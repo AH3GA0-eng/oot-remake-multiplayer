@@ -1123,8 +1123,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                     }
                 }
                 if (t->second.addresses.contains(s.address)) {
-                    // A chest (issues 87, 195): shown open here, never removed
-                    // unless the play of its open idle does not take.
+                    // A chest (issues 87, 195): shown open here, never removed.
                     if (chest) {
                         Taking& tk = t->second;
                         if (tk.shown_open.contains(s.address)) {
@@ -1176,8 +1175,9 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                                         continue;
                                     }
                                     // Its AS has no such command: the open idle at
-                                    // once, on the same fail clock as before.
+                                    // once, with its own full try.
                                     sh.lid_done = true;
+                                    sh.since_us = now_us;
                                     notes_.emplace_back(s.name + ": '" + sh.opening +
                                                         "' did not take here, open idle played");
                                 } else {
@@ -1228,11 +1228,28 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                                 continue;  // still to take
                             }
                             // Never showed open: the play does not take here.
-                            // Removed as before, so its content is not given twice.
+                            // chest-lid-b (#195, players saw chests vanish):
+                            // left closed, never removed. Its opened flag is
+                            // shared, so it loads open the next time; opened
+                            // here meanwhile, its count gain is taken back
+                            // (below, as for a shown-open chest).
                             chest_shown_.erase(shown);
                             tk.show_failed.insert(s.address);
-                            notes_.emplace_back(s.name + ": could not be shown open here, removed");
+                            notes_.emplace_back(s.name + ": could not be shown open here, left closed (opens from its "
+                                                         "shared flag when it loads again)");
+                            continue;
                         }
+                        if (!animation.empty() && animation.find(kChestClosedIdle) == std::string::npos) {
+                            // Left closed above, then opened by its own AI.
+                            tk.shown_open.insert(s.address);
+                            if (beside) {
+                                ++chests_opened_twice_;
+                                notes_.emplace_back(s.name + ": opened here too after another game ('" + animation +
+                                                    "', its content may count twice; " +
+                                                    std::to_string(chests_opened_twice_) + " this session)");
+                            }
+                        }
+                        continue;  // a chest is never removed
                     }
                     // deku-visuals-b (0.10.1 playtest: webs went, but did not
                     // burn here): a web and its parts play their own "Burn"
