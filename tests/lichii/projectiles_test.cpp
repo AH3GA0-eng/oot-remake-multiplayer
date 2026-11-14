@@ -1138,7 +1138,7 @@ TEST_CASE("shots: the owner takes a hit once when a copy bomb and the DAMAGE bot
     CHECK(step.writes[0].life == 1);
 }
 
-TEST_CASE("shots: a copy blast after the thrower's DAMAGE is put back, so the hit counts once") {
+TEST_CASE("shots: a copy blast after the thrower's DAMAGE is no hit of ours (an enemy is not written up)") {
     shots::Blasts blasts;
     CoopObjects::Sync sync;
     sync.SetBlastNear([&](const proto::Vec3& at, std::uint64_t now) { return blasts.Near(at, now); });
@@ -1161,16 +1161,15 @@ TEST_CASE("shots: a copy blast after the thrower's DAMAGE is put back, so the hi
     // Then our copy goes off at the remove and the game takes 2 again.
     blasts.Add({0.0f, 0.0f, 0.0f}, 120 * kMs);
     step = Tick(sync, 140 * kMs, 4, 1);
-    REQUIRE(step.writes.size() == 1);
-    CHECK(step.writes[0].life == 6);  // written back up
+    CHECK(step.writes.empty());  // an enemy keeps what its game took (the native rule): never written back up
     CHECK(sync.BlastDrops() == 1);
     // Nothing is left as credit: the next DAMAGE is taken whole.
-    Tick(sync, 160 * kMs, 6, 1);
+    Tick(sync, 160 * kMs, 4, 1);
     d.amount = 1;
     sync.Receive(d);
-    step = Tick(sync, 200 * kMs, 6, 1);
+    step = Tick(sync, 200 * kMs, 4, 1);
     REQUIRE(step.writes.size() == 1);
-    CHECK(step.writes[0].life == 5);
+    CHECK(step.writes[0].life == 3);
 }
 
 TEST_CASE("shots: a bomb copy the owner removed as gone is no blast") {
