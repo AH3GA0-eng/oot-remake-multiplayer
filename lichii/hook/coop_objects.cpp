@@ -2974,8 +2974,8 @@ private:
             if (CoopDifficulty::IsEnemy(s.name, false)) {
                 apart.push_back({s.position[0], s.position[1], s.position[2]});
             }
-            if (!IsRolled(s.name) || (s.hash != 0 && s.hash != ~u64{0})) {
-                continue;
+            if (!IsRolled(s.name) || s.name == "Enemy_Poe" || (s.hash != 0 && s.hash != ~u64{0})) {
+                continue;  // (the horde is Stalchild only)
             }
             ++alive;
             const auto id = sync_.IdOf(s.address);

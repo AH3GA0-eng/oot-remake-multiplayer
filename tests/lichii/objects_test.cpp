@@ -1582,6 +1582,8 @@ TEST_CASE("objects: one game rolls Stalchild, the others delete theirs and make 
     CHECK(CoopObjects::IsRolled("Enemy_Stalchild"));
     CHECK(CoopObjects::IsRolled("Enemy_Stalchild_Big"));
     CHECK_FALSE(CoopObjects::IsRolled("Enemy_Stalchild_Dictionary"));
+    CHECK(CoopObjects::IsRolled("Enemy_Poe"));  // the graveyard night ghost (owner retest R6)
+    CHECK_FALSE(CoopObjects::IsRolled("Enemy_Poe_Sharp"));  // placed event Poe
 
     Sync a;  // player 1: decides
     Sync b;  // player 2

@@ -132,6 +132,8 @@ A placed id is only good inside one scene, since a scene can be loaded on one ga
 
 ### Rolled spawns (the night Stalchild)
 
+The graveyard's night ghost `Enemy_Poe` goes the same way (owner retest R6, 2026-11-14): Graveyard_Child places only the event `Enemy_Poe_Sharp`/`_Flat`, so the game makes the Poe near one Link and the other games never had one. It gets no night horde.
+
 Alex (2026-11-09): every player must see the same Stalchild rise out of the ground at the same spot, at the same time. The scene-order ids above paired each game's own rolls, which rose in different places and chased their own Link.
 
 **The spawner** (static reading of main, build e0f3ccfaf50065ae; not yet run):
