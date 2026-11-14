@@ -219,8 +219,11 @@ std::vector<Menu::Line> Menu::Lines() const {
         }
         break;
     case Page::kLocal:
-        out.push_back({Note("Split screen: two players on this PC."), Act::kNone, {}});
-        out.push_back({Note("Coming in the next test release."), Act::kNone, {}});
+        out.push_back({Note("Split screen (experimental): two full games on this PC."), Act::kNone, {}});
+        out.push_back({Note("1. Two kits (or Nucleus Co-op), each started once."), Act::kNone, {}});
+        out.push_back({Note("2. Each game its own controller: Settings > Controller."), Act::kNone, {}});
+        out.push_back({Note("3. Host in one game, Join in the other (Same network row)."), Act::kNone, {}});
+        out.push_back({Note("Steps: PLAY-LAN.md. Native split screen comes later."), Act::kNone, {}});
         break;
     case Page::kCommands: {
         const std::string key = ChatKeyWords(options_.chat_key);
@@ -857,8 +860,11 @@ View Menu::view() const {
         break;
     case Page::kLocal:
         v.help_title = "Local co-op";
-        v.help = "Two players on one PC, the screen split in two. It is not in this test release yet: for now, play "
-                 "together from two PCs with Host a game and Join a game.";
+        v.help = "Split screen (experimental) runs two full games on this PC, one per player: about 10 GB of RAM each "
+                 "and a strong graphics card. Start two kits (or use Nucleus Co-op), give each game its own controller"
+                 " in Settings, Controller (controller 1, controller 2 or the keyboard), then Host a game in one and "
+                 "Join a game in the other with the Same network line. The steps are in PLAY-LAN.md. Native split "
+                 "screen, one game for both, comes in a later release.";
         break;
     case Page::kSettings:
         v.help_title = "Settings";

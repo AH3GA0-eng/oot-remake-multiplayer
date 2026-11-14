@@ -2,7 +2,7 @@
 
 `OoTCoop.js` is a handler for [Nucleus Co-op](https://github.com/SplitScreen-Me/splitscreenme-nucleus), a free Windows tool that runs several copies of a PC game split-screen on one PC, each with its own controller. With it, 2 to 4 players on one PC start OoT Co-op on Longshot in one click: player 1's game hosts on this PC, and the others join it.
 
-How to play with it: [docs/play-lan.md, "Split-screen with Nucleus Co-op"](../../docs/play-lan.md#split-screen-with-nucleus-co-op).
+How to play with it: [docs/play-lan.md, "Split screen (experimental)"](../../docs/play-lan.md#split-screen-experimental).
 
 The handler is not on the Nucleus handler hub. Install it by hand, as described below.
 

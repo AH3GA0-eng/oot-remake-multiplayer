@@ -270,17 +270,21 @@ TEST_CASE("pause tab: co-op that came with the game's start is shown, not starte
     CHECK(m.page() == Page::kSettings);
 }
 
-TEST_CASE("pause tab: Local co-op says split screen comes in the next test release") {
+TEST_CASE("pause tab: Local co-op lists the experimental split screen steps") {
     Menu m;
     m.Show(CoopTitleMenu::Options{});
     m.Open(Page::kLocal);
     CHECK(m.page() == Page::kLocal);
     const View v = m.view();
-    REQUIRE(v.rows.size() == 2);
-    CHECK(v.rows[0].kind == RowKind::kNote);
-    CHECK(v.rows[1].name.find("next test release") != std::string::npos);
+    REQUIRE(v.rows.size() == 5);
+    for (const auto& row : v.rows) {
+        CHECK(row.kind == RowKind::kNote);
+    }
+    CHECK(v.rows[0].name.find("experimental") != std::string::npos);
+    CHECK(v.rows[2].name.find("Settings > Controller") != std::string::npos);
+    CHECK(v.rows[4].name.find("PLAY-LAN.md") != std::string::npos);
     CHECK(v.selected == -1);   // nothing to choose
-    CHECK(v.help.find("two PCs") != std::string::npos);   // the help box says what to do meanwhile
+    CHECK(v.help.find("10 GB") != std::string::npos);   // the help box says what it costs
     CHECK(v.back == "Back");
     CHECK(m.Press(Input::kBack));
     CHECK(Selected(m) == "Local co-op");

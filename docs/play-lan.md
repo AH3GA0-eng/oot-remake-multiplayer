@@ -89,11 +89,11 @@ Two games side by side, each with its own controller, or one with a controller a
 
 `longshot_log.txt` beside each kit's `longshot.exe` (in `hookshot\game\bin\`) says what it chose: `hid: this game's controller: one pad (1)` and `coop: controller 1, keyboard focus`. The default (no line, or `LICHII_COOP_PAD=auto`) is the game's own way: every controller, in the window in front only (the game's menu has **Controller in background** to let them in behind too). A log line `this Hookshot cannot choose a controller` means that kit's game is older than the kit: start `Start OoT Co-op.bat` again and let it update the game.
 
-## Split-screen with Nucleus Co-op
+## Split screen (experimental)
 
 [Nucleus Co-op](https://github.com/SplitScreen-Me/splitscreenme-nucleus) is a free Windows tool. It does what the section above does by hand, in one click, for 2 to 4 players: it starts one copy of the game per player and places the windows to fill the screen (or several screens). Player 1's game hosts on this PC, and the others join it. Longshot only.
 
-It runs a **whole game per player**. Each copy takes about 10 GB of RAM, so 2 players need about 20 GB free and 4 need about 40 GB, plus the graphics card's memory for each copy. The lighter way is the game's own split-screen ([local-coop.md](local-coop.md), from 0.11): one game, one world, every player's view in it.
+Split screen is **experimental** in this release: each player runs a **full game**. Each copy takes about 10 GB of RAM, so 2 players need about 20 GB free and 4 need about 40 GB, and a strong graphics card, with its memory for each copy. Without Nucleus, do the same by hand: two kits started once each, each game its own controller (Settings, Controller), Host in one and Join in the other (above). Native split screen (one game, one world, every player's view in it; [local-coop.md](local-coop.md)) comes in a later release.
 
 1. **Once:** install Nucleus and our handler as [tools/nucleus/README.md](../tools/nucleus/README.md) says (unzip Nucleus, copy `OoTCoop.js` into its `handlers` folder, add the `longshot.exe` of your kit's co-op game). The co-op game must be built from this release or a later one. With an older one, every copy reads the same controller: run `Build-Hookshot-Coop.bat` again.
 2. **Plug in the controllers**, start Nucleus and choose **OoT Co-op (Longshot)**. Drag each controller (and the keyboard, for a keyboard-and-mouse player) onto a part of the screen, give each player a name, then press **Play**.

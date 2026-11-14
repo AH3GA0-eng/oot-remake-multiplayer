@@ -25,6 +25,8 @@ Both stages share one design, one wire protocol and one server, so what is learn
 
 **Built in, not tested yet on Longshot** (tell us on [Discord](https://discord.gg/GwtRKAqng5) if something is off): Epona seen by everyone with more than one rider (#199); townspeople walking on every screen (#200); no black screen during another player's cutscene (#173), which worked on the emulator and Hookshot before; a controller of its own for each of two games on one PC; the randomizer (OOTRR) comes with the kit, with nothing to download or set: off by default, turned on in the Mods tab, and in co-op every guest builds the host's seed by itself ([mods.md](docs/mods.md#the-randomizer)).
 
+**Split screen (experimental):** two full games on one PC, one per player (about 10 GB of RAM each and a strong graphics card): two kits or [Nucleus Co-op](docs/play-lan.md#split-screen-experimental), each game its own controller, Host in one and Join in the other. Native split screen (one game) comes in a later release.
+
 1. [Setting up](docs/setup.md): the start file, the first build, updating, settings and troubleshooting.
 2. Play on the [same network (LAN)](docs/play-lan.md), or [over the internet](docs/play-online.md): Host in the Multiplayer tab opens the port on your router by itself (UPnP), makes a random join password and copies an **invite code** (the Host page says so first: send it to your friends, or pick another way to host below); friends paste it under Join. Every session has a join password, and all game traffic is encrypted with it.
 3. [Known issues](docs/known-issues.md): what works in this build and what does not yet.

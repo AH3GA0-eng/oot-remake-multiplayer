@@ -30,6 +30,7 @@ This is an early test release. Everything under "Works" was seen in our two-game
 
 ## Known issues
 
+- **Split screen is experimental**: it runs two full games on one PC, one per player (about 10 GB of RAM each and a strong graphics card; [play-lan.md](play-lan.md#split-screen-experimental)). Native split screen, one game for both ([local-coop.md](local-coop.md)), comes in a later release.
 - **Kakariko gate**: fixed in code for 0.11: the gate step now goes through the game's own quest manager, so the gate opens for every player, and each player keeps Zelda's Letter. Being checked in our big test run; tell us if the gate stays shut for you ([#171](https://github.com/daurosk/oot-remake-multiplayer/issues/171)).
 - **Microsoft Defender** may warn about the zip or `Update.bat` ("Trojan:Script/Wacatac"): a false alarm on our scripts, which we report to Microsoft.
 - **Built in, not yet checked on Longshot**: Epona seen by everyone with more than one rider ([#199](https://github.com/daurosk/oot-remake-multiplayer/issues/199)), townspeople walking on every screen ([#200](https://github.com/daurosk/oot-remake-multiplayer/issues/200)), no black screen in another player's cutscene ([#173](https://github.com/daurosk/oot-remake-multiplayer/issues/173)); these worked on the emulator before.
