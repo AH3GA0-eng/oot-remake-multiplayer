@@ -5,6 +5,7 @@
 #include <mutex>
 #include <utility>
 
+#include "coop/protocol/messages.hpp"
 #include "coop_colors.h"
 #include "coop_title_menu.h"
 
@@ -81,6 +82,16 @@ std::string TunicName(const std::optional<std::uint32_t>& colour) {
         c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     }
     return name;
+}
+
+std::optional<std::uint32_t> OwnTunic(const std::optional<std::uint32_t>& chosen, std::uint8_t number) {
+    if (chosen) {
+        return chosen;
+    }
+    if (number == 0) {
+        return std::nullopt;
+    }
+    return coop::protocol::slot_color(number);
 }
 
 void Choice::SetPending(const Look& look) {
