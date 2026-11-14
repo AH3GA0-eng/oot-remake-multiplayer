@@ -115,6 +115,14 @@ inline constexpr std::uint64_t kPartsEquipmentUser = 0x200;
 // a call that was taken is told from one that was not. The slot's link is at
 // EquipmentUser + 0x20 + 0x18 * slot (u32 id at +0x10, ~0 empty).
 inline constexpr std::uint64_t kEquipChangeState = 0xe34c40;
+// The game's own read of a slot's state: 0xce7ab0(eu, slot) returns 1 in
+// hand, 2 put away, 0 none (read from the dump: a request in the slot's
+// byte gives the rodata table at 0x3ef9474: bit 0 -> 0, bit 1 -> 1,
+// bit 2 -> 2; with no request, the state the piece itself keeps). The
+// puppet's own played animations can draw or put away its pieces too, so
+// the director asks this now and then and changes a piece again when the
+// game has it otherwise than its player (held-fix).
+inline constexpr std::uint64_t kEquipState = 0xce7ab0;
 // Taking armor off: 0x10aceb0(eu, index, 0) empties the EquipmentUser's
 // armor link `index` (eu + 0xe0 + 0x18 * index, the same {holder, id} shape
 // as a hand slot) and deletes its piece. The game's own GameData path
@@ -408,6 +416,8 @@ public:
     // A worn piece this far from its shown puppet was left behind (made while
     // the puppet was parked under the floor, seen 2026-11-09): worn again.
     static constexpr float kGearFar = 5.0f;
+    // A piece set in hand or put away is checked against the game this often.
+    static constexpr std::uint64_t kHoldCheckMs = 500;
     static constexpr std::uint64_t kRewearMs = 1000;  // at most once a second
     static constexpr std::uint64_t kFarForMs = 100;   // far on two readings this far apart
     static constexpr std::uint8_t kRewearTries = 3;   // then given up, with one line
@@ -471,6 +481,8 @@ private:
         int hold_slot = 0;                  // the change being made
         bool hold_in_hand = false;
         std::uint64_t hold_retry_ms = 0;    // no new change before this
+        std::uint64_t hold_check_ms = 0;    // no state check (kEquipState) before this
+        std::size_t hold_check_next = 0;    // the gear piece the next check starts from
         std::array<std::uint32_t, kGearCount> hold_id{};  // the piece each change was made for
         std::uint64_t tint_actor = 0;       // the actor the colour line was logged for
         std::uint32_t tint_color = 0;       // and its colour
@@ -489,8 +501,8 @@ private:
         CoopLinkSound::Player link_sound;   // the player's own sounds on it (issues 131, 152)
     };
     enum class Pending {
-        none, malloc, create, take, drop, remove, play, frame, sync, equip, unequip, hold, move,
-        sound, link_sound
+        none, malloc, create, take, drop, remove, play, frame, sync, equip, unequip, hold,
+        hold_check, move, sound, link_sound
     };
 
     void NewFrame(Guest& guest, std::uint64_t now_ms);

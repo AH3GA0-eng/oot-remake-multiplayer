@@ -564,6 +564,22 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
         }
         break;
     }
+    case Pending::hold_check: {
+        // The game's state of the slot against what was last set: when the
+        // puppet's own animation drew or put the piece away since, flip what
+        // we hold as set, so the next Hold asks the change again.
+        const auto state = static_cast<std::uint32_t>(result);
+        const auto bit = static_cast<std::uint8_t>(1u << slot.hold_slot);
+        if ((state == addr::kEquipStateInHand || state == addr::kEquipStateAway) &&
+            (slot.hold_known & bit) != 0 &&
+            (state == addr::kEquipStateInHand) != ((slot.in_hand & bit) != 0)) {
+            slot.in_hand = static_cast<std::uint8_t>(slot.in_hand ^ bit);
+            Say(who + " equipment slot " + std::to_string(slot.hold_slot) + " is " +
+                (state == addr::kEquipStateInHand ? "in hand" : "put away") +
+                " in the game, not as set: set again");
+        }
+        break;
+    }
     case Pending::move:
         break;
     case Pending::sound:
@@ -1112,6 +1128,7 @@ std::optional<Call> Director::Hold(Slot& slot, const Target& target, Guest& gues
     const std::string their = target.anim ? target.anim->name : std::string();
     const std::string& playing = their.empty() ? slot.anim_name : their;
     const bool ocarina = CoopOcarina::HandBind::Playing(playing);
+    std::uint64_t check_eu = 0;
     for (std::size_t i = 0; i < kGearSlots.size(); ++i) {
         const int s = kGearSlots[i];
         if (s < 0 || slot.worn[i].empty()) {
@@ -1131,6 +1148,7 @@ std::optional<Call> Director::Hold(Slot& slot, const Target& target, Guest& gues
             id == 0xFFFFFFFFu) {
             continue;  // the piece is not there (yet)
         }
+        check_eu = eu;
         if (id != slot.hold_id[i]) {
             // Another piece than the one last set: the game makes a worn
             // piece again a moment after the equip call (seen 2026-11-09),
@@ -1145,6 +1163,7 @@ std::optional<Call> Director::Hold(Slot& slot, const Target& target, Guest& gues
         if ((slot.hold_known & bit) == 0 && !want) {
             // Worn put away, as wanted: nothing to ask.
             slot.hold_known = static_cast<std::uint8_t>(slot.hold_known | bit);
+            slot.hold_check_ms = now_ms + kHoldCheckMs;
             continue;
         }
         if (drawn && ocarina) {
@@ -1153,12 +1172,34 @@ std::optional<Call> Director::Hold(Slot& slot, const Target& target, Guest& gues
         }
         slot.hold_slot = s;
         slot.hold_in_hand = want;
+        slot.hold_check_ms = now_ms + kHoldCheckMs;  // let the change settle first
         Call c;
         c.function = input_.main_base + addr::kEquipChangeState;
         c.x[0] = eu;
         c.x[1] = static_cast<std::uint64_t>(s);
         c.x[2] = want ? addr::kEquipStateInHand : addr::kEquipStateAway;
         pending_ = Pending::hold;
+        return c;
+    }
+    // Nothing to change: now and then, one piece set before is checked
+    // against the game's own state of its slot (kEquipState), in turn.
+    if (check_eu == 0 || slot.hold_check_ms == 0 || now_ms < slot.hold_check_ms) {
+        return std::nullopt;
+    }
+    slot.hold_check_ms = now_ms + kHoldCheckMs;
+    for (std::size_t n = 0; n < kGearSlots.size(); ++n) {
+        const std::size_t i = (slot.hold_check_next + n) % kGearSlots.size();
+        const int s = kGearSlots[i];
+        if (s < 0 || slot.worn[i].empty() || (slot.hold_known & (1u << s)) == 0) {
+            continue;
+        }
+        slot.hold_check_next = i + 1;
+        slot.hold_slot = s;
+        Call c;
+        c.function = input_.main_base + addr::kEquipState;
+        c.x[0] = check_eu;
+        c.x[1] = static_cast<std::uint64_t>(s);
+        pending_ = Pending::hold_check;
         return c;
     }
     return std::nullopt;
