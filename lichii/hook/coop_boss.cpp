@@ -249,10 +249,13 @@ void Sync::Take(const proto::BossRoom& m, std::uint64_t now_us) {
     }
 }
 
-void Sync::Defeat(Actions& out) {
+void Sync::Defeat(Actions& out, bool read_gone) {
     Say(out, *here_, proto::BossState::defeated);
     if (std::find(defeated_.begin(), defeated_.end(), here_->index) == defeated_.end()) {
         defeated_.push_back(here_->index);
+    }
+    if (read_gone) {
+        out.beaten_here = here_;  // only when the walk read the boss gone, never a guess from the event alone
     }
     out.log.push_back("boss beaten (" + std::string(here_->outro) + ")");
 }
@@ -264,6 +267,9 @@ void Sync::Commit(Actions& out, const char* why) {
     committed_ = true;
     const bool fight = phase_ == Phase::fight || phase_ == Phase::outro;
     Say(out, *here_, fight ? proto::BossState::intro_end : proto::BossState::intro_start);
+    if (!fight) {
+        out.intro_here = here_;  // past the door during our intro: it is the boss's (a door before it is not)
+    }
     out.log.push_back(std::string("past the door (") + why + "): the others are moved in");
 }
 
@@ -362,6 +368,7 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
                 if (local.event) {  // came in with an event running: that is the intro
                     phase_ = Phase::intro;
                     intro_at_ = now_us;
+                    out.intro_here = here_;
                     out.log.push_back("intro started (" + std::string(here_->intro) + ")");
                     if (moved_in) {
                         Commit(out, "moved in");
@@ -420,6 +427,7 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
                 // boss's death).
                 phase_ = Phase::intro;
                 intro_at_ = now_us;
+                out.intro_here = here_;
                 out.log.push_back("intro started (" + std::string(here_->intro) + ", after the wait)");
             } else if (rose && now_us - fight_at_ < kMinFightUs) {
                 out.log.push_back("an event right after the intro: the rest of it, not the boss's death");
@@ -431,7 +439,7 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
                     provisional_ = true;
                     out.log.push_back("an event in the fight; the boss is still there: waiting to see");
                 } else {
-                    Defeat(out);
+                    Defeat(out, local.boss_alive.has_value());  // read gone, or no reading at all
                 }
             }
             break;
@@ -444,12 +452,12 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
                 const bool long_event = now_us - outro_at_ >= kLongEventUs && !untouched;
                 if (gone || (long_event && local.event)) {
                     provisional_ = false;
-                    Defeat(out);
+                    Defeat(out, gone);
                     if (!gone) out.log.back() += " after a long event";
                 } else if (fell) {
                     provisional_ = false;
                     if (!local.boss_alive.has_value()) {
-                        Defeat(out);  // no reading at the end: as before
+                        Defeat(out, false);  // no reading at the end: as before
                     } else {
                         phase_ = Phase::fight;
                         out.log.push_back("the event is over and the boss is alive: the fight goes on");

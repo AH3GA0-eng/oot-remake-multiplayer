@@ -23,7 +23,7 @@ namespace coop::protocol {
 // 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY; 4: the messages
 // (types 28 to 39) and the server sending HANDOVER_ASK; 9: the join password
 // (JOIN_CHALLENGE, JOIN_PROOF, REFUSED bad_password).
-inline constexpr std::uint16_t kProtocolVersion = 11;
+inline constexpr std::uint16_t kProtocolVersion = 12;  // 12: DAMAGE's hit place (boss-intro, 0.11)
 inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr std::uint8_t kMaxPlayers = 16;  // protocol 11; 4 before
 
@@ -964,6 +964,10 @@ struct Damage {
   std::int32_t amount = 0;
   std::uint8_t cause = 0;  // DamageCause
   Vec3 position{};
+  // Where the hit landed, from the hitter's game's own hit record (a boss copy only; boss-intro): Gohma's weak
+  // point is a headshot check against her Eyelid_Down bone, so the owner's replay lands there, not at her feet.
+  // Optional, after position on the wire (protocol 12).
+  std::optional<Vec3> hit_at{};
   bool operator==(const Damage&) const = default;
 };
 

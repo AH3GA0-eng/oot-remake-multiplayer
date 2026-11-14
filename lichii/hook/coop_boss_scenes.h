@@ -68,6 +68,12 @@ struct Boss {
     std::string_view intro;  // the intro's event flow
     std::string_view outro;  // the death's
     int room = -1;           // CoopBoss::RoomByIndex, or -1: no room in the table
+    // The event settings the boss's own logic asks the game for instead (RSDB EventSetting, read from each boss's
+    // DungeonBossCommonParam EventStartParameters, 2026-11-14): e.g. Gohma's "Appear" asks
+    // InsideTheDekuTree_BossAppear (Get_StoneOfForest's Boss_Appear entry), whose flow plays Dm_Deku_BossIn as a
+    // sub-event the request wrap never sees. Empty: none.
+    std::array<std::string_view, 2> intro_asks{};
+    std::array<std::string_view, 2> outro_asks{};
 };
 
 inline constexpr std::size_t kBossCount = 10;
@@ -75,7 +81,7 @@ static_assert(kBossCount <= coop::protocol::kMaxSceneBoss + 1u);
 
 // The ten bosses, by BOSS_SCENE's boss index (0 to 7: CoopBoss::Rooms() order).
 std::span<const Boss> Bosses();
-// The boss and kind of an event name, or nothing.
+// The boss and kind of an event name (its flow or one of the settings its logic asks), or nothing.
 std::optional<std::pair<std::uint8_t, Kind>> OfEvent(std::string_view name);
 
 inline constexpr float kAnteGrow = 14.0f;      // the room before the door, around the room's circle
@@ -103,6 +109,10 @@ struct Local {
 struct Request {
     std::string name;
     bool taken = false;  // the event manager took it
+    // Seen with no request naming it (the older rules' reading of our event in the boss room): taken only for a fresh intro (no fight
+    // known, none beaten) or a death of a fight not already over, in the boss's own scene; never anything else
+    // (a name left in the event session must not restart or skip anything).
+    bool searched = false;
 };
 
 struct ChatLine {

@@ -2,8 +2,10 @@
 #include <doctest/doctest.h>
 
 #include <ostream>
+#include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "coop_boss_scenes.h"
@@ -250,6 +252,74 @@ TEST_CASE("boss scenes: the death plays in the area, outside only a chat line") 
     d.Receive(death);
     d.Tick(At(kInRoom, 4), {}, 100'100'000);
     CHECK(d.Tick(At(kInRoom, 4, true), Took("Dm_Deku_BossOut"), 100'150'000).send.empty());
+}
+
+TEST_CASE("boss scenes: the settings a boss's own logic asks start its intro and death (Gohma on Longshot)") {
+    // 0.11 run (deku-test-b): Gohma's logic asked InsideTheDekuTree_BossAppear, whose flow plays Dm_Deku_BossIn as
+    // a sub-event the request wrap never sees; the intro was not shared.
+    CHECK(CoopBossScenes::OfEvent("InsideTheDekuTree_BossAppear") ==
+          std::optional(std::pair{kGohma, CoopBossScenes::Kind::intro}));
+    CHECK(CoopBossScenes::OfEvent("InsideTheDekuTree_BossDie") ==
+          std::optional(std::pair{kGohma, CoopBossScenes::Kind::outro}));
+    CHECK(CoopBossScenes::OfEvent("InsideTheDekuTree_BossDie_DreamWorld") ==
+          std::optional(std::pair{kGohma, CoopBossScenes::Kind::outro}));
+    CHECK(CoopBossScenes::OfEvent("SageOfFire_DefeatBoss") ==
+          std::optional(std::pair{std::uint8_t{4}, CoopBossScenes::Kind::outro}));
+    CHECK(CoopBossScenes::OfEvent("InsideGanonCastle_Dungeon_BossDie_2") ==
+          std::optional(std::pair{std::uint8_t{9}, CoopBossScenes::Kind::outro}));
+    CHECK_FALSE(CoopBossScenes::OfEvent("InsideGanonCastle_Dungeon_Boss_GetMasterSword"));  // mid-fight
+    CHECK_FALSE(CoopBossScenes::OfEvent(""));
+
+    Director a, b;
+    Actions out = a.Tick(At(kInRoom, 1, true), Took("InsideTheDekuTree_BossAppear"), 1'000'000);
+    REQUIRE(out.send.size() == 1);
+    CHECK(out.send[0].kind == proto::BossSceneKind::intro_start);
+    REQUIRE_FALSE(out.log.empty());
+    CHECK(out.log.back() == "Dm_Deku_BossIn: our game started it: the others in the area play it too (asked as "
+                            "InsideTheDekuTree_BossAppear)");
+    proto::BossScene start = out.send[0];
+    start.player_number = 1;
+    b.Receive(start);
+    // The joiner plays the intro's own flow (the movie), not the setting that would run the fight's start again.
+    CHECK(b.Tick(At(kBeforeDoor, 2), {}, 1'100'000).play == std::optional<std::string>("Dm_Deku_BossIn"));
+
+    out = a.Tick(At(kInRoom, 1, true), Took("InsideTheDekuTree_BossDie"), 100'000'000);
+    REQUIRE(out.send.size() == 1);
+    CHECK(out.send[0].kind == proto::BossSceneKind::outro_start);
+    proto::BossScene death = out.send[0];
+    death.player_number = 1;
+    b.Receive(death);
+    CHECK(b.Tick(At(kInRoom, 2), {}, 100'100'000).play == std::optional<std::string>("Dm_Deku_BossOut"));
+}
+
+TEST_CASE("boss scenes: our intro or death seen with no name starts a fresh intro, never a leftover") {
+    // 0.11 run 4 (boss-intro): Gohma's game asked only InsideTheDekuTree_BossArea_ShutIn; the older rules' own
+    // reading of our event in the boss room names it instead.
+    const auto searched = [](const char* name) { return std::vector<Request>{Request{name, true, true}}; };
+    Director a;
+    Actions out = a.Tick(At(kInRoom, 1, true), searched("Dm_Deku_BossIn"), 1'000'000);
+    REQUIRE(out.send.size() == 1);
+    CHECK(out.send[0].kind == proto::BossSceneKind::intro_start);
+    CHECK(a.phase(kGohma) == Phase::intro);
+    // Found again later in the fight (a name left in the session): nothing, no skip.
+    a.Tick(At(kInRoom, 1, false), {}, 30'000'000);
+    REQUIRE(a.phase(kGohma) == Phase::fight);
+    out = a.Tick(At(kInRoom, 1, true), searched("Dm_Deku_BossIn"), 40'000'000);
+    CHECK(out.send.empty());
+    CHECK_FALSE(out.skip);
+    // The death found by the search: shared once.
+    out = a.Tick(At(kInRoom, 1, true), searched("Dm_Deku_BossOut"), 100'000'000);
+    REQUIRE(out.send.size() == 1);
+    CHECK(out.send[0].kind == proto::BossSceneKind::outro_start);
+    out = a.Tick(At(kInRoom, 1, true), searched("Dm_Deku_BossOut"), 100'500'000);
+    CHECK(out.send.empty());
+    // Beaten: a leftover intro starts nothing.
+    a.Tick(At(kInRoom, 1, false), {}, 130'000'000);
+    CHECK(a.Tick(At(kInRoom, 1, true), searched("Dm_Deku_BossIn"), 140'000'000).send.empty());
+    // Another scene: nothing.
+    Director c;
+    CHECK(c.Tick(At(kInRoom, 3, true, "KokiriForest"), searched("Dm_Deku_BossIn"), 1'000'000).send.empty());
+    CHECK(c.phase(kGohma) == Phase::none);
 }
 
 TEST_CASE("boss scenes: one heart container for all, never two") {

@@ -14,17 +14,23 @@ namespace {
 // event flows); 8 and 9 have no room in that table. Event flows checked in
 // the RomFS (Event/EventFlow, 2026-11-13). No mini-boss has an intro or
 // death event of its own (no Dm_ flow names one), so none is listed.
+// The settings a boss's logic asks (intro_asks/outro_asks) are from
+// RSDB/EventSetting and each boss pack's DungeonBossCommonParam (2026-11-14).
 constexpr std::array<Boss, kBossCount> kBosses{{
-    {"Queen Gohma", "Dm_Deku_BossIn", "Dm_Deku_BossOut", 0},
-    {"King Dodongo", "Dm_DodongoCave_BossIn", "Dm_DodongoCave_BossOut", 1},
-    {"Barinade", "Dm_InsideJabu_Jabu_BossIn", "Dm_InsideJabu_Jabu_BossOut", 2},
-    {"Phantom Ganon", "Dm_ForestTemple_BossIn", "Dm_ForestTemple_BossOut", 3},
-    {"Volvagia", "Dm_FireTemple_BossIn", "Dm_FireTemple_BossOut", 4},
-    {"Morpha", "Dm_WaterTemple_BossIn", "Dm_WaterTemple_BossOut", 5},
-    {"Bongo Bongo", "Dm_ShadowTemple_BossIn", "Dm_ShadowTemple_BossOut", 6},
-    {"Twinrova", "Dm_SpiritTemple_BossIn", "Dm_SpiritTemple_BossOut", 7},
-    {"Ganondorf", "Dm_InsideGanonCastle_BossIn", "Dm_InsideGanonCastle_BossOut", -1},
-    {"Ganon", "Dm_FinalBattle_BossIn", "Dm_FinalBattle_BossOut", -1},
+    {"Queen Gohma", "Dm_Deku_BossIn", "Dm_Deku_BossOut", 0, {"InsideTheDekuTree_BossAppear"},
+     {"InsideTheDekuTree_BossDie", "InsideTheDekuTree_BossDie_DreamWorld"}},
+    {"King Dodongo", "Dm_DodongoCave_BossIn", "Dm_DodongoCave_BossOut", 1, {}, {"Get_StoneOfFire_DefeatBoss"}},
+    {"Barinade", "Dm_InsideJabu_Jabu_BossIn", "Dm_InsideJabu_Jabu_BossOut", 2, {}, {"Get_StoneOfWater_DestroyBoss"}},
+    {"Phantom Ganon", "Dm_ForestTemple_BossIn", "Dm_ForestTemple_BossOut", 3, {},
+     {"ForestTemple_SageOfForest_PhantomGanonDefeat"}},
+    {"Volvagia", "Dm_FireTemple_BossIn", "Dm_FireTemple_BossOut", 4, {}, {"SageOfFire_DefeatBoss"}},
+    {"Morpha", "Dm_WaterTemple_BossIn", "Dm_WaterTemple_BossOut", 5, {}, {"Demo_SageOfWater_BossDefeat"}},
+    {"Bongo Bongo", "Dm_ShadowTemple_BossIn", "Dm_ShadowTemple_BossOut", 6, {}, {"ShadowTemple_BossWin"}},
+    {"Twinrova", "Dm_SpiritTemple_BossIn", "Dm_SpiritTemple_BossOut", 7, {}, {"SageOfSpirit_BossEnd"}},
+    {"Ganondorf", "Dm_InsideGanonCastle_BossIn", "Dm_InsideGanonCastle_BossOut", -1, {},
+     {"InsideGanonCastle_Dungeon_BossDie_1"}},
+    // (Ganon's first half asks InsideGanonCastle_Dungeon_Boss_GetMasterSword at 1% life: mid-fight, not its death)
+    {"Ganon", "Dm_FinalBattle_BossIn", "Dm_FinalBattle_BossOut", -1, {}, {"InsideGanonCastle_Dungeon_BossDie_2"}},
 }};
 
 const CoopBoss::Room* RoomOf(const Boss& b) {
@@ -43,10 +49,14 @@ std::span<const Boss> Bosses() {
 
 std::optional<std::pair<std::uint8_t, Kind>> OfEvent(std::string_view name) {
     for (std::size_t i = 0; i < kBosses.size(); ++i) {
-        if (name == kBosses[i].intro) {
+        const Boss& b = kBosses[i];
+        const auto asks = [&](const std::array<std::string_view, 2>& list) {
+            return std::find(list.begin(), list.end(), name) != list.end() && !name.empty();
+        };
+        if (name == b.intro || asks(b.intro_asks)) {
             return std::pair{static_cast<std::uint8_t>(i), Kind::intro};
         }
-        if (name == kBosses[i].outro) {
+        if (name == b.outro || asks(b.outro_asks)) {
             return std::pair{static_cast<std::uint8_t>(i), Kind::outro};
         }
     }
@@ -266,8 +276,31 @@ void Director::Ours(const Request& r, const Local& local, std::uint64_t now_us, 
         return;
     }
     const auto [b, kind] = *of;
+    if (r.searched) {
+        const Fight& f = fights_[b];
+        const auto* room = RoomOf(kBosses[b]);
+        const bool here = room != nullptr && local.scene && *local.scene == room->scene;
+        const bool fresh = kind == Kind::intro ? f.phase == Phase::none : f.phase < Phase::outro;
+        if (!here || !fresh || !r.taken) {
+            return;  // a leftover name: nothing starts or skips because of it
+        }
+    }
+    const std::string_view flow = kind == Kind::intro ? kBosses[b].intro : kBosses[b].outro;
+    // The flow's name starts each line (the proof lines name it); the setting the game asked, when not the flow,
+    // ends every line this call adds.
+    const std::string label(flow);
+    struct Suffix {
+        std::vector<std::string>& log;
+        std::size_t first;
+        std::string text;
+        ~Suffix() {
+            for (std::size_t i = first; i < log.size() && !text.empty(); ++i) {
+                log[i] += text;
+            }
+        }
+    } suffix{out.log, out.log.size(), r.name == flow ? std::string() : " (asked as " + r.name + ")"};
     if (!r.taken) {
-        out.log.push_back(r.name + ": our game did not take it");
+        out.log.push_back(label + ": our game did not take it");
         return;
     }
     Fight& f = fights_[b];
@@ -283,9 +316,9 @@ void Director::Ours(const Request& r, const Local& local, std::uint64_t now_us, 
             f.starter_at = local.position;
             f.at = now_us;
             Say(out, b, proto::BossSceneKind::intro_start, local);
-            out.log.push_back(r.name + ": our game started it: the others in the area play it too");
+            out.log.push_back(label + ": our game started it: the others in the area play it too");
         } else if (f.phase == Phase::intro) {
-            out.log.push_back(r.name + (asked ? ": playing with player " : ": ours started with player ") +
+            out.log.push_back(label + (asked ? ": playing with player " : ": ours started with player ") +
                               std::to_string(f.starter) + "'s");
         } else {
             Skip("the fight is on already (we came in late)", now_us, out);
@@ -302,9 +335,9 @@ void Director::Ours(const Request& r, const Local& local, std::uint64_t now_us, 
         f.at = now_us;
         f.base = Base(local);
         Say(out, b, proto::BossSceneKind::outro_start, local);
-        out.log.push_back(r.name + ": our game started the death: the others in the area play it too");
+        out.log.push_back(label + ": our game started the death: the others in the area play it too");
     } else {
-        out.log.push_back(r.name + (asked ? ": playing with player " : ": ours started with player ") +
+        out.log.push_back(label + (asked ? ": playing with player " : ": ours started with player ") +
                           std::to_string(f.outro_by) + "'s");
     }
 }

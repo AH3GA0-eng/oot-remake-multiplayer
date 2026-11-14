@@ -505,6 +505,14 @@ public:
         bool exact = false;           // `at` is where the blade was, not the actor's foot
     };
 
+    // Any thread: the hit id we last wrote into this Life component (the walk never takes our own replay for
+    // a hit of our game's).
+    u32 ReplayedId(u64 life) {
+        std::lock_guard lock(mutex_);
+        const auto it = replayed_ids_.find(life);
+        return it == replayed_ids_.end() ? 0xffffffffu : it->second;
+    }
+
     // Present thread: hits to replay at the next game frame.
     void AddHit(const Hit& hit) {
         std::lock_guard lock(mutex_);
@@ -1122,6 +1130,10 @@ private:
         rec[3] = 0;  // present last, below
         const std::array<u32, 4> header{0x00060001, 0x40040000, id, 2};
         const std::array<s32, 2> amount{4, h.amount};
+        {
+            std::lock_guard lock(mutex_);
+            replayed_ids_[life] = id;
+        }
         guest.Write(life + kHitHeader, header.data(), sizeof(header));
         guest.Write(life + kHitAmount, amount.data(), sizeof(amount));
         guest.Write(life + kHitRecord, rec.data(), sizeof(rec));
@@ -1130,8 +1142,8 @@ private:
         // Difficulty: the player who dealt it had it scaled; the Life step takes it as it is.
         CoopDifficulty::TheKinds().Pass(life, h.amount, CoopDifficulty::SteadyMs());
         ++replayed_;
-        LOG_INFO(Core, "coop: objects: copy {:#x} replays a hit of {} (id {:#x})", h.actor,
-                 h.amount, id);
+        LOG_INFO(Core, "coop: objects: copy {:#x} replays a hit of {} (id {:#x}{})", h.actor,
+                 h.amount, id, h.exact ? ", where it landed in the hitter's game" : "");
     }
 
     // The fixed cell holding `name` in the block (written once), or 0 when
@@ -1167,6 +1179,7 @@ private:
     }
 
     std::mutex mutex_;
+    std::unordered_map<u64, u32> replayed_ids_;  // Life component: the hit id we wrote last (under mutex_)
     u64 main_ = 0;
     std::vector<Pose> poses_;
     std::vector<u64> removes_;
@@ -2653,6 +2666,7 @@ private:
                         s.bsa_component = r.Ptr(*table + CoopBossNative::addr::kComponentBsa).value_or(0);
                     }
                     s.bsa = CoopBossNative::TheTable().OwnerState(a);
+                    s.hit_at = NewOwnHitAt(r, a, s.position);
                 }
                 if (const auto value = LifeValue(r, a)) {
                     const auto life = r.Get<s32>(value->first + 8);
@@ -2770,6 +2784,35 @@ private:
     }
 
     // The life and max value entries ([life + 0x1c10], [life + 0x1c18]).
+    // Where a boss's incoming hit our game took since the last walk landed: its Life component's last hit id
+    // moved (+0x1b18), not to one we replayed, and the record's hit place (+0x240 + 0x3c, kHitTemplate's
+    // "the hit's place") is finite and within kHitNearBoss of the boss. Only that one named field leaves this
+    // game (DAMAGE's hit_at); the owner's game builds the rest of the hit itself (boss-intro).
+    static constexpr float kHitNearBoss = 12.0f;
+    static constexpr u64 kHitPlace = 0x27c;
+    std::unordered_map<u64, u32> boss_hit_ids_;  // actor: the last hit id seen
+    std::optional<coop::protocol::Vec3> NewOwnHitAt(Reader& r, u64 a, const coop::protocol::Vec3& boss) {
+        const auto table = r.Ptr(a + kActorComponents);
+        const auto life = table ? r.Ptr(*table + kComponentLife) : std::nullopt;
+        const auto id = life ? r.Get<u32>(*life + kLastHitId) : std::nullopt;
+        if (!id) {
+            return std::nullopt;
+        }
+        const auto [it, fresh] = boss_hit_ids_.try_emplace(a, *id);
+        if (fresh || it->second == *id) {
+            return std::nullopt;
+        }
+        it->second = *id;
+        if (*id == TheMover().ReplayedId(*life)) {
+            return std::nullopt;  // our replay of the owner's hit, not one of our game's
+        }
+        const auto at = r.Get<std::array<float, 3>>(*life + kHitPlace);
+        if (!at) {
+            return std::nullopt;
+        }
+        return CoopObjects::CheckedHitPlace(*at, boss, kHitNearBoss);
+    }
+
     std::optional<std::pair<u64, u64>> LifeValue(Reader& r, u64 a) {
         const auto table = r.Ptr(a + kActorComponents);
         const auto life = table ? r.Ptr(*table + kComponentLife) : std::nullopt;
@@ -2973,6 +3016,7 @@ private:
             w.life = 0;
             w.hurt = std::max<std::int32_t>(best->life->life, 1);
             w.from = player_;
+            w.direct = true;
             writes.push_back(w);
             LOG_INFO(Core, "coop: test kill {} {:#x} at {:.2f} {:.2f} {:.2f} ({:.1f} m, life {}): hit",
                      name, best->address, best->position[0], best->position[1], best->position[2],
@@ -2986,7 +3030,7 @@ private:
             return;
         }
         const s32 old = r.Get<s32>(value->first + 8).value_or(-1);
-        if (w.hurt > 0 && replay_) {
+        if (w.hurt > 0 && replay_ && !w.direct) {
             u64 player = 0;
             for (const auto& [a, known] : names_) {
                 if (known.first == "Player_Child" || known.first == "Player_Adult") {
@@ -3000,6 +3044,12 @@ private:
                 h.attacker = player;
                 h.amount = w.hurt;
                 h.at = r.Get<std::array<float, 3>>(w.address + kActorPosition).value_or(h.at);
+                if (w.hit_at) {
+                    // Where it landed in the hitter's game (a boss: Gohma's headshot check against her eye bone,
+                    // which our game's own damage step makes with its own boss): the hit lands there.
+                    h.at = {(*w.hit_at)[0], (*w.hit_at)[1], (*w.hit_at)[2]};
+                    h.exact = true;
+                }
                 h.from = r.Get<std::array<float, 3>>(player + kActorPosition).value_or(h.at);
                 if (w.from) {
                     // The player who hit, so the enemy is knocked away from them.
@@ -3048,9 +3098,19 @@ private:
                                       "life is written directly until the next scene",
                                 w.address, NameOf(w.address));
                 }
+                if (w.direct) {
+                    LOG_INFO(Core, "coop: objects: test kill {:#x}: the game's Life step did not take it: nothing "
+                                   "written", w.address);
+                    return;  // the test kill goes only through the game's own step, never a write of ours
+                }
             }
         }
 #endif
+        if (w.direct) {
+            LOG_INFO(Core, "coop: objects: test kill {:#x}: no game Life step here (patch 0007): nothing written",
+                     w.address);
+            return;
+        }
         if (w.hurt > 0 && !stepped) {
             const auto table = r.Ptr(w.address + kActorComponents);
             const auto life = table ? r.Ptr(*table + kComponentLife) : std::nullopt;

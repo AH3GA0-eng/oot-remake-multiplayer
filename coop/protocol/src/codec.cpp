@@ -935,12 +935,16 @@ Error encode_body(const Damage& m, Writer& w) {
   if (!valid_player_or_self(m.player_number)) return Error::bad_value;
   COOP_TRY(check_object_id(m.id));
   if (m.amount < 0 || !all_finite(m.position)) return Error::bad_value;
+  if (m.hit_at && !all_finite(*m.hit_at)) return Error::bad_value;
   w.u8(m.player_number);
   write_object_id(m.id, w);
   w.u16(m.epoch);
   w.u32(static_cast<std::uint32_t>(m.amount));
   w.u8(m.cause);
   for (float f : m.position) w.f32(f);
+  if (m.hit_at) {
+    for (float f : *m.hit_at) w.f32(f);
+  }
   return Error::none;
 }
 
@@ -1657,7 +1661,9 @@ Error decode_body(Reader& r, Damage& m) {
   m.amount = static_cast<std::int32_t>(amount);
   if (m.amount < 0) return Error::bad_value;
   COOP_READ(r.u8(m.cause));
-  return read_floats(r, m.position);
+  COOP_TRY(read_floats(r, m.position));
+  if (r.left() == 12) COOP_TRY(read_floats(r, m.hit_at.emplace()));
+  return Error::none;
 }
 
 template <std::size_t N>

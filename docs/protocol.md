@@ -412,7 +412,7 @@ The server's rules today (`server/session.cpp`):
 | 23 | `OBJECT_SAMPLE` | 4 | both | `u8` player field, object id, `u16` epoch, then object components |
 | 24 | `OBJECT_REMOVE` | 2 | both | `u8` player field, object id, `u16` epoch, `u8` reason (0 gone, 1 dead, 2 exploded, 3 hit, 4 picked up), position (3 x f32) |
 | 29 | `OBJECT_GROUP` | 2 | client | `u8` player field, `u16` count (1 to 256), then per entry: member object id, root object id, `u8` flags (bit 0 the member is a boss; other bits refused). No member twice |
-| 25 | `DAMAGE` | 2 | both | `u8` player field, object id, `u16` epoch, `s32` amount (0 or more), `u8` cause (0 unknown, 1 sword, 2 arrow, 3 fire arrow, 4 ice arrow, 5 light arrow, 6 seed, 7 bomb, 8 nut, 9 boomerang, 10 hookshot, 11 hammer, 12 magic; others kept), position (3 x f32) |
+| 25 | `DAMAGE` | 2 | both | `u8` player field, object id, `u16` epoch, `s32` amount (0 or more), `u8` cause (0 unknown, 1 sword, 2 arrow, 3 fire arrow, 4 ice arrow, 5 light arrow, 6 seed, 7 bomb, 8 nut, 9 boomerang, 10 hookshot, 11 hammer, 12 magic; others kept), position (3 x f32), then (protocol 12, optional) where the hit landed (3 x f32, finite): a boss copy's hit place from its own game's hit record (Life +0x27c, kept only within 12 units of the boss), so the owner's replay lands there (Gohma's weak point is a headshot check against her `Eyelid_Down` bone; boss-intro, [dungeons-boss.md](dungeons-boss.md)); any other trailing length is refused |
 
 An **object id** is 10 bytes: `u8` kind (0 placed, 1 made), `u8` maker (0 for placed, 1 to 16 for made), `u64` value (the placement hash, or the maker's own counter). Any other kind, or a maker that does not fit the kind, is refused.
 
@@ -627,6 +627,7 @@ usual `PLAYER_JOINED`, samples and `PLAYER_LEFT`. Types 460 to 469 are kept; 465
 - Version 11 also (branch `look-live`): types 430 to 434 are kept for a look of several parts (shield, sword, boots, gauntlets). A colour changed in the pause menu needs none: it goes out in `PLAYER_EQUIP` `color` as at the start (docs/puppet.md, "Changing your colour in the game").
 - Version 11 also (branch `customizer-full`): `PLAYER_LOOK` (430), each part's colour from the Link customizer ([Looks](#looks-player_look)). No earlier layout changed and no bump of its own. A build without it ignores the type (that player's parts stay the game's own on its screen).
 - Version 11 also (branch `ocarina-sound-b`): `LINK_SOUND` (500); 500 to 509 kept for Link's sounds. A build without it ignores the type (no sounds from that player).
+- **Protocol 12** (0.11, branch `boss-intro`): `DAMAGE` may end in the hit's place (3 x `f32`). A protocol 11 reader refuses that as trailing bytes, so the version goes up once for 0.11: a 0.10.x game or server is refused at `HELLO` with reason 1 and the server's note says which side runs Update.bat. Every other protocol 11 message is unchanged.
 
 ## Who gets which stream
 

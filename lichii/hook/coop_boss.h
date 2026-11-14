@@ -133,6 +133,10 @@ struct Actions {
     std::optional<Pull> pull;
     bool skip_intro = false;  // force skip the event that runs now
     std::vector<std::string> log;
+    // Our own game's event in the boss room, as these rules read it (no name needed): the intro began here, or
+    // the boss was beaten here (only when the walk read the boss gone, not a guess from a long event). The area rules (coop_boss_scenes) take them when no request named the event.
+    const Room* intro_here = nullptr;
+    const Room* beaten_here = nullptr;
 };
 
 // This game's Link, read this frame.
@@ -201,7 +205,7 @@ private:
         std::uint64_t heard_at = 0;
     };
     void Take(const coop::protocol::BossRoom& m, std::uint64_t now_us);
-    void Defeat(Actions& out);  // our game saw the boss's death
+    void Defeat(Actions& out, bool read_gone);  // our game saw the boss's death (read_gone: the walk read it gone)
     void Say(Actions& out, const Room& room, coop::protocol::BossState state);
     bool FightActive(const Room& room, std::uint64_t now_us) const;
     bool OtherFinishedIntro(const Room& room, std::uint64_t now_us) const;

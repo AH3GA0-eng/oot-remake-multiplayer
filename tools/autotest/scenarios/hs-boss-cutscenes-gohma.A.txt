@@ -14,6 +14,9 @@
 #  4. A: "Dm_Deku_BossIn: ours is over: the others' end too"; B: "the starter's intro is over: skipping ours"
 #     (or B's ended first: "player 1's still runs"). Screens at a-intro / b-intro: both show the intro;
 #     at a-fight / b-fight: both in the room, free to move, the door shut behind both.
+#  4b. Stun step (boss-intro): at a-stunN / b-stunN Gohma lies stunned in at least one shot; B's log (the owner
+#     after the stun) 'copy ... replays a hit of N (id ..., where it landed in the hitter's game)' for A's hits,
+#     her life falls, and the death follows from them (or the kill after).
 #  5. A after a-kill: "Dm_Deku_BossOut: our game started the death"; B: "Dm_Deku_BossOut: playing it here too".
 #     Screens at a-death / b-death: the death on both.
 #  6. Neither log: "moving in" from the older rules ("another player is in the boss room").
@@ -53,6 +56,47 @@ mark a-intro
 wait 1500               # the door's event and the intro
 mark a-fight
 wait 600
+# boss-intro (2026-11-14): Gohma takes no plain hit outside her stun (the game held her at life 1 against the
+# test kill). B stuns her (slingshot, same timing in the B script): the stun hands her to B, so A's sword hits
+# in the stun are a non-owner's, replayed in B's game at the place they landed (DAMAGE's hit_at, protocol 12).
+# NOT proven: lock-on and timing are guesses.
+wait 180                  # (B takes its slingshot now)
+hold ZL 40                # stun try 1: A locks on while B's seed stuns her (B owns her then)
+wait 20
+hold ZL+Y 8               # A's sword hits in her stun: a NON-owner's hits, replayed in B's game where they landed
+wait 10
+hold ZL+Y 8
+wait 10
+hold ZL+Y 8
+wait 240
+mark a-stun1
+hold ZL 40                # stun try 2: A locks on while B's seed stuns her (B owns her then)
+wait 20
+hold ZL+Y 8               # A's sword hits in her stun: a NON-owner's hits, replayed in B's game where they landed
+wait 10
+hold ZL+Y 8
+wait 10
+hold ZL+Y 8
+wait 240
+mark a-stun2
+hold ZL 40                # stun try 3: A locks on while B's seed stuns her (B owns her then)
+wait 20
+hold ZL+Y 8               # A's sword hits in her stun: a NON-owner's hits, replayed in B's game where they landed
+wait 10
+hold ZL+Y 8
+wait 10
+hold ZL+Y 8
+wait 240
+mark a-stun3
+hold ZL 40                # stun try 4: A locks on while B's seed stuns her (B owns her then)
+wait 20
+hold ZL+Y 8               # A's sword hits in her stun: a NON-owner's hits, replayed in B's game where they landed
+wait 10
+hold ZL+Y 8
+wait 10
+hold ZL+Y 8
+wait 240
+mark a-stun4
 kill Enemy_DungeonBoss_Gohma
 wait 120
 mark a-kill

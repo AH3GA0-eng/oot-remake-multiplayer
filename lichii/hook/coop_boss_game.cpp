@@ -172,6 +172,8 @@ struct Glue {
     std::optional<std::int32_t> max_life_write;    // for the hook (TakeMaxLifeWrite)
     std::optional<std::int32_t> max_life_cap;      // for the hook (MaxLifeCap)
     std::vector<std::string> wanted;               // events for the live-event requester (TakeWantedEvents)
+    std::mutex searched_mutex;
+    std::vector<std::string> searched;             // our boss intro/death read with no name (Sync's intro_here/beaten_here)
     std::vector<std::string> lines;                // chat lines (TakeLines)
 
     Glue() {
@@ -286,6 +288,17 @@ struct Glue {
         for (const auto& line : act.log) {
             LOG_INFO(Core, "coop: boss: {}", line);
         }
+        {
+            // Gohma's intro is no event the game asks by name (only the door's ShutIn is): the older rules' own
+            // reading of our event in the boss room tells the area rules, guarded as a search's find.
+            std::lock_guard lock(searched_mutex);
+            if (act.intro_here != nullptr) {
+                searched.emplace_back(act.intro_here->intro);
+            }
+            if (act.beaten_here != nullptr) {
+                searched.emplace_back(act.beaten_here->outro);
+            }
+        }
         if (Scenes(system, main, local, event, session, now_us)) {
             // The area's rules move and skip (boss-cutscenes): the older dungeon-wide pull and its "any intro
             // over" skip would move players from anywhere in the dungeon.
@@ -332,6 +345,8 @@ bool Glue::Scenes(Core::System& system, std::uint64_t main, const Local& local, 
     auto& requests = CoopLiveEvents::TheGameRequests();
     if (!scenes_on || !requests.Live()) {
         max_life_cap.reset();
+        std::lock_guard lock(searched_mutex);
+        searched.clear();  // nothing takes them: none applied late when the rules come on
         return false;
     }
     if (!scenes_live) {
@@ -341,7 +356,19 @@ bool Glue::Scenes(Core::System& system, std::uint64_t main, const Local& local, 
     }
     std::vector<CoopBossScenes::Request> ours;
     for (const auto& r : requests.Since(requests_cursor)) {
+        if (debug) {
+            // Every event the game asked, as the wrap names it (the boss's own may be a setting, not its flow).
+            LOG_INFO(Core, "coop: boss: the game asked the event '{}' ({})", r.name, r.taken ? "taken" : "not taken");
+        }
         ours.push_back({r.name, r.taken});
+    }
+    {
+        std::lock_guard lock(searched_mutex);
+        for (auto& name : searched) {
+            LOG_INFO(Core, "coop: boss: our game runs {} (seen without a request naming it)", name);
+            ours.push_back({std::move(name), true, true});
+        }
+        searched.clear();
     }
     CoopBossScenes::Local here;
     here.scene = local.scene;
