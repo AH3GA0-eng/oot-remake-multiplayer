@@ -186,13 +186,22 @@ std::array<float, 2> pane_point(const Pane& p, float x, float y) {
   return {kLayoutW * 0.5f + gx, kLayoutH * 0.5f - gy};
 }
 
+float minimap_fade(const MinimapPanes& mm) {
+  float fade = 1.0f;
+  for (const float a : {mm.alpha, mm.picture.alpha, mm.window.alpha}) {
+    fade = finite(a) ? std::min(fade, std::clamp(a, 0.0f, 1.0f)) : 0.0f;
+    if (fade <= 0.0f) return 0.0f;
+  }
+  return fade;
+}
+
 void minimap_icons(const MinimapPanes& mm, const Capture& c, int shown_floor, const std::vector<Player>& players,
                    std::vector<Icon>& out) {
   out.clear();
   const Pane& pic = mm.picture;
   const Pane& win = mm.window;
   if (!pane_usable(pic) || !pane_usable(win) || !finite(c.height) || c.height <= 0) return;
-  const float fade = finite(mm.alpha) ? std::clamp(mm.alpha, 0.0f, 1.0f) : 0.0f;
+  const float fade = minimap_fade(mm);
   if (fade <= 0.0f) return;
   // The window's own units from the layout's (y up from the middle): its matrix inverted.
   const float det = win.m[0] * win.m[4] - win.m[1] * win.m[3];

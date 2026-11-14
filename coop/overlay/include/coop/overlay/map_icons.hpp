@@ -111,6 +111,7 @@ inline constexpr float kLayoutW = 3840.0f, kLayoutH = 2160.0f;
 struct Pane {
   std::array<float, 12> m{};
   float w = 0.0f, h = 0.0f;
+  float alpha = 1.0f;  // the pane's alpha with its parents' as the game draws it (0: not drawn)
 };
 // A pane the game shows: a finite matrix that is not flat (its x and y axes
 // span an area) and a size.
@@ -132,6 +133,10 @@ struct MinimapPanes {
   float edge_inset = 0.0f;  // layout units kept free at the window's edge for a clamped icon
   float alpha = 1.0f;       // the game's own fade of its minimap (0: hidden, no icons): the icons fade with it
 };
+// The icons' fade: the least of the minimap's, its picture's and its window's alphas, in 0..1. 0 (no icons)
+// when any of them is hidden: a frame the game draws over no map picture (a dungeon whose map is not got) has
+// nothing to place anyone on. NaN counts as hidden.
+float minimap_fade(const MinimapPanes& minimap);
 
 // The minimap's icons for everyone in one of `capture`'s scenes (others left
 // out, so are bad numbers and unusable panes), in the layout's units (x right,

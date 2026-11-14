@@ -359,3 +359,25 @@ TEST_CASE("minimap: the game's own numbers (run 20261114-115734) put our Link on
   CHECK(out[0].x == doctest::Approx(983 * 3).epsilon(0.004));  // the arrow at (983, 590)
   CHECK(out[0].y == doctest::Approx(590 * 3).epsilon(0.004));
 }
+
+TEST_CASE("minimap: a frame the game draws over a hidden map picture (no map got) shows no icons") {
+  std::vector<Icon> out;
+  MinimapPanes mm = panes();
+  mm.picture.alpha = 0.0f;  // the dungeon's picture not drawn: the frame alone (or the game's no-map look)
+  CHECK(minimap_fade(mm) == 0.0f);
+  minimap_icons(mm, room(), 0, {at(2, 1, 0, 1, "Room")}, out);
+  CHECK(out.empty());
+  mm = panes();
+  mm.window.alpha = 0.0f;  // the window hidden
+  minimap_icons(mm, room(), 0, {at(2, 1, 0, 1, "Room")}, out);
+  CHECK(out.empty());
+  mm = panes();
+  mm.picture.alpha = 0.4f;  // the picture fading in: the icons by the least of the three
+  mm.alpha = 0.8f;
+  CHECK(minimap_fade(mm) == doctest::Approx(0.4f));
+  minimap_icons(mm, room(), 0, {at(2, 1, 0, 1, "Room")}, out);
+  REQUIRE(out.size() == 1);
+  CHECK(out[0].alpha == doctest::Approx(0.4f));
+  mm.picture.alpha = std::numeric_limits<float>::quiet_NaN();
+  CHECK(minimap_fade(mm) == 0.0f);
+}

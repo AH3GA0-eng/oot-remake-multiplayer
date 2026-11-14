@@ -208,6 +208,9 @@ std::optional<map::Pane> ReadPane(const Found& f, const Menu& menu, float w, flo
         return std::nullopt;
     }
     p.w = w, p.h = h;
+    if (!CoopRuntime::Read(pane + kPaneAlpha, &p.alpha, sizeof p.alpha) || !std::isfinite(p.alpha)) {
+        p.alpha = 0.0f;  // (unreadable: drawn as hidden)
+    }
     return p;
 }
 
@@ -275,8 +278,8 @@ std::optional<map::MinimapPanes> Minimap(bool dungeon) {
     if (root == 0 || !CoopRuntime::Read(root + kPaneAlpha, &alpha, sizeof alpha) || !std::isfinite(alpha)) {
         alpha = 0.0f;
     }
-    const bool placed =
-        picture && window && map::pane_usable(*picture) && map::pane_usable(*window) && alpha > 0.0f;
+    const bool placed = picture && window && map::pane_usable(*picture) && map::pane_usable(*window) && alpha > 0.0f &&
+                        picture->alpha > 0.0f && window->alpha > 0.0f;  // (the frame alone over no picture: none)
     Diagnose(*menu, dungeon, placed);
     if (!placed) {
         return std::nullopt;
