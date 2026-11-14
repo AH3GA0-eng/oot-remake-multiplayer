@@ -974,7 +974,7 @@ private:
         std::uint64_t since_us = 0;          // when the take came
         std::set<std::uint64_t> shown_open;  // chests that showed themselves open
         std::map<std::uint64_t, std::string> bound_animation;  // each chest's animation when bound
-        std::set<std::uint64_t> show_failed;  // chests the open idle never took on: left closed
+        std::map<std::uint64_t, std::uint64_t> show_failed;  // chests the open idle never took on (left closed): when
     };
     // Every loaded chest's animation and when it last changed (0: the same
     // since it was first seen), for the opening tests above.

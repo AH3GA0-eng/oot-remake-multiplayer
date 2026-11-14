@@ -1234,15 +1234,26 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                             // here meanwhile, its count gain is taken back
                             // (below, as for a shown-open chest).
                             chest_shown_.erase(shown);
-                            tk.show_failed.insert(s.address);
+                            tk.show_failed.emplace(s.address, now_us);
                             notes_.emplace_back(s.name + ": could not be shown open here, left closed (opens from its "
                                                          "shared flag when it loads again)");
                             continue;
                         }
                         if (!animation.empty() && animation.find(kChestClosedIdle) == std::string::npos) {
-                            // Left closed above, then opened by its own AI.
+                            // Left closed above, then something else plays. A late
+                            // OpenWait, or the opening command within the lid's try
+                            // after the give-up, is our own play taking late: shown
+                            // open, never "opened twice" (that takes a count back).
+                            // Anything else: its own AI opened it (our Link).
+                            const auto failed = tk.show_failed.find(s.address);
+                            const bool ours_late =
+                                animation == kChestOpenIdle ||
+                                (animation == ChestOpening(s.name) && failed != tk.show_failed.end() &&
+                                 now_us - failed->second < kChestLidTryUs);
                             tk.shown_open.insert(s.address);
-                            if (beside) {
+                            if (ours_late) {
+                                notes_.emplace_back(s.name + ": opened in another game, shows open here (late)");
+                            } else if (beside) {
                                 ++chests_opened_twice_;
                                 notes_.emplace_back(s.name + ": opened here too after another game ('" + animation +
                                                     "', its content may count twice; " +

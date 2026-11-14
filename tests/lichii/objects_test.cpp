@@ -1308,6 +1308,52 @@ TEST_CASE("objects: a second take of a key does not start the chest's wait again
     CHECK(sync.Removes().empty());
 }
 
+TEST_CASE("objects: a lid that does not take gives the open idle its own full try (clock restarted)") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    sync.Take(0x3c5bb811b4cf54dd);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});  // first play: the lid's command
+    // No animation here: the lid gives up at the 1500 ms walk; the open idle's 3 s count from there.
+    const auto gave_up = [&](std::uint64_t until) {
+        bool said = false;
+        for (std::uint64_t t = 500; t <= until; t += 500) {
+            Tick(sync, t * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+            for (const auto& n : sync.TakeNotes()) said |= n.find("could not be shown open here") != std::string::npos;
+        }
+        return said;
+    };
+    CHECK_FALSE(gave_up(4000));  // the old clock (from 20 ms) gave up at 3500
+    bool said = false;
+    Tick(sync, 4500 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    for (const auto& n : sync.TakeNotes()) said |= n.find("could not be shown open here") != std::string::npos;
+    CHECK(said);
+    CHECK(sync.Removes().empty());
+}
+
+TEST_CASE("objects: a late OpenWait after the give-up is shown open, not opened twice (no take-back)") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    sync.SetPlayer(proto::Vec3{1.5f, 0.0f, 1.0f});  // beside it
+    Seen chest = Chest(0x500);
+    sync.Take(chest.hash);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    for (std::uint64_t t = 500; t <= 6000; t += 500) {
+        Tick(sync, t * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    }
+    // Our own play takes late.
+    chest.animation = proto::Animation{};
+    chest.animation->name = "OpenWait";
+    Tick(sync, 6500 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 7000 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.ChestsOpenedTwice() == 0);
+    bool late = false;
+    for (const auto& n : sync.TakeNotes()) late |= n.find("shows open here (late)") != std::string::npos;
+    CHECK(late);
+    CHECK(sync.Removes().empty());
+}
+
 TEST_CASE("objects: a chest left closed, then opened here beside our Link, counts as opened twice") {
     Sync sync;
     Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
