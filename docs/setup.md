@@ -35,6 +35,18 @@ Nothing to do: on every start the kit asks GitHub whether a new co-op version is
 
 `Update.bat` in the kit folder updates by hand (for example when the start said it could not reach GitHub). It is also attached to each release: dropped into an older emulator kit, it turns that kit into a Longshot kit. The emulator, `Host.bat`, `Join.bat` and the other old files go into the kit's `backup-<version>\` folder; your emulator files (`emulator\user`: its saves, keys and settings) stay where they are, and the window says you can delete that folder when you no longer need it.
 
+## Going back to an older version
+
+If a new version gives you trouble, double-click `Revert.bat` in the kit folder: it puts back the version your kit had before its last update. Every update keeps the version it replaces in the kit's `previous\` folder (the last two; only the kit's own files, a few MB), and a kit updated by an older updater goes back from its `backup-<version>\` folder.
+
+- **Every player in a session needs the same version**: the versions do not talk to each other. Tell your friends to go back too (their own `Revert.bat`), or you cannot play together.
+- Your saves, your settings, `coop-options.ini` and the built game are kept, and so is the version you left: `Update.bat` goes forward again.
+- The game: when only the co-op patches differ, the next start updates it in a few minutes. When the older version is on another Longshot, it is built again (15 to 45 minutes; it asks first). Going back to 0.11 or later, a build of that version already in this PC's game cache (testers' PCs: `%LOCALAPPDATA%\oot-coop\hs-cache`) is copied in instead; going back to 0.10.1 always builds again.
+- Starting the kit does not update straight back: it stays on the version you went back to and asks again only when a release newer than the one you left comes out (with `auto_update = yes` too).
+- Any older release by its tag: open a terminal in the kit folder and run `Update.bat -Version v0.10.1` (downloaded from the release and checked against its SHA-256, as an update is).
+
+On Linux the same is `bash revert.sh` and `bash scripts/update.sh --version <tag>`.
+
 ## The kit folder
 
 | What | Why |
@@ -42,6 +54,7 @@ Nothing to do: on every start the kit asks GitHub whether a new co-op version is
 | `Start OoT Co-op.bat` | The only file you start |
 | `README.txt` | The steps above, short |
 | `Update.bat` | Updates by hand (the start does it by itself) |
+| `Revert.bat` | Goes back to the version before the last update ([above](#going-back-to-an-older-version)); `previous\` holds the versions kept for it |
 | `coop-options.ini` | Co-op switches; the game's Co-op Settings write it too |
 | `start-server.cmd`, `server\` | A dedicated co-op server, only if you want one (Host in the game needs neither) |
 | `hookshot\` | The co-op module and Longshot's pin and patches; after the first start also `tools\` (1.1 GB), `downloads\` (0.3 GB), `work\` (0.7 GB; kept so updates are quick, deleting them makes the next build take the full time) and `game\` (your built game, 35 GB) |

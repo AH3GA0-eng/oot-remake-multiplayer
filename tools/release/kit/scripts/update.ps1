@@ -10,6 +10,16 @@
 #   update.ps1 -Launch                      update without asking, for play.ps1 when the player
 #                                           said yes (exit code 3: updated, start the new kit);
 #                                           this kit's own co-op server is stopped first
+#   update.ps1 -Version v0.10.1             install that release instead of the newest (older ones too)
+#   update.ps1 -Revert                      go back to the version this kit had before (Revert.bat)
+#
+# Going back (Revert.bat, -Revert, -Version with an older tag): every update keeps the kit's own files of
+# the version it replaces in previous\<version>\ (the last 2; saves, keys, settings, logs and the built
+# game are never in it), and -Revert puts the newest older one back (or a backup-<version>\ an older
+# updater left, which holds the same files). This kit's updater (scripts\update.ps1, Update.bat,
+# Revert.bat) stays the newer one, and stay-on-version.txt remembers the choice: the start no longer
+# offers the version the player left, only a release newer than it (and then asks, auto_update = yes
+# too). Update.bat goes forward again and forgets it.
 #
 # Every failure says why and how to update by hand (Get-KitManualSteps).
 #
@@ -55,13 +65,22 @@ param(
     [switch]$Launch,
     [string]$Repo = 'daurosk/oot-remake-multiplayer',
     [string]$Api = '',
+    [ValidatePattern('^(v?\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?)?$')][string]$Version = '',
+    [switch]$Revert,
     [switch]$NoRun
 )
+if ($Version -and -not $Version.StartsWith('v')) { $Version = 'v' + $Version }
 
 if (-not $Api -and $env:OOT_COOP_UPDATE_API) { $Api = $env:OOT_COOP_UPDATE_API }
 if ($Launch) { $Yes = [switch]$true }
 $UserAgent = 'oot-coop-updater'
 $InProgress = 'update-in-progress.txt'
+$Previous = 'previous'               # previous\<version>\: the kit's own files of the versions it had
+$StayFile = 'stay-on-version.txt'    # the player went back: stay=<version>, left=<the newest they left>
+$KeepPrevious = 2
+# Not replaced when going back: the updater stays the newer one (it knows stay-on-version.txt; the old one would
+# update straight back on the next start).
+$UpdaterFiles = @('scripts\update.ps1', 'Update.bat', 'Revert.bat')
 $KitPage = ''
 
 # --- Versions ---------------------------------------------------------------------------
@@ -249,6 +268,7 @@ function Test-KitPlayerPath([string]$Rel) {
         if ($p.StartsWith($dir, [StringComparison]::OrdinalIgnoreCase)) { return $true }
     }
     if ($p -match '^(?i)backup-[^\\]+\\') { return $true }
+    if ($p.StartsWith($Previous + '\', [StringComparison]::OrdinalIgnoreCase) -or $p -ieq $StayFile) { return $true }
     return $false
 }
 
@@ -526,9 +546,14 @@ function Copy-KitFile([string]$From, [string]$To) {
     }
 }
 
-function Install-KitFiles([string]$NewKit, [string]$KitDir, [string]$Backup, [string]$Version, [bool]$MoveShaders = $false, [string]$From = '') {
+# $Leave: kit-relative files left as they are (neither written nor removed); $NoOptions: coop-options.ini is not merged
+# (going back: the player's file keeps its newer keys, an older kit ignores them).
+function Install-KitFiles([string]$NewKit, [string]$KitDir, [string]$Backup, [string]$Version, [bool]$MoveShaders = $false, [string]$From = '',
+                          [string[]]$Leave = @(), [bool]$NoOptions = $false) {
     $NewKit = [System.IO.Path]::GetFullPath($NewKit).TrimEnd('\')
-    $newFiles = Get-KitInstallOrder @(Get-KitFiles $NewKit | Where-Object { -not (Test-KitPlayerPath $_) })
+    $left = @{}
+    foreach ($k in $Leave) { if (Test-Path -LiteralPath (Join-Path $KitDir $k) -PathType Leaf) { $left[$k.ToLowerInvariant()] = $true } }
+    $newFiles = Get-KitInstallOrder @(Get-KitFiles $NewKit | Where-Object { -not (Test-KitPlayerPath $_) -and -not $left.ContainsKey($_.ToLowerInvariant()) })
     # Files of the old kit that the new one no longer has: only those the old kit's
     # MANIFEST.txt lists (a kit before this updater has none, so nothing is removed), and
     # only plain files inside the kit.
@@ -539,7 +564,7 @@ function Install-KitFiles([string]$NewKit, [string]$KitDir, [string]$Backup, [st
         foreach ($f in $newFiles) { $keep[$f.ToLowerInvariant()] = $true }
         $gone = @([System.IO.File]::ReadAllLines($manifest) | ForEach-Object { $_.Trim() } | Where-Object {
             $_ -and -not $_.StartsWith('#') -and (Test-KitRelativePath $_) -and -not (Test-KitPlayerPath $_) -and
-            -not $keep.ContainsKey($_.ToLowerInvariant()) -and (Test-Path -LiteralPath (Join-Path $KitDir $_) -PathType Leaf)
+            -not $keep.ContainsKey($_.ToLowerInvariant()) -and -not $left.ContainsKey($_.ToLowerInvariant()) -and (Test-Path -LiteralPath (Join-Path $KitDir $_) -PathType Leaf)
         })
     }
     # A changed puppet pack tool means the pack should be made again (make-puppet-pack.cmd).
@@ -582,7 +607,9 @@ function Install-KitFiles([string]$NewKit, [string]$KitDir, [string]$Backup, [st
         # The player's options: kept, with the new switches added behind '#'.
         $mine = Join-Path $KitDir 'coop-options.ini'
         $tmpl = Join-Path $NewKit 'coop-options.ini'
-        if ((Test-Path -LiteralPath $mine) -and (Test-Path -LiteralPath $tmpl)) {
+        if ($NoOptions) {
+            # (kept as it is)
+        } elseif ((Test-Path -LiteralPath $mine) -and (Test-Path -LiteralPath $tmpl)) {
             $lines = [System.IO.File]::ReadAllLines($mine)
             $merged = Merge-KitOptionsWith $NewKit $lines ([System.IO.File]::ReadAllLines($tmpl)) $Version
             if ($merged.Count -ne $lines.Count) {
@@ -640,6 +667,282 @@ function Install-KitFiles([string]$NewKit, [string]$KitDir, [string]$Backup, [st
     return $newFiles.Count
 }
 
+# --- Going back -------------------------------------------------------------------------
+
+# stay-on-version.txt when it is about this kit's version ($Mine): @{ Stay; Left }, else $null (a file about another
+# version, as after the player copied old files in by hand, counts for nothing).
+function Get-KitStay([string]$KitDir, [string]$Mine) {
+    $file = Join-Path $KitDir $StayFile
+    if (-not $Mine -or -not (Test-Path -LiteralPath $file)) { return $null }
+    $r = @{ Stay = ''; Left = '' }
+    foreach ($line in [System.IO.File]::ReadAllLines($file)) {
+        if ($line -match '^\s*stay\s*=\s*(\S+)\s*$' -and (ConvertTo-KitVersion $Matches[1])) { $r.Stay = $Matches[1] }
+        if ($line -match '^\s*left\s*=\s*(\S+)\s*$' -and (ConvertTo-KitVersion $Matches[1])) { $r.Left = $Matches[1] }
+    }
+    if (-not $r.Stay -or -not $r.Left -or (Compare-KitVersion $r.Stay $Mine) -ne 0) { return $null }
+    return $r
+}
+
+function Write-KitStay([string]$KitDir, [string]$Stay, [string]$Left) {
+    [System.IO.File]::WriteAllText((Join-Path $KitDir $StayFile), (
+        "# You went back to $Stay on purpose (Revert.bat or Update.bat -Version). Starting the kit does not update to`r`n" +
+        "# $Left or older again; a newer release is asked about first. Update.bat goes forward and removes this file.`r`n" +
+        "stay=$Stay`r`nleft=$Left`r`n"))
+}
+
+# The kit's own files as they are now (kit-relative): what its MANIFEST.txt lists and what of $Also is here, never
+# the player's (Test-KitPlayerPath). Exactly what an update replaces or removes, so previous\<version>\ can put it back.
+function Get-KitOwnFiles([string]$KitDir, [string[]]$Also) {
+    $names = New-Object System.Collections.Generic.List[string]
+    $seen = @{}
+    $manifest = Join-Path $KitDir 'MANIFEST.txt'
+    $from = @($Also) + @('VERSION.txt', 'MANIFEST.txt')
+    if (Test-Path -LiteralPath $manifest) { $from += @([System.IO.File]::ReadAllLines($manifest) | ForEach-Object { $_.Trim() }) }
+    foreach ($rel in $from) {
+        if (-not $rel -or $rel.StartsWith('#') -or -not (Test-KitRelativePath $rel) -or (Test-KitPlayerPath $rel)) { continue }
+        if ($seen.ContainsKey($rel.ToLowerInvariant())) { continue }
+        if (-not (Test-Path -LiteralPath (Join-Path $KitDir $rel) -PathType Leaf)) { continue }
+        $seen[$rel.ToLowerInvariant()] = $true
+        $names.Add($rel)
+    }
+    return ,([string[]]$names.ToArray())
+}
+
+# A version that may name a folder (previous\<version>\, backup-<version>\): a release version (ConvertTo-KitVersion),
+# with no '..' and no trailing dot, so a damaged or hand-edited VERSION.txt ('(release ..)', '(release ..\..)') never
+# becomes a path outside the kit.
+function Test-KitSafeVersion([string]$Ver) {
+    return [bool](ConvertTo-KitVersion $Ver) -and -not $Ver.Contains('..') -and -not $Ver.EndsWith('.')
+}
+
+# Removes a folder, only one directly inside the kit's previous\ (never the kit, never above it).
+function Remove-KitPreviousDir([string]$KitDir, [string]$Path) {
+    $root = [System.IO.Path]::GetFullPath((Join-Path $KitDir $Previous)).TrimEnd('\')
+    $full = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+    if ((Split-Path -Parent $full) -ine $root -or (Split-Path -Leaf $full) -in '', '.', '..') { throw "Not removed (outside $Previous\): $Path" }
+    if (Test-Path -LiteralPath $full) { Remove-Item -LiteralPath $full -Recurse -Force }
+}
+
+# Copies $Files of the kit to previous\<version>.part\ (Complete-KitPrevious names it previous\<version>\ once the
+# update went through). Returns that folder, or '' for a kit with no version.
+function Save-KitPrevious([string]$KitDir, [string]$Ver, [string[]]$Files) {
+    if (-not (Test-KitSafeVersion $Ver) -or -not $Files) { return '' }
+    $part = Join-Path (Join-Path $KitDir $Previous) "$Ver.part"
+    Remove-KitPreviousDir $KitDir $part
+    foreach ($rel in $Files) {
+        $to = Join-Path $part $rel
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $to) | Out-Null
+        Copy-Item -LiteralPath (Join-Path $KitDir $rel) -Destination $to -Force
+    }
+    return $part
+}
+
+# previous\<version>.part\ becomes previous\<version>\ (an older copy of that version goes), and only the last
+# $KeepPrevious stay. Returns the folder, or ''.
+function Complete-KitPrevious([string]$KitDir, [string]$Part) {
+    if (-not $Part -or -not (Test-Path -LiteralPath $Part)) { return '' }
+    $dest = $Part.Substring(0, $Part.Length - '.part'.Length)
+    Remove-KitPreviousDir $KitDir $dest
+    Move-Item -LiteralPath $Part -Destination $dest
+    (Get-Item -LiteralPath $dest).LastWriteTime = Get-Date
+    $root = Join-Path $KitDir $Previous
+    Get-ChildItem -LiteralPath $root -Directory -Filter '*.part' -Force | ForEach-Object { try { Remove-KitPreviousDir $KitDir $_.FullName } catch { } }
+    @(Get-ChildItem -LiteralPath $root -Directory -Force | Sort-Object LastWriteTime -Descending | Select-Object -Skip $KeepPrevious) |
+        ForEach-Object { try { Remove-KitPreviousDir $KitDir $_.FullName } catch { } }
+    return $dest
+}
+
+# The versions this kit can go back to without a download: previous\<version>\ (newest first), then the backup-*\
+# folders updates left (an update copies every file it replaces or removes there, so one holds that whole version;
+# older updaters made only those). Each: @{ Version; Dir }; only complete kits (Test-KitNewKit).
+function Get-KitKept([string]$KitDir) {
+    $dirs = @(Get-ChildItem -LiteralPath (Join-Path $KitDir $Previous) -Directory -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -notlike '*.part' } | Sort-Object LastWriteTime -Descending) +
+        @(Get-ChildItem -LiteralPath $KitDir -Directory -Filter 'backup-*' -Force -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
+    $out = @()
+    $seen = @{}
+    foreach ($d in $dirs) {
+        $v = Get-KitVersion $d.FullName
+        if (-not (ConvertTo-KitVersion $v) -or $seen.ContainsKey($v)) { continue }
+        if (-not (Test-KitFolder $d.FullName) -or (Test-KitNewKit $d.FullName) -or -not (Test-KitComplete $d.FullName)) { continue }
+        $seen[$v] = $true
+        $out += , @{ Version = $v; Dir = $d.FullName }
+    }
+    return , $out
+}
+
+# A kept kit folder that holds its whole version: every file its own MANIFEST.txt names is in it (a backup-*\ of an
+# update that failed while copying holds only some). One without a MANIFEST.txt (kits before the updater) counts.
+function Test-KitComplete([string]$Dir) {
+    $manifest = Join-Path $Dir 'MANIFEST.txt'
+    if (-not (Test-Path -LiteralPath $manifest)) { return $true }
+    foreach ($l in [System.IO.File]::ReadAllLines($manifest)) {
+        $rel = $l.Trim()
+        if (-not $rel -or $rel.StartsWith('#') -or -not (Test-KitRelativePath $rel) -or (Test-KitPlayerPath $rel)) { continue }
+        if (-not (Test-Path -LiteralPath (Join-Path $Dir $rel) -PathType Leaf)) { return $false }
+    }
+    return $true
+}
+
+# How the co-op game changes from kit $A to kit $B: 'same' (only co-op itself: seconds on the next start), 'patches'
+# (its co-op patches: the next start updates the game, a few minutes) or 'pin' (another Longshot release or commit:
+# built again, 15 to 45 minutes; the start asks first). An emulator kit on either side has no such game: 'same'.
+function Get-KitGameChange([string]$A, [string]$B) {
+    $pin = { param($k) (@('PIN', 'TOOLS.txt') | ForEach-Object { @(Get-Content -LiteralPath (Join-Path $k "hookshot\$_") -ErrorAction SilentlyContinue) } |
+        Where-Object { $_ -match '^\s*(release|commit)\s*=' } | ForEach-Object { $_.Trim() }) -join "`n" }
+    $patches = { param($k) (@(Get-ChildItem -LiteralPath (Join-Path $k 'hookshot\patches') -Filter '*.patch' -File -ErrorAction SilentlyContinue |
+        Sort-Object Name | ForEach-Object { (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash })) -join ',' }
+    $pa = & $pin $A; $pb = & $pin $B
+    if (-not $pa -or -not $pb) { return 'same' }   # (no game of its own on one side: an emulator kit)
+    if ($pa -ne $pb) { return 'pin' }
+    if ((& $patches $A) -ne (& $patches $B)) { return 'patches' }
+    return 'same'
+}
+
+function Get-KitGameChangeText([string]$Change, [string]$To) {
+    switch ($Change) {
+        'pin' { "The co-op game is built again for $To on the next start (Longshot changed between these versions: 15 to 45 minutes; it asks first). Your saves are kept." }
+        'patches' { "The next start updates the co-op game for $To (a few minutes). Your saves are kept." }
+        default { 'The co-op game stays as it is (only the co-op part changes, seconds on the next start).' }
+    }
+}
+
+function Get-KitSameVersionText([string]$To) {
+    return [string[]]@(
+        "Every player in a session needs the same version: $To does not talk to other versions (the co-op protocol differs).",
+        "Tell your friends to go back too (Revert.bat, or Update.bat -Version $To), or they cannot join you, nor you them.")
+}
+
+# Yes or no, $Default when no key comes in $Seconds (or no answer comes from a redirected input).
+function Read-KitYesNo([string]$Question, [int]$Seconds, [bool]$Default) {
+    $hint = if ($Default) { '[Y/n]' } else { '[y/N]' }
+    $redirected = $true
+    try { $redirected = [Console]::IsInputRedirected } catch { }
+    if ($redirected) {
+        Write-Host "$Question $hint"
+        $line = [Console]::In.ReadLine()
+        if (-not $line -or -not $line.Trim()) { return $Default }
+        return $line.Trim() -match '^(?i)(y|yes)$'
+    }
+    Write-Host -NoNewline "$Question $hint ($(if ($Default) { 'yes' } else { 'no' }) in $Seconds s) "
+    $end = (Get-Date).AddSeconds($Seconds)
+    while ((Get-Date) -lt $end) {
+        if ([Console]::KeyAvailable) {
+            $key = [Console]::ReadKey($true)
+            if ($key.Key -eq 'N') { Write-Host 'n'; return $false }
+            if ($key.Key -eq 'Y') { Write-Host 'y'; return $true }
+            if ($key.Key -eq 'Enter') { Write-Host $(if ($Default) { 'y' } else { 'n' }); return $Default }
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    Write-Host $(if ($Default) { 'y' } else { 'n' })
+    return $Default
+}
+
+# Puts the kit $Source (an unpacked release, or a kept one) in place of this kit's files. Keeps this version in
+# previous\<version>\ first. $Back: going back (the updater files stay, coop-options.ini is not merged, and
+# stay-on-version.txt is written); else stay-on-version.txt goes. @{ N; Backup; Kept; HadEmu; Game }.
+function Invoke-KitSwitch([string]$Dir, [string]$Source, [string]$To, [string]$Mine, [bool]$Back, [bool]$Unfinished) {
+    # A stopped update may have written the new VERSION.txt already: the backup is named
+    # after the version that update started from.
+    $from = if ($Unfinished) { Get-KitUnfinishedFrom $Dir } else { '' }
+    if (-not $from) { $from = $Mine }
+    if (-not (Test-KitSafeVersion $from)) { $from = '' }
+    $backup = Join-Path $Dir ('backup-' + $(if ($from) { $from } else { 'old' }))
+    if (Test-Path -LiteralPath $backup) { $backup += '-' + (Get-Date -Format 'yyyyMMdd-HHmmss') }
+    # (a Hookshot-only kit has no emulator: the old emulator's cache stays in emulator\user, the player's)
+    $newEmu = (Test-Path -LiteralPath (Join-Path $Source 'emulator\lichii.exe')) -and
+        (Test-KitEmulatorChanged (Join-Path $Dir 'emulator\lichii.exe') (Join-Path $Source 'emulator\lichii.exe'))
+    $hadEmu = Test-Path -LiteralPath (Join-Path $Dir 'emulator\lichii.exe')
+    $game = Get-KitGameChange $Dir $Source
+    # This version, so the player can come back to it (not from a half-done kit: that is no one version).
+    $part = ''
+    if (-not $Unfinished -and $Mine) {
+        try { $part = Save-KitPrevious $Dir $Mine (Get-KitOwnFiles $Dir (Get-KitFiles $Source)) } catch {
+            Write-Host "Could not keep $Mine in $Previous\ ($(Get-KitErrorText $_)); going on without it."
+            $part = ''
+        }
+    }
+    $keep = if ($Back) { $UpdaterFiles } else { @() }
+    try { $n = Install-KitFiles $Source $Dir $backup $To $newEmu $from $keep $Back } catch {
+        if ($part) { try { Remove-KitPreviousDir $Dir $part } catch { } }
+        throw
+    }
+    $kept = ''
+    try { $kept = Complete-KitPrevious $Dir $part } catch { }
+    $stayPath = Join-Path $Dir $StayFile
+    if ($Back) {
+        $old = Get-KitStay $Dir $Mine
+        $left = if ($old -and (Compare-KitVersion $old.Left $Mine) -gt 0) { $old.Left } else { $Mine }
+        if (-not $left) { $left = $To }
+        Write-KitStay $Dir $To $left
+    } elseif (Test-Path -LiteralPath $stayPath) {
+        Remove-Item -LiteralPath $stayPath -Force -ErrorAction SilentlyContinue
+    }
+    return @{ N = $n; Backup = $backup; Kept = $kept; HadEmu = $hadEmu; Game = $game }
+}
+
+# Waits until nothing runs from this kit ($Yes: fails instead).
+function Wait-KitNotRunning([string]$Dir) {
+    while ($true) {
+        $running = Get-KitRunning $Dir
+        if (-not $running) { return }
+        Write-Host "Close these first (they run from this kit): $(($running | ForEach-Object { $_.Name + '.exe' } | Sort-Object -Unique) -join ', ')"
+        if ($Yes) { throw "This kit's game or server is still running: close it, then run this again." }
+        Read-Host 'Press Enter when they are closed' | Out-Null
+    }
+}
+
+# A release by its tag ($Tag, 'v0.10.1'), in the release list or else asked for on its own (older than the
+# list's 30); as Select-KitRelease gives it, or $null.
+function Find-KitRelease([string]$List, [string]$Tag) {
+    $all = @(Read-KitReleaseList $List | ForEach-Object { $_ })
+    $rel = @($all | Where-Object { [string]$_.tag_name -ieq $Tag }) | Select-Object -First 1
+    if (-not $rel -and -not $Api) {
+        try { $rel = Read-KitReleaseList "https://api.github.com/repos/$Repo/releases/tags/$Tag" } catch { $rel = $null }
+    }
+    if (-not $rel) { return $null }
+    return Select-KitRelease @($rel)
+}
+
+# Revert.bat (update.ps1 -Revert): back to the newest kept version older than this one.
+function Invoke-KitRevert([string]$Dir, [string]$Mine, [bool]$Unfinished) {
+    Write-Host "Kit: $Dir"
+    Write-Host "This kit: $(if ($Mine) { $Mine } else { 'a test build' })"
+    if ($Unfinished) { throw 'An update of this kit did not finish: run Update.bat to finish it first, then Revert.bat.' }
+    $best = $null
+    foreach ($k in @(Get-KitKept $Dir)) {
+        if ($Mine -and (Compare-KitVersion $k.Version $Mine) -ge 0) { continue }
+        if (-not $best -or (Compare-KitVersion $k.Version $best.Version) -gt 0) { $best = $k }
+    }
+    if (-not $best) {
+        throw ("This kit keeps no older version (an update keeps the one it replaces, from 0.11 on). To install an older release, " +
+               "run Update.bat -Version <tag>, such as: Update.bat -Version v0.10.1 (the tags: https://github.com/$Repo/releases).")
+    }
+    $to = $best.Version
+    Write-Host "Going back to $to (kept in $($best.Dir))."
+    foreach ($l in Get-KitSameVersionText $to) { Write-Host $l }
+    Write-Host (Get-KitGameChangeText (Get-KitGameChange $Dir $best.Dir) $to)
+    Write-Host "Your saves, keys, settings and coop-options.ini are kept, and so is $(if ($Mine) { $Mine } else { 'this version' }): Update.bat goes forward again."
+    Wait-KitNotRunning $Dir
+    if (-not $Yes) {
+        $a = Read-Host "Go back to $to? [Y/n]"
+        if ($a -and $a.Trim() -notmatch '^(y|yes)$') { Write-Host 'Nothing changed.'; return 0 }
+    }
+    $r = Invoke-KitSwitch $Dir $best.Dir $to $Mine $true $false
+    Write-Host "Back on $($to): $($r.N) files. The replaced files are in $($r.Backup)."
+    if ($script:ShadersMoved) { Write-Host "The emulator changed, so its shader cache was moved to $($r.Backup)\$ShaderCache." }
+    Write-Host "Starting the kit stays on $to now; it asks only when a release newer than $(Get-KitStayLeft $Dir $to) comes out. Update.bat goes forward."
+    Write-Host 'Tell the others in your session to go back too: everyone needs the same version.'
+    return 0
+}
+
+function Get-KitStayLeft([string]$Dir, [string]$Ver) {
+    $s = Get-KitStay $Dir $Ver
+    if ($s) { return $s.Left }
+    return $Ver
+}
+
 # --- The run ----------------------------------------------------------------------------
 
 function Invoke-KitUpdate {
@@ -650,11 +953,16 @@ function Invoke-KitUpdate {
         throw "$dir is not a co-op kit. Put Update.bat in the kit folder, beside ""Start OoT Co-op.bat"" (or Host.bat in an older kit)."
     }
     $mine = Get-KitVersion $dir
+    # (a damaged VERSION.txt: this kit counts as no release, the update goes on, nothing is named after it)
+    if ($mine -and -not (Test-KitSafeVersion $mine)) { $mine = '' }
     $unfinished = Test-KitUnfinished $dir
     $have = if ($mine) { $mine } else { 'a test build' }
     $list = if ($Api) { $Api } else { "https://api.github.com/repos/$Repo/releases?per_page=30" }
     # Keys an older updater did not add (not while an update is half done).
     if (-not $unfinished) { Update-KitOptions $dir | Out-Null }
+    # The player went back to this version on purpose: only a release newer than the one they left counts.
+    $stay = Get-KitStay $dir $mine
+    $wanted = { param($tag) (Compare-KitVersion $tag $mine) -gt 0 -and (-not $stay -or (Compare-KitVersion $tag $stay.Left) -gt 0) }
 
     if ($Status) {
         # Straight to stdout: a function's own output would become its return value.
@@ -663,7 +971,7 @@ function Invoke-KitUpdate {
             [Console]::Out.WriteLine('failed ' + (Get-KitErrorText $_))
             return 0
         }
-        if ($newest -and (Compare-KitVersion $newest.Tag $mine) -gt 0) { [Console]::Out.WriteLine("newer $($newest.Tag)") }
+        if ($newest -and (& $wanted $newest.Tag)) { [Console]::Out.WriteLine("newer $($newest.Tag)") }
         return 0
     }
     if ($Check) {
@@ -675,29 +983,55 @@ function Invoke-KitUpdate {
             Write-Host "Could not check for a new version: $(Get-KitErrorText $_)"
             return 0
         }
-        if ($newest -and (Compare-KitVersion $newest.Tag $mine) -gt 0) {
+        if ($newest -and (& $wanted $newest.Tag)) {
             Write-Host "A new version is out: $($newest.Tag) (you have $have). Close the games and run Update.bat."
+        } elseif ($stay -and $newest -and (Compare-KitVersion $newest.Tag $mine) -gt 0) {
+            Write-Host "You stay on $mine (you went back from $($stay.Left)); $($newest.Tag) is out. Update.bat goes forward again."
         }
         return 0
     }
+    if ($Revert) { return (Invoke-KitRevert $dir $mine $unfinished) }
 
     Write-Host "Kit: $dir"
     Write-Host "This kit: $have"
     if ($unfinished) { Write-Host 'An update of this kit did not finish: it is done again now.' }
-    Write-Host 'Looking for the newest release...'
-    $newest = Select-KitRelease (Read-KitReleaseList $list)
-    if (-not $newest) { throw 'No release with a kit was found in the release list.' }
+    if ($Version) {
+        Write-Host "Looking for release $Version..."
+        $newest = Find-KitRelease $list $Version
+        if (-not $newest) { throw "No release $Version with a Windows kit was found (the releases: https://github.com/$Repo/releases)." }
+    } else {
+        Write-Host 'Looking for the newest release...'
+        $newest = Select-KitRelease (Read-KitReleaseList $list)
+        if (-not $newest) { throw 'No release with a kit was found in the release list.' }
+    }
     $script:KitPage = $newest.Page
     if (-not $Api) {
         foreach ($u in $newest.Zip, $newest.Sum) {
             if (-not (Test-KitDownloadUrl $u $Repo)) { throw "The release list names a download outside this project's releases: $u" }
         }
     }
-    if (-not $unfinished -and (Compare-KitVersion $newest.Tag $mine) -le 0) {
+    $cmp = Compare-KitVersion $newest.Tag $mine
+    if (-not $unfinished -and $cmp -eq 0 -and $Version) { Write-Host "This kit is $mine already."; return 0 }
+    if (-not $unfinished -and $cmp -le 0 -and -not $Version) {
         Write-Host "You have the newest version ($mine)."
         return 0
     }
-    Write-Host ("Newest: {0}, {1:N0} MB.  {2}" -f $newest.Tag, ($newest.Size / 1MB), $newest.Page)
+    # Going back: an older release by its tag (Update.bat -Version).
+    $back = $cmp -lt 0 -and [bool]$Version
+    if ($Launch -and $stay -and -not $Version -and (Get-KitAutoUpdate $dir) -eq 'yes') {
+        # (auto_update = ask: the start asked already)
+        if (-not (Read-KitYesNo "You went back to $mine on purpose. Co-op $($newest.Tag) is out, newer than $($stay.Left). Update now?" 20 $false)) {
+            Write-Host "Staying on $mine. Update.bat updates when you want."
+            return 0
+        }
+    }
+    Write-Host ("{0}: {1}, {2:N0} MB.  {3}" -f $(if ($Version) { 'Release' } else { 'Newest' }), $newest.Tag, ($newest.Size / 1MB), $newest.Page)
+    if ($back) {
+        foreach ($l in Get-KitSameVersionText $newest.Tag) { Write-Host $l }
+        Write-Host "This version ($have) is kept in $Previous\: Update.bat goes forward again."
+    } elseif ($stay) {
+        Write-Host "You went back to $mine on purpose; this goes forward to $($newest.Tag)."
+    }
 
     while ($true) {
         $running = Get-KitRunning $dir
@@ -717,7 +1051,8 @@ function Invoke-KitUpdate {
         Read-Host 'Press Enter when they are closed' | Out-Null
     }
     if (-not $Yes) {
-        $a = Read-Host "Update to $($newest.Tag)? Your saves, keys, settings and coop-options.ini are kept. [Y/n]"
+        $verb = if ($back) { 'Go back' } else { 'Update' }
+        $a = Read-Host "$verb to $($newest.Tag)? Your saves, keys, settings and coop-options.ini are kept. [Y/n]"
         if ($a -and $a.Trim() -notmatch '^(y|yes)$') { Write-Host 'Nothing changed.'; return 0 }
     }
 
@@ -749,20 +1084,11 @@ function Invoke-KitUpdate {
         $why = Test-KitNewKit $newKit
         if ($why) { throw "The release zip is not a co-op kit ($why). Nothing changed." }
 
-        # A stopped update may have written the new VERSION.txt already: the backup is named
-        # after the version that update started from.
-        $from = if ($unfinished) { Get-KitUnfinishedFrom $dir } else { '' }
-        if (-not $from) { $from = $mine }
-        $backup = Join-Path $dir ('backup-' + $(if ($from) { $from } else { 'old' }))
-        if (Test-Path -LiteralPath $backup) { $backup += '-' + (Get-Date -Format 'yyyyMMdd-HHmmss') }
-        # (a Hookshot-only kit has no emulator: the old emulator's cache stays in emulator\user, the player's)
-        $newEmu = (Test-Path -LiteralPath (Join-Path $newKit 'emulator\lichii.exe')) -and
-            (Test-KitEmulatorChanged (Join-Path $dir 'emulator\lichii.exe') (Join-Path $newKit 'emulator\lichii.exe'))
-        $hadEmu = Test-Path -LiteralPath (Join-Path $dir 'emulator\lichii.exe')
-        $n = Install-KitFiles $newKit $dir $backup $newest.Tag $newEmu $from
+        $r = Invoke-KitSwitch $dir $newKit $newest.Tag $mine $back $unfinished
+        $n = $r.N; $backup = $r.Backup
         # After the install: an emulator kit updated to a Hookshot-only one has the new launcher now.
         $hsOnly = Test-Path -LiteralPath (Join-Path $dir 'Start OoT Co-op.bat')
-        Write-Host "Updated to $($newest.Tag): $n files. The replaced files are in $backup (delete it once the new version works)."
+        Write-Host "$(if ($back) { 'Went back' } else { 'Updated' }) to $($newest.Tag): $n files. The replaced files are in $backup (delete it once the new version works)."
         if ($script:ShadersMoved) {
             Write-Host "The emulator changed, so its old shader cache was moved to $backup\$ShaderCache. The first minutes of play may stutter while a new one is built."
         } elseif ($unfinished -and -not (Test-Path -LiteralPath (Join-Path $dir $ShaderCache))) {
@@ -771,12 +1097,22 @@ function Invoke-KitUpdate {
                 Write-Host "The old shader cache, moved by the update that stopped, is in $s."
             }
         }
-        foreach ($l in Complete-KitHookshotOnly $dir $hadEmu) { Write-Host $l }
+        foreach ($l in Complete-KitHookshotOnly $dir $r.HadEmu) { Write-Host $l }
+        if ($hsOnly -and $r.Game -ne 'same') { Write-Host (Get-KitGameChangeText $r.Game $newest.Tag) }
         if ($script:PackToolChanged) {
             if ($hsOnly) { Write-Host 'The puppet pack tool changed: "Start OoT Co-op.bat" makes the pack again when it starts.' }
             else { Write-Host 'The puppet pack tool changed: run make-puppet-pack.cmd once more before you play, for the other players'' sounds and the latest puppet fixes.' }
         }
-        Write-Host 'Every player needs the same version: tell the others to update too.'
+        if ($back) {
+            Write-Host "Starting the kit stays on $($newest.Tag) now; it asks only when a release newer than $(Get-KitStayLeft $dir $newest.Tag) comes out. Update.bat goes forward."
+            Write-Host 'Tell the others in your session to go back too: everyone needs the same version.'
+        } else {
+            if ($r.Kept) {
+                $how = if (Test-Path -LiteralPath (Join-Path $dir 'Revert.bat')) { 'Revert.bat' } else { 'Update.bat -Revert' }
+                Write-Host "Changed your mind? $how goes back to $mine (kept in $Previous\$mine)."
+            }
+            Write-Host 'Every player needs the same version: tell the others to update too.'
+        }
         if ($Launch) { return 3 }
         return 0
     } finally {
@@ -789,8 +1125,8 @@ if (-not $NoRun) {
         exit (Invoke-KitUpdate)
     } catch {
         if ($Check -or $Status) { exit 0 }
-        Write-Host "Update failed: $(Get-KitErrorText $_)"
-        foreach ($l in Get-KitManualSteps $script:KitPage) { Write-Host $l }
+        Write-Host "$(if ($Revert) { 'Going back failed' } else { 'Update failed' }): $(Get-KitErrorText $_)"
+        if (-not $Revert) { foreach ($l in Get-KitManualSteps $script:KitPage) { Write-Host $l } }
         exit 1
     }
 }

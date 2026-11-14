@@ -9,6 +9,7 @@
 #   Start OoT Co-op.bat     the one entry point: checks, update, first game build, start (scripts\start.ps1)
 #   README.txt              ten lines: what to do
 #   Update.bat              the updater in one file (also attached to the release for older kits)
+#   Revert.bat              back to the version before the last update (Update.bat -Revert)
 #   coop-options.ini        the player's switches (the co-op module reads and writes it)
 #   start-server.cmd        a dedicated server, for those who want one; with server\ it also marks the kit
 #                           folder for the module (hookshot/src/coop_title.cpp, FindKit)
@@ -51,7 +52,7 @@ function Test-BinaryHas([string]$Path, [string]$Text) {
 function Get-Sha([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
 
 # What goes in. Files listed here and nowhere else, so a review sees the whole kit in one place.
-$KitTop = @('Start OoT Co-op.bat', 'README.txt', 'start-server.cmd', 'coop-options.ini')
+$KitTop = @('Start OoT Co-op.bat', 'README.txt', 'Revert.bat', 'start-server.cmd', 'coop-options.ini')
 $KitScripts = @('start.ps1', 'start-checks.ps1', 'play.ps1', 'coop-ini.ps1', 'kit-paths.ps1', 'hosting.ps1', 'relay-join.ps1',
     'invite.ps1', 'hookshot-build.ps1', 'apply_patch.py', 'update.ps1', 'start-server.ps1', 'collect-logs.ps1', 'collect-logs.cmd',
     'log-mask.ps1', 'windows-checks.ps1')

@@ -62,12 +62,23 @@ The terminal says what happened and what to do. Common ones:
 For a bug report: `bash start-oot-coop.sh --logs` writes `coop-logs-<time>.tar.gz` beside it (passwords, codes,
 addresses and your user name are masked). Send that file.
 
+## Going back to an older version
+
+`bash revert.sh` in the kit folder puts back the version the kit had before its last update. Every update keeps the version it replaces in `previous/` (the last two; only the kit's own files).
+
+- **Every player in a session needs the same version** (the versions do not talk to each other): tell your friends to go back too.
+- Your saves, settings, `data/coop-options.ini` and the built game are kept, and so is the version you left: `bash scripts/update.sh` goes forward again.
+- The next start updates the game for that version (a few minutes when only co-op's patches differ; built again when it is on another Longshot).
+- Starting the kit does not update straight back: it asks again only when a release newer than the one you left comes out.
+- Any older release by its tag: `bash scripts/update.sh --version v0.11.0` (SHA-256 checked, as an update is).
+
 ## What is where
 
 | Path | What |
 |---|---|
 | `start-oot-coop.sh` | The one file you start. |
 | `README.txt` | The short version of this page. |
+| `revert.sh` | Back to the version before the last update (above); `previous/` holds the versions kept for it. |
 | `scripts/` | The kit's scripts (start, build, update, logs). |
 | `data/game/` | The built game, your saves and settings (`longshot_log.txt` is its log). Kept by updates. |
 | `data/coop-options.ini` | Co-op's settings (the Multiplayer tab writes them). Updates keep your values. |

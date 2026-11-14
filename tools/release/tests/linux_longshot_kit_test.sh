@@ -94,7 +94,7 @@ sha=$(sha256sum "$appimage" | cut -d' ' -f1)
 
 kit="$tmp/OoT Coop kit"   # (a space in the path, as players' folders have)
 mkdir -p "$kit/scripts" "$kit/data/longshot/patches" "$kit/data/server" "$kit/data/tools/puppet_pack"
-cp "$src/start-oot-coop.sh" "$src/README.txt" "$kit/"
+cp "$src/start-oot-coop.sh" "$src/README.txt" "$src/revert.sh" "$kit/"
 cp "$src"/scripts/*.sh "$release/kit/scripts/apply_patch.py" "$kit/scripts/"
 cp "$release/kit/coop.ini.template" "$kit/scripts/"
 cp "$release/kit/coop-options.ini" "$kit/data/coop-options.ini"
@@ -240,7 +240,7 @@ fi
 # --- update.sh -------------------------------------------------------------------------------
 new=$tmp/rel/oot-coop-v0.1.0-beta3-linux
 mkdir -p "$new"
-cp -a "$kit/start-oot-coop.sh" "$kit/README.txt" "$kit/scripts" "$new/"
+cp -a "$kit/start-oot-coop.sh" "$kit/README.txt" "$kit/revert.sh" "$kit/scripts" "$new/"
 mkdir -p "$new/data/longshot/patches" "$new/data/server"
 cp -a "$kit/data/longshot/." "$new/data/longshot/"
 printf 'module v12\n' >"$new/data/longshot/hookshot_coop.so"
@@ -273,6 +273,59 @@ check "update: the player's settings stay; the new switch is added as a comment"
 check 'update: the old files are in backup-v0.1.0-beta2/' [ -f "$kit/backup-v0.1.0-beta2/data/longshot/hookshot_coop.so" ]
 check 'update: the start file keeps working after a zip without exec bits' bash -n "$kit/start-oot-coop.sh"
 check 'update --status after it: nothing newer' [ -z "$(bash "$kit/scripts/update.sh" --status)" ]
+# revert-b: the version replaced is kept in previous/, revert.sh puts it back, the start does not update straight back.
+P=$kit/previous/v0.1.0-beta2
+check 'update: the version it replaced is kept in previous/v0.1.0-beta2' bash -c '[ "$(cat "$1/data/longshot/hookshot_coop.so")" = module ] && grep -q beta2 "$1/VERSION.txt" && [ -f "$1/start-oot-coop.sh" ]' _ "$P"
+check "update: nothing of the player's in it (game, saves, coop-options.ini)" bash -c '[ ! -e "$1/data/game" ] && [ ! -e "$1/data/coop-options.ini" ] && [ ! -e "$1/data/logs" ]' _ "$P"
+check 'update: it says how to go back' grep -q 'bash revert.sh goes back to v0.1.0-beta2' "$tmp/update.txt"
+bash "$kit/revert.sh" --yes </dev/null >"$tmp/revert.txt" 2>&1
+check 'revert.sh: back on beta2' bash -c 'grep -q beta2 "$1/VERSION.txt" && [ "$(cat "$1/data/longshot/hookshot_coop.so")" = module ]' _ "$kit"
+check 'revert.sh: says every player needs the same version, tell your friends' bash -c 'grep -q "SAME version" "$1" && grep -q "Tell your friends" "$1"' _ "$tmp/revert.txt"
+check 'revert.sh: saves and settings kept' bash -c '[ "$(cat "$1/game/save.bin")" = "my save" ] && grep -q "^auto_update = yes$" "$1/coop-options.ini"' _ "$D"
+check 'revert.sh: stay on beta2, left beta3' bash -c 'grep -qx "stay=v0.1.0-beta2" "$1" && grep -qx "left=v0.1.0-beta3" "$1"' _ "$kit/stay-on-version.txt"
+check 'revert.sh: beta3 is kept, to go forward again' grep -q beta3 "$kit/previous/v0.1.0-beta3/VERSION.txt"
+export OOT_COOP_UPDATE_API=$tmp/rel/releases.json
+check 'revert: the start check is quiet about beta3, the version left' [ -z "$(bash "$kit/scripts/update.sh" --status)" ]
+bash "$kit/scripts/update.sh" --launch </dev/null >"$tmp/launch2.txt" 2>&1
+check 'revert: auto_update = yes with no terminal stays (exit 0, still beta2)' bash -c '[ $2 -eq 0 ] && grep -q beta2 "$1/VERSION.txt" && grep -q Staying "$3"' _ "$kit" $? "$tmp/launch2.txt"
+bash "$kit/scripts/update.sh" --yes </dev/null >"$tmp/forward.txt" 2>&1
+check 'revert: update.sh goes forward to beta3 and forgets the stay' bash -c 'grep -q beta3 "$1/VERSION.txt" && [ ! -e "$1/stay-on-version.txt" ] && [ "$(cat "$1/data/longshot/hookshot_coop.so")" = "module v12" ]' _ "$kit"
+check 'revert: the last 2 versions are kept' [ "$(ls -1 "$kit/previous" | wc -l)" -eq 2 ]
+# --version: an older release by its tag (here beta2 again, zipped from what previous/ kept).
+(cd "$kit/previous" && cp -a v0.1.0-beta2 "$tmp/rel/oot-coop-v0.1.0-beta2-linux" && cd "$tmp/rel" && "$py" -c 'import os, sys, zipfile
+z = zipfile.ZipFile(sys.argv[1], "w")
+for d, _, fs in os.walk(sys.argv[2]):
+    for f in fs: z.write(os.path.join(d, f))
+z.close()' oot-coop-v0.1.0-beta2-linux.zip oot-coop-v0.1.0-beta2-linux && sha256sum oot-coop-v0.1.0-beta2-linux.zip >oot-coop-v0.1.0-beta2-linux.zip.sha256)
+cat >"$tmp/rel/releases2.json" <<EOF
+[{"tag_name": "v0.1.0-beta3", "assets": [
+  {"browser_download_url": "$tmp/rel/oot-coop-v0.1.0-beta3-linux.zip"},
+  {"browser_download_url": "$tmp/rel/oot-coop-v0.1.0-beta3-linux.zip.sha256"}]},
+ {"tag_name": "v0.1.0-beta2", "assets": [
+  {"browser_download_url": "$tmp/rel/oot-coop-v0.1.0-beta2-linux.zip"},
+  {"browser_download_url": "$tmp/rel/oot-coop-v0.1.0-beta2-linux.zip.sha256"}]}]
+EOF
+export OOT_COOP_UPDATE_API=$tmp/rel/releases2.json
+bash "$kit/scripts/update.sh" --yes --version v0.1.0-beta2 </dev/null >"$tmp/version.txt" 2>&1
+check 'update --version: an older release by its tag, SHA-256 checked, stays on it' bash -c 'grep -q beta2 "$1/VERSION.txt" && grep -q "SHA-256 checked" "$2" && grep -qx "stay=v0.1.0-beta2" "$1/stay-on-version.txt"' _ "$kit" "$tmp/version.txt"
+check 'update --version: no such release -> said' bash -c 'bash "$1/scripts/update.sh" --yes --version v0.0.9 </dev/null | grep -q "No release v0.0.9" && grep -q beta2 "$1/VERSION.txt"' _ "$kit"
+rm -rf "$kit/previous" "$kit"/backup-*
+# (a backup missing a file its MANIFEST.txt names, as an update that failed while copying leaves one: never gone back to)
+mkdir -p "$kit/backup-v0.1.0-beta1"
+cp "$kit/start-oot-coop.sh" "$kit/backup-v0.1.0-beta1/"
+printf 'kit: oot-coop-v0.1.0-beta1-linux (release v0.1.0-beta1)\n' >"$kit/backup-v0.1.0-beta1/VERSION.txt"
+printf 'MANIFEST.txt\nVERSION.txt\nstart-oot-coop.sh\nscripts/start.sh\n' >"$kit/backup-v0.1.0-beta1/MANIFEST.txt"
+check 'revert.sh: nothing kept (a partial backup does not count) -> says --version' bash -c 'bash "$1/revert.sh" --yes </dev/null | grep -q -- "--version" && grep -q beta2 "$1/VERSION.txt"' _ "$kit"
+rm -rf "$kit"/backup-*
+# A damaged or hand-edited VERSION.txt never names a folder: the update goes on, nothing outside previous/ is removed.
+printf 'beside the kit\n' >"$tmp/beside-the-kit.txt"
+for bad in .. ../..; do
+    printf 'kit: oot-coop-x (release %s)\n' "$bad" >"$kit/VERSION.txt"
+    bash "$kit/scripts/update.sh" --yes </dev/null >"$tmp/hostile.txt" 2>&1
+    check "VERSION.txt '(release $bad)': the update goes on, the kit, its saves and the folder above are still there" bash -c \
+        'grep -q beta3 "$1/VERSION.txt" && [ -f "$1/start-oot-coop.sh" ] && [ "$(cat "$1/data/game/save.bin")" = "my save" ] && [ -f "$2" ]' _ "$kit" "$tmp/beside-the-kit.txt"
+    check "VERSION.txt '(release $bad)': nothing kept under that name" bash -c '[ ! -e "$1/previous" ] || [ -z "$(ls -A "$1/previous")" ]' _ "$kit"
+done
 unset OOT_COOP_UPDATE_API
 
 # --- collect-logs.sh -------------------------------------------------------------------------

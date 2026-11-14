@@ -39,6 +39,10 @@ We never ship save files, keys, firmware or the game in a release or in this rep
 
 `Host.bat`, `Join.bat` and `Update.bat` say why and how to update by hand. Most often: the emulator is still open (close it), there is no network, or GitHub turned the check away for a while (it allows 60 checks an hour from one internet address). If it says the release signature does not check, the release was published moments ago and is not signed yet: try again later (only set `verify_signature = no` in `coop-options.ini` if it keeps failing and you downloaded nothing from elsewhere). By hand: download the newest `oot-coop-....zip` from the [releases](https://github.com/daurosk/oot-remake-multiplayer/releases), unzip it to a new short folder, copy `emulator\user` and `coop-options.ini` from your old kit into it, and play from there.
 
+## Can I go back to the version I had?
+
+Yes: `Revert.bat` in the kit folder (`bash revert.sh` on Linux) puts back the version your kit had before its last update; your saves and settings stay, and `Update.bat` goes forward again. Everyone you play with needs the same version, so tell your friends to go back too. Starting the kit does not update straight back. Any older release: `Update.bat -Version v0.10.1`. More in [setup.md](setup.md#going-back-to-an-older-version).
+
 ## My coop-options.ini is missing a line I see in the release
 
 `Update.bat` and every start of `Host.bat` / `Join.bat` add each key a newer kit has and your file lacks, at the end of the file under "Added by Update.bat", with its comment. Your own lines stay as they are. If a line is still missing (kits from before this was added could miss keys such as `server_allow`), copy the line from the release's `coop-options.ini` into yours, or start the kit once after updating.
