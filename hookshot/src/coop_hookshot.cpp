@@ -610,8 +610,11 @@ std::atomic<bool> g_map_names{!EnvOff("LICHII_COOP_MAP_NAMES")};
 // The players on the maps (CoopDraw::MapShown), or null: the setting is
 // off, our place is not known or has no map (coop_maps.txt), nobody else is
 // there, or our own cutscene runs (the game hides its HUD). The minimap needs
-// the game's camera (we play) and no game menu in front (patch 0018); the Map
-// page's picture is CoopMapPage's. The present's thread only: the view, the
+// the game's camera (we play), no game menu in front (patch 0018) and the
+// game's own minimap panes placed (CoopMapPage::Minimap: where the game draws
+// no minimap, nothing); the Map page's picture is CoopMapPage's. With
+// LICHII_COOP_MAP_SELF=1 (tests) our own Link is marked too, as player 0, to
+// hold against the game's own arrow. The present's thread only: the view, the
 // players and their names keep their room between presents.
 const CoopDraw::MapShown* MapScene(bool camera, std::uint8_t self) {
     static CoopHook::MapView view;
@@ -626,16 +629,14 @@ const CoopDraw::MapShown* MapScene(bool camera, std::uint8_t self) {
         page_open_floor.reset();
         return nullptr;
     }
-    static const float zoom = [] {
-        const auto z = coop::overlay::map::parse_zoom(Env("LICHII_COOP_MINIMAP_ZOOM"));
-        if (z) {
-            LOG_INFO(Core, "coop: map: the minimap's zoom {} (LICHII_COOP_MINIMAP_ZOOM)", *z);
-        }
-        return z.value_or(1.0f);
-    }();
+    static const bool mark_self = Env("LICHII_COOP_MAP_SELF") == "1";
     const auto menu = CoopMapPage::MenuState();
     const auto page = CoopMapPage::Shown(capture->dungeon);
-    m.minimap = camera && !(menu && menu->menu_open);
+    m.minimap.reset();
+    if (camera && !(menu && menu->menu_open)) {
+        m.minimap = CoopMapPage::Minimap(capture->dungeon);
+    }
+    m.minimap_floor = coop::overlay::map::floor_of(*capture, view.self[1]);
     m.page.reset();
     m.page_floor = coop::overlay::map::floor_of(*capture, view.self[1]);
     if (page) {
@@ -654,10 +655,9 @@ const CoopDraw::MapShown* MapScene(bool camera, std::uint8_t self) {
     m.scene.assign(view.scene);
     m.self = view.self;
     m.capture = capture;
-    m.metres_across = CoopDraw::MinimapMetres(*capture, zoom);
     const bool names = g_map_names.load();
-    m.players.resize(view.others.size());
-    m.names.resize(names ? view.others.size() : 0);
+    m.players.resize(view.others.size() + (mark_self ? 1 : 0));
+    m.names.resize(names ? m.players.size() : 0);
     for (std::size_t i = 0; i < view.others.size(); ++i) {
         const auto& o = view.others[i];
         auto& p = m.players[i];
@@ -680,6 +680,16 @@ const CoopDraw::MapShown* MapScene(bool camera, std::uint8_t self) {
                 m.names[i].assign(o.name);
             }
         }
+    }
+    if (mark_self) {  // (white, no facing: a dot where we place our own Link)
+        auto& p = m.players.back();
+        p.number = 0;
+        p.position = view.self;
+        p.rotation.reset();
+        p.scene.emplace(view.scene);
+        p.fade = 1.0f;
+        p.rgb = 0xFFFFFF;
+        if (names) m.names.back() = "self";
     }
     return &m;
 }

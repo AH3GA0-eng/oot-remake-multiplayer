@@ -32,6 +32,20 @@ inline constexpr const char* kFieldPane = "N_PatternField_00";
 inline constexpr float kFieldW = 2600.0f, kFieldH = 1872.0f;
 inline constexpr const char* kDungeonPane = "N_PatternDungeon_00";
 inline constexpr float kDungeonW = 2600.0f, kDungeonH = 2600.0f;
+// The HUD minimap in MapMenu_00 (read from the game's layout; sizes in its
+// units): the picture pane the game puts the map's capture in, a dungeon's
+// P_ReplaceDungeonMini_00 1300 x 1300 (under N_Dungeon_01) or an area's
+// P_ReplaceFieldMini_00 960 x 960 (under N_Field_01), which the game moves,
+// zooms and turns; and the frame the minimap shows through,
+// P_MiniMapFrame_00, 552 x 552 at 1536 right of and 690 below the layout's
+// middle. N_MiniMap_00 holds both minimaps.
+inline constexpr const char* kMiniDungeonPane = "P_ReplaceDungeonMini_00";
+inline constexpr float kMiniDungeonSize = 1300.0f;
+inline constexpr const char* kMiniFieldPane = "P_ReplaceFieldMini_00";
+inline constexpr float kMiniFieldSize = 960.0f;
+inline constexpr const char* kMiniWindowPane = "P_MiniMapFrame_00";
+inline constexpr float kMiniWindowSize = 552.0f;
+inline constexpr const char* kMiniRootPane = "N_MiniMap_00";
 inline constexpr std::uint64_t kFindPane = 0x8078e2b0;  // (layout, "name") -> pane, or 0
 inline constexpr std::uint64_t kScreenLayout = 0x28;     // a screen's layout
 inline constexpr std::uint64_t kPaneMatrix = 0x28;       // a pane's global matrix
@@ -106,5 +120,13 @@ void Frame(void* ctx, const HosCoopApi* api);
 // found in a screen that still runs, is shown: the picture. `dungeon` picks
 // the pane (our place's map is a dungeon's). The present's thread (PageWatch).
 std::optional<Picture> Shown(bool dungeon);
+
+// The HUD minimap as the game placed it this frame: its picture pane (`dungeon`
+// picks which) and its frame, from the HUD screen that runs now. None when a
+// pane was not found or the game has not placed it (a matrix of 0: never shown
+// since the screen came up), so no icons are drawn where the game draws no
+// minimap. Any thread. Also logs, a few times a run, the panes' state bytes
+// whenever the minimap comes or goes (to learn the game's own shown flag).
+std::optional<coop::overlay::map::MinimapPanes> Minimap(bool dungeon);
 
 }  // namespace CoopMapPage

@@ -103,23 +103,44 @@ struct Icon {
 // looks), seen from above. None when it points straight up or down.
 std::optional<float> map_angle(const Quat& rotation);
 
-// The HUD minimap: centred on our Link, `metres_across` metres from its left
-// edge to its right edge, round or square.
-struct Minimap {
-  Box box;
-  bool round = false;
-  float metres_across = 0.0f;
-  float edge_inset = 0.0f;  // pixels kept free at the edge for a clamped icon
+// A pane of the game's HUD layout as the game placed it this frame: its
+// global matrix (3 x 4 by column, in the layout's units: x right and y up
+// from the middle of the 3840 x 2160 layout; [0],[1] the pane's x axis,
+// [3],[4] its y axis, [9],[10] its centre) and its size in its own units.
+inline constexpr float kLayoutW = 3840.0f, kLayoutH = 2160.0f;
+struct Pane {
+  std::array<float, 12> m{};
+  float w = 0.0f, h = 0.0f;
+};
+// A pane the game shows: a finite matrix that is not flat (its x and y axes
+// span an area) and a size.
+bool pane_usable(const Pane& pane);
+// A point in the pane's own units (x right, y up from its centre) in the
+// layout's units (x right, y down from the layout's top left).
+std::array<float, 2> pane_point(const Pane& pane, float x, float y);
+
+// The HUD minimap as the game draws it (MapMenu_00): `picture` is the pane
+// the game puts the map's capture in (P_ReplaceDungeonMini_00 or
+// P_ReplaceFieldMini_00, the whole capture filling it), moved, scaled and
+// turned by the game as it scrolls, zooms or turns its minimap; `window` is
+// the frame the minimap shows through (P_MiniMapFrame_00). Nothing here is
+// relative to our Link: a player who stands still keeps their spot while we
+// move, and moves only with the game's picture.
+struct MinimapPanes {
+  Pane picture;
+  Pane window;
+  float edge_inset = 0.0f;  // layout units kept free at the window's edge for a clamped icon
 };
 
-// The minimap's icons for the others in our scene; players in another scene
-// or with no scene are left out, so are bad numbers (NaN, a box of no size).
-// With a dungeon's `capture`, each icon's floor and its floor_delta from our
-// Link's floor (floor_of; 0 elsewhere). `out` is cleared and refilled (its
-// capacity kept: no allocation once it holds 16).
-void minimap_icons(const Minimap& minimap, std::string_view our_scene, const Vec3& self,
-                   const std::vector<Player>& others, std::vector<Icon>& out,
-                   const Capture* capture = nullptr);
+// The minimap's icons for everyone in one of `capture`'s scenes (others left
+// out, so are bad numbers and unusable panes), in the layout's units (x right,
+// y down from its top left; CoopDraw maps them to the screen). A player past
+// the window is held at its edge on the line from its centre (clamped). The
+// facing is turned as the picture is. Dungeons: each icon's floor and its
+// floor_delta from `shown_floor` (the floor the minimap shows, ours). `out`
+// is cleared and refilled (its capacity kept).
+void minimap_icons(const MinimapPanes& minimap, const Capture& capture, int shown_floor,
+                   const std::vector<Player>& players, std::vector<Icon>& out);
 
 // The pause menu's map of `capture` drawn in `picture` (the whole map
 // picture's box on the screen, its aspect the capture's width to height):
@@ -130,9 +151,5 @@ void picture_icons(const Box& picture, const Capture& capture, int shown_floor,
 
 // One world point on the picture (no clamping).
 std::array<float, 2> to_picture(const Box& picture, const Capture& capture, const Vec3& p);
-
-// A ratio for the minimap's zoom (LICHII_COOP_MINIMAP_ZOOM): a finite number
-// above 0 and at most 100, else none.
-std::optional<float> parse_zoom(std::string_view text);
 
 }  // namespace coop::overlay::map

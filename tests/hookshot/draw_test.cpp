@@ -618,63 +618,70 @@ TEST_CASE("dbno ring: drawn with the clock when the scene has it, and wanted for
 
 namespace {
 
-// A player on the minimap, `dx` and `dz` metres from our Link at the origin.
-coop::overlay::map::Player OnMap(std::uint8_t n, float dx, float dz, std::uint32_t rgb) {
+// A player at (x, z) in HyruleField.
+coop::overlay::map::Player OnMap(std::uint8_t n, float x, float z, std::uint32_t rgb) {
     coop::overlay::map::Player p;
     p.number = n;
-    p.position = {dx, 0, dz};
+    p.position = {x, 0, z};
     p.scene = "HyruleField";
     p.rgb = rgb;
     return p;
 }
 
-}  // namespace
-
-TEST_CASE("hookshot draw: the minimap where the game's layout has it, on any picture size") {
-    auto b = CoopDraw::MinimapBox(3840, 2160);
-    CHECK(b.cx() == doctest::Approx(1920 + 1470));
-    CHECK(b.cy() == doctest::Approx(1080 + 544));
-    CHECK(b.w == doctest::Approx(552));
-    b = CoopDraw::MinimapBox(1920, 1080);  // half
-    CHECK(b.cx() == doctest::Approx(1695));
-    CHECK(b.cy() == doctest::Approx(812));
-    CHECK(b.w == doctest::Approx(276));
-    b = CoopDraw::MinimapBox(2560, 1080);  // ultrawide: the 16:9 picture in the middle
-    CHECK(b.cx() == doctest::Approx(320 + 1695));
-    CHECK(b.h == doctest::Approx(276));
-    coop::overlay::map::Capture field;
-    field.height = 736;
-    CHECK(CoopDraw::MinimapMetres(field) == doctest::Approx(736.0f * 552 / 960));
-    CHECK(CoopDraw::MinimapMetres(field, 2.0f) == doctest::Approx(736.0f * 552 / 960 / 2));
-    CHECK(CoopDraw::MinimapMetres(field, 0.0f) == 0.0f);
+// An unturned pane `size` across at (x, y) from the layout's middle (y up), scaled by `k`.
+coop::overlay::map::Pane Pane(float size, float x, float y, float k = 1.0f) {
+    coop::overlay::map::Pane p;
+    p.w = p.h = size;
+    p.m = {k, 0, 0, 0, k, 0, 0, 0, 1, x, y, 0};
+    return p;
 }
 
-TEST_CASE("hookshot draw: the others on the minimap in their colours, names under them, wanted for them alone") {
+// The game's minimap as its layout has it: the frame 552 across at (1536, -690), the area picture (960) under
+// it at half size: 480 layout units for the map's 240 m, so 1 picture pixel a metre at 1920 x 1080.
+coop::overlay::map::MinimapPanes GameMinimap() {
+    coop::overlay::map::MinimapPanes mm;
+    mm.picture = Pane(960, 1536, -690, 0.5f);
+    mm.window = Pane(552, 1536, -690);
+    return mm;
+}
+
+coop::overlay::map::Capture Field() {
+    coop::overlay::map::Capture field;
+    field.location = "HyruleField";
+    field.height = 240;
+    field.floors.push_back({});
+    return field;
+}
+
+}  // namespace
+
+TEST_CASE("hookshot draw: the others on the minimap where the game's picture has them, names under them") {
+    const auto field = Field();
     Canvas c(1920, 1080);
     CoopDraw::Scene s;
     CoopDraw::MapShown m;
     m.scene = "HyruleField";
-    m.metres_across = 276;  // a pixel a metre on this picture
+    m.capture = &field;
+    m.minimap = GameMinimap();
     m.players = {OnMap(2, 10, -20, 0xFF0000), OnMap(3, 0, 0, 0x00FF00)};
     m.players[0].rotation = coop::overlay::map::Quat{0, 0, 0, 1};  // looks +Z: an arrow
     m.names = {"Saria", "Darunia"};
     s.map = &m;
     CHECK(CoopDraw::Wanted(s));
     CoopDraw::Draw(c.d, s);
+    // The frame's centre on a 1920 x 1080 picture: (1920 + 1536, 1080 + 690) / 2.
     const auto tris = c.Of("triangle");
     REQUIRE(tris.size() == 2);  // rim, then the arrow
     CHECK(tris[1].rgba == CoopDraw::Rgba(255, 0, 0, 255));
-    CHECK(tris[1].x == doctest::Approx(1705).epsilon(0.001));  // the tip, below the player at (1705, 792)
-    CHECK(tris[1].y > 792);
+    CHECK(tris[1].x == doctest::Approx(1728 + 10).epsilon(0.001));  // the tip, below the player at (1738, 865)
+    CHECK(tris[1].y > 865);
     const auto dots = c.Of("circle");
     REQUIRE(dots.size() == 2);  // no rotation: a dot on a rim
-    CHECK(dots[1].x == doctest::Approx(1695));
-    CHECK(dots[1].y == doctest::Approx(812));
+    CHECK(dots[1].x == doctest::Approx(1728));
+    CHECK(dots[1].y == doctest::Approx(885));
     CHECK(dots[1].rgba == CoopDraw::Rgba(0, 255, 0, 255));
-    const auto texts = c.Of("text");
-    REQUIRE(texts.size() >= 2);
     bool saria = false;
-    for (const auto& t : texts) saria = saria || t.text == "Saria";
+    for (const auto& t : c.Of("text")) saria = saria || t.text == "Saria";
     CHECK(saria);
 
     // Names off: arrows only. No one: nothing wanted.
@@ -686,20 +693,41 @@ TEST_CASE("hookshot draw: the others on the minimap in their colours, names unde
     CHECK_FALSE(CoopDraw::Wanted(s));
 }
 
-TEST_CASE("hookshot draw: a player far off the minimap is held at its edge, paler") {
+TEST_CASE("hookshot draw: no minimap from the game, no icons (and none without our place's map)") {
+    const auto field = Field();
+    CoopDraw::MapShown m;
+    m.scene = "HyruleField";
+    m.capture = &field;
+    m.players = {OnMap(2, 10, -20, 0xFF0000)};
+    CoopDraw::Scene s;
+    s.map = &m;
+    m.minimap.reset();  // the game shows no minimap (not placed, a menu, no camera)
+    CHECK_FALSE(CoopDraw::Wanted(s));
+    Canvas none(1920, 1080);
+    CoopDraw::Draw(none.d, s);
+    CHECK(none.calls.empty());
+    m.minimap = GameMinimap();
+    m.capture = nullptr;
+    CHECK_FALSE(CoopDraw::Wanted(s));
+}
+
+TEST_CASE("hookshot draw: a player far off the minimap is held at the frame's edge, paler") {
+    const auto field = Field();
     Canvas c(1920, 1080);
     CoopDraw::Scene s;
     CoopDraw::MapShown m;
     m.scene = "HyruleField";
-    m.metres_across = 276;
+    m.capture = &field;
+    m.minimap = GameMinimap();
     m.players = {OnMap(2, 5000, 0, 0x0000FF)};
     s.map = &m;
     CoopDraw::Draw(c.d, s);
     const auto dots = c.Of("circle");
     REQUIRE(dots.size() == 2);
-    const auto box = CoopDraw::MinimapBox(1920, 1080);
-    CHECK(dots[1].x < box.x + box.w);
-    CHECK(dots[1].x > box.x + box.w - 20);
+    const float right = 1728 + 552.0f / 4;  // the frame's right edge on this picture
+    CHECK(dots[1].x < right);
+    CHECK(dots[1].x > right - 20);
+    CHECK(dots[1].y == doctest::Approx(885));
     CHECK(AlphaOf(dots[1].rgba) < 255);
 }
 
@@ -726,7 +754,7 @@ TEST_CASE("hookshot map page: a pane's box from its global matrix, in the layout
     CHECK(s.x == doctest::Approx(0));
 }
 
-TEST_CASE("hookshot draw: the Map page's map shows everyone in our place's map, and the minimap hides behind menus") {
+TEST_CASE("hookshot draw: the Map page's map shows everyone in our place's map, and the minimap hides with the game's") {
     coop::overlay::map::Capture field;
     field.location = "HyruleField";
     field.height = 100;
@@ -734,7 +762,6 @@ TEST_CASE("hookshot draw: the Map page's map shows everyone in our place's map, 
     CoopDraw::MapShown m;
     m.scene = "HyruleField";
     m.capture = &field;
-    m.metres_across = 276;
     m.players = {OnMap(2, 25, 0, 0xFF0000)};  // a quarter of the picture's height right of its centre
     m.names = {"Saria"};
     m.page = coop::overlay::map::Box{1920 - 1000, 1080 - 500, 2000, 1000};  // 200 m across
@@ -749,7 +776,7 @@ TEST_CASE("hookshot draw: the Map page's map shows everyone in our place's map, 
     CHECK(dots[1].y == doctest::Approx(540));
 
     m.page.reset();
-    m.minimap = false;  // a game menu in front, no Map page: nothing
+    m.minimap.reset();  // a game menu in front (the game shows no minimap), no Map page: nothing
     CHECK_FALSE(CoopDraw::Wanted(s));
     Canvas none(1920, 1080);
     CoopDraw::Draw(none.d, s);
@@ -771,7 +798,8 @@ TEST_CASE("hookshot draw: a player on another floor is paler, the floors after t
     m.scene = "InsideJabuJabuBelly";
     m.self = {0, 100, 0};
     m.capture = &jabu;
-    m.metres_across = 276;
+    m.minimap = GameMinimap();
+    m.minimap_floor = 1;  // ours (y 100)
     m.players = {OnMap(2, 5, 0, 0x00FF00)};
     m.players[0].scene = "InsideJabuJabuBelly";
     m.players[0].position[1] = 68;  // floor 2: one below ours

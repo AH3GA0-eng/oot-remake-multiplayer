@@ -84,6 +84,15 @@ std::string_view without_era(std::string_view s) {
   return s;
 }
 
+// Whether `scene` is one of the places `c` is the map of.
+bool in_capture(const Capture& c, std::string_view scene) {
+  if (scene == c.location) return true;
+  for (const auto& s : c.scenes) {
+    if (s == scene) return true;
+  }
+  return false;
+}
+
 Icon start(const Player& p) {
   Icon icon;
   icon.number = p.number;
@@ -163,41 +172,64 @@ std::optional<float> map_angle(const Quat& q) {
   return std::atan2(fz, fx);  // the picture's y is world +Z, down
 }
 
-void minimap_icons(const Minimap& m, std::string_view our_scene, const Vec3& self,
-                   const std::vector<Player>& others, std::vector<Icon>& out, const Capture* capture) {
-  out.clear();
-  if (!usable(m.box) || !finite(m.metres_across) || m.metres_across <= 0 || !finite(self) || our_scene.empty()) {
-    return;
+bool pane_usable(const Pane& p) {
+  for (const float v : p.m) {
+    if (!finite(v)) return false;
   }
-  const float px_per_m = m.box.w / m.metres_across;
-  const float inset = finite(m.edge_inset) ? std::max(0.0f, m.edge_inset) : 0.0f;
-  const float hx = std::max(0.0f, m.box.w * 0.5f - inset), hy = std::max(0.0f, m.box.h * 0.5f - inset);
-  for (const Player& p : others) {
-    if (!p.scene || *p.scene != our_scene || !finite(p.position)) continue;
+  const float area = p.m[0] * p.m[4] - p.m[1] * p.m[3];
+  return std::fabs(area) > 1e-6f && finite(p.w) && finite(p.h) && p.w > 0 && p.h > 0;
+}
+
+std::array<float, 2> pane_point(const Pane& p, float x, float y) {
+  const float gx = p.m[0] * x + p.m[3] * y + p.m[9];
+  const float gy = p.m[1] * x + p.m[4] * y + p.m[10];
+  return {kLayoutW * 0.5f + gx, kLayoutH * 0.5f - gy};
+}
+
+void minimap_icons(const MinimapPanes& mm, const Capture& c, int shown_floor, const std::vector<Player>& players,
+                   std::vector<Icon>& out) {
+  out.clear();
+  const Pane& pic = mm.picture;
+  const Pane& win = mm.window;
+  if (!pane_usable(pic) || !pane_usable(win) || !finite(c.height) || c.height <= 0) return;
+  // The window's own units from the layout's (y up from the middle): its matrix inverted.
+  const float det = win.m[0] * win.m[4] - win.m[1] * win.m[3];
+  const float inset_layout = finite(mm.edge_inset) ? std::max(0.0f, mm.edge_inset) : 0.0f;
+  const float win_scale = std::sqrt(std::fabs(det));  // layout units per window unit
+  const float inset = inset_layout / win_scale;
+  const float hx = std::max(0.0f, win.w * 0.5f - inset), hy = std::max(0.0f, win.h * 0.5f - inset);
+  const float width_m = c.height * pic.w / pic.h;
+  for (const Player& p : players) {
+    if (!p.scene || !finite(p.position) || !in_capture(c, *p.scene)) continue;
     Icon icon = start(p);
-    float dx = (p.position[0] - self[0]) * px_per_m;
-    float dy = (p.position[2] - self[2]) * px_per_m;
-    if (m.round) {
-      const float r = std::min(hx, hy), d = std::sqrt(dx * dx + dy * dy);
-      if (d > r) {
-        const float s = d > 0 ? r / d : 0.0f;
-        dx *= s;
-        dy *= s;
-        icon.clamped = true;
-      }
-    } else if (std::fabs(dx) > hx || std::fabs(dy) > hy) {
-      const float sx = std::fabs(dx) > 0 ? hx / std::fabs(dx) : 1.0f;
-      const float sy = std::fabs(dy) > 0 ? hy / std::fabs(dy) : 1.0f;
-      const float s = std::min({sx, sy, 1.0f});
-      dx *= s;
-      dy *= s;
+    // The capture fills the picture: +X right, +Z down on it; the pane's y is up.
+    const float u = (p.position[0] - c.centre_x) / width_m;
+    const float v = (p.position[2] - c.centre_z) / c.height;
+    const float px = u * pic.w, py = -v * pic.h;
+    const float gx = pic.m[0] * px + pic.m[3] * py + pic.m[9] - win.m[9];
+    const float gy = pic.m[1] * px + pic.m[4] * py + pic.m[10] - win.m[10];
+    float wx = (win.m[4] * gx - win.m[3] * gy) / det;
+    float wy = (-win.m[1] * gx + win.m[0] * gy) / det;
+    if (std::fabs(wx) > hx || std::fabs(wy) > hy) {
+      const float sx = std::fabs(wx) > 0 ? hx / std::fabs(wx) : 1.0f;
+      const float sy = std::fabs(wy) > 0 ? hy / std::fabs(wy) : 1.0f;
+      const float k = std::min({sx, sy, 1.0f});
+      wx *= k;
+      wy *= k;
       icon.clamped = true;
     }
-    icon.x = m.box.cx() + dx;
-    icon.y = m.box.cy() + dy;
-    if (capture != nullptr && capture->dungeon) {
-      icon.floor = floor_of(*capture, p.position[1]);
-      icon.floor_delta = icon.floor - floor_of(*capture, self[1]);
+    const auto [x, y] = pane_point(win, wx, wy);
+    icon.x = x;
+    icon.y = y;
+    if (icon.angle) {
+      // The facing on the picture (y down) through the picture's turn, back to y down.
+      const float dx = std::cos(*icon.angle), dy = -std::sin(*icon.angle);
+      const float tx = pic.m[0] * dx + pic.m[3] * dy, ty = pic.m[1] * dx + pic.m[4] * dy;
+      icon.angle = tx * tx + ty * ty > 1e-12f ? std::optional<float>(std::atan2(-ty, tx)) : std::nullopt;
+    }
+    if (c.dungeon) {
+      icon.floor = floor_of(c, p.position[1]);
+      icon.floor_delta = icon.floor - shown_floor;
     }
     out.push_back(icon);
   }
@@ -216,9 +248,7 @@ void picture_icons(const Box& picture, const Capture& c, int shown_floor, const 
   if (!usable(picture) || !finite(c.height) || c.height <= 0) return;
   for (const Player& p : players) {
     if (!p.scene || !finite(p.position)) continue;
-    bool here = *p.scene == c.location;
-    for (const auto& s : c.scenes) here = here || s == *p.scene;
-    if (!here) continue;
+    if (!in_capture(c, *p.scene)) continue;
     Icon icon = start(p);
     auto [x, y] = to_picture(picture, c, p.position);
     const float cx = std::clamp(x, picture.x, picture.x + picture.w);
@@ -232,12 +262,6 @@ void picture_icons(const Box& picture, const Capture& c, int shown_floor, const 
     }
     out.push_back(icon);
   }
-}
-
-std::optional<float> parse_zoom(std::string_view text) {
-  const auto v = number(text);
-  if (!v || *v <= 0 || *v > 100) return std::nullopt;
-  return v;
 }
 
 }  // namespace coop::overlay::map
