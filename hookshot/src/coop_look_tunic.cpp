@@ -205,8 +205,21 @@ Search Find(const Textures& textures, const std::vector<std::shared_ptr<const Te
                 const Texture& texture = (*colour)[i];
                 const std::size_t size =
                     static_cast<std::size_t>(std::min<std::uint64_t>(texture.texels.size(), live.size));
-                if (texture.texels.size() > live.size + kFilePad || std::memcmp(head, texture.texels.data(), kHead) != 0 ||
-                    !Same(textures, live.address, texture.texels, size)) {
+                if (texture.texels.size() > live.size + kFilePad || std::memcmp(head, texture.texels.data(), kHead) != 0) {
+                    continue;
+                }
+                if (!Same(textures, live.address, texture.texels, size)) {
+                    if (++out.heads <= 2 && out.notes.size() < kNotes + 2) {
+                        std::vector<std::uint8_t> got(size);
+                        std::size_t at = 0;
+                        if (textures.Read(live.address, got.data(), size)) {
+                            at = static_cast<std::size_t>(
+                                std::mismatch(got.begin(), got.end(), texture.texels.begin()).first - got.begin());
+                        }
+                        out.notes.push_back(Hex(live.address) + " (" + std::to_string(live.size) + " bytes, " +
+                                            texture.name + "): the same up to byte " + std::to_string(at) + " of " +
+                                            std::to_string(size));
+                    }
                     continue;
                 }
                 matched = &texture;
@@ -362,15 +375,23 @@ void Wardrobe::Step(std::uint64_t now_ms) {
         places_ = std::move(found.places);   // (a texture finalized took its override with it)
         look_now_ = false, looked_ = true;
         generation_ = generation;
-        if (places_.empty() && !said_nothing_found_) {
-            said_nothing_found_ = true;
+        if (places_.empty()) {
             std::string notes;
             for (const std::string& n : found.notes) {
                 notes += "; " + n;
             }
-            host_.log("coop: look: no " + host_.what + " texture of your Link among the game's yet (" +
-                      std::to_string(found.copies) + " of puppets, left alone; " + std::to_string(found.listed) +
-                      " of the game's of those sizes, " + std::to_string(found.unread) + " not readable" + notes + ")");
+            std::string line = "coop: look: no " + host_.what + " texture of your Link among the game's yet (" +
+                               std::to_string(found.copies) + " of puppets, left alone; " +
+                               std::to_string(found.listed) + " of the game's of those sizes, " +
+                               std::to_string(found.unread) + " not readable, " + std::to_string(found.heads) +
+                               " with only the first bytes the same" + notes + ")";
+            // (said again when it changes, at most 20 times: the game makes its textures over a while)
+            if ((!said_nothing_found_ || line != said_) && said_count_ < 20) {
+                ++said_count_;
+                host_.log(line);
+            }
+            said_nothing_found_ = true;
+            said_ = std::move(line);
         }
     }
     std::size_t drawn = 0;

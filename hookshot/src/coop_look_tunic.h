@@ -98,7 +98,8 @@ struct Search {
     std::vector<Place> places;
     std::size_t copies = 0;   // the same texels outside the texture's own file (a puppet's copy): left alone
     std::size_t listed = 0;   // the game's textures of a fitting size
-    std::size_t unread = 0;   // textures of a fitting size whose storage could not be read
+    std::size_t unread = 0;
+    std::size_t heads = 0;    // textures whose first kHead bytes are a colour's, the rest not   // textures of a fitting size whose storage could not be read
     // What lies in front of the first few of those copies, for the log (why
     // none was taken): "0x... (N bytes): ..." (Probe).
     std::vector<std::string> notes;
@@ -163,6 +164,8 @@ private:
     bool looked_ = false;
     std::uint64_t generation_ = 0;
     bool said_nothing_found_ = false;
+    std::string said_;                        // the last "no texture" line (said again when it changes)
+    int said_count_ = 0;
 };
 
 }  // namespace CoopLookTunic
