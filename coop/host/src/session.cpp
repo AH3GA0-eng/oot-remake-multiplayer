@@ -11,6 +11,7 @@ Session::Session(net::Client& client, SessionSettings settings)
     : sampler_(settings.sampler),
       client_(client),
       on_event_(std::move(settings.on_event)),
+      game_frame_age_us_(std::move(settings.game_frame_age_us)),
       presence_(settings.presence) {
   sharing_ = settings.shared.has_value();
   if (settings.shared) {
@@ -65,7 +66,9 @@ FrameReport Session::frame(const std::optional<PlayerReading>& reading, FlagStor
   if (report.connected) {
     if (std::exchange(reset_sampler_, false)) sampler_.reset();
     sampler_.set_player_number(number);
-    for (const Outgoing& m : sampler_.frame(reading, report.server_now_us)) {
+    const std::uint64_t sample_us =
+        frame_aligned_us(report.server_now_us, game_frame_age_us_ ? game_frame_age_us_() : 0);
+    for (const Outgoing& m : sampler_.frame(reading, sample_us)) {
       protocol::Message message;
       if (protocol::decode(m.bytes, message) == protocol::Error::none) {
         out.emplace_back(std::move(message));

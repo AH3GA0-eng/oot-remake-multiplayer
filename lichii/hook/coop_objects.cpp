@@ -63,6 +63,7 @@
 #include "coop_svc.h"
 
 #include <algorithm>
+#include <limits>
 #include <utility>
 #include <tuple>
 #include <array>
@@ -89,6 +90,8 @@
 #include "coop/host/session.hpp"
 #include "coop/net/client.hpp"
 #include "coop_objects_sync.h"
+#include "coop_follow.h"
+#include "coop_frame_clock.h"
 #include "coop_link_sound.h"
 #include "coop_ocarina.h"
 #include "coop_puppet_sound.h"
@@ -486,6 +489,9 @@ public:
         std::array<float, 12> transform{};  // place, then the 3x3 rows
         bool rotation = false;              // false: keep the actor's own
         bool asleep = false;                // state 6 may be moved too (issue 101)
+        // jitter-b (coop_follow.h): a townsperson's velocity, metres a second: followed
+        // each game frame from when it was wished. Unset: written where it is.
+        std::optional<std::array<float, 3>> velocity;
     };
 
     using Hit = CoopHitReplay::Hit;
@@ -556,7 +562,8 @@ public:
         poses_ = std::move(poses);
         removes_ = std::move(removes);
         plays_ = std::move(plays);
-        want_ms_ = SteadyMs();
+        // jitter-b: the time the wishes are for (Share was given that game frame's time).
+        want_ms_ = CoopFrameClock::PresentAgeUs() != 0 ? CoopFrameClock::PresentAtMs() : SteadyMs();
     }
 
     // deku-visuals-b (issue 147): run the game's own push-node start on a
@@ -679,6 +686,17 @@ public:
                 WriteHolds(guest);
             }
             work_ = poses_;
+            std::erase_if(follow_, [this](const auto& f) {  // jitter-b: copies no longer followed
+                return std::none_of(work_.begin(), work_.end(),
+                                    [&f](const Pose& p) { return p.actor == f.first && p.velocity; });
+            });
+            if (resync_.Size() > 256) {  // jitter-b: copies that left
+                std::unordered_set<u64> playing;
+                for (const PlayWish& w : plays_) {
+                    playing.insert(w.slot == 0 ? w.address : w.address ^ (static_cast<u64>(w.slot) << 56));
+                }
+                resync_.Keep(playing);
+            }
             if (work_.size() > 1) {
                 std::rotate(work_.begin(), work_.begin() + (++turn_ % work_.size()), work_.end());
             }
@@ -765,9 +783,17 @@ public:
                 checked = p.sample;
                 float now_frame = 0.0f;
                 if (p.play_frame) {
-                    if (PlayFrame(guest, controller, now_frame) &&
-                        CoopNpcAnim::FrameGap(now_frame, frame, p.loop) <=
-                            CoopNpcAnim::kFrameSlack) {
+                    const float gap = PlayFrame(guest, controller, now_frame)
+                                          ? CoopNpcAnim::FrameGap(now_frame, frame, p.loop)
+                                          : std::numeric_limits<float>::infinity();
+                    // jitter-b: at most once a second, and not again while sets do not take.
+                    const auto verdict = resync_.Check(key, p.name, gap, now_ms);
+                    if (verdict == CoopNpcAnim::Resync::Verdict::give_up) {
+                        LOG_INFO(Core, "coop: npc-anim: copy {:#x} '{}': its frame sets do not take "
+                                       "({:.1f} frames off): left to its own playback",
+                                 p.address, p.name, gap);
+                    }
+                    if (verdict != CoopNpcAnim::Resync::Verdict::set) {
                         continue;
                     }
                     ++npc_framed_;
@@ -875,10 +901,16 @@ public:
             if (!Alive(guest, p.actor, p.asleep)) {
                 continue;
             }
+            Pose followed = p;
+            if (p.velocity) {
+                const CoopFollow::Vec3 at{p.transform[0], p.transform[1], p.transform[2]};
+                const auto drawn = follow_[p.actor].Step(at, *p.velocity, want_ms_, now_ms);
+                std::copy(drawn.begin(), drawn.end(), followed.transform.begin());
+            }
             if (p.rotation) {
-                guest.Write(p.actor + kActorPosition, p.transform.data(), 48);
+                guest.Write(p.actor + kActorPosition, followed.transform.data(), 48);
             } else {
-                guest.Write(p.actor + kActorPosition, p.transform.data(), 12);
+                guest.Write(p.actor + kActorPosition, followed.transform.data(), 12);
             }
             ++moved_;
             CoopPuppet::Call c;
@@ -1127,6 +1159,8 @@ private:
     CoopHitReplay::Replayer replayer_;  // the hit replay: its own locks (Step runs it under mutex_)
     u64 main_ = 0;
     std::vector<Pose> poses_;
+    std::unordered_map<u64, CoopFollow::Follower> follow_;  // jitter-b: by actor
+    CoopNpcAnim::Resync resync_;  // jitter-b: townspeople's frame sets
     std::vector<u64> removes_;
     std::vector<PlayWish> plays_;
     std::size_t replayed_ = 0;
@@ -3365,6 +3399,11 @@ private:
             if (w.rotation) {
                 std::copy(w.rotation->begin(), w.rotation->end(), p.transform.begin() + 3);
                 p.rotation = true;
+            }
+            // jitter-b: a townsperson is followed in even steps each game frame (coop_follow.h).
+            if (const auto name = names_.find(w.address);
+                w.velocity && name != names_.end() && name->second.first.starts_with("Npc_")) {
+                p.velocity = std::array<float, 3>{(*w.velocity)[0], (*w.velocity)[1], (*w.velocity)[2]};
             }
             wish.push_back(p);
             placed.emplace(w.address, w.position);

@@ -1,0 +1,32 @@
+#! switches LICHII_COOP_DEBUG_NPC=1
+# jitter, B: arrives 20 s after A and watches (see jitter.A.txt); marks at A's moments.
+mark start
+wait 1200
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 1500
+place -62.0 98.5 40.0
+wait 300
+mark w1
+wait 30
+mark w2
+wait 30
+mark w3
+wait 300
+wait 60
+mark r1
+wait 15
+mark r2
+wait 30
+mark r3
+wait 15
+mark r4
+wait 45
+mark r5
+wait 30
+mark r6
+wait 15
+mark r7
+wait 45
+mark r8
+wait 540
+mark end

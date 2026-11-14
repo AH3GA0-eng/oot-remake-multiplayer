@@ -152,6 +152,8 @@ Mat3 MatOf(const coop::protocol::Quat& q);
 struct PoseWrite {
     std::uint64_t address = 0;
     coop::protocol::Vec3 position{};
+    // jitter-b (coop_follow.h): how fast `position` moves, metres a second (unset: still).
+    std::optional<coop::protocol::Vec3> velocity;
     std::optional<Mat3> rotation;
 };
 

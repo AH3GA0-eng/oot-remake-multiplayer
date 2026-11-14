@@ -29,6 +29,7 @@
 #include "coop/protocol/messages.hpp"
 #include "coop_native_player.h"
 #include "coop_ocarina.h"
+#include "coop_follow.h"
 #include "coop_snap.h"
 #include "coop_link_sound.h"
 #include "coop_puppet_sound.h"
@@ -115,6 +116,14 @@ inline constexpr std::uint64_t kPartsEquipmentUser = 0x200;
 // a call that was taken is told from one that was not. The slot's link is at
 // EquipmentUser + 0x20 + 0x18 * slot (u32 id at +0x10, ~0 empty).
 inline constexpr std::uint64_t kEquipChangeState = 0xe34c40;
+// The game's own read of a slot's state: 0xce7ab0(eu, slot) returns 1 in
+// hand, 2 put away, 0 none (read from the dump: a request in the slot's
+// byte gives the rodata table at 0x3ef9474: bit 0 -> 0, bit 1 -> 1,
+// bit 2 -> 2; with no request, the state the piece itself keeps). The
+// puppet's own played animations can draw or put away its pieces too, so
+// the director asks this now and then and changes a piece again when the
+// game has it otherwise than its player (held-fix).
+inline constexpr std::uint64_t kEquipState = 0xce7ab0;
 // Taking armor off: 0x10aceb0(eu, index, 0) empties the EquipmentUser's
 // armor link `index` (eu + 0xe0 + 0x18 * index, the same {holder, id} shape
 // as a hand slot) and deletes its piece. The game's own GameData path
@@ -280,6 +289,9 @@ struct Target {
     std::uint8_t number = 0;  // the player; 0 is the debug puppet
     std::string actor;        // the actor pack name
     Vec3 position{};
+    // jitter-b (coop_follow.h): how fast `position` moves, metres a second, as of
+    // Input::made_ms. Unset (local players, the debug puppet): drawn where `position` is.
+    std::optional<Vec3> velocity;
     Mat3 rotation{1, 0, 0, 0, 1, 0, 0, 0, 1};
     Show show = Show::show;   // hold: frozen as it is; hide: parked out of sight
     const char* why = "";     // for the log when `show` changes ("our cutscene", ...); string literals only
@@ -305,6 +317,9 @@ struct Input {
     std::uint64_t main_base = 0;  // 0: no game, nothing is done
     std::string scene;            // the local scene; "" not known
     std::vector<Target> targets;
+    // When the targets were worked out (steady ms; 0 not known): the director takes
+    // each place forward from then to its own game frame (coop_follow.h).
+    std::uint64_t made_ms = 0;
     // The local game's drawing, from the renderer's camera (coop_camera.h).
     // A puppet created while the game loads a scene (the scene is already
     // readable) is made but never drawn, so a create waits for the drawing
@@ -374,6 +389,7 @@ public:
         std::uint64_t actor = 0;
         std::string actor_name;
         std::string anim_name;  // what was last played on it
+        std::size_t strays = 0; // actors of its player still being deleted
     };
     std::vector<SlotView> Slots() const;  // the calc thread, or tests
     // Any thread: bit n set while puppet n's actor is live in this scene and
@@ -408,6 +424,8 @@ public:
     // A worn piece this far from its shown puppet was left behind (made while
     // the puppet was parked under the floor, seen 2026-11-09): worn again.
     static constexpr float kGearFar = 5.0f;
+    // A piece set in hand or put away is checked against the game this often.
+    static constexpr std::uint64_t kHoldCheckMs = 500;
     static constexpr std::uint64_t kRewearMs = 1000;  // at most once a second
     static constexpr std::uint64_t kFarForMs = 100;   // far on two readings this far apart
     static constexpr std::uint8_t kRewearTries = 3;   // then given up, with one line
@@ -418,6 +436,13 @@ public:
     static constexpr std::uint64_t kDrawnMs = 750;
     // ...or, when the drawing never broke, this long after it.
     static constexpr std::uint64_t kSteadyMs = 3000;
+    // A stray (an actor of a puppet's player that is not its puppet any more:
+    // a create that timed out while its actor still loaded, a delete that did
+    // not finish) is asked to go with the game's own delete this often until
+    // it is gone (owner's playtest 2026-11-14: two puppets of one player).
+    static constexpr std::uint64_t kStrayDeleteMs = 1000;
+    // ...at most this many times (half a minute), then let go with a log line.
+    static constexpr int kStrayMaxDeletes = 30;
 
 private:
     struct Slot {
@@ -449,6 +474,7 @@ private:
         std::uint64_t anim_buffer = 0;  // which name buffer is next
         std::optional<float> frame_to_set;  // after a play
         std::optional<float> held_frame;    // while held
+        CoopFollow::Follower follow;        // jitter-b: their place taken to this game frame
         CoopSnap::Smoother smooth;          // issue 194: where it is drawn, jumps eased
         CoopSnap::Meter meter;              // issue 194: its place read back, snaps logged
         bool meter_skip = false;            // the next read is still the parked spot
@@ -471,6 +497,9 @@ private:
         int hold_slot = 0;                  // the change being made
         bool hold_in_hand = false;
         std::uint64_t hold_retry_ms = 0;    // no new change before this
+        std::uint64_t hold_check_ms = 0;    // no state check (kEquipState) before this
+        std::size_t hold_check_next = 0;    // the gear piece the next check starts from
+        std::uint8_t hold_said = 0;         // slots whose "set again" was logged and not yet held (bits)
         std::array<std::uint32_t, kGearCount> hold_id{};  // the piece each change was made for
         std::uint64_t tint_actor = 0;       // the actor the colour line was logged for
         std::uint32_t tint_color = 0;       // and its colour
@@ -487,11 +516,27 @@ private:
         std::uint64_t moved_frame = 0;      // the cave frame of the last matrix call
         CoopPuppetSound::State sound;       // the player's Ocarina on it (issue 152)
         CoopLinkSound::Player link_sound;   // the player's own sounds on it (issues 131, 152)
+        // Actors made for this player that are not `taken` any more (kStrayDeleteMs):
+        // deleted until gone, so there is never a second puppet of one player.
+        struct Stray {
+            std::uint64_t actor = 0;
+            std::uint64_t vtable = 0;  // as taken: a reused address is left alone
+            std::string name;          // the actor made, read back when the game has it
+            std::uint64_t next_ms = 0; // the next delete call
+            int deletes = 0;
+        };
+        std::vector<Stray> strays;
     };
     enum class Pending {
-        none, malloc, create, take, drop, remove, play, frame, sync, equip, unequip, hold, move,
-        sound, link_sound
+        none, malloc, create, take, drop, remove, play, frame, sync, equip, unequip, hold,
+        hold_check, move, sound, link_sound, stray
     };
+    // The slot's taken actor becomes a stray (above); the slot then has none.
+    void Abandon(Slot& slot, Guest& guest, std::uint64_t now_ms, const char* why);
+    // Strays gone, reused or given up are dropped; the next delete call for one, if due.
+    std::string StrayCheck(const Slot::Stray& s, Guest& guest) const;
+    void KeepStrays(Slot& slot, Guest& guest);
+    std::optional<Call> DeleteStray(Slot& slot, Guest& guest, std::uint64_t now_ms);
 
     void NewFrame(Guest& guest, std::uint64_t now_ms);
     void PoseFrame(Guest& guest, std::uint64_t now_ms);
@@ -543,6 +588,8 @@ private:
     CoopLinkSound::Budget sound_budget_;  // every puppet's sound starts together
     Pending pending_ = Pending::none;
     std::uint8_t pending_slot_ = 0;
+    std::uint64_t stray_actor_ = 0;  // the stray a Pending::stray call deletes
+    std::uint64_t stray_frame_ = ~std::uint64_t{0};  // the frame of the last stray delete
     int calls_ = 0;  // this frame
     std::size_t first_slot_ = 0;  // where this frame's Step starts (round robin)
     std::uint64_t frames_ = 0;
@@ -561,6 +608,7 @@ struct Remote {
     std::uint8_t number = 0;
     std::optional<std::string> scene;
     Vec3 position{};
+    std::optional<Vec3> velocity;  // presence's, metres a second
     std::optional<Quat> rotation;
     float fade = 1.0f;
     std::uint8_t status = 0;  // PLAYER_STATUS flags
