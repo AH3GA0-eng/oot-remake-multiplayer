@@ -65,10 +65,13 @@ press A
 wait 2400
 mark after
 wait 720                 # B gets on the floor first
-place -27.6 75.8 40.6    # deku-test: on the water 2 m west of the dive switch (-25.6 74.2 40.6)
+place -25.6 75.8 40.6    # deku-test: on the water right over the dive switch (top at -25.63 74.25 40.62)
 wait 180
-toward -25.6 40.6 45 A   # swim at it holding A: "Dive (Hold)" is pad A; Link dives onto the switch
-hold A 60
+hold A 240 dive          # "Dive (Hold)" is pad A (key E): a long dive down onto the switch; mark dive halfway
+wait 60
+place -25.6 76.5 40.6    # second try: dropped from above the water onto the switch
+wait 30
+hold A 240 dive2
 wait 60
 mark placed
 wait 150
