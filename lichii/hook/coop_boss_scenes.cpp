@@ -277,8 +277,19 @@ void Director::Ours(const Request& r, const Local& local, std::uint64_t now_us, 
     }
     const auto [b, kind] = *of;
     const std::string_view flow = kind == Kind::intro ? kBosses[b].intro : kBosses[b].outro;
-    // The flow's name in the log (the proof lines name it), with the setting the game asked when not the flow.
-    const std::string label = r.name == flow ? r.name : std::string(flow) + " (asked as " + r.name + ")";
+    // The flow's name starts each line (the proof lines name it); the setting the game asked, when not the flow,
+    // ends every line this call adds.
+    const std::string label(flow);
+    struct Suffix {
+        std::vector<std::string>& log;
+        std::size_t first;
+        std::string text;
+        ~Suffix() {
+            for (std::size_t i = first; i < log.size() && !text.empty(); ++i) {
+                log[i] += text;
+            }
+        }
+    } suffix{out.log, out.log.size(), r.name == flow ? std::string() : " (asked as " + r.name + ")"};
     if (!r.taken) {
         out.log.push_back(label + ": our game did not take it");
         return;

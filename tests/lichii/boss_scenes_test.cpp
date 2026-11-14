@@ -275,8 +275,8 @@ TEST_CASE("boss scenes: the settings a boss's own logic asks start its intro and
     REQUIRE(out.send.size() == 1);
     CHECK(out.send[0].kind == proto::BossSceneKind::intro_start);
     REQUIRE_FALSE(out.log.empty());
-    CHECK(out.log.back() == "Dm_Deku_BossIn (asked as InsideTheDekuTree_BossAppear): our game started it: the "
-                            "others in the area play it too");
+    CHECK(out.log.back() == "Dm_Deku_BossIn: our game started it: the others in the area play it too (asked as "
+                            "InsideTheDekuTree_BossAppear)");
     proto::BossScene start = out.send[0];
     start.player_number = 1;
     b.Receive(start);
