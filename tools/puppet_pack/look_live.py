@@ -102,7 +102,8 @@ def mark(data, slot):
     from your own Link's; the mark tells them apart (the module marks its copies the same way:
     hookshot/src/coop_look_parts.cpp Mark). That byte is in the last mip level (a few pixels: the
     item seen from very far) or the image's padding past it: the 2-bit colour indices of the last
-    row of a BC1/BC3 block, the top weight bits of an ASTC block. Not to be seen."""
+    pixel row of a BC1/BC3 block (in block-linear layout almost always the GOB padding of the last
+    mip); for ASTC the weights of one texel of the last block. Not to be seen."""
     if not 1 <= slot <= 255 or not data:
         raise TunicError(f"no mark for copy {slot}")
     out = bytearray(data)

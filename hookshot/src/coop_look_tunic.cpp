@@ -130,10 +130,9 @@ Search Find(const Textures& textures, const std::vector<std::shared_ptr<const Te
     if (largest == 0) {
         return out;
     }
-    // A storage is the image's own size: up to kFilePad shorter than the pack's
-    // texels (the file's padding), or its layout rounded up a little.
-    const std::uint64_t low = smallest > kFilePad ? smallest - kFilePad : 1;
-    const std::vector<Live> listed = textures.List(low, largest + kStorageSlack, nullptr);
+    // A storage is the image's own size (the pack's texels), or its layout
+    // rounded up a little.
+    const std::vector<Live> listed = textures.List(smallest, largest + kStorageSlack, nullptr);
     out.listed = listed.size();
     for (const Live& live : listed) {
         std::uint8_t head[kHead];
@@ -152,7 +151,8 @@ Search Find(const Textures& textures, const std::vector<std::shared_ptr<const Te
                 const Texture& texture = (*colour)[i];
                 const std::size_t size =
                     static_cast<std::size_t>(std::min<std::uint64_t>(texture.texels.size(), live.size));
-                if (texture.texels.size() > live.size + kFilePad || std::memcmp(head, texture.texels.data(), kHead) != 0) {
+                // (the whole image, its last byte too: a copy's mark is there)
+                if (texture.texels.size() > live.size || std::memcmp(head, texture.texels.data(), kHead) != 0) {
                     continue;
                 }
                 if (!Same(textures, live.address, texture.texels, size)) {

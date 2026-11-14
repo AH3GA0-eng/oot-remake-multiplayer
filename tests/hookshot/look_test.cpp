@@ -333,7 +333,7 @@ TEST_CASE("look tunic: look files are read whole or not at all") {
     CHECK_FALSE(CoopLookTunic::SameLayout(*t, *Colour({{"Tile_A", TexelsOf(9)}})));
 }
 
-TEST_CASE("look tunic: a texture is known by its exact texels, with no file in front; a marked copy is left alone") {
+TEST_CASE("look tunic: a texture is known by its exact texels, with no file in front, a marked copy left alone") {
     FakeTextures m(kBase, 0x10000);
     const auto green = Colour({{"Tile_A", TexelsOf(1)}});
     std::memcpy(m.at(kBase + 0x3000), TexelsOf(1).data(), kTexels);
@@ -739,27 +739,14 @@ TEST_CASE("look: your own Link wears your slot colour when you chose none") {
     CHECK(CoopLook::OwnTunic(0x123456u, 0) == 0x123456u);
 }
 
-TEST_CASE("look tunic: a storage shorter than the pack's texels (the file's padding) is found and drawn inside it") {
-    // The game's storage is the image's own size; the pack has the BNTX's data block, padded to 4096 bytes
-    // (the Hylian shield: 396288 bytes of 397312). The bytes past the storage are not compared nor drawn.
+TEST_CASE("look tunic: a storage shorter than the pack's texels is not taken (a copy's mark is the image's last byte)") {
+    // The pack holds each image at its own size, as the game's storage; a storage that is shorter would
+    // leave the mark uncompared, so a puppet's copy could be taken for your own.
     FakeTextures m(kBase, 0x10000);
     const auto green = Colour({{"Tile_A", TexelsOf(1)}});
-    const auto red = Colour({{"Tile_A", TexelsOf(9)}});
-    constexpr std::size_t kImage = kTexels - 56;
-    PutFile(m, kBase + 0x1000, "Tile_A", TexelsOf(1));
-    const std::uint64_t storage = kBase + 0x1000 + kOffset;
-    std::memset(m.at(storage + kImage), 0xEE, kTexels - kImage);   // past the storage: something else
-    m.Make(storage, kImage);
-    const auto found = CoopLookTunic::Find(m, {green, red});
-    REQUIRE(found.places.size() == 1);
-    auto place = found.places[0];
-    CHECK(place.size == kImage);
-    REQUIRE(CoopLookTunic::Draw(m, place, red));   // inside the storage: Longshot takes it
-    CHECK(place.overridden);
-    const auto drawn = m.Drawn(storage, kImage);
-    CHECK(std::equal(drawn.begin(), drawn.end(), TexelsOf(9).begin()));
-    REQUIRE(CoopLookTunic::Draw(m, place, green));
-    CHECK(m.overrides() == 0);
+    PutFile(m, kBase + 0x1000, "Tile_A", Marked(TexelsOf(1), 3));   // copy 3, marked in its last byte
+    m.Make(kBase + 0x1000 + kOffset, kTexels - 1);                   // seen as one byte shorter: the mark cut off
+    CHECK(CoopLookTunic::Find(m, {green}).places.empty());
 }
 
 TEST_CASE("look tunic: the puppets' file of every copy's gear is read (more than 64 textures)") {
