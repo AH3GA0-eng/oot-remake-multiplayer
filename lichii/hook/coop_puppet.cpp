@@ -363,6 +363,7 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                     DrawAt(slot, guest, *t, now_ms);
                 } else if (t->show == Show::hide) {
                     slot.smooth.Set(t->position);  // out of sight: comes back where they are
+                    slot.follow.Reset();
                     slot.meter.Reset();
                     Vec3 parked = t->position;
                     parked[1] -= kHideDrop;
@@ -795,6 +796,7 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     slot.held_frame.reset();
     slot.smooth.Reset();
     slot.meter.Reset();
+    slot.follow.Reset();
     slot.meter_skip = false;
     slot.sync_next = 0;
     slot.worn = {};
@@ -1344,8 +1346,16 @@ void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint6
         }
         slot.smooth.Spawned(at, target.position);  // a new puppet: eased from where the game made it (no spawn pop)
     }
+    // jitter-b (coop_follow.h): their place taken to this game frame and followed in even
+    // steps. Held (their cutscene) it is drawn where the samples say, as before.
+    Vec3 place = target.position;
+    if (target.velocity && !held) {
+        place = slot.follow.Step(target.position, *target.velocity, input_.made_ms, now_ms);
+    } else {
+        slot.follow.Reset();
+    }
     float jump = 0.0f;
-    const Vec3 drawn = slot.smooth.Step(target.position, now_ms, !held, &jump);
+    const Vec3 drawn = slot.smooth.Step(place, now_ms, !held, &jump);
     if (jump > 0.0f && slot.smooth.FromSpawn()) {
         // Held (their cutscene) the smoother does not ease: the step is drawn at once then.
         Say(who + (held ? " drawn at once from where it was made, " : " eased from where it was made, ") +
@@ -1560,6 +1570,7 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         t.color = r.color ? r.color : coop::protocol::slot_color(r.number);
         t.actor = ActorFor(r.adult, t.color);
         t.position = r.position;
+        t.velocity = r.velocity;
         if (r.rotation) {
             t.rotation = QuatToMatrix(*r.rotation);
         }
@@ -1857,6 +1868,7 @@ std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_n
                 Remote r;
                 r.number = n;
                 r.position = pose->position;
+                r.velocity = pose->velocity;
                 r.rotation = pose->rotation;
                 r.fade = pose->fade;
                 if (const auto* player = p.player(n)) {
@@ -1910,6 +1922,7 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
     g_planner->SetFailedTunics(g_director->FailedTunics());
     auto input = g_planner->Plan(main_base, scene, position, local_event, remotes, now_ms, own_gear, own_drawn, own_color);
     if (main_base != 0) CoopLocalGame::AddTargets(input);   // local co-op's players (coop_local_game.h)
+    input.made_ms = now_ms;
     StampDrawing(input, now_ms);
     g_director->SetInput(std::move(input));
 }

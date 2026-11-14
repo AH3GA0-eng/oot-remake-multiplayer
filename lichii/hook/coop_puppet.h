@@ -29,6 +29,7 @@
 #include "coop/protocol/messages.hpp"
 #include "coop_native_player.h"
 #include "coop_ocarina.h"
+#include "coop_follow.h"
 #include "coop_snap.h"
 #include "coop_link_sound.h"
 #include "coop_puppet_sound.h"
@@ -280,6 +281,9 @@ struct Target {
     std::uint8_t number = 0;  // the player; 0 is the debug puppet
     std::string actor;        // the actor pack name
     Vec3 position{};
+    // jitter-b (coop_follow.h): how fast `position` moves, metres a second, as of
+    // Input::made_ms. Unset (local players, the debug puppet): drawn where `position` is.
+    std::optional<Vec3> velocity;
     Mat3 rotation{1, 0, 0, 0, 1, 0, 0, 0, 1};
     Show show = Show::show;   // hold: frozen as it is; hide: parked out of sight
     const char* why = "";     // for the log when `show` changes ("our cutscene", ...); string literals only
@@ -305,6 +309,9 @@ struct Input {
     std::uint64_t main_base = 0;  // 0: no game, nothing is done
     std::string scene;            // the local scene; "" not known
     std::vector<Target> targets;
+    // When the targets were worked out (steady ms; 0 not known): the director takes
+    // each place forward from then to its own game frame (coop_follow.h).
+    std::uint64_t made_ms = 0;
     // The local game's drawing, from the renderer's camera (coop_camera.h).
     // A puppet created while the game loads a scene (the scene is already
     // readable) is made but never drawn, so a create waits for the drawing
@@ -449,6 +456,7 @@ private:
         std::uint64_t anim_buffer = 0;  // which name buffer is next
         std::optional<float> frame_to_set;  // after a play
         std::optional<float> held_frame;    // while held
+        CoopFollow::Follower follow;        // jitter-b: their place taken to this game frame
         CoopSnap::Smoother smooth;          // issue 194: where it is drawn, jumps eased
         CoopSnap::Meter meter;              // issue 194: its place read back, snaps logged
         bool meter_skip = false;            // the next read is still the parked spot
@@ -561,6 +569,7 @@ struct Remote {
     std::uint8_t number = 0;
     std::optional<std::string> scene;
     Vec3 position{};
+    std::optional<Vec3> velocity;  // presence's, metres a second
     std::optional<Quat> rotation;
     float fade = 1.0f;
     std::uint8_t status = 0;  // PLAYER_STATUS flags

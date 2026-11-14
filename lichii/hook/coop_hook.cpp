@@ -53,6 +53,7 @@
 #include "coop/presence/presence.hpp"
 #include "coop/version.hpp"
 #include "coop_boss.h"
+#include "coop_frame_clock.h"
 #include "coop_boss_scenes.h"
 #include "coop_teleport_game.h"
 #include "coop_pvp_game.h"
@@ -279,6 +280,7 @@ public:
             return false;
         }
         coop::host::SessionSettings session;
+        session.game_frame_age_us = [] { return CoopFrameClock::PresentAgeUs(); };  // jitter-b
         // The player's colour goes out in PLAYER_EQUIP (docs/puppet.md, "Colour").
         session.sampler.color = settings_.color;
         CoopPuppet::SetOwnColor(settings_.color);
@@ -430,6 +432,7 @@ public:
     }
 
     void Frame(Core::System& system) {
+        CoopFrameClock::BeginPresent();  // jitter-b: the game frame this present reads
         FrameView view;
         view.at = Clock::now();
         const auto reading = Read(system, view);
@@ -960,8 +963,9 @@ public:
                         view.scene, event, view.position,
                         reading ? reading->rotation : std::nullopt,
                         reading ? reading->animation : std::nullopt, report.server_now_us);
+        // jitter-b: stamped with the game frame the objects were read from (coop_frame_clock.h).
         CoopObjects::Share(system, report.connected ? session_.get() : nullptr, view.scene,
-                           report.server_now_us);
+                           coop::host::frame_aligned_us(report.server_now_us, CoopFrameClock::PresentAgeUs()));
         CoopHud::Frame(report.connected ? session_.get() : nullptr);  // our hearts (PLAYER_LIFE)
         CoopSpawn::Frame(system, report.connected ? session_.get() : nullptr, view.scene, report.server_now_us);
         CoopDrops::Frame(system, report.connected ? session_.get() : nullptr, view.scene, report.server_now_us);

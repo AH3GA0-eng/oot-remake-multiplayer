@@ -108,4 +108,37 @@ std::vector<std::pair<std::uint64_t, Aliases::Entry>> Aliases::DropAllBut(
     return out;
 }
 
+// jitter-b: Resync (coop_npc_anim.h).
+Resync::Verdict Resync::Check(std::uint64_t key, std::string_view name, float gap, std::uint64_t now_ms) {
+    Entry& e = entries_[key];
+    if (e.name != name) {
+        e = Entry{};
+        e.name = std::string(name);
+    }
+    if (!(gap > kFrameSlack)) {
+        e.misses = 0;  // in step: the game's own playback runs
+        return Verdict::in_step;
+    }
+    if (e.given_up) {
+        return Verdict::given_up;
+    }
+    if (e.set_ms != 0) {
+        if (now_ms - e.set_ms < kResyncMs) {
+            return Verdict::wait;
+        }
+        // Still about as far off as before the last set: that set did not take.
+        if (gap >= e.gap_at_set * 0.5f && ++e.misses >= kMaxMisses) {
+            e.given_up = true;
+            return Verdict::give_up;
+        }
+    }
+    e.set_ms = now_ms == 0 ? 1 : now_ms;
+    e.gap_at_set = gap;
+    return Verdict::set;
+}
+
+void Resync::Keep(const std::unordered_set<std::uint64_t>& keys) {
+    std::erase_if(entries_, [&keys](const auto& e) { return !keys.contains(e.first); });
+}
+
 } // namespace CoopNpcAnim

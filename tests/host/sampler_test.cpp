@@ -467,3 +467,40 @@ TEST_CASE("host sampler: 'by player number' after a colour sends the slot colour
   REQUIRE(d.equips.size() == 1);
   CHECK(d.equips[0].equipment.color == 0x00FF00u);
 }
+
+// jitter-b: presents at 60 a second read a game that moves 30 times a second. Stamped with the
+// present's time, every other step's velocity came out double (a 16 ms gap over a 33 ms move) and
+// the sample times were off by up to a present; stamped with the game frame's time
+// (frame_aligned_us), every sample is 33 ms apart and moves at the real speed.
+TEST_CASE("host sampler: samples stamped with the game frame read at 60 presents a second") {
+  constexpr std::uint64_t kGameUs = 33'333;
+  Sampler s;
+  std::vector<proto::PlayerSample> sent;
+  const std::uint64_t present_after[] = {1'000, 9'000, 4'000, 15'000, 2'000, 12'000};
+  for (int frame = 0; frame < 12; ++frame) {
+    const std::uint64_t frame_at = kStart + static_cast<std::uint64_t>(frame) * kGameUs;
+    const float x = 0.2f * static_cast<float>(frame);  // 6 m/s
+    // Two presents read this frame, the first some time after it, the second a present later.
+    for (const std::uint64_t later : {present_after[frame % 6], present_after[frame % 6] + kFrameUs}) {
+      const std::uint64_t now = frame_at + later;
+      const std::uint64_t age = later <= kFrameAgeMaxUs ? later : 0;
+      for (const auto& smp : decode(s.frame(at(x), frame_aligned_us(now, age))).samples) {
+        sent.push_back(smp);
+      }
+    }
+  }
+  REQUIRE(sent.size() >= 10);
+  for (std::size_t i = 1; i < sent.size(); ++i) {
+    CHECK(sent[i].time.server_time_us - sent[i - 1].time.server_time_us == kGameUs);
+    if (sent[i].velocity) {
+      CHECK((*sent[i].velocity)[0] == doctest::Approx(6.0f).epsilon(0.01));
+    }
+  }
+}
+
+TEST_CASE("host sampler: frame_aligned_us") {
+  CHECK(frame_aligned_us(1'000'000, 0) == 1'000'000);        // not known
+  CHECK(frame_aligned_us(1'000'000, 12'000) == 988'000);
+  CHECK(frame_aligned_us(1'000'000, kFrameAgeMaxUs + 1) == 1'000'000);  // a pause: now
+  CHECK(frame_aligned_us(10, 20) == 10);                      // no wrap
+}
