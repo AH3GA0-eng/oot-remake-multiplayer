@@ -448,7 +448,7 @@ TEST_CASE("difficulty: which placed enemies get extras") {
   constexpr std::uint64_t kPlaced = 0x1234'5678'9abc'def0ULL;
   CHECK(GetsExtras("Enemy_Keese", kPlaced, true, false));
   CHECK(GetsExtras("Enemy_Dekubaba", kPlaced, true, false));
-  CHECK(GetsExtras("Enemy_Octorok", kPlaced, true, false));
+  CHECK_FALSE(GetsExtras("Enemy_Octorok", kPlaced, true, false));  // water: its weight (no land spot)
   CHECK_FALSE(GetsExtras("Enemy_Keese", 0, true, false));  // made by the game, not placed
   CHECK_FALSE(GetsExtras("Enemy_Keese", ~std::uint64_t{0}, true, false));
   CHECK_FALSE(GetsExtras("Enemy_Keese", kPlaced, false, false));  // no life read: a helper
@@ -474,7 +474,7 @@ struct World {
   struct Data {
     std::string name;
     std::vector<CoopDifficulty::AreaEnemy> enemies;
-    std::vector<Point> ground;
+    std::vector<CoopDifficulty::Marker> ground;
   };
   std::vector<std::unique_ptr<Data>> areas;
   Data& Add(std::string name) {
@@ -542,13 +542,13 @@ TEST_CASE("difficulty: an extra stands only on a floor marker, apart from every 
   const Point from{0.0f, 5.0f, 0.0f};
   CHECK_FALSE(FindSpot(from, "Enemy_Stalfos", {}, {}).has_value());  // no marker: no spot
   // Markers too far, on another floor, or too near the enemy itself: none.
-  const std::vector<Point> useless{{9.0f, 5.0f, 0.0f},    // beyond kSpotReachM
+  const std::vector<CoopDifficulty::Marker> useless{{9.0f, 5.0f, 0.0f},    // beyond kSpotReachM
                                    {5.0f, 6.5f, 0.0f},    // 1.5 m up
                                    {0.0f, 3.9f, 5.0f},    // 1.1 m down (a pit's floor)
                                    {2.0f, 5.0f, 2.0f}};   // under 3.5 m from it
   CHECK_FALSE(FindSpot(from, "Enemy_Stalfos", useless, {}).has_value());
   // Two good ones: the nearer first, exactly the marker (never a point worked out between two).
-  std::vector<Point> ground = useless;
+  std::vector<CoopDifficulty::Marker> ground = useless;
   ground.push_back({0.0f, 5.5f, -7.0f});
   ground.push_back({4.0f, 4.5f, 0.0f});
   const auto spot = FindSpot(from, "Enemy_Stalfos", ground, {});
@@ -561,8 +561,24 @@ TEST_CASE("difficulty: an extra stands only on a floor marker, apart from every 
   // A smaller enemy may stand nearer: 2 m for a Keese.
   CHECK(FindSpot(from, "Enemy_Keese", ground, {}) == Point{2.0f, 5.0f, 2.0f});
   // Equal distance: the first marker (the table's order, the same in every game).
-  const std::vector<Point> twins{{0.0f, 5.0f, 4.0f}, {4.0f, 5.0f, 0.0f}};
-  CHECK(FindSpot(from, "Enemy_Stalfos", twins, {}) == twins[0]);
+  const std::vector<CoopDifficulty::Marker> twins{{0.0f, 5.0f, 4.0f}, {4.0f, 5.0f, 0.0f}};
+  CHECK(FindSpot(from, "Enemy_Stalfos", twins, {}) == twins[0].at);
+}
+
+TEST_CASE("difficulty: a door's landing is a spot only for an enemy on its side of the door") {
+  using CoopDifficulty::FindSpot;
+  using CoopDifficulty::Marker;
+  // A door at x = 0: its landing in the room at x < 0 faces -x, the one in the room at x > 0 faces +x.
+  const std::vector<Marker> door{{-1.0f, 0.0f, 0.0f, -1.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f, 0.0f}};
+  const Point west{-5.0f, 0.0f, 0.0f}, east{5.0f, 0.0f, 0.0f};
+  CHECK(FindSpot(west, "Enemy_Keese", door, {}) == Point{-1.0f, 0.0f, 0.0f});  // never the east one, though in reach
+  CHECK(FindSpot(east, "Enemy_Keese", door, {}) == Point{1.0f, 0.0f, 0.0f});
+  CHECK_FALSE(FindSpot(west, "Enemy_Keese", {&door[1], 1}, {}).has_value());  // only the far side's: none
+  // Beside the landing, not in front: not taken either (it may be the other room's wall).
+  CHECK_FALSE(FindSpot({-1.0f, 0.0f, 4.0f}, "Enemy_Keese", {&door[1], 1}, {}).has_value());
+  // A marker with no facing (grass, a start) serves either side.
+  const std::vector<Marker> grass{{-2.0f, 0.0f, 3.0f}};
+  CHECK(FindSpot(east, "Enemy_Keese", grass, {}).has_value());
 }
 
 TEST_CASE("difficulty: an area's extras come from its placement data, all of an enemy's or none") {
@@ -581,7 +597,7 @@ TEST_CASE("difficulty: an area's extras come from its placement data, all of an 
   REQUIRE(area.has_value());
   const auto special = [](std::string_view n) { return n == "Enemy_Stalchild"; };
   // 200%: one each where there is ground; the lone one has none: its weight instead.
-  auto plan = CoopDifficulty::PlanArea(*area, 200, special);
+  auto plan = CoopDifficulty::PlanArea(*area, 200, special, 32);
   CHECK(plan.no_spot == std::set<std::uint64_t>{kLone});
   REQUIRE(plan.spots.contains(kPair));
   CHECK(plan.spots[kPair] == std::vector<Point>{{4.0f, 0.0f, 0.0f}});
@@ -591,16 +607,38 @@ TEST_CASE("difficulty: an area's extras come from its placement data, all of an 
   CHECK_FALSE(plan.no_spot.contains(kPatrol));
   CHECK_FALSE(plan.spots.contains(0x10e0'0000'0005ULL));
   // 300%: two each: kPair takes both its markers; never one of two (all or nothing).
-  plan = CoopDifficulty::PlanArea(*area, 300, special);
+  plan = CoopDifficulty::PlanArea(*area, 300, special, 32);
   CHECK(plan.spots[kPair] == std::vector<Point>{{4.0f, 0.0f, 0.0f}, {-4.0f, 0.0f, 0.0f}});
   CHECK(plan.no_spot.contains(kOther));
   // The same data, the same plan, every time.
-  CHECK(CoopDifficulty::PlanArea(*area, 300, special).spots == plan.spots);
+  CHECK(CoopDifficulty::PlanArea(*area, 300, special, 32).spots == plan.spots);
+}
+
+TEST_CASE("difficulty: an area's cap takes the same enemies in every game, the rest their weight") {
+  World w;
+  const World::Data& d = w.Grid("Field", "Enemy_Keese", 0x4ee5'0000'0000ULL, 40);
+  const auto area = w.Lookup()(d.enemies[0].hash);
+  REQUIRE(area.has_value());
+  const auto plan = CoopDifficulty::PlanArea(*area, 200, nullptr, 10);
+  CHECK(plan.spots.size() == 10);
+  for (std::size_t i = 0; i < 40; ++i) {
+    CHECK(plan.spots.contains(d.enemies[i].hash) == (i < 10));  // placement id order, never sight order
+    CHECK(plan.no_spot.contains(d.enemies[i].hash) == (i >= 10));
+  }
+}
+
+TEST_CASE("difficulty: water enemies get their weight, never a land spot") {
+  using CoopDifficulty::Treatment;
+  for (const char* water : {"Enemy_Stinger", "Enemy_Stinger_UnderWater", "Enemy_ShellBlade", "Enemy_Octorok"}) {
+    CHECK_MESSAGE(CoopDifficulty::TreatmentOf(water, 0x1234'5678'9abc'def0ULL) == Treatment::fold, std::string(water));
+    CHECK(CoopDifficulty::TreatmentWhy(water, 0x1234'5678'9abc'def0ULL).starts_with("water"));
+  }
 }
 
 TEST_CASE("difficulty: every game plans the same extras whatever it has loaded and wherever its enemies walked") {
   World w;
-  const World::Data& d = w.Grid("Lake", "Enemy_Octorok", 0x0c70'0000'0000ULL, 2 * int(CoopDifficulty::Extras::kMost));
+  const World::Data& d =
+      w.Grid("Lake", "Enemy_Tektite_Red", 0x0c70'0000'0000ULL, 2 * int(CoopDifficulty::Extras::kMost));
   auto walk = Walk(d);
   std::vector<CoopDifficulty::Extras::Original> reversed(walk.rbegin(), walk.rend());
   std::vector<CoopDifficulty::Extras::Original> part(walk.begin(), walk.begin() + 10);  // the rest not loaded yet
@@ -625,7 +663,7 @@ TEST_CASE("difficulty: every game plans the same extras whatever it has loaded a
 TEST_CASE("difficulty: a scene visit's extras are planned once, bound to their actors, and forgotten after it") {
   World w;
   const World::Data& keese = w.Grid("Dungeon", "Enemy_Keese", 0x5a17c0de00000001ULL, 4);
-  const World::Data& octoroks = w.Grid("Dungeon2", "Enemy_Octorok", 0x0c70'0000'0000ULL, 100);
+  const World::Data& octoroks = w.Grid("Dungeon2", "Enemy_Tektite_Red", 0x0c70'0000'0000ULL, 100);
   CoopDifficulty::Extras x(w.Lookup());
   const auto walk = Walk(keese);
   CHECK(x.Plan("Dungeon", walk, 100, false, 0) == 0);  // the game as it is
@@ -656,9 +694,12 @@ TEST_CASE("difficulty: a scene visit's extras are planned once, bound to their a
   CHECK_FALSE(x.Holds("Enemy_Keese", 2000));
   CHECK(x.HashOf(0x7000 + x.All()[2].key * 0x10, "Enemy_Keese") == x.All()[2].hash);
   CHECK_FALSE(x.HashOf(0x9999, "Enemy_Keese").has_value());
-  // At most kMost in a visit, and never part of one enemy's copies.
+  // At most kMost in an area (the first enemies by placement id), never part of one enemy's copies;
+  // the ones past the cap get their weight.
   x.Plan("Dungeon", Walk(octoroks), 300, false, 3000);
-  CHECK(x.All().size() == CoopDifficulty::Extras::kMost);
+  CHECK(x.All().size() == 4 + CoopDifficulty::Extras::kMost);
+  CHECK_FALSE(x.NoSpot(octoroks.enemies[15].hash));
+  CHECK(x.NoSpot(octoroks.enemies[16].hash));
   // Another scene: the old ones are forgotten (gone with their scene).
   CHECK(x.Plan("Field", {}, 300, false, 4000) == 0);
   CHECK(x.All().empty());
@@ -738,10 +779,12 @@ TEST_CASE("difficulty: the game's own spots table is well formed") {
   CHECK(std::any_of(area->enemies.begin(), area->enemies.end(), [](const auto& e) { return e.hash == kMeadowMoblin; }));
   CHECK(std::is_sorted(area->enemies.begin(), area->enemies.end(),
                        [](const auto& a, const auto& b) { return a.hash < b.hash; }));
-  for (const Point& g : area->ground) {
+  for (const auto& g : area->ground) {
     CHECK(std::any_of(area->enemies.begin(), area->enemies.end(), [&](const auto& e) {
-      return Flat(g, e.at) <= CoopDifficulty::kSpotReachM + 1e-3f && std::fabs(g[1] - e.at[1]) <= 1.0f + 1e-3f;
+      return Flat(g.at, e.at) <= CoopDifficulty::kSpotReachM + 1e-3f && std::fabs(g.at[1] - e.at[1]) <= 1.0f + 1e-3f;
     }));
+    const float facing = std::hypot(g.fx, g.fz);  // a door's landing faces one way (unit, to 3 places), the rest none
+    CHECK((facing == 0.0f || facing == doctest::Approx(1.0f).epsilon(0.01)));
   }
   CHECK_FALSE(CoopDifficulty::AreaOf(0x1234'5678'9abc'def0ULL).has_value());
 }
@@ -800,7 +843,7 @@ TEST_CASE("difficulty: puzzle and set-piece kinds get their weight, never copies
         "Enemy_Peahat_Larva_Independent", "Npc_Gerudo_FortressGuard", "Animal_Cucco"}) {
     CHECK_MESSAGE(TreatmentOf(placed, kPlain) == Treatment::as_placed, std::string(placed));
   }
-  for (const char* copies : {"Enemy_Keese", "Enemy_Keese_Fire", "Enemy_Octorok", "Enemy_Stalfos", "Enemy_Wolfos",
+  for (const char* copies : {"Enemy_Keese", "Enemy_Keese_Fire", "Enemy_Biri", "Enemy_Stalfos", "Enemy_Wolfos",
                              "Enemy_Tektite_Red", "Enemy_Lizalfos", "Enemy_Dekubaba", "Enemy_Gibdo", "Enemy_Leever"}) {
     CHECK_MESSAGE(TreatmentOf(copies, kPlain) == Treatment::copies, std::string(copies));
   }

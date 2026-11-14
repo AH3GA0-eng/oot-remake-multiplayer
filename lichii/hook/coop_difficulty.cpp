@@ -456,6 +456,10 @@ constexpr KindRule kKindRules[] = {
     {Match::prefix, "Enemy_Poe_Flat", Treatment::fold, "set piece: a composer brother"},
     {Match::prefix, "Enemy_Shabom", Treatment::fold, "puzzle: the bubbles of a room"},
     {Match::prefix, "Enemy_ReDead", Treatment::fold, "set piece: stands at a set spot"},
+    // Water: they live in or under water, and the floor markers are all on land (extra_spots.py).
+    {Match::prefix, "Enemy_Stinger", Treatment::fold, "water: lives in the water, no land spot for it"},
+    {Match::prefix, "Enemy_ShellBlade", Treatment::fold, "water: lies on the bottom, no land spot for it"},
+    {Match::prefix, "Enemy_Octorok", Treatment::fold, "water: shoots from the water, no land spot for it"},
     {Match::prefix, "Enemy_TorchSlug", Treatment::fold, "puzzle: relights the torches"},
     {Match::prefix, "Enemy_Anubis", Treatment::fold, "puzzle: follows Link, beaten with fire"},
     {Match::prefix, "Enemy_IronKnuckle", Treatment::fold, "set piece: a one-on-one fight"},
@@ -560,7 +564,7 @@ float ApartFor(std::string_view name) {
     return starts(kBig) ? 3.5f : starts(kSmall) ? 2.0f : 2.5f;
 }
 
-std::optional<Point> FindSpot(const Point& from, std::string_view name, std::span<const Point> candidates,
+std::optional<Point> FindSpot(const Point& from, std::string_view name, std::span<const Marker> candidates,
                               const std::vector<Point>& apart) {
     const float least = ApartFor(name);
     const auto flat = [](const Point& a, const Point& b) {
@@ -571,7 +575,11 @@ std::optional<Point> FindSpot(const Point& from, std::string_view name, std::spa
     const auto near = [&](const Point& at, const Point& other) { return flat(at, other) < least - 1e-3f; };
     const Point* best = nullptr;
     float best_d = 0.0f;
-    for (const Point& c : candidates) {  // nearest first; among equals the first (the same in every game)
+    for (const Marker& m : candidates) {  // nearest first; among equals the first (the same in every game)
+        const Point& c = m.at;
+        if ((m.fx != 0.0f || m.fz != 0.0f) && (from[0] - c[0]) * m.fx + (from[2] - c[2]) * m.fz <= 0.0f) {
+            continue;  // a door's landing that faces away: the room behind it is another
+        }
         const float d = flat(from, c);
         if (d > kSpotReachM || std::fabs(c[1] - from[1]) > kSpotStepM || near(c, from) ||
             std::any_of(apart.begin(), apart.end(), [&](const Point& t) { return near(c, t); })) {
@@ -589,7 +597,7 @@ namespace {
 
 // The game's placement data for the extras' spots (tools/puppet_pack/extra_spots.py).
 using SpotEnemy = AreaEnemy;
-using SpotPoint = Point;
+using SpotPoint = Marker;
 struct SpotArea {
     std::string_view name;
     std::uint32_t enemy_begin, enemy_end, ground_begin, ground_end;
@@ -614,10 +622,10 @@ std::optional<Area> AreaOf(std::uint64_t hash) {
     }
     const SpotArea& a = kSpotAreas[it->second];
     return Area{a.name, std::span<const AreaEnemy>(kSpotEnemies).subspan(a.enemy_begin, a.enemy_end - a.enemy_begin),
-                std::span<const Point>(kSpotGround).subspan(a.ground_begin, a.ground_end - a.ground_begin)};
+                std::span<const Marker>(kSpotGround).subspan(a.ground_begin, a.ground_end - a.ground_begin)};
 }
 
-AreaPlan PlanArea(const Area& area, std::uint16_t count_pct, const NameTest& special) {
+AreaPlan PlanArea(const Area& area, std::uint16_t count_pct, const NameTest& special, std::size_t most) {
     AreaPlan plan;
     std::vector<Point> apart;  // every enemy placed here, then every spot taken
     apart.reserve(area.enemies.size());
@@ -639,6 +647,10 @@ AreaPlan PlanArea(const Area& area, std::uint16_t count_pct, const NameTest& spe
             continue;
         }
         const std::size_t before = apart.size();
+        if (before - area.enemies.size() + want > most) {
+            plan.no_spot.insert(e->hash);  // past the area's cap (placement id order): its weight
+            continue;
+        }
         while (apart.size() - before < want) {
             const auto spot = FindSpot(e->at, e->name, area.ground, apart);
             if (!spot) {
@@ -687,7 +699,7 @@ std::size_t Extras::Plan(std::string_view scene, const std::vector<Original>& wa
         }
         auto plan = plans_.find(area->name);
         if (plan == plans_.end()) {
-            plan = plans_.emplace(area->name, PlanArea(*area, count_pct, special_)).first;
+            plan = plans_.emplace(area->name, PlanArea(*area, count_pct, special_, kMost)).first;
         }
         if (plan->second.no_spot.contains(o.hash)) {
             no_spot_.insert(o.hash);
@@ -696,9 +708,6 @@ std::size_t Extras::Plan(std::string_view scene, const std::vector<Original>& wa
         const auto spots = plan->second.spots.find(o.hash);
         if (spots == plan->second.spots.end()) {
             continue;  // none for it at this count
-        }
-        if (extras_.size() + spots->second.size() > kMost) {
-            continue;  // the visit's cap: not even partly
         }
         unsigned& have = planned_[o.hash];
         for (const Point& at : spots->second) {

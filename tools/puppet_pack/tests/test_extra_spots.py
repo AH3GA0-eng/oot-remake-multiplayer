@@ -35,14 +35,25 @@ class SpotsTest(unittest.TestCase):
         self.assertEqual([a[0] for a in found], ["Room"])  # an area with no enemies is left out
         _, enemies, ground = found[0]
         self.assertEqual([e[0] for e in enemies], [1, 2])  # in placement id order
-        self.assertEqual(ground, sorted([(3.0, 0.5, 0.0), (23.0, 0.0, 0.0), (0.0, 0.0, 7.0)]))
+        self.assertEqual([m[0] for m in ground], sorted([(3.0, 0.5, 0.0), (23.0, 0.0, 0.0), (0.0, 0.0, 7.0)]))
+
+    def test_door_facing(self):
+        door = {"Gyaml": "DestinationAnchor", "Rotate": [3.1415927, 1.2217305, 3.1415927]}
+        fx, fz = xs.facing(door)
+        self.assertAlmostEqual(fx, 0.9397, places=3)  # the other landing of that door, (0, -1.22, 0), faces back
+        self.assertAlmostEqual(fz, -0.3420, places=3)
+        bx, bz = xs.facing({"Gyaml": "DestinationAnchor", "Rotate": [0.0, -1.2217305, 0.0]})
+        self.assertAlmostEqual(bx, -fx, places=3)
+        self.assertAlmostEqual(bz, -fz, places=3)
+        self.assertEqual(xs.facing({"Gyaml": "DestinationAnchor"}), (0.0, 1.0))  # no Rotate: +z
+        self.assertEqual(xs.facing({"Gyaml": "Obj_Plant_Grass_A_01", "Rotate": [0.0, 1.0, 0.0]}), (0.0, 0.0))
 
     def test_render(self):
         found = xs.areas({"Room": [actor("Enemy_Keese", 2, 0.0, 0.0, 0.0),
                                    actor("DestinationAnchor", 10, 3.0, 0.0, 0.0)]})
         text = xs.render(found)
         self.assertIn('{0x0000000000000002ull, "Enemy_Keese", {0.000f, 0.000f, 0.000f}},', text)
-        self.assertIn("{3.000f, 0.000f, 0.000f},", text)
+        self.assertIn("{3.000f, 0.000f, 0.000f, 0.000f, 1.000f},", text)  # a door landing with no Rotate faces +z
         self.assertIn('{"Room", 0, 1, 0, 1},', text)
 
 

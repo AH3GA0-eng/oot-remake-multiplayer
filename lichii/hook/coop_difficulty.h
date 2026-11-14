@@ -281,14 +281,24 @@ std::uint64_t ExtraHash(std::uint64_t hash, unsigned index);
 // fall, at the start, a tuft of grass); for the horde, where the game's own rolls rose this visit.
 // FindSpot takes the nearest such point within kSpotReachM (x, z) and kSpotStepM up or down, at
 // least ApartFor(name) from `from`, from every point of `apart` (the other enemies, the spots taken
-// before); ties by the candidates' order. None: nullopt.
+// before); ties by the candidates' order. A door's landing (a marker with a facing) only when `from`
+// is in front of it: a door has one on each side, each facing into its own room, so never the one
+// in the next room. None: nullopt.
 inline constexpr float kSpotReachM = 8.0f;  // tools/puppet_pack/extra_spots.py REACH_M
 inline constexpr float kSpotStepM = 1.0f;   // and STEP_M
 // The least distance between an extra and any other enemy: 2.5 m, 3.5 m for the big ones
 // (Moblin, Lizalfos, Dinolfos, Stalfos, Gibdo, Wolfos, Lynel, ...), 2 m for the small ones.
 float ApartFor(std::string_view name);
 using Point = std::array<float, 3>;
-std::optional<Point> FindSpot(const Point& from, std::string_view name, std::span<const Point> candidates,
+struct Marker {
+    Point at{};
+    float fx = 0.0f, fz = 0.0f;  // where it faces (x, z; a door's landing), or 0, 0: any side
+    constexpr Marker() = default;
+    constexpr Marker(const Point& p, float x = 0.0f, float z = 0.0f) : at(p), fx(x), fz(z) {}
+    constexpr Marker(float x, float y, float z, float face_x = 0.0f, float face_z = 0.0f)
+        : at{x, y, z}, fx(face_x), fz(face_z) {}
+};
+std::optional<Point> FindSpot(const Point& from, std::string_view name, std::span<const Marker> candidates,
                               const std::vector<Point>& apart);
 
 // One area of the game's placement data (coop_difficulty_spots.inc, made by
@@ -302,7 +312,7 @@ struct AreaEnemy {
 struct Area {
     std::string_view name;  // the Banc scene
     std::span<const AreaEnemy> enemies;
-    std::span<const Point> ground;
+    std::span<const Marker> ground;
 };
 // The area whose placements hold `hash` (the game's table); nullopt for one it does not have.
 std::optional<Area> AreaOf(std::uint64_t hash);
@@ -311,18 +321,19 @@ std::optional<Area> AreaOf(std::uint64_t hash);
 // copies (TreatmentOf copies, not `special` by name), in placement id order,
 // takes ExtraCount spots (FindSpot from where it is placed, apart from every
 // enemy placed there and every spot taken before), all of them or none: with
-// none, its weight instead (no_spot).
+// none, its weight instead (no_spot). At most `most` extras in the area, the
+// first enemies in that order first; the ones past it get their weight too.
 struct AreaPlan {
     std::map<std::uint64_t, std::vector<Point>> spots;
     std::set<std::uint64_t> no_spot;
 };
 using NameTest = std::function<bool(std::string_view)>;
-AreaPlan PlanArea(const Area& area, std::uint16_t count_pct, const NameTest& special);
+AreaPlan PlanArea(const Area& area, std::uint16_t count_pct, const NameTest& special, std::size_t most);
 
 // One scene visit's extras (present thread).
 class Extras {
 public:
-    static constexpr std::size_t kMost = 32;          // in one scene visit
+    static constexpr std::size_t kMost = 32;          // in one area (PlanArea's `most`)
     static constexpr std::uint64_t kBindWaitMs = 4000;  // a made one not yet bound to its actor
 
     using Lookup = std::function<std::optional<Area>(std::uint64_t)>;
@@ -474,7 +485,7 @@ private:
     std::string scene_;
     std::vector<Made> made_;
     std::map<std::uint64_t, Seen> rolls_;       // a roll's actor -> when first seen, how last seen
-    std::vector<Point> rises_;                  // where the game's rolls were first seen: its own floor
+    std::vector<Marker> rises_;                 // where the game's rolls were first seen: its own floor
     std::map<std::uint64_t, unsigned> planned_;  // a roll's actor -> made beside it
     std::map<std::uint64_t, std::uint64_t> by_address_;  // our actor -> its key
     std::uint64_t orphan_since_ = 0;  // ms: orphans with no living roll to join since (0: none)
