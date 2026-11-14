@@ -777,7 +777,7 @@ class BuildPackTest(unittest.TestCase):
 @unittest.skipIf(zstandard is None, "needs the zstandard package")
 def fake_bntx(name, blocks=None, fmt=0x1C):
     """A one-texture BNTX as tunic.py reads it: the name, a BRTI with the format at +0x1C and a
-    BRTD (size at +8) holding the blocks."""
+    BRTD (size at +8) holding the blocks (the image size at BRTI +0x50)."""
     if blocks is None:
         blocks = []
         for i in range(8):  # BC3: 8 alpha bytes, two greens, indices
@@ -786,8 +786,9 @@ def fake_bntx(name, blocks=None, fmt=0x1C):
     # The string section has room for either tunic name, as in the game's two tiles.
     strs = b"_STR" + struct.pack("<H", len(name)) + name.encode() + b"\x00"
     head = b"BNTX" + bytes(12) + strs + bytes(0x30 - len(strs)) + b"_DIC" + bytes(4)
-    brti = b"BRTI" + bytes(0x18) + struct.pack("<I", fmt << 8 | 6) + bytes(0x20)
     data = b"".join(blocks)
+    # (the image's own size at +0x50: look_live.texels)
+    brti = b"BRTI" + bytes(0x18) + struct.pack("<I", fmt << 8 | 6) + bytes(0x30) + struct.pack("<I", len(data)) + bytes(4)
     brtd = b"BRTD" + bytes(4) + struct.pack("<Q", 0x10 + len(data)) + data
     return head + brti + brtd
 
@@ -1080,7 +1081,7 @@ class FullBuildTest(unittest.TestCase):
     def test_look_items(self):
         # Gear colours on the puppets (look_items): per slot, a copy of each coloured item with
         # its own model project and textures, the game's own left as they were.
-        from puppet_pack import look_items, zs
+        from puppet_pack import look_items, look_live, zs
         plain = zstandard.ZstdCompressor()
         item = "Weapon_Shield_Hylian"
         info = f"Component/ModelInfo/{item}.engine__component__ModelInfo.bgyml"
@@ -1131,7 +1132,10 @@ class FullBuildTest(unittest.TestCase):
             self.assertNotIn(b"Mt_Weapon_Shield_Hylian_Alb\x00", got)
             name = look_items.tex_name("Mt_Weapon_Shield_Hylian_Alb", k)
             got = d.decompress(build.read(os.path.join(out, f"Tex/{name}.bntx.zs")))
-            self.assertEqual(got, tex.replace(b"Mt_Weapon_Shield_Hylian_Alb\x00", name.encode() + b"\x00"))
+            renamed = tex.replace(b"Mt_Weapon_Shield_Hylian_Alb\x00", name.encode() + b"\x00")
+            self.assertEqual(got, look_live.mark_bntx(renamed, k))   # marked: told from your own by its texels
+            self.assertEqual(look_live.texels(got)[:-1], look_live.texels(renamed)[:-1])   # only the last byte
+            self.assertEqual(look_live.texels(got)[-1], look_live.texels(renamed)[-1] ^ k)
             for f in (f"Pack/Actor/{actor}.pack", f"Actor/{actor}.engine__actor__ActorParam.bgyml",
                       f"Model/{actor}.{item}.bfres", f"Tex/{name}.bntx"):
                 self.assertGreater(t.get(f) or 0, 0, f)
@@ -1605,13 +1609,15 @@ class FullBuildTest(unittest.TestCase):
         for c in ("red", "blue"):
             self.assertEqual([n for n, _ in looks[c]], names)
             for n, data in looks[c]:
-                self.assertEqual(len(data), len(game[n]), n)
+                if n != tunic.DARK:   # (the dark tile: the kit's BC3 copy, below)
+                    self.assertEqual(len(data), len(game[n]), n)
             self.assertNotEqual(looks[c][0][1], game[names[0]])
-        # the tile is your own tile's; the dark tile keeps the game's format (not the BC3 copy)
+        # the tile is your own tile's; the dark tile the BC3 copy the kit puts over the game's for your
+        # colour (self_dark_tiles): what the game's memory holds then
         self.assertEqual(looks["red"][0][1], look_live.texels(d.decompress(build.read(
             os.path.join(mod, m["self_tiles"]["red"])))))
-        self.assertEqual(looks["red"][1][1], look_live.texels(tunic_extra.recolor(game_dark, "red",
-                                                                                  tunic.average_luma(game_tile))))
+        self.assertEqual(looks["red"][1][1], look_live.texels(d.decompress(build.read(
+            os.path.join(mod, m["self_dark_tiles"]["red"])))))
 
     def test_build_look_files_without_green(self):
         from puppet_pack import look_live

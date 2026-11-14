@@ -8,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -406,13 +407,18 @@ void StartModule() {
     host.textures = g_textures.get();
     host.file = [](const std::string& colour) { return ReadFile(LookDir() / (colour + ".bin")); };
     host.log = [](const std::string& line) { LOG_INFO(Core, "{}", line); };
+    if (const char* self = std::getenv("LICHII_COOP_SELF_TUNIC")) {
+        host.start = self;   // (the kit put that colour's files in: Set-KitSelfTunic)
+    }
     CoopLookTunic::Wardrobe::Host gear = host;
     gear.file = GearFile;
     gear.base = CoopLookParts::kBase;
+    gear.start.clear();   // (the kit changes only the tunic's files)
     gear.what = "gear";
     CoopLookTunic::Wardrobe::Host puppets = host;
     puppets.file = CopiesFile;
     puppets.base = CoopLookParts::kCopiesBase;
+    puppets.start.clear();
     puppets.what = "puppets' gear";
     g_wardrobe = std::make_unique<CoopLookTunic::Wardrobe>(std::move(host));
     g_gear = std::make_unique<CoopLookTunic::Wardrobe>(std::move(gear));

@@ -273,12 +273,15 @@ fi
 pack_from=$game
 [[ -n $pack_from ]] || { [[ -f $remembered ]] && IFS= read -r pack_from <"$remembered" || true; }
 mod=$GAME/mods/contents/0400486024DEC000/coop-puppet
-if [[ -f $mod/coop_puppet.json && $(cat "$mod/.coop-stamp" 2>/dev/null) == "$src_stamp" ]]; then
+# (the pack tool's own files too: a pack made by another version of the tool is made again, as the
+# Windows kit's Test-KitPuppetPackStale does; the look files and the copies' marks change with it)
+pack_stamp="$src_stamp tool:$(cd "$DATA/tools/puppet_pack" && LC_ALL=C sha256sum -- *.py | sha256sum | cut -d' ' -f1)"
+if [[ -f $mod/coop_puppet.json && $(cat "$mod/.coop-stamp" 2>/dev/null) == "$pack_stamp" ]]; then
     say '  puppet pack: built already'
 elif [[ -n $pack_from && -e $pack_from ]]; then
     say '  building the puppet pack ...'
     if "$PY" -I -B "$DATA/tools/puppet_pack/build.py" --romfs "$pack_from" --mod-dir "$mod" --title-rows 2>&1 | sed 's/^/    /'; then
-        printf '%s' "$src_stamp" >"$mod/.coop-stamp"
+        printf '%s' "$pack_stamp" >"$mod/.coop-stamp"
     else
         warn 'the puppet pack was not built (said why above): other players show as stand-ins.'
     fi

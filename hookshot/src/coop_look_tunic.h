@@ -11,10 +11,10 @@
 //
 // The puppet pack has those texels per colour (tools/puppet_pack/look_live.py:
 // coop_look/<colour>.bin, green being the game's own). A texture is one the
-// game made (Longshot lists them) whose storage holds a colour's texels, and
-// only inside its own file's image: the file's header (BNTX) in front of them,
-// naming the texture. The puppets' copies of the same texels have another name
-// and are left alone.
+// game made (Longshot lists them) whose storage holds a colour's texels
+// exactly. The game copies texels into its texture memory with no file or name
+// in front (lane1, 2026-11-14), so the puppets' copies of the same texels carry
+// a mark (look_live.py mark, CoopLookParts::Mark) and are left alone.
 //
 // Nothing here runs on the game's thread: Wardrobe::Step is the worker's.
 #pragma once
@@ -44,11 +44,6 @@ inline constexpr std::size_t kHead = 64;
 // How much larger than its texels a texture's storage may be (its layout
 // rounded up): only storages up to this much larger are compared.
 inline constexpr std::uint64_t kStorageSlack = 0x10000;
-// How much longer than its storage a texture's texels in the pack may be: a
-// BNTX's data block is padded to 4096 bytes, the game's storage is the
-// image's own size (the Hylian shield: 396288 bytes of 397312). Only the
-// bytes inside the storage are compared and drawn.
-inline constexpr std::uint64_t kFilePad = 0x1000;
 // A texture file's header is at most this long (the game's are 4096 bytes).
 inline constexpr std::uint64_t kMaxOffset = 0x10000;
 
@@ -58,8 +53,8 @@ inline constexpr std::uint64_t kMaxOffset = 0x10000;
 std::optional<Texels> Parse(const std::vector<std::uint8_t>& file, std::string* why = nullptr);
 // The file of these texels (Parse reads it back).
 std::vector<std::uint8_t> Pack(const Texels& texels);
-// Two colours of one pack: the same textures, each as long and at the same
-// offset. Only then may one's texels be written over the other's.
+// Two colours of one pack: the same textures in the same order (a texture of
+// another size in one of them is not drawn: Draw).
 bool SameLayout(const Texels& a, const Texels& b);
 
 // The game's textures and Longshot's overrides of them (hos_coop_texture.h).
@@ -96,11 +91,14 @@ struct Place {
 
 struct Search {
     std::vector<Place> places;
-    std::size_t copies = 0;   // the same texels outside the texture's own file (a puppet's copy): left alone
+    std::size_t listed = 0;   // the game's textures of a fitting size
+    std::size_t unread = 0;   // ... whose storage could not be read
+    std::size_t heads = 0;    // ... whose first kHead bytes are a colour's, the rest not (a copy's mark, a painting)
 };
 // Every texture of `colours` the game has made: its storage holds the
-// colour's texels (those inside the storage: kFilePad), in its own file's
-// image.
+// colour's texels exactly, the whole image (the pack's texels are the image's
+// own size, as the game's storage; a copy's mark is its last byte); the first
+// colour that holds them is the one held.
 Search Find(const Textures& textures, const std::vector<std::shared_ptr<const Texels>>& colours);
 // Draws the place in `colour`: an override, or none when the game's memory
 // holds that colour already. False when Longshot refused it (nothing changed).
@@ -119,6 +117,10 @@ public:
         // log calls the textures ("tunic").
         std::string base = "green";
         std::string what = "tunic";
+        // The colour the game's files give your Link at the start, when not the
+        // base: the kit put that colour's files in (LICHII_COOP_SELF_TUNIC),
+        // so its texels are what the game's memory holds.
+        std::string start;
     };
 
     explicit Wardrobe(Host host) : host_(std::move(host)) {}
@@ -150,7 +152,7 @@ private:
     bool kicked_ = false;                     // guarded
     // Step's thread only:
     std::string asked_;                       // the wanted colour of the last round
-    std::shared_ptr<const Texels> green_, target_;
+    std::shared_ptr<const Texels> green_, start_, target_;
     std::string target_name_;
     std::string refused_;                     // a colour the pack does not have (said once)
     std::vector<Place> places_;
@@ -158,6 +160,8 @@ private:
     bool looked_ = false;
     std::uint64_t generation_ = 0;
     bool said_nothing_found_ = false;
+    std::string said_;                        // the last "no texture" line (said again when it changes)
+    int said_count_ = 0;
 };
 
 }  // namespace CoopLookTunic
