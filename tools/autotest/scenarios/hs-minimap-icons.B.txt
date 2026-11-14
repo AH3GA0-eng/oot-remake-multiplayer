@@ -1,0 +1,27 @@
+# hs-minimap-icons: B goes where A goes and stands still (header in A).
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-deku
+wait 600
+warp InsideTheDekuTree Entrance
+wait 900
+mark b-deku2
+wait 120
+warp KokiriForest_Child FrontDekuTree
+wait 900
+mark b-kokiri
+wait 240
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 900
+mark b-kak
+wait 600

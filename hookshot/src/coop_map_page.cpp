@@ -231,14 +231,26 @@ void Diagnose(const Menu& menu, bool dungeon, bool placed) {
         }
         now += " ";
         for (std::size_t i = 0; i < sizeof b; ++i) {
-            if (i >= kPaneMatrix && i < kPaneMatrix + 48) continue;  // (the matrix: it moves every frame)
+            if (i >= kPaneMatrix && i < kPaneMatrix + 48) continue;  // (the matrix: logged below as numbers)
             now += fmt::format("{:02x}", b[i]);
             if (i == kPaneMatrix - 1) now += "|";
         }
     }
     now = (placed ? "placed" : "not placed") + now;
-    if (now != last) {
-        last = now;
+    if (now == last) {
+        busy = false;
+        return;
+    }
+    last = now;
+    for (const Found* f : {dungeon ? &g_mini_dungeon : &g_mini_field, &g_mini_window}) {
+        float m[12] = {};
+        const std::uint64_t pane = PaneNow(*f, menu);
+        if (pane != 0 && CoopRuntime::Read(pane + kPaneMatrix, m, sizeof m)) {
+            now += fmt::format(" m[{:.3f} {:.3f} {:.3f} | {:.3f} {:.3f} {:.3f} | {:.3f} {:.3f} {:.3f} | {:.1f} {:.1f} {:.1f}]",
+                               m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10], m[11]);
+        }
+    }
+    {
         LOG_INFO(Core, "coop: map: minimap panes ({}, root/picture/frame bytes 0-27|58-af): {}",
                  dungeon ? "dungeon" : "area", now);
         ++lines;
@@ -256,7 +268,13 @@ std::optional<map::MinimapPanes> Minimap(bool dungeon) {
     const auto picture = dungeon ? ReadPane(g_mini_dungeon, *menu, kMiniDungeonSize, kMiniDungeonSize)
                                  : ReadPane(g_mini_field, *menu, kMiniFieldSize, kMiniFieldSize);
     const auto window = ReadPane(g_mini_window, *menu, kMiniWindowSize, kMiniWindowSize);
-    const bool placed = picture && window && map::pane_usable(*picture) && map::pane_usable(*window);
+    float alpha = 0.0f;
+    const std::uint64_t root = PaneNow(g_mini_root, *menu);
+    if (root == 0 || !CoopRuntime::Read(root + kPaneAlpha, &alpha, sizeof alpha) || !std::isfinite(alpha)) {
+        alpha = 0.0f;
+    }
+    const bool placed =
+        picture && window && map::pane_usable(*picture) && map::pane_usable(*window) && alpha > 0.0f;
     Diagnose(*menu, dungeon, placed);
     if (!placed) {
         return std::nullopt;
@@ -264,6 +282,7 @@ std::optional<map::MinimapPanes> Minimap(bool dungeon) {
     map::MinimapPanes mm;
     mm.picture = *picture;
     mm.window = *window;
+    mm.alpha = (std::min)(alpha, 1.0f);
     return mm;
 }
 

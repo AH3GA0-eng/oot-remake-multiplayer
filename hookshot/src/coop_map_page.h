@@ -49,6 +49,8 @@ inline constexpr const char* kMiniRootPane = "N_MiniMap_00";
 inline constexpr std::uint64_t kFindPane = 0x8078e2b0;  // (layout, "name") -> pane, or 0
 inline constexpr std::uint64_t kScreenLayout = 0x28;     // a screen's layout
 inline constexpr std::uint64_t kPaneMatrix = 0x28;       // a pane's global matrix
+inline constexpr std::uint64_t kPaneAlpha = 0x78;        // a pane's alpha with its parents' (float; run 20261114-105315:
+                                                         // the minimap's panes fade 0 -> 1 together as it comes)
 inline constexpr std::uint64_t kHudFloors = 0x1368;      // the HUD screen: floor shown, count, lowest (s32)
 
 // The game's menus, from patch 0018.

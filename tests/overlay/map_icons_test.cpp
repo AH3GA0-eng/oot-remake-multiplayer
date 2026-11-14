@@ -313,3 +313,18 @@ TEST_CASE("minimap in a dungeon: a player on another floor is marked by how many
   REQUIRE(out.size() == 2);
   CHECK(out[1].floor_delta == 0);
 }
+
+TEST_CASE("minimap: the icons fade with the game's own minimap, and none while it is hidden") {
+  std::vector<Icon> out;
+  MinimapPanes mm = panes();
+  mm.alpha = 0.5f;
+  minimap_icons(mm, room(), 0, {at(2, 1, 0, 1, "Room")}, out);
+  REQUIRE(out.size() == 1);
+  CHECK(out[0].alpha == doctest::Approx(0.5f));
+  mm.alpha = 0.0f;
+  minimap_icons(mm, room(), 0, {at(2, 1, 0, 1, "Room")}, out);
+  CHECK(out.empty());
+  mm.alpha = std::numeric_limits<float>::quiet_NaN();
+  minimap_icons(mm, room(), 0, {at(2, 1, 0, 1, "Room")}, out);
+  CHECK(out.empty());
+}

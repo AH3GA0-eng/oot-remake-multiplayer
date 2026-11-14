@@ -690,6 +690,18 @@ const CoopDraw::MapShown* MapScene(bool camera, std::uint8_t self) {
         p.fade = 1.0f;
         p.rgb = 0xFFFFFF;
         if (names) m.names.back() = "self";
+        static auto next_log = std::chrono::steady_clock::time_point{};
+        const auto now = std::chrono::steady_clock::now();
+        if (m.minimap && now >= next_log) {  // (where our code puts our own Link, in the layout's units)
+            next_log = now + std::chrono::seconds(5);
+            static std::vector<coop::overlay::map::Icon> one;
+            coop::overlay::map::minimap_icons(*m.minimap, *capture, m.minimap_floor, {p}, one);
+            LOG_INFO(Core, "coop: map: self in {} at {:.1f} {:.1f} {:.1f}: on the minimap {} (alpha {:.2f})", view.scene,
+                     p.position[0], p.position[1], p.position[2],
+                     one.empty() ? std::string("nowhere") : fmt::format("{:.0f} {:.0f}{}", one[0].x, one[0].y,
+                                                                         one[0].clamped ? " (held at the edge)" : ""),
+                     m.minimap->alpha);
+        }
     }
     return &m;
 }

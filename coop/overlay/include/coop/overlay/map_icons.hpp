@@ -130,6 +130,7 @@ struct MinimapPanes {
   Pane picture;
   Pane window;
   float edge_inset = 0.0f;  // layout units kept free at the window's edge for a clamped icon
+  float alpha = 1.0f;       // the game's own fade of its minimap (0: hidden, no icons): the icons fade with it
 };
 
 // The minimap's icons for everyone in one of `capture`'s scenes (others left

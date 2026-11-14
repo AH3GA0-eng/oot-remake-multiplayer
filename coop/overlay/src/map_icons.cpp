@@ -192,6 +192,8 @@ void minimap_icons(const MinimapPanes& mm, const Capture& c, int shown_floor, co
   const Pane& pic = mm.picture;
   const Pane& win = mm.window;
   if (!pane_usable(pic) || !pane_usable(win) || !finite(c.height) || c.height <= 0) return;
+  const float fade = finite(mm.alpha) ? std::clamp(mm.alpha, 0.0f, 1.0f) : 0.0f;
+  if (fade <= 0.0f) return;
   // The window's own units from the layout's (y up from the middle): its matrix inverted.
   const float det = win.m[0] * win.m[4] - win.m[1] * win.m[3];
   const float inset_layout = finite(mm.edge_inset) ? std::max(0.0f, mm.edge_inset) : 0.0f;
@@ -202,6 +204,7 @@ void minimap_icons(const MinimapPanes& mm, const Capture& c, int shown_floor, co
   for (const Player& p : players) {
     if (!p.scene || !finite(p.position) || !in_capture(c, *p.scene)) continue;
     Icon icon = start(p);
+    icon.alpha *= fade;
     // The capture fills the picture: +X right, +Z down on it; the pane's y is up.
     const float u = (p.position[0] - c.centre_x) / width_m;
     const float v = (p.position[2] - c.centre_z) / c.height;
