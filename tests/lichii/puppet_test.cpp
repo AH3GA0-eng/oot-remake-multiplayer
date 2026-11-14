@@ -2089,3 +2089,157 @@ TEST_CASE("puppet link sound: a sound call the cave did not make does not silenc
     CHECK(again->function == kBase + CoopLinkSound::addr::kSearchAsset);
     CHECK(d.Slots()[0].phase == Phase::live);
 }
+
+namespace {
+constexpr std::uint64_t kRequest2 = 0x500000000;
+constexpr std::uint64_t kActor2 = 0x500002000;
+
+// A second request and actor, for the create after a retry.
+void SpawnSecond(Game& g, std::uint64_t handle, std::uint32_t state = 4) {
+    g.guest.Map(kRequest2, 0x30);
+    g.guest.Map(kActor2, 0x400);
+    g.guest.Set(kRequest2, std::uint32_t{0x10000 | addr::kRequestReady});
+    g.guest.Set(kRequest2 + addr::kRequestActor, kActor2);
+    g.guest.Set(kActor2, kVtable);
+    g.guest.Set(kActor2 + addr::kActorState, state);
+    g.guest.Set(handle, kRequest2);
+}
+
+int Deletes(const std::vector<Call>& calls, std::uint64_t actor) {
+    int n = 0;
+    for (const auto& c : calls) {
+        n += c.function == kBase + addr::kRequestDelete && c.x[0] == actor;
+    }
+    return n;
+}
+
+const Call* Find(const std::vector<Call>& calls, std::uint64_t function) {
+    for (const auto& c : calls) {
+        if (c.function == kBase + function) {
+            return &c;
+        }
+    }
+    return nullptr;
+}
+}  // namespace
+
+TEST_CASE("puppet stray: an actor that spawns late after a retry is deleted, one puppet stays") {
+    Game g;
+    std::vector<std::string> log;
+    Director d([&](const std::string& line) { log.push_back(line); });
+    d.SetInput(Wants({At(2, 0, 0, 0)}));
+    auto calls = Frame(d, g, 0);
+    REQUIRE(calls.size() == 2);
+    // Taken, but still loading (state 3), as in the owner's playtest.
+    g.Spawn(calls[1].x[3], 3);
+    calls = Frame(d, g, 10);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kTakeCreated);
+
+    // The create times out: its actor is asked to go with the game's delete.
+    const std::uint64_t timeout = Director::kCreateTimeoutMs + 20;
+    calls = Frame(d, g, timeout);
+    CHECK(Deletes(calls, kActor) == 1);
+    CHECK(d.Slots()[0].phase == Phase::idle);
+    CHECK(d.Slots()[0].strays == 1);
+
+    // The retry: a new actor, live.
+    calls = Frame(d, g, timeout + 5100);
+    const Call* create = Find(calls, addr::kCreate);
+    REQUIRE(create != nullptr);
+    CHECK(Deletes(calls, kActor) == 1);  // still there: asked again (once a second)
+    SpawnSecond(g, create->x[3]);
+    Frame(d, g, timeout + 5200);
+    Frame(d, g, timeout + 5210);
+    REQUIRE(d.Slots()[0].phase == Phase::live);
+    CHECK(d.Slots()[0].actor == kActor2);
+
+    // The old one finishes loading late: still deleted, never a second puppet.
+    g.guest.Set(kActor + addr::kActorState, std::uint32_t{4});
+    calls = Frame(d, g, timeout + 6200);
+    CHECK(Deletes(calls, kActor) == 1);
+    CHECK(Deletes(calls, kActor2) == 0);
+    // The game deletes it: no more calls for it, the puppet stays.
+    g.guest.Set(kActor + addr::kActorState, std::uint32_t{8});
+    calls = Frame(d, g, timeout + 7300);
+    CHECK(Deletes(calls, kActor) == 0);
+    CHECK(d.Slots()[0].strays == 0);
+    CHECK(d.Slots()[0].phase == Phase::live);
+    CHECK(d.Slots()[0].actor == kActor2);
+    CHECK(Deletes(Frame(d, g, timeout + 9000), kActor) == 0);
+
+    bool said = false;
+    for (const auto& line : log) {
+        said = said || line.find("is a stray (its create timed out)") != std::string::npos;
+    }
+    CHECK(said);
+}
+
+TEST_CASE("puppet stray: a rejoin whose old puppet is not deleted in time keeps one puppet") {
+    Game g;
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0)}));
+    auto calls = Frame(d, g, 0);
+    g.Spawn(calls[1].x[3]);
+    Frame(d, g, 10);
+    Frame(d, g, 15);
+    REQUIRE(d.Slots()[0].phase == Phase::live);
+
+    // The player leaves; the game leaves the actor standing past the 5 s wait.
+    d.SetInput(Wants({}));
+    Frame(d, g, 100);
+    calls = Frame(d, g, 100 + Director::kLeaveGraceMs);
+    CHECK(Deletes(calls, kActor) == 1);
+    Frame(d, g, 8000);
+    CHECK(d.Slots()[0].phase == Phase::idle);
+    CHECK(d.Slots()[0].strays == 1);
+
+    // They join again: the old one is asked to go first, then the new create.
+    d.SetInput(Wants({At(1, 0, 0, 0)}));
+    calls = Frame(d, g, 9000);
+    REQUIRE(calls.size() == 2);
+    CHECK(Deletes(calls, kActor) == 1);
+    CHECK(calls[1].function == kBase + addr::kCreate);
+    SpawnSecond(g, calls[1].x[3]);
+    Frame(d, g, 9100);
+    Frame(d, g, 9110);
+    REQUIRE(d.Slots()[0].phase == Phase::live);
+    CHECK(d.Slots()[0].actor == kActor2);
+    g.guest.Set(kActor + addr::kActorState, std::uint32_t{9});
+    Frame(d, g, 10100);
+    CHECK(d.Slots()[0].strays == 0);
+    CHECK(d.Slots()[0].actor == kActor2);
+}
+
+TEST_CASE("puppet stray: an address the engine reused for another actor is left alone") {
+    Game g;
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0)}));
+    auto calls = Frame(d, g, 0);
+    g.Spawn(calls[1].x[3], 3);
+    Frame(d, g, 10);
+    CHECK(Deletes(Frame(d, g, Director::kCreateTimeoutMs + 20), kActor) == 1);
+    REQUIRE(d.Slots()[0].strays == 1);
+    g.guest.Set(kActor, kVtable + 0x100);  // freed and made into something else
+    CHECK(Deletes(Frame(d, g, Director::kCreateTimeoutMs + 2000), kActor) == 0);
+    CHECK(d.Slots()[0].strays == 0);
+}
+
+TEST_CASE("puppet stray: an actor of another name at the address is left alone") {
+    Game g;
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0)}));
+    auto calls = Frame(d, g, 0);
+    g.Spawn(calls[1].x[3], 3);
+    Frame(d, g, 10);
+    Frame(d, g, Director::kCreateTimeoutMs + 20);
+    REQUIRE(d.Slots()[0].strays == 1);
+    // Same class, another actor (an NPC on the same vtable): its name differs.
+    constexpr std::uint64_t kText = 0x400003000;
+    g.guest.Map(kText, 0x40);
+    const char other[] = "Npc_Kokiri";
+    REQUIRE(g.guest.Write(kText, other, sizeof(other)));
+    g.guest.Set(kActor + 0x260, kText);
+    CHECK(Deletes(Frame(d, g, Director::kCreateTimeoutMs + 2000), kActor) == 0);
+    CHECK(d.Slots()[0].strays == 0);
+}
