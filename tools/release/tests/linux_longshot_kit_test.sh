@@ -177,6 +177,36 @@ check 'build offline: no OOTRR here -> no download try, one offline line, the ga
     bash -c '[ $CODE -eq 0 ] && grep -q "offline: using the tools already here" "$1" && ! grep -q -e downloading -e "not set up" "$1" && grep -q "The game is ready" "$1" && [ ! -e "$2/game/tools/ootrr" ]' _ "$tmp/build-o5.txt" "$D"
 rm -f "$kit/data/longshot/OOTRR.txt"
 
+# A randomizer seed older than the puppet pack (the pack made again): its size table lacks the pack's entries and
+# the game aborts while it loads (lane1, 2026-11-14). The start builds it again beside the pack's table, or removes it.
+G=$D/game R=romfs/System/Resource
+mkdir -p "$G/tools/ootrr" "$G/romfs/System" "$G/mods/oot-remake-randomizer" "$G/mods/randomizer-AB/$R" "$G/mods/randomizer-CD/$R" \
+    "$G/mods/_off/$R" "$G/mods/contents/0400486024DEC000/coop-puppet/$R"
+cat >"$G/tools/ootrr/ootrr" <<'EOF'
+#!/bin/sh
+# build <seed file> <romfs> <load dir> <name> --host hookshot: the tables beside it, then the seed as OOTRR writes it
+ls "$4"/*/romfs/System/Resource/ | grep rsizetable >"$4/../staged.txt"
+cat "$4"/*/romfs/System/Resource/*.rsizetable.zs >>"$4/../staged.txt"
+mkdir -p "$4/$5/romfs/System/Resource" && echo new >"$4/$5/romfs/System/Resource/T.rsizetable.zs" && echo AB >"$4/$5/coop-seed.txt"
+EOF
+chmod +x "$G/tools/ootrr/ootrr"
+for s in AB CD; do echo old >"$G/mods/randomizer-$s/$R/T.rsizetable.zs"; echo "$s" >"$G/mods/randomizer-$s/coop-seed.txt"; done
+echo default >"$G/mods/randomizer-AB/coop-rando.txt"
+echo seed >"$G/mods/oot-remake-randomizer/randomizer-AB.ootrr"   # (none kept for CD: it cannot be built again)
+echo off >"$G/mods/_off/$R/T.rsizetable.zs"
+touch -d '1 hour ago' "$G/mods/randomizer-AB/$R/T.rsizetable.zs" "$G/mods/randomizer-CD/$R/T.rsizetable.zs"
+echo pack >"$G/mods/contents/0400486024DEC000/coop-puppet/$R/T.rsizetable.zs"
+bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-r1.txt" 2>&1; export CODE=$?
+check 'build: a seed older than the puppet pack is built again beside the pack'"'"'s size table (no off folder'"'"'s), its preset kept' \
+    bash -c '[ $CODE -eq 0 ] && grep -q "seed randomizer-AB built again" "$1" && [ "$(cat "$2/mods/randomizer-AB/romfs/System/Resource/T.rsizetable.zs")" = new ] &&
+        grep -qx pack "$2/mods/oot-remake-randomizer/staged.txt" && ! grep -q off "$2/mods/oot-remake-randomizer/staged.txt" &&
+        [ -f "$2/mods/randomizer-AB/coop-rando.txt" ] && [ ! -e "$2/mods/oot-remake-randomizer/_seed-build" ]' _ "$tmp/build-r1.txt" "$G"
+check 'build: a seed older than the pack that cannot be built again (no seed file kept) is removed, said once' \
+    bash -c 'grep -q "seed randomizer-CD removed" "$1" && [ ! -e "$2/mods/randomizer-CD" ]' _ "$tmp/build-r1.txt" "$G"
+bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-r2.txt" 2>&1
+check 'build: the next start leaves the rebuilt seed alone' bash -c '! grep -q "randomizer: seed" "$1"' _ "$tmp/build-r2.txt"
+rm -rf "$G/tools/ootrr" "$G/romfs" "$G/mods/randomizer-AB" "$G/mods/oot-remake-randomizer" "$G/mods/_off"
+
 # A new patch set: refreshed in place, the game built again.
 cat >"$kit/data/longshot/patches/0001-test.patch" <<'EOF'
 diff --git a/host/coop_test.c b/host/coop_test.c

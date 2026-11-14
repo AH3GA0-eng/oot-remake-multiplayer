@@ -288,5 +288,42 @@ elif [[ -n $pack_from && -e $pack_from ]]; then
 else
     warn 'no game files to build the puppet pack from: start again with --game <your .nup>.'
 fi
+# Randomizer seeds built before this puppet pack: the game uses one size table, the seed's, and without the pack's
+# entries it aborts while it loads. Built again with every other mod's table beside it (as the module does,
+# coop_rando StageSizeTables), from the seed file the game kept; removed when that cannot be done (the game builds
+# it at its next start). (kit-paths.ps1 Update-KitRandoSeeds on Windows)
+rando_tables() {   # the size tables of the mods the game loads besides the seeds
+    local t rel
+    while IFS= read -r t; do
+        rel=${t#"$GAME/mods/"}
+        [[ $rel =~ ^(randomizer-[^/]*|oot-remake-randomizer)/ || /$rel =~ /[-_] ]] || printf '%s\n' "$t"
+    done < <(find "$GAME/mods" -mindepth 4 -maxdepth 7 -path '*/romfs/System/Resource/*.rsizetable.zs' -type f 2>/dev/null)
+}
+pack_table=$(ls -t "$mod"/romfs/System/Resource/*.rsizetable.zs 2>/dev/null | head -n 1 || true)
+for seed_dir in "$GAME"/mods/randomizer-*/; do
+    [[ -n $pack_table && -f ${seed_dir}coop-seed.txt ]] || continue
+    seed_name=$(basename "$seed_dir")
+    seed_table=$(ls "${seed_dir}"romfs/System/Resource/*.rsizetable.zs 2>/dev/null | head -n 1 || true)
+    [[ -n $seed_table && ! $pack_table -nt $seed_table ]] && continue
+    control=$GAME/mods/oot-remake-randomizer stage=$GAME/mods/oot-remake-randomizer/_seed-build
+    rm -rf "$stage"
+    ok=''
+    if [[ -x $GAME/tools/ootrr/ootrr && -f $control/$seed_name.ootrr && -d $GAME/romfs/System ]]; then
+        n=0
+        while IFS= read -r t; do
+            [[ -n $t ]] || continue
+            mkdir -p "$stage/$n/romfs/System/Resource" && cp "$t" "$stage/$n/romfs/System/Resource/" && n=$((n + 1))
+        done < <(rando_tables)
+        if "$GAME/tools/ootrr/ootrr" build "$control/$seed_name.ootrr" "$GAME/romfs" "$stage" "$seed_name" --host hookshot \
+            >"$control/last-build.txt" 2>&1 && [[ -f $stage/$seed_name/coop-seed.txt ]]; then
+            [[ -f ${seed_dir}coop-rando.txt ]] && cp "${seed_dir}coop-rando.txt" "$stage/$seed_name/"
+            rm -rf "$seed_dir" && mv "$stage/$seed_name" "$GAME/mods/$seed_name" && ok=1
+        fi
+    fi
+    rm -rf "$stage"
+    if [[ -n $ok ]]; then say "  randomizer: seed $seed_name built again for the new puppet pack"
+    else rm -rf "$seed_dir"; say "  randomizer: seed $seed_name removed (could not build it again for the new puppet pack): the game builds it at its next start"
+    fi
+done
 say ''
 say 'The game is ready.'

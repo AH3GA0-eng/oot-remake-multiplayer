@@ -696,6 +696,20 @@ try {
     Check ((Get-KitHookshotNeed $hk) -eq '') 'hookshot need: the kit''s OOTRR in the game -> nothing'
     Check (-not (Test-KitOotrrStale (Join-Path $hk 'no-kit') $g)) 'OOTRR stale: a kit without OOTRR.txt brings none'
     Check ((Test-KitOotrrStale $hk (Join-Path $hk 'no-game'))) 'OOTRR stale: a game without tools\ootrr -> yes'
+    # A randomizer seed built before the puppet pack was made again: its size table lacks the pack's entries and the
+    # game aborts while it loads (lane1, 2026-11-14), so it is built again, or removed when it cannot be.
+    $rg = Join-Path $hk 'rando-game'
+    $rst = 'romfs\System\Resource\T.rsizetable.zs'
+    Write-File (Join-Path $rg "mods\randomizer-AB\$rst") 'seed'
+    Write-File (Join-Path $rg 'mods\randomizer-AB\coop-seed.txt') "AB`n"
+    Write-File (Join-Path $rg "mods\_off\$rst") 'off'
+    Write-File (Join-Path $rg "mods\contents\0400486024DEC000\coop-puppet\$rst") 'pack'
+    (Get-Item (Join-Path $rg "mods\randomizer-AB\$rst")).LastWriteTimeUtc = [datetime]::UtcNow.AddHours(-1)
+    Check ((@(Get-KitOtherSizeTables (Join-Path $rg 'mods')) | ForEach-Object { $_.Directory.Parent.Parent.Parent.Name }) -join ',' -eq 'coop-puppet') 'rando seeds: the other mods'' size tables are the pack''s (deep), not a seed''s or an off folder''s'
+    Check ((@(Get-KitStaleRandoSeeds $rg) -join ',') -eq 'randomizer-AB') 'rando seeds: a seed older than the puppet pack is stale'
+    $lines = @(Update-KitRandoSeeds $rg)
+    Check (-not (Test-Path -LiteralPath (Join-Path $rg 'mods\randomizer-AB')) -and $lines.Count -eq 1 -and $lines[0] -match 'removed') 'rando seeds: no OOTRR to build it again -> the seed is removed, said once'
+    Check (@(Get-KitStaleRandoSeeds $rg).Count -eq 0) 'rando seeds: nothing stale after'
     $env:OOT_COOP_OFFLINE = $offlineWas
     Check ((Test-KitPuppetPackStale (Join-Path $hk 'none\coop_puppet.json') (Join-Path $hk 'no-tool')) -and
         -not (Test-KitPuppetPackStale $pack (Join-Path $hk 'no-tool'))) 'pack stale: a missing pack yes, a current one no'
