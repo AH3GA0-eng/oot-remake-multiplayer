@@ -100,7 +100,16 @@ bool IsMovable(std::string_view name) {
         return false;
     }
     return name.find("MovableBox_") != std::string_view::npos ||
-           name.starts_with("Obj_SliderBox_") || name.starts_with("Obj_AmosStatue_") || IsRoller(name);
+           name.starts_with("Obj_SliderBox_") || name.starts_with("Obj_AmosStatue_") || IsRoller(name) ||
+           IsGravestone(name);
+}
+
+bool IsGravestone(std::string_view name) {
+    // The graves Link pulls or pushes (Graveyard_Child: 17 Obj_Tombstone_A_01 and the brothers'
+    // Obj_Graveyard_Tombstone_A_01/02). Not the Royal Tomb's A_03: it goes by its flag
+    // GraveYard_RoyalFamilyTomb_Open (coop_story), never by a push.
+    return name.starts_with("Obj_Tombstone_") || name == "Obj_Graveyard_Tombstone_A_01" ||
+           name == "Obj_Graveyard_Tombstone_A_02";
 }
 
 bool IsRoller(std::string_view name) {

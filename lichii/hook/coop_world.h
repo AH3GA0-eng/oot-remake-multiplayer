@@ -36,6 +36,8 @@ bool IsBreakable(std::string_view name);
 // blocks of every dungeon (the MovableBox family, the Armos statue that is
 // one, the slider box), and the placed rolling boulders (IsRoller).
 bool IsMovable(std::string_view name);
+// A grave Link pulls or pushes (a movable; owner retest R7, 2026-11-14).
+bool IsGravestone(std::string_view name);
 
 // The placed boulders that roll on their own (issue 84: the Kokiri Sword
 // crawlspace's Obj_Kokiri_RollingRock_A_01; the Fire Temple, Gerudo Training

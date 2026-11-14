@@ -224,8 +224,11 @@ bool IsGuardReaction(std::string_view name) {
 
 bool IsRolled(std::string_view name) {
     // Enemy_Stalchild and Enemy_Stalchild_Big; not the picture book's
-    // Enemy_Stalchild_Dictionary actors.
-    return name == "Enemy_Stalchild" || name == "Enemy_Stalchild_Big";
+    // Enemy_Stalchild_Dictionary actors. Enemy_Poe (the graveyard's night
+    // ghost) is no placement either (Graveyard_Child places only the
+    // event Poe_Sharp and Poe_Flat): the game makes it near Link, so the
+    // other games never had one (owner retest R6, 2026-11-14).
+    return name == "Enemy_Stalchild" || name == "Enemy_Stalchild_Big" || name == "Enemy_Poe";
 }
 
 namespace {
