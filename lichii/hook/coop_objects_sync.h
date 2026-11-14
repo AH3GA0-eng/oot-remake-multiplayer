@@ -937,7 +937,7 @@ private:
         std::uint64_t since_us = 0;          // when the take came
         std::set<std::uint64_t> shown_open;  // chests that showed themselves open
         std::map<std::uint64_t, std::string> bound_animation;  // each chest's animation when bound
-        std::set<std::uint64_t> show_failed;  // chests the open idle never took on: removed
+        std::set<std::uint64_t> show_failed;  // chests the open idle never took on: left closed
     };
     // Every loaded chest's animation and when it last changed (0: the same
     // since it was first seen), for the opening tests above.
@@ -949,7 +949,7 @@ private:
     // Issue 195: a loaded closed chest that another player opened is shown
     // open here with its own open idle (kChestOpenIdle, through Plays), not
     // removed (it vanished in Alex's play-test). Address: when first played.
-    // Removed only if it still shows its closed idle kChestShowFailUs after.
+    // Still closed kChestShowFailUs after: left closed, never removed (chest-lid-b).
     static constexpr const char* kChestOpenIdle = "OpenWait";
     static constexpr const char* kChestClosedIdle = "Close";  // "CloseWait"
     static constexpr std::uint64_t kChestShowFailUs = 3'000'000;

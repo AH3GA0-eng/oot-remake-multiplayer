@@ -26,7 +26,7 @@
 #  - after B's "opened" mark: "Obj_TBox_A_02 0x771092ae2f3b7100: opened in another game", then
 #    "Obj_TBox_A_02: opened in another game, shown open here (OpenWait played)", "copy 0x... plays
 #    'OpenWait'" and "Obj_TBox_A_02: opened in another game, shows open here".
-#  - FAIL: "could not be shown open here, removed", or "- Obj_TBox_A_02 ... 0x771092ae2f3b7100"
+#  - FAIL: "could not be shown open here" (left closed since chest-lid-b), or "- Obj_TBox_A_02 ... 0x771092ae2f3b7100"
 #    before the "far" mark. Shot "a-look": A's chest stands with its lid open.
 #  - Lid steady: shot "a-look2" (10 s later) must match "a-look" (lid open in both). In A's log,
 #    "copy 0x<chest> plays 'OpenWait'" comes once or twice, not every second while A only watches,
