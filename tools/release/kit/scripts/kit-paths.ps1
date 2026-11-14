@@ -807,6 +807,7 @@ function Get-KitHookshotNeed([string]$Kit) {
     }
     $manifest = Join-Path $exeDir 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json'
     if (Test-KitPuppetPackStale $manifest (Join-Path $Kit 'tools\puppet_pack')) { return 'module' }
+    if (Get-KitStaleRandoSeeds $exeDir) { return 'module' }   # (a seed built before the puppet pack: it would abort)
     if (Test-KitOotrrStale $Kit $exeDir) {
         # (an offline player: the module step would only try the OOTRR download again, on every start. Everything
         # else is current and checked above, so the game starts as it is; a zip already downloaded and matching its
@@ -874,6 +875,93 @@ function Test-KitOotrrStale([string]$Kit, [string]$ExeDir) {
     $stamp = Join-Path $dir 'coop-ootrr.txt'
     $have = if (Test-Path -LiteralPath $stamp) { (Get-Content -LiteralPath $stamp -TotalCount 1).Trim() } else { '' }
     return $have -ne "$($keys.release) $($keys.windows_sha256)"
+}
+
+# The resource size tables (romfs\System\Resource\*.rsizetable.zs) of the mods the game loads besides the randomizer's
+# seeds: every folder under mods\ (any depth: the puppet pack is in mods\contents\<title>\coop-puppet) but seeds
+# (randomizer-*), the randomizer's control folder and folders whose name starts with '-' or '_' (Longshot skips them).
+# The game uses one table, the seed's (it sorts last), so a seed must be built with all of these (coop_rando's
+# StageSizeTables does the same in the game).
+function Get-KitOtherSizeTables([string]$ModsDir) {
+    if (-not (Test-Path -LiteralPath $ModsDir)) { return @() }
+    $out = New-Object System.Collections.Generic.List[System.IO.FileInfo]
+    $walk = {
+        param($dir, $depth)
+        foreach ($d in @(Get-ChildItem -LiteralPath $dir -Directory -ErrorAction SilentlyContinue)) {
+            if ($d.Name -match '^[-_]') { continue }
+            if ($depth -eq 0 -and ($d.Name -like 'randomizer-*' -or $d.Name -eq 'oot-remake-randomizer')) { continue }
+            if ($d.Name -eq 'romfs') {
+                foreach ($f in @(Get-ChildItem -LiteralPath (Join-Path $d.FullName 'System\Resource') -File -Filter '*.rsizetable.zs' -ErrorAction SilentlyContinue)) { $out.Add($f) }
+                continue
+            }
+            if ($depth -lt 3) { & $walk $d.FullName ($depth + 1) }
+        }
+    }
+    & $walk $ModsDir 0
+    return $out.ToArray()
+}
+
+# Built randomizer seeds (mods\randomizer-*\coop-seed.txt) whose size table is older than another mod's (a puppet
+# pack made again): the game aborts while it loads with such a seed on, so they are built again (Update-KitRandoSeeds).
+function Get-KitStaleRandoSeeds([string]$ExeDir) {
+    $mods = Join-Path $ExeDir 'mods'
+    $others = @(Get-KitOtherSizeTables $mods)
+    if (-not $others) { return @() }
+    $newest = ($others | Measure-Object -Property LastWriteTimeUtc -Maximum).Maximum
+    $stale = @()
+    foreach ($d in @(Get-ChildItem -LiteralPath $mods -Directory -Filter 'randomizer-*' -ErrorAction SilentlyContinue)) {
+        if (-not (Test-Path -LiteralPath (Join-Path $d.FullName 'coop-seed.txt'))) { continue }
+        $own = @(Get-ChildItem -LiteralPath (Join-Path $d.FullName 'romfs\System\Resource') -File -Filter '*.rsizetable.zs' -ErrorAction SilentlyContinue)
+        if (-not $own -or ($own | Measure-Object -Property LastWriteTimeUtc -Minimum).Minimum -lt $newest) { $stale += $d.Name }
+    }
+    return $stale
+}
+
+# Builds the stale seeds again with the kit's OOTRR (a few seconds each), beside every other mod's size table, from
+# the seed file the game kept (mods\oot-remake-randomizer\<seed folder>.ootrr): host and guest seeds alike. A seed
+# that cannot be built again is removed (the game builds it at its next start and asks for a restart), never left to
+# abort the game. The lines to show.
+function Update-KitRandoSeeds([string]$ExeDir) {
+    $lines = @()
+    $mods = Join-Path $ExeDir 'mods'
+    $control = Join-Path $mods 'oot-remake-randomizer'
+    $ootrr = Join-Path $ExeDir 'tools\ootrr\ootrr.exe'
+    $romfs = @((Join-Path $ExeDir 'romfs'), (Join-Path (Split-Path -Parent $ExeDir) 'romfs')) | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'System') } | Select-Object -First 1
+    foreach ($name in @(Get-KitStaleRandoSeeds $ExeDir)) {
+        $seedDir = Join-Path $mods $name
+        $seedFile = Join-Path $control "$name.ootrr"
+        $stage = Join-Path $control '_seed-build'
+        $ok = $false
+        if ((Test-Path -LiteralPath $ootrr) -and $romfs -and (Test-Path -LiteralPath $seedFile)) {
+            if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
+            $n = 0
+            foreach ($t in @(Get-KitOtherSizeTables $mods)) {
+                $to = Join-Path $stage "$n\romfs\System\Resource"
+                New-Item -ItemType Directory -Force -Path $to | Out-Null
+                Copy-Item -LiteralPath $t.FullName -Destination (Join-Path $to $t.Name)
+                $n++
+            }
+            $ErrorActionPreference = 'Continue'
+            & $ootrr build $seedFile $romfs $stage $name --host hookshot *> (Join-Path $control 'last-build.txt')
+            $code = $LASTEXITCODE
+            $ErrorActionPreference = 'Stop'
+            $built = Join-Path $stage $name
+            if ($code -eq 0 -and (Test-Path -LiteralPath (Join-Path $built 'coop-seed.txt'))) {
+                $preset = Join-Path $seedDir 'coop-rando.txt'
+                if (Test-Path -LiteralPath $preset) { Copy-Item -LiteralPath $preset -Destination (Join-Path $built 'coop-rando.txt') }
+                Remove-Item -LiteralPath $seedDir -Recurse -Force
+                Move-Item -LiteralPath $built -Destination $seedDir
+                $ok = $true
+            }
+            if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
+        }
+        if ($ok) { $lines += "randomizer: seed $name built again for the new puppet pack" }
+        else {
+            Remove-Item -LiteralPath $seedDir -Recurse -Force
+            $lines += "randomizer: seed $name removed (could not build it again for the new puppet pack): the game builds it at its next start"
+        }
+    }
+    return $lines
 }
 
 # A puppet pack to make (again) before the game starts: none there, or one Get-PuppetPackHint calls old (no sound,

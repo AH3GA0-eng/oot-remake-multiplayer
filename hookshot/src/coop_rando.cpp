@@ -214,6 +214,48 @@ std::vector<std::string> BuildArgs(const fs::path& seed_file, const fs::path& ga
             "--host", "hookshot"};
 }
 
+int StageSizeTables(const fs::path& mods_root, const std::vector<CoopMods::Row>& rows, const fs::path& stage) {
+    std::error_code ec;
+    int count = 0;
+    fs::recursive_directory_iterator it(mods_root, ec), end;
+    for (; !ec && it != end; it.increment(ec)) {
+        if (std::error_code dec; !it->is_directory(dec)) continue;
+        const std::string name = CoopMods::ToUtf8(it->path().filename());
+        const bool top = it.depth() == 0;
+        if (name.empty() || name[0] == '-' || name[0] == '_' || it.depth() > 3 ||
+            (top && (CoopMods::NameSame(name, kFolder) || IsSeedFolder(name)))) {
+            it.disable_recursion_pending();
+            continue;
+        }
+        if (top) {
+            const CoopMods::Row* row = RowOf(rows, name);
+            if (row != nullptr && !row->on) {
+                it.disable_recursion_pending();
+                continue;
+            }
+        }
+        if (name != "romfs") continue;
+        it.disable_recursion_pending();  // (a mod's own files: no mod inside)
+        std::error_code fec;
+        for (fs::directory_iterator files(it->path() / "System" / "Resource", fec), last; !fec && files != last;
+             files.increment(fec)) {
+            const fs::directory_entry& f = *files;
+            const std::string file = CoopMods::ToUtf8(f.path().filename());
+            const std::string_view tail = ".rsizetable.zs";
+            if (!f.is_regular_file(fec) || file.size() <= tail.size() ||
+                file.compare(file.size() - tail.size(), tail.size(), tail) != 0) {
+                continue;
+            }
+            const fs::path to = stage / std::to_string(count) / "romfs" / "System" / "Resource" / f.path().filename();
+            std::error_code cec;
+            fs::create_directories(to.parent_path(), cec);
+            if (cec || !fs::copy_file(f.path(), to, fs::copy_options::overwrite_existing, cec)) return -1;
+            ++count;
+        }
+    }
+    return count;
+}
+
 std::wstring CommandLine(const fs::path& program, const std::vector<std::string>& args) {
     // ToUtf8 writes '/': Windows paths back to '\' before quoting (a trailing '\' is doubled by Quote).
     const auto windows = [](std::string s) {
@@ -657,7 +699,18 @@ void Rando::Build(const Plan& plan, const Want& want) {
         return fail("OOTRR could not make the seed (" + exit_text(made) + "): see " + CoopMods::ToUtf8(log),
                     "OOTRR could not make the seed (" + exit_text(made) + ")");
     }
-    const int built = hooks_.run(*ootrr, BuildArgs(seed_file, *game, root, plan.folder), log);
+    // Built in a stage beside the other mods' size tables (StageSizeTables), then moved in. ('_': Longshot never
+    // loads it, if a closed game leaves it behind)
+    const fs::path stage = control / "_seed-build";
+    fs::remove_all(stage, ec);
+    if (StageSizeTables(root, loader_.Rows(), stage) < 0) {
+        fs::remove_all(stage, ec);
+        return fail("could not copy the other mods' size tables into " + CoopMods::ToUtf8(stage),
+                    "the other mods' size tables could not be copied");
+    }
+    const int built = hooks_.run(*ootrr, BuildArgs(seed_file, *game, stage, plan.folder), log);
+    if (built == 0) fs::rename(stage / CoopMods::FromUtf8(plan.folder), target, ec);
+    fs::remove_all(stage, ec);
     if (built != 0 || !fs::is_regular_file(target / kSeedFile, ec)) {
         fs::remove_all(target, ec);
         std::ifstream in(log, std::ios::binary);

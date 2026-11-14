@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iterator>
 #include <mutex>
 #include <set>
 #include <string>
@@ -31,6 +32,11 @@ void Put(const fs::path& p, const std::string& text) {
     out << text;
 }
 
+std::string Get(const fs::path& p) {
+    std::ifstream in(p, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(in), {});
+}
+
 CoopMods::Row RowNamed(const std::string& name, bool on) {
     CoopMods::Row r;
     r.name = name;
@@ -48,6 +54,7 @@ struct World {
     std::vector<std::wstring> runs;
     int fail_at = -1;  // the run (0, 1, ...) that fails
     std::string fail_output;  // what OOTRR writes into its log (each run)
+    std::vector<std::string> staged;  // the size tables the last build saw beside it (their text, sorted)
     World() {
         std::error_code ec;
         fs::remove_all(base, ec);
@@ -73,17 +80,23 @@ struct World {
             const int at = static_cast<int>(runs.size());
             runs.push_back(line);
             if (at == fail_at) return 3;
-            // "build" names the folder last but two (before --host hookshot): write it as OOTRR does.
-            const std::string text = CoopMods::ToUtf8(fs::path(line));
-            if (text.find(" build ") != std::string::npos) {
-                const auto end = text.rfind(" --host");
-                const auto start = text.rfind(' ', end - 1) + 1;
-                const std::string folder = text.substr(start, end - start);
-                Put(mods / folder / "romfs" / "System" / "a.bin", "seeded");
+            // build <seed> <game> <load dir> <folder>: write the folder into the load dir as OOTRR does, and note
+            // the size tables OOTRR finds there (mods/<name>/romfs only).
+            if (!args.empty() && args[0] == "build" && args.size() >= 5) {
+                const fs::path load = CoopMods::FromUtf8(args[3]);
+                const std::string folder = args[4];
+                staged.clear();
+                std::error_code ec;
+                for (fs::directory_iterator d(load, ec), e; !ec && d != e; d.increment(ec)) {
+                    const fs::path t = d->path() / "romfs" / "System" / "Resource" / "T.rsizetable.zs";
+                    if (fs::is_regular_file(t)) staged.push_back(Get(t));
+                }
+                std::sort(staged.begin(), staged.end());
+                Put(load / folder / "romfs" / "System" / "a.bin", "seeded");
                 const auto dash = folder.find('-');
                 std::string word = folder.substr(dash + 1);
                 if (const auto p = word.find('-'); p != std::string::npos) word = word.substr(0, p);
-                Put(mods / folder / kSeedFile, word + "\n");
+                Put(load / folder / kSeedFile, word + "\n");
             }
             return 0;
         };
@@ -206,6 +219,34 @@ TEST_CASE("rando: switched on, a seed is made, built once and switched on first,
     REQUIRE(loader.Set(kFolder, "on", "0"));
     rando.Wait();
     CHECK_FALSE(On(loader, folder));
+}
+
+TEST_CASE("rando: the seed is built beside every other mod's size table, the puppet pack's too") {
+    // (lane1, 2026-11-14: the seed's table had none of the puppet pack's 189 entries, as OOTRR reads only
+    // mods/<name>/romfs, and the game aborted while it loaded)
+    World w;
+    const fs::path table = fs::path("romfs") / "System" / "Resource" / "T.rsizetable.zs";
+    Put(w.mods / "contents" / "0400486024DEC000" / "coop-puppet" / table, "puppet");
+    Put(w.mods / "aa" / table, "aa");
+    Put(w.mods / "_off" / table, "off");
+    Put(w.mods / "randomizer-old" / table, "old seed");
+    Put(w.mods / "randomizer-old" / kSeedFile, "old\n");
+    Put(w.mods / "bb" / table, "bb");
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    loader.Start();
+    REQUIRE(loader.SetOn("bb", false));
+    Rando rando(loader, w.Hooks());
+    rando.Start();
+    w.Settings(loader);
+    REQUIRE(loader.Set(kFolder, "on", "1"));
+    rando.Wait();
+    REQUIRE(w.runs.size() == 2);
+    CHECK(w.staged == std::vector<std::string>{"aa", "puppet"});
+    const std::string folder = FolderFor(loader.Value(kId, "seed"), "default");
+    CHECK(fs::is_regular_file(w.mods / folder / kSeedFile));
+    CHECK(Get(w.mods / folder / "romfs" / "System" / "a.bin") == "seeded");
+    CHECK_FALSE(fs::exists(w.mods / kFolder / "_seed-build"));
+    CHECK(On(loader, folder));
 }
 
 TEST_CASE("rando: a failed build is said once and not tried again until the settings change") {

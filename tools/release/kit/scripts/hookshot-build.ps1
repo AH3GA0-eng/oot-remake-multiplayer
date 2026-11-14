@@ -616,6 +616,8 @@ if ($packFrom -and (Test-Path -LiteralPath $packFrom) -and (Test-Path -LiteralPa
 } else {
     Write-Host '  No game files to build the puppet pack from: run this again with -Game <your .nup>.' -ForegroundColor Yellow
 }
+# Randomizer seeds built before this puppet pack: built again with its size table (else the game aborts while it loads).
+foreach ($l in @(Update-KitRandoSeeds $exeDir)) { Write-Host "  $l" }
 
 # Your own Longshot's saves into the co-op game (once, after its first build; a slot already there is never overwritten).
 if ($lsImage) {
