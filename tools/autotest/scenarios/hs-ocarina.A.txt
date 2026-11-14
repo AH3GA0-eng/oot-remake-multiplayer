@@ -5,11 +5,21 @@
 # "gives no pad word" note). Proof, A's log: "coop: ocarina note 4 (Ocarina_D) sent" ...
 # "note 16 (Ocarina_HighD) sent", "note 0 (let go) sent" after each; B's log as in ocarina-notes
 # ("P1 plays sound 'Ocarina_D'"). B only waits.
-#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1,LICHII_COOP_OCARINA_SOUND=1
+# Big-run rows 15-16 (ocarina-notes, 2026-11-14): A walks ahead, then turns to face B's camera,
+# so B's shots at note-L..note-A show the puppet's front. B's log: "P1: Ocarina notes go to
+# sound user 0x... 'Ocarina' (... field +0x40 -> +0x8)" once, then "P1 plays sound
+# 'Ocarina_D' (returned 0x..)" per note, and no "is not in its sound user"; "P1 ocarina to
+# the hand ('DemoOcarina')". B's shots at note-*: the Ocarina in the puppet's right hand at
+# its face, no shield or sword in its hands; after-song/end: Ocarina back on the belt.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1
 mark start
 wait 120
 hold LSTICK_UP 40
 wait 60
+# Turn round to face B (a short tap turns Link where he stands).
+hold LSTICK_DOWN 4
+wait 60
+mark facing
 press DLEFT 12
 wait 240
 mark out

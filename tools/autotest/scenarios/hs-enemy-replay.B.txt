@@ -1,0 +1,46 @@
+# hs-enemy-replay, B (not the host): walks to the Deku Baba and kills it (see hs-enemy-replay.A.txt).
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+goto -68.5 3.5 1.5 900
+toward -71.33 3.5 10
+press Y
+wait 40
+press Y
+wait 40
+mark swing
+toward -71.33 3.5 6
+press Y
+wait 40
+press Y
+wait 40
+press Y
+wait 120
+press Y
+wait 40
+press Y
+wait 40
+press Y
+wait 40
+press Y
+wait 40
+press Y
+wait 40
+press Y
+wait 40
+wait 120
+mark hit
+wait 600
+mark late
+wait 600
+mark end

@@ -57,6 +57,10 @@ inline constexpr std::uint64_t kSoundRootGot = 0x4c7e678;
 inline constexpr std::uint64_t kOcarinaModuleVtableGot = 0x4c8bfd0;  // + 0x10 = vtable
 inline constexpr std::uint64_t kModuleUser = 0x40;  // 0xd1f360 stores the made user here
 inline constexpr std::uint64_t kUserModuleBack = 0x138;  // ... and module + 0x38 here
+// The object at module + kModuleUser is the Ocarina.bars bank's handle; the SLink user the
+// game emits its own notes on is at its +0x8 (runs 2026-11-14: A's sound probe saw
+// 'Ocarina_D' ... emitted on user 0x108a99f6a8, B's module line showed that word at +0x8).
+inline constexpr std::uint64_t kModuleUserInner = 0x8;
 inline constexpr std::uint64_t kRootSLinkSystem = 0x18;
 }  // namespace addr
 
@@ -92,6 +96,7 @@ struct State {
     // player's user has none of them): found once by walking the user lists from the
     // puppet's user (FindUser); 0 not looked for or not found (then the puppet's user).
     std::uint64_t ocarina_user = 0;
+    std::uint64_t ocarina_module = 0;  // the module it came from (OcarinaModuleUser), or 0
     bool ocarina_looked = false;
     std::string module_said;  // the last module line logged (said again only when it changes)
     std::string playing;         // the names last logged (debug)
@@ -150,6 +155,17 @@ inline constexpr std::uint64_t kModuleScan = 0x100;
 std::uint64_t FindOcarinaModule(CoopPuppet::Guest& guest, std::uint64_t main_base,
                                 std::uint64_t root, std::string* how = nullptr);
 inline constexpr std::uint64_t kRootScan = 0x200;
+// The SLink user the game plays its own Ocarina notes on: the module's +0x40 object, or the
+// user at its +0x8, whichever is a real user (LooksLikeUser, an accessor) named "Ocarina".
+// `field` says which ("+0x40" or "+0x40 -> +0x8"). 0 if neither.
+std::uint64_t OcarinaModuleUser(CoopPuppet::Guest& guest, std::uint64_t module,
+                                std::string* field = nullptr);
+// Whether the cached Ocarina user is still that live user (review-ocarina-notes M1: the bank
+// handle and its user can be freed and made again while the puppet keeps its address): still a
+// real SLink user named "Ocarina" with an accessor, and when it came from a module, that module
+// still has its vtable and still gives this user. Checked before every search and emit.
+bool StillOcarinaUser(CoopPuppet::Guest& guest, std::uint64_t main_base, std::uint64_t user,
+                      std::uint64_t module);
 // One line on a module and the user at its +0x40 (name, accessor, user checks), for the log.
 std::string DescribeModule(CoopPuppet::Guest& guest, std::uint64_t module);
 // The checks FindUser makes on a candidate (debug: logged for the puppet's own user).
