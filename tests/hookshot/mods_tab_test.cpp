@@ -12,6 +12,7 @@
 #include "mod_temp.h"
 #include "coop_mods.h"
 #include "coop_mods_tab.h"
+#include "coop_rando.h"
 
 namespace fs = std::filesystem;
 using CoopModsTab::Input;
@@ -154,7 +155,7 @@ TEST_CASE("mods tab: a mod's page moves it and changes each kind of setting") {
     CHECK(tab.view().selected == 0 + 1);  // back on Big HUD's row (under the restart note)
 }
 
-TEST_CASE("mods tab: the host's value is locked, and co-op and the randomizer have their lines") {
+TEST_CASE("mods tab: the host's value is locked, and co-op has its line") {
     Mods m;
     m.loader->SetHostValues(std::vector<CoopMods::SharedValue>{{"hud", "seed", "HOST"}});
     Tab tab({m.loader.get(), [] { return std::vector<std::string>{"Co-op: missing x (the host has it)"}; },
@@ -162,7 +163,7 @@ TEST_CASE("mods tab: the host's value is locked, and co-op and the randomizer ha
     tab.Show();
     auto v = tab.view();
     CHECK(RowNamed(v, "Co-op: missing x (the host has it)") >= 0);
-    CHECK(RowNamed(v, "Randomizer: seed AB is ready") >= 0);
+    CHECK(RowNamed(v, "Randomizer: seed AB is ready") < 0);  // on the randomizer's page, not the list
     tab.Click(static_cast<std::size_t>(RowNamed(v, "Big HUD 2")), 0);  // the name: its page
     v = tab.view();
     const int seed = RowNamed(v, "Seed");
@@ -172,6 +173,44 @@ TEST_CASE("mods tab: the host's value is locked, and co-op and the randomizer ha
     tab.Click(static_cast<std::size_t>(seed), 0);
     CHECK_FALSE(tab.typing());
     CHECK(tab.view().gold == "In this co-op game the host sets this.");
+}
+
+TEST_CASE("mods tab: the randomizer's row is its name and a Settings button that opens its page") {
+    Mods m;
+    Put(m.root / CoopRando::kFolder / "mod.json", CoopRando::ManifestText());
+    m.loader->Refresh();
+    Tab tab({m.loader.get(), nullptr, [] { return std::string("seed AB is ready"); }});
+    tab.Show();
+    auto v = tab.view();
+    const int row = RowNamed(v, "OoT Remake Randomizer");  // no version, no Off / On
+    REQUIRE(row >= 0);
+    CHECK(v.rows[row].kind == RowKind::kAction);
+    CHECK(v.rows[row].value == "Settings");
+    CHECK_FALSE(v.rows[row].fixed);
+    CHECK(RowNamed(v, "Randomizer: seed AB is ready") < 0);
+    CHECK(v.rows[RowNamed(v, "Big HUD 2")].kind == RowKind::kToggle);  // the other mods keep their switch
+    const auto rando_on = [&] {
+        for (const auto& r : m.loader->Rows()) {
+            if (r.id == CoopRando::kId) return r.on;
+        }
+        return false;
+    };
+    const bool was_on = rando_on();
+    tab.Click(static_cast<std::size_t>(row), 1);  // the value's half: the button too, no switch
+    CHECK(tab.on_mod_page());
+    CHECK(rando_on() == was_on);
+    v = tab.view();
+    CHECK(RowNamed(v, "Randomizer: seed AB is ready") > 0);
+    const int sw = RowNamed(v, "Randomizer");
+    REQUIRE(sw > 0);
+    CHECK(v.rows[sw].kind == RowKind::kToggle);
+    CHECK(tab.Press(Input::kBack));
+    CHECK_FALSE(tab.on_mod_page());
+    tab.Select(static_cast<std::size_t>(row));
+    CHECK(tab.Press(Input::kRight));  // Left / Right on the button change nothing
+    CHECK_FALSE(tab.on_mod_page());
+    CHECK(tab.Press(Input::kDecide));  // A: its page
+    CHECK(tab.on_mod_page());
 }
 
 TEST_CASE("mods tab: an empty folder says where mods go") {

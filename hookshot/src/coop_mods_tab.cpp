@@ -2,6 +2,8 @@
 // Loader at every view; the module's glue at the end.
 #include "coop_mods_tab.h"
 
+#include "coop_rando.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -94,18 +96,21 @@ std::vector<Tab::Line> Tab::Lines() const {
         if (src_.coop) {
             for (std::string& line : src_.coop()) note(std::move(line));
         }
-        if (src_.rando) {
-            if (std::string r = src_.rando(); !r.empty()) note("Randomizer: " + r);
-        }
         if (rows.empty()) {
             note("No mods in " + CoopMods::ToUtf8(src_.loader->Root()) + ". Put each mod in its own folder there.");
         }
         for (const CoopMods::Row& m : rows) {
             Line l;
-            l.row = Make(m.title + (m.version.empty() || m.version == "0" ? "" : " " + m.version), "",
-                         RowKind::kToggle);
-            l.row.on = m.on;
-            l.row.fixed = !m.can_switch;
+            if (m.id == CoopRando::kId) {
+                // The randomizer's row is its name and a Settings button: its own switch ("Randomizer") is on its
+                // page, so an Off / On here (the mod's) would read as the randomizer's.
+                l.row = Make(m.title, "Settings", RowKind::kAction);
+            } else {
+                l.row = Make(m.title + (m.version.empty() || m.version == "0" ? "" : " " + m.version), "",
+                             RowKind::kToggle);
+                l.row.on = m.on;
+                l.row.fixed = !m.can_switch;
+            }
             l.act = Act::kMod;
             l.name = m.name;
             l.help = m.description;
@@ -126,6 +131,9 @@ std::vector<Tab::Line> Tab::Lines() const {
     if (!m.description.empty()) note(m.description);
     if (!m.author.empty()) note("By " + m.author + (m.version.empty() ? "" : ", version " + m.version));
     if (!m.note.empty()) note(m.note);
+    if (m.id == CoopRando::kId && src_.rando) {
+        if (std::string r = src_.rando(); !r.empty()) note("Randomizer: " + r);
+    }
     Line on;
     on.row = Make("On", "", RowKind::kToggle);
     on.row.on = m.on;
