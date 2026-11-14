@@ -43,6 +43,15 @@ struct SamplerSettings {
   std::optional<std::uint32_t> color;
 };
 
+// jitter-b: the server time of the game frame a reading is from: `server_now_us` less `age_us`
+// (how long ago that frame ran; 0 not known). An age past kFrameAgeMaxUs (a pause, a load) is
+// not that frame: now.
+inline constexpr std::uint64_t kFrameAgeMaxUs = 250'000;  // a 4 fps frame (review-jitter)
+inline std::uint64_t frame_aligned_us(std::uint64_t server_now_us, std::uint64_t age_us) {
+  if (age_us == 0 || age_us > kFrameAgeMaxUs || age_us > server_now_us) return server_now_us;
+  return server_now_us - age_us;
+}
+
 class Sampler {
  public:
   explicit Sampler(SamplerSettings settings = {}) : settings_(settings) {}

@@ -39,6 +39,13 @@ inline constexpr std::uint64_t kEaseMs = 250;
 inline constexpr float kEaseSpeed = 15.0f;  // metres a second
 // A new puppet is made where its player was a few frames before it shows: at most this far.
 inline constexpr float kSpawnLagM = 3.0f;
+// jitter-b (owner-deku 20261114-100649: "target jump 0.8-2.3 m (show, eased)" while the game ran at
+// 7-18 fps): a frame that took long moves a running player well past kSnapM in that one frame,
+// and each such frame began a new ease, so the puppet was held back and let go over and over.
+// A move counts as a jump only past kSnapM plus what kMoveSpeed covers in the frame's time
+// (at most kMoveFrameMs); the first Step after Set or Spawned has no frame time: kSnapM alone.
+inline constexpr float kMoveSpeed = 10.0f;  // metres a second: a run, a roll, a horse
+inline constexpr std::uint64_t kMoveFrameMs = 250;
 
 inline std::uint64_t EaseMs(float gap) {
     const float ms = gap / kEaseSpeed * 1000.0f;
@@ -78,10 +85,16 @@ public:
         from_spawn_ = std::exchange(spawned_, false);
         if (!drawn_ || !last_target_) {
             Set(target);
+            last_ms_ = now_ms;
             return target;
         }
         const float moved = Distance(target, *last_target_);
         last_target_ = target;
+        float allowed = kSnapM;
+        if (last_ms_ && now_ms >= *last_ms_) {
+            allowed += kMoveSpeed * static_cast<float>(std::min(now_ms - *last_ms_, kMoveFrameMs)) / 1000.0f;
+        }
+        last_ms_ = now_ms;
         // Where the current ease draws it now.
         Vec3 now = target;
         if (offset_) {
@@ -95,7 +108,7 @@ public:
                 }
             }
         }
-        if (moved > kSnapM && std::isfinite(moved)) {
+        if (moved > allowed && std::isfinite(moved)) {
             if (jump != nullptr) {
                 *jump = moved;
             }
@@ -137,10 +150,12 @@ public:
     void Set(const Vec3& at) {
         drawn_ = at;
         last_target_ = at;
+        last_ms_.reset();
         offset_.reset();
     }
     void Reset() {
         drawn_.reset();
+        last_ms_.reset();
         last_target_.reset();
         offset_.reset();
         spawned_ = from_spawn_ = false;
@@ -152,6 +167,7 @@ private:
     std::optional<Vec3> drawn_;
     std::optional<Vec3> last_target_;
     std::optional<Vec3> offset_;  // drawn minus target when the ease began
+    std::optional<std::uint64_t> last_ms_;  // the last Step's time; unset after Set
     std::uint64_t start_ms_ = 0;
     std::uint64_t ease_ms_ = kEaseMs;
     bool spawned_ = false;     // Spawned, no Step since

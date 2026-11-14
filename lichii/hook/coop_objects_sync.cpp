@@ -2522,6 +2522,9 @@ void Sync::Poses(std::uint64_t now_us, std::vector<PoseWrite>& out) const {
                     w.position[i] += (*last.velocity)[i] * ahead;
                 }
             }
+            if (last.velocity && Finite(*last.velocity) && t - last.time < kExtrapolateUs) {
+                w.velocity = *last.velocity;  // past the extrapolation it stands still
+            }
             rotation = last.rotation;
         } else if (t <= o.received.front().time) {
             w.position = o.received.front().position;
@@ -2535,6 +2538,14 @@ void Sync::Poses(std::uint64_t now_us, std::vector<PoseWrite>& out) const {
             const Received& b = o.received[i];
             const float f = static_cast<float>(t - a.time) / static_cast<float>(b.time - a.time);
             w.position = Lerp(a.position, b.position, f);
+            const float span_s = static_cast<float>(b.time - a.time) / 1e6f;
+            coop::protocol::Vec3 v{};
+            for (std::size_t k = 0; k < 3; ++k) {
+                v[k] = (b.position[k] - a.position[k]) / span_s;
+            }
+            if (Finite(v)) {
+                w.velocity = v;
+            }
             if (a.rotation && b.rotation) {
                 rotation = Nlerp(*a.rotation, *b.rotation, f);
             } else {

@@ -194,3 +194,24 @@ TEST_CASE("snap: a new puppet eases from where the game made it (no 0.8 m spawn 
     CHECK(far.Step({4, 5, 6}, 0) == Vec3{4, 5, 6});
     CHECK_FALSE(far.FromSpawn());
 }
+
+// jitter-b (owner-deku 20261114-100649): at 7 fps a running player moves about 0.9 m a frame.
+// That is no jump: drawn where they are, not eased (each ease held the puppet back again).
+TEST_CASE("snap: a long frame's run is no jump") {
+    Smoother s;
+    std::uint64_t now = 1000;
+    float jump = 0.0f;
+    s.Step({0, 0, 0}, now);
+    for (int i = 1; i <= 10; ++i) {
+        now += 143;  // 7 frames a second
+        const Vec3 at{0.86f * static_cast<float>(i), 0, 0};
+        CHECK(s.Step(at, now, true, &jump) == at);
+        CHECK(jump == 0.0f);
+        CHECK_FALSE(s.Easing());
+    }
+    // The same move in one 33 ms frame is a jump, eased.
+    now += 33;
+    CHECK(s.Step({8.6f + 1.5f, 0, 0}, now, true, &jump) == Vec3{8.6f, 0, 0});
+    CHECK(jump > 0.0f);
+    CHECK(s.Easing());
+}

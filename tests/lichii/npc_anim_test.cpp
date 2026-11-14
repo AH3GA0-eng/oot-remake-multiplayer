@@ -101,3 +101,33 @@ TEST_CASE("npc-anim: Aliases give back the entries no longer wished") {
     CHECK(gone[0].second.name_at == 0x30);
     CHECK(book.Size() == 1);
 }
+
+// jitter-b: a copy's frame is set at most once a second, and never again for an animation
+// whose sets do not take (the walking child of walk 20261114-094808, ~383 frames off).
+TEST_CASE("npc anim resync: sets once a second and gives up on sets that do not take") {
+    using V = CoopNpcAnim::Resync::Verdict;
+    CoopNpcAnim::Resync r;
+    CHECK(r.Check(1, "Walk", 1.0f, 1000) == V::in_step);
+    CHECK(r.Check(1, "Walk", 383.0f, 1033) == V::set);
+    CHECK(r.Check(1, "Walk", 383.0f, 1066) == V::wait);   // a sample later: not again yet
+    CHECK(r.Check(1, "Walk", 383.0f, 2000) == V::wait);
+    CHECK(r.Check(1, "Walk", 383.0f, 2033) == V::set);    // one miss
+    CHECK(r.Check(1, "Walk", 383.0f, 3033) == V::give_up);
+    CHECK(r.Check(1, "Walk", 383.0f, 9000) == V::given_up);
+    // Another animation starts afresh.
+    CHECK(r.Check(1, "Run", 50.0f, 9033) == V::set);
+}
+
+TEST_CASE("npc anim resync: a set that took is followed by another only after a real drift") {
+    using V = CoopNpcAnim::Resync::Verdict;
+    CoopNpcAnim::Resync r;
+    CHECK(r.Check(2, "Act_Care", 100.0f, 0) == V::set);
+    CHECK(r.Check(2, "Act_Care", 0.5f, 33) == V::in_step);  // it took
+    CHECK(r.Check(2, "Act_Care", 10.0f, 5000) == V::set);   // drifted later: set again
+    CHECK(r.Check(2, "Act_Care", 1.0f, 5033) == V::in_step);
+    CHECK(r.Check(2, "Act_Care", 9.0f, 9000) == V::set);    // still sets after in-step checks
+    // An unreadable frame (infinity) counts as off.
+    CHECK(r.Check(3, "Walk", std::numeric_limits<float>::infinity(), 0) == V::set);
+    r.Keep(std::unordered_set<std::uint64_t>{2});
+    CHECK(r.Size() == 1);
+}

@@ -59,6 +59,7 @@ add_executable(coop_tests
   lichii/drops_test.cpp
   lichii/guard_test.cpp
   lichii/snap_test.cpp
+  lichii/follow_test.cpp
   lichii/scrub_talk_test.cpp
   lichii/chests_test.cpp
   lichii/colors_test.cpp
