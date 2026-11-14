@@ -97,6 +97,11 @@ struct Place {
 struct Search {
     std::vector<Place> places;
     std::size_t copies = 0;   // the same texels outside the texture's own file (a puppet's copy): left alone
+    std::size_t listed = 0;   // the game's textures of a fitting size
+    std::size_t unread = 0;   // textures of a fitting size whose storage could not be read
+    // What lies in front of the first few of those copies, for the log (why
+    // none was taken): "0x... (N bytes): ..." (Probe).
+    std::vector<std::string> notes;
 };
 // Every texture of `colours` the game has made: its storage holds the
 // colour's texels (those inside the storage: kFilePad), in its own file's

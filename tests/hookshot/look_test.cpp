@@ -327,6 +327,27 @@ TEST_CASE("look tunic: look files are read whole or not at all") {
     CHECK_FALSE(CoopLookTunic::SameLayout(*t, *Colour({{"Tile_A", TexelsOf(9)}})));
 }
 
+TEST_CASE("look tunic: Find says what lies in front of the copies it left alone") {
+    FakeTextures m(kBase, 0x10000);
+    const auto green = Colour({{"Tile_A", TexelsOf(1)}});
+    PutFile(m, kBase + 0x1000, "Tile_A_Red", TexelsOf(1));   // a puppet's: another name
+    std::memcpy(m.at(kBase + 0x3000), TexelsOf(1).data(), kTexels);
+    m.Make(kBase + 0x3000, kTexels);   // the same texels with no file in front
+    m.Make(kBase + 0x20000, kTexels);  // a storage outside the readable memory
+
+    const auto found = CoopLookTunic::Find(m, {green});
+    CHECK(found.places.empty());
+    CHECK(found.copies == 2);
+    CHECK(found.listed == 3);
+    CHECK(found.unread == 1);
+    REQUIRE(found.notes.size() == 3);
+    CHECK(found.notes[0] == "0x11100 (256 bytes, Tile_A): BNTX at -0x100 yes, BRTD at -0x10 yes, nearest BNTX at "
+                            "-0x100, not the name in front");
+    CHECK(found.notes[1] == "0x13000 (256 bytes, Tile_A): BNTX at -0x100 no, BRTD at -0x10 no, nearest BNTX at "
+                            "-0x2000, not the name in front");
+    CHECK(found.notes[2] == "0x30000 (256 bytes): not readable");
+}
+
 TEST_CASE("look tunic: your Link's textures are found and drawn over, the game's memory and a puppet's copy left alone") {
     FakeTextures m(kBase, 0x10000);
     const auto green = Colour({{"Tile_A", TexelsOf(1)}, {"Vest", TexelsOf(2)}});

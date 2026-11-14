@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <string_view>
 #include <utility>
@@ -33,6 +34,9 @@ void Fail(std::string* why, std::string text) {
     }
 }
 
+// How many copies' surroundings Find describes (Search::notes).
+constexpr std::size_t kNotes = 3;
+
 // Memory is compared in pieces of this size.
 constexpr std::size_t kPiece = std::size_t{4} << 20;
 
@@ -58,6 +62,42 @@ bool InOwnFile(const Textures& memory, std::uint64_t address, const Texture& tex
     }
     const char* name = texture.name.c_str();
     return std::search(head.begin(), head.end(), name, name + texture.name.size() + 1) != head.end();
+}
+
+std::string Hex(std::uint64_t v) {
+    char b[24];
+    std::snprintf(b, sizeof b, "0x%llx", static_cast<unsigned long long>(v));
+    return b;
+}
+
+// Where the texture's file should start (its texels at file + offset), and the
+// nearest "BNTX" in the 64 KB in front of the texels: why InOwnFile said no.
+std::string Probe(const Textures& memory, const Live& live, const Texture& texture) {
+    std::string out = Hex(live.address) + " (" + std::to_string(live.size) + " bytes, " + texture.name + "): ";
+    std::uint64_t back = std::min<std::uint64_t>(live.address, kMaxOffset);
+    std::vector<std::uint8_t> head;
+    for (; back >= 16; back /= 2) {   // (as much of the 64 KB as is there)
+        head.resize(static_cast<std::size_t>(back));
+        if (memory.Read(live.address - back, head.data(), head.size())) {
+            break;
+        }
+    }
+    if (back < 16) {
+        return out + "the bytes in front are not readable";
+    }
+    const auto at = [&](std::uint64_t before, const char* magic) {
+        return before <= back && std::memcmp(head.data() + (back - before), magic, 4) == 0;
+    };
+    out += std::string("BNTX at -") + Hex(texture.offset) + (at(texture.offset, "BNTX") ? " yes" : " no");
+    out += std::string(", BRTD at -0x10") + (at(16, "BRTD") ? " yes" : " no");
+    const char magic[4] = {'B', 'N', 'T', 'X'};
+    const auto r = std::find_end(head.begin(), head.end(), magic, magic + 4);
+    out += r == head.end() ? ", no BNTX in the " + Hex(back) + " bytes in front"
+                           : ", nearest BNTX at -" + Hex(static_cast<std::uint64_t>(head.end() - r));
+    const char* name = texture.name.c_str();   // (with its NUL, as InOwnFile)
+    out += std::search(head.begin(), head.end(), name, name + texture.name.size() + 1) != head.end()
+               ? ", the name in front" : ", not the name in front";
+    return out;
 }
 
 }  // namespace
@@ -146,14 +186,20 @@ Search Find(const Textures& textures, const std::vector<std::shared_ptr<const Te
     // A storage is the image's own size: up to kFilePad shorter than the pack's
     // texels (the file's padding), or its layout rounded up a little.
     const std::uint64_t low = smallest > kFilePad ? smallest - kFilePad : 1;
-    for (const Live& live : textures.List(low, largest + kStorageSlack, nullptr)) {
+    const std::vector<Live> listed = textures.List(low, largest + kStorageSlack, nullptr);
+    out.listed = listed.size();
+    for (const Live& live : listed) {
         std::uint8_t head[kHead];
         if (!textures.Read(live.address, head, kHead)) {
+            if (++out.unread == 1 && out.notes.size() < kNotes) {
+                out.notes.push_back(Hex(live.address) + " (" + std::to_string(live.size) + " bytes): not readable");
+            }
             continue;
         }
         // Several textures may hold the same texels (the puppets' copies all
         // start as the game's own): the one whose own file this is takes it.
-        bool taken = false, matched = false;
+        bool taken = false;
+        const Texture* matched = nullptr;
         for (const auto& colour : colours) {
             for (std::size_t i = 0; !taken && colour && i < colour->size(); ++i) {
                 const Texture& texture = (*colour)[i];
@@ -163,7 +209,7 @@ Search Find(const Textures& textures, const std::vector<std::shared_ptr<const Te
                     !Same(textures, live.address, texture.texels, size)) {
                     continue;
                 }
-                matched = true;
+                matched = &texture;
                 if (InOwnFile(textures, live.address, texture)) {
                     taken = true;
                     out.places.push_back({i, live.address, live.serial, size, colour, colour, false});
@@ -173,8 +219,11 @@ Search Find(const Textures& textures, const std::vector<std::shared_ptr<const Te
                 break;
             }
         }
-        if (matched && !taken) {
+        if (matched != nullptr && !taken) {
             ++out.copies;   // the same texels in another texture's file (a puppet's copy)
+            if (out.notes.size() < kNotes) {
+                out.notes.push_back(Probe(textures, live, *matched));
+            }
         }
     }
     return out;
@@ -315,8 +364,13 @@ void Wardrobe::Step(std::uint64_t now_ms) {
         generation_ = generation;
         if (places_.empty() && !said_nothing_found_) {
             said_nothing_found_ = true;
+            std::string notes;
+            for (const std::string& n : found.notes) {
+                notes += "; " + n;
+            }
             host_.log("coop: look: no " + host_.what + " texture of your Link among the game's yet (" +
-                      std::to_string(found.copies) + " of puppets, left alone)");
+                      std::to_string(found.copies) + " of puppets, left alone; " + std::to_string(found.listed) +
+                      " of the game's of those sizes, " + std::to_string(found.unread) + " not readable" + notes + ")");
         }
     }
     std::size_t drawn = 0;
