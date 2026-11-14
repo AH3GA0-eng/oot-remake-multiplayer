@@ -957,7 +957,7 @@ bool Start(const HosCoopApi* api) {
     // The Multiplayer tab (patch 0004's Hookshot and later, or HOS_COOP_MENU=1): the module stays loaded with co-op idle
     // until the player hosts or joins from the tab (coop_pause.h, hos_coop_host.h).
     const bool menu = EnvOn("HOS_COOP_MENU") || TitleMenuPossible(api, Env("LICHII_COOP_TITLE_MENU"));
-    const bool server = CoopHook::LoadSettings(ini, errors).enabled() && errors.empty();
+    const bool server = CoopHook::LoadSettings(ini, errors).enabled();
     for (const auto& e : errors) {
         LOG_WARNING(Core, "coop: {}", e);
     }

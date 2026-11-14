@@ -42,8 +42,12 @@ std::array<std::uint8_t, 16> LoadPlayerKey(const std::filesystem::path& file, st
 
 // Reads `key = value` lines. Blank lines, `#` or `;` comments and `[section]`
 // headers are skipped. Keys: server (`host` or `host:port`), port, name, password,
-// color (a colour name or #RRGGBB, CoopColors::Parse; "" for none).
-// Each problem is added to `errors` with its line number.
+// color (a colour name or #RRGGBB, CoopColors::Parse; "" for none). The keys
+// the game's co-op module writes there itself (client_id, last_invite,
+// last_host, look_*) are passed over without a word.
+// Each problem is added to `errors` with its line number. A problem only
+// drops its own line: an unknown key is ignored, a bad value leaves that
+// setting as it was (a bad server: none, so co-op stays off).
 void ApplyIni(std::string_view text, Settings& settings, std::vector<std::string>& errors);
 
 // LICHII_COOP_SERVER, LICHII_COOP_PORT, LICHII_COOP_NAME, LICHII_COOP_PASSWORD,
@@ -53,8 +57,8 @@ void ApplyEnvironment(const std::function<std::optional<std::string>(const char*
                       Settings& settings, std::vector<std::string>& errors);
 
 // The ini at `ini` (a missing file is fine), then the process environment.
-// Any error turns co-op off (server cleared), so a typo never connects
-// somewhere unintended.
+// `errors` are warnings: each drops only its own line (ApplyIni), never the
+// rest of the settings, so a key a newer build wrote never turns co-op off.
 Settings LoadSettings(const std::filesystem::path& ini, std::vector<std::string>& errors);
 
 } // namespace CoopHook
