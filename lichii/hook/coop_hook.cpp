@@ -2186,12 +2186,9 @@ void Start() {
     const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
     std::vector<std::string> errors;
     auto settings = LoadSettings(ini, errors);
+    // Each problem drops only its own line (CoopHook::ApplyIni): co-op goes on with the rest.
     for (const auto& e : errors) {
-        LOG_ERROR(Core, "coop: {}", e);
-    }
-    if (!errors.empty()) {
-        LOG_ERROR(Core, "coop: off (fix the settings above)");
-        return;
+        LOG_WARNING(Core, "coop: {}", e);
     }
     if (!settings.enabled()) {
         LOG_INFO(Core, "coop: off (no server in {} or LICHII_COOP_SERVER)", ini.string());

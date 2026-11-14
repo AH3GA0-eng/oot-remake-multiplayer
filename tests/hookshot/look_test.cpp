@@ -21,6 +21,7 @@
 #include "coop_look_paint.h"
 #include "coop_look_parts.h"
 #include "coop_look_tunic.h"
+#include "coop_settings.h"
 #include "coop_title_menu.h"
 
 using CoopLook::Look;
@@ -751,4 +752,57 @@ TEST_CASE("look tunic: the puppets' file of every copy's gear is read (more than
     REQUIRE(again);
     CHECK(again->size() == 136);
     CHECK((*again)[135].texels == TexelsOf(135));
+}
+
+// ini-reject: the module's own coop.ini (the launcher's lines, Customize's
+// colour and parts, Join's last invite and host, the title's client id),
+// written as the module writes it, then read back as the next start reads
+// it: co-op stays on, nothing is refused.
+TEST_CASE("look: coop.ini as Customize and Join write it keeps co-op on") {
+    std::string coop = "server = 127.0.0.1\r\nport = 27510\r\nname = AlexA\r\n";
+    Look look;
+    look[Part::tunic] = CoopColors::Parse("black");
+    look[Part::hylian_frame] = 0xE0C030u;
+    look[Part::hylian_emblem] = CoopColors::Parse("red");
+    CHECK(CoopLook::WriteSettings(look, coop, nullptr));
+    coop = CoopTitleMenu::IniSet(coop, "last_invite", "ABCDE-FGHJK", true);
+    coop = CoopTitleMenu::IniSet(coop, "last_host", "26.1.2.3:27510", true);
+    coop = CoopTitleMenu::IniSet(coop, "client_id", "0123456789abcdef0123456789abcdef", true);
+    // An unset part is commented out, as Customize leaves it.
+    look[Part::hylian_emblem].reset();
+    CHECK(CoopLook::WriteSettings(look, coop, nullptr));
+
+    const auto ini = std::filesystem::temp_directory_path() / "coop_tests_module.ini";
+    {
+        std::ofstream out(ini, std::ios::binary | std::ios::trunc);
+        out << coop;
+    }
+    std::vector<std::string> errors;
+    const CoopHook::Settings s = CoopHook::LoadSettings(ini, errors);
+    std::filesystem::remove(ini);
+    for (const auto& e : errors) {
+        MESSAGE(e);
+    }
+    const auto env_set = [](const char* name) {
+#ifdef _MSC_VER
+        char* v = nullptr;
+        std::size_t n = 0;
+        const bool set = _dupenv_s(&v, &n, name) == 0 && v != nullptr;
+        std::free(v);
+        return set;
+#else
+        return std::getenv(name) != nullptr;
+#endif
+    };
+    if (!env_set("LICHII_COOP_SERVER") && !env_set("LICHII_COOP_NAME") && !env_set("LICHII_COOP_COLOR") &&
+        !env_set("LICHII_COOP_PORT") && !env_set("LICHII_COOP_PASSWORD")) {
+        CHECK(errors.empty());
+        CHECK(s.enabled());
+        CHECK(s.server == "127.0.0.1");
+        CHECK(s.name == "AlexA");
+        CHECK(s.color == CoopColors::Parse("black"));
+    }
+    const Look back = CoopLook::ReadParts(coop);
+    CHECK(back[Part::hylian_frame] == 0xE0C030u);
+    CHECK_FALSE(back[Part::hylian_emblem]);
 }

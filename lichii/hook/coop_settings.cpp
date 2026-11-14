@@ -136,8 +136,12 @@ void Set(std::string_view key, std::string_view value, const std::string& where,
             return;
         }
         settings.color = color;
+    } else if (key == "client_id" || key == "last_invite" || key == "last_host" ||
+               key.substr(0, 5) == "look_") {
+        // Written into coop.ini by the game's co-op module itself (the title's
+        // client id, Join again, Customize) and read there, not here.
     } else {
-        errors.push_back(where + ": unknown key '" + std::string(key) + "'");
+        errors.push_back(where + ": unknown key '" + std::string(key) + "', line ignored");
     }
 }
 
@@ -277,9 +281,6 @@ Settings LoadSettings(const std::filesystem::path& ini, std::vector<std::string>
 #endif
         },
         settings, errors);
-    if (!errors.empty()) {
-        settings.server.clear();
-    }
     return settings;
 }
 
