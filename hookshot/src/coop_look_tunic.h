@@ -44,6 +44,11 @@ inline constexpr std::size_t kHead = 64;
 // How much larger than its texels a texture's storage may be (its layout
 // rounded up): only storages up to this much larger are compared.
 inline constexpr std::uint64_t kStorageSlack = 0x10000;
+// How much longer than its storage a texture's texels in the pack may be: a
+// BNTX's data block is padded to 4096 bytes, the game's storage is the
+// image's own size (the Hylian shield: 396288 bytes of 397312). Only the
+// bytes inside the storage are compared and drawn.
+inline constexpr std::uint64_t kFilePad = 0x1000;
 // A texture file's header is at most this long (the game's are 4096 bytes).
 inline constexpr std::uint64_t kMaxOffset = 0x10000;
 
@@ -83,6 +88,7 @@ struct Place {
     std::size_t texture = 0;
     std::uint64_t address = 0;
     std::uint64_t serial = 0;
+    std::uint64_t size = 0;   // the bytes compared and drawn: the texels, at most the storage
     std::shared_ptr<const Texels> held;    // in the game's memory
     std::shared_ptr<const Texels> drawn;   // on screen: held, or an override's
     bool overridden = false;
@@ -93,7 +99,8 @@ struct Search {
     std::size_t copies = 0;   // the same texels outside the texture's own file (a puppet's copy): left alone
 };
 // Every texture of `colours` the game has made: its storage holds the
-// colour's texels whole, in its own file's image.
+// colour's texels (those inside the storage: kFilePad), in its own file's
+// image.
 Search Find(const Textures& textures, const std::vector<std::shared_ptr<const Texels>>& colours);
 // Draws the place in `colour`: an override, or none when the game's memory
 // holds that colour already. False when Longshot refused it (nothing changed).

@@ -714,3 +714,41 @@ TEST_CASE("look: your own Link wears your slot colour when you chose none") {
     CHECK(CoopLook::OwnTunic(0x123456u, 2) == 0x123456u);
     CHECK(CoopLook::OwnTunic(0x123456u, 0) == 0x123456u);
 }
+
+TEST_CASE("look tunic: a storage shorter than the pack's texels (the file's padding) is found and drawn inside it") {
+    // The game's storage is the image's own size; the pack has the BNTX's data block, padded to 4096 bytes
+    // (the Hylian shield: 396288 bytes of 397312). The bytes past the storage are not compared nor drawn.
+    FakeTextures m(kBase, 0x10000);
+    const auto green = Colour({{"Tile_A", TexelsOf(1)}});
+    const auto red = Colour({{"Tile_A", TexelsOf(9)}});
+    constexpr std::size_t kImage = kTexels - 56;
+    PutFile(m, kBase + 0x1000, "Tile_A", TexelsOf(1));
+    const std::uint64_t storage = kBase + 0x1000 + kOffset;
+    std::memset(m.at(storage + kImage), 0xEE, kTexels - kImage);   // past the storage: something else
+    m.Make(storage, kImage);
+    const auto found = CoopLookTunic::Find(m, {green, red});
+    REQUIRE(found.places.size() == 1);
+    auto place = found.places[0];
+    CHECK(place.size == kImage);
+    REQUIRE(CoopLookTunic::Draw(m, place, red));   // inside the storage: Longshot takes it
+    CHECK(place.overridden);
+    const auto drawn = m.Drawn(storage, kImage);
+    CHECK(std::equal(drawn.begin(), drawn.end(), TexelsOf(9).begin()));
+    REQUIRE(CoopLookTunic::Draw(m, place, green));
+    CHECK(m.overrides() == 0);
+}
+
+TEST_CASE("look tunic: the puppets' file of every copy's gear is read (more than 64 textures)") {
+    Named many;
+    for (int i = 0; i < 136; ++i) {   // 8 copies of 17 gear textures
+        many.push_back({"C" + std::to_string(i) + "_Gear", TexelsOf(static_cast<std::uint8_t>(i))});
+    }
+    std::string why;
+    const auto t = CoopLookTunic::Parse(LookFile(many), &why);
+    REQUIRE(t);
+    CHECK(t->size() == 136);
+    const auto again = CoopLookTunic::Parse(CoopLookTunic::Pack(*t));
+    REQUIRE(again);
+    CHECK(again->size() == 136);
+    CHECK((*again)[135].texels == TexelsOf(135));
+}

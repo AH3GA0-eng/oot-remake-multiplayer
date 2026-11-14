@@ -14,7 +14,8 @@ namespace {
 constexpr char kMagic[8] = {'C', 'O', 'O', 'P', 'L', 'O', 'O', 'K'};
 constexpr std::uint32_t kVersion = 1;
 constexpr std::size_t kNameBytes = 64;
-constexpr std::size_t kMaxTextures = 64;
+// The puppets' file holds every copy's gear (8 copies of 17 textures today).
+constexpr std::size_t kMaxTextures = 4096;
 
 
 template <typename T>
@@ -35,10 +36,10 @@ void Fail(std::string* why, std::string text) {
 // Memory is compared in pieces of this size.
 constexpr std::size_t kPiece = std::size_t{4} << 20;
 
-bool Same(const Textures& memory, std::uint64_t address, const std::vector<std::uint8_t>& texels) {
-    std::vector<std::uint8_t> piece(std::min(kPiece, texels.size()));
-    for (std::size_t at = 0; at < texels.size(); at += piece.size()) {
-        const std::size_t n = std::min(piece.size(), texels.size() - at);
+bool Same(const Textures& memory, std::uint64_t address, const std::vector<std::uint8_t>& texels, std::size_t size) {
+    std::vector<std::uint8_t> piece(std::min(kPiece, size));
+    for (std::size_t at = 0; at < size; at += piece.size()) {
+        const std::size_t n = std::min(piece.size(), size - at);
         if (!memory.Read(address + at, piece.data(), n) || std::memcmp(piece.data(), texels.data() + at, n) != 0) {
             return false;
         }
@@ -142,8 +143,10 @@ Search Find(const Textures& textures, const std::vector<std::shared_ptr<const Te
     if (largest == 0) {
         return out;
     }
-    // A storage holds at least its texels, and is rounded up a little at most.
-    for (const Live& live : textures.List(smallest, largest + kStorageSlack, nullptr)) {
+    // A storage is the image's own size: up to kFilePad shorter than the pack's
+    // texels (the file's padding), or its layout rounded up a little.
+    const std::uint64_t low = smallest > kFilePad ? smallest - kFilePad : 1;
+    for (const Live& live : textures.List(low, largest + kStorageSlack, nullptr)) {
         std::uint8_t head[kHead];
         if (!textures.Read(live.address, head, kHead)) {
             continue;
@@ -154,14 +157,16 @@ Search Find(const Textures& textures, const std::vector<std::shared_ptr<const Te
         for (const auto& colour : colours) {
             for (std::size_t i = 0; !taken && colour && i < colour->size(); ++i) {
                 const Texture& texture = (*colour)[i];
-                if (texture.texels.size() > live.size || std::memcmp(head, texture.texels.data(), kHead) != 0 ||
-                    !Same(textures, live.address, texture.texels)) {
+                const std::size_t size =
+                    static_cast<std::size_t>(std::min<std::uint64_t>(texture.texels.size(), live.size));
+                if (texture.texels.size() > live.size + kFilePad || std::memcmp(head, texture.texels.data(), kHead) != 0 ||
+                    !Same(textures, live.address, texture.texels, size)) {
                     continue;
                 }
                 matched = true;
                 if (InOwnFile(textures, live.address, texture)) {
                     taken = true;
-                    out.places.push_back({i, live.address, live.serial, colour, colour, false});
+                    out.places.push_back({i, live.address, live.serial, size, colour, colour, false});
                 }
             }
             if (taken) {
@@ -178,16 +183,18 @@ Search Find(const Textures& textures, const std::vector<std::shared_ptr<const Te
 bool Draw(Textures& textures, Place& place, const std::shared_ptr<const Texels>& colour) {
     const Texture& held = (*place.held)[place.texture];
     const Texture& to = (*colour)[place.texture];
-    if (to.texels.size() != held.texels.size()) {
+    const std::size_t n = static_cast<std::size_t>(place.size);
+    if (to.texels.size() != held.texels.size() || n > to.texels.size()) {
         return false;
     }
-    if (to.texels == held.texels) {   // the game's memory holds it: no override
-        if (place.overridden && !textures.Override(place.address, place.serial, nullptr, held.texels.size())) {
+    if (std::equal(to.texels.begin(), to.texels.begin() + static_cast<std::ptrdiff_t>(n), held.texels.begin())) {
+        // the game's memory holds it: no override
+        if (place.overridden && !textures.Override(place.address, place.serial, nullptr, n)) {
             return false;
         }
         place.overridden = false;
     } else {
-        if (!textures.Override(place.address, place.serial, to.texels.data(), to.texels.size())) {
+        if (!textures.Override(place.address, place.serial, to.texels.data(), n)) {
             return false;
         }
         place.overridden = true;
@@ -217,7 +224,7 @@ bool Wardrobe::Busy() const {
 void Wardrobe::Clear() {
     for (Place& p : places_) {
         if (p.overridden) {
-            host_.textures->Override(p.address, p.serial, nullptr, (*p.held)[p.texture].texels.size());
+            host_.textures->Override(p.address, p.serial, nullptr, static_cast<std::size_t>(p.size));
             p.overridden = false;
             p.drawn = p.held;
         }
