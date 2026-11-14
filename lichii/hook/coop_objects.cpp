@@ -509,7 +509,7 @@ public:
     // Any thread: the hit id we last wrote into this Life component (the walk never takes our own replay for
     // a hit of our game's).
     u32 ReplayedId(u64 life) {
-        std::lock_guard lock(mutex_);
+        std::lock_guard lock(ids_mutex_);
         const auto it = replayed_ids_.find(life);
         return it == replayed_ids_.end() ? 0xffffffffu : it->second;
     }
@@ -1132,7 +1132,9 @@ private:
         const std::array<u32, 4> header{0x00060001, 0x40040000, id, 2};
         const std::array<s32, 2> amount{4, h.amount};
         {
-            std::lock_guard lock(mutex_);
+            // Its own lock: Replay runs inside Step, which holds mutex_ (locking that again threw
+            // resource_deadlock_would_occur and ended the game, boss-intro run 080505).
+            std::lock_guard lock(ids_mutex_);
             replayed_ids_[life] = id;
         }
         guest.Write(life + kHitHeader, header.data(), sizeof(header));
@@ -1180,7 +1182,8 @@ private:
     }
 
     std::mutex mutex_;
-    std::unordered_map<u64, u32> replayed_ids_;  // Life component: the hit id we wrote last (under mutex_)
+    std::mutex ids_mutex_;                       // replayed_ids_ only (Replay runs under mutex_)
+    std::unordered_map<u64, u32> replayed_ids_;  // Life component: the hit id we wrote last (under ids_mutex_)
     u64 main_ = 0;
     std::vector<Pose> poses_;
     std::vector<u64> removes_;
