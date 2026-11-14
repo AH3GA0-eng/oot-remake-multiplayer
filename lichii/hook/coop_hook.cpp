@@ -606,10 +606,24 @@ public:
                 presents_ = 0;
             }
         }
+        {   // deku-sync-fix: what our game asked before the title or this co-op session is not ours now
+            const bool scene_loaded = view.scene.has_value();
+            const bool title = start_source_.NoScene(scene_loaded);
+            if (story_source_.NoScene(scene_loaded) || title) {
+                LOG_INFO(Core, "coop: live events: the title: the game's earlier event requests are forgotten");
+            }
+            if (sources_reset_.exchange(false)) {
+                start_source_.Reset();
+                story_source_.Reset();
+                LOG_INFO(Core, "coop: live events: a new co-op session: the game's earlier event requests are forgotten");
+            }
+        }
         if (report.save_load_flags != 0) {
             LOG_INFO(Core, "coop: flags: save load seen ({} flags back, {} frames without a scene)",
                      report.save_load_flags, report.save_load_frames);
             CoopTime::SaveLoaded(report.server_now_us);  // issue 159
+            start_source_.Reset();  // deku-sync-fix: what the game asked before the load is not ours now
+            story_source_.Reset();
             coop::host::map_drop_log().note("save load seen (" + std::to_string(report.save_load_flags) + " flags back)");
         }
         // deku-dungeon-2 (DUNGEON_EVENT, issues 176 and 196): a gimmick event
@@ -645,6 +659,7 @@ public:
                 // of the event session is the emulator's way, and Hookshot's net.
                 auto& requests = CoopLiveEvents::TheGameRequests();
                 const bool by_request = requests.Live();
+                start_source_.Scene(hold_scene_);
                 const auto found = start_source_.Frame(
                     by_request ? CoopLiveEvents::RequestedOf(requests.Since(start_cursor_), names) : std::nullopt,
                     by_request, running_now,
@@ -1594,9 +1609,11 @@ private:
         switch (event.kind) {
         case EventKind::welcomed:
             welcomed_once_ = true;
+            sources_reset_ = true;  // deku-sync-fix: read on the frame
             chat_.Add("joined as player " + std::to_string(event.welcome.player_number), true);
             break;
         case EventKind::reconnected:
+            sources_reset_ = true;
             chat_.Add("reconnected as player " + std::to_string(event.welcome.player_number), true);
             break;
         case EventKind::disconnected:
@@ -1793,7 +1810,8 @@ private:
                             std::uint64_t* refused_said = nullptr) {
         if (source.ScanOnly() != said) {
             said = source.ScanOnly();
-            LOG_INFO(Core, "coop: {}: an event start found by the search that no request of the game named ({} so far)",
+            LOG_INFO(Core, "coop: {}: an event start found by the search that no request of our game named in this "
+                               "scene: a leftover, not sent ({} so far; deku-sync-fix)",
                      what, said);
         }
         if (refused_said != nullptr && source.Refused() != *refused_said) {
@@ -1891,6 +1909,7 @@ private:
             const bool by_request = requests.Live();
             // Only the story path refuses the search's finds while another asked-for event runs (intro-ocarina);
             // the dungeon gimmicks above keep their net as it was (a gimmick may start inside a talk's flow).
+            story_source_.Scene(here.scene);
             const auto asked = by_request ? requests.Since(story_cursor_) : std::vector<CoopLiveEvents::GameRequest>{};
             const auto found = story_source_.Frame(
                 by_request ? CoopLiveEvents::RequestedOf(asked, names) : std::nullopt,
@@ -2049,6 +2068,7 @@ private:
     std::string note_;  // network thread only
     CoopChat::Log chat_;  // locks itself
     std::atomic<bool> welcomed_once_ = false;
+    std::atomic<bool> sources_reset_ = false;  // deku-sync-fix: welcomed or reconnected (network thread)
     // Network thread (Run): the "no packets from the server" warning is out (issue 143).
     bool quiet_warned_ = false;
     static constexpr std::uint32_t kQuietWarnMs = 3000;
