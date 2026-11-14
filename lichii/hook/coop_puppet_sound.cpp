@@ -241,14 +241,40 @@ std::string DescribeModule(CoopPuppet::Guest& guest, std::uint64_t module) {
     std::uint32_t flags = 0;
     Read(guest, user + addr::kUserFlags, flags);
     const std::uint64_t back = Pointer(guest, user + addr::kUserModuleBack);
+    const std::uint64_t inner = user != 0 ? Pointer(guest, user + addr::kModuleUserInner) : 0;
     return "module " + Hex(module) + ", user +0x40 " + Hex(user) + " '" + UserName(guest, user) +
            "' accessor " + Hex(user != 0 ? Accessor(guest, user) : 0) + " flags " + Hex(flags) +
            (user != 0 && LooksLikeUser(guest, user) ? " passes" : " fails") +
            " the user check, back link " + (back == module + 0x38 ? "ok" : Hex(back)) +
+           ", its +0x8 " + Hex(inner) + " '" + (inner != 0 ? UserName(guest, inner) : std::string()) +
+           "' accessor " + Hex(inner != 0 ? Accessor(guest, inner) : 0) +
+           (inner != 0 && LooksLikeUser(guest, inner) ? " passes" : " fails") + " the user check" +
            (user != 0 ? ", user words " + Words(guest, user, 0x80) + Names(guest, user) +
                             ", +0x20 words " + Words(guest, Pointer(guest, user + 0x20), 0x80) +
                             Names(guest, Pointer(guest, user + 0x20))
                       : std::string());
+}
+
+std::uint64_t OcarinaModuleUser(CoopPuppet::Guest& guest, std::uint64_t module, std::string* field) {
+    const auto is = [&](std::uint64_t user) {
+        return user != 0 && Accessor(guest, user) != 0 && UserName(guest, user) == kOcarinaUser &&
+               LooksLikeUser(guest, user);
+    };
+    const std::uint64_t held = module != 0 ? Pointer(guest, module + addr::kModuleUser) : 0;
+    if (is(held)) {
+        if (field != nullptr) {
+            *field = "+0x40";
+        }
+        return held;
+    }
+    const std::uint64_t inner = held != 0 ? Pointer(guest, held + addr::kModuleUserInner) : 0;
+    if (is(inner)) {
+        if (field != nullptr) {
+            *field = "+0x40 -> +0x8";
+        }
+        return inner;
+    }
+    return 0;
 }
 
 std::uint64_t FindUserInSystem(CoopPuppet::Guest& guest, std::uint64_t system,
@@ -387,7 +413,6 @@ std::optional<CoopPuppet::Call> Next(State& state, const Wanted& wanted, CoopPup
             std::string where;
             const std::uint64_t module =
                 FindOcarinaModule(guest, main_base, SoundRoot(guest, main_base), &where);
-            const std::uint64_t mu = module != 0 ? Pointer(guest, module + addr::kModuleUser) : 0;
             if (module != 0) {
                 const std::string line = who + ": Ocarina " + DescribeModule(guest, module) + " (" + where + ")";
                 if (line != state.module_said) {
@@ -395,11 +420,11 @@ std::optional<CoopPuppet::Call> Next(State& state, const Wanted& wanted, CoopPup
                     say(line);
                 }
             }
-            if (mu != 0 && Accessor(guest, mu) != 0 && UserName(guest, mu) == kOcarinaUser &&
-                LooksLikeUser(guest, mu)) {
-                state.ocarina_user = mu;
-                say(who + ": Ocarina notes go to sound user " + Hex(mu) + " '" + kOcarinaUser +
-                    "' (Ocarina module at " + where + ", field +0x40, on a later note)");
+            std::string field;
+            if (const std::uint64_t u = OcarinaModuleUser(guest, module, &field); u != 0) {
+                state.ocarina_user = u;
+                say(who + ": Ocarina notes go to sound user " + Hex(u) + " '" + kOcarinaUser +
+                    "' (Ocarina module at " + where + ", field " + field + ", on a later note)");
             }
         }
         if (!state.ocarina_looked) {
@@ -410,9 +435,10 @@ std::optional<CoopPuppet::Call> Next(State& state, const Wanted& wanted, CoopPup
             state.ocarina_user = FindUserInModules(guest, SoundRoot(guest, main_base), kOcarinaUser, &how);
             std::string no_module;
             if (state.ocarina_user == 0) {
-                // The module by its vtable. Its +0x40 object is taken only if it is a real SLink
-                // user named "Ocarina": in game (2026-11-12) it was the Ocarina.bars sound bank
-                // (accessor set, no name), which must not be played on: logged only.
+                // The module by its vtable. Its +0x40 object is the Ocarina.bars bank's handle
+                // (no name, must not be played on); the user the game emits its own notes on
+                // is at that object's +0x8 (OcarinaModuleUser). Either is taken only if it is a
+                // real SLink user named "Ocarina".
                 std::string where;
                 const std::uint64_t module =
                     FindOcarinaModule(guest, main_base, SoundRoot(guest, main_base), &where);
@@ -424,11 +450,10 @@ std::optional<CoopPuppet::Call> Next(State& state, const Wanted& wanted, CoopPup
                                 Hex(addr::kOcarinaModuleVtableGot) + "]+0x10) near the sound root " +
                                 Hex(SoundRoot(guest, main_base));
                 }
-                const std::uint64_t mu = module != 0 ? Pointer(guest, module + addr::kModuleUser) : 0;
-                if (mu != 0 && Accessor(guest, mu) != 0 && UserName(guest, mu) == kOcarinaUser &&
-                LooksLikeUser(guest, mu)) {
-                    state.ocarina_user = mu;
-                    how = "Ocarina module at " + where + ", field +0x40";
+                std::string field;
+                if (const std::uint64_t u = OcarinaModuleUser(guest, module, &field); u != 0) {
+                    state.ocarina_user = u;
+                    how = "Ocarina module at " + where + ", field " + field;
                 }
             }
             if (state.ocarina_user == 0) {

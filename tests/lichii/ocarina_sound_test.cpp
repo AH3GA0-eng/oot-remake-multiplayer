@@ -455,3 +455,70 @@ TEST_CASE("the Ocarina module's user is taken on a later note once it is a named
     CHECK(c->x[0] == 0x400080000);
     CHECK(run.said.back().find("on a later note") != std::string::npos);
 }
+
+TEST_CASE("the notes go to the user at +0x8 of the module's bank handle, where the game plays its own") {
+    // As in the runs of 2026-11-14: the module's +0x40 object is the Ocarina.bars bank's
+    // handle (no name, no accessor, flags 0x2) and its +0x8 is the SLink user the game
+    // emitted 'Ocarina_D' ... on.
+    FakeGuest g = PuppetWithSound();
+    constexpr std::uint64_t kRoot = 0x4000a0000;
+    constexpr std::uint64_t kModules = 0x4000b0000;
+    constexpr std::uint64_t kModule = 0x4000c0000;
+    constexpr std::uint64_t kBank = kModule + 0x360;
+    constexpr std::uint64_t kOcarina = kModule + 0x100;
+    constexpr std::uint64_t kOcarinaResource = 0x400070000;
+    constexpr std::uint64_t kVtableBase = kBase + 0x4b00000;
+    g.Put<std::uint64_t>(kBase + snd::addr::kSoundRootGot, kBase + 0x100000);
+    g.Put<std::uint64_t>(kBase + 0x100000, kRoot);
+    g.Put<std::uint64_t>(kBase + snd::addr::kOcarinaModuleVtableGot, kVtableBase);
+    g.Put<std::int32_t>(kRoot + 0xc0, 1);
+    g.Put<std::int32_t>(kRoot + 0xc4, 1);
+    g.Put<std::uint64_t>(kRoot + 0xc8, kModules);
+    g.Put<std::uint64_t>(kModules, kModule);
+    g.Put<std::uint64_t>(kModule, kVtableBase + 0x10);
+    g.Put<std::uint64_t>(kModule + snd::addr::kModuleUser, kBank);
+    g.Put<std::uint32_t>(kBank + snd::addr::kUserFlags, 0x2);
+    g.Put<std::uint64_t>(kBank + snd::addr::kModuleUserInner, kOcarina);
+    g.Put<std::uint64_t>(kOcarina + snd::addr::kUserResource, kOcarinaResource);
+    g.Put<std::uint64_t>(kOcarinaResource + snd::addr::kResourceAccessor, 0x400080000);
+    g.Put<std::uint64_t>(kOcarinaResource + snd::addr::kResourceName, kOcarinaResource + 0x100);
+    g.PutText(kOcarinaResource + 0x100, "Ocarina");
+    g.Put<std::uint64_t>(kOcarina + snd::addr::kUserFirstLink, kOcarina + snd::addr::kUserEvents);
+    g.Put<std::int32_t>(kOcarina + snd::addr::kUserLinkOffset, 0x10);
+
+    std::string field;
+    CHECK(snd::OcarinaModuleUser(g, kModule, &field) == kOcarina);
+    CHECK(field == "+0x40 -> +0x8");
+    CHECK(snd::DescribeModule(g, kModule).find("its +0x8 0x4000c0100 'Ocarina'") != std::string::npos);
+
+    Run run;
+    snd::State st;
+    auto c = snd::Next(st, snd::Wanted{4, 1, 0}, g, kBase, kActor, kBlock, 10, "P1", run.say());
+    REQUIRE(c.has_value());
+    CHECK(c->function == kBase + snd::addr::kSearchAsset);
+    CHECK(c->x[0] == 0x400080000);  // the Ocarina user's accessor
+    bool chosen = false;
+    for (const auto& line : run.said) {
+        chosen = chosen || line.find("Ocarina notes go to sound user 0x4000c0100 'Ocarina' "
+                                     "(Ocarina module at root array +0xc0 [0], field +0x40 -> +0x8)") !=
+                               std::string::npos;
+    }
+    CHECK(chosen);
+    snd::Finish(st, 1, "P1", run.say());
+    c = snd::Next(st, snd::Wanted{4, 1, 0}, g, kBase, kActor, kBlock, 20, "P1", run.say());
+    REQUIRE(c.has_value());
+    CHECK(c->function == kBase + snd::addr::kEmit);
+    CHECK(c->x[0] == kOcarina);  // emitted on the game's Ocarina user, as the game's own notes
+}
+
+TEST_CASE("a +0x8 word that is no user named Ocarina is never played on") {
+    FakeGuest g = PuppetWithSound();
+    constexpr std::uint64_t kModule = 0x4000c0000;
+    constexpr std::uint64_t kBank = kModule + 0x360;
+    g.Put<std::uint64_t>(kModule + snd::addr::kModuleUser, kBank);
+    g.Put<std::uint64_t>(kBank + snd::addr::kModuleUserInner, kUser);  // Player_Child's user
+    CHECK(snd::OcarinaModuleUser(g, kModule) == 0);
+    g.Put<std::uint64_t>(kBank + snd::addr::kModuleUserInner, 0);
+    CHECK(snd::OcarinaModuleUser(g, kModule) == 0);
+    CHECK(snd::OcarinaModuleUser(g, 0) == 0);
+}

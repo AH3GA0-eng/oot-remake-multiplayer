@@ -25,13 +25,14 @@
 namespace CoopPuppet {
 namespace {
 
-// The puppet plays the other player's Ocarina notes (issue 152) only with
-// LICHII_COOP_OCARINA_SOUND=1: off by default until the game's own note player
-// is found (the notes are in the Ocarina.bars bank, not an SLink user, 2026-11-12).
+// The puppet plays the other player's Ocarina notes (issue 152) on the game's own
+// "Ocarina" SLink user, the one the game emits its own notes on (coop_puppet_sound.h,
+// OcarinaModuleUser). On by default since ocarina-notes (2026-11-14);
+// LICHII_COOP_OCARINA_SOUND=0 turns it off.
 bool OcarinaSoundOn() {
     static const bool on = [] {
         const char* v = std::getenv("LICHII_COOP_OCARINA_SOUND");
-        return v != nullptr && std::string_view(v) == "1";
+        return v == nullptr || std::string_view(v) != "0";
     }();
     return on;
 }
