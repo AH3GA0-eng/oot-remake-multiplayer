@@ -58,6 +58,7 @@ constexpr std::uint32_t kEscapeDungeon = 0x3ecd8c01u;
 constexpr std::uint32_t kGotoHyruleCastle = 0xdb89c1a9u;
 constexpr std::uint32_t kDoorOfTime = 0x378913cau;
 constexpr std::uint32_t kStoneOfFire = 0x1002b466u;
+constexpr std::uint32_t kStoneOfFireName = 0xe4c584e6u;  // the challenge: Get_StoneOfFire
 
 constexpr std::array kGotoSteps{kNotReady, kReady,     kStep01,    kStep02, kStep02_01,
                                 kStep03,   kStep03_01, kStep03_02, kStep04, kComplete};
@@ -130,8 +131,8 @@ constexpr std::array kQuests{
 constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 19> kHeld{{
     {0xe8dafe6cu, kStep04},      // DoorOfTime Step04
     {0xe873ce22u, 0x085d18f0u},  // Get_Epona GambleRacePlaying
-    {0xe4c584e6u, kBossBattle},  // Get_StoneOfFire BossBattle
-    {0xe4c584e6u, kEscapeDungeon},
+    {kStoneOfFireName, kBossBattle},  // Get_StoneOfFire BossBattle
+    {kStoneOfFireName, kEscapeDungeon},
     {0x628de7a6u, 0xb5df43cbu},  // Get_StoneOfForest GoToBossRoom
     {0x628de7a6u, 0x576277fau},  // Get_StoneOfForest DefeatBoss
     {0x628de7a6u, 0xd52b1014u},  // Get_StoneOfForest GoToWarpPoint
@@ -198,6 +199,14 @@ bool HeldStep(std::uint32_t challenge, std::uint32_t step) {
     return std::find(kHeld.begin(), kHeld.end(), std::pair{challenge, step}) != kHeld.end();
 }
 
+std::optional<StepWant> LiveWant(const Quest& quest, const ReadEnum& value) {
+    if (quest.hash != kStoneOfFire) return std::nullopt;  // 0.11: the gate's quest only
+    const auto at = value(quest.hash);
+    const auto rank = at ? Rank(quest, *at) : std::nullopt;
+    if (!rank || *rank < quest.floor) return std::nullopt;
+    return StepWant{kStoneOfFireName, *at, {quest.steps.begin(), quest.steps.end()}, quest.name};
+}
+
 void Challenges::Want(std::vector<StepWant> wants) {
     std::lock_guard lock(mutex_);
     waiting_ = std::move(wants);
@@ -234,6 +243,7 @@ std::optional<CoopPuppet::Call> Challenges::Step(CoopPuppet::Guest& guest, bool 
         const auto at = Get<std::uint32_t>(guest, entry + kEntryStep);
         const auto have = at ? IndexOf(w.steps, *at) : std::nullopt;
         if (!have || *want <= *have) continue;  // never lowered; an unknown step is left alone
+        if (*have == 0 || HeldStep(w.challenge, *at)) continue;  // NotReady; a fight or race goes on
         const auto flags = Get<std::uint16_t>(guest, entry + kEntryFlags);
         const auto asked = Get<std::uint32_t>(guest, entry + kEntryAsked);
         if (!flags || !asked || ((*flags & kFlagAsked) != 0 && *asked == w.step)) continue;
@@ -242,8 +252,7 @@ std::optional<CoopPuppet::Call> Challenges::Step(CoopPuppet::Guest& guest, bool 
         c.function = main + kSetStep;
         c.x[0] = *mgr;
         c.x[1] = w.challenge;
-        c.x[2] = w.step;
-        c.x[5] = 1;  // force: a quest still at NotReady takes the step too
+        c.x[2] = w.step;  // w3, w4, force: 0, as the game's own calls
         return c;
     }
     return std::nullopt;

@@ -324,7 +324,7 @@ TEST_CASE("quest: a GameData step ahead of the game's ChallengeMgr is asked thro
     CHECK(call->x[2] == Hash("KakarikoVillageLetter"));
     CHECK(call->x[3] == 0);
     CHECK(call->x[4] == 0);
-    CHECK(call->x[5] == 1);
+    CHECK(call->x[5] == 0);  // no force, as the game's own calls
     CHECK_FALSE(c.Step(g.m, true, 1, kMain).has_value());  // one call, then done
     const auto notes = c.TakeNotes();
     REQUIRE(notes.size() == 1);
@@ -380,20 +380,62 @@ TEST_CASE("quest: the ChallengeMgr is never lowered, never moved into a held ste
     CHECK(c.TakeNotes().empty());
 }
 
-TEST_CASE("quest: from NotReady the step is asked with force, and a refusal is noted") {
-    Mgr g("NotReady");
+TEST_CASE("quest: nothing is asked from NotReady, and a refusal is noted") {
+    {
+        Mgr g("NotReady");  // the game refuses it without force; none is passed
+        CoopQuest::Challenges c;
+        c.Want({Fire("KakarikoVillageLetter")});
+        CHECK_FALSE(c.Step(g.m, false, 0, kMain).has_value());
+    }
+    Mgr g("KakarikoVillageNpc");
     CoopQuest::Challenges c;
-    c.Want({Fire("KakarikoVillageNpc"), Fire("KakarikoVillageLetter")});
+    c.Want({Fire("KakarikoVillageLetter"), Fire("DeathMtTrailIn")});
     const auto first = c.Step(g.m, false, 0, kMain);
     REQUIRE(first.has_value());
-    CHECK(first->x[2] == Hash("KakarikoVillageNpc"));
-    CHECK(first->x[5] == 1);
+    CHECK(first->x[2] == Hash("KakarikoVillageLetter"));
     const auto second = c.Step(g.m, true, 0, kMain);  // the first was refused (0)
     REQUIRE(second.has_value());
-    CHECK(second->x[2] == Hash("KakarikoVillageLetter"));
+    CHECK(second->x[2] == Hash("DeathMtTrailIn"));
     CHECK_FALSE(c.Step(g.m, true, 1, kMain).has_value());
     const auto notes = c.TakeNotes();
     REQUIRE(notes.size() == 2);
     CHECK(notes[0].find("refused") != std::string::npos);
     CHECK(notes[1].find("asked") != std::string::npos);
+}
+
+TEST_CASE("quest: a player in a boss fight or minigame step is never moved out of it") {
+    CoopQuest::Challenges c;
+    for (const char* in : {"BossBattle", "EscapeDungeon"}) {
+        Mgr g(in);  // B is fighting King Dodongo (or escaping) when A finishes
+        c.Want({Fire("Complete")});
+        CHECK_MESSAGE(!c.Step(g.m, false, 0, kMain).has_value(), in);
+    }
+    Mgr g("DungeonStart");  // not in the fight: the step after it is fine
+    c.Want({Fire("Complete")});
+    CHECK(c.Step(g.m, false, 0, kMain).has_value());
+}
+
+TEST_CASE("quest: only Get_StoneOfFire goes to the live manager, and only from KakarikoVillageNpc") {
+    Game g;
+    const auto& f = Q("Get_StoneOfFire");
+    for (const auto& q : CoopQuest::Quests()) {
+        g.enums[q.hash] = q.steps[q.steps.size() - 2];  // every quest far along
+    }
+    for (const auto& q : CoopQuest::Quests()) {
+        const auto w = CoopQuest::LiveWant(q, g.value);
+        CHECK_MESSAGE(w.has_value() == (q.hash == f.hash), q.name);
+        if (w) {
+            CHECK(w->challenge == Hash("Get_StoneOfFire"));
+            CHECK(w->step == g.enums[f.hash]);
+            CHECK(w->steps.size() == f.steps.size());
+        }
+    }
+    g.enums[f.hash] = Hash("Ready");  // below the floor: not B's quest yet
+    CHECK_FALSE(CoopQuest::LiveWant(f, g.value).has_value());
+    g.enums[f.hash] = Hash("KakarikoVillageNpc");
+    CHECK(CoopQuest::LiveWant(f, g.value).has_value());
+    g.enums[f.hash] = 0x12345678u;  // unknown
+    CHECK_FALSE(CoopQuest::LiveWant(f, g.value).has_value());
+    g.enums.erase(f.hash);  // unread
+    CHECK_FALSE(CoopQuest::LiveWant(f, g.value).has_value());
 }

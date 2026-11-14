@@ -81,11 +81,11 @@ std::optional<std::uint32_t> CatchUp(const Quest& quest, const ReadBool& flag,
 //     +0x48/+0x58/+0x68, entries 0x160 bytes: +0x08 the challenge's hash
 //     (Murmur3 of its name), +0x10 the step it is at (a step name's hash),
 //     +0x16 flags (0x400: a step was asked), +0xa4 the step asked.
-//   setStep = main + 0x2cf54a0 (mgr, challenge, step, w3, w4, force): finds
+//   setStep = main + 0x2cf54a0 (mgr, challenge, step, w3, w4, w5 force): finds
 //     the entry, refuses from NotReady or Complete unless force, does nothing
 //     when the step is the one it is at, else asks for the step (+0xa4, flag
 //     0x400) for the manager's own update to apply. The game's own calls pass
-//     w3 = w4 = 0.
+//     w3 = w4 = w5 = 0, and so does co-op.
 inline constexpr std::uint64_t kChallengeMgr = 0x4e29950;
 inline constexpr std::uint64_t kSetStep = 0x2cf54a0;
 
@@ -98,12 +98,21 @@ struct StepWant {
 };
 
 // A boss fight or minigame step (RSDB Challenge IsBossBattle / IsMiniGame):
-// the manager is never moved into one (the player gets there by playing).
+// the manager is never moved into one (the player gets there by playing), nor
+// out of one a player is in (their fight or race goes on).
 bool HeldStep(std::uint32_t challenge, std::uint32_t step);
 
+// The step of `quest` the live manager should get, from the GameData step
+// `value` reads, or nothing. 0.11 sends only Get_StoneOfFire (the Kakariko
+// gate's quest), and only from its floor (KakarikoVillageNpc) on. The other
+// quests stay as before (GameData and the Threads of Time tab); each joins
+// later on its own, with its own floor and an in-game check.
+std::optional<StepWant> LiveWant(const Quest& quest, const ReadEnum& value);
+
 // Moves the manager's entries up to the steps GameData holds. Never lowers,
-// never into a held step, an unknown step or a quest the manager does not have
-// is left alone, and a step already asked is not asked again.
+// never into or out of a held step, never from NotReady (the game refuses it
+// without force, and none is passed); an unknown step or a quest the manager
+// does not have is left alone, and a step already asked is not asked again.
 class Challenges {
 public:
     // Any thread: the quests to check on the next frame (replaces any waiting).

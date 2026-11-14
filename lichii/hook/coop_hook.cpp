@@ -1962,9 +1962,10 @@ private:
     // DoorOfTime, Get_StoneOfFire) to what the shared story scenes say, so a
     // scene another player played does not leave our quest behind. Only ever
     // raised. Issue 171: the game's logic reads its ChallengeMgr, not the
-    // GameData Enum co-op writes, so every shared quest's GameData step then
-    // goes to the manager too, through the game's setStep (challenges_, a
-    // caller on the calc thread); never while our Link is in an event.
+    // GameData Enum co-op writes, so Get_StoneOfFire's GameData step (the
+    // Kakariko gate's; only that quest in 0.11: CoopQuest::LiveWant) goes to
+    // the manager too, through the game's setStep (challenges_, a caller on
+    // the calc thread); never while our Link is in an event.
     CoopEvery::Every quest_catch_up_{CoopEvery::kSecondUs};
     CoopQuest::Challenges challenges_;
     void CatchUpQuests(EmulatorMemory& memory, bool in_event) {
@@ -1986,20 +1987,8 @@ private:
             return;
         }
         std::vector<CoopQuest::StepWant> wants;
-        const auto want = [&](std::uint32_t hash, const char* name, std::vector<std::uint32_t> steps) {
-            const auto at = flags.get_enum(hash);
-            const std::uint32_t challenge = coop::host::flag_hash(name);
-            const bool seen = std::any_of(wants.begin(), wants.end(),
-                                          [&](const CoopQuest::StepWant& w) { return w.challenge == challenge; });
-            if (at && !seen) wants.push_back({challenge, *at, std::move(steps), name});
-        };
         for (const auto& quest : CoopQuest::Quests()) {
-            want(quest.hash, quest.name, {quest.steps.begin(), quest.steps.end()});
-        }
-        for (const auto& quest : CoopQuests::Quests()) {
-            std::vector<std::uint32_t> steps;
-            for (const char* step : quest.steps) steps.push_back(coop::host::flag_hash(step));
-            want(quest.hash, quest.name, std::move(steps));
+            if (auto w = CoopQuest::LiveWant(quest, value)) wants.push_back(std::move(*w));
         }
         challenges_.Want(std::move(wants));
     }
