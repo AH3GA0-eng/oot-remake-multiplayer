@@ -751,7 +751,7 @@ public:
             const std::int64_t since_us = static_cast<std::int64_t>(since) * 1000;
             // A townsperson's (coop_npc_anim.h): the playing frame, inside its loop.
             const float frame =
-                p.npc ? CoopNpcAnim::Wrapped(
+                p.play_frame ? CoopNpcAnim::Wrapped(
                             FrameAfter(p.frame, p.run < 0.0f ? rate : p.run, since_us), p.loop)
                       : FrameAfter(p.frame, rate, since_us);
             const std::string slot_name = SlotName(guest, controller, p.slot);
@@ -764,7 +764,7 @@ public:
                 }
                 checked = p.sample;
                 float now_frame = 0.0f;
-                if (p.npc) {
+                if (p.play_frame) {
                     if (PlayFrame(guest, controller, now_frame) &&
                         CoopNpcAnim::FrameGap(now_frame, frame, p.loop) <=
                             CoopNpcAnim::kFrameSlack) {
@@ -2626,8 +2626,8 @@ private:
                 if (const auto m = r.Get<std::array<float, 9>>(a + kActorRotation)) {
                     s.rotation = *m;
                 }
-                // Townspeople send the playing frame (coop_npc_anim.h).
-                s.animation = s.name.starts_with("Npc_")
+                // Townspeople and enemies send the playing frame (PlaysByFrame).
+                s.animation = PlaysByFrame(s.name)
                                   ? AnimationAt(r, a, 0, false, CoopNpcAnim::kSlotPlayFrame)
                                   : Animation(r, a);
                 if (IsBoss(s.name)) {
@@ -3258,7 +3258,7 @@ private:
             // What each copy really shows, and ours (the frame we send).
             for (const PlayWish& p : plays) {
                 const auto name = names_.find(p.address);
-                if (!p.npc || name == names_.end()) {
+                if (!p.play_frame || name == names_.end() || !name->second.first.starts_with("Npc_")) {
                     continue;
                 }
                 const auto shown = AnimationAt(r, p.address, 0, false, CoopNpcAnim::kSlotPlayFrame);

@@ -342,6 +342,10 @@ LifeRouted RouteLife(const LifeAsk& a) {
     return {a.native ? LifeRoute::lost : LifeRoute::write, 0};
 }
 
+bool PlaysByFrame(std::string_view name) {
+    return name.starts_with("Npc_") || (name.starts_with("Enemy_") && !IsBoss(name));
+}
+
 bool IsBoss(std::string_view name) {
     if (name.find("_Dictionary") != std::string_view::npos) return false;
     if (name.starts_with("Enemy_DungeonBoss_") || name.starts_with("Enemy_MiddleBoss_")) {
@@ -1617,6 +1621,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.fish = IsFish(s->name);
         o.guard = IsGuard(s->name);
         o.npc = s->name.starts_with("Npc_");
+        o.play_frame = PlaysByFrame(s->name);
         o.first_position = s->position;
         if (s->animation) {
             o.rest_animation = s->animation->name;
@@ -2342,8 +2347,8 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                     while (o->received.size() > kKeepSamples) {
                         o->received.pop_front();
                     }
-                    if (const auto& a = o->received.back().animation; o->npc && a) {
-                        o->npc_loop.See(a->name, a->frame);  // coop_npc_anim.h
+                    if (const auto& a = o->received.back().animation; o->play_frame && a) {
+                        o->frame_loop.See(a->name, a->frame);  // coop_npc_anim.h
                     }
                 }
             }
@@ -2651,13 +2656,15 @@ void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
             -static_cast<std::int64_t>(kBehindUs), static_cast<std::int64_t>(kExtrapolateUs));
         out.push_back({address, wanted->name, rate, FrameAfter(wanted->frame, rate, age),
                        last.time, 0, {}});
-        if (o.npc) {
-            // Walking townspeople (coop_npc_anim.h): the playing frame, run
-            // on as fast as the owner's last two samples show it running.
+        if (o.play_frame) {
+            // Townspeople and enemies (coop_npc_anim.h): the playing frame,
+            // run on as fast as the owner's last two samples show it running.
             PlayWish& wish = out.back();
-            wish.npc = true;
-            wish.alias = !o.guard;  // a guard's own reaction is a hand-over (issue 191)
-            wish.loop = o.npc_loop.Length();
+            wish.play_frame = true;
+            // A guard's own reaction is a hand-over (issue 191), an enemy's
+            // its wake (issue 157): no alias hides them.
+            wish.alias = o.npc && !o.guard;
+            wish.loop = o.frame_loop.Length();
             wish.run = rate;
             if (o.received.size() >= 2) {
                 const Received& before = o.received[o.received.size() - 2];
