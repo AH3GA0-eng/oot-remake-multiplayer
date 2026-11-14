@@ -105,6 +105,7 @@
 
 namespace CoopObjects {
 void NoteBosses(const std::vector<Seen>& seen, const std::vector<std::pair<u64, std::string>>& owned);  // issue 109, below
+void ForgetBosses();  // below: a new session, the title or a new game run
 // Boss bodies whose intro this game has not played (SetUnreadyBosses, below).
 std::mutex g_unready_mutex;
 std::vector<std::string> g_unready;
@@ -1331,6 +1332,7 @@ public:
                 sync_.Reset();
                 world_.Reset();
                 block_retry_.clear();
+                ForgetBosses();  // (not connected, or no scene: the title)
                 sharing_ = false;
             }
             return;
@@ -2087,6 +2089,8 @@ private:
             sync_.Reset();
             world_.Reset();
             block_retry_.clear();
+            ForgetBosses();
+            boss_hit_ids_.clear();
             extras_.Reset();  // difficulty: that run's extra enemies are gone with it
             horde_.Reset();
             {
@@ -3798,6 +3802,7 @@ namespace {
 std::mutex g_bosses_mutex;
 std::vector<Seen> g_bosses;
 std::vector<std::uint64_t> g_bosses_ours;  // the bosses of g_bosses our game owns (boss-intro)
+std::map<std::string, BossOwnership, std::less<>> g_boss_last;  // the last ownership reading per boss (BossOurs)
 std::uint64_t g_bosses_at = 0;
 constexpr std::uint64_t kBossesFreshUs = 1'500'000;
 
@@ -3831,14 +3836,21 @@ std::optional<bool> LastBossAlive(std::span<const std::string_view> bodies) {
     return BossAlive(g_bosses, bodies);
 }
 
+void ForgetBosses() {
+    std::lock_guard lock(g_bosses_mutex);
+    g_bosses.clear();
+    g_bosses_ours.clear();
+    g_boss_last.clear();  // another session's (or run's) owner says nothing here
+    g_bosses_at = 0;
+}
+
 std::optional<bool> LastBossOurs(std::span<const std::string_view> bodies) {
     std::lock_guard lock(g_bosses_mutex);
     const std::uint64_t now = CoopEvery::NowUs();
-    static std::map<std::string, BossOwnership, std::less<>> last;  // (under g_bosses_mutex)
     if (g_bosses_at == 0 || now < g_bosses_at || now - g_bosses_at > kBossesFreshUs) {
         return std::nullopt;
     }
-    return BossOurs(g_bosses, g_bosses_ours, bodies, g_bosses_at, last);
+    return BossOurs(g_bosses, g_bosses_ours, bodies, g_bosses_at, g_boss_last);
 }
 
 void SetUnreadyBosses(std::vector<std::string> bodies) {

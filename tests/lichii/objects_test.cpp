@@ -296,6 +296,13 @@ TEST_CASE("objects: whose boss it is stays known a while after the owner's boss 
     // Never seen: nothing.
     std::map<std::string, CoopObjects::BossOwnership, std::less<>> none;
     CHECK_FALSE(CoopObjects::BossOurs({}, {}, bodies, 1'000'000, none));
+    // Ours, then handed to the other player while still seen: a copy from that walk on, also once she is gone.
+    std::map<std::string, CoopObjects::BossOwnership, std::less<>> flip;
+    CHECK(CoopObjects::BossOurs(with, ours, bodies, 1'000'000, flip) == std::optional(true));
+    CHECK(CoopObjects::BossOurs(with, {}, bodies, 2'000'000, flip) == std::optional(false));
+    CHECK(CoopObjects::BossOurs({}, {}, bodies, 3'000'000, flip) == std::optional(false));
+    // And back (a stun hands her to us): ours again.
+    CHECK(CoopObjects::BossOurs(with, ours, bodies, 4'000'000, flip) == std::optional(true));
 }
 
 TEST_CASE("objects: a hit place is kept only finite and near the boss") {
