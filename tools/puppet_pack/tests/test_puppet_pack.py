@@ -184,6 +184,8 @@ def fake_player_pack(variant):
             "SLinkRef": "?Component/SLink/Player.engine__component__SLinkParam.bgyml",
             "SoundFootStepRef": "?Component/SoundFootStepParam/Player.game__component__SoundFootStepParam.bgyml",
             "XLinkRef": "?Component/XLink/Player.engine__component__XLinkParam.bgyml",
+            "AffiliationRef": "?Component/AffiliationParam/Player.game__component__AffiliationParam.bgyml",
+            "PerceptionEmitterRef": "?Component/PerceptionEmitterParam/Player.game__component__PerceptionEmitterParam.bgyml",
         }
     }
     child = {
@@ -221,6 +223,11 @@ def fake_player_pack(variant):
         f"{fs}Player_{variant}.game__component__SoundFootStepParam.bgyml": byml.dumps(
             {"$parent": f"Work/{fs}Player.game__component__SoundFootStepParam.gyml", "LandInterval": 5.0}),
         "AI/Player.root.ainb": b"AIB " + b"\0" * 8,
+        "Component/AffiliationParam/Player.game__component__AffiliationParam.bgyml": byml.dumps(
+            {"DefaultAffiliation": byml.UInt(145979025), "TargetAffiliations": [byml.UInt(2194130537)]}),
+        "Component/PerceptionEmitterParam/Player.game__component__PerceptionEmitterParam.bgyml": byml.dumps(
+            {"AdvancedEmitters": {"AimTerror": "Work/Perception/AdvancedEmitterParam/Player_AimTerror.gyml"},
+             "IsResidentEmitter": True, "SubLayerSensor": "PerceptionPlayer"}),
         f"{eu}{variant}.game__component__EquipmentUserParam.bgyml": byml.dumps(
             {"$parent": f"Work/{eu}Player.game__component__EquipmentUserParam.gyml", "AccessoryBindBoneName1": "Pod_B"}),
         f"{eu}Player.game__component__EquipmentUserParam.bgyml": byml.dumps(
@@ -241,6 +248,16 @@ def fake_player_pack(variant):
         "Component/Blackboard/BlackboardInfo/P.engine__component__BlackboardInfo.bgyml": byml.dumps({"T": []}),
     }
     return files
+
+
+def fake_perception_pack():
+    """InterestSpotActor's physics as the game has it: a ProjectBase physics param with an empty controller set."""
+    return {
+        build.PERCEPTION_PHYSICS: byml.dumps(
+            {"$parent": "Work/Component/Physics/ProjectBase.engine__component__PhysicsParam.gyml",
+             "ControllerSetPath": "Work/Phive/ControllerSetParam/InterestSpotActor.phive__ControllerSetParam.gyml"}),
+        build.PERCEPTION_CONTROLLERS: byml.dumps({}),
+    }
 
 
 def fake_emit_ainb():
@@ -382,6 +399,43 @@ class BuildPackTest(unittest.TestCase):
         self.assertEqual(comps["SoundFootStepRef"],
                          "?Component/SoundFootStepParam/Player_Adult.game__component__SoundFootStepParam.bgyml")
         self.assertFalse([n for n in names if "CoopPuppet_Adult.game__" in n])
+
+    def test_pack_perception(self):
+        # Issues 150/178: the puppet is a target of the game's perception (build.PERCEPTION_SOURCE).
+        members = fake_player_pack("Child")
+        seen_by = build.perception_members(fake_perception_pack())
+        pack, _, names, _ = build.build_pack(members, "Child", perception=seen_by)
+        out = sarc.read(pack)
+        comps = byml.loads(out["Actor/CoopPuppet_Child.engine__actor__ActorParam.bgyml"])["Components"]
+        own = "Component/PerceptionEmitterParam/CoopPuppet_Child.game__component__PerceptionEmitterParam.bgyml"
+        self.assertEqual(comps["PerceptionEmitterRef"], "?" + own)
+        self.assertEqual(byml.loads(out[own]), {"IsResidentEmitter": True, "SubLayerSensor": "PerceptionPlayer"})
+        self.assertEqual(comps["AffiliationRef"],
+                         "?Component/AffiliationParam/Player.game__component__AffiliationParam.bgyml")
+        self.assertEqual(comps["PhysicsRef"], "?" + build.PERCEPTION_PHYSICS)
+        for p in (build.PERCEPTION_PHYSICS, build.PERCEPTION_CONTROLLERS,
+                  "Component/AffiliationParam/Player.game__component__AffiliationParam.bgyml"):
+            self.assertIn(p, names)
+        # Never the player's own physics or emitter.
+        self.assertNotIn("Component/Physics/P.engine__component__PhysicsParam.bgyml", names)
+        self.assertNotIn("Component/PerceptionEmitterParam/Player.game__component__PerceptionEmitterParam.bgyml", names)
+
+    def test_pack_no_perception(self):
+        _, ap, _, _ = build.build_pack(fake_player_pack("Child"), "Child")
+        comps = byml.loads(ap)["Components"]
+        for k in ("AffiliationRef", "PerceptionEmitterRef", "PhysicsRef"):
+            self.assertNotIn(k, comps)
+
+    def test_perception_members_checks(self):
+        self.assertIsNone(build.perception_members({}))
+        bad = fake_perception_pack()
+        bad[build.PERCEPTION_CONTROLLERS] = byml.dumps({"RigidBodies": [1]})
+        with self.assertRaises(build.BuildError):
+            build.perception_members(bad)
+        bad = fake_perception_pack()
+        bad[build.PERCEPTION_PHYSICS] = byml.dumps({"ControllerSetPath": "Work/Phive/Other.gyml"})
+        with self.assertRaises(build.BuildError):
+            build.perception_members(bad)
 
     def test_pack_sound_user(self):
         members = fake_player_pack("Child")

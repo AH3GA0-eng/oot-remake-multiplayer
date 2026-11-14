@@ -88,6 +88,23 @@ SLINK_DIR = "Component/SLink/"
 SLINK_SUFFIX = ".engine__component__SLinkParam.bgyml"
 FOOTSTEP_SUFFIX = ".game__component__SoundFootStepParam.bgyml"
 
+# Perception (issues 150 and 178): an enemy picks its target with the game's own perception search
+# (AI modules EnemyCommmon.PerceptionTargetSearchAndSet and Common.MinimumPerceptionSetTarget: Gohma's
+# wander and hanging battle, her eggs' hatch). It finds actors that emit perception (PerceptionEmitterRef)
+# of an affiliation the enemy targets (Gohma's and her eggs' AffiliationParam EnemyCommon: TargetAffiliations
+# Player, murmur3 145979025). The player has both; a puppet had neither, so a boss and its eggs in a game
+# only ever went for that game's own Link. The puppet keeps the player's AffiliationRef (DefaultAffiliation
+# Player) and gets a PerceptionEmitter of its own: the player's file without its AdvancedEmitters (AimTerror,
+# worked by the player's own aiming code). Every perception emitter in the game has a Physics component; the
+# puppet gets the one of InterestSpotActor, a logic-only emitter whose controller set is empty (no body: the
+# puppet still collides with nothing). `--no-perception` builds the pack as before.
+PERCEPTION_SOURCE = "InterestSpotActor"
+PERCEPTION_PHYSICS = "Component/Physics/InterestSpotActor.engine__component__PhysicsParam.bgyml"
+PERCEPTION_CONTROLLERS = "Phive/ControllerSetParam/InterestSpotActor.phive__ControllerSetParam.bgyml"
+EMITTER_DIR = "Component/PerceptionEmitterParam/"
+EMITTER_SUFFIX = ".game__component__PerceptionEmitterParam.bgyml"
+EMITTER_DROP = ("AdvancedEmitters",)
+
 # The puppet is no use without these: no AS, no model, nowhere to put a sword.
 REQUIRED_COMPONENTS = ("ASRef", "ModelInfoRef", "EquipmentUserRef")
 # Blackboard keys of the EquipmentUser: the instance parameters a create request can set.
@@ -379,6 +396,47 @@ def puppet_slink(doc, actor, user):
     return slink_path(actor), byml.dumps({"UserName": user}), src
 
 
+def emitter_path(actor):
+    return f"{EMITTER_DIR}{actor}{EMITTER_SUFFIX}"
+
+
+def perception_members(source_members):
+    """The body-less Physics files of PERCEPTION_SOURCE's pack ({member path: bytes}), or None when
+    that pack lacks them (then the puppets get no perception)."""
+    paths = (PERCEPTION_PHYSICS, PERCEPTION_CONTROLLERS)
+    if not all(p in source_members for p in paths):
+        return None
+    physics = byml.loads(source_members[PERCEPTION_PHYSICS])
+    if physics.get("ControllerSetPath") != "Work/" + PERCEPTION_CONTROLLERS[:-len(".bgyml")] + ".gyml":
+        raise BuildError(f"{PERCEPTION_PHYSICS} names another controller set")
+    if byml.loads(source_members[PERCEPTION_CONTROLLERS]):
+        raise BuildError(f"{PERCEPTION_CONTROLLERS} is not empty: the puppet would get a body")
+    return {p: source_members[p] for p in paths}
+
+
+def add_perception(doc, player_components, members, actor, files, perception):
+    """Makes the puppet's ActorParam `doc` perceivable (PERCEPTION_SOURCE): the player's AffiliationRef,
+    the puppet's own emitter param and the body-less physics. Returns the emitter's (path, bytes, the
+    player's member path it stands in for)."""
+    aff = player_components.get("AffiliationRef")
+    src = ref_to_member(player_components.get("PerceptionEmitterRef"))
+    if not aff or not src:
+        raise BuildError("the player's ActorParam has no AffiliationRef or PerceptionEmitterRef")
+    if src not in members:
+        raise BuildError(f"the player's perception emitter {src} is not in the pack")
+    own = {k: v for k, v in byml.loads(members[src]).items() if k not in EMITTER_DROP}
+    if "$parent" in own:
+        raise BuildError(f"the player's perception emitter {src} has a $parent")
+    path, data = emitter_path(actor), byml.dumps(own)
+    doc["Components"]["AffiliationRef"] = aff
+    doc["Components"]["PerceptionEmitterRef"] = "?" + path
+    doc["Components"]["PhysicsRef"] = "?" + PERCEPTION_PHYSICS
+    files.update(collect_members(members, {"Components": {"AffiliationRef": aff}}))
+    files.update(perception)
+    files[path] = data
+    return path, data, src
+
+
 def tunic_model_info(actor, variant, project):
     """(member path, bytes) of a colour puppet's ModelInfo: the player's model under its own
     project name, `Model/<project>.Player_<variant>.bfres` (puppet_pack.tunic)."""
@@ -387,14 +445,18 @@ def tunic_model_info(actor, variant, project):
 
 
 def build_pack(members, variant, sound=True, player_footsteps=False, sound_user=None, actor=None,
-               project=None, basic_xlink=False):
+               project=None, basic_xlink=False, perception=None):
     """Returns (pack bytes, actor param bytes, member list, equipment keys) for one variant.
     `actor`: the pack's actor (default CoopPuppet_<variant>); `project`: a model project of its own
-    (a tunic colour), else the player's."""
+    (a tunic colour), else the player's. `perception`: perception_members() to make the puppet a
+    target of the game's perception (PERCEPTION_SOURCE), or None."""
     player = f"Player_{variant}"
     actor = actor or puppet_name(variant)
-    doc = make_actor_param(flatten_actor_param(members, player), sound, basic_xlink)
+    player_components = flatten_actor_param(members, player)
+    doc = make_actor_param(player_components, sound, basic_xlink)
     files = collect_members(members, doc)
+    if perception:
+        add_perception(doc, player_components, members, actor, files, perception)
     if project:
         path, data = tunic_model_info(actor, variant, project)
         files[path] = data
@@ -813,7 +875,7 @@ def write_look_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows, slots, l
 
 def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None,
           tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False, title_rows=False,
-          look_slots=look_items.SLOTS):
+          look_slots=look_items.SLOTS, perception=True):
     """`tunics`: the tunic colours to make puppets of (puppet_pack.tunic.COLORS; each is a model,
     a tile and an actor per age, CoopPuppet_<age>_<Colour>). `test_tunic`: give the plain puppets
     that colour too (a test of the colours with a hook that knows none).
@@ -822,7 +884,8 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
     the player's footstep param instead of the puppet's own (FOOTSTEP_OVERRIDES). `sound_user`: another
     SLink user for the puppets' sounds (SLINK_DIR). `basic_xlink`: the shared ActorBasic XLink param
     instead of the player's (test switch, the pack before puppet-looks). `look_slots`: how many
-    players' puppets can wear gear colours of their own (puppet_pack.look_items; 0: none)."""
+    players' puppets can wear gear colours of their own (puppet_pack.look_items; 0: none).
+    `perception`: False builds the puppets as no target of the game's perception (PERCEPTION_SOURCE)."""
     heaps = heaps or {}
     if not os.path.isfile(os.path.join(romfs, "Pack", "ZsDic.pack.zs")):
         raise BuildError(f"{romfs} does not look like the game's romfs (no Pack/ZsDic.pack.zs)")
@@ -845,6 +908,16 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         raise BuildError(f"no actor has the SLink user {sound_user}")
     made = []
     new_ai, new_gai = [], []
+    seen_by = None
+    if perception:
+        src = os.path.join(romfs, "Pack", "Actor", f"{PERCEPTION_SOURCE}.pack.zs")
+        seen_by = perception_members(sarc.read(dicts.decompress(read(src)))) if os.path.isfile(src) else None
+        if seen_by is None:
+            log(f"note: no {PERCEPTION_SOURCE} physics in this romfs: the puppets are no target of the game's perception")
+        else:
+            for path in seen_by:
+                if table.get(path) is None:
+                    raise BuildError(f"the size table has no {path}")
     for c in list(tunics) + ([test_tunic] if test_tunic else []):
         if c not in tunic.COLORS:
             raise BuildError(f"no tunic colour {c} (have {', '.join(tunic.COLORS)})")
@@ -889,7 +962,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
             raise BuildError(f"missing {rel(romfs, src)}")
         members = sarc.read(dicts.decompress(read(src)))
         pack, ap, names, keys = build_pack(members, v, sound, player_footsteps, sound_user, actor, project,
-                                           basic_xlink=basic_xlink)
+                                           basic_xlink=basic_xlink, perception=seen_by)
         dst_rel = f"Pack/Actor/{actor}.pack.zs"
         write(os.path.join(out_romfs, dst_rel), dicts.compress(pack, PACK_DICT))
         if player not in ai_rows:
@@ -926,7 +999,15 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
                 raise BuildError(f"the player's SLink param {src} is not in the pack")
             table.add_new(path, max((table.get(src) or 0) + max(0, len(data) - len(members[src])),
                                     len(data) + PACK_SIZE_MARGIN))
-        made.append({"actor": actor, "from": player, "tunic": shade, "model": project, "pack": dst_rel, "pack_bytes": len(pack),
+        emitter = None
+        if emitter_path(actor) in names:
+            comps = flatten_actor_param(members, player)
+            path, data, src = add_perception({"Components": {}}, comps, members, actor, {}, seen_by)
+            # Sized as the player's emitter param it stands in for, as the footstep param.
+            em_size = max((table.get(src) or 0) + max(0, len(data) - len(members[src])), len(data) + PACK_SIZE_MARGIN)
+            table.add_new(path, em_size)
+            emitter = {"param": path, "size": em_size}
+        made.append({"actor": actor, "from": player, "perception": emitter, "tunic": shade, "model": project, "pack": dst_rel, "pack_bytes": len(pack),
                      "instance_heap": _num(new_ai[-1].get("InstanceHeapSize", 0)), "param_size": ap_size,
                      "members": names, "equipment_keys": keys, "footstep": footstep})
         log(f"{actor}: {len(names)} files, {len(pack)} bytes, {len(keys)} equipment keys -> {dst_rel}")
@@ -1031,6 +1112,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "test_tunic": test_tunic,
         "sound": sound,
         "footsteps": "player" if player_footsteps or not sound else "puppet",
+        "perception": bool(seen_by),
         "sound_user": sound_user if sound and sound_user else None,
         "xlink": "player" if sound and not basic_xlink else "basic",
         "tables": [rel(romfs, p) for p in (ai_path, gai_path, rs_path)],
@@ -1089,6 +1171,8 @@ def main(argv=None):
                          f"(default: all, {','.join(tunic.COLORS)})")
     ap.add_argument("--test-tunic", metavar="COLOUR",
                     help="give the plain puppets this tunic colour too (a test with a hook that knows no colours)")
+    ap.add_argument("--no-perception", action="store_true",
+                    help="puppets the game's perception does not see (no enemy targets them; the pack before boss-sync-2)")
     ap.add_argument("--no-sound", action="store_true",
                     help="build the puppets without Link's sounds (the pack before issue 131)")
     ap.add_argument("--seed-trail", action="store_true",
@@ -1161,7 +1245,8 @@ def _main_build(a, romfs, hud_reader=None):
         build(romfs, mod_dir, heaps=heaps, sound=not a.no_sound, player_footsteps=a.player_footsteps,
               sound_user=a.sound_user, tunics=tunics, test_tunic=a.test_tunic,
               stand_in_effects=a.seed_trail and not a.no_seed_trail, basic_xlink=a.basic_xlink,
-              title_rows=a.title_rows, look_slots=max(0, min(a.look_slots, look_items.MAX_SLOTS)))
+              title_rows=a.title_rows, look_slots=max(0, min(a.look_slots, look_items.MAX_SLOTS)),
+              perception=not a.no_perception)
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
