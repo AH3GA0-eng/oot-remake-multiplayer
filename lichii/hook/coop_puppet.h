@@ -483,6 +483,7 @@ private:
         std::uint64_t hold_retry_ms = 0;    // no new change before this
         std::uint64_t hold_check_ms = 0;    // no state check (kEquipState) before this
         std::size_t hold_check_next = 0;    // the gear piece the next check starts from
+        std::uint8_t hold_said = 0;         // slots whose "set again" was logged and not yet held (bits)
         std::array<std::uint32_t, kGearCount> hold_id{};  // the piece each change was made for
         std::uint64_t tint_actor = 0;       // the actor the colour line was logged for
         std::uint32_t tint_color = 0;       // and its colour

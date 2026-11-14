@@ -570,13 +570,22 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
         // we hold as set, so the next Hold asks the change again.
         const auto state = static_cast<std::uint32_t>(result);
         const auto bit = static_cast<std::uint8_t>(1u << slot.hold_slot);
-        if ((state == addr::kEquipStateInHand || state == addr::kEquipStateAway) &&
-            (slot.hold_known & bit) != 0 &&
-            (state == addr::kEquipStateInHand) != ((slot.in_hand & bit) != 0)) {
-            slot.in_hand = static_cast<std::uint8_t>(slot.in_hand ^ bit);
+        if ((state != addr::kEquipStateInHand && state != addr::kEquipStateAway) ||
+            (slot.hold_known & bit) == 0) {
+            break;
+        }
+        if ((state == addr::kEquipStateInHand) == ((slot.in_hand & bit) != 0)) {
+            slot.hold_said = static_cast<std::uint8_t>(slot.hold_said & ~bit);  // holds again
+            break;
+        }
+        slot.in_hand = static_cast<std::uint8_t>(slot.in_hand ^ bit);
+        // Said once until a check finds it holding: an animation that keeps
+        // undoing it would otherwise log twice a second.
+        if ((slot.hold_said & bit) == 0) {
+            slot.hold_said = static_cast<std::uint8_t>(slot.hold_said | bit);
             Say(who + " equipment slot " + std::to_string(slot.hold_slot) + " is " +
                 (state == addr::kEquipStateInHand ? "in hand" : "put away") +
-                " in the game, not as set: set again");
+                " in the game, not as set: set again (said once until it holds)");
         }
         break;
     }

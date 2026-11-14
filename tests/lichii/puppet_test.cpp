@@ -1617,6 +1617,48 @@ TEST_CASE("puppet gear: slingshot out, then the sword: the slingshot goes away, 
     CHECK(g.state_checks.size() >= 4);
 }
 
+TEST_CASE("puppet gear: a piece its animation keeps undoing is set again, said once until it holds") {
+    Game g;
+    std::vector<std::string> log;
+    Director d([&](const std::string& line) { log.push_back(line); });
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    g.guest.Map(kParts, 0x3000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    for (int s = 0; s < 8; ++s) {
+        g.guest.Set(kEu + addr::kEquipSlots + addr::kEquipSlotStride * s + addr::kEquipSlotId,
+                    std::uint32_t{s == 0 ? 3u : 0xFFFFFFFFu});
+    }
+    g.guest.Set(kEu + addr::kEquipSlotBits + 0, addr::kEquipBitInHand);  // every ask taken
+    g.slot_state[0] = addr::kEquipStateAway;  // but the game keeps putting it away
+    Target t = At(1, 4, 5, 6);
+    t.gear[0] = "Weapon_Sword_Kokiri";
+    t.drawn = std::uint8_t{0x01};
+    d.SetInput(Wants({t}));
+    auto said = [&] {
+        return std::count_if(log.begin(), log.end(), [](const std::string& l) {
+            return l.find("not as set: set again") != std::string::npos;
+        });
+    };
+    int asks = 0;
+    for (std::uint64_t now = 20; now < 5000; now += 100) {
+        for (const Call& c : Frame(d, g, now)) {
+            asks += c.function == kBase + addr::kEquipChangeState ? 1 : 0;
+        }
+    }
+    CHECK(asks >= 5);    // asked again each time a check finds it away
+    CHECK(said() == 1);  // said once
+    // It holds for a check, then is undone again: said again.
+    g.slot_state[0] = addr::kEquipStateInHand;
+    for (std::uint64_t now = 5000; now < 6500; now += 100) Frame(d, g, now);
+    CHECK(said() == 1);
+    g.slot_state[0] = addr::kEquipStateAway;
+    for (std::uint64_t now = 6500; now < 8000; now += 100) Frame(d, g, now);
+    CHECK(said() == 2);
+}
+
 TEST_CASE("puppet gear: a piece the game made anew is put into the hand again") {
     Game g;
     Director d;

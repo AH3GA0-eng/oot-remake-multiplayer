@@ -155,6 +155,8 @@ inline constexpr std::uint32_t kEquipSlotSubTool = 6;
 // in state 6 (the slingshot, autotest 2026-11-09). That is the piece's own
 // state, so it stands even when the put-away request byte was missed
 // (held-fix: a slingshot stayed in the puppet's hand after the sword came out).
+// Both ways: a carried piece in state 4 (kActorStatePresent) with no request
+// in flight is out (the pose code takes state 4 as out for these slots too).
 inline constexpr std::uint32_t kActorStateKeptAway = 6;
 constexpr bool equip_slot_carried(std::uint32_t slot) {
   return slot == kEquipSlotSubWeapon || slot == kEquipSlotThirdWeapon ||
