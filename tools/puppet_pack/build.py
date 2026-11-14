@@ -97,15 +97,24 @@ FOOTSTEP_SUFFIX = ".game__component__SoundFootStepParam.bgyml"
 # Player) and gets a PerceptionEmitter of its own: the player's file without its AdvancedEmitters (AimTerror,
 # worked by the player's own aiming code). Every perception emitter in the game has a Physics component; the
 # puppet gets the one of InterestSpotActor, a logic-only emitter whose controller set is empty (no body: the
-# puppet still collides with nothing). OFF by default for 0.11 (review-boss-sync must-fix): the castle and
-# Gerudo guards also target Player, so with it they would see a puppet and catch this game's Link. `--perception`
-# builds it (a test switch until the guards are kept off the puppets).
+# puppet still collides with nothing).
+# Guards (review-boss-sync must-fix): the stealth guards (AffiliationParam NpcSecurityGuard: the castle's child
+# soldiers, the Gerudo) target Player too, and their AI (NpcSecurityGuard.SetIsObserve) takes any perceived
+# emitter of affiliation Player as Link: a puppet in view would catch this game's Link. Nothing in the data keeps
+# them apart from the enemies: every enemy targets only Player, and the guards' sight filter
+# (PerceptionFilterNone, Phive/Config/PhiveConfig.byml mask 0x41803FFF) takes the PerceptionPlayer sub-layer that
+# the enemies' (PerceptionFilterPlayerOnly, mask 2) take alone. So each puppet also has a QUIET copy without the
+# perception (quiet_name: CoopPuppet_ChildQuiet, CoopPuppet_ChildQuiet_Red), and the manifest lists the scenes
+# whose placements have a stealth guard (guard_scenes: "quiet_scenes"); the hook makes the quiet puppets there
+# (coop_puppet.cpp Planner::ActorFor). `--no-perception` builds the pack before this (no perception, no copies).
 PERCEPTION_SOURCE = "InterestSpotActor"
 PERCEPTION_PHYSICS = "Component/Physics/InterestSpotActor.engine__component__PhysicsParam.bgyml"
 PERCEPTION_CONTROLLERS = "Phive/ControllerSetParam/InterestSpotActor.phive__ControllerSetParam.bgyml"
 EMITTER_DIR = "Component/PerceptionEmitterParam/"
 EMITTER_SUFFIX = ".game__component__PerceptionEmitterParam.bgyml"
 EMITTER_DROP = ("AdvancedEmitters",)
+QUIET = "Quiet"
+GUARD_AFFILIATION = "Component/AffiliationParam/NpcSecurityGuard.game__component__AffiliationParam.bgyml"
 
 # The puppet is no use without these: no AS, no model, nowhere to put a sword.
 REQUIRED_COMPONENTS = ("ASRef", "ModelInfoRef", "EquipmentUserRef")
@@ -238,6 +247,45 @@ class BuildError(RuntimeError):
 
 def puppet_name(variant):
     return f"CoopPuppet_{variant}"
+
+
+def quiet_name(actor):
+    """The puppet's copy no perception sees: CoopPuppet_Child -> CoopPuppet_ChildQuiet, and
+    CoopPuppet_Child_Red -> CoopPuppet_ChildQuiet_Red (still a tunic actor to the hook)."""
+    for v in VARIANTS:
+        plain = puppet_name(v)
+        if actor == plain or actor.startswith(plain + "_"):
+            return plain + QUIET + actor[len(plain):]
+    raise BuildError(f"{actor} is no puppet")
+
+
+def guard_scenes(romfs, dicts):
+    """{scene: [guard actor, ...]}: the scenes (Banc/<area>/<scene>_Static/_Dynamic) that place a stealth
+    guard, an actor whose ActorParam takes GUARD_AFFILIATION. Only Npc_ actors are opened (every guard
+    is one; the other placements are thousands of packs)."""
+    placed = {}
+    for path in sorted(glob.glob(os.path.join(romfs, "Banc", "*", "*.bcett.byml.zs"))):
+        scene = os.path.basename(path)[: -len(".bcett.byml.zs")]
+        for suffix in ("_Static", "_Dynamic"):
+            if scene.endswith(suffix):
+                scene = scene[: -len(suffix)]
+        root = byml.loads(dicts.decompress(read(path)))
+        for a in root.get("Actors", []) or []:
+            name = a.get("Gyaml")
+            if isinstance(name, str) and name.startswith("Npc_"):
+                placed.setdefault(scene, set()).add(name)
+    guard = {}
+    for name in sorted(set().union(*placed.values()) if placed else ()):
+        src = os.path.join(romfs, "Pack", "Actor", f"{name}.pack.zs")
+        if not os.path.isfile(src):
+            continue
+        members = sarc.read(dicts.decompress(read(src)))
+        try:
+            guard[name] = ref_to_member(flatten_actor_param(members, name).get("AffiliationRef")) == GUARD_AFFILIATION
+        except BuildError:
+            guard[name] = False
+    return {scene: sorted(n for n in names if guard.get(n)) for scene, names in sorted(placed.items())
+            if any(guard.get(n) for n in names)}
 
 
 def actor_param_path(actor):
@@ -882,7 +930,7 @@ def write_look_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows, slots, l
 
 def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None,
           tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False, title_rows=False,
-          look_slots=look_items.SLOTS, perception=False):
+          look_slots=look_items.SLOTS, perception=True):
     """`tunics`: the tunic colours to make puppets of (puppet_pack.tunic.COLORS; each is a model,
     a tile and an actor per age, CoopPuppet_<age>_<Colour>). `test_tunic`: give the plain puppets
     that colour too (a test of the colours with a hook that knows none).
@@ -892,7 +940,8 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
     SLink user for the puppets' sounds (SLINK_DIR). `basic_xlink`: the shared ActorBasic XLink param
     instead of the player's (test switch, the pack before puppet-looks). `look_slots`: how many
     players' puppets can wear gear colours of their own (puppet_pack.look_items; 0: none).
-    `perception`: True makes the puppets a target of the game's perception (PERCEPTION_SOURCE; off for 0.11)."""
+    `perception`: True makes the puppets a target of the game's perception (PERCEPTION_SOURCE), each with a
+    quiet copy (quiet_name) for the scenes with stealth guards (guard_scenes)."""
     heaps = heaps or {}
     if not os.path.isfile(os.path.join(romfs, "Pack", "ZsDic.pack.zs")):
         raise BuildError(f"{romfs} does not look like the game's romfs (no Pack/ZsDic.pack.zs)")
@@ -959,9 +1008,11 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         new_ai += rows
         new_gai += grows
     jobs = [(v, None) for v in VARIANTS] + [(v, c) for v in VARIANTS for c in tunics]
-    for v, color in jobs:
+    jobs = [(v, c, False) for v, c in jobs] + ([(v, c, True) for v, c in jobs] if seen_by else [])
+    for v, color, quiet in jobs:
         player = f"Player_{v}"
         actor = tunic.actor_name(v, color) if color else puppet_name(v)
+        actor = quiet_name(actor) if quiet else actor
         shade = color or test_tunic
         project = tunic.project_name(v, shade) if shade else None
         src = os.path.join(romfs, "Pack", "Actor", f"{player}.pack.zs")
@@ -969,7 +1020,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
             raise BuildError(f"missing {rel(romfs, src)}")
         members = sarc.read(dicts.decompress(read(src)))
         pack, ap, names, keys = build_pack(members, v, sound, player_footsteps, sound_user, actor, project,
-                                           basic_xlink=basic_xlink, perception=seen_by)
+                                           basic_xlink=basic_xlink, perception=None if quiet else seen_by)
         dst_rel = f"Pack/Actor/{actor}.pack.zs"
         write(os.path.join(out_romfs, dst_rel), dicts.compress(pack, PACK_DICT))
         if player not in ai_rows:
@@ -1014,7 +1065,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
             em_size = max((table.get(src) or 0) + max(0, len(data) - len(members[src])), len(data) + PACK_SIZE_MARGIN)
             table.add_new(path, em_size)
             emitter = {"param": path, "size": em_size}
-        made.append({"actor": actor, "from": player, "perception": emitter, "tunic": shade, "model": project, "pack": dst_rel, "pack_bytes": len(pack),
+        made.append({"actor": actor, "from": player, "perception": emitter, "quiet": quiet, "tunic": shade, "model": project, "pack": dst_rel, "pack_bytes": len(pack),
                      "instance_heap": _num(new_ai[-1].get("InstanceHeapSize", 0)), "param_size": ap_size,
                      "members": names, "equipment_keys": keys, "footstep": footstep})
         log(f"{actor}: {len(names)} files, {len(pack)} bytes, {len(keys)} equipment keys -> {dst_rel}")
@@ -1103,6 +1154,10 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         write(os.path.join(out_romfs, r), recompress(dicts, read(path), new))
         log(f"wrote {r}")
 
+    guards = guard_scenes(romfs, dicts) if seen_by else {}
+    quiet_scenes = sorted(guards)
+    if seen_by:
+        log(f"quiet puppets (no perception) in {len(quiet_scenes)} scenes with stealth guards: {', '.join(quiet_scenes)}")
     manifest = {
         "tool": "tools/puppet_pack",
         "title_id": TITLE_ID,
@@ -1120,6 +1175,8 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "sound": sound,
         "footsteps": "player" if player_footsteps or not sound else "puppet",
         "perception": bool(seen_by),
+        "quiet_scenes": quiet_scenes,
+        "guards": guards,
         "sound_user": sound_user if sound and sound_user else None,
         "xlink": "player" if sound and not basic_xlink else "basic",
         "tables": [rel(romfs, p) for p in (ai_path, gai_path, rs_path)],
@@ -1178,8 +1235,8 @@ def main(argv=None):
                          f"(default: all, {','.join(tunic.COLORS)})")
     ap.add_argument("--test-tunic", metavar="COLOUR",
                     help="give the plain puppets this tunic colour too (a test with a hook that knows no colours)")
-    ap.add_argument("--perception", action="store_true",
-                    help="test switch: puppets the game's perception sees (enemies target them; guards would too)")
+    ap.add_argument("--no-perception", action="store_true",
+                    help="puppets no perception sees (the pack before issue 150: enemies go for this game's Link only)")
     ap.add_argument("--no-sound", action="store_true",
                     help="build the puppets without Link's sounds (the pack before issue 131)")
     ap.add_argument("--seed-trail", action="store_true",
@@ -1253,7 +1310,7 @@ def _main_build(a, romfs, hud_reader=None):
               sound_user=a.sound_user, tunics=tunics, test_tunic=a.test_tunic,
               stand_in_effects=a.seed_trail and not a.no_seed_trail, basic_xlink=a.basic_xlink,
               title_rows=a.title_rows, look_slots=max(0, min(a.look_slots, look_items.MAX_SLOTS)),
-              perception=a.perception)
+              perception=not a.no_perception)
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

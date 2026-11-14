@@ -218,3 +218,41 @@ TEST_CASE("colours: the tunic of a colour, and the puppet actor for it") {
     CHECK_FALSE(CoopPuppet::Director::IsTunicActor("CoopPuppet_Adult"));
     CHECK_FALSE(CoopPuppet::Director::IsTunicActor("Npc_Some_Thing"));
 }
+
+TEST_CASE("puppets: in a scene with stealth guards each puppet is its quiet copy (issue 150)") {
+    CHECK(CoopPuppet::QuietActor("CoopPuppet_Child") == "CoopPuppet_ChildQuiet");
+    CHECK(CoopPuppet::QuietActor("CoopPuppet_Adult_Red") == "CoopPuppet_AdultQuiet_Red");
+    CHECK(CoopPuppet::QuietActor("CoopPuppet_Childish") == "CoopPuppet_Childish");  // no puppet of ours
+    CHECK(CoopPuppet::QuietActor("Player_Child") == "Player_Child");
+    // Still a tunic actor (the model check) or a plain one, as its loud puppet.
+    CHECK(CoopPuppet::Director::IsTunicActor("CoopPuppet_AdultQuiet_Red"));
+    CHECK_FALSE(CoopPuppet::Director::IsTunicActor("CoopPuppet_ChildQuiet"));
+
+    CHECK(CoopPuppet::PackQuietScenes(R"({"perception": true, "quiet_scenes": ["GerudoFortress_Adult", "HyruleCastle"]})") ==
+          std::vector<std::string>{"GerudoFortress_Adult", "HyruleCastle"});
+    CHECK(CoopPuppet::PackQuietScenes(R"({"quiet_scenes": []})").empty());
+    CHECK(CoopPuppet::PackQuietScenes(R"({"perception": false})").empty());  // a pack before them
+    // A quiet pack still counts its loud tunic puppets only (PackHasTunicPuppets).
+    CHECK_FALSE(CoopPuppet::PackHasTunicPuppets(R"({"actors": [{"actor": "CoopPuppet_ChildQuiet"}]})"));
+
+    CoopPuppet::PlannerSettings s;
+    s.quiet_scenes = {"HyruleCastle"};
+    CoopPuppet::Planner p(s);
+    std::vector<CoopPuppet::Remote> remotes(1);
+    remotes[0].number = 2;
+    remotes[0].color = 0xFF3030u;
+    const auto plan = [&](const char* scene) {
+        remotes[0].scene = scene;
+        const auto in = p.Plan(0x8000000, std::string(scene), CoopPuppet::Vec3{0, 0, 0}, false, remotes, 1000);
+        REQUIRE(in.targets.size() == 1);
+        return in.targets[0].actor;
+    };
+    CHECK(plan("Kokiri") == "CoopPuppet_Child_Red");  // enemies see it
+    CHECK(plan("HyruleCastle") == "CoopPuppet_ChildQuiet_Red");  // no guard does
+    p.SetFailedTunics({"CoopPuppet_ChildQuiet_Red"});
+    CHECK(plan("HyruleCastle") == "CoopPuppet_ChildQuiet");
+    CHECK(plan("Kokiri") == "CoopPuppet_Child_Red");
+    p.SetTunics(false);
+    CHECK(plan("HyruleCastle") == "CoopPuppet_ChildQuiet");
+    CHECK(plan("Kokiri") == "CoopPuppet_Child");
+}
