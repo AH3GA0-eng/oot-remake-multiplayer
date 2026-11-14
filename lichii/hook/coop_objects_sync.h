@@ -457,6 +457,8 @@ public:
     // gone alive at most kHatchWindowUs before) came out of it.
     static constexpr float kHatchReachM = 3.0f;
     static constexpr std::uint64_t kHatchWindowUs = 2'000'000;
+    // How long our own hatchling of a copy egg waits for the owner's.
+    static constexpr std::uint64_t kOwnHatchWaitUs = 10'000'000;
     std::uint64_t Hatched() const { return hatched_count_; }
 
     // Hurt through the game's damage field (LifeWrite::hurt); off: write life.
@@ -845,6 +847,12 @@ private:
         // An egg we own that a hatchling came out of: when it leaves the
         // walk, OBJECT_REMOVE reason gone goes out for it.
         bool hatched = false;
+        // boss-sync-2 (issue 178): a hatchling our own game hatched out of a
+        // copy of another game's egg (when our game saw it hatch, 0: none).
+        // It stays: the owner's hatchling, when its OBJECT_SPAWN comes, takes
+        // this one as its copy instead of a second one being made; none within
+        // kOwnHatchWaitUs: it is ended (one larva per game).
+        std::uint64_t own_hatch_us = 0;
         // Issue 150: a boss copy whose own game stunned it (a DAMAGE of 0 is
         // due), and when that last went out.
         bool stun_due = false;
@@ -881,6 +889,13 @@ private:
                std::vector<coop::protocol::Message>& send);
     // gohma-sync: an egg of ours still on the walk, marked hatched, near `at`.
     Object* HatchedSibling(std::uint8_t self, const coop::protocol::Vec3& at);
+    // boss-sync-2 (issue 178): a fresh hatchling next to a copy of another
+    // game's egg (still on the walk, or gone alive at most kHatchWindowUs
+    // before, copy_eggs_): our game hatched it through its own AI.
+    bool CopyHatch(std::uint8_t self, const Seen& s, std::uint64_t now_us) const;
+    // The hatchling our game hatched out of a copy egg near `at` that no
+    // owner's hatchling took yet (at most kOwnHatchWaitUs old), or null.
+    Object* OwnHatchling(const coop::protocol::Vec3& at, std::uint64_t now_us);
 
     // A rolled enemy another game decided, from its OBJECT_SPAWN.
     struct Decided {
@@ -910,6 +925,9 @@ private:
         std::uint64_t at = 0;
     };
     std::vector<Egg> eggs_;
+    // boss-sync-2: copies of other games' eggs that left our walk alive (our
+    // game hatched them), for CopyHatch.
+    std::vector<Egg> copy_eggs_;
     std::uint64_t hatched_count_ = 0;
     std::string scene_;
     std::uint64_t scene_since_ = 0;  // server time of the scene's first walk

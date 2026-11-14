@@ -147,6 +147,16 @@ std::optional<bool> PackTunicPuppets() {
     return false;
 }
 
+// The first manifest with quiet scenes.
+std::vector<std::string> PackQuiet() {
+    for (const auto& text : PackManifests()) {
+        if (auto scenes = CoopPuppet::PackQuietScenes(text); !scenes.empty()) {
+            return scenes;
+        }
+    }
+    return {};
+}
+
 // The first manifest with item copies.
 CoopPuppet::LookItems PackLook() {
     for (const auto& text : PackManifests()) {
@@ -162,6 +172,16 @@ CoopPuppet::LookItems PackLook() {
 void Configure() {
     std::vector<std::string> lines;
     auto settings = Settings(Env, PackGreenPuppets, &lines, PackTunicPuppets, PackLook);
+    if (settings.actor.empty() && !settings.native_player) {
+        settings.quiet_scenes = PackQuiet();
+        if (!settings.quiet_scenes.empty()) {
+            std::string names;
+            for (const auto& s : settings.quiet_scenes) {
+                names += (names.empty() ? "" : ", ") + s;
+            }
+            lines.push_back("coop: puppets are seen by enemies; quiet puppets (no guard sees them) in " + names);
+        }
+    }
     for (const auto& line : lines) {
         LOG_INFO(Core, "{}", line);
     }

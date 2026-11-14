@@ -16,7 +16,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from puppet_pack import build, byml, dumpcheck, dungeon_rooms, map_captures, nup, rstb, sarc  # noqa: E402
+from puppet_pack import build, byml, dumpcheck, dungeon_rooms, map_captures, nup, rstb, sarc, zs  # noqa: E402
 
 # The co-op HUD's tests run with these (CI runs this file).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -184,6 +184,8 @@ def fake_player_pack(variant):
             "SLinkRef": "?Component/SLink/Player.engine__component__SLinkParam.bgyml",
             "SoundFootStepRef": "?Component/SoundFootStepParam/Player.game__component__SoundFootStepParam.bgyml",
             "XLinkRef": "?Component/XLink/Player.engine__component__XLinkParam.bgyml",
+            "AffiliationRef": "?Component/AffiliationParam/Player.game__component__AffiliationParam.bgyml",
+            "PerceptionEmitterRef": "?Component/PerceptionEmitterParam/Player.game__component__PerceptionEmitterParam.bgyml",
         }
     }
     child = {
@@ -221,6 +223,11 @@ def fake_player_pack(variant):
         f"{fs}Player_{variant}.game__component__SoundFootStepParam.bgyml": byml.dumps(
             {"$parent": f"Work/{fs}Player.game__component__SoundFootStepParam.gyml", "LandInterval": 5.0}),
         "AI/Player.root.ainb": b"AIB " + b"\0" * 8,
+        "Component/AffiliationParam/Player.game__component__AffiliationParam.bgyml": byml.dumps(
+            {"DefaultAffiliation": byml.UInt(145979025), "TargetAffiliations": [byml.UInt(2194130537)]}),
+        "Component/PerceptionEmitterParam/Player.game__component__PerceptionEmitterParam.bgyml": byml.dumps(
+            {"AdvancedEmitters": {"AimTerror": "Work/Perception/AdvancedEmitterParam/Player_AimTerror.gyml"},
+             "IsResidentEmitter": True, "SubLayerSensor": "PerceptionPlayer"}),
         f"{eu}{variant}.game__component__EquipmentUserParam.bgyml": byml.dumps(
             {"$parent": f"Work/{eu}Player.game__component__EquipmentUserParam.gyml", "AccessoryBindBoneName1": "Pod_B"}),
         f"{eu}Player.game__component__EquipmentUserParam.bgyml": byml.dumps(
@@ -241,6 +248,16 @@ def fake_player_pack(variant):
         "Component/Blackboard/BlackboardInfo/P.engine__component__BlackboardInfo.bgyml": byml.dumps({"T": []}),
     }
     return files
+
+
+def fake_perception_pack():
+    """InterestSpotActor's physics as the game has it: a ProjectBase physics param with an empty controller set."""
+    return {
+        build.PERCEPTION_PHYSICS: byml.dumps(
+            {"$parent": "Work/Component/Physics/ProjectBase.engine__component__PhysicsParam.gyml",
+             "ControllerSetPath": "Work/Phive/ControllerSetParam/InterestSpotActor.phive__ControllerSetParam.gyml"}),
+        build.PERCEPTION_CONTROLLERS: byml.dumps({}),
+    }
 
 
 def fake_emit_ainb():
@@ -382,6 +399,43 @@ class BuildPackTest(unittest.TestCase):
         self.assertEqual(comps["SoundFootStepRef"],
                          "?Component/SoundFootStepParam/Player_Adult.game__component__SoundFootStepParam.bgyml")
         self.assertFalse([n for n in names if "CoopPuppet_Adult.game__" in n])
+
+    def test_pack_perception(self):
+        # Issues 150/178: the puppet is a target of the game's perception (build.PERCEPTION_SOURCE).
+        members = fake_player_pack("Child")
+        seen_by = build.perception_members(fake_perception_pack())
+        pack, _, names, _ = build.build_pack(members, "Child", perception=seen_by)
+        out = sarc.read(pack)
+        comps = byml.loads(out["Actor/CoopPuppet_Child.engine__actor__ActorParam.bgyml"])["Components"]
+        own = "Component/PerceptionEmitterParam/CoopPuppet_Child.game__component__PerceptionEmitterParam.bgyml"
+        self.assertEqual(comps["PerceptionEmitterRef"], "?" + own)
+        self.assertEqual(byml.loads(out[own]), {"IsResidentEmitter": True, "SubLayerSensor": "PerceptionPlayer"})
+        self.assertEqual(comps["AffiliationRef"],
+                         "?Component/AffiliationParam/Player.game__component__AffiliationParam.bgyml")
+        self.assertEqual(comps["PhysicsRef"], "?" + build.PERCEPTION_PHYSICS)
+        for p in (build.PERCEPTION_PHYSICS, build.PERCEPTION_CONTROLLERS,
+                  "Component/AffiliationParam/Player.game__component__AffiliationParam.bgyml"):
+            self.assertIn(p, names)
+        # Never the player's own physics or emitter.
+        self.assertNotIn("Component/Physics/P.engine__component__PhysicsParam.bgyml", names)
+        self.assertNotIn("Component/PerceptionEmitterParam/Player.game__component__PerceptionEmitterParam.bgyml", names)
+
+    def test_pack_no_perception(self):
+        _, ap, _, _ = build.build_pack(fake_player_pack("Child"), "Child")
+        comps = byml.loads(ap)["Components"]
+        for k in ("AffiliationRef", "PerceptionEmitterRef", "PhysicsRef"):
+            self.assertNotIn(k, comps)
+
+    def test_perception_members_checks(self):
+        self.assertIsNone(build.perception_members({}))
+        bad = fake_perception_pack()
+        bad[build.PERCEPTION_CONTROLLERS] = byml.dumps({"RigidBodies": [1]})
+        with self.assertRaises(build.BuildError):
+            build.perception_members(bad)
+        bad = fake_perception_pack()
+        bad[build.PERCEPTION_PHYSICS] = byml.dumps({"ControllerSetPath": "Work/Phive/Other.gyml"})
+        with self.assertRaises(build.BuildError):
+            build.perception_members(bad)
 
     def test_pack_sound_user(self):
         members = fake_player_pack("Child")
@@ -1304,6 +1358,73 @@ class FullBuildTest(unittest.TestCase):
         self.assertNotIn("SLinkUserName", rows["CoopPuppet_Adult"])
         files = sarc.read(d.decompress(build.read(os.path.join(out, "Pack/Actor/CoopPuppet_Adult.pack.zs"))))
         self.assertFalse([n for n in files if "SLink" in n or "SoundFootStep" in n])
+
+    def add_perception_and_guards(self):
+        """InterestSpotActor (the puppets' perception), a stealth guard placed in Castle and a townsperson
+        placed in Town (both made-up packs)."""
+        pack_dict = zstandard.ZstdCompressionDict(sarc.read(zstandard.ZstdDecompressor().decompress(
+            self.dicts_raw))["pack.zsdic"])
+        z = zstandard.ZstdCompressor(dict_data=pack_dict)
+        self.write(f"Pack/Actor/{build.PERCEPTION_SOURCE}.pack.zs", z.compress(sarc.write(fake_perception_pack())))
+        for name, aff in (("Npc_Guard", build.GUARD_AFFILIATION),
+                          ("Npc_Town", "Component/AffiliationParam/NpcCommon.game__component__AffiliationParam.bgyml")):
+            self.write(f"Pack/Actor/{name}.pack.zs", z.compress(sarc.write({build.actor_param_path(name): byml.dumps(
+                {"Components": {"AffiliationRef": "?" + aff}})})))
+        plain = zstandard.ZstdCompressor()
+        rs = os.path.join(self.romfs, "System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs")
+        t = rstb.Rstb.loads(zstandard.ZstdDecompressor().decompress(build.read(rs)))
+        for path in (build.PERCEPTION_PHYSICS, build.PERCEPTION_CONTROLLERS):
+            t.set(path, 800)
+        self.write("System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs", plain.compress(t.dumps()))
+        for area, scene, actors in (("Castle", "Castle_Dynamic", ["Npc_Guard", "Enemy_X"]),
+                                    ("Town", "Town_Static", ["Npc_Town", "Npc_NoPack"])):
+            self.write(f"Banc/{area}/{scene}.bcett.byml.zs", plain.compress(byml.dumps(
+                {"Actors": [{"Gyaml": a, "Hash": byml.UInt64(i + 1), "Translate": [0.0, 0.0, 0.0]}
+                            for i, a in enumerate(actors)], "FilePath": "x"})))
+
+    def test_build_quiet_puppets_for_guard_scenes(self):
+        # Issue 150 (review-boss-sync must-fix): perception is on by default; each puppet has a quiet copy
+        # (no perception) and the scenes with a stealth guard are listed for it.
+        self.add_perception_and_guards()
+        d = zs.Dicts.from_romfs(self.romfs)
+        self.assertEqual(build.guard_scenes(self.romfs, d), {"Castle": ["Npc_Guard"]})
+        mod = os.path.join(self.dir, "mod_quiet")
+        m = build.build(self.romfs, mod, log=lambda *_: None, tunics=("red",), look_slots=0)
+        self.assertTrue(m["perception"])
+        self.assertEqual(m["quiet_scenes"], ["Castle"])
+        self.assertEqual(m["guards"], {"Castle": ["Npc_Guard"]})
+        made = {a["actor"]: a for a in m["actors"]}
+        for loud in ("CoopPuppet_Child", "CoopPuppet_Adult", "CoopPuppet_Child_Red", "CoopPuppet_Adult_Red"):
+            quiet = build.quiet_name(loud)
+            self.assertIn(quiet, made)
+            self.assertIsNotNone(made[loud]["perception"])
+            self.assertFalse(made[loud]["quiet"])
+            self.assertIsNone(made[quiet]["perception"])
+            self.assertTrue(made[quiet]["quiet"])
+            self.assertEqual(made[quiet]["tunic"], made[loud]["tunic"])
+            files = sarc.read(d.decompress(build.read(os.path.join(mod, "romfs", made[quiet]["pack"]))))
+            comps = byml.loads(files[build.actor_param_path(quiet)])["Components"]
+            for k in ("AffiliationRef", "PerceptionEmitterRef", "PhysicsRef"):
+                self.assertNotIn(k, comps)
+            loud_comps = byml.loads(sarc.read(d.decompress(build.read(os.path.join(
+                mod, "romfs", made[loud]["pack"]))))[build.actor_param_path(loud)])["Components"]
+            self.assertIn("PerceptionEmitterRef", loud_comps)
+        rows = {r["__RowId"] for r in byml.loads(d.decompress(build.read(
+            os.path.join(mod, "romfs", "RSDB/ActorInfo.Product.999.rstbl.byml.zs"))))}
+        self.assertTrue({"CoopPuppet_ChildQuiet", "CoopPuppet_AdultQuiet_Red"} <= rows)
+
+    def test_build_no_perception(self):
+        self.add_perception_and_guards()
+        m = build.build(self.romfs, os.path.join(self.dir, "mod_loud"), log=lambda *_: None, perception=False)
+        self.assertFalse(m["perception"])
+        self.assertEqual(m["quiet_scenes"], [])
+        self.assertFalse([a for a in m["actors"] if a["quiet"] or a["perception"]])
+
+    def test_quiet_name(self):
+        self.assertEqual(build.quiet_name("CoopPuppet_Child"), "CoopPuppet_ChildQuiet")
+        self.assertEqual(build.quiet_name("CoopPuppet_Adult_Green"), "CoopPuppet_AdultQuiet_Green")
+        with self.assertRaises(build.BuildError):
+            build.quiet_name("Npc_Guard")
 
     def test_build_writes_the_room_table(self):
         mod = os.path.join(self.dir, "mod_rooms")

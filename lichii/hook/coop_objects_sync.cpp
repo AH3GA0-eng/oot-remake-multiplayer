@@ -647,6 +647,42 @@ Sync::Object* Sync::HatchedSibling(std::uint8_t self, const proto::Vec3& at) {
     return best;
 }
 
+bool Sync::CopyHatch(std::uint8_t self, const Seen& s, std::uint64_t now_us) const {
+    // An egg whose owner is another game: its copy here runs its own AI (the
+    // game's perception sees our Link and the other players' puppets), so it
+    // hatches through the game's own path, as the owner's does.
+    const auto other = [&](const proto::ObjectId& id) {
+        const auto owner = owners_.find(id);
+        return owner != owners_.end() && owner->second.player != self;
+    };
+    for (const Egg& e : copy_eggs_) {
+        if (now_us - e.at <= kHatchWindowUs && Distance(e.position, s.position) <= kHatchReachM) {
+            return true;
+        }
+    }
+    return std::any_of(objects_.begin(), objects_.end(), [&](const auto& entry) {
+        const Object& e = entry.second;
+        return IsHatchingEgg(e.name) && e.dead_at == 0 && other(e.id) &&
+               Distance(e.position, s.position) <= kHatchReachM;
+    });
+}
+
+Sync::Object* Sync::OwnHatchling(const proto::Vec3& at, std::uint64_t now_us) {
+    Object* best = nullptr;
+    float best_d = 2.0f * kHatchReachM;  // both hatched where the egg lay
+    for (auto& [address, o] : objects_) {
+        if (o.own_hatch_us == 0 || now_us - o.own_hatch_us > kOwnHatchWaitUs) {
+            continue;
+        }
+        const float d = Distance(o.position, at);
+        if (d <= best_d) {
+            best = &o;
+            best_d = d;
+        }
+    }
+    return best;
+}
+
 void Sync::Reset() {
     scene_.clear();
     objects_.clear();
@@ -667,6 +703,7 @@ void Sync::Reset() {
     fish_at_ = 0;
     decided_.clear();
     eggs_.clear();
+    copy_eggs_.clear();
     bound_.clear();
     refused_.clear();
     decider_ = 0;
@@ -1568,6 +1605,13 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                     eggs_.push_back({o.id, owner->second.epoch, o.position, now_us});
                 }
             }
+            // boss-sync-2: a copy of another game's egg left alive: our game
+            // may have hatched it (CopyHatch).
+            if (IsHatchingEgg(o.name) && owner != owners_.end() && owner->second.player != self &&
+                o.dead_at == 0 && !(o.life && *o.life <= 0) &&
+                !(o.animation && IsDeathAnimation(o.animation->name))) {
+                copy_eggs_.push_back({o.id, owner->second.epoch, o.position, now_us});
+            }
             // A decided copy the director made left our walk. Dead: not made
             // again. Otherwise it went by itself (issue 124: a Stalchild copy
             // sank into the ground while the decider's one still fights); the
@@ -1601,6 +1645,21 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     }
     decider_ = DeciderOf(self, now_us);
     std::erase_if(eggs_, [now_us](const Egg& e) { return now_us - e.at > kHatchWindowUs; });
+    std::erase_if(copy_eggs_, [now_us](const Egg& e) { return now_us - e.at > kHatchWindowUs; });
+    // Our own hatchling that no owner's took in time (its egg has not hatched
+    // there yet): ended (gohma-2, review of boss-sync-2: shared as ours it
+    // could make two larvae, ours and the owner's when that egg hatches
+    // later). The owner's larva comes as its OBJECT_SPAWN whenever it does.
+    for (auto& [address, o] : objects_) {
+        if (o.own_hatch_us != 0 && now_us - o.own_hatch_us > kOwnHatchWaitUs) {
+            o.own_hatch_us = 0;
+            if (o.dead_at == 0) {
+                o.dead_now = true;  // deleted now (Removes), as a copy egg is
+                o.dead_at = now_us;
+                notes_.emplace_back("no owner's hatchling came for ours, ended: " + o.name);
+            }
+        }
+    }
     std::set<std::uint64_t> refused;
     std::sort(fresh.begin(), fresh.end(), [](const Seen* a, const Seen* b) {
         return std::tie(a->name, a->position[0], a->position[2]) <
@@ -1723,6 +1782,11 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             continue;  // the copy of another game's hatchling, not yet bound
         } else {
             o.id = {proto::ObjectKind::placed, 0, SceneSpawnId(scene_, s->name, order_[s->name]++)};
+            if (IsHatchling(s->name) && CopyHatch(self, *s, now_us)) {
+                // Out of a copy egg: the owner's hatchling takes it (Apply).
+                o.own_hatch_us = now_us;
+                notes_.emplace_back("hatched here out of a copy egg (waits for its owner's): " + s->name);
+            }
         }
         objects_.emplace(s->address, o);
     }
@@ -2206,6 +2270,19 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                                            [&](const auto& e) { return e.second.id == spawn->id; });
             if (known) {
                 continue;
+            }
+            // boss-sync-2 (issue 178): the owner's hatchling, and our game
+            // already hatched its own out of our copy of that egg: ours is
+            // its copy (no second larva is made, ours is not deleted).
+            if (made && IsHatchling(spawn->actor) && find(spawn->id) == nullptr) {
+                if (Object* own = OwnHatchling(*spawn->state.position, now_us); own != nullptr) {
+                    own->id = spawn->id;
+                    own->own_hatch_us = 0;
+                    owners_[spawn->id] = {spawn->id.maker, 0};
+                    notes_.emplace_back("our own hatchling is player " + std::to_string(spawn->id.maker) +
+                                        "'s: " + spawn->actor);
+                    continue;
+                }
             }
             Decided d;
             d.id = spawn->id;

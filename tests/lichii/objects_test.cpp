@@ -3800,6 +3800,105 @@ TEST_CASE("objects: a copy's egg goes and the owner's larva is made here (gohma-
     REQUIRE(b.IdOf(0x300));
     CHECK(*b.IdOf(0x300) == spawn.id);
 }
+// boss-sync-2 (issue 178): a copy of another game's egg runs its own AI, so
+// our game hatches it through its own path (the game's perception sees the
+// players' puppets too). Our own larva then is the owner's larva's copy.
+namespace {
+
+proto::ObjectSpawn OwnersLarva(float x) {
+    proto::ObjectSpawn spawn;
+    spawn.player_number = 1;
+    spawn.id = {proto::ObjectKind::made, 1, 9};
+    spawn.actor = kLarva;
+    spawn.state.position = proto::Vec3{x, 0.0f, 0.0f};
+    return spawn;
+}
+
+} // namespace
+
+TEST_CASE("objects: our game hatches its copy of an egg, the owner's larva takes our own larva (issue 178)") {
+    for (const bool egg_left : {true, false}) {
+        CAPTURE(egg_left);
+        Sync b;
+        Tick(b, 0, {Enemy(0x100, 0, 1, 0.0f, kEgg)}, 2, kDeku);
+        const proto::ObjectId egg = *b.IdOf(0x100);
+        Own(b, egg, 1, 1);
+        Tick(b, 100 * kMs, {Enemy(0x100, 0, 1, 0.0f, kEgg)}, 2, kDeku);
+        std::vector<Seen> seen;
+        if (egg_left) {
+            Tick(b, 200 * kMs, {}, 2, kDeku);
+            Tick(b, 300 * kMs, {}, 2, kDeku);
+            CHECK_FALSE(b.IdOf(0x100));
+        } else {
+            seen.push_back(Enemy(0x100, 0, 1, 0.0f, kEgg));
+        }
+        seen.push_back(Enemy(0x300, 0, 1, 1.0f, kLarva));
+        // Our own larva: kept, not shared (it is not out of an egg of ours).
+        const auto born = Tick(b, 400 * kMs, seen, 2, kDeku);
+        CHECK(All<proto::ObjectSpawn>(born).empty());
+        REQUIRE(b.IdOf(0x300));
+        CHECK(b.IdOf(0x300)->kind == proto::ObjectKind::placed);
+
+        // The owner's larva comes: ours is its copy, nothing is made.
+        const proto::ObjectSpawn spawn = OwnersLarva(1.5f);
+        b.Receive(spawn);
+        Tick(b, 500 * kMs, seen, 2, kDeku);
+        CHECK(b.Creates().empty());
+        REQUIRE(b.IdOf(0x300));
+        CHECK(*b.IdOf(0x300) == spawn.id);
+        CHECK(b.OwnerOf(spawn.id) == 1);
+        CHECK(b.Removes().empty());
+    }
+}
+
+TEST_CASE("objects: a larva of ours far from any copy egg is not the owner's (issue 178)") {
+    Sync b;
+    Tick(b, 0, {Enemy(0x100, 0, 1, 0.0f, kEgg)}, 2, kDeku);
+    Own(b, *b.IdOf(0x100), 1, 1);
+    const std::vector<Seen> seen{Enemy(0x100, 0, 1, 0.0f, kEgg), Enemy(0x300, 0, 1, 20.0f, kLarva)};
+    Tick(b, 100 * kMs, seen, 2, kDeku);
+    b.Receive(OwnersLarva(1.0f));
+    Tick(b, 200 * kMs, seen, 2, kDeku);
+    REQUIRE(b.Creates().size() == 1);  // the director makes the owner's
+    CHECK(b.IdOf(0x300)->kind == proto::ObjectKind::placed);
+}
+
+TEST_CASE("objects: our own larva out of a copy egg waits only so long for the owner's, then is ended: one larva per game (issue 178)") {
+    Sync b;
+    Tick(b, 0, {Enemy(0x100, 0, 1, 0.0f, kEgg)}, 2, kDeku);
+    Own(b, *b.IdOf(0x100), 1, 1);
+    Tick(b, 100 * kMs, {Enemy(0x100, 0, 1, 0.0f, kEgg)}, 2, kDeku);  // the owner is known
+    Step sent;
+    const auto keep = [&sent](const Step& m) {
+        sent.send.insert(sent.send.end(), m.send.begin(), m.send.end());
+    };
+    for (std::uint64_t t = 200; t <= 300; t += 100) {
+        keep(Tick(b, t * kMs, {Enemy(0x100, 0, 1, 0.0f, kEgg), Enemy(0x300, 0, 1, 1.0f, kLarva)}, 2, kDeku));
+    }
+    REQUIRE(b.IdOf(0x300));
+    CHECK(b.IdOf(0x300)->kind == proto::ObjectKind::placed);
+    // Still waiting just before the wait runs out: kept.
+    const std::uint64_t wait_end = 200 * kMs + Sync::kOwnHatchWaitUs;
+    keep(Tick(b, wait_end, {Enemy(0x300, 0, 1, 1.0f, kLarva)}, 2, kDeku));
+    CHECK(b.Removes().empty());
+    // The wait runs out: ours is ended through the game's removal, never shared.
+    const std::uint64_t late = wait_end + kMs;
+    keep(Tick(b, late, {Enemy(0x300, 0, 1, 1.0f, kLarva)}, 2, kDeku));
+    CHECK(b.Removes() == std::vector<std::uint64_t>{0x300});
+    keep(Tick(b, late + 50 * kMs, {}, 2, kDeku));  // it went
+    CHECK(All<proto::ObjectSpawn>(sent).empty());  // the owner's game gets no second larva
+    // The owner's egg hatches later: its larva is the only one made here.
+    b.Receive(OwnersLarva(1.0f));
+    Tick(b, late + 100 * kMs, {}, 2, kDeku);
+    const auto creates = b.Creates();
+    REQUIRE(creates.size() == 1);
+    CHECK(creates[0].name == kLarva);
+    b.Bind({{creates[0].key, 0x310}});
+    Tick(b, late + 200 * kMs, {Enemy(0x310, 0, 1, 1.0f, kLarva)}, 2, kDeku);
+    REQUIRE(b.IdOf(0x310));
+    CHECK(*b.IdOf(0x310) == OwnersLarva(1.0f).id);
+    CHECK(b.Removes().empty());
+}
 
 TEST_CASE("objects: townspeople near our Link in an event are flagged targeting and wait (issue 200)") {
     constexpr const char* kNpc = "Npc_Kokiri_Mido";

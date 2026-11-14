@@ -1798,6 +1798,46 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
     return in;
 }
 
+std::vector<std::string> PackQuietScenes(std::string_view manifest) {
+    // "quiet_scenes": ["...", ...], as build.py writes it (json.dumps).
+    std::vector<std::string> out;
+    const auto at = manifest.find("\"quiet_scenes\"");
+    if (at == std::string_view::npos) {
+        return out;
+    }
+    const auto lb = manifest.find_first_not_of(" \t\r\n:", at + 14);
+    if (lb == std::string_view::npos || manifest[lb] != '[') {
+        return out;
+    }
+    const auto rb = manifest.find(']', lb);
+    if (rb == std::string_view::npos) {
+        return out;
+    }
+    std::string_view list = manifest.substr(lb + 1, rb - lb - 1);
+    while (true) {
+        const auto q0 = list.find('"');
+        const auto q1 = q0 == std::string_view::npos ? q0 : list.find('"', q0 + 1);
+        if (q1 == std::string_view::npos) {
+            break;
+        }
+        if (q1 > q0 + 1) {
+            out.emplace_back(list.substr(q0 + 1, q1 - q0 - 1));
+        }
+        list.remove_prefix(q1 + 1);
+    }
+    return out;
+}
+
+std::string QuietActor(std::string_view actor) {
+    for (const std::string_view plain : {std::string_view("CoopPuppet_Child"), std::string_view("CoopPuppet_Adult")}) {
+        if (actor.substr(0, plain.size()) == plain &&
+            (actor.size() == plain.size() || actor[plain.size()] == '_')) {
+            return std::string(plain) + "Quiet" + std::string(actor.substr(plain.size()));
+        }
+    }
+    return std::string(actor);
+}
+
 std::string LookItemName(std::string_view item, std::size_t copy) {
     return std::string(item) + "_Look" + std::to_string(copy);
 }
@@ -1879,6 +1919,10 @@ std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color) co
     if (settings_.native_player) {
         return CoopNativePlayer::ActorFor(adult);
     }
+    // Issue 150: in a scene with stealth guards, the quiet copy (PlannerSettings::quiet_scenes).
+    const bool quiet = std::find(settings_.quiet_scenes.begin(), settings_.quiet_scenes.end(), scene_) !=
+                       settings_.quiet_scenes.end();
+    const auto named = [quiet](std::string name) { return quiet ? QuietActor(name) : name; };
     const std::string plain = adult ? "CoopPuppet_Adult" : "CoopPuppet_Child";
     if (settings_.tunics && color) {
         std::string_view tunic = CoopColors::TunicOf(*color);
@@ -1886,13 +1930,13 @@ std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color) co
             tunic = "Green";  // the plain puppet wears your own colour (PlannerSettings)
         }
         if (!tunic.empty()) {
-            std::string name = plain + '_' + std::string(tunic);
+            std::string name = named(plain + '_' + std::string(tunic));
             if (std::find(failed_tunics_.begin(), failed_tunics_.end(), name) == failed_tunics_.end()) {
                 return name;
             }
         }
     }
-    return plain;
+    return named(plain);
 }
 
 void Director::TunicFails(const std::string& actor, const std::string& why) {

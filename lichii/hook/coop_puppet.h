@@ -651,6 +651,11 @@ struct PlannerSettings {
     // (PackLookItems). None: every puppet wears the game's items.
     std::vector<std::string> look_items;
     std::size_t look_copies = 0;
+    // Scenes with stealth guards (coop_puppet.json "quiet_scenes",
+    // tools/puppet_pack/build.py guard_scenes): there each puppet is its
+    // quiet copy (QuietActor), which no perception sees, so a guard of this
+    // game never takes another player's puppet for our Link (issue 150).
+    std::vector<std::string> quiet_scenes;
 };
 
 // The puppet pack's item copies (coop_puppet.json "look_items",
@@ -661,6 +666,13 @@ struct LookItems {
     std::size_t copies = 0;
 };
 LookItems PackLookItems(std::string_view manifest);
+
+// The pack's "quiet_scenes" (a list of scene names; none for a pack made
+// before them, or without perception).
+std::vector<std::string> PackQuietScenes(std::string_view manifest);
+// A puppet's quiet copy: CoopPuppet_Child -> CoopPuppet_ChildQuiet,
+// CoopPuppet_Adult_Red -> CoopPuppet_AdultQuiet_Red; any other name as it is.
+std::string QuietActor(std::string_view actor);
 
 // A copy of an item: "Weapon_Shield_Hylian", 2 -> "..._Look2".
 std::string LookItemName(std::string_view item, std::size_t copy);
