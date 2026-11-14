@@ -858,7 +858,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
       if (store.write_exact(back)) {  // exact: the max rule would keep the higher
         ++stats_.max_caps_kept;
         ++stats_.applied;
-        it->second = before;  // a new floor in `back` goes out next frame as a change
+        it->second = back;
         pending_.erase(key);
         continue;
       }
@@ -894,7 +894,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
         ++stats_.applied;
         counts_guarded_.push_back(
             CountGuarded{key, static_cast<std::int32_t>(as_int(now->value) - as_int(before.value))});
-        it->second = before;  // a new floor in `back` goes out next frame as a change
+        it->second = back;
         continue;
       }
       ++stats_.write_failures;  // sent as any gain
