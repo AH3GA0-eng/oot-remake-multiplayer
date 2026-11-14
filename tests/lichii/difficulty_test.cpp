@@ -465,7 +465,19 @@ TEST_CASE("difficulty: which placed enemies get extras") {
   }
 }
 
-TEST_CASE("difficulty: an extra's placement id and place are the same in every game") {
+// Ground all around for the planning tests (another kind's spots, 6 m apart, at height 0).
+static std::vector<CoopDifficulty::Ground> Floor() {
+  std::vector<CoopDifficulty::Ground> ground;
+  for (int x = -5; x <= 5; ++x) {
+    for (int z = -5; z <= 5; ++z) {
+      ground.push_back({"Enemy_Floor", static_cast<std::uint64_t>((x + 5) * 11 + z + 5),
+                        {6.0f * x + 3.0f, 0.0f, 6.0f * z + 3.0f}});
+    }
+  }
+  return ground;
+}
+
+TEST_CASE("difficulty: an extra's placement id is the same in every game") {
   using CoopDifficulty::ExtraHash;
   std::set<std::uint64_t> ids;
   for (std::uint64_t hash : {1ULL, 2ULL, 0x8000'0000'0000'0000ULL, 0x1234'5678'9abc'def0ULL}) {
@@ -479,14 +491,101 @@ TEST_CASE("difficulty: an extra's placement id and place are the same in every g
     }
   }
   CHECK(ids.size() == 12);  // all different
-  const std::array<float, 3> at{10.0f, 2.0f, -5.0f};
-  for (std::uint64_t id = 0; id < 16; ++id) {
-    const auto p = CoopDifficulty::ExtraPlace(at, id);
-    CHECK(p[1] == at[1]);  // the same height: on the original's floor
-    const float dx = p[0] - at[0];
-    const float dz = p[2] - at[2];
-    CHECK(std::sqrt(dx * dx + dz * dz) == doctest::Approx(CoopDifficulty::kExtraOffsetM));
+}
+
+namespace {
+using Spot = std::array<float, 3>;
+float Flat(const Spot& a, const Spot& b) { return std::hypot(a[0] - b[0], a[2] - b[2]); }
+}  // namespace
+
+TEST_CASE("difficulty: an extra stands apart, on ground the game put an enemy on") {
+  using CoopDifficulty::ApartFor;
+  using CoopDifficulty::FindSpot;
+  using CoopDifficulty::Ground;
+  CHECK(ApartFor("Enemy_Moblin") == 3.5f);
+  CHECK(ApartFor("Enemy_Keese") == 2.0f);
+  CHECK(ApartFor("Enemy_Deku_Something") == 2.5f);
+  const Spot from{0.0f, 5.0f, 0.0f};
+  // No other enemy here: no ground known, no spot (the original takes the weight instead).
+  CHECK_FALSE(FindSpot(from, "Enemy_Stalfos", {}, {}).has_value());
+  // Others too far, too high or low, or too near for a spot between: none either.
+  const std::vector<Ground> useless{{"Enemy_Stalfos", 1, {20.0f, 5.0f, 0.0f}},   // beyond kSpotReachM
+                                    {"Enemy_Stalfos", 2, {8.0f, 7.0f, 0.0f}},    // another floor (2 m up)
+                                    {"Enemy_Stalfos", 3, {0.0f, 3.5f, 9.0f}},    // a pit's floor below
+                                    {"Enemy_Stalfos", 4, {-5.0f, 5.0f, 0.0f}}};  // under 2 x 3.5 m away
+  CHECK_FALSE(FindSpot(from, "Enemy_Stalfos", useless, {}).has_value());
+  // Another Stalfos 14 m away on the same floor: 3.5 m from the original, towards it.
+  std::vector<Ground> ground = useless;
+  ground.push_back({"Enemy_Stalfos", 5, {0.0f, 5.5f, -14.0f}});
+  const auto spot = FindSpot(from, "Enemy_Stalfos", ground, {});
+  REQUIRE(spot.has_value());
+  CHECK((*spot)[0] == doctest::Approx(0.0f));
+  CHECK((*spot)[2] == doctest::Approx(-3.5f));
+  CHECK((*spot)[1] == doctest::Approx(5.125f));  // on the line between the two: the same floor
+  // That spot taken (another extra): the middle of the line next, then 3.5 m short of the other.
+  const auto second = FindSpot(from, "Enemy_Stalfos", ground, {*spot});
+  REQUIRE(second.has_value());
+  CHECK((*second)[2] == doctest::Approx(-7.0f));
+  const auto third = FindSpot(from, "Enemy_Stalfos", ground, {*spot, *second});
+  REQUIRE(third.has_value());
+  CHECK((*third)[2] == doctest::Approx(-10.5f));
+  CHECK_FALSE(FindSpot(from, "Enemy_Stalfos", ground, {*spot, *second, *third}).has_value());  // all too close
+  // The same kind before another kind, even when the other is nearer.
+  ground.push_back({"Enemy_Keese", 6, {8.0f, 5.0f, 0.0f}});
+  const auto same = FindSpot(from, "Enemy_Stalfos", ground, {});
+  REQUIRE(same.has_value());
+  CHECK((*same)[2] == doctest::Approx(-3.5f));
+  // Never within ApartFor of any enemy here or a spot taken; the same answer every time.
+  for (int i = 0; i < 3; ++i) {
+    CHECK(FindSpot(from, "Enemy_Stalfos", ground, {}) == same);
   }
+  const auto other = FindSpot(from, "Enemy_Stalfos", ground, {*same, *second});
+  REQUIRE(other.has_value());
+  CHECK(Flat(*other, from) >= 3.5f - 1e-3f);
+  for (const Ground& g : ground) {
+    CHECK(Flat(*other, g.at) >= 3.5f - 1e-3f);
+  }
+  CHECK(Flat(*other, *same) >= 3.5f - 1e-3f);
+  CHECK(Flat(*other, *second) >= 3.5f - 1e-3f);
+}
+
+TEST_CASE("difficulty: a placed enemy with no ground for its copies gets their weight instead") {
+  CoopDifficulty::Extras x;
+  using Original = CoopDifficulty::Extras::Original;
+  using CoopDifficulty::Kind;
+  constexpr std::uint64_t kLone = 0x10e0'0000'0001ULL, kPair = 0x10e0'0000'0002ULL;
+  const std::vector<Original> walk{{"Enemy_Stalfos", kLone, {100.0f, 0.0f, 100.0f}},
+                                   {"Enemy_Stalfos", kPair, {0.0f, 0.0f, 0.0f}}};
+  // The ground: the two placed enemies and one more Stalfos 12 m from the second.
+  const std::vector<CoopDifficulty::Ground> ground{{"Enemy_Stalfos", kLone, walk[0].position},
+                                                   {"Enemy_Stalfos", kPair, walk[1].position},
+                                                   {"Enemy_Stalfos", 3, {12.0f, 0.0f, 0.0f}}};
+  CHECK(x.Plan("Dungeon", walk, ground, 300, false, 0) == 2);  // two copies of the second, none of the lone one
+  REQUIRE(x.All().size() == 2);
+  CHECK(x.NoSpot(kLone));
+  CHECK_FALSE(x.NoSpot(kPair));
+  CHECK(x.NoSpots() == 1);
+  CHECK(Flat(x.All()[0].position, x.All()[1].position) >= 3.5f - 1e-3f);
+  for (const auto& e : x.All()) {
+    CHECK(Flat(e.position, walk[1].position) >= 3.5f - 1e-3f);
+    CHECK(Flat(e.position, ground[2].at) >= 3.5f - 1e-3f);
+  }
+  // The lone one is folded (life and hits times the count), the other plain.
+  CHECK(CoopDifficulty::LifeKind("Enemy_Stalfos", kLone, x.NoSpot(kLone)) == Kind::folded_enemy_life);
+  CHECK(CoopDifficulty::AttackerKind("Enemy_Stalfos", kLone, x.NoSpot(kLone)) == Kind::folded_enemy);
+  CHECK(CoopDifficulty::LifeKind("Enemy_Stalfos", kPair, x.NoSpot(kPair)) == Kind::enemy_life);
+  // Decided once for the visit: more ground later changes nothing; a new visit decides again.
+  std::vector<CoopDifficulty::Ground> more = ground;
+  more.push_back({"Enemy_Stalfos", 4, {110.0f, 0.0f, 100.0f}});
+  CHECK(x.Plan("Dungeon", walk, more, 300, false, 100) == 0);
+  CHECK(x.NoSpot(kLone));
+  CHECK(x.Plan("Field", {}, more, 300, false, 200) == 0);
+  CHECK_FALSE(x.NoSpot(kLone));
+  // All or nothing: room for one copy of the two it wants, so none (and the weight).
+  CoopDifficulty::Extras y;
+  const std::vector<CoopDifficulty::Ground> tight{{"Enemy_Stalfos", 3, {7.0f, 0.0f, 0.0f}}};
+  CHECK(y.Plan("Dungeon", {walk[1]}, tight, 300, false, 0) == 0);
+  CHECK(y.NoSpot(kPair));
 }
 
 TEST_CASE("difficulty: a scene visit's extras are planned once, bound to their actors, and forgotten after it") {
@@ -496,19 +595,19 @@ TEST_CASE("difficulty: a scene visit's extras are planned once, bound to their a
   for (std::uint64_t i = 1; i <= 4; ++i) {
     walk.push_back({"Enemy_Keese", 0x5a17c0de00000000ULL + i, {float(i), 0.0f, 0.0f}});
   }
-  CHECK(x.Plan("Dungeon", walk, 100, false, 0) == 0);  // the game as it is
-  CHECK(x.Plan("Dungeon", walk, 200, true, 0) == 0);   // a boss here: none
+  CHECK(x.Plan("Dungeon", walk, Floor(), 100, false, 0) == 0);  // the game as it is
+  CHECK(x.Plan("Dungeon", walk, Floor(), 200, true, 0) == 0);   // a boss here: none
   CHECK(x.All().empty());
-  CHECK(x.Plan("Dungeon", walk, 200, false, 1000) == 4);  // one each
-  CHECK(x.Plan("Dungeon", walk, 200, false, 1100) == 0);  // once
+  CHECK(x.Plan("Dungeon", walk, Floor(), 200, false, 1000) == 4);  // one each
+  CHECK(x.Plan("Dungeon", walk, Floor(), 200, false, 1100) == 0);  // once
   REQUIRE(x.All().size() == 4);
   for (std::size_t i = 0; i < 4; ++i) {
     CHECK(x.All()[i].name == "Enemy_Keese");
     CHECK(x.All()[i].hash == CoopDifficulty::ExtraHash(walk[i].hash, 0));
   }
   // Raised to 300: one more each; lowered: none taken away.
-  CHECK(x.Plan("Dungeon", walk, 300, false, 1200) == 4);
-  CHECK(x.Plan("Dungeon", walk, 150, false, 1300) == 0);
+  CHECK(x.Plan("Dungeon", walk, Floor(), 300, false, 1200) == 4);
+  CHECK(x.Plan("Dungeon", walk, Floor(), 150, false, 1300) == 0);
   CHECK(x.All().size() == 8);
   // Until the director made it, a made Keese may be one of ours.
   CHECK(x.Holds("Enemy_Keese", 2000));
@@ -526,16 +625,17 @@ TEST_CASE("difficulty: a scene visit's extras are planned once, bound to their a
   // At most kMost in a visit.
   std::vector<Original> many;
   for (std::uint64_t i = 0; i < 100; ++i) {
-    many.push_back({"Enemy_Octorok", 0x0c70'0000'0000ULL + i, {}});
+    const float px = 6.0f * float(i % 10) - 27.0f, pz = 6.0f * float(i / 10) - 27.0f;
+    many.push_back({"Enemy_Octorok", 0x0c70'0000'0000ULL + i, {px, 0.0f, pz}});
   }
-  x.Plan("Dungeon", many, 300, false, 3000);
+  x.Plan("Dungeon", many, Floor(), 300, false, 3000);
   CHECK(x.All().size() == CoopDifficulty::Extras::kMost);
   // Another scene: the old ones are forgotten (gone with their scene).
-  CHECK(x.Plan("Field", {}, 300, false, 4000) == 0);
+  CHECK(x.Plan("Field", {}, Floor(), 300, false, 4000) == 0);
   CHECK(x.All().empty());
   CHECK_FALSE(x.HashOf(0x7000 + 1 * 0x10, "Enemy_Keese").has_value());
   // Back in the first scene: its enemies get their extras again, with the same ids.
-  CHECK(x.Plan("Dungeon", walk, 200, false, 5000) == 4);
+  CHECK(x.Plan("Dungeon", walk, Floor(), 200, false, 5000) == 4);
   CHECK(x.All()[0].hash == CoopDifficulty::ExtraHash(walk[0].hash, 0));
 }
 
@@ -543,7 +643,7 @@ TEST_CASE("difficulty: an extra's address is its own only while its actor is the
   CoopDifficulty::Extras x;
   using Original = CoopDifficulty::Extras::Original;
   const std::vector<Original> walk{{"Enemy_Keese", 0x5a17'0000'0001ULL, {}}, {"Enemy_Keese", 0x5a17'0000'0002ULL, {}}};
-  REQUIRE(x.Plan("Dungeon", walk, 200, false, 0) == 2);
+  REQUIRE(x.Plan("Dungeon", walk, Floor(), 200, false, 0) == 2);
   const auto first = x.All()[0];
   const auto second = x.All()[1];
   constexpr std::uint64_t kFirst = 0x8000, kSecond = 0x8100;
@@ -565,7 +665,7 @@ TEST_CASE("difficulty: an extra's address is its own only while its actor is the
   CHECK_FALSE(x.Holds("Enemy_Keese", 10));  // a gone one is not waited for
   // Not made yet: nothing to keep or forget.
   CoopDifficulty::Extras y;
-  REQUIRE(y.Plan("Dungeon", walk, 200, false, 0) == 2);
+  REQUIRE(y.Plan("Dungeon", walk, Floor(), 200, false, 0) == 2);
   y.Keep({});
   CHECK_FALSE(y.All()[0].gone);
 }
@@ -574,16 +674,19 @@ TEST_CASE("difficulty: every game plans the same extras whatever order its walk 
   using Original = CoopDifficulty::Extras::Original;
   std::vector<Original> walk;
   for (std::uint64_t i = 0; i < 2 * CoopDifficulty::Extras::kMost; ++i) {
-    walk.push_back({"Enemy_Octorok", 0x0c70'0000'0000ULL + (i * 7919) % 1000, {}});
+    const std::uint64_t h = (i * 7919) % 1000;  // (where it stands follows its id: the same in both walks)
+    const float x = 6.0f * float(h % 10) - 27.0f, z = 6.0f * float(h / 10 % 10) - 27.0f;
+    walk.push_back({"Enemy_Octorok", 0x0c70'0000'0000ULL + h, {x, 0.0f, z}});
   }
   std::vector<Original> reversed(walk.rbegin(), walk.rend());
   CoopDifficulty::Extras a, b;
-  a.Plan("Lake", walk, 200, false, 0);
-  b.Plan("Lake", reversed, 200, false, 0);
+  a.Plan("Lake", walk, Floor(), 200, false, 0);
+  b.Plan("Lake", reversed, Floor(), 200, false, 0);
   REQUIRE(a.All().size() == CoopDifficulty::Extras::kMost);
   REQUIRE(b.All().size() == a.All().size());
   for (std::size_t i = 0; i < a.All().size(); ++i) {
     CHECK(a.All()[i].hash == b.All()[i].hash);
+    CHECK(a.All()[i].position == b.All()[i].position);  // and the same spot
   }
 }
 
@@ -695,23 +798,23 @@ TEST_CASE("difficulty: the night horde grows with the players near a roll") {
   using Roll = Horde::Roll;
   std::vector<Roll> rolls{{0xa000, "Enemy_Stalchild", {10.0f, 0.0f, 10.0f}, 2}};
   // A roll is ours to grow only once it has settled (never one the director is still making).
-  CHECK(h.Plan("HyruleField_Child", rolls, 1, 150, 0) == 0);
-  CHECK(h.Plan("HyruleField_Child", rolls, 1, 150, Horde::kSettleMs - 1) == 0);
-  CHECK(h.Plan("HyruleField_Child", rolls, 1, 150, Horde::kSettleMs) == 1);
-  CHECK(h.Plan("HyruleField_Child", rolls, 1, 150, Horde::kSettleMs + 100) == 0);  // once
+  CHECK(h.Plan("HyruleField_Child", rolls, 1, Floor(), 150, 0) == 0);
+  CHECK(h.Plan("HyruleField_Child", rolls, 1, Floor(), 150, Horde::kSettleMs - 1) == 0);
+  CHECK(h.Plan("HyruleField_Child", rolls, 1, Floor(), 150, Horde::kSettleMs) == 1);
+  CHECK(h.Plan("HyruleField_Child", rolls, 1, Floor(), 150, Horde::kSettleMs + 100) == 0);  // once
   REQUIRE(h.All().size() == 1);
   CHECK(h.All()[0].name == "Enemy_Stalchild");
   const auto& at = h.All()[0].position;
-  CHECK(std::hypot(at[0] - 10.0f, at[2] - 10.0f) == doctest::Approx(CoopDifficulty::kExtraOffsetM));
+  CHECK(std::hypot(at[0] - 10.0f, at[2] - 10.0f) >= CoopDifficulty::ApartFor("Enemy_Stalchild") - 1e-3f);
   // A third player comes near: one more for the same roll.
   rolls[0].players_near = 3;
-  CHECK(h.Plan("HyruleField_Child", rolls, 2, 150, 2000) == 1);
+  CHECK(h.Plan("HyruleField_Child", rolls, 2, Floor(), 150, 2000) == 1);
   CHECK(h.All().size() == 2);
   // Made and bound: ours, never grown itself.
   h.Bind({{h.All()[0].key, 0xb000}, {h.All()[1].key, 0xb100}});
   CHECK(h.Ours(0xb000));
   rolls.push_back({0xb000, "Enemy_Stalchild", {}, 4});
-  CHECK(h.Plan("HyruleField_Child", rolls, 3, 150, 5000) == 0);
+  CHECK(h.Plan("HyruleField_Child", rolls, 3, Floor(), 150, 5000) == 0);
   // Gone from the walk: no longer ours, never made again.
   h.Keep({0xa000, 0xb100});
   CHECK_FALSE(h.Ours(0xb000));
@@ -721,12 +824,12 @@ TEST_CASE("difficulty: the night horde grows with the players near a roll") {
   for (std::uint64_t i = 0; i < 20; ++i) {
     many.push_back({0xc000 + i, "Enemy_Stalchild", {}, 8});
   }
-  CHECK(h.Plan("HyruleField_Child", many, 16, 300, 10000) == 0);  // (settling)
-  CHECK(h.Plan("HyruleField_Child", many, 16, 300, 12000) == 2);  // 16 alive: two more fill it
-  CHECK(h.Plan("HyruleField_Child", many, 16, 300, 12100) == 0);  // those two still being made count
+  CHECK(h.Plan("HyruleField_Child", many, 16, Floor(), 300, 10000) == 0);  // (settling)
+  CHECK(h.Plan("HyruleField_Child", many, 16, Floor(), 300, 12000) == 2);  // 16 alive: two more fill it
+  CHECK(h.Plan("HyruleField_Child", many, 16, Floor(), 300, 12100) == 0);  // those two still being made count
   CHECK(h.All().size() <= Horde::kMost);
   // Another scene forgets them.
-  CHECK(h.Plan("Graveyard", {}, 0, 300, 13000) == 0);
+  CHECK(h.Plan("Graveyard", {}, 0, Floor(), 300, 13000) == 0);
   CHECK(h.All().empty());
 }
 
@@ -736,8 +839,8 @@ TEST_CASE("difficulty: the night horde goes when the spawner takes its roll away
   const std::string field = "HyruleField_Adult";
   Horde h;
   std::vector<Roll> rolls{{0xa000, "Enemy_Stalchild", {}, 2}, {0xa100, "Enemy_Stalchild", {}, 2}};
-  h.Plan(field, rolls, 2, 200, 0);
-  CHECK(h.Plan(field, rolls, 2, 200, Horde::kSettleMs) == 2);  // one beside each
+  h.Plan(field, rolls, 2, Floor(), 200, 0);
+  CHECK(h.Plan(field, rolls, 2, Floor(), 200, Horde::kSettleMs) == 2);  // one beside each
   REQUIRE(h.All().size() == 2);
   h.Bind({{h.All()[0].key, 0xb000}, {h.All()[1].key, 0xb100}});
   h.Keep({0xa000, 0xa100, 0xb000, 0xb100});
@@ -745,11 +848,11 @@ TEST_CASE("difficulty: the night horde goes when the spawner takes its roll away
 
   // The first roll is killed (life 0) and leaves: ours beside it stays and joins the living one.
   rolls[0].dead = true;
-  h.Plan(field, rolls, 4, 200, 2000);
+  h.Plan(field, rolls, 4, Floor(), 200, 2000);
   h.Keep({0xa100, 0xb000, 0xb100});
   CHECK(h.Removes().empty());
   rolls.erase(rolls.begin());
-  h.Plan(field, rolls, 3, 200, 2100);
+  h.Plan(field, rolls, 3, Floor(), 200, 2100);
   CHECK(h.All()[0].roll == 0xa100);  // adopted
 
   // Dawn: the spawner takes the living roll away (it leaves alive): both of ours go with the game's delete.
@@ -757,7 +860,7 @@ TEST_CASE("difficulty: the night horde goes when the spawner takes its roll away
   auto removes = h.Removes();
   std::sort(removes.begin(), removes.end());
   CHECK(removes == std::vector<std::uint64_t>{0xb000, 0xb100});
-  h.Plan(field, {}, 2, 200, 3000);  // asked again while still there
+  h.Plan(field, {}, 2, Floor(), 200, 3000);  // asked again while still there
   CHECK(h.Removes().size() == 2);
   h.Keep({});  // deleted
   CHECK(h.Removes().empty());
@@ -771,22 +874,22 @@ TEST_CASE("difficulty: the night horde's orphans go by day, and a refused one st
   const std::string field = "HyruleField_Adult";
   Horde h;
   std::vector<Roll> rolls{{0xa000, "Enemy_Stalchild", {}, 3}};
-  h.Plan(field, rolls, 1, 200, 0);
-  CHECK(h.Plan(field, rolls, 1, 200, Horde::kSettleMs) == 2);
+  h.Plan(field, rolls, 1, Floor(), 200, 0);
+  CHECK(h.Plan(field, rolls, 1, Floor(), 200, Horde::kSettleMs) == 2);
   // The director makes only the first; the other is given up after kBindWaitMs and never made.
   h.Bind({{h.All()[0].key, 0xb000}});
   h.Keep({0xa000, 0xb000});
-  h.Plan(field, rolls, 2, 200, Horde::kSettleMs + Horde::kBindWaitMs);
+  h.Plan(field, rolls, 2, Floor(), 200, Horde::kSettleMs + Horde::kBindWaitMs);
   CHECK(h.All()[1].gone);
   // The roll is killed: ours is an orphan; with no living roll for kOrphanMs (day) it goes too.
   rolls[0].dead = true;
-  h.Plan(field, rolls, 2, 200, 6000);
+  h.Plan(field, rolls, 2, Floor(), 200, 6000);
   h.Keep({0xb000});
   constexpr std::uint64_t kT = 7000;
-  h.Plan(field, {}, 1, 200, kT);
-  h.Plan(field, {}, 1, 200, kT + Horde::kOrphanMs - 1);
+  h.Plan(field, {}, 1, Floor(), 200, kT);
+  h.Plan(field, {}, 1, Floor(), 200, kT + Horde::kOrphanMs - 1);
   CHECK(h.Removes().empty());
-  h.Plan(field, {}, 1, 200, kT + Horde::kOrphanMs);
+  h.Plan(field, {}, 1, Floor(), 200, kT + Horde::kOrphanMs);
   CHECK(h.Removes() == std::vector<std::uint64_t>{0xb000});
 }
 

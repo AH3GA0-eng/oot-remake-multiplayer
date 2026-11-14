@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -256,8 +257,9 @@ enum class Treatment : std::uint8_t { copies, fold, as_placed };
 // values (boss_hp_pct, boss_damage_pct), never by the enemies' ones.
 bool ScalesAsBoss(std::string_view name);
 // The Kinds for an enemy's actor and its Life component: boss, folded or plain.
-Kind AttackerKind(std::string_view name, std::uint64_t hash);
-Kind LifeKind(std::string_view name, std::uint64_t hash);
+// `no_spot`: a placed enemy whose copies found no ground to stand on (Extras::NoSpot): folded as well.
+Kind AttackerKind(std::string_view name, std::uint64_t hash, bool no_spot = false);
+Kind LifeKind(std::string_view name, std::uint64_t hash, bool no_spot = false);
 Treatment TreatmentOf(std::string_view name, std::uint64_t hash);
 // Why TreatmentOf said what it said, for the log and the tests ("rail",
 // "puzzle: Armos statues", "boss", ...); empty for copies.
@@ -270,11 +272,27 @@ bool GetsExtras(std::string_view name, std::uint64_t hash, bool has_life, bool s
 // The placement id of extra `index` (0 on) of the enemy placed with `hash`:
 // never 0 or ~0 (a made actor's), never `hash` itself.
 std::uint64_t ExtraHash(std::uint64_t hash, unsigned index);
-// Where extra `index` is made: `at` moved kExtraOffsetM sideways (x, z) in
-// a direction picked by its placement id, so it does not stand inside its
-// original.
-inline constexpr float kExtraOffsetM = 0.6f;
-std::array<float, 3> ExtraPlace(const std::array<float, 3>& at, std::uint64_t extra_hash);
+// Where an extra (or a horde Stalchild) is made (owner, 2026-11-14: never on top of each other).
+// The module has no ground or navmesh query of the game, so a spot is taken only on ground the game
+// itself put an enemy on: on the straight line from the original to another enemy the game placed
+// or rolled (`Ground`), at about the same height (kSpotStepM) and within kSpotReachM, ApartFor(name)
+// from the original, from every other enemy and from every spot taken before. Nearer ground of the
+// same kind first (a Keese's spot is no Stalfos floor), then any; on each line the point ApartFor
+// from the original, then the middle, then ApartFor short of the other. The same inputs give the same
+// spot in every game. None found: nullopt (an extra's original then takes their weight: NoSpot).
+inline constexpr float kSpotReachM = 15.0f;  // the other enemy: at most this far (x, z)
+inline constexpr float kSpotStepM = 1.0f;    // and at most this much higher or lower
+// The least distance between an extra and any other enemy: 2.5 m, 3.5 m for the big ones
+// (Moblin, Lizalfos, Dinolfos, Stalfos, Gibdo, Wolfos, Lynel, ...), 2 m for the small ones.
+float ApartFor(std::string_view name);
+struct Ground {
+    std::string_view name;  // the enemy there
+    std::uint64_t order = 0;  // its placement id (or actor), for a fixed order among equals
+    std::array<float, 3> at{};
+};
+std::optional<std::array<float, 3>> FindSpot(const std::array<float, 3>& from, std::string_view name,
+                                             const std::vector<Ground>& ground,
+                                             const std::vector<std::array<float, 3>>& taken);
 
 // One scene visit's extras (present thread).
 class Extras {
@@ -302,8 +320,14 @@ public:
     // old one's extras first. Taken in placement id order, so every game picks
     // the same ones whatever order its walk saw them in. Answers how many were
     // added.
-    std::size_t Plan(std::string_view scene, const std::vector<Original>& walk, std::uint16_t count_pct,
-                     bool boss_here, std::uint64_t now_ms);
+    // `ground`: every enemy of the walk (placed or made, these extras among
+    // them), for FindSpot. An original whose copies do not all find a spot
+    // gets none of them (NoSpot) unless it had some already.
+    std::size_t Plan(std::string_view scene, const std::vector<Original>& walk, const std::vector<Ground>& ground,
+                     std::uint16_t count_pct, bool boss_here, std::uint64_t now_ms);
+    // The placed enemy with `hash` got no copies for want of ground: its life and hits are folded instead.
+    bool NoSpot(std::uint64_t hash) const { return no_spot_.contains(hash); }
+    std::size_t NoSpots() const { return no_spot_.size(); }
     // The director's actors (key to actor) after it made some.
     void Bind(const std::map<std::uint64_t, std::uint64_t>& live);
     // A whole walk's actors: an extra whose actor is not among them is gone,
@@ -326,6 +350,7 @@ private:
     std::string scene_;
     std::vector<Extra> extras_;
     std::map<std::uint64_t, unsigned> planned_;  // original's hash -> extras asked for it
+    std::set<std::uint64_t> no_spot_;            // originals folded for want of ground
     struct Bound {
         std::uint64_t hash = 0;
         std::string name;
@@ -389,8 +414,10 @@ public:
     // `alive`: the rolled enemies in our walk now. A new scene forgets the
     // old one's first. A roll gets more as more players come near it, up to
     // PerRoll. Answers how many were added.
+    // `ground`: the Stalchild of the walk and our Link (FindSpot); a roll
+    // with no spot for one more gets no more then (it is tried again later).
     std::size_t Plan(std::string_view scene, const std::vector<Roll>& rolls, std::size_t alive,
-                     std::uint16_t count_pct, std::uint64_t now_ms);
+                     const std::vector<Ground>& ground, std::uint16_t count_pct, std::uint64_t now_ms);
     // The director's actors (key to actor) after it made some.
     void Bind(const std::map<std::uint64_t, std::uint64_t>& live);
     // A whole walk's actors: a roll or one of ours that is not among them is

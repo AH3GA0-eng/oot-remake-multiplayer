@@ -2515,7 +2515,8 @@ private:
                                        extras_.Holds(known.first, now_ms);
             if (CoopDifficulty::IsEnemy(known.first, CoopEnemyShots::IsEnemyShot(known.first))) {
                 // Difficulty: an attacker (a boss, one with its copies' weight folded in, or plain).
-                CoopDifficulty::TheKinds().Mark(a, CoopDifficulty::AttackerKind(known.first, known.second));
+                CoopDifficulty::TheKinds().Mark(a, CoopDifficulty::AttackerKind(known.first, known.second,
+                                                                                extras_.NoSpot(known.second)));
             } else {
                 CoopDifficulty::TheKinds().Forget(a);  // difficulty: a reused address (our bomb where a Keese was)
             }
@@ -2650,7 +2651,8 @@ private:
                             life_components.emplace(*component, a);  // (whose Life step is whose: StepHits)
                             if (CoopDifficulty::IsEnemy(s.name, false)) {  // difficulty: its hits are scaled
                                 CoopDifficulty::TheKinds().Mark(*component,
-                                                                CoopDifficulty::LifeKind(s.name, s.hash));
+                                                                CoopDifficulty::LifeKind(s.name, s.hash,
+                                                                                         extras_.NoSpot(s.hash)));
                             } else {
                                 CoopDifficulty::TheKinds().Forget(*component);  // (a reused address)
                             }
@@ -2884,9 +2886,14 @@ private:
     // on the director's enemy list as the game's own actors, made once each.
     void PlanExtras(const std::string& scene, const std::vector<Seen>& seen, std::vector<CoopSpawn::Copy>& enemies) {
         std::vector<CoopDifficulty::Extras::Original> originals;
+        std::vector<CoopDifficulty::Ground> ground;  // every enemy here: where extras may stand, and keep apart from
         bool boss = false;
         for (const Seen& s : seen) {
             boss = boss || IsBoss(s.name);
+            if (CoopDifficulty::IsEnemy(s.name, false)) {
+                const bool placed = s.hash != 0 && s.hash != ~u64{0};
+                ground.push_back({s.name, placed ? s.hash : 0, {s.position[0], s.position[1], s.position[2]}});
+            }
             const bool special = IsRolled(s.name) || IsHatchingEgg(s.name) || IsHatchling(s.name) ||
                                  IsAnnounced(s.name) || IsOwnPuzzle(s.name) || IsFish(s.name) ||
                                  extras_.HashOf(s.address, s.name).has_value();  // an extra gets none of its own
@@ -2895,9 +2902,14 @@ private:
             }
         }
         const std::uint16_t count = CoopDifficulty::Now().count_pct;
-        if (const std::size_t added = extras_.Plan(scene, originals, count, boss, SteadyNowMs())) {
+        const std::size_t no_spot = extras_.NoSpots();
+        if (const std::size_t added = extras_.Plan(scene, originals, ground, count, boss, SteadyNowMs())) {
             LOG_INFO(Core, "coop: difficulty: {} extra enemies to make in {} (enemies {}%, {} in this visit)", added,
                      scene, count, extras_.All().size());
+        }
+        if (extras_.NoSpots() > no_spot) {
+            LOG_INFO(Core, "coop: difficulty: {} more placed enemies in {} with no ground for copies: weight instead",
+                     extras_.NoSpots() - no_spot, scene);
         }
         for (const auto& e : extras_.All()) {
             CoopSpawn::Copy c;
@@ -2919,8 +2931,18 @@ private:
     void PlanHorde(const std::string& scene, std::uint8_t self, u64 server_now_us, const std::vector<Seen>& seen,
                    std::vector<CoopSpawn::Copy>& enemies) {
         std::vector<CoopDifficulty::Horde::Roll> rolls;
+        // Where ours may rise (CoopDifficulty::FindSpot): ground the game rolled a Stalchild on or our Link
+        // stands on; every enemy here is kept apart from.
+        std::vector<CoopDifficulty::Ground> ground;
+        if (player_) {
+            ground.push_back({"Player", 0, {(*player_)[0], (*player_)[1], (*player_)[2]}});
+        }
         std::size_t alive = 0;
         for (const Seen& s : seen) {
+            if (CoopDifficulty::IsEnemy(s.name, false)) {
+                const bool placed = s.hash != 0 && s.hash != ~u64{0};
+                ground.push_back({s.name, placed ? s.hash : 0, {s.position[0], s.position[1], s.position[2]}});
+            }
             if (!IsRolled(s.name) || (s.hash != 0 && s.hash != ~u64{0})) {
                 continue;
             }
@@ -2934,7 +2956,7 @@ private:
                              sync_.PlayersNear(s.position, server_now_us), dead});
         }
         const std::uint16_t count = CoopDifficulty::Now().count_pct;
-        if (const std::size_t added = horde_.Plan(scene, rolls, alive, count, SteadyNowMs())) {
+        if (const std::size_t added = horde_.Plan(scene, rolls, alive, ground, count, SteadyNowMs())) {
             LOG_INFO(Core, "coop: difficulty: night horde: {} more Stalchild in {} ({} alive, enemies {}%)", added,
                      scene, alive, count);
         }
