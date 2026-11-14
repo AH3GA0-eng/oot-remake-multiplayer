@@ -192,7 +192,10 @@ TEST_CASE("truncated buffers are refused at every length") {
                                   std::holds_alternative<HandoverState>(m) ||
                                   std::holds_alternative<ObjectSpawn>(m) ||
                                   std::holds_alternative<ObjectSample>(m) ||
-                                  std::holds_alternative<VoiceFrame>(m);
+                                  std::holds_alternative<VoiceFrame>(m) ||
+                                  // DAMAGE without its optional hit place (protocol 12), and only that
+                                  (std::holds_alternative<Damage>(m) && std::get<Damage>(m).hit_at &&
+                                   n == full.size() - 12);
           CHECK(may_shrink);
         }
       }
@@ -1036,30 +1039,32 @@ TEST_CASE("object messages have their numbers, channels and senders") {
   CHECK_FALSE(may_send(Sender::client, MessageType::object_owner));
   CHECK_FALSE(may_send(Sender::client, MessageType::handover_ask));
   CHECK(may_send(Sender::client, MessageType::damage));
-  Message d = Damage{0, test::kPlacedId, 1, 2, 1, {}};
+  Message d = Damage{0, test::kPlacedId, 1, 2, 1, {}, {}};
   CHECK(check_received(d, Sender::client, kChannelOwnership) == Error::none);
   CHECK(set_sender(d, 3));
   CHECK(sender_of(d) == 3);
   CHECK(check_received(d, Sender::server, kChannelOwnership) == Error::none);
 }
 
-TEST_CASE("damage carries the hitter's own hit words, optional") {
-  // boss-intro: a copy's weak-point hit on Gohma reaches the owner as that hit, not a plain sword hit.
-  Damage d{0, test::kPlacedId, 1, 2, 1, {1.0f, 2.0f, 3.0f}};
+TEST_CASE("damage carries where the hit landed, optional (protocol 12)") {
+  // boss-intro: a copy's hit on Gohma's eye reaches the owner at the eye (her headshot check), not at her feet.
+  Damage d{0, test::kPlacedId, 1, 2, 1, {1.0f, 2.0f, 3.0f}, {}};
   const Bytes plain = must_encode(d);
-  auto& hit = d.hit.emplace();
-  for (std::size_t i = 0; i < hit.size(); ++i) hit[i] = 0x1000u + static_cast<std::uint32_t>(i);
+  d.hit_at = Vec3{18.5f, 61.0f, 67.8f};
   const Bytes with = must_encode(d);
-  CHECK(with.size() == plain.size() + kDamageHitWords * 4);
+  CHECK(with.size() == plain.size() + 12);
   Message back;
   REQUIRE(decode(with, back) == Error::none);
   CHECK(std::get<Damage>(back) == d);
   REQUIRE(decode(plain, back) == Error::none);
-  CHECK_FALSE(std::get<Damage>(back).hit);
-  Bytes cut = with;  // a part of the block: refused
+  CHECK_FALSE(std::get<Damage>(back).hit_at);
+  Bytes cut = with;  // a part of it: refused
   cut.resize(cut.size() - 4);
   fix_length(cut);
   CHECK(decode_bytes(cut) == Error::trailing_bytes);
+  Bytes out;
+  d.hit_at = Vec3{std::numeric_limits<float>::infinity(), 0.0f, 0.0f};
+  CHECK(encode(d, out) == Error::bad_value);
 }
 
 TEST_CASE("object id layout on the wire") {
@@ -1090,7 +1095,7 @@ TEST_CASE("bad object messages are refused") {
   CHECK(encode(ObjectSpawn{0, test::kMadeId, "", 0, {}}, out) == Error::bad_value);
   CHECK(encode(ObjectSpawn{0, test::kMadeId, std::string(65, 'a'), 0, {}}, out) ==
         Error::string_too_long);
-  CHECK(encode(Damage{0, test::kPlacedId, 0, -1, 0, {}}, out) == Error::bad_value);
+  CHECK(encode(Damage{0, test::kPlacedId, 0, -1, 0, {}, {}}, out) == Error::bad_value);
   const float nan = std::numeric_limits<float>::quiet_NaN();
   CHECK(encode(ObjectRemove{0, test::kMadeId, 0, RemoveReason::hit, {nan, 0, 0}}, out) ==
         Error::bad_value);

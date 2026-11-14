@@ -29,7 +29,33 @@ wait 300
 mark b-intro
 wait 1500
 mark b-fight
-wait 720
+wait 600
+# boss-intro: B stuns Gohma (a seed in the eye hands her to B); A's hits in the stun are then a non-owner's.
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 60
+assign SlingShot
+wait 120
+hold ZL+ZR 40             # stun try 1: lock on Gohma, the slingshot aims at her eye (releasing ZR fires)
+wait 20
+wait 44                   # (A's sword hits)
+wait 240
+mark b-stun1
+hold ZL+ZR 40             # stun try 2: lock on Gohma, the slingshot aims at her eye (releasing ZR fires)
+wait 20
+wait 44                   # (A's sword hits)
+wait 240
+mark b-stun2
+hold ZL+ZR 40             # stun try 3: lock on Gohma, the slingshot aims at her eye (releasing ZR fires)
+wait 20
+wait 44                   # (A's sword hits)
+wait 240
+mark b-stun3
+hold ZL+ZR 40             # stun try 4: lock on Gohma, the slingshot aims at her eye (releasing ZR fires)
+wait 20
+wait 44                   # (A's sword hits)
+wait 240
+mark b-stun4
+wait 120
 mark b-kill
 wait 300
 mark b-death

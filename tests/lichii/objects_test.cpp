@@ -190,11 +190,10 @@ TEST_CASE("objects: a hit on a copy goes to the owner as DAMAGE, summed over 100
     CHECK(All<proto::ObjectSample>(step).empty());
 }
 
-TEST_CASE("objects: a boss copy's own hit words go with the DAMAGE, and the owner replays them (boss-intro)") {
-    // Gohma holds her life at 1 against a plain sword hit: the finishing hit of a non-owner must reach the
-    // owner as the weak-point hit its game took, not as the replay's Kokiri Sword template.
-    std::array<std::uint32_t, proto::kDamageHitWords> words{};
-    for (std::size_t i = 0; i < words.size(); ++i) words[i] = 0xa000u + static_cast<std::uint32_t>(i);
+TEST_CASE("objects: a boss copy's hit place goes with its DAMAGE, and the owner's replay lands there (boss-intro)") {
+    // Gohma's weak point is a headshot check against her Eyelid_Down bone: a non-owner's finishing hit must land
+    // at her eye in the owner's game, not at her feet.
+    const proto::Vec3 eye{18.5f, 61.5f, 67.8f};
     const std::string kBoss = "Enemy_DungeonBoss_Gohma";
     Sync copy;
     Tick(copy, 0, {Enemy(0x100, 0x11, 2, 0.0f, kBoss)});
@@ -202,14 +201,12 @@ TEST_CASE("objects: a boss copy's own hit words go with the DAMAGE, and the owne
     Own(copy, id, 2, 1);
     Tick(copy, 10 * kMs, {Enemy(0x100, 0x11, 2, 0.0f, kBoss)});
     Seen hit = Enemy(0x100, 0x11, 0, 0.0f, kBoss);
-    hit.hit = words;
+    hit.hit_at = eye;
     Tick(copy, 20 * kMs, {hit});
     auto damage = All<proto::Damage>(Tick(copy, 130 * kMs, {Enemy(0x100, 0x11, 0, 0.0f, kBoss)}));
     REQUIRE(damage.size() == 1);
-    REQUIRE(damage[0].hit);
-    CHECK(*damage[0].hit == words);
+    CHECK(damage[0].hit_at == std::optional<proto::Vec3>(eye));
 
-    // The owner: the hurt it gives the game carries the same words.
     Sync owner;
     owner.SetHurt(true);
     Tick(owner, 0, {Enemy(0x200, 0x11, 2, 0.0f, kBoss)});
@@ -222,23 +219,47 @@ TEST_CASE("objects: a boss copy's own hit words go with the DAMAGE, and the owne
     auto step = Tick(owner, 140 * kMs, {Enemy(0x200, 0x11, 2, 0.0f, kBoss)});
     REQUIRE(step.writes.size() == 1);
     CHECK(step.writes[0].hurt == 2);
-    REQUIRE(step.writes[0].hit);
-    CHECK(*step.writes[0].hit == words);
+    CHECK(step.writes[0].hit_at == std::optional<proto::Vec3>(eye));
+    // The boss's game does not take it (Gohma holds at 1): no life is written for a boss, ever.
+    step = Tick(owner, 700 * kMs, {Enemy(0x200, 0x11, 1, 0.0f, kBoss)});
+    CHECK(step.writes.empty());
+}
 
-    // A plain enemy's DAMAGE has none: the template stays.
-    Sync plain;
-    plain.SetHurt(true);
-    Tick(plain, 0, {Enemy(0x300, 0x11, 2)});
-    const proto::ObjectId pid = *plain.IdOf(0x300);
-    Own(plain, pid, 1);
-    proto::Damage p;
-    p.player_number = 2;
-    p.id = pid;
-    p.amount = 1;
-    plain.Receive(p);
-    step = Tick(plain, 10 * kMs, {Enemy(0x300, 0x11, 2)});
-    REQUIRE(step.writes.size() == 1);
-    CHECK_FALSE(step.writes[0].hit);
+TEST_CASE("objects: a hit place never rides on a later DAMAGE (seen while ours, or an older sum)") {
+    const proto::Vec3 eye{18.5f, 61.5f, 67.8f};
+    const std::string kBoss = "Enemy_DungeonBoss_Gohma";
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 4, 0.0f, kBoss)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 1);  // ours: our game's own hit at the eye, nothing to send
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 4, 0.0f, kBoss)});
+    Seen ours = Enemy(0x100, 0x11, 3, 0.0f, kBoss);
+    ours.hit_at = eye;
+    Tick(sync, 20 * kMs, {ours});
+    Own(sync, id, 2, 1);  // handed over: now a copy
+    Tick(sync, 30 * kMs, {Enemy(0x100, 0x11, 3, 0.0f, kBoss)});
+    Tick(sync, 40 * kMs, {Enemy(0x100, 0x11, 2, 0.0f, kBoss)});  // a plain drop, no place this walk
+    auto damage = All<proto::Damage>(Tick(sync, 150 * kMs, {Enemy(0x100, 0x11, 2, 0.0f, kBoss)}));
+    REQUIRE(damage.size() == 1);
+    CHECK_FALSE(damage[0].hit_at);
+    // A place with one sum, then a later sum without one: the second goes without.
+    Seen at = Enemy(0x100, 0x11, 1, 0.0f, kBoss);
+    at.hit_at = eye;
+    Tick(sync, 160 * kMs, {at});
+    damage = All<proto::Damage>(Tick(sync, 270 * kMs, {Enemy(0x100, 0x11, 1, 0.0f, kBoss)}));
+    REQUIRE(damage.size() == 1);
+    CHECK(damage[0].hit_at == std::optional<proto::Vec3>(eye));
+    Tick(sync, 280 * kMs, {Enemy(0x100, 0x11, 0, 0.0f, kBoss)});
+    damage = All<proto::Damage>(Tick(sync, 400 * kMs, {Enemy(0x100, 0x11, 0, 0.0f, kBoss)}));
+    REQUIRE(damage.size() == 1);
+    CHECK_FALSE(damage[0].hit_at);
+}
+
+TEST_CASE("objects: a hit place is kept only finite and near the boss") {
+    const proto::Vec3 boss{18.0f, 60.0f, 67.0f};
+    CHECK(CoopObjects::CheckedHitPlace({18.5f, 61.5f, 67.8f}, boss, 12.0f));
+    CHECK_FALSE(CoopObjects::CheckedHitPlace({18.5f, 90.0f, 67.8f}, boss, 12.0f));
+    CHECK_FALSE(CoopObjects::CheckedHitPlace({std::nanf(""), 61.0f, 67.0f}, boss, 12.0f));
 }
 
 TEST_CASE("objects: no owner yet or our own enemy: a life drop sends no DAMAGE") {

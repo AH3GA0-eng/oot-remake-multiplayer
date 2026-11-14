@@ -22,6 +22,7 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <deque>
 #include <functional>
 
@@ -44,6 +45,24 @@
 namespace CoopObjects {
 
 // One actor of one walk.
+// A hit place read from a game's hit record: kept only when finite and within `near` of the boss (a stale or
+// unrelated record, or a garbage read, sends nothing).
+inline std::optional<coop::protocol::Vec3> CheckedHitPlace(const std::array<float, 3>& at,
+                                                           const coop::protocol::Vec3& boss, float near) {
+    float d2 = 0.0f;
+    for (std::size_t i = 0; i < 3; ++i) {
+        if (!std::isfinite(at[i])) {
+            return std::nullopt;
+        }
+        const float d = at[i] - boss[i];
+        d2 += d * d;
+    }
+    if (!(d2 <= near * near)) {
+        return std::nullopt;
+    }
+    return coop::protocol::Vec3{at[0], at[1], at[2]};
+}
+
 struct Seen {
     std::uint64_t address = 0;  // the actor, in guest memory
     std::string name;           // the game's actor name
@@ -60,9 +79,9 @@ struct Seen {
     // our game last set them (sent in its samples).
     std::uint64_t bsa_component = 0;
     std::optional<coop::protocol::BossBsa> bsa;
-    // A boss copy's own incoming hit, read when its game took a new one (boss-intro; IsBoss only, never one we
-    // replayed): sent with our DAMAGE so the owner replays that hit, not a plain sword hit.
-    std::optional<std::array<std::uint32_t, coop::protocol::kDamageHitWords>> hit;
+    // Where a boss copy's own new hit landed (its game's hit record, +0x27c; IsBoss only, never one we replayed,
+    // checked near the boss): sent with our DAMAGE so the owner's replay lands there (boss-intro).
+    std::optional<coop::protocol::Vec3> hit_at{};
 };
 
 // An animation a copy should play (the owner's AS slot 0 command). The
@@ -145,8 +164,8 @@ struct LifeWrite {
     // With a hurt: where the player who hit stands, when known (the enemy is
     // knocked away from there).
     std::optional<coop::protocol::Vec3> from;
-    // With a hurt: the hitter's own hit words (DAMAGE's hit), replayed instead of the plain sword hit.
-    std::optional<std::array<std::uint32_t, coop::protocol::kDamageHitWords>> hit;
+    // With a hurt: where the hitter's hit landed (DAMAGE's hit_at): the replay lands there (Gohma's eye).
+    std::optional<coop::protocol::Vec3> hit_at{};
     // Past the hit replay (a hit record the game's damage rules judge): the amount goes straight into the game's
     // Life step (Hookshot, patch 0007), so the game still runs its own death. For the test kill: a boss takes no
     // plain hit outside its weak point (Gohma on the ceiling). Never written directly: not taken, nothing happens.
@@ -695,7 +714,7 @@ private:
         std::uint32_t sequence = 0;
         // Copy side.
         std::int32_t hit_sum = 0;
-        std::optional<std::array<std::uint32_t, coop::protocol::kDamageHitWords>> hit_words;  // our newest own hit on it
+        std::optional<coop::protocol::Vec3> hit_place;  // where our own hit summed now landed (a boss; cleared with the sum)
         std::uint64_t hit_since = 0;
         std::uint64_t hit_at = 0;  // last DAMAGE sent
         std::uint64_t react_at = 0;  // our last hit on it, as seen in its life
@@ -776,7 +795,7 @@ private:
     std::int32_t StepHits(Object& o, std::int32_t fell, std::int32_t life, std::uint64_t now_us);
     void Lower(Object& o, std::int32_t life, std::uint64_t now_us, std::vector<LifeWrite>& writes,
                std::uint8_t hitter,
-               const std::optional<std::array<std::uint32_t, coop::protocol::kDamageHitWords>>& hit = std::nullopt);
+               const std::optional<coop::protocol::Vec3>& hit_at = std::nullopt);
 
     // enemy-sync-3 (issue 133): an enemy we own whose life was written to 0
     // (another game's hit our game did not take, or hurt off) may stand on

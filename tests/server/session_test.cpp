@@ -1660,7 +1660,7 @@ TEST_CASE("damage goes to the owner alone, whatever epoch the hitter knew") {
 
   h.clear();
   h.receive(1, hit, kChannelOwnership);                                // from the owner itself
-  h.receive(2, Damage{0, placed(8), 0, 2, 0, {}}, kChannelOwnership);  // unknown object
+  h.receive(2, Damage{0, placed(8), 0, 2, 0, {}, {}}, kChannelOwnership);  // unknown object
   CHECK(h.sent.empty());
   CHECK(h.session.stats().damage_relayed == 1);
   CHECK(h.session.stats().damage_dropped == 2);
@@ -1736,7 +1736,7 @@ TEST_CASE("a removed enemy stays owned by nobody until no game has it, then is f
   // Player 2's copy, still listed, does not take it; damage to it goes nowhere.
   h.clear();
   h.receive(2, present_in("Graveyard", {placed(7)}), kChannelOwnership);
-  h.receive(2, Damage{0, placed(7), 0, 2, 0, {}}, kChannelOwnership);
+  h.receive(2, Damage{0, placed(7), 0, 2, 0, {}, {}}, kChannelOwnership);
   CHECK(h.sent.empty());
   // Player 1 leaves the scene: a removed object is not handed over.
   h.receive(1, present_in("Market", {}), kChannelOwnership);
@@ -2483,7 +2483,7 @@ TEST_CASE("issue 150: a boss goes to the player who hurt it, at most every 8 s")
   h.stand(1, 4);  // both in the boss room, a few metres apart
   h.stand(2, 6);
   h.clear();
-  h.receive(2, Damage{0, placed(7), 0, 1, 1, {}}, kChannelOwnership);
+  h.receive(2, Damage{0, placed(7), 0, 1, 1, {}, {}}, kChannelOwnership);
   const auto to1 = h.to(1);
   REQUIRE(to1.size() == 2);  // the hit first, then the ask
   CHECK(std::get<Damage>(to1[0].message).amount == 1);
@@ -2493,13 +2493,13 @@ TEST_CASE("issue 150: a boss goes to the player who hurt it, at most every 8 s")
   CHECK(h.session.object_owner(placed(7)) == owned(2, 1));
   // Player 1 hits back at once: the hit goes to player 2, the boss stays there.
   h.clear();
-  h.receive(1, Damage{0, placed(7), 1, 1, 1, {}}, kChannelOwnership);
+  h.receive(1, Damage{0, placed(7), 1, 1, 1, {}, {}}, kChannelOwnership);
   CHECK(messages_to<Damage>(h, 2).size() == 1);
   CHECK(messages_to<HandoverAsk>(h, 2).empty());
   // 8 s after the change, player 1's hit takes it back.
   h.run(8 * kSecond);
   h.clear();
-  h.receive(1, Damage{0, placed(7), 1, 1, 1, {}}, kChannelOwnership);
+  h.receive(1, Damage{0, placed(7), 1, 1, 1, {}, {}}, kChannelOwnership);
   CHECK(messages_to<HandoverAsk>(h, 2) == std::vector<HandoverAsk>{{placed(7), 1, 1}});
   CHECK(h.session.stats().boss_to_hitter == 2);
 }
@@ -2517,7 +2517,7 @@ TEST_CASE("issue 150: two players hitting in turn do not bounce the boss") {
     --life;
     h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, life)}, kChannelObjectSamples);
     h.run(kSecond);
-    h.receive(2, Damage{0, placed(7), 0, 1, 1, {}}, kChannelOwnership);
+    h.receive(2, Damage{0, placed(7), 0, 1, 1, {}, {}}, kChannelOwnership);
     h.run(250'000);
     h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, --life)}, kChannelObjectSamples);  // 2's hit taken
     h.run(1'750'000);  // the owner's next own hit is well past the hit window
@@ -2527,7 +2527,7 @@ TEST_CASE("issue 150: two players hitting in turn do not bounce the boss") {
   // The owner stops hitting: 6 s later player 2's hit takes it.
   h.run(6 * kSecond);
   h.clear();
-  h.receive(2, Damage{0, placed(7), 0, 1, 1, {}}, kChannelOwnership);
+  h.receive(2, Damage{0, placed(7), 0, 1, 1, {}, {}}, kChannelOwnership);
   CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
   CHECK(h.session.stats().boss_to_hitter == 1);
 }
@@ -2541,14 +2541,14 @@ TEST_CASE("issue 150: a hit on a boss's part asks for the boss, plain enemies ke
   h.stand(1, 4);
   h.stand(2, 6);
   h.clear();
-  h.receive(2, Damage{0, placed(8), 0, 1, 1, {}}, kChannelOwnership);  // the part (an egg)
+  h.receive(2, Damage{0, placed(8), 0, 1, 1, {}, {}}, kChannelOwnership);  // the part (an egg)
   CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
 
   OwnerHarness plain;  // no boss: two players near it, no move on a hit
   plain.stand(1, 4);
   plain.stand(2, 6);
   plain.clear();
-  plain.receive(2, Damage{0, placed(7), 0, 1, 1, {}}, kChannelOwnership);
+  plain.receive(2, Damage{0, placed(7), 0, 1, 1, {}, {}}, kChannelOwnership);
   CHECK(plain.asks() == 0);
   CHECK(plain.session.stats().boss_to_hitter == 0);
 
@@ -2559,7 +2559,7 @@ TEST_CASE("issue 150: a hit on a boss's part asks for the boss, plain enemies ke
   h0.stand(1, 4);
   h0.stand(2, 6);
   h0.clear();
-  h0.receive(2, Damage{0, placed(7), 0, 1, 1, {}}, kChannelOwnership);
+  h0.receive(2, Damage{0, placed(7), 0, 1, 1, {}, {}}, kChannelOwnership);
   CHECK(h0.asks() == 0);
 }
 
@@ -2669,14 +2669,14 @@ TEST_CASE("gohma-sync: by default a boss hit that takes life stays with the owne
   h.stand(1, 12);  // the owner by the wall, player 2 at the boss: no near-player move
   h.stand(2, 3);
   h.clear();
-  h.receive(2, Damage{0, placed(7), 0, 2, 1, {}}, kChannelOwnership);
+  h.receive(2, Damage{0, placed(7), 0, 2, 1, {}, {}}, kChannelOwnership);
   // The hit goes to the owner, who takes it off its boss; no ask.
   REQUIRE(messages_to<Damage>(h, 1).size() == 1);
   CHECK(messages_to<Damage>(h, 1)[0].amount == 2);
   CHECK(h.asks() == 0);
   h.run(30 * kSecond);  // hits every few seconds, player 2 standing nearer all along
   for (int i = 0; i < 5; ++i) {
-    h.receive(2, Damage{0, placed(7), 0, 1, 1, {}}, kChannelOwnership);
+    h.receive(2, Damage{0, placed(7), 0, 1, 1, {}, {}}, kChannelOwnership);
     h.run(3 * kSecond);
   }
   CHECK(h.asks() == 0);
@@ -2685,7 +2685,7 @@ TEST_CASE("gohma-sync: by default a boss hit that takes life stays with the owne
   CHECK(h.session.object_owner(placed(7)) == owned(1, 0));
   // Player 2's seed stuns its copy (DAMAGE 0): that one hands the boss over.
   h.clear();
-  h.receive(2, Damage{0, placed(7), 0, 0, 0, {}}, kChannelOwnership);
+  h.receive(2, Damage{0, placed(7), 0, 0, 0, {}, {}}, kChannelOwnership);
   CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
   CHECK(h.session.stats().boss_to_hitter == 1);
 }
@@ -2696,7 +2696,7 @@ TEST_CASE("issue 150: a DAMAGE of 0 (a stun in the hitter's game) asks for the b
   h.stand(1, 4);
   h.stand(2, 6);
   h.clear();
-  h.receive(2, Damage{0, placed(7), 0, 0, 0, {}}, kChannelOwnership);
+  h.receive(2, Damage{0, placed(7), 0, 0, 0, {}, {}}, kChannelOwnership);
   CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
   h.receive(1, HandoverState{0, placed(7), 0, state_at(0, 12)}, kChannelOwnership);
   CHECK(h.session.object_owner(placed(7)) == owned(2, 1));
@@ -2709,7 +2709,7 @@ TEST_CASE("a hit by the player near it, its owner well away, takes it at once, t
   h.stand(1, 50);
   h.stand(2, 2);
   h.clear();
-  h.receive(2, Damage{0, placed(7), 0, 3, 1, {}}, kChannelOwnership);
+  h.receive(2, Damage{0, placed(7), 0, 3, 1, {}, {}}, kChannelOwnership);
   const auto to1 = h.to(1);
   REQUIRE(to1.size() == 2);  // the hit first, then the ask
   CHECK(std::get<Damage>(to1[0].message).amount == 3);
@@ -2728,7 +2728,7 @@ TEST_CASE("an answer that already has the hit in it is not lowered twice") {
   OwnerHarness h;
   h.stand(1, 50);
   h.stand(2, 2);
-  h.receive(2, Damage{0, placed(7), 0, 3, 1, {}}, kChannelOwnership);
+  h.receive(2, Damage{0, placed(7), 0, 3, 1, {}, {}}, kChannelOwnership);
   h.clear();
   h.receive(1, HandoverState{0, placed(7), 0, state_at(0, 8)}, kChannelOwnership);
   CHECK(messages_to<HandoverState>(h, 2) ==
@@ -2740,7 +2740,7 @@ TEST_CASE("hits by a player in the same fight as the owner do not move the enemy
   h.stand(1, 3);
   h.stand(2, 2);
   h.clear();
-  for (int i = 0; i < 5; ++i) h.receive(2, Damage{0, placed(7), 0, 1, 1, {}}, kChannelOwnership);
+  for (int i = 0; i < 5; ++i) h.receive(2, Damage{0, placed(7), 0, 1, 1, {}, {}}, kChannelOwnership);
   CHECK(messages_to<Damage>(h, 1).size() == 5);
   CHECK(h.asks() == 0);
   h.run(11 * kSecond);  // and the fight they started keeps it there
@@ -2854,7 +2854,7 @@ TEST_CASE("issue 101: a hit where the hitter's copy stands, far from the owner's
     h.stand(1, 34);
     h.stand(2, 60);
     h.clear();
-    h.receive(2, Damage{0, placed(7), 0, 1, 1, {}}, kChannelOwnership);
+    h.receive(2, Damage{0, placed(7), 0, 1, 1, {}, {}}, kChannelOwnership);
     CHECK(h.asks() == 0);
   }
   {
@@ -2969,7 +2969,7 @@ TEST_CASE("a group: the parts follow the root's owner and share its fight") {
   h.stand(2, 2);
   h.receive(1, ObjectSample{0, placed(8), 0, state_at(0, 5)}, kChannelObjectSamples);
   h.clear();
-  h.receive(2, Damage{0, placed(8), 0, 1, 1, {}}, kChannelOwnership);
+  h.receive(2, Damage{0, placed(8), 0, 1, 1, {}, {}}, kChannelOwnership);
   CHECK(h.asks() == 0);
   CHECK(h.session.object_in_fight(placed(7), h.now));
 
@@ -5237,7 +5237,7 @@ TEST_CASE("a boss never goes to a game whose boss has not begun its fight (unrea
   h.run(20 * kSecond);  // clearly nearer, for long: still not moved
   CHECK(h.asks() == 0);
   // A stun (DAMAGE 0) is the hit that hands a boss over (gohma-sync); still counts...
-  h.receive(2, Damage{0, placed(7), 0, 0, 0, {}}, kChannelOwnership);
+  h.receive(2, Damage{0, placed(7), 0, 0, 0, {}, {}}, kChannelOwnership);
   CHECK(messages_to<Damage>(h, 1).size() == 1);
   CHECK(messages_to<HandoverAsk>(h, 1).empty());  // ...but takes no boss
   CHECK(h.session.stats().boss_to_near == 0);
@@ -5246,6 +5246,6 @@ TEST_CASE("a boss never goes to a game whose boss has not begun its fight (unrea
   h.receive(2, present_in("Field", {placed(7)}), kChannelOwnership);
   h.run(3 * kSecond);
   h.clear();
-  h.receive(2, Damage{0, placed(7), 0, 0, 0, {}}, kChannelOwnership);
+  h.receive(2, Damage{0, placed(7), 0, 0, 0, {}, {}}, kChannelOwnership);
   CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
 }
