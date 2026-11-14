@@ -111,6 +111,21 @@ mark shot6
 hold ZL+ZR 60 aim7        # Z-target lock (the eye shows a target mark), then shoot
 wait 120
 press B
+# deku-test (after groups-20261114-071719, 7 misses): the aim1 screens of that run and of the pass -053933 both
+# have the reticle on the eye, and A stood 0.05 m apart; the miss's shot1 screen shows the seed's puff low, at the
+# door under the eye (the seed drops on the way). Two more tries, untested: aim higher, and let go of ZR while ZL
+# still holds the lock (each step replaces the held keys, so the 2nd hold releases only ZR).
+hold ZR 30
+rstick 0 1.0 11 ZR
+rstick -1.0 0 3 ZR
+hold ZR 12 aim8
+wait 90
+mark shot8
+hold ZL 20
+hold ZL+ZR 40
+hold ZL 20 aim9
+wait 120
+mark shot9
 mark ladder
 wait 900
 mark late
