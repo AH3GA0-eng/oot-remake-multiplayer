@@ -65,13 +65,17 @@ press A
 wait 2400
 mark after
 wait 720                 # B gets on the floor first
-place -26.6 75.8 40.6    # deku-test 4th run: 1 m west of the dive switch (top at -25.63 74.25 40.62)
+place -26.6 75.8 40.6    # deku-test: 1 m west of the dive switch (top at -25.63 74.25 40.62)
 wait 120
-hold A 50 dive           # dive ("Dive (Hold)" = pad A, key E); the 3rd run's dive reached y 74.04, 2 m off
-toward -25.6 40.6 40 A   # under water, steer at the switch's centre while still diving
+hold A 50 dive           # dive ("Dive (Hold)" = pad A, key E): the dives float 0.14-0.4 m over the switch's top
+toward -25.6 40.6 40 A
 hold A 60 dive2
-toward -25.6 40.6 30 A
-hold A 60 dive3
+place -25.6 79.5 40.6    # 5th run: dropped 4 m over the switch into the water, holding A, so the fall carries Link down
+hold A 120 dive3
+wait 60
+place -25.6 79.5 40.6
+wait 40                  # this time no A while falling, A once in the water
+hold A 120 dive4
 wait 120
 mark placed
 wait 150
