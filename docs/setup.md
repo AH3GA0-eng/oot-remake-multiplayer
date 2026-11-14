@@ -41,7 +41,7 @@ If a new version gives you trouble, double-click `Revert.bat` in the kit folder:
 
 - **Every player in a session needs the same version**: the versions do not talk to each other. Tell your friends to go back too (their own `Revert.bat`), or you cannot play together.
 - Your saves, your settings, `coop-options.ini` and the built game are kept, and so is the version you left: `Update.bat` goes forward again.
-- The game: when only the co-op patches differ, the next start updates it in a few minutes. When the older version is on another Longshot, it is built again (15 to 45 minutes; it asks first), unless this PC's game cache already holds that build (testers' PCs: `%LOCALAPPDATA%\oot-coop\hs-cache`), which is then copied in.
+- The game: when only the co-op patches differ, the next start updates it in a few minutes. When the older version is on another Longshot, it is built again (15 to 45 minutes; it asks first). Going back to 0.11 or later, a build of that version already in this PC's game cache (testers' PCs: `%LOCALAPPDATA%\oot-coop\hs-cache`) is copied in instead; going back to 0.10.1 always builds again.
 - Starting the kit does not update straight back: it stays on the version you went back to and asks again only when a release newer than the one you left comes out (with `auto_update = yes` too).
 - Any older release by its tag: open a terminal in the kit folder and run `Update.bat -Version v0.10.1` (downloaded from the release and checked against its SHA-256, as an update is).
 

@@ -703,6 +703,29 @@ try {
     New-HsKit $nk2 'v0.11.1' $c1 'patch 0.11.1'
     $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $nk2 -Yes -Revert 2>&1
     Check ($LASTEXITCODE -eq 1 -and ($out -join ' ') -match 'Update\.bat -Version v0\.10\.1' -and (Get-KitVersion $nk2) -eq 'v0.11.1') "revert: nothing kept -> says Update.bat -Version, nothing changed [$($out -join ' ')]"
+    # 7b. A backup-*\ that misses a file its MANIFEST.txt names (an update that failed while copying) is never gone back to.
+    $pk = Join-Path $rv 'kit-partial-backup'
+    New-HsKit $pk 'v0.11.1' $c1 'patch 0.11.1'
+    New-HsKit "$pk\backup-v0.10.1" 'v0.10.1' $c0 'patch 0.10.1' @('scripts\only-0.10.1.ps1')
+    Remove-Item -LiteralPath "$pk\backup-v0.10.1\scripts\only-0.10.1.ps1"
+    Check (-not (Test-KitComplete "$pk\backup-v0.10.1") -and (Test-KitComplete "$rv\src-v0.10.1\oot-coop-v0.10.1")) 'revert: a backup missing a file of its MANIFEST.txt is not complete'
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $pk -Yes -Revert 2>&1
+    Check ($LASTEXITCODE -eq 1 -and (Get-KitVersion $pk) -eq 'v0.11.1') "revert: a partial backup is not gone back to [$(($out | Select-Object -Last 1) -join ' ')]"
+    # 7c. A damaged or hand-edited VERSION.txt never names a folder: the update goes on, nothing outside previous\ goes.
+    foreach ($bad in '..', '..\..', 'v0.1.0-..', 'v0.1.0.') { Check (-not (Test-KitSafeVersion $bad)) "a version that could be a path is refused: '$bad'" }
+    Check (Test-KitSafeVersion 'v0.11.0-rc.1') 'a test build version is fine'
+    Check ($(try { Remove-KitPreviousDir $rk $rv; $false } catch { $true }) -and (Test-Path $rv)) 'previous\ removal refuses a folder outside previous\'
+    foreach ($bad in '..', '..\..') {
+        $hk2 = Join-Path $rv "kit-hostile-$($bad.Length)\kit"
+        New-HsKit $hk2 'v0.11.0' $c1 'patch 0.11.0'
+        Write-File "$hk2\VERSION.txt" "kit: oot-coop-x (release $bad)`r`n"
+        Write-File "$hk2\hookshot\game\save\slot_00\progress.sav" 'my save'
+        Write-File "$(Split-Path -Parent $hk2)\beside-the-kit.txt" 'not the kit''s'
+        $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $hk2 -Yes -Api $l1 2>&1
+        Check ($LASTEXITCODE -eq 0 -and (Get-KitVersion $hk2) -eq 'v0.11.1') "VERSION.txt '(release $bad)': the update goes on [$(($out | Select-Object -Last 1) -join ' ')]"
+        Check ((Read-File "$hk2\hookshot\game\save\slot_00\progress.sav") -eq 'my save' -and (Test-Path "$(Split-Path -Parent $hk2)\beside-the-kit.txt") -and
+            (Test-Path "$hk2\Start OoT Co-op.bat") -and -not (Test-Path "$hk2\previous")) "VERSION.txt '(release $bad)': nothing deleted, nothing kept under that name"
+    }
     # 8. The game: same pin and patches, other patches, another commit.
     Check ((Get-KitGameChange $rk $rk) -eq 'same') 'game change: the same kit -> same'
     Check ((Get-KitGameChange "$rv\src-v0.11.1\oot-coop-v0.11.1" "$rv\src-v0.11.2\oot-coop-v0.11.2") -eq 'patches') 'game change: other patches -> patches'

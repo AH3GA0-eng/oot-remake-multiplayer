@@ -310,7 +310,22 @@ bash "$kit/scripts/update.sh" --yes --version v0.1.0-beta2 </dev/null >"$tmp/ver
 check 'update --version: an older release by its tag, SHA-256 checked, stays on it' bash -c 'grep -q beta2 "$1/VERSION.txt" && grep -q "SHA-256 checked" "$2" && grep -qx "stay=v0.1.0-beta2" "$1/stay-on-version.txt"' _ "$kit" "$tmp/version.txt"
 check 'update --version: no such release -> said' bash -c 'bash "$1/scripts/update.sh" --yes --version v0.0.9 </dev/null | grep -q "No release v0.0.9" && grep -q beta2 "$1/VERSION.txt"' _ "$kit"
 rm -rf "$kit/previous" "$kit"/backup-*
-check 'revert.sh: nothing kept -> says --version' bash -c 'bash "$1/revert.sh" --yes </dev/null | grep -q -- "--version"' _ "$kit"
+# (a backup missing a file its MANIFEST.txt names, as an update that failed while copying leaves one: never gone back to)
+mkdir -p "$kit/backup-v0.1.0-beta1"
+cp "$kit/start-oot-coop.sh" "$kit/backup-v0.1.0-beta1/"
+printf 'kit: oot-coop-v0.1.0-beta1-linux (release v0.1.0-beta1)\n' >"$kit/backup-v0.1.0-beta1/VERSION.txt"
+printf 'MANIFEST.txt\nVERSION.txt\nstart-oot-coop.sh\nscripts/start.sh\n' >"$kit/backup-v0.1.0-beta1/MANIFEST.txt"
+check 'revert.sh: nothing kept (a partial backup does not count) -> says --version' bash -c 'bash "$1/revert.sh" --yes </dev/null | grep -q -- "--version" && grep -q beta2 "$1/VERSION.txt"' _ "$kit"
+rm -rf "$kit"/backup-*
+# A damaged or hand-edited VERSION.txt never names a folder: the update goes on, nothing outside previous/ is removed.
+printf 'beside the kit\n' >"$tmp/beside-the-kit.txt"
+for bad in .. ../..; do
+    printf 'kit: oot-coop-x (release %s)\n' "$bad" >"$kit/VERSION.txt"
+    bash "$kit/scripts/update.sh" --yes </dev/null >"$tmp/hostile.txt" 2>&1
+    check "VERSION.txt '(release $bad)': the update goes on, the kit, its saves and the folder above are still there" bash -c \
+        'grep -q beta3 "$1/VERSION.txt" && [ -f "$1/start-oot-coop.sh" ] && [ "$(cat "$1/data/game/save.bin")" = "my save" ] && [ -f "$2" ]' _ "$kit" "$tmp/beside-the-kit.txt"
+    check "VERSION.txt '(release $bad)': nothing kept under that name" bash -c '[ ! -e "$1/previous" ] || [ -z "$(ls -A "$1/previous")" ]' _ "$kit"
+done
 unset OOT_COOP_UPDATE_API
 
 # --- collect-logs.sh -------------------------------------------------------------------------

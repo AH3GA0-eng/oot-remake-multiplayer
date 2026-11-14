@@ -708,12 +708,27 @@ function Get-KitOwnFiles([string]$KitDir, [string[]]$Also) {
     return ,([string[]]$names.ToArray())
 }
 
+# A version that may name a folder (previous\<version>\, backup-<version>\): a release version (ConvertTo-KitVersion),
+# with no '..' and no trailing dot, so a damaged or hand-edited VERSION.txt ('(release ..)', '(release ..\..)') never
+# becomes a path outside the kit.
+function Test-KitSafeVersion([string]$Ver) {
+    return [bool](ConvertTo-KitVersion $Ver) -and -not $Ver.Contains('..') -and -not $Ver.EndsWith('.')
+}
+
+# Removes a folder, only one directly inside the kit's previous\ (never the kit, never above it).
+function Remove-KitPreviousDir([string]$KitDir, [string]$Path) {
+    $root = [System.IO.Path]::GetFullPath((Join-Path $KitDir $Previous)).TrimEnd('\')
+    $full = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+    if ((Split-Path -Parent $full) -ine $root -or (Split-Path -Leaf $full) -in '', '.', '..') { throw "Not removed (outside $Previous\): $Path" }
+    if (Test-Path -LiteralPath $full) { Remove-Item -LiteralPath $full -Recurse -Force }
+}
+
 # Copies $Files of the kit to previous\<version>.part\ (Complete-KitPrevious names it previous\<version>\ once the
 # update went through). Returns that folder, or '' for a kit with no version.
 function Save-KitPrevious([string]$KitDir, [string]$Ver, [string[]]$Files) {
-    if (-not (ConvertTo-KitVersion $Ver) -or -not $Files) { return '' }
+    if (-not (Test-KitSafeVersion $Ver) -or -not $Files) { return '' }
     $part = Join-Path (Join-Path $KitDir $Previous) "$Ver.part"
-    if (Test-Path -LiteralPath $part) { Remove-Item -LiteralPath $part -Recurse -Force }
+    Remove-KitPreviousDir $KitDir $part
     foreach ($rel in $Files) {
         $to = Join-Path $part $rel
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $to) | Out-Null
@@ -727,13 +742,13 @@ function Save-KitPrevious([string]$KitDir, [string]$Ver, [string[]]$Files) {
 function Complete-KitPrevious([string]$KitDir, [string]$Part) {
     if (-not $Part -or -not (Test-Path -LiteralPath $Part)) { return '' }
     $dest = $Part.Substring(0, $Part.Length - '.part'.Length)
-    if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Recurse -Force }
+    Remove-KitPreviousDir $KitDir $dest
     Move-Item -LiteralPath $Part -Destination $dest
     (Get-Item -LiteralPath $dest).LastWriteTime = Get-Date
     $root = Join-Path $KitDir $Previous
-    Get-ChildItem -LiteralPath $root -Directory -Filter '*.part' -Force | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+    Get-ChildItem -LiteralPath $root -Directory -Filter '*.part' -Force | ForEach-Object { try { Remove-KitPreviousDir $KitDir $_.FullName } catch { } }
     @(Get-ChildItem -LiteralPath $root -Directory -Force | Sort-Object LastWriteTime -Descending | Select-Object -Skip $KeepPrevious) |
-        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+        ForEach-Object { try { Remove-KitPreviousDir $KitDir $_.FullName } catch { } }
     return $dest
 }
 
@@ -749,11 +764,24 @@ function Get-KitKept([string]$KitDir) {
     foreach ($d in $dirs) {
         $v = Get-KitVersion $d.FullName
         if (-not (ConvertTo-KitVersion $v) -or $seen.ContainsKey($v)) { continue }
-        if (-not (Test-KitFolder $d.FullName) -or (Test-KitNewKit $d.FullName)) { continue }
+        if (-not (Test-KitFolder $d.FullName) -or (Test-KitNewKit $d.FullName) -or -not (Test-KitComplete $d.FullName)) { continue }
         $seen[$v] = $true
         $out += , @{ Version = $v; Dir = $d.FullName }
     }
     return , $out
+}
+
+# A kept kit folder that holds its whole version: every file its own MANIFEST.txt names is in it (a backup-*\ of an
+# update that failed while copying holds only some). One without a MANIFEST.txt (kits before the updater) counts.
+function Test-KitComplete([string]$Dir) {
+    $manifest = Join-Path $Dir 'MANIFEST.txt'
+    if (-not (Test-Path -LiteralPath $manifest)) { return $true }
+    foreach ($l in [System.IO.File]::ReadAllLines($manifest)) {
+        $rel = $l.Trim()
+        if (-not $rel -or $rel.StartsWith('#') -or -not (Test-KitRelativePath $rel) -or (Test-KitPlayerPath $rel)) { continue }
+        if (-not (Test-Path -LiteralPath (Join-Path $Dir $rel) -PathType Leaf)) { return $false }
+    }
+    return $true
 }
 
 # How the co-op game changes from kit $A to kit $B: 'same' (only co-op itself: seconds on the next start), 'patches'
@@ -819,6 +847,7 @@ function Invoke-KitSwitch([string]$Dir, [string]$Source, [string]$To, [string]$M
     # after the version that update started from.
     $from = if ($Unfinished) { Get-KitUnfinishedFrom $Dir } else { '' }
     if (-not $from) { $from = $Mine }
+    if (-not (Test-KitSafeVersion $from)) { $from = '' }
     $backup = Join-Path $Dir ('backup-' + $(if ($from) { $from } else { 'old' }))
     if (Test-Path -LiteralPath $backup) { $backup += '-' + (Get-Date -Format 'yyyyMMdd-HHmmss') }
     # (a Hookshot-only kit has no emulator: the old emulator's cache stays in emulator\user, the player's)
@@ -836,7 +865,7 @@ function Invoke-KitSwitch([string]$Dir, [string]$Source, [string]$To, [string]$M
     }
     $keep = if ($Back) { $UpdaterFiles } else { @() }
     try { $n = Install-KitFiles $Source $Dir $backup $To $newEmu $from $keep $Back } catch {
-        if ($part) { Remove-Item -LiteralPath $part -Recurse -Force -ErrorAction SilentlyContinue }
+        if ($part) { try { Remove-KitPreviousDir $Dir $part } catch { } }
         throw
     }
     $kept = ''
@@ -924,6 +953,8 @@ function Invoke-KitUpdate {
         throw "$dir is not a co-op kit. Put Update.bat in the kit folder, beside ""Start OoT Co-op.bat"" (or Host.bat in an older kit)."
     }
     $mine = Get-KitVersion $dir
+    # (a damaged VERSION.txt: this kit counts as no release, the update goes on, nothing is named after it)
+    if ($mine -and -not (Test-KitSafeVersion $mine)) { $mine = '' }
     $unfinished = Test-KitUnfinished $dir
     $have = if ($mine) { $mine } else { 'a test build' }
     $list = if ($Api) { $Api } else { "https://api.github.com/repos/$Repo/releases?per_page=30" }

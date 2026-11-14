@@ -81,7 +81,11 @@ newest_release() {
     [[ -n $best ]] && printf '%s %s %s\n' "$best" "$best_zip" "$best_sha"
 }
 
+# A release version, nothing else: it names folders below (previous/<version>/, backup-<version>/), so a damaged or
+# hand-edited VERSION.txt ("(release ..)", "(release ../..)") must never become a path.
+ver_ok() { [[ $1 =~ ^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ && $1 != *..* ]]; }
 current=$(kit_version)
+ver_ok "$current" || current=''   # (then this kit counts as no release: the update goes on, nothing is kept)
 
 # A path the updater never writes or removes.
 player_path() {
@@ -96,7 +100,28 @@ dir_version() {   # the release of a kit folder's VERSION.txt
     local first
     [[ -f $1/VERSION.txt ]] || return 0
     IFS= read -r first <"$1/VERSION.txt" || true
-    [[ $first =~ \(release\ ([^\)]+)\) ]] && printf '%s\n' "${BASH_REMATCH[1]}"
+    [[ $first =~ \(release\ ([^\)]+)\) ]] || return 0
+    local v=${BASH_REMATCH[1]}   # (ver_ok matches again, which changes BASH_REMATCH)
+    if ver_ok "$v"; then printf '%s\n' "$v"; fi
+}
+# Removes a folder, only one directly inside previous/ (never the kit, never above it).
+prev_rm() {
+    local name=${1#"$KIT/$PREV/"}
+    name=${name%/}
+    [[ $1 == "$KIT/$PREV/"* && -n $name && $name != */* && $name != . && $name != .. ]] || { warn "not removed (outside $PREV/): $1"; return 1; }
+    rm -rf -- "$KIT/$PREV/$name"
+}
+# A kept kit folder that holds its whole version: every file its own MANIFEST.txt names (a backup-*/ of an update
+# that failed while copying holds only some).
+kit_complete() {
+    local rel
+    [[ -f $1/MANIFEST.txt && -f $1/start-oot-coop.sh ]] || return 1
+    while IFS= read -r rel; do
+        rel=${rel%$'\r'}
+        [[ -z $rel || $rel == '#'* || $rel == data/coop-options.ini ]] && continue
+        plain_path "$rel" && ! player_path "$rel" || continue
+        [[ -f $1/$rel ]] || return 1
+    done <"$1/MANIFEST.txt"
 }
 # The version left, when the player went back to this one on purpose (stay-on-version.txt about this version).
 stay_left() {
@@ -128,7 +153,7 @@ game_change() {
 }
 game_change_text() {
     case $1 in
-        pin) say "The co-op game is built again for $2 on the next start (Longshot changed between these versions: 15 to 60 minutes). Your saves are kept." ;;
+        pin) say "The co-op game is built again for $2 on the next start (Longshot changed between these versions: 15 to 45 minutes). Your saves are kept." ;;
         patches) say "The next start updates the co-op game for $2 (a few minutes). Your saves are kept." ;;
     esac
 }
@@ -148,7 +173,7 @@ if [[ $action == revert ]]; then
     tag='' new=''
     for d in "$KIT/$PREV"/*/ "$KIT"/backup-*/; do
         d=${d%/}
-        [[ -d $d && $d != *.part && -f $d/MANIFEST.txt && -f $d/start-oot-coop.sh ]] || continue
+        [[ -d $d && $d != *.part ]] && kit_complete "$d" || continue
         v=$(dir_version "$d")
         [[ -n $v ]] || continue
         [[ -n $current && $(kit_version_compare "$v" "$current") != -1 ]] && continue
@@ -256,12 +281,12 @@ leave() { ((back)) && [[ " $UPDATER_FILES " == *" $1 "* ]]; }
 part=''
 if [[ -n $current && ! -f $KIT/$MARKER ]]; then
     part=$KIT/$PREV/$current.part
-    rm -rf -- "$part" && mkdir -p "$part" &&
+    { [[ ! -e $part ]] || prev_rm "$part"; } && mkdir -p "$part" &&
     { [[ -f $KIT/MANIFEST.txt ]] && tr -d '\r' <"$KIT/MANIFEST.txt"; tr -d '\r' <"$new/MANIFEST.txt"; printf '%s\n' MANIFEST.txt VERSION.txt; } |
         sort -u | while IFS= read -r rel; do
             [[ $rel != '#'* && $rel != data/coop-options.ini ]] && plain_path "$rel" && ! player_path "$rel" && [[ -f $KIT/$rel ]] || continue
             mkdir -p "$part/$(dirname "$rel")" && cp -p -- "$KIT/$rel" "$part/$rel" || exit 1
-        done || { warn "could not keep $current in $PREV/; going on without it."; rm -rf -- "$part"; part=''; }
+        done || { warn "could not keep $current in $PREV/; going on without it."; prev_rm "$part"; part=''; }
 fi
 
 backup=$KIT/backup-${current:-unknown}
@@ -274,7 +299,7 @@ restore() {
         mkdir -p "$KIT/$(dirname "$f")" && cp -p -- "$backup/$f" "$KIT/$f"
     done
     rm -f "$KIT/$MARKER"
-    [[ -n $part ]] && rm -rf -- "$part"
+    [[ -n $part ]] && prev_rm "$part"
     exit 1
 }
 keep_old() {   # keep_old REL: this kit's file to the backup before it changes
@@ -323,11 +348,11 @@ chmod +x "$KIT/start-oot-coop.sh" "$KIT"/scripts/*.sh "$KIT/revert.sh" 2>/dev/nu
 rm -f "$KIT/$MARKER"
 # previous/<version>/, the last $KEEP_PREV of them.
 if [[ -n $part && -d $part ]]; then
-    rm -rf -- "${part%.part}" && mv -- "$part" "${part%.part}" && touch -- "${part%.part}"
+    { [[ ! -e ${part%.part} ]] || prev_rm "${part%.part}"; } && mv -- "$part" "${part%.part}" && touch -- "${part%.part}"
     i=0
     while IFS= read -r d; do
         i=$((i + 1))
-        ((i > KEEP_PREV)) && rm -rf -- "$d"
+        ((i > KEEP_PREV)) && prev_rm "$d"
     done < <(ls -1dt -- "$KIT/$PREV"/*/ 2>/dev/null)
 fi
 if ((back)); then
