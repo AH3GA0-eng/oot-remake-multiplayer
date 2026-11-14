@@ -249,6 +249,22 @@ TEST_CASE("rando: the seed is built beside every other mod's size table, the pup
     CHECK(On(loader, folder));
 }
 
+TEST_CASE("rando: a failed build leaves no stage and no seed folder") {
+    World w;
+    Put(w.mods / "contents" / "0400486024DEC000" / "coop-puppet" / "romfs" / "System" / "Resource" / "T.rsizetable.zs", "pack");
+    w.fail_at = 1;  // the build
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    loader.Start();
+    Rando rando(loader, w.Hooks());
+    rando.Start();
+    w.Settings(loader);
+    REQUIRE(loader.Set(kFolder, "on", "1"));
+    rando.Wait();
+    REQUIRE(w.runs.size() == 2);
+    CHECK_FALSE(fs::exists(w.mods / kFolder / "_seed-build"));
+    CHECK_FALSE(fs::exists(w.mods / FolderFor(loader.Value(kId, "seed"), "default")));
+}
+
 TEST_CASE("rando: a failed build is said once and not tried again until the settings change") {
     World w;
     w.fail_at = 1;

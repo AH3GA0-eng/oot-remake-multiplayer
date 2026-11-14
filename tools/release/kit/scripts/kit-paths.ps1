@@ -880,6 +880,7 @@ function Test-KitOotrrStale([string]$Kit, [string]$ExeDir) {
 # The resource size tables (romfs\System\Resource\*.rsizetable.zs) of the mods the game loads besides the randomizer's
 # seeds: every folder under mods\ (any depth: the puppet pack is in mods\contents\<title>\coop-puppet) but seeds
 # (randomizer-*), the randomizer's control folder and folders whose name starts with '-' or '_' (Longshot skips them).
+# A mod switched off in the Mods tab is still read: its larger entries do no harm.
 # The game uses one table, the seed's (it sorts last), so a seed must be built with all of these (coop_rando's
 # StageSizeTables does the same in the game).
 function Get-KitOtherSizeTables([string]$ModsDir) {
@@ -912,7 +913,9 @@ function Get-KitStaleRandoSeeds([string]$ExeDir) {
     foreach ($d in @(Get-ChildItem -LiteralPath $mods -Directory -Filter 'randomizer-*' -ErrorAction SilentlyContinue)) {
         if (-not (Test-Path -LiteralPath (Join-Path $d.FullName 'coop-seed.txt'))) { continue }
         $own = @(Get-ChildItem -LiteralPath (Join-Path $d.FullName 'romfs\System\Resource') -File -Filter '*.rsizetable.zs' -ErrorAction SilentlyContinue)
-        if (-not $own -or ($own | Measure-Object -Property LastWriteTimeUtc -Minimum).Minimum -lt $newest) { $stale += $d.Name }
+        # (no table of its own: the seed's build time, coop-seed.txt, so it is not built again at every start)
+        $built = if ($own) { ($own | Measure-Object -Property LastWriteTimeUtc -Minimum).Minimum } else { (Get-Item -LiteralPath (Join-Path $d.FullName 'coop-seed.txt')).LastWriteTimeUtc }
+        if ($built -lt $newest) { $stale += $d.Name }
     }
     return $stale
 }
@@ -933,6 +936,7 @@ function Update-KitRandoSeeds([string]$ExeDir) {
         $stage = Join-Path $control '_seed-build'
         $ok = $false
         if ((Test-Path -LiteralPath $ootrr) -and $romfs -and (Test-Path -LiteralPath $seedFile)) {
+          try {
             if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
             $n = 0
             foreach ($t in @(Get-KitOtherSizeTables $mods)) {
@@ -953,11 +957,16 @@ function Update-KitRandoSeeds([string]$ExeDir) {
                 Move-Item -LiteralPath $built -Destination $seedDir
                 $ok = $true
             }
-            if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
+          } catch {
+            $ok = $false   # (a copy or move that failed: removed below, as when it cannot be built)
+          } finally {
+            $ErrorActionPreference = 'Stop'
+            if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue }
+          }
         }
         if ($ok) { $lines += "randomizer: seed $name built again for the new puppet pack" }
         else {
-            Remove-Item -LiteralPath $seedDir -Recurse -Force
+            if (Test-Path -LiteralPath $seedDir) { Remove-Item -LiteralPath $seedDir -Recurse -Force }
             $lines += "randomizer: seed $name removed (could not build it again for the new puppet pack): the game builds it at its next start"
         }
     }
