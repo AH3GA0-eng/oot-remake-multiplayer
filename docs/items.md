@@ -181,7 +181,7 @@ Each row: `PouchData.<item>.StockNum` and `IsGet.<item>` (— when there is none
 | `Item_Wallet_Medium` | 0x2d2c874b | 0xd1360de8 | Shared, max |
 | `Item_Wallet_Small` | 0x1d74617e | 0xb6e5a3a5 | Shared, max |
 | `Item_WeirdEgg` | 0x24596e8e | 0x44ab1487 | Shared, mirror (trade item) |
-| `Item_ZeldaLetter` | 0x6be5c3b0 | 0xf19393b5 | Shared, mirror (trade item) |
+| `Item_ZeldaLetter` | 0x6be5c3b0 | 0xf19393b5 | Shared, max: each player keeps their own until they show it (issue 171). A join or reconnect merges the max again, so a player who already showed it gets it back then: harmless, the gate stays open |
 | `Obj_Armor_Child_Normal` | 0x84ba0d24 | 0xf9594156 | Shared, max |
 | `Obj_Heart_Piece` | 0x51ec97b3 | 0xe6aaab65 | Count (delta), see Hearts |
 | `Pouch_Amiibo` | 0x20820479 | 0x3506a557 | Shared, max |

@@ -368,6 +368,12 @@ public:
                 }
             }  // issue 129: start another player's gimmick event here (coop_live_events.h)
         }
+        if (CoopStory::On()) {  // issue 171: shared quest steps into the game's ChallengeMgr
+            CoopSvc::AddCaller(64, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
+                                          std::uint64_t) {
+                return challenges_.Step(guest, after_call, result, base_);
+            });
+        }
         if (live_events_) {
             CoopSvc::AddCaller(60, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
                                           std::uint64_t) {
@@ -456,7 +462,7 @@ public:
             }
             if (sharing_ && load_mend_.ready() && CoopStory::On() &&
                 quest_catch_up_.Due(CoopEvery::NowUs())) {
-                CatchUpQuests(*memory);  // issue 173: Impa comes for every player
+                CatchUpQuests(*memory, reading && reading->event_running.value_or(false));  // issues 173, 171
             }
             if (sharing_) {
                 // A small key or token we and another player took at once: ours
@@ -1953,10 +1959,16 @@ private:
     }
 
     // Issue 173 (coop_quest.h): raises our own quests (Goto_HyruleCastle,
-    // DoorOfTime) to what the shared story scenes say, so a scene another
-    // player played does not leave our quest behind. Only ever raised.
+    // DoorOfTime, Get_StoneOfFire) to what the shared story scenes say, so a
+    // scene another player played does not leave our quest behind. Only ever
+    // raised. Issue 171: the game's logic reads its ChallengeMgr, not the
+    // GameData Enum co-op writes, so Get_StoneOfFire's GameData step (the
+    // Kakariko gate's; only that quest in 0.11: CoopQuest::LiveWant) goes to
+    // the manager too, through the game's setStep (challenges_, a caller on
+    // the calc thread); never while our Link is in an event.
     CoopEvery::Every quest_catch_up_{CoopEvery::kSecondUs};
-    void CatchUpQuests(EmulatorMemory& memory) {
+    CoopQuest::Challenges challenges_;
+    void CatchUpQuests(EmulatorMemory& memory, bool in_event) {
         coop::host::GameFlags flags(memory);
         const CoopQuest::ReadBool flag = [&](std::uint32_t h) { return flags.get_bool(h); };
         const CoopQuest::ReadEnum value = [&](std::uint32_t h) { return flags.get_enum(h); };
@@ -1968,6 +1980,17 @@ private:
                          quest.name, *was, *raise);
             }
         }
+        for (const auto& line : challenges_.TakeNotes()) {
+            LOG_INFO(Core, "coop: story: {}", line);
+        }
+        if (in_event) {
+            return;
+        }
+        std::vector<CoopQuest::StepWant> wants;
+        for (const auto& quest : CoopQuest::Quests()) {
+            if (auto w = CoopQuest::LiveWant(quest, value)) wants.push_back(std::move(*w));
+        }
+        challenges_.Want(std::move(wants));
     }
 
     // Issue 125 (docs/items.md, "Strength"): raises PlayerStatus.LiftGrade to

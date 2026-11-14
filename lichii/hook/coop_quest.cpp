@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_quest.h"
 
+#include <algorithm>
 #include <array>
+#include <cstdio>
+#include <utility>
 
 namespace CoopQuest {
 namespace {
@@ -29,13 +32,59 @@ constexpr std::uint32_t kOwlScene = 0xd4ef7853u;     // HavePlayedEvent.Dm_HrlFi
 constexpr std::uint32_t kTalonWoke = 0xb9d7d709u;    // HavePlayedEvent.Dm_HrlCastle_0020
 constexpr std::uint32_t kImpaCame = 0x8e15ffd6u;     // HavePlayedEvent.Dm_HrlCastle_0060
 
+constexpr std::uint32_t kGateOpen = 0x19898d14u;     // Npc_Hylia_Soldier_003_GateOpen
+
+// Get_StoneOfFire's steps (RSDB Challenge, in order).
+constexpr std::uint32_t kKakarikoVillageNpc = 0x4011c4aau;
+constexpr std::uint32_t kKakarikoVillageLetter = 0x4d329ec9u;
+constexpr std::uint32_t kDeathMtTrailIn = 0x1d5e4b01u;
+constexpr std::uint32_t kDeathMtTrailNpc = 0xf05c8740u;
+constexpr std::uint32_t kGoronCityIn = 0x4968c687u;
+constexpr std::uint32_t kGoronCityDarniaroomNpcTalk01 = 0x49a9bc8cu;
+constexpr std::uint32_t kGoronCityDarniaroomOpen = 0xe4167a6au;
+constexpr std::uint32_t kGoronCityDarniaTalk = 0xfa1d363au;
+constexpr std::uint32_t kDarniaRoomKokiriTalk = 0xdf107a36u;
+constexpr std::uint32_t kKokiriForestNPCTalk = 0xf8649356u;
+constexpr std::uint32_t kKokiriForestFire = 0x70e44053u;
+constexpr std::uint32_t kKokiriForestIn = 0xfef39213u;
+constexpr std::uint32_t kSariaMelodyGet = 0x19e79ac0u;
+constexpr std::uint32_t kSariaMelodyPlay = 0xc9879474u;
+constexpr std::uint32_t kDodongoCavernOpne = 0x1dfb4ab5u;  // sic, the game's name
+constexpr std::uint32_t kDungeonStart = 0x22a0fc04u;
+constexpr std::uint32_t kBossBattle = 0xb83d269bu;
+constexpr std::uint32_t kEscapeDungeon = 0x3ecd8c01u;
+
+// The quests' Enums: Murmur3 of "Step_" + the quest's name.
 constexpr std::uint32_t kGotoHyruleCastle = 0xdb89c1a9u;
 constexpr std::uint32_t kDoorOfTime = 0x378913cau;
+constexpr std::uint32_t kStoneOfFire = 0x1002b466u;
+constexpr std::uint32_t kStoneOfFireName = 0xe4c584e6u;  // the challenge: Get_StoneOfFire
 
 constexpr std::array kGotoSteps{kNotReady, kReady,     kStep01,    kStep02, kStep02_01,
                                 kStep03,   kStep03_01, kStep03_02, kStep04, kComplete};
 constexpr std::array kDoorSteps{kNotReady, kReady,  kStep01, kStep02, kStep2_1, kSrep2_1_1,
                                 kStep2_2,  kStep03, kStep04, kStep05, kStep06,  kComplete};
+constexpr std::array kFireSteps{kNotReady,
+                                kReady,
+                                kKakarikoVillageNpc,
+                                kKakarikoVillageLetter,
+                                kDeathMtTrailIn,
+                                kDeathMtTrailNpc,
+                                kGoronCityIn,
+                                kGoronCityDarniaroomNpcTalk01,
+                                kGoronCityDarniaroomOpen,
+                                kGoronCityDarniaTalk,
+                                kDarniaRoomKokiriTalk,
+                                kKokiriForestNPCTalk,
+                                kKokiriForestFire,
+                                kKokiriForestIn,
+                                kSariaMelodyGet,
+                                kSariaMelodyPlay,
+                                kDodongoCavernOpne,
+                                kDungeonStart,
+                                kBossBattle,
+                                kEscapeDungeon,
+                                kComplete};
 
 // Goto_HyruleCastle: the owl at the field entrance (event flow
 // Goto_HyruleCastle_Kaepora_00) gives Step02; Talon woken (Dm_HrlCastle_0020)
@@ -50,8 +99,20 @@ constexpr std::array kGotoRules{
 // DoorOfTime: the same meeting gives Step01 (Impa waits in the courtyard and
 // stops Link when he leaves, then takes him out: Zelda's Lullaby). Nothing
 // later is raised: each player then meets Impa, who moves the quest on.
+// Checked again for issue 171 and kept: DoorOfTime's own flow (Impa's send-off
+// after Zelda's Lullaby) is what sets Get_StoneOfFire to KakarikoVillageNpc,
+// the step the Kakariko guard needs; raising DoorOfTime past Step01 would skip it.
 constexpr std::array kDoorRules{
     Rule{kImpaCame, kStep01, "Zelda met in the courtyard (Impa comes)"},
+};
+// Get_StoneOfFire (issue 171): showing Zelda's Letter to the Kakariko guard
+// sets his Bool (shared) and moves the shower's quest from KakarikoVillageNpc
+// to KakarikoVillageLetter; the gate's shutter opens on that step, not on the
+// Bool. Another player's guard finds the Bool set and skips the letter talk, so
+// their quest stayed behind and their gate shut. The Bool now gives
+// KakarikoVillageLetter, but only once our own Impa sent us (KakarikoVillageNpc).
+constexpr std::array kFireRules{
+    Rule{kGateOpen, kKakarikoVillageLetter, "Zelda's Letter shown at the Kakariko gate"},
 };
 
 constexpr std::array kQuests{
@@ -61,9 +122,141 @@ constexpr std::array kQuests{
     // DoorOfTime is NotReady until Goto_HyruleCastle is complete; the
     // meeting with Zelda moves it from there.
     Quest{kDoorOfTime, "DoorOfTime", kDoorSteps, kDoorRules, 0, kGotoHyruleCastle, kComplete},
+    // From KakarikoVillageNpc (index 2) on: set by our own Impa.
+    Quest{kStoneOfFire, "Get_StoneOfFire", kFireSteps, kFireRules, 2},
 };
 
+// The steps the manager is never moved into (RSDB Challenge: IsBossBattle or
+// IsMiniGame), as {challenge, step}: Murmur3 of the challenge's and step's names.
+constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 19> kHeld{{
+    {0xe8dafe6cu, kStep04},      // DoorOfTime Step04
+    {0xe873ce22u, 0x085d18f0u},  // Get_Epona GambleRacePlaying
+    {kStoneOfFireName, kBossBattle},  // Get_StoneOfFire BossBattle
+    {kStoneOfFireName, kEscapeDungeon},
+    {0x628de7a6u, 0xb5df43cbu},  // Get_StoneOfForest GoToBossRoom
+    {0x628de7a6u, 0x576277fau},  // Get_StoneOfForest DefeatBoss
+    {0x628de7a6u, 0xd52b1014u},  // Get_StoneOfForest GoToWarpPoint
+    {0x0aa38424u, 0xc25a29d8u},  // Get_StoneOfWater Step12
+    {0x0aa38424u, 0xa6447454u},  // Get_StoneOfWater Step13_01
+    {0x0aa38424u, 0x84be6ff1u},  // Get_StoneOfWater Step14
+    {0x533999f4u, 0x576277fau},  // SageOfFire DefeatBoss
+    {0x533999f4u, 0xd52b1014u},  // SageOfFire GoToWarpPoint
+    {0x5a2be4b5u, kStep06},      // SageOfForest Step06
+    {0x5a2be4b5u, 0x277efd68u},  // SageOfForest Step06_1_1
+    {0x5a2be4b5u, 0xee867c27u},  // SageOfForest Step07
+    {0x5a2be4b5u, 0xa594ed54u},  // SageOfForest Step08
+    {0x5a2be4b5u, 0x5daeca58u},  // SageOfForest Step09
+    {0x7caec227u, 0x50d665b4u},  // SubEvent_GetStormSong BeforeBossRoom
+    {0x7caec227u, 0x9bddd011u},  // SubEvent_GetStormSong step04
+}};
+
+// ChallengeMgr's layout (coop_quest.h).
+constexpr std::uint64_t kArrays = 0x40;  // three {i32 count, pad, u64 entries}, 0x10 apart
+constexpr std::uint64_t kEntrySize = 0x160;
+constexpr std::uint64_t kEntryChallenge = 0x08;
+constexpr std::uint64_t kEntryStep = 0x10;
+constexpr std::uint64_t kEntryFlags = 0x16;
+constexpr std::uint64_t kEntryAsked = 0xa4;
+constexpr std::uint16_t kFlagAsked = 0x400;
+constexpr std::int32_t kMostEntries = 256;  // the table has 45 rows
+
+template <typename T>
+std::optional<T> Get(CoopPuppet::Guest& guest, std::uint64_t address) {
+    T v{};
+    if (!guest.Read(address, &v, sizeof v)) return std::nullopt;
+    return v;
+}
+
+std::optional<std::size_t> IndexOf(const std::vector<std::uint32_t>& steps, std::uint32_t step) {
+    const auto it = std::find(steps.begin(), steps.end(), step);
+    if (it == steps.end()) return std::nullopt;
+    return static_cast<std::size_t>(it - steps.begin());
+}
+
+std::string Hex(std::uint32_t v) {
+    char buf[16];
+    std::snprintf(buf, sizeof buf, "%#x", v);
+    return buf;
+}
+
+// The manager's entry of `challenge`, or 0.
+std::uint64_t FindEntry(CoopPuppet::Guest& guest, std::uint64_t mgr, std::uint32_t challenge) {
+    for (std::uint64_t a = 0; a < 3; ++a) {
+        const auto count = Get<std::int32_t>(guest, mgr + kArrays + 0x10 * a);
+        const auto entries = Get<std::uint64_t>(guest, mgr + kArrays + 0x10 * a + 8);
+        if (!count || !entries || *count <= 0 || *count > kMostEntries || *entries == 0) continue;
+        for (std::int32_t i = 0; i < *count; ++i) {
+            const std::uint64_t entry = *entries + kEntrySize * static_cast<std::uint64_t>(i);
+            if (Get<std::uint32_t>(guest, entry + kEntryChallenge) == challenge) return entry;
+        }
+    }
+    return 0;
+}
+
 } // namespace
+
+bool HeldStep(std::uint32_t challenge, std::uint32_t step) {
+    return std::find(kHeld.begin(), kHeld.end(), std::pair{challenge, step}) != kHeld.end();
+}
+
+std::optional<StepWant> LiveWant(const Quest& quest, const ReadEnum& value) {
+    if (quest.hash != kStoneOfFire) return std::nullopt;  // 0.11: the gate's quest only
+    const auto at = value(quest.hash);
+    const auto rank = at ? Rank(quest, *at) : std::nullopt;
+    if (!rank || *rank < quest.floor) return std::nullopt;
+    return StepWant{kStoneOfFireName, *at, {quest.steps.begin(), quest.steps.end()}, quest.name};
+}
+
+void Challenges::Want(std::vector<StepWant> wants) {
+    std::lock_guard lock(mutex_);
+    waiting_ = std::move(wants);
+}
+
+std::vector<std::string> Challenges::TakeNotes() {
+    std::lock_guard lock(mutex_);
+    return std::exchange(notes_, {});
+}
+
+std::optional<CoopPuppet::Call> Challenges::Step(CoopPuppet::Guest& guest, bool after_call,
+                                                 std::uint64_t result, std::uint64_t main) {
+    std::lock_guard lock(mutex_);
+    if (!after_call) {
+        // Each list is checked on the one frame after it came, never again:
+        // the hook gives none while our Link is in an event.
+        work_ = std::exchange(waiting_, {});
+        next_ = 0;
+    } else if (next_ > 0 && next_ <= work_.size()) {
+        const StepWant& w = work_[next_ - 1];
+        notes_.push_back("quest " + w.name + " " + Hex(asked_from_) + " -> " + Hex(w.step) +
+                         ((result & 1) != 0 ? " asked of the game's ChallengeMgr (issue 171)"
+                                            : " refused by the game's ChallengeMgr"));
+    }
+    if (main == 0) return std::nullopt;
+    const auto mgr = Get<std::uint64_t>(guest, main + kChallengeMgr);
+    if (!mgr || *mgr == 0) return std::nullopt;  // no game loaded yet
+    while (next_ < work_.size()) {
+        const StepWant& w = work_[next_++];
+        if (HeldStep(w.challenge, w.step)) continue;
+        const auto want = IndexOf(w.steps, w.step);
+        const std::uint64_t entry = FindEntry(guest, *mgr, w.challenge);
+        if (!want || entry == 0) continue;
+        const auto at = Get<std::uint32_t>(guest, entry + kEntryStep);
+        const auto have = at ? IndexOf(w.steps, *at) : std::nullopt;
+        if (!have || *want <= *have) continue;  // never lowered; an unknown step is left alone
+        if (*have == 0 || HeldStep(w.challenge, *at)) continue;  // NotReady; a fight or race goes on
+        const auto flags = Get<std::uint16_t>(guest, entry + kEntryFlags);
+        const auto asked = Get<std::uint32_t>(guest, entry + kEntryAsked);
+        if (!flags || !asked || ((*flags & kFlagAsked) != 0 && *asked == w.step)) continue;
+        asked_from_ = *at;
+        CoopPuppet::Call c;
+        c.function = main + kSetStep;
+        c.x[0] = *mgr;
+        c.x[1] = w.challenge;
+        c.x[2] = w.step;  // w3, w4, force: 0, as the game's own calls
+        return c;
+    }
+    return std::nullopt;
+}
 
 std::span<const Quest> Quests() {
     return kQuests;

@@ -3,6 +3,7 @@
 #include <doctest/doctest.h>
 
 #include <map>
+#include <iterator>
 #include <optional>
 #include <string>
 
@@ -184,4 +185,257 @@ TEST_CASE("quest: the owl and Talon move Goto_HyruleCastle on, the highest rule 
     c.Played("Dm_HrlCastle_0060");
     c.Frame();
     CHECK(c.enums[g.hash] == Hash("Complete"));
+}
+
+TEST_CASE("quest: Get_StoneOfFire's Enum and steps are the game's names") {
+    const auto& f = Q("Get_StoneOfFire");
+    CHECK(f.hash == Hash("Step_Get_StoneOfFire"));
+    CHECK(Q("DoorOfTime").hash == Hash("Step_DoorOfTime"));
+    CHECK(Q("Goto_HyruleCastle").hash == Hash("Step_Goto_HyruleCastle"));
+    const char* names[] = {"NotReady", "Ready", "KakarikoVillageNpc", "KakarikoVillageLetter",
+                           "DeathMtTrailIn", "DeathMtTrailNpc", "GoronCityIn",
+                           "GoronCityDarniaroomNpcTalk01", "GoronCityDarniaroomOpen",
+                           "GoronCityDarniaTalk", "DarniaRoomKokiriTalk", "KokiriForestNPCTalk",
+                           "KokiriForestFire", "KokiriForestIn", "SariaMelodyGet", "SariaMelodyPlay",
+                           "DodongoCavernOpne", "DungeonStart", "BossBattle", "EscapeDungeon", "Complete"};
+    REQUIRE(f.steps.size() == std::size(names));
+    for (std::size_t i = 0; i < f.steps.size(); ++i) {
+        CHECK_MESSAGE(f.steps[i] == Hash(names[i]), names[i]);
+    }
+    CHECK(f.rules.size() == 1);
+    CHECK(f.rules[0].flag == Hash("Npc_Hylia_Soldier_003_GateOpen"));
+}
+
+TEST_CASE("quest: the letter shown at A's gate opens B's (issue 171), once B's Impa sent B") {
+    const auto& f = Q("Get_StoneOfFire");
+    const std::uint32_t gate = Hash("Npc_Hylia_Soldier_003_GateOpen");
+    Game b;
+    b.enums[f.hash] = Hash("KakarikoVillageNpc");  // B met Impa: sent to Kakariko
+    b.Frame();
+    CHECK(b.enums[f.hash] == Hash("KakarikoVillageNpc"));
+    b.bools[gate] = true;  // A showed the letter
+    b.Frame();
+    CHECK(b.enums[f.hash] == Hash("KakarikoVillageLetter"));
+
+    Game early;  // before Impa: the quest is not B's yet
+    early.enums[f.hash] = Hash("Ready");
+    early.bools[gate] = true;
+    early.Frame();
+    CHECK(early.enums[f.hash] == Hash("Ready"));
+
+    Game ahead;  // already up the mountain: never lowered
+    ahead.enums[f.hash] = Hash("GoronCityIn");
+    ahead.bools[gate] = true;
+    ahead.Frame();
+    CHECK(ahead.enums[f.hash] == Hash("GoronCityIn"));
+}
+
+TEST_CASE("quest: the held steps are the table's boss and minigame steps") {
+    using CoopQuest::HeldStep;
+    CHECK(HeldStep(Hash("Get_StoneOfFire"), Hash("BossBattle")));
+    CHECK(HeldStep(Hash("Get_StoneOfFire"), Hash("EscapeDungeon")));
+    CHECK(HeldStep(Hash("DoorOfTime"), Hash("Step04")));
+    CHECK(HeldStep(Hash("Get_Epona"), Hash("GambleRacePlaying")));
+    CHECK(HeldStep(Hash("Get_StoneOfForest"), Hash("GoToBossRoom")));
+    CHECK(HeldStep(Hash("Get_StoneOfForest"), Hash("DefeatBoss")));
+    CHECK(HeldStep(Hash("Get_StoneOfForest"), Hash("GoToWarpPoint")));
+    CHECK(HeldStep(Hash("Get_StoneOfWater"), Hash("Step12")));
+    CHECK(HeldStep(Hash("Get_StoneOfWater"), Hash("Step13_01")));
+    CHECK(HeldStep(Hash("Get_StoneOfWater"), Hash("Step14")));
+    CHECK(HeldStep(Hash("SageOfFire"), Hash("DefeatBoss")));
+    CHECK(HeldStep(Hash("SageOfFire"), Hash("GoToWarpPoint")));
+    for (const char* s : {"Step06", "Step06_1_1", "Step07", "Step08", "Step09"}) {
+        CHECK_MESSAGE(HeldStep(Hash("SageOfForest"), Hash(s)), s);
+    }
+    CHECK(HeldStep(Hash("SubEvent_GetStormSong"), Hash("BeforeBossRoom")));
+    CHECK(HeldStep(Hash("SubEvent_GetStormSong"), Hash("step04")));
+    CHECK_FALSE(HeldStep(Hash("Get_StoneOfFire"), Hash("KakarikoVillageLetter")));
+    CHECK_FALSE(HeldStep(Hash("Get_StoneOfForest"), Hash("Complete")));
+    CHECK_FALSE(HeldStep(Hash("Goto_HyruleCastle"), Hash("Step04")));  // another quest's Step04
+}
+
+namespace {
+
+// Guest memory, byte by byte: unwritten bytes cannot be read.
+class Memory : public CoopPuppet::Guest {
+public:
+    std::map<std::uint64_t, std::uint8_t> bytes;
+    bool Read(std::uint64_t address, void* out, std::size_t size) override {
+        auto* o = static_cast<std::uint8_t*>(out);
+        for (std::size_t i = 0; i < size; ++i) {
+            const auto it = bytes.find(address + i);
+            if (it == bytes.end()) return false;
+            o[i] = it->second;
+        }
+        return true;
+    }
+    bool Write(std::uint64_t, const void*, std::size_t) override {
+        return false;
+    }
+    template <typename T>
+    void Put(std::uint64_t address, T v) {
+        const auto bits = static_cast<std::uint64_t>(v);
+        for (std::size_t i = 0; i < sizeof v; ++i) {
+            bytes[address + i] = static_cast<std::uint8_t>(bits >> (8 * i));
+        }
+    }
+};
+
+constexpr std::uint64_t kMain = 0x80020000;
+constexpr std::uint64_t kMgr = 0x90000000;
+constexpr std::uint64_t kEntries = 0x91000000;
+
+// A manager whose second array holds Get_StoneOfFire as its entry 3, at `at`.
+struct Mgr {
+    Memory m;
+    std::uint64_t entry = kEntries + 3 * 0x160;
+    explicit Mgr(const char* at) {
+        m.Put<std::uint64_t>(kMain + CoopQuest::kChallengeMgr, kMgr);
+        for (std::uint64_t a = 0; a < 3; ++a) {
+            m.Put<std::int32_t>(kMgr + 0x40 + 0x10 * a, a == 1 ? 5 : 0);
+            m.Put<std::uint64_t>(kMgr + 0x48 + 0x10 * a, a == 1 ? kEntries : 0);
+        }
+        for (std::uint64_t i = 0; i < 5; ++i) {
+            const std::uint32_t name = i == 3 ? Hash("Get_StoneOfFire") : Hash("Other" + std::to_string(i));
+            m.Put<std::uint32_t>(kEntries + i * 0x160 + 0x08, name);
+        }
+        m.Put<std::uint32_t>(entry + 0x10, Hash(at));
+        m.Put<std::uint16_t>(entry + 0x16, 0);
+        m.Put<std::uint32_t>(entry + 0xa4, 0);
+    }
+};
+
+CoopQuest::StepWant Fire(const char* step) {
+    const auto& f = Q("Get_StoneOfFire");
+    return {Hash("Get_StoneOfFire"), Hash(step), {f.steps.begin(), f.steps.end()}, "Get_StoneOfFire"};
+}
+
+} // namespace
+
+TEST_CASE("quest: a GameData step ahead of the game's ChallengeMgr is asked through setStep") {
+    Mgr g("KakarikoVillageNpc");
+    CoopQuest::Challenges c;
+    c.Want({Fire("KakarikoVillageLetter")});
+    const auto call = c.Step(g.m, false, 0, kMain);
+    REQUIRE(call.has_value());
+    CHECK(call->function == kMain + 0x2cf54a0);
+    CHECK(call->x[0] == kMgr);
+    CHECK(call->x[1] == Hash("Get_StoneOfFire"));
+    CHECK(call->x[2] == Hash("KakarikoVillageLetter"));
+    CHECK(call->x[3] == 0);
+    CHECK(call->x[4] == 0);
+    CHECK(call->x[5] == 0);  // no force, as the game's own calls
+    CHECK_FALSE(c.Step(g.m, true, 1, kMain).has_value());  // one call, then done
+    const auto notes = c.TakeNotes();
+    REQUIRE(notes.size() == 1);
+    CHECK(notes[0].find("asked of the game") != std::string::npos);
+    // A list is used once: the next frame asks nothing.
+    CHECK_FALSE(c.Step(g.m, false, 0, kMain).has_value());
+}
+
+TEST_CASE("quest: the ChallengeMgr is never lowered, never moved into a held step or asked twice") {
+    CoopQuest::Challenges c;
+    {
+        Mgr g("GoronCityIn");  // ahead of GameData
+        c.Want({Fire("KakarikoVillageLetter")});
+        CHECK_FALSE(c.Step(g.m, false, 0, kMain).has_value());
+    }
+    {
+        Mgr g("KakarikoVillageLetter");  // the same step
+        c.Want({Fire("KakarikoVillageLetter")});
+        CHECK_FALSE(c.Step(g.m, false, 0, kMain).has_value());
+    }
+    {
+        Mgr g("DungeonStart");
+        c.Want({Fire("BossBattle")});  // a boss fight: played, never given
+        CHECK_FALSE(c.Step(g.m, false, 0, kMain).has_value());
+    }
+    {
+        Mgr g("KakarikoVillageNpc");  // the step is already asked
+        g.m.Put<std::uint16_t>(g.entry + 0x16, 0x400);
+        g.m.Put<std::uint32_t>(g.entry + 0xa4, Hash("KakarikoVillageLetter"));
+        c.Want({Fire("KakarikoVillageLetter")});
+        CHECK_FALSE(c.Step(g.m, false, 0, kMain).has_value());
+    }
+    {
+        Mgr g("SomethingElse");  // a step we do not know
+        c.Want({Fire("KakarikoVillageLetter")});
+        CHECK_FALSE(c.Step(g.m, false, 0, kMain).has_value());
+    }
+    {
+        Mgr g("KakarikoVillageNpc");  // a quest the manager does not have
+        auto w = Fire("KakarikoVillageLetter");
+        w.challenge = Hash("NoSuchQuest");
+        c.Want({w});
+        CHECK_FALSE(c.Step(g.m, false, 0, kMain).has_value());
+    }
+    {
+        Memory none;  // no game loaded: no manager
+        c.Want({Fire("KakarikoVillageLetter")});
+        CHECK_FALSE(c.Step(none, false, 0, kMain).has_value());
+        Mgr g("KakarikoVillageNpc");
+        c.Want({Fire("KakarikoVillageLetter")});
+        CHECK_FALSE(c.Step(g.m, false, 0, 0).has_value());  // main not known
+    }
+    CHECK(c.TakeNotes().empty());
+}
+
+TEST_CASE("quest: nothing is asked from NotReady, and a refusal is noted") {
+    {
+        Mgr g("NotReady");  // the game refuses it without force; none is passed
+        CoopQuest::Challenges c;
+        c.Want({Fire("KakarikoVillageLetter")});
+        CHECK_FALSE(c.Step(g.m, false, 0, kMain).has_value());
+    }
+    Mgr g("KakarikoVillageNpc");
+    CoopQuest::Challenges c;
+    c.Want({Fire("KakarikoVillageLetter"), Fire("DeathMtTrailIn")});
+    const auto first = c.Step(g.m, false, 0, kMain);
+    REQUIRE(first.has_value());
+    CHECK(first->x[2] == Hash("KakarikoVillageLetter"));
+    const auto second = c.Step(g.m, true, 0, kMain);  // the first was refused (0)
+    REQUIRE(second.has_value());
+    CHECK(second->x[2] == Hash("DeathMtTrailIn"));
+    CHECK_FALSE(c.Step(g.m, true, 1, kMain).has_value());
+    const auto notes = c.TakeNotes();
+    REQUIRE(notes.size() == 2);
+    CHECK(notes[0].find("refused") != std::string::npos);
+    CHECK(notes[1].find("asked") != std::string::npos);
+}
+
+TEST_CASE("quest: a player in a boss fight or minigame step is never moved out of it") {
+    CoopQuest::Challenges c;
+    for (const char* in : {"BossBattle", "EscapeDungeon"}) {
+        Mgr g(in);  // B is fighting King Dodongo (or escaping) when A finishes
+        c.Want({Fire("Complete")});
+        CHECK_MESSAGE(!c.Step(g.m, false, 0, kMain).has_value(), in);
+    }
+    Mgr g("DungeonStart");  // not in the fight: the step after it is fine
+    c.Want({Fire("Complete")});
+    CHECK(c.Step(g.m, false, 0, kMain).has_value());
+}
+
+TEST_CASE("quest: only Get_StoneOfFire goes to the live manager, and only from KakarikoVillageNpc") {
+    Game g;
+    const auto& f = Q("Get_StoneOfFire");
+    for (const auto& q : CoopQuest::Quests()) {
+        g.enums[q.hash] = q.steps[q.steps.size() - 2];  // every quest far along
+    }
+    for (const auto& q : CoopQuest::Quests()) {
+        const auto w = CoopQuest::LiveWant(q, g.value);
+        CHECK_MESSAGE(w.has_value() == (q.hash == f.hash), q.name);
+        if (w) {
+            CHECK(w->challenge == Hash("Get_StoneOfFire"));
+            CHECK(w->step == g.enums[f.hash]);
+            CHECK(w->steps.size() == f.steps.size());
+        }
+    }
+    g.enums[f.hash] = Hash("Ready");  // below the floor: not B's quest yet
+    CHECK_FALSE(CoopQuest::LiveWant(f, g.value).has_value());
+    g.enums[f.hash] = Hash("KakarikoVillageNpc");
+    CHECK(CoopQuest::LiveWant(f, g.value).has_value());
+    g.enums[f.hash] = 0x12345678u;  // unknown
+    CHECK_FALSE(CoopQuest::LiveWant(f, g.value).has_value());
+    g.enums.erase(f.hash);  // unread
+    CHECK_FALSE(CoopQuest::LiveWant(f, g.value).has_value());
 }
