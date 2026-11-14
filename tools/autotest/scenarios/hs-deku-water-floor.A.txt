@@ -65,14 +65,15 @@ press A
 wait 2400
 mark after
 wait 720                 # B gets on the floor first
-place -25.6 75.8 40.6    # deku-test: on the water right over the dive switch (top at -25.63 74.25 40.62)
-wait 180
-hold A 240 dive          # "Dive (Hold)" is pad A (key E): a long dive down onto the switch; mark dive halfway
-wait 60
-place -25.6 76.5 40.6    # second try: dropped from above the water onto the switch
+place -27.1 75.8 40.6    # deku-test 3rd run: 1.5 m west of the dive switch (top at -25.63 74.25 40.62)
+wait 120
+toward -25.6 40.6 6      # face it
+press ZL 10              # the camera behind Link, looking at the switch
 wait 30
-hold A 240 dive2
-wait 60
+hold A 60 dive           # dive ("Dive (Hold)" = pad A, key E)
+stick 0 1.0 60 A         # swim forward along the bottom over the switch, still diving (its AI: CheckPlayerOn)
+hold A 60 dive2
+wait 120
 mark placed
 wait 150
 mark ride1
