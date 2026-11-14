@@ -52,6 +52,7 @@ struct Found {
     std::atomic<std::uint64_t> pane{0}, from{0};
 };
 Found g_field, g_dungeon;
+Found g_mini_dungeon, g_mini_field, g_mini_window, g_mini_field_window, g_mini_root;  // the HUD minimap's (HUD screen only)
 std::atomic<std::uint64_t> g_searched_hud{0}, g_searched_panel{0};
 
 // A pane is used only while the screen it came from is one of the screens that run now (a new screen: its
@@ -92,11 +93,33 @@ std::uint64_t FindPane(void* ctx, const HosCoopApi* api, std::uint64_t layout, c
     return api->call(ctx, &k, &pane) ? pane : 0;
 }
 
+// The HUD minimap's panes in the HUD screen's layout.
+void SearchMinimap(void* ctx, const HosCoopApi* api, std::uint64_t screen, std::uint64_t layout) {
+    const struct {
+        Found* f;
+        const char* name;
+    } want[] = {{&g_mini_dungeon, kMiniDungeonPane},
+                {&g_mini_field, kMiniFieldPane},
+                {&g_mini_window, kMiniWindowPane},
+                {&g_mini_field_window, kMiniFieldWindowPane},
+                {&g_mini_root, kMiniRootPane}};
+    std::string found;
+    for (const auto& w : want) {
+        const std::uint64_t pane = FindPane(ctx, api, layout, w.name);
+        if (pane != 0) w.f->pane = pane, w.f->from = screen;
+        found += fmt::format(" {} {:#x}", w.name, pane);
+    }
+    LOG_INFO(Core, "coop: map: the HUD minimap's panes:{}", found);
+}
+
 // Looks for both panes in `screen`'s layout; keeps what it finds (a pane found before stays).
 void Search(void* ctx, const HosCoopApi* api, std::uint64_t screen, const char* which) {
     const std::uint64_t layout = Read64(screen + kScreenLayout);
     if (layout == 0) {
         return;
+    }
+    if (std::strcmp(which, "HUD") == 0) {
+        SearchMinimap(ctx, api, screen, layout);
     }
     const std::uint64_t field = FindPane(ctx, api, layout, kFieldPane);
     const std::uint64_t dungeon = FindPane(ctx, api, layout, kDungeonPane);
@@ -136,6 +159,7 @@ void Frame(void* ctx, const HosCoopApi* api) {
     if (menu->hud_screen != 0 && menu->hud_screen != g_searched_hud.load()) {
         const std::uint64_t old = g_searched_hud.exchange(menu->hud_screen);
         Forget(g_field, old), Forget(g_dungeon, old);
+        for (Found* f : {&g_mini_dungeon, &g_mini_field, &g_mini_window, &g_mini_field_window, &g_mini_root}) Forget(*f, old);
         Search(ctx, api, menu->hud_screen, "HUD");
     }
     if (menu->panel_screen != 0 && menu->panel_screen != g_searched_panel.load()) {
@@ -172,6 +196,99 @@ std::optional<Picture> Shown(bool dungeon) {
         p.floor = f[0], p.floors = f[1], p.lowest = f[2];
     }
     return p;
+}
+
+namespace {
+
+// A pane as the game placed it, or none (not found in the HUD screen that runs, or not readable).
+std::optional<map::Pane> ReadPane(const Found& f, const Menu& menu, float w, float h) {
+    const std::uint64_t pane = PaneNow(f, menu);
+    map::Pane p;
+    if (pane == 0 || !CoopRuntime::Read(pane + kPaneMatrix, p.m.data(), sizeof(float) * p.m.size())) {
+        return std::nullopt;
+    }
+    p.w = w, p.h = h;
+    if (!CoopRuntime::Read(pane + kPaneAlpha, &p.alpha, sizeof p.alpha) || !std::isfinite(p.alpha)) {
+        p.alpha = 0.0f;  // (unreadable: drawn as hidden)
+    }
+    return p;
+}
+
+// What the minimap panes hold besides their matrices, to learn the game's own shown flag from a run: the
+// first 0x28 bytes and the 0x58 after the matrix of the minimap's root, its picture and its frame, logged when
+// the minimap comes or goes (by its matrices) or those bytes change; at most kDiagLines lines a run.
+constexpr int kDiagLines = 24;
+void Diagnose(const Menu& menu, bool dungeon, bool placed) {
+    static std::atomic<int> lines{0};
+    static std::string last;
+    static std::atomic<bool> busy{false};
+    if (lines.load() >= kDiagLines || busy.exchange(true)) {
+        return;
+    }
+    std::string now;
+    for (const Found* f : {&g_mini_root, dungeon ? &g_mini_dungeon : &g_mini_field, dungeon ? &g_mini_window : &g_mini_field_window}) {
+        const std::uint64_t pane = PaneNow(*f, menu);
+        std::uint8_t b[0xb0] = {};
+        if (pane == 0 || !CoopRuntime::Read(pane, b, sizeof b)) {
+            now += " -";
+            continue;
+        }
+        now += " ";
+        for (std::size_t i = 0; i < sizeof b; ++i) {
+            if (i >= kPaneMatrix && i < kPaneMatrix + 48) continue;  // (the matrix: logged below as numbers)
+            now += fmt::format("{:02x}", b[i]);
+            if (i == kPaneMatrix - 1) now += "|";
+        }
+    }
+    now = (placed ? "placed" : "not placed") + now;
+    if (now == last) {
+        busy = false;
+        return;
+    }
+    last = now;
+    for (const Found* f : {dungeon ? &g_mini_dungeon : &g_mini_field, dungeon ? &g_mini_window : &g_mini_field_window}) {
+        float m[12] = {};
+        const std::uint64_t pane = PaneNow(*f, menu);
+        if (pane != 0 && CoopRuntime::Read(pane + kPaneMatrix, m, sizeof m)) {
+            now += fmt::format(" m[{:.3f} {:.3f} {:.3f} | {:.3f} {:.3f} {:.3f} | {:.3f} {:.3f} {:.3f} | {:.1f} {:.1f} {:.1f}]",
+                               m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10], m[11]);
+        }
+    }
+    {
+        LOG_INFO(Core, "coop: map: minimap panes ({}, root/picture/frame bytes 0-27|58-af): {}",
+                 dungeon ? "dungeon" : "area", now);
+        ++lines;
+    }
+    busy = false;
+}
+
+}  // namespace
+
+std::optional<map::MinimapPanes> Minimap(bool dungeon) {
+    const auto menu = MenuState();
+    if (!menu || menu->hud_screen == 0) {
+        return std::nullopt;
+    }
+    const auto picture = dungeon ? ReadPane(g_mini_dungeon, *menu, kMiniDungeonSize, kMiniDungeonSize)
+                                 : ReadPane(g_mini_field, *menu, kMiniFieldSize, kMiniFieldSize);
+    const auto window = dungeon ? ReadPane(g_mini_window, *menu, kMiniWindowSize, kMiniWindowSize)
+                                : ReadPane(g_mini_field_window, *menu, kMiniFieldWindowSize, kMiniFieldWindowSize);
+    float alpha = 0.0f;
+    const std::uint64_t root = PaneNow(g_mini_root, *menu);
+    if (root == 0 || !CoopRuntime::Read(root + kPaneAlpha, &alpha, sizeof alpha) || !std::isfinite(alpha)) {
+        alpha = 0.0f;
+    }
+    const bool placed = picture && window && map::pane_usable(*picture) && map::pane_usable(*window) && alpha > 0.0f &&
+                        picture->alpha > 0.0f && window->alpha > 0.0f;  // (the frame alone over no picture: none)
+    Diagnose(*menu, dungeon, placed);
+    if (!placed) {
+        return std::nullopt;
+    }
+    map::MinimapPanes mm;
+    mm.picture = *picture;
+    mm.window = *window;
+    mm.alpha = (std::min)(alpha, 1.0f);
+    return mm;
 }
 
 }  // namespace CoopMapPage

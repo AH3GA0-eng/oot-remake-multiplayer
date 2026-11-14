@@ -488,7 +488,8 @@ void DrawCheats(const HosCoopDraw& d, const CheatsView& c) {
 }
 
 // The others on the maps (MapShown): on the Map page's picture while it is
-// shown, else on the HUD minimap (not while a game menu is in front). An
+// shown, else on the HUD minimap while the game shows it (where the game's
+// own minimap panes are this frame: CoopMapPage::Minimap). An
 // arrow each in their colour, turned the way they face (a dot when that is
 // not known), on a dark rim; a player off the map is held at its edge, a
 // little paler, and one on another floor paler still. Their name under the
@@ -502,13 +503,17 @@ void DrawMap(const HosCoopDraw& d, const MapShown& m, const Look* look) {
         const map::Box pic = LayoutToScreen(*m.page, d.width, d.height);
         r = std::max(6.0f, d.height * 0.012f);
         map::picture_icons(pic, *m.capture, m.page_floor, m.players, icons);
-    } else if (m.minimap) {
-        map::Minimap mini;
-        mini.box = MinimapBox(d.width, d.height);
-        mini.metres_across = m.metres_across;
-        r = std::max(5.0f, mini.box.w * 0.035f);
-        mini.edge_inset = r;
-        map::minimap_icons(mini, m.scene, m.self, m.players, icons, m.capture);
+    } else if (m.minimap && m.capture != nullptr) {
+        const map::Box layout = LayoutToScreen({0, 0, kLayoutW, kLayoutH}, d.width, d.height);
+        const float s = layout.w / kLayoutW;
+        r = std::max(5.0f, 19.3f * s);  // (as 3.5 % of the 552 frame)
+        map::MinimapPanes mini = *m.minimap;
+        mini.edge_inset = r / s;
+        map::minimap_icons(mini, *m.capture, m.minimap_floor, m.players, icons);
+        for (auto& icon : icons) {
+            icon.x = layout.x + icon.x * s;
+            icon.y = layout.y + icon.y * s;
+        }
     } else {
         return;
     }
@@ -559,14 +564,6 @@ void DrawMap(const HosCoopDraw& d, const MapShown& m, const Look* look) {
 
 }  // namespace
 
-coop::overlay::map::Box MinimapBox(float width, float height) {
-    const float s = std::min(width / kLayoutW, height / kLayoutH);
-    const float ox = (width - kLayoutW * s) / 2, oy = (height - kLayoutH * s) / 2;
-    const float size = kMinimapSize * s;
-    const float cx = ox + (kLayoutW / 2 + kMinimapX) * s, cy = oy + (kLayoutH / 2 + kMinimapY) * s;
-    return {cx - size / 2, cy - size / 2, size, size};
-}
-
 coop::overlay::map::Box LayoutToScreen(const coop::overlay::map::Box& b, float width, float height) {
     const float s = std::min(width / kLayoutW, height / kLayoutH);
     const float ox = (width - kLayoutW * s) / 2, oy = (height - kLayoutH * s) / 2;
@@ -579,10 +576,6 @@ std::string FloorWords(int delta) {
     }
     const int n = delta < 0 ? -delta : delta;
     return " (" + std::to_string(n) + (delta > 0 ? " below)" : " above)");
-}
-
-float MinimapMetres(const coop::overlay::map::Capture& capture, float zoom) {
-    return zoom > 0 ? capture.height * kMinimapShare / zoom : 0.0f;
 }
 
 CheatsBox CheatsAt(float width, float height, const CheatsView& c) {
@@ -763,7 +756,7 @@ bool Wanted(const Scene& s) {
         return true;
     }
     return !s.chat.empty() || !s.hud.empty() || s.box.has_value() || s.cheats.has_value() || (s.markers && !s.markers->items.empty()) || s.players.has_value() ||
-           (s.panel && !s.panel->empty()) || s.dbno.has_value() || (s.map != nullptr && !s.map->players.empty() && (s.map->minimap || s.map->page));
+           (s.panel && !s.panel->empty()) || s.dbno.has_value() || (s.map != nullptr && !s.map->players.empty() && ((s.map->minimap && s.map->capture != nullptr) || s.map->page));
 }
 
 bool GameLook(const HosCoopDraw& d, const Look& look) {

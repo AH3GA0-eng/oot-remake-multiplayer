@@ -155,40 +155,32 @@ TitleBox TitleAt(float width, float height, const TitleView& t, const FontMetric
 
 // The other players on the HUD minimap and on the pause menu's Map page
 // (docs/overlay.md, "Players on the map"; coop/overlay/map_icons.hpp): our
-// Link's place, the minimap's span, our place's map and the others with their
+// Link's place, the game's minimap panes, our place's map and the others with their
 // colours (Lifted) and names. A player on another floor of a dungeon is
 // paler, "(1 below)" / "(2 above)" after the name.
 struct MapShown {
     std::string scene;
     std::array<float, 3> self{};
-    float metres_across = 0.0f;  // the minimap's span (MinimapMetres)
     const coop::overlay::map::Capture* capture = nullptr;  // our place's map (the table's: it outlives the scene)
     std::vector<coop::overlay::map::Player> players;
     std::vector<std::string> names;  // players[i]'s; empty: no names (the setting)
-    bool minimap = true;             // false: a game menu is in front (the game hides its minimap)
+    // The game's minimap panes as it placed them this frame (CoopMapPage::Minimap), or none: the game
+    // shows no minimap now (none placed, a game menu in front, no camera). Icons only with our `capture`.
+    std::optional<coop::overlay::map::MinimapPanes> minimap;
     std::optional<coop::overlay::map::Box> page;  // the Map page's map picture, in the layout's units
     int page_floor = 0;              // the floor the page shows, as floor_of counts them
+    int minimap_floor = 0;           // the floor the minimap shows (ours), as floor_of counts them
 };
 
-// The game's minimap in its HUD layout (MapMenu_00, N_MiniMap_00 under
-// N_Common_00: its centre 1470 right of and 544 below the middle of the
-// 3840 x 2160 layout; the map window N_Dungeon_01 552 across), on a picture
-// of `width` x `height`: the layout fits the picture keeping its aspect, as
-// the game's picture does (DrawMarkers).
-inline constexpr float kLayoutW = 3840.0f, kLayoutH = 2160.0f;
-inline constexpr float kMinimapX = 1470.0f, kMinimapY = 544.0f, kMinimapSize = 552.0f;
-coop::overlay::map::Box MinimapBox(float width, float height);
-// A box in the layout's units (x right, y down from its top left) on the
-// picture, by the same rule.
+// The game's HUD layout (MapMenu_00) is 3840 x 2160 and fits the picture
+// keeping its aspect, as the game's picture does (DrawMarkers): a box in the
+// layout's units (x right, y down from its top left) on a picture of
+// `width` x `height`.
+inline constexpr float kLayoutW = coop::overlay::map::kLayoutW, kLayoutH = coop::overlay::map::kLayoutH;
 coop::overlay::map::Box LayoutToScreen(const coop::overlay::map::Box& layout, float width, float height);
 // The words after a name for a player `delta` floors from the one shown
 // ("" on the same floor): floors count down as floor_of's do.
 std::string FloorWords(int delta);
-// The metres the minimap spans, from its map's capture: the share of the map
-// picture the window shows (552 of the 960 the picture pane N_FadeMiniMap is
-// across), over `zoom` (LICHII_COOP_MINIMAP_ZOOM, 1 by default).
-inline constexpr float kMinimapShare = 552.0f / 960.0f;
-float MinimapMetres(const coop::overlay::map::Capture& capture, float zoom = 1.0f);
 
 // What to draw this present.
 struct Scene {
