@@ -46,6 +46,8 @@ std::string GiveOne(coop::host::FlagStore& game, const coop::host::ItemFlag& ite
         } else {
             value = std::max(was, 1);
         }
+    } else if (item.kind == FlagKind::uint32) {
+        value = static_cast<std::int32_t>(now->value | 1u);  // a floors bit field: the first floor too
     }
     if (!game.write(coop::protocol::FlagEntry(key, item.kind, static_cast<std::uint32_t>(value)))) {
         return std::string(item.name) + ": write failed";

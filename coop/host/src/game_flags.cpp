@@ -1,6 +1,7 @@
 #include "coop/host/game_flags.hpp"
 
 #include "coop/host/game_flag_events.hpp"
+#include "coop/host/game_items.hpp"
 #include "coop/host/map_drop_log.hpp"
 
 #include <algorithm>
@@ -525,6 +526,15 @@ std::optional<protocol::FlagEntry> GameFlagStore::read(FlagKey key) {
     e.value = static_cast<std::uint32_t>(*i);
     return e;
   }
+  // A shared UInt item only (a dungeon's floors on its map, issue 146): any
+  // other UInt stays unread, so no other shared list starts carrying one.
+  if (is_shared_uint_item(key.hash)) {
+    if (const auto u = flags.get_uint(key.hash)) {
+      e.kind = protocol::FlagKind::uint32;
+      e.value = *u;
+      return e;
+    }
+  }
   return std::nullopt;
 }
 
@@ -539,6 +549,8 @@ bool GameFlagStore::busy(FlagKey key) {
   if (key.kind != FlagKeyKind::named || key.index != 0) return false;
   if (find(memory_, *mgr, kBool, key.hash)) return no_room(memory_, *mgr, kBool.queue_cap, kBool.queue_word);
   if (find(memory_, *mgr, kInt, key.hash)) return no_room(memory_, *mgr, kInt.queue_cap, kInt.queue_word);
+  if (is_shared_uint_item(key.hash) && find(memory_, *mgr, kUInt, key.hash))
+    return no_room(memory_, *mgr, kUInt.queue_cap, kUInt.queue_word);
   return false;
 }
 
@@ -566,6 +578,9 @@ bool GameFlagStore::write(const protocol::FlagEntry& entry) {
       return GameFlags::set_bool(memory_, key.hash, entry.value != 0);
     case protocol::FlagKind::int32:
       return GameFlags::set_int(memory_, key.hash, static_cast<std::int32_t>(entry.value));
+    case protocol::FlagKind::uint32:
+      // Through the game's UInt setter (0x57af30), as read above: shared UInt items only.
+      return is_shared_uint_item(key.hash) && GameFlags::set_uint(memory_, key.hash, entry.value);
     default:
       return false;
   }

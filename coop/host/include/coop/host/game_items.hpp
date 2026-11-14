@@ -35,12 +35,13 @@ enum class ItemRule : std::uint8_t {
   mirror,      // shared: the last change is copied (trade items: handing one over takes it)
   count,       // shared: each change (+1 got, -1 used) is added to everyone's value
   per_player,  // never sent (rupees, ammo, life, bottle contents, equipped gear)
+  bits,        // shared: a bit set for anyone is set for everyone (a dungeon's floors on its map)
 };
 
 struct ItemFlag {
   std::string_view name;    // the flag's name in the game
   std::uint32_t hash;       // flag_hash(name)
-  protocol::FlagKind kind;  // boolean or int32
+  protocol::FlagKind kind;  // boolean, int32, or uint32 (bottle contents, a dungeon's floors)
   ItemRule rule;
   // False for a rule not turned on yet. All are on now: counts travel as
   // count deltas (docs/protocol.md, "Counts").
@@ -62,6 +63,11 @@ SharedFlags item_shared_flags(bool with_off = false);
 bool is_one_way_item(FlagKey key);
 // Every such flag, sorted by hash.
 std::vector<FlagKey> one_way_item_flags();
+
+// A shared UInt item (DungeonInfo.<dungeon>.EnteredFloorBit, issue 146): the
+// game's UInt table is read and written for it (GameFlagStore). Other UInts
+// stay unread there, as before.
+bool is_shared_uint_item(std::uint32_t hash);
 
 // What the game should hold after `incoming` arrives for a flag of `rule`
 // and `kind` when it holds `local`. Values are raw FlagEntry bits. `base` is,
