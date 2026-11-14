@@ -376,6 +376,14 @@ bool Glue::Scenes(Core::System& system, std::uint64_t main, const Local& local, 
     here.event = event;
     here.self = local.self;
     here.max_life = max_life;
+    if (local.scene) {
+        for (const auto& room : CoopBoss::Rooms()) {  // the scene's boss (a dungeon has one boss room)
+            if (room.scene == *local.scene) {
+                here.boss_ours = CoopObjects::LastBossOurs(CoopBoss::Bodies(room));
+                break;
+            }
+        }
+    }
     CoopBossScenes::Actions a = scenes.Tick(here, ours, now_us);
     for (const auto& line : a.log) {
         LOG_INFO(Core, "coop: boss: {}", line);

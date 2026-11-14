@@ -127,6 +127,26 @@ std::optional<bool> BossAlive(const std::vector<Seen>& seen, std::span<const std
     return false;
 }
 
+std::optional<bool> BossOurs(const std::vector<Seen>& walk, std::span<const std::uint64_t> ours,
+                             std::span<const std::string_view> bodies, std::uint64_t now_us,
+                             std::map<std::string, BossOwnership, std::less<>>& last) {
+    std::optional<bool> out;
+    for (const Seen& s : walk) {
+        if (std::find(bodies.begin(), bodies.end(), s.name) == bodies.end()) continue;
+        const bool mine = std::find(ours.begin(), ours.end(), s.address) != ours.end();
+        last[s.name] = BossOwnership{mine, now_us};
+        out = out.value_or(false) || mine;
+    }
+    if (out) return out;
+    for (const std::string_view body : bodies) {  // gone from the walk: the last reading, while fresh
+        const auto it = last.find(body);
+        if (it != last.end() && now_us >= it->second.at_us && now_us - it->second.at_us <= kBossOursKeepUs) {
+            out = out.value_or(false) || it->second.ours;
+        }
+    }
+    return out;
+}
+
 std::optional<bool> BossHurt(const std::vector<Seen>& seen, std::span<const std::string_view> bodies) {
     bool any = false;
     for (const Seen& s : seen) {
@@ -1290,6 +1310,11 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.animation = s.animation;
         o.slots = s.slots;
         o.bsa = s.bsa;
+        if (s.hit_at) {
+            // (its life drop may be read a walk later than the hit id: kept kHitPlaceKeepUs for it)
+            o.place_seen = s.hit_at;
+            o.place_seen_at = now_us;
+        }
         // A breakable's life can no longer be read once it has died (a crate
         // at 0 for one frame, then its life object is gone): read that as 0.
         std::optional<proto::ObjectLife> life = s.life;
@@ -1381,15 +1406,19 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 // Another game's, or nobody's yet (kept until the owner is
                 // known: an enemy hit the moment it loaded, issue 133).
                 const bool ours = owner != owners_.end() && owner->second.player == self;
+                if (ours) {
+                    o.place_seen.reset();  // our own boss's hit: nothing to send
+                }
                 if (drop > 0 && !ours) {
                     if (o.hit_sum == 0) {
                         o.hit_since = now_us;
                         o.hit_place.reset();
                     }
                     o.hit_sum += drop;
-                    if (s.hit_at) {
-                        o.hit_place = s.hit_at;  // this walk's own hit on our copy (a boss): where it landed
+                    if (o.place_seen && now_us - o.place_seen_at <= kHitPlaceKeepUs) {
+                        o.hit_place = o.place_seen;  // our own hit on our copy (a boss): where it landed
                     }
+                    o.place_seen.reset();
                     if (life->life <= 0 && o.killed_at == 0) {
                         o.killed_at = now_us;  // our hit took it: a resend may follow
                         o.resent = 0;
@@ -2139,6 +2168,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                     o->dead_at = now_us;
                     o->hit_sum = 0;
                     o->hit_place.reset();
+                    o->place_seen.reset();
                     notes_.emplace_back("hatched in its owner's game: " + o->name);
                     if (had != owners_.end()) {
                         owners_.erase(had);
@@ -2172,6 +2202,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                                                              : "dead in its owner's game: " + o->name);
                     o->hit_sum = 0;
                     o->hit_place.reset();
+                    o->place_seen.reset();
                 }
                 // Nobody's now: no samples, poses or plays for it.
                 if (had != owners_.end()) {
@@ -2209,6 +2240,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 // get its state at once.
                 o->hit_sum = 0;
                 o->hit_place.reset();
+                o->place_seen.reset();
                 o->hit_at = 0;
                 o->react_at = 0;
                 o->sent_once = false;
@@ -2268,6 +2300,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 ++o->resent;
                 o->hit_sum = life;
                 o->hit_place.reset();
+                o->place_seen.reset();
                 o->hit_since = now_us > kDamageSumUs ? now_us - kDamageSumUs : 0;
                 notes_.emplace_back("killed here, owner still shows life: hit sent again: " +
                                     o->name);

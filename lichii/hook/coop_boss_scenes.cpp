@@ -284,6 +284,12 @@ void Director::Ours(const Request& r, const Local& local, std::uint64_t now_us, 
         if (!here || !fresh || !r.taken) {
             return;  // a leftover name: nothing starts or skips because of it
         }
+        if (kind == Kind::outro && local.boss_ours != true) {
+            // Only the owner's game's death is the boss's: a copy waits for the owner's (its outro_start).
+            out.log.push_back(std::string(kBosses[b].outro) + ": the boss died here, but we do not own it: "
+                                                              "waiting for its owner's death");
+            return;
+        }
     }
     const std::string_view flow = kind == Kind::intro ? kBosses[b].intro : kBosses[b].outro;
     // The flow's name starts each line (the proof lines name it); the setting the game asked, when not the flow,

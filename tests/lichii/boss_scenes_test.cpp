@@ -308,10 +308,14 @@ TEST_CASE("boss scenes: our intro or death seen with no name starts a fresh intr
     CHECK(out.send.empty());
     CHECK_FALSE(out.skip);
     // The death found by the search: shared once.
-    out = a.Tick(At(kInRoom, 1, true), searched("Dm_Deku_BossOut"), 100'000'000);
+    const auto owner = [](Local l) {
+        l.boss_ours = true;
+        return l;
+    };
+    out = a.Tick(owner(At(kInRoom, 1, true)), searched("Dm_Deku_BossOut"), 100'000'000);
     REQUIRE(out.send.size() == 1);
     CHECK(out.send[0].kind == proto::BossSceneKind::outro_start);
-    out = a.Tick(At(kInRoom, 1, true), searched("Dm_Deku_BossOut"), 100'500'000);
+    out = a.Tick(owner(At(kInRoom, 1, true)), searched("Dm_Deku_BossOut"), 100'500'000);
     CHECK(out.send.empty());
     // Beaten: a leftover intro starts nothing.
     a.Tick(At(kInRoom, 1, false), {}, 130'000'000);
@@ -320,6 +324,32 @@ TEST_CASE("boss scenes: our intro or death seen with no name starts a fresh intr
     Director c;
     CHECK(c.Tick(At(kInRoom, 3, true, "KokiriForest"), searched("Dm_Deku_BossIn"), 1'000'000).send.empty());
     CHECK(c.phase(kGohma) == Phase::none);
+}
+
+TEST_CASE("boss scenes: a copy that dies in its own game starts no death, the owner's does (review boss-intro)") {
+    // A's eye hit judged lethal on A's copy while the owner B refused it: A's walk reads its boss gone.
+    const auto searched = [](const char* name) { return std::vector<Request>{Request{name, true, true}}; };
+    Director a;
+    a.Tick(At(kInRoom, 1, true), searched("Dm_Deku_BossIn"), 1'000'000);
+    a.Tick(At(kInRoom, 1, false), {}, 30'000'000);
+    REQUIRE(a.phase(kGohma) == Phase::fight);
+    Local copy = At(kInRoom, 1, true);
+    copy.boss_ours = false;
+    Actions out = a.Tick(copy, searched("Dm_Deku_BossOut"), 60'000'000);
+    CHECK(out.send.empty());
+    CHECK_FALSE(out.play);
+    CHECK(a.phase(kGohma) == Phase::fight);
+    Local unknown = At(kInRoom, 1, true);  // no walk reading: not the owner's either
+    CHECK(a.Tick(unknown, searched("Dm_Deku_BossOut"), 61'000'000).send.empty());
+    // The owner's death comes: then A plays it.
+    a.Receive(Scene(2, kGohma, proto::BossSceneKind::outro_start, kInRoom));
+    out = a.Tick(At(kInRoom, 1, false), {}, 62'000'000);
+    CHECK(out.play == std::optional<std::string>("Dm_Deku_BossOut"));
+    // A death our game asked by name (a request) is still ours to share, owner or not (as before).
+    Director c;
+    c.Tick(At(kInRoom, 3, true), searched("Dm_Deku_BossIn"), 1'000'000);
+    c.Tick(At(kInRoom, 3, false), {}, 30'000'000);
+    CHECK(c.Tick(At(kInRoom, 3, true), Took("Dm_Deku_BossOut"), 60'000'000).send.size() == 1);
 }
 
 TEST_CASE("boss scenes: one heart container for all, never two") {
