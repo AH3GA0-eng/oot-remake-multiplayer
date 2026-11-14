@@ -304,7 +304,7 @@ TEST_CASE("objects: the owner writes DAMAGE into its enemy, never below 0") {
     CHECK(Tick(sync, 100 * kMs, {Enemy(0x100, 0x11, 0)}).writes.empty());
 }
 
-TEST_CASE("objects: a copy takes the owner's life, but does not heal back over our own hit") {
+TEST_CASE("objects: a copy takes the owner's life, but is never healed back up to it (native rule)") {
     Sync sync;
     Tick(sync, 0, {Enemy(0x100, 0x11, 4)});
     const proto::ObjectId id = *sync.IdOf(0x100);
@@ -328,11 +328,17 @@ TEST_CASE("objects: a copy takes the owner's life, but does not heal back over o
     CHECK(All<proto::Damage>(Tick(sync, 400 * kMs, {Enemy(0x100, 0x11, 2)})).size() == 1);
     sync.Receive(s);
     CHECK(Tick(sync, 500 * kMs, {Enemy(0x100, 0x11, 2)}).writes.empty());
-    // Long after, the owner's word wins.
+    // Long after, still no write: no game path raises an enemy's life, so the copy keeps its own.
     sync.Receive(s);
     step = Tick(sync, 1500 * kMs, {Enemy(0x100, 0x11, 2)});
+    CHECK(step.writes.empty());
+    CHECK(All<proto::Damage>(step).empty());
+    // The owner's next fall below ours still comes down to the copy.
+    s.state.life = proto::ObjectLife{1, 4};
+    sync.Receive(s);
+    step = Tick(sync, 1600 * kMs, {Enemy(0x100, 0x11, 2)});
     REQUIRE(step.writes.size() == 1);
-    CHECK(step.writes[0].life == 3);
+    CHECK(step.writes[0].life == 1);
 }
 
 TEST_CASE("objects: HANDOVER_STATE gives the new owner the last life") {
@@ -1593,7 +1599,7 @@ TEST_CASE("objects: after our hit on a copy the owner's old animation waits for 
     CHECK(plays[0].name == "Walk");
 }
 
-TEST_CASE("objects: a hurt the game takes after its life was written is put back, not sent on") {
+TEST_CASE("objects: a hurt the game takes late is no hit of ours, and an enemy is not written back up") {
     Sync sync;
     sync.SetHurt(true);
     Tick(sync, 0, {Enemy(0x100, 0x11, 4)}, 2);
@@ -1607,23 +1613,22 @@ TEST_CASE("objects: a hurt the game takes after its life was written is put back
     auto step = Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 4)}, 2);
     REQUIRE(step.writes.size() == 1);
     CHECK(step.writes[0].hurt == 1);
-    // Not taken in 400 ms: written as life.
+    // Not taken in 400 ms: the rest goes to the game's Life step (WriteLife; never a raw write).
     step = Tick(sync, 420 * kMs, {Enemy(0x100, 0x11, 4)}, 2);
     REQUIRE(step.writes.size() == 1);
     CHECK(step.writes[0].hurt == 0);
     CHECK(step.writes[0].life == 3);
     Tick(sync, 450 * kMs, {Enemy(0x100, 0x11, 3)}, 2);
-    // The game takes the old hit now (it was paused): 3 -> 2. Put back to 3.
+    // The game takes the old hit now (it was paused): 3 -> 2. An enemy keeps it (no write up).
     step = Tick(sync, 700 * kMs, {Enemy(0x100, 0x11, 2)}, 2);
-    REQUIRE(step.writes.size() == 1);
-    CHECK(step.writes[0].life == 3);
-    CHECK(step.writes[0].hurt == 0);
+    CHECK(step.writes.empty());
     CHECK(sync.HurtsLate() == 1);
-    step = Tick(sync, 900 * kMs, {Enemy(0x100, 0x11, 3)}, 2);
+    CHECK(All<proto::Damage>(step).empty());
+    step = Tick(sync, 900 * kMs, {Enemy(0x100, 0x11, 2)}, 2);
     CHECK(All<proto::Damage>(step).empty());
     // A real hit of ours after that still goes to the owner.
-    Tick(sync, 1000 * kMs, {Enemy(0x100, 0x11, 2)}, 2);
-    CHECK(All<proto::Damage>(Tick(sync, 1200 * kMs, {Enemy(0x100, 0x11, 2)}, 2)).size() == 1);
+    Tick(sync, 1000 * kMs, {Enemy(0x100, 0x11, 1)}, 2);
+    CHECK(All<proto::Damage>(Tick(sync, 1200 * kMs, {Enemy(0x100, 0x11, 1)}, 2)).size() == 1);
 }
 
 TEST_CASE("objects: an enemy that becomes ours keeps its place and takes the lower life") {
@@ -2201,7 +2206,7 @@ TEST_CASE("objects: a hit before the owner is known is kept and sent once it is 
     CHECK(All<proto::Damage>(Tick(late, 2200 * kMs, {Enemy(0x100, 0x11, 5)})).empty());
 }
 
-TEST_CASE("objects: a copy we killed is not healed back, and the hit is sent again twice at most") {
+TEST_CASE("objects: a copy we killed is never healed back, and the hit is sent again twice at most") {
     Sync sync;
     Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
     const proto::ObjectId id = *sync.IdOf(0x100);
@@ -2219,12 +2224,12 @@ TEST_CASE("objects: a copy we killed is not healed back, and the hit is sent aga
         REQUIRE(damage.size() == 1);
         CHECK(damage[0].amount == 2);
     }
-    // After that the owner is right: the copy takes its life.
+    // After that nothing more is sent, and the copy is not written up either (the native rule: no game
+    // path raises an enemy's life; its game's kill stands).
     sync.Receive(OwnerSample(id, 2, 3400 * kMs, 0.0f, 2, "Wait"));
     auto step = Tick(sync, 3400 * kMs, {Enemy(0x100, 0x11, 0)});
     CHECK(All<proto::Damage>(step).empty());
-    REQUIRE(step.writes.size() == 1);
-    CHECK(step.writes[0].life == 2);
+    CHECK(step.writes.empty());
 }
 
 TEST_CASE("objects: an enemy of ours that died is said dead to the others, even with no life read") {
@@ -2419,7 +2424,7 @@ TEST_CASE("objects: animation names without their LOD suffix") {
     CHECK_FALSE((flags && (*flags & kTargeting) != 0));
 }
 
-TEST_CASE("objects: a copy brought to 0 by its owner and alive again is healed, not hit") {
+TEST_CASE("objects: a copy brought to 0 by its owner and alive again is neither hit nor written up") {
     // We hit it once, long before; then the owner's own samples took it to
     // 0 and back (a revive). No DAMAGE for the owner's whole life.
     Sync sync;
@@ -2434,8 +2439,7 @@ TEST_CASE("objects: a copy brought to 0 by its owner and alive again is healed, 
     sync.Receive(OwnerSample(id, 2, 8000 * kMs, 0.0f, 2, "Wait"));
     auto step = Tick(sync, 8000 * kMs, {Enemy(0x100, 0x11, 0)});
     CHECK(All<proto::Damage>(step).empty());
-    REQUIRE(step.writes.size() == 1);
-    CHECK(step.writes[0].life == 2);
+    CHECK(step.writes.empty());  // (an enemy's life is never written up: the native rule)
 }
 
 TEST_CASE("objects: owners queued from before a reconnect are not applied after the forget") {

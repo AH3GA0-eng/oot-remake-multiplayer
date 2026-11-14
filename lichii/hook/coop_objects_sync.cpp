@@ -1327,14 +1327,16 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                     }
                     drop = 0;
                 } else if (o.late_left > 0 && now_us < o.late_until) {
-                    // The game took a hurt after its life had been written
-                    // for it: a second fall for one hit. Put it back; it is
-                    // no hit of ours.
+                    // The game took a hurt late (after its wait): no hit of
+                    // ours. An enemy keeps the life its game took (never
+                    // written up: the native rule); anything else is put back.
                     const std::int32_t back = std::min(drop, o.late_left);
                     o.late_left -= back;
-                    life->life += back;
                     drop -= back;
-                    writes.push_back({o.address, life->life, 0, {}});
+                    if (!o.reacts) {
+                        life->life += back;
+                        writes.push_back({o.address, life->life, 0, {}});
+                    }
                     ++hurt_late_;
                 }
                 if (stepped) {
@@ -1357,11 +1359,14 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                         if (o.damage_debit > 0 && now_us < o.debit_until) {
                             // The thrower's DAMAGE came first: this is the
                             // same hit again. Put it back.
+                            // (an enemy keeps what its game took: never written up)
                             const std::int32_t back = std::min(o.damage_debit, drop);
                             o.damage_debit -= back;
                             drop -= back;
-                            life->life += back;
-                            writes.push_back({o.address, life->life, 0, {}});
+                            if (!o.reacts) {
+                                life->life += back;
+                                writes.push_back({o.address, life->life, 0, {}});
+                            }
                         }
                         if (drop > 0) {
                             if (now_us >= o.blast_until) {
@@ -1640,7 +1645,9 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
 
     for (auto& [address, o] : objects_) {
         // A hurt the game did not take (or took differently) in time: the
-        // life is written as the owner has it.
+        // rest goes to the game's own Life step (WriteLife; an enemy's life is
+        // never written: if its damage step never saw the replay, or there is
+        // no Life step, the hit is lost and its life stays its game's).
         if (o.hurt_until != 0 && now_us >= o.hurt_until) {
             if (o.life && *o.life != o.hurt_target && IsBoss(o.name)) {
                 // A boss is never written (boss-intro, the native rule): its game refused the hit (Gohma holds
@@ -2264,7 +2271,9 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 o->hit_since = now_us > kDamageSumUs ? now_us - kDamageSumUs : 0;
                 notes_.emplace_back("killed here, owner still shows life: hit sent again: " +
                                     o->name);
-            } else if (life > have && !holding && o->dead_at == 0) {
+            } else if (life > have && !holding && o->dead_at == 0 && !o->reacts) {
+                // (an enemy copy is never healed up to its owner's life: no game
+                // path raises it, so it keeps its own; the native rule)
                 write(*o, life);
                 o->fight_until = now_us + kFightUs;
             }

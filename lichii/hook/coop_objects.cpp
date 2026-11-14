@@ -2264,7 +2264,13 @@ private:
                 steps.Take(g.component);  // (another actor there now, or none)
                 return true;
             }
-            if (steps.Take(g.component) != 0) {
+            const s32 left = steps.Take(g.component);
+            if (left != 0 && NativeOnly(g.address)) {
+                ++lives_lost_;
+                LOG_INFO(Core, "coop: objects: {:#x} '{}': its Life step did not take the change: lost, its life "
+                               "stays its game's ({} lost so far)",
+                         g.address, NameOf(g.address), lives_lost_);
+            } else if (left != 0) {
                 const auto value = LifeValue(r, g.address);
                 if (value && memory.IsValidVirtualAddressRange(value->first + 8, 4) &&
                     r.Get<s32>(value->first + 8).value_or(g.life) > g.life) {
@@ -2282,12 +2288,30 @@ private:
         s32 life = 0;
         u64 at_us = 0;
     };
+    // An enemy or a boss: its life is never written (the native rule), only changed by its game's own steps.
+    bool NativeOnly(u64 actor) const {
+        const std::string name = NameOf(actor);
+        return name.starts_with("Enemy_") || IsBoss(name);
+    }
+
+    // Has the enemy's own damage step seen the hit we replayed last on this Life component? (Its last hit id,
+    // Life + 0x1b18, reached our id: hit ids only grow.) True when we never replayed one.
+    bool ReplaySeen(Reader& r, u64 life) const {
+        const u32 ours = TheMover().ReplayedId(life);
+        if (ours == 0xffffffffu) {
+            return true;
+        }
+        const u32 last = r.Get<u32>(life + kLastHitId).value_or(0xffffffffu);
+        return last != 0xffffffffu && static_cast<s32>(last - ours) >= 0;
+    }
+
     std::string NameOf(u64 actor) const {
         const auto known = names_.find(actor);
         return known != names_.end() ? known->second.first : std::string("?");
     }
     std::string life_scene_;
     bool life_table_full_said_ = false;
+    std::size_t lives_lost_ = 0;  // enemy life changes no game step took (never written: lost)
     static constexpr std::size_t kStepHitsKept = 4096;
     static constexpr u64 kGivenWaitUs = 250'000;
     std::vector<std::pair<u64, s32>> step_hits_;
@@ -3030,6 +3054,9 @@ private:
             return;
         }
         const s32 old = r.Get<s32>(value->first + 8).value_or(-1);
+        // An enemy (a boss too) is never written (the owner's native rule): its life changes only through its
+        // game's own damage step (the replayed hit) or its own Life step (patch 0007); else the change is lost.
+        const bool native_only = w.direct || NativeOnly(w.address);
         if (w.hurt > 0 && replay_ && !w.direct) {
             u64 player = 0;
             for (const auto& [a, known] : names_) {
@@ -3056,7 +3083,7 @@ private:
                     h.from = *w.from;
                 }
                 TheMover().AddHit(h);
-                return;  // the game takes the life; Sync writes it after 400 ms if not
+                return;  // the game takes the life; after 400 ms the rest goes to its Life step (below)
             }
         }
         bool stepped = false;  // (Hookshot: the game's Life step is ours to use, the damage field is not)
@@ -3066,18 +3093,27 @@ private:
         // thread (CoopActorEvents::LifeTable), so the game clamps it, reacts
         // and runs its own death. A hit still waiting from an earlier write
         // (the actor's step did not run: asleep, paused) is taken back and
-        // the life written directly, so nothing is dealt twice.
+        // the life written directly, so nothing is dealt twice; an enemy's is
+        // given again with the new one (this fall already holds it), never written.
         // The damage field is left alone then: the step reads it into the
         // sum it tells us, and it would come back as a hit of this game's.
         stepped = CoopActorEvents::LifeStepSeen().load(std::memory_order_relaxed);
         if (stepped && old >= 0 && (w.hurt > 0 || w.life < old)) {
             const auto table = r.Ptr(w.address + kActorComponents);
             const auto life = table ? r.Ptr(*table + kComponentLife) : std::nullopt;
+            if (life && native_only && w.hurt <= 0 && !ReplaySeen(r, *life)) {
+                // Our replayed hit still waits for this enemy's own damage step (asleep, paused): it takes that
+                // hit itself when it runs, so the same fall is not given a second time.
+                LOG_INFO(Core, "coop: objects: share life {:#x} '{}': its damage step has not seen our replayed hit "
+                               "yet: nothing given (life {}, owner's {})",
+                         w.address, NameOf(w.address), old, w.life);
+                return;
+            }
             if (life) {
                 auto& steps = CoopActorEvents::TheLifeTable();
                 const s32 stale = steps.Take(*life);
-                const s32 amount = w.hurt > 0 ? w.hurt : old - w.life;
-                if (stale == 0 && steps.Give(*life, amount)) {
+                const s32 amount = w.hurt > 0 ? w.hurt + (native_only ? stale : 0) : old - w.life;
+                if ((stale == 0 || native_only) && steps.Give(*life, amount)) {
                     LOG_INFO(Core, "coop: objects: share {} {:#x}: {} through the game's Life step at life {} (to {})",
                              w.hurt > 0 ? "hurt" : "life", w.address, amount, old, w.life);
                     if (w.hurt <= 0) {
@@ -3087,7 +3123,7 @@ private:
                     }
                     return;
                 }
-                if (stale != 0) {
+                if (stale != 0 && !native_only) {
                     // (its step did not run: asleep or paused, or one of the
                     // step's two paths that skip the sum; the name says which actors)
                     LOG_INFO(Core, "coop: objects: {:#x} '{}': {} given earlier was never taken by its Life step",
@@ -3095,7 +3131,7 @@ private:
                 } else if (!life_table_full_said_) {
                     life_table_full_said_ = true;
                     LOG_WARNING(Core, "coop: objects: no room to give a hit to the game's Life step ({:#x} '{}'): "
-                                      "life is written directly until the next scene",
+                                      "until the next scene an enemy's is lost, anything else's life written",
                                 w.address, NameOf(w.address));
                 }
                 if (w.direct) {
@@ -3109,6 +3145,14 @@ private:
         if (w.direct) {
             LOG_INFO(Core, "coop: objects: test kill {:#x}: no game Life step here (patch 0007): nothing written",
                      w.address);
+            return;
+        }
+        if (native_only) {
+            // (no Life step here, or it could not take it: the hit is lost; never a write of ours)
+            ++lives_lost_;
+            LOG_INFO(Core, "coop: objects: share {} {:#x} '{}': not taken by its game's own steps: its life stays "
+                           "{} (owner's {}; {} lost so far)",
+                     w.hurt > 0 ? "hurt" : "life", w.address, NameOf(w.address), old, w.life, lives_lost_);
             return;
         }
         if (w.hurt > 0 && !stepped) {
