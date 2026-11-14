@@ -15,9 +15,10 @@ wait 300
 press A
 wait 2400
 mark after
-place 5.45 108.9 6.15
+place 4.4 108.9 5.1       # 1.5 m behind its front spot, on the line from 3.5 4.2 (known floor)
 wait 240
-toward 6.51 7.25 10       # face the chest
+goto 5.45 6.15 0.35 300   # to its front: the walk teaches the runner the camera's angle
+toward 6.51 7.25 20       # face it (a walk into it). One 10-tick push before chest-lid-b left Link facing away: B never opened it
 mark placed
 press A
 wait 60
@@ -32,11 +33,10 @@ wait 120
 press B
 wait 600
 mark opened
-wait 900                  # A's a-look, a-look2
+wait 600                  # A's a-look, a-look2
 mark b-look2
-place 3.5 108.9 4.2       # out of A's way while A tries the chest
+place 7.57 108.9 8.35     # out of A's way (behind the chest) while A tries it
 wait 240
-toward 6.51 7.25 10
 wait 60
 wait 600
 wait 120
@@ -45,9 +45,9 @@ mark b-try
 place -29 117.6 0         # room 3, as A
 wait 600
 mark far
-place 5.45 108.9 6.15
+place 4.4 108.9 5.1
 wait 240
-toward 6.51 7.25 10
+goto 5.0 5.6 0.25 120
 wait 360
 mark back
 wait 300
