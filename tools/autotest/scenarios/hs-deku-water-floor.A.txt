@@ -31,8 +31,10 @@
 #    follow the floor; shots show B standing on it. B's log: one "moved by another player" per move of A's,
 #    not a run of them (jitter). FAIL (B falls or shakes): keep both logs; the fix is then sharing only the
 #    switch and letting each game move its own floor.
-# deku-test run (2026-11-14): no WaterLevel 0 -> 1: placed at 75.8 A sank to 74.39 (on the switch), 'hold A' brought
-# A back to the surface; the switch never reported pressed. Next: try a dive from 2 m away (stick + hold A).
+# deku-test runs (2026-11-14): STILL BLOCKED: no try pressed the dive switch (Obj_DiveSwitch_A_01, top at -25.63 74.25
+# 40.62; its AI is a step switch: CheckPlayerOn). Dives ('hold A', key E) stop 0.14-0.4 m over its top (y 74.39-74.64);
+# swimming along the bottom drifted 2 m off; a drop from 4 m over it with A held reached 74.60. Next: how the game
+# expects a child to press it (the remake's own walkthrough, or the switch's ActorParam sensor size).
 # deku-test (2026-11-14, Longshot rc.3): clearing HavePlayedEvent alone does not start anything. The rooms'
 # logic (romfs Logic/InsideTheDekuTree_Level_Room_*.logic.module.ainb) reads room flags when the room loads:
 #   compass room D: the event's asker (EventRequestActor_641b) is deleted while RoomD_StepSwitch_On_01 (0x6fb4f455)

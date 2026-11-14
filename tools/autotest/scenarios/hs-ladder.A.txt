@@ -20,8 +20,11 @@
 #   copy there), or later runs start with the ladder not played.
 # On Hookshot the "#! start" line below checks nothing (only the emulator's runner reads it); the
 #   scripts' own waits cover the load.
-# deku-test run (2026-11-14): no hit: A's slingshot aims at the wall by the chest, never at the eye switch
-# (shot aim3). Next: place A on B's floor facing the eye (-35.6 114.3 10.7) and aim up from there.
+# deku-test runs (2026-11-14, 0.11 edf277c4): the setup WORKS (groups-20261114-053933 and -055221): A's 1st aimed shot
+# (right stick 9 up, 3 left under ZR) hits the eye, A 'get_bool(0xb3a4fe84) = 1 (was 0)', B 'started by our room's
+# asker at -37.5 117.8 12.5' (result 1) within 1 s. SYNC FAILS: A's ladder falls into a bridge (A-late), B's stays
+# up at the top of the column (b-view and b-ladder are the same): the event plays in B, its room does not move,
+# as hs-deku-platforms (deku-sync-fix-b).
 # deku-test (2026-11-14, Longshot rc.3): clearing HavePlayedEvent alone does not start anything. The rooms'
 # logic (romfs Logic/InsideTheDekuTree_Level_Room_*.logic.module.ainb) reads room flags when the room loads:
 #   compass room D: the event's asker (EventRequestActor_641b) is deleted while RoomD_StepSwitch_On_01 (0x6fb4f455)

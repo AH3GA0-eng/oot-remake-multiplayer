@@ -26,6 +26,9 @@
 # deku-test run (2026-11-14): still NO event: the torch is lit at load. The plate's BootUp comes from an autogen
 # bool (OperateGameDataAllocAutogenGameData __GUIDHash 72078894 in Room_E_Prefab_e259) whose save hash is not
 # known yet (not the plate's Hash, not in the 64-bit key set). Needs that hash, or a save from before the room.
+# 2nd look: GameDataList's Bool list is sorted by name; the unnamed bools in the Deku range are 0x76b5643f,
+# 0x031c8de5 0x478d1207 0x96aa0977 0xa2fee6f0 (all 0 in the saves) and 0x9de68609 0xb469eee8 (1; cleared in a run:
+# the torch still lit, no event, groups-20261114-053242). Every progress.sav on this PC (680) is past the Deku Tree.
 # deku-test (2026-11-14, Longshot rc.3): clearing HavePlayedEvent alone does not start anything. The rooms'
 # logic (romfs Logic/InsideTheDekuTree_Level_Room_*.logic.module.ainb) reads room flags when the room loads:
 #   compass room D: the event's asker (EventRequestActor_641b) is deleted while RoomD_StepSwitch_On_01 (0x6fb4f455)
