@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include "coop/protocol/messages.hpp"
 #include "coop_colors.h"
 #include "coop_look.h"
 #include "coop_look_paint.h"
@@ -700,4 +701,16 @@ TEST_CASE("look: a look chosen with the menu open is shown on your own Link at o
     CHECK(applied[0] == red);
     CHECK(CoopLook::Worn() == red);
     CoopLook::Init(Look{}, nullptr);
+}
+
+TEST_CASE("look: your own Link wears your slot colour when you chose none") {
+    // None chosen ("by player number"): the slot colour the others see you in, once the number is known.
+    CHECK(CoopLook::OwnTunic(std::nullopt, 0) == std::nullopt);   // before the welcome, or co-op off: the game's own
+    CHECK(CoopLook::OwnTunic(std::nullopt, 1) == coop::protocol::slot_color(1));
+    CHECK(CoopLook::OwnTunic(std::nullopt, 2) == coop::protocol::slot_color(2));   // a rejoin with another number
+    CHECK(CoopLook::TunicName(CoopLook::OwnTunic(std::nullopt, 1)) == "blue");
+    CHECK(CoopLook::TunicName(CoopLook::OwnTunic(std::nullopt, 2)) == "red");
+    // A chosen colour wins over the number.
+    CHECK(CoopLook::OwnTunic(0x123456u, 2) == 0x123456u);
+    CHECK(CoopLook::OwnTunic(0x123456u, 0) == 0x123456u);
 }
