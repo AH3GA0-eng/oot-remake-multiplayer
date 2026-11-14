@@ -1482,12 +1482,16 @@ void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint6
     if (const auto r = slot.steps.Step(read, drawn, now_ms)) {
         // jitter-2's proof line: 'uneven' near 0 is even steps; 'game moved' is what the game
         // itself moved it between our writes (a second writer).
-        char buf[200];
+        char raw_text[16] = "n/a";  // the raw-time steps did not report this frame
+        if (before) {
+            std::snprintf(raw_text, sizeof(raw_text), "%.2f", before->uneven);
+        }
+        char buf[220];
         std::snprintf(buf, sizeof(buf),
                       " steps: %d frames (%d moving), mean %.3f m, uneven %.2f (worst %.2f; raw frame time "
-                      "%.2f), frame %.1f ms, game moved %.3f m (max %.3f)",
-                      r->frames, r->moving, r->mean_step, r->uneven, r->uneven_max,
-                      before ? before->uneven : -1.0f, cadence_.PeriodMs(), r->game_moved, r->game_moved_max);
+                      "%s), frame %.1f ms, game moved %.3f m (max %.3f)",
+                      r->frames, r->moving, r->mean_step, r->uneven, r->uneven_max, raw_text,
+                      cadence_.PeriodMs(), r->game_moved, r->game_moved_max);
         Say(who + buf);
     }
     Pose(slot, guest, drawn, &target.rotation, now_ms);

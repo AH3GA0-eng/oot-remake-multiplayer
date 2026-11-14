@@ -220,6 +220,37 @@ TEST_CASE("cadence: the same frame twice, a hitch and a clock going back") {
     CHECK(c.At(500) == 500.0);    // back: afresh
 }
 
+TEST_CASE("cadence: slow even frames stay smooth, a resync never goes back") {
+    for (const std::uint64_t frame_ms : {143ull, 250ull}) {  // 7 and 4 fps
+        CAPTURE(frame_ms);
+        CoopFollow::Cadence c;
+        double last = c.At(1000);
+        for (std::uint64_t i = 1; i < 40; ++i) {
+            const std::uint64_t jitter = (i % 3) * 20;  // uneven too
+            const double t = c.At(1000 + i * frame_ms + jitter);
+            if (i > 10) {
+                CHECK(t - last > 0.6 * static_cast<double>(frame_ms));
+                CHECK(t - last < 1.4 * static_cast<double>(frame_ms));
+            }
+            last = t;
+        }
+    }
+    // Slow frames, then a burst of fast ones, a hitch and slow again: the time never goes back.
+    CoopFollow::Cadence c;
+    std::uint64_t now = 1000;
+    double last = c.At(now);
+    const std::uint64_t gaps[] = {140, 150, 145, 10, 8, 9, 7, 400, 33, 33, 200, 5, 140, 6, 6, 6, 6, 300};
+    for (int round = 0; round < 5; ++round) {
+        for (const std::uint64_t g : gaps) {
+            now += g;
+            const double t = c.At(now);
+            CHECK(t >= last);
+            CHECK(t <= static_cast<double>(now) + 2.5 * 150.0);
+            last = t;
+        }
+    }
+}
+
 TEST_CASE("follow: the owner's uneven frames: even steps on the Cadence time, not on the raw time") {
     const auto raw = Run(false);
     const auto even = Run(true);

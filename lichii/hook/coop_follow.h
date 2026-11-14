@@ -132,6 +132,8 @@ private:
 inline constexpr double kPull = 0.1;
 inline constexpr double kPeriodBlend = 0.1;
 inline constexpr double kResyncMs = 150.0;
+inline constexpr double kResyncFrames = 2.5;   // or this many mean frames, if more
+inline constexpr double kSlowestMs = 500.0;    // a first frame time up to this is taken
 inline constexpr std::uint64_t kSameFrameMs = 3;  // game frames are further apart than this
 
 class Cadence {
@@ -149,14 +151,18 @@ public:
         }
         const double dt = now - static_cast<double>(raw_ms_);
         raw_ms_ = now_ms;
-        if (dt > kResyncMs) {
-            return smooth_ms_ = now;  // a hitch: the mean frame time stays
+        // review-jitter2: the limit grows with the frame time, so slow but even frames (the
+        // owner's 7 fps) stay smooth; a first frame up to kSlowestMs sets the frame time.
+        const double base = period_ms_ != 0.0 ? period_ms_ : (dt <= kSlowestMs ? dt : 0.0);
+        const double limit = std::max(kResyncMs, kResyncFrames * base);
+        if (dt > limit) {
+            return Resync(now);  // a hitch: the mean frame time stays
         }
         period_ms_ = period_ms_ == 0.0 ? dt : period_ms_ + (dt - period_ms_) * kPeriodBlend;
         const double guess = smooth_ms_ + period_ms_;
         const double off = now - guess;
-        if (off > kResyncMs || off < -kResyncMs) {
-            return smooth_ms_ = now;
+        if (off > limit || off < -limit) {
+            return Resync(now);
         }
         smooth_ms_ = std::max(guess + off * kPull, smooth_ms_);
         return smooth_ms_;
@@ -164,6 +170,10 @@ public:
     double PeriodMs() const { return period_ms_; }
 
 private:
+    // From the real time again, never back (review-jitter2: a step back made the Follower start
+    // afresh, one frame unsmoothed); a time ahead of the real one waits for it.
+    double Resync(double now) { return smooth_ms_ = std::max(now, smooth_ms_); }
+
     bool have_ = false;
     std::uint64_t raw_ms_ = 0;
     double smooth_ms_ = 0.0;
