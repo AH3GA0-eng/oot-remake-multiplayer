@@ -1,0 +1,72 @@
+# hs-map-opener (Hookshot, map-get-b, issue 146): does the OPENER's own map show after the Deku Tree map chest?
+# Owner's playtest 2026-11-14: the opener got the map, but saw it on neither the minimap nor the Map page,
+# although its saves kept DungeonInfo.InsideTheDekuTree.IsGetMap (bool 0x89787395) = 1 and EnteredFloorBit
+# (UInt 0x5c6c21c1) = 31, and co-op wrote no flag in it. Here A opens the chest; B only idles.
+# Saves: a pre-Deku save (IsGetMap 0), e.g. the owner's '1. Deku Tree' copied into both pairs' autotest-save.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-map-opener -Lane 1 -Server <protocol-12 server>
+#      and, if the map is missing, again with -NoCoop (the game's own behaviour, no session).
+# Look at: "got" (the get scene), "mini-room" (the minimap, same room), "panel" / "panel-r1" / "panel-r2" (the
+# Minus panel's pages: the Map page shows the Deku Tree floors), "mini-room2" and "panel2" (after a room change).
+# The log: "bool 0x89787395" 0 -> 1, no "coop: map-drop:" line.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_BOOL=89787395
+#! timeout 420
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark mini-before
+place 4.4 108.9 5.1       # 1.5 m behind the chest's front spot (hs-chest-other's B)
+wait 240
+goto 5.45 6.15 0.35 300   # to its front: the walk teaches the runner the camera's angle
+toward 6.51 7.25 20       # face it
+mark placed
+press A
+wait 60
+press A
+wait 60
+press A
+wait 600                  # the get scene
+mark got
+press A
+wait 120
+press A
+wait 120
+press B
+wait 600
+mark mini-room
+press MINUS
+wait 120
+mark panel
+press R
+wait 90
+mark panel-r1
+press R
+wait 90
+mark panel-r2
+press B
+wait 240
+place -29 117.6 0         # room 3: a room load
+wait 900
+mark mini-room2
+press MINUS
+wait 120
+mark panel2
+press R
+wait 90
+mark panel2-r1
+press R
+wait 90
+mark panel2-r2
+press B
+wait 240
+mark end

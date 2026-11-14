@@ -1632,3 +1632,37 @@ TEST_CASE("flag watcher: a capped rise whose put-back fails is still never sent,
   CHECK(p.stats().max_caps_kept == 1);
   CHECK(host_game.get(kMaxLife) == 16u);
 }
+
+// map-get review (822e9828): a rise past the cap from below it is put back to the CAP, and that put-back
+// value is what the watcher has seen: the next frame sends nothing (seeing the old value made it send
+// the rise to the cap).
+TEST_CASE("flag watcher: a capped rise from below the cap puts the cap back and sends nothing after") {
+  constexpr FlagKey kMaxLife{0xfbe01da1u, 0};
+  FakeStore game;
+  game.values[kMaxLife] = entry(kMaxLife, 12, proto::FlagKind::int32);
+  ItemFlagStore store(game);
+  FlagWatcher p(SharedFlags({kMaxLife}), FlagRole::player);
+  p.frame(store);
+  p.cap_max(kMaxLife, 16);
+  game.values[kMaxLife] = entry(kMaxLife, 20, proto::FlagKind::int32);  // two containers at once
+  CHECK(entries(p.frame(store)).empty());
+  CHECK(game.get(kMaxLife) == 16u);
+  CHECK(p.stats().max_caps_kept == 1);
+  for (int i = 0; i < 3; ++i) CHECK(entries(p.frame(store)).empty());  // the cap is not a rise of ours
+  CHECK(p.stats().max_caps_kept == 1);
+}
+
+// map-get review (822e9828): after a doubled chest's gain is put back, the watcher has seen the put-back
+// value, so the frames after send nothing and take nothing back again.
+TEST_CASE("doubled chest: after the put-back, the next frames send nothing") {
+  TokenStore store = token_game();
+  FlagWatcher w(token_shared(), FlagRole::player);
+  w.frame(store);
+  w.expect_doubled_gain();
+  store.tokens(7);  // +2 in one frame
+  CHECK(entries(w.frame(store)).empty());
+  CHECK(store.tokens() == 5);
+  for (int i = 0; i < 3; ++i) CHECK(entries(w.frame(store)).empty());
+  CHECK(w.stats().doubled_gains == 1);
+  CHECK(store.tokens() == 5);
+}
