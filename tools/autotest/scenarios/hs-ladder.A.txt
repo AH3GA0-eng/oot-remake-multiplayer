@@ -67,29 +67,45 @@ toward -35.6 10.7 20      # face the eye switch across the room (-35.6 114.3 10.
 press ZL 10               # nothing to target: the camera goes behind Link, looking at the eye
 wait 60
 mark trap
-# deku-test 3rd run: in aim mode the left stick walks Link; the right stick moves the aim only while ZR is still
-# down (between holds the aim resets to the centre, 150 px under the eye). Each try: draw, steer, shoot (let go).
+# deku-test 4th run: the right stick moves the aim while ZR is down, +y up. 10 ticks of 1.0 up put the aim
+# 60 px right of the eye and a little above it (shot aim1); 20 ticks went far over. Tries around that:
 hold ZR 30
-rstick 0 1.0 10 ZR
-hold ZR 10 aim1
+rstick 0 1.0 9 ZR
+rstick -1.0 0 3 ZR
+hold ZR 12 aim1
 wait 90
 mark shot1
 hold ZR 30
-rstick 0 1.0 20 ZR
-hold ZR 10 aim2
+rstick 0 1.0 9 ZR
+rstick -1.0 0 4 ZR
+hold ZR 12 aim2
 wait 90
 mark shot2
 hold ZR 30
-rstick 0 -1.0 10 ZR       # in case up is inverted
-hold ZR 10 aim3
+rstick 0 1.0 8 ZR
+rstick -1.0 0 3 ZR
+hold ZR 12 aim3
 wait 90
 mark shot3
 hold ZR 30
-rstick 0 -1.0 20 ZR
-hold ZR 10 aim4
+rstick 0 1.0 8 ZR
+rstick -1.0 0 4 ZR
+hold ZR 12 aim4
 wait 90
 mark shot4
-hold ZL+ZR 60 aim5        # Z-target lock (the eye shows a target mark), then shoot
+hold ZR 30
+rstick 0 1.0 9 ZR
+rstick -1.0 0 2 ZR
+hold ZR 12 aim5
+wait 90
+mark shot5
+hold ZR 30
+rstick 0 1.0 10 ZR
+rstick -1.0 0 4 ZR
+hold ZR 12 aim6
+wait 90
+mark shot6
+hold ZL+ZR 60 aim7        # Z-target lock (the eye shows a target mark), then shoot
 wait 120
 press B
 mark ladder
