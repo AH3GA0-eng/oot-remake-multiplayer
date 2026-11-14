@@ -97,7 +97,9 @@ FOOTSTEP_SUFFIX = ".game__component__SoundFootStepParam.bgyml"
 # Player) and gets a PerceptionEmitter of its own: the player's file without its AdvancedEmitters (AimTerror,
 # worked by the player's own aiming code). Every perception emitter in the game has a Physics component; the
 # puppet gets the one of InterestSpotActor, a logic-only emitter whose controller set is empty (no body: the
-# puppet still collides with nothing). `--no-perception` builds the pack as before.
+# puppet still collides with nothing). OFF by default for 0.11 (review-boss-sync must-fix): the castle and
+# Gerudo guards also target Player, so with it they would see a puppet and catch this game's Link. `--perception`
+# builds it (a test switch until the guards are kept off the puppets).
 PERCEPTION_SOURCE = "InterestSpotActor"
 PERCEPTION_PHYSICS = "Component/Physics/InterestSpotActor.engine__component__PhysicsParam.bgyml"
 PERCEPTION_CONTROLLERS = "Phive/ControllerSetParam/InterestSpotActor.phive__ControllerSetParam.bgyml"
@@ -414,6 +416,16 @@ def perception_members(source_members):
     return {p: source_members[p] for p in paths}
 
 
+def puppet_emitter(members, src, actor):
+    """The puppet's own emitter param: the player's `src` without EMITTER_DROP. (path, bytes, src)."""
+    if src not in members:
+        raise BuildError(f"the player's perception emitter {src} is not in the pack")
+    own = {k: v for k, v in byml.loads(members[src]).items() if k not in EMITTER_DROP}
+    if "$parent" in own:
+        raise BuildError(f"the player's perception emitter {src} has a $parent")
+    return emitter_path(actor), byml.dumps(own), src
+
+
 def add_perception(doc, player_components, members, actor, files, perception):
     """Makes the puppet's ActorParam `doc` perceivable (PERCEPTION_SOURCE): the player's AffiliationRef,
     the puppet's own emitter param and the body-less physics. Returns the emitter's (path, bytes, the
@@ -422,12 +434,7 @@ def add_perception(doc, player_components, members, actor, files, perception):
     src = ref_to_member(player_components.get("PerceptionEmitterRef"))
     if not aff or not src:
         raise BuildError("the player's ActorParam has no AffiliationRef or PerceptionEmitterRef")
-    if src not in members:
-        raise BuildError(f"the player's perception emitter {src} is not in the pack")
-    own = {k: v for k, v in byml.loads(members[src]).items() if k not in EMITTER_DROP}
-    if "$parent" in own:
-        raise BuildError(f"the player's perception emitter {src} has a $parent")
-    path, data = emitter_path(actor), byml.dumps(own)
+    path, data, _ = puppet_emitter(members, src, actor)
     doc["Components"]["AffiliationRef"] = aff
     doc["Components"]["PerceptionEmitterRef"] = "?" + path
     doc["Components"]["PhysicsRef"] = "?" + PERCEPTION_PHYSICS
@@ -875,7 +882,7 @@ def write_look_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows, slots, l
 
 def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None,
           tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False, title_rows=False,
-          look_slots=look_items.SLOTS, perception=True):
+          look_slots=look_items.SLOTS, perception=False):
     """`tunics`: the tunic colours to make puppets of (puppet_pack.tunic.COLORS; each is a model,
     a tile and an actor per age, CoopPuppet_<age>_<Colour>). `test_tunic`: give the plain puppets
     that colour too (a test of the colours with a hook that knows none).
@@ -885,7 +892,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
     SLink user for the puppets' sounds (SLINK_DIR). `basic_xlink`: the shared ActorBasic XLink param
     instead of the player's (test switch, the pack before puppet-looks). `look_slots`: how many
     players' puppets can wear gear colours of their own (puppet_pack.look_items; 0: none).
-    `perception`: False builds the puppets as no target of the game's perception (PERCEPTION_SOURCE)."""
+    `perception`: True makes the puppets a target of the game's perception (PERCEPTION_SOURCE; off for 0.11)."""
     heaps = heaps or {}
     if not os.path.isfile(os.path.join(romfs, "Pack", "ZsDic.pack.zs")):
         raise BuildError(f"{romfs} does not look like the game's romfs (no Pack/ZsDic.pack.zs)")
@@ -1001,8 +1008,8 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
                                     len(data) + PACK_SIZE_MARGIN))
         emitter = None
         if emitter_path(actor) in names:
-            comps = flatten_actor_param(members, player)
-            path, data, src = add_perception({"Components": {}}, comps, members, actor, {}, seen_by)
+            src = ref_to_member(flatten_actor_param(members, player).get("PerceptionEmitterRef"))
+            path, data, src = puppet_emitter(members, src, actor)
             # Sized as the player's emitter param it stands in for, as the footstep param.
             em_size = max((table.get(src) or 0) + max(0, len(data) - len(members[src])), len(data) + PACK_SIZE_MARGIN)
             table.add_new(path, em_size)
@@ -1171,8 +1178,8 @@ def main(argv=None):
                          f"(default: all, {','.join(tunic.COLORS)})")
     ap.add_argument("--test-tunic", metavar="COLOUR",
                     help="give the plain puppets this tunic colour too (a test with a hook that knows no colours)")
-    ap.add_argument("--no-perception", action="store_true",
-                    help="puppets the game's perception does not see (no enemy targets them; the pack before boss-sync-2)")
+    ap.add_argument("--perception", action="store_true",
+                    help="test switch: puppets the game's perception sees (enemies target them; guards would too)")
     ap.add_argument("--no-sound", action="store_true",
                     help="build the puppets without Link's sounds (the pack before issue 131)")
     ap.add_argument("--seed-trail", action="store_true",
@@ -1246,7 +1253,7 @@ def _main_build(a, romfs, hud_reader=None):
               sound_user=a.sound_user, tunics=tunics, test_tunic=a.test_tunic,
               stand_in_effects=a.seed_trail and not a.no_seed_trail, basic_xlink=a.basic_xlink,
               title_rows=a.title_rows, look_slots=max(0, min(a.look_slots, look_items.MAX_SLOTS)),
-              perception=not a.no_perception)
+              perception=a.perception)
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

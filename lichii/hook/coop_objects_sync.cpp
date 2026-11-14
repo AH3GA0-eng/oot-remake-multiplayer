@@ -1576,6 +1576,21 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     decider_ = DeciderOf(self, now_us);
     std::erase_if(eggs_, [now_us](const Egg& e) { return now_us - e.at > kHatchWindowUs; });
     std::erase_if(copy_eggs_, [now_us](const Egg& e) { return now_us - e.at > kHatchWindowUs; });
+    // Our own hatchling that no owner's took in time (its egg never hatched
+    // there): ours, shared as Hatch shares one, so it is not left unowned.
+    for (auto& [address, o] : objects_) {
+        if (o.own_hatch_us != 0 && now_us - o.own_hatch_us > kOwnHatchWaitUs) {
+            o.own_hatch_us = 0;
+            o.id = {proto::ObjectKind::made, self, ++made_counter_};
+            owners_[o.id] = {self, 0};
+            proto::ObjectSpawn spawn;
+            spawn.id = o.id;
+            spawn.actor = o.name;
+            spawn.state = StateOf(o, now_us);
+            send.emplace_back(std::move(spawn));
+            notes_.emplace_back("no owner's hatchling came for ours, shared as ours: " + o.name);
+        }
+    }
     std::set<std::uint64_t> refused;
     std::sort(fresh.begin(), fresh.end(), [](const Seen* a, const Seen* b) {
         return std::tie(a->name, a->position[0], a->position[2]) <

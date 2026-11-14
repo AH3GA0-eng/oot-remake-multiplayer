@@ -3565,14 +3565,27 @@ TEST_CASE("objects: a larva of ours far from any copy egg is not the owner's (is
     CHECK(b.IdOf(0x300)->kind == proto::ObjectKind::placed);
 }
 
-TEST_CASE("objects: our own larva out of a copy egg waits only so long for the owner's (issue 178)") {
+TEST_CASE("objects: our own larva out of a copy egg waits only so long for the owner's, then is shared as ours (issue 178)") {
     Sync b;
     Tick(b, 0, {Enemy(0x100, 0, 1, 0.0f, kEgg)}, 2, kDeku);
     Own(b, *b.IdOf(0x100), 1, 1);
-    Tick(b, 100 * kMs, {Enemy(0x100, 0, 1, 0.0f, kEgg), Enemy(0x300, 0, 1, 1.0f, kLarva)}, 2, kDeku);
-    const std::uint64_t late = 100 * kMs + Sync::kOwnHatchWaitUs + kMs;
+    Tick(b, 100 * kMs, {Enemy(0x100, 0, 1, 0.0f, kEgg)}, 2, kDeku);  // the owner is known
+    for (std::uint64_t t = 200; t <= 300; t += 100) {
+        Tick(b, t * kMs, {Enemy(0x100, 0, 1, 0.0f, kEgg), Enemy(0x300, 0, 1, 1.0f, kLarva)}, 2, kDeku);
+    }
+    REQUIRE(b.IdOf(0x300));
+    CHECK(b.IdOf(0x300)->kind == proto::ObjectKind::placed);
+    const std::uint64_t late = 300 * kMs + Sync::kOwnHatchWaitUs + kMs;
+    const auto shared = All<proto::ObjectSpawn>(Tick(b, late, {Enemy(0x300, 0, 1, 1.0f, kLarva)}, 2, kDeku));
+    REQUIRE(shared.size() == 1);
+    CHECK(shared[0].actor == kLarva);
+    CHECK(shared[0].id.kind == proto::ObjectKind::made);
+    CHECK(shared[0].id.maker == 2);
+    CHECK(*b.IdOf(0x300) == shared[0].id);
+    CHECK(b.OwnerOf(shared[0].id) == 2);
+    // The owner's larva after that is made as any other (ours is no longer waiting).
     b.Receive(OwnersLarva(1.0f));
-    Tick(b, late, {Enemy(0x300, 0, 1, 1.0f, kLarva)}, 2, kDeku);
+    Tick(b, late + 100 * kMs, {Enemy(0x300, 0, 1, 1.0f, kLarva)}, 2, kDeku);
     CHECK(b.Creates().size() == 1);
 }
 
