@@ -1,7 +1,8 @@
 // The Mods tab of Hookshot's menu, right after Multiplayer (docs/mods.md "The
-// Mods tab"): every mod as a row with its switch, its own page (on/off, up and
-// down, its settings), what needs a restart, how this game's mods differ from
-// the co-op host's, and the randomizer's status. The tab's logic (Tab) works
+// Mods tab"): every mod as a row with its switch (the randomizer's row: its
+// name and a Settings button), its own page (on/off, up and down, its
+// settings; the randomizer's status on its page), what needs a restart, and
+// how this game's mods differ from the co-op host's. The tab's logic (Tab) works
 // on a Loader and two lines of text, so the tests drive it in a temporary
 // mods folder; the module's part (Page, Input, Key, Char) hands it to
 // Hookshot through hos_coop_menu.h as tab 2 (after Multiplayer and the Lobby).
@@ -27,7 +28,7 @@ public:
         CoopMods::Loader* loader = nullptr;
         // Co-op's word on the mods (CoopModShare::Now): lines shown on the list. Empty: none.
         std::function<std::vector<std::string>()> coop;
-        // The randomizer's last line (CoopRando::Rando::Status). Empty: none.
+        // The randomizer's last line (CoopRando::Rando::Status), on its page. Empty: none.
         std::function<std::string()> rando;
     };
     explicit Tab(Sources sources);
