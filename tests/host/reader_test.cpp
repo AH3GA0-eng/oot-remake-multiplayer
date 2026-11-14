@@ -499,7 +499,7 @@ TEST_CASE("host reader: what the player wears") {
                     {addr::kEquipOcarina, "Item_Ocarina_Time"}});
     put_user(m, l);
     put_equipped(m, 0, 40, 4, 0x2);  // sword drawn
-    put_equipped(m, 2, 41, 4, 0x0);  // shield on the back
+    put_equipped(m, 2, 41, 6, 0x0);  // a carried piece kept away (state 6)
     put_equipped(m, 4, 42, 8, 0x2);  // drawn, but its actor is gone
     put_equipped(m, 5, 43, 4, 0x2);
     m.put_u32(kEquipHolders + 0x100 * 5 + 0x48, 99);  // a stale holder
@@ -677,6 +677,43 @@ TEST_CASE("host reader: what the player wears") {
     CHECK(reader.read_equipment()->drawn == 0x00);
     m.put_u32(kEquipActors + 0x2c, 4);
     CHECK(reader.read_equipment()->drawn == 0x00);
+  }
+  SUBCASE("a held item the game keeps away is put away, its request missed or not") {
+    // held-fix: the slingshot stayed in the puppet's hand after the sword
+    // came out, as its put-away request passed between two readings.
+    put_user(m, l);
+    const std::uint64_t request = kUser + 0x13bc + 3;
+    const std::uint64_t held_state = kEquipActors + 0x1000 * 3 + 0x2c;
+    put_equipped(m, 3, 50, 6, 0x4);  // the slingshot, put away
+    CHECK(reader.read_equipment()->drawn == 0x00);
+    m.put_u8(request, 0x2);  // aimed: the request comes while it is still kept away
+    CHECK(reader.read_equipment()->drawn == 0x08);
+    m.put_u32(held_state, 4);  // in the hand
+    m.put_u8(request, 0);
+    CHECK(reader.read_equipment()->drawn == 0x08);
+    // The sword comes out: slot 0 drawn, the slingshot's put-away request unseen.
+    put_equipped(m, 0, 40, 4, 0x2);
+    m.put_u32(held_state, 6);
+    CHECK(reader.read_equipment()->drawn == 0x01);
+    m.put_u8(kUser + 0x13bc, 0);
+    CHECK(reader.read_equipment()->drawn == 0x01);
+    // The sword is no carried piece: its state 6 changes nothing.
+    m.put_u32(kEquipActors + 0x2c, 6);
+    CHECK(reader.read_equipment()->drawn == 0x01);
+    m.put_u32(kEquipActors + 0x2c, 4);
+    // Aimed again, the draw request cleared while it is still kept away:
+    // put away for that reading, then out once the game shows it (state 4).
+    m.put_u8(kUser + 0x13bc, 0x4);  // the sword put away
+    m.put_u8(request, 0x2);
+    CHECK(reader.read_equipment()->drawn == 0x08);
+    m.put_u8(kUser + 0x13bc, 0);
+    m.put_u8(request, 0);
+    CHECK(reader.read_equipment()->drawn == 0x00);
+    m.put_u32(held_state, 4);
+    CHECK(reader.read_equipment()->drawn == 0x08);
+    CHECK(reader.read_equipment()->drawn == 0x08);
+    // The sword is no carried piece: state 4 with the byte 0 keeps it put away.
+    CHECK((*reader.read_equipment()->drawn & 0x01) == 0);
   }
   SUBCASE("readers of different frames share a state") {
     put_user(m, l);

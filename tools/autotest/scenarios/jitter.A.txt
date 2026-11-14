@@ -1,0 +1,39 @@
+#! switches LICHII_COOP_DEBUG_NPC=1
+#! timeout 420
+# jitter (jitter-b, 0.11 release blocker): townspeople copies on B, then A runs past B (puppet on B).
+# Grade from B's log: few 'P1 target jump' lines while A runs, 'share placed' frame sets about
+# 1 a second per copy or less; shots r1..r8 (B's view of A's puppet running).
+mark start
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 1200
+mark arrived
+wait 1500
+place -62.0 98.5 40.0
+wait 300
+mark w1
+wait 30
+mark w2
+wait 30
+mark w3
+wait 300
+stick 0 0.6 60          # walk
+mark r1
+stick 0 0.6 15
+mark r2
+hold LSTICK_UP+A 30     # dash
+mark r3
+hold LSTICK_UP+A 15
+mark r4
+stick 1 0 45            # turn
+mark r5
+stick 0 -1 30           # run back past B
+mark r6
+stick 0 -1 15
+mark r7
+stick -1 0 45
+mark r8
+wait 120
+stick 0 1 90
+stick 0 -1 90
+wait 120
+mark end

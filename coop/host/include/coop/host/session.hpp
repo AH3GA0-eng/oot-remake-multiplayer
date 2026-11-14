@@ -69,6 +69,11 @@ struct SessionSettings {
   // event after the session has handled it (for logging). It may use the
   // client it is given but must not call into the Session.
   std::function<void(const net::Event&, net::Client&)> on_event;
+  // jitter-b: how long ago (steady us) the game ran the frame whose state frame() reads (0: not
+  // known). The player's samples are stamped with that frame's time, not this call's, so a
+  // reading taken some time after its frame gives no uneven step on the other screens.
+  // Empty (tests, the emulator): stamped now, as before.
+  std::function<std::uint64_t()> game_frame_age_us;
 };
 
 // What one frame() did.
@@ -251,6 +256,7 @@ class Session {
   std::vector<Outbound> outbox_;
   std::vector<Inbound> inbox_;
   std::function<void(const net::Event&, net::Client&)> on_event_;
+  std::function<std::uint64_t()> game_frame_age_us_;  // SessionSettings::game_frame_age_us
   bool sharing_ = false;  // set once, before any thread starts
 
   // Guarded by presence_mutex_.

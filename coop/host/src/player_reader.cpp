@@ -247,6 +247,8 @@ std::optional<std::uint8_t> PlayerReader::read_drawn() {
     // As 0x4a33c0: the holder must still hold this id and its actor must
     // not be gone.
     bool live = false;
+    bool kept_away = false;
+    bool carried_out = false;
     if (*id != addr::kEmptyId) {
       if (const auto holder = read_ptr(memory_, slot + addr::kEquipSlotHolder)) {
         const auto holder_id = read_u32(memory_, *holder + addr::kHolderId);
@@ -255,6 +257,10 @@ std::optional<std::uint8_t> PlayerReader::read_drawn() {
             const auto state = read_u32(memory_, *equipment + addr::kActorState);
             live = state && !(*state >= addr::kActorStateGoneFirst &&
                               *state <= addr::kActorStateGoneLast);
+            kept_away = state && *state == addr::kActorStateKeptAway &&
+                        addr::equip_slot_carried(i);
+            carried_out = state && *state == addr::kActorStatePresent &&
+                          addr::equip_slot_carried(i);
           }
         }
       }
@@ -274,6 +280,14 @@ std::optional<std::uint8_t> PlayerReader::read_drawn() {
       memo.drawn = true;
     } else if (*bits & (addr::kEquipRequestAway | addr::kEquipRequestNone)) {
       memo.drawn = false;
+    } else if (*bits == 0 && kept_away) {
+      // No request in flight and the game keeps the piece elsewhere: put
+      // away, also when its put-away request passed unseen.
+      memo.drawn = false;
+    } else if (*bits == 0 && carried_out) {
+      // And the other way: a carried piece the game shows (state 4) is out,
+      // also when its draw request was cleared before the state changed.
+      memo.drawn = true;
     }
     if (memo.drawn) drawn = static_cast<std::uint8_t>(drawn | (1u << i));
   }

@@ -73,6 +73,7 @@
 #include "coop_png.h"
 #include "coop_puppet.h"
 #include "coop_puppet_config.h"
+#include "coop_frame_clock.h"
 #include "coop_runtime.h"
 #include "coop_settings.h"
 #include "coop_svc.h"
@@ -1002,6 +1003,7 @@ void Frame(void* ctx, int site) {
         return;
     }
     if (site == HOS_COOP_SITE_FRAME) {
+        CoopFrameClock::Note();  // jitter-b: the game frame the next present reads (coop_frame_clock.h)
         CoopModsRuntime::Frame();
         CoopPause::Tick();   // the Multiplayer tab's follow-ups, also while the menu is closed
         CoopLook::Frame();   // a look chosen in the pause menu, once it closed

@@ -5,6 +5,7 @@
 // both drawn through Longshot's texture overrides (patch 0020), and the
 // other players' puppets' own copies of the gear (coop_look_share.h) the same way.
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
@@ -268,6 +269,43 @@ std::mutex g_wake_mutex;
 std::condition_variable g_wake;
 bool g_kick = false;   // guarded by g_wake_mutex: a new colour, no need to wait the round out
 bool g_stop = false;   // guarded by g_wake_mutex
+// With no colour chosen ("by player number") your own Link wears your player
+// number's slot colour, the one the others see you in (OwnTunic): the number
+// as the worker last saw it (0: not known, co-op off), and the chosen tunic.
+std::atomic<std::uint8_t> g_number{0};
+std::mutex g_chosen_mutex;
+std::optional<std::uint32_t> g_chosen;   // guarded by g_chosen_mutex
+
+std::uint8_t OwnNumber() {
+    for (const auto& row : CoopHook::PlayerList()) {
+        if (row.self) {
+            return row.number;
+        }
+    }
+    return 0;
+}
+
+// The worker's round: the player number came (welcome) or changed (rejoin),
+// or co-op stopped. With no colour chosen, your own Link's tunic follows it.
+void FollowNumber() {
+    const std::uint8_t number = OwnNumber();
+    if (number == g_number.exchange(number)) {
+        return;
+    }
+    std::optional<std::uint32_t> chosen;
+    {
+        std::lock_guard lock(g_chosen_mutex);
+        chosen = g_chosen;
+    }
+    if (chosen) {
+        return;   // a chosen colour wins
+    }
+    const auto tunic = OwnTunic(chosen, number);
+    LOG_INFO(Core, "coop: look: player number {}: your own Link wears {}", static_cast<int>(number),
+             tunic ? "the slot colour " + ColourText(tunic) : std::string("the game's own colour"));
+    g_wardrobe->Wear(TunicName(tunic));
+    g_wardrobe->Kick();
+}
 
 void Wear(const std::string& name, const CoopLook::Look& look) {
     g_wardrobe->Wear(name);
@@ -298,6 +336,7 @@ void Work() {
         lock.unlock();
         const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
         PaintPuppets(static_cast<std::uint64_t>(ms.count()));   // before their puppets wear the copies
+        FollowNumber();
         g_wardrobe->Step(static_cast<std::uint64_t>(ms.count()));
         g_gear->Step(static_cast<std::uint64_t>(ms.count()));
         g_puppets->Step(static_cast<std::uint64_t>(ms.count()));
@@ -339,7 +378,11 @@ void PaintOwnLink(const Look& look) {
     if (!g_wardrobe || !g_gear) {
         return;   // (before StartModule or after StopModule)
     }
-    Wear(TunicName(look[Part::tunic]), look);
+    {
+        std::lock_guard lock(g_chosen_mutex);
+        g_chosen = look[Part::tunic];
+    }
+    Wear(TunicName(OwnTunic(look[Part::tunic], g_number.load())), look);
 }
 
 void StartModule() {
@@ -387,6 +430,11 @@ void StartModule() {
     // The game started in the settings' colour (the pack's own tiles): the
     // wardrobe looks for that colour's texels too.
     g_wardrobe->Wear(TunicName(worn[Part::tunic]));
+    {
+        std::lock_guard lock(g_chosen_mutex);
+        g_chosen = worn[Part::tunic];
+    }
+    g_number = 0;   // the worker's first round puts on the slot colour once the number is known
     // The gear starts in the game's own colours: the settings' look is painted.
     {
         std::lock_guard lock(g_gear_mutex);
@@ -428,6 +476,7 @@ void StopModule() {
         g_copies_named.clear();
     }
     CoopLookShare::EnableSlots(false);
+    g_number = 0;
     g_textures.reset();
 }
 

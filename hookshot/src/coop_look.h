@@ -120,6 +120,12 @@ Look FromWire(const std::vector<std::pair<std::uint8_t, std::uint32_t>>& parts);
 // game's own, when unset.
 std::string TunicName(const std::optional<std::uint32_t>& colour);
 
+// The tunic colour your own Link wears: the chosen one; with none chosen
+// ("by player number") your player number's slot colour
+// (coop::protocol::slot_color), the colour the others see you in, once the
+// number is known (0: not yet, or co-op off); else unset (the game's own).
+std::optional<std::uint32_t> OwnTunic(const std::optional<std::uint32_t>& chosen, std::uint8_t number);
+
 // ---------------------------------------------------------------------------
 // The module's one look. Any thread, but Frame.
 
