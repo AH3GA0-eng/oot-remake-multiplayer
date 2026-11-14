@@ -851,6 +851,50 @@ TEST_CASE("live events: a room gimmick event is started by our room's asker, so 
     CHECK(order == std::vector<std::uint64_t>{addr::kArgBuild, addr::kRequest, addr::kStringFree, addr::kStringFree});
 }
 
+TEST_CASE("deku-sync-fix: a late request is given only for a while, and the title and a new session forget it") {
+    using CoopLiveEvents::StartSource;
+    std::optional<std::string> in_session = "Ladder";
+    const auto find = [&] { return in_session; };
+    const auto asked_long_ago = [&](StartSource& s) {
+        CHECK(s.Frame(std::string("Ladder"), true, false, find) == "Ladder");
+        for (int i = 0; i <= StartSource::kForgetFrames; ++i) CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+    };
+    // Asked, never ran, and then nothing for kPendingFrames more: too old, a later find is not sent.
+    StartSource s;
+    s.Scene("InsideTheDekuTree");
+    asked_long_ago(s);
+    for (int i = 0; i < StartSource::kPendingFrames; ++i) CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+    CHECK_FALSE(s.Frame(std::nullopt, true, true, find));
+    CHECK(s.ScanOnly() == 1);
+    // Still within its time: given.
+    StartSource young;
+    young.Scene("InsideTheDekuTree");
+    asked_long_ago(young);
+    for (int i = 0; i < StartSource::kPendingFrames - 10; ++i) CHECK_FALSE(young.Frame(std::nullopt, true, false, find));
+    CHECK(young.Frame(std::nullopt, true, true, find) == "Ladder");
+
+    // The title (no scene for kTitleFrames) forgets it, once; a short load does not.
+    StartSource t;
+    t.Scene("InsideTheDekuTree");
+    asked_long_ago(t);
+    for (int i = 0; i < StartSource::kTitleFrames - 1; ++i) CHECK_FALSE(t.NoScene(false));
+    CHECK_FALSE(t.NoScene(true));  // a load between rooms: the scene back
+    for (int i = 0; i < StartSource::kTitleFrames - 1; ++i) CHECK_FALSE(t.NoScene(false));
+    CHECK(t.NoScene(false));
+    CHECK_FALSE(t.NoScene(false));  // once
+    t.Scene("InsideTheDekuTree");   // the same dungeon again after the title: still forgotten
+    CHECK_FALSE(t.Frame(std::nullopt, true, true, find));
+    CHECK(t.ScanOnly() == 1);
+
+    // A new co-op session (the hook calls Reset when welcomed or reconnected) forgets it too.
+    StartSource n;
+    n.Scene("InsideTheDekuTree");
+    asked_long_ago(n);
+    n.Reset();
+    CHECK_FALSE(n.Frame(std::nullopt, true, true, find));
+    CHECK(n.ScanOnly() == 1);
+}
+
 TEST_CASE("deku-sync-fix: our room's asker asks the event itself (its performer's own request), so the flow binds it") {
     Mem m;
     m.Put64(kMain + addr::kManagerPtr, kHolder);

@@ -606,6 +606,18 @@ public:
                 presents_ = 0;
             }
         }
+        {   // deku-sync-fix: what our game asked before the title or this co-op session is not ours now
+            const bool scene_loaded = view.scene.has_value();
+            const bool title = start_source_.NoScene(scene_loaded);
+            if (story_source_.NoScene(scene_loaded) || title) {
+                LOG_INFO(Core, "coop: live events: the title: the game's earlier event requests are forgotten");
+            }
+            if (sources_reset_.exchange(false)) {
+                start_source_.Reset();
+                story_source_.Reset();
+                LOG_INFO(Core, "coop: live events: a new co-op session: the game's earlier event requests are forgotten");
+            }
+        }
         if (report.save_load_flags != 0) {
             LOG_INFO(Core, "coop: flags: save load seen ({} flags back, {} frames without a scene)",
                      report.save_load_flags, report.save_load_frames);
@@ -1597,9 +1609,11 @@ private:
         switch (event.kind) {
         case EventKind::welcomed:
             welcomed_once_ = true;
+            sources_reset_ = true;  // deku-sync-fix: read on the frame
             chat_.Add("joined as player " + std::to_string(event.welcome.player_number), true);
             break;
         case EventKind::reconnected:
+            sources_reset_ = true;
             chat_.Add("reconnected as player " + std::to_string(event.welcome.player_number), true);
             break;
         case EventKind::disconnected:
@@ -2054,6 +2068,7 @@ private:
     std::string note_;  // network thread only
     CoopChat::Log chat_;  // locks itself
     std::atomic<bool> welcomed_once_ = false;
+    std::atomic<bool> sources_reset_ = false;  // deku-sync-fix: welcomed or reconnected (network thread)
     // Network thread (Run): the "no packets from the server" warning is out (issue 143).
     bool quiet_warned_ = false;
     static constexpr std::uint32_t kQuietWarnMs = 3000;

@@ -27,6 +27,8 @@
 #include <cstring>
 #include <deque>
 #include <functional>
+#include <iterator>
+#include <map>
 #include <optional>
 #include <set>
 #include <span>
@@ -423,6 +425,8 @@ inline bool RequestedOtherOf(const std::vector<GameRequest>& requests, const std
 class StartSource {
 public:
     static constexpr int kForgetFrames = 1800;  // a request whose event never ran waits in pending_ after this
+    static constexpr int kPendingFrames = 1800;  // ... for at most this long more, then it is dropped
+    static constexpr int kTitleFrames = 90;      // no scene this long: the title (as OneWayKeeper)
 
     template <typename Find>
     std::optional<std::string> Frame(std::optional<std::string> requested, bool wrap_live, bool running, Find&& find) {
@@ -431,6 +435,9 @@ public:
     template <typename Find>
     std::optional<std::string> Frame(std::optional<std::string> requested, bool other, bool wrap_live, bool running,
                                      Find&& find) {
+        for (auto it = pending_.begin(); it != pending_.end();) {
+            it = ++it->second > kPendingFrames ? pending_.erase(it) : std::next(it);  // too old: not ours any more
+        }
         if (!by_request_.empty() || other_) {
             ran_ = ran_ || running;
             if (ran_ && !running) {
@@ -438,7 +445,7 @@ public:
                 other_ = false;
             } else if (++frames_ > kForgetFrames) {
                 if (!by_request_.empty() && !ran_) {
-                    pending_.insert(by_request_);  // asked, never ran yet: the search may still give it
+                    pending_[by_request_] = 0;  // asked, never ran yet: the search may still give it, for a while
                 }
                 by_request_.clear();
                 other_ = false;
@@ -482,7 +489,21 @@ public:
             Reset();
         }
     }
-    // A save load or a new session: nothing asked before counts.
+    // Once a frame: whether a scene is loaded. None for kTitleFrames (the title) forgets everything once, as a
+    // save load does; true on that frame.
+    bool NoScene(bool scene_loaded) {
+        if (scene_loaded) {
+            no_scene_ = 0;
+            return false;
+        }
+        if (++no_scene_ != kTitleFrames) {
+            return false;
+        }
+        Reset();
+        scene_.clear();
+        return true;
+    }
+    // A save load, the title or a new co-op session (welcomed, reconnected): nothing asked before counts.
     void Reset() {
         by_request_.clear();
         pending_.clear();
@@ -503,7 +524,8 @@ private:
     StartWatch watch_;
     std::string scene_;
     std::string by_request_;          // the start the request named, until its event is over
-    std::set<std::string> pending_;   // asked in this scene, its event not seen running in kForgetFrames
+    std::map<std::string, int> pending_;  // asked in this scene, its event not seen running in kForgetFrames: age
+    int no_scene_ = 0;
     bool other_ = false;              // the request named an event not in the list, until its event is over
     bool ran_ = false;
     int frames_ = 0;
