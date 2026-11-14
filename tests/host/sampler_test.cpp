@@ -504,3 +504,26 @@ TEST_CASE("host sampler: frame_aligned_us") {
   CHECK(frame_aligned_us(1'000'000, kFrameAgeMaxUs + 1) == 1'000'000);  // a pause: now
   CHECK(frame_aligned_us(10, 20) == 10);                      // no wrap
 }
+
+// review-jitter: a 10 fps game (the owner's games ran at 7-18 fps) read at 60 presents a second
+// stays on frame stamps: samples 100 ms apart at the real speed.
+TEST_CASE("host sampler: a 10 fps game read at 60 presents a second") {
+  constexpr std::uint64_t kGameUs = 100'000;
+  Sampler s;
+  std::vector<proto::PlayerSample> sent;
+  for (int frame = 0; frame < 10; ++frame) {
+    const std::uint64_t frame_at = kStart + static_cast<std::uint64_t>(frame) * kGameUs;
+    const float x = 0.6f * static_cast<float>(frame);  // 6 m/s
+    for (std::uint64_t later = 3'000; later < kGameUs; later += kFrameUs) {  // six presents a frame
+      for (const auto& smp : decode(s.frame(at(x), frame_aligned_us(frame_at + later, later))).samples) {
+        sent.push_back(smp);
+      }
+    }
+  }
+  REQUIRE(sent.size() >= 9);
+  for (std::size_t i = 1; i < sent.size(); ++i) {
+    CHECK(sent[i].time.server_time_us - sent[i - 1].time.server_time_us == kGameUs);
+    REQUIRE(sent[i].velocity.has_value());
+    CHECK((*sent[i].velocity)[0] == doctest::Approx(6.0f).epsilon(0.01));
+  }
+}

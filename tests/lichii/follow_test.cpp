@@ -122,3 +122,26 @@ TEST_CASE("frame clock: age of the newest game frame") {
     CHECK(CoopFrameClock::Age(1'000'000, 1'000'500) == 0);   // noted after now
     CHECK(CoopFrameClock::Age(1'000'000, 1'000'000 - CoopFrameClock::kFreshUs - 1) == 0);  // a pause
 }
+
+// review-jitter: even steps at 60 fps (16 ms frames, a place per present) and at 10 fps (100 ms
+// frames, each place worked out at one of the six presents before the frame).
+TEST_CASE("follow: even steps at 60 fps and at 10 fps") {
+    for (const std::uint64_t frame_ms : {16ull, 100ull}) {
+        CAPTURE(frame_ms);
+        Follower f;
+        float last = 0.0f;
+        std::vector<float> steps;
+        for (int i = 0; i < 30; ++i) {
+            const std::uint64_t now = 1000 + frame_ms * static_cast<std::uint64_t>(i);
+            const std::uint64_t made = now - (frame_ms == 16 ? (i % 2) * 8 : (i * 37) % 95);
+            const Vec3 drawn = f.Step(RunnerAt(made), {kSpeed, 0.0f, 0.0f}, made, now);
+            CHECK(drawn[0] == doctest::Approx(RunnerAt(now)[0]).epsilon(0.001));
+            if (i > 0) {
+                steps.push_back(drawn[0] - last);
+            }
+            last = drawn[0];
+        }
+        const auto [lo, hi] = std::minmax_element(steps.begin(), steps.end());
+        CHECK(*hi - *lo < 0.01f);
+    }
+}

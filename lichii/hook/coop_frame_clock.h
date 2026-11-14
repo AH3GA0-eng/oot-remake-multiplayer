@@ -17,8 +17,9 @@
 
 namespace CoopFrameClock {
 
-// A frame older than this is not the one read (a pause, a load): the present's own time.
-inline constexpr std::uint64_t kFreshUs = 50'000;
+// A frame older than this is not the one read (a pause, a load): the present's own time. 250 ms
+// keeps 4 fps games on frame stamps (review-jitter: 50 ms turned the fix off under 20 fps).
+inline constexpr std::uint64_t kFreshUs = 250'000;
 
 inline std::uint64_t SteadyUs() {
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(

@@ -31,7 +31,7 @@ namespace CoopFollow {
 using Vec3 = std::array<float, 3>;
 
 // The place is taken forward from when it was worked out by at most this.
-inline constexpr std::uint64_t kAheadMaxMs = 50;
+inline constexpr std::uint64_t kAheadMaxMs = 150;  // a 7 fps frame (review-jitter)
 // What is left of the gap closes by 1 - e^(-dt/kTauMs) a frame (a 30 fps frame: 56 %).
 inline constexpr float kTauMs = 40.0f;
 // A gap past this (metres) is taken at once.
