@@ -85,6 +85,8 @@ struct Game {
     std::uint64_t create_result = 1;  // what the game's create returns
     bool queue_anyway = false;        // a request in the handle even so
     std::uint64_t unequip_result = 1; // what the game's armor take-off returns
+    std::array<std::uint64_t, 8> slot_state{};  // what the game's state read (kEquipState) returns per slot
+    std::vector<Call> state_checks;            // those reads, in order
     Game() {
         guest.Map(kBase + addr::kActorManagerPtr, 8);
         guest.Map(kBase + addr::kGotCreateDefault, 8);
@@ -147,6 +149,12 @@ std::vector<Call> Frame(Director& d, Game& g, std::uint64_t now_ms) {
             result = g.unequip_result;
         } else if (call->function == kBase + addr::kTakeCreated) {
             REQUIRE(g.guest.Read(call->x[0] + addr::kRequestActor, &result, 8));
+        } else if (call->function == kBase + addr::kEquipState) {
+            // The game's read of a slot's state, from the fake's slot states;
+            // kept apart from the calls a test counts.
+            result = g.slot_state[call->x[1] & 7];
+            g.state_checks.push_back(*call);
+            calls.pop_back();
         }
         call = d.Step(g.guest, true, result, now_ms);
         REQUIRE(calls.size() < 16);
@@ -1506,6 +1514,149 @@ TEST_CASE("puppet gear: the held item is worn as a bow and follows drawn bit 3")
     CHECK(calls[0].x[1] == 3u);
     CHECK(calls[0].x[2] == addr::kEquipStateAway);
     CHECK(Frame(d, g, 90).empty());
+}
+
+TEST_CASE("puppet gear: slingshot out, then the sword: the slingshot goes away, the sword in hand") {
+    // held-fix (owner, 0.11): the puppet's slingshot stayed out in the other
+    // hand when its player used the sword, and the sword never showed in hand.
+    Game g;
+    Director d;
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    g.guest.Map(kParts, 0x3000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    auto slot_id = [&](int s) {
+        return kEu + addr::kEquipSlots + addr::kEquipSlotStride * s + addr::kEquipSlotId;
+    };
+    auto take = [&](int s, bool in_hand) {  // the game takes a change
+        g.guest.Set(kEu + addr::kEquipSlotBits + s,
+                    in_hand ? addr::kEquipBitInHand : addr::kEquipBitAway);
+        g.slot_state[s] = in_hand ? addr::kEquipStateInHand : addr::kEquipStateAway;
+    };
+    for (int s = 0; s < 8; ++s) g.guest.Set(slot_id(s), std::uint32_t{0xFFFFFFFF});
+    g.guest.Set(slot_id(0), std::uint32_t{3});  // the sword
+    g.guest.Set(slot_id(3), std::uint32_t{4});  // the slingshot
+    g.slot_state[0] = addr::kEquipStateAway;
+    g.slot_state[3] = addr::kEquipStateAway;
+    Target t = At(1, 4, 5, 6);
+    t.gear[0] = "Weapon_Sword_Kokiri";
+    t.gear[CoopPuppet::kGearHeld] = "Weapon_Range_SlingShot";
+    t.drawn = std::uint8_t{0};
+    d.SetInput(Wants({t}));
+    CHECK(Frame(d, g, 20).size() == 2);  // both worn, put away
+    CHECK(Frame(d, g, 30).empty());
+
+    // The slingshot out.
+    t.drawn = std::uint8_t{0x08};
+    d.SetInput(Wants({t}));
+    auto calls = Frame(d, g, 40);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kEquipChangeState);
+    CHECK(calls[0].x[1] == 3u);
+    CHECK(calls[0].x[2] == addr::kEquipStateInHand);
+    take(3, true);
+    CHECK(Frame(d, g, 300).size() == 1);  // asked again, now seen taken
+    CHECK(Frame(d, g, 310).empty());
+
+    // The sword out (the reader sends the slingshot put away): both change.
+    t.drawn = std::uint8_t{0x01};
+    d.SetInput(Wants({t}));
+    calls = Frame(d, g, 320);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].x[1] == 0u);
+    CHECK(calls[0].x[2] == addr::kEquipStateInHand);
+    take(0, true);
+    calls = Frame(d, g, 600);
+    REQUIRE(calls.size() == 2);  // the sword seen taken, then the slingshot
+    CHECK(calls[1].x[1] == 3u);
+    CHECK(calls[1].x[2] == addr::kEquipStateAway);
+    take(3, false);
+    CHECK(Frame(d, g, 900).size() == 1);
+    CHECK(Frame(d, g, 910).empty());
+
+    // The puppet's own animation puts its sword away: the game's state read
+    // shows it, and the sword is asked into the hand again.
+    g.slot_state[0] = addr::kEquipStateAway;
+    g.guest.Set(kEu + addr::kEquipSlotBits + 0, std::uint8_t{0});
+    g.state_checks.clear();
+    calls.clear();
+    std::uint64_t now = 1000;
+    for (; now < 4000 && calls.empty(); now += 100) {
+        calls = Frame(d, g, now);
+    }
+    REQUIRE(calls.size() == 1);
+    CHECK(now <= 2600);  // within two check rounds
+    CHECK(calls[0].function == kBase + addr::kEquipChangeState);
+    CHECK(calls[0].x[1] == 0u);
+    CHECK(calls[0].x[2] == addr::kEquipStateInHand);
+    REQUIRE_FALSE(g.state_checks.empty());
+    CHECK(g.state_checks.back().function == kBase + addr::kEquipState);
+    CHECK(g.state_checks.back().x[0] == kEu);
+    CHECK(g.state_checks.back().x[1] == 0u);
+    take(0, true);
+
+    // Both put away: the sword goes away (the game took the last ask late,
+    // so a check finds it in hand), and nothing is asked again after.
+    t.drawn = std::uint8_t{0};
+    d.SetInput(Wants({t}));
+    calls.clear();
+    for (now = 3000; now < 6000 && calls.empty(); now += 100) {
+        calls = Frame(d, g, now);
+    }
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].x[1] == 0u);
+    CHECK(calls[0].x[2] == addr::kEquipStateAway);
+    take(0, false);
+    CHECK(Frame(d, g, now + 300).size() == 1);  // asked again, now seen taken
+    g.state_checks.clear();
+    for (now += 400; now < 9000; now += 300) {
+        CHECK(Frame(d, g, now).empty());  // checks only: the game has both as set
+    }
+    CHECK(g.state_checks.size() >= 4);
+}
+
+TEST_CASE("puppet gear: a piece its animation keeps undoing is set again, said once until it holds") {
+    Game g;
+    std::vector<std::string> log;
+    Director d([&](const std::string& line) { log.push_back(line); });
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    g.guest.Map(kParts, 0x3000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    for (int s = 0; s < 8; ++s) {
+        g.guest.Set(kEu + addr::kEquipSlots + addr::kEquipSlotStride * s + addr::kEquipSlotId,
+                    std::uint32_t{s == 0 ? 3u : 0xFFFFFFFFu});
+    }
+    g.guest.Set(kEu + addr::kEquipSlotBits + 0, addr::kEquipBitInHand);  // every ask taken
+    g.slot_state[0] = addr::kEquipStateAway;  // but the game keeps putting it away
+    Target t = At(1, 4, 5, 6);
+    t.gear[0] = "Weapon_Sword_Kokiri";
+    t.drawn = std::uint8_t{0x01};
+    d.SetInput(Wants({t}));
+    auto said = [&] {
+        return std::count_if(log.begin(), log.end(), [](const std::string& l) {
+            return l.find("not as set: set again") != std::string::npos;
+        });
+    };
+    int asks = 0;
+    for (std::uint64_t now = 20; now < 5000; now += 100) {
+        for (const Call& c : Frame(d, g, now)) {
+            asks += c.function == kBase + addr::kEquipChangeState ? 1 : 0;
+        }
+    }
+    CHECK(asks >= 5);    // asked again each time a check finds it away
+    CHECK(said() == 1);  // said once
+    // It holds for a check, then is undone again: said again.
+    g.slot_state[0] = addr::kEquipStateInHand;
+    for (std::uint64_t now = 5000; now < 6500; now += 100) Frame(d, g, now);
+    CHECK(said() == 1);
+    g.slot_state[0] = addr::kEquipStateAway;
+    for (std::uint64_t now = 6500; now < 8000; now += 100) Frame(d, g, now);
+    CHECK(said() == 2);
 }
 
 TEST_CASE("puppet gear: a piece the game made anew is put into the hand again") {
