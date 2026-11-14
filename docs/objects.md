@@ -450,6 +450,14 @@ The fix (module only, no game patch, no new message):
 - Not proven in a game yet: that 0x37b5d70 sets the frame +0x10c shows (if not, the 5 s line's "frames set" climbs with every sample).
 - Not proven in a game yet: that the copy's AI makes its every-frame play request with skip-if-same (request +0x20), so a slot already naming its animation is left alone. If it plays without that, the alias does nothing: the copy shows its own AI's animation, the debug line shows no `(alias of ...)` match with the owner's name, and "frames set" climbs.
 
+### Enemies by the playing frame too (branch `enemy-anim`)
+
+The owner's Deku Tree run (2026-11-14): enemy animations not fully in step. Enemies still sent and compared AS slot +0xe8. Every play on a copy started 8 to 15 frames into the animation (A's log: the Deku Scrub Brothers' `Appear`, `Hide`, `Sleep_In` each "plays ... at frame 8.5 to 14.8"), and since +0xe8 does not run with the animation, a copy's frame was almost never corrected (B's log: 18 copies, 2160 moves, 0 frame sets in 5 s).
+
+The fix (module only, no game patch, no new message): `PlaysByFrame` (townspeople and every `Enemy_` but bosses) sends the playing frame +0x10c, and the copy compares and sets it with the same arithmetic as townspeople (the owner's measured speed, the learned loop, the game's 0x2022a0 play and 0x37b5d70 frame set). Enemies get no alias: their own AI's wake must show (issue 157). Bosses keep +0xe8 for all their slots (issue 150), not changed here.
+
+Check in game: in the Deku Scrub Brothers' room and with a Skulltula, the copy's "plays ... at frame" lines show small frames (0 to 3) at each new animation, and the 5 s line's "frame sets" is above 0 but well below the samples.
+
 ## Waiting for our event (issue 144)
 
 A player test in the Deku Tree: B beat a Deku Scrub and was in its talk. A beat the same scrub in A's game, and B was stuck until A had finished A's own talk. A's kill reached B's scrub during B's talk, and B's event waited on an actor that had changed.

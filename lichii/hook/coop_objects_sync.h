@@ -106,12 +106,13 @@ struct PlayWish {
     // (a chest shown open, issue 195: only over its closed idle "CloseWait",
     // never over its own opening when our Link opens it here).
     std::string only_over;
-    // Walking townspeople (coop_npc_anim.h). `npc`: `frame` is the playing
-    // frame (slot +0x10c on both sides) and is compared the short way round
-    // a loop of `loop` frames (0: not known), run on at `run` frames a game
-    // frame (below 0: at `rate`). `alias`: the copy's slot keeps the name
-    // its own AI asked for while it plays this one.
-    bool npc = false;
+    // Townspeople and enemies (PlaysByFrame, coop_npc_anim.h). `play_frame`:
+    // `frame` is the playing frame (slot +0x10c on both sides) and is
+    // compared the short way round a loop of `loop` frames (0: not known),
+    // run on at `run` frames a game frame (below 0: at `rate`). `alias`
+    // (townspeople only): the copy's slot keeps the name its own AI asked
+    // for while it plays this one.
+    bool play_frame = false;
     bool alias = false;
     float loop = 0.0f;
     float run = -1.0f;
@@ -318,6 +319,14 @@ const GroupPart* PartOf(std::string_view name);
 // A boss or mini-boss on its own (Enemy_DungeonBoss_*, Enemy_MiddleBoss_*,
 // and the roots of boss groups); never a picture book _Dictionary actor.
 bool IsBoss(std::string_view name);
+
+// enemy-anim-b: an actor whose slot 0 is sent and set by its playing frame
+// (AS slot +0x10c, what the game's getter 0x37b5e70 reads): townspeople
+// (Npc_) and enemies (Enemy_) other than bosses. Slot +0xe8 is not the
+// playing frame: enemy copies started each animation 8 to 15 frames in and
+// their frame was never corrected (owner's Deku Tree run, 2026-11-14).
+// Bosses keep +0xe8 for all their slots (issue 150, tested that way).
+bool PlaysByFrame(std::string_view name);
 
 // An actor whose life is never written (the owner's native rule): an enemy or a boss, and any actor whose name
 // we do not know (fail safe).
@@ -808,7 +817,8 @@ private:
         bool fish = false;                      // IsFish: the lure rules
         bool guard = false;                     // IsGuard: handed over on a reaction
         bool npc = false;                       // Npc_: claimed by our event (issue 200)
-        CoopNpcAnim::Loop npc_loop;             // its owner's animation loop, from the samples
+        bool play_frame = false;                // PlaysByFrame
+        CoopNpcAnim::Loop frame_loop;           // its owner's animation loop, from the samples (play_frame)
         std::uint64_t event_until = 0;          // flagged by our event until then
         coop::protocol::Vec3 first_position{};  // where it was first seen
         int missed = 0;                         // walks in a row without it

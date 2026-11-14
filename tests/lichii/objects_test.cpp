@@ -1475,6 +1475,99 @@ TEST_CASE("objects: a copy's animation frame follows the owner's, shown 100 ms l
     CHECK(plays[0].frame == doctest::Approx(19.0f));
 }
 
+TEST_CASE("objects: enemies and townspeople go by the playing frame, bosses do not (enemy-anim-b)") {
+    using CoopObjects::PlaysByFrame;
+    CHECK(PlaysByFrame("Enemy_Scrub_Deku_Leaf"));
+    CHECK(PlaysByFrame("Enemy_Skulltula"));
+    CHECK(PlaysByFrame("Npc_Hylia_030_Child"));
+    CHECK_FALSE(PlaysByFrame("Enemy_DungeonBoss_Gohma"));
+    CHECK_FALSE(PlaysByFrame("Enemy_MiddleBoss_Dodongo"));
+    CHECK_FALSE(PlaysByFrame("Obj_Plant_Grass_A_01"));
+}
+
+namespace {
+// An owner's sample of an enemy with this animation, as the copy gets it.
+proto::ObjectSample EnemySample(const proto::ObjectId& id, std::uint64_t at, const std::string& anim,
+                                float frame) {
+    proto::ObjectSample s;
+    s.id = id;
+    s.player_number = 1;
+    s.state.time = {at, 1};
+    s.state.position = proto::Vec3{0.0f, 0.0f, 0.0f};
+    s.state.animation = proto::Animation{anim, frame, 1.0f};
+    return s;
+}
+
+// The copy's walk at `now` (as player 2), then what it asks the mover to play.
+std::vector<CoopObjects::PlayWish> EnemyPlays(Sync& copy, std::uint64_t now, const std::string& name) {
+    Tick(copy, now, {Enemy(0x200, 0x11, 2, 0.0f, name)}, 2);
+    std::vector<CoopObjects::PlayWish> plays;
+    copy.Plays(now, plays);
+    return plays;
+}
+} // namespace
+
+TEST_CASE("objects: an enemy copy gets the owner's new animation once, near its start, run as the owner runs it") {
+    const std::string name = "Enemy_Scrub_Deku_Leaf";
+    Sync owner;
+    Tick(owner, 0, {Enemy(0x100, 0x11, 2, 0.0f, name)});
+    const proto::ObjectId id = *owner.IdOf(0x100);
+
+    Sync copy;
+    Seen c = Enemy(0x200, 0x11, 2, 0.0f, name);
+    c.animation = proto::Animation{"Wait", 40.0f, 1.0f};
+    Tick(copy, 0, {c}, 2);
+    Own(copy, id, 1);
+
+    // The owner starts "Appear": its first sample shows playing frame 1.
+    copy.Receive(EnemySample(id, 1000 * kMs, "Appear", 1.0f));
+    auto plays = EnemyPlays(copy, 1000 * kMs, name);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].name == "Appear");
+    CHECK(plays[0].play_frame);
+    CHECK_FALSE(plays[0].alias);  // an enemy's own wake must show (issue 157)
+    // Shown 100 ms late: at its start, not 8 to 15 frames in.
+    CHECK(plays[0].frame == doctest::Approx(0.0f));
+
+    // The next sample of the same animation: the same name and sample-led
+    // frame (the mover plays a name only when the copy shows another, and
+    // sets the frame only when it is off by more than its slack).
+    copy.Receive(EnemySample(id, 1050 * kMs, "Appear", 4.0f));
+    plays = EnemyPlays(copy, 1150 * kMs, name);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].name == "Appear");
+    CHECK(plays[0].sample == 1050 * kMs);
+    // 3 frames in 50 ms (1.5 game frames): the owner runs it at 2.
+    CHECK(plays[0].run == doctest::Approx(2.0f));
+    CHECK(plays[0].frame == doctest::Approx(4.0f));
+
+    // A loop: the owner's "Wait" climbs to 20 and starts again; the copy's
+    // frame stays inside that loop.
+    copy.Receive(EnemySample(id, 1100 * kMs, "Wait", 18.0f));
+    copy.Receive(EnemySample(id, 1150 * kMs, "Wait", 20.0f));
+    copy.Receive(EnemySample(id, 1200 * kMs, "Wait", 1.0f));
+    plays = EnemyPlays(copy, 1200 * kMs + 100 * kMs + 150 * kMs, name);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].name == "Wait");
+    CHECK(plays[0].loop == doctest::Approx(20.0f));
+    CHECK(plays[0].frame < 20.0f);
+}
+
+TEST_CASE("objects: a boss copy keeps the slot frame it had (issue 150)") {
+    const std::string name = "Enemy_DungeonBoss_Gohma";
+    Sync owner;
+    Tick(owner, 0, {Enemy(0x100, 0x11, 2, 0.0f, name)});
+    const proto::ObjectId id = *owner.IdOf(0x100);
+    Sync copy;
+    Tick(copy, 0, {Enemy(0x200, 0x11, 2, 0.0f, name)}, 2);
+    Own(copy, id, 1);
+    copy.Receive(EnemySample(id, 1000 * kMs, "Wait", 10.0f));
+    const auto plays = EnemyPlays(copy, 1100 * kMs, name);
+    REQUIRE(plays.size() == 1);
+    CHECK_FALSE(plays[0].play_frame);
+    CHECK_FALSE(plays[0].alias);
+}
+
 namespace {
 proto::PlayerSample Where(std::uint8_t player, const std::string& scene, std::uint64_t now) {
     proto::PlayerSample p;
