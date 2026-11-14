@@ -156,6 +156,28 @@ TEST_CASE("boss: no intro within 10 s means the fight has begun here, but moves 
     CHECK(s.phase() == Sync::Phase::fight);
 }
 
+TEST_CASE("boss: our own intro and death, read with no name, are told to the area rules (Gohma on Longshot)") {
+    // 0.11 runs (boss-intro): Gohma's intro is no event the game asks by name; these rules saw it anyway.
+    Sync s;
+    s.Tick(At("ForestTemple", Forest().arrive), 1 * kS);
+    auto a = s.Tick(At("ForestTemple", Forest().arrive), 11 * kS);  // no intro in 10 s: "fight" here
+    REQUIRE(s.phase() == Sync::Phase::fight);
+    CHECK(a.intro_here == nullptr);
+    a = s.Tick(At("ForestTemple", Forest().arrive, true), 12 * kS);  // the real intro, after the wait
+    CHECK(s.phase() == Sync::Phase::intro);
+    CHECK(a.intro_here == &Forest());
+    CHECK(a.beaten_here == nullptr);
+    a = s.Tick(At("ForestTemple", Forest().arrive, false), 30 * kS);
+    CHECK(a.intro_here == nullptr);
+    a = s.Tick(At("ForestTemple", Forest().arrive, true), 90 * kS);  // the death
+    CHECK(a.beaten_here == &Forest());
+    CHECK(a.intro_here == nullptr);
+    // A door's event on the way (not yet in the room) tells nothing.
+    Sync w;
+    w.Tick(At("ForestTemple", kForestEntrance), 1 * kS);
+    CHECK(w.Tick(At("ForestTemple", kForestEntrance, true), 2 * kS).intro_here == nullptr);
+}
+
 TEST_CASE("boss: a player only near the room pulls no one, one whose intro started does (issue 148)") {
     // Deku Tree, player test: A came near the boss room; B was moved in and the door shut in B's game
     // while A, still on the way to it, was locked out.

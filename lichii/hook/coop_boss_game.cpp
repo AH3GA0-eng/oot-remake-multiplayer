@@ -173,7 +173,7 @@ struct Glue {
     std::optional<std::int32_t> max_life_cap;      // for the hook (MaxLifeCap)
     std::vector<std::string> wanted;               // events for the live-event requester (TakeWantedEvents)
     std::mutex searched_mutex;
-    std::vector<std::string> searched;             // boss flows the hook's search found running (SeenEvent)
+    std::vector<std::string> searched;             // our boss intro/death read with no name (Sync's intro_here/beaten_here)
     std::vector<std::string> lines;                // chat lines (TakeLines)
 
     Glue() {
@@ -288,6 +288,17 @@ struct Glue {
         for (const auto& line : act.log) {
             LOG_INFO(Core, "coop: boss: {}", line);
         }
+        {
+            // Gohma's intro is no event the game asks by name (only the door's ShutIn is): the older rules' own
+            // reading of our event in the boss room tells the area rules, guarded as a search's find.
+            std::lock_guard lock(searched_mutex);
+            if (act.intro_here != nullptr) {
+                searched.emplace_back(act.intro_here->intro);
+            }
+            if (act.beaten_here != nullptr) {
+                searched.emplace_back(act.beaten_here->outro);
+            }
+        }
         if (Scenes(system, main, local, event, session, now_us)) {
             // The area's rules move and skip (boss-cutscenes): the older dungeon-wide pull and its "any intro
             // over" skip would move players from anywhere in the dungeon.
@@ -352,7 +363,7 @@ bool Glue::Scenes(Core::System& system, std::uint64_t main, const Local& local, 
     {
         std::lock_guard lock(searched_mutex);
         for (auto& name : searched) {
-            LOG_INFO(Core, "coop: boss: the search found {} running in our game", name);
+            LOG_INFO(Core, "coop: boss: our game runs {} (seen without a request naming it)", name);
             ours.push_back({std::move(name), true, true});
         }
         searched.clear();
@@ -454,12 +465,6 @@ std::optional<std::int32_t> TakeMaxLifeWrite() {
 
 std::optional<std::int32_t> MaxLifeCap() {
     return TheGlue().max_life_cap;
-}
-
-void SeenEvent(std::string name) {
-    auto& g = TheGlue();
-    std::lock_guard lock(g.searched_mutex);
-    g.searched.push_back(std::move(name));
 }
 
 std::vector<std::string> TakeWantedEvents() {

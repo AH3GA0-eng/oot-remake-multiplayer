@@ -292,9 +292,9 @@ TEST_CASE("boss scenes: the settings a boss's own logic asks start its intro and
     CHECK(b.Tick(At(kInRoom, 2), {}, 100'100'000).play == std::optional<std::string>("Dm_Deku_BossOut"));
 }
 
-TEST_CASE("boss scenes: a boss flow found running by the search starts a fresh intro, never a leftover") {
-    // 0.11 run 4 (boss-intro): Gohma's game asked only InsideTheDekuTree_BossArea_ShutIn; the intro's flow is
-    // found in the running event instead.
+TEST_CASE("boss scenes: our intro or death seen with no name starts a fresh intro, never a leftover") {
+    // 0.11 run 4 (boss-intro): Gohma's game asked only InsideTheDekuTree_BossArea_ShutIn; the older rules' own
+    // reading of our event in the boss room names it instead.
     const auto searched = [](const char* name) { return std::vector<Request>{Request{name, true, true}}; };
     Director a;
     Actions out = a.Tick(At(kInRoom, 1, true), searched("Dm_Deku_BossIn"), 1'000'000);
@@ -320,9 +320,6 @@ TEST_CASE("boss scenes: a boss flow found running by the search starts a fresh i
     Director c;
     CHECK(c.Tick(At(kInRoom, 3, true, "KokiriForest"), searched("Dm_Deku_BossIn"), 1'000'000).send.empty());
     CHECK(c.phase(kGohma) == Phase::none);
-    CHECK(CoopBossScenes::InBossScene(kDeku));
-    CHECK_FALSE(CoopBossScenes::InBossScene("KokiriForest"));
-    CHECK(CoopBossScenes::FlowNames().size() == 20);
 }
 
 TEST_CASE("boss scenes: one heart container for all, never two") {

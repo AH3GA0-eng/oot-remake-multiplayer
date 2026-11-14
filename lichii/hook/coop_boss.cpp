@@ -254,6 +254,7 @@ void Sync::Defeat(Actions& out) {
     if (std::find(defeated_.begin(), defeated_.end(), here_->index) == defeated_.end()) {
         defeated_.push_back(here_->index);
     }
+    out.beaten_here = here_;
     out.log.push_back("boss beaten (" + std::string(here_->outro) + ")");
 }
 
@@ -264,6 +265,9 @@ void Sync::Commit(Actions& out, const char* why) {
     committed_ = true;
     const bool fight = phase_ == Phase::fight || phase_ == Phase::outro;
     Say(out, *here_, fight ? proto::BossState::intro_end : proto::BossState::intro_start);
+    if (!fight) {
+        out.intro_here = here_;  // past the door during our intro: it is the boss's (a door before it is not)
+    }
     out.log.push_back(std::string("past the door (") + why + "): the others are moved in");
 }
 
@@ -362,6 +366,7 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
                 if (local.event) {  // came in with an event running: that is the intro
                     phase_ = Phase::intro;
                     intro_at_ = now_us;
+                    out.intro_here = here_;
                     out.log.push_back("intro started (" + std::string(here_->intro) + ")");
                     if (moved_in) {
                         Commit(out, "moved in");
@@ -420,6 +425,7 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
                 // boss's death).
                 phase_ = Phase::intro;
                 intro_at_ = now_us;
+                out.intro_here = here_;
                 out.log.push_back("intro started (" + std::string(here_->intro) + ", after the wait)");
             } else if (rose && now_us - fight_at_ < kMinFightUs) {
                 out.log.push_back("an event right after the intro: the rest of it, not the boss's death");

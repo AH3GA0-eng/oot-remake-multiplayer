@@ -133,6 +133,10 @@ struct Actions {
     std::optional<Pull> pull;
     bool skip_intro = false;  // force skip the event that runs now
     std::vector<std::string> log;
+    // Our own game's event in the boss room, as these rules read it (no name needed): the intro began here, or
+    // the boss was beaten here. The area rules (coop_boss_scenes) take them when no request named the event.
+    const Room* intro_here = nullptr;
+    const Room* beaten_here = nullptr;
 };
 
 // This game's Link, read this frame.
@@ -287,8 +291,6 @@ std::optional<std::int32_t> TakeMaxLifeWrite();
 std::optional<std::int32_t> MaxLifeCap();
 // - boss events to ask our game for by name (the live-event requester);
 std::vector<std::string> TakeWantedEvents();
-// A boss intro/death flow the search found in our running event (the hook; any thread).
-void SeenEvent(std::string name);
 // - lines for the chat box ("<name> entered the boss room of ...").
 std::vector<std::string> TakeLines();
 

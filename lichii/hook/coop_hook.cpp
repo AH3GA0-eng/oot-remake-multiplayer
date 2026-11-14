@@ -671,20 +671,6 @@ public:
         if (shared_scenes_) {
             SharedScenes(view, reading, memory, report.server_now_us);
         }
-        // Boss cutscenes: the boss's own intro/death is not always an event the game asks by name (Gohma's logic
-        // starts Dm_Deku_BossIn inside its own flow; the wrap sees only the door's ShutIn): when an event starts in
-        // a boss's scene, its flow's name is looked for in the running event, as for story cutscenes.
-        if (memory && view.scene && CoopBossScenes::InBossScene(*view.scene)) {
-            static const std::vector<std::string_view> boss_names = CoopBossScenes::FlowNames();
-            const bool running = reading && reading->event_running.value_or(false);
-            if (const auto found = boss_watch_.Frame(running, [&] {
-                    return CoopLiveEvents::FindRunningEvent(&ReadGuest, &*memory, base_, boss_names);
-                })) {
-                CoopBoss::SeenEvent(*found);
-            }
-        } else {
-            boss_watch_.Frame(false, [] { return std::optional<std::string>(); });
-        }
         // Boss cutscenes (coop_boss_scenes.h): another player's boss intro or
         // death, asked of our game by name, as a story cutscene's.
         if (live_events_) {
@@ -1800,7 +1786,6 @@ private:
     std::mutex live_mutex_;  // the requester runs on the calc thread (CoopSvc caller)
     CoopLiveEvents::Requester live_requester_;
     CoopLiveEvents::StartSource start_source_;  // our own gimmick event starts
-    CoopLiveEvents::StartWatch boss_watch_;     // a boss intro/death flow in our running event (coop_boss_scenes)
     std::uint64_t start_cursor_ = 0, start_scan_only_ = 0;
     // An event start the search found that the game's request had not named, with the wrap there: logged, as the
     // sign that some event does not start through the wrapped request.

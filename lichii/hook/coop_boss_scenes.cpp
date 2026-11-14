@@ -63,24 +63,6 @@ std::optional<std::pair<std::uint8_t, Kind>> OfEvent(std::string_view name) {
     return std::nullopt;
 }
 
-std::vector<std::string_view> FlowNames() {
-    std::vector<std::string_view> out;
-    for (const Boss& b : kBosses) {
-        out.push_back(b.intro);
-        out.push_back(b.outro);
-    }
-    return out;
-}
-
-bool InBossScene(std::string_view scene) {
-    for (const Boss& b : kBosses) {
-        if (const auto* room = RoomOf(b); room != nullptr && room->scene == scene) {
-            return true;
-        }
-    }
-    return false;
-}
-
 bool InArea(const Boss& b, std::string_view boss_scene, const std::optional<Vec>& starter, std::string_view scene,
             const Vec& p) {
     if (!Finite(p)) {
