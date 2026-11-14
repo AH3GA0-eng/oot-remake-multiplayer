@@ -70,6 +70,18 @@ inline constexpr std::uint64_t kStringsSize = 0x200;
 // The event's starter actor: 0x2bc440(arg + kArgMember2, actor, 0) links it, as the game's
 // OneShotEventMemberRequestEventByEventName does; the frees after the request let it go again.
 inline constexpr std::uint64_t kSetLink = 0x2bc440;
+// deku-sync-fix: an actor's own event request, as the room graph's ActorLogicEventRequestActor node (0xbd1670) and the
+// performer AI nodes (0x2beedc, 0x2bf064) make it: 0x4aa890(performer, &name) builds the arg on its own stack, links
+// the performer's actor (+kPerformerActor) as the starter, asks the manager (via 0xf61460) and, when it took it, sets
+// the performer's state (+kPerformerState) to 1: the event is then that actor's own, so the flow's EventRequestActor
+// is bound to it and its EventTriggerSetEventBool reaches the room graph (the 0.11 run: with the link alone A's asker
+// was never bound, its lifts stayed down, and it was not deleted at the event's end as B's was). `name` is the address
+// of a char* (the game passes a SafeString's buffer pointer). The performer is [[actor + 0x270] + kPerformerSlot].
+inline constexpr std::uint64_t kPerformerRequest = 0x4aa890;
+inline constexpr std::uint64_t kPerformerSlot = 0x88;      // as 0xbd1670 and 0x2beedc read it
+inline constexpr std::uint64_t kPerformerSlotAlt = 0x90;   // as 0xc70560 reads it (the player's)
+inline constexpr std::uint64_t kPerformerActor = 16;       // the performer's actor
+inline constexpr std::uint64_t kPerformerState = 40;       // u32; 3: busy (0x27fe410 does not ask then)
 inline constexpr std::uint64_t kEventStatePtr = 0x4e94840;  // as coop_boss_game.cpp
 inline constexpr std::uint64_t kEventSession = 0x68;        // set while an event runs
 inline constexpr std::uint64_t kSessionCount = 0xeb0;       // u32, as coop_boss_game.cpp
@@ -259,7 +271,9 @@ public:
     std::uint64_t Block() const { return block_; }
 
 private:
-    enum class Next { none, malloc, build, link, request, free1, free2 };
+    enum class Next { none, malloc, build, link, request, free1, free2, own_request };
+    // deku-sync-fix: the asker's performer (its actor at +kPerformerActor), 0 when it has none we can trust.
+    static std::uint64_t PerformerOf(CoopPuppet::Guest& guest, std::uint64_t actor);
     // The current event's arguments into the built request; false when one does not fit.
     bool WriteArgs(CoopPuppet::Guest& guest);
     // The request call itself (after the build, and the starter's link if any); the frees when there is no manager.
@@ -398,14 +412,17 @@ inline bool RequestedOtherOf(const std::vector<GameRequest>& requests, const std
 }
 
 // Which of `names` our game just started, once per start: by the game's own request when the wrap is there
-// (`requested`: RequestedOf this frame's requests), else by StartWatch's search of the running event. With the
-// wrap, the search still runs as a net: an event it finds that no request named is given as before and counted
-// (ScanOnly), and one the request already named is not given twice. When the request named another event
-// (`other`: RequestedOtherOf), the search finds nothing of ours until that event is over (Refused): the session
-// still holds names of events that are not running.
+// (`requested`: RequestedOf this frame's requests), else by StartWatch's search of the running event.
+// With the wrap, the search gives a name only when this game's request named it in this scene (since the last
+// Scene change or Reset: a save load, the title) and that start has not been given yet: a request the manager took
+// whose event ran later than kForgetFrames. Any other name the search finds is a leftover in the event session
+// (deku-sync-fix: after a reload the session still held the event of the previous load, FallingLadder, PlatformUp,
+// CandleAndSpiderWeb, and a door's event "found" it and sent it): counted (ScanOnly), never given. When the request
+// named another event (`other`: RequestedOtherOf), nothing of ours is given until that event is over (Refused).
+// Without the wrap (the emulator) the search is the only way and gives what it finds.
 class StartSource {
 public:
-    static constexpr int kForgetFrames = 1800;  // a request whose event never ran is forgotten after this
+    static constexpr int kForgetFrames = 1800;  // a request whose event never ran waits in pending_ after this
 
     template <typename Find>
     std::optional<std::string> Frame(std::optional<std::string> requested, bool wrap_live, bool running, Find&& find) {
@@ -416,13 +433,20 @@ public:
                                      Find&& find) {
         if (!by_request_.empty() || other_) {
             ran_ = ran_ || running;
-            if ((ran_ && !running) || ++frames_ > kForgetFrames) {
+            if (ran_ && !running) {
                 by_request_.clear();  // its event is over
+                other_ = false;
+            } else if (++frames_ > kForgetFrames) {
+                if (!by_request_.empty() && !ran_) {
+                    pending_.insert(by_request_);  // asked, never ran yet: the search may still give it
+                }
+                by_request_.clear();
                 other_ = false;
             }
         }
         std::optional<std::string> found = watch_.Frame(running, std::forward<Find>(find));
         if (requested) {
+            pending_.erase(*requested);
             by_request_ = *requested;
             other_ = false;
             ran_ = running;
@@ -443,11 +467,30 @@ public:
             return std::nullopt;  // another event runs: the name is a leftover in the session
         }
         if (found && wrap_live) {
+            if (pending_.erase(*found) != 0) {
+                return found;  // our request named it in this scene; its event ran late
+            }
             ++scan_only_;
+            return std::nullopt;  // no request of this game named it here: a leftover, not sent
         }
         return found;
     }
-    // Starts the search found that no request had named, while the wrap was there.
+    // A new scene (the title is ""): the requests of the old one are forgotten.
+    void Scene(std::string_view scene) {
+        if (scene != scene_) {
+            scene_ = std::string(scene);
+            Reset();
+        }
+    }
+    // A save load or a new session: nothing asked before counts.
+    void Reset() {
+        by_request_.clear();
+        pending_.clear();
+        other_ = false;
+        ran_ = false;
+        frames_ = 0;
+    }
+    // Starts the search found that no request had named in this scene, while the wrap was there: not given.
     std::uint64_t ScanOnly() const {
         return scan_only_;
     }
@@ -458,8 +501,10 @@ public:
 
 private:
     StartWatch watch_;
-    std::string by_request_;  // the start the request named, until its event is over
-    bool other_ = false;      // the request named an event not in the list, until its event is over
+    std::string scene_;
+    std::string by_request_;          // the start the request named, until its event is over
+    std::set<std::string> pending_;   // asked in this scene, its event not seen running in kForgetFrames
+    bool other_ = false;              // the request named an event not in the list, until its event is over
     bool ran_ = false;
     int frames_ = 0;
     std::uint64_t scan_only_ = 0;

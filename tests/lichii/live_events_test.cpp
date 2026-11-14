@@ -557,18 +557,61 @@ TEST_CASE("live events: a start is given once, by the request when the wrap is t
     for (int i = 0; i < 5; ++i) CHECK_FALSE(s.Frame(std::nullopt, true, true, find));
     CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
 
-    // An event that started some other way: no request, the search finds it; given, and counted.
+    // deku-sync-fix: a start no request of ours named (a name left in the session): counted, never given.
     in_session = "Web";
-    CHECK(s.Frame(std::nullopt, true, true, find) == "Web");
+    CHECK_FALSE(s.Frame(std::nullopt, true, true, find));
     CHECK(s.ScanOnly() == 1);
     CHECK_FALSE(s.Frame(std::nullopt, true, true, find));
     CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
 
-    // A request whose event never runs is forgotten, so a later start found by the search is given.
+    // A request whose event runs only after kForgetFrames: the search gives that late start, once.
     CHECK(s.Frame(std::string("Web"), true, false, find) == "Web");
     for (int i = 0; i <= StartSource::kForgetFrames; ++i) CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
     CHECK(s.Frame(std::nullopt, true, true, find) == "Web");
+    CHECK(s.ScanOnly() == 1);
+    CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+    CHECK_FALSE(s.Frame(std::nullopt, true, true, find));  // the next event with the same name left: not given
     CHECK(s.ScanOnly() == 2);
+}
+
+TEST_CASE("deku-sync-fix: after a load or in a new scene, the event of the earlier load left in the session is not sent") {
+    using CoopLiveEvents::StartSource;
+    std::optional<std::string> in_session;
+    const auto find = [&] { return in_session; };
+    StartSource s;
+    s.Scene("InsideTheDekuTree");
+    // The previous run: the game asks for PlatformUp, it plays and ends.
+    CHECK(s.Frame(std::string("PlatformUp"), true, false, find) == "PlatformUp");
+    in_session = "PlatformUp";
+    for (int i = 0; i < 20; ++i) CHECK_FALSE(s.Frame(std::nullopt, true, true, find));
+    CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+    // The title, then the save loads into the same dungeon: the session still names PlatformUp when a door's event runs.
+    s.Scene("");
+    s.Reset();
+    s.Scene("InsideTheDekuTree");
+    for (int i = 0; i < 20; ++i) CHECK_FALSE(s.Frame(std::nullopt, true, true, find));
+    CHECK(s.ScanOnly() == 1);
+    CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+    // A request asked before the load, its event never ran: forgotten at the load.
+    CHECK(s.Frame(std::string("Ladder"), true, false, find) == "Ladder");
+    for (int i = 0; i <= StartSource::kForgetFrames; ++i) CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+    s.Reset();
+    in_session = "Ladder";
+    CHECK_FALSE(s.Frame(std::nullopt, true, true, find));
+    CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+    // A scene change forgets it too.
+    CHECK(s.Frame(std::string("Ladder"), true, false, find) == "Ladder");
+    for (int i = 0; i <= StartSource::kForgetFrames; ++i) CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+    s.Scene("DekuTreeBoss");
+    CHECK_FALSE(s.Frame(std::nullopt, true, true, find));
+    CHECK(s.ScanOnly() == 3);
+    // A fresh request in this scene is still given at once.
+    CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+    CHECK(s.Frame(std::string("BossIn"), true, false, find) == "BossIn");
+    // Without the wrap (the emulator) the search is the only way: given.
+    StartSource plain;
+    plain.Scene("InsideTheDekuTree");
+    CHECK(plain.Frame(std::nullopt, false, true, find) == "Ladder");
 }
 
 namespace {
@@ -808,6 +851,68 @@ TEST_CASE("live events: a room gimmick event is started by our room's asker, so 
     CHECK(order == std::vector<std::uint64_t>{addr::kArgBuild, addr::kRequest, addr::kStringFree, addr::kStringFree});
 }
 
+TEST_CASE("deku-sync-fix: our room's asker asks the event itself (its performer's own request), so the flow binds it") {
+    Mem m;
+    m.Put64(kMain + addr::kManagerPtr, kHolder);
+    m.Put64(kHolder, kManager);
+    ActorList list(m);
+    constexpr std::uint64_t kAsker = 0x9800000000, kParts = 0x9840000000, kPerformer = 0x9850000000;
+    list.Add(kAsker, "EventRequestActor", {-22.62f, 122.58f, -3.81f});
+    m.Put64(kAsker + CoopPuppet::addr::kActorParts, kParts);
+    m.Put64(kParts + addr::kPerformerSlot, kPerformer);
+    m.Put64(kPerformer + addr::kPerformerActor, kAsker);
+    m.Put32(kPerformer + addr::kPerformerState, 0);
+
+    const auto run = [&](CoopLiveEvents::Requester& r, std::vector<std::uint64_t>& order, std::string& name) {
+        order.clear();
+        auto call = r.Step(m, false, 0, kMain);
+        while (call) {
+            order.push_back(call->function - kMain);
+            if (call->function == kMain + addr::kPerformerRequest) {
+                CHECK(call->x[0] == kPerformer);
+                name = m.Str(m.Get64(call->x[1]));  // the address of a char*, as the game's callers pass
+            }
+            call = r.Step(m, true, Run(m, *call), kMain);
+        }
+    };
+    CoopLiveEvents::Requester r;
+    std::vector<std::uint64_t> order;
+    std::string name;
+    r.WantFromRoom("InsideTheDekuTree_Gimmick_RoomD_PlatformUp", "InsideTheDekuTree");
+    run(r, order, name);
+    // No build, no link, no frees: the performer's call makes and frees its own request.
+    CHECK(order == std::vector<std::uint64_t>{addr::kMalloc, addr::kPerformerRequest});
+    CHECK(name == "InsideTheDekuTree_Gimmick_RoomD_PlatformUp");
+    bool said = false;
+    for (const auto& n : r.TakeNotes()) said |= n.find("asked by our room's asker itself (result 1)") != std::string::npos;
+    CHECK(said);
+
+    // The asker busy in an event (state 3): linked as before, and said so.
+    m.Put32(kPerformer + addr::kPerformerState, 3);
+    r.WantFromRoom("InsideTheDekuTree_Gimmick_RoomD_PlatformUp", "InsideTheDekuTree");
+    run(r, order, name);
+    CHECK(order == std::vector<std::uint64_t>{addr::kArgBuild, addr::kSetLink, addr::kRequest, addr::kStringFree,
+                                              addr::kStringFree});
+    said = false;
+    for (const auto& n : r.TakeNotes()) said |= n.find("busy (state 3)") != std::string::npos;
+    CHECK(said);
+
+    // A performer that is not the asker's own (another actor's, a stale slot): never asked through; linked.
+    m.Put32(kPerformer + addr::kPerformerState, 0);
+    m.Put64(kPerformer + addr::kPerformerActor, 0x9860000000);
+    r.WantFromRoom("InsideTheDekuTree_Gimmick_RoomD_PlatformUp", "InsideTheDekuTree");
+    run(r, order, name);
+    CHECK(order == std::vector<std::uint64_t>{addr::kArgBuild, addr::kSetLink, addr::kRequest, addr::kStringFree,
+                                              addr::kStringFree});
+    // The player's slot (+0x90) is the second place looked at.
+    m.Put64(kParts + addr::kPerformerSlot, 0);
+    m.Put64(kParts + addr::kPerformerSlotAlt, kPerformer);
+    m.Put64(kPerformer + addr::kPerformerActor, kAsker);
+    r.WantFromRoom("InsideTheDekuTree_Gimmick_RoomD_PlatformUp", "InsideTheDekuTree");
+    run(r, order, name);
+    CHECK(order == std::vector<std::uint64_t>{addr::kPerformerRequest});
+}
+
 TEST_CASE("live events: an asker deleted between the pick and the link is not handed to the game") {
     Mem m;
     m.Put64(kMain + addr::kManagerPtr, kHolder);
@@ -859,9 +964,9 @@ TEST_CASE("intro-ocarina: while the game runs another event it asked for, a stor
     for (int i = 0; i < 40; ++i) CHECK_FALSE(s.Frame(std::nullopt, false, true, true, find));
     CHECK(s.Refused() == 1);
     CHECK(s.ScanOnly() == 0);
-    // That event over: a start no request named is given again (the net), as before.
+    // That event over: a start no request named is still not given (deku-sync-fix), only counted.
     CHECK_FALSE(s.Frame(std::nullopt, false, true, false, find));
-    CHECK(s.Frame(std::nullopt, false, true, true, find) == "Dm_Kokiri_0150");
+    CHECK_FALSE(s.Frame(std::nullopt, false, true, true, find));
     CHECK(s.ScanOnly() == 1);
     CHECK_FALSE(s.Frame(std::nullopt, false, true, false, find));
     // A request for one of ours in the same frames still names it.

@@ -610,6 +610,8 @@ public:
             LOG_INFO(Core, "coop: flags: save load seen ({} flags back, {} frames without a scene)",
                      report.save_load_flags, report.save_load_frames);
             CoopTime::SaveLoaded(report.server_now_us);  // issue 159
+            start_source_.Reset();  // deku-sync-fix: what the game asked before the load is not ours now
+            story_source_.Reset();
             coop::host::map_drop_log().note("save load seen (" + std::to_string(report.save_load_flags) + " flags back)");
         }
         // deku-dungeon-2 (DUNGEON_EVENT, issues 176 and 196): a gimmick event
@@ -645,6 +647,7 @@ public:
                 // of the event session is the emulator's way, and Hookshot's net.
                 auto& requests = CoopLiveEvents::TheGameRequests();
                 const bool by_request = requests.Live();
+                start_source_.Scene(hold_scene_);
                 const auto found = start_source_.Frame(
                     by_request ? CoopLiveEvents::RequestedOf(requests.Since(start_cursor_), names) : std::nullopt,
                     by_request, running_now,
@@ -1793,7 +1796,8 @@ private:
                             std::uint64_t* refused_said = nullptr) {
         if (source.ScanOnly() != said) {
             said = source.ScanOnly();
-            LOG_INFO(Core, "coop: {}: an event start found by the search that no request of the game named ({} so far)",
+            LOG_INFO(Core, "coop: {}: an event start found by the search that no request of our game named in this "
+                               "scene: a leftover, not sent ({} so far; deku-sync-fix)",
                      what, said);
         }
         if (refused_said != nullptr && source.Refused() != *refused_said) {
@@ -1891,6 +1895,7 @@ private:
             const bool by_request = requests.Live();
             // Only the story path refuses the search's finds while another asked-for event runs (intro-ocarina);
             // the dungeon gimmicks above keep their net as it was (a gimmick may start inside a talk's flow).
+            story_source_.Scene(here.scene);
             const auto asked = by_request ? requests.Since(story_cursor_) : std::vector<CoopLiveEvents::GameRequest>{};
             const auto found = story_source_.Frame(
                 by_request ? CoopLiveEvents::RequestedOf(asked, names) : std::nullopt,

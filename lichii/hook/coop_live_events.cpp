@@ -324,6 +324,21 @@ std::uint64_t NearestActor(CoopPuppet::Guest& guest, std::uint64_t main, std::sp
     return best;
 }
 
+std::uint64_t Requester::PerformerOf(CoopPuppet::Guest& guest, std::uint64_t actor) {
+    std::uint64_t parts = 0;
+    if (actor == 0 || !guest.Read(actor + CoopPuppet::addr::kActorParts, &parts, 8) || parts == 0) {
+        return 0;
+    }
+    for (const std::uint64_t slot : {addr::kPerformerSlot, addr::kPerformerSlotAlt}) {
+        std::uint64_t performer = 0, owner = 0;
+        if (guest.Read(parts + slot, &performer, 8) && performer != 0 &&
+            guest.Read(performer + addr::kPerformerActor, &owner, 8) && owner == actor) {
+            return performer;  // its own: the game links exactly that actor
+        }
+    }
+    return 0;
+}
+
 std::uint64_t Requester::FindAsker(CoopPuppet::Guest& guest, std::uint64_t main, const std::string& name,
                                    const std::string& scene, std::string& where) {
     for (const Place& p : Places()) {
@@ -505,6 +520,14 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
         }
         case Next::link:
             return Ask(guest, main);
+        case Next::own_request:
+            notes_.push_back("live event " + current_ + " asked by our room's asker itself (result " +
+                             std::to_string(result & 0xff) + ")");
+            current_.clear();
+            current_args_.clear();
+            current_starter_ = 0;
+            current_room_asker_ = false;
+            return std::nullopt;  // its own call built and freed its arg; one event a frame
         case Next::request: {
             notes_.push_back("live event " + current_ + " asked of the game (result " + std::to_string(result & 0xff) +
                              ")");
@@ -562,6 +585,30 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
                                        "asked by name alone (its room may not move)");
         }
         wanted_.pop_front();
+        // deku-sync-fix: the asker asks the event itself, as its room graph's node does, so the event is its own.
+        if (current_room_asker_ && current_args_.empty()) {
+            if (const std::uint64_t performer = PerformerOf(guest, current_starter_); performer != 0) {
+                std::uint32_t state = 0;
+                guest.Read(performer + addr::kPerformerState, &state, 4);
+                const std::uint64_t at = block_ + addr::kArgStrings;  // [char*][the name], in our own block
+                const std::size_t n = std::min<std::size_t>(current_.size(), addr::kStringsSize - 9);
+                std::string text = current_.substr(0, n);
+                text.push_back('\0');
+                const std::uint64_t text_at = at + 8;
+                if (state != 3 && guest.Write(at, &text_at, 8) && guest.Write(text_at, text.data(), text.size())) {
+                    c.function = main + addr::kPerformerRequest;
+                    c.x[0] = performer;
+                    c.x[1] = at;
+                    next_ = Next::own_request;
+                    return c;
+                }
+                notes_.push_back("live event " + current_ + ": our room's asker is busy (state " +
+                                 std::to_string(state) + ") or the name did not fit; linked instead");
+            } else {
+                notes_.push_back("live event " + current_ + ": our room's asker has no event performer we know; "
+                                 "linked instead");
+            }
+        }
     }
     c.function = main + addr::kArgBuild;
     c.x[0] = block_;
