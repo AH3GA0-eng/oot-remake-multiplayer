@@ -62,31 +62,27 @@ wait 120
 place -51.8 112.6 12.2
 wait 240
 mark placed
-goto -53.3 12.2 0.4 300  # in front of the chest
-toward -54.4 12.2 8
-press A                  # open it: the item get, and the trap floor goes
-wait 300
-press A
-wait 120
-press A
-wait 120
-press A
-wait 240
+goto -50.0 12.2 0.5 200   # deku-test: walk 3 m east, toward the eye (the chest in t11 left the camera on the wall)
+toward -35.6 10.7 20      # face the eye switch across the room (-35.6 114.3 10.7)
+press ZL 10               # nothing to target: the camera goes behind Link, looking at the eye
+wait 60
 mark trap
-wait 300
-toward -35.6 10.7 10     # face the eye switch across the room
-wait 30
 hold ZR 60 aim1
 hold ZR 30
-wait 60
+wait 90
 mark shot1
-rstick 0 0.4 6           # a little higher
+rstick 0 0.3 4            # a little higher (the eye is 2.3 m above, 15 m off)
 hold ZR 60 aim2
 hold ZR 30
-wait 60
+wait 90
 mark shot2
-rstick 0 0.4 6
+rstick 0 0.3 4
 hold ZR 60 aim3
+hold ZR 30
+wait 90
+mark shot3
+rstick 0 -0.5 6           # lower than the first, in case the eye sits below the aim's centre
+hold ZR 60 aim4
 hold ZR 30
 wait 120
 press B
