@@ -1438,10 +1438,13 @@ void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint6
     const std::string who = "P" + std::to_string(slot.number);
     const bool held = target.show == Show::hold;
     Vec3 at{};
+    std::optional<Vec3> read;
     if (slot.meter_skip) {
         slot.meter_skip = false;  // still the parked spot: start again from the next frame
         slot.meter.Reset();
+        slot.steps.Break();
     } else if (ReadValue(guest, slot.actor + addr::kActorPosition, at)) {
+        read = at;
         if (const auto snap = slot.meter.Step(at)) {
             Say(who + " snap " + std::to_string(*snap).substr(0, 5) + " m (" +
                 (*snap >= CoopSnap::kWarpM ? std::string("warp") : ShowText(target.show)) + ")");
@@ -1451,10 +1454,15 @@ void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint6
     // jitter-b (coop_follow.h): their place taken to this game frame and followed in even
     // steps. Held (their cutscene) it is drawn where the samples say, as before.
     Vec3 place = target.position;
+    Vec3 raw = target.position;
     if (target.velocity && !held) {
-        place = slot.follow.Step(target.position, *target.velocity, input_.made_ms, now_ms);
+        // jitter-2: at the even frame time (coop_follow.h Cadence), so each frame's step is even.
+        place = slot.follow.Step(target.position, *target.velocity, input_.made_ms, cadence_.At(now_ms));
+        raw = slot.raw_follow.Step(target.position, *target.velocity, input_.made_ms,
+                                   static_cast<double>(now_ms));
     } else {
         slot.follow.Reset();
+        slot.raw_follow.Reset();
     }
     float jump = 0.0f;
     const Vec3 drawn = slot.smooth.Step(place, now_ms, !held, &jump);
@@ -1465,6 +1473,22 @@ void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint6
     } else if (jump > 0.0f) {
         Say(who + " target jump " + std::to_string(jump).substr(0, 5) + " m (" + ShowText(target.show) +
             (jump >= CoopSnap::kWarpM ? ", warp" : held ? ", at once" : ", eased") + ")");
+    }
+    if (jump > 0.0f) {
+        slot.steps.Break();
+        slot.raw_steps.Break();
+    }
+    const auto before = slot.raw_steps.Step(std::nullopt, raw, now_ms);
+    if (const auto r = slot.steps.Step(read, drawn, now_ms)) {
+        // jitter-2's proof line: 'uneven' near 0 is even steps; 'game moved' is what the game
+        // itself moved it between our writes (a second writer).
+        char buf[200];
+        std::snprintf(buf, sizeof(buf),
+                      " steps: %d frames (%d moving), mean %.3f m, uneven %.2f (worst %.2f; raw frame time "
+                      "%.2f), frame %.1f ms, game moved %.3f m (max %.3f)",
+                      r->frames, r->moving, r->mean_step, r->uneven, r->uneven_max,
+                      before ? before->uneven : -1.0f, cadence_.PeriodMs(), r->game_moved, r->game_moved_max);
+        Say(who + buf);
     }
     Pose(slot, guest, drawn, &target.rotation, now_ms);
 }

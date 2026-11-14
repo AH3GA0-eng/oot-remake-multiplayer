@@ -475,6 +475,9 @@ private:
         std::optional<float> frame_to_set;  // after a play
         std::optional<float> held_frame;    // while held
         CoopFollow::Follower follow;        // jitter-b: their place taken to this game frame
+        CoopFollow::Steps steps;            // jitter-2: how even its drawn steps are (logged)
+        CoopFollow::Follower raw_follow;    // jitter-2: the same on the raw frame time (not drawn;
+        CoopFollow::Steps raw_steps;        //   the log's before number)
         CoopSnap::Smoother smooth;          // issue 194: where it is drawn, jumps eased
         CoopSnap::Meter meter;              // issue 194: its place read back, snaps logged
         bool meter_skip = false;            // the next read is still the parked spot
@@ -584,6 +587,7 @@ private:
 
     // The calc thread only.
     Input input_;
+    CoopFollow::Cadence cadence_;  // jitter-2: the game frames' time made even (coop_follow.h)
     std::vector<Slot> slots_;
     CoopLinkSound::Budget sound_budget_;  // every puppet's sound starts together
     Pending pending_ = Pending::none;
