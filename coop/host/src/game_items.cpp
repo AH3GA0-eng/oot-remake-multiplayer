@@ -141,7 +141,7 @@ constexpr ItemFlag kItems[] = {
   {"PouchData.Item_Medal_Forest.StockNum", 0x692d57cb, K::int32, R::max, true},
   {"IsGet.Weapon_Range_Bow", 0x69ec28be, K::boolean, R::any, true},
   {"IsGet.Item_Token_Gold", 0x6ba394fe, K::boolean, R::any, true},
-  {"PouchData.Item_ZeldaLetter.StockNum", 0x6be5c3b0, K::int32, R::mirror, true},
+  {"PouchData.Item_ZeldaLetter.StockNum", 0x6be5c3b0, K::int32, R::max, true},  // issue 171: each keeps theirs
   {"DungeonInfo.FinalBattleField.IsGetBossKey", 0x6d0fea11, K::boolean, R::any, true},
   {"DungeonInfo.GerudoTrainingGround.IsGetBossKey", 0x6d155841, K::boolean, R::any, true},
   {"IsGet.Item_MagicBean", 0x6d39c600, K::boolean, R::any, true},

@@ -188,6 +188,9 @@ TEST_CASE("game items: Alex's rule, item by item") {
            Want{kHookshot, ItemRule::max, true},        // key item: shared
            Want{kHookshotGet, ItemRule::any, true},
            Want{kPocketEgg, ItemRule::mirror, true},    // trade item
+           // Issue 171: Zelda's Letter on the max rule: showing it takes it
+           // from the shower only (a max-rule drop is kept, never sent).
+           Want{0x6be5c3b0, ItemRule::max, true},
            Want{kRupees, ItemRule::per_player, true},   // rupees stay with the player
            Want{0xdb1bcd4f, ItemRule::per_player, true},  // bombs (ammo)
            Want{0xbd3ca2c6, ItemRule::max, true},       // the bomb bag tier is shared
@@ -234,6 +237,7 @@ TEST_CASE("game items: merge rules") {
   CHECK(merge_item(ItemRule::any, K::boolean, 1, 0) == 1);
   CHECK(merge_item(ItemRule::any, K::int32, 1, 0) == 1);  // a bottle stays owned
   CHECK(merge_item(ItemRule::mirror, K::int32, 1, 0) == 0);  // the egg was handed over
+  CHECK(merge_item(ItemRule::max, K::int32, 1, 0) == 1);     // the letter shown elsewhere: ours stays
   CHECK(merge_item(ItemRule::mirror, K::int32, 0, 1) == 1);
   CHECK(merge_item(ItemRule::per_player, K::int32, 50, 99) == 50);
   // Count: the sender went from 2 to 3 keys (+1) while this game spent one (2 -> 1).
