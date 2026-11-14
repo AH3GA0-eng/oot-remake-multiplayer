@@ -910,6 +910,33 @@ std::uint64_t EquipState(std::uint32_t kind) {
 // the wearer and distance on the ground), the request byte, and the slot
 // record's in-hand byte and flags (u32 at +0xa0: "put away" 0xe34c70 sets
 // 0x800, "in hand" 0x6b6820 clears it; read from the dump, not run).
+// A piece's turn in its wearer's frame (wearer rotation transposed times the
+// piece's), its three rows to one decimal, for the debug log: a held piece
+// at the same place but turned another way than on the player's own Link
+// shows here (held-sword: a sword in the hand not seen, an Ocarina upside down).
+std::string TurnText(Guest& guest, std::uint64_t wearer, std::uint64_t piece) {
+    std::array<float, 9> w{};
+    std::array<float, 9> p{};
+    if (!ReadValue(guest, wearer + addr::kActorRotation, w) ||
+        !ReadValue(guest, piece + addr::kActorRotation, p)) {
+        return " turn ?";
+    }
+    std::string text = " turn";
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            float v = 0.0f;
+            for (int k = 0; k < 3; ++k) {
+                v += w[k * 3 + r] * p[k * 3 + c];
+            }
+            char n[16];
+            std::snprintf(n, sizeof(n), "%s%.1f", c == 0 ? (r == 0 ? " " : "/") : ",",
+                          static_cast<double>(v));
+            text += n;
+        }
+    }
+    return text;
+}
+
 std::string SlotsText(Guest& guest, std::uint64_t actor, std::optional<std::uint8_t> wanted) {
     std::uint64_t parts = 0;
     std::uint64_t eu = 0;
@@ -951,7 +978,8 @@ std::string SlotsText(Guest& guest, std::uint64_t actor, std::optional<std::uint
                       static_cast<double>(std::hypot(at[0] - own[0], at[2] - own[2])));
         text += "; slot " + std::to_string(s) + ": id " + Hex(id) + " actor " + Hex(piece) +
                 " state " + std::to_string(state) + " " + place + " request " + Hex(request) +
-                " record " + Hex(hand) + " flags " + Hex(flags);
+                " record " + Hex(hand) + " flags " + Hex(flags) +
+                (piece != 0 ? TurnText(guest, actor, piece) : std::string());
         if (wanted) {
             text += std::string(" want ") + (((*wanted >> s) & 1u) != 0 ? "hand" : "away");
         }
@@ -980,7 +1008,8 @@ std::string SlotsText(Guest& guest, std::uint64_t actor, std::optional<std::uint
         std::snprintf(place, sizeof(place), "up %.2f off %.2f", static_cast<double>(at[1] - own[1]),
                       static_cast<double>(std::hypot(at[0] - own[0], at[2] - own[2])));
         text += "; armor " + std::to_string(a) + ": id " + Hex(id) + " actor " + Hex(piece) +
-                " state " + std::to_string(state) + " " + place;
+                " state " + std::to_string(state) + " " + place +
+                (piece != 0 && a == 8 ? TurnText(guest, actor, piece) : std::string());
     }
     // Issue 91 (puppet-looks): the equip call's per-kind words (eu + 0x12d4 +
     // 8 * kind, two u32), to tell how the game wears a real mask from the
