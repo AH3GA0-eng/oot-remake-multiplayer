@@ -104,7 +104,7 @@
 #include <set>
 
 namespace CoopObjects {
-void NoteBosses(const std::vector<Seen>& seen);  // issue 109, below
+void NoteBosses(const std::vector<Seen>& seen, const std::vector<std::pair<u64, std::string>>& owned);  // issue 109, below
 // Boss bodies whose intro this game has not played (SetUnreadyBosses, below).
 std::mutex g_unready_mutex;
 std::vector<std::string> g_unready;
@@ -1376,7 +1376,7 @@ public:
         if (!Collect(r, seen)) {
             return;
         }
-        NoteBosses(seen);
+        NoteBosses(seen, sync_.Owned());
         const u8 self =
             session->with_client([](coop::net::Client& c) { return c.player_number(); });
         if (self == 0) {
@@ -3797,20 +3797,28 @@ namespace {
 // The bosses of the last walk, for LastBossAlive (issue 109).
 std::mutex g_bosses_mutex;
 std::vector<Seen> g_bosses;
+std::vector<std::uint64_t> g_bosses_ours;  // the bosses of g_bosses our game owns (boss-intro)
 std::uint64_t g_bosses_at = 0;
 constexpr std::uint64_t kBossesFreshUs = 1'500'000;
 
 } // namespace
 
-void NoteBosses(const std::vector<Seen>& seen) {
+void NoteBosses(const std::vector<Seen>& seen, const std::vector<std::pair<u64, std::string>>& owned) {
     std::vector<Seen> bosses;
+    std::vector<std::uint64_t> ours;
     for (const Seen& s : seen) {
         if (s.name.starts_with("Enemy_DungeonBoss_")) {
             bosses.push_back(s);
+            for (const auto& [address, name] : owned) {
+                if (address == s.address) {
+                    ours.push_back(address);
+                }
+            }
         }
     }
     std::lock_guard lock(g_bosses_mutex);
     g_bosses = std::move(bosses);
+    g_bosses_ours = std::move(ours);
     g_bosses_at = CoopEvery::NowUs();
 }
 
@@ -3821,6 +3829,23 @@ std::optional<bool> LastBossAlive(std::span<const std::string_view> bodies) {
         return std::nullopt;
     }
     return BossAlive(g_bosses, bodies);
+}
+
+std::optional<bool> LastBossOurs(std::span<const std::string_view> bodies) {
+    std::lock_guard lock(g_bosses_mutex);
+    const std::uint64_t now = CoopEvery::NowUs();
+    if (g_bosses_at == 0 || now < g_bosses_at || now - g_bosses_at > kBossesFreshUs) {
+        return std::nullopt;
+    }
+    std::optional<bool> out;
+    for (const Seen& s : g_bosses) {
+        if (std::find(bodies.begin(), bodies.end(), s.name) != bodies.end()) {
+            const bool ours =
+                std::find(g_bosses_ours.begin(), g_bosses_ours.end(), s.address) != g_bosses_ours.end();
+            out = out.value_or(false) || ours;
+        }
+    }
+    return out;
 }
 
 void SetUnreadyBosses(std::vector<std::string> bodies) {

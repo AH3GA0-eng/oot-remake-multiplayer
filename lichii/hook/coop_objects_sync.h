@@ -388,6 +388,7 @@ public:
     static constexpr std::uint64_t kExtrapolateUs = 150'000;
     static constexpr std::uint64_t kPoseStaleUs = 2'500'000;  // no sample this long: let it be
     static constexpr std::uint64_t kHurtWaitUs = 400'000;     // then write life directly
+    static constexpr std::uint64_t kHitPlaceKeepUs = 200'000;  // a hit's place waits this long for its life drop
     static constexpr std::size_t kKeepSamples = 16;
     static constexpr std::uint64_t kSceneStaleUs = 5'000'000;  // a player's scene, from its samples
     static constexpr float kClaimDistance = 4.0f;  // a fresh roll this near a copy being made is it
@@ -714,6 +715,8 @@ private:
         std::uint32_t sequence = 0;
         // Copy side.
         std::int32_t hit_sum = 0;
+        std::optional<coop::protocol::Vec3> place_seen;  // a new hit's place, waiting for its life drop
+        std::uint64_t place_seen_at = 0;
         std::optional<coop::protocol::Vec3> hit_place;  // where our own hit summed now landed (a boss; cleared with the sum)
         std::uint64_t hit_since = 0;
         std::uint64_t hit_at = 0;  // last DAMAGE sent

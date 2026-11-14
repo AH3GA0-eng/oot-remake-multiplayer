@@ -255,6 +255,30 @@ TEST_CASE("objects: a hit place never rides on a later DAMAGE (seen while ours, 
     CHECK_FALSE(damage[0].hit_at);
 }
 
+TEST_CASE("objects: a hit place read a walk before its life drop still goes with it, not later (review)") {
+    const proto::Vec3 eye{18.5f, 61.5f, 67.8f};
+    const std::string kBoss = "Enemy_DungeonBoss_Gohma";
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 4, 0.0f, kBoss)});
+    Own(sync, *sync.IdOf(0x100), 2, 1);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 4, 0.0f, kBoss)});
+    Seen id_moved = Enemy(0x100, 0x11, 4, 0.0f, kBoss);  // the hit id moved, the life not yet
+    id_moved.hit_at = eye;
+    Tick(sync, 20 * kMs, {id_moved});
+    Tick(sync, 40 * kMs, {Enemy(0x100, 0x11, 3, 0.0f, kBoss)});  // the drop, one walk later
+    auto damage = All<proto::Damage>(Tick(sync, 150 * kMs, {Enemy(0x100, 0x11, 3, 0.0f, kBoss)}));
+    REQUIRE(damage.size() == 1);
+    CHECK(damage[0].hit_at == std::optional<proto::Vec3>(eye));
+    // A place whose drop comes too late (past kHitPlaceKeepUs) goes with nothing.
+    Seen old = Enemy(0x100, 0x11, 3, 0.0f, kBoss);
+    old.hit_at = eye;
+    Tick(sync, 160 * kMs, {old});
+    Tick(sync, 500 * kMs, {Enemy(0x100, 0x11, 2, 0.0f, kBoss)});
+    damage = All<proto::Damage>(Tick(sync, 620 * kMs, {Enemy(0x100, 0x11, 2, 0.0f, kBoss)}));
+    REQUIRE(damage.size() == 1);
+    CHECK_FALSE(damage[0].hit_at);
+}
+
 TEST_CASE("objects: a hit place is kept only finite and near the boss") {
     const proto::Vec3 boss{18.0f, 60.0f, 67.0f};
     CHECK(CoopObjects::CheckedHitPlace({18.5f, 61.5f, 67.8f}, boss, 12.0f));

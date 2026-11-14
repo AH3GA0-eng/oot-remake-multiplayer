@@ -103,6 +103,9 @@ struct Local {
     bool event = false;                  // an event runs in our game
     std::uint8_t self = 0;               // our player number (0 unknown)
     std::optional<std::int32_t> max_life;  // PlayerStatus.MaxLife as our game has it
+    // Whether our game owns the boss (the object walk): a death seen with no name is taken only from the owner,
+    // so a copy that dies in its own game (its hit judged lethal there, refused by the owner) starts nothing.
+    std::optional<bool> boss_ours;
 };
 
 // One of our game's own event requests since the last tick.
