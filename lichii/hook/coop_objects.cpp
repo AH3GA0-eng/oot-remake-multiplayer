@@ -904,7 +904,7 @@ public:
             Pose followed = p;
             if (p.velocity) {
                 const CoopFollow::Vec3 at{p.transform[0], p.transform[1], p.transform[2]};
-                const auto drawn = follow_[p.actor].Step(at, *p.velocity, want_ms_, now_ms);
+                const auto drawn = follow_[p.actor].Step(at, *p.velocity, want_ms_, cadence_.At(now_ms));  // jitter-2: even
                 std::copy(drawn.begin(), drawn.end(), followed.transform.begin());
             }
             if (p.rotation) {
@@ -1160,6 +1160,7 @@ private:
     u64 main_ = 0;
     std::vector<Pose> poses_;
     std::unordered_map<u64, CoopFollow::Follower> follow_;  // jitter-b: by actor
+    CoopFollow::Cadence cadence_;  // jitter-2: the game frames' time made even
     CoopNpcAnim::Resync resync_;  // jitter-b: townspeople's frame sets
     std::vector<u64> removes_;
     std::vector<PlayWish> plays_;
