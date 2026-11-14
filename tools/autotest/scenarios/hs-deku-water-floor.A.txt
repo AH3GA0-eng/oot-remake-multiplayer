@@ -35,6 +35,11 @@
 # 40.62; its AI is a step switch: CheckPlayerOn). Dives ('hold A', key E) stop 0.14-0.4 m over its top (y 74.39-74.64);
 # swimming along the bottom drifted 2 m off; a drop from 4 m over it with A held reached 74.60. Next: how the game
 # expects a child to press it (the remake's own walkthrough, or the switch's ActorParam sensor size).
+# deku-test run 3 (2026-11-14, groups-20261114-081307): on the PRE-DEKU save ('1. Deku Tree', as hs-deku-torch) the
+# 4th try (the drop from 79.5) PRESSED the switch: A bools 0xfcbd74e3, 0x8d2b85ef (WaterLevel) 0 -> 1; A stands on the
+# switch in the lowered water (A-moved). B got 0x8d2b85ef and 0xfcbd74e3 by flag sync and its water went down too
+# (B's Link 75.58 -> 74.58, shots B-ride2 / B-moved). The older saves were past the room: the switch's own state
+# kept it from being pressed. No 'started the event' line for the water event in either game (flags only).
 # deku-test (2026-11-14, Longshot rc.3): clearing HavePlayedEvent alone does not start anything. The rooms'
 # logic (romfs Logic/InsideTheDekuTree_Level_Room_*.logic.module.ainb) reads room flags when the room loads:
 #   compass room D: the event's asker (EventRequestActor_641b) is deleted while RoomD_StepSwitch_On_01 (0x6fb4f455)
