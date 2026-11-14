@@ -560,62 +560,104 @@ float ApartFor(std::string_view name) {
     return starts(kBig) ? 3.5f : starts(kSmall) ? 2.0f : 2.5f;
 }
 
-std::optional<std::array<float, 3>> FindSpot(const std::array<float, 3>& from, std::string_view name,
-                                             const std::vector<Ground>& ground,
-                                             const std::vector<std::array<float, 3>>& taken) {
-    const float apart = ApartFor(name);
-    const auto flat = [](const std::array<float, 3>& a, const std::array<float, 3>& b) {
+std::optional<Point> FindSpot(const Point& from, std::string_view name, std::span<const Point> candidates,
+                              const std::vector<Point>& apart) {
+    const float least = ApartFor(name);
+    const auto flat = [](const Point& a, const Point& b) {
         const float dx = a[0] - b[0];
         const float dz = a[2] - b[2];
         return std::sqrt(dx * dx + dz * dz);
     };
-    const auto near = [&](const std::array<float, 3>& at, const std::array<float, 3>& other) {
-        return flat(at, other) < apart - 1e-3f;
-    };
-    const auto clear = [&](const std::array<float, 3>& at) {
-        return !near(at, from) &&
-               std::none_of(taken.begin(), taken.end(), [&](const auto& t) { return near(at, t); }) &&
-               std::none_of(ground.begin(), ground.end(), [&](const Ground& g) { return near(at, g.at); });
-    };
-    // The lines to try: the same kind first, then nearer, then by id (the same order in every game).
-    struct Line {
-        bool other_kind;
-        float length;
-        std::uint64_t order;
-        const Ground* to;
-    };
-    std::vector<Line> lines;
-    for (const Ground& g : ground) {
-        const float d = flat(from, g.at);
-        if (d >= 2.0f * apart && d <= kSpotReachM && std::fabs(g.at[1] - from[1]) <= kSpotStepM) {
-            lines.push_back({g.name != name, d, g.order, &g});
+    const auto near = [&](const Point& at, const Point& other) { return flat(at, other) < least - 1e-3f; };
+    const Point* best = nullptr;
+    float best_d = 0.0f;
+    for (const Point& c : candidates) {  // nearest first; among equals the first (the same in every game)
+        const float d = flat(from, c);
+        if (d > kSpotReachM || std::fabs(c[1] - from[1]) > kSpotStepM || near(c, from) ||
+            std::any_of(apart.begin(), apart.end(), [&](const Point& t) { return near(c, t); })) {
+            continue;
+        }
+        if (best == nullptr || d < best_d) {
+            best = &c;
+            best_d = d;
         }
     }
-    std::sort(lines.begin(), lines.end(), [](const Line& a, const Line& b) {
-        if (a.other_kind != b.other_kind) {
-            return !a.other_kind;
-        }
-        if (a.length != b.length) {
-            return a.length < b.length;
-        }
-        return a.order < b.order;
-    });
-    for (const Line& line : lines) {
-        for (const float t : {apart, line.length * 0.5f, line.length - apart}) {
-            const float f = t / line.length;
-            const std::array<float, 3> at{from[0] + (line.to->at[0] - from[0]) * f,
-                                          from[1] + (line.to->at[1] - from[1]) * f,
-                                          from[2] + (line.to->at[2] - from[2]) * f};
-            if (clear(at)) {
-                return at;
-            }
-        }
-    }
-    return std::nullopt;
+    return best != nullptr ? std::optional<Point>(*best) : std::nullopt;
 }
 
-std::size_t Extras::Plan(std::string_view scene, const std::vector<Original>& walk, const std::vector<Ground>& ground,
-                         std::uint16_t count_pct, bool boss_here, std::uint64_t now_ms) {
+namespace {
+
+// The game's placement data for the extras' spots (tools/puppet_pack/extra_spots.py).
+using SpotEnemy = AreaEnemy;
+using SpotPoint = Point;
+struct SpotArea {
+    std::string_view name;
+    std::uint32_t enemy_begin, enemy_end, ground_begin, ground_end;
+};
+#include "coop_difficulty_spots.inc"
+
+} // namespace
+
+std::optional<Area> AreaOf(std::uint64_t hash) {
+    static const std::map<std::uint64_t, std::size_t> kAreaOf = [] {
+        std::map<std::uint64_t, std::size_t> m;
+        for (std::size_t i = 0; i < std::size(kSpotAreas); ++i) {
+            for (std::uint32_t e = kSpotAreas[i].enemy_begin; e < kSpotAreas[i].enemy_end; ++e) {
+                m.emplace(kSpotEnemies[e].hash, i);  // (a hash in two areas: the first)
+            }
+        }
+        return m;
+    }();
+    const auto it = kAreaOf.find(hash);
+    if (it == kAreaOf.end()) {
+        return std::nullopt;
+    }
+    const SpotArea& a = kSpotAreas[it->second];
+    return Area{a.name, std::span<const AreaEnemy>(kSpotEnemies).subspan(a.enemy_begin, a.enemy_end - a.enemy_begin),
+                std::span<const Point>(kSpotGround).subspan(a.ground_begin, a.ground_end - a.ground_begin)};
+}
+
+AreaPlan PlanArea(const Area& area, std::uint16_t count_pct, const NameTest& special) {
+    AreaPlan plan;
+    std::vector<Point> apart;  // every enemy placed here, then every spot taken
+    apart.reserve(area.enemies.size());
+    for (const AreaEnemy& e : area.enemies) {
+        apart.push_back(e.at);
+    }
+    std::vector<const AreaEnemy*> sorted;
+    for (const AreaEnemy& e : area.enemies) {
+        sorted.push_back(&e);
+    }
+    std::stable_sort(sorted.begin(), sorted.end(),
+                     [](const AreaEnemy* a, const AreaEnemy* b) { return a->hash < b->hash; });
+    for (const AreaEnemy* e : sorted) {
+        if (TreatmentOf(e->name, e->hash) != Treatment::copies || (special && special(e->name))) {
+            continue;
+        }
+        const unsigned want = ExtraCount(e->hash, count_pct);
+        if (want == 0) {
+            continue;
+        }
+        const std::size_t before = apart.size();
+        while (apart.size() - before < want) {
+            const auto spot = FindSpot(e->at, e->name, area.ground, apart);
+            if (!spot) {
+                break;
+            }
+            apart.push_back(*spot);
+        }
+        if (apart.size() - before < want) {
+            apart.resize(before);  // all of them or none
+            plan.no_spot.insert(e->hash);
+            continue;
+        }
+        plan.spots[e->hash].assign(apart.begin() + static_cast<std::ptrdiff_t>(before), apart.end());
+    }
+    return plan;
+}
+
+std::size_t Extras::Plan(std::string_view scene, const std::vector<Original>& walk, std::uint16_t count_pct,
+                         bool boss_here, std::uint64_t now_ms) {
     if (scene != scene_) {
         Reset();
         scene_ = std::string(scene);
@@ -633,39 +675,38 @@ std::size_t Extras::Plan(std::string_view scene, const std::vector<Original>& wa
     std::size_t added = 0;
     for (const Original* original : sorted) {
         const Original& o = *original;
-        const unsigned want = ExtraCount(o.hash, count_pct);
+        if (planned_.contains(o.hash) || no_spot_.contains(o.hash)) {
+            continue;  // decided for this visit
+        }
+        const std::optional<Area> area = areas_ ? areas_(o.hash) : std::nullopt;
+        if (!area) {
+            if (ExtraCount(o.hash, count_pct) > 0) {
+                no_spot_.insert(o.hash);  // no placement data: no ground known
+            }
+            continue;
+        }
+        auto plan = plans_.find(area->name);
+        if (plan == plans_.end()) {
+            plan = plans_.emplace(area->name, PlanArea(*area, count_pct, special_)).first;
+        }
+        if (plan->second.no_spot.contains(o.hash)) {
+            no_spot_.insert(o.hash);
+            continue;
+        }
+        const auto spots = plan->second.spots.find(o.hash);
+        if (spots == plan->second.spots.end()) {
+            continue;  // none for it at this count
+        }
+        if (extras_.size() + spots->second.size() > kMost) {
+            continue;  // the visit's cap: not even partly
+        }
         unsigned& have = planned_[o.hash];
-        if (have >= want || extras_.size() >= kMost) {
-            continue;
-        }
-        // Every spot first: all of its copies, or (with none yet) their weight instead.
-        std::vector<std::array<float, 3>> taken;
-        taken.reserve(extras_.size() + want);
-        for (const Extra& e : extras_) {
-            taken.push_back(e.position);
-        }
-        const std::size_t before = taken.size();
-        const std::size_t asked = std::min<std::size_t>(want - have, kMost - extras_.size());
-        while (taken.size() - before < asked) {
-            const auto spot = FindSpot(o.position, o.name, ground, taken);
-            if (!spot) {
-                break;
-            }
-            taken.push_back(*spot);
-        }
-        if (taken.size() - before < asked) {
-            if (have == 0) {
-                no_spot_.insert(o.hash);  // its weight instead (LifeKind / AttackerKind, no_spot)
-            }
-            have = want;  // decided for this visit
-            continue;
-        }
-        for (std::size_t i = before; i < taken.size(); ++i) {
+        for (const Point& at : spots->second) {
             Extra e;
             e.key = next_key_++;
             e.hash = ExtraHash(o.hash, have);
             e.name = o.name;
-            e.position = taken[i];
+            e.position = at;
             e.asked_ms = now_ms;
             extras_.push_back(std::move(e));
             ++have;
@@ -719,6 +760,7 @@ bool Extras::Holds(std::string_view name, std::uint64_t now_ms) const {
 void Extras::Reset() {
     scene_.clear();
     extras_.clear();
+    plans_.clear();
     planned_.clear();
     no_spot_.clear();
     by_address_.clear();
@@ -733,7 +775,7 @@ unsigned Horde::PerRoll(std::size_t players_near, std::uint16_t count_pct) {
 }
 
 std::size_t Horde::Plan(std::string_view scene, const std::vector<Roll>& rolls, std::size_t alive,
-                        const std::vector<Ground>& ground, std::uint16_t count_pct, std::uint64_t now_ms) {
+                        const std::vector<Point>& apart, std::uint16_t count_pct, std::uint64_t now_ms) {
     if (scene != scene_) {
         Reset();
         scene_ = std::string(scene);
@@ -784,7 +826,11 @@ std::size_t Horde::Plan(std::string_view scene, const std::vector<Roll>& rolls, 
         if (roll.address == 0 || Ours(roll.address)) {
             continue;
         }
-        Seen& seen = rolls_.emplace(roll.address, Seen{now_ms, roll.dead}).first->second;
+        const auto [entry, first] = rolls_.emplace(roll.address, Seen{now_ms, roll.dead});
+        Seen& seen = entry->second;
+        if (first && rises_.size() < kMost) {
+            rises_.push_back(roll.position);  // where the game made it rise: its own floor
+        }
         seen.dead = roll.dead;
         if (roll.dead || now_ms - seen.first_ms < kSettleMs) {
             continue;
@@ -792,13 +838,13 @@ std::size_t Horde::Plan(std::string_view scene, const std::vector<Roll>& rolls, 
         unsigned& made = planned_[roll.address];
         const unsigned want = PerRoll(roll.players_near, count_pct);
         while (made < want && alive + pending < kMostAlive && made_.size() < kMost) {
-            std::vector<std::array<float, 3>> taken;
+            std::vector<Point> taken = apart;
             for (const Made& other : made_) {
                 if (!other.gone) {
                     taken.push_back(other.position);
                 }
             }
-            const auto spot = FindSpot(roll.position, roll.name, ground, taken);
+            const auto spot = FindSpot(roll.position, roll.name, rises_, taken);
             if (!spot) {
                 break;  // no ground for one more now: tried again on a later walk
             }
@@ -875,6 +921,7 @@ void Horde::Reset() {
     scene_.clear();
     made_.clear();
     rolls_.clear();
+    rises_.clear();
     planned_.clear();
     by_address_.clear();
     orphan_since_ = 0;
