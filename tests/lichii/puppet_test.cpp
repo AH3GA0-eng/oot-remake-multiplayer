@@ -2243,3 +2243,65 @@ TEST_CASE("puppet stray: an actor of another name at the address is left alone")
     CHECK(Deletes(Frame(d, g, Director::kCreateTimeoutMs + 2000), kActor) == 0);
     CHECK(d.Slots()[0].strays == 0);
 }
+
+TEST_CASE("puppet stray: an actor freed or being deleted before the timeout gets no delete call") {
+    for (const bool reused : {true, false}) {
+        CAPTURE(reused);
+        Game g;
+        Director d;
+        d.SetInput(Wants({At(1, 0, 0, 0)}));
+        auto calls = Frame(d, g, 0);
+        g.Spawn(calls[1].x[3], 3);
+        Frame(d, g, 10);
+        if (reused) {
+            g.guest.Set(kActor, kVtable + 0x100);  // freed, the address made into another class
+        } else {
+            g.guest.Set(kActor + addr::kActorState, std::uint32_t{8});  // the game deletes it
+        }
+        calls = Frame(d, g, Director::kCreateTimeoutMs + 20);
+        CHECK(Deletes(calls, kActor) == 0);
+        CHECK(d.Slots()[0].strays == 0);
+        CHECK(d.Slots()[0].phase == Phase::idle);
+    }
+}
+
+TEST_CASE("puppet stray: a scene change lets strays go (the load deletes them)") {
+    Game g;
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0)}, "A"));
+    auto calls = Frame(d, g, 0);
+    g.Spawn(calls[1].x[3], 3);
+    Frame(d, g, 10);
+    CHECK(Deletes(Frame(d, g, Director::kCreateTimeoutMs + 20), kActor) == 1);
+    REQUIRE(d.Slots()[0].strays == 1);
+    d.SetInput(Wants({}, ""));  // loading
+    CHECK(Deletes(Frame(d, g, Director::kCreateTimeoutMs + 2000), kActor) == 0);
+    CHECK(d.Slots()[0].strays == 0);
+}
+
+TEST_CASE("puppet stray: a stray the game keeps is let go after the most delete calls") {
+    Game g;
+    std::vector<std::string> log;
+    Director d([&](const std::string& line) { log.push_back(line); });
+    // A live puppet whose player leaves; the game never deletes it.
+    d.SetInput(Wants({At(1, 0, 0, 0)}));
+    auto calls = Frame(d, g, 0);
+    g.Spawn(calls[1].x[3]);
+    Frame(d, g, 10);
+    Frame(d, g, 15);
+    REQUIRE(d.Slots()[0].phase == Phase::live);
+    d.SetInput(Wants({}));
+    Frame(d, g, 100);
+    Frame(d, g, 100 + Director::kLeaveGraceMs);
+    int deletes = 0;
+    for (std::uint64_t t = 8000; t < 8000 + 40 * Director::kStrayDeleteMs; t += 250) {
+        deletes += Deletes(Frame(d, g, t), kActor);
+    }
+    CHECK(deletes == Director::kStrayMaxDeletes);
+    CHECK(d.Slots()[0].strays == 0);
+    bool said = false;
+    for (const auto& line : log) {
+        said = said || line.find("given up") != std::string::npos;
+    }
+    CHECK(said);
+}

@@ -262,6 +262,15 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
     if (input_.scene != scene_) {
         scene_ = input_.scene;
         scene_since_ms_ = now_ms;
+        // A load deletes every actor itself: what was a stray is gone or freed
+        // memory now, never to be called on.
+        for (auto& slot : slots_) {
+            if (!slot.strays.empty()) {
+                Say("P" + std::to_string(slot.number) + ": " + std::to_string(slot.strays.size()) +
+                    " stray actor(s) let go: the scene changed (the load deletes them)");
+                slot.strays.clear();
+            }
+        }
     }
     std::uint32_t live = 0;  // LiveMask(): rebuilt each frame
     if (input_.main_base == 0) {
@@ -311,7 +320,12 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                 }
                 // Its actor may still be loading: made later, it would be a
                 // second puppet of this player beside the next one. Deleted.
-                Abandon(slot, now_ms, "its create timed out");
+                if (slot.taken != 0) {
+                    Abandon(slot, guest, now_ms, "its create timed out");
+                } else if (slot.request != 0) {
+                    Say("P" + std::to_string(slot.number) + ": request " + Hex(slot.request) +
+                        " timed out before it gave an actor (not taken: left to the game)");
+                }
                 slot.phase = Phase::idle;
                 slot.retry_ms = now_ms + 5000;
                 slot.take = slot.drop = false;
@@ -417,7 +431,7 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                     (have_state ? "state " + std::to_string(state) : std::string("no actor")) +
                     ")");
                 if (have_state && !Gone(state)) {
-                    Abandon(slot, now_ms, "its delete did not finish");  // asked again until gone
+                    Abandon(slot, guest, now_ms, "its delete did not finish");  // asked again until gone
                 }
                 slot.phase = Phase::idle;
                 slot.actor = 0;
@@ -620,7 +634,7 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
         slot.wanted_since_ms = now_ms;
     }
     if (slot.phase != Phase::allocating) {
-        if (auto c = DeleteStray(slot, now_ms)) {
+        if (auto c = DeleteStray(slot, guest, now_ms)) {
             return c;  // before anything else: never two of one player
         }
     }
@@ -814,7 +828,7 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     c.x[2] = b + block::kCreateArg;
     c.x[3] = slot.handle;
     c.x[4] = 1;
-    Abandon(slot, 0, "a new one is made");  // never kept beside the new one
+    Abandon(slot, guest, 0, "a new one is made");  // never kept beside the new one
     slot.phase = Phase::creating;
     slot.actor = 0;
     slot.actor_name = target.actor;
@@ -1435,13 +1449,21 @@ void Director::Pose(Slot& slot, Guest& guest, const Vec3& position, const Mat3* 
 }
 
 // The slot's taken actor becomes a stray: no longer the puppet, deleted until gone.
-void Director::Abandon(Slot& slot, std::uint64_t now_ms, const char* why) {
-    if (slot.taken == 0 || slot.vtable == 0) {
+// Only while it is still that actor (Resolve: the vtable it was taken with) and not
+// being deleted already (state 7-11): a freed or reused address is only let go.
+void Director::Abandon(Slot& slot, Guest& guest, std::uint64_t now_ms, const char* why) {
+    const std::uint64_t actor = slot.taken;
+    if (actor == 0 || slot.vtable == 0) {
         return;
     }
-    const std::uint64_t actor = slot.taken;
+    std::uint32_t state = 0;
+    const bool alive = Resolve(slot, guest) == actor &&
+                       ReadValue(guest, actor + addr::kActorState, state) && !Gone(state);
     slot.taken = 0;
     slot.actor = 0;
+    if (!alive) {
+        return;
+    }
     for (const auto& s : slot.strays) {
         if (s.actor == actor) {
             return;
@@ -1452,36 +1474,59 @@ void Director::Abandon(Slot& slot, std::uint64_t now_ms, const char* why) {
         ") is a stray (" + why + "): deleted with the game's call until it is gone");
 }
 
+// Why the stray must not be called on any more; empty while it may be deleted.
+std::string Director::StrayCheck(const Slot::Stray& s, Guest& guest) const {
+    std::uint64_t vtable = 0;
+    std::uint32_t state = 0;
+    if (!ReadValue(guest, s.actor, vtable) || vtable != s.vtable) {
+        return "freed or reused";
+    }
+    if (!ReadValue(guest, s.actor + addr::kActorState, state)) {
+        return "not readable";
+    }
+    if (Gone(state)) {
+        return "state " + std::to_string(state);
+    }
+    if (!NameFits(guest, s.actor, s.name)) {
+        return "another actor's name";
+    }
+    for (const auto& other : slots_) {
+        if (other.taken == s.actor) {
+            return "a puppet again";
+        }
+    }
+    if (s.deletes >= kStrayMaxDeletes) {
+        return "given up: the game kept it through " + std::to_string(s.deletes) + " delete calls";
+    }
+    return {};
+}
+
 void Director::KeepStrays(Slot& slot, Guest& guest) {
     std::erase_if(slot.strays, [&](const Slot::Stray& s) {
-        std::uint64_t vtable = 0;
-        std::uint32_t state = 0;
-        const bool same = ReadValue(guest, s.actor, vtable) && vtable == s.vtable;
-        const bool there = same && ReadValue(guest, s.actor + addr::kActorState, state) &&
-                           !Gone(state) && NameFits(guest, s.actor, s.name);
-        bool ours = false;  // taken again for a puppet (the engine reused the address)
-        for (const auto& other : slots_) {
-            ours = ours || other.taken == s.actor;
-        }
-        if (there && !ours) {
+        const std::string why = StrayCheck(s, guest);
+        if (why.empty()) {
             return false;
         }
-        Say("P" + std::to_string(slot.number) + ": stray actor " + Hex(s.actor) + " gone (" +
-            (ours ? std::string("a puppet again") :
-             !same ? std::string("freed or reused") : "state " + std::to_string(state)) +
+        Say("P" + std::to_string(slot.number) + ": stray actor " + Hex(s.actor) + " let go (" + why +
             ", " + std::to_string(s.deletes) + " delete calls)");
         return true;
     });
 }
 
-std::optional<Call> Director::DeleteStray(Slot& slot, std::uint64_t now_ms) {
+// At most one stray delete a frame over all slots, each one checked right before
+// its call (another slot may have taken the address since the frame began).
+std::optional<Call> Director::DeleteStray(Slot& slot, Guest& guest, std::uint64_t now_ms) {
+    if (stray_frame_ == frames_) {
+        return std::nullopt;
+    }
     for (auto& s : slot.strays) {
-        if (now_ms < s.next_ms) {
-            continue;
+        if (now_ms < s.next_ms || !StrayCheck(s, guest).empty()) {
+            continue;  // not due, or let go next frame
         }
         s.next_ms = now_ms + kStrayDeleteMs;
         ++s.deletes;
         stray_actor_ = s.actor;
+        stray_frame_ = frames_;
         Call c;
         c.function = input_.main_base + addr::kRequestDelete;
         c.x[0] = s.actor;

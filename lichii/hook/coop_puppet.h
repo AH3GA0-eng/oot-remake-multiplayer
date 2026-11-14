@@ -424,6 +424,8 @@ public:
     // not finish) is asked to go with the game's own delete this often until
     // it is gone (owner's playtest 2026-11-14: two puppets of one player).
     static constexpr std::uint64_t kStrayDeleteMs = 1000;
+    // ...at most this many times (half a minute), then let go with a log line.
+    static constexpr int kStrayMaxDeletes = 30;
 
 private:
     struct Slot {
@@ -509,10 +511,11 @@ private:
         sound, link_sound, stray
     };
     // The slot's taken actor becomes a stray (above); the slot then has none.
-    void Abandon(Slot& slot, std::uint64_t now_ms, const char* why);
-    // Strays gone or reused are dropped; the next delete call for one, if due.
+    void Abandon(Slot& slot, Guest& guest, std::uint64_t now_ms, const char* why);
+    // Strays gone, reused or given up are dropped; the next delete call for one, if due.
+    std::string StrayCheck(const Slot::Stray& s, Guest& guest) const;
     void KeepStrays(Slot& slot, Guest& guest);
-    std::optional<Call> DeleteStray(Slot& slot, std::uint64_t now_ms);
+    std::optional<Call> DeleteStray(Slot& slot, Guest& guest, std::uint64_t now_ms);
 
     void NewFrame(Guest& guest, std::uint64_t now_ms);
     void PoseFrame(Guest& guest, std::uint64_t now_ms);
@@ -565,6 +568,7 @@ private:
     Pending pending_ = Pending::none;
     std::uint8_t pending_slot_ = 0;
     std::uint64_t stray_actor_ = 0;  // the stray a Pending::stray call deletes
+    std::uint64_t stray_frame_ = ~std::uint64_t{0};  // the frame of the last stray delete
     int calls_ = 0;  // this frame
     std::size_t first_slot_ = 0;  // where this frame's Step starts (round robin)
     std::uint64_t frames_ = 0;
