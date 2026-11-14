@@ -30,7 +30,7 @@ This is an early test release. Everything under "Works" was seen in our two-game
 
 ## Known issues
 
-- **Kakariko gate**: when one player shows Zelda's Letter, the gate may open for that player only, and the letter can go from both games ([#171](https://github.com/daurosk/oot-remake-multiplayer/issues/171)).
+- **Kakariko gate**: fixed in code for 0.11: the gate step now goes through the game's own quest manager, so the gate opens for every player, and each player keeps Zelda's Letter. Being checked in our big test run; tell us if the gate stays shut for you ([#171](https://github.com/daurosk/oot-remake-multiplayer/issues/171)).
 - **Microsoft Defender** may warn about the zip or `Update.bat` ("Trojan:Script/Wacatac"): a false alarm on our scripts, which we report to Microsoft.
 - **Built in, not yet checked on Longshot**: Epona seen by everyone with more than one rider ([#199](https://github.com/daurosk/oot-remake-multiplayer/issues/199)), townspeople walking on every screen ([#200](https://github.com/daurosk/oot-remake-multiplayer/issues/200)), no black screen in another player's cutscene ([#173](https://github.com/daurosk/oot-remake-multiplayer/issues/173)); these worked on the emulator before.
 - **The ocarina**: other players' songs are not heard ([#152](https://github.com/daurosk/oot-remake-multiplayer/issues/152)); the ocarina in their hand was seen in our test logs.
