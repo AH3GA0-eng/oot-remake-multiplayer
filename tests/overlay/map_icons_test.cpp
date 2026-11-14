@@ -328,3 +328,34 @@ TEST_CASE("minimap: the icons fade with the game's own minimap, and none while i
   minimap_icons(mm, room(), 0, {at(2, 1, 0, 1, "Room")}, out);
   CHECK(out.empty());
 }
+
+TEST_CASE("minimap: the game's own numbers (run 20261114-115734) put our Link on the game's own arrow") {
+  // The real captures (coop_maps.txt) and the panes' matrices the game had; the arrow read from the shots
+  // (1280 x 720: layout units are 3 pixels).
+  const Table t(parse_captures(
+      "map KokiriForest -5 -12 120 300 0 KokiriForest_Child,KokiriForest_Adult -95:- -20:- 3:- -7:-\n"
+      "map KakarikoVillage -50 42 200 246 0 KakarikoVillage_Child,KakarikoVillage_Adult -:-\n"
+      "map InsideTheDekuTree -36 18 200 125 1 InsideTheDekuTree -:- 119:140 124:140 125:140 147:160 75:78\n"));
+  std::vector<Icon> out;
+  MinimapPanes deku;
+  deku.picture = pane(1300, 1300, 1180.3f, -867.8f, 0.95f);
+  deku.window = pane(552, 552, 1536, -690);
+  minimap_icons(deku, *t.find("InsideTheDekuTree"), 0, {at(1, -2.36f, 104.13f, -7.17f, "InsideTheDekuTree")}, out);
+  REQUIRE(out.size() == 1);
+  CHECK(out[0].x == doctest::Approx(1145 * 3).epsilon(0.002));  // the game's arrow at (1145, 567)
+  CHECK(out[0].y == doctest::Approx(567 * 3).epsilon(0.003));
+  MinimapPanes area;
+  area.window = pane(960, 960, 1490, -644);  // S_FieldMini_00
+  area.picture = pane(960, 960, 1510, -698);
+  minimap_icons(area, *t.find("KakarikoVillage"), 0, {at(1, -82.14f, 96.74f, 47.88f, "KakarikoVillage_Child")}, out);
+  REQUIRE(out.size() == 1);
+  CHECK_FALSE(out[0].clamped);
+  CHECK(out[0].x == doctest::Approx(1100 * 3).epsilon(0.003));  // the arrow at (1100, 600)
+  CHECK(out[0].y == doctest::Approx(600 * 3).epsilon(0.003));
+  area.picture = pane(960, 960, 1392, -774);
+  minimap_icons(area, *t.find("KokiriForest"), 0, {at(1, -115.63f, 114.7f, -36.77f, "KokiriForest_Child")}, out);
+  REQUIRE(out.size() == 1);
+  CHECK_FALSE(out[0].clamped);
+  CHECK(out[0].x == doctest::Approx(983 * 3).epsilon(0.004));  // the arrow at (983, 590)
+  CHECK(out[0].y == doctest::Approx(590 * 3).epsilon(0.004));
+}

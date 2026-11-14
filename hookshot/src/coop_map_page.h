@@ -36,15 +36,18 @@ inline constexpr float kDungeonW = 2600.0f, kDungeonH = 2600.0f;
 // units): the picture pane the game puts the map's capture in, a dungeon's
 // P_ReplaceDungeonMini_00 1300 x 1300 (under N_Dungeon_01) or an area's
 // P_ReplaceFieldMini_00 960 x 960 (under N_Field_01), which the game moves,
-// zooms and turns; and the frame the minimap shows through,
+// zooms and turns; and the window it shows through: a dungeon's frame
 // P_MiniMapFrame_00, 552 x 552 at 1536 right of and 690 below the layout's
-// middle. N_MiniMap_00 holds both minimaps.
+// middle, an area's clip S_FieldMini_00, 960 x 960 (its map is wider than the
+// frame: run hs-minimap-icons 20261114-115734). N_MiniMap_00 holds both.
 inline constexpr const char* kMiniDungeonPane = "P_ReplaceDungeonMini_00";
 inline constexpr float kMiniDungeonSize = 1300.0f;
 inline constexpr const char* kMiniFieldPane = "P_ReplaceFieldMini_00";
 inline constexpr float kMiniFieldSize = 960.0f;
 inline constexpr const char* kMiniWindowPane = "P_MiniMapFrame_00";
 inline constexpr float kMiniWindowSize = 552.0f;
+inline constexpr const char* kMiniFieldWindowPane = "S_FieldMini_00";
+inline constexpr float kMiniFieldWindowSize = 960.0f;
 inline constexpr const char* kMiniRootPane = "N_MiniMap_00";
 inline constexpr std::uint64_t kFindPane = 0x8078e2b0;  // (layout, "name") -> pane, or 0
 inline constexpr std::uint64_t kScreenLayout = 0x28;     // a screen's layout
