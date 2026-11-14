@@ -142,6 +142,10 @@ struct LifeWrite {
     // With a hurt: where the player who hit stands, when known (the enemy is
     // knocked away from there).
     std::optional<coop::protocol::Vec3> from;
+    // Past the hit replay (a hit record the game's damage rules judge): the amount goes straight into the game's
+    // Life step (Hookshot, patch 0007), so the game still runs its own death. For the test kill: a boss takes no
+    // plain hit outside its weak point (Gohma on the ceiling), so the replayed hit of a kill was refused.
+    bool direct = false;
 };
 
 // Shared: enemies, animals (a cucco is Animal_Cucco), townspeople (Npc_, but

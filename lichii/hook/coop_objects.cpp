@@ -2973,6 +2973,7 @@ private:
             w.life = 0;
             w.hurt = std::max<std::int32_t>(best->life->life, 1);
             w.from = player_;
+            w.direct = true;
             writes.push_back(w);
             LOG_INFO(Core, "coop: test kill {} {:#x} at {:.2f} {:.2f} {:.2f} ({:.1f} m, life {}): hit",
                      name, best->address, best->position[0], best->position[1], best->position[2],
@@ -2986,7 +2987,7 @@ private:
             return;
         }
         const s32 old = r.Get<s32>(value->first + 8).value_or(-1);
-        if (w.hurt > 0 && replay_) {
+        if (w.hurt > 0 && replay_ && !w.direct) {
             u64 player = 0;
             for (const auto& [a, known] : names_) {
                 if (known.first == "Player_Child" || known.first == "Player_Adult") {
