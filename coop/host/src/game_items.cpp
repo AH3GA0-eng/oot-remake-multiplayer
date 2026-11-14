@@ -765,7 +765,13 @@ std::vector<FlagKey> one_way_item_flags() {
   return keys;
 }
 
-bool ItemFlagStore::is_one_way(FlagKey key) { return is_one_way_item(key); }
+bool ItemFlagStore::is_one_way(FlagKey key) {
+  if (is_one_way_item(key)) return true;
+  // A dungeon's floors (EnteredFloorBit): a floor once on the map stays on it.
+  if (key.kind != protocol::FlagKeyKind::named || key.index != 0) return false;
+  const ItemFlag* item = find_item(key.hash);
+  return item != nullptr && item->on && item->rule == ItemRule::bits;
+}
 
 bool ItemFlagStore::write_exact(const protocol::FlagEntry& entry) {
   if (entry.kind == protocol::FlagKind::count_delta) return write(entry);  // a change, never exact

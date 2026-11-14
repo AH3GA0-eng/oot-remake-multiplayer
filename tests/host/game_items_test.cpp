@@ -1329,3 +1329,19 @@ TEST_CASE("game items: the map chest's floors reach the other game with the map 
   REQUIRE(state);
   CHECK(state->flags == std::vector{u(kDekuFloors, 0b01001)});
 }
+
+TEST_CASE("game items: a floor the game drops is put back, a new one still goes out (one-way floors)") {
+  auto w = game();
+  GameFlagStore game_store(w);
+  ItemFlagStore store(game_store);
+  CHECK(store.is_one_way(FlagKey{kDekuFloors, 0}));
+  CHECK_FALSE(coop::host::is_one_way_item(FlagKey{kDekuFloors, 0}));  // the Bool-only keeper and drop log leave it
+  hold_uint(w, kDekuFloors, 31);
+  FlagWatcher player(item_shared_flags(), FlagRole::player);
+  player.frame(store);
+  // The game drops floors 0 and 1 and enters none: written back, nothing sent.
+  hold_uint(w, kDekuFloors, 0b11100);
+  CHECK(decoded(player.frame(store)).empty());
+  CHECK(GameFlags(w).get_uint(kDekuFloors) == 31u);
+  CHECK(player.stats().one_way_restores == 1);
+}

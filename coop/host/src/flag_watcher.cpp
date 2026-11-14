@@ -792,16 +792,22 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
     it->second = *now;
     // Not while loading: a load putting the save's 0 back is the load
     // revert's (below, the group's value), not a drop of the game's own.
-    if (!loading_ && before.kind == protocol::FlagKind::boolean && before.value != 0 &&
-        now->value == 0 && store.is_one_way(key)) {
+    // A one-way UInt (a dungeon's floors, ItemRule::bits) loses no bit: the
+    // floors it had are put back with any new one.
+    const bool bool_drop = before.kind == protocol::FlagKind::boolean && before.value != 0 && now->value == 0;
+    const bool bits_drop = before.kind == protocol::FlagKind::uint32 && now->kind == protocol::FlagKind::uint32 &&
+                           (before.value & ~now->value) != 0;
+    if (!loading_ && (bool_drop || bits_drop) && store.is_one_way(key)) {
       // A map or compass the game took back (issue 146: both players opened
       // the Deku Tree's map chest and neither kept the map). Never right for
       // a one-way Bool: put it back, send nothing.
       const MapDropBecause because("the flag watcher: one-way restore (issue 146)");
-      if (store.write(before)) {
+      FlagEntry back = before;
+      if (bits_drop) back.value = before.value | now->value;
+      if (store.write(back)) {
         ++stats_.one_way_restores;
         ++stats_.applied;
-        it->second = before;
+        it->second = before;  // a new floor in `back` goes out next frame as a change
         if (one_way_told_.insert(key).second) one_way_restored_.push_back(key);
         continue;
       }
@@ -852,7 +858,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
       if (store.write_exact(back)) {  // exact: the max rule would keep the higher
         ++stats_.max_caps_kept;
         ++stats_.applied;
-        it->second = back;
+        it->second = before;  // a new floor in `back` goes out next frame as a change
         pending_.erase(key);
         continue;
       }
@@ -888,7 +894,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
         ++stats_.applied;
         counts_guarded_.push_back(
             CountGuarded{key, static_cast<std::int32_t>(as_int(now->value) - as_int(before.value))});
-        it->second = back;
+        it->second = before;  // a new floor in `back` goes out next frame as a change
         continue;
       }
       ++stats_.write_failures;  // sent as any gain

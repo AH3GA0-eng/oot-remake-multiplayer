@@ -794,7 +794,7 @@ public:
         // Each key logged the first time; the count says how often in all.
         for (const auto& k : session_->take_one_way_restores()) {
             LOG_INFO(Core,
-                     "coop: flags: {:#010x} (dungeon map or compass) went back to 0 here: put back to 1 "
+                     "coop: flags: {:#010x} (dungeon map, compass or floors) went back here: put back "
                      "({} put back this session)",
                      k.hash, session_->one_way_restores());
         }
