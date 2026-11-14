@@ -798,9 +798,11 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
                 self_dark_tiles[c] = f"{tunic.SELF_DIR}/{fname}"
                 self_files.setdefault(c, {})[dark_rel] = self_dark_tiles[c]
             if look_dir:
-                # In memory the dark tile is the game's ASTC one: recoloured in place, not the BC3 copy.
+                # In memory: the game's ASTC dark tile (green), else the BC3 copy the kit puts over it
+                # for your colour (self_dark_tiles); without those, the ASTC one recoloured in place.
                 try:
-                    look.append((tunic.DARK, dark if c == "green" else tunic_extra.recolor(dark, c, base)))
+                    look.append((tunic.DARK, dark if c == "green" else own_dark if own_dark is not None
+                                 else tunic_extra.recolor(dark, c, base)))
                 except tunic.TunicError as e:
                     raise BuildError(f"{dark_rel}: {e}")
             ddst = f"Tex/{tunic.dark_name(c)}.bntx.zs"

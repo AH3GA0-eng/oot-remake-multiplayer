@@ -115,9 +115,16 @@ CoopLookTunic::Texels CopyTexels(const CoopLookTunic::Texels& gear, std::size_t 
             return true;   // not a gear texture: no copy of it
         }
         t.name = std::move(name);
+        Mark(t.texels, copy);
         return false;
     });
     return out;
+}
+
+void Mark(std::vector<std::uint8_t>& texels, std::size_t copy) {
+    if (!texels.empty()) {
+        texels.back() ^= static_cast<std::uint8_t>(copy);
+    }
 }
 
 std::string CopiesName(const CopyLooks& looks) {

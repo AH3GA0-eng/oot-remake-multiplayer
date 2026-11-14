@@ -3,7 +3,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cstdio>
 #include <cstring>
 #include <string_view>
 #include <utility>
@@ -34,9 +33,6 @@ void Fail(std::string* why, std::string text) {
     }
 }
 
-// How many copies' surroundings Find describes (Search::notes).
-constexpr std::size_t kNotes = 3;
-
 // Memory is compared in pieces of this size.
 constexpr std::size_t kPiece = std::size_t{4} << 20;
 
@@ -49,55 +45,6 @@ bool Same(const Textures& memory, std::uint64_t address, const std::vector<std::
         }
     }
     return true;
-}
-
-bool InOwnFile(const Textures& memory, std::uint64_t address, const Texture& texture) {
-    if (address < texture.offset) {
-        return false;
-    }
-    std::vector<std::uint8_t> head(static_cast<std::size_t>(texture.offset));
-    if (!memory.Read(address - texture.offset, head.data(), head.size()) ||
-        std::memcmp(head.data(), "BNTX", 4) != 0 || std::memcmp(head.data() + head.size() - 16, "BRTD", 4) != 0) {
-        return false;
-    }
-    const char* name = texture.name.c_str();
-    return std::search(head.begin(), head.end(), name, name + texture.name.size() + 1) != head.end();
-}
-
-std::string Hex(std::uint64_t v) {
-    char b[24];
-    std::snprintf(b, sizeof b, "0x%llx", static_cast<unsigned long long>(v));
-    return b;
-}
-
-// Where the texture's file should start (its texels at file + offset), and the
-// nearest "BNTX" in the 64 KB in front of the texels: why InOwnFile said no.
-std::string Probe(const Textures& memory, const Live& live, const Texture& texture) {
-    std::string out = Hex(live.address) + " (" + std::to_string(live.size) + " bytes, " + texture.name + "): ";
-    std::uint64_t back = std::min<std::uint64_t>(live.address, kMaxOffset);
-    std::vector<std::uint8_t> head;
-    for (; back >= 16; back /= 2) {   // (as much of the 64 KB as is there)
-        head.resize(static_cast<std::size_t>(back));
-        if (memory.Read(live.address - back, head.data(), head.size())) {
-            break;
-        }
-    }
-    if (back < 16) {
-        return out + "the bytes in front are not readable";
-    }
-    const auto at = [&](std::uint64_t before, const char* magic) {
-        return before <= back && std::memcmp(head.data() + (back - before), magic, 4) == 0;
-    };
-    out += std::string("BNTX at -") + Hex(texture.offset) + (at(texture.offset, "BNTX") ? " yes" : " no");
-    out += std::string(", BRTD at -0x10") + (at(16, "BRTD") ? " yes" : " no");
-    const char magic[4] = {'B', 'N', 'T', 'X'};
-    const auto r = std::find_end(head.begin(), head.end(), magic, magic + 4);
-    out += r == head.end() ? ", no BNTX in the " + Hex(back) + " bytes in front"
-                           : ", nearest BNTX at -" + Hex(static_cast<std::uint64_t>(head.end() - r));
-    const char* name = texture.name.c_str();   // (with its NUL, as InOwnFile)
-    out += std::search(head.begin(), head.end(), name, name + texture.name.size() + 1) != head.end()
-               ? ", the name in front" : ", not the name in front";
-    return out;
 }
 
 }  // namespace
@@ -167,7 +114,7 @@ std::vector<std::uint8_t> Pack(const Texels& texels) {
 
 bool SameLayout(const Texels& a, const Texels& b) {
     return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](const Texture& x, const Texture& y) {
-        return x.name == y.name && x.offset == y.offset && x.texels.size() == y.texels.size();
+        return x.name == y.name;
     });
 }
 
@@ -191,15 +138,15 @@ Search Find(const Textures& textures, const std::vector<std::shared_ptr<const Te
     for (const Live& live : listed) {
         std::uint8_t head[kHead];
         if (!textures.Read(live.address, head, kHead)) {
-            if (++out.unread == 1 && out.notes.size() < kNotes) {
-                out.notes.push_back(Hex(live.address) + " (" + std::to_string(live.size) + " bytes): not readable");
-            }
+            ++out.unread;
             continue;
         }
-        // Several textures may hold the same texels (the puppets' copies all
-        // start as the game's own): the one whose own file this is takes it.
-        bool taken = false;
-        const Texture* matched = nullptr;
+        // The game copies each texture's texels into its texture memory (no
+        // file, no name in front: lane1, 2026-11-14), so a texture is known by
+        // its texels alone. The puppets' copies of the same texels are marked
+        // (tools/puppet_pack/look_live.py mark): only your own hold a colour's
+        // texels exactly. The first colour that holds them is the one held.
+        bool taken = false, head_only = false;
         for (const auto& colour : colours) {
             for (std::size_t i = 0; !taken && colour && i < colour->size(); ++i) {
                 const Texture& texture = (*colour)[i];
@@ -209,34 +156,18 @@ Search Find(const Textures& textures, const std::vector<std::shared_ptr<const Te
                     continue;
                 }
                 if (!Same(textures, live.address, texture.texels, size)) {
-                    if (++out.heads <= 2 && out.notes.size() < kNotes + 2) {
-                        std::vector<std::uint8_t> got(size);
-                        std::size_t at = 0;
-                        if (textures.Read(live.address, got.data(), size)) {
-                            at = static_cast<std::size_t>(
-                                std::mismatch(got.begin(), got.end(), texture.texels.begin()).first - got.begin());
-                        }
-                        out.notes.push_back(Hex(live.address) + " (" + std::to_string(live.size) + " bytes, " +
-                                            texture.name + "): the same up to byte " + std::to_string(at) + " of " +
-                                            std::to_string(size));
-                    }
+                    head_only = true;
                     continue;
                 }
-                matched = &texture;
-                if (InOwnFile(textures, live.address, texture)) {
-                    taken = true;
-                    out.places.push_back({i, live.address, live.serial, size, colour, colour, false});
-                }
+                taken = true;
+                out.places.push_back({i, live.address, live.serial, size, colour, colour, false});
             }
             if (taken) {
                 break;
             }
         }
-        if (matched != nullptr && !taken) {
-            ++out.copies;   // the same texels in another texture's file (a puppet's copy)
-            if (out.notes.size() < kNotes) {
-                out.notes.push_back(Probe(textures, live, *matched));
-            }
+        if (head_only && !taken) {
+            ++out.heads;
         }
     }
     return out;
@@ -336,8 +267,14 @@ void Wardrobe::Step(std::uint64_t now_ms) {
     if (target_name_ != want && refused_ != want) {
         if (!green_) {
             green_ = Load(host_.base);
+            if (green_ && !host_.start.empty() && host_.start != host_.base) {
+                start_ = Load(host_.start);
+                if (start_ && !SameLayout(*green_, *start_)) {
+                    start_ = nullptr;
+                }
+            }
         }
-        auto target = !green_ ? nullptr : want == host_.base ? green_ : Load(want);
+        auto target = !green_ ? nullptr : want == host_.base ? green_ : start_ && want == host_.start ? start_ : Load(want);
         if (target && !SameLayout(*green_, *target)) {
             host_.log("coop: look: coop_look/" + want + ".bin does not fit the pack's " + host_.base + ".bin: your own Link keeps "
                       "the colour it has (make the puppet pack again)");
@@ -359,9 +296,13 @@ void Wardrobe::Step(std::uint64_t now_ms) {
     std::uint64_t generation = 0;
     host_.textures->List(1, 0, &generation);   // (no storage is that size: the generation only)
     if (look_now_ || !looked_ || generation != generation_) {
-        std::vector<std::shared_ptr<const Texels>> colours{green_};
-        if (target_ != green_) {
-            colours.push_back(target_);   // (a pack that put this colour into the game's own files)
+        // What the game's memory may hold: the start's colour first (the kit put
+        // its files in), then the game's own, then the one asked for.
+        std::vector<std::shared_ptr<const Texels>> colours;
+        for (const auto& c : {start_, green_, target_}) {
+            if (c && std::find(colours.begin(), colours.end(), c) == colours.end()) {
+                colours.push_back(c);
+            }
         }
         Search found = Find(*host_.textures, colours);
         for (Place& p : found.places) {   // a texture kept since: drawn as it was
@@ -376,15 +317,10 @@ void Wardrobe::Step(std::uint64_t now_ms) {
         look_now_ = false, looked_ = true;
         generation_ = generation;
         if (places_.empty()) {
-            std::string notes;
-            for (const std::string& n : found.notes) {
-                notes += "; " + n;
-            }
             std::string line = "coop: look: no " + host_.what + " texture of your Link among the game's yet (" +
-                               std::to_string(found.copies) + " of puppets, left alone; " +
                                std::to_string(found.listed) + " of the game's of those sizes, " +
                                std::to_string(found.unread) + " not readable, " + std::to_string(found.heads) +
-                               " with only the first bytes the same" + notes + ")";
+                               " with only the first bytes the same)";
             // (said again when it changes, at most 20 times: the game makes its textures over a while)
             if ((!said_nothing_found_ || line != said_) && said_count_ < 20) {
                 ++said_count_;
@@ -405,11 +341,11 @@ void Wardrobe::Step(std::uint64_t now_ms) {
         host_.log("coop: look: your Link's " + host_.what + " is " + target_name_ + " now (" + std::to_string(drawn) +
                   " texture(s) drawn so by Longshot's texture overrides; the game's memory is left as it is)");
     }
-    if (want == host_.base && target_ == green_ &&
+    if (want == (start_ ? host_.start : host_.base) && target_ == (start_ ? start_ : green_) &&
         std::none_of(places_.begin(), places_.end(), [](const Place& p) { return p.overridden; })) {
         // Everything is the game's own again: nothing to keep.
         std::lock_guard lock(mutex_);
-        if (wanted_ == host_.base) {
+        if (wanted_ == (start_ ? host_.start : host_.base)) {
             busy_ = false;
             places_.clear();
             looked_ = false;

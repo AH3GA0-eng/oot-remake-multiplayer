@@ -136,6 +136,12 @@ std::vector<std::uint8_t> TexelsOf(std::uint8_t seed) {
     return t;
 }
 
+// A puppet copy's texels as the pack writes them (look_live.py mark).
+std::vector<std::uint8_t> Marked(std::vector<std::uint8_t> t, std::size_t copy) {
+    CoopLookParts::Mark(t, copy);
+    return t;
+}
+
 // A texture file's image at `address`: a header naming `name`, then the
 // texels; and the game makes the texture over them.
 void PutFile(FakeTextures& m, std::uint64_t address, const std::string& name, const std::vector<std::uint8_t>& texels) {
@@ -327,25 +333,21 @@ TEST_CASE("look tunic: look files are read whole or not at all") {
     CHECK_FALSE(CoopLookTunic::SameLayout(*t, *Colour({{"Tile_A", TexelsOf(9)}})));
 }
 
-TEST_CASE("look tunic: Find says what lies in front of the copies it left alone") {
+TEST_CASE("look tunic: a texture is known by its exact texels, with no file in front; a marked copy is left alone") {
     FakeTextures m(kBase, 0x10000);
     const auto green = Colour({{"Tile_A", TexelsOf(1)}});
-    PutFile(m, kBase + 0x1000, "Tile_A_Red", TexelsOf(1));   // a puppet's: another name
     std::memcpy(m.at(kBase + 0x3000), TexelsOf(1).data(), kTexels);
-    m.Make(kBase + 0x3000, kTexels);   // the same texels with no file in front
+    m.Make(kBase + 0x3000, kTexels);   // your own: the game copied the texels into its texture memory
+    std::memcpy(m.at(kBase + 0x4000), Marked(TexelsOf(1), 2).data(), kTexels);
+    m.Make(kBase + 0x4000, kTexels);   // a puppet's copy 2: the same texels, marked
     m.Make(kBase + 0x20000, kTexels);  // a storage outside the readable memory
 
     const auto found = CoopLookTunic::Find(m, {green});
-    CHECK(found.places.empty());
-    CHECK(found.copies == 2);
+    REQUIRE(found.places.size() == 1);
+    CHECK(found.places[0].address == kBase + 0x3000);
     CHECK(found.listed == 3);
     CHECK(found.unread == 1);
-    REQUIRE(found.notes.size() == 3);
-    CHECK(found.notes[0] == "0x11100 (256 bytes, Tile_A): BNTX at -0x100 yes, BRTD at -0x10 yes, nearest BNTX at "
-                            "-0x100, not the name in front");
-    CHECK(found.notes[1] == "0x13000 (256 bytes, Tile_A): BNTX at -0x100 no, BRTD at -0x10 no, nearest BNTX at "
-                            "-0x2000, not the name in front");
-    CHECK(found.notes[2] == "0x30000 (256 bytes): not readable");
+    CHECK(found.heads == 1);
 }
 
 TEST_CASE("look tunic: your Link's textures are found and drawn over, the game's memory and a puppet's copy left alone") {
@@ -354,13 +356,13 @@ TEST_CASE("look tunic: your Link's textures are found and drawn over, the game's
     const auto red = Colour({{"Tile_A", TexelsOf(9)}, {"Vest", TexelsOf(8)}});
     PutFile(m, kBase + 0x1000, "Tile_A", TexelsOf(1));
     PutFile(m, kBase + 0x3000, "Vest", TexelsOf(2));
-    PutFile(m, kBase + 0x5000, "Tile_A_Red", TexelsOf(1));   // a puppet's: another name
+    PutFile(m, kBase + 0x5000, "Tile_A_Red", Marked(TexelsOf(1), 1));   // a puppet's copy: marked
     m.at(kBase + 0x7000)[0] = 1;
     m.Make(kBase + 0x7000, kTexels);   // another texture of that size, other texels
 
     const auto found = CoopLookTunic::Find(m, {green, red});
     REQUIRE(found.places.size() == 2);
-    CHECK(found.copies == 1);
+    CHECK(found.heads == 1);
     auto place = found.places[0];
     CHECK(place.address == kBase + 0x1000 + kOffset);
     CHECK((place.held == green));
@@ -370,7 +372,7 @@ TEST_CASE("look tunic: your Link's textures are found and drawn over, the game's
     CHECK(place.overridden);
     CHECK(Drawn(m, place.address, 9));
     CHECK(Holding(m, place.address, 1));   // the game's memory: as it was
-    CHECK(Drawn(m, kBase + 0x5000 + kOffset, 1));   // the puppet's copy
+    CHECK(m.Drawn(kBase + 0x5000 + kOffset, kTexels) == Marked(TexelsOf(1), 1));   // the puppet's copy: as it was
     // Back to the game's own: the override taken away.
     REQUIRE(CoopLookTunic::Draw(m, place, green));
     CHECK_FALSE(place.overridden);
@@ -627,11 +629,11 @@ TEST_CASE("look parts: a puppet copy's textures are named per copy and painted i
     const auto plain = CoopLookParts::CopyTexels(*gear, 3, std::nullopt);
     REQUIRE(plain.size() == 1);   // not a gear texture: no copy of it
     CHECK(plain[0].name == "C3_Weapon_Shield_Hylian_Alb");
-    CHECK(plain[0].texels == Shield());
+    CHECK(plain[0].texels == Marked(Shield(), 3));   // marked as the pack's copy file (look_live.py mark)
     CHECK(plain[0].offset == kOffset);
     const auto painted = CoopLookParts::CopyTexels(*gear, 3, red);
     REQUIRE(painted.size() == 1);
-    CHECK(painted[0].texels == CoopLookParts::Painted(*gear, red)[0].texels);
+    CHECK(painted[0].texels == Marked(CoopLookParts::Painted(*gear, red)[0].texels, 3));
     CHECK(CoopLookTunic::SameLayout(plain, painted));
 
     CoopLookParts::CopyLooks looks(4);
@@ -674,14 +676,14 @@ TEST_CASE("look parts: the puppets' wardrobe draws a copy the game makes, and le
     w.Step(0);   // no puppet wears a copy yet: nothing drawn
     CHECK(m.overrides() == 0);
     // The game makes copy 2's shield for a puppet (its file, the game's own texels, under the copy's name)...
-    PutFile(m, kBase + 0x3000, "C2_Weapon_Shield_Hylian_Alb", Shield());
-    PutFile(m, kBase + 0x5000, "C1_Weapon_Shield_Hylian_Alb", Shield());
+    PutFile(m, kBase + 0x3000, "C2_Weapon_Shield_Hylian_Alb", Marked(Shield(), 2));
+    PutFile(m, kBase + 0x5000, "C1_Weapon_Shield_Hylian_Alb", Marked(Shield(), 1));
     w.Step(1000);
     // ...and it is drawn in that player's look, the game's memory as it was.
-    const auto want = CoopLookParts::Painted(gear, red)[0].texels;
+    const auto want = Marked(CoopLookParts::Painted(gear, red)[0].texels, 2);
     CHECK(m.Drawn(kBase + 0x3000 + kOffset, want.size()) == want);
-    CHECK(std::memcmp(m.at(kBase + 0x3000 + kOffset), Shield().data(), kTexels) == 0);
-    CHECK(m.Drawn(kBase + 0x5000 + kOffset, kTexels) == Shield());   // copy 1: the game's own colours
+    CHECK(std::memcmp(m.at(kBase + 0x3000 + kOffset), Marked(Shield(), 2).data(), kTexels) == 0);
+    CHECK(m.Drawn(kBase + 0x5000 + kOffset, kTexels) == Marked(Shield(), 1));   // copy 1: the game's own colours
     CHECK(m.Drawn(kBase + 0x1000 + kOffset, kTexels) == Shield());   // your own: not the puppets'
     w.Clear();
     CHECK(m.overrides() == 0);
