@@ -14,8 +14,11 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
+#include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -256,8 +259,9 @@ enum class Treatment : std::uint8_t { copies, fold, as_placed };
 // values (boss_hp_pct, boss_damage_pct), never by the enemies' ones.
 bool ScalesAsBoss(std::string_view name);
 // The Kinds for an enemy's actor and its Life component: boss, folded or plain.
-Kind AttackerKind(std::string_view name, std::uint64_t hash);
-Kind LifeKind(std::string_view name, std::uint64_t hash);
+// `no_spot`: a placed enemy whose copies found no ground to stand on (Extras::NoSpot): folded as well.
+Kind AttackerKind(std::string_view name, std::uint64_t hash, bool no_spot = false);
+Kind LifeKind(std::string_view name, std::uint64_t hash, bool no_spot = false);
 Treatment TreatmentOf(std::string_view name, std::uint64_t hash);
 // Why TreatmentOf said what it said, for the log and the tests ("rail",
 // "puzzle: Armos statues", "boss", ...); empty for copies.
@@ -270,22 +274,77 @@ bool GetsExtras(std::string_view name, std::uint64_t hash, bool has_life, bool s
 // The placement id of extra `index` (0 on) of the enemy placed with `hash`:
 // never 0 or ~0 (a made actor's), never `hash` itself.
 std::uint64_t ExtraHash(std::uint64_t hash, unsigned index);
-// Where extra `index` is made: `at` moved kExtraOffsetM sideways (x, z) in
-// a direction picked by its placement id, so it does not stand inside its
-// original.
-inline constexpr float kExtraOffsetM = 0.6f;
-std::array<float, 3> ExtraPlace(const std::array<float, 3>& at, std::uint64_t extra_hash);
+// Where an extra (or a horde Stalchild) is made (owner, 2026-11-14: never on top of each other).
+// The module has no ground or navmesh query of the game (none is mapped yet), so a spot is only a
+// point the game itself puts a body on the floor at, never a point worked out between two: for an
+// extra, a floor marker the area's placement data has (Area: where the game puts Link down, after a
+// fall, at the start, a tuft of grass); for the horde, where the game's own rolls rose this visit.
+// FindSpot takes the nearest such point within kSpotReachM (x, z) and kSpotStepM up or down, at
+// least ApartFor(name) from `from`, from every point of `apart` (the other enemies, the spots taken
+// before); ties by the candidates' order. A door's landing (a marker with a facing) only when `from`
+// is in front of it: a door has one on each side, each facing into its own room, so never the one
+// in the next room. None: nullopt.
+inline constexpr float kSpotReachM = 8.0f;  // tools/puppet_pack/extra_spots.py REACH_M
+inline constexpr float kSpotStepM = 1.0f;   // and STEP_M
+// The least distance between an extra and any other enemy: 2.5 m, 3.5 m for the big ones
+// (Moblin, Lizalfos, Dinolfos, Stalfos, Gibdo, Wolfos, Lynel, ...), 2 m for the small ones.
+float ApartFor(std::string_view name);
+using Point = std::array<float, 3>;
+struct Marker {
+    Point at{};
+    float fx = 0.0f, fz = 0.0f;  // where it faces (x, z; a door's landing), or 0, 0: any side
+    constexpr Marker() = default;
+    constexpr Marker(const Point& p, float x = 0.0f, float z = 0.0f) : at(p), fx(x), fz(z) {}
+    constexpr Marker(float x, float y, float z, float face_x = 0.0f, float face_z = 0.0f)
+        : at{x, y, z}, fx(face_x), fz(face_z) {}
+};
+std::optional<Point> FindSpot(const Point& from, std::string_view name, std::span<const Marker> candidates,
+                              const std::vector<Point>& apart);
+
+// One area of the game's placement data (coop_difficulty_spots.inc, made by
+// tools/puppet_pack/extra_spots.py from the Banc files): its placed enemies,
+// in placement id order, and the floor markers near them.
+struct AreaEnemy {
+    std::uint64_t hash = 0;
+    std::string_view name;
+    Point at{};  // where it is placed
+};
+struct Area {
+    std::string_view name;  // the Banc scene
+    std::span<const AreaEnemy> enemies;
+    std::span<const Marker> ground;
+};
+// The area whose placements hold `hash` (the game's table); nullopt for one it does not have.
+std::optional<Area> AreaOf(std::uint64_t hash);
+// The extras of a whole area at `count_pct`, from its placement data only, so
+// every game decides the same whatever it has loaded: each enemy that gets
+// copies (TreatmentOf copies, not `special` by name), in placement id order,
+// takes ExtraCount spots (FindSpot from where it is placed, apart from every
+// enemy placed there and every spot taken before), all of them or none: with
+// none, its weight instead (no_spot). At most `most` extras in the area, the
+// first enemies in that order first; the ones past it get their weight too.
+struct AreaPlan {
+    std::map<std::uint64_t, std::vector<Point>> spots;
+    std::set<std::uint64_t> no_spot;
+};
+using NameTest = std::function<bool(std::string_view)>;
+AreaPlan PlanArea(const Area& area, std::uint16_t count_pct, const NameTest& special, std::size_t most);
 
 // One scene visit's extras (present thread).
 class Extras {
 public:
-    static constexpr std::size_t kMost = 32;          // in one scene visit
+    static constexpr std::size_t kMost = 32;          // in one area (PlanArea's `most`)
     static constexpr std::uint64_t kBindWaitMs = 4000;  // a made one not yet bound to its actor
+
+    using Lookup = std::function<std::optional<Area>(std::uint64_t)>;
+    // `areas`: the placement data (AreaOf; tests give their own); `special`:
+    // the names the sync treats in its own way (rolled, hatching, ...).
+    explicit Extras(Lookup areas = AreaOf, NameTest special = nullptr)
+        : areas_(std::move(areas)), special_(std::move(special)) {}
 
     struct Original {
         std::string name;
         std::uint64_t hash = 0;
-        std::array<float, 3> position{};
     };
     struct Extra {
         std::uint64_t key = 0;   // the director's key (1 on, unique in this run)
@@ -302,8 +361,15 @@ public:
     // old one's extras first. Taken in placement id order, so every game picks
     // the same ones whatever order its walk saw them in. Answers how many were
     // added.
+    // Where they stand and which get none comes from the original's area's
+    // placement data (PlanArea), decided once per area and visit, at the
+    // count then: a higher count later in the visit adds none (its next visit
+    // has them). An original the data does not have gets none (NoSpot).
     std::size_t Plan(std::string_view scene, const std::vector<Original>& walk, std::uint16_t count_pct,
                      bool boss_here, std::uint64_t now_ms);
+    // The placed enemy with `hash` gets no copies for want of ground: its life and hits are folded instead.
+    bool NoSpot(std::uint64_t hash) const { return no_spot_.contains(hash); }
+    std::size_t NoSpots() const { return no_spot_.size(); }
     // The director's actors (key to actor) after it made some.
     void Bind(const std::map<std::uint64_t, std::uint64_t>& live);
     // A whole walk's actors: an extra whose actor is not among them is gone,
@@ -323,9 +389,13 @@ public:
     void Reset();
 
 private:
+    Lookup areas_;
+    NameTest special_;
     std::string scene_;
     std::vector<Extra> extras_;
+    std::map<std::string_view, AreaPlan> plans_;  // this visit's areas (names from the table: static)
     std::map<std::uint64_t, unsigned> planned_;  // original's hash -> extras asked for it
+    std::set<std::uint64_t> no_spot_;            // originals folded for want of ground
     struct Bound {
         std::uint64_t hash = 0;
         std::string name;
@@ -389,8 +459,12 @@ public:
     // `alive`: the rolled enemies in our walk now. A new scene forgets the
     // old one's first. A roll gets more as more players come near it, up to
     // PerRoll. Answers how many were added.
+    // Ours rise only where the game's own rolls rose this visit (FindSpot),
+    // apart from `apart` (every enemy of the walk, our Link) and from each
+    // other; a roll with no such spot for one more gets none now (tried again
+    // on a later walk).
     std::size_t Plan(std::string_view scene, const std::vector<Roll>& rolls, std::size_t alive,
-                     std::uint16_t count_pct, std::uint64_t now_ms);
+                     const std::vector<Point>& apart, std::uint16_t count_pct, std::uint64_t now_ms);
     // The director's actors (key to actor) after it made some.
     void Bind(const std::map<std::uint64_t, std::uint64_t>& live);
     // A whole walk's actors: a roll or one of ours that is not among them is
@@ -411,6 +485,7 @@ private:
     std::string scene_;
     std::vector<Made> made_;
     std::map<std::uint64_t, Seen> rolls_;       // a roll's actor -> when first seen, how last seen
+    std::vector<Marker> rises_;                 // where the game's rolls were first seen: its own floor
     std::map<std::uint64_t, unsigned> planned_;  // a roll's actor -> made beside it
     std::map<std::uint64_t, std::uint64_t> by_address_;  // our actor -> its key
     std::uint64_t orphan_since_ = 0;  // ms: orphans with no living roll to join since (0: none)
