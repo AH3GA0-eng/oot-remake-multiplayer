@@ -374,6 +374,7 @@ public:
         std::uint64_t actor = 0;
         std::string actor_name;
         std::string anim_name;  // what was last played on it
+        std::size_t strays = 0; // actors of its player still being deleted
     };
     std::vector<SlotView> Slots() const;  // the calc thread, or tests
     // Any thread: bit n set while puppet n's actor is live in this scene and
@@ -418,6 +419,13 @@ public:
     static constexpr std::uint64_t kDrawnMs = 750;
     // ...or, when the drawing never broke, this long after it.
     static constexpr std::uint64_t kSteadyMs = 3000;
+    // A stray (an actor of a puppet's player that is not its puppet any more:
+    // a create that timed out while its actor still loaded, a delete that did
+    // not finish) is asked to go with the game's own delete this often until
+    // it is gone (owner's playtest 2026-11-14: two puppets of one player).
+    static constexpr std::uint64_t kStrayDeleteMs = 1000;
+    // ...at most this many times (half a minute), then let go with a log line.
+    static constexpr int kStrayMaxDeletes = 30;
 
 private:
     struct Slot {
@@ -487,11 +495,27 @@ private:
         std::uint64_t moved_frame = 0;      // the cave frame of the last matrix call
         CoopPuppetSound::State sound;       // the player's Ocarina on it (issue 152)
         CoopLinkSound::Player link_sound;   // the player's own sounds on it (issues 131, 152)
+        // Actors made for this player that are not `taken` any more (kStrayDeleteMs):
+        // deleted until gone, so there is never a second puppet of one player.
+        struct Stray {
+            std::uint64_t actor = 0;
+            std::uint64_t vtable = 0;  // as taken: a reused address is left alone
+            std::string name;          // the actor made, read back when the game has it
+            std::uint64_t next_ms = 0; // the next delete call
+            int deletes = 0;
+        };
+        std::vector<Stray> strays;
     };
     enum class Pending {
         none, malloc, create, take, drop, remove, play, frame, sync, equip, unequip, hold, move,
-        sound, link_sound
+        sound, link_sound, stray
     };
+    // The slot's taken actor becomes a stray (above); the slot then has none.
+    void Abandon(Slot& slot, Guest& guest, std::uint64_t now_ms, const char* why);
+    // Strays gone, reused or given up are dropped; the next delete call for one, if due.
+    std::string StrayCheck(const Slot::Stray& s, Guest& guest) const;
+    void KeepStrays(Slot& slot, Guest& guest);
+    std::optional<Call> DeleteStray(Slot& slot, Guest& guest, std::uint64_t now_ms);
 
     void NewFrame(Guest& guest, std::uint64_t now_ms);
     void PoseFrame(Guest& guest, std::uint64_t now_ms);
@@ -543,6 +567,8 @@ private:
     CoopLinkSound::Budget sound_budget_;  // every puppet's sound starts together
     Pending pending_ = Pending::none;
     std::uint8_t pending_slot_ = 0;
+    std::uint64_t stray_actor_ = 0;  // the stray a Pending::stray call deletes
+    std::uint64_t stray_frame_ = ~std::uint64_t{0};  // the frame of the last stray delete
     int calls_ = 0;  // this frame
     std::size_t first_slot_ = 0;  // where this frame's Step starts (round robin)
     std::uint64_t frames_ = 0;
