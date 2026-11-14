@@ -317,6 +317,37 @@ const GroupPart* PartOf(std::string_view name);
 // and the roots of boss groups); never a picture book _Dictionary actor.
 bool IsBoss(std::string_view name);
 
+// An actor whose life is never written (the owner's native rule): an enemy or a boss, and any actor whose name
+// we do not know (fail safe).
+bool NativeOnlyName(std::string_view name);
+
+// How WriteLife hands one life change to the game (pure; WriteLife reads the game for it, then acts).
+enum class LifeRoute {
+    replay,       // a whole hit for the game's own damage step (Mover::Replay)
+    wait_replay,  // our replayed hit still waits for its damage step: nothing more now
+    step,         // `amount` into the game's Life step (patch 0007)
+    lost,         // nothing: the actor keeps its game's life (native-only)
+    write,        // the old direct write (not native-only: a pot, a crate, an animal)
+};
+struct LifeAsk {
+    bool native = false;       // NativeOnlyName, or a test kill (direct)
+    bool direct = false;       // past the replay (LifeWrite::direct)
+    bool replay_on = false;    // LICHII_COOP_OBJECTS_HIT_REPLAY
+    bool has_player = false;   // our Link is known (the replay's attacker)
+    std::int32_t hurt = 0;     // LifeWrite::hurt
+    std::int32_t life = 0;     // LifeWrite::life (the life to reach)
+    std::int32_t old = -1;     // the life read now (-1: unread)
+    bool step_seen = false;    // the game's Life step has called us (Hookshot, patch 0007)
+    bool has_component = false;
+    bool replay_seen = true;   // its damage step saw our last replayed hit (or we never replayed one)
+    std::int32_t stale = 0;    // given to the step earlier and never taken (taken back now)
+};
+struct LifeRouted {
+    LifeRoute route = LifeRoute::lost;
+    std::int32_t amount = 0;  // for step
+};
+LifeRouted RouteLife(const LifeAsk& a);
+
 // Issue 88: the hearts the game draws come from our Link's Life component,
 // not from the shared PlayerStatus.MaxLife flag. The max (quarter hearts) to
 // write into the component: the flag when another player raised it above
@@ -683,6 +714,8 @@ public:
     std::uint8_t OwnerOf(const coop::protocol::ObjectId& id) const;
     std::size_t HurtsTaken() const { return hurt_taken_; }
     std::size_t HurtsMissed() const { return hurt_missed_; }
+    // Copies dead here whose owner still showed life after every resend (a lost kill: the games stay split).
+    std::size_t SplitKills() const { return split_kills_; }
     std::size_t HurtsLate() const { return hurt_late_; }
 
 private:
@@ -744,6 +777,10 @@ private:
         // much is the game taking that same hit.
         std::int32_t late_left = 0;
         std::uint64_t late_until = 0;
+        // Our enemy's killing hit, given to its game after the wait (never written): said dead only once the walk
+        // reads its life at 0 before this time (its game took it); a lost kill leaves it alive.
+        std::uint64_t kill_given_until = 0;
+        bool split_said = false;  // "dead here, owner alive after the resends" noted once
         // With life events (SetLifeEvents). step_new: the game's hits
         // since the last Tick; step_wait: hits whose fall is not seen yet;
         // loose: a fall no hit explained yet; step_given: what we put
@@ -995,7 +1032,8 @@ private:
     std::vector<std::string> unready_;
     std::size_t hurt_taken_ = 0;   // hurts the game took as asked
     std::size_t hurt_late_ = 0;    // late falls put back
-    std::size_t hurt_missed_ = 0;  // hurts written directly after the wait
+    std::size_t hurt_missed_ = 0;
+    std::size_t split_kills_ = 0;  // hurts written directly after the wait
     BlastNear blast_near_;
     std::size_t blast_drops_ = 0;
 

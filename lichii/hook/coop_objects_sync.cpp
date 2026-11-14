@@ -318,6 +318,30 @@ std::optional<std::int32_t> RaisedMaxLife(std::int32_t link_max, std::int32_t fl
     return flag;
 }
 
+bool NativeOnlyName(std::string_view name) {
+    return name.empty() || name == "?" || name.starts_with("Enemy_") || IsBoss(name);
+}
+
+LifeRouted RouteLife(const LifeAsk& a) {
+    if (a.hurt > 0 && a.replay_on && !a.direct && a.has_player) {
+        return {LifeRoute::replay, a.hurt};
+    }
+    const bool steppable = a.step_seen && a.has_component && a.old >= 0 && (a.hurt > 0 || a.life < a.old);
+    if (steppable) {
+        if (a.native && a.hurt <= 0 && !a.replay_seen) {
+            return {LifeRoute::wait_replay, 0};
+        }
+        if (a.native) {
+            // A stale give is merged: a fall to a life already holds it, a hurt adds it.
+            return {LifeRoute::step, a.hurt > 0 ? a.hurt + a.stale : a.old - a.life};
+        }
+        if (a.stale == 0) {
+            return {LifeRoute::step, a.hurt > 0 ? a.hurt : a.old - a.life};
+        }
+    }
+    return {a.native ? LifeRoute::lost : LifeRoute::write, 0};
+}
+
 bool IsBoss(std::string_view name) {
     if (name.find("_Dictionary") != std::string_view::npos) return false;
     if (name.starts_with("Enemy_DungeonBoss_") || name.starts_with("Enemy_MiddleBoss_")) {
@@ -1435,6 +1459,15 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             if (life->life > 0) {
                 o.killed_at = 0;  // alive again: a later kill is a new one
             }
+            if (o.kill_given_until != 0) {
+                const auto own = owners_.find(o.id);
+                if (now_us >= o.kill_given_until || own == owners_.end() || own->second.player != self) {
+                    o.kill_given_until = 0;
+                } else if (life->life <= 0) {
+                    o.kill_given_until = 0;
+                    DeadByWrite(o, own->second.epoch, now_us, send, "a kill our game took after its wait");
+                }
+            }
         }
     }
     for (auto& [hash, taking] : taken_) {
@@ -1691,12 +1724,14 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 o.late_until = now_us + kHurtLateUs;
                 o.life = o.hurt_target;
                 ++hurt_missed_;
-                // A killing hit written as life 0 on an enemy of ours: it
-                // may stand on at 0 (issue 133, the big Skulltula hit from
-                // its armoured side, a wall Skulltula hit by a seed).
+                // A killing hit given to the game on an enemy of ours: it may
+                // stand on at 0 (issue 133, the big Skulltula hit from its
+                // armoured side, a wall Skulltula hit by a seed). It is said
+                // dead only once the walk reads life 0 (its game took it,
+                // below); a lost kill leaves it alive, as its game has it.
                 const auto own = owners_.find(o.id);
                 if (o.hurt_target <= 0 && own != owners_.end() && own->second.player == self) {
-                    DeadByWrite(o, own->second.epoch, now_us, send, "a hit our game did not take");
+                    o.kill_given_until = now_us + kHurtLateUs;
                 }
             }
             o.hurt_left = 0;
@@ -2296,7 +2331,8 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 // We killed it here and the owner's enemy still lives (the
                 // DAMAGE was lost, or crossed a change of owner): not healed
                 // back, the hit is sent again (issue 133). After kResendMax
-                // the owner's life is taken, as below.
+                // nothing more: an enemy is never written up (the games stay
+                // split, counted below); anything else takes the owner's life.
                 ++o->resent;
                 o->hit_sum = life;
                 o->hit_place.reset();
@@ -2304,7 +2340,14 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 o->hit_since = now_us > kDamageSumUs ? now_us - kDamageSumUs : 0;
                 notes_.emplace_back("killed here, owner still shows life: hit sent again: " +
                                     o->name);
-            } else if (life > have && !holding && o->dead_at == 0 && !o->reacts) {
+            } else if (life > have && !holding && o->dead_at == 0 && o->reacts) {
+                if (have <= 0 && o->killed_at != 0 && o->resent >= kResendMax && !o->split_said) {
+                    o->split_said = true;
+                    ++split_kills_;
+                    notes_.emplace_back("dead here, owner still shows life after the resends (lost kill): " +
+                                        o->name);
+                }
+            } else if (life > have && !holding && o->dead_at == 0) {
                 // (an enemy copy is never healed up to its owner's life: no game
                 // path raises it, so it keeps its own; the native rule)
                 write(*o, life);

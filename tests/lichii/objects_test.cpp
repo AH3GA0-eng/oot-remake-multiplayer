@@ -751,9 +751,38 @@ TEST_CASE("objects: a hurt the game does not take is written as life after 400 m
     CHECK(sync.HurtsMissed() == 1);
 }
 
-TEST_CASE("objects: our enemy killed by a hit our game did not take is said dead and deleted (issue 133)") {
+TEST_CASE("objects: a killing hit our game did not take leaves our enemy alive (native rule)") {
     // The big Skulltula hit from its armoured side in another game: our game
-    // refuses the hurt, its life is written to 0 and it would stand on.
+    // refuses the hurt. Nothing is written, so it is NOT said dead or deleted
+    // while its game still has it alive.
+    Sync sync;
+    sync.SetHurt(true);
+    const auto skull = [](std::int32_t life) { return Enemy(0x100, 0x11, life, 0.0f, "Enemy_Skulltula"); };
+    Tick(sync, 0, {skull(4)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 1, 3);
+    proto::Damage d;
+    d.player_number = 2;
+    d.id = id;
+    d.amount = 4;
+    sync.Receive(d);
+    auto step = Tick(sync, 10 * kMs, {skull(4)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].hurt == 4);
+    step = Tick(sync, 430 * kMs, {skull(4)});
+    REQUIRE(step.writes.size() == 1);  // to the game's Life step (WriteLife), never a raw write
+    CHECK(step.writes[0].hurt == 0);
+    CHECK(step.writes[0].life == 0);
+    CHECK(All<proto::ObjectRemove>(step).empty());
+    // Its game did not take it: still alive at 4.
+    for (const std::uint64_t t : {500, 1000, 1600, 3500, 4000}) {
+        step = Tick(sync, t * kMs, {skull(4)});
+        CHECK(All<proto::ObjectRemove>(step).empty());
+        CHECK(sync.Removes().empty());  // (no dead_at: never deleted)
+    }
+}
+
+TEST_CASE("objects: a killing hit given after the wait that its game takes is said dead and deleted (issue 133)") {
     Sync sync;
     sync.SetHurt(true);
     const auto skull = [](std::int32_t life) { return Enemy(0x100, 0x11, life, 0.0f, "Enemy_Skulltula"); };
@@ -765,13 +794,11 @@ TEST_CASE("objects: our enemy killed by a hit our game did not take is said dead
     d.id = id;
     d.amount = 2;
     sync.Receive(d);
-    auto step = Tick(sync, 10 * kMs, {skull(2)});
-    REQUIRE(step.writes.size() == 1);
-    CHECK(step.writes[0].hurt == 2);
-    CHECK(All<proto::ObjectRemove>(step).empty());  // the game may still take it
-    step = Tick(sync, 430 * kMs, {skull(2)});
-    REQUIRE(step.writes.size() == 1);
-    CHECK(step.writes[0].life == 0);
+    Tick(sync, 10 * kMs, {skull(2)});
+    auto step = Tick(sync, 430 * kMs, {skull(2)});
+    CHECK(All<proto::ObjectRemove>(step).empty());  // not before its game took it
+    // Its Life step took it: life 0, standing on (issue 133).
+    step = Tick(sync, 500 * kMs, {skull(0)});
     auto removes = All<proto::ObjectRemove>(step);
     REQUIRE(removes.size() == 1);
     CHECK(removes[0].id == id);
@@ -784,11 +811,82 @@ TEST_CASE("objects: our enemy killed by a hit our game did not take is said dead
     // Standing on at life 0: deleted 3 s later.
     Tick(sync, 3000 * kMs, {skull(0)});
     CHECK(sync.Removes().empty());
-    Tick(sync, 3500 * kMs, {skull(0)});
+    Tick(sync, 3600 * kMs, {skull(0)});
     CHECK(sync.Removes() == std::vector<std::uint64_t>{0x100});
     // When it goes, it is not said dead a second time.
-    Tick(sync, 3600 * kMs, {});
-    CHECK(All<proto::ObjectRemove>(Tick(sync, 3700 * kMs, {})).empty());
+    Tick(sync, 3700 * kMs, {});
+    CHECK(All<proto::ObjectRemove>(Tick(sync, 3800 * kMs, {})).empty());
+}
+
+TEST_CASE("objects: RouteLife: an enemy goes only through its game's own steps, else it is lost") {
+    using CoopObjects::LifeAsk;
+    using CoopObjects::LifeRoute;
+    using CoopObjects::RouteLife;
+    LifeAsk a;
+    a.native = true;
+    a.replay_on = true;
+    a.has_player = true;
+    a.hurt = 2;
+    a.life = 1;
+    a.old = 3;
+    a.step_seen = true;
+    a.has_component = true;
+    CHECK(RouteLife(a).route == LifeRoute::replay);
+    // The 400 ms fallback (no hurt, a life to reach): the Life step once the replay was seen.
+    a.hurt = 0;
+    auto r = RouteLife(a);
+    CHECK(r.route == LifeRoute::step);
+    CHECK(r.amount == 2);
+    // A stale give is merged into the fall (not refused, not written).
+    a.stale = 2;
+    r = RouteLife(a);
+    CHECK(r.route == LifeRoute::step);
+    CHECK(r.amount == 2);
+    // Our replay not seen yet by its damage step: nothing more.
+    a.stale = 0;
+    a.replay_seen = false;
+    CHECK(RouteLife(a).route == LifeRoute::wait_replay);
+    a.replay_seen = true;
+    // No Life step (emulator), no component, nothing to lower, or unread: lost, never a write.
+    a.step_seen = false;
+    CHECK(RouteLife(a).route == LifeRoute::lost);
+    a.step_seen = true;
+    a.has_component = false;
+    CHECK(RouteLife(a).route == LifeRoute::lost);
+    a.has_component = true;
+    a.life = 5;  // up: no game path
+    CHECK(RouteLife(a).route == LifeRoute::lost);
+    a.life = 1;
+    a.old = -1;
+    CHECK(RouteLife(a).route == LifeRoute::lost);
+    a.old = 3;
+    // A hurt past the replay (a test kill): its stale part goes with it.
+    a.direct = true;
+    a.hurt = 3;
+    a.stale = 1;
+    r = RouteLife(a);
+    CHECK(r.route == LifeRoute::step);
+    CHECK(r.amount == 4);
+    // Not native (a pot): a stale give means the old direct write, as before.
+    LifeAsk pot = a;
+    pot.native = false;
+    pot.direct = false;
+    pot.replay_on = false;
+    pot.hurt = 0;
+    CHECK(RouteLife(pot).route == LifeRoute::write);
+    pot.stale = 0;
+    CHECK(RouteLife(pot).route == LifeRoute::step);
+    pot.step_seen = false;
+    CHECK(RouteLife(pot).route == LifeRoute::write);
+}
+
+TEST_CASE("objects: NativeOnlyName: enemies, bosses and unknown names are never written") {
+    CHECK(CoopObjects::NativeOnlyName("Enemy_Stalchild"));
+    CHECK(CoopObjects::NativeOnlyName("Enemy_DungeonBoss_Goma"));
+    CHECK(CoopObjects::NativeOnlyName("?"));
+    CHECK(CoopObjects::NativeOnlyName(""));
+    CHECK_FALSE(CoopObjects::NativeOnlyName("Obj_Pot_A_01"));
+    CHECK_FALSE(CoopObjects::NativeOnlyName("Animal_Cucco"));
 }
 
 TEST_CASE("objects: a hurt not taken on a copy, or one that leaves life, says nobody dead") {
@@ -3770,4 +3868,19 @@ TEST_CASE("objects: a web whose burn never takes is broken as before") {
     std::vector<PlayWish> plays;
     sync.Plays(1100 * kMs, plays);
     CHECK(plays.empty());
+}
+
+TEST_CASE("objects: a copy dead here whose owner still lives after the resends is counted once") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {Enemy(0x100, 0x11, 0)});
+    Tick(sync, 130 * kMs, {Enemy(0x100, 0x11, 0)});
+    for (const std::uint64_t t : {1200, 2300, 3400, 4500}) {
+        sync.Receive(OwnerSample(id, 2, t * kMs, 0.0f, 2, "Wait"));
+        CHECK(Tick(sync, t * kMs, {Enemy(0x100, 0x11, 0)}).writes.empty());
+    }
+    CHECK(sync.SplitKills() == 1);
 }
