@@ -42,7 +42,7 @@ Every player needs the same release: a game of one release refuses a server of a
 
 ## Status
 
-Stage 0 is done and stage 1 (co-op in the emulator) is well under way: each part is checked on one PC with the real game in two emulator instances, and the releases ([above](#play-the-newest-release)) are played by testers on separate PCs. The plan is in [docs/plan.md](docs/plan.md), the wire protocol in [docs/protocol.md](docs/protocol.md), and what a test kit can show in [docs/testing.md](docs/testing.md).
+Stage 0 is done, and the co-op of stage 1 now runs on Longshot: each part is checked on one PC with the real game in two Longshot games, and the releases ([above](#play-the-newest-release)) are played by testers on separate PCs. The plan is in [docs/plan.md](docs/plan.md), the wire protocol in [docs/protocol.md](docs/protocol.md), and what a test kit can show in [docs/testing.md](docs/testing.md).
 
 | Stage | State |
 |---|---|
