@@ -839,7 +839,7 @@ private:
         // copy of another game's egg (when our game saw it hatch, 0: none).
         // It stays: the owner's hatchling, when its OBJECT_SPAWN comes, takes
         // this one as its copy instead of a second one being made; none within
-        // kOwnHatchWaitUs: it is shared as ours.
+        // kOwnHatchWaitUs: it is ended (one larva per game).
         std::uint64_t own_hatch_us = 0;
         // Issue 150: a boss copy whose own game stunned it (a DAMAGE of 0 is
         // due), and when that last went out.

@@ -1642,19 +1642,18 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     decider_ = DeciderOf(self, now_us);
     std::erase_if(eggs_, [now_us](const Egg& e) { return now_us - e.at > kHatchWindowUs; });
     std::erase_if(copy_eggs_, [now_us](const Egg& e) { return now_us - e.at > kHatchWindowUs; });
-    // Our own hatchling that no owner's took in time (its egg never hatched
-    // there): ours, shared as Hatch shares one, so it is not left unowned.
+    // Our own hatchling that no owner's took in time (its egg has not hatched
+    // there yet): ended (gohma-2, review of boss-sync-2: shared as ours it
+    // could make two larvae, ours and the owner's when that egg hatches
+    // later). The owner's larva comes as its OBJECT_SPAWN whenever it does.
     for (auto& [address, o] : objects_) {
         if (o.own_hatch_us != 0 && now_us - o.own_hatch_us > kOwnHatchWaitUs) {
             o.own_hatch_us = 0;
-            o.id = {proto::ObjectKind::made, self, ++made_counter_};
-            owners_[o.id] = {self, 0};
-            proto::ObjectSpawn spawn;
-            spawn.id = o.id;
-            spawn.actor = o.name;
-            spawn.state = StateOf(o, now_us);
-            send.emplace_back(std::move(spawn));
-            notes_.emplace_back("no owner's hatchling came for ours, shared as ours: " + o.name);
+            if (o.dead_at == 0) {
+                o.dead_now = true;  // deleted now (Removes), as a copy egg is
+                o.dead_at = now_us;
+                notes_.emplace_back("no owner's hatchling came for ours, ended: " + o.name);
+            }
         }
     }
     std::set<std::uint64_t> refused;
