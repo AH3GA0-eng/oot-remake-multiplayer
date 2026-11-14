@@ -127,6 +127,26 @@ std::optional<bool> BossAlive(const std::vector<Seen>& seen, std::span<const std
     return false;
 }
 
+std::optional<bool> BossOurs(const std::vector<Seen>& walk, std::span<const std::uint64_t> ours,
+                             std::span<const std::string_view> bodies, std::uint64_t now_us,
+                             std::map<std::string, BossOwnership, std::less<>>& last) {
+    std::optional<bool> out;
+    for (const Seen& s : walk) {
+        if (std::find(bodies.begin(), bodies.end(), s.name) == bodies.end()) continue;
+        const bool mine = std::find(ours.begin(), ours.end(), s.address) != ours.end();
+        last[s.name] = BossOwnership{mine, now_us};
+        out = out.value_or(false) || mine;
+    }
+    if (out) return out;
+    for (const std::string_view body : bodies) {  // gone from the walk: the last reading, while fresh
+        const auto it = last.find(body);
+        if (it != last.end() && now_us >= it->second.at_us && now_us - it->second.at_us <= kBossOursKeepUs) {
+            out = out.value_or(false) || it->second.ours;
+        }
+    }
+    return out;
+}
+
 std::optional<bool> BossHurt(const std::vector<Seen>& seen, std::span<const std::string_view> bodies) {
     bool any = false;
     for (const Seen& s : seen) {

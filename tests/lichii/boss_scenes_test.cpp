@@ -326,7 +326,7 @@ TEST_CASE("boss scenes: our intro or death seen with no name starts a fresh intr
     CHECK(c.phase(kGohma) == Phase::none);
 }
 
-TEST_CASE("boss scenes: a copy that dies in its own game starts no death; the owner's does (review boss-intro)") {
+TEST_CASE("boss scenes: a copy that dies in its own game starts no death, the owner's does (review boss-intro)") {
     // A's eye hit judged lethal on A's copy while the owner B refused it: A's walk reads its boss gone.
     const auto searched = [](const char* name) { return std::vector<Request>{Request{name, true, true}}; };
     Director a;

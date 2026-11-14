@@ -3834,18 +3834,11 @@ std::optional<bool> LastBossAlive(std::span<const std::string_view> bodies) {
 std::optional<bool> LastBossOurs(std::span<const std::string_view> bodies) {
     std::lock_guard lock(g_bosses_mutex);
     const std::uint64_t now = CoopEvery::NowUs();
+    static std::map<std::string, BossOwnership, std::less<>> last;  // (under g_bosses_mutex)
     if (g_bosses_at == 0 || now < g_bosses_at || now - g_bosses_at > kBossesFreshUs) {
         return std::nullopt;
     }
-    std::optional<bool> out;
-    for (const Seen& s : g_bosses) {
-        if (std::find(bodies.begin(), bodies.end(), s.name) != bodies.end()) {
-            const bool ours =
-                std::find(g_bosses_ours.begin(), g_bosses_ours.end(), s.address) != g_bosses_ours.end();
-            out = out.value_or(false) || ours;
-        }
-    }
-    return out;
+    return BossOurs(g_bosses, g_bosses_ours, bodies, g_bosses_at, last);
 }
 
 void SetUnreadyBosses(std::vector<std::string> bodies) {

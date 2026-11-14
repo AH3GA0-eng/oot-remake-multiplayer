@@ -6,6 +6,7 @@
 
 #include <cstring>
 #include <array>
+#include <map>
 #include <optional>
 #include <string>
 #include <variant>
@@ -277,6 +278,24 @@ TEST_CASE("objects: a hit place read a walk before its life drop still goes with
     damage = All<proto::Damage>(Tick(sync, 620 * kMs, {Enemy(0x100, 0x11, 2, 0.0f, kBoss)}));
     REQUIRE(damage.size() == 1);
     CHECK_FALSE(damage[0].hit_at);
+}
+
+TEST_CASE("objects: whose boss it is stays known a while after the owner's boss left the walk (review boss-intro2)") {
+    // The owner's Gohma is deleted by her own death event: her death must still be the owner's then.
+    const std::array<std::string_view, 1> bodies{"Enemy_DungeonBoss_Gohma"};
+    std::map<std::string, CoopObjects::BossOwnership, std::less<>> last;
+    const std::vector<Seen> with{Enemy(0x100, 0x11, 1, 0.0f, "Enemy_DungeonBoss_Gohma")};
+    const std::vector<std::uint64_t> ours{0x100};
+    CHECK(CoopObjects::BossOurs(with, ours, bodies, 1'000'000, last) == std::optional(true));
+    CHECK(CoopObjects::BossOurs({}, {}, bodies, 3'000'000, last) == std::optional(true));  // gone: the last reading
+    CHECK_FALSE(CoopObjects::BossOurs({}, {}, bodies, 1'000'000 + CoopObjects::kBossOursKeepUs + 1, last));
+    // A copy: false while seen, false after.
+    std::map<std::string, CoopObjects::BossOwnership, std::less<>> copy;
+    CHECK(CoopObjects::BossOurs(with, {}, bodies, 1'000'000, copy) == std::optional(false));
+    CHECK(CoopObjects::BossOurs({}, {}, bodies, 2'000'000, copy) == std::optional(false));
+    // Never seen: nothing.
+    std::map<std::string, CoopObjects::BossOwnership, std::less<>> none;
+    CHECK_FALSE(CoopObjects::BossOurs({}, {}, bodies, 1'000'000, none));
 }
 
 TEST_CASE("objects: a hit place is kept only finite and near the boss") {

@@ -222,6 +222,19 @@ bool RemovedWhenTaken(std::string_view name);
 // there, or every one there is at 0 life; nothing when one is there whose
 // life was not read (unknown: the boss logic then keeps its old rule).
 std::optional<bool> BossAlive(const std::vector<Seen>& seen, std::span<const std::string_view> bodies);
+
+// Whether our game owns the dungeon's boss (boss-intro): from this walk when the boss is in it (`ours`: the
+// addresses of the bosses we own), else the last walk that had it, for kBossOursKeepUs: the owner's Gohma is
+// deleted by her own death event, and her death must still be known as the owner's then. `last` keeps one
+// reading per boss body name (updated here).
+struct BossOwnership {
+    bool ours = false;
+    std::uint64_t at_us = 0;
+};
+inline constexpr std::uint64_t kBossOursKeepUs = 10'000'000;
+std::optional<bool> BossOurs(const std::vector<Seen>& walk, std::span<const std::uint64_t> ours,
+                             std::span<const std::string_view> bodies, std::uint64_t now_us,
+                             std::map<std::string, BossOwnership, std::less<>>& last);
 // Whether any of the boss's bodies has lost life (life below its maximum):
 // false while every body seen is at full life, nothing when none is seen or a
 // life is not read.
