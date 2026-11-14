@@ -38,6 +38,7 @@ Every kind of dungeon state, where the game keeps it and whether co-op shares it
 | Gold Skulltulas in dungeons, heart containers, the few hearts and rupees of type 24 | Keys | **Yes** (also as pickups, [items.md](items.md)) | One-time keys |
 | Water level (Water Temple) and other dungeon Ints | Named Int (`WaterTemple_Room00_WaterLevel`) | Yes | Live, last write wins |
 | Map, compass, boss key owned | Item: `DungeonInfo.<dungeon>.IsGetMap` / `IsGetCompass` / `IsGetBossKey` | Yes | OR: once anyone has it, everyone has it |
+| Floors shown on the map | Item: `DungeonInfo.<dungeon>.EnteredFloorBit` (UInt, a bit a floor; the map's get sets them all) | Yes | Bits: the union of every player's floors (below) |
 | Small keys in the pocket | Item: `DungeonInfo.<dungeon>.SmallKeyNum` (Int) | Yes | **One shared count per dungeon** (below) |
 | Locked doors unlocked | Named (`…_UnLock`, `…_OpenDoor…`) | Yes | Live |
 | Business scrubs sold out, fairy fountains (reset type 25) | Keys | No | Not known what type 25 means; left out |
@@ -48,6 +49,8 @@ Every kind of dungeon state, where the game keeps it and whether co-op shares it
 `SmallKeyNum` is a count, not a flag, and uses the count (delta) rule of [items.md](items.md): every change a player makes (+1 for a key picked up, −1 for a door opened) is added to the one count all players have for that dungeon. So the players share one key ring. A key cannot be had twice: its chest is a one-time key (above), so once one player has opened it, it is open in every game and the +1 is counted once. Keys that drop from an event write named flags that are shared (`FireTemple_GetSmallKey_01` to `_08`, `BottomOfTheWell_Level_Room_03_Get_SmallKey`). The only two loose `Obj_Dungeon_SmallKey` placements (Bottom of the Well and Shadow Temple, `*_Static`) have no key of their own; the Well's has the named flag just given, the Shadow Temple's is not mapped and could be taken twice (check in a run). A door opened by one player costs one key for everyone, and the door's flag opens it in the other games, so nobody pays for it twice.
 
 ### The map and compass stay got (issue 146, minimap-b)
+
+**The map's floors (map-get-b, 2026-11-14).** In the owner's playtest the opener (game B, the host) got the Deku Tree map and saw it on neither the minimap nor the Map page. Co-op had written no flag in B (`flags native: ... 0 setter calls made for co-op`), no `coop: map-drop:` line came, and B's own saves made around the get keep `IsGetMap` at 1. Comparing B's autosave before the get with the one after it shows what the get writes: `IsGetMap` 0 -> 1, the chest's opened Bool `0xe4fb555d`, four item help-box Bools (structs 0x2b05cbb9, 0x41f3e410, 0x541947d0, 0x57f52eb8), and **`DungeonInfo.InsideTheDekuTree.EnteredFloorBit` (UInt 0x5c6c21c1) 12 -> 31**, every floor. Only `IsGetMap` was shared, so another player's map stayed at the floors that player had entered. `EnteredFloorBit` of all 14 dungeons is now a shared item (`ItemRule::bits`, the union, sent and set through the game's UInt setter 0x57af30; GameFlagStore reads and writes a UInt only for such an item). Not seen in a game yet; if the opener's own map is still missing with both values set, the cause is elsewhere (the big run's check names both games).
 
 **The root cause is not found yet.** What follows is a log to find it and a narrow guard, not a fix.
 

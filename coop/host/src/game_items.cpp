@@ -82,9 +82,11 @@ constexpr ItemFlag kItems[] = {
   {"IsGet.Weapon_Sword_Biggoron", 0x33466812, K::boolean, R::any, true},
   {"IsGet.Pouch_Amiibo", 0x3506a557, K::boolean, R::any, true},
   {"IsGet.Armor_Child_Mask_Keaton", 0x35c60e1d, K::boolean, R::any, true},
+  {"DungeonInfo.SpiritTemple.EnteredFloorBit", 0x36346d00, K::uint32, R::bits, true},
   {"PlayerStatus.AssignableItem.BottleInfo.BottleE.BottleItem", 0x365e1953, K::uint32, R::per_player, true},
   {"IsGet.Item_Longshot", 0x38aea3bb, K::boolean, R::any, true},
   {"PouchData.Weapon_Sword_Giant.StockNum", 0x396a5c02, K::int32, R::max, true},
+  {"DungeonInfo.FireTemple.EnteredFloorBit", 0x3a014bac, K::uint32, R::bits, true},
   {"DungeonInfo.GerudoFortress.SmallKeyNum", 0x3a28b6a4, K::int32, R::count, true},
   {"PouchData.Item_Quiver_Medium.StockNum", 0x3bb370e1, K::int32, R::max, true},
   {"DungeonInfo.GerudoTrainingGround.IsGetCompass", 0x3d9a2750, K::boolean, R::any, true},
@@ -97,7 +99,11 @@ constexpr ItemFlag kItems[] = {
   {"PouchData.Item_StickBag_Medium.StockNum", 0x41db7ab5, K::int32, R::max, true},
   {"DungeonInfo.ForestTemple.IsGetBossKey", 0x427333a0, K::boolean, R::any, true},
   {"IsGet.Item_Ocarina_Fairy", 0x42bd296f, K::boolean, R::any, true},
+  {"DungeonInfo.ForestTemple.EnteredFloorBit", 0x4321ac04, K::uint32, R::bits, true},
+  {"DungeonInfo.ShadowTemple.EnteredFloorBit", 0x445aeb73, K::uint32, R::bits, true},
   {"IsGet.Item_WeirdEgg", 0x44ab1487, K::boolean, R::any, true},
+  {"DungeonInfo.WaterTemple.EnteredFloorBit", 0x45408bef, K::uint32, R::bits, true},
+  {"DungeonInfo.DodongoCavern.EnteredFloorBit", 0x46913e20, K::uint32, R::bits, true},
   {"PouchData.Armor_Child_Mask_Skull.StockNum", 0x47b2d775, K::int32, R::max, true},
   {"PouchData.Item_FaroreWind.StockNum", 0x47f2ca87, K::int32, R::max, true},
   {"PouchData.Armor_Child_Mask_Amiibo1.StockNum", 0x486c59a4, K::int32, R::max, true},
@@ -123,6 +129,7 @@ constexpr ItemFlag kItems[] = {
   {"IsGet.Item_Bombchu", 0x5ab49c8e, K::boolean, R::any, true},
   {"DungeonInfo.FireTemple.IsGetMap", 0x5b3ac0ba, K::boolean, R::any, true},
   {"PouchData.Item_EyeDrop.StockNum", 0x5c41a6b1, K::int32, R::mirror, true},
+  {"DungeonInfo.InsideTheDekuTree.EnteredFloorBit", 0x5c6c21c1, K::uint32, R::bits, true},
   {"IsGet.Item_Arrow_Ice", 0x5c8f3099, K::boolean, R::any, true},
   {"PouchData.Item_Medal_Fire.StockNum", 0x5ce254a6, K::int32, R::max, true},
   {"PouchData.Item_Arrow_Fire.StockNum", 0x5e529ab9, K::int32, R::max, true},
@@ -146,6 +153,7 @@ constexpr ItemFlag kItems[] = {
   {"DungeonInfo.GerudoTrainingGround.IsGetBossKey", 0x6d155841, K::boolean, R::any, true},
   {"IsGet.Item_MagicBean", 0x6d39c600, K::boolean, R::any, true},
   {"PouchData.Armor_Adult_Normal.StockNum", 0x6f631388, K::int32, R::max, true},
+  {"DungeonInfo.IceCavern.EnteredFloorBit", 0x70446601, K::uint32, R::bits, true},
   {"IsGet.Weapon_Sword_BrokenGiant", 0x720df203, K::boolean, R::any, true},
   {"IsGet.Item_NormalBoot", 0x7215060c, K::boolean, R::any, true},
   {"IsGet.Item_Hammer", 0x7227efd8, K::boolean, R::any, true},
@@ -158,13 +166,16 @@ constexpr ItemFlag kItems[] = {
   {"PouchData.Item_BulletBag_Large.StockNum", 0x7b9673f5, K::int32, R::max, true},
   {"PouchData.Weapon_Shield_Deku.StockNum", 0x7ca64f23, K::int32, R::max, true},  // issue 130: shared again
   {"PlayerStatus.AssignableItem.BottleInfo.BottleA.BottleItem", 0x7d48df76, K::uint32, R::per_player, true},
+  {"DungeonInfo.InsideJabuJabuBelly.EnteredFloorBit", 0x7d59d22a, K::uint32, R::bits, true},
   {"PouchData.Item_Stone_Fire.StockNum", 0x7d69ad47, K::int32, R::max, true},
   {"DungeonInfo.BottomOfTheWell.SmallKeyNum", 0x7dd79d10, K::int32, R::count, true},
   {"PouchData.Armor_Child_Mask_Bunny.StockNum", 0x7e607033, K::int32, R::max, true},
   {"IsGet.Item_Boomerang", 0x7f4ce38d, K::boolean, R::any, true},
+  {"DungeonInfo.BottomOfTheWell.EnteredFloorBit", 0x7f9b6ea4, K::uint32, R::bits, true},
   {"IsGet.Armor_GlassTruth", 0x7fe2a5b2, K::boolean, R::any, true},
   {"IsGet.Item_Melody_SpiritRequiem", 0x802a36a8, K::boolean, R::any, true},
   {"PouchData.Weapon_Range_SlingShot.StockNum", 0x80d34ce9, K::int32, R::max, true},
+  {"DungeonInfo.GerudoFortress.EnteredFloorBit", 0x843ae593, K::uint32, R::bits, true},
   {"PouchData.Item_Longshot.StockNum", 0x8499ea34, K::int32, R::max, true},
   {"PouchData.Obj_Armor_Child_Normal.StockNum", 0x84ba0d24, K::int32, R::max, true},
   {"PouchData.Item_Hookshot.StockNum", 0x8573d2cd, K::int32, R::max, true},
@@ -227,6 +238,7 @@ constexpr ItemFlag kItems[] = {
   {"IsGet.Item_BulletBag_Large", 0xb669f025, K::boolean, R::any, true},
   {"PouchData.Item_AlarmCucco.StockNum", 0xb6ca6093, K::int32, R::mirror, true},
   {"IsGet.Item_Wallet_Small", 0xb6e5a3a5, K::boolean, R::any, true},
+  {"DungeonInfo.FinalBattleField.EnteredFloorBit", 0xb71065f6, K::uint32, R::bits, true},
   {"DungeonInfo.FireTemple.IsGetBossKey", 0xb72d73df, K::boolean, R::any, true},
   {"IsGet.Item_OddPowder", 0xb75acaad, K::boolean, R::any, true},
   {"PouchData.Item_DinFire.StockNum", 0xb796c16d, K::int32, R::max, true},
@@ -240,6 +252,7 @@ constexpr ItemFlag kItems[] = {
   {"PouchData.Item_DekuStick.StockNum", 0xb9494411, K::int32, R::per_player, true},
   {"DungeonInfo.GerudoFortress.IsGetMap", 0xbcaad6ce, K::boolean, R::any, true},
   {"PouchData.Item_BombBag_Large.StockNum", 0xbd3ca2c6, K::int32, R::max, true},
+  {"DungeonInfo.InsideGanonCastle.EnteredFloorBit", 0xbe80d86d, K::uint32, R::bits, true},
   {"PouchData.Item_Arrow_Light.StockNum", 0xbfb285c8, K::int32, R::max, true},
   {"IsGet.Armor_Child_Mask_Spooky", 0xc0cf68a7, K::boolean, R::any, true},
   {"IsGet.Item_Melody_ShadowNocturne", 0xc2fb95f4, K::boolean, R::any, true},
@@ -295,6 +308,7 @@ constexpr ItemFlag kItems[] = {
   {"PouchData.Item_DekuNut.StockNum", 0xf30d9f54, K::int32, R::per_player, true},
   {"PlayerStatus.AssignableItem.BottleInfo.BottleA.IsValid", 0xf39ce410, K::boolean, R::any, true},
   {"PouchData.Item_AgonyStone.StockNum", 0xf3b14ce2, K::int32, R::max, true},
+  {"DungeonInfo.GerudoTrainingGround.EnteredFloorBit", 0xf464c91f, K::uint32, R::bits, true},
   {"PouchData.Weapon_Shield_Mirror.StockNum", 0xf58e0e2f, K::int32, R::max, true},
   {"PouchData.Armor_Child_Mask_Amiibo0.StockNum", 0xf5e647da, K::int32, R::max, true},
   {"DungeonInfo.ShadowTemple.IsGetMap", 0xf6177b93, K::boolean, R::any, true},
@@ -469,6 +483,10 @@ std::uint32_t merge_item(ItemRule rule, protocol::FlagKind kind, std::uint32_t l
       return as_bits(std::int64_t{as_int(local)} + as_int(incoming) - as_int(*base));
     case ItemRule::per_player:
       return local;
+    case ItemRule::bits:
+      // Each bit once set stays set: floors one player entered, or all of them
+      // from the map's get, are on everyone's map.
+      return local | incoming;
   }
   return local;
 }
@@ -726,6 +744,12 @@ bool one_way_entry(const ItemFlag& item) {
          (item.name.ends_with(".IsGetMap") || item.name.ends_with(".IsGetCompass"));
 }
 }  // namespace
+
+bool is_shared_uint_item(std::uint32_t hash) {
+  const ItemFlag* item = find_item(hash);
+  return item != nullptr && item->on && item->kind == protocol::FlagKind::uint32 &&
+         item->rule != ItemRule::per_player;
+}
 
 bool is_one_way_item(FlagKey key) {
   if (key.kind != protocol::FlagKeyKind::named || key.index != 0) return false;
