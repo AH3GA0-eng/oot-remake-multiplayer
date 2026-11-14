@@ -336,6 +336,8 @@ That writes the mod `<load folder>\0400486024DEC000\coop-puppet\` (`--mod-dir` p
 
 Before building it checks the dump with `tools/puppet_pack/dumpcheck.py` (plain Python, no zstandard), which `make-puppet-pack.cmd` also runs to find the dump. The emulator's Dump RomFS shows the same "RomFS Extraction Failed!" box for nearly every failure and writes no log line of its own, so the check looks at what the dump left: no folder (the dump failed; the emulator deletes the folder then), folders without files (Skeleton instead of Full), a missing table or pack, a file that does not start with the zstd magic (the dump stopped mid-copy: the emulator sizes each file before filling it), no `Pack` folder (the manual dumped instead of the program), or another data version than `Product.111` (the base game dumped because the update is not in the kit's NAND; `--any-version` skips that one). With no dump at all it lists the usual causes: no `keys\prod.keys` (or one folder too deep), an empty NAND, under 20 GB free, a deep kit folder. It looks in the Dump Root setting (`dump_directory` in `qt-config.ini`) and in `user\dump`, and takes the dump, title or romfs folder.
 
+Each puppet is also a target of the game's perception (issues 150 and 178): it keeps the player's `AffiliationRef`, gets its own `PerceptionEmitter` param and InterestSpotActor's body-less physics, so enemies and Gohma's eggs see every player, not only the game's own Link ([dungeons-boss.md](dungeons-boss.md), "Every player is a target"). `--no-perception` leaves these out.
+
 | Mod file (under `romfs\`) | What |
 |---|---|
 | `Pack\Actor\CoopPuppet_Child.pack.zs` | 17 files: our ActorParam and the player's own component files it refers to |
