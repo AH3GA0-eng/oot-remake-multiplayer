@@ -1,0 +1,23 @@
+# hs-graveyard, B: out and back in at night (as hs-skulltula-token B), then stands about 10 m -x of the
+# grave A moves, facing it, and watches (the Poe near A, the grave, the kill).
+mark start
+wait 2700
+stick 0 -1 120
+wait 480
+mark kakariko
+stick 0 -1 150
+wait 480
+mark graveyard
+goto -5.0 8.0 1.0 900
+goto 8.0 11.0 1.0 900
+toward 21.53 11.17 20
+mark watching
+wait 1500
+mark b-mid
+toward 21.53 11.17 10
+press ZL 10
+wait 1500
+mark b-late
+toward 14.0 11.0 10
+wait 1200
+mark end
