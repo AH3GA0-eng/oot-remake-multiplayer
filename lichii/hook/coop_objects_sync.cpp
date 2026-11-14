@@ -1722,7 +1722,11 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 // text box): watch for that fall for a while.
                 o.late_left = std::max(0, *o.life - o.hurt_target);
                 o.late_until = now_us + kHurtLateUs;
-                o.life = o.hurt_target;
+                if (!o.reacts) {
+                    o.life = o.hurt_target;
+                }
+                // (an enemy: o.life stays the walk's real read until its game takes it, so neither our samples
+                // nor a Flush tell the others a life it does not have; a late take is no hit of ours: late_left)
                 ++hurt_missed_;
                 // A killing hit given to the game on an enemy of ours: it may
                 // stand on at 0 (issue 133, the big Skulltula hit from its

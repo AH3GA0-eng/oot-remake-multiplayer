@@ -769,16 +769,35 @@ TEST_CASE("objects: a killing hit our game did not take leaves our enemy alive (
     auto step = Tick(sync, 10 * kMs, {skull(4)});
     REQUIRE(step.writes.size() == 1);
     CHECK(step.writes[0].hurt == 4);
+    // Our samples tell the others only the life our game really has (never the target of a lost hit).
+    std::size_t samples = 0;
+    const auto real_life_only = [&samples](const Step& st) {
+        for (const auto& sample : All<proto::ObjectSample>(st)) {
+            if (sample.state.life) {
+                ++samples;
+                CHECK(sample.state.life->life == 4);
+            }
+        }
+    };
     step = Tick(sync, 430 * kMs, {skull(4)});
     REQUIRE(step.writes.size() == 1);  // to the game's Life step (WriteLife), never a raw write
     CHECK(step.writes[0].hurt == 0);
     CHECK(step.writes[0].life == 0);
     CHECK(All<proto::ObjectRemove>(step).empty());
+    real_life_only(step);
     // Its game did not take it: still alive at 4.
     for (const std::uint64_t t : {500, 1000, 1600, 3500, 4000}) {
         step = Tick(sync, t * kMs, {skull(4)});
         CHECK(All<proto::ObjectRemove>(step).empty());
         CHECK(sync.Removes().empty());  // (no dead_at: never deleted)
+        real_life_only(step);
+    }
+    CHECK(samples > 0);
+    // Nor is it said dead when it leaves the walk alive (a room change).
+    for (const std::uint64_t t : {4100, 4200, 4300, 4400, 4500}) {
+        for (const auto& r : All<proto::ObjectRemove>(Tick(sync, t * kMs, {}))) {
+            CHECK(r.reason != proto::RemoveReason::dead);
+        }
     }
 }
 
@@ -1759,17 +1778,18 @@ TEST_CASE("objects: a hurt the game takes late is no hit of ours, and an enemy i
     REQUIRE(step.writes.size() == 1);
     CHECK(step.writes[0].hurt == 0);
     CHECK(step.writes[0].life == 3);
-    Tick(sync, 450 * kMs, {Enemy(0x100, 0x11, 3)}, 2);
-    // The game takes the old hit now (it was paused): 3 -> 2. An enemy keeps it (no write up).
-    step = Tick(sync, 700 * kMs, {Enemy(0x100, 0x11, 2)}, 2);
+    // (WriteLife gave nothing: the replay still waited for its damage step.) Our life stays the real read.
+    Tick(sync, 450 * kMs, {Enemy(0x100, 0x11, 4)}, 2);
+    // The game takes the replayed hit now (it was paused): 4 -> 3. No hit of ours, nothing written.
+    step = Tick(sync, 700 * kMs, {Enemy(0x100, 0x11, 3)}, 2);
     CHECK(step.writes.empty());
     CHECK(sync.HurtsLate() == 1);
     CHECK(All<proto::Damage>(step).empty());
-    step = Tick(sync, 900 * kMs, {Enemy(0x100, 0x11, 2)}, 2);
+    step = Tick(sync, 900 * kMs, {Enemy(0x100, 0x11, 3)}, 2);
     CHECK(All<proto::Damage>(step).empty());
     // A real hit of ours after that still goes to the owner.
-    Tick(sync, 1000 * kMs, {Enemy(0x100, 0x11, 1)}, 2);
-    CHECK(All<proto::Damage>(Tick(sync, 1200 * kMs, {Enemy(0x100, 0x11, 1)}, 2)).size() == 1);
+    Tick(sync, 1000 * kMs, {Enemy(0x100, 0x11, 2)}, 2);
+    CHECK(All<proto::Damage>(Tick(sync, 1200 * kMs, {Enemy(0x100, 0x11, 2)}, 2)).size() == 1);
 }
 
 TEST_CASE("objects: an enemy that becomes ours keeps its place and takes the lower life") {

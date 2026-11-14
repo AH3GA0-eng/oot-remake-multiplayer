@@ -1032,8 +1032,8 @@ private:
     std::vector<std::string> unready_;
     std::size_t hurt_taken_ = 0;   // hurts the game took as asked
     std::size_t hurt_late_ = 0;    // late falls put back
-    std::size_t hurt_missed_ = 0;
-    std::size_t split_kills_ = 0;  // hurts written directly after the wait
+    std::size_t hurt_missed_ = 0;  // hurts not taken after the wait (given to the Life step, or lost: never written)
+    std::size_t split_kills_ = 0;  // copies dead here, owner alive after the resends
     BlastNear blast_near_;
     std::size_t blast_drops_ = 0;
 
