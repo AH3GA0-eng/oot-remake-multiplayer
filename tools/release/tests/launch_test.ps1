@@ -1089,6 +1089,43 @@ try {
     finally { $env:LOCALAPPDATA = $keepKc[0]; $env:OOT_COOP_NO_SHORTCUT = $keepKc[1]; $ErrorActionPreference = 'Stop' }
     Check ($code -eq 0 -and $out -match 'Found Longshot nightly-2026-11-12' -and $out -match 'Co-op is built on v3\.0\.0-rc\.3, so it is built fresh' -and
         (Read-File "$k4\hookshot\game\bin\user\save\5a3c9e1f0b7d24680000000000000001\slot_00\progress.sav") -eq 'MINE' -and $out -match 'Copied your Longshot save slot\(s\) slot_00') "longshot build: a nightly is said to be another version, its save is copied in [$code $out]"
+    # revert-b: a kit gone back to a version on another Longshot commit (its game was built for the newer one): the
+    # build of this version in the PC's game cache (OOT_COOP_HS_CACHE, hs.py's layout) is copied over the game instead
+    # of a 15 to 45 minute build; the player's saves, settings, coop.ini and the romfs link stay as they were
+    $k5 = "$kc\kit-reverted"
+    Copy-Item -LiteralPath $k2 -Destination $k5 -Recurse
+    Remove-Item -LiteralPath "$k5\hookshot\game", "$k5\hookshot\game-folder.txt" -Recurse -Force
+    $older = 'c' * 40
+    Write-File "$k5\hookshot\PIN" "runtime=Longshot`nrepo=https://git.magicbean.dev/MagicBeanDev/Longshot`ncommit=$older`n"
+    Write-File "$k5\hookshot\TOOLS.txt" "release=v3.0.0-rc.3`nlock_sha256=b3`nsource_commit=$older`nsource_sha256=aa`n"
+    $stampOld = "release=v3.0.0-rc.3`ncommit=$older`npatches=$hash"
+    Write-File "$k5\hookshot\tools\coop-tools.txt" $stampOld
+    $g5 = "$k5\hookshot\game"
+    Write-File "$g5\longshot.exe" 'NEWER BUILD'
+    Write-File "$g5\coop-built-from.txt" $stampKc
+    Write-File "$g5\save\slot_00\progress.sav" 'MY SAVE'
+    Write-File "$g5\coop.ini" "name = Saria`n"
+    Write-File "$g5\longshot_options.ini" 'my graphics'
+    Write-File "$g5\romfs\Actor\x.bin" 'my game files'
+    Write-File "$k5\hookshot\game-folder.txt" "hookshot\game`n"
+    $cache = "$kc\hs-cache"
+    Write-File "$cache\0123456789abcdef0123\stamp.txt" ($stampOld.Replace("`n", "`r`n") + "`r`n")
+    Write-File "$cache\0123456789abcdef0123\game\longshot.exe" 'OLDER BUILD'
+    Write-File "$cache\0123456789abcdef0123\game\coop-built-from.txt" $stampOld
+    Write-File "$cache\0123456789abcdef0123\game\longshot_options.ini" 'cache graphics'
+    Write-File "$cache\0123456789abcdef0123\game\save\slot_00\progress.sav" 'NOT MINE'
+    Write-File "$cache\fedcba9876543210fedc\stamp.txt" $stampKc
+    Write-File "$cache\fedcba9876543210fedc\game\longshot.exe" 'NEWER BUILD'
+    Check ((Find-KitHookshotCachedGame $stampOld $cache) -eq "$cache\0123456789abcdef0123\game") 'revert game: the cache entry of a stamp is found (its CRLF stamp.txt too)'
+    Check (-not (Find-KitHookshotCachedGame "$stampOld-x" $cache) -and -not (Find-KitHookshotCachedGame $stampOld "$kc\no-cache")) 'revert game: another stamp, or no cache -> none'
+    $env:LOCALAPPDATA = "$kc\appdata"; $env:OOT_COOP_NO_SHORTCUT = '1'; $env:OOT_COOP_NO_LONGSHOT_ASK = '1'; $env:OOT_COOP_HS_CACHE = $cache
+    $ErrorActionPreference = 'Continue'
+    try { $out = (& powershell -NoProfile -ExecutionPolicy Bypass -File "$k5\scripts\hookshot-build.ps1" 2>&1) -join '|'; $code = $LASTEXITCODE }
+    finally { $env:LOCALAPPDATA = $keepKc[0]; $env:OOT_COOP_NO_SHORTCUT = $keepKc[1]; Remove-Item env:OOT_COOP_NO_LONGSHOT_ASK, env:OOT_COOP_HS_CACHE -ErrorAction SilentlyContinue; $ErrorActionPreference = 'Stop' }
+    Check ($code -eq 0 -and $out -match 'from the game cache on this PC' -and $out -notmatch 'Building the game' -and (Read-File "$g5\longshot.exe") -eq 'OLDER BUILD') "revert game: the cached build is copied in, not built [$code $out]"
+    Check ((Read-File "$g5\coop-built-from.txt") -eq $stampOld) 'revert game: the game''s stamp is this version''s'
+    Check ((Read-File "$g5\save\slot_00\progress.sav") -eq 'MY SAVE' -and (Read-File "$g5\longshot_options.ini") -eq 'my graphics' -and
+        (Read-File "$g5\romfs\Actor\x.bin") -eq 'my game files' -and (Read-File "$g5\coop.ini") -match 'Saria') 'revert game: saves, settings, coop.ini and the game files stay the player''s'
 } finally {
     Remove-Item -LiteralPath $kc -Recurse -Force -ErrorAction SilentlyContinue
 }

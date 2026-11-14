@@ -704,6 +704,27 @@ function Find-KitHookshotGameToCopy([string]$Kit, [string]$Stamp, [string[]]$Oth
     return ''
 }
 
+# A built game in the co-op game cache on this PC made from $Stamp (Get-KitHookshotStamp): <cache>\<key>\game, where
+# <cache> is OOT_COOP_HS_CACHE or %LOCALAPPDATA%\oot-coop\hs-cache (tools/hookshot/hs.py fills it; it keeps the last 3
+# builds). Its game folders hold nothing of a player's. Returns the game folder, or ''.
+function Find-KitHookshotCachedGame([string]$Stamp, [string]$Root = '') {
+    if (-not $Stamp) { return '' }
+    if (-not $Root) {
+        $Root = if ($env:OOT_COOP_HS_CACHE) { $env:OOT_COOP_HS_CACHE } elseif ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'oot-coop\hs-cache' } else { '' }
+    }
+    if (-not $Root -or -not (Test-Path -LiteralPath $Root -PathType Container)) { return '' }
+    # (as hs.py's key_of: line endings and trailing space do not count)
+    $norm = { param($t) (@(("$t" -replace "`r", '').Trim() -split "`n") | ForEach-Object { $_.TrimEnd() }) -join "`n" }
+    $want = & $norm $Stamp
+    foreach ($d in @(Get-ChildItem -LiteralPath $Root -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^[0-9a-f]{20}$' })) {
+        $s = Join-Path $d.FullName 'stamp.txt'
+        $g = Join-Path $d.FullName 'game'
+        if (-not (Test-Path -LiteralPath $s -PathType Leaf) -or -not (Get-KitHookshotExe $g)) { continue }
+        if ((& $norm ([System.IO.File]::ReadAllText($s))) -eq $want) { return $g }
+    }
+    return ''
+}
+
 # longshot.exe of a game folder (a builder's game folder has it in bin\), or $null.
 function Get-KitHookshotExe([string]$Game) {
     foreach ($p in (Join-Path $Game 'bin\longshot.exe'), (Join-Path $Game 'longshot.exe')) {

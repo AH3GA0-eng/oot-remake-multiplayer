@@ -356,6 +356,35 @@ if (-not $Rebuild -and -not $CheckOnly -and $Out -ieq $defaultOut -and -not (Fin
         $global:LASTEXITCODE = 0
     }
 }
+# The game built for another Longshot release or commit (a kit gone back to an older version, Revert.bat): when this
+# PC's game cache (Find-KitHookshotCachedGame) holds a build made from exactly this kit's release, pin and patches,
+# it is copied over the game instead of building it again (15 to 45 minutes). Never copied: the player's files
+# (saves, user\, mods\ with the puppet pack, coop.ini, coop-options.ini, longshot_options.ini, logs) and the romfs link.
+$oldStamp = Join-Path $Out 'coop-built-from.txt'
+if (-not $Rebuild -and -not $CheckOnly -and (Find-HookshotExe $Out) -and (Test-Path -LiteralPath $oldStamp)) {
+    $base = { param($s) (@("$s" -replace "`r", '' -split "`n") | Where-Object { $_ -match '^(release|commit)=' }) -join "`n" }
+    if ((& $base ([System.IO.File]::ReadAllText($oldStamp))) -ne (& $base $stamp)) {
+        $from = Find-KitHookshotCachedGame $stamp
+        # (the same layout only: longshot.exe at the top, or in bin\ in both)
+        $flat = { param($g) (Split-Path -Parent (Find-HookshotExe $g)).TrimEnd('\') -ieq ([System.IO.Path]::GetFullPath($g)).TrimEnd('\') }
+        if ($from -and (& $flat $from) -ne (& $flat $Out)) { $from = '' }
+        if ($from) {
+            Step "The game: copying the build of this version from the game cache on this PC ($from), instead of building it again"
+            $xd = @('user', 'save', 'autotest-save', 'mods') | ForEach-Object { Join-Path $from $_ }
+            # (its build stamp last: a copy that stops half way leaves the old stamp, and the game is built again)
+            $xf = @('hookshot_coop.dll', 'coop.ini', 'coop-options.ini', 'longshot_log.txt', 'longshot_log.old.txt', 'control.json', 'longshot_options.ini', 'language.txt',
+                'coop-built-from.txt') | ForEach-Object { Join-Path $from $_ }
+            & robocopy $from $Out /E /XJD /R:1 /W:1 /NFL /NDL /NJH /NJS /NP /XD @xd /XF @xf | Out-Null
+            if ($LASTEXITCODE -ge 8 -or -not (Find-HookshotExe $Out)) {
+                Write-Host "  Copying failed (robocopy $LASTEXITCODE): the game is built again instead." -ForegroundColor Yellow
+            } else {
+                Copy-Item -LiteralPath (Join-Path $from 'coop-built-from.txt') -Destination $oldStamp -Force
+                Write-Host "  Copied into $Out; your saves and settings there are as they were."
+            }
+            $global:LASTEXITCODE = 0
+        }
+    }
+}
 $gameStamp = Join-Path $Out 'coop-built-from.txt'
 $exe = Find-HookshotExe $Out
 $gameReady = $exe -and (Test-Path -LiteralPath $gameStamp) -and ([System.IO.File]::ReadAllText($gameStamp) -eq $stamp)

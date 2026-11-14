@@ -758,14 +758,14 @@ function Get-KitKept([string]$KitDir) {
 
 # How the co-op game changes from kit $A to kit $B: 'same' (only co-op itself: seconds on the next start), 'patches'
 # (its co-op patches: the next start updates the game, a few minutes) or 'pin' (another Longshot release or commit:
-# built again, 15 to 45 minutes; the start asks first). An emulator kit has no game of its own: 'same'.
+# built again, 15 to 45 minutes; the start asks first). An emulator kit on either side has no such game: 'same'.
 function Get-KitGameChange([string]$A, [string]$B) {
     $pin = { param($k) (@('PIN', 'TOOLS.txt') | ForEach-Object { @(Get-Content -LiteralPath (Join-Path $k "hookshot\$_") -ErrorAction SilentlyContinue) } |
         Where-Object { $_ -match '^\s*(release|commit)\s*=' } | ForEach-Object { $_.Trim() }) -join "`n" }
     $patches = { param($k) (@(Get-ChildItem -LiteralPath (Join-Path $k 'hookshot\patches') -Filter '*.patch' -File -ErrorAction SilentlyContinue |
         Sort-Object Name | ForEach-Object { (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash })) -join ',' }
     $pa = & $pin $A; $pb = & $pin $B
-    if (-not $pa -and -not $pb) { return 'same' }
+    if (-not $pa -or -not $pb) { return 'same' }   # (no game of its own on one side: an emulator kit)
     if ($pa -ne $pb) { return 'pin' }
     if ((& $patches $A) -ne (& $patches $B)) { return 'patches' }
     return 'same'

@@ -8,7 +8,7 @@ EXPERIMENTAL: not yet tested on a real Linux PC or Steam Deck. Please tell us wh
 3. In the game: Host or Join in the menu (Multiplayer). Host gives you a code to send your friends; Join takes a friend's code.
 Steam Deck: do steps 1 and 2 in Desktop Mode (Konsole). Then in Steam: Games > "Add a Non-Steam Game to My Library" > OoT Co-op.
    In Game Mode, Steam + X opens the keyboard for chat and codes.
-It updates itself; every player needs the same version, on Linux or Windows. Needs a 64-bit PC with Vulkan 1.3 graphics.
+It updates itself (bash revert.sh goes back); every player needs the same version, on Linux or Windows. Needs a 64-bit PC with Vulkan 1.3 graphics.
 Something wrong? The terminal says what to do. More help: data/docs/SETUP-LINUX.md. Logs for a bug report: bash start-oot-coop.sh --logs
 Nothing of the game is in this kit, and nothing of yours leaves your PC except the co-op traffic while you play.
 Licence: GPL-3.0 (data/licenses/). The source: data/licenses/SOURCE.txt.

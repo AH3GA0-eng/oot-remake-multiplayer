@@ -15,7 +15,7 @@
 # a player whose unzip drops it still starts the kit with `bash start-oot-coop.sh` (README.txt).
 #
 # The kit:
-#   start-oot-coop.sh, README.txt, VERSION.txt, MANIFEST.txt
+#   start-oot-coop.sh, revert.sh (back to the version before the last update), README.txt, VERSION.txt, MANIFEST.txt
 #   scripts/      start.sh, build.sh, update.sh, collect-logs.sh, lib.sh, apply_patch.py, coop.ini.template
 #   data/         coop-options.ini, server/coop_server, longshot/ (PIN, LINUX.txt, patches/, hookshot_coop.so),
 #                 tools/puppet_pack/, docs/ (SETUP-LINUX.md, KNOWN-ISSUES.md), licenses/
@@ -63,11 +63,12 @@ text() {   # text FROM TO: LF line ends
 }
 text "$src/start-oot-coop.sh" "$kit/start-oot-coop.sh"
 text "$src/README.txt" "$kit/README.txt"
+text "$src/revert.sh" "$kit/revert.sh"
 for f in start.sh build.sh update.sh collect-logs.sh lib.sh; do text "$src/scripts/$f" "$kit/scripts/$f"; done
 text "$repo/tools/release/kit/scripts/apply_patch.py" "$kit/scripts/apply_patch.py"
 text "$repo/tools/release/kit/coop.ini.template" "$kit/scripts/coop.ini.template"
 text "$repo/tools/release/kit/coop-options.ini" "$kit/data/coop-options.ini"
-chmod 755 "$kit/start-oot-coop.sh" "$kit"/scripts/*.sh
+chmod 755 "$kit/start-oot-coop.sh" "$kit/revert.sh" "$kit"/scripts/*.sh
 install -m 755 "$server" "$kit/data/server/coop_server"
 install -m 644 "$module" "$kit/data/longshot/hookshot_coop.so"
 text "$pin" "$kit/data/longshot/PIN"
