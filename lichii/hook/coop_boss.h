@@ -287,6 +287,8 @@ std::optional<std::int32_t> TakeMaxLifeWrite();
 std::optional<std::int32_t> MaxLifeCap();
 // - boss events to ask our game for by name (the live-event requester);
 std::vector<std::string> TakeWantedEvents();
+// A boss intro/death flow the search found in our running event (the hook; any thread).
+void SeenEvent(std::string name);
 // - lines for the chat box ("<name> entered the boss room of ...").
 std::vector<std::string> TakeLines();
 

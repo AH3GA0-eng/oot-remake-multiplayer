@@ -63,6 +63,24 @@ std::optional<std::pair<std::uint8_t, Kind>> OfEvent(std::string_view name) {
     return std::nullopt;
 }
 
+std::vector<std::string_view> FlowNames() {
+    std::vector<std::string_view> out;
+    for (const Boss& b : kBosses) {
+        out.push_back(b.intro);
+        out.push_back(b.outro);
+    }
+    return out;
+}
+
+bool InBossScene(std::string_view scene) {
+    for (const Boss& b : kBosses) {
+        if (const auto* room = RoomOf(b); room != nullptr && room->scene == scene) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool InArea(const Boss& b, std::string_view boss_scene, const std::optional<Vec>& starter, std::string_view scene,
             const Vec& p) {
     if (!Finite(p)) {
@@ -276,6 +294,15 @@ void Director::Ours(const Request& r, const Local& local, std::uint64_t now_us, 
         return;
     }
     const auto [b, kind] = *of;
+    if (r.searched) {
+        const Fight& f = fights_[b];
+        const auto* room = RoomOf(kBosses[b]);
+        const bool here = room != nullptr && local.scene && *local.scene == room->scene;
+        const bool fresh = kind == Kind::intro ? f.phase == Phase::none : f.phase < Phase::outro;
+        if (!here || !fresh || !r.taken) {
+            return;  // a leftover name: nothing starts or skips because of it
+        }
+    }
     const std::string_view flow = kind == Kind::intro ? kBosses[b].intro : kBosses[b].outro;
     // The flow's name starts each line (the proof lines name it); the setting the game asked, when not the flow,
     // ends every line this call adds.

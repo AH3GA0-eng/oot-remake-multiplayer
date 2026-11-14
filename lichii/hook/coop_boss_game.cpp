@@ -172,6 +172,8 @@ struct Glue {
     std::optional<std::int32_t> max_life_write;    // for the hook (TakeMaxLifeWrite)
     std::optional<std::int32_t> max_life_cap;      // for the hook (MaxLifeCap)
     std::vector<std::string> wanted;               // events for the live-event requester (TakeWantedEvents)
+    std::mutex searched_mutex;
+    std::vector<std::string> searched;             // boss flows the hook's search found running (SeenEvent)
     std::vector<std::string> lines;                // chat lines (TakeLines)
 
     Glue() {
@@ -341,7 +343,19 @@ bool Glue::Scenes(Core::System& system, std::uint64_t main, const Local& local, 
     }
     std::vector<CoopBossScenes::Request> ours;
     for (const auto& r : requests.Since(requests_cursor)) {
+        if (debug) {
+            // Every event the game asked, as the wrap names it (the boss's own may be a setting, not its flow).
+            LOG_INFO(Core, "coop: boss: the game asked the event '{}' ({})", r.name, r.taken ? "taken" : "not taken");
+        }
         ours.push_back({r.name, r.taken});
+    }
+    {
+        std::lock_guard lock(searched_mutex);
+        for (auto& name : searched) {
+            LOG_INFO(Core, "coop: boss: the search found {} running in our game", name);
+            ours.push_back({std::move(name), true, true});
+        }
+        searched.clear();
     }
     CoopBossScenes::Local here;
     here.scene = local.scene;
@@ -440,6 +454,12 @@ std::optional<std::int32_t> TakeMaxLifeWrite() {
 
 std::optional<std::int32_t> MaxLifeCap() {
     return TheGlue().max_life_cap;
+}
+
+void SeenEvent(std::string name) {
+    auto& g = TheGlue();
+    std::lock_guard lock(g.searched_mutex);
+    g.searched.push_back(std::move(name));
 }
 
 std::vector<std::string> TakeWantedEvents() {

@@ -292,6 +292,39 @@ TEST_CASE("boss scenes: the settings a boss's own logic asks start its intro and
     CHECK(b.Tick(At(kInRoom, 2), {}, 100'100'000).play == std::optional<std::string>("Dm_Deku_BossOut"));
 }
 
+TEST_CASE("boss scenes: a boss flow found running by the search starts a fresh intro, never a leftover") {
+    // 0.11 run 4 (boss-intro): Gohma's game asked only InsideTheDekuTree_BossArea_ShutIn; the intro's flow is
+    // found in the running event instead.
+    const auto searched = [](const char* name) { return std::vector<Request>{Request{name, true, true}}; };
+    Director a;
+    Actions out = a.Tick(At(kInRoom, 1, true), searched("Dm_Deku_BossIn"), 1'000'000);
+    REQUIRE(out.send.size() == 1);
+    CHECK(out.send[0].kind == proto::BossSceneKind::intro_start);
+    CHECK(a.phase(kGohma) == Phase::intro);
+    // Found again later in the fight (a name left in the session): nothing, no skip.
+    a.Tick(At(kInRoom, 1, false), {}, 30'000'000);
+    REQUIRE(a.phase(kGohma) == Phase::fight);
+    out = a.Tick(At(kInRoom, 1, true), searched("Dm_Deku_BossIn"), 40'000'000);
+    CHECK(out.send.empty());
+    CHECK_FALSE(out.skip);
+    // The death found by the search: shared once.
+    out = a.Tick(At(kInRoom, 1, true), searched("Dm_Deku_BossOut"), 100'000'000);
+    REQUIRE(out.send.size() == 1);
+    CHECK(out.send[0].kind == proto::BossSceneKind::outro_start);
+    out = a.Tick(At(kInRoom, 1, true), searched("Dm_Deku_BossOut"), 100'500'000);
+    CHECK(out.send.empty());
+    // Beaten: a leftover intro starts nothing.
+    a.Tick(At(kInRoom, 1, false), {}, 130'000'000);
+    CHECK(a.Tick(At(kInRoom, 1, true), searched("Dm_Deku_BossIn"), 140'000'000).send.empty());
+    // Another scene: nothing.
+    Director c;
+    CHECK(c.Tick(At(kInRoom, 3, true, "KokiriForest"), searched("Dm_Deku_BossIn"), 1'000'000).send.empty());
+    CHECK(c.phase(kGohma) == Phase::none);
+    CHECK(CoopBossScenes::InBossScene(kDeku));
+    CHECK_FALSE(CoopBossScenes::InBossScene("KokiriForest"));
+    CHECK(CoopBossScenes::FlowNames().size() == 20);
+}
+
 TEST_CASE("boss scenes: one heart container for all, never two") {
     Director a, b, c;
     auto beaten = [](Director& d, std::uint8_t self) {

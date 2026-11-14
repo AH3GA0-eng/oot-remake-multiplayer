@@ -83,6 +83,10 @@ static_assert(kBossCount <= coop::protocol::kMaxSceneBoss + 1u);
 std::span<const Boss> Bosses();
 // The boss and kind of an event name (its flow or one of the settings its logic asks), or nothing.
 std::optional<std::pair<std::uint8_t, Kind>> OfEvent(std::string_view name);
+// Every boss's intro and death flow, for the search of the running event.
+std::vector<std::string_view> FlowNames();
+// Whether `scene` holds a boss room of the table (the search runs there only).
+bool InBossScene(std::string_view scene);
 
 inline constexpr float kAnteGrow = 14.0f;      // the room before the door, around the room's circle
 inline constexpr float kAnteHigh = 6.0f;
@@ -109,6 +113,10 @@ struct Local {
 struct Request {
     std::string name;
     bool taken = false;  // the event manager took it
+    // Found by the search of our running event, not named by a request: taken only for a fresh intro (no fight
+    // known, none beaten) or a death of a fight not already over, in the boss's own scene; never anything else
+    // (a name left in the event session must not restart or skip anything).
+    bool searched = false;
 };
 
 struct ChatLine {
