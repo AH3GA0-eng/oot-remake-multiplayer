@@ -11,7 +11,7 @@
 # 'Ocarina_D' (returned 0x..)" per note, and no "is not in its sound user"; "P1 ocarina to
 # the hand ('DemoOcarina')". B's shots at note-*: the Ocarina in the puppet's right hand at
 # its face, no shield or sword in its hands; after-song/end: Ocarina back on the belt.
-#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1,LICHII_COOP_OCARINA_SOUND=1
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1
 mark start
 wait 120
 hold LSTICK_UP 40
