@@ -1043,6 +1043,25 @@ TEST_CASE("object messages have their numbers, channels and senders") {
   CHECK(check_received(d, Sender::server, kChannelOwnership) == Error::none);
 }
 
+TEST_CASE("damage carries the hitter's own hit words, optional") {
+  // boss-intro: a copy's weak-point hit on Gohma reaches the owner as that hit, not a plain sword hit.
+  Damage d{0, test::kPlacedId, 1, 2, 1, {1.0f, 2.0f, 3.0f}};
+  const Bytes plain = must_encode(d);
+  auto& hit = d.hit.emplace();
+  for (std::size_t i = 0; i < hit.size(); ++i) hit[i] = 0x1000u + static_cast<std::uint32_t>(i);
+  const Bytes with = must_encode(d);
+  CHECK(with.size() == plain.size() + kDamageHitWords * 4);
+  Message back;
+  REQUIRE(decode(with, back) == Error::none);
+  CHECK(std::get<Damage>(back) == d);
+  REQUIRE(decode(plain, back) == Error::none);
+  CHECK_FALSE(std::get<Damage>(back).hit);
+  Bytes cut = with;  // a part of the block: refused
+  cut.resize(cut.size() - 4);
+  fix_length(cut);
+  CHECK(decode_bytes(cut) == Error::trailing_bytes);
+}
+
 TEST_CASE("object id layout on the wire") {
   const Bytes b = must_encode(ObjectOwner{test::kMadeId, 2, 0x0102, 0x0a0b0c0d});
   REQUIRE(b.size() == kHeaderSize + 10 + 1 + 2 + 4);

@@ -169,7 +169,19 @@ TEST_CASE("boss: our own intro and death, read with no name, are told to the are
     CHECK(a.beaten_here == nullptr);
     a = s.Tick(At("ForestTemple", Forest().arrive, false), 30 * kS);
     CHECK(a.intro_here == nullptr);
-    a = s.Tick(At("ForestTemple", Forest().arrive, true), 90 * kS);  // the death
+    {
+        // The same fight, its death with no reading of the boss: beaten as before, but not told (a guess).
+        Sync g;
+        g.Tick(At("ForestTemple", Forest().arrive), 1 * kS);
+        g.Tick(At("ForestTemple", Forest().arrive), 11 * kS);
+        g.Tick(At("ForestTemple", Forest().arrive, true), 12 * kS);
+        g.Tick(At("ForestTemple", Forest().arrive, false), 30 * kS);
+        CHECK(g.Tick(At("ForestTemple", Forest().arrive, true), 90 * kS).beaten_here == nullptr);
+        CHECK(g.phase() == Sync::Phase::outro);
+    }
+    Local dying = At("ForestTemple", Forest().arrive, true);
+    dying.boss_alive = false;  // the walk read it gone
+    a = s.Tick(dying, 90 * kS);
     CHECK(a.beaten_here == &Forest());
     CHECK(a.intro_here == nullptr);
     // A door's event on the way (not yet in the room) tells nothing.

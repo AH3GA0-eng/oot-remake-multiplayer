@@ -299,6 +299,7 @@ constexpr std::array<u32, 0x98 / 4> kHitTemplate{
     0x03010102, 0x00030000,                          // +0x2d0
 };
 constexpr u64 kHitRecord = 0x240;
+static_assert(kHitTemplate.size() + 3 == coop::protocol::kDamageHitWords);  // DAMAGE's hit: 3 kind words + the record
 constexpr u64 kHitLateMs = 200;  // under Sync::kHurtWaitUs
 constexpr u64 kHitHeader = 0x1f8;
 constexpr u64 kHitAmount = 0x224;
@@ -503,7 +504,17 @@ public:
         std::array<float, 3> from{};  // the hitter's place (ours when not known)
         u64 asked_ms = 0;             // set by AddHit
         bool exact = false;           // `at` is where the blade was, not the actor's foot
+        // The hitter's own hit words (DAMAGE's hit, a boss): replayed instead of kHitTemplate.
+        std::optional<std::array<u32, coop::protocol::kDamageHitWords>> words;
     };
+
+    // Any thread: the hit id we last wrote into this Life component (the walk never takes our own replay for
+    // a hit of our game's).
+    u32 ReplayedId(u64 life) {
+        std::lock_guard lock(mutex_);
+        const auto it = replayed_ids_.find(life);
+        return it == replayed_ids_.end() ? 0xffffffffu : it->second;
+    }
 
     // Present thread: hits to replay at the next game frame.
     void AddHit(const Hit& hit) {
@@ -1113,6 +1124,13 @@ private:
         guest.Read(life + kLastHitId, &last, 4);
         const u32 id = (last == 0xffffffffu ? 0x1000u : last + 2u) & 0x7fffffffu;
         std::array<u32, kHitTemplate.size()> rec = kHitTemplate;
+        // The header's two attack words and the amount's kind word: the template's (a Kokiri Sword hit), or the
+        // hitter's own (a boss's weak point stays one).
+        std::array<u32, 3> kind{0x00060001, 0x40040000, 4};
+        if (h.words) {
+            std::copy_n(h.words->begin(), 3, kind.begin());
+            std::copy_n(h.words->begin() + 3, rec.size(), rec.begin());
+        }
         std::memcpy(&rec[0], &h.attacker, 8);
         rec[2] = id;
         rec[0x2c4 / 4 - kHitRecord / 4] = id;
@@ -1120,8 +1138,12 @@ private:
         std::memcpy(&rec[0x27c / 4 - kHitRecord / 4], at.data(), 12);
         std::memcpy(&rec[0x2a0 / 4 - kHitRecord / 4], h.from.data(), 12);
         rec[3] = 0;  // present last, below
-        const std::array<u32, 4> header{0x00060001, 0x40040000, id, 2};
-        const std::array<s32, 2> amount{4, h.amount};
+        const std::array<u32, 4> header{kind[0], kind[1], id, 2};
+        const std::array<s32, 2> amount{static_cast<s32>(kind[2]), h.amount};
+        {
+            std::lock_guard lock(mutex_);
+            replayed_ids_[life] = id;
+        }
         guest.Write(life + kHitHeader, header.data(), sizeof(header));
         guest.Write(life + kHitAmount, amount.data(), sizeof(amount));
         guest.Write(life + kHitRecord, rec.data(), sizeof(rec));
@@ -1130,8 +1152,8 @@ private:
         // Difficulty: the player who dealt it had it scaled; the Life step takes it as it is.
         CoopDifficulty::TheKinds().Pass(life, h.amount, CoopDifficulty::SteadyMs());
         ++replayed_;
-        LOG_INFO(Core, "coop: objects: copy {:#x} replays a hit of {} (id {:#x})", h.actor,
-                 h.amount, id);
+        LOG_INFO(Core, "coop: objects: copy {:#x} replays a hit of {} (id {:#x}{})", h.actor,
+                 h.amount, id, h.words ? ", the hitter's own hit" : "");
     }
 
     // The fixed cell holding `name` in the block (written once), or 0 when
@@ -1167,6 +1189,7 @@ private:
     }
 
     std::mutex mutex_;
+    std::unordered_map<u64, u32> replayed_ids_;  // Life component: the hit id we wrote last (under mutex_)
     u64 main_ = 0;
     std::vector<Pose> poses_;
     std::vector<u64> removes_;
@@ -2653,6 +2676,7 @@ private:
                         s.bsa_component = r.Ptr(*table + CoopBossNative::addr::kComponentBsa).value_or(0);
                     }
                     s.bsa = CoopBossNative::TheTable().OwnerState(a);
+                    s.hit = NewOwnHit(r, a);
                 }
                 if (const auto value = LifeValue(r, a)) {
                     const auto life = r.Get<s32>(value->first + 8);
@@ -2770,6 +2794,40 @@ private:
     }
 
     // The life and max value entries ([life + 0x1c10], [life + 0x1c18]).
+    // A boss's incoming hit our game took since the last walk (its Life component's last hit id moved, and not
+    // to one we replayed): the words DAMAGE carries to the owner (kDamageHitWords: +0x1f8, +0x1fc, +0x224 and
+    // the record +0x240..+0x2d8). Nothing on its first walk, when the id is unchanged, or unreadable.
+    std::unordered_map<u64, u32> boss_hit_ids_;  // actor: the last hit id seen
+    std::optional<std::array<u32, coop::protocol::kDamageHitWords>> NewOwnHit(Reader& r, u64 a) {
+        const auto table = r.Ptr(a + kActorComponents);
+        const auto life = table ? r.Ptr(*table + kComponentLife) : std::nullopt;
+        const auto id = life ? r.Get<u32>(*life + kLastHitId) : std::nullopt;
+        if (!id) {
+            return std::nullopt;
+        }
+        const auto [it, fresh] = boss_hit_ids_.try_emplace(a, *id);
+        if (fresh || it->second == *id) {
+            return std::nullopt;
+        }
+        it->second = *id;
+        if (*id == TheMover().ReplayedId(*life)) {
+            return std::nullopt;  // our replay of the owner's hit, not one of our game's
+        }
+        std::array<u32, coop::protocol::kDamageHitWords> w{};
+        const auto h0 = r.Get<u32>(*life + kHitHeader);
+        const auto h1 = r.Get<u32>(*life + kHitHeader + 4);
+        const auto kind = r.Get<u32>(*life + kHitAmount);
+        const auto rec = r.Get<std::array<u32, coop::protocol::kDamageHitWords - 3>>(*life + kHitRecord);
+        if (!h0 || !h1 || !kind || !rec) {
+            return std::nullopt;
+        }
+        w[0] = *h0;
+        w[1] = *h1;
+        w[2] = *kind;
+        std::copy(rec->begin(), rec->end(), w.begin() + 3);
+        return w;
+    }
+
     std::optional<std::pair<u64, u64>> LifeValue(Reader& r, u64 a) {
         const auto table = r.Ptr(a + kActorComponents);
         const auto life = table ? r.Ptr(*table + kComponentLife) : std::nullopt;
@@ -3000,6 +3058,7 @@ private:
                 h.actor = w.address;
                 h.attacker = player;
                 h.amount = w.hurt;
+                h.words = w.hit;
                 h.at = r.Get<std::array<float, 3>>(w.address + kActorPosition).value_or(h.at);
                 h.from = r.Get<std::array<float, 3>>(player + kActorPosition).value_or(h.at);
                 if (w.from) {
@@ -3049,9 +3108,19 @@ private:
                                       "life is written directly until the next scene",
                                 w.address, NameOf(w.address));
                 }
+                if (w.direct) {
+                    LOG_INFO(Core, "coop: objects: test kill {:#x}: the game's Life step did not take it: nothing "
+                                   "written", w.address);
+                    return;  // the test kill goes only through the game's own step, never a write of ours
+                }
             }
         }
 #endif
+        if (w.direct) {
+            LOG_INFO(Core, "coop: objects: test kill {:#x}: no game Life step here (patch 0007): nothing written",
+                     w.address);
+            return;
+        }
         if (w.hurt > 0 && !stepped) {
             const auto table = r.Ptr(w.address + kActorComponents);
             const auto life = table ? r.Ptr(*table + kComponentLife) : std::nullopt;

@@ -190,6 +190,57 @@ TEST_CASE("objects: a hit on a copy goes to the owner as DAMAGE, summed over 100
     CHECK(All<proto::ObjectSample>(step).empty());
 }
 
+TEST_CASE("objects: a boss copy's own hit words go with the DAMAGE, and the owner replays them (boss-intro)") {
+    // Gohma holds her life at 1 against a plain sword hit: the finishing hit of a non-owner must reach the
+    // owner as the weak-point hit its game took, not as the replay's Kokiri Sword template.
+    std::array<std::uint32_t, proto::kDamageHitWords> words{};
+    for (std::size_t i = 0; i < words.size(); ++i) words[i] = 0xa000u + static_cast<std::uint32_t>(i);
+    const std::string kBoss = "Enemy_DungeonBoss_Gohma";
+    Sync copy;
+    Tick(copy, 0, {Enemy(0x100, 0x11, 2, 0.0f, kBoss)});
+    const proto::ObjectId id = *copy.IdOf(0x100);
+    Own(copy, id, 2, 1);
+    Tick(copy, 10 * kMs, {Enemy(0x100, 0x11, 2, 0.0f, kBoss)});
+    Seen hit = Enemy(0x100, 0x11, 0, 0.0f, kBoss);
+    hit.hit = words;
+    Tick(copy, 20 * kMs, {hit});
+    auto damage = All<proto::Damage>(Tick(copy, 130 * kMs, {Enemy(0x100, 0x11, 0, 0.0f, kBoss)}));
+    REQUIRE(damage.size() == 1);
+    REQUIRE(damage[0].hit);
+    CHECK(*damage[0].hit == words);
+
+    // The owner: the hurt it gives the game carries the same words.
+    Sync owner;
+    owner.SetHurt(true);
+    Tick(owner, 0, {Enemy(0x200, 0x11, 2, 0.0f, kBoss)});
+    const proto::ObjectId oid = *owner.IdOf(0x200);
+    Own(owner, oid, 1);
+    proto::Damage d = damage[0];
+    d.player_number = 2;
+    d.id = oid;
+    owner.Receive(d);
+    auto step = Tick(owner, 140 * kMs, {Enemy(0x200, 0x11, 2, 0.0f, kBoss)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].hurt == 2);
+    REQUIRE(step.writes[0].hit);
+    CHECK(*step.writes[0].hit == words);
+
+    // A plain enemy's DAMAGE has none: the template stays.
+    Sync plain;
+    plain.SetHurt(true);
+    Tick(plain, 0, {Enemy(0x300, 0x11, 2)});
+    const proto::ObjectId pid = *plain.IdOf(0x300);
+    Own(plain, pid, 1);
+    proto::Damage p;
+    p.player_number = 2;
+    p.id = pid;
+    p.amount = 1;
+    plain.Receive(p);
+    step = Tick(plain, 10 * kMs, {Enemy(0x300, 0x11, 2)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK_FALSE(step.writes[0].hit);
+}
+
 TEST_CASE("objects: no owner yet or our own enemy: a life drop sends no DAMAGE") {
     Sync sync;
     Tick(sync, 0, {Enemy(0x100, 0x11, 6)});

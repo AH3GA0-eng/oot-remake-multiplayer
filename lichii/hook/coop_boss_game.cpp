@@ -345,6 +345,8 @@ bool Glue::Scenes(Core::System& system, std::uint64_t main, const Local& local, 
     auto& requests = CoopLiveEvents::TheGameRequests();
     if (!scenes_on || !requests.Live()) {
         max_life_cap.reset();
+        std::lock_guard lock(searched_mutex);
+        searched.clear();  // nothing takes them: none applied late when the rules come on
         return false;
     }
     if (!scenes_live) {

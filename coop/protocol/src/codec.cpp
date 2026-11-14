@@ -941,6 +941,9 @@ Error encode_body(const Damage& m, Writer& w) {
   w.u32(static_cast<std::uint32_t>(m.amount));
   w.u8(m.cause);
   for (float f : m.position) w.f32(f);
+  if (m.hit) {
+    for (std::uint32_t v : *m.hit) w.u32(v);
+  }
   return Error::none;
 }
 
@@ -1657,7 +1660,12 @@ Error decode_body(Reader& r, Damage& m) {
   m.amount = static_cast<std::int32_t>(amount);
   if (m.amount < 0) return Error::bad_value;
   COOP_READ(r.u8(m.cause));
-  return read_floats(r, m.position);
+  COOP_TRY(read_floats(r, m.position));
+  if (r.left() == kDamageHitWords * 4) {
+    auto& hit = m.hit.emplace();
+    for (std::uint32_t& v : hit) COOP_READ(r.u32(v));
+  }
+  return Error::none;
 }
 
 template <std::size_t N>

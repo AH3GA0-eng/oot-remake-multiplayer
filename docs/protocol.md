@@ -412,7 +412,7 @@ The server's rules today (`server/session.cpp`):
 | 23 | `OBJECT_SAMPLE` | 4 | both | `u8` player field, object id, `u16` epoch, then object components |
 | 24 | `OBJECT_REMOVE` | 2 | both | `u8` player field, object id, `u16` epoch, `u8` reason (0 gone, 1 dead, 2 exploded, 3 hit, 4 picked up), position (3 x f32) |
 | 29 | `OBJECT_GROUP` | 2 | client | `u8` player field, `u16` count (1 to 256), then per entry: member object id, root object id, `u8` flags (bit 0 the member is a boss; other bits refused). No member twice |
-| 25 | `DAMAGE` | 2 | both | `u8` player field, object id, `u16` epoch, `s32` amount (0 or more), `u8` cause (0 unknown, 1 sword, 2 arrow, 3 fire arrow, 4 ice arrow, 5 light arrow, 6 seed, 7 bomb, 8 nut, 9 boomerang, 10 hookshot, 11 hammer, 12 magic; others kept), position (3 x f32) |
+| 25 | `DAMAGE` | 2 | both | `u8` player field, object id, `u16` epoch, `s32` amount (0 or more), `u8` cause (0 unknown, 1 sword, 2 arrow, 3 fire arrow, 4 ice arrow, 5 light arrow, 6 seed, 7 bomb, 8 nut, 9 boomerang, 10 hookshot, 11 hammer, 12 magic; others kept), position (3 x f32), then optionally the hitter's own hit (41 x `u32`: a boss copy's Life attack words +0x1f8, +0x1fc, +0x224 and hit record +0x240..+0x2d8, replayed by the owner in place of a sword hit; boss-intro, [dungeons-boss.md](dungeons-boss.md)); any other trailing length is refused |
 
 An **object id** is 10 bytes: `u8` kind (0 placed, 1 made), `u8` maker (0 for placed, 1 to 16 for made), `u64` value (the placement hash, or the maker's own counter). Any other kind, or a maker that does not fit the kind, is refused.
 

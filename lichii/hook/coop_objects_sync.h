@@ -60,6 +60,9 @@ struct Seen {
     // our game last set them (sent in its samples).
     std::uint64_t bsa_component = 0;
     std::optional<coop::protocol::BossBsa> bsa;
+    // A boss copy's own incoming hit, read when its game took a new one (boss-intro; IsBoss only, never one we
+    // replayed): sent with our DAMAGE so the owner replays that hit, not a plain sword hit.
+    std::optional<std::array<std::uint32_t, coop::protocol::kDamageHitWords>> hit;
 };
 
 // An animation a copy should play (the owner's AS slot 0 command). The
@@ -142,9 +145,11 @@ struct LifeWrite {
     // With a hurt: where the player who hit stands, when known (the enemy is
     // knocked away from there).
     std::optional<coop::protocol::Vec3> from;
+    // With a hurt: the hitter's own hit words (DAMAGE's hit), replayed instead of the plain sword hit.
+    std::optional<std::array<std::uint32_t, coop::protocol::kDamageHitWords>> hit;
     // Past the hit replay (a hit record the game's damage rules judge): the amount goes straight into the game's
     // Life step (Hookshot, patch 0007), so the game still runs its own death. For the test kill: a boss takes no
-    // plain hit outside its weak point (Gohma on the ceiling), so the replayed hit of a kill was refused.
+    // plain hit outside its weak point (Gohma on the ceiling). Never written directly: not taken, nothing happens.
     bool direct = false;
 };
 
@@ -690,6 +695,7 @@ private:
         std::uint32_t sequence = 0;
         // Copy side.
         std::int32_t hit_sum = 0;
+        std::optional<std::array<std::uint32_t, coop::protocol::kDamageHitWords>> hit_words;  // our newest own hit on it
         std::uint64_t hit_since = 0;
         std::uint64_t hit_at = 0;  // last DAMAGE sent
         std::uint64_t react_at = 0;  // our last hit on it, as seen in its life
@@ -769,7 +775,8 @@ private:
     // o.step_rest gets the part of `fell` that no step explains.
     std::int32_t StepHits(Object& o, std::int32_t fell, std::int32_t life, std::uint64_t now_us);
     void Lower(Object& o, std::int32_t life, std::uint64_t now_us, std::vector<LifeWrite>& writes,
-               std::uint8_t hitter);
+               std::uint8_t hitter,
+               const std::optional<std::array<std::uint32_t, coop::protocol::kDamageHitWords>>& hit = std::nullopt);
 
     // enemy-sync-3 (issue 133): an enemy we own whose life was written to 0
     // (another game's hit our game did not take, or hurt off) may stand on

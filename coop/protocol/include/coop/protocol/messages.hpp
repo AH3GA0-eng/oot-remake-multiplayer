@@ -957,6 +957,12 @@ enum class DamageCause : std::uint8_t {
 };
 
 // DAMAGE: life lost on a copy, for the owner to take off. Amount 0 or more.
+// The game's own incoming hit as the hitter's copy took it (a boss only, boss-intro 2026-11-14): its Life
+// component's attack words at +0x1f8 (2), +0x224 (1) and the hit record +0x240..+0x2d8 (38), as read. The
+// owner replays the hit with these words instead of a plain sword hit, so a weak-point hit stays one (Gohma
+// holds her life at 1 against any other); its own attacker, hit ids and places go over them.
+inline constexpr std::size_t kDamageHitWords = 41;
+
 struct Damage {
   std::uint8_t player_number = kPlayerSelf;
   ObjectId id;
@@ -964,6 +970,8 @@ struct Damage {
   std::int32_t amount = 0;
   std::uint8_t cause = 0;  // DamageCause
   Vec3 position{};
+  // Optional, after position on the wire (older senders: none).
+  std::optional<std::array<std::uint32_t, kDamageHitWords>> hit;
   bool operator==(const Damage&) const = default;
 };
 

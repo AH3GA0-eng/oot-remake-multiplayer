@@ -249,12 +249,14 @@ void Sync::Take(const proto::BossRoom& m, std::uint64_t now_us) {
     }
 }
 
-void Sync::Defeat(Actions& out) {
+void Sync::Defeat(Actions& out, bool read_gone) {
     Say(out, *here_, proto::BossState::defeated);
     if (std::find(defeated_.begin(), defeated_.end(), here_->index) == defeated_.end()) {
         defeated_.push_back(here_->index);
     }
-    out.beaten_here = here_;
+    if (read_gone) {
+        out.beaten_here = here_;  // only when the walk read the boss gone, never a guess from the event alone
+    }
     out.log.push_back("boss beaten (" + std::string(here_->outro) + ")");
 }
 
@@ -437,7 +439,7 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
                     provisional_ = true;
                     out.log.push_back("an event in the fight; the boss is still there: waiting to see");
                 } else {
-                    Defeat(out);
+                    Defeat(out, local.boss_alive.has_value());  // read gone, or no reading at all
                 }
             }
             break;
@@ -450,12 +452,12 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
                 const bool long_event = now_us - outro_at_ >= kLongEventUs && !untouched;
                 if (gone || (long_event && local.event)) {
                     provisional_ = false;
-                    Defeat(out);
+                    Defeat(out, gone);
                     if (!gone) out.log.back() += " after a long event";
                 } else if (fell) {
                     provisional_ = false;
                     if (!local.boss_alive.has_value()) {
-                        Defeat(out);  // no reading at the end: as before
+                        Defeat(out, false);  // no reading at the end: as before
                     } else {
                         phase_ = Phase::fight;
                         out.log.push_back("the event is over and the boss is alive: the fight goes on");

@@ -1376,6 +1376,9 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 // Another game's, or nobody's yet (kept until the owner is
                 // known: an enemy hit the moment it loaded, issue 133).
                 const bool ours = owner != owners_.end() && owner->second.player == self;
+                if (s.hit) {
+                    o.hit_words = s.hit;  // the game's own hit on our copy (a boss)
+                }
                 if (drop > 0 && !ours) {
                     if (o.hit_sum == 0) {
                         o.hit_since = now_us;
@@ -1669,6 +1672,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 d.amount = o.hit_sum;
                 d.cause = static_cast<std::uint8_t>(proto::DamageCause::unknown);
                 d.position = o.position;
+                d.hit = std::exchange(o.hit_words, std::nullopt);
                 send.emplace_back(d);
                 o.hit_at = now_us;
             }
@@ -2034,6 +2038,7 @@ void Sync::Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& g
             d.amount = broken_here ? std::max(o.life.value_or(1), o.hit_sum) : o.hit_sum;
             d.cause = static_cast<std::uint8_t>(proto::DamageCause::unknown);
             d.position = o.position;
+            d.hit = std::exchange(o.hit_words, std::nullopt);
             send.emplace_back(d);
         }
     }
@@ -2277,7 +2282,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             o->damage_debit += amount;
             o->debit_until = now_us + kBlastCreditUs;
             const std::int32_t have = o->hurt_until != 0 ? o->hurt_target : *o->life;
-            Lower(*o, std::max(0, have - amount), now_us, writes, damage->player_number);
+            Lower(*o, std::max(0, have - amount), now_us, writes, damage->player_number, damage->hit);
             o->fight_until = now_us + kFightUs;
             if (!hurt_ && have - amount <= 0) {
                 // Hurt off: the life was written, not given as a hit.
@@ -2330,7 +2335,8 @@ void Sync::DeadByWrite(Object& o, std::uint16_t epoch, std::uint64_t now_us,
 }
 
 void Sync::Lower(Object& o, std::int32_t life, std::uint64_t now_us,
-                 std::vector<LifeWrite>& writes, std::uint8_t hitter) {
+                 std::vector<LifeWrite>& writes, std::uint8_t hitter,
+                 const std::optional<std::array<std::uint32_t, proto::kDamageHitWords>>& hit) {
     if (!o.life) {
         return;
     }
@@ -2348,6 +2354,7 @@ void Sync::Lower(Object& o, std::int32_t life, std::uint64_t now_us,
     // The game takes it off itself; the walk sees the drop and does not
     // count it as our hit. o.life stays as read until then.
     LifeWrite w{o.address, life, from - life, std::nullopt};
+    w.hit = hit;
     {
         std::lock_guard lock(inbox_mutex_);
         const auto place = places_.find(hitter);
