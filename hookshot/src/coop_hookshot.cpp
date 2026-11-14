@@ -620,7 +620,8 @@ const CoopDraw::MapShown* MapScene(bool camera, std::uint8_t self) {
     static CoopHook::MapView view;
     static CoopDraw::MapShown m;
     static std::optional<int> page_open_floor;   // the game's floor when the Map page came up
-    if (!g_map_players.load() || !CoopHook::CurrentMapView(view) || view.event || view.others.empty()) {
+    static const bool mark_self = Env("LICHII_COOP_MAP_SELF") == "1";
+    if (!g_map_players.load() || !CoopHook::CurrentMapView(view) || view.event || (view.others.empty() && !mark_self)) {
         page_open_floor.reset();
         return nullptr;
     }
@@ -629,7 +630,6 @@ const CoopDraw::MapShown* MapScene(bool camera, std::uint8_t self) {
         page_open_floor.reset();
         return nullptr;
     }
-    static const bool mark_self = Env("LICHII_COOP_MAP_SELF") == "1";
     const auto menu = CoopMapPage::MenuState();
     const auto page = CoopMapPage::Shown(capture->dungeon);
     m.minimap.reset();
