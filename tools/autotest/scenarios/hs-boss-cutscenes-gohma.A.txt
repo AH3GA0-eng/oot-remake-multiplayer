@@ -17,6 +17,10 @@
 #  5. A after a-kill: "Dm_Deku_BossOut: our game started the death"; B: "Dm_Deku_BossOut: playing it here too".
 #     Screens at a-death / b-death: the death on both.
 #  6. Neither log: "moving in" from the older rules ("another player is in the boss room").
+# deku-test run (2026-11-14): with the quest step at GoToBossRoom Gohma spawns: 'native boss sync on (BSA ..., ours)'
+# in A, 'a copy' + 'the owner's verbs came' in B (first time ever). A's own intro plays (shot a-intro) but the
+# module had logged 'no intro: the fight has begun here' just before, so B never got it; 'kill' hit (life 21) but
+# no death followed. boss-cutscenes c6924333 is not in 0.11 (held): its BossIn lines cannot come from edf277c4.
 # deku-test (2026-11-14, Longshot rc.3): clearing HavePlayedEvent alone does not start anything. The rooms'
 # logic (romfs Logic/InsideTheDekuTree_Level_Room_*.logic.module.ainb) reads room flags when the room loads:
 #   compass room D: the event's asker (EventRequestActor_641b) is deleted while RoomD_StepSwitch_On_01 (0x6fb4f455)

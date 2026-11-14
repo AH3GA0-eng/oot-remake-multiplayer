@@ -31,6 +31,8 @@
 #    follow the floor; shots show B standing on it. B's log: one "moved by another player" per move of A's,
 #    not a run of them (jitter). FAIL (B falls or shakes): keep both logs; the fix is then sharing only the
 #    switch and letting each game move its own floor.
+# deku-test run (2026-11-14): no WaterLevel 0 -> 1: placed at 75.8 A sank to 74.39 (on the switch), 'hold A' brought
+# A back to the surface; the switch never reported pressed. Next: try a dive from 2 m away (stick + hold A).
 # deku-test (2026-11-14, Longshot rc.3): clearing HavePlayedEvent alone does not start anything. The rooms'
 # logic (romfs Logic/InsideTheDekuTree_Level_Room_*.logic.module.ainb) reads room flags when the room loads:
 #   compass room D: the event's asker (EventRequestActor_641b) is deleted while RoomD_StepSwitch_On_01 (0x6fb4f455)

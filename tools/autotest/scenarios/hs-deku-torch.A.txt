@@ -23,6 +23,9 @@
 #    burning/gone in both, not vanished in A before B's fire reached it.
 #  - If A's torch stays dark although A's event played: keep both logs' "gimmick probe: 0c29e0a5d05f4426
 #    Obj_SwitchCandleStick_A_02" lines (the torch's lit words, for a torch-state share).
+# deku-test run (2026-11-14): still NO event: the torch is lit at load. The plate's BootUp comes from an autogen
+# bool (OperateGameDataAllocAutogenGameData __GUIDHash 72078894 in Room_E_Prefab_e259) whose save hash is not
+# known yet (not the plate's Hash, not in the 64-bit key set). Needs that hash, or a save from before the room.
 # deku-test (2026-11-14, Longshot rc.3): clearing HavePlayedEvent alone does not start anything. The rooms'
 # logic (romfs Logic/InsideTheDekuTree_Level_Room_*.logic.module.ainb) reads room flags when the room loads:
 #   compass room D: the event's asker (EventRequestActor_641b) is deleted while RoomD_StepSwitch_On_01 (0x6fb4f455)

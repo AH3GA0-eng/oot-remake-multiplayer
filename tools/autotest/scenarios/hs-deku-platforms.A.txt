@@ -31,6 +31,9 @@
 #    lifts are out of step (the words for a later lift-state share).
 #  - If A shows "FindRunningEvent" found nothing (B has no "our game started" line): the name is not
 #    in the event or session blocks; send B's log tail.
+# deku-test run (2026-11-14, 0.11 edf277c4, groups-20261114-041849): the setup WORKS: B's landing starts the event,
+# A 'started by our room's asker at -22.6 122.6 -3.8' (result 1) within 1 s. SYNC FAILS: shots up1/up2: B's lifts up,
+# A's stay down (the event camera plays in A, its room does not move): a real 0.11 bug (deku-switches).
 # deku-test (2026-11-14, Longshot rc.3): clearing HavePlayedEvent alone does not start anything. The rooms'
 # logic (romfs Logic/InsideTheDekuTree_Level_Room_*.logic.module.ainb) reads room flags when the room loads:
 #   compass room D: the event's asker (EventRequestActor_641b) is deleted while RoomD_StepSwitch_On_01 (0x6fb4f455)
