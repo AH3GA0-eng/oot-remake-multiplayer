@@ -113,7 +113,15 @@ TEST_CASE("coop i18n: a language code picks its table") {
     CHECK(CoopI18n::ForCode("ZH-hant") == ByCode("zh-Hant"));
     CHECK(CoopI18n::ForCode("zh-Hans-CN") == ByCode("zh-Hans"));
     CHECK(CoopI18n::ForCode("zh") == nullptr);   // (no table is plain zh)
-    CHECK(CoopI18n::ForCode("zh-Hansx") == nullptr);
+    // Windows names Chinese by region and puts no script in the code
+    // (GetUserDefaultLocaleName), so the regions stand for the scripts there:
+    // the mainland, Singapore and Malaysia are Simplified, Taiwan, Hong Kong
+    // and Macau Traditional, and any other "zh-..." is taken as Simplified.
+    CHECK(CoopI18n::ForCode("zh-CN") == ByCode("zh-Hans"));
+    CHECK(CoopI18n::ForCode("zh-SG") == ByCode("zh-Hans"));
+    CHECK(CoopI18n::ForCode("zh-TW") == ByCode("zh-Hant"));
+    CHECK(CoopI18n::ForCode("zh-HK") == ByCode("zh-Hant"));
+    CHECK(CoopI18n::ForCode("zh-MO") == ByCode("zh-Hant"));
     CHECK(CoopI18n::ForCode("en") == nullptr);   // (English: the text as it is)
     CHECK(CoopI18n::ForCode("ja") == nullptr);   // (a language this table does not have)
     CHECK(CoopI18n::ForCode("") == nullptr);
@@ -187,6 +195,21 @@ std::string Escaped(const std::string& s) {   // (as the key is written in C: \"
 }
 
 }  // namespace
+
+
+TEST_CASE("coop i18n: a place's name, and a name the table does not have") {
+    // places.json's names (lichii/hook/coop_hud_places.h) are the game's data, not lines
+    // of the module, so they are a table of their own; Tr() must not have them, or the
+    // check that every key is still a line of the module would fail on a name it cannot see.
+    const CoopI18n::Lang& hans = *ByCode("zh-Hans");
+    const CoopI18n::Lang& hant = *ByCode("zh-Hant");
+    CHECK(Line(hans, "Hyrule Field").empty());
+    CHECK(Line(hant, "Hyrule Field").empty());
+
+    // Place() in English is the name as it is (a name in no table stays English too).
+    CHECK(CoopI18n::Place("Hyrule Field") == "Hyrule Field");
+    CHECK(CoopI18n::Place("Not A Place Anyone Knows") == "Not A Place Anyone Knows");
+}
 
 TEST_CASE("coop i18n: every key is still a line of the module") {
     // A text changed in the code no longer finds its line, and that language

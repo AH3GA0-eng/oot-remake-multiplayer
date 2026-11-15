@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <iterator>
 #include <sstream>
 #include <system_error>
 #include <utility>
@@ -59,6 +60,15 @@ bool WriteText(const fs::path& file, const std::string& text) {
     return static_cast<bool>(out << text) && static_cast<bool>(out.flush());
 }
 
+// The file's text, or "" when it cannot be read (a missing file: the caller writes it).
+std::string ReadFileText(const fs::path& file) {
+    std::ifstream in(file, std::ios::binary);
+    if (!in) {
+        return {};
+    }
+    return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
 bool IsSeedFolder(std::string_view name) {
     return name.size() > std::string_view(kSeedPrefix).size() && name.rfind(kSeedPrefix, 0) == 0 &&
            name.find('/') == std::string_view::npos;
@@ -98,32 +108,74 @@ std::string Quote(const std::string& arg) {
 
 }  // namespace
 
+// Each choice is {"value", "name", "name_zh-Hans", "name_zh-Hant"}: the value is
+// what OOTRR is given and what the folder is named after; the names are what the Mods
+// tab shows, the loader picking the one for the player's language (TextIn in
+// coop_mod_library.cpp). A preset the installed OOTRR cannot build is not offered, so
+// its line is left out here and the table's line for it is simply unused.
+std::string PresetNames(const std::string& value) {
+    static constexpr const char* kValues[] = {"default", "easy", "open_world", "keysanity", "full_shuffle"};
+    static constexpr const char* kNames[] = {"Default", "Easy", "Open world", "Keysanity", "Full shuffle"};
+    static constexpr const char* kNamesHans[] = {"默认", "简单", "开放世界", "钥匙乱序", "完全乱序"};
+    static constexpr const char* kNamesHant[] = {"預設", "簡單", "開放世界", "鑰匙亂序", "完全亂序"};
+    for (std::size_t i = 0; i < sizeof kValues / sizeof kValues[0]; ++i) {
+        if (value == kValues[i]) {
+            std::string out = "{\"value\": \"" + value + "\", \"name\": \"" + kNames[i];
+            out += "\", \"name_zh-Hans\": \"" + std::string(kNamesHans[i]);
+            out += "\", \"name_zh-Hant\": \"" + std::string(kNamesHant[i]) + "\"}";
+            return out;
+        }
+    }
+    return "\"" + value + "\"";
+}
+
 std::string ManifestText() { return ManifestText(std::vector<std::string>(std::begin(kPresets), std::end(kPresets))); }
 
 std::string ManifestText(const std::vector<std::string>& offered) {
-    std::string presets = "\"default\"";
+    std::string presets = PresetNames("default");
     for (const std::string& p : offered) {
-        if (p != "default") presets += ", \"" + p + "\"";
+        if (p != "default") presets += ", " + PresetNames(p);
     }
     return std::string(R"({
   "id": "oot-remake-randomizer",
   "name": "OoT Remake Randomizer",
+  "name_zh-Hans": "OoT 重制版随机模式",
+  "name_zh-Hant": "OoT 重製版隨機模式",
   "version": "1",
   "author": "OOTRR by REALAZK (GPL-3.0-or-later), run by the co-op mod loader",
+  "author_zh-Hans": "OOTRR by REALAZK（GPL-3.0-or-later），由联机模组加载器运行",
+  "author_zh-Hant": "OOTRR by REALAZK（GPL-3.0-or-later），由連線模組載入器執行",
   "description": "Shuffles chests, dungeon items and rewards (OOTRR). In co-op everyone plays the host's seed and every pickup is shared. A new seed needs a restart of the game, never a game build.",
+  "description_zh-Hans": "打乱宝箱、迷宫道具和奖励（OOTRR）。联机时所有人玩房主的种子，拾取共享。换种子只需重启游戏，不用重新构建。",
+  "description_zh-Hant": "打亂寶箱、迷宮道具和獎勵（OOTRR）。連線時所有人玩房主的種子，拾取共享。換種子只需重新啟動遊戲，不用重新建置。",
   "coop": "everyone",
   "settings": [
     {"key": "on", "name": "Randomizer", "type": "toggle", "shared": true, "restart": true,
-     "help": "On: the game plays a randomized seed (start a new save for it)."},
+     "name_zh-Hans": "随机模式", "name_zh-Hant": "隨機模式",
+     "help": "On: the game plays a randomized seed (start a new save for it).",
+     "help_zh-Hans": "开启：游戏按随机种子运行（需要开一个新存档）。",
+     "help_zh-Hant": "開啟：遊戲按隨機種子執行（需要開一個新存檔）。"},
     {"key": "seed", "name": "Seed", "type": "text", "max_length": 63, "shared": true, "restart": true,
-     "help": "Letters and digits. Empty: a new one is made. In co-op the host's seed is everyone's."},
+     "name_zh-Hans": "种子", "name_zh-Hant": "種子",
+     "help": "Letters and digits. Empty: a new one is made. In co-op the host's seed is everyone's.",
+     "help_zh-Hans": "字母和数字。留空：自动生成。联机时所有人用房主的种子。",
+     "help_zh-Hant": "字母和數字。留空：自動產生。連線時所有人用房主的種子。"},
     {"key": "preset", "name": "Settings", "type": "choice", "choices": [)") +
            presets + R"(], "shared": true, "restart": true,
-     "help": "OOTRR's presets: only the ones the installed OOTRR can build are offered."},
+     "name_zh-Hans": "设定", "name_zh-Hant": "設定",
+     "help": "OOTRR's presets: only the ones the installed OOTRR can build are offered.",
+     "help_zh-Hans": "OOTRR 的预设：只列出已安装的 OOTRR 能构建的那些。",
+     "help_zh-Hant": "OOTRR 的預設：只列出已安裝的 OOTRR 能建置的那些。"},
     {"key": "game_folder", "name": "Game folder", "type": "text", "max_length": 260,
-     "help": "Only for other game files (1.1.1, with Pack, Banc, Event and System). Empty: the kit's own (romfs beside the game)."},
+     "name_zh-Hans": "游戏文件夹", "name_zh-Hant": "遊戲資料夾",
+     "help": "Only for other game files (1.1.1, with Pack, Banc, Event and System). Empty: the kit's own (romfs beside the game).",
+     "help_zh-Hans": "只在用别的游戏文件时填（1.1.1，含 Pack、Banc、Event 和 System）。留空：用工具包自带的（游戏旁边的 romfs）。",
+     "help_zh-Hant": "只在用別的遊戲檔案時填（1.1.1，含 Pack、Banc、Event 和 System）。留空：用工具包自帶的（遊戲旁邊的 romfs）。"},
     {"key": "ootrr", "name": "OOTRR program", "type": "text", "max_length": 260,
-     "help": "Only for another OOTRR. Empty: the one the kit brings (tools\\ootrr beside the game)."}
+     "name_zh-Hans": "OOTRR 程序", "name_zh-Hant": "OOTRR 程式",
+     "help": "Only for another OOTRR. Empty: the one the kit brings (tools\\ootrr beside the game).",
+     "help_zh-Hans": "只在用别的 OOTRR 时填。留空：用工具包自带的（游戏旁边的 tools\\ootrr）。",
+     "help_zh-Hant": "只在用別的 OOTRR 時填。留空：用工具包自帶的（遊戲旁邊的 tools\\ootrr）。"}
   ]
 }
 )";
@@ -699,9 +751,15 @@ void Rando::Say(std::string line) {
 void Rando::Start() {
     const fs::path folder = loader_.Root() / kFolder;
     std::error_code ec;
+    // The manifest is rewritten when its text changes, not only when it is missing:
+    // the text carries the settings' names and helps in the player's language, and a
+    // mod folder installed by an older build has the English one.
+    const std::string manifest = ManifestText();
     if (!fs::exists(folder / CoopMods::kManifestFile, ec)) {
         fs::create_directories(folder, ec);
-        if (ec || !WriteText(folder / CoopMods::kManifestFile, ManifestText())) {
+    }
+    if (std::string have = ReadFileText(folder / CoopMods::kManifestFile); have != manifest) {
+        if (!WriteText(folder / CoopMods::kManifestFile, manifest)) {
             Say("could not write " + CoopMods::ToUtf8(folder / CoopMods::kManifestFile));
             return;
         }

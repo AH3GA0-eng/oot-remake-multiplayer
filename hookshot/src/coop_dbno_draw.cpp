@@ -5,6 +5,7 @@
 #include <cmath>
 
 #include "coop_draw.h"
+#include "coop_i18n.h"
 
 namespace CoopDbnoDraw {
 
@@ -20,10 +21,12 @@ std::size_t Lit(float progress, std::size_t dots) {
 
 std::string Caption(const CoopDbno::View& view) {
     using Kind = CoopDbno::View::Kind;
+    // The table's words around the name (data), the way the tab's own shapes
+    // do it: "You are down", "Saria is reviving you", "Hold A to revive Saria".
     if (view.kind == Kind::downed) {
-        return view.name.empty() ? "You are down" : view.name + " is reviving you";
+        return view.name.empty() ? CoopI18n::Tr("You are down") : view.name + " " + CoopI18n::Tr("is reviving you");
     }
-    return (view.holding ? "Reviving " : "Hold A to revive ") + view.name;
+    return CoopI18n::Tr(view.holding ? "Reviving" : "Hold A to revive") + " " + view.name;
 }
 
 void Draw(const HosCoopDraw& d, const CoopDbno::View& view) {

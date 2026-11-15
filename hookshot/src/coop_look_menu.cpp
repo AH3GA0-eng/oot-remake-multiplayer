@@ -5,6 +5,7 @@
 #include <cmath>
 
 #include "coop_colors.h"
+#include "coop_i18n.h"
 
 namespace CoopLookMenu {
 
@@ -67,12 +68,17 @@ const char* Note(Part part) {
 }
 
 std::string ValueText(const std::optional<std::uint32_t>& colour) {
-    return colour ? CoopLook::ColourText(colour) : std::string("Game's own");
+    return colour ? CoopLook::ColourText(colour) : CoopI18n::Tr("Game's own");
 }
 
 std::string Title(Part part) {
     const PartInfo& info = CoopLook::InfoOf(part);
-    return info.item == std::string(info.name) ? std::string(info.item) : std::string(info.item) + ": " + info.name;
+    // Both words are the table's ("Kokiri Tunic", "Frame"), and so is the
+    // separator: the sentence is put together after each was looked up, since
+    // the joined line ("Kokiri Tunic: Frame") is not a line of any table.
+    return info.item == std::string(info.name)
+               ? CoopI18n::Tr(info.item)
+               : CoopI18n::Tr(info.item) + CoopI18n::Tr(": ") + CoopI18n::Tr(info.name);
 }
 
 // The preset after (step 1) or before (-1) a colour; a mixed colour steps from the game's own.
@@ -228,9 +234,15 @@ std::vector<Page::Line> Page::Lines() const {
             item = info.item;
             out.push_back({{item, "", 3}, What::kHeading, info.part, ""});
         }
-        out.push_back({{info.name, ValueText(look_[info.part]), 1, true, true}, What::kPart, info.part,
-                       std::string(Note(info.part)) + " Left and Right try the colours; Confirm mixes your own. Your Link "
-                       "wears it when you close the menu (the other players see only the tunic's colour for now)."});
+        // What the colour covers, then how the row works: two lines of the
+        // table put together here, because the joined paragraph is not one
+        // (both go through Tr again by the page's Keep, which changes nothing
+        // once they are Chinese).
+        const std::string note = CoopI18n::Tr(Note(info.part));
+        const std::string how = CoopI18n::Tr(
+            "Left and Right try the colours; Confirm mixes your own. Your Link wears it when you close the menu "
+            "(the other players see only the tunic's colour for now).");
+        out.push_back({{info.name, ValueText(look_[info.part]), 1, true, true}, What::kPart, info.part, note + " " + how});
     }
     out.push_back({{"All parts back to the game's own", "", 0}, What::kAllGame, Part::tunic,
                    "Every part in the game's own colours again (the tunic: your player number's colour for the others)."});
