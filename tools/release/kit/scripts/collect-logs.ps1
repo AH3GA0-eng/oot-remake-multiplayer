@@ -69,7 +69,7 @@ if ($hasEmulator) {
 $hsGame = Get-KitHookshotGame $kit
 # The start's game first, then the other places a kit's game can be (Get-KitLogGameExes): the first with a log.
 $hsExes = @(Get-KitLogGameExes $kit)
-$hsExe = $hsExes | Where-Object { @(Get-KitHookshotLogDirs $_ | Where-Object { Get-ChildItem -LiteralPath $_ -Filter 'longshot_log*.txt' -File -ErrorAction SilentlyContinue }).Count } | Select-Object -First 1
+$hsExe = $hsExes | Where-Object { @(Get-KitHookshotLogDirs $_ | ForEach-Object { Get-KitHookshotLogFiles $_ } | Where-Object { $_.File.Name -like 'longshot_log*.txt' }).Count } | Select-Object -First 1
 if (-not $hsExe) { $hsExe = $hsExes | Select-Object -First 1 }
 $gameLogs = 0
 # Logs a player copied into the kit's logs folder (what to do when the game is not found, below).
@@ -80,9 +80,10 @@ if ($hsExe) {
     $hsDirs = @(Get-KitHookshotLogDirs $hsExe)
     foreach ($hsDir in $hsDirs) {
         $to = if ($hsDir -ne $hsDirs[0]) { 'hookshot\bin' } else { 'hookshot' }
-        $logs = @(Get-ChildItem (Join-Path $hsDir '*') -Include 'longshot_log*.txt', 'hookshot_log*.txt' -File -ErrorAction SilentlyContinue)
+        # (Longshot rc.4 writes its log into logs\, older games beside the exe: Get-KitHookshotLogFiles has both)
+        $logs = @(Get-KitHookshotLogFiles $hsDir)
         $gameLogs += $logs.Count
-        $picked += $logs | ForEach-Object { @($_.FullName, "$to\$($_.Name)") }
+        $picked += $logs | ForEach-Object { @($_.File.FullName, $(if ($_.Sub) { "$to\$($_.Sub)\$($_.File.Name)" } else { "$to\$($_.File.Name)" })) }
         # (last-build.txt: OOTRR's output when a randomizer seed failed; masked like every text file)
         foreach ($f in 'coop.ini', 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json', 'mods\oot-remake-randomizer\last-build.txt') {
             $p = Join-Path $hsDir $f
@@ -93,10 +94,10 @@ if ($hsExe) {
 $logHelp = @()
 if ($gameLogs -eq 0 -and ($hsExe -or -not $hasEmulator)) {
     # The log we need most: say where it is and how to add it.
-    $where = if ($hsExe) { (@(Get-KitHookshotLogDirs $hsExe) -join ' or ') } else { $hsGame }
+    $where = if ($hsExe) { (@(Get-KitHookshotLogDirs $hsExe | ForEach-Object { $_; Join-Path $_ 'logs' }) -join ' or ') } else { $hsGame }
     $logHelp += "The game's log (longshot_log.txt) is not in this zip: none in $where."
     $logHelp += $(if ($hsExe) { '  Start the game once (it writes the log when it starts), close it, then run collect-logs.cmd again.' }
-        else { '  The game was not found. Its log is in the co-op game''s folder, beside longshot.exe (normally hookshot\game in this kit).' })
+        else { '  The game was not found. Its log is in the co-op game''s folder, in its logs folder or beside longshot.exe (normally hookshot\game in this kit).' })
     $logHelp += "  Found it somewhere else? Copy longshot_log.txt into $(Join-Path $kit 'logs') and run collect-logs.cmd again,"
     $logHelp += '  or send it with this zip.'
 }
@@ -119,7 +120,7 @@ for ($i = 0; $i -lt $picked.Count; $i += 2) {
     }
 }
 
-Write-Host 'Noting this PC (Windows version, graphics, CPU, memory, network adapters)...'
+Write-Host 'Noting this PC (Windows version, graphics, CPU, memory and what uses it, network adapters)...'
 # No PC name and no addresses: only each adapter's name and the kind of its address.
 $about = @(
     "collected: $((Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')) UTC",
@@ -129,6 +130,30 @@ try { $about += Get-CimInstance Win32_VideoController -ErrorAction Stop | ForEac
 # For low frame rates (docs/setup.md, "Low frame rate"): the CPU, memory, battery and power plan.
 try { $about += Get-CimInstance Win32_Processor -ErrorAction Stop | ForEach-Object { "cpu: $($_.Name.Trim()), $($_.NumberOfCores) cores, $($_.NumberOfLogicalProcessors) threads" } } catch {}
 try { $about += Get-CimInstance Win32_ComputerSystem -ErrorAction Stop | ForEach-Object { 'memory: {0:N1} GB' -f ($_.TotalPhysicalMemory / 1GB) } } catch {}
+# Memory now (issue 85: a host's game crashed with the PC's commit limit nearly used up). RAM,
+# the commit charge and its limit, the page files' sizes, and the 10 programs holding the most
+# private (committed) memory, by name only (no paths); each name is masked like the rest.
+try {
+    $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+    $about += 'memory now: RAM {0:N1} GB free of {1:N1} GB; commit {2:N1} GB used of {3:N1} GB limit' -f (
+        $os.FreePhysicalMemory / 1MB), ($os.TotalVisibleMemorySize / 1MB),
+        (($os.TotalVirtualMemorySize - $os.FreeVirtualMemory) / 1MB), ($os.TotalVirtualMemorySize / 1MB)
+} catch {}
+try {
+    $auto = (Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).AutomaticManagedPagefile
+    $about += "page file: $(if ($auto) { 'managed by Windows' } else { 'set by hand' })"
+    $about += Get-CimInstance Win32_PageFileUsage -ErrorAction Stop | ForEach-Object {
+        'page file: drive {0}, {1:N1} GB, {2:N1} GB in use, peak {3:N1} GB' -f $_.Name.Substring(0, 1),
+            ($_.AllocatedBaseSize / 1KB), ($_.CurrentUsage / 1KB), ($_.PeakUsage / 1KB)
+    }
+} catch {}
+try {
+    $about += Get-Process -ErrorAction Stop | Group-Object ProcessName | ForEach-Object {
+        [pscustomobject]@{ Name = $_.Name; Count = $_.Count; Bytes = ($_.Group | Measure-Object PrivateMemorySize64 -Sum).Sum }
+    } | Sort-Object Bytes -Descending | Select-Object -First 10 | ForEach-Object {
+        'top memory: {0} ({1} running), {2:N2} GB private' -f (Protect-LogText $_.Name $mask), $_.Count, ($_.Bytes / 1GB)
+    }
+} catch {}
 try {
     $about += Get-CimInstance Win32_Battery -ErrorAction Stop | ForEach-Object {
         "battery: $($_.EstimatedChargeRemaining)%, $(if ($_.BatteryStatus -eq 2) { 'plugged in' } else { 'NOT plugged in' })"

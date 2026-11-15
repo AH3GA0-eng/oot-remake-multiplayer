@@ -1,6 +1,6 @@
-# Setting up co-op
+# Setting up Squadala!
 
-Online co-op for the Ocarina of Time remake, on [Longshot](https://git.magicbean.dev/MagicBeanDev/Longshot) (Team MagicBean and contributors, GPL-3.0; its changes are being merged into [Hookshot](https://git.notrexed.dev/Hookshot/Hookshot) by NotRexed and contributors): a native PC version of the game that the kit builds on your PC from your own copy. There is no emulator: the game runs as a normal Windows program. This is an early test build (the newest is on the [releases page](https://github.com/daurosk/oot-remake-multiplayer/releases)); [known-issues.md](known-issues.md) lists what works and what does not yet.
+Squadala!, online co-op for the Ocarina of Time remake, on [Longshot](https://git.magicbean.dev/MagicBeanDev/Longshot) (Team MagicBean and contributors, GPL-3.0; its changes are being merged into [Hookshot](https://git.notrexed.dev/Hookshot/Hookshot) by NotRexed and contributors): a native PC version of the game that the kit builds on your PC from your own copy. There is no emulator: the game runs as a normal Windows program. This is an early test build (the newest is on the [releases page](https://github.com/daurosk/oot-remake-multiplayer/releases)); [known-issues.md](known-issues.md) lists what works and what does not yet.
 
 The kit has one file to start: **`Start OoT Co-op.bat`**. Everything else is done by it or in the game. (The older emulator kits, with `Host.bat` and `Join.bat`, have their own guide: [setup-emulator.md](setup-emulator.md). A player on an emulator kit cannot join a game hosted with this kit, nor the other way round: every player needs this kit, the same version.)
 
@@ -27,7 +27,7 @@ The kit has one file to start: **`Start OoT Co-op.bat`**. Everything else is don
    - **Co-op Settings:** your name, your colour, the number of players and port when you host (`Players when you host`, `Port when you host`), voice chat.
 6. **Next time**, double-click `Start OoT Co-op.bat` or the desktop shortcut: the game starts in seconds.
 
-To check it works: in the game the other players show as Link with their name tags, and **T** opens the chat box. The log `longshot_log.txt` beside `longshot.exe` (in the kit's `hookshot\game\bin\`) says `coop: module loaded`, then `coop: connected`.
+To check it works: in the game the other players show as Link with their name tags, and **T** opens the chat box. The game's log `longshot_log.txt` (in the `logs` folder of the kit's `hookshot\game\`; before Longshot rc.4, beside `longshot.exe`) says `coop: module loaded`, then `coop: connected`.
 
 ## Updating
 

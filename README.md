@@ -1,6 +1,6 @@
-# oot-remake-multiplayer
+# Squadala!
 
-Online co-op for the Ocarina of Time remake on PC.
+Squadala! - online co-op for the Ocarina of Time remake on PC. (The repository keeps its name, `oot-remake-multiplayer`.)
 
 The goal of this project is working multiplayer in two stages:
 
@@ -9,7 +9,7 @@ The goal of this project is working multiplayer in two stages:
 
 Both stages share one design, one wire protocol and one server, so what is learned on the emulator carries straight over to the recomp.
 
-**Discord:** https://discord.gg/GwtRKAqng5, for players, testers and contributors.
+**Discord:** the Squadala! server, https://discord.gg/GwtRKAqng5, for players, testers and contributors.
 
 ## Play the newest release
 

@@ -831,6 +831,23 @@ try {
     Check ($dirs.Count -eq 2 -and $dirs[0] -eq $other -and $dirs[1] -eq (Join-Path $other 'bin')) 'hookshot log dirs: the game folder first, then bin\'
     Remove-Item -LiteralPath (Join-Path $other 'image.bin')
     Check (@(Get-KitHookshotLogDirs '').Count -eq 0) 'hookshot log dirs: no exe, none'
+    # Longshot rc.4 writes its log into logs\ of the game folder, rc.3 (0.11.1's games) beside the exe: both found
+    $lf = Join-Path ([System.IO.Path]::GetTempPath()) "coop-logfiles-$PID"
+    try {
+        New-Item -ItemType Directory -Force (Join-Path $lf 'logs') | Out-Null
+        Check (@(Get-KitHookshotLogFiles $lf).Count -eq 0) 'hookshot log files: none yet'
+        Write-File (Join-Path $lf 'logs\longshot_log.txt') 'rc4'
+        $got = @(Get-KitHookshotLogFiles $lf)
+        Check ($got.Count -eq 1 -and $got[0].Sub -eq 'logs' -and $got[0].File.Name -eq 'longshot_log.txt') 'hookshot log files: rc.4 logs\longshot_log.txt'
+        Write-File (Join-Path $lf 'longshot_log.txt') 'rc3'
+        Write-File (Join-Path $lf 'hookshot_log.txt') 'old'
+        Write-File (Join-Path $lf 'logs\other.txt') 'x'
+        $got = @(Get-KitHookshotLogFiles $lf)
+        Check ($got.Count -eq 3 -and @($got | Where-Object { $_.Sub -eq '' }).Count -eq 2) 'hookshot log files: rc.3 beside the exe too, other files left out'
+        Check (@(Get-KitHookshotLogFiles '').Count -eq 0) 'hookshot log files: no folder, none'
+    } finally {
+        Remove-Item -LiteralPath $lf -Recurse -Force -ErrorAction SilentlyContinue
+    }
     # collect-logs finds the game more ways than the start (player report: no longshot_log.txt in the zip)
     $lk = Join-Path ([System.IO.Path]::GetTempPath()) "coop-logexes-$PID"
     try {

@@ -836,9 +836,10 @@ function Get-KitLogGameExes([string]$Kit, [string[]]$Running = $null) {
     }
 }
 
-# Where a game's longshot_log*.txt, coop.ini and mods\ are: beside longshot.exe, and for a builder's bin\ layout
-# (bin\longshot.exe beside image.bin) the game folder above it, where Longshot writes them (hos_paths.h:
-# hos_game_path_a gives the folder's path then). Each folder once, the game folder first.
+# Where a game's coop.ini and mods\ are (and its longshot_log*.txt up to Longshot rc.3): beside longshot.exe, and for
+# a builder's bin\ layout (bin\longshot.exe beside image.bin) the game folder above it, where Longshot writes them
+# (hos_paths.h: hos_game_path_a gives the folder's path then). Each folder once, the game folder first.
+# Longshot rc.4 writes its log into logs\ in that folder: Get-KitHookshotLogFiles looks in both.
 function Get-KitHookshotLogDirs([string]$Exe) {
     if (-not $Exe) { return @() }
     $dir = Split-Path -Parent $Exe
@@ -847,6 +848,18 @@ function Get-KitHookshotLogDirs([string]$Exe) {
         return @($up, $dir)
     }
     return @($dir)
+}
+
+# The game's log files (longshot_log*.txt, hookshot_log*.txt) for one game folder of Get-KitHookshotLogDirs: in it
+# (Longshot up to rc.3, 0.11.1's games) and in its logs\ (rc.4). Each as @{ File; Sub } with Sub '' or 'logs'.
+function Get-KitHookshotLogFiles([string]$Dir) {
+    if (-not $Dir) { return @() }
+    foreach ($sub in '', 'logs') {
+        $d = if ($sub) { Join-Path $Dir $sub } else { $Dir }
+        if (-not (Test-Path -LiteralPath $d -PathType Container)) { continue }
+        Get-ChildItem (Join-Path $d '*') -Include 'longshot_log*.txt', 'hookshot_log*.txt' -File -ErrorAction SilentlyContinue |
+            ForEach-Object { [pscustomobject]@{ File = $_; Sub = $sub } }
+    }
 }
 
 # The stamp the kit's hookshot-build.ps1 writes to the game's coop-built-from.txt: release, pin, patches.
@@ -1423,4 +1436,25 @@ function Get-KitDownloadFailText([string]$File, [string]$Why, [string]$TestUrl, 
         'If the browser downloads it but this script cannot, the antivirus or a proxy blocks PowerShell. Start again: what was'
         'downloaded is kept. Still stuck: scripts\collect-logs.cmd, and send its zip.'
     ) -join "`n"
+}
+
+# #48: Longshot serves ONE resource size table, the winning mod's. A seed made on OOTRR's website (its folder put into
+# mods by hand) has its own, made without the puppet pack's entries, so the others could not be shown. Before the game
+# starts, tools\puppet_pack\merge_tables.py writes ONE table where the game reads it: that mod's entries and every
+# other mod's that is on (the pack's too), keeping its own in <mod>\_coop-size-table (undo: merge_tables.py --undo).
+# Last it writes <mod>\coop-merged.txt, which the module checks (MergedByKit) to keep the puppets on. Never stops the start. The lines it says, for the window.
+function Invoke-KitSizeTableMerge([string]$Kit, [string]$ExeDir) {
+    $python = Join-Path $Kit 'hookshot\tools\python\python.exe'
+    $tool = Join-Path $Kit 'tools\puppet_pack\merge_tables.py'
+    $mods = Join-Path $ExeDir 'mods'
+    if (-not (Test-Path -LiteralPath $tool) -or -not (Test-Path -LiteralPath $mods)) { return @() }
+    if (-not (Test-Path -LiteralPath $python)) { return @("Size tables: not merged (no Python in $(Split-Path -Parent $python)): with a mod that has its own size table, the other players can't be shown.") }
+    $romfs = @((Join-Path $ExeDir 'romfs'), (Join-Path (Split-Path -Parent $ExeDir) 'romfs')) | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'Pack') } | Select-Object -First 1
+    $pyArgs = @('-I', '-B', $tool, '--mods', $mods)
+    if ($romfs) { $pyArgs += @('--romfs', $romfs) }
+    $before = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { $out = @(& $python @pyArgs 2>&1 | ForEach-Object { "$_" }) } catch { $out = @("Size tables: not merged ($($_.Exception.Message)).") }
+    $ErrorActionPreference = $before
+    return $out
 }
