@@ -51,6 +51,8 @@ const std::vector<std::string>& ChatKeys();
 inline constexpr std::size_t kMaxNameChars = 16;   // coop_settings.h
 inline constexpr std::size_t kMaxPasswordBytes = 128;
 inline constexpr int kMinPlayers = 2, kMaxPlayers = 16;   // a session's size (protocol 11: up to 16)
+inline constexpr std::uint16_t kDefaultPort = 27510;
+inline constexpr std::string_view kDefaultDirectPassword = "coop";
 
 // A name the server takes: 1 to 16 characters (code points), no control
 // characters. Spaces at the ends do not count.
@@ -75,6 +77,7 @@ struct Options {
     bool debug_panel = false;      // LICHII_COOP_DEBUG_PANEL
     bool cheats = false;           // LICHII_COOP_CHEATS
     int max_players = 4;           // max_players (the host's: 2 to kMaxPlayers)
+    std::uint16_t host_port = kDefaultPort;  // server_port (the host's: 1 to 65535)
     bool voice = false;            // LICHII_COOP_VOICE (open or ptt: proximity voice chat; unset, the default: off)
     bool voice_ptt = false;        // push to talk: LICHII_COOP_VOICE=ptt (or an older on, 1); open: open mic, the menu's default
     std::string voice_key = "V";   // LICHII_COOP_VOICE_KEY as the Voice mode row names it (read only)
@@ -130,6 +133,8 @@ JoinTarget ReadJoin(std::string_view typed, const CodeResult& code);
 // Whether `typed` is shaped as a server address ("host" or "host:port", as
 // coop-ini.ps1 Test-CoopServer).
 bool AddressOk(std::string_view typed);
+// Valid UDP port in 1..65535 (after trimming ends), or empty.
+std::optional<std::uint16_t> ParsePort(std::string_view text);
 
 // What Host or Join is doing, in plain words for the dialog (hos_coop_host.h's
 // HOS_COOP_* state and HOS_COOP_PROBLEM_* problem): nothing about ports,

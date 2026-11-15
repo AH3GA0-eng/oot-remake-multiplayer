@@ -64,6 +64,9 @@ struct SessionConfig {
   // both key shares; the traffic keys come from it too. Required: empty, every
   // HELLO is refused (there is no plain way in, docs/protocol.md).
   std::string join_password;
+  // Optional fallback password (e.g. "coop") accepted alongside a generated
+  // invite password for manual IP/Port joins when no custom password is set.
+  std::string direct_password;
   // Most players at once (coop_server --max-players), 1 to protocol::kMaxPlayers;
   // one more is told the server is full. 4 until the game's side (puppets,
   // HUD, tables) takes 16; the protocol already does.

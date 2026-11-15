@@ -155,6 +155,8 @@ public:
     bool typing() const { return typing_; }
     const CoopTitleMenu::Options& options() const { return options_; }
     const std::string& join_text() const { return join_; }
+    const std::string& join_ip() const { return join_ip_; }
+    const std::string& join_port() const { return join_port_; }
     const Session& session() const { return session_; }
     View view() const;
 
@@ -162,8 +164,8 @@ private:
     enum class Act {
         kNone,
         kOpenHost, kOpenJoin, kOpenLocal, kOpenSettings, kOpenCommands, kCommand,
-        kStartHost, kCopyInvite, kPasteAnswer, kCopyAnswer, kCopyLan, kCopyVpn, kLeave,
-        kRejoin, kCode, kJoinNow,
+        kStartHost, kHostPort, kCopyInvite, kPasteAnswer, kCopyAnswer, kCopyLan, kCopyVpn, kLeave,
+        kRejoin, kCode, kJoinIp, kJoinPort, kJoinNow,
         kName, kLook, kPlayers, kVoice, kVoiceMode, kChatKey, kController, kKeyboard, kMapPlayers, kMapNames,
         kOpenCustomize
     };
@@ -177,15 +179,24 @@ private:
     void Change(Act act, int step);
     void EndTyping(bool keep);
     std::string* Typed();
+    void SyncManualJoinFromText();
+    void UpdateJoinFromIpPort();
     bool InSession() const;
 
     Page page_ = Page::kMain;
     std::size_t selected_ = 0;
     bool typing_ = false;
+    Act typing_act_ = Act::kNone;
+    bool typing_fresh_ = false;
     bool confirm_leave_ = false;   // Stop hosting / Leave was pressed once: the next press does it
     CoopTitleMenu::Options options_;
     std::string name_before_;      // the name as it was when its typing began
+    std::string port_text_;        // port buffer while typing Host / Join Port
     std::string join_;
+    std::string join_ip_;
+    std::string join_port_;
+    std::string join_password_;
+    std::string ip_before_;        // join_ip_ as it was when its typing began
     std::string rejoin_host_, rejoin_code_;
     std::string controller_row_, keyboard_row_;
     Session session_;
