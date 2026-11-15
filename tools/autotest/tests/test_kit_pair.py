@@ -169,6 +169,7 @@ class KitStart(unittest.TestCase):
             hs.kit_start(r"C:\kits\kit-A", {}, self.tmp, "A", run_cmd=fake)
         self.assertIn("OOT_COOP_TEST_KIT", str(e.exception))
 
+    @unittest.skipUnless(hs.WINDOWS, "kit mode runs on Windows (elsewhere a killed child stays a zombie until reaped)")
     def test_pid_process_follows_a_real_process(self):
         p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
         try:
