@@ -591,9 +591,27 @@ if (Test-Path -LiteralPath (Join-Path $oldMod 'coop_puppet.json')) { Remove-Item
 $packFrom = $Game
 if (-not $packFrom) {
     $last = Join-Path $hs 'game-files.txt'
-    if (Test-Path -LiteralPath $last) { $packFrom = (Get-Content -LiteralPath $last -TotalCount 1).Trim() }
+    if (Test-Path -LiteralPath $last) { $packFrom = "$(Get-Content -LiteralPath $last -TotalCount 1)".Trim() }
 }
 if ($Game) { [System.IO.File]::WriteAllText((Join-Path $hs 'game-files.txt'), "$Game`n") }
+# The game file gone (moved, renamed, a drive not plugged in): said plainly, and in a window someone sits at, its new
+# place asked for 2 minutes (nothing typed: the game starts without the pack, and the next start asks again).
+if (-not $packFrom -or -not (Test-Path -LiteralPath $packFrom)) {
+    Write-Host ''
+    foreach ($l in (Get-KitPackSourceText $packFrom)) { Write-Host $l -ForegroundColor Yellow }
+    $canAsk = $true
+    try { $canAsk = -not [Console]::IsInputRedirected } catch { $canAsk = $false }
+    if ($canAsk -and -not $env:CI -and (Test-Path -LiteralPath $packTool)) {
+        Write-Host '  Drag your game''s .nup file into this window and press Enter (Enter alone: start without the pack):'
+        $given = "$(Read-TimedLine 120)".Trim().Trim('"')
+        if ($given -and (Test-Path -LiteralPath $given)) {
+            $packFrom = (Resolve-Path -LiteralPath $given).Path
+            [System.IO.File]::WriteAllText((Join-Path $hs 'game-files.txt'), "$packFrom`n")
+        } elseif ($given) {
+            Write-Host "  Not found: $given" -ForegroundColor Yellow
+        }
+    }
+}
 if ($packFrom -and (Test-Path -LiteralPath $packFrom) -and (Test-Path -LiteralPath $packTool)) {
     Write-Host '  building the puppet pack ...'
     $ErrorActionPreference = 'Continue'
@@ -601,9 +619,9 @@ if ($packFrom -and (Test-Path -LiteralPath $packFrom) -and (Test-Path -LiteralPa
     & $python -I -B $packTool --romfs $packFrom --mod-dir $mod 2>&1 | ForEach-Object { "    $_" }
     $code = $LASTEXITCODE
     $ErrorActionPreference = 'Stop'
-    if ($code -ne 0) { Write-Host '  The puppet pack was not built (said why above): other players show as stand-ins.' -ForegroundColor Yellow }
+    if ($code -ne 0) { Write-Host '  The puppet pack was not built (said why above): the other players show as names only. Every start tries again.' -ForegroundColor Yellow }
 } else {
-    Write-Host '  No game files to build the puppet pack from: run this again with -Game <your .nup>.' -ForegroundColor Yellow
+    Write-Host '  No puppet pack this time: the other players show as names only.' -ForegroundColor Yellow
 }
 # Randomizer seeds built before this puppet pack: built again with its size table (else the game aborts while it loads).
 foreach ($l in @(Update-KitRandoSeeds $exeDir)) { Write-Host "  $l" }

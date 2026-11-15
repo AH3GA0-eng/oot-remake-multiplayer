@@ -56,8 +56,15 @@ if ($hasEmulator) {
 # bin\ and Longshot writes its log and coop.ini into the game folder above it (Get-KitHookshotLogDirs): both looked in.
 . (Join-Path $PSScriptRoot 'kit-paths.ps1')
 $hsGame = Get-KitHookshotGame $kit
-$hsExe = Get-KitHookshotExe $hsGame
+# The start's game first, then the other places a kit's game can be (Get-KitLogGameExes): the first with a log.
+$hsExes = @(Get-KitLogGameExes $kit)
+$hsExe = $hsExes | Where-Object { @(Get-KitHookshotLogDirs $_ | Where-Object { Get-ChildItem -LiteralPath $_ -Filter 'longshot_log*.txt' -File -ErrorAction SilentlyContinue }).Count } | Select-Object -First 1
+if (-not $hsExe) { $hsExe = $hsExes | Select-Object -First 1 }
 $gameLogs = 0
+# Logs a player copied into the kit's logs folder (what to do when the game is not found, below).
+$copied = @(Get-ChildItem (Join-Path $kit 'logs') -Filter 'longshot_log*.txt' -File -ErrorAction SilentlyContinue)
+$gameLogs += $copied.Count
+$picked += $copied | ForEach-Object { @($_.FullName, "hookshot\copied\$($_.Name)") }
 if ($hsExe) {
     $hsDirs = @(Get-KitHookshotLogDirs $hsExe)
     foreach ($hsDir in $hsDirs) {
@@ -65,16 +72,22 @@ if ($hsExe) {
         $logs = @(Get-ChildItem (Join-Path $hsDir '*') -Include 'longshot_log*.txt', 'hookshot_log*.txt' -File -ErrorAction SilentlyContinue)
         $gameLogs += $logs.Count
         $picked += $logs | ForEach-Object { @($_.FullName, "$to\$($_.Name)") }
-        foreach ($f in 'coop.ini', 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json') {
+        # (last-build.txt: OOTRR's output when a randomizer seed failed; masked like every text file)
+        foreach ($f in 'coop.ini', 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json', 'mods\oot-remake-randomizer\last-build.txt') {
             $p = Join-Path $hsDir $f
             if (Test-Path -LiteralPath $p) { $picked += @($p, "$to\$(Split-Path -Leaf $p)") }
         }
     }
-    if ($gameLogs -eq 0) {
-        Write-Host "No game log found in $(Protect-LogText ($hsDirs -join ' or ') $mask): start the game once, then run this again."
-    }
-} elseif (-not $hasEmulator) {
-    Write-Host "No game found in $(Protect-LogText $hsGame $mask): the zip has the kit's own logs only."
+}
+$logHelp = @()
+if ($gameLogs -eq 0 -and ($hsExe -or -not $hasEmulator)) {
+    # The log we need most: say where it is and how to add it.
+    $where = if ($hsExe) { (@(Get-KitHookshotLogDirs $hsExe) -join ' or ') } else { $hsGame }
+    $logHelp += "The game's log (longshot_log.txt) is not in this zip: none in $where."
+    $logHelp += $(if ($hsExe) { '  Start the game once (it writes the log when it starts), close it, then run collect-logs.cmd again.' }
+        else { '  The game was not found. Its log is in the co-op game''s folder, beside longshot.exe (normally hookshot\game in this kit).' })
+    $logHelp += "  Found it somewhere else? Copy longshot_log.txt into $(Join-Path $kit 'logs') and run collect-logs.cmd again,"
+    $logHelp += '  or send it with this zip.'
 }
 $picked += Get-ChildItem (Join-Path $kit 'hookshot') -Filter '*.log' -File -ErrorAction SilentlyContinue | ForEach-Object { @($_.FullName, "hookshot\build\$($_.Name)") }
 if ($WithCrashDumps) {
@@ -138,4 +151,7 @@ Write-Host "Wrote $zip"
 Write-Host "  ($($found + 1) files, $gameLogs of them game logs; the folder opens with the zip selected)"
 if (-not $env:CI) { try { Start-Process explorer.exe "/select,`"$zip`"" } catch {} }
 Write-Host 'IP addresses, MAC addresses, passwords, your Windows user name and PC name are masked in it.'
+if ($logHelp) { Write-Host ''; foreach ($l in $logHelp) { Write-Host (Protect-LogText $l $mask) -ForegroundColor Yellow } }
+Write-Host ''
 Write-Host 'Send it privately (a Discord DM to the maintainer). Do not attach it to a public issue.'
+Write-Host "Send this zip: $zip" -ForegroundColor Green

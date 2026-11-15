@@ -539,6 +539,24 @@ function Use-KitPuppetPack([string]$Manifest, [string]$ToolDir, [string[]]$Missi
     return $false
 }
 
+# Why the puppet pack cannot be made now, in plain words (player report: a player saw the others' names but no
+# Links, and only longshot_log.txt said why). $Remembered: the game file hookshot\game-files.txt names ('' when
+# none). The pack is made from that file (the .nup), so a file moved, renamed or on a drive not plugged in is the
+# usual cause. Lines for the window; the last one says what happens without the pack.
+function Get-KitPackSourceText([string]$Remembered) {
+    $out = @()
+    if (-not $Remembered) {
+        $out += 'Puppet pack: not made. It is made from your game file (the .nup), and this kit does not know where it is'
+        $out += '  (hookshot\game-files.txt is missing).'
+    } else {
+        $out += "Puppet pack: not made. Your game file is not at $Remembered any more"
+        $out += '  (hookshot\game-files.txt names it): it was moved, renamed or deleted, or its drive is not plugged in.'
+        $out += '  Put it back there, or give its new place below.'
+    }
+    $out += '  Without the pack the other players show as names only (no Link). Every start tries again.'
+    return $out
+}
+
 # --- Hookshot: what the kit's game needs before it starts (updates without player steps) ---
 
 # The kit's Hookshot game folder: hookshot\game-folder.txt (hookshot-build.ps1 writes it), else hookshot\game.
@@ -736,6 +754,30 @@ function Get-KitHookshotExe([string]$Game) {
         if (Test-Path -LiteralPath $p) { return $p }
     }
     return $null
+}
+
+# The game folders collect-logs looks in for longshot_log.txt, as the kit's start finds its game, then wider (a player
+# could not find the logs, and the zip had none: 0.11.0): the start's own game (Get-KitHookshotGame, which follows
+# hookshot\game-folder.txt), the kit's default hookshot\game, the folder game-folder.txt names even when the start
+# would not follow it (another kit's game), and the folder of each longshot.exe running now. $Running: tests.
+# Returns each longshot.exe once, in that order.
+function Get-KitLogGameExes([string]$Kit, [string[]]$Running = $null) {
+    $games = @((Get-KitHookshotGame $Kit), (Join-Path $Kit 'hookshot\game'))
+    $where = Join-Path $Kit 'hookshot\game-folder.txt'
+    if (Test-Path -LiteralPath $where) {
+        $g = "$(Get-Content -LiteralPath $where -TotalCount 1)".Trim()
+        if ($g) { $games += $(if ([System.IO.Path]::IsPathRooted($g)) { $g } else { Join-Path $Kit $g }) }
+    }
+    $exes = @($games | ForEach-Object { Get-KitHookshotExe $_ })
+    if ($null -eq $Running) {
+        $Running = @(Get-Process longshot, hookshot -ErrorAction SilentlyContinue | ForEach-Object { $_.Path } | Where-Object { $_ })
+    }
+    $exes += $Running
+    $seen = @{}
+    foreach ($e in @($exes | Where-Object { $_ -and (Test-Path -LiteralPath $_) })) {
+        $k = ([System.IO.Path]::GetFullPath($e)).ToLowerInvariant()
+        if (-not $seen.ContainsKey($k)) { $seen[$k] = $true; $e }
+    }
 }
 
 # Where a game's longshot_log*.txt, coop.ini and mods\ are: beside longshot.exe, and for a builder's bin\ layout

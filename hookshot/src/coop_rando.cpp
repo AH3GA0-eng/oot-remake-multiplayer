@@ -3,6 +3,7 @@
 #include "coop_rando.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -89,10 +90,12 @@ std::string Quote(const std::string& arg) {
 
 }  // namespace
 
-std::string ManifestText() {
-    std::string presets;
-    for (const char* p : kPresets) {
-        presets += std::string(presets.empty() ? "" : ", ") + "\"" + p + "\"";
+std::string ManifestText() { return ManifestText(std::vector<std::string>(std::begin(kPresets), std::end(kPresets))); }
+
+std::string ManifestText(const std::vector<std::string>& offered) {
+    std::string presets = "\"default\"";
+    for (const std::string& p : offered) {
+        if (p != "default") presets += ", \"" + p + "\"";
     }
     return std::string(R"({
   "id": "oot-remake-randomizer",
@@ -108,7 +111,7 @@ std::string ManifestText() {
      "help": "Letters and digits. Empty: a new one is made. In co-op the host's seed is everyone's."},
     {"key": "preset", "name": "Settings", "type": "choice", "choices": [)") +
            presets + R"(], "shared": true, "restart": true,
-     "help": "OOTRR's presets (default, easy, open world, keysanity, full shuffle)."},
+     "help": "OOTRR's presets: only the ones the installed OOTRR can build are offered."},
     {"key": "game_folder", "name": "Game folder", "type": "text", "max_length": 260,
      "help": "Only for other game files (1.1.1, with Pack, Banc, Event and System). Empty: the kit's own (romfs beside the game)."},
     {"key": "ootrr", "name": "OOTRR program", "type": "text", "max_length": 260,
@@ -326,6 +329,119 @@ std::string TellLine(std::string_view why) {
     return line;
 }
 
+std::vector<std::string> LastLines(std::string_view text, std::size_t n) {
+    std::vector<std::string> all;
+    std::size_t at = 0;
+    while (at < text.size()) {
+        std::size_t end = text.find('\n', at);
+        if (end == std::string_view::npos) end = text.size();
+        std::string line(text.substr(at, end - at));
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.find_first_not_of(" \t") != std::string::npos) all.push_back(std::move(line));
+        at = end + 1;
+    }
+    if (all.size() > n) all.erase(all.begin(), all.end() - static_cast<std::ptrdiff_t>(n));
+    return all;
+}
+
+std::vector<std::string> ErrorLines(std::string_view text, std::size_t n) {
+    std::vector<std::string> out;
+    for (std::string& line : LastLines(text, static_cast<std::size_t>(-1))) {
+        std::string low = line;
+        std::transform(low.begin(), low.end(), low.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (low.find("error") != std::string::npos || low.find("cannot") != std::string::npos ||
+            low.find("can't") != std::string::npos || low.find("failed") != std::string::npos) {
+            out.push_back(std::move(line));
+            if (out.size() == n) break;
+        }
+    }
+    return out.empty() ? LastLines(text, n) : out;
+}
+
+PresetCache ReadPresetCache(std::string_view text) {
+    PresetCache c;
+    for (const std::string& line : LastLines(text, static_cast<std::size_t>(-1))) {
+        const auto sp = line.find(' ');
+        if (sp == std::string::npos) continue;
+        const std::string a = line.substr(0, sp), b = line.substr(sp + 1);
+        if (a == "ootrr") c.key = b;
+        else if (b == "ok" || b == "bad") c.ok[a] = b == "ok";
+    }
+    return c;
+}
+
+std::string PresetCacheText(const PresetCache& cache) {
+    std::string out = "ootrr " + cache.key + "\n";
+    for (const auto& [preset, ok] : cache.ok) out += preset + (ok ? " ok\n" : " bad\n");
+    return out;
+}
+
+std::string OotrrKey(const fs::path& ootrr) {
+    std::error_code ec;
+    const auto size = fs::file_size(ootrr, ec);
+    if (ec) return {};
+    const auto when = fs::last_write_time(ootrr, ec);
+    if (ec) return {};
+    return std::to_string(size) + "-" + std::to_string(when.time_since_epoch().count());
+}
+
+std::string ChatSafe(std::string line, std::size_t max_chars) {
+    // No control characters (a tab, a stray carriage return, escape codes): a space each.
+    for (char& c : line) {
+        if (static_cast<unsigned char>(c) < 0x20 || c == 0x7F) c = ' ';
+    }
+    // The user's profile folder: ...Users\<name>\ (either slash, any case) and /home/<name>/ become <user>.
+    for (const std::string_view mark : {std::string_view("users"), std::string_view("home")}) {
+        std::size_t from = 0;
+        for (;;) {
+            std::string low = line;
+            std::transform(low.begin(), low.end(), low.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            const std::size_t at = low.find(mark, from);
+            if (at == std::string::npos) break;
+            const std::size_t name = at + mark.size() + 1;
+            const auto sep = [](char c) { return c == '\\' || c == '/'; };
+            const bool sep_before = at > 0 && sep(line[at - 1]);
+            const bool sep_after = name - 1 < line.size() && sep(line[name - 1]);
+            if (!sep_before || !sep_after || name >= line.size()) {
+                from = at + 1;
+                continue;
+            }
+            std::size_t end = name;
+            while (end < line.size() && !sep(line[end]) && line[end] != '"') ++end;
+            line.replace(name, end - name, "<user>");
+            from = name + 6;
+        }
+    }
+    if (line.size() > max_chars) {
+        std::size_t cut = max_chars;
+        while (cut > 0 && (static_cast<unsigned char>(line[cut]) & 0xC0) == 0x80) --cut;  // a whole UTF-8 character
+        line.resize(cut);
+        line += "...";
+    }
+    return line;
+}
+
+bool PresetRefused(int code, std::string_view output) {
+    return code > 0 && output.find_first_not_of(" \t\r\n") != std::string_view::npos;
+}
+
+std::string ReadTail(const fs::path& file, std::size_t max_bytes) {
+    std::ifstream in(file, std::ios::binary | std::ios::ate);
+    if (!in) return {};
+    const std::streamoff size = in.tellg();
+    const auto cap = static_cast<std::streamoff>(max_bytes);
+    const std::streamoff from = size > cap ? size - cap : 0;
+    in.seekg(from);
+    std::string out(static_cast<std::size_t>(size - from), '\0');
+    in.read(out.data(), static_cast<std::streamsize>(out.size()));
+    out.resize(static_cast<std::size_t>(in.gcount()));
+    return out;
+}
+
+std::string SeeLogLine(const std::string& head) {
+    return head + ": see " + kLogFile + " in the game's mods folder, " + kFolder + " (the chat has its full path)";
+}
+
 std::string BuildFailureHint(std::string_view out) {
     if (out.find("the game folder has no") != std::string_view::npos) {
         return "your game files are not version 1.1.1 (co-op's game is update v131072): dump the game with that "
@@ -461,6 +577,63 @@ void Rando::Start() {
         if (id == kId) Check();
     });
     Check();
+}
+
+std::map<std::string, bool> Rando::ProbePresets(const fs::path& ootrr, const fs::path& control) {
+    const fs::path file = control / kPresetsFile;
+    const std::string key = OotrrKey(ootrr);
+    std::ifstream in(file, std::ios::binary);
+    std::ostringstream text;
+    text << in.rdbuf();
+    in.close();
+    PresetCache cache = ReadPresetCache(text.str());
+    if (!key.empty() && cache.key == key && cache.ok.size() == std::size(kPresets)) return cache.ok;
+    {
+        // Tried in this run already (a preset left unsure is tried again at the next start, not at every build).
+        const std::lock_guard lock(mutex_);
+        if (!key.empty() && probed_key_ == key) return probed_;
+    }
+    // A new OOTRR (or none tried yet): each preset made once into a stage ('_': Longshot never loads it). Only
+    // `generate` is run: OOTRR 0.5.0 refuses full_shuffle there ("error: This build cannot apply these settings
+    // yet: ...", exit 1), as the kit's ootrr.exe did when tried by hand (2026-11-15).
+    Say("trying OOTRR's presets once (this OOTRR is new here)");
+    if (cache.key != key) cache = PresetCache{key, {}};
+    const fs::path stage = control / "_preset-probe";
+    std::error_code ec;
+    fs::remove_all(stage, ec);
+    fs::create_directories(stage, ec);
+    std::vector<std::string> good;
+    const auto& run = hooks_.probe_run ? hooks_.probe_run : hooks_.run;
+    for (const char* p : kPresets) {
+        if (const auto known = cache.ok.find(p); known != cache.ok.end()) {
+            if (known->second) good.emplace_back(p);
+            continue;  // known for this OOTRR (an earlier start left only some unsure)
+        }
+        const fs::path out = stage / (std::string(p) + ".txt");
+        const int code = run(ootrr, GenerateArgs(p, "PROBE", stage / (std::string(p) + ".ootrr")), out);
+        if (code == 0) {
+            cache.ok[p] = true;
+            good.emplace_back(p);
+        } else if (PresetRefused(code, ReadTail(out, kTailBytes))) {
+            cache.ok[p] = false;
+            if (hooks_.log) hooks_.log(std::string("randomizer: OOTRR cannot make the ") + p + " preset: not offered");
+        } else {
+            // Stopped, timed out, not started, or an exit with nothing said: not known, offered, tried again next start.
+            good.emplace_back(p);
+            if (hooks_.log) {
+                hooks_.log(std::string("randomizer: the ") + p + " preset could not be tried (exit " + std::to_string(code) +
+                           "): offered, tried again at the next start");
+            }
+        }
+    }
+    fs::remove_all(stage, ec);
+    if (!key.empty()) WriteText(file, PresetCacheText(cache));
+    WriteText(control / CoopMods::kManifestFile, ManifestText(good));  // the Settings row (read with the next Refresh)
+    loader_.Refresh();
+    const std::lock_guard lock(mutex_);
+    probed_key_ = key;
+    probed_ = cache.ok;
+    return cache.ok;
 }
 
 void Rando::TellOthers() {
@@ -659,6 +832,25 @@ void Rando::Build(const Plan& plan, const Want& want) {
         return code == kStopped ? std::string("stopped: it ran too long or the game closed")
                                 : "exit " + std::to_string(code);
     };
+    // OOTRR's own failure (player report: the tab cut the log's path off): the tab names the file plainly, the chat has
+    // its full path (once per run) and its first error lines (#16), longshot_log.txt the path and OOTRR's last lines.
+    const auto ootrr_failed = [&](const std::string& head, std::string_view reason, const std::string& output) {
+        const std::string where = head + ": OOTRR's output is in " + CoopMods::ToUtf8(log);
+        if (hooks_.log) {
+            hooks_.log("randomizer: " + where);
+            for (const std::string& l : LastLines(output, 10)) hooks_.log("randomizer: ootrr: " + l);
+        }
+        {
+            const std::lock_guard lock(mutex_);
+            if (!log_in_chat_) {
+                log_in_chat_ = true;
+                lines_.push_back(ChatSafe(where, 400));  // (the whole path: masked, not cut)
+            }
+            for (const std::string& l : ErrorLines(output, 5)) lines_.push_back(ChatSafe("OOTRR: " + l));  // what it said, each time
+        }
+        fail(SeeLogLine(head), reason);
+    };
+    const auto read_log = [&] { return ReadTail(log, kTailBytes); };
     std::string ootrr_setting, game_setting;
     for (const CoopMods::SettingRow& s : loader_.Settings(kFolder)) {
         if (s.setting.key == "ootrr") ootrr_setting = s.value;
@@ -688,6 +880,31 @@ void Rando::Build(const Plan& plan, const Want& want) {
                         "the seed's folder is in use: a restart is needed");
         }
     }
+    // A preset this OOTRR cannot make (#16): ours goes back to default (the change builds again: Work), the host's
+    // is said plainly.
+    if (hooks_.probe_presets) {
+        const auto ok = ProbePresets(*ootrr, control);
+        const std::string preset = want.preset.empty() ? "default" : want.preset;
+        if (const auto it = ok.find(preset); it != ok.end() && !it->second && preset != "default") {
+            bool hosts_preset = false;
+            for (const CoopMods::SettingRow& s : loader_.Settings(kFolder)) {
+                if (s.setting.key == "preset") hosts_preset = s.locked;
+            }
+            if (hosts_preset) {
+                return fail("the host's Settings (" + preset + ") are not in this OOTRR yet: ask the host for another",
+                            "the host's Settings preset is not in my OOTRR yet");
+            }
+            const std::string note = "Randomizer Settings " + preset + " are not in this OOTRR yet: back to default.";
+            if (hooks_.log) hooks_.log("randomizer: " + note);
+            {
+                const std::lock_guard lock(mutex_);
+                lines_.push_back(note);
+            }
+            Say(note);
+            loader_.Set(kFolder, "preset", "default");
+            return;
+        }
+    }
     std::error_code ec;
     const fs::path target = root / CoopMods::FromUtf8(plan.folder);
     fs::remove_all(target, ec);  // a build cut off before: not in use (checked above)
@@ -696,8 +913,8 @@ void Rando::Build(const Plan& plan, const Want& want) {
     const fs::path seed_file = control / (plan.folder + ".ootrr");
     const int made = hooks_.run(*ootrr, GenerateArgs(want.preset, want.seed, seed_file), log);
     if (made != 0) {
-        return fail("OOTRR could not make the seed (" + exit_text(made) + "): see " + CoopMods::ToUtf8(log),
-                    "OOTRR could not make the seed (" + exit_text(made) + ")");
+        const std::string head = "OOTRR could not make the seed (" + exit_text(made) + ")";
+        return ootrr_failed(head, head, read_log());
     }
     // Built in a stage beside the other mods' size tables (StageSizeTables), then moved in. ('_': Longshot never
     // loads it, if a closed game leaves it behind)
@@ -713,14 +930,11 @@ void Rando::Build(const Plan& plan, const Want& want) {
     fs::remove_all(stage, ec);
     if (built != 0 || !fs::is_regular_file(target / kSeedFile, ec)) {
         fs::remove_all(target, ec);
-        std::ifstream in(log, std::ios::binary);
-        std::ostringstream out;
-        out << in.rdbuf();
-        const std::string hint = BuildFailureHint(out.str());
-        return fail("OOTRR could not build the seed (" + exit_text(built) + "): " +
-                        (hint.empty() ? "see " + CoopMods::ToUtf8(log) : hint),
-                    hint.empty() ? "OOTRR could not build the seed (" + exit_text(built) + ")"
-                                 : std::string("game files not version 1.1.1"));
+        const std::string output = read_log();
+        const std::string hint = BuildFailureHint(output);
+        const std::string head = "OOTRR could not build the seed (" + exit_text(built) + ")";
+        if (hint.empty()) return ootrr_failed(head, head, output);
+        return fail(head + ": " + hint, "game files not version 1.1.1");
     }
     WriteText(target / kPresetFile, (want.preset.empty() ? std::string("default") : want.preset) + "\n");
     {

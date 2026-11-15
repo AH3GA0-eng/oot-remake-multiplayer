@@ -74,6 +74,7 @@
 #include "coop_png.h"
 #include "coop_puppet.h"
 #include "coop_puppet_config.h"
+#include "coop_pack_notice.h"
 #include "coop_frame_clock.h"
 #include "coop_runtime.h"
 #include "coop_pause_files.h"
@@ -1014,6 +1015,7 @@ bool Start(const HosCoopApi* api) {
     if (EnvOn("LICHII_COOP_PUPPET") || EnvOn("LICHII_COOP_DEBUG_PUPPET")) {
         CoopPuppetConfig::Configure();  // as the emulator's cave (coop_puppet_config.h)
     }
+    CoopPackNotice::Enable(CoopPuppetConfig::HasPack());  // no pack: the chat says so once (coop_pack_notice.h)
     g_hold = EnvOn("LICHII_COOP_OBJECTS_AI_HOLD");
     CoopLinkSound::SetProbe(EnvOn("LICHII_COOP_DEBUG_SOUND"));  // every user's sounds named once in the log
     // Flags through the game's own functions (coop_flag_native.h): its writes as events from the applier's wrap, ours

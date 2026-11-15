@@ -373,13 +373,27 @@ unset OOT_COOP_UPDATE_API
 
 # --- collect-logs.sh -------------------------------------------------------------------------
 printf 'coop: joined 192.168.1.20\npassword = hunter2\n' >"$D/game/longshot_log.txt"
+mkdir -p "$D/game/mods/oot-remake-randomizer" && printf 'error: seed failed at 192.168.1.20\n' >"$D/game/mods/oot-remake-randomizer/last-build.txt"
 bash "$kit/scripts/collect-logs.sh" >"$tmp/logs.txt" 2>&1
 out=$(ls "$kit"/coop-logs-*.tar.gz 2>/dev/null | head -n1)
 check 'collect-logs: a .tar.gz beside start-oot-coop.sh' [ -n "$out" ]
 if [[ -n $out ]]; then
     mkdir -p "$tmp/logs" && tar -xzf "$out" -C "$tmp/logs"
     check 'collect-logs: the game log is in, its password and LAN address masked' bash -c 'grep -q "<lan-1>" "$1" && grep -q "(removed)" "$1" && ! grep -q hunter2 "$1"' _ "$tmp/logs/game/longshot_log.txt"
+    check 'collect-logs: OOTRR'"'"'s last-build.txt is in, masked' bash -c 'grep -q "<lan-1>" "$1" && grep -q "seed failed" "$1"' _ "$tmp/logs/game/last-build.txt"
 fi
+check 'collect-logs: the last line names the file to send' bash -c '[ "$(tail -n1 "$1")" = "Send this file: $2" ]' _ "$tmp/logs.txt" "$out"
+check 'collect-logs: with the game log in, no help about finding it' bash -c '! grep -q "not in this file" "$1"' _ "$tmp/logs.txt"
+# No game log: where to find it and how to add it; one copied into data/logs goes in.
+rm -f "$D/game/longshot_log.txt" "$kit"/coop-logs-*.tar.gz
+bash "$kit/scripts/collect-logs.sh" >"$tmp/logs2.txt" 2>&1
+check 'collect-logs, no game log: says so and how to add it' bash -c 'grep -q "longshot_log.txt) is not in this file" "$1" && grep -q "Copy longshot_log.txt into" "$1"' _ "$tmp/logs2.txt"
+rm -f "$kit"/coop-logs-*.tar.gz
+printf 'coop: module loaded\n' >"$D/logs/longshot_log.txt"
+bash "$kit/scripts/collect-logs.sh" >"$tmp/logs3.txt" 2>&1
+out=$(ls "$kit"/coop-logs-*.tar.gz 2>/dev/null | head -n1)
+check 'collect-logs: a log copied into data/logs goes in' bash -c 'tar -tzf "$1" | grep -q "game/copied/longshot_log.txt" && ! grep -q "not in this file" "$2"' _ "$out" "$tmp/logs3.txt"
+rm -f "$D/logs/longshot_log.txt"
 
 # --- The scripts parse ---------------------------------------------------------------------
 for f in "$src/start-oot-coop.sh" "$src"/scripts/*.sh "$release/make_kit_linux.sh"; do
