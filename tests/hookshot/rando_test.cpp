@@ -1117,3 +1117,94 @@ TEST_CASE("rando: a seed that cannot be made again for the puppets is kept, and 
     rando.Wait();
     CHECK(w.runs.size() == 4);
 }
+
+namespace {
+CoopMods::Row Indexed(const std::string& name) {
+    CoopMods::Row r = RowNamed(name, true);
+    r.on_now = true;
+    return r;
+}
+}  // namespace
+
+TEST_CASE("rando: a size table of a mod not made by us that wins is found (player report 48)") {
+    World w;
+    Put(w.mods / "ootrr-site" / kTable, "site");
+    Put(w.mods / "randomizer-S1" / kTable, "seed");
+    Put(w.mods / "aaa-textures" / kTable, "early");
+    Put(w.mods / "no-table" / "romfs" / "a.bin", "x");
+    // The Mods list's order: the first row wins.
+    CHECK(OutsideSizeTable(w.mods, {Indexed("ootrr-site"), Indexed("randomizer-S1")}, true) ==
+          std::optional<std::string>("ootrr-site"));
+    CHECK_FALSE(OutsideSizeTable(w.mods, {Indexed("randomizer-S1"), Indexed("ootrr-site")}, true));
+    CHECK_FALSE(OutsideSizeTable(w.mods, {Indexed("no-table"), Indexed("randomizer-S1")}, true));
+    CHECK(OutsideSizeTable(w.mods, {Indexed("no-table"), Indexed("ootrr-site")}, true) ==
+          std::optional<std::string>("ootrr-site"));
+    CoopMods::Row later = Indexed("ootrr-site");
+    later.on_now = false;  // switched on after this run started: the game did not read it
+    CHECK_FALSE(OutsideSizeTable(w.mods, {later, Indexed("randomizer-S1")}, true));
+    CHECK_FALSE(OutsideSizeTable(w.mods, {}, true));  // only the pack (never a row)
+    // Hookshot's own order (no list): by name, the last wins, the pack being contents/0400486024DEC000/coop-puppet.
+    CHECK(OutsideSizeTable(w.mods, {Indexed("ootrr-site")}, false) == std::optional<std::string>("ootrr-site"));
+    CHECK_FALSE(OutsideSizeTable(w.mods, {Indexed("aaa-textures")}, false));  // under the pack: the pack's wins
+    CHECK_FALSE(OutsideSizeTable(w.mods, {Indexed("ootrr-site"), Indexed("randomizer-S1")}, false));
+}
+
+TEST_CASE("rando: the chat lines about an outside size table name the mod and fit a chat line") {
+    CHECK(OutsideLine("ootrr-site").find("\"ootrr-site\"") != std::string::npos);
+    CHECK(OutsideLine("ootrr-site").find("Mods > OoT Remake Randomizer > Settings") != std::string::npos);
+    const std::string tell = OutsideTellLine(std::string(300, 'm'));
+    CHECK(tell.size() <= kTellChars);
+    CHECK(tell.find(std::string(48, 'm') + "...") != std::string::npos);
+    CHECK(OutsideTellLine("s").rfind("[randomizer] ", 0) == 0);
+}
+
+TEST_CASE("rando: a run that reads an outside mod's size table holds the pack and tells everyone") {
+    World w;
+    Put(w.mods / "ootrr-site" / kTable, "site, without the puppets");
+    PlaysSeed(w, "ootrr-site", 7);
+    CoopMods::Loader loader(w.mods, {nullptr, 7, nullptr});
+    loader.Start();
+    std::mutex told_mutex;
+    std::vector<std::string> told;
+    bool connected = false;
+    auto hooks = w.Hooks();
+    hooks.tell_others = [&](const std::string& line) {
+        const std::lock_guard lock(told_mutex);
+        if (connected) told.push_back(line);
+        return connected;
+    };
+    Rando rando(loader, hooks);
+    rando.Start();
+    rando.Wait();
+    CHECK(rando.HoldPack());
+    CHECK(Count(rando.TakeLines(), ChatSafe(OutsideLine("ootrr-site"), 300)) == 1);
+    rando.Recheck();  // alone: nobody to tell yet, the line comes again
+    rando.Wait();
+    CHECK(Count(rando.TakeLines(), ChatSafe(OutsideLine("ootrr-site"), 300)) == 1);
+    {
+        const std::lock_guard lock(told_mutex);
+        CHECK(told.empty());
+        connected = true;
+    }
+    rando.Recheck();  // joined
+    rando.Wait();
+    {
+        const std::lock_guard lock(told_mutex);
+        CHECK(Count(told, OutsideTellLine("ootrr-site")) == 1);
+    }
+    CHECK(rando.HoldPack());  // the whole run
+}
+
+TEST_CASE("rando: a run that reads our own seed's size table is not held for an outside mod") {
+    World w;
+    Put(w.mods / "ootrr-site" / kTable, "site");
+    PlaysSeed(w, "contents/0400486024DEC000/coop-puppet", 8);  // only the pack indexed: the site mod came later
+    Put(w.mods / "contents" / "0400486024DEC000" / "coop-puppet" / kTable, "puppet");
+    CoopMods::Loader loader(w.mods, {nullptr, 8, nullptr});
+    loader.Start();
+    Rando rando(loader, w.Hooks());
+    rando.Start();
+    rando.Wait();
+    CHECK_FALSE(rando.HoldPack());
+    for (const std::string& line : rando.TakeLines()) CHECK(line.find("own size table") == std::string::npos);
+}

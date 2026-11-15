@@ -108,6 +108,21 @@ std::vector<std::filesystem::path> OtherSizeTables(const std::filesystem::path& 
 // first), so a puppet pack made after the seed has no sizes there and its actors cannot load (the other players
 // invisible with the randomizer on).
 std::string TablesStamp(const std::filesystem::path& mods_root, const std::vector<std::filesystem::path>& tables);
+// The mod whose resource size table this run of the game reads, when it is none of co-op's own (player report #48:
+// a seed made on OOTRR's own page and put into the mods folder by hand). Longshot serves one size table, the winning
+// mod's: with the Mods list (ExeReadsList, `list_order`) the first row of `rows` (the puppet pack is never listed and
+// sits under every listed mod), else Hookshot's own order (by name, the last wins; the pack is
+// contents/0400486024DEC000/coop-puppet). Only a mod the game indexed at its start (Row::on_now) and that holds
+// romfs/System/Resource/*.rsizetable.zs counts. That mod's table was made without the pack's entries, so the puppets
+// cannot load (invisible, or a crash when the map loads). Empty when the winner is one of our seeds, the control
+// folder or the pack. (Whether its table happens to hold the pack's entries is not looked at: the module reads no
+// zstd. A seed of ours is built beside every other mod's table, StageSizeTables.)
+std::optional<std::string> OutsideSizeTable(const std::filesystem::path& mods_root,
+                                            const std::vector<CoopMods::Row>& rows, bool list_order);
+// This game's chat line for it (it repeats when joining), and the line the other players get (at most kTellChars).
+std::string OutsideLine(std::string_view mod);
+std::string OutsideTellLine(std::string_view mod);
+
 // The Windows command line of a program and its arguments (each quoted as CommandLineToArgvW reads it back).
 std::wstring CommandLine(const std::filesystem::path& program, const std::vector<std::string>& args);
 
@@ -215,6 +230,7 @@ public:
     // value of ours, so no setting call comes).
     void Recheck() {
         Check();  // first: drops a line no longer true (the host left, another seed)
+        SayOutside();  // joined: the others hear about an outside size table too
         TellOthers();
         RepeatRestart();  // joined: a restart still due is said again, in the chat the player now looks at
     }
@@ -223,7 +239,8 @@ public:
     // a puppet then crashes the game when the map loads (lane1 2026-11-15: a tunic model's buffer too small). Set at
     // Start until the seed is checked (a refresh); cleared when its table was right after all, kept until the restart
     // when it was made again (RefreshLine) or could not be. The other players show as their fairies meanwhile.
-    bool HoldPack() const { return hold_pack_.load(); }
+    // Also kept for the whole run when another mod's size table wins (OutsideSizeTable).
+    bool HoldPack() const { return hold_pack_.load() || outside_.load(); }
     // The chat lines since the last call (SwitchLine when the switch changed).
     std::vector<std::string> TakeLines();
     // Waits until no build runs (tests, exit).
@@ -236,7 +253,8 @@ private:
     void Work(Plan plan, Want want);      // the worker: builds until the settings stop changing
     void Build(const Plan& plan, const Want& want);
     void Say(std::string line);
-    void TellOthers();                    // sends tell_ (Hooks::tell_others)
+    void TellOthers();                    // sends tell_ and outside_tell_ (Hooks::tell_others)
+    void SayOutside();                    // outside_line_ into the chat again, outside_tell_ armed (mutex_ not held)
     void SayRestart(std::string line);    // a restart line for the chat, kept to repeat (mutex_ not held)
     void RepeatRestart();                 // restart_ into the chat now (mutex_ not held)
     std::chrono::steady_clock::time_point Now() const;
@@ -262,6 +280,9 @@ private:
     std::string tell_;                // a line for the others not sent yet (mutex_): never a path
     std::string tell_seed_;           // the host's seed it is about (mutex_)
     std::atomic<bool> hold_pack_{false};  // HoldPack
+    std::atomic<bool> outside_{false};    // another mod's size table wins this run (HoldPack)
+    std::string outside_mod_;         // that mod (mutex_): empty when none
+    bool outside_tell_ = false;       // OutsideTellLine not sent yet (mutex_)
     std::string restart_;             // the restart line until this game restarts (mutex_): empty when none
     std::chrono::steady_clock::time_point restart_said_{};  // when it was last put in the chat (mutex_)
 };

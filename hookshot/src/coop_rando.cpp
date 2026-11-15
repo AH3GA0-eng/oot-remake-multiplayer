@@ -282,6 +282,79 @@ int StageSizeTables(const fs::path& mods_root, const std::vector<CoopMods::Row>&
     return count;
 }
 
+namespace {
+bool HasSizeTable(const fs::path& mod) {
+    std::error_code ec;
+    for (fs::directory_iterator files(mod / "romfs" / "System" / "Resource", ec), last; !ec && files != last;
+         files.increment(ec)) {
+        const std::string file = CoopMods::ToUtf8(files->path().filename());
+        const std::string_view tail = ".rsizetable.zs";
+        if (std::error_code fec; files->is_regular_file(fec) && file.size() > tail.size() &&
+                                 file.compare(file.size() - tail.size(), tail.size(), tail) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// A mod name cut for a chat line (a folder name can be long).
+std::string ShortName(std::string_view mod) {
+    constexpr std::size_t kMost = 48;
+    if (mod.size() <= kMost) return std::string(mod);
+    std::size_t cut = kMost;
+    while (cut > 0 && (static_cast<unsigned char>(mod[cut]) & 0xC0) == 0x80) --cut;  // a whole UTF-8 character
+    return std::string(mod.substr(0, cut)) + "...";
+}
+}  // namespace
+
+std::optional<std::string> OutsideSizeTable(const fs::path& mods_root, const std::vector<CoopMods::Row>& rows,
+                                            bool list_order) {
+    std::vector<const CoopMods::Row*> order;
+    for (const CoopMods::Row& r : rows) {
+        if (r.on_now && HasSizeTable(mods_root / CoopMods::FromUtf8(r.name))) order.push_back(&r);
+    }
+    const CoopMods::Row* winner = nullptr;
+    if (list_order) {
+        if (!order.empty()) winner = order.front();
+    } else {
+        // Hookshot's order: by name, case folded, the last wins; the pack is a mod of its own in it.
+        const auto folded = [](std::string_view s) {
+            std::string out(s);
+            for (char& c : out) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            return out;
+        };
+        std::string best = "contents/0400486024dec000/coop-puppet";
+        for (const CoopMods::Row* r : order) {
+            if (const std::string f = folded(r->name); f > best) {
+                best = f;
+                winner = r;
+            }
+        }
+    }
+    if (winner == nullptr || IsSeedFolder(winner->name) || CoopMods::NameSame(winner->name, kFolder)) {
+        return std::nullopt;
+    }
+    return winner->name;
+}
+
+std::string OutsideLine(std::string_view mod) {
+    return "Randomizer: the mod \"" + ShortName(mod) +
+           "\" has its own size table (a seed not made in the Mods tab): other players can't be shown. Make the "
+           "seed in Mods > OoT Remake Randomizer > Settings, or turn this mod off.";
+}
+
+std::string OutsideTellLine(std::string_view mod) {
+    std::string line = "[randomizer] my mod \"" + ShortName(mod) +
+                       "\" was not made in the Mods tab: I can't see the others. Make the seed in Mods > OoT Remake "
+                       "Randomizer > Settings.";
+    if (line.size() > kTellChars) {
+        std::size_t cut = kTellChars;
+        while (cut > 0 && (static_cast<unsigned char>(line[cut]) & 0xC0) == 0x80) --cut;
+        line.resize(cut);
+    }
+    return line;
+}
+
 std::string TablesStamp(const fs::path& mods_root, const std::vector<fs::path>& tables) {
     std::vector<std::string> lines;
     for (const fs::path& table : tables) {
@@ -650,6 +723,18 @@ void Rando::Start() {
                 }
             }
         }
+        // Another mod's size table wins (#48: a seed made on OOTRR's page, dropped in by hand): no pack actor this run.
+        if (const auto outside = OutsideSizeTable(loader_.Root(), loader_.Rows(), loader_.ExeReadsList())) {
+            outside_ = true;
+            if (hooks_.log) {
+                hooks_.log("randomizer: the game reads the size table of the mod " + *outside +
+                           ", made without the co-op puppets' entries: no puppet this run (the others show as fairies)");
+            }
+            const std::lock_guard lock(mutex_);
+            outside_mod_ = *outside;
+            outside_tell_ = true;
+            lines_.push_back(ChatSafe(OutsideLine(*outside), 300));
+        }
         const std::lock_guard lock(mutex_);
         on_now_ = on_said_ = on_now;
     }
@@ -717,15 +802,32 @@ std::map<std::string, bool> Rando::ProbePresets(const fs::path& ootrr, const fs:
 }
 
 void Rando::TellOthers() {
+    if (!hooks_.tell_others) return;
+    std::string outside;
+    {
+        const std::lock_guard lock(mutex_);
+        if (outside_tell_) outside = ChatSafe(OutsideTellLine(outside_mod_), kTellChars);
+    }
+    if (!outside.empty() && hooks_.tell_others(outside)) {  // (not connected: the next Recheck tries again)
+        const std::lock_guard lock(mutex_);
+        outside_tell_ = false;
+    }
     std::string line;
     {
         const std::lock_guard lock(mutex_);
-        if (tell_.empty() || !hooks_.tell_others) return;
+        if (tell_.empty()) return;
         line = tell_;
     }
     if (!hooks_.tell_others(line)) return;  // not connected: the next Recheck tries again
     const std::lock_guard lock(mutex_);
     if (tell_ == line) tell_.clear();
+}
+
+void Rando::SayOutside() {
+    const std::lock_guard lock(mutex_);
+    if (outside_mod_.empty()) return;
+    lines_.push_back(ChatSafe(OutsideLine(outside_mod_), 300));
+    outside_tell_ = true;  // a player who joined since hears it too
 }
 
 std::chrono::steady_clock::time_point Rando::Now() const {
