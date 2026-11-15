@@ -96,8 +96,13 @@ TEST_CASE("quest: the step hashes are the step names, and each quest's steps are
         }
         for (const auto& r : q.rules) {
             CHECK(CoopQuest::Rank(q, r.step).has_value());
-            // Every rule flag is a shared story flag.
-            CHECK(CoopStory::Find(r.flag) != nullptr);
+            // Every rule flag is a shared story flag; a rule without one
+            // (the stones, issue 60) names the quests that must be Complete.
+            if (r.flag != 0) {
+                CHECK(CoopStory::Find(r.flag) != nullptr);
+            } else {
+                CHECK(r.done_a != 0);
+            }
         }
     }
     const auto& g = Q("Goto_HyruleCastle");
