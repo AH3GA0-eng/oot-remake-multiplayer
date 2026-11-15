@@ -251,7 +251,7 @@ TEST_CASE("hookshot: the puppets' settings are the emulator's, not a copy") {
     // LICHII_COOP_SELF_TUNIC on Hookshot (issue 202): both call one function.
     const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
     const std::string svc = ReadFile(kRepo / "lichii" / "hook" / "coop_svc.cpp");
-    CHECK(module.find("CoopPuppetConfig::Configure()") != std::string::npos);
+    CHECK(module.find("CoopPuppetConfig::Configure(PerceivedSafe())") != std::string::npos);
     CHECK(svc.find("CoopPuppetConfig::Configure()") != std::string::npos);
     CHECK(module.find("PlannerSettings") == std::string::npos);
     CHECK(svc.find("PlannerSettings") == std::string::npos);
