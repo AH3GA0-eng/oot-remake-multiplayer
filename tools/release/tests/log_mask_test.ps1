@@ -1,6 +1,6 @@
 # Tests for the log masking in collect-logs.ps1 (tools/release/kit/scripts/log-mask.ps1):
 # every kind of address, ports kept, the same address the same tag, MAC addresses, the user
-# name in paths, and version numbers left alone. Strings only, no files.
+# name in paths, and version numbers left alone. Strings only; at the end the zip (Write-LogZip and a collect-logs.ps1 run on a small kit in %TEMP%).
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tools\release\tests\log_mask_test.ps1
 # Exits 1 when a check fails.
 $ErrorActionPreference = 'Stop'
@@ -90,6 +90,70 @@ foreach ($keep in @('game 1.1.1 (v131072)', 'Microsoft Windows NT 10.0.26200.0',
     $got = Mask $keep
     Check ($got -eq $keep) "'$keep' stays (got '$got')"
 }
+
+# The zip (Write-LogZip; player report: '\' names from Compress-Archive on a PC without tar.exe).
+Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+function Get-ZipNames([string]$Zip) {
+    $z = [System.IO.Compression.ZipFile]::OpenRead($Zip)
+    try { @($z.Entries | ForEach-Object { $_.FullName }) } finally { $z.Dispose() }
+}
+function Test-ZipNames([string[]]$Names, [string[]]$Want, [string]$What) {
+    Check (@($Names | Where-Object { $_.Contains('\') }).Count -eq 0) "$What`: no '\' in any name [$($Names -join ', ')]"
+    Check (@($Names | Where-Object { $_ -like './*' -or $_ -eq '.' -or $_.EndsWith('/') }).Count -eq 0) "$What`: no './' and no folder entries"
+    $missing = @($Want | Where-Object { $Names -notcontains $_ })
+    Check ($missing.Count -eq 0 -and $Names.Count -eq $Want.Count) "$What`: every file once, nothing else (missing: $($missing -join ', '))"
+}
+$zt = Join-Path ([System.IO.Path]::GetTempPath()) "coop-logzip-test-$PID"
+try {
+    $stage = Join-Path $zt 'stage'
+    $want = @('VERSION.txt', 'hookshot/coop.ini', 'hookshot/build/build.log', 'emulator/log/eden.log', 'deep/a/b/c.txt')
+    foreach ($w in $want) {
+        $p = Join-Path $stage ($w.Replace('/', '\'))
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $p) | Out-Null
+        [System.IO.File]::WriteAllText($p, "text of $w")
+    }
+    New-Item -ItemType Directory -Force -Path (Join-Path $stage 'empty') | Out-Null
+    $zip = Join-Path $zt 'out.zip'
+    [System.IO.File]::WriteAllText($zip, 'an old file')   # replaced, not appended to
+    Write-LogZip "$stage\" $zip
+    Test-ZipNames (Get-ZipNames $zip) $want 'log zip'
+    $z = [System.IO.Compression.ZipFile]::OpenRead($zip)
+    try {
+        $r = New-Object System.IO.StreamReader($z.GetEntry('hookshot/build/build.log').Open())
+        Check ($r.ReadToEnd() -eq 'text of hookshot/build/build.log') 'log zip: the file''s text comes back'
+        $r.Dispose()
+    } finally { $z.Dispose() }
+    # an error half-way leaves no zip behind
+    $lock = [System.IO.File]::Open((Join-Path $stage 'VERSION.txt'), 'Open', 'Read', 'None')
+    $threw = $false
+    try { Write-LogZip $stage $zip } catch { $threw = $true } finally { $lock.Dispose() }
+    Check ($threw -and -not (Test-Path -LiteralPath $zip)) 'log zip: a file that cannot be read -> an error, no half zip left'
+
+    # collect-logs.ps1 itself on a small Longshot kit (no emulator): the zip it writes is standard.
+    $kit = Join-Path $zt 'kit'
+    $src = Join-Path (Split-Path -Parent $PSScriptRoot) 'kit\scripts'
+    New-Item -ItemType Directory -Force -Path (Join-Path $kit 'scripts'), (Join-Path $kit 'logs'), (Join-Path $kit 'hookshot\game') | Out-Null
+    foreach ($s in 'collect-logs.ps1', 'log-mask.ps1', 'kit-paths.ps1') { Copy-Item -LiteralPath (Join-Path $src $s) -Destination (Join-Path $kit 'scripts') }
+    foreach ($p in 'VERSION.txt', 'coop-options.ini', 'logs\coop_server.log', 'hookshot\build.log', 'hookshot\game\longshot.exe',
+                   'hookshot\game\longshot_log.txt', 'hookshot\game\coop.ini') {
+        [System.IO.File]::WriteAllText((Join-Path $kit $p), "x $p from 192.168.1.20")
+    }
+    $env:CI = '1'
+    $out = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $kit 'scripts\collect-logs.ps1') 2>&1 | Out-String
+    $made = @(Get-ChildItem -LiteralPath $kit -Filter 'coop-logs-*.zip' -File)
+    Check ($LASTEXITCODE -eq 0 -and $made.Count -eq 1) "collect-logs: ran and wrote one zip [$($out.Trim() -replace '\s+', ' ')]"
+    if ($made.Count -eq 1) {
+        $names = Get-ZipNames $made[0].FullName
+        Test-ZipNames $names @('about-this-pc.txt', 'VERSION.txt', 'coop-options.ini', 'server/coop_server.log', 'hookshot/build/build.log',
+            'hookshot/longshot_log.txt', 'hookshot/coop.ini') 'collect-logs zip'
+        $z = [System.IO.Compression.ZipFile]::OpenRead($made[0].FullName)
+        try {
+            $r = New-Object System.IO.StreamReader($z.GetEntry('hookshot/longshot_log.txt').Open())
+            Check ($r.ReadToEnd() -match '<lan-1>') 'collect-logs zip: text still masked'
+            $r.Dispose()
+        } finally { $z.Dispose() }
+    }
+} finally { Remove-Item -LiteralPath $zt -Recurse -Force -ErrorAction SilentlyContinue }
 
 if ($failed) { Write-Host "$failed failed"; exit 1 }
 Write-Host 'all passed'
