@@ -4,7 +4,7 @@ Short answers. Setting up is in [setup.md](setup.md), playing over the internet 
 
 ## Who is the host?
 
-The **first player to join** the server is the host. The host's game is the one the others follow: time of day, and the shared progress when the host loads a save ([Saves](setup.md#saves)).
+The **first player to join** the server is the host. The host's game is the one the others follow: time of day, and the shared progress when the host loads a save ([Playing from the host's save](play-online.md#playing-from-the-hosts-save)).
 
 When the host leaves, the host role **moves to another player** who is still in (the one with the lowest player number). Nobody needs to do anything. A player who joins later never takes the role by joining.
 
