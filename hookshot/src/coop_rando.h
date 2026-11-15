@@ -1,6 +1,6 @@
 // The OoT Remake randomizer as the mod loader's first built-in mod
 // (docs/mods.md "The randomizer"). The randomizer itself is OOTRR
-// (github.com/REALAZK/ootrr, MIT): a program that makes a seed and builds a
+// (github.com/REALAZK/ootrr, GPL-3.0-or-later since 0.5.0): a program that makes a seed and builds a
 // RomFS mod from it and the player's own game files. This file drives it:
 //
 // - mods\oot-remake-randomizer\mod.json (written here when missing) holds the
