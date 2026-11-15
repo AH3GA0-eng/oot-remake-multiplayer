@@ -102,6 +102,7 @@
 #include <atomic>
 #include <unordered_map>
 #include "coop_world.h"
+#include "coop_logic_probe.h"
 #include "coop_platforms.h"
 #include "coop_counters.h"
 #include "coop_scrubs.h"
@@ -1763,6 +1764,29 @@ public:
                 LOG_INFO(Core, "coop: {}", line);
             }
         }
+        // jabu-lifts (#65, #176): the lifts' logic plugs (RideOnCharacter, ...) and the Deku ladder and pillar's, as the game's set-bool sees them.
+        if (logic_probe_on_) {
+            std::vector<std::pair<float, const CoopWorld::GimmickProbe::Gimmick*>> near;
+            for (const auto& g : gimmicks_) {
+                if (!player_ || (g.name.find("ElevatorLift") == std::string::npos && g.name.find("FallingLadder_") == std::string::npos &&
+                                 g.name.find("Stopper_") == std::string::npos &&
+                                 g.name.find("MoveFloor") == std::string::npos)) {
+                    continue;
+                }
+                float d2 = 0.0f;
+                for (std::size_t i = 0; i < 3; ++i) {
+                    const float d = g.position[i] - (*player_)[i];
+                    d2 += d * d;
+                }
+                if (d2 <= 20.0f * 20.0f) near.emplace_back(d2, &g);
+            }
+            std::sort(near.begin(), near.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+            std::vector<std::pair<u64, std::string>> lifts;
+            for (const auto& [d2, g] : near) lifts.emplace_back(g->address, g->name);
+            for (const auto& line : logic_probe_.Look([&r](u64 address) { return r.Get<u64>(address); }, lifts)) {
+                LOG_INFO(Core, "coop: {}", line);
+            }
+        }
         // Issue 152 (docs/puppet.md "Ocarina"): where our note is kept. Reads only.
         if (ocarina_probe_on_) {
             for (const auto& line : ocarina_probe_.Look([&r](u64 address) { return r.Get<u64>(address); },
@@ -1998,6 +2022,8 @@ public:
     std::size_t platform_lines_ = 0;
     std::vector<CoopWorld::GimmickProbe::Gimmick> gimmicks_;
     bool gimmick_probe_on_ = false;
+    CoopLogicProbe::Watch logic_probe_;  // LICHII_COOP_LOGIC_PROBE=1 (jabu-lifts)
+    bool logic_probe_on_ = false;
     bool scrubs_on_ = true;  // LICHII_COOP_SCRUBS=0 turns it off (issue 149)
     std::vector<CoopScrubs::Seen> scrubs_seen_;
     bool ocarina_probe_on_ = false;           // issue 152: LICHII_COOP_OCARINA_PROBE=1
@@ -2657,7 +2683,7 @@ private:
                 }
                 platform_drivers_.push_back(std::move(d));
             }
-            if (gimmick_probe_on_ && CoopWorld::IsGimmick(known.first)) {
+            if ((gimmick_probe_on_ || logic_probe_on_) && CoopWorld::IsGimmick(known.first)) {
                 CoopWorld::GimmickProbe::Gimmick g;
                 g.address = a;
                 g.hash = known.second;
@@ -3758,6 +3784,7 @@ Objects& Instance() {
         objects.share_ = EnvFlag("LICHII_COOP_OBJECTS");
         objects.pose_ = EnvOn("LICHII_COOP_OBJECTS_POSE");
         objects.gimmick_probe_on_ = EnvFlag("LICHII_COOP_GIMMICK_PROBE");  // opt-in: many reads
+        objects.logic_probe_on_ = EnvFlag("LICHII_COOP_LOGIC_PROBE");      // jabu-lifts: reads only
         {
             const std::string platforms = EnvText("LICHII_COOP_PLATFORMS");
             objects.platforms_mode_ = platforms == "0" ? 0 : platforms == "probe" ? 2 : 1;
