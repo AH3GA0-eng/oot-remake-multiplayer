@@ -56,16 +56,20 @@ want=$(pin_get "$LS/LINUX.txt" sha256) || fail 'data/longshot/LINUX.txt has no s
 [[ $(pin_get "$LS/PIN" tag) == "$tag" ]] || fail "data/longshot/LINUX.txt ($tag) and PIN ($(pin_get "$LS/PIN" tag)) name different Longshot releases."
 [[ $name =~ ^[A-Za-z0-9._-]+$ && $url == https://git.magicbean.dev/MagicBeanDev/Longshot/releases/download/* ]] ||
     [[ -n ${OOT_COOP_FETCH_LOCAL-} ]] || fail "data/longshot/LINUX.txt: not a Longshot release download ($url)."
+# The co-op mirror (kit-mirror): our GitHub release with the same AppImage, tried after Longshot's server (the SHA-256
+# above decides either way). OOT_COOP_MIRROR (tests) points it elsewhere.
+mirror=${OOT_COOP_MIRROR:-$(pin_get "$LS/LINUX.txt" mirror || true)}
+mirror=${mirror%/}
+[[ -z $mirror || $mirror == https://* || -n ${OOT_COOP_FETCH_LOCAL-} ]] || fail "data/longshot/LINUX.txt: mirror=$mirror is not an https:// address."
 IMG=$B/image
 PY=$IMG/usr/python/bin/python3
 if [[ $(cat "$B/image.stamp" 2>/dev/null) != "$want" || ! -x $PY ]]; then
     step "Getting Longshot $tag's builder (about 95 MB, once)"
     rm -rf "$IMG" "$B/image.stamp" "$B/squashfs-root"
     if [[ ! -f $B/$name || $(sha256_of "$B/$name") != "$want" ]]; then
-        rm -f "$B/$name.part"
-        fetch "$url" "$B/$name.part" || fail "The download of $name failed (no network?). Start again to retry."
-        [[ $(sha256_of "$B/$name.part") == "$want" ]] || { rm -f "$B/$name.part"; fail "$name is damaged (its SHA-256 does not match). Start again to retry."; }
-        mv -f "$B/$name.part" "$B/$name"
+        say "  downloading $name ..."
+        fetch_verified "$B/$name" "$want" "$url" ${mirror:+"$mirror/$name"} ||
+            fail "$(fetch_fail_text "$name" "$url" "$([[ -n $mirror ]] && echo 1)")"
     fi
     chmod +x "$B/$name"
     # (--appimage-extract is the AppImage runtime's own unpacker: no FUSE, no root)
@@ -240,10 +244,8 @@ if [[ -f $ootrr_pin ]]; then
             o_why=offline
         elif ((o_get)); then
             say "  downloading $o_file ..."
-            if ! OOT_COOP_FETCH_LOCAL=$fetch_local fetch "$o_url/$o_file" "$o_tgz.part"; then o_why='the download failed (no network?)'
-            elif [[ $(sha256_of "$o_tgz.part") != "$o_sha" ]]; then o_why='its SHA-256 differs from the one this kit was made with'
-            else mv -f "$o_tgz.part" "$o_tgz"; fi
-            rm -f "$o_tgz.part"
+            # (kit-mirror: with retries; a file with another SHA-256 is deleted)
+            OOT_COOP_FETCH_LOCAL=$fetch_local fetch_verified "$o_tgz" "$o_sha" "$o_url/$o_file" || o_why="the download failed ($KIT_FETCH_WHY)"
         fi
         if [[ -z $o_why ]]; then
             rm -rf "$o_dir" && mkdir -p "$o_dir"

@@ -10,3 +10,8 @@ lock_sha256=ec162218fa808e8e3cf82cdbbf867166d1c748defaba9443b3ecb643337d6560
 # answers 404 since 2026-11-13, same bytes) and its SHA-256. Moves with the pin.
 source_commit=0c74253d4c6ed08d57e4f3aa8ce8634c4c017085
 source_sha256=f8be930d45f9b48c72f184859274c8f67e97462285ea0eb8e337fe6d7cced573
+# The co-op mirror (kit-mirror): a GitHub release of ours holding the same files (tools.lock, the tool zips as
+# <sha256>-<name>.zip, the source as longshot-<commit>.zip, the Linux AppImage), made by tools/release/mirror_longshot.ps1.
+# Tried after Longshot's own servers; every file is still checked against the SHA-256s above and in tools.lock.
+# Moves with release= (a new tag per Longshot release).
+mirror=https://github.com/daurosk/oot-remake-multiplayer/releases/download/longshot-mirror-v3.0.0-rc.3

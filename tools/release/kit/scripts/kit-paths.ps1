@@ -1175,3 +1175,111 @@ function Copy-KitLongshotSaves([string]$FromImageDir, [string]$ToImageDir) {
     if ($kept) { $say += "  Already in the co-op game, so left as they are: $($kept -join ', ')." }
     $say
 }
+
+# --- Downloads with retries, curl.exe and the co-op mirror (kit-mirror, 0.11.1) ------------------------------------
+# Players saw "The underlying connection was closed: An unexpected error occurred on a send." from git.magicbean.dev
+# (intermittent, some regions; most often an antivirus that scans HTTPS, a VPN or a proxy). Each download now gets
+# several tries, then Windows' own curl.exe, then the co-op mirror (a GitHub release with the same pinned files), and
+# every file is checked against the SHA-256 the kit pins: a file that differs is deleted, never used.
+
+# The TLS versions this .NET knows besides what Windows enables (Tls13 only where the enum has it: .NET 4.8 on new Windows).
+function Set-KitTls {
+    $p = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    if ([Enum]::GetNames([Net.SecurityProtocolType]) -contains 'Tls13') { $p = $p -bor [Net.SecurityProtocolType]'Tls13' }
+    [Net.ServicePointManager]::SecurityProtocol = $p
+}
+
+# One try of one URL into $Out: 'web' = Invoke-WebRequest, 'curl' = Windows' curl.exe (Windows 10 1803 and newer; its
+# own connection code, and --ssl-no-revoke gets past the revocation check an HTTPS-scanning antivirus breaks; the
+# SHA-256 check still decides). Throws with the reason. OOT_COOP_TEST_BLOCK_HOST (tests only): hosts matching that
+# regex fail as if blocked.
+function Invoke-KitFetch([string]$Url, [string]$Out, [string]$Method) {
+    $h = Get-KitUrlHost $Url
+    if ($env:OOT_COOP_TEST_BLOCK_HOST -and $h -match $env:OOT_COOP_TEST_BLOCK_HOST) { throw "$h is blocked (test)" }
+    if ($Method -eq 'curl') {
+        $curl = Join-Path $env:SystemRoot 'System32\curl.exe'
+        if (-not (Test-Path -LiteralPath $curl)) { throw 'this Windows has no curl.exe' }
+        $ErrorActionPreference = 'Continue'   # (curl's error line on stderr is the reason, not a stop)
+        $err = & $curl -fsSL --ssl-no-revoke --retry 2 --connect-timeout 30 -o $Out $Url 2>&1
+        if ($LASTEXITCODE -ne 0) { throw "curl.exe: $(("$err" -replace '\s+', ' ').Trim()) (exit $LASTEXITCODE)" }
+    } else {
+        Invoke-WebRequest -Uri $Url -OutFile $Out -UseBasicParsing
+    }
+}
+
+function Get-KitUrlHost([string]$Url) { if ($Url -match '^[a-z]+://([^/:]*)') { if ($Matches[1]) { $Matches[1] } else { 'this PC' } } else { $Url } }
+
+# An answer that will not change on a retry: HTTP 404 or 410 (Invoke-WebRequest), or curl.exe's "error: 404"/"410".
+function Test-KitGoneError([Exception]$E) {
+    $r = $E.Response
+    if ($r -and $r.PSObject.Properties['StatusCode']) { return [int]$r.StatusCode -in 404, 410 }
+    return $E.Message -match '^curl\.exe: .*error: (404|410)\b'
+}
+
+# Hosts that failed every try once in this run: later downloads give them one try (no wait), not the whole round.
+$script:KitBadHosts = @{}
+
+# Get-KitDownload URLS TO SHA256 [MIRRORS]: $To, checked against $Sha256 (required: nothing unverified is kept). Each
+# URL, then each mirror URL, gets $Tries tries with Invoke-WebRequest ($Wait, then twice as long, between them) and
+# then one with curl.exe. A file with another SHA-256 is deleted and the next URL tried. Returns '' when $To is there
+# and right, else what failed, host by host ("git.magicbean.dev: <reason>; github.com: <reason>").
+function Get-KitDownload([string[]]$Urls, [string]$To, [string]$Sha256, [string[]]$Mirrors = @(), [int]$Tries = 4, [double]$Wait = 2) {
+    if ($Sha256 -notmatch '^[0-9a-fA-F]{64}$') { return "no SHA-256 to check $(Split-Path -Leaf $To) against" }
+    $Sha256 = $Sha256.ToLowerInvariant()
+    if ((Test-Path -LiteralPath $To) -and (Get-FileHash -LiteralPath $To -Algorithm SHA256).Hash.ToLowerInvariant() -eq $Sha256) { return '' }
+    Write-Host "  downloading $(Split-Path -Leaf $To) ..."
+    $part = "$To.part"
+    $failed = @()
+    $mirrorSet = @($Mirrors | Where-Object { $_ })
+    foreach ($url in @(@($Urls) + $mirrorSet | Where-Object { $_ })) {
+        $h = Get-KitUrlHost $url
+        if ($mirrorSet -contains $url) { Write-Host "  trying the co-op mirror ($h) ..." }
+        $n = if ($script:KitBadHosts[$h]) { 1 } else { [Math]::Max(1, $Tries) }
+        $methods = @(@('web') * $n)
+        if (-not $script:KitBadHosts[$h]) { $methods += 'curl' }
+        $got = $false; $gone = $false; $why = ''; $delay = $Wait
+        for ($i = 0; $i -lt $methods.Count -and -not $got; $i++) {
+            Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
+            try { Invoke-KitFetch $url $part $methods[$i]; $got = $true }
+            catch {
+                $why = $_.Exception.Message
+                # (the server answered "not there": no use asking it again, and the host itself works)
+                if (Test-KitGoneError $_.Exception) { $gone = $true; break }
+                if ($i + 1 -lt $methods.Count) {
+                    $next = if ($methods[$i + 1] -eq 'curl') { "trying with curl.exe" } else { "try $($i + 2) of $n in $delay s" }
+                    Write-Host "  $h failed: $why ($next)" -ForegroundColor Yellow
+                    if ($methods[$i + 1] -eq 'web' -and $delay -gt 0) { Start-Sleep -Milliseconds ([int]($delay * 1000)); $delay *= 2 }
+                }
+            }
+        }
+        if (-not $got) {
+            if (-not $gone) { $script:KitBadHosts[$h] = $true }
+            Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
+            $failed += "${h}: $why"; continue
+        }
+        if ((Get-FileHash -LiteralPath $part -Algorithm SHA256).Hash.ToLowerInvariant() -ne $Sha256) {
+            Remove-Item -LiteralPath $part -Force
+            $failed += "${h}: the file it gave is not the one this kit pins (SHA-256 differs)"; continue
+        }
+        Move-Item -LiteralPath $part -Destination $To -Force
+        if ($failed) { Write-Host "  got it from $h" -ForegroundColor Green }
+        return ''
+    }
+    return ($failed -join '; ')
+}
+
+# What a player reads when a download failed everywhere: which hosts failed and why, that the mirror was tried, the
+# usual causes on the PC's side, and a URL to try in a browser.
+function Get-KitDownloadFailText([string]$File, [string]$Why, [string]$TestUrl, [bool]$HadMirror) {
+    $tried = if ($HadMirror) { "Longshot's servers and the co-op mirror on GitHub" } else { "Longshot's servers (this kit has no mirror for it)" }
+    @(
+        "The download of $File failed. The kit tried $tried, each several times and with curl.exe:"
+        "  $Why"
+        'This is nearly always something on this PC or network: an antivirus that scans HTTPS/web traffic (Avast, AVG,'
+        'Kaspersky, ESET, Bitdefender, Norton: turn its web shield or HTTPS scanning off for the build), a VPN or proxy,'
+        'or a firewall. Test: open this in your browser:'
+        "  $TestUrl"
+        'If the browser downloads it but this script cannot, the antivirus or a proxy blocks PowerShell. Start again: what was'
+        'downloaded is kept. Still stuck: scripts\collect-logs.cmd, and send its zip.'
+    ) -join "`n"
+}

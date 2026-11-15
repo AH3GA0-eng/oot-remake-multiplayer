@@ -17,7 +17,8 @@
 # 1. Hookshot's own build tools: the parts of the Hookshot release named in hookshot\TOOLS.txt (its
 #    Python, llvm-mingw, the Vulkan/FFmpeg headers, wgpu-native and the prebuilt third-party files),
 #    downloaded from Longshot's release (git.magicbean.dev) and checked against the SHA-256 in that release's
-#    hookshot-setup.txt (whose own SHA-256 is in TOOLS.txt). About 400 MB, once.
+#    hookshot-setup.txt (whose own SHA-256 is in TOOLS.txt). About 400 MB, once. Each download is tried several
+#    times, then with curl.exe, then from the co-op mirror (TOOLS.txt mirror=); nothing unverified is used.
 # 2. Hookshot's source at the commit in hookshot\PIN (GitHub's source archive), with our patches
 #    from hookshot\patches applied (scripts\apply_patch.py: no git needed).
 # 3. Hookshot's own builder, nx2\make_game.py, on your .nup (or romfs + exefs): 10 to 45 minutes and
@@ -49,12 +50,12 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'   # (Invoke-WebRequest's progress bar makes big downloads many times slower)
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $kit = Split-Path -Parent $PSScriptRoot
 $hs = Join-Path $kit 'hookshot'
 . (Join-Path $PSScriptRoot 'kit-paths.ps1')   # (Test-KitOtherKitGame, Find-KitHookshotGameToCopy)
 . (Join-Path $PSScriptRoot 'coop-ini.ps1')
+Set-KitTls   # (kit-mirror: Tls12 added to what Windows enables, and Tls13 where .NET has it; was Tls12 alone)
 
 function Fail([string]$Text) { Write-Host ''; Write-Host "Longshot build: $Text" -ForegroundColor Red; exit 1 }
 # (kit-friction) Anything this script did not expect: the step it was at, in plain words, and for "access denied" or a
@@ -89,25 +90,12 @@ function Read-KeyFile([string]$Path) {
     return $map
 }
 function Get-Sha256([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
-# $Urls are tried in order (tools.lock gives mirrors): the first that gives the file with the right SHA-256 wins.
-function Get-Download([string[]]$Urls, [string]$To, [string]$Sha256, [string]$What = '') {
-    if ((Test-Path -LiteralPath $To) -and (Get-Sha256 $To) -eq $Sha256) { return }
-    Write-Host "  downloading $(Split-Path -Leaf $To) ..."
-    $part = "$To.part"
-    $why = ''
-    foreach ($url in $Urls) {
-        try { Invoke-WebRequest -Uri $url -OutFile $part -UseBasicParsing }
-        catch { $why = "The download of $url failed: $($_.Exception.Message). Check the internet connection and run this again."; continue }
-        if ($Sha256 -and (Get-Sha256 $part) -ne $Sha256) {
-            Remove-Item -LiteralPath $part -Force
-            if (-not $What) { $What = "$(Split-Path -Leaf $To) is not the file Longshot published" }
-            $why = "$What (SHA-256 differs). Run this again; if it repeats, tell the co-op testers."
-            continue
-        }
-        Move-Item -LiteralPath $part -Destination $To -Force
-        return
-    }
-    Fail $why
+# $Urls are tried in order (tools.lock gives several), then the co-op mirror's copy ($MirrorName under TOOLS.txt's
+# mirror=): each with retries and curl.exe, always checked against $Sha256 (kit-paths.ps1, Get-KitDownload).
+function Get-Download([string[]]$Urls, [string]$To, [string]$Sha256, [string]$MirrorName = '') {
+    $mirrors = if ($mirror -and $MirrorName) { @("$mirror/$MirrorName") } else { @() }
+    $why = Get-KitDownload $Urls $To $Sha256 $mirrors
+    if ($why) { Fail (Get-KitDownloadFailText (Split-Path -Leaf $To) $why $Urls[0] ([bool]$mirrors)) }
 }
 # -Member: only that folder of the zip, its path left out; -Keep: files already there are not overwritten.
 function Expand-Zip([string]$Zip, [string]$To, [int]$Strip = 0, [string]$Member = '', [switch]$Keep) {
@@ -138,6 +126,11 @@ if ($pin.repo -notmatch '^(https://git\.magicbean\.dev)/([A-Za-z0-9_.-]+/[A-Za-z
 $repoUrl = "$($Matches[1])/$($Matches[2])"
 # (Forgejo's API archive: the web /archive/ path answers 404 since 2026-11-13; same bytes, so it is tried first)
 $apiUrl = "$($Matches[1])/api/v1/repos/$($Matches[2])"
+# The co-op mirror (kit-mirror): a GitHub release of ours with the same pinned files (tools/release/mirror_longshot.ps1),
+# tried after Longshot's own servers. OOT_COOP_MIRROR (tests) points it elsewhere.
+$mirror = if ($env:OOT_COOP_MIRROR) { $env:OOT_COOP_MIRROR } else { "$($toolsPin.mirror)" }
+$mirror = $mirror.TrimEnd('/')
+if ($mirror -and $mirror -notmatch '^(https|file)://') { Fail "hookshot\TOOLS.txt: mirror=$mirror is not an https:// address." }
 # The source archive's SHA-256 in TOOLS.txt is for one commit: it must be PIN's.
 if ($toolsPin.source_commit -ne $pin.commit) {
     Fail "hookshot\TOOLS.txt pins the source archive of $($toolsPin.source_commit), but hookshot\PIN says $($pin.commit). This kit is broken: tell the co-op testers."
@@ -254,7 +247,7 @@ if ($toolsReady) {
     Step "Longshot's build tools ($($toolsPin.release)) and source ($($pin.commit.Substring(0, 12)))"
     New-Item -ItemType Directory -Force -Path $downloads | Out-Null
     $lock = Join-Path $downloads "tools-$($toolsPin.release).lock"
-    Get-Download "$repoUrl/releases/download/$($toolsPin.release)/tools.lock" $lock $toolsPin.lock_sha256.ToLowerInvariant()
+    Get-Download "$repoUrl/releases/download/$($toolsPin.release)/tools.lock" $lock $toolsPin.lock_sha256 'tools.lock'
     # tools.lock: "tool <name> <version> <system> <sha256> <size> <dest> <prefix> <url> [<url> ...]"; the URLs are
     # tried in order (Longshot's Cloudflare copy, git.magicbean.dev, then upstream). Of the windows-x64 tools, emsdk
     # is not fetched (llvm-mingw builds the game; the builder sets EMSDK only when its folder is there).
@@ -275,12 +268,12 @@ if ($toolsReady) {
         # (a tool zip your own Longshot's setup downloaded already: the same SHA-256, so the same file)
         $lent = if ($lsHomes) { Copy-KitLongshotDownload $lsHomes $p.Sha $p.File } else { '' }
         if ($lent) { Write-Host "  $($p.Name): copied from your Longshot's downloads ($lent)" }
-        Get-Download $p.Urls $p.File $p.Sha
+        Get-Download $p.Urls $p.File $p.Sha "$($p.Sha)-$($p.Name).zip"
     }
     # Forgejo's source archive at PIN's commit, checked against TOOLS.txt's source_sha256 (a copy
     # already here is checked too, and fetched again when it differs).
     $sourceZip = Join-Path $downloads "longshot-$($pin.commit).zip"
-    Get-Download @("$apiUrl/archive/$($pin.commit).zip", "$repoUrl/archive/$($pin.commit).zip") $sourceZip $toolsPin.source_sha256.ToLowerInvariant() "Longshot's source archive differs from the one this kit was made with"
+    Get-Download @("$apiUrl/archive/$($pin.commit).zip", "$repoUrl/archive/$($pin.commit).zip") $sourceZip $toolsPin.source_sha256 "longshot-$($pin.commit).zip"
 
     Write-Host '  unpacking ...'
     $staging = "$tools.new"
@@ -570,13 +563,9 @@ if (Test-Path -LiteralPath $ootrrPin) {
                 # (no internet: no download try, which would only wait for its timeout)
                 $why = 'this PC has no internet now'
             } else {
-                Write-Host "  downloading $($op.windows) ..."
-                try {
-                    Invoke-WebRequest -Uri "$($op.url)/$($op.windows)" -OutFile "$ootrrZip.part" -UseBasicParsing
-                    if ((Get-Sha256 "$ootrrZip.part") -ne $op.windows_sha256) { $why = 'its SHA-256 differs from the one this kit was made with' }
-                    else { Move-Item -LiteralPath "$ootrrZip.part" -Destination $ootrrZip -Force }
-                } catch { $why = "the download failed: $($_.Exception.Message)" }
-                Remove-Item -LiteralPath "$ootrrZip.part" -Force -ErrorAction SilentlyContinue
+                # (kit-mirror: retries and curl.exe too; optional, so two tries, not four)
+                $why = Get-KitDownload @("$($op.url)/$($op.windows)") $ootrrZip $op.windows_sha256 @() 2
+                if ($why) { $why = "the download failed ($why)" }
             }
         }
         if (-not $why) {
