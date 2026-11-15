@@ -167,6 +167,10 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
         g.seen.refused = event.kind == EventKind::refused
                              ? std::string(coop::net::refuse_reason_text(event.refuse_reason))
                              : std::string();
+        g.seen.banned = event.kind == EventKind::refused && event.refuse_reason == proto::RefuseReason::banned;
+        if (!g.seen.refused.empty()) {
+            g.Line("refused: " + g.seen.refused);   // the full reason in the chat (the tabs show its first part)
+        }
         return;
     case EventKind::player_left:
         g.host_mutes.erase(event.player);

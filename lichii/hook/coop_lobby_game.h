@@ -70,7 +70,8 @@ struct PlayerSeen {
 };
 struct Seen {
     bool connected = false;              // the session took this game in (WELCOME came)
-    std::string refused;                 // why the session turned this game away ("" it did not)
+    std::string refused;                 // why the session turned this game away, in full ("" it did not)
+    bool banned = false;                 // that reason is the host's ban (joining again cannot work)
     std::uint8_t self = 0;
     std::uint8_t host = 0;
     std::vector<PlayerSeen> players;     // by number

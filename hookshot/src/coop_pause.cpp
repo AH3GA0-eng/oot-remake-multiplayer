@@ -111,6 +111,7 @@ std::vector<std::string> StatusLines(const HosCoopStatus& st, const CoopLobby::S
     CoopTitleMenu::HostView v;
     v.in_session = seen.connected;
     v.refused = seen.refused;
+    v.banned = seen.banned;
     v.host = g_doing == "hosting";
     v.state = st.state;
     v.problem = st.problem;

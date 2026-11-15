@@ -16,6 +16,7 @@
 #include "coop_lobby_game.h"
 #include "coop_objects.h"
 #include "coop_pause_files.h"
+#include "coop_title_menu.h"
 #include "coop_voice.h"
 #include "hos_coop_host.h"
 
@@ -61,7 +62,7 @@ Lobby Read(int max_players) {
         st.size = sizeof st;
         CoopHookshot::HostMenu().Status(&st);
         if (!seen.refused.empty()) {
-            l.waiting = "Your friend's game turned this one away: " + seen.refused + ".";
+            l.waiting = CoopTitleMenu::RefusedLine(seen.refused);   // the full reason: the chat and the log
         } else if (st.state != HOS_COOP_IDLE && st.state != HOS_COOP_FAILED) {
             l.waiting = "Co-op is starting...";
         }

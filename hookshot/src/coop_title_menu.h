@@ -147,11 +147,16 @@ struct HostView {
     // (WELCOME came), as the Lobby tab counts it; refused is why the session turned it away ("" it did not).
     bool in_session = true;
     std::string refused;
+    bool banned = false;    // refused by the host's ban: joining again cannot work
 };
 std::vector<std::string> PlainStatus(const HostView& v);
 // The HOS_COOP_* state the menus show: a join told to connect is still joining until the session took it in, so
 // the Multiplayer tab and the Lobby tab agree.
 int ShownState(int state, bool host, bool in_session);
+// A refusal reason for one menu row: the part before its first ':' (the full text is in the chat and the log).
+std::string ShortReason(const std::string& reason);
+// The menus' line for a refusal: "Your friend's game turned this one away: <ShortReason>."
+std::string RefusedLine(const std::string& reason);
 
 // Friends on the host's home network or on a VPN (Radmin VPN, Hamachi, Tailscale) join by address, not by the
 // invite code (the code holds the host's internet address). The Host dialog's "Same network or VPN" row copies

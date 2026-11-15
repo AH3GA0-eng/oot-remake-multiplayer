@@ -649,7 +649,21 @@ TEST_CASE("title menu: a join told to connect says joining until the session's w
     CHECK(PlainStatus(h) == std::vector<std::string>{"Joining your friend's game..."});
     h.refused = "the session is full";
     CHECK(PlainStatus(h)[0] == "Your friend's game turned this one away: the session is full.");
+    CHECK(PlainStatus(h)[1] == "Press Leave, then join again.");
+    // One row: only the part before ':' (the full reason is in the chat and the log); a ban offers no join again.
+    h.refused = "the host banned you from this game: you cannot join it again until the host stops hosting";
+    h.banned = true;
+    CHECK(PlainStatus(h) ==
+          std::vector<std::string>{"Your friend's game turned this one away: the host banned you from this game.",
+                                   "Press Leave."});
+    h.banned = false;
     h.refused.clear();
     h.in_session = true;
     CHECK(PlainStatus(h) == std::vector<std::string>{"Connected! Choose your file and play."});
+}
+
+TEST_CASE("title menu: a refusal's row keeps the part before the first ':'") {
+    CHECK(ShortReason("the session is full") == "the session is full");
+    CHECK(ShortReason("a: b: c") == "a");
+    CHECK(RefusedLine("x: y") == "Your friend's game turned this one away: x.");
 }
