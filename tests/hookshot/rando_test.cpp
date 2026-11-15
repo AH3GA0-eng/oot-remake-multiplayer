@@ -968,6 +968,7 @@ TEST_CASE("rando: a puppet pack made after the seed: the seed's size table is ma
         CHECK_FALSE(fs::exists(w.mods / kFolder / "_seed-build"));
         const auto lines = rando.TakeLines();
         CHECK(Count(lines, RefreshLine("PACK1")) == 1);
+        CHECK(rando.HoldPack());  // this run read the old table: no puppet until the restart
         const auto why = loader.RestartNeeded().why;
         CHECK(std::find(why.begin(), why.end(), RefreshLine("PACK1")) != why.end());
         CHECK(On(loader, "randomizer-PACK1"));
@@ -981,6 +982,7 @@ TEST_CASE("rando: a puppet pack made after the seed: the seed's size table is ma
         rando.Wait();
         CHECK(w.runs.size() == 4);
         CHECK(rando.TakeLines().empty());
+        CHECK_FALSE(rando.HoldPack());
     }
 }
 
@@ -1001,11 +1003,26 @@ TEST_CASE("rando: a seed from before the stamp whose table is already right is n
     PlaysSeed(w, "randomizer-OLD1", 2);
     CoopMods::Loader loader(w.mods, {nullptr, 2, nullptr});
     loader.Start();
-    Rando rando(loader, w.Hooks());
+    std::mutex log_mutex;
+    std::vector<std::string> log;
+    auto hooks = w.Hooks();
+    hooks.log = [&](const std::string& l) {
+        const std::lock_guard lock(log_mutex);
+        log.push_back(l);
+    };
+    Rando rando(loader, hooks);
     rando.Start();
     rando.Wait();
     CHECK(w.runs.size() == 4);  // checked once
     CHECK(rando.TakeLines().empty());
+    CHECK_FALSE(rando.HoldPack());  // held while it was checked, then let go
+    const std::lock_guard lock(log_mutex);
+    CHECK(std::any_of(log.begin(), log.end(), [](const std::string& l) {
+        return l.find("the co-op puppets wait until it is checked") != std::string::npos;
+    }));
+    CHECK(std::any_of(log.begin(), log.end(), [](const std::string& l) {
+        return l.find("size table was right: the co-op puppets are made now") != std::string::npos;
+    }));
     CHECK(fs::is_regular_file(w.mods / "randomizer-OLD1" / kTablesFile));
 }
 
@@ -1095,6 +1112,7 @@ TEST_CASE("rando: a seed that cannot be made again for the puppets is kept, and 
         return l.rfind("Randomizer: the seed could not be made again for the co-op puppets", 0) == 0;
     }));
     CHECK(told.Get().empty());
+    CHECK(rando.HoldPack());  // its table is still the old one
     rando.Recheck();  // not tried again in a loop
     rando.Wait();
     CHECK(w.runs.size() == 4);

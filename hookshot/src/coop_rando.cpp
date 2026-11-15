@@ -630,8 +630,25 @@ void Rando::Start() {
     {
         // Whether this run of the game plays a seed: one of ours was indexed at its start.
         bool on_now = false;
+        std::string playing;
         for (const CoopMods::Row& r : loader_.Rows()) {
-            if (IsSeedFolder(r.name) && r.on_now) on_now = true;
+            if (IsSeedFolder(r.name) && r.on_now) {
+                on_now = true;
+                playing = r.name;
+            }
+        }
+        // The seed this run plays, built beside other size tables than now: no pack actor until it is checked.
+        if (on_now) {
+            const std::string now = CurrentTables();
+            for (const Built& b : Scan(loader_.Root())) {
+                if (CoopMods::NameSame(b.name, playing) && b.tables != now) {
+                    hold_pack_ = true;
+                    if (hooks_.log) {
+                        hooks_.log("randomizer: " + playing + " was built beside other size tables than now: the "
+                                   "co-op puppets wait until it is checked (they could crash the game)");
+                    }
+                }
+            }
         }
         const std::lock_guard lock(mutex_);
         on_now_ = on_said_ = on_now;
@@ -1083,9 +1100,12 @@ void Rando::Build(const Plan& plan, const Want& want) {
         SayRestart(ReadyLine(want.seed));
     } else if (table_changed && in_use) {
         loader_.NoteChanged(kFolder, RefreshLine(want.seed));
-        SayRestart(RefreshLine(want.seed));
+        SayRestart(RefreshLine(want.seed));  // (HoldPack stays: this run's table is the old one)
     } else {
         Say(plan.why + ": done");
+        if (in_use && hold_pack_.exchange(false) && hooks_.log) {
+            hooks_.log("randomizer: " + plan.folder + "'s size table was right: the co-op puppets are made now");
+        }
     }
 }
 
