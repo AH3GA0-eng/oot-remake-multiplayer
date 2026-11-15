@@ -124,18 +124,19 @@ def is_ours(name):
     return top.startswith("randomizer-") or top == CONTROL
 
 
+def fnv64_bytes(data):
+    """FNV-1a 64 of bytes, 16 lower-case hex: coop_rando's Fnv64Hex."""
+    h = 0xcbf29ce484222325
+    for c in data:
+        h = ((h ^ c) * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF
+    return f"{h:016x}"
+
+
 def fnv64(path):
-    """(FNV-1a 64 hex of the file's bytes, its length): coop_rando's Fnv64Hex."""
-    h, n = 0xcbf29ce484222325, 0
+    """(FNV-1a 64 hex of the file's bytes, its length)."""
     with open(path, "rb") as f:
-        while True:
-            b = f.read(1 << 16)
-            if not b:
-                break
-            for c in b:
-                h = ((h ^ c) * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF
-            n += len(b)
-    return f"{h:016x}", n
+        data = f.read()
+    return fnv64_bytes(data), len(data)
 
 
 def file_line(root, path):
@@ -159,8 +160,8 @@ def write_mark(root, win_path, fname):
     return mark
 
 
-def stamp_text(root, out_path, inputs):
-    lines = [STAMP_HEAD, "out " + file_line(root, out_path)]
+def stamp_text(root, out_path, inputs, out_line=None):
+    lines = [STAMP_HEAD, "out " + (out_line or file_line(root, out_path))]
     lines += sorted("in " + file_line(root, p) for p in inputs)
     return "\n".join(lines) + "\n"
 
@@ -280,8 +281,13 @@ def merge_one(root, codec, fname, win_name, win_path, others, say):
         with open(p, "rb") as f:
             loaded.append(codec.load(f.read()))
     added, raised = merge(table, loaded)
-    write_atomic(table_path, codec.save(table, orig_raw) if (added or raised) else orig_raw)
-    write_atomic(stamp_path, stamp_text(root, table_path, inputs).encode("utf-8"))
+    data = codec.save(table, orig_raw) if (added or raised) else orig_raw
+    # The stamp names the table about to be written BEFORE it is written: stopped in between, the next start sees the
+    # table is not that one (still the original) and keeps it as the original, never a merged table as the original.
+    rel = os.path.relpath(table_path, root).replace(os.sep, "/")
+    write_atomic(stamp_path, stamp_text(root, table_path, inputs,
+                                        f"{rel} {len(data)} {fnv64_bytes(data)}").encode("utf-8"))
+    write_atomic(table_path, data)
     write_mark(root, win_path, fname)
     names = ", ".join("the puppet pack" if fold(n) == PACK else n for n, _ in others)
     say(f"Size tables: the game reads {win_name}'s; merged in the entries of {names} "
@@ -291,18 +297,26 @@ def merge_one(root, codec, fname, win_name, win_path, others, say):
 
 
 def undo(root, say=print):
+    """Puts each kept original back, but only over the table the merge wrote: a new seed put into the folder since
+    keeps its own table (the kept one is the old seed's). The kept folder and the mark go either way."""
     n = 0
     for name, path in find_mods(root).items():
         keep = os.path.join(path, KEEP_DIR)
-        if not os.path.isfile(os.path.join(keep, STAMP)):
+        stamp = read_text(os.path.join(keep, STAMP))
+        if stamp is None:
             continue
+        out = next((l[4:] for l in stamp.split("\n") if l.startswith("out ")), None)
+        back = False
         for f in os.listdir(keep):
-            if f.endswith(TAIL):
-                shutil.copyfile(os.path.join(keep, f), os.path.join(path, *RESOURCE, f))
+            table = os.path.join(path, *RESOURCE, f)
+            if f.endswith(TAIL) and os.path.isfile(table) and out == file_line(root, table):
+                shutil.copyfile(os.path.join(keep, f), table)
+                back = True
         shutil.rmtree(keep)
         if os.path.isfile(os.path.join(path, MARK)):
             os.remove(os.path.join(path, MARK))
-        say(f"Size tables: {name}'s own table is back.")
+        say(f"Size tables: {name}'s own table is back." if back else
+            f"Size tables: {name} has another table than the merged one now (a new seed?): left as it is.")
         n += 1
     return n
 
@@ -318,7 +332,12 @@ def main(argv=None):
     if a.undo:
         undo(a.mods)
         return 0
-    return 1 if merge_mods(a.mods, a.romfs) else 0
+    try:
+        return 1 if merge_mods(a.mods, a.romfs) else 0
+    except SystemExit:  # (zs._zstd: no zstandard package)
+        print("Size tables: not merged (this Python has no zstandard package): with a mod that has its own size "
+              "table, the other players can't be shown.")
+        return 1
 
 
 if __name__ == "__main__":

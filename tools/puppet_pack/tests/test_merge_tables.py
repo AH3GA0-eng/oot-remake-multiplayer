@@ -2,6 +2,8 @@
 
     python tools/puppet_pack/tests/test_merge_tables.py
 """
+import contextlib
+import io
 import os
 import random
 import shutil
@@ -115,6 +117,57 @@ class MergeTablesTest(unittest.TestCase):
         self.assertEqual(self.table("ootrr-site").by_crc, {1: 100, 7: 70})
         mt.undo(self.mods, self.say)
         self.assertEqual(self.table("ootrr-site").by_crc, {7: 70})
+
+    def test_undo_leaves_a_new_seed_put_in_after_the_merge_alone(self):
+        self.put_table(PACK, {1: 100})
+        self.put_table("ootrr-site", {2: 5})
+        self.run_merge()
+        self.put_table("ootrr-site", {7: 70})  # another seed from the site, no start since
+        mt.undo(self.mods, self.say)
+        self.assertEqual(self.table("ootrr-site").by_crc, {7: 70})  # not the old seed's {2: 5}
+        self.assertIn("left as it is", self.lines[-1])
+        self.assertFalse(os.path.exists(self.path("ootrr-site", mt.KEEP_DIR)))
+        self.assertFalse(os.path.exists(self.path("ootrr-site", mt.MARK)))
+
+    def test_a_merge_stopped_after_the_stamp_keeps_the_true_original(self):
+        self.put_table(PACK, {1: 100})
+        self.put_table("ootrr-site", {2: 5})
+        real = mt.write_atomic
+        calls = []
+
+        def stop_at_the_table(path, data):
+            if path.endswith(NAME):
+                calls.append(path)
+                raise OSError("stopped")
+            real(path, data)
+
+        mt.write_atomic = stop_at_the_table
+        try:
+            self.assertEqual(self.run_merge(), 1)
+        finally:
+            mt.write_atomic = real
+        self.assertTrue(calls)  # the stamp was written, the table not
+        self.run_merge()
+        self.assertEqual(self.table("ootrr-site").by_crc, {1: 100, 2: 5})
+        mt.undo(self.mods, self.say)
+        self.assertEqual(self.table("ootrr-site").by_crc, {2: 5})  # the site's own, not a merged one
+
+    def test_no_zstandard_is_one_line_not_a_stop(self):
+        self.put_table(PACK, {1: 100})
+        self.put_table("ootrr-site", {2: 5})
+        real = mt.zs._zstd
+
+        def none():
+            raise SystemExit("this tool needs the 'zstandard' Python package")
+
+        mt.zs._zstd = none
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(mt.main(["--mods", self.mods]), 1)
+        finally:
+            mt.zs._zstd = real
+        self.assertIn("no zstandard", out.getvalue())
 
     def test_our_seeds_and_the_pack_are_left_alone(self):
         self.put_table(PACK, {1: 100})

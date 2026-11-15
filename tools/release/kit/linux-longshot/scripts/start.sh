@@ -150,8 +150,12 @@ if [[ -f $pack/coop_puppet.json && -n $py && -f $DATA/tools/puppet_pack/self_tun
 fi
 # #48: one size table for the game (a seed from OOTRR's website has its own, without the puppet pack's entries):
 # tools/puppet_pack/merge_tables.py, as the Windows kit's Invoke-KitSizeTableMerge. Never stops the start.
-if [[ -n $py && -f $DATA/tools/puppet_pack/merge_tables.py && -d $GAME/mods ]]; then
-    "$py" -I -B "$DATA/tools/puppet_pack/merge_tables.py" --mods "$GAME/mods" --romfs "$GAME/romfs" 2>&1 | sed 's/^/  /' || true
+if [[ -f $DATA/tools/puppet_pack/merge_tables.py && -d $GAME/mods ]]; then
+    if [[ -n $py ]]; then
+        "$py" -I -B "$DATA/tools/puppet_pack/merge_tables.py" --mods "$GAME/mods" --romfs "$GAME/romfs" 2>&1 | sed 's/^/  /' || true
+    else
+        say "  Size tables: not merged (no Python): with a mod that has its own size table, the other players can't be shown."
+    fi
 fi
 step 'Starting the game: Host or Join in its menu (Multiplayer)'
 # (as Longshot's own builder/linux/longshot-launch: nothing of a launcher's environment goes in; its
