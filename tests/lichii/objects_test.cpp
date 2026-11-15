@@ -2727,6 +2727,46 @@ TEST_CASE("objects: a copy whose own AI acts near our Link is flagged targeting 
     CHECK_FALSE(flags.has_value());
 }
 
+TEST_CASE("objects: a ceiling Skulltula copy with our Link under it is flagged targeting (issue 35)") {
+    CHECK(CoopObjects::IsCeilingWait("CeilingWait"));
+    CHECK(CoopObjects::IsCeilingWait("CeilingWait_ModelOnlyLOD"));
+    CHECK_FALSE(CoopObjects::IsCeilingWait("Wait"));
+    CHECK_FALSE(CoopObjects::IsCeilingWait("Fall"));
+
+    // The owner's (player 2's) Skulltula hangs 12 m up, over the 10 m wake
+    // reach; its copy's own AI shows no wake (it plays CeilingWait too).
+    auto run = [](float link_x, const std::string& owners, std::uint8_t owner = 2, bool wake = true,
+                  std::uint64_t until = 1500) {
+        Sync sync;
+        sync.SetWake(wake);
+        sync.SetPlayer(proto::Vec3{link_x, 0.0f, 0.0f});
+        auto seen = [] {
+            Seen s = Acting(0x100, 0x11, 2, 0.0f, "CeilingWait", "Enemy_Skulltula");
+            s.position[1] = 12.0f;
+            return s;
+        };
+        Tick(sync, 0, {seen()});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, owner);
+        std::optional<std::uint8_t> flags;
+        for (std::uint64_t t = 10; t < until; t += 66) {
+            proto::ObjectSample s = OwnerSample(id, owner, t * kMs, 0.0f, 2, owners);
+            s.state.position = proto::Vec3{0.0f, 12.0f, 0.0f};
+            sync.Receive(s);
+            for (const auto& p : All<proto::ObjectPresent>(Tick(sync, t * kMs, {seen()}))) {
+                flags = p.objects[0].flags;
+            }
+        }
+        return flags && (*flags & kTargeting) != 0;
+    };
+    CHECK(run(1.0f, "CeilingWait"));              // under it: the server gives it to us
+    CHECK_FALSE(run(6.0f, "CeilingWait"));        // 6 m across: not under it
+    CHECK_FALSE(run(1.0f, "Walk"));               // already down: the usual rules
+    CHECK_FALSE(run(1.0f, "CeilingWait", 1));     // ours already
+    CHECK_FALSE(run(1.0f, "CeilingWait", 2, false));  // LICHII_COOP_OBJECTS_WAKE=0
+    CHECK_FALSE(run(1.0f, "CeilingWait", 2, true, 800));  // under 1 s: not yet
+}
+
 TEST_CASE("objects: a copy whose wake the Mover put back once is flagged targeting (issue 157)") {
     // A buried Peahat's AI asks for its rise once; the Mover plays the
     // owner's ground animation over it on the next game frame, so every walk

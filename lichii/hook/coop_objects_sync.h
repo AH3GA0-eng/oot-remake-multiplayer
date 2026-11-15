@@ -311,6 +311,15 @@ bool IsDeathAnimation(std::string_view name);
 // alone, it hid a copy that stayed alive and targetable.
 bool IsHideAnimation(std::string_view name);
 
+// Issue 35 (3): an enemy waiting on the ceiling to drop on a Link (the
+// Skulltula's "CeilingWait", any LOD variant).
+bool IsCeilingWait(std::string_view name);
+// Our Link at `link` stands under a ceiling enemy at `enemy`: within
+// kCeilingUnderM across (x, z) and below it by at most kCeilingDropM (y up).
+inline constexpr float kCeilingUnderM = 4.0f;
+inline constexpr float kCeilingDropM = 30.0f;
+bool UnderCeilingEnemy(const coop::protocol::Vec3& enemy, const coop::protocol::Vec3& link);
+
 // Issue 150: a boss animation that plays while it is stunned or knocked down
 // ("Stun_Lp", "Down_Start", "Fall_St" when Gohma drops from the ceiling): the
 // first word, LOD suffix off, is Stun, Down, Fall or Faint. A seed in Gohma's

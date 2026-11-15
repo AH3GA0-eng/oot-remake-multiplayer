@@ -499,6 +499,17 @@ bool IsHideAnimation(std::string_view name) {
     return false;
 }
 
+bool IsCeilingWait(std::string_view name) {
+    return AnimationBase(name).starts_with("CeilingWait");
+}
+
+bool UnderCeilingEnemy(const proto::Vec3& enemy, const proto::Vec3& link) {
+    const float dx = enemy[0] - link[0];
+    const float dz = enemy[2] - link[2];
+    const float above = enemy[1] - link[1];
+    return dx * dx + dz * dz <= kCeilingUnderM * kCeilingUnderM && above > 0.0f && above <= kCeilingDropM;
+}
+
 bool IsStunAnimation(std::string_view name) {
     const std::string_view base = AnimationBase(name);
     const std::string_view first = base.substr(0, base.find('_'));
@@ -2044,6 +2055,19 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 if (differs || put_back) {
                     ChaseStep(o, now_us);
                 }
+            }
+            // Issue 35 (3): a copy whose owner's enemy waits on the ceiling
+            // (a Skulltula's "CeilingWait") with our Link under it. The
+            // owner's AI drops it only on its own Link, and the copy's wake
+            // above may never show (too high, or its AI held). Flagged
+            // targeting, the server hands it to us (issue 101) and our
+            // game's own AI drops it on our Link.
+            if (wake_ && o.reacts && owner != owners_.end() && owner->second.player != 0 &&
+                owner->second.player != self && now_seen.contains(address) && !o.received.empty() &&
+                now_us >= o.received.back().time && now_us - o.received.back().time <= kPoseStaleUs &&
+                o.received.back().animation && IsCeilingWait(o.received.back().animation->name) &&
+                UnderCeilingEnemy(o.position, *player_)) {
+                ChaseStep(o, now_us);
             }
         }
         // Issue 151 (fishing-3): how near our lure is to each fish. The
