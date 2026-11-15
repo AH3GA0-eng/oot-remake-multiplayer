@@ -359,8 +359,37 @@ std::string ShortName(std::string_view mod) {
 }
 }  // namespace
 
+std::string Fnv64Hex(std::string_view bytes) {
+    std::uint64_t h = 0xcbf29ce484222325ull;
+    for (const char c : bytes) h = (h ^ static_cast<unsigned char>(c)) * 0x100000001b3ull;
+    char out[17];
+    std::snprintf(out, sizeof out, "%016llx", static_cast<unsigned long long>(h));
+    return out;
+}
+
+bool MergedByKit(const fs::path& mods_root, std::string_view mod) {
+    const fs::path folder = mods_root / CoopMods::FromUtf8(std::string(mod));
+    std::string version, table, table_hash, pack_hash;
+    for (const std::string& line : LastLines(ReadAll(folder / kMergedFile), static_cast<std::size_t>(-1))) {
+        std::istringstream words(line);
+        std::string key;
+        words >> key;
+        if (key == "coop-merged") words >> version;
+        else if (key == "table") words >> table >> table_hash;
+        else if (key == "pack") words >> pack_hash;
+    }
+    if (version != "1" || table.empty() || table_hash.size() != 16 || pack_hash.size() != 16) return false;
+    if (table.find_first_of("/\\") != std::string::npos || table == "." || table == "..") return false;
+    const fs::path in_mod = folder / "romfs" / "System" / "Resource" / CoopMods::FromUtf8(table);
+    const fs::path in_pack =
+        mods_root / CoopMods::FromUtf8(kPackFolder) / "romfs" / "System" / "Resource" / CoopMods::FromUtf8(table);
+    std::error_code ec;
+    if (!fs::is_regular_file(in_mod, ec) || !fs::is_regular_file(in_pack, ec)) return false;
+    return Fnv64Hex(ReadAll(in_mod)) == table_hash && Fnv64Hex(ReadAll(in_pack)) == pack_hash;
+}
+
 std::optional<std::string> OutsideSizeTable(const fs::path& mods_root, const std::vector<CoopMods::Row>& rows,
-                                            bool list_order) {
+                                            bool list_order, std::string* merged) {
     std::vector<const CoopMods::Row*> order;
     for (const CoopMods::Row& r : rows) {
         if (r.on_now && HasSizeTable(mods_root / CoopMods::FromUtf8(r.name))) order.push_back(&r);
@@ -384,6 +413,10 @@ std::optional<std::string> OutsideSizeTable(const fs::path& mods_root, const std
         }
     }
     if (winner == nullptr || IsSeedFolder(winner->name) || CoopMods::NameSame(winner->name, kFolder)) {
+        return std::nullopt;
+    }
+    if (MergedByKit(mods_root, winner->name)) {
+        if (merged != nullptr) *merged = winner->name;
         return std::nullopt;
     }
     return winner->name;
@@ -799,7 +832,13 @@ void Rando::Start() {
             }
         }
         // Another mod's size table wins (#48: a seed made on OOTRR's page, dropped in by hand): no pack actor this run.
-        if (const auto outside = OutsideSizeTable(loader_.Root(), loader_.Rows(), loader_.ExeReadsList())) {
+        std::string merged;
+        const auto outside = OutsideSizeTable(loader_.Root(), loader_.Rows(), loader_.ExeReadsList(), &merged);
+        if (!merged.empty() && hooks_.log) {
+            hooks_.log("randomizer: the game reads the size table of the mod " + merged +
+                       ", which the kit merged with the co-op puppets' entries (" + kMergedFile + "): puppets on");
+        }
+        if (outside) {
             outside_ = true;
             if (hooks_.log) {
                 hooks_.log("randomizer: the game reads the size table of the mod " + *outside +
