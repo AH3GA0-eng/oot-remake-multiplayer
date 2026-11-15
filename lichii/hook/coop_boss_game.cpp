@@ -468,6 +468,14 @@ void OnEvent(const coop::net::Event& event) {
     }
 }
 
+void ForgetFights() {
+    Glue& g = TheGlue();
+    g.sync.Reset();
+    g.scenes.Reset();
+    g.max_life_cap.reset();
+    LOG_INFO(Core, "coop: boss: the host loaded a save: the fights this session knew are forgotten");
+}
+
 void SetMaxLife(std::optional<std::int32_t> max_life) {
     TheGlue().max_life = max_life;
 }
