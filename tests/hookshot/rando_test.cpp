@@ -848,6 +848,11 @@ TEST_CASE("rando: only the presets this OOTRR can make are offered, a bad one go
         loader.Start();
         Rando rando(loader, w.Hooks());
         rando.Start();
+        // Start's manifest rewrite (the names in the player's language) keeps the refused one out.
+        const auto choices = PresetChoices(loader);
+        CHECK(std::find(choices.begin(), choices.end(), "full_shuffle") == choices.end());
+        CHECK(std::find(choices.begin(), choices.end(), "keysanity") != choices.end());
+        CHECK(Get(w.mods / kFolder / CoopMods::kManifestFile).find("\"name_zh-Hans\"") != std::string::npos);
         REQUIRE(loader.Set(kFolder, "seed", "PRE2"));
         rando.Wait();
         CHECK(w.runs.size() == before + 2);  // generate and build only

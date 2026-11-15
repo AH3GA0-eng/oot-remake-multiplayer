@@ -753,8 +753,18 @@ void Rando::Start() {
     std::error_code ec;
     // The manifest is rewritten when its text changes, not only when it is missing:
     // the text carries the settings' names and helps in the player's language, and a
-    // mod folder installed by an older build has the English one.
-    const std::string manifest = ManifestText();
+    // mod folder installed by an older build has the English one. The presets an earlier
+    // try found this OOTRR cannot make (kPresetsFile) stay left out: the probe that would
+    // trim them again is skipped on a cache hit. A new OOTRR is tried again before its
+    // first build, and that probe writes the manifest anew.
+    std::vector<std::string> offered;
+    {
+        const PresetCache cache = ReadPresetCache(ReadFileText(folder / kPresetsFile));
+        for (const char* p : kPresets) {
+            if (const auto known = cache.ok.find(p); known == cache.ok.end() || known->second) offered.emplace_back(p);
+        }
+    }
+    const std::string manifest = ManifestText(offered);
     if (!fs::exists(folder / CoopMods::kManifestFile, ec)) {
         fs::create_directories(folder, ec);
     }
