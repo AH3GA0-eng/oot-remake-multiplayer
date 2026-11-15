@@ -85,6 +85,7 @@ function Clear-KitTypedAhead {
 function Read-TimedLine([int]$Seconds) {
     $redirected = $true
     try { $redirected = [Console]::IsInputRedirected } catch { }
+    $script:KitLineTimedOut = $false
     if ($redirected) { return "$([Console]::In.ReadLine())" }
     # Keys typed before the question are not its answer: the Enter after a one-key Y/n question stayed in the window
     # and ended the next question empty (player report 87: 'No game files given' at every start).
@@ -105,6 +106,7 @@ function Read-TimedLine([int]$Seconds) {
         }
         Write-Host ''
         Write-Host "  (Nothing typed in $Seconds seconds: going on without it.)"
+        $script:KitLineTimedOut = $true
         return ''
     } finally { if ($qe -eq $false) { [void](Set-KitQuickEdit $false) } }
 }
@@ -129,7 +131,8 @@ function Resolve-KitGameAnswer([string]$Answer) {
         $hint = if ($p -notmatch '^([A-Za-z]:\\|\\\\)') { ' It does not start with a drive (like C:\), so it is not a whole path.' } else { ' Check the drive is plugged in and the file was not moved or renamed.' }
         return @{ Path = ''; Why = "Windows finds nothing at $p.$hint $how"; Note = '' }
     }
-    $item = Get-Item -LiteralPath $p -Force
+    try { $item = Get-Item -LiteralPath $p -Force -ErrorAction Stop }
+    catch { return @{ Path = ''; Why = "Windows cannot open $p ($($_.Exception.Message)). Move the file to a folder of yours (such as Downloads) and give it again."; Note = '' } }
     $note = ''
     if ($item.PSIsContainer) {
         $nups = @(Get-ChildItem -LiteralPath $item.FullName -File -Filter '*.nup' -ErrorAction SilentlyContinue)
@@ -162,6 +165,10 @@ function Resolve-KitGameAnswer([string]$Answer) {
 function Read-KitPath([int]$Seconds, [scriptblock]$Fits) {
     $p = ConvertTo-KitAnswerPath (Read-TimedLine $Seconds)
     if ($p) { return $p }
+    # (only for Enter pressed by someone at the window: never for input from a file or a question that timed out)
+    $redirected = $true
+    try { $redirected = [Console]::IsInputRedirected } catch { }
+    if ($redirected -or $script:KitLineTimedOut) { return '' }
     $copied = Get-KitClipboardFile
     if ($copied -and $Fits -and (& $Fits $copied)) { Write-Host "  Taken from what you copied: $copied"; return $copied }
     return ''

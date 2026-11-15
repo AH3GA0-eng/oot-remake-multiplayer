@@ -484,6 +484,9 @@ if (-not $Game -and (-not $gameReady -or $Rebuild -or $CheckOnly)) {
         $remembered = "$(Get-Content -LiteralPath $last -TotalCount 1)".Trim()
         if ($remembered -and (Test-Path -LiteralPath $remembered)) {
             $a = Resolve-KitGameAnswer $remembered
+            # (refused by Longshot's check before: asked again, with that reason)
+            $refused = if (Test-Path -LiteralPath $gameRejected) { "$(Get-Content -LiteralPath $gameRejected -TotalCount 1)".Trim() } else { '' }
+            if ($refused -and $refused -ieq $remembered) { $a = @{ Why = 'Longshot''s check refused it the last time.' } }
             if ($a.Why) { Write-Host "The game files from the last time cannot be taken: $($a.Why)" -ForegroundColor Yellow }
             else { $Game = $remembered; Write-Host "Your game (from the last time): $Game" }
         }
@@ -601,6 +604,12 @@ if ($gameReady -and -not $Rebuild -and -not $CheckOnly) {
         $said = @($script:MakeGameErrors | Select-Object -Last 2) -join ' '
         $why = "Longshot's check refused $Game$(if ($said) { ": $said" } else { ' (its lines above say why)' })."
         Save-KitGameRejected $Game $why
+        # (and forgotten: a remembered file the check refuses would be taken again at every start, with no question.
+        # The pack question and the pack step save game-files.txt unchecked.)
+        $remembered = Join-Path $hs 'game-files.txt'
+        if ((Test-Path -LiteralPath $remembered) -and "$(Get-Content -LiteralPath $remembered -TotalCount 1)".Trim() -ieq $Game) {
+            Remove-Item -LiteralPath $remembered -Force -ErrorAction SilentlyContinue
+        }
         Fail "$why Most often the file is another version of the game: co-op needs program 0400486024DEC000, update v131072, build e0f3ccfa (dump that version and give its .nup). Start again to give other files."
     }
     # Taken: remembered now, so a build that stops later does not ask again.

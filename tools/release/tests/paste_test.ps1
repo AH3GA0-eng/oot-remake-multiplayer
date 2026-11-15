@@ -141,7 +141,7 @@ try {
     $out = '"C:\a b\x.nup"' | & $ps -NoProfile -ExecutionPolicy Bypass -File $ask
     Check ("$out".EndsWith('[C:\a b\x.nup]')) "a redirected answer loses its quotes [$out]"
     $out = '' | & $ps -NoProfile -ExecutionPolicy Bypass -File $ask
-    Check ("$out".EndsWith('[]') -or "$out" -match 'Taken from what you copied') "an empty redirected answer: empty (or a copied .nup) [$out]"
+    Check ("$out".EndsWith('[]')) "an empty redirected answer: empty (never the clipboard) [$out]"
 } finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
 
 # --- Clipboard and QuickEdit never throw (CI: no clipboard, no console window)
@@ -158,6 +158,11 @@ Check (-not ($hb -match 'Read-Host\)')) 'hookshot-build.ps1 asks no path with a 
 Check (([regex]::Matches($hb, 'Read-KitPath \d+ \{')).Count -eq 4) 'all four path questions use Read-KitPath'
 Check ($hb.Contains('Resolve-KitGameAnswer') -and $hb.Contains('Save-KitGameRejected') -and $hb.Contains("Find-KitGameNup '' `$kit")) 'hookshot-build.ps1 says why game files are refused, remembers it, looks in the usual places'
 Check (-not $hb.Contains("Fail 'No game files given")) 'an empty game answer is asked again, not a stop'
+$fail = $hb.Substring($hb.IndexOf('Save-KitGameRejected $Game $why'))
+$fail = $fail.Substring(0, $fail.IndexOf('Fail "'))
+Check ($fail.Contains('Remove-Item -LiteralPath $remembered')) 'a check refusal forgets the remembered game file (no loop without a question)'
+Check ($hb -match '\$refused -ieq \$remembered') 'a remembered file refused before is not taken again'
+Check ($cm.Contains('if ($redirected -or $script:KitLineTimedOut) { return '''' }')) 'no clipboard file on redirected input or a timed-out question'
 Check (([regex]::Matches($hb, 'Ctrl\+V or right-click')).Count -ge 4) 'every path question says Ctrl+V or right-click, or drag'
 
 if ($failed) { Write-Host "$failed check(s) failed"; exit 1 }
