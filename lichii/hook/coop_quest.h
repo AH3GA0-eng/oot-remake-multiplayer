@@ -102,6 +102,13 @@ struct StepWant {
 // out of one a player is in (their fight or race goes on).
 bool HeldStep(std::uint32_t challenge, std::uint32_t step);
 
+// The step the game's ChallengeMgr holds for `challenge` (Murmur3 of the quest's
+// name): what the game's logic reads, not GameData. Read only; nothing before a
+// game is loaded or for a quest the manager does not have. `main` is main's
+// guest address; `read` reads guest memory.
+using ReadMemory = std::function<bool(std::uint64_t address, void* out, std::size_t size)>;
+std::optional<std::uint32_t> LiveStep(const ReadMemory& read, std::uint64_t main, std::uint32_t challenge);
+
 // The step of `quest` the live manager should get, from the GameData step
 // `value` reads, or nothing. 0.11 sends only Get_StoneOfFire (the Kakariko
 // gate's quest), and only from its floor (KakarikoVillageNpc) on. The other

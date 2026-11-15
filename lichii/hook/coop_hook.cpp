@@ -500,6 +500,7 @@ public:
                     // Issue 190: a shared ocarina is equipped too, or D-pad
                     // Left takes nothing out.
                     MendOcarina(*memory);
+                    MendLetters(*memory);  // issue 58: Zelda's Letter spent, Ruto's Letter for everyone
                     if (CoopStory::On()) {
                         CatchUpQuest(*memory);  // issue 130: the Kokiri Shop opens
                     }
@@ -2088,6 +2089,34 @@ private:
         }
     }
     bool ocarina_mend_failed_logged_ = false;
+
+    // Issue 58 (docs/items.md, "The letters"). Zelda's Letter: once the
+    // Kakariko guard's Bool is set (by any player; shared story), the guard
+    // never asks for the letter again, so ours is taken out as the guard
+    // takes the shower's. Ruto's Letter: a bottle's contents, per player, so
+    // another player got the bottle empty while King Zora (our own
+    // ChallengeMgr) never moved: while he has not, the letter goes into our
+    // first empty bottle, as the game's own get puts it there. Both through
+    // the game's setters; anything unread is left alone.
+    void MendLetters(EmulatorMemory& memory) {
+        namespace letters = coop::host::letters;
+        coop::host::GameFlags flags(memory);
+        const auto zelda = flags.get_int(letters::kZelda);
+        if (zelda && coop::host::zelda_letter_spent(*zelda, flags.get_bool(letters::kGateOpen)) &&
+            coop::host::GameFlags::set_int(memory, letters::kZelda, 0)) {
+            LOG_INFO(Core, "coop: items: Zelda's Letter {} -> 0: the Kakariko gate is open (issue 58)", *zelda);
+        }
+        const auto live = CoopQuest::LiveStep(
+            [&memory](std::uint64_t a, void* out, std::size_t n) { return ReadGuest(&memory, a, out, n); }, base_,
+            letters::kStoneOfWater);
+        const auto bottle = coop::host::ruto_letter_bottle(
+            flags.get_bool(letters::kRutoGot), live ? coop::host::king_zora_moved(*live) : std::nullopt,
+            [&](std::uint32_t h) { return flags.get_bool(h); }, [&](std::uint32_t h) { return flags.get_enum(h); });
+        if (bottle && coop::host::GameFlags::set_enum(memory, *bottle, letters::kLetter)) {
+            LOG_INFO(Core, "coop: items: Ruto's Letter into bottle {:#010x}: King Zora has not moved here (issue 58)",
+                     *bottle);
+        }
+    }
 
     // Issue 130 (docs/flags.md, "Story and cutscenes"): raises our own
     // Meet_DekuTree quest to what the shared story says (Mido let someone by:

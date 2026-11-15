@@ -439,3 +439,16 @@ TEST_CASE("quest: only Get_StoneOfFire goes to the live manager, and only from K
     g.enums.erase(f.hash);  // unread
     CHECK_FALSE(CoopQuest::LiveWant(f, g.value).has_value());
 }
+
+TEST_CASE("quest: the live step is read from the game's ChallengeMgr, not GameData (issue 58)") {
+    Mgr g("KakarikoVillageNpc");
+    const CoopQuest::ReadMemory read = [&g](std::uint64_t a, void* out, std::size_t n) { return g.m.Read(a, out, n); };
+    CHECK(CoopQuest::LiveStep(read, kMain, Hash("Get_StoneOfFire")) == Hash("KakarikoVillageNpc"));
+    CHECK_FALSE(CoopQuest::LiveStep(read, kMain, Hash("Get_StoneOfWater")));  // not in this manager
+    CHECK_FALSE(CoopQuest::LiveStep(read, 0, Hash("Get_StoneOfFire")));
+    Memory none;  // no game loaded: no manager
+    const CoopQuest::ReadMemory nothing = [&none](std::uint64_t a, void* out, std::size_t n) {
+        return none.Read(a, out, n);
+    };
+    CHECK_FALSE(CoopQuest::LiveStep(nothing, kMain, Hash("Get_StoneOfFire")));
+}

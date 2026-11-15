@@ -606,13 +606,20 @@ TEST_CASE("game flags: with the game's setters a String64 waits in the call list
   CHECK_FALSE(calls.pending_string(0x44));
   CHECK(flags.get_string64(0x44) == "");  // (this test's setter wrote nothing)
 
-  // A newer text put while the setter has the older one stays for the next run.
+  // A newer text put while the setter has the older one is not lost: it is handed over after it.
   REQUIRE(GameFlags::set_string64(w, 0x44, "A"));
-  CHECK(calls.run(8, [&](const GameFlagWrite&) {
-    calls.put_string(0x44, "B");
+  std::vector<std::string> seen;
+  CHECK(calls.run(8, [&](const GameFlagWrite& write) {
+    seen.push_back(calls.text(write).value_or("?"));
+    if (seen.size() == 1) calls.put_string(0x44, "B");
     return true;
-  }) == 1);
-  CHECK(calls.pending_string(0x44) == "B");
+  }) == 2);
+  CHECK(seen == std::vector<std::string>{"A", "B"});
+  CHECK_FALSE(calls.pending_string(0x44));
+  // A setter that cannot take it now keeps it waiting; clear() drops it.
+  REQUIRE(GameFlags::set_string64(w, 0x44, "C"));
+  CHECK(calls.run(8, [](const GameFlagWrite&) { return false; }) == 0);
+  CHECK(calls.pending_string(0x44) == "C");
   calls.clear();
   CHECK_FALSE(calls.pending_string(0x44));
 }
