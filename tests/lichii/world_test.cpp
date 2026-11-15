@@ -769,7 +769,7 @@ TEST_CASE("doors: a lent key not used is taken back when our Link leaves the loc
         CHECK(lent == 1);
         CHECK(taken == std::vector<std::uint32_t>{0x877bdceeu});  // once
     };
-    // A step back (4 m) keeps the key and the lock; 7 m away it goes back.
+    // A step back (2 m) keeps the key and the lock; 4 m away (off that door) it goes back.
     {
         WorldSync w;
         TempleWalk(w, 1000, LockAt());
@@ -779,9 +779,15 @@ TEST_CASE("doors: a lent key not used is taken back when our Link leaves the loc
             TempleWalk(w, t, LockAt());
         }
         for (std::uint64_t t = 7000; t < 9000; t += 100) {
-            CHECK(TempleWalk(w, t, LockAt(), proto::Vec3{1.0f, 2.0f, 7.0f}).lend_returns.empty());
+            CHECK(TempleWalk(w, t, LockAt(), proto::Vec3{1.0f, 2.0f, 5.0f}).lend_returns.empty());
             CHECK(w.Removes().empty());
         }
+        std::size_t back = 0;
+        for (std::uint64_t t = 9000; t < 10000; t += 100) {
+            back += TempleWalk(w, t, LockAt(), proto::Vec3{1.0f, 2.0f, 7.0f}).lend_returns.size();
+        }
+        CHECK(back == 1);
+        CHECK(w.Removes().empty());  // the lock stays
     }
     run([](WorldSync& w, std::uint64_t t) { return TempleWalk(w, t, LockAt(), kFar); });
     // The lock leaves the walk next to our Link with no key of ours spent.

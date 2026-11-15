@@ -432,7 +432,9 @@ public:
     // one key lent, so our player can open it too (LentKey below).
     static constexpr std::uint64_t kLendWaitUs = 1'000'000;   // at the lock this long: the key is lent
     static constexpr std::uint64_t kLendQuietUs = 3'000'000;  // after a lent key was used: no new one
-    static constexpr float kLendAwayM = 6.0f;  // this far from the lock with the key unused: taken back
+    // This far from the lock with the key unused: taken back. 3 m (was 6 m, dungeon-sync-b): our Link has left
+    // that door, so the lent key can never pay for another lock (a key is only lent within kLockHoldM).
+    static constexpr float kLendAwayM = 3.0f;
     static constexpr int kMaxLends = 8;        // per lock and visit of the scene
     static constexpr std::uint64_t kOwnDropUs = 8'000'000;  // a key spent this recently can go back
     static constexpr float kBreakNearM = 8.0f;   // as CoopObjects::Sync
