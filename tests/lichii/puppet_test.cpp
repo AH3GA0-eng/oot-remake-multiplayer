@@ -14,6 +14,7 @@
 #include "coop/host/player_reader.hpp"
 #include "coop_fairy.h"
 #include "coop_puppet.h"
+#include "coop_puppet_own.h"
 #include "coop_sites.h"
 #include "coop_svc.h"
 
@@ -2455,4 +2456,76 @@ TEST_CASE("puppet stray: a stray the game keeps is let go after the most delete 
         said = said || line.find("given up") != std::string::npos;
     }
     CHECK(said);
+}
+
+// sword-3: the local Link's sword and shield as the game's own query has them,
+// for the sender (coop_puppet_own.h).
+TEST_CASE("own drawn: a fresh answer of the game decides the slot, a stale one does not") {
+    CoopPuppetOwn::Drawn d;
+    // Nothing answered yet: the reader's bits stand.
+    CHECK(d.Apply(0x09, 1000) == 0x09);
+    d.Set(0, addr::kEquipStateInHand, 1000);  // the sword in hand
+    d.Set(1, addr::kEquipStateAway, 1000);    // the shield on the back
+    // The request byte was missed (sword bit clear) or stale (shield bit set): the game's answer wins;
+    // the held item's bit (3) is left as read.
+    CHECK(d.Apply(0x18, 1100) == 0x09);
+    CHECK(d.Apply(0x00, 1499) == 0x01);
+    // Older than kFreshMs: the reader's bits again.
+    CHECK(d.Apply(0x10, 1000 + CoopPuppetOwn::kFreshMs) == 0x10);
+    // Put away, and no piece (0): put away clears the bit, unknown leaves it.
+    d.Set(0, addr::kEquipStateAway, 2000);
+    CHECK(d.Apply(0x01, 2000) == 0x00);
+    d.Set(0, 0, 2100);
+    CHECK(d.Apply(0x01, 2100) == 0x01);
+    d.Set(7, addr::kEquipStateInHand, 2100);  // no such index: ignored
+    CHECK(d.Apply(0x00, 2100) == 0x00);
+}
+
+TEST_CASE("own drawn: the director asks the game's state of the local Link's sword and shield, one a frame") {
+    constexpr std::uint64_t kScene = 0x500000000;
+    constexpr std::uint64_t kPlayer = 0x500002000;
+    constexpr std::uint64_t kParts = 0x500003000;
+    constexpr std::uint64_t kEu = 0x500004000;
+    Game g;
+    // CoopPose::FindPlayer's chain: scene -> table -> array -> manager -> link -> holder -> actor.
+    g.guest.Map(kBase + 0x4e97648, 8);
+    g.guest.Map(kScene, 0x1000);
+    g.guest.Map(kPlayer, 0x400);
+    g.guest.Map(kParts, 0x400);
+    g.guest.Map(kEu, 0x100);
+    g.guest.Set(kBase + 0x4e97648, kScene);
+    g.guest.Set(kScene + 0x1f0, kScene + 0x100);              // table
+    g.guest.Set(kScene + 0x100 + 0x50, std::uint32_t{0x20});  // count
+    g.guest.Set(kScene + 0x100 + 0x58, kScene + 0x200);       // array
+    g.guest.Set(kScene + 0x200 + 0x78, kScene + 0x300);       // manager
+    g.guest.Set(kScene + 0x300 + 0x30, std::uint64_t{1});     // must
+    g.guest.Set(kScene + 0x300 + 0x40, kScene + 0x400);       // link
+    g.guest.Set(kScene + 0x400 + 0x10, std::uint32_t{7});     // id
+    g.guest.Set(kScene + 0x400 + 0x8, kScene + 0x500);        // holder
+    g.guest.Set(kScene + 0x500 + 0x48, std::uint32_t{7});
+    g.guest.Set(kScene + 0x500 + 0x40, kPlayer);
+    g.guest.Set(kPlayer + 0x2c, std::uint32_t{4});
+    g.guest.Set(kPlayer + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    g.slot_state[0] = addr::kEquipStateInHand;
+    g.slot_state[4] = addr::kEquipStateAway;
+    auto& own = CoopPuppetOwn::TheDrawn();
+    own.Clear();
+
+    Director d;
+    d.SetInput(Wants({}));
+    Frame(d, g, 1000);
+    REQUIRE(g.state_checks.size() == 1);
+    CHECK(g.state_checks[0].x[0] == kEu);
+    CHECK(g.state_checks[0].x[1] == 0);
+    Frame(d, g, 1016);
+    REQUIRE(g.state_checks.size() == 2);
+    CHECK(g.state_checks[1].x[1] == 4);
+    // The sender's bits: sword in hand, shield away, whatever the request bytes showed.
+    CHECK(own.Apply(0x10, CoopPuppetOwn::NowMs()) == 0x01);
+    // One a frame: the next frame asks the sword again.
+    Frame(d, g, 1033);
+    REQUIRE(g.state_checks.size() == 3);
+    CHECK(g.state_checks[2].x[1] == 0);
+    own.Clear();
 }

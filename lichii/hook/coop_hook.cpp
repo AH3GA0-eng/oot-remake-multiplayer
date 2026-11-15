@@ -93,6 +93,7 @@
 #include "coop_ocarina_sound.h"
 #include "coop_pose.h"
 #include "coop_puppet.h"
+#include "coop_puppet_own.h"
 #include "coop_ride.h"
 #include "coop_voice.h"
 #include "coop_settings.h"
@@ -1379,6 +1380,12 @@ private:
         EmulatorMemory memory(system.ApplicationMemory(), base_);
         coop::host::PlayerReader reader(memory, &drawn_state_);
         auto reading = reader.read();
+        // sword-3: the sword and shield as the game's own query has them
+        // (coop_puppet_own.h), not as the passing request byte was seen.
+        if (reading && reading->equipment && reading->equipment->drawn) {
+            reading->equipment->drawn =
+                CoopPuppetOwn::TheDrawn().Apply(*reading->equipment->drawn, CoopPuppetOwn::NowMs());
+        }
         if (reading) {
             view.position = reading->position;
             view.scene = reading->scene;

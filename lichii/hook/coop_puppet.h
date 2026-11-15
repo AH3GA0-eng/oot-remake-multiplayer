@@ -536,8 +536,11 @@ private:
     };
     enum class Pending {
         none, malloc, create, take, drop, remove, play, frame, sync, equip, unequip, hold,
-        hold_check, move, sound, link_sound, stray
+        hold_check, move, sound, link_sound, stray, own_state
     };
+    // sword-3: once a frame, the game's state of one of the local Link's own
+    // slots (CoopPuppetOwn::kSlots, in turn), for the sender (coop_puppet_own.h).
+    std::optional<Call> OwnState(Guest& guest);
     // The slot's taken actor becomes a stray (above); the slot then has none.
     void Abandon(Slot& slot, Guest& guest, std::uint64_t now_ms, const char* why);
     // Strays gone, reused or given up are dropped; the next delete call for one, if due.
@@ -599,6 +602,9 @@ private:
     std::uint64_t stray_actor_ = 0;  // the stray a Pending::stray call deletes
     std::uint64_t stray_frame_ = ~std::uint64_t{0};  // the frame of the last stray delete
     int calls_ = 0;  // this frame
+    bool own_asked_ = false;      // OwnState asked this frame
+    std::size_t own_next_ = 0;    // the CoopPuppetOwn::kSlots index asked next
+    std::size_t own_index_ = 0;   // the one a Pending::own_state call asks
     std::size_t first_slot_ = 0;  // where this frame's Step starts (round robin)
     std::uint64_t frames_ = 0;
     std::atomic<std::uint32_t> live_mask_{0};  // LiveMask(); written by the calc thread
