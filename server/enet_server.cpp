@@ -56,8 +56,8 @@ ConnectionId id_of(const ENetPeer* peer) {
 EnetServer::EnetServer(ServerOptions options)
     : options_(std::move(options)),
       session_(options_.session),
-      delay_(options_.test_delay),
-      start_(std::chrono::steady_clock::now()) {}
+      start_(std::chrono::steady_clock::now()),
+      delay_(options_.test_delay) {}
 
 EnetServer::~EnetServer() {
   if (host_ != nullptr) enet_host_destroy(host_);
