@@ -132,18 +132,36 @@ std::optional<std::string> ModelNameOf(CoopPuppet::Guest& guest, std::uint64_t a
 inline constexpr std::uint64_t kShowDelayMs = 100;  // coop/presence Settings::show_delay_us
 inline constexpr std::size_t kKeepPoses = 8;
 
+// idle-twitch (owner: "other puppets still twitch a little while standing still"). About 300 of
+// Link's bones move and a pose carries at most kMaxSendBones (48), so while he stands breathing
+// (every bone a little, none much) each bone goes about every 300-500 ms, by age. The receiver
+// held it between and blended its whole step over the one pose interval it came in (66 ms):
+// every limb moved in small jerks a few times a second. Now a bone sent again after more than
+// kRampAfterMs whose step is slow (under kRampRad / kRampUnit a second: idle breathing, not a
+// real move) is eased to its new value over the time since it was last sent, from where it was
+// shown (it reaches it that much later; a slow bone's lag is a fraction of a degree). A fast step
+// (a real move: the bone is sent again at once, by its change) is shown as before.
+inline constexpr std::uint64_t kRampAfterMs = 100;  // 1.5 pose intervals at kSendHz
+inline constexpr std::uint64_t kRampMaxMs = 600;    // kBoneRefreshMs and a pose
+inline constexpr float kRampRad = 0.35f;            // ~20 degrees a second
+inline constexpr float kRampUnit = 0.2f;            // a translation or scale part, a second
+
 // The newest poses of one remote player, and the blend shown now.
 class Track {
 public:
     // `made_ms`: when the sender's game made it, on our steady clock (the
     // sample time through the clock offset); 0: not known, shown by arrival.
     void Push(Pose pose, std::uint64_t now_ms, std::uint64_t made_ms = 0);
+    // idle-twitch: a received pose (the bones sent) filled (Fill), its slow bones eased
+    // (kRampAfterMs), and pushed. Returns how many bones are being eased.
+    std::size_t Add(Pose sent, std::uint64_t now_ms, std::uint64_t made_ms);
     // The pose to show at now_ms. Timed: the one at now_ms - kShowDelayMs,
     // the two around it blended. Untimed: one interval behind, the last two
     // blended, so a 30 Hz stream plays smooth at 60 frames a second.
     std::optional<Pose> At(std::uint64_t now_ms) const;
     std::uint64_t last_ms() const { return newest_ms_; }
     bool Timed() const { return !timed_.empty(); }
+    std::size_t Eased() const { return ramps_.size(); }  // idle-twitch: slow bones being eased
     // `pose` (some bones of this track's skeleton: the sender sends only those
     // that changed most) with the bones it lacks taken from the newest pose.
     Pose Fill(Pose pose) const;
@@ -154,6 +172,15 @@ private:
     std::uint64_t older_ms_ = 0;
     std::uint64_t newest_ms_ = 0;
     std::vector<std::pair<std::uint64_t, Pose>> timed_;  // by made time, oldest first
+    // idle-twitch: when each bone was last sent (made time), and the slow ones being eased.
+    struct Ramp {
+        BonePose from;
+        BonePose to;
+        std::uint64_t start_ms = 0;
+        std::uint64_t span_ms = 0;
+    };
+    std::map<std::uint16_t, std::uint64_t> sent_ms_;
+    std::map<std::uint16_t, Ramp> ramps_;
 };
 
 // jitter-3's proof number: how even the shown pose's change is from frame to

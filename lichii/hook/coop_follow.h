@@ -56,6 +56,16 @@ inline constexpr float kSoftTauMs = 160.0f;
 // jitter-3: while moving, the velocity may carry it up to this past the place it follows (the
 // wobble, ~1 cm); further, or still, it is cut at the place (no overshoot at a stop).
 inline constexpr float kPassM = 0.02f;
+// idle-twitch (owner: "other puppets still twitch a little while standing still"). Held only when
+// the remote is really still: the velocity handed in is ~0 (the sender's sampler sends exactly 0
+// when its player did not move, and presence's curve between two such samples at one place is 0)
+// and the place is the one it landed on. Then it is drawn exactly there, every frame (no closing
+// arithmetic at all). Any velocity or any change of the place: it follows as before, at once. No
+// distance dead-band (review-idle-twitch: a steady slow move under a band was drawn stop-go).
+inline constexpr float kSameM = 1e-5f;
+// The still meter (Stillness) counts frames where the place handed in moves slower than this
+// (still, or the noise of a sender that is not quite still). For the log only.
+inline constexpr float kIdleSpeed = 0.1f;  // metres a second
 
 class Follower {
 public:
@@ -92,7 +102,15 @@ public:
             want[i] += vel_[i] * static_cast<float>(ahead_ms / 1000.0);
         }
         if (first) {
+            rest_.reset();
             return Set(want, now_ms);
+        }
+        // idle-twitch: really still (velocity ~0, the same place): held exactly where it landed.
+        if (rest_) {
+            if (Still(velocity) && Distance(want, *rest_) < kSameM) {
+                return Set(*rest_, now_ms);
+            }
+            rest_.reset();
         }
         Vec3 drawn = *drawn_;
         const float gap = Distance(drawn, want);
@@ -120,13 +138,18 @@ public:
         }
         if (Still(velocity) && Distance(drawn, want) <= kRestM) {
             drawn = want;
+            rest_ = drawn;  // idle-twitch: landed; held from the next frame
         }
         drawn_ = drawn;
         last_ms_ = now_ms;
         return drawn;
     }
 
-    void Reset() { drawn_.reset(); }
+    void Reset() {
+        drawn_.reset();
+        rest_.reset();
+    }
+    bool Resting() const { return rest_.has_value(); }  // idle-twitch: held still
     const std::optional<Vec3>& Drawn() const { return drawn_; }
 
     static float Distance(const Vec3& a, const Vec3& b) {
@@ -151,6 +174,7 @@ private:
     }
 
     std::optional<Vec3> drawn_;
+    std::optional<Vec3> rest_;  // idle-twitch: where it is held still
     Vec3 vel_{};  // jitter-3: the velocity smoothed
     double last_ms_ = 0.0;
 };
@@ -301,6 +325,9 @@ inline constexpr float kTurnJumpRad = 2.0f;  // ~115 degrees
 inline constexpr float kTurnRestRad = 0.003f;
 inline constexpr float kTurnStillRad = 0.01f;  // rad a second: under this, not turning
 inline constexpr double kTurnLagMs = 20.0;     // a present's age (16 ms) and a little
+// idle-twitch: as the Follower's hold. Landed with no turn rate, held exactly while the rotation
+// handed in stays the one it landed on (any turn, however slow: followed at once).
+inline constexpr float kTurnSameRad = 1e-5f;
 
 class Turner {
 public:
@@ -342,6 +369,16 @@ public:
                            : std::clamp(now_ms - static_cast<double>(target_ms) - kTurnLagMs,
                                         -static_cast<double>(kAheadMaxMs), 0.0);
         const Quat want = Mul(Exp(Scale(rate_, static_cast<float>(ahead_ms / 1000.0))), *to);
+        if (first) {
+            rest_.reset();
+        }
+        // idle-twitch: really still (no turn rate, the same rotation): held exactly where it landed.
+        if (rest_ && !first) {
+            if (Length(rate_) < 1e-3f && Angle(want, *rest_) < kTurnSameRad) {
+                return Set(*rest_, now_ms);
+            }
+            rest_.reset();
+        }
         if (first || Angle(*drawn_, want) > kTurnJumpRad) {
             return Set(want, now_ms);
         }
@@ -357,12 +394,14 @@ public:
         Quat drawn = Slerp(next, want, close);
         if (Length(rate_) < 1e-3f && Angle(drawn, want) <= kTurnRestRad) {
             drawn = want;
+            rest_ = drawn;  // idle-twitch: landed; held from the next frame
         }
         return Set(drawn, now_ms);
     }
 
     void Reset() {
         drawn_.reset();
+        rest_.reset();
         target_.reset();
         target_ms_ = 0;
         rate_ = {};
@@ -423,10 +462,93 @@ private:
     }
 
     std::optional<Quat> drawn_;
+    std::optional<Quat> rest_;  // idle-twitch: where it is held still
     std::optional<Quat> target_;  // the last rotation handed in, and its time
     std::uint64_t target_ms_ = 0;
     Vec3 rate_{};                 // rad a second, smoothed
     double last_ms_ = 0.0;
+};
+
+// idle-twitch: the proof metric for a still player. Each game frame where the place handed in
+// moves slower than kIdleSpeed: how far the drawn place stepped and turned since the last frame,
+// and how far the place and rotation handed in did (so sender/presence noise shows apart from
+// ours). Report() every kReportMs when there were still frames. A still player's puppet reads
+// drawn 0 (and 'held' all the frames) whatever the handed-in numbers.
+struct StillReport {
+    int frames = 0;          // still frames
+    int held = 0;            // of them, drawn exactly where the last frame was (place and turn)
+    float drawn_step = 0.0f;  // the most the drawn place stepped in one frame, metres
+    float drawn_path = 0.0f;  // all the drawn steps, metres a second of still time
+    float drawn_turn = 0.0f;  // the most the drawn rotation turned in one frame, radians
+    float in_step = 0.0f;     // the same for what was handed in
+    float in_path = 0.0f;
+    float in_turn = 0.0f;
+};
+
+class Stillness {
+public:
+    std::optional<StillReport> Step(bool still, const Vec3& in, const std::optional<Quat>& in_turn,
+                                    const Vec3& drawn, const std::optional<Quat>& drawn_turn,
+                                    std::uint64_t now_ms) {
+        if (start_ms_ == 0 || now_ms < start_ms_) {
+            start_ms_ = now_ms;
+        }
+        if (still && last_ && last_ms_ < now_ms) {
+            const float ds = Follower::Distance(drawn, last_->drawn);
+            const float is = Follower::Distance(in, last_->in);
+            const float dt = TurnOf(drawn_turn, last_->drawn_turn);
+            const float it = TurnOf(in_turn, last_->in_turn);
+            ++r_.frames;
+            if (ds == 0.0f && dt == 0.0f) {
+                ++r_.held;
+            }
+            r_.drawn_step = std::max(r_.drawn_step, ds);
+            r_.in_step = std::max(r_.in_step, is);
+            r_.drawn_turn = std::max(r_.drawn_turn, dt);
+            r_.in_turn = std::max(r_.in_turn, it);
+            r_.drawn_path += ds;
+            r_.in_path += is;
+            still_ms_ += now_ms - last_ms_;
+        }
+        last_ = Last{in, in_turn, drawn, drawn_turn};
+        last_ms_ = now_ms;
+        if (now_ms - start_ms_ < kReportMs) {
+            return std::nullopt;
+        }
+        std::optional<StillReport> out;
+        if (r_.frames > 0) {
+            out = r_;
+            const float seconds = std::max(static_cast<float>(still_ms_) / 1000.0f, 1e-3f);
+            out->drawn_path /= seconds;
+            out->in_path /= seconds;
+        }
+        r_ = StillReport{};
+        still_ms_ = 0;
+        start_ms_ = now_ms;
+        return out;
+    }
+    // A jump, a hide, a new actor: the next frame starts afresh.
+    void Break() { last_.reset(); }
+
+private:
+    struct Last {
+        Vec3 in;
+        std::optional<Quat> in_turn;
+        Vec3 drawn;
+        std::optional<Quat> drawn_turn;
+    };
+    static float TurnOf(const std::optional<Quat>& a, const std::optional<Quat>& b) {
+        if (!a || !b || *a == *b) {
+            return 0.0f;
+        }
+        return Turner::Angle(*a, *b);
+    }
+
+    std::optional<Last> last_;
+    std::uint64_t last_ms_ = 0;
+    std::uint64_t start_ms_ = 0;
+    std::uint64_t still_ms_ = 0;
+    StillReport r_;
 };
 
 // jitter-3: the animation shown at the same time as the place. Presence shows the place

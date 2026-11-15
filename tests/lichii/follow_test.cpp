@@ -497,3 +497,162 @@ TEST_CASE("turn: a quick turn that stops never passes the heading and settles on
         }
     }
 }
+
+// idle-twitch (owner: "other puppets still twitch a little while standing still").
+TEST_CASE("idle: a really still player is drawn exactly still after a stop") {
+    Follower f;
+    CoopFollow::Turner turner;
+    CoopFollow::Cadence cadence;
+    CoopFollow::Stillness meter;
+    std::uint64_t now = 1000;
+    float x = 0.0f;
+    // Walking and turning, then still (the sender's velocity 0, one place, one heading).
+    for (int i = 0; i < 30; ++i) {
+        now += 16 + static_cast<std::uint64_t>(i % 3) * 8;
+        x += kWalk * 0.02f;
+        const double t = cadence.At(now);
+        f.Step({x, 0.0f, 0.0f}, {kWalk, 0.0f, 0.0f}, now - 5, t);
+        turner.Step(Yaw(0.02f * static_cast<float>(i)), now - 5, t);
+    }
+    const Vec3 at{x, 0.0f, 0.0f};
+    const CoopFollow::Quat heading = Yaw(0.58f);
+    std::optional<Vec3> first_held;
+    std::optional<CoopFollow::Quat> first_turn;
+    int moved = 0;
+    std::optional<CoopFollow::StillReport> report;
+    for (int i = 0; i < 400; ++i) {
+        now += 16 + static_cast<std::uint64_t>(i % 3) * 8;  // uneven frames
+        const double t = cadence.At(now);
+        const Vec3 drawn = f.Step(at, {0.0f, 0.0f, 0.0f}, now - 5, t);
+        const CoopFollow::Quat turned = turner.Step(heading, now - 5, t);
+        if (i < 20) {
+            continue;  // landing
+        }
+        if (const auto r = meter.Step(true, at, heading, drawn, turned, now)) {
+            report = r;
+        }
+        if (!first_held) {
+            first_held = drawn;
+            first_turn = turned;
+        }
+        moved += drawn != *first_held || turned != *first_turn;
+    }
+    CHECK(moved == 0);
+    CHECK(f.Resting());
+    CHECK(*first_held == at);
+    CHECK(CoopFollow::Turner::Angle(*first_turn, heading) < 1e-4f);
+    REQUIRE(report);
+    CHECK(report->held == report->frames);
+    CHECK(report->drawn_step == 0.0f);
+    CHECK(report->drawn_turn == 0.0f);
+}
+
+TEST_CASE("idle: review probe: a steady slow move and a slow turn are drawn every frame, never stop-go") {
+    for (const float speed : {0.01f, 0.05f, 0.09f}) {      // metres a second, all under kIdleSpeed
+        for (const float rate : {0.05f, 0.2f, 0.29f}) {   // rad a second, ~3-17 degrees
+            CAPTURE(speed);
+            CAPTURE(rate);
+            Follower f;
+            CoopFollow::Turner turner;
+            CoopFollow::Cadence cadence;
+            std::uint64_t now = 1000;
+            // Still first (it lands and holds), then the slow move and turn start.
+            for (int i = 0; i < 30; ++i, now += 16) {
+                f.Step({0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, now, cadence.At(now));
+                turner.Step(Yaw(0.0f), now, cadence.At(now));
+            }
+            REQUIRE(f.Resting());
+            const std::uint64_t start = now;
+            std::optional<Vec3> last;
+            std::optional<float> last_yaw;
+            int stalled = 0, turn_stalled = 0, frames = 0;
+            float worst_lag = 0.0f;
+            for (int i = 0; i < 250; ++i) {
+                now += 16 + static_cast<std::uint64_t>(i % 3) * 8;
+                const float s = static_cast<float>(now - start) / 1000.0f;
+                const double t = cadence.At(now);
+                const Vec3 drawn = f.Step({speed * s, 0.0f, 0.0f}, {speed, 0.0f, 0.0f}, now, t);
+                const float yaw = YawOf(turner.Step(Yaw(rate * s), now, t));
+                if (i >= 10 && last && last_yaw) {  // past the start
+                    ++frames;
+                    stalled += drawn[0] <= (*last)[0];
+                    turn_stalled += yaw <= *last_yaw;
+                    worst_lag = std::max(worst_lag, speed * s - drawn[0]);
+                }
+                last = drawn;
+                last_yaw = yaw;
+            }
+            CHECK(frames > 200);
+            CHECK(stalled == 0);       // it moves on every frame
+            CHECK(turn_stalled == 0);  // and turns on every frame
+            CHECK(worst_lag < 0.005f); // within 5 mm of the place, no band built up
+            CHECK_FALSE(f.Resting());
+        }
+    }
+}
+
+TEST_CASE("idle: a real start, a walk away and a turn, follow at once from the hold") {
+    Follower f;
+    CoopFollow::Turner turner;
+    std::uint64_t now = 1000;
+    for (int i = 0; i < 30; ++i, now += 16) {
+        f.Step({0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, now, now);
+        turner.Step(Yaw(0.0f), now, now);
+    }
+    REQUIRE(f.Resting());
+    // They walk off at 1.4 m/s along x and turn at 6 rad/s: it moves on the first frame.
+    const std::uint64_t start = now;
+    for (int i = 0; i < 30; ++i, now += 16) {
+        const float s = static_cast<float>(now - start) / 1000.0f;
+        const Vec3 drawn = f.Step({1.4f * s, 0.0f, 0.0f}, {1.4f, 0.0f, 0.0f}, now, now);
+        const CoopFollow::Quat turned = turner.Step(Yaw(std::min(6.0f * s, 1.5f)), now, now);
+        if (i >= 1) {
+            CHECK_FALSE(f.Resting());
+            CHECK(drawn[0] > 0.0f);
+            CHECK(drawn[0] >= 1.4f * s - 0.03f);  // no more lag than the follow has anyway
+        }
+        if (i == 2) {
+            CHECK(YawOf(turned) > 0.05f);  // turning too
+        }
+    }
+}
+
+TEST_CASE("idle: a place and heading that settle a little away are landed on exactly") {
+    Follower f;
+    CoopFollow::Turner turner;
+    std::uint64_t now = 1000;
+    for (int i = 0; i < 20; ++i, now += 16) {
+        f.Step({0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, now, now);
+        turner.Step(Yaw(0.0f), now, now);
+    }
+    REQUIRE(f.Resting());
+    // A stop's last millimetres: the place moves 8 mm slowly, then holds still exactly there.
+    const Vec3 to{0.008f, 0.0f, 0.0f};
+    Vec3 drawn{};
+    CoopFollow::Quat turned{};
+    for (int i = 0; i < 60; ++i, now += 16) {
+        const float k = std::min(1.0f, static_cast<float>(i) / 10.0f);
+        const bool moving = i < 10;
+        drawn = f.Step({to[0] * k, 0.0f, 0.0f}, {moving ? 0.05f : 0.0f, 0.0f, 0.0f}, now, now);
+        turned = turner.Step(Yaw(0.012f * k), now, now);
+    }
+    CHECK(drawn == to);
+    CHECK(f.Resting());
+    CHECK(CoopFollow::Turner::Angle(turned, Yaw(0.012f)) < 1e-4f);
+}
+
+TEST_CASE("idle: the still meter counts only still frames and reads a drawn wobble") {
+    CoopFollow::Stillness meter;
+    std::optional<CoopFollow::StillReport> report;
+    std::uint64_t now = 1000;
+    for (int i = 0; i < 400 && !report; ++i, now += 16) {
+        const bool still = i % 2 == 0;
+        const Vec3 p{0.001f * static_cast<float>(i % 2), 0.0f, 0.0f};
+        report = meter.Step(still, p, std::nullopt, p, std::nullopt, now);
+    }
+    REQUIRE(report);
+    CHECK(report->frames > 100);
+    CHECK(report->held == 0);
+    CHECK(report->drawn_step == doctest::Approx(0.001f));
+    CHECK(report->in_turn == 0.0f);
+}

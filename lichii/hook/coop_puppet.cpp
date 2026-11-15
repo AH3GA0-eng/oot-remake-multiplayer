@@ -1515,6 +1515,7 @@ void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint6
         slot.meter_skip = false;  // still the parked spot: start again from the next frame
         slot.meter.Reset();
         slot.steps.Break();
+        slot.stillness.Break();
     } else if (ReadValue(guest, slot.actor + addr::kActorPosition, at)) {
         read = at;
         if (const auto snap = slot.meter.Step(at)) {
@@ -1539,8 +1540,10 @@ void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint6
     }
     // jitter-3: the rotation followed the same way (coop_follow.h Turner).
     Mat3 rotation = target.rotation;
+    std::optional<CoopFollow::Quat> turned;  // idle-twitch: for the still meter
     if (target.turn && !held) {
-        rotation = QuatToMatrix(slot.turner.Step(*target.turn, input_.made_ms, even_ms));
+        turned = slot.turner.Step(*target.turn, input_.made_ms, even_ms);
+        rotation = QuatToMatrix(*turned);
     } else {
         slot.turner.Reset();
     }
@@ -1557,6 +1560,22 @@ void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint6
     if (jump > 0.0f) {
         slot.steps.Break();
         slot.raw_steps.Break();
+        slot.stillness.Break();
+    }
+    // idle-twitch's proof line: while they stand still, how much the puppet still moves ('drawn')
+    // and how much the place handed in does ('handed in': their sender's and presence's noise).
+    const bool still = target.velocity && !held &&
+                       std::hypot((*target.velocity)[0], (*target.velocity)[1], (*target.velocity)[2]) <
+                           CoopFollow::kIdleSpeed;
+    if (const auto r = slot.stillness.Step(still, target.position, target.turn, drawn, turned, now_ms)) {
+        constexpr float kDeg = 57.29578f;
+        char buf[200];
+        std::snprintf(buf, sizeof(buf),
+                      " still: %d frames (%d held), drawn max step %.1f mm (%.1f mm/s), max turn %.2f deg; "
+                      "handed in max step %.1f mm (%.1f mm/s), max turn %.2f deg",
+                      r->frames, r->held, r->drawn_step * 1000.0f, r->drawn_path * 1000.0f, r->drawn_turn * kDeg,
+                      r->in_step * 1000.0f, r->in_path * 1000.0f, r->in_turn * kDeg);
+        Say(who + buf);
     }
     const auto before = slot.raw_steps.Step(std::nullopt, raw, now_ms);
     if (const auto r = slot.steps.Step(read, drawn, now_ms)) {
