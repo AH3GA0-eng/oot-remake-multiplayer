@@ -638,5 +638,23 @@ class FindLogTest(unittest.TestCase):
             self.assertIn(os.path.join(game, "logs", "longshot_log.txt"), hs.log_candidates(game))
 
 
+class TestDelayTest(unittest.TestCase):
+    """The server's TEST-ONLY delay (server/test_delay.hpp) from run.ps1 -Lag / -Jitter on Longshot."""
+
+    def test_args(self):
+        self.assertEqual(hs.test_delay_args(0, 0), [])
+        self.assertEqual(hs.test_delay_args(250, 60), ["--test-delay-ms", "250", "--test-jitter-ms", "60"])
+        self.assertEqual(hs.test_delay_args(0, 20), ["--test-delay-ms", "0", "--test-jitter-ms", "20"])
+
+    def test_options(self):
+        import argparse
+        p = argparse.ArgumentParser()
+        hs.add_test_delay_options(p)
+        a = p.parse_args(["--test-delay-ms", "250", "--test-jitter-ms", "60"])
+        self.assertEqual((a.test_delay_ms, a.test_jitter_ms), (250, 60))
+        a = p.parse_args([])
+        self.assertEqual((a.test_delay_ms, a.test_jitter_ms), (0, 0))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -929,8 +929,11 @@ def run(a):
                 # Every session has a join password (it encrypts the traffic): in the
                 # environment, never on the command line.
                 senv = dict(os.environ, OOT_COOP_TEST_PASSWORD=a.password)
-                server = subprocess.Popen([a.server, "--port", str(a.port), "--password-env", "OOT_COOP_TEST_PASSWORD"],
-                                          stdout=so, stderr=subprocess.STDOUT, env=senv)
+                delay = test_delay_args(a.test_delay_ms, a.test_jitter_ms)
+                if delay:
+                    senv["OOT_COOP_TEST"] = "1"   # coop_server refuses the delay without it
+                server = subprocess.Popen([a.server, "--port", str(a.port), "--password-env", "OOT_COOP_TEST_PASSWORD"]
+                                          + delay, stdout=so, stderr=subprocess.STDOUT, env=senv)
             time.sleep(1)
         for i, x in enumerate(tags):
             g = games[x]
@@ -1081,6 +1084,22 @@ def run(a):
     return 0
 
 
+
+def test_delay_args(delay_ms, jitter_ms):
+    """coop_server's TEST-ONLY bad connection (server/test_delay.hpp) as its arguments; [] when off.
+    The server also needs OOT_COOP_TEST=1 in its environment for them."""
+    if not (delay_ms or jitter_ms):
+        return []
+    return ["--test-delay-ms", str(int(delay_ms)), "--test-jitter-ms", str(int(jitter_ms))]
+
+
+def add_test_delay_options(parser):
+    """--test-delay-ms / --test-jitter-ms for the server a run starts (run.ps1 -Lag / -Jitter on Longshot)."""
+    parser.add_argument("--test-delay-ms", type=int, default=0,
+                        help="TEST ONLY: the server holds every packet, this round trip in ms (half each way)")
+    parser.add_argument("--test-jitter-ms", type=int, default=0,
+                        help="TEST ONLY: +- up to this many ms on each packet, each way, order kept")
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = p.add_subparsers(dest="what", required=True)
@@ -1116,6 +1135,7 @@ def main(argv=None):
     r.add_argument("--renderer-wait", type=int, default=600,
                    help="seconds each game may take to start its renderer before the load (0: no wait)")
     r.add_argument("--pipe", help="default coop-auto (a lane: its own)")
+    add_test_delay_options(r)
     r.add_argument("--kit-a", help="start game A through this kit's own start (play.ps1 choose -Hookshot; its "
                                    "hookshot/game-folder.txt names --game-a): tools/autotest/kit_pair.py")
     r.add_argument("--kit-b", help="the same for game B")
