@@ -1985,9 +1985,10 @@ private:
     // scene another player played does not leave our quest behind. Only ever
     // raised. Issue 171: the game's logic reads its ChallengeMgr, not the
     // GameData Enum co-op writes, so Get_StoneOfFire's GameData step (the
-    // Kakariko gate's; only that quest in 0.11: CoopQuest::LiveWant) goes to
-    // the manager too, through the game's setStep (challenges_, a caller on
-    // the calc thread); never while our Link is in an event.
+    // Kakariko gate's) and DoorOfTime's stone steps (issue 60: Zelda's escape
+    // in the field; CoopQuest::LiveWant) go to the manager too, through the
+    // game's setStep (challenges_, a caller on the calc thread); never while
+    // our Link is in an event.
     CoopEvery::Every quest_catch_up_{CoopEvery::kSecondUs};
     CoopQuest::Challenges challenges_;
     void CatchUpQuests(EmulatorMemory& memory, bool in_event) {
