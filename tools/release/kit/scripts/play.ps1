@@ -198,6 +198,25 @@ if ($Hookshot) {
     $emu = Split-Path -Parent $exe
     $ini = Join-Path $emu 'coop.ini'
 }
+# Switches from coop-options.ini (the lines without a '#' in front), as variables for the game: your colour
+# (LICHII_COOP_COLOR, which the pack step below puts on your own Link) among them. A file of the kit is passed
+# by its full path.
+function Set-KitOptionVariables {
+    $options = Read-KitOptions (Join-Path $kit 'coop-options.ini')
+    foreach ($key in $options.Keys) {
+        $value = $options[$key]
+        if ($value -and -not [System.IO.Path]::IsPathRooted($value) -and (Test-Path -LiteralPath (Join-Path $kit $value))) {
+            $value = [System.IO.Path]::GetFullPath((Join-Path $kit $value))
+        }
+        Set-Item -Path "env:$key" -Value $value
+        $tunicNote = ''
+        if ($key -eq 'LICHII_COOP_COLOR' -and (Get-Command Get-KitTunic -ErrorAction SilentlyContinue)) {
+            $t = Get-KitTunic $value
+            if ($t) { $tunicNote = "   (your tunic: $t, the nearest of the ten tunic colours)" }
+        }
+        Write-Host "Option: $key=$value$tunicNote"
+    }
+}
 if ($Mode -eq 'title') {
     if (-not $Hookshot) { Write-Host 'play.ps1 title is for the Longshot game (Play-OoT-Coop.bat).'; exit 1 }
     $running = Get-Process longshot, hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
@@ -205,6 +224,11 @@ if ($Mode -eq 'title') {
     # No session from this start: no server and no join password in coop.ini (the name, the colour and the
     # last invite code stay), and none in the variables an earlier start in this window may have left.
     Clear-CoopIniSession $template $ini
+    # coop-options.ini first, as every other start: before 0.11.1 this start never read it, so your colour was
+    # not known to the pack step and your own Link's tunic files were put back to green (v0.11.0 player logs:
+    # "the puppet pack's tunic files are green, your colour is orange"); the module then took the switches
+    # itself ("started without the kit's launcher"). The session's variables go after it all the same.
+    Set-KitOptionVariables
     foreach ($v in 'LICHII_COOP_SERVER', 'LICHII_COOP_PASSWORD', 'OOT_COOP_SESSION_PASSWORD', 'OOT_COOP_JOIN_PASSWORD', 'LICHII_COOP_HOST_SAVE') {
         Remove-Item -Path "env:$v" -ErrorAction SilentlyContinue
     }
@@ -436,20 +460,7 @@ if ($Mode -eq 'host') {
 }
 
 # Switches from coop-options.ini (the lines without a '#' in front). They win over the AMD rule below.
-$options = Read-KitOptions (Join-Path $kit 'coop-options.ini')
-foreach ($key in $options.Keys) {
-    $value = $options[$key]
-    if ($value -and -not [System.IO.Path]::IsPathRooted($value) -and (Test-Path -LiteralPath (Join-Path $kit $value))) {
-        $value = [System.IO.Path]::GetFullPath((Join-Path $kit $value))
-    }
-    Set-Item -Path "env:$key" -Value $value
-    $tunicNote = ''
-    if ($key -eq 'LICHII_COOP_COLOR' -and (Get-Command Get-KitTunic -ErrorAction SilentlyContinue)) {
-        $t = Get-KitTunic $value
-        if ($t) { $tunicNote = "   (your tunic: $t, the nearest of the ten tunic colours)" }
-    }
-    Write-Host "Option: $key=$value$tunicNote"
-}
+Set-KitOptionVariables
 # The host's save (issue 167): a join (an address or an invite code, whose server is 127.0.0.1) plays from the
 # co-op save folder the host's save comes into; a host from its own saves. Not from coop.ini's address: an old
 # friend's address there says nothing about this start. coop-options.ini may set it itself.
