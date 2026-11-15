@@ -163,7 +163,7 @@ private:
         kNone,
         kOpenHost, kOpenJoin, kOpenLocal, kOpenSettings, kOpenCommands, kCommand,
         kStartHost, kCopyInvite, kPasteAnswer, kCopyAnswer, kCopyLan, kCopyVpn, kLeave,
-        kRejoin, kCode, kJoinNow,
+        kRejoin, kCode, kClearCode, kJoinNow,
         kName, kLook, kPlayers, kVoice, kVoiceMode, kChatKey, kController, kKeyboard, kMapPlayers, kMapNames,
         kOpenCustomize
     };
@@ -182,6 +182,7 @@ private:
     Page page_ = Page::kMain;
     std::size_t selected_ = 0;
     bool typing_ = false;
+    bool replace_typed_ = false;   // the Join field was opened with a code in it: a typed character starts a new one
     bool confirm_leave_ = false;   // Stop hosting / Leave was pressed once: the next press does it
     CoopTitleMenu::Options options_;
     std::string name_before_;      // the name as it was when its typing began
