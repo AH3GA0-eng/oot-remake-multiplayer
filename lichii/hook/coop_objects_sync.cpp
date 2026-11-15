@@ -611,6 +611,32 @@ void Sync::Receive(const proto::Message& message) {
     }
 }
 
+std::string Sync::ChestAlreadyOpenWhy(const Seen& s, std::uint64_t now_us) const {
+    // chest-late-b (row #35 (2), Bean Seller's 0.11.0 log: 3 chests read
+    // OpenWait when the other's flag came, and the player saw them closed
+    // until near): how long it has read the open idle, whether it was closed
+    // here before, and how far our Link is, so the next log tells a chest
+    // made open from one whose AS changed before the flag (and its distance).
+    std::string why = " (";
+    const auto c = chest_animations_.find(s.address);
+    if (c == chest_animations_.end() || c->second.changed_us == 0 || now_us < c->second.changed_us) {
+        why += "open idle since first seen";
+    } else {
+        char age[48];
+        std::snprintf(age, sizeof age, "open idle for %.1f s", (now_us - c->second.changed_us) / 1e6);
+        why += age;
+    }
+    if (c != chest_animations_.end() && c->second.seen_closed) {
+        why += ", closed here before";
+    }
+    if (player_ && Finite(*player_) && Finite(s.position)) {
+        char away[48];
+        std::snprintf(away, sizeof away, ", our Link %.1f m away", Distance(*player_, s.position));
+        why += away;
+    }
+    return why + ")";
+}
+
 void Sync::Take(std::uint64_t hash) {
     if (hash == 0 || hash == kNoHash) {
         return;
@@ -1166,8 +1192,10 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 continue;
             }
             ChestAnimation now{s.animation ? s.animation->name : std::string(), 0};
+            now.seen_closed = now.name.find(kChestClosedIdle) != std::string::npos;
             if (const auto was = chest_animations_.find(s.address); was != chest_animations_.end()) {
                 now.changed_us = was->second.name == now.name ? was->second.changed_us : now_us;
+                now.seen_closed = now.seen_closed || was->second.seen_closed;
             }
             chests.emplace(s.address, std::move(now));
         }
@@ -1244,7 +1272,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                                 // Made open already (its flag came before it
                                 // was made): left so (the old rule removed these too).
                                 tk.shown_open.insert(s.address);
-                                notes_.emplace_back(s.name + ": opened in another game, already shows open here");
+                                notes_.emplace_back(s.name + ": opened in another game, already shows open here" +
+                                                    ChestAlreadyOpenWhy(s, now_us));
                                 continue;
                             }
                             const auto shown = chest_shown_.find(s.address);
