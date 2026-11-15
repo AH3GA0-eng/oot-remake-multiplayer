@@ -1616,7 +1616,7 @@ private:
             break;
         case EventKind::refused:
             note_ = "refused: " +
-                    std::string(coop::net::refuse_reason_text(event.refuse_reason));
+                    std::string(coop::net::refuse_text(event));
             LOG_WARNING(Core, "coop: server {}", note_);
             break;
         case EventKind::disconnected:
