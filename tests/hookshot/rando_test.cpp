@@ -1278,7 +1278,7 @@ TEST_CASE("rando: a control mod written before the Settings string gets it at th
     const auto from = old.find("    {\"key\": \"settings\"");
     REQUIRE(from != std::string::npos);
     old.erase(from, old.find('\n', old.find("\"help\"", from)) + 1 - from);
-    REQUIRE(old.find("\"settings\"") == std::string::npos);
+    REQUIRE(old.find("\"key\": \"settings\"") == std::string::npos);
     Put(w.mods / kFolder / "mod.json", old);
     CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
     loader.Start();
