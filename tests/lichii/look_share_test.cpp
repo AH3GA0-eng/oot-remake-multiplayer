@@ -61,24 +61,25 @@ TEST_CASE("look share: the others' looks are kept by player and forgotten when t
     CHECK_FALSE(s.Of(2));
 }
 
-TEST_CASE("look share: a player who colours gear gets the lowest free slot, kept until they leave") {
+TEST_CASE("look share: every player gets the lowest free slot, gear colours or not, kept until they leave") {
     CoopLookShare::Share s;
     s.OnEvent(Look(2, {{3, 0xFF0000}}));
     CHECK_FALSE(s.SlotOf(2));                 // slots off (no painter): none
     s.EnableSlots(true);
     CHECK(s.SlotOf(2) == 1u);                 // given once the painter is on
-    s.OnEvent(Look(5, {{0, 0x3070FF}}));      // the tunic alone is no gear: no slot
-    CHECK_FALSE(s.SlotOf(5));
+    s.OnEvent(Look(5, {{0, 0x3070FF}}));      // the tunic alone: a slot too (held-sword: the puppet
+    CHECK(s.SlotOf(5) == 2u);                 // wears its own copy of the sword, in the game's colours)
     s.OnEvent(Look(5, {{0, 0x3070FF}, {11, 0x202020}}));
-    CHECK(s.SlotOf(5) == 2u);
+    CHECK(s.SlotOf(5) == 2u);                 // a gear colour keeps it
     s.OnEvent(Look(2, {{3, 0x00FF00}}));      // a new colour keeps the slot
     CHECK(s.SlotOf(2) == 1u);
     s.OnEvent(Kind(EventKind::player_left, 2));
     CHECK_FALSE(s.SlotOf(2));
     s.OnEvent(Look(7, {{4, 1}}));
     CHECK(s.SlotOf(7) == 1u);                 // the freed slot again
-    s.OnEvent(Look(7, {}));                   // back to the game's own: the slot is freed
-    CHECK_FALSE(s.SlotOf(7));
+    s.OnEvent(Look(7, {}));                   // back to the game's own colours: the slot is kept
+    CHECK(s.SlotOf(7) == 1u);
+    s.OnEvent(Kind(EventKind::player_left, 7));
     for (std::uint8_t n = 8; n < 8 + CoopLookShare::kSlots; ++n) {
         s.OnEvent(Look(n, {{4, 1}}));
     }
@@ -129,7 +130,7 @@ TEST_CASE("look share: a puppet wears a copy only once it is painted, then the s
     CHECK(s.Jobs(1000 + 3 * later)[0].copy == 1u);   // and back
 
     // Freed and given again: never the copy painted last (a puppet may still wear it).
-    s.OnEvent(Look(3, {}));
+    s.OnEvent(Kind(EventKind::player_left, 3));   // (no colours keeps the slot since held-sword)
     CHECK_FALSE(s.CopyOf(3));
     s.OnEvent(Look(3, {{11, 0x101010}}));
     CHECK(s.Jobs(1000 + 3 * later)[0] == Job{1, 1, 3, {{11, 0x101010}}});   // copy 2 was painted last
@@ -200,4 +201,21 @@ TEST_CASE("look share: a new room forgets the last room's looks, a reconnect kee
     s.TakeSend();
     s.OnEvent(Kind(EventKind::welcomed));
     CHECK(s.TakeSend());                                // ours goes to the new room
+}
+
+TEST_CASE("look share: a player with no gear colours wears their own copy, painted in the game's colours") {
+    // held-sword: a puppet in the game's own Weapon_Sword_Kokiri shares that model's blade switch
+    // with our own Link's sword and showed no blade while ours was put away; its own copy has its own.
+    CoopLookShare::Share s;
+    s.EnableSlots(true);
+    s.OnEvent(Look(4, {}));
+    CHECK(s.SlotOf(4) == 1u);
+    CHECK_FALSE(s.CopyOf(4));                   // not painted yet: the game's items for now
+    const auto jobs = s.Jobs(0);
+    REQUIRE(jobs.size() == 1);
+    CHECK(jobs[0].player == 4);
+    CHECK(jobs[0].copy == 1u);
+    CHECK(jobs[0].parts.empty());               // no colours: the copy keeps the game's own texels
+    s.Done(jobs[0], 100);
+    CHECK(s.CopyOf(4) == 1u);
 }
