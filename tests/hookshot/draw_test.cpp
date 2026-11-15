@@ -102,22 +102,54 @@ TEST_CASE("hookshot draw: chat lines show 8 s, fade in 1 s, then go") {
     CHECK(CoopDraw::Wanted(s));
 }
 
-TEST_CASE("hookshot draw: chat at the bottom left, oldest first, long lines cut") {
+TEST_CASE("hookshot draw: chat at the bottom left, oldest first, long lines wrapped") {
     Canvas c(1280, 720);
     CoopDraw::Scene s;
     s.chat = {{"Saria: hi", false, 1.0f}, {"Mido joined", true, 0.5f}, {std::string(300, 'x'), false, 1.0f}};
     CoopDraw::Draw(c.d, s);
     const auto texts = c.Of("text");
-    REQUIRE(texts.size() == 3);
+    // A line longer than the room takes rows of its own (it used to end at "..." and
+    // the rest was never drawn: the difficulty notice lost its end that way).
+    REQUIRE(texts.size() > 3);
     CHECK(texts[0].text == "Saria: hi");
     CHECK(texts[0].x == doctest::Approx(16.0f));
     CHECK(texts[0].y < texts[1].y);
-    CHECK(texts[2].y + texts[2].px < 720.0f - 16.0f + 1.0f);  // above the bottom margin
+    CHECK(texts[texts.size() - 1].y + texts[texts.size() - 1].px < 720.0f - 16.0f + 1.0f);  // above the margin
     CHECK(AlphaOf(texts[1].rgba) == 127);                     // the notice, half faded
     CHECK(texts[1].rgba != texts[0].rgba);                    // notices in the highlight colour
-    CHECK(texts[2].text.size() < 300);
-    CHECK(texts[2].text.substr(texts[2].text.size() - 3) == "...");
-    CHECK(c.Of("rect").size() == 3);  // a dark box behind each
+    // Every row of the long line reads: no row is cut.
+    for (std::size_t i = 1; i < texts.size(); ++i) {
+        CHECK(texts[i].text.find("...") == std::string::npos);
+    }
+    std::string joined;
+    for (std::size_t i = 2; i < texts.size(); ++i) {
+        joined += texts[i].text;
+    }
+    CHECK(joined == std::string(300, 'x'));
+    CHECK(c.Of("rect").size() == texts.size());  // a dark box behind each row
+}
+
+TEST_CASE("hookshot draw: a chat line in Chinese wraps between characters") {
+    // Chinese has no spaces to break at, so a row breaks where the next character
+    // would pass the room (the difficulty notice is ~70 characters wide).
+    Canvas c(1280, 720);
+    CoopDraw::Scene s;
+    const std::string notice =
+        "难度：自动（1 名玩家）：生命 100%，伤害 100%，敌人 100%；Boss：生命 100%，伤害 100%";
+    s.chat = {{notice, true, 1.0f}};
+    CoopDraw::Draw(c.d, s);
+    const auto texts = c.Of("text");
+    REQUIRE(texts.size() >= 2);
+    std::string joined;
+    for (const auto& t : texts) {
+        CHECK(t.text.find("...") == std::string::npos);
+        // a row ends on a whole character, not in the middle of one
+        const unsigned char last = static_cast<unsigned char>(t.text.back());
+        const bool whole = last < 0x80 || (last & 0xC0) != 0x80;
+        CHECK(whole);
+        joined += t.text;
+    }
+    CHECK(joined == notice);   // nothing lost, nothing repeated
 }
 
 TEST_CASE("hookshot draw: name tags scaled from the scene target to the picture") {
