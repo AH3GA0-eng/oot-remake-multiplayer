@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "mod_temp.h"
+#include "coop_mod_json.h"
 #include "coop_mod_library.h"
 #include "coop_mods.h"
 #include "coop_rando.h"
@@ -156,7 +157,49 @@ TEST_CASE("rando: the control mod's mod.json is valid, with the seed and preset 
     CHECK(ManifestText().find("\"name_zh-Hans\"") != std::string::npos);
     CHECK(ManifestText().find("\"help_zh-Hant\"") != std::string::npos);
     CHECK(ManifestText().find("\"description_zh-Hans\"") != std::string::npos);
+
+    // The loader's caps (coop_mod_library.cpp) are characters, and the Chinese
+    // halves are three bytes a character: the longest of them (the author line)
+    // is 71 bytes. Counted in bytes it was refused, and the whole manifest with
+    // it; counted in characters it fits. The tests run in English, so TextIn
+    // reads the plain fields above; this keeps the numbers of the others true.
+    const auto chars = [](const std::string& text) {
+        return static_cast<std::size_t>(
+            std::count_if(text.begin(), text.end(), [](char c) { return (static_cast<unsigned char>(c) & 0xC0) != 0x80; }));
+    };
+    std::size_t localised = 0;
+    const auto fits = [&](const CoopModJson::Value& object, const char* key, std::size_t most) {
+        for (const char* code : {"zh-Hans", "zh-Hant"}) {
+            const std::string name = std::string(key) + '_' + code;
+            if (const CoopModJson::Value* v = object.Get(name); v != nullptr && v->kind == CoopModJson::Value::Kind::String) {
+                ++localised;
+                INFO(name);
+                CHECK(chars(v->string) <= most);
+            }
+        }
+    };
+    const auto json = CoopModJson::Parse(ManifestText());
+    REQUIRE(json);
+    fits(*json, "name", 64);
+    fits(*json, "author", 64);
+    fits(*json, "description", 512);
+    for (const CoopModJson::Value& setting : json->Get("settings")->array) {
+        fits(setting, "name", 64);
+        fits(setting, "help", 256);
+        const CoopModJson::Value* choices = setting.Get("choices");
+        if (choices == nullptr) {
+            continue;
+        }
+        for (const CoopModJson::Value& choice : choices->array) {
+            if (choice.kind == CoopModJson::Value::Kind::Object) {
+                fits(choice, "name", 64);
+            }
+        }
+    }
+    CHECK(localised >= 12);
 }
+
+
 
 TEST_CASE("rando: seed words and folders as OOTRR names them") {
     CHECK(SeedWord("Hello World!") == "HelloWorld");

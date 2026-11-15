@@ -35,6 +35,16 @@ bool Printable(std::string_view s) {
     return std::all_of(s.begin(), s.end(), [](char c) { return static_cast<unsigned char>(c) >= 0x20 && c != 0x7f; });
 }
 
+// The length a person reads, not the bytes it takes: one Chinese character is one
+// character in the Mods tab and three bytes in UTF-8, so a limit of "at most 64
+// characters" has to be counted on the text. Counted in bytes it turns away a
+// translation of ordinary length while the English half goes through, and with it
+// the whole mod: one field over the line, and the manifest is not read at all.
+std::size_t CountChars(std::string_view s) {
+    return static_cast<std::size_t>(
+        std::count_if(s.begin(), s.end(), [](char c) { return (static_cast<unsigned char>(c) & 0xC0) != 0x80; }));
+}
+
 std::string NumberText(double n) {
     char buf[32];
     if (n == std::floor(n) && std::fabs(n) < 1e15) {
@@ -131,7 +141,7 @@ struct Field {
         if (v == nullptr) {
             return true;
         }
-        if (v->kind != Value::Kind::String || v->string.size() > most || !Printable(v->string)) {
+        if (v->kind != Value::Kind::String || CountChars(v->string) > most || !Printable(v->string)) {
             problem = std::string("\"") + key + "\" must be a text of at most " + std::to_string(most) + " characters";
             return false;
         }
@@ -151,7 +161,7 @@ struct Field {
             localised += code;
             const Value* v = object.Get(localised);
             if (v != nullptr) {
-                if (v->kind != Value::Kind::String || v->string.size() > most || !Printable(v->string)) {
+                if (v->kind != Value::Kind::String || CountChars(v->string) > most || !Printable(v->string)) {
                     problem = "\"" + localised + "\" must be a text of at most " + std::to_string(most) + " characters";
                     return false;
                 }
@@ -261,7 +271,8 @@ bool ReadSetting(const Value& row, Setting& out, std::string& problem) {
             }
             const bool twice = std::any_of(out.choices.begin(), out.choices.end(),
                                            [&](const auto& have) { return have.first == value; });
-            if (value.empty() || value.size() > 64 || caption.size() > 64 || !Printable(value) || !Printable(caption) ||
+            if (value.empty() || CountChars(value) > 64 || CountChars(caption) > 64 || !Printable(value) ||
+                !Printable(caption) ||
                 twice) {
                 problem = "setting \"" + out.key +
                           "\": each choice must be a text or {\"value\", \"name\"}, at most 64 characters, no value twice";
