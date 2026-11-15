@@ -5352,6 +5352,7 @@ TEST_CASE("boss-copy-b: a late joiner's stun hands it the boss once its game say
   h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);  // a fight
   h.stand(1, 12);
   h.stand(2, 3);
+  h.run(20 * kSecond);  // past the owner's own hit (the fight's life drop): only readiness holds it now
   h.clear();
   h.receive(2, Damage{0, placed(7), 0, 0, 0, {}, {}}, kChannelOwnership);  // a stun while unready
   CHECK(messages_to<HandoverAsk>(h, 1).empty());
