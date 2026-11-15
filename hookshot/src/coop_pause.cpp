@@ -296,6 +296,12 @@ void Leave() {
     g_menu.SetNote({"Co-op stopped. You play on alone."});
 }
 
+// The Settings page's Microphone row (voice on): the microphones there now, listed only while voice is on (none
+// opened); none when this game cannot choose one (an older patch 0009).
+void MicRows() {
+    g_menu.SetMicrophones(g_menu.options().voice ? CoopVoice::Microphones() : std::nullopt);
+}
+
 void Save() {
     const auto kit = FindKit();
     std::string coop = ReadText(CoopIni());
@@ -312,6 +318,8 @@ void Save() {
     CoopVoice::SetMode(!g_menu.options().voice     ? coop::voice::Mode::off
                        : g_menu.options().voice_ptt ? coop::voice::Mode::push_to_talk
                                                     : coop::voice::Mode::open_mic);   // voice chat and its mode count at once
+    CoopVoice::SetMicrophone(g_menu.options().voice_mic);   // and its microphone
+    MicRows();   // (voice just turned on: the Microphone row's list)
     CoopHookshot::SetChatKey(g_menu.options().chat_key);   // the chat key too
     CoopHookshot::SetMapOptions(g_menu.options().map_players, g_menu.options().map_names);   // at once too
     LOG_INFO(Core, "coop: multiplayer tab: settings saved{}{}", ok ? "" : " (a file could not be written)",
@@ -465,6 +473,7 @@ void ShowTab() {
     const auto last = CoopTitleMenu::IniGet(coop, "last_invite");
     g_menu.SetRejoin(CoopTitleMenu::IniGet(coop, "last_host").value_or(""), last.value_or(""));
     InputRows();   // (a controller plugged in while the menu was closed: its name)
+    MicRows();     // (and a microphone plugged in)
     RefreshSession(true);
 }
 

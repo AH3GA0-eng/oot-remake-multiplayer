@@ -618,3 +618,66 @@ TEST_CASE("pause tab: Customize Link opens the customizer, its changes are asked
     CHECK(Selected(m) == "Customize Link");
     CHECK(m.Picture().empty());
 }
+
+TEST_CASE("pause tab: Settings: the Microphone row, Default and the microphones listed, saved by name") {
+    Menu m;
+    CoopTitleMenu::Options o;
+    o.voice = true;
+    m.Show(o);
+    m.Open(Page::kSettings);
+    auto names = Names(m);
+    CHECK(std::find(names.begin(), names.end(), "Microphone") == names.end());   // no list: this game cannot choose
+    m.SetMicrophones(std::vector<std::string>{"Headset Microphone (USB)", "Webcam"});
+    names = Names(m);
+    auto at = std::find(names.begin(), names.end(), "Microphone");
+    REQUIRE(at != names.end());
+    CHECK(at[-1] == "Proximity voice chat");   // right under it
+    CHECK(at[1] == "Voice mode");
+    const auto row = static_cast<std::size_t>(at - names.begin());
+    CHECK(m.view().rows[row].value == "Default");
+    CHECK(m.view().rows[row].kind == RowKind::kChoice);
+    SelectRow(m, "Microphone");
+    m.Press(Input::kRight);
+    CHECK(m.options().voice_mic == "Headset Microphone (USB)");
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+    CHECK(m.view().rows[row].value == "Headset Microphone (USB)");
+    m.Press(Input::kRight);
+    CHECK(m.options().voice_mic == "Webcam");
+    m.Press(Input::kRight);   // round to Default
+    CHECK(m.options().voice_mic.empty());
+    m.Press(Input::kLeft);   // and back the other way
+    CHECK(m.options().voice_mic == "Webcam");
+    // the chosen one unplugged: kept by its name, shown as not connected, still one of the choices
+    m.SetMicrophones(std::vector<std::string>{"Headset Microphone (USB)"});
+    CHECK(Selected(m) == "Microphone");
+    CHECK(m.view().rows[row].value == "Webcam (not connected)");
+    m.Press(Input::kLeft);
+    CHECK(m.options().voice_mic == "Headset Microphone (USB)");
+    m.Press(Input::kRight);
+    CHECK(m.options().voice_mic == "Webcam");
+    // voice off: no row, the choice kept
+    SelectRow(m, "Proximity voice chat");
+    m.Press(Input::kLeft);
+    names = Names(m);
+    CHECK(std::find(names.begin(), names.end(), "Microphone") == names.end());
+    CHECK(m.options().voice_mic == "Webcam");
+}
+
+TEST_CASE("pause tab: the Microphone row's choices and words") {
+    using CoopPauseMenu::MicChoices;
+    using CoopPauseMenu::MicWords;
+    CHECK(MicChoices({}, "") == std::vector<std::string>{""});
+    CHECK(MicChoices({"A", "B", "A", ""}, "") == std::vector<std::string>{"", "A", "B"});   // each name once
+    CHECK(MicChoices({"A"}, "Gone") == std::vector<std::string>{"", "A", "Gone"});
+    CHECK(MicWords("", {"A"}) == "Default");
+    CHECK(MicWords("A", {"A"}) == "A");
+    CHECK(MicWords("A", {}) == "A (not connected)");
+    const std::string longer = "Microphone (Realtek(R) High Definition Audio)";
+    CHECK(MicWords(longer, {longer}) == "Microphone (Realtek(R) Hi...");
+    CHECK(CoopTitleMenu::CodePoints(MicWords(longer, {longer})) == CoopPauseMenu::kMicChars);
+    const std::string wide = "Mikrofon \xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4"
+                             "\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4";
+    const std::string cut = MicWords(wide, {wide});   // cut at a character's start, not inside one
+    CHECK(CoopTitleMenu::CodePoints(cut) == CoopPauseMenu::kMicChars);
+    CHECK(cut.substr(cut.size() - 5) == "\xC3\xA4...");
+}

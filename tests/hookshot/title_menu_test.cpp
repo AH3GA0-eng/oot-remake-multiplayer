@@ -635,3 +635,25 @@ TEST_CASE("title menu: a colour the Look row does not list survives a Save that 
     o.Write(coop, opt);
     CHECK(IniGet(opt, "color") == "red");
 }
+
+TEST_CASE("title menu: the voice's microphone in coop-options.ini") {
+    CHECK(Options::Read("", "").voice_mic.empty());
+    Options o = Options::Read("", "LICHII_COOP_VOICE=open\r\nLICHII_COOP_VOICE_MIC=Headset Microphone (USB)\r\n");
+    CHECK(o.voice_mic == "Headset Microphone (USB)");
+    std::string c, opt;
+    o.voice_mic = "Webcam";
+    o.Write(c, opt);
+    CHECK(IniGet(opt, "LICHII_COOP_VOICE_MIC") == "Webcam");
+    o.voice = false;   // voice off: the microphone is kept for next time
+    o.Write(c, opt);
+    CHECK(IniGet(opt, "LICHII_COOP_VOICE_MIC") == "Webcam");
+    o.voice_mic.clear();   // Default: no line
+    o.Write(c, opt);
+    CHECK_FALSE(IniGet(opt, "LICHII_COOP_VOICE_MIC").has_value());
+    o.voice_mic = "Webcam";
+    bool seen = false;
+    for (const auto& [k, v] : o.Environment()) {
+        seen |= k == "LICHII_COOP_VOICE_MIC" && v == "Webcam";
+    }
+    CHECK(seen);
+}
