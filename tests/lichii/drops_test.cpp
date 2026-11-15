@@ -1045,3 +1045,87 @@ TEST_CASE("drops: a player who comes in is told the placed loot already taken") 
     REQUIRE(c.removes.size() == 1);
     CHECK(c.removes[0].address == 0x1000);
 }
+
+TEST_CASE("drops: our drop unloaded here and listed again is the same drop, never told again (#40)") {
+    Game a(1);
+    a.Tick();
+    a.seen = {Lying(0x1000, 60.0f)};
+    a.Tick();
+    const auto told = Of<proto::DropSpawn>(a.send);
+    REQUIRE(told.size() == 1);
+    // Link far away: it leaves our list (unloaded here), then the same actor is listed again, several times.
+    for (int round = 0; round < 5; ++round) {
+        a.Gone(0x1000);
+        a.Tick();
+        a.Tick();
+        CHECK(a.sync.Live() == 0);
+        a.seen = {Lying(0x1000, 60.0f)};
+        a.Tick();
+        CHECK(Of<proto::DropSpawn>(a.send).empty());  // no new roll, no new id
+        CHECK(a.sync.IdOf(0x1000) == told[0].id);
+        CHECK(a.sync.Live() == 1);
+    }
+    // Picked up later: told once, under its first id.
+    a.player = Vec3{60.0f, 0.0f, 0.0f};
+    a.Gone(0x1000);
+    a.Tick();
+    a.Tick();
+    a.Tick(CoopDrops::Sync::kTakeHoldUs / kMs);
+    const auto takes = Of<proto::DropTake>(a.send);
+    REQUIRE(takes.size() == 1);
+    CHECK(takes[0].id == told[0].id);
+}
+
+TEST_CASE("drops: another game's copy unloaded here and listed again is not told as ours (#40)") {
+    Game b(2);
+    b.Tick();
+    b.sync.Receive(Told(1, 7, 60.0f, b.now));
+    b.Tick();
+    b.Tick(CoopDrops::Sync::kAdoptWaitUs / kMs);
+    REQUIRE(b.creates.size() == 1);
+    b.made[b.creates[0].key] = 0x7000;
+    b.seen = {Lying(0x7000, 60.0f)};
+    b.Tick();
+    b.made.clear();  // the director let go
+    b.Tick();
+    b.Gone(0x7000);
+    b.Tick();
+    b.Tick();
+    b.seen = {Lying(0x7000, 60.0f)};
+    b.Tick();
+    CHECK(Of<proto::DropSpawn>(b.send).empty());
+    CHECK(b.sync.IdOf(0x7000) == Id(1, 7));
+}
+
+TEST_CASE("drops: a drop taken elsewhere while unloaded here is deleted when listed again (#40)") {
+    Game a(1);
+    a.Tick();
+    a.seen = {Lying(0x1000, 60.0f)};
+    a.Tick();
+    const auto told = Of<proto::DropSpawn>(a.send);
+    REQUIRE(told.size() == 1);
+    a.Gone(0x1000);
+    a.Tick();
+    a.Tick();
+    a.sync.Receive(proto::DropTake{2, told[0].id, proto::DropTakeReason::picked_up});
+    a.Tick();
+    a.seen = {Lying(0x1000, 60.0f)};
+    a.Tick();
+    CHECK(Of<proto::DropSpawn>(a.send).empty());
+    REQUIRE(a.removes.size() == 1);
+    CHECK(a.removes[0] == Remove{0x1000, kGreen});
+}
+
+TEST_CASE("drops: another drop at an unloaded drop's address but elsewhere is a new roll (#40)") {
+    Game a(1);
+    a.Tick();
+    a.seen = {Lying(0x1000, 60.0f)};
+    a.Tick();
+    REQUIRE(Of<proto::DropSpawn>(a.send).size() == 1);
+    a.Gone(0x1000);
+    a.Tick();
+    a.Tick();
+    a.seen = {Lying(0x1000, 90.0f)};  // the game reused the address for a new rupee far from the old one
+    a.Tick();
+    CHECK(Of<proto::DropSpawn>(a.send).size() == 1);
+}
