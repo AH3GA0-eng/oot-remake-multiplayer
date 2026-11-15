@@ -41,6 +41,7 @@ inline constexpr const char* kSeedPrefix = "randomizer-";          // + the seed
 inline constexpr const char* kSeedFile = "coop-seed.txt";          // OOTRR writes it into a Hookshot mod
 inline constexpr const char* kPresetFile = "coop-rando.txt";       // we write the preset it was built with
 inline constexpr const char* kLogFile = "last-build.txt";          // in kFolder: OOTRR's output
+inline constexpr const char* kTablesFile = "coop-tables.txt";      // in a seed: the size tables it was built beside
 inline constexpr const char* kPresets[] = {"default", "easy", "open_world", "keysanity", "full_shuffle"};
 
 // The control mod's mod.json.
@@ -59,6 +60,7 @@ struct Built {
     std::string name;    // the mod's folder name (randomizer-...)
     std::string seed;    // coop-seed.txt
     std::string preset;  // coop-rando.txt; empty when not ours
+    std::string tables;  // coop-tables.txt (TablesStamp); empty when built before it
 };
 std::vector<Built> Scan(const std::filesystem::path& mods_root);
 
@@ -69,14 +71,18 @@ struct Want {
 };
 
 struct Plan {
-    enum class Do { nothing, build, use } what = Do::nothing;  // use: only switch the folders (on / off)
+    // use: only switch the folders (on / off). refresh: the seed is built, but beside other size tables than now
+    // (a puppet pack made or made again after it): it is built again and only its size table is taken.
+    enum class Do { nothing, build, refresh, use } what = Do::nothing;
     std::string folder;                 // the seed's folder (build / use)
     std::vector<std::string> on;        // folders the list turns on (first wins: the seed's)
     std::vector<std::string> off;       // folders the list turns off (every other seed; all when the randomizer is off)
     std::string why;                    // one plain line for the log and the tab
 };
-// What the game must do for `want`, given the seeds built and which mods are on now (Loader rows).
-Plan Decide(const Want& want, const std::vector<Built>& built, const std::vector<CoopMods::Row>& rows);
+// What the game must do for `want`, given the seeds built and which mods are on now (Loader rows). `tables`: the
+// TablesStamp of the other mods' size tables now; a built seed with another one is refreshed (none: not compared).
+Plan Decide(const Want& want, const std::vector<Built>& built, const std::vector<CoopMods::Row>& rows,
+            const std::optional<std::string>& tables = std::nullopt);
 
 // OOTRR's command lines (arguments after the program).
 std::vector<std::string> GenerateArgs(const std::string& preset, const std::string& seed,
@@ -92,6 +98,14 @@ std::vector<std::string> BuildArgs(const std::filesystem::path& seed_file, const
 // switched off. The count of tables copied; -1 when one could not be copied.
 int StageSizeTables(const std::filesystem::path& mods_root, const std::vector<CoopMods::Row>& rows,
                     const std::filesystem::path& stage);
+// Those size tables (the same choice as StageSizeTables), in the order found.
+std::vector<std::filesystem::path> OtherSizeTables(const std::filesystem::path& mods_root,
+                                                   const std::vector<CoopMods::Row>& rows);
+// What a seed was built beside, as kept in its coop-tables.txt: each table's path under `mods_root`, length and a
+// hash of its bytes, sorted. A seed is only as good as its size table: the game reads that one table (the seed sorts
+// first), so a puppet pack made after the seed has no sizes there and its actors cannot load (the other players
+// invisible with the randomizer on).
+std::string TablesStamp(const std::filesystem::path& mods_root, const std::vector<std::filesystem::path>& tables);
 // The Windows command line of a program and its arguments (each quoted as CommandLineToArgvW reads it back).
 std::wstring CommandLine(const std::filesystem::path& program, const std::vector<std::string>& args);
 
@@ -123,6 +137,12 @@ std::string TellLine(std::string_view why);
 // What the tab and the chat say when the randomizer is switched (by the player, or the host's switch reaching a guest).
 // A seed plays only after a restart, and only from a new save (a save from before has the items of the plain game).
 std::string SwitchLine(bool on);
+// The chat line once the seed is ready to play (built, or switched on): restart now. Said again when this game joins
+// a host and every kRepeat until the restart.
+std::string ReadyLine(std::string_view seed);
+// The chat line when a seed in use was made again for the size tables of now (the co-op puppets'): restart.
+std::string RefreshLine(std::string_view seed);
+inline constexpr std::chrono::seconds kRepeat{180};
 
 // In the game: watches the randomizer's settings and builds a seed in the background when they change.
 class Rando {
@@ -140,6 +160,8 @@ public:
         // and why: one chat line (any thread). False when it could not be sent (not connected): tried again at the
         // next Recheck. Empty: said only in this game.
         std::function<bool(const std::string& line)> tell_others;
+        // The clock for repeating the restart line (tests); empty: steady_clock.
+        std::function<std::chrono::steady_clock::time_point()> now;
     };
     Rando(CoopMods::Loader& loader, Hooks hooks);
     ~Rando();  // waits for a build that runs
@@ -156,6 +178,7 @@ public:
     void Recheck() {
         Check();  // first: drops a line no longer true (the host left, another seed)
         TellOthers();
+        RepeatRestart();  // joined: a restart still due is said again, in the chat the player now looks at
     }
     // The chat lines since the last call (SwitchLine when the switch changed).
     std::vector<std::string> TakeLines();
@@ -170,6 +193,10 @@ private:
     void Build(const Plan& plan, const Want& want);
     void Say(std::string line);
     void TellOthers();                    // sends tell_ (Hooks::tell_others)
+    void SayRestart(std::string line);    // a restart line for the chat, kept to repeat (mutex_ not held)
+    void RepeatRestart();                 // restart_ into the chat now (mutex_ not held)
+    std::chrono::steady_clock::time_point Now() const;
+    std::string CurrentTables() const;    // TablesStamp of the other mods' size tables now
 
     CoopMods::Loader& loader_;
     const Hooks hooks_;
@@ -184,6 +211,8 @@ private:
     std::vector<std::string> lines_;  // mutex_
     std::string tell_;                // a line for the others not sent yet (mutex_): never a path
     std::string tell_seed_;           // the host's seed it is about (mutex_)
+    std::string restart_;             // the restart line until this game restarts (mutex_): empty when none
+    std::chrono::steady_clock::time_point restart_said_{};  // when it was last put in the chat (mutex_)
 };
 
 }  // namespace CoopRando
