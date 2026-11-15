@@ -176,6 +176,44 @@ TEST_CASE("mods: mod.json is read strictly and says why it is refused") {
     }
 }
 
+TEST_CASE("mods: a text's length is counted in characters, not in bytes") {
+    // One Chinese character is three bytes in UTF-8, so a limit of 64 characters
+    // has to let 64 of them through: counted in bytes it turns away a translation
+    // of ordinary length while its English half passes, and with the field the
+    // whole manifest.
+    std::string cjk;
+    for (int i = 0; i < 64; ++i) {
+        cjk += "中";  // 中
+    }
+    REQUIRE(cjk.size() == 192);
+
+    std::string why;
+    const auto m = ParseManifest("{\"id\": \"a\", \"name\": \"" + cjk + "\", \"author\": \"" + cjk +
+                                     "\", \"settings\": [{\"key\": \"c\", \"type\": \"choice\", "
+                                     "\"choices\": [{\"value\": \"v\", \"name\": \"" +
+                                     cjk + "\"}]}]}",
+                                 "Folder", &why);
+    REQUIRE_MESSAGE(m, why);
+    CHECK(m->name == cjk);
+    CHECK(m->author == cjk);
+    CHECK(m->settings[0].choices[0].second == cjk);
+
+    // 65 characters are one too many, however few bytes the same would take.
+    why.clear();
+    CHECK_FALSE(ParseManifest("{\"name\": \"" + cjk + "中\"}", "Folder", &why));
+    CHECK(why.find("\"name\" must be a text of at most 64 characters") != std::string::npos);
+
+    // A description in Chinese has the room its English has.
+    std::string long_cjk;
+    for (int i = 0; i < 512; ++i) {
+        long_cjk += "中";
+    }
+    why.clear();
+    const auto d = ParseManifest("{\"description\": \"" + long_cjk + "\"}", "Folder", &why);
+    REQUIRE_MESSAGE(d, why);
+    CHECK(d->description == long_cjk);
+}
+
 TEST_CASE("mods: ids, names and paths") {
     CHECK(IdFrom("Hyrule HD Textures") == "hyrule-hd-textures");
     CHECK(IdFrom("__x") == "x");

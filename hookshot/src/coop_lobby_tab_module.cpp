@@ -13,6 +13,7 @@
 #include "coop_hook.h"
 #include "coop_hookshot.h"
 #include "coop_hud.h"
+#include "coop_i18n.h"
 #include "coop_lobby_game.h"
 #include "coop_objects.h"
 #include "coop_pause_files.h"
@@ -40,7 +41,7 @@ std::uint64_t NowMs() {
 std::string ColourWords(std::uint32_t rgb) {
     const std::string_view tunic = CoopColors::TunicOf(rgb);
     if (tunic.empty()) {
-        return "green";
+        return CoopI18n::Tr("green");
     }
     std::string s(tunic);
     for (char& ch : s) {
@@ -48,7 +49,9 @@ std::string ColourWords(std::uint32_t rgb) {
             ch = static_cast<char>(ch - 'A' + 'a');
         }
     }
-    return s;
+    // The colour is a word of its own in the tab's sentences ("Player 2, red, the host"):
+    // the table has it (coop_i18n.h), so the sentence around it can be the table's too.
+    return CoopI18n::Tr(s);
 }
 
 // The session as the tab shows it. Takes the network lock (PlayerList), so never under g_mutex.
@@ -100,7 +103,9 @@ Lobby Read(int max_players) {
             if (r.number == s.number) {
                 p.ms = r.ms;
                 if (r.scene && !r.scene->empty()) {
-                    p.place = CoopHud::PlaceName(*r.scene);
+                    // The game's own place name (places.json) through the table, as the HUD's
+                    // line is: a name the table does not know stays as it is.
+                    p.place = CoopI18n::Place(CoopHud::PlaceName(*r.scene));
                 }
             }
         }

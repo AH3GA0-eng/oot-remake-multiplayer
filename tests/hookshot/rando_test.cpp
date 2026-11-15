@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "mod_temp.h"
+#include "coop_mod_json.h"
 #include "coop_mod_library.h"
 #include "coop_mods.h"
 #include "coop_rando.h"
@@ -144,7 +145,61 @@ TEST_CASE("rando: the control mod's mod.json is valid, with the seed and preset 
     CHECK(shared == std::set<std::string>{"on", "seed", "preset"});
     CHECK(m->settings[2].initial == "default");
     CHECK(m->settings[2].choices.size() == std::size(kPresets));
+    // Each choice is {"value", "name"}: OOTRR and the folder get the value, the
+    // Mods tab shows the name (English here; the loader picks the language's
+    // with TextIn, which the tab's own test covers).
+    for (std::size_t i = 0; i < m->settings[2].choices.size(); ++i) {
+        CHECK(m->settings[2].choices[i].first == kPresets[i]);
+        CHECK_FALSE(m->settings[2].choices[i].second.empty());
+    }
+    // The kit's own mod carries its text in both Chinese tables, so a Chinese menu
+    // shows it translated without a translation of the mod's file.
+    CHECK(ManifestText().find("\"name_zh-Hans\"") != std::string::npos);
+    CHECK(ManifestText().find("\"help_zh-Hant\"") != std::string::npos);
+    CHECK(ManifestText().find("\"description_zh-Hans\"") != std::string::npos);
+
+    // The loader's caps (coop_mod_library.cpp) are characters, and the Chinese
+    // halves are three bytes a character: the longest of them (the author line)
+    // is 71 bytes. Counted in bytes it was refused, and the whole manifest with
+    // it; counted in characters it fits. The tests run in English, so TextIn
+    // reads the plain fields above; this keeps the numbers of the others true.
+    const auto chars = [](const std::string& text) {
+        return static_cast<std::size_t>(
+            std::count_if(text.begin(), text.end(), [](char c) { return (static_cast<unsigned char>(c) & 0xC0) != 0x80; }));
+    };
+    std::size_t localised = 0;
+    const auto fits = [&](const CoopModJson::Value& object, const char* key, std::size_t most) {
+        for (const char* code : {"zh-Hans", "zh-Hant"}) {
+            const std::string name = std::string(key) + '_' + code;
+            if (const CoopModJson::Value* v = object.Get(name); v != nullptr && v->kind == CoopModJson::Value::Kind::String) {
+                ++localised;
+                INFO(name);
+                CHECK(chars(v->string) <= most);
+            }
+        }
+    };
+    const auto json = CoopModJson::Parse(ManifestText());
+    REQUIRE(json);
+    fits(*json, "name", 64);
+    fits(*json, "author", 64);
+    fits(*json, "description", 512);
+    for (const CoopModJson::Value& setting : json->Get("settings")->array) {
+        fits(setting, "name", 64);
+        fits(setting, "help", 256);
+        const CoopModJson::Value* choices = setting.Get("choices");
+        if (choices == nullptr) {
+            continue;
+        }
+        for (const CoopModJson::Value& choice : choices->array) {
+            if (choice.kind == CoopModJson::Value::Kind::Object) {
+                fits(choice, "name", 64);
+            }
+        }
+    }
+    CHECK(localised >= 12);
 }
+
+
 
 TEST_CASE("rando: seed words and folders as OOTRR names them") {
     CHECK(SeedWord("Hello World!") == "HelloWorld");
@@ -793,6 +848,11 @@ TEST_CASE("rando: only the presets this OOTRR can make are offered, a bad one go
         loader.Start();
         Rando rando(loader, w.Hooks());
         rando.Start();
+        // Start's manifest rewrite (the names in the player's language) keeps the refused one out.
+        const auto choices = PresetChoices(loader);
+        CHECK(std::find(choices.begin(), choices.end(), "full_shuffle") == choices.end());
+        CHECK(std::find(choices.begin(), choices.end(), "keysanity") != choices.end());
+        CHECK(Get(w.mods / kFolder / CoopMods::kManifestFile).find("\"name_zh-Hans\"") != std::string::npos);
         REQUIRE(loader.Set(kFolder, "seed", "PRE2"));
         rando.Wait();
         CHECK(w.runs.size() == before + 2);  // generate and build only

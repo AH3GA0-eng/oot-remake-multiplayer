@@ -93,7 +93,7 @@ TEST_CASE("lobby tab: the list shows the players, the host, open places, the inv
     CHECK(Has(v, "Open place"));
     REQUIRE(Has(v, "Copy the invite code"));
     CHECK(v.rows[RowOf(v, "Copy the invite code")].value == "INVITE-CODE-1234");
-    CHECK(Has(v, "Kokiri Forest  2 and a half of 3 hearts"));
+    CHECK(Has(v, "Kokiri Forest  2.5 / 3 hearts"));
     CHECK(v.selected == 1);  // the first player
     // Copy.
     Choose(t, "Copy the invite code");

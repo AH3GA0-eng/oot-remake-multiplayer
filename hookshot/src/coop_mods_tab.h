@@ -20,6 +20,13 @@
 
 namespace CoopModsTab {
 
+// A paragraph as the rows a NOTE line is: Hookshot draws a row as one line over
+// the row's width and ends what does not fit with "…", so a longer text is cut
+// here instead — after a full stop or a comma when one is near the end, at a
+// space otherwise, and between characters for the scripts that have no spaces.
+// A '\n' in the text starts a new line; empty lines are dropped.
+std::vector<std::string> NoteLines(const std::string& text);
+
 enum class Input { kUp, kDown, kLeft, kRight, kDecide, kBack, kErase };
 
 class Tab {

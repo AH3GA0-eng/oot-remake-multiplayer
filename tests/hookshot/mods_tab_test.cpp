@@ -223,8 +223,68 @@ TEST_CASE("mods tab: an empty folder says where mods go") {
     Tab tab({&loader, nullptr, nullptr});
     tab.Show();
     const auto v = tab.view();
-    REQUIRE(v.rows.size() == 1);
-    CHECK(v.rows[0].name.find("Put each mod in its own folder there.") != std::string::npos);
+    // The folder's path is long, so the sentence comes as the rows a NOTE line is.
+    std::string said;
+    for (const auto& row : v.rows) {
+        CHECK(row.kind == RowKind::kNote);
+        said += row.name;
+    }
+    REQUIRE_FALSE(v.rows.empty());
+    CHECK(said.find("Put each mod in its own folder there.") != std::string::npos);
     CHECK(v.selected == -1);
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("mods tab: a text longer than a row is handed over as several note rows") {
+    using CoopModsTab::NoteLines;
+    // A NOTE row is one line over the row's width (hos_coop_menu.h) and Hookshot ends
+    // what does not fit with "…", so a longer text is cut here first.
+    const std::string text = "打乱宝箱、迷宫道具和奖励（OOTRR）。联机时所有人玩房主的种子，拾取共享。换种子只需重启游戏，不用重新构建。";
+    const std::vector<std::string> lines = NoteLines(text);
+    REQUIRE(lines.size() == 2);
+    CHECK(lines[0] == "打乱宝箱、迷宫道具和奖励（OOTRR）。联机时所有人玩房主的种子，拾取共享。");
+    CHECK(lines[1] == "换种子只需重启游戏，不用重新构建。");
+
+    // A newline is a break of its own; a short text is one row.
+    CHECK(NoteLines("Short.") == std::vector<std::string>{"Short."});
+    CHECK(NoteLines(std::string("a\nb")) == std::vector<std::string>{"a", "b"});
+
+    // An English text breaks at a space rather than inside a word.
+    const std::vector<std::string> words =
+        NoteLines("Speeds the game up a little so that a long walk does not feel like one, and stops at once.");
+    REQUIRE(words.size() >= 2);
+    for (const std::string& line : words) {
+        CHECK(line.front() != ' ');
+        CHECK(line.back() != ' ');
+        CHECK(line.find("  ") == std::string::npos);
+    }
+}
+
+TEST_CASE("mods tab: a mod's long description shows as several rows of its page") {
+    const fs::path root = ModTestDir("coop-mods-tab-long");
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    const std::string description =
+        "打乱宝箱、迷宫道具和奖励（OOTRR）。联机时所有人玩房主的种子，拾取共享。换种子只需重启游戏，不用重新构建。";
+    Put(root / "long" / "mod.json",
+        R"json({"id": "long", "name": "Long", "description": "打乱宝箱、迷宫道具和奖励（OOTRR）。联机时所有人玩房主的种子，拾取共享。换种子只需重启游戏，不用重新构建。"})json");
+    {
+        CoopMods::Loader loader(root, {nullptr, 1, nullptr});
+        loader.Start();
+        Tab tab({&loader, nullptr, nullptr});
+        tab.Show();
+        tab.Press(Input::kDecide);
+        REQUIRE(tab.on_mod_page());
+        std::string joined;
+        int notes = 0;
+        for (const auto& row : tab.view().rows) {
+            if (row.kind == RowKind::kNote) {
+                ++notes;
+                joined += row.name;
+            }
+        }
+        CHECK(notes == 2);
+        CHECK(joined == description);
+    }
     fs::remove_all(root, ec);
 }
