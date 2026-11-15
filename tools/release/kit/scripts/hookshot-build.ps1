@@ -10,6 +10,7 @@
 #   Build-Hookshot-Coop.bat -Rebuild                build again even when nothing changed
 #   Build-Hookshot-Coop.bat -Jobs <n>               at most n compilers at once
 #   Build-Hookshot-Coop.bat -CheckOnly              get the tools and check your game files; build nothing
+#   Build-Hookshot-Coop.bat -PackOnly               only make the puppet pack again (make-puppet-pack.cmd)
 #   (for tools\hookshot\hs.py) -Tools <folder> -Work <folder>: Hookshot's tools and source, and its work folder,
 #   somewhere else than this kit's hookshot\ (one of each per pin, shared by every kit: hs-build-speed)
 #
@@ -44,6 +45,7 @@ param(
     [string]$Work = '',
     [switch]$Rebuild,
     [switch]$CheckOnly,
+    [switch]$PackOnly,
     # A Longshot game folder of the player's own (kit-friction): its saves and, through its builder, Longshot's downloads
     # (and compiled objects, same release only) are copied from it. 'none': do not ask. Asked once before a first build.
     [string]$Longshot = ''
@@ -175,6 +177,100 @@ function Read-TimedLine([int]$Seconds) {
     Write-Host ''
     return ''
 }
+# The puppet pack, from the same game files, where the co-op hook looks for it: its load folder
+# (<exe dir>\mods\contents on Hookshot)\0400486024DEC000\coop-puppet, the emulator's layout, which Hookshot's
+# host/mods.c also loads as a mod. A pack an earlier version of this script put in mods\coop-puppet goes.
+# The pack step is a function: the end of every build and update runs it, and so does -PackOnly (make-puppet-pack.cmd,
+# pack-retry). $true when the pack was made.
+function Invoke-PuppetPackStep([string]$exeDir) {
+    $code = 1
+    $made = $false
+    $packTool = Join-Path $kit 'tools\puppet_pack\build.py'
+    $mod = Join-Path $exeDir 'mods\contents\0400486024DEC000\coop-puppet'
+    $oldMod = Join-Path $exeDir 'mods\coop-puppet'
+    if (Test-Path -LiteralPath (Join-Path $oldMod 'coop_puppet.json')) { Remove-Item -LiteralPath $oldMod -Recurse -Force }
+    $packFrom = $Game
+    if (-not $packFrom) {
+        $last = Join-Path $hs 'game-files.txt'
+        if (Test-Path -LiteralPath $last) { $packFrom = "$(Get-Content -LiteralPath $last -TotalCount 1)".Trim() }
+    }
+    if ($Game) { [System.IO.File]::WriteAllText((Join-Path $hs 'game-files.txt'), "$Game`n") }
+    # The game file gone (moved, renamed, a drive not plugged in): said plainly, and in a window someone sits at, its new
+    # place asked for 2 minutes (nothing typed: the game starts without the pack, and the next start asks again).
+    if ((-not $packFrom -or -not (Test-Path -LiteralPath $packFrom)) -and (Test-Path -LiteralPath $packTool)) {
+        # First the usual places (pack-retry: the .nup moved to Downloads or the Desktop, a kit unzipped beside it).
+        $dumpCheck = Join-Path $kit 'tools\puppet_pack\dumpcheck.py'
+        $isGame = {
+            param($p)
+            $ErrorActionPreference = 'Continue'
+            & $python -I -B $dumpCheck --user-dir (Join-Path $kit 'emulator\user') --romfs $p *> $null
+            return $LASTEXITCODE -eq 0
+        }
+        $found = if ((Test-Path -LiteralPath $dumpCheck) -and (Test-Path -LiteralPath $python)) { Find-KitGameNup $packFrom $kit $isGame } else { '' }
+        if ($found) {
+            Write-Host "  Found your game file: $found (saved in hookshot\game-files.txt)"
+            $packFrom = $found
+            [System.IO.File]::WriteAllText((Join-Path $hs 'game-files.txt'), "$packFrom`n")
+        }
+    }
+    if (-not $packFrom -or -not (Test-Path -LiteralPath $packFrom)) {
+        Write-Host ''
+        foreach ($l in (Get-KitPackSourceText $packFrom)) { Write-Host $l -ForegroundColor Yellow }
+        $canAsk = $true
+        try { $canAsk = -not [Console]::IsInputRedirected } catch { $canAsk = $false }
+        # Asked once, not on every start: hookshot\pack-asked.txt keeps what was asked about (the game file named and
+        # the pack tool's hash), and a new game file or tool asks again; make-puppet-pack.cmd (-PackOnly) always asks.
+        $askNote = Join-Path $hs 'pack-asked.txt'
+        $askKey = Get-KitPackAskKey $packFrom (Join-Path $kit 'tools\puppet_pack')
+        $askedBefore = -not $PackOnly -and (Test-KitPackAsked $askNote $askKey)
+        if ($askedBefore) {
+            Write-Host '  (Not asked again at every start. make-puppet-pack.cmd asks for your game file and makes the pack.)' -ForegroundColor Yellow
+        } elseif ($canAsk -and -not $env:CI -and (Test-Path -LiteralPath $packTool)) {
+            Write-Host '  Drag your game''s .nup file into this window and press Enter (Enter alone: start without the pack):'
+            $given = "$(Read-TimedLine 120)".Trim().Trim('"')
+            if ($given -and (Test-Path -LiteralPath $given)) {
+                $packFrom = (Resolve-Path -LiteralPath $given).Path
+                [System.IO.File]::WriteAllText((Join-Path $hs 'game-files.txt'), "$packFrom`n")
+                Remove-Item -LiteralPath $askNote -Force -ErrorAction SilentlyContinue
+            } else {
+                if ($given) { Write-Host "  Not found: $given" -ForegroundColor Yellow }
+                try { [System.IO.File]::WriteAllText($askNote, "$askKey`n") } catch { }
+            }
+        }
+    }
+    if ($packFrom -and (Test-Path -LiteralPath $packFrom) -and (Test-Path -LiteralPath $packTool)) {
+        Write-Host '  Making the puppet pack (how you see the other players; about a minute) ...'
+        $ErrorActionPreference = 'Continue'
+        # (no --title-rows: the title stays the game's own; co-op is the pause menu's Multiplayer tab)
+        & $python -I -B $packTool --romfs $packFrom --mod-dir $mod 2>&1 | ForEach-Object { Write-Host "    $_" }
+        $code = $LASTEXITCODE
+        $made = $true
+        $ErrorActionPreference = 'Stop'
+        if ($code -eq 0) { Remove-Item -LiteralPath (Join-Path $hs 'pack-asked.txt') -Force -ErrorAction SilentlyContinue }
+        if ($code -ne 0) { Write-Host '  The puppet pack could not be made (the lines above say why): the game starts, and the other players show as names only until it is made. Every start tries again.' -ForegroundColor Yellow }
+    } else {
+        Write-Host '  No puppet pack this time: the other players show as names only.' -ForegroundColor Yellow
+    }
+    return ($code -eq 0 -and $made)
+}
+
+# -PackOnly (make-puppet-pack.cmd on a Longshot kit; boredhermit: "it can't build the puppet independently anymore"):
+# only the puppet pack, made again in the game this kit built. Nothing is downloaded or built.
+if ($PackOnly) {
+    $exe = Get-KitHookshotExe $Out
+    if (-not $exe) { Fail 'The co-op game is not built yet. Start "Start OoT Co-op.bat": it builds the game and makes the puppet pack.' }
+    if (-not (Test-Path -LiteralPath $python)) { Fail "The pack tool's Python is not in $tools. Start ""Start OoT Co-op.bat"" once (it gets it), then this again." }
+    $exeDir = Split-Path -Parent $exe
+    if (Get-Process longshot, hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($exeDir, [StringComparison]::OrdinalIgnoreCase) }) {
+        Fail 'The co-op game is running: close it first (it reads the pack when it starts).'
+    }
+    Step 'The puppet pack'
+    $ok = Invoke-PuppetPackStep $exeDir
+    foreach ($l in @(Update-KitRandoSeeds $exeDir)) { Write-Host "  $l" }
+    if ($ok) { Write-Host ''; Write-Host 'Done: the puppet pack is made. Start "Start OoT Co-op.bat" to play.' -ForegroundColor Green; exit 0 }
+    exit 1
+}
+
 $lsNote = Join-Path $hs 'longshot-folder.txt'
 $lsFresh = -not $CheckOnly -and -not $sharedWork -and -not (Test-Path -LiteralPath (Join-Path $Out 'coop-built-from.txt'))
 if (-not $Longshot -and $lsFresh -and -not $env:OOT_COOP_NO_LONGSHOT_ASK) {
@@ -581,48 +677,8 @@ if (Test-Path -LiteralPath $ootrrPin) {
     }
 }
 
-# The puppet pack, from the same game files, where the co-op hook looks for it: its load folder
-# (<exe dir>\mods\contents on Hookshot)\0400486024DEC000\coop-puppet, the emulator's layout, which Hookshot's
-# host/mods.c also loads as a mod. A pack an earlier version of this script put in mods\coop-puppet goes.
-$packTool = Join-Path $kit 'tools\puppet_pack\build.py'
-$mod = Join-Path $exeDir 'mods\contents\0400486024DEC000\coop-puppet'
-$oldMod = Join-Path $exeDir 'mods\coop-puppet'
-if (Test-Path -LiteralPath (Join-Path $oldMod 'coop_puppet.json')) { Remove-Item -LiteralPath $oldMod -Recurse -Force }
-$packFrom = $Game
-if (-not $packFrom) {
-    $last = Join-Path $hs 'game-files.txt'
-    if (Test-Path -LiteralPath $last) { $packFrom = "$(Get-Content -LiteralPath $last -TotalCount 1)".Trim() }
-}
-if ($Game) { [System.IO.File]::WriteAllText((Join-Path $hs 'game-files.txt'), "$Game`n") }
-# The game file gone (moved, renamed, a drive not plugged in): said plainly, and in a window someone sits at, its new
-# place asked for 2 minutes (nothing typed: the game starts without the pack, and the next start asks again).
-if (-not $packFrom -or -not (Test-Path -LiteralPath $packFrom)) {
-    Write-Host ''
-    foreach ($l in (Get-KitPackSourceText $packFrom)) { Write-Host $l -ForegroundColor Yellow }
-    $canAsk = $true
-    try { $canAsk = -not [Console]::IsInputRedirected } catch { $canAsk = $false }
-    if ($canAsk -and -not $env:CI -and (Test-Path -LiteralPath $packTool)) {
-        Write-Host '  Drag your game''s .nup file into this window and press Enter (Enter alone: start without the pack):'
-        $given = "$(Read-TimedLine 120)".Trim().Trim('"')
-        if ($given -and (Test-Path -LiteralPath $given)) {
-            $packFrom = (Resolve-Path -LiteralPath $given).Path
-            [System.IO.File]::WriteAllText((Join-Path $hs 'game-files.txt'), "$packFrom`n")
-        } elseif ($given) {
-            Write-Host "  Not found: $given" -ForegroundColor Yellow
-        }
-    }
-}
-if ($packFrom -and (Test-Path -LiteralPath $packFrom) -and (Test-Path -LiteralPath $packTool)) {
-    Write-Host '  building the puppet pack ...'
-    $ErrorActionPreference = 'Continue'
-    # (no --title-rows: the title stays the game's own; co-op is the pause menu's Multiplayer tab)
-    & $python -I -B $packTool --romfs $packFrom --mod-dir $mod 2>&1 | ForEach-Object { "    $_" }
-    $code = $LASTEXITCODE
-    $ErrorActionPreference = 'Stop'
-    if ($code -ne 0) { Write-Host '  The puppet pack was not built (said why above): the other players show as names only. Every start tries again.' -ForegroundColor Yellow }
-} else {
-    Write-Host '  No puppet pack this time: the other players show as names only.' -ForegroundColor Yellow
-}
+# The puppet pack (Invoke-PuppetPackStep above), from the same game files.
+[void](Invoke-PuppetPackStep $exeDir)
 # Randomizer seeds built before this puppet pack: built again with its size table (else the game aborts while it loads).
 foreach ($l in @(Update-KitRandoSeeds $exeDir)) { Write-Host "  $l" }
 

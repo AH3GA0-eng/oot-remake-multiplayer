@@ -78,6 +78,7 @@ struct Options {
     bool voice = false;            // LICHII_COOP_VOICE (open or ptt: proximity voice chat; unset, the default: off)
     bool voice_ptt = false;        // push to talk: LICHII_COOP_VOICE=ptt (or an older on, 1); open: open mic, the menu's default
     std::string voice_key = "V";   // LICHII_COOP_VOICE_KEY as the Voice mode row names it (read only)
+    std::string voice_mic;         // LICHII_COOP_VOICE_MIC: the voice's microphone by its name ("": the game's)
     bool map_players = true;       // LICHII_COOP_MAP (0: no other players on the minimap and the pause map)
     bool map_names = true;         // LICHII_COOP_MAP_NAMES (0: their icons without names)
 

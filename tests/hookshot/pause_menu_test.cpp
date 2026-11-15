@@ -203,6 +203,66 @@ TEST_CASE("pause tab: Join pastes the code in one press, then joins with it") {
     CHECK(Selected(e) == "Join");
 }
 
+TEST_CASE("pause tab: a new code replaces the one in the field, never goes beside it, and Clear empties it") {
+    const std::string old_code = "ABCDEFGHJKLMNPQRSTUVWXYZ-OLD1";
+    const std::string new_code = "ABCDEFGHJKLMNPQRSTUVWXYZ-NEW2";
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    m.Open(Page::kJoin);
+    m.Press(Input::kDecide);
+    m.TakeRequest();
+    CHECK(m.Paste(old_code));
+    // a long code shows its start, its end and its length: codes start alike
+    CHECK(Names(m) == std::vector<std::string>{"Friend's code", "Clear the code", "Join"});
+    CHECK(m.view().rows[0].value == "ABCDEFGH...XYZ-OLD1 (29)");
+    // pressing the field again pastes at once, in place of the old code (one press, then Join)
+    SelectRow(m, "Friend's code");
+    m.Press(Input::kDecide);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kPaste);
+    CHECK(m.Paste(new_code));
+    CHECK(m.join_text() == new_code);
+    CHECK(Selected(m) == "Join");
+    // Ctrl+V while typing replaces it too
+    SelectRow(m, "Friend's code");
+    m.Press(Input::kDecide);
+    m.TakeRequest();
+    CHECK(m.Paste(""));   // nothing on the clipboard: the code stays, no complaint
+    CHECK(m.join_text() == new_code);
+    CHECK(m.typing());
+    CHECK(m.view().rows[0].value == "..." + new_code.substr(new_code.size() - 20) + "_");   // its end, typed
+    m.Press(Input::kPaste);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kPaste);
+    CHECK(m.Paste(old_code));
+    CHECK(m.join_text() == old_code);
+    // a code that comes as keystrokes (Win+V, an on-screen keyboard) starts a new code, not more of the old one
+    SelectRow(m, "Friend's code");
+    m.Press(Input::kDecide);
+    m.TakeRequest();
+    m.Paste("");
+    for (const char c : new_code) {
+        m.Char(static_cast<unsigned char>(c));
+    }
+    CHECK(m.join_text() == new_code);
+    m.Press(Input::kDecide);
+    // Backspace first edits the old code instead
+    SelectRow(m, "Friend's code");
+    m.Press(Input::kDecide);
+    m.TakeRequest();
+    m.Paste("");
+    m.Press(Input::kErase);
+    m.Char('3');
+    CHECK(m.join_text() == new_code.substr(0, new_code.size() - 1) + "3");
+    m.Press(Input::kDecide);
+    // Clear empties the field and goes back to it; Join waits for a code
+    SelectRow(m, "Clear the code");
+    m.Press(Input::kDecide);
+    CHECK(m.join_text().empty());
+    CHECK(Names(m) == std::vector<std::string>{"Friend's code", "Join"});
+    CHECK(m.view().rows[0].value == "Paste");
+    CHECK(Selected(m) == "Friend's code");
+    CHECK(m.view().rows[1].fixed);
+}
+
 TEST_CASE("pause tab: Join offers the last game again first, one press") {
     Menu m;
     m.Show(CoopTitleMenu::Options{});
@@ -617,4 +677,71 @@ TEST_CASE("pause tab: Customize Link opens the customizer, its changes are asked
     CHECK(m.page() == Page::kMain);
     CHECK(Selected(m) == "Customize Link");
     CHECK(m.Picture().empty());
+}
+
+TEST_CASE("pause tab: Settings: the Microphone row, Default and the microphones listed, saved by name") {
+    Menu m;
+    CoopTitleMenu::Options o;
+    o.voice = true;
+    m.Show(o);
+    m.Open(Page::kSettings);
+    auto names = Names(m);
+    CHECK(std::find(names.begin(), names.end(), "Microphone") == names.end());   // no list: this game cannot choose
+    m.SetMicrophones(std::vector<std::string>{"Headset Microphone (USB)", "Webcam"});
+    names = Names(m);
+    auto at = std::find(names.begin(), names.end(), "Microphone");
+    REQUIRE(at != names.end());
+    CHECK(at[-1] == "Proximity voice chat");   // right under it
+    CHECK(at[1] == "Voice mode");
+    const auto row = static_cast<std::size_t>(at - names.begin());
+    CHECK(m.view().rows[row].value == "Default");
+    CHECK(m.view().rows[row].kind == RowKind::kChoice);
+    SelectRow(m, "Microphone");
+    m.Press(Input::kRight);
+    CHECK(m.options().voice_mic == "Headset Microphone (USB)");
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+    CHECK(m.view().rows[row].value == "Headset Microphone (USB)");
+    m.Press(Input::kRight);
+    CHECK(m.options().voice_mic == "Webcam");
+    m.Press(Input::kRight);   // round to Default
+    CHECK(m.options().voice_mic.empty());
+    m.Press(Input::kLeft);   // and back the other way
+    CHECK(m.options().voice_mic == "Webcam");
+    // the chosen one unplugged: kept by its name, shown as not connected, still one of the choices
+    m.SetMicrophones(std::vector<std::string>{"Headset Microphone (USB)"});
+    CHECK(Selected(m) == "Microphone");
+    CHECK(m.view().rows[row].value == "Webcam (not connected)");
+    m.Press(Input::kRight);   // after it in the list: round to Default
+    CHECK(m.options().voice_mic.empty());
+    m.Press(Input::kLeft);   // once another is chosen the unplugged one is gone from the choices (as the Insert menu's)
+    CHECK(m.options().voice_mic == "Headset Microphone (USB)");
+    m.Press(Input::kRight);
+    CHECK(m.options().voice_mic.empty());
+    m.Press(Input::kRight);
+    CHECK(m.options().voice_mic == "Headset Microphone (USB)");
+    // voice off: no row, the choice kept
+    SelectRow(m, "Proximity voice chat");
+    m.Press(Input::kLeft);
+    names = Names(m);
+    CHECK(std::find(names.begin(), names.end(), "Microphone") == names.end());
+    CHECK(m.options().voice_mic == "Headset Microphone (USB)");
+}
+
+TEST_CASE("pause tab: the Microphone row's choices and words") {
+    using CoopPauseMenu::MicChoices;
+    using CoopPauseMenu::MicWords;
+    CHECK(MicChoices({}, "") == std::vector<std::string>{""});
+    CHECK(MicChoices({"A", "B", "A", ""}, "") == std::vector<std::string>{"", "A", "B"});   // each name once
+    CHECK(MicChoices({"A"}, "Gone") == std::vector<std::string>{"", "A", "Gone"});
+    CHECK(MicWords("", {"A"}) == "Default");
+    CHECK(MicWords("A", {"A"}) == "A");
+    CHECK(MicWords("A", {}) == "A (not connected)");
+    const std::string longer = "Microphone (Realtek(R) High Definition Audio)";
+    CHECK(MicWords(longer, {longer}) == "Microphone (Realtek(R) Hi...");
+    CHECK(CoopTitleMenu::CodePoints(MicWords(longer, {longer})) == CoopPauseMenu::kMicChars);
+    const std::string wide = "Mikrofon \xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4"
+                             "\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4";
+    const std::string cut = MicWords(wide, {wide});   // cut at a character's start, not inside one
+    CHECK(CoopTitleMenu::CodePoints(cut) == CoopPauseMenu::kMicChars);
+    CHECK(cut.substr(cut.size() - 5) == "\xC3\xA4...");
 }

@@ -1,4 +1,4 @@
-# Masks what identifies a player in text that collect-logs.ps1 puts into the zip.
+# Masks what identifies a player in text that collect-logs.ps1 puts into the zip, and writes that zip (Write-LogZip, at the end).
 # Dot-source it. Each IPv4/IPv6 address becomes its kind with a number, so a reader can
 # still see which lines mean the same machine: <lan-1>, <tailscale-1>, <hamachi-1>,
 # <radmin-1>, <loopback-1>, <public-1>. Ports stay. MAC addresses become <mac>, the
@@ -106,4 +106,27 @@ function Protect-LogText([string]$Text, [hashtable]$State,
         }
     }
     $t
+}
+
+# Writes the staged folder into a standard zip: '/' between folders (Compress-Archive in Windows
+# PowerShell 5.1 writes '\', which unzip tools warn about), one entry per file, no './' and no
+# folder entries. .NET's ZipArchive only, so a PC without System32\tar.exe gets the same zip.
+# A zip left half-written by an error is removed before the error goes on.
+function Write-LogZip([string]$Stage, [string]$Zip) {
+    Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+    $root = [System.IO.Path]::GetFullPath($Stage).TrimEnd('\', '/') + '\'
+    if (Test-Path -LiteralPath $Zip) { Remove-Item -LiteralPath $Zip -Force }
+    $done = $false
+    $archive = [System.IO.Compression.ZipFile]::Open($Zip, [System.IO.Compression.ZipArchiveMode]::Create)
+    try {
+        foreach ($f in @(Get-ChildItem -LiteralPath $root -Recurse -File -Force | Sort-Object FullName)) {
+            $name = $f.FullName.Substring($root.Length).Replace('\', '/')
+            [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $f.FullName, $name,
+                [System.IO.Compression.CompressionLevel]::Optimal)
+        }
+        $done = $true
+    } finally {
+        $archive.Dispose()
+        if (-not $done) { Remove-Item -LiteralPath $Zip -Force -ErrorAction SilentlyContinue }
+    }
 }

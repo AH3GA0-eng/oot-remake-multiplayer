@@ -1,0 +1,32 @@
+# hs-gate-platform-pause, B: follows A's lift clock from the middle lift; pauses 5 s at A's b-paused mark.
+mark start
+warp DodongoCavern EntrancePos
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place 0.0 97.6 -12.6
+wait 240
+mark placed
+wait 600
+mark s1
+wait 600
+press PLUS               # B pauses for 5 s (A: b-paused)
+wait 300
+press PLUS
+wait 120
+mark b-after
+wait 300
+wait 120
+wait 60
+wait 120
+mark a-after
+wait 900
+mark s4

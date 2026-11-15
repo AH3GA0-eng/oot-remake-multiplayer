@@ -53,6 +53,7 @@
 #include "coop_dbno_game.h"
 #include "coop_enemy_shots.h"
 #include "coop_mods_runtime.h"
+#include "coop_rando.h"
 #include "coop_hook.h"
 #include "coop_lobby_game.h"
 #include "coop_voice.h"
@@ -199,6 +200,20 @@ bool Refused(const CoopPuppet::Call& c) {
         return false;
     }
     const std::string actor = CreateName(c);
+    // A randomizer seed whose size table may lack the puppet pack's entries (coop_rando.h HoldPack): a pack actor
+    // made now crashes the game, so none until the restart (the chat says RESTART); the others show as fairies.
+    if (actor.rfind("Coop", 0) == 0) {
+        if (const CoopRando::Rando* r = CoopModsRuntime::Rando(); r != nullptr && r->HoldPack()) {
+            static bool held_said = false;
+            if (!held_said) {
+                held_said = true;
+                LOG_WARNING(Core, "coop: {} not made: the randomizer seed's size table is being checked or was made "
+                                  "again (restart the game); other players show as their fairy until then",
+                            actor);
+            }
+            return true;
+        }
+    }
     if (!CoopHookshot::RefuseCreate(actor, allow)) {
         return false;
     }

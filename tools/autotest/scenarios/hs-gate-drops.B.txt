@@ -1,0 +1,53 @@
+# hs-gate-drops, B: stands in the room while A cuts (B's game makes the copies), then goes away and back with A.
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place -1.0 122.9 -6.0
+wait 240
+mark placed
+wait 188
+mark cut1
+wait 368
+mark cut2
+wait 600
+place -12.0 48.5 66.5
+wait 600
+mark away1
+place 0.0 122.9 -4.0
+wait 600
+mark back1
+place -12.0 48.5 66.5
+wait 600
+mark away2
+place 0.0 122.9 -4.0
+wait 600
+mark back2
+place -12.0 48.5 66.5
+wait 600
+mark away3
+place 0.0 122.9 -4.0
+wait 600
+mark back3
+place -12.0 48.5 66.5
+wait 600
+mark away4
+place 0.0 122.9 -4.0
+wait 600
+mark back4
+place -12.0 48.5 66.5
+wait 600
+mark away5
+place 0.0 122.9 -4.0
+wait 600
+mark back5
+mark end

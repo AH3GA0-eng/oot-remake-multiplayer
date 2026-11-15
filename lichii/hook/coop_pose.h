@@ -261,5 +261,11 @@ void SetLog(std::function<void(const std::string&)> log, bool debug, bool as_too
 // arrived in the last kFreshMs), so the director plays no AS command on it.
 bool Drives(std::uint8_t number, std::uint64_t now_ms);
 inline constexpr std::uint64_t kFreshMs = 1000;
+// Calc thread, after OnCalcFrame: whether a body pose of this player was
+// written on its puppet in the last kFreshMs (puppet-anim, issue #36/#41).
+// Poses that arrive but are not written (another skeleton: age, model) or a
+// stream that stopped leave the puppet to its AS commands, never frozen in
+// the last pose written. The director goes by Drives && Writes.
+bool Writes(std::uint8_t number, std::uint64_t now_ms);
 
 }  // namespace CoopPose

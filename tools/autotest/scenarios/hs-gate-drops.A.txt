@@ -1,0 +1,85 @@
+# hs-gate-drops (0.11.1 release gate (c), drop-loop ffb0b4f5, row #40 rupee flood): a drop that unloads and is listed
+# again is the same drop, not a new roll. Magloyr's 0.11.0 log: 594 green rupee sends at the same spots of the Deku
+# Tree hookshot room's grass (-4.25 121.33 -9.02 and 4.22 108.20 5.61), "lying" up to 115.
+# A cuts the grass at both spots (sword, Y, turning), then both go far away (the corridor before Gohma's door,
+# -12.0 48.5 66.5, where the room's actors unload) and back, 5 times.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-gate-drops
+# Pass:
+#  - A: at least one "coop: drops: ... listed again: the same drop, not a new roll".
+#  - A: "coop: drops: sent <Item>" lines only for the first cuts (marks cut1/cut2), none for the same spots after
+#    "back1".."back5"; the "N lying" count flat from back1 to back5 in both logs.
+#  - Shots back1..back5: the same rupees on the floor in both games, not more each time.
+#  - Inconclusive if no drop was rolled at all (no "drops: sent" in A): grass gave nothing.
+#! noload
+#! start coop: test warp done
+#! timeout 400
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place -3.4 122.9 -9.6
+wait 240
+mark placed
+toward -4.25 -9.02 10
+press Y
+wait 40
+toward -5.0 -8.0 10
+press Y
+wait 40
+toward -3.5 -10.0 10
+press Y
+wait 60
+mark cut1
+place 3.1 109.8 8.6
+wait 180
+toward 4.22 5.61 10
+press Y
+wait 40
+toward 5.0 6.5 10
+press Y
+wait 40
+toward 3.5 4.8 10
+press Y
+wait 60
+mark cut2
+wait 600
+place -12.0 48.5 66.5    # away: the room unloads
+wait 600
+mark away1
+place -1.0 122.9 -6.0     # back by the upper grass
+wait 600
+mark back1
+place -12.0 48.5 66.5    # away: the room unloads
+wait 600
+mark away2
+place -1.0 122.9 -6.0     # back by the upper grass
+wait 600
+mark back2
+place -12.0 48.5 66.5    # away: the room unloads
+wait 600
+mark away3
+place -1.0 122.9 -6.0     # back by the upper grass
+wait 600
+mark back3
+place -12.0 48.5 66.5    # away: the room unloads
+wait 600
+mark away4
+place -1.0 122.9 -6.0     # back by the upper grass
+wait 600
+mark back4
+place -12.0 48.5 66.5    # away: the room unloads
+wait 600
+mark away5
+place -1.0 122.9 -6.0     # back by the upper grass
+wait 600
+mark back5
+mark end

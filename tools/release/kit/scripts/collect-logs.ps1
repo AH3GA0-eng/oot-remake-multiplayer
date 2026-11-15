@@ -136,15 +136,9 @@ try {
 $about += Get-Process lichii, coop_server -ErrorAction SilentlyContinue | ForEach-Object { "running: $($_.ProcessName) $(Protect-LogText $_.Path $mask)" }
 [System.IO.File]::WriteAllLines((Join-Path $stage 'about-this-pc.txt'), [string[]]$about)
 
-$tar = Join-Path $env:SystemRoot 'System32\tar.exe'
-if (Test-Path $tar) {
-    # Forward slashes in the zip, which every unzip tool reads (Compress-Archive in
-    # Windows PowerShell 5.1 writes backslashes).
-    & $tar -a -c -f $zip -C $stage .
-    if ($LASTEXITCODE -ne 0) { throw "tar failed ($LASTEXITCODE)" }
-} else {
-    Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -Force
-}
+# A standard zip on every PC ('/' names, one entry per file; log-mask.ps1). Not tar.exe or
+# Compress-Archive: a player's PC without tar.exe got Compress-Archive's '\' names.
+Write-LogZip $stage $zip
 Remove-Item -LiteralPath $stage -Recurse -Force
 Write-Host ''
 Write-Host "Wrote $zip"

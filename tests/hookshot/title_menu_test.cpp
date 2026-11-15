@@ -667,3 +667,27 @@ TEST_CASE("title menu: a refusal's row keeps the part before the first ':'") {
     CHECK(ShortReason("a: b: c") == "a");
     CHECK(RefusedLine("x: y") == "Your friend's game turned this one away: x.");
 }
+
+TEST_CASE("title menu: the voice's microphone in coop-options.ini") {
+    CHECK(Options::Read("", "").voice_mic.empty());
+    Options o = Options::Read("", "LICHII_COOP_VOICE=open\r\nLICHII_COOP_VOICE_MIC=Headset Microphone (USB)\r\n");
+    CHECK(o.voice_mic == "Headset Microphone (USB)");
+    // a name with " #" or " ;" in it is all of the name, not a comment (as the launcher reads the line)
+    CHECK(Options::Read("", "LICHII_COOP_VOICE_MIC=Mic #2 ; left\r\n").voice_mic == "Mic #2 ; left");
+    std::string c, opt;
+    o.voice_mic = "Webcam";
+    o.Write(c, opt);
+    CHECK(IniGet(opt, "LICHII_COOP_VOICE_MIC") == "Webcam");
+    o.voice = false;   // voice off: the microphone is kept for next time
+    o.Write(c, opt);
+    CHECK(IniGet(opt, "LICHII_COOP_VOICE_MIC") == "Webcam");
+    o.voice_mic.clear();   // Default: no line
+    o.Write(c, opt);
+    CHECK_FALSE(IniGet(opt, "LICHII_COOP_VOICE_MIC").has_value());
+    o.voice_mic = "Webcam";
+    bool seen = false;
+    for (const auto& [k, v] : o.Environment()) {
+        seen |= k == "LICHII_COOP_VOICE_MIC" && v == "Webcam";
+    }
+    CHECK(seen);
+}

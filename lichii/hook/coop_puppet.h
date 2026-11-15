@@ -422,6 +422,12 @@ public:
     static constexpr std::uint64_t kLeaveGraceMs = 2000;
     // A received frame further than this from the puppet's is set on it.
     static constexpr float kFrameSlack = 3.0f;
+    // Backstop (puppet-anim, player reports #36/#41): on the AS path the
+    // command the puppet's own slot 0 plays is read this often; found other
+    // than its player's at kBackstopMisses reads in a row (a play the game
+    // dropped, or a one-shot it ended and moved on from), it is played again.
+    static constexpr std::uint64_t kBackstopMs = 750;
+    static constexpr int kBackstopMisses = 2;
     // A hidden puppet is moved this far down, under the floor.
     static constexpr float kHideDrop = 500.0f;
     // A worn piece this far from its shown puppet was left behind (made while
@@ -477,6 +483,11 @@ private:
         std::uint64_t anim_buffer = 0;  // which name buffer is next
         std::optional<float> frame_to_set;  // after a play
         std::optional<float> held_frame;    // while held
+        std::uint64_t backstop_ms = 0;      // next backstop read (kBackstopMs)
+        int backstop_misses = 0;            // reads in a row that found another command
+        unsigned backstops = 0;             // times the backstop played it again (logged)
+        std::string cut_refused;            // their cutscene's command the puppet lacks (this hold)
+        std::uint64_t cut_verify_frame = 0; // a hold reads its play back from this frame
         CoopFollow::Follower follow;        // jitter-b: their place taken to this game frame
         CoopFollow::Steps steps;            // jitter-2: how even its drawn steps are (logged)
         CoopFollow::Follower raw_follow;    // jitter-2: the same on the raw frame time (not drawn;
@@ -555,7 +566,10 @@ private:
     std::optional<Call> Next(Slot& slot, Guest& guest, std::uint64_t now_ms);
     std::optional<Call> Create(Slot& slot, const Target& target, Guest& guest);
     std::uint64_t Resolve(Slot& slot, Guest& guest);
-    std::optional<Call> Animate(Slot& slot, const Target& target, Guest& guest);
+    std::optional<Call> Animate(Slot& slot, const Target& target, Guest& guest,
+                                std::uint64_t now_ms);
+    // The command slot 0 of `controller` plays (slot +0x10), when readable.
+    static std::optional<std::string> Playing(Guest& guest, std::uint64_t controller);
     std::optional<Call> Equip(Slot& slot, const Target& target, Guest& guest,
                               std::uint64_t now_ms);
     std::optional<Call> Hold(Slot& slot, const Target& target, Guest& guest,
@@ -650,9 +664,10 @@ struct PlannerSettings {
     // Each player's tunic in their colour (docs/puppet.md, "Colour"): the
     // puppet pack's CoopPuppet_<Age>_<Colour>. LICHII_COOP_TUNICS=0: off.
     bool tunics = true;
-    // Your own Link wears another colour (LICHII_COOP_SELF_TUNIC, set by the
-    // kit when it put that colour's tile over the game's): the plain puppet
-    // would wear it too, so a green player gets CoopPuppet_<Age>_Green.
+    // The pack has the green puppets (CoopPuppetConfig): the plain puppet's
+    // model is your own Link's (the kit's colour-agree copy, whatever colour
+    // you wear), so it would wear your tunic; a green player, and any puppet
+    // whose colour is off or failed, gets CoopPuppet_<Age>_Green instead.
     bool green_puppet = false;
     // LICHII_COOP_NATIVE_PLAYER (a test, coop_native_player.h): the other
     // player is the game's own Player_<Age>, made and then left alone.

@@ -278,14 +278,81 @@ mod=$GAME/mods/contents/0400486024DEC000/coop-puppet
 # (the pack tool's own files too: a pack made by another version of the tool is made again, as the
 # Windows kit's Test-KitPuppetPackStale does; the look files and the copies' marks change with it)
 pack_stamp="$src_stamp tool:$(cd "$DATA/tools/puppet_pack" && LC_ALL=C sha256sum -- *.py | sha256sum | cut -d' ' -f1)"
-if [[ -f $mod/coop_puppet.json && $(cat "$mod/.coop-stamp" 2>/dev/null) == "$pack_stamp" ]]; then
+# A file the pack's manifest names that is gone (a pack tool stopped half way, a hand-copied pack): the look files
+# (coop_look/gear.bin, a colour's .bin) and each tunic's files, as the Windows kit's Get-KitPuppetPackGaps (pack-retry).
+pack_gap() {
+    [[ -f $mod/coop_puppet.json ]] || return 0
+    "$PY" -I -B -c '
+import json, os, sys
+d = sys.argv[1]
+try:
+    m = json.load(open(os.path.join(d, "coop_puppet.json"), encoding="utf-8"))
+except Exception:
+    print("coop_puppet.json"); sys.exit()
+want = list((m.get("look_files") or {}).values())
+want += ["romfs/" + f for fs in (m.get("tunics") or {}).values() for f in (fs or [])]
+gone = [f for f in want if f and not os.path.isfile(os.path.join(d, f))]
+if gone:
+    print(gone[0])
+' "$mod" 2>/dev/null || true
+}
+# The game file gone or never named (pack-retry: players whose pack was never made): the usual places, the folder
+# the remembered file was in first; only a file dumpcheck.py says is the game (its header), the remembered name first.
+# Without dumpcheck.py nothing is taken: an unchecked file is never used (as on Windows).
+find_pack_game() {
+    local places=() f same='' good=()
+    [[ -f $DATA/tools/puppet_pack/dumpcheck.py ]] || return 0
+    [[ -n $pack_from ]] && places+=("$(dirname -- "$pack_from")")
+    places+=("$KIT" "$(dirname "$KIT")" "$HOME/Downloads" "$HOME/Desktop" "$HOME/Documents")
+    while IFS= read -r f; do
+        "$PY" -I -B "$DATA/tools/puppet_pack/dumpcheck.py" --user-dir "$DATA" --romfs "$f" >/dev/null 2>&1 || continue
+        good+=("$f")
+        [[ -n $pack_from && $(basename -- "$f") == "$(basename -- "$pack_from")" ]] && same=$f
+    done < <(find "${places[@]}" -maxdepth 2 -iname '*.nup' -type f 2>/dev/null | sort -u)
+    if [[ -n $same ]]; then printf '%s\n' "$same"
+    elif ((${#good[@]} == 1)); then printf '%s\n' "${good[0]}"
+    fi
+}
+# The drag prompt is asked once, not at every start: data/pack-asked.txt keeps what it asked about (the game file named
+# and the pack tool's hash), so a new game file or tool asks again; start-oot-coop.sh --pack removes it and asks.
+pack_asked=$DATA/pack-asked.txt
+ask_key="${pack_from:-}|${pack_stamp##* tool:}"
+if [[ ! -e ${pack_from:-} ]] && ! [[ -f $mod/coop_puppet.json && $(cat "$mod/.coop-stamp" 2>/dev/null) == "$pack_stamp" && -z $(pack_gap) ]]; then
+    found=$(find_pack_game)
+    if [[ -n $found ]]; then
+        say "  Found your game file: $found (saved in data/game-files.txt)"
+        pack_from=$found
+        printf '%s\n' "$pack_from" >"$remembered"
+    elif [[ $(cat "$pack_asked" 2>/dev/null) == "$ask_key" ]]; then
+        say '  (Not asked again at every start: bash start-oot-coop.sh --pack asks for your game file and makes the pack.)'
+    elif kit_tty && [[ -z ${CI-} ]]; then
+        say "  The puppet pack (how you see the other players) is made from your game file, and the kit cannot find it$([[ -n $pack_from ]] && printf ' (not at %s any more)' "$pack_from")."
+        a=''
+        read -r -t 120 -p "  Drag your game file (.nup) onto this window and press Enter (Enter alone: start without the pack): " a || a=''
+        a=${a#\'} a=${a%\'} a=${a#\"} a=${a%\"} a=${a#file://}
+        a=${a%"${a##*[![:space:]]}"}
+        if [[ -n $a && -e $a ]]; then
+            pack_from=$a
+            printf '%s\n' "$pack_from" >"$remembered"
+            rm -f "$pack_asked"
+        else
+            [[ -z $a ]] || warn "not found: $a"
+            printf '%s\n' "$ask_key" >"$pack_asked"
+        fi
+    fi
+fi
+gap=$(pack_gap)
+if [[ -f $mod/coop_puppet.json && $(cat "$mod/.coop-stamp" 2>/dev/null) == "$pack_stamp" && -z $gap ]]; then
     say '  puppet pack: built already'
 elif [[ -n $pack_from && -e $pack_from ]]; then
-    say '  building the puppet pack ...'
+    [[ -n $gap && -f $mod/coop_puppet.json ]] && say "  puppet pack: incomplete ($gap is missing): made again"
+    say '  Making the puppet pack (how you see the other players; about a minute) ...'
     if "$PY" -I -B "$DATA/tools/puppet_pack/build.py" --romfs "$pack_from" --mod-dir "$mod" --title-rows 2>&1 | sed 's/^/    /'; then
         printf '%s' "$pack_stamp" >"$mod/.coop-stamp"
+        rm -f "$pack_asked"
     else
-        warn 'the puppet pack was not built (said why above): the other players show as names only. Every start tries again.'
+        rm -f "$mod/.coop-stamp"
+        warn 'the puppet pack could not be made (the lines above say why): the game starts, and the other players show as names only until it is made. Every start tries again.'
     fi
 else
     if [[ -n $pack_from ]]; then

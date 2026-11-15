@@ -1,4 +1,4 @@
-From d4e779f12b5bbf99eb5483af569d67103de6c00e Mon Sep 17 00:00:00 2001
+From ee7ba07aaded66c19782cf0ee4d5ddd7eb7e4c33 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Wed, 11 Nov 2026 22:08:58 -0900
 Subject: [PATCH] Co-op bridge: frame hook, AI hold and the co-op module's
@@ -25,6 +25,10 @@ key_down.
 gpu/vk/vk_draw.cpp also hands each scene draw's camera block (the uniform buffer
 Hookshot's temporal upscalers read) to the module's optional
 hos_coop_camera_wanted / hos_coop_camera (vk_coop.cpp), for co-op's name tags.
+
+On Linux nx2/build.py also exports, each by name, the exe functions the module
+finds with dlsym (hos_coop_fs_*, hos_coop_input_*, hos_coop_pad_info/read/take,
+hos_coop_texture* from later patches); on Windows they are dllexport.
 ---
  gpu/vk/hos_coop_draw.h   |  43 +++++++++
  gpu/vk/vk_coop.cpp       | 160 ++++++++++++++++++++++++++++++
@@ -39,10 +43,10 @@ hos_coop_camera_wanted / hos_coop_camera (vk_coop.cpp), for co-op's name tags.
  host/nn_hid.c            |   8 +-
  host/nvn_native.c        |   2 +
  host/posix/display_sdl.c |  60 +++++++++++-
- nx2/build.py             |   2 +-
+ nx2/build.py             |   9 +-
  nx2/coop_hooks.py        |  61 ++++++++++++
  nx2/lift.py              |   2 +
- 16 files changed, 692 insertions(+), 8 deletions(-)
+ 16 files changed, 698 insertions(+), 9 deletions(-)
  create mode 100644 gpu/vk/hos_coop_draw.h
  create mode 100644 gpu/vk/vk_coop.cpp
  create mode 100644 gpu/vk/vk_coop.h
@@ -949,7 +953,7 @@ index 81d533b2..414fc9a1 100644
                          static float rx, ry;
                          rx += e.dx, ry += e.dy;
 diff --git a/nx2/build.py b/nx2/build.py
-index 1158c4fc..19419837 100644
+index 1158c4fc..f2f2c64d 100644
 --- a/nx2/build.py
 +++ b/nx2/build.py
 @@ -1222,7 +1222,7 @@ def main():
@@ -961,6 +965,21 @@ index 1158c4fc..19419837 100644
          for f in ("imgui.cpp", "imgui_draw.cpp", "imgui_tables.cpp", "imgui_widgets.cpp", "backends/imgui_impl_vulkan.cpp"):
              vk_jobs.append((cxx, os.path.join(imgui, *f.split("/")),
                              os.path.join(obj_dir, "vk_imgui_" + os.path.basename(f)[:-4] + ".o"), vflags + imgui_flags, imgui_deps))
+@@ -1339,8 +1339,13 @@ def main():
+         exe = os.path.join(out, EXE)   # (+ longshot.map: crash offsets -> f_<guest address>)
+         t = time.time()
+         # (--export-dynamic-symbol: the window's state, which the Vulkan back end's own Win32 calls read by name)
++        # (oot-remake-multiplayer) and the functions hookshot_coop.so finds in this exe by name (dlsym(RTLD_DEFAULT), as
++        # GetProcAddress on Windows, where they are dllexport): each by its own name, as the module has others of the same prefix
++        coop = ["-Wl,--export-dynamic-symbol=" + s for s in ("hos_coop_fs_save_root", "hos_coop_fs_save_remount",
++                "hos_coop_input_select", "hos_coop_input_pad_name", "hos_coop_pad_info", "hos_coop_pad_read", "hos_coop_pad_take",
++                "hos_coop_textures", "hos_coop_texture_override", "hos_coop_texture_overridden", "hos_coop_texture_overlay")]
+         r = subprocess.run([cc] + target() + ["-fuse-ld=lld", "-o", exe] + linker("-Map=" + exe + ".map") +
+-                           ["-Wl,--gc-sections", "-Wl,--export-dynamic-symbol=hos_posix_*", "@" + rsp] + HOT_ORDER() +
++                           ["-Wl,--gc-sections", "-Wl,--export-dynamic-symbol=hos_posix_*"] + coop + ["@" + rsp] + HOT_ORDER() +
+                            (["-fprofile-instr-generate"] if PGO == "gen" else []) +
+                            (FFMPEG_LX[1] if FFMPEG_LX else []) + HOST_LIBS,
+                            capture_output=True, text=True)
 diff --git a/nx2/coop_hooks.py b/nx2/coop_hooks.py
 new file mode 100644
 index 00000000..a3aa4a38

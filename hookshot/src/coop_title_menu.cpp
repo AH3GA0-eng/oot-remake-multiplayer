@@ -293,6 +293,12 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
         } else if (!k.empty()) {
             o.voice_key = "your key";   // (a key code: coop_voice's SettingsFrom reads it)
         }
+        // (the whole line, as the launcher hands it over: a device's name may hold " #" or " ;", no comment here)
+        for (const auto& [k, v] : KitVariables(options_ini)) {
+            if (k == "LICHII_COOP_VOICE_MIC") {
+                o.voice_mic = v;
+            }
+        }
     }
     o.map_players = !Off(IniGet(options_ini, "LICHII_COOP_MAP"));
     o.map_names = !Off(IniGet(options_ini, "LICHII_COOP_MAP_NAMES"));
@@ -320,6 +326,8 @@ void Options::Write(std::string& coop_ini, std::string& options_ini) const {
     o = cheats ? IniSet(o, "LICHII_COOP_CHEATS", "1", false) : IniUnset(o, "LICHII_COOP_CHEATS");
     // (voice-mode: open = on with open mic, ptt = push to talk, the line gone = off, the default)
     o = voice ? IniSet(o, "LICHII_COOP_VOICE", VoiceMode(), false) : IniUnset(o, "LICHII_COOP_VOICE");
+    // (kept while voice is off too: turning it on again uses the same microphone)
+    o = voice_mic.empty() ? IniUnset(o, "LICHII_COOP_VOICE_MIC") : IniSet(o, "LICHII_COOP_VOICE_MIC", voice_mic, false);
     o = IniSet(o, "max_players", std::to_string(std::clamp(max_players, kMinPlayers, kMaxPlayers)), true);
     o = map_players ? IniUnset(o, "LICHII_COOP_MAP") : IniSet(o, "LICHII_COOP_MAP", "0", false);
     o = map_names ? IniUnset(o, "LICHII_COOP_MAP_NAMES") : IniSet(o, "LICHII_COOP_MAP_NAMES", "0", false);
@@ -336,6 +344,7 @@ std::vector<std::pair<std::string, std::string>> Options::Environment() const {
         {"LICHII_COOP_DEBUG_PANEL", debug_panel ? "1" : ""},
         {"LICHII_COOP_CHEATS", cheats ? "1" : ""},
         {"LICHII_COOP_VOICE", voice ? VoiceMode() : ""},
+        {"LICHII_COOP_VOICE_MIC", voice_mic},
         {"LICHII_COOP_MAP", map_players ? "" : "0"},
         {"LICHII_COOP_MAP_NAMES", map_names ? "" : "0"},
     };

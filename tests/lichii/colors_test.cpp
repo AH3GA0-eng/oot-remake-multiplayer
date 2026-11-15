@@ -204,7 +204,15 @@ TEST_CASE("colours: the tunic of a colour, and the puppet actor for it") {
     CHECK(p.ActorFor(true, 0xFF3030u) == "CoopPuppet_Adult_Red");
     p.SetFailedTunics({"CoopPuppet_Child_Green"});
     CHECK(p.ActorFor(false, 0x30D040u) == "CoopPuppet_Child");
+    // Player report 47: never the plain puppet (your own Link's model) while
+    // the green one works: a failed colour falls back to green.
+    p.SetFailedTunics({"CoopPuppet_Adult_Red"});
+    CHECK(p.ActorFor(true, 0xFF3030u) == "CoopPuppet_Adult_Green");
     p.SetFailedTunics({});
+    p.SetTunics(false);  // tunics off: everyone green, on the green puppet
+    CHECK(p.ActorFor(true, 0xFF3030u) == "CoopPuppet_Adult_Green");
+    CHECK(p.ActorFor(false, std::nullopt) == "CoopPuppet_Child_Green");
+    p.SetTunics(true);
     CHECK(CoopPuppet::Director::IsTunicActor("CoopPuppet_Child_Green"));
     CHECK(CoopPuppet::PackHasGreenPuppets(
         R"({"actors": [{"actor": "CoopPuppet_Child_Green"}, {"actor": "CoopPuppet_Adult_Green"}]})"));

@@ -28,15 +28,15 @@ CoopPuppet::PlannerSettings From(const std::map<std::string, std::string>& vars,
 
 }  // namespace
 
-TEST_CASE("puppet config: nothing set gives coloured tunics, no green puppet, no test puppet") {
+TEST_CASE("puppet config: nothing set gives coloured tunics and no test puppet") {
     int asked = 0;
-    const auto s = From({}, true, nullptr, &asked);
+    const auto s = From({}, false, nullptr, &asked);
     CHECK(s.tunics);
-    CHECK_FALSE(s.green_puppet);
+    CHECK_FALSE(s.green_puppet);  // (this pack has no green puppets)
     CHECK_FALSE(s.debug);
     CHECK_FALSE(s.debug_anim);
     CHECK(s.actor.empty());
-    CHECK(asked == 0);  // the pack is read only for another own colour
+    CHECK(asked == 1);
 }
 
 TEST_CASE("puppet config: LICHII_COOP_TUNICS=0 or off puts everyone in green") {
@@ -45,27 +45,30 @@ TEST_CASE("puppet config: LICHII_COOP_TUNICS=0 or off puts everyone in green") {
     CHECK(From({{"LICHII_COOP_TUNICS", "1"}}, false).tunics);
     std::vector<std::string> log;
     From({{"LICHII_COOP_TUNICS", "0"}}, false, &log);
-    REQUIRE(log.size() == 1);
-    CHECK(log[0].find("tunics off") != std::string::npos);
+    REQUIRE(!log.empty());
+    CHECK(log.back().find("tunics off") != std::string::npos);
 }
 
-TEST_CASE("puppet config: own Link in another colour asks the pack for the green puppet") {
-    std::vector<std::string> log;
-    int asked = 0;
-    auto s = From({{"LICHII_COOP_SELF_TUNIC", "blue"}}, true, &log, &asked);
-    CHECK(s.green_puppet);
-    CHECK(asked == 1);
-    REQUIRE(log.size() == 2);
-    CHECK(log[0] == "coop: your Link wears blue; green players get CoopPuppet_<Age>_Green");
+// Player report 47 (0.11.0): the plain puppet's model is your own Link's
+// colour-agree copy at every start, green or none too, so a pack with the
+// green puppets gives them to green players whatever your own Link wears.
+TEST_CASE("puppet config: a pack with green puppets gives them to green players whatever your own colour") {
+    for (const char* self : {"", "green", "blue"}) {
+        CAPTURE(self);
+        std::vector<std::string> log;
+        int asked = 0;
+        const auto s = From({{"LICHII_COOP_SELF_TUNIC", self}}, true, &log, &asked);
+        CHECK(s.green_puppet);
+        CHECK(asked == 1);
+        REQUIRE(log.size() == 2);
+        CHECK(log[0] == std::string("coop: your Link wears ") + (*self ? self : "green") +
+                            " at the start; green players get CoopPuppet_<Age>_Green");
+    }
     // An old pack: the plain puppet, and the log says to make the pack again.
-    log.clear();
-    s = From({{"LICHII_COOP_SELF_TUNIC", "red"}}, false, &log);
+    std::vector<std::string> log;
+    const auto s = From({{"LICHII_COOP_SELF_TUNIC", "red"}}, false, &log);
     CHECK_FALSE(s.green_puppet);
     CHECK(log[0].find("make it again") != std::string::npos);
-    // Green is the plain puppet already.
-    asked = 0;
-    CHECK_FALSE(From({{"LICHII_COOP_SELF_TUNIC", "green"}}, true, nullptr, &asked).green_puppet);
-    CHECK(asked == 0);
 }
 
 TEST_CASE("puppet config: actor, test puppet and animation log switches") {
