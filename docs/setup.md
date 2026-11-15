@@ -27,7 +27,7 @@ The kit has one file to start: **`Start OoT Co-op.bat`**. Everything else is don
    - **Co-op Settings:** your name, your colour, the number of players and port when you host (`Players when you host`, `Port when you host`), voice chat.
 6. **Next time**, double-click `Start OoT Co-op.bat` or the desktop shortcut: the game starts in seconds.
 
-To check it works: in the game the other players show as Link with their name tags, and **T** opens the chat box. The log `longshot_log.txt` beside `longshot.exe` (in the kit's `hookshot\game\bin\`) says `coop: module loaded`, then `coop: connected`.
+To check it works: in the game the other players show as Link with their name tags, and **T** opens the chat box. The game's log `longshot_log.txt` (in the `logs` folder of the kit's `hookshot\game\`; before Longshot rc.4, beside `longshot.exe`) says `coop: module loaded`, then `coop: connected`.
 
 ## Updating
 

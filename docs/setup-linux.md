@@ -80,7 +80,7 @@ addresses and your user name are masked). Send that file.
 | `README.txt` | The short version of this page. |
 | `revert.sh` | Back to the version before the last update (above); `previous/` holds the versions kept for it. |
 | `scripts/` | The kit's scripts (start, build, update, logs). |
-| `data/game/` | The built game, your saves and settings (`longshot_log.txt` is its log). Kept by updates. |
+| `data/game/` | The built game, your saves and settings (`logs/longshot_log.txt` is its log; before Longshot rc.4, `longshot_log.txt`). Kept by updates. |
 | `data/coop-options.ini` | Co-op's settings (the Multiplayer tab writes them). Updates keep your values. |
 | `data/builder/`, `data/work/` | Longshot's builder and tools, and the build's work folder (kept for quick rebuilds). |
 | `data/longshot/` | The Longshot release co-op is built on, our patches and the co-op module (`hookshot_coop.so`). |

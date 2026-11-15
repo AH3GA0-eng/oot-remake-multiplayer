@@ -69,7 +69,7 @@ if ($hasEmulator) {
 $hsGame = Get-KitHookshotGame $kit
 # The start's game first, then the other places a kit's game can be (Get-KitLogGameExes): the first with a log.
 $hsExes = @(Get-KitLogGameExes $kit)
-$hsExe = $hsExes | Where-Object { @(Get-KitHookshotLogDirs $_ | Where-Object { Get-ChildItem -LiteralPath $_ -Filter 'longshot_log*.txt' -File -ErrorAction SilentlyContinue }).Count } | Select-Object -First 1
+$hsExe = $hsExes | Where-Object { @(Get-KitHookshotLogDirs $_ | ForEach-Object { Get-KitHookshotLogFiles $_ } | Where-Object { $_.File.Name -like 'longshot_log*.txt' }).Count } | Select-Object -First 1
 if (-not $hsExe) { $hsExe = $hsExes | Select-Object -First 1 }
 $gameLogs = 0
 # Logs a player copied into the kit's logs folder (what to do when the game is not found, below).
@@ -80,9 +80,10 @@ if ($hsExe) {
     $hsDirs = @(Get-KitHookshotLogDirs $hsExe)
     foreach ($hsDir in $hsDirs) {
         $to = if ($hsDir -ne $hsDirs[0]) { 'hookshot\bin' } else { 'hookshot' }
-        $logs = @(Get-ChildItem (Join-Path $hsDir '*') -Include 'longshot_log*.txt', 'hookshot_log*.txt' -File -ErrorAction SilentlyContinue)
+        # (Longshot rc.4 writes its log into logs\, older games beside the exe: Get-KitHookshotLogFiles has both)
+        $logs = @(Get-KitHookshotLogFiles $hsDir)
         $gameLogs += $logs.Count
-        $picked += $logs | ForEach-Object { @($_.FullName, "$to\$($_.Name)") }
+        $picked += $logs | ForEach-Object { @($_.File.FullName, $(if ($_.Sub) { "$to\$($_.Sub)\$($_.File.Name)" } else { "$to\$($_.File.Name)" })) }
         # (last-build.txt: OOTRR's output when a randomizer seed failed; masked like every text file)
         foreach ($f in 'coop.ini', 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json', 'mods\oot-remake-randomizer\last-build.txt') {
             $p = Join-Path $hsDir $f
@@ -93,10 +94,10 @@ if ($hsExe) {
 $logHelp = @()
 if ($gameLogs -eq 0 -and ($hsExe -or -not $hasEmulator)) {
     # The log we need most: say where it is and how to add it.
-    $where = if ($hsExe) { (@(Get-KitHookshotLogDirs $hsExe) -join ' or ') } else { $hsGame }
+    $where = if ($hsExe) { (@(Get-KitHookshotLogDirs $hsExe | ForEach-Object { $_; Join-Path $_ 'logs' }) -join ' or ') } else { $hsGame }
     $logHelp += "The game's log (longshot_log.txt) is not in this zip: none in $where."
     $logHelp += $(if ($hsExe) { '  Start the game once (it writes the log when it starts), close it, then run collect-logs.cmd again.' }
-        else { '  The game was not found. Its log is in the co-op game''s folder, beside longshot.exe (normally hookshot\game in this kit).' })
+        else { '  The game was not found. Its log is in the co-op game''s folder, in its logs folder or beside longshot.exe (normally hookshot\game in this kit).' })
     $logHelp += "  Found it somewhere else? Copy longshot_log.txt into $(Join-Path $kit 'logs') and run collect-logs.cmd again,"
     $logHelp += '  or send it with this zip.'
 }
