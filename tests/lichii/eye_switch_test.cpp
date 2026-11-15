@@ -228,7 +228,7 @@ TEST_CASE("eye switch: our own shot, no asker, no eye, an event running, another
     }
 }
 
-TEST_CASE("eye switch: Dodongo's Cavern sets each of its eyes; the Deku Tree only the nearest") {
+TEST_CASE("eye switch: Dodongo's Cavern sets each of its eyes, the Deku Tree only the nearest") {
     FakeGuest g;
     World w;
     w.eyes = {kEye, kEye2};
