@@ -123,14 +123,27 @@ std::uint32_t BoneCountOf(std::uint32_t skeleton);
 // a skeleton and an FMDL model resource; nothing when not (yet).
 std::optional<std::string> ModelNameOf(CoopPuppet::Guest& guest, std::uint64_t actor);
 
+// jitter-3: a pose with its sample time is shown at the place's own time:
+// presence shows the place Settings::show_delay_us (100 ms) behind the server
+// clock, and the pose was blended by its ARRIVAL, about one interval behind:
+// the limbs ran ahead of the body's place and played unevenly with the
+// network's jitter. Timed poses are kept (kKeepPoses, 0.5 s at 15 Hz) and the
+// two around now - kShowDelayMs blended.
+inline constexpr std::uint64_t kShowDelayMs = 100;  // coop/presence Settings::show_delay_us
+inline constexpr std::size_t kKeepPoses = 8;
+
 // The newest poses of one remote player, and the blend shown now.
 class Track {
 public:
-    void Push(Pose pose, std::uint64_t now_ms);
-    // The pose to show at now_ms: shown one interval behind, the last two
+    // `made_ms`: when the sender's game made it, on our steady clock (the
+    // sample time through the clock offset); 0: not known, shown by arrival.
+    void Push(Pose pose, std::uint64_t now_ms, std::uint64_t made_ms = 0);
+    // The pose to show at now_ms. Timed: the one at now_ms - kShowDelayMs,
+    // the two around it blended. Untimed: one interval behind, the last two
     // blended, so a 30 Hz stream plays smooth at 60 frames a second.
     std::optional<Pose> At(std::uint64_t now_ms) const;
     std::uint64_t last_ms() const { return newest_ms_; }
+    bool Timed() const { return !timed_.empty(); }
     // `pose` (some bones of this track's skeleton: the sender sends only those
     // that changed most) with the bones it lacks taken from the newest pose.
     Pose Fill(Pose pose) const;
@@ -140,7 +153,27 @@ private:
     std::optional<Pose> newest_;
     std::uint64_t older_ms_ = 0;
     std::uint64_t newest_ms_ = 0;
+    std::vector<std::pair<std::uint64_t, Pose>> timed_;  // by made time, oldest first
 };
+
+// jitter-3's proof number: how even the shown pose's change is from frame to
+// frame (the summed bone turn), as CoopFollow::Steps reads the place: the mean
+// |1 - change / last change| over frames that both moved; 0 is even.
+class Evenness {
+public:
+    // A report every kEvenReportMs, else nothing.
+    std::optional<float> Step(const Pose& shown, std::uint64_t now_ms, int* frames = nullptr);
+
+private:
+    std::optional<Pose> last_;
+    float last_change_ = 0.0f;
+    float sum_ = 0.0f;
+    int moving_ = 0;
+    int frames_ = 0;
+    std::uint64_t start_ms_ = 0;
+};
+inline constexpr std::uint64_t kEvenReportMs = 5000;
+inline constexpr float kEvenMovingRad = 0.02f;  // summed over the bones
 
 // The sender's side of kMaxSendBones: which of a full pose's bones to send now.
 class BonePicker {
@@ -189,6 +222,9 @@ std::vector<coop::protocol::PlayerPose> TakeOutgoing(std::uint64_t server_now_us
 // Network thread: keep a received PLAYER_POSE.
 void OnEvent(const coop::net::Event& event, std::uint64_t now_ms);
 void Receive(const coop::protocol::PlayerPose& pose, std::uint64_t now_ms);
+// jitter-3: the client's server clock at our steady `now_ms` (Send sets it);
+// received poses are then shown at their sample time (Track::Push made_ms).
+void SetClock(std::uint64_t server_now_us, std::uint64_t now_ms);
 // LICHII_COOP_DEBUG_POSE=1: a line a second with bone counts and rates.
 // The pose copy wins over the AS commands: a puppet whose poses arrive plays
 // no AS command of its own (see Drives). LICHII_COOP_POSE_AS=1 (as_too) plays

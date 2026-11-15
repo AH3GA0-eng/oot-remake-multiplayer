@@ -553,3 +553,58 @@ TEST_CASE("pose: with every limb moving fast, a still bone is still sent within 
     MESSAGE("longest a bone went unsent: " << worst << " ms (bound " << bound << ")");
     CHECK(worst <= bound);
 }
+
+// jitter-3: poses with their sample time are shown at the place's own time.
+TEST_CASE("pose: a timed track is shown at now - kShowDelayMs, whenever the poses arrive") {
+    CoopPose::Track t;
+    // Made 66 ms apart (15 Hz); they arrive unevenly (the network's jitter).
+    const std::uint64_t arrive[] = {1010, 1090, 1140, 1230};
+    for (int i = 0; i < 4; ++i) {
+        t.Push(OneBone({0, 0, 0, 1}, static_cast<float>(i)), arrive[i], 1000 + 66 * static_cast<std::uint64_t>(i));
+    }
+    CHECK(t.Timed());
+    // At 1199 it shows 1099: 1.5 of the way (0 at 1000, 1 at 1066, 2 at 1132).
+    const auto mid = t.At(1199);
+    REQUIRE(mid);
+    CHECK(Near(mid->bones[0].translation->at(0), 1.5f));
+    CHECK(Near(t.At(1000)->bones[0].translation->at(0), 0.0f));    // before them all: the first
+    CHECK(Near(t.At(5000)->bones[0].translation->at(0), 3.0f));    // past the newest: held
+    // Even frames show even steps although the arrivals were not.
+    float last = t.At(1150)->bones[0].translation->at(0);
+    for (std::uint64_t now = 1166; now <= 1298; now += 16) {
+        const float x = t.At(now)->bones[0].translation->at(0);
+        CHECK(Near(x - last, 16.0f / 66.0f, 1e-3f));
+        last = x;
+    }
+}
+
+TEST_CASE("pose: a late timed pose is left out, an untimed one goes back to arrival order") {
+    CoopPose::Track t;
+    t.Push(OneBone({0, 0, 0, 1}, 0.0f), 1000, 900);
+    t.Push(OneBone({0, 0, 0, 1}, 2.0f), 1050, 966);
+    t.Push(OneBone({0, 0, 0, 1}, 9.0f), 1060, 950);  // made before the newest: out of order
+    CHECK(Near(t.At(1033)->bones[0].translation->at(0), 1.0f));  // shows 933: halfway 900..966
+    t.Push(OneBone({0, 0, 0, 1}, 4.0f), 1200);  // no time (no clock yet): by arrival, as before
+    CHECK_FALSE(t.Timed());
+    CHECK(Near(t.At(5000)->bones[0].translation->at(0), 4.0f));
+}
+
+TEST_CASE("pose: the evenness number reads an even turn as 0 and an uneven one higher") {
+    for (const bool even : {true, false}) {
+        CoopPose::Evenness e;
+        std::optional<float> u;
+        int moving = 0;
+        for (int i = 0; i <= 400 && !u; ++i) {
+            // Even: 0.05 rad a frame. Uneven: 0.03 and 0.07 in turn.
+            const float a = 0.05f * static_cast<float>(i) - (even || i % 2 == 0 ? 0.0f : 0.02f);
+            u = e.Step(OneBone({0, 0, std::sin(a / 2), std::cos(a / 2)}, 0.0f), 1000 + 16 * static_cast<std::uint64_t>(i), &moving);
+        }
+        REQUIRE(u);
+        CHECK(moving > 100);
+        if (even) {
+            CHECK(*u < 0.01f);
+        } else {
+            CHECK(*u > 0.5f);
+        }
+    }
+}
