@@ -651,16 +651,20 @@ TEST_CASE("pause tab: Settings: the Microphone row, Default and the microphones 
     m.SetMicrophones(std::vector<std::string>{"Headset Microphone (USB)"});
     CHECK(Selected(m) == "Microphone");
     CHECK(m.view().rows[row].value == "Webcam (not connected)");
-    m.Press(Input::kLeft);
+    m.Press(Input::kRight);   // after it in the list: round to Default
+    CHECK(m.options().voice_mic.empty());
+    m.Press(Input::kLeft);   // once another is chosen the unplugged one is gone from the choices (as the Insert menu's)
     CHECK(m.options().voice_mic == "Headset Microphone (USB)");
     m.Press(Input::kRight);
-    CHECK(m.options().voice_mic == "Webcam");
+    CHECK(m.options().voice_mic.empty());
+    m.Press(Input::kRight);
+    CHECK(m.options().voice_mic == "Headset Microphone (USB)");
     // voice off: no row, the choice kept
     SelectRow(m, "Proximity voice chat");
     m.Press(Input::kLeft);
     names = Names(m);
     CHECK(std::find(names.begin(), names.end(), "Microphone") == names.end());
-    CHECK(m.options().voice_mic == "Webcam");
+    CHECK(m.options().voice_mic == "Headset Microphone (USB)");
 }
 
 TEST_CASE("pause tab: the Microphone row's choices and words") {
