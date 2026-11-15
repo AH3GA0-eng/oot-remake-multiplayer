@@ -193,7 +193,11 @@ void Configure() {
     for (const auto& line : lines) {
         LOG_INFO(Core, "{}", line);
     }
-    const auto verbose = Env("LICHII_COOP_DEBUG_PUPPET");
+    // docs/puppet.md names LICHII_COOP_DEBUG_EQUIP for the equipment slots; the
+    // switch the code has is LICHII_COOP_DEBUG_PUPPET (the same lines). Either
+    // turns them on.
+    const std::string verbose = Env("LICHII_COOP_DEBUG_PUPPET").empty() ? Env("LICHII_COOP_DEBUG_EQUIP")
+                                                                      : Env("LICHII_COOP_DEBUG_PUPPET");
     CoopPuppet::Configure(std::move(settings), On(verbose),
                           [](const std::string& line) { LOG_INFO(Core, "{}", line); });
 }

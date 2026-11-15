@@ -39,6 +39,23 @@ bool OcarinaSoundOn() {
     return on;
 }
 
+// Whether a piece the game crashed on is worn on a puppet anyway (issue 232).
+// Off by default: a GearIsUnsafe piece stays off. LICHII_COOP_PUPPET_HOOKSHOT=1
+// puts them back, for a test that checks whether a later build can take them.
+bool WearsUnsafe() {
+    static const bool on = [] {
+        const char* v = std::getenv("LICHII_COOP_PUPPET_HOOKSHOT");
+        return v != nullptr && v[0] != '\0' && std::string_view(v) != "0";
+    }();
+    return on;
+}
+
+// A piece `Equip` leaves off the puppet: nothing is made for it, and the piece
+// its slot may still hold is neither put away nor re-worn: that slot is not
+// ours to change while the player wears one of these.
+bool GearLeftOff(const std::string& name) {
+    return GearIsUnsafe(name) && !WearsUnsafe();
+}
 
 template <typename T>
 bool ReadValue(Guest& guest, std::uint64_t address, T& out) {
@@ -438,7 +455,7 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                     slot.meter.Reset();
                     Vec3 parked = t->position;
                     parked[1] -= kHideDrop;
-                    Pose(slot, guest, parked, nullptr, now_ms);
+                    Park(slot, guest, parked, now_ms);
                 }
                 // Issue 152: the Ocarina in hand while it plays one (coop_ocarina.h),
                 // by their own command (free play is DemoOcarina: shown, not held,
@@ -1115,7 +1132,21 @@ std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& gue
     }
     for (std::size_t i = 0; i < target.gear.size(); ++i) {
         const auto& want = target.gear[i];
-        if (want && want->empty() && !slot.worn[i].empty() && !GearIsCarried(i)) {
+        if (want && !want->empty() && GearLeftOff(*want)) {
+            // Issue 232: the game crashed with this piece on a puppet (the
+            // Hookshot, in the held slot). It stays off; its player's own Link
+            // still shows it. Kept in `worn` as theirs, so the slot is not
+            // asked again, and a later piece of theirs is worn as usual.
+            if (slot.worn[i] != *want) {
+                Say("P" + std::to_string(slot.number) + " " + kGearNames[i] + " '" + *want +
+                    "' stays off the puppet: the game crashed with it worn here (issue 232; "
+                    "LICHII_COOP_PUPPET_HOOKSHOT=1 wears it again)");
+                slot.worn[i] = *want;
+            }
+            continue;
+        }
+        if (want && want->empty() && !slot.worn[i].empty() && !GearIsCarried(i) &&
+            !GearLeftOff(slot.worn[i])) {
             // Empty for a moment (a load) is not taken off: kTakeOffMs first.
             if (slot.off_since_ms[i] == 0) {
                 slot.off_since_ms[i] = std::max<std::uint64_t>(now_ms, 1);
@@ -1196,8 +1227,8 @@ void Director::LeftBehind(Slot& slot, Guest& guest, std::uint64_t now_ms) {
     }
     for (std::size_t i = 0; i < kGearSlots.size(); ++i) {
         const int s = kGearSlots[i];
-        if (s < 0 || slot.worn[i].empty()) {
-            continue;
+        if (s < 0 || slot.worn[i].empty() || GearLeftOff(slot.worn[i])) {
+            continue;  // (a piece left off the puppet, issue 232: its slot is not ours)
         }
         if (GearIsCarried(i) && (slot.in_hand & (1u << s)) == 0) {
             continue;  // put away, the game keeps a held item elsewhere (state 6)
@@ -1272,8 +1303,8 @@ std::optional<Call> Director::Hold(Slot& slot, const Target& target, Guest& gues
     std::uint64_t check_eu = 0;
     for (std::size_t i = 0; i < kGearSlots.size(); ++i) {
         const int s = kGearSlots[i];
-        if (s < 0 || slot.worn[i].empty()) {
-            continue;
+        if (s < 0 || slot.worn[i].empty() || GearLeftOff(slot.worn[i])) {
+            continue;  // (a piece left off the puppet, issue 232: its slot is not ours)
         }
         const auto bit = static_cast<std::uint8_t>(1u << s);
         const bool drawn = (*target.drawn & bit) != 0;
@@ -1596,6 +1627,42 @@ std::optional<Call> Director::Animate(Slot& slot, const Target& target, Guest& g
 // their cutscene's samples move smoothly, so a jump then is a real teleport). The meter reads
 // the puppet's place back from the game (what it drew since our last write) and logs each step
 // past CoopSnap::kSnapM as a snap ("warp" past kWarpM).
+// The puppet's held pieces, each as the actor the game keeps for it.
+std::vector<Director::PieceActor> Director::Pieces(Slot& slot, Guest& guest) const {
+    std::vector<Director::PieceActor> out;
+    std::uint64_t parts = 0;
+    std::uint64_t eu = 0;
+    if (!ReadValue(guest, slot.actor + addr::kActorParts, parts) || parts == 0 ||
+        !ReadValue(guest, parts + addr::kPartsEquipmentUser, eu) || eu == 0) {
+        return out;
+    }
+    for (std::uint32_t s = 0; s < 8; ++s) {
+        const std::uint64_t link = eu + addr::kEquipSlots + addr::kEquipSlotStride * s;
+        std::uint32_t id = 0xFFFFFFFFu;
+        std::uint64_t holder = 0;
+        std::uint64_t piece = 0;
+        std::uint32_t state = 0;
+        if (!ReadValue(guest, link + addr::kEquipSlotId, id) || id == 0xFFFFFFFFu ||
+            !ReadValue(guest, link + addr::kEquipSlotHolder, holder) || holder == 0 ||
+            !ReadValue(guest, holder + addr::kHolderActor, piece) || piece == 0 ||
+            !ReadValue(guest, piece + addr::kActorState, state) || state != addr::kStatePresent) {
+            continue;
+        }
+        out.push_back({piece, state});
+    }
+    return out;
+}
+
+void Director::Park(Slot& slot, Guest& guest, const Vec3& position, std::uint64_t now_ms) {
+    // The pieces first: with the puppet already under the floor, one that the game
+    // still follows from the old place is what it trips over.
+    for (const Director::PieceActor& p : Pieces(slot, guest)) {
+        WriteValue(guest, p.actor + addr::kActorPosition, position);
+        WriteValue(guest, p.actor + addr::kActorPositionRequest, position);
+    }
+    Pose(slot, guest, position, nullptr, now_ms);
+}
+
 void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint64_t now_ms) {
     const std::string who = "P" + std::to_string(slot.number);
     const bool held = target.show == Show::hold;
