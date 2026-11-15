@@ -21,6 +21,7 @@
 //   reaction; a life that is not taken within 400 ms is written directly.
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <deque>
@@ -41,6 +42,7 @@
 #include "coop/protocol/messages.hpp"
 #include "coop_npc_anim.h"
 #include "coop_guard.h"
+#include "coop_show_delay.h"
 
 namespace CoopObjects {
 
@@ -439,7 +441,15 @@ public:
     static constexpr std::uint64_t kStunEveryUs = 2'000'000;
     static constexpr std::uint64_t kPlaceStaleUs = 2'000'000;   // another player's place
     static constexpr std::uint64_t kFightUs = 12'000'000;
-    static constexpr std::uint64_t kBehindUs = 100'000;       // copies show the owner this late
+    static constexpr std::uint64_t kBehindUs = 100'000;       // copies show the owner at least this late
+    // Report 37: as late as that owner's puppet (coop_show_delay.h: from its samples' ages), never under kBehindUs.
+    static std::uint64_t BehindUs(std::uint8_t owner) { return std::max(kBehindUs, CoopShowDelay::Us(owner)); }
+    // A hold that waits for the owner's answer to our hit (kHitHoldUs, kReactHoldUs) is set for a LAN; over a
+    // slower line the answer is later by the extra delay both ways (report 37: at 300 ms ping it came after the
+    // hold, the copy played its old animation again and the hit was sent once more).
+    static std::uint64_t AnswerHoldUs(std::uint64_t lan_us, std::uint8_t owner) {
+        return lan_us + 2 * (BehindUs(owner) - kBehindUs);
+    }
     static constexpr std::uint64_t kExtrapolateUs = 150'000;
     static constexpr std::uint64_t kPoseStaleUs = 2'500'000;  // no sample this long: let it be
     static constexpr std::uint64_t kHurtWaitUs = 400'000;     // then write life directly

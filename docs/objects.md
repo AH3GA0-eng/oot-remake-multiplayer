@@ -410,7 +410,7 @@ Object sample components, the same scheme and lengths as `PLAYER_SAMPLE`'s where
 | 17 | `fuse` | f32 seconds left (bombs and bombchus) | 4 |
 | 18 | `state` | `u8` flags: bit 0 in a fight, bit 1 held by a player, bit 2 asleep | 1 |
 
-`time` is required. The owner sends `OBJECT_SAMPLE` at 20 to 30 a second while an object moves (60 for a boss), and once a second while it is still, so silence always means "late". Receivers place them like player samples: 100 ms behind, up to 150 ms of extrapolation.
+`time` is required. The owner sends `OBJECT_SAMPLE` at 20 to 30 a second while an object moves (60 for a boss), and once a second while it is still, so silence always means "late". Receivers place them like player samples: as late as the owner's puppet (at least 100 ms, more over a slow line: docs/presence.md, "Each player's own delay"), up to 150 ms of extrapolation.
 
 What the server does:
 

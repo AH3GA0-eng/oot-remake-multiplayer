@@ -1982,7 +1982,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                        now_seen.contains(address) && Distance(o.position, *player_) <= wake_m &&
                        !o.received.empty() && now_us >= o.received.back().time &&
                        now_us - o.received.back().time <= kPoseStaleUs &&
-                       !(o.react_at != 0 && now_us < o.react_at + kReactHoldUs)) {
+                       !(o.react_at != 0 && now_us < o.react_at + AnswerHoldUs(kReactHoldUs, owner->second.player))) {
                 // A copy near our Link whose own AI plays something else than
                 // the owner's enemy (issue 132): it wants to act on our Link.
                 const auto& wanted = o.received.back().animation;
@@ -2437,7 +2437,8 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             }
             const std::int32_t life = sample->state.life->life;
             const std::int32_t have = o->hurt_until != 0 ? o->hurt_target : *o->life;
-            const bool holding = o->hit_sum > 0 || now_us - o->hit_at < kHitHoldUs;
+            const bool holding =
+                o->hit_sum > 0 || now_us - o->hit_at < AnswerHoldUs(kHitHoldUs, sample->player_number);
             if (life < have) {
                 // Who hit it is not sent: its owner is the best guess.
                 Lower(*o, life, now_us, writes, sample->player_number);
@@ -2584,7 +2585,6 @@ void Sync::Lower(Object& o, std::int32_t life, std::uint64_t now_us,
 }
 
 void Sync::Poses(std::uint64_t now_us, std::vector<PoseWrite>& out) const {
-    const std::uint64_t t = now_us > kBehindUs ? now_us - kBehindUs : 0;
     for (const auto& [address, o] : objects_) {
         if (o.received.empty() || now_us < o.received.back().time ||
             now_us - o.received.back().time > kPoseStaleUs) {
@@ -2594,6 +2594,9 @@ void Sync::Poses(std::uint64_t now_us, std::vector<PoseWrite>& out) const {
         if (owner == owners_.end() || owner->second.player == 0 || owner->second.player == self_) {
             continue;
         }
+        // Shown as late as its owner's puppet (report 37: that owner's delay, coop_show_delay.h).
+        const std::uint64_t behind = BehindUs(owner->second.player);
+        const std::uint64_t t = now_us > behind ? now_us - behind : 0;
         PoseWrite w;
         w.address = address;
         const Received& last = o.received.back();
@@ -2736,15 +2739,15 @@ void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
         // Just hit here: the copy's own game shows the hit. The owner's
         // animation from before the hit waits; its next one (its own
         // reaction to our DAMAGE) is played as usual.
-        if (o.react_at != 0 && now_us < o.react_at + kReactHoldUs &&
+        if (o.react_at != 0 && now_us < o.react_at + AnswerHoldUs(kReactHoldUs, owner->second.player) &&
             wanted->name == o.react_over) {
             continue;
         }
         const float rate = std::isfinite(wanted->rate) && wanted->rate > 0.0f ? wanted->rate : 1.0f;
-        // Shown kBehindUs late, as the pose; no further ahead than a pose is.
-        const std::int64_t age = std::clamp<std::int64_t>(
-            static_cast<std::int64_t>(now_us - last.time) - static_cast<std::int64_t>(kBehindUs),
-            -static_cast<std::int64_t>(kBehindUs), static_cast<std::int64_t>(kExtrapolateUs));
+        // Shown as late as the pose (its owner's delay); no further ahead than a pose is.
+        const auto behind = static_cast<std::int64_t>(BehindUs(owner->second.player));
+        const std::int64_t age = std::clamp<std::int64_t>(static_cast<std::int64_t>(now_us - last.time) - behind,
+                                                          -behind, static_cast<std::int64_t>(kExtrapolateUs));
         out.push_back({address, wanted->name, rate, FrameAfter(wanted->frame, rate, age),
                        last.time, 0, {}});
         if (o.play_frame) {
