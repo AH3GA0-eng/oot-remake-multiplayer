@@ -5257,7 +5257,7 @@ TEST_CASE("boss heart: the host loading a save forgets the claims (the boss figh
   h.clear();
   h.receive(2, BossHeart{0, 0, false, 16}, kChannelSession);
   CHECK(h.session.stats().boss_hearts_given == 1);
-  h.receive(1, FlagReset{0, {}}, kChannelProgress);  // the host loaded a save from before the win
+  h.receive(1, FlagReset{0, {flag(5, 0)}}, kChannelProgress);  // the host loaded a save from before the win
   h.clear();
   h.receive(1, BossHeart{0, 0, false, 16}, kChannelSession);  // the refight's pickup
   CHECK(only_message_to<BossHeart>(h, 2) == BossHeart{1, 0, true, 16});
