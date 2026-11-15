@@ -1317,6 +1317,11 @@ try {
         $text = Get-KitDownloadFailText 'tools.lock' $r 'https://git.magicbean.dev/x/tools.lock' $true
         Check ($text -match 'co-op mirror on GitHub' -and $text -match 'antivirus' -and $text -match 'VPN or proxy' -and $text -match 'https://git\.magicbean\.dev/x/tools\.lock' -and $text -match 'a\.example') "download: the failure text names the hosts, the mirror, the usual causes and a browser test [$text]"
 
+        # (review-kit-mirror 4) the mirror shares github.com with upstream URLs: a "bad" github.com still gets the mirror's full round
+        Reset-Dl; $script:fail['gh.example'] = 'all'
+        $r = Get-KitDownload @('https://gh.example/upstream') "$dl\out.bin" $goodSha @('https://gh.example/mirror') 2 0
+        Check (($script:tries -join ',') -eq 'gh.example/web,gh.example/web,gh.example/curl,gh.example/web,gh.example/web,gh.example/curl') "download: the mirror gets every try even on a host that failed [$($script:tries -join ',')]"
+
         Reset-Dl
         Check ((Get-KitDownload @('https://a.example/f') "$dl\out.bin" '' @() 4 0) -match 'no SHA-256' -and $script:tries.Count -eq 0) 'download: nothing is fetched without a SHA-256 to check it against'
     }
@@ -1324,6 +1329,10 @@ try {
     $script:KitBadHosts = @{}
     Invoke-KitFetch "$feed/good.bin" "$dl\web.bin" 'web'; Invoke-KitFetch "$feed/good.bin" "$dl\curl.bin" 'curl'
     Check ((Read-File "$dl\web.bin") -eq 'the pinned file' -and (Read-File "$dl\curl.bin") -eq 'the pinned file') 'download: Invoke-WebRequest and curl.exe both fetch'
+    # (review-kit-mirror 2) Invoke-WebRequest -OutFile reads [ ] as wildcards: a kit folder named so still gets its file
+    $br = Join-Path $dl 'kit [copy] (1)'; New-Item -ItemType Directory -Force -Path $br | Out-Null
+    Invoke-KitFetch "$feed/good.bin" (Join-Path $br 'web.bin') 'web'; Invoke-KitFetch "$feed/good.bin" (Join-Path $br 'curl.bin') 'curl'
+    Check ((Read-File (Join-Path $br 'web.bin')) -eq 'the pinned file' -and (Read-File (Join-Path $br 'curl.bin')) -eq 'the pinned file') 'download: a folder with [ ] in its name: both fetchers'
     $threw = ''; try { Invoke-KitFetch "$feed/missing.bin" "$dl\m.bin" 'curl' } catch { $threw = $_.Exception.Message }
     Check ($threw -match '^curl\.exe: ') "download: a failed curl.exe throws its own reason [$threw]"
     $env:OOT_COOP_TEST_BLOCK_HOST = 'magicbean\.dev$'

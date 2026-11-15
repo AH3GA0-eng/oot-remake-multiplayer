@@ -1192,7 +1192,8 @@ function Set-KitTls {
 # One try of one URL into $Out: 'web' = Invoke-WebRequest, 'curl' = Windows' curl.exe (Windows 10 1803 and newer; its
 # own connection code, and --ssl-no-revoke gets past the revocation check an HTTPS-scanning antivirus breaks; the
 # SHA-256 check still decides). Throws with the reason. OOT_COOP_TEST_BLOCK_HOST (tests only): hosts matching that
-# regex fail as if blocked.
+# regex fail as if blocked. (curl -g: a URL's [ ] { } are never globbed. Invoke-WebRequest -OutFile reads [ ] in a
+# path as wildcards in PowerShell 5.1, so a kit folder with them gets the file under a plain name in TEMP first.)
 function Invoke-KitFetch([string]$Url, [string]$Out, [string]$Method) {
     $h = Get-KitUrlHost $Url
     if ($env:OOT_COOP_TEST_BLOCK_HOST -and $h -match $env:OOT_COOP_TEST_BLOCK_HOST) { throw "$h is blocked (test)" }
@@ -1200,10 +1201,15 @@ function Invoke-KitFetch([string]$Url, [string]$Out, [string]$Method) {
         $curl = Join-Path $env:SystemRoot 'System32\curl.exe'
         if (-not (Test-Path -LiteralPath $curl)) { throw 'this Windows has no curl.exe' }
         $ErrorActionPreference = 'Continue'   # (curl's error line on stderr is the reason, not a stop)
-        $err = & $curl -fsSL --ssl-no-revoke --retry 2 --connect-timeout 30 -o $Out $Url 2>&1
+        $err = & $curl -fsSLg --ssl-no-revoke --retry 2 --connect-timeout 30 -o $Out $Url 2>&1
         if ($LASTEXITCODE -ne 0) { throw "curl.exe: $(("$err" -replace '\s+', ' ').Trim()) (exit $LASTEXITCODE)" }
     } else {
-        Invoke-WebRequest -Uri $Url -OutFile $Out -UseBasicParsing
+        if ($Out -notmatch '[\[\]]') { Invoke-WebRequest -Uri $Url -OutFile $Out -UseBasicParsing; return }
+        $plain = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-dl-' + [Guid]::NewGuid().ToString('N') + '.part')
+        try {
+            Invoke-WebRequest -Uri $Url -OutFile $plain -UseBasicParsing
+            Move-Item -LiteralPath $plain -Destination $Out -Force
+        } finally { Remove-Item -LiteralPath $plain -Force -ErrorAction SilentlyContinue }
     }
 }
 
@@ -1217,6 +1223,7 @@ function Test-KitGoneError([Exception]$E) {
 }
 
 # Hosts that failed every try once in this run: later downloads give them one try (no wait), not the whole round.
+# (Not for the mirror: it is the last place to try, and shares github.com with tools.lock's upstream URLs.)
 $script:KitBadHosts = @{}
 
 # Get-KitDownload URLS TO SHA256 [MIRRORS]: $To, checked against $Sha256 (required: nothing unverified is kept). Each
@@ -1234,9 +1241,10 @@ function Get-KitDownload([string[]]$Urls, [string]$To, [string]$Sha256, [string[
     foreach ($url in @(@($Urls) + $mirrorSet | Where-Object { $_ })) {
         $h = Get-KitUrlHost $url
         if ($mirrorSet -contains $url) { Write-Host "  trying the co-op mirror ($h) ..." }
-        $n = if ($script:KitBadHosts[$h]) { 1 } else { [Math]::Max(1, $Tries) }
+        $bad = $script:KitBadHosts[$h] -and $mirrorSet -notcontains $url
+        $n = if ($bad) { 1 } else { [Math]::Max(1, $Tries) }
         $methods = @(@('web') * $n)
-        if (-not $script:KitBadHosts[$h]) { $methods += 'curl' }
+        if (-not $bad) { $methods += 'curl' }
         $got = $false; $gone = $false; $why = ''; $delay = $Wait
         for ($i = 0; $i -lt $methods.Count -and -not $got; $i++) {
             Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
