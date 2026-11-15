@@ -164,6 +164,9 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
         g.host_mutes.clear();
         g.dbno.clear();
         g.Copy(client);
+        g.seen.refused = event.kind == EventKind::refused
+                             ? std::string(coop::net::refuse_reason_text(event.refuse_reason))
+                             : std::string();
         return;
     case EventKind::player_left:
         g.host_mutes.erase(event.player);
@@ -294,6 +297,15 @@ Seen Now() {
     Glue& g = TheGlue();
     std::lock_guard lock(g.mutex);
     return g.seen;
+}
+
+void Forget() {
+    Glue& g = TheGlue();
+    std::lock_guard lock(g.mutex);
+    g.seen = Seen{};
+    g.host_mutes.clear();
+    g.dbno.clear();
+    g.asked.clear();
 }
 
 }  // namespace CoopLobby

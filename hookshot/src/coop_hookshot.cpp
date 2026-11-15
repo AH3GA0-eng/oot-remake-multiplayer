@@ -439,7 +439,10 @@ CoopHostMenu::Menu& HostMenu() {
             s.password = t.password;
             return CoopHook::Begin(std::move(s));
         };
-        h.disconnect = [] { CoopHook::End(); };
+        h.disconnect = [] {
+            CoopHook::End();
+            CoopLobby::Forget();  // the Lobby tab shows nobody once co-op is left (lobby-state-b)
+        };
         h.client_id = [] { return CoopTitle::ClientId(); };
         h.log = [](const std::string& line) { LOG_INFO(Core, "{}", line); };
         h.default_name = [] {

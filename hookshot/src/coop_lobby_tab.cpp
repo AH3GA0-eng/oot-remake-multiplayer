@@ -121,6 +121,12 @@ std::vector<Tab::Line> Tab::Lines() const {
         out.push_back(std::move(l));
     };
 
+    if (!lobby_.connected && !lobby_.waiting.empty()) {
+        heading("Lobby");
+        note(lobby_.waiting);
+        note("The players show here once this game is in the session.");
+        return out;
+    }
     if (!lobby_.connected) {
         heading("Lobby");
         note("You are not in a game.");
@@ -153,6 +159,11 @@ std::vector<Tab::Line> Tab::Lines() const {
             } else {
                 note(std::to_string(open) + (open == 1 ? " more player can join" : " more players can join"));
             }
+        }
+        // Before a file is loaded (at the title or the file select) this game has no place yet.
+        if (std::any_of(lobby_.players.begin(), lobby_.players.end(),
+                        [](const Player& pl) { return pl.self && pl.place.empty(); })) {
+            note("Load your file to play: the others see you once you do.");
         }
         heading("Invite");
         if (lobby_.hosting && !lobby_.invite.empty()) {

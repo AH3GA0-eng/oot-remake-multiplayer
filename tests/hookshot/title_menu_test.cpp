@@ -636,3 +636,20 @@ TEST_CASE("title menu: a colour the Look row does not list survives a Save that 
     o.Write(coop, opt);
     CHECK(IniGet(opt, "color") == "red");
 }
+
+// lobby-state-b (player report 22): a join is "Connected!" only once the session took this game in.
+TEST_CASE("title menu: a join told to connect says joining until the session's welcome") {
+    CHECK(ShownState(HOS_COOP_CONNECTED, false, false) == HOS_COOP_JOINING);
+    CHECK(ShownState(HOS_COOP_CONNECTED, false, true) == HOS_COOP_CONNECTED);
+    CHECK(ShownState(HOS_COOP_HOSTING, true, false) == HOS_COOP_HOSTING);
+    CHECK(ShownState(HOS_COOP_JOINING, false, false) == HOS_COOP_JOINING);
+    HostView h;
+    h.state = HOS_COOP_CONNECTED;
+    h.in_session = false;
+    CHECK(PlainStatus(h) == std::vector<std::string>{"Joining your friend's game..."});
+    h.refused = "the session is full";
+    CHECK(PlainStatus(h)[0] == "Your friend's game turned this one away: the session is full.");
+    h.refused.clear();
+    h.in_session = true;
+    CHECK(PlainStatus(h) == std::vector<std::string>{"Connected! Choose your file and play."});
+}

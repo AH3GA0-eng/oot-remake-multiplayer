@@ -143,8 +143,15 @@ struct HostView {
     std::string invite;     // the code (host)
     std::string answer;     // the ANSWER CODE (guest, when the host could not be reached)
     bool copied = false;    // the code is on the clipboard
+    // HOS_COOP_CONNECTED only says this game was told to connect: in_session is whether the session took it in
+    // (WELCOME came), as the Lobby tab counts it; refused is why the session turned it away ("" it did not).
+    bool in_session = true;
+    std::string refused;
 };
 std::vector<std::string> PlainStatus(const HostView& v);
+// The HOS_COOP_* state the menus show: a join told to connect is still joining until the session took it in, so
+// the Multiplayer tab and the Lobby tab agree.
+int ShownState(int state, bool host, bool in_session);
 
 // Friends on the host's home network or on a VPN (Radmin VPN, Hamachi, Tailscale) join by address, not by the
 // invite code (the code holds the host's internet address). The Host dialog's "Same network or VPN" row copies

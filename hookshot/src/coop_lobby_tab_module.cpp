@@ -56,6 +56,15 @@ Lobby Read(int max_players) {
     Lobby l;
     l.connected = seen.connected;
     if (!seen.connected) {
+        // The Multiplayer tab's words for the same state (coop_pause.cpp, CoopTitleMenu::ShownState).
+        HosCoopStatus st{};
+        st.size = sizeof st;
+        CoopHookshot::HostMenu().Status(&st);
+        if (!seen.refused.empty()) {
+            l.waiting = "Your friend's game turned this one away: " + seen.refused + ".";
+        } else if (st.state != HOS_COOP_IDLE && st.state != HOS_COOP_FAILED) {
+            l.waiting = "Co-op is starting...";
+        }
         return l;
     }
     l.hosting = seen.host != 0 && seen.host == seen.self;

@@ -707,6 +707,12 @@ std::vector<std::string> PlainStatus(const HostView& v) {
         return {"Your friend's router blocks the way in.", "Send your friend this answer code; they paste it into their game:",
                 v.answer, "Or ask them to turn on UPnP in their router's settings and host again."};
     case HOS_COOP_CONNECTED:
+        if (!v.refused.empty()) {
+            return {"Your friend's game turned this one away: " + v.refused + ".", "Press Leave, then join again."};
+        }
+        if (!v.in_session) {
+            return {"Joining your friend's game..."};
+        }
         return {"Connected! Choose your file and play."};
     case HOS_COOP_FAILED:
         return {"Your friend could not be reached.",
@@ -715,6 +721,10 @@ std::vector<std::string> PlainStatus(const HostView& v) {
     default:
         return {};
     }
+}
+
+int ShownState(int state, bool host, bool in_session) {
+    return !host && state == HOS_COOP_CONNECTED && !in_session ? HOS_COOP_JOINING : state;
 }
 
 void SaveWait::Start(std::uint64_t now_ms, std::string host) {
