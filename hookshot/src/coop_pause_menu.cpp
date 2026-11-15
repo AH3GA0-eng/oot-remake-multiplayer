@@ -397,6 +397,19 @@ std::vector<Menu::Line> Menu::Lines() const {
                        "dungeon maps (not the world map). Off: neither shows them."});
         out.push_back({Toggle("Names on map", options_.map_names), Act::kMapNames,
                        "Each player's name beside their arrow on the maps. Off: the arrows only."});
+        {   // (Navi) New Game+ (coop_ngplus.h)
+            const std::string hearts = std::to_string(ngplus_hearts_ / 4) + (ngplus_hearts_ % 4 ? "+" : "");
+            out.push_back({Choice("New Game+", ngplus_unlocked_ == 0 ? std::string("Locked: beat Ganon")
+                                               : ngplus_level_ == 0  ? std::string("Off")
+                                                                     : "NG+ " + std::to_string(ngplus_level_)),
+                           Act::kNgPlus,
+                           ngplus_unlocked_ == 0
+                               ? "Beat Ganon to unlock it: then play again with the hearts you had and tougher enemies."
+                               : "Start a new file with this on: you keep your " + hearts +
+                                     " hearts, and enemies and bosses get 50% more life and 25% more damage for each "
+                                     "level (up to NG+ " + std::to_string(ngplus_unlocked_) +
+                                     " now). In a game you host your level counts for everyone. Off: the game as it is."});
+        }
         break;
     case Page::kCustomize:   // (its own rows: coop_look_menu.h)
         break;
@@ -1000,6 +1013,7 @@ void Menu::Decide(Act act) {
     case Act::kChatKey:
     case Act::kController:
     case Act::kKeyboard:
+    case Act::kNgPlus:
         Change(act, 1);
         break;
     case Act::kVoice:
@@ -1070,6 +1084,13 @@ void Menu::Change(Act act, int step) {
     case Act::kMapNames:
         options_.map_names = step > 0 ? true : step < 0 ? false : !options_.map_names;
         request_ = Request{Request::Kind::kSave, {}};
+        break;
+    case Act::kNgPlus:   // (Navi) Off, NG+ 1 ... the highest unlocked, round
+        if (ngplus_unlocked_ > 0) {
+            const int span = ngplus_unlocked_ + 1;
+            ngplus_level_ = (std::clamp(ngplus_level_, 0, ngplus_unlocked_) + (step < 0 ? span - 1 : 1)) % span;
+            request_ = Request{Request::Kind::kNgPlus, std::to_string(ngplus_level_)};
+        }
         break;
     default:
         break;
@@ -1350,6 +1371,12 @@ View Menu::view() const {
 
 void Menu::SetLook(const CoopLook::Look& look) {
     look_ = look;
+}
+
+void Menu::SetNgPlus(int level, int unlocked, int hearts) {
+    ngplus_level_ = level;
+    ngplus_unlocked_ = unlocked;
+    ngplus_hearts_ = hearts;
 }
 
 std::vector<CoopLookMenu::Shape> Menu::Picture() const {
