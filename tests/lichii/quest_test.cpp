@@ -408,6 +408,61 @@ TEST_CASE("quest: nothing is asked from NotReady, and a refusal is noted") {
     CHECK(notes[1].find("asked") != std::string::npos);
 }
 
+TEST_CASE("quest: a refused step backs off and is noted once, with the count when taken") {
+    Mgr g("KakarikoVillageNpc");
+    CoopQuest::Challenges c;
+    // One list a second, as CatchUpQuests sends them; the game refuses each call.
+    std::vector<int> called;
+    for (int list = 1; list <= 7; ++list) {
+        c.Want({Fire("KakarikoVillageLetter")});
+        if (c.Step(g.m, false, 0, kMain).has_value()) {
+            called.push_back(list);
+            CHECK_FALSE(c.Step(g.m, true, 0, kMain).has_value());  // refused
+        }
+    }
+    // Asked at once, then 2 lists later, then 4 lists after that: not every second.
+    CHECK(called == std::vector<int>{1, 3, 7});
+    auto notes = c.TakeNotes();
+    REQUIRE(notes.size() == 1);  // the refusal is noted once
+    CHECK(notes[0].find("refused") != std::string::npos);
+    // Another step of the same quest is not held back by that refusal.
+    c.Want({Fire("DeathMtTrailIn")});
+    REQUIRE(c.Step(g.m, false, 0, kMain).has_value());
+    CHECK_FALSE(c.Step(g.m, true, 1, kMain).has_value());
+    notes = c.TakeNotes();
+    REQUIRE(notes.size() == 1);
+    CHECK(notes[0].find("refusals") == std::string::npos);
+    // When the game takes the refused step at last, the note has the count.
+    for (int list = 8; list <= 30; ++list) {
+        c.Want({Fire("KakarikoVillageLetter")});
+        if (c.Step(g.m, false, 0, kMain).has_value()) {
+            CHECK_FALSE(c.Step(g.m, true, 1, kMain).has_value());
+            break;
+        }
+    }
+    notes = c.TakeNotes();
+    REQUIRE(notes.size() == 1);
+    CHECK(notes[0].find("asked of the game") != std::string::npos);
+    CHECK(notes[0].find("after 3 refusals") != std::string::npos);
+}
+
+TEST_CASE("quest: a step refused 10 times is noted again with its count") {
+    Mgr g("KakarikoVillageNpc");
+    CoopQuest::Challenges c;
+    int refusals = 0;
+    for (int list = 1; list <= 1000 && refusals < 10; ++list) {
+        c.Want({Fire("KakarikoVillageLetter")});
+        if (c.Step(g.m, false, 0, kMain).has_value()) {
+            c.Step(g.m, true, 0, kMain);
+            ++refusals;
+        }
+    }
+    REQUIRE(refusals == 10);
+    const auto notes = c.TakeNotes();
+    REQUIRE(notes.size() == 2);
+    CHECK(notes[1].find("10 times") != std::string::npos);
+}
+
 TEST_CASE("quest: a player in a boss fight or minigame step is never moved out of it") {
     CoopQuest::Challenges c;
     for (const char* in : {"BossBattle", "EscapeDungeon"}) {

@@ -16,6 +16,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -127,15 +128,17 @@ std::string LiveDescribe(const ReadMemory& read, std::uint64_t main, std::uint32
 // issue 171) from KakarikoVillageNpc on, and DoorOfTime (issue 60) from
 // Step2_1 on: the field's trigger for Zelda's escape
 // (Logic/HyruleField_Child_Prefab_0ce5, HoldChallengeCurrentStepCheckOrder
-// DoorOfTime Step03) reads the manager, never GameData. The other quests stay
-// as before (GameData and the Threads of Time tab); each joins later on its
-// own, with its own floor and an in-game check.
+// DoorOfTime Step03) reads the manager, never GameData. The other shared
+// quests reach the manager through CoopQuests::LiveWants (issue 94).
 std::optional<StepWant> LiveWant(const Quest& quest, const ReadEnum& value);
 
 // Moves the manager's entries up to the steps GameData holds. Never lowers,
 // never into or out of a held step, never from NotReady (the game refuses it
 // without force, and none is passed); an unknown step or a quest the manager
 // does not have is left alone, and a step already asked is not asked again.
+// A step the game refused is tried again only after 2, 4, 8 ... (at most 60)
+// more lists, and noted once (then at 10, 100, ... refusals; the count is in
+// the note when the game takes it at last), not every second.
 class Challenges {
 public:
     // Any thread: the quests to check on the next frame (replaces any waiting).
@@ -154,6 +157,12 @@ private:
     std::size_t next_ = 0;
     std::uint32_t asked_from_ = 0;
     std::vector<std::string> notes_;
+    // Refused steps (calc thread only): key challenge << 32 | step.
+    struct Refusal {
+        std::uint32_t count = 0;
+        std::uint32_t skip = 0;  // lists still to pass over
+    };
+    std::map<std::uint64_t, Refusal> refused_;
 };
 
 } // namespace CoopQuest
