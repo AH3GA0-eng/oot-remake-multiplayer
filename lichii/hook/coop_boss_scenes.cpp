@@ -46,7 +46,7 @@ const CoopBoss::Room* RoomOf(const Boss& b) {
 // InsideTheDekuTree_Level_Room_L_Common: Create_WarpPrefab, the Gimmick_Warp_FromDungeon module whose area asks
 // the warp's event). The death flow alone (Dm_Deku_BossOut, a timeline) shows the warp in the cutscene but
 // moves no quest, and the shared quest step waits until our Link is out of the dungeon (coop_hook.cpp): no
-// warp to enter. Only in the boss room's own dungeon scene; elsewhere (the boss rush, Ganondorf and Ganon, who
+// warp to enter. Only in the boss room's own dungeon scene, and only when our game has the boss (Join); elsewhere (the boss rush, Ganondorf and Ganon, who
 // have no room) the death flow, as before.
 std::string_view DeathToAsk(const Boss& b, const std::optional<std::string>& scene) {
     const CoopBoss::Room* room = RoomOf(b);
@@ -198,7 +198,12 @@ void Director::Join(std::uint8_t b, Kind kind, const Local& local, std::uint64_t
         return;  // our own game has it running already
     }
     f.asked_at = now_us;
-    out.play = std::string(kind == Kind::intro ? boss.intro : DeathToAsk(boss, local.scene));
+    // The death setting only when our game has the boss (our walk saw its body): a save that beat it already
+    // (no boss here, its warp there) would get its Complete quest set back by the setting's step (King Dodongo's
+    // and Barinade's do not ignore a completed quest), and its death signal would go to no boss (review-guest-warp).
+    out.play = std::string(kind == Kind::intro         ? boss.intro
+                           : local.boss_ours.has_value() ? DeathToAsk(boss, local.scene)
+                                                         : boss.outro);
     out.log.push_back(*out.play + ": playing it here too (player " +
                       std::to_string(kind == Kind::intro ? f.starter : f.outro_by) + " started it)");
 }

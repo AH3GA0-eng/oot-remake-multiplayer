@@ -234,7 +234,7 @@ TEST_CASE("boss scenes: the death plays in the area, outside only a chat line") 
     death.player_number = 1;
     b.Receive(death);
     Actions out = b.Tick(At(kInRoom, 2), {}, 100'100'000);
-    CHECK(out.play == std::optional<std::string>("InsideTheDekuTree_BossDie"));
+    CHECK(out.play == std::optional<std::string>("Dm_Deku_BossOut"));
     c.Receive(death);
     out = c.Tick(At(kFar, 3), {}, 100'100'000);
     CHECK_FALSE(out.play);
@@ -289,7 +289,7 @@ TEST_CASE("boss scenes: the settings a boss's own logic asks start its intro and
     proto::BossScene death = out.send[0];
     death.player_number = 1;
     b.Receive(death);
-    CHECK(b.Tick(At(kInRoom, 2), {}, 100'100'000).play == std::optional<std::string>("InsideTheDekuTree_BossDie"));
+    CHECK(b.Tick(At(kInRoom, 2), {}, 100'100'000).play == std::optional<std::string>("Dm_Deku_BossOut"));
 }
 
 TEST_CASE("boss scenes: our intro or death seen with no name starts a fresh intro, never a leftover") {
@@ -330,11 +330,15 @@ TEST_CASE("boss scenes: another's death is asked as the boss's own death setting
     // The setting's flow entry moves our quest on (Get_StoneOfForest DefeatBoss, GoToWarpPoint): the room makes
     // the blue warp in our game too. The death flow alone moved nothing, so a guest's warp did nothing.
     proto::BossScene death = Scene(1, kGohma, proto::BossSceneKind::outro_start, kInRoom);
+    const auto with_boss = [](Local l) {
+        l.boss_ours = false;  // our walk has the boss (a copy)
+        return l;
+    };
     SUBCASE("asked as the setting, taken: played with the owner's, no fallback") {
         Director b;
         b.Receive(death);
-        CHECK(b.Tick(At(kInRoom, 2), {}, 1'000'000).play == std::optional<std::string>("InsideTheDekuTree_BossDie"));
-        Actions out = b.Tick(At(kInRoom, 2, true), Took("InsideTheDekuTree_BossDie"), 1'100'000);
+        CHECK(b.Tick(with_boss(At(kInRoom, 2)), {}, 1'000'000).play == std::optional<std::string>("Dm_Deku_BossOut"));
+        Actions out = b.Tick(with_boss(At(kInRoom, 2, true)), Took("InsideTheDekuTree_BossDie"), 1'100'000);
         CHECK_FALSE(out.play);
         CHECK(out.send.empty());  // player 1 started it
         CHECK(b.phase(kGohma) == Phase::outro);
@@ -342,17 +346,17 @@ TEST_CASE("boss scenes: another's death is asked as the boss's own death setting
     SUBCASE("the setting refused: the death flow alone, once") {
         Director b;
         b.Receive(death);
-        b.Tick(At(kInRoom, 2), {}, 1'000'000);
-        Actions out = b.Tick(At(kInRoom, 2), {Request{"InsideTheDekuTree_BossDie", false}}, 1'100'000);
+        b.Tick(with_boss(At(kInRoom, 2)), {}, 1'000'000);
+        Actions out = b.Tick(with_boss(At(kInRoom, 2)), {Request{"InsideTheDekuTree_BossDie", false}}, 1'100'000);
         CHECK(out.play == std::optional<std::string>("Dm_Deku_BossOut"));
-        out = b.Tick(At(kInRoom, 2), {Request{"Dm_Deku_BossOut", false}}, 1'200'000);
+        out = b.Tick(with_boss(At(kInRoom, 2)), {Request{"Dm_Deku_BossOut", false}}, 1'200'000);
         CHECK_FALSE(out.play);  // the flow refused too: nothing more
     }
     SUBCASE("a refusal we did not ask (too late) asks nothing") {
         Director b;
         b.Receive(death);
-        b.Tick(At(kInRoom, 2), {}, 1'000'000);
-        CHECK_FALSE(b.Tick(At(kInRoom, 2), {Request{"InsideTheDekuTree_BossDie", false}},
+        b.Tick(with_boss(At(kInRoom, 2)), {}, 1'000'000);
+        CHECK_FALSE(b.Tick(with_boss(At(kInRoom, 2)), {Request{"InsideTheDekuTree_BossDie", false}},
                            1'000'000 + Director::kJoinUs + 1).play);
     }
     SUBCASE("King Dodongo and Barinade: their quests' own death settings") {
@@ -373,19 +377,25 @@ TEST_CASE("boss scenes: another's death is asked as the boss's own death setting
             const Vec centre{room->centre_x, (room->y_low + room->y_high) / 2.0f, room->centre_z};
             Director b;
             b.Receive(Scene(1, i, proto::BossSceneKind::outro_start, centre, std::string(room->scene)));
-            CHECK(b.Tick(At(centre, 2, false, std::string(room->scene)), {}, 1'000'000).play ==
+            CHECK(b.Tick(with_boss(At(centre, 2, false, std::string(room->scene))), {}, 1'000'000).play ==
                   std::optional<std::string>(setting));
         }
+    }
+    SUBCASE("no boss in our walk (our save beat it already, or the copy is gone): the death flow") {
+        // King Dodongo's and Barinade's settings would set a Complete quest back and signal an absent boss.
+        Director b;
+        b.Receive(death);
+        CHECK(b.Tick(At(kInRoom, 2), {}, 1'000'000).play == std::optional<std::string>("Dm_Deku_BossOut"));
     }
     SUBCASE("the boss rush and Ganondorf: the death flow, as before") {
         Director b;
         const Vec starter{0.0f, 0.0f, 0.0f};
         b.Receive(Scene(1, kGohma, proto::BossSceneKind::outro_start, starter, "GohmaStage"));
-        CHECK(b.Tick(At(Vec{10.0f, 0.0f, 0.0f}, 2, false, "GohmaStage"), {}, 1'000'000).play ==
+        CHECK(b.Tick(with_boss(At(Vec{10.0f, 0.0f, 0.0f}, 2, false, "GohmaStage")), {}, 1'000'000).play ==
               std::optional<std::string>("Dm_Deku_BossOut"));
         Director g;
         g.Receive(Scene(1, kGanondorf, proto::BossSceneKind::outro_start, starter, "InsideGanonCastle"));
-        CHECK(g.Tick(At(Vec{10.0f, 0.0f, 0.0f}, 2, false, "InsideGanonCastle"), {}, 1'000'000).play ==
+        CHECK(g.Tick(with_boss(At(Vec{10.0f, 0.0f, 0.0f}, 2, false, "InsideGanonCastle")), {}, 1'000'000).play ==
               std::optional<std::string>("Dm_InsideGanonCastle_BossOut"));
     }
 }
@@ -408,7 +418,7 @@ TEST_CASE("boss scenes: a copy that dies in its own game starts no death, the ow
     // The owner's death comes: then A plays it.
     a.Receive(Scene(2, kGohma, proto::BossSceneKind::outro_start, kInRoom));
     out = a.Tick(At(kInRoom, 1, false), {}, 62'000'000);
-    CHECK(out.play == std::optional<std::string>("InsideTheDekuTree_BossDie"));
+    CHECK(out.play == std::optional<std::string>("Dm_Deku_BossOut"));
     // A death our game asked by name (a request) is still ours to share, owner or not (as before).
     Director c;
     c.Tick(At(kInRoom, 3, true), searched("Dm_Deku_BossIn"), 1'000'000);
