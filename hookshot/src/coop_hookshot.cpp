@@ -63,6 +63,7 @@
 #include "coop_hud_hearts.h"
 #include "coop_link_sound.h"
 #include "coop_map_page.h"
+#include "coop_map_refresh.h"
 #include "coop_testinput.h"
 #include "coop_maps.h"
 #include "coop_live_events.h"
@@ -1107,6 +1108,10 @@ void Frame(void* ctx, int site) {
     if (w.calls && ctx != nullptr) {
         RunFlagSetters(ctx);
         LogFlagNative();
+        {  // #63/#76: the HUD screen the game's own map refresh is called on (coop_map_refresh.h)
+            const auto menu = CoopMapPage::MenuState();
+            CoopMapRefresh::TheRefresher().SetScreen(menu ? menu->hud_screen : 0, CoopRuntime::MainBase());
+        }
         RunCalls(ctx);
         LogBossNative();
         CoopMapPage::Frame(ctx, g_api);   // the Map page's panes, found once while the game plays
