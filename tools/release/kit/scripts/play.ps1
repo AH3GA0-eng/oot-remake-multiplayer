@@ -58,6 +58,10 @@ $hsRetry = if ($hsOnly) { 'Start "Start OoT Co-op.bat" again' } else { 'Run Buil
 if ($hsOnly) { $script:KitPackRemake = 'Start "Start OoT Co-op.bat" again: it makes the pack again.' }
 
 # Yes or no, yes when no key comes in $Seconds (an unattended start still updates).
+function Clear-KeysTypedAhead {
+    Start-Sleep -Milliseconds 300
+    try { while ([Console]::KeyAvailable) { [void][Console]::ReadKey($true) } } catch { }
+}
 function Read-YesNo([string]$Question, [int]$Seconds) {
     $redirected = $true
     try { $redirected = [Console]::IsInputRedirected } catch { }
@@ -71,8 +75,10 @@ function Read-YesNo([string]$Question, [int]$Seconds) {
     while ((Get-Date) -lt $end) {
         if ([Console]::KeyAvailable) {
             $key = [Console]::ReadKey($true)
-            if ($key.Key -eq 'N') { Write-Host 'n'; return $false }
-            if ($key.Key -eq 'Y' -or $key.Key -eq 'Enter') { Write-Host 'y'; return $true }
+            # (one key answers: the Enter many type after it is taken out here, else the next question reads it as
+            # an empty answer: player report 87, 'No game files given' at every start)
+            if ($key.Key -eq 'N') { Write-Host 'n'; Clear-KeysTypedAhead; return $false }
+            if ($key.Key -eq 'Y' -or $key.Key -eq 'Enter') { Write-Host 'y'; Clear-KeysTypedAhead; return $true }
         }
         Start-Sleep -Milliseconds 100
     }
