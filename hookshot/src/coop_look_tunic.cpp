@@ -320,15 +320,37 @@ void Wardrobe::Step(std::uint64_t now_ms) {
             return misses_.count({l.address, l.serial}) != 0;
         });
         misses_.insert(found.misses.begin(), found.misses.end());
+        std::vector<bool> carried(places_.size(), false);
         for (Place& p : found.places) {   // a texture kept since: drawn as it was
             const auto old = std::find_if(places_.begin(), places_.end(), [&](const Place& o) {
                 return o.address == p.address && o.serial == p.serial && o.texture == p.texture;
             });
             if (old != places_.end() && old->held == p.held) {
                 p.drawn = old->drawn, p.overridden = old->overridden;
+                carried[static_cast<std::size_t>(old - places_.begin())] = true;
             }
         }
-        places_ = std::move(found.places);   // (a texture finalized took its override with it)
+        // An override no place carries on: the game's memory there no longer
+        // holds your Link's texels, while the game has not finalized that
+        // texture (it gave the memory to something else, made another texture
+        // over it). Longshot keeps an override until the finalize, drawn over
+        // whatever the game keeps there next (players, 0.11.0: effects'
+        // textures, stick flames and nut flashes gone): taken away here. (A
+        // texture finalized took its override with it: then this is a no-op.)
+        std::size_t taken = 0;
+        for (std::size_t i = 0; i < places_.size(); ++i) {
+            const Place& o = places_[i];
+            if (o.overridden && !carried[i]) {
+                host_.textures->Override(o.address, o.serial, nullptr, static_cast<std::size_t>(o.size));
+                ++taken;
+            }
+        }
+        if (taken != 0 && said_taken_ < 20) {
+            ++said_taken_;
+            host_.log("coop: look: " + std::to_string(taken) + " override(s) of your Link's " + host_.what +
+                      " taken away: the game's memory there holds something else now");
+        }
+        places_ = std::move(found.places);
         look_now_ = false, looked_ = true;
         generation_ = generation;
         if (places_.empty() && full) {

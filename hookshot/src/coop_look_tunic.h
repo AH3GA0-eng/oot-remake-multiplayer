@@ -176,6 +176,7 @@ private:
     bool said_nothing_found_ = false;
     std::string said_;                        // the last "no texture" line (said again when it changes)
     int said_count_ = 0;
+    int said_taken_ = 0;                      // "override(s) taken away" lines said (at most 20)
 };
 
 }  // namespace CoopLookTunic
