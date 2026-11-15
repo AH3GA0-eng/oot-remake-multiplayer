@@ -444,7 +444,7 @@ function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
     # The fixed list also covers a pack without self_files (made again older): no stale copy.
     $targets = @($tile, $dark, 'Tex/Mt_Vest_Player_Adult_Alb.bntx.zs', 'Tex/Mt_Angin_Acs_Player_Adult_Alb.bntx.zs',
         'Tex/Mt_Cloth_Parts_Player_Child_Alb.bntx.zs', 'Tex/Mt_Vest_Player_Child_Alb.bntx.zs',
-        'Model/Player_Adult.Player_Adult.bfres.zs')
+        'Model/Player_Adult.Player_Adult.bfres.zs', 'Model/Player_Child.Player_Child.bfres.zs')
     $put = [ordered]@{}
     try {
         if ($json -and $json.self_files) {

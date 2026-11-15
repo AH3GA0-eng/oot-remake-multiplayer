@@ -386,6 +386,30 @@ void PaintOwnLink(const Look& look) {
     Wear(TunicName(OwnTunic(look[Part::tunic], g_number.load())), look);
 }
 
+void AgreeStartTunic() {
+    const char* set = std::getenv("LICHII_COOP_SELF_TUNIC");
+    const std::string hint = set != nullptr ? set : "";
+    const fs::path pack = LookDir().parent_path();
+    const std::string start = PackStartTunic(
+        ReadFile(pack / "romfs" / "Tex" / "Angin_Tile_A_Alb.bntx.zs"),
+        [&](const std::string& c) { return ReadFile(pack / "coop_self" / (c + ".bntx.zs")); }, hint);
+    if (start == (hint.empty() ? std::string("green") : hint)) {
+        return;
+    }
+    LOG_INFO(Core, "coop: look: your Link starts in {} (the puppet pack's tunic files; LICHII_COOP_SELF_TUNIC said "
+                   "{}): the switch follows the files",
+             start, hint.empty() ? std::string("none") : hint);
+#ifdef _MSC_VER
+    _putenv_s("LICHII_COOP_SELF_TUNIC", start == "green" ? "" : start.c_str());
+#else
+    if (start == "green") {
+        unsetenv("LICHII_COOP_SELF_TUNIC");
+    } else {
+        setenv("LICHII_COOP_SELF_TUNIC", start.c_str(), 1);
+    }
+#endif
+}
+
 void StartModule() {
     if (g_wardrobe) {
         return;

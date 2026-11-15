@@ -126,6 +126,19 @@ std::string TunicName(const std::optional<std::uint32_t>& colour);
 // number is known (0: not yet, or co-op off); else unset (the game's own).
 std::optional<std::uint32_t> OwnTunic(const std::optional<std::uint32_t>& chosen, std::uint8_t number);
 
+// The colour your own Link's tunic files in the puppet pack give it when the
+// game starts (colour-agree): the kit's Set-KitSelfTunic copies a colour's
+// coop_self/<colour>.bntx.zs over romfs/Tex/Angin_Tile_A_Alb.bntx.zs, and a
+// start without the kit's launcher (the autotest, a hand start, a colour
+// changed since) leaves whatever was copied last. The game draws what is in
+// the pack, so that is the start colour, not LICHII_COOP_SELF_TUNIC:
+// `tile` is the pack's tile (nothing: none, "green", the game's own),
+// `self_tile` a colour's coop_self file. A tile that is none of them: `hint`
+// (the switch), else "green". `hint` is asked first, then every tunic colour.
+using FileFn = std::function<std::optional<std::vector<std::uint8_t>>(const std::string&)>;
+std::string PackStartTunic(const std::optional<std::vector<std::uint8_t>>& tile, const FileFn& self_tile,
+                           const std::string& hint);
+
 // ---------------------------------------------------------------------------
 // The module's one look. Any thread, but Frame.
 
@@ -156,6 +169,12 @@ void Frame();
 // The Hookshot module's look (coop_look_live.cpp): Start, after the kit's
 // switches are set, takes the settings' look (Init), and starts the worker
 // that keeps your own Link's tunic in the worn colour; Stop ends it.
+// Before the puppets' settings (CoopPuppetConfig::Configure, which reads it)
+// and StartModule: sets LICHII_COOP_SELF_TUNIC to the colour of the tunic
+// files in the pack (PackStartTunic), or takes it away for the game's green,
+// so the puppets (green players' puppet) and the wardrobe (which texels to
+// look for) agree with what the game draws (colour-agree).
+void AgreeStartTunic();
 void StartModule();
 void StopModule();
 

@@ -94,6 +94,31 @@ std::optional<std::uint32_t> OwnTunic(const std::optional<std::uint32_t>& chosen
     return coop::protocol::slot_color(number);
 }
 
+std::string PackStartTunic(const std::optional<std::vector<std::uint8_t>>& tile, const FileFn& self_tile,
+                           const std::string& hint) {
+    if (!tile) {
+        return "green";
+    }
+    // The tunic colours of the pack (CoopColors::TunicOf's names but green).
+    static constexpr std::array<std::string_view, 9> kColours{"red",  "orange", "yellow", "cyan", "blue",
+                                                              "purple", "pink", "white", "black"};
+    std::vector<std::string> order;
+    if (!hint.empty() && hint != "green") {
+        order.push_back(hint);
+    }
+    for (const auto c : kColours) {
+        if (c != hint) {
+            order.emplace_back(c);
+        }
+    }
+    for (const auto& c : order) {
+        if (const auto file = self_tile ? self_tile(c) : std::nullopt; file && *file == *tile) {
+            return c;
+        }
+    }
+    return hint.empty() ? std::string("green") : hint;
+}
+
 void Choice::SetPending(const Look& look) {
     if (look == worn_) {
         pending_.reset();

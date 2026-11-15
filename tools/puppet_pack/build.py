@@ -709,9 +709,11 @@ def recompress(dicts, original_raw, data, level=16):
     return dicts.compress(data, name, level=level)
 
 
-# The variants whose own Link wears the colour's model copy (above); the child's own Link took
-# the colour from its replaced tiles (bigrun5 PASS), so it keeps the game's model.
-SELF_MODEL_VARIANTS = ("Adult",)
+# The variants whose own Link wears the colour's model copy (above). The child too since
+# colour-agree: the owner's lane1 run (2026-11-14) showed the child's own Link with the hat in the
+# colour but the body and sleeves still the game's green, its replaced Tex/ files in place, while
+# the puppet of the same colour (renamed copies) was coloured all over: as the adult in bigrun5.
+SELF_MODEL_VARIANTS = ("Adult", "Child")
 
 
 def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=None, self_tiles=None,
@@ -837,10 +839,10 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
             table.add_new(strip_zs(dst), table.get(strip_zs(m_rel)) or len(data) + PACK_SIZE_MARGIN)
             paths.append(dst)
             if v in SELF_MODEL_VARIANTS and self_dir and c != "green":
-                # Your own adult Link wears the puppet's model copy (same size: the game's entry
-                # stands), which names the colour's textures: bigrun5 showed the game's own names
-                # replaced in Tex/ did not reach the adult's lower tunic and hood, while the
-                # puppet's renamed ones did. The kit copies it from the pack's romfs, no 2nd copy.
+                # Your own Link wears the puppet's model copy (same size: the game's entry
+                # stands), which names the colour's textures: bigrun5 (adult) and the lane1 run of
+                # 2026-11-14 (child) showed the game's own names replaced in Tex/ did not reach the
+                # whole tunic, while the puppet's renamed ones did. The kit copies it from the pack's romfs, no 2nd copy.
                 self_files.setdefault(c, {})[m_rel] = f"romfs/{dst}"
         if look_dir:
             write(os.path.join(look_dir, f"{c}.bin"), look_live.pack(look))
