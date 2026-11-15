@@ -61,7 +61,7 @@ STICK_KEYS = {  # full stick directions: (stick, x, y)
     "RSTICK_UP": ("R", 0, 1), "RSTICK_DOWN": ("R", 0, -1), "RSTICK_LEFT": ("R", -1, 0), "RSTICK_RIGHT": ("R", 1, 0),
 }
 WEAR_SLOTS = ("weapon", "shield", "head", "armor", "boots", "hand")
-MODULE_ONLY = ("chat", "give", "wear", "assign", "place", "kill", "setflag", "setenum")
+MODULE_ONLY = ("chat", "give", "wear", "assign", "place", "kill", "setflag", "setenum", "menu")
 
 
 class ScriptError(Exception):
@@ -243,6 +243,10 @@ def parse(text):
             if len(w) != 2:
                 fail("want: assign ITEM")
             s.kind, s.name = "assign", w[1]
+        elif cmd == "MENU":
+            if len(w) != 2 or w[1].lower() not in ("customize", "close"):
+                fail("want: menu customize|close")
+            s.kind, s.name = "menu", w[1].lower()
         elif cmd == "MARK":
             if len(w) != 2:
                 fail("want: mark NAME (one word)")

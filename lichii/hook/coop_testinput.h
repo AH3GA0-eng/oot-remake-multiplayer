@@ -120,6 +120,7 @@ enum class Kind {
     setflag, // test only: an Int or Bool flag of this game set to a value (issue 130: shop-buy)
     setenum, // test only: an Enum flag (name or 0x hash) set to a value's name (issue 193: quests)
     sync,    // sync NAME N: wait here, buttons let go, until N games reached NAME
+    menu,    // test only: menu customize|close, the Multiplayer tab's Customize page opened or the menu closed (issue 74)
 };
 
 struct Step {
@@ -253,5 +254,11 @@ private:
 // and writes only the test-only steps there; they are played without a pad
 // and the file is emptied once read.
 void OnFrame(Core::System& system);
+
+// The menu step's doer: the Hookshot module sets it (coop_pause.cpp); "customize" opens
+// the Multiplayer tab's Customize page, "close" closes the menu. True when asked.
+// Unset (the emulator): the step logs that it is not here.
+using MenuOpener = std::function<bool(const std::string& page)>;
+void SetMenuOpener(MenuOpener opener);
 
 } // namespace CoopTestInput
