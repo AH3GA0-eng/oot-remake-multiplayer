@@ -1,4 +1,4 @@
-From f6ad497c65d32292b77f51adf02ff5434ad6a326 Mon Sep 17 00:00:00 2001
+From 18820e655ca17863f42e514594caf733cc275908 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Thu, 12 Nov 2026 13:32:10 -0900
 Subject: [PATCH] Co-op voice: the module's voices in the game's final mix
@@ -27,7 +27,7 @@ HOS_COOP_VOICE=0 keeps the module unattached. Linux: not yet.
 
 diff --git a/host/coop_voice.c b/host/coop_voice.c
 new file mode 100644
-index 00000000..4996f2e8
+index 00000000..1b145c74
 --- /dev/null
 +++ b/host/coop_voice.c
 @@ -0,0 +1,117 @@
@@ -204,7 +204,7 @@ index 00000000..7fc2aa9d
 +
 +#endif
 diff --git a/host/nn_audio.c b/host/nn_audio.c
-index af1ee013..62827c54 100644
+index 74269e23..ee9c4048 100644
 --- a/host/nn_audio.c
 +++ b/host/nn_audio.c
 @@ -620,6 +620,18 @@ static void render_frame(int16_t *pcm, int channels) {   /* 240 frames of the de
