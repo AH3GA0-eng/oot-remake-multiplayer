@@ -340,6 +340,11 @@ std::vector<Menu::Line> Menu::Lines() const {
         break;
     }
     case Page::kSettings:
+        out.push_back({Choice("Saves", mp_saves_ ? "Multiplayer" : "Solo"), Act::kSaveSet,   // (Navi)
+                       "Solo: your own saves. Multiplayer: a separate set of saves for playing together (made from "
+                       "your solo saves the first time), so co-op progress never mixes with your own. When you join "
+                       "a friend you play the host's save, copied beside your multiplayer saves; your saves are not "
+                       "touched. Switched on the title screen with no file loaded."});
         out.push_back({Action("Your name", typing_ && typing_act_ == Act::kName ? options_.name + "_" : options_.name),
                        Act::kName,
                        "The name the other players see: 1 to 16 characters, typed with the keyboard."});
@@ -1014,6 +1019,7 @@ void Menu::Decide(Act act) {
     case Act::kController:
     case Act::kKeyboard:
     case Act::kNgPlus:
+    case Act::kSaveSet:
         Change(act, 1);
         break;
     case Act::kVoice:
@@ -1084,6 +1090,10 @@ void Menu::Change(Act act, int step) {
     case Act::kMapNames:
         options_.map_names = step > 0 ? true : step < 0 ? false : !options_.map_names;
         request_ = Request{Request::Kind::kSave, {}};
+        break;
+    case Act::kSaveSet:   // (Navi) two choices: either arrow flips it
+        mp_saves_ = !mp_saves_;
+        request_ = Request{Request::Kind::kSaveSet, mp_saves_ ? "multiplayer" : "solo"};
         break;
     case Act::kNgPlus:   // (Navi) Off, NG+ 1 ... the highest unlocked, round
         if (ngplus_unlocked_ > 0) {
@@ -1371,6 +1381,10 @@ View Menu::view() const {
 
 void Menu::SetLook(const CoopLook::Look& look) {
     look_ = look;
+}
+
+void Menu::SetSaveSet(bool multiplayer) {
+    mp_saves_ = multiplayer;
 }
 
 void Menu::SetNgPlus(int level, int unlocked, int hearts) {
