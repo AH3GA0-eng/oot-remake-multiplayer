@@ -233,7 +233,8 @@ public:
     // (EventTriggerSetEventBool on its `EventRequestActor` member). Asked by name alone, the event plays its camera
     // and nothing in the room moves. So when the event is asked, the asker (an actor named in kAskerNames, within
     // kAskerNearM of one of the event's places in `scene`, Places()) is linked as its starter, as the game's own
-    // member request does (kSetLink). None found: asked by name alone, as before, and a note says so.
+    // member request does (kSetLink). None found: not asked at all (dungeon-sync-b), and a note says so: a start
+    // by name only plays the camera, and it can keep the event system busy when the room needs it.
     void WantFromRoom(std::string name, std::string scene);
     // review-p11-interactions: one requester takes gimmick and story events,
     // and an event waits while another runs. Once a frame, under the same
