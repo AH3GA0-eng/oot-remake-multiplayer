@@ -192,6 +192,28 @@ class MergeTablesTest(unittest.TestCase):
         self.assertEqual(self.table("zz-site").by_crc, {2: 5})
         self.assertEqual([n for n, _ in mt.load_order(self.mods)], [PACK, "zz-site", "aa-site"])
 
+    def test_with_a_list_an_unlisted_mod_wins_only_over_the_pack_by_name(self):
+        # Patch 0011: listed rows above everything; the unlisted mods and the pack by _stricmp name, the last wins.
+        self.put_table(PACK, {1: 100})
+        self.put_table("Aaa-Site", {2: 5})  # unlisted, sorts under contents/...: the pack's table is read
+        self.put_table("listed-off", {9: 9})
+        with open(os.path.join(self.mods, mt.LIST_FILE), "w", encoding="utf-8", newline="\n") as f:
+            f.write("coop-mods 1\noff listed-off\n")
+        self.assertEqual(self.run_merge(), 0)
+        self.assertEqual(self.lines, [])
+        self.assertEqual(self.table("Aaa-Site").by_crc, {2: 5})
+        self.assertEqual([n for n, _ in mt.load_order(self.mods)], ["Aaa-Site", PACK])
+        self.put_table("Zzz-Site", {3: 6})  # unlisted, sorts over contents/...: it wins and gets the others
+        self.run_merge()
+        self.assertEqual(self.table("Zzz-Site").by_crc, {1: 100, 2: 5, 3: 6})
+        self.assertEqual(self.table("Aaa-Site").by_crc, {2: 5})
+        self.put_table("bbb-listed", {4: 4})  # a listed row is above every unlisted one
+        with open(os.path.join(self.mods, mt.LIST_FILE), "w", encoding="utf-8", newline="\n") as f:
+            f.write("coop-mods 1\non bbb-listed\noff listed-off\n")
+        self.run_merge()
+        self.assertEqual(self.table("bbb-listed").by_crc, {1: 100, 2: 5, 3: 6, 4: 4})
+        self.assertEqual([n for n, _ in mt.load_order(self.mods)][-1], "bbb-listed")
+
     def test_folders_with_a_leading_dash_or_underscore_are_no_mods(self):
         self.put_table(PACK, {1: 100})
         self.put_table("-old-site", {2: 5})

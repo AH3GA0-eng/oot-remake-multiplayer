@@ -1,7 +1,7 @@
 """One merged resource size table at each start (#48: a randomizer seed from OOTRR's website).
 
 Longshot serves ONE ResourceSizeTable: the one of the mod indexed last (host/mods.c with our patch 0011: the Mods
-tab's list `coop-mods.list`, its first row last; mods the list does not name under the listed ones, by name). A seed
+tab's list `coop-mods.list`, its first row last; the mods it does not name and the puppet pack under the listed ones, by name without case, the last wins; the module: coop-mods.applied). A seed
 folder made on OOTRR's page has its own table, made without the puppet pack's entries, so the puppets cannot load.
 This writes ONE table where the game reads it: the winner's own entries, and from every other mod that is on, each
 entry it has (the larger size where both have one). The winner's original is kept in
