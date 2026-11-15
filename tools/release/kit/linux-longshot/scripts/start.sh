@@ -9,19 +9,21 @@
 #   bash start-oot-coop.sh --game FILE.nup     the game file, no question (also --exefs, --rebuild, --jobs N)
 #   bash start-oot-coop.sh --no-update         no update check this time
 #   bash start-oot-coop.sh --logs              collect the logs for a bug report, start nothing
+#   bash start-oot-coop.sh --pack              make the puppet pack again (how you see the others), start nothing
 # Started without a terminal (Steam's Game Mode, a desktop shortcut) it asks nothing: an update is
 # left for the next start from a terminal, and a game that is not built yet is said in a dialog.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-no_update=0 build_args=()
+no_update=0 pack_only=0 build_args=()
 while (($#)); do
     case $1 in
         --no-update) no_update=1 ;;
         --logs) exec bash "$KIT/scripts/collect-logs.sh" ;;
+        --pack) pack_only=1 ;;
         --game | --exefs | --jobs) build_args+=("$1" "${2-}"); shift ;;
         --rebuild | --check-only) build_args+=("$1") ;;
-        -h | --help) sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h | --help) sed -n '2,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) fail "Unknown option: $1 (bash start-oot-coop.sh --help lists them)" ;;
     esac
     shift
@@ -64,6 +66,17 @@ if command -v flock >/dev/null 2>&1; then
     flock -n 9 || fail 'This kit is starting already (another window). Wait for it, or close it first.'
 fi
 kit_game_running && fail 'The game of this kit is running already. Switch to its window (or close it first).'
+
+# --pack (boredhermit: "it can't build the puppet independently anymore"): the pack made again, nothing else. Its stamp
+# goes, so build.sh makes it whatever it was; the game's own build steps are skipped as on any start (nothing changed).
+if ((pack_only)); then
+    [[ -n $(kit_game_exe) ]] || fail 'The game is not built yet: start start-oot-coop.sh (it builds the game and makes the puppet pack).'
+    rm -f "$GAME/mods/contents/0400486024DEC000/coop-puppet/.coop-stamp"
+    bash "$KIT/scripts/build.sh" "${build_args[@]}"
+    [[ -f $GAME/mods/contents/0400486024DEC000/coop-puppet/.coop-stamp ]] || fail 'The puppet pack was not made (said why above).'
+    say 'Done: the puppet pack is made. Start start-oot-coop.sh to play.'
+    exit 0
+fi
 
 # --- 2: a new co-op version ---------------------------------------------------------------------
 mode=$(kit_auto_update)

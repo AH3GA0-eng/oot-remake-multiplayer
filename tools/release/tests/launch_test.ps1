@@ -179,6 +179,7 @@ try {
     $hash = 'b9d822a64cc6285dd1aa300d77f64ea0c86f775240885dad79ae4f2f7694f5e0'
     Check ((Get-PuppetToolHash $tool) -eq $hash) "the pack tool hash is build.py's [$(Get-PuppetToolHash $tool)]"
     $man = Join-Path $ph 'coop_puppet.json'
+    Write-File (Join-Path $ph 'romfs\x') 'tunic'   # (the "x" the tunics below name: a complete pack)
     Write-File $man '{"tool": "tools/puppet_pack", "actors": []}'
     Check ((Get-PuppetPackHint $man $tool) -match 'without the other players'' sounds.*make-puppet-pack\.cmd') 'a pack without "sound": run make-puppet-pack again'
     Write-File $man '{"actors": [], "sound": false}'
@@ -188,15 +189,28 @@ try {
     Check ($null -eq (Get-PuppetPackHint $man $tool)) 'the same tool, its files dated hours ahead (a zip from another time zone): nothing said'
     Check ($null -eq (Get-PuppetPackHint $man (Join-Path $ph 'no-tool'))) 'no tool folder: nothing said'
     Write-File $man '{"actors": [], "sound": true, "tunics": {"Red": ["x"]}}'
-    Check ($null -eq (Get-PuppetPackHint $man $tool)) 'sound and no tool hash: nothing said'
+    Check ((Get-PuppetPackHint $man $tool) -match 'older version of the pack tool') 'sound and no tool hash (a pack from before the hash): made again (pack-retry)'
+    Check ($null -eq (Get-PuppetPackHint $man (Join-Path $ph 'no-tool'))) 'no tool hash and no tool folder: nothing said'
     Write-File $man '{"actors": [], "sound": true}'
     Check ((Get-PuppetPackHint $man $tool) -match 'without the tunic colours.*green.*make-puppet-pack\.cmd') 'a pack from before the tunics: run make-puppet-pack again (#202)'
-    Write-File $man '{"actors": [], "sound": true, "tunics": {}, "tunics_off": true}'
+    Write-File $man "{`"actors`": [], `"sound`": true, `"tunics`": {}, `"tunics_off`": true, `"tool_sha256`": `"$hash`"}"
     Check ($null -eq (Get-PuppetPackHint $man $tool)) 'a --tunics none pack: no tunic line'
     Write-File $man '{"actors": [], "sound": true, "tunics": {}, "tool_sha256": "0000"}'
     Check ((Get-PuppetPackHint $man $tool) -match 'without the tunic colours') 'a pack with no tunics made: the tunic line first'
     Write-File $man '{"actors": [], "sound": true, "tunics": {"Red": ["x"]}, "tool_sha256": "0000"}'
     Check ((Get-PuppetPackHint $man $tool) -match 'another version of the pack tool') 'another tool hash: run make-puppet-pack again'
+    # An incomplete pack (pack-retry: a tool stopped half way, antivirus): a file the manifest names is gone.
+    Write-File (Join-Path $ph 'coop_look\gear.bin') 'gear'
+    Write-File $man "{`"actors`": [], `"sound`": true, `"tunics`": {`"Red`": [`"x`"]}, `"look_files`": {`"gear`": `"coop_look/gear.bin`", `"red`": `"coop_look/red.bin`"}, `"tool_sha256`": `"$hash`"}"
+    $h = Get-PuppetPackHint $man $tool
+    Check ($h -match 'incomplete \(coop_look/red\.bin is missing\)') "a look file gone: incomplete, named [$h]"
+    Check ((Test-KitPuppetPackStale $man $tool) -and (Test-KitPuppetPackStale $man (Join-Path $ph 'no-tool'))) 'a look file gone: stale, with or without the tool (the start makes it again)'
+    Write-File (Join-Path $ph 'coop_look\red.bin') 'red'
+    Check ($null -eq (Get-PuppetPackHint $man $tool)) 'every look file there: nothing said'
+    Write-File $man "{`"actors`": [], `"sound`": true, `"tunics`": {`"Red`": [`"x`", `"Tex/gone.bntx.zs`"], `"Blue`": [`"y`"]}, `"tool_sha256`": `"$hash`"}"
+    $h = Get-PuppetPackHint $man $tool
+    Check ($h -match 'incomplete \(romfs/Tex/gone\.bntx\.zs is missing and 1 more\)') "tunic files gone: incomplete, the first named and how many more [$h]"
+    Check (@(Get-KitPuppetPackGaps $man ([System.IO.File]::ReadAllText($man) | ConvertFrom-Json)).Count -eq 2) 'pack gaps: two tunic files gone'
     Write-File $man '{ not json'
     Check ((Get-PuppetPackHint $man $tool) -match 'could not be read') 'a broken coop_puppet.json: a line, no throw'
     Check ((Get-PuppetPackHint (Join-Path $ph 'none.json') $tool) -match 'could not be read') 'a missing coop_puppet.json: a line, no throw'
@@ -659,7 +673,11 @@ try {
     Write-File (Join-Path $g 'hookshot_coop.dll') 'MODULE 1'
     Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need: no puppet pack -> module (the pack is made)'
     $pack = Join-Path $g 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json'
-    Write-File $pack '{"sound": true, "tunics": {"red": ["x"]}}'
+    Write-File $pack '{"sound": true, "tunics": {"red": ["x"]}, "look_files": {"gear": "coop_look/gear.bin"}}'
+    Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need: an incomplete puppet pack (gear.bin gone) -> module (the pack is made again; pack-retry)'
+    Write-File (Join-Path (Split-Path -Parent $pack) 'coop_look\gear.bin') 'gear'
+    Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need: a tunic file gone -> module'
+    Write-File (Join-Path (Split-Path -Parent $pack) 'romfs\x') 'tunic'
     Check ((Get-KitHookshotNeed $hk) -eq '') 'hookshot need: the game as the kit wants it -> nothing'
     Write-File (Join-Path $hk 'hookshot\hookshot_coop.dll') 'MODULE 2'
     Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need: a new module -> module (seconds)'
@@ -796,6 +814,21 @@ try {
     Check ($pt -match 'D:\\Games\\oot\.nup' -and $pt -match 'game-files\.txt' -and $pt -match 'names only' -and $pt -match 'Every start tries again') "pack source text: names the missing file, game-files.txt and what happens [$pt]"
     $pt = (Get-KitPackSourceText '') -join "`n"
     Check ($pt -match 'game-files\.txt is missing' -and $pt -match '\.nup') "pack source text: no game-files.txt said plainly [$pt]"
+    # pack-retry: the .nup moved (Downloads, Desktop, beside the kit): the start finds it before it asks.
+    $nf = Join-Path $hk 'nup-find'
+    $isGame = { param($p) [System.IO.File]::ReadAllText($p) -eq 'GAME' }
+    Write-File (Join-Path $nf 'Downloads\sub\OoT.nup') 'GAME'
+    Write-File (Join-Path $nf 'Downloads\manual.nup') 'NOT'
+    Write-File (Join-Path $nf 'Desktop\deep\er\far\Other.nup') 'GAME'
+    $places = @((Join-Path $nf 'gone'), (Join-Path $nf 'Downloads'), (Join-Path $nf 'Desktop'))
+    Check ((Find-KitGameNup (Join-Path $nf 'gone\OoT.nup') $hk $isGame $places) -eq (Join-Path $nf 'Downloads\sub\OoT.nup')) 'nup find: moved into a Downloads subfolder: found; not the game file and too deep left out'
+    Write-File (Join-Path $nf 'Desktop\Renamed.nup') 'GAME'
+    Check ((Find-KitGameNup (Join-Path $nf 'gone\OoT.nup') $hk $isGame $places) -eq (Join-Path $nf 'Downloads\sub\OoT.nup')) 'nup find: two game files: the one with the remembered name'
+    Check ((Find-KitGameNup '' $hk $isGame $places) -eq '') 'nup find: two game files and no name to go by: none (asked)'
+    Remove-Item -LiteralPath (Join-Path $nf 'Downloads\sub\OoT.nup')
+    Check ((Find-KitGameNup '' $hk $isGame $places) -eq (Join-Path $nf 'Desktop\Renamed.nup')) 'nup find: one game file, renamed: found'
+    Check ((Find-KitGameNup '' $hk { param($p) throw 'tool error' } $places) -eq '') 'nup find: the check throws: none, no throw'
+    Check ((Find-KitGameNup '' $hk $isGame @((Join-Path $nf 'nothing'))) -eq '') 'nup find: nothing anywhere: none'
     # hs-missing (a tester read "No co-op Hookshot game" as "couldn't find Hookshot"): antivirus took the module
     Remove-Item -LiteralPath (Join-Path $hk 'hookshot\hookshot_coop.dll')
     Check ((Get-KitHookshotNeed $hk) -eq 'quarantine') 'hookshot need: the module in neither the kit nor the game -> quarantine (no build)'
@@ -1181,6 +1214,55 @@ try {
         (Read-File "$g5\romfs\Actor\x.bin") -eq 'my game files' -and (Read-File "$g5\coop.ini") -match 'Saria') 'revert game: saves, settings, coop.ini and the game files stay the player''s'
 } finally {
     Remove-Item -LiteralPath $kc -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# pack-retry: hookshot-build.ps1 -PackOnly (make-puppet-pack.cmd on a Longshot kit, and the pack step of every start):
+# a .nup that moved is found, a pack tool error is said, no game is said. Needs a real Python for the kit's tools\python
+# (TEST_PYTHON, else python on PATH): a junction to its folder; skipped without one.
+$pyExe = if ($env:TEST_PYTHON) { $env:TEST_PYTHON } else { (Get-Command python -ErrorAction SilentlyContinue | Select-Object -First 1).Source }
+$pyHome = ''
+if ($pyExe -and (Test-Path -LiteralPath $pyExe)) {
+    $pyHome = "$(& $pyExe -I -c 'import sys; print(sys.base_prefix)' 2>$null)".Trim()
+}
+if ($pyHome -and (Test-Path -LiteralPath (Join-Path $pyHome 'python.exe'))) {
+    $pk = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-packonly-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+    try {
+        $k = "$pk\kit"
+        Copy-Item -LiteralPath (Join-Path $kitSrc 'scripts') -Destination "$k\scripts" -Recurse
+        $commit = 'a' * 40
+        Write-File "$k\hookshot\PIN" "runtime=Longshot`nrepo=https://git.magicbean.dev/MagicBeanDev/Longshot`ncommit=$commit`n"
+        Write-File "$k\hookshot\TOOLS.txt" "release=v3.0.0-rc.3`nlock_sha256=b3`nsource_commit=$commit`nsource_sha256=aa`n"
+        Write-File "$k\hookshot\patches\0001-a.patch" "one`n"
+        Write-File "$k\Start OoT Co-op.bat" '@echo off'
+        New-Item -ItemType Directory -Force -Path "$k\hookshot\tools" | Out-Null
+        New-Item -ItemType Junction -Path "$k\hookshot\tools\python" -Value $pyHome | Out-Null
+        # stand-ins: the pack tool writes a manifest (or fails, PACK_FAIL), dumpcheck takes a file that says GAME
+        Write-File "$k\tools\puppet_pack\build.py" "import os, sys`nif os.environ.get('PACK_FAIL'): print('BuildError: Tex/x.bntx.zs: broken'); sys.exit(1)`nd = sys.argv[sys.argv.index('--mod-dir') + 1]`nos.makedirs(d, exist_ok=True)`nopen(os.path.join(d, 'coop_puppet.json'), 'w').write('{}')`nopen(os.path.join(d, 'from.txt'), 'w').write(sys.argv[sys.argv.index('--romfs') + 1])`n"
+        Write-File "$k\tools\puppet_pack\dumpcheck.py" "import sys`np = sys.argv[sys.argv.index('--romfs') + 1]`nsys.exit(0 if open(p, 'rb').read(5) == b'GAME' else 1)   # (5 bytes: a real .nup in Downloads is not read through)`n"
+        $run = {
+            $ErrorActionPreference = 'Continue'
+            $o = (& powershell -NoProfile -ExecutionPolicy Bypass -File "$k\scripts\hookshot-build.ps1" -PackOnly 2>&1) -join '|'
+            return @($LASTEXITCODE, $o)
+        }
+        $r = & $run
+        Check ($r[0] -ne 0 -and $r[1] -match 'not built yet.*Start OoT Co-op\.bat') "pack only: no game yet: said, nothing made [$($r[1])]"
+        Write-File "$k\hookshot\game\longshot.exe" 'exe'
+        Write-File "$k\hookshot\game-files.txt" "$pk\gone\OoT.nup`n"
+        Write-File "$pk\OoT.nup" 'GAME'   # moved beside the kit
+        Write-File "$pk\manual.nup" 'NOT'
+        $r = & $run
+        $man = "$k\hookshot\game\mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json"
+        Check ($r[0] -eq 0 -and $r[1] -match 'Found your game file: .*OoT\.nup' -and $r[1] -match 'Making the puppet pack' -and (Test-Path -LiteralPath $man) -and (Read-File (Join-Path (Split-Path -Parent $man) 'from.txt')) -eq "$pk\OoT.nup") "pack only: the .nup moved beside the kit: found, the pack made [$($r[0]) $($r[1])]"
+        Check ((Read-File "$k\hookshot\game-files.txt").Trim() -eq "$pk\OoT.nup") 'pack only: the new place is remembered'
+        $env:PACK_FAIL = '1'
+        try { $r = & $run } finally { Remove-Item env:PACK_FAIL }
+        Check ($r[0] -ne 0 -and $r[1] -match 'BuildError' -and $r[1] -match 'could not be made \(the lines above say why\)') "pack only: a pack tool error: said plainly, exit 1 [$($r[1])]"
+    } finally {
+        if (Test-Path -LiteralPath "$pk\kit\hookshot\tools\python") { [System.IO.Directory]::Delete("$pk\kit\hookshot\tools\python") }   # (the junction, not the Python behind it)
+        Remove-Item -LiteralPath $pk -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} else {
+    Write-Host 'skip pack only cases (no Python: set TEST_PYTHON)'
 }
 
 # kit-friction: what Windows itself may block (windows-checks.ps1, run as "Start OoT Co-op.bat" runs it: its text through

@@ -557,6 +557,44 @@ function Get-KitPackSourceText([string]$Remembered) {
     return $out
 }
 
+# The game file (.nup) when hookshot\game-files.txt names none or one that is gone (pack-retry: players whose
+# pack was never made because the .nup moved): the usual places, the folder the remembered file was in first,
+# then the kit, the kit's parent, Downloads and the Desktop (each with one level of subfolders). $Check says
+# whether a file is the game (dumpcheck.py: the right title and version, from its header). The one with the
+# remembered file's name wins; else the only good one. '' when none or several (the caller asks then).
+function Find-KitGameNup([string]$Remembered, [string]$Kit, [scriptblock]$Check, [string[]]$Places = $null) {
+    if ($null -eq $Places) {
+        $Places = @()
+        if ($Remembered) { try { $Places += Split-Path -Parent $Remembered } catch { } }
+        $Places += $Kit
+        try { $Places += Split-Path -Parent $Kit } catch { }
+        $Places += Join-Path $env:USERPROFILE 'Downloads'
+        try { $Places += [Environment]::GetFolderPath('Desktop') } catch { }
+    }
+    $seen = @{}
+    $good = @()
+    foreach ($place in $Places) {
+        if (-not $place -or -not (Test-Path -LiteralPath $place -PathType Container)) { continue }
+        $files = @(Get-ChildItem -LiteralPath $place -Filter '*.nup' -File -Depth 1 -ErrorAction SilentlyContinue)
+        foreach ($f in $files) {
+            $key = $f.FullName.ToLowerInvariant()
+            if ($seen.ContainsKey($key)) { continue }
+            $seen[$key] = $true
+            $ok = $false
+            try { $ok = [bool](& $Check $f.FullName) } catch { }
+            if ($ok) { $good += $f }
+        }
+    }
+    if (-not $good) { return '' }
+    if ($Remembered) {
+        $leaf = Split-Path -Leaf $Remembered
+        $same = @($good | Where-Object { $_.Name -ieq $leaf })
+        if ($same.Count -eq 1) { return $same[0].FullName }
+    }
+    if ($good.Count -eq 1) { return $good[0].FullName }
+    return ''
+}
+
 # --- Hookshot: what the kit's game needs before it starts (updates without player steps) ---
 
 # The kit's Hookshot game folder: hookshot\game-folder.txt (hookshot-build.ps1 writes it), else hookshot\game.
@@ -1101,6 +1139,31 @@ function Get-KitHostPort([string]$Kit, [int[]]$Listening, [int]$Default) {
 # makes the pack (play.ps1 sets this there).
 $script:KitPackRemake = 'Run make-puppet-pack.cmd again.'
 
+# The files a puppet pack's manifest ($Json, coop_puppet.json read) names that are not there: look_files (beside the
+# manifest: coop_look\<colour>.bin, coop_look\gear.bin) and each tunic's files (in its romfs\). Relative paths, the
+# manifest's own spelling; @() when all are there. Never throws.
+function Get-KitPuppetPackGaps([string]$Manifest, $Json) {
+    $out = @()
+    try {
+        $dir = Split-Path -Parent $Manifest
+        $romfs = Join-Path $dir 'romfs'
+        if ($Json.look_files) {
+            foreach ($p in $Json.look_files.PSObject.Properties) {
+                $rel = "$($p.Value)"
+                if ($rel -and -not (Test-Path -LiteralPath (Join-Path $dir $rel) -PathType Leaf)) { $out += $rel }
+            }
+        }
+        if ($Json.tunics) {
+            foreach ($p in $Json.tunics.PSObject.Properties) {
+                foreach ($rel in @($p.Value)) {
+                    if ($rel -and -not (Test-Path -LiteralPath (Join-Path $romfs "$rel") -PathType Leaf)) { $out += "romfs/$rel" }
+                }
+            }
+        }
+    } catch { }
+    return $out
+}
+
 function Get-PuppetPackHint([string]$Manifest, [string]$ToolDir) {
     try {
         $json = [System.IO.File]::ReadAllText($Manifest) | ConvertFrom-Json -ErrorAction Stop
@@ -1113,9 +1176,19 @@ function Get-PuppetPackHint([string]$Manifest, [string]$ToolDir) {
         if ($json.tunics_off -ne $true -and (-not $tunics -or @($tunics.PSObject.Properties).Count -eq 0)) {
             return "Puppet pack: made without the tunic colours, so the other players show in green. $script:KitPackRemake"
         }
+        # Files the manifest names but are gone (a pack tool stopped half way, antivirus, a hand-copied pack): the
+        # look files (coop_look\gear.bin, a colour's .bin) or a tunic's textures. The puppets need them (pack-retry).
+        $gaps = @(Get-KitPuppetPackGaps $Manifest $json)
+        if ($gaps) {
+            return "Puppet pack: incomplete ($($gaps[0]) is missing$(if ($gaps.Count -gt 1) { " and $($gaps.Count - 1) more" })). $script:KitPackRemake"
+        }
         $tool = Get-PuppetToolHash $ToolDir
         if ($tool -and $json.tool_sha256 -and $json.tool_sha256 -ne $tool) {
             return "Puppet pack: made by another version of the pack tool. $script:KitPackRemake (for the latest puppet fixes)"
+        }
+        # (a pack from before the tool hash: made by an older tool, so without the newer fixes, e.g. 0.11.1's colours)
+        if ($tool -and -not $json.tool_sha256) {
+            return "Puppet pack: made by an older version of the pack tool. $script:KitPackRemake (for the latest puppet fixes)"
         }
     } catch {
         return "Puppet pack: coop_puppet.json could not be read. $script:KitPackRemake"
