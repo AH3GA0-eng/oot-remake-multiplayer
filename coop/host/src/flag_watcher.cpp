@@ -250,6 +250,7 @@ void FlagWatcher::reset() {
     g.others_at = 0;
     g.put_back = 0;
   }
+  raced_.clear();
   resend_pending_ = role_ == FlagRole::player && !pending_.empty();
 }
 
@@ -530,10 +531,47 @@ void FlagWatcher::apply_snapshot(FlagStore& store) {
   for (const auto& state : held) apply_state(store, state.flags);
 }
 
-void FlagWatcher::answer_set(FlagStore& store, const protocol::FlagSet& set, Table& answers) {
+void FlagWatcher::note_raced(FlagStore& store, const protocol::FlagSet& set) {
+  std::erase_if(raced_, [&](const auto& r) { return frames_ - r.second.at > kRaceFrames; });
   for (const auto& entry : set.flags) {
+    if (entry.kind != protocol::FlagKind::boolean || entry.value == 0) continue;
+    const auto source = guard_source_.find(key_of(entry));
+    if (source == guard_source_.end()) continue;
+    const auto held = unwritten_.find(source->first);  // the group's, not in our game yet
+    const std::optional<FlagEntry> group =
+        held != unwritten_.end() ? std::optional<FlagEntry>(held->second) : store.read(source->first);
+    if (!group || group->value == 0) continue;  // new to the group: its gain counts
+    Raced& r = raced_[{source->second, set.player_number}];
+    ++r.gains;
+    r.at = frames_;
+  }
+}
+
+std::int32_t FlagWatcher::unraced(const FlagEntry& entry) {
+  const std::int32_t gain = as_int(entry.value);
+  if (gain <= 0) return gain;
+  const auto r = raced_.find({key_of(entry), from_});
+  if (r == raced_.end() || frames_ - r->second.at > kRaceFrames) return gain;
+  const std::int32_t dropped = std::min(gain, r->second.gains);
+  r->second.gains -= dropped;
+  if (r->second.gains == 0) raced_.erase(r);
+  stats_.raced_gains += static_cast<std::uint64_t>(dropped);
+  counts_guarded_.push_back(CountGuarded{key_of(entry), dropped});
+  restate_.insert(key_of(entry));  // the player's game counted it: our total puts it right
+  return gain - dropped;
+}
+
+void FlagWatcher::answer_set(FlagStore& store, const protocol::FlagSet& set, Table& answers) {
+  // Before any entry is written: a source this set brings is the group's then.
+  note_raced(store, set);
+  for (const auto& original : set.flags) {
+    FlagEntry entry = original;
     const FlagKey key = key_of(entry);
     if (!takes(entry)) continue;
+    if (is_delta(entry) && guards_.contains(key)) {
+      entry.value = as_bits(unraced(entry));
+      if (as_int(entry.value) == 0) continue;  // all of it raced
+    }
     note_for_others(store, entry);
     const bool written = store.write(entry);
     if (!written && is_delta(entry) && (store.holds(key) || store.busy(key))) {

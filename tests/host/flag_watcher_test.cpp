@@ -1411,6 +1411,70 @@ TEST_CASE("token guard, host: a player's take, counted again by the host, is put
   CHECK(h.stats().counts_guarded == 1);
 }
 
+// Player report 33: two players took the same token at the same time, each
+// game set its Skulltula's key 0 to 1 and counted it, and the group's count
+// went up by 2. The host counts a token once: a player's gain for a key the
+// group had already is not added, and the total is stated again.
+TEST_CASE("token race, host: two players take the same token at once: counted once") {
+  TokenStore store = token_game();  // 5 tokens
+  FlagWatcher h(token_shared(), FlagRole::host);
+  guard(h);
+  h.frame(store);
+  h.receive(proto::FlagSet{2, {entry(kSkull, 1), token_delta(1)}});
+  CHECK(has(entries(h.frame(store)), token_total(6)));
+  // Player 3 took it too, before it heard of player 2's take.
+  h.receive(proto::FlagSet{3, {entry(kSkull, 1), token_delta(1)}});
+  CHECK(has(entries(h.frame(store)), token_total(6)));  // stated again: 3 puts its count right
+  CHECK(store.tokens() == 6);
+  CHECK(h.stats().raced_gains == 1);
+  const auto told = h.take_counts_guarded();
+  REQUIRE(told.size() == 1);
+  CHECK(told[0].amount == 1);
+  // A real token of player 3's later still counts.
+  h.receive(proto::FlagSet{3, {entry(kSkull2, 1), token_delta(1)}});
+  CHECK(has(entries(h.frame(store)), token_total(7)));
+  CHECK(store.tokens() == 7);
+}
+
+TEST_CASE("token race, host: the host and a player take the same token at once: counted once") {
+  TokenStore store = token_game();
+  FlagWatcher h(token_shared(), FlagRole::host);
+  guard(h);
+  h.frame(store);
+  // The host's Link takes it: key and count in the same scan.
+  store.set(kSkull, 1);
+  store.tokens(6);
+  CHECK(has(entries(h.frame(store)), token_total(6)));
+  // The player's take of the same token comes after; the delta before the key
+  // in the set, as a set may hold them.
+  h.receive(proto::FlagSet{2, {token_delta(1), entry(kSkull, 1)}});
+  CHECK(has(entries(h.frame(store)), token_total(6)));
+  CHECK(store.tokens() == 6);
+  CHECK(h.stats().raced_gains == 1);
+}
+
+TEST_CASE("token race, host: the player's key a frame before its gain still counts once") {
+  TokenStore store = token_game();
+  FlagWatcher h(token_shared(), FlagRole::host);
+  guard(h);
+  h.frame(store);
+  h.receive(proto::FlagSet{2, {entry(kSkull, 1), token_delta(1)}});
+  h.frame(store);
+  h.receive(proto::FlagSet{3, {entry(kSkull, 1)}});
+  h.frame(store);
+  h.receive(proto::FlagSet{3, {token_delta(1)}});
+  h.frame(store);
+  CHECK(store.tokens() == 6);
+  // A raced key drops one gain only, and only for a while: a later gain of
+  // player 3's with no key (a randomizer's token from a chest) counts.
+  h.receive(proto::FlagSet{3, {entry(kSkull, 1)}});
+  for (std::uint64_t f = 0; f <= FlagWatcher::kRaceFrames; ++f) h.frame(store);
+  h.receive(proto::FlagSet{3, {token_delta(1)}});
+  h.frame(store);
+  CHECK(store.tokens() == 7);
+  CHECK(h.stats().raced_gains == 1);
+}
+
 TEST_CASE("game ticks: calls become 1/60 s of the clock (issue 106)") {
   coop::host::GameTicks none;
   CHECK(none.step() == 1);  // no clock: one call is one frame
