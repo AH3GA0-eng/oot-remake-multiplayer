@@ -149,11 +149,9 @@ bool IsSettingsString(std::string_view text) {
 }
 
 std::string SettingsString(std::string_view text) {
-    const auto first = text.find_first_not_of(" 	
-");
+    const auto first = text.find_first_not_of(" \t\r\n");
     if (first == std::string_view::npos) return {};
-    text = text.substr(first, text.find_last_not_of(" 	
-") - first + 1);
+    text = text.substr(first, text.find_last_not_of(" \t\r\n") - first + 1);
     return IsSettingsString(text) ? std::string(text) : std::string();
 }
 
@@ -1010,8 +1008,7 @@ void Rando::Check() {
         std::string bad;
         for (const CoopMods::SettingRow& s : loader_.Settings(kFolder)) {
             if (s.setting.key == "settings" && SettingsString(s.value).empty() &&
-                s.value.find_first_not_of(" 	
-") != std::string::npos) {
+                s.value.find_first_not_of(" \t\r\n") != std::string::npos) {
                 bad = s.value;
             }
         }

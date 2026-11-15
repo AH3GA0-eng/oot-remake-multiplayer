@@ -1214,10 +1214,9 @@ TEST_CASE("rando: a settings string from OOTRR's page is known, named short, and
     CHECK_FALSE(IsSettingsString("OOTRR"));
     CHECK_FALSE(IsSettingsString("default"));
     CHECK_FALSE(IsSettingsString("OOTRR1-AB CD"));
-    CHECK_FALSE(IsSettingsString("OOTRR1-..\x"));
+    CHECK_FALSE(IsSettingsString("OOTRR1-..\\x"));
     CHECK_FALSE(IsSettingsString("OOTRR1-" + std::string(kSettingsMax, 'A')));
-    CHECK(SettingsString("  OOTRR1-EYAQCTABAHIHE
-") == "OOTRR1-EYAQCTABAHIHE");
+    CHECK(SettingsString("  OOTRR1-EYAQCTABAHIHE\r\n") == "OOTRR1-EYAQCTABAHIHE");
     CHECK(SettingsString("keysanity").empty());
     CHECK(SettingsString("   ").empty());
     CHECK(SettingsName("keysanity") == "keysanity");
@@ -1248,8 +1247,7 @@ TEST_CASE("rando: the host's settings string is built in place of the preset, in
     CHECK(w.runs[0].find(L"default") == std::wstring::npos);
     const std::string folder = FolderFor("SITE1", "OOTRR1-EYAQCTABAHIHE");
     CHECK(On(loader, folder));
-    CHECK(Get(w.mods / folder / kPresetFile) == "OOTRR1-EYAQCTABAHIHE
-");
+    CHECK(Get(w.mods / folder / kPresetFile) == "OOTRR1-EYAQCTABAHIHE\n");
     // Built once: the same settings again build nothing.
     rando.Recheck();
     rando.Wait();
@@ -1279,8 +1277,7 @@ TEST_CASE("rando: a control mod written before the Settings string gets it at th
     std::string old = ManifestText();
     const auto from = old.find("    {\"key\": \"settings\"");
     REQUIRE(from != std::string::npos);
-    old.erase(from, old.find('
-', old.find("\"help\"", from)) + 1 - from);
+    old.erase(from, old.find('\n', old.find("\"help\"", from)) + 1 - from);
     REQUIRE(old.find("\"settings\"") == std::string::npos);
     Put(w.mods / kFolder / "mod.json", old);
     CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
