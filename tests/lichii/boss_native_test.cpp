@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -548,4 +549,49 @@ TEST_CASE("native boss: the owner keeps none of its event's changes and sends it
     CHECK(s->brain_verb == 6);
     REQUIRE_FALSE(s->recent.empty());
     CHECK(std::get<BossBrain>(s->recent.back().what) == BossBrain{6, true});
+}
+
+TEST_CASE("native boss: a copy's own Life step holds it at 1 until the owner's dies") {
+    constexpr std::uint64_t kLife = 0x7700'0000;
+    Table t;
+    t.SetOn(true, true);
+    Boss copy = Gohma(Role::copy);
+    copy.life_component = kLife;
+    t.Publish({copy});
+    CHECK(t.Watches(kLife));
+    CHECK_FALSE(t.Watches(kLife + 0x10));
+    CHECK(t.HeldLifeStep(kLife, 30, 10) == 10);  // a hit that leaves life: as the game has it
+    CHECK(t.HeldLifeStep(kLife, 5, 21) == 4);    // a killing hit of its own: life 1 stays
+    CHECK(t.HeldLifeStep(kLife, 1, 3) == 0);
+    CHECK(t.HeldLifeStep(kLife + 0x10, 5, 21) == 21);  // another actor's: untouched
+    CHECK(t.Totals().copy_life_held == 2);
+    // The owner's died: the same step lets ours die.
+    copy.owner_dead = true;
+    t.Publish({copy});
+    CHECK(t.HeldLifeStep(kLife, 1, 1) == 1);
+    CHECK(t.Totals().copy_killed == 1);
+    const auto notes = t.TakeNotes();
+    CHECK(std::any_of(notes.begin(), notes.end(),
+                      [](const std::string& n) { return n.find("lets it die now") != std::string::npos; }));
+}
+
+TEST_CASE("native boss: the owner's own boss and a forgotten copy are never held") {
+    constexpr std::uint64_t kLife = 0x7700'0000;
+    Table t;
+    t.SetOn(true, true);
+    Boss owner = Gohma(Role::owner);
+    owner.life_component = kLife;
+    t.Publish({owner});
+    CHECK_FALSE(t.Watches(kLife));
+    CHECK(t.HeldLifeStep(kLife, 5, 21) == 21);
+    Boss copy = Gohma(Role::copy);
+    copy.life_component = kLife;
+    t.Publish({copy});
+    CHECK(t.HeldLifeStep(kLife, 5, 21) == 4);
+    t.Publish({});  // gone from the walk (its owner's ObjectRemove dead: nobody's now)
+    CHECK_FALSE(t.Watches(kLife));
+    CHECK(t.HeldLifeStep(kLife, 5, 21) == 21);
+    t.Publish({copy});
+    t.Reset();
+    CHECK_FALSE(t.Watches(kLife));
 }

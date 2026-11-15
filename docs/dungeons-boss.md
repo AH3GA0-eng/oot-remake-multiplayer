@@ -137,6 +137,37 @@ Goal: every boss fight the same in every game, run by the game's own code. Gohma
 - Tested: `tests/lichii/boss_native_test.cpp` (boss-fix cases).
 - **Not proven in game:** that the intro then hands control back in every game, that a seed in a copy's eye stuns her there and the hand-over follows, and that the death plays for everyone. The players' 0.11 logs were not to hand (the Gohma logs in player-logs/magloyr-20261115 are from 0.10.1, without the wraps). Check: two players, save `1. Deku Tree` (owner-saves-OoTRsaves1.0), both enter Gohma's room, both get control after the intro, each stuns her with the slingshot and hits her eye, she dies in both games.
 
+## One boss death for everyone (branch boss-fix, seed N2BTEYKM report, 0.11.2)
+Before: each game's boss could die of its own game's hits. A copy took its own hits through its own Life step
+and sent them to the owner as DAMAGE. The owner's game refused most of them, because Gohma holds her life at 1
+outside her stun, and the copy's stun is not the owner's. So the copy died alone ("killed here, owner still
+shows life: hit sent again", then "lost kill"). The owner's boss lived on, and the owner's death event was
+refused ("our game did not take it (asked as InsideTheDekuTree_BossDie)", 121 times in Rev's 0.11.0 log).
+Each local death dropped its own heart container. The lost-kill resend was the copy's whole remaining life in
+one DAMAGE ("share damage 21"), which an owner without a weak-point gate takes at once (Barinade).
+Now:
+- A copy never dies of its own game's hits. `CoopBossNative::Table::HeldLifeStep` runs in the game's own Life
+  step (patch 0007, after difficulty and the replayed hits). For a copy boss's Life component it leaves the
+  boss at life 1. Its hits still go to the owner as DAMAGE, and the owner's game judges them. The stunner
+  becomes the owner (the stun hand-over), so its hits are the game's own there.
+- The owner's death kills every copy through the same step. The walk marks a copy `owner_dead` once the
+  owner's samples say life 0 or its ObjectRemove dead comes (`Sync::OwnerSaysDead`). The hold is then lifted,
+  and the owner's life 0 (CoopObjects `Lower`, the game's Life step) kills it the game's own way. A copy
+  gone from the walk (nobody's now) is not held either.
+- No lost-kill resend for a boss (`IsBoss` in the sample branch). There is nothing to resend, because a copy
+  is never killed here.
+- The 10 s bosses line: "N own Life steps held at 1, N let die after the owner's".
+- At most `kMaxHeld` (8) copy bosses are held at once.
+- LANE1 research (hs-boss-fix-gohma 20261115-011642, quest Get_StoneOfForest at GoToBossRoom):
+  - A test `kill` (a direct life write of 0) on the owner's Gohma left her at 1 (21 -> 1). She holds her
+    life at 1 outside her stun even against that write.
+  - B's copy then refused every replay of the owner's life outside its own stun ("a hit the boss's game did
+    not take" every 0.5 s).
+  - So a copy's death cannot come from a life write or a hit outside its stun. It can only come from the
+    game's own death: the owner's death brain verb, which native sync puts into the copy, plus the life 0 this
+    hold then lets through.
+  - NOT proven yet: the scripted seeds never stunned her, so no real kill happened in the run.
+
 ## Every player is a target, eggs hatch in every game (branch boss-sync-2, issues 150 and 178)
 
 **Native boss sync does come on.** Row 22 of the 0.11 big run ("`native boss sync on` never came", and in the 5 runs before) was the test, not the gate: those saves were past the Deku Tree, and room L deletes Gohma while the quest `Get_StoneOfForest` is at DefeatBoss or later (reports/deku-test-b.md). In deku-test-b's run with the quest put back, both games logged `native boss sync on (BSA ..., ours)` / `a copy` and `the owner's verbs came`. The gate (HELLO's wrap bits 4 and 5 from patch 0013, `SetBossNative` in `hookshot/src/coop_hookshot.cpp`) is unchanged. The big run needs a pre-Gohma save (deku-test's save prep in the scenario headers).

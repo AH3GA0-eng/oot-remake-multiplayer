@@ -19,11 +19,15 @@
 #     server's hand-over: B's log "Enemy_DungeonBoss_Gohma: now ours".
 #  6. DAMAGE from both: B's sword hits (b-hit*) and A's (a-hit*) each lower her life in the owner's game
 #     (objects debug life lines / "replays a hit" in the owner, "share damage" in the hitter).
+#  8. ONE DEATH (0.11.2): B's own hits never kill its copy ("own Life step ... held at 1" counted in the 10 s
+#     bosses line, never "lost kill" / "killed here, owner still shows life"); after A's kill (a-k0) B logs
+#     "its owner's died: the copy's own Life step lets it die now" and its copy dies (shots b-k1/b-k2, the
+#     objects life line to 0), one heart container.
 #  7. Optional (if she dies): "boss beaten (Dm_Deku_BossOut)" in one game and the death cutscene in both.
 #! noload
 #! start coop: test warp done
 #! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
-#! timeout 720
+#! timeout 840
 mark start
 warp InsideTheDekuTree Entrance
 wait 1200               # the title screen
@@ -87,5 +91,12 @@ hold ZL+Y 8
 wait 12
 hold ZL+Y 8
 mark a-hit2
-wait 1800
+wait 600
+mark a-k0
+kill Enemy_DungeonBoss_Gohma   # 8. the owner's Gohma dies (direct life 0 write): the copy must die too
+wait 120
+mark a-k1
+wait 900
+mark a-k2
+wait 1200
 mark end

@@ -32,6 +32,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -102,6 +103,11 @@ struct Boss {
     Role role = Role::owner;
     std::string name;
     std::uint8_t owner = 0;  // the owning player's number (a new one: a copy starts again)
+    // Its Life component (0: not read). A copy's is held at life 1 by its own
+    // Life step (HeldLifeStep) until `owner_dead`: the owner's game said it
+    // died (its life 0 in the owner's samples, or its ObjectRemove dead).
+    std::uint64_t life_component = 0;
+    bool owner_dead = false;
 };
 
 struct Counts {
@@ -118,6 +124,8 @@ struct Counts {
     std::uint64_t minions_stopped = 0; // a copy boss's own minion not made (the owner's comes)
     std::uint64_t copy_own_run = 0;   // a copy's own change run (our event, our hit)
     std::uint64_t copy_own_late = 0;  // a copy's own skipped change made late (event or hit seen after it)
+    std::uint64_t copy_life_held = 0; // a copy's own Life step that would have killed it, held at 1
+    std::uint64_t copy_killed = 0;    // a copy let die by its Life step after its owner's died
 };
 
 class Table {
@@ -148,6 +156,17 @@ public:
     // last hit id moved, not to one we replayed). A copy then runs its own
     // reaction for kReactSteps.
     void NoteOwnHit(std::uint64_t actor);
+
+    // The game's Life step (patch 0007, any game thread), after every other
+    // change to the frame's damage `sum`: for a copy boss's Life component
+    // whose owner still lives, what its game takes so its life stays at
+    // least 1 (`life`: its life before the step). One death for everyone: a
+    // copy never dies of its own game's hits (they still go to the owner as
+    // DAMAGE); it dies when the owner's does, through this same step (the
+    // owner's death comes as its life 0: CoopObjects Lower). Lock-free.
+    std::int32_t HeldLifeStep(std::uint64_t component, std::int32_t life, std::int32_t sum);
+    // A copy boss's Life component HeldLifeStep watches (the hook reads its life only then). Lock-free.
+    bool Watches(std::uint64_t component) const;
 
     // A create request (any game thread): true when a boss named `maker` is a
     // copy here that takes its owner's verbs, so its own minion is not made
@@ -187,6 +206,7 @@ public:
     // the stun's start; its DAMAGE of 0 hands the boss to us meanwhile).
     static constexpr std::uint64_t kReactSteps = 120;
     static constexpr std::size_t kMaxSkippedKept = 8;
+    static constexpr std::size_t kMaxHeld = 8;  // copy bosses held at once (more: not held)
 
 private:
     struct Entry {
@@ -243,6 +263,13 @@ private:
     std::uint64_t steps_ = 0;      // Step calls (game frames)
     Counts counts_{};
     std::vector<std::string> notes_;
+    // The Life components HeldLifeStep reads (Publish writes, any thread
+    // reads): a copy's held one, or its owner's died (`kReleased` bit: let die,
+    // counted once). 0: free.
+    static constexpr std::uint64_t kReleased = 1;
+    std::array<std::atomic<std::uint64_t>, kMaxHeld> held_life_{};
+    std::atomic<std::uint64_t> life_held_{0};
+    std::atomic<std::uint64_t> life_killed_{0};
     // The caller's state (frame thread only).
     std::uint64_t block_ = 0;      // our request in guest memory (kRequestSize)
     std::uint64_t main_base_ = 0;  // the game the block belongs to

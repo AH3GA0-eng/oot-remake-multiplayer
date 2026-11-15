@@ -1475,7 +1475,7 @@ public:
                 if (owner && *owner != 0) {
                     list.push_back({s.address, s.bsa_component,
                                     *owner == self ? CoopBossNative::Role::owner : CoopBossNative::Role::copy, s.name,
-                                    *owner});
+                                    *owner, s.life_component, sync_.OwnerSaysDead(s.address)});
                 }
             }
             TheBossMain().store(main_);
@@ -2684,6 +2684,7 @@ private:
                         const auto table = r.Ptr(a + kActorComponents);
                         if (const auto component = table ? r.Ptr(*table + kComponentLife) : std::nullopt) {
                             life_components.emplace(*component, a);  // (whose Life step is whose: StepHits)
+                            s.life_component = *component;
                             if (CoopDifficulty::IsEnemy(s.name, false)) {  // difficulty: its hits are scaled
                                 CoopDifficulty::TheKinds().Mark(*component,
                                                                 CoopDifficulty::LifeKind(s.name, s.hash,

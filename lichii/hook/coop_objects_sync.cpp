@@ -836,6 +836,11 @@ std::optional<std::uint8_t> Sync::OwnerOf(std::uint64_t address) const {
     return owner->second.player;
 }
 
+bool Sync::OwnerSaysDead(std::uint64_t address) const {
+    const auto it = objects_.find(address);
+    return it != objects_.end() && (it->second.dead_at != 0 || it->second.owner_life_zero);
+}
+
 std::vector<std::pair<std::uint64_t, std::string>> Sync::Owned() const {
     std::vector<std::pair<std::uint64_t, std::string>> out;
     for (const auto& [address, o] : objects_) {
@@ -2436,6 +2441,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 continue;
             }
             const std::int32_t life = sample->state.life->life;
+            o->owner_life_zero = life <= 0;
             const std::int32_t have = o->hurt_until != 0 ? o->hurt_target : *o->life;
             const bool holding = o->hit_sum > 0 || now_us - o->hit_at < kHitHoldUs;
             if (life < have) {
@@ -2444,7 +2450,10 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 o->fight_until = now_us + kFightUs;
             } else if (life > have && !holding && have <= 0 && o->killed_at != 0 &&
                        now_us - o->killed_at < kKilledKeepUs && o->dead_at == 0 &&
-                       o->resent < kResendMax) {
+                       o->resent < kResendMax && !IsBoss(o->name)) {
+                // (never a boss: its DAMAGE resent would be the copy's whole life in one hit, the owner's
+                // weak point bypassed (seed N2BTEYKM: Barinade's instant death). A boss copy is held at
+                // life 1 by its own Life step and dies with its owner's: CoopBossNative HeldLifeStep.)
                 // We killed it here and the owner's enemy still lives (the
                 // DAMAGE was lost, or crossed a change of owner): not healed
                 // back, the hit is sent again (issue 133). After kResendMax

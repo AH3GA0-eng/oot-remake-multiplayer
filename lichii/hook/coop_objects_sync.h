@@ -82,6 +82,9 @@ struct Seen {
     // Where a boss copy's own new hit landed (its game's hit record, +0x27c; IsBoss only, never one we replayed,
     // checked near the boss): sent with our DAMAGE so the owner's replay lands there (boss-intro).
     std::optional<coop::protocol::Vec3> hit_at{};
+    // Its Life component (0: none read); a copy boss's is held at life 1 by its own Life step
+    // (CoopBossNative::Table::HeldLifeStep) until its owner's dies.
+    std::uint64_t life_component = 0;
 };
 
 // An animation a copy should play (the owner's AS slot 0 command). The
@@ -724,6 +727,9 @@ public:
     // The player who owns the object at `address` (0: the server, none: not
     // known). For coop_enemy_shots.
     std::optional<std::uint8_t> OwnerOf(std::uint64_t address) const;
+    // The owner of the copy at `address` said it died: its life 0 in the owner's samples, or its
+    // ObjectRemove dead (one boss death for everyone: the copy's Life step lets it die then).
+    bool OwnerSaysDead(std::uint64_t address) const;
     std::uint8_t OwnerOf(const coop::protocol::ObjectId& id) const;
     std::size_t HurtsTaken() const { return hurt_taken_; }
     std::size_t HurtsMissed() const { return hurt_missed_; }
@@ -840,6 +846,7 @@ private:
         // its owner said it died (OBJECT_REMOVE dead; 0 = not said).
         int resent = 0;
         std::uint64_t dead_at = 0;
+        bool owner_life_zero = false;  // its owner's samples said life 0 (OwnerSaysDead)
         bool dead_now = false;  // a kill from before we came: deleted at once
         // enemy-sync-3 (issue 133): our enemy, killed by another game's hit
         // that our game did not take, already said dead (OBJECT_REMOVE).

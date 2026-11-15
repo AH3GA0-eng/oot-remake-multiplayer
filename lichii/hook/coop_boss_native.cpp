@@ -175,6 +175,67 @@ void Table::Publish(const std::vector<Boss>& bosses) {
         next.emplace(b.bsa, std::move(e));
     }
     by_bsa_ = std::move(next);
+
+    // The copies' Life components for HeldLifeStep: held while the owner's
+    // lives, released (let die) once it said it died. A slot already holding
+    // the same component keeps its released bit's first sighting (said once).
+    std::array<std::uint64_t, kMaxHeld> want{};
+    std::size_t n = 0;
+    for (const Boss& b : bosses) {
+        if (b.role != Role::copy || b.life_component == 0 || (b.life_component & kReleased) != 0 || n == kMaxHeld) {
+            continue;
+        }
+        want[n++] = b.life_component | (b.owner_dead ? kReleased : 0);
+    }
+    for (std::size_t i = 0; i < kMaxHeld; ++i) {
+        const std::uint64_t was = held_life_[i].load(std::memory_order_relaxed);
+        if (want[i] != was) {
+            if ((want[i] & kReleased) != 0 && (was & ~kReleased) == (want[i] & ~kReleased) && (was & kReleased) == 0) {
+                for (const Boss& b : bosses) {
+                    if (b.life_component == (want[i] & ~kReleased)) {
+                        Note(b.name + ": its owner's died: the copy's own Life step lets it die now");
+                    }
+                }
+            }
+            held_life_[i].store(want[i], std::memory_order_release);
+        }
+    }
+}
+
+bool Table::Watches(std::uint64_t component) const {
+    if (component == 0) {
+        return false;
+    }
+    for (const auto& slot : held_life_) {
+        if ((slot.load(std::memory_order_acquire) & ~kReleased) == component) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::int32_t Table::HeldLifeStep(std::uint64_t component, std::int32_t life, std::int32_t sum) {
+    if (component == 0 || sum <= 0) {
+        return sum;
+    }
+    for (const auto& slot : held_life_) {
+        const std::uint64_t v = slot.load(std::memory_order_acquire);
+        if ((v & ~kReleased) != component) {
+            continue;
+        }
+        if ((v & kReleased) != 0) {
+            if (sum >= life && life > 0) {
+                life_killed_.fetch_add(1, std::memory_order_relaxed);
+            }
+            return sum;  // the owner's died: ours dies with it
+        }
+        if (sum >= life) {
+            life_held_.fetch_add(1, std::memory_order_relaxed);
+            return std::max(0, life - 1);  // never dies of its own: the owner judges (its DAMAGE went there)
+        }
+        return sum;
+    }
+    return sum;
 }
 
 bool Table::OnBrainVerb(std::uint64_t bsa, std::int32_t verb, bool force, bool own) {
@@ -613,7 +674,10 @@ std::optional<CoopPuppet::Call> Table::Ask(CoopPuppet::Guest& guest, Entry& e, s
 
 Counts Table::Totals() const {
     std::lock_guard lock(mutex_);
-    return counts_;
+    Counts c = counts_;
+    c.copy_life_held = life_held_.load(std::memory_order_relaxed);
+    c.copy_killed = life_killed_.load(std::memory_order_relaxed);
+    return c;
 }
 
 std::vector<std::string> Table::TakeNotes() {
@@ -625,6 +689,11 @@ void Table::Reset() {
     std::lock_guard lock(mutex_);
     by_bsa_.clear();
     counts_ = {};
+    for (auto& slot : held_life_) {
+        slot.store(0, std::memory_order_relaxed);
+    }
+    life_held_.store(0, std::memory_order_relaxed);
+    life_killed_.store(0, std::memory_order_relaxed);
     notes_.clear();
     block_ = 0;  // (asked again)
     allocating_ = false;
