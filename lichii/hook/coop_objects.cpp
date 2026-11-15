@@ -2897,11 +2897,18 @@ private:
                 continue;
             }
             if (!it->replayed || now >= it->asked_ms + kPvpHitWaitMs) {
-                if (memory_ != nullptr && memory_->IsValidVirtualAddressRange(life_at, 4)) {
-                    memory_->Write32(life_at, static_cast<u32>(it->expect));
-                    LOG_INFO(Core, "coop: pvp: our Link's life {} -> {}{}", life, it->expect,
+                // Down but not out (player report 34): the write takes what the Life step would. The
+                // game's own hit may have been taken already and held back by the guard (life 1: downed),
+                // and a downed Link takes nothing; writing `expect` past it killed a downed Link.
+                const s32 to = CoopDbno::GuardedWrite(CoopDbno::TheGuard(), life, it->expect);
+                if (to >= life) {
+                    LOG_INFO(Core, "coop: pvp: our Link's life stays {}: down but not out holds the hit back",
+                             life);
+                } else if (memory_ != nullptr && memory_->IsValidVirtualAddressRange(life_at, 4)) {
+                    memory_->Write32(life_at, static_cast<u32>(to));
+                    LOG_INFO(Core, "coop: pvp: our Link's life {} -> {}{}", life, to,
                              it->replayed ? " (the game's hit was not taken)" : "");
-                    life = it->expect;
+                    life = to;
                 }
                 it = pvp_.erase(it);
                 continue;

@@ -66,6 +66,7 @@ struct FlagStats {
   std::uint64_t reset_applied = 0;     // player: values written from a FLAG_RESET
   std::uint64_t counts_guarded = 0;    // a guarded count's gain taken back (guard_count)
   std::uint64_t doubled_gains = 0;     // a chest opened again here: its gain taken back (expect_doubled_gain)
+  std::uint64_t raced_gains = 0;       // host: a player's guarded gain for a source the group had: not added
   std::uint64_t entries_unsent = 0;    // entries a message kind cannot carry: left out, the rest sent
   std::uint64_t event_reads = 0;       // use_events: flags read because the game wrote them
   std::uint64_t event_misses = 0;      // use_events: a change the audit found that no event had named
@@ -155,8 +156,14 @@ class FlagWatcher {
   // the hold is over. A drop of our own while a gain is held, or just after
   // one was put back, cancels against it: the world sync gave that same token
   // back (docs/world.md, "both at once"). docs/items.md, "Gold Skulltulas".
+  // As host: a player's FLAG_SET with one of `sources` at 1 that our game
+  // (the group) had at 1 already is a token taken twice (both games took it
+  // before either heard of the other): that player's next gain of `count`
+  // within kRaceFrames is not added (one per such source), and our total is
+  // stated again, so every game counts the token once.
   void guard_count(FlagKey count, std::span<const FlagKey> sources);
   static constexpr std::uint64_t kGuardHoldFrames = 90;
+  static constexpr std::uint64_t kRaceFrames = 2 * kGuardHoldFrames;
   static constexpr std::uint64_t kGuardRecentFrames = 5 * 60 * 60;
   struct CountGuarded {
     FlagKey count;
@@ -357,6 +364,16 @@ class FlagWatcher {
     std::int32_t own = 0;           // that change, ours only
   };
   std::map<FlagKey, Guard> guards_;          // guard_count, by count
+  struct Raced {
+    std::int32_t gains = 0;  // a player's gains of the count still to drop
+    std::uint64_t at = 0;    // the frame the last raced source came
+  };
+  std::map<std::pair<FlagKey, std::uint8_t>, Raced> raced_;  // host: by count and player
+  // Host: the sources in `set` the group had already, as gains to drop.
+  void note_raced(FlagStore& store, const protocol::FlagSet& set);
+  // Host: what of a player's delta for a guarded count is added (a raced gain
+  // dropped); the rest of `entry`'s value.
+  std::int32_t unraced(const protocol::FlagEntry& entry);
   std::map<FlagKey, std::int32_t> max_caps_;  // cap_max
   std::map<FlagKey, FlagKey> guard_source_;  // a source: its count
   Table added_;                              // count deltas add() put in this frame

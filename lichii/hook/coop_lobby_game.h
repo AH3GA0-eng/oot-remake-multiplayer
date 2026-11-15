@@ -69,11 +69,15 @@ struct PlayerSeen {
     std::uint8_t own_mutes = 0;          // what we muted
 };
 struct Seen {
-    bool connected = false;
+    bool connected = false;              // the session took this game in (WELCOME came)
+    std::string refused;                 // why the session turned this game away, in full ("" it did not)
+    bool banned = false;                 // that reason is the host's ban (joining again cannot work)
     std::uint8_t self = 0;
     std::uint8_t host = 0;
     std::vector<PlayerSeen> players;     // by number
 };
 Seen Now();
+// Co-op was left (CoopHook::End sends no last event): nothing is seen any more.
+void Forget();
 
 }  // namespace CoopLobby

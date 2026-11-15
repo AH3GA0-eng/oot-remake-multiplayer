@@ -198,6 +198,25 @@ if ($Hookshot) {
     $emu = Split-Path -Parent $exe
     $ini = Join-Path $emu 'coop.ini'
 }
+# Switches from coop-options.ini (the lines without a '#' in front), as variables for the game: your colour
+# (LICHII_COOP_COLOR, which the pack step below puts on your own Link) among them. A file of the kit is passed
+# by its full path.
+function Set-KitOptionVariables {
+    $options = Read-KitOptions (Join-Path $kit 'coop-options.ini')
+    foreach ($key in $options.Keys) {
+        $value = $options[$key]
+        if ($value -and -not [System.IO.Path]::IsPathRooted($value) -and (Test-Path -LiteralPath (Join-Path $kit $value))) {
+            $value = [System.IO.Path]::GetFullPath((Join-Path $kit $value))
+        }
+        Set-Item -Path "env:$key" -Value $value
+        $tunicNote = ''
+        if ($key -eq 'LICHII_COOP_COLOR' -and (Get-Command Get-KitTunic -ErrorAction SilentlyContinue)) {
+            $t = Get-KitTunic $value
+            if ($t) { $tunicNote = "   (your tunic: $t, the nearest of the ten tunic colours)" }
+        }
+        Write-Host "Option: $key=$value$tunicNote"
+    }
+}
 if ($Mode -eq 'title') {
     if (-not $Hookshot) { Write-Host 'play.ps1 title is for the Longshot game (Play-OoT-Coop.bat).'; exit 1 }
     $running = Get-Process longshot, hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
@@ -205,13 +224,23 @@ if ($Mode -eq 'title') {
     # No session from this start: no server and no join password in coop.ini (the name, the colour and the
     # last invite code stay), and none in the variables an earlier start in this window may have left.
     Clear-CoopIniSession $template $ini
+    # coop-options.ini first, as every other start: before 0.11.1 this start never read it, so your colour was
+    # not known to the pack step and your own Link's tunic files were put back to green (v0.11.0 player logs:
+    # "the puppet pack's tunic files are green, your colour is orange"); the module then took the switches
+    # itself ("started without the kit's launcher"). The session's variables go after it all the same.
+    Set-KitOptionVariables
+    # (OOT_COOP_TEST_KIT, the autotest's kit mode, tools/autotest/hookshot.py --kit-a: its test server and join
+    # password stay, as the title menu's Join would set them, and the game's process id goes into that file)
+    $testKit = "$env:OOT_COOP_TEST_KIT"
     foreach ($v in 'LICHII_COOP_SERVER', 'LICHII_COOP_PASSWORD', 'OOT_COOP_SESSION_PASSWORD', 'OOT_COOP_JOIN_PASSWORD', 'LICHII_COOP_HOST_SAVE') {
+        if ($testKit -and $v -in 'LICHII_COOP_SERVER', 'LICHII_COOP_PASSWORD') { continue }
         Remove-Item -Path "env:$v" -ErrorAction SilentlyContinue
     }
     [void](Use-KitPuppetPack (Join-Path $emu 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json') (Join-Path $kit 'tools\puppet_pack') @(
-        'Puppet pack: not in the co-op game, so the other players show only as markers.',
+        'Puppet pack: not in the co-op game, so the other players show as names only (the game''s chat says so too).',
         $(if ($hsOnly) { '  It is made from your game file (the one hookshot\game-files.txt names): put that file back, then start again.' } else { '  Run Build-Hookshot-Coop.bat -Game <your .nup> again (SETUP.md, "Play on Hookshot").' })))
-    [void](Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru)
+    $game = Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru
+    if ($testKit -and $game) { [System.IO.File]::WriteAllText($testKit, "$($game.Id)`n") }
     Write-Host 'Game started. Host or Join in the game''s menu, first tab Multiplayer (controller: Minus and Plus together, or Home;'
     Write-Host 'keyboard: F1; on the title screen Minus alone). Same house: Host, then "Same network". On a VPN: Host, then "VPN".'
     if (-not $hsOnly) { Write-Host 'Host-Hookshot.bat and Join-Hookshot.bat still host or join from a window like this one instead.' }
@@ -227,6 +256,7 @@ if ($Mode -eq 'host') { $Server = '127.0.0.1' }
 if (-not $Server) { $Server = $current.server }
 if ($Mode -eq 'join' -and -not $serverGiven -and $Server -match '^(127\.|localhost)') { $Server = '' }
 if (-not $Name) { $Name = $current.name }
+$newName = -not $Name   # a new player: offered a random name (New-CoopName), never the Windows user name
 if (-not $Port) { $Port = if ($current.port) { $current.port } else { '@PORT@' } }
 
 if ($askServer -or -not $Server) {
@@ -286,7 +316,8 @@ elseif ($serverGiven) {
     $parsed = ConvertTo-JoinAddress $Server
     if ($parsed) { $Server = $parsed.Server; if ($parsed.Port -and -not $PSBoundParameters.ContainsKey('Port')) { $Port = $parsed.Port } }
 }
-if ($ask -or -not $Name) {
+if ($newName) { $Name = New-CoopName }
+if ($ask -or $newName) {
     do {
         $answer = Read-Host "Your player name, 1 to 16 characters$(if ($Name) { " [$Name]" })"
         if ($answer) { $Name = $answer.Trim() }
@@ -436,20 +467,7 @@ if ($Mode -eq 'host') {
 }
 
 # Switches from coop-options.ini (the lines without a '#' in front). They win over the AMD rule below.
-$options = Read-KitOptions (Join-Path $kit 'coop-options.ini')
-foreach ($key in $options.Keys) {
-    $value = $options[$key]
-    if ($value -and -not [System.IO.Path]::IsPathRooted($value) -and (Test-Path -LiteralPath (Join-Path $kit $value))) {
-        $value = [System.IO.Path]::GetFullPath((Join-Path $kit $value))
-    }
-    Set-Item -Path "env:$key" -Value $value
-    $tunicNote = ''
-    if ($key -eq 'LICHII_COOP_COLOR' -and (Get-Command Get-KitTunic -ErrorAction SilentlyContinue)) {
-        $t = Get-KitTunic $value
-        if ($t) { $tunicNote = "   (your tunic: $t, the nearest of the ten tunic colours)" }
-    }
-    Write-Host "Option: $key=$value$tunicNote"
-}
+Set-KitOptionVariables
 # The host's save (issue 167): a join (an address or an invite code, whose server is 127.0.0.1) plays from the
 # co-op save folder the host's save comes into; a host from its own saves. Not from coop.ini's address: an old
 # friend's address there says nothing about this start. coop-options.ini may set it itself.
@@ -465,7 +483,7 @@ if ($Hookshot) {
     # puppets off without a pack. The pack is in mods\contents (Build-Hookshot-Coop.bat installs it), and
     # Hookshot indexes its mod files once at start: this runs before Start-Process.
     [void](Use-KitPuppetPack (Join-Path $emu 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json') (Join-Path $kit 'tools\puppet_pack') @(
-        'Puppet pack: not in the co-op game, so the other players show only as markers.',
+        'Puppet pack: not in the co-op game, so the other players show as names only (the game''s chat says so too).',
         $(if ($hsOnly) { '  It is made from your game file (the one hookshot\game-files.txt names): put that file back, then start again.' } else { '  Run Build-Hookshot-Coop.bat -Game <your .nup> again (SETUP.md, "Play on Hookshot").' })))
     $started = Get-Date
     $game = Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru

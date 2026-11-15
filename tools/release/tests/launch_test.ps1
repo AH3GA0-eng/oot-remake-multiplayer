@@ -139,6 +139,12 @@ try {
     . (Join-Path $kitSrc 'scripts\coop-ini.ps1')
     foreach ($good in 'blue', 'Purple', '#FF8020', 'ff8020') { Check (Test-CoopColor $good) "a colour: $good" }
     foreach ($bad in 'blurple', '#FF802', '#GG8020', '') { Check (-not (Test-CoopColor $bad)) "not a colour: '$bad'" }
+    # privacy-name (0.11.1 player report): a new player's offered name is random, a valid co-op name, never this PC's names.
+    foreach ($i in 1..50) {
+        $n = New-CoopName
+        Check ((Test-CoopName $n) -and $n -match '^[A-Za-z]+-\d{4}$' -and $n -ne $env:USERNAME -and $n -ne $env:COMPUTERNAME) "a random name: $n"
+    }
+    Check ((Read-File (Join-Path $kitSrc 'scripts\play.ps1')) -match 'if \(\$newName\) \{ \$Name = New-CoopName \}') 'play.ps1 offers a new player a random name'
     # The forms players type (10.1 report: a hex colour did nothing): one text for every reader.
     foreach ($pair in @(@('#FF8020', '#FF8020'), @('ff8020', '#FF8020'), @('"#ff8020"', '#FF8020'), @("'0xFF8020'", '#FF8020'),
                          @('#F82', '#FF8822'), @(' Orange ', 'orange'), @('blurple', ''),
@@ -179,6 +185,7 @@ try {
     $hash = 'b9d822a64cc6285dd1aa300d77f64ea0c86f775240885dad79ae4f2f7694f5e0'
     Check ((Get-PuppetToolHash $tool) -eq $hash) "the pack tool hash is build.py's [$(Get-PuppetToolHash $tool)]"
     $man = Join-Path $ph 'coop_puppet.json'
+    Write-File (Join-Path $ph 'romfs\x') 'tunic'   # (the "x" the tunics below name: a complete pack)
     Write-File $man '{"tool": "tools/puppet_pack", "actors": []}'
     Check ((Get-PuppetPackHint $man $tool) -match 'without the other players'' sounds.*make-puppet-pack\.cmd') 'a pack without "sound": run make-puppet-pack again'
     Write-File $man '{"actors": [], "sound": false}'
@@ -188,15 +195,28 @@ try {
     Check ($null -eq (Get-PuppetPackHint $man $tool)) 'the same tool, its files dated hours ahead (a zip from another time zone): nothing said'
     Check ($null -eq (Get-PuppetPackHint $man (Join-Path $ph 'no-tool'))) 'no tool folder: nothing said'
     Write-File $man '{"actors": [], "sound": true, "tunics": {"Red": ["x"]}}'
-    Check ($null -eq (Get-PuppetPackHint $man $tool)) 'sound and no tool hash: nothing said'
+    Check ((Get-PuppetPackHint $man $tool) -match 'older version of the pack tool') 'sound and no tool hash (a pack from before the hash): made again (pack-retry)'
+    Check ($null -eq (Get-PuppetPackHint $man (Join-Path $ph 'no-tool'))) 'no tool hash and no tool folder: nothing said'
     Write-File $man '{"actors": [], "sound": true}'
     Check ((Get-PuppetPackHint $man $tool) -match 'without the tunic colours.*green.*make-puppet-pack\.cmd') 'a pack from before the tunics: run make-puppet-pack again (#202)'
-    Write-File $man '{"actors": [], "sound": true, "tunics": {}, "tunics_off": true}'
+    Write-File $man "{`"actors`": [], `"sound`": true, `"tunics`": {}, `"tunics_off`": true, `"tool_sha256`": `"$hash`"}"
     Check ($null -eq (Get-PuppetPackHint $man $tool)) 'a --tunics none pack: no tunic line'
     Write-File $man '{"actors": [], "sound": true, "tunics": {}, "tool_sha256": "0000"}'
     Check ((Get-PuppetPackHint $man $tool) -match 'without the tunic colours') 'a pack with no tunics made: the tunic line first'
     Write-File $man '{"actors": [], "sound": true, "tunics": {"Red": ["x"]}, "tool_sha256": "0000"}'
     Check ((Get-PuppetPackHint $man $tool) -match 'another version of the pack tool') 'another tool hash: run make-puppet-pack again'
+    # An incomplete pack (pack-retry: a tool stopped half way, antivirus): a file the manifest names is gone.
+    Write-File (Join-Path $ph 'coop_look\gear.bin') 'gear'
+    Write-File $man "{`"actors`": [], `"sound`": true, `"tunics`": {`"Red`": [`"x`"]}, `"look_files`": {`"gear`": `"coop_look/gear.bin`", `"red`": `"coop_look/red.bin`"}, `"tool_sha256`": `"$hash`"}"
+    $h = Get-PuppetPackHint $man $tool
+    Check ($h -match 'incomplete \(coop_look/red\.bin is missing\)') "a look file gone: incomplete, named [$h]"
+    Check ((Test-KitPuppetPackStale $man $tool) -and (Test-KitPuppetPackStale $man (Join-Path $ph 'no-tool'))) 'a look file gone: stale, with or without the tool (the start makes it again)'
+    Write-File (Join-Path $ph 'coop_look\red.bin') 'red'
+    Check ($null -eq (Get-PuppetPackHint $man $tool)) 'every look file there: nothing said'
+    Write-File $man "{`"actors`": [], `"sound`": true, `"tunics`": {`"Red`": [`"x`", `"Tex/gone.bntx.zs`"], `"Blue`": [`"y`"]}, `"tool_sha256`": `"$hash`"}"
+    $h = Get-PuppetPackHint $man $tool
+    Check ($h -match 'incomplete \(romfs/Tex/gone\.bntx\.zs is missing and 1 more\)') "tunic files gone: incomplete, the first named and how many more [$h]"
+    Check (@(Get-KitPuppetPackGaps $man ([System.IO.File]::ReadAllText($man) | ConvertFrom-Json)).Count -eq 2) 'pack gaps: two tunic files gone'
     Write-File $man '{ not json'
     Check ((Get-PuppetPackHint $man $tool) -match 'could not be read') 'a broken coop_puppet.json: a line, no throw'
     Check ((Get-PuppetPackHint (Join-Path $ph 'none.json') $tool) -match 'could not be read') 'a missing coop_puppet.json: a line, no throw'
@@ -277,6 +297,14 @@ try {
     Check ((Set-KitSelfTunic $sp 'pink') -eq '' -and -not (Test-Path -LiteralPath $sTile)) 'self tunic: S set: a colour the pack lacks takes the stale black away'
     Check ((Set-KitSelfTunic $sp 'red') -eq 'red' -and [System.IO.File]::ReadAllText($sTile) -eq 'REDS' -and [System.IO.File]::ReadAllText($childModel) -eq 'REDCHILDS') 'self tunic: S set: red tile and own child model'
     Check ((Set-KitSelfTunic $sp '') -eq '' -and -not (Test-Path -LiteralPath $sTile) -and -not (Test-Path -LiteralPath $childModel)) 'self tunic: S set: no colour takes them away'
+    # npc-colour: a pack with green's own copies: green and no colour wear them (the game's tunic textures
+    # are on Mido's and Saria's models, so your own Link never wears the game's own)
+    Write-File (Join-Path $sp 'coop_self\green.Angin_Tile_S_Alb.bntx.zs') 'GREENS'
+    Write-File (Join-Path $sp 'coop_puppet.json') '{"tunics": {"red": ["x"], "green": ["y"]}, "self_files": {"red": {"Tex/Angin_Tile_S_Alb.bntx.zs": "coop_self/red.Angin_Tile_S_Alb.bntx.zs", "Model/Player_Child.Player_Child.bfres.zs": "coop_self/red.Player_Child.bfres.zs"}, "green": {"Tex/Angin_Tile_S_Alb.bntx.zs": "coop_self/green.Angin_Tile_S_Alb.bntx.zs"}}}'
+    foreach ($c in 'green', '', 'nope') {
+        [void](Set-KitSelfTunic $sp 'red')
+        Check ((Set-KitSelfTunic $sp $c) -eq 'green' -and [System.IO.File]::ReadAllText($sTile) -eq 'GREENS' -and -not (Test-Path -LiteralPath $childModel)) "self tunic: green's own copies for '$c'"
+    }
     # a pack made again by an older tool (self_tiles only): the newer copies do not stay
     [void](Set-KitSelfTunic $sp 'red')
     Write-File $vest 'STALEVEST'
@@ -542,6 +570,29 @@ try {
     $out = (cmd /c "powershell -NoProfile -ExecutionPolicy Bypass -File `"$kit\scripts\play.ps1`" choose -Hookshot -NoUpdate < nul" 2>&1) -join '|'
     $idle = Read-File (Join-Path $hsGame 'coop.ini')
     Check ($out -match 'Game started' -and $idle -notmatch '(?m)^\s*server\s*=') "Play-OoT-Coop: a first start (no coop.ini) writes one with no server [$out]"
+    # Start OoT Co-op.bat (play.ps1 choose -Hookshot, the release kit's start) reads coop-options.ini too, so
+    # your colour's tunic files are put in before the game starts (v0.11.0: this start never read it and put
+    # the game's green back: "the puppet pack's tunic files are green, your colour is orange").
+    & $stopHs
+    New-Item -ItemType Directory -Force -Path (Join-Path $hsPack 'coop_self') | Out-Null
+    Write-File (Join-Path $hsPack 'coop_self\red.bntx.zs') 'RED'
+    Write-File (Join-Path $hsPack 'coop_puppet.json') '{"sound": true, "tunics": {"red": ["x"], "green": ["y"]}, "self_tiles": {"red": "coop_self/red.bntx.zs"}}'
+    Remove-Item Env:LICHII_COOP_COLOR -ErrorAction SilentlyContinue
+    $out = (cmd /c "powershell -NoProfile -ExecutionPolicy Bypass -File `"$kit\scripts\play.ps1`" choose -Hookshot -NoUpdate < nul" 2>&1) -join '|'
+    $tile = Join-Path $hsPack 'romfs\Tex\Angin_Tile_A_Alb.bntx.zs'
+    Check ($out -match 'Option: LICHII_COOP_COLOR=' -and $out -match 'Your Link: the red tunic' -and $out -match 'Game started') "Play-OoT-Coop: coop-options.ini's colour is read before the pack step [$out]"
+    Check ((Test-Path -LiteralPath $tile) -and [System.IO.File]::ReadAllText($tile) -eq 'RED') 'Play-OoT-Coop: the red tile in the pack before the game starts'
+    Remove-Item -LiteralPath $hsPack -Recurse -Force
+    # The autotest's kit mode (tools/autotest/hookshot.py --kit-a): OOT_COOP_TEST_KIT gets the game's process id, and
+    # the test server stays in the variables (written to no file: coop.ini still has no server).
+    & $stopHs
+    $pidFile = Join-Path $tmp 'kit-pid.txt'
+    $env:OOT_COOP_TEST_KIT = $pidFile; $env:LICHII_COOP_SERVER = '127.0.0.1:27520'
+    $out = (cmd /c "powershell -NoProfile -ExecutionPolicy Bypass -File `"$kit\scripts\play.ps1`" choose -Hookshot -NoUpdate < nul" 2>&1) -join '|'
+    Remove-Item Env:OOT_COOP_TEST_KIT, Env:LICHII_COOP_SERVER -ErrorAction SilentlyContinue
+    $gamePid = if (Test-Path -LiteralPath $pidFile) { "$(Get-Content -LiteralPath $pidFile -TotalCount 1)".Trim() } else { '' }
+    Check ($out -match 'Game started' -and $gamePid -match '^\d+$') "kit autotest: the game's process id in OOT_COOP_TEST_KIT's file [$gamePid] [$out]"
+    Check ((Read-File (Join-Path $hsGame 'coop.ini')) -notmatch '(?m)^\s*server\s*=') 'kit autotest: coop.ini still has no server'
     Get-Process hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($kit, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
     # A built kit's coop.ini.template and coop-ini.ps1 keep @PORT@ (make_kit.ps1 copies with
     # kit_text.ps1), and play.ps1 writes the port each join needs: 27512 (the join helper) for an
@@ -659,7 +710,11 @@ try {
     Write-File (Join-Path $g 'hookshot_coop.dll') 'MODULE 1'
     Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need: no puppet pack -> module (the pack is made)'
     $pack = Join-Path $g 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json'
-    Write-File $pack '{"sound": true, "tunics": {"red": ["x"]}}'
+    Write-File $pack '{"sound": true, "tunics": {"red": ["x"]}, "look_files": {"gear": "coop_look/gear.bin"}}'
+    Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need: an incomplete puppet pack (gear.bin gone) -> module (the pack is made again; pack-retry)'
+    Write-File (Join-Path (Split-Path -Parent $pack) 'coop_look\gear.bin') 'gear'
+    Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need: a tunic file gone -> module'
+    Write-File (Join-Path (Split-Path -Parent $pack) 'romfs\x') 'tunic'
     Check ((Get-KitHookshotNeed $hk) -eq '') 'hookshot need: the game as the kit wants it -> nothing'
     Write-File (Join-Path $hk 'hookshot\hookshot_coop.dll') 'MODULE 2'
     Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need: a new module -> module (seconds)'
@@ -776,6 +831,55 @@ try {
     Check ($dirs.Count -eq 2 -and $dirs[0] -eq $other -and $dirs[1] -eq (Join-Path $other 'bin')) 'hookshot log dirs: the game folder first, then bin\'
     Remove-Item -LiteralPath (Join-Path $other 'image.bin')
     Check (@(Get-KitHookshotLogDirs '').Count -eq 0) 'hookshot log dirs: no exe, none'
+    # collect-logs finds the game more ways than the start (player report: no longshot_log.txt in the zip)
+    $lk = Join-Path ([System.IO.Path]::GetTempPath()) "coop-logexes-$PID"
+    try {
+        $otherGame = Join-Path $lk 'other-kit\hookshot\game'
+        $runGame = Join-Path $lk 'elsewhere'
+        Write-File (Join-Path $lk 'kit\hookshot\game\longshot.exe') 'exe'
+        Write-File (Join-Path $otherGame 'longshot.exe') 'exe'
+        Write-File (Join-Path $runGame 'longshot.exe') 'exe'
+        Write-File (Join-Path $lk 'kit\hookshot\game-folder.txt') "$otherGame`n"
+        $kitExe = Join-Path $lk 'kit\hookshot\game\longshot.exe'
+        $e = @(Get-KitLogGameExes (Join-Path $lk 'kit') @((Join-Path $runGame 'longshot.exe'), $kitExe, (Join-Path $lk 'gone\longshot.exe')))
+        Check ($e.Count -eq 3 -and $e[0] -eq $kitExe -and $e[1] -eq (Join-Path $otherGame 'longshot.exe') -and $e[2] -eq (Join-Path $runGame 'longshot.exe')) "log game exes: the kit's own game, then the one game-folder.txt names, then a running one; each once, none missing [$($e -join ', ')]"
+        Remove-Item -LiteralPath (Join-Path $lk 'kit\hookshot\game-folder.txt')
+        Check (@(Get-KitLogGameExes (Join-Path $lk 'kit') @()).Count -eq 1) 'log game exes: no game-folder.txt, nothing running -> the kit''s own game'
+    } finally { Remove-Item -LiteralPath $lk -Recurse -Force -ErrorAction SilentlyContinue }
+    # the puppet pack's game file gone (player report: names but no Links, the only hint in longshot_log.txt)
+    $pt = (Get-KitPackSourceText 'D:\Games\oot.nup') -join "`n"
+    Check ($pt -match 'D:\\Games\\oot\.nup' -and $pt -match 'game-files\.txt' -and $pt -match 'names only' -and $pt -match 'Every start tries again') "pack source text: names the missing file, game-files.txt and what happens [$pt]"
+    $pt = (Get-KitPackSourceText '') -join "`n"
+    Check ($pt -match 'game-files\.txt is missing' -and $pt -match '\.nup') "pack source text: no game-files.txt said plainly [$pt]"
+    # pack-retry: the .nup moved (Downloads, Desktop, beside the kit): the start finds it before it asks.
+    $nf = Join-Path $hk 'nup-find'
+    $isGame = { param($p) [System.IO.File]::ReadAllText($p) -eq 'GAME' }
+    Write-File (Join-Path $nf 'Downloads\sub\OoT.nup') 'GAME'
+    Write-File (Join-Path $nf 'Downloads\manual.nup') 'NOT'
+    Write-File (Join-Path $nf 'Desktop\deep\er\far\Other.nup') 'GAME'
+    $places = @((Join-Path $nf 'gone'), (Join-Path $nf 'Downloads'), (Join-Path $nf 'Desktop'))
+    Check ((Find-KitGameNup (Join-Path $nf 'gone\OoT.nup') $hk $isGame $places) -eq (Join-Path $nf 'Downloads\sub\OoT.nup')) 'nup find: moved into a Downloads subfolder: found; not the game file and too deep left out'
+    Write-File (Join-Path $nf 'Desktop\Renamed.nup') 'GAME'
+    Check ((Find-KitGameNup (Join-Path $nf 'gone\OoT.nup') $hk $isGame $places) -eq (Join-Path $nf 'Downloads\sub\OoT.nup')) 'nup find: two game files: the one with the remembered name'
+    Check ((Find-KitGameNup '' $hk $isGame $places) -eq '') 'nup find: two game files and no name to go by: none (asked)'
+    Remove-Item -LiteralPath (Join-Path $nf 'Downloads\sub\OoT.nup')
+    Check ((Find-KitGameNup '' $hk $isGame $places) -eq (Join-Path $nf 'Desktop\Renamed.nup')) 'nup find: one game file, renamed: found'
+    Check ((Find-KitGameNup '' $hk { param($p) throw 'tool error' } $places) -eq '') 'nup find: the check throws: none, no throw'
+    Check ((Find-KitGameNup '' $hk $isGame @((Join-Path $nf 'nothing'))) -eq '') 'nup find: nothing anywhere: none'
+    # The drag prompt is asked once, not at every start (review): a new game file or a new pack tool asks again.
+    $askTool = Join-Path $nf 'tool'
+    Write-File (Join-Path $askTool 'build.py') 'v1'
+    $note = Join-Path $nf 'pack-asked.txt'
+    $key = Get-KitPackAskKey 'D:\gone\OoT.nup' $askTool
+    Check (-not (Test-KitPackAsked $note $key)) 'pack ask: never asked: asks'
+    Write-File $note "$key`n"
+    Check (Test-KitPackAsked $note (Get-KitPackAskKey 'D:\gone\OoT.nup' $askTool)) 'pack ask: asked about this file and tool: not again'
+    Check (-not (Test-KitPackAsked $note (Get-KitPackAskKey 'E:\other.nup' $askTool))) 'pack ask: another game file named: asks again'
+    Check (-not (Test-KitPackAsked $note (Get-KitPackAskKey '' $askTool))) 'pack ask: no game file named any more: asks again'
+    Write-File (Join-Path $askTool 'build.py') 'v2'
+    Check (-not (Test-KitPackAsked $note (Get-KitPackAskKey 'D:\gone\OoT.nup' $askTool))) 'pack ask: a new pack tool (an update): asks again'
+    $hb = [System.IO.File]::ReadAllText((Join-Path $kitSrc 'scripts\hookshot-build.ps1'))
+    Check ($hb.Contains('$askedBefore = -not $PackOnly -and (Test-KitPackAsked $askNote $askKey)')) 'pack ask: make-puppet-pack.cmd (-PackOnly) always asks'
     # hs-missing (a tester read "No co-op Hookshot game" as "couldn't find Hookshot"): antivirus took the module
     Remove-Item -LiteralPath (Join-Path $hk 'hookshot\hookshot_coop.dll')
     Check ((Get-KitHookshotNeed $hk) -eq 'quarantine') 'hookshot need: the module in neither the kit nor the game -> quarantine (no build)'
@@ -1163,6 +1267,57 @@ try {
     Remove-Item -LiteralPath $kc -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# pack-retry: hookshot-build.ps1 -PackOnly (make-puppet-pack.cmd on a Longshot kit, and the pack step of every start):
+# a .nup that moved is found, a pack tool error is said, no game is said. Needs a real Python for the kit's tools\python
+# (TEST_PYTHON, else python on PATH): a junction to its folder; skipped without one.
+$pyExe = if ($env:TEST_PYTHON) { $env:TEST_PYTHON } else { (Get-Command python -ErrorAction SilentlyContinue | Select-Object -First 1).Source }
+$pyHome = ''
+# (the Windows Store stub, WindowsApps\python.exe, is found and exists but only prints "Python was not found" to
+# stderr, which this script's Stop preference turns into an error: no real Python, so the cases are skipped)
+if ($pyExe -and $pyExe -notmatch '\\WindowsApps\\' -and (Test-Path -LiteralPath $pyExe)) {
+    try { $pyHome = "$(& $pyExe -I -c 'import sys; print(sys.base_prefix)' 2>$null)".Trim() } catch { $pyHome = '' }
+}
+if ($pyHome -and (Test-Path -LiteralPath (Join-Path $pyHome 'python.exe'))) {
+    $pk = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-packonly-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+    try {
+        $k = "$pk\kit"
+        Copy-Item -LiteralPath (Join-Path $kitSrc 'scripts') -Destination "$k\scripts" -Recurse
+        $commit = 'a' * 40
+        Write-File "$k\hookshot\PIN" "runtime=Longshot`nrepo=https://git.magicbean.dev/MagicBeanDev/Longshot`ncommit=$commit`n"
+        Write-File "$k\hookshot\TOOLS.txt" "release=v3.0.0-rc.3`nlock_sha256=b3`nsource_commit=$commit`nsource_sha256=aa`n"
+        Write-File "$k\hookshot\patches\0001-a.patch" "one`n"
+        Write-File "$k\Start OoT Co-op.bat" '@echo off'
+        New-Item -ItemType Directory -Force -Path "$k\hookshot\tools" | Out-Null
+        New-Item -ItemType Junction -Path "$k\hookshot\tools\python" -Value $pyHome | Out-Null
+        # stand-ins: the pack tool writes a manifest (or fails, PACK_FAIL), dumpcheck takes a file that says GAME
+        Write-File "$k\tools\puppet_pack\build.py" "import os, sys`nif os.environ.get('PACK_FAIL'): print('BuildError: Tex/x.bntx.zs: broken'); sys.exit(1)`nd = sys.argv[sys.argv.index('--mod-dir') + 1]`nos.makedirs(d, exist_ok=True)`nopen(os.path.join(d, 'coop_puppet.json'), 'w').write('{}')`nopen(os.path.join(d, 'from.txt'), 'w').write(sys.argv[sys.argv.index('--romfs') + 1])`n"
+        Write-File "$k\tools\puppet_pack\dumpcheck.py" "import sys`np = sys.argv[sys.argv.index('--romfs') + 1]`nsys.exit(0 if open(p, 'rb').read(5) == b'GAME' else 1)   # (5 bytes: a real .nup in Downloads is not read through)`n"
+        $run = {
+            $ErrorActionPreference = 'Continue'
+            $o = (& powershell -NoProfile -ExecutionPolicy Bypass -File "$k\scripts\hookshot-build.ps1" -PackOnly 2>&1) -join '|'
+            return @($LASTEXITCODE, $o)
+        }
+        $r = & $run
+        Check ($r[0] -ne 0 -and $r[1] -match 'not built yet.*Start OoT Co-op\.bat') "pack only: no game yet: said, nothing made [$($r[1])]"
+        Write-File "$k\hookshot\game\longshot.exe" 'exe'
+        Write-File "$k\hookshot\game-files.txt" "$pk\gone\OoT.nup`n"
+        Write-File "$pk\OoT.nup" 'GAME'   # moved beside the kit
+        Write-File "$pk\manual.nup" 'NOT'
+        $r = & $run
+        $man = "$k\hookshot\game\mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json"
+        Check ($r[0] -eq 0 -and $r[1] -match 'Found your game file: .*OoT\.nup' -and $r[1] -match 'Making the puppet pack' -and (Test-Path -LiteralPath $man) -and (Read-File (Join-Path (Split-Path -Parent $man) 'from.txt')) -eq "$pk\OoT.nup") "pack only: the .nup moved beside the kit: found, the pack made [$($r[0]) $($r[1])]"
+        Check ((Read-File "$k\hookshot\game-files.txt").Trim() -eq "$pk\OoT.nup") 'pack only: the new place is remembered'
+        $env:PACK_FAIL = '1'
+        try { $r = & $run } finally { Remove-Item env:PACK_FAIL }
+        Check ($r[0] -ne 0 -and $r[1] -match 'BuildError' -and $r[1] -match 'could not be made \(the lines above say why\)') "pack only: a pack tool error: said plainly, exit 1 [$($r[1])]"
+    } finally {
+        if (Test-Path -LiteralPath "$pk\kit\hookshot\tools\python") { [System.IO.Directory]::Delete("$pk\kit\hookshot\tools\python") }   # (the junction, not the Python behind it)
+        Remove-Item -LiteralPath $pk -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} else {
+    Write-Host 'skip pack only cases (no Python: set TEST_PYTHON)'
+}
+
 # kit-friction: what Windows itself may block (windows-checks.ps1, run as "Start OoT Co-op.bat" runs it: its text through
 # powershell -Command), with stand-ins for Smart App Control, the language mode, the policy, the Code Integrity log and
 # controlled folder access. And a Longshot of the player's own: its saves, its downloads, its version.
@@ -1256,6 +1411,97 @@ try {
 } finally {
     foreach ($v in $wcVars) { Remove-Item "env:$v" -ErrorAction SilentlyContinue }
     Remove-Item -LiteralPath $wk -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# kit-mirror (0.11.1): Get-KitDownload tries each URL several times, then curl.exe, then the co-op mirror, and never keeps a
+# file whose SHA-256 differs. Invoke-KitFetch is replaced in a child scope by a fake that logs each try and fails as told.
+$dl = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-dl-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Force -Path $dl | Out-Null
+try {
+    $good = Join-Path $dl 'good.bin'; Write-File $good 'the pinned file'
+    $goodSha = (Get-FileHash -LiteralPath $good -Algorithm SHA256).Hash.ToLowerInvariant()
+    $feed = 'file:///' + ($dl -replace '\\', '/')
+    & {
+        $script:tries = @()
+        # fail: host -> 'all' (always), 'web' (Invoke-WebRequest only), 'bad' (a wrong file)
+        $script:fail = @{}
+        function Invoke-KitFetch([string]$Url, [string]$Out, [string]$Method) {
+            $h = Get-KitUrlHost $Url
+            $script:tries += "$h/$Method"
+            $how = $script:fail[$h]
+            if ($how -eq 'all' -or ($how -eq 'web' -and $Method -eq 'web')) { throw 'The underlying connection was closed: An unexpected error occurred on a send.' }
+            if ($how -eq 'gone') { throw 'curl.exe: curl: (22) The requested URL returned error: 404 (exit 22)' }
+            if ($how -eq 'bad') { Write-File $Out 'something else'; return }
+            Copy-Item -LiteralPath $good -Destination $Out
+        }
+        function Reset-Dl { $script:tries = @(); $script:fail = @{}; $script:KitBadHosts = @{}; Remove-Item -LiteralPath "$dl\out.bin" -Force -ErrorAction SilentlyContinue }
+
+        Reset-Dl
+        $r = Get-KitDownload @('https://a.example/f') "$dl\out.bin" $goodSha @() 4 0
+        Check ($r -eq '' -and ($script:tries -join ',') -eq 'a.example/web' -and (Test-Path "$dl\out.bin")) "download: a working host, one try [$r $($script:tries -join ',')]"
+        $r = Get-KitDownload @('https://a.example/f') "$dl\out.bin" $goodSha.ToUpperInvariant() @() 4 0
+        Check ($r -eq '' -and $script:tries.Count -eq 1) 'download: a file already there with the right SHA-256 is not fetched again'
+
+        Reset-Dl; $script:fail['a.example'] = 'web'
+        $r = Get-KitDownload @('https://a.example/f') "$dl\out.bin" $goodSha @() 4 0
+        Check ($r -eq '' -and ($script:tries -join ',') -eq 'a.example/web,a.example/web,a.example/web,a.example/web,a.example/curl') "download: 4 tries, then curl.exe [$($script:tries -join ',')]"
+
+        Reset-Dl; $script:fail['a.example'] = 'all'; $script:fail['b.example'] = 'all'
+        $r = Get-KitDownload @('https://a.example/f', 'https://b.example/f') "$dl\out.bin" $goodSha @('https://mirror.example/f') 2 0
+        Check ($r -eq '' -and ($script:tries -join ',') -eq 'a.example/web,a.example/web,a.example/curl,b.example/web,b.example/web,b.example/curl,mirror.example/web') "download: every URL, then the mirror [$($script:tries -join ',')]"
+        $before = $script:tries.Count
+        Remove-Item -LiteralPath "$dl\out.bin" -Force
+        $r = Get-KitDownload @('https://a.example/g') "$dl\out.bin" $goodSha @('https://mirror.example/g') 2 0
+        Check ($r -eq '' -and ($script:tries[$before..($script:tries.Count - 1)] -join ',') -eq 'a.example/web,mirror.example/web') "download: a host that failed every try gets one try next time [$($script:tries -join ',')]"
+
+        Reset-Dl; $script:fail['a.example'] = 'bad'
+        $r = Get-KitDownload @('https://a.example/f') "$dl\out.bin" $goodSha @('https://mirror.example/f') 4 0
+        Check ($r -eq '' -and (Read-File "$dl\out.bin") -eq 'the pinned file' -and ($script:tries -join ',') -eq 'a.example/web,mirror.example/web') "download: a wrong file is thrown away and the mirror's taken [$($script:tries -join ',')]"
+        Reset-Dl; $script:fail['a.example'] = 'bad'; $script:fail['mirror.example'] = 'bad'
+        $r = Get-KitDownload @('https://a.example/f') "$dl\out.bin" $goodSha @('https://mirror.example/f') 4 0
+        Check ($r -match 'a\.example: .*SHA-256 differs' -and $r -match 'mirror\.example: .*SHA-256 differs' -and -not (Test-Path "$dl\out.bin") -and -not (Test-Path "$dl\out.bin.part")) "download: wrong files everywhere: nothing kept, each host named [$r]"
+
+        Reset-Dl; $script:fail['a.example'] = 'gone'
+        $r = Get-KitDownload @('https://a.example/f') "$dl\out.bin" $goodSha @('https://mirror.example/f') 4 0
+        Check ($r -eq '' -and ($script:tries -join ',') -eq 'a.example/web,mirror.example/web' -and -not $script:KitBadHosts['a.example']) "download: a 404 is not asked again, and its host is not marked bad [$($script:tries -join ',')]"
+        Check (-not (Test-KitGoneError ([Exception]::new('curl.exe: curl: (35) schannel: failed to receive handshake (exit 35)')))) 'download: a TLS error is no 404'
+
+        Reset-Dl; $script:fail['a.example'] = 'all'; $script:fail['mirror.example'] = 'all'
+        $r = Get-KitDownload @('https://a.example/f') "$dl\out.bin" $goodSha @('https://mirror.example/f') 2 0
+        Check ($r -match '^a\.example: The underlying connection' -and $r -match '; mirror\.example: ') "download: everything failed: each host and why [$r]"
+        $text = Get-KitDownloadFailText 'tools.lock' $r 'https://git.magicbean.dev/x/tools.lock' $true
+        Check ($text -match 'co-op mirror on GitHub' -and $text -match 'antivirus' -and $text -match 'VPN or proxy' -and $text -match 'https://git\.magicbean\.dev/x/tools\.lock' -and $text -match 'a\.example') "download: the failure text names the hosts, the mirror, the usual causes and a browser test [$text]"
+
+        # (review-kit-mirror 4) the mirror shares github.com with upstream URLs: a "bad" github.com still gets the mirror's full round
+        Reset-Dl; $script:fail['gh.example'] = 'all'
+        $r = Get-KitDownload @('https://gh.example/upstream') "$dl\out.bin" $goodSha @('https://gh.example/mirror') 2 0
+        Check (($script:tries -join ',') -eq 'gh.example/web,gh.example/web,gh.example/curl,gh.example/web,gh.example/web,gh.example/curl') "download: the mirror gets every try even on a host that failed [$($script:tries -join ',')]"
+
+        Reset-Dl
+        Check ((Get-KitDownload @('https://a.example/f') "$dl\out.bin" '' @() 4 0) -match 'no SHA-256' -and $script:tries.Count -eq 0) 'download: nothing is fetched without a SHA-256 to check it against'
+    }
+    # the real fetchers on file:// (Invoke-WebRequest and curl.exe), and a test-blocked host falling back to the mirror
+    $script:KitBadHosts = @{}
+    Invoke-KitFetch "$feed/good.bin" "$dl\web.bin" 'web'; Invoke-KitFetch "$feed/good.bin" "$dl\curl.bin" 'curl'
+    Check ((Read-File "$dl\web.bin") -eq 'the pinned file' -and (Read-File "$dl\curl.bin") -eq 'the pinned file') 'download: Invoke-WebRequest and curl.exe both fetch'
+    # (review-kit-mirror 2) Invoke-WebRequest -OutFile reads [ ] as wildcards: a kit folder named so still gets its file
+    $br = Join-Path $dl 'kit [copy] (1)'; New-Item -ItemType Directory -Force -Path $br | Out-Null
+    Invoke-KitFetch "$feed/good.bin" (Join-Path $br 'web.bin') 'web'; Invoke-KitFetch "$feed/good.bin" (Join-Path $br 'curl.bin') 'curl'
+    Check ((Read-File (Join-Path $br 'web.bin')) -eq 'the pinned file' -and (Read-File (Join-Path $br 'curl.bin')) -eq 'the pinned file') 'download: a folder with [ ] in its name: both fetchers'
+    $threw = ''; try { Invoke-KitFetch "$feed/missing.bin" "$dl\m.bin" 'curl' } catch { $threw = $_.Exception.Message }
+    Check ($threw -match '^curl\.exe: ') "download: a failed curl.exe throws its own reason [$threw]"
+    $env:OOT_COOP_TEST_BLOCK_HOST = 'magicbean\.dev$'
+    try { $r = Get-KitDownload @('https://git.magicbean.dev/MagicBeanDev/Longshot/releases/download/x/good.bin') "$dl\blocked.bin" $goodSha @("$feed/good.bin") 2 0 }
+    finally { Remove-Item env:OOT_COOP_TEST_BLOCK_HOST -ErrorAction SilentlyContinue }
+    Check ($r -eq '' -and (Read-File "$dl\blocked.bin") -eq 'the pinned file') "download: git.magicbean.dev blocked: the file comes from the mirror [$r]"
+    $keepTls = [Net.ServicePointManager]::SecurityProtocol
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls11
+    Set-KitTls
+    $now = [Net.ServicePointManager]::SecurityProtocol
+    Check (($now -band [Net.SecurityProtocolType]::Tls12) -and ($now -band [Net.SecurityProtocolType]::Tls11)) "download: Set-KitTls adds Tls12 to what is enabled, takes nothing away [$now]"
+    [Net.ServicePointManager]::SecurityProtocol = $keepTls
+} finally {
+    Remove-Item -LiteralPath $dl -Recurse -Force -ErrorAction SilentlyContinue
 }
 if ($failed) { Write-Host "$failed failed"; exit 1 }
 Write-Host 'all passed'

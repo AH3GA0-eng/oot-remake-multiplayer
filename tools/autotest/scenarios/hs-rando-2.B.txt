@@ -1,0 +1,38 @@
+# hs-rando-2, B (rando-puppet-b): the second run, after hs-rando-1's restart. B plays the host's seed now (built in
+# hs-rando-1) and opens a Mido's house chest. Seed 6PKCPFWP: Bottom Left = Slingshot, Top Right = Goron's
+# Bracelet (Progressive Strength), Top Left = Arrows (5), Bottom Right = Rupees (5); vanilla: rupees / a heart.
+# PASS: both screens show the other player (puppet) in Mido's house; B's get scene shows one of the seed's items;
+# B's log has no "Randomizer on: ..." or ready line (it plays the seed it built).
+mark start
+warp KokiriForest_Child FrontDekuTree
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place -51.68 112.76 -39.38
+wait 600
+mark placed
+wait 600
+mark seen
+toward -51.45 -39.82 20
+press A
+wait 60
+press A
+wait 60
+press A
+wait 600
+mark get
+press A
+wait 120
+press A
+wait 120
+press B
+wait 600
+mark end

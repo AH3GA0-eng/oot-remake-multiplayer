@@ -203,6 +203,66 @@ TEST_CASE("pause tab: Join pastes the code in one press, then joins with it") {
     CHECK(Selected(e) == "Join");
 }
 
+TEST_CASE("pause tab: a new code replaces the one in the field, never goes beside it, and Clear empties it") {
+    const std::string old_code = "ABCDEFGHJKLMNPQRSTUVWXYZ-OLD1";
+    const std::string new_code = "ABCDEFGHJKLMNPQRSTUVWXYZ-NEW2";
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    m.Open(Page::kJoin);
+    m.Press(Input::kDecide);
+    m.TakeRequest();
+    CHECK(m.Paste(old_code));
+    // a long code shows its start, its end and its length: codes start alike
+    CHECK(Names(m) == std::vector<std::string>{"Friend's code", "Clear the code", "Join"});
+    CHECK(m.view().rows[0].value == "ABCDEFGH...XYZ-OLD1 (29)");
+    // pressing the field again pastes at once, in place of the old code (one press, then Join)
+    SelectRow(m, "Friend's code");
+    m.Press(Input::kDecide);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kPaste);
+    CHECK(m.Paste(new_code));
+    CHECK(m.join_text() == new_code);
+    CHECK(Selected(m) == "Join");
+    // Ctrl+V while typing replaces it too
+    SelectRow(m, "Friend's code");
+    m.Press(Input::kDecide);
+    m.TakeRequest();
+    CHECK(m.Paste(""));   // nothing on the clipboard: the code stays, no complaint
+    CHECK(m.join_text() == new_code);
+    CHECK(m.typing());
+    CHECK(m.view().rows[0].value == "..." + new_code.substr(new_code.size() - 20) + "_");   // its end, typed
+    m.Press(Input::kPaste);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kPaste);
+    CHECK(m.Paste(old_code));
+    CHECK(m.join_text() == old_code);
+    // a code that comes as keystrokes (Win+V, an on-screen keyboard) starts a new code, not more of the old one
+    SelectRow(m, "Friend's code");
+    m.Press(Input::kDecide);
+    m.TakeRequest();
+    m.Paste("");
+    for (const char c : new_code) {
+        m.Char(static_cast<unsigned char>(c));
+    }
+    CHECK(m.join_text() == new_code);
+    m.Press(Input::kDecide);
+    // Backspace first edits the old code instead
+    SelectRow(m, "Friend's code");
+    m.Press(Input::kDecide);
+    m.TakeRequest();
+    m.Paste("");
+    m.Press(Input::kErase);
+    m.Char('3');
+    CHECK(m.join_text() == new_code.substr(0, new_code.size() - 1) + "3");
+    m.Press(Input::kDecide);
+    // Clear empties the field and goes back to it; Join waits for a code
+    SelectRow(m, "Clear the code");
+    m.Press(Input::kDecide);
+    CHECK(m.join_text().empty());
+    CHECK(Names(m) == std::vector<std::string>{"Friend's code", "Join"});
+    CHECK(m.view().rows[0].value == "Paste");
+    CHECK(Selected(m) == "Friend's code");
+    CHECK(m.view().rows[1].fixed);
+}
+
 TEST_CASE("pause tab: Join offers the last game again first, one press") {
     Menu m;
     m.Show(CoopTitleMenu::Options{});

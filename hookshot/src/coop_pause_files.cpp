@@ -7,9 +7,11 @@
 #include <cstring>
 #include <cwchar>
 #include <fstream>
+#include <mutex>
 #include <sstream>
 #include <system_error>
 
+#include "coop_name_privacy.h"
 #include "coop_runtime.h"
 
 #ifdef _WIN32
@@ -28,6 +30,7 @@
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <netinet/in.h>
+#include <unistd.h>
 
 #include "coop_clipboard_posix.h"
 #endif
@@ -143,37 +146,86 @@ std::string Utf8Path(const fs::path& p) {
 }
 
 namespace {
-
-// The player's Windows name, for a first-time player with no name in coop.ini ("" when it will not do).
-std::string WindowsName() {
+// This PC's user name and PC name ("" when unknown): never the co-op name (coop_name_privacy.h).
+struct OsNames {
+    std::string user;
+    std::string pc;
+};
+OsNames ThisPc() {
+    OsNames out;
 #ifdef _WIN32
     wchar_t w[257] = {};
     DWORD n = 257;
-    if (!GetUserNameW(w, &n)) {
-        return {};
+    if (GetUserNameW(w, &n)) {
+        out.user = Narrow(w);
     }
-    std::string name = Narrow(w);
-    while (!name.empty() && !CoopTitleMenu::NameOk(name)) {   // too long: cut to 16 characters
-        do {
-            name.pop_back();
-        } while (!name.empty() && (static_cast<unsigned char>(name.back()) & 0xC0) == 0x80);
+    wchar_t c[MAX_COMPUTERNAME_LENGTH + 1] = {};
+    DWORD m = MAX_COMPUTERNAME_LENGTH + 1;
+    if (GetComputerNameW(c, &m)) {
+        out.pc = Narrow(c);
     }
-    return name;
 #else
-    const char* u = std::getenv("USER");
-    return u != nullptr && CoopTitleMenu::NameOk(u) ? std::string(u) : std::string();
+    if (const char* u = std::getenv("USER"); u != nullptr) {
+        out.user = u;
+    }
+    char h[256] = {};
+    if (gethostname(h, sizeof h - 1) == 0) {
+        out.pc = h;
+    }
 #endif
+    return out;
 }
+
+std::once_flag g_name_once;
+std::string g_fallback_name;   // the random name when coop.ini could not be written
 }  // namespace
 
+void CheckName() {
+    std::call_once(g_name_once, [] {
+        namespace P = CoopNamePrivacy;
+        const std::string coop = ReadText(CoopIni());
+        const std::string saved = CoopTitleMenu::IniGet(coop, "name").value_or(std::string());
+        // The marker: the check ran once, so a name the player types in later (even their user name) stays.
+        const fs::path marker = CoopIni().parent_path() / "coop-name-checked.txt";
+        std::error_code ec;
+        const bool checked = fs::exists(marker, ec);
+        const OsNames os = ThisPc();
+        const auto was = P::Matches(saved, os.user, os.pc);
+        const auto action = P::Decide(saved, checked, was);
+        if (action == P::Action::keep) {
+            if (!checked) {
+                WriteText(marker, "The co-op name was checked: it is not this PC's user or PC name, or the player chose it.\n");
+            }
+            return;   // a name the player chose
+        }
+        const std::string name = P::NewName();
+        g_fallback_name = name;
+        const bool ok = WriteText(CoopIni(), CoopTitleMenu::IniSet(coop, "name", name, true));
+        if (ok) {
+            WriteText(marker, "The co-op name was checked: it is not this PC's user or PC name, or the player chose it.\n");
+        }
+        std::fprintf(stderr, "coop: name: %s: now %s%s\n",
+                     action == P::Action::fill   ? "none in coop.ini"
+                     : was == P::Source::pc      ? "it was this PC's name"
+                                                 : "it was this PC's user name",
+                     name.c_str(), ok ? "" : " (coop.ini could not be written: this run only)");
+        if (action == P::Action::replace) {
+#ifdef _WIN32
+            P::Say(P::Notice(was, name, true));
+#else
+            P::Say(P::Notice(was, name, false));
+#endif
+        }
+    });
+}
+
 CoopTitleMenu::Options ReadOptions() {
+    CheckName();
     const auto kit = FindKit();
     const std::string coop = ReadText(CoopIni());
     auto o = CoopTitleMenu::Options::Read(coop, kit ? ReadText(*kit / "coop-options.ini") : std::string());
-    if (!CoopTitleMenu::IniGet(coop, "name")) {
-        if (const std::string w = WindowsName(); !w.empty()) {
-            o.name = w;
-        }
+    if (o.name.empty() && !g_fallback_name.empty()) {
+        o.name = g_fallback_name;
     }
     return o;
 }

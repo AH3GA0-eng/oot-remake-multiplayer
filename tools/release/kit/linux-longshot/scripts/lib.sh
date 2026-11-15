@@ -52,6 +52,11 @@ pin_get() {
 
 # fetch URL OUT: a download with curl or wget (OOT_COOP_FETCH_LOCAL=1, for tests: URL may be a local file).
 fetch() {
+    # (OOT_COOP_TEST_BLOCK_HOST, tests only: a host matching that regex fails as if blocked)
+    if [[ -n ${OOT_COOP_TEST_BLOCK_HOST-} ]]; then
+        local h=${1#*://}; h=${h%%/*}
+        [[ $h =~ $OOT_COOP_TEST_BLOCK_HOST ]] && return 1
+    fi
     case $1 in
         http://* | https://*)
             if command -v curl >/dev/null 2>&1; then
@@ -64,6 +69,48 @@ fetch() {
 }
 
 sha256_of() { sha256sum "$1" | cut -d' ' -f1; }
+
+# fetch_verified OUT SHA256 URL...: OUT from the first URL (Longshot's own, then the co-op mirror) whose file has
+# that SHA-256 (kit-mirror, 0.11.1: players' downloads from git.magicbean.dev fail now and then). Each URL gets 3
+# tries, waiting KIT_FETCH_WAIT (2) seconds and then twice as long; a file that differs is deleted, never used.
+# On failure KIT_FETCH_WHY says, host by host, what went wrong.
+fetch_verified() {
+    local out=$1 want=$2 url h i ok wait
+    local -a why=()
+    shift 2
+    KIT_FETCH_WHY=
+    for url; do
+        [[ -n $url ]] || continue
+        h=${url#*://}; h=${h%%/*}; [[ -n $h ]] || h='this PC'
+        ok= wait=${KIT_FETCH_WAIT:-2}
+        for i in 1 2 3; do
+            rm -f "$out.part"
+            if fetch "$url" "$out.part"; then ok=1; break; fi
+            if ((i < 3)); then say "  $h failed (try $i of 3), trying again in ${wait} s ..."; sleep "$wait"; wait=$((wait * 2)); fi
+        done
+        if [[ -z $ok ]]; then why+=("$h: the download failed"); continue; fi
+        if [[ $(sha256_of "$out.part") != "$want" ]]; then
+            rm -f "$out.part"; why+=("$h: the file is damaged (its SHA-256 differs from the one this kit pins)"); continue
+        fi
+        mv -f "$out.part" "$out"
+        ((${#why[@]})) && say "  got it from $h"
+        return 0
+    done
+    rm -f "$out.part"
+    KIT_FETCH_WHY=$(IFS=';'; printf '%s' "${why[*]}")
+    KIT_FETCH_WHY=${KIT_FETCH_WHY//;/; }
+    return 1
+}
+
+# fetch_fail_text FILE TEST_URL HAD_MIRROR: what a player reads when fetch_verified failed everywhere.
+fetch_fail_text() {
+    local tried="Longshot's servers"
+    [[ $3 == 1 ]] && tried="Longshot's servers and the co-op mirror on GitHub"
+    printf '%s\n' "The download of $1 failed. The kit tried $tried, each 3 times: $KIT_FETCH_WHY." \
+        'This is nearly always this PC or network: a VPN or proxy, a firewall, or a filtering DNS. Test: open this in a browser:' \
+        "  $2" \
+        'Start again to retry: what was downloaded is kept.'
+}
 
 # kit_offline [FORCE]: no internet here (github.com, where the kit's downloads are, cannot be reached in a few
 # seconds). FORCE is OOT_COOP_OFFLINE as read before build.sh clears it: 1 says offline, 0 online, no probe (tests).

@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <utility>
 
 namespace CoopPlatforms {
 namespace {
@@ -240,6 +241,17 @@ void ClockFinder::Add(std::uint64_t now_us, const Floats& floats) {
     }
 }
 
+std::optional<std::uint64_t> ClockFinder::StalledKey() const {
+    if (!chosen_) {
+        return std::nullopt;
+    }
+    const auto it = candidates_.find(*chosen_);
+    if (it == candidates_.end() || it->second.stalled == 0) {
+        return std::nullopt;
+    }
+    return *chosen_;
+}
+
 std::optional<ClockFinder::Clock> ClockFinder::Found() const {
     if (!chosen_ || looks_.empty()) {
         return std::nullopt;
@@ -382,9 +394,32 @@ void PlatformSync::Tick(const std::string& scene, std::uint8_t self, std::uint64
         s.finder.Add(steady_us, floats);
         const std::uint8_t owner = OwnerOf(d->hash, self, server_us);
         if (owner == self) {
-            const auto clock = s.finder.Found();
+            auto clock = s.finder.Found();
             if (!clock) {
+                if (const auto key = s.finder.StalledKey(); key && !s.paused_at) {
+                    if (const auto v = floats.find(*key); v != floats.end()) {
+                        s.paused_at = v->second;  // our game stands still (a pause menu): the shared clock does not
+                    }
+                }
                 continue;
+            }
+            bool resumed = false;
+            if (const auto stood = std::exchange(s.paused_at, std::nullopt);
+                stood && s.sent && s.sent->key == clock->key && !probe_only && !s.gave_up &&
+                DriftSeconds(clock->value, *stood, clock->rate, clock->cycle) <= kResumeS) {
+                const float want = Advance(s.sent->value, s.sent->rate, s.sent->cycle, s.sent_us, server_us);
+                if (DriftSeconds(clock->value, want, clock->rate, clock->cycle) > kDriftS) {
+                    char text[200];
+                    std::snprintf(text, sizeof text,
+                                  "%016llx %s: our game stood still: clock %s put where the shared one is (%.3f -> %.3f)",
+                                  static_cast<unsigned long long>(d->hash), d->name.c_str(), Where(clock->key).c_str(),
+                                  static_cast<double>(clock->value), static_cast<double>(want));
+                    out.notes.emplace_back(text);
+                    out.writes.push_back({d->address, d->hash, clock->key, want, clock->value});
+                    ++writes_;
+                    clock->value = want;
+                    resumed = true;
+                }
             }
             if (!s.logged_clock) {
                 s.logged_clock = true;
@@ -395,18 +430,21 @@ void PlatformSync::Tick(const std::string& scene, std::uint8_t self, std::uint64
                               static_cast<double>(clock->cycle));
                 out.notes.emplace_back(text);
             }
-            if (s.finder.Jumped() || s.last_send_us == 0 || server_us >= s.last_send_us + kSendEveryUs) {
+            if (resumed || s.finder.Jumped() || s.last_send_us == 0 || server_us >= s.last_send_us + kSendEveryUs) {
                 if (message.ticks.size() < coop::protocol::kMaxPlatformTicks) {
                     if (s.since_us == 0 || server_us > s.last_send_us + kOwnerQuietUs) {
                         s.since_us = server_us;
                     }
                     s.last_send_us = server_us;
                     message.ticks.push_back({d->hash, clock->key, clock->value, clock->rate, clock->cycle});
+                    s.sent = message.ticks.back();
+                    s.sent_us = server_us;
                 }
             }
             continue;
         }
         s.since_us = 0;  // another game has it
+        s.paused_at.reset();
         if (probe_only || s.gave_up) {
             continue;
         }
@@ -421,6 +459,18 @@ void PlatformSync::Tick(const std::string& scene, std::uint8_t self, std::uint64
         const Heard& h = hp->second;
         const auto mine = floats.find(h.tick.key);
         if (mine == floats.end() || !std::isfinite(mine->second)) {
+            continue;
+        }
+        // Our word stands still after it was seen moving: our game is paused (#35). No write (it could not
+        // hold) and nothing counted against us; once it moves again the first write puts it in step.
+        const bool same_key = s.mine_key == h.tick.key && s.mine_was;
+        const bool still = same_key && std::fabs(mine->second - *s.mine_was) <
+                                           ClockFinder::kMinRate * (ClockFinder::kLookEveryUs / 1e6f);
+        s.mine_moved = same_key && (s.mine_moved || !still);
+        s.mine_key = h.tick.key;
+        s.mine_was = mine->second;
+        if (still && s.mine_moved) {
+            s.written.reset();
             continue;
         }
         const float want = Advance(h.tick.value, h.tick.rate, h.tick.cycle, h.sent_us, server_us);

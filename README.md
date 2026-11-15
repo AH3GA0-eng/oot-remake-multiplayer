@@ -30,7 +30,7 @@ Both stages share one design, one wire protocol and one server, so what is learn
 **Split screen (experimental):** two full games on one PC with [Nucleus Co-op](docs/play-lan.md#split-screen-experimental), one per player, each with its own controller (about 10 GB of RAM per player and a strong graphics card). Native split screen (one game) comes in a later release.
 
 1. [Setting up](docs/setup.md): the start file, the first build, updating, settings and troubleshooting.
-2. Play on the [same network (LAN)](docs/play-lan.md), or [over the internet](docs/play-online.md): Host in the Multiplayer tab opens the port on your router by itself (UPnP), makes a random join password and copies an **invite code** (the Host page says so first: send it to your friends, or pick another way to host below); friends paste it under Join. Every session has a join password, and all game traffic is encrypted with it.
+2. Play on the [same network (LAN)](docs/play-lan.md), or [over the internet](docs/play-online.md): Host in the Multiplayer tab opens the port on your router by itself (UPnP), makes a random join password and copies an **invite code** (share it in DMs only: it holds your internet address); friends paste it under Join. Every session has a join password, and all game traffic is encrypted with it.
 3. [Known issues](docs/known-issues.md): what works in this build and what does not yet.
 4. [Questions testers ask](docs/faq.md): who is the host, a permanent server, shader stutter, where saves are.
 

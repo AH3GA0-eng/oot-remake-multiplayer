@@ -4,8 +4,9 @@ autotest's Hookshot start (tools/autotest/run.ps1), so the colour your own scree
 colour the others are sent, on every start.
 
 The colour is decided as the co-op module decides it: LICHII_COOP_COLOR (a switch), else the kit's
-coop-options.ini `color`, else coop.ini's `color`; none (or LICHII_COOP_TUNICS=0): no files, the
-game's green (the module then wears your slot colour live). The pack's coop_puppet.json
+coop-options.ini `color`, else coop.ini's `color`; none or green: green's own files (npc-colour: your own Link
+never wears the game's tunic textures, which Mido's and Saria's models share; the module then
+wears your slot colour live on your own copies only). The pack's coop_puppet.json
 `self_files` ({colour: {romfs path: file beside romfs}}) names the files of each colour; every one
 any colour may put in is taken away first, so no file of an earlier start stays.
 
@@ -116,10 +117,10 @@ def start_color(switch, options_ini=None, coop_ini=None, tunics=""):
 
 
 def put(pack, color):
-    """Puts the colour's own files in the pack's romfs (Set-KitSelfTunic). Returns the tunic put
-    in, or '' (green, none, no such colour in the pack, an older or broken pack)."""
+    """Puts the colour's own files in the pack's romfs (Set-KitSelfTunic); no colour: green's.
+    Returns the tunic put in, or '' (no such colour in the pack, an older or broken pack)."""
     romfs = os.path.join(pack, "romfs")
-    want = tunic_of(color)
+    want = tunic_of(color) or "green"
     try:
         with open(os.path.join(pack, "coop_puppet.json"), encoding="utf-8") as f:
             manifest = json.load(f)
@@ -134,7 +135,7 @@ def put(pack, color):
             targets += [p for p in per if isinstance(p, str) and _OK.match(p)]
     chosen = {}
     tunics = manifest.get("tunics") if isinstance(manifest.get("tunics"), dict) else {}
-    if want and want != "green" and tunics.get("green") and isinstance(files.get(want), dict):
+    if tunics.get("green") and isinstance(files.get(want), dict):
         for rel, src in files[want].items():
             if isinstance(rel, str) and _OK.match(rel) and isinstance(src, str) and src:
                 chosen[rel] = os.path.join(pack, src)

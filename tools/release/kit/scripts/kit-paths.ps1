@@ -436,7 +436,10 @@ function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
     $romfs = Join-Path $PackDir 'romfs'
     $tile = 'Tex/Angin_Tile_A_Alb.bntx.zs'
     $dark = 'Tex/Angin_Tile_A_Dark_Alb.bntx.zs'
+    # No colour: green's own files (npc-colour). Your own Link never wears the game's tunic textures: Mido's and
+    # Saria's models (every Kokiri) share them, and the module repaints your own Link's by their texels.
     $tunic = Get-KitTunic $Color
+    if (-not $tunic) { $tunic = 'green' }
     $json = $null
     try {
         $json = [System.IO.File]::ReadAllText((Join-Path $PackDir 'coop_puppet.json')) | ConvertFrom-Json -ErrorAction Stop
@@ -455,7 +458,7 @@ function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
                 foreach ($f in $c.Value.PSObject.Properties) { if (& $ok $f.Name) { $targets += $f.Name } }
             }
         }
-        if ($json -and $tunic -and $tunic -ne 'green' -and $json.tunics -and $json.tunics.green) {
+        if ($json -and $json.tunics -and $json.tunics.green) {
             if ($json.self_files -and $json.self_files.$tunic) {
                 foreach ($f in $json.self_files.$tunic.PSObject.Properties) {
                     if ((& $ok $f.Name) -and $f.Value) { $put[$f.Name] = Join-Path $PackDir $f.Value }
@@ -537,6 +540,77 @@ function Use-KitPuppetPack([string]$Manifest, [string]$ToolDir, [string[]]$Missi
     if ($env:LICHII_COOP_PUPPET) { Remove-Item env:LICHII_COOP_PUPPET; Write-Host 'Option: LICHII_COOP_PUPPET off (no pack)' }
     if ($env:LICHII_COOP_SELF_TUNIC) { Remove-Item env:LICHII_COOP_SELF_TUNIC }
     return $false
+}
+
+# Why the puppet pack cannot be made now, in plain words (player report: a player saw the others' names but no
+# Links, and only longshot_log.txt said why). $Remembered: the game file hookshot\game-files.txt names ('' when
+# none). The pack is made from that file (the .nup), so a file moved, renamed or on a drive not plugged in is the
+# usual cause. Lines for the window; the last one says what happens without the pack.
+function Get-KitPackSourceText([string]$Remembered) {
+    $out = @()
+    if (-not $Remembered) {
+        $out += 'Puppet pack: not made. It is made from your game file (the .nup), and this kit does not know where it is'
+        $out += '  (hookshot\game-files.txt is missing).'
+    } else {
+        $out += "Puppet pack: not made. Your game file is not at $Remembered any more"
+        $out += '  (hookshot\game-files.txt names it): it was moved, renamed or deleted, or its drive is not plugged in.'
+        $out += '  Put it back there, or give its new place below.'
+    }
+    $out += '  Without the pack the other players show as names only (no Link). Every start tries again.'
+    return $out
+}
+
+# The drag prompt for the game file is asked once, not at every start (a player away from the window waited 2 minutes
+# each time): the key is the game file named ('' for none) and the pack tool's hash, so a new game file or a new tool
+# asks again. Test-KitPackAsked: the note at $Note holds that key.
+function Get-KitPackAskKey([string]$Remembered, [string]$ToolDir) {
+    $tool = ''
+    try { $tool = "$(Get-PuppetToolHash $ToolDir)" } catch { }
+    return "$Remembered|$tool"
+}
+function Test-KitPackAsked([string]$Note, [string]$Key) {
+    try {
+        if (-not (Test-Path -LiteralPath $Note -PathType Leaf)) { return $false }
+        return ([System.IO.File]::ReadAllText($Note).Trim() -eq $Key.Trim())
+    } catch { return $false }
+}
+
+# The game file (.nup) when hookshot\game-files.txt names none or one that is gone (pack-retry: players whose
+# pack was never made because the .nup moved): the usual places, the folder the remembered file was in first,
+# then the kit, the kit's parent, Downloads and the Desktop (each with one level of subfolders). $Check says
+# whether a file is the game (dumpcheck.py: the right title and version, from its header). The one with the
+# remembered file's name wins; else the only good one. '' when none or several (the caller asks then).
+function Find-KitGameNup([string]$Remembered, [string]$Kit, [scriptblock]$Check, [string[]]$Places = $null) {
+    if ($null -eq $Places) {
+        $Places = @()
+        if ($Remembered) { try { $Places += Split-Path -Parent $Remembered } catch { } }
+        $Places += $Kit
+        try { $Places += Split-Path -Parent $Kit } catch { }
+        $Places += Join-Path $env:USERPROFILE 'Downloads'
+        try { $Places += [Environment]::GetFolderPath('Desktop') } catch { }
+    }
+    $seen = @{}
+    $good = @()
+    foreach ($place in $Places) {
+        if (-not $place -or -not (Test-Path -LiteralPath $place -PathType Container)) { continue }
+        $files = @(Get-ChildItem -LiteralPath $place -Filter '*.nup' -File -Depth 1 -ErrorAction SilentlyContinue)
+        foreach ($f in $files) {
+            $key = $f.FullName.ToLowerInvariant()
+            if ($seen.ContainsKey($key)) { continue }
+            $seen[$key] = $true
+            $ok = $false
+            try { $ok = [bool](& $Check $f.FullName) } catch { }
+            if ($ok) { $good += $f }
+        }
+    }
+    if (-not $good) { return '' }
+    if ($Remembered) {
+        $leaf = Split-Path -Leaf $Remembered
+        $same = @($good | Where-Object { $_.Name -ieq $leaf })
+        if ($same.Count -eq 1) { return $same[0].FullName }
+    }
+    if ($good.Count -eq 1) { return $good[0].FullName }
+    return ''
 }
 
 # --- Hookshot: what the kit's game needs before it starts (updates without player steps) ---
@@ -736,6 +810,30 @@ function Get-KitHookshotExe([string]$Game) {
         if (Test-Path -LiteralPath $p) { return $p }
     }
     return $null
+}
+
+# The game folders collect-logs looks in for longshot_log.txt, as the kit's start finds its game, then wider (a player
+# could not find the logs, and the zip had none: 0.11.0): the start's own game (Get-KitHookshotGame, which follows
+# hookshot\game-folder.txt), the kit's default hookshot\game, the folder game-folder.txt names even when the start
+# would not follow it (another kit's game), and the folder of each longshot.exe running now. $Running: tests.
+# Returns each longshot.exe once, in that order.
+function Get-KitLogGameExes([string]$Kit, [string[]]$Running = $null) {
+    $games = @((Get-KitHookshotGame $Kit), (Join-Path $Kit 'hookshot\game'))
+    $where = Join-Path $Kit 'hookshot\game-folder.txt'
+    if (Test-Path -LiteralPath $where) {
+        $g = "$(Get-Content -LiteralPath $where -TotalCount 1)".Trim()
+        if ($g) { $games += $(if ([System.IO.Path]::IsPathRooted($g)) { $g } else { Join-Path $Kit $g }) }
+    }
+    $exes = @($games | ForEach-Object { Get-KitHookshotExe $_ })
+    if ($null -eq $Running) {
+        $Running = @(Get-Process longshot, hookshot -ErrorAction SilentlyContinue | ForEach-Object { $_.Path } | Where-Object { $_ })
+    }
+    $exes += $Running
+    $seen = @{}
+    foreach ($e in @($exes | Where-Object { $_ -and (Test-Path -LiteralPath $_) })) {
+        $k = ([System.IO.Path]::GetFullPath($e)).ToLowerInvariant()
+        if (-not $seen.ContainsKey($k)) { $seen[$k] = $true; $e }
+    }
 }
 
 # Where a game's longshot_log*.txt, coop.ini and mods\ are: beside longshot.exe, and for a builder's bin\ layout
@@ -1059,6 +1157,31 @@ function Get-KitHostPort([string]$Kit, [int[]]$Listening, [int]$Default) {
 # makes the pack (play.ps1 sets this there).
 $script:KitPackRemake = 'Run make-puppet-pack.cmd again.'
 
+# The files a puppet pack's manifest ($Json, coop_puppet.json read) names that are not there: look_files (beside the
+# manifest: coop_look\<colour>.bin, coop_look\gear.bin) and each tunic's files (in its romfs\). Relative paths, the
+# manifest's own spelling; @() when all are there. Never throws.
+function Get-KitPuppetPackGaps([string]$Manifest, $Json) {
+    $out = @()
+    try {
+        $dir = Split-Path -Parent $Manifest
+        $romfs = Join-Path $dir 'romfs'
+        if ($Json.look_files) {
+            foreach ($p in $Json.look_files.PSObject.Properties) {
+                $rel = "$($p.Value)"
+                if ($rel -and -not (Test-Path -LiteralPath (Join-Path $dir $rel) -PathType Leaf)) { $out += $rel }
+            }
+        }
+        if ($Json.tunics) {
+            foreach ($p in $Json.tunics.PSObject.Properties) {
+                foreach ($rel in @($p.Value)) {
+                    if ($rel -and -not (Test-Path -LiteralPath (Join-Path $romfs "$rel") -PathType Leaf)) { $out += "romfs/$rel" }
+                }
+            }
+        }
+    } catch { }
+    return $out
+}
+
 function Get-PuppetPackHint([string]$Manifest, [string]$ToolDir) {
     try {
         $json = [System.IO.File]::ReadAllText($Manifest) | ConvertFrom-Json -ErrorAction Stop
@@ -1071,9 +1194,19 @@ function Get-PuppetPackHint([string]$Manifest, [string]$ToolDir) {
         if ($json.tunics_off -ne $true -and (-not $tunics -or @($tunics.PSObject.Properties).Count -eq 0)) {
             return "Puppet pack: made without the tunic colours, so the other players show in green. $script:KitPackRemake"
         }
+        # Files the manifest names but are gone (a pack tool stopped half way, antivirus, a hand-copied pack): the
+        # look files (coop_look\gear.bin, a colour's .bin) or a tunic's textures. The puppets need them (pack-retry).
+        $gaps = @(Get-KitPuppetPackGaps $Manifest $json)
+        if ($gaps) {
+            return "Puppet pack: incomplete ($($gaps[0]) is missing$(if ($gaps.Count -gt 1) { " and $($gaps.Count - 1) more" })). $script:KitPackRemake"
+        }
         $tool = Get-PuppetToolHash $ToolDir
         if ($tool -and $json.tool_sha256 -and $json.tool_sha256 -ne $tool) {
             return "Puppet pack: made by another version of the pack tool. $script:KitPackRemake (for the latest puppet fixes)"
+        }
+        # (a pack from before the tool hash: made by an older tool, so without the newer fixes, e.g. 0.11.1's colours)
+        if ($tool -and -not $json.tool_sha256) {
+            return "Puppet pack: made by an older version of the pack tool. $script:KitPackRemake (for the latest puppet fixes)"
         }
     } catch {
         return "Puppet pack: coop_puppet.json could not be read. $script:KitPackRemake"
@@ -1174,4 +1307,120 @@ function Copy-KitLongshotSaves([string]$FromImageDir, [string]$ToImageDir) {
     else { $say += 'No save slots copied.' }
     if ($kept) { $say += "  Already in the co-op game, so left as they are: $($kept -join ', ')." }
     $say
+}
+
+# --- Downloads with retries, curl.exe and the co-op mirror (kit-mirror, 0.11.1) ------------------------------------
+# Players saw "The underlying connection was closed: An unexpected error occurred on a send." from git.magicbean.dev
+# (intermittent, some regions; most often an antivirus that scans HTTPS, a VPN or a proxy). Each download now gets
+# several tries, then Windows' own curl.exe, then the co-op mirror (a GitHub release with the same pinned files), and
+# every file is checked against the SHA-256 the kit pins: a file that differs is deleted, never used.
+
+# The TLS versions this .NET knows besides what Windows enables (Tls13 only where the enum has it: .NET 4.8 on new Windows).
+function Set-KitTls {
+    $p = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    if ([Enum]::GetNames([Net.SecurityProtocolType]) -contains 'Tls13') { $p = $p -bor [Net.SecurityProtocolType]'Tls13' }
+    [Net.ServicePointManager]::SecurityProtocol = $p
+}
+
+# One try of one URL into $Out: 'web' = Invoke-WebRequest, 'curl' = Windows' curl.exe (Windows 10 1803 and newer; its
+# own connection code, and --ssl-no-revoke gets past the revocation check an HTTPS-scanning antivirus breaks; the
+# SHA-256 check still decides). Throws with the reason. OOT_COOP_TEST_BLOCK_HOST (tests only): hosts matching that
+# regex fail as if blocked. (curl -g: a URL's [ ] { } are never globbed. Invoke-WebRequest -OutFile reads [ ] in a
+# path as wildcards in PowerShell 5.1, so a kit folder with them gets the file under a plain name in TEMP first.)
+function Invoke-KitFetch([string]$Url, [string]$Out, [string]$Method) {
+    $h = Get-KitUrlHost $Url
+    if ($env:OOT_COOP_TEST_BLOCK_HOST -and $h -match $env:OOT_COOP_TEST_BLOCK_HOST) { throw "$h is blocked (test)" }
+    if ($Method -eq 'curl') {
+        $curl = Join-Path $env:SystemRoot 'System32\curl.exe'
+        if (-not (Test-Path -LiteralPath $curl)) { throw 'this Windows has no curl.exe' }
+        $ErrorActionPreference = 'Continue'   # (curl's error line on stderr is the reason, not a stop)
+        $err = & $curl -fsSLg --ssl-no-revoke --retry 2 --connect-timeout 30 -o $Out $Url 2>&1
+        if ($LASTEXITCODE -ne 0) { throw "curl.exe: $(("$err" -replace '\s+', ' ').Trim()) (exit $LASTEXITCODE)" }
+    } else {
+        if ($Out -notmatch '[\[\]]') { Invoke-WebRequest -Uri $Url -OutFile $Out -UseBasicParsing; return }
+        $plain = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-dl-' + [Guid]::NewGuid().ToString('N') + '.part')
+        try {
+            Invoke-WebRequest -Uri $Url -OutFile $plain -UseBasicParsing
+            Move-Item -LiteralPath $plain -Destination $Out -Force
+        } finally { Remove-Item -LiteralPath $plain -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+function Get-KitUrlHost([string]$Url) { if ($Url -match '^[a-z]+://([^/:]*)') { if ($Matches[1]) { $Matches[1] } else { 'this PC' } } else { $Url } }
+
+# An answer that will not change on a retry: HTTP 404 or 410 (Invoke-WebRequest), or curl.exe's "error: 404"/"410".
+function Test-KitGoneError([Exception]$E) {
+    $r = $E.Response
+    if ($r -and $r.PSObject.Properties['StatusCode']) { return [int]$r.StatusCode -in 404, 410 }
+    return $E.Message -match '^curl\.exe: .*error: (404|410)\b'
+}
+
+# Hosts that failed every try once in this run: later downloads give them one try (no wait), not the whole round.
+# (Not for the mirror: it is the last place to try, and shares github.com with tools.lock's upstream URLs.)
+$script:KitBadHosts = @{}
+
+# Get-KitDownload URLS TO SHA256 [MIRRORS]: $To, checked against $Sha256 (required: nothing unverified is kept). Each
+# URL, then each mirror URL, gets $Tries tries with Invoke-WebRequest ($Wait, then twice as long, between them) and
+# then one with curl.exe. A file with another SHA-256 is deleted and the next URL tried. Returns '' when $To is there
+# and right, else what failed, host by host ("git.magicbean.dev: <reason>; github.com: <reason>").
+function Get-KitDownload([string[]]$Urls, [string]$To, [string]$Sha256, [string[]]$Mirrors = @(), [int]$Tries = 4, [double]$Wait = 2) {
+    if ($Sha256 -notmatch '^[0-9a-fA-F]{64}$') { return "no SHA-256 to check $(Split-Path -Leaf $To) against" }
+    $Sha256 = $Sha256.ToLowerInvariant()
+    if ((Test-Path -LiteralPath $To) -and (Get-FileHash -LiteralPath $To -Algorithm SHA256).Hash.ToLowerInvariant() -eq $Sha256) { return '' }
+    Write-Host "  downloading $(Split-Path -Leaf $To) ..."
+    $part = "$To.part"
+    $failed = @()
+    $mirrorSet = @($Mirrors | Where-Object { $_ })
+    foreach ($url in @(@($Urls) + $mirrorSet | Where-Object { $_ })) {
+        $h = Get-KitUrlHost $url
+        if ($mirrorSet -contains $url) { Write-Host "  trying the co-op mirror ($h) ..." }
+        $bad = $script:KitBadHosts[$h] -and $mirrorSet -notcontains $url
+        $n = if ($bad) { 1 } else { [Math]::Max(1, $Tries) }
+        $methods = @(@('web') * $n)
+        if (-not $bad) { $methods += 'curl' }
+        $got = $false; $gone = $false; $why = ''; $delay = $Wait
+        for ($i = 0; $i -lt $methods.Count -and -not $got; $i++) {
+            Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
+            try { Invoke-KitFetch $url $part $methods[$i]; $got = $true }
+            catch {
+                $why = $_.Exception.Message
+                # (the server answered "not there": no use asking it again, and the host itself works)
+                if (Test-KitGoneError $_.Exception) { $gone = $true; break }
+                if ($i + 1 -lt $methods.Count) {
+                    $next = if ($methods[$i + 1] -eq 'curl') { "trying with curl.exe" } else { "try $($i + 2) of $n in $delay s" }
+                    Write-Host "  $h failed: $why ($next)" -ForegroundColor Yellow
+                    if ($methods[$i + 1] -eq 'web' -and $delay -gt 0) { Start-Sleep -Milliseconds ([int]($delay * 1000)); $delay *= 2 }
+                }
+            }
+        }
+        if (-not $got) {
+            if (-not $gone) { $script:KitBadHosts[$h] = $true }
+            Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
+            $failed += "${h}: $why"; continue
+        }
+        if ((Get-FileHash -LiteralPath $part -Algorithm SHA256).Hash.ToLowerInvariant() -ne $Sha256) {
+            Remove-Item -LiteralPath $part -Force
+            $failed += "${h}: the file it gave is not the one this kit pins (SHA-256 differs)"; continue
+        }
+        Move-Item -LiteralPath $part -Destination $To -Force
+        if ($failed) { Write-Host "  got it from $h" -ForegroundColor Green }
+        return ''
+    }
+    return ($failed -join '; ')
+}
+
+# What a player reads when a download failed everywhere: which hosts failed and why, that the mirror was tried, the
+# usual causes on the PC's side, and a URL to try in a browser.
+function Get-KitDownloadFailText([string]$File, [string]$Why, [string]$TestUrl, [bool]$HadMirror) {
+    $tried = if ($HadMirror) { "Longshot's servers and the co-op mirror on GitHub" } else { "Longshot's servers (this kit has no mirror for it)" }
+    @(
+        "The download of $File failed. The kit tried $tried, each several times and with curl.exe:"
+        "  $Why"
+        'This is nearly always something on this PC or network: an antivirus that scans HTTPS/web traffic (Avast, AVG,'
+        'Kaspersky, ESET, Bitdefender, Norton: turn its web shield or HTTPS scanning off for the build), a VPN or proxy,'
+        'or a firewall. Test: open this in your browser:'
+        "  $TestUrl"
+        'If the browser downloads it but this script cannot, the antivirus or a proxy blocks PowerShell. Start again: what was'
+        'downloaded is kept. Still stuck: scripts\collect-logs.cmd, and send its zip.'
+    ) -join "`n"
 }

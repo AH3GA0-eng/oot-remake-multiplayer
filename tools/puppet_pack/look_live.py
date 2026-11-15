@@ -8,7 +8,10 @@ of every tunic texture your Link wears, each in the game's own format and size:
 - the tile (`puppet_pack.tunic`: hat and upper body) recoloured as for the puppets;
 - the dark tile (the child's tunic body) and the other tunic textures with only their green end
   colours changed in place (`puppet_pack.tunic_extra`);
-- green: the game's own texels, to find the textures by and to go back to.
+- green: the game's own texels marked (tunic.SELF_MARK), as your own Link's green S copies hold
+  them, to find the textures by and to go back to. Never the game's own unmarked: those tunic
+  textures are on Mido's and Saria's models too (every Kokiri), and the module finds textures by
+  their texels.
 
 One file per colour, `coop_look/<colour>.bin`, beside the pack's `romfs/` (the game does not load
 it). Little-endian:
@@ -58,6 +61,11 @@ GEAR = (
     "Mt_Angin_Armor_Adult_Zora_Alb",
     "Mt_Vest_Armor_Adult_Zora_Alb",
     "Mt_Angin_Acs_Armor_Adult_Zora_Alb",
+    # The rest of the adult's Goron and Zora tunic cloth (their models name them; the dump's end colours:
+    # the Goron inner 82% crimson, the Zora parts 45% blue, the Zora feather 49% blue / cyan).
+    "Mt_Inner_Armor_Adult_Goron_Alb",
+    "Mt_Parts_Armor_Adult_Zora_Alb",
+    "Mt_Feather_Armor_Adult_Zora_Alb",
 )
 GEAR_FILE = "gear.bin"
 

@@ -3,6 +3,8 @@
 #include "coop_rando.h"
 
 #include <algorithm>
+#include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -43,6 +45,13 @@ std::string ReadLine(const fs::path& file) {
         line.pop_back();
     }
     return line;
+}
+
+std::string ReadAll(const fs::path& file) {
+    std::ifstream in(file, std::ios::binary);
+    std::ostringstream out;
+    out << in.rdbuf();
+    return out.str();
 }
 
 bool WriteText(const fs::path& file, const std::string& text) {
@@ -89,16 +98,18 @@ std::string Quote(const std::string& arg) {
 
 }  // namespace
 
-std::string ManifestText() {
-    std::string presets;
-    for (const char* p : kPresets) {
-        presets += std::string(presets.empty() ? "" : ", ") + "\"" + p + "\"";
+std::string ManifestText() { return ManifestText(std::vector<std::string>(std::begin(kPresets), std::end(kPresets))); }
+
+std::string ManifestText(const std::vector<std::string>& offered) {
+    std::string presets = "\"default\"";
+    for (const std::string& p : offered) {
+        if (p != "default") presets += ", \"" + p + "\"";
     }
     return std::string(R"({
   "id": "oot-remake-randomizer",
   "name": "OoT Remake Randomizer",
   "version": "1",
-  "author": "OOTRR by REALAZK (MIT), run by the co-op mod loader",
+  "author": "OOTRR by REALAZK (GPL-3.0-or-later), run by the co-op mod loader",
   "description": "Shuffles chests, dungeon items and rewards (OOTRR). In co-op everyone plays the host's seed and every pickup is shared. A new seed needs a restart of the game, never a game build.",
   "coop": "everyone",
   "settings": [
@@ -108,7 +119,7 @@ std::string ManifestText() {
      "help": "Letters and digits. Empty: a new one is made. In co-op the host's seed is everyone's."},
     {"key": "preset", "name": "Settings", "type": "choice", "choices": [)") +
            presets + R"(], "shared": true, "restart": true,
-     "help": "OOTRR's presets (default, easy, open world, keysanity, full shuffle)."},
+     "help": "OOTRR's presets: only the ones the installed OOTRR can build are offered."},
     {"key": "game_folder", "name": "Game folder", "type": "text", "max_length": 260,
      "help": "Only for other game files (1.1.1, with Pack, Banc, Event and System). Empty: the kit's own (romfs beside the game)."},
     {"key": "ootrr", "name": "OOTRR program", "type": "text", "max_length": 260,
@@ -155,13 +166,15 @@ std::vector<Built> Scan(const fs::path& mods_root) {
         if (!it->is_directory(ec) || !IsSeedFolder(name)) continue;
         const fs::path seed_file = it->path() / kSeedFile;
         if (!fs::is_regular_file(seed_file, ec)) continue;
-        out.push_back({name, ReadLine(seed_file), ReadLine(it->path() / kPresetFile)});
+        out.push_back(
+            {name, ReadLine(seed_file), ReadLine(it->path() / kPresetFile), ReadAll(it->path() / kTablesFile)});
     }
     std::sort(out.begin(), out.end(), [](const Built& a, const Built& b) { return CoopMods::NameLess(a.name, b.name); });
     return out;
 }
 
-Plan Decide(const Want& want, const std::vector<Built>& built, const std::vector<CoopMods::Row>& rows) {
+Plan Decide(const Want& want, const std::vector<Built>& built, const std::vector<CoopMods::Row>& rows,
+            const std::optional<std::string>& tables) {
     Plan plan;
     const auto switch_off_all_but = [&](std::string_view keep) {
         for (const CoopMods::Row& r : rows) {
@@ -193,6 +206,12 @@ Plan Decide(const Want& want, const std::vector<Built>& built, const std::vector
         plan.why = "seed " + SeedWord(want.seed) + " (" + preset + ") is built now";
         return plan;
     }
+    if (tables && have->tables != *tables) {
+        plan.what = Plan::Do::refresh;
+        plan.why = "seed " + SeedWord(want.seed) + " (" + preset +
+                   ") is made again for the other mods' size tables (the co-op puppets')";
+        return plan;
+    }
     switch_off_all_but(plan.folder);
     // On, and the first row: its size table (which keeps the larger entry of every other mod) must win.
     const CoopMods::Row* row = RowOf(rows, plan.folder);
@@ -214,9 +233,9 @@ std::vector<std::string> BuildArgs(const fs::path& seed_file, const fs::path& ga
             "--host", "hookshot"};
 }
 
-int StageSizeTables(const fs::path& mods_root, const std::vector<CoopMods::Row>& rows, const fs::path& stage) {
+std::vector<fs::path> OtherSizeTables(const fs::path& mods_root, const std::vector<CoopMods::Row>& rows) {
+    std::vector<fs::path> out;
     std::error_code ec;
-    int count = 0;
     fs::recursive_directory_iterator it(mods_root, ec), end;
     for (; !ec && it != end; it.increment(ec)) {
         if (std::error_code dec; !it->is_directory(dec)) continue;
@@ -242,18 +261,126 @@ int StageSizeTables(const fs::path& mods_root, const std::vector<CoopMods::Row>&
             const fs::directory_entry& f = *files;
             const std::string file = CoopMods::ToUtf8(f.path().filename());
             const std::string_view tail = ".rsizetable.zs";
-            if (!f.is_regular_file(fec) || file.size() <= tail.size() ||
-                file.compare(file.size() - tail.size(), tail.size(), tail) != 0) {
-                continue;
+            if (f.is_regular_file(fec) && file.size() > tail.size() &&
+                file.compare(file.size() - tail.size(), tail.size(), tail) == 0) {
+                out.push_back(f.path());
             }
-            const fs::path to = stage / std::to_string(count) / "romfs" / "System" / "Resource" / f.path().filename();
-            std::error_code cec;
-            fs::create_directories(to.parent_path(), cec);
-            if (cec || !fs::copy_file(f.path(), to, fs::copy_options::overwrite_existing, cec)) return -1;
-            ++count;
         }
     }
+    return out;
+}
+
+int StageSizeTables(const fs::path& mods_root, const std::vector<CoopMods::Row>& rows, const fs::path& stage) {
+    int count = 0;
+    for (const fs::path& table : OtherSizeTables(mods_root, rows)) {
+        const fs::path to = stage / std::to_string(count) / "romfs" / "System" / "Resource" / table.filename();
+        std::error_code cec;
+        fs::create_directories(to.parent_path(), cec);
+        if (cec || !fs::copy_file(table, to, fs::copy_options::overwrite_existing, cec)) return -1;
+        ++count;
+    }
     return count;
+}
+
+namespace {
+bool HasSizeTable(const fs::path& mod) {
+    std::error_code ec;
+    for (fs::directory_iterator files(mod / "romfs" / "System" / "Resource", ec), last; !ec && files != last;
+         files.increment(ec)) {
+        const std::string file = CoopMods::ToUtf8(files->path().filename());
+        const std::string_view tail = ".rsizetable.zs";
+        if (std::error_code fec; files->is_regular_file(fec) && file.size() > tail.size() &&
+                                 file.compare(file.size() - tail.size(), tail.size(), tail) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// A mod name cut for a chat line (a folder name can be long).
+std::string ShortName(std::string_view mod) {
+    constexpr std::size_t kMost = 48;
+    if (mod.size() <= kMost) return std::string(mod);
+    std::size_t cut = kMost;
+    while (cut > 0 && (static_cast<unsigned char>(mod[cut]) & 0xC0) == 0x80) --cut;  // a whole UTF-8 character
+    return std::string(mod.substr(0, cut)) + "...";
+}
+}  // namespace
+
+std::optional<std::string> OutsideSizeTable(const fs::path& mods_root, const std::vector<CoopMods::Row>& rows,
+                                            bool list_order) {
+    std::vector<const CoopMods::Row*> order;
+    for (const CoopMods::Row& r : rows) {
+        if (r.on_now && HasSizeTable(mods_root / CoopMods::FromUtf8(r.name))) order.push_back(&r);
+    }
+    const CoopMods::Row* winner = nullptr;
+    if (list_order) {
+        if (!order.empty()) winner = order.front();
+    } else {
+        // Hookshot's order: by name, case folded, the last wins; the pack is a mod of its own in it.
+        const auto folded = [](std::string_view s) {
+            std::string out(s);
+            for (char& c : out) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            return out;
+        };
+        std::string best = "contents/0400486024dec000/coop-puppet";
+        for (const CoopMods::Row* r : order) {
+            if (const std::string f = folded(r->name); f > best) {
+                best = f;
+                winner = r;
+            }
+        }
+    }
+    if (winner == nullptr || IsSeedFolder(winner->name) || CoopMods::NameSame(winner->name, kFolder)) {
+        return std::nullopt;
+    }
+    return winner->name;
+}
+
+std::string OutsideLine(std::string_view mod) {
+    return "Randomizer: the mod \"" + ShortName(mod) +
+           "\" has its own size table (a seed not made in the Mods tab): other players can't be shown. Make the "
+           "seed in Mods > OoT Remake Randomizer > Settings, or turn this mod off.";
+}
+
+std::string OutsideTellLine(std::string_view mod) {
+    std::string line = "[randomizer] my mod \"" + ShortName(mod) +
+                       "\" was not made in the Mods tab: I can't see the others. Make the seed in Mods > OoT Remake "
+                       "Randomizer > Settings.";
+    if (line.size() > kTellChars) {
+        std::size_t cut = kTellChars;
+        while (cut > 0 && (static_cast<unsigned char>(line[cut]) & 0xC0) == 0x80) --cut;
+        line.resize(cut);
+    }
+    return line;
+}
+
+std::string TablesStamp(const fs::path& mods_root, const std::vector<fs::path>& tables) {
+    std::vector<std::string> lines;
+    for (const fs::path& table : tables) {
+        const std::string name = CoopMods::ToUtf8(table.lexically_relative(mods_root));
+        std::ifstream in(table, std::ios::binary);
+        if (!in) {
+            lines.push_back(name + " unreadable\n");
+            continue;
+        }
+        std::uint64_t hash = 0xcbf29ce484222325ull, length = 0;  // FNV-1a
+        char buffer[1 << 16];
+        while (in.read(buffer, sizeof buffer) || in.gcount() > 0) {
+            for (std::streamsize i = 0; i < in.gcount(); ++i) {
+                hash = (hash ^ static_cast<unsigned char>(buffer[i])) * 0x100000001b3ull;
+            }
+            length += static_cast<std::uint64_t>(in.gcount());
+        }
+        char tail[48];
+        std::snprintf(tail, sizeof tail, " %llu %016llx\n", static_cast<unsigned long long>(length),
+                      static_cast<unsigned long long>(hash));
+        lines.push_back(name + tail);
+    }
+    std::sort(lines.begin(), lines.end());
+    std::string out = "coop-tables 1\n";
+    for (const std::string& l : lines) out += l;
+    return out;
 }
 
 std::wstring CommandLine(const fs::path& program, const std::vector<std::string>& args) {
@@ -324,6 +451,120 @@ std::string TellLine(std::string_view why) {
         line.resize(cut);
     }
     return line;
+}
+
+std::vector<std::string> LastLines(std::string_view text, std::size_t n) {
+    std::vector<std::string> all;
+    std::size_t at = 0;
+    while (at < text.size()) {
+        std::size_t end = text.find('\n', at);
+        if (end == std::string_view::npos) end = text.size();
+        std::string line(text.substr(at, end - at));
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.find_first_not_of(" \t") != std::string::npos) all.push_back(std::move(line));
+        at = end + 1;
+    }
+    if (all.size() > n) all.erase(all.begin(), all.end() - static_cast<std::ptrdiff_t>(n));
+    return all;
+}
+
+std::vector<std::string> ErrorLines(std::string_view text, std::size_t n) {
+    std::vector<std::string> out;
+    for (std::string& line : LastLines(text, static_cast<std::size_t>(-1))) {
+        std::string low = line;
+        std::transform(low.begin(), low.end(), low.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (low.find("error") != std::string::npos || low.find("cannot") != std::string::npos ||
+            low.find("can't") != std::string::npos || low.find("failed") != std::string::npos) {
+            out.push_back(std::move(line));
+            if (out.size() == n) break;
+        }
+    }
+    return out.empty() ? LastLines(text, n) : out;
+}
+
+PresetCache ReadPresetCache(std::string_view text) {
+    PresetCache c;
+    for (const std::string& line : LastLines(text, static_cast<std::size_t>(-1))) {
+        const auto sp = line.find(' ');
+        if (sp == std::string::npos) continue;
+        const std::string a = line.substr(0, sp), b = line.substr(sp + 1);
+        if (a == "ootrr") c.key = b;
+        else if (b == "ok" || b == "bad") c.ok[a] = b == "ok";
+    }
+    return c;
+}
+
+std::string PresetCacheText(const PresetCache& cache) {
+    std::string out = "ootrr " + cache.key + "\n";
+    for (const auto& [preset, ok] : cache.ok) out += preset + (ok ? " ok\n" : " bad\n");
+    return out;
+}
+
+std::string OotrrKey(const fs::path& ootrr) {
+    std::error_code ec;
+    const auto size = fs::file_size(ootrr, ec);
+    if (ec) return {};
+    const auto when = fs::last_write_time(ootrr, ec);
+    if (ec) return {};
+    return std::to_string(size) + "-" + std::to_string(when.time_since_epoch().count());
+}
+
+std::string ChatSafe(std::string line, std::size_t max_chars) {
+    // No control characters (a tab, a stray carriage return, escape codes): a space each.
+    for (char& c : line) {
+        if (static_cast<unsigned char>(c) < 0x20 || c == 0x7F) c = ' ';
+    }
+    // The user's profile folder: ...Users\<name>\ (either slash, any case) and /home/<name>/ become <user>.
+    for (const std::string_view mark : {std::string_view("users"), std::string_view("home")}) {
+        std::size_t from = 0;
+        for (;;) {
+            std::string low = line;
+            std::transform(low.begin(), low.end(), low.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            const std::size_t at = low.find(mark, from);
+            if (at == std::string::npos) break;
+            const std::size_t name = at + mark.size() + 1;
+            const auto sep = [](char c) { return c == '\\' || c == '/'; };
+            const bool sep_before = at > 0 && sep(line[at - 1]);
+            const bool sep_after = name - 1 < line.size() && sep(line[name - 1]);
+            if (!sep_before || !sep_after || name >= line.size()) {
+                from = at + 1;
+                continue;
+            }
+            std::size_t end = name;
+            while (end < line.size() && !sep(line[end]) && line[end] != '"') ++end;
+            line.replace(name, end - name, "<user>");
+            from = name + 6;
+        }
+    }
+    if (line.size() > max_chars) {
+        std::size_t cut = max_chars;
+        while (cut > 0 && (static_cast<unsigned char>(line[cut]) & 0xC0) == 0x80) --cut;  // a whole UTF-8 character
+        line.resize(cut);
+        line += "...";
+    }
+    return line;
+}
+
+bool PresetRefused(int code, std::string_view output) {
+    return code > 0 && output.find_first_not_of(" \t\r\n") != std::string_view::npos;
+}
+
+std::string ReadTail(const fs::path& file, std::size_t max_bytes) {
+    std::ifstream in(file, std::ios::binary | std::ios::ate);
+    if (!in) return {};
+    const std::streamoff size = in.tellg();
+    if (size < 0) return {};  // (tellg failed)
+    const auto cap = static_cast<std::streamoff>(max_bytes);
+    const std::streamoff from = size > cap ? size - cap : 0;
+    in.seekg(from);
+    std::string out(static_cast<std::size_t>(size - from), '\0');
+    in.read(out.data(), static_cast<std::streamsize>(out.size()));
+    out.resize(static_cast<std::size_t>(in.gcount()));
+    return out;
+}
+
+std::string SeeLogLine(const std::string& head) {
+    return head + ": see " + kLogFile + " in the game's mods folder, " + kFolder + " (the chat has its full path)";
 }
 
 std::string BuildFailureHint(std::string_view out) {
@@ -419,8 +660,19 @@ int RunProgram(const fs::path& program, const std::vector<std::string>& args, co
 }
 
 std::string SwitchLine(bool on) {
-    return on ? "Randomizer on: restart the game and start a new save to play it"
+    return on ? "Randomizer on: keep the game open until this chat says the seed is ready, then restart it and "
+                "start a new save"
               : "Randomizer off: restart the game to play without it";
+}
+
+std::string ReadyLine(std::string_view seed) {
+    return "Randomizer seed " + SeedWord(seed) +
+           " is ready: RESTART the game now and start a NEW save (until then this game plays without it)";
+}
+
+std::string RefreshLine(std::string_view seed) {
+    return "Randomizer seed " + SeedWord(seed) +
+           " was made again for the co-op puppets: RESTART the game to see the other players (your save stays)";
 }
 
 // ---- Rando ----
@@ -451,8 +703,37 @@ void Rando::Start() {
     {
         // Whether this run of the game plays a seed: one of ours was indexed at its start.
         bool on_now = false;
+        std::string playing;
         for (const CoopMods::Row& r : loader_.Rows()) {
-            if (IsSeedFolder(r.name) && r.on_now) on_now = true;
+            if (IsSeedFolder(r.name) && r.on_now) {
+                on_now = true;
+                playing = r.name;
+            }
+        }
+        // The seed this run plays, built beside other size tables than now: no pack actor until it is checked.
+        if (on_now) {
+            const std::string now = CurrentTables();
+            for (const Built& b : Scan(loader_.Root())) {
+                if (CoopMods::NameSame(b.name, playing) && b.tables != now) {
+                    hold_pack_ = true;
+                    if (hooks_.log) {
+                        hooks_.log("randomizer: " + playing + " was built beside other size tables than now: the "
+                                   "co-op puppets wait until it is checked (they could crash the game)");
+                    }
+                }
+            }
+        }
+        // Another mod's size table wins (#48: a seed made on OOTRR's page, dropped in by hand): no pack actor this run.
+        if (const auto outside = OutsideSizeTable(loader_.Root(), loader_.Rows(), loader_.ExeReadsList())) {
+            outside_ = true;
+            if (hooks_.log) {
+                hooks_.log("randomizer: the game reads the size table of the mod " + *outside +
+                           ", made without the co-op puppets' entries: no puppet this run (the others show as fairies)");
+            }
+            const std::lock_guard lock(mutex_);
+            outside_mod_ = *outside;
+            outside_tell_ = true;
+            lines_.push_back(ChatSafe(OutsideLine(*outside), 300));
         }
         const std::lock_guard lock(mutex_);
         on_now_ = on_said_ = on_now;
@@ -463,11 +744,78 @@ void Rando::Start() {
     Check();
 }
 
+std::map<std::string, bool> Rando::ProbePresets(const fs::path& ootrr, const fs::path& control) {
+    const fs::path file = control / kPresetsFile;
+    const std::string key = OotrrKey(ootrr);
+    std::ifstream in(file, std::ios::binary);
+    std::ostringstream text;
+    text << in.rdbuf();
+    in.close();
+    PresetCache cache = ReadPresetCache(text.str());
+    if (!key.empty() && cache.key == key && cache.ok.size() == std::size(kPresets)) return cache.ok;
+    {
+        // Tried in this run already (a preset left unsure is tried again at the next start, not at every build).
+        const std::lock_guard lock(mutex_);
+        if (!key.empty() && probed_key_ == key) return probed_;
+    }
+    // A new OOTRR (or none tried yet): each preset made once into a stage ('_': Longshot never loads it). Only
+    // `generate` is run: OOTRR 0.5.0 refuses full_shuffle there ("error: This build cannot apply these settings
+    // yet: ...", exit 1), as the kit's ootrr.exe did when tried by hand (2026-11-15).
+    Say("trying OOTRR's presets once (this OOTRR is new here)");
+    if (cache.key != key) cache = PresetCache{key, {}};
+    const fs::path stage = control / "_preset-probe";
+    std::error_code ec;
+    fs::remove_all(stage, ec);
+    fs::create_directories(stage, ec);
+    std::vector<std::string> good;
+    const auto& run = hooks_.probe_run ? hooks_.probe_run : hooks_.run;
+    for (const char* p : kPresets) {
+        if (const auto known = cache.ok.find(p); known != cache.ok.end()) {
+            if (known->second) good.emplace_back(p);
+            continue;  // known for this OOTRR (an earlier start left only some unsure)
+        }
+        const fs::path out = stage / (std::string(p) + ".txt");
+        const int code = run(ootrr, GenerateArgs(p, "PROBE", stage / (std::string(p) + ".ootrr")), out);
+        if (code == 0) {
+            cache.ok[p] = true;
+            good.emplace_back(p);
+        } else if (PresetRefused(code, ReadTail(out, kTailBytes))) {
+            cache.ok[p] = false;
+            if (hooks_.log) hooks_.log(std::string("randomizer: OOTRR cannot make the ") + p + " preset: not offered");
+        } else {
+            // Stopped, timed out, not started, or an exit with nothing said: not known, offered, tried again next start.
+            good.emplace_back(p);
+            if (hooks_.log) {
+                hooks_.log(std::string("randomizer: the ") + p + " preset could not be tried (exit " + std::to_string(code) +
+                           "): offered, tried again at the next start");
+            }
+        }
+    }
+    fs::remove_all(stage, ec);
+    if (!key.empty()) WriteText(file, PresetCacheText(cache));
+    WriteText(control / CoopMods::kManifestFile, ManifestText(good));  // the Settings row (read with the next Refresh)
+    loader_.Refresh();
+    const std::lock_guard lock(mutex_);
+    probed_key_ = key;
+    probed_ = cache.ok;
+    return cache.ok;
+}
+
 void Rando::TellOthers() {
+    if (!hooks_.tell_others) return;
+    std::string outside;
+    {
+        const std::lock_guard lock(mutex_);
+        if (outside_tell_) outside = ChatSafe(OutsideTellLine(outside_mod_), kTellChars);
+    }
+    if (!outside.empty() && hooks_.tell_others(outside)) {  // (not connected: the next Recheck tries again)
+        const std::lock_guard lock(mutex_);
+        outside_tell_ = false;
+    }
     std::string line;
     {
         const std::lock_guard lock(mutex_);
-        if (tell_.empty() || !hooks_.tell_others) return;
+        if (tell_.empty()) return;
         line = tell_;
     }
     if (!hooks_.tell_others(line)) return;  // not connected: the next Recheck tries again
@@ -475,8 +823,44 @@ void Rando::TellOthers() {
     if (tell_ == line) tell_.clear();
 }
 
-std::vector<std::string> Rando::TakeLines() {
+void Rando::SayOutside() {
     const std::lock_guard lock(mutex_);
+    if (outside_mod_.empty()) return;
+    lines_.push_back(ChatSafe(OutsideLine(outside_mod_), 300));
+    outside_tell_ = true;  // a player who joined since hears it too
+}
+
+std::chrono::steady_clock::time_point Rando::Now() const {
+    return hooks_.now ? hooks_.now() : std::chrono::steady_clock::now();
+}
+
+void Rando::SayRestart(std::string line) {
+    const auto now = Now();
+    {
+        const std::lock_guard lock(mutex_);
+        if (line == restart_) return;  // said already (a build, then its switch): it repeats on its own
+        lines_.push_back(line);
+        restart_ = line;
+        restart_said_ = now;
+    }
+    if (hooks_.log) hooks_.log("randomizer: " + line);
+}
+
+void Rando::RepeatRestart() {
+    const auto now = Now();
+    const std::lock_guard lock(mutex_);
+    if (restart_.empty()) return;
+    lines_.push_back(restart_);
+    restart_said_ = now;
+}
+
+std::vector<std::string> Rando::TakeLines() {
+    const auto now = Now();  // (the chat asks every frame: a restart still due comes back every kRepeat)
+    const std::lock_guard lock(mutex_);
+    if (!restart_.empty() && now - restart_said_ >= kRepeat) {
+        lines_.push_back(restart_);
+        restart_said_ = now;
+    }
     return std::exchange(lines_, {});
 }
 
@@ -525,6 +909,10 @@ Want Rando::Wanted(bool* seed_locked) const {
     return want;
 }
 
+std::string Rando::CurrentTables() const {
+    return TablesStamp(loader_.Root(), OtherSizeTables(loader_.Root(), loader_.Rows()));
+}
+
 void Rando::Switch(const Plan& plan) {
     for (const std::string& name : plan.off) loader_.SetOn(name, false);
     for (const std::string& name : plan.on) {
@@ -533,6 +921,8 @@ void Rando::Switch(const Plan& plan) {
     }
     if (!plan.on.empty() || !plan.off.empty()) {
         Say(plan.why + ": start the game again to play it");
+        // A seed switched on (or to the first row, where its size table wins) plays only after a restart.
+        if (!plan.on.empty()) SayRestart(ReadyLine(Wanted(nullptr).seed));
     } else if (!plan.why.empty()) {
         Say(plan.why);
     }
@@ -553,6 +943,7 @@ void Rando::Check() {
         // Back as this run started (a guest restarted on the host's seed, then joined): nothing to restart for.
         if (want.on != on_said_) {
             on_said_ = want.on;
+            restart_.clear();  // a restart line said before is about the other switch
             if (want.on != on_now_) {
                 lines_.push_back(SwitchLine(want.on));
                 if (hooks_.log) hooks_.log("randomizer: " + lines_.back());
@@ -574,8 +965,8 @@ void Rando::Check() {
             return;
         }
     }
-    const Plan plan = Decide(want, Scan(loader_.Root()), loader_.Rows());
-    if (plan.what != Plan::Do::build) {
+    const Plan plan = Decide(want, Scan(loader_.Root()), loader_.Rows(), CurrentTables());
+    if (plan.what != Plan::Do::build && plan.what != Plan::Do::refresh) {
         Switch(plan);
         return;
     }
@@ -600,7 +991,7 @@ void Rando::Check() {
 
 void Rando::Work(Plan plan, Want want) {
     for (;;) {
-        if (plan.what == Plan::Do::build) {
+        if (plan.what == Plan::Do::build || plan.what == Plan::Do::refresh) {
             Build(plan, want);
             loader_.Refresh();
         } else {
@@ -609,9 +1000,10 @@ void Rando::Work(Plan plan, Want want) {
         // What next: the settings as they are now. A change that came meanwhile set again_ (its Check saw a worker).
         for (;;) {
             want = Wanted(nullptr);
-            plan = Decide(want, Scan(loader_.Root()), loader_.Rows());
+            plan = Decide(want, Scan(loader_.Root()), loader_.Rows(), CurrentTables());
             const std::lock_guard lock(mutex_);
-            const bool failed = plan.what == Plan::Do::build && plan.folder == last_failed_;
+            const bool failed = (plan.what == Plan::Do::build || plan.what == Plan::Do::refresh) &&
+                                plan.folder == last_failed_;
             if (!failed && plan.what != Plan::Do::nothing) {
                 again_ = false;
                 break;
@@ -641,15 +1033,23 @@ void Rando::Build(const Plan& plan, const Want& want) {
     }
     // `line` is for this game only (the tab and the log: it may name local folders); `reason` is what the others
     // are told, a fixed plain text with no path or setting value in it (a path can hold the Windows user name).
+    const bool refresh = plan.what == Plan::Do::refresh;  // the seed stays: only its size table is taken
     const auto fail = [&](std::string line, std::string_view reason) {
         {
             const std::lock_guard lock(mutex_);
             last_failed_ = plan.folder;
-            if (hosts_seed) {
+            if (refresh) {
+                // The seed still plays, with its old size table: only the co-op puppets may not show.
+                lines_.push_back(ChatSafe("Randomizer: the seed could not be made again for the co-op puppets (the "
+                                          "other players may be invisible): " + line));
+            } else if (hosts_seed) {
                 // (sent, the line shows in this game's chat too, as "you: ...")
                 tell_ = TellLine(reason);
                 tell_seed_ = want.seed;
                 if (!hooks_.tell_others) lines_.push_back(tell_);
+            } else {
+                // A host or a player alone: in the chat too, not only in the Mods tab.
+                lines_.push_back(ChatSafe("Randomizer: no seed, this game plays without it: " + line));
             }
         }
         Say(std::move(line));
@@ -659,6 +1059,25 @@ void Rando::Build(const Plan& plan, const Want& want) {
         return code == kStopped ? std::string("stopped: it ran too long or the game closed")
                                 : "exit " + std::to_string(code);
     };
+    // OOTRR's own failure (player report: the tab cut the log's path off): the tab names the file plainly, the chat has
+    // its full path (once per run) and its first error lines (#16), longshot_log.txt the path and OOTRR's last lines.
+    const auto ootrr_failed = [&](const std::string& head, std::string_view reason, const std::string& output) {
+        const std::string where = head + ": OOTRR's output is in " + CoopMods::ToUtf8(log);
+        if (hooks_.log) {
+            hooks_.log("randomizer: " + where);
+            for (const std::string& l : LastLines(output, 10)) hooks_.log("randomizer: ootrr: " + l);
+        }
+        {
+            const std::lock_guard lock(mutex_);
+            if (!log_in_chat_) {
+                log_in_chat_ = true;
+                lines_.push_back(ChatSafe(where, 400));  // (the whole path: masked, not cut)
+            }
+            for (const std::string& l : ErrorLines(output, 5)) lines_.push_back(ChatSafe("OOTRR: " + l));  // what it said, each time
+        }
+        fail(SeeLogLine(head), reason);
+    };
+    const auto read_log = [&] { return ReadTail(log, kTailBytes); };
     std::string ootrr_setting, game_setting;
     for (const CoopMods::SettingRow& s : loader_.Settings(kFolder)) {
         if (s.setting.key == "ootrr") ootrr_setting = s.value;
@@ -682,53 +1101,114 @@ void Rando::Build(const Plan& plan, const Want& want) {
                               "\" (the Game folder setting): empty it to use the kit's own",
                     "game files not found");
     }
+    bool in_use = false;
     for (const CoopMods::Row& r : loader_.Rows()) {
-        if (CoopMods::NameSame(r.name, plan.folder) && r.on_now) {
-            return fail(plan.folder + " is in use by this game and not a finished seed: start the game again first",
-                        "the seed's folder is in use: a restart is needed");
+        if (CoopMods::NameSame(r.name, plan.folder) && r.on_now) in_use = true;
+    }
+    if (in_use && !refresh) {
+        return fail(plan.folder + " is in use by this game and not a finished seed: start the game again first",
+                    "the seed's folder is in use: a restart is needed");
+    }
+    // A preset this OOTRR cannot make (#16): ours goes back to default (the change builds again: Work), the host's
+    // is said plainly.
+    if (hooks_.probe_presets) {
+        const auto ok = ProbePresets(*ootrr, control);
+        const std::string preset = want.preset.empty() ? "default" : want.preset;
+        if (const auto it = ok.find(preset); it != ok.end() && !it->second && preset != "default") {
+            bool hosts_preset = false;
+            for (const CoopMods::SettingRow& s : loader_.Settings(kFolder)) {
+                if (s.setting.key == "preset") hosts_preset = s.locked;
+            }
+            if (hosts_preset) {
+                return fail("the host's Settings (" + preset + ") are not in this OOTRR yet: ask the host for another",
+                            "the host's Settings preset is not in my OOTRR yet");
+            }
+            const std::string note = "Randomizer Settings " + preset + " are not in this OOTRR yet: back to default.";
+            if (hooks_.log) hooks_.log("randomizer: " + note);
+            {
+                const std::lock_guard lock(mutex_);
+                lines_.push_back(note);
+            }
+            Say(note);
+            loader_.Set(kFolder, "preset", "default");
+            return;
         }
     }
     std::error_code ec;
     const fs::path target = root / CoopMods::FromUtf8(plan.folder);
-    fs::remove_all(target, ec);  // a build cut off before: not in use (checked above)
+    if (!refresh) fs::remove_all(target, ec);  // a build cut off before: not in use (checked above)
     fs::remove(log, ec);
     Say(plan.why + " (about a minute)");
     const fs::path seed_file = control / (plan.folder + ".ootrr");
     const int made = hooks_.run(*ootrr, GenerateArgs(want.preset, want.seed, seed_file), log);
     if (made != 0) {
-        return fail("OOTRR could not make the seed (" + exit_text(made) + "): see " + CoopMods::ToUtf8(log),
-                    "OOTRR could not make the seed (" + exit_text(made) + ")");
+        const std::string head = "OOTRR could not make the seed (" + exit_text(made) + ")";
+        return ootrr_failed(head, head, read_log());
     }
     // Built in a stage beside the other mods' size tables (StageSizeTables), then moved in. ('_': Longshot never
     // loads it, if a closed game leaves it behind)
     const fs::path stage = control / "_seed-build";
     fs::remove_all(stage, ec);
+    const std::string stamp = TablesStamp(root, OtherSizeTables(root, loader_.Rows()));
     if (StageSizeTables(root, loader_.Rows(), stage) < 0) {
         fs::remove_all(stage, ec);
         return fail("could not copy the other mods' size tables into " + CoopMods::ToUtf8(stage),
                     "the other mods' size tables could not be copied");
     }
     const int built = hooks_.run(*ootrr, BuildArgs(seed_file, *game, stage, plan.folder), log);
-    if (built == 0) fs::rename(stage / CoopMods::FromUtf8(plan.folder), target, ec);
+    const fs::path made_at = stage / CoopMods::FromUtf8(plan.folder);
+    bool table_changed = false;
+    bool copied = true;
+    if (built == 0 && refresh) {
+        // Only the new size table(s) over the seed's: its other files are the same seed's (and the game may be
+        // reading them now); Longshot opens the table at its start, so this one plays after a restart.
+        const fs::path from = made_at / "romfs" / "System" / "Resource";
+        std::error_code fec;
+        for (fs::directory_iterator f(from, fec), last; !fec && f != last; f.increment(fec)) {
+            const fs::path to = target / "romfs" / "System" / "Resource" / f->path().filename();
+            if (ReadAll(f->path()) == ReadAll(to)) continue;
+            std::error_code cec;
+            fs::create_directories(to.parent_path(), cec);
+            if (cec || !fs::copy_file(f->path(), to, fs::copy_options::overwrite_existing, cec)) copied = false;
+            table_changed = true;
+        }
+        if (!fs::is_regular_file(made_at / kSeedFile, fec)) copied = false;
+    } else if (built == 0) {
+        fs::rename(made_at, target, ec);
+    }
     fs::remove_all(stage, ec);
+    if (refresh && built == 0 && !copied) {
+        return fail("the seed's new size table could not be copied into " + CoopMods::ToUtf8(target),
+                    "the seed's size table could not be updated");
+    }
     if (built != 0 || !fs::is_regular_file(target / kSeedFile, ec)) {
-        fs::remove_all(target, ec);
-        std::ifstream in(log, std::ios::binary);
-        std::ostringstream out;
-        out << in.rdbuf();
-        const std::string hint = BuildFailureHint(out.str());
-        return fail("OOTRR could not build the seed (" + exit_text(built) + "): " +
-                        (hint.empty() ? "see " + CoopMods::ToUtf8(log) : hint),
-                    hint.empty() ? "OOTRR could not build the seed (" + exit_text(built) + ")"
-                                 : std::string("game files not version 1.1.1"));
+        if (!refresh) fs::remove_all(target, ec);  // (a refresh keeps the seed as it was)
+        const std::string output = read_log();
+        const std::string hint = BuildFailureHint(output);
+        const std::string head = "OOTRR could not build the seed (" + exit_text(built) + ")";
+        if (hint.empty()) return ootrr_failed(head, head, output);
+        return fail(head + ": " + hint, "game files not version 1.1.1");
     }
     WriteText(target / kPresetFile, (want.preset.empty() ? std::string("default") : want.preset) + "\n");
+    WriteText(target / kTablesFile, stamp);
     {
         const std::lock_guard lock(mutex_);
         last_failed_.clear();
         tell_.clear();  // built after all: a line not sent yet is not true any more
     }
-    loader_.NoteChanged(kFolder, "Randomizer seed " + SeedWord(want.seed) + " is ready: start the game again to play it.");
+    if (!refresh) {
+        loader_.NoteChanged(kFolder,
+                            "Randomizer seed " + SeedWord(want.seed) + " is ready: start the game again to play it.");
+        SayRestart(ReadyLine(want.seed));
+    } else if (table_changed && in_use) {
+        loader_.NoteChanged(kFolder, RefreshLine(want.seed));
+        SayRestart(RefreshLine(want.seed));  // (HoldPack stays: this run's table is the old one)
+    } else {
+        Say(plan.why + ": done");
+        if (in_use && hold_pack_.exchange(false) && hooks_.log) {
+            hooks_.log("randomizer: " + plan.folder + "'s size table was right: the co-op puppets are made now");
+        }
+    }
 }
 
 }  // namespace CoopRando

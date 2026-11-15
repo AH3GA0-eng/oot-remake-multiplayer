@@ -7,3 +7,6 @@ appimage=Longshot-v3.0.0-rc.3-x86_64.AppImage
 url=https://git.magicbean.dev/MagicBeanDev/Longshot/releases/download/v3.0.0-rc.3/Longshot-v3.0.0-rc.3-x86_64.AppImage
 sha256=910799f8361cce6e1c5413434d2205b6cdec63f7bcf4350a151ca26e93cf8256
 size=98609656
+# The co-op mirror (kit-mirror): our GitHub release with the same AppImage (tools/release/mirror_longshot.ps1), tried
+# after url=; the SHA-256 above decides. Moves with tag= (a new mirror tag per Longshot release).
+mirror=https://github.com/daurosk/oot-remake-multiplayer/releases/download/longshot-mirror-v3.0.0-rc.3

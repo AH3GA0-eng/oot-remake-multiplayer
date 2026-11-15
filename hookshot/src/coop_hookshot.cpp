@@ -53,10 +53,12 @@
 #include "coop_dbno_game.h"
 #include "coop_enemy_shots.h"
 #include "coop_mods_runtime.h"
+#include "coop_rando.h"
 #include "coop_hook.h"
 #include "coop_lobby_game.h"
 #include "coop_voice.h"
 #include "coop_hud.h"
+#include "coop_hud_dim.h"
 #include "coop_hud_hearts.h"
 #include "coop_link_sound.h"
 #include "coop_map_page.h"
@@ -73,8 +75,10 @@
 #include "coop_png.h"
 #include "coop_puppet.h"
 #include "coop_puppet_config.h"
+#include "coop_pack_notice.h"
 #include "coop_frame_clock.h"
 #include "coop_runtime.h"
+#include "coop_pause_files.h"
 #include "coop_settings.h"
 #include "coop_svc.h"
 #include "coop_time.h"
@@ -196,6 +200,20 @@ bool Refused(const CoopPuppet::Call& c) {
         return false;
     }
     const std::string actor = CreateName(c);
+    // A randomizer seed whose size table may lack the puppet pack's entries (coop_rando.h HoldPack): a pack actor
+    // made now crashes the game, so none until the restart (the chat says RESTART); the others show as fairies.
+    if (actor.rfind("Coop", 0) == 0) {
+        if (const CoopRando::Rando* r = CoopModsRuntime::Rando(); r != nullptr && r->HoldPack()) {
+            static bool held_said = false;
+            if (!held_said) {
+                held_said = true;
+                LOG_WARNING(Core, "coop: {} not made: the randomizer seed's size table is being checked or was made "
+                                  "again (restart the game); other players show as their fairy until then",
+                            actor);
+            }
+            return true;
+        }
+    }
     if (!CoopHookshot::RefuseCreate(actor, allow)) {
         return false;
     }
@@ -437,7 +455,10 @@ CoopHostMenu::Menu& HostMenu() {
             s.password = t.password;
             return CoopHook::Begin(std::move(s));
         };
-        h.disconnect = [] { CoopHook::End(); };
+        h.disconnect = [] {
+            CoopHook::End();
+            CoopLobby::Forget();  // the Lobby tab shows nobody once co-op is left (lobby-state-b)
+        };
         h.client_id = [] { return CoopTitle::ClientId(); };
         h.log = [](const std::string& line) { LOG_INFO(Core, "{}", line); };
         h.default_name = [] {
@@ -783,6 +804,18 @@ CoopDraw::Scene DrawScene() {
         }
         return false;
     };
+    // Each block's dim look held steady (coop_hud_dim.h): no flashing while a slow game's samples come a second apart.
+    static std::mutex dim_mutex;
+    static CoopHudDim::Hold dim_hold;
+    std::lock_guard dim_lock(dim_mutex);
+    const auto dim_now = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+    for (std::uint8_t n = 1; n <= CoopHudDim::Hold::kSlots; ++n) {
+        if (std::none_of(rows.begin(), rows.end(), [n](const CoopHook::PlayerRow& r) { return r.number == n && !r.self; })) {
+            dim_hold.Forget(n);
+        }
+    }
     for (const auto& row : game ? rows : std::vector<CoopHook::PlayerRow>{}) {
         if (row.self) {
             s.own_voice = CoopVoice::IconFor(voice_on, CoopVoice::Get().muted || voice_muted(row.number),
@@ -798,7 +831,7 @@ CoopDraw::Scene DrawScene() {
         if (const auto life = CoopHud::PlayerLife(row.number); life && life->max > 0) {
             b.hearts = CoopHudHearts::Quarters(life->life, life->max);
         }
-        b.dim = row.state != "connected";
+        b.dim = dim_hold.Dim(row.number, row.state == "connected", dim_now);
         s.hud.push_back(std::move(b));
     }
     if (list) {
@@ -974,6 +1007,7 @@ bool Start(const HosCoopApi* api) {
     // Started without the kit's launcher: its coop-options.ini switches still count.
     CoopTitle::ApplyKitOptions();
     UseInputSelect();
+    CoopFiles::CheckName();  // never the PC's user or PC name as the co-op name (coop_name_privacy.h), before coop.ini is read
     const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
     std::vector<std::string> errors;
     // The Multiplayer tab (patch 0004's Hookshot and later, or HOS_COOP_MENU=1): the module stays loaded with co-op idle
@@ -996,6 +1030,7 @@ bool Start(const HosCoopApi* api) {
     if (EnvOn("LICHII_COOP_PUPPET") || EnvOn("LICHII_COOP_DEBUG_PUPPET")) {
         CoopPuppetConfig::Configure();  // as the emulator's cave (coop_puppet_config.h)
     }
+    CoopPackNotice::Enable(CoopPuppetConfig::HasPack());  // no pack: the chat says so once (coop_pack_notice.h)
     g_hold = EnvOn("LICHII_COOP_OBJECTS_AI_HOLD");
     CoopLinkSound::SetProbe(EnvOn("LICHII_COOP_DEBUG_SOUND"));  // every user's sounds named once in the log
     // Flags through the game's own functions (coop_flag_native.h): its writes as events from the applier's wrap, ours

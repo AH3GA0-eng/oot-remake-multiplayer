@@ -175,6 +175,95 @@ void Track::Push(Pose pose, std::uint64_t now_ms, std::uint64_t made_ms) {
     newest_ms_ = now_ms;
 }
 
+namespace {
+
+const BonePose* FindBone(const Pose& pose, std::uint16_t bone) {
+    const auto it = std::lower_bound(pose.bones.begin(), pose.bones.end(), bone,
+                                     [](const BonePose& b, std::uint16_t n) { return b.bone < n; });
+    return it != pose.bones.end() && it->bone == bone ? &*it : nullptr;
+}
+
+float MostOf(const std::optional<Vec3>& a, const std::optional<Vec3>& b) {
+    if (!a || !b) return 0.0f;
+    return std::max({std::fabs((*a)[0] - (*b)[0]), std::fabs((*a)[1] - (*b)[1]), std::fabs((*a)[2] - (*b)[2])});
+}
+
+// idle-twitch: a bone's step slow enough over `seconds` to be eased (the same parts on both).
+bool SlowStep(const BonePose& from, const BonePose& to, float seconds) {
+    if (from.rotation.has_value() != to.rotation.has_value() ||
+        from.translation.has_value() != to.translation.has_value() ||
+        from.scale.has_value() != to.scale.has_value() || from.flags != to.flags) {
+        return false;
+    }
+    if (from.rotation) {
+        const Quat& a = *from.rotation;
+        const Quat& b = *to.rotation;
+        const float d = std::fabs(a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]);
+        if (2.0f * std::acos(std::min(d, 1.0f)) > kRampRad * seconds) return false;
+    }
+    return MostOf(from.translation, to.translation) <= kRampUnit * seconds &&
+           MostOf(from.scale, to.scale) <= kRampUnit * seconds;
+}
+
+BonePose Between(const BonePose& from, const BonePose& to, float t) {
+    BonePose out = to;
+    if (out.rotation) out.rotation = Nlerp(*from.rotation, *to.rotation, t);
+    if (out.translation) out.translation = Lerp(*from.translation, *to.translation, t);
+    if (out.scale) out.scale = Lerp(*from.scale, *to.scale, t);
+    return out;
+}
+
+}  // namespace
+
+std::size_t Track::Add(Pose sent, std::uint64_t now_ms, std::uint64_t made_ms) {
+    // Eased only between timed poses of the same skeleton, on in time.
+    const bool timed = made_ms != 0 && !timed_.empty() && timed_.back().second.skeleton == sent.skeleton &&
+                       made_ms > timed_.back().first;
+    if (!timed) {
+        ramps_.clear();
+        if (made_ms == 0 || (!timed_.empty() && timed_.back().second.skeleton != sent.skeleton)) {
+            sent_ms_.clear();
+        }
+    } else {
+        const auto& [shown_ms, shown] = timed_.back();  // each bone as it is shown at shown_ms
+        std::vector<std::uint16_t> in_sent;
+        in_sent.reserve(sent.bones.size());
+        for (BonePose& b : sent.bones) {
+            in_sent.push_back(b.bone);
+            const auto last = sent_ms_.find(b.bone);
+            const BonePose* was = FindBone(shown, b.bone);
+            const std::uint64_t gap = last != sent_ms_.end() && made_ms > last->second ? made_ms - last->second : 0;
+            if (was == nullptr || gap <= kRampAfterMs ||
+                !SlowStep(*was, b, static_cast<float>(gap) / 1000.0f)) {
+                ramps_.erase(b.bone);  // a real move (or a first): as sent
+                continue;
+            }
+            Ramp r{*was, b, shown_ms, std::min(gap, kRampMaxMs)};
+            ramps_[b.bone] = r;
+        }
+        // Each eased bone (sent now or still on its way) at this pose's time.
+        for (auto it = ramps_.begin(); it != ramps_.end();) {
+            const Ramp& r = it->second;
+            const float t = static_cast<float>(made_ms - r.start_ms) / static_cast<float>(r.span_ms);
+            const BonePose at = t >= 1.0f ? r.to : Between(r.from, r.to, t);
+            auto pos = std::lower_bound(sent.bones.begin(), sent.bones.end(), at.bone,
+                                        [](const BonePose& b, std::uint16_t n) { return b.bone < n; });
+            if (pos != sent.bones.end() && pos->bone == at.bone) {
+                *pos = at;
+            } else {
+                sent.bones.insert(pos, at);
+            }
+            it = t >= 1.0f ? ramps_.erase(it) : std::next(it);
+        }
+        for (const std::uint16_t n : in_sent) sent_ms_[n] = made_ms;
+    }
+    if (!timed && made_ms != 0) {
+        for (const BonePose& b : sent.bones) sent_ms_[b.bone] = made_ms;
+    }
+    Push(Fill(std::move(sent)), now_ms, made_ms);
+    return ramps_.size();
+}
+
 Pose Track::Fill(Pose pose) const {
     if (!newest_ || newest_->skeleton != pose.skeleton) return pose;
     std::vector<BonePose> merged;
@@ -516,6 +605,9 @@ struct State {
     std::array<std::map<std::uint32_t, Track>, std::size_t{proto::kMaxPlayers} + 1> tracks;
     // What was last written to each puppet, to see whether the game keeps it.
     std::vector<Written> written_last;
+    // puppet-anim: when each player's body pose was last written on its
+    // puppet (Writes).
+    std::array<std::uint64_t, std::size_t{proto::kMaxPlayers} + 1> body_written_ms{};
     // Counters for the debug line.
     std::uint64_t log_ms = 0;
     // jitter-3: server ms minus our steady ms (from the client, at each Send):
@@ -709,6 +801,14 @@ bool Drives(std::uint8_t number, std::uint64_t now_ms) {
     return last != 0 && now_ms - std::min(now_ms, last) < kFreshMs;
 }
 
+bool Writes(std::uint8_t number, std::uint64_t now_ms) {
+    State& s = S();
+    std::lock_guard lock(s.mutex);
+    if (number == 0 || number >= s.body_written_ms.size()) return false;
+    const std::uint64_t at = s.body_written_ms[number];
+    return at != 0 && now_ms - std::min(now_ms, at) < kFreshMs;
+}
+
 namespace {
 
 // Calc thread, under the lock: the pose for `actor` (a puppet or a piece in
@@ -733,15 +833,20 @@ Wrote WriteFor(State& s, CoopPuppet::Guest& guest, std::uint8_t number, std::uin
     } else {
         const auto& tracks = s.tracks[number];
         const auto it = tracks.find(id);
-        if (it != tracks.end()) pose = it->second.At(now_ms);
+        // puppet-anim (#36/#41): a track whose poses stopped is not written on: its last
+        // pose held for ever was the puppet stuck in one animation. Its AS commands drive it.
+        if (it != tracks.end() && now_ms - std::min(now_ms, it->second.last_ms()) < kFreshMs) {
+            pose = it->second.At(now_ms);
+        }
         int moving = 0;
         const std::optional<float> u = pose && body ? s.evenness[number].Step(*pose, now_ms, &moving) : std::nullopt;
         if (u) {
             // jitter-3's proof line: how even the limbs move (0 even), and by which clock.
-            char buf[112];
-            std::snprintf(buf, sizeof(buf), "P%u limbs: uneven %.2f (%d moving frames, %s)",
+            // idle-twitch: and how many slow (idle) bones are being eased over their send gap.
+            char buf[144];
+            std::snprintf(buf, sizeof(buf), "P%u limbs: uneven %.2f (%d moving frames, %s, %zu bones eased)",
                           static_cast<unsigned>(number), *u, moving,
-                          it->second.Timed() ? "at the place's time" : "by arrival");
+                          it->second.Timed() ? "at the place's time" : "by arrival", it->second.Eased());
             Say(s, buf);
         }
     }
@@ -778,6 +883,7 @@ void OnCalcFrame(CoopPuppet::Guest& guest, std::uint64_t main_base,
         const Wrote body = WriteFor(s, guest, number, actor, now_ms, true);
         if (body == Wrote::written) {
             ++s.written;
+            s.body_written_ms[number] = now_ms;
         } else if (body == Wrote::refused ||
                    (number != 0 && !s.tracks[number].empty())) {
             ++s.refused;  // poses come, none of this puppet's skeleton (age)
@@ -927,7 +1033,7 @@ void Receive(const proto::PlayerPose& m, std::uint64_t now_ms) {
             made_ms = static_cast<std::uint64_t>(made);
         }
     }
-    track.Push(track.Fill(std::move(pose)), now_ms, made_ms);
+    track.Add(std::move(pose), now_ms, made_ms);  // idle-twitch: slow bones eased
     // Skeletons not heard from for a while (a piece put away, the other age).
     std::erase_if(tracks, [&](const auto& kv) {
         return now_ms - std::min(now_ms, kv.second.last_ms()) > kTrackForgetMs;

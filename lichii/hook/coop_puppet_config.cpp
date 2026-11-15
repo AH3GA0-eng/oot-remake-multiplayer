@@ -39,17 +39,23 @@ CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool(
             }
         }
     }
-    // The kit's tools/release/kit/scripts/kit-paths.ps1 Set-KitSelfTunic. Only
-    // with a pack that has the green puppets (a hand-set switch and an older
-    // pack must not leave green players without a puppet).
-    if (const auto self = env("LICHII_COOP_SELF_TUNIC"); !self.empty() && self != "green") {
-        settings.green_puppet = pack_green();
-        if (log != nullptr) {
-            log->push_back("coop: your Link wears " + self + "; green players " +
-                           (settings.green_puppet
-                                ? "get CoopPuppet_<Age>_Green"
-                                : "get the plain puppet (the pack has no green puppet; make it again)"));
-        }
+    // Green players get CoopPuppet_<Age>_Green whenever the pack has both
+    // (player report 47, 0.11.0: "whatever I picked we all were"). The plain
+    // puppet's model is the game's Model/Player_<Age>.Player_<Age>.bfres, and
+    // since colour-agree the kit (kit-paths.ps1 Set-KitSelfTunic,
+    // puppet_pack/self_tunic.py) puts your own Link's model copy there at
+    // every start, green or none included, naming your own S textures: the
+    // plain puppet wore your own tunic, repainted live in the colour you
+    // pick. Only with a pack that has the green puppets (an older pack must
+    // not leave green players without a puppet; a pack with no tunic puppets
+    // has none).
+    settings.green_puppet = !pack_plain && pack_green();
+    if (log != nullptr && !pack_plain) {
+        const auto self = env("LICHII_COOP_SELF_TUNIC");
+        log->push_back("coop: your Link wears " + (self.empty() ? std::string("green") : self) +
+                       " at the start; green players " +
+                       (settings.green_puppet ? "get CoopPuppet_<Age>_Green"
+                                              : "get the plain puppet (the pack has no green puppet; make it again)"));
     }
     if (const auto items = env("LICHII_COOP_LOOK_ITEMS"); pack_look && items != "0" && items != "off") {
         auto look = pack_look();
@@ -168,6 +174,8 @@ CoopPuppet::LookItems PackLook() {
 }
 
 }  // namespace
+
+bool HasPack() { return !PackManifests().empty(); }
 
 void Configure() {
     std::vector<std::string> lines;
