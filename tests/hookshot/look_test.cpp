@@ -697,6 +697,76 @@ TEST_CASE("look parts: a copy's texture name never names another folder") {
     CHECK(CoopLookParts::SlotName("Mt_Weapon_Sword_Biggoron_Alb.01", 2) == "C2_Weapon_Sword_Biggoron_Alb.01");
 }
 
+TEST_CASE("look parts: the boots in Link's own model get a copy per tunic colour, painted for its wearer") {
+    const std::string kChild = "Mt_Leather_Player_Child_Alb", kAdult = "Mt_Boots_Player_Adult_Alb";
+    for (const std::string& b : CoopLookParts::BodyBoots()) {   // gear textures too: your own Link's are painted
+        CHECK(std::any_of(CoopLookParts::Gear().begin(), CoopLookParts::Gear().end(),
+                          [&](const auto& g) { return b == g.name; }));
+        CHECK(CoopLookParts::BootsName(b, 'M').size() == b.size());   // as long (look_items.py boots_name)
+    }
+    CHECK(CoopLookParts::BootsName(kChild, 'M') == "PM_Leather_Player_Child_Alb");
+    CHECK(CoopLookParts::BootsName(kHylian, 'M').empty());
+    CHECK(CoopLookParts::LetterOf("pink") == 'M');
+    CHECK(CoopLookParts::LetterOf("green") == 'G');
+    CHECK_FALSE(CoopLookParts::LetterOf("Pink").has_value());   // CoopLook::TunicName's lower case
+
+    // your own Link first, then the others in order; a colour already worn stays with its first wearer
+    CoopLookParts::Wearer own{'M', 0xFFFF00u};
+    const auto w = CoopLookParts::Assign(own, {{'M', 0x0000FFu}, {'R', 0x00FF00u}, {'R', 0xFF0000u}, {'B', {}},
+                                               {std::nullopt, 0x123456u}});
+    CHECK(w == CoopLookParts::Wearers{{'M', 0xFFFF00u}, {'R', 0x00FF00u}});
+    CHECK(CoopLookParts::Assign({'B', {}}, {{'B', 0xFF0000u}}).empty());   // your own Link keeps the game's
+    CHECK(CoopLookParts::BootsPaintingName({}) == CoopLookParts::kBootsBase);
+    CHECK(CoopLookParts::BootsPaintingName(w) == "boots.MFFFF00.R00FF00");
+
+    const auto gear = Colour({{kHylian, Shield()}, {kChild, Shield()}, {kAdult, TexelsOf(3)}});
+    const auto plain = CoopLookParts::BootsTexels(*gear, {});
+    REQUIRE(plain.size() == 20);   // ten colours, two boots each, no shield
+    CHECK(plain[0].name == "PR_Leather_Player_Child_Alb");
+    CHECK(plain[0].texels == Marked(Shield(), 'R'));   // marked as the pack's copy (look_items.py boots_mark)
+    CHECK(plain[1].name == "PR_Boots_Player_Adult_Alb");
+    const auto painted = CoopLookParts::BootsTexels(*gear, w);
+    CHECK(CoopLookTunic::SameLayout(plain, painted));
+    Look yellow;
+    yellow[Part::boots] = 0xFFFF00u;
+    const auto want = CoopLookParts::Painted(*gear, yellow);
+    for (const auto& t : painted) {
+        if (t.name == "PM_Leather_Player_Child_Alb") {
+            CHECK(t.texels == Marked(want[1].texels, 'M'));
+        } else if (t.name == "PB_Leather_Player_Child_Alb") {
+            CHECK(t.texels == Marked(Shield(), 'B'));   // no wearer with boots: the game's colour
+        }
+    }
+}
+
+TEST_CASE("look parts: the boots wardrobe draws a colour's copy, and leaves your own boots alone") {
+    const std::string kChild = "Mt_Leather_Player_Child_Alb";
+    FakeTextures m(kBase, 0x10000);
+    PutFile(m, kBase + 0x1000, kChild, Shield());   // your own Link's (the game's model)
+    PutFile(m, kBase + 0x3000, "PM_Leather_Player_Child_Alb", Marked(Shield(), 'M'));   // a pink puppet's
+    const auto gear = *CoopLookTunic::Parse(LookFile({{kChild, Shield()}}));
+    const CoopLookParts::Wearers wearers{{'M', 0x2020FFu}};
+    CoopLookTunic::Wardrobe::Host host;
+    host.textures = &m;
+    host.file = [&](const std::string& c) -> std::optional<std::vector<std::uint8_t>> {
+        return CoopLookTunic::Pack(
+            CoopLookParts::BootsTexels(gear, c == CoopLookParts::kBootsBase ? CoopLookParts::Wearers{} : wearers));
+    };
+    host.log = [](const std::string&) {};
+    host.base = CoopLookParts::kBootsBase;
+    host.what = "puppets' boots";
+    CoopLookTunic::Wardrobe w(host);
+    w.Wear(CoopLookParts::BootsPaintingName(wearers));
+    w.Step(0);
+    Look blue;
+    blue[Part::boots] = 0x2020FFu;
+    const auto want = Marked(CoopLookParts::Painted(gear, blue)[0].texels, 'M');
+    CHECK(m.Drawn(kBase + 0x3000 + kOffset, want.size()) == want);
+    CHECK(m.Drawn(kBase + 0x1000 + kOffset, kTexels) == Shield());   // your own: not the puppets'
+    w.Clear();
+    CHECK(m.overrides() == 0);
+}
+
 TEST_CASE("look: a look chosen with the menu open is shown on your own Link at once, applied on unpause") {
     std::vector<Look> applied, previewed;
     CoopLook::Init(Look{}, [&](const Look& l) { applied.push_back(l); }, {},

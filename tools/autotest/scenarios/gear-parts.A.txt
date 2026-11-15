@@ -1,0 +1,16 @@
+# gear-parts (Customize boots, Hylian frame, child straps): A's coop-options.ini sets
+# color = pink, look_boots = #FFD700, look_hylian_frame = #FFD700 (gold). A steps off the cow and
+# stands by B, shots of A's own boots (gold) and straps; then A's shield flag becomes the Hylian
+# Shield (test-only `wear`: only B's puppet of A changes) and A aims the slingshot (ZR).
+# Expect in A's log: "coop: look: your Link's gear is gear..." with N > 0 textures drawn, and
+#   "the puppets' boots are boots.M..." on B (A's pink puppet in gold boots).
+# B's shots: A's pink puppet, gold boots, pink straps, Hylian Shield with a gold rim.
+stick 1 0 50            # off the cow at the save spot
+wait 240
+mark a-still
+wear shield Weapon_Shield_Hylian
+wait 300
+mark a-hylian
+hold ZR 120 a-aim
+wait 60
+mark a-end

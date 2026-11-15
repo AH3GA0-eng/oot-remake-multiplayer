@@ -28,6 +28,9 @@ EXTRA = {
     # green each, the green edge of the cap seen in the hand test of a768c36.
     "Mt_Cloth_Parts_Player_Child_Alb": ("Child",),
     "Mt_Vest_Player_Child_Alb": ("Child",),
+    # The child's straps (Mt_PantsParts, BC1): half its end colours are the tunic's green (the
+    # owner's shot after colour-agree: straps still green while the rest took the colour).
+    "Mt_PantsParts_Player_Child_Alb": ("Child",),
 }
 
 BC1, BC3 = 0x1A, 0x1C

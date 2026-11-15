@@ -26,6 +26,7 @@
 #include "coop_look_share.h"
 #include "coop_look_tunic.h"
 #include "coop_pause_files.h"
+#include "coop_puppet.h"
 #include "coop_runtime.h"
 #include "coop_settings.h"
 #include "coop_title.h"
@@ -254,6 +255,33 @@ void PaintPuppets(std::uint64_t now_ms) {
     }
 }
 
+// The boots in Link's own model (CoopLookParts::BodyBoots): each tunic
+// colour's puppet model names copies of its own, painted here in the boots
+// colour of the player who wears that colour. Your own Link's model (the
+// game's, or its own copy: colour-agree) names the game's boots, which the
+// gear wardrobe paints. Nothing of the game is written.
+std::unique_ptr<CoopLookTunic::Wardrobe> g_boots;
+std::mutex g_boots_mutex;
+std::map<std::string, CoopLookParts::Wearers> g_boots_named;   // guarded: the newest painting's name
+std::string g_boots_worn;                                        // the worker's: the name worn
+
+std::optional<std::vector<std::uint8_t>> BootsFile(const std::string& name) {
+    const auto gear = GearTexels();
+    if (!gear) {
+        return std::nullopt;
+    }
+    CoopLookParts::Wearers wearers;
+    if (name != CoopLookParts::kBootsBase) {
+        std::lock_guard lock(g_boots_mutex);
+        const auto it = g_boots_named.find(name);
+        if (it == g_boots_named.end()) {
+            return std::nullopt;
+        }
+        wearers = it->second;
+    }
+    return CoopLookTunic::Pack(CoopLookParts::BootsTexels(*gear, wearers));
+}
+
 CoopLookShare::Parts Share(const CoopLook::Look& look) {
     CoopLookShare::Parts parts;
     for (const auto& [number, colour] : CoopLook::Wire(look)) {
@@ -276,6 +304,42 @@ bool g_stop = false;   // guarded by g_wake_mutex
 std::atomic<std::uint8_t> g_number{0};
 std::mutex g_chosen_mutex;
 std::optional<std::uint32_t> g_chosen;   // guarded by g_chosen_mutex
+
+// The worker's round: who wears which colour now, and the boots they chose.
+void FollowBoots() {
+    std::vector<CoopLookParts::Wearer> others;
+    for (const auto& row : CoopHook::PlayerList()) {
+        if (row.self) {
+            continue;
+        }
+        CoopLookParts::Wearer w;
+        const std::uint32_t colour =
+            CoopPuppet::PlayerColor(row.number).value_or(coop::protocol::slot_color(row.number));
+        w.letter = CoopLookParts::LetterOf(TunicName(colour));
+        if (const auto parts = CoopLookShare::Of(row.number)) {
+            for (const auto& p : *parts) {
+                if (p.part == static_cast<std::uint8_t>(Part::boots)) {
+                    w.boots = p.colour;
+                }
+            }
+        }
+        others.push_back(w);
+    }
+    const CoopLookParts::Wearers wearers = CoopLookParts::Assign({}, others);
+    const std::string name = CoopLookParts::BootsPaintingName(wearers);
+    if (name == g_boots_worn) {
+        return;
+    }
+    g_boots_worn = name;
+    {
+        std::lock_guard lock(g_boots_mutex);
+        g_boots_named.clear();   // only the newest painting is asked for
+        g_boots_named[name] = wearers;
+    }
+    LOG_INFO(Core, "coop: look: the puppets' boots are {} now", name);
+    g_boots->Wear(name);
+    g_boots->Kick();
+}
 
 std::uint8_t OwnNumber() {
     for (const auto& row : CoopHook::PlayerList()) {
@@ -338,9 +402,11 @@ void Work() {
         const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
         PaintPuppets(static_cast<std::uint64_t>(ms.count()));   // before their puppets wear the copies
         FollowNumber();
+        FollowBoots();
         g_wardrobe->Step(static_cast<std::uint64_t>(ms.count()));
         g_gear->Step(static_cast<std::uint64_t>(ms.count()));
         g_puppets->Step(static_cast<std::uint64_t>(ms.count()));
+        g_boots->Step(static_cast<std::uint64_t>(ms.count()));
         lock.lock();
     }
 }
@@ -462,9 +528,15 @@ void StartModule() {
     puppets.base = CoopLookParts::kCopiesBase;
     puppets.start.clear();
     puppets.what = "puppets' gear";
+    CoopLookTunic::Wardrobe::Host boots = puppets;
+    boots.file = BootsFile;
+    boots.base = CoopLookParts::kBootsBase;
+    boots.what = "puppets' boots";
     g_wardrobe = std::make_unique<CoopLookTunic::Wardrobe>(std::move(host));
     g_gear = std::make_unique<CoopLookTunic::Wardrobe>(std::move(gear));
     g_puppets = std::make_unique<CoopLookTunic::Wardrobe>(std::move(puppets));
+    g_boots = std::make_unique<CoopLookTunic::Wardrobe>(std::move(boots));
+    g_boots_worn.clear();
     // The others' puppets wear their own gear colours only where the pack has
     // the gear's texels to paint their copies with, and a Longshot that draws
     // them (patch 0020).
@@ -515,9 +587,15 @@ void StopModule() {
     g_wardrobe->Clear();   // the colours worn back to the game's own: no override left behind
     g_gear->Clear();
     g_puppets->Clear();
+    g_boots->Clear();
     g_wardrobe.reset();   // a later StartModule starts a new worker
     g_gear.reset();
     g_puppets.reset();
+    g_boots.reset();
+    {
+        std::lock_guard lock(g_boots_mutex);
+        g_boots_named.clear();
+    }
     {
         std::lock_guard lock(g_copies_mutex);
         g_copies.clear();

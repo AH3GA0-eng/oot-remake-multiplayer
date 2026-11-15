@@ -31,6 +31,7 @@ const std::vector<GearTexture>& Gear() {
         {"Mt_Weapon_Sword_Biggoron_Alb.01", Format::astc,
          {{Part::biggoron_blade, T::kGrey}, {Part::biggoron_hilt, T::kBlue | T::kPurple}}},
         {"Mt_Boots_Player_Adult_Alb", Format::astc, {{Part::boots, T::kBrown}}},
+        {"Mt_Leather_Player_Child_Alb", Format::astc, {{Part::boots, T::kBrown}}},   // and the child's belts
         {"Mt_Boots_Armor_Adult_HoverBoot_Alb", Format::astc, {{Part::boots, T::kBrown}}},
         {"Mt_Boots_Armor_Adult_HeavyBoot_Alb", Format::astc, {{Part::boots, T::kBrown}}},
         {"Mt_Silver_Armor_Adult_Gauntlet_Silver_Alb", Format::astc, {{Part::gauntlets, T::kGrey}}},
@@ -140,6 +141,92 @@ std::string CopiesName(const CopyLooks& looks) {
         }
     }
     return any ? name : std::string(kCopiesBase);
+}
+
+const std::vector<std::string>& BodyBoots() {
+    static const std::vector<std::string> kBoots = {"Mt_Boots_Player_Adult_Alb", "Mt_Leather_Player_Child_Alb"};
+    return kBoots;
+}
+
+namespace {
+struct Letter {
+    std::string_view name;
+    char letter;
+};
+constexpr Letter kLetters[] = {{"red", 'R'},    {"orange", 'O'}, {"yellow", 'Y'}, {"cyan", 'C'},  {"blue", 'B'},
+                               {"purple", 'P'}, {"pink", 'M'},   {"white", 'W'},  {"black", 'K'}, {"green", 'G'}};
+}  // namespace
+
+std::optional<char> LetterOf(std::string_view tunic) {
+    for (const Letter& l : kLetters) {
+        if (l.name == tunic) {
+            return l.letter;
+        }
+    }
+    return std::nullopt;
+}
+
+std::string BootsName(const std::string& name, char letter) {
+    if (std::find(BodyBoots().begin(), BodyBoots().end(), name) == BodyBoots().end()) {
+        return {};
+    }
+    return std::string("P") + letter + "_" + name.substr(3);
+}
+
+Wearers Assign(const Wearer& own, const std::vector<Wearer>& others) {
+    Wearers out;
+    std::vector<char> taken;
+    const auto take = [&](const Wearer& w) {
+        if (!w.letter || std::find(taken.begin(), taken.end(), *w.letter) != taken.end()) {
+            return;
+        }
+        taken.push_back(*w.letter);   // (with no boots colour: that colour keeps the game's)
+        if (w.boots) {
+            out[*w.letter] = *w.boots & 0xFFFFFFu;
+        }
+    };
+    take(own);
+    for (const Wearer& w : others) {
+        take(w);
+    }
+    return out;
+}
+
+std::string BootsPaintingName(const Wearers& wearers) {
+    if (wearers.empty()) {
+        return kBootsBase;
+    }
+    std::string name = kBootsBase;
+    for (const auto& [letter, colour] : wearers) {
+        char piece[16];
+        std::snprintf(piece, sizeof piece, ".%c%06X", letter, static_cast<unsigned>(colour & 0xFFFFFFu));
+        name += piece;
+    }
+    return name;
+}
+
+CoopLookTunic::Texels BootsTexels(const CoopLookTunic::Texels& gear, const Wearers& wearers) {
+    CoopLookTunic::Texels boots;
+    for (const CoopLookTunic::Texture& t : gear) {
+        if (!BootsName(t.name, 'G').empty()) {
+            boots.push_back(t);
+        }
+    }
+    CoopLookTunic::Texels out;
+    for (const Letter& l : kLetters) {
+        CoopLookTunic::Texels own = boots;
+        if (const auto it = wearers.find(l.letter); it != wearers.end()) {
+            CoopLook::Look look;
+            look[Part::boots] = it->second;
+            own = Painted(boots, look);
+        }
+        for (CoopLookTunic::Texture& t : own) {
+            t.name = BootsName(t.name, l.letter);
+            Mark(t.texels, static_cast<unsigned char>(l.letter));
+            out.push_back(std::move(t));
+        }
+    }
+    return out;
 }
 
 }  // namespace CoopLookParts
