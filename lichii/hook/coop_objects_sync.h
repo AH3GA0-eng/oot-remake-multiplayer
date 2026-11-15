@@ -506,6 +506,19 @@ public:
     // dying actor stays listed a while; the address may be used again later).
     void GameDeleted(std::uint64_t address, std::uint64_t now_us);
     static constexpr std::uint64_t kDeletedKeepUs = 10'000'000;
+    // churn-b: the game's delete requests reach us (Hookshot, patch 0007).
+    // Then a placed object that leaves the walk alive with no delete request
+    // is not gone: the game takes live actors off its list for a moment and
+    // puts them back (townspeople, cuccos, pots, fairies, every ~0.5 s in a
+    // big run and in players' 0.11.0 logs, 11 m from Link). Its id stays
+    // listed in OBJECT_PRESENT and its owner kept for kAwayKeepUs, so the
+    // server does not hand it to another game each time (the owner
+    // ping-pong of hundreds of OBJECT_OWNER a minute). Back at the same
+    // place it goes on as before; a delete request or the time running out
+    // ends it. Without delete events (the emulator) two missed walks still end it.
+    void SetDeleteEvents(bool on) { delete_events_ = on; }
+    static constexpr std::uint64_t kAwayKeepUs = 2'000'000;
+    std::size_t AwayCount() const { return away_.size(); }
 
     // Projectiles (coop_projectiles.h): true for a life drop at a place and
     // server time that a projectile copy's blast here may have made. A copy
@@ -949,6 +962,15 @@ private:
         std::uint64_t at = 0;
     };
     std::vector<Egg> eggs_;
+    // churn-b: placed objects off the walk without a delete request (SetDeleteEvents).
+    struct Away {
+        coop::protocol::ObjectId id;
+        std::uint64_t address = 0;
+        std::uint64_t until = 0;
+        std::string name;
+    };
+    std::vector<Away> away_;
+    bool delete_events_ = false;
     // boss-sync-2: copies of other games' eggs that left our walk alive (our
     // game hatched them), for CopyHatch.
     std::vector<Egg> copy_eggs_;
