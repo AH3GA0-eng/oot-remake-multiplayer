@@ -87,3 +87,19 @@ function Clear-CoopIniSession([string]$Template, [string]$Path) {
     }
     [System.IO.File]::WriteAllText($Path, (($out -join "`r`n") + "`r`n"), [System.Text.UTF8Encoding]::new($false))
 }
+
+# A random co-op name for a new player ('Goron-4821'), never the Windows user name or PC
+# name (players shared screenshots and invites with those). The same words as the game's
+# own (lichii/hook/coop_name_privacy.cpp), which also replaces an old saved name that is
+# the Windows user name or PC name once, and says so in the co-op chat.
+$script:CoopNameWords = @('Kokiri', 'Goron', 'Zora', 'Deku', 'Hylian', 'Sheikah', 'Gerudo', 'Fairy',
+    'Cucco', 'Keese', 'Octorok', 'Tektite', 'Skulltula', 'Epona', 'Navi', 'Ocarina',
+    'Hookshot', 'Bombchu', 'Rupee', 'Triforce', 'Malon', 'Kakariko', 'Dodongo', 'Biggoron')
+function New-CoopName {
+    $bytes = New-Object byte[] 4
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
+    $r = [BitConverter]::ToUInt32($bytes, 0)
+    $n = $script:CoopNameWords.Count
+    return '{0}-{1}' -f $script:CoopNameWords[$r % $n], (1000 + [math]::Floor($r / $n) % 9000)
+}

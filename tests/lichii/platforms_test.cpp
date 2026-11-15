@@ -40,8 +40,12 @@ struct Game {
     std::vector<proto::Message> sent;
     std::vector<std::string> notes;
     bool probe_only = false;
+    bool paused = false;  // a pause menu: the game's clocks stand still
 
     void Step(float dt) {
+        if (paused) {
+            return;
+        }
         clock += rate * dt;
         if (cycle > 0.0f && clock >= cycle) {
             clock -= cycle;
@@ -490,4 +494,52 @@ TEST_CASE("platforms: a word that steps but not at 2 pi over the word before it 
     CHECK_FALSE(WavePhaseCycle(look, Key(3, 0x20), kTwoPi / 18.0f).has_value());  // no cycle 48 bytes before
     CHECK_FALSE(WavePhaseCycle(look, Key(3, 0x10), kTwoPi / 18.0f).has_value());  // first words of a region
     CHECK_FALSE(WavePhaseCycle(look, Key(3, 0x40), -kTwoPi / 18.0f).has_value());
+}
+
+TEST_CASE("platforms: a follower's pause menu does not stop it following, and it is in step after (#35)") {
+    Game a;
+    Game b;
+    a.self = 1;
+    b.self = 2;
+    b.clock = 30.0f;
+    std::uint64_t time = 0;
+    Play(a, b, time, 4000);
+    REQUIRE(std::fabs(b.clock - a.clock) < PlatformSync::kDriftS + 0.06f);
+    const std::size_t before = b.sync.Writes();
+    b.paused = true;
+    Play(a, b, time, 4000);
+    CHECK(b.sync.Writes() == before);  // nothing written into a game that stands still
+    b.paused = false;
+    Play(a, b, time, 3000);
+    CHECK(std::fabs(b.clock - a.clock) < PlatformSync::kDriftS + 0.06f);
+    for (const auto& n : b.notes) {
+        CHECK(n.find("do not hold") == std::string::npos);
+    }
+}
+
+TEST_CASE("platforms: an owner's short pause menu does not pull the others back (#35)") {
+    Game a;
+    Game b;
+    a.self = 1;
+    b.self = 2;
+    b.clock = 30.0f;
+    std::uint64_t time = 0;
+    Play(a, b, time, 4000);
+    REQUIRE(b.sync.OwnerOf(kHash, 2, time + 10'000'000) == 1);
+    const float shared = a.clock;  // where the shared clock is now; it goes on at 1 a second
+    a.paused = true;
+    Play(a, b, time, 1500);  // A stays the owner (it was quiet less than kOwnerQuietUs)
+    CHECK(b.sync.OwnerOf(kHash, 2, time + 10'000'000) == 1);
+    a.paused = false;
+    Play(a, b, time, 3000);
+    CHECK(std::fabs(a.clock - (shared + 4.5f)) < PlatformSync::kDriftS + 0.06f);
+    CHECK(std::fabs(b.clock - (shared + 4.5f)) < PlatformSync::kDriftS + 0.06f);
+    bool caught_up = false;
+    for (const auto& n : a.notes) {
+        caught_up = caught_up || n.find("stood still") != std::string::npos;
+    }
+    CHECK(caught_up);
+    for (const auto& n : b.notes) {
+        CHECK(n.find("do not hold") == std::string::npos);
+    }
 }

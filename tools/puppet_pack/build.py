@@ -689,6 +689,28 @@ def nup_scene_files(n):
     return out
 
 
+def nup_look_files(n, dicts):
+    """RomFS paths of the gear colours' sources in an open Nup: each gear texture (look_live.GEAR,
+    for coop_look/gear.bin: your own sword, shields, gauntlets, boots) and each coloured item's
+    actor pack and models (look_items.ITEMS, write_look_items: the puppets' copies). `dicts`: the
+    game's zstd dictionaries (to read the item packs' ModelInfo). The 0.11.0 kit's packs, made
+    from the player's .nup, had none of them: only the boots in gear.bin, and no item copies."""
+    out = []
+    for g in look_live.GEAR:
+        out += n.glob(f"Tex/{g}.bntx.zs")[:1]
+    for item in look_items.ITEMS:
+        packs = n.glob(f"Pack/Actor/{item}.pack.zs")[:1]
+        if not packs:
+            continue
+        out += packs
+        try:
+            _, project, _ = look_items.model_info(sarc.read(dicts.decompress(n.read(packs[0]))), item)
+        except (look_items.TunicError, ValueError, KeyError):
+            continue   # (write_look_items says so)
+        out += n.glob(f"Model/{project}.*.bfres.zs")
+    return out
+
+
 def read(path):
     with open(path, "rb") as f:
         return f.read()
@@ -783,15 +805,20 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
     for c in colors:
         paths = []
         name = tunic.tile_name(c)
-        own_set = bool(self_dir) and c != "green"  # your own Link's S copies for this colour
+        # Your own Link's S copies for this colour, green too (npc-colour): the game's tunic
+        # textures are shared with Mido's and Saria's models, so your own Link never wears them.
+        own_set = bool(self_dir)
         try:
             # The puppets' copy is marked: its texels are never your own Link's (tunic.TUNIC_MARK).
             data = look_live.mark_bntx(tunic.tile_for(tile, c), tunic.TUNIC_MARK)
-            own = tunic.self_tile(tile, c) if (self_dir or look_dir) and c != "green" else None
+            # Your own Link's: marked (tunic.SELF_MARK), so never the texels of a texture the game shares
+            # with other models (green: the game's own tile).
+            own = (look_live.mark_bntx(tile if c == "green" else tunic.self_tile(tile, c), tunic.SELF_MARK)
+                   if self_dir or look_dir else None)
         except tunic.TunicError as e:
             raise BuildError(f"{tile_rel}: {e}")
         look = [(tunic.TILE, tile if own is None else own)]
-        if own is not None and self_dir:
+        if own is not None and self_dir and c != "green":
             # Same size as the game's tile once unpacked: its size-table entry stands. (Packs
             # before colour-agree put this one over the game's tile; the kit now uses self_files.)
             fname = f"{c}.bntx.zs"
@@ -810,26 +837,32 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
         if dark is not None:
             try:
                 ddata = look_live.mark_bntx(tunic.dark_tile_for(tile, dark, c), tunic.TUNIC_MARK)
-                own_dark = tunic.self_dark_tile(tile, dark, c) if self_dir and c != "green" else None
+                own_dark = (look_live.mark_bntx(dark if c == "green" else tunic.self_dark_tile(tile, dark, c),
+                                                tunic.SELF_MARK) if self_dir or c == "green" else None)
             except tunic.TunicError as e:
                 raise BuildError(f"{dark_rel}: {e}")
             # Green is the game's dark tile (its size); the rest are BC3 like the main tile.
             size = dark_size if c == "green" else tile_size
-            if own_dark is not None:
-                fname = f"{c}.dark.bntx.zs"
-                write(os.path.join(self_dir, fname), recompress(dicts, tile_raw, own_dark))
-                self_dark_tiles[c] = f"{tunic.SELF_DIR}/{fname}"
+            if own_dark is not None and self_dir:
+                if c != "green":
+                    fname = f"{c}.dark.bntx.zs"
+                    write(os.path.join(self_dir, fname), recompress(dicts, tile_raw, own_dark))
+                    self_dark_tiles[c] = f"{tunic.SELF_DIR}/{fname}"
                 own_name = tunic.dark_name(c, tunic.SELF_LETTER)
                 fname = f"{c}.{own_name}.bntx.zs"
                 write(os.path.join(self_dir, fname),
-                      recompress(dicts, tile_raw, tunic.rename(own_dark, tunic.DARK, own_name)))
+                      recompress(dicts, dark_raw if c == "green" else tile_raw,
+                                 tunic.rename(own_dark, tunic.DARK, own_name)))
                 self_files.setdefault(c, {})[f"Tex/{own_name}.bntx.zs"] = f"{tunic.SELF_DIR}/{fname}"
-                own_sizes[strip_zs(f"Tex/{own_name}.bntx.zs")] = tile_size or len(own_dark) + PACK_SIZE_MARGIN
+                # (one entry for every colour's file: the biggest of them)
+                own_rel = strip_zs(f"Tex/{own_name}.bntx.zs")
+                own_sizes[own_rel] = max(own_sizes.get(own_rel, 0), (size or len(own_dark) + PACK_SIZE_MARGIN)
+                                         if c == "green" else tile_size or len(own_dark) + PACK_SIZE_MARGIN)
             if look_dir:
                 # In memory: the game's ASTC dark tile (green), else the BC3 copy your own Link
                 # wears for that colour; without those, the ASTC one recoloured in place.
                 try:
-                    look.append((tunic.DARK, dark if c == "green" else own_dark if own_dark is not None
+                    look.append((tunic.DARK, own_dark if own_dark is not None
                                  else tunic_extra.recolor(dark, c, base)))
                 except tunic.TunicError as e:
                     raise BuildError(f"{dark_rel}: {e}")
@@ -842,10 +875,12 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
             try:
                 e_own = None if c == "green" else tunic_extra.recolor(e_data, c, base)
                 e_pup = look_live.mark_bntx(tunic_extra.for_puppet(e_data, e_own, name, c), tunic.TUNIC_MARK)
+                # your own Link's: marked (an extra with no green part is the game's own texels)
+                e_own = look_live.mark_bntx(e_data if e_own is None else e_own, tunic.SELF_MARK)
             except tunic.TunicError as e:
                 raise BuildError(f"{e_rel}: {e}")
-            look.append((name, e_data if e_own is None else e_own))
-            if e_own is not None and own_set:
+            look.append((name, e_own))
+            if own_set:
                 # Same size and layout as the game's file.
                 own_name = tunic_extra.extra_name(name, c, tunic.SELF_LETTER)
                 fname = f"{c}.{own_name}.bntx.zs"
@@ -897,9 +932,12 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
         out[c] = paths
         log(f"tunic {c}: {tunic.tile_name(c)} and {len(models)} models")
     if look_dir and out and "green" not in out:
-        # The game's own texels: what the module finds the textures by, and green to go back to.
-        look = [(tunic.TILE, tile)] + ([(tunic.DARK, dark)] if dark is not None else [])
-        look += [(n, e_data) for n, (_, _, e_data) in extras.items()]
+        # Green to go back to: the game's own texels, marked as green's S copies would be
+        # (tunic.SELF_MARK), never the game's shared ones: with no green S copies in the pack your
+        # own Link is not found (keeps its colour) rather than every Kokiri repainted (npc-colour).
+        mark = lambda b: look_live.mark_bntx(b, tunic.SELF_MARK)  # noqa: E731
+        look = [(tunic.TILE, mark(tile))] + ([(tunic.DARK, mark(dark))] if dark is not None else [])
+        look += [(n, mark(e_data)) for n, (_, _, e_data) in extras.items()]
         write(os.path.join(look_dir, "green.bin"), look_live.pack(look))
         look_files["green"] = f"{look_live.DIR}/green.bin"
     for path, size in own_sizes.items():
@@ -1333,6 +1371,9 @@ def main(argv=None):
         try:
             with nup.Nup(a.romfs) as n:
                 for rel in list(dumpcheck.nup_files(n).values()) + nup_scene_files(n):
+                    nup.write_under(tmp, rel, n.read(rel))
+                # The gear colours' sources (with the dictionaries just taken out, to read the items' packs).
+                for rel in nup_look_files(n, zs.Dicts.from_romfs(tmp)):
                     nup.write_under(tmp, rel, n.read(rel))
             print(f"read the game files from {a.romfs}")
             with nup.Nup(a.romfs) as n:

@@ -1,0 +1,26 @@
+# hs-rando-2, A (rando-puppet-b): the host, beside B in Mido's house, after hs-rando-1's restart (its seed's size
+# table made again for the puppets). PASS: A's screenshots show B's puppet; A's log has
+# "create CoopPuppet_... requested" and no CRASH; no RefreshLine (the table is right now).
+mark start
+warp KokiriForest_Child FrontDekuTree
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place -51.43 112.76 -38.76
+wait 600
+mark placed
+toward -51.68 -39.38 10
+wait 600
+mark seen
+wait 1500
+mark get
+wait 900
+mark end

@@ -25,6 +25,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -44,6 +45,9 @@ inline constexpr std::size_t kHead = 64;
 // How much larger than its texels a texture's storage may be (its layout
 // rounded up): only storages up to this much larger are compared.
 inline constexpr std::uint64_t kStorageSlack = 0x10000;
+// While the game makes textures, a Step looks only at the new ones; all of
+// them again at most this often (one made before its texels were in).
+inline constexpr std::uint64_t kFullSearchMs = 1000;
 // A texture file's header is at most this long (the game's are 4096 bytes).
 inline constexpr std::uint64_t kMaxOffset = 0x10000;
 
@@ -94,12 +98,15 @@ struct Search {
     std::size_t listed = 0;   // the game's textures of a fitting size
     std::size_t unread = 0;   // ... whose storage could not be read
     std::size_t heads = 0;    // ... whose first kHead bytes are a colour's, the rest not (a copy's mark, a painting)
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> misses;   // (address, serial) read and held by no colour
 };
 // Every texture of `colours` the game has made: its storage holds the
 // colour's texels exactly, the whole image (the pack's texels are the image's
 // own size, as the game's storage; a copy's mark is its last byte); the first
-// colour that holds them is the one held.
-Search Find(const Textures& textures, const std::vector<std::shared_ptr<const Texels>>& colours);
+// colour that holds them is the one held. `skip`: textures not looked at
+// (counted in `listed` all the same), e.g. the misses of an earlier search.
+Search Find(const Textures& textures, const std::vector<std::shared_ptr<const Texels>>& colours,
+            const std::function<bool(const Live&)>& skip = {});
 // Draws the place in `colour`: an override, or none when the game's memory
 // holds that colour already. False when Longshot refused it (nothing changed).
 bool Draw(Textures& textures, Place& place, const std::shared_ptr<const Texels>& colour);
@@ -127,8 +134,10 @@ public:
     // The colour to wear from now on: "green" (the game's own) or a colour of
     // the pack. Any thread.
     void Wear(std::string colour);
-    // One round of the work, about once a second: `now_ms` on any steady
-    // clock. One thread.
+    // One step of the work, every frame or two (the game makes Link's
+    // textures again on scene changes, cutscenes and its streaming, each time
+    // without the override: found again within a step, not a second later).
+    // `now_ms` on any steady clock. One thread.
     void Step(std::uint64_t now_ms);
     // Look at the game's textures again at the next Step (the pause screen
     // closed: the equipment may have changed). Any thread.
@@ -159,9 +168,15 @@ private:
     bool look_now_ = true;
     bool looked_ = false;
     std::uint64_t generation_ = 0;
+    // The game's textures of the last searches that hold no colour, looked at
+    // again only by a full search (at most every kFullSearchMs while the game
+    // makes textures): a texture made again is found within a Step, not a round.
+    std::set<std::pair<std::uint64_t, std::uint64_t>> misses_;
+    std::uint64_t full_ms_ = 0;
     bool said_nothing_found_ = false;
     std::string said_;                        // the last "no texture" line (said again when it changes)
     int said_count_ = 0;
+    int said_taken_ = 0;                      // "override(s) taken away" lines said (at most 20)
 };
 
 }  // namespace CoopLookTunic

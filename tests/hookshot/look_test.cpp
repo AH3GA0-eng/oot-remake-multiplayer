@@ -57,6 +57,7 @@ public:
         if (!In(a, n)) {
             return false;
         }
+        ++reads[a];
         std::memcpy(out, bytes_.data() + (a - base_), n);
         return true;
     }
@@ -109,6 +110,7 @@ public:
     std::uint8_t* at(std::uint64_t a) { return bytes_.data() + (a - base_); }
     std::size_t overrides() const { return overrides_.size(); }
     int overridden = 0;
+    mutable std::map<std::uint64_t, int> reads;   // Read calls by address
 
 private:
     void Drop(std::uint64_t a, std::uint64_t n) {
@@ -449,6 +451,106 @@ TEST_CASE("look tunic: the wardrobe keeps your Link in the colour worn") {
     CHECK(Drawn(m, at, 9));
 }
 
+TEST_CASE("look tunic: a texture the game makes again is drawn at the next step, the others not read again") {
+    // 0.11.0 players: the game made Link's textures again (scene changes, cutscenes, its streaming)
+    // and each time the game's colours showed until the next round, a second later: flicker.
+    FakeTextures m(kBase, 0x10000);
+    PutFile(m, kBase + 0x1000, "Tile_A", TexelsOf(1));
+    const std::uint64_t other = kBase + 0x3000 + kOffset;   // a texture of the size that is not Link's
+    m.Make(other, kTexels);
+    const std::map<std::string, std::vector<std::uint8_t>> pack = {
+        {"green", LookFile({{"Tile_A", TexelsOf(1)}})},
+        {"red", LookFile({{"Tile_A", TexelsOf(9)}})},
+    };
+    CoopLookTunic::Wardrobe::Host host;
+    host.textures = &m;
+    host.file = [&](const std::string& c) -> std::optional<std::vector<std::uint8_t>> {
+        const auto it = pack.find(c);
+        return it == pack.end() ? std::nullopt : std::optional(it->second);
+    };
+    host.log = [](const std::string&) {};
+    CoopLookTunic::Wardrobe w(host);
+    const std::uint64_t at = kBase + 0x1000 + kOffset;
+    w.Wear("red");
+    w.Step(0);
+    CHECK(Drawn(m, at, 9));
+    const int other_reads = m.reads[other];
+    CHECK(other_reads > 0);
+    // Made again 20 ms later: red at the next step; the other texture (no colour) is not read again.
+    m.Make(at, kTexels);
+    CHECK(Drawn(m, at, 1));
+    w.Step(20);
+    CHECK(Drawn(m, at, 9));
+    CHECK(m.reads[other] == other_reads);
+    // A new texture of Link's made since: found by the quick step too.
+    const std::uint64_t second = kBase + 0x5000 + kOffset;
+    std::memcpy(m.at(second), TexelsOf(1).data(), kTexels);
+    m.Make(second, kTexels);
+    w.Step(40);
+    CHECK(Drawn(m, second, 9));
+    CHECK(m.reads[other] == other_reads);
+    // Its texels came after it was made (a quick step missed it): the full search a second on finds it.
+    const std::uint64_t late = kBase + 0x7000 + kOffset;
+    m.Make(late, kTexels);
+    w.Step(60);
+    CHECK_FALSE(Drawn(m, late, 9));
+    std::memcpy(m.at(late), TexelsOf(1).data(), kTexels);
+    m.Make(other, kTexels);   // (something made: the generation moves)
+    w.Step(500);
+    CHECK_FALSE(Drawn(m, late, 9));
+    m.Make(other, kTexels);
+    w.Step(1100);
+    CHECK(Drawn(m, late, 9));
+    CHECK(m.reads[other] > other_reads);
+}
+
+TEST_CASE("look tunic: an override goes when the game's memory there holds something else, its texture not finalized") {
+    // 0.11.0 players (tracker #32): effects' textures gone. The game gave the memory of Link's
+    // texture to another texture without finalizing it; the override stayed, drawn over the new one.
+    FakeTextures m(kBase, 0x10000);
+    PutFile(m, kBase + 0x1000, "Tile_A", TexelsOf(1));
+    const std::map<std::string, std::vector<std::uint8_t>> pack = {
+        {"green", LookFile({{"Tile_A", TexelsOf(1)}})},
+        {"red", LookFile({{"Tile_A", TexelsOf(9)}})},
+    };
+    std::vector<std::string> said;
+    CoopLookTunic::Wardrobe::Host host;
+    host.textures = &m;
+    host.file = [&](const std::string& c) -> std::optional<std::vector<std::uint8_t>> {
+        const auto it = pack.find(c);
+        return it == pack.end() ? std::nullopt : std::optional(it->second);
+    };
+    host.log = [&](const std::string& s) { said.push_back(s); };
+    CoopLookTunic::Wardrobe w(host);
+    const std::uint64_t at = kBase + 0x1000 + kOffset;
+    w.Wear("red");
+    w.Step(0);
+    REQUIRE(Drawn(m, at, 9));
+    // Another texture's texels over that memory, made a little before it (no finalize of Link's).
+    const std::vector<std::uint8_t> effect = TexelsOf(50);
+    std::memcpy(m.at(at), effect.data(), kTexels);
+    m.Make(at - 0x40, kTexels + 0x40);
+    w.Step(20);
+    CHECK(m.overrides() == 0);
+    CHECK(m.Drawn(at, kTexels) == effect);
+    CHECK(w.places().empty());
+    CHECK(std::any_of(said.begin(), said.end(), [](const std::string& s) {
+        return s.find("taken away") != std::string::npos;
+    }));
+    // A texture of Link's kept since keeps its override (nothing taken away).
+    std::memcpy(m.at(at), TexelsOf(1).data(), kTexels);
+    m.Make(at, kTexels);
+    w.Step(40);
+    CHECK(Drawn(m, at, 9));
+    const std::size_t lines = said.size();
+    m.Make(kBase + 0x9000, kTexels);   // (something else made: the generation moves)
+    w.Step(60);
+    CHECK(Drawn(m, at, 9));
+    CHECK(std::none_of(said.begin() + static_cast<std::ptrdiff_t>(lines), said.end(), [](const std::string& s) {
+        return s.find("taken away") != std::string::npos;
+    }));
+}
+
 // ---------------------------------------------------------------------------
 // The gear (coop_look_parts.h)
 
@@ -525,6 +627,32 @@ TEST_CASE("look parts: the gear painted in a look, a painting's name says its co
     Look boots;
     boots[Part::boots] = 0x000080u;
     CHECK(CoopLookParts::Painted(*gear, boots)[0].texels == Shield());
+}
+
+TEST_CASE("look parts: the adult's Goron and Zora tunics are painted in all their cloth") {
+    // The adult's tunic models name more cloth than the vest and hat (the dump: Armor_Adult_Goron's inner,
+    // Armor_Adult_Zora's parts and feather): each is in the table under its tunic.
+    const auto has = [](const char* name, Part part) {
+        for (const CoopLookParts::GearTexture& g : CoopLookParts::Gear()) {
+            if (std::string_view(g.name) == name) {
+                return std::any_of(g.rules.begin(), g.rules.end(), [&](const auto& r) { return r.part == part; });
+            }
+        }
+        return false;
+    };
+    CHECK(has("Mt_Inner_Armor_Adult_Goron_Alb", Part::goron_tunic));
+    CHECK(has("Mt_Parts_Armor_Adult_Zora_Alb", Part::zora_tunic));
+    CHECK(has("Mt_Feather_Armor_Adult_Zora_Alb", Part::zora_tunic));
+    // The Zora feather (BC1, blue ends as Shield's face): painted in the Zora tunic's colour, not the Goron's.
+    const auto gear = Colour({{"Mt_Feather_Armor_Adult_Zora_Alb", Shield()}});
+    Look goron;
+    goron[Part::goron_tunic] = 0x20A040u;
+    CHECK(CoopLookParts::Painted(*gear, goron)[0].texels == Shield());
+    Look zora;
+    zora[Part::zora_tunic] = 0x20A040u;
+    const auto p = CoopLookParts::Painted(*gear, zora)[0].texels;
+    const auto ends = CoopLookPaint::Ends(CoopLookPaint::Format::bc1, std::span<const std::uint8_t>(p.data(), 8));
+    CHECK(CoopLookPaint::ToneOf(ends[0]) == CoopLookPaint::kGreen);
 }
 
 TEST_CASE("look parts: the gear wardrobe paints your shield, and one the game makes later") {
@@ -904,4 +1032,17 @@ TEST_CASE("look: your own Link starts in the colour of the pack's tunic files, n
     CHECK(CoopLook::PackStartTunic(std::vector<std::uint8_t>{9}, file, "white") == "white");
     CHECK(CoopLook::PackStartTunic(std::vector<std::uint8_t>{9}, file, "") == "green");
     CHECK(CoopLook::PackStartTunic(std::vector<std::uint8_t>{9}, nullptr, "") == "green");
+}
+
+TEST_CASE("look: green's own tunic files are known too (npc-colour)") {
+    // Your own Link wears its own copies in green as well: the game's tunic
+    // textures are on Mido's and Saria's models (every Kokiri).
+    const std::map<std::string, std::vector<std::uint8_t>> self{{"red", {1}}, {"green", {7}}};
+    const CoopLook::FileFn file = [&](const std::string& c) -> std::optional<std::vector<std::uint8_t>> {
+        const auto it = self.find(c);
+        return it == self.end() ? std::nullopt : std::optional(it->second);
+    };
+    CHECK(CoopLook::PackStartTunic(std::vector<std::uint8_t>{7}, file, "red") == "green");
+    CHECK(CoopLook::PackStartTunic(std::vector<std::uint8_t>{7}, file, "") == "green");
+    CHECK(CoopLook::PackStartTunic(std::vector<std::uint8_t>{1}, file, "green") == "red");
 }

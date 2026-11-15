@@ -5,10 +5,14 @@
 // (our patch 0009, host/coop_voice.c), hands over the microphone and libopus
 // through attach, and calls render every 5 ms with the game's final mix.
 // This file turns that table into CoopVoice's Backend.
+#include <algorithm>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <string>
+#include <vector>
 
 #include "coop_hookshot.h"
 #include "coop_voice.h"
@@ -70,6 +74,19 @@ private:
     void* dec_;
 };
 
+// The table's microphone list (none opened), as names.
+std::vector<std::string> MicList() {
+    constexpr int kMax = 16, kName = 128;
+    std::vector<char> names(static_cast<std::size_t>(kMax * kName));
+    const int n = g_voice->mic_list(names.data(), kName, kMax);
+    std::vector<std::string> out;
+    for (int i = 0; i < n && i < kMax; ++i) {
+        const char* at = names.data() + static_cast<std::size_t>(i * kName);
+        out.emplace_back(at, std::find(at, at + kName, '\0'));
+    }
+    return out;
+}
+
 bool KeyDown(std::uint32_t vk) {
     if (vk == 0 || vk > 255 || CoopHookshot::KeysTaken()) {  // typing in the chat box is not talking
         return false;
@@ -95,7 +112,8 @@ extern "C" {
 // hos_coop_start has run (the mixer finds the module as soon as it is
 // loaded): nothing here needs the game, and a 0 would be for good.
 COOP_HOOKSHOT_EXPORT int hos_coop_voice_attach(const HosCoopVoiceApi* api) {
-    if (api == nullptr || api->version != HOS_COOP_VOICE_VERSION || api->size < sizeof(HosCoopVoiceApi) ||
+    // (a game made before the table had mic_list and mic_choose: voice as before, the Insert menu's microphone)
+    if (api == nullptr || api->version != HOS_COOP_VOICE_VERSION || api->size < offsetof(HosCoopVoiceApi, mic_list) ||
         g_voice != nullptr) {
         return 0;
     }
@@ -108,6 +126,10 @@ COOP_HOOKSHOT_EXPORT int hos_coop_voice_attach(const HosCoopVoiceApi* api) {
     b.codecs.decoder = [] { return std::make_unique<VoiceDecoder>(); };
     b.now_us = [] { return g_voice->now_us(); };
     b.key_down = KeyDown;
+    if (api->size >= sizeof(HosCoopVoiceApi) && api->mic_list != nullptr && api->mic_choose != nullptr) {
+        b.mic_list = MicList;
+        b.mic_choose = [](const std::string& name) { g_voice->mic_choose(name.c_str()); };
+    }
     CoopVoice::SetBackend(std::move(b));
     return 1;
 }

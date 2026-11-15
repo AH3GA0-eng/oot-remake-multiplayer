@@ -7,6 +7,12 @@
 # Files still open (a running emulator or server) are copied as they are.
 param([switch]$WithCrashDumps)
 $ErrorActionPreference = 'Stop'
+# Says at once that it runs, then one line per step and file: masking a 30 MB game log takes a while, and a blank
+# window looked dead to players (issue #67). collect-logs.cmd says the first line itself (before windows-checks).
+if (-not $env:OOT_COOP_COLLECT_SAID) { Write-Host 'Collecting your logs (this can take a few minutes)...' }
+# QuickEdit off first: a click in this window would pause the collecting (issue #68; console-mode.ps1, never fails).
+$consoleMode = Join-Path $PSScriptRoot 'console-mode.ps1'
+if (Test-Path -LiteralPath $consoleMode) { . $consoleMode; [void](Disable-KitQuickEdit) }
 . (Join-Path $PSScriptRoot 'log-mask.ps1')
 $mask = New-MaskState
 $kit = Split-Path -Parent $PSScriptRoot
@@ -17,6 +23,11 @@ $stage = Join-Path ([System.IO.Path]::GetTempPath()) "coop-logs-$stamp-$PID"
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
 $utf8 = New-Object System.Text.UTF8Encoding($false)
+function Format-KitSize([long]$Bytes) {
+    if ($Bytes -ge 1MB) { return '{0:N1} MB' -f ($Bytes / 1MB) }
+    if ($Bytes -ge 1KB) { return '{0:N0} KB' -f ($Bytes / 1KB) }
+    return "$Bytes bytes"
+}
 function Copy-Shared([string]$From, [string]$To, [bool]$Binary) {
     # Opens with read/write sharing so a log the emulator still writes can be read.
     # Text is masked on the way; only the copy is written.
@@ -56,8 +67,15 @@ if ($hasEmulator) {
 # bin\ and Longshot writes its log and coop.ini into the game folder above it (Get-KitHookshotLogDirs): both looked in.
 . (Join-Path $PSScriptRoot 'kit-paths.ps1')
 $hsGame = Get-KitHookshotGame $kit
-$hsExe = Get-KitHookshotExe $hsGame
+# The start's game first, then the other places a kit's game can be (Get-KitLogGameExes): the first with a log.
+$hsExes = @(Get-KitLogGameExes $kit)
+$hsExe = $hsExes | Where-Object { @(Get-KitHookshotLogDirs $_ | Where-Object { Get-ChildItem -LiteralPath $_ -Filter 'longshot_log*.txt' -File -ErrorAction SilentlyContinue }).Count } | Select-Object -First 1
+if (-not $hsExe) { $hsExe = $hsExes | Select-Object -First 1 }
 $gameLogs = 0
+# Logs a player copied into the kit's logs folder (what to do when the game is not found, below).
+$copied = @(Get-ChildItem (Join-Path $kit 'logs') -Filter 'longshot_log*.txt' -File -ErrorAction SilentlyContinue)
+$gameLogs += $copied.Count
+$picked += $copied | ForEach-Object { @($_.FullName, "hookshot\copied\$($_.Name)") }
 if ($hsExe) {
     $hsDirs = @(Get-KitHookshotLogDirs $hsExe)
     foreach ($hsDir in $hsDirs) {
@@ -65,16 +83,22 @@ if ($hsExe) {
         $logs = @(Get-ChildItem (Join-Path $hsDir '*') -Include 'longshot_log*.txt', 'hookshot_log*.txt' -File -ErrorAction SilentlyContinue)
         $gameLogs += $logs.Count
         $picked += $logs | ForEach-Object { @($_.FullName, "$to\$($_.Name)") }
-        foreach ($f in 'coop.ini', 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json') {
+        # (last-build.txt: OOTRR's output when a randomizer seed failed; masked like every text file)
+        foreach ($f in 'coop.ini', 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json', 'mods\oot-remake-randomizer\last-build.txt') {
             $p = Join-Path $hsDir $f
             if (Test-Path -LiteralPath $p) { $picked += @($p, "$to\$(Split-Path -Leaf $p)") }
         }
     }
-    if ($gameLogs -eq 0) {
-        Write-Host "No game log found in $(Protect-LogText ($hsDirs -join ' or ') $mask): start the game once, then run this again."
-    }
-} elseif (-not $hasEmulator) {
-    Write-Host "No game found in $(Protect-LogText $hsGame $mask): the zip has the kit's own logs only."
+}
+$logHelp = @()
+if ($gameLogs -eq 0 -and ($hsExe -or -not $hasEmulator)) {
+    # The log we need most: say where it is and how to add it.
+    $where = if ($hsExe) { (@(Get-KitHookshotLogDirs $hsExe) -join ' or ') } else { $hsGame }
+    $logHelp += "The game's log (longshot_log.txt) is not in this zip: none in $where."
+    $logHelp += $(if ($hsExe) { '  Start the game once (it writes the log when it starts), close it, then run collect-logs.cmd again.' }
+        else { '  The game was not found. Its log is in the co-op game''s folder, beside longshot.exe (normally hookshot\game in this kit).' })
+    $logHelp += "  Found it somewhere else? Copy longshot_log.txt into $(Join-Path $kit 'logs') and run collect-logs.cmd again,"
+    $logHelp += '  or send it with this zip.'
 }
 $picked += Get-ChildItem (Join-Path $kit 'hookshot') -Filter '*.log' -File -ErrorAction SilentlyContinue | ForEach-Object { @($_.FullName, "hookshot\build\$($_.Name)") }
 if ($WithCrashDumps) {
@@ -83,8 +107,11 @@ if ($WithCrashDumps) {
 }
 
 $found = 0
+Write-Host 'Copying the files (addresses and names are masked in each):'
 for ($i = 0; $i -lt $picked.Count; $i += 2) {
     if (Test-Path -LiteralPath $picked[$i]) {
+        $size = try { (Get-Item -LiteralPath $picked[$i] -Force).Length } catch { 0 }
+        Write-Host "  $($picked[$i + 1]) ($(Format-KitSize $size))"
         Copy-Shared $picked[$i] (Join-Path $stage $picked[$i + 1]) ($picked[$i + 1] -like 'emulator\crash_dumps\*')
         $found++
     } else {
@@ -92,6 +119,7 @@ for ($i = 0; $i -lt $picked.Count; $i += 2) {
     }
 }
 
+Write-Host 'Noting this PC (Windows version, graphics, CPU, memory, network adapters)...'
 # No PC name and no addresses: only each adapter's name and the kind of its address.
 $about = @(
     "collected: $((Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')) UTC",
@@ -123,19 +151,17 @@ try {
 $about += Get-Process lichii, coop_server -ErrorAction SilentlyContinue | ForEach-Object { "running: $($_.ProcessName) $(Protect-LogText $_.Path $mask)" }
 [System.IO.File]::WriteAllLines((Join-Path $stage 'about-this-pc.txt'), [string[]]$about)
 
-$tar = Join-Path $env:SystemRoot 'System32\tar.exe'
-if (Test-Path $tar) {
-    # Forward slashes in the zip, which every unzip tool reads (Compress-Archive in
-    # Windows PowerShell 5.1 writes backslashes).
-    & $tar -a -c -f $zip -C $stage .
-    if ($LASTEXITCODE -ne 0) { throw "tar failed ($LASTEXITCODE)" }
-} else {
-    Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -Force
-}
+# A standard zip on every PC ('/' names, one entry per file; log-mask.ps1). Not tar.exe or
+# Compress-Archive: a player's PC without tar.exe got Compress-Archive's '\' names.
+Write-Host 'Making the zip...'
+Write-LogZip $stage $zip
 Remove-Item -LiteralPath $stage -Recurse -Force
 Write-Host ''
 Write-Host "Wrote $zip"
 Write-Host "  ($($found + 1) files, $gameLogs of them game logs; the folder opens with the zip selected)"
 if (-not $env:CI) { try { Start-Process explorer.exe "/select,`"$zip`"" } catch {} }
 Write-Host 'IP addresses, MAC addresses, passwords, your Windows user name and PC name are masked in it.'
+if ($logHelp) { Write-Host ''; foreach ($l in $logHelp) { Write-Host (Protect-LogText $l $mask) -ForegroundColor Yellow } }
+Write-Host ''
 Write-Host 'Send it privately (a Discord DM to the maintainer). Do not attach it to a public issue.'
+Write-Host "Send this zip: $zip" -ForegroundColor Green

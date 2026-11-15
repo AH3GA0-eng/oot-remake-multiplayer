@@ -23,8 +23,8 @@ using PackTunicsFn = std::function<std::optional<bool>()>;
 using PackLookFn = std::function<CoopPuppet::LookItems()>;
 
 // The settings the variables ask for. pack_green answers whether the puppet
-// pack has both green puppets; it is asked only when the player's own Link
-// wears another colour. pack_tunics (optional): a pack without tunic puppets
+// pack has both green puppets; asked once, always (then no puppet is the
+// plain one, whose model is your own Link's copy). pack_tunics (optional): a pack without tunic puppets
 // turns the tunics off, so every puppet is the plain one the pack has.
 // pack_look (optional): the pack's item copies for gear colours on the
 // puppets (LICHII_COOP_LOOK_ITEMS=0: none). Each line for the log goes into
@@ -37,6 +37,8 @@ CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool(
 // Settings() from the process's variables and the puppet pack under
 // LoadDir/<title id>, then CoopPuppet::Configure.
 void Configure();
+// A coop_puppet.json is under LoadDir/<title id> (the puppet pack is installed).
+bool HasPack();
 #endif
 
 }  // namespace CoopPuppetConfig

@@ -13,6 +13,7 @@
 #include "coop/net/client.hpp"
 #include "coop/protocol/messages.hpp"
 #include "coop_puppet.h"
+#include "coop_show_delay.h"
 
 namespace CoopPose {
 
@@ -375,9 +376,9 @@ std::vector<proto::PoseBone> BonePicker::Pick(std::uint32_t skeleton,
     return out;
 }
 
-std::optional<Pose> Track::At(std::uint64_t now_ms) const {
+std::optional<Pose> Track::At(std::uint64_t now_ms, std::uint64_t delay_ms) const {
     if (!timed_.empty()) {
-        const std::uint64_t show = now_ms - std::min(now_ms, kShowDelayMs);
+        const std::uint64_t show = now_ms - std::min(now_ms, delay_ms);
         if (show <= timed_.front().first) return timed_.front().second;
         for (std::size_t i = 0; i + 1 < timed_.size(); ++i) {
             const auto& [a_ms, a] = timed_[i];
@@ -605,6 +606,9 @@ struct State {
     std::array<std::map<std::uint32_t, Track>, std::size_t{proto::kMaxPlayers} + 1> tracks;
     // What was last written to each puppet, to see whether the game keeps it.
     std::vector<Written> written_last;
+    // puppet-anim: when each player's body pose was last written on its
+    // puppet (Writes).
+    std::array<std::uint64_t, std::size_t{proto::kMaxPlayers} + 1> body_written_ms{};
     // Counters for the debug line.
     std::uint64_t log_ms = 0;
     // jitter-3: server ms minus our steady ms (from the client, at each Send):
@@ -798,6 +802,14 @@ bool Drives(std::uint8_t number, std::uint64_t now_ms) {
     return last != 0 && now_ms - std::min(now_ms, last) < kFreshMs;
 }
 
+bool Writes(std::uint8_t number, std::uint64_t now_ms) {
+    State& s = S();
+    std::lock_guard lock(s.mutex);
+    if (number == 0 || number >= s.body_written_ms.size()) return false;
+    const std::uint64_t at = s.body_written_ms[number];
+    return at != 0 && now_ms - std::min(now_ms, at) < kFreshMs;
+}
+
 namespace {
 
 // Calc thread, under the lock: the pose for `actor` (a puppet or a piece in
@@ -822,7 +834,11 @@ Wrote WriteFor(State& s, CoopPuppet::Guest& guest, std::uint8_t number, std::uin
     } else {
         const auto& tracks = s.tracks[number];
         const auto it = tracks.find(id);
-        if (it != tracks.end()) pose = it->second.At(now_ms);
+        // puppet-anim (#36/#41): a track whose poses stopped is not written on: its last
+        // pose held for ever was the puppet stuck in one animation. Its AS commands drive it.
+        if (it != tracks.end() && now_ms - std::min(now_ms, it->second.last_ms()) < kFreshMs) {
+            pose = it->second.At(now_ms, CoopShowDelay::Us(number) / 1000);
+        }
         int moving = 0;
         const std::optional<float> u = pose && body ? s.evenness[number].Step(*pose, now_ms, &moving) : std::nullopt;
         if (u) {
@@ -868,6 +884,7 @@ void OnCalcFrame(CoopPuppet::Guest& guest, std::uint64_t main_base,
         const Wrote body = WriteFor(s, guest, number, actor, now_ms, true);
         if (body == Wrote::written) {
             ++s.written;
+            s.body_written_ms[number] = now_ms;
         } else if (body == Wrote::refused ||
                    (number != 0 && !s.tracks[number].empty())) {
             ++s.refused;  // poses come, none of this puppet's skeleton (age)

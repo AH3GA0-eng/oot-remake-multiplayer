@@ -329,6 +329,10 @@ std::vector<std::uint32_t>& KeyRefundQueue() {
     static std::vector<std::uint32_t> q;
     return q;
 }
+std::vector<std::pair<std::uint32_t, bool>>& KeyLendQueue() {  // lends (false) and take-backs (true)
+    static std::vector<std::pair<std::uint32_t, bool>> q;
+    return q;
+}
 std::vector<std::uint32_t>& OwnDropQueue() {  // our own key spends, for WorldSync
     static std::vector<std::uint32_t> q;
     return q;
@@ -1475,7 +1479,7 @@ public:
                 if (owner && *owner != 0) {
                     list.push_back({s.address, s.bsa_component,
                                     *owner == self ? CoopBossNative::Role::owner : CoopBossNative::Role::copy, s.name,
-                                    *owner});
+                                    *owner, s.life_component, sync_.OwnerSaysDead(s.address)});
                 }
             }
             TheBossMain().store(main_);
@@ -1532,12 +1536,14 @@ public:
                     world_.ForgetKept();
                 }
             }
-            // A lock another player opened is deleted here, as before door-unlock. Keeping it with a lent
-            // key (LICHII_COOP_LOCK_DELETE=0) is off: in a two-game run the lent key was shared to the
-            // other players as a found key, so the group ended with more keys than it had.
+            // dungeon-sync-b (#75): a lock another player opened is kept here and our player opens it
+            // with a lent key, the game's own way: the door set unlocks only on the lock's
+            // ReceiveDoAttention pulse, so a deleted lock left the door shut. The lent key stays in our
+            // game (coop::host::LentKeys), so the group's count is right. LICHII_COOP_LOCK_DELETE=1:
+            // deleted, as in 0.11.0.
             static const bool delete_locks = [] {
                 const char* v = std::getenv("LICHII_COOP_LOCK_DELETE");
-                return v == nullptr || std::string_view(v) != "0";
+                return v != nullptr && std::string_view(v) == "1";
             }();
             world_.SetDeleteLocks(delete_locks);
             world_.Tick(*scene, self, server_now_us, seen, player_, world);
@@ -1546,6 +1552,16 @@ public:
             }
             writes.insert(writes.end(), world.lives.begin(), world.lives.end());
             TestKills(seen, writes);
+            if (!world.key_lends.empty() || !world.lend_returns.empty()) {
+                std::lock_guard lock(KeyRefundMutex());
+                auto& lends = KeyLendQueue();
+                for (const std::uint32_t key : world.key_lends) {
+                    lends.emplace_back(key, false);
+                }
+                for (const std::uint32_t key : world.lend_returns) {
+                    lends.emplace_back(key, true);
+                }
+            }
             if (!world.key_refunds.empty()) {
                 std::lock_guard lock(KeyRefundMutex());
                 auto& refunds = KeyRefundQueue();
@@ -1672,7 +1688,7 @@ public:
                         [&r](u64 address) { return r.Get<u64>(address); }, fix.address, main_);
                     // Stale: both its start and target still hold the old
                     // rest (read only). Mid-push here (one of them): tried
-                    // again on the next walks, as when it is not found.
+                    // again on the next walks (not when it is not found: report 37).
                     const auto stale = node ? CoopWorld::NodeRestWords(
                                                   [&r](u64 address) { return r.Get<u64>(address); },
                                                   *node, fix.from, fix.to)
@@ -1688,11 +1704,14 @@ public:
                                            "where it rests: left alone",
                                      fix.hash, fix.name, *node);
                         }
-                    } else if (++fix.tries < kBlockNodeTries) {
+                    } else if (node && ++fix.tries < kBlockNodeTries) {
+                        // Report 37 (an fps drop in the other game at each push): only a busy node is
+                        // looked for again. A search that found none (up to kNodeLooks objects, every
+                        // 8-byte word of each into a set) finds none on the next walk either; it ran
+                        // 21 times for every rest of the block (every player log: "not found").
                         if (first) {
-                            LOG_INFO(Core, "coop: world: {:016x} {} push node {}: tried again for {} walks",
-                                     fix.hash, fix.name, node ? "busy (mid-push here)" : "not found",
-                                     kBlockNodeTries);
+                            LOG_INFO(Core, "coop: world: {:016x} {} push node busy (mid-push here): tried again for {} walks",
+                                     fix.hash, fix.name, kBlockNodeTries);
                         }
                         block_retry_.push_back(fix);
                     } else {
@@ -2684,6 +2703,7 @@ private:
                         const auto table = r.Ptr(a + kActorComponents);
                         if (const auto component = table ? r.Ptr(*table + kComponentLife) : std::nullopt) {
                             life_components.emplace(*component, a);  // (whose Life step is whose: StepHits)
+                            s.life_component = *component;
                             if (CoopDifficulty::IsEnemy(s.name, false)) {  // difficulty: its hits are scaled
                                 CoopDifficulty::TheKinds().Mark(*component,
                                                                 CoopDifficulty::LifeKind(s.name, s.hash,
@@ -2815,6 +2835,8 @@ private:
         if (*id == TheMover().ReplayedId(*life)) {
             return std::nullopt;  // our replay of the owner's hit, not one of our game's
         }
+        // Our game's own hit: a copy boss runs its own reaction (the stun; boss-fix).
+        CoopBossNative::TheTable().NoteOwnHit(a);
         const auto at = r.Get<std::array<float, 3>>(*life + kHitPlace);
         if (!at) {
             return std::nullopt;
@@ -2897,11 +2919,18 @@ private:
                 continue;
             }
             if (!it->replayed || now >= it->asked_ms + kPvpHitWaitMs) {
-                if (memory_ != nullptr && memory_->IsValidVirtualAddressRange(life_at, 4)) {
-                    memory_->Write32(life_at, static_cast<u32>(it->expect));
-                    LOG_INFO(Core, "coop: pvp: our Link's life {} -> {}{}", life, it->expect,
+                // Down but not out (player report 34): the write takes what the Life step would. The
+                // game's own hit may have been taken already and held back by the guard (life 1: downed),
+                // and a downed Link takes nothing; writing `expect` past it killed a downed Link.
+                const s32 to = CoopDbno::GuardedWrite(CoopDbno::TheGuard(), life, it->expect);
+                if (to >= life) {
+                    LOG_INFO(Core, "coop: pvp: our Link's life stays {}: down but not out holds the hit back",
+                             life);
+                } else if (memory_ != nullptr && memory_->IsValidVirtualAddressRange(life_at, 4)) {
+                    memory_->Write32(life_at, static_cast<u32>(to));
+                    LOG_INFO(Core, "coop: pvp: our Link's life {} -> {}{}", life, to,
                              it->replayed ? " (the game's hit was not taken)" : "");
-                    life = it->expect;
+                    life = to;
                 }
                 it = pvp_.erase(it);
                 continue;
@@ -3074,6 +3103,7 @@ private:
         ask.hurt = w.hurt;
         ask.life = w.life;
         ask.old = old;
+        ask.heal = w.heal;
         std::optional<u64> life;
 #ifdef COOP_HOOKSHOT
         // Hookshot with patch 0007: the hit (or the life the owner says this
@@ -3095,7 +3125,7 @@ private:
                 ask.replay_seen = ReplaySeen(r, *life);
             }
         }
-        const bool steppable = ask.step_seen && life && old >= 0 && (w.hurt > 0 || w.life < old) &&
+        const bool steppable = ask.step_seen && life && old >= 0 && (w.hurt > 0 || w.life < old || (w.heal && w.life > old)) &&
                                !(w.hurt > 0 && replay_ && !w.direct && player != 0);
         if (steppable) {
             ask.stale = steps.Take(*life);
@@ -3166,6 +3196,12 @@ private:
             }
 #endif
             break;
+        }
+        if (w.heal) {
+            LOG_INFO(Core, "coop: objects: share raise {:#x} '{}': not taken by its game's Life step: its life stays {} "
+                           "(old owner's {})",
+                     w.address, NameOf(w.address), old, w.life);
+            return;  // never a write of ours
         }
         if (w.direct) {
             LOG_INFO(Core, "coop: objects: test kill {:#x}: the game's Life step did not take it (or there is none: "
@@ -3838,6 +3874,13 @@ std::vector<std::uint32_t> TakeKeyRefunds() {
     std::lock_guard lock(KeyRefundMutex());
     std::vector<std::uint32_t> out;
     out.swap(KeyRefundQueue());
+    return out;
+}
+
+std::vector<std::pair<std::uint32_t, bool>> TakeKeyLends() {
+    std::lock_guard lock(KeyRefundMutex());
+    std::vector<std::pair<std::uint32_t, bool>> out;
+    out.swap(KeyLendQueue());
     return out;
 }
 

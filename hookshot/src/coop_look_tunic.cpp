@@ -118,7 +118,8 @@ bool SameLayout(const Texels& a, const Texels& b) {
     });
 }
 
-Search Find(const Textures& textures, const std::vector<std::shared_ptr<const Texels>>& colours) {
+Search Find(const Textures& textures, const std::vector<std::shared_ptr<const Texels>>& colours,
+            const std::function<bool(const Live&)>& skip) {
     Search out;
     std::uint64_t smallest = ~std::uint64_t{0}, largest = 0;
     for (const auto& colour : colours) {
@@ -135,6 +136,9 @@ Search Find(const Textures& textures, const std::vector<std::shared_ptr<const Te
     const std::vector<Live> listed = textures.List(smallest, largest + kStorageSlack, nullptr);
     out.listed = listed.size();
     for (const Live& live : listed) {
+        if (skip && skip(live)) {
+            continue;
+        }
         std::uint8_t head[kHead];
         if (!textures.Read(live.address, head, kHead)) {
             ++out.unread;
@@ -168,6 +172,8 @@ Search Find(const Textures& textures, const std::vector<std::shared_ptr<const Te
         }
         if (head_only && !taken) {
             ++out.heads;
+        } else if (!taken) {
+            out.misses.emplace_back(live.address, live.serial);
         }
     }
     return out;
@@ -247,7 +253,6 @@ std::shared_ptr<const Texels> Wardrobe::Load(const std::string& colour) {
 }
 
 void Wardrobe::Step(std::uint64_t now_ms) {
-    (void)now_ms;
     std::string want;
     {
         std::lock_guard lock(mutex_);
@@ -296,6 +301,13 @@ void Wardrobe::Step(std::uint64_t now_ms) {
     std::uint64_t generation = 0;
     host_.textures->List(1, 0, &generation);   // (no storage is that size: the generation only)
     if (look_now_ || !looked_ || generation != generation_) {
+        // Only the textures made since the last search, unless asked to look
+        // again or a full search is due (a texture whose texels came later).
+        const bool full = look_now_ || !looked_ || now_ms - full_ms_ >= kFullSearchMs;
+        if (full) {
+            misses_.clear();
+            full_ms_ = now_ms;
+        }
         // What the game's memory may hold: the start's colour first (the kit put
         // its files in), then the game's own, then the one asked for.
         std::vector<std::shared_ptr<const Texels>> colours;
@@ -304,19 +316,44 @@ void Wardrobe::Step(std::uint64_t now_ms) {
                 colours.push_back(c);
             }
         }
-        Search found = Find(*host_.textures, colours);
+        Search found = Find(*host_.textures, colours, [&](const Live& l) {
+            return misses_.count({l.address, l.serial}) != 0;
+        });
+        misses_.insert(found.misses.begin(), found.misses.end());
+        std::vector<bool> carried(places_.size(), false);
         for (Place& p : found.places) {   // a texture kept since: drawn as it was
             const auto old = std::find_if(places_.begin(), places_.end(), [&](const Place& o) {
                 return o.address == p.address && o.serial == p.serial && o.texture == p.texture;
             });
             if (old != places_.end() && old->held == p.held) {
                 p.drawn = old->drawn, p.overridden = old->overridden;
+                carried[static_cast<std::size_t>(old - places_.begin())] = true;
             }
         }
-        places_ = std::move(found.places);   // (a texture finalized took its override with it)
+        // An override no place carries on: the game's memory there no longer
+        // holds your Link's texels, while the game has not finalized that
+        // texture (it gave the memory to something else, made another texture
+        // over it). Longshot keeps an override until the finalize, drawn over
+        // whatever the game keeps there next (players, 0.11.0: effects'
+        // textures, stick flames and nut flashes gone): taken away here. (A
+        // texture finalized took its override with it: then this is a no-op.)
+        std::size_t taken = 0;
+        for (std::size_t i = 0; i < places_.size(); ++i) {
+            const Place& o = places_[i];
+            if (o.overridden && !carried[i]) {
+                host_.textures->Override(o.address, o.serial, nullptr, static_cast<std::size_t>(o.size));
+                ++taken;
+            }
+        }
+        if (taken != 0 && said_taken_ < 20) {
+            ++said_taken_;
+            host_.log("coop: look: " + std::to_string(taken) + " override(s) of your Link's " + host_.what +
+                      " taken away: the game's memory there holds something else now");
+        }
+        places_ = std::move(found.places);
         look_now_ = false, looked_ = true;
         generation_ = generation;
-        if (places_.empty()) {
+        if (places_.empty() && full) {
             std::string line = "coop: look: no " + host_.what + " texture of your Link among the game's yet (" +
                                std::to_string(found.listed) + " of the game's of those sizes, " +
                                std::to_string(found.unread) + " not readable, " + std::to_string(found.heads) +

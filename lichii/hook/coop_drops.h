@@ -225,6 +225,17 @@ private:
     std::map<std::uint64_t, coop::protocol::ObjectId> bound_;  // actor to drop
     std::map<std::uint64_t, std::pair<std::string, std::uint64_t>> deleting_;  // actor: name, since
     std::map<coop::protocol::ObjectId, std::uint64_t> gone_unknown_;  // taken before we knew it
+    // Our actors of drops that left the list far from Link (unloaded here), by address, until the scene
+    // changes (player report 40, the rupee flood): one that is listed again is that drop again (bound back,
+    // or deleted when it was taken or lost meanwhile), never a new roll told with a new id, which made every
+    // other game make one more copy, whose own unload and return did the same.
+    struct Unloaded {
+        coop::protocol::ObjectId id;
+        std::string name;
+        Vec3 position{};
+    };
+    std::map<std::uint64_t, Unloaded> unloaded_;
+    static constexpr std::size_t kMaxUnloaded = 1024;
     std::vector<std::pair<Vec3, std::uint64_t>> sources_;  // owned things: place, last seen
     std::uint64_t counter_ = 0;
     std::uint64_t next_key_ = 1;

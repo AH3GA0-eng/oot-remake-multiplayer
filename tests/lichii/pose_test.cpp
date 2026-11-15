@@ -703,3 +703,46 @@ TEST_CASE("pose: Add without times or on a new skeleton eases nothing") {
     CHECK(timed.Add(Unpacked(Breathing(5000)), 5000, 5000) == 0);  // a first: as sent
     REQUIRE(timed.At(5100));
 }
+
+TEST_CASE("pose: a stopped stream or another skeleton leaves the puppet to its AS commands (puppet-anim)") {
+    FakeGuest g;
+    const std::uint64_t puppet = 0x700000000, other = 0x710000000;
+    const std::uint64_t theirs = MakeActor(g, puppet, "Player_Child");
+    MakeActor(g, other, "Player_Adult");
+    CoopPose::SetLog({}, false);
+    auto pose_of = [](std::uint8_t n, std::string_view model, std::int16_t x) {
+        coop::protocol::PlayerPose m;
+        m.player_number = n;
+        m.skeleton = CoopPose::SkeletonId(kBones, model);
+        m.bones.push_back(coop::protocol::PoseBone{
+            2, 0, std::nullopt, std::array<std::int16_t, 3>{x, 0, 0}, std::nullopt});
+        return m;
+    };
+    const std::uint64_t t0 = 3'000'000;
+    const std::uint64_t bone2x = theirs + 2 * paddr::kLocalStride + 0x50;
+
+    // Player 5's poses arrive and are written on its puppet: the copy drives it.
+    CoopPose::Receive(pose_of(5, "Player_Child", 2048), t0);
+    CoopPose::OnCalcFrame(g, kMain, {{5, puppet}}, t0 + 16);
+    CHECK(Near(g.Get<float>(bone2x), 0.25f));
+    CHECK(CoopPose::Drives(5, t0 + 16));
+    CHECK(CoopPose::Writes(5, t0 + 16));
+
+    // The stream stops. Within kFreshMs the last pose still shows; after it the
+    // puppet is not written on any more (no pose held for ever) and the director
+    // plays its AS commands again.
+    g.Put(bone2x, 0.5f);  // what the puppet's own animation would leave there
+    CoopPose::OnCalcFrame(g, kMain, {{5, puppet}}, t0 + CoopPose::kFreshMs + 100);
+    CHECK(g.Get<float>(bone2x) == 0.5f);
+    CHECK_FALSE(CoopPose::Drives(5, t0 + CoopPose::kFreshMs + 100));
+    CHECK_FALSE(CoopPose::Writes(5, t0 + CoopPose::kFreshMs + 100));
+
+    // Player 6's poses arrive, but of a skeleton its puppet does not have: they
+    // count as arriving (Drives) but none is written (Writes), so the director does
+    // not leave the puppet frozen waiting for the copy.
+    const std::uint64_t t1 = t0 + 10'000;
+    CoopPose::Receive(pose_of(6, "Player_Child", 2048), t1);
+    CoopPose::OnCalcFrame(g, kMain, {{6, other}}, t1 + 16);
+    CHECK(CoopPose::Drives(6, t1 + 16));
+    CHECK_FALSE(CoopPose::Writes(6, t1 + 16));
+}

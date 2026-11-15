@@ -138,8 +138,8 @@ function Get-ServerHostingArgs($Access, [string]$Password, [string]$Allow) {
                 if ($s -match '^[A-Za-z0-9._-]{1,253}(:\d{1,5})?$') { $list += @('--stun', $s) }
                 else { $notes += "stun_servers: '$s' is not a name:port; not used." }
             }
-            $notes += 'INVITE CODE: shows below in a few seconds and is copied to the clipboard. Send it to your friends'
-            $notes += '(only to friends: it holds your internet address and the join password); they paste it into'
+            $notes += 'INVITE CODE: shows below in a few seconds and is copied to the clipboard. Share it in DMs only'
+            $notes += '(never in a public channel: it holds your internet address and the join password); friends paste it into'
             $notes += 'Join.bat. It stops working when this window closes. If a friend''s Join.bat shows an ANSWER CODE,'
             $notes += 'paste it into this window and press Enter.'
         }

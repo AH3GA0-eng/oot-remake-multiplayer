@@ -78,6 +78,7 @@ struct Options {
     bool voice = false;            // LICHII_COOP_VOICE (open or ptt: proximity voice chat; unset, the default: off)
     bool voice_ptt = false;        // push to talk: LICHII_COOP_VOICE=ptt (or an older on, 1); open: open mic, the menu's default
     std::string voice_key = "V";   // LICHII_COOP_VOICE_KEY as the Voice mode row names it (read only)
+    std::string voice_mic;         // LICHII_COOP_VOICE_MIC: the voice's microphone by its name ("": the game's)
     bool map_players = true;       // LICHII_COOP_MAP (0: no other players on the minimap and the pause map)
     bool map_names = true;         // LICHII_COOP_MAP_NAMES (0: their icons without names)
 
@@ -143,8 +144,20 @@ struct HostView {
     std::string invite;     // the code (host)
     std::string answer;     // the ANSWER CODE (guest, when the host could not be reached)
     bool copied = false;    // the code is on the clipboard
+    // HOS_COOP_CONNECTED only says this game was told to connect: in_session is whether the session took it in
+    // (WELCOME came), as the Lobby tab counts it; refused is why the session turned it away ("" it did not).
+    bool in_session = true;
+    std::string refused;
+    bool banned = false;    // refused by the host's ban: joining again cannot work
 };
 std::vector<std::string> PlainStatus(const HostView& v);
+// The HOS_COOP_* state the menus show: a join told to connect is still joining until the session took it in, so
+// the Multiplayer tab and the Lobby tab agree.
+int ShownState(int state, bool host, bool in_session);
+// A refusal reason for one menu row: the part before its first ':' (the full text is in the chat and the log).
+std::string ShortReason(const std::string& reason);
+// The menus' line for a refusal: "Your friend's game turned this one away: <ShortReason>."
+std::string RefusedLine(const std::string& reason);
 
 // Friends on the host's home network or on a VPN (Radmin VPN, Hamachi, Tailscale) join by address, not by the
 // invite code (the code holds the host's internet address). The Host dialog's "Same network or VPN" row copies

@@ -79,7 +79,7 @@ kit_hosting_args() {
                 else HOSTING_NOTES+=("stun_servers: '$s' is not a name:port; not used."); fi
             done
             unset IFS
-            HOSTING_NOTES+=('INVITE CODE: shows in a few seconds. Send it to your friends (only to friends: it holds your'
+            HOSTING_NOTES+=('INVITE CODE: shows in a few seconds. Share it in DMs only (never in a public channel: it holds your'
                 'internet address and the join password); they paste it into Join.sh or Join.bat. It stops working'
                 'when the server stops. If a friend gets an ANSWER CODE, run ./start-server.sh --answer <code>.')
         fi

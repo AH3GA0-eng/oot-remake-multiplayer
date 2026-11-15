@@ -15,6 +15,29 @@ using CoopTitleMenu::Trim;
 using State = Session::State;
 
 constexpr std::size_t kMaxJoinBytes = 300;
+// The row's value is drawn in a narrow box, and codes start alike: a long code shows its start, its end and its
+// length, so a player sees which code is in; while typed, its end (where the typing goes).
+constexpr std::size_t kShownCodeEnds = 8;
+constexpr std::size_t kShownTypedEnd = 20;
+
+std::size_t Utf8Start(const std::string& s, std::size_t at) {   // back to the start of the character at `at`
+    while (at > 0 && at < s.size() && (static_cast<unsigned char>(s[at]) & 0xC0) == 0x80) {
+        --at;
+    }
+    return at;
+}
+
+std::string ShownCode(const std::string& code, bool typing) {
+    if (typing) {
+        return code.size() <= kShownTypedEnd ? code + "_"
+                                             : "..." + code.substr(Utf8Start(code, code.size() - kShownTypedEnd)) + "_";
+    }
+    if (code.size() <= 2 * kShownCodeEnds + 3) {
+        return code;
+    }
+    return code.substr(0, Utf8Start(code, kShownCodeEnds)) + "..." +
+           code.substr(Utf8Start(code, code.size() - kShownCodeEnds)) + " (" + std::to_string(code.size()) + ")";
+}
 
 std::string Joined(const std::vector<std::string>& lines) {
     std::string out;
@@ -107,6 +130,37 @@ const std::vector<Command>& Commands() {
     return list;
 }
 
+std::vector<std::string> MicChoices(const std::vector<std::string>& listed, const std::string& chosen) {
+    std::vector<std::string> out{std::string()};
+    for (const std::string& n : listed) {
+        if (!n.empty() && std::find(out.begin(), out.end(), n) == out.end()) {
+            out.push_back(n);
+        }
+    }
+    if (std::find(out.begin(), out.end(), chosen) == out.end()) {
+        out.push_back(chosen);
+    }
+    return out;
+}
+
+std::string MicWords(const std::string& chosen, const std::vector<std::string>& listed) {
+    if (chosen.empty()) {
+        return "Default";
+    }
+    std::string words = chosen;
+    if (CodePoints(words) > kMicChars) {
+        std::size_t at = 0;
+        for (std::size_t points = 0; at < words.size(); ++at) {   // (the byte where character kMicChars - 3 starts)
+            if ((static_cast<unsigned char>(words[at]) & 0xc0) != 0x80 && points++ == kMicChars - 3) {
+                break;
+            }
+        }
+        words = words.substr(0, at) + "...";
+    }
+    const bool there = std::find(listed.begin(), listed.end(), chosen) != listed.end();
+    return there ? words : words + " (not connected)";
+}
+
 std::string ChatKeyWords(const std::string& chat_key) {
     std::string k = chat_key.empty() ? std::string("T") : chat_key;
     std::string low = k;
@@ -172,7 +226,7 @@ std::vector<Menu::Line> Menu::Lines() const {
     case Page::kHost:
         if (host) {
             out.push_back({Action("Copy the code again", "Copy", session_.code.empty()), Act::kCopyInvite,
-                           "Puts your code on the clipboard again, to paste into your chat with your friends."});
+                           "Puts your code on the clipboard again. Share it in DMs only: it contains your internet address."});
             out.push_back({Action("Paste friend's answer (or Ctrl+V)", "Paste"), Act::kPasteAnswer,
                            "Only when a friend's game shows an answer code (their way in was blocked): copy the code they "
                            "send you, then press this."});
@@ -209,11 +263,15 @@ std::vector<Menu::Line> Menu::Lines() const {
             }
             const bool typing = typing_ && page_ == Page::kJoin;
             out.push_back({Action(rejoin_code_.empty() ? "Friend's code" : "Or a new code",
-                                  typing ? join_ + "_" : join_.empty() ? std::string("Paste") : join_, off),
+                                  join_.empty() && !typing ? std::string("Paste") : ShownCode(join_, typing), off),
                            Act::kCode,
                            "Copy the code from your friend's message, then press this: it is pasted. On the same home "
                            "network or a VPN with your friend? Paste the line from Same network or from VPN on their "
                            "Host page instead (address and password). You can also type it."});
+            if (!join_.empty()) {   // a paste replaces the code, and this empties it for one typed in
+                out.push_back({Action("Clear the code", "Clear", off), Act::kClearCode,
+                               "Empties the code field. Then paste or type your friend's code again."});
+            }
             out.push_back({Action("Join", "Join", off || Trim(join_).empty()), Act::kJoinNow,
                            Trim(join_).empty() ? "Paste your friend's code first." : "Joins your friend's game."});
         }
@@ -249,6 +307,12 @@ std::vector<Menu::Line> Menu::Lines() const {
         out.push_back({Toggle("Proximity voice chat", options_.voice), Act::kVoice,
                        "Talk with players near your Link through your microphone; they sound quieter the farther away "
                        "they are. Off: you neither send nor hear voices."});
+        if (options_.voice && microphones_) {
+            out.push_back({Choice("Microphone", MicWords(options_.voice_mic, *microphones_)), Act::kMic,
+                           "The microphone your voice is recorded from. Default: the one Longshot's Insert menu "
+                           "chooses (Gameplay: Microphone), the Ocarina's too. Left and Right go through the "
+                           "microphones plugged in now. One unplugged: the others hear nothing until it is back."});
+        }
         if (options_.voice) {
             out.push_back({Choice("Voice mode", options_.voice_ptt ? "Push to talk (" + options_.voice_key + ")"
                                                                     : std::string("Open mic")),
@@ -406,6 +470,18 @@ void Menu::SetRejoin(std::string host, std::string code) {
     Clamp();
 }
 
+void Menu::SetMicrophones(std::optional<std::vector<std::string>> listed) {
+    const auto before = Lines();
+    const Act act = selected_ < before.size() ? before[selected_].act : Act::kNone;
+    microphones_ = std::move(listed);
+    const auto after = Lines();
+    const auto same = std::find_if(after.begin(), after.end(), [act](const Line& l) { return l.act == act; });
+    if (same != after.end()) {
+        selected_ = static_cast<std::size_t>(same - after.begin());
+    }
+    Clamp();
+}
+
 void Menu::SetInputRows(std::string controller, std::string keyboard) {
     const auto before = Lines();
     const Act act = selected_ < before.size() ? before[selected_].act : Act::kNone;
@@ -442,6 +518,7 @@ void Menu::EndTyping(bool keep) {
         return;
     }
     typing_ = false;
+    replace_typed_ = false;
     if (page_ == Page::kSettings) {
         if (keep && CoopTitleMenu::NameOk(options_.name)) {
             options_.name = std::string(Trim(options_.name));
@@ -510,6 +587,7 @@ bool Menu::Press(Input input) {
             if (std::string* t = Typed(); t != nullptr && !t->empty()) {
                 CoopTitleMenu::PopCodePoint(*t);
             }
+            replace_typed_ = false;   // the old code is being edited
             return true;
         case Input::kLeft:
         case Input::kRight:
@@ -639,10 +717,17 @@ void Menu::Decide(Act act) {
         request_ = Request{Request::Kind::kJoin, rejoin_code_};
         break;
     case Act::kCode:
+        // The code is on the clipboard as a rule: pasted at once, in place of the code there. With nothing to
+        // paste the old code stays to be edited, but the first character typed (or pasted as keystrokes, as
+        // Win+V's clipboard history and on-screen keyboards do) starts a new code instead of going beside it.
         typing_ = true;
-        if (join_.empty()) {   // the code is on the clipboard as a rule: pasted at once
-            request_ = Request{Request::Kind::kPaste, {}};
-        }
+        replace_typed_ = !join_.empty();
+        request_ = Request{Request::Kind::kPaste, {}};
+        break;
+    case Act::kClearCode:
+        join_.clear();
+        replace_typed_ = false;
+        Go(Page::kJoin, Act::kCode);
         break;
     case Act::kJoinNow:
         request_ = Request{Request::Kind::kJoin, join_};
@@ -654,6 +739,7 @@ void Menu::Decide(Act act) {
     case Act::kLook:
     case Act::kPlayers:
     case Act::kVoiceMode:
+    case Act::kMic:
     case Act::kChatKey:
     case Act::kController:
     case Act::kKeyboard:
@@ -691,6 +777,17 @@ void Menu::Change(Act act, int step) {
         options_.voice = step > 0 ? true : step < 0 ? false : !options_.voice;
         request_ = Request{Request::Kind::kSave, {}};
         break;
+    case Act::kMic: {
+        if (!microphones_) {
+            break;
+        }
+        const auto list = MicChoices(*microphones_, options_.voice_mic);
+        const auto at = std::find(list.begin(), list.end(), options_.voice_mic);
+        const std::size_t n = list.size(), i = static_cast<std::size_t>(at - list.begin());
+        options_.voice_mic = list[(i + (step < 0 ? n - 1 : 1)) % n];
+        request_ = Request{Request::Kind::kSave, {}};
+        break;
+    }
     case Act::kVoiceMode:   // (two choices: either arrow flips it)
         options_.voice_ptt = !options_.voice_ptt;
         request_ = Request{Request::Kind::kSave, {}};
@@ -773,6 +870,10 @@ bool Menu::Char(std::uint32_t cp) {
     if (add.empty()) {
         return true;
     }
+    if (replace_typed_ && t == &join_) {   // a new code, not more of the old one
+        join_.clear();
+    }
+    replace_typed_ = false;
     if (t == &options_.name ? CodePoints(*t) >= CoopTitleMenu::kMaxNameChars : t->size() + add.size() > kMaxJoinBytes) {
         return true;
     }
@@ -788,11 +889,14 @@ bool Menu::Paste(std::string_view text) {
             return false;
         }
         if (line.empty()) {
-            note_ = {"Nothing to paste: copy the code from your friend's message first. You can also type it."};
+            if (join_.empty()) {   // (with a code in the field: it stays, to be edited or typed over)
+                note_ = {"Nothing to paste: copy the code from your friend's message first. You can also type it."};
+            }
             return true;
         }
-        join_ = line.substr(0, kMaxJoinBytes);
+        join_ = line.substr(0, Utf8Start(line, std::min(line.size(), kMaxJoinBytes)));   // in place of the old one
         typing_ = false;
+        replace_typed_ = false;
         Go(Page::kJoin, Act::kJoinNow);
         return true;
     }

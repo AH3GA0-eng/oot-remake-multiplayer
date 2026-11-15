@@ -103,7 +103,12 @@ param(
     # Hookshot: run in test lane 1 or 2 (tools\autotest\lanes.py, docs/testing.md "Two test lanes"): the lane's
     # pair (coop-kit\ls\laneN-A/-B), port, pipes and run folders unless given, and its lock (laneN.lock) for the run.
     # Two runs in different lanes go at the same time; a game build (build-game.lock) stops both.
-    [ValidateRange(0, 2)][int]$Lane = 0
+    [ValidateRange(0, 2)][int]$Lane = 0,
+    # Hookshot: start each game through a release kit's own start, as "Start OoT Co-op.bat" does (play.ps1 choose
+    # -Hookshot: the module step, the puppet pack, the colour, the randomizer seeds), then play as usual. Two kit
+    # folders, A then B ("kitA,kitB"), each with hookshot\game-folder.txt naming its game (-HookshotA/-B or the
+    # lane's pair): tools\autotest\kit_pair.py setup makes them. Plain scenarios only (no steps files yet).
+    [string[]]$Kit = @()
 )
 $ErrorActionPreference = 'Stop'
 
@@ -158,6 +163,12 @@ if ($headSwitches.Count) {
 }
 if (-not $headStart -and -not $NoLoad) { $headStart = 'coop: objects: \+ \w*Graveyard'; if (-not (@($Switches | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() }) -match '^LICHII_COOP_DEBUG_OBJECTS=')) { $Switches += 'LICHII_COOP_DEBUG_OBJECTS=1' } }
 
+$Kit = @($Kit | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().Trim('"', "'") } | Where-Object { $_ })
+if ($Kit.Count) {
+    if ($Kit.Count -ne 2) { throw "-Kit: two kit folders, A then B (found $($Kit.Count))" }
+    if ($PSBoundParameters.ContainsKey('Runtime') -and $Runtime -ne 'hookshot') { throw "-Kit is for -Runtime hookshot" }
+    $Runtime = 'hookshot'
+}
 $Server = Resolve $Server
 if (-not $TakeBaseline -and -not $NoCoop -and -not ($DryRun -and $Runtime -eq 'hookshot') -and -not (Test-Path $Server)) { throw "no server at $Server; build it or pass -Server" }
 
@@ -194,9 +205,10 @@ if ($Runtime -eq 'hookshot') {
     }
     if (-not $HookshotA) { if (-not $kitRoot) { throw "no coop-kit folder found; pass -HookshotA and -HookshotB" }; $HookshotA = "$kitRoot\hookshot-A" }
     if (-not $HookshotB) { $HookshotB = "$(Split-Path (Resolve $HookshotA))\hookshot-B" }
-    if (-not $PSBoundParameters.ContainsKey('Shots')) { $Shots = Resolve "$(Split-Path (Resolve $HookshotA))\shots-hookshot" }
+    if (-not $Lane -and -not $PSBoundParameters.ContainsKey('Shots')) { $Shots = Resolve "$(Split-Path (Resolve $HookshotA))\shots-hookshot" }
     $out = Join-Path $Shots "$Scenario\$(Get-Date -Format yyyyMMdd-HHmmss)"
     if (-not $DryRun) { New-Item -ItemType Directory -Force $out | Out-Null }
+    if ($Kit.Count -and ($steps -or $NoCoop)) { throw "-Kit: plain scenarios with the server only (no steps file, no -NoCoop)" }
     if ($steps) {
         if ($NoCoop) { throw "-NoCoop: a steps file needs the server" }
         $a = @($py | Select-Object -Skip 1) + @('-I', "$here\hs_steps.py", 'run', '--steps', $steps,
@@ -218,6 +230,7 @@ if ($Runtime -eq 'hookshot') {
     }
     if ($NoCoop) { $a += @('--env', 'HOS_COOP=0') } else { $a += @('--server', $Server, '--port', "$Port") }
     if ($Pipe -ne 'coop-auto') { $a += @('--pipe', $Pipe) }
+    if ($Kit.Count) { $a += @('--kit-a', (Resolve $Kit[0]), '--kit-b', (Resolve $Kit[1])) }
     foreach ($e in @($Switches | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().Trim('"', "'") } | Where-Object { $_ })) {
         $a += @('--env', $e)
     }
@@ -236,7 +249,7 @@ if ($Runtime -eq 'hookshot') {
         # kit's launcher does (colour-agree; tools\puppet_pack\self_tunic.py = kit-paths.ps1 Set-KitSelfTunic):
         # files left by an earlier start in another colour would show you in that colour on your own screen.
         $switchList = @($Switches | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().Trim('"', "'") } | Where-Object { $_ })
-        foreach ($x in 'A', 'B') {
+        foreach ($x in $(if ($Kit.Count) { @() } else { 'A', 'B' })) {   # (-Kit: the kit's own start does it)
             $pair = Resolve $(if ($x -eq 'A') { $HookshotA } else { $HookshotB })
             $sw = @{}   # a plain switch, then the pair's own 'A:' / 'B:' one wins (hookshot.py --env)
             foreach ($e in $switchList) { if ($e -notmatch '^[AB]:' -and $e -match '^(.+?)=(.*)$') { $sw[$Matches[1]] = $Matches[2] } }
@@ -244,7 +257,7 @@ if ($Runtime -eq 'hookshot') {
             $pack = Join-Path $pair 'mods\contents\0400486024DEC000\coop-puppet'
             if (-not (Test-Path -LiteralPath (Join-Path $pack 'coop_puppet.json'))) { continue }
             $selfArgs = @('-I', (Join-Path (Split-Path $here) 'puppet_pack\self_tunic.py'), '--pack', $pack,
-                '--color', "$($sw['LICHII_COOP_COLOR'])", '--tunics', "$($sw['LICHII_COOP_TUNICS'])",
+                "--color=$($sw['LICHII_COOP_COLOR'])", "--tunics=$($sw['LICHII_COOP_TUNICS'])",   # (=: PowerShell drops an empty argument)
                 '--options', (Join-Path $pair 'coop-options.ini'), '--coop-ini', (Join-Path $pair 'coop.ini'))
             $got = (& $py[0] @pyArgs @selfArgs | Out-String).Trim()
             Write-Host "hookshot: game $x's own tunic files: $(if ($got) { $got } else { "none (the game's green)" })"

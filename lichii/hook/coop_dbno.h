@@ -181,6 +181,15 @@ private:
     std::atomic<bool> live_{false};
 };
 
+// A life our own code writes to our Link past the game's Life step (PvP's
+// write when the game's own hit did not come in time): what the guard lets
+// it lower `life` to when `to` is asked, as the Life step would (a lethal
+// one leaves kDownedLife and downs him; downed or just revived, nothing).
+// Player report 34: PvP wrote 0 over a Link the game's hit had just downed.
+inline std::int32_t GuardedWrite(LifeGuard& guard, std::int32_t life, std::int32_t to) {
+    return to >= life ? to : life - guard.Step(life, life - to);
+}
+
 // --- The downed player's side ---
 
 inline constexpr float kReviveReachM = 2.5f;  // level distance, feet to feet

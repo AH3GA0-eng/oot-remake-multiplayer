@@ -13,6 +13,7 @@
 #   coop-options.ini        the player's switches (the co-op module reads and writes it)
 #   start-server.cmd        a dedicated server, for those who want one; with server\ it also marks the kit
 #                           folder for the module (hookshot/src/coop_title.cpp, FindKit)
+#   make-puppet-pack.cmd    the puppet pack made again on its own (hookshot-build.ps1 -PackOnly; the start makes it too)
 #   server\                 coop_server.exe and the Visual C++ runtime
 #   hookshot\               hookshot_coop.dll (the co-op module), the runtime, PIN, TOOLS.txt, patches\
 #   scripts\                everything else the launcher runs; collect-logs.cmd for bug reports
@@ -52,13 +53,13 @@ function Test-BinaryHas([string]$Path, [string]$Text) {
 function Get-Sha([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
 
 # What goes in. Files listed here and nowhere else, so a review sees the whole kit in one place.
-$KitTop = @('Start OoT Co-op.bat', 'README.txt', 'Revert.bat', 'start-server.cmd', 'coop-options.ini')
+$KitTop = @('Start OoT Co-op.bat', 'README.txt', 'Revert.bat', 'start-server.cmd', 'make-puppet-pack.cmd', 'coop-options.ini')
 $KitScripts = @('start.ps1', 'start-checks.ps1', 'play.ps1', 'coop-ini.ps1', 'kit-paths.ps1', 'hosting.ps1', 'relay-join.ps1',
     'invite.ps1', 'hookshot-build.ps1', 'apply_patch.py', 'update.ps1', 'start-server.ps1', 'collect-logs.ps1', 'collect-logs.cmd',
-    'log-mask.ps1', 'windows-checks.ps1')
+    'log-mask.ps1', 'windows-checks.ps1', 'console-mode.ps1')
 $KitDocs = @(@('setup.md', 'SETUP.md'), @('known-issues.md', 'KNOWN-ISSUES.md'))
 # Never in this kit (emulator kits only); make_kit_hookshot refuses a kit that has one.
-$EmulatorOnly = '(?i)(^|\\)(emulator\\|lichii|fritchii|.*\.nx2recipe$|Host\.bat$|Join\.bat$|Host-Hookshot\.bat$|Join-Hookshot\.bat$|Play-OoT-Coop\.bat$|Build-Hookshot-Coop\.bat$|play\.cmd$|start-join\.cmd$|start-relay\.cmd$|make-puppet-pack\.cmd$|check-hosting\.cmd$|puppet-pack\.ps1$|qt6|Qt6|SDL2\.dll$)'
+$EmulatorOnly = '(?i)(^|\\)(emulator\\|lichii|fritchii|.*\.nx2recipe$|Host\.bat$|Join\.bat$|Host-Hookshot\.bat$|Join-Hookshot\.bat$|Play-OoT-Coop\.bat$|Build-Hookshot-Coop\.bat$|play\.cmd$|start-join\.cmd$|start-relay\.cmd$|check-hosting\.cmd$|puppet-pack\.ps1$|qt6|Qt6|SDL2\.dll$)'
 
 $repo = Invoke-Git $here rev-parse --show-toplevel
 if (-not $repo) { throw 'tools\release is not inside a git checkout' }

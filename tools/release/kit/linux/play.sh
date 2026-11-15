@@ -281,7 +281,7 @@ if [[ $mode == host ]]; then
         if [[ -f $KIT/logs/invite-code.txt ]]; then
             code=$(head -n1 "$KIT/logs/invite-code.txt")
             echo
-            echo "INVITE CODE (send it to your friends; they paste it into Join.sh or Join.bat):"
+            echo "INVITE CODE (share it in DMs only: it contains your internet address; friends paste it into Join.sh or Join.bat):"
             echo "  $code"
             kit_copy "$code" && echo '  (copied to the clipboard)'
             echo 'It is also in logs/invite-code.txt while the server runs. An ANSWER CODE from a friend:'

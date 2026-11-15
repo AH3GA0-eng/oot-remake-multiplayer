@@ -17,6 +17,7 @@
 #include "coop_host_menu.h"
 #include "coop_i18n.h"
 #include "coop_input.h"
+#include "coop_lobby_game.h"
 #include "coop_lobby_tab.h"
 #include "coop_look.h"
 #include "coop_look_view.h"
@@ -106,8 +107,11 @@ std::vector<std::string> ChooseLookParts(const CoopLook::Look& look) {
 
 // What the module's host is doing, in plain words (CoopTitleMenu::PlainStatus). Only reads: what follows from
 // the state (codes on the clipboard, the host's save loaded) is Tick's.
-std::vector<std::string> StatusLines(const HosCoopStatus& st) {
+std::vector<std::string> StatusLines(const HosCoopStatus& st, const CoopLobby::Seen& seen) {
     CoopTitleMenu::HostView v;
+    v.in_session = seen.connected;
+    v.refused = seen.refused;
+    v.banned = seen.banned;
     v.host = g_doing == "hosting";
     v.state = st.state;
     v.problem = st.problem;
@@ -151,8 +155,9 @@ void Joined() {
 // What co-op is doing, for the tab.
 CoopPauseMenu::Session SessionNow() {
     const HosCoopStatus st = Status();
+    const CoopLobby::Seen seen = CoopLobby::Now();   // what the Lobby tab shows too
     CoopPauseMenu::Session s;
-    switch (st.state) {
+    switch (CoopTitleMenu::ShownState(st.state, g_doing == "hosting", seen.connected)) {
     case HOS_COOP_STARTING: s.state = State::kStarting; break;
     case HOS_COOP_HOSTING: s.state = State::kHosting; break;
     case HOS_COOP_JOINING: s.state = State::kJoining; break;
@@ -170,7 +175,7 @@ CoopPauseMenu::Session SessionNow() {
         s.players = static_cast<int>(CoopHook::PlayerList().size());
         s.code = st.state == HOS_COOP_WAIT_HOST ? st.answer : "";
     }
-    s.lines = StatusLines(st);
+    s.lines = StatusLines(st, seen);
     return s;
 }
 
@@ -199,7 +204,9 @@ void Follow(const HosCoopStatus& st) {
             LOG_INFO(Core, "coop: multiplayer tab: {}", said);   // (the English detail, for the log)
         }
     }
-    if (g_doing == "joined" && st.state == HOS_COOP_CONNECTED && !g_join_saved && !g_join_text.empty()) {
+    // Once the session took this game in: the host's name is known then (PlayerList).
+    if (g_doing == "joined" && st.state == HOS_COOP_CONNECTED && !g_join_saved && !g_join_text.empty() &&
+        CoopLobby::Now().connected) {
         Joined();
     }
 }
@@ -296,6 +303,12 @@ void Leave() {
     g_menu.SetNote({"Co-op stopped. You play on alone."});
 }
 
+// The Settings page's Microphone row (voice on): the microphones there now, listed only while voice is on (none
+// opened); none when this game cannot choose one (an older patch 0009).
+void MicRows() {
+    g_menu.SetMicrophones(g_menu.options().voice ? CoopVoice::Microphones() : std::nullopt);
+}
+
 void Save() {
     const auto kit = FindKit();
     std::string coop = ReadText(CoopIni());
@@ -312,6 +325,8 @@ void Save() {
     CoopVoice::SetMode(!g_menu.options().voice     ? coop::voice::Mode::off
                        : g_menu.options().voice_ptt ? coop::voice::Mode::push_to_talk
                                                     : coop::voice::Mode::open_mic);   // voice chat and its mode count at once
+    CoopVoice::SetMicrophone(g_menu.options().voice_mic);   // and its microphone
+    MicRows();   // (voice just turned on: the Microphone row's list)
     CoopHookshot::SetChatKey(g_menu.options().chat_key);   // the chat key too
     CoopHookshot::SetMapOptions(g_menu.options().map_players, g_menu.options().map_names);   // at once too
     LOG_INFO(Core, "coop: multiplayer tab: settings saved{}{}", ok ? "" : " (a file could not be written)",
@@ -465,6 +480,7 @@ void ShowTab() {
     const auto last = CoopTitleMenu::IniGet(coop, "last_invite");
     g_menu.SetRejoin(CoopTitleMenu::IniGet(coop, "last_host").value_or(""), last.value_or(""));
     InputRows();   // (a controller plugged in while the menu was closed: its name)
+    MicRows();     // (and a microphone plugged in)
     RefreshSession(true);
 }
 

@@ -121,6 +121,12 @@ std::vector<Tab::Line> Tab::Lines() const {
         out.push_back(std::move(l));
     };
 
+    if (!lobby_.connected && !lobby_.waiting.empty()) {
+        heading("Lobby");
+        note(lobby_.waiting);
+        note("The players show here once this game is in the session.");
+        return out;
+    }
     if (!lobby_.connected) {
         heading("Lobby");
         note("You are not in a game.");
@@ -154,10 +160,15 @@ std::vector<Tab::Line> Tab::Lines() const {
                 note(std::to_string(open) + (open == 1 ? " more player can join" : " more players can join"));
             }
         }
+        // Before a file is loaded (at the title or the file select) this game has no place yet.
+        if (std::any_of(lobby_.players.begin(), lobby_.players.end(),
+                        [](const Player& pl) { return pl.self && pl.place.empty(); })) {
+            note("Load your file to play: the others see you once you do.");
+        }
         heading("Invite");
         if (lobby_.hosting && !lobby_.invite.empty()) {
             action("Copy the invite code", Shorten(lobby_.invite, 24), Act::kCopy,
-                   "Puts the invite code on the clipboard: send it to a friend, who pastes it in Join a game.");
+                   "Puts the invite code on the clipboard. Share it in DMs only (it contains your internet address); your friend pastes it in Join a game.");
         } else if (lobby_.hosting) {
             note("The invite code is not ready yet (see the Multiplayer tab).");
         } else {

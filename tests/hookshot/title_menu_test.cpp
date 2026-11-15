@@ -182,11 +182,11 @@ TEST_CASE("title menu: Host and Join in plain words, nothing about ports or pass
     auto s = PlainStatus(h);
     REQUIRE(s.size() >= 3);
     // First: the invite code is the way to host (it is on the clipboard); the other rows come after.
-    CHECK(s[0] == "Invite code copied to your clipboard. Send it to your friends, or pick another way to host below.");
+    CHECK(s[0] == "Invite code copied to your clipboard. Share it in DMs only: it contains your internet address.");
     CHECK(s[1] == "ABCDE-FGHJK");
     CHECK(s[2] == "Waiting for your friends to join...");
     h.copied = false;
-    CHECK(PlainStatus(h)[0].find("Send it to your friends") != std::string::npos);
+    CHECK(PlainStatus(h)[0].find("Share it in DMs only") != std::string::npos);
     CHECK(PlainStatus(h)[2].find("Copy the code again") != std::string::npos);
     h.copied = true;
     h.players = 3;
@@ -224,7 +224,8 @@ TEST_CASE("title menu: Host and Join in plain words, nothing about ports or pass
             for (const auto& line : PlainStatus(v)) {
                 CHECK(line.find("port") == std::string::npos);
                 CHECK(line.find("password") == std::string::npos);
-                CHECK(line.find("address") == std::string::npos);
+                // (one exception: the host is told the invite code holds their internet address, privacy-name)
+                CHECK((line.find("address") == std::string::npos || line.find("Share it in DMs only: it contains your internet address.") != std::string::npos));
             }
         }
     }
@@ -516,7 +517,7 @@ TEST_CASE("Same network and VPN: two rows, the VPN found by its card's name") {
     CHECK(no_vpn[0] == "No VPN found.");
     CHECK(HomeLines({}, 27510, "pw", false)[0].find("No home-network address") != std::string::npos);
     CHECK(HostHeadline(true) ==
-          "Invite code copied to your clipboard. Send it to your friends, or pick another way to host below.");
+          "Invite code copied to your clipboard. Share it in DMs only: it contains your internet address.");
 }
 
 TEST_CASE("title menu: players on the map are on unless turned off: off writes 0, on takes the line away") {
@@ -634,4 +635,59 @@ TEST_CASE("title menu: a colour the Look row does not list survives a Save that 
     std::string coop, opt = "color = gray\r\n";
     o.Write(coop, opt);
     CHECK(IniGet(opt, "color") == "red");
+}
+
+// lobby-state-b (player report 22): a join is "Connected!" only once the session took this game in.
+TEST_CASE("title menu: a join told to connect says joining until the session's welcome") {
+    CHECK(ShownState(HOS_COOP_CONNECTED, false, false) == HOS_COOP_JOINING);
+    CHECK(ShownState(HOS_COOP_CONNECTED, false, true) == HOS_COOP_CONNECTED);
+    CHECK(ShownState(HOS_COOP_HOSTING, true, false) == HOS_COOP_HOSTING);
+    CHECK(ShownState(HOS_COOP_JOINING, false, false) == HOS_COOP_JOINING);
+    HostView h;
+    h.state = HOS_COOP_CONNECTED;
+    h.in_session = false;
+    CHECK(PlainStatus(h) == std::vector<std::string>{"Joining your friend's game..."});
+    h.refused = "the session is full";
+    CHECK(PlainStatus(h)[0] == "Your friend's game turned this one away: the session is full.");
+    CHECK(PlainStatus(h)[1] == "Press Leave, then join again.");
+    // One row: only the part before ':' (the full reason is in the chat and the log); a ban offers no join again.
+    h.refused = "the host banned you from this game: you cannot join it again until the host stops hosting";
+    h.banned = true;
+    CHECK(PlainStatus(h) ==
+          std::vector<std::string>{"Your friend's game turned this one away: the host banned you from this game.",
+                                   "Press Leave."});
+    h.banned = false;
+    h.refused.clear();
+    h.in_session = true;
+    CHECK(PlainStatus(h) == std::vector<std::string>{"Connected! Choose your file and play."});
+}
+
+TEST_CASE("title menu: a refusal's row keeps the part before the first ':'") {
+    CHECK(ShortReason("the session is full") == "the session is full");
+    CHECK(ShortReason("a: b: c") == "a");
+    CHECK(RefusedLine("x: y") == "Your friend's game turned this one away: x.");
+}
+
+TEST_CASE("title menu: the voice's microphone in coop-options.ini") {
+    CHECK(Options::Read("", "").voice_mic.empty());
+    Options o = Options::Read("", "LICHII_COOP_VOICE=open\r\nLICHII_COOP_VOICE_MIC=Headset Microphone (USB)\r\n");
+    CHECK(o.voice_mic == "Headset Microphone (USB)");
+    // a name with " #" or " ;" in it is all of the name, not a comment (as the launcher reads the line)
+    CHECK(Options::Read("", "LICHII_COOP_VOICE_MIC=Mic #2 ; left\r\n").voice_mic == "Mic #2 ; left");
+    std::string c, opt;
+    o.voice_mic = "Webcam";
+    o.Write(c, opt);
+    CHECK(IniGet(opt, "LICHII_COOP_VOICE_MIC") == "Webcam");
+    o.voice = false;   // voice off: the microphone is kept for next time
+    o.Write(c, opt);
+    CHECK(IniGet(opt, "LICHII_COOP_VOICE_MIC") == "Webcam");
+    o.voice_mic.clear();   // Default: no line
+    o.Write(c, opt);
+    CHECK_FALSE(IniGet(opt, "LICHII_COOP_VOICE_MIC").has_value());
+    o.voice_mic = "Webcam";
+    bool seen = false;
+    for (const auto& [k, v] : o.Environment()) {
+        seen |= k == "LICHII_COOP_VOICE_MIC" && v == "Webcam";
+    }
+    CHECK(seen);
 }

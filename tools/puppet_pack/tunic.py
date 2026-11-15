@@ -40,9 +40,9 @@ COLORS = {
 }
 
 # Your own Link in your colour: the game's tile recoloured under its own name, one per colour,
-# kept beside the pack (not in romfs/, so the game does not load it). The kit copies the one of
-# your colour over romfs/Tex/<TILE>.bntx.zs at each start (scripts/kit-paths.ps1
-# Set-KitSelfTunic); green or none: no copy, the game's own tile.
+# kept beside the pack (not in romfs/, so the game does not load it). The kit puts the files of
+# your colour (self_files) in at each start (scripts/kit-paths.ps1 Set-KitSelfTunic); green or
+# none: green's S copies (the game's texels marked, SELF_MARK), never the game's shared tile.
 SELF_DIR = "coop_self"
 
 # Your own Link's textures have their own names (colour-agree): the letter S, which no colour
@@ -54,6 +54,12 @@ SELF_LETTER = "S"
 # The puppets' tunic copies: the image's last byte XOR this (puppet_pack.look_live.mark), so their
 # texels are never your own Link's (the same colour's own copy, or the game's green).
 TUNIC_MARK = 0xA5
+# Your own Link's green S copies (npc-colour): the game's own texels with the image's last byte XOR
+# this. The game's tunic textures are shared: Angin_Tile_A_Alb is on Mido's model (39 Kokiri actors
+# use it), the dark tile on Saria's (18 more). The module finds your own Link's textures by their
+# texels (hookshot/src/coop_look_tunic.cpp), so green's must not be the game's own, or a colour
+# change repaints every Kokiri. Never a copy's 1..8, the boots' letters or TUNIC_MARK.
+SELF_MARK = 0x5A
 
 BC1, BC3 = 0x1A, 0x1C
 

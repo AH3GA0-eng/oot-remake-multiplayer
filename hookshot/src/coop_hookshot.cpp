@@ -53,6 +53,7 @@
 #include "coop_dbno_game.h"
 #include "coop_enemy_shots.h"
 #include "coop_mods_runtime.h"
+#include "coop_rando.h"
 #include "coop_hook.h"
 #include "coop_lobby_game.h"
 #include "coop_voice.h"
@@ -74,8 +75,10 @@
 #include "coop_png.h"
 #include "coop_puppet.h"
 #include "coop_puppet_config.h"
+#include "coop_pack_notice.h"
 #include "coop_frame_clock.h"
 #include "coop_runtime.h"
+#include "coop_pause_files.h"
 #include "coop_settings.h"
 #include "coop_svc.h"
 #include "coop_time.h"
@@ -197,6 +200,20 @@ bool Refused(const CoopPuppet::Call& c) {
         return false;
     }
     const std::string actor = CreateName(c);
+    // A randomizer seed whose size table may lack the puppet pack's entries (coop_rando.h HoldPack): a pack actor
+    // made now crashes the game, so none until the restart (the chat says RESTART); the others show as fairies.
+    if (actor.rfind("Coop", 0) == 0) {
+        if (const CoopRando::Rando* r = CoopModsRuntime::Rando(); r != nullptr && r->HoldPack()) {
+            static bool held_said = false;
+            if (!held_said) {
+                held_said = true;
+                LOG_WARNING(Core, "coop: {} not made: the randomizer seed's size table is being checked or was made "
+                                  "again (restart the game); other players show as their fairy until then",
+                            actor);
+            }
+            return true;
+        }
+    }
     if (!CoopHookshot::RefuseCreate(actor, allow)) {
         return false;
     }
@@ -241,6 +258,12 @@ void RunFlagSetters(void* ctx) {
             if (s0) std::memcpy(&k.s0, &*s0, sizeof k.s0);  // a Float setter's value
             std::uint64_t result = 0;
             return g_api->call(ctx, &k, &result) != 0;
+        },
+        [ctx](const void* data, std::size_t n) -> std::uint64_t {
+            // (patch 0004's scratch: an older Hookshot has none, and String64 writes then go into the queues)
+            const bool has = g_api->size >= offsetof(HosCoopApi, scratch) + sizeof(g_api->scratch) &&
+                             g_api->scratch != nullptr;
+            return has ? g_api->scratch(ctx, data, n) : 0;
         });
     if (ok) {
         return;
@@ -271,6 +294,9 @@ void RunFlagSetters(void* ctx) {
             break;
         case GameFlagType::key64:
             done = GameFlags::set_key64(memory, w.id, w.value != 0);
+            break;
+        case GameFlagType::string64:
+            if (const auto text = CoopFlagNative::Calls().text(w)) done = GameFlags::set_string64(memory, hash, *text);
             break;
         }
         ++(done ? moved : lost);
@@ -332,15 +358,19 @@ void LogBossNative() {
     }
     const CoopBossNative::Counts c = CoopBossNative::TheTable().Totals();
     if (c.owner_brain == said.owner_brain && c.owner_action == said.owner_action && c.copy_skipped == said.copy_skipped &&
-        c.brain_applied == said.brain_applied && c.action_applied == said.action_applied) {
+        c.brain_applied == said.brain_applied && c.action_applied == said.action_applied &&
+        c.copy_own_run == said.copy_own_run && c.copy_own_late == said.copy_own_late &&
+        c.copy_life_held == said.copy_life_held && c.copy_killed == said.copy_killed) {
         return;
     }
     said_ms = now;
     said = c;
     LOG_INFO(Core, "coop: bosses: ours sent {} brain + {} action verbs ({} by plug); copies: {} own skipped, {} brain + "
-                   "{} action verbs put in ({} waited for a node), {} own minions not made, {} busy",
+                   "{} action verbs put in ({} waited for a node), {} own run in our event or after our hit ({} late), "
+                   "{} own minions not made, {} busy; {} own Life steps held at 1, {} let die after the owner's",
              c.owner_brain, c.owner_action, c.plug_actions, c.copy_skipped, c.brain_applied, c.action_applied,
-             c.action_waiting, c.minions_stopped, c.busy);
+             c.action_waiting, c.copy_own_run, c.copy_own_late, c.minions_stopped, c.busy, c.copy_life_held,
+             c.copy_killed);
 }
 
 void RunCalls(void* ctx) {
@@ -438,7 +468,10 @@ CoopHostMenu::Menu& HostMenu() {
             s.password = t.password;
             return CoopHook::Begin(std::move(s));
         };
-        h.disconnect = [] { CoopHook::End(); };
+        h.disconnect = [] {
+            CoopHook::End();
+            CoopLobby::Forget();  // the Lobby tab shows nobody once co-op is left (lobby-state-b)
+        };
         h.client_id = [] { return CoopTitle::ClientId(); };
         h.log = [](const std::string& line) { LOG_INFO(Core, "{}", line); };
         h.default_name = [] {
@@ -987,6 +1020,7 @@ bool Start(const HosCoopApi* api) {
     // Started without the kit's launcher: its coop-options.ini switches still count.
     CoopTitle::ApplyKitOptions();
     UseInputSelect();
+    CoopFiles::CheckName();  // never the PC's user or PC name as the co-op name (coop_name_privacy.h), before coop.ini is read
     const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
     std::vector<std::string> errors;
     // The Multiplayer tab (patch 0004's Hookshot and later, or HOS_COOP_MENU=1): the module stays loaded with co-op idle
@@ -1009,6 +1043,7 @@ bool Start(const HosCoopApi* api) {
     if (EnvOn("LICHII_COOP_PUPPET") || EnvOn("LICHII_COOP_DEBUG_PUPPET")) {
         CoopPuppetConfig::Configure();  // as the emulator's cave (coop_puppet_config.h)
     }
+    CoopPackNotice::Enable(CoopPuppetConfig::HasPack());  // no pack: the chat says so once (coop_pack_notice.h)
     g_hold = EnvOn("LICHII_COOP_OBJECTS_AI_HOLD");
     CoopLinkSound::SetProbe(EnvOn("LICHII_COOP_DEBUG_SOUND"));  // every user's sounds named once in the log
     // Flags through the game's own functions (coop_flag_native.h): its writes as events from the applier's wrap, ours
@@ -1195,6 +1230,16 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
                                                                                                          : 0;
             });
         *sum = CoopActorEvents::Step(CoopActorEvents::TheRing(), CoopActorEvents::TheLifeTable(), a, own);
+        // One boss death for everyone (coop_boss_native.h HeldLifeStep): a copy boss's own Life step
+        // keeps it at life 1 until its owner's has died; then this same step lets it die.
+        if (CoopBossNative::Table& bosses = CoopBossNative::TheTable(); *sum > 0 && bosses.Watches(a)) {
+            std::uint64_t value = 0;
+            std::int32_t life = 0;
+            if (CoopRuntime::Read(a + CoopDbno::kLifeValueEntry, &value, sizeof value) && value != 0 &&
+                CoopRuntime::Read(value + 8, &life, sizeof life)) {
+                *sum = bosses.HeldLifeStep(a, life, *sum);
+            }
+        }
         // Down but not out (coop_dbno_game.h): our Link's last life is held back, after every other
         // change to the sum (difficulty, PvP), so the guard sees what would really be taken.
         if (a != 0 && a == CoopDbno::OurLifeComponent()) {

@@ -118,6 +118,12 @@ open(os.path.join(d, "coop_puppet.json"), "w").write("{}")
 with open(os.environ["FAKE_LOG"], "a") as f:
     f.write("puppet_pack %s\n" % " ".join(sys.argv[1:]))
 EOF
+# (dumpcheck.py's stand-in: a file that starts with "nup" is the game; the pack's .nup search takes no other)
+cat >"$kit/data/tools/puppet_pack/dumpcheck.py" <<'EOF'
+import sys
+p = sys.argv[sys.argv.index("--romfs") + 1]
+sys.exit(0 if open(p, "rb").read(3) == b"nup" else 1)
+EOF
 printf 'kit: oot-coop-v0.1.0-beta2-linux (release v0.1.0-beta2)\n' >"$kit/VERSION.txt"
 export OOT_COOP_FETCH_LOCAL=1
 export KIT_FETCH_WAIT=0   # (kit-mirror: no waits between the retries here)
@@ -148,6 +154,45 @@ check 'build: the game file is remembered' has "$D/game-files.txt" "Downloads/Oo
 : >"$log"
 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build2.txt" 2>&1; export CODE=$?
 check 'build: a second start builds nothing' bash -c '[ $CODE -eq 0 ] && grep -q "built already" "$1" && ! grep -q "^make_game" "$2" && grep -q "puppet pack: built already" "$1"' _ "$tmp/build2.txt" "$log"
+
+# pack-retry: the pack is made again on a start whenever it is missing, incomplete or from another tool, and the
+# game file is looked for when it moved; a pack tool error is said and the start goes on.
+P=$D/game/mods/contents/0400486024DEC000/coop-puppet
+nup_was=$HOME/Downloads/'OoT [04004860224DEC000].nup'
+printf '{"look_files": {"gear": "coop_look/gear.bin"}, "tunics": {"red": ["Tex/r.bntx.zs"]}}' >"$P/coop_puppet.json"
+: >"$log"
+bash "$kit/scripts/build.sh" </dev/null >"$tmp/pack1.txt" 2>&1; export CODE=$?
+check 'pack: an incomplete pack (gear.bin gone) is made again, said plainly' bash -c '[ $CODE -eq 0 ] && grep -q "incomplete (coop_look/gear.bin is missing)" "$1" && grep -q "^puppet_pack" "$2" && grep -q "Making the puppet pack" "$1"' _ "$tmp/pack1.txt" "$log"
+rm -rf "$P"
+mkdir -p "$HOME/Desktop/games"
+mv "$nup_was" "$HOME/Desktop/games/"
+printf 'manual' >"$HOME/Downloads/Manual.nup"   # (a .nup that is not the game: the check leaves it out)
+: >"$log"
+bash "$kit/scripts/build.sh" </dev/null >"$tmp/pack2.txt" 2>&1; export CODE=$?
+check 'pack: no pack and the .nup moved to the Desktop: found there, remembered, the pack made' bash -c '[ $CODE -eq 0 ] && grep -q "Found your game file: .*Desktop/games/OoT" "$1" && grep -q "Desktop/games/OoT" "$3" && grep -q "^puppet_pack --romfs .*Desktop/games/OoT" "$2"' _ "$tmp/pack2.txt" "$log" "$D/game-files.txt"
+mkdir -p "$tmp/away/far" && mv "$HOME/Desktop/games/OoT [04004860224DEC000].nup" "$tmp/away/far/"   # (deeper than the search looks)
+# (only Manual.nup is left in the search's places: it is not the game, so it is not taken; no dumpcheck.py: nothing is)
+rm -rf "$P"
+: >"$log"
+bash "$kit/scripts/build.sh" </dev/null >"$tmp/pack3.txt" 2>&1; export CODE=$?
+check 'pack: only a .nup that is not the game left: not taken, said, the start goes on (no prompt without a terminal)' bash -c '[ $CODE -eq 0 ] && grep -q "puppet pack was not made: your game file is not at" "$1" && ! grep -q "^puppet_pack" "$2" && ! grep -q Manual "$3"' _ "$tmp/pack3.txt" "$log" "$D/game-files.txt"
+mv "$D/tools/puppet_pack/dumpcheck.py" "$tmp/dumpcheck.py"
+printf 'nup' >"$HOME/Downloads/Unchecked.nup"
+rm -rf "$P"; : >"$log"
+bash "$kit/scripts/build.sh" </dev/null >"$tmp/pack3b.txt" 2>&1; export CODE=$?
+check 'pack: no dumpcheck.py: an unchecked .nup is never taken' bash -c '[ $CODE -eq 0 ] && ! grep -q "^puppet_pack" "$2" && ! grep -q Unchecked "$3"' _ "$tmp/pack3b.txt" "$log" "$D/game-files.txt"
+mv "$tmp/dumpcheck.py" "$D/tools/puppet_pack/dumpcheck.py"
+rm -f "$HOME/Downloads/Unchecked.nup" "$HOME/Downloads/Manual.nup"
+mv "$tmp/away/far/OoT [04004860224DEC000].nup" "$nup_was"
+printf '%s\n' "$nup_was" >"$D/game-files.txt"
+cp "$D/tools/puppet_pack/build.py" "$tmp/build.py.good"
+printf 'import sys\nprint("BuildError: Tex/x.bntx.zs: broken")\nsys.exit(1)\n' >"$D/tools/puppet_pack/build.py"
+bash "$kit/scripts/build.sh" </dev/null >"$tmp/pack4.txt" 2>&1; export CODE=$?
+check 'pack: a pack tool error is said plainly and the start goes on, the next start tries again' bash -c '[ $CODE -eq 0 ] && grep -q "BuildError" "$1" && grep -q "could not be made (the lines above say why): the game starts" "$1" && [ ! -f "$2/.coop-stamp" ]' _ "$tmp/pack4.txt" "$P"
+cp "$tmp/build.py.good" "$D/tools/puppet_pack/build.py"
+: >"$log"
+bash "$kit/scripts/build.sh" </dev/null >"$tmp/pack5.txt" 2>&1; export CODE=$?
+check 'pack: the tool fixed: the next start makes the pack' bash -c '[ $CODE -eq 0 ] && grep -q "^puppet_pack" "$2" && [ -f "$3/.coop-stamp" ]' _ "$tmp/pack5.txt" "$log" "$P"
 
 # The randomizer the kit brings (data/longshot/OOTRR.txt): fetched and unpacked into data/game/tools/ootrr.
 mkdir -p "$tmp/ootrr-rel/ootrr-0.5.0-linux-x86_64"
@@ -270,6 +315,10 @@ if [[ $(uname -s) == Linux ]]; then
     check 'start: an unknown option is refused' bash -c '[ $CODE -ne 0 ] && grep -q "Unknown option" "$1"' _ "$tmp/start2.txt"
     bash "$kit/start-oot-coop.sh" --help </dev/null >"$tmp/start3.txt" 2>&1
     check 'start --help lists the options' has "$tmp/start3.txt" '--no-update'
+    check 'start --help lists --pack' has "$tmp/start3.txt" '--pack'
+    : >"$log"
+    bash "$kit/start-oot-coop.sh" --pack </dev/null >"$tmp/start5.txt" 2>&1; export CODE=$?
+    check 'start --pack: the pack made again even when current, the game not started' bash -c '[ $CODE -eq 0 ] && grep -q "^puppet_pack" "$1" && ! grep -q "^started" "$1" && grep -q "the puppet pack is made" "$2"' _ "$log" "$tmp/start5.txt"
     chmod -w "$D"
     if [[ ! -w $D ]]; then
         bash "$kit/start-oot-coop.sh" --no-update </dev/null >"$tmp/start4.txt" 2>&1
@@ -373,13 +422,27 @@ unset OOT_COOP_UPDATE_API
 
 # --- collect-logs.sh -------------------------------------------------------------------------
 printf 'coop: joined 192.168.1.20\npassword = hunter2\n' >"$D/game/longshot_log.txt"
+mkdir -p "$D/game/mods/oot-remake-randomizer" && printf 'error: seed failed at 192.168.1.20\n' >"$D/game/mods/oot-remake-randomizer/last-build.txt"
 bash "$kit/scripts/collect-logs.sh" >"$tmp/logs.txt" 2>&1
 out=$(ls "$kit"/coop-logs-*.tar.gz 2>/dev/null | head -n1)
 check 'collect-logs: a .tar.gz beside start-oot-coop.sh' [ -n "$out" ]
 if [[ -n $out ]]; then
     mkdir -p "$tmp/logs" && tar -xzf "$out" -C "$tmp/logs"
     check 'collect-logs: the game log is in, its password and LAN address masked' bash -c 'grep -q "<lan-1>" "$1" && grep -q "(removed)" "$1" && ! grep -q hunter2 "$1"' _ "$tmp/logs/game/longshot_log.txt"
+    check 'collect-logs: OOTRR'"'"'s last-build.txt is in, masked' bash -c 'grep -q "<lan-1>" "$1" && grep -q "seed failed" "$1"' _ "$tmp/logs/game/last-build.txt"
 fi
+check 'collect-logs: the last line names the file to send' bash -c '[ "$(tail -n1 "$1")" = "Send this file: $2" ]' _ "$tmp/logs.txt" "$out"
+check 'collect-logs: with the game log in, no help about finding it' bash -c '! grep -q "not in this file" "$1"' _ "$tmp/logs.txt"
+# No game log: where to find it and how to add it; one copied into data/logs goes in.
+rm -f "$D/game/longshot_log.txt" "$kit"/coop-logs-*.tar.gz
+bash "$kit/scripts/collect-logs.sh" >"$tmp/logs2.txt" 2>&1
+check 'collect-logs, no game log: says so and how to add it' bash -c 'grep -q "longshot_log.txt) is not in this file" "$1" && grep -q "Copy longshot_log.txt into" "$1"' _ "$tmp/logs2.txt"
+rm -f "$kit"/coop-logs-*.tar.gz
+printf 'coop: module loaded\n' >"$D/logs/longshot_log.txt"
+bash "$kit/scripts/collect-logs.sh" >"$tmp/logs3.txt" 2>&1
+out=$(ls "$kit"/coop-logs-*.tar.gz 2>/dev/null | head -n1)
+check 'collect-logs: a log copied into data/logs goes in' bash -c 'tar -tzf "$1" | grep -q "game/copied/longshot_log.txt" && ! grep -q "not in this file" "$2"' _ "$out" "$tmp/logs3.txt"
+rm -f "$D/logs/longshot_log.txt"
 
 # --- The scripts parse ---------------------------------------------------------------------
 for f in "$src/start-oot-coop.sh" "$src"/scripts/*.sh "$release/make_kit_linux.sh"; do

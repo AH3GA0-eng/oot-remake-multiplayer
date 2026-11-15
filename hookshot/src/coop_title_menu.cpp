@@ -293,6 +293,12 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
         } else if (!k.empty()) {
             o.voice_key = "your key";   // (a key code: coop_voice's SettingsFrom reads it)
         }
+        // (the whole line, as the launcher hands it over: a device's name may hold " #" or " ;", no comment here)
+        for (const auto& [k, v] : KitVariables(options_ini)) {
+            if (k == "LICHII_COOP_VOICE_MIC") {
+                o.voice_mic = v;
+            }
+        }
     }
     o.map_players = !Off(IniGet(options_ini, "LICHII_COOP_MAP"));
     o.map_names = !Off(IniGet(options_ini, "LICHII_COOP_MAP_NAMES"));
@@ -320,6 +326,8 @@ void Options::Write(std::string& coop_ini, std::string& options_ini) const {
     o = cheats ? IniSet(o, "LICHII_COOP_CHEATS", "1", false) : IniUnset(o, "LICHII_COOP_CHEATS");
     // (voice-mode: open = on with open mic, ptt = push to talk, the line gone = off, the default)
     o = voice ? IniSet(o, "LICHII_COOP_VOICE", VoiceMode(), false) : IniUnset(o, "LICHII_COOP_VOICE");
+    // (kept while voice is off too: turning it on again uses the same microphone)
+    o = voice_mic.empty() ? IniUnset(o, "LICHII_COOP_VOICE_MIC") : IniSet(o, "LICHII_COOP_VOICE_MIC", voice_mic, false);
     o = IniSet(o, "max_players", std::to_string(std::clamp(max_players, kMinPlayers, kMaxPlayers)), true);
     o = map_players ? IniUnset(o, "LICHII_COOP_MAP") : IniSet(o, "LICHII_COOP_MAP", "0", false);
     o = map_names ? IniUnset(o, "LICHII_COOP_MAP_NAMES") : IniSet(o, "LICHII_COOP_MAP_NAMES", "0", false);
@@ -336,6 +344,7 @@ std::vector<std::pair<std::string, std::string>> Options::Environment() const {
         {"LICHII_COOP_DEBUG_PANEL", debug_panel ? "1" : ""},
         {"LICHII_COOP_CHEATS", cheats ? "1" : ""},
         {"LICHII_COOP_VOICE", voice ? VoiceMode() : ""},
+        {"LICHII_COOP_VOICE_MIC", voice_mic},
         {"LICHII_COOP_MAP", map_players ? "" : "0"},
         {"LICHII_COOP_MAP_NAMES", map_names ? "" : "0"},
     };
@@ -642,8 +651,8 @@ std::vector<std::string> VpnLines(const std::vector<LanAddress>& vpn, std::uint1
 }
 
 std::string HostHeadline(bool copied) {
-    return copied ? "Invite code copied to your clipboard. Send it to your friends, or pick another way to host below."
-                  : "Your invite code is below. Send it to your friends, or pick another way to host below.";
+    return copied ? "Invite code copied to your clipboard. Share it in DMs only: it contains your internet address."
+                  : "Your invite code is below. Share it in DMs only: it contains your internet address.";
 }
 
 
@@ -707,6 +716,12 @@ std::vector<std::string> PlainStatus(const HostView& v) {
         return {"Your friend's router blocks the way in.", "Send your friend this answer code; they paste it into their game:",
                 v.answer, "Or ask them to turn on UPnP in their router's settings and host again."};
     case HOS_COOP_CONNECTED:
+        if (!v.refused.empty()) {
+            return {RefusedLine(v.refused), v.banned ? "Press Leave." : "Press Leave, then join again."};
+        }
+        if (!v.in_session) {
+            return {"Joining your friend's game..."};
+        }
         return {"Connected! Choose your file and play."};
     case HOS_COOP_FAILED:
         return {"Your friend could not be reached.",
@@ -715,6 +730,18 @@ std::vector<std::string> PlainStatus(const HostView& v) {
     default:
         return {};
     }
+}
+
+int ShownState(int state, bool host, bool in_session) {
+    return !host && state == HOS_COOP_CONNECTED && !in_session ? HOS_COOP_JOINING : state;
+}
+
+std::string ShortReason(const std::string& reason) {
+    return reason.substr(0, reason.find(':'));
+}
+
+std::string RefusedLine(const std::string& reason) {
+    return "Your friend's game turned this one away: " + ShortReason(reason) + ".";
 }
 
 void SaveWait::Start(std::uint64_t now_ms, std::string host) {

@@ -578,11 +578,24 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
             std::string where;
             current_starter_ = FindAsker(guest, main, current_, wanted_.front().scene, where);
             current_room_asker_ = current_starter_ != 0;
-            notes_.push_back(current_starter_ != 0
-                                 ? "live event " + current_ + ": started by our room's asker at " + where +
-                                       " (its EventBool moves the room)"
-                                 : "live event " + current_ + ": no asker actor within 1 m of its places here; "
-                                       "asked by name alone (its room may not move)");
+            if (current_starter_ == 0) {
+                // dungeon-sync-b (#62, #72): no asker here. Asked by name alone the event only plays its
+                // camera (the room moves on its asker's outputs), and where the asker went because the
+                // room's clear flag deleted it (the Dodongo's Cavern Lizalfos rooms'
+                // Gimmick_TreasureBoxAppear module: Logic_Delete <- Clear) the room has its result already.
+                // That camera kept our event system busy just as the shared clear flag unlocked the room's
+                // shutters, and the door stayed shut. Not asked: its played flag stays held until we leave
+                // or load, as before live events.
+                notes_.push_back("live event " + current_ +
+                                 ": no asker actor within 1 m of its places here: not asked (the room moves only "
+                                 "on its asker; it stays held until we leave or load)");
+                wanted_.pop_front();
+                current_.clear();
+                current_args_.clear();
+                return std::nullopt;
+            }
+            notes_.push_back("live event " + current_ + ": started by our room's asker at " + where +
+                             " (its EventBool moves the room)");
         }
         wanted_.pop_front();
         // deku-sync-fix: the asker asks the event itself, as its room graph's node does, so the event is its own.

@@ -432,7 +432,9 @@ public:
     // one key lent, so our player can open it too (LentKey below).
     static constexpr std::uint64_t kLendWaitUs = 1'000'000;   // at the lock this long: the key is lent
     static constexpr std::uint64_t kLendQuietUs = 3'000'000;  // after a lent key was used: no new one
-    static constexpr float kLendAwayM = 6.0f;  // this far from the lock with the key unused: taken back
+    // This far from the lock with the key unused: taken back. 3 m (was 6 m, dungeon-sync-b): our Link has left
+    // that door, so the lent key can never pay for another lock (a key is only lent within kLockHoldM).
+    static constexpr float kLendAwayM = 3.0f;
     static constexpr int kMaxLends = 8;        // per lock and visit of the scene
     static constexpr std::uint64_t kOwnDropUs = 8'000'000;  // a key spent this recently can go back
     static constexpr float kBreakNearM = 8.0f;   // as CoopObjects::Sync
@@ -473,6 +475,12 @@ public:
         // SmallKeyNum, once per lock this game opened after another already
         // had (docs/dungeon.md, "Locked doors").
         std::vector<std::uint32_t> key_refunds;
+        // dungeon-sync-b: a key lent at a lock another player opened (the
+        // SmallKeyNum flag) and an unused lent key taken back. The hook keeps
+        // both in our game only (coop::host::LentKeys): the group never sees
+        // them, nor our player's spend of the lent key.
+        std::vector<std::uint32_t> key_lends;
+        std::vector<std::uint32_t> lend_returns;
         std::vector<CoopObjects::LifeWrite> lives;
         // Another player's sword hits to give our copies (signs), through
         // the game's own damage call.
@@ -528,11 +536,12 @@ public:
     // SmallKeyNum flag's hash; FlagWatcher::take_own_count_drops).
     void OwnCountDrop(std::uint32_t key_flag, std::uint64_t now_us);
     // door-unlock: whether a lock another player opened is deleted here (the
-    // locked-doors design). Off by default: no run has shown that the door
-    // opens when its lock is deleted by us, and a deleted lock on a door
-    // that stays shut cannot be opened at all. With it off the lock stays,
-    // and our player opens it with a lent key (Lend). LICHII_COOP_LOCK_DELETE=1.
-    // With it on no key is ever lent either (the hook's default).
+    // locked-doors design). Off by default: the door set's graph
+    // (Logic/DungeonDoorSingleWithChainLockSet*) unlocks the door only on a
+    // pulse of a lock's ReceiveDoAttention, a key used on it, so a lock we
+    // delete leaves the door shut for good (player report #75). With it off
+    // the lock stays, and our player opens it with a lent key (Lend).
+    // LICHII_COOP_LOCK_DELETE=1 deletes, and then no key is ever lent.
     void SetDeleteLocks(bool on) { delete_locks_ = on; }
     // Present thread: the host loaded a save (host-save's FLAG_RESET): kept
     // breaks (locks) are forgotten, so our locks come back with their rooms.
@@ -683,9 +692,9 @@ private:
     bool TakeOwnDrop(std::uint64_t now_us);
     // door-unlock: another player opened this lock and our Link stands at it
     // with the lock still shut here. One small key is lent to our game (+1,
-    // Out::key_refunds), so our player opens it as the game does; that spend
+    // Out::key_lends), so our player opens it as the game does; that spend
     // is the lent key, nothing more goes back. One lent key at a time; taken
-    // back (-1, Out::give_back) when our Link leaves without using it.
+    // back (-1, Out::lend_returns) when our Link leaves without using it.
     void Lend(Object& o, Break& b, std::uint64_t now_us, Out& out);
     void TakeBack(Break& b, std::uint64_t hash, std::uint64_t now_us, const char* why);
     // The lock we lent a key for went next to our Link: used (true) when a key
@@ -705,11 +714,9 @@ private:
     bool no_key_logged_ = false;
     bool delete_locks_ = false;           // SetDeleteLocks
     std::uint64_t lent_hash_ = 0;         // the lock a lent key is out for (0: none)
-    std::string lent_count_;              // its count's name, to take it back
-    std::vector<std::string> lend_back_;  // lent keys to take back, for this Tick's Out::give_back
-    std::uint64_t lend_quiet_until_ = 0;  // kLendQuietUs
-    int ignore_drops_ = 0;                // our own take-backs: no key spend of the player
-    std::uint64_t ignore_drops_until_ = 0;
+    std::uint32_t lent_key_ = 0;            // its count's flag, to take it back
+    std::vector<std::uint32_t> lend_back_;  // lent keys to take back, for this Tick's Out::lend_returns
+    std::uint64_t lend_quiet_until_ = 0;    // kLendQuietUs
     std::map<std::uint64_t, Remote> remote_;   // by placement hash, this scene
     std::vector<Gone> gone_;
     std::vector<std::string> give_back_;  // from Drain, for the next Tick's Out
