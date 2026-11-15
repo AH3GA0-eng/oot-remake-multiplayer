@@ -232,6 +232,8 @@ constexpr u64 kBlockSize = kBlockNames + kNameCell * kNameCells;
 // The pause counters' ring (coop_counters.h): made once with the game's
 // malloc on the calc thread, its address put where the cave reads it.
 constexpr int kCountersCallerOrder = 63;
+// deku-switches (LICHII_COOP_LOGIC_PROBE): a room's event asker (coop_live_events.h kAskerNames).
+bool IsRoomAsker(std::string_view name) { return name == "EventRequestActor" || name == "EventProxyRequestActor"; }
 struct CounterRingBox {
     std::mutex mutex;
     u64 main = 0;    // set by Share while sharing; 0: nothing to do
@@ -1786,7 +1788,8 @@ public:
             for (const auto& g : gimmicks_) {
                 if (!player_ || (g.name.find("ElevatorLift") == std::string::npos && g.name.find("FallingLadder_") == std::string::npos &&
                                  g.name.find("Stopper_") == std::string::npos &&
-                                 g.name.find("MoveFloor") == std::string::npos)) {
+                                 g.name.find("MoveFloor") == std::string::npos &&
+                                 g.name.find("EyeSwitch_") == std::string::npos && !IsRoomAsker(g.name))) {
                     continue;
                 }
                 float d2 = 0.0f;
@@ -2712,7 +2715,8 @@ private:
                 }
                 ride_lifts_.push_back(std::move(l));
             }
-            if ((gimmick_probe_on_ || logic_probe_on_) && CoopWorld::IsGimmick(known.first)) {
+            if (((gimmick_probe_on_ || logic_probe_on_) && CoopWorld::IsGimmick(known.first)) ||
+                (logic_probe_on_ && IsRoomAsker(known.first))) {  // deku-switches: the asker's EventRequestTrigger
                 CoopWorld::GimmickProbe::Gimmick g;
                 g.address = a;
                 g.hash = known.second;
