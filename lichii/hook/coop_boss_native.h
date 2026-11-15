@@ -18,6 +18,17 @@
 // brain's changes are skipped at the wrap (the function does not run), once
 // the owner's first state has come. So every game runs the same phases and
 // action sequences: the game's own animations, movement and attacks.
+//
+// Except where the copy's own game must run it (boss-fix, issues of player
+// reports #30/#31): while our game runs an event (the intro, the death; the
+// set brain verb's callers include the game's events) and for a moment after
+// our Link's own hit on a copy (its weak point hit, the stun and chance time
+// are its own AI's reaction), the copy's own changes run and the owner's
+// wait. Its own changes skipped just before (the event or the hit is seen up
+// to a few frames late) are made then, late. Afterwards the copy starts again
+// from the owner's state. The owner keeps nothing of its own events (their
+// verbs belong to its cutscene, not the fight) and sends its brain verb as a
+// change once the event is over.
 #pragma once
 
 #include <array>
@@ -30,6 +41,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 #include "coop/protocol/messages.hpp"
@@ -104,6 +116,8 @@ struct Counts {
     std::uint64_t drift_fixes = 0;    // a copy's brain verb put back after it differed for long
     std::uint64_t busy = 0;           // a wrap that found the table busy (the game ran its own)
     std::uint64_t minions_stopped = 0; // a copy boss's own minion not made (the owner's comes)
+    std::uint64_t copy_own_run = 0;   // a copy's own change run (our event, our hit)
+    std::uint64_t copy_own_late = 0;  // a copy's own skipped change made late (event or hit seen after it)
 };
 
 class Table {
@@ -125,6 +139,15 @@ public:
     // verb changed), sent with the owner's action and given to the copies.
     bool OnBrainVerb(std::uint64_t bsa, std::int32_t verb, bool force, bool own);
     bool OnActionVerb(std::uint64_t bsa, const Request& request, bool changed, bool own);
+
+    // Our game runs an event now (the boss glue, every frame; the player
+    // reader's event flag). Copies then run their own changes; the owner keeps
+    // none of its event's.
+    void SetEvent(bool running);
+    // Our game took a hit of its own on this boss (the Objects walk: its Life's
+    // last hit id moved, not to one we replayed). A copy then runs its own
+    // reaction for kReactSteps.
+    void NoteOwnHit(std::uint64_t actor);
 
     // A create request (any game thread): true when a boss named `maker` is a
     // copy here that takes its owner's verbs, so its own minion is not made
@@ -157,6 +180,13 @@ public:
     // before it is put back (about a second at the game's 60 frames).
     static constexpr int kDriftSteps = 60;
     static constexpr int kMaxDriftFixes = 5;  // put-backs per owner state the game refuses, then left alone
+    // A copy's own changes skipped up to this many steps before an event or
+    // its own hit was seen are made then (about 0.2 s).
+    static constexpr std::uint64_t kLookBackSteps = 12;
+    // Steps a copy runs its own changes after our own hit on it (about 2 s:
+    // the stun's start; its DAMAGE of 0 hands the boss to us meanwhile).
+    static constexpr std::uint64_t kReactSteps = 120;
+    static constexpr std::size_t kMaxSkippedKept = 8;
 
 private:
     struct Entry {
@@ -178,7 +208,26 @@ private:
         int drift = 0;                 // steps the brain verb has differed with nothing queued
         int drift_fixes = 0;           // put-backs since the owner's last new state
         std::uint64_t own_node = 0;    // the copy's own AI node that last asked for an action
+        // Copy: its own changes skipped lately (step, change), and those to
+        // make late; the step until which its own run (our hit); whether its
+        // own ran last step (then the owner's state again).
+        struct Skipped {
+            std::uint64_t step = 0;
+            std::variant<BossBrain, BossAction> what;
+        };
+        std::deque<Skipped> skipped;
+        std::deque<std::variant<BossBrain, BossAction>> own_late;
+        std::uint64_t react_until = 0;
+        bool held = false;
+        // Owner: our event ended: send our brain verb as a change.
+        bool record_after_event = false;
     };
+    bool OwnTime(const Entry& e) const;   // the copy's own changes run now
+    void Keep(Entry& e, std::variant<BossBrain, BossAction> what);
+    void MakeLate(Entry& e);              // its skipped ones of the last kLookBackSteps, to make
+    std::optional<CoopPuppet::Call> Ask(CoopPuppet::Guest& guest, Entry& e, std::uint64_t bsa,
+                                        const std::variant<BossBrain, BossAction>& what, std::uint64_t main_base,
+                                        bool* made);
     void Record(Entry& e, std::variant<BossBrain, BossAction> what);
     void Resync(Entry& e, const BossBsa& state);
     Entry* Find(std::uint64_t bsa);
@@ -190,6 +239,8 @@ private:
     std::map<std::uint64_t, Entry> by_bsa_;
     bool brain_on_ = false;
     bool actions_on_ = false;
+    bool event_ = false;           // our game runs an event (SetEvent)
+    std::uint64_t steps_ = 0;      // Step calls (game frames)
     Counts counts_{};
     std::vector<std::string> notes_;
     // The caller's state (frame thread only).

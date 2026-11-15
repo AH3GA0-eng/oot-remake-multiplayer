@@ -2815,6 +2815,8 @@ private:
         if (*id == TheMover().ReplayedId(*life)) {
             return std::nullopt;  // our replay of the owner's hit, not one of our game's
         }
+        // Our game's own hit: a copy boss runs its own reaction (the stun; boss-fix).
+        CoopBossNative::TheTable().NoteOwnHit(a);
         const auto at = r.Get<std::array<float, 3>>(*life + kHitPlace);
         if (!at) {
             return std::nullopt;
