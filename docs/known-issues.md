@@ -26,7 +26,7 @@ This is an early test release. Everything under "Works" was seen in our two-game
 - **Crates and thrown rocks** break in every game.
 - **Things a player makes**: Deku seeds and arrows in flight and Deku Nuts appear in the other games, and seeds and arrows stay where they hit. A bomb another player holds stays in their hands with its fuse blinking, and it explodes on every screen at once, held or thrown.
 - **`/teleport <name>`** moves you next to another player, in the same area or another one (into a dungeon: see Known issues).
-- **Voice chat** (proximity, [voice.md](voice.md)) is off until you turn it on in the co-op settings; on, it is open mic, and the Voice mode row switches to push to talk (hold **V**). Off, your microphone is never opened.
+- **Voice chat** (proximity, [voice.md](voice.md)) is off until you turn it on in the co-op settings; on, it is open mic, and the Voice mode row switches to push to talk (hold **V**). Off, your microphone is never opened. The Microphone row under it chooses which microphone (Default: Longshot's Insert menu's); there is no Speaker row: the voices play through the game's own sound output.
 - **PvP**, off unless the host sets `pvp = on` in `coop-options.ini` (or types `/pvp on`): sword hits hurt the other players, both ways.
 - **Kit**: `collect-logs` masks addresses and your PC and user name; the updater adds every new `coop-options.ini` setting below your own lines; `Revert.bat` goes back to the version before the last update; a `coop.ini` with a setting it does not know no longer turns co-op off.
 - **Mods**: the Mods tab, and a note in the chat when your mods differ from the host's (see Other notes).

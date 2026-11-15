@@ -35,6 +35,15 @@ const std::vector<Command>& Commands();
 // The key that opens the chat box, in words, from LICHII_COOP_CHAT_KEY ("T"
 // by default; "off": none).
 std::string ChatKeyWords(const std::string& chat_key);
+// The Settings page's Microphone row (shown while voice chat is on): its
+// choices in order: Default ("": Longshot's Insert menu's microphone) first,
+// then the microphones listed now (each name once), then the chosen one when
+// it is not among them (kept by its name while it is unplugged).
+std::vector<std::string> MicChoices(const std::vector<std::string>& listed, const std::string& chosen);
+// What the row shows: "Default", or the name cut to kMicChars characters
+// ("..." at its end), with " (not connected)" when it is not listed.
+constexpr std::size_t kMicChars = 28;
+std::string MicWords(const std::string& chosen, const std::vector<std::string>& listed);
 
 struct Request {
     // kHost: start the server and join it. kJoin: `text` is the code or the
@@ -142,6 +151,10 @@ public:
     // Controller"). Empty: this Hookshot cannot choose (no patch 0015), so
     // the rows are not shown.
     void SetInputRows(std::string controller, std::string keyboard);
+    // The Microphone row's list, the microphones there now by their names
+    // (CoopVoice::Microphones). None: this game cannot choose one for the
+    // voice (an older patch 0009), so the row is not shown.
+    void SetMicrophones(std::optional<std::vector<std::string>> listed);
     // The look shown now (the one waiting for the menu to close, else the one
     // worn): the Customize page opens on it.
     void SetLook(const CoopLook::Look& look);
@@ -164,7 +177,7 @@ private:
         kOpenHost, kOpenJoin, kOpenLocal, kOpenSettings, kOpenCommands, kCommand,
         kStartHost, kCopyInvite, kPasteAnswer, kCopyAnswer, kCopyLan, kCopyVpn, kLeave,
         kRejoin, kCode, kClearCode, kJoinNow,
-        kName, kLook, kPlayers, kVoice, kVoiceMode, kChatKey, kController, kKeyboard, kMapPlayers, kMapNames,
+        kName, kLook, kPlayers, kVoice, kMic, kVoiceMode, kChatKey, kController, kKeyboard, kMapPlayers, kMapNames,
         kOpenCustomize
     };
     struct Line;   // a row, what it does and its help
@@ -189,6 +202,7 @@ private:
     std::string join_;
     std::string rejoin_host_, rejoin_code_;
     std::string controller_row_, keyboard_row_;
+    std::optional<std::vector<std::string>> microphones_;
     Session session_;
     std::vector<std::string> note_;
     std::optional<Request> request_;

@@ -130,6 +130,37 @@ const std::vector<Command>& Commands() {
     return list;
 }
 
+std::vector<std::string> MicChoices(const std::vector<std::string>& listed, const std::string& chosen) {
+    std::vector<std::string> out{std::string()};
+    for (const std::string& n : listed) {
+        if (!n.empty() && std::find(out.begin(), out.end(), n) == out.end()) {
+            out.push_back(n);
+        }
+    }
+    if (std::find(out.begin(), out.end(), chosen) == out.end()) {
+        out.push_back(chosen);
+    }
+    return out;
+}
+
+std::string MicWords(const std::string& chosen, const std::vector<std::string>& listed) {
+    if (chosen.empty()) {
+        return "Default";
+    }
+    std::string words = chosen;
+    if (CodePoints(words) > kMicChars) {
+        std::size_t at = 0;
+        for (std::size_t points = 0; at < words.size(); ++at) {   // (the byte where character kMicChars - 3 starts)
+            if ((static_cast<unsigned char>(words[at]) & 0xc0) != 0x80 && points++ == kMicChars - 3) {
+                break;
+            }
+        }
+        words = words.substr(0, at) + "...";
+    }
+    const bool there = std::find(listed.begin(), listed.end(), chosen) != listed.end();
+    return there ? words : words + " (not connected)";
+}
+
 std::string ChatKeyWords(const std::string& chat_key) {
     std::string k = chat_key.empty() ? std::string("T") : chat_key;
     std::string low = k;
@@ -276,6 +307,12 @@ std::vector<Menu::Line> Menu::Lines() const {
         out.push_back({Toggle("Proximity voice chat", options_.voice), Act::kVoice,
                        "Talk with players near your Link through your microphone; they sound quieter the farther away "
                        "they are. Off: you neither send nor hear voices."});
+        if (options_.voice && microphones_) {
+            out.push_back({Choice("Microphone", MicWords(options_.voice_mic, *microphones_)), Act::kMic,
+                           "The microphone your voice is recorded from. Default: the one Longshot's Insert menu "
+                           "chooses (Gameplay: Microphone), the Ocarina's too. Left and Right go through the "
+                           "microphones plugged in now. One unplugged: the others hear nothing until it is back."});
+        }
         if (options_.voice) {
             out.push_back({Choice("Voice mode", options_.voice_ptt ? "Push to talk (" + options_.voice_key + ")"
                                                                     : std::string("Open mic")),
@@ -430,6 +467,18 @@ void Menu::SetRejoin(std::string host, std::string code) {
     const auto after = Lines();
     const auto same = std::find_if(after.begin(), after.end(), [act](const Line& l) { return l.act == act; });
     selected_ = same != after.end() ? static_cast<std::size_t>(same - after.begin()) : 0;
+    Clamp();
+}
+
+void Menu::SetMicrophones(std::optional<std::vector<std::string>> listed) {
+    const auto before = Lines();
+    const Act act = selected_ < before.size() ? before[selected_].act : Act::kNone;
+    microphones_ = std::move(listed);
+    const auto after = Lines();
+    const auto same = std::find_if(after.begin(), after.end(), [act](const Line& l) { return l.act == act; });
+    if (same != after.end()) {
+        selected_ = static_cast<std::size_t>(same - after.begin());
+    }
     Clamp();
 }
 
@@ -690,6 +739,7 @@ void Menu::Decide(Act act) {
     case Act::kLook:
     case Act::kPlayers:
     case Act::kVoiceMode:
+    case Act::kMic:
     case Act::kChatKey:
     case Act::kController:
     case Act::kKeyboard:
@@ -727,6 +777,17 @@ void Menu::Change(Act act, int step) {
         options_.voice = step > 0 ? true : step < 0 ? false : !options_.voice;
         request_ = Request{Request::Kind::kSave, {}};
         break;
+    case Act::kMic: {
+        if (!microphones_) {
+            break;
+        }
+        const auto list = MicChoices(*microphones_, options_.voice_mic);
+        const auto at = std::find(list.begin(), list.end(), options_.voice_mic);
+        const std::size_t n = list.size(), i = static_cast<std::size_t>(at - list.begin());
+        options_.voice_mic = list[(i + (step < 0 ? n - 1 : 1)) % n];
+        request_ = Request{Request::Kind::kSave, {}};
+        break;
+    }
     case Act::kVoiceMode:   // (two choices: either arrow flips it)
         options_.voice_ptt = !options_.voice_ptt;
         request_ = Request{Request::Kind::kSave, {}};
