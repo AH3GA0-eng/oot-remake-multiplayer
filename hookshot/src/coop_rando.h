@@ -52,8 +52,19 @@ std::string ManifestText();
 // The seed as OOTRR writes it into coop-seed.txt and as the folder is named: ASCII letters, digits, '_' and '-',
 // at most 63, "seed" when nothing is left.
 std::string SeedWord(std::string_view seed);
-// The seed's folder: "randomizer-<word>", with "-<preset>" for a preset other than "default".
+// The seed's folder: "randomizer-<word>", with "-<preset>" for a preset other than "default", or "-s<8 hex digits>"
+// (a hash) for a settings string (IsSettingsString: too long for a folder name).
 std::string FolderFor(std::string_view seed, std::string_view preset);
+// OOTRR's settings string, as its own page shows it and as `ootrr generate` takes in place of a preset (the .ootrr
+// file's "settings", "OOTRR1-EYAQCTABAHIHE" for default with OOTRR 0.5.0; player report #48: a seed made on OOTRR's
+// page for its extra settings). The "settings" setting holds one: when set and valid it is used in place of the
+// preset (shared, so a guest builds the host's). Valid: "OOTRR" then letters, digits, '-' and '_', at most
+// kSettingsMax, spaces around it left out (SettingsString gives it trimmed; empty when not valid).
+inline constexpr std::size_t kSettingsMax = 400;
+bool IsSettingsString(std::string_view text);
+std::string SettingsString(std::string_view text);
+// The settings as the tab and the log name them: a preset, or "settings OOTRR1-EYAQCT..." (cut).
+std::string SettingsName(std::string_view preset);
 // A new seed for a host who has none: 8 letters and digits from `entropy`.
 std::string NewSeed(std::uint64_t entropy);
 
@@ -69,7 +80,7 @@ std::vector<Built> Scan(const std::filesystem::path& mods_root);
 struct Want {
     bool on = false;
     std::string seed;    // empty: none yet
-    std::string preset;
+    std::string preset;  // a preset, or a settings string (IsSettingsString) in its place
 };
 
 struct Plan {
@@ -283,6 +294,7 @@ private:
     std::atomic<bool> outside_{false};    // another mod's size table wins this run (HoldPack)
     std::string outside_mod_;         // that mod (mutex_): empty when none
     bool outside_tell_ = false;       // OutsideTellLine not sent yet (mutex_)
+    std::string bad_settings_;        // the "settings" value said to be no settings string (mutex_)
     std::string restart_;             // the restart line until this game restarts (mutex_): empty when none
     std::chrono::steady_clock::time_point restart_said_{};  // when it was last put in the chat (mutex_)
 };
