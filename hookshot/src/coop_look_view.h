@@ -97,10 +97,29 @@ private:
 enum class Showing : std::uint8_t {
     live_child,     // the live picture, a child Link
     live_adult,     // the live picture, an adult Link
-    flat_no_link,   // the flat one: the hook has no Link this frame (no game, scene or place)
-    flat_event,     // the flat one: our own event (cutscene) runs
+    flat_no_link,   // the flat one: the hook has no Link (no game, scene or place) for longer than Keep::kGapMs
+    live_event,     // the live picture while our own event (a cutscene) runs: the camera still turns around him
 };
 const char* Describe(Showing showing);
+
+// Your own Link as the page last saw him, kept through a short gap (#74: the
+// picture flipped to the flat one for a moment after each scene entry, when
+// the hook had no Link for a frame or two). Not thread-safe: the caller's lock.
+struct Seen {
+    Subject link;
+    Showing showing = Showing::live_child;
+};
+class Keep {
+public:
+    static constexpr std::uint64_t kGapMs = 1500;
+    // This moment's Link (none: the hook has none): him, or the last one seen
+    // no longer than kGapMs ago, or none.
+    std::optional<Seen> Take(const std::optional<Seen>& now, std::uint64_t now_ms);
+
+private:
+    std::optional<Seen> last_;
+    std::uint64_t seen_ms_ = 0;
+};
 
 // One line to the log each time the page's picture changes (and again at
 // each opening of the page), and once when a live picture's camera is never

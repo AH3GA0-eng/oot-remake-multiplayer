@@ -105,7 +105,7 @@ std::optional<Shot> Orbit::Camera(const Vec3& game_eye, const Vec3& game_target,
 
 namespace {
 bool Live(std::optional<Showing> s) {
-    return s == Showing::live_child || s == Showing::live_adult;
+    return s == Showing::live_child || s == Showing::live_adult || s == Showing::live_event;
 }
 }  // namespace
 
@@ -114,9 +114,22 @@ const char* Describe(Showing showing) {
     case Showing::live_child: return "live, the camera around your child Link";
     case Showing::live_adult: return "live, the camera around your adult Link";
     case Showing::flat_no_link: return "flat: the co-op hook has no Link this frame (no game, scene or place)";
-    case Showing::flat_event: return "flat: our own event (a cutscene) runs";
+    case Showing::live_event: return "live, our own event (a cutscene) runs: the camera around your Link";
     }
     return "?";
+}
+
+std::optional<Seen> Keep::Take(const std::optional<Seen>& now, std::uint64_t now_ms) {
+    if (now) {
+        last_ = now;
+        seen_ms_ = now_ms;
+        return now;
+    }
+    if (last_ && now_ms >= seen_ms_ && now_ms - seen_ms_ <= kGapMs) {
+        return last_;
+    }
+    last_.reset();
+    return std::nullopt;
 }
 
 std::optional<std::string> Watch::Drawn(Showing showing, std::uint64_t now_ms) {

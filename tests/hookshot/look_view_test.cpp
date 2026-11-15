@@ -140,12 +140,12 @@ TEST_CASE("look view: the log says the page's picture once per change and per op
     CHECK_FALSE(watch.Drawn(Showing::live_child, 1016));   // the same picture: nothing
     CHECK_FALSE(watch.Drawn(Showing::live_child, 1032));
     // Our event starts: said once, with why.
-    const auto event = watch.Drawn(Showing::flat_event, 1048);
+    const auto event = watch.Drawn(Showing::live_event, 1048);
     REQUIRE(event);
     CHECK(event->find("event") != std::string::npos);
-    CHECK_FALSE(watch.Drawn(Showing::flat_event, 1064));
+    CHECK_FALSE(watch.Drawn(Showing::live_event, 1064));
     // The page left (not drawn for more than kHoldMs) and opened again: said again.
-    const auto again = watch.Drawn(Showing::flat_event, 1064 + CoopLookView::kHoldMs + 1);
+    const auto again = watch.Drawn(Showing::live_event, 1064 + CoopLookView::kHoldMs + 1);
     REQUIRE(again);
     const auto adult = watch.Drawn(Showing::live_adult, 1400);
     REQUIRE(adult);
@@ -254,4 +254,26 @@ TEST_CASE("look view: the orbit frames with the fov it is given") {
     const auto middle = Project(*shot, {0, 0.95, 0}, Square().aspect, game_fov);
     CHECK(middle[0] == doctest::Approx((Square().x0 + Square().x1) * 0.5).epsilon(1e-6));
     CHECK(middle[1] == doctest::Approx((Square().y0 + Square().y1) * 0.5).epsilon(1e-6));
+}
+
+TEST_CASE("look view: Link missing for a moment (a scene entry) keeps the last one, longer is none (#74)") {
+    using CoopLookView::Keep;
+    using CoopLookView::Seen;
+    using CoopLookView::Showing;
+    Keep keep;
+    CHECK_FALSE(keep.Take(std::nullopt, 1000).has_value());   // never seen: none (the title)
+    const Seen adult{Subject{{1.0f, 2.0f, 3.0f}, 1.9f}, Showing::live_adult};
+    const auto now = keep.Take(adult, 2000);
+    REQUIRE(now);
+    CHECK(now->showing == Showing::live_adult);
+    const auto gap = keep.Take(std::nullopt, 2000 + Keep::kGapMs);
+    REQUIRE(gap);   // a frame or two without him: still him
+    CHECK(gap->link.feet[0] == doctest::Approx(1.0f));
+    CHECK(gap->showing == Showing::live_adult);
+    CHECK_FALSE(keep.Take(std::nullopt, 2001 + Keep::kGapMs).has_value());   // gone longer: none
+    CHECK_FALSE(keep.Take(std::nullopt, 2002 + Keep::kGapMs).has_value());
+    // Our own event: the picture stays live (the camera still turns around him).
+    const Seen event{Subject{{0, 0, 0}, 1.9f}, Showing::live_event};
+    REQUIRE(keep.Take(event, 9000));
+    CHECK(keep.Take(std::nullopt, 9100)->showing == Showing::live_event);
 }
