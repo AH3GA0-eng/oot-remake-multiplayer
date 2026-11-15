@@ -101,6 +101,9 @@ public:
     std::optional<Clock> Found() const;
     // The clock jumped in the last look (looped or a switch reset it).
     bool Jumped() const { return jumped_; }
+    // The kept clock's word while it stands still (the game paused or
+    // hitched; Found() is empty then), else nothing.
+    std::optional<std::uint64_t> StalledKey() const;
     void Reset();
 
 private:
@@ -143,6 +146,11 @@ public:
     static constexpr float kNearM = 40.0f;
     static constexpr std::size_t kMaxWatched = 8;               // the nearest drivers
     static constexpr int kMaxNoHold = 4;  // writes that did not hold (off again at once) before we stop
+    // A pause menu stops our game's clocks but not the shared one (#35): an owner whose clock stood still
+    // and goes on from where it stopped (within kResumeS of the clock) puts it where its last sent tick has
+    // reached by now, once, before it sends again; a follower whose word was moving and stands still writes
+    // nothing (and counts no write as not held) until it moves again.
+    static constexpr float kResumeS = 1.0f;
 
     struct Driver {
         std::uint64_t address = 0;
@@ -203,6 +211,14 @@ private:
         int no_hold = 0;
         bool gave_up = false;
         std::optional<float> written;  // what we wrote last, to see whether it held
+        // #35, the owner: the last tick we sent (server time), and the value our clock stood still at.
+        std::optional<coop::protocol::PlatformTick> sent;
+        std::uint64_t sent_us = 0;
+        std::optional<float> paused_at;
+        // #35, a follower: our word at the last look (key, value) and whether it was seen moving.
+        std::uint64_t mine_key = 0;
+        std::optional<float> mine_was;
+        bool mine_moved = false;
     };
 
     std::string scene_;
