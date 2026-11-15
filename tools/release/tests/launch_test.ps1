@@ -569,6 +569,16 @@ try {
     Check ($out -match 'Option: LICHII_COOP_COLOR=' -and $out -match 'Your Link: the red tunic' -and $out -match 'Game started') "Play-OoT-Coop: coop-options.ini's colour is read before the pack step [$out]"
     Check ((Test-Path -LiteralPath $tile) -and [System.IO.File]::ReadAllText($tile) -eq 'RED') 'Play-OoT-Coop: the red tile in the pack before the game starts'
     Remove-Item -LiteralPath $hsPack -Recurse -Force
+    # The autotest's kit mode (tools/autotest/hookshot.py --kit-a): OOT_COOP_TEST_KIT gets the game's process id, and
+    # the test server stays in the variables (written to no file: coop.ini still has no server).
+    & $stopHs
+    $pidFile = Join-Path $tmp 'kit-pid.txt'
+    $env:OOT_COOP_TEST_KIT = $pidFile; $env:LICHII_COOP_SERVER = '127.0.0.1:27520'
+    $out = (cmd /c "powershell -NoProfile -ExecutionPolicy Bypass -File `"$kit\scripts\play.ps1`" choose -Hookshot -NoUpdate < nul" 2>&1) -join '|'
+    Remove-Item Env:OOT_COOP_TEST_KIT, Env:LICHII_COOP_SERVER -ErrorAction SilentlyContinue
+    $gamePid = if (Test-Path -LiteralPath $pidFile) { "$(Get-Content -LiteralPath $pidFile -TotalCount 1)".Trim() } else { '' }
+    Check ($out -match 'Game started' -and $gamePid -match '^\d+$') "kit autotest: the game's process id in OOT_COOP_TEST_KIT's file [$gamePid] [$out]"
+    Check ((Read-File (Join-Path $hsGame 'coop.ini')) -notmatch '(?m)^\s*server\s*=') 'kit autotest: coop.ini still has no server'
     Get-Process hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($kit, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
     # A built kit's coop.ini.template and coop-ini.ps1 keep @PORT@ (make_kit.ps1 copies with
     # kit_text.ps1), and play.ps1 writes the port each join needs: 27512 (the join helper) for an
