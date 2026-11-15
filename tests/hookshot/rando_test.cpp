@@ -1263,6 +1263,72 @@ TEST_CASE("rando: a run that reads an outside mod's size table holds the pack an
     CHECK(rando.HoldPack());  // the whole run
 }
 
+TEST_CASE("rando: FNV-1a 64 as the kit's merge writes it") {
+    CHECK(Fnv64Hex("") == "cbf29ce484222325");
+    CHECK(Fnv64Hex("a") == "af63dc4c8601ec8c");
+    CHECK(Fnv64Hex("foobar") == "85944171f73967e8");
+}
+
+namespace {
+// The kit's merge (#48 step 2) as it leaves a mod: its table rewritten, and the mark beside its romfs.
+void MarkMerged(const fs::path& mods, const std::string& mod, const std::string& table_text) {
+    Put(mods / mod / kTable, table_text);
+    const std::string pack = Get(mods / kPackFolder / kTable);
+    Put(mods / mod / kMergedFile, "coop-merged 1\r\ntable " + kTable.filename().string() + " " +
+                                      Fnv64Hex(table_text) + "\r\npack " + Fnv64Hex(pack) + "\r\n");
+}
+}  // namespace
+
+TEST_CASE("rando: a winning mod whose table the kit merged is not held, a stale mark is") {
+    World w;
+    Put(w.mods / kPackFolder / kTable, "puppet");
+    MarkMerged(w.mods, "ootrr-site", "site + puppet");
+    CHECK(MergedByKit(w.mods, "ootrr-site"));
+    std::string merged;
+    CHECK_FALSE(OutsideSizeTable(w.mods, {Indexed("ootrr-site")}, true, &merged));
+    CHECK(merged == "ootrr-site");
+    CHECK_FALSE(OutsideSizeTable(w.mods, {Indexed("ootrr-site")}, false));
+    // a new seed table dropped over it: stale
+    Put(w.mods / "ootrr-site" / kTable, "another site seed");
+    CHECK_FALSE(MergedByKit(w.mods, "ootrr-site"));
+    CHECK(OutsideSizeTable(w.mods, {Indexed("ootrr-site")}, true) == std::optional<std::string>("ootrr-site"));
+    // the pack rebuilt since the merge: stale
+    MarkMerged(w.mods, "ootrr-site", "site + puppet");
+    Put(w.mods / kPackFolder / kTable, "puppet, rebuilt");
+    CHECK_FALSE(MergedByKit(w.mods, "ootrr-site"));
+    // a mark of another version, a path for a table name, or no pack: not trusted
+    Put(w.mods / kPackFolder / kTable, "puppet");
+    MarkMerged(w.mods, "ootrr-site", "site + puppet");
+    CHECK(MergedByKit(w.mods, "ootrr-site"));
+    const std::string good = Get(w.mods / "ootrr-site" / kMergedFile);
+    std::string other = good;
+    other.replace(0, std::string("coop-merged 1").size(), "coop-merged 2");
+    Put(w.mods / "ootrr-site" / kMergedFile, other);
+    CHECK_FALSE(MergedByKit(w.mods, "ootrr-site"));
+    Put(w.mods / "ootrr-site" / kMergedFile,
+        "coop-merged 1\ntable ../../coop-puppet/romfs/System/Resource/T.rsizetable.zs " + Fnv64Hex("puppet") +
+            "\npack " + Fnv64Hex("puppet") + "\n");
+    CHECK_FALSE(MergedByKit(w.mods, "ootrr-site"));
+    Put(w.mods / "ootrr-site" / kMergedFile, good);
+    fs::remove(w.mods / kPackFolder / kTable);
+    CHECK_FALSE(MergedByKit(w.mods, "ootrr-site"));
+    CHECK_FALSE(MergedByKit(w.mods, "no-such-mod"));
+}
+
+TEST_CASE("rando: a run that reads a kit-merged outside table makes the puppets and says nothing") {
+    World w;
+    Put(w.mods / kPackFolder / kTable, "puppet");
+    MarkMerged(w.mods, "ootrr-site", "site + puppet");
+    PlaysSeed(w, "ootrr-site", 7);
+    CoopMods::Loader loader(w.mods, {nullptr, 7, nullptr});
+    loader.Start();
+    Rando rando(loader, w.Hooks());
+    rando.Start();
+    rando.Wait();
+    CHECK_FALSE(rando.HoldPack());
+    CHECK(Count(rando.TakeLines(), ChatSafe(OutsideLine("ootrr-site"), 300)) == 0);
+}
+
 TEST_CASE("rando: a run that reads our own seed's size table is not held for an outside mod") {
     World w;
     Put(w.mods / "ootrr-site" / kTable, "site");
