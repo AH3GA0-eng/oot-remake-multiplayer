@@ -560,7 +560,7 @@ TEST_CASE("time: the test set fires after joining and again after the host's sav
     CHECK_FALSE(t.Due(60'000 * kMs, true, true));
 }
 
-TEST_CASE("time: the test set is the host's only; off without the switch") {
+TEST_CASE("time: the test set is the host's only and off without the switch") {
     CoopTime::TestSet guest(72'000, 10'000 * kMs);
     guest.Joined(0);
     CHECK_FALSE(guest.Due(20'000 * kMs, false, true));
