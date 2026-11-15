@@ -399,7 +399,9 @@ TEST_CASE("turn: a steady turn worked out at uneven times is drawn in even turns
         const float yaw = YawOf(turner.Step(Yaw(kRate * static_cast<float>(made - 1000) / 1000.0f), made, now));
         if (i > 15) {  // the turn rate learnt
             turns.push_back(yaw - last);
-            CHECK(yaw == doctest::Approx(kRate * static_cast<float>(now - 1000) / 1000.0f).epsilon(0.01));
+            // Drawn kTurnLagMs behind (never past a turn that stops).
+            const float at = static_cast<float>(static_cast<double>(now - 1000) - CoopFollow::kTurnLagMs) / 1000.0f;
+            CHECK(yaw == doctest::Approx(kRate * at).epsilon(0.01));
         }
         last = yaw;
     }
@@ -469,4 +471,29 @@ TEST_CASE("follow: an easing stop passes the stop by at most kPassM") {
         }
     }
     CHECK(most <= CoopFollow::kPassM + 1e-3f);  // 2 cm (and float rounding)
+}
+
+TEST_CASE("turn: a quick turn that stops never passes the heading and settles on it") {
+    for (const float rate : {3.0f, 6.0f, 10.0f}) {  // rad a second
+        for (const std::uint64_t frame_ms : {16ull, 33ull, 100ull}) {
+            CAPTURE(rate);
+            CAPTURE(frame_ms);
+            CoopFollow::Turner turner;
+            CoopFollow::Cadence cadence;
+            const std::uint64_t made_before[] = {0, 16, 3, 12, 16, 0, 8, 15, 1, 10};
+            std::uint64_t now = 1000;
+            const std::uint64_t stop_ms = 1600;
+            const float stop = rate * static_cast<float>(stop_ms - 1000) / 1000.0f;
+            float most = -10.0f;
+            CoopFollow::Quat drawn{};
+            for (int i = 0; now < 3000; ++i, now += frame_ms) {
+                const std::uint64_t made = now - made_before[i % 10];
+                const float yaw = rate * static_cast<float>(std::min(made, stop_ms) - 1000) / 1000.0f;
+                drawn = turner.Step(Yaw(yaw), made, cadence.At(now));
+                most = std::max(most, YawOf(drawn) - stop);
+            }
+            CHECK(most <= 0.001f);                                 // never past the heading
+            CHECK(CoopFollow::Turner::Angle(drawn, Yaw(stop)) < 1e-3f);  // and settled on it
+        }
+    }
 }

@@ -299,6 +299,8 @@ private:
 using Quat = std::array<float, 4>;
 inline constexpr float kTurnJumpRad = 2.0f;  // ~115 degrees
 inline constexpr float kTurnRestRad = 0.003f;
+inline constexpr float kTurnStillRad = 0.01f;  // rad a second: under this, not turning
+inline constexpr double kTurnLagMs = 20.0;     // a present's age (16 ms) and a little
 
 class Turner {
 public:
@@ -322,23 +324,35 @@ public:
             const float seconds = static_cast<float>(target_ms - target_ms_) / 1000.0f;
             const float k = 1.0f - std::exp(-static_cast<float>(dt_ms) / kVelTauMs);
             const bool jump = Length(turn) > kTurnJumpRad;
+            // review-jitter3: no turn since the last rotation handed in (a stop): no rate at once,
+            // as the Follower's velocity (else it turned on past the heading for ~60 ms).
+            const bool stopped = Length(turn) / seconds < kTurnStillRad;
             for (std::size_t i = 0; i < 3; ++i) {
-                rate_[i] += ((jump ? 0.0f : turn[i] / seconds) - rate_[i]) * k;
+                rate_[i] = stopped ? 0.0f : rate_[i] + ((jump ? 0.0f : turn[i] / seconds) - rate_[i]) * k;
             }
         }
         if (!target_ || target_ms != target_ms_) {
             target_ = *to;
             target_ms_ = target_ms;
         }
+        // review-jitter3: drawn as of kTurnLagMs before the frame, so it is only ever taken back
+        // along the turn, never on past it (a turn that stops is not yet known to stop).
         const double ahead_ms =
             target_ms == 0 ? 0.0
-                           : std::clamp(now_ms - static_cast<double>(target_ms),
-                                        -static_cast<double>(kAheadMaxMs), static_cast<double>(kAheadMaxMs));
+                           : std::clamp(now_ms - static_cast<double>(target_ms) - kTurnLagMs,
+                                        -static_cast<double>(kAheadMaxMs), 0.0);
         const Quat want = Mul(Exp(Scale(rate_, static_cast<float>(ahead_ms / 1000.0))), *to);
         if (first || Angle(*drawn_, want) > kTurnJumpRad) {
             return Set(want, now_ms);
         }
-        const Quat next = Mul(Exp(Scale(rate_, static_cast<float>(dt_ms / 1000.0))), *drawn_);
+        Quat next = Mul(Exp(Scale(rate_, static_cast<float>(dt_ms / 1000.0))), *drawn_);
+        // review-jitter3: it never turns past the heading it follows (a quick turn that stops
+        // overshot by 5-18 degrees): a rate that carries it past is cut at the heading.
+        const Vec3 left = Log(Mul(want, Conj(next)));     // what is left after the rate's turn
+        const Vec3 gap = Log(Mul(want, Conj(*drawn_)));   // what was left before it
+        if (left[0] * gap[0] + left[1] * gap[1] + left[2] * gap[2] < 0.0f) {
+            next = want;
+        }
         const float close = 1.0f - std::exp(-static_cast<float>(dt_ms) / kTauMs);
         Quat drawn = Slerp(next, want, close);
         if (Length(rate_) < 1e-3f && Angle(drawn, want) <= kTurnRestRad) {
