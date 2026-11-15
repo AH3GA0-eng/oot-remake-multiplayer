@@ -765,6 +765,14 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
         m_rel = f"Model/Player_{v}.Player_{v}.bfres.zs"
         m_src = os.path.join(romfs, m_rel)
         models[v] = (m_rel, read(m_src))
+    # The boots in the body models (look_items.BODY_BOOTS): each colour's model names its own copy.
+    boots = {}
+    for name in look_items.BODY_BOOTS:
+        b_rel = f"Tex/{name}.bntx.zs"
+        if os.path.isfile(os.path.join(romfs, b_rel)):
+            boots[name] = (b_rel, read(os.path.join(romfs, b_rel)))
+        else:
+            log(f"tunics: no {b_rel} in this romfs, those boots stay the game's on puppets")
     for c in colors:
         paths = []
         name = tunic.tile_name(c)
@@ -830,6 +838,7 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
             try:
                 data = tunic.model_for(dicts.decompress(m_raw), c, dark=dark is not None)
                 data = tunic_extra.model_names(data, c, [n for n in extras if v in tunic_extra.EXTRA[n]])
+                data = look_items.body_model_for(data, c) if boots else data
             except tunic.TunicError as e:
                 raise BuildError(f"{m_rel}: {e}")
             dst = f"Model/{tunic.project_name(v, c)}.Player_{v}.bfres.zs"
@@ -842,6 +851,15 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
                 # replaced in Tex/ did not reach the adult's lower tunic and hood, while the
                 # puppet's renamed ones did. The kit copies it from the pack's romfs, no 2nd copy.
                 self_files.setdefault(c, {})[m_rel] = f"romfs/{dst}"
+        for name, (b_rel, b_raw) in boots.items():
+            try:
+                b_data = look_items.boots_texture_for(dicts.decompress(b_raw), name, c)
+            except tunic.TunicError as e:
+                raise BuildError(f"{b_rel}: {e}")
+            b_dst = f"Tex/{look_items.boots_name(name, c)}.bntx.zs"
+            write(os.path.join(out_romfs, b_dst), recompress(dicts, b_raw, b_data))
+            table.add_new(strip_zs(b_dst), table.get(strip_zs(b_rel)) or len(b_data) + PACK_SIZE_MARGIN)
+            paths.append(b_dst)
         if look_dir:
             write(os.path.join(look_dir, f"{c}.bin"), look_live.pack(look))
             look_files[c] = f"{look_live.DIR}/{c}.bin"

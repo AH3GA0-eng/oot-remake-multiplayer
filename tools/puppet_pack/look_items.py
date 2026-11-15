@@ -22,14 +22,14 @@ Nothing from the game is kept in the tool: everything is made from the user's ow
 """
 from . import byml, sarc
 from .look_live import GEAR, mark_bntx
-from .tunic import TunicError, rename
+from .tunic import COLORS, TunicError, rename
 
 SLOTS = 4
 COPIES_PER_SLOT = 2
 MAX_SLOTS = 4  # copies 1..8: the texture prefix C<k>_ has one digit
 
 # The coloured items (hookshot/src/coop_look_parts.cpp names their textures). The Kokiri boots are
-# in the player's own model: they are not an item and stay the game's on puppets.
+# in the player's own model, not an item: see BODY_BOOTS.
 ITEMS = (
     "Weapon_Shield_Hylian",
     "Weapon_Shield_Mirror",
@@ -127,3 +127,39 @@ def info_row(row, item, slot):
         out["ActorName"] = actor
     out["ModelProjectName"] = actor
     return out
+
+
+# The boots in the player's own model (the Kokiri boots; the child's leather texture holds his belts
+# too). Every Link draws one texture of a name, so the puppets' body models (puppet_pack.tunic
+# model_for, one per tunic colour) name a copy of their own per colour: `Mt_...` -> `P<L>_...`
+# (L: the colour's letter, tunic.COLORS; as long). The module paints each colour's copy in the boots
+# colour of the player who wears that colour (hookshot/src/coop_look_boots.cpp, same names and
+# marks); your own adult Link wears his colour's model too, so his boots are his colour's copy.
+BODY_BOOTS = (
+    "Mt_Boots_Player_Adult_Alb",
+    "Mt_Leather_Player_Child_Alb",
+)
+
+
+def boots_name(name, color):
+    """A colour's name of a body boots texture: `Mt_` -> `P<L>_` (as long)."""
+    if not name.startswith(PREFIX) or color not in COLORS:
+        raise TunicError(f"{name}: no boots name for colour {color}")
+    return f"P{COLORS[color][0]}_" + name[len(PREFIX):]
+
+
+def boots_mark(color):
+    """The mark of a colour's boots copy (look_live.mark): its letter's code, never a copy's 1..8."""
+    return ord(COLORS[color][0])
+
+
+def body_model_for(model, color):
+    """A body model naming the colour's boots copies instead of the game's boots (those it names)."""
+    for name in BODY_BOOTS:
+        model = rename(model, name, boots_name(name, color), at_least=0)
+    return model
+
+
+def boots_texture_for(bntx, name, color):
+    """The game's boots texture under the colour's name, its texels marked with the colour's mark."""
+    return mark_bntx(rename(bntx, name, boots_name(name, color), at_least=1), boots_mark(color))

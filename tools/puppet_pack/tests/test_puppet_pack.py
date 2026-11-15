@@ -848,6 +848,30 @@ class TunicExtraTest(unittest.TestCase):
             names = re.findall(r'\{"(Mt_[A-Za-z0-9_.]+)", Format::', f.read())
         self.assertEqual(tuple(names), look_live.GEAR)
 
+    def test_body_boots(self):
+        """Each tunic colour's body model names boots of its own, as the module names and marks them
+        (hookshot/src/coop_look_parts.cpp BootsName, kLetters, BootsTexels)."""
+        import re
+        from puppet_pack import look_items, look_live, tunic
+        for b in look_items.BODY_BOOTS:
+            self.assertIn(b, look_live.GEAR)   # your own Link's are painted as gear
+            self.assertEqual(len(look_items.boots_name(b, "pink")), len(b))
+        self.assertEqual(look_items.boots_name("Mt_Leather_Player_Child_Alb", "pink"), "PM_Leather_Player_Child_Alb")
+        self.assertEqual(look_items.boots_mark("pink"), ord("M"))
+        with self.assertRaises(look_items.TunicError):
+            look_items.boots_name("Angin_Tile_A_Alb", "red")
+        model = b"\0Mt_Boots_Player_Adult_Alb\0Mt_Boots\0Mt_Leather_Player_Child_Alb\0"
+        got = look_items.body_model_for(model, "red")
+        self.assertEqual(got, b"\0PR_Boots_Player_Adult_Alb\0Mt_Boots\0PR_Leather_Player_Child_Alb\0")
+        self.assertEqual(look_items.body_model_for(b"\0nothing\0", "red"), b"\0nothing\0")
+        src = os.path.join(os.path.dirname(__file__), "..", "..", "..", "hookshot", "src", "coop_look_parts.cpp")
+        with open(src, encoding="utf-8") as f:
+            text = f.read()
+        letters = dict(re.findall(r"""\{"([a-z]+)", '([A-Z])'\}""", text))
+        self.assertEqual(letters, {c: v[0] for c, v in tunic.COLORS.items()})
+        boots = re.search(r"kBoots = \{([^}]*)\}", text).group(1)
+        self.assertEqual(tuple(re.findall(r'"([^"]+)"', boots)), look_items.BODY_BOOTS)
+
     def test_names(self):
         from puppet_pack import tunic_extra as te
         for n in te.EXTRA:
@@ -1061,9 +1085,13 @@ class FullBuildTest(unittest.TestCase):
                                             fmt=0x34)))
         self.write("Tex/Mt_Vest_Player_Child_Alb.bntx.zs",
                    plain.compress(fake_bntx("Mt_Vest_Player_Child_Alb", blocks=[void_block(55, 66, 47)] * 2, fmt=0x34)))
+        # The child's straps (BC1, half green).
+        self.write("Tex/Mt_PantsParts_Player_Child_Alb.bntx.zs",
+                   plain.compress(fake_bntx("Mt_PantsParts_Player_Child_Alb",
+                                            blocks=[struct.pack("<HHI", 0x3A25, 0x2A05, 0)] * 2, fmt=0x1A)))
         for v in ("Child", "Adult"):
             dark = (b"\x15\x00Angin_Tile_A_Dark_Alb\x00\x1f\x00Mt_Cloth_Parts_Player_Child_Alb\x00"
-                    b"\x18\x00Mt_Vest_Player_Child_Alb\x00") if v == "Child" else \
+                    b"\x18\x00Mt_Vest_Player_Child_Alb\x00\x1e\x00Mt_PantsParts_Player_Child_Alb\x00") if v == "Child" else \
                 b"\x18\x00Mt_Vest_Player_Adult_Alb\x00\x1d\x00Mt_Angin_Acs_Player_Adult_Alb\x00"
             self.write(f"Model/Player_{v}.Player_{v}.bfres.zs",
                        plain.compress(b"FRES" + bytes(12) + b"\x10\x00Angin_Tile_A_Alb\x00" + dark
@@ -1506,6 +1534,34 @@ class FullBuildTest(unittest.TestCase):
         self.assertEqual(tree(a), tree(b))
         self.assertGreater(len(tree(a)), 4)
 
+    def test_build_body_boots(self):
+        """The child's boots (his leather texture, named in his model): a copy per colour, named by
+        that colour's body model, marked (look_items.BODY_BOOTS); the adult's are not in this romfs."""
+        from puppet_pack import look_items, look_live, zs
+        plain = zs.Dicts.from_romfs(self.romfs)
+        leather = fake_bntx("Mt_Leather_Player_Child_Alb", blocks=[b"\x55" * 16] * 2, fmt=0x32)
+        self.write("Tex/Mt_Leather_Player_Child_Alb.bntx.zs", plain.compress(leather))
+        m_rel = "Model/Player_Child.Player_Child.bfres.zs"
+        model = plain.decompress(build.read(os.path.join(self.romfs, m_rel)))
+        self.write(m_rel, plain.compress(model + b"\x1b\x00Mt_Leather_Player_Child_Alb\x00"))
+        said = []
+        mod = os.path.join(self.dir, "mod_boots")
+        build.build(self.romfs, mod, log=said.append, tunics=["pink", "green"])
+        out = os.path.join(mod, "romfs")
+        d = zs.Dicts.from_romfs(self.romfs)
+        for c, letter in (("pink", "M"), ("green", "G")):
+            child = d.decompress(build.read(os.path.join(out, f"Model/CoopTunic_Child_{c.capitalize()}.Player_Child.bfres.zs")))
+            self.assertIn(f"P{letter}_Leather_Player_Child_Alb\x00".encode(), child)
+            self.assertNotIn(b"Mt_Leather_Player_Child_Alb\x00", child)
+            got = d.decompress(build.read(os.path.join(out, f"Tex/P{letter}_Leather_Player_Child_Alb.bntx.zs")))
+            renamed = leather.replace(b"Mt_Leather_Player_Child_Alb\x00", f"P{letter}_Leather_Player_Child_Alb\x00".encode())
+            self.assertEqual(got, look_live.mark_bntx(renamed, ord(letter)))
+        self.assertFalse(os.path.exists(os.path.join(out, "Tex/PM_Boots_Player_Adult_Alb.bntx.zs")))
+        self.assertTrue(any("Mt_Boots_Player_Adult_Alb" in line for line in said))
+        t = rstb.Rstb.loads(d.decompress(build.read(os.path.join(
+            out, "System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs"))))
+        self.assertGreater(t.get("Tex/PM_Leather_Player_Child_Alb.bntx") or 0, 0)
+
     def test_build_tunics(self):
         from puppet_pack import tunic, zs
         mod = os.path.join(self.dir, "mod_t")
@@ -1574,7 +1630,7 @@ class FullBuildTest(unittest.TestCase):
             self.assertTrue(os.path.isfile(os.path.join(out, f"Tex/{n}_Coop_G_Adult_Alb.bntx.zs")))
         # the child's cap knot / headband / collar and back string: the same, in the child copies
         child_red = d.decompress(build.read(os.path.join(out, "Model/CoopTunic_Child_Red.Player_Child.bfres.zs")))
-        for n in ("Mt_Cloth_Parts", "Mt_Vest"):
+        for n in ("Mt_Cloth_Parts", "Mt_Vest", "Mt_PantsParts"):
             self.assertIn(f"{n}_Coop_R_Child_Alb\x00".encode(), child_red)
             self.assertNotIn(f"{n}_Player_Child_Alb\x00".encode(), child_red)
             self.assertTrue(os.path.isfile(os.path.join(out, f"Tex/{n}_Coop_R_Child_Alb.bntx.zs")))
@@ -1585,6 +1641,7 @@ class FullBuildTest(unittest.TestCase):
             "Tex/Angin_Tile_A_Dark_Alb.bntx.zs": "coop_self/red.dark.bntx.zs",
             "Tex/Mt_Cloth_Parts_Player_Child_Alb.bntx.zs": "coop_self/red.Mt_Cloth_Parts_Player_Child_Alb.bntx.zs",
             "Tex/Mt_Vest_Player_Child_Alb.bntx.zs": "coop_self/red.Mt_Vest_Player_Child_Alb.bntx.zs",
+            "Tex/Mt_PantsParts_Player_Child_Alb.bntx.zs": "coop_self/red.Mt_PantsParts_Player_Child_Alb.bntx.zs",
             "Tex/Mt_Vest_Player_Adult_Alb.bntx.zs": "coop_self/red.Mt_Vest_Player_Adult_Alb.bntx.zs",
             "Tex/Mt_Angin_Acs_Player_Adult_Alb.bntx.zs": "coop_self/red.Mt_Angin_Acs_Player_Adult_Alb.bntx.zs",
             # your own adult Link wears the puppet's model copy (bigrun5): the pack's own file
@@ -1735,7 +1792,9 @@ class NupTest(unittest.TestCase):
                          {f"Pack/Actor/{build.IMPACT_SOURCE}.pack.zs"} |
                          {"Tex/Angin_Tile_A_Alb.bntx.zs", "Tex/Angin_Tile_A_Dark_Alb.bntx.zs",
                           "Tex/Mt_Vest_Player_Adult_Alb.bntx.zs", "Tex/Mt_Angin_Acs_Player_Adult_Alb.bntx.zs",
-                          "Tex/Mt_Cloth_Parts_Player_Child_Alb.bntx.zs", "Tex/Mt_Vest_Player_Child_Alb.bntx.zs"} |
+                          "Tex/Mt_Cloth_Parts_Player_Child_Alb.bntx.zs", "Tex/Mt_Vest_Player_Child_Alb.bntx.zs",
+                          "Tex/Mt_PantsParts_Player_Child_Alb.bntx.zs", "Tex/Mt_Boots_Player_Adult_Alb.bntx.zs",
+                          "Tex/Mt_Leather_Player_Child_Alb.bntx.zs"} |
                          {f"Model/Player_{v}.Player_{v}.bfres.zs" for v in build.VARIANTS},
                          set(dumpcheck.OPTIONAL))
         seed = "Pack/Actor/Shootable_DekuSeed.pack.zs"

@@ -59,7 +59,7 @@ const char* Note(Part part) {
     case Part::kokiri_hilt: return "The leather grip.";
     case Part::master_hilt: return "The blue grip and wings; the gold and the gem stay.";
     case Part::biggoron_hilt: return "The blue grip.";
-    case Part::boots: return "The leather of every pair: the Kokiri, Hover and Iron Boots.";
+    case Part::boots: return "The leather of every pair: the Kokiri, Hover and Iron Boots (young Link's belts too).";
     case Part::gauntlets: return "The metal of the Silver and the Golden Gauntlets.";
     }
     return "";
