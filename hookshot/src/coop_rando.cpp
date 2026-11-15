@@ -90,10 +90,12 @@ std::string Quote(const std::string& arg) {
 
 }  // namespace
 
-std::string ManifestText() {
-    std::string presets;
-    for (const char* p : kPresets) {
-        presets += std::string(presets.empty() ? "" : ", ") + "\"" + p + "\"";
+std::string ManifestText() { return ManifestText(std::vector<std::string>(std::begin(kPresets), std::end(kPresets))); }
+
+std::string ManifestText(const std::vector<std::string>& offered) {
+    std::string presets = "\"default\"";
+    for (const std::string& p : offered) {
+        if (p != "default") presets += ", \"" + p + "\"";
     }
     return std::string(R"({
   "id": "oot-remake-randomizer",
@@ -109,7 +111,7 @@ std::string ManifestText() {
      "help": "Letters and digits. Empty: a new one is made. In co-op the host's seed is everyone's."},
     {"key": "preset", "name": "Settings", "type": "choice", "choices": [)") +
            presets + R"(], "shared": true, "restart": true,
-     "help": "OOTRR's presets (default, easy, open world, keysanity, full shuffle)."},
+     "help": "OOTRR's presets: only the ones the installed OOTRR can build are offered."},
     {"key": "game_folder", "name": "Game folder", "type": "text", "max_length": 260,
      "help": "Only for other game files (1.1.1, with Pack, Banc, Event and System). Empty: the kit's own (romfs beside the game)."},
     {"key": "ootrr", "name": "OOTRR program", "type": "text", "max_length": 260,
@@ -356,6 +358,65 @@ std::vector<std::string> ErrorLines(std::string_view text, std::size_t n) {
     return out.empty() ? LastLines(text, n) : out;
 }
 
+PresetCache ReadPresetCache(std::string_view text) {
+    PresetCache c;
+    for (const std::string& line : LastLines(text, static_cast<std::size_t>(-1))) {
+        const auto sp = line.find(' ');
+        if (sp == std::string::npos) continue;
+        const std::string a = line.substr(0, sp), b = line.substr(sp + 1);
+        if (a == "ootrr") c.key = b;
+        else if (b == "ok" || b == "bad") c.ok[a] = b == "ok";
+    }
+    return c;
+}
+
+std::string PresetCacheText(const PresetCache& cache) {
+    std::string out = "ootrr " + cache.key + "\n";
+    for (const auto& [preset, ok] : cache.ok) out += preset + (ok ? " ok\n" : " bad\n");
+    return out;
+}
+
+std::string OotrrKey(const fs::path& ootrr) {
+    std::error_code ec;
+    const auto size = fs::file_size(ootrr, ec);
+    if (ec) return {};
+    const auto when = fs::last_write_time(ootrr, ec);
+    if (ec) return {};
+    return std::to_string(size) + "-" + std::to_string(when.time_since_epoch().count());
+}
+
+std::string ChatSafe(std::string line, std::size_t max_chars) {
+    // The user's profile folder: ...Users\<name>\ (either slash, any case) and /home/<name>/ become <user>.
+    for (const std::string_view mark : {std::string_view("users"), std::string_view("home")}) {
+        std::size_t from = 0;
+        for (;;) {
+            std::string low = line;
+            std::transform(low.begin(), low.end(), low.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            const std::size_t at = low.find(mark, from);
+            if (at == std::string::npos) break;
+            const std::size_t name = at + mark.size() + 1;
+            const auto sep = [](char c) { return c == '\\' || c == '/'; };
+            const bool sep_before = at > 0 && sep(line[at - 1]);
+            const bool sep_after = name - 1 < line.size() && sep(line[name - 1]);
+            if (!sep_before || !sep_after || name >= line.size()) {
+                from = at + 1;
+                continue;
+            }
+            std::size_t end = name;
+            while (end < line.size() && !sep(line[end]) && line[end] != '"') ++end;
+            line.replace(name, end - name, "<user>");
+            from = name + 6;
+        }
+    }
+    if (line.size() > max_chars) {
+        std::size_t cut = max_chars;
+        while (cut > 0 && (static_cast<unsigned char>(line[cut]) & 0xC0) == 0x80) --cut;  // a whole UTF-8 character
+        line.resize(cut);
+        line += "...";
+    }
+    return line;
+}
+
 std::string SeeLogLine(const std::string& head) {
     return head + ": see " + kLogFile + " in the game's mods folder, " + kFolder + " (the chat has its full path)";
 }
@@ -495,6 +556,36 @@ void Rando::Start() {
         if (id == kId) Check();
     });
     Check();
+}
+
+std::map<std::string, bool> Rando::ProbePresets(const fs::path& ootrr, const fs::path& control) {
+    const fs::path file = control / kPresetsFile;
+    const std::string key = OotrrKey(ootrr);
+    std::ifstream in(file, std::ios::binary);
+    std::ostringstream text;
+    text << in.rdbuf();
+    in.close();
+    PresetCache cache = ReadPresetCache(text.str());
+    if (!key.empty() && cache.key == key && cache.ok.size() == std::size(kPresets)) return cache.ok;
+    // A new OOTRR (or none tried yet): each preset made once into a stage ('_': Longshot never loads it).
+    Say("trying OOTRR's presets once (this OOTRR is new here)");
+    cache = PresetCache{key, {}};
+    const fs::path stage = control / "_preset-probe";
+    std::error_code ec;
+    fs::remove_all(stage, ec);
+    fs::create_directories(stage, ec);
+    std::vector<std::string> good;
+    for (const char* p : kPresets) {
+        const bool ok = hooks_.run(ootrr, GenerateArgs(p, "PROBE", stage / (std::string(p) + ".ootrr")), stage / "out.txt") == 0;
+        cache.ok[p] = ok;
+        if (ok) good.emplace_back(p);
+        if (!ok && hooks_.log) hooks_.log(std::string("randomizer: OOTRR cannot make the ") + p + " preset: not offered");
+    }
+    fs::remove_all(stage, ec);
+    if (!key.empty()) WriteText(file, PresetCacheText(cache));
+    WriteText(control / CoopMods::kManifestFile, ManifestText(good));  // the Settings row (read with the next Refresh)
+    loader_.Refresh();
+    return cache.ok;
 }
 
 void Rando::TellOthers() {
@@ -705,9 +796,9 @@ void Rando::Build(const Plan& plan, const Want& want) {
             const std::lock_guard lock(mutex_);
             if (!log_in_chat_) {
                 log_in_chat_ = true;
-                lines_.push_back(where);
+                lines_.push_back(ChatSafe(where, 400));  // (the whole path: masked, not cut)
             }
-            for (const std::string& l : ErrorLines(output, 5)) lines_.push_back("OOTRR: " + l);  // what it said, each time
+            for (const std::string& l : ErrorLines(output, 5)) lines_.push_back(ChatSafe("OOTRR: " + l));  // what it said, each time
         }
         fail(SeeLogLine(head), reason);
     };
@@ -744,6 +835,31 @@ void Rando::Build(const Plan& plan, const Want& want) {
         if (CoopMods::NameSame(r.name, plan.folder) && r.on_now) {
             return fail(plan.folder + " is in use by this game and not a finished seed: start the game again first",
                         "the seed's folder is in use: a restart is needed");
+        }
+    }
+    // A preset this OOTRR cannot make (#16): ours goes back to default (the change builds again: Work), the host's
+    // is said plainly.
+    if (hooks_.probe_presets) {
+        const auto ok = ProbePresets(*ootrr, control);
+        const std::string preset = want.preset.empty() ? "default" : want.preset;
+        if (const auto it = ok.find(preset); it != ok.end() && !it->second && preset != "default") {
+            bool hosts_preset = false;
+            for (const CoopMods::SettingRow& s : loader_.Settings(kFolder)) {
+                if (s.setting.key == "preset") hosts_preset = s.locked;
+            }
+            if (hosts_preset) {
+                return fail("the host's Settings (" + preset + ") are not in this OOTRR yet: ask the host for another",
+                            "the host's Settings preset is not in my OOTRR yet");
+            }
+            const std::string note = "Randomizer Settings " + preset + " are not in this OOTRR yet: back to default.";
+            if (hooks_.log) hooks_.log("randomizer: " + note);
+            {
+                const std::lock_guard lock(mutex_);
+                lines_.push_back(note);
+            }
+            Say(note);
+            loader_.Set(kFolder, "preset", "default");
+            return;
         }
     }
     std::error_code ec;

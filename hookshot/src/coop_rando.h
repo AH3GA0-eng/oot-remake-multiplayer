@@ -29,6 +29,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <map>
 #include <vector>
 
 #include "coop_mods.h"
@@ -42,6 +43,7 @@ inline constexpr const char* kSeedFile = "coop-seed.txt";          // OOTRR writ
 inline constexpr const char* kPresetFile = "coop-rando.txt";       // we write the preset it was built with
 inline constexpr const char* kLogFile = "last-build.txt";          // in kFolder: OOTRR's output
 inline constexpr const char* kPresets[] = {"default", "easy", "open_world", "keysanity", "full_shuffle"};
+inline constexpr const char* kPresetsFile = "presets-ok.txt";   // in kFolder: which presets the installed OOTRR builds
 
 // The control mod's mod.json.
 std::string ManifestText();
@@ -115,11 +117,26 @@ std::optional<std::filesystem::path> FindGameFolder(const std::string& setting, 
 // What to do about a failed `ootrr build`, from its output: game files of another version than 1.1.1 (OOTRR says
 // "the game folder has no ...") say so plainly; anything else is empty (the caller gives the exit code).
 std::string BuildFailureHint(std::string_view ootrr_output);
-// The last `n` non-empty lines of OOTRR's output (for longshot_log.txt when it fails), oldest first, without .
+// Which presets an OOTRR builds (player report #16: OOTRR 0.5.0's own full_shuffle preset exits 1, "This build cannot
+// apply these settings yet"). Tried once per OOTRR (its size and write time: `key`), kept in kPresetsFile as
+// "ootrr <key>" then "<preset> ok" or "<preset> bad" lines.
+struct PresetCache {
+    std::string key;
+    std::map<std::string, bool> ok;
+};
+PresetCache ReadPresetCache(std::string_view text);
+std::string PresetCacheText(const PresetCache& cache);
+std::string OotrrKey(const std::filesystem::path& ootrr);
+// The control mod's manifest offering only `presets` (default always, first).
+std::string ManifestText(const std::vector<std::string>& presets);
+// The last `n` non-empty lines of OOTRR's output (for longshot_log.txt when it fails), oldest first, without carriage returns.
 std::vector<std::string> LastLines(std::string_view text, std::size_t n);
 // The tab's line for OOTRR's own failure: `head` and where its output is, by file name (player report: a full path
 // was cut off in the tab). The full path goes to the chat and the log.
 std::string SeeLogLine(const std::string& head);
+// A line for the co-op chat (others may see a screenshot): the user's profile folder (Users<name>, /home/<name>)
+// masked as <user>, as collect-logs does, and cut to `max_chars` bytes at a whole UTF-8 character.
+std::string ChatSafe(std::string line, std::size_t max_chars = 100);
 // OOTRR's own error lines (player report #16: "This build cannot apply these settings yet: ..."): the first `n` lines
 // that say error, cannot, can't or failed; none: the last `n` lines.
 std::vector<std::string> ErrorLines(std::string_view text, std::size_t n);
@@ -148,6 +165,9 @@ public:
         // and why: one chat line (any thread). False when it could not be sent (not connected): tried again at the
         // next Recheck. Empty: said only in this game.
         std::function<bool(const std::string& line)> tell_others;
+        // Try every preset once per OOTRR before its first build (#16): the Settings row then offers only the ones it
+        // builds. (Off in tests that count OOTRR's runs.)
+        bool probe_presets = true;
     };
     Rando(CoopMods::Loader& loader, Hooks hooks);
     ~Rando();  // waits for a build that runs
@@ -178,6 +198,9 @@ private:
     void Build(const Plan& plan, const Want& want);
     void Say(std::string line);
     void TellOthers();                    // sends tell_ (Hooks::tell_others)
+    // The presets the OOTRR at `ootrr` builds, tried and kept in kPresetsFile when it is new (#16); the manifest
+    // offers only those.
+    std::map<std::string, bool> ProbePresets(const std::filesystem::path& ootrr, const std::filesystem::path& control);
 
     CoopMods::Loader& loader_;
     const Hooks hooks_;
