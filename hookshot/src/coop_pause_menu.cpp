@@ -786,6 +786,7 @@ bool Menu::Press(Input input) {
             if (to_join) {
                 Go(Page::kJoin, Act::kJoinNow);
             } else {
+                Go(page_, act);   // rows may have come or gone (Clear the code): step from the typed one
                 Move(input == Input::kUp ? -1 : 1);
             }
             return true;
@@ -1323,7 +1324,8 @@ View Menu::view() const {
             // (nothing to press: the row is read)
         } else if (line->row.kind == RowKind::kAction) {
             const bool typed_row = line->act == Act::kName || line->act == Act::kHostPort ||
-                                   line->act == Act::kJoinIp || line->act == Act::kJoinPort;
+                                   line->act == Act::kJoinIp || line->act == Act::kJoinPort ||
+                                   line->act == Act::kJoinPassword;
             v.confirm = line->row.value.empty() ? "Open" : typed_row ? "Type" : "Choose";
         } else {
             v.change = "Change";

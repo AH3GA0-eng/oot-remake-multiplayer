@@ -29,6 +29,11 @@ std::string Selected(const Menu& m) {
     return v.selected >= 0 ? v.rows[static_cast<std::size_t>(v.selected)].name : std::string();
 }
 
+std::string SelectedValue(const Menu& m) {
+    const View v = m.view();
+    return v.selected >= 0 ? v.rows[static_cast<std::size_t>(v.selected)].value : std::string();
+}
+
 void SelectRow(Menu& m, const std::string& name) {
     for (int i = 0; i < 20 && Selected(m) != name; ++i) {
         m.Press(Input::kDown);
@@ -172,11 +177,11 @@ TEST_CASE("pause tab: Join pastes the code in one press, then joins with it") {
     SelectRow(m, "Join a game");
     m.Press(Input::kDecide);
     CHECK(m.page() == Page::kJoin);
-    CHECK(Names(m) == std::vector<std::string>{"Friend's code", "IP address", "Port", "Join"});
+    CHECK(Names(m) == std::vector<std::string>{"Friend's code", "IP address", "Port", "Password", "Join"});
     CHECK(m.view().rows[0].value == "Paste");
     CHECK(m.view().rows[1].value == "Type");
     CHECK(m.view().rows[2].value == "27510");
-    CHECK(m.view().rows[3].fixed);   // nothing to join yet
+    CHECK(m.view().rows[4].fixed);   // nothing to join yet
     m.Press(Input::kDecide);
     CHECK(m.typing());
     CHECK(m.view().typing);
@@ -217,7 +222,7 @@ TEST_CASE("pause tab: a new code replaces the one in the field, never goes besid
     m.TakeRequest();
     CHECK(m.Paste(old_code));
     // a long code shows its start, its end and its length: codes start alike
-    CHECK(Names(m) == std::vector<std::string>{"Friend's code", "Clear the code", "Join"});
+    CHECK(Names(m) == std::vector<std::string>{"Friend's code", "Clear the code", "IP address", "Port", "Password", "Join"});
     CHECK(m.view().rows[0].value == "ABCDEFGH...XYZ-OLD1 (29)");
     // pressing the field again pastes at once, in place of the old code (one press, then Join)
     SelectRow(m, "Friend's code");
@@ -261,10 +266,10 @@ TEST_CASE("pause tab: a new code replaces the one in the field, never goes besid
     SelectRow(m, "Clear the code");
     m.Press(Input::kDecide);
     CHECK(m.join_text().empty());
-    CHECK(Names(m) == std::vector<std::string>{"Friend's code", "Join"});
+    CHECK(Names(m) == std::vector<std::string>{"Friend's code", "IP address", "Port", "Password", "Join"});
     CHECK(m.view().rows[0].value == "Paste");
     CHECK(Selected(m) == "Friend's code");
-    CHECK(m.view().rows[1].fixed);
+    CHECK(m.view().rows[4].fixed);
 }
 
 TEST_CASE("pause tab: Join offers the last game again first, one press") {
@@ -272,7 +277,7 @@ TEST_CASE("pause tab: Join offers the last game again first, one press") {
     m.Show(CoopTitleMenu::Options{});
     m.Open(Page::kJoin);
     m.SetRejoin("Saria", "ABCDE-FGHJK");
-    CHECK(Names(m) == std::vector<std::string>{"Join Saria again", "Or a new code", "IP address", "Port", "Join"});
+    CHECK(Names(m) == std::vector<std::string>{"Join Saria again", "Or a new code", "IP address", "Port", "Password", "Join"});
     CHECK(Selected(m) == "Join Saria again");
     m.Press(Input::kDecide);
     auto r = m.TakeRequest();
@@ -863,15 +868,15 @@ TEST_CASE("pause tab: Join's Password row: typed or pasted, shown as stars, sent
     for (const char c : std::string("Secret7")) {
         m.Char(static_cast<unsigned char>(c));
     }
-    CHECK(m.view().confirm == "*******_");
+    CHECK(SelectedValue(m) == "*******_");
     m.Press(Input::kDecide);
     CHECK_FALSE(m.typing());
     CHECK(Selected(m) == "Join");
     CHECK(m.join_text() == "192.168.1.50:28000 Secret7");
     SelectRow(m, "Password");
-    CHECK(m.view().confirm == "*******");
+    CHECK(SelectedValue(m) == "*******");
     SelectRow(m, "Friend's code");   // the address line shows the password as stars too
-    CHECK(m.view().confirm == "192.168.1.50:28000 *******");
+    CHECK(SelectedValue(m) == "192.168.1.50:28000 *******");
     SelectRow(m, "Join");
     m.Press(Input::kDecide);
     const auto req = m.TakeRequest();
@@ -892,8 +897,7 @@ TEST_CASE("pause tab: Join's Password row: typed or pasted, shown as stars, sent
     m.Press(Input::kBack);
     CHECK(m.join_text() == "192.168.1.50:28000 Secret7");
     m.Press(Input::kDecide);
-    CHECK(m.Paste("Other9
-"));
+    CHECK(m.Paste("Other9\n"));
     CHECK_FALSE(m.typing());
     CHECK(m.join_text() == "192.168.1.50:28000 Other9");
     CHECK(Selected(m) == "Join");
