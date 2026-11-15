@@ -337,7 +337,7 @@ TEST_CASE("boss scenes: another's death is asked as the boss's own death setting
     SUBCASE("asked as the setting, taken: played with the owner's, no fallback") {
         Director b;
         b.Receive(death);
-        CHECK(b.Tick(with_boss(At(kInRoom, 2)), {}, 1'000'000).play == std::optional<std::string>("Dm_Deku_BossOut"));
+        CHECK(b.Tick(with_boss(At(kInRoom, 2)), {}, 1'000'000).play == std::optional<std::string>("InsideTheDekuTree_BossDie"));
         Actions out = b.Tick(with_boss(At(kInRoom, 2, true)), Took("InsideTheDekuTree_BossDie"), 1'100'000);
         CHECK_FALSE(out.play);
         CHECK(out.send.empty());  // player 1 started it
