@@ -224,7 +224,8 @@ TEST_CASE("title menu: Host and Join in plain words, nothing about ports or pass
             for (const auto& line : PlainStatus(v)) {
                 CHECK(line.find("port") == std::string::npos);
                 CHECK(line.find("password") == std::string::npos);
-                CHECK(line.find("address") == std::string::npos);
+                // (one exception: the host is told the invite code holds their internet address, privacy-name)
+                CHECK((line.find("address") == std::string::npos || line.find("Share it in DMs only: it contains your internet address.") != std::string::npos));
             }
         }
     }
