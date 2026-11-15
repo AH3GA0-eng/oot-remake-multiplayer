@@ -967,6 +967,8 @@ private:
                                             std::uint64_t now_us) const;
     // The nearest of our lures to `at` (metres), or nothing with none.
     std::optional<float> LureDistance(const coop::protocol::Vec3& at) const;
+    // chest-late-b: why a chest read the open idle when another's flag came (log only).
+    std::string ChestAlreadyOpenWhy(const Seen& s, std::uint64_t now_us) const;
     std::vector<std::string> notes_;
     std::map<std::uint64_t, Object> objects_;  // by actor address
     std::vector<std::uint64_t> ours_now_;     // copies that became ours (TakeOursNow)
@@ -1035,6 +1037,9 @@ private:
     struct ChestAnimation {
         std::string name;
         std::uint64_t changed_us = 0;
+        // chest-late-b (row #35 (2)): seen with its closed idle since it was
+        // first seen (an "already open" chest that was closed here before).
+        bool seen_closed = false;
     };
     std::map<std::uint64_t, ChestAnimation> chest_animations_;
     // Issue 195: a loaded closed chest that another player opened is shown

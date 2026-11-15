@@ -1217,6 +1217,41 @@ TEST_CASE("objects: a chest made open is never removed when its flag comes (issu
     }
 }
 
+TEST_CASE("objects: an already open chest's log says how long it read OpenWait and if it was closed (row 35)") {
+    // chest-late-b: Bean Seller's 0.11.0 log had 'already shows open here'
+    // for chests the player saw closed; the note now tells the two cases apart.
+    Sync sync;
+    sync.SetPlayer(proto::Vec3{20.0f, 0.0f, 1.0f});
+    Seen made = Chest(0x500, 0x1111);
+    made.animation = proto::Animation{"OpenWait", 0.0f, 1.0f};
+    Seen changed = Chest(0x600, 0x2222);
+    changed.animation = proto::Animation{"CloseWait", 0.0f, 1.0f};
+    Tick(sync, 0, {made, changed, Enemy(0x100, 0x11, 2)});
+    changed.animation = proto::Animation{"OpenWait", 0.0f, 1.0f};
+    Tick(sync, 1000 * kMs, {made, changed, Enemy(0x100, 0x11, 2)});
+    for (std::uint64_t t = 2000; t <= 5000; t += 1000) Tick(sync, t * kMs, {made, changed, Enemy(0x100, 0x11, 2)});
+    sync.TakeNotes();
+    sync.Take(0x1111);
+    sync.Take(0x2222);
+    Tick(sync, 6000 * kMs, {made, changed, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 6010 * kMs, {made, changed, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    std::vector<PlayWish> plays;
+    sync.Plays(6020 * kMs, plays);
+    CHECK(plays.empty());
+    bool first = false;
+    bool later = false;
+    for (const auto& n : sync.TakeNotes()) {
+        if (n.find("already shows open here") == std::string::npos) continue;
+        first |= n.find("open idle since first seen") != std::string::npos &&
+                 n.find("closed here before") == std::string::npos;
+        later |= n.find("open idle for 5.0 s, closed here before") != std::string::npos;
+        CHECK(n.find("m away") != std::string::npos);
+    }
+    CHECK(first);
+    CHECK(later);
+}
+
 TEST_CASE("objects: a chest away from our Link that starts opening as the flag comes shows open (issue 87)") {
     Sync sync;
     sync.SetPlayer(proto::Vec3{20.0f, 0.0f, 1.0f});
