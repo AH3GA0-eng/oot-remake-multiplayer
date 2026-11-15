@@ -1,8 +1,8 @@
 # Mods
 
-Co-op on Hookshot has its own mod loader. It sits in the pause menu's **Mods** tab, right after **Multiplayer**. It loads two kinds of mods from Hookshot's own `mods` folder:
+Co-op on Longshot (the continuation of Hookshot) has its own mod loader. It sits in the pause menu's **Mods** tab, right after **Multiplayer**. It loads two kinds of mods from the game's own `mods` folder:
 
-- **Game file mods** (RomFS: textures, models, text, a randomizer seed). Hookshot reads them when the game starts.
+- **Game file mods** (RomFS: textures, models, text, a randomizer seed). The game reads them when it starts.
 - **Code mods**: a library (`.dll`) that the co-op module loads when the game starts. It can read and write the game's memory, run something every frame, draw over the picture, take keys and hook game functions.
 
 The randomizer (OOTRR) is built in.
@@ -11,7 +11,7 @@ The randomizer (OOTRR) is built in.
 
 ### Where mods go
 
-Put each mod in its own folder under `mods` beside `hookshot.exe` (or the folder `HOS_MODS` names):
+Put each mod in its own folder under `mods` beside `longshot.exe` (in the kit: `hookshot\game\bin\mods`; or the folder `HOS_MODS` names):
 
 ```
 mods\
@@ -32,7 +32,7 @@ A mod made for an emulator's `load\<title id>\<name>\romfs` folder works the sam
 - **The randomizer's row** reads **OoT Remake Randomizer** with a **Settings** button and no Off / On: press it to open its page, where the **Randomizer** switch, its seed, its settings and its status line are.
 - **Restart needed**: game files and code are read only when the game starts. The tab says what changes at the next start; nothing is ever rebuilt.
 
-The tab writes two files into the mods folder: `coop-mods.list` (order and switches) and `coop-mods.settings.json` (settings). Hookshot reads the list at its start (our patch 0011). A `hookshot.exe` without that patch loads every mod in its own order, and the tab cannot switch or move game file mods (code mods and settings still work).
+The tab writes two files into the mods folder: `coop-mods.list` (order and switches) and `coop-mods.settings.json` (settings). The game reads the list at its start (our patch 0011). A game built without that patch loads every mod in its own order, and the tab cannot switch or move game file mods (code mods and settings still work).
 
 ### A mod that fails
 
@@ -52,7 +52,8 @@ A setting marked `"shared"` is the host's in a co-op game: your tab shows the ho
 
 The OoT Remake randomizer is [OOTRR](https://github.com/REALAZK/ootrr) (by REALAZK, GPL-3.0-or-later since 0.5.0). The kit brings it: there is nothing to download or set.
 
-- **OOTRR comes with the kit.** The kit's game build (`Build-Hookshot-Coop`, or the launcher's "putting the updated co-op into the game" step) downloads the OOTRR release named in `hookshot\OOTRR.txt` (0.5.0), checks its SHA-256 and puts it in `tools\ootrr\` beside the game (`hookshot\game\tools\ootrr\ootrr.exe`, with its `LICENSE` and `NOTICE`). The Linux kit does the same into `data/game/tools/ootrr/`. When that download fails the build only warns, co-op plays without the randomizer, and the next start tries again.
+- **OOTRR comes with the kit.** The kit's game build (`Start OoT Co-op.bat`'s first build, or its "putting the updated co-op into the game" step) downloads the OOTRR release named in `hookshot\OOTRR.txt` (0.5.0), checks its SHA-256 and puts it in `tools\ootrr\` beside the game (`hookshot\game\tools\ootrr\ootrr.exe`, with its `LICENSE` and `NOTICE`). The Linux kit does the same into `data/game/tools/ootrr/`. When that download fails the build only warns, co-op plays without the randomizer, and the next start tries again.
+- **Do not install OOTRR by hand next to co-op.** A second OOTRR 0.5.0 (unpacked into `mods`, or set up as its own instructions say) crashes the game at start; the kit's own copy is all co-op needs. OOTRR's next release is due soon; a co-op update moves `hookshot\OOTRR.txt` to it.
 - **Your game files are the kit's own.** The kit's build already unpacks your game beside the program (`hookshot\game\romfs`, or `data/game/romfs` on Linux). OOTRR reads them there and never changes them; nothing is copied. They are the game version co-op needs (program 0400486024DEC000, update v131072, which is the 1.1.1 OOTRR asks for), so they always pass OOTRR's version check.
 
 1. In the Mods tab, press **Settings** on the **OoT Remake Randomizer** row and turn **Randomizer** on. With no **Seed** a new one is made. Pick **Settings** (OOTRR's presets: default, easy, open world, keysanity, full shuffle).
@@ -132,6 +133,6 @@ The table (version 1): `log`, `main_base`, `read`, `write` (guest addresses; off
 
 Mods are loaded first row first and started at the first frame. `coop_mod_stop` (optional) runs at exit.
 
-A whole sample is in `hookshot/samples/hello-mod` (`mod.json` + `hello_mod.c`; the tests build it as `hello_mod.dll`): copy both files into `modshello-mod`, start the game, and F7 shows its message in the corner.
+A whole sample is in `hookshot/samples/hello-mod` (`mod.json` + `hello_mod.c`; the tests build it as `hello_mod.dll`): copy both files into `mods\hello-mod`, start the game, and F7 shows its message in the corner.
 
-The interface is ours, modelled on NX2navi's plugin interface, and does not depend on Hookshot: the same mod is meant to load on Longshot once our module runs there.
+The interface is ours, modelled on NX2navi's plugin interface, and does not depend on Longshot: the same mod is meant to load on any game our module runs on.

@@ -2,6 +2,8 @@
 
 How to test the co-op build with the test kit: the server on one PC, the patched emulator on both, each with its own copy of the game. The kit is made by `tools/release/make_kit.ps1` ([Making the kit](#making-the-kit)); in the kit this file is `TESTING.md`.
 
+**Longshot (0.11.0 and newer).** Releases are Longshot only, and players test with the Longshot kit ([setup.md](setup.md), [known-issues.md](known-issues.md)). The sections from "What a kit can show" to "Making the kit" describe the older emulator test kit (`make_kit.ps1`, the emulator kits up to the early test release of 2026-11-12, the last with the emulator); the Longshot kit is made by `tools/release/make_kit_hookshot.ps1` (Windows) and `tools/release/make_kit_linux.sh` (Linux), and two-game tests on Longshot use [Automatic tests](#automatic-tests) with `-Runtime hookshot` and the test lanes.
+
 ## What a kit can show
 
 Which features are in `main`, and so in a kit built from it, as of 2026-11-09 (for players: [known-issues.md](known-issues.md)). A feature that is not merged yet has no check to do: skip its rows in the [checklist](#checklist) and write "not in this kit". `VERSION.txt` in the kit says which commit it was built from.
