@@ -2155,7 +2155,28 @@ private:
             LOG_INFO(Core, "coop: story: quest Meet_DekuTree {:#x} -> {:#x} (shared story; issue 130)",
                      *step, *raise);
         }
+        // Issue 84: Mido blocks again in a game already past him (a shared 1
+        // from a save behind the group). Held kMidoMendUs first, so a host
+        // save load whose quest and scene flags land a few frames after its
+        // blocker is not fought.
+        const bool mend = CoopStory::MidoBlockerMend(step, flags.get_bool(quest::kMidoBlocker),
+                                                     flags.get_bool(quest::kMetDekuTree));
+        const std::uint64_t now_us = CoopEvery::NowUs();
+        if (!mend) {
+            mido_mend_since_us_ = 0;
+        } else if (mido_mend_since_us_ == 0) {
+            mido_mend_since_us_ = now_us;
+        } else if (now_us - mido_mend_since_us_ >= kMidoMendUs &&
+                   coop::host::GameFlags::set_bool(memory, quest::kMidoBlocker, false)) {
+            mido_mend_since_us_ = 0;
+            LOG_INFO(Core,
+                     "coop: story: Mido's blocker was 1 in a game past him (Meet_DekuTree {:#x}): set to 0 "
+                     "(issue 84)",
+                     step.value_or(0));
+        }
     }
+    static constexpr std::uint64_t kMidoMendUs = 3'000'000;
+    std::uint64_t mido_mend_since_us_ = 0;  // CatchUpQuest's (game thread)
 
     // Set by Begin before the network thread starts; the session borrows the
     // client and locks it, so neither is touched directly after that.

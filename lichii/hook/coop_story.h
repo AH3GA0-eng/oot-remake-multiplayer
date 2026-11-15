@@ -85,4 +85,16 @@ std::optional<std::uint32_t> QuestCatchUp(std::optional<std::uint32_t> step,
                                           std::optional<bool> mido_blocker,
                                           std::optional<bool> met_deku_tree);
 
+// Issue 84: true when Mido's blocker (kMidoBlocker) is 1 in a game that is
+// past him: our Meet_DekuTree at Step03 or later, or the Deku Tree scene
+// played. The game itself never sets the blocker back to 1 (GameDataList
+// default 1; both writes in Npc_Kokiri_Mido_Child.bfevfl set it false, the
+// same talk that moves the quest to Step03), and Mido's talks after Step03
+// have no branch that clears it. Only a shared value can bring a 1 back (a
+// host save or snapshot behind the group), and then Mido blocks the Deku
+// Tree path in every game for good, also after Gohma. Mended to 0 through
+// the game's own Bool setter. Unknown inputs count as "not past him".
+bool MidoBlockerMend(std::optional<std::uint32_t> step, std::optional<bool> mido_blocker,
+                     std::optional<bool> met_deku_tree);
+
 } // namespace CoopStory

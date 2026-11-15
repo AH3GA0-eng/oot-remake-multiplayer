@@ -283,6 +283,35 @@ TEST_CASE("story: the Meet_DekuTree catch-up never lowers the quest nor runs bef
     CHECK_FALSE(QuestCatchUp(std::nullopt, false, true));
 }
 
+TEST_CASE("story: Mido's blocker goes back to 0 in a game already past him (issue 84)") {
+    namespace q = CoopStory::quest;
+    using CoopStory::MidoBlockerMend;
+    // After Gohma (quest Complete, the Deku Tree scene played) a shared 1 came
+    // back from a save behind the group: Mido blocks the path in every game.
+    CHECK(MidoBlockerMend(q::kComplete, true, true));
+    CHECK(MidoBlockerMend(q::kComplete, true, false));
+    CHECK(MidoBlockerMend(q::kStep03, true, false));
+    // The Deku Tree scene played but our quest is unread or not caught up yet.
+    CHECK(MidoBlockerMend(std::nullopt, true, true));
+    CHECK(MidoBlockerMend(q::kStep01, true, true));
+}
+
+TEST_CASE("story: Mido's blocker is left alone before Link gets past him (issue 84)") {
+    namespace q = CoopStory::quest;
+    using CoopStory::MidoBlockerMend;
+    // Mido still waits for a sword and shield, as in one game.
+    CHECK_FALSE(MidoBlockerMend(q::kStep02, true, false));
+    CHECK_FALSE(MidoBlockerMend(q::kStep01, true, false));
+    CHECK_FALSE(MidoBlockerMend(q::kReady, true, false));
+    // A host save from before Mido: its quest and scene flags came with it.
+    CHECK_FALSE(MidoBlockerMend(q::kNotReady, true, false));
+    // Already 0, unread, or nothing known: no write.
+    CHECK_FALSE(MidoBlockerMend(q::kComplete, false, true));
+    CHECK_FALSE(MidoBlockerMend(q::kComplete, std::nullopt, true));
+    CHECK_FALSE(MidoBlockerMend(0x12345678u, true, false));
+    CHECK_FALSE(MidoBlockerMend(std::nullopt, true, std::nullopt));
+}
+
 TEST_CASE("story: the Kakariko guard's gate and the letter scene are shared (issue 171)") {
     // The guard's flow Npc_Hylia_Soldier_003 and the letter scene Dm_Kakariko_0010
     // set Npc_Hylia_Soldier_003_GateOpen (romfs Event/EventFlow); the scene's

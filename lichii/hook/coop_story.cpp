@@ -319,26 +319,32 @@ std::size_t Merge(std::optional<coop::host::SharedFlags>& shared, bool on) {
     return shared->size() - before;
 }
 
+namespace {
+
+// Meet_DekuTree's steps in order; 0 for NotReady or a value we do not know.
+int Rank(std::uint32_t v) {
+    switch (v) {
+    case quest::kReady:
+        return 1;
+    case quest::kStep01:
+        return 2;
+    case quest::kStep02:
+        return 3;
+    case quest::kStep03:
+        return 4;
+    case quest::kComplete:
+        return 5;
+    default:
+        return 0;
+    }
+}
+
+} // namespace
+
 std::optional<std::uint32_t> QuestCatchUp(std::optional<std::uint32_t> step,
                                           std::optional<bool> mido_blocker,
                                           std::optional<bool> met_deku_tree) {
-    const auto rank = [](std::uint32_t v) -> int {
-        switch (v) {
-        case quest::kReady:
-            return 1;
-        case quest::kStep01:
-            return 2;
-        case quest::kStep02:
-            return 3;
-        case quest::kStep03:
-            return 4;
-        case quest::kComplete:
-            return 5;
-        default:
-            return 0;  // NotReady or a value we do not know
-        }
-    };
-    if (!step || rank(*step) == 0) {
+    if (!step || Rank(*step) == 0) {
         return std::nullopt;
     }
     std::uint32_t target = 0;
@@ -349,10 +355,18 @@ std::optional<std::uint32_t> QuestCatchUp(std::optional<std::uint32_t> step,
     } else {
         return std::nullopt;
     }
-    if (rank(target) <= rank(*step)) {
+    if (Rank(target) <= Rank(*step)) {
         return std::nullopt;
     }
     return target;
+}
+
+bool MidoBlockerMend(std::optional<std::uint32_t> step, std::optional<bool> mido_blocker,
+                     std::optional<bool> met_deku_tree) {
+    if (mido_blocker != true) {
+        return false;  // already out of the way, or unread
+    }
+    return met_deku_tree == true || (step && Rank(*step) >= Rank(quest::kStep03));
 }
 
 bool On() {
