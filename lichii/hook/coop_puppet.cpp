@@ -6,6 +6,7 @@
 #include "coop_local_game.h"
 #include "coop_look_share.h"
 #include "coop_pose.h"
+#include "coop_puppet_own.h"
 
 #include <algorithm>
 #include <atomic>
@@ -179,6 +180,13 @@ std::optional<Call> Director::Step(Guest& guest, bool after_call, std::uint64_t 
     if (input_.main_base == 0 || calls_ >= kMaxCallsPerFrame) {
         return std::nullopt;
     }
+    if (!own_asked_) {
+        own_asked_ = true;
+        if (auto call = OwnState(guest)) {
+            ++calls_;
+            return call;
+        }
+    }
     for (const auto& t : input_.targets) {
         SlotFor(t.number);
     }
@@ -195,6 +203,29 @@ std::optional<Call> Director::Step(Guest& guest, bool after_call, std::uint64_t 
         }
     }
     return std::nullopt;
+}
+
+// sword-3: the game's own state of the local Link's sword or shield
+// (kEquipState, 0xce7ab0(eu, slot)), one slot a frame in turn. The sender's
+// request-byte reading misses changes made inside one game frame
+// (coop_puppet_own.h); this answer is what it sends instead. No local Link
+// (a load, the title): nothing asked, and the stored answers go stale.
+std::optional<Call> Director::OwnState(Guest& guest) {
+    const std::uint64_t player = CoopPose::FindPlayer(guest, input_.main_base);
+    std::uint64_t parts = 0;
+    std::uint64_t eu = 0;
+    if (player == 0 || !ReadValue(guest, player + addr::kActorParts, parts) || parts == 0 ||
+        !ReadValue(guest, parts + addr::kPartsEquipmentUser, eu) || eu == 0) {
+        return std::nullopt;
+    }
+    own_index_ = own_next_;
+    own_next_ = (own_next_ + 1) % CoopPuppetOwn::kSlots.size();
+    Call c;
+    c.function = input_.main_base + addr::kEquipState;
+    c.x[0] = eu;
+    c.x[1] = CoopPuppetOwn::kSlots[own_index_];
+    pending_ = Pending::own_state;
+    return c;
 }
 
 // Once a frame, the full-body pose copy (coop_pose.cpp): our skeleton is
@@ -215,6 +246,10 @@ void Director::PoseFrame(Guest& guest, std::uint64_t now_ms) {
 void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
     ++frames_;
     calls_ = 0;
+    own_asked_ = false;
+    if (pending_ == Pending::own_state) {
+        pending_ = Pending::none;  // not made: asked again this frame
+    }
     first_slot_ = slots_.empty() ? 0 : (first_slot_ + 1) % slots_.size();
     if (pending_ != Pending::none) {
         // The cave did not make the call (its own limit): undo the phase.
@@ -449,6 +484,13 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
 }
 
 void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) {
+    if (pending_ == Pending::own_state) {
+        // Its own clock: the hook's reader compares it with its own (coop_puppet_own.h).
+        CoopPuppetOwn::TheDrawn().Set(own_index_, static_cast<std::uint32_t>(result),
+                                      CoopPuppetOwn::NowMs());
+        pending_ = Pending::none;
+        return;
+    }
     Slot& slot = SlotFor(pending_slot_);
     const std::string who = "P" + std::to_string(slot.number);
     switch (pending_) {
@@ -645,6 +687,7 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
         CoopLinkSound::Finish(slot.link_sound, result, guest, slot.block, who,
                               [this](const std::string& line) { Say(line); }, anim_);
         break;
+    case Pending::own_state:  // taken above
     case Pending::none:
         break;
     }
