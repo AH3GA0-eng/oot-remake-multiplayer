@@ -62,7 +62,134 @@ Row Make(std::string name, std::string value, RowKind kind) {
     return r;
 }
 
+// A glyph and what it means for a break: its bytes, the cells it takes (a Chinese
+// character is two), and whether a line may end after it.
+struct Piece {
+    std::string bytes;
+    int cells = 1;
+    bool space = false;
+    bool stops = false;
+};
+
+int Cells(std::uint32_t cp) {
+    return cp >= 0x1100 ? 2 : 1;   // the wide scripts: CJK, kana, hangul, the fullwidth forms
+}
+
+bool Stops(std::uint32_t cp) {
+    switch (cp) {
+    case ',':
+    case '.':
+    case ';':
+    case ':':
+    case '!':
+    case '?':
+    case 0x3001:   // 、
+    case 0x3002:   // 。
+    case 0xFF0C:   // ，
+    case 0xFF1B:   // ；
+    case 0xFF1A:   // ：
+    case 0xFF01:   // ！
+    case 0xFF1F:   // ？
+    case 0x300D:   // 」
+    case 0x300F:   // 』
+    case 0x3011:   // 】
+    case 0xFF09:   // ）
+    case 0xFF3D:   // ］
+        return true;
+    default:
+        return false;
+    }
+}
+
+std::vector<Piece> Pieces(const std::string& text) {
+    std::vector<Piece> out;
+    for (std::size_t i = 0; i < text.size();) {
+        const unsigned char b = static_cast<unsigned char>(text[i]);
+        std::uint32_t cp = b;
+        std::size_t n = 1;
+        if ((b & 0xE0) == 0xC0 && i + 1 < text.size()) {
+            cp = b & 0x1Fu;
+            n = 2;
+        } else if ((b & 0xF0) == 0xE0 && i + 2 < text.size()) {
+            cp = b & 0x0Fu;
+            n = 3;
+        } else if ((b & 0xF8) == 0xF0 && i + 3 < text.size()) {
+            cp = b & 0x07u;
+            n = 4;
+        }
+        for (std::size_t k = 1; k < n; ++k) {
+            cp = (cp << 6) | (static_cast<unsigned char>(text[i + k]) & 0x3Fu);
+        }
+        Piece p;
+        p.bytes = text.substr(i, n);
+        p.cells = Cells(cp);
+        p.space = cp == ' ';
+        p.stops = Stops(cp);
+        out.push_back(std::move(p));
+        i += n;
+    }
+    return out;
+}
+
+// A row takes about 85 cells at the menu's usual scale (a line of 44 Chinese
+// characters before the "…"); 76 keeps a margin for a larger UI scale.
+constexpr std::size_t kNoteCells = 76;
+
 }  // namespace
+
+std::vector<std::string> NoteLines(const std::string& text) {
+    std::vector<std::string> out;
+    std::size_t start = 0;
+    for (;;) {
+        const std::size_t nl = text.find('\n', start);
+        std::vector<Piece> left = Pieces(text.substr(start, nl == std::string::npos ? std::string::npos : nl - start));
+        while (!left.empty()) {
+            std::size_t cells = 0;
+            std::size_t stop = 0;
+            std::size_t space = 0;
+            std::size_t take = 0;
+            for (; take < left.size(); ++take) {
+                if (cells + static_cast<std::size_t>(left[take].cells) > kNoteCells && take > 0) {
+                    break;
+                }
+                cells += static_cast<std::size_t>(left[take].cells);
+                if (left[take].stops) stop = take + 1;
+                if (left[take].space) space = take + 1;
+            }
+            std::size_t cut = take;
+            if (take < left.size()) {
+                // A break that reads: after a full stop or a comma near the end, else at a space.
+                if (stop > 0 && stop * 2 >= take) {
+                    cut = stop;
+                } else if (space > 0 && space * 2 >= take) {
+                    cut = space;
+                }
+            }
+            if (cut == 0) {
+                cut = 1;
+            }
+            std::string line;
+            for (std::size_t i = 0; i < cut; ++i) {
+                line += left[i].bytes;
+            }
+            while (!line.empty() && line.back() == ' ') {
+                line.pop_back();
+            }
+            if (!line.empty()) {
+                out.push_back(std::move(line));
+            }
+            left.erase(left.begin(), left.begin() + static_cast<std::ptrdiff_t>(cut));
+            while (!left.empty() && left.front().space) {
+                left.erase(left.begin());
+            }
+        }
+        if (nl == std::string::npos) {
+            break;
+        }
+        start = nl + 1;
+    }
+    return out;
+}
 
 Tab::Tab(Sources sources) : src_(std::move(sources)) {}
 
@@ -93,12 +220,19 @@ std::vector<Tab::Line> Tab::Lines() const {
     };
     if (mod_.empty()) {
         const CoopMods::Restart restart = src_.loader->RestartNeeded();
-        for (const std::string& why : restart.why) note("Restart needed: " + why);
+        for (const std::string& why : restart.why) {
+            for (const std::string& line : NoteLines("Restart needed: " + why)) note(line);
+        }
         if (src_.coop) {
-            for (std::string& line : src_.coop()) note(std::move(line));
+            for (const std::string& line : src_.coop()) {
+                for (const std::string& part : NoteLines(line)) note(part);
+            }
         }
         if (rows.empty()) {
-            note("No mods in " + CoopMods::ToUtf8(src_.loader->Root()) + ". Put each mod in its own folder there.");
+            for (const std::string& line : NoteLines("No mods in " + CoopMods::ToUtf8(src_.loader->Root()) +
+                                                     ". Put each mod in its own folder there.")) {
+                note(line);
+            }
         }
         for (const CoopMods::Row& m : rows) {
             Line l;
@@ -129,7 +263,9 @@ std::vector<Tab::Line> Tab::Lines() const {
     Line head;
     head.row = Make(m.title, "", RowKind::kHeading);
     out.push_back(head);
-    if (!m.description.empty()) note(m.description);
+    if (!m.description.empty()) {
+        for (const std::string& line : NoteLines(m.description)) note(line);
+    }
     if (!m.author.empty()) {
         // The table's words around the author and the version, and the author's own
         // text through it too (the kit's randomizer writes a sentence there, which
@@ -140,7 +276,9 @@ std::vector<Tab::Line> Tab::Lines() const {
         }
         note(std::move(by));
     }
-    if (!m.note.empty()) note(m.note);
+    if (!m.note.empty()) {
+        for (const std::string& line : NoteLines(m.note)) note(line);
+    }
     if (m.id == CoopRando::kId && src_.rando) {
         if (std::string r = src_.rando(); !r.empty()) note("Randomizer: " + r);
     }
