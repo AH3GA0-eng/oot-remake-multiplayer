@@ -98,6 +98,10 @@ FOOTSTEP_SUFFIX = ".game__component__SoundFootStepParam.bgyml"
 # worked by the player's own aiming code). Every perception emitter in the game has a Physics component; the
 # puppet gets the one of InterestSpotActor, a logic-only emitter whose controller set is empty (no body: the
 # puppet still collides with nothing).
+# OFF by default for 0.11 (own-look-2, lane1 2026-11-15): with the emitter on, a game crashes ~8 s after the save
+# loads when a child puppet wears a gear copy (Weapon_Sword_Kokiri_Look1) and holds the slingshot (guest null
+# read 0x7d8, lr 0x82deeef8; the slingshot actor in x19). The same pack built without it plays on. `--perception`
+# builds it (a test switch until that crash is understood).
 # Guards (review-boss-sync must-fix): the stealth guards (AffiliationParam NpcSecurityGuard: the castle's child
 # soldiers, the Gerudo) target Player too, and their AI (NpcSecurityGuard.SetIsObserve) takes any perceived
 # emitter of affiliation Player as Link: a puppet in view would catch this game's Link. Nothing in the data keeps
@@ -961,7 +965,7 @@ def write_look_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows, slots, l
 
 def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None,
           tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False, title_rows=False,
-          look_slots=look_items.SLOTS, perception=True):
+          look_slots=look_items.SLOTS, perception=False):
     """`tunics`: the tunic colours to make puppets of (puppet_pack.tunic.COLORS; each is a model,
     a tile and an actor per age, CoopPuppet_<age>_<Colour>). `test_tunic`: give the plain puppets
     that colour too (a test of the colours with a hook that knows none).
@@ -972,7 +976,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
     instead of the player's (test switch, the pack before puppet-looks). `look_slots`: how many
     players' puppets can wear gear colours of their own (puppet_pack.look_items; 0: none).
     `perception`: True makes the puppets a target of the game's perception (PERCEPTION_SOURCE), each with a
-    quiet copy (quiet_name) for the scenes with stealth guards (guard_scenes)."""
+    quiet copy (quiet_name) for the scenes with stealth guards (guard_scenes); off for 0.11 (PERCEPTION_SOURCE)."""
     heaps = heaps or {}
     if not os.path.isfile(os.path.join(romfs, "Pack", "ZsDic.pack.zs")):
         raise BuildError(f"{romfs} does not look like the game's romfs (no Pack/ZsDic.pack.zs)")
@@ -1266,8 +1270,11 @@ def main(argv=None):
                          f"(default: all, {','.join(tunic.COLORS)})")
     ap.add_argument("--test-tunic", metavar="COLOUR",
                     help="give the plain puppets this tunic colour too (a test with a hook that knows no colours)")
+    ap.add_argument("--perception", action="store_true",
+                    help="puppets the game's perception sees, with quiet copies for the stealth guards' scenes "
+                         "(issue 150; off for 0.11: a puppet with a gear copy and the slingshot crashes the game)")
     ap.add_argument("--no-perception", action="store_true",
-                    help="puppets no perception sees (the pack before issue 150: enemies go for this game's Link only)")
+                    help="puppets no perception sees (the default for 0.11; kept for older scripts)")
     ap.add_argument("--no-sound", action="store_true",
                     help="build the puppets without Link's sounds (the pack before issue 131)")
     ap.add_argument("--seed-trail", action="store_true",
@@ -1341,7 +1348,7 @@ def _main_build(a, romfs, hud_reader=None):
               sound_user=a.sound_user, tunics=tunics, test_tunic=a.test_tunic,
               stand_in_effects=a.seed_trail and not a.no_seed_trail, basic_xlink=a.basic_xlink,
               title_rows=a.title_rows, look_slots=max(0, min(a.look_slots, look_items.MAX_SLOTS)),
-              perception=not a.no_perception)
+              perception=a.perception and not a.no_perception)
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

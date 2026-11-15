@@ -1388,13 +1388,13 @@ class FullBuildTest(unittest.TestCase):
                             for i, a in enumerate(actors)], "FilePath": "x"})))
 
     def test_build_quiet_puppets_for_guard_scenes(self):
-        # Issue 150 (review-boss-sync must-fix): perception is on by default; each puppet has a quiet copy
-        # (no perception) and the scenes with a stealth guard are listed for it.
+        # Issue 150 (review-boss-sync must-fix): with perception (off by default for 0.11) each puppet has a
+        # quiet copy (no perception) and the scenes with a stealth guard are listed for it.
         self.add_perception_and_guards()
         d = zs.Dicts.from_romfs(self.romfs)
         self.assertEqual(build.guard_scenes(self.romfs, d), {"Castle": ["Npc_Guard"]})
         mod = os.path.join(self.dir, "mod_quiet")
-        m = build.build(self.romfs, mod, log=lambda *_: None, tunics=("red",), look_slots=0)
+        m = build.build(self.romfs, mod, log=lambda *_: None, tunics=("red",), look_slots=0, perception=True)
         self.assertTrue(m["perception"])
         self.assertEqual(m["quiet_scenes"], ["Castle"])
         self.assertEqual(m["guards"], {"Castle": ["Npc_Guard"]})
@@ -1422,6 +1422,10 @@ class FullBuildTest(unittest.TestCase):
         self.add_perception_and_guards()
         m = build.build(self.romfs, os.path.join(self.dir, "mod_loud"), log=lambda *_: None, perception=False)
         self.assertFalse(m["perception"])
+        # Off by default for 0.11 (a puppet with a gear copy and the slingshot crashed the game with it).
+        d = build.build(self.romfs, os.path.join(self.dir, "mod_default"), log=lambda *_: None, look_slots=0)
+        self.assertFalse(d["perception"])
+        self.assertEqual(d["quiet_scenes"], [])
         self.assertEqual(m["quiet_scenes"], [])
         self.assertFalse([a for a in m["actors"] if a["quiet"] or a["perception"]])
 
