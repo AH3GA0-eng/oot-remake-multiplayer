@@ -57,6 +57,7 @@ public:
         if (!In(a, n)) {
             return false;
         }
+        ++reads[a];
         std::memcpy(out, bytes_.data() + (a - base_), n);
         return true;
     }
@@ -109,6 +110,7 @@ public:
     std::uint8_t* at(std::uint64_t a) { return bytes_.data() + (a - base_); }
     std::size_t overrides() const { return overrides_.size(); }
     int overridden = 0;
+    mutable std::map<std::uint64_t, int> reads;   // Read calls by address
 
 private:
     void Drop(std::uint64_t a, std::uint64_t n) {
@@ -447,6 +449,59 @@ TEST_CASE("look tunic: the wardrobe keeps your Link in the colour worn") {
     // A later start wears red again.
     w.Step(7000);
     CHECK(Drawn(m, at, 9));
+}
+
+TEST_CASE("look tunic: a texture the game makes again is drawn at the next step, the others not read again") {
+    // 0.11.0 players: the game made Link's textures again (scene changes, cutscenes, its streaming)
+    // and each time the game's colours showed until the next round, a second later: flicker.
+    FakeTextures m(kBase, 0x10000);
+    PutFile(m, kBase + 0x1000, "Tile_A", TexelsOf(1));
+    const std::uint64_t other = kBase + 0x3000 + kOffset;   // a texture of the size that is not Link's
+    m.Make(other, kTexels);
+    const std::map<std::string, std::vector<std::uint8_t>> pack = {
+        {"green", LookFile({{"Tile_A", TexelsOf(1)}})},
+        {"red", LookFile({{"Tile_A", TexelsOf(9)}})},
+    };
+    CoopLookTunic::Wardrobe::Host host;
+    host.textures = &m;
+    host.file = [&](const std::string& c) -> std::optional<std::vector<std::uint8_t>> {
+        const auto it = pack.find(c);
+        return it == pack.end() ? std::nullopt : std::optional(it->second);
+    };
+    host.log = [](const std::string&) {};
+    CoopLookTunic::Wardrobe w(host);
+    const std::uint64_t at = kBase + 0x1000 + kOffset;
+    w.Wear("red");
+    w.Step(0);
+    CHECK(Drawn(m, at, 9));
+    const int other_reads = m.reads[other];
+    CHECK(other_reads > 0);
+    // Made again 20 ms later: red at the next step; the other texture (no colour) is not read again.
+    m.Make(at, kTexels);
+    CHECK(Drawn(m, at, 1));
+    w.Step(20);
+    CHECK(Drawn(m, at, 9));
+    CHECK(m.reads[other] == other_reads);
+    // A new texture of Link's made since: found by the quick step too.
+    const std::uint64_t second = kBase + 0x5000 + kOffset;
+    std::memcpy(m.at(second), TexelsOf(1).data(), kTexels);
+    m.Make(second, kTexels);
+    w.Step(40);
+    CHECK(Drawn(m, second, 9));
+    CHECK(m.reads[other] == other_reads);
+    // Its texels came after it was made (a quick step missed it): the full search a second on finds it.
+    const std::uint64_t late = kBase + 0x7000 + kOffset;
+    m.Make(late, kTexels);
+    w.Step(60);
+    CHECK_FALSE(Drawn(m, late, 9));
+    std::memcpy(m.at(late), TexelsOf(1).data(), kTexels);
+    m.Make(other, kTexels);   // (something made: the generation moves)
+    w.Step(500);
+    CHECK_FALSE(Drawn(m, late, 9));
+    m.Make(other, kTexels);
+    w.Step(1100);
+    CHECK(Drawn(m, late, 9));
+    CHECK(m.reads[other] > other_reads);
 }
 
 // ---------------------------------------------------------------------------
