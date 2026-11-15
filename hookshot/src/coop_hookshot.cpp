@@ -57,6 +57,7 @@
 #include "coop_lobby_game.h"
 #include "coop_voice.h"
 #include "coop_hud.h"
+#include "coop_hud_dim.h"
 #include "coop_hud_hearts.h"
 #include "coop_link_sound.h"
 #include "coop_map_page.h"
@@ -783,6 +784,18 @@ CoopDraw::Scene DrawScene() {
         }
         return false;
     };
+    // Each block's dim look held steady (coop_hud_dim.h): no flashing while a slow game's samples come a second apart.
+    static std::mutex dim_mutex;
+    static CoopHudDim::Hold dim_hold;
+    std::lock_guard dim_lock(dim_mutex);
+    const auto dim_now = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+    for (std::uint8_t n = 1; n <= CoopHudDim::Hold::kSlots; ++n) {
+        if (std::none_of(rows.begin(), rows.end(), [n](const CoopHook::PlayerRow& r) { return r.number == n && !r.self; })) {
+            dim_hold.Forget(n);
+        }
+    }
     for (const auto& row : game ? rows : std::vector<CoopHook::PlayerRow>{}) {
         if (row.self) {
             s.own_voice = CoopVoice::IconFor(voice_on, CoopVoice::Get().muted || voice_muted(row.number),
@@ -798,7 +811,7 @@ CoopDraw::Scene DrawScene() {
         if (const auto life = CoopHud::PlayerLife(row.number); life && life->max > 0) {
             b.hearts = CoopHudHearts::Quarters(life->life, life->max);
         }
-        b.dim = row.state != "connected";
+        b.dim = dim_hold.Dim(row.number, row.state == "connected", dim_now);
         s.hud.push_back(std::move(b));
     }
     if (list) {
