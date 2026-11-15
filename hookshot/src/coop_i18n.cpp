@@ -33,6 +33,9 @@
 namespace CoopI18n {
 namespace {
 
+// A place's name in `lang` (defined with the table itself, below).
+std::string PlaceIn(const Lang* lang, std::string_view en);
+
 // ---------------------------------------------------------------------------
 // Simplified Chinese.
 
@@ -602,6 +605,61 @@ constexpr Entry kzh_Hans[] = {
     {"Keysanity", "钥匙乱序"},
     {"Full shuffle", "完全乱序"},
 
+
+    // ---- The chat's notices (coop_hook.cpp and the modules it asks) ----
+    {"connection lost, reconnecting", "连接断了，正在重连"},
+    {"the host muted your chat: nobody sees it", "房主屏蔽了你的聊天：现在没人看得到"},
+    {"you host now: the Lobby's host controls are yours", "你现在是房主：「大厅」页的房主操作归你了"},
+    {"Difficulty: could not be sent", "难度：没能发出去"},
+    {"teleport: wait until your game is loaded", "传送：等你的游戏载入好"},
+    {"teleport: not during a cutscene or a talk", "传送：过场或对话时不行"},
+    {"teleport: not during your boss fight", "传送：打 Boss 的时候不行"},
+    {"teleport: stopped: your game got busy (a load, a cutscene or a fight)", "传送：已停下：你的游戏忙起来了（载入、过场或战斗）"},
+    {"teleport: talk to someone or read a sign within a minute to go there", "传送：一分钟内和某人说话或读一个告示，就能过去"},
+    {"teleport: the game did not change scene in time; stopped", "传送：游戏没能及时换场景，已停下"},
+    {"teleport: stopped: the new scene did not settle", "传送：已停下：新场景没稳定下来"},
+    {"teleport: off in this game (LICHII_COOP_TELEPORT=0)", "传送：本局关掉了（LICHII_COOP_TELEPORT=0）"},
+    {"teleport: could not ask (not connected?)", "传送：问不到对方（没连上？）"},
+    {"teleport: stopped: the connection was lost", "传送：已停下：连接断了"},
+    {"lobby: not connected", "大厅：没连上"},
+    {"lobby: could not be sent", "大厅：没能发出去"},
+    {"Mods: yours now match the host's", "模组：你的和房主一致了"},
+    {"child", "孩子"},
+    {"adult", "大人"},
+    {"Normal", "普通"},
+    {"Hard", "困难"},
+    {"Custom", "自定义"},
+    {"joined as player {}", "已加入：玩家 {}"},
+    {"reconnected as player {}", "已重新连上：玩家 {}"},
+    {"{} joined", "{} 加入了"},
+    {"{} left", "{} 离开了"},
+    {"server {}", "服务器：{}"},
+    {"and {} more", "还有 {} 个"},
+    {"teleport: next to {}", "传送：已经到 {} 身边"},
+    {"teleport: asking {} where they are", "传送：在问 {} 在哪里"},
+    {"teleport: {} is coming to you", "传送：{} 正在过来"},
+    {"teleport: stopped: you left {}", "传送：已停下：你离开了 {}"},
+    {"Difficulty: Automatic ({} players): life {}%, damage {}%, enemies {}%; bosses: life {}%, damage {}%", "难度：自动（{} 名玩家）：生命 {}%，伤害 {}%，敌人 {}%；Boss：生命 {}%，伤害 {}%"},
+    {"Difficulty: Automatic ({} player): life {}%, damage {}%, enemies {}%; bosses: life {}%, damage {}%", "难度：自动（{} 名玩家）：生命 {}%，伤害 {}%，敌人 {}%；Boss：生命 {}%，伤害 {}%"},
+    {"Difficulty: {}: life {}%, damage {}%, enemies {}%", "难度：{}：生命 {}%，伤害 {}%，敌人 {}%"},
+    {"teleport: going to {} in {}", "传送：去 {} 所在的 {}"},
+    {"teleport: {} has gone on to {}; you are where they were. Type /teleport again to follow", "传送：{} 已经去了 {}；你到了他刚才的位置。再输一次 /teleport 就能跟过去"},
+    {"teleport: {} is in {}, a place for {} Link; yours is {}", "传送：{} 在 {}，那是{}的林克去的地方；你这边是{}"},
+    {"teleport: {} is {} Link and you are {}: no teleport to another age's Link", "传送：{} 是{}的林克，你是{}：不能传送到另一个时代的林克那里"},
+    {"teleport: {} is busy now; you are where they were", "传送：{} 现在正忙；你到了他刚才的位置"},
+    {"teleport: no answer from {}; you are where they were", "传送：{} 没回应；你到了他刚才的位置"},
+    {"teleport: no answer from {} (an older build, or their game is busy)", "传送：{} 没回应（他的版本较旧，或者游戏正忙）"},
+    {"teleport: {} is in a dungeon: you may need its items to get on from there", "传送：{} 在迷宫里：要从那里继续，可能需要里面的道具"},
+    {"teleport: {} is in {}, a place /teleport cannot load (no start point known there)", "传送：{} 在 {}，那个地方 /teleport 载入不了（不知道起点）"},
+    {"{}: not connected", "{}：没连上"},
+    {"{}: only the host can do that", "{}：只有房主能做"},
+    {"{}: could not be sent", "{}：没能发出去"},
+    {"refused: {}", "被拒绝：{}"},
+    {"Mods: yours differ from the host's ({}): see the Mods tab", "模组：你的和房主不一样（{}）：看「模组」页"},
+    {"Mods: player {} ({}) has {} mods unlike yours", "模组：玩家 {}（{}）有 {} 个模组和你不一样"},
+    {"Mods: player {} has {} mods unlike yours", "模组：玩家 {} 有 {} 个模组和你不一样"},
+    {"Mods: player {} has {} mod unlike yours", "模组：玩家 {} 有 {} 个模组和你不一样"},
+    {"Mods: player {} ({}) has {} mod unlike yours", "模组：玩家 {}（{}）有 {} 个模组和你不一样"},
 };
 
 // ---------------------------------------------------------------------------
@@ -1151,6 +1209,61 @@ constexpr Entry kzh_Hant[] = {
     {"Open world", "開放世界"},
     {"Keysanity", "鑰匙亂序"},
     {"Full shuffle", "完全亂序"},
+
+    // ---- The chat's notices (coop_hook.cpp and the modules it asks) ----
+    {"connection lost, reconnecting", "連線斷了，正在重連"},
+    {"the host muted your chat: nobody sees it", "房主封鎖了你的聊天：現在沒人看得到"},
+    {"you host now: the Lobby's host controls are yours", "你現在是房主：「大廳」頁的房主操作歸你了"},
+    {"Difficulty: could not be sent", "難度：沒能發出去"},
+    {"teleport: wait until your game is loaded", "傳送：等你的遊戲載入好"},
+    {"teleport: not during a cutscene or a talk", "傳送：過場或對話時不行"},
+    {"teleport: not during your boss fight", "傳送：打 Boss 的時候不行"},
+    {"teleport: stopped: your game got busy (a load, a cutscene or a fight)", "傳送：已停下：你的遊戲忙起來了（載入、過場或戰鬥）"},
+    {"teleport: talk to someone or read a sign within a minute to go there", "傳送：一分鐘內和某人說話或讀一個告示，就能過去"},
+    {"teleport: the game did not change scene in time; stopped", "傳送：遊戲沒能及時換場景，已停下"},
+    {"teleport: stopped: the new scene did not settle", "傳送：已停下：新場景沒穩定下來"},
+    {"teleport: off in this game (LICHII_COOP_TELEPORT=0)", "傳送：本局關掉了（LICHII_COOP_TELEPORT=0）"},
+    {"teleport: could not ask (not connected?)", "傳送：問不到對方（沒連上？）"},
+    {"teleport: stopped: the connection was lost", "傳送：已停下：連線斷了"},
+    {"lobby: not connected", "大廳：沒連上"},
+    {"lobby: could not be sent", "大廳：沒能發出去"},
+    {"Mods: yours now match the host's", "模組：你的和房主一致了"},
+    {"child", "孩子"},
+    {"adult", "大人"},
+    {"Normal", "普通"},
+    {"Hard", "困難"},
+    {"Custom", "自訂"},
+    {"joined as player {}", "已加入：玩家 {}"},
+    {"reconnected as player {}", "已重新連上：玩家 {}"},
+    {"{} joined", "{} 加入了"},
+    {"{} left", "{} 離開了"},
+    {"server {}", "伺服器：{}"},
+    {"and {} more", "還有 {} 個"},
+    {"teleport: next to {}", "傳送：已經到 {} 身邊"},
+    {"teleport: asking {} where they are", "傳送：在問 {} 在哪裡"},
+    {"teleport: {} is coming to you", "傳送：{} 正在過來"},
+    {"teleport: stopped: you left {}", "傳送：已停下：你離開了 {}"},
+    {"Difficulty: Automatic ({} players): life {}%, damage {}%, enemies {}%; bosses: life {}%, damage {}%", "難度：自動（{} 名玩家）：生命 {}%，傷害 {}%，敵人 {}%；Boss：生命 {}%，傷害 {}%"},
+    {"Difficulty: Automatic ({} player): life {}%, damage {}%, enemies {}%; bosses: life {}%, damage {}%", "難度：自動（{} 名玩家）：生命 {}%，傷害 {}%，敵人 {}%；Boss：生命 {}%，傷害 {}%"},
+    {"Difficulty: {}: life {}%, damage {}%, enemies {}%", "難度：{}：生命 {}%，傷害 {}%，敵人 {}%"},
+    {"teleport: going to {} in {}", "傳送：去 {} 所在的 {}"},
+    {"teleport: {} has gone on to {}; you are where they were. Type /teleport again to follow", "傳送：{} 已經去了 {}；你到了他剛才的位置。再輸入一次 /teleport 就能跟過去"},
+    {"teleport: {} is in {}, a place for {} Link; yours is {}", "傳送：{} 在 {}，那是{}的林克去的地方；你這邊是{}"},
+    {"teleport: {} is {} Link and you are {}: no teleport to another age's Link", "傳送：{} 是{}的林克，你是{}：不能傳送到另一個時代的林克那裡"},
+    {"teleport: {} is busy now; you are where they were", "傳送：{} 現在正忙；你到了他剛才的位置"},
+    {"teleport: no answer from {}; you are where they were", "傳送：{} 沒回應；你到了他剛才的位置"},
+    {"teleport: no answer from {} (an older build, or their game is busy)", "傳送：{} 沒回應（他的版本較舊，或者遊戲正忙）"},
+    {"teleport: {} is in a dungeon: you may need its items to get on from there", "傳送：{} 在迷宮裡：要從那裡繼續，可能需要裡面的道具"},
+    {"teleport: {} is in {}, a place /teleport cannot load (no start point known there)", "傳送：{} 在 {}，那個地方 /teleport 載入不了（不知道起點）"},
+    {"{}: not connected", "{}：沒連上"},
+    {"{}: only the host can do that", "{}：只有房主能做"},
+    {"{}: could not be sent", "{}：沒能發出去"},
+    {"refused: {}", "被拒絕：{}"},
+    {"Mods: yours differ from the host's ({}): see the Mods tab", "模組：你的和房主不一樣（{}）：看「模組」頁"},
+    {"Mods: player {} ({}) has {} mods unlike yours", "模組：玩家 {}（{}）有 {} 個模組和你不一樣"},
+    {"Mods: player {} has {} mods unlike yours", "模組：玩家 {} 有 {} 個模組和你不一樣"},
+    {"Mods: player {} has {} mod unlike yours", "模組：玩家 {} 有 {} 個模組和你不一樣"},
+    {"Mods: player {} ({}) has {} mod unlike yours", "模組：玩家 {}（{}）有 {} 個模組和你不一樣"},
 };
 
 std::string Trim(std::string s) {
@@ -1386,6 +1499,8 @@ constexpr PlaceName kPlaces[] = {
     {"Zora Domain", "佐拉领地", "佐拉領地"},
     {"Zora Fountain", "佐拉泉", "佐拉泉"},
     {"Zora River", "佐拉河", "佐拉河"},
+
+
 };
 
 const Lang kLangs[] = {
@@ -1570,6 +1685,111 @@ constexpr Shape kShapes[] = {
      "Co-op: {}", false},
     {"Player ", "",
      "Player {}", false},
+    {"joined as player ", "",
+     "joined as player {}", false},
+    {"reconnected as player ", "",
+     "reconnected as player {}", false},
+    {"", " joined",
+     "{} joined", false},
+    {"", " left",
+     "{} left", false},
+    {"server ", "",
+     "server {}", false},
+    {"and ", " more",
+     "and {} more", false},
+    {"teleport: next to ", "",
+     "teleport: next to {}", false},
+    {"teleport: asking ", " where they are",
+     "teleport: asking {} where they are", false},
+    {"teleport: ", " is coming to you",
+     "teleport: {} is coming to you", false},
+    {"teleport: stopped: you left ", "",
+     "teleport: stopped: you left {}", false},
+};
+
+// A line the game builds from two or more pieces of data ("Difficulty: Automatic
+// (2 players): life 140%, ...", "teleport: Saria is in Hyrule Field, ..."): the
+// fixed text between them (one piece more than the data), and the table's line
+// with a {} for each piece. One Shape above cannot say that: its middle would be
+// the rest of the line.
+struct SplitShape {
+    const char* pieces[8];
+    int words;    // bit i: part i is a word of the table too (a preset's name, an age)
+    int count;    // pieces used
+    const char* key;
+};
+
+bool SplitAll(std::string_view text, const SplitShape& shape, std::string_view* parts) {
+    if (shape.count < 2 || shape.count > 8) {
+        return false;
+    }
+    const std::string_view first = shape.pieces[0];
+    const std::string_view last = shape.pieces[shape.count - 1];
+    if (text.size() < first.size() + last.size()) {
+        return false;
+    }
+    if (!first.empty() && text.substr(0, first.size()) != first) {
+        return false;
+    }
+    if (!last.empty() && text.substr(text.size() - last.size()) != last) {
+        return false;
+    }
+    std::size_t at = first.size();
+    const std::size_t end = text.size() - last.size();
+    for (int i = 1; i < shape.count - 1; ++i) {
+        const std::string_view piece = shape.pieces[i];
+        const std::size_t found = text.find(piece, at);
+        if (found == std::string_view::npos || found >= end) {
+            return false;
+        }
+        parts[i - 1] = text.substr(at, found - at);
+        at = found + piece.size();
+    }
+    parts[shape.count - 2] = text.substr(at, end - at);
+    return true;
+}
+
+// `text` with its {}s filled, left to right, from `parts`.
+std::string FillAll(const char* text, const std::string_view* parts, int count) {
+    std::string out;
+    int used = 0;
+    const std::string_view t(text);
+    for (std::size_t i = 0; i < t.size();) {
+        if (t[i] == '{' && i + 1 < t.size() && t[i + 1] == '}') {
+            if (used < count) {
+                out += parts[used++];
+            }
+            i += 2;
+        } else {
+            out += t[i];
+            ++i;
+        }
+    }
+    return out;
+}
+
+constexpr SplitShape kSplitShapes[] = {
+    {{"Difficulty: Automatic (", " players): life ", "%, damage ", "%, enemies ", "%; bosses: life ", "%, damage ", "%", ""}, 0, 7, "Difficulty: Automatic ({} players): life {}%, damage {}%, enemies {}%; bosses: life {}%, damage {}%"},
+    {{"Difficulty: Automatic (", " player): life ", "%, damage ", "%, enemies ", "%; bosses: life ", "%, damage ", "%", ""}, 0, 7, "Difficulty: Automatic ({} player): life {}%, damage {}%, enemies {}%; bosses: life {}%, damage {}%"},
+    {{"Difficulty: ", ": life ", "%, damage ", "%, enemies ", "%", ""}, 1, 5, "Difficulty: {}: life {}%, damage {}%, enemies {}%"},
+    {{"teleport: going to ", " in ", "", ""}, 0, 3, "teleport: going to {} in {}"},
+    {{"teleport: ", " has gone on to ", "; you are where they were. Type /teleport again to follow", ""}, 0, 3, "teleport: {} has gone on to {}; you are where they were. Type /teleport again to follow"},
+    {{"teleport: ", " is in ", ", a place for ", " Link; yours is ", "", ""}, 12, 5, "teleport: {} is in {}, a place for {} Link; yours is {}"},
+    {{"teleport: ", " is ", " Link and you are ", ": no teleport to another age's Link", ""}, 6, 4, "teleport: {} is {} Link and you are {}: no teleport to another age's Link"},
+    {{"teleport: ", " is busy now; you are where they were", ""}, 0, 2, "teleport: {} is busy now; you are where they were"},
+    {{"teleport: no answer from ", "; you are where they were", ""}, 0, 2, "teleport: no answer from {}; you are where they were"},
+    {{"teleport: no answer from ", " (an older build, or their game is busy)", ""}, 0, 2, "teleport: no answer from {} (an older build, or their game is busy)"},
+    {{"teleport: ", " is in a dungeon: you may need its items to get on from there", ""}, 0, 2, "teleport: {} is in a dungeon: you may need its items to get on from there"},
+    {{"teleport: ", " is in ", ", a place /teleport cannot load (no start point known there)", ""}, 0, 3, "teleport: {} is in {}, a place /teleport cannot load (no start point known there)"},
+    {{"", ": not connected", ""}, 0, 2, "{}: not connected"},
+    {{"", ": only the host can do that", ""}, 0, 2, "{}: only the host can do that"},
+    {{"", ": could not be sent", ""}, 0, 2, "{}: could not be sent"},
+    {{"refused: ", "", ""}, 0, 2, "refused: {}"},
+    {{"Mods: yours differ from the host's (", "): see the Mods tab", ""}, 0, 2, "Mods: yours differ from the host's ({}): see the Mods tab"},
+    {{"Mods: player ", " (", ") has ", " mods unlike yours", ""}, 0, 4, "Mods: player {} ({}) has {} mods unlike yours"},
+    {{"Mods: player ", " has ", " mods unlike yours", ""}, 0, 3, "Mods: player {} has {} mods unlike yours"},
+    {{"Mods: player ", " has ", " mod unlike yours", ""}, 0, 3, "Mods: player {} has {} mod unlike yours"},
+    {{"Mods: player ", " (", ") has ", " mod unlike yours", ""}, 0, 4, "Mods: player {} ({}) has {} mod unlike yours"},
 };
 
 // The middle of `text` when it fits `shape`; false when it does not.
@@ -1610,10 +1830,13 @@ std::string Tr(const Lang* lang, std::string_view en) {
             continue;
         }
         std::string_view text = middle;
+        std::string kept;
         if (shape.words) {
             if (const Entry* word = Find(*lang, middle)) {
                 text = word->text;
             }
+        } else if (kept = PlaceIn(lang, middle); kept != middle) {
+            text = kept;   // a scene the game names ("Hyrule Field")
         }
         if (const Entry* entry = Find(*lang, shape.key)) {
             return Fill(entry->text, text);
@@ -1622,6 +1845,32 @@ std::string Tr(const Lang* lang, std::string_view en) {
         // language, the middle as it is)
         return Tr(lang, shape.before) + std::string(text) + Tr(lang, shape.after);
     }
+    for (const SplitShape& shape : kSplitShapes) {
+        std::string_view parts[7];
+        if (!SplitAll(en, shape, parts)) {
+            continue;
+        }
+        std::string filled[7];
+        std::string_view views[7];
+        for (int i = 0; i < shape.count - 1; ++i) {
+            filled[i] = std::string(parts[i]);
+            if ((shape.words & (1 << i)) != 0) {
+                filled[i] = Tr(lang, parts[i]);
+            } else if (const std::string place = PlaceIn(lang, parts[i]); place != parts[i]) {
+                filled[i] = place;   // a scene the game names ("Hyrule Field")
+            }
+            views[i] = filled[i];
+        }
+        if (const Entry* entry = Find(*lang, shape.key)) {
+            return FillAll(entry->text, views, shape.count - 1);
+        }
+        return std::string(en);
+    }
+    // A place's name the game wrote (places.json): its own table (see below), so a
+    // chat line or a label that carries one reads in the same language as the HUD.
+    if (const std::string place = PlaceIn(lang, en); place != en) {
+        return place;
+    }
     return std::string(en);
 }
 
@@ -1629,7 +1878,11 @@ std::string Tr(const Lang* lang, std::string_view en) {
 // A place's name in the table's language (places.json's English); the name as
 // it is when the table has no line for it, and for English.
 std::string Place(std::string_view en) {
-    const Lang* lang = Current();
+    return PlaceIn(Current(), en);
+}
+
+namespace {
+std::string PlaceIn(const Lang* lang, std::string_view en) {
     if (lang == nullptr || lang->entries == nullptr) {
         return std::string(en);
     }
@@ -1641,5 +1894,6 @@ std::string Place(std::string_view en) {
     }
     return std::string(en);
 }
+}  // namespace
 
 }  // namespace CoopI18n

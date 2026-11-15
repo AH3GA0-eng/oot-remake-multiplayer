@@ -211,6 +211,33 @@ TEST_CASE("coop i18n: a place's name, and a name the table does not have") {
     CHECK(CoopI18n::Place("Not A Place Anyone Knows") == "Not A Place Anyone Knows");
 }
 
+TEST_CASE("coop i18n: the chat's notices, built around names and numbers") {
+    // The chat lines the hook adds (coop_hook.cpp and the modules it asks) reach the
+    // module as text; Tr() matches them whole, or by the pieces around their data.
+    const CoopI18n::Lang& hans = *ByCode("zh-Hans");
+    const CoopI18n::Lang& hant = *ByCode("zh-Hant");
+    CHECK(CoopI18n::Tr(&hans, "joined as player 2") == "已加入：玩家 2");
+    CHECK(CoopI18n::Tr(&hans, "ROGX joined") == "ROGX 加入了");
+    CHECK(CoopI18n::Tr(&hant, "ROGX left") == "ROGX 離開了");
+    CHECK(CoopI18n::Tr(&hans, "connection lost, reconnecting") == "连接断了，正在重连");
+
+    // Two or more pieces of data in one line: the host's difficulty notice.
+    CHECK(CoopI18n::Tr(&hans, "Difficulty: Normal: life 100%, damage 100%, enemies 100%") ==
+          "难度：普通：生命 100%，伤害 100%，敌人 100%");
+    CHECK(CoopI18n::Tr(&hans,
+                       "Difficulty: Automatic (2 players): life 140%, damage 120%, enemies 12%; bosses: life "
+                       "110%, damage 110%") ==
+          "难度：自动（2 名玩家）：生命 140%，伤害 120%，敌人 12%；Boss：生命 110%，伤害 110%");
+
+    // A scene the game names is the place table's, inside a line too.
+    CHECK(CoopI18n::Tr(&hans, "teleport: going to ROGX in Hyrule Field") == "传送：去 ROGX 所在的 海拉鲁平原");
+    CHECK(CoopI18n::Tr(&hans, "teleport: ROGX is in Hyrule Field, a place for adult Link; yours is child") ==
+          "传送：ROGX 在 海拉鲁平原，那是大人的林克去的地方；你这边是孩子");
+
+    // A notice the table does not know stays as it is.
+    CHECK(CoopI18n::Tr(&hans, "something else entirely") == "something else entirely");
+}
+
 TEST_CASE("coop i18n: every key is still a line of the module") {
     // A text changed in the code no longer finds its line, and that language
     // shows English there: the table is re-keyed with it. (Shapes, with {},
