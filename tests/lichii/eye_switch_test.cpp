@@ -145,7 +145,7 @@ TEST_CASE("eye switch: one malloc, then FirstOn through the game's set-bool unti
     CHECK_FALSE(s.Step(g, false, 0, kMain, 148));  // nothing left
 }
 
-TEST_CASE("eye switch: a latched FirstOn is not set again; no event in time goes the old way") {
+TEST_CASE("eye switch: a latched FirstOn is not set again, no event in time goes the old way") {
     FakeGuest g;
     World w;
     Eye(g, kEye);
