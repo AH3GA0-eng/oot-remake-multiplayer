@@ -87,6 +87,7 @@
 #include "coop_title.h"
 #include "core/core.h"
 #include "coop_host_menu.h"
+#include "coop_null_page.h"
 #include "hos_coop_api.h"
 #include "hos_coop_actors.h"
 #include "hos_coop_bosses.h"
@@ -189,38 +190,16 @@ bool PuppetGuardInExe() {
 #endif
 }
 
-// The exe's hos_coop_null_page (patch 0002, host/coop_null_page.c): from then on a guest null read gives 0. nullptr in
-// an exe built before it was exported (and on Linux, which needs none).
-using NullPageFn = void (*)();
-NullPageFn NullPage() {
-#ifdef _WIN32
-    static const auto fn = reinterpret_cast<NullPageFn>(
-        reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(nullptr), "hos_coop_null_page")));
-    return fn;
-#else
-    return nullptr;
-#endif
-}
-
-// coop_hookshot.h PerceivedPuppetsSafe for this game.
-bool PerceivedSafe() {
-#ifdef _WIN32
-    const bool window_readable = false;
-#else
-    const bool window_readable = true;  // (Linux: see PuppetGuardInExe)
-#endif
-    return CoopHookshot::PerceivedPuppetsSafe(window_readable, NullPage() != nullptr, Env("HOS_COOP_NULL_READS"));
-}
-
-// Before the game makes a puppet: its null reads give 0 (issue 150, coop_hookshot.h PerceivedPuppetsSafe). Once.
+// Before the game makes our first puppet: its null reads give 0 (issue 150, coop_null_page.h). Once.
 void ArmNullPage(const std::string& actor) {
-    static std::atomic<bool> armed{false};
-    if (actor.rfind("CoopPuppet_", 0) != 0 || armed.exchange(true)) {
-        return;
+    if (actor.rfind("CoopPuppet_", 0) == 0) {
+        CoopNullPage::Arm(Env("HOS_COOP_NULL_READS"));
     }
-    if (const NullPageFn fn = NullPage(); fn != nullptr) {
-        fn();
-    }
+}
+
+// Whether a perceived puppet is safe here (coop_null_page.h Armable); if not, quiet puppets everywhere.
+bool PerceivedSafe() {
+    return CoopNullPage::Armable(Env("HOS_COOP_NULL_READS"), CoopNullPage::Query());
 }
 
 // coop_hookshot.h AllowLinkPuppets / RefuseCreate: without patch 0002 a Link-model puppet crashes Hookshot's game.

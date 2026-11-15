@@ -37,7 +37,7 @@ CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool(
 // Settings() from the process's variables and the puppet pack under
 // LoadDir/<title id>, then CoopPuppet::Configure. perceived_safe: false when
 // the runtime cannot make a perceived puppet's null reads give 0 (issue 150,
-// coop_hookshot.h PerceivedPuppetsSafe): a pack with perception then makes
+// hookshot/src/coop_null_page.h Armable): a pack with perception then makes
 // every puppet its quiet copy.
 void Configure(bool perceived_safe = true);
 // A coop_puppet.json is under LoadDir/<title id> (the puppet pack is installed).

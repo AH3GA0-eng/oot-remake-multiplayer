@@ -104,8 +104,8 @@ FOOTSTEP_SUFFIX = ".game__component__SoundFootStepParam.bgyml"
 # from the lane logs: every crashed game had no 'puppet guard' line, every game that played on had one): the
 # perception's Physics fills the puppet's component slot 10, so Hookshot patch 0002's guard, which arms the null page
 # when slot 10 is missing, never runs; the game's later read of the puppet's missing Player component faults. The
-# module now arms the page itself before its first puppet (coop_hookshot.h PerceivedPuppetsSafe) and makes the quiet
-# copies everywhere when the exe cannot. `--perception` builds it; default OFF until a lane run proves it.
+# module now arms the page itself before its first puppet (hookshot/src/coop_null_page.h, no game rebuild) and makes
+# the quiet copies everywhere when it cannot. `--perception` builds it; default OFF until a lane run proves it.
 # Guards (review-boss-sync must-fix): the stealth guards (AffiliationParam NpcSecurityGuard: the castle's child
 # soldiers, the Gerudo) target Player too, and their AI (NpcSecurityGuard.SetIsObserve) takes any perceived
 # emitter of affiliation Player as Link: a puppet in view would catch this game's Link. Nothing in the data keeps

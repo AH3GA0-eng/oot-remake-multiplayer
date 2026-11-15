@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -16,6 +17,7 @@
 #include "coop_counters.h"
 #include "coop_hold.h"
 #include "coop_hookshot.h"
+#include "coop_null_page.h"
 #include "hos_coop_sound.h"
 #include "hos_coop_world.h"
 #include "hos_coop_actors.h"
@@ -192,15 +194,23 @@ TEST_CASE("hookshot: Link puppets follow the puppet guard in longshot.exe") {
     CHECK_FALSE(CoopHookshot::AllowLinkPuppets("0", true));
 }
 
-TEST_CASE("hookshot: perceived puppets only where their null reads give 0 (issue 150)") {
-    // Linux: the guest window is readable whole.
-    CHECK(CoopHookshot::PerceivedPuppetsSafe(true, false, ""));
-    CHECK(CoopHookshot::PerceivedPuppetsSafe(true, false, "0"));
-    // Windows: the exe must export patch 0002's hos_coop_null_page, and HOS_COOP_NULL_READS=0 must not turn it off.
-    CHECK(CoopHookshot::PerceivedPuppetsSafe(false, true, ""));
-    CHECK(CoopHookshot::PerceivedPuppetsSafe(false, true, "1"));
-    CHECK_FALSE(CoopHookshot::PerceivedPuppetsSafe(false, true, "0"));
-    CHECK_FALSE(CoopHookshot::PerceivedPuppetsSafe(false, false, ""));
+TEST_CASE("hookshot: the module's null page covers the guest's first MB only (issue 150)") {
+    using CoopNullPage::GuestOffset;
+    CHECK(GuestOffset(0x1000000007d8ULL) == std::optional<std::uint64_t>(0x7d8));  // the perception crash's read
+    CHECK(GuestOffset(0x100000000000ULL) == std::optional<std::uint64_t>(0));
+    CHECK(GuestOffset(0x1000000fffffULL) == std::optional<std::uint64_t>(0xfffff));
+    CHECK_FALSE(GuestOffset(0x100000100000ULL));  // past the MB: a real fault
+    CHECK_FALSE(GuestOffset(0x0fffffffffffULL));
+    CHECK_FALSE(GuestOffset(0x7d8));
+}
+
+TEST_CASE("hookshot: perceived puppets only where null reads can give 0 (issue 150)") {
+    using CoopNullPage::Armable;
+    using CoopNullPage::Mb;
+    CHECK(Armable("", Mb::Reserved));   // the module commits it
+    CHECK(Armable("1", Mb::Committed));  // the exe's guard (or Linux) did already
+    CHECK_FALSE(Armable("0", Mb::Reserved));  // HOS_COOP_NULL_READS=0
+    CHECK_FALSE(Armable("", Mb::Other));
 }
 
 TEST_CASE("hookshot: the null page is armed before the first puppet create reaches the game (issue 150)") {
@@ -210,12 +220,7 @@ TEST_CASE("hookshot: the null page is armed before the first puppet create reach
     REQUIRE(arm != std::string::npos);
     REQUIRE(call != std::string::npos);
     CHECK(arm < call);  // inside Refused(), which runs before the call
-    CHECK(src.find("\"hos_coop_null_page\"") != std::string::npos);
     CHECK(src.find("CoopPuppetConfig::Configure(PerceivedSafe())") != std::string::npos);
-    // Patch 0002 exports it (dllexport on Windows) for the module to find.
-    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0002-coop-puppets.patch");
-    CHECK(patch.find("+#define HOS_COOP_NULL_EXPORT __declspec(dllexport)") != std::string::npos);
-    CHECK(patch.find("+HOS_COOP_NULL_EXPORT void hos_coop_null_page(void) {") != std::string::npos);
 }
 
 TEST_CASE("hookshot: the module refuses puppet creates before they reach the game") {

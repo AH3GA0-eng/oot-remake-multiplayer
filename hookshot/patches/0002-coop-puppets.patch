@@ -15,14 +15,12 @@ first MB is committed read-only with a guard bit, so a null-pointer read
 gives 0 from then on and is counted in the log (the first 32 with where
 from, then a count a minute); a write still faults. HOS_COOP_NULL_READS=0
 leaves it as shipped. Linux maps the whole window already: only a log
-line there. Called from nx2/coop_hooks.py install(). hos_coop_null_page is
-exported: hookshot_coop.dll arms it before its first puppet, as a puppet
-with a Physics component (perception, issue 150) never meets the guard.
+line there. Called from nx2/coop_hooks.py install().
 ---
- host/coop_null_page.c    | 92 ++++++++++++++++++++++++++++++++++++++++++
+ host/coop_null_page.c    | 84 ++++++++++++++++++++++++++++++++++++++++
  nx2/coop_hooks.py        |  2 +
  nx2/coop_puppet_guard.py | 61 +++++++++++++++++++++++++++++
- 3 files changed, 155 insertions(+)
+ 3 files changed, 147 insertions(+)
  create mode 100644 host/coop_null_page.c
  create mode 100644 nx2/coop_puppet_guard.py
 
@@ -31,7 +29,7 @@ new file mode 100644
 index 00000000..e64d21c5
 --- /dev/null
 +++ b/host/coop_null_page.c
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,84 @@
 +/* (oot-remake-multiplayer's patch 0002, nx2/coop_puppet_guard.py) Null-pointer reads give 0 once a co-op puppet exists.
 +
 +   On the emulator a guest read of an unmapped page gives 0, and the game's code for a co-op puppet (a stripped copy of
@@ -47,17 +45,9 @@ index 00000000..e64d21c5
 +   code as hookshot.exe+offset, guest address), and lets the read go on. Once a minute a thread logs the minute's count and
 +   puts the guard bits back, so null reads the game makes stay visible in the log.
 +   HOS_COOP_NULL_READS=0: left as shipped (the puppet's update then crashes).
-+   Linux: the whole guest window is mapped readable already (hos_main.c), so nothing changes there.
-+   Exported: hookshot_coop.dll calls it (GetProcAddress) before it asks for its first puppet, because a puppet with a
-+   Physics component (the puppet pack's perception, issue 150) never reaches the guard's slot-10 call. */
++   Linux: the whole guest window is mapped readable already (hos_main.c), so nothing changes there. */
 +#include "hos.h"
 +#include <stdlib.h>
-+
-+#ifdef _WIN32
-+#define HOS_COOP_NULL_EXPORT __declspec(dllexport)
-+#else
-+#define HOS_COOP_NULL_EXPORT __attribute__((visibility("default")))
-+#endif
 +
 +#ifdef _WIN32
 +#define WIN32_LEAN_AND_MEAN
@@ -93,7 +83,7 @@ index 00000000..e64d21c5
 +    return 0;
 +}
 +
-+HOS_COOP_NULL_EXPORT void hos_coop_null_page(void) {
++void hos_coop_null_page(void) {
 +    static volatile LONG done;
 +    if (done || InterlockedExchange(&done, 1)) return;
 +    const char *v = getenv("HOS_COOP_NULL_READS");
@@ -117,7 +107,7 @@ index 00000000..e64d21c5
 +            "counted in this log; HOS_COOP_NULL_READS=0: off)");
 +}
 +#else
-+HOS_COOP_NULL_EXPORT void hos_coop_null_page(void) {
++void hos_coop_null_page(void) {
 +    static int done;
 +    if (done) return;
 +    done = 1;

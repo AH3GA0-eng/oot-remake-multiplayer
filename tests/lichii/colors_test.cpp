@@ -283,7 +283,7 @@ TEST_CASE("puppets: quiet everywhere when the runtime cannot make a perceived pu
         REQUIRE(in.targets.size() == 1);
         return in.targets[0].actor;
     };
-    CHECK(plan("Kokiri") == "CoopPuppet_ChildQuiet_Red");  // no Physics: patch 0002's guard arms the null page
+    CHECK(plan("Kokiri") == "CoopPuppet_ChildQuiet_Red");  // no Physics: patch 0002's guard arms the null page too
     CHECK(plan("HyruleCastle") == "CoopPuppet_ChildQuiet_Red");
     p.SetTunics(false);
     CHECK(plan("Kokiri") == "CoopPuppet_ChildQuiet");

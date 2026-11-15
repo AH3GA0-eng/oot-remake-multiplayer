@@ -717,9 +717,9 @@ struct PlannerSettings {
     // game never takes another player's puppet for our Link (issue 150).
     std::vector<std::string> quiet_scenes;
     // Every scene, not only quiet_scenes: the runtime cannot make the reads of
-    // a perceived puppet's missing Player component safe (Hookshot's exe
-    // without patch 0002's exported hos_coop_null_page, coop_hookshot.h
-    // PerceivedPuppetsSafe), so no puppet carries the perception's Physics.
+    // a perceived puppet's missing Player component give 0 (Hookshot's null
+    // page cannot be armed, hookshot/src/coop_null_page.h), so no puppet
+    // carries the perception's Physics.
     bool quiet_everywhere = false;
 };
 

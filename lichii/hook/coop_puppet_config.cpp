@@ -201,9 +201,8 @@ void Configure(bool perceived_safe) {
         }
         if (!perceived_safe && PackPerceived()) {
             settings.quiet_everywhere = true;
-            lines.push_back("coop: this game cannot make a perceived puppet safe (no hos_coop_null_page: build the "
-                            "game again for patch 0002, or HOS_COOP_NULL_READS=0): quiet puppets everywhere, "
-                            "enemies see only their own Link");
+            lines.push_back("coop: null-pointer reads cannot give 0 here (HOS_COOP_NULL_READS=0, or the guest's first "
+                            "MB is not free): quiet puppets everywhere, enemies see only their own Link");
         }
     }
     for (const auto& line : lines) {
