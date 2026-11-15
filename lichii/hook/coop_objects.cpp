@@ -1672,7 +1672,7 @@ public:
                         [&r](u64 address) { return r.Get<u64>(address); }, fix.address, main_);
                     // Stale: both its start and target still hold the old
                     // rest (read only). Mid-push here (one of them): tried
-                    // again on the next walks, as when it is not found.
+                    // again on the next walks (not when it is not found: report 37).
                     const auto stale = node ? CoopWorld::NodeRestWords(
                                                   [&r](u64 address) { return r.Get<u64>(address); },
                                                   *node, fix.from, fix.to)
@@ -1688,11 +1688,14 @@ public:
                                            "where it rests: left alone",
                                      fix.hash, fix.name, *node);
                         }
-                    } else if (++fix.tries < kBlockNodeTries) {
+                    } else if (node && ++fix.tries < kBlockNodeTries) {
+                        // Report 37 (an fps drop in the other game at each push): only a busy node is
+                        // looked for again. A search that found none (up to kNodeLooks objects, every
+                        // 8-byte word of each into a set) finds none on the next walk either; it ran
+                        // 21 times for every rest of the block (every player log: "not found").
                         if (first) {
-                            LOG_INFO(Core, "coop: world: {:016x} {} push node {}: tried again for {} walks",
-                                     fix.hash, fix.name, node ? "busy (mid-push here)" : "not found",
-                                     kBlockNodeTries);
+                            LOG_INFO(Core, "coop: world: {:016x} {} push node busy (mid-push here): tried again for {} walks",
+                                     fix.hash, fix.name, kBlockNodeTries);
                         }
                         block_retry_.push_back(fix);
                     } else {
