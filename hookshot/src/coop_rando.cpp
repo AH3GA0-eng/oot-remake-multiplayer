@@ -429,6 +429,7 @@ std::string ReadTail(const fs::path& file, std::size_t max_bytes) {
     std::ifstream in(file, std::ios::binary | std::ios::ate);
     if (!in) return {};
     const std::streamoff size = in.tellg();
+    if (size < 0) return {};  // (tellg failed)
     const auto cap = static_cast<std::streamoff>(max_bytes);
     const std::streamoff from = size > cap ? size - cap : 0;
     in.seekg(from);
