@@ -689,6 +689,28 @@ def nup_scene_files(n):
     return out
 
 
+def nup_look_files(n, dicts):
+    """RomFS paths of the gear colours' sources in an open Nup: each gear texture (look_live.GEAR,
+    for coop_look/gear.bin: your own sword, shields, gauntlets, boots) and each coloured item's
+    actor pack and models (look_items.ITEMS, write_look_items: the puppets' copies). `dicts`: the
+    game's zstd dictionaries (to read the item packs' ModelInfo). The 0.11.0 kit's packs, made
+    from the player's .nup, had none of them: only the boots in gear.bin, and no item copies."""
+    out = []
+    for g in look_live.GEAR:
+        out += n.glob(f"Tex/{g}.bntx.zs")[:1]
+    for item in look_items.ITEMS:
+        packs = n.glob(f"Pack/Actor/{item}.pack.zs")[:1]
+        if not packs:
+            continue
+        out += packs
+        try:
+            _, project, _ = look_items.model_info(sarc.read(dicts.decompress(n.read(packs[0]))), item)
+        except (look_items.TunicError, ValueError, KeyError):
+            continue   # (write_look_items says so)
+        out += n.glob(f"Model/{project}.*.bfres.zs")
+    return out
+
+
 def read(path):
     with open(path, "rb") as f:
         return f.read()
@@ -1333,6 +1355,9 @@ def main(argv=None):
         try:
             with nup.Nup(a.romfs) as n:
                 for rel in list(dumpcheck.nup_files(n).values()) + nup_scene_files(n):
+                    nup.write_under(tmp, rel, n.read(rel))
+                # The gear colours' sources (with the dictionaries just taken out, to read the items' packs).
+                for rel in nup_look_files(n, zs.Dicts.from_romfs(tmp)):
                     nup.write_under(tmp, rel, n.read(rel))
             print(f"read the game files from {a.romfs}")
             with nup.Nup(a.romfs) as n:

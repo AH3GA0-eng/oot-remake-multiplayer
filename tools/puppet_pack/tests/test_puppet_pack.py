@@ -1107,10 +1107,9 @@ class FullBuildTest(unittest.TestCase):
         with open(p, "wb") as f:
             f.write(data)
 
-    def test_look_items(self):
-        # Gear colours on the puppets (look_items): per slot, a copy of each coloured item with
-        # its own model project and textures, the game's own left as they were.
-        from puppet_pack import look_items, look_live, zs
+    def add_hylian_shield(self):
+        """The Hylian Shield in the test romfs: its pack, model, texture and ActorInfo rows."""
+        from puppet_pack import zs
         plain = zstandard.ZstdCompressor()
         item = "Weapon_Shield_Hylian"
         info = f"Component/ModelInfo/{item}.engine__component__ModelInfo.bgyml"
@@ -1130,6 +1129,13 @@ class FullBuildTest(unittest.TestCase):
         self.write("RSDB/ActorInfo.Product.999.rstbl.byml.zs", plain.compress(byml.dumps(ai)))
         gai = [{"__RowId": r["__RowId"]} for r in ai]
         self.write("RSDB/GameActorInfo.Product.999.rstbl.byml.zs", plain.compress(byml.dumps(gai)))
+        return item, model, tex
+
+    def test_look_items(self):
+        # Gear colours on the puppets (look_items): per slot, a copy of each coloured item with
+        # its own model project and textures, the game's own left as they were.
+        from puppet_pack import look_items, look_live, zs
+        item, model, tex = self.add_hylian_shield()
         mod = os.path.join(self.dir, "mod")
         said = []
         m = build.build(self.romfs, mod, log=said.append, tunics=("red",), look_slots=2)
@@ -1178,6 +1184,38 @@ class FullBuildTest(unittest.TestCase):
         # None asked for: none made.
         m = build.build(self.romfs, os.path.join(self.dir, "mod0"), log=lambda *_: None, tunics=("red",), look_slots=0)
         self.assertIsNone(m["look_items"])
+
+    def test_build_from_nup_has_the_gear(self):
+        # The 0.11.0 kit made its pack from the player's .nup, which took out only dumpcheck's files:
+        # coop_look/gear.bin had the boots alone (your own sword, shields and gauntlets kept the
+        # game's colours) and no item copies were made (the puppets' gear neither).
+        from puppet_pack import look_live
+        item, model, _ = self.add_hylian_shield()
+        # Every model of the item's project (a shield's burnt one too), not one hit per pattern.
+        self.write(f"Model/{item}.{item}_fracture.bfres.zs", zstandard.ZstdCompressor().compress(model))
+        tid = int(dumpcheck.TITLE_ID, 16)
+        game = os.path.join(self.dir, "game.nup")
+        nup.write_nup(game, [(tid | 0x800, 0x20000, nup.KIND_UPDATE,
+                              {k: (v, nup.CODEC_RAW) for k, v in self.romfs_files().items()})])
+        with nup.Nup(game) as n:
+            from puppet_pack import zs
+            got = build.nup_look_files(n, zs.Dicts.from_romfs(self.romfs))
+        self.assertEqual(sorted(got), ["Model/Weapon_Shield_Hylian.Weapon_Shield_Hylian.bfres.zs",
+                                       "Model/Weapon_Shield_Hylian.Weapon_Shield_Hylian_fracture.bfres.zs",
+                                       "Pack/Actor/Weapon_Shield_Hylian.pack.zs",
+                                       "Tex/Mt_Weapon_Shield_Hylian_Alb.bntx.zs"])
+        a, b = os.path.join(self.dir, "gear_dir"), os.path.join(self.dir, "gear_nup")
+        quiet = io.StringIO()
+        with contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
+            self.assertEqual(build.main(["--romfs", self.romfs, "--mod-dir", a, "--any-version"]), 0)
+            self.assertEqual(build.main(["--romfs", game, "--mod-dir", b, "--any-version"]), 0)
+        gear = os.path.join(look_live.DIR, look_live.GEAR_FILE)
+        names = [n for n, _ in look_live.unpack(build.read(os.path.join(b, gear)))]
+        self.assertIn("Mt_Weapon_Shield_Hylian_Alb", names)
+        self.assertEqual(build.read(os.path.join(a, gear)), build.read(os.path.join(b, gear)))
+        ma, mb = (json.loads(build.read(os.path.join(d, "coop_puppet.json"))) for d in (a, b))
+        self.assertEqual(mb["look_items"]["actors"], [item])
+        self.assertEqual(ma["look_items"], mb["look_items"])
 
     def test_look_item_names(self):
         from puppet_pack import look_items, look_live

@@ -16,6 +16,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <utility>
 
 #include "common/fs/path_util.h"
 #include "common/logging.h"
@@ -50,6 +51,11 @@ namespace {
 namespace fs = std::filesystem;
 
 constexpr auto kRound = std::chrono::seconds(1);
+// The wardrobes' step: the game makes Link's textures again (scene changes,
+// cutscenes, its streaming) and the override stays with the old one; until a
+// step finds the new one the game's colours show (0.11.0: up to a round, seen
+// as flicker). A step with nothing new made only asks Longshot's generation.
+constexpr auto kStep = std::chrono::milliseconds(20);
 
 // The game's textures and Longshot's overrides of them: patch 0020's exports
 // of the game's executable (hos_coop_texture.h). Nothing of the game is
@@ -391,18 +397,23 @@ void Wear(const std::string& name, const CoopLook::Look& look) {
 
 void Work() {
     const auto start = std::chrono::steady_clock::now();
+    auto round = start + kRound;   // the next round of the rest (who wears what)
     std::unique_lock lock(g_wake_mutex);
     while (!g_stop) {
-        g_wake.wait_for(lock, kRound, [] { return g_stop || g_kick; });
+        g_wake.wait_for(lock, kStep, [] { return g_stop || g_kick; });
         if (g_stop) {
             break;
         }
-        g_kick = false;
+        const bool kicked = std::exchange(g_kick, false);
         lock.unlock();
-        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
-        PaintPuppets(static_cast<std::uint64_t>(ms.count()));   // before their puppets wear the copies
-        FollowNumber();
-        FollowBoots();
+        const auto now = std::chrono::steady_clock::now();
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - start);
+        if (kicked || now >= round) {
+            round = now + kRound;
+            PaintPuppets(static_cast<std::uint64_t>(ms.count()));   // before their puppets wear the copies
+            FollowNumber();
+            FollowBoots();
+        }
         g_wardrobe->Step(static_cast<std::uint64_t>(ms.count()));
         g_gear->Step(static_cast<std::uint64_t>(ms.count()));
         g_puppets->Step(static_cast<std::uint64_t>(ms.count()));
