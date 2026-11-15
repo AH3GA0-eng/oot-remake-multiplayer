@@ -17,7 +17,7 @@ The kit has one file to start: **`Start OoT Co-op.bat`**. Everything else is don
 
 ## Step by step
 
-1. **Download** `oot-coop-<version>.zip` from the newest release on the [releases page](https://github.com/daurosk/oot-remake-multiplayer/releases).
+1. **Download** `oot-coop-<version>-windows.zip` from the newest release on the [releases page](https://github.com/daurosk/oot-remake-multiplayer/releases).
 2. **Unzip it.** Right-click the zip, choose **Extract All...**, and extract it to a short folder on a drive with 60 GB free, for example `C:\OoT-Coop`. Not inside the zip, not in OneDrive (your Desktop and Documents are often in OneDrive), not under Program Files.
 3. **Double-click `Start OoT Co-op.bat`** in that folder. A window opens and checks the kit first (see [If something goes wrong](#if-something-goes-wrong)).
 4. **The first time, give it your game.** It asks you to drag your game's `.nup` file into the window and press Enter (for a `romfs` folder it then asks for the `exefs` folder). It remembers the file; it never asks again. Then it builds the game: **10 to 45 minutes, once**. The window shows each stage; the PC stays usable. It also makes the puppet pack (the other players' Link and tunic colours) from your game, and puts a **Play OoT Co-op** shortcut on your desktop.
@@ -33,7 +33,7 @@ To check it works: in the game the other players show as Link with their name ta
 
 Nothing to do: on every start the kit asks GitHub whether a new co-op version is out, and if so asks you once (`auto_update = yes` in `coop-options.ini` updates without asking, `no` never does). It downloads the new kit, checks it, keeps your settings, your game file and the built game, and puts the new co-op into the game in seconds. It builds the game again only when the update moves to a new Longshot (it says so: about 15 minutes). Every player needs the same version.
 
-`Update.bat` in the kit folder updates by hand (for example when the start said it could not reach GitHub). It is also attached to each release: dropped into an older emulator kit, it turns that kit into a Longshot kit. The emulator, `Host.bat`, `Join.bat` and the other old files go into the kit's `backup-<version>\` folder; your emulator files (`emulator\user`: its saves, keys and settings) stay where they are, and the window says you can delete that folder when you no longer need it.
+`Update.bat` in the kit folder updates by hand (for example when the start said it could not reach GitHub). It is also attached to each release: dropped into an older emulator kit, it turns that kit into a Longshot kit. The emulator, `Host.bat`, `Join.bat` and the other old files go into the kit's `backup-<version>\` folder; your emulator files (`emulator\user`: its saves, keys and settings) stay where they are, and the window says you can delete that folder when you no longer need it. **To keep playing on the emulator**, keep your emulator kit (the last emulator release is the early test release of 2026-11-12 on the [releases page](https://github.com/daurosk/oot-remake-multiplayer/releases)) as it is (do not put a newer `Update.bat` in it) and unzip the Longshot kit into a new folder.
 
 ## Going back to an older version
 
@@ -112,7 +112,11 @@ Already set up? Copy by hand: close both games, keep a copy of the kit's `hooksh
 
 ## The randomizer
 
-The kit brings the randomizer, OOTRR: the first build (and an update that moves it) downloads it into `hookshot\game\tools\ootrr\`, and it builds seeds from the game files the build already unpacked. Nothing to download or set. It is off until you, or the host in co-op, turn it on in the Mods tab: [mods.md](mods.md#the-randomizer).
+The kit brings the randomizer, OOTRR: the first build (and an update that moves it) downloads it into `hookshot\game\tools\ootrr\`, and it builds seeds from the game files the build already unpacked. Nothing to download or set. It is off until you, or the host in co-op, turn it on in the Mods tab (**OoT Remake Randomizer**, **Settings**): [mods.md](mods.md#the-randomizer). Do not install OOTRR by hand next to co-op: with a second OOTRR 0.5.0 the game crashes at start.
+
+## Customize Link
+
+The Multiplayer tab's **Customize Link** page colours your tunic and each part of your gear (shields, swords, boots, gauntlets). Your own Link wears it when the menu closes, the other players see it on your Link, and it is saved in `coop-options.ini` for the next start ([puppet.md, The Link customizer](puppet.md#the-link-customizer)). The kit makes the puppet pack these colours are drawn with from your own game by itself, and again after an update that changes it.
 
 ## In the game, saves, the emulator kit
 
