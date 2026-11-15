@@ -558,7 +558,7 @@ A player test: B saw A's slingshot pulled back with a seed in it, and it stayed 
 
 ### Not done (pose)
 
-1. The AS commands stop only while poses arrive; if poses stop for more than 1 s the next sample's animation is played again (the slot's last command keeps playing until then).
+1. The AS commands stop only while poses arrive and are written on the puppet (`Drives` and `Writes`). puppet-anim (player reports #36, #41: puppets stuck in one animation): before, a stream that stopped left its last pose written on the puppet every frame for ever, and poses of a skeleton the puppet does not have (refused) still kept its AS commands off, so it stood frozen. Now a body track older than `kFreshMs` (1 s) is not written, the director goes by `Drives && Writes`, and while the copy drives it forgets the slot's last played command, so the handover plays their current command at once.
 2. Adult Link's skeleton was not read in a running game (only `Player_Child`): see [Adult](#adult).
 
 ## Adult

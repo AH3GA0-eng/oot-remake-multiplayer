@@ -828,8 +828,13 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
                 return c;
             }
         }
-        if (pose_copy_ && CoopPose::Drives(slot.number, now_ms)) {
-            return std::nullopt;  // the pose copy moves it
+        if (pose_copy_ && CoopPose::Drives(slot.number, now_ms) &&
+            CoopPose::Writes(slot.number, now_ms)) {
+            // The pose copy moves it. puppet-anim (#36/#41): what the slot last played is
+            // forgotten, so when the copy stops (poses stop, or come for another skeleton)
+            // their current command is played again at once, not an old one left on.
+            slot.anim_name.clear();
+            return std::nullopt;
         }
         return Animate(slot, *t, guest);
     default:
