@@ -84,6 +84,9 @@ struct Seen {
     // Where a boss copy's own new hit landed (its game's hit record, +0x27c; IsBoss only, never one we replayed,
     // checked near the boss): sent with our DAMAGE so the owner's replay lands there (boss-intro).
     std::optional<coop::protocol::Vec3> hit_at{};
+    // Its Life component (0: none read); a copy boss's is held at life 1 by its own Life step
+    // (CoopBossNative::Table::HeldLifeStep) until its owner's dies.
+    std::uint64_t life_component = 0;
 };
 
 // An animation a copy should play (the owner's AS slot 0 command). The
@@ -175,6 +178,10 @@ struct LifeWrite {
     // Life step (Hookshot, patch 0007), so the game still runs its own death. For the test kill: a boss takes no
     // plain hit outside its weak point (Gohma on the ceiling). Never written directly: not taken, nothing happens.
     bool direct = false;
+    // Raise its life to `life` through the game's own Life step (a negative sum: the game's heal), never a write:
+    // a boss copy that becomes ours with less life than its old owner's had (held at 1 by HeldLifeStep, or
+    // lowered by its own hits) takes the old owner's life, so one hit never kills a near-full boss (Barinade).
+    bool heal = false;
 };
 
 // Shared: enemies, animals (a cucco is Animal_Cucco), townspeople (Npc_, but
@@ -354,6 +361,7 @@ struct LifeAsk {
     bool has_component = false;
     bool replay_seen = true;   // its damage step saw our last replayed hit (or we never replayed one)
     std::int32_t stale = 0;    // given to the step earlier and never taken (taken back now)
+    bool heal = false;         // LifeWrite::heal: a raise to `life` through the Life step
 };
 struct LifeRouted {
     LifeRoute route = LifeRoute::lost;
@@ -734,6 +742,9 @@ public:
     // The player who owns the object at `address` (0: the server, none: not
     // known). For coop_enemy_shots.
     std::optional<std::uint8_t> OwnerOf(std::uint64_t address) const;
+    // The owner of the copy at `address` said it died: its life 0 in the owner's samples, or its
+    // ObjectRemove dead (one boss death for everyone: the copy's Life step lets it die then).
+    bool OwnerSaysDead(std::uint64_t address) const;
     std::uint8_t OwnerOf(const coop::protocol::ObjectId& id) const;
     std::size_t HurtsTaken() const { return hurt_taken_; }
     std::size_t HurtsMissed() const { return hurt_missed_; }
@@ -850,6 +861,7 @@ private:
         // its owner said it died (OBJECT_REMOVE dead; 0 = not said).
         int resent = 0;
         std::uint64_t dead_at = 0;
+        bool owner_life_zero = false;  // its owner's samples said life 0 (OwnerSaysDead)
         bool dead_now = false;  // a kill from before we came: deleted at once
         // enemy-sync-3 (issue 133): our enemy, killed by another game's hit
         // that our game did not take, already said dead (OBJECT_REMOVE).

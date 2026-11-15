@@ -5278,3 +5278,17 @@ TEST_CASE("a boss never goes to a game whose boss has not begun its fight (unrea
   h.receive(2, Damage{0, placed(7), 0, 0, 0, {}, {}}, kChannelOwnership);
   CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
 }
+
+TEST_CASE("boss heart: the host loading a save forgets the claims (the boss fights again, player report #52)") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  h.receive(2, BossHeart{0, 0, false, 16}, kChannelSession);
+  CHECK(h.session.stats().boss_hearts_given == 1);
+  h.receive(1, FlagReset{0, {flag(5, 0)}}, kChannelProgress);  // the host loaded a save from before the win
+  h.clear();
+  h.receive(1, BossHeart{0, 0, false, 16}, kChannelSession);  // the refight's pickup
+  CHECK(only_message_to<BossHeart>(h, 2) == BossHeart{1, 0, true, 16});
+  CHECK(h.session.stats().boss_hearts_given == 2);
+}

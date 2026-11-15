@@ -904,6 +904,13 @@ void Session::on_host_reset() {
   // Owners of session-wide kept state add their clear here (docs/flags.md, "Saves").
   world_.forget_kept();  // locked doors' kept breaks (docs/dungeon.md, "Locked doors")
   dead_.clear();         // kills-late: the save's enemies are alive again
+  // Bosses beaten after the save the host loaded are alive again, their heart containers back in the
+  // game: an old claim would answer the refight's pickup from the fight before (player report #52).
+  if (!boss_hearts_.empty()) {
+    log("the host loaded a save: " + std::to_string(boss_hearts_.size()) +
+        " boss heart container claim(s) forgotten (those bosses fight again)");
+  }
+  boss_hearts_.clear();
 }
 
 // A host's table, merged in part by part. A flag the server lacks is kept and

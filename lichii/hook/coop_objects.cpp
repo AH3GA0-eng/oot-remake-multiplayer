@@ -1475,7 +1475,7 @@ public:
                 if (owner && *owner != 0) {
                     list.push_back({s.address, s.bsa_component,
                                     *owner == self ? CoopBossNative::Role::owner : CoopBossNative::Role::copy, s.name,
-                                    *owner});
+                                    *owner, s.life_component, sync_.OwnerSaysDead(s.address)});
                 }
             }
             TheBossMain().store(main_);
@@ -2687,6 +2687,7 @@ private:
                         const auto table = r.Ptr(a + kActorComponents);
                         if (const auto component = table ? r.Ptr(*table + kComponentLife) : std::nullopt) {
                             life_components.emplace(*component, a);  // (whose Life step is whose: StepHits)
+                            s.life_component = *component;
                             if (CoopDifficulty::IsEnemy(s.name, false)) {  // difficulty: its hits are scaled
                                 CoopDifficulty::TheKinds().Mark(*component,
                                                                 CoopDifficulty::LifeKind(s.name, s.hash,
@@ -2818,6 +2819,8 @@ private:
         if (*id == TheMover().ReplayedId(*life)) {
             return std::nullopt;  // our replay of the owner's hit, not one of our game's
         }
+        // Our game's own hit: a copy boss runs its own reaction (the stun; boss-fix).
+        CoopBossNative::TheTable().NoteOwnHit(a);
         const auto at = r.Get<std::array<float, 3>>(*life + kHitPlace);
         if (!at) {
             return std::nullopt;
@@ -3084,6 +3087,7 @@ private:
         ask.hurt = w.hurt;
         ask.life = w.life;
         ask.old = old;
+        ask.heal = w.heal;
         std::optional<u64> life;
 #ifdef COOP_HOOKSHOT
         // Hookshot with patch 0007: the hit (or the life the owner says this
@@ -3105,7 +3109,7 @@ private:
                 ask.replay_seen = ReplaySeen(r, *life);
             }
         }
-        const bool steppable = ask.step_seen && life && old >= 0 && (w.hurt > 0 || w.life < old) &&
+        const bool steppable = ask.step_seen && life && old >= 0 && (w.hurt > 0 || w.life < old || (w.heal && w.life > old)) &&
                                !(w.hurt > 0 && replay_ && !w.direct && player != 0);
         if (steppable) {
             ask.stale = steps.Take(*life);
@@ -3176,6 +3180,12 @@ private:
             }
 #endif
             break;
+        }
+        if (w.heal) {
+            LOG_INFO(Core, "coop: objects: share raise {:#x} '{}': not taken by its game's Life step: its life stays {} "
+                           "(old owner's {})",
+                     w.address, NameOf(w.address), old, w.life);
+            return;  // never a write of ours
         }
         if (w.direct) {
             LOG_INFO(Core, "coop: objects: test kill {:#x}: the game's Life step did not take it (or there is none: "
