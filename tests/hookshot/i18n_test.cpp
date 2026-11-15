@@ -194,6 +194,25 @@ std::string Escaped(const std::string& s) {   // (as the key is written in C: \"
     return out;
 }
 
+
+// The names a pickup notice says are the module's own list (coop/host/src/notify.cpp's
+// kItems, kSongs, kDungeons) plus what its Spell() makes out of an id it does not
+// know ("Pocket Cucco"). The first three are a line of that file, so Sources() has
+// them; the ones Spell() builds are not a literal anywhere, so the check for "every
+// key is still a line of the module" leaves them out by name.
+std::string NotifyNames() {
+    namespace fs = std::filesystem;
+    const fs::path repo = fs::path(COOP_TEST_SOURCE_DIR) / "..";
+    std::ifstream in(repo / "coop" / "host" / "src" / "notify.cpp", std::ios::binary);
+    std::ostringstream text;
+    text << in.rdbuf();
+    return text.str();
+}
+
+bool Spelled(const std::string& key) {
+    // a name Spell() can make: the id's own words, no punctuation the notice adds
+    return key.find(' ') != std::string::npos || (key.size() > 2 && key[0] >= 'A' && key[0] <= 'Z');
+}
 }  // namespace
 
 
@@ -238,6 +257,31 @@ TEST_CASE("coop i18n: the chat's notices, built around names and numbers") {
     CHECK(CoopI18n::Tr(&hans, "something else entirely") == "something else entirely");
 }
 
+TEST_CASE("coop i18n: a pickup notice and the join page's lines") {
+    // coop/host/src/notify.cpp builds these around a name and an item; the module
+    // shows them in the chat (coop_draw.cpp ShownChat -> Tr).
+    const CoopI18n::Lang& hans = *ByCode("zh-Hans");
+    const CoopI18n::Lang& hant = *ByCode("zh-Hant");
+    CHECK(CoopI18n::Tr(&hans, "ROGX got the Pocket Cucco - you got one too!") ==
+          "ROGX 拿到了口袋咕咕鸡 —— 你也得到了一个！");
+    CHECK(CoopI18n::Tr(&hans, "ROGX got the Fairy Slingshot - you got one too!") ==
+          "ROGX 拿到了妖精弹弓 —— 你也得到了一个！");
+    CHECK(CoopI18n::Tr(&hans, "Saria found a Small Key (Deku Tree) - the group has 3") ==
+          "Saria 找到一把小钥匙（德库大树）—— 队伍现在有 3 把");
+    CHECK(CoopI18n::Tr(&hans, "ROGX learned Saria's Song") == "ROGX 学会了萨莉亚之歌");
+    CHECK(CoopI18n::Tr(&hans, "ROGX loaded a save - the group follows it (3 items changed)") ==
+          "ROGX 载入了存档 —— 队伍跟着切换（3 件道具 项变化）");
+    CHECK(CoopI18n::Tr(&hant, "ROGX learned Saria's Song") == "ROGX 學會了薩莉亞之歌");
+
+    // the join page, before the game starts
+    CHECK(CoopI18n::Tr(&hans, "Your friend's game turned this one away: wrong join password.") ==
+          "朋友的房间拒绝了这次加入：加入密码不对。");
+    CHECK(CoopI18n::Tr(&hans, "Press Leave, then join again.") == "按「离开」，然后再加入一次。");
+
+    // a notice no table knows stays as the game wrote it
+    CHECK(CoopI18n::Tr(&hans, "ROGX got something new entirely") == "ROGX got something new entirely");
+}
+
 TEST_CASE("coop i18n: every key is still a line of the module") {
     // A text changed in the code no longer finds its line, and that language
     // shows English there: the table is re-keyed with it. (Shapes, with {},
@@ -250,8 +294,13 @@ TEST_CASE("coop i18n: every key is still a line of the module") {
         if (Braces(en) > 0) {
             continue;
         }
-        const bool found = sources.find("\"" + Escaped(en)) != std::string::npos ||
-                           sources.find(Escaped(en) + "\"") != std::string::npos;
+        bool found = sources.find("\"" + Escaped(en)) != std::string::npos ||
+                     sources.find(Escaped(en) + "\"") != std::string::npos;
+        if (!found) {
+            // a pickup's name: notify.cpp's own list, or one Spell() builds from an id
+            const std::string names = NotifyNames();
+            found = names.find("\"" + Escaped(en) + "\"") != std::string::npos || Spelled(en);
+        }
         CHECK_MESSAGE(found, en);
     }
 }

@@ -660,6 +660,206 @@ constexpr Entry kzh_Hans[] = {
     {"Mods: player {} has {} mods unlike yours", "模组：玩家 {} 有 {} 个模组和你不一样"},
     {"Mods: player {} has {} mod unlike yours", "模组：玩家 {} 有 {} 个模组和你不一样"},
     {"Mods: player {} ({}) has {} mod unlike yours", "模组：玩家 {}（{}）有 {} 个模组和你不一样"},
+
+    // ---- The pickup notices' sentences and the names Spell() makes ----
+    {"{} got the {} - you got one too!", "{} 拿到了{} —— 你也得到了一个！"},
+    {"{} got the {} - you got them too!", "{} 拿到了{} —— 你也得到了！"},
+    {"{} got the {}", "{} 拿到了{}"},
+    {"{} found a Small Key ({}) - the group has {}", "{} 找到一把小钥匙（{}）—— 队伍现在有 {} 把"},
+    {"{} got the map ({})", "{} 拿到了地图（{}）"},
+    {"{} got the compass ({})", "{} 拿到了指南针（{}）"},
+    {"{} got the Boss Key ({})", "{} 拿到了 Boss 钥匙（{}）"},
+    {"{} got a Heart Container - your max health went up", "{} 得到一颗心之容器 —— 最大生命值提升了"},
+    {"{} got a Gold Skulltula token ({})", "{} 得到一枚金色骷髅蜘蛛徽章（{}）"},
+    {"{} learned {}", "{} 学会了{}"},
+    {"Synced with the group: {}", "已与队伍同步：{}"},
+    {"{} loaded a save - the group follows it ({} changed)", "{} 载入了存档 —— 队伍跟着切换（{} 项变化）"},
+    {"...and {} more from the group", "……还有 {} 条队伍的消息"},
+    {"items", "件道具"},
+    {"songs", "首歌曲"},
+    {"keys", "把钥匙"},
+    {"maps and compasses", "份地图和指南针"},
+    {"heart containers", "颗心之容器"},
+    {"tokens", "枚徽章"},
+    {"other things", "样其他东西"},
+    {"Someone", "某人"},
+    {"Pocket Cucco", "口袋咕咕鸡"},
+    {"Pocket Egg", "口袋蛋"},
+    {"Bomb Bag Small", "小炸弹袋"},
+    {"Bomb Bag Medium", "中炸弹袋"},
+    {"Bomb Bag Large", "大炸弹袋"},
+    {"Bombchus", "炸弹鼠"},
+    {"Piece of Heart", "心之碎片"},
+    {"Heart Container", "心之容器"},
+    {"Small Key", "小钥匙"},
+    {"Boss Key", "Boss 钥匙"},
+    {"Hookshot", "钩索"},
+    {"Longshot", "长钩索"},
+    {"Boomerang", "回旋镖"},
+    {"Lens of Truth", "真实之镜"},
+    {"Magic Bean", "魔法豆"},
+    {"Magic Bean Pack", "魔法豆袋"},
+    {"Mask Keaton", "基顿面具"},
+    {"Mask Skull", "骷髅面具"},
+    {"Mask Spooky", "恐怖面具"},
+    {"Mask Gerudo", "格鲁德面具"},
+    {"Mask Truth", "真实面具"},
+    {"Mask Zora", "佐拉面具"},
+    {"Mask Goron", "哥隆面具"},
+    {"Mask Bunny", "兔子头巾"},
+    {"Weird Egg", "奇怪的蛋"},
+    {"Chicken", "咕咕鸡"},
+    {"Zelda Letter", "塞尔达的信"},
+    {"Weird Bottle", "奇怪的瓶子"},
+    {"Empty Bottle", "空瓶"},
+    {"Red Potion", "红药水"},
+    {"Green Potion", "绿药水"},
+    {"Blue Potion", "蓝药水"},
+    {"Fairy", "妖精"},
+    {"Fish", "鱼"},
+    {"Milk", "牛奶"},
+    {"Rutos Letter", "露多公主的信"},
+    {"Poacher's Saw", "盗猎者的锯"},
+    {"Broken Goron's Sword", "折断的大哥隆之剑"},
+    {"Prescription", "处方"},
+    {"Eyeball Frog", "眼球蛙"},
+    {"Eyedrops", "眼药水"},
+    {"Claim Check", "取货单"},
+    {"Ocarina", "陶笛"},
+    {"Stick", "木棒"},
+    {"Nut", "坚果"},
+    {"Bean", "豆子"},
+    {"Hammer", "锤子"},
+    {"Slingshot", "弹弓"},
+    {"Bow", "弓"},
+    {"Arrow", "箭"},
+    {"Scale", "鳞"},
+    {"Tunic", "束衣"},
+    {"Boots", "靴子"},
+    {"Gauntlet", "护手"},
+    {"Shield", "盾"},
+    {"Sword", "剑"},
+    {"Stone", "宝石"},
+    {"Medal", "徽章"},
+    {"Seed", "种子"},
+    {"Fire", "火"},
+    {"Ice", "冰"},
+    {"Light", "光"},
+    {"Forest", "森"},
+    {"Water", "水"},
+    {"Shadow", "暗"},
+    {"Spirit", "魂"},
+
+    // ---- What a pickup notice names (coop/host/src/notify.cpp) and the join page ----
+    {"Fairy Slingshot", "妖精弹弓"},
+    {"Fairy Bow", "妖精弓"},
+    {"Fire Arrows", "火箭"},
+    {"Ice Arrows", "冰箭"},
+    {"Light Arrows", "光箭"},
+    {"Fairy Ocarina", "妖精陶笛"},
+    {"Ocarina of Time", "时之陶笛"},
+    {"Bombs", "炸弹"},
+    {"Deku Nuts", "德库坚果"},
+    {"Deku Seeds", "德库种子"},
+    {"Deku Sticks", "德库木棒"},
+    {"Megaton Hammer", "巨力锤"},
+    {"Nayru's Love", "娜露之爱"},
+    {"Din's Fire", "汀之炎"},
+    {"Farore's Wind", "法罗之风"},
+    {"Silver Scale", "银鳞"},
+    {"Golden Scale", "金鳞"},
+    {"Kokiri's Emerald", "科吉里的翠玉"},
+    {"Goron's Ruby", "哥隆的红玉"},
+    {"Zora's Sapphire", "佐拉的蓝玉"},
+    {"Forest Medallion", "森之徽章"},
+    {"Fire Medallion", "火之徽章"},
+    {"Water Medallion", "水之徽章"},
+    {"Shadow Medallion", "暗之徽章"},
+    {"Spirit Medallion", "魂之徽章"},
+    {"Light Medallion", "光之徽章"},
+    {"Gerudo Membership Card", "格鲁德会员卡"},
+    {"Kokiri Sword", "科吉里剑"},
+    {"Master Sword", "大师之剑"},
+    {"Giant's Knife", "巨人的小刀"},
+    {"Biggoron's Sword", "大哥隆之剑"},
+    {"Deku Shield", "德库盾"},
+    {"Hylian Shield", "海利亚盾"},
+    {"Mirror Shield", "镜盾"},
+    {"Hover Boots", "浮空靴"},
+    {"Iron Boots", "铁靴"},
+    {"Goron Tunic", "哥隆束衣"},
+    {"Zora Tunic", "佐拉束衣"},
+    {"Silver Gauntlets", "银护手"},
+    {"Golden Gauntlets", "金护手"},
+    {"Zelda's Lullaby", "塞尔达的摇篮曲"},
+    {"Epona's Song", "艾波娜之歌"},
+    {"Saria's Song", "萨莉亚之歌"},
+    {"Sun's Song", "太阳之歌"},
+    {"Song of Time", "时之歌"},
+    {"Song of Storms", "风暴之歌"},
+    {"Scarecrow's Song", "稻草人之歌"},
+    {"Minuet of Forest", "森之小步舞曲"},
+    {"Bolero of Fire", "火之波丽露"},
+    {"Serenade of Water", "水之小夜曲"},
+    {"Nocturne of Shadow", "暗之夜曲"},
+    {"Requiem of Spirit", "魂之安魂曲"},
+    {"Prelude of Light", "光之前奏曲"},
+    {"Deku Tree", "德库大树"},
+    {"Dodongo's Cavern", "多多哥洞窟"},
+    {"Jabu-Jabu's Belly", "加布加布大人腹中"},
+    {"Ganon's Castle", "加农城堡"},
+    {"got the {} - you got one too!", "拿到了{} —— 你也得到了一个！"},
+    {"got the {} - you got them too!", "拿到了{} —— 你也得到了！"},
+    {"got the {}", "拿到了{}"},
+    {"found a Small Key ({})", "找到一把小钥匙（{}）"},
+    {"got the map ({})", "拿到了地图（{}）"},
+    {"got the compass ({})", "拿到了指南针（{}）"},
+    {"got the Boss Key ({})", "拿到了 Boss 钥匙（{}）"},
+    {"got a Heart Container", "得到一颗心之容器"},
+    {"got a Gold Skulltula token ({})", "得到一枚金色骷髅蜘蛛徽章（{}）"},
+    {"learned {}", "学会了{}"},
+    {", the ", "、"}, 
+    {"Synced with the group: {}", "已与队伍同步：{}"},
+    {"{} loaded a save - the group follows it ({} changed)", "{} 载入了存档 —— 队伍跟着切换（{} 项变化）"},
+    {"...and {} more from the group", "……还有 {} 条队伍的消息"},
+    {"items", "道具"},
+    {"songs", "歌曲"},
+    {"keys", "钥匙"},
+    {"maps and compasses", "地图和指南针"},
+    {"heart containers", "心之容器"},
+    {"tokens", "徽章"},
+    {"other things", "其他东西"},
+    {"Someone", "某人"},
+    {"Joining your friend's game...", "正在加入朋友的房间…"},
+    {"Joining your friend...", "正在加入朋友的房间…"},
+    {"Connected! Choose your file and play.", "已连上！选一个存档开始玩。"},
+    {"Your friend could not be reached.", "联系不上你的朋友。"},
+    {"Check that they are hosting right now and that the code is their newest one.", "确认他正在开房，而且你用的是最新的邀请码。"},
+    {"Your friend's router blocks the way in.", "朋友的网络挡住了入口。"},
+    {"Send your friend this answer code; they paste it into their game:", "把这个应答码发给朋友，他粘贴到自己游戏里："},
+    {"Or ask them to turn on UPnP in their router's settings and host again.", "或者请他在路由器设置里打开 UPnP，然后重新开房。"},
+    {"Press Leave, then join again.", "按「离开」，然后再加入一次。"},
+    {"Press Leave.", "按「离开」。"},
+    {"Hosting did not start.", "创建房间没启动起来。"},
+    {"Check that this PC is online, then press Host again.", "确认这台电脑能上网，然后重新按「创建房间」。"},
+    {"wrong join password", "加入密码不对"},
+    {"wrong game build", "游戏版本不一致"},
+    {"server full", "房间满了"},
+    {"name taken", "名字被占了"},
+    {"bad name", "名字不合法"},
+    {"wrong protocol version", "协议版本不一致"},
+    {"the host took you out of the game", "房主把你踢出了游戏"},
+    {"the host banned you from this game", "房主在这个房间封禁了你"},
+    // ---- The pickup notices' summary words ("2 items") and the item names Spell() makes ----
+    {"{} items", "{} 件道具"},
+    {"{} songs", "{} 首歌曲"},
+    {"{} keys", "{} 把钥匙"},
+    {"{} maps and compasses", "{} 份地图和指南针"},
+    {"{} heart containers", "{} 颗心之容器"},
+    {"{} tokens", "{} 枚徽章"},
+    {"{} other things", "{} 样其他东西"},
+    {"Your friend's game turned this one away: {}", "朋友的房间拒绝了这次加入：{}。"},
+
 };
 
 // ---------------------------------------------------------------------------
@@ -1264,6 +1464,206 @@ constexpr Entry kzh_Hant[] = {
     {"Mods: player {} has {} mods unlike yours", "模組：玩家 {} 有 {} 個模組和你不一樣"},
     {"Mods: player {} has {} mod unlike yours", "模組：玩家 {} 有 {} 個模組和你不一樣"},
     {"Mods: player {} ({}) has {} mod unlike yours", "模組：玩家 {}（{}）有 {} 個模組和你不一樣"},
+
+    // ---- The pickup notices' sentences and the names Spell() makes ----
+    {"{} got the {} - you got one too!", "{} 拿到了{} —— 你也得到了一個！"},
+    {"{} got the {} - you got them too!", "{} 拿到了{} —— 你也得到了！"},
+    {"{} got the {}", "{} 拿到了{}"},
+    {"{} found a Small Key ({}) - the group has {}", "{} 找到一把小鑰匙（{}）—— 隊伍現在有 {} 把"},
+    {"{} got the map ({})", "{} 拿到了地圖（{}）"},
+    {"{} got the compass ({})", "{} 拿到了指南針（{}）"},
+    {"{} got the Boss Key ({})", "{} 拿到了 Boss 鑰匙（{}）"},
+    {"{} got a Heart Container - your max health went up", "{} 得到一顆心之容器 —— 最大生命值提升了"},
+    {"{} got a Gold Skulltula token ({})", "{} 得到一枚金色骷髏蜘蛛徽章（{}）"},
+    {"{} learned {}", "{} 學會了{}"},
+    {"Synced with the group: {}", "已與隊伍同步：{}"},
+    {"{} loaded a save - the group follows it ({} changed)", "{} 載入了存檔 —— 隊伍跟著切換（{} 項變化）"},
+    {"...and {} more from the group", "……還有 {} 條隊伍的消息"},
+    {"items", "件道具"},
+    {"songs", "首歌曲"},
+    {"keys", "把鑰匙"},
+    {"maps and compasses", "份地圖和指南針"},
+    {"heart containers", "顆心之容器"},
+    {"tokens", "枚徽章"},
+    {"other things", "樣其他東西"},
+    {"Someone", "某人"},
+    {"Pocket Cucco", "口袋咕咕雞"},
+    {"Pocket Egg", "口袋蛋"},
+    {"Bomb Bag Small", "小炸彈袋"},
+    {"Bomb Bag Medium", "中炸彈袋"},
+    {"Bomb Bag Large", "大炸彈袋"},
+    {"Bombchus", "炸彈鼠"},
+    {"Piece of Heart", "心之碎片"},
+    {"Heart Container", "心之容器"},
+    {"Small Key", "小鑰匙"},
+    {"Boss Key", "Boss 鑰匙"},
+    {"Hookshot", "鉤索"},
+    {"Longshot", "長鉤索"},
+    {"Boomerang", "迴旋鏢"},
+    {"Lens of Truth", "真實之鏡"},
+    {"Magic Bean", "魔法豆"},
+    {"Magic Bean Pack", "魔法豆袋"},
+    {"Mask Keaton", "基頓面具"},
+    {"Mask Skull", "骷髏面具"},
+    {"Mask Spooky", "恐怖面具"},
+    {"Mask Gerudo", "格魯德面具"},
+    {"Mask Truth", "真實面具"},
+    {"Mask Zora", "佐拉面具"},
+    {"Mask Goron", "哥隆面具"},
+    {"Mask Bunny", "兔子頭巾"},
+    {"Weird Egg", "奇怪的蛋"},
+    {"Chicken", "咕咕雞"},
+    {"Zelda Letter", "薩爾達的信"},
+    {"Weird Bottle", "奇怪的瓶子"},
+    {"Empty Bottle", "空瓶"},
+    {"Red Potion", "紅藥水"},
+    {"Green Potion", "綠藥水"},
+    {"Blue Potion", "藍藥水"},
+    {"Fairy", "妖精"},
+    {"Fish", "魚"},
+    {"Milk", "牛奶"},
+    {"Rutos Letter", "露多公主的信"},
+    {"Poacher's Saw", "盜獵者的鋸"},
+    {"Broken Goron's Sword", "折斷的大哥隆之劍"},
+    {"Prescription", "處方"},
+    {"Eyeball Frog", "眼球蛙"},
+    {"Eyedrops", "眼藥水"},
+    {"Claim Check", "取貨單"},
+    {"Ocarina", "陶笛"},
+    {"Stick", "木棒"},
+    {"Nut", "堅果"},
+    {"Bean", "豆子"},
+    {"Hammer", "鎚子"},
+    {"Slingshot", "彈弓"},
+    {"Bow", "弓"},
+    {"Arrow", "箭"},
+    {"Scale", "鱗"},
+    {"Tunic", "束衣"},
+    {"Boots", "靴子"},
+    {"Gauntlet", "護手"},
+    {"Shield", "盾"},
+    {"Sword", "劍"},
+    {"Stone", "寶石"},
+    {"Medal", "徽章"},
+    {"Seed", "種子"},
+    {"Fire", "火"},
+    {"Ice", "冰"},
+    {"Light", "光"},
+    {"Forest", "森"},
+    {"Water", "水"},
+    {"Shadow", "暗"},
+    {"Spirit", "魂"},
+
+    // ---- What a pickup notice names (coop/host/src/notify.cpp) and the join page ----
+    {"Fairy Slingshot", "妖精彈弓"},
+    {"Fairy Bow", "妖精弓"},
+    {"Fire Arrows", "火箭"},
+    {"Ice Arrows", "冰箭"},
+    {"Light Arrows", "光箭"},
+    {"Fairy Ocarina", "妖精陶笛"},
+    {"Ocarina of Time", "時之陶笛"},
+    {"Bombs", "炸彈"},
+    {"Deku Nuts", "德庫堅果"},
+    {"Deku Seeds", "德庫種子"},
+    {"Deku Sticks", "德庫木棒"},
+    {"Megaton Hammer", "巨力鎚"},
+    {"Nayru's Love", "娜露之愛"},
+    {"Din's Fire", "汀之炎"},
+    {"Farore's Wind", "法羅之風"},
+    {"Silver Scale", "銀鱗"},
+    {"Golden Scale", "金鱗"},
+    {"Kokiri's Emerald", "科吉里的翠玉"},
+    {"Goron's Ruby", "哥隆的紅玉"},
+    {"Zora's Sapphire", "佐拉的藍玉"},
+    {"Forest Medallion", "森之徽章"},
+    {"Fire Medallion", "火之徽章"},
+    {"Water Medallion", "水之徽章"},
+    {"Shadow Medallion", "暗之徽章"},
+    {"Spirit Medallion", "魂之徽章"},
+    {"Light Medallion", "光之徽章"},
+    {"Gerudo Membership Card", "格魯德會員卡"},
+    {"Kokiri Sword", "科吉里劍"},
+    {"Master Sword", "大師之劍"},
+    {"Giant's Knife", "巨人的小刀"},
+    {"Biggoron's Sword", "大哥隆之劍"},
+    {"Deku Shield", "德庫盾"},
+    {"Hylian Shield", "海利亞盾"},
+    {"Mirror Shield", "鏡盾"},
+    {"Hover Boots", "浮空靴"},
+    {"Iron Boots", "鐵靴"},
+    {"Goron Tunic", "哥隆束衣"},
+    {"Zora Tunic", "佐拉束衣"},
+    {"Silver Gauntlets", "銀護手"},
+    {"Golden Gauntlets", "金護手"},
+    {"Zelda's Lullaby", "薩爾達的搖籃曲"},
+    {"Epona's Song", "艾波娜之歌"},
+    {"Saria's Song", "薩莉亞之歌"},
+    {"Sun's Song", "太陽之歌"},
+    {"Song of Time", "時之歌"},
+    {"Song of Storms", "風暴之歌"},
+    {"Scarecrow's Song", "稻草人之歌"},
+    {"Minuet of Forest", "森之小步舞曲"},
+    {"Bolero of Fire", "火之波麗露"},
+    {"Serenade of Water", "水之小夜曲"},
+    {"Nocturne of Shadow", "暗之夜曲"},
+    {"Requiem of Spirit", "魂之安魂曲"},
+    {"Prelude of Light", "光之前奏曲"},
+    {"Deku Tree", "德庫大樹"},
+    {"Dodongo's Cavern", "多多哥洞窟"},
+    {"Jabu-Jabu's Belly", "加布加布大人腹中"},
+    {"Ganon's Castle", "加農城堡"},
+    {"got the {} - you got one too!", "拿到了{} —— 你也得到了一個！"},
+    {"got the {} - you got them too!", "拿到了{} —— 你也得到了！"},
+    {"got the {}", "拿到了{}"},
+    {"found a Small Key ({})", "找到一把小鑰匙（{}）"},
+    {"got the map ({})", "拿到了地圖（{}）"},
+    {"got the compass ({})", "拿到了指南針（{}）"},
+    {"got the Boss Key ({})", "拿到了 Boss 鑰匙（{}）"},
+    {"got a Heart Container", "得到一顆心之容器"},
+    {"got a Gold Skulltula token ({})", "得到一枚金色骷髏蜘蛛徽章（{}）"},
+    {"learned {}", "學會了{}"},
+    {", the ", "、"}, 
+    {"Synced with the group: {}", "已與隊伍同步：{}"},
+    {"{} loaded a save - the group follows it ({} changed)", "{} 載入了存檔 —— 隊伍跟著切換（{} 項變化）"},
+    {"...and {} more from the group", "……還有 {} 條隊伍的消息"},
+    {"items", "道具"},
+    {"songs", "歌曲"},
+    {"keys", "鑰匙"},
+    {"maps and compasses", "地圖和指南針"},
+    {"heart containers", "心之容器"},
+    {"tokens", "徽章"},
+    {"other things", "其他東西"},
+    {"Someone", "某人"},
+    {"Joining your friend's game...", "正在加入朋友的房間…"},
+    {"Joining your friend...", "正在加入朋友的房間…"},
+    {"Connected! Choose your file and play.", "已連上！選一個存檔開始玩。"},
+    {"Your friend could not be reached.", "聯繫不上你的朋友。"},
+    {"Check that they are hosting right now and that the code is their newest one.", "確認他正在開房，而且你用的是最新的邀請碼。"},
+    {"Your friend's router blocks the way in.", "朋友的網路擋住了入口。"},
+    {"Send your friend this answer code; they paste it into their game:", "把這個應答碼發給朋友，他貼上到自己遊戲裡："},
+    {"Or ask them to turn on UPnP in their router's settings and host again.", "或者請他在路由器設定裡打開 UPnP，然後重新開房。"},
+    {"Press Leave, then join again.", "按「離開」，然後再加入一次。"},
+    {"Press Leave.", "按「離開」。"},
+    {"Hosting did not start.", "建立房間沒啟動起來。"},
+    {"Check that this PC is online, then press Host again.", "確認這台電腦能上網，然後重新按「建立房間」。"},
+    {"wrong join password", "加入密碼不對"},
+    {"wrong game build", "遊戲版本不一致"},
+    {"server full", "房間滿了"},
+    {"name taken", "名字被佔了"},
+    {"bad name", "名字不合法"},
+    {"wrong protocol version", "協定版本不一致"},
+    {"the host took you out of the game", "房主把你踢出了遊戲"},
+    {"the host banned you from this game", "房主在這個房間封禁了你"},
+    // ---- The pickup notices' summary words ("2 items") and the item names Spell() makes ----
+    {"{} items", "{} 件道具"},
+    {"{} songs", "{} 首歌曲"},
+    {"{} keys", "{} 把鑰匙"},
+    {"{} maps and compasses", "{} 份地圖和指南針"},
+    {"{} heart containers", "{} 顆心之容器"},
+    {"{} tokens", "{} 枚徽章"},
+    {"{} other things", "{} 樣其他东西"},
+    {"Your friend's game turned this one away: {}", "朋友的房間拒絕了這次加入：{}。"},
+
 };
 
 std::string Trim(std::string s) {
@@ -1705,6 +2105,12 @@ constexpr Shape kShapes[] = {
      "teleport: {} is coming to you", false},
     {"teleport: stopped: you left ", "",
      "teleport: stopped: you left {}", false},
+    {"Synced with the group: ", "",
+     "Synced with the group: {}", false},
+    {"...and ", " more from the group",
+     "...and {} more from the group", false},
+    {"Synced with the group: ", "",
+     "Synced with the group: {}", false},
 };
 
 // A line the game builds from two or more pieces of data ("Difficulty: Automatic
@@ -1749,6 +2155,208 @@ bool SplitAll(std::string_view text, const SplitShape& shape, std::string_view* 
     return true;
 }
 
+// A list of counts the group's summary builds ("2 items, 1 keys, 3 heart
+// containers"): each "<n> <word>" is translated as its own piece, and the
+// pieces are joined with the table's ", ". The words are the table's too, so a
+// language that wants a counter word ("2 件道具") has one.
+bool CountsLine(const Lang* lang, std::string_view text, std::string& out) {
+    static constexpr const char* kWords[] = {"items", "songs", "keys", "maps and compasses",
+                                             "heart containers", "tokens", "other things"};
+    std::string result;
+    std::size_t at = 0;
+    bool any = false;
+    while (at < text.size()) {
+        std::size_t comma = text.find(", ", at);
+        if (comma == std::string_view::npos) {
+            comma = text.size();
+        }
+        const std::string_view piece = text.substr(at, comma - at);
+        const std::size_t space = piece.find(' ');
+        if (space == std::string_view::npos || space == 0) {
+            return false;
+        }
+        for (char c : piece.substr(0, space)) {
+            if (c < '0' || c > '9') {
+                return false;
+            }
+        }
+        const std::string_view word = piece.substr(space + 1);
+        bool known = false;
+        for (const char* w : kWords) {
+            if (word == w) {
+                known = true;
+                break;
+            }
+        }
+        if (!known) {
+            return false;
+        }
+        std::string key = "{} ";
+        key += std::string(word);
+        const Entry* entry = Find(*lang, key);
+        if (entry == nullptr) {
+            return false;
+        }
+        const std::string counted(piece.substr(0, space));
+        result += any ? Tr(lang, ", ") : std::string();
+        result += Fill(entry->text, counted);
+        any = true;
+        at = comma == text.size() ? text.size() : comma + 2;
+    }
+    if (!any) {
+        return false;
+    }
+    out = std::move(result);
+    return true;
+}
+
+
+std::string FillAll(const char* text, const std::string_view* parts, int count);
+
+// A pickup notice (coop/host/src/notify.cpp) and the join page's own lines: the
+// module shows what the co-op server said, and the server builds these around
+// names and numbers, so each is matched here with the fixed text around its
+// data. The data are the table's words when it has them (an item's name, a
+// song's, a refusal's reason), and stay as the game wrote them when it does not.
+// One match per line, by the text that follows the first data:
+//   "<name> got the <item> - you got one too!"   and "... them too!"
+//   "<name> got the map (<place>)"   (also the compass, the Boss Key, a token)
+//   "<name> found a Small Key (<place>) - the group has <n>"
+//   "<name> learned <song>"
+//   "<name> loaded a save - the group follows it (<n> changed)"
+//   "Your friend's game turned this one away: <reason>."
+//   "Synced with the group: <n> items, <n> keys"
+bool NoticeLine(const Lang* lang, std::string_view text, std::string& out) {
+    const auto find = [&](std::string_view key) { return Find(*lang, key); };
+
+    // "Your friend's game turned this one away: <reason>."
+    {
+        const std::string_view before = "Your friend's game turned this one away: ";
+        const std::string_view after = ".";
+        if (text.size() > before.size() + after.size() && text.substr(0, before.size()) == before &&
+            text.substr(text.size() - after.size()) == after) {
+            const std::string reason(text.substr(before.size(), text.size() - before.size() - after.size()));
+            if (const Entry* e = find("Your friend's game turned this one away: {}")) {
+                std::string said = reason;
+                if (const Entry* r = Find(*lang, reason)) {
+                    said = r->text;
+                }
+                out = Fill(e->text, said);
+                return true;
+            }
+        }
+    }
+
+    // "<name> got the ..." / "<name> found a Small Key ..." / "<name> learned ..." etc.
+    const std::string_view tail = [&]() -> std::string_view {
+        for (const char* t : {" - you got one too!", " - you got them too!"}) {
+            if (text.size() > std::string_view(t).size() && text.substr(text.size() - std::string_view(t).size()) == t) {
+                return t;
+            }
+        }
+        return {};
+    }();
+    const std::size_t cut = tail.empty() ? text.size() : text.size() - tail.size();
+    const std::string_view head = text.substr(0, cut);
+
+    struct Tail {
+        const char* after;
+        const char* key;
+        int words;   // 1: the single data after it is a word (a place)
+    };
+    static constexpr Tail kTails[] = {
+        {" got the ", "{} got the {}", 1},
+        {" learned ", "{} learned {}", 1},
+        {" got a Gold Skulltula token (", "{} got a Gold Skulltula token ({})", 0},
+        {" got the Boss Key (", "{} got the Boss Key ({})", 1},
+        {" got the compass (", "{} got the compass ({})", 1},
+        {" got the map (", "{} got the map ({})", 1},
+        {" found a Small Key (", "{} found a Small Key ({})", 1},
+        {" got a Heart Container", "{} got a Heart Container", 0},
+    };
+    // "<name> found a Small Key (<place>) - the group has <n>": three data
+    {
+        const std::string_view a = " found a Small Key (";
+        const std::string_view b = ") - the group has ";
+        const std::size_t i = head.find(a);
+        const std::size_t j = i == std::string_view::npos ? i : head.find(b, i + a.size());
+        if (i != std::string_view::npos && i > 0 && j != std::string_view::npos) {
+            const std::string who(head.substr(0, i));
+            const std::string place(head.substr(i + a.size(), j - i - a.size()));
+            const std::string count(head.substr(j + b.size()));
+            if (const Entry* e = find("{} found a Small Key ({}) - the group has {}")) {
+                std::string said = place;
+                if (const Entry* p2 = Find(*lang, place)) {
+                    said = p2->text;
+                }
+                const std::string_view parts_in[3] = {who, said, count};
+                out = FillAll(e->text, parts_in, 3);
+                return true;
+            }
+        }
+    }
+    // "<name> loaded a save - the group follows it (<n> changed)": two data
+    {
+        const std::string_view a = " loaded a save - the group follows it (";
+        const std::string_view b = " changed)";
+        const std::size_t i = head.find(a);
+        if (i != std::string_view::npos && i > 0 && head.size() >= b.size() &&
+            head.substr(head.size() - b.size()) == b) {
+            const std::string who(head.substr(0, i));
+            const std::string count(head.substr(i + a.size(), head.size() - i - a.size() - b.size()));
+            if (const Entry* e = find("{} loaded a save - the group follows it ({} changed)")) {
+                std::string said = count;
+                if (std::string counts; CountsLine(lang, count, counts)) {
+                    said = counts;   // "3 items" in the table's words
+                }
+                const std::string_view parts_in[2] = {who, said};
+                out = FillAll(e->text, parts_in, 2);
+                return true;
+            }
+        }
+    }
+    for (const Tail& t : kTails) {
+        const std::size_t at = head.find(t.after);
+        if (at == std::string_view::npos || at == 0) {
+            continue;
+        }
+        const std::string who(head.substr(0, at));
+        std::string rest(head.substr(at + std::string_view(t.after).size()));
+        const bool paren = !rest.empty() && rest.back() == ')';
+        if (paren) {
+            rest.pop_back();
+        }
+        std::string said = rest;
+        if (t.words != 0) {
+            if (const Entry* e = Find(*lang, rest)) {
+                said = e->text;
+            } else if (const std::string place = PlaceIn(lang, rest); place != rest) {
+                said = place;
+            }
+        }
+        if (const Entry* e = find(t.key); e != nullptr) {
+            // two data: the name, then the rest; the line's own tables carry the
+            // sentence's end ("- you got one too!"), so the key has both forms.
+            const std::string_view parts_in[2] = {who, said};
+            std::string filled = FillAll(e->text, parts_in, 2);
+            if (paren) {
+                filled += "）";   // the dungeon's name is inside the line's parens
+            }
+            if (!tail.empty()) {
+                const std::string key = std::string(t.key) + std::string(tail);
+                if (const Entry* with_tail = Find(*lang, key)) {
+                    filled = FillAll(with_tail->text, parts_in, 2);
+                } else {
+                    filled += Tr(lang, tail);
+                }
+            }
+            out = std::move(filled);
+            return true;
+        }
+    }
+    return false;
+}
+
 // `text` with its {}s filled, left to right, from `parts`.
 std::string FillAll(const char* text, const std::string_view* parts, int count) {
     std::string out;
@@ -1769,10 +2377,13 @@ std::string FillAll(const char* text, const std::string_view* parts, int count) 
 }
 
 constexpr SplitShape kSplitShapes[] = {
-    {{"Difficulty: Automatic (", " players): life ", "%, damage ", "%, enemies ", "%; bosses: life ", "%, damage ", "%", ""}, 0, 7, "Difficulty: Automatic ({} players): life {}%, damage {}%, enemies {}%; bosses: life {}%, damage {}%"},
-    {{"Difficulty: Automatic (", " player): life ", "%, damage ", "%, enemies ", "%; bosses: life ", "%, damage ", "%", ""}, 0, 7, "Difficulty: Automatic ({} player): life {}%, damage {}%, enemies {}%; bosses: life {}%, damage {}%"},
-    {{"Difficulty: ", ": life ", "%, damage ", "%, enemies ", "%", ""}, 1, 5, "Difficulty: {}: life {}%, damage {}%, enemies {}%"},
-    {{"teleport: going to ", " in ", "", ""}, 0, 3, "teleport: going to {} in {}"},
+    // the refusal line and the join page's reasons (coop_title_menu.cpp)
+    // the host's difficulty notice (coop_difficulty.cpp Describe): numbers, plus the preset or the player count
+    {{"Difficulty: Automatic (", " players): life ", "%, damage ", "%, enemies ", "%; bosses: life ", "%, damage ", "%"}, 0, 7, "Difficulty: Automatic ({} players): life {}%, damage {}%, enemies {}%; bosses: life {}%, damage {}%"},
+    {{"Difficulty: Automatic (", " player): life ", "%, damage ", "%, enemies ", "%; bosses: life ", "%, damage ", "%"}, 0, 7, "Difficulty: Automatic ({} player): life {}%, damage {}%, enemies {}%; bosses: life {}%, damage {}%"},
+    {{"Difficulty: ", ": life ", "%, damage ", "%, enemies ", "%"}, 1, 5, "Difficulty: {}: life {}%, damage {}%, enemies {}%"},
+    // /teleport's lines (coop_teleport.cpp)
+    {{"teleport: going to ", " in ", ""}, 0, 3, "teleport: going to {} in {}"},
     {{"teleport: ", " has gone on to ", "; you are where they were. Type /teleport again to follow", ""}, 0, 3, "teleport: {} has gone on to {}; you are where they were. Type /teleport again to follow"},
     {{"teleport: ", " is in ", ", a place for ", " Link; yours is ", "", ""}, 12, 5, "teleport: {} is in {}, a place for {} Link; yours is {}"},
     {{"teleport: ", " is ", " Link and you are ", ": no teleport to another age's Link", ""}, 6, 4, "teleport: {} is {} Link and you are {}: no teleport to another age's Link"},
@@ -1781,15 +2392,21 @@ constexpr SplitShape kSplitShapes[] = {
     {{"teleport: no answer from ", " (an older build, or their game is busy)", ""}, 0, 2, "teleport: no answer from {} (an older build, or their game is busy)"},
     {{"teleport: ", " is in a dungeon: you may need its items to get on from there", ""}, 0, 2, "teleport: {} is in a dungeon: you may need its items to get on from there"},
     {{"teleport: ", " is in ", ", a place /teleport cannot load (no start point known there)", ""}, 0, 3, "teleport: {} is in {}, a place /teleport cannot load (no start point known there)"},
+    {{"teleport: stopped: you left ", ""}, 0, 2, "teleport: stopped: you left {}"},
+    {{"teleport: ", " is coming to you", ""}, 0, 2, "teleport: {} is coming to you"},
+    {{"teleport: asking ", " where they are", ""}, 0, 2, "teleport: asking {} where they are"},
+    {{"teleport: next to ", ""}, 0, 2, "teleport: next to {}"},
+    // the lobby's and the mods' notes
     {{"", ": not connected", ""}, 0, 2, "{}: not connected"},
     {{"", ": only the host can do that", ""}, 0, 2, "{}: only the host can do that"},
     {{"", ": could not be sent", ""}, 0, 2, "{}: could not be sent"},
-    {{"refused: ", "", ""}, 0, 2, "refused: {}"},
+    {{"refused: ", ""}, 0, 2, "refused: {}"},
     {{"Mods: yours differ from the host's (", "): see the Mods tab", ""}, 0, 2, "Mods: yours differ from the host's ({}): see the Mods tab"},
     {{"Mods: player ", " (", ") has ", " mods unlike yours", ""}, 0, 4, "Mods: player {} ({}) has {} mods unlike yours"},
     {{"Mods: player ", " has ", " mods unlike yours", ""}, 0, 3, "Mods: player {} has {} mods unlike yours"},
     {{"Mods: player ", " has ", " mod unlike yours", ""}, 0, 3, "Mods: player {} has {} mod unlike yours"},
     {{"Mods: player ", " (", ") has ", " mod unlike yours", ""}, 0, 4, "Mods: player {} ({}) has {} mod unlike yours"},
+    // what a pickup notice says (coop/host/src/notify.cpp): the player's name, then the item's
 };
 
 // The middle of `text` when it fits `shape`; false when it does not.
@@ -1845,6 +2462,9 @@ std::string Tr(const Lang* lang, std::string_view en) {
         // language, the middle as it is)
         return Tr(lang, shape.before) + std::string(text) + Tr(lang, shape.after);
     }
+    if (std::string notice; NoticeLine(lang, en, notice)) {
+        return notice;
+    }
     for (const SplitShape& shape : kSplitShapes) {
         std::string_view parts[7];
         if (!SplitAll(en, shape, parts)) {
@@ -1856,6 +2476,8 @@ std::string Tr(const Lang* lang, std::string_view en) {
             filled[i] = std::string(parts[i]);
             if ((shape.words & (1 << i)) != 0) {
                 filled[i] = Tr(lang, parts[i]);
+            } else if (std::string counts; CountsLine(lang, parts[i], counts)) {
+                filled[i] = counts;   // "2 items, 1 keys": each count in its own words
             } else if (const std::string place = PlaceIn(lang, parts[i]); place != parts[i]) {
                 filled[i] = place;   // a scene the game names ("Hyrule Field")
             }
