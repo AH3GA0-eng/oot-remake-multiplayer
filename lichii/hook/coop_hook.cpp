@@ -2079,6 +2079,9 @@ private:
         for (const auto& quest : CoopQuest::Quests()) {
             if (auto w = CoopQuest::LiveWant(quest, value)) wants.push_back(std::move(*w));
         }
+        if (CoopQuests::LiveOn()) {  // issue 94: every shared quest, not only after a reload
+            for (auto& w : CoopQuests::LiveWants(value)) wants.push_back(std::move(w));
+        }
         challenges_.Want(std::move(wants));
     }
 

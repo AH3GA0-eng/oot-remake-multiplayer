@@ -175,6 +175,27 @@ bool On() {
     return !EnvOff("LICHII_COOP_QUESTS");
 }
 
+std::vector<CoopQuest::StepWant> LiveWants(const CoopQuest::ReadEnum& value) {
+    std::vector<CoopQuest::StepWant> wants;
+    for (const Quest& quest : Table()) {
+        const bool sent = std::any_of(CoopQuest::Quests().begin(), CoopQuest::Quests().end(),
+                                      [&](const CoopQuest::Quest& q) { return q.hash == quest.hash && q.live != 0; });
+        if (sent) continue;
+        const auto now = value(quest.hash);
+        const auto rank = now ? Rank(quest, *now) : std::nullopt;
+        if (!rank || *rank < std::max<std::int32_t>(quest.floor, 2)) continue;
+        if (quest.complete_only && *rank != Last(quest)) continue;
+        CoopQuest::StepWant w{coop::host::flag_hash(quest.name), *now, {}, quest.name};
+        for (const char* step : quest.steps) w.steps.push_back(coop::host::flag_hash(step));
+        wants.push_back(std::move(w));
+    }
+    return wants;
+}
+
+bool LiveOn() {
+    return !EnvOff("LICHII_COOP_QUEST_LIVE");
+}
+
 void AddShared(std::optional<coop::host::SharedFlags>& shared) {
     const bool on = On();
     const std::size_t added = Merge(shared, on);
