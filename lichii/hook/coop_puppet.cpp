@@ -437,7 +437,7 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                     slot.meter.Reset();
                     Vec3 parked = t->position;
                     parked[1] -= kHideDrop;
-                    Pose(slot, guest, parked, nullptr, now_ms);
+                    Park(slot, guest, parked, now_ms);
                 }
                 // Issue 152: the Ocarina in hand while it plays one (coop_ocarina.h),
                 // by their own command (free play is DemoOcarina: shown, not held,
@@ -1595,6 +1595,42 @@ std::optional<Call> Director::Animate(Slot& slot, const Target& target, Guest& g
 // their cutscene's samples move smoothly, so a jump then is a real teleport). The meter reads
 // the puppet's place back from the game (what it drew since our last write) and logs each step
 // past CoopSnap::kSnapM as a snap ("warp" past kWarpM).
+// The puppet's held pieces, each as the actor the game keeps for it.
+std::vector<Director::PieceActor> Director::Pieces(Slot& slot, Guest& guest) const {
+    std::vector<Director::PieceActor> out;
+    std::uint64_t parts = 0;
+    std::uint64_t eu = 0;
+    if (!ReadValue(guest, slot.actor + addr::kActorParts, parts) || parts == 0 ||
+        !ReadValue(guest, parts + addr::kPartsEquipmentUser, eu) || eu == 0) {
+        return out;
+    }
+    for (std::uint32_t s = 0; s < 8; ++s) {
+        const std::uint64_t link = eu + addr::kEquipSlots + addr::kEquipSlotStride * s;
+        std::uint32_t id = 0xFFFFFFFFu;
+        std::uint64_t holder = 0;
+        std::uint64_t piece = 0;
+        std::uint32_t state = 0;
+        if (!ReadValue(guest, link + addr::kEquipSlotId, id) || id == 0xFFFFFFFFu ||
+            !ReadValue(guest, link + addr::kEquipSlotHolder, holder) || holder == 0 ||
+            !ReadValue(guest, holder + addr::kHolderActor, piece) || piece == 0 ||
+            !ReadValue(guest, piece + addr::kActorState, state) || state != addr::kStatePresent) {
+            continue;
+        }
+        out.push_back({piece, state});
+    }
+    return out;
+}
+
+void Director::Park(Slot& slot, Guest& guest, const Vec3& position, std::uint64_t now_ms) {
+    // The pieces first: with the puppet already under the floor, one that the game
+    // still follows from the old place is what it trips over.
+    for (const Director::PieceActor& p : Pieces(slot, guest)) {
+        WriteValue(guest, p.actor + addr::kActorPosition, position);
+        WriteValue(guest, p.actor + addr::kActorPositionRequest, position);
+    }
+    Pose(slot, guest, position, nullptr, now_ms);
+}
+
 void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint64_t now_ms) {
     const std::string who = "P" + std::to_string(slot.number);
     const bool held = target.show == Show::hold;

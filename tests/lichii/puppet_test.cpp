@@ -1187,6 +1187,59 @@ TEST_CASE("puppet move: the game's setter once a frame when asked for") {
     CheckPosition(g2.guest, kActor + addr::kActorPosition, 4, 5, 6);
 }
 
+
+TEST_CASE("puppet: parking a hidden puppet takes its held pieces with it") {
+    // A held piece is an actor of its own, and the game keeps stepping it. Parked with
+    // the puppet left behind, the game follows a piece whose owner is 500 m below it;
+    // seen 2026-11-15 as the other player changed to the Hookshot while the puppet came
+    // and went: 0xc0000005 reading a null + 0x7d8 on a guest thread.
+    Game g;
+    Director d;
+    MakeLive(d, g);
+
+    // The puppet's equipment: one slot with a piece actor in it (after MakeLive: it
+    // writes the actor's own state as the game does).
+    const std::uint64_t kParts = 0x500000000;
+    const std::uint64_t kEu = 0x500001000;
+    const std::uint64_t kHolder = 0x500002000;
+    const std::uint64_t kPiece = 0x500003000;
+    g.guest.Map(kParts, 0x400);
+    g.guest.Map(kEu, 0x1600);
+    g.guest.Map(kHolder, 0x100);
+    g.guest.Map(kPiece, 0x600);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    g.guest.Set(kEu + addr::kEquipSlots + addr::kEquipSlotStride * 3 + addr::kEquipSlotId,
+                std::uint32_t{0x1234});
+    g.guest.Set(kEu + addr::kEquipSlots + addr::kEquipSlotStride * 3 + addr::kEquipSlotHolder, kHolder);
+    g.guest.Set(kHolder + addr::kHolderActor, kPiece);
+    g.guest.Set(kPiece + addr::kActorState, std::uint32_t{addr::kStatePresent});
+    const float at[3] = {4.0f, 5.0f, 6.0f};
+    for (std::uint64_t i = 0; i < 3; ++i) {
+        g.guest.Set(kPiece + addr::kActorPosition + 4 * i, at[i]);
+    }
+
+    // Parked: the piece moves down with it, not left where the puppet was.
+    Target hidden = At(1, 40, 5, 6);
+    hidden.show = CoopPuppet::Show::hide;
+    // (the piece's own record: what the test wrote must still be there)
+    CHECK(g.guest.Get<std::uint64_t>(kActor + addr::kActorParts) == kParts);
+    CHECK(g.guest.Get<std::uint64_t>(kParts + addr::kPartsEquipmentUser) == kEu);
+    CHECK(g.guest.Get<std::uint32_t>(kEu + addr::kEquipSlots + addr::kEquipSlotStride * 3 +
+                                    addr::kEquipSlotId) == 0x1234u);
+    d.SetInput(Wants({hidden}));
+    Frame(d, g, 100);
+    CheckPosition(g.guest, kActor + addr::kActorPosition, 40, 5 - Director::kHideDrop, 6);
+    CheckPosition(g.guest, kPiece + addr::kActorPosition, 40, 5 - Director::kHideDrop, 6);
+
+    // Shown again at their place: the puppet comes back up (the piece follows the
+    // game's own bone bind from there, so it is not parked again).
+    Target shown = At(1, 40, 5, 6);
+    d.SetInput(Wants({shown}));
+    Frame(d, g, 200);
+    CheckPosition(g.guest, kActor + addr::kActorPosition, 40, 5, 6);
+}
+
 TEST_CASE("puppet scene filter: hold freezes its frame and follows its place, hide parks it") {
     Game g;
     Director d;
