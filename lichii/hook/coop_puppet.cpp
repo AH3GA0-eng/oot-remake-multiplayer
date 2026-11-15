@@ -828,10 +828,15 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
                 return c;
             }
         }
-        if (pose_copy_ && CoopPose::Drives(slot.number, now_ms)) {
-            return std::nullopt;  // the pose copy moves it
+        if (pose_copy_ && CoopPose::Drives(slot.number, now_ms) &&
+            CoopPose::Writes(slot.number, now_ms)) {
+            // The pose copy moves it. puppet-anim (#36/#41): what the slot last played is
+            // forgotten, so when the copy stops (poses stop, or come for another skeleton)
+            // their current command is played again at once, not an old one left on.
+            slot.anim_name.clear();
+            return std::nullopt;
         }
-        return Animate(slot, *t, guest);
+        return Animate(slot, *t, guest, now_ms);
     default:
         return std::nullopt;
     }
@@ -1384,6 +1389,39 @@ std::optional<float> Director::Frame(Guest& guest, std::uint64_t controller) {
     return frame;
 }
 
+std::optional<std::string> Director::Playing(Guest& guest, std::uint64_t controller) {
+    std::int32_t count = 0;
+    std::uint64_t slots = 0, slot0 = 0, text = 0;
+    if (!ReadValue(guest, controller + addr::kSlotCount, count) || count <= 0 ||
+        !ReadValue(guest, controller + addr::kSlots, slots) || slots == 0 ||
+        !ReadValue(guest, slots, slot0) || slot0 == 0 ||
+        !ReadValue(guest, slot0 + addr::kSlotName, text) || text == 0) {
+        return std::nullopt;
+    }
+    // In 16-byte pieces that stay inside a 16-byte block (as PlayerReader reads it).
+    std::string name;
+    std::uint64_t at = text;
+    while (name.size() < block::kAnimCapacity) {
+        const std::uint64_t end = (at | 0xf) + 1;
+        std::array<char, 16> piece{};
+        const std::size_t n = static_cast<std::size_t>(end - at);
+        if (!guest.Read(at, piece.data(), n)) {
+            return std::nullopt;
+        }
+        for (std::size_t i = 0; i < n; ++i) {
+            if (piece[i] == 0) {
+                return name;
+            }
+            if (piece[i] < 0x20 || piece[i] > 0x7e) {
+                return std::nullopt;
+            }
+            name += piece[i];
+        }
+        at = end;
+    }
+    return std::nullopt;  // no end within the buffer's size
+}
+
 std::optional<Call> Director::SetFrame(Slot& slot, std::uint64_t controller, float frame) {
     Call c;
     c.function = input_.main_base + addr::kSetAsFrame;
@@ -1399,9 +1437,11 @@ std::optional<Call> Director::SetFrame(Slot& slot, std::uint64_t controller, flo
 // - show: play the received command when it changes, then set its frame;
 //   after that, set the frame only when a new sample finds it more than
 //   kFrameSlack off, so the game's own playback runs in between.
-// - hold: the frame it had when the hold began, every frame.
+// - hold: their command played as in show when the puppet has it (read back from its
+//   slot 0, puppet-anim); else the frame it had when the hold began, every frame.
 // - hide: nothing (it is out of sight).
-std::optional<Call> Director::Animate(Slot& slot, const Target& target, Guest& guest) {
+std::optional<Call> Director::Animate(Slot& slot, const Target& target, Guest& guest,
+                                      std::uint64_t now_ms) {
     if (target.show == Show::hide) {
         return std::nullopt;
     }
@@ -1410,7 +1450,33 @@ std::optional<Call> Director::Animate(Slot& slot, const Target& target, Guest& g
         return std::nullopt;
     }
     const std::string who = "P" + std::to_string(slot.number);
-    if (target.show == Show::hold) {
+    // puppet-anim (#36, the item-get pose): in their cutscene the puppet first tries their
+    // command (the event's, e.g. holding up a chest's item) through the same play call. Once
+    // played, the puppet's own slot 0 is read back the next frame: when it does not name that
+    // command (the puppet has no such animation), the command is not tried again in this
+    // hold and the puppet freezes at its frame as before (issue 194).
+    bool hold_plays = false;
+    if (target.show == Show::hold && target.anim && !target.anim->name.empty() &&
+        target.anim->name.size() < block::kAnimCapacity &&
+        target.anim->name != slot.cut_refused) {
+        const std::string& name = target.anim->name;
+        hold_plays = true;
+        if (slot.anim_name == name && !slot.frame_to_set && slot.sync_next == 0 &&
+            frames_ >= slot.cut_verify_frame) {
+            const std::optional<std::string> playing = Playing(guest, controller);
+            if (!playing || *playing != name) {
+                slot.cut_refused = name;
+                slot.anim_name.clear();  // played again once the hold ends
+                hold_plays = false;
+                Say(who + " has no '" + name + "' (their cutscene, its own is '" +
+                    playing.value_or("?") + "'): held at its frame");
+            }
+        }
+    }
+    if (target.show != Show::hold) {
+        slot.cut_refused.clear();
+    }
+    if (target.show == Show::hold && !hold_plays) {
         if (!slot.held_frame) {
             slot.held_frame = Frame(guest, controller);
             if (!slot.held_frame) {
@@ -1434,6 +1500,28 @@ std::optional<Call> Director::Animate(Slot& slot, const Target& target, Guest& g
         return std::nullopt;
     }
     const Anim& anim = *target.anim;
+    // Backstop (puppet-anim, #36/#41, Hot Onion's idea): what the puppet's slot 0 really
+    // plays is read now and then; another command than its player's, twice in a row, is
+    // played again through the game's own play call (0x2022a0, below) and logged.
+    if (target.show == Show::show && !slot.anim_name.empty() && anim.name == slot.anim_name &&
+        !slot.frame_to_set && slot.sync_next == 0 && now_ms >= slot.backstop_ms) {
+        slot.backstop_ms = now_ms + kBackstopMs;
+        const std::optional<std::string> playing = Playing(guest, controller);
+        if (playing && *playing != anim.name) {
+            if (++slot.backstop_misses >= kBackstopMisses) {
+                slot.backstop_misses = 0;
+                ++slot.backstops;
+                if (slot.backstops <= 3 || slot.backstops % 20 == 0) {
+                    Say(who + " backstop: its own animation is '" + *playing + "', not '" +
+                        anim.name + "': played again (" + std::to_string(slot.backstops) +
+                        " so far)");
+                }
+                slot.anim_name.clear();  // played again just below
+            }
+        } else {
+            slot.backstop_misses = 0;
+        }
+    }
     if (anim.name != slot.anim_name) {
         const std::uint64_t text =
             slot.block + block::kAnimText + block::kAnimCapacity * slot.anim_buffer;
@@ -1461,6 +1549,7 @@ std::optional<Call> Director::Animate(Slot& slot, const Target& target, Guest& g
         slot.play_name = anim.name;
         slot.play_frame = std::isfinite(anim.frame) ? anim.frame : 0.0f;
         slot.play_serial = target.anim_serial;
+        slot.cut_verify_frame = frames_ + 1;  // a hold reads it back from the next frame
         Call c;
         c.function = input_.main_base + addr::kPlayAs;
         c.x[0] = at;
