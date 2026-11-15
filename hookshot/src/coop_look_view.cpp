@@ -73,8 +73,24 @@ bool Orbit::Asked(std::uint64_t now_ms) const {
     return asked_ms_ && now_ms >= *asked_ms_ && now_ms - *asked_ms_ <= kHoldMs;
 }
 
+std::optional<double> FovFromClip(const std::array<float, 16>& m) {
+    const auto length = [&m](int row) {
+        return std::sqrt(static_cast<double>(m[4 * row]) * m[4 * row] + static_cast<double>(m[4 * row + 1]) * m[4 * row + 1] +
+                         static_cast<double>(m[4 * row + 2]) * m[4 * row + 2]);
+    };
+    const double up = length(1), depth = length(3);
+    if (!std::isfinite(up) || !std::isfinite(depth) || up <= 1e-9 || depth <= 1e-9) {
+        return std::nullopt;
+    }
+    const double fov = 2.0 * std::atan(depth / up);
+    if (!(fov >= kFovMin && fov <= kFovMax)) {
+        return std::nullopt;
+    }
+    return fov;
+}
+
 std::optional<Shot> Orbit::Camera(const Vec3& game_eye, const Vec3& game_target, const std::optional<Subject>& link,
-                                  std::uint64_t now_ms) {
+                                  std::uint64_t now_ms, double fov_y) {
     if (!Asked(now_ms) || !link) {
         start_ms_.reset();   // (the next turn starts in front of him again)
         return std::nullopt;
@@ -84,7 +100,7 @@ std::optional<Shot> Orbit::Camera(const Vec3& game_eye, const Vec3& game_target,
         start_yaw_ = FrontYaw(game_eye, game_target);
     }
     const double turn = static_cast<double>(now_ms - *start_ms_) / 1000.0 / kTurnSeconds;
-    return Aim(link->feet, link->height, start_yaw_ + kTau * (turn - std::floor(turn)), window_);
+    return Aim(link->feet, link->height, start_yaw_ + kTau * (turn - std::floor(turn)), window_, fov_y);
 }
 
 namespace {

@@ -32,9 +32,12 @@ struct Shot {
     Vec3 target{};
 };
 
-// The game's vertical field of view, in radians (not read from the game: its
-// camera's projection is not mapped; measured on a screenshot).
+// The game's vertical field of view, in radians, when its camera is not
+// handed over (FovFromClip has none): measured on a screenshot.
 inline constexpr double kFovY = 0.785398;   // 45 degrees
+// The field of view FovFromClip believes: outside it, kFovY.
+inline constexpr double kFovMin = 0.17;   // 10 degrees
+inline constexpr double kFovMax = 2.1;    // 120 degrees
 // One turn around Link, in seconds; the camera a little above his middle.
 inline constexpr double kTurnSeconds = 16.0;
 inline constexpr double kElevation = 0.14;   // radians (8 degrees)
@@ -43,6 +46,13 @@ inline constexpr double kFill = 0.85;
 // Asked for no later than this ago: still the picture (the menu draws at the
 // display's rate, the game frames its camera at its own).
 inline constexpr std::uint64_t kHoldMs = 250;
+
+// The game's vertical field of view from its world-to-clip matrix (row-major,
+// clip = m * p: the camera block Hookshot hands the name tags, CoopCamera).
+// Its y row is the view's up scaled by 1/tan(fov/2), its w row the view's
+// depth axis at scale 1, so the fov is 2 atan(|w| / |y|) (the xyz parts).
+// None for a matrix that is not such a perspective.
+std::optional<double> FovFromClip(const std::array<float, 16>& clip_from_world);
 
 // The shot that shows Link (his feet, his height) in the middle of the
 // window, from `yaw` (the direction from him to the eye, as atan2(x, z): the
@@ -71,8 +81,9 @@ public:
     void Ask(const Window& window, std::uint64_t now_ms);
     bool Asked(std::uint64_t now_ms) const;
     // The game's thread: the shot for now, or none (the game's camera).
+    // `fov_y`: the game's (FovFromClip), else kFovY.
     std::optional<Shot> Camera(const Vec3& game_eye, const Vec3& game_target, const std::optional<Subject>& link,
-                               std::uint64_t now_ms);
+                               std::uint64_t now_ms, double fov_y = kFovY);
 
 private:
     Window window_{};

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstdlib>
 #include <filesystem>
@@ -20,6 +21,7 @@
 
 #include "common/fs/path_util.h"
 #include "common/logging.h"
+#include "coop_camera.h"
 #include "coop_hook.h"
 #include "coop_look.h"
 #include "coop_look_view.h"
@@ -672,6 +674,21 @@ std::optional<Subject> OwnLink(Showing* showing = nullptr) {
     return link;
 }
 
+// The game's vertical field of view now: from the camera block Hookshot hands the name tags (CoopCamera), else
+// kFovY. Said in the log when first known and when it changes by more than two degrees. The game's thread.
+double GameFov() {
+    const auto frame = CoopCamera::Latest();
+    const auto fov = frame ? FovFromClip(frame->clip_from_world) : std::nullopt;
+    static double said = 0;   // (the game's thread only)
+    const double now = fov.value_or(kFovY);
+    if (std::abs(now - said) > 0.035) {
+        said = now;
+        LOG_INFO(Core, "coop: look: the Customize camera's field of view is {:.1f} degrees ({})", now * 57.29578,
+                 fov ? "the game's camera" : "no camera from the game: the measured one");
+    }
+    return now;
+}
+
 }  // namespace
 
 bool LinkShown() {
@@ -706,8 +723,9 @@ bool Camera(double eye[3], double target[3]) {
         }
     }
     const auto link = OwnLink();   // (outside the lock: the hook's own lock)
+    const double fov = GameFov();
     std::lock_guard lock(g_mutex);
-    const auto shot = g_orbit.Camera({eye[0], eye[1], eye[2]}, {target[0], target[1], target[2]}, link, now);
+    const auto shot = g_orbit.Camera({eye[0], eye[1], eye[2]}, {target[0], target[1], target[2]}, link, now, fov);
     if (!shot) {
         return false;
     }
