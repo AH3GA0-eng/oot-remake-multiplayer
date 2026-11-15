@@ -303,6 +303,23 @@ bool IsAnnounced(std::string_view name);
 // could not be read (the big Skulltula has none we can read; issue 133).
 bool IsDeathAnimation(std::string_view name);
 
+// Issue 35 (4): an animation that hides the model (the withered Deku Baba's
+// "Upside_Visible_Off_Spine4", the stem's "DownSide_Visible_Off_Withered_Spine6"):
+// "Visible_Off" at the start or after '_'. A plain enemy's copy never
+// plays its owner's one: its own game hides it in its own step (its death),
+// the same step that takes it off Navi's and the Z-target's list. Replayed
+// alone, it hid a copy that stayed alive and targetable.
+bool IsHideAnimation(std::string_view name);
+
+// Issue 35 (3): an enemy waiting on the ceiling to drop on a Link (the
+// Skulltula's "CeilingWait", any LOD variant).
+bool IsCeilingWait(std::string_view name);
+// Our Link at `link` stands under a ceiling enemy at `enemy`: within
+// kCeilingUnderM across (x, z) and below it by at most kCeilingDropM (y up).
+inline constexpr float kCeilingUnderM = 4.0f;
+inline constexpr float kCeilingDropM = 30.0f;
+bool UnderCeilingEnemy(const coop::protocol::Vec3& enemy, const coop::protocol::Vec3& link);
+
 // Issue 150: a boss animation that plays while it is stunned or knocked down
 // ("Stun_Lp", "Down_Start", "Fall_St" when Gohma drops from the ceiling): the
 // first word, LOD suffix off, is Stun, Down, Fall or Faint. A seed in Gohma's

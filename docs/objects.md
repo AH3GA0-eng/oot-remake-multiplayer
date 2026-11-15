@@ -461,6 +461,14 @@ The fix (module only, no game patch, no new message): `PlaysByFrame` (townspeopl
 
 Check in game: in the Deku Scrub Brothers' room and with a Skulltula, the copy's "plays ... at frame" lines show small frames (0 to 3) at each new animation, and the 5 s line's "frame sets" is above 0 but well below the samples.
 
+### No owner's hide on an enemy copy (issue 35, row 4)
+
+Player report: Navi targets an invisible Deku Baba. Logs (Magloyr and Bean Seller, 0.11.0): the owner's withered Deku Baba dies and plays `Upside_Visible_On_Spine6`, then `Upside_Visible_Off_Spine6` (its model hidden). The copy was played both. The replayed killing hit was not taken yet (`its damage step has not seen our replayed hit yet`), so the copy lived on, hidden, and still on the game's target list until OBJECT_REMOVE dead or the delete `kDeadGraceUs` later. Model and target go together only in the game's own step. So `Sync::Plays` no longer asks a plain enemy copy (`Enemy_`, not a boss) for its owner's `IsHideAnimation` (`Visible_Off` at the start or after `_`). The copy shows its own animation until its own game kills it (the Life step after OBJECT_REMOVE dead: its own death hides it and takes it off the list) or deletes it. Bosses keep every animation. Check in game: kill a withered Deku Baba (Kokiri Forest, near the Deku Tree) in the owner's game; in the other game the Baba stays visible until it dies, and Navi never shows a target on an empty spot.
+
+### A ceiling Skulltula goes to the player under it (issue 35, row 3)
+
+Player report: a Skulltula won't drop. Bean Seller's log: the Skulltulas sat in `CeilingWait`, owned by the other game. Only the owner's AI moves the enemy, and it drops only on its own Link. The wake rule (issue 132) needs the copy's own AI to show its wake within `kWakeM` (10 m), which a Skulltula hanging high, or whose AI never shows the wake, does not give. Fix (module only, no new message): a copy whose owner's latest animation is `IsCeilingWait` (`CeilingWait`, any LOD) with our Link under it (`UnderCeilingEnemy`: within `kCeilingUnderM` 4 m across, below it by at most `kCeilingDropM` 30 m) is flagged targeting through `ChaseStep` (1 s held). The server then hands it to us by the issue 101 rule (`chased_by`, out of a fight), and our game's own AI drops it on our Link. This is the smallest native path: the existing hand-over, no perception of the puppet (issue 150). Check in game: a Skulltula on the ceiling (Deku Tree), owned by A (A entered first); B walks under it, A stays away. Within about 2 s B's log shows `share owner ... is player <B>` for it and it drops on B in both games.
+
 ## Waiting for our event (issue 144)
 
 A player test in the Deku Tree: B beat a Deku Scrub and was in its talk. A beat the same scrub in A's game, and B was stuck until A had finished A's own talk. A's kill reached B's scrub during B's talk, and B's event waited on an actor that had changed.

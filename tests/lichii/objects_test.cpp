@@ -1578,6 +1578,47 @@ TEST_CASE("objects: a boss copy keeps the slot frame it had (issue 150)") {
     CHECK_FALSE(plays[0].alias);
 }
 
+TEST_CASE("objects: an enemy copy never plays its owner's hide animation (issue 35, Navi on a hidden Deku Baba)") {
+    CHECK(CoopObjects::IsHideAnimation("Upside_Visible_Off_Spine4"));
+    CHECK(CoopObjects::IsHideAnimation("DownSide_Visible_Off_Withered_Spine6"));
+    CHECK(CoopObjects::IsHideAnimation("Visible_Off"));
+    CHECK_FALSE(CoopObjects::IsHideAnimation("Upside_Visible_On_Spine6"));
+    CHECK_FALSE(CoopObjects::IsHideAnimation("Wait_Battle_Wither"));
+    CHECK_FALSE(CoopObjects::IsHideAnimation("InVisible_Off"));
+
+    const std::string name = "Enemy_Dekubaba_Withered";
+    Sync owner;
+    Tick(owner, 0, {Enemy(0x100, 0x11, 2, 0.0f, name)});
+    const proto::ObjectId id = *owner.IdOf(0x100);
+    Sync copy;
+    Tick(copy, 0, {Enemy(0x200, 0x11, 2, 0.0f, name)}, 2);
+    Own(copy, id, 1);
+
+    // Before the kill the owner's animations play on the copy as usual.
+    copy.Receive(EnemySample(id, 1000 * kMs, "Upside_Visible_On_Spine6", 1.0f));
+    auto plays = EnemyPlays(copy, 1100 * kMs, name);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].name == "Upside_Visible_On_Spine6");
+
+    // The owner's dying Baba hides its spine: the copy is asked nothing (its
+    // own death hides it and takes it off the target list).
+    copy.Receive(EnemySample(id, 1050 * kMs, "Upside_Visible_Off_Spine6", 1.0f));
+    CHECK(EnemyPlays(copy, 1150 * kMs, name).empty());
+
+    // A boss keeps every animation of its owner's (its phases may hide parts).
+    const std::string boss = "Enemy_DungeonBoss_Gohma";
+    Sync boss_owner;
+    Tick(boss_owner, 0, {Enemy(0x100, 0x11, 2, 0.0f, boss)});
+    const proto::ObjectId boss_id = *boss_owner.IdOf(0x100);
+    Sync boss_copy;
+    Tick(boss_copy, 0, {Enemy(0x200, 0x11, 2, 0.0f, boss)}, 2);
+    Own(boss_copy, boss_id, 1);
+    boss_copy.Receive(EnemySample(boss_id, 1000 * kMs, "Visible_Off", 1.0f));
+    plays = EnemyPlays(boss_copy, 1100 * kMs, boss);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].name == "Visible_Off");
+}
+
 namespace {
 proto::PlayerSample Where(std::uint8_t player, const std::string& scene, std::uint64_t now) {
     proto::PlayerSample p;
@@ -2684,6 +2725,46 @@ TEST_CASE("objects: a copy whose own AI acts near our Link is flagged targeting 
     Own(sync, id, 2);
     const auto flags = Wake(sync, id, 10, 800, 5.0f, "Appear", "Wait_Ground");
     CHECK_FALSE(flags.has_value());
+}
+
+TEST_CASE("objects: a ceiling Skulltula copy with our Link under it is flagged targeting (issue 35)") {
+    CHECK(CoopObjects::IsCeilingWait("CeilingWait"));
+    CHECK(CoopObjects::IsCeilingWait("CeilingWait_ModelOnlyLOD"));
+    CHECK_FALSE(CoopObjects::IsCeilingWait("Wait"));
+    CHECK_FALSE(CoopObjects::IsCeilingWait("Fall"));
+
+    // The owner's (player 2's) Skulltula hangs 12 m up, over the 10 m wake
+    // reach; its copy's own AI shows no wake (it plays CeilingWait too).
+    auto run = [](float link_x, const std::string& owners, std::uint8_t owner = 2, bool wake = true,
+                  std::uint64_t until = 1500) {
+        Sync sync;
+        sync.SetWake(wake);
+        sync.SetPlayer(proto::Vec3{link_x, 0.0f, 0.0f});
+        auto seen = [] {
+            Seen s = Acting(0x100, 0x11, 2, 0.0f, "CeilingWait", "Enemy_Skulltula");
+            s.position[1] = 12.0f;
+            return s;
+        };
+        Tick(sync, 0, {seen()});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, owner);
+        std::optional<std::uint8_t> flags;
+        for (std::uint64_t t = 10; t < until; t += 66) {
+            proto::ObjectSample s = OwnerSample(id, owner, t * kMs, 0.0f, 2, owners);
+            s.state.position = proto::Vec3{0.0f, 12.0f, 0.0f};
+            sync.Receive(s);
+            for (const auto& p : All<proto::ObjectPresent>(Tick(sync, t * kMs, {seen()}))) {
+                flags = p.objects[0].flags;
+            }
+        }
+        return flags && (*flags & kTargeting) != 0;
+    };
+    CHECK(run(1.0f, "CeilingWait"));              // under it: the server gives it to us
+    CHECK_FALSE(run(6.0f, "CeilingWait"));        // 6 m across: not under it
+    CHECK_FALSE(run(1.0f, "Walk"));               // already down: the usual rules
+    CHECK_FALSE(run(1.0f, "CeilingWait", 1));     // ours already
+    CHECK_FALSE(run(1.0f, "CeilingWait", 2, false));  // LICHII_COOP_OBJECTS_WAKE=0
+    CHECK_FALSE(run(1.0f, "CeilingWait", 2, true, 800));  // under 1 s: not yet
 }
 
 TEST_CASE("objects: a copy whose wake the Mover put back once is flagged targeting (issue 157)") {
