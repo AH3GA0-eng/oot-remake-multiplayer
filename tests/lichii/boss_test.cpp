@@ -754,7 +754,9 @@ TEST_CASE("boss: a player past the door who leaves before the win is told as lef
     CHECK(Said(s.Tick(here(), 4 * kS)) == std::vector<std::string>{"2 left the boss room"});
     // The boss beaten in our own game: their warp out is a warp.
     s.Receive(From(4, Forest(), proto::BossState::intro_end));
-    s.Tick(here(), 30 * kS);
+    s.Tick(At("ForestTemple", Forest().arrive, true), 5 * kS);  // our intro
+    s.Tick(here(), 20 * kS);                                    // its end: the fight
+    REQUIRE(s.phase() == Sync::Phase::fight);
     s.Tick(At("ForestTemple", Forest().arrive, true), 60 * kS);  // our boss's death (outro)
     s.Tick(At("ForestTemple", Forest().arrive, true), 80 * kS);
     s.Tick(here(), 90 * kS);
