@@ -448,6 +448,15 @@ TEST_CASE("objects: order-puzzle scrubs are each game's own (issue 149)") {
     CHECK_FALSE(CoopObjects::IsOwnPuzzle("Enemy_Scrub_Deku"));
 }
 
+TEST_CASE("objects: Jabu-Jabu's child Ruto is each game's own, so a carried Ruto is never put down by a copy (#64)") {
+    CHECK(CoopObjects::IsOwnPuzzle("Npc_Zora_Ruto_Child_001"));
+    CHECK_FALSE(CoopObjects::IsShared("Npc_Zora_Ruto_Child_001"));
+    // Other Zoras, and adult Ruto, stay shared NPCs.
+    CHECK(CoopObjects::IsShared("Npc_Zora_ZU_001"));
+    CHECK(CoopObjects::IsShared("Npc_Zora_Ruto_Adult_001"));
+    CHECK_FALSE(CoopObjects::IsOwnPuzzle("Npc_Zora_Ruto_Adult_001"));
+}
+
 TEST_CASE("objects: the pond's owner is each game's own, its fish are shared (issue 151)") {
     for (const char* own : {"Npc_Hylia_Fishman_001_Child", "Npc_Hylia_Fishman_001_Adult"}) {
         CHECK_MESSAGE(CoopObjects::IsOwnPuzzle(own), own);

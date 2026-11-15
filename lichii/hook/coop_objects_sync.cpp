@@ -199,8 +199,16 @@ bool IsOwnPuzzle(std::string_view name) {
     // and _GetGoldScale, coop/host game_items). The fish are shared (IsFish,
     // fishing-2): the lure rules give each fish to the game whose lure it
     // goes for.
+    // Player report #64 (dungeon-sync-b, Revirie's 0.11.0 log). Child Ruto in
+    // Jabu-Jabu (Npc_Zora_Ruto_Child_001) is lifted and carried by one Link
+    // (her 'Act_LiftRest' animations): her AI follows that game's own Link.
+    // Shared as an NPC copy, the owner's 'Crouch' was played over the carried
+    // Ruto, so she dropped as soon as she was picked up, and again when the
+    // owner left the room (a new owner). Each game runs its own Ruto; the
+    // room flags she sets (switches, rooms cleared) stay shared.
     return name.starts_with("Enemy_Scrub_Deku_Brothers") ||
-           name.starts_with("Enemy_Scrub_ForestStage") || name.starts_with("Npc_Hylia_Fishman");
+           name.starts_with("Enemy_Scrub_ForestStage") || name.starts_with("Npc_Hylia_Fishman") ||
+           name.starts_with("Npc_Zora_Ruto_Child");
 }
 
 bool IsFish(std::string_view name) {
