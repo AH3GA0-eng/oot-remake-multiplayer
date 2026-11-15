@@ -642,8 +642,8 @@ std::vector<std::string> VpnLines(const std::vector<LanAddress>& vpn, std::uint1
 }
 
 std::string HostHeadline(bool copied) {
-    return copied ? "Invite code copied to your clipboard. Send it to your friends, or pick another way to host below."
-                  : "Your invite code is below. Send it to your friends, or pick another way to host below.";
+    return copied ? "Invite code copied to your clipboard. Share it in DMs only: it contains your internet address."
+                  : "Your invite code is below. Share it in DMs only: it contains your internet address.";
 }
 
 

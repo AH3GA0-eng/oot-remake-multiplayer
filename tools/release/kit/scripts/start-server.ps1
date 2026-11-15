@@ -64,7 +64,7 @@ if ($madePassword) {
     # Shown here only (never in the log), for friends who join by a VPN or home-network address.
     Write-Host "Join password for this session: $password   (only needed when a friend joins by address instead of the invite code)"
 }
-else { Write-Host "Join password: $password   (server_password in coop-options.ini). Send it to your friends with the address." }
+else { Write-Host "Join password: $password   (server_password in coop-options.ini). Send it with the address to your friends in DMs only." }
 Write-Host 'Every session has a join password, and the traffic is encrypted with it.'
 if ($kitAccess.Pvp) { Write-Host 'PvP: on (pvp in coop-options.ini): players can hurt each other. /pvp off in the game chat turns it off.' }
 else { Write-Host 'PvP: off (players cannot hurt each other; pvp = on in coop-options.ini, or /pvp on in the game chat).' }

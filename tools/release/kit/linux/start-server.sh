@@ -103,7 +103,7 @@ if ((made_password)); then
     echo 'Join password: a new random one for this session; it is inside the invite code (server_password in coop-options.ini sets your own).'
     echo "Join password for this session: $password   (only needed when a friend joins by address instead of the invite code)"
 else
-    echo "Join password: $password   (server_password in coop-options.ini). Send it to your friends with the address."
+    echo "Join password: $password   (server_password in coop-options.ini). Send it with the address to your friends in DMs only."
 fi
 echo 'Every session has a join password, and the traffic is encrypted with it.'
 if ((KA_PVP)); then echo 'PvP: on (pvp in coop-options.ini): players can hurt each other. /pvp off in the game chat turns it off.'

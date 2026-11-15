@@ -139,6 +139,12 @@ try {
     . (Join-Path $kitSrc 'scripts\coop-ini.ps1')
     foreach ($good in 'blue', 'Purple', '#FF8020', 'ff8020') { Check (Test-CoopColor $good) "a colour: $good" }
     foreach ($bad in 'blurple', '#FF802', '#GG8020', '') { Check (-not (Test-CoopColor $bad)) "not a colour: '$bad'" }
+    # privacy-name (0.11.1 player report): a new player's offered name is random, a valid co-op name, never this PC's names.
+    foreach ($i in 1..50) {
+        $n = New-CoopName
+        Check ((Test-CoopName $n) -and $n -match '^[A-Za-z]+-\d{4}$' -and $n -ne $env:USERNAME -and $n -ne $env:COMPUTERNAME) "a random name: $n"
+    }
+    Check ((Read-File (Join-Path $kitSrc 'scripts\play.ps1')) -match 'if \(\$newName\) \{ \$Name = New-CoopName \}') 'play.ps1 offers a new player a random name'
     # The forms players type (10.1 report: a hex colour did nothing): one text for every reader.
     foreach ($pair in @(@('#FF8020', '#FF8020'), @('ff8020', '#FF8020'), @('"#ff8020"', '#FF8020'), @("'0xFF8020'", '#FF8020'),
                          @('#F82', '#FF8822'), @(' Orange ', 'orange'), @('blurple', ''),

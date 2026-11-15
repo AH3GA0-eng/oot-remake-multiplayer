@@ -225,8 +225,8 @@ void HostService::finish_invite() {
   }
   if (config_.log_invite) {
     say("invite code: " + *code);
-    say("invite: send the invite code to your friends; they paste it into Join.bat. It holds your internet "
-        "address and the join password, so send it only to friends. It stops working when this window closes, "
+    say("invite: share the invite code in DMs only (never in a public channel): it holds your internet "
+        "address and the join password. Your friends paste it into Join.bat. It stops working when this window closes, "
         "and changes each time.");
     say("invite: if a friend's Join.bat window shows an ANSWER CODE, paste it here (right-click) and press Enter.");
   } else {

@@ -251,6 +251,7 @@ if ($Mode -eq 'host') { $Server = '127.0.0.1' }
 if (-not $Server) { $Server = $current.server }
 if ($Mode -eq 'join' -and -not $serverGiven -and $Server -match '^(127\.|localhost)') { $Server = '' }
 if (-not $Name) { $Name = $current.name }
+$newName = -not $Name   # a new player: offered a random name (New-CoopName), never the Windows user name
 if (-not $Port) { $Port = if ($current.port) { $current.port } else { '@PORT@' } }
 
 if ($askServer -or -not $Server) {
@@ -310,7 +311,8 @@ elseif ($serverGiven) {
     $parsed = ConvertTo-JoinAddress $Server
     if ($parsed) { $Server = $parsed.Server; if ($parsed.Port -and -not $PSBoundParameters.ContainsKey('Port')) { $Port = $parsed.Port } }
 }
-if ($ask -or -not $Name) {
+if ($newName) { $Name = New-CoopName }
+if ($ask -or $newName) {
     do {
         $answer = Read-Host "Your player name, 1 to 16 characters$(if ($Name) { " [$Name]" })"
         if ($answer) { $Name = $answer.Trim() }
