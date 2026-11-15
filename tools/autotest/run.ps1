@@ -244,7 +244,7 @@ if ($Runtime -eq 'hookshot') {
             $pack = Join-Path $pair 'mods\contents\0400486024DEC000\coop-puppet'
             if (-not (Test-Path -LiteralPath (Join-Path $pack 'coop_puppet.json'))) { continue }
             $selfArgs = @('-I', (Join-Path (Split-Path $here) 'puppet_pack\self_tunic.py'), '--pack', $pack,
-                '--color', "$($sw['LICHII_COOP_COLOR'])", '--tunics', "$($sw['LICHII_COOP_TUNICS'])",
+                "--color=$($sw['LICHII_COOP_COLOR'])", "--tunics=$($sw['LICHII_COOP_TUNICS'])",   # (=: PowerShell drops an empty argument)
                 '--options', (Join-Path $pair 'coop-options.ini'), '--coop-ini', (Join-Path $pair 'coop.ini'))
             $got = (& $py[0] @pyArgs @selfArgs | Out-String).Trim()
             Write-Host "hookshot: game $x's own tunic files: $(if ($got) { $got } else { "none (the game's green)" })"
