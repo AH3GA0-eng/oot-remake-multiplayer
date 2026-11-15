@@ -30,7 +30,9 @@ for p in /proc/[0-9]*; do
     [[ ${e##*/} == longshot ]] && log_dirs+=("${e%/*}")
 done
 for d in "${log_dirs[@]}"; do
+    # (Longshot rc.4 writes its log into logs/ there, older games beside the program)
     for f in "$d"/longshot_log*.txt; do [[ -f $f ]] && pick "$f" "game/${f##*/}" && game_logs=$((game_logs + 1)); done
+    for f in "$d"/logs/longshot_log*.txt; do [[ -f $f ]] && pick "$f" "game/logs/${f##*/}" && game_logs=$((game_logs + 1)); done
     ((game_logs)) && break
 done
 for f in "$LOGS"/longshot_log*.txt; do [[ -f $f ]] && pick "$f" "game/copied/${f##*/}" && game_logs=$((game_logs + 1)); done
@@ -125,7 +127,7 @@ if ((game_logs == 0)); then
     # (as in the tarball: the user name masked)
     u=$(id -un 2>/dev/null)
     {
-        echo "The game's log (longshot_log.txt) is not in this file: none in $GAME."
+        echo "The game's log (longshot_log.txt) is not in this file: none in $GAME or $GAME/logs."
     if [[ -x $GAME/longshot ]]; then
         echo '  Start the game once (it writes the log when it starts), close it, then run this again (bash start-oot-coop.sh --logs).'
     else

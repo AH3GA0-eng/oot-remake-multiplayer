@@ -770,12 +770,20 @@ def exe_dir(game):
     return os.path.join(game, "bin") if os.path.isfile(os.path.join(game, "bin", "longshot.exe")) else game
 
 
-def find_log(game):
+def log_candidates(game):
+    """Where the game's longshot_log.txt can be: beside the exe or in the game folder (rc.3), or in their logs\\ (rc.4)."""
+    out = []
     for d in (exe_dir(game), game):
-        p = os.path.join(d, "longshot_log.txt")
-        if os.path.isfile(p):
-            return p
-    return None
+        for p in (os.path.join(d, "longshot_log.txt"), os.path.join(d, "logs", "longshot_log.txt")):
+            if p not in out:
+                out.append(p)
+    return out
+
+
+def find_log(game):
+    """The newest of the game's longshot_log.txt files (an older one elsewhere is from another build), else None."""
+    found = [p for p in log_candidates(game) if os.path.isfile(p)]
+    return max(found, key=os.path.getmtime) if found else None
 
 
 # ---------------------------------------------------------------------------------------------- the kit's own start

@@ -602,5 +602,35 @@ class RunTest(unittest.TestCase):
             self.assertIn("coop: test script done", a_log)
 
 
+class FindLogTest(unittest.TestCase):
+    def test_rc3_and_rc4_places_newest_wins(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as game:
+            self.assertIsNone(hs.find_log(game))
+            rc3 = os.path.join(game, "longshot_log.txt")
+            with open(rc3, "w") as f:
+                f.write("rc3")
+            self.assertEqual(hs.find_log(game), rc3)
+            os.makedirs(os.path.join(game, "logs"))
+            rc4 = os.path.join(game, "logs", "longshot_log.txt")
+            with open(rc4, "w") as f:
+                f.write("rc4")
+            os.utime(rc3, (1000, 1000))  # an rc.3 log left from an older build
+            self.assertEqual(hs.find_log(game), rc4)
+            os.utime(rc4, (500, 500))
+            self.assertEqual(hs.find_log(game), rc3)
+
+    def test_bin_layout(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as game:
+            os.makedirs(os.path.join(game, "bin", "logs"))
+            open(os.path.join(game, "bin", "longshot.exe"), "w").close()
+            log = os.path.join(game, "bin", "logs", "longshot_log.txt")
+            with open(log, "w") as f:
+                f.write("x")
+            self.assertEqual(hs.find_log(game), log)
+            self.assertIn(os.path.join(game, "logs", "longshot_log.txt"), hs.log_candidates(game))
+
+
 if __name__ == "__main__":
     unittest.main()

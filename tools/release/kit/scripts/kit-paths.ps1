@@ -836,9 +836,10 @@ function Get-KitLogGameExes([string]$Kit, [string[]]$Running = $null) {
     }
 }
 
-# Where a game's longshot_log*.txt, coop.ini and mods\ are: beside longshot.exe, and for a builder's bin\ layout
-# (bin\longshot.exe beside image.bin) the game folder above it, where Longshot writes them (hos_paths.h:
-# hos_game_path_a gives the folder's path then). Each folder once, the game folder first.
+# Where a game's coop.ini and mods\ are (and its longshot_log*.txt up to Longshot rc.3): beside longshot.exe, and for
+# a builder's bin\ layout (bin\longshot.exe beside image.bin) the game folder above it, where Longshot writes them
+# (hos_paths.h: hos_game_path_a gives the folder's path then). Each folder once, the game folder first.
+# Longshot rc.4 writes its log into logs\ in that folder: Get-KitHookshotLogFiles looks in both.
 function Get-KitHookshotLogDirs([string]$Exe) {
     if (-not $Exe) { return @() }
     $dir = Split-Path -Parent $Exe
@@ -847,6 +848,18 @@ function Get-KitHookshotLogDirs([string]$Exe) {
         return @($up, $dir)
     }
     return @($dir)
+}
+
+# The game's log files (longshot_log*.txt, hookshot_log*.txt) for one game folder of Get-KitHookshotLogDirs: in it
+# (Longshot up to rc.3, 0.11.1's games) and in its logs\ (rc.4). Each as @{ File; Sub } with Sub '' or 'logs'.
+function Get-KitHookshotLogFiles([string]$Dir) {
+    if (-not $Dir) { return @() }
+    foreach ($sub in '', 'logs') {
+        $d = if ($sub) { Join-Path $Dir $sub } else { $Dir }
+        if (-not (Test-Path -LiteralPath $d -PathType Container)) { continue }
+        Get-ChildItem (Join-Path $d '*') -Include 'longshot_log*.txt', 'hookshot_log*.txt' -File -ErrorAction SilentlyContinue |
+            ForEach-Object { [pscustomobject]@{ File = $_; Sub = $sub } }
+    }
 }
 
 # The stamp the kit's hookshot-build.ps1 writes to the game's coop-built-from.txt: release, pin, patches.

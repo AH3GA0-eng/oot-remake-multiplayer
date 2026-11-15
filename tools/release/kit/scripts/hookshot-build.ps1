@@ -714,11 +714,11 @@ if (-not $PSBoundParameters.ContainsKey('Out') -and -not $Tools -and (Test-Path 
 Write-Host ''
 if (Test-Path -LiteralPath (Join-Path $kit 'Start OoT Co-op.bat')) {
     Write-Host 'Done. The game is ready: "Start OoT Co-op.bat" (or the desktop shortcut) starts it; Host and Join are in the game.' -ForegroundColor Green
-    Write-Host "  The game: $exe. Its longshot_log.txt says 'coop: module loaded'."
+    Write-Host "  The game: $exe. Its log (longshot_log.txt in the game's logs folder) says 'coop: module loaded'."
     exit 0
 }
 Write-Host 'Done. To play co-op on Hookshot: Play-OoT-Coop.bat (or the desktop shortcut) starts the game, Host and Join are on its title screen; Host-Hookshot.bat hosts, Join-Hookshot.bat joins (as Host.bat and' -ForegroundColor Green
 Write-Host "  Join.bat, with the Hookshot game in place of the emulator). The game: $exe"
-Write-Host "  Its longshot_log.txt says 'coop: module loaded' and 'coop: connected'. HOS_COOP=0 starts it without co-op."
+Write-Host "  Its log (longshot_log.txt in the game's logs folder) says 'coop: module loaded' and 'coop: connected'. HOS_COOP=0 starts it without co-op."
 Write-Host '  Updates come by themselves: the launchers check for a new version and bring the game up to date.'
 exit 0

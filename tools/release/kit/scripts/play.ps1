@@ -487,7 +487,7 @@ if ($Hookshot) {
         $(if ($hsOnly) { '  It is made from your game file (the one hookshot\game-files.txt names): put that file back, then start again.' } else { '  Run Build-Hookshot-Coop.bat -Game <your .nup> again (SETUP.md, "Play on Hookshot").' })))
     $started = Get-Date
     $game = Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru
-    Write-Host "Game started. Its longshot_log.txt (beside the game) says 'coop: module loaded', then 'coop: connected'."
+    Write-Host "Game started. Its log (longshot_log.txt in the game's logs folder) says 'coop: module loaded', then 'coop: connected'."
     exit 0
 }
 # AMD cards: shader libraries off unless the player chose (kit-paths.ps1, issue 118).

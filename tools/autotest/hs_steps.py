@@ -358,7 +358,9 @@ class HookshotGames:
         self.commands = {x: os.path.join(out, "commands-%s.txt" % x) for x in games}
 
     def _log_path(self, x):
-        return os.path.join(self.hk.exe_dir(self.games[x]), "longshot_log.txt")
+        # Longshot rc.3 wrote longshot_log.txt beside the exe, rc.4 in logs\ there: the newest one, else rc.3's place.
+        find = getattr(self.hk, "find_log", None)
+        return (find and find(self.games[x])) or os.path.join(self.hk.exe_dir(self.games[x]), "longshot_log.txt")
 
     def _run_log(self, x):
         """This run's log: the game's longshot_log.txt (start() removes an older one), else game-out-<x>-<n>.txt.
