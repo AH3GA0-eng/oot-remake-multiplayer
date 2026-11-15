@@ -733,6 +733,42 @@ TEST_CASE("puppet animation: play the command, set its frame, correct only when 
     CHECK(d.Slots()[0].anim_name == "Run");
 }
 
+TEST_CASE("puppet animation: the backstop plays their command again when the puppet's own slot 0 left it (puppet-anim)") {
+    Game g;
+    std::vector<std::string> log;
+    Director d([&](const std::string& line) { log.push_back(line); }, false, false);
+    MakeLive(d, g);
+    GiveAnimation(g, 0.0f);
+    d.SetInput(Wants({Playing("Wait", 4.0f, 1)}));
+    auto calls = Frame(d, g, 1000);
+    REQUIRE(calls.size() == 2);
+    REQUIRE(calls[0].function == kBase + addr::kPlayAs);
+    const std::uint64_t played = g.guest.Get<std::uint64_t>(calls[0].x[0] + 0x08);
+    // The game took it: slot 0 names the command we played.
+    g.guest.Set(kSlot0 + addr::kSlotName, played);
+    for (std::uint64_t ms = 2000; ms <= 6000; ms += 500) {
+        CHECK(Frame(d, g, ms).empty());  // the same command: nothing to do
+    }
+    // The puppet's own animation moved on to another command (a one-shot ended, a play
+    // dropped). One read finding it is not enough; the second, kBackstopMs on, plays theirs.
+    const std::uint64_t other = kAs + 0x800;
+    const char fall[] = "Fall";
+    for (std::size_t i = 0; i < sizeof(fall); ++i) {
+        g.guest.Set(other + i, static_cast<std::uint8_t>(fall[i]));
+    }
+    g.guest.Set(kSlot0 + addr::kSlotName, other);
+    CHECK(Frame(d, g, 7000).empty());
+    calls = Frame(d, g, 7000 + Director::kBackstopMs);
+    REQUIRE(calls.size() == 2);
+    CHECK(calls[0].function == kBase + addr::kPlayAs);
+    CHECK(calls[1].function == kBase + addr::kSetAsFrame);
+    CHECK(d.Slots()[0].anim_name == "Wait");
+    REQUIRE_FALSE(log.empty());
+    bool said = false;
+    for (const auto& l : log) said = said || l.find("backstop: its own animation is 'Fall', not 'Wait'") != std::string::npos;
+    CHECK(said);
+}
+
 TEST_CASE("puppet animation: the other slots synced from slot 0, pose request written") {
     Game g;
     Director d;
