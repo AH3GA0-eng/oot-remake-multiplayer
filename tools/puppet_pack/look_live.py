@@ -15,7 +15,8 @@ it). Little-endian:
 
     "COOPLOOK", u32 version (1), u32 count, then per texture:
     its name in the game (64 bytes, NUL-filled), u64 offset of the texels in its BNTX (the data
-    block's header is the 16 bytes in front), u64 size, the texels (the BNTX's data block)
+    block's header is the 16 bytes in front), u64 size, the texels (the image: every mip level,
+    BRTI's image size, as the game's texture memory holds it)
 
 Read by hookshot/src/coop_look_tunic.cpp.
 
@@ -77,10 +78,43 @@ def gear(read_tex, log=print):
     return pack(found)
 
 
-def texels(bntx):
-    """The data block of a one-texture BNTX: every mip level, as the game has it in memory."""
+def _image(bntx):
+    """(start, size) of a one-texture BNTX's image in the file: every mip level, the image's own
+    size (BRTI +0x50), without the data block's padding to 4096 bytes."""
     _, start, end = _brti(bntx)
-    return bntx[start:end]
+    i = bntx.find(b"BRTI")
+    size = struct.unpack_from("<I", bntx, i + 0x50)[0]
+    if not 0 < size <= end - start:
+        raise TunicError(f"image size {size} does not fit the data block ({end - start} bytes)")
+    return start, size
+
+
+def texels(bntx):
+    """The image of a one-texture BNTX: every mip level, as the game copies it into its texture
+    memory (the game's storage is this size)."""
+    start, size = _image(bntx)
+    return bntx[start:start + size]
+
+
+def mark(data, slot):
+    """The texels of a puppet's copy: the image's last byte XOR the copy's number. The game copies every texture's texels into its texture
+    memory, with no file or name in front, so a copy holding the game's own texels could not be told
+    from your own Link's; the mark tells them apart (the module marks its copies the same way:
+    hookshot/src/coop_look_parts.cpp Mark). That byte is in the last mip level (a few pixels: the
+    item seen from very far) or the image's padding past it: the 2-bit colour indices of the last
+    pixel row of a BC1/BC3 block (in block-linear layout almost always the GOB padding of the last
+    mip); for ASTC the weights of one texel of the last block. Not to be seen."""
+    if not 1 <= slot <= 255 or not data:
+        raise TunicError(f"no mark for copy {slot}")
+    out = bytearray(data)
+    out[-1] ^= slot
+    return bytes(out)
+
+
+def mark_bntx(bntx, slot):
+    """A one-texture BNTX with its image marked as `mark` marks texels."""
+    start, size = _image(bntx)
+    return bntx[:start] + mark(bntx[start:start + size], slot) + bntx[start + size:]
 
 
 def offset(bntx):

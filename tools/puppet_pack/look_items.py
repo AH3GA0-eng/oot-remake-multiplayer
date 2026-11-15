@@ -21,7 +21,7 @@ that copy (lichii/hook/coop_puppet.cpp).
 Nothing from the game is kept in the tool: everything is made from the user's own romfs.
 """
 from . import byml, sarc
-from .look_live import GEAR
+from .look_live import GEAR, mark_bntx
 from .tunic import TunicError, rename
 
 SLOTS = 4
@@ -68,8 +68,9 @@ def model_for(model, slot):
 
 
 def texture_for(bntx, name, slot):
-    """The game's texture under the slot's name."""
-    return rename(bntx, name, tex_name(name, slot), at_least=1)
+    """The game's texture under the slot's name, its texels marked with the slot's number
+    (look_live.mark: the module tells your own Link's textures from the copies' by it)."""
+    return mark_bntx(rename(bntx, name, tex_name(name, slot), at_least=1), slot)
 
 
 def actor_param_path(actor):

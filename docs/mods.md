@@ -29,6 +29,7 @@ A mod made for an emulator's `load\<title id>\<name>\romfs` folder works the sam
 - Each mod is a row: its name, version and author, whether it is on, and a note when something is wrong.
 - **On / off** and **up / down**. The first row wins a file two mods have.
 - **Settings**: a mod's own page (toggles, choices, numbers, text).
+- **The randomizer's row** reads **OoT Remake Randomizer** with a **Settings** button and no Off / On: press it to open its page, where the **Randomizer** switch, its seed, its settings and its status line are.
 - **Restart needed**: game files and code are read only when the game starts. The tab says what changes at the next start; nothing is ever rebuilt.
 
 The tab writes two files into the mods folder: `coop-mods.list` (order and switches) and `coop-mods.settings.json` (settings). Hookshot reads the list at its start (our patch 0011). A `hookshot.exe` without that patch loads every mod in its own order, and the tab cannot switch or move game file mods (code mods and settings still work).
@@ -54,7 +55,7 @@ The OoT Remake randomizer is [OOTRR](https://github.com/REALAZK/ootrr) (by REALA
 - **OOTRR comes with the kit.** The kit's game build (`Build-Hookshot-Coop`, or the launcher's "putting the updated co-op into the game" step) downloads the OOTRR release named in `hookshot\OOTRR.txt` (0.5.0), checks its SHA-256 and puts it in `tools\ootrr\` beside the game (`hookshot\game\tools\ootrr\ootrr.exe`, with its `LICENSE` and `NOTICE`). The Linux kit does the same into `data/game/tools/ootrr/`. When that download fails the build only warns, co-op plays without the randomizer, and the next start tries again.
 - **Your game files are the kit's own.** The kit's build already unpacks your game beside the program (`hookshot\game\romfs`, or `data/game/romfs` on Linux). OOTRR reads them there and never changes them; nothing is copied. They are the game version co-op needs (program 0400486024DEC000, update v131072, which is the 1.1.1 OOTRR asks for), so they always pass OOTRR's version check.
 
-1. In the Mods tab, open **OoT Remake Randomizer** and turn **Randomizer** on. With no **Seed** a new one is made. Pick **Settings** (OOTRR's presets: default, easy, open world, keysanity, full shuffle).
+1. In the Mods tab, press **Settings** on the **OoT Remake Randomizer** row and turn **Randomizer** on. With no **Seed** a new one is made. Pick **Settings** (OOTRR's presets: default, easy, open world, keysanity, full shuffle).
 2. The game builds the seed in the background (about a minute; OOTRR's output is in `mods\oot-remake-randomizer\last-build.txt`) into `mods\randomizer-<seed>` and switches it on, first row. An OOTRR that runs longer than 10 minutes, or while the game closes, is stopped; the seed is built again at the next start.
 3. Start the game again, and start a new save.
 
@@ -71,7 +72,7 @@ In co-op the host's switch, seed and settings are everyone's: a guest's game bui
 
 **Items in a randomized seed, in co-op.** An item from a randomized check is shared as any other ([items.md](items.md)), and comes with what makes it usable: a bag or quiver with its capacity and a fill, the Slingshot and Bow with their ammo, a bracelet or gauntlets with the lift grade (bomb flowers, bombs), an ocarina equipped and playable, and the magic meter (`Item_FairyBless_MP`, shared since branch `rando-items`) with a full meter, 240 a level as OOTRR gives it. A shared Silver or Golden Scale also raises `PlayerStatus.DiveDepth` (a Float) to 6.0 or 9.0, as OOTRR writes it, through the game's own Float setter. The Giant's Wallet (`Item_Wallet_Large`) gives room for 1000 rupees, as its own game data says. Magic Beans and Bombchus stay per player by choice: a shared bean or bombchu pack gives the others none ([items.md](items.md)).
 
-Known limits: a seed is built with the other mods that are on at that time (OOTRR keeps their larger size-table entries); turn other mods on or off before building, or build again. Starting items are OOTRR's (its starting module, on a new save, for each player who plays the seed): older OOTRR builds applied only the Kokiri Sword, Deku Shield and Slingshot; newer ones also give bags, strength, scales, magic, ocarinas and bottles (`start_items/give.rs`). Not checked with the OOTRR in the kit.
+Known limits: a seed is built with the other mods that are on at that time, the puppet pack (in `mods\contents\...\coop-puppet`) included: the game uses one resource size table, the seed's, so the seed keeps every other mod's larger entries (without the pack's, the game aborts while it loads). Turn other mods on or off before building, or build again. When the kit makes the puppet pack again (a kit update), its start builds every seed again (a few seconds each), or removes one it cannot build, which the game then builds at its next start. Starting items are OOTRR's (its starting module, on a new save, for each player who plays the seed): older OOTRR builds applied only the Kokiri Sword, Deku Shield and Slingshot; newer ones also give bags, strength, scales, magic, ocarinas and bottles (`start_items/give.rs`). Not checked with the OOTRR in the kit.
 
 ## For mod authors
 

@@ -60,9 +60,15 @@ CoopLookTunic::Texels Painted(const CoopLookTunic::Texels& gear, const CoopLook:
 // a gear texture's ("Mt_..." is), or that could name another folder.
 std::string SlotName(const std::string& name, std::size_t copy);
 // The gear textures under copy `copy`'s names, painted in `look` (the game's
-// own colours when none): what that copy's pieces are drawn with.
+// own colours when none) and marked (Mark): what that copy's pieces are drawn
+// with.
 CoopLookTunic::Texels CopyTexels(const CoopLookTunic::Texels& gear, std::size_t copy,
                                  const std::optional<CoopLook::Look>& look);
+// A copy's texels as the pack's copy files hold them: the image's last byte
+// XOR the copy's number (tools/puppet_pack/look_live.py mark). The game keeps
+// no name with a texture's texels, so only this tells a copy's textures from
+// your own Link's. That byte is in the last mip level or the padding past it.
+void Mark(std::vector<std::uint8_t>& texels, std::size_t copy);
 // The looks the copies are painted in (index 0: copy 1; nothing: the game's own).
 using CopyLooks = std::vector<std::optional<CoopLook::Look>>;
 // The copies' wardrobe's base (every copy in the game's own colours), and the

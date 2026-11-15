@@ -293,6 +293,9 @@ struct Target {
     // Input::made_ms. Unset (local players, the debug puppet): drawn where `position` is.
     std::optional<Vec3> velocity;
     Mat3 rotation{1, 0, 0, 0, 1, 0, 0, 0, 1};
+    // jitter-3: the same rotation as a quaternion, as of Input::made_ms (remote players only):
+    // followed to each game frame (coop_follow.h Turner). Unset: `rotation` as it is.
+    std::optional<Quat> turn;
     Show show = Show::show;   // hold: frozen as it is; hide: parked out of sight
     const char* why = "";     // for the log when `show` changes ("our cutscene", ...); string literals only
     std::optional<Anim> anim;
@@ -475,6 +478,10 @@ private:
         std::optional<float> frame_to_set;  // after a play
         std::optional<float> held_frame;    // while held
         CoopFollow::Follower follow;        // jitter-b: their place taken to this game frame
+        CoopFollow::Steps steps;            // jitter-2: how even its drawn steps are (logged)
+        CoopFollow::Follower raw_follow;    // jitter-2: the same on the raw frame time (not drawn;
+        CoopFollow::Steps raw_steps;        //   the log's before number)
+        CoopFollow::Turner turner;          // jitter-3: their rotation taken to this game frame
         CoopSnap::Smoother smooth;          // issue 194: where it is drawn, jumps eased
         CoopSnap::Meter meter;              // issue 194: its place read back, snaps logged
         bool meter_skip = false;            // the next read is still the parked spot
@@ -584,6 +591,7 @@ private:
 
     // The calc thread only.
     Input input_;
+    CoopFollow::Cadence cadence_;  // jitter-2: the game frames' time made even (coop_follow.h)
     std::vector<Slot> slots_;
     CoopLinkSound::Budget sound_budget_;  // every puppet's sound starts together
     Pending pending_ = Pending::none;

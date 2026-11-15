@@ -21,6 +21,7 @@ from puppet_pack import build, byml, dumpcheck, dungeon_rooms, map_captures, nup
 # The co-op HUD's tests run with these (CI runs this file).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_hud import *  # noqa: E402,F401,F403
+from test_self_tunic import *  # noqa: E402,F401,F403
 
 try:
     import zstandard
@@ -777,7 +778,7 @@ class BuildPackTest(unittest.TestCase):
 @unittest.skipIf(zstandard is None, "needs the zstandard package")
 def fake_bntx(name, blocks=None, fmt=0x1C):
     """A one-texture BNTX as tunic.py reads it: the name, a BRTI with the format at +0x1C and a
-    BRTD (size at +8) holding the blocks."""
+    BRTD (size at +8) holding the blocks (the image size at BRTI +0x50)."""
     if blocks is None:
         blocks = []
         for i in range(8):  # BC3: 8 alpha bytes, two greens, indices
@@ -786,8 +787,9 @@ def fake_bntx(name, blocks=None, fmt=0x1C):
     # The string section has room for either tunic name, as in the game's two tiles.
     strs = b"_STR" + struct.pack("<H", len(name)) + name.encode() + b"\x00"
     head = b"BNTX" + bytes(12) + strs + bytes(0x30 - len(strs)) + b"_DIC" + bytes(4)
-    brti = b"BRTI" + bytes(0x18) + struct.pack("<I", fmt << 8 | 6) + bytes(0x20)
     data = b"".join(blocks)
+    # (the image's own size at +0x50: look_live.texels)
+    brti = b"BRTI" + bytes(0x18) + struct.pack("<I", fmt << 8 | 6) + bytes(0x30) + struct.pack("<I", len(data)) + bytes(4)
     brtd = b"BRTD" + bytes(4) + struct.pack("<Q", 0x10 + len(data)) + data
     return head + brti + brtd
 
@@ -1080,7 +1082,7 @@ class FullBuildTest(unittest.TestCase):
     def test_look_items(self):
         # Gear colours on the puppets (look_items): per slot, a copy of each coloured item with
         # its own model project and textures, the game's own left as they were.
-        from puppet_pack import look_items, zs
+        from puppet_pack import look_items, look_live, zs
         plain = zstandard.ZstdCompressor()
         item = "Weapon_Shield_Hylian"
         info = f"Component/ModelInfo/{item}.engine__component__ModelInfo.bgyml"
@@ -1131,7 +1133,10 @@ class FullBuildTest(unittest.TestCase):
             self.assertNotIn(b"Mt_Weapon_Shield_Hylian_Alb\x00", got)
             name = look_items.tex_name("Mt_Weapon_Shield_Hylian_Alb", k)
             got = d.decompress(build.read(os.path.join(out, f"Tex/{name}.bntx.zs")))
-            self.assertEqual(got, tex.replace(b"Mt_Weapon_Shield_Hylian_Alb\x00", name.encode() + b"\x00"))
+            renamed = tex.replace(b"Mt_Weapon_Shield_Hylian_Alb\x00", name.encode() + b"\x00")
+            self.assertEqual(got, look_live.mark_bntx(renamed, k))   # marked: told from your own by its texels
+            self.assertEqual(look_live.texels(got)[:-1], look_live.texels(renamed)[:-1])   # only the last byte
+            self.assertEqual(look_live.texels(got)[-1], look_live.texels(renamed)[-1] ^ k)
             for f in (f"Pack/Actor/{actor}.pack", f"Actor/{actor}.engine__actor__ActorParam.bgyml",
                       f"Model/{actor}.{item}.bfres", f"Tex/{name}.bntx"):
                 self.assertGreater(t.get(f) or 0, 0, f)
@@ -1383,13 +1388,13 @@ class FullBuildTest(unittest.TestCase):
                             for i, a in enumerate(actors)], "FilePath": "x"})))
 
     def test_build_quiet_puppets_for_guard_scenes(self):
-        # Issue 150 (review-boss-sync must-fix): perception is on by default; each puppet has a quiet copy
-        # (no perception) and the scenes with a stealth guard are listed for it.
+        # Issue 150 (review-boss-sync must-fix): with perception (off by default for 0.11) each puppet has a
+        # quiet copy (no perception) and the scenes with a stealth guard are listed for it.
         self.add_perception_and_guards()
         d = zs.Dicts.from_romfs(self.romfs)
         self.assertEqual(build.guard_scenes(self.romfs, d), {"Castle": ["Npc_Guard"]})
         mod = os.path.join(self.dir, "mod_quiet")
-        m = build.build(self.romfs, mod, log=lambda *_: None, tunics=("red",), look_slots=0)
+        m = build.build(self.romfs, mod, log=lambda *_: None, tunics=("red",), look_slots=0, perception=True)
         self.assertTrue(m["perception"])
         self.assertEqual(m["quiet_scenes"], ["Castle"])
         self.assertEqual(m["guards"], {"Castle": ["Npc_Guard"]})
@@ -1417,6 +1422,10 @@ class FullBuildTest(unittest.TestCase):
         self.add_perception_and_guards()
         m = build.build(self.romfs, os.path.join(self.dir, "mod_loud"), log=lambda *_: None, perception=False)
         self.assertFalse(m["perception"])
+        # Off by default for 0.11 (a puppet with a gear copy and the slingshot crashed the game with it).
+        d = build.build(self.romfs, os.path.join(self.dir, "mod_default"), log=lambda *_: None, look_slots=0)
+        self.assertFalse(d["perception"])
+        self.assertEqual(d["quiet_scenes"], [])
         self.assertEqual(m["quiet_scenes"], [])
         self.assertFalse([a for a in m["actors"] if a["quiet"] or a["perception"]])
 
@@ -1512,7 +1521,11 @@ class FullBuildTest(unittest.TestCase):
         game_tile = d.decompress(build.read(os.path.join(self.romfs, "Tex/Angin_Tile_A_Alb.bntx.zs")))
         # green: the game's own tile under the green name, not recoloured (#202)
         green = d.decompress(build.read(os.path.join(out, "Tex/Angin_Tile_G_Alb.bntx.zs")))
-        self.assertEqual(green, game_tile.replace(b"Angin_Tile_A_Alb\x00", b"Angin_Tile_G_Alb\x00"))
+        # (the puppets' copies are marked: their texels are never your own Link's, tunic.TUNIC_MARK)
+        from puppet_pack import look_live as _ll
+        unmark = lambda b: _ll.mark_bntx(b, tunic.TUNIC_MARK)
+        self.assertEqual(unmark(green), game_tile.replace(b"Angin_Tile_A_Alb\x00", b"Angin_Tile_G_Alb\x00"))
+        self.assertNotEqual(_ll.texels(green), _ll.texels(game_tile))
         # your own Link: per colour but green, the tile recoloured under the game's name, beside
         # romfs/ (the kit copies one in); as long as the game's tile, so its size entry stands
         self.assertEqual(m["self_tiles"], {"red": "coop_self/red.bntx.zs", "blue": "coop_self/blue.bntx.zs"})
@@ -1524,7 +1537,7 @@ class FullBuildTest(unittest.TestCase):
             self.assertIn(b"Angin_Tile_A_Alb\x00", own)
             self.assertNotEqual(own, game_tile)
             recoloured = d.decompress(build.read(os.path.join(out, f"Tex/{tunic.tile_name(c)}.bntx.zs")))
-            self.assertEqual(own, recoloured.replace(tunic.tile_name(c).encode() + b"\x00", b"Angin_Tile_A_Alb\x00"))
+            self.assertEqual(own, unmark(recoloured).replace(tunic.tile_name(c).encode() + b"\x00", b"Angin_Tile_A_Alb\x00"))
         for c in ("red", "blue", "green"):
             tile = d.decompress(build.read(os.path.join(out, f"Tex/{tunic.tile_name(c)}.bntx.zs")))
             self.assertIn(tunic.tile_name(c).encode() + b"\x00", tile)
@@ -1556,7 +1569,7 @@ class FullBuildTest(unittest.TestCase):
             own = d.decompress(build.read(os.path.join(mod, m["self_dark_tiles"][c])))
             self.assertEqual(own, tunic.self_dark_tile(game_tile, game_dark, c))
             self.assertGreaterEqual(t.get(f"Tex/{tunic.dark_name(c)}.bntx"), len(own))
-        self.assertEqual(d.decompress(build.read(os.path.join(out, "Tex/Angin_Tile_G_Dark_Alb.bntx.zs"))),
+        self.assertEqual(unmark(d.decompress(build.read(os.path.join(out, "Tex/Angin_Tile_G_Dark_Alb.bntx.zs")))),
                          game_dark.replace(b"Angin_Tile_A_Dark_Alb\x00", b"Angin_Tile_G_Dark_Alb\x00"))
         child = d.decompress(build.read(os.path.join(out, "Model/CoopTunic_Child_Blue.Player_Child.bfres.zs")))
         self.assertIn(b"Angin_Tile_B_Dark_Alb\x00", child)
@@ -1576,18 +1589,39 @@ class FullBuildTest(unittest.TestCase):
             self.assertTrue(os.path.isfile(os.path.join(out, f"Tex/{n}_Coop_R_Child_Alb.bntx.zs")))
         self.assertNotIn(b"Mt_Vest_Coop_R_Adult_Alb\x00", child_red)
         self.assertNotIn(b"_Child_Alb\x00", adult)
+        # your own Link: its own S copies and model copies naming them (colour-agree), never the
+        # puppets' letter copies
         self.assertEqual(m["self_files"]["red"], {
-            "Tex/Angin_Tile_A_Alb.bntx.zs": "coop_self/red.bntx.zs",
-            "Tex/Angin_Tile_A_Dark_Alb.bntx.zs": "coop_self/red.dark.bntx.zs",
-            "Tex/Mt_Cloth_Parts_Player_Child_Alb.bntx.zs": "coop_self/red.Mt_Cloth_Parts_Player_Child_Alb.bntx.zs",
-            "Tex/Mt_Vest_Player_Child_Alb.bntx.zs": "coop_self/red.Mt_Vest_Player_Child_Alb.bntx.zs",
-            "Tex/Mt_Vest_Player_Adult_Alb.bntx.zs": "coop_self/red.Mt_Vest_Player_Adult_Alb.bntx.zs",
-            "Tex/Mt_Angin_Acs_Player_Adult_Alb.bntx.zs": "coop_self/red.Mt_Angin_Acs_Player_Adult_Alb.bntx.zs",
-            # your own adult Link wears the puppet's model copy (bigrun5): the pack's own file
-            "Model/Player_Adult.Player_Adult.bfres.zs": "romfs/Model/CoopTunic_Adult_Red.Player_Adult.bfres.zs"})
-        self.assertTrue(os.path.isfile(os.path.join(mod, "romfs/Model/CoopTunic_Adult_Red.Player_Adult.bfres.zs")))
+            "Tex/Angin_Tile_S_Alb.bntx.zs": "coop_self/red.Angin_Tile_S_Alb.bntx.zs",
+            "Tex/Angin_Tile_S_Dark_Alb.bntx.zs": "coop_self/red.Angin_Tile_S_Dark_Alb.bntx.zs",
+            "Tex/Mt_Cloth_Parts_Coop_S_Child_Alb.bntx.zs": "coop_self/red.Mt_Cloth_Parts_Coop_S_Child_Alb.bntx.zs",
+            "Tex/Mt_Vest_Coop_S_Child_Alb.bntx.zs": "coop_self/red.Mt_Vest_Coop_S_Child_Alb.bntx.zs",
+            "Tex/Mt_Vest_Coop_S_Adult_Alb.bntx.zs": "coop_self/red.Mt_Vest_Coop_S_Adult_Alb.bntx.zs",
+            "Tex/Mt_Angin_Acs_Coop_S_Adult_Alb.bntx.zs": "coop_self/red.Mt_Angin_Acs_Coop_S_Adult_Alb.bntx.zs",
+            "Model/Player_Adult.Player_Adult.bfres.zs": "coop_self/red.Player_Adult.bfres.zs",
+            "Model/Player_Child.Player_Child.bfres.zs": "coop_self/red.Player_Child.bfres.zs"})
+        for v, names in (("Child", ("Angin_Tile_S_Alb", "Angin_Tile_S_Dark_Alb", "Mt_Cloth_Parts_Coop_S_Child_Alb",
+                                    "Mt_Vest_Coop_S_Child_Alb")),
+                         ("Adult", ("Angin_Tile_S_Alb", "Mt_Vest_Coop_S_Adult_Alb", "Mt_Angin_Acs_Coop_S_Adult_Alb"))):
+            own_model = d.decompress(build.read(os.path.join(mod, f"coop_self/red.Player_{v}.bfres.zs")))
+            game_model = d.decompress(build.read(os.path.join(self.romfs, f"Model/Player_{v}.Player_{v}.bfres.zs")))
+            self.assertEqual(len(own_model), len(game_model))   # the game's size entry stands
+            for n in names:
+                self.assertIn(n.encode() + b"\x00", own_model, n)
+            self.assertNotIn(b"Angin_Tile_R_Alb\x00", own_model)
+            self.assertNotIn(b"_Coop_R_", own_model)
+        for rel in m["self_files"]["red"]:
+            if rel.startswith("Tex/"):
+                self.assertIsNotNone(t.get(rel[:-3]), rel)   # a size entry for every own texture
+        # your own textures hold the texels the module finds them by (look files); the puppets' not
+        own_tile = d.decompress(build.read(os.path.join(mod, m["self_files"]["red"]["Tex/Angin_Tile_S_Alb.bntx.zs"])))
+        pup_tile = d.decompress(build.read(os.path.join(out, "Tex/Angin_Tile_R_Alb.bntx.zs")))
+        red_look = dict(_ll.unpack(build.read(os.path.join(mod, "coop_look/red.bin"))))
+        self.assertEqual(_ll.texels(own_tile), red_look["Angin_Tile_A_Alb"])
+        self.assertNotEqual(_ll.texels(pup_tile), red_look["Angin_Tile_A_Alb"])
+        self.assertEqual(_ll.texels(unmark(pup_tile)), red_look["Angin_Tile_A_Alb"])
         self.assertNotIn("green", m["self_files"])
-        vest = d.decompress(build.read(os.path.join(mod, m["self_files"]["red"]["Tex/Mt_Vest_Player_Adult_Alb.bntx.zs"])))
+        vest = d.decompress(build.read(os.path.join(mod, m["self_files"]["red"]["Tex/Mt_Vest_Coop_S_Adult_Alb.bntx.zs"])))
         game_vest = d.decompress(build.read(os.path.join(self.romfs, "Tex/Mt_Vest_Player_Adult_Alb.bntx.zs")))
         self.assertEqual(len(vest), len(game_vest))
         self.assertNotEqual(vest, game_vest)
@@ -1605,13 +1639,15 @@ class FullBuildTest(unittest.TestCase):
         for c in ("red", "blue"):
             self.assertEqual([n for n, _ in looks[c]], names)
             for n, data in looks[c]:
-                self.assertEqual(len(data), len(game[n]), n)
+                if n != tunic.DARK:   # (the dark tile: the kit's BC3 copy, below)
+                    self.assertEqual(len(data), len(game[n]), n)
             self.assertNotEqual(looks[c][0][1], game[names[0]])
-        # the tile is your own tile's; the dark tile keeps the game's format (not the BC3 copy)
+        # the tile is your own tile's; the dark tile the BC3 copy the kit puts over the game's for your
+        # colour (self_dark_tiles): what the game's memory holds then
         self.assertEqual(looks["red"][0][1], look_live.texels(d.decompress(build.read(
             os.path.join(mod, m["self_tiles"]["red"])))))
-        self.assertEqual(looks["red"][1][1], look_live.texels(tunic_extra.recolor(game_dark, "red",
-                                                                                  tunic.average_luma(game_tile))))
+        self.assertEqual(looks["red"][1][1], look_live.texels(d.decompress(build.read(
+            os.path.join(mod, m["self_dark_tiles"]["red"])))))
 
     def test_build_look_files_without_green(self):
         from puppet_pack import look_live

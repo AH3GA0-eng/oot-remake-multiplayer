@@ -1,0 +1,53 @@
+# hs-graveyard (graveyard-b, owner retest R6/R7, 2026-11-14): the night Poe and a pulled grave in both games.
+# As hs-skulltula-token: the kit save loads in the Graveyard, the host's clock goes to 20:00, both walk out
+# to Kakariko and back so the Graveyard loads at night. A walks among the graves (the game makes the Poe
+# near Link), then pushes the grave Obj_Tombstone_A_01 (Banc 21.53 103.03 11.17, hash
+# 14296617607783081483) by walking into it from its front (-x), then tries a pull (hold A, stick back).
+# Then the test kill of the Poe. B watches from about 10 m (-x of the graves).
+# The host sets 20:00 10 s after joining and again 10 s after its save load (the save's own time replaced the
+# title's set in the 2026-11-14 run: daylight); the guests take the host's jump (docs/time.md).
+#! switches LICHII_COOP_TIME_TEST_SET=72000@10,LICHII_COOP_DEBUG_TIME=1
+#! timeout 330
+# Pass: A "share" OBJECT_SPAWN path: A log `+ Enemy_Poe`, B log `+ Enemy_Poe` too (a copy) with the same
+# made id, `share owner` for it; after `kill Enemy_Poe` A "test kill Enemy_Poe ... hit", both logs
+# `- Enemy_Poe`. Grave: A "world: <hash> Obj_Tombstone_A_01 moved here: sending", B "moved by another
+# player"; shots `pushed`/`pulled` show the grave moved on both screens.
+# INCONCLUSIVE: "test kill Enemy_Poe ... none here with a life" (no Poe made: still day, or not near).
+mark start
+wait 2400
+mark night
+stick 0 -1 120
+wait 480
+mark kakariko
+stick 0 -1 150
+wait 480
+mark graveyard
+goto -5.0 8.0 1.0 900
+goto 10.0 8.0 1.0 900
+wait 300
+mark poe-1
+goto 14.0 0.0 1.0 600
+wait 300
+mark poe-2
+goto 14.0 18.0 1.0 600
+wait 300
+mark poe-3
+goto 18.5 11.17 0.5 600     # in front of the grave at 21.53 11.17 (it faces -x)
+toward 21.53 11.17 15
+mark at-grave
+toward 25.0 11.17 150       # walk into it: a push toward +x
+wait 120
+mark pushed
+toward 21.53 11.17 10
+hold A 30                   # a grab, then pull back toward -x with A held
+toward 14.0 11.17 120 A
+wait 120
+mark pulled
+goto 14.0 11.0 1.0 600
+mark before-kill
+kill Enemy_Poe
+wait 120
+mark killed
+kill Enemy_Poe
+wait 300
+mark end

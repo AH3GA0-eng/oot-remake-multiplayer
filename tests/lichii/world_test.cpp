@@ -1037,20 +1037,24 @@ TEST_CASE("world: movables, grass actors and the new breakables by name") {
     for (const char* name : {"Obj_MovableBox_A_01", "Obj_ForestTemple_MovableBox_A_03",
                              "Obj_LonLonRanch_MovableBox_A_01", "Obj_SliderBox_A_01",
                              "Obj_AmosStatue_A_01", "Obj_Kokiri_RollingRock_A_01", "Obj_RollingRock_A_05",
-                             "Obj_Firetemple_RollingRock_A_01"}) {
+                             "Obj_Firetemple_RollingRock_A_01", "Obj_Tombstone_A_01",
+                             "Obj_Graveyard_Tombstone_A_01", "Obj_Graveyard_Tombstone_A_02"}) {
         CAPTURE(name);
         CHECK(CoopWorld::IsMovable(name));
         CHECK_FALSE(CoopWorld::IsBreakable(name));
     }
     for (const char* name : {"Obj_MovableBox_BasePosAnchor", "Obj_Pot_A_01", "Obj_Deku_MoveFloor_A_01",
                              "Enemy_MovableBox_A_01", "Land_Kokiri_RollingRockArea_A_01",
-                             "FldObj_AirWall_RollingRock", "RollingRockSpawnActor_DeathMountainTrail"}) {
+                             "FldObj_AirWall_RollingRock", "RollingRockSpawnActor_DeathMountainTrail",
+                             "Obj_Graveyard_Tombstone_A_03", "Land_Graveyard_TombstoneBase_A_01"}) {
         CAPTURE(name);
         CHECK_FALSE(CoopWorld::IsMovable(name));
     }
     CHECK(CoopWorld::IsRoller("Obj_Kokiri_RollingRock_A_01"));
     CHECK_FALSE(CoopWorld::IsRoller("Obj_MovableBox_A_01"));
     CHECK_FALSE(CoopWorld::IsPushBlock("Obj_Kokiri_RollingRock_A_01"));
+    CHECK(CoopWorld::IsGravestone("Obj_Tombstone_A_01"));
+    CHECK_FALSE(CoopWorld::IsPushBlock("Obj_Tombstone_A_01"));  // moved and placed, no rest-word fix
     CHECK(CoopWorld::IsBreakable("Obj_Zora_GuidePost_A_01"));
     CHECK(CoopWorld::IsBreakable("Obj_RedIce_A_01"));
     CHECK(CoopWorld::IsGrassActor(kTuft));
