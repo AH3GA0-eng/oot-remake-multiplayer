@@ -543,6 +543,16 @@ tools\autotest\run.ps1 -Scenario walk -Lag 150 -Jitter 20 -Loss 2 -Spike 500/10
 
 `-NetSimFor A` puts only A behind the relay (B connects straight: A slow, B fine). `-NetSimArgs` passes more relay options, `A:` or `B:` for one game only: `-NetSimArgs "--seed 3","B:--down loss=10"`. The relay's Python is the recomp's `.venv` beside the repo, else `py -3` or `python` (`-Python` sets it). The run folder gets `netsim.txt` (the conditions and each relay's command line) and `netsim-A.txt` / `netsim-B.txt` (each relay's counts).
 
+### On Longshot: the server's test delay
+
+Longshot games cannot be put behind the relay, so with `-Runtime hookshot` (and `-Kit`, `groups.py --lag N --jitter J`) `-Lag` and `-Jitter` go to the server instead: `coop_server --test-delay-ms N --test-jitter-ms J` holds every packet (`server/test_delay.hpp`). The same rules as the relay: `N` is the added round trip, half each way; each packet gets ± up to `J` ms on top, each way; one player's packets in one direction keep their order, so reliable stays reliable. Both games get it (no `-NetSimFor`); `-Loss`, `-Spike` and `-NetSimArgs` stay emulator-only. ENet's own round trip does not see it (its acknowledgements are not held), the game's PING/PONG does.
+
+```
+tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-puppets -Lag 250 -Jitter 60
+```
+
+**Tests only.** The server refuses both options unless its environment has `OOT_COOP_TEST=1` (`hookshot.py` and `hs_steps.py` set it for their server only) and prints `TEST DELAY on: ...` in `server-out.txt` when it runs with them. Never put them in a kit's start-server.
+
 ### What it does to the puppet
 
 `coop_test` ([soak.md](soak.md)) shows the effect without the game: its clients draw each other with the same `coop/presence` code as the emulator, and its `shown error` line is how far, in game units, the drawn player is from where it really was at the time shown. The largest is the biggest correction the puppet makes when the late samples arrive: the rubber-band. One server, client `lagA` through the relay, client `okB` straight, 30 s each (`coop_test --server-only`, then one `--connect` client each; the moving player runs a circle of 100 units every 4 s, about 157 units/s):
