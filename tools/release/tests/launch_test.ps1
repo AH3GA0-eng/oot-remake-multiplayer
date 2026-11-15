@@ -1262,8 +1262,10 @@ try {
 # (TEST_PYTHON, else python on PATH): a junction to its folder; skipped without one.
 $pyExe = if ($env:TEST_PYTHON) { $env:TEST_PYTHON } else { (Get-Command python -ErrorAction SilentlyContinue | Select-Object -First 1).Source }
 $pyHome = ''
-if ($pyExe -and (Test-Path -LiteralPath $pyExe)) {
-    $pyHome = "$(& $pyExe -I -c 'import sys; print(sys.base_prefix)' 2>$null)".Trim()
+# (the Windows Store stub, WindowsApps\python.exe, is found and exists but only prints "Python was not found" to
+# stderr, which this script's Stop preference turns into an error: no real Python, so the cases are skipped)
+if ($pyExe -and $pyExe -notmatch '\\WindowsApps\\' -and (Test-Path -LiteralPath $pyExe)) {
+    try { $pyHome = "$(& $pyExe -I -c 'import sys; print(sys.base_prefix)' 2>$null)".Trim() } catch { $pyHome = '' }
 }
 if ($pyHome -and (Test-Path -LiteralPath (Join-Path $pyHome 'python.exe'))) {
     $pk = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-packonly-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
