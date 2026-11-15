@@ -182,10 +182,10 @@ std::vector<Tab::Line> Tab::Lines() const {
             note("Only the host has the invite code: ask them for it.");
         }
         heading("Host's game");
-        // The place is a name the table may have (places.json's); the counts are data,
-        // and "10 / 10 hearts" is a shape the table fills ("10 / 10 颗心").
-        std::string game = lobby_.host_place.empty() ? CoopI18n::Tr("Not known yet")
-                                                     : CoopI18n::Place(lobby_.host_place);
+        // The place comes already through the table (as each player's does: the module's
+        // Place()); the counts are data, and "10 / 10 hearts" is a shape the table fills
+        // ("10 / 10 颗心").
+        std::string game = lobby_.host_place.empty() ? CoopI18n::Tr("Not known yet") : lobby_.host_place;
         if (lobby_.host_life && lobby_.host_max && *lobby_.host_max > 0) {
             game += "  " +
                     CoopI18n::Tr(Hearts(*lobby_.host_life) + " / " + Hearts(*lobby_.host_max) + " hearts");
