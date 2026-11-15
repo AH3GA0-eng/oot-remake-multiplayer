@@ -169,7 +169,6 @@ private:
     float last_change_ = 0.0f;
     float sum_ = 0.0f;
     int moving_ = 0;
-    int frames_ = 0;
     std::uint64_t start_ms_ = 0;
 };
 inline constexpr std::uint64_t kEvenReportMs = 5000;
