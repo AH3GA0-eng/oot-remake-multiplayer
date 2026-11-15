@@ -1,9 +1,11 @@
 // Tests for the pose copy's math and its track (lichii/hook/coop_pose.cpp).
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -607,4 +609,97 @@ TEST_CASE("pose: the evenness number reads an even turn as 0 and an uneven one h
             CHECK(*u > 0.5f);
         }
     }
+}
+
+// idle-twitch (owner: "other puppets still twitch a little while standing still").
+namespace {
+
+float SwingAt(std::uint64_t ms) { return std::sin(2.0f * 3.14159265f * static_cast<float>(ms % 1000) / 1000.0f); }
+
+// Standing, breathing: 300 bones each turning +-1.5 degrees about x at 0.3 Hz (their own phase);
+// bone 0 swings fast (a real move: +-1 rad at 1 Hz, up to 6 rad a second) when `swing`.
+std::vector<proto16::PoseBone> Breathing(std::uint64_t ms, bool swing = false) {
+    std::vector<proto16::PoseBone> bones;
+    for (std::uint16_t i = 0; i < 300; ++i) {
+        const float t = static_cast<float>(ms) / 1000.0f;
+        float angle = 0.026f * std::sin(2.0f * 3.14159265f * 0.3f * t + 0.1f * static_cast<float>(i));
+        if (i == 0 && swing) angle = SwingAt(ms);
+        proto16::PoseBone b;
+        b.bone = i;
+        b.rotation = CoopPose::Pack({std::sin(angle / 2.0f), 0.0f, 0.0f, std::cos(angle / 2.0f)});
+        bones.push_back(b);
+    }
+    return bones;
+}
+
+float AngleOf(const Quat& q) { return 2.0f * std::atan2(q[0], q[3]); }
+
+struct Played {
+    float worst_step = 0.0f;  // the most any bone turned in one frame, radians
+    float swing_lag = 0.0f;   // the most bone 0's shown angle is off its angle at the shown time
+};
+
+// Sends at kSendHz through the picker, timed (made = sent), shown every 16 ms frame.
+Played Play(bool eased, bool swing) {
+    CoopPose::BonePicker picker;
+    CoopPose::Track track;
+    std::uint64_t next_send = 5000;
+    std::optional<CoopPose::Pose> last;
+    Played out;
+    for (std::uint64_t now = 5000; now < 9000; now += 16) {
+        while (next_send <= now) {
+            const auto sent = Unpacked(picker.Pick(0x1234, Breathing(next_send, swing), next_send));
+            if (eased) {
+                track.Add(sent, next_send, next_send);
+            } else {
+                track.Push(track.Fill(sent), next_send, next_send);
+            }
+            next_send += 1000 / CoopPose::kSendHz;
+        }
+        const auto shown = track.At(now);
+        if (!shown) continue;
+        if (now > 7000 && last && last->bones.size() == shown->bones.size()) {
+            for (std::size_t i = swing ? 1 : 0; i < shown->bones.size(); ++i) {
+                const float step = std::fabs(AngleOf(*shown->bones[i].rotation) - AngleOf(*last->bones[i].rotation));
+                out.worst_step = std::max(out.worst_step, step);
+            }
+        }
+        last = shown;
+        if (swing && now > 7000 && !shown->bones.empty()) {
+            out.swing_lag = std::max(out.swing_lag, std::fabs(SwingAt(now - CoopPose::kShowDelayMs) -
+                                                              AngleOf(*shown->bones[0].rotation)));
+        }
+    }
+    return out;
+}
+
+}  // namespace
+
+TEST_CASE("pose: a still player's breathing bones are eased over their own send gap, not stepped") {
+    // The true motion: at most 2 pi 0.3 Hz x 0.026 rad a second, ~0.8 mrad a 16 ms frame.
+    const float true_step = 2.0f * 3.14159265f * 0.3f * 0.026f * 0.016f;
+    const Played before = Play(false, false);
+    const Played after = Play(true, false);
+    MESSAGE("worst bone step a frame: held and stepped " << before.worst_step << " rad, eased "
+                                                          << after.worst_step << " rad (true " << true_step << ")");
+    CHECK(before.worst_step > 3.0f * true_step);  // the stepping the owner saw
+    CHECK(after.worst_step < 1.6f * true_step);   // now about the real motion
+}
+
+TEST_CASE("pose: a fast bone (a real move) is shown as before, with no lag added") {
+    const Played before = Play(false, true);
+    const Played after = Play(true, true);
+    CHECK(before.swing_lag < 0.1f);
+    CHECK(after.swing_lag <= before.swing_lag + 1e-4f);
+}
+
+TEST_CASE("pose: Add without times or on a new skeleton eases nothing") {
+    CoopPose::Track track;
+    CHECK(track.Add(Unpacked(Breathing(5000)), 5000, 0) == 0);
+    CHECK(track.Add(Unpacked(Breathing(5500)), 5500, 0) == 0);
+    REQUIRE(track.At(5500));
+    CHECK(!track.Timed());
+    CoopPose::Track timed;
+    CHECK(timed.Add(Unpacked(Breathing(5000)), 5000, 5000) == 0);  // a first: as sent
+    REQUIRE(timed.At(5100));
 }

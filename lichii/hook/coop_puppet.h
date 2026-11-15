@@ -482,6 +482,7 @@ private:
         CoopFollow::Follower raw_follow;    // jitter-2: the same on the raw frame time (not drawn;
         CoopFollow::Steps raw_steps;        //   the log's before number)
         CoopFollow::Turner turner;          // jitter-3: their rotation taken to this game frame
+        CoopFollow::Stillness stillness;    // idle-twitch: how still it is drawn while they stand (logged)
         CoopSnap::Smoother smooth;          // issue 194: where it is drawn, jumps eased
         CoopSnap::Meter meter;              // issue 194: its place read back, snaps logged
         bool meter_skip = false;            // the next read is still the parked spot
