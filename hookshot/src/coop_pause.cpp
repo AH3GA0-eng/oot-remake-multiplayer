@@ -219,8 +219,14 @@ bool Busy() {
     return g_coop_on || (st.state != HOS_COOP_IDLE && st.state != HOS_COOP_FAILED);
 }
 
+void Save();
+
 void Host() {
-    if (Busy()) {
+    if (g_doing == "hosting" && !g_coop_on) {
+        Save();
+        CoopHookshot::HostMenu().Leave();
+        g_doing.clear();
+    } else if (Busy()) {
         g_menu.SetNote({"Co-op is on already in this game: stop it first, or start the game again."});
         return;
     }
@@ -230,8 +236,8 @@ void Host() {
     HosCoopHostOptions h{};
     h.size = sizeof h;
     h.name = o.name.c_str();
-    h.password = nullptr;   // a new random one, inside the invite code: nobody types it
-    h.port = 0;
+    h.password = o.password.empty() ? nullptr : o.password.c_str();
+    h.port = o.host_port;
     h.upnp = 1;             // the router forward (nothing to set up)
     h.invite = 1;
     h.pvp = o.pvp ? 1 : 0;
@@ -244,7 +250,7 @@ void Host() {
         RefreshSession(true);
         return;
     }
-    LOG_INFO(Core, "coop: multiplayer tab: host: started (up to {} players)", o.max_players);
+    LOG_INFO(Core, "coop: multiplayer tab: host: started (up to {} players, port {})", o.max_players, o.host_port);
     RefreshSession(true);
 }
 
@@ -274,6 +280,8 @@ void Join(const std::string& text) {
     CoopFiles::SetCoopEnvironment(o);
     const bool invite = std::holds_alternative<CoopTitleMenu::JoinInvite>(target);
     const std::string where = invite ? text : std::get<CoopTitleMenu::JoinAddress>(target).server;
+    // Only what the player gave (the invite code, or the password after the address): never this game's own
+    // server_password, which is its host secret and not the other server's.
     const std::string password = invite ? std::string() : std::get<CoopTitleMenu::JoinAddress>(target).password;
     HosCoopJoinOptions j{};
     j.size = sizeof j;
@@ -303,6 +311,12 @@ void Leave() {
     g_menu.SetNote({"Co-op stopped. You play on alone."});
 }
 
+// The Settings page's Microphone row (voice on): the microphones there now, listed only while voice is on (none
+// opened); none when this game cannot choose one (an older patch 0009).
+void MicRows() {
+    g_menu.SetMicrophones(g_menu.options().voice ? CoopVoice::Microphones() : std::nullopt);
+}
+
 void Save() {
     const auto kit = FindKit();
     std::string coop = ReadText(CoopIni());
@@ -319,6 +333,8 @@ void Save() {
     CoopVoice::SetMode(!g_menu.options().voice     ? coop::voice::Mode::off
                        : g_menu.options().voice_ptt ? coop::voice::Mode::push_to_talk
                                                     : coop::voice::Mode::open_mic);   // voice chat and its mode count at once
+    CoopVoice::SetMicrophone(g_menu.options().voice_mic);   // and its microphone
+    MicRows();   // (voice just turned on: the Microphone row's list)
     CoopHookshot::SetChatKey(g_menu.options().chat_key);   // the chat key too
     CoopHookshot::SetMapOptions(g_menu.options().map_players, g_menu.options().map_names);   // at once too
     LOG_INFO(Core, "coop: multiplayer tab: settings saved{}{}", ok ? "" : " (a file could not be written)",
@@ -472,6 +488,7 @@ void ShowTab() {
     const auto last = CoopTitleMenu::IniGet(coop, "last_invite");
     g_menu.SetRejoin(CoopTitleMenu::IniGet(coop, "last_host").value_or(""), last.value_or(""));
     InputRows();   // (a controller plugged in while the menu was closed: its name)
+    MicRows();     // (and a microphone plugged in)
     RefreshSession(true);
 }
 

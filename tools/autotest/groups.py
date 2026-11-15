@@ -27,6 +27,8 @@ Group N (the Nth [group] in the file) uses the game folders <kit root>\\hookshot
 With --lane N (tools/autotest/lanes.py) every group runs in that test lane instead, one after another on the lane's
 pair, port and pipes (run.ps1 -Lane N, which holds the lane's lock for each run), run folders under
 <kit root>\\ls\\shots-laneN\\groups-<time>\\. The other lane can run another group file at the same time.
+With --lane N --kit <kit A>,<kit B> every game is started by that kit's own start, as a player's (run.ps1 -Kit;
+tools/autotest/kit_pair.py setup makes the two kits from a release zip and points them at the lane's pair).
 
 Result of one run (merge): FAILED.txt in the run folder -> FAIL; a FAIL line in counts.txt -> FAIL; run.ps1's exit code
 not 0 -> FAIL; every expect= found -> PASS, one missing -> FAIL; no expect= -> PLAYED (it ran to the end; look at the
@@ -136,8 +138,8 @@ def check_distinct(setups):
             seen[k] = s["name"]
 
 
-def run_command(setup, run, server, run_ps1=None):
-    """The run.ps1 command line for one scenario of a group."""
+def run_command(setup, run, server, run_ps1=None, kits=None):
+    """The run.ps1 command line for one scenario of a group (kits: the A and B kit folders, run.ps1 -Kit)."""
     cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
            run_ps1 or os.path.join(HERE, "run.ps1"), "-Runtime", "hookshot", "-Scenario", run["scenario"],
            "-HookshotA", setup["a"], "-HookshotB", setup["b"], "-Port", str(setup["port"]), "-Pipe", setup["pipe"],
@@ -150,6 +152,8 @@ def run_command(setup, run, server, run_ps1=None):
         cmd += ["-Timeout", str(run["timeout"])]
     if run.get("password"):
         cmd += ["-ServerPassword", run["password"]]
+    if kits:
+        cmd += ["-Kit", ",".join(kits)]
     return cmd
 
 
@@ -166,7 +170,11 @@ def lane_setup(lane, name, kit_root, run_root):
             "shots": os.path.join(run_root, name)}
 
 
-def plan(groups, kit_root, run_root, server, lane=0):
+def plan(groups, kit_root, run_root, server, lane=0, kits=None):
+    if kits and not lane:
+        raise Fail("--kit runs in a test lane only (--lane N): the kits start that lane's pair (kit_pair.py setup)")
+    if kits and len(kits) != 2:
+        raise Fail("--kit: two kit folders, A,B")
     if lane:   # every group on the lane's one pair: run_groups plays them one after another
         setups = [lane_setup(lane, name, kit_root, run_root) for name, _ in groups]
     else:
@@ -174,7 +182,7 @@ def plan(groups, kit_root, run_root, server, lane=0):
         check_distinct(setups)
     planned = []
     for s, (_, runs) in zip(setups, groups):
-        cmds = [run_command(s, r, server) for r in runs]
+        cmds = [run_command(s, r, server, kits=kits) for r in runs]
         if lane:
             cmds = [c + ["-Lane", str(lane)] for c in cmds]
         planned.append((s, runs, cmds))
@@ -408,6 +416,8 @@ def main(argv=None):
         p.add_argument("--run-root", help="default: <kit root>\\shots-hookshot\\groups-<time>")
         p.add_argument("--dry-run", action="store_true")
         p.add_argument("--lane", type=int, choices=[1, 2], help="run every group in this test lane (lanes.py)")
+        p.add_argument("--kit", help="A,B: kit folders whose own start starts the lane's games (run.ps1 -Kit; "
+                                     "kit_pair.py setup)")
     m = sub.add_parser("merge")
     m.add_argument("paths", nargs="+")
     m.add_argument("--out", help="write the table here too")
@@ -429,7 +439,8 @@ def main(argv=None):
                                   else os.path.join(kit, "shots-hookshot", stamp))
         with open(a.groups, encoding="utf-8") as f:
             groups = parse_groups(f.read())
-        planned = plan(groups, kit, run_root, server, a.lane or 0)
+        kits = [os.path.abspath(k.strip()) for k in a.kit.split(",") if k.strip()] if a.kit else None
+        planned = plan(groups, kit, run_root, server, a.lane or 0, kits)
         if a.cmd == "prepare" and a.lane:
             raise Fail("a lane's pair is filled by lanes.py setup --lane %d (hard links for read-only files only)"
                        % a.lane)

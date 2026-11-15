@@ -229,13 +229,18 @@ if ($Mode -eq 'title') {
     # "the puppet pack's tunic files are green, your colour is orange"); the module then took the switches
     # itself ("started without the kit's launcher"). The session's variables go after it all the same.
     Set-KitOptionVariables
+    # (OOT_COOP_TEST_KIT, the autotest's kit mode, tools/autotest/hookshot.py --kit-a: its test server and join
+    # password stay, as the title menu's Join would set them, and the game's process id goes into that file)
+    $testKit = "$env:OOT_COOP_TEST_KIT"
     foreach ($v in 'LICHII_COOP_SERVER', 'LICHII_COOP_PASSWORD', 'OOT_COOP_SESSION_PASSWORD', 'OOT_COOP_JOIN_PASSWORD', 'LICHII_COOP_HOST_SAVE') {
+        if ($testKit -and $v -in 'LICHII_COOP_SERVER', 'LICHII_COOP_PASSWORD') { continue }
         Remove-Item -Path "env:$v" -ErrorAction SilentlyContinue
     }
     [void](Use-KitPuppetPack (Join-Path $emu 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json') (Join-Path $kit 'tools\puppet_pack') @(
         'Puppet pack: not in the co-op game, so the other players show as names only (the game''s chat says so too).',
         $(if ($hsOnly) { '  It is made from your game file (the one hookshot\game-files.txt names): put that file back, then start again.' } else { '  Run Build-Hookshot-Coop.bat -Game <your .nup> again (SETUP.md, "Play on Hookshot").' })))
-    [void](Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru)
+    $game = Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru
+    if ($testKit -and $game) { [System.IO.File]::WriteAllText($testKit, "$($game.Id)`n") }
     Write-Host 'Game started. Host or Join in the game''s menu, first tab Multiplayer (controller: Minus and Plus together, or Home;'
     Write-Host 'keyboard: F1; on the title screen Minus alone). Same house: Host, then "Same network". On a VPN: Host, then "VPN".'
     if (-not $hsOnly) { Write-Host 'Host-Hookshot.bat and Join-Hookshot.bat still host or join from a window like this one instead.' }

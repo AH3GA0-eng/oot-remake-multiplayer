@@ -155,6 +155,31 @@ TEST_CASE("dbno guard: the Life step's lethal hit shields at once and is counted
     CHECK_FALSE(guard.TakeLethal());
 }
 
+// Player report 34 (Kerbex's 0.11.0 log): a PvP hit of 2 at life 2 went in as
+// the game's own hit, which the guard held at 1 (downed); 400 ms later PvP's
+// fallback wrote the life it expected, 0, and the downed Link died.
+TEST_CASE("dbno guard: a write past the Life step is guarded as the step is") {
+    CoopDbno::LifeGuard guard;
+    guard.Set(CoopDbno::Guard::last_stand);
+    // The game's own hit: held back, downed.
+    CHECK(guard.Step(2, 2) == 1);
+    CHECK(guard.Get() == CoopDbno::Guard::shielded);
+    // The fallback write of what PvP expected: nothing more is taken.
+    CHECK(CoopDbno::GuardedWrite(guard, 1, 0) == 1);
+    CHECK(guard.TakeLethal());
+    CHECK_FALSE(guard.TakeLethal());  // counted once
+    // Without the game's hit (it never came): the write itself downs him.
+    guard.Set(CoopDbno::Guard::last_stand);
+    CHECK(CoopDbno::GuardedWrite(guard, 2, 0) == CoopDbno::kDownedLife);
+    CHECK(guard.TakeLethal());
+    // A write that does not kill, and the rules off: as asked.
+    guard.Set(CoopDbno::Guard::last_stand);
+    CHECK(CoopDbno::GuardedWrite(guard, 8, 6) == 6);
+    guard.Set(CoopDbno::Guard::off);
+    CHECK(CoopDbno::GuardedWrite(guard, 2, 0) == 0);
+    CHECK(CoopDbno::GuardedWrite(guard, 2, 5) == 5);  // a raise is never held
+}
+
 TEST_CASE("dbno guard: the game's thread and the frame's may run at once") {
     CoopDbno::LifeGuard guard;
     guard.Set(Guard::last_stand);

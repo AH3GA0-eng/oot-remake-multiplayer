@@ -1,0 +1,143 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// CoopLiftRide (jabu-lifts, player report #65): another player on our lift sets its RideOnPlayer through the
+// game's set-bool.
+#include <doctest/doctest.h>
+
+#include <map>
+
+#include "coop_fairy.h"
+#include "coop_lift_ride.h"
+#include "coop_logic_probe.h"
+
+namespace {
+namespace a = CoopLiftRide::addr;
+namespace p = CoopLogicProbe::addr;
+
+class FakeGuest : public CoopPuppet::Guest {
+public:
+    bool Read(std::uint64_t address, void* out, std::size_t size) override {
+        auto* b = static_cast<std::uint8_t*>(out);
+        for (std::size_t i = 0; i < size; ++i) {
+            const auto it = bytes.find(address + i);
+            b[i] = it == bytes.end() ? 0 : it->second;
+        }
+        return true;
+    }
+    bool Write(std::uint64_t address, const void* in, std::size_t size) override {
+        const auto* b = static_cast<const std::uint8_t*>(in);
+        for (std::size_t i = 0; i < size; ++i) bytes[address + i] = b[i];
+        return true;
+    }
+    template <typename T>
+    void Put(std::uint64_t address, T v) {
+        Write(address, &v, sizeof v);
+    }
+    template <typename T>
+    T Get(std::uint64_t address) {
+        T v{};
+        Read(address, &v, sizeof v);
+        return v;
+    }
+    std::map<std::uint64_t, std::uint8_t> bytes;
+};
+
+constexpr std::uint64_t kMain = 0x7100000000;
+constexpr std::uint64_t kLift = 0x1000;
+constexpr std::uint64_t kBlock = 0x9000;
+constexpr std::uint64_t kValue = 0x7000;
+
+// A present lift whose logic has one plug, RideOnPlayer (bool) at `value`.
+void Lift(FakeGuest& g, std::uint32_t key = CoopLiftRide::kRideOnPlayer ^ 7u, std::uint8_t value = 0) {
+    g.Put<std::uint32_t>(kLift + CoopFairy::addr::kActorState, CoopFairy::addr::kStatePresent);
+    g.Put<std::uint64_t>(kLift + p::kActorLogic, 0x2000);
+    g.Put<std::uint64_t>(0x2000 + p::kLogicInner, 0x3000);
+    g.Put<std::uint64_t>(0x3000 + p::kLogicState, 5);
+    g.Put<std::uint64_t>(0x3000 + p::kLogicTable, 0x4000);
+    g.Put<std::uint64_t>(0x4000 + p::kTableRootHolder, 0x5000);
+    g.Put<std::uint64_t>(0x5000 + p::kRoot, 0x6000);
+    g.Put<std::uint32_t>(0x6000 + p::kKey, key);
+    g.Put<std::uint8_t>(0x6000 + p::kType, CoopLogicProbe::kBool);
+    g.Put<std::uint64_t>(0x6000 + p::kValue, kValue | 2);
+    g.Put<std::uint8_t>(kValue, value);
+}
+
+}  // namespace
+
+TEST_CASE("lift ride: which lifts ride, and who stands on them") {
+    CHECK(CoopLiftRide::IsRideLift("Obj_InsideJabu_Jabu_ElevatorLift_A_01"));
+    CHECK(CoopLiftRide::IsRideLift("Obj_InsideJabu_Jabu_MoveFloor_A_01"));
+    CHECK_FALSE(CoopLiftRide::IsRideLift("Obj_Deku_MoveFloor_A_01"));
+    CHECK_FALSE(CoopLiftRide::IsRideLift("Obj_InsideTheDekuTree_ElevatorLift_A_02"));
+    CHECK_FALSE(CoopLiftRide::IsRideLift("Npc_ElevatorLift_A_01"));
+
+    const std::vector<CoopLiftRide::Lift> lifts{{0x10, "Obj_InsideJabu_Jabu_ElevatorLift_A_01", {-32.36f, 84.5f, -93.31f}},
+                                                {0x20, "Obj_InsideJabu_Jabu_MoveFloor_A_01", {0.32f, 92.5f, -42.63f}}};
+    CHECK(CoopLiftRide::Ridden(lifts, {}).empty());
+    CHECK(CoopLiftRide::Ridden(lifts, {{-32.0f, 84.6f, -93.0f}}) == std::vector<std::uint64_t>{0x10});
+    CHECK(CoopLiftRide::Ridden(lifts, {{-29.0f, 84.5f, -93.31f}}).empty());  // 3.4 m off: stepped off
+    CHECK(CoopLiftRide::Ridden(lifts, {{-32.36f, 80.0f, -93.31f}}).empty());  // under it
+    CHECK(CoopLiftRide::Ridden(lifts, {{-32.36f, 86.5f, -93.31f}, {0.5f, 92.5f, -42.0f}}) ==
+          std::vector<std::uint64_t>{0x10, 0x20});
+}
+
+TEST_CASE("lift ride: one malloc, then the game's set-bool on our node block naming the lift") {
+    FakeGuest g;
+    Lift(g);
+    CoopLiftRide::Rider r;
+    CHECK_FALSE(r.Step(g, false, 0, 100));  // nothing wanted
+    r.Want({kLift}, kMain, 100);
+    auto c = r.Step(g, false, 0, 100);
+    REQUIRE(c);
+    CHECK(c->function == kMain + a::kMalloc);
+    CHECK(c->x[0] == a::kBlockSize);
+    c = r.Step(g, true, kBlock, 100);
+    REQUIRE(c);
+    CHECK(c->function == kMain + a::kExecute);
+    CHECK(c->x[0] == kBlock);
+    // What the execute reads.
+    CHECK(g.Get<std::uint64_t>(kBlock) == kMain + a::kVtable);
+    CHECK((g.Get<std::uint8_t>(kBlock + a::kNodeFlags) & 2) != 0);
+    CHECK((g.Get<std::uint32_t>(kBlock + a::kNodeKey) ^ 7u) == g.Get<std::uint32_t>(0x6000 + p::kKey));
+    const auto owner = g.Get<std::uint64_t>(kBlock + a::kNodeOwner);
+    const auto holder = g.Get<std::uint64_t>(owner + 8);
+    CHECK(g.Get<std::uint64_t>(holder + a::kHolderActor) == kLift);
+    CHECK(g.Get<std::uint8_t>(g.Get<std::uint64_t>(kBlock + a::kNodeValue)) == 1);
+    CHECK(holder + a::kHolderActor + 8 <= kBlock + a::kBlockSize);
+    CHECK_FALSE(r.Step(g, true, 0, 100));  // one lift: done for this frame
+    // The next frame: again (the lift's AI puts its own 0 back each frame), with no new malloc.
+    c = r.Step(g, false, 0, 116);
+    REQUIRE(c);
+    CHECK(c->function == kMain + a::kExecute);
+    CHECK(r.TakeNotes().size() == 1);  // logged once
+}
+
+TEST_CASE("lift ride: not set when on already, gone, without the plug, or no longer ridden") {
+    FakeGuest g;
+    CoopLiftRide::Rider r;
+    r.Want({kLift}, kMain, 100);
+    REQUIRE(r.Step(g, false, 0, 100));  // the malloc
+    CHECK_FALSE(r.Step(g, true, kBlock, 100));  // no lift there: not present
+    Lift(g, CoopLiftRide::kRideOnPlayer ^ 7u, 1);
+    CHECK_FALSE(r.Step(g, false, 0, 110));  // our Link is on it: 1 already
+    Lift(g, 0xa19eba9c);  // only RideOnCharacter
+    CHECK_FALSE(r.Step(g, false, 0, 120));
+    Lift(g);
+    g.Put<std::uint64_t>(kLift + p::kActorLogic, 0);  // no logic: the execute would read 0+0x118
+    CHECK_FALSE(r.Step(g, false, 0, 130));
+    Lift(g);
+    CHECK(r.Step(g, false, 0, 140));
+    CHECK_FALSE(r.Step(g, true, 0, 140));
+    CHECK_FALSE(r.Step(g, false, 0, 100 + CoopLiftRide::kHoldMs + 1));  // the rider's samples left the lift
+}
+
+TEST_CASE("lift ride: a failed malloc turns it off") {
+    FakeGuest g;
+    Lift(g);
+    CoopLiftRide::Rider r;
+    r.Want({kLift}, kMain, 100);
+    REQUIRE(r.Step(g, false, 0, 100));
+    CHECK_FALSE(r.Step(g, true, 0, 100));
+    r.Want({kLift}, kMain, 200);
+    CHECK_FALSE(r.Step(g, false, 0, 200));
+    CHECK(r.TakeNotes().size() == 1);
+}

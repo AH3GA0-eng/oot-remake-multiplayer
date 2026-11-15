@@ -22,9 +22,9 @@ The kit has one file to start: **`Start OoT Co-op.bat`**. Everything else is don
 3. **Double-click `Start OoT Co-op.bat`** in that folder. A window opens and checks the kit first (see [If something goes wrong](#if-something-goes-wrong)).
 4. **The first time, give it your game.** It asks you to drag your game's `.nup` file into the window and press Enter (for a `romfs` folder it then asks for the `exefs` folder). It remembers the file; it never asks again. Then it builds the game: **10 to 45 minutes, once**. The window shows each stage; the PC stays usable. It also makes the puppet pack (the other players' Link and tunic colours) from your game, and puts a **Play OoT Co-op** shortcut on your desktop.
 5. **The game starts.** **Host** and **Join** are in the game's menu, on its first tab, **Multiplayer**. To open it: on a controller **−** and **+** together (on an Xbox-style pad **View** and **Menu**), or **Home**; on the keyboard **F1** (Insert and Esc also open it unless you changed that in the menu); on the title screen **−** alone. The D-pad or the arrow keys choose, A or Enter confirms, B or Esc goes back.
-   - **Host:** one press. The Host screen's first line says it: *Invite code copied to your clipboard. Share it in DMs only: it contains your internet address.* Send the code in a DM (Discord, a text), never in a public channel; that is all most hosts need. Below it: **Paste friend's answer (or Ctrl+V)** when a friend's game shows an answer code, **Same network** for friends in the same house, **VPN** for friends on Radmin VPN, Hamachi, ZeroTier, Tailscale or WireGuard with you.
-   - **Join:** paste your friend's code (it is filled in already when it is on your clipboard), then OK.
-   - **Co-op Settings:** your name, your colour, the number of players when you host, voice chat.
+   - **Host:** one press. The Host screen's first line says it: *Invite code copied to your clipboard. Share it in DMs only: it contains your internet address.* Send the code in a DM (Discord, a text), never in a public channel; that is all most hosts need. Below it: **Paste friend's answer (or Ctrl+V)** when a friend's game shows an answer code, **Same network** for friends in the same house, **VPN** for friends on Radmin VPN, Hamachi, ZeroTier, Tailscale or WireGuard with you, and **Port** to choose a custom UDP port (1 to 65535; default 27510; changing it while hosting restarts hosting: friends join again with the new code).
+   - **Join:** paste your friend's code (it is filled in already when it is on your clipboard), or enter their **IP address**, **Port** and **Password** (from their Same network or VPN line), then **Join**.
+   - **Co-op Settings:** your name, your colour, the number of players and port when you host (`Players when you host`, `Port when you host`), voice chat.
 6. **Next time**, double-click `Start OoT Co-op.bat` or the desktop shortcut: the game starts in seconds.
 
 To check it works: in the game the other players show as Link with their name tags, and **T** opens the chat box. The log `longshot_log.txt` beside `longshot.exe` (in the kit's `hookshot\game\bin\`) says `coop: module loaded`, then `coop: connected`.
@@ -95,11 +95,11 @@ The start window says what is wrong and what to do. What it checks:
 
 ## Built Longshot yourself?
 
-The kit never plays a Longshot you built with Longshot's own builder, and moving that game into the kit folder does nothing: co-op needs its own build of the Longshot release the kit is made for (`hookshot\PIN`, now v3.0.0-rc.3), with co-op's changes in its source. A nightly or dev build is another version, so it cannot be used either.
+The kit never plays a Longshot you built with Longshot's own builder, and moving that game into the kit folder does nothing: co-op needs its own build of the Longshot release the kit is made for (`hookshot\PIN`, now v3.0.0-rc.4), with co-op's changes in its source. A nightly or dev build is another version, so it cannot be used either.
 
 Before the first build the kit asks once: **"Built Longshot yourself? ... Drag your Longshot game folder ... into this window"** (the folder with `longshot.exe`; just Enter, or 60 seconds, for no). The answer is kept in `hookshot\longshot-folder.txt`: to be asked again, delete that file before the game is built (once it is built, copy saves by hand, below). It then:
 - copies the tool downloads your Longshot's setup already has, when they are the very same files (by SHA-256): less to download;
-- copies its compiled files too when it is the same release (v3.0.0-rc.3), so that what co-op does not change is not compiled again (the game is still translated again, with co-op in it);
+- copies its compiled files too when it is the same release (v3.0.0-rc.4), so that what co-op does not change is not compiled again (the game is still translated again, with co-op in it);
 - copies your saves into the co-op game after the build (below).
 
 Nothing is ever changed in your Longshot's folders. Without a folder, the kit still reuses the downloads in Longshot Builder's home (`%LOCALAPPDATA%\LongshotBuilder`) when it finds one.

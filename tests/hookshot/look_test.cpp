@@ -504,6 +504,53 @@ TEST_CASE("look tunic: a texture the game makes again is drawn at the next step,
     CHECK(m.reads[other] > other_reads);
 }
 
+TEST_CASE("look tunic: an override goes when the game's memory there holds something else, its texture not finalized") {
+    // 0.11.0 players (tracker #32): effects' textures gone. The game gave the memory of Link's
+    // texture to another texture without finalizing it; the override stayed, drawn over the new one.
+    FakeTextures m(kBase, 0x10000);
+    PutFile(m, kBase + 0x1000, "Tile_A", TexelsOf(1));
+    const std::map<std::string, std::vector<std::uint8_t>> pack = {
+        {"green", LookFile({{"Tile_A", TexelsOf(1)}})},
+        {"red", LookFile({{"Tile_A", TexelsOf(9)}})},
+    };
+    std::vector<std::string> said;
+    CoopLookTunic::Wardrobe::Host host;
+    host.textures = &m;
+    host.file = [&](const std::string& c) -> std::optional<std::vector<std::uint8_t>> {
+        const auto it = pack.find(c);
+        return it == pack.end() ? std::nullopt : std::optional(it->second);
+    };
+    host.log = [&](const std::string& s) { said.push_back(s); };
+    CoopLookTunic::Wardrobe w(host);
+    const std::uint64_t at = kBase + 0x1000 + kOffset;
+    w.Wear("red");
+    w.Step(0);
+    REQUIRE(Drawn(m, at, 9));
+    // Another texture's texels over that memory, made a little before it (no finalize of Link's).
+    const std::vector<std::uint8_t> effect = TexelsOf(50);
+    std::memcpy(m.at(at), effect.data(), kTexels);
+    m.Make(at - 0x40, kTexels + 0x40);
+    w.Step(20);
+    CHECK(m.overrides() == 0);
+    CHECK(m.Drawn(at, kTexels) == effect);
+    CHECK(w.places().empty());
+    CHECK(std::any_of(said.begin(), said.end(), [](const std::string& s) {
+        return s.find("taken away") != std::string::npos;
+    }));
+    // A texture of Link's kept since keeps its override (nothing taken away).
+    std::memcpy(m.at(at), TexelsOf(1).data(), kTexels);
+    m.Make(at, kTexels);
+    w.Step(40);
+    CHECK(Drawn(m, at, 9));
+    const std::size_t lines = said.size();
+    m.Make(kBase + 0x9000, kTexels);   // (something else made: the generation moves)
+    w.Step(60);
+    CHECK(Drawn(m, at, 9));
+    CHECK(std::none_of(said.begin() + static_cast<std::ptrdiff_t>(lines), said.end(), [](const std::string& s) {
+        return s.find("taken away") != std::string::npos;
+    }));
+}
+
 // ---------------------------------------------------------------------------
 // The gear (coop_look_parts.h)
 

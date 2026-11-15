@@ -29,6 +29,11 @@ std::string Selected(const Menu& m) {
     return v.selected >= 0 ? v.rows[static_cast<std::size_t>(v.selected)].name : std::string();
 }
 
+std::string SelectedValue(const Menu& m) {
+    const View v = m.view();
+    return v.selected >= 0 ? v.rows[static_cast<std::size_t>(v.selected)].value : std::string();
+}
+
 void SelectRow(Menu& m, const std::string& name) {
     for (int i = 0; i < 20 && Selected(m) != name; ++i) {
         m.Press(Input::kDown);
@@ -98,7 +103,7 @@ TEST_CASE("pause tab: Host hosts in one press, then the page shows the code, the
     CHECK(m.view().gold == "Starting your game...");
     m.SetSession(Hosting(1));
     CHECK(Names(m) == std::vector<std::string>{"Copy the code again", "Paste friend's answer (or Ctrl+V)",
-                                               "Same network", "VPN", "Stop hosting"});
+                                               "Same network", "VPN", "Port", "Stop hosting"});
     // Ctrl+V (or Shift+Insert) on the Host page is Paste friend's answer, wherever the cursor is.
     CHECK(m.Press(Input::kPaste));
     const auto paste = m.TakeRequest();
@@ -121,15 +126,17 @@ TEST_CASE("pause tab: Host hosts in one press, then the page shows the code, the
     m.Press(Input::kDown);
     m.Press(Input::kDecide);
     CHECK(m.TakeRequest()->kind == Request::Kind::kCopyVpn);
-    // Stop takes a second press
+    // Port row, then Stop hosting
+    m.Press(Input::kDown);
+    REQUIRE(Selected(m) == "Port");
     m.Press(Input::kDown);
     REQUIRE(Selected(m) == "Stop hosting");
     m.Press(Input::kDecide);
     CHECK_FALSE(m.TakeRequest().has_value());
-    CHECK(m.view().rows[4].value == "Press again to confirm");
+    CHECK(m.view().rows[5].value == "Press again to confirm");
     m.Press(Input::kUp);   // anything else: not confirmed
     m.Press(Input::kDown);
-    CHECK(m.view().rows[4].value == "Stop");
+    CHECK(m.view().rows[5].value == "Stop");
     m.Press(Input::kDecide);
     m.Press(Input::kDecide);
     CHECK(m.TakeRequest()->kind == Request::Kind::kLeave);
@@ -170,9 +177,11 @@ TEST_CASE("pause tab: Join pastes the code in one press, then joins with it") {
     SelectRow(m, "Join a game");
     m.Press(Input::kDecide);
     CHECK(m.page() == Page::kJoin);
-    CHECK(Names(m) == std::vector<std::string>{"Friend's code", "Join"});
+    CHECK(Names(m) == std::vector<std::string>{"Friend's code", "IP address", "Port", "Password", "Join"});
     CHECK(m.view().rows[0].value == "Paste");
-    CHECK(m.view().rows[1].fixed);   // nothing to join yet
+    CHECK(m.view().rows[1].value == "Type");
+    CHECK(m.view().rows[2].value == "27510");
+    CHECK(m.view().rows[4].fixed);   // nothing to join yet
     m.Press(Input::kDecide);
     CHECK(m.typing());
     CHECK(m.view().typing);
@@ -203,12 +212,72 @@ TEST_CASE("pause tab: Join pastes the code in one press, then joins with it") {
     CHECK(Selected(e) == "Join");
 }
 
+TEST_CASE("pause tab: a new code replaces the one in the field, never goes beside it, and Clear empties it") {
+    const std::string old_code = "ABCDEFGHJKLMNPQRSTUVWXYZ-OLD1";
+    const std::string new_code = "ABCDEFGHJKLMNPQRSTUVWXYZ-NEW2";
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    m.Open(Page::kJoin);
+    m.Press(Input::kDecide);
+    m.TakeRequest();
+    CHECK(m.Paste(old_code));
+    // a long code shows its start, its end and its length: codes start alike
+    CHECK(Names(m) == std::vector<std::string>{"Friend's code", "Clear the code", "IP address", "Port", "Password", "Join"});
+    CHECK(m.view().rows[0].value == "ABCDEFGH...XYZ-OLD1 (29)");
+    // pressing the field again pastes at once, in place of the old code (one press, then Join)
+    SelectRow(m, "Friend's code");
+    m.Press(Input::kDecide);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kPaste);
+    CHECK(m.Paste(new_code));
+    CHECK(m.join_text() == new_code);
+    CHECK(Selected(m) == "Join");
+    // Ctrl+V while typing replaces it too
+    SelectRow(m, "Friend's code");
+    m.Press(Input::kDecide);
+    m.TakeRequest();
+    CHECK(m.Paste(""));   // nothing on the clipboard: the code stays, no complaint
+    CHECK(m.join_text() == new_code);
+    CHECK(m.typing());
+    CHECK(m.view().rows[0].value == "..." + new_code.substr(new_code.size() - 20) + "_");   // its end, typed
+    m.Press(Input::kPaste);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kPaste);
+    CHECK(m.Paste(old_code));
+    CHECK(m.join_text() == old_code);
+    // a code that comes as keystrokes (Win+V, an on-screen keyboard) starts a new code, not more of the old one
+    SelectRow(m, "Friend's code");
+    m.Press(Input::kDecide);
+    m.TakeRequest();
+    m.Paste("");
+    for (const char c : new_code) {
+        m.Char(static_cast<unsigned char>(c));
+    }
+    CHECK(m.join_text() == new_code);
+    m.Press(Input::kDecide);
+    // Backspace first edits the old code instead
+    SelectRow(m, "Friend's code");
+    m.Press(Input::kDecide);
+    m.TakeRequest();
+    m.Paste("");
+    m.Press(Input::kErase);
+    m.Char('3');
+    CHECK(m.join_text() == new_code.substr(0, new_code.size() - 1) + "3");
+    m.Press(Input::kDecide);
+    // Clear empties the field and goes back to it; Join waits for a code
+    SelectRow(m, "Clear the code");
+    m.Press(Input::kDecide);
+    CHECK(m.join_text().empty());
+    CHECK(Names(m) == std::vector<std::string>{"Friend's code", "IP address", "Port", "Password", "Join"});
+    CHECK(m.view().rows[0].value == "Paste");
+    CHECK(Selected(m) == "Friend's code");
+    CHECK(m.view().rows[4].fixed);
+}
+
 TEST_CASE("pause tab: Join offers the last game again first, one press") {
     Menu m;
     m.Show(CoopTitleMenu::Options{});
     m.Open(Page::kJoin);
     m.SetRejoin("Saria", "ABCDE-FGHJK");
-    CHECK(Names(m) == std::vector<std::string>{"Join Saria again", "Or a new code", "Join"});
+    CHECK(Names(m) == std::vector<std::string>{"Join Saria again", "Or a new code", "IP address", "Port", "Password", "Join"});
     CHECK(Selected(m) == "Join Saria again");
     m.Press(Input::kDecide);
     auto r = m.TakeRequest();
@@ -341,13 +410,14 @@ TEST_CASE("pause tab: Settings: name, Link's look, players and voice chat (off u
     m.Show(o);
     m.Open(Page::kSettings);
     CHECK(Names(m) == std::vector<std::string>{"Your name", "Link's look", "Players when you host",
-                                               "Proximity voice chat", "Chat key", "Show players on map",
-                                               "Names on map"});   // (no patch 0015: no input rows)
+                                               "Port when you host", "Proximity voice chat", "Chat key",
+                                               "Show players on map", "Names on map"});   // (no patch 0015: no input rows)
     View v = m.view();
     CHECK(v.rows[0].value == "Saria");
     CHECK(v.rows[1].value == "By player number");
-    CHECK(v.rows[3].kind == RowKind::kToggle);
-    CHECK_FALSE(v.rows[3].on);   // the default
+    CHECK(v.rows[3].value == "27510");
+    CHECK(v.rows[4].kind == RowKind::kToggle);
+    CHECK_FALSE(v.rows[4].on);   // the default
     // the name, typed
     m.Press(Input::kDecide);
     CHECK(m.typing());
@@ -419,10 +489,10 @@ TEST_CASE("pause tab: Settings: players on the map and their names, on unless tu
     m.Show(CoopTitleMenu::Options{});
     m.Open(Page::kSettings);
     View v = m.view();
-    REQUIRE(v.rows.size() == 7);   // (the chat key row before them; no patch 0015: no input rows)
-    CHECK(v.rows[5].kind == RowKind::kToggle);
-    CHECK(v.rows[5].on);
+    REQUIRE(v.rows.size() == 8);   // (the port and chat key rows before them; no patch 0015: no input rows)
+    CHECK(v.rows[6].kind == RowKind::kToggle);
     CHECK(v.rows[6].on);
+    CHECK(v.rows[7].on);
     SelectRow(m, "Show players on map");
     m.Press(Input::kLeft);
     CHECK_FALSE(m.options().map_players);
@@ -463,13 +533,13 @@ TEST_CASE("pause tab: the mouse selects a row and clicks a value's halves") {
     Menu m;
     m.Show(CoopTitleMenu::Options{});
     m.Open(Page::kSettings);
-    m.Select(3);
+    m.Select(4);
     CHECK(Selected(m) == "Proximity voice chat");
-    m.Click(3, 1);   // the On half
+    m.Click(4, 1);   // the On half
     CHECK(m.options().voice);
-    m.Click(3, -1);
+    m.Click(4, -1);
     CHECK_FALSE(m.options().voice);
-    m.Click(3, 0);   // the name: selected only
+    m.Click(4, 0);   // the name: selected only
     CHECK_FALSE(m.options().voice);
     m.Click(0, 0);   // an action: as A
     CHECK(m.typing());
@@ -556,8 +626,9 @@ TEST_CASE("pause tab: Settings: Controller and Keyboard rows when this Hookshot 
     m.SetInputRows("Controller: all", "Keyboard + mouse: window in front");
     CHECK(Selected(m) == "Chat key");   // (the rows came under it: the same row stays chosen)
     CHECK(Names(m) == std::vector<std::string>{"Your name", "Link's look", "Players when you host",
-                                               "Proximity voice chat", "Chat key", "Controller",
-                                               "Keyboard and mouse", "Show players on map", "Names on map"});
+                                               "Port when you host", "Proximity voice chat", "Chat key",
+                                               "Controller", "Keyboard and mouse", "Show players on map",
+                                               "Names on map"});
     SelectRow(m, "Controller");
     View v = m.view();
     CHECK(v.rows[static_cast<std::size_t>(v.selected)].value == "all");
@@ -582,7 +653,7 @@ TEST_CASE("pause tab: Settings: Controller and Keyboard rows when this Hookshot 
     CHECK(r->kind == Request::Kind::kKeyboard);
     // gone again (the module found no patch 0015): the selection stays on a row there is
     m.SetInputRows({}, {});
-    CHECK(Names(m).size() == 7);   // (with the two map rows)
+    CHECK(Names(m).size() == 8);   // (with the port and two map rows)
     CHECK_FALSE(Selected(m).empty());
 }
 
@@ -617,4 +688,283 @@ TEST_CASE("pause tab: Customize Link opens the customizer, its changes are asked
     CHECK(m.page() == Page::kMain);
     CHECK(Selected(m) == "Customize Link");
     CHECK(m.Picture().empty());
+}
+
+TEST_CASE("pause tab: Settings: the Microphone row, Default and the microphones listed, saved by name") {
+    Menu m;
+    CoopTitleMenu::Options o;
+    o.voice = true;
+    m.Show(o);
+    m.Open(Page::kSettings);
+    auto names = Names(m);
+    CHECK(std::find(names.begin(), names.end(), "Microphone") == names.end());   // no list: this game cannot choose
+    m.SetMicrophones(std::vector<std::string>{"Headset Microphone (USB)", "Webcam"});
+    names = Names(m);
+    auto at = std::find(names.begin(), names.end(), "Microphone");
+    REQUIRE(at != names.end());
+    CHECK(at[-1] == "Proximity voice chat");   // right under it
+    CHECK(at[1] == "Voice mode");
+    const auto row = static_cast<std::size_t>(at - names.begin());
+    CHECK(m.view().rows[row].value == "Default");
+    CHECK(m.view().rows[row].kind == RowKind::kChoice);
+    SelectRow(m, "Microphone");
+    m.Press(Input::kRight);
+    CHECK(m.options().voice_mic == "Headset Microphone (USB)");
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+    CHECK(m.view().rows[row].value == "Headset Microphone (USB)");
+    m.Press(Input::kRight);
+    CHECK(m.options().voice_mic == "Webcam");
+    m.Press(Input::kRight);   // round to Default
+    CHECK(m.options().voice_mic.empty());
+    m.Press(Input::kLeft);   // and back the other way
+    CHECK(m.options().voice_mic == "Webcam");
+    // the chosen one unplugged: kept by its name, shown as not connected, still one of the choices
+    m.SetMicrophones(std::vector<std::string>{"Headset Microphone (USB)"});
+    CHECK(Selected(m) == "Microphone");
+    CHECK(m.view().rows[row].value == "Webcam (not connected)");
+    m.Press(Input::kRight);   // after it in the list: round to Default
+    CHECK(m.options().voice_mic.empty());
+    m.Press(Input::kLeft);   // once another is chosen the unplugged one is gone from the choices (as the Insert menu's)
+    CHECK(m.options().voice_mic == "Headset Microphone (USB)");
+    m.Press(Input::kRight);
+    CHECK(m.options().voice_mic.empty());
+    m.Press(Input::kRight);
+    CHECK(m.options().voice_mic == "Headset Microphone (USB)");
+    // voice off: no row, the choice kept
+    SelectRow(m, "Proximity voice chat");
+    m.Press(Input::kLeft);
+    names = Names(m);
+    CHECK(std::find(names.begin(), names.end(), "Microphone") == names.end());
+    CHECK(m.options().voice_mic == "Headset Microphone (USB)");
+}
+
+TEST_CASE("pause tab: the Microphone row's choices and words") {
+    using CoopPauseMenu::MicChoices;
+    using CoopPauseMenu::MicWords;
+    CHECK(MicChoices({}, "") == std::vector<std::string>{""});
+    CHECK(MicChoices({"A", "B", "A", ""}, "") == std::vector<std::string>{"", "A", "B"});   // each name once
+    CHECK(MicChoices({"A"}, "Gone") == std::vector<std::string>{"", "A", "Gone"});
+    CHECK(MicWords("", {"A"}) == "Default");
+    CHECK(MicWords("A", {"A"}) == "A");
+    CHECK(MicWords("A", {}) == "A (not connected)");
+    const std::string longer = "Microphone (Realtek(R) High Definition Audio)";
+    CHECK(MicWords(longer, {longer}) == "Microphone (Realtek(R) Hi...");
+    CHECK(CoopTitleMenu::CodePoints(MicWords(longer, {longer})) == CoopPauseMenu::kMicChars);
+    const std::string wide = "Mikrofon \xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4"
+                             "\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4\xC3\xA4";
+    const std::string cut = MicWords(wide, {wide});   // cut at a character's start, not inside one
+    CHECK(CoopTitleMenu::CodePoints(cut) == CoopPauseMenu::kMicChars);
+    CHECK(cut.substr(cut.size() - 5) == "\xC3\xA4...");
+}
+
+TEST_CASE("pause tab: Join accepts manual IP address and port, with default port replacement and validation") {
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    m.Open(Page::kJoin);
+
+    SelectRow(m, "IP address");
+    CHECK(m.view().confirm == "Type");
+    m.Press(Input::kDecide);
+    CHECK(m.typing());
+    for (const char c : std::string("192.168.1.50")) {
+        CHECK(m.Char(static_cast<unsigned char>(c)));
+    }
+    // Moving Down commits the IP and steps to Port cleanly rather than jumping straight to Join.
+    m.Press(Input::kDown);
+    CHECK_FALSE(m.typing());
+    CHECK(m.join_ip() == "192.168.1.50");
+    CHECK(m.join_text() == "192.168.1.50");
+    CHECK(Selected(m) == "Port");
+
+    // Typing a digit replaces the shown default 27510 cleanly.
+    m.Press(Input::kDecide);
+    CHECK(m.typing());
+    for (const char c : std::string("28000")) {
+        CHECK(m.Char(static_cast<unsigned char>(c)));
+    }
+    m.Press(Input::kDecide);
+    CHECK_FALSE(m.typing());
+    CHECK(m.join_port() == "28000");
+    CHECK(m.join_text() == "192.168.1.50:28000");
+    CHECK(Selected(m) == "Join");
+
+    m.Press(Input::kDecide);
+    const auto req = m.TakeRequest();
+    REQUIRE(req.has_value());
+    CHECK(req->kind == Request::Kind::kJoin);
+    CHECK(req->text == "192.168.1.50:28000");
+
+    // Backspace edits the current port digit-by-digit instead of clearing on first keystroke.
+    SelectRow(m, "Port");
+    m.Press(Input::kDecide);
+    m.Press(Input::kErase);
+    m.Char('5');
+    m.Press(Input::kDecide);
+    CHECK(m.join_port() == "28005");
+    CHECK(m.join_text() == "192.168.1.50:28005");
+
+    // Invalid IP or out-of-range port shows a clear note and keeps the prior value.
+    SelectRow(m, "IP address");
+    m.Press(Input::kDecide);
+    m.Char(' ');
+    m.Char('!');
+    m.Press(Input::kDecide);
+    CHECK(m.join_ip() == "192.168.1.50");
+    CHECK(m.view().help.find("valid IP address") != std::string::npos);
+
+    SelectRow(m, "Port");
+    m.Press(Input::kDecide);
+    for (const char c : std::string("70000")) {
+        m.Char(static_cast<unsigned char>(c));
+    }
+    m.Press(Input::kDecide);
+    CHECK(m.join_port() == "28005");
+    CHECK(m.view().help.find("1 to 65535") != std::string::npos);
+
+    // Pasting a Same network / VPN line mirrors into IP address and Port as well.
+    m.Paste("25.1.2.3:27512 ABCDEF\n");
+    CHECK(m.join_ip() == "25.1.2.3");
+    CHECK(m.join_port() == "27512");
+    CHECK(m.join_text() == "25.1.2.3:27512 ABCDEF");
+    // Editing Port keeps any password parsed from that line.
+    SelectRow(m, "Port");
+    m.Press(Input::kDecide);
+    for (const char c : std::string("29000")) {
+        m.Char(static_cast<unsigned char>(c));
+    }
+    m.Press(Input::kDecide);
+    CHECK(m.join_text() == "25.1.2.3:29000 ABCDEF");
+
+    // Typing host:port in IP address splits both cleanly.
+    SelectRow(m, "IP address");
+    m.Press(Input::kDecide);
+    for (int i = 0; i < 8; ++i) {
+        m.Press(Input::kErase);
+    }
+    for (const char c : std::string("10.0.0.5:27777")) {
+        m.Char(static_cast<unsigned char>(c));
+    }
+    m.Press(Input::kDecide);
+    CHECK(m.join_ip() == "10.0.0.5");
+    CHECK(m.join_port() == "27777");
+    CHECK(m.join_text() == "10.0.0.5:27777");
+}
+
+TEST_CASE("pause tab: Join's Password row: typed or pasted, shown as stars, sent after the address, no default") {
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    m.Open(Page::kJoin);
+    SelectRow(m, "IP address");
+    m.Press(Input::kDecide);
+    for (const char c : std::string("192.168.1.50:28000")) {
+        m.Char(static_cast<unsigned char>(c));
+    }
+    m.Press(Input::kDecide);
+    CHECK(m.join_text() == "192.168.1.50:28000");   // no password is made up ("coop" is gone)
+    SelectRow(m, "Password");
+    CHECK(m.view().confirm == "Type");
+    m.Press(Input::kDecide);
+    CHECK(m.typing());
+    for (const char c : std::string("Secret7")) {
+        m.Char(static_cast<unsigned char>(c));
+    }
+    CHECK(SelectedValue(m) == "*******_");
+    m.Press(Input::kDecide);
+    CHECK_FALSE(m.typing());
+    CHECK(Selected(m) == "Join");
+    CHECK(m.join_text() == "192.168.1.50:28000 Secret7");
+    SelectRow(m, "Password");
+    CHECK(SelectedValue(m) == "*******");
+    SelectRow(m, "Friend's code");   // the address line shows the password as stars too
+    CHECK(SelectedValue(m) == "192.168.1.50:28000 *******");
+    SelectRow(m, "Join");
+    m.Press(Input::kDecide);
+    const auto req = m.TakeRequest();
+    REQUIRE(req.has_value());
+    CHECK(req->text == "192.168.1.50:28000 Secret7");
+
+    // a space is refused, Esc keeps the old one, a paste goes into the field
+    SelectRow(m, "Password");
+    m.Press(Input::kDecide);
+    m.Char('a');
+    m.Char(' ');
+    m.Char('b');
+    m.Press(Input::kDecide);
+    CHECK(m.join_text() == "192.168.1.50:28000 Secret7");
+    CHECK(m.view().help.find("no spaces") != std::string::npos);
+    m.Press(Input::kDecide);
+    m.Char('y');
+    m.Press(Input::kBack);
+    CHECK(m.join_text() == "192.168.1.50:28000 Secret7");
+    m.Press(Input::kDecide);
+    CHECK(m.Paste("Other9\n"));
+    CHECK_FALSE(m.typing());
+    CHECK(m.join_text() == "192.168.1.50:28000 Other9");
+    CHECK(Selected(m) == "Join");
+
+    // emptied: no password again
+    SelectRow(m, "Password");
+    m.Press(Input::kDecide);
+    for (int i = 0; i < 6; ++i) {
+        m.Press(Input::kErase);
+    }
+    m.Press(Input::kDecide);
+    CHECK(m.join_text() == "192.168.1.50:28000");
+}
+
+TEST_CASE("pause tab: Host Port and Settings Port when you host validate, save, and restart hosting when active") {
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    m.Open(Page::kSettings);
+    SelectRow(m, "Port when you host");
+    CHECK(m.view().confirm == "Type");
+    m.Press(Input::kDecide);
+    for (const char c : std::string("28500")) {
+        CHECK(m.Char(static_cast<unsigned char>(c)));
+    }
+    m.Press(Input::kDecide);
+    CHECK(m.options().host_port == 28500);
+    REQUIRE(m.TakeRequest()->kind == Request::Kind::kSave);
+
+    // Back cancels without saving.
+    m.Press(Input::kDecide);
+    m.Char('1');
+    m.Press(Input::kBack);
+    CHECK(m.options().host_port == 28500);
+    CHECK_FALSE(m.TakeRequest().has_value());
+
+    // Host page while stopped saves without starting host; while hosting, changing port restarts hosting.
+    m.Open(Page::kHost);
+    REQUIRE(m.TakeRequest()->kind == Request::Kind::kHost);
+    m.SetSession(Session{});
+    CHECK(Names(m) == std::vector<std::string>{"Start hosting", "Players", "Port"});
+    SelectRow(m, "Port");
+    m.Press(Input::kDecide);
+    for (const char c : std::string("28600")) {
+        m.Char(static_cast<unsigned char>(c));
+    }
+    m.Press(Input::kDecide);
+    CHECK(m.options().host_port == 28600);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+
+    m.SetSession(Hosting(1));
+    SelectRow(m, "Port");
+    m.Press(Input::kDecide);
+    for (const char c : std::string("28700")) {
+        m.Char(static_cast<unsigned char>(c));
+    }
+    m.Press(Input::kDecide);
+    CHECK(m.options().host_port == 28700);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kHost);
+
+    // Unchanged or out-of-range port does not restart hosting.
+    m.Press(Input::kDecide);
+    m.Press(Input::kDecide);
+    CHECK_FALSE(m.TakeRequest().has_value());
+    m.Press(Input::kDecide);
+    m.Char('0');
+    m.Press(Input::kDecide);
+    CHECK(m.options().host_port == 28700);
+    CHECK_FALSE(m.TakeRequest().has_value());
+    CHECK(m.view().help.find("1 to 65535") != std::string::npos);
 }

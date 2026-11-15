@@ -20,8 +20,10 @@ add_executable(coop_tests
   net/clock_test.cpp
   net/client_test.cpp
   net/small_path_test.cpp
+  net/lag_path_test.cpp
   net/encrypt_loopback_test.cpp
   presence/presence_test.cpp
+  presence/show_delay_test.cpp
   voice/jitter_test.cpp
   voice/gate_test.cpp
   voice/spatial_test.cpp
@@ -33,6 +35,7 @@ add_executable(coop_tests
   host/game_flags_test.cpp
   host/flag_events_test.cpp
   host/game_items_test.cpp
+  host/lent_keys_test.cpp
   host/map_drop_log_test.cpp
   host/notify_test.cpp
   host/one_way_keeper_test.cpp
@@ -51,6 +54,7 @@ add_executable(coop_tests
   lichii/fairy_test.cpp
   lichii/rooms_test.cpp
   lichii/objects_test.cpp
+  lichii/show_delay_test.cpp
   lichii/npc_anim_test.cpp
   lichii/spawn_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_spawn.cpp
   lichii/ride_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_ride.cpp
@@ -94,6 +98,7 @@ add_executable(coop_tests
   lichii/dbno_test.cpp
   lichii/difficulty_test.cpp
   lichii/live_events_test.cpp
+  lichii/logic_probe_test.cpp
   lichii/shared_scenes_test.cpp
   lichii/scrubs_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_scrubs.cpp
   lichii/cheat_items_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_cheat_items.cpp
@@ -122,6 +127,8 @@ add_executable(coop_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_puppet_config.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_settings.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_world.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_logic_probe.cpp
+  lichii/lift_ride_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_lift_ride.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_ocarina.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_ocarina_sound.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_look_share.cpp

@@ -827,7 +827,8 @@ TEST_CASE("live events: a room gimmick event is started by our room's asker, so 
     for (const auto& n : r.TakeNotes()) said |= n.find("started by our room's asker at -22.6 122.6 -3.8") != std::string::npos;
     CHECK(said);
 
-    // No asker here (its room not loaded, or deleted): asked by name alone, and said so.
+    // No asker here (its room not loaded, or deleted by the room's clear flag): not asked at all, and said so
+    // (dungeon-sync-b: a start by name only plays the camera and kept the Lizalfos room's shutter shut).
     r.WantFromRoom("InsideTheDekuTree_Gimmick_CandleAndSpiderWeb", "InsideTheDekuTree");
     order.clear();
     call = r.Step(m, false, 0, kMain);
@@ -835,9 +836,10 @@ TEST_CASE("live events: a room gimmick event is started by our room's asker, so 
         order.push_back(call->function - kMain);
         call = r.Step(m, true, Run(m, *call), kMain);
     }
-    CHECK(order == std::vector<std::uint64_t>{addr::kArgBuild, addr::kRequest, addr::kStringFree, addr::kStringFree});
+    CHECK(order.empty());
+    CHECK(r.Waiting() == 0);
     said = false;
-    for (const auto& n : r.TakeNotes()) said |= n.find("no asker actor") != std::string::npos;
+    for (const auto& n : r.TakeNotes()) said |= n.find("no asker actor within 1 m of its places here: not asked") != std::string::npos;
     CHECK(said);
 
     // A plain Want (a story cutscene) never looks for an asker.

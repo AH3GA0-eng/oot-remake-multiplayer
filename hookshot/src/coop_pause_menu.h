@@ -35,6 +35,15 @@ const std::vector<Command>& Commands();
 // The key that opens the chat box, in words, from LICHII_COOP_CHAT_KEY ("T"
 // by default; "off": none).
 std::string ChatKeyWords(const std::string& chat_key);
+// The Settings page's Microphone row (shown while voice chat is on): its
+// choices in order: Default ("": Longshot's Insert menu's microphone) first,
+// then the microphones listed now (each name once), then the chosen one when
+// it is not among them (kept by its name while it is unplugged).
+std::vector<std::string> MicChoices(const std::vector<std::string>& listed, const std::string& chosen);
+// What the row shows: "Default", or the name cut to kMicChars characters
+// ("..." at its end), with " (not connected)" when it is not listed.
+constexpr std::size_t kMicChars = 28;
+std::string MicWords(const std::string& chosen, const std::vector<std::string>& listed);
 
 struct Request {
     // kHost: start the server and join it. kJoin: `text` is the code or the
@@ -142,6 +151,10 @@ public:
     // Controller"). Empty: this Hookshot cannot choose (no patch 0015), so
     // the rows are not shown.
     void SetInputRows(std::string controller, std::string keyboard);
+    // The Microphone row's list, the microphones there now by their names
+    // (CoopVoice::Microphones). None: this game cannot choose one for the
+    // voice (an older patch 0009), so the row is not shown.
+    void SetMicrophones(std::optional<std::vector<std::string>> listed);
     // The look shown now (the one waiting for the menu to close, else the one
     // worn): the Customize page opens on it.
     void SetLook(const CoopLook::Look& look);
@@ -155,6 +168,8 @@ public:
     bool typing() const { return typing_; }
     const CoopTitleMenu::Options& options() const { return options_; }
     const std::string& join_text() const { return join_; }
+    const std::string& join_ip() const { return join_ip_; }
+    const std::string& join_port() const { return join_port_; }
     const Session& session() const { return session_; }
     View view() const;
 
@@ -162,9 +177,9 @@ private:
     enum class Act {
         kNone,
         kOpenHost, kOpenJoin, kOpenLocal, kOpenSettings, kOpenCommands, kCommand,
-        kStartHost, kCopyInvite, kPasteAnswer, kCopyAnswer, kCopyLan, kCopyVpn, kLeave,
-        kRejoin, kCode, kJoinNow,
-        kName, kLook, kPlayers, kVoice, kVoiceMode, kChatKey, kController, kKeyboard, kMapPlayers, kMapNames,
+        kStartHost, kHostPort, kCopyInvite, kPasteAnswer, kCopyAnswer, kCopyLan, kCopyVpn, kLeave,
+        kRejoin, kCode, kClearCode, kJoinIp, kJoinPort, kJoinPassword, kJoinNow,
+        kName, kLook, kPlayers, kVoice, kMic, kVoiceMode, kChatKey, kController, kKeyboard, kMapPlayers, kMapNames,
         kOpenCustomize
     };
     struct Line;   // a row, what it does and its help
@@ -177,17 +192,29 @@ private:
     void Change(Act act, int step);
     void EndTyping(bool keep);
     std::string* Typed();
+    void SyncManualJoinFromText();
+    void UpdateJoinFromIpPort();
     bool InSession() const;
 
     Page page_ = Page::kMain;
     std::size_t selected_ = 0;
     bool typing_ = false;
+    Act typing_act_ = Act::kNone;
+    bool typing_fresh_ = false;
+    bool replace_typed_ = false;   // the Join field was opened with a code in it: a typed character starts a new one
     bool confirm_leave_ = false;   // Stop hosting / Leave was pressed once: the next press does it
     CoopTitleMenu::Options options_;
     std::string name_before_;      // the name as it was when its typing began
+    std::string port_text_;        // port buffer while typing Host / Join Port
     std::string join_;
+    std::string join_ip_;
+    std::string join_port_;
+    std::string join_password_;
+    std::string ip_before_;        // join_ip_ as it was when its typing began
+    std::string password_before_;  // join_password_ as it was when its typing began
     std::string rejoin_host_, rejoin_code_;
     std::string controller_row_, keyboard_row_;
+    std::optional<std::vector<std::string>> microphones_;
     Session session_;
     std::vector<std::string> note_;
     std::optional<Request> request_;

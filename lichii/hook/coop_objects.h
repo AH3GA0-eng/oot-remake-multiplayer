@@ -13,6 +13,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace Core {
@@ -97,6 +98,10 @@ void SetUnreadyBosses(std::vector<std::string> bodies);
 // had, or at the same moment with the higher player number (docs/dungeon.md,
 // "Locked doors"). Taken by the hook, which adds 1 to each in the game.
 std::vector<std::uint32_t> TakeKeyRefunds();
+// dungeon-sync-b (#75): small keys to lend to our game only (false) or to
+// take back unused (true), by the SmallKeyNum flag (WorldSync::Out::key_lends,
+// lend_returns). The hook keeps them from the group (coop::host::LentKeys).
+std::vector<std::pair<std::uint32_t, bool>> TakeKeyLends();
 // Our own game lowered these counts (Session::take_own_count_drops): a key
 // spent here. A lock's second key goes back only against one of these.
 void OwnCountDrops(const std::vector<std::uint32_t>& key_flags);

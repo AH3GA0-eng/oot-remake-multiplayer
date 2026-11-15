@@ -213,7 +213,7 @@ function Read-KitOptions([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) { return $values }
     foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
         $t = $line.Trim()
-        if (-not $t -or $t.StartsWith('#') -or $t.StartsWith(';') -or $t -match '^(auto_update|verify_signature|server_allow|server_bind|server_password|public_address_lookup|upnp|invite|stun_servers|relay|relay_key|pvp)\s*=') { continue }
+        if (-not $t -or $t.StartsWith('#') -or $t.StartsWith(';') -or $t -match '^(auto_update|verify_signature|server_allow|server_bind|server_port|server_password|max_players|public_address_lookup|upnp|invite|stun_servers|relay|relay_key|pvp)\s*=') { continue }
         if ($t -match '^color\s*=\s*(.*?)\s*$') {
             $c = $Matches[1] -replace '\s+[#;].*$', ''  # a comment after it: 'color = blue  # mine'
             if (-not $c) { continue }  # none chosen: the player number's colour

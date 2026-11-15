@@ -24,6 +24,7 @@ log has them in order with its own lines (groups.py grades that log); a warp is 
     python -I tools/autotest/hookshot.py play --sock coop-auto-A --script walk.A.txt --log a.txt --shots out
     python -I tools/autotest/hookshot.py run --game-a <folder> --game-b <folder> --server coop_server.exe --out <dir>
                                              --script-a walk.A.txt [--script-b walk.B.txt] [--load load.txt]
+                                             [--kit-a <kit> --kit-b <kit>]   (the kits' own start, see kit_start)
 """
 import argparse
 import base64
@@ -719,7 +720,9 @@ def to_play(bridge, log, timeout, clock=time.monotonic, sleep=time.sleep):
 
 # The renderer's start is done: its pipelines are made (from the caches or compiled now). Until then the game shows
 # nothing and reads no controller; with a cold driver cache that is minutes (~170 s seen), so a run waits for it.
-RENDERER_READY = re.compile(r"vk: precompile: \d+ programs, .* in \d+ ms")
+# Longshot rc.4 builds pipelines at their create (RX_VK_LOAD=create) and logs "vk: start-up: the shaders took N s"
+# instead of rc.3's precompile total.
+RENDERER_READY = re.compile(r"vk: precompile: \d+ programs, .* in \d+ ms|vk: start-up: the shaders took \d")
 
 
 def read_text(path):
@@ -775,12 +778,127 @@ def find_log(game):
     return None
 
 
+# ---------------------------------------------------------------------------------------------- the kit's own start
+# Kit mode (run --kit-a/--kit-b, run.ps1 -Kit): each game is started by its kit's own start, play.ps1 choose -Hookshot
+# as "Start OoT Co-op.bat" runs it, so what a player's start does runs for real before the game: the update check
+# aside (-NoUpdate), the module step (Get-KitHookshotNeed: co-op module, puppet pack, randomizer, seeds built again),
+# coop-options.ini (the colour) and the pack's own-tunic step. The start answers 'n' to every question (a long game
+# build is never started by a test: the start fails and says so). OOT_COOP_TEST_KIT keeps the test server and join
+# password in the game's variables (the title menu's Join otherwise) and gets the game's process id back.
+
+def kit_game_folder(kit):
+    """The game folder the kit's start uses (kit-paths.ps1 Get-KitHookshotGame, without the other-kit check)."""
+    where = os.path.join(kit, "hookshot", "game-folder.txt")
+    g = ""
+    if os.path.isfile(where):
+        with open(where, encoding="utf-8-sig") as f:
+            g = (f.readline() or "").strip()
+    if not g:
+        return os.path.join(kit, "hookshot", "game")
+    return g if os.path.isabs(g) else os.path.join(kit, g)
+
+
+def same_path(a, b):
+    return os.path.normcase(os.path.abspath(a)).rstrip("\\/") == os.path.normcase(os.path.abspath(b)).rstrip("\\/")
+
+
+def kit_start_command(kit):
+    ps = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "WindowsPowerShell", "v1.0",
+                      "powershell.exe") if WINDOWS else "pwsh"
+    return [ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", os.path.join(kit, "scripts", "play.ps1"),
+            "-Mode", "choose", "-Hookshot", "-NoUpdate"]
+
+
+def kit_start(kit, env, out, x, timeout=1200, run_cmd=subprocess.run):
+    """Runs the kit's start for game x with env; the started game's process id. Its window's text: kit-start-<x>.txt."""
+    pidfile = os.path.join(out, "kit-pid-%s.txt" % x)
+    if os.path.exists(pidfile):
+        os.remove(pidfile)
+    env = dict(env, OOT_COOP_KIT=kit, OOT_COOP_TEST_KIT=pidfile, OOT_COOP_NO_SHORTCUT="1")
+    text_path = os.path.join(out, "kit-start-%s.txt" % x)
+    with open(text_path, "wb") as so:
+        r = run_cmd(kit_start_command(kit), cwd=kit, env=env, input=b"n\r\n" * 16, stdout=so,
+                    stderr=subprocess.STDOUT, timeout=timeout)
+    text = read_text(text_path)
+    pid = ""
+    if os.path.isfile(pidfile):
+        pid = read_text(pidfile).strip()
+    if r.returncode != 0 or not pid.isdigit():
+        last = " | ".join(l.strip() for l in text.splitlines() if l.strip())[-600:]
+        why = "exit %s" % r.returncode if r.returncode != 0 else "no game process id (a kit without OOT_COOP_TEST_KIT?)"
+        raise RuntimeError("kit start of %s failed (%s): %s" % (x, why, last))
+    return int(pid)
+
+
+class PidProcess:
+    """A game the kit's start started (play.ps1's Start-Process): known by its process id, waited on like a Popen."""
+
+    def __init__(self, pid):
+        self.pid, self.returncode, self._h = pid, None, None
+        if WINDOWS:
+            import ctypes
+            self._k = ctypes.WinDLL("kernel32", use_last_error=True)
+            self._k.OpenProcess.restype = ctypes.c_void_p
+            # SYNCHRONIZE | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION
+            self._h = self._k.OpenProcess(0x00100000 | 0x0001 | 0x1000, False, pid)
+            if not self._h:
+                self.returncode = -1   # gone already
+
+    def poll(self):
+        if self.returncode is None and WINDOWS:
+            import ctypes
+            if self._k.WaitForSingleObject(ctypes.c_void_p(self._h), 0) == 0:
+                code = ctypes.c_ulong()
+                self._k.GetExitCodeProcess(ctypes.c_void_p(self._h), ctypes.byref(code))
+                self.returncode = code.value
+        elif self.returncode is None:
+            try:
+                os.kill(self.pid, 0)
+            except OSError:
+                self.returncode = -1
+        return self.returncode
+
+    def wait(self, timeout=None):
+        end = None if timeout is None else time.monotonic() + timeout
+        while self.poll() is None:
+            if end is not None and time.monotonic() > end:
+                raise subprocess.TimeoutExpired("pid %d" % self.pid, timeout)
+            time.sleep(0.2)
+        return self.returncode
+
+    def kill(self):
+        if self.poll() is None:
+            if WINDOWS:
+                import ctypes
+                self._k.TerminateProcess(ctypes.c_void_p(self._h), 1)
+            else:
+                os.kill(self.pid, 9)
+
+
+def fresh_log(game, since):
+    """The game's longshot_log.txt once this start wrote it (an older one in the folder is from another run), else ''."""
+    p = find_log(game)
+    try:
+        return read_text(p) if p and os.path.getmtime(p) >= since - 2 else ""
+    except OSError:
+        return ""
+
+
 def run(a):
     out = os.path.abspath(a.out)
     os.makedirs(out, exist_ok=True)
     say = Log(os.path.join(out, "steps.txt"), echo=print)
     tags = ["A", "B"]
     games = {"A": os.path.abspath(a.game_a), "B": os.path.abspath(a.game_b)}
+    kits = {"A": getattr(a, "kit_a", None), "B": getattr(a, "kit_b", None)}
+    for x in tags:
+        if kits[x]:
+            kits[x] = os.path.abspath(kits[x])
+            if not same_path(kit_game_folder(kits[x]), games[x]):
+                # (else the kit would start another game than the one whose save was put back and whose log is read)
+                raise SystemExit("kit %s starts %s, not game %s: point its hookshot\\game-folder.txt there "
+                                 "(tools/autotest/kit_pair.py setup)" % (kits[x], kit_game_folder(kits[x]), games[x]))
+    started = {}
     scripts = {"A": a.script_a, "B": a.script_b}
     parsed = {}
     for x in tags:
@@ -826,17 +944,23 @@ def run(a):
                     k = k[2:]
                 env[k] = v
             exe = os.path.join(exe_dir(g), "longshot.exe" if WINDOWS else "longshot")
-            with open(os.path.join(out, "game-out-%s.txt" % x), "wb") as go:
-                kw = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {"start_new_session": True}
-                procs[x] = subprocess.Popen([exe], cwd=exe_dir(g), env=env, stdin=subprocess.DEVNULL, stdout=go,
-                                            stderr=subprocess.STDOUT, **kw)
+            started[x] = time.time()
+            if kits[x]:
+                say("%s: the kit's own start (%s)" % (x, kits[x]))
+                procs[x] = PidProcess(kit_start(kits[x], env, out, x))
+            else:
+                with open(os.path.join(out, "game-out-%s.txt" % x), "wb") as go:
+                    kw = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {"start_new_session": True}
+                    procs[x] = subprocess.Popen([exe], cwd=exe_dir(g), env=env, stdin=subprocess.DEVNULL, stdout=go,
+                                                stderr=subprocess.STDOUT, **kw)
             say("%s: started pid %d, bridge %s" % (x, procs[x].pid, sock))
             bridges[x] = (sock, Bridge.connect(sock, timeout=120))
             if i == 0:
                 time.sleep(3)
         for x in tags:   # both games drawing before anything is pressed (a cold shader cache: minutes)
             go = os.path.join(out, "game-out-%s.txt" % x)
-            waited = wait_renderer(lambda: read_text(go), lambda: procs[x].poll() is None, a.renderer_wait)
+            log = (lambda: fresh_log(games[x], started[x])) if kits[x] else (lambda: read_text(go))
+            waited = wait_renderer(log, lambda: procs[x].poll() is None, a.renderer_wait)
             if a.renderer_wait > 0:
                 say("%s: renderer ready (%.0f s waited)" % (x, waited))
 
@@ -980,6 +1104,9 @@ def main(argv=None):
     r.add_argument("--renderer-wait", type=int, default=600,
                    help="seconds each game may take to start its renderer before the load (0: no wait)")
     r.add_argument("--pipe", help="default coop-auto (a lane: its own)")
+    r.add_argument("--kit-a", help="start game A through this kit's own start (play.ps1 choose -Hookshot; its "
+                                   "hookshot/game-folder.txt names --game-a): tools/autotest/kit_pair.py")
+    r.add_argument("--kit-b", help="the same for game B")
     a = p.parse_args(argv)
     if a.what == "check":
         bad = 0
