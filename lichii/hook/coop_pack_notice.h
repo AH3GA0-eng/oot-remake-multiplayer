@@ -13,8 +13,14 @@
 
 namespace CoopPackNotice {
 
+// The kit's start file per system: the Windows kit's .bat, the Linux kit's start-oot-coop.sh.
+#ifdef _WIN32
 inline constexpr const char* kText =
     "No puppet pack: other players show as names only. Close the game and run Start OoT Co-op.bat again.";
+#else
+inline constexpr const char* kText =
+    "No puppet pack: other players show as names only. Close the game and run start-oot-coop.sh again.";
+#endif
 
 // The once-per-run decision, apart for the tests.
 class Once {

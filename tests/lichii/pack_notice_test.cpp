@@ -23,6 +23,10 @@ TEST_CASE("pack notice: off until the module turns it on, then the line says wha
     const auto lines = CoopPackNotice::TakeLines(true);
     REQUIRE(lines.size() == 1);
     CHECK(lines[0].find("No puppet pack") == 0);
+#ifdef _WIN32
     CHECK(lines[0].find("Start OoT Co-op.bat") != std::string::npos);
+#else
+    CHECK(lines[0].find("start-oot-coop.sh") != std::string::npos);
+#endif
     CHECK(CoopPackNotice::TakeLines(true).empty());
 }

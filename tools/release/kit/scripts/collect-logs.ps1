@@ -72,7 +72,8 @@ if ($hsExe) {
         $logs = @(Get-ChildItem (Join-Path $hsDir '*') -Include 'longshot_log*.txt', 'hookshot_log*.txt' -File -ErrorAction SilentlyContinue)
         $gameLogs += $logs.Count
         $picked += $logs | ForEach-Object { @($_.FullName, "$to\$($_.Name)") }
-        foreach ($f in 'coop.ini', 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json') {
+        # (last-build.txt: OOTRR's output when a randomizer seed failed; masked like every text file)
+        foreach ($f in 'coop.ini', 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json', 'mods\oot-remake-randomizer\last-build.txt') {
             $p = Join-Path $hsDir $f
             if (Test-Path -LiteralPath $p) { $picked += @($p, "$to\$(Split-Path -Leaf $p)") }
         }
@@ -150,7 +151,7 @@ Write-Host "Wrote $zip"
 Write-Host "  ($($found + 1) files, $gameLogs of them game logs; the folder opens with the zip selected)"
 if (-not $env:CI) { try { Start-Process explorer.exe "/select,`"$zip`"" } catch {} }
 Write-Host 'IP addresses, MAC addresses, passwords, your Windows user name and PC name are masked in it.'
-if ($logHelp) { Write-Host ''; foreach ($l in $logHelp) { Write-Host $l -ForegroundColor Yellow } }
+if ($logHelp) { Write-Host ''; foreach ($l in $logHelp) { Write-Host (Protect-LogText $l $mask) -ForegroundColor Yellow } }
 Write-Host ''
 Write-Host 'Send it privately (a Discord DM to the maintainer). Do not attach it to a public issue.'
 Write-Host "Send this zip: $zip" -ForegroundColor Green

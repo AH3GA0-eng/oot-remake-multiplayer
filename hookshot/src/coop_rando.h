@@ -115,6 +115,14 @@ std::optional<std::filesystem::path> FindGameFolder(const std::string& setting, 
 // What to do about a failed `ootrr build`, from its output: game files of another version than 1.1.1 (OOTRR says
 // "the game folder has no ...") say so plainly; anything else is empty (the caller gives the exit code).
 std::string BuildFailureHint(std::string_view ootrr_output);
+// The last `n` non-empty lines of OOTRR's output (for longshot_log.txt when it fails), oldest first, without .
+std::vector<std::string> LastLines(std::string_view text, std::size_t n);
+// The tab's line for OOTRR's own failure: `head` and where its output is, by file name (player report: a full path
+// was cut off in the tab). The full path goes to the chat and the log.
+std::string SeeLogLine(const std::string& head);
+// OOTRR's own error lines (player report #16: "This build cannot apply these settings yet: ..."): the first `n` lines
+// that say error, cannot, can't or failed; none: the last `n` lines.
+std::vector<std::string> ErrorLines(std::string_view text, std::size_t n);
 // The chat line a guest sends when it cannot build the host's seed (Hooks::tell_others): at most kTellChars bytes
 // (a chat line's limit), cut at a whole UTF-8 character.
 inline constexpr std::size_t kTellChars = 200;
@@ -182,6 +190,7 @@ private:
     bool on_now_ = false;      // the switch as the game started (mutex_)
     bool on_said_ = false;     // the switch as last said (mutex_)
     std::vector<std::string> lines_;  // mutex_
+    bool log_in_chat_ = false;        // OOTRR's log path said in the chat this run (mutex_)
     std::string tell_;                // a line for the others not sent yet (mutex_): never a path
     std::string tell_seed_;           // the host's seed it is about (mutex_)
 };

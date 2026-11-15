@@ -373,12 +373,14 @@ unset OOT_COOP_UPDATE_API
 
 # --- collect-logs.sh -------------------------------------------------------------------------
 printf 'coop: joined 192.168.1.20\npassword = hunter2\n' >"$D/game/longshot_log.txt"
+mkdir -p "$D/game/mods/oot-remake-randomizer" && printf 'error: seed failed at 192.168.1.20\n' >"$D/game/mods/oot-remake-randomizer/last-build.txt"
 bash "$kit/scripts/collect-logs.sh" >"$tmp/logs.txt" 2>&1
 out=$(ls "$kit"/coop-logs-*.tar.gz 2>/dev/null | head -n1)
 check 'collect-logs: a .tar.gz beside start-oot-coop.sh' [ -n "$out" ]
 if [[ -n $out ]]; then
     mkdir -p "$tmp/logs" && tar -xzf "$out" -C "$tmp/logs"
     check 'collect-logs: the game log is in, its password and LAN address masked' bash -c 'grep -q "<lan-1>" "$1" && grep -q "(removed)" "$1" && ! grep -q hunter2 "$1"' _ "$tmp/logs/game/longshot_log.txt"
+    check 'collect-logs: OOTRR'"'"'s last-build.txt is in, masked' bash -c 'grep -q "<lan-1>" "$1" && grep -q "seed failed" "$1"' _ "$tmp/logs/game/last-build.txt"
 fi
 check 'collect-logs: the last line names the file to send' bash -c '[ "$(tail -n1 "$1")" = "Send this file: $2" ]' _ "$tmp/logs.txt" "$out"
 check 'collect-logs: with the game log in, no help about finding it' bash -c '! grep -q "not in this file" "$1"' _ "$tmp/logs.txt"

@@ -36,6 +36,8 @@ for f in "$LOGS"/*.log; do [[ -f $f ]] && pick "$f" "logs/${f##*/}"; done
 pick "$KIT/VERSION.txt" VERSION.txt
 pick "$DATA/coop-options.ini" coop-options.ini
 pick "$GAME/mods/contents/0400486024DEC000/coop-puppet/coop_puppet.json" game/coop_puppet.json
+# OOTRR's output when a randomizer seed failed (masked below like every file)
+[[ -f $GAME/mods/oot-remake-randomizer/last-build.txt ]] && pick "$GAME/mods/oot-remake-randomizer/last-build.txt" game/last-build.txt
 {
     echo "pc: $host"
     echo "collected: $(date '+%Y-%m-%d %H:%M:%S %z')"
@@ -116,13 +118,17 @@ echo "Wrote $out ($((found + 1)) files, $game_logs of them game logs)."
 echo 'IP addresses, MAC addresses, passwords, the invite code, your user name and PC name are masked in it.'
 if ((game_logs == 0)); then
     echo
-    echo "The game's log (longshot_log.txt) is not in this file: none in $GAME."
+    # (as in the tarball: the user name masked)
+    u=$(id -un 2>/dev/null)
+    {
+        echo "The game's log (longshot_log.txt) is not in this file: none in $GAME."
     if [[ -x $GAME/longshot ]]; then
         echo '  Start the game once (it writes the log when it starts), close it, then run this again (bash start-oot-coop.sh --logs).'
     else
         echo '  The game was not found there: it is built by the first start (bash start-oot-coop.sh). Its log is beside the game.'
     fi
     echo "  Found it somewhere else? Copy longshot_log.txt into $LOGS and run this again, or send it with this file."
+    } | sed -e "s#/home/$u/#/home/<user>/#g"
 fi
 echo
 echo 'Send it privately (a Discord DM to the maintainer). Do not attach it to a public issue.'

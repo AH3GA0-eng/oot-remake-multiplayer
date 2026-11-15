@@ -268,6 +268,7 @@ TEST_CASE("rando: a failed build leaves no stage and no seed folder") {
 TEST_CASE("rando: a failed build is said once and not tried again until the settings change") {
     World w;
     w.fail_at = 1;
+    w.fail_output = "This build cannot apply these settings yet: bridge is dungeons\n";
     CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
     loader.Start();
     std::vector<std::string> log;
@@ -286,6 +287,15 @@ TEST_CASE("rando: a failed build is said once and not tried again until the sett
     CHECK(w.runs.size() == 2);
     CHECK(rando.Status().find("OOTRR could not build the seed (exit 3)") != std::string::npos);
     CHECK_FALSE(fs::exists(w.mods / "randomizer-FAIL1"));
+    {
+        const std::lock_guard lock(log_mutex);
+        const bool path_logged = std::any_of(log.begin(), log.end(), [&](const std::string& l) {
+            return l.find(CoopMods::ToUtf8(w.mods / kFolder / kLogFile)) != std::string::npos;
+        });
+        CHECK(path_logged);  // longshot_log.txt has the full path
+    }
+    const auto chat = rando.TakeLines();
+    CHECK(std::find(chat.begin(), chat.end(), "OOTRR: This build cannot apply these settings yet: bridge is dungeons") != chat.end());
     REQUIRE(loader.Set(kFolder, "game_folder", CoopMods::ToUtf8(w.game) + "/"));  // another setting, same seed
     rando.Wait();
     CHECK(w.runs.size() == 2);
@@ -627,7 +637,12 @@ TEST_CASE("rando: the line a guest tells the others never holds a local path or 
     w.fail_at = 1;
     loader.SetHostValues(std::vector<CoopMods::SharedValue>{{kId, "on", "1"}, {kId, "seed", "HOSTP2"}});
     rando.Wait();
-    CHECK(rando.Status().find(CoopMods::ToUtf8(w.mods / kFolder / kLogFile)) != std::string::npos);
+    // (the tab names the file plainly; its full path is in this game's chat, once)
+    CHECK(rando.Status().find(std::string("see ") + kLogFile + " in the game's mods folder, " + kFolder) != std::string::npos);
+    const auto chat = rando.TakeLines();
+    CHECK(std::count_if(chat.begin(), chat.end(), [&](const std::string& l) {
+              return l.find(CoopMods::ToUtf8(w.mods / kFolder / kLogFile)) != std::string::npos;
+          }) == 1);
     const auto lines = told.Get();
     REQUIRE(lines.size() == 2);
     CHECK(lines[0] == "[randomizer] I play without the host's seed: OOTRR not found");
@@ -681,4 +696,26 @@ TEST_CASE("rando: a line not sent yet is dropped when the host's seed changes or
     rando.Recheck();
     rando.Wait();
     CHECK(told.Get().empty());
+}
+
+TEST_CASE("rando: OOTRR's last lines for the log, and the tab's plain file name") {
+    using CoopRando::LastLines;
+    CHECK(LastLines("", 10).empty());
+    CHECK(LastLines("a\r\n\r\nb\n  \nc", 10) == std::vector<std::string>{"a", "b", "c"});
+    CHECK(LastLines("1\n2\n3\n4\n", 2) == std::vector<std::string>{"3", "4"});
+    const std::string line = CoopRando::SeeLogLine("OOTRR could not make the seed (exit 1)");
+    CHECK(line.find("last-build.txt") != std::string::npos);
+    CHECK(line.find("oot-remake-randomizer") != std::string::npos);
+    CHECK_FALSE(HasPath(line));
+}
+
+TEST_CASE("rando: OOTRR's own error lines for the chat (#16)") {
+    using CoopRando::ErrorLines;
+    const std::string out = "reading settings\nThis build cannot apply these settings yet: bridge is dungeons\nError: 2\n"
+                            "x\ny\nz\nfailed\nfailed again\nerror 6\n";
+    const auto e = ErrorLines(out, 5);
+    REQUIRE(e.size() == 5);
+    CHECK(e[0] == "This build cannot apply these settings yet: bridge is dungeons");
+    CHECK(e[4] == "error 6");
+    CHECK(ErrorLines("one\ntwo\n", 5) == std::vector<std::string>{"one", "two"});  // nothing error-like: the last lines
 }

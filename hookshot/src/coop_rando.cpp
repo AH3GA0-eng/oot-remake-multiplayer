@@ -3,6 +3,7 @@
 #include "coop_rando.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -324,6 +325,39 @@ std::string TellLine(std::string_view why) {
         line.resize(cut);
     }
     return line;
+}
+
+std::vector<std::string> LastLines(std::string_view text, std::size_t n) {
+    std::vector<std::string> all;
+    std::size_t at = 0;
+    while (at < text.size()) {
+        std::size_t end = text.find('\n', at);
+        if (end == std::string_view::npos) end = text.size();
+        std::string line(text.substr(at, end - at));
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.find_first_not_of(" \t") != std::string::npos) all.push_back(std::move(line));
+        at = end + 1;
+    }
+    if (all.size() > n) all.erase(all.begin(), all.end() - static_cast<std::ptrdiff_t>(n));
+    return all;
+}
+
+std::vector<std::string> ErrorLines(std::string_view text, std::size_t n) {
+    std::vector<std::string> out;
+    for (std::string& line : LastLines(text, static_cast<std::size_t>(-1))) {
+        std::string low = line;
+        std::transform(low.begin(), low.end(), low.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (low.find("error") != std::string::npos || low.find("cannot") != std::string::npos ||
+            low.find("can't") != std::string::npos || low.find("failed") != std::string::npos) {
+            out.push_back(std::move(line));
+            if (out.size() == n) break;
+        }
+    }
+    return out.empty() ? LastLines(text, n) : out;
+}
+
+std::string SeeLogLine(const std::string& head) {
+    return head + ": see " + kLogFile + " in the game's mods folder, " + kFolder + " (the chat has its full path)";
 }
 
 std::string BuildFailureHint(std::string_view out) {
@@ -659,6 +693,30 @@ void Rando::Build(const Plan& plan, const Want& want) {
         return code == kStopped ? std::string("stopped: it ran too long or the game closed")
                                 : "exit " + std::to_string(code);
     };
+    // OOTRR's own failure (player report: the tab cut the log's path off): the tab names the file plainly, the chat has
+    // its full path (once per run) and its first error lines (#16), longshot_log.txt the path and OOTRR's last lines.
+    const auto ootrr_failed = [&](const std::string& head, std::string_view reason, const std::string& output) {
+        const std::string where = head + ": OOTRR's output is in " + CoopMods::ToUtf8(log);
+        if (hooks_.log) {
+            hooks_.log("randomizer: " + where);
+            for (const std::string& l : LastLines(output, 10)) hooks_.log("randomizer: ootrr: " + l);
+        }
+        {
+            const std::lock_guard lock(mutex_);
+            if (!log_in_chat_) {
+                log_in_chat_ = true;
+                lines_.push_back(where);
+            }
+            for (const std::string& l : ErrorLines(output, 5)) lines_.push_back("OOTRR: " + l);  // what it said, each time
+        }
+        fail(SeeLogLine(head), reason);
+    };
+    const auto read_log = [&] {
+        std::ifstream in(log, std::ios::binary);
+        std::ostringstream out;
+        out << in.rdbuf();
+        return out.str();
+    };
     std::string ootrr_setting, game_setting;
     for (const CoopMods::SettingRow& s : loader_.Settings(kFolder)) {
         if (s.setting.key == "ootrr") ootrr_setting = s.value;
@@ -696,8 +754,8 @@ void Rando::Build(const Plan& plan, const Want& want) {
     const fs::path seed_file = control / (plan.folder + ".ootrr");
     const int made = hooks_.run(*ootrr, GenerateArgs(want.preset, want.seed, seed_file), log);
     if (made != 0) {
-        return fail("OOTRR could not make the seed (" + exit_text(made) + "): see " + CoopMods::ToUtf8(log),
-                    "OOTRR could not make the seed (" + exit_text(made) + ")");
+        const std::string head = "OOTRR could not make the seed (" + exit_text(made) + ")";
+        return ootrr_failed(head, head, read_log());
     }
     // Built in a stage beside the other mods' size tables (StageSizeTables), then moved in. ('_': Longshot never
     // loads it, if a closed game leaves it behind)
@@ -713,14 +771,11 @@ void Rando::Build(const Plan& plan, const Want& want) {
     fs::remove_all(stage, ec);
     if (built != 0 || !fs::is_regular_file(target / kSeedFile, ec)) {
         fs::remove_all(target, ec);
-        std::ifstream in(log, std::ios::binary);
-        std::ostringstream out;
-        out << in.rdbuf();
-        const std::string hint = BuildFailureHint(out.str());
-        return fail("OOTRR could not build the seed (" + exit_text(built) + "): " +
-                        (hint.empty() ? "see " + CoopMods::ToUtf8(log) : hint),
-                    hint.empty() ? "OOTRR could not build the seed (" + exit_text(built) + ")"
-                                 : std::string("game files not version 1.1.1"));
+        const std::string output = read_log();
+        const std::string hint = BuildFailureHint(output);
+        const std::string head = "OOTRR could not build the seed (" + exit_text(built) + ")";
+        if (hint.empty()) return ootrr_failed(head, head, output);
+        return fail(head + ": " + hint, "game files not version 1.1.1");
     }
     WriteText(target / kPresetFile, (want.preset.empty() ? std::string("default") : want.preset) + "\n");
     {
