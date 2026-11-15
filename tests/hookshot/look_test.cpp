@@ -527,6 +527,32 @@ TEST_CASE("look parts: the gear painted in a look, a painting's name says its co
     CHECK(CoopLookParts::Painted(*gear, boots)[0].texels == Shield());
 }
 
+TEST_CASE("look parts: the adult's Goron and Zora tunics are painted in all their cloth") {
+    // The adult's tunic models name more cloth than the vest and hat (the dump: Armor_Adult_Goron's inner,
+    // Armor_Adult_Zora's parts and feather): each is in the table under its tunic.
+    const auto has = [](const char* name, Part part) {
+        for (const CoopLookParts::GearTexture& g : CoopLookParts::Gear()) {
+            if (std::string_view(g.name) == name) {
+                return std::any_of(g.rules.begin(), g.rules.end(), [&](const auto& r) { return r.part == part; });
+            }
+        }
+        return false;
+    };
+    CHECK(has("Mt_Inner_Armor_Adult_Goron_Alb", Part::goron_tunic));
+    CHECK(has("Mt_Parts_Armor_Adult_Zora_Alb", Part::zora_tunic));
+    CHECK(has("Mt_Feather_Armor_Adult_Zora_Alb", Part::zora_tunic));
+    // The Zora feather (BC1, blue ends as Shield's face): painted in the Zora tunic's colour, not the Goron's.
+    const auto gear = Colour({{"Mt_Feather_Armor_Adult_Zora_Alb", Shield()}});
+    Look goron;
+    goron[Part::goron_tunic] = 0x20A040u;
+    CHECK(CoopLookParts::Painted(*gear, goron)[0].texels == Shield());
+    Look zora;
+    zora[Part::zora_tunic] = 0x20A040u;
+    const auto p = CoopLookParts::Painted(*gear, zora)[0].texels;
+    const auto ends = CoopLookPaint::Ends(CoopLookPaint::Format::bc1, std::span<const std::uint8_t>(p.data(), 8));
+    CHECK(CoopLookPaint::ToneOf(ends[0]) == CoopLookPaint::kGreen);
+}
+
 TEST_CASE("look parts: the gear wardrobe paints your shield, and one the game makes later") {
     FakeTextures m(kBase, 0x10000);
     PutFile(m, kBase + 0x1000, kHylian, Shield());
