@@ -743,6 +743,7 @@ void Sync::Reset() {
     decided_.clear();
     eggs_.clear();
     copy_eggs_.clear();
+    away_.clear();
     bound_.clear();
     refused_.clear();
     decider_ = 0;
@@ -936,6 +937,8 @@ void Sync::GameDeleted(std::uint64_t address, std::uint64_t now_us) {
     if (it != objects_.end()) {
         it->second.deleted_until = now_us + kDeletedKeepUs;
     }
+    // Asked while off the walk: gone now, not away.
+    std::erase_if(away_, [address](const Away& a) { return a.address == address; });
 }
 
 void Sync::Stepped(std::uint64_t address, std::int32_t amount, std::uint64_t now_us) {
@@ -1626,6 +1629,15 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         // others delete their copies.
         const Object& o = it->second;
         const auto owner = owners_.find(o.id);
+        // churn-b: alive, no delete request, a placed id with an owner: away, not gone.
+        if (delete_events_ && !deleted && o.id.kind == proto::ObjectKind::placed && owner != owners_.end() &&
+            owner->second.player != 0 && o.dead_at == 0 && !o.dead_said && !(o.life && *o.life <= 0) &&
+            !(o.animation && IsDeathAnimation(o.animation->name)) && !IsHatchingEgg(o.name) &&
+            !bound_.contains(o.address)) {
+            away_.push_back({o.id, o.address, now_us + kAwayKeepUs, o.name});
+            it = objects_.erase(it);
+            continue;
+        }
         if (o.id.kind == proto::ObjectKind::made && o.id.maker == self && owner != owners_.end() &&
             owner->second.player == self) {
             proto::ObjectRemove r;
@@ -1982,8 +1994,23 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         }
     }
 
+    // churn-b: an away object that came back goes on with its owner; one
+    // still off the walk after kAwayKeepUs is gone (left), its owner forgotten.
+    std::erase_if(away_, [this, now_us](const Away& a) {
+        if (std::any_of(objects_.begin(), objects_.end(), [&a](const auto& e) { return e.second.id == a.id; })) {
+            return true;
+        }
+        if (now_us < a.until) {
+            return false;
+        }
+        owners_.erase(a.id);
+        notes_.emplace_back("gone " + a.name + ": off our walk " + std::to_string(kAwayKeepUs / 1'000'000) +
+                            " s with no delete request: left");
+        return true;
+    });
+
     std::vector<proto::ObjectPresence> present;
-    present.reserve(objects_.size());
+    present.reserve(objects_.size() + away_.size());
     std::vector<proto::FishLureEntry> fish;  // issue 151: FISH_LURE
     for (auto& [address, o] : objects_) {
         if (o.dead_said) {
@@ -2090,6 +2117,14 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             flags |= proto::object_presence::unready;
         }
         present.push_back({o.id, flags});
+    }
+    // churn-b: an away object stays listed as it was last listed.
+    for (const Away& a : away_) {
+        if (std::none_of(present.begin(), present.end(), [&a](const auto& p) { return p.id == a.id; })) {
+            const auto last = std::find_if(present_sent_.begin(), present_sent_.end(),
+                                           [&a](const auto& p) { return p.id == a.id; });
+            present.push_back({a.id, last != present_sent_.end() ? last->flags : proto::object_presence::awake});
+        }
     }
     // gohma-larva: an egg of ours that just left the walk alive stays on the
     // list while its hatchling may still come, so the server keeps it ours

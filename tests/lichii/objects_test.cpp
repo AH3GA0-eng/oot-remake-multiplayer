@@ -663,6 +663,95 @@ TEST_CASE("objects: an actor the game itself deleted is gone at the first walk w
     CHECK(sync.IdOf(0x300));
 }
 
+namespace {
+bool Listed(const Step& step, const proto::ObjectId& id) {
+    for (const auto& p : All<proto::ObjectPresent>(step)) {
+        for (const auto& o : p.objects) {
+            if (o.id == id) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+} // namespace
+
+// churn-b: the game takes live actors off its list for a moment (adult
+// Kakariko's townspeople and cuccos, hundreds of times in 4 minutes); with
+// the game's delete requests known (Hookshot) such an actor is away, not
+// gone, so the server never hands it to another game for it.
+TEST_CASE("objects: delete events: an actor off the walk with no delete request keeps its id listed and its owner") {
+    const std::string npc = "Npc_Hylia_019_Shop_Child";
+    Sync sync;
+    sync.SetDeleteEvents(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 100, 0.0f, npc), Enemy(0x200, 0x22, 2, 5.0f)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 1);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 100, 0.0f, npc), Enemy(0x200, 0x22, 2, 5.0f)});
+    REQUIRE(sync.OwnerAt(0x100) == 1);
+
+    // Off the list for several walks: away, still listed (a new enemy is the
+    // change, so a presence goes out), its owner kept.
+    Tick(sync, 40 * kMs, {Enemy(0x200, 0x22, 2, 5.0f)});
+    const Step off = Tick(sync, 80 * kMs, {Enemy(0x200, 0x22, 2, 5.0f), Enemy(0x300, 0x33, 2, 9.0f)});
+    CHECK(sync.AwayCount() == 1);
+    CHECK(Listed(off, id));
+    for (const auto& n : sync.TakeNotes()) {
+        CHECK(n.find("Npc_Hylia_019_Shop_Child") == std::string::npos);  // no "gone ... left" line
+    }
+    // Back on the list: the same id, the same owner, nothing asked again.
+    Tick(sync, 500 * kMs, {Enemy(0x100, 0x11, 100, 0.0f, npc)});
+    CHECK(sync.AwayCount() == 0);
+    CHECK(*sync.IdOf(0x100) == id);
+    CHECK(sync.OwnerAt(0x100) == 1);
+
+    // Off for longer than kAwayKeepUs: gone (left), no longer listed.
+    Tick(sync, 600 * kMs, {});
+    Tick(sync, 700 * kMs, {});
+    CHECK(sync.AwayCount() == 1);
+    const Step later = Tick(sync, 700 * kMs + Sync::kAwayKeepUs, {});
+    CHECK(sync.AwayCount() == 0);
+    CHECK_FALSE(Listed(later, id));
+}
+
+TEST_CASE("objects: delete events: a deleted, dead or unowned actor is gone, not away") {
+    Sync sync;
+    sync.SetDeleteEvents(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2), Enemy(0x200, 0x22, 2, 5.0f), Enemy(0x300, 0x33, 2, 9.0f)});
+    Own(sync, *sync.IdOf(0x100), 1);
+    Own(sync, *sync.IdOf(0x200), 2);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2), Enemy(0x200, 0x22, 0, 5.0f), Enemy(0x300, 0x33, 2, 9.0f)});
+    sync.GameDeleted(0x100, 20 * kMs);  // the game asked: gone at the first miss
+    Tick(sync, 40 * kMs, {});
+    Tick(sync, 80 * kMs, {});
+    // 0x100 deleted, 0x200 dead (life 0), 0x300 with no owner yet: none is away.
+    CHECK(sync.AwayCount() == 0);
+    CHECK_FALSE(sync.IdOf(0x100));
+    CHECK_FALSE(sync.IdOf(0x200));
+    CHECK_FALSE(sync.IdOf(0x300));
+
+    // A delete request that comes while it is away ends it at once.
+    Tick(sync, 100 * kMs, {Enemy(0x400, 0x44, 2)});
+    Own(sync, *sync.IdOf(0x400), 1);
+    Tick(sync, 110 * kMs, {Enemy(0x400, 0x44, 2)});
+    Tick(sync, 140 * kMs, {});
+    Tick(sync, 180 * kMs, {});
+    REQUIRE(sync.AwayCount() == 1);
+    sync.GameDeleted(0x400, 190 * kMs);
+    CHECK(sync.AwayCount() == 0);
+}
+
+TEST_CASE("objects: without delete events (the emulator) two missed walks still end an owned actor") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    Own(sync, *sync.IdOf(0x100), 1);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 40 * kMs, {});
+    Tick(sync, 80 * kMs, {});
+    CHECK(sync.AwayCount() == 0);
+    CHECK_FALSE(sync.IdOf(0x100));
+}
+
 TEST_CASE("objects: life events: a hit that took no life is forgotten, a fall with no step still counts") {
     Sync sync;
     sync.SetLifeEvents(true);
