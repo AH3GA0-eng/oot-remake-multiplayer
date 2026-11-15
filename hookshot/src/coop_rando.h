@@ -218,6 +218,12 @@ public:
         TellOthers();
         RepeatRestart();  // joined: a restart still due is said again, in the chat the player now looks at
     }
+    // Whether the puppet pack's actors must not be made in this run: the seed it plays was built beside other size
+    // tables than there are now, so the size table the game read at its start may lack the pack's entries, and making
+    // a puppet then crashes the game when the map loads (lane1 2026-11-15: a tunic model's buffer too small). Set at
+    // Start until the seed is checked (a refresh); cleared when its table was right after all, kept until the restart
+    // when it was made again (RefreshLine) or could not be. The other players show as their fairies meanwhile.
+    bool HoldPack() const { return hold_pack_.load(); }
     // The chat lines since the last call (SwitchLine when the switch changed).
     std::vector<std::string> TakeLines();
     // Waits until no build runs (tests, exit).
@@ -255,6 +261,7 @@ private:
     bool log_in_chat_ = false;        // OOTRR's log path said in the chat this run (mutex_)
     std::string tell_;                // a line for the others not sent yet (mutex_): never a path
     std::string tell_seed_;           // the host's seed it is about (mutex_)
+    std::atomic<bool> hold_pack_{false};  // HoldPack
     std::string restart_;             // the restart line until this game restarts (mutex_): empty when none
     std::chrono::steady_clock::time_point restart_said_{};  // when it was last put in the chat (mutex_)
 };
