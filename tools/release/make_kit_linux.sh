@@ -120,7 +120,7 @@ The co-op code (the module, the server, the puppet pack tool, these scripts), GP
   https://github.com/daurosk/oot-remake-multiplayer/tree/$commit
   ${release:+(tag $release) }commit $commit; data/longshot/hookshot_coop.so is its CMake target hookshot_coop.
 
-Longshot: Team MagicBean's static recompilation (it continues Hookshot), GPL-3.0. Not in this kit: start-oot-coop.sh
+Longshot: Team MagicBean's static recompilation, GPL-3.0. Not in this kit: start-oot-coop.sh
 downloads Longshot $ls_tag's own Linux builder (data/longshot/LINUX.txt) and builds the game on your PC from your own game:
   https://git.magicbean.dev/MagicBeanDev/Longshot/src/commit/$ls_commit
   with the patches in data/longshot/patches (hookshot/patches in the co-op repo, less the WebGPU renderer's).

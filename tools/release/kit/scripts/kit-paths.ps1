@@ -995,7 +995,7 @@ function Get-KitHookshotNeedText([string]$Need, [string]$Game = '', [bool]$HsOnl
     # where 60 GB goes. Sizes measured on a built kit, 2026-11-14)
     if ($HsOnly -and $Need -eq 'game') {
         return ('The game isn''t set up yet. The kit builds the co-op game on this PC from your own game file, once (about 20 to 40 minutes; the PC stays usable).' + "`n" +
-            'It is Longshot (Hookshot''s continuation) with co-op built into its source, so a Longshot you built yourself is never used as it is, and moving one into this folder does nothing (the setup can copy your saves from it).' + "`n" +
+            'It is Longshot with co-op built into its source, so a Longshot you built yourself is never used as it is, and moving one into this folder does nothing (the setup can copy your saves from it).' + "`n" +
             'Disk: about 60 GB free while it builds; about 37 GB stay (the game 35 GB, 24 GB of it your game''s unpacked files; 2 GB of build files that keep updates quick).')
     }
     if ($HsOnly -and $Need -eq 'moved') { return "The co-op game this kit built is not in $Game any more (moved or deleted). Moved it? Answer n, move it back there, then start again. Otherwise it is built again (about 20 to 40 minutes)." }
