@@ -113,8 +113,8 @@ TEST_CASE("coop i18n: a language code picks its table") {
     CHECK(CoopI18n::ForCode("ZH-hant") == ByCode("zh-Hant"));
     CHECK(CoopI18n::ForCode("zh-Hans-CN") == ByCode("zh-Hans"));
     CHECK(CoopI18n::ForCode("zh") == nullptr);   // (no table is plain zh)
-    // Windows names Chinese by region and puts no script in the code
-    // (GetUserDefaultLocaleName), so the regions stand for the scripts there:
+    // Chinese named by region with no script in the code ("zh-CN"):
+    // the regions stand for the scripts there:
     // the mainland, Singapore and Malaysia are Simplified, Taiwan, Hong Kong
     // and Macau Traditional, and any other "zh-..." is taken as Simplified.
     CHECK(CoopI18n::ForCode("zh-CN") == ByCode("zh-Hans"));
@@ -124,6 +124,13 @@ TEST_CASE("coop i18n: a language code picks its table") {
     CHECK(CoopI18n::ForCode("zh-MO") == ByCode("zh-Hant"));
     CHECK(CoopI18n::ForCode("en") == nullptr);   // (English: the text as it is)
     CHECK(CoopI18n::ForCode("ja") == nullptr);   // (a language this table does not have)
+    // Other languages' regions are never Chinese (Longshot's menu codes
+    // pt-BR and es-419, a language.txt's en-US).
+    CHECK(CoopI18n::ForCode("en-US") == nullptr);
+    CHECK(CoopI18n::ForCode("pt-BR") == nullptr);
+    CHECK(CoopI18n::ForCode("es-419") == nullptr);
+    CHECK(CoopI18n::ForCode("ja-JP") == nullptr);
+    CHECK(CoopI18n::ForCode("ZH-tw") == ByCode("zh-Hant"));
     CHECK(CoopI18n::ForCode("") == nullptr);
 }
 

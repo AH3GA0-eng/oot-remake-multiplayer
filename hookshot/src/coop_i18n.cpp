@@ -538,7 +538,8 @@ constexpr Entry kzh_Hans[] = {
     {"The red rim.", "红色边。"},
     {"The mirror.", "镜面。"},
     {"The whole shield: it is one piece of wood.", "整个盾：它是一整块木头。"},
-    {"The blade.", "剑身。"},
+    {"The blade only: the grip is the Hilt below.", "仅剑身：握柄是下面的剑柄。"},
+    {"The blade only: the grip and wings are the Hilt below; the gold stays.", "仅剑身：握柄和翼是下面的剑柄；金色部分不变。"},
     {"The leather grip.", "皮革握柄。"},
     {"The blue grip and wings; the gold and the gem stay.", "蓝色握柄和翼；金色部分与宝石不变。"},
     {"The blue grip.", "蓝色握柄。"},
@@ -1088,7 +1089,8 @@ constexpr Entry kzh_Hant[] = {
     {"The red rim.", "紅色邊。"},
     {"The mirror.", "鏡面。"},
     {"The whole shield: it is one piece of wood.", "整個盾：它是一整塊木頭。"},
-    {"The blade.", "劍身。"},
+    {"The blade only: the grip is the Hilt below.", "僅劍身：握柄是下面的劍柄。"},
+    {"The blade only: the grip and wings are the Hilt below; the gold stays.", "僅劍身：握柄和翼是下面的劍柄；金色部分不變。"},
     {"The leather grip.", "皮革握柄。"},
     {"The blue grip and wings; the gold and the gem stay.", "藍色握柄和翼；金色部分與寶石不變。"},
     {"The blue grip.", "藍色握柄。"},
@@ -1190,40 +1192,13 @@ std::string GameFolder() {
 #endif
 }
 
-// The system's own language, as a code this module may have a table for
-// ("zh-Hans-CN" -> "zh-Hans", "pt-BR" -> "pt-BR"). Windows: the user's
-// language (GetUserDefaultLocaleName), which is what the game and Longshot
-// fall back to as well; elsewhere: the locale's own setting.
-std::string SystemLanguage() {
-#ifdef _WIN32
-    wchar_t wide[LOCALE_NAME_MAX_LENGTH] = {};
-    if (GetUserDefaultLocaleName(wide, LOCALE_NAME_MAX_LENGTH) > 0) {
-        const int need = WideCharToMultiByte(CP_UTF8, 0, wide, -1, nullptr, 0, nullptr, nullptr);
-        if (need > 1) {
-            std::string code(static_cast<std::size_t>(need), '\0');
-            WideCharToMultiByte(CP_UTF8, 0, wide, -1, code.data(), need, nullptr, nullptr);
-            code.resize(static_cast<std::size_t>(need - 1));   // (the ending zero)
-            return code;
-        }
-    }
-    return {};
-#else
-    if (const char* env = std::getenv("LC_ALL"); env != nullptr && *env != '\0') {
-        return Trim(env);
-    }
-    if (const char* env = std::getenv("LANG"); env != nullptr && *env != '\0') {
-        return Trim(env);
-    }
-    return {};
-#endif
-}
-
 // The game's language, which the Menu language row's Auto follows: HOS_LANGUAGE
 // when the game was started with it, else language.txt's first line that is
-// not a comment (a UTF-8 mark at its start skipped), else the system's own
-// language (so a Chinese Windows shows Chinese without a language.txt). Read
-// once: the game reads it at its start too, and Auto keeps that one until a
-// restart.
+// not a comment (a UTF-8 mark at its start skipped), else English: the game
+// and Longshot's Auto run in en-US then and never ask the system, so the tabs
+// match them (longshot-src host/nn_applet.c, gpu/vk/vk_menu_i18n.h
+// game_language()). Read once: the game reads it at its start too, and Auto
+// keeps that one until a restart.
 std::string ReadLanguage() {
     if (const char* env = std::getenv("HOS_LANGUAGE"); env != nullptr && *env != '\0') {
         return Trim(env);
@@ -1244,7 +1219,7 @@ std::string ReadLanguage() {
             }
         }
     }
-    return SystemLanguage();
+    return "en";
 }
 
 // longshot_options.ini as it was last read: Longshot's menu writes it on
@@ -1408,12 +1383,13 @@ const Lang* ForCode(std::string_view code) {
             }
         }
     }
-    // Windows names Chinese by its region, with no script in the code
-    // (GetUserDefaultLocaleName gives "zh-CN", "zh-TW", "zh-HK"): the script
+    // Chinese named by its region, with no script in the code ("zh-CN",
+    // "zh-TW", "zh-HK", as a language.txt may have it): the script
     // is what the tables are apart by, so the regions stand for them here.
     // Simplified: the mainland, Singapore and Malaysia; traditional: Taiwan,
-    // Hong Kong and Macau. Any other "zh-..." is taken as Simplified.
-    if (code.size() > 3 && code[2] == '-') {
+    // Hong Kong and Macau. Any other "zh-..." is taken as Simplified; other
+    // languages' regions ("en-US", "pt-BR", "es-419") are not Chinese.
+    if (code.size() > 3 && code[2] == '-' && SameCode(code.substr(0, 2), "zh")) {
         const std::string_view region = code.substr(3);
         const bool traditional = SameCode(region, "TW") || SameCode(region, "HK") || SameCode(region, "MO") ||
                                  SameCode(region, "Hant");
