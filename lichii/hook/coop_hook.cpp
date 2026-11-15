@@ -253,6 +253,34 @@ struct RoomView {
     bool encrypted = false;  // docs/protocol.md "Encrypted traffic"
 };
 
+// Issue 84: Mido blocks again in a game already past him (the save holds a
+// 1 that a shared value from a save behind the group put there): his
+// blocker back to 0 through the game's Bool setter (CoopStory::
+// MidoBlockerMend says when). Held 3 s first, so a host save load whose
+// quest and scene flags land a few frames after its blocker is not fought.
+// In a session (Coop::CatchUpQuest) and with none (LocalFrameOff), so a
+// save stuck that way is mended when it is played alone too. `since_us`: the
+// caller's own hold clock.
+void MendMidoBlocker(EmulatorMemory& memory, std::uint64_t& since_us) {
+    static constexpr std::uint64_t kHoldUs = 3'000'000;
+    if (!CoopStory::On()) return;
+    namespace quest = CoopStory::quest;
+    coop::host::GameFlags flags(memory);
+    const auto step = flags.get_enum(quest::kMeetDekuTree);
+    const bool mend = CoopStory::MidoBlockerMend(step, flags.get_bool(quest::kMidoBlocker),
+                                                 flags.get_bool(quest::kMetDekuTree));
+    const std::uint64_t now_us = CoopEvery::NowUs();
+    if (!mend) {
+        since_us = 0;
+    } else if (since_us == 0) {
+        since_us = now_us;
+    } else if (now_us - since_us >= kHoldUs && coop::host::GameFlags::set_bool(memory, quest::kMidoBlocker, false)) {
+        since_us = 0;
+        LOG_INFO(Core, "coop: story: Mido's blocker was 1 in a game past him (Meet_DekuTree {:#x}): set to 0 (issue 84)",
+                 step.value_or(0));
+    }
+}
+
 class Coop {
 public:
     // main's address in a game process (split screen with co-op off: LocalFrameOff below).
@@ -396,6 +424,9 @@ public:
         shared_scenes_ = live_events_ && CoopSharedScenes::OnFromEnv(EnvString("LICHII_COOP_SHARED_CUTSCENES"));
         LOG_INFO(Core, "coop: cutscene: shared story cutscenes {}",
                  shared_scenes_ ? "on (off with LICHII_COOP_SHARED_CUTSCENES=0)" : "off");
+        if (CoopStory::On()) {  // issue 84: Mido's blocker only ever goes down: a group's 1 never over our 0
+            session_->share_down_only(coop::protocol::FlagKey(CoopStory::quest::kMidoBlocker, std::uint16_t{0}));
+        }
         if (CoopDungeon::On()) {  // room switch flags the game resets itself: one way, no load write-back
             for (const auto& f : CoopDungeon::LiveFlags()) {
                 session_->share_one_way(coop::protocol::FlagKey(f.hash, std::uint16_t{0}));
@@ -2155,27 +2186,8 @@ private:
             LOG_INFO(Core, "coop: story: quest Meet_DekuTree {:#x} -> {:#x} (shared story; issue 130)",
                      *step, *raise);
         }
-        // Issue 84: Mido blocks again in a game already past him (a shared 1
-        // from a save behind the group). Held kMidoMendUs first, so a host
-        // save load whose quest and scene flags land a few frames after its
-        // blocker is not fought.
-        const bool mend = CoopStory::MidoBlockerMend(step, flags.get_bool(quest::kMidoBlocker),
-                                                     flags.get_bool(quest::kMetDekuTree));
-        const std::uint64_t now_us = CoopEvery::NowUs();
-        if (!mend) {
-            mido_mend_since_us_ = 0;
-        } else if (mido_mend_since_us_ == 0) {
-            mido_mend_since_us_ = now_us;
-        } else if (now_us - mido_mend_since_us_ >= kMidoMendUs &&
-                   coop::host::GameFlags::set_bool(memory, quest::kMidoBlocker, false)) {
-            mido_mend_since_us_ = 0;
-            LOG_INFO(Core,
-                     "coop: story: Mido's blocker was 1 in a game past him (Meet_DekuTree {:#x}): set to 0 "
-                     "(issue 84)",
-                     step.value_or(0));
-        }
+        MendMidoBlocker(memory, mido_mend_since_us_);  // issue 84
     }
-    static constexpr std::uint64_t kMidoMendUs = 3'000'000;
     std::uint64_t mido_mend_since_us_ = 0;  // CatchUpQuest's (game thread)
 
     // Set by Begin before the network thread starts; the session borrows the
@@ -2377,6 +2389,12 @@ void LocalFrameOff(Core::System& system) {
         const auto scene = full ? full->scene : reader.read_scene();
         WatchMapDrops(memory, facts.position.has_value(), scene, facts.position);
         KeepMapsAlone(memory, facts.position.has_value(), scene);
+        static std::uint64_t mido_since_us = 0;
+        if (facts.position.has_value()) {
+            MendMidoBlocker(memory, mido_since_us);  // issue 84: a save stuck behind Mido, played alone
+        } else {
+            mido_since_us = 0;  // the title or a load: nothing to read yet
+        }
     }
     if (!step.Publish(CoopLocalGame::HasSeats())) return;
     if (!full) full = reader.read();   // seats came in this frame's step

@@ -154,6 +154,8 @@ class Session {
   bool share_pickup(FlagKey key) { return watcher_ && watcher_->share_pickup(key); }
   // FlagWatcher::share_one_way. Emulator thread only, like share_pickup.
   bool share_one_way(FlagKey key) { return watcher_ && watcher_->share_one_way(key); }
+  // FlagWatcher::share_down_only. Emulator thread only, like share_pickup.
+  bool share_down_only(FlagKey key) { return watcher_ && watcher_->share_down_only(key); }
   // The game's own flag writes as events (FlagWatcher::use_events,
   // game_wrote, game_wrote_all). Emulator thread only, before frame().
   void flag_events(bool on) {
