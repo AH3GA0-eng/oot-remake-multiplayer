@@ -489,9 +489,10 @@ void StartModule() {
         g_gear_looks[CoopLookParts::Name(worn)] = worn;
     }
     g_gear->Wear(CoopLookParts::Name(worn));
-    if (CoopLookParts::AnyGear(worn)) {
-        CoopLookShare::Set(Share(worn));
-    }
+    // Always sent, gear colours or not (held-sword): the others give every player whose look
+    // arrives their own copy of the items, so a puppet never wears the game's own sword, whose
+    // blade hides with their own Link's. A look with no gear paints that copy in the game's colours.
+    CoopLookShare::Set(Share(worn));
     for (const std::string& e : part_errors) {
         LOG_WARNING(Core, "coop: look: {}", e);
     }

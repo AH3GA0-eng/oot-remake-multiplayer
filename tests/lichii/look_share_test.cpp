@@ -219,3 +219,19 @@ TEST_CASE("look share: a player with no gear colours wears their own copy, paint
     s.Done(jobs[0], 100);
     CHECK(s.CopyOf(4) == 1u);
 }
+
+TEST_CASE("look share: a look with no gear set at start goes out, and the other game gives that player a copy") {
+    // held-sword: the module sets its look at start even with no gear colours (coop_look_live.cpp
+    // StartModule), so the others dress that player's puppet in its own copy of the sword.
+    CoopLookShare::Share ours;
+    ours.Set({});
+    const auto sent = ours.TakeSend();
+    REQUIRE(sent);
+    CHECK(sent->parts.empty());
+    CoopLookShare::Share theirs;
+    theirs.EnableSlots(true);
+    theirs.OnEvent(Look(2, sent->parts));      // as relayed, from player 2
+    CHECK(theirs.SlotOf(2) == 1u);
+    ours.OnEvent(Kind(EventKind::player_joined, 3));
+    CHECK(ours.TakeSend());                    // and again for a late joiner
+}
