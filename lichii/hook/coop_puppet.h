@@ -650,9 +650,10 @@ struct PlannerSettings {
     // Each player's tunic in their colour (docs/puppet.md, "Colour"): the
     // puppet pack's CoopPuppet_<Age>_<Colour>. LICHII_COOP_TUNICS=0: off.
     bool tunics = true;
-    // Your own Link wears another colour (LICHII_COOP_SELF_TUNIC, set by the
-    // kit when it put that colour's tile over the game's): the plain puppet
-    // would wear it too, so a green player gets CoopPuppet_<Age>_Green.
+    // The pack has the green puppets (CoopPuppetConfig): the plain puppet's
+    // model is your own Link's (the kit's colour-agree copy, whatever colour
+    // you wear), so it would wear your tunic; a green player, and any puppet
+    // whose colour is off or failed, gets CoopPuppet_<Age>_Green instead.
     bool green_puppet = false;
     // LICHII_COOP_NATIVE_PLAYER (a test, coop_native_player.h): the other
     // player is the game's own Player_<Age>, made and then left alone.

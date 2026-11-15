@@ -2052,16 +2052,24 @@ std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color) co
                        settings_.quiet_scenes.end();
     const auto named = [quiet](std::string name) { return quiet ? QuietActor(name) : name; };
     const std::string plain = adult ? "CoopPuppet_Adult" : "CoopPuppet_Child";
+    const auto works = [this](const std::string& name) {
+        return std::find(failed_tunics_.begin(), failed_tunics_.end(), name) == failed_tunics_.end();
+    };
     if (settings_.tunics && color) {
-        std::string_view tunic = CoopColors::TunicOf(*color);
-        if (tunic.empty() && settings_.green_puppet) {
-            tunic = "Green";  // the plain puppet wears your own colour (PlannerSettings)
-        }
+        const std::string_view tunic = CoopColors::TunicOf(*color);
         if (!tunic.empty()) {
             std::string name = named(plain + '_' + std::string(tunic));
-            if (std::find(failed_tunics_.begin(), failed_tunics_.end(), name) == failed_tunics_.end()) {
+            if (works(name)) {
                 return name;
             }
+        }
+    }
+    // The plain puppet wears your own colour (PlannerSettings::green_puppet):
+    // a green player, tunics off, or a colour that failed get the green one.
+    if (settings_.green_puppet) {
+        std::string green = named(plain + "_Green");
+        if (works(green)) {
+            return green;
         }
     }
     return named(plain);
