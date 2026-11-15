@@ -542,6 +542,19 @@ try {
     $out = (cmd /c "powershell -NoProfile -ExecutionPolicy Bypass -File `"$kit\scripts\play.ps1`" choose -Hookshot -NoUpdate < nul" 2>&1) -join '|'
     $idle = Read-File (Join-Path $hsGame 'coop.ini')
     Check ($out -match 'Game started' -and $idle -notmatch '(?m)^\s*server\s*=') "Play-OoT-Coop: a first start (no coop.ini) writes one with no server [$out]"
+    # Start OoT Co-op.bat (play.ps1 choose -Hookshot, the release kit's start) reads coop-options.ini too, so
+    # your colour's tunic files are put in before the game starts (v0.11.0: this start never read it and put
+    # the game's green back: "the puppet pack's tunic files are green, your colour is orange").
+    & $stopHs
+    New-Item -ItemType Directory -Force -Path (Join-Path $hsPack 'coop_self') | Out-Null
+    Write-File (Join-Path $hsPack 'coop_self\red.bntx.zs') 'RED'
+    Write-File (Join-Path $hsPack 'coop_puppet.json') '{"sound": true, "tunics": {"red": ["x"], "green": ["y"]}, "self_tiles": {"red": "coop_self/red.bntx.zs"}}'
+    Remove-Item Env:LICHII_COOP_COLOR -ErrorAction SilentlyContinue
+    $out = (cmd /c "powershell -NoProfile -ExecutionPolicy Bypass -File `"$kit\scripts\play.ps1`" choose -Hookshot -NoUpdate < nul" 2>&1) -join '|'
+    $tile = Join-Path $hsPack 'romfs\Tex\Angin_Tile_A_Alb.bntx.zs'
+    Check ($out -match 'Option: LICHII_COOP_COLOR=' -and $out -match 'Your Link: the red tunic' -and $out -match 'Game started') "Play-OoT-Coop: coop-options.ini's colour is read before the pack step [$out]"
+    Check ((Test-Path -LiteralPath $tile) -and [System.IO.File]::ReadAllText($tile) -eq 'RED') 'Play-OoT-Coop: the red tile in the pack before the game starts'
+    Remove-Item -LiteralPath $hsPack -Recurse -Force
     Get-Process hookshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($kit, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
     # A built kit's coop.ini.template and coop-ini.ps1 keep @PORT@ (make_kit.ps1 copies with
     # kit_text.ps1), and play.ps1 writes the port each join needs: 27512 (the join helper) for an

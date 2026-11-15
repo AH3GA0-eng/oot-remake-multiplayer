@@ -41,6 +41,11 @@ const std::vector<GearTexture>& Gear() {
         {"Mt_Angin_Armor_Adult_Zora_Alb", Format::astc, {{Part::zora_tunic, T::kBlue | T::kCyan}}},
         {"Mt_Vest_Armor_Adult_Zora_Alb", Format::astc, {{Part::zora_tunic, T::kBlue | T::kCyan}}},
         {"Mt_Angin_Acs_Armor_Adult_Zora_Alb", Format::astc, {{Part::zora_tunic, T::kBlue | T::kCyan}}},
+        // The rest of the cloth (the dump's end colours: the Goron inner 82% crimson, which is pink by
+        // hue; the Zora parts 45% blue beside grey scales; the Zora feather 49% blue and cyan).
+        {"Mt_Inner_Armor_Adult_Goron_Alb", Format::astc, {{Part::goron_tunic, T::kRed | T::kPink}}},
+        {"Mt_Parts_Armor_Adult_Zora_Alb", Format::astc, {{Part::zora_tunic, T::kBlue | T::kCyan}}},
+        {"Mt_Feather_Armor_Adult_Zora_Alb", Format::bc1, {{Part::zora_tunic, T::kBlue | T::kCyan}}},
     };
     return kGear;
 }

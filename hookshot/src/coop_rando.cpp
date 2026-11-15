@@ -98,7 +98,7 @@ std::string ManifestText() {
   "id": "oot-remake-randomizer",
   "name": "OoT Remake Randomizer",
   "version": "1",
-  "author": "OOTRR by REALAZK (MIT), run by the co-op mod loader",
+  "author": "OOTRR by REALAZK (GPL-3.0-or-later), run by the co-op mod loader",
   "description": "Shuffles chests, dungeon items and rewards (OOTRR). In co-op everyone plays the host's seed and every pickup is shared. A new seed needs a restart of the game, never a game build.",
   "coop": "everyone",
   "settings": [

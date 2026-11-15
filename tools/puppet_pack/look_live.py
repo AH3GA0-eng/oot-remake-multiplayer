@@ -58,6 +58,11 @@ GEAR = (
     "Mt_Angin_Armor_Adult_Zora_Alb",
     "Mt_Vest_Armor_Adult_Zora_Alb",
     "Mt_Angin_Acs_Armor_Adult_Zora_Alb",
+    # The rest of the adult's Goron and Zora tunic cloth (their models name them; the dump's end colours:
+    # the Goron inner 82% crimson, the Zora parts 45% blue, the Zora feather 49% blue / cyan).
+    "Mt_Inner_Armor_Adult_Goron_Alb",
+    "Mt_Parts_Armor_Adult_Zora_Alb",
+    "Mt_Feather_Armor_Adult_Zora_Alb",
 )
 GEAR_FILE = "gear.bin"
 
