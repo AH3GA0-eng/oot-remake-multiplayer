@@ -43,6 +43,7 @@
 #include "coop/host/game_items.hpp"
 #include "coop/host/game_memory.hpp"
 #include "coop/host/notify.hpp"
+#include "coop/host/lent_keys.hpp"
 #include "coop/host/map_drop_log.hpp"
 #include "coop/host/one_way_keeper.hpp"
 #include "coop/host/player_reader.hpp"
@@ -520,9 +521,23 @@ public:
         std::optional<coop::host::HoldFlagStore> hold;
         // Issue 193: the Threads of Time quests, ordered (coop_quests.h).
         std::optional<CoopQuests::Store> quests;
+        // dungeon-sync-b (#75): small keys lent at a lock another player opened
+        // stay in our game; the watcher sees the counts without them.
+        std::optional<coop::host::LentKeyStore> lent_view;
         if (store) {
+            for (const auto& [count, back] : CoopObjects::TakeKeyLends()) {
+                if (back) {
+                    lent_keys_.give_back(coop::protocol::FlagKey{count, 0});
+                } else {
+                    lent_keys_.lend(coop::protocol::FlagKey{count, 0});
+                }
+            }
+            for (const std::string& line : lent_keys_.frame(*store)) {
+                LOG_INFO(Core, "coop: {}", line);
+            }
+            lent_view.emplace(*store, lent_keys_);
             quests.emplace(
-                *store,
+                *lent_view,
                 [&memory](std::uint32_t hash) { return coop::host::GameFlags(*memory).get_enum(hash); },
                 [&memory](std::uint32_t hash, std::uint32_t value) {
                     return coop::host::GameFlags::set_enum(*memory, hash, value);
@@ -634,6 +649,7 @@ public:
             LOG_INFO(Core, "coop: flags: save load seen ({} flags back, {} frames without a scene)",
                      report.save_load_flags, report.save_load_frames);
             CoopTime::SaveLoaded(report.server_now_us);  // issue 159
+            lent_keys_.forget();  // dungeon-sync-b: the save has its own key counts
             start_source_.Reset();  // deku-sync-fix: what the game asked before the load is not ours now
             story_source_.Reset();
             coop::host::map_drop_log().note("save load seen (" + std::to_string(report.save_load_flags) + " flags back)");
@@ -778,6 +794,7 @@ public:
             // locked doors' kept breaks, the kills-late dead list, ...).
             LOG_INFO(Core, "coop: flags: the host loaded a save: the group follows it");
             CoopObjects::ForgetKeptBreaks();  // locked doors' kept breaks (docs/dungeon.md)
+            lent_keys_.forget();              // the host's save has its own key counts
         }
         // Issue 167: the host's save for the guests (coop_save.h): a guest asks
         // once, the host sends its newest save a part a frame, and again to
@@ -864,6 +881,9 @@ public:
         {  // our own key spends, for the locks' give-back (docs/dungeon.md, "Locked doors")
             std::vector<std::uint32_t> drops;
             for (const auto& k : session_->take_own_count_drops()) {
+                drops.push_back(k.hash);
+            }
+            for (const auto& k : lent_keys_.take_spent()) {  // a lent key used on its lock
                 drops.push_back(k.hash);
             }
             CoopObjects::OwnCountDrops(drops);
@@ -1787,6 +1807,7 @@ private:
     std::uint64_t flag_event_reads_ = 0, flag_event_misses_ = 0, flag_full_reads_ = 0;
 #endif
     CoopScrubTalk::Hold scrub_talk_;  // issue 144: scrub destroy flags wait for our event
+    coop::host::LentKeys lent_keys_;  // dungeon-sync-b (#75): keys lent at another player's lock
     bool scrub_talk_on_ = EnvString("LICHII_COOP_SCRUB_TALK_HOLD") != "0";  // =0: off (the old softlock)
     bool live_events_ = false;     // LICHII_COOP_LIVE_EVENTS=1 (issue 129)
     // Chat notices, on unless LICHII_COOP_NOTIFY=0 (docs/setup.md).

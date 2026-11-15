@@ -329,6 +329,10 @@ std::vector<std::uint32_t>& KeyRefundQueue() {
     static std::vector<std::uint32_t> q;
     return q;
 }
+std::vector<std::pair<std::uint32_t, bool>>& KeyLendQueue() {  // lends (false) and take-backs (true)
+    static std::vector<std::pair<std::uint32_t, bool>> q;
+    return q;
+}
 std::vector<std::uint32_t>& OwnDropQueue() {  // our own key spends, for WorldSync
     static std::vector<std::uint32_t> q;
     return q;
@@ -1532,12 +1536,14 @@ public:
                     world_.ForgetKept();
                 }
             }
-            // A lock another player opened is deleted here, as before door-unlock. Keeping it with a lent
-            // key (LICHII_COOP_LOCK_DELETE=0) is off: in a two-game run the lent key was shared to the
-            // other players as a found key, so the group ended with more keys than it had.
+            // dungeon-sync-b (#75): a lock another player opened is kept here and our player opens it
+            // with a lent key, the game's own way: the door set unlocks only on the lock's
+            // ReceiveDoAttention pulse, so a deleted lock left the door shut. The lent key stays in our
+            // game (coop::host::LentKeys), so the group's count is right. LICHII_COOP_LOCK_DELETE=1:
+            // deleted, as in 0.11.0.
             static const bool delete_locks = [] {
                 const char* v = std::getenv("LICHII_COOP_LOCK_DELETE");
-                return v == nullptr || std::string_view(v) != "0";
+                return v != nullptr && std::string_view(v) == "1";
             }();
             world_.SetDeleteLocks(delete_locks);
             world_.Tick(*scene, self, server_now_us, seen, player_, world);
@@ -1546,6 +1552,16 @@ public:
             }
             writes.insert(writes.end(), world.lives.begin(), world.lives.end());
             TestKills(seen, writes);
+            if (!world.key_lends.empty() || !world.lend_returns.empty()) {
+                std::lock_guard lock(KeyRefundMutex());
+                auto& lends = KeyLendQueue();
+                for (const std::uint32_t key : world.key_lends) {
+                    lends.emplace_back(key, false);
+                }
+                for (const std::uint32_t key : world.lend_returns) {
+                    lends.emplace_back(key, true);
+                }
+            }
             if (!world.key_refunds.empty()) {
                 std::lock_guard lock(KeyRefundMutex());
                 auto& refunds = KeyRefundQueue();
@@ -3845,6 +3861,13 @@ std::vector<std::uint32_t> TakeKeyRefunds() {
     std::lock_guard lock(KeyRefundMutex());
     std::vector<std::uint32_t> out;
     out.swap(KeyRefundQueue());
+    return out;
+}
+
+std::vector<std::pair<std::uint32_t, bool>> TakeKeyLends() {
+    std::lock_guard lock(KeyRefundMutex());
+    std::vector<std::pair<std::uint32_t, bool>> out;
+    out.swap(KeyLendQueue());
     return out;
 }
 

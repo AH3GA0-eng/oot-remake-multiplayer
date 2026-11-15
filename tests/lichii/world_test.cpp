@@ -687,15 +687,15 @@ TEST_CASE("doors: a lock at our Link's feet is not taken, a key is lent once, an
     TempleWalk(w, 5000, LockAt());
     w.Receive(BreakOf(0x11, proto::world_break::kept, kTemple));
     std::vector<std::uint32_t> lent;
-    std::vector<std::string> taken;
+    std::vector<std::uint32_t> taken;
     for (std::uint64_t t = 5100; t < 9000; t += 100) {
         auto out = TempleWalk(w, t, LockAt());
         CHECK(w.Removes().empty());
         if (t < 6100) {
-            CHECK(out.key_refunds.empty());  // lent after a second at the lock
+            CHECK(out.key_lends.empty());  // lent after a second at the lock
         }
-        lent.insert(lent.end(), out.key_refunds.begin(), out.key_refunds.end());
-        taken.insert(taken.end(), out.give_back.begin(), out.give_back.end());
+        lent.insert(lent.end(), out.key_lends.begin(), out.key_lends.end());
+        taken.insert(taken.end(), out.lend_returns.begin(), out.lend_returns.end());
     }
     CHECK(lent == std::vector<std::uint32_t>{0x877bdceeu});  // once (door-unlock: a player with no key)
     // Our player opens it: our game spends the lent key, then takes the lock.
@@ -703,14 +703,14 @@ TEST_CASE("doors: a lock at our Link's feet is not taken, a key is lent once, an
     for (std::uint64_t t = 9100; t < 12000; t += 100) {
         auto out = TempleWalk(w, t, {});
         CHECK(Sent<proto::WorldBreak>(out).empty());  // the scene has this break already
-        lent.insert(lent.end(), out.key_refunds.begin(), out.key_refunds.end());
-        taken.insert(taken.end(), out.give_back.begin(), out.give_back.end());
+        lent.insert(lent.end(), out.key_lends.begin(), out.key_lends.end());
+        taken.insert(taken.end(), out.lend_returns.begin(), out.lend_returns.end());
     }
     CHECK(lent.size() == 1);  // the spend was the lent key: nothing more goes back
     CHECK(taken.empty());
 }
 
-TEST_CASE("doors: with locks deleted (the hook's default) no key is lent at a lock at our Link's feet") {
+TEST_CASE("doors: with locks deleted (LICHII_COOP_LOCK_DELETE=1) no key is lent at a lock at our Link's feet") {
     WorldSync w;
     w.SetDeleteLocks(true);
     TempleWalk(w, 1000, LockAt());
@@ -719,8 +719,8 @@ TEST_CASE("doors: with locks deleted (the hook's default) no key is lent at a lo
     for (std::uint64_t t = 5100; t < 12000; t += 100) {
         auto out = TempleWalk(w, t, LockAt());
         CHECK(w.Removes().empty());       // never from under our Link
-        CHECK(out.key_refunds.empty());   // and no key on top of our own
-        CHECK(out.give_back.empty());
+        CHECK(out.key_lends.empty());   // and no key on top of our own
+        CHECK(out.lend_returns.empty());
         for (const auto& n : out.notes) {
             CHECK(n.find("lent") == std::string::npos);
         }
@@ -750,25 +750,24 @@ TEST_CASE("doors: opening a lock another player opened within the first second g
 }
 
 TEST_CASE("doors: a lent key not used is taken back when our Link leaves the lock, the room or the scene") {
-    const std::string count = "DungeonInfo.WaterTemple.SmallKeyNum";
-    auto run = [&](auto&& leave) {
+    auto run = [](auto&& leave) {
         WorldSync w;
         TempleWalk(w, 1000, LockAt());
         TempleWalk(w, 5000, LockAt());
         w.Receive(BreakOf(0x11, proto::world_break::kept, kTemple));
         std::size_t lent = 0;
         for (std::uint64_t t = 5100; t < 7000; t += 100) {
-            lent += TempleWalk(w, t, LockAt()).key_refunds.size();
+            lent += TempleWalk(w, t, LockAt()).key_lends.size();
         }
         CHECK(lent == 1);
-        std::vector<std::string> taken;
+        std::vector<std::uint32_t> taken;
         for (std::uint64_t t = 7000; t < 11000; t += 100) {
             auto out = leave(w, t);
-            lent += out.key_refunds.size();
-            taken.insert(taken.end(), out.give_back.begin(), out.give_back.end());
+            lent += out.key_lends.size();
+            taken.insert(taken.end(), out.lend_returns.begin(), out.lend_returns.end());
         }
         CHECK(lent == 1);
-        CHECK(taken == std::vector<std::string>{count});  // once
+        CHECK(taken == std::vector<std::uint32_t>{0x877bdceeu});  // once
     };
     // A step back (4 m) keeps the key and the lock; 7 m away it goes back.
     {
@@ -780,7 +779,7 @@ TEST_CASE("doors: a lent key not used is taken back when our Link leaves the loc
             TempleWalk(w, t, LockAt());
         }
         for (std::uint64_t t = 7000; t < 9000; t += 100) {
-            CHECK(TempleWalk(w, t, LockAt(), proto::Vec3{1.0f, 2.0f, 7.0f}).give_back.empty());
+            CHECK(TempleWalk(w, t, LockAt(), proto::Vec3{1.0f, 2.0f, 7.0f}).lend_returns.empty());
             CHECK(w.Removes().empty());
         }
     }
@@ -789,7 +788,8 @@ TEST_CASE("doors: a lent key not used is taken back when our Link leaves the loc
     run([](WorldSync& w, std::uint64_t t) { return TempleWalk(w, t, {}); });
     // Our Link leaves the dungeon.
     run([](WorldSync& w, std::uint64_t t) { return Walk(w, t * kMs, {}, kLink, 2, kScene); });
-    // Our own take-back lowers our count: that is no key our player spent.
+    // Our own take-back is never seen as a drop (the hook's LentKeys keeps it from the watcher),
+    // so a held lock that goes beside us then gives nothing back.
     {
         WorldSync w;
         TempleWalk(w, 1000, LockAt());
@@ -800,14 +800,13 @@ TEST_CASE("doors: a lent key not used is taken back when our Link leaves the loc
             TempleWalk(w, t, LockAt());
         }
         TempleWalk(w, 7000, LockAt(), kFar);
-        w.OwnCountDrop(0x877bdceeu, 7100 * kMs);  // the hook's -1 of the take-back, seen by the watcher
         // Another opened lock we stand at for a moment goes (its room unloads by us).
         const auto other = Thing(0x200, 0x12, std::nullopt, kLock, kFar);
         TempleWalk(w, 7200, {other}, kFar);
         TempleWalk(w, 7300, {other}, kFar);
         std::size_t back = 0;
         for (std::uint64_t t = 7400; t < 10000; t += 100) {
-            back += TempleWalk(w, t, {}, kFar).key_refunds.size();
+            back += TempleWalk(w, t, {}, kFar).key_lends.size();
         }
         CHECK(back == 0);
     }
@@ -821,22 +820,22 @@ TEST_CASE("doors: the two locks of one door get one lent key, and going together
     w.Receive(BreakOf(0x11, proto::world_break::kept, kTemple));
     w.Receive(BreakOf(0x12, proto::world_break::kept, kTemple));
     std::vector<std::uint32_t> lent;
-    std::vector<std::string> taken;
+    std::vector<std::uint32_t> taken;
     for (std::uint64_t t = 5100; t < 9000; t += 100) {
         auto out = TempleWalk(w, t, pair);
-        lent.insert(lent.end(), out.key_refunds.begin(), out.key_refunds.end());
+        lent.insert(lent.end(), out.key_lends.begin(), out.key_lends.end());
     }
     CHECK(lent.size() == 1);
     w.OwnCountDrop(0x877bdceeu, 9000 * kMs);
     // One lock goes a walk before the other.
     for (std::uint64_t t = 9100; t < 9300; t += 100) {
         auto out = TempleWalk(w, t, {pair[1]});
-        lent.insert(lent.end(), out.key_refunds.begin(), out.key_refunds.end());
+        lent.insert(lent.end(), out.key_lends.begin(), out.key_lends.end());
     }
     for (std::uint64_t t = 9300; t < 14000; t += 100) {
         auto out = TempleWalk(w, t, {});
-        lent.insert(lent.end(), out.key_refunds.begin(), out.key_refunds.end());
-        taken.insert(taken.end(), out.give_back.begin(), out.give_back.end());
+        lent.insert(lent.end(), out.key_lends.begin(), out.key_lends.end());
+        taken.insert(taken.end(), out.lend_returns.begin(), out.lend_returns.end());
     }
     CHECK(lent.size() == 1);
     CHECK(taken.empty());
@@ -849,7 +848,7 @@ TEST_CASE("doors: by default a lock another player opened is never deleted, near
     w.Receive(BreakOf(0x11, proto::world_break::kept, kTemple));
     std::size_t lent = 0;
     for (std::uint64_t t = 5100; t < 13000; t += 100) {
-        lent += TempleWalk(w, t, LockAt(), kFar).key_refunds.size();
+        lent += TempleWalk(w, t, LockAt(), kFar).key_lends.size();
         CHECK(w.Removes().empty());
     }
     CHECK(lent == 0);  // nobody at it: no key
@@ -863,7 +862,7 @@ TEST_CASE("doors: by default a lock another player opened is never deleted, near
     }
     // Our Link comes to it: a key is lent.
     for (std::uint64_t t = 16000; t < 18000; t += 100) {
-        lent += TempleWalk(w, t, LockAt(0x300)).key_refunds.size();
+        lent += TempleWalk(w, t, LockAt(0x300)).key_lends.size();
     }
     CHECK(lent == 1);
     CHECK(w.Removes().empty());
@@ -904,11 +903,11 @@ TEST_CASE("doors: at most kMaxLends keys are lent for one lock") {
     std::uint64_t t = 5100;
     for (int visit = 0; visit < WorldSync::kMaxLends + 3; ++visit) {
         for (int i = 0; i < 20; ++i, t += 100) {
-            lent += TempleWalk(w, t, LockAt()).key_refunds.size();
+            lent += TempleWalk(w, t, LockAt()).key_lends.size();
         }
         // Away: the lock stays (the default), the key goes back.
         for (int i = 0; i < 20; ++i, t += 100) {
-            taken += TempleWalk(w, t, LockAt(), kFar).give_back.size();
+            taken += TempleWalk(w, t, LockAt(), kFar).lend_returns.size();
         }
     }
     CHECK(lent == static_cast<std::size_t>(WorldSync::kMaxLends));
@@ -962,7 +961,7 @@ TEST_CASE("doors: our own lock's key cannot also pay for a held lock beside it")
     for (std::uint64_t t = 6100; t < 8000; t += 100) {
         auto out = TempleWalk(w, t, {y});
         sent += Sent<proto::WorldBreak>(out).size();
-        back.insert(back.end(), out.key_refunds.begin(), out.key_refunds.end());
+        back.insert(back.end(), out.key_lends.begin(), out.key_lends.end());
     }
     CHECK(sent == 1);  // X went out, kept
     CHECK(back.size() == 1);  // the key lent for Y, at which B stands
@@ -971,8 +970,8 @@ TEST_CASE("doors: our own lock's key cannot also pay for a held lock beside it")
     std::size_t taken = 0;
     for (std::uint64_t t = 8000; t < 11000; t += 100) {
         auto out = TempleWalk(w, t, {});
-        back.insert(back.end(), out.key_refunds.begin(), out.key_refunds.end());
-        taken += out.give_back.size();
+        back.insert(back.end(), out.key_lends.begin(), out.key_lends.end());
+        taken += out.lend_returns.size();
     }
     CHECK(back.size() == 1);
     CHECK(taken == 1);

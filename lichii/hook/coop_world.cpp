@@ -407,9 +407,9 @@ void WorldSync::Reset() {
     refund_notes_.clear();
     own_drops_.clear();
     lent_hash_ = 0;
+    lent_key_ = 0;
     lend_back_.clear();
     lend_quiet_until_ = 0;
-    ignore_drops_ = 0;
     player_.reset();
     probe_.Reset();
     std::lock_guard lock(inbox_mutex_);
@@ -681,13 +681,8 @@ bool WorldSync::TakeOwnDrop(std::uint64_t now_us) {
 }
 
 void WorldSync::OwnCountDrop(std::uint32_t key_flag, std::uint64_t now_us) {
-    if (ignore_drops_ > 0) {
-        if (now_us < ignore_drops_until_) {
-            --ignore_drops_;  // our own take-back of a lent key, not a spend
-            return;
-        }
-        ignore_drops_ = 0;
-    }
+    // A lent key's take-back is never seen as a drop (coop::host::LentKeys
+    // keeps it from the flag watcher); a spend of the lent key comes here.
     if (own_drops_.size() < 16) {
         own_drops_.emplace_back(key_flag, now_us);
     }
@@ -699,15 +694,11 @@ void WorldSync::Lend(Object& o, Break& b, std::uint64_t now_us, Out& out) {
         now_us < lend_quiet_until_ || now_us - o.held_us < kLendWaitUs) {
         return;
     }
-    auto count = KeyCountOf(scene_);
-    if (!count) {
-        return;
-    }
     b.lent = true;
     ++b.lends;
     lent_hash_ = o.hash;
-    lent_count_ = std::move(*count);
-    out.key_refunds.push_back(key);
+    lent_key_ = key;
+    out.key_lends.push_back(key);
     out.notes.push_back(Line("world: %016llx %s was opened by another player and is shut here with our "
                              "Link at it: one key lent to open it%s",
                              o.hash, o.name, ""));
@@ -719,9 +710,8 @@ void WorldSync::TakeBack(Break& b, std::uint64_t hash, std::uint64_t now_us, con
         return;
     }
     lent_hash_ = 0;
-    lend_back_.push_back(lent_count_);
-    ++ignore_drops_;
-    ignore_drops_until_ = now_us + kLendQuietUs;
+    lend_back_.push_back(lent_key_);
+    lend_quiet_until_ = now_us + kLendQuietUs;
     refund_notes_.push_back(Line("world: %016llx lent key not used (%s): taken back%s", hash, why, ""));
 }
 
@@ -1134,10 +1124,9 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
     if (scene != scene_) {
         if (lent_hash_ != 0) {  // left the dungeon with a lent key: it goes back
             lent_hash_ = 0;
-            lend_back_.push_back(lent_count_);
+            lend_back_.push_back(lent_key_);
             refund_notes_.push_back("world: lent key not used (our Link left the scene): taken back");
-            ++ignore_drops_;
-            ignore_drops_until_ = now_us + kLendQuietUs;
+            lend_quiet_until_ = now_us + kLendQuietUs;
         }
         probe_.Reset();
         scene_ = scene;
@@ -1383,9 +1372,7 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         out.notes.push_back(std::move(note));
     }
     refund_notes_.clear();
-    for (std::string& count : lend_back_) {
-        out.give_back.push_back(std::move(count));
-    }
+    out.lend_returns.insert(out.lend_returns.end(), lend_back_.begin(), lend_back_.end());
     lend_back_.clear();
 
     for (auto& [address, o] : objects_) {
