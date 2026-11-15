@@ -448,6 +448,10 @@ constexpr Entry kzh_Hans[] = {
     {"Player {}", "玩家 {}"},
     {", the host", "，房主"},
     {"{} hearts", "{} 颗心"},
+    {"{} ms", "{} 毫秒"},
+    {"{} / {} hearts", "{} / {} 颗心"},
+    {"{} more player can join", "还能进 {} 人"},
+    {"{} more players can join", "还能进 {} 人"},
     {"The host muted their {} for everyone.", "房主对所有人屏蔽了他的{}。"},
     {"Teleporting to {}: the chat says how it goes.", "正在传送到 {}：过程会显示在聊天里。"},
     {"Kicking {}.", "正在踢出 {}。"},
@@ -589,6 +593,7 @@ constexpr Entry kzh_Hans[] = {
     {"yourself.", "自己的情况。"},
     {"what you can do.", "能做些什么。"},
     {"Open mic: you are heard whenever you speak (silence and quiet noise are not sent).", "自由麦：你说话时大家都能听到（静音和轻声不会发送）。"},
+    {", ", "，"},
     {"Host: ", "房主："},
     {": ", "："},
     {"Default", "默认"},
@@ -596,6 +601,7 @@ constexpr Entry kzh_Hans[] = {
     {"Open world", "开放世界"},
     {"Keysanity", "钥匙乱序"},
     {"Full shuffle", "完全乱序"},
+
 };
 
 // ---------------------------------------------------------------------------
@@ -992,6 +998,10 @@ constexpr Entry kzh_Hant[] = {
     {"Player {}", "玩家 {}"},
     {", the host", "，房主"},
     {"{} hearts", "{} 顆心"},
+    {"{} ms", "{} 毫秒"},
+    {"{} / {} hearts", "{} / {} 顆心"},
+    {"{} more player can join", "還能進 {} 人"},
+    {"{} more players can join", "還能進 {} 人"},
     {"The host muted their {} for everyone.", "房主對所有人屏蔽了他的{}。"},
     {"Teleporting to {}: the chat says how it goes.", "正在傳送到 {}：過程會顯示在聊天裡。"},
     {"Kicking {}.", "正在踢出 {}。"},
@@ -1133,6 +1143,7 @@ constexpr Entry kzh_Hant[] = {
     {"yourself.", "自己的情況。"},
     {"what you can do.", "能做些什麼。"},
     {"Open mic: you are heard whenever you speak (silence and quiet noise are not sent).", "自由麥：你說話時大家都能聽到（靜音和輕聲不會發送）。"},
+    {", ", "，"},
     {"Host: ", "房主："},
     {": ", "："},
     {"Default", "預設"},
@@ -1322,6 +1333,61 @@ std::string Fill(const char* text, std::string_view middle) {
 
 }  // namespace
 
+
+// ---------------------------------------------------------------------------
+// The place names. They are not the tab's words but the game's own:
+// places.json, which the puppet pack writes from the player's files
+// (lichii/hook/coop_hud_places.h), names a scene ("Hyrule Field") and the HUD
+// and the lobby draw that name. So they are a table of their own, apart from
+// the tab's lines: a name the table does not have stays as the game wrote it,
+// and the lines above are still checked to be lines of the module's source,
+// which a place name is not.
+
+struct PlaceName {
+    const char* en;
+    const char* hans;
+    const char* hant;
+};
+
+constexpr PlaceName kPlaces[] = {
+    {"Bottom of the Well", "井底", "井底"},
+    {"Death Mountain Crater", "死亡火山口", "死亡火山口"},
+    {"Death Mountain Trail", "死亡山道", "死亡山道"},
+    {"Dodongo Cavern", "多多哥洞窟", "多多哥洞窟"},
+    {"Evil Desert Colossus", "邪恶沙漠巨像", "邪惡沙漠巨像"},
+    {"Fire Temple", "火之神殿", "火之神殿"},
+    {"Forest Temple", "森之神殿", "森之神殿"},
+    {"Ganondorf's Castle", "加农多夫城堡", "加農多夫城堡"},
+    {"Gerudo Fortress", "格鲁德要塞", "格魯德要塞"},
+    {"Gerudo Proving Grounds", "格鲁德试炼场", "格魯德試煉場"},
+    {"Gerudo Valley", "格鲁德峡谷", "格魯德峽谷"},
+    {"Goron City", "哥隆城", "哥隆城"},
+    {"Graveyard", "墓地", "墓地"},
+    {"Great Deku Tree", "德库大树", "德庫大樹"},
+    {"Hall of Fallen Foes", "阵亡敌人之间", "陣亡敵人之間"},
+    {"Hyrule Castle", "海拉鲁城堡", "海拉魯城堡"},
+    {"Hyrule Castle Town", "海拉鲁城下町", "海拉魯城下町"},
+    {"Hyrule Field", "海拉鲁平原", "海拉魯平原"},
+    {"Ice Cavern", "冰之洞窟", "冰之洞窟"},
+    {"Ingo Ranch", "英戈牧场", "英戈牧場"},
+    {"Inside Ganondorf's Castle", "加农多夫城堡内部", "加農多夫城堡內部"},
+    {"Kakariko Village", "卡卡利科村", "卡卡利科村"},
+    {"Kokiri Forest", "科吉里森林", "科吉里森林"},
+    {"Lake Hylia", "海利亚湖", "海利亞湖"},
+    {"Lon Lon Ranch", "隆隆牧场", "隆隆牧場"},
+    {"Lord Jabu-Jabu's Belly", "加布加布大人腹中", "加布加布大人腹中"},
+    {"Lost Woods", "迷途森林", "迷途森林"},
+    {"Mirage Desert", "蜃景沙漠", "蜃景沙漠"},
+    {"Sacred Grove", "圣地之林", "聖地之林"},
+    {"Shadow Temple", "暗之神殿", "暗之神殿"},
+    {"Spirit Temple", "魂之神殿", "魂之神殿"},
+    {"Temple of Time", "时之神殿", "時之神殿"},
+    {"Water Temple", "水之神殿", "水之神殿"},
+    {"Zora Domain", "佐拉领地", "佐拉領地"},
+    {"Zora Fountain", "佐拉泉", "佐拉泉"},
+    {"Zora River", "佐拉河", "佐拉河"},
+};
+
 const Lang kLangs[] = {
     {"en", "English", nullptr, 0},
     {"zh-Hans", "简体中文", kzh_Hans, int(sizeof kzh_Hans / sizeof kzh_Hans[0])},
@@ -1474,6 +1540,14 @@ constexpr Shape kShapes[] = {
      "Players  {}", false},
     {"", " hearts",
      "{} hearts", false},
+    {"", " ms",
+     "{} ms", false},
+    {"", " hearts",
+     "{} / {} hearts", false},
+    {"", " more players can join",
+     "{} more players can join", false},
+    {"", " more player can join",
+     "{} more player can join", false},
     {"The host muted their ", " for everyone.",
      "The host muted their {} for everyone.", true},
     {"Teleporting to ", ": the chat says how it goes.",
@@ -1547,6 +1621,23 @@ std::string Tr(const Lang* lang, std::string_view en) {
         // (the table knows the ends but not the whole line: the ends in that
         // language, the middle as it is)
         return Tr(lang, shape.before) + std::string(text) + Tr(lang, shape.after);
+    }
+    return std::string(en);
+}
+
+
+// A place's name in the table's language (places.json's English); the name as
+// it is when the table has no line for it, and for English.
+std::string Place(std::string_view en) {
+    const Lang* lang = Current();
+    if (lang == nullptr || lang->entries == nullptr) {
+        return std::string(en);
+    }
+    const bool traditional = std::string_view(lang->code) == "zh-Hant";
+    for (const PlaceName& p : kPlaces) {
+        if (en == p.en) {
+            return traditional ? p.hant : p.hans;
+        }
     }
     return std::string(en);
 }

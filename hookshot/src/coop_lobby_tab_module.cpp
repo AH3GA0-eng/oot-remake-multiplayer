@@ -103,7 +103,9 @@ Lobby Read(int max_players) {
             if (r.number == s.number) {
                 p.ms = r.ms;
                 if (r.scene && !r.scene->empty()) {
-                    p.place = CoopHud::PlaceName(*r.scene);
+                    // The game's own place name (places.json) through the table, as the HUD's
+                    // line is: a name the table does not know stays as it is.
+                    p.place = CoopI18n::Place(CoopHud::PlaceName(*r.scene));
                 }
             }
         }

@@ -196,6 +196,21 @@ std::string Escaped(const std::string& s) {   // (as the key is written in C: \"
 
 }  // namespace
 
+
+TEST_CASE("coop i18n: a place's name, and a name the table does not have") {
+    // places.json's names (lichii/hook/coop_hud_places.h) are the game's data, not lines
+    // of the module, so they are a table of their own; Tr() must not have them, or the
+    // check that every key is still a line of the module would fail on a name it cannot see.
+    const CoopI18n::Lang& hans = *ByCode("zh-Hans");
+    const CoopI18n::Lang& hant = *ByCode("zh-Hant");
+    CHECK(Line(hans, "Hyrule Field").empty());
+    CHECK(Line(hant, "Hyrule Field").empty());
+
+    // Place() in English is the name as it is (a name in no table stays English too).
+    CHECK(CoopI18n::Place("Hyrule Field") == "Hyrule Field");
+    CHECK(CoopI18n::Place("Not A Place Anyone Knows") == "Not A Place Anyone Knows");
+}
+
 TEST_CASE("coop i18n: every key is still a line of the module") {
     // A text changed in the code no longer finds its line, and that language
     // shows English there: the table is re-keyed with it. (Shapes, with {},

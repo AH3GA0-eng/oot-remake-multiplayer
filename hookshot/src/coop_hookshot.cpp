@@ -44,6 +44,7 @@
 #include "coop_flag_native.h"
 #include "coop_flags.h"
 #include "coop_game_build.h"
+#include "coop_i18n.h"
 #include "coop_save.h"
 #include "coop_hold.h"
 #include "coop_counters.h"
@@ -826,7 +827,9 @@ CoopDraw::Scene DrawScene() {
         b.voice = CoopVoice::IconFor(voice_on, voice_muted(row.number), CoopVoice::Speaking(row.number), false);
         b.name = row.name.empty() ? "Player " + std::to_string(row.number) : row.name;
         if (row.scene && !row.scene->empty()) {
-            b.place = CoopHud::PlaceName(*row.scene);
+            // The place names are the game's own (places.json): the table has them
+            // for the languages it carries, and a name it does not know stays as it is.
+            b.place = CoopI18n::Place(CoopHud::PlaceName(*row.scene));
         }
         if (const auto life = CoopHud::PlayerLife(row.number); life && life->max > 0) {
             b.hearts = CoopHudHearts::Quarters(life->life, life->max);
@@ -838,7 +841,7 @@ CoopDraw::Scene DrawScene() {
         if (game) {
             for (auto& row : rows) {
                 if (row.scene && !row.scene->empty()) {
-                    row.scene = CoopHud::PlaceName(*row.scene);
+                    row.scene = CoopI18n::Place(CoopHud::PlaceName(*row.scene));
                 }
             }
         }
