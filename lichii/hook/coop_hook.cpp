@@ -60,6 +60,7 @@
 #include "coop_lobby_game.h"
 #include "coop_dbno_game.h"
 #include "coop_mod_share.h"
+#include "coop_pack_notice.h"
 #include "coop_scene_probe.h"
 #include "coop_camera.h"
 #include "coop_colors.h"
@@ -1031,6 +1032,10 @@ public:
         // Mods (docs/mods.md "Mods in co-op"): our list, the host's shared settings, a warning when they differ.
         CoopModShare::Frame(report.connected ? session_.get() : nullptr);
         for (auto& line : CoopModShare::TakeLines()) {
+            chat_.Add(std::move(line), true);
+        }
+        // No puppet pack (Longshot module only): said once, when another player is first shown.
+        for (auto& line : CoopPackNotice::TakeLines(!view.others.empty())) {
             chat_.Add(std::move(line), true);
         }
         Place(view);

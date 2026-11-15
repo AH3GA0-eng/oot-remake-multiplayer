@@ -209,7 +209,7 @@ if ($Mode -eq 'title') {
         Remove-Item -Path "env:$v" -ErrorAction SilentlyContinue
     }
     [void](Use-KitPuppetPack (Join-Path $emu 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json') (Join-Path $kit 'tools\puppet_pack') @(
-        'Puppet pack: not in the co-op game, so the other players show only as markers.',
+        'Puppet pack: not in the co-op game, so the other players show as names only (the game''s chat says so too).',
         $(if ($hsOnly) { '  It is made from your game file (the one hookshot\game-files.txt names): put that file back, then start again.' } else { '  Run Build-Hookshot-Coop.bat -Game <your .nup> again (SETUP.md, "Play on Hookshot").' })))
     [void](Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru)
     Write-Host 'Game started. Host or Join in the game''s menu, first tab Multiplayer (controller: Minus and Plus together, or Home;'
@@ -465,7 +465,7 @@ if ($Hookshot) {
     # puppets off without a pack. The pack is in mods\contents (Build-Hookshot-Coop.bat installs it), and
     # Hookshot indexes its mod files once at start: this runs before Start-Process.
     [void](Use-KitPuppetPack (Join-Path $emu 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json') (Join-Path $kit 'tools\puppet_pack') @(
-        'Puppet pack: not in the co-op game, so the other players show only as markers.',
+        'Puppet pack: not in the co-op game, so the other players show as names only (the game''s chat says so too).',
         $(if ($hsOnly) { '  It is made from your game file (the one hookshot\game-files.txt names): put that file back, then start again.' } else { '  Run Build-Hookshot-Coop.bat -Game <your .nup> again (SETUP.md, "Play on Hookshot").' })))
     $started = Get-Date
     $game = Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru
