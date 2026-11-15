@@ -9,6 +9,9 @@
 #   bash scripts/build.sh --rebuild             build again even when nothing changed
 #   bash scripts/build.sh --check-only          get the tools and check your game files; build nothing
 #   bash scripts/build.sh --jobs N              at most N compilers at once
+#   bash scripts/build.sh --dlss                with NVIDIA DLSS: asks you to accept NVIDIA's license once, then every
+#                                               build fetches NVIDIA's DLSS SDK and builds with it (data/dlss.txt)
+#   bash scripts/build.sh --no-dlss             without DLSS again (the game is built again without it)
 #   bash scripts/build.sh --renderer-only DIR   (CI, no game) steps 1 to 3, then compile Longshot's patched
 #                                               Linux renderer and our host files into DIR
 #
@@ -28,13 +31,15 @@
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-game='' exefs='' rebuild=0 check_only=0 jobs='' renderer_out=''
+game='' exefs='' rebuild=0 check_only=0 jobs='' renderer_out='' dlss=0 no_dlss=0
 while (($#)); do
     case $1 in
         --game) game=$2; shift ;;
         --exefs) exefs=$2; shift ;;
         --rebuild) rebuild=1 ;;
         --check-only) check_only=1 ;;
+        --dlss) dlss=1 ;;
+        --no-dlss) no_dlss=1 ;;
         --jobs) jobs=$2; shift ;;
         --renderer-only) renderer_out=$2; shift ;;
         *) fail "build.sh: unknown option $1" ;;
@@ -143,6 +148,33 @@ make_game() {
 game_stamp=$GAME/coop-built-from.txt
 ready=0
 [[ -n $(kit_game_exe) && $(cat "$game_stamp" 2>/dev/null) == "$src_stamp" ]] && ready=1
+
+# NVIDIA DLSS (#234), as hookshot-build.ps1: only in a game built with NVIDIA's DLSS SDK, which nobody may pass on, so
+# each build downloads it once NVIDIA's license is accepted. --dlss asks once and data/dlss.txt keeps the answer (the
+# builds after an update keep DLSS); --no-dlss takes it back. Not in coop-built-from.txt (release, pin and patches).
+# A game with DLSS has its runtime in data/game/ngx (make_game.py's place_ngx_runtime; gone again without the SDK).
+dlss_note=$DATA/dlss.txt
+if ((no_dlss)); then
+    rm -f "$dlss_note"
+elif ((dlss)) && [[ ! -f $dlss_note ]]; then
+    kit_tty || fail 'NVIDIA DLSS needs NVIDIA'"'"'s license accepted: run bash scripts/build.sh --dlss from a terminal.'
+    say ''
+    warn "NVIDIA DLSS (NVIDIA RTX graphics cards): the build downloads NVIDIA's DLSS SDK, under NVIDIA's own license:"
+    say '  https://github.com/NVIDIA/DLSS/blob/9981c6350dc58c0ce21f024fd65e31e851c31689/LICENSE.txt (the build prints NVIDIA'"'"'s notice too).'
+    say "  The game folder then holds NVIDIA's files: never share it, and never post builds made with them."
+    read -r -p "  Accept NVIDIA's license and build with DLSS? (y/n) " answer || answer=''
+    [[ ${answer,,} =~ ^(y|yes|j|ja)$ ]] || fail "NVIDIA's license not accepted: nothing changed (the game stays as it is, without DLSS)."
+    printf 'nvidia-license=accepted\n' >"$dlss_note"
+fi
+want_dlss=0
+((!no_dlss)) && [[ -f $dlss_note ]] && want_dlss=1
+game_dlss=0
+compgen -G "$GAME/ngx/libnvidia-ngx-dlss.so.*" >/dev/null && game_dlss=1
+if ((ready && want_dlss != game_dlss && (want_dlss || no_dlss))); then
+    if ((want_dlss)); then say 'NVIDIA DLSS: the game has no DLSS yet, so it is built again with it (much shorter than the first build).'
+    else say 'NVIDIA DLSS off: the game is built again without it.'; fi
+    ready=0
+fi
 remembered=$DATA/game-files.txt
 
 if [[ -z $game ]] && ((!ready || rebuild || check_only)); then
@@ -211,7 +243,11 @@ else
     step 'Building the game (15 to 60 minutes, once; the PC stays usable)'
     build_args=("${game_args[@]}" --out "$GAME" --work "$WORK" --language "$language" --log "$LOGS/build.log")
     [[ -n $jobs ]] && build_args+=(--jobs "$jobs")
+    # (NVIDIA DLSS: make_game.py fetches NVIDIA's SDK into data/work/ngx-sdk, only what is missing, and builds the
+    # renderer with it; the license was accepted above, data/dlss.txt)
+    ((want_dlss)) && build_args+=(--fetch-ngx-sdk --accept-nvidia-license)
     mkdir -p "$GAME"
+    ((want_dlss)) && export LONGSHOT_NGX_SDK=$WORK/ngx-sdk
     make_game "${build_args[@]}" || fail "The build stopped. Its log: $LOGS/build.log"
     [[ -n $(kit_game_exe) ]] || fail "The build finished but there is no game in $GAME. Its log: $LOGS/build.log"
     printf '%s' "$src_stamp" >"$game_stamp"
