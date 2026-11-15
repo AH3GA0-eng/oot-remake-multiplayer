@@ -486,6 +486,8 @@ private:
         std::uint64_t backstop_ms = 0;      // next backstop read (kBackstopMs)
         int backstop_misses = 0;            // reads in a row that found another command
         unsigned backstops = 0;             // times the backstop played it again (logged)
+        std::string cut_refused;            // their cutscene's command the puppet lacks (this hold)
+        std::uint64_t cut_verify_frame = 0; // a hold reads its play back from this frame
         CoopFollow::Follower follow;        // jitter-b: their place taken to this game frame
         CoopFollow::Steps steps;            // jitter-2: how even its drawn steps are (logged)
         CoopFollow::Follower raw_follow;    // jitter-2: the same on the raw frame time (not drawn;

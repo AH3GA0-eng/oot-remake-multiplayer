@@ -1200,10 +1200,15 @@ TEST_CASE("puppet scene filter: hold freezes its frame and follows its place, hi
     // Hold: its frame set back to where it was every frame, and (issue 194) it follows their
     // place, so it is not left behind for a snap at the end. A jump while held is a real
     // teleport (their samples move smoothly in a cutscene): drawn at once, not eased.
+    // puppet-anim: their cutscene's command is tried first; the puppet's slot 0 does not name
+    // it the next frame (it has no such animation), so it is held at its frame from then on.
     Target held = Playing("Walk", 2.0f, 2, CoopPuppet::Show::hold);
     held.position = {6, 5, 6};
     d.SetInput(Wants({held}));
     g.guest.Set(kSlot0 + addr::kSlotFrame, 11.0f);
+    auto tried = Frame(d, g, 35);
+    REQUIRE_FALSE(tried.empty());
+    CHECK(tried[0].function == kBase + addr::kPlayAs);
     for (std::uint64_t now : {40, 50}) {
         auto calls = Frame(d, g, now);
         REQUIRE(calls.size() == 1);
@@ -1212,7 +1217,7 @@ TEST_CASE("puppet scene filter: hold freezes its frame and follows its place, hi
         g.guest.Set(kSlot0 + addr::kSlotFrame, 12.0f);
     }
     CheckPosition(g.guest, kActor + addr::kActorPosition, 6, 5, 6);
-    CHECK(d.Slots()[0].anim_name == "Wait");
+    CHECK(d.Slots()[0].anim_name.empty());  // played again once the hold ends
     // Their event walks them on: followed.
     held.position = {6.2f, 5, 6};
     d.SetInput(Wants({held}));
@@ -1235,6 +1240,30 @@ TEST_CASE("puppet scene filter: hold freezes its frame and follows its place, hi
     REQUIRE(calls.size() == 2);
     CHECK(calls[0].function == kBase + addr::kPlayAs);
     CheckPosition(g.guest, kActor + addr::kActorPosition, 40, 5, 6);  // where it was hidden: no ease
+}
+
+TEST_CASE("puppet animation: in their cutscene the puppet plays their command when it has it (item-get, puppet-anim)") {
+    Game g;
+    Director d;
+    MakeLive(d, g);
+    GiveAnimation(g, 9.0f);
+    d.SetInput(Wants({Playing("Wait", 9.0f, 1)}));
+    Frame(d, g, 20);
+    Frame(d, g, 30);
+
+    // Their chest opens: the item-get command arrives with the hold. It is played, and the
+    // puppet's slot 0 names it (the game took it), so it is not frozen: no calls after that.
+    Target held = Playing("DemoItemGet_t36", 0.0f, 2, CoopPuppet::Show::hold);
+    d.SetInput(Wants({held}));
+    auto calls = Frame(d, g, 40);
+    REQUIRE(calls.size() == 2);
+    CHECK(calls[0].function == kBase + addr::kPlayAs);
+    CHECK(calls[1].function == kBase + addr::kSetAsFrame);
+    g.guest.Set(kSlot0 + addr::kSlotName, g.guest.Get<std::uint64_t>(calls[0].x[0] + 0x08));
+    for (std::uint64_t now : {50, 60, 70}) {
+        CHECK(Frame(d, g, now).empty());
+    }
+    CHECK(d.Slots()[0].anim_name == "DemoItemGet_t36");
 }
 
 TEST_CASE("puppet: LiveMask has a live puppet shown or held, not one parked or gone (issue 145)") {
