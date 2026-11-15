@@ -257,14 +257,13 @@ void PaintPuppets(std::uint64_t now_ms) {
 
 // The boots in Link's own model (CoopLookParts::BodyBoots): each tunic
 // colour's puppet model names copies of its own, painted here in the boots
-// colour of the player who wears that colour, your own Link first (when the
-// kit dressed him in his colour's model). Nothing of the game is written.
+// colour of the player who wears that colour. Your own Link's model (the
+// game's, or its own copy: colour-agree) names the game's boots, which the
+// gear wardrobe paints. Nothing of the game is written.
 std::unique_ptr<CoopLookTunic::Wardrobe> g_boots;
 std::mutex g_boots_mutex;
 std::map<std::string, CoopLookParts::Wearers> g_boots_named;   // guarded: the newest painting's name
 std::string g_boots_worn;                                        // the worker's: the name worn
-std::optional<char> g_own_letter;                                // the colour's model your own Link wears
-std::optional<std::uint32_t> g_own_boots;                        // guarded by g_chosen_mutex (below)
 
 std::optional<std::vector<std::uint8_t>> BootsFile(const std::string& name) {
     const auto gear = GearTexels();
@@ -308,12 +307,6 @@ std::optional<std::uint32_t> g_chosen;   // guarded by g_chosen_mutex
 
 // The worker's round: who wears which colour now, and the boots they chose.
 void FollowBoots() {
-    CoopLookParts::Wearer own;
-    own.letter = g_own_letter;
-    {
-        std::lock_guard lock(g_chosen_mutex);
-        own.boots = g_own_boots;
-    }
     std::vector<CoopLookParts::Wearer> others;
     for (const auto& row : CoopHook::PlayerList()) {
         if (row.self) {
@@ -332,7 +325,7 @@ void FollowBoots() {
         }
         others.push_back(w);
     }
-    const CoopLookParts::Wearers wearers = CoopLookParts::Assign(own, others);
+    const CoopLookParts::Wearers wearers = CoopLookParts::Assign({}, others);
     const std::string name = CoopLookParts::BootsPaintingName(wearers);
     if (name == g_boots_worn) {
         return;
@@ -455,9 +448,50 @@ void PaintOwnLink(const Look& look) {
     {
         std::lock_guard lock(g_chosen_mutex);
         g_chosen = look[Part::tunic];
-        g_own_boots = look[Part::boots];
     }
     Wear(TunicName(OwnTunic(look[Part::tunic], g_number.load())), look);
+}
+
+void AgreeStartTunic() {
+    const char* set = std::getenv("LICHII_COOP_SELF_TUNIC");
+    const std::string hint = set != nullptr ? set : "";
+    const fs::path pack = LookDir().parent_path();
+    // Your own tile (colour-agree packs), else an older pack's tile over the game's.
+    std::string own = "Angin_Tile_S_Alb.";
+    auto tile = ReadFile(pack / "romfs" / "Tex" / "Angin_Tile_S_Alb.bntx.zs");
+    if (!tile) {
+        own.clear();
+        tile = ReadFile(pack / "romfs" / "Tex" / "Angin_Tile_A_Alb.bntx.zs");
+    }
+    const std::string start = PackStartTunic(
+        tile, [&](const std::string& c) { return ReadFile(pack / "coop_self" / (c + "." + own + "bntx.zs")); },
+        hint);
+    // The colour chosen (sent to the others): the files should be its. They are when the kit's launcher or
+    // the autotest started the game; else your own Link starts in the files' colour and the wardrobe repaints
+    // it in the chosen one (your own textures only: the puppets' copies are marked).
+    std::vector<std::string> errors;
+    const auto chosen = CoopHook::LoadSettings(
+        Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini", errors).color;
+    if (chosen && TunicName(chosen) != start) {
+        LOG_WARNING(Core, "coop: look: the puppet pack's tunic files are {}, your colour is {}: started without the "
+                          "kit's launcher? Your Link is repainted in {} once the game's textures are found",
+                    start, TunicName(chosen), TunicName(chosen));
+    }
+    if (start == (hint.empty() ? std::string("green") : hint)) {
+        return;
+    }
+    LOG_INFO(Core, "coop: look: your Link starts in {} (the puppet pack's tunic files; LICHII_COOP_SELF_TUNIC said "
+                   "{}): the switch follows the files",
+             start, hint.empty() ? std::string("none") : hint);
+#ifdef _MSC_VER
+    _putenv_s("LICHII_COOP_SELF_TUNIC", start == "green" ? "" : start.c_str());
+#else
+    if (start == "green") {
+        unsetenv("LICHII_COOP_SELF_TUNIC");
+    } else {
+        setenv("LICHII_COOP_SELF_TUNIC", start.c_str(), 1);
+    }
+#endif
 }
 
 void StartModule() {
@@ -502,12 +536,6 @@ void StartModule() {
     g_gear = std::make_unique<CoopLookTunic::Wardrobe>(std::move(gear));
     g_puppets = std::make_unique<CoopLookTunic::Wardrobe>(std::move(puppets));
     g_boots = std::make_unique<CoopLookTunic::Wardrobe>(std::move(boots));
-    // Your own Link wears the model of the colour the kit put in (its
-    // boots are that colour's copies); the game's model with none.
-    g_own_letter.reset();
-    if (const char* self = std::getenv("LICHII_COOP_SELF_TUNIC"); self != nullptr && *self != '\0') {
-        g_own_letter = CoopLookParts::LetterOf(self);
-    }
     g_boots_worn.clear();
     // The others' puppets wear their own gear colours only where the pack has
     // the gear's texels to paint their copies with, and a Longshot that draws
@@ -525,7 +553,6 @@ void StartModule() {
     {
         std::lock_guard lock(g_chosen_mutex);
         g_chosen = worn[Part::tunic];
-        g_own_boots = worn[Part::boots];
     }
     g_number = 0;   // the worker's first round puts on the slot colour once the number is known
     // The gear starts in the game's own colours: the settings' look is painted.

@@ -134,7 +134,7 @@ def info_row(row, item, slot):
 # model_for, one per tunic colour) name a copy of their own per colour: `Mt_...` -> `P<L>_...`
 # (L: the colour's letter, tunic.COLORS; as long). The module paints each colour's copy in the boots
 # colour of the player who wears that colour (hookshot/src/coop_look_boots.cpp, same names and
-# marks); your own adult Link wears his colour's model too, so his boots are his colour's copy.
+# marks). Your own Link's model copy (coop_self) keeps the game's names: the module paints those.
 BODY_BOOTS = (
     "Mt_Boots_Player_Adult_Alb",
     "Mt_Leather_Player_Child_Alb",

@@ -84,8 +84,9 @@ std::string CopiesName(const CopyLooks& looks);
 // tunic colour, each name a copy of their own, "Mt_..." as "P<letter>_..."
 // (tools/puppet_pack/look_items.py BODY_BOOTS, boots_name, boots_mark: the
 // same names, letters and marks). One more wardrobe keeps each colour's
-// copies in the boots colour of the player who wears that colour: the
-// puppets of that colour, and your own Link when the kit dressed him in it.
+// copies in the boots colour of the player who wears that colour. Your own
+// Link's model (the game's, or its own copy) names the game's boots: the
+// gear wardrobe paints those (Gear() lists them).
 //
 // The body boots textures (a subset of Gear()).
 const std::vector<std::string>& BodyBoots();
