@@ -1,0 +1,25 @@
+# hs-npc-colour: B stands a little behind A, by the Kokiri (header in A).
+mark start
+warp KokiriForest_Child FrontDekuTree
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 660
+place -70.0 117.1 -12.0
+wait 120
+toward -79.5 -17.0 10
+press ZL 10
+wait 120
+mark b-mido-1
+wait 600
+mark b-mido-2
+wait 600
+mark b-end

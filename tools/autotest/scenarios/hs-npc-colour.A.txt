@@ -1,0 +1,45 @@
+# hs-npc-colour (Hookshot, npc-colour): your own Link's tunic colour never reaches the Kokiri.
+# The game's tunic tile is also on Mido's model (39 Kokiri actors) and its dark tile on Saria's
+# (18 more). Both games start with no colour: each wears its slot colour, put on live by the
+# module's tunic wardrobe once the number is known (the same path as a Customize change).
+# A faces Kokiri 002/003/004 (Mido's model; about -79.5 117.1 -17.0 in the lane saves).
+# NOT YET RIGHT (06:2x UTC, lane1): in the lane saves these spots left the camera in a wall; pick a
+# spot with Kokiri in front of the camera before trusting the shots.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-npc-colour -Lane 1 -Server <protocol-12 server>
+# Pass, in A's shots "mido-*": A's Link in its slot colour, Mido and the other Kokiri in their own
+#   green; the log has "coop: look: your Link's tunic is <colour> now" and no "older than this module".
+# Before the fix (a pack from before npc-colour with the module before it): Mido in A's colour.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_PUPPET=1
+#! timeout 420
+mark start
+warp KokiriForest_Child FrontDekuTree
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 600
+place -71.5 117.1 -16.5
+wait 120
+toward -79.5 -17.0 10
+press ZL 10
+wait 120
+mark mido-1
+wait 600
+mark mido-2
+stick 0 -0.5 30
+wait 120
+toward -79.5 -17.0 10
+press ZL 10
+wait 120
+mark mido-3
+wait 300
+mark end

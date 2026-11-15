@@ -986,3 +986,16 @@ TEST_CASE("look: your own Link starts in the colour of the pack's tunic files, n
     CHECK(CoopLook::PackStartTunic(std::vector<std::uint8_t>{9}, file, "") == "green");
     CHECK(CoopLook::PackStartTunic(std::vector<std::uint8_t>{9}, nullptr, "") == "green");
 }
+
+TEST_CASE("look: green's own tunic files are known too (npc-colour)") {
+    // Your own Link wears its own copies in green as well: the game's tunic
+    // textures are on Mido's and Saria's models (every Kokiri).
+    const std::map<std::string, std::vector<std::uint8_t>> self{{"red", {1}}, {"green", {7}}};
+    const CoopLook::FileFn file = [&](const std::string& c) -> std::optional<std::vector<std::uint8_t>> {
+        const auto it = self.find(c);
+        return it == self.end() ? std::nullopt : std::optional(it->second);
+    };
+    CHECK(CoopLook::PackStartTunic(std::vector<std::uint8_t>{7}, file, "red") == "green");
+    CHECK(CoopLook::PackStartTunic(std::vector<std::uint8_t>{7}, file, "") == "green");
+    CHECK(CoopLook::PackStartTunic(std::vector<std::uint8_t>{1}, file, "green") == "red");
+}

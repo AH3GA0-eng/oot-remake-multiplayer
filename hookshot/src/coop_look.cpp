@@ -113,6 +113,9 @@ std::string PackStartTunic(const std::optional<std::vector<std::uint8_t>>& tile,
             order.push_back(std::move(c));
         }
     }
+    // Green has its own files too (npc-colour: your own Link never wears the
+    // game's tunic textures, which Mido's and Saria's models share).
+    order.push_back("green");
     for (const auto& c : order) {
         if (const auto file = self_tile ? self_tile(c) : std::nullopt; file && *file == *tile) {
             return c;
