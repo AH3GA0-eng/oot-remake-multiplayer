@@ -691,3 +691,30 @@ TEST_CASE("title menu: the voice's microphone in coop-options.ini") {
     }
     CHECK(seen);
 }
+
+TEST_CASE("title menu: ParsePort and host port, 1 to 65535, read and written") {
+    CHECK(ParsePort("27510") == std::uint16_t{27510});
+    CHECK(ParsePort(" 1 ") == std::uint16_t{1});
+    CHECK(ParsePort("65535") == std::uint16_t{65535});
+    CHECK_FALSE(ParsePort("").has_value());
+    CHECK_FALSE(ParsePort("0").has_value());
+    CHECK_FALSE(ParsePort("65536").has_value());
+    CHECK_FALSE(ParsePort("27510a").has_value());
+    CHECK(AddressOk("192.168.1.50:28000"));
+    CHECK_FALSE(AddressOk("192.168.1.50: 28000"));
+
+    CHECK(Options::Read("", "").host_port == kDefaultPort);
+    CHECK(Options::Read("host_port = 28000\r\n", "").host_port == 28000);
+    CHECK(Options::Read("host_port = 28000\r\n", "server_port = 29000\r\n").host_port == 29000);
+    CHECK(Options::Read("", "server_port = 99999\r\n").host_port == kDefaultPort);
+
+    Options o;
+    o.host_port = 28123;
+    std::string coop, opt = "# server_port = 27510\r\n";
+    o.Write(coop, opt);
+    CHECK(IniGet(opt, "server_port") == "28123");
+    CHECK(Options::Read("", opt).host_port == 28123);
+    o.host_port = kDefaultPort;
+    o.Write(coop, opt);
+    CHECK_FALSE(IniGet(opt, "server_port").has_value());
+}

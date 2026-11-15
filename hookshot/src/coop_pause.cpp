@@ -219,8 +219,14 @@ bool Busy() {
     return g_coop_on || (st.state != HOS_COOP_IDLE && st.state != HOS_COOP_FAILED);
 }
 
+void Save();
+
 void Host() {
-    if (Busy()) {
+    if (g_doing == "hosting" && !g_coop_on) {
+        Save();
+        CoopHookshot::HostMenu().Leave();
+        g_doing.clear();
+    } else if (Busy()) {
         g_menu.SetNote({"Co-op is on already in this game: stop it first, or start the game again."});
         return;
     }
@@ -230,8 +236,8 @@ void Host() {
     HosCoopHostOptions h{};
     h.size = sizeof h;
     h.name = o.name.c_str();
-    h.password = nullptr;   // a new random one, inside the invite code: nobody types it
-    h.port = 0;
+    h.password = o.password.empty() ? nullptr : o.password.c_str();
+    h.port = o.host_port;
     h.upnp = 1;             // the router forward (nothing to set up)
     h.invite = 1;
     h.pvp = o.pvp ? 1 : 0;
@@ -244,7 +250,7 @@ void Host() {
         RefreshSession(true);
         return;
     }
-    LOG_INFO(Core, "coop: multiplayer tab: host: started (up to {} players)", o.max_players);
+    LOG_INFO(Core, "coop: multiplayer tab: host: started (up to {} players, port {})", o.max_players, o.host_port);
     RefreshSession(true);
 }
 
@@ -274,6 +280,8 @@ void Join(const std::string& text) {
     CoopFiles::SetCoopEnvironment(o);
     const bool invite = std::holds_alternative<CoopTitleMenu::JoinInvite>(target);
     const std::string where = invite ? text : std::get<CoopTitleMenu::JoinAddress>(target).server;
+    // Only what the player gave (the invite code, or the password after the address): never this game's own
+    // server_password, which is its host secret and not the other server's.
     const std::string password = invite ? std::string() : std::get<CoopTitleMenu::JoinAddress>(target).password;
     HosCoopJoinOptions j{};
     j.size = sizeof j;
