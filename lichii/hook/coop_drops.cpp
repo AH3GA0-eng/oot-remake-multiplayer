@@ -110,6 +110,7 @@ void Sync::Reset() {
     deleting_.clear();
     ghosts_.clear();
     gone_unknown_.clear();
+    unloaded_.clear();
     sources_.clear();
     tell_at_ = 0;
     outbox_.clear();
@@ -434,6 +435,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     const bool unloaded = !player || left.size() >= kUnloadCount;
     for (const auto& id : left) {
         Drop& d = drops_.at(id);
+        const std::uint64_t address = d.address;
         bound_.erase(d.address);
         d.address = 0;
         d.key = 0;
@@ -449,6 +451,9 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                  (reason == proto::DropTakeReason::picked_up ? " picked up here" : " blinked out here"));
         } else {
             d.state = State::away;
+            if (unloaded_.size() < kMaxUnloaded || unloaded_.count(address) != 0) {
+                unloaded_[address] = {id, d.name, d.position};
+            }
             Note(Tag(id) + " " + d.name + " unloaded here");
         }
     }
@@ -505,6 +510,34 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         if (old_.count(s.address) != 0 || bound_.count(s.address) != 0 ||
             deleting_.count(s.address) != 0 || !Finite(s.position)) {
             continue;
+        }
+        // A drop of ours that was unloaded here and is listed again: the same drop, not a new roll.
+        if (const auto u = unloaded_.find(s.address); u != unloaded_.end()) {
+            const Unloaded was = u->second;
+            if (was.name == s.name && Distance(was.position, s.position) < kMatchM) {
+                const auto it = drops_.find(was.id);
+                if (it == drops_.end()) {
+                    // Forgotten here (and by the others) meanwhile: left alone while listed, never told again;
+                    // its entry stays for the next time it comes back.
+                    old_.insert(s.address);
+                    Note(Tag(was.id) + " " + s.name + " listed again after it was forgotten: left alone");
+                    continue;
+                }
+                unloaded_.erase(u);
+                if (it->second.state == State::away) {
+                    Drop& d = it->second;
+                    d.state = State::live;
+                    d.done_us = 0;
+                    d.position = s.position;
+                    Bind(d, s.address);
+                    Note(Tag(was.id) + " " + s.name + " listed again: the same drop, not a new roll");
+                } else {
+                    Delete(s.address, s.name, now_us, removes);
+                    Note(Tag(was.id) + " " + s.name + " listed again but taken or lost meanwhile: deleted");
+                }
+                continue;
+            }
+            unloaded_.erase(u);  // another actor at that address now
         }
         // A create that was called off: the director deletes it.
         const auto ghost = std::find_if(ghosts_.begin(), ghosts_.end(), [&](const Ghost& g) {
