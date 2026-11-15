@@ -3,7 +3,7 @@
 // docs/hookshot.md "The Multiplayer tab"): the settings files, what the Join
 // field may hold, Host's and Join's status in plain words, the addresses for
 // friends on the same network, and the host's save loaded in one step at the
-// title after a join (AutoLoad). Logic only (no game, no files, no
+// title after a join (SaveWait). Logic only (no game, no files, no
 // processes), so the tests drive it. The name is from the title screen's
 // menu, where all of it began.
 #pragma once
@@ -75,8 +75,11 @@ struct Options {
     bool debug_panel = false;      // LICHII_COOP_DEBUG_PANEL
     bool cheats = false;           // LICHII_COOP_CHEATS
     int max_players = 4;           // max_players (the host's: 2 to kMaxPlayers)
-    bool voice = false;            // LICHII_COOP_VOICE (ptt or open: proximity voice chat; unset, the default: off)
-    std::string voice_in_file;     // that line's value as read ("open" written by hand stays open while voice is on)
+    bool voice = false;            // LICHII_COOP_VOICE (open or ptt: proximity voice chat; unset, the default: off)
+    bool voice_ptt = false;        // push to talk: LICHII_COOP_VOICE=ptt (or an older on, 1); open: open mic, the menu's default
+    std::string voice_key = "V";   // LICHII_COOP_VOICE_KEY as the Voice mode row names it (read only)
+    bool map_players = true;       // LICHII_COOP_MAP (0: no other players on the minimap and the pause map)
+    bool map_names = true;         // LICHII_COOP_MAP_NAMES (0: their icons without names)
 
     // From the two files' texts (a missing file: "").
     static Options Read(std::string_view coop_ini, std::string_view options_ini);
@@ -86,7 +89,7 @@ struct Options {
     // launcher sets them from coop-options.ini (name, "" = not set), so they
     // count for this run when co-op has not started yet.
     std::vector<std::pair<std::string, std::string>> Environment() const;
-    // LICHII_COOP_VOICE's value while voice is on: "open" when the file said so, else "ptt" (V to talk).
+    // LICHII_COOP_VOICE's value while voice is on: "ptt" for push to talk, else "open" (open mic).
     std::string VoiceMode() const;
 };
 
@@ -159,64 +162,109 @@ std::string LanJoinText(std::string_view address, std::uint16_t port, std::strin
 std::vector<std::string> LanLines(const std::vector<LanAddress>& addresses, std::uint16_t port,
                                   std::string_view password, bool copied);
 
-// After Join connects: the host's save (lichii/hook/coop_save.h, the co-op
-// folder) is loaded in one step, with no Continue to find. Wait until the
-// host's save is in this game's co-op folder, then show the title's Continue
-// (a first-time joiner's title opened without it: the module sets the title's
-// row count as the game's own dialogs set theirs), put the cursor on it (the
-// co-op folder holds only the host's save) and press A every kPressEveryMs
-// until Link is in the game (the file list and its question take the same A),
-// but only while the cursor really is on Continue. Gives up after a while
-// with a line saying what to do.
-class AutoLoad {
+// The Host dialog's two rows for friends who join by address: "Same network" (this PC's home-network address, the
+// card with the router first) and "VPN" (a VPN program's card: Radmin VPN, Hamachi, ZeroTier, Tailscale, WireGuard,
+// found by the card's name, so any address range it uses works).
+struct LocalCard {
+    std::string address;   // IPv4, dotted
+    std::string adapter;   // the card's name and description as the system gives them ("" when it does not say)
+    bool gateway = false;  // the card has a router (the default way out)
+};
+// The VPN program a card belongs to ("" when none): by its name ("Radmin VPN", "Hamachi Network Interface",
+// "ZeroTier One Virtual Port", "Tailscale", "WireGuard Tunnel"; on Linux ham0, zt..., tailscale0, wg0).
+std::string VpnLabel(std::string_view adapter);
+struct LanSplit {
+    std::vector<LanAddress> home;   // label "home network"; a card with a router first
+    std::vector<LanAddress> vpn;    // label the VPN program's name
+};
+// A card without a name (the system did not say) counts as a VPN by its address range (LanLabel), as before.
+LanSplit SplitLan(const std::vector<LocalCard>& cards);
+// The lines each row shows (the first address's join text is on the clipboard when `copied`).
+std::vector<std::string> HomeLines(const std::vector<LanAddress>& home, std::uint16_t port, std::string_view password,
+                                   bool copied);
+std::vector<std::string> VpnLines(const std::vector<LanAddress>& vpn, std::uint16_t port, std::string_view password,
+                                  bool copied);
+// The Host dialog's first line while hosting with an invite code: the code is the way to host, the rows the others.
+std::string HostHeadline(bool copied);
+
+// After Join connects at the title: what the title's bottom-left line says
+// while the host's save (lichii/hook/coop_save.h, the co-op folder) comes.
+// Nothing is pressed for the player: they load a save themselves when the
+// chat says Success (save::GuestNotices). The states:
+// - wait: the save is not in yet. Only time on the title's menu with nothing
+//   coming counts (not a menu over it, a file list, a transfer under way, a
+//   hitch); after kWaitSaveMs of it: late.
+// - late: still not here; the line says Continue plays the player's own save.
+//   A save that comes now is still written and announced.
+// - chose: the player picked a title button themselves (PlayerChose) while it
+//   waited or was late: no line. Link in the game: done. Back on the title's
+//   menu for kBackMs after it had gone (they backed out of their own file or a
+//   new game): wait again (Tick::rearm: the host's save is offered again).
+// - ready: the save is in and the game plays from the co-op folder: "load any
+//   save" until Link is in the game (done).
+// - host none: the host has no save yet. host gone: the session ended while it
+//   waited. done: Link is in the game.
+class SaveWait {
 public:
-    static constexpr std::uint64_t kWaitSaveMs = 60000;   // for the host's save to arrive
-    static constexpr std::uint64_t kLoadMs = 30000;       // for the presses to get Link into the game
-    static constexpr std::uint64_t kPressEveryMs = 1200;
-    static constexpr std::uint64_t kPressHoldMs = 120;
+    static constexpr std::uint64_t kWaitSaveMs = 60000;    // title time with nothing coming, before "late"
+    static constexpr std::uint64_t kStepGapMs = 1000;      // a longer gap between two looks counts as this much
+    static constexpr std::uint64_t kBackMs = 1500;         // chose: back on the title this long, then wait again
+
+    // What the module sees at one look (each pad poll).
+    struct Input {
+        bool host_save_ready = false;   // written whole, and the game plays from the co-op folder
+        bool save_coming = false;       // parts coming in, or in and waiting for the title's menu
+        bool title_up = false;          // the title's menu is up (TitleUp)
+        bool in_game = false;           // Link is in the game
+        bool session_live = true;       // the co-op session is on (CoopSave::SessionLive)
+    };
 
     void Start(std::uint64_t now_ms, std::string host);
     void Stop() { phase_ = Phase::kOff; }
-    // The host has no save yet (a new game): stop waiting, say so (the title's own New Game / Continue stay).
+    // The host has no save yet (a new game): stop waiting, say so.
     void NoSave() {
-        if (phase_ == Phase::kWait) phase_ = Phase::kHostNone;
+        if (waiting()) phase_ = Phase::kHostNone;
     }
-    bool active() const { return phase_ == Phase::kWait || phase_ == Phase::kLoad; }
-    bool waiting() const { return phase_ == Phase::kWait; }   // (for the host's save; nothing pressed yet)
-    // The player picked a file on the title while it waited: AutoLoad stops, with no line (their choice).
+    // Waiting with nothing late yet (the title's co-op rows wait).
+    bool active() const { return phase_ == Phase::kWait; }
+    // Step is called: wait, late, chose or ready.
+    bool watching() const { return waiting() || phase_ == Phase::kChose || phase_ == Phase::kReady; }
+    // For the host's save: wait or late.
+    bool waiting() const { return phase_ == Phase::kWait || phase_ == Phase::kLate; }
+    // The player picked a file on the title while it waited: no line (their choice), until Link is in the game or
+    // they are back on the title.
     void PlayerChose() {
-        if (phase_ == Phase::kWait) phase_ = Phase::kDone;
+        if (waiting()) {
+            phase_ = Phase::kChose;
+            chose_gone_ = false;
+            back_ms_ = 0;
+        }
     }
-    // One look: whether A is held now, and whether the cursor should go to Continue (once).
+    bool chose() const { return phase_ == Phase::kChose; }
+    // One look: what the module should do (never a button press).
     struct Tick {
-        bool press_a = false;           // (the module sends it only while the cursor is on Continue)
-        bool reveal_continue = false;   // once: the title shows its Continue row
-        bool focus_continue = false;    // once, after it: the cursor to Continue
+        bool rearm = false;   // chose -> wait: the module offers the host's save again (CoopSave)
     };
-    Tick Step(std::uint64_t now_ms, bool host_save_ready, bool title_up, bool in_game);
+    Tick Step(std::uint64_t now_ms, const Input& in);
     // What the player sees (bottom left of the title); "" when nothing.
     std::string Line() const;
 
-    // The title's Continue (Pa_Button_02: OpenTitle.module.ainb gives it label 0001).
-    static constexpr int kContinue = 2;
-    // Whether AutoLoad's A may go in: on the title only with the cursor on Continue (never New Game, never a row
-    // the title hides); once the title has gone (the file list, its question) every press.
-    static bool PressAllowed(bool title_up, int focused_button) { return !title_up || focused_button == kContinue; }
     // Whether an A that went in is the player picking a file (or a new game, or the title's options) on the title
-    // itself: not AutoLoad's own press, a title button focused, and not one of the co-op rows (Host, Join, Settings:
-    // they open our menu). A guest's pending switch to the host's save is dropped then (CoopSave).
-    static bool PlayerPicksFile(bool title_up, bool autoload_pressed, int focused_button, bool on_coop_row) {
-        return title_up && !autoload_pressed && focused_button >= 0 && !on_coop_row;
+    // itself: a title button focused, and not one of the co-op rows (Host, Join, Settings: they open our menu). A
+    // guest's pending switch to the host's save is dropped then (CoopSave).
+    static bool PlayerPicksFile(bool title_up, int focused_button, bool on_coop_row) {
+        return title_up && focused_button >= 0 && !on_coop_row;
     }
 
 private:
-    enum class Phase { kOff, kWait, kLoad, kDone, kNoSave, kHostNone, kStuck };
+    enum class Phase { kOff, kWait, kLate, kChose, kReady, kDone, kHostNone, kHostGone };
     Phase phase_ = Phase::kOff;
     std::string host_;
-    std::uint64_t since_ = 0;
-    std::uint64_t next_press_ = 0;
-    bool focused_ = false;
-    bool revealed_ = false;
+    std::uint64_t last_ms_ = 0;          // the last look
+    std::uint64_t waited_ms_ = 0;        // wait: title time with nothing coming
+    std::uint64_t back_ms_ = 0;          // chose: title time since it came back
+    bool chose_gone_ = false;            // chose: the title went after the pick
+    bool live_seen_ = false;             // the session was seen on since Start (a join still connecting is not off)
 };
 
 // ---------------------------------------------------------------------------

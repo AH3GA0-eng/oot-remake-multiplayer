@@ -227,6 +227,60 @@ std::vector<Planner::Send> Planner::due(std::optional<Time> newest) {
   return out;
 }
 
+std::string GuestNotices::on_part(std::uint32_t transfer_id, std::size_t count) {
+  if (count <= 1 || (started_ && transfer_id == transfer_)) return {};
+  started_ = true;
+  transfer_ = transfer_id;
+  loading_ = true;
+  said_early_ = false;
+  return std::string(kLoading);
+}
+
+std::string GuestNotices::on_ready(bool in_game) {
+  loading_ = false;
+  return std::string(in_game ? kSuccessPlaying : kSuccessTitle);
+}
+
+std::string GuestNotices::on_in_game(bool in_game) {
+  const bool came_in = in_game && !was_in_game_;
+  was_in_game_ = in_game;
+  if (!came_in || !loading_ || said_early_) return {};
+  said_early_ = true;
+  return std::string(kTooEarly);
+}
+
+std::string GuestNotices::on_gave_up() {
+  loading_ = false;
+  return std::string(kGaveUp);
+}
+
+namespace {
+// An ask is due again (reask_due), the kGuestMaxAsks cap left out.
+bool ask_again(const GuestSession& s, std::uint64_t now_us) {
+  if (!s.asked || s.ready || s.no_save || s.unwritten) return false;
+  if (now_us - s.asked_us < kGuestReaskUs) return false;
+  const auto& a = s.assembler;
+  if (a.received() == 0 && s.last_part_us <= s.asked_us) return true;  // (nothing at all came)
+  // Parts came: only a transfer that stopped part way (a part lost), quiet for kGuestReaskUs.
+  return a.received() != 0 && a.received() < a.count() && now_us - s.last_part_us >= kGuestReaskUs;
+}
+}  // namespace
+
+bool reask_due(const GuestSession& s, std::uint64_t now_us) {
+  return s.asks < kGuestMaxAsks && ask_again(s, now_us);
+}
+
+void note_part(GuestSession& s, std::uint32_t transfer_id, std::uint64_t now_us) {
+  if (s.last_part_us == 0 || transfer_id != s.transfer) s.gave_up = false;
+  s.transfer = transfer_id;
+  s.last_part_us = now_us;
+  s.said_stuck = false;
+}
+
+bool give_up_due(const GuestSession& s, std::uint64_t now_us) {
+  return !s.gave_up && s.asks >= kGuestMaxAsks && ask_again(s, now_us);
+}
+
 std::optional<fs::path> newest_slot(const fs::path& game_dir) {
   std::error_code ec;
   std::optional<fs::path> best;
@@ -374,8 +428,7 @@ int clear_coop_slots(const fs::path& coop_dir) {
 }
 
 PendingStep pending_step(bool slot_in, bool title_up, bool in_game) {
-  if (in_game) return PendingStep::drop;
-  return slot_in && title_up ? PendingStep::go : PendingStep::keep;
+  return slot_in && title_up && !in_game ? PendingStep::go : PendingStep::keep;
 }
 
 bool decide_again(bool decided, bool over, bool in_game) {

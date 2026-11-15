@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <span>
 #include <string>
 #include <variant>
@@ -129,7 +130,10 @@ struct World {
   std::string answer;
   std::vector<std::string> host_log;
 
-  World(const std::string& host_password, const std::string& guest_password, bool probe) {
+  // invite_host: the address the invite code names (nullopt: the server's
+  // own 127.0.0.1 one); nearby: JoinConfig::nearby (nullopt: only the host).
+  World(const std::string& host_password, const std::string& guest_password, bool probe,
+        std::optional<Addr> invite_host = std::nullopt, std::optional<std::vector<Addr>> nearby = std::vector<Addr>{}) {
     ServerOptions options;
     options.port = 0;
     options.session.join_password = host_password;
@@ -150,7 +154,9 @@ struct World {
     rendezvous->start(ms_now());
 
     JoinConfig jc;
-    jc.host = Addr{0x7F000001u, server->port()};
+    jc.host = invite_host.value_or(Addr{0x7F000001u, server->port()});
+    if (nearby && nearby->size() == 1 && nearby->front().port == 0) nearby->front().port = server->port();
+    jc.nearby = nearby;
     jc.password = guest_password;
     jc.stun_servers = {stun.address()};
     jc.game_port = 0;
@@ -242,6 +248,32 @@ TEST_CASE("nat loopback: a server that hears the helper directly answers its pro
   REQUIRE(w.pump_until([&] { return w.game.connected; }, 8000));
 }
 
+TEST_CASE("nat loopback: a host on this PC is reached on 127.0.0.1 when its internet address does not answer") {
+  // The invite names an internet address that never answers (a router without
+  // hairpin NAT); the server listens on this PC.
+  const Addr unreachable{0xC0000201u, 9};  // 192.0.2.1:9 (TEST-NET-1)
+  World w("pw-same-pc", "pw-same-pc", true, unreachable, std::vector<Addr>{Addr{0x7F000001u, 0}});
+  REQUIRE(w.pump_until([&] { return w.helper->state() == JoinState::kOpen; }));
+  CHECK(w.helper->direct());
+  CHECK(w.helper->nearby_peer());
+  CHECK(w.helper->peer() == Addr{0x7F000001u, w.server->port()});
+  CHECK(w.answer.empty());
+  w.game.connect(w.helper->game_port());
+  REQUIRE(w.pump_until([&] { return w.game.connected; }, 8000));
+  w.say_hello();
+  REQUIRE(w.pump_until([&] { return w.game.find<JoinChallenge>() != nullptr; }));
+}
+
+TEST_CASE("nat loopback: a nearby server with another password does not open the way") {
+  const Addr unreachable{0xC0000201u, 9};
+  World w("pw-host", "pw-other", true, unreachable, std::vector<Addr>{Addr{0x7F000001u, 0}});
+  w.pump_until([] { return false; }, 1200);
+  CHECK(w.helper->state() != JoinState::kOpen);
+  CHECK_FALSE(w.helper->nearby_peer());
+  CHECK(w.rendezvous->stats().probes_answered == 0);
+  CHECK(w.rendezvous->stats().rejected > 0);
+}
+
 // HostService (host_service.hpp) with invite: the same STUN round and code as
 // coop_server --invite, read from its status (what the game's menu shows).
 TEST_CASE("host service: the invite code holds this server's address and the password") {
@@ -326,4 +358,30 @@ TEST_CASE("host service: no STUN answer, no invite code, and the status says why
   CHECK(status.message.find("no invite code") != std::string::npos);
   CHECK(status.problem == HostProblem::kNoInvite);
   CHECK(status.state == HostState::kHosting);  // LAN and VPN players still get in
+}
+
+TEST_CASE("join helper: the probe also goes to this PC and the local network, at the invite's port and 27510") {
+  const Addr host{0xCB007105u, 40000};  // 203.0.113.5:40000 (a router that maps another port)
+  const std::vector<Addr> want{{0x7F000001u, 40000}, {0x7F000001u, 27510}, {0xFFFFFFFFu, 40000}, {0xFFFFFFFFu, 27510}};
+  CHECK(nearby_targets(host) == want);
+  // The usual port once each; a host already on 127.0.0.1 is not in it twice.
+  const std::vector<Addr> usual{{0x7F000001u, 27510}, {0xFFFFFFFFu, 27510}};
+  CHECK(nearby_targets(Addr{0xCB007105u, 27510}) == usual);
+  CHECK(nearby_targets(Addr{0x7F000001u, 27510}) == std::vector<Addr>{{0xFFFFFFFFu, 27510}});
+}
+
+TEST_CASE("join helper: the local-network probe only for a long or Host.bat-made password, to each card's broadcast") {
+  CHECK(lan_probe_ok(make_password()));
+  CHECK(lan_probe_ok(std::string(20, 'x')));
+  CHECK_FALSE(lan_probe_ok("hunter2"));
+  CHECK_FALSE(lan_probe_ok(std::string(19, 'x')));
+  const Addr host{0xCB007105u, 27510};
+  // A short password: only this PC.
+  CHECK(nearby_targets(host, {}, false) == std::vector<Addr>{{0x7F000001u, 27510}});
+  // Two cards (the home network and a VPN): each one's broadcast address too; a /32 has none.
+  const std::vector<LocalNet> cards{{0xC0A80105u, 0xFFFFFF00u, 0xC0A80101u},
+                                    {0x1A000002u, 0xFF000000u, 0},
+                                    {0x0A000009u, 0xFFFFFFFFu, 0}};
+  const std::vector<Addr> want{{0x7F000001u, 27510}, {0xFFFFFFFFu, 27510}, {0xC0A801FFu, 27510}, {0x1AFFFFFFu, 27510}};
+  CHECK(nearby_targets(host, cards, true) == want);
 }

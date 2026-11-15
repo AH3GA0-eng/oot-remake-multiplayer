@@ -39,6 +39,11 @@ std::optional<std::uint64_t> PlayerReader::game_ui() {
 }
 
 std::optional<std::uint64_t> PlayerReader::find_player_actor() {
+  if (actor_ != 0) {  // (set_actor: another local player's Link, while it is there)
+    const auto state = read_u32(memory_, actor_ + addr::kActorState);
+    if (!state || *state != addr::kActorStatePresent) return std::nullopt;
+    return actor_;
+  }
   const auto scene = read_ptr(memory_, memory_.main_base() + addr::kSceneModulePtr);
   if (!scene) return std::nullopt;
   const auto table = read_ptr(memory_, *scene + addr::kSceneTable);
@@ -71,8 +76,8 @@ std::optional<std::uint64_t> PlayerReader::find_player_actor() {
 }
 
 std::optional<Vec3> PlayerReader::read_position() {
-  // The GameUI copy, while its valid bit is set.
-  if (const auto ui = game_ui()) {
+  // The GameUI copy, while its valid bit is set (the first Link's: not for set_actor's).
+  if (const auto ui = actor_ == 0 ? game_ui() : std::nullopt) {
     const auto flags = read_u16(memory_, *ui + addr::kGameUiPoseFlags);
     if (flags && (*flags & addr::kGameUiPoseValidBit) != 0) {
       if (auto p = read_vec3(memory_, *ui + addr::kGameUiPosition)) return p;
@@ -201,6 +206,18 @@ std::optional<protocol::Equipment> PlayerReader::read_equipment() {
   e.boots = flags.get_string64(addr::kEquipBoot);
   e.head = flags.get_string64(addr::kEquipHeadArmor);
   e.hand = flags.get_string64(addr::kEquipHandArmor);
+  // The child's Goron's Bracelet is no EquipHandArmor: the game wears it
+  // as an accessory (addresses.hpp, kArmorLinkBracelet). Sent as `hand`;
+  // the puppet wears a bracelet with the same accessory kind. An empty flag
+  // with that link unreadable is not known (not a bracelet taken off).
+  if (!e.hand || e.hand->empty()) {
+    const auto bracelet = read_armor_link_name(addr::kArmorLinkBracelet);
+    if (!bracelet) {
+      e.hand.reset();
+    } else if (bracelet->starts_with(protocol::kChildBraceletPrefix)) {
+      e.hand = bracelet;
+    }
+  }
   e.ocarina = flags.get_string64(addr::kEquipOcarina);
   e.arrow = flags.get_string64(addr::kEquipArrow);
   e.drawn = read_drawn();
@@ -230,6 +247,8 @@ std::optional<std::uint8_t> PlayerReader::read_drawn() {
     // As 0x4a33c0: the holder must still hold this id and its actor must
     // not be gone.
     bool live = false;
+    bool kept_away = false;
+    bool carried_out = false;
     if (*id != addr::kEmptyId) {
       if (const auto holder = read_ptr(memory_, slot + addr::kEquipSlotHolder)) {
         const auto holder_id = read_u32(memory_, *holder + addr::kHolderId);
@@ -238,6 +257,10 @@ std::optional<std::uint8_t> PlayerReader::read_drawn() {
             const auto state = read_u32(memory_, *equipment + addr::kActorState);
             live = state && !(*state >= addr::kActorStateGoneFirst &&
                               *state <= addr::kActorStateGoneLast);
+            kept_away = state && *state == addr::kActorStateKeptAway &&
+                        addr::equip_slot_carried(i);
+            carried_out = state && *state == addr::kActorStatePresent &&
+                          addr::equip_slot_carried(i);
           }
         }
       }
@@ -257,6 +280,14 @@ std::optional<std::uint8_t> PlayerReader::read_drawn() {
       memo.drawn = true;
     } else if (*bits & (addr::kEquipRequestAway | addr::kEquipRequestNone)) {
       memo.drawn = false;
+    } else if (*bits == 0 && kept_away) {
+      // No request in flight and the game keeps the piece elsewhere: put
+      // away, also when its put-away request passed unseen.
+      memo.drawn = false;
+    } else if (*bits == 0 && carried_out) {
+      // And the other way: a carried piece the game shows (state 4) is out,
+      // also when its draw request was cleared before the state changed.
+      memo.drawn = true;
     }
     if (memo.drawn) drawn = static_cast<std::uint8_t>(drawn | (1u << i));
   }
@@ -265,14 +296,22 @@ std::optional<std::uint8_t> PlayerReader::read_drawn() {
 
 std::optional<std::string> PlayerReader::read_slot_name(std::uint32_t slot_index) {
   if (slot_index >= addr::kEquipSlotCount) return std::nullopt;
+  return read_link_name(addr::kEquipSlots + addr::kEquipSlotStride * slot_index);
+}
+
+std::optional<std::string> PlayerReader::read_armor_link_name(std::uint32_t link_index) {
+  if (link_index >= addr::kArmorLinkCount) return std::nullopt;
+  return read_link_name(addr::kArmorLinks + addr::kEquipSlotStride * link_index);
+}
+
+std::optional<std::string> PlayerReader::read_link_name(std::uint64_t link_offset) {
   const auto actor = find_player_actor();
   if (!actor) return std::nullopt;
   const auto components = read_ptr(memory_, *actor + addr::kActorComponents);
   if (!components) return std::nullopt;
   const auto user = read_ptr(memory_, *components + addr::kComponentsEquipmentUser);
   if (!user) return std::nullopt;
-  const std::uint64_t slot =
-      *user + addr::kEquipSlots + addr::kEquipSlotStride * slot_index;
+  const std::uint64_t slot = *user + link_offset;
   const auto id = read_u32(memory_, slot + addr::kEquipSlotId);
   if (!id) return std::nullopt;
   if (*id == addr::kEmptyId) return std::string{};

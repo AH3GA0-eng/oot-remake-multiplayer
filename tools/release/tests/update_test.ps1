@@ -58,6 +58,29 @@ try {
     Check ($pick.Tag -eq 'v0.1.0-beta10') 'the newest release with a zip and a checksum, drafts never'
     Check ($pick.Sum -eq 'dl/oot-coop-v0.1.0-beta10.zip.sha256') 'its checksum file'
     Check ($null -eq (Select-KitRelease @((Rel 'v0.1.0-beta2' $false @('oot-coop-v0.1.0-beta2.zip'))))) 'no release without a checksum'
+    # From v0.11.0 the Windows kit is oot-coop-<tag>-windows.zip, and the same file goes up as oot-coop-<tag>.zip too
+    # (make_kit_hookshot.ps1) for the kits up to v0.10.1, whose updater looks for that name only.
+    $both = @('oot-coop-v0.11.0-windows.zip', 'oot-coop-v0.11.0-windows.zip.sha256', 'oot-coop-v0.11.0.zip', 'oot-coop-v0.11.0.zip.sha256',
+              'oot-coop-v0.11.0-linux.zip', 'oot-coop-v0.11.0-linux.zip.sha256', 'Update.bat')
+    $pick = Select-KitRelease @((Rel 'v0.10.1' $false @('oot-coop-v0.10.1.zip', 'oot-coop-v0.10.1.zip.sha256')), (Rel 'v0.11.0' $false $both))
+    Check ($pick.Tag -eq 'v0.11.0' -and $pick.Zip -eq 'dl/oot-coop-v0.11.0-windows.zip' -and $pick.Sum -eq 'dl/oot-coop-v0.11.0-windows.zip.sha256') 'v0.11.0: the -windows zip is taken when both names are up'
+    $pick = Select-KitRelease @((Rel 'v0.11.0' $false @('oot-coop-v0.11.0-windows.zip', 'oot-coop-v0.11.0-windows.zip.sha256', 'oot-coop-v0.11.0-linux.zip', 'oot-coop-v0.11.0-linux.zip.sha256')))
+    Check ($pick.Tag -eq 'v0.11.0' -and $pick.Zip -eq 'dl/oot-coop-v0.11.0-windows.zip') 'a release with only the -windows zip is found'
+    $pick = Select-KitRelease @((Rel 'v0.11.0' $false @('oot-coop-v0.11.0-windows.zip', 'oot-coop-v0.11.0.zip', 'oot-coop-v0.11.0.zip.sha256')))
+    Check ($pick.Zip -eq 'dl/oot-coop-v0.11.0.zip' -and $pick.Sum -eq 'dl/oot-coop-v0.11.0.zip.sha256') 'a -windows zip with no checksum: the old name with its checksum instead'
+    Check ($null -eq (Select-KitRelease @((Rel 'v0.11.0' $false @('oot-coop-v0.11.0-linux.zip', 'oot-coop-v0.11.0-linux.zip.sha256'))))) 'the Linux zip is never taken by the Windows updater'
+    # What the v0.10.1 kits run (its Select-KitRelease, the exact name only): it sees v0.11.0 through the old name.
+    $v0101 = Join-Path $release 'tests\fixtures\update-v0.10.1-select.ps1'
+    if (Test-Path -LiteralPath $v0101) {
+        $old = & { param($f, $l) . $f; Select-KitRelease $l } $v0101 @((Rel 'v0.10.1' $false @('oot-coop-v0.10.1.zip', 'oot-coop-v0.10.1.zip.sha256')), (Rel 'v0.11.0' $false $both))
+        Check ($old.Tag -eq 'v0.11.0' -and $old.Zip -eq 'dl/oot-coop-v0.11.0.zip') 'the v0.10.1 updater finds v0.11.0 by oot-coop-v0.11.0.zip'
+        $old = & { param($f, $l) . $f; Select-KitRelease $l } $v0101 @((Rel 'v0.11.0' $false @('oot-coop-v0.11.0-windows.zip', 'oot-coop-v0.11.0-windows.zip.sha256')))
+        Check ($null -eq $old) 'the v0.10.1 updater cannot see a release with only the -windows zip (why the old name must go up too)'
+    } else { Check $false "the v0.10.1 Select-KitRelease fixture is missing ($v0101)" }
+    # make_kit_hookshot.ps1 writes both names (the whole path, with a real kit: old_kit_update_test.ps1).
+    $mk = [System.IO.File]::ReadAllText((Join-Path $release 'make_kit_hookshot.ps1'))
+    Check ($mk.Contains('$zip = Join-Path $OutRoot "$name-windows.zip"') -and $mk.Contains('$old = "$kit.zip"') -and
+           $mk.Contains('"$hash  $name-windows.zip`n"') -and $mk.Contains('"$hash  $name.zip`n"')) 'make_kit_hookshot.ps1 writes oot-coop-<tag>-windows.zip and oot-coop-<tag>.zip, each with its .sha256'
 
     # --- The player's files
     foreach ($p in 'emulator\user\config\coop.ini', 'emulator\user\keys\prod.keys', 'emulator\user\load\0400486024DEC000\coop-puppet\x',
@@ -372,6 +395,20 @@ try {
     Check (-not (Test-Path "$kit\backup-v0.1.0-beta2\emulator\user\cache\shader")) 'and not left in the backup'
     Test-PlayerKept $kit 'rolled back after a write'
 
+    # A file held for a moment (an antivirus scanning the exe it just saw written): the write is tried again and the
+    # update goes through (this flaked launch_test's update checks on a PC's first run).
+    $kit = Join-Path $tmp 'kit8b'; New-OldKit $kit
+    $held = Join-Path $tmp 'kit8b-held.txt'
+    $holder = Start-Process -FilePath $ps -WindowStyle Hidden -PassThru -ArgumentList @('-NoProfile', '-Command',
+        "`$f = [System.IO.File]::Open('$kit\emulator\lichii.exe', 'Open', 'Read', 'Read'); [System.IO.File]::WriteAllText('$held', 'x'); Start-Sleep -Milliseconds 1500; `$f.Dispose()")
+    $until = (Get-Date).AddSeconds(30)
+    while (-not (Test-Path -LiteralPath $held) -and (Get-Date) -lt $until) { Start-Sleep -Milliseconds 50 }
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $kit -Yes -Api $good 2>&1
+    $code = $LASTEXITCODE
+    $holder.WaitForExit(30000) | Out-Null
+    Check ((Test-Path -LiteralPath $held) -and $code -eq 0 -and (Get-KitVersion $kit) -eq 'v0.1.0-beta3') "a file held for a moment: tried again, the update goes through [$(($out | Select-Object -Last 2) -join ' ')]"
+    Check ((Read-File "$kit\emulator\lichii.exe") -ne 'old exe') 'and the held exe is the new one'
+
     # Same emulator (an update that keeps lichii.exe): the shader cache stays.
     $kit = Join-Path $tmp 'kit9'; New-OldKit $kit
     Copy-Item -LiteralPath "$newKit\emulator\lichii.exe" -Destination "$kit\emulator\lichii.exe" -Force
@@ -546,6 +583,153 @@ try {
     Check ($sh.CreateShortcut((Join-Path $desk 'Play OoT Co-op.lnk')).TargetPath -ieq "$hk\Start OoT Co-op.bat") 'emulator kit -> Hookshot kit: the desktop shortcut starts the new launcher'
     $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $hk -Check -Api $hsList 2>&1
     Check ($LASTEXITCODE -eq 0 -and ($out -join ' ') -notmatch 'not a co-op kit') "a Hookshot-only kit can be updated again [$($out -join ' ')]"
+
+    # --- revert-b: going back. Hookshot-only kits v0.10.1 (another Longshot commit), v0.11.0 (the kit), v0.11.1 and
+    # v0.11.2 (other patches): the version an update replaces is kept in previous\, Revert.bat puts it back, the start
+    # does not update straight back, Update.bat goes forward again, Update.bat -Version installs an older release.
+    $rv = Join-Path $tmp 'revert'
+    function New-HsKit([string]$Dir, [string]$Ver, [string]$Commit, [string]$Patch, [string[]]$Extra = @()) {
+        Write-File "$Dir\VERSION.txt" "kit: oot-coop-$Ver (release $Ver)`r`nkind: hookshot`r`n"
+        Write-File "$Dir\Start OoT Co-op.bat" "launcher $Ver"
+        Write-File "$Dir\scripts\start.ps1" "start $Ver"
+        Write-File "$Dir\scripts\update.ps1" "# updater of $Ver"
+        Write-File "$Dir\Update.bat" "Update.bat of $Ver"
+        Write-File "$Dir\hookshot\PIN" "runtime=Longshot`r`ncommit=$Commit`r`n"
+        Write-File "$Dir\hookshot\TOOLS.txt" "release=v3.0.0-rc.3`r`nsource_commit=$Commit`r`n"
+        Write-File "$Dir\hookshot\patches\0001-coop.patch" $Patch
+        Write-File "$Dir\hookshot\hookshot_coop.dll" "module $Ver"
+        foreach ($e in $Extra) { Write-File "$Dir\$e" "$e of $Ver" }
+        $files = @(Get-KitFiles $Dir)
+        Write-File "$Dir\MANIFEST.txt" ("# Files`r`nMANIFEST.txt`r`n" + (($files | ForEach-Object { "$_`r`n" }) -join ''))
+    }
+    $rvAssets = Join-Path $rv 'assets'
+    function New-HsRelease([string]$Ver, [string]$Commit, [string]$Patch, [string[]]$Extra = @()) {
+        $src = Join-Path $rv "src-$Ver"
+        New-HsKit "$src\oot-coop-$Ver" $Ver $Commit $Patch $Extra
+        # (the release's updater is this one: an update installs it, a revert must keep it)
+        Copy-Item -LiteralPath $updater -Destination "$src\oot-coop-$Ver\scripts\update.ps1" -Force
+        Write-File "$src\oot-coop-$Ver\coop-options.ini" "auto_update = ask`r`n"
+        New-Item -ItemType Directory -Force -Path $rvAssets | Out-Null
+        $z = Join-Path $rvAssets "oot-coop-$Ver-windows.zip"
+        & "$env:SystemRoot\System32\tar.exe" -a -c -f $z -C $src "oot-coop-$Ver"
+        if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
+        [System.IO.File]::WriteAllText("$z.sha256", "$((Get-FileHash -LiteralPath $z -Algorithm SHA256).Hash.ToLowerInvariant())  oot-coop-$Ver-windows.zip`n")
+        return @{ tag_name = $Ver; draft = $false; html_url = 'local'; assets = @(
+            @{ name = "oot-coop-$Ver-windows.zip"; browser_download_url = $z; size = (Get-Item $z).Length },
+            @{ name = "oot-coop-$Ver-windows.zip.sha256"; browser_download_url = "$z.sha256"; size = 80 }) }
+    }
+    $c1 = 'a' * 40; $c0 = 'b' * 40
+    $r0101 = New-HsRelease 'v0.10.1' $c0 'patch 0.10.1' @('scripts\only-0.10.1.ps1')
+    $r0111 = New-HsRelease 'v0.11.1' $c1 'patch 0.11.1' @('scripts\new-in-0.11.1.ps1')
+    $r0112 = New-HsRelease 'v0.11.2' $c1 'patch 0.11.2'
+    $l1 = Join-Path $rv 'list-0.11.1.json'; [System.IO.File]::WriteAllText($l1, (ConvertTo-Json -Depth 5 @($r0111, $r0101)))
+    $l2 = Join-Path $rv 'list-0.11.2.json'; [System.IO.File]::WriteAllText($l2, (ConvertTo-Json -Depth 5 @($r0112, $r0111, $r0101)))
+    $rk = Join-Path $rv 'kit'
+    New-HsKit $rk 'v0.11.0' $c1 'patch 0.11.0' @('scripts\gone-in-0.11.1.ps1')
+    Write-File "$rk\coop-options.ini" "auto_update = yes`r`nmine = 1`r`n"
+    Write-File "$rk\hookshot\game\save\slot_00\progress.sav" 'my save'
+    Write-File "$rk\hookshot\game\coop.ini" 'name = Saria'
+    Write-File "$rk\logs\start.log" 'my log'
+    $playerKept = {
+        param($What)
+        Check ((Read-File "$rk\hookshot\game\save\slot_00\progress.sav") -eq 'my save' -and (Read-File "$rk\hookshot\game\coop.ini") -eq 'name = Saria' -and
+            (Read-File "$rk\logs\start.log") -eq 'my log' -and (Read-File "$rk\coop-options.ini") -match 'mine = 1') "${What}: saves, the game, coop.ini, logs and coop-options.ini kept"
+    }
+    # 1. An update keeps the version it replaces, with nothing of the player's in it.
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $rk -Yes -Api $l1 2>&1
+    $text = $out -join ' '
+    Check ($LASTEXITCODE -eq 0 -and (Get-KitVersion $rk) -eq 'v0.11.1') "revert: 0.11.0 -> 0.11.1 updated [$(($out | Select-Object -Last 2) -join ' / ')]"
+    $p0 = "$rk\previous\v0.11.0"
+    Check ((Get-KitVersion $p0) -eq 'v0.11.0' -and (Read-File "$p0\scripts\start.ps1") -eq 'start v0.11.0' -and (Read-File "$p0\scripts\gone-in-0.11.1.ps1") -match 'v0.11.0' -and
+        (Read-File "$p0\hookshot\patches\0001-coop.patch") -eq 'patch 0.11.0' -and (Read-File "$p0\scripts\update.ps1") -eq '# updater of v0.11.0') 'revert: the update kept 0.11.0''s own files in previous\v0.11.0'
+    Check (-not (Test-Path "$p0\hookshot\game") -and -not (Test-Path "$p0\logs") -and -not (Test-Path "$p0\coop-options.ini") -and -not (Test-Path "$p0\backup-v0.11.0")) 'revert: and nothing of the player''s (game, saves, logs, coop-options.ini, backups)'
+    Check (-not (Test-Path "$rk\previous\v0.11.0.part")) 'revert: no half-made folder left'
+    Check ($text -match 'Changed your mind\? Update\.bat -Revert goes back to v0\.11\.0') "revert: the update says how to go back [$text]"
+    Check ((Test-KitPlayerPath 'previous\v0.11.0\scripts\start.ps1') -and (Test-KitPlayerPath 'stay-on-version.txt')) 'revert: previous\ and stay-on-version.txt are never the kit''s files'
+    & $playerKept 'revert, after the update'
+    # 2. Revert.bat: back to 0.11.0, with the plain warning.
+    Write-File "$rk\Revert.bat" ([System.IO.File]::ReadAllText((Join-Path $release 'kit\Revert.bat')))
+    & (Join-Path $release 'make_update_bat.ps1') -Out "$rk\Update.bat"
+    $updBat = [System.IO.File]::ReadAllText("$rk\Update.bat")
+    $out = cmd.exe /c "$rk\Revert.bat -Api $l1 <NUL" 2>&1   # (the temp folder: no spaces)
+    $text = $out -join ' '
+    Check ((Get-KitVersion $rk) -eq 'v0.11.0') "revert: Revert.bat went back to 0.11.0 [$(($out | Select-Object -Last 4) -join ' / ')]"
+    Check ($text -match 'SAME version' -and $text -match 'Tell your friends' -and $text -match 'Every player in a session needs the same version: v0\.11\.0') "revert: it says every player needs the same version, tell your friends [$text]"
+    Check ((Read-File "$rk\scripts\start.ps1") -eq 'start v0.11.0' -and (Read-File "$rk\scripts\gone-in-0.11.1.ps1") -match 'v0.11.0' -and
+        -not (Test-Path "$rk\scripts\new-in-0.11.1.ps1") -and (Read-File "$rk\hookshot\patches\0001-coop.patch") -eq 'patch 0.11.0') 'revert: 0.11.0''s files are back, 0.11.1''s own file is gone'
+    Check ((Read-File "$rk\scripts\update.ps1") -eq [System.IO.File]::ReadAllText($updater) -and (Read-File "$rk\Update.bat") -eq $updBat -and (Test-Path "$rk\Revert.bat")) 'revert: the newer updater stays (scripts\update.ps1, Update.bat, Revert.bat)'
+    Check ((Read-File "$rk\stay-on-version.txt") -match '(?m)^stay=v0\.11\.0\r?$' -and (Read-File "$rk\stay-on-version.txt") -match '(?m)^left=v0\.11\.1\r?$') 'revert: stay-on-version.txt says stay on 0.11.0, left 0.11.1'
+    Check ((Get-KitVersion "$rk\previous\v0.11.1") -eq 'v0.11.1') 'revert: 0.11.1 is kept, to go forward again'
+    Check ($text -match 'updates the co-op game for v0\.11\.0 \(a few minutes\)') "revert: other patches: the game is updated on the next start, said [$text]"
+    & $playerKept 'revert, after Revert.bat'
+    # 3. The start does not update straight back: only a release newer than the one left, and then it asks.
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File "$rk\scripts\update.ps1" -Status -Kit $rk -Api $l1 2>&1
+    Check (-not (($out | Where-Object { "$_".Trim() }) -join '')) "revert: the start check is quiet about 0.11.1, the version left [$($out -join '|')]"
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File "$rk\scripts\update.ps1" -Check -Kit $rk -Api $l1 2>&1
+    Check (($out -join ' ') -match 'You stay on v0\.11\.0 \(you went back from v0\.11\.1\)') "revert: -Check says the kit stays [$($out -join ' ')]"
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File "$rk\scripts\update.ps1" -Status -Kit $rk -Api $l2 2>&1
+    Check ((($out | Where-Object { "$_".Trim() }) -join '|') -eq 'newer v0.11.2') "revert: a release newer than the one left is offered [$($out -join '|')]"
+    $out = '' | & $ps -NoProfile -ExecutionPolicy Bypass -File "$rk\scripts\update.ps1" -Launch -Kit $rk -Api $l2 2>&1
+    Check ($LASTEXITCODE -eq 0 -and (Get-KitVersion $rk) -eq 'v0.11.0' -and ($out -join ' ') -match 'went back to v0\.11\.0 on purpose' -and ($out -join ' ') -match 'Staying on') "revert: auto_update = yes still asks, no answer stays [$LASTEXITCODE $(($out | Select-Object -Last 2) -join ' / ')]"
+    # 4. Update.bat goes forward again and forgets the stay.
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $rk -Yes -Api $l1 2>&1
+    Check ($LASTEXITCODE -eq 0 -and (Get-KitVersion $rk) -eq 'v0.11.1' -and -not (Test-Path "$rk\stay-on-version.txt")) "revert: Update.bat goes forward to 0.11.1, the stay is gone [$(($out | Select-Object -Last 2) -join ' / ')]"
+    Check ((Read-File "$rk\scripts\start.ps1") -eq 'start v0.11.1' -and (Test-Path "$rk\scripts\new-in-0.11.1.ps1") -and -not (Test-Path "$rk\scripts\gone-in-0.11.1.ps1")) 'revert: and 0.11.1''s files are back'
+    $kept = @(Get-ChildItem -LiteralPath "$rk\previous" -Directory | ForEach-Object Name)
+    Check ($kept.Count -eq 2 -and $kept -contains 'v0.11.0') "revert: the last 2 versions are kept [$($kept -join ', ')]"
+    # 5. Update.bat -Version: an older release by its tag (another Longshot commit: the game is built again, said).
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $rk -Yes -Api $l1 -Version v0.10.1 2>&1
+    $text = $out -join ' '
+    Check ($LASTEXITCODE -eq 0 -and (Get-KitVersion $rk) -eq 'v0.10.1' -and (Test-Path "$rk\scripts\only-0.10.1.ps1") -and (Read-File "$rk\scripts\update.ps1") -eq [System.IO.File]::ReadAllText($updater)) "revert: -Version v0.10.1 installs that release, the updater stays [$(($out | Select-Object -Last 3) -join ' / ')]"
+    Check ($text -match 'SHA-256 checked' -and $text -match 'same version' -and $text -match 'built again for v0\.10\.1') "revert: -Version checks the SHA-256, warns, says the game is built again [$text]"
+    Check ((Read-File "$rk\stay-on-version.txt") -match '(?m)^stay=v0\.10\.1\r?$' -and (Read-File "$rk\stay-on-version.txt") -match '(?m)^left=v0\.11\.1\r?$') 'revert: and stays on 0.10.1'
+    $kept = @(Get-ChildItem -LiteralPath "$rk\previous" -Directory | ForEach-Object Name)
+    Check ($kept.Count -eq 2 -and $kept -contains 'v0.11.1') "revert: still 2 kept, 0.11.1 among them [$($kept -join ', ')]"
+    & $playerKept 'revert, after -Version'
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $rk -Yes -Api $l1 -Version v0.10.1 2>&1
+    Check ($LASTEXITCODE -eq 0 -and ($out -join ' ') -match 'is v0\.10\.1 already') '-Version of the kit''s own version: nothing to do'
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $rk -Yes -Api $l1 -Version v0.9.9 2>&1
+    Check ($LASTEXITCODE -eq 1 -and ($out -join ' ') -match 'No release v0\.9\.9') '-Version of a release that does not exist: said, nothing changed'
+    # 6. A kit an older updater updated (no previous\, only its backup-<version>\): Revert.bat uses the backup.
+    $bk = Join-Path $rv 'kit-old-updater'
+    New-HsKit $bk 'v0.11.1' $c1 'patch 0.11.1'
+    New-HsKit "$bk\backup-v0.10.1" 'v0.10.1' $c0 'patch 0.10.1'
+    Copy-Item -LiteralPath $updater -Destination "$bk\scripts\update.ps1" -Force
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File "$bk\scripts\update.ps1" -Kit $bk -Yes -Revert 2>&1
+    Check ($LASTEXITCODE -eq 0 -and (Get-KitVersion $bk) -eq 'v0.10.1' -and (Read-File "$bk\hookshot\patches\0001-coop.patch") -eq 'patch 0.10.1') "revert: from the backup an older updater left [$(($out | Select-Object -Last 2) -join ' / ')]"
+    Check (($out -join ' ') -match 'built again for v0\.10\.1') 'revert: another Longshot commit: the game is built again, said'
+    # 7. Nothing kept: says how to get an older release.
+    $nk2 = Join-Path $rv 'kit-nothing'
+    New-HsKit $nk2 'v0.11.1' $c1 'patch 0.11.1'
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $nk2 -Yes -Revert 2>&1
+    Check ($LASTEXITCODE -eq 1 -and ($out -join ' ') -match 'Update\.bat -Version v0\.10\.1' -and (Get-KitVersion $nk2) -eq 'v0.11.1') "revert: nothing kept -> says Update.bat -Version, nothing changed [$($out -join ' ')]"
+    # 7b. A backup-*\ that misses a file its MANIFEST.txt names (an update that failed while copying) is never gone back to.
+    $pk = Join-Path $rv 'kit-partial-backup'
+    New-HsKit $pk 'v0.11.1' $c1 'patch 0.11.1'
+    New-HsKit "$pk\backup-v0.10.1" 'v0.10.1' $c0 'patch 0.10.1' @('scripts\only-0.10.1.ps1')
+    Remove-Item -LiteralPath "$pk\backup-v0.10.1\scripts\only-0.10.1.ps1"
+    Check (-not (Test-KitComplete "$pk\backup-v0.10.1") -and (Test-KitComplete "$rv\src-v0.10.1\oot-coop-v0.10.1")) 'revert: a backup missing a file of its MANIFEST.txt is not complete'
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $pk -Yes -Revert 2>&1
+    Check ($LASTEXITCODE -eq 1 -and (Get-KitVersion $pk) -eq 'v0.11.1') "revert: a partial backup is not gone back to [$(($out | Select-Object -Last 1) -join ' ')]"
+    # 7c. A damaged or hand-edited VERSION.txt never names a folder: the update goes on, nothing outside previous\ goes.
+    foreach ($bad in '..', '..\..', 'v0.1.0-..', 'v0.1.0.') { Check (-not (Test-KitSafeVersion $bad)) "a version that could be a path is refused: '$bad'" }
+    Check (Test-KitSafeVersion 'v0.11.0-rc.1') 'a test build version is fine'
+    Check ($(try { Remove-KitPreviousDir $rk $rv; $false } catch { $true }) -and (Test-Path $rv)) 'previous\ removal refuses a folder outside previous\'
+    foreach ($bad in '..', '..\..') {
+        $hk2 = Join-Path $rv "kit-hostile-$($bad.Length)\kit"
+        New-HsKit $hk2 'v0.11.0' $c1 'patch 0.11.0'
+        Write-File "$hk2\VERSION.txt" "kit: oot-coop-x (release $bad)`r`n"
+        Write-File "$hk2\hookshot\game\save\slot_00\progress.sav" 'my save'
+        Write-File "$(Split-Path -Parent $hk2)\beside-the-kit.txt" 'not the kit''s'
+        $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $hk2 -Yes -Api $l1 2>&1
+        Check ($LASTEXITCODE -eq 0 -and (Get-KitVersion $hk2) -eq 'v0.11.1') "VERSION.txt '(release $bad)': the update goes on [$(($out | Select-Object -Last 1) -join ' ')]"
+        Check ((Read-File "$hk2\hookshot\game\save\slot_00\progress.sav") -eq 'my save' -and (Test-Path "$(Split-Path -Parent $hk2)\beside-the-kit.txt") -and
+            (Test-Path "$hk2\Start OoT Co-op.bat") -and -not (Test-Path "$hk2\previous")) "VERSION.txt '(release $bad)': nothing deleted, nothing kept under that name"
+    }
+    # 8. The game: same pin and patches, other patches, another commit.
+    Check ((Get-KitGameChange $rk $rk) -eq 'same') 'game change: the same kit -> same'
+    Check ((Get-KitGameChange "$rv\src-v0.11.1\oot-coop-v0.11.1" "$rv\src-v0.11.2\oot-coop-v0.11.2") -eq 'patches') 'game change: other patches -> patches'
+    Check ((Get-KitGameChange "$rv\src-v0.11.1\oot-coop-v0.11.1" "$rv\src-v0.10.1\oot-coop-v0.10.1") -eq 'pin') 'game change: another Longshot commit -> pin'
 } finally {
     Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 }

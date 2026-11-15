@@ -1,0 +1,60 @@
+# hs-minimap-icons (Hookshot, minimap-fix): the other player on the HUD minimap where the game's own minimap
+# picture has them, and only while the game shows its minimap. B stands still at each place; A walks.
+# LICHII_COOP_MAP_SELF=1 also puts a white dot ("self") where our code places our own Link.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-minimap-icons -Lane 1
+# Pass, in A's shots (B's the same the other way):
+#   - every shot with the game's minimap: the white "self" dot on the game's own red arrow, and B's marker on the
+#     picture where B stands; between "*-in" and "*-walked" B's marker stays on the same spot of the picture
+#     (it moves only if the game scrolled its picture, and then as the picture did);
+#   - "deku-nomap" (the map flag 0, the room loaded again): if the game shows no minimap, no marker at all;
+#   - "kak-pause": the pause menu, no marker.
+# Log: "coop: map: the HUD minimap's panes: P_ReplaceDungeonMini_00 0x..." (all found), and the
+#   "coop: map: minimap panes (...)" lines (the panes' bytes as the minimap comes and goes).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_MAP_SELF=1
+#! timeout 600
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark deku-in
+stick 0 1 60
+wait 120
+mark deku-walked
+stick -1 0 60
+wait 120
+mark deku-walked2
+setflag DungeonInfo.InsideTheDekuTree.IsGetMap 0
+wait 60
+warp InsideTheDekuTree Entrance
+wait 900
+mark deku-nomap
+setflag DungeonInfo.InsideTheDekuTree.IsGetMap 1
+wait 60
+warp KokiriForest_Child FrontDekuTree
+wait 900
+mark kokiri-in
+stick 0 -1 60
+wait 120
+mark kokiri-walked
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 900
+mark kak-in
+stick 1 0 60
+wait 120
+mark kak-walked
+press PLUS
+wait 120
+mark kak-pause
+press PLUS
+wait 240
+mark end

@@ -68,8 +68,16 @@ TEST_CASE("boss: the eight rooms") {
         CHECK(CoopBoss::RoomByIndex(r.index) == &r);
         // The arrival point and every player's spot around it are in the room.
         CHECK(CoopBoss::Inside(r, r.arrive));
-        for (std::uint8_t n = 1; n <= 4; ++n) {
+        for (std::uint8_t n = 1; n <= proto::kMaxPlayers; ++n) {
             CHECK(CoopBoss::Inside(r, CoopBoss::ArrivalFor(r, n)));
+        }
+        // All 16 spots differ, at least a unit apart.
+        for (std::uint8_t a = 1; a <= proto::kMaxPlayers; ++a) {
+            for (std::uint8_t b = a + 1; b <= proto::kMaxPlayers; ++b) {
+                const Vec pa = CoopBoss::ArrivalFor(r, a);
+                const Vec pb = CoopBoss::ArrivalFor(r, b);
+                CHECK(std::hypot(pa.x - pb.x, pa.z - pb.z) > 1.0f);
+            }
         }
         CHECK_FALSE(r.parts.empty());
         CHECK(r.parts[0] == r.boss);
@@ -146,6 +154,40 @@ TEST_CASE("boss: no intro within 10 s means the fight has begun here, but moves 
     CHECK_FALSE(Has(a, proto::BossState::intro_end));  // no event said we are past the door
     CHECK(States(a) == std::vector{proto::BossState::in_room});  // the heartbeat
     CHECK(s.phase() == Sync::Phase::fight);
+}
+
+TEST_CASE("boss: our own intro and death, read with no name, are told to the area rules (Gohma on Longshot)") {
+    // 0.11 runs (boss-intro): Gohma's intro is no event the game asks by name; these rules saw it anyway.
+    Sync s;
+    s.Tick(At("ForestTemple", Forest().arrive), 1 * kS);
+    auto a = s.Tick(At("ForestTemple", Forest().arrive), 11 * kS);  // no intro in 10 s: "fight" here
+    REQUIRE(s.phase() == Sync::Phase::fight);
+    CHECK(a.intro_here == nullptr);
+    a = s.Tick(At("ForestTemple", Forest().arrive, true), 12 * kS);  // the real intro, after the wait
+    CHECK(s.phase() == Sync::Phase::intro);
+    CHECK(a.intro_here == &Forest());
+    CHECK(a.beaten_here == nullptr);
+    a = s.Tick(At("ForestTemple", Forest().arrive, false), 30 * kS);
+    CHECK(a.intro_here == nullptr);
+    {
+        // The same fight, its death with no reading of the boss: beaten as before, but not told (a guess).
+        Sync g;
+        g.Tick(At("ForestTemple", Forest().arrive), 1 * kS);
+        g.Tick(At("ForestTemple", Forest().arrive), 11 * kS);
+        g.Tick(At("ForestTemple", Forest().arrive, true), 12 * kS);
+        g.Tick(At("ForestTemple", Forest().arrive, false), 30 * kS);
+        CHECK(g.Tick(At("ForestTemple", Forest().arrive, true), 90 * kS).beaten_here == nullptr);
+        CHECK(g.phase() == Sync::Phase::outro);
+    }
+    Local dying = At("ForestTemple", Forest().arrive, true);
+    dying.boss_alive = false;  // the walk read it gone
+    a = s.Tick(dying, 90 * kS);
+    CHECK(a.beaten_here == &Forest());
+    CHECK(a.intro_here == nullptr);
+    // A door's event on the way (not yet in the room) tells nothing.
+    Sync w;
+    w.Tick(At("ForestTemple", kForestEntrance), 1 * kS);
+    CHECK(w.Tick(At("ForestTemple", kForestEntrance, true), 2 * kS).intro_here == nullptr);
 }
 
 TEST_CASE("boss: a player only near the room pulls no one, one whose intro started does (issue 148)") {
@@ -381,6 +423,32 @@ TEST_CASE("boss: an event that runs 15 s is the death even if the boss is still 
     CHECK(Has(a, proto::BossState::defeated));
     s.Tick(Alive(Forest().arrive, false, true), 60 * kS);
     CHECK(s.phase() == Sync::Phase::done);
+}
+
+TEST_CASE("boss: a long event with the boss at full life is not its death (Gohma's ceiling intro)") {
+    // The Deku Tree: a 2 s event on entry is taken as the intro; Gohma's own intro (on the
+    // ceiling, then three camera shots) starts later and runs over 15 s, Gohma at full life.
+    Sync s;
+    ToFight(s);
+    Local l = Alive(Forest().arrive, true, true);
+    l.boss_hurt = false;
+    s.Tick(l, 30 * kS);
+    REQUIRE(s.phase() == Sync::Phase::outro);
+    auto a = s.Tick(l, 46 * kS);
+    CHECK_FALSE(Has(a, proto::BossState::defeated));
+    a = s.Tick(l, 60 * kS);
+    CHECK_FALSE(Has(a, proto::BossState::defeated));
+    // The scene ends, Gohma alive: the fight goes on.
+    l.event = false;
+    a = s.Tick(l, 61 * kS);
+    CHECK_FALSE(Has(a, proto::BossState::defeated));
+    CHECK(s.phase() == Sync::Phase::fight);
+    // Once hurt, a long event is the death again (a body left with its life unread).
+    l.event = true;
+    l.boss_hurt = true;
+    s.Tick(l, 80 * kS);
+    a = s.Tick(l, 96 * kS);
+    CHECK(Has(a, proto::BossState::defeated));
 }
 
 TEST_CASE("boss: the boss dead when the event starts, or no reading, is the death at once") {

@@ -29,7 +29,7 @@ Projects without a licence file (all rights reserved, for example Ship of Harkin
 
 ## Reporting bugs and desyncs
 
-Use the issue forms. Include the co-op build version (`VERSION.txt` in the kit), whether you played on the kit's emulator, on Hookshot (experimental) or with the Linux kit (experimental), the game version, how you connected (invite code, VPN, port forwarding, relay or LAN), how many players, who hosted, and the steps to reproduce. For a desync, say what each player saw; clips from both sides help the most. Logs are welcome; recordings of long play sessions are not needed.
+Use the issue forms. Include the co-op build version (`VERSION.txt` in the kit), whether you played with the Windows kit (Longshot), the Linux kit (experimental) or an older emulator kit, the game version, how you connected (invite code, VPN, port forwarding, relay or LAN), how many players, who hosted, and the steps to reproduce. For a desync, say what each player saw; clips from both sides help the most. Logs are welcome; recordings of long play sessions are not needed.
 
 ## Pull requests
 
@@ -50,6 +50,8 @@ By opening a pull request you agree that your contribution is licensed under GPL
 Every pull request is reviewed by a review session before it is merged. This holds for everyone: outside contributors, the maintainer, and the project's own workers. Nothing merges unreviewed, however small.
 
 A review session is one of the maintainer's AI sessions, started only to review that pull request ([docs/workflow.md](docs/workflow.md)). It did not write the change. For a pull request from outside it writes what it found as a comment on the pull request; you answer or push fixes to the same branch, and it looks again. Reviews of the project's own workers are written in the project's notes, outside this repository.
+
+Every pull request from outside is merged with its own commits as authored: `git merge --no-ff` of the pull request's head, so GitHub shows it as merged and the contributor's commits keep their author line all the way to `main`. It is never squashed, rewritten by rebase, cherry-picked under our name or redone by us. A change we need goes on top as a separate commit. Every merged contributor is listed under "Contributors" in the README.
 
 A review checks that:
 

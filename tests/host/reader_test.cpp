@@ -499,7 +499,7 @@ TEST_CASE("host reader: what the player wears") {
                     {addr::kEquipOcarina, "Item_Ocarina_Time"}});
     put_user(m, l);
     put_equipped(m, 0, 40, 4, 0x2);  // sword drawn
-    put_equipped(m, 2, 41, 4, 0x0);  // shield on the back
+    put_equipped(m, 2, 41, 6, 0x0);  // a carried piece kept away (state 6)
     put_equipped(m, 4, 42, 8, 0x2);  // drawn, but its actor is gone
     put_equipped(m, 5, 43, 4, 0x2);
     m.put_u32(kEquipHolders + 0x100 * 5 + 0x48, 99);  // a stale holder
@@ -594,6 +594,54 @@ TEST_CASE("host reader: what the player wears") {
     CHECK(e->sub_tool == "");
     CHECK(e->held == "");
   }
+  SUBCASE("the child's Goron's Bracelet is sent as hand, from its accessory link") {
+    put_user(m, l);
+    // Armor link 9 is the 18th link of the same array (8 hand slots first).
+    const std::uint32_t link = 8 + addr::kArmorLinkBracelet;
+    m.put_u64(kUser + 0x20 + 0x18 * link + 8, kEquipHolders + 0x100 * link);
+    const auto wear = [&](const std::string& name) {
+      put_equipped(m, link, 70, 4, 0x0);
+      const std::uint64_t piece = kEquipActors + 0x1000 * link;
+      const std::uint64_t text = piece + 0x800;
+      m.put_u64(piece + 0x260, text);
+      const std::string room(80, char{0});
+      m.put(text, room.data(), room.size());
+      m.put(text, name.c_str(), name.size() + 1);
+    };
+    SUBCASE("no flag and no link read: hand not known") {
+      CHECK_FALSE(reader.read_equipment()->hand);
+    }
+    SUBCASE("an empty flag with the link unreadable is not known, not taken off") {
+      put_strings(m, {{addr::kEquipHandArmor, ""}, {addr::kEquipWeapon, "Weapon_Sword_Kokiri"}});
+      CHECK_FALSE(reader.read_equipment()->hand);
+    }
+    SUBCASE("an empty flag and an empty link: no hand piece") {
+      put_strings(m, {{addr::kEquipHandArmor, ""}});
+      m.put_u32(kUser + 0x20 + 0x18 * link + 0x10, 0xffffffffu);
+      CHECK(reader.read_equipment()->hand == "");
+    }
+    SUBCASE("the bracelet, while EquipHandArmor is empty") {
+      put_strings(m, {{addr::kEquipHandArmor, ""}});
+      wear("Armor_Child_Gauntlet_Goron");
+      CHECK(reader.read_equipment()->hand == "Armor_Child_Gauntlet_Goron");
+    }
+    SUBCASE("the adult's gauntlets flag stands") {
+      put_strings(m, {{addr::kEquipHandArmor, "Armor_Adult_Gauntlet_Silver"}});
+      wear("Armor_Child_Gauntlet_Goron");
+      CHECK(reader.read_equipment()->hand == "Armor_Adult_Gauntlet_Silver");
+    }
+    SUBCASE("another piece in that link is not a bracelet") {
+      put_strings(m, {{addr::kEquipHandArmor, ""}});
+      wear("Item_Ocarina_Fairy");
+      CHECK(reader.read_equipment()->hand == "");
+    }
+    SUBCASE("the bracelet gone") {
+      put_strings(m, {{addr::kEquipHandArmor, ""}});
+      wear("Armor_Child_Gauntlet_Goron");
+      m.put_u32(kEquipActors + 0x1000 * link + 0x2c, 8);
+      CHECK(reader.read_equipment()->hand == "");
+    }
+  }
   SUBCASE("a request lasts a moment: the last one stands") {
     put_user(m, l);
     const std::uint64_t request = kUser + 0x13bc;
@@ -629,6 +677,43 @@ TEST_CASE("host reader: what the player wears") {
     CHECK(reader.read_equipment()->drawn == 0x00);
     m.put_u32(kEquipActors + 0x2c, 4);
     CHECK(reader.read_equipment()->drawn == 0x00);
+  }
+  SUBCASE("a held item the game keeps away is put away, its request missed or not") {
+    // held-fix: the slingshot stayed in the puppet's hand after the sword
+    // came out, as its put-away request passed between two readings.
+    put_user(m, l);
+    const std::uint64_t request = kUser + 0x13bc + 3;
+    const std::uint64_t held_state = kEquipActors + 0x1000 * 3 + 0x2c;
+    put_equipped(m, 3, 50, 6, 0x4);  // the slingshot, put away
+    CHECK(reader.read_equipment()->drawn == 0x00);
+    m.put_u8(request, 0x2);  // aimed: the request comes while it is still kept away
+    CHECK(reader.read_equipment()->drawn == 0x08);
+    m.put_u32(held_state, 4);  // in the hand
+    m.put_u8(request, 0);
+    CHECK(reader.read_equipment()->drawn == 0x08);
+    // The sword comes out: slot 0 drawn, the slingshot's put-away request unseen.
+    put_equipped(m, 0, 40, 4, 0x2);
+    m.put_u32(held_state, 6);
+    CHECK(reader.read_equipment()->drawn == 0x01);
+    m.put_u8(kUser + 0x13bc, 0);
+    CHECK(reader.read_equipment()->drawn == 0x01);
+    // The sword is no carried piece: its state 6 changes nothing.
+    m.put_u32(kEquipActors + 0x2c, 6);
+    CHECK(reader.read_equipment()->drawn == 0x01);
+    m.put_u32(kEquipActors + 0x2c, 4);
+    // Aimed again, the draw request cleared while it is still kept away:
+    // put away for that reading, then out once the game shows it (state 4).
+    m.put_u8(kUser + 0x13bc, 0x4);  // the sword put away
+    m.put_u8(request, 0x2);
+    CHECK(reader.read_equipment()->drawn == 0x08);
+    m.put_u8(kUser + 0x13bc, 0);
+    m.put_u8(request, 0);
+    CHECK(reader.read_equipment()->drawn == 0x00);
+    m.put_u32(held_state, 4);
+    CHECK(reader.read_equipment()->drawn == 0x08);
+    CHECK(reader.read_equipment()->drawn == 0x08);
+    // The sword is no carried piece: state 4 with the byte 0 keeps it put away.
+    CHECK((*reader.read_equipment()->drawn & 0x01) == 0);
   }
   SUBCASE("readers of different frames share a state") {
     put_user(m, l);

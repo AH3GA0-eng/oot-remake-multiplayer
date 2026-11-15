@@ -7,7 +7,7 @@
 # The map flag DungeonInfo.InsideTheDekuTree.IsGetMap 0x89787395 is watched in both.
 # Expect: one or both "Obj_TBox_A_02 0x771092ae2f3b7100" open lines (or B's "opened in another
 # game" and the chest removed); bool 0x89787395 "0 -> 1" in both and never a later "1 -> 0"
-# that stays; if a game cleared it, "(dungeon map or compass) went back to 0 here: put back to 1"
+# that stays; if a game cleared it, "(dungeon map, compass or floors) went back here: put back"
 # (map-lost's fix; that is a PASS, note it in #146). INCONCLUSIVE (not a PASS): B's chest was
 # removed live ("opened in another game ... removed") before B pressed A: then only one
 # player opened it, which is not the #146 case (B starts about 4 s after A); rerun with A's

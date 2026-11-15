@@ -13,7 +13,8 @@ bool On(const std::string& v) {
 }  // namespace
 
 CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool()>& pack_green,
-                                     std::vector<std::string>* log, const PackTunicsFn& pack_tunics) {
+                                     std::vector<std::string>* log, const PackTunicsFn& pack_tunics,
+                                     const PackLookFn& pack_look) {
     CoopPuppet::PlannerSettings settings;
     // The test puppet has its own switch: the logs alone must not put a
     // second Link in the game (Alex's run of 2026-11-09 with the logs on).
@@ -22,6 +23,7 @@ CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool(
     if (auto actor = env("LICHII_COOP_PUPPET_ACTOR"); !actor.empty()) {
         settings.actor = std::move(actor);
     }
+    settings.native_player = On(env("LICHII_COOP_NATIVE_PLAYER"));
     bool pack_plain = false;
     if (const auto tunics = env("LICHII_COOP_TUNICS"); tunics == "0" || tunics == "off") {
         settings.tunics = false;
@@ -49,12 +51,26 @@ CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool(
                                 : "get the plain puppet (the pack has no green puppet; make it again)"));
         }
     }
+    if (const auto items = env("LICHII_COOP_LOOK_ITEMS"); pack_look && items != "0" && items != "off") {
+        auto look = pack_look();
+        settings.look_items = std::move(look.actors);
+        settings.look_copies = settings.look_items.empty() ? 0 : look.copies;
+        if (log != nullptr && settings.look_copies > 0) {
+            log->push_back("coop: the puppet pack has " + std::to_string(settings.look_items.size()) +
+                           " coloured items in " + std::to_string(settings.look_copies) +
+                           " copies (gear colours on the puppets)");
+        }
+    }
     if (log != nullptr) {
         log->push_back(std::string("coop: puppets on, actor ") +
                        (settings.actor.empty() ? "by age" : settings.actor) +
                        (settings.tunics  ? ""
                         : pack_plain     ? ", tunics off (the pack has none)"
                                          : ", tunics off (LICHII_COOP_TUNICS=0)") +
+                       (settings.native_player && settings.actor.empty()
+                            ? ", NATIVE PLAYER TEST (LICHII_COOP_NATIVE_PLAYER): the game's own "
+                              "Player_<Age>, left alone"
+                            : "") +
                        (settings.debug ? ", test puppet beside you" : ""));
     }
     return settings;
@@ -131,11 +147,41 @@ std::optional<bool> PackTunicPuppets() {
     return false;
 }
 
+// The first manifest with quiet scenes.
+std::vector<std::string> PackQuiet() {
+    for (const auto& text : PackManifests()) {
+        if (auto scenes = CoopPuppet::PackQuietScenes(text); !scenes.empty()) {
+            return scenes;
+        }
+    }
+    return {};
+}
+
+// The first manifest with item copies.
+CoopPuppet::LookItems PackLook() {
+    for (const auto& text : PackManifests()) {
+        if (auto items = CoopPuppet::PackLookItems(text); items.copies > 0) {
+            return items;
+        }
+    }
+    return {};
+}
+
 }  // namespace
 
 void Configure() {
     std::vector<std::string> lines;
-    auto settings = Settings(Env, PackGreenPuppets, &lines, PackTunicPuppets);
+    auto settings = Settings(Env, PackGreenPuppets, &lines, PackTunicPuppets, PackLook);
+    if (settings.actor.empty() && !settings.native_player) {
+        settings.quiet_scenes = PackQuiet();
+        if (!settings.quiet_scenes.empty()) {
+            std::string names;
+            for (const auto& s : settings.quiet_scenes) {
+                names += (names.empty() ? "" : ", ") + s;
+            }
+            lines.push_back("coop: puppets are seen by enemies; quiet puppets (no guard sees them) in " + names);
+        }
+    }
     for (const auto& line : lines) {
         LOG_INFO(Core, "{}", line);
     }

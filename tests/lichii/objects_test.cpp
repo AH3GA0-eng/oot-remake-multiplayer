@@ -2,8 +2,11 @@
 // No emulator code: each walk is a list of actors.
 #include <doctest/doctest.h>
 
+#include <ostream>  // doctest prints string_view through it
+
 #include <cstring>
 #include <array>
+#include <map>
 #include <optional>
 #include <string>
 #include <variant>
@@ -188,6 +191,127 @@ TEST_CASE("objects: a hit on a copy goes to the owner as DAMAGE, summed over 100
     CHECK(All<proto::ObjectSample>(step).empty());
 }
 
+TEST_CASE("objects: a boss copy's hit place goes with its DAMAGE, and the owner's replay lands there (boss-intro)") {
+    // Gohma's weak point is a headshot check against her Eyelid_Down bone: a non-owner's finishing hit must land
+    // at her eye in the owner's game, not at her feet.
+    const proto::Vec3 eye{18.5f, 61.5f, 67.8f};
+    const std::string kBoss = "Enemy_DungeonBoss_Gohma";
+    Sync copy;
+    Tick(copy, 0, {Enemy(0x100, 0x11, 2, 0.0f, kBoss)});
+    const proto::ObjectId id = *copy.IdOf(0x100);
+    Own(copy, id, 2, 1);
+    Tick(copy, 10 * kMs, {Enemy(0x100, 0x11, 2, 0.0f, kBoss)});
+    Seen hit = Enemy(0x100, 0x11, 0, 0.0f, kBoss);
+    hit.hit_at = eye;
+    Tick(copy, 20 * kMs, {hit});
+    auto damage = All<proto::Damage>(Tick(copy, 130 * kMs, {Enemy(0x100, 0x11, 0, 0.0f, kBoss)}));
+    REQUIRE(damage.size() == 1);
+    CHECK(damage[0].hit_at == std::optional<proto::Vec3>(eye));
+
+    Sync owner;
+    owner.SetHurt(true);
+    Tick(owner, 0, {Enemy(0x200, 0x11, 2, 0.0f, kBoss)});
+    const proto::ObjectId oid = *owner.IdOf(0x200);
+    Own(owner, oid, 1);
+    proto::Damage d = damage[0];
+    d.player_number = 2;
+    d.id = oid;
+    owner.Receive(d);
+    auto step = Tick(owner, 140 * kMs, {Enemy(0x200, 0x11, 2, 0.0f, kBoss)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].hurt == 2);
+    CHECK(step.writes[0].hit_at == std::optional<proto::Vec3>(eye));
+    // The boss's game does not take it (Gohma holds at 1): no life is written for a boss, ever.
+    step = Tick(owner, 700 * kMs, {Enemy(0x200, 0x11, 1, 0.0f, kBoss)});
+    CHECK(step.writes.empty());
+}
+
+TEST_CASE("objects: a hit place never rides on a later DAMAGE (seen while ours, or an older sum)") {
+    const proto::Vec3 eye{18.5f, 61.5f, 67.8f};
+    const std::string kBoss = "Enemy_DungeonBoss_Gohma";
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 4, 0.0f, kBoss)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 1);  // ours: our game's own hit at the eye, nothing to send
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 4, 0.0f, kBoss)});
+    Seen ours = Enemy(0x100, 0x11, 3, 0.0f, kBoss);
+    ours.hit_at = eye;
+    Tick(sync, 20 * kMs, {ours});
+    Own(sync, id, 2, 1);  // handed over: now a copy
+    Tick(sync, 30 * kMs, {Enemy(0x100, 0x11, 3, 0.0f, kBoss)});
+    Tick(sync, 40 * kMs, {Enemy(0x100, 0x11, 2, 0.0f, kBoss)});  // a plain drop, no place this walk
+    auto damage = All<proto::Damage>(Tick(sync, 150 * kMs, {Enemy(0x100, 0x11, 2, 0.0f, kBoss)}));
+    REQUIRE(damage.size() == 1);
+    CHECK_FALSE(damage[0].hit_at);
+    // A place with one sum, then a later sum without one: the second goes without.
+    Seen at = Enemy(0x100, 0x11, 1, 0.0f, kBoss);
+    at.hit_at = eye;
+    Tick(sync, 160 * kMs, {at});
+    damage = All<proto::Damage>(Tick(sync, 270 * kMs, {Enemy(0x100, 0x11, 1, 0.0f, kBoss)}));
+    REQUIRE(damage.size() == 1);
+    CHECK(damage[0].hit_at == std::optional<proto::Vec3>(eye));
+    Tick(sync, 280 * kMs, {Enemy(0x100, 0x11, 0, 0.0f, kBoss)});
+    damage = All<proto::Damage>(Tick(sync, 400 * kMs, {Enemy(0x100, 0x11, 0, 0.0f, kBoss)}));
+    REQUIRE(damage.size() == 1);
+    CHECK_FALSE(damage[0].hit_at);
+}
+
+TEST_CASE("objects: a hit place read a walk before its life drop still goes with it, not later (review)") {
+    const proto::Vec3 eye{18.5f, 61.5f, 67.8f};
+    const std::string kBoss = "Enemy_DungeonBoss_Gohma";
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 4, 0.0f, kBoss)});
+    Own(sync, *sync.IdOf(0x100), 2, 1);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 4, 0.0f, kBoss)});
+    Seen id_moved = Enemy(0x100, 0x11, 4, 0.0f, kBoss);  // the hit id moved, the life not yet
+    id_moved.hit_at = eye;
+    Tick(sync, 20 * kMs, {id_moved});
+    Tick(sync, 40 * kMs, {Enemy(0x100, 0x11, 3, 0.0f, kBoss)});  // the drop, one walk later
+    auto damage = All<proto::Damage>(Tick(sync, 150 * kMs, {Enemy(0x100, 0x11, 3, 0.0f, kBoss)}));
+    REQUIRE(damage.size() == 1);
+    CHECK(damage[0].hit_at == std::optional<proto::Vec3>(eye));
+    // A place whose drop comes too late (past kHitPlaceKeepUs) goes with nothing.
+    Seen old = Enemy(0x100, 0x11, 3, 0.0f, kBoss);
+    old.hit_at = eye;
+    Tick(sync, 160 * kMs, {old});
+    Tick(sync, 500 * kMs, {Enemy(0x100, 0x11, 2, 0.0f, kBoss)});
+    damage = All<proto::Damage>(Tick(sync, 620 * kMs, {Enemy(0x100, 0x11, 2, 0.0f, kBoss)}));
+    REQUIRE(damage.size() == 1);
+    CHECK_FALSE(damage[0].hit_at);
+}
+
+TEST_CASE("objects: whose boss it is stays known a while after the owner's boss left the walk (review boss-intro2)") {
+    // The owner's Gohma is deleted by her own death event: her death must still be the owner's then.
+    const std::array<std::string_view, 1> bodies{"Enemy_DungeonBoss_Gohma"};
+    std::map<std::string, CoopObjects::BossOwnership, std::less<>> last;
+    const std::vector<Seen> with{Enemy(0x100, 0x11, 1, 0.0f, "Enemy_DungeonBoss_Gohma")};
+    const std::vector<std::uint64_t> ours{0x100};
+    CHECK(CoopObjects::BossOurs(with, ours, bodies, 1'000'000, last) == std::optional(true));
+    CHECK(CoopObjects::BossOurs({}, {}, bodies, 3'000'000, last) == std::optional(true));  // gone: the last reading
+    CHECK_FALSE(CoopObjects::BossOurs({}, {}, bodies, 1'000'000 + CoopObjects::kBossOursKeepUs + 1, last));
+    // A copy: false while seen, false after.
+    std::map<std::string, CoopObjects::BossOwnership, std::less<>> copy;
+    CHECK(CoopObjects::BossOurs(with, {}, bodies, 1'000'000, copy) == std::optional(false));
+    CHECK(CoopObjects::BossOurs({}, {}, bodies, 2'000'000, copy) == std::optional(false));
+    // Never seen: nothing.
+    std::map<std::string, CoopObjects::BossOwnership, std::less<>> none;
+    CHECK_FALSE(CoopObjects::BossOurs({}, {}, bodies, 1'000'000, none));
+    // Ours, then handed to the other player while still seen: a copy from that walk on, also once she is gone.
+    std::map<std::string, CoopObjects::BossOwnership, std::less<>> flip;
+    CHECK(CoopObjects::BossOurs(with, ours, bodies, 1'000'000, flip) == std::optional(true));
+    CHECK(CoopObjects::BossOurs(with, {}, bodies, 2'000'000, flip) == std::optional(false));
+    CHECK(CoopObjects::BossOurs({}, {}, bodies, 3'000'000, flip) == std::optional(false));
+    // And back (a stun hands her to us): ours again.
+    CHECK(CoopObjects::BossOurs(with, ours, bodies, 4'000'000, flip) == std::optional(true));
+}
+
+TEST_CASE("objects: a hit place is kept only finite and near the boss") {
+    const proto::Vec3 boss{18.0f, 60.0f, 67.0f};
+    CHECK(CoopObjects::CheckedHitPlace({18.5f, 61.5f, 67.8f}, boss, 12.0f));
+    CHECK_FALSE(CoopObjects::CheckedHitPlace({18.5f, 90.0f, 67.8f}, boss, 12.0f));
+    CHECK_FALSE(CoopObjects::CheckedHitPlace({std::nanf(""), 61.0f, 67.0f}, boss, 12.0f));
+}
+
 TEST_CASE("objects: no owner yet or our own enemy: a life drop sends no DAMAGE") {
     Sync sync;
     Tick(sync, 0, {Enemy(0x100, 0x11, 6)});
@@ -230,7 +354,7 @@ TEST_CASE("objects: the owner writes DAMAGE into its enemy, never below 0") {
     CHECK(Tick(sync, 100 * kMs, {Enemy(0x100, 0x11, 0)}).writes.empty());
 }
 
-TEST_CASE("objects: a copy takes the owner's life, but does not heal back over our own hit") {
+TEST_CASE("objects: a copy takes the owner's life, but is never healed back up to it (native rule)") {
     Sync sync;
     Tick(sync, 0, {Enemy(0x100, 0x11, 4)});
     const proto::ObjectId id = *sync.IdOf(0x100);
@@ -254,11 +378,17 @@ TEST_CASE("objects: a copy takes the owner's life, but does not heal back over o
     CHECK(All<proto::Damage>(Tick(sync, 400 * kMs, {Enemy(0x100, 0x11, 2)})).size() == 1);
     sync.Receive(s);
     CHECK(Tick(sync, 500 * kMs, {Enemy(0x100, 0x11, 2)}).writes.empty());
-    // Long after, the owner's word wins.
+    // Long after, still no write: no game path raises an enemy's life, so the copy keeps its own.
     sync.Receive(s);
     step = Tick(sync, 1500 * kMs, {Enemy(0x100, 0x11, 2)});
+    CHECK(step.writes.empty());
+    CHECK(All<proto::Damage>(step).empty());
+    // The owner's next fall below ours still comes down to the copy.
+    s.state.life = proto::ObjectLife{1, 4};
+    sync.Receive(s);
+    step = Tick(sync, 1600 * kMs, {Enemy(0x100, 0x11, 2)});
     REQUIRE(step.writes.size() == 1);
-    CHECK(step.writes[0].life == 3);
+    CHECK(step.writes[0].life == 1);
 }
 
 TEST_CASE("objects: HANDOVER_STATE gives the new owner the last life") {
@@ -458,6 +588,147 @@ TEST_CASE("objects: with hurt on, a copy loses life through the game and it is n
     CHECK(All<proto::Damage>(Tick(sync, 800 * kMs, {Enemy(0x100, 0x11, 2)})).size() == 1);
 }
 
+// Hookshot, patch 0007: this game's hits on a copy come from the game's own
+// Life step (Sync::GameHit), not from the life read falling.
+namespace {
+std::int32_t DamageSent(const Step& step) {
+    std::int32_t sum = 0;
+    for (const auto& d : All<proto::Damage>(step)) {
+        sum += d.amount;
+    }
+    return sum;
+}
+} // namespace
+
+TEST_CASE("objects: life events: the Life step's hit on a copy goes to the owner, whichever comes first") {
+    Sync sync;
+    sync.SetLifeEvents(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 6)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2, 1);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 6)});
+
+    // The hit and its fall in the same walk.
+    sync.GameHit(0x100, 1);
+    CHECK(DamageSent(Tick(sync, 20 * kMs, {Enemy(0x100, 0x11, 5)})) == 0);
+    CHECK(DamageSent(Tick(sync, 130 * kMs, {Enemy(0x100, 0x11, 5)})) == 1);
+    // The hit one walk before the life read shows it: counted once.
+    sync.GameHit(0x100, 2);
+    std::int32_t sent = DamageSent(Tick(sync, 200 * kMs, {Enemy(0x100, 0x11, 5)}));
+    sent += DamageSent(Tick(sync, 220 * kMs, {Enemy(0x100, 0x11, 3)}));
+    sent += DamageSent(Tick(sync, 400 * kMs, {Enemy(0x100, 0x11, 3)}));
+    CHECK(sent == 2);
+    // The fall read first, its hit drained one walk later: counted once, at the hit.
+    sent = DamageSent(Tick(sync, 500 * kMs, {Enemy(0x100, 0x11, 2)}));
+    sync.GameHit(0x100, 1);
+    sent += DamageSent(Tick(sync, 520 * kMs, {Enemy(0x100, 0x11, 2)}));
+    sent += DamageSent(Tick(sync, 700 * kMs, {Enemy(0x100, 0x11, 2)}));
+    sent += DamageSent(Tick(sync, 1200 * kMs, {Enemy(0x100, 0x11, 2)}));
+    CHECK(sent == 1);
+    CHECK(sync.LooseDrops() == 0);
+    // A hit for more than it has left: only what it had goes.
+    sync.GameHit(0x100, 9);
+    sent = DamageSent(Tick(sync, 1300 * kMs, {Enemy(0x100, 0x11, 0)}));
+    sent += DamageSent(Tick(sync, 1500 * kMs, {Enemy(0x100, 0x11, 0)}));
+    CHECK(sent == 2);
+}
+
+TEST_CASE("objects: an actor the game itself deleted is gone at the first walk without it") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2), Enemy(0x200, 0x22, 2, 5.0f)});
+    REQUIRE(sync.IdOf(0x100));
+    REQUIRE(sync.IdOf(0x200));
+    sync.GameDeleted(0x100, 10 * kMs);  // (the game's delete request, patch 0007)
+    sync.GameDeleted(0x999, 10 * kMs);  // (an actor we do not share: nothing)
+    Tick(sync, 40 * kMs, {});
+    CHECK_FALSE(sync.IdOf(0x100));
+    CHECK(sync.IdOf(0x200));  // off the list for one walk only: lifted, or changing hands
+    Tick(sync, 80 * kMs, {});
+    CHECK_FALSE(sync.IdOf(0x200));
+    // Long after the request the address is another actor's: two walks again.
+    Tick(sync, 100 * kMs, {Enemy(0x300, 0x33, 2)});
+    sync.GameDeleted(0x300, 100 * kMs);
+    Tick(sync, 20'000 * kMs, {Enemy(0x300, 0x33, 2)});
+    Tick(sync, 20'040 * kMs, {});
+    CHECK(sync.IdOf(0x300));
+}
+
+TEST_CASE("objects: life events: a hit that took no life is forgotten, a fall with no step still counts") {
+    Sync sync;
+    sync.SetLifeEvents(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 6)});
+    Own(sync, *sync.IdOf(0x100), 2, 1);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 6)});
+    // The step said 1 but the life stayed (the game's own guard): nothing goes, and a fall
+    // long after it is not paired with it.
+    sync.GameHit(0x100, 1);
+    std::int32_t sent = 0;
+    for (std::uint64_t t = 20; t <= 400; t += 20) {
+        sent += DamageSent(Tick(sync, t * kMs, {Enemy(0x100, 0x11, 6)}));
+    }
+    CHECK(sent == 0);
+    // Life gone with no step for it (something outside the Life step): a hit after the wait.
+    sent = DamageSent(Tick(sync, 500 * kMs, {Enemy(0x100, 0x11, 4)}));
+    sent += DamageSent(Tick(sync, 700 * kMs, {Enemy(0x100, 0x11, 4)}));
+    CHECK(sent == 0);
+    CHECK(sync.LooseDrops() == 0);
+    sent += DamageSent(Tick(sync, 810 * kMs, {Enemy(0x100, 0x11, 4)}));
+    sent += DamageSent(Tick(sync, 1000 * kMs, {Enemy(0x100, 0x11, 4)}));
+    CHECK(sent == 2);
+    CHECK(sync.LooseDrops() == 2);
+}
+
+TEST_CASE("objects: life events: our hit in the same frames as the owner's hurt is still ours") {
+    Sync sync;
+    sync.SetHurt(true);
+    sync.SetLifeEvents(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 4)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2);
+    proto::ObjectSample s;
+    s.player_number = 2;
+    s.id = id;
+    s.state.life = proto::ObjectLife{3, 4};
+    sync.Receive(s);
+    auto step = Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 4)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].hurt == 1);
+    // The game takes the owner's hurt and our Link's own hit in one step: 2 gone, 1 of it ours.
+    sync.GameHit(0x100, 1);
+    std::int32_t sent = DamageSent(Tick(sync, 40 * kMs, {Enemy(0x100, 0x11, 2)}));
+    sent += DamageSent(Tick(sync, 200 * kMs, {Enemy(0x100, 0x11, 2)}));
+    sent += DamageSent(Tick(sync, 900 * kMs, {Enemy(0x100, 0x11, 2)}));
+    CHECK(sent == 1);
+    CHECK(sync.LooseDrops() == 0);
+    CHECK(sync.HurtsTaken() == 1);  // (and its life is not written back up to the owner's 3)
+    // The owner's hurt alone: nothing of ours.
+    Sync other;
+    other.SetHurt(true);
+    other.SetLifeEvents(true);
+    Tick(other, 0, {Enemy(0x100, 0x11, 4)});
+    Own(other, id, 2);
+    other.Receive(s);
+    Tick(other, 10 * kMs, {Enemy(0x100, 0x11, 4)});
+    sent = DamageSent(Tick(other, 40 * kMs, {Enemy(0x100, 0x11, 3)}));
+    sent += DamageSent(Tick(other, 900 * kMs, {Enemy(0x100, 0x11, 3)}));
+    CHECK(sent == 0);
+    CHECK(other.HurtsTaken() == 1);
+}
+
+TEST_CASE("objects: life events: life we put through the step ourselves is no hit of this game's") {
+    Sync sync;
+    sync.SetLifeEvents(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 5)});
+    Own(sync, *sync.IdOf(0x100), 2, 1);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 5)});
+    sync.Stepped(0x100, 2, 10 * kMs);  // (the owner's life, given to the Life step: no GameHit for it)
+    std::int32_t sent = DamageSent(Tick(sync, 40 * kMs, {Enemy(0x100, 0x11, 3)}));
+    sent += DamageSent(Tick(sync, 500 * kMs, {Enemy(0x100, 0x11, 3)}));
+    sent += DamageSent(Tick(sync, 900 * kMs, {Enemy(0x100, 0x11, 3)}));
+    CHECK(sent == 0);
+    CHECK(sync.LooseDrops() == 0);
+}
+
 TEST_CASE("objects: a hurt the game does not take is written as life after 400 ms") {
     Sync sync;
     sync.SetHurt(true);
@@ -487,9 +758,57 @@ TEST_CASE("objects: a hurt the game does not take is written as life after 400 m
     CHECK(sync.HurtsMissed() == 1);
 }
 
-TEST_CASE("objects: our enemy killed by a hit our game did not take is said dead and deleted (issue 133)") {
+TEST_CASE("objects: a killing hit our game did not take leaves our enemy alive (native rule)") {
     // The big Skulltula hit from its armoured side in another game: our game
-    // refuses the hurt, its life is written to 0 and it would stand on.
+    // refuses the hurt. Nothing is written, so it is NOT said dead or deleted
+    // while its game still has it alive.
+    Sync sync;
+    sync.SetHurt(true);
+    const auto skull = [](std::int32_t life) { return Enemy(0x100, 0x11, life, 0.0f, "Enemy_Skulltula"); };
+    Tick(sync, 0, {skull(4)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 1, 3);
+    proto::Damage d;
+    d.player_number = 2;
+    d.id = id;
+    d.amount = 4;
+    sync.Receive(d);
+    auto step = Tick(sync, 10 * kMs, {skull(4)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].hurt == 4);
+    // Our samples tell the others only the life our game really has (never the target of a lost hit).
+    std::size_t samples = 0;
+    const auto real_life_only = [&samples](const Step& st) {
+        for (const auto& sample : All<proto::ObjectSample>(st)) {
+            if (sample.state.life) {
+                ++samples;
+                CHECK(sample.state.life->life == 4);
+            }
+        }
+    };
+    step = Tick(sync, 430 * kMs, {skull(4)});
+    REQUIRE(step.writes.size() == 1);  // to the game's Life step (WriteLife), never a raw write
+    CHECK(step.writes[0].hurt == 0);
+    CHECK(step.writes[0].life == 0);
+    CHECK(All<proto::ObjectRemove>(step).empty());
+    real_life_only(step);
+    // Its game did not take it: still alive at 4.
+    for (const std::uint64_t t : {500, 1000, 1600, 3500, 4000}) {
+        step = Tick(sync, t * kMs, {skull(4)});
+        CHECK(All<proto::ObjectRemove>(step).empty());
+        CHECK(sync.Removes().empty());  // (no dead_at: never deleted)
+        real_life_only(step);
+    }
+    CHECK(samples > 0);
+    // Nor is it said dead when it leaves the walk alive (a room change).
+    for (const std::uint64_t t : {4100, 4200, 4300, 4400, 4500}) {
+        for (const auto& r : All<proto::ObjectRemove>(Tick(sync, t * kMs, {}))) {
+            CHECK(r.reason != proto::RemoveReason::dead);
+        }
+    }
+}
+
+TEST_CASE("objects: a killing hit given after the wait that its game takes is said dead and deleted (issue 133)") {
     Sync sync;
     sync.SetHurt(true);
     const auto skull = [](std::int32_t life) { return Enemy(0x100, 0x11, life, 0.0f, "Enemy_Skulltula"); };
@@ -501,13 +820,11 @@ TEST_CASE("objects: our enemy killed by a hit our game did not take is said dead
     d.id = id;
     d.amount = 2;
     sync.Receive(d);
-    auto step = Tick(sync, 10 * kMs, {skull(2)});
-    REQUIRE(step.writes.size() == 1);
-    CHECK(step.writes[0].hurt == 2);
-    CHECK(All<proto::ObjectRemove>(step).empty());  // the game may still take it
-    step = Tick(sync, 430 * kMs, {skull(2)});
-    REQUIRE(step.writes.size() == 1);
-    CHECK(step.writes[0].life == 0);
+    Tick(sync, 10 * kMs, {skull(2)});
+    auto step = Tick(sync, 430 * kMs, {skull(2)});
+    CHECK(All<proto::ObjectRemove>(step).empty());  // not before its game took it
+    // Its Life step took it: life 0, standing on (issue 133).
+    step = Tick(sync, 500 * kMs, {skull(0)});
     auto removes = All<proto::ObjectRemove>(step);
     REQUIRE(removes.size() == 1);
     CHECK(removes[0].id == id);
@@ -520,11 +837,82 @@ TEST_CASE("objects: our enemy killed by a hit our game did not take is said dead
     // Standing on at life 0: deleted 3 s later.
     Tick(sync, 3000 * kMs, {skull(0)});
     CHECK(sync.Removes().empty());
-    Tick(sync, 3500 * kMs, {skull(0)});
+    Tick(sync, 3600 * kMs, {skull(0)});
     CHECK(sync.Removes() == std::vector<std::uint64_t>{0x100});
     // When it goes, it is not said dead a second time.
-    Tick(sync, 3600 * kMs, {});
-    CHECK(All<proto::ObjectRemove>(Tick(sync, 3700 * kMs, {})).empty());
+    Tick(sync, 3700 * kMs, {});
+    CHECK(All<proto::ObjectRemove>(Tick(sync, 3800 * kMs, {})).empty());
+}
+
+TEST_CASE("objects: RouteLife: an enemy goes only through its game's own steps, else it is lost") {
+    using CoopObjects::LifeAsk;
+    using CoopObjects::LifeRoute;
+    using CoopObjects::RouteLife;
+    LifeAsk a;
+    a.native = true;
+    a.replay_on = true;
+    a.has_player = true;
+    a.hurt = 2;
+    a.life = 1;
+    a.old = 3;
+    a.step_seen = true;
+    a.has_component = true;
+    CHECK(RouteLife(a).route == LifeRoute::replay);
+    // The 400 ms fallback (no hurt, a life to reach): the Life step once the replay was seen.
+    a.hurt = 0;
+    auto r = RouteLife(a);
+    CHECK(r.route == LifeRoute::step);
+    CHECK(r.amount == 2);
+    // A stale give is merged into the fall (not refused, not written).
+    a.stale = 2;
+    r = RouteLife(a);
+    CHECK(r.route == LifeRoute::step);
+    CHECK(r.amount == 2);
+    // Our replay not seen yet by its damage step: nothing more.
+    a.stale = 0;
+    a.replay_seen = false;
+    CHECK(RouteLife(a).route == LifeRoute::wait_replay);
+    a.replay_seen = true;
+    // No Life step (emulator), no component, nothing to lower, or unread: lost, never a write.
+    a.step_seen = false;
+    CHECK(RouteLife(a).route == LifeRoute::lost);
+    a.step_seen = true;
+    a.has_component = false;
+    CHECK(RouteLife(a).route == LifeRoute::lost);
+    a.has_component = true;
+    a.life = 5;  // up: no game path
+    CHECK(RouteLife(a).route == LifeRoute::lost);
+    a.life = 1;
+    a.old = -1;
+    CHECK(RouteLife(a).route == LifeRoute::lost);
+    a.old = 3;
+    // A hurt past the replay (a test kill): its stale part goes with it.
+    a.direct = true;
+    a.hurt = 3;
+    a.stale = 1;
+    r = RouteLife(a);
+    CHECK(r.route == LifeRoute::step);
+    CHECK(r.amount == 4);
+    // Not native (a pot): a stale give means the old direct write, as before.
+    LifeAsk pot = a;
+    pot.native = false;
+    pot.direct = false;
+    pot.replay_on = false;
+    pot.hurt = 0;
+    CHECK(RouteLife(pot).route == LifeRoute::write);
+    pot.stale = 0;
+    CHECK(RouteLife(pot).route == LifeRoute::step);
+    pot.step_seen = false;
+    CHECK(RouteLife(pot).route == LifeRoute::write);
+}
+
+TEST_CASE("objects: NativeOnlyName: enemies, bosses and unknown names are never written") {
+    CHECK(CoopObjects::NativeOnlyName("Enemy_Stalchild"));
+    CHECK(CoopObjects::NativeOnlyName("Enemy_DungeonBoss_Goma"));
+    CHECK(CoopObjects::NativeOnlyName("?"));
+    CHECK(CoopObjects::NativeOnlyName(""));
+    CHECK_FALSE(CoopObjects::NativeOnlyName("Obj_Pot_A_01"));
+    CHECK_FALSE(CoopObjects::NativeOnlyName("Animal_Cucco"));
 }
 
 TEST_CASE("objects: a hurt not taken on a copy, or one that leaves life, says nobody dead") {
@@ -616,7 +1004,8 @@ TEST_CASE("objects: a chest opened elsewhere is shown open here, never removed (
     sync.Plays(30 * kMs, plays);
     REQUIRE(plays.size() == 1);
     CHECK(plays[0].address == 0x500);
-    CHECK(plays[0].name == "OpenWait");
+    // deku-visuals-b: first its own opening (the lid), only over its closed idle.
+    CHECK(plays[0].name == "FrontOpenSmall");
     CHECK(plays[0].only_over == "Close");
     chest.animation->name = "OpenWait";
     Tick(sync, 100 * kMs, {chest, Enemy(0x100, 0x11, 2)});
@@ -684,9 +1073,11 @@ TEST_CASE("objects: keys written while no walk ran remove nothing (title, save l
     Tick(sync, 3040 * kMs, {Enemy(0x200, 0x22, 2)}, 1, "Other");
     Tick(sync, 3050 * kMs, {Chest(0x700), Enemy(0x200, 0x22, 2)}, 1, "Other");
     CHECK(sync.Removes().empty());  // shown open: its open idle is played
-    // It never shows open (no animation here): removed after the fallback.
-    Tick(sync, 6100 * kMs, {Chest(0x700), Enemy(0x200, 0x22, 2)}, 1, "Other");
-    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x700});
+    // It never shows open (no animation here): left closed, never removed (chest-lid-b, #195).
+    for (std::uint64_t t = 3500; t <= 9500; t += 500) {
+        Tick(sync, t * kMs, {Chest(0x700), Enemy(0x200, 0x22, 2)}, 1, "Other");
+    }
+    CHECK(sync.Removes().empty());
 }
 
 TEST_CASE("objects: a chest opened elsewhere that shows open stays, open (issues 87, 195)") {
@@ -708,7 +1099,7 @@ TEST_CASE("objects: a chest opened elsewhere that shows open stays, open (issues
         said |= n.find("shows open here") != std::string::npos;
     }
     CHECK(said);
-    // Still closed after the wait: removed (the fallback).
+    // Still closed after the wait: left closed, never removed (chest-lid-b, #195).
     Seen closed = Chest(0x600, 0x77);
     closed.animation = proto::Animation{};
     closed.animation->name = "CloseWait";
@@ -717,11 +1108,13 @@ TEST_CASE("objects: a chest opened elsewhere that shows open stays, open (issues
     Tick(sync, 2020 * kMs, {chest, closed, Enemy(0x100, 0x11, 2)});
     Tick(sync, 3600 * kMs, {chest, closed, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
-    // Its open idle never took (still closed kChestShowFailUs after): removed.
-    Tick(sync, 5100 * kMs, {chest, closed, Enemy(0x100, 0x11, 2)});
-    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x600});
+    // Its open idle never took (still closed kChestShowFailUs after): left closed.
+    for (std::uint64_t t = 4000; t <= 9000; t += 500) {
+        Tick(sync, t * kMs, {chest, closed, Enemy(0x100, 0x11, 2)});
+    }
+    CHECK(sync.Removes().empty());
     bool failed = false;
-    for (const auto& n : sync.TakeNotes()) failed |= n.find("could not be shown open here") != std::string::npos;
+    for (const auto& n : sync.TakeNotes()) failed |= n.find("could not be shown open here, left closed") != std::string::npos;
     CHECK(failed);
 }
 
@@ -908,9 +1301,81 @@ TEST_CASE("objects: a second take of a key does not start the chest's wait again
     Tick(sync, 1000 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
     Tick(sync, 3000 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());
-    // Never shown open: removed kChestShowFailUs after its first play.
-    Tick(sync, 3030 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
-    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x500});
+    // Never shown open: left closed, never removed (chest-lid-b, #195).
+    for (std::uint64_t t = 3500; t <= 8000; t += 500) {
+        Tick(sync, t * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    }
+    CHECK(sync.Removes().empty());
+}
+
+TEST_CASE("objects: a lid that does not take gives the open idle its own full try (clock restarted)") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    sync.Take(0x3c5bb811b4cf54dd);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});  // first play: the lid's command
+    // No animation here: the lid gives up at the 1500 ms walk; the open idle's 3 s count from there.
+    const auto gave_up = [&](std::uint64_t until) {
+        bool said = false;
+        for (std::uint64_t t = 500; t <= until; t += 500) {
+            Tick(sync, t * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+            for (const auto& n : sync.TakeNotes()) said |= n.find("could not be shown open here") != std::string::npos;
+        }
+        return said;
+    };
+    CHECK_FALSE(gave_up(4000));  // the old clock (from 20 ms) gave up at 3500
+    bool said = false;
+    Tick(sync, 4500 * kMs, {Chest(0x500), Enemy(0x100, 0x11, 2)});
+    for (const auto& n : sync.TakeNotes()) said |= n.find("could not be shown open here") != std::string::npos;
+    CHECK(said);
+    CHECK(sync.Removes().empty());
+}
+
+TEST_CASE("objects: a late OpenWait after the give-up is shown open, not opened twice (no take-back)") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    sync.SetPlayer(proto::Vec3{1.5f, 0.0f, 1.0f});  // beside it
+    Seen chest = Chest(0x500);
+    sync.Take(chest.hash);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    for (std::uint64_t t = 500; t <= 6000; t += 500) {
+        Tick(sync, t * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    }
+    // Our own play takes late.
+    chest.animation = proto::Animation{};
+    chest.animation->name = "OpenWait";
+    Tick(sync, 6500 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 7000 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.ChestsOpenedTwice() == 0);
+    bool late = false;
+    for (const auto& n : sync.TakeNotes()) late |= n.find("shows open here (late)") != std::string::npos;
+    CHECK(late);
+    CHECK(sync.Removes().empty());
+}
+
+TEST_CASE("objects: a chest left closed, then opened here beside our Link, counts as opened twice") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    sync.SetPlayer(proto::Vec3{1.5f, 0.0f, 1.0f});
+    Seen chest = Chest(0x500);
+    sync.Take(chest.hash);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    for (std::uint64_t t = 500; t <= 9500; t += 500) {
+        Tick(sync, t * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    }
+    bool left = false;
+    for (const auto& n : sync.TakeNotes()) left |= n.find("left closed") != std::string::npos;
+    CHECK(left);
+    CHECK(sync.ChestsOpenedTwice() == 0);
+    // Our Link opens it: its own AI plays the opening.
+    chest.animation = proto::Animation{};
+    chest.animation->name = "FrontOpenSmall";
+    Tick(sync, 9600 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 9700 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.ChestsOpenedTwice() == 1);
+    CHECK(sync.Removes().empty());
 }
 
 TEST_CASE("objects: a take for a chest not loaded removes nothing that loads later") {
@@ -1010,6 +1475,99 @@ TEST_CASE("objects: a copy's animation frame follows the owner's, shown 100 ms l
     CHECK(plays[0].frame == doctest::Approx(19.0f));
 }
 
+TEST_CASE("objects: enemies and townspeople go by the playing frame, bosses do not (enemy-anim-b)") {
+    using CoopObjects::PlaysByFrame;
+    CHECK(PlaysByFrame("Enemy_Scrub_Deku_Leaf"));
+    CHECK(PlaysByFrame("Enemy_Skulltula"));
+    CHECK(PlaysByFrame("Npc_Hylia_030_Child"));
+    CHECK_FALSE(PlaysByFrame("Enemy_DungeonBoss_Gohma"));
+    CHECK_FALSE(PlaysByFrame("Enemy_MiddleBoss_Dodongo"));
+    CHECK_FALSE(PlaysByFrame("Obj_Plant_Grass_A_01"));
+}
+
+namespace {
+// An owner's sample of an enemy with this animation, as the copy gets it.
+proto::ObjectSample EnemySample(const proto::ObjectId& id, std::uint64_t at, const std::string& anim,
+                                float frame) {
+    proto::ObjectSample s;
+    s.id = id;
+    s.player_number = 1;
+    s.state.time = {at, 1};
+    s.state.position = proto::Vec3{0.0f, 0.0f, 0.0f};
+    s.state.animation = proto::Animation{anim, frame, 1.0f};
+    return s;
+}
+
+// The copy's walk at `now` (as player 2), then what it asks the mover to play.
+std::vector<CoopObjects::PlayWish> EnemyPlays(Sync& copy, std::uint64_t now, const std::string& name) {
+    Tick(copy, now, {Enemy(0x200, 0x11, 2, 0.0f, name)}, 2);
+    std::vector<CoopObjects::PlayWish> plays;
+    copy.Plays(now, plays);
+    return plays;
+}
+} // namespace
+
+TEST_CASE("objects: an enemy copy gets the owner's new animation once, near its start, run as the owner runs it") {
+    const std::string name = "Enemy_Scrub_Deku_Leaf";
+    Sync owner;
+    Tick(owner, 0, {Enemy(0x100, 0x11, 2, 0.0f, name)});
+    const proto::ObjectId id = *owner.IdOf(0x100);
+
+    Sync copy;
+    Seen c = Enemy(0x200, 0x11, 2, 0.0f, name);
+    c.animation = proto::Animation{"Wait", 40.0f, 1.0f};
+    Tick(copy, 0, {c}, 2);
+    Own(copy, id, 1);
+
+    // The owner starts "Appear": its first sample shows playing frame 1.
+    copy.Receive(EnemySample(id, 1000 * kMs, "Appear", 1.0f));
+    auto plays = EnemyPlays(copy, 1000 * kMs, name);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].name == "Appear");
+    CHECK(plays[0].play_frame);
+    CHECK_FALSE(plays[0].alias);  // an enemy's own wake must show (issue 157)
+    // Shown 100 ms late: at its start, not 8 to 15 frames in.
+    CHECK(plays[0].frame == doctest::Approx(0.0f));
+
+    // The next sample of the same animation: the same name and sample-led
+    // frame (the mover plays a name only when the copy shows another, and
+    // sets the frame only when it is off by more than its slack).
+    copy.Receive(EnemySample(id, 1050 * kMs, "Appear", 4.0f));
+    plays = EnemyPlays(copy, 1150 * kMs, name);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].name == "Appear");
+    CHECK(plays[0].sample == 1050 * kMs);
+    // 3 frames in 50 ms (1.5 game frames): the owner runs it at 2.
+    CHECK(plays[0].run == doctest::Approx(2.0f));
+    CHECK(plays[0].frame == doctest::Approx(4.0f));
+
+    // A loop: the owner's "Wait" climbs to 20 and starts again; the copy's
+    // frame stays inside that loop.
+    copy.Receive(EnemySample(id, 1100 * kMs, "Wait", 18.0f));
+    copy.Receive(EnemySample(id, 1150 * kMs, "Wait", 20.0f));
+    copy.Receive(EnemySample(id, 1200 * kMs, "Wait", 1.0f));
+    plays = EnemyPlays(copy, 1200 * kMs + 100 * kMs + 150 * kMs, name);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].name == "Wait");
+    CHECK(plays[0].loop == doctest::Approx(20.0f));
+    CHECK(plays[0].frame < 20.0f);
+}
+
+TEST_CASE("objects: a boss copy keeps the slot frame it had (issue 150)") {
+    const std::string name = "Enemy_DungeonBoss_Gohma";
+    Sync owner;
+    Tick(owner, 0, {Enemy(0x100, 0x11, 2, 0.0f, name)});
+    const proto::ObjectId id = *owner.IdOf(0x100);
+    Sync copy;
+    Tick(copy, 0, {Enemy(0x200, 0x11, 2, 0.0f, name)}, 2);
+    Own(copy, id, 1);
+    copy.Receive(EnemySample(id, 1000 * kMs, "Wait", 10.0f));
+    const auto plays = EnemyPlays(copy, 1100 * kMs, name);
+    REQUIRE(plays.size() == 1);
+    CHECK_FALSE(plays[0].play_frame);
+    CHECK_FALSE(plays[0].alias);
+}
+
 namespace {
 proto::PlayerSample Where(std::uint8_t player, const std::string& scene, std::uint64_t now) {
     proto::PlayerSample p;
@@ -1024,6 +1582,8 @@ TEST_CASE("objects: one game rolls Stalchild, the others delete theirs and make 
     CHECK(CoopObjects::IsRolled("Enemy_Stalchild"));
     CHECK(CoopObjects::IsRolled("Enemy_Stalchild_Big"));
     CHECK_FALSE(CoopObjects::IsRolled("Enemy_Stalchild_Dictionary"));
+    CHECK(CoopObjects::IsRolled("Enemy_Poe"));  // the graveyard night ghost (owner retest R6)
+    CHECK_FALSE(CoopObjects::IsRolled("Enemy_Poe_Sharp"));  // placed event Poe
 
     Sync a;  // player 1: decides
     Sync b;  // player 2
@@ -1377,7 +1937,7 @@ TEST_CASE("objects: after our hit on a copy the owner's old animation waits for 
     CHECK(plays[0].name == "Walk");
 }
 
-TEST_CASE("objects: a hurt the game takes after its life was written is put back, not sent on") {
+TEST_CASE("objects: a hurt the game takes late is no hit of ours, and an enemy is not written back up") {
     Sync sync;
     sync.SetHurt(true);
     Tick(sync, 0, {Enemy(0x100, 0x11, 4)}, 2);
@@ -1391,18 +1951,18 @@ TEST_CASE("objects: a hurt the game takes after its life was written is put back
     auto step = Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 4)}, 2);
     REQUIRE(step.writes.size() == 1);
     CHECK(step.writes[0].hurt == 1);
-    // Not taken in 400 ms: written as life.
+    // Not taken in 400 ms: the rest goes to the game's Life step (WriteLife; never a raw write).
     step = Tick(sync, 420 * kMs, {Enemy(0x100, 0x11, 4)}, 2);
     REQUIRE(step.writes.size() == 1);
     CHECK(step.writes[0].hurt == 0);
     CHECK(step.writes[0].life == 3);
-    Tick(sync, 450 * kMs, {Enemy(0x100, 0x11, 3)}, 2);
-    // The game takes the old hit now (it was paused): 3 -> 2. Put back to 3.
-    step = Tick(sync, 700 * kMs, {Enemy(0x100, 0x11, 2)}, 2);
-    REQUIRE(step.writes.size() == 1);
-    CHECK(step.writes[0].life == 3);
-    CHECK(step.writes[0].hurt == 0);
+    // (WriteLife gave nothing: the replay still waited for its damage step.) Our life stays the real read.
+    Tick(sync, 450 * kMs, {Enemy(0x100, 0x11, 4)}, 2);
+    // The game takes the replayed hit now (it was paused): 4 -> 3. No hit of ours, nothing written.
+    step = Tick(sync, 700 * kMs, {Enemy(0x100, 0x11, 3)}, 2);
+    CHECK(step.writes.empty());
     CHECK(sync.HurtsLate() == 1);
+    CHECK(All<proto::Damage>(step).empty());
     step = Tick(sync, 900 * kMs, {Enemy(0x100, 0x11, 3)}, 2);
     CHECK(All<proto::Damage>(step).empty());
     // A real hit of ours after that still goes to the owner.
@@ -1593,6 +2153,34 @@ TEST_CASE("objects: the AI hold's table and hook") {
     // No enemy held: an empty table, so every brain runs as the game wants.
     table = CoopHold::Table({}, CoopHold::MasksFor(1));
     CHECK(u32(0) == 0);
+}
+
+TEST_CASE("objects: the AI hold's host table (Hookshot, no guest table)") {
+    CoopHold::HostTable t;
+    // Nothing held yet: every brain runs as the game wants.
+    CHECK(t.Apply(0x1111, 0x1230u) == 0x1230u);
+    t.Publish({0x1111, 0, 0x2222}, CoopHold::MasksFor(1));
+    CHECK(t.Count() == 2);
+    CHECK(t.Apply(0x1111, 0x1230u) == 0x1231u);
+    CHECK(t.Apply(0x2222, 0x1230u) == 0x1231u);
+    CHECK(t.Apply(0x3333, 0x1230u) == 0x1230u);
+    CHECK(t.Apply(0, 0x1230u) == 0x1230u);
+    // Mode 2 clears the bit; a component no longer listed runs its own AI again.
+    t.Publish({0x2222}, CoopHold::MasksFor(2));
+    CHECK(t.Apply(0x2222, 0x1231u) == 0x1230u);
+    CHECK(t.Apply(0x1111, 0x1231u) == 0x1231u);
+    // At most 64; past them nothing is held.
+    std::vector<std::uint64_t> many;
+    for (std::uint64_t i = 1; i <= 100; ++i) {
+        many.push_back(0x10000 + i);
+    }
+    t.Publish(many, CoopHold::MasksFor(1));
+    CHECK(t.Count() == CoopHold::kMaxHeld);
+    CHECK(t.Apply(0x10000 + CoopHold::kMaxHeld, 0) == 1u);
+    CHECK(t.Apply(0x10000 + CoopHold::kMaxHeld + 1, 0) == 0u);
+    t.Clear();
+    CHECK(t.Count() == 0);
+    CHECK(t.Apply(0x10001, 0) == 0u);
 }
 
 TEST_CASE("objects: group rules for parts and bosses") {
@@ -1957,7 +2545,7 @@ TEST_CASE("objects: a hit before the owner is known is kept and sent once it is 
     CHECK(All<proto::Damage>(Tick(late, 2200 * kMs, {Enemy(0x100, 0x11, 5)})).empty());
 }
 
-TEST_CASE("objects: a copy we killed is not healed back, and the hit is sent again twice at most") {
+TEST_CASE("objects: a copy we killed is never healed back, and the hit is sent again twice at most") {
     Sync sync;
     Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
     const proto::ObjectId id = *sync.IdOf(0x100);
@@ -1975,12 +2563,12 @@ TEST_CASE("objects: a copy we killed is not healed back, and the hit is sent aga
         REQUIRE(damage.size() == 1);
         CHECK(damage[0].amount == 2);
     }
-    // After that the owner is right: the copy takes its life.
+    // After that nothing more is sent, and the copy is not written up either (the native rule: no game
+    // path raises an enemy's life; its game's kill stands).
     sync.Receive(OwnerSample(id, 2, 3400 * kMs, 0.0f, 2, "Wait"));
     auto step = Tick(sync, 3400 * kMs, {Enemy(0x100, 0x11, 0)});
     CHECK(All<proto::Damage>(step).empty());
-    REQUIRE(step.writes.size() == 1);
-    CHECK(step.writes[0].life == 2);
+    CHECK(step.writes.empty());
 }
 
 TEST_CASE("objects: an enemy of ours that died is said dead to the others, even with no life read") {
@@ -2175,7 +2763,7 @@ TEST_CASE("objects: animation names without their LOD suffix") {
     CHECK_FALSE((flags && (*flags & kTargeting) != 0));
 }
 
-TEST_CASE("objects: a copy brought to 0 by its owner and alive again is healed, not hit") {
+TEST_CASE("objects: a copy brought to 0 by its owner and alive again is neither hit nor written up") {
     // We hit it once, long before; then the owner's own samples took it to
     // 0 and back (a revive). No DAMAGE for the owner's whole life.
     Sync sync;
@@ -2190,8 +2778,7 @@ TEST_CASE("objects: a copy brought to 0 by its owner and alive again is healed, 
     sync.Receive(OwnerSample(id, 2, 8000 * kMs, 0.0f, 2, "Wait"));
     auto step = Tick(sync, 8000 * kMs, {Enemy(0x100, 0x11, 0)});
     CHECK(All<proto::Damage>(step).empty());
-    REQUIRE(step.writes.size() == 1);
-    CHECK(step.writes[0].life == 2);
+    CHECK(step.writes.empty());  // (an enemy's life is never written up: the native rule)
 }
 
 TEST_CASE("objects: owners queued from before a reconnect are not applied after the forget") {
@@ -2233,7 +2820,7 @@ TEST_CASE("objects: only chests, pickups and things that go away are removed whe
     }
 }
 
-TEST_CASE("objects: a taken enemy counter or hammer pillar stays, a chest beside it goes (issue 138)") {
+TEST_CASE("objects: a taken enemy counter or hammer pillar stays, and so does a chest beside it (issues 138, 195)") {
     Sync sync;
     Seen counter = Chest(0x510, 0x1111);
     counter.name = "Obj_EnemyCounter_A_01";
@@ -2247,10 +2834,10 @@ TEST_CASE("objects: a taken enemy counter or hammer pillar stays, a chest beside
     Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
     Tick(sync, 20 * kMs, {counter, pillar, chest, Enemy(0x100, 0x11, 2)});
     CHECK(sync.Removes().empty());  // shown open: its open idle is played
-    // It never shows open (no animation here): removed after the fallback.
-    Tick(sync, 3100 * kMs, {counter, pillar, chest, Enemy(0x100, 0x11, 2)});
-    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x530});
-    Tick(sync, 3110 * kMs, {counter, pillar, Enemy(0x100, 0x11, 2)});
+    // It never shows open (no animation here): left closed, never removed (chest-lid-b).
+    for (std::uint64_t t = 500; t <= 8000; t += 500) {
+        Tick(sync, t * kMs, {counter, pillar, chest, Enemy(0x100, 0x11, 2)});
+    }
     CHECK(sync.Removes().empty());
 }
 
@@ -2283,6 +2870,23 @@ TEST_CASE("objects: a boss is alive while a body actor has life left, unknown wi
     CHECK(CoopObjects::BossAlive({koume, kotake}, kTwinrova) == std::optional<bool>(false));
 }
 
+TEST_CASE("objects: a boss is hurt once a body's life is below its maximum (Gohma's intro)") {
+    constexpr std::array<std::string_view, 1> kGohma{"Enemy_DungeonBoss_Gohma"};
+    Seen boss = Chest(0x940, 0);
+    boss.name = "Enemy_DungeonBoss_Gohma";
+    CHECK_FALSE(CoopObjects::BossHurt({}, kGohma).has_value());      // not seen: unknown
+    CHECK_FALSE(CoopObjects::BossHurt({boss}, kGohma).has_value());  // no life read: unknown
+    boss.life = coop::protocol::ObjectLife{21, 21};
+    CHECK(CoopObjects::BossHurt({boss}, kGohma) == std::optional<bool>(false));
+    boss.life = coop::protocol::ObjectLife{17, 21};
+    CHECK(CoopObjects::BossHurt({boss}, kGohma) == std::optional<bool>(true));
+    Seen egg = Chest(0x950, 0);
+    egg.name = "Enemy_Gohma_Egg";
+    egg.life = coop::protocol::ObjectLife{0, 1};
+    boss.life = coop::protocol::ObjectLife{21, 21};
+    CHECK(CoopObjects::BossHurt({egg, boss}, kGohma) == std::optional<bool>(false));  // not a body
+}
+
 TEST_CASE("objects: a breakable taken elsewhere plays its own break, and is deleted only if it stands") {
     // breakables-2 (player test): the Deku Tree web burnt in A just vanished
     // in B. One with a life (a bomb web, a cracked wall) gets life 0 first, so
@@ -2296,21 +2900,26 @@ TEST_CASE("objects: a breakable taken elsewhere plays its own break, and is dele
     web.life = proto::ObjectLife{1, 1};
     Tick(sync, 0, {web});
     sync.Take(web.hash);
+    // deku-visuals-b: a web first gets its own Burn played; this one never
+    // shows it (no animation here), so after kWebBurnTryUs it breaks as before.
     auto step = Tick(sync, 10 * kMs, {web});
+    CHECK(step.writes.empty());
+    step = Tick(sync, 1100 * kMs, {web});
     REQUIRE(step.writes.size() == 1);
     CHECK(step.writes[0].address == 0x700);
     CHECK(step.writes[0].life == 0);
     CHECK(step.writes[0].hurt == 0);
     CHECK(sync.Removes().empty());
     // Its break plays: not deleted, not written again.
-    step = Tick(sync, 800 * kMs, {web});
+    step = Tick(sync, 1900 * kMs, {web});
     CHECK(step.writes.empty());
     CHECK(sync.Removes().empty());
     // Still standing 1.5 s on: deleted after all.
-    Tick(sync, 1600 * kMs, {web});
+    Tick(sync, 2700 * kMs, {web});
     CHECK(sync.Removes() == std::vector<std::uint64_t>{0x700});
 
-    // One with no life (the floor web you fall through) goes at once, as before.
+    // One with no life (the floor web you fall through) goes once its burn
+    // had its try (deku-visuals-b; before: at once).
     Sync other;
     Seen floor = web;
     floor.name = "Obj_InsideTheDekuTree_SpiderWeb_A_01";
@@ -2319,6 +2928,9 @@ TEST_CASE("objects: a breakable taken elsewhere plays its own break, and is dele
     Tick(other, 0, {floor});
     other.Take(floor.hash);
     step = Tick(other, 10 * kMs, {floor});
+    CHECK(step.writes.empty());
+    CHECK(other.Removes().empty());
+    step = Tick(other, 1100 * kMs, {floor});
     CHECK(step.writes.empty());
     CHECK(other.Removes() == std::vector<std::uint64_t>{0x700});
 }
@@ -2558,6 +3170,73 @@ TEST_CASE("objects: a boss's other AS slots go with its samples and are played o
     auto ps = All<proto::ObjectSample>(Tick(plain, 10 * kMs, {p}));
     REQUIRE(ps.size() == 1);
     CHECK_FALSE(ps[0].state.slots);
+}
+
+TEST_CASE("objects: a boss's brain and action verbs go with its samples, a new one at once (native boss sync)") {
+    const std::string gohma = "Enemy_DungeonBoss_Gohma";
+    Sync owner;
+    Seen e = Enemy(0x100, 0x11, 12, 0.0f, gohma);
+    e.animation = proto::Animation{"Wait", 0.0f, 1.0f};
+    e.bsa = proto::BossBsa{1, 2, std::nullopt, {}};
+    Tick(owner, 0, {e});
+    const proto::ObjectId id = *owner.IdOf(0x100);
+    Own(owner, id, 1, 4);
+    auto samples = All<proto::ObjectSample>(Tick(owner, 10 * kMs, {e}));
+    REQUIRE(samples.size() == 1);
+    REQUIRE(samples[0].state.bsa);
+    CHECK(samples[0].state.bsa->brain_verb == 2);
+    // Nothing new, standing still: no sample (until the still one, 1 s).
+    CHECK(All<proto::ObjectSample>(Tick(owner, 100 * kMs, {e})).empty());
+    // A new verb (seq 2), nothing else changed: a sample at the next 50 ms step.
+    e.bsa = proto::BossBsa{2, 3, std::nullopt, {}};
+    auto changed = All<proto::ObjectSample>(Tick(owner, 200 * kMs, {e}));
+    REQUIRE(changed.size() == 1);
+    CHECK(changed[0].state.bsa->seq == 2);
+
+    // The copy keeps the owner's latest for the boss module, and its AI is never held.
+    Sync copy;
+    Seen c = Enemy(0x200, 0x11, 12, 0.0f, gohma);
+    c.animation = proto::Animation{"Walk", 0.0f, 1.0f};
+    Tick(copy, 0, {c}, 2);
+    Own(copy, id, 1, 4);
+    CHECK(copy.BossVerbsIn().empty());
+    proto::ObjectSample s = changed[0];
+    s.player_number = 1;
+    s.state.time = {1000 * kMs, 1};
+    copy.Receive(s);
+    Tick(copy, 1010 * kMs, {c}, 2);
+    const auto in = copy.BossVerbsIn();
+    REQUIRE(in.size() == 1);
+    CHECK(in[0].first == 0x200);
+    CHECK(in[0].second.brain_verb == 3);
+    CHECK(copy.Holds(1020 * kMs).empty());
+
+    // A new owner (player 3): the old owner's state is not handed on as the
+    // new owner's; the AI still runs; the new owner's first sample is taken,
+    // even with a lower seq (it lagged the old one).
+    Own(copy, id, 3, 5);
+    Tick(copy, 1100 * kMs, {c}, 2);
+    CHECK(copy.BossVerbsIn().empty());
+    CHECK(copy.Holds(1110 * kMs).empty());
+    s.player_number = 3;
+    s.epoch = 5;
+    s.state.bsa = proto::BossBsa{1, 7, std::nullopt, {}};
+    s.state.time = {1200 * kMs, 1};
+    copy.Receive(s);
+    Tick(copy, 1210 * kMs, {c}, 2);
+    const auto taken = copy.BossVerbsIn();
+    REQUIRE(taken.size() == 1);
+    CHECK(taken[0].second.brain_verb == 7);
+    CHECK(taken[0].second.seq == 1);
+
+    // A plain enemy's samples carry no verbs.
+    Sync plain;
+    Seen p = Enemy(0x300, 0x33, 2, 0.0f, "Enemy_Stalchild");
+    Tick(plain, 0, {p});
+    Own(plain, *plain.IdOf(0x300), 1);
+    auto ps = All<proto::ObjectSample>(Tick(plain, 10 * kMs, {p}));
+    REQUIRE(ps.size() == 1);
+    CHECK_FALSE(ps[0].state.bsa);
 }
 
 TEST_CASE("objects: no stun DAMAGE from a plain enemy, our own boss, or when the owner is stunned too") {
@@ -3123,6 +3802,105 @@ TEST_CASE("objects: a copy's egg goes and the owner's larva is made here (gohma-
     REQUIRE(b.IdOf(0x300));
     CHECK(*b.IdOf(0x300) == spawn.id);
 }
+// boss-sync-2 (issue 178): a copy of another game's egg runs its own AI, so
+// our game hatches it through its own path (the game's perception sees the
+// players' puppets too). Our own larva then is the owner's larva's copy.
+namespace {
+
+proto::ObjectSpawn OwnersLarva(float x) {
+    proto::ObjectSpawn spawn;
+    spawn.player_number = 1;
+    spawn.id = {proto::ObjectKind::made, 1, 9};
+    spawn.actor = kLarva;
+    spawn.state.position = proto::Vec3{x, 0.0f, 0.0f};
+    return spawn;
+}
+
+} // namespace
+
+TEST_CASE("objects: our game hatches its copy of an egg, the owner's larva takes our own larva (issue 178)") {
+    for (const bool egg_left : {true, false}) {
+        CAPTURE(egg_left);
+        Sync b;
+        Tick(b, 0, {Enemy(0x100, 0, 1, 0.0f, kEgg)}, 2, kDeku);
+        const proto::ObjectId egg = *b.IdOf(0x100);
+        Own(b, egg, 1, 1);
+        Tick(b, 100 * kMs, {Enemy(0x100, 0, 1, 0.0f, kEgg)}, 2, kDeku);
+        std::vector<Seen> seen;
+        if (egg_left) {
+            Tick(b, 200 * kMs, {}, 2, kDeku);
+            Tick(b, 300 * kMs, {}, 2, kDeku);
+            CHECK_FALSE(b.IdOf(0x100));
+        } else {
+            seen.push_back(Enemy(0x100, 0, 1, 0.0f, kEgg));
+        }
+        seen.push_back(Enemy(0x300, 0, 1, 1.0f, kLarva));
+        // Our own larva: kept, not shared (it is not out of an egg of ours).
+        const auto born = Tick(b, 400 * kMs, seen, 2, kDeku);
+        CHECK(All<proto::ObjectSpawn>(born).empty());
+        REQUIRE(b.IdOf(0x300));
+        CHECK(b.IdOf(0x300)->kind == proto::ObjectKind::placed);
+
+        // The owner's larva comes: ours is its copy, nothing is made.
+        const proto::ObjectSpawn spawn = OwnersLarva(1.5f);
+        b.Receive(spawn);
+        Tick(b, 500 * kMs, seen, 2, kDeku);
+        CHECK(b.Creates().empty());
+        REQUIRE(b.IdOf(0x300));
+        CHECK(*b.IdOf(0x300) == spawn.id);
+        CHECK(b.OwnerOf(spawn.id) == 1);
+        CHECK(b.Removes().empty());
+    }
+}
+
+TEST_CASE("objects: a larva of ours far from any copy egg is not the owner's (issue 178)") {
+    Sync b;
+    Tick(b, 0, {Enemy(0x100, 0, 1, 0.0f, kEgg)}, 2, kDeku);
+    Own(b, *b.IdOf(0x100), 1, 1);
+    const std::vector<Seen> seen{Enemy(0x100, 0, 1, 0.0f, kEgg), Enemy(0x300, 0, 1, 20.0f, kLarva)};
+    Tick(b, 100 * kMs, seen, 2, kDeku);
+    b.Receive(OwnersLarva(1.0f));
+    Tick(b, 200 * kMs, seen, 2, kDeku);
+    REQUIRE(b.Creates().size() == 1);  // the director makes the owner's
+    CHECK(b.IdOf(0x300)->kind == proto::ObjectKind::placed);
+}
+
+TEST_CASE("objects: our own larva out of a copy egg waits only so long for the owner's, then is ended: one larva per game (issue 178)") {
+    Sync b;
+    Tick(b, 0, {Enemy(0x100, 0, 1, 0.0f, kEgg)}, 2, kDeku);
+    Own(b, *b.IdOf(0x100), 1, 1);
+    Tick(b, 100 * kMs, {Enemy(0x100, 0, 1, 0.0f, kEgg)}, 2, kDeku);  // the owner is known
+    Step sent;
+    const auto keep = [&sent](const Step& m) {
+        sent.send.insert(sent.send.end(), m.send.begin(), m.send.end());
+    };
+    for (std::uint64_t t = 200; t <= 300; t += 100) {
+        keep(Tick(b, t * kMs, {Enemy(0x100, 0, 1, 0.0f, kEgg), Enemy(0x300, 0, 1, 1.0f, kLarva)}, 2, kDeku));
+    }
+    REQUIRE(b.IdOf(0x300));
+    CHECK(b.IdOf(0x300)->kind == proto::ObjectKind::placed);
+    // Still waiting just before the wait runs out: kept.
+    const std::uint64_t wait_end = 200 * kMs + Sync::kOwnHatchWaitUs;
+    keep(Tick(b, wait_end, {Enemy(0x300, 0, 1, 1.0f, kLarva)}, 2, kDeku));
+    CHECK(b.Removes().empty());
+    // The wait runs out: ours is ended through the game's removal, never shared.
+    const std::uint64_t late = wait_end + kMs;
+    keep(Tick(b, late, {Enemy(0x300, 0, 1, 1.0f, kLarva)}, 2, kDeku));
+    CHECK(b.Removes() == std::vector<std::uint64_t>{0x300});
+    keep(Tick(b, late + 50 * kMs, {}, 2, kDeku));  // it went
+    CHECK(All<proto::ObjectSpawn>(sent).empty());  // the owner's game gets no second larva
+    // The owner's egg hatches later: its larva is the only one made here.
+    b.Receive(OwnersLarva(1.0f));
+    Tick(b, late + 100 * kMs, {}, 2, kDeku);
+    const auto creates = b.Creates();
+    REQUIRE(creates.size() == 1);
+    CHECK(creates[0].name == kLarva);
+    b.Bind({{creates[0].key, 0x310}});
+    Tick(b, late + 200 * kMs, {Enemy(0x310, 0, 1, 1.0f, kLarva)}, 2, kDeku);
+    REQUIRE(b.IdOf(0x310));
+    CHECK(*b.IdOf(0x310) == OwnersLarva(1.0f).id);
+    CHECK(b.Removes().empty());
+}
 
 TEST_CASE("objects: townspeople near our Link in an event are flagged targeting and wait (issue 200)") {
     constexpr const char* kNpc = "Npc_Kokiri_Mido";
@@ -3185,4 +3963,221 @@ TEST_CASE("objects: an event's townsperson is let go kEventNpcKeepUs after the e
     REQUIRE(flags);
     CHECK((*flags & kTargeting) == 0);
     CHECK(sync.OwnerAt(0x999) == 0);
+}
+
+TEST_CASE("objects: a boss's minion is made by the game that owns the boss, the others make that one (native boss sync)") {
+    const std::string dodongo = "Enemy_DungeonBoss_Dodongo";
+    const std::string baby = "Enemy_DungeonBoss_Dodongo_SpawnBabyDodongo";
+    CHECK(CoopObjects::MinionMaker(baby) == dodongo);
+    CHECK(CoopObjects::MinionMaker("Enemy_Shabom_BigOctoChild") == "Enemy_MiddleBoss_BigOcto");
+    CHECK(CoopObjects::MinionMaker("Enemy_DungeonBoss_Dodongo_Attention").empty());  // made by each game's boss
+    CHECK(CoopObjects::MinionMaker("Enemy_Stalchild").empty());
+
+    // A owns King Dodongo: its baby is shared as a made id.
+    Sync a;
+    Seen boss_a = Enemy(0x100, 0x77, 40, 0.0f, dodongo);
+    Tick(a, 0, {boss_a}, 1);
+    const proto::ObjectId boss_id = *a.IdOf(0x100);
+    Own(a, boss_id, 1);
+    Tick(a, 50 * kMs, {boss_a}, 1);  // (the owner is known long before a baby comes)
+    const Step made = Tick(a, 100 * kMs, {boss_a, Enemy(0x110, ~0ULL, 4, 5.0f, baby)}, 1);
+    const auto spawns = All<proto::ObjectSpawn>(made);
+    REQUIRE(spawns.size() == 1);
+    CHECK(spawns[0].id.kind == proto::ObjectKind::made);
+    CHECK(spawns[0].id.maker == 1);
+    CHECK(spawns[0].actor == baby);
+    CHECK(a.Removes().empty());
+
+    // B's copy of the boss (owned by A) makes its own baby too: deleted, not shared.
+    Sync b;
+    Seen boss_b = Enemy(0x200, 0x77, 40, 0.0f, dodongo);
+    Tick(b, 0, {boss_b}, 2);
+    Own(b, boss_id, 1);
+    Tick(b, 50 * kMs, {boss_b}, 2);
+    const Step own = Tick(b, 100 * kMs, {boss_b, Enemy(0x210, ~0ULL, 4, 5.2f, baby)}, 2);
+    CHECK(All<proto::ObjectSpawn>(own).empty());
+    CHECK_FALSE(b.IdOf(0x210));
+    CHECK(b.Removes() == std::vector<std::uint64_t>{0x210});
+    // A's spawn reaches B: B makes A's baby.
+    b.Receive(spawns[0]);
+    Tick(b, 150 * kMs, {boss_b}, 2);
+    const auto creates = b.Creates();
+    REQUIRE(creates.size() == 1);
+    CHECK(creates[0].name == baby);
+    CHECK(b.OwnerOf(spawns[0].id) == 1);
+
+    // No owner known for the boss: as before (matched by order, a placed id).
+    Sync c;
+    const Step lone = Tick(c, 100 * kMs, {Enemy(0x310, ~0ULL, 4, 5.0f, baby)}, 1);
+    CHECK(All<proto::ObjectSpawn>(lone).empty());
+    REQUIRE(c.IdOf(0x310));
+    CHECK(c.IdOf(0x310)->kind == proto::ObjectKind::placed);
+}
+
+// deku-visuals-b (0.10.1 playtest: the lid did not move for the other player).
+TEST_CASE("objects: a chest opened elsewhere opens its lid here, then shows its open idle") {
+    CHECK(CoopObjects::ChestOpening("Obj_TBox_A_01") == "FrontOpenSmall");
+    CHECK(CoopObjects::ChestOpening("Obj_TBox_A_02") == "FrontOpen");
+    CHECK(CoopObjects::ChestOpening("Obj_TBox_A_03_NoBake") == "FrontOpen");
+    CHECK(CoopObjects::ChestOpening("Obj_TBox_A_04") == "FrontOpenSmall");
+    CHECK(CoopObjects::ChestOpening("Obj_TBox_A_06") == "FrontOpenSmall");
+    CHECK(CoopObjects::ChestOpening("Obj_TBox_GlassTruth_A_01") == "FrontOpenSmall");
+    CHECK(CoopObjects::ChestOpening("Obj_HrlCity_Shop_TBox_A_01").empty());
+    CHECK(CoopObjects::PlaysOver("CloseWait", "Close"));
+    CHECK(CoopObjects::PlaysOver("FrontOpen", "FrontOpen|Close"));
+    CHECK(CoopObjects::PlaysOver("CloseWait", "FrontOpen|Close"));
+    CHECK_FALSE(CoopObjects::PlaysOver("Rattle", "FrontOpen|Close"));
+    CHECK(CoopObjects::PlaysOver("Rattle", ""));
+
+    Sync sync;
+    Seen chest = Chest(0x500);
+    chest.name = "Obj_TBox_A_02";
+    chest.animation = proto::Animation{"CloseWait", 0.0f, 1.0f};
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    sync.Take(chest.hash);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    std::vector<PlayWish> plays;
+    sync.Plays(30 * kMs, plays);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].name == "FrontOpen");
+    CHECK(plays[0].only_over == "Close");
+    CHECK(plays[0].frame == 0.0f);
+    // The lid opens; still the opening while it runs.
+    chest.animation->name = "FrontOpen";
+    Tick(sync, 100 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 1000 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    plays.clear();
+    sync.Plays(1000 * kMs, plays);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].name == "FrontOpen");
+    // After kChestLidUs: the open idle, over the finished opening (or the closed idle).
+    Tick(sync, 1700 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    plays.clear();
+    sync.Plays(1700 * kMs, plays);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].name == "OpenWait");
+    CHECK(plays[0].only_over == "FrontOpen|Close");
+    // Still the opening's last frame for a walk: not "opened twice", not removed.
+    Tick(sync, 1800 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    chest.animation->name = "OpenWait";
+    Tick(sync, 1900 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    plays.clear();
+    sync.Plays(1900 * kMs, plays);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].only_over == "Close");
+    Tick(sync, 9000 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+    CHECK(sync.ChestsOpenedTwice() == 0);
+    bool lid = false, shows = false;
+    for (const auto& n : sync.TakeNotes()) {
+        lid |= n.find("the lid opens here ('FrontOpen')") != std::string::npos;
+        shows |= n.find("shows open here") != std::string::npos;
+    }
+    CHECK(lid);
+    CHECK(shows);
+}
+
+TEST_CASE("objects: a chest whose opening never takes gets the open idle after a second") {
+    Sync sync;
+    Seen chest = Chest(0x500);
+    chest.animation = proto::Animation{"CloseWait", 0.0f, 1.0f};
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    sync.Take(chest.hash);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 900 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    std::vector<PlayWish> plays;
+    sync.Plays(900 * kMs, plays);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].name == "FrontOpenSmall");
+    Tick(sync, 1100 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    plays.clear();
+    sync.Plays(1100 * kMs, plays);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].name == "OpenWait");
+    CHECK(plays[0].only_over == "Close");
+    chest.animation->name = "OpenWait";
+    Tick(sync, 1200 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    Tick(sync, 5000 * kMs, {chest, Enemy(0x100, 0x11, 2)});
+    CHECK(sync.Removes().empty());
+}
+
+// deku-visuals-b (0.10.1 playtest: webs went in the other game, but did not burn).
+TEST_CASE("objects: a web burnt elsewhere burns here before it goes") {
+    CHECK(CoopObjects::IsWeb("Obj_InsideTheDekuTree_SpiderWeb_A_01"));
+    CHECK(CoopObjects::IsWeb("Obj_InsideTheDekuTree_InteractiveSpiderWebParts_A_02"));
+    CHECK_FALSE(CoopObjects::IsWeb("Obj_TBox_A_01"));
+    Sync sync;
+    Seen web;
+    web.address = 0x800;
+    web.name = "Obj_InsideTheDekuTree_SpiderWeb_A_01";
+    web.hash = 0x6b1c0e44a1f0d2c3;
+    web.position = {30.0f, 0.0f, 30.0f};
+    web.life = proto::ObjectLife{1, 1};
+    web.animation = proto::Animation{"Wait", 0.0f, 1.0f};
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    sync.Take(web.hash);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {web, Enemy(0x100, 0x11, 2)});
+    std::vector<PlayWish> plays;
+    sync.Plays(30 * kMs, plays);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].address == 0x800);
+    CHECK(plays[0].name == "Burn");
+    CHECK(plays[0].frame == 0.0f);
+    // No life 0 and no remove while it burns.
+    web.animation->name = "Burn";
+    auto step = Tick(sync, 100 * kMs, {web, Enemy(0x100, 0x11, 2)});
+    CHECK(step.writes.empty());
+    CHECK(sync.Removes().empty());
+    plays.clear();
+    sync.Plays(100 * kMs, plays);
+    CHECK(plays.empty());  // asked once: it never restarts
+    step = Tick(sync, 2000 * kMs, {web, Enemy(0x100, 0x11, 2)});
+    CHECK(step.writes.empty());
+    // Burnt: then its own break (life 0) as before.
+    step = Tick(sync, 2700 * kMs, {web, Enemy(0x100, 0x11, 2)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].address == 0x800);
+    CHECK(step.writes[0].life == 0);
+    bool said = false;
+    for (const auto& n : sync.TakeNotes()) said |= n.find("burns here ('Burn' played)") != std::string::npos;
+    CHECK(said);
+}
+
+TEST_CASE("objects: a web whose burn never takes is broken as before") {
+    Sync sync;
+    Seen web;
+    web.address = 0x800;
+    web.name = "Obj_InsideTheDekuTree_SpiderWeb_A_02";
+    web.hash = 0x6b1c0e44a1f0d2c4;
+    web.position = {30.0f, 0.0f, 30.0f};
+    web.life = proto::ObjectLife{1, 1};
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    sync.Take(web.hash);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {web, Enemy(0x100, 0x11, 2)});
+    CHECK(Tick(sync, 500 * kMs, {web, Enemy(0x100, 0x11, 2)}).writes.empty());
+    const auto step = Tick(sync, 1100 * kMs, {web, Enemy(0x100, 0x11, 2)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].life == 0);
+    std::vector<PlayWish> plays;
+    sync.Plays(1100 * kMs, plays);
+    CHECK(plays.empty());
+}
+
+TEST_CASE("objects: a copy dead here whose owner still lives after the resends is counted once") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 20 * kMs, {Enemy(0x100, 0x11, 0)});
+    Tick(sync, 130 * kMs, {Enemy(0x100, 0x11, 0)});
+    for (const std::uint64_t t : {1200, 2300, 3400, 4500}) {
+        sync.Receive(OwnerSample(id, 2, t * kMs, 0.0f, 2, "Wait"));
+        CHECK(Tick(sync, t * kMs, {Enemy(0x100, 0x11, 0)}).writes.empty());
+    }
+    CHECK(sync.SplitKills() == 1);
 }

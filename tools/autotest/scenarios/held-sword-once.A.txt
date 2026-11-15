@@ -1,0 +1,20 @@
+# held-sword-once: does the puppet's sword need the local sword drawn once, or out now? B draws its own
+# sword at the start and puts it away (held-sword-once.B.txt); only then A walks up and draws. B's shots
+# "a-sword"/"a-sword2" show whether the puppet's blade is drawn while B's own sword is put away.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_DEBUG_ANIM=1
+mark start
+stick 0 0.6 100
+stick 0.7 0 30
+stick 0 -0.4 14
+wait 900
+mark before
+press Y 8
+wait 60
+mark a-sword
+wait 60
+mark a-sword2
+hold ZL 60
+mark a-sword-z
+press B 12
+wait 120
+mark end

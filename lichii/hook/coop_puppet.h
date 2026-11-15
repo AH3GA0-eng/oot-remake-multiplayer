@@ -22,12 +22,16 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "coop/protocol/messages.hpp"
+#include "coop_native_player.h"
 #include "coop_ocarina.h"
+#include "coop_follow.h"
 #include "coop_snap.h"
+#include "coop_link_sound.h"
 #include "coop_puppet_sound.h"
 
 namespace coop::protocol {
@@ -112,6 +116,14 @@ inline constexpr std::uint64_t kPartsEquipmentUser = 0x200;
 // a call that was taken is told from one that was not. The slot's link is at
 // EquipmentUser + 0x20 + 0x18 * slot (u32 id at +0x10, ~0 empty).
 inline constexpr std::uint64_t kEquipChangeState = 0xe34c40;
+// The game's own read of a slot's state: 0xce7ab0(eu, slot) returns 1 in
+// hand, 2 put away, 0 none (read from the dump: a request in the slot's
+// byte gives the rodata table at 0x3ef9474: bit 0 -> 0, bit 1 -> 1,
+// bit 2 -> 2; with no request, the state the piece itself keeps). The
+// puppet's own played animations can draw or put away its pieces too, so
+// the director asks this now and then and changes a piece again when the
+// game has it otherwise than its player (held-fix).
+inline constexpr std::uint64_t kEquipState = 0xce7ab0;
 // Taking armor off: 0x10aceb0(eu, index, 0) empties the EquipmentUser's
 // armor link `index` (eu + 0xe0 + 0x18 * index, the same {holder, id} shape
 // as a hand slot) and deletes its piece. The game's own GameData path
@@ -156,10 +168,10 @@ inline constexpr std::uint64_t kSetMatrix = 0x4c6580;
 // for it; the slingshot is a bow to the game).
 //
 // The rest (branch held-items-2) follows the game's own two enums, read from
-// rodata. The 18 slot kinds the equip call takes (0x3ef94a8): 0 Weapon,
+// rodata. The 18 slot kinds the equip call takes (0x3ef9490): 0 Weapon,
 // 1 SubWeapon, 2 ThirdWeapon, 3 Sheath, 4 Quiver, 5 Bow, 6 Shield,
 // 7 ArmorHead, 8 ArmorUpper, 9 ArmorLower, 10 ArmorHand, 11 Tool, 12 SubTool,
-// 13 to 16 Accessory1 to 4, 17 Extra. The 8 hand slots (0x3ef2033): 0 Weapon,
+// 13 to 16 Accessory1 to 4, 17 Extra. The 8 hand slots (0x3ef2000): 0 Weapon,
 // 1 SubWeapon, 2 ThirdWeapon, 3 Bow, 4 Shield, 5 Tool, 6 SubTool, 7 Helmet.
 // So the pieces after the held item are: the gauntlets (kind 10, no hand
 // slot), and whatever sits in hand slots 1, 2, 5 and 6 (kinds 1, 2, 11, 12:
@@ -169,8 +181,15 @@ inline constexpr std::uint64_t kSetMatrix = 0x4c6580;
 // accessories on the belt (Item_Ocarina_Fairy_Holder and Item_Ocarina_Fairy,
 // or _Time; both packs have an AccessoryParam, and the player's
 // EquipmentUserParam binds Accessory1 and Accessory4 to the bone Pod_B), and
-// its playing animations take it in hand. The puppet wears the same two, as
-// Accessory1 (kind 13) and Accessory4 (kind 16), from PLAYER_EQUIP's ocarina.
+// its playing animations take it in hand. The puppet wears the same two from
+// PLAYER_EQUIP's ocarina, in the player's own slots: the Ocarina as
+// Accessory1 (kind 13) and the holder as Accessory4 (kind 16). Seen in two
+// Hookshot runs (held-ocarina-b, 2026-11-14): the player's EquipmentUser has
+// the Ocarina in armor link 8 and the holder in link 12, and a puppet that
+// wore them the other way round (holder kind 13, Ocarina kind 16) had the
+// holder in link 8 and the Ocarina in link 12, so the link follows the kind.
+// Worn swapped, the puppet's Ocarina sat in the holder's slot, and players
+// saw it vanish (or something else in the hand) while it played.
 inline constexpr std::size_t kGearCount = 13;
 inline constexpr std::size_t kGearHeld = 5;  // index of the held item
 inline constexpr std::size_t kGearHand = 6;  // the gauntlets
@@ -182,14 +201,29 @@ inline constexpr std::size_t kGearOcarinaHolder = 11;
 inline constexpr std::size_t kGearOcarina = 12;
 using Gear = std::array<std::optional<std::string>, kGearCount>;
 inline constexpr std::array<std::uint32_t, kGearCount> kGearKinds{0, 6, 7, 8, 9, 5,
-                                                                  10, 1, 2, 11, 12, 13, 16};
+                                                                  10, 1, 2, 11, 12, 16, 13};
 inline constexpr std::array<const char*, kGearCount> kGearNames{
     "weapon", "shield",     "head",         "armor", "boots",   "held",
     "hand",   "sub weapon", "third weapon", "tool",  "sub tool", "ocarina holder", "ocarina"};
+// The child's Goron's Bracelet comes as `hand` too (PlayerReader reads it
+// from the player's own EquipmentUser), but the game wears it as an
+// accessory, not as hand armor: its pack has an AccessoryParam (the adult
+// gauntlets an ArmorParam), and the GameData equip path 0x2df6c80 wears
+// `Armor_Child_Gauntlet_Goron` with kind 14 (Accessory2, which
+// Player_Child's EquipmentUserParam binds to the bone Ph_Bangle). Worn with
+// kind 10 it would go to the hand armor link, not where the player has it.
+inline constexpr std::uint32_t kBraceletKind = 14;  // Accessory2
+// The kind piece `i` named `name` is worn with.
+constexpr std::uint32_t GearKind(std::size_t i, std::string_view name) {
+    return i == kGearHand && name.starts_with(coop::protocol::kChildBraceletPrefix)
+               ? kBraceletKind
+               : kGearKinds[i];
+}
 // Armor (mask, tunic, boots, gauntlets): taken off with addr::kUnequipArmor.
-constexpr bool GearIsArmor(std::size_t i) {
-    return i < kGearCount && kGearKinds[i] >= addr::kArmorKindFirst &&
-           kGearKinds[i] <= addr::kArmorKindLast;
+// The bracelet is no armor: it is taken off as the belt pieces are.
+constexpr bool GearIsArmor(std::size_t i, std::string_view name) {
+    return i < kGearCount && GearKind(i, name) >= addr::kArmorKindFirst &&
+           GearKind(i, name) <= addr::kArmorKindLast;
 }
 // Pieces the game keeps elsewhere while they are put away (seen for the
 // slingshot: state 6), so the left-behind check looks at them only in hand.
@@ -203,7 +237,7 @@ inline constexpr std::array<int, kGearCount> kGearSlots{0, 4, -1, -1, -1, 3, -1,
 
 // A puppet's memory block, from the game's malloc, kept for the whole run.
 namespace block {
-inline constexpr std::uint64_t kSize = 0x700;
+inline constexpr std::uint64_t kSize = 0x740;  // to 0x738: coop_link_sound.h's handles
 inline constexpr std::uint64_t kCreateArg = 0x000;  // 0x100 bytes
 inline constexpr std::uint64_t kName = 0x100;       // {char*, u32 capacity}
 inline constexpr std::uint64_t kHandles = 0x110;    // kHandleCount slots of 8 bytes
@@ -255,7 +289,13 @@ struct Target {
     std::uint8_t number = 0;  // the player; 0 is the debug puppet
     std::string actor;        // the actor pack name
     Vec3 position{};
+    // jitter-b (coop_follow.h): how fast `position` moves, metres a second, as of
+    // Input::made_ms. Unset (local players, the debug puppet): drawn where `position` is.
+    std::optional<Vec3> velocity;
     Mat3 rotation{1, 0, 0, 0, 1, 0, 0, 0, 1};
+    // jitter-3: the same rotation as a quaternion, as of Input::made_ms (remote players only):
+    // followed to each game frame (coop_follow.h Turner). Unset: `rotation` as it is.
+    std::optional<Quat> turn;
     Show show = Show::show;   // hold: frozen as it is; hide: parked out of sight
     const char* why = "";     // for the log when `show` changes ("our cutscene", ...); string literals only
     std::optional<Anim> anim;
@@ -271,12 +311,18 @@ struct Target {
     std::optional<std::uint32_t> color;
     // The player's newest OCARINA_NOTE, played on the puppet (issue 152).
     CoopPuppetSound::Wanted ocarina;
+    // LINK_SOUNDs received since the last frame, near enough to hear
+    // (coop_link_sound.h): the director takes each one once.
+    std::vector<CoopLinkSound::Sound> sounds;
 };
 
 struct Input {
     std::uint64_t main_base = 0;  // 0: no game, nothing is done
     std::string scene;            // the local scene; "" not known
     std::vector<Target> targets;
+    // When the targets were worked out (steady ms; 0 not known): the director takes
+    // each place forward from then to its own game frame (coop_follow.h).
+    std::uint64_t made_ms = 0;
     // The local game's drawing, from the renderer's camera (coop_camera.h).
     // A puppet created while the game loads a scene (the scene is already
     // readable) is made but never drawn, so a create waits for the drawing
@@ -346,6 +392,7 @@ public:
         std::uint64_t actor = 0;
         std::string actor_name;
         std::string anim_name;  // what was last played on it
+        std::size_t strays = 0; // actors of its player still being deleted
     };
     std::vector<SlotView> Slots() const;  // the calc thread, or tests
     // Any thread: bit n set while puppet n's actor is live in this scene and
@@ -380,6 +427,8 @@ public:
     // A worn piece this far from its shown puppet was left behind (made while
     // the puppet was parked under the floor, seen 2026-11-09): worn again.
     static constexpr float kGearFar = 5.0f;
+    // A piece set in hand or put away is checked against the game this often.
+    static constexpr std::uint64_t kHoldCheckMs = 500;
     static constexpr std::uint64_t kRewearMs = 1000;  // at most once a second
     static constexpr std::uint64_t kFarForMs = 100;   // far on two readings this far apart
     static constexpr std::uint8_t kRewearTries = 3;   // then given up, with one line
@@ -390,6 +439,13 @@ public:
     static constexpr std::uint64_t kDrawnMs = 750;
     // ...or, when the drawing never broke, this long after it.
     static constexpr std::uint64_t kSteadyMs = 3000;
+    // A stray (an actor of a puppet's player that is not its puppet any more:
+    // a create that timed out while its actor still loaded, a delete that did
+    // not finish) is asked to go with the game's own delete this often until
+    // it is gone (owner's playtest 2026-11-14: two puppets of one player).
+    static constexpr std::uint64_t kStrayDeleteMs = 1000;
+    // ...at most this many times (half a minute), then let go with a log line.
+    static constexpr int kStrayMaxDeletes = 30;
 
 private:
     struct Slot {
@@ -421,11 +477,18 @@ private:
         std::uint64_t anim_buffer = 0;  // which name buffer is next
         std::optional<float> frame_to_set;  // after a play
         std::optional<float> held_frame;    // while held
+        CoopFollow::Follower follow;        // jitter-b: their place taken to this game frame
+        CoopFollow::Steps steps;            // jitter-2: how even its drawn steps are (logged)
+        CoopFollow::Follower raw_follow;    // jitter-2: the same on the raw frame time (not drawn;
+        CoopFollow::Steps raw_steps;        //   the log's before number)
+        CoopFollow::Turner turner;          // jitter-3: their rotation taken to this game frame
         CoopSnap::Smoother smooth;          // issue 194: where it is drawn, jumps eased
         CoopSnap::Meter meter;              // issue 194: its place read back, snaps logged
         bool meter_skip = false;            // the next read is still the parked spot
         Show shown = Show::show;            // the last `show` acted on (log on change)
         bool model_checked = false;         // a tunic puppet's model (kTunicModelCheckMs)
+        bool native = false;                // a real Player_<Age> (coop_native_player.h): left alone
+        CoopNativePlayer::Probe probe;      // what the game does with it, for the log
         std::uint64_t frame_set_in = 0;     // the cave frame of the last frame set
         std::string play_name;              // the play being made
         float play_frame = 0.0f;
@@ -441,6 +504,9 @@ private:
         int hold_slot = 0;                  // the change being made
         bool hold_in_hand = false;
         std::uint64_t hold_retry_ms = 0;    // no new change before this
+        std::uint64_t hold_check_ms = 0;    // no state check (kEquipState) before this
+        std::size_t hold_check_next = 0;    // the gear piece the next check starts from
+        std::uint8_t hold_said = 0;         // slots whose "set again" was logged and not yet held (bits)
         std::array<std::uint32_t, kGearCount> hold_id{};  // the piece each change was made for
         std::uint64_t tint_actor = 0;       // the actor the colour line was logged for
         std::uint32_t tint_color = 0;       // and its colour
@@ -456,11 +522,31 @@ private:
         std::array<bool, kGearCount> unequip_refused{};        // the take-off call returned 0
         std::uint64_t moved_frame = 0;      // the cave frame of the last matrix call
         CoopPuppetSound::State sound;       // the player's Ocarina on it (issue 152)
+        CoopLinkSound::Player link_sound;   // the player's own sounds on it (issues 131, 152)
+        // Actors made for this player that are not `taken` any more (kStrayDeleteMs):
+        // deleted until gone, so there is never a second puppet of one player.
+        struct Stray {
+            std::uint64_t actor = 0;
+            std::uint64_t vtable = 0;  // as taken: a reused address is left alone
+            std::string name;          // the actor made, read back when the game has it
+            std::uint64_t next_ms = 0; // the next delete call
+            int deletes = 0;
+        };
+        std::vector<Stray> strays;
     };
     enum class Pending {
-        none, malloc, create, take, drop, remove, play, frame, sync, equip, unequip, hold, move,
-        sound
+        none, malloc, create, take, drop, remove, play, frame, sync, equip, unequip, hold,
+        hold_check, move, sound, link_sound, stray, own_state
     };
+    // sword-3: once a frame, the game's state of one of the local Link's own
+    // slots (CoopPuppetOwn::kSlots, in turn), for the sender (coop_puppet_own.h).
+    std::optional<Call> OwnState(Guest& guest);
+    // The slot's taken actor becomes a stray (above); the slot then has none.
+    void Abandon(Slot& slot, Guest& guest, std::uint64_t now_ms, const char* why);
+    // Strays gone, reused or given up are dropped; the next delete call for one, if due.
+    std::string StrayCheck(const Slot::Stray& s, Guest& guest) const;
+    void KeepStrays(Slot& slot, Guest& guest);
+    std::optional<Call> DeleteStray(Slot& slot, Guest& guest, std::uint64_t now_ms);
 
     void NewFrame(Guest& guest, std::uint64_t now_ms);
     void PoseFrame(Guest& guest, std::uint64_t now_ms);
@@ -508,10 +594,17 @@ private:
 
     // The calc thread only.
     Input input_;
+    CoopFollow::Cadence cadence_;  // jitter-2: the game frames' time made even (coop_follow.h)
     std::vector<Slot> slots_;
+    CoopLinkSound::Budget sound_budget_;  // every puppet's sound starts together
     Pending pending_ = Pending::none;
     std::uint8_t pending_slot_ = 0;
+    std::uint64_t stray_actor_ = 0;  // the stray a Pending::stray call deletes
+    std::uint64_t stray_frame_ = ~std::uint64_t{0};  // the frame of the last stray delete
     int calls_ = 0;  // this frame
+    bool own_asked_ = false;      // OwnState asked this frame
+    std::size_t own_next_ = 0;    // the CoopPuppetOwn::kSlots index asked next
+    std::size_t own_index_ = 0;   // the one a Pending::own_state call asks
     std::size_t first_slot_ = 0;  // where this frame's Step starts (round robin)
     std::uint64_t frames_ = 0;
     std::atomic<std::uint32_t> live_mask_{0};  // LiveMask(); written by the calc thread
@@ -529,6 +622,7 @@ struct Remote {
     std::uint8_t number = 0;
     std::optional<std::string> scene;
     Vec3 position{};
+    std::optional<Vec3> velocity;  // presence's, metres a second
     std::optional<Quat> rotation;
     float fade = 1.0f;
     std::uint8_t status = 0;  // PLAYER_STATUS flags
@@ -541,6 +635,10 @@ struct Remote {
     // player's slot colour (coop::protocol::slot_color).
     std::optional<std::uint32_t> color;
     CoopPuppetSound::Wanted ocarina;                 // as Target::ocarina
+    std::vector<CoopLinkSound::Sound> sounds;        // received since the last Collect
+    // The item copy painted in the player's gear colours
+    // (CoopLookShare::CopyOf): their puppet wears it.
+    std::optional<std::size_t> look_copy;
 };
 
 struct PlannerSettings {
@@ -555,11 +653,45 @@ struct PlannerSettings {
     // kit when it put that colour's tile over the game's): the plain puppet
     // would wear it too, so a green player gets CoopPuppet_<Age>_Green.
     bool green_puppet = false;
+    // LICHII_COOP_NATIVE_PLAYER (a test, coop_native_player.h): the other
+    // player is the game's own Player_<Age>, made and then left alone.
+    bool native_player = false;
     bool debug = false;           // LICHII_COOP_TEST_PUPPET: one more, beside you,
                                   // wearing your own gear
     std::uint64_t debug_delay_ms = 3000;  // after the scene is known
     Vec3 debug_offset{2.0f, 0.0f, 0.0f};  // from you, in game units (about metres)
+    // Gear colours on the puppets (docs/puppet.md, "Gear colours on the
+    // puppets"): the items the pack has copies of, and how many copies
+    // (PackLookItems). None: every puppet wears the game's items.
+    std::vector<std::string> look_items;
+    std::size_t look_copies = 0;
+    // Scenes with stealth guards (coop_puppet.json "quiet_scenes",
+    // tools/puppet_pack/build.py guard_scenes): there each puppet is its
+    // quiet copy (QuietActor), which no perception sees, so a guard of this
+    // game never takes another player's puppet for our Link (issue 150).
+    std::vector<std::string> quiet_scenes;
 };
+
+// The puppet pack's item copies (coop_puppet.json "look_items",
+// tools/puppet_pack/look_items.py): the items and the copy count (two per
+// slot). Nothing for a pack without them.
+struct LookItems {
+    std::vector<std::string> actors;
+    std::size_t copies = 0;
+};
+LookItems PackLookItems(std::string_view manifest);
+
+// The pack's "quiet_scenes" (a list of scene names; none for a pack made
+// before them, or without perception).
+std::vector<std::string> PackQuietScenes(std::string_view manifest);
+// A puppet's quiet copy: CoopPuppet_Child -> CoopPuppet_ChildQuiet,
+// CoopPuppet_Adult_Red -> CoopPuppet_AdultQuiet_Red; any other name as it is.
+std::string QuietActor(std::string_view actor);
+
+// A copy of an item: "Weapon_Shield_Hylian", 2 -> "..._Look2".
+std::string LookItemName(std::string_view item, std::size_t copy);
+// Every piece of `gear` the pack has a copy of becomes that copy.
+void DressInLook(Gear& gear, std::size_t copy, const std::vector<std::string>& items);
 
 // A puppet pack's coop_puppet.json lists both green puppets
 // (CoopPuppet_Child_Green, CoopPuppet_Adult_Green): only then may

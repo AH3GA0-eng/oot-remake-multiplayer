@@ -15,6 +15,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <set>
 #include <span>
@@ -123,12 +124,17 @@ class Planner {
     bool no_save = false;  // the host has no save on disk: send pack_no_save()
     bool operator==(const Send&) const = default;
   };
-  // A player's ask is answered once while it stays: a repeated ask (an honest
-  // game asks once a run) is ignored, so a guest cannot make the host send
-  // its save over and over. Returns whether the ask was taken.
-  bool on_ask(std::uint8_t player) {
-    if (answered_.count(player) != 0) return false;
-    answered_.insert(player);
+  // A repeated ask within kReaskUs of the last one taken is ignored, so a
+  // guest cannot make the host send its save over and over; after that it is
+  // taken again (a guest whose ask or answer was lost asks again: GuestSession
+  // reask_due; or a rejoin under the same number before PLAYER_LEFT came).
+  // `now_us`: a steady clock in microseconds. Returns whether it was taken.
+  static constexpr std::uint64_t kReaskUs = 10'000'000;
+  bool on_ask(std::uint8_t player, std::uint64_t now_us) {
+    if (const auto it = answered_.find(player); it != answered_.end() && now_us - it->second < kReaskUs) {
+      return false;
+    }
+    answered_[player] = now_us;
     asks_.insert(player);
     return true;
   }
@@ -161,7 +167,7 @@ class Planner {
 
  private:
   std::set<std::uint8_t> asks_;
-  std::set<std::uint8_t> answered_;  // asks taken, until the player leaves
+  std::map<std::uint8_t, std::uint64_t> answered_;  // asks taken (when), until the player leaves
   bool reload_ = false;
   std::optional<Time> loaded_at_;  // the host's last load, until a save after it
 };
@@ -212,10 +218,12 @@ FolderChoice folder_choice(std::optional<bool> env, bool can_switch, bool connec
 bool decide_again(bool decided, bool over, bool in_game);
 
 // A guest's pending switch to the co-op folder (Hookshot), each frame: `go` only on the title's menu with the host's
-// save in (never during a load, where a re-mount changes the folder under the game's read: the 10.1 crash);
-// `drop` once Link is in the game (the player's own file or a new game). The hook also drops it when the player
-// picks a file on the title while waiting, or AutoLoad gives up (CoopSave::CancelPendingSwitch).
-enum class PendingStep { keep, go, drop };
+// save in and no file loaded (never during a load, where a re-mount changes the folder under the game's read: the
+// 10.1 crash; never under a game being played). Else `keep`: also while Link is in the game (the player loaded
+// their own file or a new game, maybe too early): the save still comes in and is switched to when they are back on
+// the title's menu, so "load a save after Success" holds. The hook holds it while the player's own pick on the
+// title loads (CoopSave::CancelPendingSwitch, ResumePendingSwitch).
+enum class PendingStep { keep, go };
 PendingStep pending_step(bool slot_in, bool title_up, bool in_game);
 
 // A guest's save state for ONE session (CoopSave): the ask sent, the parts coming in, a slot that came before the
@@ -229,6 +237,64 @@ struct GuestSession {
   bool no_save = false;   // the host said it has no save yet (pack_no_save)
   bool said_stuck = false;
   std::uint64_t last_part_us = 0;
+  std::uint64_t asked_us = 0;   // when the last ask went out
+  int asks = 0;                 // asks sent this session
+  bool gave_up = false;         // the last ask got nothing whole: the guest stopped asking (give_up_due)
+  std::uint32_t transfer = 0;   // the transfer id of the last part that came (note_part)
+};
+
+// A part of the host's save came (transfer `transfer_id`) at `now_us`. A new transfer (the host loaded another
+// save, or answered again) starts fresh: gave_up ends, so it can give up (and say so) again if it stalls too.
+void note_part(GuestSession& s, std::uint32_t transfer_id, std::uint64_t now_us);
+
+// A guest asks again kGuestReaskUs after its last ask when nothing at all came (the ask or the whole answer was
+// lost, or the host refused it as too soon), or when a transfer stopped part way and no part came for
+// kGuestReaskUs (a part lost: the host sends the whole save again, under a new transfer id); at most
+// kGuestMaxAsks times a session. Not while parts come in, once the save (or "no save") is in, or once the slot
+// waits to be written.
+inline constexpr std::uint64_t kGuestReaskUs = 15'000'000;
+inline constexpr int kGuestMaxAsks = 4;
+bool reask_due(const GuestSession& s, std::uint64_t now_us);
+// Once a session: the kGuestMaxAsks-th ask got nothing whole either (it would be due again, but the asks are used
+// up). The guest stops waiting: Loading ends (GuestNotices::on_gave_up) and the player plays on.
+bool give_up_due(const GuestSession& s, std::uint64_t now_us);
+
+// A guest's chat lines about the host's save (the owner's wording). The player loads the save themselves (nothing
+// presses the title's buttons); these lines say when:
+// - kLoading once per transfer, when its first part comes;
+// - kSuccessTitle / kSuccessPlaying once it is written whole and the game plays from the co-op folder (at the title,
+//   or in the game: a join during play, or the host loaded another save);
+// - kTooEarly once per transfer if the player loads a save (Link comes into the game) after kLoading and before
+//   Success.
+class GuestNotices {
+ public:
+  static constexpr std::string_view kLoading = "Host save loading, don't load a save.";
+  static constexpr std::string_view kSuccessTitle = "Success, load any save.";
+  static constexpr std::string_view kSuccessPlaying = "Success, load any save for changes to occur.";
+  static constexpr std::string_view kTooEarly =
+      "That save loaded before the host's save was in: go back to the title and load a save after Success.";
+  static constexpr std::string_view kGaveUp = "The host's save did not come: play on, or join again to get it.";
+  // A part of transfer `transfer_id` (of `count` parts) came: kLoading when it is a new transfer of a save, else "".
+  // A "no save" answer is one part (pack_no_save: a few bytes); a save slot is about 170 KB, many parts.
+  std::string on_part(std::uint32_t transfer_id, std::size_t count);
+  // The host answered "no save", or the transfer ended without a save to play (damaged, not a slot, the write or
+  // the folder switch failed): no Loading any more (the caller says what happened), no kTooEarly.
+  void on_no_save() { loading_ = false; }
+  void on_failed() { loading_ = false; }
+  // The guest stopped asking (give_up_due): no Loading any more, no kTooEarly; kGaveUp.
+  std::string on_gave_up();
+  // The save is written and played from: kSuccessTitle when Link is not in the game, else kSuccessPlaying.
+  std::string on_ready(bool in_game);
+  // Each frame: Link in the game or not. kTooEarly when Link came in while the save was still loading.
+  std::string on_in_game(bool in_game);
+  bool loading() const { return loading_; }
+
+ private:
+  bool started_ = false;
+  std::uint32_t transfer_ = 0;
+  bool loading_ = false;
+  bool said_early_ = false;
+  bool was_in_game_ = false;
 };
 
 // The slot_NN folders of a co-op save folder taken away, so it holds nothing until the host's save comes (a guest

@@ -1,0 +1,12 @@
+# gear-parts (see gear-parts.A.txt): B faces A, camera behind; shots of A's puppet.
+wait 120
+stick 1 0 8             # face right
+press ZL                # camera behind B
+wait 170
+mark b-sees-a
+wait 240
+mark b-hylian
+wait 120
+mark b-aim
+wait 120
+mark b-end

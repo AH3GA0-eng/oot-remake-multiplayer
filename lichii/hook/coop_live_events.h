@@ -20,10 +20,15 @@
 // No emulator code here: tested in tests/lichii/live_events_test.cpp.
 #pragma once
 
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
+#include <cstring>
 #include <deque>
 #include <functional>
+#include <iterator>
+#include <map>
 #include <optional>
 #include <set>
 #include <span>
@@ -31,6 +36,7 @@
 #include <string_view>
 #include <vector>
 
+#include "coop/host/bounded_queue.hpp"
 #include "coop_puppet.h"
 
 namespace CoopLiveEvents {
@@ -47,6 +53,37 @@ inline constexpr std::uint64_t kArgName = 0x1a90;          // char* (inline buff
 inline constexpr std::uint64_t kArgNameCap = 0x1a98;       // u32
 inline constexpr std::uint64_t kArgMember1 = 0x1968;       // freed first, as the node does
 inline constexpr std::uint64_t kArgMember2 = 0x1950;
+// An event's arguments, as the game's QueryBancChangeEventRequestArg (0x29bf380) fills them for a map change: an
+// array of 200-byte entries at +kArgEntries (capacity u32 at +0, count u32 at +kArgCount). Entry: +0 its type (1 a
+// string pointer, 4 a bool), +8 its name's buffer, +16 that buffer's size, +152 the value. A string value is a
+// pointer the request does not copy, so ours live after the arg in our own block (kArgStrings).
+inline constexpr std::uint64_t kArgCapacity = 0x0;         // u32
+inline constexpr std::uint64_t kArgEntries = 0x8;          // -> entries
+inline constexpr std::uint64_t kArgCount = 0x10;           // u32
+inline constexpr std::uint64_t kArgEntrySize = 200;
+inline constexpr std::uint64_t kEntryType = 0;             // u32
+inline constexpr std::uint64_t kEntryName = 8;             // char*
+inline constexpr std::uint64_t kEntryNameCap = 16;         // u32
+inline constexpr std::uint64_t kEntryValue = 152;
+inline constexpr std::uint32_t kTypeString = 1;
+inline constexpr std::uint32_t kTypeBool = 4;
+inline constexpr std::uint64_t kArgStrings = kArgSize;     // our strings, in the block after the arg
+inline constexpr std::uint64_t kStringsSize = 0x200;
+// The event's starter actor: 0x2bc440(arg + kArgMember2, actor, 0) links it, as the game's
+// OneShotEventMemberRequestEventByEventName does; the frees after the request let it go again.
+inline constexpr std::uint64_t kSetLink = 0x2bc440;
+// deku-sync-fix: an actor's own event request, as the room graph's ActorLogicEventRequestActor node (0xbd1670) and the
+// performer AI nodes (0x2beedc, 0x2bf064) make it: 0x4aa890(performer, &name) builds the arg on its own stack, links
+// the performer's actor (+kPerformerActor) as the starter, asks the manager (via 0xf61460) and, when it took it, sets
+// the performer's state (+kPerformerState) to 1: the event is then that actor's own, so the flow's EventRequestActor
+// is bound to it and its EventTriggerSetEventBool reaches the room graph (the 0.11 run: with the link alone A's asker
+// was never bound, its lifts stayed down, and it was not deleted at the event's end as B's was). `name` is the address
+// of a char* (the game passes a SafeString's buffer pointer). The performer is [[actor + 0x270] + kPerformerSlot].
+inline constexpr std::uint64_t kPerformerRequest = 0x4aa890;
+inline constexpr std::uint64_t kPerformerSlot = 0x88;      // as 0xbd1670 and 0x2beedc read it
+inline constexpr std::uint64_t kPerformerSlotAlt = 0x90;   // as 0xc70560 reads it (the player's)
+inline constexpr std::uint64_t kPerformerActor = 16;       // the performer's actor
+inline constexpr std::uint64_t kPerformerState = 40;       // u32; 3: busy (0x27fe410 does not ask then)
 inline constexpr std::uint64_t kEventStatePtr = 0x4e94840;  // as coop_boss_game.cpp
 inline constexpr std::uint64_t kEventSession = 0x68;        // set while an event runs
 inline constexpr std::uint64_t kSessionCount = 0xeb0;       // u32, as coop_boss_game.cpp
@@ -71,6 +108,18 @@ std::span<const Place> Places();
 // 11 and 17 m from the ladder's asker; the compass room's asker is 20 m
 // from that door, so that room's event waits until we are in it.
 inline constexpr float kNearM = 18.0f;
+
+// The actors that ask a room's gimmick event (the Banc placements of Places() are these): the room graph's
+// ActorLogicEventRequestActor / ActorLogicEventProxyRequestActor. An actor stands where it is placed, so it is
+// within kAskerNearM of the place (the table rounds to 0.1 m).
+inline constexpr std::string_view kAskerNames[] = {"EventRequestActor", "EventProxyRequestActor"};
+inline constexpr float kAskerNearM = 1.0f;
+
+// The present actor whose name is one of `names` nearest `at` (x, height, z), within `max_m`; 0 none. Walks the
+// game's actor list (CoopFairy::WalkActors); the actor's place at CoopPuppet::addr::kActorPosition. The calc thread
+// (or a test).
+std::uint64_t NearestActor(CoopPuppet::Guest& guest, std::uint64_t main, std::span<const std::string_view> names,
+                           const std::array<float, 3>& at, float max_m);
 
 // The dungeon room a place of the scene is in, if known (coop_rooms.h).
 using RoomOf = std::function<std::optional<int>(const std::array<float, 3>&)>;
@@ -167,6 +216,25 @@ public:
     // `scene`: where it was decided (empty: any); `at_us` when; `max_age_us`
     // how long it may wait for a free moment (0: no limit). See Expire.
     void Want(std::string name, std::string scene = {}, std::uint64_t at_us = 0, std::uint64_t max_age_us = 0);
+    // One argument of an event: a string (text) or a bool.
+    struct Arg {
+        std::string name;
+        std::optional<std::string> text;  // a string argument; none: a bool
+        bool flag = false;
+    };
+    // As Want, for an event that takes arguments and a starter actor (0: none): the game's map change is the
+    // event Dm_SY_BancChangeGo with NextBanc, NextStartPos, BootEventName and IsCheckAir, started by Link
+    // (coop_teleport_game.cpp). The arguments are written into the request after the game built it.
+    void WantWith(std::string name, std::vector<Arg> args, std::uint64_t starter);
+    // deku-switches-b (0.10.1 playtest, Deku Tree): a room gimmick event started by our room's own asker. The room
+    // graph acts on the asker's outputs, not on the event: the compass room's lifts rise from
+    // `EventRequestActor.EventBool` (IsOn <- OR(EventBool, flag AND plate)), the slingshot ladder falls from it, the web
+    // room's torch burns from it, and the event sets that bool only on the actor that asked it
+    // (EventTriggerSetEventBool on its `EventRequestActor` member). Asked by name alone, the event plays its camera
+    // and nothing in the room moves. So when the event is asked, the asker (an actor named in kAskerNames, within
+    // kAskerNearM of one of the event's places in `scene`, Places()) is linked as its starter, as the game's own
+    // member request does (kSetLink). None found: asked by name alone, as before, and a note says so.
+    void WantFromRoom(std::string name, std::string scene);
     // review-p11-interactions: one requester takes gimmick and story events,
     // and an event waits while another runs. Once a frame, under the same
     // lock as Step: drops each name still waiting (not one being asked now)
@@ -205,7 +273,13 @@ public:
     std::uint64_t Block() const { return block_; }
 
 private:
-    enum class Next { none, malloc, build, request, free1, free2 };
+    enum class Next { none, malloc, build, link, request, free1, free2, own_request };
+    // deku-sync-fix: the asker's performer (its actor at +kPerformerActor), 0 when it has none we can trust.
+    static std::uint64_t PerformerOf(CoopPuppet::Guest& guest, std::uint64_t actor);
+    // The current event's arguments into the built request; false when one does not fit.
+    bool WriteArgs(CoopPuppet::Guest& guest);
+    // The request call itself (after the build, and the starter's link if any); the frees when there is no manager.
+    std::optional<CoopPuppet::Call> Ask(CoopPuppet::Guest& guest, std::uint64_t main);
     // The two string members' frees, as the node does them; every path after
     // a build goes through them, so the reused block is never built over
     // live members.
@@ -216,13 +290,247 @@ private:
         std::string scene;
         std::uint64_t at_us = 0;
         std::uint64_t max_age_us = 0;
+        std::vector<Arg> args;
+        std::uint64_t starter = 0;
+        bool room_asker = false;  // WantFromRoom: the starter is found when it is asked
     };
+    bool current_room_asker_ = false;  // current_starter_ is a room asker: checked again just before the link
+    // WantFromRoom's asker for `name` in `scene`, read on the calc thread when the event is asked; 0 none.
+    static std::uint64_t FindAsker(CoopPuppet::Guest& guest, std::uint64_t main, const std::string& name,
+                                   const std::string& scene, std::string& where);
     std::deque<Wanted> wanted_;
     std::string current_;
+    std::vector<Arg> current_args_;
+    std::uint64_t current_starter_ = 0;
     std::uint64_t block_ = 0;
     Next next_ = Next::none;  // the call made last, whose return comes next
     bool malloc_failed_ = false;
     std::vector<std::string> notes_;
+};
+
+// The game's own event requests, on Hookshot (docs/hookshot.md "World hooks", HOS_COOP_WRAP_EVENT_REQUEST): every
+// event the game asks for goes through main + kRequest (manager, arg), with the event's name in the arg (kArgName)
+// and x0 not 0 when the manager took it. The wrap hands each to Push on the game's thread; the hook's frame reads
+// them. So which event our game started is known at the request, by name, with no search of the event session.
+struct GameRequest {
+    char name[0x80] = {};  // 0-terminated (the arg's buffer is 0x80 bytes)
+    bool taken = false;    // the manager took the request
+};
+
+class GameRequests {
+public:
+    static constexpr std::size_t kKept = 64;  // the newest requests a reader can still get
+
+    // Any thread (the game's): no lock, nothing allocated.
+    void Push(std::string_view name, bool taken) {
+        GameRequest r;
+        const std::size_t n = (std::min)(name.size(), sizeof r.name - 1);
+        std::memcpy(r.name, name.data(), n);
+        r.taken = taken;
+        seen_.fetch_add(1, std::memory_order_relaxed);
+        // Full (no reader took any for a while: flags not shared, a long load): the oldest goes, so the ring always
+        // holds the newest and never stays full.
+        while (!ring_.push(r)) {
+            GameRequest oldest;
+            if (ring_.pop(oldest)) {
+                dropped_.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    }
+    // True once any request came: the wrap is in this hookshot.exe and runs.
+    bool Live() const {
+        return seen_.load(std::memory_order_relaxed) != 0;
+    }
+    std::uint64_t Seen() const {
+        return seen_.load(std::memory_order_relaxed);
+    }
+    // Requests that left the ring unread (it was full).
+    std::uint64_t Dropped() const {
+        return dropped_.load(std::memory_order_relaxed);
+    }
+    // One thread (the hook's frame). The requests after `cursor` (0 at first), oldest first; `cursor` moves past
+    // them. Each reader keeps its own cursor, so two readers both get every request (of the newest kKept).
+    std::vector<GameRequest> Since(std::uint64_t& cursor) {
+        GameRequest r;
+        while (ring_.pop(r)) {
+            kept_.push_back(r);
+            ++last_;
+            if (kept_.size() > kKept) {
+                kept_.pop_front();
+            }
+        }
+        std::vector<GameRequest> out;
+        const std::uint64_t first = last_ - kept_.size();  // the number before kept_.front()
+        for (std::uint64_t n = (std::max)(cursor, first); n < last_; ++n) {
+            out.push_back(kept_[static_cast<std::size_t>(n - first)]);
+        }
+        cursor = last_;
+        return out;
+    }
+
+private:
+    coop::host::BoundedQueue<GameRequest, 64> ring_;
+    std::atomic<std::uint64_t> seen_{0}, dropped_{0};
+    std::deque<GameRequest> kept_;  // the reader's side
+    std::uint64_t last_ = 0;        // requests taken out of the ring so far
+};
+
+inline GameRequests& TheGameRequests() {
+    static GameRequests requests;
+    return requests;
+}
+
+// The first of `requests` the manager took that is one of `names`.
+inline std::optional<std::string> RequestedOf(const std::vector<GameRequest>& requests,
+                                              const std::vector<std::string_view>& names) {
+    for (const GameRequest& r : requests) {
+        if (!r.taken) {
+            continue;
+        }
+        const std::string_view name(r.name);
+        for (const std::string_view n : names) {
+            if (n == name) {
+                return std::string(name);
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+// Whether the manager took a request for an event that is NOT one of `names` (a pickup's or a talk's event): then
+// the event running now is that one, and a story name the search finds in the session is a leftover of another
+// (intro-ocarina: a rupee's event in Kokiri Forest found Saria's gift Dm_Kokiri_0150 and sent it).
+inline bool RequestedOtherOf(const std::vector<GameRequest>& requests, const std::vector<std::string_view>& names) {
+    for (const GameRequest& r : requests) {
+        if (!r.taken) {
+            continue;
+        }
+        const std::string_view name(r.name);
+        if (std::find(names.begin(), names.end(), name) == names.end()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Which of `names` our game just started, once per start: by the game's own request when the wrap is there
+// (`requested`: RequestedOf this frame's requests), else by StartWatch's search of the running event.
+// With the wrap, the search gives a name only when this game's request named it in this scene (since the last
+// Scene change or Reset: a save load, the title) and that start has not been given yet: a request the manager took
+// whose event ran later than kForgetFrames. Any other name the search finds is a leftover in the event session
+// (deku-sync-fix: after a reload the session still held the event of the previous load, FallingLadder, PlatformUp,
+// CandleAndSpiderWeb, and a door's event "found" it and sent it): counted (ScanOnly), never given. When the request
+// named another event (`other`: RequestedOtherOf), nothing of ours is given until that event is over (Refused).
+// Without the wrap (the emulator) the search is the only way and gives what it finds.
+class StartSource {
+public:
+    static constexpr int kForgetFrames = 1800;  // a request whose event never ran waits in pending_ after this
+    static constexpr int kPendingFrames = 1800;  // ... for at most this long more, then it is dropped
+    static constexpr int kTitleFrames = 90;      // no scene this long: the title (as OneWayKeeper)
+
+    template <typename Find>
+    std::optional<std::string> Frame(std::optional<std::string> requested, bool wrap_live, bool running, Find&& find) {
+        return Frame(std::move(requested), false, wrap_live, running, std::forward<Find>(find));
+    }
+    template <typename Find>
+    std::optional<std::string> Frame(std::optional<std::string> requested, bool other, bool wrap_live, bool running,
+                                     Find&& find) {
+        for (auto it = pending_.begin(); it != pending_.end();) {
+            it = ++it->second > kPendingFrames ? pending_.erase(it) : std::next(it);  // too old: not ours any more
+        }
+        if (!by_request_.empty() || other_) {
+            ran_ = ran_ || running;
+            if (ran_ && !running) {
+                by_request_.clear();  // its event is over
+                other_ = false;
+            } else if (++frames_ > kForgetFrames) {
+                if (!by_request_.empty() && !ran_) {
+                    pending_[by_request_] = 0;  // asked, never ran yet: the search may still give it, for a while
+                }
+                by_request_.clear();
+                other_ = false;
+            }
+        }
+        std::optional<std::string> found = watch_.Frame(running, std::forward<Find>(find));
+        if (requested) {
+            pending_.erase(*requested);
+            by_request_ = *requested;
+            other_ = false;
+            ran_ = running;
+            frames_ = 0;
+            return requested;
+        }
+        if (other && wrap_live) {
+            by_request_.clear();
+            other_ = true;
+            ran_ = running;
+            frames_ = 0;
+        }
+        if (found && *found == by_request_) {
+            return std::nullopt;  // the request said so already
+        }
+        if (found && other_) {
+            ++refused_;
+            return std::nullopt;  // another event runs: the name is a leftover in the session
+        }
+        if (found && wrap_live) {
+            if (pending_.erase(*found) != 0) {
+                return found;  // our request named it in this scene; its event ran late
+            }
+            ++scan_only_;
+            return std::nullopt;  // no request of this game named it here: a leftover, not sent
+        }
+        return found;
+    }
+    // A new scene (the title is ""): the requests of the old one are forgotten.
+    void Scene(std::string_view scene) {
+        if (scene != scene_) {
+            scene_ = std::string(scene);
+            Reset();
+        }
+    }
+    // Once a frame: whether a scene is loaded. None for kTitleFrames (the title) forgets everything once, as a
+    // save load does; true on that frame.
+    bool NoScene(bool scene_loaded) {
+        if (scene_loaded) {
+            no_scene_ = 0;
+            return false;
+        }
+        if (++no_scene_ != kTitleFrames) {
+            return false;
+        }
+        Reset();
+        scene_.clear();
+        return true;
+    }
+    // A save load, the title or a new co-op session (welcomed, reconnected): nothing asked before counts.
+    void Reset() {
+        by_request_.clear();
+        pending_.clear();
+        other_ = false;
+        ran_ = false;
+        frames_ = 0;
+    }
+    // Starts the search found that no request had named in this scene, while the wrap was there: not given.
+    std::uint64_t ScanOnly() const {
+        return scan_only_;
+    }
+    // Names the search found while the game's request had named another event: not given.
+    std::uint64_t Refused() const {
+        return refused_;
+    }
+
+private:
+    StartWatch watch_;
+    std::string scene_;
+    std::string by_request_;          // the start the request named, until its event is over
+    std::map<std::string, int> pending_;  // asked in this scene, its event not seen running in kForgetFrames: age
+    int no_scene_ = 0;
+    bool other_ = false;              // the request named an event not in the list, until its event is over
+    bool ran_ = false;
+    int frames_ = 0;
+    std::uint64_t scan_only_ = 0;
+    std::uint64_t refused_ = 0;
 };
 
 } // namespace CoopLiveEvents

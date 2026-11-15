@@ -155,14 +155,14 @@ TEST_CASE("save transfer: the host answers asks at once with its newest save, al
   save::Planner p;
   CHECK(p.due(t0).empty());  // nobody asked
 
-  p.on_ask(2);
+  p.on_ask(2, 0);
   CHECK(p.due(t0) == std::vector<Send>{{2, proto::SaveReason::join}});
   CHECK(p.due(t0).empty());  // once
 
   // hostsave-fix: the host loaded a save, then a guest asks. The ask is answered at once with the save on disk
   // (it used to wait for the game's next save, and the guest got nothing); every guest gets the next save after it.
   p.on_host_load(later);
-  p.on_ask(3);
+  p.on_ask(3, 0);
   CHECK(p.waiting());
   CHECK(p.due(t0) == std::vector<Send>{{3, proto::SaveReason::join}});  // at once, from before the load
   CHECK(p.waiting());
@@ -174,13 +174,13 @@ TEST_CASE("save transfer: the host answers asks at once with its newest save, al
 
   // An ask on the same look as the reload: the reload goes to everyone, once.
   p.on_host_load(later + std::chrono::seconds(5));
-  p.on_ask(4);
+  p.on_ask(4, 0);
   CHECK(p.due(later + std::chrono::seconds(6)) == std::vector<Send>{{0, proto::SaveReason::host_load}});
   CHECK(p.idle());
   p.forget(4);
 
   // A player who left is not answered.
-  CHECK(p.on_ask(4));
+  CHECK(p.on_ask(4, 0));
   p.forget(4);
   CHECK(p.due(later + std::chrono::seconds(3)).empty());
 }
@@ -188,7 +188,7 @@ TEST_CASE("save transfer: the host answers asks at once with its newest save, al
 TEST_CASE("save transfer: a host with no save tells the asker at once (hostsave-fix)") {
   using Send = save::Planner::Send;
   save::Planner p;
-  CHECK(p.on_ask(2));
+  CHECK(p.on_ask(2, 0));
   CHECK(p.due(std::nullopt) == std::vector<Send>{{2, proto::SaveReason::join, true}});
   CHECK(p.idle());
   CHECK(p.due(std::nullopt).empty());  // once
@@ -244,16 +244,18 @@ TEST_CASE("save transfer: a guest's switch to the host's save goes only on the t
   CHECK(pending_step(true, true, false) == PendingStep::go);     // in, on the title's menu
   CHECK(pending_step(true, false, false) == PendingStep::keep);  // in, but the title is not up (booting, or a
                                                                  // file loading): never a re-mount under a load
-  CHECK(pending_step(true, true, true) == PendingStep::drop);    // Link is in the game: the player's own file
-  CHECK(pending_step(false, false, true) == PendingStep::drop);
-  CHECK(pending_step(true, false, true) == PendingStep::drop);
+  // Link is in the game (the player's own file or a new game, maybe loaded too early): kept, never switched under it;
+  // switched once they are back on the title's menu with no file loaded
+  CHECK(pending_step(true, true, true) == PendingStep::keep);
+  CHECK(pending_step(false, false, true) == PendingStep::keep);
+  CHECK(pending_step(true, false, true) == PendingStep::keep);
 }
 
 TEST_CASE("save transfer: a send the full outbox could not take is owed again") {
   using Send = save::Planner::Send;
   const auto t0 = fs::file_time_type::clock::now();
   save::Planner p;
-  CHECK(p.on_ask(2));
+  CHECK(p.on_ask(2, 0));
   const auto first = p.due(t0);
   REQUIRE(first == std::vector<Send>{{2, proto::SaveReason::join}});
   p.retry(first[0]);
@@ -294,16 +296,151 @@ TEST_CASE("save transfer: a guest that asks again and again gets the save once")
   using Send = save::Planner::Send;
   const auto t0 = fs::file_time_type::clock::now();
   save::Planner p;
-  CHECK(p.on_ask(2));
-  for (int i = 0; i < 100; ++i) CHECK_FALSE(p.on_ask(2));
+  CHECK(p.on_ask(2, 0));
+  for (int i = 0; i < 100; ++i) CHECK_FALSE(p.on_ask(2, 1000 * static_cast<std::uint64_t>(i)));
   CHECK(p.due(t0) == std::vector<Send>{{2, proto::SaveReason::join}});
-  for (int i = 0; i < 100; ++i) CHECK_FALSE(p.on_ask(2));
+  for (int i = 0; i < 100; ++i) CHECK_FALSE(p.on_ask(2, 0));
   CHECK(p.idle());
   CHECK(p.due(t0).empty());
   // It left and a player with its number joined: that one may ask.
   p.forget(2);
-  CHECK(p.on_ask(2));
+  CHECK(p.on_ask(2, 0));
   CHECK(p.due(t0) == std::vector<Send>{{2, proto::SaveReason::join}});
+}
+
+TEST_CASE("save transfer: an ask again after 10 s is answered again (a lost answer, a rejoin before PLAYER_LEFT)") {
+  // Revirie 0.10.1: the guest closed the game and joined again; the host still held its first ask as answered
+  // ("once a player") and sent nothing, so the guest's title never got a Continue.
+  using Send = save::Planner::Send;
+  const auto t0 = fs::file_time_type::clock::now();
+  const std::uint64_t s = 1'000'000;
+  save::Planner p;
+  CHECK(p.on_ask(2, 5 * s));
+  CHECK(p.due(t0) == std::vector<Send>{{2, proto::SaveReason::join}});
+  CHECK_FALSE(p.on_ask(2, 5 * s + save::Planner::kReaskUs - 1));
+  CHECK(p.on_ask(2, 5 * s + save::Planner::kReaskUs));
+  CHECK(p.due(t0) == std::vector<Send>{{2, proto::SaveReason::join}});
+  // and the 10 s start over from that one
+  CHECK_FALSE(p.on_ask(2, 5 * s + save::Planner::kReaskUs + 3 * s));
+  // another player is never held up by it
+  CHECK(p.on_ask(3, 5 * s + save::Planner::kReaskUs + 3 * s));
+}
+
+TEST_CASE("save transfer: a guest asks again when nothing at all came, or the transfer stopped part way") {
+  const std::uint64_t s = 1'000'000;
+  save::GuestSession g;
+  CHECK_FALSE(save::reask_due(g, 100 * s));   // never asked: the first ask is not a re-ask
+  g.asked = true;
+  g.asked_us = 10 * s;
+  g.asks = 1;
+  CHECK_FALSE(save::reask_due(g, 10 * s + save::kGuestReaskUs - 1));
+  CHECK(save::reask_due(g, 10 * s + save::kGuestReaskUs));
+  // parts came after the ask, none kept yet: nothing to ask for
+  save::GuestSession part = g;
+  part.last_part_us = 11 * s;
+  CHECK_FALSE(save::reask_due(part, 100 * s));
+  // a transfer under way (a part came just now), then stopped part way: asked again once it is quiet
+  save::GuestSession stalled = g;
+  const auto parts = save::split(save::pack(Slot(5)), 3, proto::SaveReason::join, 2);
+  REQUIRE(parts.size() > 2);
+  REQUIRE(stalled.assembler.add(Relayed(parts[0], 1), 1) == save::Assembler::Result::partial);
+  stalled.last_part_us = 12 * s;
+  CHECK_FALSE(save::reask_due(stalled, 12 * s + save::kGuestReaskUs - 1));   // still coming
+  CHECK(save::reask_due(stalled, 12 * s + save::kGuestReaskUs));
+  // just asked again: not again before kGuestReaskUs (the old parts are still kept)
+  stalled.asked_us = 12 * s + save::kGuestReaskUs;
+  stalled.asks = 2;
+  CHECK_FALSE(save::reask_due(stalled, stalled.asked_us + save::kGuestReaskUs - 1));
+  CHECK(save::reask_due(stalled, stalled.asked_us + save::kGuestReaskUs));
+  // the new transfer's parts come in: not while they come
+  stalled.last_part_us = stalled.asked_us + 2 * s;
+  CHECK_FALSE(save::reask_due(stalled, stalled.asked_us + save::kGuestReaskUs));
+  // the save is in, written, or the host said it has none
+  save::GuestSession in = g;
+  in.unwritten = save::SaveSlot{};
+  CHECK_FALSE(save::reask_due(in, 100 * s));
+  save::GuestSession ready = g;
+  ready.ready = true;
+  CHECK_FALSE(save::reask_due(ready, 100 * s));
+  save::GuestSession none = g;
+  none.no_save = true;
+  CHECK_FALSE(save::reask_due(none, 100 * s));
+  // at most kGuestMaxAsks a session
+  save::GuestSession many = g;
+  many.asks = save::kGuestMaxAsks;
+  CHECK_FALSE(save::reask_due(many, 100 * s));
+}
+
+TEST_CASE("save transfer: a guest gives up once after its last ask, and Loading ends") {
+  using N = save::GuestNotices;
+  const std::uint64_t s = 1'000'000;
+  save::GuestSession g;
+  g.asked = true;
+  g.asked_us = 10 * s;
+  g.asks = save::kGuestMaxAsks - 1;
+  CHECK_FALSE(save::give_up_due(g, 100 * s));   // asks left: it asks again instead
+  CHECK(save::reask_due(g, 100 * s));
+  // the last ask: a transfer starts, then stops part way
+  N n;
+  n.on_in_game(false);
+  g.asks = save::kGuestMaxAsks;
+  const auto parts = save::split(save::pack(Slot(5)), 3, proto::SaveReason::join, 2);
+  REQUIRE(parts.size() > 2);
+  REQUIRE(g.assembler.add(Relayed(parts[0], 1), 1) == save::Assembler::Result::partial);
+  g.last_part_us = 12 * s;
+  CHECK(n.on_part(parts[0].transfer_id, parts.size()) == N::kLoading);
+  CHECK_FALSE(save::give_up_due(g, 12 * s + save::kGuestReaskUs - 1));   // still coming
+  CHECK_FALSE(save::reask_due(g, 12 * s + save::kGuestReaskUs));         // no asks left
+  REQUIRE(save::give_up_due(g, 12 * s + save::kGuestReaskUs));
+  CHECK(n.on_gave_up() == N::kGaveUp);
+  g.gave_up = true;
+  CHECK_FALSE(n.loading());
+  CHECK_FALSE(save::give_up_due(g, 100 * s));   // said once
+  // the player loads their own save later: not "too early"
+  CHECK(n.on_in_game(true).empty());
+  // nothing at all came after the last ask: gives up too; never once the save is in
+  save::GuestSession quiet;
+  quiet.asked = true;
+  quiet.asked_us = 10 * s;
+  quiet.asks = save::kGuestMaxAsks;
+  CHECK(save::give_up_due(quiet, 10 * s + save::kGuestReaskUs));
+  save::GuestSession ready = quiet;
+  ready.ready = true;
+  CHECK_FALSE(save::give_up_due(ready, 100 * s));
+  CHECK(N::kGaveUp == "The host's save did not come: play on, or join again to get it.");
+}
+
+TEST_CASE("save transfer: after giving up, a new transfer from the host can give up again") {
+  using N = save::GuestNotices;
+  const std::uint64_t s = 1'000'000;
+  save::GuestSession g;
+  N n;
+  n.on_in_game(false);
+  g.asked = true;
+  g.asked_us = 10 * s;
+  g.asks = save::kGuestMaxAsks;
+  const auto first = save::split(save::pack(Slot(5)), 3, proto::SaveReason::join, 2);
+  REQUIRE(g.assembler.add(Relayed(first[0], 1), 1) == save::Assembler::Result::partial);
+  save::note_part(g, 3, 12 * s);
+  CHECK(n.on_part(3, first.size()) == N::kLoading);
+  REQUIRE(save::give_up_due(g, 12 * s + save::kGuestReaskUs));
+  CHECK(n.on_gave_up() == N::kGaveUp);
+  g.gave_up = true;
+  // more parts of the same transfer: still given up
+  save::note_part(g, 3, 40 * s);
+  CHECK(g.gave_up);
+  CHECK_FALSE(save::give_up_due(g, 40 * s + save::kGuestReaskUs));
+  // the host loads another save: a new transfer starts, Loading again, and it stalls too
+  const auto second = save::split(save::pack(Slot(6)), 4, proto::SaveReason::host_load, 2);
+  REQUIRE(g.assembler.add(Relayed(second[0], 1), 1) == save::Assembler::Result::partial);
+  save::note_part(g, 4, 50 * s);
+  CHECK_FALSE(g.gave_up);
+  CHECK(n.on_part(4, second.size()) == N::kLoading);
+  CHECK(n.loading());
+  CHECK_FALSE(save::give_up_due(g, 50 * s + save::kGuestReaskUs - 1));
+  REQUIRE(save::give_up_due(g, 50 * s + save::kGuestReaskUs));
+  CHECK(n.on_gave_up() == N::kGaveUp);
+  CHECK_FALSE(n.loading());
 }
 
 TEST_CASE("save transfer: the newest slot is found and read") {
@@ -443,4 +580,86 @@ TEST_CASE("save transfer: two Join sessions in one run each ask once and get the
     CHECK(s.assembler.take() == packed);
     s.ready = true;
   }
+}
+
+TEST_CASE("save transfer: the guest's lines come in order: loading, (too early), success") {
+  using N = save::GuestNotices;
+  // at the title: loading once per transfer, then success at the title
+  N n;
+  CHECK(n.on_in_game(false).empty());
+  CHECK(n.on_part(7, 11) == N::kLoading);
+  CHECK(n.on_part(7, 11).empty());   // (the same transfer's other parts)
+  CHECK(n.loading());
+  CHECK(n.on_in_game(false).empty());
+  CHECK(n.on_ready(false) == N::kSuccessTitle);
+  CHECK_FALSE(n.loading());
+  CHECK(n.on_in_game(true).empty());   // (loading a save after Success: nothing to say)
+  // the player loads a save while it loads: told once to load again after Success
+  N early;
+  early.on_in_game(false);
+  CHECK(early.on_part(3, 11) == N::kLoading);
+  CHECK(early.on_in_game(true) == N::kTooEarly);
+  CHECK(early.on_in_game(true).empty());
+  early.on_in_game(false);
+  CHECK(early.on_in_game(true).empty());   // (once a transfer)
+  CHECK(early.on_ready(true) == N::kSuccessPlaying);
+  // during play (a join in the game, or the host loaded another save): no "too early" for being in the game,
+  // success says the changes need a load
+  N playing;
+  playing.on_in_game(true);
+  CHECK(playing.on_part(9, 11) == N::kLoading);
+  CHECK(playing.on_in_game(true).empty());
+  CHECK(playing.on_ready(true) == N::kSuccessPlaying);
+  // the host loads another save later: a new transfer says loading again
+  CHECK(playing.on_part(10, 11) == N::kLoading);
+  CHECK(playing.on_ready(true) == N::kSuccessPlaying);
+  // the owner's exact wording
+  CHECK(N::kLoading == "Host save loading, don't load a save.");
+  CHECK(N::kSuccessTitle == "Success, load any save.");
+  CHECK(N::kSuccessPlaying == "Success, load any save for changes to occur.");
+}
+
+TEST_CASE("save transfer: no Loading for a no-save answer, a failed transfer ends Loading") {
+  using N = save::GuestNotices;
+  // the host has no save: its answer is one part; no Loading, and loading a save then is not "too early"
+  N none;
+  none.on_in_game(false);
+  CHECK(none.on_part(4, 1).empty());
+  CHECK_FALSE(none.loading());
+  none.on_no_save();
+  CHECK(none.on_in_game(true).empty());
+  // a save that came damaged (or could not be read, written or switched to): Loading ends, no "too early" after
+  N failed;
+  failed.on_in_game(false);
+  CHECK(failed.on_part(5, 11) == N::kLoading);
+  failed.on_failed();
+  CHECK_FALSE(failed.loading());
+  CHECK(failed.on_in_game(true).empty());
+  // the host's next send is a new transfer: Loading again
+  failed.on_in_game(false);
+  CHECK(failed.on_part(6, 11) == N::kLoading);
+  CHECK(failed.loading());
+}
+
+TEST_CASE("save transfer: loaded too early, the save still comes and is switched to back on the title") {
+  using N = save::GuestNotices;
+  using save::PendingStep;
+  using save::pending_step;
+  N n;
+  bool slot_in = false, in_game = false, title = true;
+  n.on_in_game(in_game);
+  CHECK(n.on_part(8, 11) == N::kLoading);
+  // the player loads their own file while it comes: told to go back to the title after Success
+  title = false;
+  in_game = true;
+  CHECK(n.on_in_game(in_game) == N::kTooEarly);
+  // the rest comes in while they play: kept, never switched under the game
+  slot_in = true;
+  CHECK(pending_step(slot_in, title, in_game) == PendingStep::keep);
+  // back on the title's menu with no file loaded: switched, then Success (at the title)
+  in_game = false;
+  title = true;
+  CHECK(n.on_in_game(in_game).empty());
+  CHECK(pending_step(slot_in, title, in_game) == PendingStep::go);
+  CHECK(n.on_ready(in_game) == N::kSuccessTitle);
 }

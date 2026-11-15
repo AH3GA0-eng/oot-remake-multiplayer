@@ -43,6 +43,15 @@ struct SamplerSettings {
   std::optional<std::uint32_t> color;
 };
 
+// jitter-b: the server time of the game frame a reading is from: `server_now_us` less `age_us`
+// (how long ago that frame ran; 0 not known). An age past kFrameAgeMaxUs (a pause, a load) is
+// not that frame: now.
+inline constexpr std::uint64_t kFrameAgeMaxUs = 250'000;  // a 4 fps frame (review-jitter)
+inline std::uint64_t frame_aligned_us(std::uint64_t server_now_us, std::uint64_t age_us) {
+  if (age_us == 0 || age_us > kFrameAgeMaxUs || age_us > server_now_us) return server_now_us;
+  return server_now_us - age_us;
+}
+
 class Sampler {
  public:
   explicit Sampler(SamplerSettings settings = {}) : settings_(settings) {}
@@ -60,6 +69,21 @@ class Sampler {
   // velocity afresh. The sequence keeps counting.
   void reset();
 
+  // The player changed their colour while the game runs (docs/puppet.md,
+  // "Changing your colour in the game"): the next frame() sends it in
+  // PLAYER_EQUIP. Unset after a colour ("by player number" in the menu):
+  // from then on it sends this player's slot colour (protocol::slot_color
+  // of set_player_number's number), because an unset colour in PLAYER_EQUIP
+  // leaves the others on the old one (protocol::merge_equipment).
+  void set_color(std::optional<std::uint32_t> color) {
+    if (!color && settings_.color) by_number_ = true;
+    if (color) by_number_ = false;
+    settings_.color = color;
+  }
+  // This player's number from the last WELCOME (0 before): the slot colour
+  // sent after set_color went back to unset.
+  void set_player_number(std::uint8_t number) { player_number_ = number; }
+
   // The last messages built, for tests and the debug overlay.
   const std::optional<protocol::PlayerSample>& last_sample() const { return last_sent_; }
   std::uint8_t status_flags() const { return flags_; }
@@ -71,6 +95,8 @@ class Sampler {
   std::optional<Vec3> velocity(const PlayerReading& reading, std::uint64_t now) const;
 
   SamplerSettings settings_;
+  bool by_number_ = false;           // set_color went back to unset after a colour
+  std::uint8_t player_number_ = 0;   // set_player_number's
   std::uint32_t sequence_ = 0;
   std::uint8_t flags_ = 0;
   bool status_sent_ = false;

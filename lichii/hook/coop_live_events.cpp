@@ -3,7 +3,10 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
+
+#include "coop_fairy.h"
 
 namespace CoopLiveEvents {
 
@@ -285,8 +288,152 @@ void Requester::Want(std::string name, std::string scene, std::uint64_t at_us, s
     const bool waiting =
         std::any_of(wanted_.begin(), wanted_.end(), [&](const Wanted& w) { return w.name == name; });
     if (!waiting && name != current_) {
-        wanted_.push_back(Wanted{std::move(name), std::move(scene), at_us, max_age_us});
+        wanted_.push_back(Wanted{std::move(name), std::move(scene), at_us, max_age_us, {}, 0});
     }
+}
+
+void Requester::WantFromRoom(std::string name, std::string scene) {
+    const std::string key = name;
+    Want(std::move(name), std::move(scene));  // no age limit: started when near, as before
+    for (Wanted& w : wanted_) {
+        if (w.name == key) {
+            w.room_asker = true;
+        }
+    }
+}
+
+std::uint64_t NearestActor(CoopPuppet::Guest& guest, std::uint64_t main, std::span<const std::string_view> names,
+                           const std::array<float, 3>& at, float max_m) {
+    std::uint64_t best = 0;
+    float best_d2 = max_m * max_m;
+    CoopFairy::WalkActors(guest, main, [&](std::uint64_t actor) {
+        std::array<float, 3> p{};
+        if (CoopFairy::ActorPresent(guest, actor) &&
+            std::any_of(names.begin(), names.end(),
+                        [&](std::string_view n) { return CoopFairy::ActorNamed(guest, actor, n); }) &&
+            guest.Read(actor + CoopPuppet::addr::kActorPosition, p.data(), sizeof p)) {
+            const float dx = p[0] - at[0], dy = p[1] - at[1], dz = p[2] - at[2];
+            const float d2 = dx * dx + dy * dy + dz * dz;
+            if (d2 <= best_d2) {
+                best_d2 = d2;
+                best = actor;
+            }
+        }
+        return false;  // the whole list: the nearest wins
+    });
+    return best;
+}
+
+std::uint64_t Requester::PerformerOf(CoopPuppet::Guest& guest, std::uint64_t actor) {
+    std::uint64_t parts = 0;
+    if (actor == 0 || !guest.Read(actor + CoopPuppet::addr::kActorParts, &parts, 8) || parts == 0) {
+        return 0;
+    }
+    for (const std::uint64_t slot : {addr::kPerformerSlot, addr::kPerformerSlotAlt}) {
+        std::uint64_t performer = 0, owner = 0;
+        if (guest.Read(parts + slot, &performer, 8) && performer != 0 &&
+            guest.Read(performer + addr::kPerformerActor, &owner, 8) && owner == actor) {
+            return performer;  // its own: the game links exactly that actor
+        }
+    }
+    return 0;
+}
+
+std::uint64_t Requester::FindAsker(CoopPuppet::Guest& guest, std::uint64_t main, const std::string& name,
+                                   const std::string& scene, std::string& where) {
+    for (const Place& p : Places()) {
+        if (p.event != name || (!scene.empty() && p.scene != scene)) {
+            continue;
+        }
+        const std::array<float, 3> at{p.x, p.y, p.z};
+        if (const std::uint64_t actor = NearestActor(guest, main, kAskerNames, at, kAskerNearM); actor != 0) {
+            char text[64];
+            std::snprintf(text, sizeof text, "%.1f %.1f %.1f", p.x, p.y, p.z);
+            where = text;
+            return actor;
+        }
+    }
+    return 0;
+}
+
+void Requester::WantWith(std::string name, std::vector<Arg> args, std::uint64_t starter) {
+    const std::size_t before = wanted_.size();
+    Want(name);
+    if (wanted_.size() == before) {
+        // Already waiting (or refused, with its note): the newest arguments are the ones to use.
+        for (Wanted& w : wanted_) {
+            if (w.name == name) {
+                w.args = std::move(args);
+                w.starter = starter;
+                return;
+            }
+        }
+        return;
+    }
+    wanted_.back().args = std::move(args);
+    wanted_.back().starter = starter;
+}
+
+bool Requester::WriteArgs(CoopPuppet::Guest& guest) {
+    std::uint32_t capacity = 0, count = 0;
+    std::uint64_t entries = 0;
+    if (!guest.Read(block_ + addr::kArgCapacity, &capacity, 4) || !guest.Read(block_ + addr::kArgEntries, &entries, 8) ||
+        !guest.Read(block_ + addr::kArgCount, &count, 4) || entries == 0) {
+        return false;
+    }
+    std::uint64_t used = 0;  // of our strings' room
+    for (const Arg& arg : current_args_) {
+        if (count >= capacity) {
+            return false;
+        }
+        const std::uint64_t entry = entries + addr::kArgEntrySize * count;
+        std::uint64_t name_buffer = 0;
+        std::uint32_t name_cap = 0;
+        if (!guest.Read(entry + addr::kEntryName, &name_buffer, 8) || !guest.Read(entry + addr::kEntryNameCap, &name_cap, 4) ||
+            name_buffer == 0 || arg.name.size() + 1 > name_cap ||
+            !guest.Write(name_buffer, arg.name.c_str(), arg.name.size() + 1)) {
+            return false;
+        }
+        std::uint32_t type = addr::kTypeBool;
+        if (arg.text) {
+            if (used + arg.text->size() + 1 > addr::kStringsSize) {
+                return false;
+            }
+            const std::uint64_t text = block_ + addr::kArgStrings + used;
+            if (!guest.Write(text, arg.text->c_str(), arg.text->size() + 1) ||
+                !guest.Write(entry + addr::kEntryValue, &text, 8)) {
+                return false;
+            }
+            used += arg.text->size() + 1;
+            type = addr::kTypeString;
+        } else {
+            const std::uint8_t value = arg.flag ? 1 : 0;
+            if (!guest.Write(entry + addr::kEntryValue, &value, 1)) {
+                return false;
+            }
+        }
+        ++count;
+        if (!guest.Write(entry + addr::kEntryType, &type, 4) || !guest.Write(block_ + addr::kArgCount, &count, 4)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::optional<CoopPuppet::Call> Requester::Ask(CoopPuppet::Guest& guest, std::uint64_t main) {
+    std::uint64_t holder = 0;
+    std::uint64_t manager = 0;
+    if (!guest.Read(main + addr::kManagerPtr, &holder, 8) || holder == 0 || !guest.Read(holder, &manager, 8) ||
+        manager == 0) {
+        notes_.push_back("live event " + current_ + ": no event manager; not asked");
+        return FreeFirst(guest, main);  // still free what the build made
+    }
+    CoopPuppet::Call c;
+    c.function = main + addr::kRequest;
+    c.x[0] = manager;
+    c.x[1] = block_;
+    next_ = Next::request;
+    return c;
 }
 
 std::vector<std::string> Requester::TakeNotes() {
@@ -346,19 +493,41 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
                 notes_.push_back("live event " + current_ + ": name not written; not asked");
                 return FreeFirst(guest, main);
             }
-            std::uint64_t holder = 0;
-            std::uint64_t manager = 0;
-            if (!guest.Read(main + addr::kManagerPtr, &holder, 8) || holder == 0 || !guest.Read(holder, &manager, 8) ||
-                manager == 0) {
-                notes_.push_back("live event " + current_ + ": no event manager; not asked");
-                return FreeFirst(guest, main);  // still free what the build made
+            if (!current_args_.empty() && !WriteArgs(guest)) {
+                notes_.push_back("live event " + current_ + ": its arguments do not fit the request; not asked");
+                return FreeFirst(guest, main);
             }
-            c.function = main + addr::kRequest;
-            c.x[0] = manager;
-            c.x[1] = block_;
-            next_ = Next::request;
-            return c;
+            if (current_starter_ != 0 && current_room_asker_ &&
+                !(CoopFairy::ActorPresent(guest, current_starter_) &&
+                  std::any_of(std::begin(kAskerNames), std::end(kAskerNames), [&](std::string_view n) {
+                      return CoopFairy::ActorNamed(guest, current_starter_, n);
+                  }))) {
+                // Found when the event was picked, a frame ago: deleted since (its Logic_Delete, the room unloaded)?
+                // Never hand the game's link a freed actor.
+                notes_.push_back("live event " + current_ + ": our room's asker went away before the link; asked by "
+                                 "name alone");
+                current_starter_ = 0;
+            }
+            if (current_starter_ != 0) {
+                c.function = main + addr::kSetLink;
+                c.x[0] = block_ + addr::kArgMember2;
+                c.x[1] = current_starter_;
+                c.x[2] = 0;
+                next_ = Next::link;
+                return c;
+            }
+            return Ask(guest, main);
         }
+        case Next::link:
+            return Ask(guest, main);
+        case Next::own_request:
+            notes_.push_back("live event " + current_ + " asked by our room's asker itself (result " +
+                             std::to_string(result & 0xff) + ")");
+            current_.clear();
+            current_args_.clear();
+            current_starter_ = 0;
+            current_room_asker_ = false;
+            return std::nullopt;  // its own call built and freed its arg; one event a frame
         case Next::request: {
             notes_.push_back("live event " + current_ + " asked of the game (result " + std::to_string(result & 0xff) +
                              ")");
@@ -374,6 +543,9 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
         }
         case Next::free2:
             current_.clear();
+            current_args_.clear();
+            current_starter_ = 0;
+            current_room_asker_ = false;
             return std::nullopt;  // one event a frame
         case Next::none:
             return std::nullopt;
@@ -387,7 +559,7 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
             return std::nullopt;
         }
         c.function = main + addr::kMalloc;
-        c.x[0] = addr::kArgSize;
+        c.x[0] = addr::kArgSize + addr::kStringsSize;  // the arg, then room for our string arguments
         next_ = Next::malloc;
         return c;
     }
@@ -399,7 +571,44 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
     }
     if (current_.empty()) {
         current_ = std::move(wanted_.front().name);
+        current_args_ = std::move(wanted_.front().args);
+        current_starter_ = wanted_.front().starter;
+        current_room_asker_ = false;
+        if (wanted_.front().room_asker && current_starter_ == 0) {
+            std::string where;
+            current_starter_ = FindAsker(guest, main, current_, wanted_.front().scene, where);
+            current_room_asker_ = current_starter_ != 0;
+            notes_.push_back(current_starter_ != 0
+                                 ? "live event " + current_ + ": started by our room's asker at " + where +
+                                       " (its EventBool moves the room)"
+                                 : "live event " + current_ + ": no asker actor within 1 m of its places here; "
+                                       "asked by name alone (its room may not move)");
+        }
         wanted_.pop_front();
+        // deku-sync-fix: the asker asks the event itself, as its room graph's node does, so the event is its own.
+        if (current_room_asker_ && current_args_.empty()) {
+            if (const std::uint64_t performer = PerformerOf(guest, current_starter_); performer != 0) {
+                std::uint32_t state = 0;
+                guest.Read(performer + addr::kPerformerState, &state, 4);
+                const std::uint64_t at = block_ + addr::kArgStrings;  // [char*][the name], in our own block
+                const std::size_t n = std::min<std::size_t>(current_.size(), addr::kStringsSize - 9);
+                std::string text = current_.substr(0, n);
+                text.push_back('\0');
+                const std::uint64_t text_at = at + 8;
+                if (state != 3 && guest.Write(at, &text_at, 8) && guest.Write(text_at, text.data(), text.size())) {
+                    c.function = main + addr::kPerformerRequest;
+                    c.x[0] = performer;
+                    c.x[1] = at;
+                    next_ = Next::own_request;
+                    return c;
+                }
+                notes_.push_back("live event " + current_ + ": our room's asker is busy (state " +
+                                 std::to_string(state) + ") or the name did not fit; linked instead");
+            } else {
+                notes_.push_back("live event " + current_ + ": our room's asker has no event performer we know; "
+                                 "linked instead");
+            }
+        }
     }
     c.function = main + addr::kArgBuild;
     c.x[0] = block_;

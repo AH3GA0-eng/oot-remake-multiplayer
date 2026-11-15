@@ -19,6 +19,9 @@
 
 namespace coop::host {
 
+class GameFlagCalls;
+enum class GameFlagType : std::uint8_t;
+
 // Guest memory that can also be written. The emulator implements it.
 class WritableGameMemory : public GameMemory {
  public:
@@ -49,6 +52,8 @@ class GameFlags {
   // A UInt flag (type 20; 0x57a4e0 reads it, 0x57af30 sets it). A hash only in
   // the game's fallback UInt table (M + 0x800, not read) is not found.
   std::optional<std::uint32_t> get_uint(std::uint32_t hash);
+  // A Float flag (PlayerStatus.DiveDepth).
+  std::optional<float> get_float(std::uint32_t hash);
   // An Enum flag (type 6; 0x7e73d0 reads it, 0x3e0980 sets it): the value is
   // the flag_hash of the value's name (PlayerStatus.AssignableItem.Adult:
   // "Bow" is flag_hash("Bow")).
@@ -70,6 +75,7 @@ class GameFlags {
   static bool set_bool(WritableGameMemory& memory, std::uint32_t hash, bool value);
   static bool set_int(WritableGameMemory& memory, std::uint32_t hash, std::int32_t value);
   static bool set_uint(WritableGameMemory& memory, std::uint32_t hash, std::uint32_t value);
+  static bool set_float(WritableGameMemory& memory, std::uint32_t hash, float value);
   static bool set_enum(WritableGameMemory& memory, std::uint32_t hash, std::uint32_t value);
   static bool set_key64(WritableGameMemory& memory, std::uint64_t key, bool value);
 
@@ -79,6 +85,20 @@ class GameFlags {
   // not fit (at most 63 bytes, printable ASCII).
   static bool set_string64_now(WritableGameMemory& memory, std::uint32_t hash,
                                std::string_view text);
+
+  // From now on the setters above hand each write to `calls` (which the
+  // game's calc thread empties into the game's own setter functions,
+  // game_flag_events.hpp) and write nothing into the game's queues; the
+  // getters see a write that still waits there. nullptr: the queues again.
+  // `calls` must outlive its use. Set once at start, before any flag call.
+  static void use_calls(GameFlagCalls* calls);
+  // True while the game's write queue of this type has room for one of our
+  // writes (half of it stays the game's own, as with the queue writes): only
+  // then may the game's setter be called for us, as the game's own setters
+  // stop the game on a full queue (0x34fc280).
+  static bool setter_has_room(GameMemory& memory, GameFlagType type);
+  // The manager (gmd::GameDataMgr), nothing before it is up.
+  static std::optional<std::uint64_t> manager_address(GameMemory& memory);
 
   // Which typed table (the save type ids, 0 to 25) holds `hash`, for finding
   // a flag's type. Nothing when none does.

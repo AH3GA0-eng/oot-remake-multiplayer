@@ -279,8 +279,23 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
     }
     o.debug_panel = On(IniGet(options_ini, "LICHII_COOP_DEBUG_PANEL"));
     o.cheats = On(IniGet(options_ini, "LICHII_COOP_CHEATS"));
-    o.voice_in_file = IniGet(options_ini, "LICHII_COOP_VOICE").value_or("");
-    o.voice = On(o.voice_in_file);
+    {
+        const auto v = IniGet(options_ini, "LICHII_COOP_VOICE");
+        o.voice = On(v);
+        std::string m(Trim(v.value_or("")));
+        std::transform(m.begin(), m.end(), m.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        // push to talk only when the line turns voice on and is not open (an older on, 1, yes: as it meant);
+        // no line or off: voice off, and turning it on in the menu gives open mic
+        o.voice_ptt = o.voice && m != "open" && m != "open-mic";
+        const std::string k(Trim(IniGet(options_ini, "LICHII_COOP_VOICE_KEY").value_or("")));
+        if (k.size() == 1 && std::isalnum(static_cast<unsigned char>(k[0]))) {
+            o.voice_key = std::string(1, static_cast<char>(std::toupper(static_cast<unsigned char>(k[0]))));
+        } else if (!k.empty()) {
+            o.voice_key = "your key";   // (a key code: coop_voice's SettingsFrom reads it)
+        }
+    }
+    o.map_players = !Off(IniGet(options_ini, "LICHII_COOP_MAP"));
+    o.map_names = !Off(IniGet(options_ini, "LICHII_COOP_MAP_NAMES"));
     if (const auto v = IniGet(options_ini, "max_players"); v && !v->empty() && v->size() <= 2 &&
         std::all_of(v->begin(), v->end(), [](char c) { return c >= '0' && c <= '9'; })) {
         o.max_players = std::clamp(std::stoi(*v), kMinPlayers, kMaxPlayers);
@@ -303,13 +318,11 @@ void Options::Write(std::string& coop_ini, std::string& options_ini) const {
     o = password.empty() ? IniUnset(o, "server_password") : IniSet(o, "server_password", password, true);
     o = debug_panel ? IniSet(o, "LICHII_COOP_DEBUG_PANEL", "1", false) : IniUnset(o, "LICHII_COOP_DEBUG_PANEL");
     o = cheats ? IniSet(o, "LICHII_COOP_CHEATS", "1", false) : IniUnset(o, "LICHII_COOP_CHEATS");
-    // (voip-101: ptt = on, the line gone = off, the default; "open" written by hand stays as it is)
-    if (!voice) {
-        o = IniUnset(o, "LICHII_COOP_VOICE");
-    } else if (!On(IniGet(o, "LICHII_COOP_VOICE"))) {
-        o = IniSet(o, "LICHII_COOP_VOICE", VoiceMode(), false);
-    }
+    // (voice-mode: open = on with open mic, ptt = push to talk, the line gone = off, the default)
+    o = voice ? IniSet(o, "LICHII_COOP_VOICE", VoiceMode(), false) : IniUnset(o, "LICHII_COOP_VOICE");
     o = IniSet(o, "max_players", std::to_string(std::clamp(max_players, kMinPlayers, kMaxPlayers)), true);
+    o = map_players ? IniUnset(o, "LICHII_COOP_MAP") : IniSet(o, "LICHII_COOP_MAP", "0", false);
+    o = map_names ? IniUnset(o, "LICHII_COOP_MAP_NAMES") : IniSet(o, "LICHII_COOP_MAP_NAMES", "0", false);
     options_ini = std::move(o);
 }
 
@@ -323,14 +336,12 @@ std::vector<std::pair<std::string, std::string>> Options::Environment() const {
         {"LICHII_COOP_DEBUG_PANEL", debug_panel ? "1" : ""},
         {"LICHII_COOP_CHEATS", cheats ? "1" : ""},
         {"LICHII_COOP_VOICE", voice ? VoiceMode() : ""},
+        {"LICHII_COOP_MAP", map_players ? "" : "0"},
+        {"LICHII_COOP_MAP_NAMES", map_names ? "" : "0"},
     };
 }
 
-std::string Options::VoiceMode() const {
-    std::string s(Trim(voice_in_file));
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return s == "open" ? "open" : "ptt";
-}
+std::string Options::VoiceMode() const { return voice_ptt ? "ptt" : "open"; }
 
 std::string CoopIniFor(std::string_view coop_ini, std::string_view server, std::string_view name,
                        std::string_view password) {
@@ -490,15 +501,151 @@ std::vector<std::string> LanLines(const std::vector<LanAddress>& addresses, std:
         copied ? "It is copied: paste it into your chat with them (Ctrl+V)."
                : "Type it into your chat with them, exactly as it is."};
     if (addresses.size() > 1) {
-        std::string other = "Or with another address in front:";
+        std::string other = "If that does not work, try another of this PC's addresses in its place:";
         for (std::size_t i = 1; i < addresses.size() && i < 4; ++i) {
             other += " " + addresses[i].address + " (" + addresses[i].label + ")";
         }
         out.push_back(other);
     }
+#ifdef _WIN32
     out.push_back("If Windows asks about the firewall, allow the game on private networks.");
+#endif
     return out;
 }
+
+std::string VpnLabel(std::string_view adapter) {
+    std::string a;
+    for (const char c : adapter) {
+        a.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+    const auto has = [&a](std::string_view s) { return a.find(s) != std::string::npos; };
+    const auto starts = [&a](std::string_view s) {
+        return a.size() > s.size() && a.compare(0, s.size(), s) == 0 &&
+               std::isdigit(static_cast<unsigned char>(a[s.size()])) != 0;
+    };
+    if (has("radmin")) {
+        return "Radmin VPN";
+    }
+    if (has("hamachi") || starts("ham")) {
+        return "Hamachi";
+    }
+    if (has("zerotier") || (a.size() > 2 && a.compare(0, 2, "zt") == 0 && a.find(' ') == std::string::npos)) {
+        return "ZeroTier";
+    }
+    if (has("tailscale")) {
+        return "Tailscale";
+    }
+    if (has("wireguard") || starts("wg")) {
+        return "WireGuard";
+    }
+    return {};
+}
+
+namespace {
+// A dotted IPv4 a friend's PC could reach over some network: not 0.x, loopback, link-local or multicast.
+bool Reachable(std::string_view ipv4) {
+    int part[4] = {0, 0, 0, 0};
+    int n = 0;
+    bool digit = false;
+    for (const char c : ipv4) {
+        if (c >= '0' && c <= '9') {
+            part[n] = part[n] * 10 + (c - '0');
+            digit = true;
+            if (part[n] > 255) {
+                return false;
+            }
+        } else if (c == '.' && digit && n < 3) {
+            ++n;
+            digit = false;
+        } else {
+            return false;
+        }
+    }
+    return n == 3 && digit && part[0] != 0 && part[0] != 127 && part[0] < 224 && !(part[0] == 169 && part[1] == 254);
+}
+
+// Linux's bridges for containers and virtual machines on this PC only (Docker, libvirt, LXC, Podman): no friend
+// reaches them.
+bool VirtualBridge(std::string_view adapter) {
+    const auto starts = [&adapter](std::string_view s) { return adapter.substr(0, s.size()) == s; };
+    return starts("docker") || starts("virbr") || starts("br-") || starts("veth") || starts("lxcbr") ||
+           starts("podman") || starts("cni");
+}
+
+std::vector<std::string> AddressLines(const std::vector<LanAddress>& a, std::uint16_t port, std::string_view password,
+                                      bool copied) {
+    std::vector<std::string> out = {
+        "Friends on your " + a.front().label + " paste this line in Join (address and password):",
+        LanJoinText(a.front().address, port, password),
+        copied ? "It is copied: paste it into your chat with them (Ctrl+V)."
+               : "Type it into your chat with them, exactly as it is."};
+    if (a.size() > 1) {
+        std::string other = "If that does not work, try another of this PC's addresses in its place:";
+        for (std::size_t i = 1; i < a.size() && i < 4; ++i) {
+            other += " " + a[i].address + (a[i].label == a.front().label ? "" : " (" + a[i].label + ")");
+        }
+        out.push_back(other);
+    }
+#ifdef _WIN32
+    out.push_back("If Windows asks about the firewall, allow the game on private networks.");
+#endif
+    return out;
+}
+}  // namespace
+
+LanSplit SplitLan(const std::vector<LocalCard>& cards) {
+    LanSplit out;
+    std::vector<LanAddress> home_routed;
+    std::vector<LanAddress> home_other;
+    const auto seen = [&](const std::string& address) {
+        const auto same = [&address](const LanAddress& x) { return x.address == address; };
+        return std::any_of(out.vpn.begin(), out.vpn.end(), same) ||
+               std::any_of(home_routed.begin(), home_routed.end(), same) ||
+               std::any_of(home_other.begin(), home_other.end(), same);
+    };
+    for (const LocalCard& c : cards) {
+        if (!Reachable(c.address) || seen(c.address) || VirtualBridge(c.adapter)) {
+            continue;
+        }
+        std::string vpn = VpnLabel(c.adapter);
+        const std::string range = LanLabel(c.address);
+        if (vpn.empty() && !range.empty() && range != "home network") {
+            vpn = range;   // no name it knows (none, renamed, another language): the address range says which VPN
+        }
+        if (!vpn.empty()) {
+            out.vpn.push_back(LanAddress{c.address, vpn});
+        } else if (range == "home network") {
+            (c.gateway ? home_routed : home_other).push_back(LanAddress{c.address, range});
+        }
+    }
+    out.home = std::move(home_routed);
+    out.home.insert(out.home.end(), home_other.begin(), home_other.end());
+    return out;
+}
+
+std::vector<std::string> HomeLines(const std::vector<LanAddress>& home, std::uint16_t port, std::string_view password,
+                                   bool copied) {
+    if (home.empty()) {
+        return {"No home-network address was found on this PC.",
+                "Friends somewhere else join with your invite code; on a VPN with you, they use the VPN row."};
+    }
+    return AddressLines(home, port, password, copied);
+}
+
+std::vector<std::string> VpnLines(const std::vector<LanAddress>& vpn, std::uint16_t port, std::string_view password,
+                                  bool copied) {
+    if (vpn.empty()) {
+        return {"No VPN found.",
+                "Using one (Radmin VPN, Hamachi, ZeroTier, Tailscale, WireGuard)? Start it, then press this again."};
+    }
+    return AddressLines(vpn, port, password, copied);
+}
+
+std::string HostHeadline(bool copied) {
+    return copied ? "Invite code copied to your clipboard. Send it to your friends, or pick another way to host below."
+                  : "Your invite code is below. Send it to your friends, or pick another way to host below.";
+}
+
 
 std::vector<std::string> PlainStatus(const HostView& v) {
     std::vector<std::string> out;
@@ -530,9 +677,10 @@ std::vector<std::string> PlainStatus(const HostView& v) {
             return {"Starting..."};
         case HOS_COOP_HOSTING:
             if (!v.invite.empty()) {
-                out = {"Send this code to your friends:", v.invite};
-                out.push_back(v.copied ? "It is copied: paste it into your chat with them (Ctrl+V)."
-                                       : "Press \"Copy the code again\", then paste it into your chat with them.");
+                out = {HostHeadline(v.copied), v.invite};
+                if (!v.copied) {
+                    out.push_back("Press \"Copy the code again\" to put it on the clipboard.");
+                }
                 out.push_back(v.players <= 1 ? "Waiting for your friends to join..."
                                              : std::to_string(v.players - 1) + " friend(s) joined.");
             } else if (!v.invite_done) {
@@ -563,75 +711,80 @@ std::vector<std::string> PlainStatus(const HostView& v) {
     case HOS_COOP_FAILED:
         return {"Your friend could not be reached.",
                 "Check that they are hosting right now and that the code is their newest one.",
-                "Same home network or VPN as them? Ask for the line from \"Same network or VPN\" on their Host page."};
+                "Same home network or VPN as them? Ask for the line from \"Same network\" or \"VPN\" on their Host page."};
     default:
         return {};
     }
 }
 
-void AutoLoad::Start(std::uint64_t now_ms, std::string host) {
+void SaveWait::Start(std::uint64_t now_ms, std::string host) {
     phase_ = Phase::kWait;
     host_ = Trim(host).empty() ? std::string("your friend") : std::string(Trim(host));
-    since_ = now_ms;
-    next_press_ = 0;
-    focused_ = false;
-    revealed_ = false;
+    last_ms_ = now_ms;
+    waited_ms_ = 0;
+    live_seen_ = false;
 }
 
-AutoLoad::Tick AutoLoad::Step(std::uint64_t now_ms, bool host_save_ready, bool title_up, bool in_game) {
+SaveWait::Tick SaveWait::Step(std::uint64_t now_ms, const Input& in) {
     Tick t;
-    if (in_game && active()) {
+    const std::uint64_t dt = std::min<std::uint64_t>(now_ms >= last_ms_ ? now_ms - last_ms_ : 0, kStepGapMs);
+    last_ms_ = now_ms;
+    if (in.in_game && watching()) {
         phase_ = Phase::kDone;   // (Link is in: the host's save, or a file the player chose)
         return t;
     }
-    if (phase_ == Phase::kWait) {
-        if (host_save_ready && title_up) {
-            phase_ = Phase::kLoad;
-            since_ = now_ms;
-            next_press_ = now_ms + 600;   // (Continue shown, then the cursor, then A)
-        } else if (now_ms - since_ >= kWaitSaveMs) {
-            phase_ = Phase::kNoSave;
+    if (in.session_live) {
+        live_seen_ = true;
+    } else if (live_seen_ && waiting()) {
+        phase_ = Phase::kHostGone;   // (the host dropped before the save came: nothing more comes)
+        return t;
+    }
+    if (phase_ == Phase::kChose) {
+        if (!in.title_up) {
+            chose_gone_ = true;
+            back_ms_ = 0;
+        } else if (chose_gone_) {
+            back_ms_ += dt;
+            if (back_ms_ >= kBackMs) {
+                phase_ = Phase::kWait;   // (backed out of their pick: the host's save again)
+                waited_ms_ = 0;
+                t.rearm = true;
+            }
         }
         return t;
     }
-    if (phase_ != Phase::kLoad) {
-        return t;
-    }
-    if (now_ms - since_ >= kLoadMs) {
-        phase_ = Phase::kStuck;
-        return t;
-    }
-    if (!revealed_ && title_up) {
-        revealed_ = true;
-        t.reveal_continue = true;
-        return t;
-    }
-    if (!focused_ && title_up && now_ms - since_ >= 300) {
-        focused_ = true;
-        t.focus_continue = true;
-    }
-    if (now_ms >= next_press_) {
-        if (now_ms < next_press_ + kPressHoldMs) {
-            t.press_a = true;
-        } else {
-            next_press_ = now_ms + kPressEveryMs;
+    if (waiting()) {
+        if (in.host_save_ready) {
+            phase_ = Phase::kReady;   // (late too: the player loads it themselves now)
+            return t;
+        }
+        if (in.save_coming) {
+            phase_ = Phase::kWait;   // (on its way: "Getting ...", and the wait starts over)
+            waited_ms_ = 0;
+        } else if (in.title_up) {
+            waited_ms_ += dt;
+        }
+        if (phase_ == Phase::kWait && waited_ms_ >= kWaitSaveMs) {
+            phase_ = Phase::kLate;
         }
     }
     return t;
 }
 
-std::string AutoLoad::Line() const {
+std::string SaveWait::Line() const {
     switch (phase_) {
     case Phase::kWait:
-        return "Getting " + host_ + "'s save...";
-    case Phase::kLoad:
-        return "Loading " + host_ + "'s save...";
-    case Phase::kNoSave:
-        return host_ + "'s save did not arrive: Continue plays your own save, New Game starts a new one.";
+        return "Getting " + host_ + "'s save: don't load a save yet...";
+    case Phase::kLate:
+        return host_ + "'s save is not here yet (the chat says Success when it is): Continue plays your own save, "
+                       "New Game starts a new one.";
+    case Phase::kReady:
+        return host_ + "'s save is in: load any save.";
     case Phase::kHostNone:
         return host_ + " has no save yet: New Game starts one, Continue plays your own.";
-    case Phase::kStuck:
-        return "Press Continue to play " + host_ + "'s save.";
+    case Phase::kHostGone:
+        return host_ + "'s game ended before the save came: Continue plays your own save, New Game starts a new "
+                       "one.";
     default:
         return {};
     }

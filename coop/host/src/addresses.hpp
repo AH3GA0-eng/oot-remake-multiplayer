@@ -12,6 +12,7 @@
 // (the guest is AArch64), little-endian.
 
 #include <cstdint>
+#include <string_view>
 
 namespace coop::host::addr {
 
@@ -143,12 +144,35 @@ inline constexpr std::uint32_t kEquipSlotSword = 0;
 inline constexpr std::uint32_t kEquipSlotHeldItem = 3;
 inline constexpr std::uint32_t kEquipSlotShield = 4;
 // [dump] The game's own names for the eight slots, an enum's names in rodata
-// at 0x3ef2033: Weapon, SubWeapon, ThirdWeapon, Bow, Shield, Tool, SubTool,
-// Helmet. (The 18 slot kinds of the equip call are another enum, 0x3ef94a8.)
+// at 0x3ef2000: Weapon, SubWeapon, ThirdWeapon, Bow, Shield, Tool, SubTool,
+// Helmet. (The 18 slot kinds of the equip call are another enum, 0x3ef9490.)
 inline constexpr std::uint32_t kEquipSlotSubWeapon = 1;
 inline constexpr std::uint32_t kEquipSlotThirdWeapon = 2;
 inline constexpr std::uint32_t kEquipSlotTool = 5;
 inline constexpr std::uint32_t kEquipSlotSubTool = 6;
+// A carried piece (the held item and slots 1, 2, 5, 6; not the sword,
+// the shield or the helmet) put away is kept elsewhere by the game, its actor
+// in state 6 (the slingshot, autotest 2026-11-09). That is the piece's own
+// state, so it stands even when the put-away request byte was missed
+// (held-fix: a slingshot stayed in the puppet's hand after the sword came out).
+// Both ways: a carried piece in state 4 (kActorStatePresent) with no request
+// in flight is out (the pose code takes state 4 as out for these slots too).
+inline constexpr std::uint32_t kActorStateKeptAway = 6;
+constexpr bool equip_slot_carried(std::uint32_t slot) {
+  return slot == kEquipSlotSubWeapon || slot == kEquipSlotThirdWeapon ||
+         slot == kEquipSlotHeldItem || slot == kEquipSlotTool || slot == kEquipSlotSubTool;
+}
+// The EquipmentUser's armor links follow the eight hand slots, the same
+// {holder, id} shape (eu + 0xe0 + 0x18 * index; 0x10aceb0 empties link
+// kind - 7 for the armor kinds 7 to 10). [dump] The game's GameData equip
+// path 0x2df6c80 wears the child's Goron's Bracelet as `Armor_Child_Gauntlet_Goron`
+// with kind 14 (Accessory2; Player_Child's EquipmentUserParam binds
+// Accessory2 to the bone Ph_Bangle), not through PlayerStatus.EquipHandArmor,
+// which stays "" for the child. Hookshot runs (held-ocarina-b, 2026-11-14)
+// saw the bracelet in armor link 9 of the player's own EquipmentUser.
+inline constexpr std::uint64_t kArmorLinks = 0xe0;
+inline constexpr std::uint32_t kArmorLinkCount = 13;
+inline constexpr std::uint32_t kArmorLinkBracelet = 9;
 // [dump] 0x2df7b20 (the equip call) tests slot 3's link (+0x70, +0x78) for
 // slot kind 5, the bow kind: slot 3 is the bow slot. Autotest logs
 // (2026-11-09): a child with the slingshot has `Weapon_Range_SlingShot`

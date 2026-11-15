@@ -423,10 +423,13 @@ function Get-KitTunic([string]$Color) {
     return $best
 }
 
-# Puts your colour's tunic textures over the game's in the pack's romfs, so your own Link wears
-# your colour: the pack tool's coop_self/ files, listed in coop_puppet.json as self_files
-# ({colour: {romfs path: file}}: the tile, the child's dark tile, the adult's other tunic
-# textures and the adult's model copy that names the colour's textures, #202); a pack from before that: self_tiles / self_dark_tiles. Green, no colour or a
+# Puts your colour's tunic files in the pack's romfs, so your own Link wears your colour: the pack
+# tool's coop_self/ files, listed in coop_puppet.json as self_files ({colour: {romfs path: file}}).
+# Since colour-agree they are your own textures under their own names (Tex/Angin_Tile_S_Alb, ...)
+# and a copy of each player model naming them over Model/Player_<Age>: your own Link never draws
+# the puppets' copies. Older packs: the game-name tiles and the adult's puppet model copy (#202);
+# a pack from before that: self_tiles / self_dark_tiles. The Linux kit and the autotest run
+# tools/puppet_pack/self_tunic.py, the same steps. Green, no colour or a
 # pack without them: takes every copy away, the game's own green. Only the Kokiri tunic: the
 # Goron and Zora tunics have their own textures. Returns the colour put in, or ''.
 function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
@@ -444,7 +447,7 @@ function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
     # The fixed list also covers a pack without self_files (made again older): no stale copy.
     $targets = @($tile, $dark, 'Tex/Mt_Vest_Player_Adult_Alb.bntx.zs', 'Tex/Mt_Angin_Acs_Player_Adult_Alb.bntx.zs',
         'Tex/Mt_Cloth_Parts_Player_Child_Alb.bntx.zs', 'Tex/Mt_Vest_Player_Child_Alb.bntx.zs',
-        'Model/Player_Adult.Player_Adult.bfres.zs')
+        'Model/Player_Adult.Player_Adult.bfres.zs', 'Model/Player_Child.Player_Child.bfres.zs')
     $put = [ordered]@{}
     try {
         if ($json -and $json.self_files) {
@@ -465,8 +468,10 @@ function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
             }
         }
     } catch { $put = [ordered]@{} }
-    # The tile is the one that must be there; a missing other file is left to the game's.
-    if (-not $put.Contains($tile) -or -not (Test-Path -LiteralPath $put[$tile] -PathType Leaf)) { $put = [ordered]@{} }
+    # A main tile must be there (your own S tile since colour-agree, or an older pack's game-name tile); a
+    # missing other file is left to the game's.
+    $main = @($put.Keys | Where-Object { $_ -match '^Tex/Angin_Tile_[A-Z]_Alb\.bntx\.zs$' -and (Test-Path -LiteralPath $put[$_] -PathType Leaf) })
+    if (-not $main.Count) { $put = [ordered]@{} }
     try {
         foreach ($t in ($targets | Select-Object -Unique)) {
             $dst = Join-Path $romfs $t
@@ -537,13 +542,192 @@ function Use-KitPuppetPack([string]$Manifest, [string]$ToolDir, [string[]]$Missi
 # --- Hookshot: what the kit's game needs before it starts (updates without player steps) ---
 
 # The kit's Hookshot game folder: hookshot\game-folder.txt (hookshot-build.ps1 writes it), else hookshot\game.
+# The file holds a path relative to the kit (hookshot\game) or, for -Out, a full one. Kits up to 0.10.1 wrote
+# their own hookshot\game as a full path: a copy of such a kit (a player's "oot-coop-v0.10.1 - Copy" for two
+# players on one PC) or a moved one then named the other kit's game, and both started one exe. A full path that
+# is another kit's default game (<folder>\hookshot\game) is never followed: this kit uses its own.
 function Get-KitHookshotGame([string]$Kit) {
+    $own = Join-Path $Kit 'hookshot\game'
     $where = Join-Path $Kit 'hookshot\game-folder.txt'
     if (Test-Path -LiteralPath $where) {
         $g = "$(Get-Content -LiteralPath $where -TotalCount 1)".Trim()
-        if ($g) { return $g }
+        if ($g -and -not [System.IO.Path]::IsPathRooted($g)) { return (Join-Path $Kit $g) }
+        if ($g -and -not (Test-KitOtherKitGame $Kit $g)) { return $g }
     }
-    return (Join-Path $Kit 'hookshot\game')
+    return $own
+}
+
+# A folder removed or moved while something may still hold a file in it for a moment: antivirus scanning a fresh
+# unzip, Explorer or the search indexer, a python.exe that just ended (a 0.10.1 player: "Access to the path
+# 'D:\coop\hookshot\tools.new' is denied", as admin too). Tried again for $Seconds; a move then falls back to
+# robocopy /MOVE (it copies what is held and leaves only that behind). Returns '' when done, else why not.
+# ($OnWait: tests; it runs before each wait.)
+function Remove-KitFolderRetry([string]$Path, [int]$Seconds = 30, [int]$WaitMs = 500, [scriptblock]$OnWait = $null) {
+    $until = [DateTime]::UtcNow.AddSeconds($Seconds)
+    while ($true) {
+        if (-not (Test-Path -LiteralPath $Path)) { return '' }
+        try { Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop; return '' } catch { $why = $_.Exception.Message }
+        if ([DateTime]::UtcNow -ge $until) { return $why }
+        if ($OnWait) { & $OnWait }
+        Start-Sleep -Milliseconds $WaitMs
+    }
+}
+function Move-KitFolderRetry([string]$From, [string]$To, [int]$Seconds = 30, [int]$WaitMs = 500, [scriptblock]$OnWait = $null) {
+    $until = [DateTime]::UtcNow.AddSeconds($Seconds)
+    $why = ''
+    while ($true) {
+        # (Directory.Move: one rename or nothing; a Move-Item that fails half way leaves a part of $To, and the next
+        # try then moves $From INTO it)
+        try { [System.IO.Directory]::Move($From, $To); return '' } catch { $why = $_.Exception.InnerException.Message; if (-not $why) { $why = $_.Exception.Message } }
+        if ([DateTime]::UtcNow -ge $until) { break }
+        if ($OnWait) { & $OnWait }
+        Start-Sleep -Milliseconds $WaitMs
+    }
+    if (-not (Test-Path -LiteralPath $From)) { return $why }
+    & robocopy $From $To /MOVE /E /R:3 /W:2 /NFL /NDL /NJH /NJS /NP | Out-Null
+    $code = $LASTEXITCODE
+    $global:LASTEXITCODE = 0
+    if ($code -ge 8) { return "$why (robocopy $code)" }
+    # (what robocopy copied but could not delete stays in $From: gone later, or with the next build)
+    Remove-KitFolderRetry $From 2 $WaitMs | Out-Null
+    return ''
+}
+# The cloud-sync client whose synced folder holds $Folder (OneDrive, Google Drive, Dropbox, iCloud...: the sync roots
+# Windows knows, HKLM ...\Explorer\SyncRootManager), or ''. A sync client opens each new file to upload it.
+function Get-KitSyncRoot([string]$Folder) {
+    try { $full = [System.IO.Path]::GetFullPath($Folder).TrimEnd('\') + '\' } catch { return '' }
+    $base = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\SyncRootManager'
+    foreach ($k in @(Get-ChildItem -LiteralPath $base -ErrorAction SilentlyContinue)) {
+        $roots = Get-ItemProperty -LiteralPath (Join-Path $k.PSPath 'UserSyncRoots') -ErrorAction SilentlyContinue
+        if (-not $roots) { continue }
+        foreach ($p in $roots.PSObject.Properties) {
+            if ($p.Name -like 'PS*' -or -not ($p.Value -is [string]) -or -not $p.Value) { continue }
+            $r = $p.Value.TrimEnd('\') + '\'
+            if ($full.StartsWith($r, [StringComparison]::OrdinalIgnoreCase)) { return ($k.PSChildName -split '!')[0] }
+        }
+    }
+    return ''
+}
+
+# Who holds files in $Folder: programs running from it (a python.exe of the build still ending), and, for the files in it
+# no one else may open now (at most $MaxFiles looked at, the first 16 held asked about), the programs Windows' Restart
+# Manager names (an antivirus, Explorer, the search indexer, a sync client). Names only, '' parts left out.
+function Get-KitFolderHolders([string]$Folder, [int]$MaxFiles = 40000) {
+    $out = @()
+    try { $full = [System.IO.Path]::GetFullPath($Folder).TrimEnd('\') + '\' } catch { return @() }
+    if (-not (Test-Path -LiteralPath $Folder)) { return @() }
+    foreach ($p in @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($full, [StringComparison]::OrdinalIgnoreCase) })) {
+        $out += "$($p.ProcessName).exe (process $($p.Id), started from this folder)"
+    }
+    $held = @()
+    foreach ($f in @(Get-ChildItem -LiteralPath $Folder -Recurse -File -Force -ErrorAction SilentlyContinue | Select-Object -First $MaxFiles)) {
+        try { ([System.IO.File]::Open($f.FullName, 'Open', 'Read', 'None')).Dispose() } catch { $held += $f.FullName; if ($held.Count -ge 16) { break } }
+    }
+    if ($held) {
+        try {
+            if (-not ('KitRestartManager' -as [type])) {
+                Add-Type -ErrorAction Stop -TypeDefinition @'
+using System; using System.Text; using System.Collections.Generic; using System.Runtime.InteropServices;
+public static class KitRestartManager {
+    [StructLayout(LayoutKind.Sequential)] struct RM_UNIQUE_PROCESS { public int dwProcessId; public System.Runtime.InteropServices.ComTypes.FILETIME ProcessStartTime; }
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] struct RM_PROCESS_INFO {
+        public RM_UNIQUE_PROCESS Process;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)] public string strAppName;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)] public string strServiceShortName;
+        public int ApplicationType; public uint AppStatus; public uint TSSessionId; [MarshalAs(UnmanagedType.Bool)] public bool bRestartable; }
+    [DllImport("rstrtmgr.dll", CharSet = CharSet.Unicode)] static extern int RmStartSession(out uint h, int flags, StringBuilder key);
+    [DllImport("rstrtmgr.dll")] static extern int RmEndSession(uint h);
+    [DllImport("rstrtmgr.dll", CharSet = CharSet.Unicode)] static extern int RmRegisterResources(uint h, uint nFiles, string[] files, uint nApps, RM_UNIQUE_PROCESS[] apps, uint nSvc, string[] svcs);
+    [DllImport("rstrtmgr.dll")] static extern int RmGetList(uint h, out uint needed, ref uint n, [In, Out] RM_PROCESS_INFO[] info, ref uint reasons);
+    public static string[] Holders(string[] files) {
+        var names = new List<string>();
+        uint h; var key = new StringBuilder(64);
+        if (RmStartSession(out h, 0, key) != 0) return names.ToArray();
+        try {
+            if (RmRegisterResources(h, (uint)files.Length, files, 0, null, 0, null) != 0) return names.ToArray();
+            uint needed, n = 0, reasons = 0;
+            int r = RmGetList(h, out needed, ref n, null, ref reasons);
+            if (r == 234 && needed > 0) {
+                var info = new RM_PROCESS_INFO[needed]; n = needed;
+                if (RmGetList(h, out needed, ref n, info, ref reasons) == 0)
+                    for (int i = 0; i < n; i++) names.Add(info[i].strAppName + " (process " + info[i].Process.dwProcessId + ")");
+            }
+        } finally { RmEndSession(h); }
+        return names.ToArray();
+    }
+}
+'@
+            }
+            $out += @([KitRestartManager]::Holders([string[]]$held))
+        } catch { }
+        if (-not $out) { $out += "a program Windows would not name (it holds $(Split-Path -Leaf $held[0]) and $($held.Count - 1) more)" }
+    }
+    @($out | Where-Object { $_ } | Select-Object -Unique)
+}
+
+# What to say when a folder of the build stays held ($Why: Remove- or Move-KitFolderRetry's answer). $Holders: who
+# holds it (Get-KitFolderHolders, worked out here when not given); $Sync: the sync client of its folder (Get-KitSyncRoot).
+function Get-KitHeldFolderText([string]$Folder, [string]$Why, [string[]]$Holders = $null, [string]$Sync = $null) {
+    if ($null -eq $Holders) { try { $Holders = @(Get-KitFolderHolders $Folder) } catch { $Holders = @() } }
+    if ($null -eq $Sync) { $Sync = Get-KitSyncRoot $Folder }
+    $text = "Windows would not let the build move or delete $Folder ($Why). Something still has a file in it open"
+    $text += $(if ($Holders) { ': ' + ($Holders -join ', ') + '.' } else { '.' })
+    if ($Sync) {
+        $text += " This folder is in a cloud-sync folder ($Sync), and the sync client opens every new file to upload it: move the kit out of it, to a short folder such as C:\OoT-Coop, and start it there."
+        return $text
+    }
+    $text += (' Most often it is the antivirus scanning the files just unpacked, or an Explorer window or the search indexer. ' +
+        'Close Explorer windows on this kit''s folder; in Windows Security > Virus & threat protection > Manage settings > ' +
+        'Exclusions > Add an exclusion > Folder, add this kit''s folder (another antivirus: its own exclusions); then start it again (what was downloaded is kept).')
+    return $text
+}
+# Is $Game the default game folder of a kit other than $Kit (<that kit>\hookshot\game)?
+function Test-KitOtherKitGame([string]$Kit, [string]$Game) {
+    try {
+        $full = [System.IO.Path]::GetFullPath($Game).TrimEnd('\')
+        $mine = [System.IO.Path]::GetFullPath((Join-Path $Kit 'hookshot\game')).TrimEnd('\')
+    } catch { return $false }
+    if ($full -ieq $mine) { return $false }
+    return ((Split-Path -Leaf $full) -ieq 'game') -and ((Split-Path -Leaf (Split-Path -Parent $full)) -ieq 'hookshot')
+}
+
+# A built game another kit on this PC has, made from the same release, pin and patches as $Kit wants
+# ($Stamp: Get-KitHookshotStamp), so a second kit (unzipped twice or copied) copies it instead of a 10 to 45
+# minute build. $Others: the other kit folders (kits.txt and the kit game-folder.txt names). Returns the game
+# folder, or ''.
+function Find-KitHookshotGameToCopy([string]$Kit, [string]$Stamp, [string[]]$Others) {
+    if (-not $Stamp) { return '' }
+    $mine = [System.IO.Path]::GetFullPath($Kit).TrimEnd('\')
+    foreach ($o in @($Others | Where-Object { $_ } | Sort-Object -Unique)) {
+        try { $of = [System.IO.Path]::GetFullPath($o).TrimEnd('\') } catch { continue }
+        if ($of -ieq $mine) { continue }
+        $g = Join-Path $of 'hookshot\game'
+        if (-not (Get-KitHookshotExe $g)) { continue }
+        $s = Join-Path $g 'coop-built-from.txt'
+        if ((Test-Path -LiteralPath $s) -and [System.IO.File]::ReadAllText($s) -eq $Stamp) { return $g }
+    }
+    return ''
+}
+
+# A built game in the co-op game cache on this PC made from $Stamp (Get-KitHookshotStamp): <cache>\<key>\game, where
+# <cache> is OOT_COOP_HS_CACHE or %LOCALAPPDATA%\oot-coop\hs-cache (tools/hookshot/hs.py fills it; it keeps the last 3
+# builds). Its game folders hold nothing of a player's. Returns the game folder, or ''.
+function Find-KitHookshotCachedGame([string]$Stamp, [string]$Root = '') {
+    if (-not $Stamp) { return '' }
+    if (-not $Root) {
+        $Root = if ($env:OOT_COOP_HS_CACHE) { $env:OOT_COOP_HS_CACHE } elseif ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'oot-coop\hs-cache' } else { '' }
+    }
+    if (-not $Root -or -not (Test-Path -LiteralPath $Root -PathType Container)) { return '' }
+    # (as hs.py's key_of: line endings and trailing space do not count)
+    $norm = { param($t) (@(("$t" -replace "`r", '').Trim() -split "`n") | ForEach-Object { $_.TrimEnd() }) -join "`n" }
+    $want = & $norm $Stamp
+    foreach ($d in @(Get-ChildItem -LiteralPath $Root -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^[0-9a-f]{20}$' })) {
+        $s = Join-Path $d.FullName 'stamp.txt'
+        $g = Join-Path $d.FullName 'game'
+        if (-not (Test-Path -LiteralPath $s -PathType Leaf) -or -not (Get-KitHookshotExe $g)) { continue }
+        if ((& $norm ([System.IO.File]::ReadAllText($s))) -eq $want) { return $g }
+    }
+    return ''
 }
 
 # longshot.exe of a game folder (a builder's game folder has it in bin\), or $null.
@@ -552,6 +736,19 @@ function Get-KitHookshotExe([string]$Game) {
         if (Test-Path -LiteralPath $p) { return $p }
     }
     return $null
+}
+
+# Where a game's longshot_log*.txt, coop.ini and mods\ are: beside longshot.exe, and for a builder's bin\ layout
+# (bin\longshot.exe beside image.bin) the game folder above it, where Longshot writes them (hos_paths.h:
+# hos_game_path_a gives the folder's path then). Each folder once, the game folder first.
+function Get-KitHookshotLogDirs([string]$Exe) {
+    if (-not $Exe) { return @() }
+    $dir = Split-Path -Parent $Exe
+    $up = Split-Path -Parent $dir
+    if ((Split-Path -Leaf $dir) -ieq 'bin' -and $up -and (Test-Path -LiteralPath (Join-Path $up 'image.bin'))) {
+        return @($up, $dir)
+    }
+    return @($dir)
 }
 
 # The stamp the kit's hookshot-build.ps1 writes to the game's coop-built-from.txt: release, pin, patches.
@@ -578,7 +775,10 @@ function Get-KitHookshotStamp([string]$Kit) {
 #   'pin'     the kit moved to another Hookshot release or pin (a full game build, about 15 minutes)
 #   'patches' the co-op patches changed (the game built again, only what changed: a few minutes)
 #   'module'  the co-op module changed, or the puppet pack is missing or stale (co-op and the pack put in
-#             again: seconds to a minute; without a pack the other players cannot be shown)
+#             again: seconds to a minute; without a pack the other players cannot be shown), or the kit's
+#             randomizer (hookshot\OOTRR.txt) is not in the game yet
+#   'offline' only the kit's randomizer is missing and this PC has no internet: the game starts as it is
+#             (play.ps1 says one line), the next start with internet puts it in
 #   ''        nothing: start the game
 function Get-KitHookshotNeed([string]$Kit) {
     $game = Get-KitHookshotGame $Kit
@@ -589,7 +789,7 @@ function Get-KitHookshotNeed([string]$Kit) {
     if (-not $gameHas -and (Test-Path -LiteralPath (Join-Path $Kit 'hookshot\PIN')) -and
         -not (Test-Path -LiteralPath (Join-Path $Kit 'hookshot\hookshot_coop.dll'))) { return 'quarantine' }
     if (-not $exe) {
-        if (Test-Path -LiteralPath (Join-Path $Kit 'hookshot\game-folder.txt')) { return 'moved' }
+        if ($game -ine (Join-Path $Kit 'hookshot\game')) { return 'moved' }
         return 'game'
     }
     $stampFile = Join-Path $game 'coop-built-from.txt'
@@ -612,7 +812,170 @@ function Get-KitHookshotNeed([string]$Kit) {
     }
     $manifest = Join-Path $exeDir 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json'
     if (Test-KitPuppetPackStale $manifest (Join-Path $Kit 'tools\puppet_pack')) { return 'module' }
+    if (Get-KitStaleRandoSeeds $exeDir) { return 'module' }   # (a seed built before the puppet pack: it would abort)
+    if (Test-KitOotrrStale $Kit $exeDir) {
+        # (an offline player: the module step would only try the OOTRR download again, on every start. Everything
+        # else is current and checked above, so the game starts as it is; a zip already downloaded and matching its
+        # pinned SHA-256 needs no network, so that one still goes in)
+        if (-not (Test-KitOotrrZipReady $Kit) -and (Test-KitOffline)) { return 'offline' }
+        return 'module'
+    }
     return ''
+}
+
+# The kit's OOTRR zip (hookshot\OOTRR.txt) is in hookshot\downloads already and matches its pinned SHA-256.
+function Test-KitOotrrZipReady([string]$Kit) {
+    $pin = Join-Path $Kit 'hookshot\OOTRR.txt'
+    if (-not (Test-Path -LiteralPath $pin)) { return $false }
+    $keys = @{}
+    foreach ($line in @(Get-Content -LiteralPath $pin -ErrorAction SilentlyContinue)) {
+        if ($line -match '^\s*([A-Za-z0-9_]+)\s*=\s*(.+?)\s*$') { $keys[$Matches[1]] = $Matches[2] }
+    }
+    if ($keys.windows -notmatch '^[A-Za-z0-9._-]+$' -or -not $keys.windows_sha256) { return $false }
+    $zip = Join-Path $Kit "hookshot\downloads\$($keys.windows)"
+    if (-not (Test-Path -LiteralPath $zip)) { return $false }
+    return (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash -eq $keys.windows_sha256.ToUpperInvariant()
+}
+
+# No internet on this PC: no network adapter up, or github.com (where the kit's downloads are) cannot be reached
+# in a few seconds. OOT_COOP_OFFLINE=1 says offline and =0 online, with no probe (tests). Behind a proxy it is never
+# offline: a direct connect is often blocked there while the kit's downloads (the system proxy) work.
+function Test-KitOffline {
+    if ($env:OOT_COOP_OFFLINE -eq '1') { return $true }
+    if ($env:OOT_COOP_OFFLINE -eq '0') { return $false }
+    if (Test-KitProxied) { return $false }
+    try { if (-not [System.Net.NetworkInformation.NetworkInterface]::GetIsNetworkAvailable()) { return $true } } catch { }
+    $client = New-Object System.Net.Sockets.TcpClient
+    try {
+        $try = $client.BeginConnect('github.com', 443, $null, $null)
+        if (-not $try.AsyncWaitHandle.WaitOne(4000)) { return $true }
+        $client.EndConnect($try)
+        return $false
+    } catch { return $true } finally { $client.Close() }
+}
+
+# github.com goes through a proxy here ($Proxy: the system's, as Invoke-WebRequest uses it; tests pass their own).
+# Can't tell: yes (online is the safe answer, the download is then tried as before).
+function Test-KitProxied($Proxy = $null) {
+    try {
+        if (-not $Proxy) { $Proxy = [System.Net.WebRequest]::GetSystemWebProxy() }
+        if (-not $Proxy) { return $false }
+        $u = [uri]'https://github.com'
+        return (-not $Proxy.IsBypassed($u)) -and ($Proxy.GetProxy($u) -ne $u)
+    } catch { return $true }
+}
+
+# The randomizer the kit brings (hookshot\OOTRR.txt) is not in the game's tools\ootrr yet, or another release is:
+# the module step (hookshot-build.ps1) puts it in. A kit without OOTRR.txt brings none.
+function Test-KitOotrrStale([string]$Kit, [string]$ExeDir) {
+    $pin = Join-Path $Kit 'hookshot\OOTRR.txt'
+    if (-not (Test-Path -LiteralPath $pin)) { return $false }
+    $keys = @{}
+    foreach ($line in @(Get-Content -LiteralPath $pin -ErrorAction SilentlyContinue)) {
+        if ($line -match '^\s*([A-Za-z0-9_]+)\s*=\s*(.+?)\s*$') { $keys[$Matches[1]] = $Matches[2] }
+    }
+    if (-not $keys.release -or -not $keys.windows_sha256) { return $false }
+    $dir = Join-Path $ExeDir 'tools\ootrr'
+    if (-not (Test-Path -LiteralPath (Join-Path $dir 'ootrr.exe'))) { return $true }
+    $stamp = Join-Path $dir 'coop-ootrr.txt'
+    $have = if (Test-Path -LiteralPath $stamp) { (Get-Content -LiteralPath $stamp -TotalCount 1).Trim() } else { '' }
+    return $have -ne "$($keys.release) $($keys.windows_sha256)"
+}
+
+# The resource size tables (romfs\System\Resource\*.rsizetable.zs) of the mods the game loads besides the randomizer's
+# seeds: every folder under mods\ (any depth: the puppet pack is in mods\contents\<title>\coop-puppet) but seeds
+# (randomizer-*), the randomizer's control folder and folders whose name starts with '-' or '_' (Longshot skips them).
+# A mod switched off in the Mods tab is still read: its larger entries do no harm.
+# The game uses one table, the seed's (it sorts last), so a seed must be built with all of these (coop_rando's
+# StageSizeTables does the same in the game).
+function Get-KitOtherSizeTables([string]$ModsDir) {
+    if (-not (Test-Path -LiteralPath $ModsDir)) { return @() }
+    $out = New-Object System.Collections.Generic.List[System.IO.FileInfo]
+    $walk = {
+        param($dir, $depth)
+        foreach ($d in @(Get-ChildItem -LiteralPath $dir -Directory -ErrorAction SilentlyContinue)) {
+            if ($d.Name -match '^[-_]') { continue }
+            if ($depth -eq 0 -and ($d.Name -like 'randomizer-*' -or $d.Name -eq 'oot-remake-randomizer')) { continue }
+            if ($d.Name -eq 'romfs') {
+                foreach ($f in @(Get-ChildItem -LiteralPath (Join-Path $d.FullName 'System\Resource') -File -Filter '*.rsizetable.zs' -ErrorAction SilentlyContinue)) { $out.Add($f) }
+                continue
+            }
+            if ($depth -lt 3) { & $walk $d.FullName ($depth + 1) }
+        }
+    }
+    & $walk $ModsDir 0
+    return $out.ToArray()
+}
+
+# Built randomizer seeds (mods\randomizer-*\coop-seed.txt) whose size table is older than another mod's (a puppet
+# pack made again): the game aborts while it loads with such a seed on, so they are built again (Update-KitRandoSeeds).
+function Get-KitStaleRandoSeeds([string]$ExeDir) {
+    $mods = Join-Path $ExeDir 'mods'
+    $others = @(Get-KitOtherSizeTables $mods)
+    if (-not $others) { return @() }
+    $newest = ($others | Measure-Object -Property LastWriteTimeUtc -Maximum).Maximum
+    $stale = @()
+    foreach ($d in @(Get-ChildItem -LiteralPath $mods -Directory -Filter 'randomizer-*' -ErrorAction SilentlyContinue)) {
+        if (-not (Test-Path -LiteralPath (Join-Path $d.FullName 'coop-seed.txt'))) { continue }
+        $own = @(Get-ChildItem -LiteralPath (Join-Path $d.FullName 'romfs\System\Resource') -File -Filter '*.rsizetable.zs' -ErrorAction SilentlyContinue)
+        # (no table of its own: the seed's build time, coop-seed.txt, so it is not built again at every start)
+        $built = if ($own) { ($own | Measure-Object -Property LastWriteTimeUtc -Minimum).Minimum } else { (Get-Item -LiteralPath (Join-Path $d.FullName 'coop-seed.txt')).LastWriteTimeUtc }
+        if ($built -lt $newest) { $stale += $d.Name }
+    }
+    return $stale
+}
+
+# Builds the stale seeds again with the kit's OOTRR (a few seconds each), beside every other mod's size table, from
+# the seed file the game kept (mods\oot-remake-randomizer\<seed folder>.ootrr): host and guest seeds alike. A seed
+# that cannot be built again is removed (the game builds it at its next start and asks for a restart), never left to
+# abort the game. The lines to show.
+function Update-KitRandoSeeds([string]$ExeDir) {
+    $lines = @()
+    $mods = Join-Path $ExeDir 'mods'
+    $control = Join-Path $mods 'oot-remake-randomizer'
+    $ootrr = Join-Path $ExeDir 'tools\ootrr\ootrr.exe'
+    $romfs = @((Join-Path $ExeDir 'romfs'), (Join-Path (Split-Path -Parent $ExeDir) 'romfs')) | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'System') } | Select-Object -First 1
+    foreach ($name in @(Get-KitStaleRandoSeeds $ExeDir)) {
+        $seedDir = Join-Path $mods $name
+        $seedFile = Join-Path $control "$name.ootrr"
+        $stage = Join-Path $control '_seed-build'
+        $ok = $false
+        if ((Test-Path -LiteralPath $ootrr) -and $romfs -and (Test-Path -LiteralPath $seedFile)) {
+          try {
+            if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
+            $n = 0
+            foreach ($t in @(Get-KitOtherSizeTables $mods)) {
+                $to = Join-Path $stage "$n\romfs\System\Resource"
+                New-Item -ItemType Directory -Force -Path $to | Out-Null
+                Copy-Item -LiteralPath $t.FullName -Destination (Join-Path $to $t.Name)
+                $n++
+            }
+            $ErrorActionPreference = 'Continue'
+            & $ootrr build $seedFile $romfs $stage $name --host hookshot *> (Join-Path $control 'last-build.txt')
+            $code = $LASTEXITCODE
+            $ErrorActionPreference = 'Stop'
+            $built = Join-Path $stage $name
+            if ($code -eq 0 -and (Test-Path -LiteralPath (Join-Path $built 'coop-seed.txt'))) {
+                $preset = Join-Path $seedDir 'coop-rando.txt'
+                if (Test-Path -LiteralPath $preset) { Copy-Item -LiteralPath $preset -Destination (Join-Path $built 'coop-rando.txt') }
+                Remove-Item -LiteralPath $seedDir -Recurse -Force
+                Move-Item -LiteralPath $built -Destination $seedDir
+                $ok = $true
+            }
+          } catch {
+            $ok = $false   # (a copy or move that failed: removed below, as when it cannot be built)
+          } finally {
+            $ErrorActionPreference = 'Stop'
+            if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue }
+          }
+        }
+        if ($ok) { $lines += "randomizer: seed $name built again for the new puppet pack" }
+        else {
+            if (Test-Path -LiteralPath $seedDir) { Remove-Item -LiteralPath $seedDir -Recurse -Force }
+            $lines += "randomizer: seed $name removed (could not build it again for the new puppet pack): the game builds it at its next start"
+        }
+    }
+    return $lines
 }
 
 # A puppet pack to make (again) before the game starts: none there, or one Get-PuppetPackHint calls old (no sound,
@@ -628,15 +991,21 @@ function Test-KitPuppetPackStale([string]$Manifest, [string]$ToolDir) {
 # and stopped: these say what is missing and that the kit sets it up.
 # $HsOnly: a Hookshot-only kit ("Start OoT Co-op.bat"), which has no emulator and no Build-Hookshot-Coop.bat.
 function Get-KitHookshotNeedText([string]$Need, [string]$Game = '', [bool]$HsOnly = $false) {
-    if ($HsOnly -and $Need -eq 'game') { return 'The game isn''t set up yet. The kit builds the co-op game on this PC from your own game file, once (about 20 to 40 minutes; the PC stays usable).' }
+    # (kit-friction: players who had built Longshot asked whether it could be used, or moved it into the kit; one asked
+    # where 60 GB goes. Sizes measured on a built kit, 2026-11-14)
+    if ($HsOnly -and $Need -eq 'game') {
+        return ('The game isn''t set up yet. The kit builds the co-op game on this PC from your own game file, once (about 20 to 40 minutes; the PC stays usable).' + "`n" +
+            'It is Longshot with co-op built into its source, so a Longshot you built yourself is never used as it is, and moving one into this folder does nothing (the setup can copy your saves from it).' + "`n" +
+            'Disk: about 60 GB free while it builds; about 37 GB stay (the game 35 GB, 24 GB of it your game''s unpacked files; 2 GB of build files that keep updates quick).')
+    }
     if ($HsOnly -and $Need -eq 'moved') { return "The co-op game this kit built is not in $Game any more (moved or deleted). Moved it? Answer n, move it back there, then start again. Otherwise it is built again (about 20 to 40 minutes)." }
     switch ($Need) {
         # (the tester behind this was an emulator player joining a Hookshot host with Join-Hookshot.bat)
         'game' { 'Playing on the emulator? Use Join.bat (or Host.bat): emulator and Hookshot players can be in the same game.' + "`n" + 'Hookshot isn''t set up yet. The kit builds the co-op Hookshot game on this PC from your own game, once (about 20 to 40 minutes; the PC stays usable).' }
         'moved' { "The co-op Hookshot game this kit built is not in $Game any more (moved or deleted). Moved it? Answer n, then run Build-Hookshot-Coop.bat -Out ""<its new folder>"" (seconds). Otherwise it is built again (about 20 to 40 minutes)." }
-        'pin' { 'Your Hookshot game was built for another Hookshot version than this kit uses: it is built again (about 15 minutes; the PC stays usable).' }
-        'patches' { 'This update changes the Hookshot game a little: updating it (a few minutes).' }
-        'module' { 'Putting the updated co-op and the puppet pack into the Hookshot game (seconds to a minute).' }
+        'pin' { 'Your co-op game was built for another game version than this kit uses: it is built again (about 15 minutes; the PC stays usable).' }
+        'patches' { 'This update changes the co-op game a little: updating it (a few minutes).' }
+        'module' { 'Putting the updated co-op and the puppet pack into the co-op game (seconds to a minute).' }
         'quarantine' { Get-KitHookshotQuarantineText }
         default { '' }
     }
@@ -660,7 +1029,7 @@ function Get-KitHookshotQuarantineText {
         'Antivirus most likely took it away as a false alarm. To get it back (SETUP.md, "Antivirus took hookshot_coop.dll"):',
         '  1. Windows Security > Virus & threat protection > Protection history: the hookshot_coop.dll entry > Actions > Restore.',
         '  2. Add an exclusion so it stays: Virus & threat protection settings > Exclusions > Add or remove exclusions >',
-        '     Add an exclusion > Folder: this kit''s folder (and the Hookshot game''s folder if it is elsewhere).',
+        '     Add an exclusion > Folder: this kit''s folder (and the co-op game''s folder if it is elsewhere).',
         '  Another antivirus: restore it from its quarantine and allow the kit folder the same way, or unzip the kit again.',
         'Then start this again.'
     ) -join "`n"
@@ -709,4 +1078,100 @@ function Get-PuppetPackHint([string]$Manifest, [string]$ToolDir) {
     } catch {
         return "Puppet pack: coop_puppet.json could not be read. $script:KitPackRemake"
     }
+}
+
+# --- A Longshot the player built themselves (kit-friction) ---------------------------------------
+# The kit never plays a Longshot the player built: co-op needs its own build of the Longshot release in hookshot\PIN with
+# co-op's patches in its source. But such a game folder gives two things: its saves (copied into the co-op game), and,
+# through its builder's home, Longshot's own downloads (the same tool zips, by SHA-256) and, when it is the same release,
+# its compiled objects (Longshot keys each by its source, flags and headers, never by folder: a copy can only hit or miss).
+# Nothing is ever written into the player's folders: everything is copied out.
+
+# The folder the game's image.bin is in (its saves are in user\ beside it): <game>\bin (a builder's game folder, its
+# launcher longshot.exe on top) or <game>. '' when $Folder is no Longshot game.
+function Get-KitLongshotImageDir([string]$Folder) {
+    if (-not $Folder) { return '' }
+    foreach ($d in (Join-Path $Folder 'bin'), $Folder) {
+        if (Test-Path -LiteralPath (Join-Path $d 'image.bin')) { return $d }
+    }
+    return ''
+}
+
+# What longshot_version.txt in a game folder says: @{ version = 'v3.0.0-rc.3' (or a nightly's name); home = the builder's
+# home ('' when not named) }. $null when there is none.
+function Get-KitLongshotGameInfo([string]$Folder) {
+    foreach ($f in (Join-Path $Folder 'longshot_version.txt'), (Join-Path $Folder 'bin\longshot_version.txt')) {
+        if (-not (Test-Path -LiteralPath $f)) { continue }
+        $info = @{ version = ''; home = '' }
+        foreach ($line in Get-Content -LiteralPath $f) {
+            if ($line -match '^\s*version\s*=\s*(.+?)\s*$') { $info.version = $Matches[1] }
+            # (builder=<home>\versions\<tag>\LongshotBuilder\LongshotBuilder.exe: the home is above versions\)
+            elseif ($line -match '^\s*builder\s*=\s*(.+?)\\versions\\[^\\]+\\') { $info.home = $Matches[1] }
+        }
+        return $info
+    }
+    return $null
+}
+
+# Longshot Builder homes on this PC: the one the game folder names, LONGSHOT_SETUP_BASE, %LOCALAPPDATA%\LongshotBuilder.
+# Each @{ path; version (versions\current.txt, '' when unknown) }, only the ones that have downloads\ or objcache\.
+function Get-KitLongshotHomes([string]$Named = '', [string]$LocalAppData = $env:LOCALAPPDATA) {
+    $seen = @()
+    $homes = @()
+    foreach ($h in @($Named, $env:LONGSHOT_SETUP_BASE, $(if ($LocalAppData) { Join-Path $LocalAppData 'LongshotBuilder' }))) {
+        if (-not $h) { continue }
+        $full = [System.IO.Path]::GetFullPath($h).TrimEnd('\')
+        if ($seen -contains $full.ToLowerInvariant()) { continue }
+        $seen += $full.ToLowerInvariant()
+        if (-not ((Test-Path -LiteralPath (Join-Path $full 'downloads')) -or (Test-Path -LiteralPath (Join-Path $full 'objcache')))) { continue }
+        $cur = Join-Path $full 'versions\current.txt'
+        $v = if (Test-Path -LiteralPath $cur) { "$(Get-Content -LiteralPath $cur -TotalCount 1)".Trim() } else { '' }
+        $homes += @{ path = $full; version = $v }
+    }
+    $homes
+}
+
+# A tool zip Longshot's setup already downloaded (downloads\<sha256>.zip in a home), copied to $To when $To is not there:
+# its SHA-256 is its name, and Get-Download checks it again. Returns the home it came from, or ''.
+function Copy-KitLongshotDownload([object[]]$Homes, [string]$Sha256, [string]$To) {
+    if (Test-Path -LiteralPath $To) { return '' }
+    foreach ($h in $Homes) {
+        $from = Join-Path $h.path "downloads\$($Sha256.ToLowerInvariant()).zip"
+        if (-not (Test-Path -LiteralPath $from)) { continue }
+        try {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $To) | Out-Null
+            Copy-Item -LiteralPath $from -Destination "$To.part" -Force
+            Move-Item -LiteralPath "$To.part" -Destination $To -Force
+            return $h.path
+        } catch { Remove-Item -LiteralPath "$To.part" -Force -ErrorAction SilentlyContinue }
+    }
+    return ''
+}
+
+# The saves of a Longshot game (user\save\<account>\slot_NN, account.sav, option.sav beside its image.bin) copied into
+# the co-op game's. A slot or file the co-op game has already is never overwritten (said, and left). The co-op guest
+# folders (<account>-coop) are not copied. Returns the lines to say.
+# (The account folder's name is the same in every Longshot: its one user's id is a constant, host/nn_applet.c user_uid,
+# 5a3c9e1f0b7d2468 0000000000000001, which no co-op patch touches; the test kits' games use that folder. Still on the
+# in-game check list: the copied slots show on the title.)
+function Copy-KitLongshotSaves([string]$FromImageDir, [string]$ToImageDir) {
+    $from = Join-Path $FromImageDir 'user\save'
+    if (-not (Test-Path -LiteralPath $from)) { return @("No saves in $FromImageDir\user\save: nothing to copy.") }
+    $copied = @(); $kept = @()
+    foreach ($acct in @(Get-ChildItem -LiteralPath $from -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -notlike '*-coop' })) {
+        $to = Join-Path $ToImageDir "user\save\$($acct.Name)"
+        foreach ($e in @(Get-ChildItem -LiteralPath $acct.FullName -Force -ErrorAction SilentlyContinue)) {
+            if (-not ($e.Name -like 'slot_*' -or $e.Name -in @('account.sav', 'option.sav'))) { continue }
+            $dest = Join-Path $to $e.Name
+            if (Test-Path -LiteralPath $dest) { $kept += $e.Name; continue }
+            New-Item -ItemType Directory -Force -Path $to | Out-Null
+            Copy-Item -LiteralPath $e.FullName -Destination $dest -Recurse -Force
+            if ($e.Name -like 'slot_*') { $copied += $e.Name }
+        }
+    }
+    $say = @()
+    if ($copied) { $say += "Copied your Longshot save slot(s) $($copied -join ', ') into the co-op game (your Longshot's own saves are not changed)." }
+    else { $say += 'No save slots copied.' }
+    if ($kept) { $say += "  Already in the co-op game, so left as they are: $($kept -join ', ')." }
+    $say
 }

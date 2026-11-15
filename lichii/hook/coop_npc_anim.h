@@ -105,4 +105,40 @@ private:
     std::unordered_map<std::uint64_t, Entry> entries_;
 };
 
+// jitter-b (0.11 playtest: townspeople "extremely jittery and choppy"). A copy's frame was set
+// each time a new owner sample found it more than kFrameSlack off: about 13 sets a second
+// ("67 frames set" in 5 s, walk 20261114-094808), and for a walking child the copy stayed
+// ~383 frames off the whole time, so the sets never took and only made its pose jump. Now:
+// a set at most once in kResyncMs per copy, and after kMaxMisses sets that left it about as
+// far off as before, none for that animation: the game's own playback runs it.
+inline constexpr std::uint64_t kResyncMs = 1000;
+inline constexpr int kMaxMisses = 2;
+
+class Resync {
+public:
+    enum class Verdict {
+        in_step,   // within kFrameSlack: nothing to do
+        set,       // set its frame now
+        wait,      // off, but set less than kResyncMs ago
+        give_up,   // this check gave up on it (log once)
+        given_up,  // its sets did not take: left to its own playback
+    };
+    // Copy `key` plays `name` and is `gap` frames off its owner (FrameGap; infinity when its
+    // frame cannot be read), at game frame time `now_ms`.
+    Verdict Check(std::uint64_t key, std::string_view name, float gap, std::uint64_t now_ms);
+    // Only these copies are kept (the rest left or are ours).
+    void Keep(const std::unordered_set<std::uint64_t>& keys);
+    std::size_t Size() const { return entries_.size(); }
+
+private:
+    struct Entry {
+        std::string name;
+        std::uint64_t set_ms = 0;  // the last set; 0 none
+        float gap_at_set = 0.0f;
+        int misses = 0;
+        bool given_up = false;
+    };
+    std::unordered_map<std::uint64_t, Entry> entries_;
+};
+
 } // namespace CoopNpcAnim

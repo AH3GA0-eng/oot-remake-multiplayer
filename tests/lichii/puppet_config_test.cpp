@@ -3,6 +3,7 @@
 // Hookshot (lichii/hook/coop_puppet_config.h).
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <map>
 #include <string>
 #include <vector>
@@ -78,6 +79,14 @@ TEST_CASE("puppet config: actor, test puppet and animation log switches") {
     CHECK_FALSE(From({{"LICHII_COOP_TEST_PUPPET", "0"}}, false).debug);
 }
 
+TEST_CASE("puppet config: the native player test is off unless asked for") {
+    CHECK_FALSE(From({}, false).native_player);
+    CHECK_FALSE(From({{"LICHII_COOP_NATIVE_PLAYER", "0"}}, false).native_player);
+    std::vector<std::string> log;
+    CHECK(From({{"LICHII_COOP_NATIVE_PLAYER", "1"}}, false, &log).native_player);
+    CHECK(log.back().find("NATIVE PLAYER TEST") != std::string::npos);
+}
+
 TEST_CASE("puppet config: a pack without tunic puppets turns the tunics off (Hookshot proof 3)") {
     const auto with = [](std::optional<bool> has, std::vector<std::string>* log = nullptr, int* asked = nullptr,
                          std::map<std::string, std::string> vars = {}) {
@@ -120,4 +129,26 @@ TEST_CASE("puppet config: the manifest names tunic puppets or only the plain one
     CHECK(CoopPuppet::PackHasTunicPuppets(tunics));
     CHECK(CoopPuppet::PackHasTunicPuppets(R"({"actor": "CoopPuppet_Adult_Red"})"));
     CHECK_FALSE(CoopPuppet::PackHasTunicPuppets(""));
+}
+
+TEST_CASE("puppet config: the pack's item copies, unless LICHII_COOP_LOOK_ITEMS=0") {
+    const auto look = [] {
+        CoopPuppet::LookItems items;
+        items.actors = {"Weapon_Shield_Hylian"};
+        items.copies = 8;
+        return items;
+    };
+    const auto env = [](std::string value) {
+        return [value](const char* name) { return std::string(name) == "LICHII_COOP_LOOK_ITEMS" ? value : std::string(); };
+    };
+    std::vector<std::string> log;
+    auto s = CoopPuppetConfig::Settings(env(""), [] { return false; }, &log, {}, look);
+    CHECK(s.look_copies == 8);
+    CHECK(s.look_items == std::vector<std::string>{"Weapon_Shield_Hylian"});
+    CHECK(std::any_of(log.begin(), log.end(), [](const std::string& l) { return l.find("coloured items") != std::string::npos; }));
+    s = CoopPuppetConfig::Settings(env("0"), [] { return false; }, nullptr, {}, look);
+    CHECK(s.look_copies == 0);
+    CHECK(s.look_items.empty());
+    s = CoopPuppetConfig::Settings(env(""), [] { return false; }, nullptr);
+    CHECK(s.look_copies == 0);
 }

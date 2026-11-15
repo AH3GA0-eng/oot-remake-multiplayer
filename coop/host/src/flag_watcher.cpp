@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <limits>
 
+#include "coop/host/map_drop_log.hpp"
 #include "coop/protocol/codec.hpp"
 
 namespace coop::host {
@@ -253,6 +254,7 @@ void FlagWatcher::reset() {
 }
 
 std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
+  const MapDropBecause because("the flag watcher");  // (a write of ours in the drop log, minimap-b)
   std::vector<Outgoing> out;
   const unsigned step = ticks_.step();  // 1/60 s that passed (issue 106)
   frames_ += step;
@@ -354,6 +356,8 @@ void FlagWatcher::handle(FlagStore& store, Incoming& message, Table& answers) {
     from_ = reset->player_number;
     received_kind_ = ReceivedKind::reset;
     recording_ = true;
+    map_drop_log().note("FLAG_RESET from the host (its save load), " + std::to_string(reset->flags.size()) + " flags");
+    const MapDropBecause because("the flag watcher: the host's save-load reset");
     apply_reset(store, reset->flags);
     recording_ = false;
     reset_seen_ = true;
@@ -502,12 +506,15 @@ void FlagWatcher::end_window(FlagStore& store, std::vector<Outgoing>& out) {
   if (role_ == FlagRole::host && !changed.empty()) {
     ++stats_.host_resets;
     reset_seen_ = true;
+    map_drop_log().note("our save load: FLAG_RESET sent, " + std::to_string(changed.size()) + " flags");
     push_list<protocol::FlagReset>(out, changed, stats_.entries_unsent);
   }
 }
 
 void FlagWatcher::apply_snapshot(FlagStore& store) {
   holding_ = false;
+  map_drop_log().note("join snapshot applied, " + std::to_string(snapshot_.size()) + " flags");
+  const MapDropBecause because("the flag watcher: the join snapshot");
   for (const auto& [key, entry] : snapshot_) {
     if (!takes(entry)) {
       // not shared here, or a pickup's 0
@@ -677,8 +684,45 @@ void FlagWatcher::add(FlagStore& store, const FlagEntry& delta) {
   restate_.insert(key);
 }
 
+const std::vector<FlagKey>& FlagWatcher::diff_keys() {
+  audit_from_ = static_cast<std::size_t>(-1);
+  const std::vector<FlagKey>& list = shared_.keys();
+  if (!events_) return list;
+  // The whole list: the first time (the baseline), when a flag joined the
+  // list, in a load window (a save load or a room load moves many flags, and
+  // the rules of the window look at each), and when events were lost.
+  if (!baselined_ || wrote_all_ || listed_ != list.size() || window_ || settling()) {
+    baselined_ = true;
+    wrote_all_ = false;
+    listed_ = list.size();
+    wrote_.clear();
+    ++stats_.full_reads;
+    return list;
+  }
+  visit_.clear();
+  for (const FlagKey& key : wrote_) {
+    if (shared_.contains(key)) visit_.push_back(key);
+  }
+  stats_.event_reads += visit_.size();
+  for (const FlagKey& key : restate_) {
+    if (!wrote_.contains(key) && shared_.contains(key)) visit_.push_back(key);
+  }
+  wrote_.clear();
+  audit_from_ = visit_.size();
+  if (!list.empty()) {
+    const std::size_t slice = (list.size() + kAuditFrames - 1) / kAuditFrames;
+    for (std::size_t i = 0; i < slice; ++i) {
+      audit_next_ = audit_next_ >= list.size() ? 0 : audit_next_;
+      visit_.push_back(list[audit_next_++]);
+    }
+  }
+  return visit_;
+}
+
 void FlagWatcher::diff(FlagStore& store, Table& changes) {
-  for (const FlagKey key : shared_.keys()) {
+  const std::vector<FlagKey>& keys = diff_keys();
+  for (std::size_t n = 0; n < keys.size(); ++n) {
+    const FlagKey key = keys[n];
     std::optional<FlagEntry> now = store.read(key);
     if (!now) {
       ++stats_.read_failures;
@@ -688,6 +732,8 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
     const auto [it, first] = last_.try_emplace(key, *now);
     if (first) continue;  // the first read is the baseline
     if (it->second == *now && !restate_.contains(key)) continue;
+    // The audit's read of a flag found a change that no event had named.
+    if (n >= audit_from_ && it->second != *now) ++stats_.event_misses;
     if (window_ && loading_ && !moved_ && key.kind == FlagKeyKind::named && !one_way_.contains(key) &&
         went_back(it->second, *now)) {
       // The title screen (no scene) and saved progress going back: a save
@@ -746,15 +792,22 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
     it->second = *now;
     // Not while loading: a load putting the save's 0 back is the load
     // revert's (below, the group's value), not a drop of the game's own.
-    if (!loading_ && before.kind == protocol::FlagKind::boolean && before.value != 0 &&
-        now->value == 0 && store.is_one_way(key)) {
+    // A one-way UInt (a dungeon's floors, ItemRule::bits) loses no bit: the
+    // floors it had are put back with any new one.
+    const bool bool_drop = before.kind == protocol::FlagKind::boolean && before.value != 0 && now->value == 0;
+    const bool bits_drop = before.kind == protocol::FlagKind::uint32 && now->kind == protocol::FlagKind::uint32 &&
+                           (before.value & ~now->value) != 0;
+    if (!loading_ && (bool_drop || bits_drop) && store.is_one_way(key)) {
       // A map or compass the game took back (issue 146: both players opened
       // the Deku Tree's map chest and neither kept the map). Never right for
       // a one-way Bool: put it back, send nothing.
-      if (store.write(before)) {
+      const MapDropBecause because("the flag watcher: one-way restore (issue 146)");
+      FlagEntry back = before;
+      if (bits_drop) back.value = before.value | now->value;
+      if (store.write(back)) {
         ++stats_.one_way_restores;
         ++stats_.applied;
-        it->second = before;
+        it->second = before;  // a new floor in `back` goes out next frame as a change
         if (one_way_told_.insert(key).second) one_way_restored_.push_back(key);
         continue;
       }
@@ -791,6 +844,28 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
     }
     if (now->value == 0 && (pickups_.contains(key) || one_way_.contains(key)) && !restate_.contains(key)) {
       ++stats_.pickup_resets;  // the game reset it (a scene change): ours only
+      continue;
+    }
+    if (const auto cap = max_caps_.find(key);
+        cap != max_caps_.end() && !restate_.contains(key) && before.kind == protocol::FlagKind::int32 &&
+        now->kind == protocol::FlagKind::int32 && as_int(now->value) > as_int(before.value) &&
+        as_int(now->value) > cap->second && store.is_max(key)) {
+      // Past the cap (cap_max: a second pickup of a boss's one heart
+      // container): put back, never sent.
+      FlagEntry back = before;
+      back.key = key;
+      back.value = as_bits((std::max)(as_int(before.value), std::int64_t{cap->second}));
+      if (store.write_exact(back)) {  // exact: the max rule would keep the higher
+        ++stats_.max_caps_kept;
+        ++stats_.applied;
+        it->second = back;
+        pending_.erase(key);
+        continue;
+      }
+      // Not put back now: still never sent. The value before stays the one
+      // seen, so the next frame sees the rise again and tries again.
+      ++stats_.write_failures;
+      it->second = before;
       continue;
     }
     if (!restate_.contains(key) && before.kind == protocol::FlagKind::int32 &&

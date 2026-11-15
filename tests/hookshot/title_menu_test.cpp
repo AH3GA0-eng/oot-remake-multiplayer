@@ -181,9 +181,14 @@ TEST_CASE("title menu: Host and Join in plain words, nothing about ports or pass
     h.players = 1;
     auto s = PlainStatus(h);
     REQUIRE(s.size() >= 3);
-    CHECK(s[0] == "Send this code to your friends:");
+    // First: the invite code is the way to host (it is on the clipboard); the other rows come after.
+    CHECK(s[0] == "Invite code copied to your clipboard. Send it to your friends, or pick another way to host below.");
     CHECK(s[1] == "ABCDE-FGHJK");
-    CHECK(s[2].find("copied") != std::string::npos);
+    CHECK(s[2] == "Waiting for your friends to join...");
+    h.copied = false;
+    CHECK(PlainStatus(h)[0].find("Send it to your friends") != std::string::npos);
+    CHECK(PlainStatus(h)[2].find("Copy the code again") != std::string::npos);
+    h.copied = true;
     h.players = 3;
     CHECK(PlainStatus(h).back() == "2 friend(s) joined.");
     h.invite.clear();
@@ -238,128 +243,171 @@ TEST_CASE("title menu: the kit's options as the launcher's variables") {
     CHECK(KitVariables("color =\r\n").empty());
 }
 
-TEST_CASE("title menu: after Join the host's save loads in one step") {
-    AutoLoad a;
-    CHECK_FALSE(a.active());
+namespace {
+SaveWait::Input Look(bool ready, bool title, bool coming = false, bool in_game = false) {
+    SaveWait::Input in;
+    in.host_save_ready = ready;
+    in.save_coming = coming;
+    in.title_up = title;
+    in.in_game = in_game;
+    return in;
+}
+// Steps every 100 ms over [from, to) with the same look.
+void Run(SaveWait& a, std::uint64_t from, std::uint64_t to, const SaveWait::Input& in) {
+    for (std::uint64_t ms = from; ms < to; ms += 100) a.Step(ms, in);
+}
+}  // namespace
+
+TEST_CASE("title menu: after Join the title says what the host's save does, and presses nothing") {
+    // Tick has nothing that presses: only rearm (the host's save offered again).
+    static_assert(sizeof(SaveWait::Tick) == sizeof(bool));
+    SaveWait a;
+    CHECK_FALSE(a.watching());
     CHECK(a.Line().empty());
     a.Start(1000, "Saria");
     CHECK(a.active());
-    CHECK(a.Line() == "Getting Saria's save...");
-    // waiting for the save: no presses
-    auto t = a.Step(2000, false, true, false);
-    CHECK_FALSE(t.press_a);
-    CHECK_FALSE(t.focus_continue);
-    // the save is here, the title is up: Continue shown (a first-time joiner's title opened without it), the
-    // cursor to it, then A pressed now and then
-    t = a.Step(3000, true, true, false);
-    CHECK(a.Line() == "Loading Saria's save...");
-    t = a.Step(3050, true, true, false);
-    CHECK(t.reveal_continue);
-    CHECK_FALSE(t.focus_continue);
-    CHECK_FALSE(t.press_a);
-    CHECK_FALSE(a.Step(3100, true, true, false).reveal_continue);   // once
-    t = a.Step(3300, true, true, false);
-    CHECK(t.focus_continue);
-    CHECK_FALSE(t.press_a);   // (the cursor first)
-    t = a.Step(3600, true, true, false);
-    CHECK(t.press_a);
-    CHECK_FALSE(t.focus_continue);   // once only
-    t = a.Step(3450, true, false, false);   // held 120 ms, then let go (the title may be gone: the file list)
-    CHECK_FALSE(t.press_a);
-    t = a.Step(3300 + 120 + AutoLoad::kPressEveryMs + 150, true, false, false);
-    t = a.Step(3300 + 2 * AutoLoad::kPressEveryMs, true, false, false);
-    int presses = 0;
-    for (std::uint64_t ms = 4000; ms < 10000; ms += 20) {
-        presses += a.Step(ms, true, false, false).press_a ? 1 : 0;
-    }
-    CHECK(presses > 10);   // (A held in a few short presses, about every 1.2 s)
-    CHECK(presses < 60);
-    // Link is in the game: done, nothing more pressed, no line
-    a.Step(10000, true, false, true);
-    CHECK_FALSE(a.active());
+    CHECK(a.Line() == "Getting Saria's save: don't load a save yet...");
+    CHECK_FALSE(a.Step(2000, Look(false, true)).rearm);
+    // the save is in and played from: the player loads a save themselves
+    CHECK_FALSE(a.Step(3000, Look(true, true)).rearm);
+    CHECK(a.watching());
+    CHECK_FALSE(a.active());   // (the title's co-op rows work again)
+    CHECK(a.Line() == "Saria's save is in: load any save.");
+    Run(a, 3100, 60000, Look(true, true));   // (nothing changes while they look at the title)
+    CHECK(a.Line() == "Saria's save is in: load any save.");
+    // they load it: Link in the game, done
+    a.Step(60100, Look(true, false, false, true));
+    CHECK_FALSE(a.watching());
     CHECK(a.Line().empty());
-    CHECK_FALSE(a.Step(10500, true, false, false).press_a);
 }
 
-TEST_CASE("title menu: no host's save, or no way in: a plain line and no endless presses") {
-    AutoLoad a;
+TEST_CASE("title menu: only title time with nothing coming counts toward late, a late save is still announced") {
+    SaveWait a;
     a.Start(0, "");
-    a.Step(AutoLoad::kWaitSaveMs + 1, false, true, false);
+    // a menu over the title, a file list, a slow PC (no title steps): no wait counted
+    Run(a, 100, 3 * SaveWait::kWaitSaveMs, Look(false, false));
+    CHECK(a.active());
+    // a transfer under way on the title: no wait counted either
+    Run(a, 3 * SaveWait::kWaitSaveMs, 5 * SaveWait::kWaitSaveMs, Look(false, true, true));
+    CHECK(a.active());
+    // a hitch (a 10 s gap between two looks) counts as 1 s
+    a.Step(10 * SaveWait::kWaitSaveMs, Look(false, true));
+    CHECK(a.active());
+    // a minute of title time with nothing coming: late
+    Run(a, 10 * SaveWait::kWaitSaveMs, 11 * SaveWait::kWaitSaveMs + 200, Look(false, true));
+    CHECK(a.waiting());
     CHECK_FALSE(a.active());
-    CHECK(a.Line() == "your friend's save did not arrive: Continue plays your own save, New Game starts a new one.");
-    AutoLoad b;
-    b.Start(0, "Saria");
-    b.Step(100, true, true, false);
-    b.Step(100 + AutoLoad::kLoadMs + 1, true, true, false);
-    CHECK_FALSE(b.active());
-    CHECK(b.Line() == "Press Continue to play Saria's save.");
-    CHECK_FALSE(b.Step(100 + AutoLoad::kLoadMs + 500, true, true, false).press_a);
+    CHECK(a.Line() == "your friend's save is not here yet (the chat says Success when it is): Continue plays your "
+                      "own save, New Game starts a new one.");
+    // parts start coming: back to "Getting"
+    a.Step(11 * SaveWait::kWaitSaveMs + 300, Look(false, true, true));
+    CHECK(a.active());
+    // ... and in
+    a.Step(11 * SaveWait::kWaitSaveMs + 400, Look(true, true));
+    CHECK(a.Line() == "your friend's save is in: load any save.");
 }
 
-TEST_CASE("title menu: a host with no save: AutoLoad stops waiting at once and presses nothing (hostsave-fix)") {
-    AutoLoad a;
+TEST_CASE("title menu: a host with no save: the wait stops at once (hostsave-fix)") {
+    SaveWait a;
     a.Start(0, "Saria");
-    CHECK(a.Line() == "Getting Saria's save...");
-    a.Step(500, false, true, false);
+    a.Step(500, Look(false, true));
     a.NoSave();
-    CHECK_FALSE(a.active());
+    CHECK_FALSE(a.watching());
     CHECK(a.Line() == "Saria has no save yet: New Game starts one, Continue plays your own.");
-    for (std::uint64_t t = 600; t < AutoLoad::kWaitSaveMs * 2; t += 100) {
-        CHECK_FALSE(a.Step(t, false, true, false).press_a);
-    }
-    // While waiting, nothing is pressed: the game stays on the player's own folder until the save is whole.
-    AutoLoad b;
+    // late: "no save" still ends it
+    SaveWait b;
     b.Start(0, "Saria");
-    for (std::uint64_t t = 100; t < AutoLoad::kWaitSaveMs; t += 100) {
-        const auto tick = b.Step(t, false, true, false);
-        CHECK_FALSE(tick.press_a);
-        CHECK_FALSE(tick.reveal_continue);
-        CHECK_FALSE(tick.focus_continue);
-    }
-    b.NoSave();   // (only while waiting)
-    AutoLoad c;
+    Run(b, 100, SaveWait::kWaitSaveMs + 2000, Look(false, true));
+    CHECK(b.waiting());
+    b.NoSave();
+    CHECK_FALSE(b.watching());
+    // once the save is in, "no save" changes nothing
+    SaveWait c;
     c.Start(0, "Saria");
-    c.Step(100, true, true, false);
+    c.Step(100, Look(true, true));
     c.NoSave();
-    CHECK(c.active());
+    CHECK(c.watching());
 }
 
-TEST_CASE("title menu: the player picking a file while the host's save comes stops AutoLoad (hostsave-fix)") {
+TEST_CASE("title menu: the player picking a file while the host's save comes: no line, their choice") {
     // Only the player's own A on a title button that is not a co-op row counts.
-    CHECK(AutoLoad::PlayerPicksFile(true, false, AutoLoad::kContinue, false));
-    CHECK(AutoLoad::PlayerPicksFile(true, false, 0, false));
-    CHECK_FALSE(AutoLoad::PlayerPicksFile(true, true, AutoLoad::kContinue, false));   // AutoLoad's own press
-    CHECK_FALSE(AutoLoad::PlayerPicksFile(true, false, 4, true));                    // Host / Join / Settings
-    CHECK_FALSE(AutoLoad::PlayerPicksFile(true, false, -1, false));                  // no button focused
-    CHECK_FALSE(AutoLoad::PlayerPicksFile(false, false, AutoLoad::kContinue, false)); // not the title
-    AutoLoad a;
+    CHECK(SaveWait::PlayerPicksFile(true, 0, false));
+    CHECK(SaveWait::PlayerPicksFile(true, 2, false));
+    CHECK_FALSE(SaveWait::PlayerPicksFile(true, 4, true));    // Host / Join / Settings
+    CHECK_FALSE(SaveWait::PlayerPicksFile(true, -1, false));  // no button focused
+    CHECK_FALSE(SaveWait::PlayerPicksFile(false, 0, false));  // not the title
+    SaveWait a;
     a.Start(0, "Saria");
     CHECK(a.waiting());
     a.PlayerChose();
-    CHECK_FALSE(a.active());
-    CHECK(a.Line().empty());   // (their choice: no "did not arrive" line)
-    CHECK_FALSE(a.Step(AutoLoad::kWaitSaveMs + 1, true, true, false).press_a);
-    // Once loading the host's save, the player's A changes nothing.
-    AutoLoad b;
+    CHECK(a.chose());
+    CHECK_FALSE(a.active());   // (the title's rows work)
+    CHECK(a.Line().empty());   // (their choice: no line)
+    // their file loads: Link in the game, done
+    a.Step(3000, Look(true, false, false, true));
+    CHECK_FALSE(a.watching());
+    // once the save is in, a pick changes nothing
+    SaveWait b;
     b.Start(0, "Saria");
-    b.Step(100, true, true, false);
-    CHECK_FALSE(b.waiting());
+    b.Step(100, Look(true, true));
     b.PlayerChose();
-    CHECK(b.active());
+    CHECK_FALSE(b.chose());
 }
 
-TEST_CASE("title menu: with no Continue under the cursor AutoLoad presses nothing on the title") {
-    CHECK_FALSE(AutoLoad::PressAllowed(true, 0));    // New Game focused (Continue hidden: the cursor could not go there)
-    CHECK_FALSE(AutoLoad::PressAllowed(true, -1));   // nothing focused
-    CHECK_FALSE(AutoLoad::PressAllowed(true, 4));    // one of our rows
-    CHECK(AutoLoad::PressAllowed(true, AutoLoad::kContinue));
-    CHECK(AutoLoad::PressAllowed(false, 0));         // the title gone: the file list takes the A
-    // and AutoLoad then gives up with the plain line, no endless presses
-    AutoLoad a;
+TEST_CASE("title menu: backing out of their own file to the title offers the host's save again (Revirie 0.10.1)") {
+    SaveWait a;
     a.Start(0, "Saria");
-    a.Step(10, true, true, false);
-    a.Step(AutoLoad::kLoadMs + 20, true, true, false);
-    CHECK(a.Line() == "Press Continue to play Saria's save.");
+    a.Step(100, Look(false, true));
+    a.PlayerChose();
+    // the title still up a moment after the A (TitleUp's 300 ms): nothing yet
+    for (std::uint64_t ms = 200; ms < 3000; ms += 100) CHECK_FALSE(a.Step(ms, Look(false, true)).rearm);
+    // their file list (the title gone), then back on the title
+    Run(a, 3000, 5000, Look(false, false));
+    bool rearm = false;
+    std::uint64_t ms = 5000;
+    for (; ms < 5000 + SaveWait::kBackMs + 500 && !rearm; ms += 100) rearm = a.Step(ms, Look(false, true)).rearm;
+    CHECK(rearm);
+    CHECK(ms >= 5000 + SaveWait::kBackMs);
+    CHECK(a.active());
+    CHECK(a.Line() == "Getting Saria's save: don't load a save yet...");
+    // A New Game the player went on with: in the game, done, nothing re-armed
+    SaveWait b;
+    b.Start(0, "Saria");
+    b.PlayerChose();
+    Run(b, 100, 2000, Look(false, false));
+    b.Step(2000, Look(false, false, false, true));
+    CHECK_FALSE(b.watching());
+    CHECK_FALSE(b.Step(9000, Look(false, true)).rearm);
+}
+
+TEST_CASE("title menu: the host drops while the save is awaited: it stops waiting and says so") {
+    SaveWait::Input off = Look(false, true);
+    off.session_live = false;
+    // a join still connecting (never on yet) is not a drop
+    SaveWait a;
+    a.Start(0, "Saria");
+    Run(a, 100, 3000, off);
+    CHECK(a.active());
+    // on, then off: host gone
+    Run(a, 3000, 4000, Look(false, true));
+    a.Step(4000, off);
+    CHECK_FALSE(a.watching());
+    CHECK(a.Line() == "Saria's game ended before the save came: Continue plays your own save, New Game starts a "
+                      "new one.");
+    // late: the same
+    SaveWait late;
+    late.Start(0, "Saria");
+    Run(late, 100, SaveWait::kWaitSaveMs + 2000, Look(false, true));
+    late.Step(SaveWait::kWaitSaveMs + 3000, off);
+    CHECK_FALSE(late.watching());
+    // once the save is in, a drop does not take the line away (the folder is already the host's)
+    SaveWait in;
+    in.Start(0, "Saria");
+    in.Step(100, Look(true, true));
+    SaveWait::Input gone = Look(true, true);
+    gone.session_live = false;
+    in.Step(200, gone);
+    CHECK(in.Line() == "Saria's save is in: load any save.");
 }
 
 TEST_CASE("Same network or VPN: the addresses a friend can use, and the line Join takes") {
@@ -391,7 +439,7 @@ TEST_CASE("Same network or VPN: the addresses a friend can use, and the line Joi
     CHECK(std::get<JoinAddress>(t).server == "26.12.34.56:27510");
     CHECK(std::get<JoinAddress>(t).password == "abcdefghijklmnopqrst");
     const auto lines = LanLines(a, 27510, "abcdefghijklmnopqrst", true);
-    REQUIRE(lines.size() == 5);
+    REQUIRE(lines.size() >= 4);   // (and the firewall line on Windows)
     CHECK(lines[0].find("Radmin VPN") != std::string::npos);
     CHECK(lines[1] == line);
     CHECK(lines[2].find("copied") != std::string::npos);
@@ -402,43 +450,162 @@ TEST_CASE("Same network or VPN: the addresses a friend can use, and the line Joi
     CHECK(none[1].find("VPN program") != std::string::npos);
 }
 
-TEST_CASE("title menu: voice chat is off unless turned on: on writes ptt, off takes the line away") {
+TEST_CASE("Same network and VPN: two rows, the VPN found by its card's name") {
+    using namespace CoopTitleMenu;
+    CHECK(VpnLabel("Radmin VPN | Famatech Radmin VPN Ethernet Adapter") == "Radmin VPN");
+    CHECK(VpnLabel("Hamachi | LogMeIn Hamachi Virtual Ethernet Adapter") == "Hamachi");
+    CHECK(VpnLabel("ham0") == "Hamachi");
+    CHECK(VpnLabel("ZeroTier One [8056c2e21c000001] | ZeroTier Virtual Port") == "ZeroTier");
+    CHECK(VpnLabel("ztc3qb6hok") == "ZeroTier");
+    CHECK(VpnLabel("Tailscale | Tailscale Tunnel") == "Tailscale");
+    CHECK(VpnLabel("tailscale0") == "Tailscale");
+    CHECK(VpnLabel("wg0") == "WireGuard");
+    CHECK(VpnLabel("Office | WireGuard Tunnel") == "WireGuard");
+    CHECK(VpnLabel("Wi-Fi | Intel(R) Wi-Fi 6 AX201 160MHz").empty());
+    CHECK(VpnLabel("Ethernet | Realtek PCIe GbE Family Controller").empty());
+    CHECK(VpnLabel("eth0").empty());
+    CHECK(VpnLabel("wlan0").empty());
+    CHECK(VpnLabel("").empty());
+
+    // A ZeroTier card on a private range is a VPN, not the home network; the card with the router comes first.
+    const LanSplit split = SplitLan({
+        {"127.0.0.1", "Loopback Pseudo-Interface 1", false},
+        {"192.168.56.1", "Ethernet 2 | VirtualBox Host-Only Ethernet Adapter", false},
+        {"192.168.1.20", "Wi-Fi | Intel(R) Wi-Fi 6", true},
+        {"10.147.17.5", "ZeroTier One [8056c2e21c000001] | ZeroTier Virtual Port", false},
+        {"26.12.34.56", "Radmin VPN | Famatech Radmin VPN Ethernet Adapter", false},
+        {"169.254.7.7", "Ethernet 3", false},
+        {"192.168.1.20", "Wi-Fi | Intel(R) Wi-Fi 6", true},
+    });
+    REQUIRE(split.home.size() == 2);
+    CHECK(split.home[0].address == "192.168.1.20");
+    CHECK(split.home[1].address == "192.168.56.1");
+    REQUIRE(split.vpn.size() == 2);
+    CHECK(split.vpn[0].address == "10.147.17.5");
+    CHECK(split.vpn[0].label == "ZeroTier");
+    CHECK(split.vpn[1].label == "Radmin VPN");
+    // No card names (the system did not say): the address range, as before.
+    const LanSplit bare = SplitLan({{"25.1.2.3", "", false}, {"192.168.0.9", "", false}, {"8.8.8.8", "", false}});
+    REQUIRE(bare.vpn.size() == 1);
+    CHECK(bare.vpn[0].label == "Hamachi");
+    REQUIRE(bare.home.size() == 1);
+    CHECK(bare.home[0].address == "192.168.0.9");
+    // A card name it does not know (renamed, another language): the VPN range still decides. Linux's container and
+    // VM bridges are left out.
+    const LanSplit named = SplitLan({{"26.1.2.3", "Mein Netzwerk | Unbekannter Adapter", false},
+                                     {"172.17.0.1", "docker0", false},
+                                     {"192.168.122.1", "virbr0", false},
+                                     {"192.168.1.30", "enp3s0", false}});
+    REQUIRE(named.vpn.size() == 1);
+    CHECK(named.vpn[0].label == "Radmin VPN");
+    REQUIRE(named.home.size() == 1);
+    CHECK(named.home[0].address == "192.168.1.30");
+
+    const auto home = HomeLines(split.home, 27510, "pw", true);
+    CHECK(home[0].find("home network") != std::string::npos);
+    CHECK(home[1] == "192.168.1.20:27510 pw");
+    CHECK(home[2].find("copied") != std::string::npos);
+    CHECK(home[3] == "If that does not work, try another of this PC's addresses in its place: 192.168.56.1");
+    const auto vpn = VpnLines(split.vpn, 27510, "pw", false);
+    CHECK(vpn[0].find("ZeroTier") != std::string::npos);
+    CHECK(vpn[1] == "10.147.17.5:27510 pw");
+    CHECK(vpn[2].find("exactly as it is") != std::string::npos);
+    CHECK(vpn[3] ==
+          "If that does not work, try another of this PC's addresses in its place: 26.12.34.56 (Radmin VPN)");
+    const auto no_vpn = VpnLines({}, 27510, "pw", false);
+    CHECK(no_vpn[0] == "No VPN found.");
+    CHECK(HomeLines({}, 27510, "pw", false)[0].find("No home-network address") != std::string::npos);
+    CHECK(HostHeadline(true) ==
+          "Invite code copied to your clipboard. Send it to your friends, or pick another way to host below.");
+}
+
+TEST_CASE("title menu: players on the map are on unless turned off: off writes 0, on takes the line away") {
+    Options o;
+    CHECK(o.map_players);
+    CHECK(o.map_names);
+    std::string c, opt;
+    o.map_players = false;
+    o.map_names = false;
+    o.Write(c, opt);
+    CHECK(IniGet(opt, "LICHII_COOP_MAP") == "0");
+    CHECK(IniGet(opt, "LICHII_COOP_MAP_NAMES") == "0");
+    const Options back = Options::Read("", opt);
+    CHECK_FALSE(back.map_players);
+    CHECK_FALSE(back.map_names);
+    int seen = 0;
+    for (const auto& [k, v] : o.Environment()) {
+        if (k == "LICHII_COOP_MAP" || k == "LICHII_COOP_MAP_NAMES") {
+            CHECK(v == "0");
+            ++seen;
+        }
+    }
+    CHECK(seen == 2);
+    o.map_players = o.map_names = true;
+    o.Write(c, opt);
+    CHECK_FALSE(IniGet(opt, "LICHII_COOP_MAP").has_value());
+    CHECK_FALSE(IniGet(opt, "LICHII_COOP_MAP_NAMES").has_value());
+    CHECK(Options::Read("", "LICHII_COOP_MAP=1\r\n").map_players);
+}
+
+TEST_CASE("title menu: voice chat is off unless turned on: on writes open, ptt stays ptt, off takes the line away") {
     Options o;
     CHECK_FALSE(o.voice);
+    CHECK_FALSE(o.voice_ptt);
     std::string c, opt = "LICHII_COOP_VOICE=ptt\r\n";
     o.Write(c, opt);
     CHECK_FALSE(IniGet(opt, "LICHII_COOP_VOICE").has_value());
     CHECK_FALSE(Options::Read("", opt).voice);
+    // turned on: open mic
     o.voice = true;
     o.Write(c, opt);
-    CHECK(IniGet(opt, "LICHII_COOP_VOICE") == "ptt");
+    CHECK(IniGet(opt, "LICHII_COOP_VOICE") == "open");
     CHECK(Options::Read("", opt).voice);
-    // a mode written by hand stays as it is while voice stays on
-    std::string open = "LICHII_COOP_VOICE=open\r\n";
-    Options::Read("", open).Write(c, open);
-    CHECK(IniGet(open, "LICHII_COOP_VOICE") == "open");
+    CHECK_FALSE(Options::Read("", opt).voice_ptt);
+    // the Voice mode row's push to talk
+    o.voice_ptt = true;
+    o.Write(c, opt);
+    CHECK(IniGet(opt, "LICHII_COOP_VOICE") == "ptt");
+    // an older file's ptt (and on, 1) read back
+    CHECK(Options::Read("", "LICHII_COOP_VOICE=ptt\r\n").voice_ptt);
+    CHECK(Options::Read("", "LICHII_COOP_VOICE=PTT\r\n").VoiceMode() == "ptt");
+    CHECK(Options::Read("", "LICHII_COOP_VOICE=on\r\n").VoiceMode() == "ptt");   // an older file's on: as it meant
+    CHECK(Options::Read("", "LICHII_COOP_VOICE=1\r\n").voice_ptt);
+    CHECK(Options::Read("", "LICHII_COOP_VOICE=open-mic\r\n").VoiceMode() == "open");
+    CHECK(Options::Read("", "LICHII_COOP_VOICE=Open\r\n").VoiceMode() == "open");
     CHECK_FALSE(Options::Read("", "LICHII_COOP_VOICE=off\r\n").voice);
-    // this run's variable: ptt, or unset for off
-    bool seen = false;
-    for (const auto& [k, v] : o.Environment()) {
-        if (k == "LICHII_COOP_VOICE") {
-            seen = true;
-            CHECK(v == "ptt");
+    // this run's variable: the mode, or unset for off
+    auto env_of = [](const Options& x) {
+        for (const auto& [k, v] : x.Environment()) {
+            if (k == "LICHII_COOP_VOICE") {
+                return v;
+            }
         }
+        return std::string("(none)");
+    };
+    CHECK(env_of(o) == "ptt");
+    o.voice_ptt = false;
+    CHECK(env_of(o) == "open");
+    o.voice = false;
+    CHECK(env_of(o).empty());
+    // the push-to-talk key the Voice mode row names
+    CHECK(Options{}.voice_key == "V");
+    CHECK(Options::Read("", "LICHII_COOP_VOICE_KEY=b\r\n").voice_key == "B");
+    CHECK(Options::Read("", "LICHII_COOP_VOICE_KEY=0x14\r\n").voice_key == "your key");
+}
+
+TEST_CASE("title menu: a fresh kit has voice off, and turning it on gives open mic") {
+    for (const char* file : {"", "# LICHII_COOP_VOICE=open\r\n", "LICHII_COOP_VOICE=off\r\n"}) {
+        CAPTURE(file);
+        Options o = Options::Read("", file);
+        CHECK_FALSE(o.voice);       // no line (or off): voice off
+        CHECK_FALSE(o.voice_ptt);   // and no push to talk waiting
+        o.voice = true;             // the menu's row turned on
+        CHECK(o.VoiceMode() == "open");
+        std::string c, opt = file;
+        o.Write(c, opt);
+        CHECK(IniGet(opt, "LICHII_COOP_VOICE") == "open");
+        CHECK_FALSE(Options::Read("", opt).voice_ptt);
     }
-    CHECK(seen);
-    // "open" by hand counts for this run too (Host / Join set the variable), not ptt in its place
-    const auto by_hand = Options::Read("", "LICHII_COOP_VOICE=Open\r\n");
-    CHECK(by_hand.VoiceMode() == "open");
-    bool open_seen = false;
-    for (const auto& [k, v] : by_hand.Environment()) {
-        if (k == "LICHII_COOP_VOICE") {
-            open_seen = true;
-            CHECK(v == "open");
-        }
-    }
-    CHECK(open_seen);
-    CHECK(Options::Read("", "LICHII_COOP_VOICE=on\r\n").VoiceMode() == "ptt");
 }
 
 TEST_CASE("title menu: the host's player count, 2 to 16, read and written") {

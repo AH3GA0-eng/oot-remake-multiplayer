@@ -99,7 +99,11 @@ param(
     # (tools\autotest\groups.py) each need their own, as they need their own -Port.
     [string]$Pipe = "coop-auto",
     # Hookshot: print the hookshot.py command and stop (nothing started, no run folder made).
-    [switch]$DryRun
+    [switch]$DryRun,
+    # Hookshot: run in test lane 1 or 2 (tools\autotest\lanes.py, docs/testing.md "Two test lanes"): the lane's
+    # pair (coop-kit\ls\laneN-A/-B), port, pipes and run folders unless given, and its lock (laneN.lock) for the run.
+    # Two runs in different lanes go at the same time; a game build (build-game.lock) stops both.
+    [ValidateRange(0, 2)][int]$Lane = 0
 )
 $ErrorActionPreference = 'Stop'
 
@@ -170,11 +174,6 @@ if ($Runtime -eq 'hookshot') {
     # hs_steps.py gives it to every game without a 'password' line, and a hookshot.py that knows
     # --password (every session has one) gets it there.
     if ($ServerPassword) { $env:OOT_COOP_TEST_PASSWORD = $ServerPassword }
-    if (-not $HookshotA) { if (-not $kitRoot) { throw "no coop-kit folder found; pass -HookshotA and -HookshotB" }; $HookshotA = "$kitRoot\hookshot-A" }
-    if (-not $HookshotB) { $HookshotB = "$(Split-Path (Resolve $HookshotA))\hookshot-B" }
-    if (-not $PSBoundParameters.ContainsKey('Shots')) { $Shots = Resolve "$(Split-Path (Resolve $HookshotA))\shots-hookshot" }
-    $out = Join-Path $Shots "$Scenario\$(Get-Date -Format yyyyMMdd-HHmmss)"
-    if (-not $DryRun) { New-Item -ItemType Directory -Force $out | Out-Null }
     $py = @()
     if ($Python) { $py = @($Python) } else {
         for ($d = Get-Item $here; $d; $d = $d.Parent) {
@@ -183,6 +182,21 @@ if ($Runtime -eq 'hookshot') {
         }
         if (-not $py.Count) { if (Get-Command py -ErrorAction SilentlyContinue) { $py = @('py', '-3') } else { $py = @('python') } }
     }
+    $pyArgs = @($py | Select-Object -Skip 1)
+    if ($Lane) {
+        $info = (& $py[0] @pyArgs -I "$here\lanes.py" info --lane $Lane --json | Out-String) | ConvertFrom-Json
+        if (-not $info) { throw "lanes.py info --lane $Lane failed" }
+        if (-not $HookshotA) { $HookshotA = $info.a }
+        if (-not $HookshotB) { $HookshotB = $info.b }
+        if (-not $PSBoundParameters.ContainsKey('Port')) { $Port = [int]$info.port }
+        if (-not $PSBoundParameters.ContainsKey('Pipe')) { $Pipe = $info.pipe }
+        if (-not $PSBoundParameters.ContainsKey('Shots')) { $Shots = $info.shots }
+    }
+    if (-not $HookshotA) { if (-not $kitRoot) { throw "no coop-kit folder found; pass -HookshotA and -HookshotB" }; $HookshotA = "$kitRoot\hookshot-A" }
+    if (-not $HookshotB) { $HookshotB = "$(Split-Path (Resolve $HookshotA))\hookshot-B" }
+    if (-not $PSBoundParameters.ContainsKey('Shots')) { $Shots = Resolve "$(Split-Path (Resolve $HookshotA))\shots-hookshot" }
+    $out = Join-Path $Shots "$Scenario\$(Get-Date -Format yyyyMMdd-HHmmss)"
+    if (-not $DryRun) { New-Item -ItemType Directory -Force $out | Out-Null }
     if ($steps) {
         if ($NoCoop) { throw "-NoCoop: a steps file needs the server" }
         $a = @($py | Select-Object -Skip 1) + @('-I', "$here\hs_steps.py", 'run', '--steps', $steps,
@@ -210,13 +224,41 @@ if ($Runtime -eq 'hookshot') {
     Write-Host "hookshot: $($py[0]) $($a -join ' ')"
     if ($DryRun -and $steps) { & $py[0] @a; return }   # hs_steps.py --dry-run prints the plan
     if ($DryRun) { Write-Host "hookshot: dry run, nothing started"; return }
-    & $py[0] @a
-    $code = $LASTEXITCODE
+    $laneOwner = "run.ps1 $Scenario (pid $PID)"
+    if ($Lane) {
+        # Waits up to 30 min for the lane (another run in it, or a game build); held by this PowerShell's pid, so a
+        # killed run's lock goes stale by itself.
+        & $py[0] @pyArgs -I "$here\lanes.py" lock acquire --lane $Lane --owner $laneOwner --pid $PID --wait 1800
+        if ($LASTEXITCODE) { throw "lane $Lane is not free (lanes.py lock status)" }
+    }
+    try {
+        # Your own Link's tunic files follow the colour each game will wear and send, on every start, as the
+        # kit's launcher does (colour-agree; tools\puppet_pack\self_tunic.py = kit-paths.ps1 Set-KitSelfTunic):
+        # files left by an earlier start in another colour would show you in that colour on your own screen.
+        $switchList = @($Switches | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().Trim('"', "'") } | Where-Object { $_ })
+        foreach ($x in 'A', 'B') {
+            $pair = Resolve $(if ($x -eq 'A') { $HookshotA } else { $HookshotB })
+            $sw = @{}   # a plain switch, then the pair's own 'A:' / 'B:' one wins (hookshot.py --env)
+            foreach ($e in $switchList) { if ($e -notmatch '^[AB]:' -and $e -match '^(.+?)=(.*)$') { $sw[$Matches[1]] = $Matches[2] } }
+            foreach ($e in $switchList) { if ($e -match "^${x}:(.+?)=(.*)$") { $sw[$Matches[1]] = $Matches[2] } }
+            $pack = Join-Path $pair 'mods\contents\0400486024DEC000\coop-puppet'
+            if (-not (Test-Path -LiteralPath (Join-Path $pack 'coop_puppet.json'))) { continue }
+            $selfArgs = @('-I', (Join-Path (Split-Path $here) 'puppet_pack\self_tunic.py'), '--pack', $pack,
+                '--color', "$($sw['LICHII_COOP_COLOR'])", '--tunics', "$($sw['LICHII_COOP_TUNICS'])",
+                '--options', (Join-Path $pair 'coop-options.ini'), '--coop-ini', (Join-Path $pair 'coop.ini'))
+            $got = (& $py[0] @pyArgs @selfArgs | Out-String).Trim()
+            Write-Host "hookshot: game $x's own tunic files: $(if ($got) { $got } else { "none (the game's green)" })"
+        }
+        & $py[0] @a
+        $code = $LASTEXITCODE
+    } finally {
+        if ($Lane) { & $py[0] @pyArgs -I "$here\lanes.py" lock release --lane $Lane --owner $laneOwner | Out-Null }
+    }
     $out
     if ($code) { exit $code }
     return
 }
-if ($DryRun -or $PSBoundParameters.ContainsKey('Pipe')) { throw "-DryRun and -Pipe are for -Runtime hookshot" }
+if ($DryRun -or $Lane -or $PSBoundParameters.ContainsKey('Pipe')) { throw "-DryRun, -Lane and -Pipe are for -Runtime hookshot" }
 
 # The folders a kit's emulator really uses: qt-config.ini can point nand/sdmc/load/dump anywhere
 # (kits copied from another kit keep that kit's absolute paths).

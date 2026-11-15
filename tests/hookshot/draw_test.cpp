@@ -3,11 +3,15 @@
 // through a canvas that records the calls.
 #include <doctest/doctest.h>
 
+#include <algorithm>
+#include <cmath>
 #include <string>
 #include <vector>
 
+#include "coop_dbno_draw.h"
 #include "coop_draw.h"
 #include "coop_hud_layout.h"
+#include "coop_map_page.h"
 
 namespace {
 
@@ -446,21 +450,432 @@ TEST_CASE("hookshot draw: the mouse finds the cheats panel's rows where they are
     CHECK_FALSE(CoopDraw::CheatsRowAt(1280, 720, v, texts[3].x, texts[5].y + box.line + 5));  // below the last row
 }
 
-TEST_CASE("hookshot draw: the title's Multiplayer prompt (the menu is Hookshot's Multiplayer tab)") {
+TEST_CASE("hookshot draw: a title screen line, with or without the Minus button") {
     {
         Canvas c(1280, 720);
         CoopDraw::Scene s;
-        s.title = CoopDraw::TitleView{"Multiplayer"};
+        s.title = CoopDraw::TitleView{"Loading Saria's save..."};   // (the host's save loading: no button)
         CHECK(CoopDraw::Wanted(s));
         CoopDraw::Draw(c.d, s, GameLook());
         bool said = false;
         for (const auto& t : c.Of("text")) {
-            said |= t.text == "Multiplayer";
+            said |= t.text == "Loading Saria's save...";
         }
         CHECK(said);
+        CHECK(c.Of("circle").empty());   // no button: nothing to press
+    }
+    {
+        Canvas c(1280, 720);
+        CoopDraw::Scene s;
+        s.title = CoopDraw::TitleView{"Multiplayer", true};
+        CoopDraw::Draw(c.d, s, GameLook());
         CHECK(c.Of("circle").size() == 2);   // the Minus button
     }
     CoopDraw::Scene none;
     none.title = CoopDraw::TitleView{};
     CHECK_FALSE(CoopDraw::Wanted(none));
+}
+
+namespace {
+
+// A font file with only the tables MetricsOf reads: hhea (ascender, descender), head (unitsPerEm) and OS/2 (version,
+// sCapHeight); os2_version 0: no OS/2 table.
+std::vector<std::uint8_t> FakeFont(int ascender, int descender, int em, int os2_version, int cap) {
+    std::vector<std::uint8_t> b;
+    auto put = [&](std::uint64_t v, int n) {   // (n up to 6: the 0 padding; 64 bits so v >> 40 is defined)
+        for (int i = n - 1; i >= 0; --i) {
+            b.push_back(static_cast<std::uint8_t>(v >> (8 * i)));
+        }
+    };
+    const int tables = os2_version ? 3 : 2;
+    put(0x4F54544Fu, 4), put(static_cast<std::uint32_t>(tables), 2), put(0, 6);
+    const std::uint32_t dir_end = 12 + 16 * static_cast<std::uint32_t>(tables);
+    put(0x68686561u, 4), put(0, 4), put(dir_end, 4), put(36, 4);             // hhea
+    put(0x68656164u, 4), put(0, 4), put(dir_end + 36, 4), put(54, 4);        // head
+    if (os2_version) {
+        put(0x4F532F32u, 4), put(0, 4), put(dir_end + 90, 4), put(96, 4);   // OS/2
+    }
+    std::vector<std::uint8_t> hhea(36), head(54), os2(96);
+    auto set = [](std::vector<std::uint8_t>& t, std::size_t at, int v) {
+        t[at] = static_cast<std::uint8_t>((v >> 8) & 0xFF), t[at + 1] = static_cast<std::uint8_t>(v & 0xFF);
+    };
+    set(hhea, 4, ascender), set(hhea, 6, descender);
+    set(head, 18, em);
+    set(os2, 0, os2_version), set(os2, 88, cap);
+    b.insert(b.end(), hhea.begin(), hhea.end());
+    b.insert(b.end(), head.begin(), head.end());
+    if (os2_version) {
+        b.insert(b.end(), os2.begin(), os2.end());
+    }
+    return b;
+}
+
+}  // namespace
+
+TEST_CASE("hookshot draw: a font's metrics from its hhea, head and OS/2 tables") {
+    const auto m = CoopDraw::MetricsOf(FakeFont(880, -120, 1000, 4, 700));
+    CHECK(m.ascent == doctest::Approx(0.88f));
+    CHECK(m.cap == doctest::Approx(0.70f));
+    const auto no_cap = CoopDraw::MetricsOf(FakeFont(800, -200, 1000, 1, 0));   // OS/2 version 1: no sCapHeight
+    CHECK(no_cap.ascent == doctest::Approx(0.8f));
+    CHECK(no_cap.cap == doctest::Approx(0.7f));   // Longshot's 0.7 em
+    const auto no_os2 = CoopDraw::MetricsOf(FakeFont(1900, -500, 2048, 0, 0));
+    CHECK(no_os2.ascent == doctest::Approx(1900.0f / 2400.0f));
+    CHECK(no_os2.cap == doctest::Approx(0.7f * 2048 / 2400.0f).epsilon(0.01));
+    const CoopDraw::FontMetrics plain;
+    for (const auto& junk : {std::vector<std::uint8_t>{}, std::vector<std::uint8_t>(40, 0xFF), FakeFont(0, 0, 1000, 4, 700)}) {
+        const auto j = CoopDraw::MetricsOf(junk);
+        CHECK(j.ascent == plain.ascent);
+        CHECK(j.cap == plain.cap);
+    }
+}
+
+TEST_CASE("hookshot draw: the title's Minus button and its word share a middle at every window shape") {
+    const CoopDraw::TitleView t{"Multiplayer", true};
+    const CoopDraw::FontMetrics fonts[] = {{}, {0.88f, 0.70f}, {0.75f, 0.52f}, {0.97f, 0.70f}};
+    // 16:9 (720p, 1080p, 4K), 16:10, 21:9 and 32:9 ultrawide, a 4:3 window, a small window.
+    const float sizes[][2] = {{1280, 720}, {1920, 1080}, {3840, 2160}, {1920, 1200}, {2560, 1080}, {5120, 1440}, {1024, 768}, {640, 480}};
+    for (const auto& f : fonts) {
+        for (const auto& wh : sizes) {
+            const auto b = CoopDraw::TitleAt(wh[0], wh[1], t, f);
+            const float caps_mid = b.text_top + f.ascent * b.px - 0.5f * f.cap * b.px;   // baseline minus half the capitals
+            CHECK(std::abs(caps_mid - b.cy) < 0.01f);
+            // The 16:9 picture's units: the same look, only bigger or smaller.
+            const float u = std::min(wh[0] / 16.0f, wh[1] / 9.0f) * 9.0f / 720.0f;
+            const float left = (wh[0] - 16.0f * u * 80.0f) / 2;
+            CHECK(b.cx - b.r == doctest::Approx(left + 48.0f * u));
+            CHECK(b.text_x - (b.cx + b.r) == doctest::Approx(10.0f * u));   // the word after the button, a gap
+            CHECK(b.cy + b.r < wh[1]);                                       // on the window
+        }
+    }
+    // Without the button the word starts where the button would.
+    const auto plain = CoopDraw::TitleAt(1920, 1080, CoopDraw::TitleView{"Loading Saria's save..."}, {});
+    const auto with = CoopDraw::TitleAt(1920, 1080, t, {});
+    CHECK(plain.text_x == doctest::Approx(with.cx - with.r));
+    CHECK(plain.text_top == doctest::Approx(with.text_top));
+}
+
+TEST_CASE("hookshot draw: the title prompt draws its word where TitleAt says, on the button's middle") {
+    Canvas c(1920, 1080);
+    CoopDraw::Scene s;
+    s.title = CoopDraw::TitleView{"Multiplayer", true};
+    auto look = GameLook();
+    look.regular_metrics = {0.86f, 0.66f};
+    CoopDraw::Draw(c.d, s, look);
+    const auto b = CoopDraw::TitleAt(1920, 1080, *s.title, look.regular_metrics);
+    const auto circles = c.Of("circle");
+    REQUIRE(circles.size() == 2);
+    CHECK(circles[0].x == doctest::Approx(b.cx));
+    CHECK(circles[0].y == doctest::Approx(b.cy));
+    bool word = false;
+    for (const auto& t : c.Of("text")) {
+        if (t.text == "Multiplayer" && t.rgba == CoopDraw::Rgba(255, 255, 255, 255)) {   // (the fill, not its shadow)
+            word = true;
+            CHECK(t.x == doctest::Approx(b.text_x));
+            CHECK(t.y == doctest::Approx(b.text_top));
+            CHECK(t.px == doctest::Approx(b.px));
+        }
+    }
+    CHECK(word);
+}
+
+// Down but not out (hookshot/src/coop_dbno_draw.h).
+TEST_CASE("dbno ring: the dots lit follow the revive, the caption says who") {
+    using CoopDbnoDraw::Lit;
+    CHECK(Lit(0.0f) == 0);
+    CHECK(Lit(-1.0f) == 0);
+    CHECK(Lit(0.5f) == CoopDbnoDraw::kDots / 2);
+    CHECK(Lit(0.99f) == CoopDbnoDraw::kDots - 1);
+    CHECK(Lit(1.0f) == CoopDbnoDraw::kDots);
+    CHECK(Lit(7.0f) == CoopDbnoDraw::kDots);
+    using View = CoopDbno::View;
+    CHECK(CoopDbnoDraw::Caption(View{View::Kind::downed, "", 0, 0, false}) == "You are down");
+    CHECK(CoopDbnoDraw::Caption(View{View::Kind::downed, "Saria", 0, 0, false}) == "Saria is reviving you");
+    CHECK(CoopDbnoDraw::Caption(View{View::Kind::reviving, "Saria", 0, 0, false}) == "Hold A to revive Saria");
+    CHECK(CoopDbnoDraw::Caption(View{View::Kind::reviving, "Saria", 0, 0, true}) == "Reviving Saria");
+}
+
+TEST_CASE("dbno ring: drawn with the clock when the scene has it, and wanted for it alone") {
+    CoopDraw::Scene s;
+    CHECK_FALSE(CoopDraw::Wanted(s));
+    s.dbno = CoopDbno::View{CoopDbno::View::Kind::downed, "", 32'000'000, 0.25f, false};
+    CHECK(CoopDraw::Wanted(s));
+    Canvas c(1280, 720);
+    CoopDraw::Draw(c.d, s);
+    // The backing disc and the ring's dots, a quarter of them lit.
+    CHECK(c.Of("circle").size() == 1 + CoopDbnoDraw::kDots);
+    std::size_t lit = 0;
+    for (const auto& call : c.Of("circle")) {
+        lit += call.rgba == CoopDraw::Rgba(120, 230, 120, 255) ? 1 : 0;
+    }
+    CHECK(lit == CoopDbnoDraw::kDots / 4);
+    std::vector<std::string> texts;
+    for (const auto& call : c.Of("text")) {
+        texts.push_back(call.text);
+    }
+    CHECK(texts == std::vector<std::string>{"0:32", "You are down"});
+}
+
+namespace {
+
+// A player at (x, z) in HyruleField.
+coop::overlay::map::Player OnMap(std::uint8_t n, float x, float z, std::uint32_t rgb) {
+    coop::overlay::map::Player p;
+    p.number = n;
+    p.position = {x, 0, z};
+    p.scene = "HyruleField";
+    p.rgb = rgb;
+    return p;
+}
+
+// An unturned pane `size` across at (x, y) from the layout's middle (y up), scaled by `k`.
+coop::overlay::map::Pane Pane(float size, float x, float y, float k = 1.0f) {
+    coop::overlay::map::Pane p;
+    p.w = p.h = size;
+    p.m = {k, 0, 0, 0, k, 0, 0, 0, 1, x, y, 0};
+    return p;
+}
+
+// The game's minimap as its layout has it: the frame 552 across at (1536, -690), the area picture (960) under
+// it at half size: 480 layout units for the map's 240 m, so 1 picture pixel a metre at 1920 x 1080.
+coop::overlay::map::MinimapPanes GameMinimap() {
+    coop::overlay::map::MinimapPanes mm;
+    mm.picture = Pane(960, 1536, -690, 0.5f);
+    mm.window = Pane(552, 1536, -690);
+    return mm;
+}
+
+coop::overlay::map::Capture Field() {
+    coop::overlay::map::Capture field;
+    field.location = "HyruleField";
+    field.height = 240;
+    field.floors.push_back({});
+    return field;
+}
+
+}  // namespace
+
+TEST_CASE("hookshot draw: the others on the minimap where the game's picture has them, names under them") {
+    const auto field = Field();
+    Canvas c(1920, 1080);
+    CoopDraw::Scene s;
+    CoopDraw::MapShown m;
+    m.scene = "HyruleField";
+    m.capture = &field;
+    m.minimap = GameMinimap();
+    m.players = {OnMap(2, 10, -20, 0xFF0000), OnMap(3, 0, 0, 0x00FF00)};
+    m.players[0].rotation = coop::overlay::map::Quat{0, 0, 0, 1};  // looks +Z: an arrow
+    m.names = {"Saria", "Darunia"};
+    s.map = &m;
+    CHECK(CoopDraw::Wanted(s));
+    CoopDraw::Draw(c.d, s);
+    // The frame's centre on a 1920 x 1080 picture: (1920 + 1536, 1080 + 690) / 2.
+    const auto tris = c.Of("triangle");
+    REQUIRE(tris.size() == 2);  // rim, then the arrow
+    CHECK(tris[1].rgba == CoopDraw::Rgba(255, 0, 0, 255));
+    CHECK(tris[1].x == doctest::Approx(1728 + 10).epsilon(0.001));  // the tip, below the player at (1738, 865)
+    CHECK(tris[1].y > 865);
+    const auto dots = c.Of("circle");
+    REQUIRE(dots.size() == 2);  // no rotation: a dot on a rim
+    CHECK(dots[1].x == doctest::Approx(1728));
+    CHECK(dots[1].y == doctest::Approx(885));
+    CHECK(dots[1].rgba == CoopDraw::Rgba(0, 255, 0, 255));
+    bool saria = false;
+    for (const auto& t : c.Of("text")) saria = saria || t.text == "Saria";
+    CHECK(saria);
+
+    // Names off: arrows only. No one: nothing wanted.
+    Canvas quiet(1920, 1080);
+    m.names.clear();
+    CoopDraw::Draw(quiet.d, s);
+    CHECK(quiet.Of("text").empty());
+    m.players.clear();
+    CHECK_FALSE(CoopDraw::Wanted(s));
+}
+
+TEST_CASE("hookshot draw: no minimap from the game, no icons (and none without our place's map)") {
+    const auto field = Field();
+    CoopDraw::MapShown m;
+    m.scene = "HyruleField";
+    m.capture = &field;
+    m.players = {OnMap(2, 10, -20, 0xFF0000)};
+    CoopDraw::Scene s;
+    s.map = &m;
+    m.minimap.reset();  // the game shows no minimap (not placed, a menu, no camera)
+    CHECK_FALSE(CoopDraw::Wanted(s));
+    Canvas none(1920, 1080);
+    CoopDraw::Draw(none.d, s);
+    CHECK(none.calls.empty());
+    m.minimap = GameMinimap();
+    m.capture = nullptr;
+    CHECK_FALSE(CoopDraw::Wanted(s));
+}
+
+TEST_CASE("hookshot draw: a player far off the minimap is held at the frame's edge, paler") {
+    const auto field = Field();
+    Canvas c(1920, 1080);
+    CoopDraw::Scene s;
+    CoopDraw::MapShown m;
+    m.scene = "HyruleField";
+    m.capture = &field;
+    m.minimap = GameMinimap();
+    m.players = {OnMap(2, 5000, 0, 0x0000FF)};
+    s.map = &m;
+    CoopDraw::Draw(c.d, s);
+    const auto dots = c.Of("circle");
+    REQUIRE(dots.size() == 2);
+    const float right = 1728 + 552.0f / 4;  // the frame's right edge on this picture
+    CHECK(dots[1].x < right);
+    CHECK(dots[1].x > right - 20);
+    CHECK(dots[1].y == doctest::Approx(885));
+    CHECK(AlphaOf(dots[1].rgba) < 255);
+}
+
+TEST_CASE("hookshot map page: a pane's box from its global matrix, in the layout's units") {
+    float m[12] = {};
+    m[0] = 1.0f, m[4] = 1.0f, m[9] = 0.0f, m[10] = 0.0f;  // the middle, unscaled
+    auto b = CoopMapPage::PaneBox(m, CoopMapPage::kFieldW, CoopMapPage::kFieldH);
+    REQUIRE(b);
+    CHECK(b->cx() == doctest::Approx(1920));
+    CHECK(b->cy() == doctest::Approx(1080));
+    CHECK(b->w == doctest::Approx(2600));
+    m[0] = m[4] = 2.0f, m[9] = 100.0f, m[10] = 200.0f;  // zoomed in twice, moved right and up
+    b = CoopMapPage::PaneBox(m, 2600, 1872);
+    REQUIRE(b);
+    CHECK(b->cx() == doctest::Approx(2020));
+    CHECK(b->cy() == doctest::Approx(880));
+    CHECK(b->h == doctest::Approx(3744));
+    m[0] = 0.0f;  // not shown
+    CHECK_FALSE(CoopMapPage::PaneBox(m, 2600, 1872));
+    m[0] = std::nanf("");
+    CHECK_FALSE(CoopMapPage::PaneBox(m, 2600, 1872));
+    const auto s = CoopDraw::LayoutToScreen({0, 0, 3840, 2160}, 1920, 1080);
+    CHECK(s.w == doctest::Approx(1920));
+    CHECK(s.x == doctest::Approx(0));
+}
+
+TEST_CASE("hookshot draw: the Map page's map shows everyone in our place's map, and the minimap hides with the game's") {
+    coop::overlay::map::Capture field;
+    field.location = "HyruleField";
+    field.height = 100;
+    field.floors.push_back({});
+    CoopDraw::MapShown m;
+    m.scene = "HyruleField";
+    m.capture = &field;
+    m.players = {OnMap(2, 25, 0, 0xFF0000)};  // a quarter of the picture's height right of its centre
+    m.names = {"Saria"};
+    m.page = coop::overlay::map::Box{1920 - 1000, 1080 - 500, 2000, 1000};  // 200 m across
+    CoopDraw::Scene s;
+    s.map = &m;
+    CHECK(CoopDraw::Wanted(s));
+    Canvas c(1920, 1080);
+    CoopDraw::Draw(c.d, s);
+    const auto dots = c.Of("circle");
+    REQUIRE(dots.size() == 2);
+    CHECK(dots[1].x == doctest::Approx(960 + 0.125f * 1000));  // 25 of 200 m: 1/8 of the half-size picture
+    CHECK(dots[1].y == doctest::Approx(540));
+
+    m.page.reset();
+    m.minimap.reset();  // a game menu in front (the game shows no minimap), no Map page: nothing
+    CHECK_FALSE(CoopDraw::Wanted(s));
+    Canvas none(1920, 1080);
+    CoopDraw::Draw(none.d, s);
+    CHECK(none.calls.empty());
+}
+
+TEST_CASE("hookshot draw: a player on another floor is paler, the floors after the name") {
+    CHECK(CoopDraw::FloorWords(0).empty());
+    CHECK(CoopDraw::FloorWords(1) == " (1 below)");
+    CHECK(CoopDraw::FloorWords(-2) == " (2 above)");
+    coop::overlay::map::Capture jabu;
+    jabu.location = "InsideJabuJabuBelly";
+    jabu.scenes = {"InsideJabuJabuBelly"};
+    jabu.camera_y = 200;
+    jabu.height = 300;
+    jabu.dungeon = true;
+    jabu.floors = {{}, {93.0f, 105.0f}, {128.0f, 133.0f}};
+    CoopDraw::MapShown m;
+    m.scene = "InsideJabuJabuBelly";
+    m.self = {0, 100, 0};
+    m.capture = &jabu;
+    m.minimap = GameMinimap();
+    m.minimap_floor = 1;  // ours (y 100)
+    m.players = {OnMap(2, 5, 0, 0x00FF00)};
+    m.players[0].scene = "InsideJabuJabuBelly";
+    m.players[0].position[1] = 68;  // floor 2: one below ours
+    m.names = {"Ruto"};
+    CoopDraw::Scene s;
+    s.map = &m;
+    Canvas c(1920, 1080);
+    CoopDraw::Draw(c.d, s);
+    const auto dots = c.Of("circle");
+    REQUIRE(dots.size() == 2);
+    CHECK(AlphaOf(dots[1].rgba) < 160);
+    bool named = false;
+    for (const auto& t : c.Of("text")) named = named || t.text == "Ruto (1 below)";
+    CHECK(named);
+}
+
+TEST_CASE("hookshot map page: our place's map until Y turns it to the World Map, and back") {
+    CoopMapPage::PageWatch w;
+    CHECK_FALSE(w.Update(false, false));  // no page
+    CHECK(w.Update(true, false));         // opens on our place
+    CHECK(w.Update(true, false));
+    CHECK_FALSE(w.Update(true, true));    // Y: the World Map
+    CHECK_FALSE(w.Update(true, true));    // (held: one press)
+    CHECK_FALSE(w.Update(true, false));
+    CHECK(w.Update(true, true));          // Y again: Current Location
+    CHECK(w.Update(true, false));
+    CHECK_FALSE(w.Update(true, true));    // World Map again, then the page closes
+    CHECK_FALSE(w.Update(false, false));
+    CHECK(w.Update(true, true));          // a new page opens on our place, even with Y still held
+    CHECK(w.Update(true, false));
+}
+
+TEST_CASE("hookshot map page: a tap held for one present counts as a press, like a long one") {
+    CoopMapPage::PageWatch w;
+    CHECK(w.Update(true, false));
+    CHECK_FALSE(w.Update(true, true));  // the mouse's tap on the Y prompt: one present
+    CHECK_FALSE(w.Update(true, false));
+    CHECK_FALSE(w.Update(true, false));
+    CHECK(w.Update(true, true));        // and back
+    CHECK(w.Update(true, false));
+}
+
+TEST_CASE("hookshot draw: the voice icon after a talking or muted player's name, our row over the others") {
+    CoopDraw::Scene s;
+    s.hud = {{"Mido", "", {}, false}};
+    Canvas quiet(1280, 720);
+    CoopDraw::Draw(quiet.d, s, GameLook());
+    CHECK(quiet.Of("rect").empty());   // no icon: nothing but the name
+    s.hud[0].voice = CoopVoice::Icon::talking;
+    Canvas talk(1280, 720);
+    CoopDraw::Draw(talk.d, s, GameLook());
+    const auto rects = talk.Of("rect");
+    REQUIRE(rects.size() == 6);   // the microphone's three parts, shadow then fill
+    CHECK(rects[0].x > 40.0f + 4 * 25.0f * 0.5f);   // after "Mido" (the fake's width: half the size a byte)
+    CHECK(rects[3].rgba == CoopDraw::Rgba(120, 235, 120, 255));   // lit green
+    CHECK(talk.Of("circle").size() == 1);   // the ring
+    CHECK(talk.Of("triangle").empty());
+    s.hud[0].voice = CoopVoice::Icon::muted;
+    Canvas muted(1280, 720);
+    CoopDraw::Draw(muted.d, s, GameLook());
+    CHECK(muted.Of("triangle").size() == 2);   // the red bar
+    CHECK(muted.Of("circle").empty());
+    // our own row first, with "You", while voice is on
+    s.own_voice = CoopVoice::Icon::idle;
+    Canvas own(1280, 720);
+    CoopDraw::Draw(own.d, s, GameLook());
+    const auto texts = own.Of("text");
+    REQUIRE(texts.size() == 12);
+    CHECK(texts[5].text == "You");
+    CHECK(texts[5].y == doctest::Approx(CoopHudLayout::BlocksTop(1280, 720)));
+    CHECK(texts[11].text == "Mido");
+    CHECK(texts[11].y > texts[5].y);
+    CHECK(AlphaOf(own.Of("rect")[3].rgba) == 110);   // quiet: dim
+    // nobody else: no row of our own either
+    s.hud.clear();
+    Canvas alone(1280, 720);
+    CoopDraw::Draw(alone.d, s, GameLook());
+    CHECK(alone.calls.empty());
 }

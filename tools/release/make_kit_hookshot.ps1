@@ -9,6 +9,7 @@
 #   Start OoT Co-op.bat     the one entry point: checks, update, first game build, start (scripts\start.ps1)
 #   README.txt              ten lines: what to do
 #   Update.bat              the updater in one file (also attached to the release for older kits)
+#   Revert.bat              back to the version before the last update (Update.bat -Revert)
 #   coop-options.ini        the player's switches (the co-op module reads and writes it)
 #   start-server.cmd        a dedicated server, for those who want one; with server\ it also marks the kit
 #                           folder for the module (hookshot/src/coop_title.cpp, FindKit)
@@ -51,10 +52,10 @@ function Test-BinaryHas([string]$Path, [string]$Text) {
 function Get-Sha([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
 
 # What goes in. Files listed here and nowhere else, so a review sees the whole kit in one place.
-$KitTop = @('Start OoT Co-op.bat', 'README.txt', 'start-server.cmd', 'coop-options.ini')
+$KitTop = @('Start OoT Co-op.bat', 'README.txt', 'Revert.bat', 'start-server.cmd', 'coop-options.ini')
 $KitScripts = @('start.ps1', 'start-checks.ps1', 'play.ps1', 'coop-ini.ps1', 'kit-paths.ps1', 'hosting.ps1', 'relay-join.ps1',
     'invite.ps1', 'hookshot-build.ps1', 'apply_patch.py', 'update.ps1', 'start-server.ps1', 'collect-logs.ps1', 'collect-logs.cmd',
-    'log-mask.ps1')
+    'log-mask.ps1', 'windows-checks.ps1')
 $KitDocs = @(@('setup.md', 'SETUP.md'), @('known-issues.md', 'KNOWN-ISSUES.md'))
 # Never in this kit (emulator kits only); make_kit_hookshot refuses a kit that has one.
 $EmulatorOnly = '(?i)(^|\\)(emulator\\|lichii|fritchii|.*\.nx2recipe$|Host\.bat$|Join\.bat$|Host-Hookshot\.bat$|Join-Hookshot\.bat$|Play-OoT-Coop\.bat$|Build-Hookshot-Coop\.bat$|play\.cmd$|start-join\.cmd$|start-relay\.cmd$|make-puppet-pack\.cmd$|check-hosting\.cmd$|puppet-pack\.ps1$|qt6|Qt6|SDL2\.dll$)'
@@ -135,6 +136,7 @@ Copy-Item -LiteralPath $HookshotDll -Destination $hsKit
 foreach ($dir in $srv, $hsKit) { Get-ChildItem $crt.FullName -Filter '*.dll' | Copy-Item -Destination $dir }
 Copy-Text $hsPin (Join-Path $hsKit 'PIN')
 Copy-Text (Join-Path $src 'hookshot\TOOLS.txt') (Join-Path $hsKit 'TOOLS.txt')
+Copy-Text (Join-Path $src 'hookshot\OOTRR.txt') (Join-Path $hsKit 'OOTRR.txt')   # (the randomizer the build fetches)
 foreach ($p in $hsPatches) { Copy-Item -LiteralPath $p.FullName -Destination (Join-Path $hsKit "patches\$($p.Name)") }   # (byte for byte)
 
 # The puppet pack tool (hookshot-build.ps1 runs it with Hookshot's own Python): every module build.py imports.
@@ -166,11 +168,11 @@ $commit = Invoke-Git $repo rev-parse HEAD
     "  https://github.com/daurosk/oot-remake-multiplayer/tree/$commit",
     "  $(if ($Release) { "(tag $Release) " })commit $commit; hookshot\hookshot_coop.dll is its CMake target hookshot_coop.",
     '',
-    'Hookshot: NotRexed''s static recompilation, GPL-3.0. Not in this kit: "Start OoT Co-op.bat" downloads it and builds',
+    'Longshot: Team MagicBean''s static recompilation, GPL-3.0. Not in this kit: "Start OoT Co-op.bat" downloads it and builds',
     'it on your PC from your own game:',
-    "  https://github.com/NotRexed/Hookshot/tree/$($pin.commit)",
+    "  $($pin.repo)/src/commit/$($pin.commit)",
     '  with the patches in hookshot\patches (also hookshot/patches in the co-op repo), and the build tools of the',
-    '  Hookshot release named in hookshot\TOOLS.txt.',
+    '  Longshot release named in hookshot\TOOLS.txt.',
     '',
     'If a link stops working, open an issue on the co-op repo and the source will be sent to you.'))
 [System.IO.File]::WriteAllLines((Join-Path $kit 'VERSION.txt'), [string[]]@(
@@ -203,12 +205,19 @@ $own = @(Get-ChildItem $kit -Recurse -File | ForEach-Object { $_.FullName.Substr
 $size = (Get-ChildItem $kit -Recurse -File | Measure-Object Length -Sum).Sum
 Write-Host ('Folder: {0:N1} MB, {1} files' -f ($size / 1MB), ($own.Count + 1))
 if (-not $NoZip) {
-    $zip = "$kit.zip"
+    # Two names, the same bytes: oot-coop-<tag>-windows.zip is the one players download (beside the Linux kit's
+    # oot-coop-<tag>-linux.zip); oot-coop-<tag>.zip is the name every updater up to v0.10.1 looks for (its
+    # Select-KitRelease takes nothing else), so those kits still find and install this release. Both go up.
+    $zip = Join-Path $OutRoot "$name-windows.zip"
+    $old = "$kit.zip"
     & "$env:SystemRoot\System32\tar.exe" -a -c -f $zip -C $OutRoot $name
     if ($LASTEXITCODE -ne 0) { throw "Zipping failed (tar $LASTEXITCODE)." }
+    Copy-Item -LiteralPath $zip -Destination $old -Force
     $hash = Get-Sha $zip
-    [System.IO.File]::WriteAllText("$zip.sha256", "$hash  $name.zip`n", [System.Text.Encoding]::ASCII)
+    if ((Get-Sha $old) -ne $hash) { throw "The copy $old does not match $zip." }
+    [System.IO.File]::WriteAllText("$zip.sha256", "$hash  $name-windows.zip`n", [System.Text.Encoding]::ASCII)
+    [System.IO.File]::WriteAllText("$old.sha256", "$hash  $name.zip`n", [System.Text.Encoding]::ASCII)
     Copy-Item -LiteralPath (Join-Path $kit 'Update.bat') -Destination (Join-Path $OutRoot 'Update.bat') -Force
     Write-Host ('Zip: {0} ({1:N1} MB), SHA-256 {2}' -f $zip, ((Get-Item $zip).Length / 1MB), $hash)
-    Write-Host "Release assets: $name.zip, $name.zip.sha256 and Update.bat, all in $OutRoot"
+    Write-Host "Release assets: $name-windows.zip and $name.zip (the same file, the name kits up to v0.10.1 update from), each with its .sha256, and Update.bat, all in $OutRoot"
 }

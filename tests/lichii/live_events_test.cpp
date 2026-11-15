@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "coop_dungeon.h"
+#include "coop_fairy.h"
 #include "coop_live_events.h"
 
 namespace {
@@ -467,4 +468,554 @@ TEST_CASE("a gimmick event starts by distance alone where a room is not known") 
         CoopLiveEvents::Decider d;
         CHECK(d.Next(held, "InsideTheDekuTree", false, link, &empty).has_value());
     }
+}
+
+TEST_CASE("live events: the game's own requests reach every reader once, the newest kept") {
+    CoopLiveEvents::GameRequests requests;
+    std::uint64_t a = 0, b = 0;
+    CHECK_FALSE(requests.Live());
+    CHECK(requests.Since(a).empty());
+    requests.Push("Dm_DekuTree_Ladder", true);
+    requests.Push("Dm_SY_BancChangeGo", false);
+    CHECK(requests.Live());
+    auto got = requests.Since(a);
+    REQUIRE(got.size() == 2);
+    CHECK(std::string(got[0].name) == "Dm_DekuTree_Ladder");
+    CHECK(got[0].taken);
+    CHECK(std::string(got[1].name) == "Dm_SY_BancChangeGo");
+    CHECK_FALSE(got[1].taken);
+    CHECK(requests.Since(a).empty());  // each once
+    requests.Push("Third", true);
+    got = requests.Since(b);  // the second reader gets all three
+    REQUIRE(got.size() == 3);
+    CHECK(std::string(got[2].name) == "Third");
+    got = requests.Since(a);
+    REQUIRE(got.size() == 1);
+    CHECK(std::string(got[0].name) == "Third");
+
+    // A name longer than the buffer is cut, and still ends.
+    requests.Push(std::string(300, 'x'), true);
+    got = requests.Since(a);
+    REQUIRE(got.size() == 1);
+    CHECK(std::string(got[0].name).size() == sizeof got[0].name - 1);
+    // A reader far behind gets the newest kKept only.
+    for (int round = 0; round < 3; ++round) {
+        for (int i = 0; i < 50; ++i) requests.Push("n" + std::to_string(round * 50 + i), true);
+        requests.Since(a);
+    }
+    got = requests.Since(b);
+    REQUIRE(got.size() == CoopLiveEvents::GameRequests::kKept);
+    CHECK(std::string(got.back().name) == "n149");
+    CHECK(std::string(got.front().name) == "n" + std::to_string(150 - CoopLiveEvents::GameRequests::kKept));
+}
+
+TEST_CASE("live events: the request that the manager took and that is one of ours names the start") {
+    std::vector<CoopLiveEvents::GameRequest> requests(3);
+    std::memcpy(requests[0].name, "Dm_Door", sizeof "Dm_Door");
+    requests[0].taken = true;
+    std::memcpy(requests[1].name, "Dm_DekuTree_Ladder", sizeof "Dm_DekuTree_Ladder");
+    requests[1].taken = false;  // refused: an event was running
+    std::memcpy(requests[2].name, "Dm_DekuTree_Web", sizeof "Dm_DekuTree_Web");
+    requests[2].taken = true;
+    const std::vector<std::string_view> names{"Dm_DekuTree_Ladder", "Dm_DekuTree_Web"};
+    CHECK(CoopLiveEvents::RequestedOf(requests, names) == "Dm_DekuTree_Web");
+    requests[1].taken = true;
+    CHECK(CoopLiveEvents::RequestedOf(requests, names) == "Dm_DekuTree_Ladder");
+    CHECK_FALSE(CoopLiveEvents::RequestedOf(requests, {"Dm_Other"}));
+    CHECK_FALSE(CoopLiveEvents::RequestedOf({}, names));
+}
+
+TEST_CASE("live events: a start is given once, by the request when the wrap is there, else by the search") {
+    using CoopLiveEvents::StartSource;
+    int looked = 0;
+    std::optional<std::string> in_session;
+    const auto find = [&] {
+        ++looked;
+        return in_session;
+    };
+    // No wrap (the emulator, an older Hookshot): the search, as StartWatch alone.
+    StartSource plain;
+    CHECK_FALSE(plain.Frame(std::nullopt, false, false, find));
+    in_session = "Ladder";
+    CHECK(plain.Frame(std::nullopt, false, true, find) == "Ladder");
+    CHECK_FALSE(plain.Frame(std::nullopt, false, true, find));
+    CHECK(plain.ScanOnly() == 0);
+
+    // The wrap: the request names it before the event runs; the search finding it then adds nothing.
+    StartSource s;
+    looked = 0;
+    in_session.reset();
+    CHECK(s.Frame(std::string("Ladder"), true, false, find) == "Ladder");
+    CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+    in_session = "Ladder";
+    for (int i = 0; i < 40; ++i) CHECK_FALSE(s.Frame(std::nullopt, true, true, find));
+    CHECK(looked >= 1);
+    CHECK(s.ScanOnly() == 0);
+    // The event ends; the same event asked again later is a new start.
+    CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+    CHECK(s.Frame(std::string("Ladder"), true, false, find) == "Ladder");
+    for (int i = 0; i < 5; ++i) CHECK_FALSE(s.Frame(std::nullopt, true, true, find));
+    CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+
+    // deku-sync-fix: a start no request of ours named (a name left in the session): counted, never given.
+    in_session = "Web";
+    CHECK_FALSE(s.Frame(std::nullopt, true, true, find));
+    CHECK(s.ScanOnly() == 1);
+    CHECK_FALSE(s.Frame(std::nullopt, true, true, find));
+    CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+
+    // A request whose event runs only after kForgetFrames: the search gives that late start, once.
+    CHECK(s.Frame(std::string("Web"), true, false, find) == "Web");
+    for (int i = 0; i <= StartSource::kForgetFrames; ++i) CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+    CHECK(s.Frame(std::nullopt, true, true, find) == "Web");
+    CHECK(s.ScanOnly() == 1);
+    CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+    CHECK_FALSE(s.Frame(std::nullopt, true, true, find));  // the next event with the same name left: not given
+    CHECK(s.ScanOnly() == 2);
+}
+
+TEST_CASE("deku-sync-fix: after a load or in a new scene, the event of the earlier load left in the session is not sent") {
+    using CoopLiveEvents::StartSource;
+    std::optional<std::string> in_session;
+    const auto find = [&] { return in_session; };
+    StartSource s;
+    s.Scene("InsideTheDekuTree");
+    // The previous run: the game asks for PlatformUp, it plays and ends.
+    CHECK(s.Frame(std::string("PlatformUp"), true, false, find) == "PlatformUp");
+    in_session = "PlatformUp";
+    for (int i = 0; i < 20; ++i) CHECK_FALSE(s.Frame(std::nullopt, true, true, find));
+    CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+    // The title, then the save loads into the same dungeon: the session still names PlatformUp when a door's event runs.
+    s.Scene("");
+    s.Reset();
+    s.Scene("InsideTheDekuTree");
+    for (int i = 0; i < 20; ++i) CHECK_FALSE(s.Frame(std::nullopt, true, true, find));
+    CHECK(s.ScanOnly() == 1);
+    CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+    // A request asked before the load, its event never ran: forgotten at the load.
+    CHECK(s.Frame(std::string("Ladder"), true, false, find) == "Ladder");
+    for (int i = 0; i <= StartSource::kForgetFrames; ++i) CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+    s.Reset();
+    in_session = "Ladder";
+    CHECK_FALSE(s.Frame(std::nullopt, true, true, find));
+    CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+    // A scene change forgets it too.
+    CHECK(s.Frame(std::string("Ladder"), true, false, find) == "Ladder");
+    for (int i = 0; i <= StartSource::kForgetFrames; ++i) CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+    s.Scene("DekuTreeBoss");
+    CHECK_FALSE(s.Frame(std::nullopt, true, true, find));
+    CHECK(s.ScanOnly() == 3);
+    // A fresh request in this scene is still given at once.
+    CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+    CHECK(s.Frame(std::string("BossIn"), true, false, find) == "BossIn");
+    // Without the wrap (the emulator) the search is the only way: given.
+    StartSource plain;
+    plain.Scene("InsideTheDekuTree");
+    CHECK(plain.Frame(std::nullopt, false, true, find) == "Ladder");
+}
+
+namespace {
+
+constexpr std::uint64_t kEntries = 0x9300000000;
+constexpr std::uint64_t kNames = 0x9400000000;
+
+// The build, with room for `capacity` arguments as the game's makes it: each entry's name buffer of 0x40 bytes.
+std::uint64_t RunWithArgs(Mem& m, const CoopPuppet::Call& c, std::uint32_t capacity) {
+    const std::uint64_t result = Run(m, c);
+    if (c.function == kMain + addr::kArgBuild) {
+        m.Put32(c.x[0] + addr::kArgCapacity, capacity);
+        m.Put64(c.x[0] + addr::kArgEntries, kEntries);
+        m.Put32(c.x[0] + addr::kArgCount, 0);
+        for (std::uint32_t i = 0; i < capacity; ++i) {
+            const std::uint64_t entry = kEntries + addr::kArgEntrySize * i;
+            for (std::uint64_t b = 0; b < addr::kArgEntrySize; ++b) m.bytes[entry + b] = 0;
+            for (std::uint64_t b = 0; b < 0x40; ++b) m.bytes[kNames + 0x40 * i + b] = 0;
+            m.Put64(entry + addr::kEntryName, kNames + 0x40 * i);
+            m.Put32(entry + addr::kEntryNameCap, 0x40);
+        }
+    }
+    return result;
+}
+
+std::uint32_t Get32(Mem& m, std::uint64_t a) {
+    std::uint32_t v = 0;
+    m.Read(a, &v, 4);
+    return v;
+}
+
+} // namespace
+
+TEST_CASE("live events: an event with arguments and a starter, as the game's map change is asked") {
+    using Arg = CoopLiveEvents::Requester::Arg;
+    Mem m;
+    m.Put64(kMain + addr::kManagerPtr, kHolder);
+    m.Put64(kHolder, kManager);
+    CoopLiveEvents::Requester r;
+    constexpr std::uint64_t kLink = 0x9500000000;
+    r.WantWith("Dm_SY_BancChangeGo",
+               {Arg{"NextBanc", std::string("HyruleField_Child"), false},
+                Arg{"NextStartPos", std::string("HyruleField_FrontOfLostWoodBridge"), false},
+                Arg{"BootEventName", std::string("Dm_SY_BancChangeArrive"), false},
+                Arg{"IsCheckAir", std::nullopt, false}},
+               kLink);
+    // Asked again before it ran: one request, with the newer arguments.
+    r.WantWith("Dm_SY_BancChangeGo",
+               {Arg{"NextBanc", std::string("KokiriForest_Child"), false},
+                Arg{"NextStartPos", std::string("LostWoodBridge_FrontOfHyruleField"), false},
+                Arg{"BootEventName", std::string("Dm_SY_BancChangeArrive"), false},
+                Arg{"IsCheckAir", std::nullopt, true}},
+               kLink);
+    CHECK(r.Waiting() == 1);
+
+    std::vector<std::uint64_t> order;
+    auto call = r.Step(m, false, 0, kMain);
+    while (call) {
+        order.push_back(call->function - kMain);
+        if (call->function == kMain + addr::kMalloc) {
+            CHECK(call->x[0] == addr::kArgSize + addr::kStringsSize);  // room for the strings after the arg
+        }
+        if (call->function == kMain + addr::kSetLink) {
+            CHECK(call->x[0] == kBlock + addr::kArgMember2);
+            CHECK(call->x[1] == kLink);
+            CHECK(call->x[2] == 0);
+        }
+        if (call->function == kMain + addr::kRequest) {
+            CHECK(m.Str(m.Get64(kBlock + addr::kArgName)) == "Dm_SY_BancChangeGo");
+            REQUIRE(Get32(m, kBlock + addr::kArgCount) == 4);
+            const char* names[] = {"NextBanc", "NextStartPos", "BootEventName", "IsCheckAir"};
+            const char* texts[] = {"KokiriForest_Child", "LostWoodBridge_FrontOfHyruleField", "Dm_SY_BancChangeArrive"};
+            for (std::uint32_t i = 0; i < 4; ++i) {
+                const std::uint64_t entry = kEntries + addr::kArgEntrySize * i;
+                CHECK(m.Str(kNames + 0x40 * i) == names[i]);
+                if (i < 3) {
+                    CHECK(Get32(m, entry + addr::kEntryType) == addr::kTypeString);
+                    const std::uint64_t text = m.Get64(entry + addr::kEntryValue);
+                    CHECK(text >= kBlock + addr::kArgStrings);  // in our block, after the arg: it stays
+                    CHECK(text < kBlock + addr::kArgStrings + addr::kStringsSize);
+                    CHECK(m.Str(text) == texts[i]);
+                } else {
+                    CHECK(Get32(m, entry + addr::kEntryType) == addr::kTypeBool);
+                    CHECK(m.bytes[entry + addr::kEntryValue] == 1);
+                }
+            }
+        }
+        call = r.Step(m, true, RunWithArgs(m, *call, 8), kMain);
+    }
+    CHECK(order == std::vector<std::uint64_t>{addr::kMalloc, addr::kArgBuild, addr::kSetLink, addr::kRequest,
+                                              addr::kStringFree, addr::kStringFree});
+
+    // The next plain event carries nothing over: no link, no arguments.
+    r.Want("InsideTheDekuTree_Gimmick_FallingLadder");
+    order.clear();
+    call = r.Step(m, false, 0, kMain);
+    while (call) {
+        order.push_back(call->function - kMain);
+        if (call->function == kMain + addr::kRequest) CHECK(Get32(m, kBlock + addr::kArgCount) == 0);
+        call = r.Step(m, true, RunWithArgs(m, *call, 8), kMain);
+    }
+    CHECK(order == std::vector<std::uint64_t>{addr::kArgBuild, addr::kRequest, addr::kStringFree, addr::kStringFree});
+}
+
+TEST_CASE("live events: arguments that do not fit the request are not asked, and what was built is freed") {
+    using Arg = CoopLiveEvents::Requester::Arg;
+    Mem m;
+    m.Put64(kMain + addr::kManagerPtr, kHolder);
+    m.Put64(kHolder, kManager);
+    for (int which = 0; which < 3; ++which) {
+        CoopLiveEvents::Requester r;
+        std::vector<Arg> args{Arg{"NextBanc", std::string("A"), false}, Arg{"NextStartPos", std::string("B"), false}};
+        if (which == 1) args[0].name = std::string(0x40, 'n');                 // a name past the entry's buffer
+        if (which == 2) args[1].text = std::string(addr::kStringsSize, 't');   // a text past our strings' room
+        r.WantWith("Dm_SY_BancChangeGo", args, 0);
+        std::vector<std::uint64_t> order;
+        auto call = r.Step(m, false, 0, kMain);
+        while (call) {
+            order.push_back(call->function - kMain);
+            call = r.Step(m, true, RunWithArgs(m, *call, which == 0 ? 1 : 8), kMain);  // 0: room for one argument only
+        }
+        CHECK(order == std::vector<std::uint64_t>{addr::kMalloc, addr::kArgBuild, addr::kStringFree, addr::kStringFree});
+        bool said = false;
+        for (const auto& n : r.TakeNotes()) said |= n.find("do not fit") != std::string::npos;
+        CHECK(said);
+    }
+}
+
+TEST_CASE("live events: with no reader the ring keeps the newest requests and never stays full") {
+    CoopLiveEvents::GameRequests requests;
+    for (int i = 0; i < 1000; ++i) requests.Push("e" + std::to_string(i), true);  // nobody calls Since
+    CHECK(requests.Seen() == 1000);
+    CHECK(requests.Dropped() == 1000 - 64);
+    std::uint64_t cursor = 0;
+    const auto got = requests.Since(cursor);
+    REQUIRE(got.size() == 64);
+    CHECK(std::string(got.front().name) == "e936");
+    CHECK(std::string(got.back().name) == "e999");
+    requests.Push("after", true);
+    const auto more = requests.Since(cursor);
+    REQUIRE(more.size() == 1);
+    CHECK(std::string(more[0].name) == "after");
+}
+
+namespace {
+// A game actor list (CoopFairy::addr): each actor's node, name and place.
+struct ActorList {
+    Mem& m;
+    std::uint64_t lists = 0x9600000000;
+    std::uint64_t names = 0x9700000000;
+    std::vector<std::uint64_t> nodes;
+    explicit ActorList(Mem& mem) : m(mem) {
+        namespace fa = CoopFairy::addr;
+        constexpr std::uint64_t kActorManager = 0x9650000000;
+        m.Put64(kMain + fa::kManagerPtr, kActorManager);
+        m.Put64(kActorManager + fa::kLists, lists);
+        m.Put64(lists + fa::kListHead, lists + fa::kListHead);  // empty ring
+    }
+    void Add(std::uint64_t actor, const std::string& name, std::array<float, 3> at, std::uint32_t state = 4) {
+        namespace fa = CoopFairy::addr;
+        const std::uint64_t head = lists + fa::kListHead;
+        const std::uint64_t node = actor + fa::kActorNode;
+        m.Put64(node + fa::kNodeOwner, actor);
+        m.Put32(actor + fa::kActorState, state);
+        const std::uint64_t text = names + 0x40 * nodes.size();
+        m.Write(text, name.c_str(), name.size() + 1);
+        m.Put64(actor + fa::kActorName, text);
+        m.Write(actor + CoopPuppet::addr::kActorPosition, at.data(), sizeof at);
+        // Push at the front of the ring.
+        m.Put64(node, m.Get64(head));
+        m.Put64(head, node);
+        nodes.push_back(node);
+    }
+};
+} // namespace
+
+TEST_CASE("live events: a room gimmick event is started by our room's asker, so the room's graph moves") {
+    Mem m;
+    m.Put64(kMain + addr::kManagerPtr, kHolder);
+    m.Put64(kHolder, kManager);
+    ActorList list(m);
+    constexpr std::uint64_t kAsker = 0x9800000000, kOtherAsker = 0x9810000000, kLift = 0x9820000000,
+                            kGone = 0x9830000000;
+    // The compass room's asker at its place, the slingshot room's elsewhere, a lift on the place, a dead asker.
+    list.Add(kAsker, "EventRequestActor", {-22.62f, 122.58f, -3.81f});
+    list.Add(kOtherAsker, "EventRequestActor", {-37.5f, 117.8f, 12.5f});
+    list.Add(kLift, "Obj_InsideTheDekuTree_ElevatorLift_A_01", {-22.6f, 122.6f, -3.8f});
+    list.Add(kGone, "EventRequestActor", {-22.6f, 122.6f, -3.8f}, 2);
+
+    const std::array<std::string_view, 1> names{"EventRequestActor"};
+    CHECK(CoopLiveEvents::NearestActor(m, kMain, CoopLiveEvents::kAskerNames, {-22.6f, 122.6f, -3.8f}, 1.0f) ==
+          kAsker);
+    CHECK(CoopLiveEvents::NearestActor(m, kMain, names, {-22.6f, 122.6f, -3.8f}, 0.001f) == 0);
+    CHECK(CoopLiveEvents::NearestActor(m, kMain, names, {0.0f, 0.0f, 0.0f}, 1.0f) == 0);
+
+    CoopLiveEvents::Requester r;
+    r.WantFromRoom("InsideTheDekuTree_Gimmick_RoomD_PlatformUp", "InsideTheDekuTree");
+    r.WantFromRoom("InsideTheDekuTree_Gimmick_RoomD_PlatformUp", "InsideTheDekuTree");  // once
+    CHECK(r.Waiting() == 1);
+    std::vector<std::uint64_t> order;
+    auto call = r.Step(m, false, 0, kMain);
+    while (call) {
+        order.push_back(call->function - kMain);
+        if (call->function == kMain + addr::kSetLink) {
+            CHECK(call->x[0] == kBlock + addr::kArgMember2);
+            CHECK(call->x[1] == kAsker);
+        }
+        call = r.Step(m, true, Run(m, *call), kMain);
+    }
+    CHECK(order == std::vector<std::uint64_t>{addr::kMalloc, addr::kArgBuild, addr::kSetLink, addr::kRequest,
+                                              addr::kStringFree, addr::kStringFree});
+    bool said = false;
+    for (const auto& n : r.TakeNotes()) said |= n.find("started by our room's asker at -22.6 122.6 -3.8") != std::string::npos;
+    CHECK(said);
+
+    // No asker here (its room not loaded, or deleted): asked by name alone, and said so.
+    r.WantFromRoom("InsideTheDekuTree_Gimmick_CandleAndSpiderWeb", "InsideTheDekuTree");
+    order.clear();
+    call = r.Step(m, false, 0, kMain);
+    while (call) {
+        order.push_back(call->function - kMain);
+        call = r.Step(m, true, Run(m, *call), kMain);
+    }
+    CHECK(order == std::vector<std::uint64_t>{addr::kArgBuild, addr::kRequest, addr::kStringFree, addr::kStringFree});
+    said = false;
+    for (const auto& n : r.TakeNotes()) said |= n.find("no asker actor") != std::string::npos;
+    CHECK(said);
+
+    // A plain Want (a story cutscene) never looks for an asker.
+    r.Want("InsideTheDekuTree_Gimmick_RoomD_PlatformUp");
+    order.clear();
+    call = r.Step(m, false, 0, kMain);
+    while (call) {
+        order.push_back(call->function - kMain);
+        call = r.Step(m, true, Run(m, *call), kMain);
+    }
+    CHECK(order == std::vector<std::uint64_t>{addr::kArgBuild, addr::kRequest, addr::kStringFree, addr::kStringFree});
+}
+
+TEST_CASE("deku-sync-fix: a late request is given only for a while, and the title and a new session forget it") {
+    using CoopLiveEvents::StartSource;
+    std::optional<std::string> in_session = "Ladder";
+    const auto find = [&] { return in_session; };
+    const auto asked_long_ago = [&](StartSource& s) {
+        CHECK(s.Frame(std::string("Ladder"), true, false, find) == "Ladder");
+        for (int i = 0; i <= StartSource::kForgetFrames; ++i) CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+    };
+    // Asked, never ran, and then nothing for kPendingFrames more: too old, a later find is not sent.
+    StartSource s;
+    s.Scene("InsideTheDekuTree");
+    asked_long_ago(s);
+    for (int i = 0; i < StartSource::kPendingFrames; ++i) CHECK_FALSE(s.Frame(std::nullopt, true, false, find));
+    CHECK_FALSE(s.Frame(std::nullopt, true, true, find));
+    CHECK(s.ScanOnly() == 1);
+    // Still within its time: given.
+    StartSource young;
+    young.Scene("InsideTheDekuTree");
+    asked_long_ago(young);
+    for (int i = 0; i < StartSource::kPendingFrames - 10; ++i) CHECK_FALSE(young.Frame(std::nullopt, true, false, find));
+    CHECK(young.Frame(std::nullopt, true, true, find) == "Ladder");
+
+    // The title (no scene for kTitleFrames) forgets it, once; a short load does not.
+    StartSource t;
+    t.Scene("InsideTheDekuTree");
+    asked_long_ago(t);
+    for (int i = 0; i < StartSource::kTitleFrames - 1; ++i) CHECK_FALSE(t.NoScene(false));
+    CHECK_FALSE(t.NoScene(true));  // a load between rooms: the scene back
+    for (int i = 0; i < StartSource::kTitleFrames - 1; ++i) CHECK_FALSE(t.NoScene(false));
+    CHECK(t.NoScene(false));
+    CHECK_FALSE(t.NoScene(false));  // once
+    t.Scene("InsideTheDekuTree");   // the same dungeon again after the title: still forgotten
+    CHECK_FALSE(t.Frame(std::nullopt, true, true, find));
+    CHECK(t.ScanOnly() == 1);
+
+    // A new co-op session (the hook calls Reset when welcomed or reconnected) forgets it too.
+    StartSource n;
+    n.Scene("InsideTheDekuTree");
+    asked_long_ago(n);
+    n.Reset();
+    CHECK_FALSE(n.Frame(std::nullopt, true, true, find));
+    CHECK(n.ScanOnly() == 1);
+}
+
+TEST_CASE("deku-sync-fix: our room's asker asks the event itself (its performer's own request), so the flow binds it") {
+    Mem m;
+    m.Put64(kMain + addr::kManagerPtr, kHolder);
+    m.Put64(kHolder, kManager);
+    ActorList list(m);
+    constexpr std::uint64_t kAsker = 0x9800000000, kParts = 0x9840000000, kPerformer = 0x9850000000;
+    list.Add(kAsker, "EventRequestActor", {-22.62f, 122.58f, -3.81f});
+    m.Put64(kAsker + CoopPuppet::addr::kActorParts, kParts);
+    m.Put64(kParts + addr::kPerformerSlot, kPerformer);
+    m.Put64(kPerformer + addr::kPerformerActor, kAsker);
+    m.Put32(kPerformer + addr::kPerformerState, 0);
+
+    const auto run = [&](CoopLiveEvents::Requester& r, std::vector<std::uint64_t>& order, std::string& name) {
+        order.clear();
+        auto call = r.Step(m, false, 0, kMain);
+        while (call) {
+            order.push_back(call->function - kMain);
+            if (call->function == kMain + addr::kPerformerRequest) {
+                CHECK(call->x[0] == kPerformer);
+                name = m.Str(m.Get64(call->x[1]));  // the address of a char*, as the game's callers pass
+            }
+            call = r.Step(m, true, Run(m, *call), kMain);
+        }
+    };
+    CoopLiveEvents::Requester r;
+    std::vector<std::uint64_t> order;
+    std::string name;
+    r.WantFromRoom("InsideTheDekuTree_Gimmick_RoomD_PlatformUp", "InsideTheDekuTree");
+    run(r, order, name);
+    // No build, no link, no frees: the performer's call makes and frees its own request.
+    CHECK(order == std::vector<std::uint64_t>{addr::kMalloc, addr::kPerformerRequest});
+    CHECK(name == "InsideTheDekuTree_Gimmick_RoomD_PlatformUp");
+    bool said = false;
+    for (const auto& n : r.TakeNotes()) said |= n.find("asked by our room's asker itself (result 1)") != std::string::npos;
+    CHECK(said);
+
+    // The asker busy in an event (state 3): linked as before, and said so.
+    m.Put32(kPerformer + addr::kPerformerState, 3);
+    r.WantFromRoom("InsideTheDekuTree_Gimmick_RoomD_PlatformUp", "InsideTheDekuTree");
+    run(r, order, name);
+    CHECK(order == std::vector<std::uint64_t>{addr::kArgBuild, addr::kSetLink, addr::kRequest, addr::kStringFree,
+                                              addr::kStringFree});
+    said = false;
+    for (const auto& n : r.TakeNotes()) said |= n.find("busy (state 3)") != std::string::npos;
+    CHECK(said);
+
+    // A performer that is not the asker's own (another actor's, a stale slot): never asked through; linked.
+    m.Put32(kPerformer + addr::kPerformerState, 0);
+    m.Put64(kPerformer + addr::kPerformerActor, 0x9860000000);
+    r.WantFromRoom("InsideTheDekuTree_Gimmick_RoomD_PlatformUp", "InsideTheDekuTree");
+    run(r, order, name);
+    CHECK(order == std::vector<std::uint64_t>{addr::kArgBuild, addr::kSetLink, addr::kRequest, addr::kStringFree,
+                                              addr::kStringFree});
+    // The player's slot (+0x90) is the second place looked at.
+    m.Put64(kParts + addr::kPerformerSlot, 0);
+    m.Put64(kParts + addr::kPerformerSlotAlt, kPerformer);
+    m.Put64(kPerformer + addr::kPerformerActor, kAsker);
+    r.WantFromRoom("InsideTheDekuTree_Gimmick_RoomD_PlatformUp", "InsideTheDekuTree");
+    run(r, order, name);
+    CHECK(order == std::vector<std::uint64_t>{addr::kPerformerRequest});
+}
+
+TEST_CASE("live events: an asker deleted between the pick and the link is not handed to the game") {
+    Mem m;
+    m.Put64(kMain + addr::kManagerPtr, kHolder);
+    m.Put64(kHolder, kManager);
+    ActorList list(m);
+    constexpr std::uint64_t kAsker = 0x9800000000;
+    list.Add(kAsker, "EventRequestActor", {-37.5f, 117.8f, 12.5f});
+    CoopLiveEvents::Requester r;
+    r.WantFromRoom("InsideTheDekuTree_Gimmick_FallingLadder", "InsideTheDekuTree");
+    std::vector<std::uint64_t> order;
+    auto call = r.Step(m, false, 0, kMain);
+    while (call) {
+        order.push_back(call->function - kMain);
+        const std::uint64_t x0 = Run(m, *call);
+        if (call->function == kMain + addr::kArgBuild) {
+            m.Put32(kAsker + CoopFairy::addr::kActorState, 2);  // the room graph's Logic_Delete, this frame
+        }
+        call = r.Step(m, true, x0, kMain);
+    }
+    CHECK(order == std::vector<std::uint64_t>{addr::kMalloc, addr::kArgBuild, addr::kRequest, addr::kStringFree,
+                                              addr::kStringFree});
+    bool said = false;
+    for (const auto& n : r.TakeNotes()) said |= n.find("asker went away before the link") != std::string::npos;
+    CHECK(said);
+}
+
+TEST_CASE("intro-ocarina: while the game runs another event it asked for, a story name left in the session is not given") {
+    using CoopLiveEvents::StartSource;
+    // The game asks for a pickup's event (not one of ours); the session still holds Saria's gift's name.
+    std::vector<CoopLiveEvents::GameRequest> asked(1);
+    std::memcpy(asked[0].name, "DmF_GetItem", sizeof "DmF_GetItem");
+    asked[0].taken = true;
+    const std::vector<std::string_view> names{"Dm_Kokiri_0150", "Dm_Kokiri_0050"};
+    CHECK(CoopLiveEvents::RequestedOtherOf(asked, names));
+    CHECK_FALSE(CoopLiveEvents::RequestedOf(asked, names));
+    asked[0].taken = false;  // refused by the manager: nothing runs from it
+    CHECK_FALSE(CoopLiveEvents::RequestedOtherOf(asked, names));
+    asked[0].taken = true;
+    std::vector<CoopLiveEvents::GameRequest> ours(1);
+    std::memcpy(ours[0].name, "Dm_Kokiri_0050", sizeof "Dm_Kokiri_0050");
+    ours[0].taken = true;
+    CHECK_FALSE(CoopLiveEvents::RequestedOtherOf(ours, names));
+    CHECK_FALSE(CoopLiveEvents::RequestedOtherOf({}, names));
+
+    std::optional<std::string> in_session = "Dm_Kokiri_0150";
+    const auto find = [&] { return in_session; };
+    StartSource s;
+    CHECK_FALSE(s.Frame(std::nullopt, true, true, false, find));  // asked, not running yet
+    for (int i = 0; i < 40; ++i) CHECK_FALSE(s.Frame(std::nullopt, false, true, true, find));
+    CHECK(s.Refused() == 1);
+    CHECK(s.ScanOnly() == 0);
+    // That event over: a start no request named is still not given (deku-sync-fix), only counted.
+    CHECK_FALSE(s.Frame(std::nullopt, false, true, false, find));
+    CHECK_FALSE(s.Frame(std::nullopt, false, true, true, find));
+    CHECK(s.ScanOnly() == 1);
+    CHECK_FALSE(s.Frame(std::nullopt, false, true, false, find));
+    // A request for one of ours in the same frames still names it.
+    CHECK(s.Frame(std::string("Dm_Kokiri_0050"), true, true, false, find) == "Dm_Kokiri_0050");
+    // Without the wrap (the emulator) `other` cannot be known and is ignored.
+    StartSource plain;
+    CHECK(plain.Frame(std::nullopt, true, false, true, find) == "Dm_Kokiri_0150");
 }

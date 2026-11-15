@@ -1,0 +1,125 @@
+# hs-boss-cutscenes-gohma (Hookshot, branch boss-cutscenes): Queen Gohma's intro and death for everyone in
+# the boss's area (docs/dungeons-boss.md, "Boss cutscenes"). A walks in through the door (the game's own
+# trigger: A is the starter); B waits in the corridor before the door (inside the area) and must play the
+# same intro at once, be put at its spot in the room, and end it with A's. Then A kills Gohma (test kill):
+# both play Dm_Deku_BossOut together.
+# NEEDS a hookshot.exe with the event request wrap (HOS_COOP_WRAP_EVENT_REQUEST, patch 0005).
+# BEFORE the run: clear the six Deku boss flags in both pairs' baselines as hs-gohma-door says.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-boss-cutscenes-gohma
+# PASS (proof lines):
+#  1. Both: "coop: boss: intros and deaths are shared with the boss's area".
+#  2. A: "Dm_Deku_BossIn: our game started it: the others in the area play it too", then "sent cutscene 1".
+#  3. B within 1 s of A's line: "Dm_Deku_BossIn: playing it here too (player 1 started it)", "moving in to
+#     the room's start (try 1)", then "Dm_Deku_BossIn: playing with player 1's" (B's game took it).
+#  4. A: "Dm_Deku_BossIn: ours is over: the others' end too"; B: "the starter's intro is over: skipping ours"
+#     (or B's ended first: "player 1's still runs"). Screens at a-intro / b-intro: both show the intro;
+#     at a-fight / b-fight: both in the room, free to move, the door shut behind both.
+#  4b. Stun step (boss-intro): at a-stunN / b-stunN Gohma lies stunned in at least one shot; B's log (the owner
+#     after the stun) 'copy ... replays a hit of N (id ..., where it landed in the hitter's game)' for A's hits,
+#     her life falls, and the death follows from them (or the kill after).
+#  5. A after a-kill: "Dm_Deku_BossOut: our game started the death"; B: "Dm_Deku_BossOut: playing it here too".
+#     Screens at a-death / b-death: the death on both.
+#  6. Neither log: "moving in" from the older rules ("another player is in the boss room").
+# deku-test run (2026-11-14): with the quest step at GoToBossRoom Gohma spawns: 'native boss sync on (BSA ..., ours)'
+# in A, 'a copy' + 'the owner's verbs came' in B (first time ever). A's own intro plays (shot a-intro), but
+# boss-cutscenes (in 0.11, ca7eb8ac) never logged 'Dm_Deku_BossIn: our game started it': it did not see the game
+# ask for the intro by name, so B never played it (a real 0.11 result). coop_boss said 'no intro: the fight has
+# begun here' first (A waited in the corridor longer than kNoIntroUs). 'kill' hit (life 21), no death followed.
+# deku-test (2026-11-14, Longshot rc.3): clearing HavePlayedEvent alone does not start anything. The rooms'
+# logic (romfs Logic/InsideTheDekuTree_Level_Room_*.logic.module.ainb) reads room flags when the room loads:
+#   compass room D: the event's asker (EventRequestActor_641b) is deleted while RoomD_StepSwitch_On_01 (0x6fb4f455)
+#     is 1 (then the plate lifts the platforms with no event); slingshot room C: RoomC_Cleared (0x77279a83) boots the
+#     eye switch up and deletes its asker; torch room E: RoomE_KillSpiderWave (0x46e8fcf9) burns the web at load and
+#     the burned web is a Bool64bitKey (its placement Hash 0x0181f8a8ef2fd1d3, its parts 0x45c7d8b5c0c68917);
+#     water room G: WaterLevel (0x8d2b85ef) 1 deletes the dive switch's asker; Gohma's prefab (room L) deletes Gohma
+#     while the quest Get_StoneOfForest (enum 0x7d776b61) is DefeatBoss or later (the saves: Complete).
+# BEFORE the run (games closed), both games of the pair, every slot (one prep for all hs-deku-*, hs-ladder and
+# hs-boss-cutscenes-gohma; keep a copy of <pair>\autotest-save first and put it back afterwards):
+#   save_flags.py set <pair>\autotest-save\slot_0*\progress.sav bool:0x50cbaf1b=0 bool:0x429126ef=0 bool:0xb3a4fe84=0
+#     bool:0xfcbd74e3=0 bool:0x8d2b85ef=0 bool:0x392a228a=0 bool:0x6fb4f455=0 bool:0x77279a83=0 bool:0x46e8fcf9=0
+#     enum:0x7d776b61=0xb5df43cb      (GoToBossRoom)
+#   save_flags.py drop-keys <pair>\autotest-save\slot_0*\progress.sav 0x0181f8a8ef2fd1d3 0x45c7d8b5c0c68917
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 600
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200               # the title screen
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A                 # loads the save, then the warp
+wait 2400
+mark a-landed
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+wait 120
+place -12.0 48.5 66.5   # the corridor, 11 m before the door (as gohma-door)
+wait 600                # B is placed there too
+goto -4.0 67.5 1.0 600
+goto 6.7 67.6 1.5 600   # through the door: the game's own boss trigger
+mark a-in
+wait 300
+mark a-intro
+wait 1500               # the door's event and the intro
+mark a-fight
+wait 600
+# boss-intro (2026-11-14): Gohma takes no plain hit outside her stun (the game held her at life 1 against the
+# test kill). B stuns her (slingshot, same timing in the B script): the stun hands her to B, so A's sword hits
+# in the stun are a non-owner's, replayed in B's game at the place they landed (DAMAGE's hit_at, protocol 12).
+# NOT proven: lock-on and timing are guesses.
+wait 180                  # (B takes its slingshot now)
+hold ZL 40                # stun try 1: A locks on while B's seed stuns her (B owns her then)
+wait 20
+hold ZL+Y 8               # A's sword hits in her stun: a NON-owner's hits, replayed in B's game where they landed
+wait 10
+hold ZL+Y 8
+wait 10
+hold ZL+Y 8
+wait 240
+mark a-stun1
+hold ZL 40                # stun try 2: A locks on while B's seed stuns her (B owns her then)
+wait 20
+hold ZL+Y 8               # A's sword hits in her stun: a NON-owner's hits, replayed in B's game where they landed
+wait 10
+hold ZL+Y 8
+wait 10
+hold ZL+Y 8
+wait 240
+mark a-stun2
+hold ZL 40                # stun try 3: A locks on while B's seed stuns her (B owns her then)
+wait 20
+hold ZL+Y 8               # A's sword hits in her stun: a NON-owner's hits, replayed in B's game where they landed
+wait 10
+hold ZL+Y 8
+wait 10
+hold ZL+Y 8
+wait 240
+mark a-stun3
+hold ZL 40                # stun try 4: A locks on while B's seed stuns her (B owns her then)
+wait 20
+hold ZL+Y 8               # A's sword hits in her stun: a NON-owner's hits, replayed in B's game where they landed
+wait 10
+hold ZL+Y 8
+wait 10
+hold ZL+Y 8
+wait 240
+mark a-stun4
+kill Enemy_DungeonBoss_Gohma
+wait 120
+mark a-kill
+wait 300
+mark a-death
+wait 2400
+mark end

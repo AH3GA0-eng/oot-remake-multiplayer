@@ -139,9 +139,32 @@ Vec3 Lerp(const Vec3& a, const Vec3& b, float t) {
     return {a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t};
 }
 
+// `b` with each part taken `t` of the way from `o` (same bones).
+Pose Blend(const Pose& o, const Pose& b, float t) {
+    Pose out = b;
+    for (std::size_t i = 0; i < out.bones.size(); ++i) {
+        BonePose& x = out.bones[i];
+        const BonePose& y = o.bones[i];
+        if (x.rotation) x.rotation = Nlerp(*y.rotation, *x.rotation, t);
+        if (x.translation) x.translation = Lerp(*y.translation, *x.translation, t);
+        if (x.scale) x.scale = Lerp(*y.scale, *x.scale, t);
+        if (t < 0.5f) x.flags = y.flags;
+    }
+    return out;
+}
+
 }  // namespace
 
-void Track::Push(Pose pose, std::uint64_t now_ms) {
+void Track::Push(Pose pose, std::uint64_t now_ms, std::uint64_t made_ms) {
+    // jitter-3: timed poses by their made time; another bone list or an
+    // untimed pose starts them over; one not newer (out of order) is left out.
+    if (made_ms == 0 || (!timed_.empty() && !SameBones(timed_.back().second, pose))) {
+        timed_.clear();
+    }
+    if (made_ms != 0 && (timed_.empty() || made_ms > timed_.back().first)) {
+        if (timed_.size() >= kKeepPoses) timed_.erase(timed_.begin());
+        timed_.emplace_back(made_ms, pose);
+    }
     if (newest_ && SameBones(*newest_, pose)) {
         older_ = std::move(newest_);
         older_ms_ = newest_ms_;
@@ -264,6 +287,18 @@ std::vector<proto::PoseBone> BonePicker::Pick(std::uint32_t skeleton,
 }
 
 std::optional<Pose> Track::At(std::uint64_t now_ms) const {
+    if (!timed_.empty()) {
+        const std::uint64_t show = now_ms - std::min(now_ms, kShowDelayMs);
+        if (show <= timed_.front().first) return timed_.front().second;
+        for (std::size_t i = 0; i + 1 < timed_.size(); ++i) {
+            const auto& [a_ms, a] = timed_[i];
+            const auto& [b_ms, b] = timed_[i + 1];
+            if (show < b_ms) {
+                return Blend(a, b, static_cast<float>(show - a_ms) / static_cast<float>(b_ms - a_ms));
+            }
+        }
+        return timed_.back().second;  // past the newest: held (as presence holds the place)
+    }
     if (!newest_) {
         return std::nullopt;
     }
@@ -276,16 +311,38 @@ std::optional<Pose> Track::At(std::uint64_t now_ms) const {
     if (t >= 1.0f) {
         return newest_;
     }
-    Pose out = *newest_;
-    for (std::size_t i = 0; i < out.bones.size(); ++i) {
-        BonePose& b = out.bones[i];
-        const BonePose& o = older_->bones[i];
-        if (b.rotation) b.rotation = Nlerp(*o.rotation, *b.rotation, t);
-        if (b.translation) b.translation = Lerp(*o.translation, *b.translation, t);
-        if (b.scale) b.scale = Lerp(*o.scale, *b.scale, t);
-        if (t < 0.5f) b.flags = o.flags;
+    return Blend(*older_, *newest_, t);
+}
+
+std::optional<float> Evenness::Step(const Pose& shown, std::uint64_t now_ms, int* moving) {
+    if (start_ms_ == 0 || now_ms < start_ms_) start_ms_ = now_ms;
+    if (last_ && SameBones(*last_, shown)) {
+        float change = 0.0f;
+        for (std::size_t i = 0; i < shown.bones.size(); ++i) {
+            const auto& a = shown.bones[i].rotation;
+            const auto& b = last_->bones[i].rotation;
+            if (a && b) {
+                const float d = std::fabs((*a)[0] * (*b)[0] + (*a)[1] * (*b)[1] + (*a)[2] * (*b)[2] +
+                                          (*a)[3] * (*b)[3]);
+                change += 2.0f * std::acos(std::min(d, 1.0f));
+            }
+        }
+        if (change > kEvenMovingRad && last_change_ > kEvenMovingRad) {
+            sum_ += std::fabs(1.0f - change / last_change_);
+            ++moving_;
+        }
+        last_change_ = change;
+    } else {
+        last_change_ = 0.0f;
     }
-    return out;
+    last_ = shown;
+    if (now_ms - start_ms_ < kEvenReportMs) return std::nullopt;
+    const float uneven = moving_ ? sum_ / static_cast<float>(moving_) : 0.0f;
+    if (moving != nullptr) *moving = moving_;
+    sum_ = 0.0f;
+    moving_ = 0;
+    start_ms_ = now_ms;
+    return uneven;
 }
 
 // ------------------------------------------------------------------ the game side
@@ -461,6 +518,12 @@ struct State {
     std::vector<Written> written_last;
     // Counters for the debug line.
     std::uint64_t log_ms = 0;
+    // jitter-3: server ms minus our steady ms (from the client, at each Send):
+    // a received pose's sample time on our clock. And the frame our outbox
+    // pose was read on, so it is stamped with that frame's time.
+    std::optional<std::int64_t> offset_ms;
+    std::uint64_t outbox_ms = 0;
+    std::map<std::uint8_t, Evenness> evenness;  // the puppets' shown body pose
     unsigned sent = 0, received = 0, written = 0, refused = 0, kept = 0, overwritten = 0;
     unsigned pieces_sent_n = 0, pieces_written = 0;
 };
@@ -653,7 +716,7 @@ namespace {
 // no pose of its skeleton has come.
 enum class Wrote { none, written, refused };
 Wrote WriteFor(State& s, CoopPuppet::Guest& guest, std::uint8_t number, std::uint64_t actor,
-               std::uint64_t now_ms) {
+               std::uint64_t now_ms, bool body) {
     const auto skel = FindSkeleton(guest, actor);
     if (!skel) return Wrote::none;
     const std::uint32_t id = SkeletonId(skel->count, skel->model);
@@ -669,7 +732,18 @@ Wrote WriteFor(State& s, CoopPuppet::Guest& guest, std::uint8_t number, std::uin
         }
     } else {
         const auto& tracks = s.tracks[number];
-        if (const auto it = tracks.find(id); it != tracks.end()) pose = it->second.At(now_ms);
+        const auto it = tracks.find(id);
+        if (it != tracks.end()) pose = it->second.At(now_ms);
+        int moving = 0;
+        const std::optional<float> u = pose && body ? s.evenness[number].Step(*pose, now_ms, &moving) : std::nullopt;
+        if (u) {
+            // jitter-3's proof line: how even the limbs move (0 even), and by which clock.
+            char buf[112];
+            std::snprintf(buf, sizeof(buf), "P%u limbs: uneven %.2f (%d moving frames, %s)",
+                          static_cast<unsigned>(number), *u, moving,
+                          it->second.Timed() ? "at the place's time" : "by arrival");
+            Say(s, buf);
+        }
     }
     if (!pose) return Wrote::none;
     return WritePose(s, guest, actor, *pose) ? Wrote::written : Wrote::refused;
@@ -687,6 +761,7 @@ void OnCalcFrame(CoopPuppet::Guest& guest, std::uint64_t main_base,
         if (auto local = ReadLocal(s, guest, player)) {
             s.last_size = local->bones.size();
             s.outbox = std::move(local);
+            s.outbox_ms = now_ms;
             s.pieces_outbox.clear();
             for (const std::uint64_t piece : HeldPieces(guest, player)) {
                 if (const auto skel = FindSkeleton(guest, piece)) {
@@ -700,7 +775,7 @@ void OnCalcFrame(CoopPuppet::Guest& guest, std::uint64_t main_base,
     }
     for (const auto& [number, actor] : puppets) {
         if (actor == 0 || number >= s.tracks.size()) continue;
-        const Wrote body = WriteFor(s, guest, number, actor, now_ms);
+        const Wrote body = WriteFor(s, guest, number, actor, now_ms, true);
         if (body == Wrote::written) {
             ++s.written;
         } else if (body == Wrote::refused ||
@@ -708,7 +783,7 @@ void OnCalcFrame(CoopPuppet::Guest& guest, std::uint64_t main_base,
             ++s.refused;  // poses come, none of this puppet's skeleton (age)
         }
         for (const std::uint64_t piece : HeldPieces(guest, actor)) {
-            const Wrote w = WriteFor(s, guest, number, piece, now_ms);
+            const Wrote w = WriteFor(s, guest, number, piece, now_ms, false);
             if (w == Wrote::written) {
                 ++s.pieces_written;
             }
@@ -771,7 +846,11 @@ std::vector<proto::PlayerPose> TakeOutgoing(std::uint64_t server_now_us, std::ui
     s.sent_serial = s.outbox_serial;
     s.last_send_ms = now_ms;
     proto::PlayerPose body;
-    body.time = {server_now_us, ++s.sequence};
+    // jitter-3: stamped with the frame it was read on, not with this send.
+    const std::uint64_t age_us = s.outbox_ms != 0 && s.outbox_ms <= now_ms && now_ms - s.outbox_ms < 1000
+                                     ? (now_ms - s.outbox_ms) * 1000
+                                     : 0;
+    body.time = {server_now_us - std::min(server_now_us, age_us), ++s.sequence};
     body.skeleton = s.outbox->skeleton;
     // Sent even with no bone changed: the receiver keeps its puppet's pose
     // fresh (Drives) and its blend interval right.
@@ -800,7 +879,9 @@ std::vector<proto::PlayerPose> TakeOutgoing(std::uint64_t server_now_us, std::ui
 }
 
 void Send(coop::net::Client& client, std::uint64_t now_ms) {
-    for (const proto::PlayerPose& m : TakeOutgoing(client.server_now_us(), now_ms)) {
+    const std::uint64_t server_now_us = client.server_now_us();
+    SetClock(server_now_us, now_ms);
+    for (const proto::PlayerPose& m : TakeOutgoing(server_now_us, now_ms)) {
         client.send(m);
     }
 }
@@ -810,6 +891,13 @@ void OnEvent(const coop::net::Event& event, std::uint64_t now_ms) {
     const auto* m = std::get_if<proto::PlayerPose>(&event.message);
     if (m == nullptr) return;
     Receive(*m, now_ms);
+}
+
+void SetClock(std::uint64_t server_now_us, std::uint64_t now_ms) {
+    if (server_now_us == 0) return;
+    State& s = S();
+    std::lock_guard lock(s.mutex);
+    s.offset_ms = static_cast<std::int64_t>(server_now_us / 1000) - static_cast<std::int64_t>(now_ms);
 }
 
 void Receive(const proto::PlayerPose& m, std::uint64_t now_ms) {
@@ -830,7 +918,16 @@ void Receive(const proto::PlayerPose& m, std::uint64_t now_ms) {
     if (m.player_number == 0 || m.player_number >= s.tracks.size()) return;
     auto& tracks = s.tracks[m.player_number];
     auto& track = tracks[m.skeleton];
-    track.Push(track.Fill(std::move(pose)), now_ms);
+    // jitter-3: its sample time on our clock (sane: not ahead, not stale).
+    std::uint64_t made_ms = 0;
+    if (s.offset_ms && m.time.server_time_us != 0) {
+        const std::int64_t made = static_cast<std::int64_t>(m.time.server_time_us / 1000) - *s.offset_ms;
+        if (made > 0 && static_cast<std::uint64_t>(made) <= now_ms + 50 &&
+            now_ms - std::min(now_ms, static_cast<std::uint64_t>(made)) < 2000) {
+            made_ms = static_cast<std::uint64_t>(made);
+        }
+    }
+    track.Push(track.Fill(std::move(pose)), now_ms, made_ms);
     // Skeletons not heard from for a while (a piece put away, the other age).
     std::erase_if(tracks, [&](const auto& kv) {
         return now_ms - std::min(now_ms, kv.second.last_ms()) > kTrackForgetMs;

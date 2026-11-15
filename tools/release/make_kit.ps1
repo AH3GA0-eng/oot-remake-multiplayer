@@ -226,6 +226,7 @@ if (-not (Test-Path $hsPin)) {
     if ($crt) { Get-ChildItem $crt.FullName -Filter '*.dll' | Copy-Item -Destination $hsKit }
     Copy-Text $hsPin (Join-Path $hsKit 'PIN')
     Copy-Text (Join-Path $here 'kit\hookshot\TOOLS.txt') (Join-Path $hsKit 'TOOLS.txt')
+    Copy-Text (Join-Path $here 'kit\hookshot\OOTRR.txt') (Join-Path $hsKit 'OOTRR.txt')   # (the randomizer the build fetches)
     $hsPatches = @(Get-ChildItem (Join-Path $repo 'hookshot\patches') -Filter '*.patch' -File | Sort-Object Name)
     if (-not $hsPatches) { throw 'hookshot\PIN is there but hookshot\patches has no .patch.' }
     # (byte for byte: a patch's own line ends are part of it)
@@ -251,14 +252,17 @@ if (-not (Test-Path $hsPin)) {
 # The puppet pack tool, run on each PC by make-puppet-pack.cmd. Its tests and the
 # scene-placing test helper stay out.
 $packTool = Join-Path $repo 'tools\puppet_pack'
-foreach ($f in 'ainb.py', 'build.py', '__init__.py', 'byml.py', 'dumpcheck.py', 'dungeon_rooms.py', 'hud.py', 'nup.py', 'rstb.py', 'sarc.py', 'texture.py', 'title_menu.py', 'tunic.py', 'tunic_extra.py', 'zs.py') {
+foreach ($f in 'ainb.py', 'build.py', '__init__.py', 'byml.py', 'dumpcheck.py', 'dungeon_rooms.py', 'hud.py', 'look_items.py', 'look_live.py', 'map_captures.py', 'nup.py', 'rstb.py', 'sarc.py', 'texture.py', 'title_menu.py', 'tunic.py', 'tunic_extra.py', 'zs.py') {
     Copy-Text (Join-Path $packTool $f) (Join-Path $kit "tools\puppet_pack\$f")
 }
-# Every module build.py imports must be in the kit, or the pack is never made on the players' PCs.
+# Every module build.py imports must be in the kit, or the pack is never made on the players' PCs: one the list
+# above misses is copied too (a new import never breaks the kit), and one not in the repo stops the build.
 foreach ($line in (Get-Content (Join-Path $packTool 'build.py') | Where-Object { $_ -match '^\s*from \. import ' })) {
     foreach ($m in (($line -replace '#.*$', '') -replace '^\s*from \. import ', '').Split(',')) {
         $m = $m.Trim()
-        if ($m -and -not (Test-Path (Join-Path $kit "tools\puppet_pack\$m.py"))) { throw "make_kit: tools\puppet_pack\$m.py (imported by build.py) is not in the kit" }
+        if (-not $m -or (Test-Path (Join-Path $kit "tools\puppet_pack\$m.py"))) { continue }
+        if (-not (Test-Path (Join-Path $packTool "$m.py"))) { throw "make_kit: tools\puppet_pack\$m.py (imported by build.py) is not in the repo" }
+        Copy-Text (Join-Path $packTool "$m.py") (Join-Path $kit "tools\puppet_pack\$m.py")
     }
 }
 
@@ -339,7 +343,7 @@ $source = @(
 )
 if ($hookshotNote) {
     $source += @(
-        'Longshot (experimental): Team MagicBean''s static recompilation (it continues Hookshot), GPL-3.0. Not in this kit:',
+        'Longshot (experimental): Team MagicBean''s static recompilation, GPL-3.0. Not in this kit:',
         'Build-Hookshot-Coop.bat downloads it and builds it on your PC from your own game:',
         "  https://git.magicbean.dev/MagicBeanDev/Longshot/src/commit/$hookshotNote",
         '  with the patches in hookshot\patches (also hookshot/patches in the co-op repo), and',

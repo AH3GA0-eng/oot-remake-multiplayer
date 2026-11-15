@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdlib>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #ifdef LICHII_COOP
@@ -1618,6 +1619,23 @@ std::span<const Flag> LiveFlags() {
 }
 
 namespace {
+// The Deku Tree torch room's floor plate (room E, its BootUp from
+// OperateGameDataAllocAutogenGameData __GUIDHash 72078894 in
+// Logic/InsideTheDekuTree_Level_Room_E_Prefab_e259): the player who steps on
+// it sets this bool and their torch burns. Unshared, the other players saw
+// the web burn (RoomE_KillSpiderWave is named) but their torch stayed out
+// (deku-test run groups-20261114-081307). The same bool is 0 in a save from
+// before the Deku Tree and 1 in the next checkpoint save.
+constexpr std::array kAutogenFlags = std::to_array<AutogenFlag>({
+    {0x0f8f3fa3, "InsideTheDekuTree", "room E torch plate (Obj_SwitchCandleStick_A_02)"},
+});
+} // namespace
+
+std::span<const AutogenFlag> AutogenFlags() {
+    return kAutogenFlags;
+}
+
+namespace {
 
 constexpr std::string_view kDungeonScenes[] = {
     "BottomOfTheWell", "DodongoCavern", "FireTemple", "ForestTemple", "GanonCastle",
@@ -1637,6 +1655,15 @@ constexpr std::string_view kCorridor[] = {
 // event is left live too, so nothing changes for them.
 constexpr std::string_view kLiveOnTest6[] = {
     "InsideTheDekuTree_Gimmick_RoomG_WaterLevelDrop", "InsideTheDekuTree_Gimmick_RoomH_CandleStick"};
+
+// deku-switches-b (0.10.1 playtest): room flags that delete the asker of a held gimmick event, so they wait with
+// that event. The slingshot room's graph (Logic/InsideTheDekuTree_Level_Room_C_Prefab_efa7) deletes
+// EventRequestActor_d457 when RoomC_Cleared is set (Logic_Delete <- HoldGameDataGetBoolSimple), and the presser's
+// game sets it at its event's end. Taken live, it deleted our asker before our own event ran, so the ladder (IsOn <-
+// that asker's EventBool) never fell and our eye switch asked nothing. Held, our asker is there for the event (or
+// for our own eye shot), and the event's end sets the flag here too.
+constexpr std::pair<std::string_view, std::string_view> kHeldWithEvent[] = {
+    {"InsideTheDekuTree_RoomC_Cleared", "InsideTheDekuTree"}};
 
 std::string_view SceneOfEvent(std::string_view event) {
     // The game's own spellings, and the scene names that are not prefixes.
@@ -1687,6 +1714,9 @@ std::optional<std::string_view> HeldIn(std::uint32_t hash) {
         for (const std::string_view c : kCorridor) {
             if (name == c) return std::string_view("ForestTemple");
         }
+        for (const auto& [flag, scene] : kHeldWithEvent) {
+            if (name == flag) return scene;
+        }
         return std::nullopt;
     }
     return std::nullopt;
@@ -1713,6 +1743,9 @@ std::size_t Merge(std::optional<coop::host::SharedFlags>& shared, bool on) {
         keys.push_back(coop::host::FlagKey(f.hash, std::uint16_t{0}));
     }
     for (const Flag& f : kLiveFlags) {
+        keys.push_back(coop::host::FlagKey(f.hash, std::uint16_t{0}));
+    }
+    for (const AutogenFlag& f : kAutogenFlags) {
         keys.push_back(coop::host::FlagKey(f.hash, std::uint16_t{0}));
     }
     for (const Key& k : kKeys) {

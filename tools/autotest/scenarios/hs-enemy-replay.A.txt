@@ -1,0 +1,30 @@
+# hs-enemy-replay (enemy-replay-native's in-game check, 0.11 big run): deku-hit with the roles swapped, so the
+# player who is NOT the host (B) kills a plain enemy the host's game owns. Both load into the Deku Tree entrance;
+# A (host) watches; B walks to the Deku Baba at -71.33 3.50 (floor, y 82) and swings the sword (Y) at it again
+# and again (enemies have more life with 2 players: Automatic 140%).
+# Pass: the Baba dies in both games (A's log has its death/gone line, shots "late" both without it), and no
+# "life written" line for any Enemy_ actor in either log (enemy-replay-native: no raw life write, a refused
+# replay goes to the game's Life step or is lost). Count by hand: "not taken by its game's own steps",
+# "has not seen our replayed hit yet", "did not take the change: lost" (lost hits), "hurts taken X missed Y".
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-enemy-replay
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 400
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 4000
+mark look
+wait 600
+mark late

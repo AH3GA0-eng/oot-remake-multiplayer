@@ -3,7 +3,10 @@
 
 #include "coop_camera.h"
 #include "coop_colors.h"
+#include "coop_local_game.h"
+#include "coop_look_share.h"
 #include "coop_pose.h"
+#include "coop_puppet_own.h"
 
 #include <algorithm>
 #include <atomic>
@@ -23,13 +26,14 @@
 namespace CoopPuppet {
 namespace {
 
-// The puppet plays the other player's Ocarina notes (issue 152) only with
-// LICHII_COOP_OCARINA_SOUND=1: off by default until the game's own note player
-// is found (the notes are in the Ocarina.bars bank, not an SLink user, 2026-11-12).
+// The puppet plays the other player's Ocarina notes (issue 152) on the game's own
+// "Ocarina" SLink user, the one the game emits its own notes on (coop_puppet_sound.h,
+// OcarinaModuleUser). On by default since ocarina-notes (2026-11-14);
+// LICHII_COOP_OCARINA_SOUND=0 turns it off.
 bool OcarinaSoundOn() {
     static const bool on = [] {
         const char* v = std::getenv("LICHII_COOP_OCARINA_SOUND");
-        return v != nullptr && std::string_view(v) == "1";
+        return v == nullptr || std::string_view(v) != "0";
     }();
     return on;
 }
@@ -59,6 +63,21 @@ std::string VecText(const Vec3& v) {
 
 bool Gone(std::uint32_t state) {
     return state >= 7 && state <= 11;  // as 0x37cca0
+}
+
+// The actor's name (actor + 0x260 -> a C string, as coop_fairy.h's
+// addr::kActorName) is `name`, or not readable yet (then the vtable decides).
+bool NameFits(Guest& guest, std::uint64_t actor, const std::string& name) {
+    constexpr std::uint64_t kActorName = 0x260;
+    std::uint64_t text = 0;
+    if (!ReadValue(guest, actor + kActorName, text) || text == 0) {
+        return true;
+    }
+    std::string read(name.size() + 1, '\0');
+    if (!guest.Read(text, read.data(), read.size())) {
+        return true;
+    }
+    return read.compare(0, name.size(), name) == 0 && read[name.size()] == '\0';
 }
 
 } // namespace
@@ -124,7 +143,7 @@ void Director::Say(const std::string& text) const {
 std::vector<Director::SlotView> Director::Slots() const {
     std::vector<SlotView> out;
     for (const auto& s : slots_) {
-        out.push_back({s.number, s.phase, s.block, s.actor, s.actor_name, s.anim_name});
+        out.push_back({s.number, s.phase, s.block, s.actor, s.actor_name, s.anim_name, s.strays.size()});
     }
     return out;
 }
@@ -161,6 +180,13 @@ std::optional<Call> Director::Step(Guest& guest, bool after_call, std::uint64_t 
     if (input_.main_base == 0 || calls_ >= kMaxCallsPerFrame) {
         return std::nullopt;
     }
+    if (!own_asked_) {
+        own_asked_ = true;
+        if (auto call = OwnState(guest)) {
+            ++calls_;
+            return call;
+        }
+    }
     for (const auto& t : input_.targets) {
         SlotFor(t.number);
     }
@@ -179,6 +205,29 @@ std::optional<Call> Director::Step(Guest& guest, bool after_call, std::uint64_t 
     return std::nullopt;
 }
 
+// sword-3: the game's own state of the local Link's sword or shield
+// (kEquipState, 0xce7ab0(eu, slot)), one slot a frame in turn. The sender's
+// request-byte reading misses changes made inside one game frame
+// (coop_puppet_own.h); this answer is what it sends instead. No local Link
+// (a load, the title): nothing asked, and the stored answers go stale.
+std::optional<Call> Director::OwnState(Guest& guest) {
+    const std::uint64_t player = CoopPose::FindPlayer(guest, input_.main_base);
+    std::uint64_t parts = 0;
+    std::uint64_t eu = 0;
+    if (player == 0 || !ReadValue(guest, player + addr::kActorParts, parts) || parts == 0 ||
+        !ReadValue(guest, parts + addr::kPartsEquipmentUser, eu) || eu == 0) {
+        return std::nullopt;
+    }
+    own_index_ = own_next_;
+    own_next_ = (own_next_ + 1) % CoopPuppetOwn::kSlots.size();
+    Call c;
+    c.function = input_.main_base + addr::kEquipState;
+    c.x[0] = eu;
+    c.x[1] = CoopPuppetOwn::kSlots[own_index_];
+    pending_ = Pending::own_state;
+    return c;
+}
+
 // Once a frame, the full-body pose copy (coop_pose.cpp): our skeleton is
 // read and each live puppet's is written.
 void Director::PoseFrame(Guest& guest, std::uint64_t now_ms) {
@@ -187,7 +236,7 @@ void Director::PoseFrame(Guest& guest, std::uint64_t now_ms) {
     }
     std::vector<std::pair<std::uint8_t, std::uint64_t>> puppets;
     for (const auto& slot : slots_) {
-        if (slot.phase == Phase::live && slot.actor != 0) {
+        if (slot.phase == Phase::live && slot.actor != 0 && !slot.native) {
             puppets.emplace_back(slot.number, slot.actor);
         }
     }
@@ -197,6 +246,10 @@ void Director::PoseFrame(Guest& guest, std::uint64_t now_ms) {
 void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
     ++frames_;
     calls_ = 0;
+    own_asked_ = false;
+    if (pending_ == Pending::own_state) {
+        pending_ = Pending::none;  // not made: asked again this frame
+    }
     first_slot_ = slots_.empty() ? 0 : (first_slot_ + 1) % slots_.size();
     if (pending_ != Pending::none) {
         // The cave did not make the call (its own limit): undo the phase.
@@ -207,18 +260,52 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
             slot.phase = Phase::idle;
         } else if (pending_ == Pending::take || pending_ == Pending::drop) {
             // Still creating with the flag set: asked again.
+        } else if (pending_ == Pending::stray) {
+            // Its next delete is due in kStrayDeleteMs anyway.
         } else {
             slot.phase = Phase::live;
+        }
+        // A sound call not made: its step is asked again (note) or the sound is lost
+        // (link sound), never left waiting for a Finish that cannot come.
+        if (pending_ == Pending::sound) {
+            slot.sound.pending = CoopPuppetSound::State::Step::none;
+        } else if (pending_ == Pending::link_sound) {
+            CoopLinkSound::Dropped(slot.link_sound);
         }
         pending_ = Pending::none;
     }
     {
         std::lock_guard lock(input_mutex_);
         input_ = next_input_;
+        for (auto& t : next_input_.targets) {
+            t.sounds.clear();  // each received sound is taken once
+        }
+    }
+    for (auto& t : input_.targets) {
+        for (auto& slot : slots_) {
+            if (slot.number == t.number && !t.sounds.empty()) {
+                for (auto& s : t.sounds) {
+                    if (OcarinaSoundOn() && s.name.starts_with("Ocarina_")) {
+                        continue;  // the OCARINA_NOTE path plays the notes: not twice
+                    }
+                    slot.link_sound.heard.Push(std::move(s.name), s.at_ms);
+                }
+            }
+        }
+        t.sounds.clear();
     }
     if (input_.scene != scene_) {
         scene_ = input_.scene;
         scene_since_ms_ = now_ms;
+        // A load deletes every actor itself: what was a stray is gone or freed
+        // memory now, never to be called on.
+        for (auto& slot : slots_) {
+            if (!slot.strays.empty()) {
+                Say("P" + std::to_string(slot.number) + ": " + std::to_string(slot.strays.size()) +
+                    " stray actor(s) let go: the scene changed (the load deletes them)");
+                slot.strays.clear();
+            }
+        }
     }
     std::uint32_t live = 0;  // LiveMask(): rebuilt each frame
     if (input_.main_base == 0) {
@@ -226,6 +313,7 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
         return;
     }
     for (auto& slot : slots_) {
+        KeepStrays(slot, guest);
         if (slot.phase != Phase::creating && slot.phase != Phase::live &&
             slot.phase != Phase::deleting) {
             continue;
@@ -265,6 +353,14 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                     TunicFails(slot.actor_name, "not made twice: the puppet pack has no tunic "
                                                 "colours (an older pack? run make-puppet-pack again)");
                 }
+                // Its actor may still be loading: made later, it would be a
+                // second puppet of this player beside the next one. Deleted.
+                if (slot.taken != 0) {
+                    Abandon(slot, guest, now_ms, "its create timed out");
+                } else if (slot.request != 0) {
+                    Say("P" + std::to_string(slot.number) + ": request " + Hex(slot.request) +
+                        " timed out before it gave an actor (not taken: left to the game)");
+                }
                 slot.phase = Phase::idle;
                 slot.retry_ms = now_ms + 5000;
                 slot.take = slot.drop = false;
@@ -300,6 +396,19 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                 slot.ocarina_hand = {};  // its bind block is freed with it
                 slot.taken = 0;
                 slot.lost_ms = now_ms;  // a load deletes it before the camera goes
+            } else if (slot.native) {
+                // A real Player (coop_native_player.h): the game runs it; nothing of
+                // ours is written into it, it is only watched.
+                if (state == addr::kStatePresent) {
+                    const auto read = [&guest](std::uint64_t a, void* out, std::size_t size) {
+                        return guest.Read(a, out, size);
+                    };
+                    if (auto line = slot.probe.Step(read, input_.main_base, slot.actor,
+                                                    CoopPose::FindPlayer(guest, input_.main_base),
+                                                    now_ms)) {
+                        Say("P" + std::to_string(slot.number) + " " + *line);
+                    }
+                }
             } else if (const Target* t = Wanted(slot.number);
                        t != nullptr && state == addr::kStatePresent && t->actor == slot.actor_name &&
                        input_.scene == slot.scene) {
@@ -324,6 +433,7 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                     DrawAt(slot, guest, *t, now_ms);
                 } else if (t->show == Show::hide) {
                     slot.smooth.Set(t->position);  // out of sight: comes back where they are
+                    slot.follow.Reset();
                     slot.meter.Reset();
                     Vec3 parked = t->position;
                     parked[1] -= kHideDrop;
@@ -356,6 +466,9 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                 Say("P" + std::to_string(slot.number) + " deleted (" +
                     (have_state ? "state " + std::to_string(state) : std::string("no actor")) +
                     ")");
+                if (have_state && !Gone(state)) {
+                    Abandon(slot, guest, now_ms, "its delete did not finish");  // asked again until gone
+                }
                 slot.phase = Phase::idle;
                 slot.actor = 0;
                 slot.ocarina_hand = {};  // its bind block is freed with it
@@ -371,6 +484,13 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
 }
 
 void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) {
+    if (pending_ == Pending::own_state) {
+        // Its own clock: the hook's reader compares it with its own (coop_puppet_own.h).
+        CoopPuppetOwn::TheDrawn().Set(own_index_, static_cast<std::uint32_t>(result),
+                                      CoopPuppetOwn::NowMs());
+        pending_ = Pending::none;
+        return;
+    }
     Slot& slot = SlotFor(pending_slot_);
     const std::string who = "P" + std::to_string(slot.number);
     switch (pending_) {
@@ -452,6 +572,14 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
     case Pending::remove:
         Say(who + ": delete requested (returned " + Hex(result & 0xff) + ")");
         break;
+    case Pending::stray:
+        for (const auto& s : slot.strays) {
+            if (s.actor == stray_actor_ && (s.deletes == 1 || s.deletes % 30 == 0)) {
+                Say(who + ": stray actor " + Hex(s.actor) + " delete requested (returned " +
+                    Hex(result & 0xff) + ", call " + std::to_string(s.deletes) + ")");
+            }
+        }
+        break;
     case Pending::play:
         slot.anim_name = slot.play_name;
         slot.anim_serial = slot.play_serial;
@@ -525,11 +653,41 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
         }
         break;
     }
+    case Pending::hold_check: {
+        // The game's state of the slot against what was last set: when the
+        // puppet's own animation drew or put the piece away since, flip what
+        // we hold as set, so the next Hold asks the change again.
+        const auto state = static_cast<std::uint32_t>(result);
+        const auto bit = static_cast<std::uint8_t>(1u << slot.hold_slot);
+        if ((state != addr::kEquipStateInHand && state != addr::kEquipStateAway) ||
+            (slot.hold_known & bit) == 0) {
+            break;
+        }
+        if ((state == addr::kEquipStateInHand) == ((slot.in_hand & bit) != 0)) {
+            slot.hold_said = static_cast<std::uint8_t>(slot.hold_said & ~bit);  // holds again
+            break;
+        }
+        slot.in_hand = static_cast<std::uint8_t>(slot.in_hand ^ bit);
+        // Said once until a check finds it holding: an animation that keeps
+        // undoing it would otherwise log twice a second.
+        if ((slot.hold_said & bit) == 0) {
+            slot.hold_said = static_cast<std::uint8_t>(slot.hold_said | bit);
+            Say(who + " equipment slot " + std::to_string(slot.hold_slot) + " is " +
+                (state == addr::kEquipStateInHand ? "in hand" : "put away") +
+                " in the game, not as set: set again (said once until it holds)");
+        }
+        break;
+    }
     case Pending::move:
         break;
     case Pending::sound:
         CoopPuppetSound::Finish(slot.sound, result, who, [this](const std::string& line) { Say(line); });
         break;
+    case Pending::link_sound:
+        CoopLinkSound::Finish(slot.link_sound, result, guest, slot.block, who,
+                              [this](const std::string& line) { Say(line); }, anim_);
+        break;
+    case Pending::own_state:  // taken above
     case Pending::none:
         break;
     }
@@ -543,6 +701,11 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
     } else if (t->actor != slot.wanted_actor) {
         slot.wanted_actor = t->actor;
         slot.wanted_since_ms = now_ms;
+    }
+    if (slot.phase != Phase::allocating) {
+        if (auto c = DeleteStray(slot, guest, now_ms)) {
+            return c;  // before anything else: never two of one player
+        }
     }
     switch (slot.phase) {
     case Phase::no_block:
@@ -619,6 +782,9 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
             pending_ = Pending::remove;
             return c;
         }
+        if (slot.native) {
+            return std::nullopt;  // a real Player: no call of ours drives it
+        }
         // The player's Ocarina notes (issue 152), and with LICHII_COOP_DEBUG_ANIM
         // what the puppet's sound user plays (issue 131).
         // Not only in show: A playing is an event on A, so B holds the puppet (still,
@@ -636,6 +802,19 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
                                                       now_ms, who, say)) {
                 pending_ = Pending::sound;
                 return c;
+            }
+            // The player's own sounds (coop_link_sound.h), while no note is being started:
+            // the two share the block's asset and text cells.
+            if (slot.sound.step == CoopPuppetSound::State::Step::none &&
+                slot.sound.pending == CoopPuppetSound::State::Step::none) {
+                const std::uint64_t user = CoopPuppetSound::SoundUser(guest, slot.actor);
+                if (auto c = CoopLinkSound::Next(
+                        slot.link_sound, sound_budget_, guest, input_.main_base, slot.actor, user,
+                        slot.block, now_ms,
+                        [&guest, user] { return CoopPuppetSound::Playing(guest, user); }, who, say, anim_)) {
+                    pending_ = Pending::link_sound;
+                    return c;
+                }
             }
         }
         if (auto c = Equip(slot, *t, guest, now_ms)) {
@@ -718,9 +897,12 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     c.x[2] = b + block::kCreateArg;
     c.x[3] = slot.handle;
     c.x[4] = 1;
+    Abandon(slot, guest, 0, "a new one is made");  // never kept beside the new one
     slot.phase = Phase::creating;
     slot.actor = 0;
     slot.actor_name = target.actor;
+    slot.native = CoopNativePlayer::IsPlayerActor(target.actor);
+    slot.probe.Reset();
     slot.scene = input_.scene;
     slot.request = 0;
     slot.taken = 0;
@@ -734,6 +916,7 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     slot.held_frame.reset();
     slot.smooth.Reset();
     slot.meter.Reset();
+    slot.follow.Reset();
     slot.meter_skip = false;
     slot.sync_next = 0;
     slot.worn = {};
@@ -770,6 +953,33 @@ std::uint64_t EquipState(std::uint32_t kind) {
 // the wearer and distance on the ground), the request byte, and the slot
 // record's in-hand byte and flags (u32 at +0xa0: "put away" 0xe34c70 sets
 // 0x800, "in hand" 0x6b6820 clears it; read from the dump, not run).
+// A piece's turn in its wearer's frame (wearer rotation transposed times the
+// piece's), its three rows to one decimal, for the debug log: a held piece
+// at the same place but turned another way than on the player's own Link
+// shows here (held-sword: a sword in the hand not seen, an Ocarina upside down).
+std::string TurnText(Guest& guest, std::uint64_t wearer, std::uint64_t piece) {
+    std::array<float, 9> w{};
+    std::array<float, 9> p{};
+    if (!ReadValue(guest, wearer + addr::kActorRotation, w) ||
+        !ReadValue(guest, piece + addr::kActorRotation, p)) {
+        return " turn ?";
+    }
+    std::string text = " turn";
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            float v = 0.0f;
+            for (int k = 0; k < 3; ++k) {
+                v += w[k * 3 + r] * p[k * 3 + c];
+            }
+            char n[16];
+            std::snprintf(n, sizeof(n), "%s%.1f", c == 0 ? (r == 0 ? " " : "/") : ",",
+                          static_cast<double>(v));
+            text += n;
+        }
+    }
+    return text;
+}
+
 std::string SlotsText(Guest& guest, std::uint64_t actor, std::optional<std::uint8_t> wanted) {
     std::uint64_t parts = 0;
     std::uint64_t eu = 0;
@@ -811,7 +1021,8 @@ std::string SlotsText(Guest& guest, std::uint64_t actor, std::optional<std::uint
                       static_cast<double>(std::hypot(at[0] - own[0], at[2] - own[2])));
         text += "; slot " + std::to_string(s) + ": id " + Hex(id) + " actor " + Hex(piece) +
                 " state " + std::to_string(state) + " " + place + " request " + Hex(request) +
-                " record " + Hex(hand) + " flags " + Hex(flags);
+                " record " + Hex(hand) + " flags " + Hex(flags) +
+                (piece != 0 ? TurnText(guest, actor, piece) : std::string());
         if (wanted) {
             text += std::string(" want ") + (((*wanted >> s) & 1u) != 0 ? "hand" : "away");
         }
@@ -840,7 +1051,8 @@ std::string SlotsText(Guest& guest, std::uint64_t actor, std::optional<std::uint
         std::snprintf(place, sizeof(place), "up %.2f off %.2f", static_cast<double>(at[1] - own[1]),
                       static_cast<double>(std::hypot(at[0] - own[0], at[2] - own[2])));
         text += "; armor " + std::to_string(a) + ": id " + Hex(id) + " actor " + Hex(piece) +
-                " state " + std::to_string(state) + " " + place;
+                " state " + std::to_string(state) + " " + place +
+                (piece != 0 && a == 8 ? TurnText(guest, actor, piece) : std::string());
     }
     // Issue 91 (puppet-looks): the equip call's per-kind words (eu + 0x12d4 +
     // 8 * kind, two u32), to tell how the game wears a real mask from the
@@ -906,7 +1118,7 @@ std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& gue
             if (now_ms - slot.off_since_ms[i] < kTakeOffMs) {
                 continue;
             }
-            if (GearIsArmor(i) && !slot.unequip_refused[i]) {
+            if (GearIsArmor(i, slot.worn[i]) && !slot.unequip_refused[i]) {
                 std::uint64_t parts = 0;
                 std::uint64_t eu = 0;
                 if (!ReadValue(guest, slot.actor + addr::kActorParts, parts) || parts == 0 ||
@@ -917,7 +1129,7 @@ std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& gue
                 Call c;
                 c.function = input_.main_base + addr::kUnequipArmor;
                 c.x[0] = eu;
-                c.x[1] = kGearKinds[i] - addr::kArmorKindFirst;
+                c.x[1] = GearKind(i, slot.worn[i]) - addr::kArmorKindFirst;
                 c.x[2] = 0;
                 pending_ = Pending::unequip;
                 return c;
@@ -950,9 +1162,9 @@ std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& gue
         Call c;
         c.function = input_.main_base + addr::kEquip;
         c.x[0] = eu;
-        c.x[1] = kGearKinds[i];
+        c.x[1] = GearKind(i, *want);
         c.x[2] = cell;
-        c.x[3] = EquipState(kGearKinds[i]);
+        c.x[3] = EquipState(GearKind(i, *want));
         c.x[4] = 0xFFFFFFFF;
         c.x[5] = 1;
         c.x[6] = 0;
@@ -1037,18 +1249,29 @@ void Director::LeftBehind(Slot& slot, Guest& guest, std::uint64_t now_ms) {
 // One change of an equipment slot's state for a live puppet: a worn piece
 // its player holds in the hand while the puppet's is put away, or the other
 // way round. A piece just worn is put away, so only "in hand" is asked then.
+// While the puppet plays the Ocarina (their command, as CoopOcarina::HandBind
+// follows it) both hands hold the Ocarina, as on the player's own Link: every
+// hand-slot piece is put away then, whatever their drawn bits say
+// (held-ocarina-b: players saw a shield in the hand of an Ocarina player).
 std::optional<Call> Director::Hold(Slot& slot, const Target& target, Guest& guest,
                                    std::uint64_t now_ms) {
     if (!target.drawn || now_ms < slot.hold_retry_ms || target.show == Show::hide) {
         return std::nullopt;
     }
+    // The same rule as the hand bind in the live step: their command, else the
+    // puppet's last play.
+    const std::string their = target.anim ? target.anim->name : std::string();
+    const std::string& playing = their.empty() ? slot.anim_name : their;
+    const bool ocarina = CoopOcarina::HandBind::Playing(playing);
+    std::uint64_t check_eu = 0;
     for (std::size_t i = 0; i < kGearSlots.size(); ++i) {
         const int s = kGearSlots[i];
         if (s < 0 || slot.worn[i].empty()) {
             continue;
         }
         const auto bit = static_cast<std::uint8_t>(1u << s);
-        const bool want = (*target.drawn & bit) != 0;
+        const bool drawn = (*target.drawn & bit) != 0;
+        const bool want = drawn && !ocarina;
         std::uint64_t parts = 0;
         std::uint64_t eu = 0;
         std::uint32_t id = 0;
@@ -1060,6 +1283,7 @@ std::optional<Call> Director::Hold(Slot& slot, const Target& target, Guest& gues
             id == 0xFFFFFFFFu) {
             continue;  // the piece is not there (yet)
         }
+        check_eu = eu;
         if (id != slot.hold_id[i]) {
             // Another piece than the one last set: the game makes a worn
             // piece again a moment after the equip call (seen 2026-11-09),
@@ -1074,16 +1298,43 @@ std::optional<Call> Director::Hold(Slot& slot, const Target& target, Guest& gues
         if ((slot.hold_known & bit) == 0 && !want) {
             // Worn put away, as wanted: nothing to ask.
             slot.hold_known = static_cast<std::uint8_t>(slot.hold_known | bit);
+            slot.hold_check_ms = now_ms + kHoldCheckMs;
             continue;
+        }
+        if (drawn && ocarina) {
+            Say("P" + std::to_string(slot.number) + " " + kGearNames[i] + " '" + slot.worn[i] +
+                "' put away while the Ocarina plays ('" + playing + "')");
         }
         slot.hold_slot = s;
         slot.hold_in_hand = want;
+        slot.hold_check_ms = now_ms + kHoldCheckMs;  // let the change settle first
         Call c;
         c.function = input_.main_base + addr::kEquipChangeState;
         c.x[0] = eu;
         c.x[1] = static_cast<std::uint64_t>(s);
         c.x[2] = want ? addr::kEquipStateInHand : addr::kEquipStateAway;
         pending_ = Pending::hold;
+        return c;
+    }
+    // Nothing to change: now and then, one piece set before is checked
+    // against the game's own state of its slot (kEquipState), in turn.
+    if (check_eu == 0 || slot.hold_check_ms == 0 || now_ms < slot.hold_check_ms) {
+        return std::nullopt;
+    }
+    slot.hold_check_ms = now_ms + kHoldCheckMs;
+    for (std::size_t n = 0; n < kGearSlots.size(); ++n) {
+        const std::size_t i = (slot.hold_check_next + n) % kGearSlots.size();
+        const int s = kGearSlots[i];
+        if (s < 0 || slot.worn[i].empty() || (slot.hold_known & (1u << s)) == 0) {
+            continue;
+        }
+        slot.hold_check_next = i + 1;
+        slot.hold_slot = s;
+        Call c;
+        c.function = input_.main_base + addr::kEquipState;
+        c.x[0] = check_eu;
+        c.x[1] = static_cast<std::uint64_t>(s);
+        pending_ = Pending::hold_check;
         return c;
     }
     return std::nullopt;
@@ -1259,18 +1510,42 @@ void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint6
     const std::string who = "P" + std::to_string(slot.number);
     const bool held = target.show == Show::hold;
     Vec3 at{};
+    std::optional<Vec3> read;
     if (slot.meter_skip) {
         slot.meter_skip = false;  // still the parked spot: start again from the next frame
         slot.meter.Reset();
+        slot.steps.Break();
     } else if (ReadValue(guest, slot.actor + addr::kActorPosition, at)) {
+        read = at;
         if (const auto snap = slot.meter.Step(at)) {
             Say(who + " snap " + std::to_string(*snap).substr(0, 5) + " m (" +
                 (*snap >= CoopSnap::kWarpM ? std::string("warp") : ShowText(target.show)) + ")");
         }
         slot.smooth.Spawned(at, target.position);  // a new puppet: eased from where the game made it (no spawn pop)
     }
+    // jitter-b (coop_follow.h): their place taken to this game frame and followed in even
+    // steps. Held (their cutscene) it is drawn where the samples say, as before.
+    Vec3 place = target.position;
+    Vec3 raw = target.position;
+    // jitter-2: at the even frame time (coop_follow.h Cadence), so each frame's step is even.
+    const double even_ms = cadence_.At(now_ms);
+    if (target.velocity && !held) {
+        place = slot.follow.Step(target.position, *target.velocity, input_.made_ms, even_ms);
+        raw = slot.raw_follow.Step(target.position, *target.velocity, input_.made_ms,
+                                   static_cast<double>(now_ms));
+    } else {
+        slot.follow.Reset();
+        slot.raw_follow.Reset();
+    }
+    // jitter-3: the rotation followed the same way (coop_follow.h Turner).
+    Mat3 rotation = target.rotation;
+    if (target.turn && !held) {
+        rotation = QuatToMatrix(slot.turner.Step(*target.turn, input_.made_ms, even_ms));
+    } else {
+        slot.turner.Reset();
+    }
     float jump = 0.0f;
-    const Vec3 drawn = slot.smooth.Step(target.position, now_ms, !held, &jump);
+    const Vec3 drawn = slot.smooth.Step(place, now_ms, !held, &jump);
     if (jump > 0.0f && slot.smooth.FromSpawn()) {
         // Held (their cutscene) the smoother does not ease: the step is drawn at once then.
         Say(who + (held ? " drawn at once from where it was made, " : " eased from where it was made, ") +
@@ -1279,7 +1554,27 @@ void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint6
         Say(who + " target jump " + std::to_string(jump).substr(0, 5) + " m (" + ShowText(target.show) +
             (jump >= CoopSnap::kWarpM ? ", warp" : held ? ", at once" : ", eased") + ")");
     }
-    Pose(slot, guest, drawn, &target.rotation, now_ms);
+    if (jump > 0.0f) {
+        slot.steps.Break();
+        slot.raw_steps.Break();
+    }
+    const auto before = slot.raw_steps.Step(std::nullopt, raw, now_ms);
+    if (const auto r = slot.steps.Step(read, drawn, now_ms)) {
+        // jitter-2's proof line: 'uneven' near 0 is even steps; 'game moved' is what the game
+        // itself moved it between our writes (a second writer).
+        char raw_text[16] = "n/a";  // the raw-time steps did not report this frame
+        if (before) {
+            std::snprintf(raw_text, sizeof(raw_text), "%.2f", before->uneven);
+        }
+        char buf[220];
+        std::snprintf(buf, sizeof(buf),
+                      " steps: %d frames (%d moving), mean %.3f m, uneven %.2f (worst %.2f; raw frame time "
+                      "%s), frame %.1f ms, game moved %.3f m (max %.3f)",
+                      r->frames, r->moving, r->mean_step, r->uneven, r->uneven_max, raw_text,
+                      cadence_.PeriodMs(), r->game_moved, r->game_moved_max);
+        Say(who + buf);
+    }
+    Pose(slot, guest, drawn, &rotation, now_ms);
 }
 
 // The puppet's pose: +0x31c/+0x328 and the engine's pending transform
@@ -1319,6 +1614,95 @@ void Director::Pose(Slot& slot, Guest& guest, const Vec3& position, const Mat3* 
         WriteValue(guest, slot.actor + addr::kActorRotation, *rotation);
         WriteValue(guest, slot.actor + addr::kActorRotationRequest, *rotation);
     }
+}
+
+// The slot's taken actor becomes a stray: no longer the puppet, deleted until gone.
+// Only while it is still that actor (Resolve: the vtable it was taken with) and not
+// being deleted already (state 7-11): a freed or reused address is only let go.
+void Director::Abandon(Slot& slot, Guest& guest, std::uint64_t now_ms, const char* why) {
+    const std::uint64_t actor = slot.taken;
+    if (actor == 0 || slot.vtable == 0) {
+        return;
+    }
+    std::uint32_t state = 0;
+    const bool alive = Resolve(slot, guest) == actor &&
+                       ReadValue(guest, actor + addr::kActorState, state) && !Gone(state);
+    slot.taken = 0;
+    slot.actor = 0;
+    if (!alive) {
+        return;
+    }
+    for (const auto& s : slot.strays) {
+        if (s.actor == actor) {
+            return;
+        }
+    }
+    slot.strays.push_back({actor, slot.vtable, slot.actor_name, now_ms, 0});
+    Say("P" + std::to_string(slot.number) + ": actor " + Hex(actor) + " (" + slot.actor_name +
+        ") is a stray (" + why + "): deleted with the game's call until it is gone");
+}
+
+// Why the stray must not be called on any more; empty while it may be deleted.
+std::string Director::StrayCheck(const Slot::Stray& s, Guest& guest) const {
+    std::uint64_t vtable = 0;
+    std::uint32_t state = 0;
+    if (!ReadValue(guest, s.actor, vtable) || vtable != s.vtable) {
+        return "freed or reused";
+    }
+    if (!ReadValue(guest, s.actor + addr::kActorState, state)) {
+        return "not readable";
+    }
+    if (Gone(state)) {
+        return "state " + std::to_string(state);
+    }
+    if (!NameFits(guest, s.actor, s.name)) {
+        return "another actor's name";
+    }
+    for (const auto& other : slots_) {
+        if (other.taken == s.actor) {
+            return "a puppet again";
+        }
+    }
+    if (s.deletes >= kStrayMaxDeletes) {
+        return "given up: the game kept it through " + std::to_string(s.deletes) + " delete calls";
+    }
+    return {};
+}
+
+void Director::KeepStrays(Slot& slot, Guest& guest) {
+    std::erase_if(slot.strays, [&](const Slot::Stray& s) {
+        const std::string why = StrayCheck(s, guest);
+        if (why.empty()) {
+            return false;
+        }
+        Say("P" + std::to_string(slot.number) + ": stray actor " + Hex(s.actor) + " let go (" + why +
+            ", " + std::to_string(s.deletes) + " delete calls)");
+        return true;
+    });
+}
+
+// At most one stray delete a frame over all slots, each one checked right before
+// its call (another slot may have taken the address since the frame began).
+std::optional<Call> Director::DeleteStray(Slot& slot, Guest& guest, std::uint64_t now_ms) {
+    if (stray_frame_ == frames_) {
+        return std::nullopt;
+    }
+    for (auto& s : slot.strays) {
+        if (now_ms < s.next_ms || !StrayCheck(s, guest).empty()) {
+            continue;  // not due, or let go next frame
+        }
+        s.next_ms = now_ms + kStrayDeleteMs;
+        ++s.deletes;
+        stray_actor_ = s.actor;
+        stray_frame_ = frames_;
+        Call c;
+        c.function = input_.main_base + addr::kRequestDelete;
+        c.x[0] = s.actor;
+        c.x[1] = 0;
+        pending_ = Pending::stray;
+        return c;
+    }
+    return std::nullopt;
 }
 
 // The actor taken from the request, while its vtable is the one it had then
@@ -1485,16 +1869,24 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         t.color = r.color ? r.color : coop::protocol::slot_color(r.number);
         t.actor = ActorFor(r.adult, t.color);
         t.position = r.position;
+        t.velocity = r.velocity;
         if (r.rotation) {
             t.rotation = QuatToMatrix(*r.rotation);
+            t.turn = r.rotation;
         }
         t.show = show;
         t.why = why;
         t.anim = r.anim;
         t.anim_serial = r.anim_serial;
         t.gear = r.gear;
+        if (r.look_copy && *r.look_copy >= 1 && *r.look_copy <= settings_.look_copies) {
+            DressInLook(t.gear, *r.look_copy, settings_.look_items);
+        }
         t.drawn = r.drawn;
         t.ocarina = r.ocarina;
+        if (show != Show::hide && CoopLinkSound::InHearing(position, r.position)) {
+            t.sounds = r.sounds;  // too far, or out of sight: not heard
+        }
         in.targets.push_back(std::move(t));
     }
     if (settings_.debug && position && now_ms - scene_since_ms_ >= settings_.debug_delay_ms) {
@@ -1515,6 +1907,110 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
     return in;
 }
 
+std::vector<std::string> PackQuietScenes(std::string_view manifest) {
+    // "quiet_scenes": ["...", ...], as build.py writes it (json.dumps).
+    std::vector<std::string> out;
+    const auto at = manifest.find("\"quiet_scenes\"");
+    if (at == std::string_view::npos) {
+        return out;
+    }
+    const auto lb = manifest.find_first_not_of(" \t\r\n:", at + 14);
+    if (lb == std::string_view::npos || manifest[lb] != '[') {
+        return out;
+    }
+    const auto rb = manifest.find(']', lb);
+    if (rb == std::string_view::npos) {
+        return out;
+    }
+    std::string_view list = manifest.substr(lb + 1, rb - lb - 1);
+    while (true) {
+        const auto q0 = list.find('"');
+        const auto q1 = q0 == std::string_view::npos ? q0 : list.find('"', q0 + 1);
+        if (q1 == std::string_view::npos) {
+            break;
+        }
+        if (q1 > q0 + 1) {
+            out.emplace_back(list.substr(q0 + 1, q1 - q0 - 1));
+        }
+        list.remove_prefix(q1 + 1);
+    }
+    return out;
+}
+
+std::string QuietActor(std::string_view actor) {
+    for (const std::string_view plain : {std::string_view("CoopPuppet_Child"), std::string_view("CoopPuppet_Adult")}) {
+        if (actor.substr(0, plain.size()) == plain &&
+            (actor.size() == plain.size() || actor[plain.size()] == '_')) {
+            return std::string(plain) + "Quiet" + std::string(actor.substr(plain.size()));
+        }
+    }
+    return std::string(actor);
+}
+
+std::string LookItemName(std::string_view item, std::size_t copy) {
+    return std::string(item) + "_Look" + std::to_string(copy);
+}
+
+void DressInLook(Gear& gear, std::size_t copy, const std::vector<std::string>& items) {
+    for (auto& piece : gear) {
+        if (piece && std::find(items.begin(), items.end(), *piece) != items.end()) {
+            piece = LookItemName(*piece, copy);
+        }
+    }
+}
+
+LookItems PackLookItems(std::string_view manifest) {
+    // "look_items": {"slots": N, "copies": 2N, "actors": ["...", ...], "files": [...]}, as
+    // build.py writes it (json.dumps); null for a pack without them.
+    LookItems out;
+    const auto at = manifest.find("\"look_items\"");
+    if (at == std::string_view::npos) {
+        return out;
+    }
+    const auto open = manifest.find_first_not_of(" \t\r\n:", at + 12);
+    if (open == std::string_view::npos || manifest[open] != '{') {
+        return out;   // null: none
+    }
+    const auto close = manifest.find('}', open);
+    if (close == std::string_view::npos) {
+        return out;
+    }
+    const std::string_view body = manifest.substr(open, close - open);
+    std::size_t copies = 0;
+    if (const auto s = body.find("\"copies\""); s != std::string_view::npos) {
+        std::size_t i = body.find_first_not_of(" \t\r\n:", s + 8);
+        while (i < body.size() && body[i] >= '0' && body[i] <= '9' && copies < 100) {
+            copies = copies * 10 + static_cast<std::size_t>(body[i] - '0');
+            ++i;
+        }
+    }
+    const auto a = body.find("\"actors\"");
+    const auto lb = a == std::string_view::npos ? a : body.find('[', a);
+    const auto rb = lb == std::string_view::npos ? lb : body.find(']', lb);
+    if (rb == std::string_view::npos || copies == 0) {
+        return out;
+    }
+    std::string_view list = body.substr(lb + 1, rb - lb - 1);
+    while (true) {
+        const auto q0 = list.find('"');
+        if (q0 == std::string_view::npos) {
+            break;
+        }
+        const auto q1 = list.find('"', q0 + 1);
+        if (q1 == std::string_view::npos) {
+            break;
+        }
+        if (q1 > q0 + 1) {
+            out.actors.emplace_back(list.substr(q0 + 1, q1 - q0 - 1));
+        }
+        list.remove_prefix(q1 + 1);
+    }
+    if (!out.actors.empty()) {
+        out.copies = copies;
+    }
+    return out;
+}
+
 bool PackHasGreenPuppets(std::string_view manifest) {
     return manifest.find("\"CoopPuppet_Child_Green\"") != std::string_view::npos &&
            manifest.find("\"CoopPuppet_Adult_Green\"") != std::string_view::npos;
@@ -1529,6 +2025,13 @@ std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color) co
     if (!settings_.actor.empty()) {
         return settings_.actor;
     }
+    if (settings_.native_player) {
+        return CoopNativePlayer::ActorFor(adult);
+    }
+    // Issue 150: in a scene with stealth guards, the quiet copy (PlannerSettings::quiet_scenes).
+    const bool quiet = std::find(settings_.quiet_scenes.begin(), settings_.quiet_scenes.end(), scene_) !=
+                       settings_.quiet_scenes.end();
+    const auto named = [quiet](std::string name) { return quiet ? QuietActor(name) : name; };
     const std::string plain = adult ? "CoopPuppet_Adult" : "CoopPuppet_Child";
     if (settings_.tunics && color) {
         std::string_view tunic = CoopColors::TunicOf(*color);
@@ -1536,13 +2039,13 @@ std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color) co
             tunic = "Green";  // the plain puppet wears your own colour (PlannerSettings)
         }
         if (!tunic.empty()) {
-            std::string name = plain + '_' + std::string(tunic);
+            std::string name = named(plain + '_' + std::string(tunic));
             if (std::find(failed_tunics_.begin(), failed_tunics_.end(), name) == failed_tunics_.end()) {
                 return name;
             }
         }
     }
-    return plain;
+    return named(plain);
 }
 
 void Director::TunicFails(const std::string& actor, const std::string& why) {
@@ -1567,12 +2070,15 @@ struct Received {
 std::mutex g_anim_mutex;
 // One entry per player number, 0 (unused) to kMaxPlayers (up to 16 players).
 constexpr std::size_t kNumbers = std::size_t{coop::protocol::kMaxPlayers} + 1;
-std::array<std::optional<Received>, kNumbers> g_anims;  // by player number; guarded
+// jitter-3: by their sample time, taken at presence's shown time (coop_follow.h Delayed).
+std::array<CoopFollow::Delayed<Received>, kNumbers> g_anims;  // by player number; guarded
+std::array<std::uint32_t, kNumbers> g_anim_serials{};         // the same; guarded
 std::array<Gear, kNumbers> g_gear;                         // the same; guarded
 std::array<std::optional<std::uint8_t>, kNumbers> g_drawn;  // the same; guarded
 std::array<std::optional<std::uint32_t>, kNumbers> g_color; // the same; guarded
 std::optional<std::uint32_t> g_own_color;                    // ours; guarded
 std::array<CoopPuppetSound::Wanted, kNumbers> g_ocarina;  // the same; guarded (issue 152)
+std::array<std::vector<CoopLinkSound::Sound>, kNumbers> g_sounds;  // the same; guarded (LINK_SOUND)
 
 } // namespace
 
@@ -1608,13 +2114,15 @@ void OnEvent(const coop::net::Event& event) {
         g_drawn = {};
         g_color = {};
         g_ocarina = {};
+        g_sounds = {};
     } else if (event.kind == EventKind::player_left && event.player < g_anims.size()) {
         std::lock_guard lock(g_anim_mutex);
-        g_anims[event.player].reset();
+        g_anims[event.player].Clear();
         g_gear[event.player] = {};
         g_drawn[event.player].reset();
         g_color[event.player].reset();
         g_ocarina[event.player] = {};
+        g_sounds[event.player].clear();
     } else if (event.kind == EventKind::player_equip && event.player != 0 &&
                event.player < g_gear.size()) {
         const auto& e = event.equipment;
@@ -1640,6 +2148,21 @@ void OnEvent(const coop::net::Event& event) {
         std::lock_guard lock(g_anim_mutex);
         auto& w = g_ocarina[note->player_number];
         w = CoopPuppetSound::Wanted{note->note, w.serial + 1, now_ms};
+    } else if (const auto* sound = std::get_if<coop::protocol::LinkSound>(&event.message);
+               event.kind == EventKind::message && sound != nullptr) {
+        if (sound->player_number == 0 || sound->player_number >= g_sounds.size()) {
+            return;
+        }
+        const auto now_ms = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+        std::lock_guard lock(g_anim_mutex);
+        auto& queue = g_sounds[sound->player_number];
+        if (queue.size() >= CoopLinkSound::kHeardMax) {
+            queue.erase(queue.begin());  // the newest are kept
+        }
+        queue.push_back(CoopLinkSound::Sound{sound->name, now_ms});
     } else if (event.kind == EventKind::message) {
         const auto* sample = std::get_if<coop::protocol::PlayerSample>(&event.message);
         if (sample == nullptr || !sample->animation || sample->player_number == 0 ||
@@ -1647,11 +2170,10 @@ void OnEvent(const coop::net::Event& event) {
             return;
         }
         std::lock_guard lock(g_anim_mutex);
-        auto& slot = g_anims[sample->player_number];
-        const std::uint32_t serial = slot ? slot->serial + 1 : 1;
-        slot = Received{{sample->animation->name, sample->animation->frame,
-                         sample->animation->rate},
-                        serial};
+        const std::uint32_t serial = ++g_anim_serials[sample->player_number];
+        g_anims[sample->player_number].Push(
+            sample->time.server_time_us,
+            Received{{sample->animation->name, sample->animation->frame, sample->animation->rate}, serial});
     }
 }
 
@@ -1681,7 +2203,10 @@ std::uint32_t LivePuppets() {
 std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_now_us) {
     std::vector<Remote> remotes;
     if (session != nullptr && server_now_us != 0) {
+        std::uint64_t show_us = 0;  // jitter-3: the animation at the place's own time
         session->with_presence([&](coop::presence::Presence& p) {
+            const std::uint64_t delay = p.settings().show_delay_us;
+            show_us = server_now_us > delay ? server_now_us - delay : 0;
             for (const std::uint8_t n : p.players()) {
                 // The same time as the markers' collect() this frame.
                 const auto pose = p.shown(n, server_now_us);
@@ -1691,6 +2216,7 @@ std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_n
                 Remote r;
                 r.number = n;
                 r.position = pose->position;
+                r.velocity = pose->velocity;
                 r.rotation = pose->rotation;
                 r.fade = pose->fade;
                 if (const auto* player = p.player(n)) {
@@ -1703,16 +2229,20 @@ std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_n
         });
         std::lock_guard lock(g_anim_mutex);
         for (auto& r : remotes) {
-            if (r.number < g_anims.size() && g_anims[r.number]) {
-                r.anim = g_anims[r.number]->anim;
-                r.anim_serial = g_anims[r.number]->serial;
+            if (r.number < g_anims.size()) {
+                if (const Received* a = g_anims[r.number].At(show_us)) {
+                    r.anim = a->anim;
+                    r.anim_serial = a->serial;
+                }
             }
             if (r.number < g_gear.size()) {
                 r.gear = g_gear[r.number];
                 r.drawn = g_drawn[r.number];
                 r.color = g_color[r.number];
                 r.ocarina = g_ocarina[r.number];
+                r.sounds = std::exchange(g_sounds[r.number], {});
             }
+            r.look_copy = CoopLookShare::CopyOf(r.number);
         }
     }
     return remotes;
@@ -1741,6 +2271,8 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
             .count());
     g_planner->SetFailedTunics(g_director->FailedTunics());
     auto input = g_planner->Plan(main_base, scene, position, local_event, remotes, now_ms, own_gear, own_drawn, own_color);
+    if (main_base != 0) CoopLocalGame::AddTargets(input);   // local co-op's players (coop_local_game.h)
+    input.made_ms = now_ms;
     StampDrawing(input, now_ms);
     g_director->SetInput(std::move(input));
 }

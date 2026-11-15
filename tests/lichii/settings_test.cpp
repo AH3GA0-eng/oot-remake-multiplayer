@@ -218,19 +218,45 @@ TEST_CASE("settings: LoadSettings reads the file, a missing one is fine") {
   CHECK(on.name == "Saria");
 }
 
-TEST_CASE("settings: any error turns co-op off") {
+TEST_CASE("settings: a problem drops only its own line") {
   if (any_coop_env()) {
     MESSAGE("LICHII_COOP_* set in this environment; skipped");
     return;
   }
   std::vector<std::string> errors;
-  // The server line is fine; the typo on the next line still turns it off.
-  const auto bad = write_temp("coop_tests_bad.ini", "server = 127.0.0.1\nprot = 27510\n");
+  // An unknown key and a bad name are said, and passed over: co-op stays on
+  // with the rest (the name stays the default).
+  const auto bad = write_temp("coop_tests_bad.ini",
+                              "server = 127.0.0.1\nprot = 27510\nname = 12345678901234567\nport = 27520\n");
   Settings s = LoadSettings(bad, errors);
   std::filesystem::remove(bad);
-  REQUIRE(errors.size() == 1);
+  REQUIRE(errors.size() == 2);
   CHECK(errors[0].find("unknown key 'prot'") != std::string::npos);
-  CHECK_FALSE(s.enabled());
+  CHECK(errors[1].find("name must be") != std::string::npos);
+  CHECK(s.enabled());
+  CHECK(s.server == "127.0.0.1");
+  CHECK(s.port == 27520);
+  CHECK(s.name == "Player");
+  // A bad server is dropped too, and with no server co-op is off.
+  errors.clear();
+  Settings off;
+  ApplyIni("server = bad/host\nname = Saria\n", off, errors);
+  CHECK(errors.size() == 1);
+  CHECK_FALSE(off.enabled());
+  CHECK(off.name == "Saria");
+}
+
+TEST_CASE("settings: the keys the co-op module writes are read without a word") {
+  Settings s;
+  std::vector<std::string> errors;
+  ApplyIni("server = 127.0.0.1\nname = AlexA\ncolor = black\nlook_hylian_frame = #E0C030\n"
+           "look_hylian_emblem = red\nlast_invite = ABCDE-FGHJK\nlast_host = 26.1.2.3:27510\n"
+           "client_id = 0123456789abcdef0123456789abcdef\n",
+           s, errors);
+  CHECK(errors.empty());
+  CHECK(s.enabled());
+  CHECK(s.name == "AlexA");
+  CHECK(s.color.has_value());
 }
 
 TEST_CASE("settings: the join password from coop.ini and LICHII_COOP_PASSWORD") {
@@ -274,4 +300,39 @@ TEST_CASE("settings: color, a name or #RRGGBB") {
   REQUIRE(errors.size() == 1);
   CHECK(errors[0].find("LICHII_COOP_COLOR") != std::string::npos);
   CHECK(s.color == 0x30D040u);  // kept
+}
+
+TEST_CASE("settings: the player key is 32 hex digits, kept in its own file and made once") {
+    using CoopHook::LoadPlayerKey;
+    using CoopHook::ParsePlayerKey;
+    using CoopHook::PlayerKeyText;
+    CHECK_FALSE(ParsePlayerKey(""));
+    CHECK_FALSE(ParsePlayerKey("00112233445566778899aabbccddeef"));    // 31
+    CHECK_FALSE(ParsePlayerKey("00112233445566778899aabbccddeeffx"));  // 33
+    CHECK_FALSE(ParsePlayerKey("g0112233445566778899aabbccddeeff"));
+    const auto key = ParsePlayerKey("  00112233445566778899AABBCCDDEEFF\r\n");
+    REQUIRE(key);
+    CHECK((*key)[0] == 0x00);
+    CHECK((*key)[10] == 0xaa);
+    CHECK((*key)[15] == 0xff);
+    CHECK(PlayerKeyText(*key) == "00112233445566778899aabbccddeeff");
+
+    const auto dir = std::filesystem::temp_directory_path() / "coop-player-key-test";
+    std::filesystem::remove_all(dir);
+    const auto file = dir / "player-key.txt";
+    std::string note;
+    const auto made = LoadPlayerKey(file, note);
+    CHECK(note.find("a new player key was made") == 0);
+    REQUIRE(std::filesystem::is_regular_file(file));
+    note.clear();
+    CHECK(LoadPlayerKey(file, note) == made);  // kept: the same key next time
+    CHECK(note.empty());
+    {
+        std::ofstream broken(file, std::ios::binary | std::ios::trunc);
+        broken << "not a key";
+    }
+    const auto again = LoadPlayerKey(file, note);
+    CHECK(again != made);  // a broken file gets a new one (16 random bytes: never the same)
+    CHECK(note.find("a new player key was made") == 0);
+    std::filesystem::remove_all(dir);
 }

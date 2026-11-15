@@ -118,11 +118,25 @@ const Room* RoomAt(std::string_view scene, const Vec& p) {
 
 Vec ArrivalFor(const Room& room, std::uint8_t number) {
     Vec v = room.arrive;
-    if (number >= 1 && number <= 4) {
-        const float angle = static_cast<float>(number) * 1.5707963f;  // a quarter turn each
-        v.x += kArrivalSpread * std::cos(angle);
-        v.z += kArrivalSpread * std::sin(angle);
+    if (number < 1 || number > coop::protocol::kMaxPlayers) {
+        return v;
     }
+    // Ring 1, players 1 to 8 at kArrivalSpread: 1-4 a quarter turn each (as
+    // with four players), 5-8 between them. Ring 2, players 9 to 16 at twice
+    // that, an eighth of a turn each, half an eighth past ring 1's.
+    constexpr float kEighth = 0.78539816f;
+    float angle = 0.0f;
+    float radius = kArrivalSpread;
+    if (number <= 4) {
+        angle = static_cast<float>(number) * 2.0f * kEighth;
+    } else if (number <= 8) {
+        angle = static_cast<float>(number - 4) * 2.0f * kEighth + kEighth;
+    } else {
+        angle = static_cast<float>(number - 8) * kEighth + kEighth / 2.0f;
+        radius = 2.0f * kArrivalSpread;
+    }
+    v.x += radius * std::cos(angle);
+    v.z += radius * std::sin(angle);
     return v;
 }
 
@@ -235,10 +249,13 @@ void Sync::Take(const proto::BossRoom& m, std::uint64_t now_us) {
     }
 }
 
-void Sync::Defeat(Actions& out) {
+void Sync::Defeat(Actions& out, bool read_gone) {
     Say(out, *here_, proto::BossState::defeated);
     if (std::find(defeated_.begin(), defeated_.end(), here_->index) == defeated_.end()) {
         defeated_.push_back(here_->index);
+    }
+    if (read_gone) {
+        out.beaten_here = here_;  // only when the walk read the boss gone, never a guess from the event alone
     }
     out.log.push_back("boss beaten (" + std::string(here_->outro) + ")");
 }
@@ -250,6 +267,9 @@ void Sync::Commit(Actions& out, const char* why) {
     committed_ = true;
     const bool fight = phase_ == Phase::fight || phase_ == Phase::outro;
     Say(out, *here_, fight ? proto::BossState::intro_end : proto::BossState::intro_start);
+    if (!fight) {
+        out.intro_here = here_;  // past the door during our intro: it is the boss's (a door before it is not)
+    }
     out.log.push_back(std::string("past the door (") + why + "): the others are moved in");
 }
 
@@ -348,6 +368,7 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
                 if (local.event) {  // came in with an event running: that is the intro
                     phase_ = Phase::intro;
                     intro_at_ = now_us;
+                    out.intro_here = here_;
                     out.log.push_back("intro started (" + std::string(here_->intro) + ")");
                     if (moved_in) {
                         Commit(out, "moved in");
@@ -406,6 +427,7 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
                 // boss's death).
                 phase_ = Phase::intro;
                 intro_at_ = now_us;
+                out.intro_here = here_;
                 out.log.push_back("intro started (" + std::string(here_->intro) + ", after the wait)");
             } else if (rose && now_us - fight_at_ < kMinFightUs) {
                 out.log.push_back("an event right after the intro: the rest of it, not the boss's death");
@@ -417,22 +439,25 @@ Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
                     provisional_ = true;
                     out.log.push_back("an event in the fight; the boss is still there: waiting to see");
                 } else {
-                    Defeat(out);
+                    Defeat(out, local.boss_alive.has_value());  // read gone, or no reading at all
                 }
             }
             break;
         case Phase::outro:
             if (provisional_) {
                 const bool gone = local.boss_alive.has_value() && !*local.boss_alive;
-                const bool long_event = now_us - outro_at_ >= kLongEventUs;
+                // An untouched boss is not dying: a long event with the boss at
+                // full life is a scene of the fight (Gohma's ceiling intro).
+                const bool untouched = local.boss_hurt.has_value() && !*local.boss_hurt;
+                const bool long_event = now_us - outro_at_ >= kLongEventUs && !untouched;
                 if (gone || (long_event && local.event)) {
                     provisional_ = false;
-                    Defeat(out);
+                    Defeat(out, gone);
                     if (!gone) out.log.back() += " after a long event";
                 } else if (fell) {
                     provisional_ = false;
                     if (!local.boss_alive.has_value()) {
-                        Defeat(out);  // no reading at the end: as before
+                        Defeat(out, false);  // no reading at the end: as before
                     } else {
                         phase_ = Phase::fight;
                         out.log.push_back("the event is over and the boss is alive: the fight goes on");

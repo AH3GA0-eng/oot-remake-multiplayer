@@ -30,6 +30,10 @@
 //   loads (each autotest's guest did, issue 159); the guest takes the host's
 //   clock again instead, as on joining. The same for any jump a guest reads
 //   while or just after its Link could not be read (a reload, a death).
+// - On Hookshot the game's own time function is wrapped (GameSet, docs/time.md
+//   "Through the game's own function"): a jump is then the game's set itself,
+//   known at once and with its exact time, not a guess from two reads half an
+//   hour apart. The read's jump stays as a net for a jump no set named.
 #pragma once
 
 #include <cstdint>
@@ -70,6 +74,19 @@ public:
                                       std::uint64_t now_us,
                                       std::vector<coop::protocol::Message>& send);
 
+    // Present thread, before Tick: the game's own time function (main +
+    // 0xeee640, every time change goes through it: an AI node's set, the
+    // Sun's Song, a night's sleep, a save's time, and our own set) set the
+    // clock to `seconds` since the last tick. The next Tick with a readable
+    // clock sends it as a jump when it moved our clock (the last one read)
+    // by more than kDriftSeconds, under the same rules as a jump that was
+    // read: not our own set, not a guest's load. From the first GameSet on,
+    // a jump that is read within kSetCoversUs of a set is that set's and is
+    // not sent again; one that no set named is sent as before and counted.
+    void GameSet(std::uint32_t seconds);
+    static constexpr std::uint64_t kSetCoversUs = 10'000'000;
+    // Jumps read that no GameSet named, since GameSet was first called.
+    std::uint64_t UnnamedJumps() const { return unnamed_jumps_; }
     // Present thread, after Tick: the value to write into our clock's
     // seconds word (a nudge, issue 192), if any. Taken once.
     std::optional<std::uint32_t> TakeNudge();
@@ -113,8 +130,46 @@ private:
     int nudge_tries_ = 0;  // nudges in a row without getting within kNudgeSeconds
     bool nudges_off_ = false;
 
+    std::optional<std::uint32_t> game_set_;  // GameSet, until a Tick with a clock
+    bool set_events_ = false;  // GameSet was called once: the game's sets come as events
+    std::optional<std::uint64_t> game_set_at_;  // the Tick that took the last one
+    std::uint64_t unnamed_jumps_ = 0;
     std::mutex inbox_mutex_;
     std::vector<coop::protocol::TimeOfDay> inbox_;
+};
+
+// LICHII_COOP_TIME_TEST_SET (tests only): when the host sets its own clock.
+// Once <delay> after joining, and again <delay> after each save load the host
+// sees: a save load moves the clock to the save's time (the game's own set,
+// mode 0), so a set made at the title was lost when the save loaded
+// (time-sync-b: hs-graveyard 2026-11-14, the host set 20:00 at the title, its
+// save then loaded at 11:59 and both games played the run in daylight).
+class TestSet {
+public:
+    TestSet() = default;
+    TestSet(std::uint32_t seconds, std::uint64_t delay_us) : seconds_(seconds), delay_us_(delay_us) {}
+    bool On() const { return seconds_.has_value(); }
+    void Joined(std::uint64_t now_us) { Arm(now_us); }
+    void SaveLoaded(std::uint64_t now_us) { Arm(now_us); }
+    // The time to set now, once per arm; nullopt otherwise. Only the host
+    // sets; another game drops the arm. Waits for a readable clock.
+    std::optional<std::uint32_t> Due(std::uint64_t now_us, bool host, bool clock) {
+        if (!seconds_ || !armed_at_ || !clock || now_us - *armed_at_ < delay_us_) {
+            return std::nullopt;
+        }
+        armed_at_.reset();
+        return host ? seconds_ : std::nullopt;
+    }
+
+private:
+    void Arm(std::uint64_t now_us) {
+        if (seconds_) {
+            armed_at_ = now_us;
+        }
+    }
+    std::optional<std::uint32_t> seconds_;
+    std::uint64_t delay_us_ = 5'000'000;
+    std::optional<std::uint64_t> armed_at_;
 };
 
 } // namespace CoopTime

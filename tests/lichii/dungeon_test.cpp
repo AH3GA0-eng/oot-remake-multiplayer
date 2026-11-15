@@ -137,7 +137,8 @@ TEST_CASE("dungeon: Merge adds to the list, makes one when there is none, or doe
     CHECK_FALSE(none.has_value());
 
     const std::size_t all =
-        CoopDungeon::Flags().size() + CoopDungeon::LiveFlags().size() + CoopDungeon::Keys().size();
+        CoopDungeon::Flags().size() + CoopDungeon::LiveFlags().size() + CoopDungeon::AutogenFlags().size() +
+        CoopDungeon::Keys().size();
     const std::size_t n = CoopDungeon::Merge(none, true);
     REQUIRE(none.has_value());
     CHECK(n == all);
@@ -269,6 +270,53 @@ TEST_CASE("dungeon: a chest opened in one game opens in the other and never clos
     CHECK(b.values[chest].value == 1);
 }
 
+TEST_CASE("dungeon: the Deku torch plate's unnamed autogen bool is shared (deku-test, torch flame)") {
+    // B stepped on room E's plate and set 0x0f8f3fa3; A got the web (RoomE_KillSpiderWave)
+    // but not the torch, because the bool has no name and Flags() lists by name.
+    std::set<std::uint32_t> named;
+    for (const auto& f : CoopDungeon::Flags()) named.insert(f.hash);
+    for (const auto& f : CoopDungeon::LiveFlags()) named.insert(f.hash);
+    std::optional<host::SharedFlags> list;
+    CoopDungeon::Merge(list, true);
+    REQUIRE(list);
+    bool plate = false;
+    std::set<std::uint32_t> seen;
+    for (const auto& f : CoopDungeon::AutogenFlags()) {
+        CHECK(seen.insert(f.hash).second);
+        CHECK_FALSE(named.contains(f.hash));  // a named flag belongs in Flags()
+        CHECK(CoopDungeon::IsDungeonScene(f.dungeon));
+        CHECK(list->contains(host::FlagKey(f.hash, std::uint16_t{0})));
+        CHECK_FALSE(CoopDungeon::HeldIn(f.hash).has_value());  // written at once, as the web's flag
+        plate |= f.hash == 0x0f8f3fa3;
+    }
+    CHECK(plate);
+    CHECK(list->contains(host::FlagKey(host::flag_hash("InsideTheDekuTree_RoomE_KillSpiderWave"), 0)));
+
+    // Through watchers, as the hook shares it: B's 1 reaches A's game.
+    namespace proto = coop::protocol;
+    const auto key = host::FlagKey(0x0f8f3fa3, std::uint16_t{0});
+    Game a;
+    Game b;
+    a.set(key, 0);
+    b.set(key, 0);
+    host::FlagWatcher wa(*list, host::FlagRole::player);
+    host::FlagWatcher wb(*list, host::FlagRole::player);
+    wa.frame(a);
+    wb.frame(b);
+    b.set(key, 1);
+    const auto out = wb.frame(b);
+    REQUIRE(out.size() == 1);
+    proto::Message m;
+    REQUIRE(proto::decode(out[0].bytes, m) == proto::Error::none);
+    const auto* set = std::get_if<proto::FlagSet>(&m);
+    REQUIRE(set);
+    REQUIRE(set->flags.size() == 1);
+    CHECK(set->flags[0].key == key);
+    wa.receive(proto::Message{proto::FlagState{1, set->flags}});
+    wa.frame(a);
+    CHECK(a.values[key].value == 1);
+}
+
 TEST_CASE("dungeon: the slingshot room's ladder event played in A is set in B (issue 129)") {
     namespace proto = coop::protocol;
     std::optional<host::SharedFlags> list;
@@ -346,7 +394,8 @@ TEST_CASE("dungeon: the ladder event waits while B is in the Deku Tree, B's own 
         host::FlagKey(host::flag_hash("HavePlayedEvent.InsideTheDekuTree_Gimmick_FallingLadder"), 0);
     const auto cleared = host::FlagKey(host::flag_hash("InsideTheDekuTree_RoomC_Cleared"), 0);
     REQUIRE(CoopDungeon::HeldIn(ladder.hash) == std::optional<std::string_view>("InsideTheDekuTree"));
-    CHECK_FALSE(CoopDungeon::HeldIn(cleared.hash).has_value());  // the room's own flag is live
+    // deku-switches-b: the room clear deletes the ladder's asker in the room graph, so it waits with the event.
+    REQUIRE(CoopDungeon::HeldIn(cleared.hash) == std::optional<std::string_view>("InsideTheDekuTree"));
 
     Game b;
     b.set(ladder, 0);
@@ -362,16 +411,25 @@ TEST_CASE("dungeon: the ladder event waits while B is in the Deku Tree, B's own 
                                               {cleared, proto::FlagKind::boolean, 1}};
     wb.receive(proto::Message{proto::FlagState{1, from_a}});
     wb.frame(store);
-    CHECK(b.values[cleared].value == 1);
-    CHECK(b.values[ladder].value == 0);  // B's eye switch still plays the event
+    CHECK(b.values[cleared].value == 0);  // B's asker stays for B's event (or B's own eye shot)
+    CHECK(b.values[ladder].value == 0);   // B's eye switch still plays the event
     wb.frame(store);
     CHECK(b.values[ladder].value == 0);
 
-    // B leaves the Deku Tree (or loads): the event is written, so the room
-    // loads with the ladder down.
+    // B leaves the Deku Tree (or loads): both are written, so the room
+    // loads with the ladder down and the room cleared.
     scene = "KokiriForest";
     wb.frame(store);
     CHECK(b.values[ladder].value == 1);
+    CHECK(b.values[cleared].value == 1);
+}
+
+TEST_CASE("dungeon: only the slingshot room's clear waits with its event, other Deku Tree rooms stay live") {
+    for (const char* live : {"InsideTheDekuTree_RoomD_Cleared", "InsideTheDekuTree_RoomD_StepSwitch_On_01",
+                             "InsideTheDekuTree_RoomE_Cleared", "InsideTheDekuTree_RoomG_WaterLevel"}) {
+        CAPTURE(live);
+        CHECK_FALSE(CoopDungeon::HeldIn(host::flag_hash(live)).has_value());
+    }
 }
 
 TEST_CASE("dungeon: a held event B plays itself is not written again, and is sent as B's") {

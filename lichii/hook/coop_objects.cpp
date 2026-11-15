@@ -49,15 +49,21 @@
 // dropped, and an actor counts as gone only when two walks in a row miss it.
 
 #include "coop_objects.h"
+#include "coop_hit_replay.h"
 #include "coop_every.h"
 #include "coop_cheat_items.h"
 #include "coop_flags.h"
 #include "coop_hold.h"
+#include "coop_actor_events.h"
+#include "coop_boss_native.h"
+#include "coop_difficulty.h"
 #include "coop_puppet.h"
 #include "coop_pvp_game.h"
+#include "coop_dbno_game.h"
 #include "coop_svc.h"
 
 #include <algorithm>
+#include <limits>
 #include <utility>
 #include <tuple>
 #include <array>
@@ -84,7 +90,11 @@
 #include "coop/host/session.hpp"
 #include "coop/net/client.hpp"
 #include "coop_objects_sync.h"
+#include "coop_follow.h"
+#include "coop_frame_clock.h"
+#include "coop_link_sound.h"
 #include "coop_ocarina.h"
+#include "coop_puppet_sound.h"
 #include "coop_spawn.h"
 #include "coop_pickups.h"
 #include "coop_projectiles.h"
@@ -98,7 +108,11 @@
 #include <set>
 
 namespace CoopObjects {
-void NoteBosses(const std::vector<Seen>& seen);  // issue 109, below
+void NoteBosses(const std::vector<Seen>& seen, const std::vector<std::pair<u64, std::string>>& owned);  // issue 109, below
+void ForgetBosses();  // below: a new session, the title or a new game run
+// Boss bodies whose intro this game has not played (SetUnreadyBosses, below).
+std::mutex g_unready_mutex;
+std::vector<std::string> g_unready;
 namespace {
 
 constexpr u64 kOcarinaProgramId = 0x0400486024DEC000ULL;
@@ -143,6 +157,10 @@ constexpr u32 kWarpBit = u32{1} << 23;
 constexpr u64 kRequestDelete = 0xa6490;  // (actor, 0), as docs/puppet.md
 // Rolled enemies' copies in the spawn director: their keys have the top bit.
 constexpr u64 kEnemyKey = u64{1} << 63;
+// Difficulty's extra enemies (coop_difficulty.h Extras) on the director's enemy list: their own keys there.
+constexpr u64 kExtraKey = kEnemyKey | u64{1} << 62;
+// Difficulty's night horde (coop_difficulty.h Horde): its own keys on the same list.
+constexpr u64 kHordeKey = kEnemyKey | u64{1} << 61;
 constexpr unsigned kMoverCallerOrder = 30;  // after the puppets, spawn copies (10) and fairies (20)
 constexpr unsigned kGrassCallerOrder = 40;  // the others' field grass cuts (coop_world.h)
 
@@ -200,6 +218,9 @@ constexpr u64 kMalloc = 0x14c6c90;
 // The mover's block from the game's malloc: the play request, then one
 // fixed cell per animation name (a slot may keep the name's pointer).
 constexpr u64 kBlockRequest = 0x0;
+// deku-visuals-b: the enter arguments of a push block's node start (0x10
+// bytes, zeroed: the start reads only the float at +8).
+constexpr u64 kBlockNodeArgs = 0x30;
 constexpr u64 kBlockNames = 0x40;
 constexpr u64 kNameCell = 0x50;
 constexpr u64 kNameCells = 400;
@@ -238,12 +259,15 @@ std::optional<CoopPuppet::Call> CounterRingStep(CoopPuppet::Guest& guest, bool a
     if (after_call || box.main == 0 || box.ring != 0 || box.asked) {
         return std::nullopt;
     }
-    u32 word = 0;  // only when the loader put the cave in (Hookshot: patch 0003's lift hook, not checkable here)
 #ifdef COOP_HOOKSHOT
-    word = CoopCounters::HookWord();
+    // Hookshot: no guest ring; the game's C hands each start to the module
+    // (patch 0005's world hook, hos_coop_world -> CoopCounters::TheHostRing).
+    box.asked = true;
+    LOG_INFO(Core, "coop: platforms: pause counters from hookshot.exe's world hook (patch 0005), no guest ring");
+    return std::nullopt;
 #else
+    u32 word = 0;  // only when the loader put the cave in
     guest.Read(box.main + CoopCounters::kStartOffset, &word, 4);
-#endif
     if (word != CoopCounters::HookWord()) {
         box.asked = true;
         LOG_INFO(Core, "coop: platforms: no counter cave (main+{:#x} holds {:#010x}): pause counters off",
@@ -256,6 +280,7 @@ std::optional<CoopPuppet::Call> CounterRingStep(CoopPuppet::Guest& guest, bool a
     c.function = box.main + kMalloc;
     c.x[0] = CoopCounters::kRingBytes;
     return c;
+#endif
 }
 constexpr u64 kPlayLogMs = 1000;  // a copy's replays of one name: one log line a second
 // LICHII_COOP_OBJECTS_HIT_REPLAY=1 (experiment): a life a copy must lose is
@@ -266,20 +291,8 @@ constexpr u64 kPlayLogMs = 1000;  // a copy's replays of one name: one log line 
 // actor +0x240, hit id +0x248, present +0x24c, attack kind +0x250, the hit's
 // place +0x27c, the attacker's place +0x2a0). The list links from +0x2d8 on
 // are left alone. Our own player stands in as the attacker.
-constexpr std::array<u32, 0x98 / 4> kHitTemplate{
-    0x472d7288, 0x00000021, 0x000000b9, 0x00000001,  // +0x240 attacker, id, present
-    0x00060001, 0x40040000, 0x00000014, 0x00000000,  // +0x250
-    0x00220000, 0x00001000, 0x0000000a, 0x00000000,  // +0x260
-    0x00000200, 0x00000000, 0x00000000, 0xc21085f6,  // +0x270, hit place from +0x27c
-    0x42c63e88, 0x40501269, 0x3e76ed80, 0xb3c00000,  // +0x280
-    0xbf787210, 0x40588db0, 0xc1129418, 0xc0cb90a0,  // +0x290
-    0xc210600c, 0x42c45791, 0x409352f5, 0xbdcc4eb0,  // +0x2a0 attacker place
-    0x3ecc555c, 0xc0d481b8, 0x000343ff, 0x00040000,  // +0x2b0
-    0x00000004, 0x000000be, 0x00000002, 0x03000000,  // +0x2c0 (+0x2c4 id again)
-    0x03010102, 0x00030000,                          // +0x2d0
-};
+// (kHitTemplate: coop_hit_replay.h)
 constexpr u64 kHitRecord = 0x240;
-constexpr u64 kHitLateMs = 200;  // under Sync::kHurtWaitUs
 constexpr u64 kHitHeader = 0x1f8;
 constexpr u64 kHitAmount = 0x224;
 constexpr u64 kLastHitId = 0x1b18;
@@ -295,6 +308,9 @@ constexpr u64 kActorComponents = 0x270;
 constexpr u64 kComponentBsa = 0xb0;
 constexpr u64 kBsaFlags = 0xc4;
 constexpr u64 kComponentLife = 0x2b8;
+static_assert(kComponentLife == CoopHitReplay::kComponentLife && kActorComponents == CoopHitReplay::kActorComponents &&
+              kHitRecord == CoopHitReplay::kHitRecord && kHitHeader == CoopHitReplay::kHitHeader &&
+              kHitAmount == CoopHitReplay::kHitAmount && kLastHitId == CoopHitReplay::kLastHitId);
 constexpr u64 kLifeValue = 0x1c10;
 constexpr u64 kLifeMax = 0x1c18;
 constexpr u64 kLifeCopy = 0x1ca8;  // life and max as last mirrored
@@ -456,6 +472,12 @@ private:
     Core::Memory::Memory& memory_;
 };
 
+// Native boss sync: main's base for the boss caller (set by the walk).
+std::atomic<std::uint64_t>& TheBossMain() {
+    static std::atomic<std::uint64_t> main{0};
+    return main;
+}
+
 // The game's calc thread, at the svc cave (coop_svc.h AddCaller): moves the
 // copies with the game's own setter and deletes the taken pickups. The
 // present thread hands it the latest wish list; each game frame it works
@@ -467,25 +489,26 @@ public:
         std::array<float, 12> transform{};  // place, then the 3x3 rows
         bool rotation = false;              // false: keep the actor's own
         bool asleep = false;                // state 6 may be moved too (issue 101)
+        // jitter-b (coop_follow.h): a townsperson's velocity, metres a second: followed
+        // each game frame from when it was wished. Unset: written where it is.
+        std::optional<std::array<float, 3>> velocity;
     };
 
-    struct Hit {
-        u64 actor = 0;      // the copy
-        u64 attacker = 0;   // our player
-        s32 amount = 0;
-        std::array<float, 3> at{};    // the copy's place
-        std::array<float, 3> from{};  // the hitter's place (ours when not known)
-        u64 asked_ms = 0;             // set by AddHit
-        bool exact = false;           // `at` is where the blade was, not the actor's foot
-    };
+    using Hit = CoopHitReplay::Hit;
+
+    // Any thread: the hit id we last wrote into this Life component (the walk never takes our own replay for
+    // a hit of our game's).
+    u32 ReplayedId(u64 life) {
+        return replayer_.ReplayedId(life);
+    }
+    // A new scene: its Life components may sit where the old ones were (ReplaySeen would wait on an old id).
+    void ForgetReplayed() {
+        replayer_.Forget();  // (the ids' own lock, never the Mover's: boss-intro d58e663e)
+    }
 
     // Present thread: hits to replay at the next game frame.
     void AddHit(const Hit& hit) {
-        std::lock_guard lock(mutex_);
-        if (hits_.size() < 64) {
-            hits_.push_back(hit);
-            hits_.back().asked_ms = SteadyMs();
-        }
+        replayer_.Add(hit, SteadyMs());
     }
 
     // Present thread: the enemy copies whose AI is held, and how.
@@ -539,7 +562,26 @@ public:
         poses_ = std::move(poses);
         removes_ = std::move(removes);
         plays_ = std::move(plays);
-        want_ms_ = SteadyMs();
+        // jitter-b: the time the wishes are for (Share was given that game frame's time).
+        want_ms_ = CoopFrameClock::PresentAgeUs() != 0 ? CoopFrameClock::PresentAtMs() : SteadyMs();
+    }
+
+    // deku-visuals-b (issue 147): run the game's own push-node start on a
+    // block another game moved (CoopWorld::BlockNode::kStart_fn), on the
+    // next game frame, after that frame's pose writes. `node` is checked by
+    // its vtable again then.
+    void StartBlockNode(u64 node, u64 actor, const coop::protocol::Vec3& from,
+                        const coop::protocol::Vec3& to) {
+        std::lock_guard lock(mutex_);
+        if (node_starts_.size() < 16) {
+            node_starts_.push_back({node, actor, from, to});
+        }
+    }
+
+    // Node starts made and skipped since the last ask (for the 5 s log line).
+    std::pair<std::size_t, std::size_t> TakeNodeStarts() {
+        std::lock_guard lock(mutex_);
+        return {std::exchange(node_started_, 0), std::exchange(node_skipped_, 0)};
     }
 
     // Calls made since the last ask (for the 5 s log line).
@@ -612,7 +654,8 @@ public:
                     ++release_clear_;
                 }
             }
-            if (block_ == 0 && main_ != 0 && !allocating_ && !plays_.empty() && !alloc_tried_) {
+            if (block_ == 0 && main_ != 0 && !allocating_ && (!plays_.empty() || !node_starts_.empty()) &&
+                !alloc_tried_) {
                 allocating_ = true;
                 alloc_tried_ = true;
                 CoopPuppet::Call c;
@@ -622,21 +665,38 @@ public:
             }
             work_plays_ = plays_;
             next_play_ = 0;
+            if (block_ != 0) {
+                work_node_starts_ = std::exchange(node_starts_, {});
+            }
+            next_node_start_ = 0;
             Unalias(guest);
             work_wakes_ = std::exchange(wakes_, {});
             next_wake_ = 0;
-            for (const Hit& h : hits_) {
-                // A hit that waited too long (no game frame ran) is dropped:
-                // by then its life has been written directly.
-                if (now_ms < h.asked_ms + kHitLateMs) {
-                    Replay(guest, h);
+            // The queued hits (coop_hit_replay.h: its own locks, never this mutex_ again).
+            if (main_ != 0) {
+                for (const auto& w : replayer_.Run(guest, now_ms, [&](u64 a) { return Alive(guest, a); })) {
+                    // Difficulty: the player who dealt it had it scaled; the Life step takes it as it is.
+                    CoopDifficulty::TheKinds().Pass(w.life, w.amount, CoopDifficulty::SteadyMs());
+                    ++replayed_;
+                    LOG_INFO(Core, "coop: objects: copy {:#x} replays a hit of {} (id {:#x}{})", w.actor, w.amount,
+                             w.id, w.exact ? ", where it landed in the hitter's game" : "");
                 }
             }
-            hits_.clear();
             if (holding_) {
                 WriteHolds(guest);
             }
             work_ = poses_;
+            std::erase_if(follow_, [this](const auto& f) {  // jitter-b: copies no longer followed
+                return std::none_of(work_.begin(), work_.end(),
+                                    [&f](const Pose& p) { return p.actor == f.first && p.velocity; });
+            });
+            if (resync_.Size() > 256) {  // jitter-b: copies that left
+                std::unordered_set<u64> playing;
+                for (const PlayWish& w : plays_) {
+                    playing.insert(w.slot == 0 ? w.address : w.address ^ (static_cast<u64>(w.slot) << 56));
+                }
+                resync_.Keep(playing);
+            }
             if (work_.size() > 1) {
                 std::rotate(work_.begin(), work_.begin() + (++turn_ % work_.size()), work_.end());
             }
@@ -709,7 +769,7 @@ public:
             const std::int64_t since_us = static_cast<std::int64_t>(since) * 1000;
             // A townsperson's (coop_npc_anim.h): the playing frame, inside its loop.
             const float frame =
-                p.npc ? CoopNpcAnim::Wrapped(
+                p.play_frame ? CoopNpcAnim::Wrapped(
                             FrameAfter(p.frame, p.run < 0.0f ? rate : p.run, since_us), p.loop)
                       : FrameAfter(p.frame, rate, since_us);
             const std::string slot_name = SlotName(guest, controller, p.slot);
@@ -722,10 +782,18 @@ public:
                 }
                 checked = p.sample;
                 float now_frame = 0.0f;
-                if (p.npc) {
-                    if (PlayFrame(guest, controller, now_frame) &&
-                        CoopNpcAnim::FrameGap(now_frame, frame, p.loop) <=
-                            CoopNpcAnim::kFrameSlack) {
+                if (p.play_frame) {
+                    const float gap = PlayFrame(guest, controller, now_frame)
+                                          ? CoopNpcAnim::FrameGap(now_frame, frame, p.loop)
+                                          : std::numeric_limits<float>::infinity();
+                    // jitter-b: at most once a second, and not again while sets do not take.
+                    const auto verdict = resync_.Check(key, p.name, gap, now_ms);
+                    if (verdict == CoopNpcAnim::Resync::Verdict::give_up) {
+                        LOG_INFO(Core, "coop: npc-anim: copy {:#x} '{}': its frame sets do not take "
+                                       "({:.1f} frames off): left to its own playback",
+                                 p.address, p.name, gap);
+                    }
+                    if (verdict != CoopNpcAnim::Resync::Verdict::set) {
                         continue;
                     }
                     ++npc_framed_;
@@ -738,8 +806,7 @@ public:
             }
             // Issue 195: a chest shown open is played again only over its
             // closed idle, never over its own opening (our Link opens it).
-            if (!p.only_over.empty() && !slot_name.empty() &&
-                slot_name.find(p.only_over) == std::string::npos) {
+            if (!slot_name.empty() && !PlaysOver(slot_name, p.only_over)) {
                 continue;
             }
             // Issue 157: the name we played last is gone from slot 0, so the
@@ -834,16 +901,59 @@ public:
             if (!Alive(guest, p.actor, p.asleep)) {
                 continue;
             }
+            Pose followed = p;
+            if (p.velocity) {
+                const CoopFollow::Vec3 at{p.transform[0], p.transform[1], p.transform[2]};
+                const auto drawn = follow_[p.actor].Step(at, *p.velocity, want_ms_, cadence_.At(now_ms));  // jitter-2: even
+                std::copy(drawn.begin(), drawn.end(), followed.transform.begin());
+            }
             if (p.rotation) {
-                guest.Write(p.actor + kActorPosition, p.transform.data(), 48);
+                guest.Write(p.actor + kActorPosition, followed.transform.data(), 48);
             } else {
-                guest.Write(p.actor + kActorPosition, p.transform.data(), 12);
+                guest.Write(p.actor + kActorPosition, followed.transform.data(), 12);
             }
             ++moved_;
             CoopPuppet::Call c;
             c.function = main_ + kSetMatrix;
             c.x[0] = p.actor;
             c.x[1] = 0;
+            return c;
+        }
+        // deku-visuals-b (issue 147): a block another game moved runs its
+        // own push node's start again, after this frame's pose writes (its
+        // base anchor is at the new rest by then). The start sets the push's
+        // start and target from the block's place, as when the node is
+        // entered, so this player's next push starts where the block is.
+        while (next_node_start_ < work_node_starts_.size()) {
+            const NodeStart& n = work_node_starts_[next_node_start_++];
+            const u64 node = n.node;
+            u64 table = 0;
+            if (block_ == 0 || !Alive(guest, n.actor) || !guest.Read(node, &table, 8) ||
+                table != main_ + CoopWorld::BlockNode::kVtable) {
+                ++node_skipped_;
+                continue;
+            }
+            // Still idle at the old rest, read again now (review): our
+            // player may have grabbed the block since the walk read it.
+            const auto stale = CoopWorld::NodeRestWords(
+                [&guest](u64 address) -> std::optional<u64> {
+                    u64 word = 0;
+                    return guest.Read(address, &word, 8) ? std::optional<u64>(word) : std::nullopt;
+                },
+                node, n.from, n.to);
+            if (stale.busy || stale.writes.empty()) {
+                ++node_skipped_;
+                continue;
+            }
+            const std::array<std::uint8_t, 0x10> args{};
+            if (!guest.Write(block_ + kBlockNodeArgs, args.data(), args.size())) {
+                continue;
+            }
+            ++node_started_;
+            CoopPuppet::Call c;
+            c.function = main_ + CoopWorld::BlockNode::kStartFn;
+            c.x[0] = node;
+            c.x[1] = block_ + kBlockNodeArgs;
             return c;
         }
         return std::nullopt;
@@ -894,8 +1004,14 @@ private:
         if (components.size() > CoopHold::kMaxHeld) {
             components.resize(CoopHold::kMaxHeld);
         }
+#ifdef COOP_HOOKSHOT
+        // Hookshot: the hold hook asks the module (CoopHold::TheHostTable),
+        // no table in the game's memory.
+        CoopHold::TheHostTable().Publish(components, masks_);
+#else
         const auto bytes = CoopHold::Table(components, masks_);
         guest.Write(main_ + CoopHold::kTableOffset, bytes.data(), bytes.size());
+#endif
         held_before_ = std::unordered_set<u64>(components.begin(), components.end());
     }
 
@@ -1007,40 +1123,6 @@ private:
         return slot != 0 && guest.Read(slot + kAsSlotFrame, &frame, 4) && std::isfinite(frame);
     }
 
-    // Writes one hit into the copy's Life component (see kHitTemplate).
-    void Replay(CoopPuppet::Guest& guest, const Hit& h) {
-        if (main_ == 0 || !Alive(guest, h.actor)) {
-            return;
-        }
-        u64 table = 0;
-        u64 life = 0;
-        if (!guest.Read(h.actor + kActorComponents, &table, 8) || table == 0 ||
-            !guest.Read(table + kComponentLife, &life, 8) || life == 0) {
-            return;
-        }
-        u32 last = 0;
-        guest.Read(life + kLastHitId, &last, 4);
-        const u32 id = (last == 0xffffffffu ? 0x1000u : last + 2u) & 0x7fffffffu;
-        std::array<u32, kHitTemplate.size()> rec = kHitTemplate;
-        std::memcpy(&rec[0], &h.attacker, 8);
-        rec[2] = id;
-        rec[0x2c4 / 4 - kHitRecord / 4] = id;
-        const std::array<float, 3> at{h.at[0], h.at[1] + (h.exact ? 0.0f : 1.0f), h.at[2]};
-        std::memcpy(&rec[0x27c / 4 - kHitRecord / 4], at.data(), 12);
-        std::memcpy(&rec[0x2a0 / 4 - kHitRecord / 4], h.from.data(), 12);
-        rec[3] = 0;  // present last, below
-        const std::array<u32, 4> header{0x00060001, 0x40040000, id, 2};
-        const std::array<s32, 2> amount{4, h.amount};
-        guest.Write(life + kHitHeader, header.data(), sizeof(header));
-        guest.Write(life + kHitAmount, amount.data(), sizeof(amount));
-        guest.Write(life + kHitRecord, rec.data(), sizeof(rec));
-        const u32 present = 1;
-        guest.Write(life + kHitRecord + 0xc, &present, 4);
-        ++replayed_;
-        LOG_INFO(Core, "coop: objects: copy {:#x} replays a hit of {} (id {:#x})", h.actor,
-                 h.amount, id);
-    }
-
     // The fixed cell holding `name` in the block (written once), or 0 when
     // the block is full or the name too long.
     u64 Cell(CoopPuppet::Guest& guest, const std::string& name) {
@@ -1074,11 +1156,14 @@ private:
     }
 
     std::mutex mutex_;
+    CoopHitReplay::Replayer replayer_;  // the hit replay: its own locks (Step runs it under mutex_)
     u64 main_ = 0;
     std::vector<Pose> poses_;
+    std::unordered_map<u64, CoopFollow::Follower> follow_;  // jitter-b: by actor
+    CoopFollow::Cadence cadence_;  // jitter-2: the game frames' time made even
+    CoopNpcAnim::Resync resync_;  // jitter-b: townspeople's frame sets
     std::vector<u64> removes_;
     std::vector<PlayWish> plays_;
-    std::vector<Hit> hits_;
     std::size_t replayed_ = 0;
     std::vector<PlayWish> work_plays_;
     std::size_t next_play_ = 0;
@@ -1100,6 +1185,17 @@ private:
     u64 block_ = 0;
     bool allocating_ = false;
     bool alloc_tried_ = false;
+    struct NodeStart {  // deku-visuals-b: a push node to start again
+        u64 node = 0;
+        u64 actor = 0;  // its block
+        coop::protocol::Vec3 from{};  // the old rest both its places must still hold
+        coop::protocol::Vec3 to{};
+    };
+    std::vector<NodeStart> node_starts_;
+    std::vector<NodeStart> work_node_starts_;
+    std::size_t next_node_start_ = 0;
+    std::size_t node_started_ = 0;
+    std::size_t node_skipped_ = 0;
     std::vector<Pose> work_;
     // Issue 157: the animation each copy's own AI last chose that we put
     // back (name, steady ms), and the ones to give back once it is ours.
@@ -1213,6 +1309,8 @@ public:
             if (sharing_) {
                 sync_.Reset();
                 world_.Reset();
+                block_retry_.clear();
+                ForgetBosses();  // (not connected, or no scene: the title)
                 sharing_ = false;
             }
             return;
@@ -1220,6 +1318,20 @@ public:
         if (!Ready(system)) {
             return;
         }
+#ifdef COOP_HOOKSHOT
+        if (*scene != life_scene_) {
+            // Another scene's actors: their Life components' slots are free
+            // again (a slot is a component's for good otherwise, and 256 of
+            // them fill up over a long session). Nothing given there is owed.
+            life_scene_ = *scene;
+            CoopActorEvents::TheLifeTable().Clear();
+            CoopDifficulty::TheKinds().Clear();  // difficulty: the kinds of the scene before
+            life_given_.clear();
+            step_hits_.clear();
+            TheMover().ForgetReplayed();  // its Life components may sit where the old ones were
+        }
+        ActorEvents(server_now_us);
+#endif
         if (test_take_ != 0 && sharing_ && self_ == 2 && take_at_ != 0 &&
             server_now_us >= take_at_) {
             take_at_ = 0;
@@ -1245,7 +1357,7 @@ public:
         if (!Collect(r, seen)) {
             return;
         }
-        NoteBosses(seen);
+        NoteBosses(seen, sync_.Owned());
         const u8 self =
             session->with_client([](coop::net::Client& c) { return c.player_number(); });
         if (self == 0) {
@@ -1262,6 +1374,13 @@ public:
                                    [](CoopPuppet::Guest& guest, bool after_call,
                                       std::uint64_t result, std::uint64_t) {
                                        return CounterRingStep(guest, after_call, result);
+                                   });
+                // Native boss sync: the owner's boss verbs put into our copies.
+                CoopSvc::AddCaller(CoopBossNative::Table::kCallerOrder,
+                                   [](CoopPuppet::Guest& guest, bool after_call,
+                                      std::uint64_t result, std::uint64_t) {
+                                       return CoopBossNative::TheTable().Step(guest, after_call, result,
+                                                                              TheBossMain().load());
                                    });
                 CoopSvc::AddCaller(kGrassCallerOrder,
                                    [](CoopPuppet::Guest& guest, bool after_call,
@@ -1311,6 +1430,14 @@ public:
             }
             sync_.Bind(live);
         }
+#ifdef COOP_HOOKSHOT
+        StepHits();
+#endif
+        share_now_us_ = server_now_us;
+        {
+            std::lock_guard lock(g_unready_mutex);
+            sync_.SetUnready(g_unready);
+        }
         sync_.Tick(*scene, self, server_now_us, seen, send, writes);
         if (const unsigned twice = sync_.ChestsOpenedTwice(); twice != chests_twice_seen_) {
             // Issue 195: a chest shown open that our Link opened again; the
@@ -1329,10 +1456,36 @@ public:
                     shooters.push_back({s.name, s.position,
                                         !owner || *owner == 0 ? CoopEnemyShots::Owner::unknown
                                         : *owner == self      ? CoopEnemyShots::Owner::ours
-                                                              : CoopEnemyShots::Owner::theirs});
+                                                              : CoopEnemyShots::Owner::theirs,
+                                        s.address});
                 }
             }
             CoopEnemyShots::NoteShooters(std::move(shooters), server_now_us);
+        }
+        if (CoopBossNative::Table& bosses = CoopBossNative::TheTable(); bosses.BrainOn()) {
+            // Native boss sync (coop_boss_native.h): which bosses are
+            // ours (our game runs them and sends their verbs) and which are
+            // copies (they take the owner's verbs, put in by its caller).
+            std::vector<CoopBossNative::Boss> list;
+            for (const Seen& s : seen) {
+                if (s.bsa_component == 0) {
+                    continue;
+                }
+                const std::optional<u8> owner = sync_.OwnerOf(s.address);
+                if (owner && *owner != 0) {
+                    list.push_back({s.address, s.bsa_component,
+                                    *owner == self ? CoopBossNative::Role::owner : CoopBossNative::Role::copy, s.name,
+                                    *owner});
+                }
+            }
+            TheBossMain().store(main_);
+            bosses.Publish(list);
+            for (const auto& [address, state] : sync_.BossVerbsIn()) {
+                bosses.Receive(address, state);
+            }
+            for (const std::string& note : bosses.TakeNotes()) {
+                LOG_INFO(Core, "coop: bosses: {}", note);
+            }
         }
         if (sync_.BlastDrops() != blast_drops_logged_) {
             blast_drops_logged_ = sync_.BlastDrops();
@@ -1359,6 +1512,8 @@ public:
                 LOG_INFO(Core, "coop: objects: rolls decided by player {}, {} copies to make, {} own rolls deleted",
                          decider_logged_, enemies_logged_, refused_logged_);
             }
+            PlanExtras(*scene, seen, enemies);
+            PlanHorde(*scene, self, server_now_us, seen, enemies);
             CoopSpawn::TheDirector().SetEnemies(main_, std::move(enemies));
         }
         for (const auto& note : sync_.TakeNotes()) {
@@ -1498,38 +1653,56 @@ public:
             sign_words_.clear();
             // Issue 147: a block another game moved rests here now; its own
             // memory's old rest place gets the new one.
-            for (const auto& fix : block_fixes_) {
-                // world-objects-2: the block's push node (known fields,
-                // found by its vtables and owner): on unless
-                // LICHII_COOP_BLOCK_NODE=0.
+            // deku-visuals-b: fixes whose node was not found or was busy come again.
+            for (auto& again : std::exchange(block_retry_, {})) {
+                block_fixes_.push_back(std::move(again));
+            }
+            for (auto& fix : block_fixes_) {
+                if (fix.snap) {
+                    continue;  // deku-visuals-b: logged by WorldSync only
+                }
+                // world-objects-2, deku-visuals-b: the block's push node
+                // (found by its vtables and owner; read only) runs its own
+                // start again (the Mover's call), so its next push starts
+                // where the block rests now. On unless LICHII_COOP_BLOCK_NODE=0.
                 static const bool node_on = EnvOn("LICHII_COOP_BLOCK_NODE");
+                const bool first = fix.tries == 0;
                 if (node_on) {
                     const auto node = CoopWorld::FindBlockNode(
                         [&r](u64 address) { return r.Get<u64>(address); }, fix.address, main_);
-                    if (!node) {
-                        LOG_INFO(Core, "coop: world: {:016x} {} push node not found: its next push may "
-                                       "start from the old place",
-                                 fix.hash, fix.name);
-                    } else {
-                        const auto words = CoopWorld::NodeRestWords(
-                            [&r](u64 address) { return r.Get<u64>(address); }, *node, fix.from, fix.to);
-                        if (words.busy) {
-                            LOG_INFO(Core, "coop: world: {:016x} {} push node {:x} busy (mid-push here): "
-                                           "not written",
+                    // Stale: both its start and target still hold the old
+                    // rest (read only). Mid-push here (one of them): tried
+                    // again on the next walks, as when it is not found.
+                    const auto stale = node ? CoopWorld::NodeRestWords(
+                                                  [&r](u64 address) { return r.Get<u64>(address); },
+                                                  *node, fix.from, fix.to)
+                                            : CoopWorld::RestScan{};
+                    if (node && !stale.busy) {
+                        if (!stale.writes.empty()) {
+                            TheMover().StartBlockNode(*node, fix.address, fix.from, fix.to);
+                            LOG_INFO(Core, "coop: world: {:016x} {} push node {:x}: its own start "
+                                           "(main+{:#x}) asked to run again, from where it rests now",
+                                     fix.hash, fix.name, *node, CoopWorld::BlockNode::kStartFn);
+                        } else {
+                            LOG_INFO(Core, "coop: world: {:016x} {} push node {:x} already starts from "
+                                           "where it rests: left alone",
                                      fix.hash, fix.name, *node);
-                            continue;  // RestWords below too: one block, one decision
                         }
-                        for (const auto& w : words.writes) {
-                            memory_->Write32(w.address, w.value);
+                    } else if (++fix.tries < kBlockNodeTries) {
+                        if (first) {
+                            LOG_INFO(Core, "coop: world: {:016x} {} push node {}: tried again for {} walks",
+                                     fix.hash, fix.name, node ? "busy (mid-push here)" : "not found",
+                                     kBlockNodeTries);
                         }
-                        std::string at;
-                        for (const auto& w : words.where) {
-                            at += " " + w;
-                        }
-                        LOG_INFO(Core, "coop: world: {:016x} {} push node {:x}: {} of its places moved to "
-                                       "the new rest{}{}",
-                                 fix.hash, fix.name, *node, words.where.size(), at.empty() ? "" : ":", at);
+                        block_retry_.push_back(fix);
+                    } else {
+                        LOG_INFO(Core, "coop: world: {:016x} {} push node {}: its next push may start "
+                                       "from the old place",
+                                 fix.hash, fix.name, node ? "still busy" : "not found");
                     }
+                }
+                if (!first) {
+                    continue;  // the wide search below ran on the fix's first walk
                 }
                 const auto scan = CoopWorld::RestWords(
                     [&r](u64 address) { return r.Get<u64>(address); }, fix.address, fix.from,
@@ -1608,6 +1781,7 @@ public:
         {
             if (*scene != guard_scene_) {
                 guard_scene_ = *scene;
+                block_retry_.clear();  // deku-visuals-b: its blocks are gone with it
                 // Those actors are gone with the scene (enemies come back with it).
                 if (const std::size_t dropped = held_writes_.Forget(); dropped != 0) {
                     LOG_INFO(Core, "coop: objects: the scene changed: {} waiting changes dropped", dropped);
@@ -1647,6 +1821,9 @@ public:
                          passed.released, passed.dropped);
             }
         }
+#ifdef COOP_HOOKSHOT
+        StaleGiven(system.ApplicationMemory(), r, server_now_us);
+#endif
         for (const LifeWrite& w : writes) {
             WriteLife(system.ApplicationMemory(), r, w);
         }
@@ -1810,6 +1987,8 @@ public:
     u64 our_link_ = 0;                        // our Link's actor, from the last walk
     std::vector<CoopWorld::WorldSync::Out::Word> sign_words_;  // SIGN_CUT words to write
     std::vector<CoopWorld::WorldSync::Out::BlockFix> block_fixes_;  // issue 147: blocks to fix
+    std::vector<CoopWorld::WorldSync::Out::BlockFix> block_retry_;  // node not found or busy: next walk
+    static constexpr int kBlockNodeTries = 20;
     std::optional<coop::protocol::Vec3> player_;  // our Link in the last walk
     // Issue 144: shared changes to actors near our Link wait while it is in an
     // event (coop_guard.h). Where each actor of the last walk was, kills and
@@ -1886,8 +2065,14 @@ private:
             actors_.clear();
             first_ = true;
             names_.clear();
+            TheMover().ForgetReplayed();
             sync_.Reset();
             world_.Reset();
+            block_retry_.clear();
+            ForgetBosses();
+            boss_hit_ids_.clear();
+            extras_.Reset();  // difficulty: that run's extra enemies are gone with it
+            horde_.Reset();
             {
                 ScrubsBox& box = TheScrubs();  // a new game run: its block is gone
                 std::lock_guard lock(box.mutex);
@@ -1957,7 +2142,175 @@ private:
         }
     }
 
+    // An enemy or a boss: its life is never written (the native rule), only changed by its game's own steps.
+    bool NativeOnly(u64 actor) const {
+        return NativeOnlyName(NameOf(actor));
+    }
+
+    std::string NameOf(u64 actor) const {
+        const auto known = names_.find(actor);
+        return known != names_.end() ? known->second.first : std::string("?");
+    }
+    std::size_t lives_lost_ = 0;  // enemy life changes no game step took (never written: lost)
+
     // The pause counters (coop_counters.h): the nodes the cave kept, read.
+#ifdef COOP_HOOKSHOT
+    // The game's own creates, deletes and hits (patch 0007), drained each
+    // presented frame. First step: counted and said, per kind, against
+    // what the walk sees, so one run shows the events are the game's own
+    // (docs/hookshot.md "Actor events"); the walk still decides.
+    void ActorEvents(u64 server_now_us) {
+        std::size_t lost = 0;
+        const auto events = CoopActorEvents::TheRing().Drain(&lost);
+        actor_events_lost_ += lost;
+        for (const auto& e : events) {
+            switch (e.kind) {
+            case CoopActorEvents::Kind::Create:
+                ++actor_creates_;
+                if ((e.flags & CoopActorEvents::kStopped) != 0) {
+                    ++actor_stops_;
+                    if (actor_stop_lines_ < 10) {
+                        ++actor_stop_lines_;
+                        LOG_INFO(Core, "coop: actors: '{}' not made: a copy enemy's own shot, refused at the game's create "
+                                       "request (the owner's comes as a copy)", e.Name());
+                    }
+                }
+                if (actor_event_lines_ < 40 && (e.flags & CoopActorEvents::kOwn) == 0) {
+                    ++actor_event_lines_;
+                    float place[3] = {};
+                    for (int i = 0; i < 3; ++i) {
+                        const auto bits = static_cast<u32>(e.place[i]);
+                        std::memcpy(&place[i], &bits, 4);
+                    }
+                    LOG_INFO(Core, "coop: actors: create '{}' from main+{:#x} at ({:.1f}, {:.1f}, {:.1f})", e.Name(),
+                             e.from >= main_ && main_ != 0 ? e.from - main_ : e.from, place[0], place[1], place[2]);
+                }
+                break;
+            case CoopActorEvents::Kind::Delete: {
+                ++actor_deletes_;
+                sync_.GameDeleted(e.a, server_now_us);  // (gone at the first walk without it)
+                const auto known = names_.find(e.a);
+                if (actor_event_lines_ < 40 && known != names_.end()) {
+                    ++actor_event_lines_;
+                    LOG_INFO(Core, "coop: actors: {} {:#x} '{}' (reason {})",
+                             (e.flags & CoopActorEvents::kOwn) != 0 ? "co-op deletes" : "the game deletes", e.a,
+                             known->second.first, e.b);
+                }
+                break;
+            }
+            case CoopActorEvents::Kind::Damage:
+                ++actor_hits_;
+                actor_hit_sum_ += CoopActorEvents::Amount(e.b);
+                if (step_hits_.size() < kStepHitsKept) {
+                    step_hits_.emplace_back(e.a, CoopActorEvents::Amount(e.b));  // (for the Sync: StepHits)
+                }
+                break;
+            default:
+                break;
+            }
+        }
+        if (actor_events_said_us_ == 0) {
+            actor_events_said_us_ = server_now_us;
+        } else if (server_now_us >= actor_events_said_us_ + 10'000'000 &&
+                   (actor_creates_ | actor_deletes_ | actor_hits_ | actor_events_lost_) != 0) {
+            actor_events_said_us_ = server_now_us;
+            LOG_INFO(Core, "coop: actors: in 10 s the game asked {} creates ({} copies' shots refused), {} deletes, "
+                           "{} hits (life {}), {} lost",
+                     actor_creates_, actor_stops_, actor_deletes_, actor_hits_, actor_hit_sum_, actor_events_lost_);
+            actor_creates_ = actor_deletes_ = actor_hits_ = actor_events_lost_ = actor_stops_ = 0;
+            actor_hit_sum_ = 0;
+        }
+    }
+    // The game's hits since the last walk, by Life component, handed to the
+    // Sync as this game's hits on its copies (Sync::GameHit) instead of the
+    // life read falling. Not with LICHII_COOP_OBJECTS_HIT_REPLAY: there the
+    // other players' hits are dealt by the game too and would come back.
+    void StepHits() {
+        const bool on = CoopActorEvents::LifeStepSeen().load(std::memory_order_relaxed) && !replay_;
+        if (on != sync_.LifeEvents()) {
+            sync_.SetLifeEvents(on);
+            LOG_INFO(Core, "coop: actors: hits on copies are {}", on ? "taken from the game's Life step (patch 0007)"
+                                                                     : "read from the life falling");
+        }
+        for (const auto& [component, amount] : step_hits_) {
+            const auto actor = life_components_.find(component);
+            if (on && actor != life_components_.end()) {
+                sync_.GameHit(actor->second, amount);
+            }
+        }
+        step_hits_.clear();
+        if (const std::size_t loose = sync_.LooseDrops(); loose != loose_said_) {
+            LOG_INFO(Core, "coop: actors: {} life fell on copies with no Life step for it (counted as hits)",
+                     loose - loose_said_);
+            loose_said_ = loose;
+        }
+    }
+    // A life change given to the Life step that no step took in kGivenWaitUs
+    // (the actor asleep or paused): taken back and written, as before.
+    void StaleGiven(Core::Memory::Memory& memory, Reader& r, u64 now_us) {
+        auto& steps = CoopActorEvents::TheLifeTable();
+        std::erase_if(life_given_, [&](const LifeGiven& g) {
+            if (now_us < g.at_us + kGivenWaitUs) {
+                return false;
+            }
+            const auto table = r.Ptr(g.address + kActorComponents);
+            const auto life = table ? r.Ptr(*table + kComponentLife) : std::nullopt;
+            if (!life || *life != g.component) {
+                steps.Take(g.component);  // (another actor there now, or none)
+                return true;
+            }
+            const s32 left = steps.Take(g.component);
+            if (left != 0 && NativeOnly(g.address)) {
+                ++lives_lost_;
+                LOG_INFO(Core, "coop: objects: {:#x} '{}': its Life step did not take the change: lost, its life "
+                               "stays its game's ({} lost so far)",
+                         g.address, NameOf(g.address), lives_lost_);
+            } else if (left != 0) {
+                const auto value = LifeValue(r, g.address);
+                if (value && memory.IsValidVirtualAddressRange(value->first + 8, 4) &&
+                    r.Get<s32>(value->first + 8).value_or(g.life) > g.life) {
+                    memory.Write32(value->first + 8, static_cast<u32>(g.life));
+                    LOG_INFO(Core, "coop: objects: {:#x} '{}': its Life step did not take the change: life written {}",
+                             g.address, NameOf(g.address), g.life);
+                }
+            }
+            return true;
+        });
+    }
+    struct LifeGiven {
+        u64 component = 0;
+        u64 address = 0;
+        s32 life = 0;
+        u64 at_us = 0;
+    };
+    // Has the enemy's own damage step seen the hit we replayed last on this Life component? (Its last hit id,
+    // Life + 0x1b18, reached our id: hit ids only grow.) True when we never replayed one.
+    bool ReplaySeen(Reader& r, u64 life) const {
+        const u32 ours = TheMover().ReplayedId(life);
+        if (ours == 0xffffffffu) {
+            return true;
+        }
+        const u32 last = r.Get<u32>(life + kLastHitId).value_or(0xffffffffu);
+        return last != 0xffffffffu && static_cast<s32>(last - ours) >= 0;
+    }
+    std::string life_scene_;
+    bool life_table_full_said_ = false;
+    static constexpr std::size_t kStepHitsKept = 4096;
+    static constexpr u64 kGivenWaitUs = 250'000;
+    std::vector<std::pair<u64, s32>> step_hits_;
+    std::vector<LifeGiven> life_given_;
+    std::size_t loose_said_ = 0;
+    std::size_t actor_creates_ = 0;
+    std::size_t actor_stops_ = 0;
+    std::size_t actor_stop_lines_ = 0;
+    std::size_t actor_deletes_ = 0;
+    std::size_t actor_hits_ = 0;
+    std::size_t actor_events_lost_ = 0;
+    std::int64_t actor_hit_sum_ = 0;
+    std::size_t actor_event_lines_ = 0;
+    u64 actor_events_said_us_ = 0;
+#endif
+
     void Counters(Reader& r, const std::string& scene, u8 self, u64 server_now_us,
                   std::vector<coop::protocol::Message>& send) {
         u64 ring = 0;
@@ -1972,6 +2325,14 @@ private:
                 counter_nodes_.clear();
                 counter_others_.Clear();
                 ring_count_seen_ = 0;
+#ifdef COOP_HOOKSHOT
+                CoopCounters::TheHostRing().Clear();
+                ring_count_seen_ = CoopCounters::TheHostRing().Count();
+                CoopActorEvents::TheLifeTable().Clear();  // (another heap's components)
+                CoopDifficulty::TheKinds().Clear();
+                CoopActorEvents::TheRing().Forget();
+#endif
+                CoopDbno::SetOurLifeComponent(0);  // down but not out: until our Link is seen again
             }
             box.main = main_;
             ring = box.ring;
@@ -2004,13 +2365,23 @@ private:
             return mid ? r.Get<u64>(mid + CoopCounters::kOwnerActor).value_or(0) : 0;
         };
         std::size_t named_new = 0;
-        if (ring != 0) {
+#ifdef COOP_HOOKSHOT
+        const bool have_ring = true;  // (the world hook's, in our memory)
+        (void)ring;
+#else
+        const bool have_ring = ring != 0;
+#endif
+        if (have_ring) {
             std::array<u64, CoopCounters::kRingNodes> entries{};
+#ifdef COOP_HOOKSHOT
+            const u32 count = CoopCounters::TheHostRing().Read(entries);
+#else
             for (std::size_t i = 0; i < entries.size(); ++i) {
                 entries[i] = r.Get<u64>(ring + 8 + 8 * i).value_or(0);
             }
-            // Starts since the last look: more than the ring holds and some were lost.
             const u32 count = r.Get<u32>(ring).value_or(0);
+#endif
+            // Starts since the last look: more than the ring holds and some were lost.
             const u32 since = count - ring_count_seen_;
             ring_count_seen_ = count;
             ring_starts_ += since;
@@ -2054,7 +2425,7 @@ private:
         }
         // What the ring caught, every 10 s while a platform counter is near
         // (the 2026-11-12 run had no counter line at all; this says why).
-        if (ring != 0 && counter_lines_ < 60 &&
+        if (have_ring && counter_lines_ < 60 &&
             (counter_said_us_ == 0 || server_now_us >= counter_said_us_ + 10'000'000)) {
             counter_said_us_ = server_now_us;
             ++counter_lines_;
@@ -2131,6 +2502,27 @@ private:
         }
         std::optional<coop::protocol::Vec3> player;
         std::unordered_map<u64, std::pair<std::string, u64>> names;
+        std::unordered_map<u64, u64> life_components;
+        {
+            // Difficulty: the extra enemies the director made so far (coop_difficulty.h Extras).
+            std::map<u64, u64> live;
+            for (const auto& [key, actor] : CoopSpawn::TheDirector().Live()) {
+                if ((key & kExtraKey) == kExtraKey) {
+                    live[key & ~kExtraKey] = actor;
+                }
+            }
+            extras_.Keep(actors);  // (a whole walk: List) one whose actor is gone frees its address
+            extras_.Bind(live);
+            std::map<u64, u64> horde;
+            for (const auto& [key, actor] : CoopSpawn::TheDirector().Live()) {
+                if ((key & (kExtraKey | kHordeKey)) == kHordeKey) {
+                    horde[key & ~kHordeKey] = actor;
+                }
+            }
+            horde_.Keep(actors);
+            horde_.Bind(horde);
+        }
+        const u64 now_ms = SteadyNowMs();
         for (const u64 a : actors) {
             auto it = names_.find(a);
             std::pair<std::string, u64> known;
@@ -2150,9 +2542,33 @@ private:
                              known.first, vt - main_, slot - main_);
                 }
             }
+            if (const auto extra = extras_.HashOf(a, known.first)) {
+                known.second = *extra;  // difficulty: an extra enemy is shared by its own placement id
+            }
+            // Difficulty: a made actor that may be an extra the director has not bound yet waits for it.
+            const bool extra_unbound = (known.second == 0 || known.second == ~u64{0}) &&
+                                       extras_.Holds(known.first, now_ms);
+            if (CoopDifficulty::IsEnemy(known.first, CoopEnemyShots::IsEnemyShot(known.first))) {
+                // Difficulty: an attacker (a boss, one with its copies' weight folded in, or plain).
+                CoopDifficulty::TheKinds().Mark(a, CoopDifficulty::AttackerKind(known.first, known.second,
+                                                                                extras_.NoSpot(known.second)));
+            } else {
+                CoopDifficulty::TheKinds().Forget(a);  // difficulty: a reused address (our bomb where a Keese was)
+            }
             if (known.first.starts_with("Player_")) {  // our own Link, for coop_world
                 if (known.first == "Player_Child" || known.first == "Player_Adult") {
                     our_link_ = a;  // the ocarina probe (issue 152)
+                    // Difficulty: the Life component whose hits from enemies are scaled.
+                    if (const auto table = r.Ptr(a + kActorComponents)) {
+                        if (const auto component = r.Ptr(*table + kComponentLife)) {
+                            CoopDifficulty::TheKinds().Mark(*component, CoopDifficulty::Kind::our_link_life);
+                        }
+                    }
+                    // Our Link's own sound user, whose sounds go to the others (coop_link_sound.h).
+                    const u64 parts = r.Get<u64>(a + CoopPuppetSound::addr::kActorParts).value_or(0);
+                    const u64 xlink = parts ? r.Get<u64>(parts + CoopPuppetSound::addr::kPartsXLink).value_or(0) : 0;
+                    CoopLinkSound::SetOurUser(
+                        xlink ? r.Get<u64>(xlink + CoopPuppetSound::addr::kXLinkSoundUser).value_or(0) : 0);
                 }
                 coop::protocol::Vec3 at{};
                 for (std::size_t i = 0; i < 3; ++i) {
@@ -2182,6 +2598,9 @@ private:
                     }
                     if (known.first == "Player_Child" || known.first == "Player_Adult") {
                         GivePvp(a, value->first + 8, life);  // PvP (coop_pvp_game.cpp)
+                    }
+                    if (known.first == "Player_Child" || known.first == "Player_Adult") {
+                        GiveDbno(r, a, value->first + 8, life);  // down but not out (coop_dbno_game.h)
                     }
                     // On by default (=0 turns it off): a MaxLife raised by
                     // another player is put into the component the hearts are
@@ -2229,9 +2648,10 @@ private:
                 }
                 gimmicks_.push_back(std::move(g));
             }
-            if (IsShared(known.first) || CoopWorld::IsWorldObject(known.first) ||
-                CoopWorld::IsBlockAnchor(known.first) ||  // moved with its block (issue 147)
-                (known.second != 0 && known.second != ~u64{0} && sync_.Taken(known.second))) {
+            if (!extra_unbound &&
+                (IsShared(known.first) || CoopWorld::IsWorldObject(known.first) ||
+                 CoopWorld::IsBlockAnchor(known.first) ||  // moved with its block (issue 147)
+                 (known.second != 0 && known.second != ~u64{0} && sync_.Taken(known.second)))) {
                 Seen s;
                 s.address = a;
                 s.name = known.first;
@@ -2242,18 +2662,36 @@ private:
                 if (const auto m = r.Get<std::array<float, 9>>(a + kActorRotation)) {
                     s.rotation = *m;
                 }
-                // Townspeople send the playing frame (coop_npc_anim.h).
-                s.animation = s.name.starts_with("Npc_")
+                // Townspeople and enemies send the playing frame (PlaysByFrame).
+                s.animation = PlaysByFrame(s.name)
                                   ? AnimationAt(r, a, 0, false, CoopNpcAnim::kSlotPlayFrame)
                                   : Animation(r, a);
                 if (IsBoss(s.name)) {
                     s.slots = OtherSlots(r, a);  // issue 150
+                    // Native boss sync (coop_boss_native.h): its BSA
+                    // component, and our game's verbs for it when it is ours.
+                    if (const auto table = r.Ptr(a + kActorComponents)) {
+                        s.bsa_component = r.Ptr(*table + CoopBossNative::addr::kComponentBsa).value_or(0);
+                    }
+                    s.bsa = CoopBossNative::TheTable().OwnerState(a);
+                    s.hit_at = NewOwnHitAt(r, a, s.position);
                 }
                 if (const auto value = LifeValue(r, a)) {
                     const auto life = r.Get<s32>(value->first + 8);
                     const auto max = r.Get<s32>(value->second + 8);
                     if (life && max) {
                         s.life = coop::protocol::ObjectLife{*life, *max};
+                        const auto table = r.Ptr(a + kActorComponents);
+                        if (const auto component = table ? r.Ptr(*table + kComponentLife) : std::nullopt) {
+                            life_components.emplace(*component, a);  // (whose Life step is whose: StepHits)
+                            if (CoopDifficulty::IsEnemy(s.name, false)) {  // difficulty: its hits are scaled
+                                CoopDifficulty::TheKinds().Mark(*component,
+                                                                CoopDifficulty::LifeKind(s.name, s.hash,
+                                                                                         extras_.NoSpot(s.hash)));
+                            } else {
+                                CoopDifficulty::TheKinds().Forget(*component);  // (a reused address)
+                            }
+                        }
                     }
                 }
                 out.push_back(std::move(s));
@@ -2261,6 +2699,7 @@ private:
             names.emplace(a, std::move(known));
         }
         names_ = std::move(names);
+        life_components_ = std::move(life_components);
         sync_.SetPlayer(player);
         sync_.SetEvent(TheLocalEvent().load());  // issue 200: our cutscene's NPCs become ours
         sync_.SetLures(CoopProjectiles::TheLures().Get());  // issue 151: our cast lures
@@ -2354,6 +2793,35 @@ private:
     }
 
     // The life and max value entries ([life + 0x1c10], [life + 0x1c18]).
+    // Where a boss's incoming hit our game took since the last walk landed: its Life component's last hit id
+    // moved (+0x1b18), not to one we replayed, and the record's hit place (+0x240 + 0x3c, kHitTemplate's
+    // "the hit's place") is finite and within kHitNearBoss of the boss. Only that one named field leaves this
+    // game (DAMAGE's hit_at); the owner's game builds the rest of the hit itself (boss-intro).
+    static constexpr float kHitNearBoss = 12.0f;
+    static constexpr u64 kHitPlace = 0x27c;
+    std::unordered_map<u64, u32> boss_hit_ids_;  // actor: the last hit id seen
+    std::optional<coop::protocol::Vec3> NewOwnHitAt(Reader& r, u64 a, const coop::protocol::Vec3& boss) {
+        const auto table = r.Ptr(a + kActorComponents);
+        const auto life = table ? r.Ptr(*table + kComponentLife) : std::nullopt;
+        const auto id = life ? r.Get<u32>(*life + kLastHitId) : std::nullopt;
+        if (!id) {
+            return std::nullopt;
+        }
+        const auto [it, fresh] = boss_hit_ids_.try_emplace(a, *id);
+        if (fresh || it->second == *id) {
+            return std::nullopt;
+        }
+        it->second = *id;
+        if (*id == TheMover().ReplayedId(*life)) {
+            return std::nullopt;  // our replay of the owner's hit, not one of our game's
+        }
+        const auto at = r.Get<std::array<float, 3>>(*life + kHitPlace);
+        if (!at) {
+            return std::nullopt;
+        }
+        return CoopObjects::CheckedHitPlace(*at, boss, kHitNearBoss);
+    }
+
     std::optional<std::pair<u64, u64>> LifeValue(Reader& r, u64 a) {
         const auto table = r.Ptr(a + kActorComponents);
         const auto life = table ? r.Ptr(*table + kComponentLife) : std::nullopt;
@@ -2363,6 +2831,23 @@ private:
             return std::nullopt;
         }
         return std::pair{*value, *max};
+    }
+
+    // Down but not out (coop_dbno_game.h): our Link's Life component for the
+    // Life step's guard, and the life the rules ask for (a revive, a downed
+    // Link's quarter heart, out), written as PvP's fallback does.
+    void GiveDbno(Reader& r, u64 link, u64 life_at, s32 life) {
+        const auto table = r.Ptr(link + kActorComponents);
+        const auto component = table ? r.Ptr(*table + kComponentLife) : std::nullopt;
+        CoopDbno::SetOurLifeComponent(component.value_or(0));
+        const auto want = CoopDbno::TakeLifeWrite();
+        if (!want || life < 0 || *want == life || memory_ == nullptr ||
+            !memory_->IsValidVirtualAddressRange(life_at, 4)) {
+            return;
+        }
+        memory_->Write32(life_at, static_cast<u32>(*want));
+        TheLinkLife().store(*want);
+        LOG_INFO(Core, "coop: dbno: our Link's life {} -> {}", life, *want);
     }
 
     // PvP: our Link's life `life` (at `life_at`) was just read. Notes it for
@@ -2431,6 +2916,98 @@ private:
     // actor of that name to our Link with a life takes a hit from our Link of
     // its whole life, through the game's damage, so it dies as from a real hit
     // (and drops what it drops: a Gold Skulltula its token).
+    // Difficulty (coop_difficulty.h Extras): the extra enemies of this scene
+    // visit, planned from the walk's placed enemies at the count in force, go
+    // on the director's enemy list as the game's own actors, made once each.
+    // The enemies the sync treats in its own way get no extras (by name, so the placement data can say too).
+    static bool SpecialForExtras(std::string_view name) {
+        return IsRolled(name) || IsHatchingEgg(name) || IsHatchling(name) || IsAnnounced(name) || IsOwnPuzzle(name) ||
+               IsFish(name);
+    }
+    void PlanExtras(const std::string& scene, const std::vector<Seen>& seen, std::vector<CoopSpawn::Copy>& enemies) {
+        std::vector<CoopDifficulty::Extras::Original> originals;
+        bool boss = false;
+        for (const Seen& s : seen) {
+            boss = boss || IsBoss(s.name);
+            const bool special = SpecialForExtras(s.name) ||
+                                 extras_.HashOf(s.address, s.name).has_value();  // an extra gets none of its own
+            if (CoopDifficulty::GetsExtras(s.name, s.hash, s.life && s.life->max > 0, special)) {
+                originals.push_back({s.name, s.hash});
+            }
+        }
+        const std::uint16_t count = CoopDifficulty::Now().count_pct;
+        const std::size_t no_spot = extras_.NoSpots();
+        if (const std::size_t added = extras_.Plan(scene, originals, count, boss, SteadyNowMs())) {
+            LOG_INFO(Core, "coop: difficulty: {} extra enemies to make in {} (enemies {}%, {} in this visit)", added,
+                     scene, count, extras_.All().size());
+        }
+        if (extras_.NoSpots() > no_spot) {
+            LOG_INFO(Core, "coop: difficulty: {} more placed enemies in {} with no ground for copies: weight instead",
+                     extras_.NoSpots() - no_spot, scene);
+        }
+        for (const auto& e : extras_.All()) {
+            CoopSpawn::Copy c;
+            c.key = kExtraKey | e.key;
+            c.actor = e.name;
+            c.position = {e.position[0], e.position[1], e.position[2]};
+            // Once made and bound, the director lets it go (its slot is free for
+            // the shots and drops); the actor stays, the sync's like any enemy.
+            c.act = e.address != 0 ? CoopSpawn::Act::release : CoopSpawn::Act::show;
+            c.place = false;  // its own AI moves it; the sync places it where it is a copy
+            c.remakes = 0;    // one that went is not made again
+            c.real = true;    // the game's own enemy, never a stand-in
+            enemies.push_back(std::move(c));
+        }
+    }
+
+    // Difficulty (coop_difficulty.h Horde): more night Stalchild beside the
+    // rolls this game keeps and shares, the more players stand near each.
+    void PlanHorde(const std::string& scene, std::uint8_t self, u64 server_now_us, const std::vector<Seen>& seen,
+                   std::vector<CoopSpawn::Copy>& enemies) {
+        std::vector<CoopDifficulty::Horde::Roll> rolls;
+        // Ours rise where the game's rolls rose (CoopDifficulty::FindSpot), apart from every enemy here and our Link.
+        std::vector<CoopDifficulty::Point> apart;
+        if (player_) {
+            apart.push_back({(*player_)[0], (*player_)[1], (*player_)[2]});
+        }
+        std::size_t alive = 0;
+        for (const Seen& s : seen) {
+            if (CoopDifficulty::IsEnemy(s.name, false)) {
+                apart.push_back({s.position[0], s.position[1], s.position[2]});
+            }
+            if (!IsRolled(s.name) || s.name == "Enemy_Poe" || (s.hash != 0 && s.hash != ~u64{0})) {
+                continue;  // (the horde is Stalchild only)
+            }
+            ++alive;
+            const auto id = sync_.IdOf(s.address);
+            if (!id || id->kind != coop::protocol::ObjectKind::made || id->maker != self || horde_.Ours(s.address)) {
+                continue;  // another game's roll (a copy here), or one we made: no horde of its own
+            }
+            const bool dead = s.life && s.life->life <= 0;
+            rolls.push_back({s.address, s.name, {s.position[0], s.position[1], s.position[2]},
+                             sync_.PlayersNear(s.position, server_now_us), dead});
+        }
+        const std::uint16_t count = CoopDifficulty::Now().count_pct;
+        if (const std::size_t added = horde_.Plan(scene, rolls, alive, apart, count, SteadyNowMs())) {
+            LOG_INFO(Core, "coop: difficulty: night horde: {} more Stalchild in {} ({} alive, enemies {}%)", added,
+                     scene, alive, count);
+        }
+        for (const auto& m : horde_.All()) {
+            CoopSpawn::Copy c;
+            c.key = kHordeKey | m.key;
+            c.actor = m.name;
+            c.position = {m.position[0], m.position[1], m.position[2]};
+            if (m.gone) {
+                continue;  // (one never made: off the director's list, so it is not made)
+            }
+            c.act = m.address != 0 ? CoopSpawn::Act::release : CoopSpawn::Act::show;
+            c.place = false;  // its own AI; the roll sync shares it as one of our rolls
+            c.remakes = 0;
+            c.real = true;
+            enemies.push_back(std::move(c));
+        }
+    }
+
     void TestKills(const std::vector<Seen>& seen, std::vector<LifeWrite>& writes) {
         std::vector<std::string> names;
         {
@@ -2465,6 +3042,7 @@ private:
             w.life = 0;
             w.hurt = std::max<std::int32_t>(best->life->life, 1);
             w.from = player_;
+            w.direct = true;
             writes.push_back(w);
             LOG_INFO(Core, "coop: test kill {} {:#x} at {:.2f} {:.2f} {:.2f} ({:.1f} m, life {}): hit",
                      name, best->address, best->position[0], best->position[1], best->position[2],
@@ -2478,30 +3056,132 @@ private:
             return;
         }
         const s32 old = r.Get<s32>(value->first + 8).value_or(-1);
-        if (w.hurt > 0 && replay_) {
-            u64 player = 0;
-            for (const auto& [a, known] : names_) {
-                if (known.first == "Player_Child" || known.first == "Player_Adult") {
-                    player = a;
-                    break;
-                }
-            }
-            if (player != 0) {
-                Mover::Hit h;
-                h.actor = w.address;
-                h.attacker = player;
-                h.amount = w.hurt;
-                h.at = r.Get<std::array<float, 3>>(w.address + kActorPosition).value_or(h.at);
-                h.from = r.Get<std::array<float, 3>>(player + kActorPosition).value_or(h.at);
-                if (w.from) {
-                    // The player who hit, so the enemy is knocked away from them.
-                    h.from = *w.from;
-                }
-                TheMover().AddHit(h);
-                return;  // the game takes the life; Sync writes it after 400 ms if not
+        // An enemy (a boss too, or an actor we cannot name) is never written (the owner's native rule): its life
+        // changes only through its game's own damage step (the replayed hit) or its own Life step (patch 0007);
+        // else the change is lost. RouteLife decides (objects_test); this reads the game for it and acts.
+        u64 player = 0;
+        for (const auto& [a, known] : names_) {
+            if (known.first == "Player_Child" || known.first == "Player_Adult") {
+                player = a;
+                break;
             }
         }
-        if (w.hurt > 0) {
+        LifeAsk ask;
+        ask.native = w.direct || NativeOnly(w.address);
+        ask.direct = w.direct;
+        ask.replay_on = replay_;
+        ask.has_player = player != 0;
+        ask.hurt = w.hurt;
+        ask.life = w.life;
+        ask.old = old;
+        std::optional<u64> life;
+#ifdef COOP_HOOKSHOT
+        // Hookshot with patch 0007: the hit (or the life the owner says this
+        // copy has lost) goes in through the game's own Life step on its own
+        // thread (CoopActorEvents::LifeTable), so the game clamps it, reacts
+        // and runs its own death. A change still waiting from an earlier give
+        // (the actor's step did not run: asleep, paused) is taken back: an
+        // enemy's goes in again with the new one (RouteLife), anything else's
+        // life is written directly, so nothing is dealt twice.
+        // The damage field is left alone then: the step reads it into the
+        // sum it tells us, and it would come back as a hit of this game's.
+        auto& steps = CoopActorEvents::TheLifeTable();
+        ask.step_seen = CoopActorEvents::LifeStepSeen().load(std::memory_order_relaxed);
+        if (ask.step_seen) {
+            const auto table = r.Ptr(w.address + kActorComponents);
+            life = table ? r.Ptr(*table + kComponentLife) : std::nullopt;
+            ask.has_component = life.has_value();
+            if (life) {
+                ask.replay_seen = ReplaySeen(r, *life);
+            }
+        }
+        const bool steppable = ask.step_seen && life && old >= 0 && (w.hurt > 0 || w.life < old) &&
+                               !(w.hurt > 0 && replay_ && !w.direct && player != 0);
+        if (steppable) {
+            ask.stale = steps.Take(*life);
+        }
+#endif
+        const LifeRouted routed = RouteLife(ask);
+        switch (routed.route) {
+        case LifeRoute::replay: {
+            Mover::Hit h;
+            h.actor = w.address;
+            h.attacker = player;
+            h.amount = w.hurt;
+            h.at = r.Get<std::array<float, 3>>(w.address + kActorPosition).value_or(h.at);
+            if (w.hit_at) {
+                // Where it landed in the hitter's game (a boss: Gohma's headshot check against her eye bone,
+                // which our game's own damage step makes with its own boss): the hit lands there.
+                h.at = {(*w.hit_at)[0], (*w.hit_at)[1], (*w.hit_at)[2]};
+                h.exact = true;
+            }
+            h.from = r.Get<std::array<float, 3>>(player + kActorPosition).value_or(h.at);
+            if (w.from) {
+                // The player who hit, so the enemy is knocked away from them.
+                h.from = *w.from;
+            }
+            TheMover().AddHit(h);
+            return;  // the game takes the life; after 400 ms the rest goes to its Life step (Sync)
+        }
+        case LifeRoute::wait_replay:
+#ifdef COOP_HOOKSHOT
+            if (ask.stale != 0) {
+                steps.Give(*life, ask.stale);  // (left as it was)
+            }
+#endif
+            // Our replayed hit still waits for this enemy's own damage step (asleep, paused): it takes that
+            // hit itself when it runs, so the same fall is not given a second time.
+            LOG_INFO(Core, "coop: objects: share life {:#x} '{}': its damage step has not seen our replayed hit "
+                           "yet: nothing given (life {}, owner's {})",
+                     w.address, NameOf(w.address), old, w.life);
+            return;
+        case LifeRoute::step:
+#ifdef COOP_HOOKSHOT
+            if (steps.Give(*life, routed.amount)) {
+                LOG_INFO(Core, "coop: objects: share {} {:#x}: {} through the game's Life step at life {} (to {})",
+                         w.hurt > 0 ? "hurt" : "life", w.address, routed.amount, old, w.life);
+                if (w.hurt <= 0) {
+                    // (a hurt's fall the Sync already expects, and writes itself when not taken)
+                    sync_.Stepped(w.address, routed.amount, share_now_us_);
+                    life_given_.push_back({*life, w.address, w.life, share_now_us_});
+                }
+                return;
+            }
+            if (!life_table_full_said_) {
+                life_table_full_said_ = true;
+                LOG_WARNING(Core, "coop: objects: no room to give a hit to the game's Life step ({:#x} '{}'): "
+                                  "until the next scene an enemy's is lost, anything else's life written",
+                            w.address, NameOf(w.address));
+            }
+#endif
+            break;
+        case LifeRoute::lost:
+        case LifeRoute::write:
+#ifdef COOP_HOOKSHOT
+            if (ask.stale != 0 && !ask.native) {
+                // (its step did not run: asleep or paused, or one of the
+                // step's two paths that skip the sum; the name says which actors)
+                LOG_INFO(Core, "coop: objects: {:#x} '{}': {} given earlier was never taken by its Life step",
+                         w.address, NameOf(w.address), ask.stale);
+            }
+#endif
+            break;
+        }
+        if (w.direct) {
+            LOG_INFO(Core, "coop: objects: test kill {:#x}: the game's Life step did not take it (or there is none: "
+                           "patch 0007): nothing written",
+                     w.address);
+            return;  // the test kill goes only through the game's own step, never a write of ours
+        }
+        if (ask.native) {
+            // (no Life step here, or it could not take it: the hit is lost; never a write of ours)
+            ++lives_lost_;
+            LOG_INFO(Core, "coop: objects: share {} {:#x} '{}': not taken by its game's own steps: its life stays "
+                           "{} (owner's {}; {} lost so far)",
+                     w.hurt > 0 ? "hurt" : "life", w.address, NameOf(w.address), old, w.life, lives_lost_);
+            return;
+        }
+        if (w.hurt > 0 && !ask.step_seen) {
             const auto table = r.Ptr(w.address + kActorComponents);
             const auto life = table ? r.Ptr(*table + kComponentLife) : std::nullopt;
             if (life && memory.IsValidVirtualAddressRange(*life + kLifeHurt, 4)) {
@@ -2632,7 +3312,7 @@ private:
             // What each copy really shows, and ours (the frame we send).
             for (const PlayWish& p : plays) {
                 const auto name = names_.find(p.address);
-                if (!p.npc || name == names_.end()) {
+                if (!p.play_frame || name == names_.end() || !name->second.first.starts_with("Npc_")) {
                     continue;
                 }
                 const auto shown = AnimationAt(r, p.address, 0, false, CoopNpcAnim::kSlotPlayFrame);
@@ -2740,6 +3420,11 @@ private:
                 std::copy(w.rotation->begin(), w.rotation->end(), p.transform.begin() + 3);
                 p.rotation = true;
             }
+            // jitter-b: a townsperson is followed in even steps each game frame (coop_follow.h).
+            if (const auto name = names_.find(w.address);
+                w.velocity && name != names_.end() && name->second.first.starts_with("Npc_")) {
+                p.velocity = std::array<float, 3>{(*w.velocity)[0], (*w.velocity)[1], (*w.velocity)[2]};
+            }
             wish.push_back(p);
             placed.emplace(w.address, w.position);
         }
@@ -2753,6 +3438,9 @@ private:
             TheMover().Release(ours);
         }
         std::vector<u64> removes = sync_.Removes();
+        for (const u64 a : horde_.Removes()) {
+            removes.push_back(a);  // difficulty: night horde beside a roll the spawner took away
+        }
         for (const u64 a : world_.Removes()) {
             removes.push_back(a);
         }
@@ -2790,6 +3478,11 @@ private:
         TheMover().Want(main_, std::move(wish), std::move(removes), std::move(plays));
         if (now_us - drift_at_ >= kDriftLogUs) {
             const auto [moved, deleted, played, framed] = TheMover().TakeCounts();
+            if (const auto [started, skipped] = TheMover().TakeNodeStarts(); started + skipped > 0) {
+                LOG_INFO(Core, "coop: world: push node starts run {}, skipped {} (block gone, another "
+                               "node, or busy by then)",
+                         started, skipped);
+            }
             if (drift_count_ > 0 || moved > 0 || deleted > 0 || played > 0 || framed > 0 ||
                 sync_.HurtsTaken() + sync_.HurtsMissed() > 0) {
                 LOG_INFO(Core,
@@ -3009,6 +3702,11 @@ private:
     std::size_t refused_logged_ = 0;
     std::uint8_t decider_logged_ = 0;
     std::unordered_map<u64, std::pair<std::string, u64>> names_;  // name, hash by actor
+    std::unordered_map<u64, u64> life_components_;  // the actor by its Life component (shared actors with a life)
+    // Difficulty: this scene visit's extra enemies (where from the game's placement data).
+    CoopDifficulty::Extras extras_{CoopDifficulty::AreaOf, SpecialForExtras};
+    CoopDifficulty::Horde horde_;    // difficulty: the night horde we made beside our own rolls
+    u64 share_now_us_ = 0;  // this Share's server time (WriteLife)
     Sync sync_;
     Kernel::KProcess* process_ = nullptr;
     u64 main_ = 0;
@@ -3175,20 +3873,29 @@ namespace {
 // The bosses of the last walk, for LastBossAlive (issue 109).
 std::mutex g_bosses_mutex;
 std::vector<Seen> g_bosses;
+std::vector<std::uint64_t> g_bosses_ours;  // the bosses of g_bosses our game owns (boss-intro)
+std::map<std::string, BossOwnership, std::less<>> g_boss_last;  // the last ownership reading per boss (BossOurs)
 std::uint64_t g_bosses_at = 0;
 constexpr std::uint64_t kBossesFreshUs = 1'500'000;
 
 } // namespace
 
-void NoteBosses(const std::vector<Seen>& seen) {
+void NoteBosses(const std::vector<Seen>& seen, const std::vector<std::pair<u64, std::string>>& owned) {
     std::vector<Seen> bosses;
+    std::vector<std::uint64_t> ours;
     for (const Seen& s : seen) {
         if (s.name.starts_with("Enemy_DungeonBoss_")) {
             bosses.push_back(s);
+            for (const auto& [address, name] : owned) {
+                if (address == s.address) {
+                    ours.push_back(address);
+                }
+            }
         }
     }
     std::lock_guard lock(g_bosses_mutex);
     g_bosses = std::move(bosses);
+    g_bosses_ours = std::move(ours);
     g_bosses_at = CoopEvery::NowUs();
 }
 
@@ -3199,6 +3906,37 @@ std::optional<bool> LastBossAlive(std::span<const std::string_view> bodies) {
         return std::nullopt;
     }
     return BossAlive(g_bosses, bodies);
+}
+
+void ForgetBosses() {
+    std::lock_guard lock(g_bosses_mutex);
+    g_bosses.clear();
+    g_bosses_ours.clear();
+    g_boss_last.clear();  // another session's (or run's) owner says nothing here
+    g_bosses_at = 0;
+}
+
+std::optional<bool> LastBossOurs(std::span<const std::string_view> bodies) {
+    std::lock_guard lock(g_bosses_mutex);
+    const std::uint64_t now = CoopEvery::NowUs();
+    if (g_bosses_at == 0 || now < g_bosses_at || now - g_bosses_at > kBossesFreshUs) {
+        return std::nullopt;
+    }
+    return BossOurs(g_bosses, g_bosses_ours, bodies, g_bosses_at, g_boss_last);
+}
+
+void SetUnreadyBosses(std::vector<std::string> bodies) {
+    std::lock_guard lock(g_unready_mutex);
+    g_unready = std::move(bodies);
+}
+
+std::optional<bool> LastBossHurt(std::span<const std::string_view> bodies) {
+    std::lock_guard lock(g_bosses_mutex);
+    const std::uint64_t now = CoopEvery::NowUs();
+    if (g_bosses_at == 0 || now < g_bosses_at || now - g_bosses_at > kBossesFreshUs) {
+        return std::nullopt;
+    }
+    return BossHurt(g_bosses, bodies);
 }
 
 } // namespace CoopObjects

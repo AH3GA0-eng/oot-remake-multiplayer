@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_pause_files.h"
 
+#include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cwchar>
 #include <fstream>
 #include <sstream>
 #include <system_error>
@@ -19,10 +22,14 @@
 #include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <iphlpapi.h>
 #else
 #include <arpa/inet.h>
 #include <ifaddrs.h>
+#include <net/if.h>
 #include <netinet/in.h>
+
+#include "coop_clipboard_posix.h"
 #endif
 
 namespace CoopFiles {
@@ -90,7 +97,13 @@ bool WriteText(const fs::path& p, const std::string& text) {
 std::optional<fs::path> FindKit() {
     auto is_kit = [](const fs::path& d) {
         std::error_code ec;
+#ifdef _WIN32
         return fs::exists(d / "server" / "coop_server.exe", ec) && fs::exists(d / "start-server.cmd", ec);
+#else
+        // The Linux kit (tools/release/kit/linux-longshot): its data/ folder holds the server,
+        // coop-options.ini and the built game (data/game/), so data/ is the kit here.
+        return fs::exists(d / "server" / "coop_server", ec) && fs::exists(d / "coop-options.ini", ec);
+#endif
     };
     std::vector<fs::path> tries;
     if (const std::string e = Env("OOT_COOP_KIT"); !e.empty()) {
@@ -188,23 +201,45 @@ std::string Narrow(const wchar_t* w) {
 }  // namespace
 #endif
 
-std::string ClipboardText() {
-#ifdef _WIN32
+std::optional<std::string> ReadClipboard() {
     std::string out;
-    if (!OpenClipboard(nullptr)) {
-        return out;
+#ifdef _WIN32
+    // Another program (a chat app, a clipboard manager) may hold the clipboard for a moment: try a few times.
+    bool open = false;
+    for (int i = 0; i < 10 && !(open = OpenClipboard(nullptr) != 0); ++i) {
+        Sleep(15);
     }
+    if (!open) {
+        return std::nullopt;
+    }
+    // Read no further than the block holds (a program may leave the text unterminated), and at most 4096 characters.
     if (HANDLE h = GetClipboardData(CF_UNICODETEXT)) {
         if (const auto* w = static_cast<const wchar_t*>(GlobalLock(h))) {
-            out = Narrow(w);
+            const std::size_t room = std::min<std::size_t>(GlobalSize(h) / sizeof(wchar_t), 4096);
+            const std::wstring text(w, wcsnlen(w, room));
             GlobalUnlock(h);
+            out = Narrow(text.c_str());
+        }
+    } else if (HANDLE a = GetClipboardData(CF_TEXT)) {   // only 8-bit text on it (some older programs)
+        if (const auto* s = static_cast<const char*>(GlobalLock(a))) {
+            out.assign(s, strnlen(s, std::min<std::size_t>(GlobalSize(a), 4096)));
+            GlobalUnlock(a);
         }
     }
     CloseClipboard();
-    return out.size() > 4096 ? out.substr(0, 4096) : out;
 #else
-    return {};
+    // The one Linux reader (coop_clipboard_posix.cpp): wl-paste, else xclip, else xsel; nothing only when none is there.
+    std::optional<std::string> got = CoopClipboard::Paste();
+    if (!got) {
+        return std::nullopt;
+    }
+    out = std::move(*got);
 #endif
+    return out.size() > 4096 ? out.substr(0, 4096) : out;
+}
+
+std::string ClipboardText() {
+    return ReadClipboard().value_or(std::string());
 }
 
 bool SetClipboardText(const std::string& text) {
@@ -228,8 +263,7 @@ bool SetClipboardText(const std::string& text) {
     CloseClipboard();
     return ok;
 #else
-    (void)text;
-    return false;
+    return CoopClipboard::Copy(text);
 #endif
 }
 
@@ -272,6 +306,67 @@ std::vector<std::string> LocalIpv4s() {
         for (const ifaddrs* i = list; i != nullptr; i = i->ifa_next) {
             if (i->ifa_addr != nullptr && i->ifa_addr->sa_family == AF_INET) {
                 add(reinterpret_cast<const sockaddr_in*>(i->ifa_addr)->sin_addr);
+            }
+        }
+        freeifaddrs(list);
+    }
+#endif
+    return out;
+}
+
+
+std::vector<CoopTitleMenu::LocalCard> LocalCards() {
+    std::vector<CoopTitleMenu::LocalCard> out;
+    const auto text_of = [](const in_addr& a) {
+        char text[INET_ADDRSTRLEN] = {};
+        return inet_ntop(AF_INET, &a, text, sizeof text) != nullptr ? std::string(text) : std::string();
+    };
+#ifdef _WIN32
+    ULONG size = 16 * 1024;
+    std::vector<unsigned char> buf;
+    ULONG r = ERROR_BUFFER_OVERFLOW;
+    for (int tries = 0; tries < 3 && r == ERROR_BUFFER_OVERFLOW; ++tries) {
+        buf.resize(size);
+        r = GetAdaptersAddresses(AF_INET, GAA_FLAG_INCLUDE_GATEWAYS | GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST |
+                                              GAA_FLAG_SKIP_DNS_SERVER,
+                                 nullptr, reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()), &size);
+    }
+    if (r != NO_ERROR) {
+        for (const std::string& a : LocalIpv4s()) {   // the system did not say: addresses without card names
+            out.push_back({a, {}, false});
+        }
+        return out;
+    }
+    for (auto* ad = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()); ad != nullptr; ad = ad->Next) {
+        if (ad->OperStatus != IfOperStatusUp || ad->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
+            continue;
+        }
+        std::string name = ad->FriendlyName != nullptr ? Narrow(ad->FriendlyName) : std::string();
+        if (ad->Description != nullptr) {
+            name += " | " + Narrow(ad->Description);
+        }
+        const bool gateway = ad->FirstGatewayAddress != nullptr;
+        for (auto* u = ad->FirstUnicastAddress; u != nullptr; u = u->Next) {
+            const sockaddr* sa = u->Address.lpSockaddr;
+            if (sa != nullptr && sa->sa_family == AF_INET) {
+                const std::string a = text_of(reinterpret_cast<const sockaddr_in*>(sa)->sin_addr);
+                if (!a.empty()) {
+                    out.push_back({a, name, gateway});
+                }
+            }
+        }
+    }
+#else
+    ifaddrs* list = nullptr;
+    if (getifaddrs(&list) == 0) {
+        for (const ifaddrs* i = list; i != nullptr; i = i->ifa_next) {
+            if (i->ifa_addr != nullptr && i->ifa_addr->sa_family == AF_INET && (i->ifa_flags & IFF_UP) != 0 &&
+                (i->ifa_flags & IFF_LOOPBACK) == 0) {
+                const std::string a = text_of(reinterpret_cast<const sockaddr_in*>(i->ifa_addr)->sin_addr);
+                if (!a.empty()) {
+                    // Linux names no router per card here: the home row keeps the system's order.
+                    out.push_back({a, i->ifa_name != nullptr ? i->ifa_name : "", false});
+                }
             }
         }
         freeifaddrs(list);

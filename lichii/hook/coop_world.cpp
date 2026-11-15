@@ -100,7 +100,16 @@ bool IsMovable(std::string_view name) {
         return false;
     }
     return name.find("MovableBox_") != std::string_view::npos ||
-           name.starts_with("Obj_SliderBox_") || name.starts_with("Obj_AmosStatue_") || IsRoller(name);
+           name.starts_with("Obj_SliderBox_") || name.starts_with("Obj_AmosStatue_") || IsRoller(name) ||
+           IsGravestone(name);
+}
+
+bool IsGravestone(std::string_view name) {
+    // The graves Link pulls or pushes (Graveyard_Child: 17 Obj_Tombstone_A_01 and the brothers'
+    // Obj_Graveyard_Tombstone_A_01/02). Not the Royal Tomb's A_03: it goes by its flag
+    // GraveYard_RoyalFamilyTomb_Open (coop_story), never by a push.
+    return name.starts_with("Obj_Tombstone_") || name == "Obj_Graveyard_Tombstone_A_01" ||
+           name == "Obj_Graveyard_Tombstone_A_02";
 }
 
 bool IsRoller(std::string_view name) {
@@ -902,6 +911,8 @@ void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
         // and held in place in the other game).
         return;
     }
+    const std::optional<proto::Vec3> before = o.last_walk;
+    o.last_walk = Finite(o.position) ? std::optional<proto::Vec3>(o.position) : std::nullopt;
     const auto found = remote_.find(o.hash);
     Remote* r = found != remote_.end() ? &found->second : nullptr;
     bool remote = r != nullptr && !r->samples.empty() && now_us - r->got_us < kRemoteHoldUs;
@@ -981,7 +992,35 @@ void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
                                      fix.anchor != 0 ? " is put there too" : " was not found near its old place"));
             out.blocks.push_back(std::move(fix));
         }
+        if (o.follow_from && Finite(o.position) &&
+            Distance(*o.follow_from, o.position) > kBlockStartM) {
+            o.stale_from = o.follow_from;  // watched for a push from there (kSnapM)
+            o.agreed = o.position;
+            o.stale_until = now_us + kSnapWatchUs;
+        }
         o.follow_from.reset();
+    }
+    if (o.stale_from && (o.ours || now_us >= o.stale_until)) {
+        o.stale_from.reset();
+    }
+    if (o.stale_from && before && Finite(o.position) && Distance(*before, o.position) > kSnapM &&
+        Distance(o.position, *o.stale_from) < Distance(o.position, o.agreed)) {
+        // deku-visuals-b: our game's push started from where the block
+        // rested before the other's push (its push node kept the old start,
+        // issue 147: its own start did not run again here). Told only: the
+        // push is ours and is sent as usual.
+        Out::BlockFix fix;
+        fix.address = o.address;
+        fix.hash = o.hash;
+        fix.name = o.name;
+        fix.from = *o.stale_from;
+        fix.to = o.agreed;
+        fix.snap = true;
+        out.blocks.push_back(std::move(fix));
+        out.notes.push_back(Line("world: %016llx %s jumped back toward its old rest (a push from the "
+                                 "stale place, issue 147)%s",
+                                 o.hash, o.name, ""));
+        o.stale_from.reset();
     }
     if (now_us < o.quiet_until) {
         o.rest = o.position;  // settling after another game's move: no claim

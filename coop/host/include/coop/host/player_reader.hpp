@@ -53,6 +53,10 @@ class PlayerReader {
 
   // This frame's reading, or nothing when the player cannot be read.
   std::optional<PlayerReading> read();
+  // Split screen: read this Player actor (another local player's Link)
+  // instead of the one the game's lookup finds; its place is the actor's own,
+  // never the GameUI copy (that one is the first Link's). 0: the lookup again.
+  void set_actor(std::uint64_t actor) { actor_ = actor; }
 
   // The parts, for tests and for the emulator's debug overlay.
   std::optional<Vec3> read_position();      // GameUI copy, else the actor's
@@ -79,9 +83,14 @@ class PlayerReader {
   // "" when the slot is empty or its piece is gone. Nothing when the slot
   // or the name could not be read.
   std::optional<std::string> read_slot_name(std::uint32_t slot_index);
+  // The same for one of the EquipmentUser's armor links (after the slots).
+  std::optional<std::string> read_armor_link_name(std::uint32_t link_index);
+  // The piece behind the link at EquipmentUser + `link_offset`.
+  std::optional<std::string> read_link_name(std::uint64_t link_offset);
   GameMemory& memory_;
   DrawnState own_drawn_{};
   DrawnState& drawn_memo_;
+  std::uint64_t actor_ = 0;  // set_actor's
 };
 
 // A rotation matrix (row-major, v' = M v) to a unit quaternion with w >= 0.

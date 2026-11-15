@@ -23,6 +23,32 @@
 #    burning/gone in both, not vanished in A before B's fire reached it.
 #  - If A's torch stays dark although A's event played: keep both logs' "gimmick probe: 0c29e0a5d05f4426
 #    Obj_SwitchCandleStick_A_02" lines (the torch's lit words, for a torch-state share).
+# deku-test run (2026-11-14): still NO event: the torch is lit at load. The plate's BootUp comes from an autogen
+# bool (OperateGameDataAllocAutogenGameData __GUIDHash 72078894 in Room_E_Prefab_e259) whose save hash is not
+# known yet (not the plate's Hash, not in the 64-bit key set). Needs that hash, or a save from before the room.
+# 2nd look: GameDataList's Bool list is sorted by name; the unnamed bools in the Deku range are 0x76b5643f,
+# 0x031c8de5 0x478d1207 0x96aa0977 0xa2fee6f0 (all 0 in the saves) and 0x9de68609 0xb469eee8 (1; cleared in a run:
+# the torch still lit, no event, groups-20261114-053242). Every progress.sav on this PC (680) is past the Deku Tree.
+# deku-test run 3 (2026-11-14, groups-20261114-081307, protocol-12 module ace835b8): on a PRE-DEKU save (quest step
+# GoInside, all room flags 0, no web keys; copy the owner's checkpoint save '1. Deku Tree' into the pair's autotest-save,
+# no save_flags prep needed) the setup WORKS: B's landing set bool 0x0f8f3fa3 0 -> 1 (the plate's autogen bool: it
+# also flips between that save and the next checkpoint) and started the event; A 'started by our room's asker at
+# -10.0 82.5 -9.5' (result 1), RoomE_KillSpiderWave and HavePlayedEvent came to A. SYNC HALF: A's web burns (shot
+# A-web: gone) but A's torch stays unlit (A-lit, A-late) while B's burns: 0x0f8f3fa3 never reaches A.
+# deku-test (2026-11-14, Longshot rc.3): clearing HavePlayedEvent alone does not start anything. The rooms'
+# logic (romfs Logic/InsideTheDekuTree_Level_Room_*.logic.module.ainb) reads room flags when the room loads:
+#   compass room D: the event's asker (EventRequestActor_641b) is deleted while RoomD_StepSwitch_On_01 (0x6fb4f455)
+#     is 1 (then the plate lifts the platforms with no event); slingshot room C: RoomC_Cleared (0x77279a83) boots the
+#     eye switch up and deletes its asker; torch room E: RoomE_KillSpiderWave (0x46e8fcf9) burns the web at load and
+#     the burned web is a Bool64bitKey (its placement Hash 0x0181f8a8ef2fd1d3, its parts 0x45c7d8b5c0c68917);
+#     water room G: WaterLevel (0x8d2b85ef) 1 deletes the dive switch's asker; Gohma's prefab (room L) deletes Gohma
+#     while the quest Get_StoneOfForest (enum 0x7d776b61) is DefeatBoss or later (the saves: Complete).
+# BEFORE the run (games closed), both games of the pair, every slot (one prep for all hs-deku-*, hs-ladder and
+# hs-boss-cutscenes-gohma; keep a copy of <pair>\autotest-save first and put it back afterwards):
+#   save_flags.py set <pair>\autotest-save\slot_0*\progress.sav bool:0x50cbaf1b=0 bool:0x429126ef=0 bool:0xb3a4fe84=0
+#     bool:0xfcbd74e3=0 bool:0x8d2b85ef=0 bool:0x392a228a=0 bool:0x6fb4f455=0 bool:0x77279a83=0 bool:0x46e8fcf9=0
+#     enum:0x7d776b61=0xb5df43cb      (GoToBossRoom)
+#   save_flags.py drop-keys <pair>\autotest-save\slot_0*\progress.sav 0x0181f8a8ef2fd1d3 0x45c7d8b5c0c68917
 #! noload
 #! start coop: test warp done
 #! switches LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_GIMMICK_PROBE=1

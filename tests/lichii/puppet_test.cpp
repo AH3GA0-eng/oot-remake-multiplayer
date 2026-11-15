@@ -14,6 +14,7 @@
 #include "coop/host/player_reader.hpp"
 #include "coop_fairy.h"
 #include "coop_puppet.h"
+#include "coop_puppet_own.h"
 #include "coop_sites.h"
 #include "coop_svc.h"
 
@@ -85,6 +86,8 @@ struct Game {
     std::uint64_t create_result = 1;  // what the game's create returns
     bool queue_anyway = false;        // a request in the handle even so
     std::uint64_t unequip_result = 1; // what the game's armor take-off returns
+    std::array<std::uint64_t, 8> slot_state{};  // what the game's state read (kEquipState) returns per slot
+    std::vector<Call> state_checks;            // those reads, in order
     Game() {
         guest.Map(kBase + addr::kActorManagerPtr, 8);
         guest.Map(kBase + addr::kGotCreateDefault, 8);
@@ -147,6 +150,12 @@ std::vector<Call> Frame(Director& d, Game& g, std::uint64_t now_ms) {
             result = g.unequip_result;
         } else if (call->function == kBase + addr::kTakeCreated) {
             REQUIRE(g.guest.Read(call->x[0] + addr::kRequestActor, &result, 8));
+        } else if (call->function == kBase + addr::kEquipState) {
+            // The game's read of a slot's state, from the fake's slot states;
+            // kept apart from the calls a test counts.
+            result = g.slot_state[call->x[1] & 7];
+            g.state_checks.push_back(*call);
+            calls.pop_back();
         }
         call = d.Step(g.guest, true, result, now_ms);
         REQUIRE(calls.size() < 16);
@@ -895,6 +904,109 @@ TEST_CASE("puppet gear: tunic, boots and gauntlets come off by their armor index
     CHECK(Frame(d, g, 200 + Director::kTakeOffMs).empty());
 }
 
+TEST_CASE("puppet gear: the child's Goron's Bracelet is worn as Accessory2, as the game wears it") {
+    using namespace CoopPuppet;
+    CHECK(GearKind(kGearHand, "Armor_Child_Gauntlet_Goron") == 14u);
+    CHECK(GearKind(kGearHand, "Armor_Adult_Gauntlet_Silver") == 10u);
+    CHECK(GearKind(kGearHand, "Armor_Adult_Gauntlet_Gold") == 10u);
+    CHECK(GearKind(kGearHand, "") == 10u);
+    CHECK(GearKind(kGearHeld, "Armor_Child_Gauntlet_Goron") == 5u);  // only the hand piece
+    CHECK(GearIsArmor(kGearHand, "Armor_Adult_Gauntlet_Silver"));
+    CHECK_FALSE(GearIsArmor(kGearHand, "Armor_Child_Gauntlet_Goron"));
+    CHECK_FALSE(GearIsArmor(kGearOcarina, "Item_Ocarina_Fairy"));
+    CHECK(GearIsArmor(2, "Armor_Child_Mask_Keaton"));
+
+    Game g;
+    Director d;
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    g.guest.Map(kParts, 0x1000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    Target t = At(1, 4, 5, 6);
+    t.gear[kGearHand] = "Armor_Child_Gauntlet_Goron";
+    d.SetInput(Wants({t}));
+    auto calls = Frame(d, g, 20);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kEquip);
+    CHECK(calls[0].x[0] == kEu);
+    CHECK(calls[0].x[1] == 14u);
+    CHECK(calls[0].x[3] == 2u);  // worn as the belt pieces are
+    CHECK(Frame(d, g, 30).empty());  // worn: not again
+    // Taken off: no armor index for an accessory, so the puppet is made again.
+    t.gear[kGearHand] = "";
+    d.SetInput(Wants({t}));
+    CHECK(Frame(d, g, 100).empty());
+    CHECK(Frame(d, g, 100 + Director::kTakeOffMs).empty());
+    calls = Frame(d, g, 110 + Director::kTakeOffMs);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kRequestDelete);
+}
+
+TEST_CASE("puppet gear: each hand item is worn in the same hand slot as on its player") {
+    using namespace CoopPuppet;
+    // The game's two enums (rodata): the 8 hand slots (0x3ef2000) and the 18
+    // slot kinds of the equip call (0x3ef9490). A piece sent from hand slot
+    // n is worn with the kind of the same name, so it lands in slot n on the
+    // puppet whichever item it is.
+    const char* const slot_names[8] = {"Weapon", "SubWeapon", "ThirdWeapon", "Bow",
+                                       "Shield", "Tool",      "SubTool",     "Helmet"};
+    const char* const kind_names[18] = {
+        "Weapon",     "SubWeapon",  "ThirdWeapon", "Sheath",     "Quiver",     "Bow",
+        "Shield",     "ArmorHead",  "ArmorUpper",  "ArmorLower", "ArmorHand",  "Tool",
+        "SubTool",    "Accessory1", "Accessory2",  "Accessory3", "Accessory4", "Extra"};
+    for (std::size_t i = 0; i < kGearCount; ++i) {
+        if (kGearSlots[i] >= 0) {
+            CAPTURE(i);
+            CHECK(std::string(kind_names[kGearKinds[i]]) == slot_names[kGearSlots[i]]);
+        }
+    }
+    // Item by item: the piece that carries it and the kind it is worn with.
+    // Only the rows marked (run) are slots seen on a player. The hookshot,
+    // longshot, boomerang and hammer have not been seen in a slot: their
+    // rows put them in slots of our choosing, and only show that any slot
+    // routes the same way (GearOf and kGearKinds do not look at the name).
+    struct Item {
+        const char* name;
+        std::optional<std::string> coop::protocol::Equipment::*field;
+        std::size_t piece;
+        std::uint32_t kind;
+    };
+    using E = coop::protocol::Equipment;
+    const Item items[] = {
+        {"Weapon_Bottle", &E::sub_weapon, kGearSubWeapon, 1},  // held up: slot 1 (run)
+        {"Weapon_Bottle_Fairy", &E::sub_weapon, kGearSubWeapon, 1},
+        {"Weapon_DekuStick", &E::sub_weapon, kGearSubWeapon, 1},  // slot 1 (run)
+        {"Weapon_DekuStick", &E::weapon_slot, 0, 0},  // or in the sword hand
+        {"Weapon_Range_SlingShot", &E::held, kGearHeld, 5},  // slot 3 (run)
+        {"Weapon_Range_Bow", &E::held, kGearHeld, 5},  // a BowParam like the slingshot: not run
+        {"Weapon_Range_Hookshot", &E::tool, kGearTool, 11},  // slot chosen here
+        {"Weapon_Range_Longshot", &E::third_weapon, kGearThirdWeapon, 2},  // chosen here
+        {"Weapon_Boomerang", &E::tool, kGearTool, 11},  // chosen here
+        {"Weapon_Hammer", &E::sub_tool, kGearSubTool, 12},  // chosen here
+        {"Armor_Child_Mask_Keaton", &E::head, 2, 7},  // a mask is head armor
+    };
+    for (const Item& it : items) {
+        CAPTURE(it.name);
+        E e;
+        e.*it.field = it.name;
+        const Gear g = GearOf(e);
+        REQUIRE(g[it.piece]);
+        CHECK(*g[it.piece] == it.name);
+        CHECK(GearKind(it.piece, it.name) == it.kind);
+        for (std::size_t i = 0; i < kGearCount; ++i) {
+            if (i != it.piece) {
+                CHECK_FALSE(g[i]);  // in no other piece
+            }
+        }
+    }
+    // Not covered here: Deku Nuts, bombs, bombchus and the Lens of Truth.
+    // They are in no hand slot (thrown objects, which the objects sync
+    // shows, and magic with no actor), so there is nothing to send and no
+    // puppet test for them.
+}
+
 TEST_CASE("puppet gear: a refused take-off and a sword taken off make the puppet again") {
     Game g;
     Director d;
@@ -1405,6 +1517,149 @@ TEST_CASE("puppet gear: the held item is worn as a bow and follows drawn bit 3")
     CHECK(Frame(d, g, 90).empty());
 }
 
+TEST_CASE("puppet gear: slingshot out, then the sword: the slingshot goes away, the sword in hand") {
+    // held-fix (owner, 0.11): the puppet's slingshot stayed out in the other
+    // hand when its player used the sword, and the sword never showed in hand.
+    Game g;
+    Director d;
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    g.guest.Map(kParts, 0x3000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    auto slot_id = [&](int s) {
+        return kEu + addr::kEquipSlots + addr::kEquipSlotStride * s + addr::kEquipSlotId;
+    };
+    auto take = [&](int s, bool in_hand) {  // the game takes a change
+        g.guest.Set(kEu + addr::kEquipSlotBits + s,
+                    in_hand ? addr::kEquipBitInHand : addr::kEquipBitAway);
+        g.slot_state[s] = in_hand ? addr::kEquipStateInHand : addr::kEquipStateAway;
+    };
+    for (int s = 0; s < 8; ++s) g.guest.Set(slot_id(s), std::uint32_t{0xFFFFFFFF});
+    g.guest.Set(slot_id(0), std::uint32_t{3});  // the sword
+    g.guest.Set(slot_id(3), std::uint32_t{4});  // the slingshot
+    g.slot_state[0] = addr::kEquipStateAway;
+    g.slot_state[3] = addr::kEquipStateAway;
+    Target t = At(1, 4, 5, 6);
+    t.gear[0] = "Weapon_Sword_Kokiri";
+    t.gear[CoopPuppet::kGearHeld] = "Weapon_Range_SlingShot";
+    t.drawn = std::uint8_t{0};
+    d.SetInput(Wants({t}));
+    CHECK(Frame(d, g, 20).size() == 2);  // both worn, put away
+    CHECK(Frame(d, g, 30).empty());
+
+    // The slingshot out.
+    t.drawn = std::uint8_t{0x08};
+    d.SetInput(Wants({t}));
+    auto calls = Frame(d, g, 40);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kEquipChangeState);
+    CHECK(calls[0].x[1] == 3u);
+    CHECK(calls[0].x[2] == addr::kEquipStateInHand);
+    take(3, true);
+    CHECK(Frame(d, g, 300).size() == 1);  // asked again, now seen taken
+    CHECK(Frame(d, g, 310).empty());
+
+    // The sword out (the reader sends the slingshot put away): both change.
+    t.drawn = std::uint8_t{0x01};
+    d.SetInput(Wants({t}));
+    calls = Frame(d, g, 320);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].x[1] == 0u);
+    CHECK(calls[0].x[2] == addr::kEquipStateInHand);
+    take(0, true);
+    calls = Frame(d, g, 600);
+    REQUIRE(calls.size() == 2);  // the sword seen taken, then the slingshot
+    CHECK(calls[1].x[1] == 3u);
+    CHECK(calls[1].x[2] == addr::kEquipStateAway);
+    take(3, false);
+    CHECK(Frame(d, g, 900).size() == 1);
+    CHECK(Frame(d, g, 910).empty());
+
+    // The puppet's own animation puts its sword away: the game's state read
+    // shows it, and the sword is asked into the hand again.
+    g.slot_state[0] = addr::kEquipStateAway;
+    g.guest.Set(kEu + addr::kEquipSlotBits + 0, std::uint8_t{0});
+    g.state_checks.clear();
+    calls.clear();
+    std::uint64_t now = 1000;
+    for (; now < 4000 && calls.empty(); now += 100) {
+        calls = Frame(d, g, now);
+    }
+    REQUIRE(calls.size() == 1);
+    CHECK(now <= 2600);  // within two check rounds
+    CHECK(calls[0].function == kBase + addr::kEquipChangeState);
+    CHECK(calls[0].x[1] == 0u);
+    CHECK(calls[0].x[2] == addr::kEquipStateInHand);
+    REQUIRE_FALSE(g.state_checks.empty());
+    CHECK(g.state_checks.back().function == kBase + addr::kEquipState);
+    CHECK(g.state_checks.back().x[0] == kEu);
+    CHECK(g.state_checks.back().x[1] == 0u);
+    take(0, true);
+
+    // Both put away: the sword goes away (the game took the last ask late,
+    // so a check finds it in hand), and nothing is asked again after.
+    t.drawn = std::uint8_t{0};
+    d.SetInput(Wants({t}));
+    calls.clear();
+    for (now = 3000; now < 6000 && calls.empty(); now += 100) {
+        calls = Frame(d, g, now);
+    }
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].x[1] == 0u);
+    CHECK(calls[0].x[2] == addr::kEquipStateAway);
+    take(0, false);
+    CHECK(Frame(d, g, now + 300).size() == 1);  // asked again, now seen taken
+    g.state_checks.clear();
+    for (now += 400; now < 9000; now += 300) {
+        CHECK(Frame(d, g, now).empty());  // checks only: the game has both as set
+    }
+    CHECK(g.state_checks.size() >= 4);
+}
+
+TEST_CASE("puppet gear: a piece its animation keeps undoing is set again, said once until it holds") {
+    Game g;
+    std::vector<std::string> log;
+    Director d([&](const std::string& line) { log.push_back(line); });
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    g.guest.Map(kParts, 0x3000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    for (int s = 0; s < 8; ++s) {
+        g.guest.Set(kEu + addr::kEquipSlots + addr::kEquipSlotStride * s + addr::kEquipSlotId,
+                    std::uint32_t{s == 0 ? 3u : 0xFFFFFFFFu});
+    }
+    g.guest.Set(kEu + addr::kEquipSlotBits + 0, addr::kEquipBitInHand);  // every ask taken
+    g.slot_state[0] = addr::kEquipStateAway;  // but the game keeps putting it away
+    Target t = At(1, 4, 5, 6);
+    t.gear[0] = "Weapon_Sword_Kokiri";
+    t.drawn = std::uint8_t{0x01};
+    d.SetInput(Wants({t}));
+    auto said = [&] {
+        return std::count_if(log.begin(), log.end(), [](const std::string& l) {
+            return l.find("not as set: set again") != std::string::npos;
+        });
+    };
+    int asks = 0;
+    for (std::uint64_t now = 20; now < 5000; now += 100) {
+        for (const Call& c : Frame(d, g, now)) {
+            asks += c.function == kBase + addr::kEquipChangeState ? 1 : 0;
+        }
+    }
+    CHECK(asks >= 5);    // asked again each time a check finds it away
+    CHECK(said() == 1);  // said once
+    // It holds for a check, then is undone again: said again.
+    g.slot_state[0] = addr::kEquipStateInHand;
+    for (std::uint64_t now = 5000; now < 6500; now += 100) Frame(d, g, now);
+    CHECK(said() == 1);
+    g.slot_state[0] = addr::kEquipStateAway;
+    for (std::uint64_t now = 6500; now < 8000; now += 100) Frame(d, g, now);
+    CHECK(said() == 2);
+}
+
 TEST_CASE("puppet gear: a piece the game made anew is put into the hand again") {
     Game g;
     Director d;
@@ -1609,9 +1864,12 @@ TEST_CASE("puppet gear: every hand slot and the gauntlets have a piece, kind and
     using namespace CoopPuppet;
     // The game's slot kinds: weapon 0, shield 6, head 7, armor 8, boots 9,
     // bow 5, gauntlets 10, sub weapon 1, third weapon 2, tool 11, sub tool 12,
-    // and the Ocarina's holder and Ocarina as Accessory1 and Accessory4 (13, 16).
+    // the Ocarina's holder as Accessory4 (16) and the Ocarina as Accessory1 (13),
+    // the player's own slots for them.
     CHECK(kGearKinds ==
-          std::array<std::uint32_t, kGearCount>{0, 6, 7, 8, 9, 5, 10, 1, 2, 11, 12, 13, 16});
+          std::array<std::uint32_t, kGearCount>{0, 6, 7, 8, 9, 5, 10, 1, 2, 11, 12, 16, 13});
+    CHECK(kGearKinds[kGearOcarina] == 13);
+    CHECK(kGearKinds[kGearOcarinaHolder] == 16);
     // Each kind once, each hand slot at most once, none past the drawn bits.
     for (std::size_t i = 0; i < kGearCount; ++i) {
         for (std::size_t j = i + 1; j < kGearCount; ++j) {
@@ -1680,7 +1938,7 @@ TEST_CASE("puppet gear: the Ocarina and its belt holder come from PLAYER_EQUIP's
     CHECK_FALSE(GearOf(e)[kGearOcarina]);
 }
 
-TEST_CASE("puppet gear: the Ocarina pieces are equipped as Accessory1 and Accessory4 (issue 152)") {
+TEST_CASE("puppet gear: the Ocarina is equipped as Accessory1 and its holder as Accessory4, as the player wears them") {
     Game g;
     Director d;
     MakeLive(d, g);
@@ -1699,7 +1957,7 @@ TEST_CASE("puppet gear: the Ocarina pieces are equipped as Accessory1 and Access
     for (std::size_t k = 0; k < 2; ++k) {
         CHECK(calls[k].function == kBase + addr::kEquip);
         CHECK(calls[k].x[0] == kEu);
-        CHECK(calls[k].x[1] == (k == 0 ? 13u : 16u));
+        CHECK(calls[k].x[1] == (k == 0 ? 16u : 13u));  // holder Accessory4, Ocarina Accessory1
         CHECK(calls[k].x[2] == kHeap + block::kGearPtr + 8 * index[k]);
         const auto text = g.guest.Get<std::uint64_t>(calls[k].x[2]);
         std::array<char, block::kGearCapacity> name{};
@@ -1707,6 +1965,57 @@ TEST_CASE("puppet gear: the Ocarina pieces are equipped as Accessory1 and Access
         CHECK(std::string(name.data()) == *t.gear[index[k]]);
     }
     CHECK(Frame(d, g, 40).empty());  // worn: not again
+}
+
+TEST_CASE("puppet gear: pieces in hand are put away while the puppet plays the Ocarina") {
+    Game g;
+    Director d;
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    g.guest.Map(kParts, 0x3000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    g.guest.Set(kEu + addr::kEquipSlots + addr::kEquipSlotStride * 4 + addr::kEquipSlotId,
+                std::uint32_t{7});
+    auto holds = [&](std::uint64_t at) {
+        std::vector<Call> out;
+        for (const auto& c : Frame(d, g, at)) {
+            if (c.function == kBase + addr::kEquipChangeState) {
+                out.push_back(c);
+            }
+        }
+        return out;
+    };
+    Target t = At(1, 4, 5, 6);
+    t.gear[1] = "Weapon_Shield_Hylian";
+    t.drawn = std::uint8_t{0x10};  // their shield in hand
+    d.SetInput(Wants({t}));
+    auto calls = holds(20);  // worn and, its actor there, asked into the hand
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].x[1] == 4u);
+    CHECK(calls[0].x[2] == addr::kEquipStateInHand);
+    g.guest.Set(kEu + addr::kEquipSlotBits + 4, addr::kEquipBitInHand);
+    CHECK(holds(400).size() == 1);  // asked again after the wait, the bit seen: taken
+    CHECK(holds(410).empty());
+
+    // They play the Ocarina with the shield bit still set: put away.
+    t.anim = CoopPuppet::Anim{"DemoOcarina", 0.0f, 1.0f};
+    d.SetInput(Wants({t}));
+    g.guest.Set(kEu + addr::kEquipSlotBits + 4, addr::kEquipBitAway);
+    calls = holds(420);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].x[1] == 4u);
+    CHECK(calls[0].x[2] == addr::kEquipStateAway);
+    CHECK(holds(430).empty());
+
+    // The song ends: back in the hand as their bits say.
+    t.anim = CoopPuppet::Anim{"Wait", 0.0f, 1.0f};
+    d.SetInput(Wants({t}));
+    g.guest.Set(kEu + addr::kEquipSlotBits + 4, addr::kEquipBitInHand);
+    calls = holds(440);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].x[2] == addr::kEquipStateInHand);
 }
 
 TEST_CASE("puppet gear: a tool is equipped with the tool kind and drawn on its own slot") {
@@ -1796,4 +2105,427 @@ TEST_CASE("puppet: up to 15 puppets (16 players) all get made, within the frame'
         CHECK(s.phase == Phase::creating);
     }
     CHECK(coop::protocol::kMaxPlayers < 32);  // LiveMask: one bit per player number
+}
+
+// LICHII_COOP_NATIVE_PLAYER (coop_native_player.h): the game's own Player_<Age> is made as any
+// puppet is, then nothing of ours touches it.
+TEST_CASE("native player: Player_Child is created, then left alone and only watched") {
+    Game g;
+    std::vector<std::string> log;
+    Director d([&](const std::string& line) { log.push_back(line); });
+    d.SetInput(Wants({At(1, 3, 0, 0, "Player_Child")}));
+    auto calls = Frame(d, g, 100);
+    REQUIRE(calls.size() == 2);
+    CHECK(calls[1].function == kBase + addr::kCreate);
+    std::array<char, 32> name{};
+    g.guest.Read(kHeap + block::kNameText, name.data(), name.size());
+    CHECK(std::string(name.data()) == "Player_Child");
+    g.Spawn(calls[1].x[3]);
+    CHECK(Frame(d, g, 200).size() == 1);  // the take
+    CHECK(Frame(d, g, 210).empty());
+    REQUIRE(d.Slots()[0].phase == Phase::live);
+
+    // The other player moves, wears things, plays an animation: no call, no write.
+    Target moved = At(1, 8, 2, -4, "Player_Child");
+    moved.anim = CoopPuppet::Anim{};
+    moved.anim->name = "Run";
+    moved.anim_serial = 1;
+    moved.gear[0] = "Weapon_Sword_001";
+    moved.drawn = std::uint8_t{1};
+    moved.color = 0xff0000u;
+    d.SetInput(Wants({moved}));
+    for (std::uint64_t t = 300; t < 3000; t += 33) {
+        CHECK(Frame(d, g, t).empty());
+    }
+    CheckPosition(g.guest, kActor + addr::kActorPosition, 0, 0, 0);
+    CheckPosition(g.guest, kActor + addr::kActorPositionRequest, 0, 0, 0);
+    CHECK(d.LiveMask() == 0u);  // nothing of the puppets' follows it (fairy, pose copy)
+    const auto said = [&](const char* what) {
+        return std::any_of(log.begin(), log.end(),
+                           [&](const std::string& l) { return l.find(what) != std::string::npos; });
+    };
+    CHECK(said("native player: second 0x400002000 state 4"));
+    CHECK(said("first look"));
+
+    // Gone from the plan: deleted as any puppet.
+    d.SetInput(Wants({}));
+    bool deleted = false;
+    for (std::uint64_t t = 3000; t < 3000 + 2 * Director::kLeaveGraceMs && !deleted; t += 100) {
+        for (const Call& c : Frame(d, g, t)) {
+            deleted = deleted || c.function == kBase + addr::kRequestDelete;
+        }
+    }
+    CHECK(deleted);
+}
+
+TEST_CASE("native player: the planner asks for Player_<Age> only with the switch") {
+    CoopPuppet::PlannerSettings s;
+    CHECK(CoopPuppet::Planner(s).ActorFor(false, 0xff0000u) != "Player_Child");
+    s.native_player = true;
+    CHECK(CoopPuppet::Planner(s).ActorFor(false, 0xff0000u) == "Player_Child");
+    CHECK(CoopPuppet::Planner(s).ActorFor(true) == "Player_Adult");
+    s.actor = "CoopPuppet_Adult";  // LICHII_COOP_PUPPET_ACTOR still wins
+    CHECK(CoopPuppet::Planner(s).ActorFor(false) == "CoopPuppet_Adult");
+    CHECK(CoopNativePlayer::IsPlayerActor("Player_Adult"));
+    CHECK_FALSE(CoopNativePlayer::IsPlayerActor("CoopPuppet_Child"));
+    CHECK_FALSE(CoopNativePlayer::IsPlayerActor("Player_Child_Red"));
+}
+
+TEST_CASE("native player: the probe says when the second one moves, with the local Link or alone") {
+    FakeGuest guest;
+    const std::uint64_t second = 0x500000000, local = 0x500010000, parts = 0x500020000;
+    guest.Map(second, 0x400);
+    guest.Map(local, 0x400);
+    guest.Map(parts, 0x400);
+    guest.Set(second + 0x2c, std::uint32_t{4});
+    guest.Set(second + 0x270, parts);
+    guest.Set(parts + 0x358, std::uint64_t{0x77000});
+    const CoopNativePlayer::ReadFn read = [&](std::uint64_t a, void* out, std::size_t n) {
+        return guest.Read(a, out, n);
+    };
+    const auto put = [&](std::uint64_t actor, float x) {
+        guest.Set(actor + 0x31c, std::array<float, 3>{x, 0, 0});
+    };
+    CoopNativePlayer::Probe probe;
+    auto line = probe.Step(read, kBase, second, local, 0);
+    REQUIRE(line);
+    CHECK(line->find("player 0x77000") != std::string::npos);
+    CHECK(line->find("preload lists -1/-1") != std::string::npos);  // not readable here
+    CHECK_FALSE(probe.Step(read, kBase, second, local, 2000));      // nothing changed, not due
+    line = probe.Step(read, kBase, second, local, 5000);
+    REQUIRE(line);
+    CHECK(line->find("no change") != std::string::npos);
+    put(second, 1.0f);  // alone
+    line = probe.Step(read, kBase, second, local, 6500);
+    REQUIRE(line);
+    CHECK(line->find("the second one moved") != std::string::npos);
+    CHECK(line->find("WITH") == std::string::npos);
+    put(second, 2.0f);  // both, the same way: it reads the local pad
+    put(local, 1.0f);
+    line = probe.Step(read, kBase, second, local, 8000);
+    REQUIRE(line);
+    CHECK(line->find("moved WITH the local Link") != std::string::npos);
+    CHECK(line->find("2.00 m from where it was made") != std::string::npos);
+    // The game's own lookup now gives the second one: the worst case, said loudly.
+    line = probe.Step(read, kBase, second, second, 9500);
+    REQUIRE(line);
+    CHECK(line->find("THE GAME'S PLAYER IS NOW THE SECOND ONE") != std::string::npos);
+}
+
+TEST_CASE("puppet link sound: a sound call the cave did not make does not silence the puppet") {
+    Game g;
+    Director d;
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kXLink = kParts + 0x400;
+    constexpr std::uint64_t kUser = kParts + 0x800;
+    constexpr std::uint64_t kResource = kParts + 0xa00;
+    g.guest.Map(kParts, 0x1000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + CoopPuppetSound::addr::kPartsXLink, kXLink);
+    g.guest.Set(kXLink + CoopPuppetSound::addr::kXLinkSoundUser, kUser);
+    g.guest.Set(kUser + CoopLinkSound::addr::kUserResource, kResource);
+    g.guest.Set(kResource + CoopLinkSound::addr::kResourceAccessor, kParts + 0xc00);
+    Target t = At(1, 4, 5, 6);
+    t.sounds.push_back({"Pl_Voice_Attack_00", 100});
+    d.SetInput(Wants({t}));
+    auto first = d.Step(g.guest, false, 0, 100);
+    REQUIRE(first);
+    CHECK(first->function == kBase + CoopLinkSound::addr::kSearchAsset);
+    // The cave never made it (no result): the next frame undoes it, and the
+    // next sound is still looked up (the first is lost).
+    t.sounds = {{"Pl_Voice_Damage_00", 120}};
+    d.SetInput(Wants({t}));
+    auto again = d.Step(g.guest, false, 0, 120);
+    REQUIRE(again);
+    CHECK(again->function == kBase + CoopLinkSound::addr::kSearchAsset);
+    CHECK(d.Slots()[0].phase == Phase::live);
+}
+
+namespace {
+constexpr std::uint64_t kRequest2 = 0x500000000;
+constexpr std::uint64_t kActor2 = 0x500002000;
+
+// A second request and actor, for the create after a retry.
+void SpawnSecond(Game& g, std::uint64_t handle, std::uint32_t state = 4) {
+    g.guest.Map(kRequest2, 0x30);
+    g.guest.Map(kActor2, 0x400);
+    g.guest.Set(kRequest2, std::uint32_t{0x10000 | addr::kRequestReady});
+    g.guest.Set(kRequest2 + addr::kRequestActor, kActor2);
+    g.guest.Set(kActor2, kVtable);
+    g.guest.Set(kActor2 + addr::kActorState, state);
+    g.guest.Set(handle, kRequest2);
+}
+
+int Deletes(const std::vector<Call>& calls, std::uint64_t actor) {
+    int n = 0;
+    for (const auto& c : calls) {
+        n += c.function == kBase + addr::kRequestDelete && c.x[0] == actor;
+    }
+    return n;
+}
+
+const Call* Find(const std::vector<Call>& calls, std::uint64_t function) {
+    for (const auto& c : calls) {
+        if (c.function == kBase + function) {
+            return &c;
+        }
+    }
+    return nullptr;
+}
+}  // namespace
+
+TEST_CASE("puppet stray: an actor that spawns late after a retry is deleted, one puppet stays") {
+    Game g;
+    std::vector<std::string> log;
+    Director d([&](const std::string& line) { log.push_back(line); });
+    d.SetInput(Wants({At(2, 0, 0, 0)}));
+    auto calls = Frame(d, g, 0);
+    REQUIRE(calls.size() == 2);
+    // Taken, but still loading (state 3), as in the owner's playtest.
+    g.Spawn(calls[1].x[3], 3);
+    calls = Frame(d, g, 10);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kTakeCreated);
+
+    // The create times out: its actor is asked to go with the game's delete.
+    const std::uint64_t timeout = Director::kCreateTimeoutMs + 20;
+    calls = Frame(d, g, timeout);
+    CHECK(Deletes(calls, kActor) == 1);
+    CHECK(d.Slots()[0].phase == Phase::idle);
+    CHECK(d.Slots()[0].strays == 1);
+
+    // The retry: a new actor, live.
+    calls = Frame(d, g, timeout + 5100);
+    const Call* create = Find(calls, addr::kCreate);
+    REQUIRE(create != nullptr);
+    CHECK(Deletes(calls, kActor) == 1);  // still there: asked again (once a second)
+    SpawnSecond(g, create->x[3]);
+    Frame(d, g, timeout + 5200);
+    Frame(d, g, timeout + 5210);
+    REQUIRE(d.Slots()[0].phase == Phase::live);
+    CHECK(d.Slots()[0].actor == kActor2);
+
+    // The old one finishes loading late: still deleted, never a second puppet.
+    g.guest.Set(kActor + addr::kActorState, std::uint32_t{4});
+    calls = Frame(d, g, timeout + 6200);
+    CHECK(Deletes(calls, kActor) == 1);
+    CHECK(Deletes(calls, kActor2) == 0);
+    // The game deletes it: no more calls for it, the puppet stays.
+    g.guest.Set(kActor + addr::kActorState, std::uint32_t{8});
+    calls = Frame(d, g, timeout + 7300);
+    CHECK(Deletes(calls, kActor) == 0);
+    CHECK(d.Slots()[0].strays == 0);
+    CHECK(d.Slots()[0].phase == Phase::live);
+    CHECK(d.Slots()[0].actor == kActor2);
+    CHECK(Deletes(Frame(d, g, timeout + 9000), kActor) == 0);
+
+    bool said = false;
+    for (const auto& line : log) {
+        said = said || line.find("is a stray (its create timed out)") != std::string::npos;
+    }
+    CHECK(said);
+}
+
+TEST_CASE("puppet stray: a rejoin whose old puppet is not deleted in time keeps one puppet") {
+    Game g;
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0)}));
+    auto calls = Frame(d, g, 0);
+    g.Spawn(calls[1].x[3]);
+    Frame(d, g, 10);
+    Frame(d, g, 15);
+    REQUIRE(d.Slots()[0].phase == Phase::live);
+
+    // The player leaves; the game leaves the actor standing past the 5 s wait.
+    d.SetInput(Wants({}));
+    Frame(d, g, 100);
+    calls = Frame(d, g, 100 + Director::kLeaveGraceMs);
+    CHECK(Deletes(calls, kActor) == 1);
+    Frame(d, g, 8000);
+    CHECK(d.Slots()[0].phase == Phase::idle);
+    CHECK(d.Slots()[0].strays == 1);
+
+    // They join again: the old one is asked to go first, then the new create.
+    d.SetInput(Wants({At(1, 0, 0, 0)}));
+    calls = Frame(d, g, 9000);
+    REQUIRE(calls.size() == 2);
+    CHECK(Deletes(calls, kActor) == 1);
+    CHECK(calls[1].function == kBase + addr::kCreate);
+    SpawnSecond(g, calls[1].x[3]);
+    Frame(d, g, 9100);
+    Frame(d, g, 9110);
+    REQUIRE(d.Slots()[0].phase == Phase::live);
+    CHECK(d.Slots()[0].actor == kActor2);
+    g.guest.Set(kActor + addr::kActorState, std::uint32_t{9});
+    Frame(d, g, 10100);
+    CHECK(d.Slots()[0].strays == 0);
+    CHECK(d.Slots()[0].actor == kActor2);
+}
+
+TEST_CASE("puppet stray: an address the engine reused for another actor is left alone") {
+    Game g;
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0)}));
+    auto calls = Frame(d, g, 0);
+    g.Spawn(calls[1].x[3], 3);
+    Frame(d, g, 10);
+    CHECK(Deletes(Frame(d, g, Director::kCreateTimeoutMs + 20), kActor) == 1);
+    REQUIRE(d.Slots()[0].strays == 1);
+    g.guest.Set(kActor, kVtable + 0x100);  // freed and made into something else
+    CHECK(Deletes(Frame(d, g, Director::kCreateTimeoutMs + 2000), kActor) == 0);
+    CHECK(d.Slots()[0].strays == 0);
+}
+
+TEST_CASE("puppet stray: an actor of another name at the address is left alone") {
+    Game g;
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0)}));
+    auto calls = Frame(d, g, 0);
+    g.Spawn(calls[1].x[3], 3);
+    Frame(d, g, 10);
+    Frame(d, g, Director::kCreateTimeoutMs + 20);
+    REQUIRE(d.Slots()[0].strays == 1);
+    // Same class, another actor (an NPC on the same vtable): its name differs.
+    constexpr std::uint64_t kText = 0x400003000;
+    g.guest.Map(kText, 0x40);
+    const char other[] = "Npc_Kokiri";
+    REQUIRE(g.guest.Write(kText, other, sizeof(other)));
+    g.guest.Set(kActor + 0x260, kText);
+    CHECK(Deletes(Frame(d, g, Director::kCreateTimeoutMs + 2000), kActor) == 0);
+    CHECK(d.Slots()[0].strays == 0);
+}
+
+TEST_CASE("puppet stray: an actor freed or being deleted before the timeout gets no delete call") {
+    for (const bool reused : {true, false}) {
+        CAPTURE(reused);
+        Game g;
+        Director d;
+        d.SetInput(Wants({At(1, 0, 0, 0)}));
+        auto calls = Frame(d, g, 0);
+        g.Spawn(calls[1].x[3], 3);
+        Frame(d, g, 10);
+        if (reused) {
+            g.guest.Set(kActor, kVtable + 0x100);  // freed, the address made into another class
+        } else {
+            g.guest.Set(kActor + addr::kActorState, std::uint32_t{8});  // the game deletes it
+        }
+        calls = Frame(d, g, Director::kCreateTimeoutMs + 20);
+        CHECK(Deletes(calls, kActor) == 0);
+        CHECK(d.Slots()[0].strays == 0);
+        CHECK(d.Slots()[0].phase == Phase::idle);
+    }
+}
+
+TEST_CASE("puppet stray: a scene change lets strays go (the load deletes them)") {
+    Game g;
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0)}, "A"));
+    auto calls = Frame(d, g, 0);
+    g.Spawn(calls[1].x[3], 3);
+    Frame(d, g, 10);
+    CHECK(Deletes(Frame(d, g, Director::kCreateTimeoutMs + 20), kActor) == 1);
+    REQUIRE(d.Slots()[0].strays == 1);
+    d.SetInput(Wants({}, ""));  // loading
+    CHECK(Deletes(Frame(d, g, Director::kCreateTimeoutMs + 2000), kActor) == 0);
+    CHECK(d.Slots()[0].strays == 0);
+}
+
+TEST_CASE("puppet stray: a stray the game keeps is let go after the most delete calls") {
+    Game g;
+    std::vector<std::string> log;
+    Director d([&](const std::string& line) { log.push_back(line); });
+    // A live puppet whose player leaves; the game never deletes it.
+    d.SetInput(Wants({At(1, 0, 0, 0)}));
+    auto calls = Frame(d, g, 0);
+    g.Spawn(calls[1].x[3]);
+    Frame(d, g, 10);
+    Frame(d, g, 15);
+    REQUIRE(d.Slots()[0].phase == Phase::live);
+    d.SetInput(Wants({}));
+    Frame(d, g, 100);
+    Frame(d, g, 100 + Director::kLeaveGraceMs);
+    int deletes = 0;
+    for (std::uint64_t t = 8000; t < 8000 + 40 * Director::kStrayDeleteMs; t += 250) {
+        deletes += Deletes(Frame(d, g, t), kActor);
+    }
+    CHECK(deletes == Director::kStrayMaxDeletes);
+    CHECK(d.Slots()[0].strays == 0);
+    bool said = false;
+    for (const auto& line : log) {
+        said = said || line.find("given up") != std::string::npos;
+    }
+    CHECK(said);
+}
+
+// sword-3: the local Link's sword and shield as the game's own query has them,
+// for the sender (coop_puppet_own.h).
+TEST_CASE("own drawn: a fresh answer of the game decides the slot, a stale one does not") {
+    CoopPuppetOwn::Drawn d;
+    // Nothing answered yet: the reader's bits stand.
+    CHECK(d.Apply(0x09, 1000) == 0x09);
+    d.Set(0, addr::kEquipStateInHand, 1000);  // the sword in hand
+    d.Set(1, addr::kEquipStateAway, 1000);    // the shield on the back
+    // The request byte was missed (sword bit clear) or stale (shield bit set): the game's answer wins;
+    // the held item's bit (3) is left as read.
+    CHECK(d.Apply(0x18, 1100) == 0x09);
+    CHECK(d.Apply(0x00, 1499) == 0x01);
+    // Older than kFreshMs: the reader's bits again.
+    CHECK(d.Apply(0x10, 1000 + CoopPuppetOwn::kFreshMs) == 0x10);
+    // Put away, and no piece (0): put away clears the bit, unknown leaves it.
+    d.Set(0, addr::kEquipStateAway, 2000);
+    CHECK(d.Apply(0x01, 2000) == 0x00);
+    d.Set(0, 0, 2100);
+    CHECK(d.Apply(0x01, 2100) == 0x01);
+    d.Set(7, addr::kEquipStateInHand, 2100);  // no such index: ignored
+    CHECK(d.Apply(0x00, 2100) == 0x00);
+}
+
+TEST_CASE("own drawn: the director asks the game's state of the local Link's sword and shield, one a frame") {
+    constexpr std::uint64_t kScene = 0x500000000;
+    constexpr std::uint64_t kPlayer = 0x500002000;
+    constexpr std::uint64_t kParts = 0x500003000;
+    constexpr std::uint64_t kEu = 0x500004000;
+    Game g;
+    // CoopPose::FindPlayer's chain: scene -> table -> array -> manager -> link -> holder -> actor.
+    g.guest.Map(kBase + 0x4e97648, 8);
+    g.guest.Map(kScene, 0x1000);
+    g.guest.Map(kPlayer, 0x400);
+    g.guest.Map(kParts, 0x400);
+    g.guest.Map(kEu, 0x100);
+    g.guest.Set(kBase + 0x4e97648, kScene);
+    g.guest.Set(kScene + 0x1f0, kScene + 0x100);              // table
+    g.guest.Set(kScene + 0x100 + 0x50, std::uint32_t{0x20});  // count
+    g.guest.Set(kScene + 0x100 + 0x58, kScene + 0x200);       // array
+    g.guest.Set(kScene + 0x200 + 0x78, kScene + 0x300);       // manager
+    g.guest.Set(kScene + 0x300 + 0x30, std::uint64_t{1});     // must
+    g.guest.Set(kScene + 0x300 + 0x40, kScene + 0x400);       // link
+    g.guest.Set(kScene + 0x400 + 0x10, std::uint32_t{7});     // id
+    g.guest.Set(kScene + 0x400 + 0x8, kScene + 0x500);        // holder
+    g.guest.Set(kScene + 0x500 + 0x48, std::uint32_t{7});
+    g.guest.Set(kScene + 0x500 + 0x40, kPlayer);
+    g.guest.Set(kPlayer + 0x2c, std::uint32_t{4});
+    g.guest.Set(kPlayer + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    g.slot_state[0] = addr::kEquipStateInHand;
+    g.slot_state[4] = addr::kEquipStateAway;
+    auto& own = CoopPuppetOwn::TheDrawn();
+    own.Clear();
+
+    Director d;
+    d.SetInput(Wants({}));
+    Frame(d, g, 1000);
+    REQUIRE(g.state_checks.size() == 1);
+    CHECK(g.state_checks[0].x[0] == kEu);
+    CHECK(g.state_checks[0].x[1] == 0);
+    Frame(d, g, 1016);
+    REQUIRE(g.state_checks.size() == 2);
+    CHECK(g.state_checks[1].x[1] == 4);
+    // The sender's bits: sword in hand, shield away, whatever the request bytes showed.
+    CHECK(own.Apply(0x10, CoopPuppetOwn::NowMs()) == 0x01);
+    // One a frame: the next frame asks the sword again.
+    Frame(d, g, 1033);
+    REQUIRE(g.state_checks.size() == 3);
+    CHECK(g.state_checks[2].x[1] == 0);
+    own.Clear();
 }

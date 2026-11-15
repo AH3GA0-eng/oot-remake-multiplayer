@@ -35,12 +35,13 @@ enum class ItemRule : std::uint8_t {
   mirror,      // shared: the last change is copied (trade items: handing one over takes it)
   count,       // shared: each change (+1 got, -1 used) is added to everyone's value
   per_player,  // never sent (rupees, ammo, life, bottle contents, equipped gear)
+  bits,        // shared: a bit set for anyone is set for everyone (a dungeon's floors on its map)
 };
 
 struct ItemFlag {
   std::string_view name;    // the flag's name in the game
   std::uint32_t hash;       // flag_hash(name)
-  protocol::FlagKind kind;  // boolean or int32
+  protocol::FlagKind kind;  // boolean, int32, or uint32 (bottle contents, a dungeon's floors)
   ItemRule rule;
   // False for a rule not turned on yet. All are on now: counts travel as
   // count deltas (docs/protocol.md, "Counts").
@@ -55,6 +56,18 @@ const ItemFlag* find_item(std::uint32_t hash);
 // The flags to share: every entry that is on and not per player. With
 // `with_off`, also the shared ones not on yet (for tests and trials).
 SharedFlags item_shared_flags(bool with_off = false);
+
+// A dungeon's map or compass (DungeonInfo.<dungeon>.IsGetMap, .IsGetCompass;
+// issue 146): a Bool the game never takes back once got. Only entries that
+// are on.
+bool is_one_way_item(FlagKey key);
+// Every such flag, sorted by hash.
+std::vector<FlagKey> one_way_item_flags();
+
+// A shared UInt item (DungeonInfo.<dungeon>.EnteredFloorBit, issue 146): the
+// game's UInt table is read and written for it (GameFlagStore). Other UInts
+// stay unread there, as before.
+bool is_shared_uint_item(std::uint32_t hash);
 
 // What the game should hold after `incoming` arrives for a flag of `rule`
 // and `kind` when it holds `local`. Values are raw FlagEntry bits. `base` is,
@@ -117,6 +130,19 @@ constexpr std::uint32_t kGold = 0x40ae1183;    // PouchData.Armor_Adult_Gauntlet
 std::optional<std::uint32_t> lift_grade_raise(std::int32_t goron, std::int32_t silver,
                                               std::int32_t gold, std::uint32_t current);
 
+// Scales (randomizer items, docs/mods.md). How deep Link dives is PlayerStatus.DiveDepth, a Float
+// (3.0 by default), not the scale items: OOTRR's starting scales write 6.0 (Silver) and 9.0 (Golden)
+// beside the item (start_items/give.rs SCALE_DEPTH), so a scale shared by another player dived no deeper.
+namespace dive {
+constexpr std::uint32_t kDepth = 0x61466c21;   // PlayerStatus.DiveDepth
+constexpr std::uint32_t kSilver = 0x1240044b;  // PouchData.Item_Scale_Silver.StockNum
+constexpr std::uint32_t kGold = 0x4aeb140a;    // PouchData.Item_Scale_Gold.StockNum
+constexpr float kSilverDepth = 6.0f, kGoldDepth = 9.0f;
+}  // namespace dive
+
+// The depth the held scales give, when it is above `current`. Nothing otherwise (never lowered).
+std::optional<float> dive_depth_raise(std::int32_t silver, std::int32_t gold, float current);
+
 // Issue 190 (docs/items.md, "The ocarina"): D-pad Left takes out the ocarina
 // named in PlayerStatus.EquipOcarina (String64, an actor name, "" by
 // default). The game writes it when Link gets an ocarina himself; an ocarina
@@ -138,6 +164,9 @@ constexpr std::uint32_t kSlotA = 0xaacdef1f;        // 0x541947d0.Ocarina
 constexpr std::uint32_t kSlotB = 0xda41879d;        // 0x57f52eb8.Ocarina
 constexpr std::uint32_t kGotFairy = 0x137df1ac;     // 0x41f3e410.Item_Ocarina_Fairy
 constexpr std::uint32_t kGotTime = 0xac6a85e3;      // 0x41f3e410.Item_Ocarina_Time
+// Set with Saria's gift and with OOTRR's starting ocarina (start_items/give.rs): an
+// ocarina shared without it could not be played until a reload (playtest 11).
+constexpr std::uint32_t kPrepared = 0x171de71f;     // HavePreparedToPlayOcarina
 }  // namespace ocarina
 
 // The ocarina to equip for the held ones (Ocarina of Time over the Fairy

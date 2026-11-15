@@ -1,0 +1,63 @@
+# hs-boss-cutscenes-gohma, B: waits in the corridor before Gohma's door; never walks in itself (see the A file).
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-landed
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+wait 120
+place -14.0 48.5 66.5   # the corridor, behind A's spot
+wait 600
+wait 1200               # A walks through the door now
+mark b-in
+wait 300
+mark b-intro
+wait 1500
+mark b-fight
+wait 600
+# boss-intro: B stuns Gohma (a seed in the eye hands her to B); A's hits in the stun are then a non-owner's.
+give PouchData.Weapon_Range_SlingShot.StockNum
+wait 60
+assign SlingShot
+wait 120
+hold ZL+ZR 40             # stun try 1: lock on Gohma, the slingshot aims at her eye (releasing ZR fires)
+wait 20
+wait 44                   # (A's sword hits)
+wait 240
+mark b-stun1
+hold ZL+ZR 40             # stun try 2: lock on Gohma, the slingshot aims at her eye (releasing ZR fires)
+wait 20
+wait 44                   # (A's sword hits)
+wait 240
+mark b-stun2
+hold ZL+ZR 40             # stun try 3: lock on Gohma, the slingshot aims at her eye (releasing ZR fires)
+wait 20
+wait 44                   # (A's sword hits)
+wait 240
+mark b-stun3
+hold ZL+ZR 40             # stun try 4: lock on Gohma, the slingshot aims at her eye (releasing ZR fires)
+wait 20
+wait 44                   # (A's sword hits)
+wait 240
+mark b-stun4
+wait 120
+mark b-kill
+wait 300
+mark b-death
+wait 2400
+mark end

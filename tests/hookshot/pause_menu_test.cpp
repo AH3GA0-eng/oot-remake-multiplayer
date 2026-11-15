@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "coop_colors.h"
 #include "coop_pause_menu.h"
 #include "hos_coop_menu.h"
 
@@ -41,7 +42,7 @@ Session Hosting(int players, std::string code = "ABCDE-FGHJK") {
     s.hosting = true;
     s.players = players;
     s.code = std::move(code);
-    s.lines = {"Send this code to your friends:", s.code};
+    s.lines = {CoopTitleMenu::HostHeadline(true), s.code};
     return s;
 }
 
@@ -68,7 +69,7 @@ TEST_CASE("pause tab: the first page is Host, Join, Local co-op, Settings and Co
     Menu m;
     m.Show(CoopTitleMenu::Options{});
     CHECK(m.page() == Page::kMain);
-    CHECK(Names(m) == std::vector<std::string>{"Host a game", "Join a game", "Local co-op", "Settings", "Commands"});
+    CHECK(Names(m) == std::vector<std::string>{"Host a game", "Join a game", "Local co-op", "Settings", "Customize Link", "Commands"});
     CHECK(Selected(m) == "Host a game");
     m.Press(Input::kUp);   // round the ends
     CHECK(Selected(m) == "Commands");
@@ -96,12 +97,17 @@ TEST_CASE("pause tab: Host hosts in one press, then the page shows the code, the
     m.SetSession(starting);
     CHECK(m.view().gold == "Starting your game...");
     m.SetSession(Hosting(1));
-    CHECK(Names(m) == std::vector<std::string>{"Copy the code again", "Paste friend's answer", "Same network or VPN",
-                                               "Stop hosting"});
+    CHECK(Names(m) == std::vector<std::string>{"Copy the code again", "Paste friend's answer (or Ctrl+V)",
+                                               "Same network", "VPN", "Stop hosting"});
+    // Ctrl+V (or Shift+Insert) on the Host page is Paste friend's answer, wherever the cursor is.
+    CHECK(m.Press(Input::kPaste));
+    const auto paste = m.TakeRequest();
+    REQUIRE(paste.has_value());
+    CHECK(paste->kind == Request::Kind::kPasteAnswer);
     View v = m.view();
     CHECK(v.hint == "ABCDE-FGHJK");
     CHECK(v.gold == "Hosting: waiting for friends");
-    CHECK(v.help.find("Send this code") != std::string::npos);   // what the host does, in place of the row's help
+    CHECK(v.help.find("Invite code copied to your clipboard") == 0);   // what the host does, in place of the row's help
     m.SetSession(Hosting(3));
     CHECK(m.view().gold == "Hosting: 3 players");
     m.Press(Input::kDecide);
@@ -112,15 +118,18 @@ TEST_CASE("pause tab: Host hosts in one press, then the page shows the code, the
     m.Press(Input::kDown);
     m.Press(Input::kDecide);
     CHECK(m.TakeRequest()->kind == Request::Kind::kCopyLan);
+    m.Press(Input::kDown);
+    m.Press(Input::kDecide);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kCopyVpn);
     // Stop takes a second press
     m.Press(Input::kDown);
     REQUIRE(Selected(m) == "Stop hosting");
     m.Press(Input::kDecide);
     CHECK_FALSE(m.TakeRequest().has_value());
-    CHECK(m.view().rows[3].value == "Press again to confirm");
+    CHECK(m.view().rows[4].value == "Press again to confirm");
     m.Press(Input::kUp);   // anything else: not confirmed
     m.Press(Input::kDown);
-    CHECK(m.view().rows[3].value == "Stop");
+    CHECK(m.view().rows[4].value == "Stop");
     m.Press(Input::kDecide);
     m.Press(Input::kDecide);
     CHECK(m.TakeRequest()->kind == Request::Kind::kLeave);
@@ -261,16 +270,21 @@ TEST_CASE("pause tab: co-op that came with the game's start is shown, not starte
     CHECK(m.page() == Page::kSettings);
 }
 
-TEST_CASE("pause tab: Local co-op says split screen comes in the next test release") {
+TEST_CASE("pause tab: Local co-op lists the experimental split screen steps") {
     Menu m;
     m.Show(CoopTitleMenu::Options{});
     m.Open(Page::kLocal);
     CHECK(m.page() == Page::kLocal);
     const View v = m.view();
-    REQUIRE(v.rows.size() == 2);
-    CHECK(v.rows[0].kind == RowKind::kNote);
-    CHECK(v.rows[1].name.find("next test release") != std::string::npos);
+    REQUIRE(v.rows.size() == 5);
+    for (const auto& row : v.rows) {
+        CHECK(row.kind == RowKind::kNote);
+    }
+    CHECK(v.rows[0].name.find("experimental") != std::string::npos);
+    CHECK(v.rows[2].name.find("Settings > Controller") != std::string::npos);
+    CHECK(v.rows[4].name.find("PLAY-LAN.md") != std::string::npos);
     CHECK(v.selected == -1);   // nothing to choose
+    CHECK(v.help.find("10 GB") != std::string::npos);   // the help box says what it costs
     CHECK(v.back == "Back");
     CHECK(m.Press(Input::kBack));
     CHECK(Selected(m) == "Local co-op");
@@ -290,6 +304,8 @@ TEST_CASE("pause tab: Commands lists the chat key and every chat command, each w
     CHECK(v.rows[0].name == "Open the chat");
     CHECK(v.rows[0].value == "Y");
     CHECK(v.help.find("Press Y") != std::string::npos);
+    CHECK(v.help.find("Settings, Chat key") != std::string::npos);
+    CHECK(v.help.find("LICHII_") == std::string::npos);   // plain words, no file names
     CHECK(v.confirm.empty());   // read only: nothing happens on a press
     for (std::size_t i = 0; i < Commands().size(); ++i) {
         CHECK(v.rows[i + 1].name == Commands()[i].typed);
@@ -314,7 +330,8 @@ TEST_CASE("pause tab: Commands lists the chat key and every chat command, each w
     m.Open(Page::kCommands);
     v = m.view();
     CHECK(v.rows[0].value == "Off");
-    CHECK(v.help.find("LICHII_COOP_CHAT_KEY") != std::string::npos);
+    CHECK(v.help.find("Settings, Chat key") != std::string::npos);
+    CHECK(v.help.find("LICHII_") == std::string::npos);
 }
 
 TEST_CASE("pause tab: Settings: name, Link's look, players and voice chat (off unless turned on)") {
@@ -324,7 +341,8 @@ TEST_CASE("pause tab: Settings: name, Link's look, players and voice chat (off u
     m.Show(o);
     m.Open(Page::kSettings);
     CHECK(Names(m) == std::vector<std::string>{"Your name", "Link's look", "Players when you host",
-                                               "Proximity voice chat"});
+                                               "Proximity voice chat", "Chat key", "Show players on map",
+                                               "Names on map"});   // (no patch 0015: no input rows)
     View v = m.view();
     CHECK(v.rows[0].value == "Saria");
     CHECK(v.rows[1].value == "By player number");
@@ -364,6 +382,60 @@ TEST_CASE("pause tab: Settings: name, Link's look, players and voice chat (off u
     CHECK_FALSE(m.options().voice);
     m.Press(Input::kDecide);   // A flips it
     CHECK(m.options().voice);
+}
+
+TEST_CASE("pause tab: Settings: voice on shows Voice mode, open mic first, push to talk the other choice") {
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    m.Open(Page::kSettings);
+    SelectRow(m, "Proximity voice chat");
+    m.Press(Input::kRight);
+    m.TakeRequest();
+    auto names = Names(m);
+    auto at = std::find(names.begin(), names.end(), "Voice mode");
+    REQUIRE(at != names.end());
+    CHECK(at[-1] == "Proximity voice chat");   // right under it
+    const auto row = static_cast<std::size_t>(at - names.begin());
+    CHECK(m.view().rows[row].value == "Open mic");
+    CHECK(m.view().rows[row].kind == RowKind::kChoice);
+    SelectRow(m, "Voice mode");
+    m.Press(Input::kRight);
+    CHECK(m.options().voice_ptt);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+    CHECK(m.view().rows[row].value == "Push to talk (V)");
+    m.Press(Input::kLeft);
+    CHECK_FALSE(m.options().voice_ptt);
+    // voice off: the row goes, the choice stays for next time
+    m.Press(Input::kRight);
+    SelectRow(m, "Proximity voice chat");
+    m.Press(Input::kLeft);
+    names = Names(m);
+    CHECK(std::find(names.begin(), names.end(), "Voice mode") == names.end());
+    CHECK(m.options().voice_ptt);
+}
+
+TEST_CASE("pause tab: Settings: players on the map and their names, on unless turned off, each saved") {
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    m.Open(Page::kSettings);
+    View v = m.view();
+    REQUIRE(v.rows.size() == 7);   // (the chat key row before them; no patch 0015: no input rows)
+    CHECK(v.rows[5].kind == RowKind::kToggle);
+    CHECK(v.rows[5].on);
+    CHECK(v.rows[6].on);
+    SelectRow(m, "Show players on map");
+    m.Press(Input::kLeft);
+    CHECK_FALSE(m.options().map_players);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+    m.Press(Input::kDecide);
+    CHECK(m.options().map_players);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+    SelectRow(m, "Names on map");
+    m.Press(Input::kDecide);
+    CHECK_FALSE(m.options().map_names);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+    m.Press(Input::kRight);
+    CHECK(m.options().map_names);
 }
 
 TEST_CASE("pause tab: a name the server would refuse is not kept") {
@@ -450,4 +522,99 @@ TEST_CASE("pause tab: a session that changes keeps the same row selected") {
     CHECK(Selected(m) == "Settings");
     m.SetSession(Session{});
     CHECK(Selected(m) == "Settings");
+}
+
+TEST_CASE("pause tab: Settings: the chat key goes round the keys, Off among them, and is saved") {
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    m.Open(Page::kSettings);
+    SelectRow(m, "Chat key");
+    CHECK(m.view().rows[static_cast<std::size_t>(m.view().selected)].value == "T");
+    const auto& keys = CoopTitleMenu::ChatKeys();
+    m.Press(Input::kRight);
+    CHECK(m.options().chat_key == keys[1]);
+    REQUIRE(m.TakeRequest().has_value());
+    m.Press(Input::kLeft);
+    m.Press(Input::kLeft);
+    CHECK(m.options().chat_key == "off");   // (round the end: the last one)
+    const auto r = m.TakeRequest();
+    REQUIRE(r.has_value());
+    CHECK(r->kind == Request::Kind::kSave);
+    CHECK(m.view().rows[static_cast<std::size_t>(m.view().selected)].value == "Off");
+    m.Press(Input::kDecide);   // A goes on, as on the other choices
+    CHECK(m.options().chat_key == "T");
+    // the Commands page follows
+    m.Open(Page::kCommands);
+    CHECK(m.view().rows[0].value == "T");
+}
+
+TEST_CASE("pause tab: Settings: Controller and Keyboard rows when this Hookshot can choose (patch 0015)") {
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    m.Open(Page::kSettings);
+    SelectRow(m, "Chat key");
+    m.SetInputRows("Controller: all", "Keyboard + mouse: window in front");
+    CHECK(Selected(m) == "Chat key");   // (the rows came under it: the same row stays chosen)
+    CHECK(Names(m) == std::vector<std::string>{"Your name", "Link's look", "Players when you host",
+                                               "Proximity voice chat", "Chat key", "Controller",
+                                               "Keyboard and mouse", "Show players on map", "Names on map"});
+    SelectRow(m, "Controller");
+    View v = m.view();
+    CHECK(v.rows[static_cast<std::size_t>(v.selected)].value == "all");
+    CHECK(v.rows[static_cast<std::size_t>(v.selected)].kind == RowKind::kChoice);
+    CHECK(v.help.find("Which controller") != std::string::npos);
+    for (const Input in : {Input::kRight, Input::kLeft, Input::kDecide}) {   // each asks the module for the next one
+        m.Press(in);
+        const auto r = m.TakeRequest();
+        REQUIRE(r.has_value());
+        CHECK(r->kind == Request::Kind::kController);
+    }
+    m.SetInputRows("Controller: 2 - Xbox Wireless Controller", "Keyboard + mouse: window in front");
+    v = m.view();
+    CHECK(Selected(m) == "Controller");
+    CHECK(v.rows[static_cast<std::size_t>(v.selected)].value == "2 - Xbox Wireless Controller");
+    m.Press(Input::kDown);
+    CHECK(Selected(m) == "Keyboard and mouse");
+    CHECK(m.view().rows[static_cast<std::size_t>(m.view().selected)].value == "window in front");
+    m.Press(Input::kRight);
+    const auto r = m.TakeRequest();
+    REQUIRE(r.has_value());
+    CHECK(r->kind == Request::Kind::kKeyboard);
+    // gone again (the module found no patch 0015): the selection stays on a row there is
+    m.SetInputRows({}, {});
+    CHECK(Names(m).size() == 7);   // (with the two map rows)
+    CHECK_FALSE(Selected(m).empty());
+}
+
+TEST_CASE("pause tab: Customize Link opens the customizer, its changes are asked of the module, Back comes back") {
+    Menu m;
+    CoopTitleMenu::Options o;
+    m.Show(o);
+    CoopLook::Look worn;
+    worn[CoopLook::Part::boots] = 0x112233u;
+    m.SetLook(worn);
+    CHECK(m.Picture().empty());   // the first page has no picture
+    SelectRow(m, "Customize Link");
+    m.Press(Input::kDecide);
+    CHECK(m.page() == Page::kCustomize);
+    View v = m.view();
+    CHECK(v.rows[0].kind == RowKind::kHeading);
+    CHECK(v.rows[0].name == "Tunic");
+    CHECK(Selected(m) == "Kokiri Tunic");
+    CHECK_FALSE(m.Picture().empty());
+    CHECK_FALSE(m.TakeRequest());
+    m.Press(Input::kRight);   // the tunic: red
+    const auto r = m.TakeRequest();
+    REQUIRE(r);
+    CHECK(r->kind == Request::Kind::kLookParts);
+    CHECK(m.look()[CoopLook::Part::tunic] == CoopColors::Parse("red"));
+    CHECK(m.look()[CoopLook::Part::boots] == 0x112233u);   // the rest as it was worn
+    CHECK(m.options().colour == "red");                     // the Settings page's row agrees
+    // The mouse: a click on a part's right half.
+    m.Click(2, 1);   // Goron Tunic
+    CHECK(m.look()[CoopLook::Part::goron_tunic] == CoopColors::Parse("red"));
+    m.Press(Input::kBack);
+    CHECK(m.page() == Page::kMain);
+    CHECK(Selected(m) == "Customize Link");
+    CHECK(m.Picture().empty());
 }

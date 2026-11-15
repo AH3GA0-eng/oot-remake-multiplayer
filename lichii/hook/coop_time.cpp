@@ -14,6 +14,7 @@
 #include "coop_time.h"
 
 #include <array>
+#include <atomic>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -109,18 +110,26 @@ std::optional<T> Get(Core::Memory::Memory& memory, std::uint64_t address) {
     return value;
 }
 
+// OnGameSet's newest set, for the present thread: bit 63 set while one waits, the seconds below; and how many came.
+std::atomic<std::uint64_t> g_game_set{0};
+std::atomic<std::uint64_t> g_game_sets{0};
+
 struct Glue {
     bool on = false;
     bool debug = false;
     CoopEvery::Every every{CoopEvery::kQuarterUs};
     std::uint64_t debug_at = 0;
     bool connected = false;
+    std::uint64_t unnamed_logged = 0;
+    // OnGameSet's waiting set (bit 63 and the seconds), 0 when none.
+    static std::uint64_t TakeGameSet() {
+        return g_game_set.exchange(0, std::memory_order_acq_rel);
+    }
     // LICHII_COOP_TIME_TEST_SET=<seconds>[@<delay s>] (tests only): <delay>
-    // seconds (default 5) after joining, the host sets its own clock there,
-    // as the Sun's Song would. Another game ignores it, so one switch list
-    // serves both games of a test.
-    std::optional<std::uint32_t> test_set;
-    std::uint64_t test_delay_us = 5'000'000;
+    // seconds (default 5) after joining and after each of its save loads, the
+    // host sets its own clock there, as the Sun's Song would (TestSet).
+    // Another game ignores it, so one switch list serves both games of a test.
+    TestSet test_set;
     std::uint64_t joined_at = 0;
     // LICHII_COOP_TIME_TEST_DRIFT=<seconds>[@<delay s>] (tests only, issue
     // 192): <delay> seconds (default 60) after joining, a guest moves its own
@@ -140,11 +149,12 @@ struct Glue {
         if (const auto t = Env("LICHII_COOP_TIME_TEST_SET"); !t.empty()) {
             char* rest = nullptr;
             const unsigned long v = std::strtoul(t.c_str(), &rest, 10);
+            std::uint64_t delay_us = 5'000'000;
             if (rest != nullptr && *rest == '@') {
-                test_delay_us = std::strtoull(rest + 1, nullptr, 10) * 1'000'000;
+                delay_us = std::strtoull(rest + 1, nullptr, 10) * 1'000'000;
             }
             if (v < coop::protocol::kSecondsPerDay) {
-                test_set = static_cast<std::uint32_t>(v);
+                test_set = TestSet(static_cast<std::uint32_t>(v), delay_us);
             }
         }
         if (const auto t = Env("LICHII_COOP_TIME_TEST_DRIFT"); !t.empty()) {
@@ -254,15 +264,13 @@ struct Glue {
         const auto now = Read(system, main, now_us);
         if (!connected) {
             joined_at = now_us;
+            test_set.Joined(now_us);
         }
         connected = true;
         const bool host = session->with_client([](coop::net::Client& c) { return c.is_host(); });
-        if (test_set && now && now_us - joined_at >= test_delay_us) {
-            if (host) {
-                LOG_INFO(Core, "coop: time: test set to {}", *test_set);
-                setter.Want(main, *test_set);
-            }
-            test_set.reset();
+        if (const auto t = test_set.Due(now_us, host, now.has_value())) {
+            LOG_INFO(Core, "coop: time: test set to {}", *t);
+            setter.Want(main, *t);
         }
         if (test_drift && now && now_us - joined_at >= test_drift_delay_us) {
             auto& memory = system.ApplicationMemory();
@@ -279,6 +287,13 @@ struct Glue {
             }
         }
         std::vector<coop::protocol::Message> send;
+        if (const std::uint64_t set = TakeGameSet(); set != 0) {
+            sync.GameSet(static_cast<std::uint32_t>(set));  // the game's own time change (the world hook's wrap)
+        }
+        if (const std::uint64_t unnamed = sync.UnnamedJumps(); unnamed != unnamed_logged) {
+            unnamed_logged = unnamed;
+            LOG_INFO(Core, "coop: time: a clock jump that no time set of the game named ({} so far): sent as read", unnamed);
+        }
         sync.SetEvent(in_event);  // issue 192: no nudge during a cutscene
         if (const auto target = sync.Tick(now, host, now_us, send)) {
             setter.Want(main, *target);
@@ -319,9 +334,19 @@ void Frame(Core::System& system, std::uint64_t main_base, coop::host::Session* s
     TheGlue().Frame(system, main_base, session, server_now_us, in_event);
 }
 
+void OnGameSet(std::uint32_t seconds, std::uint32_t mode, std::int32_t days) {
+    g_game_set.store((1ull << 63) | seconds, std::memory_order_release);
+    const std::uint64_t n = g_game_sets.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (n <= 20 || n % 100 == 0) {  // which of the game's time changes come here, and how often (loads?)
+        LOG_INFO(Core, "coop: time: the game set its clock to {:02}:{:02}:{:02} (mode {}, days {}; set {} of this run)",
+                 seconds / 3600 % 100, seconds / 60 % 60, seconds % 60, mode, days, n);
+    }
+}
+
 void SaveLoaded(std::uint64_t server_now_us) {
     if (server_now_us != 0) {
         TheGlue().sync.SaveLoaded(server_now_us);
+        TheGlue().test_set.SaveLoaded(server_now_us);  // tests only: the save's time replaced the test's
     }
 }
 
