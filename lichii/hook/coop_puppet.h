@@ -584,6 +584,20 @@ private:
     void Tint(Slot& slot, Guest& guest, std::uint32_t color);
     void Pose(Slot& slot, Guest& guest, const Vec3& position, const Mat3* rotation,
               std::uint64_t now_ms);
+    // Park the puppet under the floor with everything it holds: a held piece is an
+    // actor of its own (the Hookshot's claw is bound to a bone, a bottle to the hand),
+    // and moving only the puppet leaves the pieces where they were. The game keeps
+    // stepping them, and one whose owner it can no longer follow crashes it
+    // (0xc0000005 reading a null + 0x7d8, seen 2026-11-15 while the other player
+    // changed to the Hookshot as the puppet came and went).
+    void Park(Slot& slot, Guest& guest, const Vec3& position, std::uint64_t now_ms);
+    // The actors the game keeps for the puppet's equipment slots (a worn piece, a
+    // held one); empty when it has no EquipmentUser yet.
+    struct PieceActor {
+        std::uint64_t actor = 0;
+        std::uint32_t state = 0;
+    };
+    std::vector<PieceActor> Pieces(Slot& slot, Guest& guest) const;
     void DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint64_t now_ms);
     void Poll(Slot& slot, Guest& guest, std::uint64_t now_ms);
     const Target* Wanted(std::uint8_t number) const;
