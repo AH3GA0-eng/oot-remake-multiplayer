@@ -168,11 +168,11 @@ $commit = Invoke-Git $repo rev-parse HEAD
     "  https://github.com/daurosk/oot-remake-multiplayer/tree/$commit",
     "  $(if ($Release) { "(tag $Release) " })commit $commit; hookshot\hookshot_coop.dll is its CMake target hookshot_coop.",
     '',
-    'Hookshot: NotRexed''s static recompilation, GPL-3.0. Not in this kit: "Start OoT Co-op.bat" downloads it and builds',
+    'Longshot: Team MagicBean''s static recompilation, GPL-3.0. Not in this kit: "Start OoT Co-op.bat" downloads it and builds',
     'it on your PC from your own game:',
-    "  https://github.com/NotRexed/Hookshot/tree/$($pin.commit)",
+    "  $($pin.repo)/src/commit/$($pin.commit)",
     '  with the patches in hookshot\patches (also hookshot/patches in the co-op repo), and the build tools of the',
-    '  Hookshot release named in hookshot\TOOLS.txt.',
+    '  Longshot release named in hookshot\TOOLS.txt.',
     '',
     'If a link stops working, open an issue on the co-op repo and the source will be sent to you.'))
 [System.IO.File]::WriteAllLines((Join-Path $kit 'VERSION.txt'), [string[]]@(
