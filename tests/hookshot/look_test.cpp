@@ -596,26 +596,31 @@ TEST_CASE("look tunic: a scene's many new textures are read again at most kLateC
         return n;
     };
     CHECK(reads() == 200);
+    // The textures one step reads (a texture whose first bytes are a colour's is read twice: head, then whole).
+    const auto step = [&](std::uint64_t at_ms) {
+        const std::map<std::uint64_t, int> was = m.reads;
+        w.Step(at_ms);
+        std::size_t n = 0;
+        for (const std::uint64_t a : made) {
+            n += m.reads[a] != (was.count(a) ? was.at(a) : 0) ? 1 : 0;
+        }
+        return n;
+    };
     std::memcpy(m.at(late), TexelsOf(1).data(), kTexels);
-    int before = reads();
-    w.Step(40);
-    CHECK(reads() - before <= static_cast<int>(CoopLookTunic::kLateChecks));
-    CHECK(reads() - before > 0);
+    std::size_t n = step(40);
+    CHECK(n <= CoopLookTunic::kLateChecks);
+    CHECK(n > 0);
     // Every one is read again in turn: Link's is drawn within a few steps.
     std::uint64_t t = 40;
     while (!Drawn(m, late, 9) && t < 200) {
         t += 20;
-        before = reads();
-        w.Step(t);
-        CHECK(reads() - before <= static_cast<int>(CoopLookTunic::kLateChecks));
+        CHECK(step(t) <= CoopLookTunic::kLateChecks);
     }
     CHECK(Drawn(m, late, 9));
     CHECK(t <= 20 + 20 * (200 / CoopLookTunic::kLateChecks + 1));
     // Once they are older than kLateTexelsMs, a step with nothing made reads none of them.
     w.Step(20 + CoopLookTunic::kLateTexelsMs + 20);
-    before = reads();
-    w.Step(20 + CoopLookTunic::kLateTexelsMs + 40);
-    CHECK(reads() == before);
+    CHECK(step(20 + CoopLookTunic::kLateTexelsMs + 40) == 0);
 }
 
 TEST_CASE("look tunic: an override goes when the game's memory there holds something else, its texture not finalized") {
