@@ -1,0 +1,29 @@
+# hs-rando-1 (rando-puppet-b, player reports 0.11.0): the first of two runs, randomizer ON on the host.
+# BEFORE: A (host) plays a seed whose size table lacks the puppets' entries (a seed built before the pack: no
+# coop-tables.txt); B (guest) has its own randomizer off and no seed folder.
+# Expect A's log: "randomizer: seed ... is made again for the other mods' size tables" then RefreshLine
+# ("... was made again for the co-op puppets: RESTART ..."). B's log: "Randomizer on: keep the game open ...",
+# then the build, then ReadyLine ("... is ready: RESTART the game now ..."). Then run hs-rando-2.
+# Both stand in Mido's house (Kokiri Forest), at two of its chests.
+mark start
+warp KokiriForest_Child FrontDekuTree
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place -51.43 112.76 -38.76
+wait 600
+mark placed
+wait 3600
+mark mid
+wait 3600
+mark late
+wait 3600
+mark end
