@@ -110,7 +110,8 @@ std::string MicMissingNote(const std::string& chosen, const std::vector<std::str
                                       [&](const std::string& n) { return MicName(n) == chosen; })) {
         return {};
     }
-    return "Microphone " + chosen + " is not connected: the default one is used until it is back.";
+    return "Microphone " + chosen + " is not connected: the others hear nothing until it is back (or choose another "
+           "in Settings).";
 }
 
 const char* ModeName(coop::voice::Mode mode) {
@@ -590,7 +591,7 @@ void Frame(const std::optional<std::array<float, 3>>& our_feet,
     }
     if (check_mic) {   // (outside the lock: the system's list may take a moment)
         if (std::string note = MicMissingNote(now_set.mic, g_backend.mic_list()); !note.empty()) {
-            LOG_WARNING(Core, "coop: voice: microphone {} is not connected; the default one stands in", now_set.mic);
+            LOG_WARNING(Core, "coop: voice: microphone {} is not connected; silence until it is back", now_set.mic);
             std::lock_guard lock(g_mutex);
             g_mic_notice = std::move(note);
         }

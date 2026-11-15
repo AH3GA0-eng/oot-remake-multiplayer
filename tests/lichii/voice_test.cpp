@@ -236,7 +236,8 @@ TEST_CASE("voice microphone: chosen by its name, kept on one line, a missing one
     CHECK(MicMissingNote("", listed).empty());
     CHECK(MicMissingNote("Webcam", listed).empty());
     CHECK(MicMissingNote("Desk mic", listed) ==
-          "Microphone Desk mic is not connected: the default one is used until it is back.");
+          "Microphone Desk mic is not connected: the others hear nothing until it is back (or choose another in "
+          "Settings).");
     CHECK(MicMissingNote("Desk mic", {}) != "");
     Settings a, b;
     b.mic = "Webcam";

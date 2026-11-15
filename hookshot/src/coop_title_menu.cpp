@@ -293,7 +293,12 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
         } else if (!k.empty()) {
             o.voice_key = "your key";   // (a key code: coop_voice's SettingsFrom reads it)
         }
-        o.voice_mic = std::string(Trim(IniGet(options_ini, "LICHII_COOP_VOICE_MIC").value_or("")));
+        // (the whole line, as the launcher hands it over: a device's name may hold " #" or " ;", no comment here)
+        for (const auto& [k, v] : KitVariables(options_ini)) {
+            if (k == "LICHII_COOP_VOICE_MIC") {
+                o.voice_mic = v;
+            }
+        }
     }
     o.map_players = !Off(IniGet(options_ini, "LICHII_COOP_MAP"));
     o.map_names = !Off(IniGet(options_ini, "LICHII_COOP_MAP_NAMES"));

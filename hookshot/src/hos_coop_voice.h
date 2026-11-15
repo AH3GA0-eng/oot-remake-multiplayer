@@ -43,7 +43,7 @@ typedef struct HosCoopVoiceApi {
        shows), up to max names of name_size bytes each into names, the number listed. choose: the one the voice records
        from, by its name (a source of its own: the game's streams keep the Insert menu's); NULL or "": the Insert menu's
        again. Opens nothing while the voice's stream is stopped; a started one moves to it at once. One not plugged in:
-       the system's default stands in until it is back. */
+       silence until it is back (no other microphone stands in for it). */
     int (*mic_list)(char *names, int name_size, int max);
     void (*mic_choose)(const char *name);
 } HosCoopVoiceApi;

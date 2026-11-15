@@ -89,8 +89,9 @@ Settings WithEnabled(Settings s, bool on);
 constexpr std::size_t kMicNameBytes = 127;
 std::string MicName(std::string_view name);
 // The chat's note when the chosen microphone is not among those listed:
-// "Microphone <name> is not connected: the default one is used until it is
-// back."; "" when none is chosen or it is there.
+// "Microphone <name> is not connected: the others hear nothing until it is
+// back (or choose another in Settings)."; "" when none is chosen or it is
+// there. (No other microphone stands in: only the one chosen is opened.)
 std::string MicMissingNote(const std::string& chosen, const std::vector<std::string>& listed);
 // The push-to-talk key as the player reads it: "V", "7", else "the
 // push-to-talk key".

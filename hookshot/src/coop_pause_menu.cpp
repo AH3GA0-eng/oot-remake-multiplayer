@@ -284,7 +284,7 @@ std::vector<Menu::Line> Menu::Lines() const {
             out.push_back({Choice("Microphone", MicWords(options_.voice_mic, *microphones_)), Act::kMic,
                            "The microphone your voice is recorded from. Default: the one Longshot's Insert menu "
                            "chooses (Gameplay: Microphone), the Ocarina's too. Left and Right go through the "
-                           "microphones plugged in now. One unplugged: the default stands in until it is back."});
+                           "microphones plugged in now. One unplugged: the others hear nothing until it is back."});
         }
         if (options_.voice) {
             out.push_back({Choice("Voice mode", options_.voice_ptt ? "Push to talk (" + options_.voice_key + ")"

@@ -640,6 +640,8 @@ TEST_CASE("title menu: the voice's microphone in coop-options.ini") {
     CHECK(Options::Read("", "").voice_mic.empty());
     Options o = Options::Read("", "LICHII_COOP_VOICE=open\r\nLICHII_COOP_VOICE_MIC=Headset Microphone (USB)\r\n");
     CHECK(o.voice_mic == "Headset Microphone (USB)");
+    // a name with " #" or " ;" in it is all of the name, not a comment (as the launcher reads the line)
+    CHECK(Options::Read("", "LICHII_COOP_VOICE_MIC=Mic #2 ; left\r\n").voice_mic == "Mic #2 ; left");
     std::string c, opt;
     o.voice_mic = "Webcam";
     o.Write(c, opt);
