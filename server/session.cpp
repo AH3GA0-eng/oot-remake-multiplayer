@@ -906,6 +906,10 @@ void Session::on_host_reset() {
   dead_.clear();         // kills-late: the save's enemies are alive again
   // Bosses beaten after the save the host loaded are alive again, their heart containers back in the
   // game: an old claim would answer the refight's pickup from the fight before (player report #52).
+  if (!boss_hearts_.empty()) {
+    log("the host loaded a save: " + std::to_string(boss_hearts_.size()) +
+        " boss heart container claim(s) forgotten (those bosses fight again)");
+  }
   boss_hearts_.clear();
 }
 
