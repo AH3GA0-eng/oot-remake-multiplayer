@@ -1,0 +1,8 @@
+# held-sword-once, B's side: draw once at the start, put it away, then only watch.
+wait 420
+press Y 8
+wait 90
+mark b-drawn
+press B 12
+wait 120
+mark b-away

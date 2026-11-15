@@ -51,11 +51,11 @@ bool Share::OnEvent(const coop::net::Event& event) {
             auto& worn = theirs_[look->player_number];
             const bool changed = worn != look->parts;
             worn = look->parts;
-            if (HasGear(worn)) {
-                Assign(look->player_number);
-            } else {
-                Free(look->player_number);
-            }
+            // Every player gets a slot, gear colours or not (held-sword): a puppet
+            // that wears the game's own item shares its model's blade switch with
+            // our own Link's, so its sword hid whenever ours was put away. Their
+            // own copy, painted in no colours, is the game's item with its own.
+            Assign(look->player_number);
             return changed;
         }
         return false;
@@ -151,9 +151,7 @@ void Share::EnableSlots(bool on) {
     ready_.fill({});
     if (on) {
         for (const auto& [number, parts] : theirs_) {   // in player order: the same slots every time
-            if (HasGear(parts)) {
-                Assign(number);
-            }
+            Assign(number);   // every player, gear colours or not (OnEvent)
         }
     }
 }

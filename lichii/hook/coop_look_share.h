@@ -30,9 +30,12 @@ using Parts = std::vector<coop::protocol::LookPart>;
 // Puppets in their own gear colours (docs/puppet.md, "Gear colours on the
 // puppets"): the puppet pack has kSlots slots of copies of every coloured
 // item, two copies a slot (copy 2 * slot - 1 and 2 * slot), each with texture
-// files of its own. A player whose look colours any part but the tunic gets a
-// slot, the lowest free one; with all taken, the game's own items. Kept while
-// the player keeps such a look and stays; freed on leaving.
+// files of its own. Every player whose look arrives gets a slot, the lowest
+// free one, gear colours or not (a look with none paints the copy in the
+// game's own colours): a puppet in the game's own sword shares that model's
+// blade switch with our own Link's and hid its blade whenever ours was put
+// away (held-sword). With all taken, the game's own items. Kept while the
+// player stays; freed on leaving.
 //
 // The module paints the slot's copy that is not worn (it writes that copy's
 // texture files in the player's look: a Job), says it is Done, and only then
