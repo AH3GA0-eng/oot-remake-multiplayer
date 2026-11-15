@@ -626,7 +626,10 @@ TEST_CASE("hookshot: on Linux the exe exports every function the module finds in
     for (const char* d : {"#define HOS_COOP_PAD_INFO \"", "#define HOS_COOP_PAD_READ \"", "#define HOS_COOP_PAD_TAKE \""}) {
         collect(pads, d);
     }
-    CHECK(names.size() >= 7);
+    // Patch 0020's texture exports: the module's live look finds two, the exe's own renderers the other two.
+    collect(ReadFile(kRepo / "hookshot" / "src" / "coop_look_live.cpp"), "look(\"");
+    collect(ReadFile(kRepo / "hookshot" / "patches" / "0020-coop-texture-override.patch"), "look(\"");
+    CHECK(names.size() >= 11);
     const std::string patch = Patch();
     const auto start = patch.find("+++ b/nx2/build.py\n");
     REQUIRE(start != std::string::npos);
