@@ -21,7 +21,7 @@ You are an AI coding agent and someone has handed you this repository. This page
 
 Online co-op for the Ocarina of Time remake on PC. Up to 16 players see each other as Link, share progress and fight the same enemies.
 
-- **Today:** co-op runs on [Longshot](https://git.magicbean.dev/MagicBeanDev/Longshot), a native PC recompilation of the game (the continuation of Hookshot). Releases are Longshot only. The emulator (Fritchii) build still exists in the code, but its releases ended.
+- **Today:** co-op runs on [Longshot](https://git.magicbean.dev/MagicBeanDev/Longshot), a native PC recompilation of the game by Team MagicBean, whose changes are being merged into [Hookshot](https://git.notrexed.dev/Hookshot/Hookshot) (NotRexed and contributors). Releases are Longshot only. The emulator (Fritchii) build still exists in the code, but its releases ended.
 - **Direction for 1.0:** co-op ships as an add-on module for the recomp (`hookshot_coop.dll`). Patches to the recomp stay minimal and generic (a hook layer: frame calls, input, drawing, memory); every co-op feature lives in our module (`hookshot/src` plus the shared `lichii/hook` code). Prefer a change in the module over a new patch.
 - One design, one wire protocol, one server for every build.
 

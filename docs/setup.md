@@ -1,6 +1,6 @@
 # Setting up co-op
 
-Online co-op for the Ocarina of Time remake, on [Longshot](https://git.magicbean.dev/MagicBeanDev/Longshot) (Team MagicBean and contributors, GPL-3.0; the continuation of Hookshot by NotRexed and contributors): a native PC version of the game that the kit builds on your PC from your own copy. There is no emulator: the game runs as a normal Windows program. This is an early test build (the newest is on the [releases page](https://github.com/daurosk/oot-remake-multiplayer/releases)); [known-issues.md](known-issues.md) lists what works and what does not yet.
+Online co-op for the Ocarina of Time remake, on [Longshot](https://git.magicbean.dev/MagicBeanDev/Longshot) (Team MagicBean and contributors, GPL-3.0; its changes are being merged into [Hookshot](https://git.notrexed.dev/Hookshot/Hookshot) by NotRexed and contributors): a native PC version of the game that the kit builds on your PC from your own copy. There is no emulator: the game runs as a normal Windows program. This is an early test build (the newest is on the [releases page](https://github.com/daurosk/oot-remake-multiplayer/releases)); [known-issues.md](known-issues.md) lists what works and what does not yet.
 
 The kit has one file to start: **`Start OoT Co-op.bat`**. Everything else is done by it or in the game. (The older emulator kits, with `Host.bat` and `Join.bat`, have their own guide: [setup-emulator.md](setup-emulator.md). A player on an emulator kit cannot join a game hosted with this kit, nor the other way round: every player needs this kit, the same version.)
 
@@ -9,7 +9,7 @@ The kit has one file to start: **`Start OoT Co-op.bat`**. Everything else is don
 - **Windows 10 or 11, 64-bit.** No administrator rights are needed.
 - **A graphics card with Vulkan 1.3 and mesh shaders**: NVIDIA RTX 20 series or newer, or AMD RX 6000 series or newer. Older cards (GTX 10 series, RX 5000 and older) cannot run it; Intel cards are mostly untested.
 - **16 GB of RAM** (the game uses about 10 GB; 8 GB of video memory is recommended).
-- **About 60 GB free** on the drive the kit is on, for the first build. The kit builds Longshot (the continuation of Hookshot) on your PC with co-op built into its source; the 60 GB is the build's peak. Afterwards about 37 GB stay (measured on a built kit): the game in `hookshot\game` is 35 GB (24 GB of it your game's unpacked files, 7 GB its shader programs), and the build files in `hookshot\work`, `tools` and `downloads` are about 2 GB, kept so that updates take minutes.
+- **About 60 GB free** on the drive the kit is on, for the first build. The kit builds Longshot on your PC with co-op built into its source; the 60 GB is the build's peak. Afterwards about 37 GB stay (measured on a built kit): the game in `hookshot\game` is 35 GB (24 GB of it your game's unpacked files, 7 GB its shader programs), and the build files in `hookshot\work`, `tools` and `downloads` are about 2 GB, kept so that updates take minutes.
 - **Your own game as a `.nup` file** (or its `romfs` and `exefs` folders): program `0400486024DEC000`, update v131072, build `e0f3ccfa`. No keys or firmware are needed. Every player needs their own copy of the game.
 - An internet connection for the first build (it downloads Longshot's build tools, about 400 MB) and to play.
 

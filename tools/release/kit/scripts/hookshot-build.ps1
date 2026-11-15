@@ -1,5 +1,5 @@
 # Builds a co-op Longshot game on this PC from your own copy of the game, then puts co-op in it.
-# Build-Hookshot-Coop.bat runs this. Longshot (git.magicbean.dev/MagicBeanDev/Longshot, Team MagicBean, GPL-3.0; it continues Hookshot) is a static
+# Build-Hookshot-Coop.bat runs this. Longshot (git.magicbean.dev/MagicBeanDev/Longshot, Team MagicBean, GPL-3.0) is a static
 # recompilation of the game: it is built here, from your files, and never leaves this PC.
 #
 #   Build-Hookshot-Coop.bat                         finds your .nup (as make-puppet-pack.cmd does), else asks

@@ -1,6 +1,6 @@
 # Mods
 
-Co-op on Longshot (the continuation of Hookshot) has its own mod loader. It sits in the pause menu's **Mods** tab, right after **Multiplayer**. It loads two kinds of mods from the game's own `mods` folder:
+Co-op on Longshot has its own mod loader. It sits in the pause menu's **Mods** tab, right after **Multiplayer**. It loads two kinds of mods from the game's own `mods` folder:
 
 - **Game file mods** (RomFS: textures, models, text, a randomizer seed). The game reads them when it starts.
 - **Code mods**: a library (`.dll`) that the co-op module loads when the game starts. It can read and write the game's memory, run something every frame, draw over the picture, take keys and hook game functions.

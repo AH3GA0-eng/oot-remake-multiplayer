@@ -1,6 +1,6 @@
 # hookshot/
 
-Co-op inside [Longshot](https://git.magicbean.dev/MagicBeanDev/Longshot) (Team MagicBean and contributors, GPL-3.0; the continuation of [Hookshot](https://github.com/NotRexed/Hookshot) by NotRexed and contributors), the PC port of the same game build. The folder, the module (`hookshot_coop.dll`) and the scripts keep the Hookshot name; `PIN` says `runtime=Longshot` (docs/hookshot.md, "Longshot"). The design and what is proven: [docs/hookshot.md](../docs/hookshot.md); for players: the kit's `Build-Hookshot-Coop.bat` and docs/play-online.md "On Hookshot" (branch hookshot-kit). Hookshot's source is not in this repository and not forked on GitHub. Built games and Hookshot's generated C contain the game: they never leave the player's PC.
+Co-op inside [Longshot](https://git.magicbean.dev/MagicBeanDev/Longshot) (Team MagicBean and contributors, GPL-3.0; its changes are being merged into [Hookshot](https://git.notrexed.dev/Hookshot/Hookshot) by NotRexed and contributors), the PC port of the same game build. The folder, the module (`hookshot_coop.dll`) and the scripts keep the Hookshot name; `PIN` says `runtime=Longshot` (docs/hookshot.md, "Longshot"). The design and what is proven: [docs/hookshot.md](../docs/hookshot.md); for players: the kit's `Build-Hookshot-Coop.bat` and docs/play-online.md "On Hookshot" (branch hookshot-kit). Hookshot's source is not in this repository and not forked on GitHub. Built games and Hookshot's generated C contain the game: they never leave the player's PC.
 
 | File | What |
 |---|---|

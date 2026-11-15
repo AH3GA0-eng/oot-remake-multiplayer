@@ -343,7 +343,7 @@ $source = @(
 )
 if ($hookshotNote) {
     $source += @(
-        'Longshot (experimental): Team MagicBean''s static recompilation (it continues Hookshot), GPL-3.0. Not in this kit:',
+        'Longshot (experimental): Team MagicBean''s static recompilation, GPL-3.0. Not in this kit:',
         'Build-Hookshot-Coop.bat downloads it and builds it on your PC from your own game:',
         "  https://git.magicbean.dev/MagicBeanDev/Longshot/src/commit/$hookshotNote",
         '  with the patches in hookshot\patches (also hookshot/patches in the co-op repo), and',
