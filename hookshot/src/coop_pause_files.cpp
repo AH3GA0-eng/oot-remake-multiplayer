@@ -182,27 +182,38 @@ std::string g_fallback_name;   // the random name when coop.ini could not be wri
 
 void CheckName() {
     std::call_once(g_name_once, [] {
+        namespace P = CoopNamePrivacy;
         const std::string coop = ReadText(CoopIni());
-        const auto saved = CoopTitleMenu::IniGet(coop, "name");
-        const bool none = !saved || saved->find_first_not_of(" \t") == std::string::npos;
+        const std::string saved = CoopTitleMenu::IniGet(coop, "name").value_or(std::string());
+        // The marker: the check ran once, so a name the player types in later (even their user name) stays.
+        const fs::path marker = CoopIni().parent_path() / "coop-name-checked.txt";
+        std::error_code ec;
+        const bool checked = fs::exists(marker, ec);
         const OsNames os = ThisPc();
-        const auto was = none ? CoopNamePrivacy::Source::none : CoopNamePrivacy::Matches(*saved, os.user, os.pc);
-        if (!none && was == CoopNamePrivacy::Source::none) {
+        const auto was = P::Matches(saved, os.user, os.pc);
+        const auto action = P::Decide(saved, checked, was);
+        if (action == P::Action::keep) {
+            if (!checked) {
+                WriteText(marker, "The co-op name was checked: it is not this PC's user or PC name, or the player chose it.\n");
+            }
             return;   // a name the player chose
         }
-        const std::string name = CoopNamePrivacy::NewName();
+        const std::string name = P::NewName();
         g_fallback_name = name;
         const bool ok = WriteText(CoopIni(), CoopTitleMenu::IniSet(coop, "name", name, true));
+        if (ok) {
+            WriteText(marker, "The co-op name was checked: it is not this PC's user or PC name, or the player chose it.\n");
+        }
         std::fprintf(stderr, "coop: name: %s: now %s%s\n",
-                     none                                   ? "none in coop.ini"
-                     : was == CoopNamePrivacy::Source::pc ? "it was this PC's name"
-                                                            : "it was this PC's user name",
+                     action == P::Action::fill   ? "none in coop.ini"
+                     : was == P::Source::pc      ? "it was this PC's name"
+                                                 : "it was this PC's user name",
                      name.c_str(), ok ? "" : " (coop.ini could not be written: this run only)");
-        if (!none) {
+        if (action == P::Action::replace) {
 #ifdef _WIN32
-            CoopNamePrivacy::Say(CoopNamePrivacy::Notice(was, name, true));
+            P::Say(P::Notice(was, name, true));
 #else
-            CoopNamePrivacy::Say(CoopNamePrivacy::Notice(was, name, false));
+            P::Say(P::Notice(was, name, false));
 #endif
         }
     });

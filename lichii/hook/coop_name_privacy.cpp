@@ -70,6 +70,12 @@ Source Matches(std::string_view name, std::string_view user, std::string_view pc
     return Source::none;
 }
 
+Action Decide(std::string_view saved, bool checked, Source match) {
+    if (Trim(saved).empty()) return Action::fill;
+    if (checked || match == Source::none) return Action::keep;
+    return Action::replace;
+}
+
 std::string Notice(Source was, std::string_view now, bool windows) {
     const char* what = was == Source::pc ? "PC's name" : windows ? "Windows user name" : "user name";
     return std::string("Your co-op name was your ") + what + "; it is now " + std::string(now) +

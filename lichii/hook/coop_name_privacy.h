@@ -29,6 +29,14 @@ std::string NewName();
 enum class Source { none, user, pc };
 Source Matches(std::string_view name, std::string_view user, std::string_view pc);
 
+// What to do with the saved name: fill (none saved: a random one), replace (it
+// is this PC's name and was never checked: a random one, said once in the chat)
+// or keep. `checked`: the marker beside coop.ini (CoopFiles::CheckName) says a
+// check ran before, so a name typed in later, even the user name, is the
+// player's choice and stays.
+enum class Action { keep, fill, replace };
+Action Decide(std::string_view saved, bool checked, Source match);
+
 // The chat line that tells the player their name changed (windows: says
 // "Windows user name" rather than "user name").
 std::string Notice(Source was, std::string_view now, bool windows);

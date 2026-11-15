@@ -39,7 +39,9 @@ std::filesystem::path CoopIni();
 // The co-op name never names the player (coop_name_privacy.h): once a run, a
 // coop.ini with no name gets a random one ("Goron-4821"), and a saved name that
 // is this PC's user name or PC name (the old default) is replaced by one, with
-// a line in the co-op chat. Names the player chose stay. ReadOptions calls it.
+// a line in the co-op chat. Names the player chose stay. coop-name-checked.txt
+// beside coop.ini marks the check done: a name typed in later (even the user
+// name) is the player's and is never replaced. ReadOptions calls it.
 void CheckName();
 // The settings as the two files have them (CheckName first).
 CoopTitleMenu::Options ReadOptions();

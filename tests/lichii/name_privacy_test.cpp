@@ -52,3 +52,14 @@ TEST_CASE("name privacy: the chat line and its queue") {
     CHECK(lines[0] == "one");
     CHECK(TakeLines().empty());
 }
+
+TEST_CASE("name privacy: replaced once, and a name typed in after the check stays") {
+    CHECK(Decide("", false, Source::none) == Action::fill);
+    CHECK(Decide("  ", true, Source::none) == Action::fill);
+    CHECK(Decide("Bob", false, Source::user) == Action::replace);   // the old default, never checked
+    CHECK(Decide("DESKTOP-1", false, Source::pc) == Action::replace);
+    CHECK(Decide("Saria", false, Source::none) == Action::keep);
+    // The marker is there: the player typed their user name back in themselves.
+    CHECK(Decide("Bob", true, Source::user) == Action::keep);
+    CHECK(Decide("DESKTOP-1", true, Source::pc) == Action::keep);
+}
