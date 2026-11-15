@@ -120,6 +120,7 @@ with open(os.environ["FAKE_LOG"], "a") as f:
 EOF
 printf 'kit: oot-coop-v0.1.0-beta2-linux (release v0.1.0-beta2)\n' >"$kit/VERSION.txt"
 export OOT_COOP_FETCH_LOCAL=1
+export KIT_FETCH_WAIT=0   # (kit-mirror: no waits between the retries here)
 D=$kit/data
 
 # --- build.sh ------------------------------------------------------------------------------
@@ -237,6 +238,18 @@ rm -rf "$kit2/data/builder" "$kit2/data/game"
 sed -i "s/^sha256=.*/sha256=$(printf '0%.0s' {1..64})/" "$kit2/data/longshot/LINUX.txt"
 bash "$kit2/scripts/build.sh" </dev/null >"$tmp/build5.txt" 2>&1; export CODE=$?
 check 'build: a damaged builder download stops, nothing unpacked' bash -c '[ $CODE -ne 0 ] && grep -q "is damaged" "$1" && [ ! -d "$2/data/builder/image" ]' _ "$tmp/build5.txt" "$kit2"
+# kit-mirror (0.11.1): Longshot's server failing (here a host blocked as in a test), the builder comes from the co-op
+# mirror (here a folder), checked against the same SHA-256; a mirror with another file is not used.
+rm -rf "$kit2" && cp -a "$kit" "$kit2" && rm -rf "$kit2/data/builder" "$kit2/data/game"
+mkdir -p "$tmp/mirror" && cp "$appimage" "$tmp/mirror/Longshot-test.AppImage"
+sed -i "s#^url=.*#url=https://git.magicbean.dev/MagicBeanDev/Longshot/releases/download/v3.0.0-rc.3/Longshot-test.AppImage#" "$kit2/data/longshot/LINUX.txt"
+printf 'mirror=%s\n' "$tmp/nowhere" >>"$kit2/data/longshot/LINUX.txt"
+OOT_COOP_TEST_BLOCK_HOST='magicbean\.dev$' OOT_COOP_MIRROR="$tmp/mirror" bash "$kit2/scripts/build.sh" </dev/null >"$tmp/build7.txt" 2>&1; export CODE=$?
+check 'build: the Longshot server blocked: the builder from the mirror, 3 tries first' bash -c '[ $CODE -eq 0 ] && grep -q "git.magicbean.dev failed (try 2 of 3)" "$1" && grep -q "got it from this PC" "$1" && [ -d "$2/data/builder/image" ]' _ "$tmp/build7.txt" "$kit2"
+rm -rf "$kit2/data/builder" "$kit2/data/game"
+printf 'not the builder' >"$tmp/mirror/Longshot-test.AppImage"
+OOT_COOP_TEST_BLOCK_HOST='magicbean\.dev$' OOT_COOP_MIRROR="$tmp/mirror" bash "$kit2/scripts/build.sh" </dev/null >"$tmp/build8.txt" 2>&1; export CODE=$?
+check 'build: a wrong file on the mirror is not used; the text names each host, the mirror and a browser test' bash -c '[ $CODE -ne 0 ] && grep -q "git.magicbean.dev: the download failed; this PC: the file is damaged" "$1" && grep -q "co-op mirror on GitHub" "$1" && grep -q "open this in a browser" "$1" && [ ! -d "$2/data/builder/image" ] && [ ! -f "$2/data/builder/Longshot-test.AppImage.part" ]' _ "$tmp/build8.txt" "$kit2"
 # No game file and no terminal (Steam's Game Mode on a first start): said, nothing asked.
 rm -rf "$kit2" && cp -a "$kit" "$kit2" && rm -rf "$kit2/data/game" "$kit2/data/game-files.txt"
 mv "$HOME/Downloads" "$HOME/Downloads-away"

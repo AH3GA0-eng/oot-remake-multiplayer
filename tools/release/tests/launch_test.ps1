@@ -1257,5 +1257,96 @@ try {
     foreach ($v in $wcVars) { Remove-Item "env:$v" -ErrorAction SilentlyContinue }
     Remove-Item -LiteralPath $wk -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+# kit-mirror (0.11.1): Get-KitDownload tries each URL several times, then curl.exe, then the co-op mirror, and never keeps a
+# file whose SHA-256 differs. Invoke-KitFetch is replaced in a child scope by a fake that logs each try and fails as told.
+$dl = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-dl-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Force -Path $dl | Out-Null
+try {
+    $good = Join-Path $dl 'good.bin'; Write-File $good 'the pinned file'
+    $goodSha = (Get-FileHash -LiteralPath $good -Algorithm SHA256).Hash.ToLowerInvariant()
+    $feed = 'file:///' + ($dl -replace '\\', '/')
+    & {
+        $script:tries = @()
+        # fail: host -> 'all' (always), 'web' (Invoke-WebRequest only), 'bad' (a wrong file)
+        $script:fail = @{}
+        function Invoke-KitFetch([string]$Url, [string]$Out, [string]$Method) {
+            $h = Get-KitUrlHost $Url
+            $script:tries += "$h/$Method"
+            $how = $script:fail[$h]
+            if ($how -eq 'all' -or ($how -eq 'web' -and $Method -eq 'web')) { throw 'The underlying connection was closed: An unexpected error occurred on a send.' }
+            if ($how -eq 'gone') { throw 'curl.exe: curl: (22) The requested URL returned error: 404 (exit 22)' }
+            if ($how -eq 'bad') { Write-File $Out 'something else'; return }
+            Copy-Item -LiteralPath $good -Destination $Out
+        }
+        function Reset-Dl { $script:tries = @(); $script:fail = @{}; $script:KitBadHosts = @{}; Remove-Item -LiteralPath "$dl\out.bin" -Force -ErrorAction SilentlyContinue }
+
+        Reset-Dl
+        $r = Get-KitDownload @('https://a.example/f') "$dl\out.bin" $goodSha @() 4 0
+        Check ($r -eq '' -and ($script:tries -join ',') -eq 'a.example/web' -and (Test-Path "$dl\out.bin")) "download: a working host, one try [$r $($script:tries -join ',')]"
+        $r = Get-KitDownload @('https://a.example/f') "$dl\out.bin" $goodSha.ToUpperInvariant() @() 4 0
+        Check ($r -eq '' -and $script:tries.Count -eq 1) 'download: a file already there with the right SHA-256 is not fetched again'
+
+        Reset-Dl; $script:fail['a.example'] = 'web'
+        $r = Get-KitDownload @('https://a.example/f') "$dl\out.bin" $goodSha @() 4 0
+        Check ($r -eq '' -and ($script:tries -join ',') -eq 'a.example/web,a.example/web,a.example/web,a.example/web,a.example/curl') "download: 4 tries, then curl.exe [$($script:tries -join ',')]"
+
+        Reset-Dl; $script:fail['a.example'] = 'all'; $script:fail['b.example'] = 'all'
+        $r = Get-KitDownload @('https://a.example/f', 'https://b.example/f') "$dl\out.bin" $goodSha @('https://mirror.example/f') 2 0
+        Check ($r -eq '' -and ($script:tries -join ',') -eq 'a.example/web,a.example/web,a.example/curl,b.example/web,b.example/web,b.example/curl,mirror.example/web') "download: every URL, then the mirror [$($script:tries -join ',')]"
+        $before = $script:tries.Count
+        Remove-Item -LiteralPath "$dl\out.bin" -Force
+        $r = Get-KitDownload @('https://a.example/g') "$dl\out.bin" $goodSha @('https://mirror.example/g') 2 0
+        Check ($r -eq '' -and ($script:tries[$before..($script:tries.Count - 1)] -join ',') -eq 'a.example/web,mirror.example/web') "download: a host that failed every try gets one try next time [$($script:tries -join ',')]"
+
+        Reset-Dl; $script:fail['a.example'] = 'bad'
+        $r = Get-KitDownload @('https://a.example/f') "$dl\out.bin" $goodSha @('https://mirror.example/f') 4 0
+        Check ($r -eq '' -and (Read-File "$dl\out.bin") -eq 'the pinned file' -and ($script:tries -join ',') -eq 'a.example/web,mirror.example/web') "download: a wrong file is thrown away and the mirror's taken [$($script:tries -join ',')]"
+        Reset-Dl; $script:fail['a.example'] = 'bad'; $script:fail['mirror.example'] = 'bad'
+        $r = Get-KitDownload @('https://a.example/f') "$dl\out.bin" $goodSha @('https://mirror.example/f') 4 0
+        Check ($r -match 'a\.example: .*SHA-256 differs' -and $r -match 'mirror\.example: .*SHA-256 differs' -and -not (Test-Path "$dl\out.bin") -and -not (Test-Path "$dl\out.bin.part")) "download: wrong files everywhere: nothing kept, each host named [$r]"
+
+        Reset-Dl; $script:fail['a.example'] = 'gone'
+        $r = Get-KitDownload @('https://a.example/f') "$dl\out.bin" $goodSha @('https://mirror.example/f') 4 0
+        Check ($r -eq '' -and ($script:tries -join ',') -eq 'a.example/web,mirror.example/web' -and -not $script:KitBadHosts['a.example']) "download: a 404 is not asked again, and its host is not marked bad [$($script:tries -join ',')]"
+        Check (-not (Test-KitGoneError ([Exception]::new('curl.exe: curl: (35) schannel: failed to receive handshake (exit 35)')))) 'download: a TLS error is no 404'
+
+        Reset-Dl; $script:fail['a.example'] = 'all'; $script:fail['mirror.example'] = 'all'
+        $r = Get-KitDownload @('https://a.example/f') "$dl\out.bin" $goodSha @('https://mirror.example/f') 2 0
+        Check ($r -match '^a\.example: The underlying connection' -and $r -match '; mirror\.example: ') "download: everything failed: each host and why [$r]"
+        $text = Get-KitDownloadFailText 'tools.lock' $r 'https://git.magicbean.dev/x/tools.lock' $true
+        Check ($text -match 'co-op mirror on GitHub' -and $text -match 'antivirus' -and $text -match 'VPN or proxy' -and $text -match 'https://git\.magicbean\.dev/x/tools\.lock' -and $text -match 'a\.example') "download: the failure text names the hosts, the mirror, the usual causes and a browser test [$text]"
+
+        # (review-kit-mirror 4) the mirror shares github.com with upstream URLs: a "bad" github.com still gets the mirror's full round
+        Reset-Dl; $script:fail['gh.example'] = 'all'
+        $r = Get-KitDownload @('https://gh.example/upstream') "$dl\out.bin" $goodSha @('https://gh.example/mirror') 2 0
+        Check (($script:tries -join ',') -eq 'gh.example/web,gh.example/web,gh.example/curl,gh.example/web,gh.example/web,gh.example/curl') "download: the mirror gets every try even on a host that failed [$($script:tries -join ',')]"
+
+        Reset-Dl
+        Check ((Get-KitDownload @('https://a.example/f') "$dl\out.bin" '' @() 4 0) -match 'no SHA-256' -and $script:tries.Count -eq 0) 'download: nothing is fetched without a SHA-256 to check it against'
+    }
+    # the real fetchers on file:// (Invoke-WebRequest and curl.exe), and a test-blocked host falling back to the mirror
+    $script:KitBadHosts = @{}
+    Invoke-KitFetch "$feed/good.bin" "$dl\web.bin" 'web'; Invoke-KitFetch "$feed/good.bin" "$dl\curl.bin" 'curl'
+    Check ((Read-File "$dl\web.bin") -eq 'the pinned file' -and (Read-File "$dl\curl.bin") -eq 'the pinned file') 'download: Invoke-WebRequest and curl.exe both fetch'
+    # (review-kit-mirror 2) Invoke-WebRequest -OutFile reads [ ] as wildcards: a kit folder named so still gets its file
+    $br = Join-Path $dl 'kit [copy] (1)'; New-Item -ItemType Directory -Force -Path $br | Out-Null
+    Invoke-KitFetch "$feed/good.bin" (Join-Path $br 'web.bin') 'web'; Invoke-KitFetch "$feed/good.bin" (Join-Path $br 'curl.bin') 'curl'
+    Check ((Read-File (Join-Path $br 'web.bin')) -eq 'the pinned file' -and (Read-File (Join-Path $br 'curl.bin')) -eq 'the pinned file') 'download: a folder with [ ] in its name: both fetchers'
+    $threw = ''; try { Invoke-KitFetch "$feed/missing.bin" "$dl\m.bin" 'curl' } catch { $threw = $_.Exception.Message }
+    Check ($threw -match '^curl\.exe: ') "download: a failed curl.exe throws its own reason [$threw]"
+    $env:OOT_COOP_TEST_BLOCK_HOST = 'magicbean\.dev$'
+    try { $r = Get-KitDownload @('https://git.magicbean.dev/MagicBeanDev/Longshot/releases/download/x/good.bin') "$dl\blocked.bin" $goodSha @("$feed/good.bin") 2 0 }
+    finally { Remove-Item env:OOT_COOP_TEST_BLOCK_HOST -ErrorAction SilentlyContinue }
+    Check ($r -eq '' -and (Read-File "$dl\blocked.bin") -eq 'the pinned file') "download: git.magicbean.dev blocked: the file comes from the mirror [$r]"
+    $keepTls = [Net.ServicePointManager]::SecurityProtocol
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls11
+    Set-KitTls
+    $now = [Net.ServicePointManager]::SecurityProtocol
+    Check (($now -band [Net.SecurityProtocolType]::Tls12) -and ($now -band [Net.SecurityProtocolType]::Tls11)) "download: Set-KitTls adds Tls12 to what is enabled, takes nothing away [$now]"
+    [Net.ServicePointManager]::SecurityProtocol = $keepTls
+} finally {
+    Remove-Item -LiteralPath $dl -Recurse -Force -ErrorAction SilentlyContinue
+}
 if ($failed) { Write-Host "$failed failed"; exit 1 }
 Write-Host 'all passed'
