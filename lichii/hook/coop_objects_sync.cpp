@@ -326,6 +326,13 @@ bool NativeOnlyName(std::string_view name) {
 }
 
 LifeRouted RouteLife(const LifeAsk& a) {
+    if (a.heal) {
+        // Only through the game's own Life step (a negative sum), never a write; nothing to do when not lower.
+        if (a.step_seen && a.has_component && a.old >= 0 && a.life > a.old) {
+            return {LifeRoute::step, a.old - a.life};  // (a stale give was taken back: the whole raise again)
+        }
+        return {LifeRoute::lost, 0};
+    }
     if (a.hurt > 0 && a.replay_on && !a.direct && a.has_player) {
         return {LifeRoute::replay, a.hurt};
     }
@@ -2525,8 +2532,24 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
         } else if (const auto* handed = std::get_if<proto::HandoverState>(&m)) {
             Object* o = find(handed->id);
             // The lower life of the two, so an enemy never heals across a
-            // hand-over. Its place stays our own enemy's.
-            if (o != nullptr && handed->state.life && o->life &&
+            // hand-over. Its place stays our own enemy's. A boss is the
+            // exception: one boss death for everyone holds a copy at 1 (and
+            // its own hits lowered it where the owner refused them), so it
+            // takes the old owner's life, raised through its own Life step.
+            if (o != nullptr && handed->state.life && o->life && IsBoss(o->name) &&
+                handed->state.life->life > *o->life && handed->state.life->life > 0) {
+                LifeWrite raise;
+                raise.address = o->address;
+                raise.life = handed->state.life->life;
+                raise.heal = true;
+                writes.push_back(raise);
+                notes_.emplace_back("ours now with less life than its old owner's (" + std::to_string(*o->life) +
+                                    " < " + std::to_string(handed->state.life->life) +
+                                    "): raised through its own Life step: " + o->name);
+                o->life = handed->state.life->life;
+                o->hurt_left = 0;
+                o->hurt_until = 0;
+            } else if (o != nullptr && handed->state.life && o->life &&
                 handed->state.life->life < *o->life) {
                 write(*o, handed->state.life->life);
                 if (handed->state.life->life <= 0) {

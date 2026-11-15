@@ -158,6 +158,15 @@ Now:
   is never killed here.
 - The 10 s bosses line: "N own Life steps held at 1, N let die after the owner's".
 - At most `kMaxHeld` (8) copy bosses are held at once.
+- A boss copy that becomes the owner (the stun hand-over) takes the old owner's life before its first own hit.
+  Otherwise a copy held at 1, or one lowered by its own hits, would make one eye hit kill a near-full boss
+  for everyone. The HandoverState branch sends a `LifeWrite::heal` to the old owner's life. It goes in only
+  through the game's own Life step, as a negative sum (the game's heal; RouteLife), and is never written.
+  Other enemies still take the lower life of the two. Log line: "ours now with less life than its old
+  owner's (1 < 21): raised through its own Life step"; if the game does not take it: "share raise ... not
+  taken".
+- Scaling trace: "difficulty: bosses: N Life steps with damage, N damage in, N taken (boss life N%)" every
+  5 s, apart from the enemies' line.
 - LANE1 research (hs-boss-fix-gohma 20261115-011642, quest Get_StoneOfForest at GoToBossRoom):
   - A test `kill` (a direct life write of 0) on the owner's Gohma left her at 1 (21 -> 1). She holds her
     life at 1 outside her stun even against that write.

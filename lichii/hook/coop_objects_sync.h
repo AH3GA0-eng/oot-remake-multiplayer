@@ -176,6 +176,10 @@ struct LifeWrite {
     // Life step (Hookshot, patch 0007), so the game still runs its own death. For the test kill: a boss takes no
     // plain hit outside its weak point (Gohma on the ceiling). Never written directly: not taken, nothing happens.
     bool direct = false;
+    // Raise its life to `life` through the game's own Life step (a negative sum: the game's heal), never a write:
+    // a boss copy that becomes ours with less life than its old owner's had (held at 1 by HeldLifeStep, or
+    // lowered by its own hits) takes the old owner's life, so one hit never kills a near-full boss (Barinade).
+    bool heal = false;
 };
 
 // Shared: enemies, animals (a cucco is Animal_Cucco), townspeople (Npc_, but
@@ -355,6 +359,7 @@ struct LifeAsk {
     bool has_component = false;
     bool replay_seen = true;   // its damage step saw our last replayed hit (or we never replayed one)
     std::int32_t stale = 0;    // given to the step earlier and never taken (taken back now)
+    bool heal = false;         // LifeWrite::heal: a raise to `life` through the Life step
 };
 struct LifeRouted {
     LifeRoute route = LifeRoute::lost;

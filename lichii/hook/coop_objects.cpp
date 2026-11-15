@@ -3077,6 +3077,7 @@ private:
         ask.hurt = w.hurt;
         ask.life = w.life;
         ask.old = old;
+        ask.heal = w.heal;
         std::optional<u64> life;
 #ifdef COOP_HOOKSHOT
         // Hookshot with patch 0007: the hit (or the life the owner says this
@@ -3098,7 +3099,7 @@ private:
                 ask.replay_seen = ReplaySeen(r, *life);
             }
         }
-        const bool steppable = ask.step_seen && life && old >= 0 && (w.hurt > 0 || w.life < old) &&
+        const bool steppable = ask.step_seen && life && old >= 0 && (w.hurt > 0 || w.life < old || (w.heal && w.life > old)) &&
                                !(w.hurt > 0 && replay_ && !w.direct && player != 0);
         if (steppable) {
             ask.stale = steps.Take(*life);
@@ -3169,6 +3170,12 @@ private:
             }
 #endif
             break;
+        }
+        if (w.heal) {
+            LOG_INFO(Core, "coop: objects: share raise {:#x} '{}': not taken by its game's Life step: its life stays {} "
+                           "(old owner's {})",
+                     w.address, NameOf(w.address), old, w.life);
+            return;  // never a write of ours
         }
         if (w.direct) {
             LOG_INFO(Core, "coop: objects: test kill {:#x}: the game's Life step did not take it (or there is none: "
