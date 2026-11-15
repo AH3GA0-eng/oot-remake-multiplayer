@@ -558,7 +558,11 @@ TEST_CASE("platforms: our Link rides by the game's RideOnPlayer and the platform
     CHECK_FALSE(PlatformSync::OurLinkRides(lift, under));
     lift.ride_plug = true;
     CHECK(PlatformSync::OurLinkRides(lift, on));
+    CHECK(PlatformSync::OurLinkRides(lift, beside));  // a wide platform: our Link on its far edge (review)
+    lift.other_on = true;
     CHECK_FALSE(PlatformSync::OurLinkRides(lift, beside));  // another player's puppet on our copy
+    CHECK(PlatformSync::OurLinkRides(lift, on));            // both of us on it
+    lift.other_on = false;
     lift.ride_plug = false;
     CHECK_FALSE(PlatformSync::OurLinkRides(lift, on));  // the game says nobody is on it
     PlatformSync::Driver mover{0x2000, kHash, "GroundControlActor_ResidentMoveTo", {10.0f, 5.0f, 0.0f}, {}};
@@ -602,4 +606,63 @@ TEST_CASE("platforms: no clock write while our Link rides it, in step once he is
     CHECK(std::fabs(a.clock - b.clock) < PlatformSync::kDriftS + 0.06f);
     CHECK(has("our Link is off it"));
     CHECK_FALSE(has("do not hold"));
+}
+
+TEST_CASE("platforms: a jump on the platform keeps the hold, a longer time off it does not (#194 review)") {
+    Game a;
+    Game b;
+    a.self = 1;
+    b.self = 2;
+    b.clock = 30.0f;
+    for (Game* g : {&a, &b}) {
+        g->driver_name = "Obj_InsideTheDekuTree_ElevatorLift_A_02";
+    }
+    a.link = {6.0f, 0.0f, 0.0f};
+    b.link = {1.2f, 0.3f, 0.0f};
+    b.ride_plug = true;
+    std::uint64_t time = 0;
+    a.Tick(time);
+    Play(a, b, time, 3000);
+    REQUIRE(b.sync.Writes() == 0);
+    // A jump: in the air the plug is 0 and Link is over the footprint's top for half a second.
+    b.ride_plug = false;
+    b.link = {1.2f, 3.0f, 0.0f};
+    Play(a, b, time, 500);
+    CHECK(b.sync.Writes() == 0);
+    // Landed again: still held.
+    b.ride_plug = true;
+    b.link = {1.2f, 0.3f, 0.0f};
+    Play(a, b, time, 1000);
+    CHECK(b.sync.Writes() == 0);
+    // Off it for good: in step after the grace.
+    b.ride_plug = false;
+    b.link = {6.0f, 0.0f, 0.0f};
+    Play(a, b, time, 3000);
+    CHECK(b.sync.Writes() >= 1);
+    CHECK(std::fabs(a.clock - b.clock) < PlatformSync::kDriftS + 0.06f);
+}
+
+TEST_CASE("platforms: an owner riding its platform does not put its clock back after a pause (#194 review)") {
+    Game a;
+    Game b;
+    a.self = 1;
+    b.self = 2;
+    b.clock = 30.0f;
+    for (Game* g : {&a, &b}) {
+        g->driver_name = "Obj_InsideTheDekuTree_ElevatorLift_A_02";
+        g->link = {6.0f, 0.0f, 0.0f};
+    }
+    std::uint64_t time = 0;
+    Play(a, b, time, 4000);
+    REQUIRE(b.sync.OwnerOf(kHash, 2, time + 10'000'000) == 1);
+    a.link = {1.2f, 0.3f, 0.0f};  // A stands on its lift
+    a.ride_plug = true;
+    a.paused = true;
+    Play(a, b, time, 1500);
+    a.paused = false;
+    Play(a, b, time, 3000);
+    CHECK(a.sync.Writes() == 0);
+    for (const auto& n : a.notes) {
+        CHECK(n.find("stood still") == std::string::npos);
+    }
 }

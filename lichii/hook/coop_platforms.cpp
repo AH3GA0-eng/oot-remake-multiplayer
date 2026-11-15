@@ -76,6 +76,13 @@ bool IsDriver(std::string_view name) {
     return false;
 }
 
+bool PlatformSync::OnFootprint(const coop::protocol::Vec3& platform, const coop::protocol::Vec3& who) {
+    const float dx = who[0] - platform[0];
+    const float dz = who[2] - platform[2];
+    const float dy = who[1] - platform[1];
+    return dx * dx + dz * dz <= kRideRadiusM * kRideRadiusM && dy >= -kRideBelowM && dy <= kRideAboveM;
+}
+
 bool PlatformSync::OurLinkRides(const Driver& d, const coop::protocol::Vec3& player) {
     if (d.ride_plug == false) {
         return false;  // the game says no player is on it
@@ -83,10 +90,11 @@ bool PlatformSync::OurLinkRides(const Driver& d, const coop::protocol::Vec3& pla
     if (d.name.starts_with("GroundControlActor_") || d.name.starts_with("GrouondControlActor_")) {
         return d.ride_plug.value_or(false);
     }
-    const float dx = player[0] - d.position[0];
-    const float dz = player[2] - d.position[2];
-    const float dy = player[1] - d.position[1];
-    return dx * dx + dz * dz <= kRideRadiusM * kRideRadiusM && dy >= -kRideBelowM && dy <= kRideAboveM;
+    const bool ours_on = OnFootprint(d.position, player);
+    if (d.ride_plug == true) {
+        return ours_on || !d.other_on;  // only another player's puppet on it is not ours
+    }
+    return ours_on;
 }
 
 std::string Where(std::uint64_t key) {
@@ -395,7 +403,11 @@ void PlatformSync::Tick(const std::string& scene, std::uint8_t self, std::uint64
     message.server_time_us = server_us;
     for (const auto& [m, d] : near) {
         State& s = states_[d->hash];
-        const bool ridden = OurLinkRides(*d, *player);  // issue 194: no clock write moves our Link
+        // Issue 194: no clock write moves our Link; a jump on it (the plug 0 in the air) keeps the hold.
+        if (OurLinkRides(*d, *player)) {
+            s.ride_until_us = steady_us + kRideGraceUs;
+        }
+        const bool ridden = steady_us < s.ride_until_us;
         if (s.held_for_ride && !ridden) {
             s.held_for_ride = false;
             char text[160];

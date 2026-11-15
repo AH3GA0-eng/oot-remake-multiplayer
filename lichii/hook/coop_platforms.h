@@ -160,15 +160,23 @@ public:
         // Issue 194: the game's own ride state, the platform AI's bool plug RideOnPlayer (set every frame from a
         // physics contact with a player; coop_lift_ride.h). Unset: the actor has no such plug.
         std::optional<bool> ride_plug;
+        // Another player stands on its footprint (their samples): what else a plug of 1 can mean.
+        bool other_on = false;
     };
     // Issue 194: our Link rides this platform, so a write of its clock would move him with it (the
     // platform jumped, and bounced back each time the game took a write back). The plug RideOnPlayer
     // is the game's word that a player is on it, but it is also 1 while another player's puppet rides
-    // our copy (CoopLiftRide sets it), so our Link must be on the platform actor's footprint too; with
-    // no plug the footprint alone. A GroundControl controller is not where its floor is: only its plug.
+    // our copy (CoopLiftRide sets it): a plug of 1 is ours unless another player is on the footprint
+    // and our Link is not (a platform wider than the footprint: our Link on its far edge is still
+    // ours). With no plug the footprint alone. A GroundControl controller is not where its floor is:
+    // only its plug.
     static constexpr float kRideRadiusM = 1.8f;  // as CoopLiftRide's footprint
     static constexpr float kRideBelowM = 0.5f;
     static constexpr float kRideAboveM = 2.5f;
+    // The plug is 0 while our Link is in the air (a jump on the platform): still riding this long after
+    // the last look that said so, so no write moves the platform from under his landing.
+    static constexpr std::uint64_t kRideGraceUs = 1'000'000;
+    static bool OnFootprint(const coop::protocol::Vec3& platform, const coop::protocol::Vec3& who);
     static bool OurLinkRides(const Driver& d, const coop::protocol::Vec3& player);
     // The 8-byte words of a driver (SignProbe::Read), plus its AS slot 0
     // frame under Key(kRegionAsFrame, 0) when it has one. Empty: not there.
@@ -233,6 +241,7 @@ private:
         bool mine_moved = false;
         // Issue 194: a write was held back while our Link rode it (logged once a ride).
         bool held_for_ride = false;
+        std::uint64_t ride_until_us = 0;  // steady time: riding until then (kRideGraceUs after the last look)
     };
 
     std::string scene_;
