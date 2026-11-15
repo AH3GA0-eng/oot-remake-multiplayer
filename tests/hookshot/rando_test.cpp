@@ -5,6 +5,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <cstring>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -54,6 +55,9 @@ struct World {
     std::vector<std::wstring> runs;
     int fail_at = -1;  // the run (0, 1, ...) that fails
     std::string fail_output;  // what OOTRR writes into its log (each run)
+    std::set<std::string> bad_presets;  // presets this OOTRR cannot make (#16: OOTRR 0.5.0's full_shuffle)
+    std::set<std::string> stopped_presets;  // presets whose run is stopped (a timeout, the game closing)
+    bool probe = false;                 // Hooks::probe_presets (off: the tests count every run)
     std::vector<std::string> staged;  // the size tables the last build saw beside it (their text, sorted)
     World() {
         std::error_code ec;
@@ -73,12 +77,18 @@ struct World {
         Rando::Hooks h;
         h.game_dir = base;
         h.entropy = [] { return std::uint64_t{123456789}; };
+        h.probe_presets = probe;
         h.run = [this](const fs::path& program, const std::vector<std::string>& args, const fs::path& log) {
             const std::wstring line = CommandLine(program, args);
             const std::lock_guard lock(mutex);
             if (!fail_output.empty()) Put(log, fail_output);
             const int at = static_cast<int>(runs.size());
             runs.push_back(line);
+            if (args.size() >= 2 && args[0] == "generate" && stopped_presets.count(args[1]) != 0) return kStopped;
+            if (args.size() >= 2 && args[0] == "generate" && bad_presets.count(args[1]) != 0) {
+                Put(log, "This build cannot apply these settings yet: bridge is dungeons\n");
+                return 1;
+            }
             if (at == fail_at) return 3;
             // build <seed> <game> <load dir> <folder>: write the folder into the load dir as OOTRR does, and note
             // the size tables OOTRR finds there (mods/<name>/romfs only).
@@ -150,7 +160,8 @@ TEST_CASE("rando: seed words and folders as OOTRR names them") {
 }
 
 TEST_CASE("rando: what to do for the settings, the seeds built and the switches") {
-    const std::vector<Built> built{{"randomizer-AB12", "AB12", "default"}, {"randomizer-ZZ-easy", "ZZ", "easy"}};
+    const std::vector<Built> built{{"randomizer-AB12", "AB12", "default", ""},
+                                   {"randomizer-ZZ-easy", "ZZ", "easy", ""}};
     {
         const Plan p = Decide({true, "NEW1", "default"}, built, {});
         CHECK(p.what == Plan::Do::build);
@@ -272,6 +283,7 @@ TEST_CASE("rando: a failed build leaves no stage and no seed folder") {
 TEST_CASE("rando: a failed build is said once and not tried again until the settings change") {
     World w;
     w.fail_at = 1;
+    w.fail_output = "This build cannot apply these settings yet: bridge is dungeons\n";
     CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
     loader.Start();
     std::vector<std::string> log;
@@ -290,6 +302,15 @@ TEST_CASE("rando: a failed build is said once and not tried again until the sett
     CHECK(w.runs.size() == 2);
     CHECK(rando.Status().find("OOTRR could not build the seed (exit 3)") != std::string::npos);
     CHECK_FALSE(fs::exists(w.mods / "randomizer-FAIL1"));
+    {
+        const std::lock_guard lock(log_mutex);
+        const bool path_logged = std::any_of(log.begin(), log.end(), [&](const std::string& l) {
+            return l.find(CoopMods::ToUtf8(w.mods / kFolder / kLogFile)) != std::string::npos;
+        });
+        CHECK(path_logged);  // longshot_log.txt has the full path
+    }
+    const auto chat = rando.TakeLines();
+    CHECK(std::find(chat.begin(), chat.end(), "OOTRR: This build cannot apply these settings yet: bridge is dungeons") != chat.end());
     REQUIRE(loader.Set(kFolder, "game_folder", CoopMods::ToUtf8(w.game) + "/"));  // another setting, same seed
     rando.Wait();
     CHECK(w.runs.size() == 2);
@@ -631,7 +652,12 @@ TEST_CASE("rando: the line a guest tells the others never holds a local path or 
     w.fail_at = 1;
     loader.SetHostValues(std::vector<CoopMods::SharedValue>{{kId, "on", "1"}, {kId, "seed", "HOSTP2"}});
     rando.Wait();
-    CHECK(rando.Status().find(CoopMods::ToUtf8(w.mods / kFolder / kLogFile)) != std::string::npos);
+    // (the tab names the file plainly; its full path is in this game's chat, once)
+    CHECK(rando.Status().find(std::string("see ") + kLogFile + " in the game's mods folder, " + kFolder) != std::string::npos);
+    const auto chat = rando.TakeLines();
+    CHECK(std::count_if(chat.begin(), chat.end(), [&](const std::string& l) {
+              return l.find(ChatSafe(CoopMods::ToUtf8(w.mods / kFolder / kLogFile), 400)) != std::string::npos;
+          }) == 1);
     const auto lines = told.Get();
     REQUIRE(lines.size() == 2);
     CHECK(lines[0] == "[randomizer] I play without the host's seed: OOTRR not found");
@@ -685,6 +711,176 @@ TEST_CASE("rando: a line not sent yet is dropped when the host's seed changes or
     rando.Recheck();
     rando.Wait();
     CHECK(told.Get().empty());
+}
+
+TEST_CASE("rando: OOTRR's last lines for the log, and the tab's plain file name") {
+    using CoopRando::LastLines;
+    CHECK(LastLines("", 10).empty());
+    CHECK(LastLines("a\r\n\r\nb\n  \nc", 10) == std::vector<std::string>{"a", "b", "c"});
+    CHECK(LastLines("1\n2\n3\n4\n", 2) == std::vector<std::string>{"3", "4"});
+    const std::string line = CoopRando::SeeLogLine("OOTRR could not make the seed (exit 1)");
+    CHECK(line.find("last-build.txt") != std::string::npos);
+    CHECK(line.find("oot-remake-randomizer") != std::string::npos);
+    CHECK_FALSE(HasPath(line));
+}
+
+TEST_CASE("rando: OOTRR's own error lines for the chat (#16)") {
+    using CoopRando::ErrorLines;
+    const std::string out = "reading settings\nThis build cannot apply these settings yet: bridge is dungeons\nError: 2\n"
+                            "x\ny\nz\nfailed\nfailed again\nerror 6\n";
+    const auto e = ErrorLines(out, 5);
+    REQUIRE(e.size() == 5);
+    CHECK(e[0] == "This build cannot apply these settings yet: bridge is dungeons");
+    CHECK(e[4] == "error 6");
+    CHECK(ErrorLines("one\ntwo\n", 5) == std::vector<std::string>{"one", "two"});  // nothing error-like: the last lines
+}
+
+namespace {
+std::vector<std::string> PresetChoices(const CoopMods::Loader& loader) {
+    std::vector<std::string> out;
+    for (const CoopMods::SettingRow& s : loader.Settings(kFolder)) {
+        if (s.setting.key == "preset") {
+            for (const auto& c : s.setting.choices) out.push_back(c.first);
+        }
+    }
+    return out;
+}
+std::size_t Generates(const World& w, const char* preset) {
+    std::size_t n = 0;
+    const std::wstring want = L"generate " + std::wstring(preset, preset + std::strlen(preset)) + L" ";
+    for (const auto& r : w.runs) n += r.find(want) != std::wstring::npos ? 1 : 0;
+    return n;
+}
+}  // namespace
+
+TEST_CASE("rando: only the presets this OOTRR can make are offered, a bad one goes back to default (#16)") {
+    World w;
+    w.probe = true;
+    w.bad_presets = {"full_shuffle"};
+    {
+        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+        loader.Start();
+        Rando rando(loader, w.Hooks());
+        rando.Start();
+        w.Settings(loader);
+        REQUIRE(loader.Set(kFolder, "preset", "full_shuffle"));
+        REQUIRE(loader.Set(kFolder, "seed", "PRE1"));
+        REQUIRE(loader.Set(kFolder, "on", "1"));
+        rando.Wait();
+        for (const char* p : kPresets) CHECK(Generates(w, p) >= 1);  // each tried once
+        CHECK(loader.Value(kId, "preset") == "default");
+        const auto choices = PresetChoices(loader);
+        CHECK(std::find(choices.begin(), choices.end(), "full_shuffle") == choices.end());
+        CHECK(std::find(choices.begin(), choices.end(), "keysanity") != choices.end());
+        CHECK(Get(w.mods / kFolder / kPresetsFile).find("full_shuffle bad") != std::string::npos);
+        const auto chat = rando.TakeLines();
+        CHECK(std::find(chat.begin(), chat.end(),
+                        "Randomizer Settings full_shuffle are not in this OOTRR yet: back to default.") != chat.end());
+        CHECK(On(loader, "randomizer-PRE1"));  // built with default
+    }
+    // The next run of the game, the same OOTRR: not tried again.
+    const std::size_t before = w.runs.size();
+    {
+        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+        loader.Start();
+        Rando rando(loader, w.Hooks());
+        rando.Start();
+        REQUIRE(loader.Set(kFolder, "seed", "PRE2"));
+        rando.Wait();
+        CHECK(w.runs.size() == before + 2);  // generate and build only
+    }
+    // Another OOTRR (a kit update): tried again.
+    Put(w.ootrr, "MZ new");
+    const std::size_t before2 = w.runs.size();
+    {
+        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+        loader.Start();
+        Rando rando(loader, w.Hooks());
+        rando.Start();
+        REQUIRE(loader.Set(kFolder, "seed", "PRE3"));
+        rando.Wait();
+        CHECK(w.runs.size() == before2 + std::size(kPresets) + 2);
+    }
+}
+
+TEST_CASE("rando: the preset cache's text") {
+    PresetCache c{"12-34", {{"default", true}, {"full_shuffle", false}}};
+    const PresetCache back = ReadPresetCache(PresetCacheText(c));
+    CHECK(back.key == "12-34");
+    CHECK(back.ok == c.ok);
+    CHECK(ReadPresetCache("").key.empty());
+}
+
+TEST_CASE("rando: chat lines mask the user's folder and are cut") {
+    using CoopRando::ChatSafe;
+    CHECK(ChatSafe(R"(see C:\Users\SecretName\Desktop\kit\last-build.txt)") == R"(see C:\Users\<user>\Desktop\kit\last-build.txt)");
+    CHECK(ChatSafe("at C:/users/Secret Name/x") == "at C:/users/<user>/x");  // (a name with a space: all of it)
+    CHECK(ChatSafe("/home/deck/kit/data/game") == "/home/<user>/kit/data/game");
+    CHECK(ChatSafe("users and homes are words") == "users and homes are words");
+    const std::string cut = ChatSafe(std::string(150, 'a'));
+    CHECK(cut == std::string(100, 'a') + "...");
+}
+
+TEST_CASE("rando: a preset whose try was stopped is offered, not cached, and tried again at the next start (#16)") {
+    World w;
+    w.probe = true;
+    w.stopped_presets = {"keysanity"};
+    w.bad_presets = {"full_shuffle"};
+    {
+        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+        loader.Start();
+        Rando rando(loader, w.Hooks());
+        rando.Start();
+        w.Settings(loader);
+        REQUIRE(loader.Set(kFolder, "seed", "STOP1"));
+        REQUIRE(loader.Set(kFolder, "on", "1"));
+        rando.Wait();
+        const auto choices = PresetChoices(loader);
+        CHECK(std::find(choices.begin(), choices.end(), "keysanity") != choices.end());  // not known: offered
+        CHECK(std::find(choices.begin(), choices.end(), "full_shuffle") == choices.end());
+        const std::string cache = Get(w.mods / kFolder / kPresetsFile);
+        CHECK(cache.find("keysanity") == std::string::npos);
+        CHECK(cache.find("full_shuffle bad") != std::string::npos);
+        CHECK(Generates(w, "keysanity") == 1);
+        REQUIRE(loader.Set(kFolder, "seed", "STOP2"));  // a second build in this run: not tried again
+        rando.Wait();
+        CHECK(Generates(w, "keysanity") == 1);
+    }
+    // The next start: only keysanity is tried again; now it works and is cached.
+    w.stopped_presets.clear();
+    const std::size_t shuffles = Generates(w, "full_shuffle");
+    {
+        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+        loader.Start();
+        Rando rando(loader, w.Hooks());
+        rando.Start();
+        REQUIRE(loader.Set(kFolder, "seed", "STOP3"));
+        rando.Wait();
+        CHECK(Generates(w, "keysanity") == 2);
+        CHECK(Generates(w, "full_shuffle") == shuffles);  // known bad: not tried again
+        CHECK(Get(w.mods / kFolder / kPresetsFile).find("keysanity ok") != std::string::npos);
+    }
+}
+
+TEST_CASE("rando: only a real refusal counts as a bad preset") {
+    CHECK(PresetRefused(1, "error: This build cannot apply these settings yet: bridge is dungeons"));
+    CHECK_FALSE(PresetRefused(1, " \r\n"));      // said nothing
+    CHECK_FALSE(PresetRefused(kStopped, "half"));  // a timeout or a stop
+    CHECK_FALSE(PresetRefused(-1, ""));            // did not start
+    CHECK_FALSE(PresetRefused(0, "fine"));
+}
+
+TEST_CASE("rando: OOTRR's output is read from its end, at most the cap") {
+    World w;
+    const fs::path f = w.base / "big.txt";
+    Put(f, std::string(100, 'a') + "THE END");
+    CHECK(ReadTail(f, 7) == "THE END");
+    CHECK(ReadTail(f, 1000).size() == 107);
+    CHECK(ReadTail(w.base / "none.txt", 10).empty());
+}
+
+TEST_CASE("rando: chat lines have no control characters") {
+    CHECK(CoopRando::ChatSafe("a\tb\x1b[31mc\x7f") == "a b [31mc ");
 }
 
 namespace {

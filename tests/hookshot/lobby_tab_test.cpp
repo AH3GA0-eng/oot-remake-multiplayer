@@ -243,3 +243,37 @@ TEST_CASE("lobby tab: a player who leaves takes their page with them, many place
     Choose(t, "Mido");
     CHECK(Has(t.view(), "Kick"));
 }
+
+// lobby-state-b (player report 22): the Multiplayer tab said "Connected!" while this tab said "You are not in a game".
+TEST_CASE("lobby tab: co-op started but not in the session yet says so, not 'not in a game'") {
+    Tab t;
+    t.Show();
+    Lobby l;
+    l.waiting = "Co-op is starting...";
+    t.Set(l);
+    View v = t.view();
+    REQUIRE(v.rows.size() == 3);
+    CHECK(v.rows[1].name == "Co-op is starting...");
+    CHECK_FALSE(Has(v, "You are not in a game."));
+    l.waiting = "Your friend's game turned this one away: the session is full.";
+    t.Set(l);
+    CHECK(t.view().rows[1].name == l.waiting);
+}
+
+TEST_CASE("lobby tab: in the session before a file is loaded, the players show with a line to load one") {
+    for (const bool host : {false, true}) {
+        Tab t;
+        t.Show();
+        Lobby l = Game(host);
+        t.Set(l);
+        View v = t.view();
+        CHECK(Has(v, "Host: Link" + std::string(host ? " (you)" : "")));
+        CHECK(Has(v, host ? "Saria" : "Saria (you)"));
+        CHECK(Has(v, "Load your file to play: the others see you once you do."));
+        for (auto& p : l.players) {
+            if (p.self) p.place = "Kokiri Forest";
+        }
+        t.Set(l);
+        CHECK_FALSE(Has(t.view(), "Load your file to play: the others see you once you do."));
+    }
+}

@@ -285,10 +285,14 @@ elif [[ -n $pack_from && -e $pack_from ]]; then
     if "$PY" -I -B "$DATA/tools/puppet_pack/build.py" --romfs "$pack_from" --mod-dir "$mod" --title-rows 2>&1 | sed 's/^/    /'; then
         printf '%s' "$pack_stamp" >"$mod/.coop-stamp"
     else
-        warn 'the puppet pack was not built (said why above): other players show as stand-ins.'
+        warn 'the puppet pack was not built (said why above): the other players show as names only. Every start tries again.'
     fi
 else
-    warn 'no game files to build the puppet pack from: start again with --game <your .nup>.'
+    if [[ -n $pack_from ]]; then
+        warn "the puppet pack was not made: your game file is not at $pack_from any more (data/game-files.txt names it; moved, renamed or its drive not mounted). Put it back, or start again with --game <your .nup>. Until then the other players show as names only."
+    else
+        warn 'the puppet pack was not made: the kit does not know your game file (no data/game-files.txt). Start again with --game <your .nup>. Until then the other players show as names only.'
+    fi
 fi
 # Randomizer seeds built before this puppet pack: the game uses one size table, the seed's, and without the pack's
 # entries it aborts while it loads. Built again with every other mod's table beside it (as the module does,

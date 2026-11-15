@@ -37,6 +37,8 @@ CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool(
 // Settings() from the process's variables and the puppet pack under
 // LoadDir/<title id>, then CoopPuppet::Configure.
 void Configure();
+// A coop_puppet.json is under LoadDir/<title id> (the puppet pack is installed).
+bool HasPack();
 #endif
 
 }  // namespace CoopPuppetConfig

@@ -169,6 +169,8 @@ CoopPuppet::LookItems PackLook() {
 
 }  // namespace
 
+bool HasPack() { return !PackManifests().empty(); }
+
 void Configure() {
     std::vector<std::string> lines;
     auto settings = Settings(Env, PackGreenPuppets, &lines, PackTunicPuppets, PackLook);

@@ -795,6 +795,26 @@ try {
     Check ($dirs.Count -eq 2 -and $dirs[0] -eq $other -and $dirs[1] -eq (Join-Path $other 'bin')) 'hookshot log dirs: the game folder first, then bin\'
     Remove-Item -LiteralPath (Join-Path $other 'image.bin')
     Check (@(Get-KitHookshotLogDirs '').Count -eq 0) 'hookshot log dirs: no exe, none'
+    # collect-logs finds the game more ways than the start (player report: no longshot_log.txt in the zip)
+    $lk = Join-Path ([System.IO.Path]::GetTempPath()) "coop-logexes-$PID"
+    try {
+        $otherGame = Join-Path $lk 'other-kit\hookshot\game'
+        $runGame = Join-Path $lk 'elsewhere'
+        Write-File (Join-Path $lk 'kit\hookshot\game\longshot.exe') 'exe'
+        Write-File (Join-Path $otherGame 'longshot.exe') 'exe'
+        Write-File (Join-Path $runGame 'longshot.exe') 'exe'
+        Write-File (Join-Path $lk 'kit\hookshot\game-folder.txt') "$otherGame`n"
+        $kitExe = Join-Path $lk 'kit\hookshot\game\longshot.exe'
+        $e = @(Get-KitLogGameExes (Join-Path $lk 'kit') @((Join-Path $runGame 'longshot.exe'), $kitExe, (Join-Path $lk 'gone\longshot.exe')))
+        Check ($e.Count -eq 3 -and $e[0] -eq $kitExe -and $e[1] -eq (Join-Path $otherGame 'longshot.exe') -and $e[2] -eq (Join-Path $runGame 'longshot.exe')) "log game exes: the kit's own game, then the one game-folder.txt names, then a running one; each once, none missing [$($e -join ', ')]"
+        Remove-Item -LiteralPath (Join-Path $lk 'kit\hookshot\game-folder.txt')
+        Check (@(Get-KitLogGameExes (Join-Path $lk 'kit') @()).Count -eq 1) 'log game exes: no game-folder.txt, nothing running -> the kit''s own game'
+    } finally { Remove-Item -LiteralPath $lk -Recurse -Force -ErrorAction SilentlyContinue }
+    # the puppet pack's game file gone (player report: names but no Links, the only hint in longshot_log.txt)
+    $pt = (Get-KitPackSourceText 'D:\Games\oot.nup') -join "`n"
+    Check ($pt -match 'D:\\Games\\oot\.nup' -and $pt -match 'game-files\.txt' -and $pt -match 'names only' -and $pt -match 'Every start tries again') "pack source text: names the missing file, game-files.txt and what happens [$pt]"
+    $pt = (Get-KitPackSourceText '') -join "`n"
+    Check ($pt -match 'game-files\.txt is missing' -and $pt -match '\.nup') "pack source text: no game-files.txt said plainly [$pt]"
     # hs-missing (a tester read "No co-op Hookshot game" as "couldn't find Hookshot"): antivirus took the module
     Remove-Item -LiteralPath (Join-Path $hk 'hookshot\hookshot_coop.dll')
     Check ((Get-KitHookshotNeed $hk) -eq 'quarantine') 'hookshot need: the module in neither the kit nor the game -> quarantine (no build)'

@@ -43,7 +43,10 @@ struct Player {
 };
 
 struct Lobby {
-    bool connected = false;
+    bool connected = false;             // the session took this game in (WELCOME came)
+    // Not connected yet, but co-op was started (Host or Join on the Multiplayer tab): what it is doing, as that tab
+    // says it ("" co-op is off).
+    std::string waiting;
     bool hosting = false;               // we are the session's host
     int max_players = 0;                // 0: not known
     std::string invite;                 // the invite code (host), "" none yet
