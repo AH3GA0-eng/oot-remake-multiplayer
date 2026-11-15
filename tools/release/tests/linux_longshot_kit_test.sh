@@ -118,6 +118,12 @@ open(os.path.join(d, "coop_puppet.json"), "w").write("{}")
 with open(os.environ["FAKE_LOG"], "a") as f:
     f.write("puppet_pack %s\n" % " ".join(sys.argv[1:]))
 EOF
+# (dumpcheck.py's stand-in: a file that starts with "nup" is the game; the pack's .nup search takes no other)
+cat >"$kit/data/tools/puppet_pack/dumpcheck.py" <<'EOF'
+import sys
+p = sys.argv[sys.argv.index("--romfs") + 1]
+sys.exit(0 if open(p, "rb").read(3) == b"nup" else 1)
+EOF
 printf 'kit: oot-coop-v0.1.0-beta2-linux (release v0.1.0-beta2)\n' >"$kit/VERSION.txt"
 export OOT_COOP_FETCH_LOCAL=1
 export KIT_FETCH_WAIT=0   # (kit-mirror: no waits between the retries here)
@@ -160,14 +166,23 @@ check 'pack: an incomplete pack (gear.bin gone) is made again, said plainly' bas
 rm -rf "$P"
 mkdir -p "$HOME/Desktop/games"
 mv "$nup_was" "$HOME/Desktop/games/"
+printf 'manual' >"$HOME/Downloads/Manual.nup"   # (a .nup that is not the game: the check leaves it out)
 : >"$log"
 bash "$kit/scripts/build.sh" </dev/null >"$tmp/pack2.txt" 2>&1; export CODE=$?
 check 'pack: no pack and the .nup moved to the Desktop: found there, remembered, the pack made' bash -c '[ $CODE -eq 0 ] && grep -q "Found your game file: .*Desktop/games/OoT" "$1" && grep -q "Desktop/games/OoT" "$3" && grep -q "^puppet_pack --romfs .*Desktop/games/OoT" "$2"' _ "$tmp/pack2.txt" "$log" "$D/game-files.txt"
 mkdir -p "$tmp/away/far" && mv "$HOME/Desktop/games/OoT [04004860224DEC000].nup" "$tmp/away/far/"   # (deeper than the search looks)
+# (only Manual.nup is left in the search's places: it is not the game, so it is not taken; no dumpcheck.py: nothing is)
 rm -rf "$P"
 : >"$log"
 bash "$kit/scripts/build.sh" </dev/null >"$tmp/pack3.txt" 2>&1; export CODE=$?
-check 'pack: the .nup nowhere to be found: said, the start goes on (no prompt without a terminal)' bash -c '[ $CODE -eq 0 ] && grep -q "puppet pack was not made: your game file is not at" "$1" && ! grep -q "^puppet_pack" "$2"' _ "$tmp/pack3.txt" "$log"
+check 'pack: only a .nup that is not the game left: not taken, said, the start goes on (no prompt without a terminal)' bash -c '[ $CODE -eq 0 ] && grep -q "puppet pack was not made: your game file is not at" "$1" && ! grep -q "^puppet_pack" "$2" && ! grep -q Manual "$3"' _ "$tmp/pack3.txt" "$log" "$D/game-files.txt"
+mv "$D/tools/puppet_pack/dumpcheck.py" "$tmp/dumpcheck.py"
+printf 'nup' >"$HOME/Downloads/Unchecked.nup"
+rm -rf "$P"; : >"$log"
+bash "$kit/scripts/build.sh" </dev/null >"$tmp/pack3b.txt" 2>&1; export CODE=$?
+check 'pack: no dumpcheck.py: an unchecked .nup is never taken' bash -c '[ $CODE -eq 0 ] && ! grep -q "^puppet_pack" "$2" && ! grep -q Unchecked "$3"' _ "$tmp/pack3b.txt" "$log" "$D/game-files.txt"
+mv "$tmp/dumpcheck.py" "$D/tools/puppet_pack/dumpcheck.py"
+rm -f "$HOME/Downloads/Unchecked.nup" "$HOME/Downloads/Manual.nup"
 mv "$tmp/away/far/OoT [04004860224DEC000].nup" "$nup_was"
 printf '%s\n' "$nup_was" >"$D/game-files.txt"
 cp "$D/tools/puppet_pack/build.py" "$tmp/build.py.good"

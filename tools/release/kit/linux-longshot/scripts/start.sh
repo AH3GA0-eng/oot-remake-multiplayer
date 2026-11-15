@@ -71,7 +71,7 @@ kit_game_running && fail 'The game of this kit is running already. Switch to its
 # goes, so build.sh makes it whatever it was; the game's own build steps are skipped as on any start (nothing changed).
 if ((pack_only)); then
     [[ -n $(kit_game_exe) ]] || fail 'The game is not built yet: start start-oot-coop.sh (it builds the game and makes the puppet pack).'
-    rm -f "$GAME/mods/contents/0400486024DEC000/coop-puppet/.coop-stamp"
+    rm -f "$GAME/mods/contents/0400486024DEC000/coop-puppet/.coop-stamp" "$DATA/pack-asked.txt"   # (and asks again)
     bash "$KIT/scripts/build.sh" "${build_args[@]}"
     [[ -f $GAME/mods/contents/0400486024DEC000/coop-puppet/.coop-stamp ]] || fail 'The puppet pack was not made (said why above).'
     say 'Done: the puppet pack is made. Start start-oot-coop.sh to play.'

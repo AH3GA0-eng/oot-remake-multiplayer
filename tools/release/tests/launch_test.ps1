@@ -829,6 +829,20 @@ try {
     Check ((Find-KitGameNup '' $hk $isGame $places) -eq (Join-Path $nf 'Desktop\Renamed.nup')) 'nup find: one game file, renamed: found'
     Check ((Find-KitGameNup '' $hk { param($p) throw 'tool error' } $places) -eq '') 'nup find: the check throws: none, no throw'
     Check ((Find-KitGameNup '' $hk $isGame @((Join-Path $nf 'nothing'))) -eq '') 'nup find: nothing anywhere: none'
+    # The drag prompt is asked once, not at every start (review): a new game file or a new pack tool asks again.
+    $askTool = Join-Path $nf 'tool'
+    Write-File (Join-Path $askTool 'build.py') 'v1'
+    $note = Join-Path $nf 'pack-asked.txt'
+    $key = Get-KitPackAskKey 'D:\gone\OoT.nup' $askTool
+    Check (-not (Test-KitPackAsked $note $key)) 'pack ask: never asked: asks'
+    Write-File $note "$key`n"
+    Check (Test-KitPackAsked $note (Get-KitPackAskKey 'D:\gone\OoT.nup' $askTool)) 'pack ask: asked about this file and tool: not again'
+    Check (-not (Test-KitPackAsked $note (Get-KitPackAskKey 'E:\other.nup' $askTool))) 'pack ask: another game file named: asks again'
+    Check (-not (Test-KitPackAsked $note (Get-KitPackAskKey '' $askTool))) 'pack ask: no game file named any more: asks again'
+    Write-File (Join-Path $askTool 'build.py') 'v2'
+    Check (-not (Test-KitPackAsked $note (Get-KitPackAskKey 'D:\gone\OoT.nup' $askTool))) 'pack ask: a new pack tool (an update): asks again'
+    $hb = [System.IO.File]::ReadAllText((Join-Path $kitSrc 'scripts\hookshot-build.ps1'))
+    Check ($hb.Contains('$askedBefore = -not $PackOnly -and (Test-KitPackAsked $askNote $askKey)')) 'pack ask: make-puppet-pack.cmd (-PackOnly) always asks'
     # hs-missing (a tester read "No co-op Hookshot game" as "couldn't find Hookshot"): antivirus took the module
     Remove-Item -LiteralPath (Join-Path $hk 'hookshot\hookshot_coop.dll')
     Check ((Get-KitHookshotNeed $hk) -eq 'quarantine') 'hookshot need: the module in neither the kit nor the game -> quarantine (no build)'

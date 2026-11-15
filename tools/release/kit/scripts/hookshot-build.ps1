@@ -218,14 +218,23 @@ function Invoke-PuppetPackStep([string]$exeDir) {
         foreach ($l in (Get-KitPackSourceText $packFrom)) { Write-Host $l -ForegroundColor Yellow }
         $canAsk = $true
         try { $canAsk = -not [Console]::IsInputRedirected } catch { $canAsk = $false }
-        if ($canAsk -and -not $env:CI -and (Test-Path -LiteralPath $packTool)) {
+        # Asked once, not on every start: hookshot\pack-asked.txt keeps what was asked about (the game file named and
+        # the pack tool's hash), and a new game file or tool asks again; make-puppet-pack.cmd (-PackOnly) always asks.
+        $askNote = Join-Path $hs 'pack-asked.txt'
+        $askKey = Get-KitPackAskKey $packFrom (Join-Path $kit 'tools\puppet_pack')
+        $askedBefore = -not $PackOnly -and (Test-KitPackAsked $askNote $askKey)
+        if ($askedBefore) {
+            Write-Host '  (Not asked again at every start. make-puppet-pack.cmd asks for your game file and makes the pack.)' -ForegroundColor Yellow
+        } elseif ($canAsk -and -not $env:CI -and (Test-Path -LiteralPath $packTool)) {
             Write-Host '  Drag your game''s .nup file into this window and press Enter (Enter alone: start without the pack):'
             $given = "$(Read-TimedLine 120)".Trim().Trim('"')
             if ($given -and (Test-Path -LiteralPath $given)) {
                 $packFrom = (Resolve-Path -LiteralPath $given).Path
                 [System.IO.File]::WriteAllText((Join-Path $hs 'game-files.txt'), "$packFrom`n")
-            } elseif ($given) {
-                Write-Host "  Not found: $given" -ForegroundColor Yellow
+                Remove-Item -LiteralPath $askNote -Force -ErrorAction SilentlyContinue
+            } else {
+                if ($given) { Write-Host "  Not found: $given" -ForegroundColor Yellow }
+                try { [System.IO.File]::WriteAllText($askNote, "$askKey`n") } catch { }
             }
         }
     }
@@ -237,6 +246,7 @@ function Invoke-PuppetPackStep([string]$exeDir) {
         $code = $LASTEXITCODE
         $made = $true
         $ErrorActionPreference = 'Stop'
+        if ($code -eq 0) { Remove-Item -LiteralPath (Join-Path $hs 'pack-asked.txt') -Force -ErrorAction SilentlyContinue }
         if ($code -ne 0) { Write-Host '  The puppet pack could not be made (the lines above say why): the game starts, and the other players show as names only until it is made. Every start tries again.' -ForegroundColor Yellow }
     } else {
         Write-Host '  No puppet pack this time: the other players show as names only.' -ForegroundColor Yellow

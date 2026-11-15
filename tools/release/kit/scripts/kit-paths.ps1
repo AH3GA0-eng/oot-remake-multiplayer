@@ -557,6 +557,21 @@ function Get-KitPackSourceText([string]$Remembered) {
     return $out
 }
 
+# The drag prompt for the game file is asked once, not at every start (a player away from the window waited 2 minutes
+# each time): the key is the game file named ('' for none) and the pack tool's hash, so a new game file or a new tool
+# asks again. Test-KitPackAsked: the note at $Note holds that key.
+function Get-KitPackAskKey([string]$Remembered, [string]$ToolDir) {
+    $tool = ''
+    try { $tool = "$(Get-PuppetToolHash $ToolDir)" } catch { }
+    return "$Remembered|$tool"
+}
+function Test-KitPackAsked([string]$Note, [string]$Key) {
+    try {
+        if (-not (Test-Path -LiteralPath $Note -PathType Leaf)) { return $false }
+        return ([System.IO.File]::ReadAllText($Note).Trim() -eq $Key.Trim())
+    } catch { return $false }
+}
+
 # The game file (.nup) when hookshot\game-files.txt names none or one that is gone (pack-retry: players whose
 # pack was never made because the .nup moved): the usual places, the folder the remembered file was in first,
 # then the kit, the kit's parent, Downloads and the Desktop (each with one level of subfolders). $Check says

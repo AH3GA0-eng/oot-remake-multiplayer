@@ -297,15 +297,15 @@ if gone:
 ' "$mod" 2>/dev/null || true
 }
 # The game file gone or never named (pack-retry: players whose pack was never made): the usual places, the folder
-# the remembered file was in first; a file dumpcheck.py says is the game (its header), the remembered name first.
+# the remembered file was in first; only a file dumpcheck.py says is the game (its header), the remembered name first.
+# Without dumpcheck.py nothing is taken: an unchecked file is never used (as on Windows).
 find_pack_game() {
     local places=() f same='' good=()
+    [[ -f $DATA/tools/puppet_pack/dumpcheck.py ]] || return 0
     [[ -n $pack_from ]] && places+=("$(dirname -- "$pack_from")")
     places+=("$KIT" "$(dirname "$KIT")" "$HOME/Downloads" "$HOME/Desktop" "$HOME/Documents")
     while IFS= read -r f; do
-        if [[ -f $DATA/tools/puppet_pack/dumpcheck.py ]]; then
-            "$PY" -I -B "$DATA/tools/puppet_pack/dumpcheck.py" --user-dir "$DATA" --romfs "$f" >/dev/null 2>&1 || continue
-        fi
+        "$PY" -I -B "$DATA/tools/puppet_pack/dumpcheck.py" --user-dir "$DATA" --romfs "$f" >/dev/null 2>&1 || continue
         good+=("$f")
         [[ -n $pack_from && $(basename -- "$f") == "$(basename -- "$pack_from")" ]] && same=$f
     done < <(find "${places[@]}" -maxdepth 2 -iname '*.nup' -type f 2>/dev/null | sort -u)
@@ -313,12 +313,18 @@ find_pack_game() {
     elif ((${#good[@]} == 1)); then printf '%s\n' "${good[0]}"
     fi
 }
+# The drag prompt is asked once, not at every start: data/pack-asked.txt keeps what it asked about (the game file named
+# and the pack tool's hash), so a new game file or tool asks again; start-oot-coop.sh --pack removes it and asks.
+pack_asked=$DATA/pack-asked.txt
+ask_key="${pack_from:-}|${pack_stamp##* tool:}"
 if [[ ! -e ${pack_from:-} ]] && ! [[ -f $mod/coop_puppet.json && $(cat "$mod/.coop-stamp" 2>/dev/null) == "$pack_stamp" && -z $(pack_gap) ]]; then
     found=$(find_pack_game)
     if [[ -n $found ]]; then
         say "  Found your game file: $found (saved in data/game-files.txt)"
         pack_from=$found
         printf '%s\n' "$pack_from" >"$remembered"
+    elif [[ $(cat "$pack_asked" 2>/dev/null) == "$ask_key" ]]; then
+        say '  (Not asked again at every start: bash start-oot-coop.sh --pack asks for your game file and makes the pack.)'
     elif kit_tty && [[ -z ${CI-} ]]; then
         say "  The puppet pack (how you see the other players) is made from your game file, and the kit cannot find it$([[ -n $pack_from ]] && printf ' (not at %s any more)' "$pack_from")."
         a=''
@@ -328,8 +334,10 @@ if [[ ! -e ${pack_from:-} ]] && ! [[ -f $mod/coop_puppet.json && $(cat "$mod/.co
         if [[ -n $a && -e $a ]]; then
             pack_from=$a
             printf '%s\n' "$pack_from" >"$remembered"
-        elif [[ -n $a ]]; then
-            warn "not found: $a"
+            rm -f "$pack_asked"
+        else
+            [[ -z $a ]] || warn "not found: $a"
+            printf '%s\n' "$ask_key" >"$pack_asked"
         fi
     fi
 fi
@@ -341,6 +349,7 @@ elif [[ -n $pack_from && -e $pack_from ]]; then
     say '  Making the puppet pack (how you see the other players; about a minute) ...'
     if "$PY" -I -B "$DATA/tools/puppet_pack/build.py" --romfs "$pack_from" --mod-dir "$mod" --title-rows 2>&1 | sed 's/^/    /'; then
         printf '%s' "$pack_stamp" >"$mod/.coop-stamp"
+        rm -f "$pack_asked"
     else
         rm -f "$mod/.coop-stamp"
         warn 'the puppet pack could not be made (the lines above say why): the game starts, and the other players show as names only until it is made. Every start tries again.'
