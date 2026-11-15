@@ -333,24 +333,22 @@ void Wardrobe::Step(std::uint64_t now_ms) {
                 colours.push_back(c);
             }
         }
-        // (a miss still young is read again: its texels may have come in since)
-        Search found = Find(*host_.textures, colours, [&](const Live& l) {
-            const auto m = misses_.find({l.address, l.serial});
-            return !full && m != misses_.end() && now_ms - m->second.since >= kLateTexelsMs;
-        });
-        // The misses: those read now (each keeps when it was first read), and
-        // the old ones not read, while the game has them.
+        // The misses: those the game still has and this search skips (a quick
+        // one skips every known miss, young ones too: LateLook below reads
+        // those, kLateChecks a step), and those read now (each keeps when it
+        // was first read). A texture finalized is not listed: its miss goes.
         std::map<std::pair<std::uint64_t, std::uint64_t>, Miss> misses;
+        Search found = Find(*host_.textures, colours, [&](const Live& l) {
+            const auto m = full ? misses_.end() : misses_.find({l.address, l.serial});
+            if (m == misses_.end()) {
+                return false;
+            }
+            misses.insert(*m);
+            return true;
+        });
         for (const Live& l : found.misses) {
             const auto old = misses_.find({l.address, l.serial});
             misses[{l.address, l.serial}] = {l, old != misses_.end() ? old->second.since : now_ms};
-        }
-        if (!full) {
-            for (const auto& [key, m] : misses_) {
-                if (now_ms - m.since >= kLateTexelsMs && !misses.count(key)) {
-                    misses.emplace(key, m);   // (skipped above; a texture finalized is never listed again)
-                }
-            }
         }
         misses_ = std::move(misses);
         std::vector<bool> carried(places_.size(), false);
@@ -386,6 +384,9 @@ void Wardrobe::Step(std::uint64_t now_ms) {
         places_ = std::move(found.places);
         look_now_ = false, looked_ = true;
         generation_ = generation;
+        if (!full) {
+            LateLook(now_ms, colours);   // (a full search read them all just now)
+        }
         if (places_.empty() && full) {
             std::string line = "coop: look: no " + host_.what + " texture of your Link among the game's yet (" +
                                std::to_string(found.listed) + " of the game's of those sizes, " +
@@ -435,7 +436,8 @@ void Wardrobe::Step(std::uint64_t now_ms) {
 void Wardrobe::LateLook(std::uint64_t now_ms, const std::vector<std::shared_ptr<const Texels>>& colours) {
     // The young misses, from late_next_ on (in turn: at most kLateChecks a Step).
     std::vector<Live> look_at;
-    const auto young = [&](const auto& e) { return now_ms - e.second.since < kLateTexelsMs; };
+    // (one first read in this very Step is not read again in it)
+    const auto young = [&](const auto& e) { return e.second.since != now_ms && now_ms - e.second.since < kLateTexelsMs; };
     auto it = misses_.lower_bound(late_next_);
     for (std::size_t n = 0; n < misses_.size() && look_at.size() < kLateChecks; ++n, ++it) {
         if (it == misses_.end()) {

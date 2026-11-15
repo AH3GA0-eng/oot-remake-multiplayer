@@ -623,6 +623,53 @@ TEST_CASE("look tunic: a scene's many new textures are read again at most kLateC
     CHECK(step(20 + CoopLookTunic::kLateTexelsMs + 40) == 0);
 }
 
+TEST_CASE("look tunic: while the game makes textures every step, the young ones are still read at most kLateChecks a step") {
+    // review-sword-blink: a scene load makes textures over many steps; each such step reads the new
+    // ones and at most kLateChecks of the young misses, not all of them again.
+    FakeTextures m(kBase, 0x40000);
+    PutFile(m, kBase + 0x1000, "Tile_A", TexelsOf(1));
+    const std::map<std::string, std::vector<std::uint8_t>> pack = {
+        {"green", LookFile({{"Tile_A", TexelsOf(1)}})},
+        {"red", LookFile({{"Tile_A", TexelsOf(9)}})},
+    };
+    CoopLookTunic::Wardrobe::Host host;
+    host.textures = &m;
+    host.file = [&](const std::string& c) -> std::optional<std::vector<std::uint8_t>> {
+        const auto it = pack.find(c);
+        return it == pack.end() ? std::nullopt : std::optional(it->second);
+    };
+    host.log = [](const std::string&) {};
+    CoopLookTunic::Wardrobe w(host);
+    w.Wear("red");
+    w.Step(0);
+    std::vector<std::uint64_t> made;
+    for (std::uint64_t i = 0; i < 200; ++i) {
+        made.push_back(kBase + 0x2000 + i * 0x120);
+        m.Make(made.back(), kTexels);
+    }
+    const std::uint64_t late = made[150];
+    w.Step(20);
+    std::memcpy(m.at(late), TexelsOf(1).data(), kTexels);
+    // One new texture made before each step (none of Link's): the 200 are read <= kLateChecks a step.
+    std::uint64_t t = 20;
+    std::uint64_t fresh = kBase + 0x20000;
+    while (!Drawn(m, late, 9) && t < 200) {
+        t += 20;
+        m.Make(fresh, kTexels);
+        fresh += 0x120;
+        const std::map<std::uint64_t, int> was = m.reads;
+        w.Step(t);
+        std::size_t n = 0;
+        for (const std::uint64_t a : made) {
+            n += m.reads[a] != (was.count(a) ? was.at(a) : 0) ? 1 : 0;
+        }
+        CHECK(n <= CoopLookTunic::kLateChecks);
+        CHECK(m.reads[fresh - 0x120] > 0);   // (the new one is read at once)
+    }
+    CHECK(Drawn(m, late, 9));
+    CHECK(t <= 20 + 20 * (200 / CoopLookTunic::kLateChecks + 1));
+}
+
 TEST_CASE("look tunic: an override goes when the game's memory there holds something else, its texture not finalized") {
     // 0.11.0 players (tracker #32): effects' textures gone. The game gave the memory of Link's
     // texture to another texture without finalizing it; the override stayed, drawn over the new one.
