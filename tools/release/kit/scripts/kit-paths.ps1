@@ -1424,3 +1424,23 @@ function Get-KitDownloadFailText([string]$File, [string]$Why, [string]$TestUrl, 
         'downloaded is kept. Still stuck: scripts\collect-logs.cmd, and send its zip.'
     ) -join "`n"
 }
+
+# #48: Longshot serves ONE resource size table, the winning mod's. A seed made on OOTRR's website (its folder put into
+# mods by hand) has its own, made without the puppet pack's entries, so the others could not be shown. Before the game
+# starts, tools\puppet_pack\merge_tables.py writes ONE table where the game reads it: that mod's entries and every
+# other mod's that is on (the pack's too), keeping its own in <mod>\_coop-size-table (undo: merge_tables.py --undo).
+# The module sees merged.txt there and keeps the puppets on. Never stops the start. The lines it says, for the window.
+function Invoke-KitSizeTableMerge([string]$Kit, [string]$ExeDir) {
+    $python = Join-Path $Kit 'hookshot\tools\python\python.exe'
+    $tool = Join-Path $Kit 'tools\puppet_pack\merge_tables.py'
+    $mods = Join-Path $ExeDir 'mods'
+    if (-not (Test-Path -LiteralPath $python) -or -not (Test-Path -LiteralPath $tool) -or -not (Test-Path -LiteralPath $mods)) { return @() }
+    $romfs = @((Join-Path $ExeDir 'romfs'), (Join-Path (Split-Path -Parent $ExeDir) 'romfs')) | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'Pack') } | Select-Object -First 1
+    $pyArgs = @('-I', '-B', $tool, '--mods', $mods)
+    if ($romfs) { $pyArgs += @('--romfs', $romfs) }
+    $before = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { $out = @(& $python @pyArgs 2>&1 | ForEach-Object { "$_" }) } catch { $out = @("Size tables: not merged ($($_.Exception.Message)).") }
+    $ErrorActionPreference = $before
+    return $out
+}

@@ -148,6 +148,11 @@ if [[ -f $pack/coop_puppet.json && -n $py && -f $DATA/tools/puppet_pack/self_tun
         --coop-ini "$GAME/coop.ini" 2>/dev/null) || own=''
     [[ -n $own ]] && say "Your Link: the $own tunic (coop-options.ini color)."
 fi
+# #48: one size table for the game (a seed from OOTRR's website has its own, without the puppet pack's entries):
+# tools/puppet_pack/merge_tables.py, as the Windows kit's Invoke-KitSizeTableMerge. Never stops the start.
+if [[ -n $py && -f $DATA/tools/puppet_pack/merge_tables.py && -d $GAME/mods ]]; then
+    "$py" -I -B "$DATA/tools/puppet_pack/merge_tables.py" --mods "$GAME/mods" --romfs "$GAME/romfs" 2>&1 | sed 's/^/  /' || true
+fi
 step 'Starting the game: Host or Join in its menu (Multiplayer)'
 # (as Longshot's own builder/linux/longshot-launch: nothing of a launcher's environment goes in; its
 # own update check is off, the kit's updater brings Longshot up to date with co-op)
