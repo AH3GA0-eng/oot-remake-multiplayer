@@ -1578,6 +1578,47 @@ TEST_CASE("objects: a boss copy keeps the slot frame it had (issue 150)") {
     CHECK_FALSE(plays[0].alias);
 }
 
+TEST_CASE("objects: an enemy copy never plays its owner's hide animation (issue 35, Navi on a hidden Deku Baba)") {
+    CHECK(CoopObjects::IsHideAnimation("Upside_Visible_Off_Spine4"));
+    CHECK(CoopObjects::IsHideAnimation("DownSide_Visible_Off_Withered_Spine6"));
+    CHECK(CoopObjects::IsHideAnimation("Visible_Off"));
+    CHECK_FALSE(CoopObjects::IsHideAnimation("Upside_Visible_On_Spine6"));
+    CHECK_FALSE(CoopObjects::IsHideAnimation("Wait_Battle_Wither"));
+    CHECK_FALSE(CoopObjects::IsHideAnimation("InVisible_Off"));
+
+    const std::string name = "Enemy_Dekubaba_Withered";
+    Sync owner;
+    Tick(owner, 0, {Enemy(0x100, 0x11, 2, 0.0f, name)});
+    const proto::ObjectId id = *owner.IdOf(0x100);
+    Sync copy;
+    Tick(copy, 0, {Enemy(0x200, 0x11, 2, 0.0f, name)}, 2);
+    Own(copy, id, 1);
+
+    // Before the kill the owner's animations play on the copy as usual.
+    copy.Receive(EnemySample(id, 1000 * kMs, "Upside_Visible_On_Spine6", 1.0f));
+    auto plays = EnemyPlays(copy, 1100 * kMs, name);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].name == "Upside_Visible_On_Spine6");
+
+    // The owner's dying Baba hides its spine: the copy is asked nothing (its
+    // own death hides it and takes it off the target list).
+    copy.Receive(EnemySample(id, 1050 * kMs, "Upside_Visible_Off_Spine6", 1.0f));
+    CHECK(EnemyPlays(copy, 1150 * kMs, name).empty());
+
+    // A boss keeps every animation of its owner's (its phases may hide parts).
+    const std::string boss = "Enemy_DungeonBoss_Gohma";
+    Sync boss_owner;
+    Tick(boss_owner, 0, {Enemy(0x100, 0x11, 2, 0.0f, boss)});
+    const proto::ObjectId boss_id = *boss_owner.IdOf(0x100);
+    Sync boss_copy;
+    Tick(boss_copy, 0, {Enemy(0x200, 0x11, 2, 0.0f, boss)}, 2);
+    Own(boss_copy, boss_id, 1);
+    boss_copy.Receive(EnemySample(boss_id, 1000 * kMs, "Visible_Off", 1.0f));
+    plays = EnemyPlays(boss_copy, 1100 * kMs, boss);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].name == "Visible_Off");
+}
+
 namespace {
 proto::PlayerSample Where(std::uint8_t player, const std::string& scene, std::uint64_t now) {
     proto::PlayerSample p;

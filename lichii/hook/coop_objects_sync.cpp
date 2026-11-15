@@ -489,6 +489,16 @@ bool IsDeathAnimation(std::string_view name) {
     return false;
 }
 
+bool IsHideAnimation(std::string_view name) {
+    constexpr std::string_view word = "Visible_Off";
+    for (std::size_t at = name.find(word); at != std::string_view::npos; at = name.find(word, at + 1)) {
+        if (at == 0 || name[at - 1] == '_') {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool IsStunAnimation(std::string_view name) {
     const std::string_view base = AnimationBase(name);
     const std::string_view first = base.substr(0, base.find('_'));
@@ -2792,6 +2802,12 @@ void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
         const Received& last = o.received.back();
         const auto& wanted = last.animation;
         if (!wanted || wanted->name.empty()) {
+            continue;
+        }
+        // Issue 35 (4): the owner's hide is not ours to play (IsHideAnimation).
+        // The copy shows its own animation until its own game kills it
+        // (OBJECT_REMOVE dead, the Life step) or deletes it kDeadGraceUs later.
+        if (o.reacts && !IsBoss(o.name) && IsHideAnimation(wanted->name)) {
             continue;
         }
         // Just hit here: the copy's own game shows the hit. The owner's
