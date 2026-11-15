@@ -272,6 +272,11 @@ std::optional<StepWant> LiveWant(const Quest& quest, const ReadEnum& value) {
 void Challenges::Want(std::vector<StepWant> wants) {
     std::lock_guard lock(mutex_);
     waiting_ = std::move(wants);
+    // The back-off counts fresh lists (one a second), not frames: Step(false)
+    // runs every frame (coop_callers.h).
+    for (auto& [key, r] : refused_) {
+        if (r.skip > 0) --r.skip;
+    }
 }
 
 std::vector<std::string> Challenges::TakeNotes() {
@@ -287,9 +292,6 @@ std::optional<CoopPuppet::Call> Challenges::Step(CoopPuppet::Guest& guest, bool 
         // the hook gives none while our Link is in an event.
         work_ = std::exchange(waiting_, {});
         next_ = 0;
-        for (auto& [key, r] : refused_) {
-            if (r.skip > 0) --r.skip;
-        }
     } else if (next_ > 0 && next_ <= work_.size()) {
         const StepWant& w = work_[next_ - 1];
         const std::string head = "quest " + w.name + " " + Hex(asked_from_) + " -> " + Hex(w.step);

@@ -412,12 +412,15 @@ TEST_CASE("quest: a refused step backs off and is noted once, with the count whe
     Mgr g("KakarikoVillageNpc");
     CoopQuest::Challenges c;
     // One list a second, as CatchUpQuests sends them; the game refuses each call.
+    // Step(false) runs every frame: about 60 frames per list.
     std::vector<int> called;
     for (int list = 1; list <= 7; ++list) {
         c.Want({Fire("KakarikoVillageLetter")});
-        if (c.Step(g.m, false, 0, kMain).has_value()) {
-            called.push_back(list);
-            CHECK_FALSE(c.Step(g.m, true, 0, kMain).has_value());  // refused
+        for (int frame = 0; frame < 60; ++frame) {
+            if (c.Step(g.m, false, 0, kMain).has_value()) {
+                called.push_back(list);
+                CHECK_FALSE(c.Step(g.m, true, 0, kMain).has_value());  // refused
+            }
         }
     }
     // Asked at once, then 2 lists later, then 4 lists after that: not every second.

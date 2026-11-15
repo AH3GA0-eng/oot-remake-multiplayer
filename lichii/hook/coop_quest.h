@@ -157,7 +157,7 @@ private:
     std::size_t next_ = 0;
     std::uint32_t asked_from_ = 0;
     std::vector<std::string> notes_;
-    // Refused steps (calc thread only): key challenge << 32 | step.
+    // Refused steps (under mutex_; counted down by Want): key challenge << 32 | step.
     struct Refusal {
         std::uint32_t count = 0;
         std::uint32_t skip = 0;  // lists still to pass over
