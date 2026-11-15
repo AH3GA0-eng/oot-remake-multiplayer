@@ -172,7 +172,7 @@ std::vector<Menu::Line> Menu::Lines() const {
     case Page::kHost:
         if (host) {
             out.push_back({Action("Copy the code again", "Copy", session_.code.empty()), Act::kCopyInvite,
-                           "Puts your code on the clipboard again, to paste into your chat with your friends."});
+                           "Puts your code on the clipboard again. Share it in DMs only: it contains your internet address."});
             out.push_back({Action("Paste friend's answer (or Ctrl+V)", "Paste"), Act::kPasteAnswer,
                            "Only when a friend's game shows an answer code (their way in was blocked): copy the code they "
                            "send you, then press this."});

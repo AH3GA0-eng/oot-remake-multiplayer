@@ -36,8 +36,12 @@ std::optional<std::filesystem::path> FindKit();
 // coop.ini beside longshot.exe.
 std::filesystem::path CoopIni();
 
-// The settings as the two files have them; a first-time player with no name
-// in coop.ini gets their Windows name when the server would take it.
+// The co-op name never names the player (coop_name_privacy.h): once a run, a
+// coop.ini with no name gets a random one ("Goron-4821"), and a saved name that
+// is this PC's user name or PC name (the old default) is replaced by one, with
+// a line in the co-op chat. Names the player chose stay. ReadOptions calls it.
+void CheckName();
+// The settings as the two files have them (CheckName first).
 CoopTitleMenu::Options ReadOptions();
 // The settings' LICHII_COOP_* variables for this run (co-op not started yet).
 void SetCoopEnvironment(const CoopTitleMenu::Options& o);

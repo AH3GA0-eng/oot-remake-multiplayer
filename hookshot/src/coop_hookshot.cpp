@@ -76,6 +76,7 @@
 #include "coop_puppet_config.h"
 #include "coop_frame_clock.h"
 #include "coop_runtime.h"
+#include "coop_pause_files.h"
 #include "coop_settings.h"
 #include "coop_svc.h"
 #include "coop_time.h"
@@ -987,6 +988,7 @@ bool Start(const HosCoopApi* api) {
     // Started without the kit's launcher: its coop-options.ini switches still count.
     CoopTitle::ApplyKitOptions();
     UseInputSelect();
+    CoopFiles::CheckName();  // never the PC's user or PC name as the co-op name (coop_name_privacy.h), before coop.ini is read
     const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
     std::vector<std::string> errors;
     // The Multiplayer tab (patch 0004's Hookshot and later, or HOS_COOP_MENU=1): the module stays loaded with co-op idle

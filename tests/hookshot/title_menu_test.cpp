@@ -182,11 +182,11 @@ TEST_CASE("title menu: Host and Join in plain words, nothing about ports or pass
     auto s = PlainStatus(h);
     REQUIRE(s.size() >= 3);
     // First: the invite code is the way to host (it is on the clipboard); the other rows come after.
-    CHECK(s[0] == "Invite code copied to your clipboard. Send it to your friends, or pick another way to host below.");
+    CHECK(s[0] == "Invite code copied to your clipboard. Share it in DMs only: it contains your internet address.");
     CHECK(s[1] == "ABCDE-FGHJK");
     CHECK(s[2] == "Waiting for your friends to join...");
     h.copied = false;
-    CHECK(PlainStatus(h)[0].find("Send it to your friends") != std::string::npos);
+    CHECK(PlainStatus(h)[0].find("Share it in DMs only") != std::string::npos);
     CHECK(PlainStatus(h)[2].find("Copy the code again") != std::string::npos);
     h.copied = true;
     h.players = 3;
@@ -516,7 +516,7 @@ TEST_CASE("Same network and VPN: two rows, the VPN found by its card's name") {
     CHECK(no_vpn[0] == "No VPN found.");
     CHECK(HomeLines({}, 27510, "pw", false)[0].find("No home-network address") != std::string::npos);
     CHECK(HostHeadline(true) ==
-          "Invite code copied to your clipboard. Send it to your friends, or pick another way to host below.");
+          "Invite code copied to your clipboard. Share it in DMs only: it contains your internet address.");
 }
 
 TEST_CASE("title menu: players on the map are on unless turned off: off writes 0, on takes the line away") {
