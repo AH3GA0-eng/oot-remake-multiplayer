@@ -65,6 +65,8 @@ Bits 0–19 count slots taken, bits 20–27 count slots finished (they go back t
 | 0x57af30 | UInt set: queues at +0x7b0 / +0x7b8 / +0x7c0 like the Int setter, but also stores u32 1 at slot + 8 (0x57b018); the fallback table goes to 0x376be00 on M + 0x7e8 | Checked (issue 125) |
 | 0x607f70 | Float get (`f_7100607f70` in the recomp's main): the Int layout 0xc0 further on (type 4, M + 0x190), entries of 0x28, value at +0x1c | Read from the recomp source (branch `rando-items`) |
 | 0xba6f80 | Float set (`f_7100ba6f80`): (M, value in s0, hash in w1), queues {f32 value, u32 hash} in 12-byte slots at +0x1b0 / +0x1b8 / +0x1c0. Found by scanning the recomp source for a setter with the Int setter's shape at the Float offsets; the same scan finds the known Int (0x163b70) and Enum (0x3e0980) setters and nothing else | Read from the recomp source, not run in a game yet |
+| 0xcb0ea0 | String64 get (M, out char\*\*, hash): the live text of entry +0x68 | Read from the recomp source (issue 57) |
+| 0x376b9b0 | String64 queue push (M + 0x608, &{char\* text, u32 hash}): takes a slot at M + 0x640 as the other setters do, copies the text into the slot's own buffer (slot +0, its size +8; cut at size - 1), the hash at +0x50. `f_7103759370` (the String64Array setter) calls it for a plain String64; most of the game's own String64 sets are this code inlined | Read from the recomp source (issue 57) |
 | 0x838960, 0x3761680 | 64-bit key get (M, out, key) | Checked |
 | 0x3761720 | 64-bit key set (M, value, key): finds the record, then 0xf071c0 queues it | Checked |
 | 0xb99980 | Applies the queues (M). Called from 0x3b500a0, in the GameData module | Checked for Bool and 64-bit keys |
@@ -74,6 +76,8 @@ Bits 0–19 count slots taken, bits 20–27 count slots finished (they go back t
 What the applier does for a Bool slot: when the value differs, it stores the live byte (+0x16), the saved copy (+0x17, unless entry +0x10 bit 31 is set or M + 0xd0c is not 0), marks the entry changed (+0xc = 1, +0x14 = 0), ORs the entry's file mask (+8) into M + 0x60, and adds the hash to a change ring at M + 0x48. It stops at the first empty slot, clears the slots it walked, and moves the round on. For a 64-bit key slot it stores +0xc, the saved bit in +0xe (when the file index is not negative), and ORs the mask into M + 0xca8. Checked.
 
 So writing the live byte directly would skip the saved copy and the save-file mask: the change would be lost on save. `game_flags` queues instead, exactly as the setters do, and its reads look through the queue first, as 0x20fd90 does, so a value read straight after a write is the new one.
+
+**String64** (issue 57). The same holds for a String64: the applier copies a queued slot's text into the entry's live text (+0x68, size +0x70) and into its saved copy (+0xb8, size +0xc0, unless entry +0x10 bit 31 is set), marks the entry changed, ORs its file mask into M + 0x660 and puts the hash in the change ring at M + 0x648. The queue: slot count M + 0x630, slots of 0x58 at M + 0x638, word M + 0x640 (the Bool queue's word layout). `GameFlags::set_string64` writes it so, through the game's push 0x376b9b0 on Hookshot (its `{text, hash}` argument on the game's stack, the bridge's `scratch`) and into the queue on the emulator; `get_string64` sees a write of ours that still waits there. `set_string64_now` (the live text only) stays for the tests' warp: a value written that way goes back at the next scene load, as `PlayerStatus.EquipOcarina` did.
 
 ## Which flags are which
 
