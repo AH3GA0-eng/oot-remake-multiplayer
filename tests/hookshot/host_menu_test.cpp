@@ -407,7 +407,7 @@ TEST_CASE("host menu: Paste friend's answer says plainly what was wrong with the
     CHECK(old_invite.line.find("another invite code") != std::string::npos);
 }
 
-TEST_CASE("host menu: Host on a custom port with no custom password accepts manual IP and port joins with default password") {
+TEST_CASE("host menu: Host on a custom port: a manual IP and port join gets in with the host's own password only") {
     EnetLife enet;
     Game host_game, join_game;
     CoopHostMenu::Menu host_menu(host_game.hooks());
@@ -415,7 +415,7 @@ TEST_CASE("host menu: Host on a custom port with no custom password accepts manu
 
     HosCoopHostOptions ho = host_options();
     ho.port = 38515;
-    ho.password = nullptr;
+    ho.password = "pr230-secret";   // server_password; with none it is random, inside the invite code
     REQUIRE(host_menu.HostStart(&ho) == 1);
     REQUIRE(wait_for([&] { return status_of(host_menu).state == HOS_COOP_HOSTING; }, 3000));
     CHECK(status_of(host_menu).port == 38515);
@@ -425,7 +425,7 @@ TEST_CASE("host menu: Host on a custom port with no custom password accepts manu
     jo.size = sizeof jo;
     jo.name = "Link";
     jo.target = addr.c_str();
-    jo.password = "coop";
+    jo.password = "pr230-secret";
     REQUIRE(join_menu.Join(&jo) == 1);
     REQUIRE(wait_for([&] { return status_of(join_menu).state == HOS_COOP_CONNECTED && join_game.target().has_value(); }, 3000));
     CHECK(join_game.target()->server == "127.0.0.1");

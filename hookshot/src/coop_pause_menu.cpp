@@ -43,7 +43,12 @@ constexpr std::size_t kMaxPortBytes = 5;
 
 const char* const kHostPortHelp =
     "The UDP port other players reach you on (default 27510). Type a number from 1 to 65535; changing it while "
-    "hosting restarts your game.";
+    "hosting restarts hosting: friends join again with the new code.";
+
+// A join password is never drawn: one star per character.
+std::string Masked(const std::string& password) {
+    return std::string(CodePoints(password), '*');
+}
 
 std::string Joined(const std::vector<std::string>& lines) {
     std::string out;
@@ -275,9 +280,15 @@ std::vector<Menu::Line> Menu::Lines() const {
             const bool typing_code = typing_ && typing_act_ == Act::kCode;
             const bool typing_ip = typing_ && typing_act_ == Act::kJoinIp;
             const bool typing_port = typing_ && typing_act_ == Act::kJoinPort;
-            out.push_back({Action(rejoin_code_.empty() ? "Friend's code" : "Or a new code",
-                                  join_.empty() && !typing_code ? std::string("Paste") : ShownCode(join_, typing_code),
-                                  off),
+            const bool typing_password = typing_ && typing_act_ == Act::kJoinPassword;
+            // An address line's password (pasted, or from the Password row) is shown as stars here too.
+            std::string code_shown = join_.empty() && !typing_code ? std::string("Paste") : ShownCode(join_, typing_code);
+            if (!typing_code && !join_password_.empty() && join_.size() > join_password_.size() &&
+                join_.compare(join_.size() - join_password_.size() - 1, std::string::npos, " " + join_password_) == 0) {
+                code_shown = ShownCode(join_.substr(0, join_.size() - join_password_.size() - 1), false) + " " +
+                             Masked(join_password_);
+            }
+            out.push_back({Action(rejoin_code_.empty() ? "Friend's code" : "Or a new code", code_shown, off),
                            Act::kCode,
                            "Copy the code from your friend's message, then press this: it is pasted. On the same home "
                            "network or a VPN with your friend? Paste the line from Same network or from VPN on their "
@@ -297,6 +308,13 @@ std::vector<Menu::Line> Menu::Lines() const {
                                   off),
                            Act::kJoinPort,
                            "The host's UDP port (default 27510). Type a number from 1 to 65535."});
+            out.push_back({Action("Password",
+                                  typing_password ? Masked(join_password_) + "_"
+                                                  : join_password_.empty() ? std::string("Type") : Masked(join_password_),
+                                  off),
+                           Act::kJoinPassword,
+                           "The host's join password, for an IP address: the word after the address on their Same "
+                           "network or VPN line. An invite code has it inside."});
             out.push_back({Action("Join", "Join", off || Trim(join_).empty()), Act::kJoinNow,
                            Trim(join_).empty() ? "Paste your friend's code or enter an IP address first."
                                                : "Joins your friend's game."});
@@ -553,6 +571,7 @@ std::string* Menu::Typed() {
     case Act::kName: return &options_.name;
     case Act::kCode: return &join_;
     case Act::kJoinIp: return &join_ip_;
+    case Act::kJoinPassword: return &join_password_;
     case Act::kHostPort:
     case Act::kJoinPort: return &port_text_;
     default: break;
@@ -671,10 +690,24 @@ void Menu::EndTyping(bool keep) {
         } else {
             join_ip_ = trimmed;
         }
-        if (join_ip_ != ip_before_) {
+        if (join_ip_ != ip_before_) {   // another host: its password is typed after it
             join_password_.clear();
         }
         UpdateJoinFromIpPort();
+    } else if (act == Act::kJoinPassword) {
+        const std::string trimmed(Trim(join_password_));
+        const bool ok = trimmed.empty() || CoopTitleMenu::PasswordOk(trimmed);   // empty: no password
+        if (keep && !ok) {
+            note_ = {"Password: no spaces, at most 128 characters. It was not changed."};
+        }
+        if (!keep || !ok) {
+            join_password_ = password_before_;
+            return;
+        }
+        join_password_ = trimmed;
+        if (!Trim(join_ip_).empty()) {
+            UpdateJoinFromIpPort();
+        }
     } else if (act == Act::kJoinPort) {
         if (!keep) {
             port_text_.clear();
@@ -759,7 +792,7 @@ bool Menu::Press(Input input) {
         }
         case Input::kDecide:
             EndTyping(true);
-            if (note_.empty() && (act == Act::kCode || act == Act::kJoinIp || act == Act::kJoinPort) &&
+            if (note_.empty() && (act == Act::kCode || act == Act::kJoinIp || act == Act::kJoinPort || act == Act::kJoinPassword) &&
                 !Trim(join_).empty()) {
                 Go(Page::kJoin, Act::kJoinNow);
             }
@@ -924,6 +957,12 @@ void Menu::Decide(Act act) {
         ip_before_ = join_ip_;
         typing_ = true;
         typing_act_ = Act::kJoinIp;
+        typing_fresh_ = false;
+        break;
+    case Act::kJoinPassword:
+        password_before_ = join_password_;
+        typing_ = true;
+        typing_act_ = Act::kJoinPassword;
         typing_fresh_ = false;
         break;
     case Act::kJoinPort:
@@ -1099,7 +1138,9 @@ bool Menu::Char(std::uint32_t cp) {
         join_.clear();
     }
     replace_typed_ = false;
-    const std::size_t max_bytes = typing_act_ == Act::kJoinIp ? kMaxIpBytes : kMaxJoinBytes;
+    const std::size_t max_bytes = typing_act_ == Act::kJoinIp         ? kMaxIpBytes
+                                  : typing_act_ == Act::kJoinPassword ? CoopTitleMenu::kMaxPasswordBytes
+                                                                      : kMaxJoinBytes;
     if (typing_act_ == Act::kName ? CodePoints(*t) >= CoopTitleMenu::kMaxNameChars : t->size() + add.size() > max_bytes) {
         return true;
     }
@@ -1125,6 +1166,17 @@ bool Menu::Paste(std::string_view text) {
             join_ip_ = line.substr(0, kMaxIpBytes);
             EndTyping(true);
         }
+        if (note_.empty() && !Trim(join_).empty()) {
+            Go(Page::kJoin, Act::kJoinNow);
+        }
+        return true;
+    }
+    if (typing_ && typing_act_ == Act::kJoinPassword) {
+        if (line.empty()) {
+            return true;
+        }
+        join_password_ = line.substr(0, Utf8Start(line, std::min(line.size(), CoopTitleMenu::kMaxPasswordBytes)));
+        EndTyping(true);
         if (note_.empty() && !Trim(join_).empty()) {
             Go(Page::kJoin, Act::kJoinNow);
         }

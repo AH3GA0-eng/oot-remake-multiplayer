@@ -178,7 +178,7 @@ private:
         kNone,
         kOpenHost, kOpenJoin, kOpenLocal, kOpenSettings, kOpenCommands, kCommand,
         kStartHost, kHostPort, kCopyInvite, kPasteAnswer, kCopyAnswer, kCopyLan, kCopyVpn, kLeave,
-        kRejoin, kCode, kClearCode, kJoinIp, kJoinPort, kJoinNow,
+        kRejoin, kCode, kClearCode, kJoinIp, kJoinPort, kJoinPassword, kJoinNow,
         kName, kLook, kPlayers, kVoice, kMic, kVoiceMode, kChatKey, kController, kKeyboard, kMapPlayers, kMapNames,
         kOpenCustomize
     };
@@ -211,6 +211,7 @@ private:
     std::string join_port_;
     std::string join_password_;
     std::string ip_before_;        // join_ip_ as it was when its typing began
+    std::string password_before_;  // join_password_ as it was when its typing began
     std::string rejoin_host_, rejoin_code_;
     std::string controller_row_, keyboard_row_;
     std::optional<std::vector<std::string>> microphones_;

@@ -367,8 +367,8 @@ constexpr Entry kzh_Hans[] = {
     {"IP address", "IP 地址"},
     {"Port", "端口"},
     {"Port when you host", "建房端口"},
-    {"The UDP port other players reach you on (default 27510). Type a number from 1 to 65535; changing it while hosting restarts your game.",
-     "其他玩家连接你使用的 UDP 端口（默认 27510）。输入 1 到 65535 之间的数字；建房期间修改会重启房主服务。"},
+    {"The UDP port other players reach you on (default 27510). Type a number from 1 to 65535; changing it while hosting restarts hosting: friends join again with the new code.",
+     "其他玩家连接你使用的 UDP 端口（默认 27510）。输入 1 到 65535 之间的数字；建房期间修改会重新建房：朋友要用新的邀请码重新加入。"},
     {"Type the host's IP address or host name directly (no invite code needed).",
      "直接输入房主的 IP 地址或主机名（不需要邀请码）。"},
     {"The host's UDP port (default 27510). Type a number from 1 to 65535.",
@@ -379,6 +379,11 @@ constexpr Entry kzh_Hans[] = {
      "IP 地址：请输入有效的 IP 地址或主机名（可带 :端口），未修改。"},
     {"Port: enter a number from 1 to 65535. It was not changed.",
      "端口：请输入 1 到 65535 之间的数字，未修改。"},
+    {"Password", "密码"},
+    {"The host's join password, for an IP address: the word after the address on their Same network or VPN line. An invite code has it inside.",
+     "用 IP 地址加入时房主的加入密码：房主「同一网络」或「VPN」那一行里地址后面的词。邀请码里已经包含密码。"},
+    {"Password: no spaces, at most 128 characters. It was not changed.",
+     "密码：不能有空格，最多 128 个字符，未修改。"},
 };
 
 // ---------------------------------------------------------------------------
@@ -694,8 +699,8 @@ constexpr Entry kzh_Hant[] = {
     {"IP address", "IP 位址"},
     {"Port", "連接埠"},
     {"Port when you host", "建房連接埠"},
-    {"The UDP port other players reach you on (default 27510). Type a number from 1 to 65535; changing it while hosting restarts your game.",
-     "其他玩家連線至你使用的 UDP 連接埠（預設 27510）。輸入 1 到 65535 之間的數字；建房期間修改會重新啟動房主服務。"},
+    {"The UDP port other players reach you on (default 27510). Type a number from 1 to 65535; changing it while hosting restarts hosting: friends join again with the new code.",
+     "其他玩家連線至你使用的 UDP 連接埠（預設 27510）。輸入 1 到 65535 之間的數字；建房期間修改會重新建房：朋友要用新的邀請碼重新加入。"},
     {"Type the host's IP address or host name directly (no invite code needed).",
      "直接輸入房主的 IP 位址或主機名稱（不需要邀請碼）。"},
     {"The host's UDP port (default 27510). Type a number from 1 to 65535.",
@@ -706,6 +711,11 @@ constexpr Entry kzh_Hant[] = {
      "IP 位址：請輸入有效的 IP 位址或主機名稱（可附帶 :連接埠），未修改。"},
     {"Port: enter a number from 1 to 65535. It was not changed.",
      "連接埠：請輸入 1 到 65535 之間的數字，未修改。"},
+    {"Password", "密碼"},
+    {"The host's join password, for an IP address: the word after the address on their Same network or VPN line. An invite code has it inside.",
+     "用 IP 位址加入時房主的加入密碼：房主「同一網路」或「VPN」那一行裡位址後面的詞。邀請碼裡已經包含密碼。"},
+    {"Password: no spaces, at most 128 characters. It was not changed.",
+     "密碼：不能有空格，最多 128 個字元，未修改。"},
 };
 
 std::string Trim(std::string s) {

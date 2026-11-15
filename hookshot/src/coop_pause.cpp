@@ -280,10 +280,9 @@ void Join(const std::string& text) {
     CoopFiles::SetCoopEnvironment(o);
     const bool invite = std::holds_alternative<CoopTitleMenu::JoinInvite>(target);
     const std::string where = invite ? text : std::get<CoopTitleMenu::JoinAddress>(target).server;
-    std::string password = invite ? std::string() : std::get<CoopTitleMenu::JoinAddress>(target).password;
-    if (!invite && password.empty()) {
-        password = !o.password.empty() ? o.password : std::string(CoopTitleMenu::kDefaultDirectPassword);
-    }
+    // Only what the player gave (the invite code, or the password after the address): never this game's own
+    // server_password, which is its host secret and not the other server's.
+    const std::string password = invite ? std::string() : std::get<CoopTitleMenu::JoinAddress>(target).password;
     HosCoopJoinOptions j{};
     j.size = sizeof j;
     j.name = o.name.c_str();

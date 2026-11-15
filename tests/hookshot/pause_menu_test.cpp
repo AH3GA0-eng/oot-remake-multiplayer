@@ -845,6 +845,69 @@ TEST_CASE("pause tab: Join accepts manual IP address and port, with default port
     CHECK(m.join_text() == "10.0.0.5:27777");
 }
 
+TEST_CASE("pause tab: Join's Password row: typed or pasted, shown as stars, sent after the address, no default") {
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    m.Open(Page::kJoin);
+    SelectRow(m, "IP address");
+    m.Press(Input::kDecide);
+    for (const char c : std::string("192.168.1.50:28000")) {
+        m.Char(static_cast<unsigned char>(c));
+    }
+    m.Press(Input::kDecide);
+    CHECK(m.join_text() == "192.168.1.50:28000");   // no password is made up ("coop" is gone)
+    SelectRow(m, "Password");
+    CHECK(m.view().confirm == "Type");
+    m.Press(Input::kDecide);
+    CHECK(m.typing());
+    for (const char c : std::string("Secret7")) {
+        m.Char(static_cast<unsigned char>(c));
+    }
+    CHECK(m.view().confirm == "*******_");
+    m.Press(Input::kDecide);
+    CHECK_FALSE(m.typing());
+    CHECK(Selected(m) == "Join");
+    CHECK(m.join_text() == "192.168.1.50:28000 Secret7");
+    SelectRow(m, "Password");
+    CHECK(m.view().confirm == "*******");
+    SelectRow(m, "Friend's code");   // the address line shows the password as stars too
+    CHECK(m.view().confirm == "192.168.1.50:28000 *******");
+    SelectRow(m, "Join");
+    m.Press(Input::kDecide);
+    const auto req = m.TakeRequest();
+    REQUIRE(req.has_value());
+    CHECK(req->text == "192.168.1.50:28000 Secret7");
+
+    // a space is refused, Esc keeps the old one, a paste goes into the field
+    SelectRow(m, "Password");
+    m.Press(Input::kDecide);
+    m.Char('a');
+    m.Char(' ');
+    m.Char('b');
+    m.Press(Input::kDecide);
+    CHECK(m.join_text() == "192.168.1.50:28000 Secret7");
+    CHECK(m.view().help.find("no spaces") != std::string::npos);
+    m.Press(Input::kDecide);
+    m.Char('y');
+    m.Press(Input::kBack);
+    CHECK(m.join_text() == "192.168.1.50:28000 Secret7");
+    m.Press(Input::kDecide);
+    CHECK(m.Paste("Other9
+"));
+    CHECK_FALSE(m.typing());
+    CHECK(m.join_text() == "192.168.1.50:28000 Other9");
+    CHECK(Selected(m) == "Join");
+
+    // emptied: no password again
+    SelectRow(m, "Password");
+    m.Press(Input::kDecide);
+    for (int i = 0; i < 6; ++i) {
+        m.Press(Input::kErase);
+    }
+    m.Press(Input::kDecide);
+    CHECK(m.join_text() == "192.168.1.50:28000");
+}
+
 TEST_CASE("pause tab: Host Port and Settings Port when you host validate, save, and restart hosting when active") {
     Menu m;
     m.Show(CoopTitleMenu::Options{});

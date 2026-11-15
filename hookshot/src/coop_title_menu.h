@@ -52,7 +52,6 @@ inline constexpr std::size_t kMaxNameChars = 16;   // coop_settings.h
 inline constexpr std::size_t kMaxPasswordBytes = 128;
 inline constexpr int kMinPlayers = 2, kMaxPlayers = 16;   // a session's size (protocol 11: up to 16)
 inline constexpr std::uint16_t kDefaultPort = 27510;
-inline constexpr std::string_view kDefaultDirectPassword = "coop";
 
 // A name the server takes: 1 to 16 characters (code points), no control
 // characters. Spaces at the ends do not count.
