@@ -2142,6 +2142,17 @@ private:
         }
     }
 
+    // An enemy or a boss: its life is never written (the native rule), only changed by its game's own steps.
+    bool NativeOnly(u64 actor) const {
+        return NativeOnlyName(NameOf(actor));
+    }
+
+    std::string NameOf(u64 actor) const {
+        const auto known = names_.find(actor);
+        return known != names_.end() ? known->second.first : std::string("?");
+    }
+    std::size_t lives_lost_ = 0;  // enemy life changes no game step took (never written: lost)
+
     // The pause counters (coop_counters.h): the nodes the cave kept, read.
 #ifdef COOP_HOOKSHOT
     // The game's own creates, deletes and hits (patch 0007), drained each
@@ -2272,11 +2283,6 @@ private:
         s32 life = 0;
         u64 at_us = 0;
     };
-    // An enemy or a boss: its life is never written (the native rule), only changed by its game's own steps.
-    bool NativeOnly(u64 actor) const {
-        return NativeOnlyName(NameOf(actor));
-    }
-
     // Has the enemy's own damage step seen the hit we replayed last on this Life component? (Its last hit id,
     // Life + 0x1b18, reached our id: hit ids only grow.) True when we never replayed one.
     bool ReplaySeen(Reader& r, u64 life) const {
@@ -2287,14 +2293,8 @@ private:
         const u32 last = r.Get<u32>(life + kLastHitId).value_or(0xffffffffu);
         return last != 0xffffffffu && static_cast<s32>(last - ours) >= 0;
     }
-
-    std::string NameOf(u64 actor) const {
-        const auto known = names_.find(actor);
-        return known != names_.end() ? known->second.first : std::string("?");
-    }
     std::string life_scene_;
     bool life_table_full_said_ = false;
-    std::size_t lives_lost_ = 0;  // enemy life changes no game step took (never written: lost)
     static constexpr std::size_t kStepHitsKept = 4096;
     static constexpr u64 kGivenWaitUs = 250'000;
     std::vector<std::pair<u64, s32>> step_hits_;
