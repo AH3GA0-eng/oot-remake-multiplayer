@@ -3,6 +3,7 @@
 #include "coop_mods_tab.h"
 
 #include "coop_rando.h"
+#include "coop_i18n.h"
 
 #include <algorithm>
 #include <cmath>
@@ -129,7 +130,16 @@ std::vector<Tab::Line> Tab::Lines() const {
     head.row = Make(m.title, "", RowKind::kHeading);
     out.push_back(head);
     if (!m.description.empty()) note(m.description);
-    if (!m.author.empty()) note("By " + m.author + (m.version.empty() ? "" : ", version " + m.version));
+    if (!m.author.empty()) {
+        // The table's words around the author and the version, and the author's own
+        // text through it too (the kit's randomizer writes a sentence there, which
+        // the table has; a mod's own name is not in it and stays as it is).
+        std::string by = CoopI18n::Tr("By") + " " + CoopI18n::Tr(m.author);
+        if (!m.version.empty()) {
+            by += CoopI18n::Tr(", version") + " " + m.version;
+        }
+        note(std::move(by));
+    }
     if (!m.note.empty()) note(m.note);
     if (m.id == CoopRando::kId && src_.rando) {
         if (std::string r = src_.rando(); !r.empty()) note("Randomizer: " + r);
@@ -193,8 +203,13 @@ std::vector<Tab::Line> Tab::Lines() const {
             break;
         }
         l.row.fixed = s.locked;
-        l.help = s.locked ? "In this co-op game the host sets this." : s.setting.help;
-        if (s.setting.restart) l.help += (l.help.empty() ? "" : " ") + std::string("Counts after a restart.");
+        // The setting's own help and the restart note are two lines of the table,
+        // put together here: the joined paragraph ("... (for it). Counts after a
+        // restart.") is not a line of any table, so it would stay English.
+        l.help = s.locked ? CoopI18n::Tr("In this co-op game the host sets this.") : s.setting.help;
+        if (s.setting.restart) {
+            l.help += (l.help.empty() ? "" : " ") + CoopI18n::Tr("Counts after a restart.");
+        }
         out.push_back(std::move(l));
     }
     return out;

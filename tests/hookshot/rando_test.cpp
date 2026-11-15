@@ -144,6 +144,18 @@ TEST_CASE("rando: the control mod's mod.json is valid, with the seed and preset 
     CHECK(shared == std::set<std::string>{"on", "seed", "preset"});
     CHECK(m->settings[2].initial == "default");
     CHECK(m->settings[2].choices.size() == std::size(kPresets));
+    // Each choice is {"value", "name"}: OOTRR and the folder get the value, the
+    // Mods tab shows the name (English here; the loader picks the language's
+    // with TextIn, which the tab's own test covers).
+    for (std::size_t i = 0; i < m->settings[2].choices.size(); ++i) {
+        CHECK(m->settings[2].choices[i].first == kPresets[i]);
+        CHECK_FALSE(m->settings[2].choices[i].second.empty());
+    }
+    // The kit's own mod carries its text in both Chinese tables, so a Chinese menu
+    // shows it translated without a translation of the mod's file.
+    CHECK(ManifestText().find("\"name_zh-Hans\"") != std::string::npos);
+    CHECK(ManifestText().find("\"help_zh-Hant\"") != std::string::npos);
+    CHECK(ManifestText().find("\"description_zh-Hans\"") != std::string::npos);
 }
 
 TEST_CASE("rando: seed words and folders as OOTRR names them") {

@@ -417,8 +417,9 @@ void DrawHud(const HosCoopDraw& d, const std::vector<HudBlock>& blocks, CoopVoic
     const float icon_gap = 0.3f * name_px;
     if (own_voice != CoopVoice::Icon::none && !blocks.empty()) {   // our own row: "You" and our icon
         Font(d, look.medium);
-        GameText(d, x, y, name_px, Rgba(255, 255, 255, 255), "You");
-        DrawVoiceIcon(d, x + d.text_width(d.user, name_px, "You") + icon_gap, y, name_px, own_voice, 255);
+        const std::string you = CoopI18n::Tr("You");
+        GameText(d, x, y, name_px, Rgba(255, 255, 255, 255), you.c_str());
+        DrawVoiceIcon(d, x + d.text_width(d.user, name_px, you.c_str()) + icon_gap, y, name_px, own_voice, 255);
         y += name_px + kHudGap * u;
     }
     for (const auto& b : blocks) {
@@ -575,7 +576,10 @@ std::string FloorWords(int delta) {
         return {};
     }
     const int n = delta < 0 ? -delta : delta;
-    return " (" + std::to_string(n) + (delta > 0 ? " below)" : " above)");
+    // The number and the table's words, put together here: "(1 below)" as one
+    // line of a table would need the count inside it, and a shape's middle is
+    // a name or a code rather than a bare number.
+    return " (" + std::to_string(n) + " " + CoopI18n::Tr(delta > 0 ? "below" : "above") + ")";
 }
 
 CheatsBox CheatsAt(float width, float height, const CheatsView& c) {

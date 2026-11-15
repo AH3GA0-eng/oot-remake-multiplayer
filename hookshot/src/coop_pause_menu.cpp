@@ -277,13 +277,19 @@ std::vector<Menu::Line> Menu::Lines() const {
                        "Talk with players near your Link through your microphone; they sound quieter the farther away "
                        "they are. Off: you neither send nor hear voices."});
         if (options_.voice) {
-            out.push_back({Choice("Voice mode", options_.voice_ptt ? "Push to talk (" + options_.voice_key + ")"
-                                                                    : std::string("Open mic")),
-                           Act::kVoiceMode,
-                           "Open mic: you are heard whenever you speak (silence and quiet noise are not sent). Push "
-                           "to talk: only while you hold " + options_.voice_key +
-                               ". On speakers, not headphones? Push to talk keeps the others' voices from coming "
-                               "back to them through your microphone."});
+            // The table's words around the key (data), put together here: "Push to
+            // talk (T)" as one line of a table would need the key inside it.
+            const std::string mode =
+                options_.voice_ptt ? CoopI18n::Tr("Push to talk") + " (" + options_.voice_key + ")"
+                                   : CoopI18n::Tr("Open mic");
+            // The help has the key in it twice, so its two halves are put
+            // together around the key: neither is a line of the table alone.
+            const std::string voice_help =
+                CoopI18n::Tr("Open mic: you are heard whenever you speak (silence and quiet noise are not sent).") +
+                " " + CoopI18n::Tr("Push to talk: only while you hold") + " " + options_.voice_key + ". " +
+                CoopI18n::Tr("On speakers, not headphones? Push to talk keeps the others' voices from coming back to "
+                             "them through your microphone.");
+            out.push_back({Choice("Voice mode", mode), Act::kVoiceMode, voice_help});
         }
         out.push_back({Choice("Chat key", ChatKeyWords(options_.chat_key)), Act::kChatKey,
                        "The key that opens the chat box in the game. Off: no chat box."});

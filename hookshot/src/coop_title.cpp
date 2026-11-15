@@ -441,7 +441,7 @@ std::optional<CoopDraw::TitleView> View() {
     if (g_rows) {
         return std::nullopt;
     }
-    return CoopDraw::TitleView{"Multiplayer", true};
+    return CoopDraw::TitleView{CoopI18n::Tr("Multiplayer"), true};
 }
 
 }  // namespace CoopTitle

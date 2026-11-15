@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <utility>
 
+#include "coop_i18n.h"
+
 namespace CoopLobbyTab {
 
 namespace {
@@ -19,16 +21,16 @@ constexpr std::uint8_t kChat = proto::lobby_mute::chat;
 // players; past it one line says how many more can join.
 constexpr int kMostSlotRows = 4;
 
+// "3.5", not "3 and a half": a number reads the same in every language's table
+// (coop_i18n.h); the word after it ("hearts") is the table's.
 std::string Hearts(std::uint16_t quarters) {
     const int whole = quarters / 4;
-    const int rest = quarters % 4;
-    std::string s = std::to_string(whole);
-    if (rest == 2) {
-        s += " and a half";
-    } else if (rest != 0) {
-        s += " and " + std::to_string(rest) + "/4";
+    switch (quarters % 4) {
+    case 2: return std::to_string(whole) + ".5";
+    case 1: return std::to_string(whole) + ".25";
+    case 3: return std::to_string(whole) + ".75";
+    default: return std::to_string(whole);
     }
-    return s;
 }
 
 std::string MutedWords(std::uint8_t bits) {
@@ -141,13 +143,15 @@ std::vector<Tab::Line> Tab::Lines() const {
                     ? "Players  " + std::to_string(count) + " / " + std::to_string(lobby_.max_players)
                     : "Players  " + std::to_string(count));
         for (const auto& pl : lobby_.players) {
-            std::string name = pl.host ? "Host: " + pl.name : pl.name;
+            std::string name = pl.host ? CoopI18n::Tr("Host") + ": " + pl.name : pl.name;
             if (pl.self) {
-                name += " (you)";
+                name += CoopI18n::Tr(" (you)");
             }
             action(std::move(name), Summary(pl), Act::kPlayer,
-                   "Player " + std::to_string(pl.number) + (pl.colour.empty() ? "" : ", " + pl.colour) +
-                       (pl.host ? ", the host" : "") + ". Press to see " + (pl.self ? "yourself." : "what you can do."),
+                   CoopI18n::Tr("Player") + " " + std::to_string(pl.number) +
+                       (pl.colour.empty() ? "" : CoopI18n::Tr(", ") + pl.colour) +
+                       (pl.host ? CoopI18n::Tr(", the host") : std::string()) + CoopI18n::Tr(". Press to see ") +
+                       CoopI18n::Tr(pl.self ? "yourself." : "what you can do."),
                    pl.number);
         }
         if (lobby_.max_players > count) {
@@ -177,7 +181,7 @@ std::vector<Tab::Line> Tab::Lines() const {
         heading("Host's game");
         std::string game = lobby_.host_place.empty() ? std::string("Not known yet") : lobby_.host_place;
         if (lobby_.host_life && lobby_.host_max && *lobby_.host_max > 0) {
-            game += "  " + Hearts(*lobby_.host_life) + " of " + Hearts(*lobby_.host_max) + " hearts";
+            game += "  " + Hearts(*lobby_.host_life) + " / " + Hearts(*lobby_.host_max) + " hearts";
         }
         note(std::move(game));
         return out;

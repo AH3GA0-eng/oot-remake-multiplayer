@@ -13,6 +13,7 @@
 #include <monocypher.h>
 
 #include "coop_mod_json.h"
+#include "coop_i18n.h"
 #include "hos_coop_mods.h"
 
 namespace CoopMods {
@@ -138,6 +139,29 @@ struct Field {
         return true;
     }
 
+    // A text member in the player's language and, when it has none, the plain one:
+    // "name_zh-Hans" (the code language.txt and Longshot's Menu language row use),
+    // then "name". A mod that carries one of these shows that language's text in the
+    // Mods tab; a mod that carries none is as it was.
+    bool TextIn(const char* key, std::size_t most, std::string& out) const {
+        const std::string_view code = CoopI18n::Current() != nullptr ? CoopI18n::Current()->code : std::string_view();
+        if (!code.empty()) {
+            std::string localised(key);
+            localised += '_';
+            localised += code;
+            const Value* v = object.Get(localised);
+            if (v != nullptr) {
+                if (v->kind != Value::Kind::String || v->string.size() > most || !Printable(v->string)) {
+                    problem = "\"" + localised + "\" must be a text of at most " + std::to_string(most) + " characters";
+                    return false;
+                }
+                out = v->string;
+                return true;
+            }
+        }
+        return Text(key, most, out);
+    }
+
     bool Flag(const char* key, bool& out) const {
         const Value* v = object.Get(key);
         if (v == nullptr) {
@@ -186,7 +210,7 @@ bool ReadSetting(const Value& row, Setting& out, std::string& problem) {
     }
     out.name = out.key;
     double max_length = 64;
-    if (!f.Text("name", 64, out.name) || !f.Text("help", 256, out.help) || !f.Flag("restart", out.restart) ||
+    if (!f.TextIn("name", 64, out.name) || !f.TextIn("help", 256, out.help) || !f.Flag("restart", out.restart) ||
         !f.Flag("shared", out.shared) || !f.Number("min", out.min) || !f.Number("max", out.max) ||
         !f.Number("step", out.step) || !f.Number("max_length", max_length)) {
         return false;
@@ -221,12 +245,19 @@ bool ReadSetting(const Value& row, Setting& out, std::string& problem) {
             return false;
         }
         for (const Value& c : choices->array) {
-            std::string value, caption;
+            std::string value, caption, ignored;
             if (c.kind == Value::Kind::String) {
                 value = caption = c.string;
             } else if (c.kind == Value::Kind::Object) {
                 value = c.Text("value").value_or("");
-                caption = c.Text("name").value_or(value);
+                // {"value", "name"}: the name in the player's language when the mod has one.
+                const Field pair{c, ignored};
+                if (!pair.TextIn("name", 64, caption)) {
+                    caption = value;
+                }
+                if (caption.empty()) {
+                    caption = value;
+                }
             }
             const bool twice = std::any_of(out.choices.begin(), out.choices.end(),
                                            [&](const auto& have) { return have.first == value; });
@@ -425,8 +456,8 @@ std::optional<Manifest> ParseManifest(std::string_view text, std::string_view fo
     const Field f{*doc, why};
     std::string share = "everyone";
     double api = 0;
-    if (!f.Text("id", kMaxId, m.id) || !f.Text("name", 64, m.name) || !f.Text("version", kMaxVersion, m.version) ||
-        !f.Text("author", 64, m.author) || !f.Text("description", 512, m.description) ||
+    if (!f.Text("id", kMaxId, m.id) || !f.TextIn("name", 64, m.name) || !f.Text("version", kMaxVersion, m.version) ||
+        !f.TextIn("author", 64, m.author) || !f.TextIn("description", 512, m.description) ||
         !f.Text("coop", 16, share) || !f.Number("api", api)) {
         return fail();
     }

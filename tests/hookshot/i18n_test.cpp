@@ -113,7 +113,15 @@ TEST_CASE("coop i18n: a language code picks its table") {
     CHECK(CoopI18n::ForCode("ZH-hant") == ByCode("zh-Hant"));
     CHECK(CoopI18n::ForCode("zh-Hans-CN") == ByCode("zh-Hans"));
     CHECK(CoopI18n::ForCode("zh") == nullptr);   // (no table is plain zh)
-    CHECK(CoopI18n::ForCode("zh-Hansx") == nullptr);
+    // Windows names Chinese by region and puts no script in the code
+    // (GetUserDefaultLocaleName), so the regions stand for the scripts there:
+    // the mainland, Singapore and Malaysia are Simplified, Taiwan, Hong Kong
+    // and Macau Traditional, and any other "zh-..." is taken as Simplified.
+    CHECK(CoopI18n::ForCode("zh-CN") == ByCode("zh-Hans"));
+    CHECK(CoopI18n::ForCode("zh-SG") == ByCode("zh-Hans"));
+    CHECK(CoopI18n::ForCode("zh-TW") == ByCode("zh-Hant"));
+    CHECK(CoopI18n::ForCode("zh-HK") == ByCode("zh-Hant"));
+    CHECK(CoopI18n::ForCode("zh-MO") == ByCode("zh-Hant"));
     CHECK(CoopI18n::ForCode("en") == nullptr);   // (English: the text as it is)
     CHECK(CoopI18n::ForCode("ja") == nullptr);   // (a language this table does not have)
     CHECK(CoopI18n::ForCode("") == nullptr);
