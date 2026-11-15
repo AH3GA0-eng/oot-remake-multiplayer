@@ -2349,13 +2349,15 @@ TEST_CASE("out of a fight an enemy goes to the player near it after 3 s, with it
   h.receive(2, ObjectSample{0, placed(7), 1, state_at(3, 9)}, kChannelObjectSamples);
   CHECK(messages_to<ObjectSample>(h, 1).size() == 1);
 
-  // It does not go straight back: 5 s must pass after a change, then 3 s.
+  // It does not go straight back: not to the player who just gave it up for
+  // handover_back_us (15 s, report 37), though 5 s + 3 s would allow another.
   h.stand(1, 5);
   h.stand(2, 50);
   h.clear();
-  h.run(4 * kSecond);
+  h.run(9 * kSecond);
   CHECK(messages_to<HandoverAsk>(h, 2).empty());
-  h.run(5 * kSecond);
+  CHECK(h.session.stats().handover_back_held > 0);
+  h.run(8 * kSecond);
   CHECK(messages_to<HandoverAsk>(h, 2) == std::vector<HandoverAsk>{{placed(7), 1, 1}});
 }
 
