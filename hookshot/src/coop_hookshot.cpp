@@ -189,6 +189,40 @@ bool PuppetGuardInExe() {
 #endif
 }
 
+// The exe's hos_coop_null_page (patch 0002, host/coop_null_page.c): from then on a guest null read gives 0. nullptr in
+// an exe built before it was exported (and on Linux, which needs none).
+using NullPageFn = void (*)();
+NullPageFn NullPage() {
+#ifdef _WIN32
+    static const auto fn = reinterpret_cast<NullPageFn>(
+        reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(nullptr), "hos_coop_null_page")));
+    return fn;
+#else
+    return nullptr;
+#endif
+}
+
+// coop_hookshot.h PerceivedPuppetsSafe for this game.
+bool PerceivedSafe() {
+#ifdef _WIN32
+    const bool window_readable = false;
+#else
+    const bool window_readable = true;  // (Linux: see PuppetGuardInExe)
+#endif
+    return CoopHookshot::PerceivedPuppetsSafe(window_readable, NullPage() != nullptr, Env("HOS_COOP_NULL_READS"));
+}
+
+// Before the game makes a puppet: its null reads give 0 (issue 150, coop_hookshot.h PerceivedPuppetsSafe). Once.
+void ArmNullPage(const std::string& actor) {
+    static std::atomic<bool> armed{false};
+    if (actor.rfind("CoopPuppet_", 0) != 0 || armed.exchange(true)) {
+        return;
+    }
+    if (const NullPageFn fn = NullPage(); fn != nullptr) {
+        fn();
+    }
+}
+
 // coop_hookshot.h AllowLinkPuppets / RefuseCreate: without patch 0002 a Link-model puppet crashes Hookshot's game.
 bool Refused(const CoopPuppet::Call& c) {
     static const bool allow = [] {
@@ -218,6 +252,7 @@ bool Refused(const CoopPuppet::Call& c) {
         }
     }
     if (!CoopHookshot::RefuseCreate(actor, allow)) {
+        ArmNullPage(actor);
         return false;
     }
     static bool said = false;
@@ -1046,7 +1081,7 @@ bool Start(const HosCoopApi* api) {
     // The same switches that make the emulator put its cave in.
     CoopLook::AgreeStartTunic();  // your start tunic from the pack's files, before the puppets read it (coop_look.h)
     if (EnvOn("LICHII_COOP_PUPPET") || EnvOn("LICHII_COOP_DEBUG_PUPPET")) {
-        CoopPuppetConfig::Configure();  // as the emulator's cave (coop_puppet_config.h)
+        CoopPuppetConfig::Configure(PerceivedSafe());  // as the emulator's cave (coop_puppet_config.h)
     }
     CoopPackNotice::Enable(CoopPuppetConfig::HasPack());  // no pack: the chat says so once (coop_pack_notice.h)
     g_hold = EnvOn("LICHII_COOP_OBJECTS_AI_HOLD");

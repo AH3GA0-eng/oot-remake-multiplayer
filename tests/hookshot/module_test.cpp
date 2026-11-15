@@ -192,6 +192,32 @@ TEST_CASE("hookshot: Link puppets follow the puppet guard in longshot.exe") {
     CHECK_FALSE(CoopHookshot::AllowLinkPuppets("0", true));
 }
 
+TEST_CASE("hookshot: perceived puppets only where their null reads give 0 (issue 150)") {
+    // Linux: the guest window is readable whole.
+    CHECK(CoopHookshot::PerceivedPuppetsSafe(true, false, ""));
+    CHECK(CoopHookshot::PerceivedPuppetsSafe(true, false, "0"));
+    // Windows: the exe must export patch 0002's hos_coop_null_page, and HOS_COOP_NULL_READS=0 must not turn it off.
+    CHECK(CoopHookshot::PerceivedPuppetsSafe(false, true, ""));
+    CHECK(CoopHookshot::PerceivedPuppetsSafe(false, true, "1"));
+    CHECK_FALSE(CoopHookshot::PerceivedPuppetsSafe(false, true, "0"));
+    CHECK_FALSE(CoopHookshot::PerceivedPuppetsSafe(false, false, ""));
+}
+
+TEST_CASE("hookshot: the null page is armed before the first puppet create reaches the game (issue 150)") {
+    const std::string src = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    const auto arm = src.find("ArmNullPage(actor);");
+    const auto call = src.find("g_api->call(ctx, &k, &x0)");
+    REQUIRE(arm != std::string::npos);
+    REQUIRE(call != std::string::npos);
+    CHECK(arm < call);  // inside Refused(), which runs before the call
+    CHECK(src.find("\"hos_coop_null_page\"") != std::string::npos);
+    CHECK(src.find("CoopPuppetConfig::Configure(PerceivedSafe())") != std::string::npos);
+    // Patch 0002 exports it (dllexport on Windows) for the module to find.
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0002-coop-puppets.patch");
+    CHECK(patch.find("+#define HOS_COOP_NULL_EXPORT __declspec(dllexport)") != std::string::npos);
+    CHECK(patch.find("+HOS_COOP_NULL_EXPORT void hos_coop_null_page(void) {") != std::string::npos);
+}
+
 TEST_CASE("hookshot: the module refuses puppet creates before they reach the game") {
     const std::string src = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
     const auto refused = src.find("if (Refused(c))");

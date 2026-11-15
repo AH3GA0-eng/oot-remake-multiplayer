@@ -163,6 +163,20 @@ inline bool AllowLinkPuppets(const std::string& env, bool guard_in_exe) {
     return guard_in_exe;
 }
 
+// Issue 150: a puppet pack built with perception gives each puppet the
+// perception's Physics component (slot 10). Patch 0002's guard arms the null
+// page (host/coop_null_page.c) only when it meets a Link with NO slot 10, so a
+// perceived puppet never arms it, and the game's later read of the puppet's
+// Player component (f_7102dcee60 after a held-item change: guest 0x7d8,
+// lr 0x82deeef8) crashed the game. The module now arms the page itself (the
+// exe's exported hos_coop_null_page) before its first puppet. A perceived
+// puppet is safe on Linux (the guest window is readable whole), or when the
+// exe exports it and HOS_COOP_NULL_READS is not 0; otherwise every puppet is
+// its quiet copy (CoopPuppet::PlannerSettings::quiet_everywhere).
+inline bool PerceivedPuppetsSafe(bool window_readable, bool null_page_exported, const std::string& null_reads_env) {
+    return window_readable || (null_page_exported && null_reads_env != "0");
+}
+
 // Refused while not allowed: other players then show as their Navi only.
 inline bool RefuseCreate(const std::string& actor, bool allow) {
     return !allow && actor.rfind("CoopPuppet_", 0) == 0;
