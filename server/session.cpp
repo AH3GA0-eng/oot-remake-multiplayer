@@ -211,7 +211,7 @@ void Session::on_hello(ConnectionId id, Connection& c, const Hello& hello,
   // learns nothing about the session (its game build, names, how full).
   // Every session has one (coop_server does not start without it), and the
   // traffic is always encrypted: there is no plain way in.
-  if (config_.join_password.empty()) {
+  if (config_.join_password.empty() && config_.direct_password.empty()) {
     refuse(id, c, RefuseReason::bad_password, now_us,
            "this server has no join password set, so nobody can join");
     return;
@@ -241,10 +241,16 @@ void Session::on_join_proof(ConnectionId id, Connection& c, const JoinProof& pro
   std::shared_ptr<const KeyPair> key_pair = std::move(c.key_pair);
   // Bound to both key shares: a proof relayed by someone who swapped them
   // (to sit in the middle) does not match.
-  const bool right =
-      key_pair != nullptr && hello.key_share &&
+  const bool matched_join =
+      key_pair != nullptr && hello.key_share && !config_.join_password.empty() &&
       same_proof(proof.proof, join_proof(config_.join_password, c.nonce, *hello.key_share,
                                          key_pair->share()));
+  const bool matched_direct =
+      !matched_join && key_pair != nullptr && hello.key_share &&
+      !config_.direct_password.empty() &&
+      same_proof(proof.proof, join_proof(config_.direct_password, c.nonce, *hello.key_share,
+                                         key_pair->share()));
+  const bool right = matched_join || matched_direct;
   c.nonce = {};  // used once: a second proof on this connection finds no nonce to match
   std::vector<std::uint8_t> hello_packet = std::move(c.hello_packet);
   std::vector<std::uint8_t> challenge_packet = std::move(c.challenge_packet);
@@ -258,8 +264,10 @@ void Session::on_join_proof(ConnectionId id, Connection& c, const JoinProof& pro
     return;
   }
   // The keys for this connection: from here on, all of it is sealed.
+  const std::string& matched_password =
+      matched_direct ? config_.direct_password : config_.join_password;
   std::optional<TrafficKeys> keys =
-      derive_traffic_keys(*key_pair, *hello.key_share, config_.join_password, hello_packet,
+      derive_traffic_keys(*key_pair, *hello.key_share, matched_password, hello_packet,
                           challenge_packet, /*is_server=*/true);
   if (!keys) {
     ++stats_.no_key_share;

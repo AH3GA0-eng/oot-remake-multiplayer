@@ -184,6 +184,7 @@ int Menu::HostStart(const HosCoopHostOptions* o) {
     }
     if (job.password.empty()) {
         job.password = nat::make_password();  // every session has one; the invite code carries it
+        job.direct_password = "coop";         // fallback for manual IP:port joins without a code
     } else if (const char* why = coop::server::password_problem(job.password)) {
         Fail(std::string("the join password is ") + why, HOS_COOP_PROBLEM_BAD_PASSWORD);
         return 0;
@@ -217,6 +218,7 @@ void Menu::RunHost(HostJob job) {
         config.port = job.port;
         config.port_tries = kPortTries;
         config.session.join_password = job.password;
+        config.session.direct_password = job.direct_password;
         config.session.pvp = job.pvp;
         config.session.max_players = job.max_players;
         config.session.pose_upload_bytes_per_second = job.pose_upload_kbps * 125u;

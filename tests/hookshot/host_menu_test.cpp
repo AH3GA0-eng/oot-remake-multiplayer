@@ -406,3 +406,35 @@ TEST_CASE("host menu: Paste friend's answer says plainly what was wrong with the
     const auto old_invite = ReadPastedAnswer(answer, invite, "other-pw", now);
     CHECK(old_invite.line.find("another invite code") != std::string::npos);
 }
+
+TEST_CASE("host menu: Host on a custom port with no custom password accepts manual IP and port joins with default password") {
+    EnetLife enet;
+    Game host_game, join_game;
+    CoopHostMenu::Menu host_menu(host_game.hooks());
+    CoopHostMenu::Menu join_menu(join_game.hooks());
+
+    HosCoopHostOptions ho = host_options();
+    ho.port = 38515;
+    ho.password = nullptr;
+    REQUIRE(host_menu.HostStart(&ho) == 1);
+    REQUIRE(wait_for([&] { return status_of(host_menu).state == HOS_COOP_HOSTING; }, 3000));
+    CHECK(status_of(host_menu).port == 38515);
+
+    const std::string addr = "127.0.0.1:" + std::to_string(status_of(host_menu).port);
+    HosCoopJoinOptions jo{};
+    jo.size = sizeof jo;
+    jo.name = "Link";
+    jo.target = addr.c_str();
+    jo.password = "coop";
+    REQUIRE(join_menu.Join(&jo) == 1);
+    REQUIRE(wait_for([&] { return status_of(join_menu).state == HOS_COOP_CONNECTED && join_game.target().has_value(); }, 3000));
+    CHECK(join_game.target()->server == "127.0.0.1");
+    CHECK(join_game.target()->port == 38515);
+    join_game.start_client();
+    REQUIRE(wait_for([&] { return status_of(host_menu).players == 1; }, 5000, [&] { join_game.client->service(1); }));
+    CHECK(join_game.client->state() == coop::net::State::connected);
+
+    join_game.client->stop();
+    join_menu.Leave();
+    host_menu.Leave();
+}
