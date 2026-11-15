@@ -99,16 +99,18 @@ std::string PackStartTunic(const std::optional<std::vector<std::uint8_t>>& tile,
     if (!tile) {
         return "green";
     }
-    // The tunic colours of the pack (CoopColors::TunicOf's names but green).
-    static constexpr std::array<std::string_view, 9> kColours{"red",  "orange", "yellow", "cyan", "blue",
-                                                              "purple", "pink", "white", "black"};
+    // The pack's tunic colours: CoopColors::TunicOf's names but green (tunic.py COLORS).
     std::vector<std::string> order;
     if (!hint.empty() && hint != "green") {
         order.push_back(hint);
     }
-    for (const auto c : kColours) {
+    for (const auto suffix : CoopColors::Tunics()) {
+        std::string c(suffix);
+        for (char& ch : c) {
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        }
         if (c != hint) {
-            order.emplace_back(c);
+            order.push_back(std::move(c));
         }
     }
     for (const auto& c : order) {

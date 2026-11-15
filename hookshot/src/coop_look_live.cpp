@@ -390,9 +390,27 @@ void AgreeStartTunic() {
     const char* set = std::getenv("LICHII_COOP_SELF_TUNIC");
     const std::string hint = set != nullptr ? set : "";
     const fs::path pack = LookDir().parent_path();
+    // Your own tile (colour-agree packs), else an older pack's tile over the game's.
+    std::string own = "Angin_Tile_S_Alb.";
+    auto tile = ReadFile(pack / "romfs" / "Tex" / "Angin_Tile_S_Alb.bntx.zs");
+    if (!tile) {
+        own.clear();
+        tile = ReadFile(pack / "romfs" / "Tex" / "Angin_Tile_A_Alb.bntx.zs");
+    }
     const std::string start = PackStartTunic(
-        ReadFile(pack / "romfs" / "Tex" / "Angin_Tile_A_Alb.bntx.zs"),
-        [&](const std::string& c) { return ReadFile(pack / "coop_self" / (c + ".bntx.zs")); }, hint);
+        tile, [&](const std::string& c) { return ReadFile(pack / "coop_self" / (c + "." + own + "bntx.zs")); },
+        hint);
+    // The colour chosen (sent to the others): the files should be its. They are when the kit's launcher or
+    // the autotest started the game; else your own Link starts in the files' colour and the wardrobe repaints
+    // it in the chosen one (your own textures only: the puppets' copies are marked).
+    std::vector<std::string> errors;
+    const auto chosen = CoopHook::LoadSettings(
+        Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini", errors).color;
+    if (chosen && TunicName(chosen) != start) {
+        LOG_WARNING(Core, "coop: look: the puppet pack's tunic files are {}, your colour is {}: started without the "
+                          "kit's launcher? Your Link is repainted in {} once the game's textures are found",
+                    start, TunicName(chosen), TunicName(chosen));
+    }
     if (start == (hint.empty() ? std::string("green") : hint)) {
         return;
     }

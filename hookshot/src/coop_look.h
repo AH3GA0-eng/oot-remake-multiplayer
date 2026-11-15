@@ -127,14 +127,15 @@ std::string TunicName(const std::optional<std::uint32_t>& colour);
 std::optional<std::uint32_t> OwnTunic(const std::optional<std::uint32_t>& chosen, std::uint8_t number);
 
 // The colour your own Link's tunic files in the puppet pack give it when the
-// game starts (colour-agree): the kit's Set-KitSelfTunic copies a colour's
-// coop_self/<colour>.bntx.zs over romfs/Tex/Angin_Tile_A_Alb.bntx.zs, and a
-// start without the kit's launcher (the autotest, a hand start, a colour
-// changed since) leaves whatever was copied last. The game draws what is in
-// the pack, so that is the start colour, not LICHII_COOP_SELF_TUNIC:
-// `tile` is the pack's tile (nothing: none, "green", the game's own),
-// `self_tile` a colour's coop_self file. A tile that is none of them: `hint`
-// (the switch), else "green". `hint` is asked first, then every tunic colour.
+// game starts (colour-agree): at each start the kit (Set-KitSelfTunic,
+// puppet_pack/self_tunic.py for Linux and the autotest) copies your colour's
+// coop_self/ files in: your own tile romfs/Tex/Angin_Tile_S_Alb.bntx.zs (an
+// older pack: over the game's Angin_Tile_A_Alb). A start that skipped it
+// leaves whatever was copied last, and the game draws what is in the pack, so
+// that is the start colour, not LICHII_COOP_SELF_TUNIC: `tile` is the pack's
+// tile (nothing: none, "green", the game's own), `self_tile` a colour's
+// coop_self file. A tile that is none of them: `hint` (the switch), else
+// "green". `hint` is asked first, then every tunic colour (CoopColors::Tunics).
 using FileFn = std::function<std::optional<std::vector<std::uint8_t>>(const std::string&)>;
 std::string PackStartTunic(const std::optional<std::vector<std::uint8_t>>& tile, const FileFn& self_tile,
                            const std::string& hint);
