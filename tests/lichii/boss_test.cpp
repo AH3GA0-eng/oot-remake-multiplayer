@@ -742,7 +742,7 @@ TEST_CASE("boss: a player who leaves the beaten boss room is told to those still
     CHECK(s.Tick(here(), 25 * kS).chat.empty());
 }
 
-TEST_CASE("boss: a player past the door who leaves before the win is told as left; one only near it is not (#50)") {
+TEST_CASE("boss: a player past the door who leaves before the win is told as left, and one only near it is not (#50)") {
     Sync s;
     const auto here = [] { return At("ForestTemple", Forest().arrive); };
     s.Tick(here(), 1 * kS);

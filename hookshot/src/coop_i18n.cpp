@@ -1528,6 +1528,10 @@ constexpr Shape kShapes[] = {
     {"No ", " yet.", "No {} yet.", true},
     {"Copied: ", "", "Copied: {}", false},
     {"", " friend(s) joined.", "{} friend(s) joined.", false},
+    // The boss room's chat notices (lichii/hook/coop_boss.cpp, #50): "<name> took the blue warp". Before
+    // the shapes with an empty end below ("Player {}"), which a name could also fit.
+    {"", " took the blue warp", "{} took the blue warp", false},
+    {"", " left the boss room", "{} left the boss room", false},
     {"Getting ", "'s save...", "Getting {}'s save...", false},
     {"Loading ", "'s save...", "Loading {}'s save...", false},
     {"Multiplayer: ", "", "Multiplayer: {}", true},

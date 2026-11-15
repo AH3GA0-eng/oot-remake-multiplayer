@@ -316,9 +316,10 @@ bool Sync::OtherFinishedIntro(const Room& room, std::uint64_t now_us) const {
 
 Actions Sync::Tick(const Local& local, std::uint64_t now_us) {
     Actions out = Step(local, now_us);
-    // Only once our room is known again this frame (a load keeps here_ as it was).
+    // Only once our room is known again this frame (a load keeps here_ as it was). On Step's clock,
+    // which never goes back: a server time stepping back must not cut the notice's wait.
     if (local.scene && local.position) {
-        Notices(out, now_us);
+        Notices(out, last_now_);
     }
     return out;
 }
