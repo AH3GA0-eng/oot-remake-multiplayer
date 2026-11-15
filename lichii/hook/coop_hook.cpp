@@ -2052,9 +2052,12 @@ private:
 
     // Issue 190 (docs/items.md, "The ocarina"): equips the best held ocarina
     // when PlayerStatus.EquipOcarina is "" (an ocarina from another player)
-    // or the Fairy Ocarina while the Ocarina of Time is held. The String64 is
-    // written straight into its buffer (the game has no queue for it), as the
-    // teleport does. A flag that cannot be read is left alone.
+    // or the Fairy Ocarina while the Ocarina of Time is held. The String64 goes
+    // through the game's own String64 push (GameFlags::set_string64), so the
+    // saved copy changes too: written straight into the live text, it went
+    // back to "" at every scene load, before Link took it out (issue 57,
+    // a player's log: the mend wrote it again after each load). A flag that
+    // cannot be read is left alone.
     void MendOcarina(EmulatorMemory& memory) {
         namespace oc = coop::host::ocarina;
         coop::host::GameFlags flags(memory);
@@ -2077,7 +2080,7 @@ private:
         if (!want) {
             return;
         }
-        if (coop::host::GameFlags::set_string64_now(memory, oc::kEquip, *want)) {
+        if (coop::host::GameFlags::set_string64(memory, oc::kEquip, *want)) {
             LOG_INFO(Core, "coop: items: ocarina '{}' -> '{}' for the held ocarina", *current, *want);
         } else if (!ocarina_mend_failed_logged_) {
             ocarina_mend_failed_logged_ = true;

@@ -258,6 +258,12 @@ void RunFlagSetters(void* ctx) {
             if (s0) std::memcpy(&k.s0, &*s0, sizeof k.s0);  // a Float setter's value
             std::uint64_t result = 0;
             return g_api->call(ctx, &k, &result) != 0;
+        },
+        [ctx](const void* data, std::size_t n) -> std::uint64_t {
+            // (patch 0004's scratch: an older Hookshot has none, and String64 writes then go into the queues)
+            const bool has = g_api->size >= offsetof(HosCoopApi, scratch) + sizeof(g_api->scratch) &&
+                             g_api->scratch != nullptr;
+            return has ? g_api->scratch(ctx, data, n) : 0;
         });
     if (ok) {
         return;
@@ -288,6 +294,9 @@ void RunFlagSetters(void* ctx) {
             break;
         case GameFlagType::key64:
             done = GameFlags::set_key64(memory, w.id, w.value != 0);
+            break;
+        case GameFlagType::string64:
+            if (const auto text = CoopFlagNative::Calls().text(w)) done = GameFlags::set_string64(memory, hash, *text);
             break;
         }
         ++(done ? moved : lost);
