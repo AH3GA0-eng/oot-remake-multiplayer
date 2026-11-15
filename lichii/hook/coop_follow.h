@@ -56,17 +56,16 @@ inline constexpr float kSoftTauMs = 160.0f;
 // jitter-3: while moving, the velocity may carry it up to this past the place it follows (the
 // wobble, ~1 cm); further, or still, it is cut at the place (no overshoot at a stop).
 inline constexpr float kPassM = 0.02f;
-// idle-twitch (owner: "other puppets still twitch a little while standing still"). A player who
-// stands still is still handed a place that wobbles a little (their physics' and presence's curve's
-// noise: a few mm, and a velocity of a few cm a second from it), and the Follower drew every bit of
-// it. Once it has landed with the place moving slower than kIdleSpeed, it holds there exactly while
-// the place stays within kIdleM and that slow: a still player's puppet does not move at all. Faster
-// (a real start: a walk is 1.4 m/s, the first frame of it is past this) or further, it follows at once
-// from there as before. A place that settles (velocity 0, the same two frames running) somewhere
-// else in that radius is followed to and landed on exactly (a stop's last millimetres).
-inline constexpr float kIdleSpeed = 0.1f;  // metres a second
-inline constexpr float kIdleM = 0.02f;
+// idle-twitch (owner: "other puppets still twitch a little while standing still"). Held only when
+// the remote is really still: the velocity handed in is ~0 (the sender's sampler sends exactly 0
+// when its player did not move, and presence's curve between two such samples at one place is 0)
+// and the place is the one it landed on. Then it is drawn exactly there, every frame (no closing
+// arithmetic at all). Any velocity or any change of the place: it follows as before, at once. No
+// distance dead-band (review-idle-twitch: a steady slow move under a band was drawn stop-go).
 inline constexpr float kSameM = 1e-5f;
+// The still meter (Stillness) counts frames where the place handed in moves slower than this
+// (still, or the noise of a sender that is not quite still). For the log only.
+inline constexpr float kIdleSpeed = 0.1f;  // metres a second
 
 class Follower {
 public:
@@ -102,17 +101,13 @@ public:
         for (std::size_t i = 0; i < 3; ++i) {
             want[i] += vel_[i] * static_cast<float>(ahead_ms / 1000.0);
         }
-        const std::optional<Vec3> last_want = std::exchange(last_want_, want);
         if (first) {
             rest_.reset();
             return Set(want, now_ms);
         }
-        // idle-twitch: still, held exactly where it landed.
-        const bool slow = Length(velocity) < kIdleSpeed;
+        // idle-twitch: really still (velocity ~0, the same place): held exactly where it landed.
         if (rest_) {
-            const bool settled_elsewhere = Still(velocity) && last_want && Distance(want, *last_want) < kSameM &&
-                                           Distance(want, *rest_) >= kSameM;
-            if (slow && !settled_elsewhere && Distance(want, *rest_) <= kIdleM) {
+            if (Still(velocity) && Distance(want, *rest_) < kSameM) {
                 return Set(*rest_, now_ms);
             }
             rest_.reset();
@@ -141,7 +136,7 @@ public:
         for (std::size_t i = 0; i < 3; ++i) {
             drawn[i] = next[i] + (want[i] - next[i]) * close;
         }
-        if (slow && Distance(drawn, want) <= kRestM) {
+        if (Still(velocity) && Distance(drawn, want) <= kRestM) {
             drawn = want;
             rest_ = drawn;  // idle-twitch: landed; held from the next frame
         }
@@ -153,7 +148,6 @@ public:
     void Reset() {
         drawn_.reset();
         rest_.reset();
-        last_want_.reset();
     }
     bool Resting() const { return rest_.has_value(); }  // idle-twitch: held still
     const std::optional<Vec3>& Drawn() const { return drawn_; }
@@ -178,11 +172,9 @@ private:
     static bool Still(const Vec3& v) {
         return std::fabs(v[0]) < 1e-3f && std::fabs(v[1]) < 1e-3f && std::fabs(v[2]) < 1e-3f;
     }
-    static float Length(const Vec3& v) { return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]); }
 
     std::optional<Vec3> drawn_;
-    std::optional<Vec3> rest_;       // idle-twitch: where it is held still
-    std::optional<Vec3> last_want_;  // idle-twitch: the place last frame (a settled one)
+    std::optional<Vec3> rest_;  // idle-twitch: where it is held still
     Vec3 vel_{};  // jitter-3: the velocity smoothed
     double last_ms_ = 0.0;
 };
@@ -333,10 +325,8 @@ inline constexpr float kTurnJumpRad = 2.0f;  // ~115 degrees
 inline constexpr float kTurnRestRad = 0.003f;
 inline constexpr float kTurnStillRad = 0.01f;  // rad a second: under this, not turning
 inline constexpr double kTurnLagMs = 20.0;     // a present's age (16 ms) and a little
-// idle-twitch: as the Follower's hold. Landed and turning slower than kTurnIdleRate, held exactly
-// while the heading stays within kTurnIdleRad (a real turn's first frame is past it).
-inline constexpr float kTurnIdleRate = 0.3f;  // rad a second (~17 degrees)
-inline constexpr float kTurnIdleRad = 0.02f;  // ~1.1 degrees
+// idle-twitch: as the Follower's hold. Landed with no turn rate, held exactly while the rotation
+// handed in stays the one it landed on (any turn, however slow: followed at once).
 inline constexpr float kTurnSameRad = 1e-5f;
 
 class Turner {
@@ -379,17 +369,12 @@ public:
                            : std::clamp(now_ms - static_cast<double>(target_ms) - kTurnLagMs,
                                         -static_cast<double>(kAheadMaxMs), 0.0);
         const Quat want = Mul(Exp(Scale(rate_, static_cast<float>(ahead_ms / 1000.0))), *to);
-        const std::optional<Quat> last_to = std::exchange(last_to_, *to);
         if (first) {
             rest_.reset();
         }
-        // idle-twitch: still, held exactly where it landed; a heading that settles (the same two
-        // frames running) elsewhere in the radius is turned to and landed on.
-        const bool slow = Length(rate_) < kTurnIdleRate;
+        // idle-twitch: really still (no turn rate, the same rotation): held exactly where it landed.
         if (rest_ && !first) {
-            const bool settled_elsewhere = last_to && Angle(*to, *last_to) < kTurnSameRad &&
-                                           Angle(want, *rest_) >= kTurnSameRad;
-            if (slow && !settled_elsewhere && Angle(want, *rest_) <= kTurnIdleRad) {
+            if (Length(rate_) < 1e-3f && Angle(want, *rest_) < kTurnSameRad) {
                 return Set(*rest_, now_ms);
             }
             rest_.reset();
@@ -407,7 +392,7 @@ public:
         }
         const float close = 1.0f - std::exp(-static_cast<float>(dt_ms) / kTauMs);
         Quat drawn = Slerp(next, want, close);
-        if (slow && Angle(drawn, want) <= kTurnRestRad) {
+        if (Length(rate_) < 1e-3f && Angle(drawn, want) <= kTurnRestRad) {
             drawn = want;
             rest_ = drawn;  // idle-twitch: landed; held from the next frame
         }
@@ -417,7 +402,6 @@ public:
     void Reset() {
         drawn_.reset();
         rest_.reset();
-        last_to_.reset();
         target_.reset();
         target_ms_ = 0;
         rate_ = {};
@@ -478,8 +462,7 @@ private:
     }
 
     std::optional<Quat> drawn_;
-    std::optional<Quat> rest_;     // idle-twitch: where it is held still
-    std::optional<Quat> last_to_;  // idle-twitch: the rotation handed in last frame
+    std::optional<Quat> rest_;  // idle-twitch: where it is held still
     std::optional<Quat> target_;  // the last rotation handed in, and its time
     std::uint64_t target_ms_ = 0;
     Vec3 rate_{};                 // rad a second, smoothed
