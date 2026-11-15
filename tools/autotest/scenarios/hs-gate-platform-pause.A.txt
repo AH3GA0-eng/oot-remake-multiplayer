@@ -1,0 +1,49 @@
+# hs-gate-platform-pause (0.11.1 release gate (d), world-sync-4 58c02506): a pause menu no longer stops a moving
+# platform's shared clock. As hs-platforms-dodongo: Dodongo's Cavern room 1 up/down lifts; A stands on lift
+# 51802f1732232227 (-10.5 96.5 -23.0) and owns its clock ("ours to send"), B follows it from the middle lift.
+# B opens the pause menu for 5 s (b-paused .. b-back), then A (the owner) for 2 s (a-paused .. a-back).
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-gate-platform-pause
+# Pass:
+#  - B: "coop: platforms: ... following player 1's clock" and NO "do not hold (N in a row): stopped following".
+#  - A: after a-back, "our game stood still: clock ... put where the shared one is" (the owner's stalled clock put back).
+#  - Shots b-after and a-after (2 s after each pause): each lift at the same height in A and B.
+#  - Inconclusive if no "+ Obj_DodongoCave_MoveFloor" line (the room did not load at the place).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_OBJECTS=1
+#! timeout 300
+mark start
+warp DodongoCavern EntrancePos
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+place -10.5 97.6 -23.0
+wait 240
+mark placed
+wait 600
+mark s1
+wait 600
+mark b-paused
+wait 300
+mark b-back
+wait 120
+mark b-after
+wait 300
+press PLUS               # A (the owner) pauses for 2 s
+wait 120
+mark a-paused
+press PLUS
+wait 60
+mark a-back
+wait 120
+mark a-after
+wait 900
+mark s4
