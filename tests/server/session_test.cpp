@@ -5301,8 +5301,9 @@ TEST_CASE("boss-copy-b: a game whose boss has not played its intro never takes i
   CHECK(h.session.stats().handover_chased == 0);
   // Its intro played (no unready bit): the chase rule applies again.
   h.receive(2, boss_presence(object_presence::awake | object_presence::targeting), kChannelOwnership);
-  h.run(2 * kSecond);
-  CHECK(h.asks() == 1);
+  h.run(250'000);
+  CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+  CHECK(h.session.stats().handover_chased == 1);
 }
 
 TEST_CASE("boss-copy-b: a boss owned by a game that has not played its intro goes to one that has") {
