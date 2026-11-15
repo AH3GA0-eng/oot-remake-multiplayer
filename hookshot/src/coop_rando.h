@@ -108,8 +108,8 @@ std::vector<std::filesystem::path> OtherSizeTables(const std::filesystem::path& 
 // first), so a puppet pack made after the seed has no sizes there and its actors cannot load (the other players
 // invisible with the randomizer on).
 std::string TablesStamp(const std::filesystem::path& mods_root, const std::vector<std::filesystem::path>& tables);
-// The mod whose resource size table this run of the game reads, when it is none of co-op's own (player report #48:
-// a seed made on OOTRR's own page and put into the mods folder by hand). Longshot serves one size table, the winning
+// The mod whose resource size table this run of the game reads, when it is none of co-op's own: any mod with its
+// own size table above the puppet pack (player report #48: a seed made on OOTRR's own page, put into mods by hand). Longshot serves one size table, the winning
 // mod's: with the Mods list (ExeReadsList, `list_order`) the first row of `rows` (the puppet pack is never listed and
 // sits under every listed mod), else Hookshot's own order (by name, the last wins; the pack is
 // contents/0400486024DEC000/coop-puppet). Only a mod the game indexed at its start (Row::on_now) and that holds

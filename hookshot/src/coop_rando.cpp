@@ -338,15 +338,15 @@ std::optional<std::string> OutsideSizeTable(const fs::path& mods_root, const std
 }
 
 std::string OutsideLine(std::string_view mod) {
-    return "Randomizer: the mod \"" + ShortName(mod) +
-           "\" has its own size table (a seed not made in the Mods tab): other players can't be shown. Make the "
-           "seed in Mods > OoT Remake Randomizer > Settings, or turn this mod off.";
+    return "Randomizer: \"" + ShortName(mod) +
+           "\" is a mod with its own size table (e.g. a randomizer seed from OOTRR's site): other players can't be "
+           "shown. Make the seed in Mods > OoT Remake Randomizer > Settings, or turn this mod off.";
 }
 
 std::string OutsideTellLine(std::string_view mod) {
     std::string line = "[randomizer] my mod \"" + ShortName(mod) +
-                       "\" was not made in the Mods tab: I can't see the others. Make the seed in Mods > OoT Remake "
-                       "Randomizer > Settings.";
+                       "\" has its own size table (e.g. a seed from OOTRR's site): I can't see the others. Make the "
+                       "seed in Mods > OoT Remake Randomizer > Settings.";
     if (line.size() > kTellChars) {
         std::size_t cut = kTellChars;
         while (cut > 0 && (static_cast<unsigned char>(line[cut]) & 0xC0) == 0x80) --cut;
