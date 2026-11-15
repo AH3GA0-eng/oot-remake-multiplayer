@@ -76,6 +76,19 @@ bool IsDriver(std::string_view name) {
     return false;
 }
 
+bool PlatformSync::OurLinkRides(const Driver& d, const coop::protocol::Vec3& player) {
+    if (d.ride_plug == false) {
+        return false;  // the game says no player is on it
+    }
+    if (d.name.starts_with("GroundControlActor_") || d.name.starts_with("GrouondControlActor_")) {
+        return d.ride_plug.value_or(false);
+    }
+    const float dx = player[0] - d.position[0];
+    const float dz = player[2] - d.position[2];
+    const float dy = player[1] - d.position[1];
+    return dx * dx + dz * dz <= kRideRadiusM * kRideRadiusM && dy >= -kRideBelowM && dy <= kRideAboveM;
+}
+
 std::string Where(std::uint64_t key) {
     const std::uint64_t region = key >> 32;
     const auto offset = static_cast<unsigned long long>(key & 0xffffffffu);
@@ -382,6 +395,14 @@ void PlatformSync::Tick(const std::string& scene, std::uint8_t self, std::uint64
     message.server_time_us = server_us;
     for (const auto& [m, d] : near) {
         State& s = states_[d->hash];
+        const bool ridden = OurLinkRides(*d, *player);  // issue 194: no clock write moves our Link
+        if (s.held_for_ride && !ridden) {
+            s.held_for_ride = false;
+            char text[160];
+            std::snprintf(text, sizeof text, "%016llx %s: our Link is off it: its clock may be put in step again",
+                          static_cast<unsigned long long>(d->hash), d->name.c_str());
+            out.notes.emplace_back(text);
+        }
         if (s.last_look_us != 0 && steady_us < s.last_look_us + ClockFinder::kLookEveryUs) {
             continue;
         }
@@ -405,7 +426,7 @@ void PlatformSync::Tick(const std::string& scene, std::uint8_t self, std::uint64
             }
             bool resumed = false;
             if (const auto stood = std::exchange(s.paused_at, std::nullopt);
-                stood && s.sent && s.sent->key == clock->key && !probe_only && !s.gave_up &&
+                stood && s.sent && s.sent->key == clock->key && !probe_only && !s.gave_up && !ridden &&
                 DriftSeconds(clock->value, *stood, clock->rate, clock->cycle) <= kResumeS) {
                 const float want = Advance(s.sent->value, s.sent->rate, s.sent->cycle, s.sent_us, server_us);
                 if (DriftSeconds(clock->value, want, clock->rate, clock->cycle) > kDriftS) {
@@ -478,6 +499,21 @@ void PlatformSync::Tick(const std::string& scene, std::uint8_t self, std::uint64
         if (drift <= kDriftS) {
             s.no_hold = 0;
             s.written.reset();
+            continue;
+        }
+        if (ridden) {
+            // Issue 194: written now, the platform would jump with our Link on it. Put in step once he is
+            // off; nothing was written, so the next write is not one the game "took back".
+            s.written.reset();
+            if (!s.held_for_ride) {
+                s.held_for_ride = true;
+                char text[200];
+                std::snprintf(text, sizeof text,
+                              "%016llx %s: our Link rides it (%s): its clock is left %.2f s off until he is off",
+                              static_cast<unsigned long long>(d->hash), d->name.c_str(),
+                              d->ride_plug ? "RideOnPlayer" : "footprint", static_cast<double>(drift));
+                out.notes.emplace_back(text);
+            }
             continue;
         }
         if (s.last_write_us != 0 && steady_us < s.last_write_us + kWriteEveryUs) {

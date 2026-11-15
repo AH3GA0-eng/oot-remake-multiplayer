@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstring>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -41,6 +42,11 @@ struct Game {
     std::vector<std::string> notes;
     bool probe_only = false;
     bool paused = false;  // a pause menu: the game's clocks stand still
+    // Issue 194: the driver and our Link (by default a controller 1 m away, nobody riding).
+    std::string driver_name = "GroundControlActor_WaveLoop";
+    proto::Vec3 driver_at{1.0f, 0.0f, 0.0f};
+    std::optional<bool> ride_plug;
+    proto::Vec3 link{0.0f, 0.0f, 0.0f};
 
     void Step(float dt) {
         if (paused) {
@@ -63,11 +69,9 @@ struct Game {
 
     // `time_us`: the one true time of the test; the server is time + 10 s.
     void Tick(std::uint64_t time_us, const std::string& scene = "DodongoCavern") {
-        const std::vector<PlatformSync::Driver> drivers{
-            {0x1000, kHash, "GroundControlActor_WaveLoop", {1.0f, 0.0f, 0.0f}}};
+        const std::vector<PlatformSync::Driver> drivers{{0x1000, kHash, driver_name, driver_at, ride_plug}};
         PlatformSync::Out out;
-        sync.Tick(scene, self, time_us + steady_offset, time_us + 10'000'000, drivers,
-                  proto::Vec3{0.0f, 0.0f, 0.0f},
+        sync.Tick(scene, self, time_us + steady_offset, time_us + 10'000'000, drivers, link,
                   [this](const PlatformSync::Driver&) { return Words(); }, probe_only, out);
         for (auto& m : out.send) {
             sent.push_back(std::move(m));
@@ -542,4 +546,60 @@ TEST_CASE("platforms: an owner's short pause menu does not pull the others back 
     for (const auto& n : b.notes) {
         CHECK(n.find("do not hold") == std::string::npos);
     }
+}
+
+TEST_CASE("platforms: our Link rides by the game's RideOnPlayer and the platform's footprint (#194)") {
+    PlatformSync::Driver lift{0x1000, kHash, "Obj_InsideTheDekuTree_ElevatorLift_A_02", {10.0f, 5.0f, 0.0f}, {}};
+    const proto::Vec3 on{10.5f, 5.2f, 0.5f};
+    const proto::Vec3 beside{13.0f, 5.0f, 0.0f};
+    const proto::Vec3 under{10.0f, 3.0f, 0.0f};
+    CHECK(PlatformSync::OurLinkRides(lift, on));  // no plug: the footprint
+    CHECK_FALSE(PlatformSync::OurLinkRides(lift, beside));
+    CHECK_FALSE(PlatformSync::OurLinkRides(lift, under));
+    lift.ride_plug = true;
+    CHECK(PlatformSync::OurLinkRides(lift, on));
+    CHECK_FALSE(PlatformSync::OurLinkRides(lift, beside));  // another player's puppet on our copy
+    lift.ride_plug = false;
+    CHECK_FALSE(PlatformSync::OurLinkRides(lift, on));  // the game says nobody is on it
+    PlatformSync::Driver mover{0x2000, kHash, "GroundControlActor_ResidentMoveTo", {10.0f, 5.0f, 0.0f}, {}};
+    CHECK_FALSE(PlatformSync::OurLinkRides(mover, on));  // a controller: no footprint, only its plug
+    mover.ride_plug = true;
+    CHECK(PlatformSync::OurLinkRides(mover, beside));
+}
+
+TEST_CASE("platforms: no clock write while our Link rides it, in step once he is off (#194)") {
+    Game a;
+    Game b;
+    a.self = 1;
+    b.self = 2;
+    b.clock = 30.0f;  // far out of step: a write would make the lift jump
+    for (Game* g : {&a, &b}) {
+        g->driver_name = "Obj_InsideTheDekuTree_ElevatorLift_A_02";
+        g->driver_at = {1.0f, 0.0f, 0.0f};
+    }
+    a.link = {6.0f, 0.0f, 0.0f};  // A beside its lift
+    b.link = {1.2f, 0.3f, 0.0f};  // B stands on its lift
+    b.ride_plug = true;
+    std::uint64_t time = 0;
+    a.Tick(time);
+    Play(a, b, time, 4000);
+    CHECK(b.sync.Writes() == 0);
+    CHECK(std::fabs(a.clock - b.clock) > 10.0f);
+    const auto has = [&b](const char* text) {
+        for (const auto& n : b.notes) {
+            if (n.find(text) != std::string::npos) {
+                return true;
+            }
+        }
+        return false;
+    };
+    CHECK(has("our Link rides it (RideOnPlayer)"));
+    // Off the lift: put in step, and the held writes count as none the game took back.
+    b.link = {6.0f, 0.0f, 0.0f};
+    b.ride_plug = false;
+    Play(a, b, time, 3000);
+    CHECK(b.sync.Writes() >= 1);
+    CHECK(std::fabs(a.clock - b.clock) < PlatformSync::kDriftS + 0.06f);
+    CHECK(has("our Link is off it"));
+    CHECK_FALSE(has("do not hold"));
 }
