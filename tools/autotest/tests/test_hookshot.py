@@ -197,6 +197,11 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(steps[11].name, "/teleport  Saria")
         self.assertEqual((steps[13].start, steps[13].name), ("boots", "HoverBoot"))
 
+    def test_menu_step_goes_to_the_module(self):
+        steps = hs.parse("menu Customize\nmenu close\n")
+        self.assertEqual([(s.kind, s.name) for s in steps], [("menu", "customize"), ("menu", "close")])
+        self.assertIn("menu", hs.MODULE_ONLY)
+
     def test_key_names(self):
         s = hs.parse("hold DUP+LCLICK+RCLICK+MINUS+RSTICK_LEFT 5")[0]
         self.assertEqual(s.buttons, ["UP", "LS", "RS", "MINUS"])
@@ -206,7 +211,8 @@ class ParseTest(unittest.TestCase):
         for text, want in (("wait", "line 1: want: wait TICKS"), ("\n\nhold Q 3", "line 3: unknown key Q"),
                            ("stick 2 0 5", "line 1: want: STICK"), ("goto 1 2 0.1", "radius at least 0.2"),
                            ("jump", "unknown command jump"), ("# only", "no steps"),
-                           ("wear cape X", "want: wear")):
+                           ("wear cape X", "want: wear"), ("menu", "want: menu customize|close"),
+                           ("menu map", "want: menu customize|close")):
             with self.assertRaises(hs.ScriptError) as e:
                 hs.parse(text)
             self.assertIn(want, str(e.exception))
