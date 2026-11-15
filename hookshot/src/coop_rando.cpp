@@ -386,6 +386,10 @@ std::string OotrrKey(const fs::path& ootrr) {
 }
 
 std::string ChatSafe(std::string line, std::size_t max_chars) {
+    // No control characters (a tab, a stray carriage return, escape codes): a space each.
+    for (char& c : line) {
+        if (static_cast<unsigned char>(c) < 0x20 || c == 0x7F) c = ' ';
+    }
     // The user's profile folder: ...Users\<name>\ (either slash, any case) and /home/<name>/ become <user>.
     for (const std::string_view mark : {std::string_view("users"), std::string_view("home")}) {
         std::size_t from = 0;
@@ -415,6 +419,23 @@ std::string ChatSafe(std::string line, std::size_t max_chars) {
         line += "...";
     }
     return line;
+}
+
+bool PresetRefused(int code, std::string_view output) {
+    return code > 0 && output.find_first_not_of(" \t\r\n") != std::string_view::npos;
+}
+
+std::string ReadTail(const fs::path& file, std::size_t max_bytes) {
+    std::ifstream in(file, std::ios::binary | std::ios::ate);
+    if (!in) return {};
+    const std::streamoff size = in.tellg();
+    const auto cap = static_cast<std::streamoff>(max_bytes);
+    const std::streamoff from = size > cap ? size - cap : 0;
+    in.seekg(from);
+    std::string out(static_cast<std::size_t>(size - from), '\0');
+    in.read(out.data(), static_cast<std::streamsize>(out.size()));
+    out.resize(static_cast<std::size_t>(in.gcount()));
+    return out;
 }
 
 std::string SeeLogLine(const std::string& head) {
@@ -567,24 +588,51 @@ std::map<std::string, bool> Rando::ProbePresets(const fs::path& ootrr, const fs:
     in.close();
     PresetCache cache = ReadPresetCache(text.str());
     if (!key.empty() && cache.key == key && cache.ok.size() == std::size(kPresets)) return cache.ok;
-    // A new OOTRR (or none tried yet): each preset made once into a stage ('_': Longshot never loads it).
+    {
+        // Tried in this run already (a preset left unsure is tried again at the next start, not at every build).
+        const std::lock_guard lock(mutex_);
+        if (!key.empty() && probed_key_ == key) return probed_;
+    }
+    // A new OOTRR (or none tried yet): each preset made once into a stage ('_': Longshot never loads it). Only
+    // `generate` is run: OOTRR 0.5.0 refuses full_shuffle there ("error: This build cannot apply these settings
+    // yet: ...", exit 1), as the kit's ootrr.exe did when tried by hand (2026-11-15).
     Say("trying OOTRR's presets once (this OOTRR is new here)");
-    cache = PresetCache{key, {}};
+    if (cache.key != key) cache = PresetCache{key, {}};
     const fs::path stage = control / "_preset-probe";
     std::error_code ec;
     fs::remove_all(stage, ec);
     fs::create_directories(stage, ec);
     std::vector<std::string> good;
+    const auto& run = hooks_.probe_run ? hooks_.probe_run : hooks_.run;
     for (const char* p : kPresets) {
-        const bool ok = hooks_.run(ootrr, GenerateArgs(p, "PROBE", stage / (std::string(p) + ".ootrr")), stage / "out.txt") == 0;
-        cache.ok[p] = ok;
-        if (ok) good.emplace_back(p);
-        if (!ok && hooks_.log) hooks_.log(std::string("randomizer: OOTRR cannot make the ") + p + " preset: not offered");
+        if (const auto known = cache.ok.find(p); known != cache.ok.end()) {
+            if (known->second) good.emplace_back(p);
+            continue;  // known for this OOTRR (an earlier start left only some unsure)
+        }
+        const fs::path out = stage / (std::string(p) + ".txt");
+        const int code = run(ootrr, GenerateArgs(p, "PROBE", stage / (std::string(p) + ".ootrr")), out);
+        if (code == 0) {
+            cache.ok[p] = true;
+            good.emplace_back(p);
+        } else if (PresetRefused(code, ReadTail(out, kTailBytes))) {
+            cache.ok[p] = false;
+            if (hooks_.log) hooks_.log(std::string("randomizer: OOTRR cannot make the ") + p + " preset: not offered");
+        } else {
+            // Stopped, timed out, not started, or an exit with nothing said: not known, offered, tried again next start.
+            good.emplace_back(p);
+            if (hooks_.log) {
+                hooks_.log(std::string("randomizer: the ") + p + " preset could not be tried (exit " + std::to_string(code) +
+                           "): offered, tried again at the next start");
+            }
+        }
     }
     fs::remove_all(stage, ec);
     if (!key.empty()) WriteText(file, PresetCacheText(cache));
     WriteText(control / CoopMods::kManifestFile, ManifestText(good));  // the Settings row (read with the next Refresh)
     loader_.Refresh();
+    const std::lock_guard lock(mutex_);
+    probed_key_ = key;
+    probed_ = cache.ok;
     return cache.ok;
 }
 
@@ -802,12 +850,7 @@ void Rando::Build(const Plan& plan, const Want& want) {
         }
         fail(SeeLogLine(head), reason);
     };
-    const auto read_log = [&] {
-        std::ifstream in(log, std::ios::binary);
-        std::ostringstream out;
-        out << in.rdbuf();
-        return out.str();
-    };
+    const auto read_log = [&] { return ReadTail(log, kTailBytes); };
     std::string ootrr_setting, game_setting;
     for (const CoopMods::SettingRow& s : loader_.Settings(kFolder)) {
         if (s.setting.key == "ootrr") ootrr_setting = s.value;

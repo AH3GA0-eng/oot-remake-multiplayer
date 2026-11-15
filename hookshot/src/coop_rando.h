@@ -137,6 +137,12 @@ std::string SeeLogLine(const std::string& head);
 // A line for the co-op chat (others may see a screenshot): the user's profile folder (Users<name>, /home/<name>)
 // masked as <user>, as collect-logs does, and cut to `max_chars` bytes at a whole UTF-8 character.
 std::string ChatSafe(std::string line, std::size_t max_chars = 100);
+// Whether a probe's run means OOTRR refused the preset: a real exit code above 0 with something said. A stop, a
+// timeout, a program that did not start (kStopped, -1) or a silent exit are not known: never cached as refused.
+bool PresetRefused(int code, std::string_view output);
+// At most the last `max_bytes` of a file (OOTRR's output can be long): empty when it cannot be read.
+inline constexpr std::size_t kTailBytes = 64 * 1024;
+std::string ReadTail(const std::filesystem::path& file, std::size_t max_bytes);
 // OOTRR's own error lines (player report #16: "This build cannot apply these settings yet: ..."): the first `n` lines
 // that say error, cannot, can't or failed; none: the last `n` lines.
 std::vector<std::string> ErrorLines(std::string_view text, std::size_t n);
@@ -168,6 +174,10 @@ public:
         // Try every preset once per OOTRR before its first build (#16): the Settings row then offers only the ones it
         // builds. (Off in tests that count OOTRR's runs.)
         bool probe_presets = true;
+        // The probe's runs (a shorter time limit than a build's: ~90 s each); empty: `run`.
+        std::function<int(const std::filesystem::path& program, const std::vector<std::string>& args,
+                          const std::filesystem::path& log_file)>
+            probe_run;
     };
     Rando(CoopMods::Loader& loader, Hooks hooks);
     ~Rando();  // waits for a build that runs
@@ -213,6 +223,8 @@ private:
     bool on_now_ = false;      // the switch as the game started (mutex_)
     bool on_said_ = false;     // the switch as last said (mutex_)
     std::vector<std::string> lines_;  // mutex_
+    std::string probed_key_;               // the OOTRR the presets were tried for in this run (mutex_)
+    std::map<std::string, bool> probed_;  // what that found (mutex_)
     bool log_in_chat_ = false;        // OOTRR's log path said in the chat this run (mutex_)
     std::string tell_;                // a line for the others not sent yet (mutex_): never a path
     std::string tell_seed_;           // the host's seed it is about (mutex_)

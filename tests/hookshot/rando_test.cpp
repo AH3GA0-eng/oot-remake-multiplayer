@@ -56,6 +56,7 @@ struct World {
     int fail_at = -1;  // the run (0, 1, ...) that fails
     std::string fail_output;  // what OOTRR writes into its log (each run)
     std::set<std::string> bad_presets;  // presets this OOTRR cannot make (#16: OOTRR 0.5.0's full_shuffle)
+    std::set<std::string> stopped_presets;  // presets whose run is stopped (a timeout, the game closing)
     bool probe = false;                 // Hooks::probe_presets (off: the tests count every run)
     std::vector<std::string> staged;  // the size tables the last build saw beside it (their text, sorted)
     World() {
@@ -83,6 +84,7 @@ struct World {
             if (!fail_output.empty()) Put(log, fail_output);
             const int at = static_cast<int>(runs.size());
             runs.push_back(line);
+            if (args.size() >= 2 && args[0] == "generate" && stopped_presets.count(args[1]) != 0) return kStopped;
             if (args.size() >= 2 && args[0] == "generate" && bad_presets.count(args[1]) != 0) {
                 Put(log, "This build cannot apply these settings yet: bridge is dungeons\n");
                 return 1;
@@ -746,7 +748,7 @@ std::size_t Generates(const World& w, const char* preset) {
 }
 }  // namespace
 
-TEST_CASE("rando: only the presets this OOTRR can make are offered; a bad one goes back to default (#16)") {
+TEST_CASE("rando: only the presets this OOTRR can make are offered, a bad one goes back to default (#16)") {
     World w;
     w.probe = true;
     w.bad_presets = {"full_shuffle"};
@@ -812,4 +814,66 @@ TEST_CASE("rando: chat lines mask the user's folder and are cut") {
     CHECK(ChatSafe("users and homes are words") == "users and homes are words");
     const std::string cut = ChatSafe(std::string(150, 'a'));
     CHECK(cut == std::string(100, 'a') + "...");
+}
+
+TEST_CASE("rando: a preset whose try was stopped is offered, not cached, and tried again at the next start (#16)") {
+    World w;
+    w.probe = true;
+    w.stopped_presets = {"keysanity"};
+    w.bad_presets = {"full_shuffle"};
+    {
+        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+        loader.Start();
+        Rando rando(loader, w.Hooks());
+        rando.Start();
+        w.Settings(loader);
+        REQUIRE(loader.Set(kFolder, "seed", "STOP1"));
+        REQUIRE(loader.Set(kFolder, "on", "1"));
+        rando.Wait();
+        const auto choices = PresetChoices(loader);
+        CHECK(std::find(choices.begin(), choices.end(), "keysanity") != choices.end());  // not known: offered
+        CHECK(std::find(choices.begin(), choices.end(), "full_shuffle") == choices.end());
+        const std::string cache = Get(w.mods / kFolder / kPresetsFile);
+        CHECK(cache.find("keysanity") == std::string::npos);
+        CHECK(cache.find("full_shuffle bad") != std::string::npos);
+        CHECK(Generates(w, "keysanity") == 1);
+        REQUIRE(loader.Set(kFolder, "seed", "STOP2"));  // a second build in this run: not tried again
+        rando.Wait();
+        CHECK(Generates(w, "keysanity") == 1);
+    }
+    // The next start: only keysanity is tried again; now it works and is cached.
+    w.stopped_presets.clear();
+    const std::size_t shuffles = Generates(w, "full_shuffle");
+    {
+        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+        loader.Start();
+        Rando rando(loader, w.Hooks());
+        rando.Start();
+        REQUIRE(loader.Set(kFolder, "seed", "STOP3"));
+        rando.Wait();
+        CHECK(Generates(w, "keysanity") == 2);
+        CHECK(Generates(w, "full_shuffle") == shuffles);  // known bad: not tried again
+        CHECK(Get(w.mods / kFolder / kPresetsFile).find("keysanity ok") != std::string::npos);
+    }
+}
+
+TEST_CASE("rando: only a real refusal counts as a bad preset") {
+    CHECK(PresetRefused(1, "error: This build cannot apply these settings yet: bridge is dungeons"));
+    CHECK_FALSE(PresetRefused(1, " \r\n"));      // said nothing
+    CHECK_FALSE(PresetRefused(kStopped, "half"));  // a timeout or a stop
+    CHECK_FALSE(PresetRefused(-1, ""));            // did not start
+    CHECK_FALSE(PresetRefused(0, "fine"));
+}
+
+TEST_CASE("rando: OOTRR's output is read from its end, at most the cap") {
+    World w;
+    const fs::path f = w.base / "big.txt";
+    Put(f, std::string(100, 'a') + "THE END");
+    CHECK(ReadTail(f, 7) == "THE END");
+    CHECK(ReadTail(f, 1000).size() == 107);
+    CHECK(ReadTail(w.base / "none.txt", 10).empty());
+}
+
+TEST_CASE("rando: chat lines have no control characters") {
+    CHECK(CoopRando::ChatSafe("a\tb\x1b[31mc\x7f") == "a b [31mc ");
 }

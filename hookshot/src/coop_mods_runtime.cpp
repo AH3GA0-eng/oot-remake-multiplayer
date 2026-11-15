@@ -213,6 +213,11 @@ void Start() {
                    const std::filesystem::path& log) {
         return CoopRando::RunProgram(program, args, log, kOotrrLimit, &g_stop_ootrr);
     };
+    // Each preset tried once per OOTRR (#16) is one short `generate`: 90 s at most (a stop is not cached).
+    rando.probe_run = [](const std::filesystem::path& program, const std::vector<std::string>& args,
+                         const std::filesystem::path& log) {
+        return CoopRando::RunProgram(program, args, log, std::chrono::seconds(90), &g_stop_ootrr);
+    };
     // (chat goes to every player: the host's chat shows this guest's name with the line)
     rando.tell_others = [](const std::string& line) { return CoopHook::SendChat(line); };
     rando.entropy = [] {
