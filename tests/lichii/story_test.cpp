@@ -2,6 +2,7 @@
 #include <doctest/doctest.h>
 
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 
@@ -337,4 +338,69 @@ TEST_CASE("story: Zora's River waterfall opens for every player, with its scene 
         CHECK(f->kind == CoopStory::Kind::world);
     }
     CHECK(CoopStory::Find(host::flag_hash("HavePlayedEvent.Dm_ZoraRiver_0010")) != nullptr);
+}
+
+TEST_CASE("story: every one-way story flag is a shared world flag named by its hash, listed once (issue 84)") {
+    std::set<std::uint32_t> seen;
+    for (const auto& f : CoopStory::OneWays()) {
+        INFO(f.name);
+        CHECK(host::flag_hash(f.name) == f.hash);
+        const auto* shared = CoopStory::Find(f.hash);
+        REQUIRE(shared != nullptr);
+        CHECK(shared->kind == CoopStory::Kind::world);
+        CHECK(seen.insert(f.hash).second);
+    }
+    // The blockers the game only lowers; the scene gates it only raises.
+    const auto way = [](const char* name) {
+        for (const auto& f : CoopStory::OneWays()) {
+            if (std::string(f.name) == name) return std::optional<CoopStory::Way>(f.way);
+        }
+        return std::optional<CoopStory::Way>();
+    };
+    CHECK(way("KokiriForest_Npc_Kokiri_Mido_Child_Blocker") == CoopStory::Way::down);
+    CHECK(way("KokiriForest_Npc_Kokiri_Mido_Adult_Blocker") == CoopStory::Way::down);
+    CHECK(way("KokiriForest_Npc_Kokiri_007_Child_Blocker_00") == CoopStory::Way::down);
+    CHECK(way("KokiriForest_Meet_DekuTree_OpenDekuTreeMouth") == CoopStory::Way::up);
+    CHECK(way("GraveYard_RoyalFamilyTomb_Open") == CoopStory::Way::up);
+    CHECK(way("KakarikoVillage_Npc_Hylia_009_Child_DeleteWaterPlane") == CoopStory::Way::up);
+    CHECK(way("Npc_Hylia_Soldier_003_GateOpen") == CoopStory::Way::up);
+    // Set both ways by the game (area logic, Malon's flows): not one way.
+    CHECK_FALSE(way("KokiriForest_Npc_Kokiri_007_Child_Blocker"));
+    CHECK_FALSE(way("KokiriForest_Npc_Kokiri_Blocker"));
+    CHECK_FALSE(way("LostWood_Npc_Kokiri_Blocker"));
+    CHECK_FALSE(way("IsMalonAppear_Market"));
+    CHECK_FALSE(way("IsMalonAppear_HyruleCastleSecondTime"));
+}
+
+TEST_CASE("story: the Deku Tree's mouth opens again in a game whose quest is Complete (issue 84)") {
+    namespace q = CoopStory::quest;
+    using CoopStory::DekuTreeMouthMend;
+    CHECK(host::flag_hash("KokiriForest_Meet_DekuTree_OpenDekuTreeMouth") == q::kDekuTreeMouth);
+    CHECK(DekuTreeMouthMend(q::kComplete, false));
+    // Open already, or the quest not Complete (the scene can still play), or unread.
+    CHECK_FALSE(DekuTreeMouthMend(q::kComplete, true));
+    CHECK_FALSE(DekuTreeMouthMend(q::kStep03, false));
+    CHECK_FALSE(DekuTreeMouthMend(q::kStep01, false));
+    CHECK_FALSE(DekuTreeMouthMend(std::nullopt, false));
+    CHECK_FALSE(DekuTreeMouthMend(q::kComplete, std::nullopt));
+}
+
+TEST_CASE("story: each mend writes the value its quest proves, on the one-way side, and only when due (issue 84)") {
+    namespace q = CoopStory::quest;
+    for (const auto& m : CoopStory::Mends()) {
+        INFO(m.what);
+        const CoopStory::OneWay* one = nullptr;
+        for (const auto& f : CoopStory::OneWays()) {
+            if (f.hash == m.flag) one = &f;
+        }
+        REQUIRE(one != nullptr);
+        // A down-only flag is mended to 0, an up-only one to 1.
+        CHECK(m.value == (one->way == CoopStory::Way::up));
+        // Never due once it holds the mended value, whatever the quest says.
+        CHECK_FALSE(m.due(q::kComplete, m.value, true));
+        // Due on the wrong side once the quest is Complete and the scene played.
+        CHECK(m.due(q::kComplete, !m.value, true));
+        // Before Mido (Step01, the Deku Tree scene not played): never due.
+        CHECK_FALSE(m.due(q::kStep01, !m.value, false));
+    }
 }

@@ -253,31 +253,36 @@ struct RoomView {
     bool encrypted = false;  // docs/protocol.md "Encrypted traffic"
 };
 
-// Issue 84: Mido blocks again in a game already past him (the save holds a
-// 1 that a shared value from a save behind the group put there): his
-// blocker back to 0 through the game's Bool setter (CoopStory::
-// MidoBlockerMend says when). Held 3 s first, so a host save load whose
-// quest and scene flags land a few frames after its blocker is not fought.
-// In a session (Coop::CatchUpQuest) and with none (LocalFrameOff), so a
-// save stuck that way is mended when it is played alone too. `since_us`: the
-// caller's own hold clock.
-void MendMidoBlocker(EmulatorMemory& memory, std::uint64_t& since_us) {
+// Issue 84: a one-way story flag back on the wrong side in a game whose own
+// quest proves the right value (Mido blocks again past him; the Deku Tree's
+// mouth shut with the quest Complete): a shared value from a save behind the
+// group put it there. Set back through the game's Bool setter
+// (CoopStory::Mends says which and when). Held 3 s first, so a host save load
+// whose quest and scene flags land a few frames after the flag is not fought.
+// In a session (Coop::CatchUpQuest) and with none (LocalFrameOff), so a save
+// stuck that way is mended when it is played alone too. `since_us`: the
+// caller's own hold clocks, one per mend.
+using MendClocks = std::array<std::uint64_t, CoopStory::kMends>;
+void MendStory(EmulatorMemory& memory, MendClocks& since_us) {
     static constexpr std::uint64_t kHoldUs = 3'000'000;
     if (!CoopStory::On()) return;
     namespace quest = CoopStory::quest;
     coop::host::GameFlags flags(memory);
     const auto step = flags.get_enum(quest::kMeetDekuTree);
-    const bool mend = CoopStory::MidoBlockerMend(step, flags.get_bool(quest::kMidoBlocker),
-                                                 flags.get_bool(quest::kMetDekuTree));
+    const auto met = flags.get_bool(quest::kMetDekuTree);
     const std::uint64_t now_us = CoopEvery::NowUs();
-    if (!mend) {
-        since_us = 0;
-    } else if (since_us == 0) {
-        since_us = now_us;
-    } else if (now_us - since_us >= kHoldUs && coop::host::GameFlags::set_bool(memory, quest::kMidoBlocker, false)) {
-        since_us = 0;
-        LOG_INFO(Core, "coop: story: Mido's blocker was 1 in a game past him (Meet_DekuTree {:#x}): set to 0 (issue 84)",
-                 step.value_or(0));
+    for (std::size_t i = 0; i < CoopStory::kMends; ++i) {
+        const auto& mend = CoopStory::Mends()[i];
+        auto& since = since_us[i];
+        if (!mend.due(step, flags.get_bool(mend.flag), met)) {
+            since = 0;
+        } else if (since == 0) {
+            since = now_us;
+        } else if (now_us - since >= kHoldUs && coop::host::GameFlags::set_bool(memory, mend.flag, mend.value)) {
+            since = 0;
+            LOG_INFO(Core, "coop: story: {} (Meet_DekuTree {:#x}): set to {} (issue 84)", mend.what,
+                     step.value_or(0), mend.value ? 1 : 0);
+        }
     }
 }
 
@@ -424,8 +429,15 @@ public:
         shared_scenes_ = live_events_ && CoopSharedScenes::OnFromEnv(EnvString("LICHII_COOP_SHARED_CUTSCENES"));
         LOG_INFO(Core, "coop: cutscene: shared story cutscenes {}",
                  shared_scenes_ ? "on (off with LICHII_COOP_SHARED_CUTSCENES=0)" : "off");
-        if (CoopStory::On()) {  // issue 84: Mido's blocker only ever goes down: a group's 1 never over our 0
-            session_->share_down_only(coop::protocol::FlagKey(CoopStory::quest::kMidoBlocker, std::uint16_t{0}));
+        if (CoopStory::On()) {  // issue 84: story flags the game moves one way never go back here
+            for (const auto& f : CoopStory::OneWays()) {
+                const coop::protocol::FlagKey key(f.hash, std::uint16_t{0});
+                if (f.way == CoopStory::Way::down) {
+                    session_->share_down_only(key);
+                } else {
+                    session_->share_up_only(key);
+                }
+            }
         }
         if (CoopDungeon::On()) {  // room switch flags the game resets itself: one way, no load write-back
             for (const auto& f : CoopDungeon::LiveFlags()) {
@@ -2186,9 +2198,9 @@ private:
             LOG_INFO(Core, "coop: story: quest Meet_DekuTree {:#x} -> {:#x} (shared story; issue 130)",
                      *step, *raise);
         }
-        MendMidoBlocker(memory, mido_mend_since_us_);  // issue 84
+        MendStory(memory, mend_since_us_);  // issue 84
     }
-    std::uint64_t mido_mend_since_us_ = 0;  // CatchUpQuest's (game thread)
+    MendClocks mend_since_us_{};  // CatchUpQuest's (game thread)
 
     // Set by Begin before the network thread starts; the session borrows the
     // client and locks it, so neither is touched directly after that.
@@ -2389,11 +2401,11 @@ void LocalFrameOff(Core::System& system) {
         const auto scene = full ? full->scene : reader.read_scene();
         WatchMapDrops(memory, facts.position.has_value(), scene, facts.position);
         KeepMapsAlone(memory, facts.position.has_value(), scene);
-        static std::uint64_t mido_since_us = 0;
+        static MendClocks mend_since_us{};
         if (facts.position.has_value()) {
-            MendMidoBlocker(memory, mido_since_us);  // issue 84: a save stuck behind Mido, played alone
+            MendStory(memory, mend_since_us);  // issue 84: a stuck save, played alone
         } else {
-            mido_since_us = 0;  // the title or a load: nothing to read yet
+            mend_since_us = {};  // the title or a load: nothing to read yet
         }
     }
     if (!step.Publish(CoopLocalGame::HasSeats())) return;

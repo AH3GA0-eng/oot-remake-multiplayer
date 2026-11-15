@@ -75,6 +75,9 @@ inline constexpr std::uint32_t kComplete = 0x4c0a63f4u;
 // Deku Tree scene that completes the quest.
 inline constexpr std::uint32_t kMidoBlocker = 0x502f6ceau;  // KokiriForest_Npc_Kokiri_Mido_Child_Blocker
 inline constexpr std::uint32_t kMetDekuTree = 0x5ab867ffu;  // HavePlayedEvent.Dm_Kokiri_0075
+// The Deku Tree's mouth, a shared story flag: Dm_Kokiri_0075 sets it true
+// and, in the next event of the same cut, moves the quest to Complete.
+inline constexpr std::uint32_t kDekuTreeMouth = 0x9a60a460u;  // KokiriForest_Meet_DekuTree_OpenDekuTreeMouth
 } // namespace quest
 
 // The step to write into our quest, or nothing: Complete once the Deku Tree
@@ -96,5 +99,41 @@ std::optional<std::uint32_t> QuestCatchUp(std::optional<std::uint32_t> step,
 // the game's own Bool setter. Unknown inputs count as "not past him".
 bool MidoBlockerMend(std::optional<std::uint32_t> step, std::optional<bool> mido_blocker,
                      std::optional<bool> met_deku_tree);
+
+// Issue 84 follow-up: true when the Deku Tree's mouth (kDekuTreeMouth) is
+// closed in a game whose Meet_DekuTree is Complete. Only Dm_Kokiri_0075 sets
+// the quest to Complete, right after it opens the mouth, and no flow or logic
+// closes the mouth again; the scene never plays again once the quest is
+// Complete. So a 0 there came from a shared value behind the group, and the
+// Deku Tree is shut for good. Unknown inputs count as "not Complete".
+bool DekuTreeMouthMend(std::optional<std::uint32_t> step, std::optional<bool> mouth);
+
+// A shared story flag the game moves only one way (GameDataList default, and
+// every write in Event/EventFlow and Logic goes the other way only). Co-op
+// never moves it back over a game that is past it (FlagWatcher::
+// share_down_only / share_up_only): a 1 the game only lowers, or a 0 the game
+// only raises, from a host save, a join snapshot or a load's write-back would
+// block a path the game never opens again (issue 84, docs/flags.md).
+enum class Way : std::uint8_t {
+    down,  // default 1, the game only writes 0: a blocker that steps aside
+    up,    // default 0, the game only writes 1: a gate a story scene opens
+};
+struct OneWay {
+    std::uint32_t hash;
+    Way way;
+    const char* name;
+};
+std::span<const OneWay> OneWays();
+
+// A one-way flag our own quest proves (the game's own invariant), set back
+// by Coop through the game's Bool setter after a short hold.
+struct Mend {
+    std::uint32_t flag;
+    bool value;        // what the quest proves
+    const char* what;  // for the log: what was wrong
+    bool (*due)(std::optional<std::uint32_t> step, std::optional<bool> now, std::optional<bool> met_deku_tree);
+};
+inline constexpr std::size_t kMends = 2;
+std::span<const Mend, kMends> Mends();
 
 } // namespace CoopStory

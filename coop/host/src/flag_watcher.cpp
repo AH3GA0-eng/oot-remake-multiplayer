@@ -140,19 +140,28 @@ bool FlagWatcher::share_one_way(FlagKey key) {
 }
 
 bool FlagWatcher::share_down_only(FlagKey key) {
-  if (key.kind != FlagKeyKind::named || !down_only_.insert(key).second) return false;
+  if (key.kind != FlagKeyKind::named || up_only_.contains(key) || !down_only_.insert(key).second) return false;
   shared_.add(key);
   return true;
 }
 
-bool FlagWatcher::keeps_zero(FlagStore& store, const FlagEntry& entry) {
+bool FlagWatcher::share_up_only(FlagKey key) {
+  if (key.kind != FlagKeyKind::named || down_only_.contains(key) || !up_only_.insert(key).second) return false;
+  shared_.add(key);
+  return true;
+}
+
+bool FlagWatcher::keeps_own(FlagStore& store, const FlagEntry& entry) {
+  if (entry.kind != protocol::FlagKind::boolean) return false;
   const FlagKey key = key_of(entry);
-  if (entry.kind != protocol::FlagKind::boolean || entry.value == 0 || !down_only_.contains(key)) return false;
+  const bool down = entry.value != 0 && down_only_.contains(key);  // a 1 over our 0
+  const bool up = entry.value == 0 && up_only_.contains(key);      // a 0 over our 1
+  if (!down && !up) return false;
   std::optional<FlagEntry> now = store.read(key);
-  if (!now || now->kind != protocol::FlagKind::boolean || now->value != 0) return false;
+  if (!now || now->kind != protocol::FlagKind::boolean || (now->value != 0) != up) return false;
   now->key = key;
-  ++stats_.down_only_kept;
-  note_group(*now, nullptr);  // a load's write-back puts our 0 back, not the 1
+  ++(down ? stats_.down_only_kept : stats_.up_only_kept);
+  note_group(*now, nullptr);  // a load's write-back puts our value back, not the group's
   return true;
 }
 
@@ -471,9 +480,9 @@ void FlagWatcher::apply_reset(FlagStore& store, const std::vector<FlagEntry>& fl
     const FlagKey key = key_of(entry);
     if (!shared_.contains(key) || is_delta(entry)) continue;  // no one-way rule here
     pending_.erase(key);  // the host's save wins over a change of ours
-    if (keeps_zero(store, entry)) {
+    if (keeps_own(store, entry)) {
       unwritten_.erase(key);
-      last_[key] = entry;  // the next diff sends our 0
+      last_[key] = entry;  // the next diff sends our own value
       continue;
     }
     note_for_others(store, entry);
@@ -521,8 +530,8 @@ void FlagWatcher::end_window(FlagStore& store, std::vector<Outgoing>& out) {
       changed[key] = *now;  // the save's value goes to everyone
       last_[key] = *now;
       if (!store.is_count(key)) note_group(*now, nullptr);
-    } else if (keeps_zero(store, it->second)) {
-      continue;  // our 0 stays; last_ still holds the 1, so the next diff sends it
+    } else if (keeps_own(store, it->second)) {
+      continue;  // our value stays; last_ still holds the group's, so the next diff sends ours
     } else if (store.write_exact(it->second)) {
       ++stats_.load_reverts;  // back to the group's value from before the load
       ++stats_.applied;
@@ -592,11 +601,11 @@ void FlagWatcher::answer_set(FlagStore& store, const protocol::FlagSet& set, Tab
     FlagEntry entry = original;
     const FlagKey key = key_of(entry);
     if (!takes(entry)) continue;
-    if (keeps_zero(store, entry)) {
-      FlagEntry zero = entry;
-      zero.value = 0;
-      last_[key] = zero;
-      answers[key] = zero;  // the host's 0 is the group's
+    if (keeps_own(store, entry)) {
+      FlagEntry ours = entry;
+      ours.value = entry.value == 0 ? 1 : 0;  // keeps_own: the host holds the other value
+      last_[key] = ours;
+      answers[key] = ours;  // the host's value is the group's
       ++stats_.answers_sent;
       continue;
     }
@@ -672,10 +681,10 @@ void FlagWatcher::answer_set(FlagStore& store, const protocol::FlagSet& set, Tab
 
 bool FlagWatcher::write(FlagStore& store, const FlagEntry& entry) {
   const FlagKey key = key_of(entry);
-  if (keeps_zero(store, entry)) {
+  if (keeps_own(store, entry)) {
     pending_.erase(key);
     unwritten_.erase(key);
-    last_[key] = entry;  // our 0 differs from it: the next diff sends the 0
+    last_[key] = entry;  // ours differs from it: the next diff sends ours
     return true;
   }
   const auto seen = last_.find(key);
@@ -823,7 +832,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
       if (role_ == FlagRole::player && !store.is_count(key) && !one_way_.contains(key)) {
         // The group's value back at once, so a room loading now has it.
         const auto group = group_.find(key);
-        if (group != group_.end() && group->second != *now && !keeps_zero(store, group->second)) {
+        if (group != group_.end() && group->second != *now && !keeps_own(store, group->second)) {
           if (store.holds(key)) {
             unwritten_[key] = group->second;
             it->second = *now;
@@ -846,7 +855,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
       if (role_ == FlagRole::player && !store.is_count(key) && !one_way_.contains(key)) {
         const auto group = group_.find(key);
         const auto older = group_before_.find(key);
-        if (group != group_.end() && !keeps_zero(store, group->second) &&
+        if (group != group_.end() && !keeps_own(store, group->second) &&
             backwards(group->second, older != group_before_.end() ? &older->second : nullptr, *now, true)) {
           if (store.holds(key)) {
             ++stats_.load_reverts;
@@ -894,7 +903,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
       // the group's value goes back in (set_loading).
       const auto group = group_.find(key);
       const auto older = group_before_.find(key);
-      if (group != group_.end() && !keeps_zero(store, group->second) &&
+      if (group != group_.end() && !keeps_own(store, group->second) &&
           backwards(group->second, older != group_before_.end() ? &older->second : nullptr,
                     *now, loading_)) {
         if (store.holds(key)) {

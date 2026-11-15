@@ -63,6 +63,7 @@ struct FlagStats {
   std::uint64_t load_reverts = 0;      // the game's load undid a group value: written back
   std::uint64_t one_way_restores = 0;  // a one-way Bool (map, compass) back to 0: written back
   std::uint64_t down_only_kept = 0;    // a group's 1 not written over our 0 (share_down_only)
+  std::uint64_t up_only_kept = 0;      // a group's 0 not written over our 1 (share_up_only)
   std::uint64_t host_resets = 0;       // host: FLAG_RESETs sent after its save load
   std::uint64_t reset_applied = 0;     // player: values written from a FLAG_RESET
   std::uint64_t counts_guarded = 0;    // a guarded count's gain taken back (guard_count)
@@ -114,6 +115,11 @@ class FlagWatcher {
   // never written over our game's 0; our 0 goes to the group instead.
   // False: already down-only.
   bool share_down_only(FlagKey key);
+  // The same rule the other way: a named Bool the game only ever raises (a
+  // gate a story scene opens: the Deku Tree's mouth, the royal tomb, the
+  // drained well): a 0 from the group is never written over our game's 1;
+  // our 1 goes to the group instead. False: already up-only (or down-only).
+  bool share_up_only(FlagKey key);
   // The pickup rule for a named Bool (a chest's opened flag,
   // issue 87: the game records a chest opened in a named Bool of its own,
   // not in the placement's 64-bit key). It is also noted in
@@ -357,9 +363,11 @@ class FlagWatcher {
   std::set<FlagKey> pickups_;  // one-way 64-bit keys
   std::set<FlagKey> one_way_;  // one-way named flags, no load write-back (share_one_way)
   std::set<FlagKey> down_only_;  // share_down_only
+  std::set<FlagKey> up_only_;    // share_up_only
   // True (and counted) when `entry` would raise a down-only Bool our game
-  // holds at 0; the group's value here becomes our 0.
-  bool keeps_zero(FlagStore& store, const protocol::FlagEntry& entry);
+  // holds at 0, or lower an up-only Bool it holds at 1; the group's value
+  // here becomes ours.
+  bool keeps_own(FlagStore& store, const protocol::FlagEntry& entry);
   std::vector<FlagKey> written_for_others_;  // take_written_for_others
   std::vector<FlagKey> one_way_restored_;    // take_one_way_restores
   std::set<FlagKey> one_way_told_;           // keys take_one_way_restores gave once
