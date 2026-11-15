@@ -8,7 +8,10 @@ of every tunic texture your Link wears, each in the game's own format and size:
 - the tile (`puppet_pack.tunic`: hat and upper body) recoloured as for the puppets;
 - the dark tile (the child's tunic body) and the other tunic textures with only their green end
   colours changed in place (`puppet_pack.tunic_extra`);
-- green: the game's own texels, to find the textures by and to go back to.
+- green: the game's own texels marked (tunic.SELF_MARK), as your own Link's green S copies hold
+  them, to find the textures by and to go back to. Never the game's own unmarked: those tunic
+  textures are on Mido's and Saria's models too (every Kokiri), and the module finds textures by
+  their texels.
 
 One file per colour, `coop_look/<colour>.bin`, beside the pack's `romfs/` (the game does not load
 it). Little-endian:

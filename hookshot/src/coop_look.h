@@ -135,7 +135,8 @@ std::optional<std::uint32_t> OwnTunic(const std::optional<std::uint32_t>& chosen
 // that is the start colour, not LICHII_COOP_SELF_TUNIC: `tile` is the pack's
 // tile (nothing: none, "green", the game's own), `self_tile` a colour's
 // coop_self file. A tile that is none of them: `hint` (the switch), else
-// "green". `hint` is asked first, then every tunic colour (CoopColors::Tunics).
+// "green". `hint` is asked first, then every tunic colour (CoopColors::Tunics),
+// then green (whose own copies a pack since npc-colour has).
 using FileFn = std::function<std::optional<std::vector<std::uint8_t>>(const std::string&)>;
 std::string PackStartTunic(const std::optional<std::vector<std::uint8_t>>& tile, const FileFn& self_tile,
                            const std::string& hint);

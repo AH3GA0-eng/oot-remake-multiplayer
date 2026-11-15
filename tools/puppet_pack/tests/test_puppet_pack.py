@@ -1618,6 +1618,8 @@ class FullBuildTest(unittest.TestCase):
         # (the puppets' copies are marked: their texels are never your own Link's, tunic.TUNIC_MARK)
         from puppet_pack import look_live as _ll
         unmark = lambda b: _ll.mark_bntx(b, tunic.TUNIC_MARK)
+        # (your own Link's copies are marked too, their own way: tunic.SELF_MARK, npc-colour)
+        selfmark = lambda b: _ll.mark_bntx(b, tunic.SELF_MARK)
         self.assertEqual(unmark(green), game_tile.replace(b"Angin_Tile_A_Alb\x00", b"Angin_Tile_G_Alb\x00"))
         self.assertNotEqual(_ll.texels(green), _ll.texels(game_tile))
         # your own Link: per colour but green, the tile recoloured under the game's name, beside
@@ -1631,7 +1633,8 @@ class FullBuildTest(unittest.TestCase):
             self.assertIn(b"Angin_Tile_A_Alb\x00", own)
             self.assertNotEqual(own, game_tile)
             recoloured = d.decompress(build.read(os.path.join(out, f"Tex/{tunic.tile_name(c)}.bntx.zs")))
-            self.assertEqual(own, unmark(recoloured).replace(tunic.tile_name(c).encode() + b"\x00", b"Angin_Tile_A_Alb\x00"))
+            self.assertEqual(own, selfmark(unmark(recoloured)).replace(tunic.tile_name(c).encode() + b"\x00",
+                                                                       b"Angin_Tile_A_Alb\x00"))
         for c in ("red", "blue", "green"):
             tile = d.decompress(build.read(os.path.join(out, f"Tex/{tunic.tile_name(c)}.bntx.zs")))
             self.assertIn(tunic.tile_name(c).encode() + b"\x00", tile)
@@ -1661,7 +1664,7 @@ class FullBuildTest(unittest.TestCase):
                          {"red": "coop_self/red.dark.bntx.zs", "blue": "coop_self/blue.dark.bntx.zs"})
         for c in ("red", "blue"):
             own = d.decompress(build.read(os.path.join(mod, m["self_dark_tiles"][c])))
-            self.assertEqual(own, tunic.self_dark_tile(game_tile, game_dark, c))
+            self.assertEqual(own, selfmark(tunic.self_dark_tile(game_tile, game_dark, c)))
             self.assertGreaterEqual(t.get(f"Tex/{tunic.dark_name(c)}.bntx"), len(own))
         self.assertEqual(unmark(d.decompress(build.read(os.path.join(out, "Tex/Angin_Tile_G_Dark_Alb.bntx.zs")))),
                          game_dark.replace(b"Angin_Tile_A_Dark_Alb\x00", b"Angin_Tile_G_Dark_Alb\x00"))
@@ -1714,8 +1717,22 @@ class FullBuildTest(unittest.TestCase):
         red_look = dict(_ll.unpack(build.read(os.path.join(mod, "coop_look/red.bin"))))
         self.assertEqual(_ll.texels(own_tile), red_look["Angin_Tile_A_Alb"])
         self.assertNotEqual(_ll.texels(pup_tile), red_look["Angin_Tile_A_Alb"])
-        self.assertEqual(_ll.texels(unmark(pup_tile)), red_look["Angin_Tile_A_Alb"])
-        self.assertNotIn("green", m["self_files"])
+        self.assertEqual(_ll.texels(selfmark(unmark(pup_tile))), red_look["Angin_Tile_A_Alb"])
+        # green has its own S copies too (npc-colour): the game's tunic textures are on Mido's and
+        # Saria's models, so your own Link never wears them; green's are the game's, marked
+        self.assertEqual(sorted(m["self_files"]["green"]), sorted(m["self_files"]["red"]))
+        own_green = d.decompress(build.read(os.path.join(mod, m["self_files"]["green"]["Tex/Angin_Tile_S_Alb.bntx.zs"])))
+        self.assertEqual(own_green, selfmark(game_tile).replace(b"Angin_Tile_A_Alb\x00", b"Angin_Tile_S_Alb\x00"))
+        own_green_dark = d.decompress(build.read(os.path.join(
+            mod, m["self_files"]["green"]["Tex/Angin_Tile_S_Dark_Alb.bntx.zs"])))
+        self.assertEqual(own_green_dark,
+                         selfmark(game_dark).replace(b"Angin_Tile_A_Dark_Alb\x00", b"Angin_Tile_S_Dark_Alb\x00"))
+        self.assertGreaterEqual(t.get("Tex/Angin_Tile_S_Dark_Alb.bntx"), max(len(own_green_dark), len(game_tile)))
+        green_model = d.decompress(build.read(os.path.join(mod, "coop_self/green.Player_Child.bfres.zs")))
+        self.assertIn(b"Angin_Tile_S_Alb\x00", green_model)
+        self.assertNotIn(b"Angin_Tile_A_Alb\x00", green_model)
+        self.assertNotIn(b"Mt_Vest_Player_Child_Alb\x00", green_model)
+        self.assertFalse(os.path.exists(os.path.join(mod, "coop_self", "green.dark.bntx.zs")))
         vest = d.decompress(build.read(os.path.join(mod, m["self_files"]["red"]["Tex/Mt_Vest_Coop_S_Adult_Alb.bntx.zs"])))
         game_vest = d.decompress(build.read(os.path.join(self.romfs, "Tex/Mt_Vest_Player_Adult_Alb.bntx.zs")))
         self.assertEqual(len(vest), len(game_vest))
@@ -1730,7 +1747,12 @@ class FullBuildTest(unittest.TestCase):
         game = {n: look_live.texels(d.decompress(build.read(os.path.join(self.romfs, f"Tex/{n}.bntx.zs"))))
                 for n in names}
         looks = {c: look_live.unpack(build.read(os.path.join(mod, m["look_files"][c]))) for c in m["look_files"]}
-        self.assertEqual(looks["green"], [(n, game[n]) for n in names])
+        # green: the game's own marked as your own green copies are; no colour's texels are ever a
+        # texture of the game's (the module finds your own Link's by them: npc-colour)
+        self.assertEqual(looks["green"], [(n, look_live.mark(game[n], tunic.SELF_MARK)) for n in names])
+        for c in looks:
+            for n, data in looks[c]:
+                self.assertNotIn(data, game.values(), (c, n))
         for c in ("red", "blue"):
             self.assertEqual([n for n, _ in looks[c]], names)
             for n, data in looks[c]:
@@ -1748,10 +1770,15 @@ class FullBuildTest(unittest.TestCase):
         from puppet_pack import look_live
         mod = os.path.join(self.dir, "mod_l")
         m = build.build(self.romfs, mod, log=lambda *_: None, tunics=["red"])
-        # green is always there: the module finds the textures by the game's own texels
+        # green is always there (to go back to), marked as your own green copies would be: never the
+        # game's own texels, which Mido's model shares (npc-colour)
+        from puppet_pack import tunic
         self.assertEqual(sorted(m["look_files"]), ["green", "red"])
         green = look_live.unpack(build.read(os.path.join(mod, "coop_look", "green.bin")))
         self.assertEqual(green[0][0], "Angin_Tile_A_Alb")
+        d = zs.Dicts.from_romfs(self.romfs)
+        game_tile = look_live.texels(d.decompress(build.read(os.path.join(self.romfs, "Tex/Angin_Tile_A_Alb.bntx.zs"))))
+        self.assertEqual(green[0][1], look_live.mark(game_tile, tunic.SELF_MARK))
 
     def test_build_no_tile_no_tunics(self):
         os.remove(os.path.join(self.romfs, "Tex", "Angin_Tile_A_Alb.bntx.zs"))

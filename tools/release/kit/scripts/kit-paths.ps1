@@ -436,7 +436,10 @@ function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
     $romfs = Join-Path $PackDir 'romfs'
     $tile = 'Tex/Angin_Tile_A_Alb.bntx.zs'
     $dark = 'Tex/Angin_Tile_A_Dark_Alb.bntx.zs'
+    # No colour: green's own files (npc-colour). Your own Link never wears the game's tunic textures: Mido's and
+    # Saria's models (every Kokiri) share them, and the module repaints your own Link's by their texels.
     $tunic = Get-KitTunic $Color
+    if (-not $tunic) { $tunic = 'green' }
     $json = $null
     try {
         $json = [System.IO.File]::ReadAllText((Join-Path $PackDir 'coop_puppet.json')) | ConvertFrom-Json -ErrorAction Stop
@@ -455,7 +458,7 @@ function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
                 foreach ($f in $c.Value.PSObject.Properties) { if (& $ok $f.Name) { $targets += $f.Name } }
             }
         }
-        if ($json -and $tunic -and $tunic -ne 'green' -and $json.tunics -and $json.tunics.green) {
+        if ($json -and $json.tunics -and $json.tunics.green) {
             if ($json.self_files -and $json.self_files.$tunic) {
                 foreach ($f in $json.self_files.$tunic.PSObject.Properties) {
                     if ((& $ok $f.Name) -and $f.Value) { $put[$f.Name] = Join-Path $PackDir $f.Value }

@@ -525,6 +525,19 @@ void StartModule() {
     CoopLookTunic::Wardrobe::Host host;
     host.textures = g_textures.get();
     host.file = [](const std::string& colour) { return ReadFile(LookDir() / (colour + ".bin")); };
+    // The game's tunic textures are not only your Link's: Angin_Tile_A_Alb is on
+    // Mido's model (39 Kokiri actors), the dark tile on Saria's (18 more). The
+    // wardrobe finds textures by their texels, so it may only look for your own
+    // Link's copies (tools/puppet_pack: marked, green's too). A pack from before
+    // npc-colour has no own green copies, and its green.bin holds the game's
+    // own texels: with it the tunic is not changed in the game at all.
+    std::error_code no_file;
+    if (!fs::exists(LookDir().parent_path() / "coop_self" / "green.Angin_Tile_S_Alb.bntx.zs", no_file)) {
+        host.file = [](const std::string&) -> std::optional<std::vector<std::uint8_t>> { return std::nullopt; };
+        LOG_WARNING(Core, "coop: look: the puppet pack is older than this module (no own green tunic copies): your "
+                          "Link's tunic colour is not changed in the game, so the Kokiri keep theirs (make the "
+                          "puppet pack again; the others see your colour all the same)");
+    }
     host.log = [](const std::string& line) { LOG_INFO(Core, "{}", line); };
     if (const char* self = std::getenv("LICHII_COOP_SELF_TUNIC")) {
         host.start = self;   // (the kit put that colour's files in: Set-KitSelfTunic)

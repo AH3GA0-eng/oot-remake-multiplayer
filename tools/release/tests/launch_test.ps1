@@ -277,6 +277,14 @@ try {
     Check ((Set-KitSelfTunic $sp 'pink') -eq '' -and -not (Test-Path -LiteralPath $sTile)) 'self tunic: S set: a colour the pack lacks takes the stale black away'
     Check ((Set-KitSelfTunic $sp 'red') -eq 'red' -and [System.IO.File]::ReadAllText($sTile) -eq 'REDS' -and [System.IO.File]::ReadAllText($childModel) -eq 'REDCHILDS') 'self tunic: S set: red tile and own child model'
     Check ((Set-KitSelfTunic $sp '') -eq '' -and -not (Test-Path -LiteralPath $sTile) -and -not (Test-Path -LiteralPath $childModel)) 'self tunic: S set: no colour takes them away'
+    # npc-colour: a pack with green's own copies: green and no colour wear them (the game's tunic textures
+    # are on Mido's and Saria's models, so your own Link never wears the game's own)
+    Write-File (Join-Path $sp 'coop_self\green.Angin_Tile_S_Alb.bntx.zs') 'GREENS'
+    Write-File (Join-Path $sp 'coop_puppet.json') '{"tunics": {"red": ["x"], "green": ["y"]}, "self_files": {"red": {"Tex/Angin_Tile_S_Alb.bntx.zs": "coop_self/red.Angin_Tile_S_Alb.bntx.zs", "Model/Player_Child.Player_Child.bfres.zs": "coop_self/red.Player_Child.bfres.zs"}, "green": {"Tex/Angin_Tile_S_Alb.bntx.zs": "coop_self/green.Angin_Tile_S_Alb.bntx.zs"}}}'
+    foreach ($c in 'green', '', 'nope') {
+        [void](Set-KitSelfTunic $sp 'red')
+        Check ((Set-KitSelfTunic $sp $c) -eq 'green' -and [System.IO.File]::ReadAllText($sTile) -eq 'GREENS' -and -not (Test-Path -LiteralPath $childModel)) "self tunic: green's own copies for '$c'"
+    }
     # a pack made again by an older tool (self_tiles only): the newer copies do not stay
     [void](Set-KitSelfTunic $sp 'red')
     Write-File $vest 'STALEVEST'

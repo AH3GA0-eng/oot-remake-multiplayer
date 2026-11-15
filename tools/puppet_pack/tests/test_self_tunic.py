@@ -77,8 +77,22 @@ class SelfTunicTest(unittest.TestCase):
         self.assertEqual(self.text(self.tile), "REDS")
         self.assertEqual(self.text(self.model), "REDCHILD")
         self.assertFalse(os.path.exists(os.path.join(self.pack, "romfs", "Model", "Other.bfres.zs")))
-        self.assertEqual(self_tunic.put(self.pack, "green"), "")
+        self.assertEqual(self_tunic.put(self.pack, "green"), "")   # (a pack with no green own files)
         self.assertFalse(os.path.exists(self.tile) or os.path.exists(self.model))
+
+    def test_green_and_none_wear_greens_own_files(self):
+        # npc-colour: the game's tunic textures are on Mido's and Saria's models (every Kokiri), so
+        # your own Link wears its own copies in green too, and with no colour set
+        with open(os.path.join(self.pack, "coop_self", "green.Angin_Tile_S_Alb.bntx.zs"), "w") as f:
+            f.write("GREENS")
+        m = json.loads(self.text(os.path.join(self.pack, "coop_puppet.json")))
+        m["self_files"]["green"] = {"Tex/Angin_Tile_S_Alb.bntx.zs": "coop_self/green.Angin_Tile_S_Alb.bntx.zs"}
+        self.manifest(m)
+        for colour in ("green", "", "nope"):
+            self.assertEqual(self_tunic.put(self.pack, "red"), "red")
+            self.assertEqual(self_tunic.put(self.pack, colour), "green", colour)
+            self.assertEqual(self.text(self.tile), "GREENS")
+            self.assertFalse(os.path.exists(self.model))   # (red's model taken away)
 
     def test_older_and_broken_packs(self):
         self.assertEqual(self_tunic.put(self.pack, "red"), "red")
