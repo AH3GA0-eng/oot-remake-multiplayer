@@ -110,6 +110,7 @@
 #include "coop_scrub_sale.h"
 #include "coop_scrubs.h"
 #include "coop_event_member.h"
+#include "coop_event_owner.h"
 #include <set>
 
 namespace CoopObjects {
@@ -1258,11 +1259,18 @@ Mover& TheMover() {
     return mover;
 }
 
-// Whether our own Link is in an event (a talk, a cutscene), from the hook's
-// reading each frame (SetLocalEvent; issue 144).
+// Whether an event runs in our game, from the hook's reading each frame
+// (SetLocalEvent; issue 144).
 std::atomic<bool>& TheLocalEvent() {
     static std::atomic<bool> in_event{false};
     return in_event;
+}
+
+// G1: whether our own Link is in that event (not another player's replayed here,
+// not the free Ocarina; coop/host/event_owner.hpp).
+std::atomic<bool>& TheOwnEvent() {
+    static std::atomic<bool> ours{false};
+    return ours;
 }
 
 // The MaxLife flag as the session left it (SetMaxLife); -1: not known.
@@ -1401,7 +1409,8 @@ public:
             return;
         }
         // Issue 200, row 97: our event's actors become ours (Sync::SetEvent).
-        sync_.SetEvent(TheLocalEvent().load(), server_now_us);
+        // G1: another player's event here: its bound actors act for it, none is claimed.
+        sync_.SetEvent(TheLocalEvent().load(), server_now_us, TheOwnEvent().load());
         NoteBosses(seen, sync_.Owned(), *scene);
         const u8 self =
             session->with_client([](coop::net::Client& c) { return c.player_number(); });
@@ -1659,7 +1668,7 @@ public:
                 ScrubsBox& box = TheScrubs();
                 std::lock_guard lock(box.mutex);
                 box.main = main_;
-                box.puzzle.SetEvent(TheLocalEvent().load(), CoopEvery::NowUs());  // issue 144
+                box.puzzle.SetEvent(TheOwnEvent().load(), CoopEvery::NowUs());  // issue 144; G1: our Link's event
                 box.puzzle.Look(*scene, scrubs_seen_, player_, CoopEvery::NowUs(), out);
             }
             for (auto& h : out.send) {
@@ -2103,8 +2112,11 @@ public:
     bool guard_said_ = false;
     // Row 97: the event's partners wait wherever they are (Sync::EventPartner).
     CoopGuard::Local GuardLocal(u64 now_us) const {
-        return {TheLocalEvent().load(), player_,
-                [this, now_us](std::uint64_t a) { return sync_.EventPartner(a, now_us); }};
+        // G1: near-by changes wait in our Link's event; the event's own actors in any event here.
+        const bool any = TheLocalEvent().load();
+        const bool ours = any && TheOwnEvent().load();
+        return {ours, player_,
+                [this, now_us](std::uint64_t a) { return sync_.EventPartner(a, now_us); }, any && !ours};
     }
     std::optional<coop::protocol::Vec3> Where(u64 address) const {
         const auto it = where_.find(address);
@@ -3491,11 +3503,13 @@ private:
             event_began_us_ = now_us;
             event_still_us_ = now_us;
             const auto ev = CoopEventMember::ReadRunning([&r](std::uint64_t at) { return r.Get<u64>(at); }, main_);
+            CoopEventOwner::RunNames(ev.names, CoopEvery::NowUs());  // G1: whose it is, by its name
             std::string names;
             for (const std::string& n : ev.names) {
                 names += (names.empty() ? "" : ", ") + n;
             }
-            LOG_INFO(Core, "coop: event: our Link's event began: {:#x} kind {} ({} in the session); names seen: {}",
+            LOG_INFO(Core, "coop: event: {} event began: {:#x} kind {} ({} in the session); names seen: {}",
+                     TheOwnEvent().load() ? "our Link's" : "an event without our Link (another player's or the Ocarina)",
                      ev.event, ev.kind ? std::to_string(*ev.kind) : std::string("?"), ev.count,
                      names.empty() ? std::string("none") : names);
         } else if (!running && event_began_us_ != 0) {
@@ -4031,7 +4045,8 @@ Objects& Instance() {
 
 } // namespace
 
-void SetLocalEvent(bool in_event) {
+void SetLocalEvent(bool in_event, bool ours) {
+    TheOwnEvent().store(in_event && ours);
     TheLocalEvent().store(in_event);
 }
 

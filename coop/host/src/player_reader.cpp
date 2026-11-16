@@ -379,6 +379,7 @@ std::optional<PlayerReading> PlayerReader::read() {
     if ((word && *word) || (bound && *bound)) {
       reading.event_running = true;
       reading.event_by_link = !(word && *word);
+      reading.link_bound = bound && *bound;
     } else if (word || bound) {
       reading.event_running = false;
     }

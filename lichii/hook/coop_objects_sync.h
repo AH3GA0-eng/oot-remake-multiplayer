@@ -652,11 +652,19 @@ public:
     // 8 m rule (coop_guard.h) covered the rest: a Deku Scrub copy further away
     // was made to sleep by its absent owner every frame and our Link's event
     // that waited on it never ended (Mr. Shorty's 15 min softlock).
-    void SetEvent(bool in_event, std::uint64_t now_us = 0) {
+    //
+    // G1 (coop/host/event_owner.hpp): `ours` false is another player's event that our game
+    // plays (a live dungeon event, a shared scene joined, an eye switch's event): its bound
+    // actors (member) still act for it here (EventPartner: no owner's motion, changes wait),
+    // but none is claimed (no targeting flag: it stays with the player whose event it is, so
+    // two games never pull one actor to and fro), and no actor is guessed in (own_ai,
+    // townsperson: our Link is not in it).
+    void SetEvent(bool in_event, std::uint64_t now_us = 0, bool ours = true) {
         if (in_event && !in_event_) {
             event_since_ = now_us;
         }
         in_event_ = in_event;
+        event_ours_ = in_event && ours;
     }
     // A copy our event claimed (within kEventKeepUs of the last Tick that
     // flagged it): the owner's routine is not put on it while the hand-over
@@ -1124,6 +1132,7 @@ private:
     std::uint64_t scene_since_ = 0;  // server time of the scene's first walk
     std::optional<coop::protocol::Vec3> player_;
     bool in_event_ = false;  // issue 200: SetEvent
+    bool event_ours_ = false;  // G1: our Link is in it (SetEvent's ours)
     // Row 97: why `o` is our running event's partner now (none: it is not):
     // the event binds it (member); its performer is not known to us and its
     // own AI asked for another animation since the event began, within

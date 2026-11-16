@@ -4822,6 +4822,49 @@ TEST_CASE("objects: every actor our event is with is claimed, any kind and any d
     CHECK_FALSE(sync.EventPartner(0x100, 100 * kMs + Sync::kEventKeepUs));
 }
 
+TEST_CASE("objects: another player's event here keeps its bound actors acting, claims none (G1, issues 251, 200)") {
+    // Our game plays another player's event (a live dungeon event, a shared scene joined):
+    // the actors it binds here must act for it (or it waits on them: issue 251's softlock),
+    // but they stay with their owner (no targeting: two games never pull one NPC to and fro,
+    // issue 200), and nothing is guessed in by our Link's nearness or its own AI.
+    constexpr const char* kScrub = "Enemy_Scrub_Deku";
+    struct Out {
+        bool partner = false;
+        bool targeting = false;
+    };
+    auto run = [&](bool ours, std::optional<bool> member, std::optional<std::uint64_t> own_at) {
+        Sync sync;
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        Seen scrub = Acting(0x100, 0x11, 100, 20.0f, "Sleep", kScrub);
+        Tick(sync, 0, {scrub});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, 2);
+        sync.SetEvent(true, 10 * kMs, ours);
+        scrub.event_member = member;
+        std::optional<std::uint8_t> flags;
+        for (std::uint64_t t = 10; t < 700; t += 66) {
+            sync.Receive(OwnerSample(id, 2, t * kMs, 20.0f, 100, "Sleep"));
+            if (own_at && t >= *own_at) {
+                sync.NoteTakeover(0x100, t * kMs, "Appear");
+            }
+            for (const auto& p : All<proto::ObjectPresent>(Tick(sync, t * kMs, {scrub}))) {
+                flags = p.objects[0].flags;
+            }
+        }
+        return Out{sync.EventPartner(0x100, 700 * kMs), flags && (*flags & kTargeting) != 0};
+    };
+    const Out bound_theirs = run(false, true, {});
+    CHECK(bound_theirs.partner);          // acts for the event here: no owner's motion, changes wait
+    CHECK_FALSE(bound_theirs.targeting);  // not claimed: stays with its owner
+    const Out bound_ours = run(true, true, {});
+    CHECK(bound_ours.partner);
+    CHECK(bound_ours.targeting);          // our Link's event claims it, as row 97
+    const Out guessed_theirs = run(false, std::nullopt, 200);
+    CHECK_FALSE(guessed_theirs.partner);  // its own AI in another player's event: not ours to take
+    CHECK_FALSE(guessed_theirs.targeting);
+    CHECK(run(true, std::nullopt, 200).targeting);  // in our Link's event it is, as before
+}
+
 TEST_CASE("objects: a boss or a fish our event binds stays unclaimed (row 97)") {
     // A boss runs its own changes in our event through CoopBossNative::SetEvent and keeps its
     // fight's owner; a fish keeps the lure rules (issue 151). Neither is an event partner, even

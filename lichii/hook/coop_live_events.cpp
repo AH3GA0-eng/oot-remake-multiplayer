@@ -544,6 +544,9 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
         case Next::own_request:
             notes_.push_back("live event " + current_ + " asked by our room's asker itself (result " +
                              std::to_string(result & 0xff) + ")");
+            if ((result & 0xff) != 0 && on_taken_) {
+                on_taken_(current_);
+            }
             current_.clear();
             current_args_.clear();
             current_starter_ = 0;
@@ -552,6 +555,9 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
         case Next::request: {
             notes_.push_back("live event " + current_ + " asked of the game (result " + std::to_string(result & 0xff) +
                              ")");
+            if ((result & 0xff) != 0 && on_taken_) {
+                on_taken_(current_);
+            }
             return FreeFirst(guest, main);
         }
         case Next::free1: {

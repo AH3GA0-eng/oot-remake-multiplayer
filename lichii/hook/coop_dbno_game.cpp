@@ -326,7 +326,10 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
     }
 
     // Beside a downed teammate: hold A.
-    const bool event = reading && reading->event_running.value_or(false);
+    // G1 (coop/host/event_owner.hpp): no revive while the game's event holds our Link (ours, or the
+    // free Ocarina); another player's event replayed here leaves our Link free, so it may revive.
+    const bool event = reading && reading->event_running.value_or(false) &&
+                       reading->event_whose != coop::host::EventWhose::others;
     const bool able = connected && rules.on && out.state == State::up && reading.has_value() && !event;
     const Reviver::Out rev =
         g.reviver.Frame(now_us, able, g.button.load(), in.position, scene, fallen);

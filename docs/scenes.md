@@ -23,6 +23,23 @@ One line each for the callers:
 - Puppet (`coop_puppet.*`): `switch (coop::host::visibility(local.scene, local.event_running, presence.scene(n), presence.status(n)))`: `hide` despawns or hides the puppet, `hold` stops updating its transform and animation, `show` drives it as now.
 - Overlay markers (`coop_window.*`): `if (coop::host::visibility(local.scene, local.event_running, presence.scene(n), presence.status(n)) == coop::host::Visibility::hide) continue;` (draw a held marker with its last pose).
 
+## Whose event (G1: issues 251, 243, 200, 144, 86; not yet run in a game)
+
+Code: `coop/host/event_owner.hpp` (the rule, tested in `tests/host/event_owner_test.cpp`) and
+`lichii/hook/coop_event_owner.h` (the game's one tracker). "An event runs in our game" can be one of three things:
+
+| Kind | What it is | How it is known |
+|---|---|---|
+| ours | our Link is in it: a talk, our cutscene, a shared scene that binds our Link | the default; our Link's own performer bound |
+| another player's | an event the co-op layer asked our game to play for another player (a live dungeon event, an eye switch's event, a shared scene joined) that does not bind our Link | it starts within 3 s of such an ask the game took (`Requester::OnTaken`, `Switcher::OnSet`) |
+| our free Ocarina | the game's event setting `Dm_SY_Ocarina` / `PlayOcarina_Base` (RSDB EventSetting) | Hookshot's request wrap names it; without the wrap our Link's Ocarina animation |
+
+What each kind does at each site:
+- **Only our Link's own event**: the "in a cutscene" status sent to the others (their games hold our puppet), hiding the other players, the Deku Scrub talk, sale and Scrub Brothers' hit holds, holding shared changes near our Link, the chest get scene, and claiming actors from their owner (townspeople, actors whose own AI acts, actors the event binds).
+- **Any event in our game**: the actors it binds here act for it (no owner's motion on them, their shared changes wait), or the event waits on them forever (issue 251). Also the "game is busy" checks: no second event asked, no quest catch-up, no time nudge, no shared scene start, no teleport. A revive (DBNO) and PvP hits wait while the game's event holds our Link (PvP: our own event only; revive: ours or the Ocarina), not in another player's event.
+- So another player's event replayed here hides nobody and holds nothing near our Link, and it claims none of its actors: they stay with the player whose event it is, so two games never pull one NPC to and fro (issue 200).
+- The log says `coop: event: the running event is ours | another player's | our free Ocarina` on each change.
+
 ## Shared story cutscenes (not yet run in a game)
 
 Alex's choice (2026-11-12): a story cutscene plays together for every player in the same room. Small talks stay in the talker's game; the NPCs in them move for the others through npc-anim (issue 200, [objects.md](objects.md) "Cutscene NPCs"). Code: `lichii/hook/coop_shared_scenes.{h,cpp}` (rules, tested in `tests/lichii/shared_scenes_test.cpp`) and `SharedScenes` in `coop_hook.cpp`. On with the live events; off with `LICHII_COOP_SHARED_CUTSCENES=0` (or `LICHII_COOP_LIVE_EVENTS=0`, which also turns this off).
