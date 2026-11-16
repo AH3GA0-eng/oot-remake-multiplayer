@@ -53,6 +53,10 @@ bool IsShared(std::string_view name);
 // every named setting of a story flow under another name, classified from the
 // game's data: the shared ones here, the others (boss events, dungeon
 // gimmicks, talks, arrivals, items, room events) in comments with why.
+struct StoryOwn {
+    std::string_view name;  // a story name
+    std::string_view why;   // what of the player's own its flow changes
+};
 struct StorySetting {
     std::string_view request;  // the setting's name (what the game's request names)
     std::string_view flow;     // the shared story flow it plays
@@ -68,13 +72,19 @@ bool IsStory(std::string_view name);
 // The names a request of our game counts as a story start by: the story
 // names and the story settings (RequestedOf / RequestedOtherOf).
 std::vector<std::string_view> RequestNames();
-// Whether a game can be asked for `name`: false for the story names the game
-// has no event setting of (the quests Meet_DekuTree, Meet_GreatFairy,
-// Get_StoneOf{Forest,Fire,Water}, which also have no played flag, and
-// Dm_FinalBattle_0000, Dm_LostWood_0030, played inside other settings). Such
-// a name is neither sent nor joined: asking it plays nothing, and a game
-// could not tell that it played it. Their cutscenes are settings of their
-// own (the table above, Dm_FairyFountain_*, the boss events).
+// Why `name` is neither sent nor joined, or "" when it is shared:
+// - a story name the game has no event setting of (the quests Meet_DekuTree,
+//   Meet_GreatFairy, Get_StoneOf{Forest,Fire,Water}, which also have no played
+//   flag, and Dm_FinalBattle_0000, Dm_LostWood_0030, played inside other
+//   settings): asking it plays nothing, and a game could not tell it played
+//   it. Their cutscenes are settings of their own (the table above,
+//   Dm_FairyFountain_*, the boss events);
+// - a story name whose event flow changes the player's own things (an item got
+//   or shown, a bottle, rupees, the pouch: Zelda's letter Dm_HrlCastle_0050,
+//   kOwnStory with why, read from the game's flows by story_requests.py):
+//   another game asked for it would be given or charged them too.
+std::string_view NotShared(std::string_view name);
+// NotShared(name) is "".
 bool Askable(std::string_view name);
 
 // How near the starter must be to our Link for us to join: same room. The

@@ -20,11 +20,20 @@ name is not that flow's is classified here from the game's data, first rule that
   own      started inside a talk of the player's own (components NPCTalk*, or an entry Talk*):
            another game has no talk to continue;
   own      played where the player is, on that player's own arrival (base PlayerPos);
-  own      an item each player gets for themself (`_Get<Item>`, not a spiritual stone);
+  own      it changes the player's own things: read from the event flow its entry runs (subflows,
+           switches, forks, and the settings it goes on to by EventTransition, which a game asked for
+           it plays too; puppet_pack/evfl.py): an item got or shown (Pouch actors, Dm_SY_Get,
+           GetPouchContent, Dm_SY_Treasurebox, ShowItem), a song (Dm_MelodyGet*), a bottle, the
+           player's ocarina (Dm_SY_Ocarina), a shop, rupees, or a PouchData./PlayerStatus./IsGet.
+           flag (hearts healed are not counted). A movie with no flowchart (a timeline only) is not
+           read;
   story    a `Dm_` cutscene entry of a `Dm_` story flow, or a name that carries its flow's name as
            a whole part (`Get_StoneOfWater_ShowLetter`): shared, sent and joined by its name;
   never    anything else: a room or object event the flow's file also holds (a door, a hole).
-The `story` ones go in kStorySettings, the rest in comments with their reason. It also writes
+The `story` ones go in kStorySettings, the rest in comments with their reason. The same reading of
+the event flow is done for the story names themselves: one that changes the player's own things
+(Zelda's letter, a reward, a pouch content) goes in kOwnStory with why, and is neither sent nor
+joined: another game would be given it too. It also writes
 `kNoSetting`, the story names with no setting: no game can be asked for them, so they are neither
 sent nor joined. Every story setting and every other story name must have its played flag in
 GameData/GameDataList.Product.*.byml.zs, else the tool stops.
@@ -41,7 +50,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "puppet_pack"  # noqa: A001
 
-from . import byml, zs  # noqa: E402
+from . import byml, evfl, zs  # noqa: E402
 
 HOOK = os.path.join(os.path.dirname(__file__), "..", "..", "lichii", "hook")
 
@@ -81,8 +90,38 @@ def carries(name, flow):
     return f"_{flow}_" in f"_{name}_"
 
 
-def classify(name, s, gimmicks):
-    """(class, reason) of a named setting `s` of a story flow (module docstring)."""
+OWN_FLOWS = ("Dm_SY_Ocarina", "Dm_MelodyGet")  # the player's ocarina; a song learnt (some are movies only)
+OWN_FLAGS = ("PouchData.", "PlayerStatus.", "IsGet.")
+OWN_WORDS = ("ShowItem", "Bottle", "Ocarina", "Shop", "Rupee", "Pouch")
+NOT_OWN_WORDS = ("NoRelationPouch", "DeleteShowItem")  # a model of equipment only; a shown item put away
+
+
+def touches_own(actions):
+    """Why the actions an entry runs (evfl.actions_of) change the player's own things, or "": an item got
+    or shown (the Pouch actors, the item get and show flows), a song learnt (Dm_MelodyGet*), a bottle, the
+    player's ocarina, a shop, rupees, or a flag of the player's pouch or status. Hearts healed are not
+    counted (harmless to a player who joins)."""
+    for actor, action, params in actions:
+        if actor == "<subflow>":
+            if action.split(":")[0].startswith(OWN_FLOWS):
+                return f"runs {action}"
+            continue
+        if action == "EventTransition" and str(params.get("EventName", "")).startswith(OWN_FLOWS):
+            return f"goes on to {params['EventName']}"
+        if any(w in action for w in NOT_OWN_WORDS):
+            continue
+        if actor.startswith("Pouch") or (actor in ("Player_Event", "GameSystemActor", "Npc_EventStarter")
+                                          and any(w in action for w in OWN_WORDS)):
+            return f"runs {actor} {action}"
+        flag = params.get("GameDataName", "") if actor == "GameDataActor" else ""
+        if flag.startswith(OWN_FLAGS):
+            return f"sets {flag}"
+    return ""
+
+
+def classify(name, s, gimmicks, actions=()):
+    """(class, reason) of a named setting `s` of a story flow (module docstring); `actions` are those
+    its entry runs (evfl.actions_of, through its transitions too: a game asked for it plays those as well)."""
     if s.components == "BossDie" or "Boss" in name or "Boss" in s.entry:
         return "boss", "a boss event: the boss scenes have it"
     if name in gimmicks:
@@ -91,21 +130,35 @@ def classify(name, s, gimmicks):
         return "own", "started in the player's own talk"
     if s.base == "PlayerPos":
         return "own", "played on the player's own arrival"
-    if re.search(r"_Get(?!Stone)[A-Z]", name):
-        return "own", "an item each player gets"
+    own = touches_own(actions)
+    if own:
+        return "own", "changes the player's own things: " + own
     if (name.startswith("Dm_") and s.flow.startswith("Dm_")) or carries(name, s.flow):
         return "story", ""
     return "never", "no story name in it: a room or object event"
 
 
-def table(settings, story, gimmicks):
+def table(settings, story, gimmicks, actions_of=lambda flow, entry: ()):
     """[(setting, flow, class, reason)] sorted by flow and name: every named setting of a story flow
-    under another name."""
+    under another name. `actions_of(flow, entry)` gives the actions an entry runs."""
     rows = []
     for name, s in settings.items():
         if s.flow in story and name != s.flow and not name[:1].isdigit():
-            rows.append((name, s.flow) + classify(name, s, gimmicks))
+            rows.append((name, s.flow) + classify(name, s, gimmicks, actions_of(s.flow, s.entry)))
     return sorted(rows, key=lambda r: (r[1], r[0]))
+
+
+def own_story(story, settings, actions_of):
+    """[(story name, why)] the story names that are a setting of their own and change the player's own
+    things (touches_own of what their entry runs)."""
+    out = []
+    for n in sorted(story):
+        s = settings.get(n)
+        if s and s.flow:
+            why = touches_own(actions_of(s.flow, s.entry))
+            if why:
+                out.append((n, why))
+    return out
 
 
 def no_setting(story, settings):
@@ -150,7 +203,7 @@ def missing_played_flags(names, gamedata):
     return [n for n in names if murmur3(played_flag(n)).to_bytes(4, "big") not in gamedata]
 
 
-def render(rows, nosetting):
+def render(rows, nosetting, ownstory=()):
     lines = [
         "// Generated by tools/puppet_pack/story_requests.py from the game's RSDB EventSetting and GameDataList",
         "// and the hook's own lists; do not edit. Every named event setting that plays a shared story flow under",
@@ -162,6 +215,10 @@ def render(rows, nosetting):
     lines.append("};")
     lines.append("// Not shared (a request of one is another event: the story search's find is refused):")
     lines += [f"//   {cls:7} {name} ({flow}): {why}" for name, flow, cls, why in rows if cls != "story"]
+    lines.append("// Story names that change the player's own things (neither sent nor joined), and why:")
+    lines.append("constexpr StoryOwn kOwnStory[] = {")
+    lines += [f'    {{"{n}", "{why}"}},' for n, why in ownstory]
+    lines.append("};")
     lines.append("constexpr std::string_view kNoSetting[] = {")
     lines += [f'    "{n}",' for n in nosetting]
     lines.append("};")
@@ -190,7 +247,24 @@ def main(argv=None):
             return zs.maybe_decompress(dicts, fh.read())
 
     settings = event_settings(byml.loads(read("RSDB", "EventSetting.Product.*.rstbl.byml.zs")))
-    rows = table(settings, story, gimmicks)
+    flows = {}
+
+    def load(flow):
+        path = os.path.join(args.romfs, "Event", "EventFlow", flow + ".bfevfl.zs")
+        if not os.path.exists(path):
+            return None
+        with open(path, "rb") as fh:
+            return evfl.parse(zs.maybe_decompress(dicts, fh.read()))
+
+    def transition(event):
+        target = settings.get(event)
+        return (target.flow, target.entry) if target and target.flow else None
+
+    def actions(flow, entry):
+        return evfl.actions_of(flows, flow, entry, load, transition)
+
+    rows = table(settings, story, gimmicks, actions)
+    ownstory = own_story(story, settings, actions)
     nosetting = no_setting(story, settings)
     gamedata = read("GameData", "GameDataList.Product.*.byml.zs")
     asked = [r[0] for r in rows if r[2] == "story"] + sorted(story - set(nosetting))
@@ -198,9 +272,10 @@ def main(argv=None):
     if missing:
         raise SystemExit("no played flag in the game for: " + ", ".join(played_flag(n) for n in missing))
     with open(args.out, "w", newline="\n") as fh:
-        fh.write(render(rows, nosetting))
+        fh.write(render(rows, nosetting, ownstory))
     shared = sum(1 for r in rows if r[2] == "story")
-    print(f"{shared} story settings, {len(rows) - shared} not shared, {len(nosetting)} story names with no setting")
+    print(f"{shared} story settings, {len(rows) - shared} not shared, {len(ownstory)} story names changing the "
+          f"player's own things, {len(nosetting)} story names with no setting")
 
 
 if __name__ == "__main__":

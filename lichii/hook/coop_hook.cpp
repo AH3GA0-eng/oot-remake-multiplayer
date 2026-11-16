@@ -2042,9 +2042,10 @@ private:
             const auto story_flag = [&](std::uint32_t h) { return coop::host::GameFlags(*memory).get_bool(h); };
             if (found && !CoopSharedScenes::Askable(*found)) {
                 // A story quest's flow (Get_StoneOfWater) the search found while one of its settings runs that
-                // this game's request did not name: no game can be asked for it (report 110 review).
-                LOG_INFO(Core, "coop: cutscene: the search found {}, which the game has no event setting of: not "
-                               "sent", *found);
+                // this game's request did not name (no game can be asked for it), or a story cutscene that gives
+                // or takes the player's own things (Zelda's letter): not sent (report 110 review).
+                LOG_INFO(Core, "coop: cutscene: our game started {}: not sent ({})", *found,
+                         CoopSharedScenes::NotShared(*found));
             } else if (found && !CoopSharedScenes::GateHolds(*found, story_flag)) {
                 // Our game cannot be in that scene now (intro-ocarina): a name left in the session.
                 LOG_INFO(Core, "coop: cutscene: the search found the story cutscene {}, which our story is not at "

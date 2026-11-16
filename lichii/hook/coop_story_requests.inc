@@ -11,9 +11,6 @@ constexpr StorySetting kStorySettings[] = {
     {"Dm_FireTemple_0019", "Dm_FireTemple_0020"},
     {"Dm_FireTemple_0021", "Dm_FireTemple_0020"},
     {"Dm_FireTemple_0022", "Dm_FireTemple_0020"},
-    {"Dm_Gerudo_0021", "Dm_Gerudo_0020"},
-    {"Dm_Gerudo_0022", "Dm_Gerudo_0020"},
-    {"Dm_Gerudo_0023", "Dm_Gerudo_0020"},
     {"Dm_InsideGanonCastle_0200", "Dm_InsideGanonCastle_0005"},
     {"Dm_InsideGanonCastle_0201", "Dm_InsideGanonCastle_0005"},
     {"Dm_InsideGanonCastle_0202", "Dm_InsideGanonCastle_0005"},
@@ -23,22 +20,21 @@ constexpr StorySetting kStorySettings[] = {
     {"Get_StoneOfFire_DodongoCavernOpne", "Get_StoneOfFire"},
     {"Get_StoneOfFire_MeetDarnia", "Get_StoneOfFire"},
     {"Get_StoneOfWater_DiscoveryStone", "Get_StoneOfWater"},
-    {"Get_StoneOfWater_JabuJabuEat", "Get_StoneOfWater"},
     {"Get_StoneOfWater_MeetRuto", "Get_StoneOfWater"},
-    {"Get_StoneOfWater_RutoGetStone", "Get_StoneOfWater"},
-    {"Get_StoneOfWater_ShowLetter", "Get_StoneOfWater"},
     {"Get_StoneOfWater_TalkKaepora_ZoraRiver", "Get_StoneOfWater"},
     {"Get_StoneOfWater_TalkWithImpa", "Get_StoneOfWater"},
-    {"Get_StoneOfWater_WaterfallSplit", "Get_StoneOfWater"},
     {"KokiriForest_Meet_DekuTree_MeetDekuTree_01", "Meet_DekuTree"},
 };
 // Not shared (a request of one is another event: the story search's find is refused):
 //   own     Dm_DeathMtCrater_0000_FromTop (Dm_DeathMtCrater_0000): played on the player's own arrival
+//   own     Dm_Gerudo_0021 (Dm_Gerudo_0020): changes the player's own things: runs Player_Event EventCreateShowItemFromActorFileName
+//   own     Dm_Gerudo_0022 (Dm_Gerudo_0020): changes the player's own things: runs Player_Event EventCreateShowItemFromActorFileName
+//   own     Dm_Gerudo_0023 (Dm_Gerudo_0020): changes the player's own things: runs Player_Event EventCreateShowItemFromActorFileName
 //   never   Check_DaruniaDoor (Get_StoneOfFire): no story name in it: a room or object event
 //   boss    Get_StoneOfFire_AppearBoss (Get_StoneOfFire): a boss event: the boss scenes have it
 //   boss    Get_StoneOfFire_DefeatBoss (Get_StoneOfFire): a boss event: the boss scenes have it
-//   own     Get_StoneOfFire_GetBombBag (Get_StoneOfFire): an item each player gets
-//   never   GoronCity_PlayZeldasLullaby_OpenDaruniaRoom (Get_StoneOfFire): no story name in it: a room or object event
+//   own     Get_StoneOfFire_GetBombBag (Get_StoneOfFire): changes the player's own things: runs PouchContentGuestPerformer EventTriggerModelBindForItemGetDemo
+//   own     GoronCity_PlayZeldasLullaby_OpenDaruniaRoom (Get_StoneOfFire): changes the player's own things: runs Dm_SY_Ocarina:PlayOcarinaSequence
 //   never   GoronCity_SecretHole_AppearTreasureBox (Get_StoneOfFire): no story name in it: a room or object event
 //   never   GoronCity_SecretHole_AppearTreasureBox2 (Get_StoneOfFire): no story name in it: a room or object event
 //   own     Meet_Darunia_PlayOcarina (Get_StoneOfFire): started in the player's own talk
@@ -47,7 +43,7 @@ constexpr StorySetting kStorySettings[] = {
 //   own     Enemy_Scrub_Deku_D_T (Get_StoneOfForest): started in the player's own talk
 //   own     Enemy_Scrub_Deku_D_T_002 (Get_StoneOfForest): started in the player's own talk
 //   own     Enemy_Scrub_Deku_D_T_003 (Get_StoneOfForest): started in the player's own talk
-//   own     Get_StoneOfForest_GetSword (Get_StoneOfForest): an item each player gets
+//   own     Get_StoneOfForest_GetSword (Get_StoneOfForest): changes the player's own things: runs Player_Event EventTriggerPlayerEquipDynamicEquipmentFromPouch
 //   boss    InsideTheDekuTree_BossAppear (Get_StoneOfForest): a boss event: the boss scenes have it
 //   boss    InsideTheDekuTree_BossArea_ShutIn (Get_StoneOfForest): a boss event: the boss scenes have it
 //   boss    InsideTheDekuTree_BossDie (Get_StoneOfForest): a boss event: the boss scenes have it
@@ -58,8 +54,30 @@ constexpr StorySetting kStorySettings[] = {
 //   own     Get_StoneOfWater_ArriveJabuJabuBelly (Get_StoneOfWater): played on the player's own arrival
 //   boss    Get_StoneOfWater_BossAppear (Get_StoneOfWater): a boss event: the boss scenes have it
 //   boss    Get_StoneOfWater_DestroyBoss (Get_StoneOfWater): a boss event: the boss scenes have it
+//   own     Get_StoneOfWater_JabuJabuEat (Get_StoneOfWater): changes the player's own things: runs Player_Event EventPlayerDrawnBottleFull
+//   own     Get_StoneOfWater_RutoGetStone (Get_StoneOfWater): changes the player's own things: runs PouchSystemActor EventTriggerSetForGetWindow
+//   own     Get_StoneOfWater_ShowLetter (Get_StoneOfWater): changes the player's own things: runs Player_Event EventCreateShowItemBottle
+//   own     Get_StoneOfWater_WaterfallSplit (Get_StoneOfWater): changes the player's own things: runs Dm_SY_Ocarina:PlayOcarinaSequence
 //   gimmick StoneOfWater_ElevatedFloor (Get_StoneOfWater): a dungeon live event
 //   never   StoneOfWater_ElevatedFloor_NaviTalk (Get_StoneOfWater): no story name in it: a room or object event
+// Story names that change the player's own things (neither sent nor joined), and why:
+constexpr StoryOwn kOwnStory[] = {
+    {"Dm_DeathMtTrail_0025", "runs PouchSystemActor EventTriggerSetForGetWindow"},
+    {"Dm_DeathMtTrail_0050", "runs PouchSystemActor EventTriggerAddOrRemovePouchContent"},
+    {"Dm_FinalBattle_0010", "runs PouchSystemActor EventTriggerAddOrRemovePouchContent"},
+    {"Dm_Gerudo_0020", "runs Player_Event EventCreateShowItemFromActorFileName"},
+    {"Dm_Gerudo_0025", "runs Player_Event EventCreateShowItemFromActorFileName"},
+    {"Dm_Goron_0030", "runs Player_Event EventCreateShowItemFromActorFileName"},
+    {"Dm_HrlCastle_0020", "runs PouchSystemActor EventTriggerAddOrRemovePouchContent"},
+    {"Dm_HrlCastle_0050", "runs Player_Event EventCreateShowItemFromActorFileName"},
+    {"Dm_InsideJabu_Jabu_0030", "runs PouchSystemActor EventTriggerSetForGetWindow"},
+    {"Dm_Kokiri_0063", "runs Player_Event EventTriggerPlayerEquipDynamicEquipmentFromPouch"},
+    {"Dm_Kokiri_0130", "runs PouchSystemActor EventTriggerSetForGetWindow"},
+    {"Dm_Kokiri_0155", "runs PouchSystemActor EventTriggerAddOrRemovePouchContent"},
+    {"Dm_LonLon_0030", "runs PouchSystemActor EventTriggerIncreaseRupee"},
+    {"Dm_LostWood_0015", "runs PouchSystemActor EventTriggerRemoveSwordBigGoronChallengeActor"},
+    {"Dm_ZoraFountain_0030", "runs PouchSystemActor EventTriggerSetForGetWindow"},
+};
 constexpr std::string_view kNoSetting[] = {
     "Dm_FinalBattle_0000",
     "Dm_LostWood_0030",
