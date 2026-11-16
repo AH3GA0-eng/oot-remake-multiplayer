@@ -212,7 +212,9 @@ class ParseTest(unittest.TestCase):
                            ("stick 2 0 5", "line 1: want: STICK"), ("goto 1 2 0.1", "radius at least 0.2"),
                            ("jump", "unknown command jump"), ("# only", "no steps"),
                            ("wear cape X", "want: wear"), ("menu", "want: menu customize|close"),
-                           ("menu map", "want: menu customize|close")):
+                           ("menu map", "want: menu customize|close"), ("hurt", "want: hurt QUARTER_HEARTS"),
+                           ("hurt 0", "want: hurt QUARTER_HEARTS"), ("hurt 81", "want: hurt QUARTER_HEARTS"),
+                           ("hurt 2x", "want: hurt QUARTER_HEARTS")):
             with self.assertRaises(hs.ScriptError) as e:
                 hs.parse(text)
             self.assertIn(want, str(e.exception))
@@ -431,16 +433,17 @@ class PlayerTest(unittest.TestCase):
                 assign Bow
                 setenum 0x1234abcd Done
                 kill Enemy_Skulltula_Gold
+                hurt 4
                 mark m
             """, game, commands=path)
             self.assertEqual(len(taken), 3)   # the mark too: the module logs it in the game's log
             self.assertEqual(taken[0].splitlines()[1:], ["give bombs", "chat /teleport B", "place 1 2.5 -3"])
             self.assertEqual(taken[1].splitlines()[1:], [
                 "setflag PouchData.Item_Bomb.StockNum 20", "wear head Mask_Keaton", "assign Bow",
-                "setenum 0x1234abcd Done", "kill Enemy_Skulltula_Gold"])
+                "setenum 0x1234abcd Done", "kill Enemy_Skulltula_Gold", "hurt 4"])
             self.assertEqual(taken[2].splitlines()[1:], ["mark m"])
             self.assertTrue(all(t.startswith("# ") for t in taken))
-            self.assertEqual(sum(" sent (line" in line for line in log.lines), 8)
+            self.assertEqual(sum(" sent (line" in line for line in log.lines), 9)
             self.assertFalse(any("skipped" in line for line in log.lines))
             self.assertEqual(len(game.cmds("press")), 1)
             self.assertEqual(log.lines[-2:], ["coop: test mark m", "coop: test script done"])

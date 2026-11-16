@@ -320,6 +320,16 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             }
             step.kind = Kind::kill;
             step.mark = std::string(w[1]);
+        } else if (cmd == "HURT") {
+            int quarters = 0;
+            const std::string_view n = w.size() == 2 ? std::string_view(w[1]) : std::string_view();
+            const auto r = std::from_chars(n.data(), n.data() + n.size(), quarters);
+            if (w.size() != 2 || r.ec != std::errc{} || r.ptr != n.data() + n.size() || quarters < 1 ||
+                quarters > 80) {
+                return fail("want: hurt QUARTER_HEARTS (1 to 80)");
+            }
+            step.kind = Kind::hurt;
+            step.mark = std::to_string(quarters);
         } else if (cmd == "GIVE") {
             if (w.size() != 2) {
                 return fail("want: give ITEM");
@@ -476,7 +486,7 @@ void Runner::Advance(double now_s, std::optional<std::array<float, 2>> player,
             return;
         }
         if (s.kind == Kind::warp || s.kind == Kind::give || s.kind == Kind::wear ||
-            s.kind == Kind::assign || s.kind == Kind::chat || s.kind == Kind::kill ||
+            s.kind == Kind::assign || s.kind == Kind::chat || s.kind == Kind::kill || s.kind == Kind::hurt ||
             s.kind == Kind::setflag || s.kind == Kind::setenum || s.kind == Kind::menu) {
             requests_.push_back(Request{s.kind, s.mark, s.start});
             ++index_;
@@ -604,6 +614,7 @@ void Runner::Steer(const Step& step, double now_s, std::optional<std::array<floa
 
 #ifdef LICHII_COOP
 
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -1090,6 +1101,15 @@ void OnFrame(Core::System& system) {
                      request.at[2], ok ? "done" : "failed");
         } else if (request.kind == Kind::kill) {
             CoopObjects::QueueTestKill(request.name);  // logged where it is done
+        } else if (request.kind == Kind::hurt) {
+            if (g_state.link) {
+                const std::array<float, 3> at = *g_state.link;
+                const std::array<float, 3> from{at[0] + 1.0f, at[1], at[2]};  // a hit from a metre east
+                CoopObjects::HurtOurLink(std::stoi(request.name), at, from);
+                LOG_INFO(Core, "coop: test hurt {}: asked", request.name);
+            } else {
+                LOG_INFO(Core, "coop: test hurt {}: no Link", request.name);
+            }
         } else if (request.kind == Kind::menu) {
             const bool asked = g_menu_opener && g_menu_opener(request.name);
             LOG_INFO(Core, "coop: test menu {}: {}", request.name,

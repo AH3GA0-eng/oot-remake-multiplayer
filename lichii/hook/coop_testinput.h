@@ -43,6 +43,11 @@
 //                          damage (as a real kill, so it drops what it
 //                          drops); needs LICHII_COOP_OBJECTS on; logs
 //                          "coop: test kill NAME ...: hit" or "none here"
+//   hurt 4                 test only: our own Link takes a hit of that many
+//                          quarter hearts (1 to 80) through the game's own hit
+//                          on him (CoopObjects::HurtOurLink, PvP's path: he
+//                          flinches; a lethal one runs the game's death);
+//                          logs "coop: test hurt N: asked" (or "no Link")
 //   give bombs             test only: gives an item through coop_cheats
 //                          (needs LICHII_COOP_CHEATS=1): bombs, bow, hookshot,
 //                          or any item flag name coop_cheats knows
@@ -117,6 +122,7 @@ enum class Kind {
     chat,    // test only: a chat line or command, as typed in the chat box (/teleport B)
     place,   // test only: Link put at x, y, z in this scene
     kill,    // test only: the nearest actor of that name hit by our Link for all its life
+    hurt,    // test only: our own Link hit for N quarter hearts (the game's own hit)
     setflag, // test only: an Int or Bool flag of this game set to a value (issue 130: shop-buy)
     setenum, // test only: an Enum flag (name or 0x hash) set to a value's name (issue 193: quests)
     sync,    // sync NAME N: wait here, buttons let go, until N games reached NAME

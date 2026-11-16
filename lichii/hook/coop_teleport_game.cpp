@@ -154,10 +154,16 @@ struct Glue {
     // Chat / network threads -> present thread.
     std::optional<std::pair<std::uint8_t, std::string>> want;
     std::vector<Answered> answers;
+    // Down but not out's respawn (Beside, ToEntrance): the trip asked for it,
+    // the entrance asked, and how the move went (taken by TakeRespawnMove).
+    bool want_beside = false;
+    bool want_entrance = false;
+    std::optional<bool> respawn_moved;
     // Any thread -> the hook's chat box.
     std::vector<std::string> lines;
     // Present thread only.
     Trip trip;
+    std::uint8_t beside_to = 0;  // the respawn's trip under way: to this player; 0 none
     // The start name before the trip's first ask (AskScene, ClearScene).
     std::optional<std::string> saved_start;
     bool saved_read = false;
@@ -253,6 +259,32 @@ bool OnChat(std::string_view text, coop::host::Session& session) {
     return true;
 }
 
+bool Beside(std::uint8_t number, std::string name) {
+    Glue& g = TheGlue();
+    std::lock_guard lock(g.mutex);
+    if (!g.on || number == 0) {
+        return false;
+    }
+    g.want = std::make_pair(number, std::move(name));
+    g.want_beside = true;
+    g.respawn_moved.reset();
+    return true;
+}
+
+bool ToEntrance() {
+    Glue& g = TheGlue();
+    std::lock_guard lock(g.mutex);
+    g.want_entrance = true;
+    g.respawn_moved.reset();
+    return true;
+}
+
+std::optional<bool> TakeRespawnMove() {
+    Glue& g = TheGlue();
+    std::lock_guard lock(g.mutex);
+    return std::exchange(g.respawn_moved, std::nullopt);
+}
+
 void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
     using coop::net::EventKind;
     Glue& g = TheGlue();
@@ -327,18 +359,50 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
 
     std::optional<std::pair<std::uint8_t, std::string>> want;
     std::vector<Answered> answers;
+    bool want_beside = false;
+    bool want_entrance = false;
     {
         std::lock_guard lock(g.mutex);
         g.answer = AnswerFor(local, g.grounded);
         want = std::exchange(g.want, std::nullopt);
         answers = std::exchange(g.answers, {});
+        want_beside = std::exchange(g.want_beside, false);
+        want_entrance = std::exchange(g.want_entrance, false);
     }
 
+    // Down but not out's respawn: how its move goes (nothing: not known yet).
+    std::optional<bool> respawn_moved;
     std::vector<Trip::Actions> all;
     if (want) {
         all.push_back(g.trip.Start(want->first, want->second, local, now));
+        g.beside_to = want_beside ? want->first : 0;
+        if (g.beside_to != 0 && !all.back().ask) {
+            respawn_moved = false;  // refused at once (an event of ours, a boss fight, not connected)
+            g.beside_to = 0;
+        }
+    }
+    if (want_entrance) {
+        // The game's own respawn point: our scene again, at its entrance nearest us.
+        const auto start = local.scene && local.position ? NearestStart(*local.scene, *local.position)
+                                                         : std::nullopt;
+        if (!start || main_base == 0) {
+            respawn_moved = false;
+            LOG_INFO(Core, "coop: teleport: respawn at the entrance: no start point known here");
+        } else {
+            Trip::Actions entrance;
+            entrance.scene = *local.scene;
+            entrance.start = *start;
+            entrance.start_event = true;  // the game takes the change at once (no talk or sign needed)
+            all.push_back(std::move(entrance));
+            respawn_moved = true;
+            LOG_INFO(Core, "coop: teleport: respawn at the entrance {} of {}", *start, *local.scene);
+        }
     }
     for (const auto& a : answers) {
+        if (g.beside_to != 0 && a.player == g.beside_to && a.kind != Answered::Kind::accepted) {
+            respawn_moved = false;  // refused, no answer, or they left
+            g.beside_to = 0;
+        }
         switch (a.kind) {
         case Answered::Kind::accepted:
         {
@@ -442,10 +506,26 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
                     act.lines.push_back(NotMovedLine(check, "", act.after_load));
                 }
                 act.move.reset();
+                if (g.beside_to != 0) {
+                    respawn_moved = false;  // not moved (another room of a dungeon)
+                    g.beside_to = 0;
+                }
             }
+        }
+        if (g.beside_to != 0 && act.scene) {
+            respawn_moved = true;  // the trip loads their scene: we arrive at its entrance, then beside them
+            g.beside_to = 0;
+        }
+        if (g.beside_to != 0 && act.cancel_scene) {
+            respawn_moved = false;  // the trip was given up before it moved us
+            g.beside_to = 0;
         }
         if (act.move) {
             const bool ok = CoopBoss::MoveLink(system, main_base, CoopBoss::Vec{act.move->x, act.move->y, act.move->z});
+            if (g.beside_to != 0) {
+                respawn_moved = ok;
+                g.beside_to = 0;
+            }
             LOG_INFO(Core, "coop: teleport: move to {:.1f} {:.1f} {:.1f}: {}", act.move->x, act.move->y,
                      act.move->z, ok ? "asked" : "NOT asked (no Link, or LICHII_COOP_BOSS=0)");
             if (!ok) {
@@ -470,6 +550,9 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
         for (auto& line : act.lines) {
             g.Line(std::move(line));
         }
+    }
+    if (respawn_moved) {
+        g.respawn_moved = respawn_moved;
     }
 }
 
