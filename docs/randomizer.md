@@ -7,7 +7,7 @@ The randomizer is **off** until the host turns it on. Each game builds the seed 
 ## Before you start
 
 - **Everyone on the same kit.** All players update to the same release (Update.bat). Another kit has another OOTRR, and the same seed is then another world (other items in chests). Since 0.11.2 the chat says so: "... has the randomizer seed X built unlike the host's ...".
-- **Start the game fresh.** Every player closes the game fully and starts it again with `Start OoT Co-op.bat`. Nobody keeps an old save loaded.
+- **Start the game fresh.** Every player closes the game fully and starts it again with `Start Squadala.bat`. Nobody keeps an old save loaded.
 
 ## Host
 
