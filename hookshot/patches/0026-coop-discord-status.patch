@@ -1,4 +1,4 @@
-From 10ff24d89bfc171e2a6f2ee61dc98b23982212f9 Mon Sep 17 00:00:00 2001
+From ca36cf2122fbb836fb2d08482dabe983f387522f Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Mon, 16 Nov 2026 07:02:27 -0900
 Subject: [PATCH] Co-op Discord status: the words and art from the options
@@ -26,13 +26,13 @@ sent at once; the 60 s keep-alive stays. The options file is read with
 a 512-byte line (the rest of a longer line is skipped, not read as a
 line of its own).
 ---
- host/discord_rpc.c          | 131 +++++++++++++++++++++++++---------
- host/hos_discord_activity.h | 137 ++++++++++++++++++++++++++++++++++++
- 2 files changed, 236 insertions(+), 32 deletions(-)
+ host/discord_rpc.c          | 143 ++++++++++++++++++++++++++++--------
+ host/hos_discord_activity.h | 137 ++++++++++++++++++++++++++++++++++
+ 2 files changed, 248 insertions(+), 32 deletions(-)
  create mode 100644 host/hos_discord_activity.h
 
 diff --git a/host/discord_rpc.c b/host/discord_rpc.c
-index 5cb38b7..60dd4e1 100644
+index 5cb38b7..0ca15f6 100644
 --- a/host/discord_rpc.c
 +++ b/host/discord_rpc.c
 @@ -14,8 +14,18 @@
@@ -156,7 +156,7 @@ index 5cb38b7..60dd4e1 100644
  }
  
  /* ---- frames ---- */
-@@ -217,17 +275,18 @@ static Ipc connect_client(const char *app_id) {
+@@ -217,17 +275,21 @@ static Ipc connect_client(const char *app_id) {
      }
      return IPC_NONE;
  }
@@ -166,7 +166,7 @@ index 5cb38b7..60dd4e1 100644
 -    char version[48], json[640], answer[ANSWER_CAP];
 +/* the activity: the release in the details, the start of play for the elapsed time, the application's art. (patch 0026) The
 +   words: host/hos_discord_activity.h (the settings' where they have them, the module's second line first) */
-+static void make_activity(char *activity, size_t cap, const Settings *s, const char *module_line, long long started) {
++static int make_activity(char *activity, size_t cap, const Settings *s, const char *module_line, long long started) {
 +    char version[48];
      snprintf(version, sizeof version, "%s", hos_version());
      version[strcspn(version, " +")] = 0;   /* ("v2.0.12 (source ...)": the release alone) */
@@ -175,16 +175,19 @@ index 5cb38b7..60dd4e1 100644
 -             "\"state\":\"Longshot %s\",\"timestamps\":{\"start\":%lld},\"assets\":{\"large_image\":\"%s\",\"large_text\":"
 -             "\"Longshot %s\"}}}}",
 -             ++nonce, process_id(), version, started, LONGSHOT_DISCORD_IMAGE_DEFAULT, version);
-+    hos_discord_activity(activity, cap, "Longshot", version, LONGSHOT_DISCORD_IMAGE_DEFAULT, &s->words, module_line, started);
++    return hos_discord_activity(activity, cap, "Longshot", version, LONGSHOT_DISCORD_IMAGE_DEFAULT, &s->words, module_line,
++                                started);   /* (0: it does not fit, out "") */
 +}
++/* 1 sent, 0 the connection broke, -1 no frame (it does not fit: nothing written, the connection is fine) */
 +static int send_activity(Ipc p, const char *activity) {
 +    static unsigned nonce;
 +    char json[2048], answer[ANSWER_CAP];
-+    hos_discord_set_activity(json, sizeof json, ++nonce, process_id(), activity);
++    if (!hos_discord_set_activity(json, sizeof json, nonce + 1, process_id(), activity)) return -1;
++    ++nonce;
      if (!write_frame(p, OP_FRAME, json)) return 0;
      uint32_t op = 0;
      const int r = read_frame(p, &op, answer, sizeof answer, 2000);
-@@ -242,19 +301,19 @@ static int send_activity(Ipc p, long long started) {
+@@ -242,19 +304,19 @@ static int send_activity(Ipc p, long long started) {
  
  /* ---- the presence thread ---- */
  static void presence_main(void) {
@@ -211,7 +214,7 @@ index 5cb38b7..60dd4e1 100644
                  if (ipc != IPC_NONE) ipc_close(ipc), ipc = IPC_NONE;
                  retry_at = 0, said_no_app = 0;
              }
-@@ -264,7 +323,7 @@ static void presence_main(void) {
+@@ -264,7 +326,7 @@ static void presence_main(void) {
              if (ipc != IPC_NONE) ipc_close(ipc), ipc = IPC_NONE;
              continue;
          }
@@ -220,7 +223,7 @@ index 5cb38b7..60dd4e1 100644
              if (!said_no_app)
                  hos_log("discord: no application id: discord_app_id= in longshot_options.ini or HOS_DISCORD_APP_ID (the "
                          "Discord application named Longshot); the status stays off");
-@@ -272,23 +331,31 @@ static void presence_main(void) {
+@@ -272,23 +334,40 @@ static void presence_main(void) {
              continue;
          }
          if (ipc == IPC_NONE && now_ms() >= retry_at) {
@@ -243,9 +246,18 @@ index 5cb38b7..60dd4e1 100644
 +            words_at = now_ms() + 5000;
 +        }
 +        char activity[1536];
-+        make_activity(activity, sizeof activity, &set, module_line, started);
-+        if (ipc != IPC_NONE && (now_ms() >= send_at || strcmp(activity, sent))) {
-+            if (send_activity(ipc, activity)) {
++        static int said_too_long;
++        const int made = make_activity(activity, sizeof activity, &set, module_line, started);
++        if (!made && !said_too_long) hos_log("discord: the status's words do not fit; nothing sent");
++        said_too_long |= !made;
++        if (made && ipc != IPC_NONE && (now_ms() >= send_at || strcmp(activity, sent))) {
++            const int r = send_activity(ipc, activity);
++            if (r < 0) {   /* (no frame: tried again at the keep-alive, the connection kept) */
++                if (!said_too_long) hos_log("discord: the status's frame does not fit; nothing sent");
++                said_too_long = 1;
++                snprintf(sent, sizeof sent, "%s", activity);
++                send_at = now_ms() + 60000;
++            } else if (r) {
 +                snprintf(sent, sizeof sent, "%s", activity);
                  send_at = now_ms() + 60000;
              } else {

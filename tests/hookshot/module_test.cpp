@@ -610,6 +610,15 @@ TEST_CASE("hookshot: the Discord status header in patch 0026 is hookshot/src's, 
     CHECK(patch.find("+    hos_discord_activity(activity, cap, \"Longshot\", version, LONGSHOT_DISCORD_IMAGE_DEFAULT,") !=
           std::string::npos);
     CHECK(patch.find("GetProcAddress(m, \"hos_coop_discord_state\")") != std::string::npos);
+    // Words or a frame that do not fit (hos_discord_activity / hos_discord_set_activity give 0 and "": the
+    // header's test) send no frame, and that is no broken connection.
+    CHECK(patch.find("+    if (!hos_discord_set_activity(json, sizeof json, nonce + 1, process_id(), activity)) return -1;\n"
+                     "+    ++nonce;\n"
+                     "+    if (!write_frame(p, OP_FRAME, json)) return 0;\n") != std::string::npos);
+    CHECK(patch.find("+        if (made && ipc != IPC_NONE && (now_ms() >= send_at || strcmp(activity, sent))) {\n") !=
+          std::string::npos);
+    CHECK(patch.find("+            if (r < 0) {   /* (no frame: tried again at the keep-alive, the connection kept) */\n") !=
+          std::string::npos);
     const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
     CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_discord_state(char* out, size_t cap) noexcept") != std::string::npos);
 }
