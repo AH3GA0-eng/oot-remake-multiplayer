@@ -1315,15 +1315,11 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         // walk of ours would otherwise leave both here for a second pickup
         // (issue 89, 2026-11-17: 41 -> 42).
         //
-        // A Gold Skulltula whose key is already 1 (TakenKey) goes as the walk sees it,
-        // and so does the token it made: a kill and a pickup that crossed no
-        // walk of ours would otherwise leave both here for a second pickup
-        // (issue 89, 2026-11-17: 41 -> 42).
-        //
-        // Cost measured (bench_walk.cpp, 300 actors, 500 walks a second): the
-        // name test for every actor and one set lookup is 0.38 ms a second,
-        // about 0.02% of the frame budget, and the token test was already there
-        // upstream. So this stays plain: no extra branch to save it.
+        // Cost measured (PR 257, a bench outside the tree: 300 actors, 500 walks
+        // a second, so well above the real walk, kTwoFramesUs = 30 a second):
+        // the name test for every actor and one set lookup is 0.38 ms a second,
+        // 0.02 ms more than the token test that was already here. Hoisting a
+        // `token || gold` branch doubled it. So this stays plain.
         if ((token && (IsTokenTaken(s.hash) || NearTakenPlace(s.position))) ||
             (s.name == "Enemy_Skulltula_Gold" && IsSkulltulaTaken(s.hash))) {
             if (objects_.size() < 4096) {
