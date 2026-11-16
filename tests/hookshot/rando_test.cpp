@@ -1315,7 +1315,7 @@ TEST_CASE("rando: a winning mod whose table the kit merged is not held, a stale 
     CHECK_FALSE(MergedByKit(w.mods, "no-such-mod"));
 }
 
-TEST_CASE("rando: the mark's rule says what let the table through; an unknown rule is not trusted") {
+TEST_CASE("rando: the mark's rule says what let the table through, an unknown rule is not trusted") {
     World w;
     Put(w.mods / kPackFolder / kTable, "puppet");
     MarkMerged(w.mods, "ootrr-site", "site + puppet");  // (no rule line: an older kit's mark)
