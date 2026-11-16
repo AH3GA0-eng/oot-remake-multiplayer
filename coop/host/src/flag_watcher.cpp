@@ -387,6 +387,7 @@ void FlagWatcher::handle(FlagStore& store, Incoming& message, Table& answers) {
       ++stats_.ignored_messages;
       return;
     }
+    stats_.entries_in += set->flags.size();
     from_ = set->player_number;
     received_kind_ = ReceivedKind::live;
     recording_ = true;
@@ -399,6 +400,7 @@ void FlagWatcher::handle(FlagStore& store, Incoming& message, Table& answers) {
       ++stats_.ignored_messages;
       return;
     }
+    stats_.entries_in += reset->flags.size();
     from_ = reset->player_number;
     received_kind_ = ReceivedKind::reset;
     recording_ = true;
@@ -410,6 +412,7 @@ void FlagWatcher::handle(FlagStore& store, Incoming& message, Table& answers) {
     return;
   }
   if (auto* state = std::get_if<protocol::FlagState>(&message)) {
+    stats_.entries_in += state->flags.size();
     if (holding_) {
       held_states_.push_back(std::move(*state));
     } else {
@@ -427,6 +430,7 @@ void FlagWatcher::handle(FlagStore& store, Incoming& message, Table& answers) {
   }
 
   auto& part = std::get<protocol::FlagSnapshot>(message);
+  stats_.entries_in += part.flags.size();
   if (part.part >= part.part_count) {
     ++stats_.bad_snapshots;
     return;
@@ -533,10 +537,12 @@ bool FlagWatcher::write_exact(FlagStore& store, const FlagEntry& entry) {
 void FlagWatcher::see_save_load() {
   if (!window_ || !loading_ || moved_) return;
   const bool flags_back = static_cast<int>(back_keys_.size()) >= kSaveLoadMin && no_scene_frames_ >= kTitleFrames;
-  // A player's load through Hookshot's title menu (set_title) is a save load
-  // even when its save only goes forward of the group's (player report #96:
-  // a guest's own richer save). The host's loads keep the flags-back rule.
-  const bool title = role_ == FlagRole::player && window_title_;
+  // A load through Hookshot's title menu (set_title) is a save load even when
+  // its save only goes forward of the group's (player report #96: a guest's
+  // own richer save), and for the host too (forest-temple-a: a host's load
+  // mid-session through the title was never seen, so no FLAG_RESET went out
+  // and the old save's maps and floors were put into the new save).
+  const bool title = window_title_;
   if (!flags_back && !title) return;
   if (!flags_back) ++stats_.title_loads;
   moved_ = true;

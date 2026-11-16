@@ -54,14 +54,31 @@ constexpr std::array<std::string_view, 6> kNotShared{
 // them out cannot strand a switch. The solve itself
 // (InsideTheDekuTree_RoomK_Cleared, ..._EnemyScrubDekuDestroy_003) is shared,
 // and so are _001/_002 (each set once when a lone scrub is beaten).
+// Also left out (forest-temple-b, player report #108): where ONE player's Link
+// stands. Each is set true and false by its room graph's two Player-layer
+// areas and read only by that player's own event, by no room graph:
+//   ForestTemple_IsLeftOfTimeBLock (Room 02's Song of Time block, and the Fire
+//     Temple Room 11 and Hiding Hole 23 copies of that graph; read by the
+//     block's song event, Event/EventFlow/ForestTemple_Gimmick),
+//   ForestTemple_IsInFallingCeilingRoom (Room 15; read by DmF_SY_FallDown).
+// Shared, another player's event would take our Link's side or room. The
+// block's own state (Foresttemple_SongOfTimeBlock_A_01_Disappearance, read by
+// HoldGameDataGetBoolSimple with UpdateOnce false, so live) stays shared.
+// The same kind in every dungeon (forest-temple-a sweep of the romfs room graphs: each set true AND false by
+// its graph's area or sensor nodes, so it says where one player's Link, or that player's Ruto, is; a graph that
+// reads it reads our own Link's place): Bottom of the Well Room 01 InTheCenter/Diving/ReturnArea, Room 09
+// NearRock; Dodongo's Cavern Room05_NearTreasureBox, Room10_PlayerOutOfRoom (read by Dm_DodongoCave_0010);
+// Fire Temple Room04/Room12_IsAtCorrectArea; Forest Temple Room08_ClimbIvy_Near; Gerudo Training Ground
+// Room03/Room08_InSecretRoom; Jabu-Jabu Room09/Room12_TBoxNearRuto, Room14_IsNearGimmick,
+// Room14_PlayerIsUnder, Room18_IsInHiddenArea; Deku Tree RoomA_NearScaffold; Shadow Temple Room_09_Away,
+// Room_13_PlayerPosCheck; Spirit Temple Room 02 PlayerPosChange1/1_2/2/2_2, Room16_PlayerPosCheck; Water
+// Temple Room00_Switch_NearThePlatform/NearTheShutter; Ice Cavern Room01Demo_Far. Room state that a graph also
+// sets both ways (switches, fires, air walls, lifts, Ruto's reactions) stays shared.
 constexpr std::array kFlags = std::to_array<Flag>({
     {0xfff1ad87, false, "BottomOfTheWell_BubbleAppear"},
     {0x0b5b3b0c, false, "BottomOfTheWell_CoffinRoomCheck"},
     {0x1215a1d0, false, "BottomOfTheWell_Level_Room_00_A_Clear"},
     {0x0470c37e, false, "BottomOfTheWell_Level_Room_01_C_Clear"},
-    {0x4777f331, false, "BottomOfTheWell_Level_Room_01_InTheCenterArea"},
-    {0xc6a4aa65, false, "BottomOfTheWell_Level_Room_01_InTheDivingArea"},
-    {0x99da5f45, false, "BottomOfTheWell_Level_Room_01_InTheReturnArea"},
     {0xef559f85, false, "BottomOfTheWell_Level_Room_02_BurnedAny"},
     {0x400e7348, false, "BottomOfTheWell_Level_Room_02_BurnedGimmick"},
     {0xc8929a3f, false, "BottomOfTheWell_Level_Room_03_Coffin_Open"},
@@ -77,7 +94,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x5e784b3b, false, "BottomOfTheWell_Level_Room_09_Arrival"},
     {0xbb057cea, true, "BottomOfTheWell_Level_Room_09_ArrivalTime"},
     {0xb561f527, false, "BottomOfTheWell_Level_Room_09_GetMap"},
-    {0x5601772d, false, "BottomOfTheWell_Level_Room_09_NearRock"},
     {0x230e55c8, false, "BottomOfTheWell_Level_Room_09_RockDestoryed_01"},
     {0x25d342b9, false, "BottomOfTheWell_Level_Room_09_RockDestoryed_02"},
     {0x1f4810d0, false, "BottomOfTheWell_Level_Room_09_RockDestoryed_03"},
@@ -103,8 +119,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x94fcf42f, false, "DodongoCavern_Room01_ReadStoneTablet2"},
     {0x4b640f7e, false, "DodongoCavern_Room02_EventFinish"},
     {0xc03c59ca, false, "DodongoCavern_Room02_StepSwitchOnPlayer"},
-    {0xeb055de5, false, "DodongoCavern_Room05_NearTreasureBox"},
-    {0x7d1f6539, false, "DodongoCavern_Room10_PlayerOutOfRoom"},
     {0x4bf8ba8a, false, "DodongoCavern_Room13_MovableBox"},
     {0x6e5f3718, false, "DodongoCavern_Room19_EventFinish"},
     {0x940530ab, false, "DodongoCavern_Room19_MovableBox"},
@@ -162,7 +176,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xa86ced5e, false, "FireTemple_Room04_CloserFireOn"},
     {0xaf91e6ce, false, "FireTemple_Room04_FurtherFireOn"},
     {0x16ca2911, false, "FireTemple_Room04_GimmickClear"},
-    {0x6aaaf7d2, false, "FireTemple_Room04_IsAtCorrectArea"},
     {0x92fa4e64, false, "FireTemple_Room04_SwitchHit"},
     {0x90428ea7, true, "FireTemple_Room04_SwitchMovableBoxRecreatePosition"},
     {0x8eea0cd9, false, "FireTemple_Room06_ShutterOpen"},
@@ -178,7 +191,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xa6cd88e5, false, "FireTemple_Room12_DeleteAirWall"},
     {0x2f8636c8, false, "FireTemple_Room12_FurtherFireOn"},
     {0x607500aa, false, "FireTemple_Room12_GimmickClear"},
-    {0xbfe66553, false, "FireTemple_Room12_IsAtCorrectArea"},
     {0xc25ca6e0, false, "FireTemple_Room12_SwitchHit"},
     {0x403407e5, false, "FireTemple_Room13_FireOn"},
     {0xb3dcce20, false, "FireTemple_Room14_AirWallEnemyMove00"},
@@ -207,8 +219,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xaeac59d4, false, "ForestTemple_Ghost_Appear_Block"},
     {0x5a9f90e7, false, "ForestTemple_HidingHole23_TimeBlockOFF"},
     {0x6dc517d4, false, "ForestTemple_InRoom11_AfterGetBow"},
-    {0xece4e747, false, "ForestTemple_IsInFallingCeilingRoom"},
-    {0xaa70c440, false, "ForestTemple_IsLeftOfTimeBLock"},
     {0x24e06e44, false, "ForestTemple_Level_Room_06_PressedEyeball"},
     {0xaa9dc048, false, "ForestTemple_Level_Room_08_IN"},
     {0xf07bad26, false, "ForestTemple_Level_Room_21_Clear"},
@@ -231,7 +241,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xe7fee3dc, false, "ForestTemple_Room07_WellIn"},
     {0x32414b27, false, "ForestTemple_Room08_Back_Enter"},
     {0x8f8af32e, false, "ForestTemple_Room08_ClimbIvy"},
-    {0x7c5d6ee1, false, "ForestTemple_Room08_ClimbIvy_Near"},
     {0x2662855d, false, "ForestTemple_Room08_EyeSwitch_Clear"},
     {0x47cc7758, false, "ForestTemple_Room08_MovableBox_MoveFront"},
     {0x44662d7f, false, "ForestTemple_Room08_MovableBox_MoveLast"},
@@ -286,7 +295,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x49278189, false, "GerudoTrainingGround_Dungeon_Room02_SilverRupee"},
     {0xbbf8e9e3, false, "GerudoTrainingGround_Dungeon_Room03_Block"},
     {0x85ec522f, false, "GerudoTrainingGround_Dungeon_Room03_DefeatEnemy"},
-    {0xef8de0e5, false, "GerudoTrainingGround_Dungeon_Room03_InSecretRoom"},
     {0x9961be86, false, "GerudoTrainingGround_Dungeon_Room03_StepSwitch"},
     {0xc290227a, false, "GerudoTrainingGround_Dungeon_Room04_StoneStatue"},
     {0x88cc699c, false, "GerudoTrainingGround_Dungeon_Room05_DefeatEnemy"},
@@ -301,7 +309,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x1c7725f8, false, "GerudoTrainingGround_Dungeon_Room07_DefeatEnemy"},
     {0x32da60e0, false, "GerudoTrainingGround_Dungeon_Room07_EnterFromRoom00"},
     {0xb89d711a, false, "GerudoTrainingGround_Dungeon_Room07_EnterFromRoom06"},
-    {0xfe3d998c, false, "GerudoTrainingGround_Dungeon_Room08_InSecretRoom"},
     {0xd0a07639, true, "GerudoTrainingGround_Dungeon_Room08_OpenDoorNum"},
     {0x43921d41, false, "GerudoTrainingGround_Dungeon_Room08_TBox"},
     {0x516ed4f9, false, "GerudoTrainingGround_Dungeon_Room09_SilverRupee"},
@@ -533,7 +540,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xcd4ecb07, false, "HavePlayedEvent.WaterTemple_Waterlevelrise_FocusOnGimmick"},
     {0xa5c9012a, false, "IceCavern_Room00_RedIce_01"},
     {0x49eb1639, false, "IceCavern_Room00_RedIce_Melted"},
-    {0x111201d5, false, "IceCavern_Room01Demo_Far"},
     {0xfebfac16, false, "IceCavern_Room01_BlueRupeePot_IsCrushed"},
     {0xa44793b3, false, "IceCavern_Room01_RedIce_Melted_01"},
     {0x7464d603, false, "IceCavern_Room01_RedIce_Melted_02"},
@@ -648,17 +654,12 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x0a8079db, false, "InsideJabuJabuBelly_Room07_StepSwitch_Ruto"},
     {0xfdec26af, false, "InsideJabuJabuBelly_Room09Door"},
     {0x8a3e5a4c, false, "InsideJabuJabuBelly_Room09_TBoxDemo"},
-    {0xf99477ee, false, "InsideJabuJabuBelly_Room09_TBoxNearRuto"},
     {0x8f1208d9, false, "InsideJabuJabuBelly_Room12_TBoxDemo"},
-    {0xc3cf4176, false, "InsideJabuJabuBelly_Room12_TBoxNearRuto"},
     {0xf6a19c8b, false, "InsideJabuJabuBelly_Room14_IsGetMap"},
     {0x0adfba29, false, "InsideJabuJabuBelly_Room14_IsLutoGimmickClear"},
-    {0xd0440e02, false, "InsideJabuJabuBelly_Room14_IsNearGimmick"},
     {0xf44b79ed, false, "InsideJabuJabuBelly_Room14_PlayedSwitchEvent_Lower"},
     {0xf036b3a1, false, "InsideJabuJabuBelly_Room14_PlayedSwitchEvent_Upper"},
-    {0xafd95a4a, false, "InsideJabuJabuBelly_Room14_PlayerIsUnder"},
     {0x5580869c, false, "InsideJabuJabuBelly_Room14_SwitchControlInEvent"},
-    {0x3d1102e5, false, "InsideJabuJabuBelly_Room18_IsInHiddenArea"},
     {0x5564f932, false, "InsideJabuJabuBelly_RutoReaction_01"},
     {0x96d9dcf7, false, "InsideJabuJabuBelly_RutoReaction_02"},
     {0x42bfcd10, false, "InsideJabuJabuBelly_RutoReaction_03"},
@@ -723,7 +724,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x98ca7aab, false, "InsideTheDekuTree_Heart_Container_Obtained"},
     {0xfb39c3e6, false, "InsideTheDekuTree_Level_RoomH_ClearBlock"},
     {0xa356fb4c, false, "InsideTheDekuTree_RoomA_Cleared"},
-    {0xe27b79a0, false, "InsideTheDekuTree_RoomA_NearScaffold"},
     {0x64edd2f3, false, "InsideTheDekuTree_RoomB_Cleared"},
     {0x77279a83, false, "InsideTheDekuTree_RoomC_Cleared"},
     {0xd0d8a271, false, "InsideTheDekuTree_RoomD_Cleared"},
@@ -761,7 +761,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xf8b39977, false, "ShadowTemple_Level_Room_06_HasRead_Sign_01"},
     {0xc75584b3, false, "ShadowTemple_Level_Room_06_SilverToken_Appear"},
     {0x5f30cdca, false, "ShadowTemple_Level_Room_06_TBox_Open_01"},
-    {0x645bf023, false, "ShadowTemple_Level_Room_09_Away"},
     {0x86502ca8, false, "ShadowTemple_Level_Room_09_Clear_A"},
     {0x0882bcd0, false, "ShadowTemple_Level_Room_09_Clear_B"},
     {0x2359815d, false, "ShadowTemple_Level_Room_09_SilverToken_Appear"},
@@ -775,7 +774,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xbb6ece58, false, "ShadowTemple_Level_Room_13_DoorControl"},
     {0xa16d839c, false, "ShadowTemple_Level_Room_13_GetKey"},
     {0x59e0b2cf, false, "ShadowTemple_Level_Room_13_HasRead_Sign_01"},
-    {0x89758470, false, "ShadowTemple_Level_Room_13_PlayerPosCheck"},
     {0x146d6db5, false, "ShadowTemple_Level_Room_14_Clear"},
     {0xcd448d26, false, "ShadowTemple_Level_Room_14_Clear_A"},
     {0x805f7e36, false, "ShadowTemple_Level_Room_15_HasRead_Sign_01"},
@@ -822,10 +820,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xe53a50c5, false, "ShadowTemple_RoomB3FB4F_OpenCounter"},
     {0x461327a8, false, "ShadowTemple_Room_01_GimmickClear"},
     {0xfdd4db41, false, "SpiritTemple_Adult_NaviGuideTimeTemple"},
-    {0x9121e5ba, false, "SpiritTemple_LevelRoom_02_PlayerPosChange1_2"},
-    {0x58b66e09, false, "SpiritTemple_LevelRoom_02_PlayerPosChange2"},
-    {0x1632014b, false, "SpiritTemple_LevelRoom_02_PlayerPosChange2_2"},
-    {0x2ea866dc, false, "SpiritTemple_Level_Room_02_PlayerPosChange1"},
     {0x09ed9480, false, "SpiritTemple_Level_Room_07_AppearEnemy"},
     {0x754623ed, false, "SpiritTemple_Level_Room_07_DefeatEnemy"},
     {0x874c0e3e, false, "SpiritTemple_Level_Room_15_AppearEnemy"},
@@ -876,7 +870,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x98934ca7, false, "SpiritTemple_Room14_Unlocked_02"},
     {0x5ecb991c, false, "SpiritTemple_Room15_TBox_On"},
     {0x46c97e5d, false, "SpiritTemple_Room15_TBox_On_01"},
-    {0x833295b6, false, "SpiritTemple_Room16_PlayerPosCheck"},
     {0x152c570c, false, "SpiritTemple_Room16_SilverTokenAppeared"},
     {0x849f96bd, false, "SpiritTemple_Room16_TimeBoxRight_Appeared"},
     {0xdc943ffa, false, "SpiritTemple_Room16_Unlocked"},
@@ -934,8 +927,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xfdae7d4e, false, "WaterTemple_Room00_00"},
     {0xa5c6be9b, false, "WaterTemple_Room00_OpenDoor1F"},
     {0xc3a7d1f6, false, "WaterTemple_Room00_ShootSwitchOnce"},
-    {0xc0f55710, false, "WaterTemple_Room00_Switch_NearThePlatform"},
-    {0x2f3bb3de, false, "WaterTemple_Room00_Switch_NearTheShutter"},
     {0xbeb09982, true, "WaterTemple_Room00_WaterLevel"},
     {0x236cee78, false, "WaterTemple_Room02_00"},
     {0xdee97c7c, false, "WaterTemple_Room02_Cleared"},

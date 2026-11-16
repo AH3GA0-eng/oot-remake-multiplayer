@@ -28,7 +28,8 @@ TEST_CASE("dungeon: the Water Temple's water level and switches are in the list"
     bool shutter = false;
     for (const auto& f : CoopDungeon::Flags()) {
         level |= std::string(f.name) == "WaterTemple_Room00_WaterLevel" && f.is_int;
-        shutter |= std::string(f.name) == "WaterTemple_Room00_Switch_NearTheShutter";
+        // (Room00_Switch_NearTheShutter is where our Link stands, set both ways by an area: not shared.)
+        shutter |= std::string(f.name) == "WaterTemple_Room00_OpenDoor1F";
         // One player's own state is not shared.
         CHECK(std::string(f.name).find("NaviHelp") == std::string::npos);
         CHECK(std::string(f.name).find("IsPlayerIn") == std::string::npos);
@@ -129,6 +130,57 @@ TEST_CASE("dungeon: one player's failed or reset attempt is not shared (issue 14
     // The puzzle solved is shared: the Scrub Brothers' room opens for everyone.
     CHECK(names.count("InsideTheDekuTree_RoomK_Cleared") == 1);
     CHECK(names.count("InsideTheDekuTree_Dungeon_EnemyScrubDekuDestroy_003") == 1);
+}
+
+TEST_CASE("dungeon: where one player's Link stands in the Forest Temple is not shared (player report 108)") {
+    // Set true and false by a room graph's Player-layer areas, read only by
+    // that player's own event (the Song of Time block's, the fall-down one).
+    std::set<std::string> names;
+    for (const auto& f : CoopDungeon::Flags()) names.insert(f.name);
+    for (const char* out : {"ForestTemple_IsLeftOfTimeBLock", "ForestTemple_IsInFallingCeilingRoom"}) {
+        CHECK_MESSAGE(names.count(out) == 0, out);
+    }
+    // The block gone stays the group's: every game's room graph reads it live.
+    CHECK(names.count("Foresttemple_SongOfTimeBlock_A_01_Disappearance") == 1);
+    CHECK(names.count("ForestTemple_Room02_TimeBlock") == 1);
+}
+
+TEST_CASE("dungeon: where one player's Link stands is not shared in any dungeon (forest-temple-a sweep)") {
+  std::set<std::string> names;
+  for (const auto& f : CoopDungeon::Flags()) names.insert(f.name);
+  for (const char* out : {"BottomOfTheWell_Level_Room_01_InTheCenterArea",
+                          "BottomOfTheWell_Level_Room_01_InTheDivingArea",
+                          "BottomOfTheWell_Level_Room_01_InTheReturnArea",
+                          "BottomOfTheWell_Level_Room_09_NearRock",
+                          "DodongoCavern_Room05_NearTreasureBox",
+                          "DodongoCavern_Room10_PlayerOutOfRoom",
+                          "FireTemple_Room04_IsAtCorrectArea",
+                          "FireTemple_Room12_IsAtCorrectArea",
+                          "ForestTemple_Room08_ClimbIvy_Near",
+                          "GerudoTrainingGround_Dungeon_Room03_InSecretRoom",
+                          "GerudoTrainingGround_Dungeon_Room08_InSecretRoom",
+                          "InsideJabuJabuBelly_Room09_TBoxNearRuto",
+                          "InsideJabuJabuBelly_Room12_TBoxNearRuto",
+                          "InsideJabuJabuBelly_Room14_IsNearGimmick",
+                          "InsideJabuJabuBelly_Room14_PlayerIsUnder",
+                          "InsideJabuJabuBelly_Room18_IsInHiddenArea",
+                          "InsideTheDekuTree_RoomA_NearScaffold",
+                          "ShadowTemple_Level_Room_09_Away",
+                          "ShadowTemple_Level_Room_13_PlayerPosCheck",
+                          "SpiritTemple_LevelRoom_02_PlayerPosChange1_2",
+                          "SpiritTemple_LevelRoom_02_PlayerPosChange2",
+                          "SpiritTemple_LevelRoom_02_PlayerPosChange2_2",
+                          "SpiritTemple_Level_Room_02_PlayerPosChange1",
+                          "SpiritTemple_Room16_PlayerPosCheck",
+                          "WaterTemple_Room00_Switch_NearThePlatform",
+                          "WaterTemple_Room00_Switch_NearTheShutter",
+                          "IceCavern_Room01Demo_Far"}) {
+    CHECK_MESSAGE(names.count(out) == 0, out);
+  }
+  // Room state set both ways by a graph stays shared (a switch, a fire, an air wall).
+  CHECK(names.count("FireTemple_Room04_SwitchHit") == 1);
+  CHECK(names.count("FireTemple_Room14_AirWallEnemyMove00") == 1);
+  CHECK(names.count("ForestTemple_TwistCorridor01_IsConstraint") == 1);
 }
 
 TEST_CASE("dungeon: Merge adds to the list, makes one when there is none, or does nothing when off") {

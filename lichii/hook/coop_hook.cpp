@@ -676,6 +676,7 @@ public:
         CoopFlagNative::Feed(*session_);
         LogFlagEvents();
 #endif
+        LogFlagTraffic();
         if (auto color = TakeColor()) {  // the pause menu's look (hookshot/src/coop_look.h)
             session_->set_color(*color);
         }
@@ -1910,6 +1911,27 @@ private:
     CoopEvery::Every flag_events_log_{10 * CoopEvery::kSecondUs};
     std::uint64_t flag_event_reads_ = 0, flag_event_misses_ = 0, flag_full_reads_ = 0;
 #endif
+    // forest-temple-b (player reports #106-#108): every 10 s while it changed, the shared flags that went out, came
+    // in and were written, so a player's log says whether two games' flags reach each other at all.
+    void LogFlagTraffic() {
+        if (!session_ || !flag_traffic_log_.Due(CoopEvery::NowUs())) {
+            return;
+        }
+        const coop::host::FlagStats s = session_->flag_stats();
+        const std::uint64_t sum = s.changes_sent + s.answers_sent + s.entries_in + s.applied + s.write_failures;
+        if (sum == flag_traffic_sum_) {
+            return;
+        }
+        flag_traffic_sum_ = sum;
+        LOG_INFO(Core, "coop: flags: traffic: {} changes sent, {} answers sent, {} entries came, {} written here "
+                       "({} count deltas, {} load reverts, {} one-way put back, {} from a host reset), {} kept over "
+                       "our own, {} not shared, {} write failures, {} messages not for us, {} bad snapshots",
+                 s.changes_sent, s.answers_sent, s.entries_in, s.applied, s.deltas_added, s.load_reverts,
+                 s.one_way_restores, s.reset_applied, s.kept_local, s.not_shared, s.write_failures, s.ignored_messages,
+                 s.bad_snapshots);
+    }
+    CoopEvery::Every flag_traffic_log_{10 * CoopEvery::kSecondUs};
+    std::uint64_t flag_traffic_sum_ = 0;
     CoopScrubTalk::Hold scrub_talk_;  // issue 144: scrub destroy flags wait for our event
     coop::host::LentKeys lent_keys_;  // dungeon-sync-b (#75): keys lent at another player's lock
     bool scrub_talk_on_ = EnvString("LICHII_COOP_SCRUB_TALK_HOLD") != "0";  // =0: off (the old softlock)
@@ -2448,6 +2470,13 @@ void KeepMapsAlone(EmulatorMemory& memory, bool in_play, const std::optional<std
     }();
     if (!on) return;
     if (g_keeper_reset.exchange(false)) keeper.reset();
+#ifdef COOP_HOOKSHOT
+    // The title menu: the next save is another file (forest-temple-a: the no-scene sign alone may not come there).
+    static bool title_was_up = false;
+    const bool title_up = CoopSave::TitleUp();
+    if (title_up && !title_was_up) keeper.reset();
+    title_was_up = title_up;
+#endif
     coop::host::GameFlagStore flags(memory);
     const coop::host::MapDropBecause because("the solo keeper (minimap-b)");
     const auto restored = keeper.frame(flags, in_play, scene ? std::optional<std::string_view>(*scene) : std::nullopt);

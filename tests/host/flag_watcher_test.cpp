@@ -308,6 +308,22 @@ TEST_CASE("flag watcher: the game's own change wins over a write still to retry"
   CHECK(w.frame(store).empty());
 }
 
+TEST_CASE("flag watcher: every entry that comes is counted, written or not (player reports 106-108)") {
+  FakeStore store = game();
+  FlagWatcher player(shared(), FlagRole::player);
+  player.frame(store);
+  player.receive(state({entry(kChest, 1), entry(kDoor, 0)}));  // the door is 0 already: nothing written
+  player.receive(proto::FlagSnapshot{0, 1, {entry(kKey0, 1)}});
+  player.frame(store);
+  CHECK(player.stats().entries_in == 3);
+  CHECK(player.stats().applied >= 1);
+  FlagWatcher host(shared(), FlagRole::host);
+  host.frame(store);
+  host.receive(proto::FlagSet{2, {entry(kKey1, 1)}});
+  host.frame(store);
+  CHECK(host.stats().entries_in == 1);
+}
+
 TEST_CASE("flag watcher: a player ignores FLAG_SET, a host snapshots") {
   FlagWatcher player(shared(), FlagRole::player);
   CHECK_FALSE(player.receive(proto::FlagSet{2, {entry(kChest, 1)}}));
@@ -677,7 +693,7 @@ TEST_CASE("flag watcher: a guest loading the host's save copy through the title 
   CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(kChest, 1)});
 }
 
-TEST_CASE("flag watcher: the host's load through the title keeps the flags-back rule (#96)") {
+TEST_CASE("flag watcher: the host's load through the title is a save load, also forward only (#96, forest-temple-a)") {
   FakeStore store = game();
   FlagWatcher w(shared(), FlagRole::host);
   w.set_loading(true);
@@ -687,9 +703,16 @@ TEST_CASE("flag watcher: the host's load through the title keeps the flags-back 
   store.set(kDoor, 1);  // the host's save: forward only
   w.frame(store);
   const auto sent = link_back(w, store);
-  for (const auto& m : decode(sent)) CHECK_FALSE(std::holds_alternative<proto::FlagReset>(m));
-  CHECK(w.stats().host_resets == 0);
-  CHECK(w.stats().title_loads == 0);
+  bool door = false;
+  for (const auto& m : decode(sent)) {
+    if (const auto* r = std::get_if<proto::FlagReset>(&m)) {
+      door = door || std::find(r->flags.begin(), r->flags.end(), entry(kDoor, 1)) != r->flags.end();
+    }
+  }
+  CHECK(door);  // the group follows the host's save
+  CHECK(w.stats().host_resets == 1);
+  CHECK(w.stats().title_loads == 1);
+  CHECK(w.take_save_load().has_value());
   CHECK(store.get(kDoor) == 1);
 }
 
@@ -1101,6 +1124,39 @@ TEST_CASE("flag watcher: a dungeon map or compass the game drops to 0 is put bac
   w.frame(store);
   CHECK(w.stats().one_way_restores == 2);
   CHECK(w.take_one_way_restores().empty());
+}
+
+TEST_CASE("flag watcher: the host's save load through the title with a scene read is a save load (forest-temple-a)") {
+  // A player's 0.11.2 host log: the host went to Hookshot's title mid-session and loaded a save without the Forest
+  // Temple map; no save load was seen, and the old save's floors were put back into the new one, once a frame.
+  FakeStore game_store = dungeon_game();
+  ItemFlagStore store(game_store);
+  FlagWatcher w(SharedFlags({kDekuMap, kDekuCompass, kGotBomb}), FlagRole::host);
+  w.set_scene(true);
+  w.frame(store);
+  game_store.set(kDekuMap, 1);
+  game_store.set(kDekuCompass, 1);
+  w.frame(store);  // in play: the old save's map and compass
+  // The title menu: a scene is still read there, so only the title sign says it is a save load.
+  w.set_loading(true);
+  w.set_title(true);
+  w.frame(store);
+  game_store.set(kDekuMap, 0);  // the new save has no map: one flag back, fewer than kSaveLoadMin
+  for (int i = 0; i < 5; ++i) w.frame(store);
+  bool reset = false;
+  for (const auto& m : decode(link_back(w, store))) {
+    if (const auto* r = std::get_if<proto::FlagReset>(&m)) {
+      reset = std::find(r->flags.begin(), r->flags.end(), entry(kDekuMap, 0)) != r->flags.end();
+    }
+  }
+  CHECK(reset);  // the group follows the host's new save (#96)
+  CHECK(w.stats().host_resets == 1);
+  CHECK(w.stats().title_loads == 1);
+  CHECK(w.stats().one_way_restores == 0);  // the old save's map is not put into the new save
+  CHECK(game_store.get(kDekuMap) == 0);
+  for (int i = 0; i < 10; ++i) w.frame(store);
+  CHECK(game_store.get(kDekuMap) == 0);
+  CHECK(w.stats().one_way_restores == 0);
 }
 
 TEST_CASE("flag watcher: both players open the map chest at the same time and both keep the map (issue 146)") {
