@@ -1018,6 +1018,25 @@ function Get-KitOtherSizeTables([string]$ModsDir) {
     return $out.ToArray()
 }
 
+# Another OOTRR release replaced the game's (an update of hookshot\OOTRR.txt): its seeds are other worlds than the
+# old one's for the same seed word, and the old release's seed files do not build with the new one (OOTRR 0.6.0:
+# "Seeds made with older versions will not build"). So every built seed (mods\randomizer-*\coop-seed.txt) and its
+# seed file go: the game makes each one again with the new OOTRR at its next start (about a minute), so every player
+# of the same kit plays the same world. Run while the game is closed (the module step). The lines to show.
+function Remove-KitRandoSeeds([string]$ExeDir, [string]$Release) {
+    $lines = @()
+    $mods = Join-Path $ExeDir 'mods'
+    $control = Join-Path $mods 'oot-remake-randomizer'
+    foreach ($d in @(Get-ChildItem -LiteralPath $mods -Directory -Filter 'randomizer-*' -ErrorAction SilentlyContinue)) {
+        if (-not (Test-Path -LiteralPath (Join-Path $d.FullName 'coop-seed.txt'))) { continue }
+        Remove-Item -LiteralPath $d.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path $control "$($d.Name).ootrr") -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $d.FullName) { $lines += "randomizer: seed $($d.Name) could not be removed for OOTRR $Release" }
+        else { $lines += "randomizer: seed $($d.Name) removed for OOTRR $Release`: the game makes it again at its next start (another world: start a new save)" }
+    }
+    return $lines
+}
+
 # Built randomizer seeds (mods\randomizer-*\coop-seed.txt) whose size table is older than another mod's (a puppet
 # pack made again): the game aborts while it loads with such a seed on, so they are built again (Update-KitRandoSeeds).
 function Get-KitStaleRandoSeeds([string]$ExeDir) {

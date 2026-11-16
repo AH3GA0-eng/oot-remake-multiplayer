@@ -247,12 +247,24 @@ if [[ -f $ootrr_pin ]]; then
             # (kit-mirror: with retries; a file with another SHA-256 is deleted)
             OOT_COOP_FETCH_LOCAL=$fetch_local fetch_verified "$o_tgz" "$o_sha" "$o_url/$o_file" || o_why="the download failed ($KIT_FETCH_WHY)"
         fi
+        o_had=$(cat "$o_dir/coop-ootrr.txt" 2>/dev/null || true)
         if [[ -z $o_why ]]; then
             rm -rf "$o_dir" && mkdir -p "$o_dir"
             # (one folder, ootrr-<version>-linux-x86_64/: ootrr, LICENSE, NOTICE, README.md, install.sh, ootrr.desktop)
             if tar -xzf "$o_tgz" -C "$o_dir" --strip-components=1 && [[ -f $o_dir/ootrr ]]; then
                 chmod +x "$o_dir/ootrr"
                 printf '%s\n' "$o_want" >"$o_dir/coop-ootrr.txt"
+                # Another release than the one before: its seeds are other worlds and the old seed files do not build
+                # with it, so every built seed goes and the game makes it again at its next start
+                # (kit-paths.ps1 Remove-KitRandoSeeds on Windows).
+                if [[ -n $o_had && ${o_had%% *} != "$o_rel" ]]; then
+                    for seed_dir in "$GAME"/mods/randomizer-*/; do
+                        [[ -f ${seed_dir}coop-seed.txt ]] || continue
+                        seed_name=$(basename "$seed_dir")
+                        rm -rf "$seed_dir" "$GAME/mods/oot-remake-randomizer/$seed_name.ootrr"
+                        say "  randomizer: seed $seed_name removed for OOTRR $o_rel: the game makes it again at its next start (another world: start a new save)"
+                    done
+                fi
             else
                 o_why="unpacking $o_file failed"
             fi

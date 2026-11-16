@@ -103,8 +103,9 @@ std::vector<std::string> GenerateArgs(const std::string& preset, const std::stri
 std::vector<std::string> BuildArgs(const std::filesystem::path& seed_file, const std::filesystem::path& game_folder,
                                    const std::filesystem::path& mods_root, const std::string& folder);
 // The game uses one resource size table, the one of the mod that wins (the seed), so the seed's must hold every
-// other mod's entries. OOTRR merges those only from mods/<name>/romfs, and the puppet pack is deeper
-// (mods/contents/<title>/coop-puppet): without its entries the game aborts while it loads. So the seed is built in
+// other mod's entries. OOTRR 0.5.0 merges those only from mods/<name>/romfs, and the puppet pack is deeper
+// (mods/contents/<title>/coop-puppet): without its entries the game aborts while it loads; 0.6.0 reads deeper
+// folders too, but not the Mods tab's switches (a row switched off would still count). So the seed is built in
 // `stage`, where this copies the size tables (romfs/System/Resource/*.rsizetable.zs) of every other mod under
 // `mods_root` the game loads next time, each into <stage>/<n>/romfs/System/Resource. Left out: seeds
 // (randomizer-*), the control folder, a folder whose name starts with '-' or '_' (Longshot skips those) and a row

@@ -112,7 +112,7 @@ Already set up? Copy by hand: close both games, keep a copy of the kit's `hooksh
 
 ## The randomizer
 
-The kit brings the randomizer, OOTRR: the first build (and an update that moves it) downloads it into `hookshot\game\tools\ootrr\`, and it builds seeds from the game files the build already unpacked. Nothing to download or set. It is off until you, or the host in co-op, turn it on in the Mods tab (**OoT Remake Randomizer**, **Settings**): [mods.md](mods.md#the-randomizer). Do not install OOTRR by hand next to co-op: with a second OOTRR 0.5.0 the game crashes at start.
+The kit brings the randomizer, OOTRR: the first build (and an update that moves it) downloads it into `hookshot\game\tools\ootrr\`, and it builds seeds from the game files the build already unpacked. Nothing to download or set. It is off until you, or the host in co-op, turn it on in the Mods tab (**OoT Remake Randomizer**, **Settings**): [mods.md](mods.md#the-randomizer). Do not install OOTRR by hand next to co-op: with a second OOTRR the game crashes at start.
 
 ## Customize Link
 
