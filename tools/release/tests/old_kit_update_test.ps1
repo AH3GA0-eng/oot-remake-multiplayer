@@ -145,10 +145,17 @@ try {
     $params = if ($cmd) { @($cmd.Parameters.Keys) } else { @() }
     $lack = @('NoUpdate', 'Mode', 'Server', 'Name', 'Port', 'Hookshot' | Where-Object { $params -notcontains $_ })
     Check ($cmd -and $lack.Count -eq 0) "the new play.ps1 takes -NoUpdate -Mode -Server -Name -Port -Hookshot [$($lack -join ', ')]"
-    # The game: the next start's build sees new patches or a new pin, so it brings the game up to date (incremental: hookshot\work kept).
+    # The game: the kit's stamp is now the new release's. When the release changed Longshot's pin, tools or patches, the
+    # next start's build sees that and brings the game up to date (incremental: hookshot\work kept); when it did not
+    # (v0.11.2 -> v0.11.3: the module only), the built game is reused as it is.
     $newStamp = Get-Stamp $kit
     Check ((Select-String -LiteralPath (Join-Path $kit 'scripts\hookshot-build.ps1') -SimpleMatch '$stamp = "release=$($toolsPin.release)`ncommit=$($pin.commit)`npatches=$patchHash"' -Quiet)) 'the new kit''s game stamp is made the same way'
-    Check ($newStamp -ne $oldStamp) 'the game''s stamp no longer matches: the next start builds the game again'
+    Check ($newStamp -eq (Get-Stamp $newKit)) 'the kit''s game stamp is the new release''s'
+    if ($newStamp -eq $oldStamp) {
+        Write-Host "     | the same Longshot pin, tools and patches as $oldTag`: the built game is reused (no game build on the next start)"
+    } else {
+        Check ($newStamp -ne $oldStamp) 'the game''s stamp no longer matches: the next start builds the game again'
+    }
 } finally {
     $env:OOT_COOP_UPDATE_API = $savedApi
     if ($own) { Remove-Item -LiteralPath $Work -Recurse -Force -ErrorAction SilentlyContinue }
