@@ -190,12 +190,15 @@ float MostOf(const std::optional<Vec3>& a, const std::optional<Vec3>& b) {
 }
 
 // idle-twitch: a bone's step slow enough over `seconds` to be eased (the same parts on both).
+// The same parts and flags on both: one can be blended into the other.
+bool SameParts(const BonePose& a, const BonePose& b) {
+    return a.rotation.has_value() == b.rotation.has_value() &&
+           a.translation.has_value() == b.translation.has_value() &&
+           a.scale.has_value() == b.scale.has_value() && a.flags == b.flags;
+}
+
 bool SlowStep(const BonePose& from, const BonePose& to, float seconds) {
-    if (from.rotation.has_value() != to.rotation.has_value() ||
-        from.translation.has_value() != to.translation.has_value() ||
-        from.scale.has_value() != to.scale.has_value() || from.flags != to.flags) {
-        return false;
-    }
+    if (!SameParts(from, to)) return false;
     if (from.rotation) {
         const Quat& a = *from.rotation;
         const Quat& b = *to.rotation;
@@ -236,7 +239,10 @@ std::size_t Track::Add(Pose sent, std::uint64_t now_ms, std::uint64_t made_ms) {
             const std::uint64_t gap = last != sent_ms_.end() && made_ms > last->second ? made_ms - last->second : 0;
             if (was == nullptr || gap <= kRampAfterMs ||
                 !SlowStep(*was, b, static_cast<float>(gap) / 1000.0f)) {
-                ramps_.erase(b.bone);  // a real move (or a first): as sent
+                // A real move (or a first): as sent. puppet-smooth: and when it was left out of
+                // the poses since it was last sent, its path through them, not held.
+                const bool ramping = ramps_.erase(b.bone) != 0;
+                if (was != nullptr && !ramping && gap > 0) Bridge(b, last->second, made_ms);
                 continue;
             }
             Ramp r{*was, b, shown_ms, std::min(gap, kRampMaxMs)};
@@ -263,6 +269,28 @@ std::size_t Track::Add(Pose sent, std::uint64_t now_ms, std::uint64_t made_ms) {
     }
     Push(Fill(std::move(sent)), now_ms, made_ms);
     return ramps_.size();
+}
+
+void Track::Bridge(const BonePose& to, std::uint64_t from_ms, std::uint64_t to_ms) {
+    // Every kept pose after from_ms (all before to_ms) held the bone as it was sent then. It moves
+    // from where it is shown now (shown_ms_, At's last show time) when that is later: the poses
+    // already played stay as they were, and the one being shown changes by at most its share.
+    const std::uint64_t start_ms = std::max(from_ms, shown_ms_);
+    std::size_t k = 0;
+    for (std::size_t i = 0; i < timed_.size() && timed_[i].first <= start_ms; ++i) k = i;
+    if (timed_.empty() || start_ms >= to_ms || timed_[k].first >= to_ms) return;
+    const BonePose* from = FindBone(timed_[k].second, to.bone);
+    if (from == nullptr || !SameParts(*from, to)) return;
+    const BonePose start = *from;
+    const float span = static_cast<float>(to_ms - start_ms);
+    for (std::size_t i = k + 1; i < timed_.size() && timed_[i].first < to_ms; ++i) {
+        auto& bones = timed_[i].second.bones;
+        const auto it = std::lower_bound(bones.begin(), bones.end(), to.bone,
+                                         [](const BonePose& b, std::uint16_t n) { return b.bone < n; });
+        if (it == bones.end() || it->bone != to.bone || !SameParts(*it, to)) continue;
+        const std::uint64_t at = std::max(timed_[i].first, start_ms);
+        *it = Between(start, to, static_cast<float>(at - start_ms) / span);
+    }
 }
 
 Pose Track::Fill(Pose pose) const {
@@ -301,6 +329,17 @@ int BonePicker::Change(const proto::PoseBone& then, const proto::PoseBone& now) 
     part(then.scale, now.scale);
     if (then.flags != now.flags) most = std::max(most, kBoneStep + 1);
     return most;
+}
+
+StreamPlan PlanFor(std::size_t watchers) {
+    const std::size_t w = std::max<std::size_t>(watchers, 1);
+    const std::size_t share = kPoseRelayBytes / ((w + 1) * w);  // bytes a second, our stream
+    StreamPlan plan;
+    if (share >= static_cast<std::size_t>(kFastHz) * kFullBodyBones * kBoneBytes) {
+        plan.hz = kFastHz;
+    }
+    plan.bones = std::clamp(share / (static_cast<std::size_t>(plan.hz) * kBoneBytes), kMaxSendBones, kMaxBones);
+    return plan;
 }
 
 std::vector<proto::PoseBone> BonePicker::Pick(std::uint32_t skeleton,
@@ -379,6 +418,7 @@ std::vector<proto::PoseBone> BonePicker::Pick(std::uint32_t skeleton,
 std::optional<Pose> Track::At(std::uint64_t now_ms, std::uint64_t delay_ms) const {
     if (!timed_.empty()) {
         const std::uint64_t show = now_ms - std::min(now_ms, delay_ms);
+        shown_ms_ = show;  // puppet-smooth: Bridge starts here
         if (show <= timed_.front().first) return timed_.front().second;
         for (std::size_t i = 0; i + 1 < timed_.size(); ++i) {
             const auto& [a_ms, a] = timed_[i];
@@ -406,7 +446,9 @@ std::optional<Pose> Track::At(std::uint64_t now_ms, std::uint64_t delay_ms) cons
 
 std::optional<float> Evenness::Step(const Pose& shown, std::uint64_t now_ms, int* moving) {
     if (start_ms_ == 0 || now_ms < start_ms_) start_ms_ = now_ms;
-    if (last_ && SameBones(*last_, shown)) {
+    const std::uint64_t dt = last_ms_ != 0 && now_ms > last_ms_ ? now_ms - last_ms_ : 0;
+    if (last_ && SameBones(*last_, shown) && dt > 0) {
+        held_.resize(shown.bones.size(), 0);
         float change = 0.0f;
         for (std::size_t i = 0; i < shown.bones.size(); ++i) {
             const auto& a = shown.bones[i].rotation;
@@ -414,25 +456,40 @@ std::optional<float> Evenness::Step(const Pose& shown, std::uint64_t now_ms, int
             if (a && b) {
                 const float d = std::fabs((*a)[0] * (*b)[0] + (*a)[1] * (*b)[1] + (*a)[2] * (*b)[2] +
                                           (*a)[3] * (*b)[3]);
-                change += 2.0f * std::acos(std::min(d, 1.0f));
+                const float turn = 2.0f * std::acos(std::min(d, 1.0f));
+                change += turn;
+                if (held_[i] && turn > kJumpRad) ++jumps_;
+                held_[i] = turn < kHeldRad ? 1 : 0;
             }
         }
+        const float rate = change / static_cast<float>(dt);
         if (change > kEvenMovingRad && last_change_ > kEvenMovingRad) {
-            sum_ += std::fabs(1.0f - change / last_change_);
+            sum_ += std::fabs(1.0f - rate / last_rate_);
+            raw_sum_ += std::fabs(1.0f - change / last_change_);
             ++moving_;
         }
         last_change_ = change;
+        last_rate_ = rate;
     } else {
         last_change_ = 0.0f;
+        last_rate_ = 0.0f;
+        held_.assign(shown.bones.size(), 0);
     }
     last_ = shown;
+    last_ms_ = now_ms;
     if (now_ms - start_ms_ < kEvenReportMs) return std::nullopt;
-    const float uneven = moving_ ? sum_ / static_cast<float>(moving_) : 0.0f;
+    const float seconds = static_cast<float>(now_ms - start_ms_) / 1000.0f;
+    report_.uneven = moving_ ? sum_ / static_cast<float>(moving_) : 0.0f;
+    report_.raw = moving_ ? raw_sum_ / static_cast<float>(moving_) : 0.0f;
+    report_.moving = moving_;
+    report_.jumps_per_s = static_cast<float>(jumps_) / seconds;
     if (moving != nullptr) *moving = moving_;
     sum_ = 0.0f;
+    raw_sum_ = 0.0f;
     moving_ = 0;
+    jumps_ = 0;
     start_ms_ = now_ms;
-    return uneven;
+    return report_.uneven;
 }
 
 // ------------------------------------------------------------------ the game side
@@ -599,8 +656,10 @@ struct State {
         std::uint64_t ms = 0;
     };
     std::map<std::uint32_t, PieceSent> pieces_sent;
-    // Which of Link's bones go in the next pose (kMaxSendBones).
+    // Which of Link's bones go in the next pose (plan.bones).
     BonePicker picker;
+    // puppet-smooth: our stream's rate and bone budget, by who watches it (PlanFor).
+    StreamPlan plan;
     // Received, per player 1 to kMaxPlayers, one track per skeleton: Link's
     // body and each held piece arrive as poses of their own skeleton.
     std::array<std::map<std::uint32_t, Track>, std::size_t{proto::kMaxPlayers} + 1> tracks;
@@ -844,10 +903,16 @@ Wrote WriteFor(State& s, CoopPuppet::Guest& guest, std::uint8_t number, std::uin
         if (u) {
             // jitter-3's proof line: how even the limbs move (0 even), and by which clock.
             // idle-twitch: and how many slow (idle) bones are being eased over their send gap.
-            char buf[144];
-            std::snprintf(buf, sizeof(buf), "P%u limbs: uneven %.2f (%d moving frames, %s, %zu bones eased)",
+            // puppet-smooth: by frame time, the old per-frame number, the held-then-jumped bones,
+            // and the stream we send (the other side's is in its own log).
+            const EvenReport& r = s.evenness[number].Last();
+            char buf[224];
+            std::snprintf(buf, sizeof(buf),
+                          "P%u limbs: uneven %.2f (%d moving frames, %s, %zu bones eased); raw %.2f, "
+                          "jumps %.1f/s; we send %d/s x %zu bones",
                           static_cast<unsigned>(number), *u, moving,
-                          it->second.Timed() ? "at the place's time" : "by arrival", it->second.Eased());
+                          it->second.Timed() ? "at the place's time" : "by arrival", it->second.Eased(),
+                          r.raw, r.jumps_per_s, s.plan.hz, s.plan.bones);
             Say(s, buf);
         }
     }
@@ -946,12 +1011,29 @@ std::vector<proto::PlayerPose> TakeOutgoing(std::uint64_t server_now_us, std::ui
     std::vector<proto::PlayerPose> out;
     State& s = S();
     std::lock_guard lock(s.mutex);
+    // puppet-smooth: who watches our stream = the other players whose body poses reach us (the
+    // server forwards poses both ways by the same interest), each counted once.
+    std::size_t watchers = 0;
+    for (std::size_t n = 1; n < s.tracks.size(); ++n) {
+        for (const auto& [skeleton, track] : s.tracks[n]) {
+            if (BoneCountOf(skeleton) > kMaxPieceBones &&
+                now_ms - std::min(now_ms, track.last_ms()) < kFreshMs) {
+                ++watchers;
+                break;
+            }
+        }
+    }
+    s.plan = PlanFor(watchers);
     if (!s.outbox || s.outbox_serial == s.sent_serial ||
-        now_ms - s.last_send_ms < 1000 / kSendHz) {
+        now_ms - s.last_send_ms < static_cast<std::uint64_t>(1000 / s.plan.hz)) {
         return out;
     }
     s.sent_serial = s.outbox_serial;
-    s.last_send_ms = now_ms;
+    // puppet-smooth: on the rate's own beat, not "an interval after the network thread's tick
+    // that passed it" (that rounded every interval up to the next tick: fewer sends a second
+    // than the rate, unevenly spaced). A late send (a stall) starts the beat again from now.
+    const std::uint64_t interval = static_cast<std::uint64_t>(1000 / s.plan.hz);
+    s.last_send_ms = now_ms - s.last_send_ms < 2 * interval ? s.last_send_ms + interval : now_ms;
     proto::PlayerPose body;
     // jitter-3: stamped with the frame it was read on, not with this send.
     const std::uint64_t age_us = s.outbox_ms != 0 && s.outbox_ms <= now_ms && now_ms - s.outbox_ms < 1000
@@ -961,7 +1043,7 @@ std::vector<proto::PlayerPose> TakeOutgoing(std::uint64_t server_now_us, std::ui
     body.skeleton = s.outbox->skeleton;
     // Sent even with no bone changed: the receiver keeps its puppet's pose
     // fresh (Drives) and its blend interval right.
-    body.bones = s.picker.Pick(body.skeleton, Encode(*s.outbox), now_ms);
+    body.bones = s.picker.Pick(body.skeleton, Encode(*s.outbox), now_ms, s.plan.bones);
     out.push_back(std::move(body));
     ++s.sent;
     // Each piece in our hands as a pose of its own skeleton: when it changed,
