@@ -16,15 +16,18 @@
 // this table does not know stay English.
 #include "coop_i18n.h"
 
+#include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -673,8 +676,8 @@ constexpr Entry kzh_Hans[] = {
     {"Difficulty: {}: life {}%, damage {}%, enemies {}%", "难度 {}：生命{}% 伤害{}% 敌人{}%"},
     {"teleport: going to {} in {}", "传送：去 {} 所在的 {}"},
     {"teleport: {} has gone on to {}; you are where they were. Type /teleport again to follow", "传送：{} 已经去了 {}；你到了他刚才的位置。再输一次 /teleport 就能跟过去"},
-    {"teleport: {} is in {}, a place for {} Link; yours is {}", "传送：{} 在 {}，那是{}的林克去的地方；你这边是{}"},
-    {"teleport: {} is {} Link and you are {}: no teleport to another age's Link", "传送：{} 是{}的林克，你是{}：不能传送到另一个时代的林克那里"},
+    {"teleport: {} is in {}, a place for {} Link; yours is {}", "传送：{} 在 {}，那是{}林克去的地方；你这边是{}"},
+    {"teleport: {} is {} Link and you are {}: no teleport to another age's Link", "传送：{} 是{}林克，你是{}：不能传送到另一个时代的林克那里"},
     {"teleport: {} is busy now; you are where they were", "传送：{} 现在正忙；你到了他刚才的位置"},
     {"teleport: no answer from {}; you are where they were", "传送：{} 没回应；你到了他刚才的位置"},
     {"teleport: no answer from {} (an older build, or their game is busy)", "传送：{} 没回应（他的版本较旧，或者游戏正忙）"},
@@ -832,6 +835,11 @@ constexpr Entry kzh_Hans[] = {
     {"got a Gold Skulltula token ({})", "得到一枚金色骷髅蜘蛛徽章（{}）"},
     {"learned {}", "学会了{}"},
     {", the ", "、"},
+    {", ", "，"},
+    {" - you got one too!", " —— 你也得到了一个！"},
+    {" - you got them too!", " —— 你也得到了！"},
+    {" - your max health went up", " —— 最大生命值提升了"},
+    {" - the group has {}", "—— 队伍现在有 {} 把"},
     {"Joining your friend's game...", "正在加入朋友的房间…"},
     {"Press Leave, then join again.", "按「离开」，然后再加入一次。"},
     {"Press Leave.", "按「离开」。"},
@@ -1486,8 +1494,8 @@ constexpr Entry kzh_Hant[] = {
     {"Difficulty: {}: life {}%, damage {}%, enemies {}%", "難度 {}：生命{}% 傷害{}% 敵人{}%"},
     {"teleport: going to {} in {}", "傳送：去 {} 所在的 {}"},
     {"teleport: {} has gone on to {}; you are where they were. Type /teleport again to follow", "傳送：{} 已經去了 {}；你到了他剛才的位置。再輸入一次 /teleport 就能跟過去"},
-    {"teleport: {} is in {}, a place for {} Link; yours is {}", "傳送：{} 在 {}，那是{}的林克去的地方；你這邊是{}"},
-    {"teleport: {} is {} Link and you are {}: no teleport to another age's Link", "傳送：{} 是{}的林克，你是{}：不能傳送到另一個時代的林克那裡"},
+    {"teleport: {} is in {}, a place for {} Link; yours is {}", "傳送：{} 在 {}，那是{}林克去的地方；你這邊是{}"},
+    {"teleport: {} is {} Link and you are {}: no teleport to another age's Link", "傳送：{} 是{}林克，你是{}：不能傳送到另一個時代的林克那裡"},
     {"teleport: {} is busy now; you are where they were", "傳送：{} 現在正忙；你到了他剛才的位置"},
     {"teleport: no answer from {}; you are where they were", "傳送：{} 沒回應；你到了他剛才的位置"},
     {"teleport: no answer from {} (an older build, or their game is busy)", "傳送：{} 沒回應（他的版本較舊，或者遊戲正忙）"},
@@ -1645,6 +1653,11 @@ constexpr Entry kzh_Hant[] = {
     {"got a Gold Skulltula token ({})", "得到一枚金色骷髏蜘蛛徽章（{}）"},
     {"learned {}", "學會了{}"},
     {", the ", "、"},
+    {", ", "，"},
+    {" - you got one too!", " —— 你也得到了一個！"},
+    {" - you got them too!", " —— 你也得到了！"},
+    {" - your max health went up", " —— 最大生命值提升了"},
+    {" - the group has {}", "—— 隊伍現在有 {} 把"},
     {"Joining your friend's game...", "正在加入朋友的房間…"},
     {"Press Leave, then join again.", "按「離開」，然後再加入一次。"},
     {"Press Leave.", "按「離開」。"},
@@ -2204,6 +2217,219 @@ bool CountsLine(const Lang* lang, std::string_view text, std::string& out) {
     return true;
 }
 
+namespace {
+
+// A pickup notice (coop/host/src/notify.cpp, Notifier::Take): "<name> <clause>[, <clause>...][<end>]".
+// One clause per pickup ("got the map (Deku Tree)", "learned Zelda's Lullaby"); a group of items
+// is one clause with its names joined by ", the " ("got the Bombs, the Deku Nuts"); several
+// pickups of one kind are clauses joined by ", "; the end is the last pickup's (" - the group has 2").
+// Each clause is read by its own start and end, the most specific one that fits: a line read by the
+// first start that fits took "got the map (Deku Tree)" for an item called "map (Deku Tree".
+struct Clause {
+    const char* start;
+    const char* end;
+    const char* key;   // the table's clause; {} is the data between start and end
+    bool words;        // the data is names of the table (items, songs, dungeons)
+};
+constexpr Clause kClauses[] = {
+    {"got the map (", ")", "got the map ({})", true},
+    {"got the compass (", ")", "got the compass ({})", true},
+    {"got the Boss Key (", ")", "got the Boss Key ({})", true},
+    {"found a Small Key (", ")", "found a Small Key ({})", true},
+    {"got a Gold Skulltula token (", ")", "got a Gold Skulltula token ({})", false},
+    {"got a Heart Container", "", "got a Heart Container", false},
+    {"learned ", "", "learned {}", true},
+    {"got the ", "", "got the {}", true},
+};
+
+// The line's end, as notify.cpp writes it; `number` when the end carries a count.
+struct End {
+    const char* en;
+    const char* key;
+    bool number;
+};
+constexpr End kEnds[] = {
+    {" - you got one too!", " - you got one too!", false},
+    {" - you got them too!", " - you got them too!", false},
+    {" - your max health went up", " - your max health went up", false},
+    {" - the group has ", " - the group has {}", true},
+};
+
+bool StartsWith(std::string_view text, std::string_view start) {
+    return text.size() >= start.size() && text.substr(0, start.size()) == start;
+}
+
+// The most specific clause `text` is (the longest start and end that fit); nullptr when none.
+const Clause* ClauseOf(std::string_view text, std::string_view* data) {
+    const Clause* best = nullptr;
+    std::size_t best_fixed = 0;
+    for (const Clause& c : kClauses) {
+        const std::string_view start = c.start, end = c.end;
+        if (!StartsWith(text, start) || text.size() < start.size() + end.size() ||
+            text.substr(text.size() - end.size()) != end) {
+            continue;
+        }
+        const std::string_view middle = text.substr(start.size(), text.size() - start.size() - end.size());
+        const bool has_data = std::string_view(c.key).find("{}") != std::string_view::npos;
+        if (has_data == middle.empty()) {
+            continue;   // "got a Heart Container" has no data; "got the " needs one
+        }
+        if (best == nullptr || start.size() + end.size() > best_fixed) {
+            best = &c;
+            best_fixed = start.size() + end.size();
+            *data = middle;
+        }
+    }
+    return best;
+}
+
+// A name the notice gives: a player's name as it is; the stand-ins notify.cpp
+// writes when it has none ("Someone", "Player 3") in the table's words.
+std::string Who(const Lang* lang, std::string_view who) {
+    if (who == "Someone" || (StartsWith(who, "Player ") && who.size() > 7 &&
+                             who.find_first_not_of("0123456789", 7) == std::string_view::npos)) {
+        return Tr(lang, who);
+    }
+    return std::string(who);
+}
+
+// A word of the line's data (an item, a song, a dungeon) in the table's words, or as it is.
+std::string Word(const Lang* lang, std::string_view en) {
+    if (const Entry* e = Find(*lang, en)) {
+        return e->text;
+    }
+    return PlaceIn(lang, en);
+}
+
+bool PickupLine(const Lang* lang, std::string_view text, std::string& out) {
+    // The line's end, and the count it carries.
+    const End* end = nullptr;
+    std::string_view count;
+    std::string_view body = text;
+    for (const End& e : kEnds) {
+        const std::string_view en = e.en;
+        if (e.number) {
+            const std::size_t at = body.rfind(en);
+            if (at == std::string_view::npos || at + en.size() == body.size() ||
+                body.find_first_not_of("0123456789", at + en.size()) != std::string_view::npos) {
+                continue;
+            }
+            count = body.substr(at + en.size());
+            body = body.substr(0, at);
+        } else {
+            if (body.size() <= en.size() || body.substr(body.size() - en.size()) != en) {
+                continue;
+            }
+            body = body.substr(0, body.size() - en.size());
+        }
+        end = &e;
+        break;
+    }
+    // The name: up to the first " <clause start>".
+    std::size_t name_end = std::string_view::npos;
+    for (const Clause& c : kClauses) {
+        const std::string start = std::string(" ") + c.start;
+        const std::size_t at = body.find(start);
+        if (at != std::string_view::npos && at > 0 && at < name_end) {
+            name_end = at;
+        }
+    }
+    if (name_end == std::string_view::npos) {
+        return false;
+    }
+    const std::string who = Who(lang, body.substr(0, name_end));
+    body = body.substr(name_end + 1);
+    // The clauses: split at ", " where a clause starts (", the " goes on a group of items).
+    std::vector<std::string_view> clauses;
+    for (std::size_t from = 0;;) {
+        std::size_t cut = std::string_view::npos;
+        for (std::size_t at = body.find(", ", from); at != std::string_view::npos; at = body.find(", ", at + 1)) {
+            bool starts = false;
+            for (const Clause& c : kClauses) {
+                starts = starts || StartsWith(body.substr(at + 2), c.start);
+            }
+            if (starts) {
+                cut = at;
+                break;
+            }
+        }
+        clauses.push_back(body.substr(from, cut == std::string_view::npos ? cut : cut - from));
+        if (cut == std::string_view::npos) {
+            break;
+        }
+        from = cut + 2;
+    }
+    struct Read {
+        const Clause* clause;
+        std::string data;
+    };
+    std::vector<Read> reads;
+    for (const std::string_view clause : clauses) {
+        std::string_view data;
+        const Clause* c = ClauseOf(clause, &data);
+        if (c == nullptr) {
+            return false;   // not a pickup notice, or one this table cannot read: as it is
+        }
+        std::string said(data);
+        if (c->words) {
+            // each name in the table's words; a group of items joined the table's way
+            said.clear();
+            for (std::size_t from = 0;;) {
+                const std::size_t at = data.find(", the ", from);
+                if (from != 0) {
+                    said += Tr(lang, ", the ");
+                }
+                said += Word(lang, data.substr(from, at == std::string_view::npos ? at : at - from));
+                if (at == std::string_view::npos) {
+                    break;
+                }
+                from = at + 6;
+            }
+        }
+        reads.push_back({c, std::move(said)});
+    }
+    // One clause: the whole line's own sentence, when the table has it.
+    if (reads.size() == 1) {
+        const std::string key = std::string("{} ") + reads[0].clause->key + (end != nullptr ? end->key : "");
+        if (const Entry* e = Find(*lang, key)) {
+            std::string_view parts[3];
+            int n = 0;
+            parts[n++] = who;
+            if (std::string_view(reads[0].clause->key).find("{}") != std::string_view::npos) {
+                parts[n++] = reads[0].data;
+            }
+            if (end != nullptr && end->number) {
+                parts[n++] = count;
+            }
+            out = FillAll(e->text, parts, n);
+            return true;
+        }
+    }
+    // Several (or a sentence the table lacks): the name, each clause, then the end.
+    std::string line = who + " ";
+    for (std::size_t i = 0; i < reads.size(); ++i) {
+        const Entry* e = Find(*lang, reads[i].clause->key);
+        if (e == nullptr) {
+            return false;
+        }
+        if (i != 0) {
+            line += Tr(lang, ", ");
+        }
+        line += Fill(e->text, reads[i].data);
+    }
+    if (end != nullptr) {
+        const Entry* e = Find(*lang, end->key);
+        if (e == nullptr) {
+            return false;
+        }
+        line += Fill(e->text, count);
+    }
+    out = std::move(line);
+    return true;
+}
+
+}  // namespace
+
 bool NoticeLine(const Lang* lang, std::string_view text, std::string& out) {
     const auto find = [&](std::string_view key) { return Find(*lang, key); };
 
@@ -2225,72 +2451,15 @@ bool NoticeLine(const Lang* lang, std::string_view text, std::string& out) {
         }
     }
 
-    // "<name> got the ..." / "<name> found a Small Key ..." / "<name> learned ..." etc.
-    const std::string_view tail = [&]() -> std::string_view {
-        // The heart container's own end too (notify.cpp: the "got a Heart
-        // Container" notice carries it): without it the whole end stayed in the
-        // middle, and the line matched neither form.
-        for (const char* t : {" - your max health went up", " - you got one too!", " - you got them too!"}) {
-            if (text.size() > std::string_view(t).size() && text.substr(text.size() - std::string_view(t).size()) == t) {
-                return t;
-            }
-        }
-        return {};
-    }();
-    const std::size_t cut = tail.empty() ? text.size() : text.size() - tail.size();
-    const std::string_view head = text.substr(0, cut);
-
-    struct Tail {
-        const char* after;
-        const char* key;
-        int words;   // 1: the single data after it is a word (a place)
-    };
-    // The map, compass, Boss Key and token lines come first: each has its own
-    // "got" form with a place, and a bare " got the " ahead of them took them
-    // ("Saria got the map (Deku Tree)" read as "Saria 拿到了 map (Deku Tree)").
-    // Their place (words = 1) is looked up in the table too. The token line is
-    // "got a Gold Skulltula token (12)" and the table's key adds no bracket of
-    // its own (it had "({})", which made the line "(12))").
-    static constexpr Tail kTails[] = {
-        {" got a Gold Skulltula token (", "{} got a Gold Skulltula token ({})", 1},
-        {" got the Boss Key (", "{} got the Boss Key ({})", 1},
-        {" got the compass (", "{} got the compass ({})", 1},
-        {" got the map (", "{} got the map ({})", 1},
-        {" found a Small Key (", "{} found a Small Key ({})", 1},
-        {" got a Heart Container", "{} got a Heart Container", 0},
-        {" got the ", "{} got the {}", 1},
-        {" learned ", "{} learned {}", 1},
-    };
-    // "<name> found a Small Key (<place>) - the group has <n>": three data
-    {
-        const std::string_view a = " found a Small Key (";
-        const std::string_view b = ") - the group has ";
-        const std::size_t i = head.find(a);
-        const std::size_t j = i == std::string_view::npos ? i : head.find(b, i + a.size());
-        if (i != std::string_view::npos && i > 0 && j != std::string_view::npos) {
-            const std::string who(head.substr(0, i));
-            const std::string place(head.substr(i + a.size(), j - i - a.size()));
-            const std::string count(head.substr(j + b.size()));
-            if (const Entry* e = find("{} found a Small Key ({}) - the group has {}")) {
-                std::string said = place;
-                if (const Entry* p2 = Find(*lang, place)) {
-                    said = p2->text;
-                }
-                const std::string_view parts_in[3] = {who, said, count};
-                out = FillAll(e->text, parts_in, 3);
-                return true;
-            }
-        }
-    }
     // "<name> loaded a save - the group follows it (<n> changed)": two data
     {
         const std::string_view a = " loaded a save - the group follows it (";
         const std::string_view b = " changed)";
-        const std::size_t i = head.find(a);
-        if (i != std::string_view::npos && i > 0 && head.size() >= b.size() &&
-            head.substr(head.size() - b.size()) == b) {
-            const std::string who(head.substr(0, i));
-            const std::string count(head.substr(i + a.size(), head.size() - i - a.size() - b.size()));
+        const std::size_t i = text.find(a);
+        if (i != std::string_view::npos && i > 0 && text.size() >= i + a.size() + b.size() &&
+            text.substr(text.size() - b.size()) == b) {
+            const std::string who = Who(lang, text.substr(0, i));
+            const std::string count(text.substr(i + a.size(), text.size() - i - a.size() - b.size()));
             if (const Entry* e = find("{} loaded a save - the group follows it ({} changed)")) {
                 std::string said = count;
                 if (std::string counts; CountsLine(lang, count, counts)) {
@@ -2302,49 +2471,7 @@ bool NoticeLine(const Lang* lang, std::string_view text, std::string& out) {
             }
         }
     }
-    for (const Tail& t : kTails) {
-        const std::size_t at = head.find(t.after);
-        if (at == std::string_view::npos || at == 0) {
-            continue;
-        }
-        const std::string who(head.substr(0, at));
-        std::string rest(head.substr(at + std::string_view(t.after).size()));
-        const bool paren = !rest.empty() && rest.back() == ')';
-        if (paren) {
-            rest.pop_back();
-        }
-        std::string said = rest;
-        if (t.words != 0) {
-            if (const Entry* e = Find(*lang, rest)) {
-                said = e->text;
-            } else if (const std::string place = PlaceIn(lang, rest); place != rest) {
-                said = place;
-            }
-        }
-        if (const Entry* e = find(t.key); e != nullptr) {
-            // two data: the name, then the rest; the line's own tables carry the
-            // sentence's end ("- you got one too!"), so the key has both forms.
-            const std::string_view parts_in[2] = {who, said};
-            std::string filled = FillAll(e->text, parts_in, 2);
-            // The key's own line already has the parens when it wants them
-            // ("{} got the map ({})"): a second one made "(12))". Only a key
-            // without them gets the closing one ("{} got the {}").
-            if (paren && std::string_view(t.key).find('(') == std::string_view::npos) {
-                filled += "）";   // the dungeon's name is inside the line's parens
-            }
-            if (!tail.empty()) {
-                const std::string key = std::string(t.key) + std::string(tail);
-                if (const Entry* with_tail = Find(*lang, key)) {
-                    filled = FillAll(with_tail->text, parts_in, 2);
-                } else {
-                    filled += Tr(lang, tail);
-                }
-            }
-            out = std::move(filled);
-            return true;
-        }
-    }
-    return false;
+    return PickupLine(lang, text, out);
 }
 
 std::string FillAll(const char* text, const std::string_view* parts, int count) {
@@ -2396,9 +2523,6 @@ constexpr SplitShape kSplitShapes[] = {
     {{"Mods: player ", " has ", " mods unlike yours", ""}, 0, 3, "Mods: player {} has {} mods unlike yours"},
     {{"Mods: player ", " has ", " mod unlike yours", ""}, 0, 3, "Mods: player {} has {} mod unlike yours"},
     {{"Mods: player ", " (", ") has ", " mod unlike yours", ""}, 0, 4, "Mods: player {} ({}) has {} mod unlike yours"},
-    // what a pickup notice says (coop/host/src/notify.cpp): the player's name, then
-    // the item's. These are read by NoticeLine (the tails above), not by SplitAll:
-    // the item is a word of the table, and the end may be one of three.
 };
 std::string PlaceIn(const Lang* lang, std::string_view en) {
     if (lang == nullptr || lang->entries == nullptr) {
@@ -2456,19 +2580,50 @@ std::string Tr(const Lang* lang, std::string_view en) {
     // A line built around a number, a name or a code: the table's shape for it
     // fills in what the tab put there. Its middle, when it is a word of the
     // table too ("invite code", "hosting"), is translated as well.
+    //
+    // The most specific shape wins: the one with the most fixed text, over both lists.
+    // "teleport: stopped: Saria left" is the teleport's line, not "{} left" around a
+    // name "teleport: stopped: Saria" (the first shape that fitted used to win, so a
+    // short end like " left" took any line that ended in it).
+    const Shape* best_shape = nullptr;
+    std::string_view middle;
+    std::size_t shape_fixed = 0;
     for (const Shape& shape : kShapes) {
-        std::string_view middle;
-        if (!Split(en, shape, &middle)) {
+        std::string_view m;
+        const std::size_t fixed = std::strlen(shape.before) + std::strlen(shape.after);
+        // "<name> joined" / "<name> left" (a bare end): only for a line that is a
+        // name and that end (NamedLine), never for a line of the tab's own that ends so.
+        const bool bare = shape.before[0] == '\0' && (std::string_view(shape.after) == " joined" ||
+                                                      std::string_view(shape.after) == " left");
+        if (bare && !NamedLine(en)) {
             continue;
         }
-        // "<name> joined" / "<name> left" (a bare end): only for a line that is
-        // a name and that end, never for a longer line that happens to end so
-        // (the teleport's "stopped: <name> left").
-        if (shape.before[0] == '\0' && (std::string_view(shape.after) == " joined" ||
-                                        std::string_view(shape.after) == " left") &&
-            !NamedLine(en)) {
+        if (Split(en, shape, &m) && (best_shape == nullptr || fixed > shape_fixed)) {
+            best_shape = &shape;
+            middle = m;
+            shape_fixed = fixed;
+        }
+    }
+    const SplitShape* best_split = nullptr;
+    std::string_view parts[7];
+    std::size_t split_fixed = 0;
+    for (const SplitShape& shape : kSplitShapes) {
+        std::string_view p[7];
+        if (!SplitAll(en, shape, p)) {
             continue;
         }
+        std::size_t fixed = 0;
+        for (int i = 0; i < shape.count; ++i) {
+            fixed += std::strlen(shape.pieces[i]);
+        }
+        if (best_split == nullptr || fixed > split_fixed) {
+            best_split = &shape;
+            std::copy(std::begin(p), std::end(p), std::begin(parts));
+            split_fixed = fixed;
+        }
+    }
+    if (best_shape != nullptr && (best_split == nullptr || shape_fixed >= split_fixed)) {
+        const Shape& shape = *best_shape;
         std::string_view text = middle;
         std::string kept;
         if (shape.words) {
@@ -2488,11 +2643,8 @@ std::string Tr(const Lang* lang, std::string_view en) {
     if (std::string notice; NoticeLine(lang, en, notice)) {
         return notice;
     }
-    for (const SplitShape& shape : kSplitShapes) {
-        std::string_view parts[7];
-        if (!SplitAll(en, shape, parts)) {
-            continue;
-        }
+    if (best_split != nullptr) {
+        const SplitShape& shape = *best_split;
         std::string filled[7];
         std::string_view views[7];
         for (int i = 0; i < shape.count - 1; ++i) {
