@@ -51,6 +51,7 @@
 #include "coop_difficulty.h"
 #include "coop_actor_events.h"
 #include "coop_boss_native.h"
+#include "coop_boss_scenes.h"
 #include "coop_dbno_game.h"
 #include "coop_enemy_shots.h"
 #include "coop_mods_runtime.h"
@@ -1333,6 +1334,12 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
             named = x[1] != 0 && CoopRuntime::Read(x[1] + CoopLiveEvents::addr::kArgName, &text, sizeof text) &&
                     text != 0 && CoopRuntime::Read(text, name, sizeof name - 1);
             name[sizeof name - 1] = 0;
+            // One death cutscene per game (coop_boss_scenes.h refuse_deaths): a boss's death asked again after it
+            // played here is not run; x0 0 is the manager's own "not taken" (phase 1 still reports it).
+            if (named && CoopBossScenes::RefuseAsk(name)) {
+                x[0] = 0;
+                return 1;
+            }
         } else if (named) {
             named = false;
             CoopLiveEvents::TheGameRequests().Push(name, x[0] != 0);

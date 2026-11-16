@@ -300,16 +300,28 @@ game could never finish: a black screen, no fade back, no warp.
   that copy's death. The copy is released and finished right after that tick (the glue runs SetDying after
   `Director::Tick`; the finish above on the next share), so the Director waits up to `kCopyWaitUs` (1.5 s) for the
   walk to read it dead (life 0), then asks the setting (`our copy of the boss died here: asking its own death`): the
-  whole death, the quest step and the warp in our game. Still alive then (a clamp): the death flow alone (the
-  timeline, as 0.11.1: `... asked again if it dies`), and once the copy reads dead with no event running, within
-  `kReaskUs` (25 s) of the death, the setting once (`our copy of the boss died after the death flow`; its death
-  cutscene then plays a second time; a refusal asks nothing more). A copy deleted by its owner's dead remove (gone,
-  not dead here) reads removed alive (row 114 below), so it never gets a setting that would wait for it. Our own game taking the death setting itself ends the wait. Never dead by then:
-  `never died here`, and that player's warp does nothing until their Link leaves the dungeon (#88).
+  whole death, the quest step and the warp in our game. With the life stops passed (above) a released copy reads
+  dead a few frames after the release, so the 1.5 s is a fault guard. Still alive then (a game built without
+  LIFE_STOPS, or a copy off the walk): the death flow alone (the timeline, as 0.11.1: `... one death cutscene here,
+  nothing asked again`), and that player's warp does nothing until their Link leaves the dungeon (#88). A copy
+  deleted by its owner's dead remove (gone, not dead here) reads removed alive (row 114 below), so it never gets a
+  setting that would wait for it. Our own game taking the death setting itself ends the wait.
+- **One death cutscene per game (review-boss-0114 risk 3).** The first version asked the setting again when the copy
+  died after the flow alone, so its death cutscene played a second time. That re-ask is gone, and nothing else may
+  play it twice: once our game took a boss's death (the flow or a setting, ours or its own logic's: `death_played`),
+  while our Link is in that boss's area and no event runs, the Director's `refuse_deaths` bit is set; the glue
+  publishes it (`CoopBossScenes::RefusedDeaths`) and the game's event request wrap (patch 0005,
+  `HOS_COOP_WRAP_EVENT_REQUEST`) refuses any ask of that boss's death flow or settings at the request
+  (`RefuseAsk`: the function is not run and x0 is 0, the manager's own "not taken"; phase 1 still reports it).
+  While an event runs nothing is refused by us: during its death the boss's own logic asks its setting every frame
+  and the manager refuses those itself, as it always has (about 50 asks in hs-gohma-death 20261115-191432 B, all
+  before its event ended). A refused late ask asks no flow either. Log: `our game asked it again, not taken
+  (refused at the request once its event is over)`.
 - Tests: `tests/lichii/boss_scenes_test.cpp` (report 88 case: the real order, a copy that dies after the release,
-  one held alive past the wait and dying after the flow, one that never dies, our game's own setting, leaving the
-  area), `boss_native_test.cpp` and `objects_test.cpp` (dying release, late changes, finish; the owner's death
-  finishing a copy whose killing replay timed out before SetDying).
+  one still alive past the wait (the flow alone, then nothing asked when it dies, its late ask refused), our
+  game's own setting, leaving the area; the owner's own death refused only after its event), `boss_native_test.cpp`
+  and `objects_test.cpp` (dying release, late changes, finish; the owner's death finishing a copy whose killing
+  replay timed out before SetDying), `actor_events_test.cpp` (PassStops, judged gives).
 - In game: scenario `hs-gohma-death` (LANE1; PASS lines in its header).
 
 ## Phantom Ganon with more than one player (player report row 114, boss-0114-a)

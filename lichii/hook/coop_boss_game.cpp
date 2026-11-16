@@ -245,6 +245,7 @@ struct Glue {
             if (connected) {
                 sync.Reset();
                 scenes.Reset();
+                CoopBossScenes::RefusedDeaths().store(0, std::memory_order_release);
                 readiness.Reset();
                 max_life_cap.reset();
                 connected = false;
@@ -413,6 +414,8 @@ bool Glue::Scenes(Core::System& system, std::uint64_t main, const Local& local, 
         }
     }
     CoopBossScenes::Actions a = scenes.Tick(here, ours, now_us);
+    // (one death cutscene per game: the event request refuses a played death while we are in its area)
+    CoopBossScenes::RefusedDeaths().store(a.refuse_deaths, std::memory_order_release);
     // Player report #105 (a black screen after Gohma's death): once her death has begun in any game, our copy is
     // no copy any more; its own game runs its death (the setting we ask it, its warp and its container).
     std::vector<std::string> dying;
@@ -511,6 +514,7 @@ void ForgetFights() {
     Glue& g = TheGlue();
     g.sync.Reset();
     g.scenes.Reset();
+    CoopBossScenes::RefusedDeaths().store(0, std::memory_order_release);
     g.readiness.Reset();
     g.max_life_cap.reset();
     LOG_INFO(Core, "coop: boss: the host loaded a save: the fights this session knew are forgotten");
