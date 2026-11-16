@@ -168,6 +168,15 @@ void Table::Publish(const std::vector<Boss>& bosses) {
             e.actor = b.actor;
             Note(b.name + ": native boss sync on (BSA " + Hex(b.bsa) + ", " +
                  (b.role == Role::owner ? "ours" : "a copy") + ")");
+            if (b.role == Role::copy && RunsOwnStart(b.name)) {
+                // Issue 62 (seed N2BTEYKM, Dodongo's Cavern): a mid-boss copy
+                // made while its owner already fights (the second Lizalfos,
+                // back in our walk after the first died) took the owner's
+                // verbs at once, its own appear was skipped and it stayed
+                // unseen. Its own start runs first; then the owner's state.
+                e.react_until = steps_ + kStartSteps;
+                Note(b.name + ": a new copy: its own start (appear) runs first, then the owner's state");
+            }
         }
         e.role = b.role;
         e.name = b.name;
@@ -326,6 +335,10 @@ bool Table::OnActionVerb(std::uint64_t bsa, const Request& request, bool changed
     return true;
 }
 
+bool RunsOwnStart(std::string_view name) {
+    return name.starts_with("Enemy_MiddleBoss_");
+}
+
 bool Table::OwnTime(const Entry& e) const {
     return event_ || steps_ < e.react_until;
 }
@@ -378,7 +391,7 @@ void Table::NoteOwnHit(std::uint64_t actor) {
         MakeLate(*e);
         Note(e->name + ": our own hit: the copy runs its own reaction");
     }
-    e->react_until = steps_ + kReactSteps;
+    e->react_until = std::max(e->react_until, steps_ + kReactSteps);
 }
 
 void Table::Record(Entry& e, std::variant<BossBrain, BossAction> what) {

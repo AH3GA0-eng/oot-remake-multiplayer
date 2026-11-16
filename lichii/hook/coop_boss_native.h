@@ -25,7 +25,8 @@
 // our Link's own hit on a copy (its weak point hit, the stun and chance time
 // are its own AI's reaction), the copy's own changes run and the owner's
 // wait. Its own changes skipped just before (the event or the hit is seen up
-// to a few frames late) are made then, late. Afterwards the copy starts again
+// to a few frames late) are made then, late. A new mid-boss copy also runs
+// its own start (its appear, issue 62) for kStartSteps. Afterwards the copy starts again
 // from the owner's state. The owner keeps nothing of its own events (their
 // verbs belong to its cutscene, not the fight) and sends its brain verb as a
 // change once the event is over.
@@ -95,6 +96,11 @@ std::optional<BossAction> ActionFromRequest(const Request& r, bool* plug = nullp
 Request RequestFromAction(const BossAction& a, std::uint64_t node);
 
 enum class Role : std::uint8_t { owner, copy };
+// A boss whose new copy runs its own start first (Table::kStartSteps): a
+// mid-boss (Enemy_MiddleBoss_*: Lizalfos, Stalfos, ...) appears in its room
+// by its own AI with no intro event to run it (a dungeon boss's intro is an
+// event: SetEvent covers it).
+bool RunsOwnStart(std::string_view name);
 
 // One boss the Objects step saw in its walk.
 struct Boss {
@@ -212,6 +218,9 @@ public:
     // state at once would put ours back on the ceiling, and its own AI would
     // ask the intro again (boss-copy-b).
     static constexpr std::uint64_t kAfterEventSteps = 120;
+    // Steps a new mid-boss copy runs its own start (RunsOwnStart; about 3 s:
+    // a Lizalfos's jump into the fight) before the owner's state.
+    static constexpr std::uint64_t kStartSteps = 180;
     static constexpr std::size_t kMaxSkippedKept = 8;
     static constexpr std::size_t kMaxHeld = 8;  // copy bosses held at once (more: not held)
 
@@ -244,7 +253,7 @@ private:
         };
         std::deque<Skipped> skipped;
         std::deque<std::variant<BossBrain, BossAction>> own_late;
-        std::uint64_t react_until = 0;
+        std::uint64_t react_until = 0;  // (also a new mid-boss copy's start, kStartSteps)
         bool held = false;
         // Owner: our event ended: send our brain verb as a change.
         bool record_after_event = false;
