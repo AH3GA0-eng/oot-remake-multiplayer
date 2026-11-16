@@ -3197,7 +3197,7 @@ TEST_CASE("objects: a boss off the walk reads by its last life and its delete re
     CHECK_FALSE(BossAliveKept({unread}, kGanon, last).has_value());
 }
 
-TEST_CASE("objects: a body removed alive keeps no boss of several bodies alive; one away does (row 114, Twinrova)") {
+TEST_CASE("objects: a body removed alive keeps no boss of several bodies alive, one away does (row 114, Twinrova)") {
     constexpr std::array<std::string_view, 3> kTwinrova{"Enemy_DungeonBoss_Twinrova", "Enemy_DungeonBoss_Koume",
                                                         "Enemy_DungeonBoss_Kotake"};
     using CoopObjects::BossAliveKept;

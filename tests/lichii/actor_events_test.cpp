@@ -112,7 +112,7 @@ TEST_CASE("actor events: a hit given goes in through the next Life step once, an
     CHECK(table.Pending(0x500) == 0);
 }
 
-TEST_CASE("actor events: a judged give is told to its step once; only an owner's death passes the life stops") {
+TEST_CASE("actor events: a judged give is told to its step once, only an owner's death passes the life stops") {
     static Ring ring;
     static CoopActorEvents::LifeTable table;
     bool judged = true;
