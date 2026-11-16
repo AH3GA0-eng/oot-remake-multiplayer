@@ -837,6 +837,34 @@ TEST_CASE("boss: a Game Over in the fight is never the boss's death (boss-gameov
     CHECK_FALSE(Has(a, proto::BossState::defeated));
 }
 
+TEST_CASE("boss: a Game Over with the boss off our walk is no death either (row 114, Phantom Ganon)") {
+    // piscesgamer97-phantomganon-20261116: the host's Link died while Phantom Ganon rode in a painting (his body
+    // off the walk: read gone); the Game Over was taken for his death and sent: every game's fight ended.
+    Sync s;
+    ToFight(s);
+    auto a = s.Tick(Dead(Forest().arrive, true, false, true), 30 * kS);
+    CHECK_FALSE(Has(a, proto::BossState::defeated));
+    CHECK_FALSE(a.beaten_here);
+    CHECK(s.phase() == Sync::Phase::fight);
+    for (std::uint64_t t = 31; t <= 60; t += 3) {
+        a = s.Tick(Dead(Forest().arrive, t % 2 == 0, false, true), t * kS);
+        CHECK_FALSE(Has(a, proto::BossState::defeated));
+        CHECK_FALSE(a.beaten_here);
+    }
+    // The death read only after the event began (provisional, boss gone): taken back too.
+    Sync t;
+    ToFight(t);
+    t.Tick(Dead(Forest().arrive, true, true, false), 30 * kS);
+    REQUIRE(t.phase() == Sync::Phase::outro);
+    a = t.Tick(Dead(Forest().arrive, true, false, true), 31 * kS);
+    CHECK_FALSE(Has(a, proto::BossState::defeated));
+    CHECK(t.phase() == Sync::Phase::fight);
+    // The owner's defeat still ends it here.
+    t.Receive(From(2, Forest(), proto::BossState::defeated));
+    t.Tick(Dead(Forest().arrive, false, false, true), 40 * kS);
+    CHECK(t.phase() == Sync::Phase::done);
+}
+
 TEST_CASE("boss: Link's death read after the event began takes back the waiting (boss-gameover-b)") {
     Sync s;
     ToFight(s);

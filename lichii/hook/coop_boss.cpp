@@ -443,8 +443,10 @@ Actions Sync::Step(const Local& local, std::uint64_t now_us) {
         if (local.link_dead.value_or(false) && !died_) {
             died_ = true;
             out.log.push_back("our Link died: a Game Over, not the boss's death");
-            const bool boss_gone = local.boss_alive.has_value() && !*local.boss_alive;
-            if (phase_ == Phase::outro && provisional_ && !boss_gone) {
+            // Not even with the boss read gone: Phantom Ganon is off our walk while he rides in a painting
+            // (player report row 114: the host's Game Over in his fight was sent as the boss beaten, and every
+            // game's fight ended). The boss's real death comes from its owner (BOSS_STATE defeated).
+            if (phase_ == Phase::outro && provisional_) {
                 provisional_ = false;
                 phase_ = Phase::fight;
                 fight_at_ = now_us;
@@ -496,8 +498,8 @@ Actions Sync::Step(const Local& local, std::uint64_t now_us) {
             }
             break;
         case Phase::fight:
-            if (rose && died_ && local.boss_alive.value_or(true)) {
-                // (The boss read gone at the same time is its death all the same: below.)
+            if (rose && died_) {
+                // Also with the boss read gone (a boss off the walk for a while, as Phantom Ganon in his paintings).
                 out.log.push_back("an event while our Link is dead: the Game Over, not the boss's death");
             } else if (rose && !committed_ && local.boss_alive.value_or(true)) {
                 // The fight began here with no intro and nobody past the door
