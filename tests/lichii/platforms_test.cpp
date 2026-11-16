@@ -252,7 +252,7 @@ TEST_CASE("platforms: the owner's clock reaches the other game in step, whatever
     CHECK(a.sync.Writes() == 0);
     bool followed = false;
     for (const auto& n : b.notes) {
-        followed = followed || n.find("following player 1's clock c+0x10+0x30") != std::string::npos;
+        followed = followed || n.find("following player 1's clock as-frame") != std::string::npos;
     }
     CHECK(followed);
     // In step: no more writes.
