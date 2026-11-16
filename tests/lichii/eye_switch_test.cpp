@@ -128,7 +128,7 @@ TEST_CASE("eye switch: the table, its places and FirstOn's key") {
         }));
         CHECK(Dist(s.eye_at, s.asker_at[0], s.asker_at[1], s.asker_at[2]) < 30.0f);
     }
-    CHECK(scenes.size() == 8);
+    CHECK(scenes.size() == 7);
     CHECK(CoopEyeSwitch::FindAll("WaterTemple_EyeSwitch_Focus", "WaterTemple").size() == 2);
     CHECK(CoopEyeSwitch::FindAll("DodongoCavern_Gimmick_EyeSwitch", "DodongoCavern").size() == 1);  // one eye, not three
     CHECK(CoopEyeSwitch::OnFromEnv("1"));

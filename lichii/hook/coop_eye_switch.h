@@ -47,7 +47,7 @@ inline constexpr std::uint32_t kFirstOn = 0x2d9754fd;  // Murmur3("FirstOn"); th
 
 // A room event started by an eye switch's FirstOn, one per (event, eye). Generated from the romfs by
 // tools/puppet_pack/eye_switches.py (deku-ladder): the room graph has an IsFirstOnEventTrigger node, and the graph's
-// EventRequestActor (RequestEventName = event) has a Reference link to that eye. 15 events, 16 eyes, 8 dungeons. The
+// EventRequestActor (RequestEventName = event) has a Reference link to that eye. 15 events, 16 eyes, 7 dungeons. The
 // Water Temple's WaterTemple_EyeSwitch_Focus is asked in two rooms (two lines); the one nearest our Link is used.
 struct Switch {
     std::string_view event;  // without "HavePlayedEvent."
