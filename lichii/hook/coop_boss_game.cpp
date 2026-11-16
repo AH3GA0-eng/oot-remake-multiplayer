@@ -22,6 +22,7 @@
 #include "coop_boss_native.h"
 #include "coop_boss_scenes.h"
 #include "coop_live_events.h"
+#include "coop_session_gate.h"
 #include "coop_objects.h"
 
 #include <chrono>
@@ -158,7 +159,7 @@ struct Glue {
     bool by_scene = true;  // LICHII_COOP_BOSS_MOVE=matrix: never
     bool debug = false;
     std::uint64_t tick_at = 0;  // steady clock, us
-    bool connected = false;
+    CoopSessionGate::Gate gate;  // the session's end seen before the tick (coop_session_gate.h)
     bool unready_logged_ = true;  // the last state logged: ready
     Readiness readiness;          // boss-copy-b: may our game own the room's boss
     std::uint64_t debug_at = 0;
@@ -237,21 +238,22 @@ struct Glue {
             std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now().time_since_epoch())
                 .count());
-        if (tick_at != 0 && steady_us - tick_at < kTickEveryUs) {
-            return;
-        }
-        tick_at = steady_us;
-        if (main == 0 || now_us == 0 || session == nullptr) {
-            if (connected) {
-                sync.Reset();
-                scenes.Reset();
-                readiness.Reset();
-                max_life_cap.reset();
-                connected = false;
+        const auto step = gate.Next(main != 0 && now_us != 0 && session != nullptr, [&] {
+            if (tick_at != 0 && steady_us - tick_at < kTickEveryUs) {
+                return false;
             }
+            tick_at = steady_us;
+            return true;
+        });
+        if (step == CoopSessionGate::Step::forget) {
+            sync.Reset();
+            scenes.Reset();
+            readiness.Reset();
+            max_life_cap.reset();
+        }
+        if (step != CoopSessionGate::Step::join && step != CoopSessionGate::Step::run) {
             return;
         }
-        connected = true;
         Local local;
         local.scene = scene;
         if (position) {
