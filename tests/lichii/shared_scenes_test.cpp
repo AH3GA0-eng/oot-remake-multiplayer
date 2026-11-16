@@ -288,7 +288,7 @@ TEST_CASE("a story cutscene asked by its event setting is sent and joined by tha
     CHECK(source.Refused() == 0);
 }
 
-TEST_CASE("a joined story setting reads its own played flag; a story name with no setting is not joined") {
+TEST_CASE("a joined story setting reads its own played flag, and a story name with no setting is not joined") {
     // The flags the game has (GameDataList.Product.110): HavePlayedEvent per setting; none for the quests' flows.
     CHECK(coop::host::flag_hash("HavePlayedEvent.KokiriForest_Meet_DekuTree_MeetDekuTree_01") == 0xef98d829u);
     CHECK(coop::host::flag_hash("HavePlayedEvent.Get_StoneOfFire_MeetDarnia") == 0x507d99c9u);
