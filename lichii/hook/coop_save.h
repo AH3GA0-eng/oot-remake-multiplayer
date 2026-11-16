@@ -34,6 +34,14 @@ void SetSwitch(std::function<std::string()> root, std::function<bool(const std::
 
 // Each frame: whether Link is in the game (a loaded save): no switch then.
 void NoteInGame(bool in_game);
+// Player report 120, Hookshot's patch 0025: the opens of a slot's progress.sav on the account save (the count so
+// far, the slot folder and whether it was a write), so the host sends the slot its game plays (save::PlayedSlot).
+// Unset (the emulator, an older Hookshot): the newest slot on disk, as before.
+void SetSlotOpens(std::function<unsigned(std::string& slot_dir, bool& write)> opens);
+// Each frame, also without a session: takes the new opens (cheap when there are none).
+void PollSlotOpens();
+// Patch 0024's load window (start, then the save is in): reads inside it are the loaded slot.
+void NoteLoadWindow(bool start);
 
 // The host's save has been written whole into this game's co-op folder and (Hookshot) the game plays from it now:
 // a title menu may load it. Before that a guest's game stays on its own folder.

@@ -185,7 +185,7 @@ For `server_allow` and `server_bind`: remove the `#` in front of the line, put i
 
 ## Playing from the host's save
 
-Everyone plays from the host's save: when you join, the host's game sends its newest save to yours, and your game keeps it in its own co-op save folder (your own saves are never touched). Nothing is pressed for you; the chat says when to load:
+Everyone plays from the host's save: when you join, the host's game sends the save it is playing to yours, and your game keeps it in its own co-op save folder (your own saves are never touched). Nothing is pressed for you; the chat says when to load:
 
 1. **"Host save loading, don't load a save."** The host's save is on its way. Wait on the title screen (it takes a few seconds).
 2. **"Success, load any save."** It is in: press Continue (or pick any save in Load). At the title every save there is the host's.

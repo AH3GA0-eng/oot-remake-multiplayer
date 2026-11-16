@@ -1569,9 +1569,35 @@ void UseSaveSwitch() {
         [remount](const std::string& dir) { return remount(dir.c_str()) != 0; });
 }
 
+// Player report 120: patch 0025's opens of a slot's progress.sav, so the host sends the slot its game plays (not the
+// newest file on disk). An exe without it: the newest slot, as before.
+void UseSlotOpens() {
+    using OpenedFn = unsigned (*)(char*, size_t, int*);
+#ifdef _WIN32
+    const auto opened = reinterpret_cast<OpenedFn>(
+        reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(nullptr), "hos_coop_fs_save_slot_opened")));
+#else
+    const auto opened = reinterpret_cast<OpenedFn>(dlsym(RTLD_DEFAULT, "hos_coop_fs_save_slot_opened"));
+#endif
+    if (!opened) {
+        LOG_INFO(Core, "coop: save: this Hookshot does not say which save slot the game opens (patch 0025): the host "
+                       "sends its newest slot");
+        return;
+    }
+    CoopSave::SetSlotOpens([opened](std::string& slot_dir, bool& write) {
+        char buf[1024];
+        int w = 0;
+        const unsigned opens = opened(buf, sizeof buf, &w);
+        slot_dir = opens != 0 ? std::string(buf) : std::string();
+        write = w != 0;
+        return opens;
+    });
+}
+
 COOP_HOOKSHOT_EXPORT int hos_coop_start(const HosCoopApi* api) {
     if (!CoopHookshot::Start(api)) return 0;
     UseSaveSwitch();
+    UseSlotOpens();
     CoopHookshot::UseLocalPads();
     return 1;
 }
