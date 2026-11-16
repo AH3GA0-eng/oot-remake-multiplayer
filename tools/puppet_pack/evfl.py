@@ -1,160 +1,173 @@
-"""BFEVFL (version 4) reader: flowchart actors, events, entry points, and a walk of one entry (G2, boss-0114-a: the bosses' beaten sets come from their death settings' entries)."""
+"""Reads the game's event flow files (Event/EventFlow/*.bfevfl, EVFL version 4) far enough to say
+which actions an entry point can run.
+
+Layout (offsets are from the file's start; strings are a u16 length, the text and a 0):
+  file      0x20 u16 flowcharts (0: a timeline only); 0x28 u64 -> u64 -> the flowchart
+  flowchart "EVFL"; 0x10 u16 actors, actions, queries, events, entry points; 0x20 name;
+            0x28 actors; 0x30 events; 0x38 entry point names (a "DIC " dictionary); 0x40 entry points
+  actor     0x38 bytes: 0x00 name, 0x08 secondary name, 0x18 action names, 0x20 query names,
+            0x30 u16 actions, u16 queries
+  event     0x30 bytes: 0x00 name, 0x08 u8 type (0 action, 1 switch, 2 fork, 3 join, 4 subflow)
+            action  0x0A u16 next, 0x0C u16 actor, 0x0E u16 action
+            switch  0x0A u16 cases, 0x0C u16 actor, 0x0E u16 query, 0x18 cases (8 bytes each: u32 value,
+                    u16 event; checked in Common_Camera_Pln and the bosses' death settings, G2)
+            fork    0x0A u16 forks, 0x0C u16 join, 0x10 forks (u16 each)
+            join    0x0A u16 next
+            subflow 0x0A u16 next, 0x18 flowchart name ("" or none: this one), 0x20 entry point name
+            action, switch and subflow: 0x10 their parameters (a container, or 0)
+  container 0x00 u8 type 1, 0x02 u16 items, 0x08 the items' names (a "DIC "), 0x10 the items (u64 each)
+  item      0x00 u8 type (2 int, 3 bool, 4 float, 5 string; others are not read), 0x10 the value
+            (a string: u64 to it)
+  entry     0x20 bytes: 0x1C u16 main event
+  dict      "DIC ", u32 count, then at 0x08 (count + 1) entries of 0x10 (the first the root): 0x08 name
+Names only: nothing but the game's own actor, action and entry names is read out.
+"""
 import struct
+from collections import namedtuple
+
+NONE = 0xFFFF
+
+# A switch: `cases` its events, `values` their case values, `query` its query (an index in queries[actor]).
+Event = namedtuple("Event", "type next actor action cases forks join flowchart entry params query values",
+                   defaults=(NONE, ()))
+# actors: [(name, secondary, actions)]; queries: [[query names] per actor]
+Flowchart = namedtuple("Flowchart", "name actors events entries queries", defaults=((),))
 
 
-class Flow:
-    def __init__(self, raw):
-        self.raw = raw
-        assert raw[:8] == b'BFEVFL\x00\x00', raw[:8]
-        fl = self.u64(0x28) if self.u16(0x20) else None  # flowchart offsets array
-        fl = self.u64(fl) if fl else None
-        self.name = None
-        self.actors, self.events, self.entries = [], [], {}
-        if fl is None:
-            return
-        assert raw[fl:fl + 4] == b'EVFL'
-        na, nact, nq, ne, nep = [self.u16(fl + 0x10 + 2 * i) for i in range(5)]
-        self.name = self.s(self.u64(fl + 0x20))
-        actors, events, epdict, eps = (self.u64(fl + 0x28), self.u64(fl + 0x30), self.u64(fl + 0x38),
-                                       self.u64(fl + 0x40))
-        for i in range(na):
-            o = actors + i * 0x38
-            acts = [self.s(self.u64(self.u64(o + 0x18) + 8 * k)) for k in range(self.u16(o + 0x30))]
-            qs = [self.s(self.u64(self.u64(o + 0x20) + 8 * k)) for k in range(self.u16(o + 0x32))]
-            self.actors.append({'name': self.s(self.u64(o)), 'sub': self.s(self.u64(o + 8)), 'actions': acts,
-                                'queries': qs})
-        for i in range(ne):
-            self.events.append(self._event(events + i * 0x30))
-        n = self.u32(epdict + 4)
-        for i in range(n):
-            name = self.s(self.u64(epdict + 8 + 0x10 * (i + 1) + 8))
-            self.entries[name] = self.u16(eps + i * 0x20 + 0x1c)
+def parse(data):
+    """The flowchart of one .bfevfl file (decompressed)."""
+    def u16(o):
+        return struct.unpack_from("<H", data, o)[0]
 
-    def u16(self, o): return struct.unpack_from('<H', self.raw, o)[0]
-    def u32(self, o): return struct.unpack_from('<I', self.raw, o)[0]
-    def i32(self, o): return struct.unpack_from('<i', self.raw, o)[0]
-    def f32(self, o): return struct.unpack_from('<f', self.raw, o)[0]
-    def u64(self, o): return struct.unpack_from('<Q', self.raw, o)[0]
+    def u32(o):
+        return struct.unpack_from("<I", data, o)[0]
 
-    def s(self, p):
-        if not p or p >= len(self.raw):
-            return None
-        n = self.u16(p)
-        return self.raw[p + 2:p + 2 + n].decode('utf-8', 'replace')
+    def u64(o):
+        return struct.unpack_from("<Q", data, o)[0]
 
-    def container(self, p):
-        """A parameter container: {name: value}."""
+    def text(p):
         if not p:
+            return ""
+        return data[p + 2:p + 2 + u16(p)].decode("utf-8")
+
+    def names(dic, n):
+        if data[dic:dic + 4] != b"DIC ":
+            raise ValueError("no dictionary")
+        return [text(u64(dic + 8 + 0x10 * (k + 1) + 8)) for k in range(n)]
+
+    def params(p):
+        if not p or data[p] != 1:
             return {}
-        t, n, d = self.raw[p], self.u16(p + 2), self.u64(p + 8)
-        if t != 1:
-            return self.item(p)
-        names = [self.s(self.u64(d + 8 + 0x10 * (i + 1) + 8)) for i in range(n)]
-        return {names[i]: self.item(self.u64(p + 0x10 + 8 * i)) for i in range(n)}
-
-    def item(self, p):
-        t, n = self.raw[p], self.u16(p + 2)
-        v = p + 0x10
-        if t == 1:
-            return self.container(p)
-        if t == 2: return self.i32(v)
-        if t == 3: return bool(self.u32(v))
-        if t == 4: return self.f32(v)
-        if t in (5, 6): return self.s(self.u64(v))
-        if t == 7: return [self.i32(v + 4 * k) for k in range(n)]
-        if t == 8: return [bool(self.u32(v + 4 * k)) for k in range(n)]
-        if t == 9: return [self.f32(v + 4 * k) for k in range(n)]
-        if t in (10, 11): return [self.s(self.u64(v + 8 * k)) for k in range(n)]
-        if t == 0xd: return ('actor', self.s(self.u64(v)), self.s(self.u64(v + 8)))
-        return ('type', t)
-
-    def _event(self, o):
-        t = self.raw[o + 8]
-        e = {'name': self.s(self.u64(o)), 'type': t}
-        if t == 0:  # action
-            e.update(next=self.u16(o + 0xa), actor=self.u16(o + 0xc), action=self.u16(o + 0xe),
-                     params=self.container(self.u64(o + 0x10)))
-        elif t == 1:  # switch
-            nc, cases = self.u16(o + 0xa), self.u64(o + 0x18)
-            e.update(actor=self.u16(o + 0xc), query=self.u16(o + 0xe), params=self.container(self.u64(o + 0x10)),
-                     cases=[(self.u32(cases + 8 * k), self.u16(cases + 8 * k + 4)) for k in range(nc)])  # 8 bytes: value, event
-        elif t == 2:  # fork
-            nf, join, forks = self.u16(o + 0xa), self.u16(o + 0xc), self.u64(o + 0x10)
-            e.update(join=join, forks=[self.u16(forks + 2 * k) for k in range(nf)])
-        elif t == 3:  # join
-            e.update(next=self.u16(o + 0xa))
-        elif t == 4:  # sub flow
-            e.update(next=self.u16(o + 0xa), params=self.container(self.u64(o + 0x10)),
-                     flow=self.s(self.u64(o + 0x18)), entry=self.s(self.u64(o + 0x20)))
-        return e
-
-    def walk(self, entry):
-        """Every event reachable from `entry`, in a depth-first order (each once)."""
-        out, todo, seen = [], [self.entries[entry]], set()
-        while todo:
-            i = todo.pop()
-            if i == 0xffff or i in seen or i >= len(self.events):
-                continue
-            seen.add(i)
-            e = self.events[i]
-            out.append((i, e))
-            if e['type'] in (0, 3, 4):
-                todo.append(e['next'])
-            elif e['type'] == 1:
-                todo.extend(c[1] for c in reversed(e['cases']))
-            elif e['type'] == 2:
-                todo.append(e['join'])
-                todo.extend(reversed(e['forks']))
+        out = {}
+        for k, name in enumerate(names(u64(p + 8), u16(p + 2))):
+            it = u64(p + 0x10 + 8 * k)
+            kind = data[it]
+            if kind == 2:
+                out[name] = struct.unpack_from("<i", data, it + 0x10)[0]
+            elif kind == 3:
+                out[name] = u32(it + 0x10) != 0
+            elif kind == 4:
+                out[name] = struct.unpack_from("<f", data, it + 0x10)[0]
+            elif kind == 5:
+                out[name] = text(u64(it + 0x10))
         return out
 
-    def describe(self, e):
-        if e['type'] == 0:
-            a = self.actors[e['actor']]
-            return f"{a['name']}.{a['actions'][e['action']]} {e['params']}"
-        if e['type'] == 1:
-            a = self.actors[e['actor']]
-            return f"switch {a['name']}.{a['queries'][e['query']]} {e['params']} cases {e['cases']}"
-        if e['type'] == 4:
-            return f"subflow {e['flow']}:{e['entry']} {e['params']}"
-        return ('fork', 'join')[e['type'] - 2] if e['type'] in (2, 3) else str(e)
+    if data[:6] != b"BFEVFL":
+        raise ValueError("not a BFEVFL file")
+    if u16(0x20) == 0:
+        return Flowchart("", [], [], {})  # a timeline only (a movie): no flowchart
+    fc = u64(u64(0x28))
+    if data[fc:fc + 4] != b"EVFL":
+        raise ValueError("no EVFL flowchart")
+    n_actors, _, _, n_events, n_entries = (u16(fc + 0x10 + 2 * i) for i in range(5))
+    actors, queries = [], []
+    for i in range(n_actors):
+        a = u64(fc + 0x28) + 0x38 * i
+        actions = [text(u64(u64(a + 0x18) + 8 * k)) for k in range(u16(a + 0x30))]
+        actors.append((text(u64(a)), text(u64(a + 8)), actions))
+        queries.append([text(u64(u64(a + 0x20) + 8 * k)) for k in range(u16(a + 0x32))])
+    events = []
+    for i in range(n_events):
+        e = u64(fc + 0x30) + 0x30 * i
+        kind = data[e + 8]
+        nxt = actor = action = join = query = NONE
+        cases, values, forks, flowchart, entry = (), (), (), "", ""
+        if kind == 0:
+            nxt, actor, action = u16(e + 0xA), u16(e + 0xC), u16(e + 0xE)
+        elif kind == 1:
+            actor, query, table = u16(e + 0xC), u16(e + 0xE), u64(e + 0x18)
+            values = tuple(u32(table + 8 * k) for k in range(u16(e + 0xA)))
+            cases = tuple(u16(table + 8 * k + 4) for k in range(u16(e + 0xA)))
+        elif kind == 2:
+            join = u16(e + 0xC)
+            forks = tuple(u16(u64(e + 0x10) + 2 * k) for k in range(u16(e + 0xA)))
+        elif kind == 3:
+            nxt = u16(e + 0xA)
+        elif kind == 4:
+            nxt, flowchart, entry = u16(e + 0xA), text(u64(e + 0x18)), text(u64(e + 0x20))
+        prm = params(u64(e + 0x10)) if kind in (0, 1, 4) else {}
+        events.append(Event(kind, nxt, actor, action, cases, forks, join, flowchart, entry, prm, query, values))
+    entries = {}
+    for i, name in enumerate(names(u64(fc + 0x38), n_entries)):
+        entries[name] = u16(u64(fc + 0x40) + 0x20 * i + 0x1C)
+    return Flowchart(text(u64(fc + 0x20)), actors, events, entries, queries)
 
 
-def walk_flows(load, flow, entry, answer=None):
-    """Every action reachable from `flow`:`entry`, sub flows followed (an empty flow name is the same file), as
-    (flow name, actor name, action name, params) in a depth-first order, each sub flow entry once. `load(name)`
-    gives the Flow of a file name. `answer(flow, actor, query, params)` gives a switch's case value, or None to take
-    every case. The game's Bool queries answer 0 for true: IsDreamWorld's case 0 is the boss rush's banc change in
-    Get_StoneOfFire_DefeatBoss, its case 1 the dungeon's death (BossOut, the quest step)."""
-    out, done = [], set()
-
-    def go(name, ent):
-        if (name, ent) in done:
-            return
-        done.add((name, ent))
-        f = load(name)
-        todo, seen = [f.entries[ent]], set()
-        while todo:
-            i = todo.pop()
-            if i == 0xffff or i in seen or i >= len(f.events):
+def actions_of(flows, flow, entry, load=None, transition=None, answer=None):
+    """[(actor, action, params)] every action reachable from `entry` of `flow` (a subflow called is
+    ("<subflow>", "flow:entry", params)), through switches, forks,
+    subflows (also into other files) and, when `transition(event name)` gives the (flow, entry) an
+    EventTransition's EventName plays, through those. `flows` is {name: Flowchart}; `load(name)` may add
+    a missing one (None when there is none). An empty entry is the flow's default (EntryPoint0, else its
+    first). Unknown entries and files give nothing. `answer(actor, query, params)` may give a switch's case
+    value, so only that case is followed (None: every case). The game's Bool queries answer 0 for true:
+    IsDreamWorld's case 0 in Get_StoneOfFire_DefeatBoss is the boss rush's banc change (G2, boss_beaten)."""
+    out, seen = [], set()
+    todo = [(flow, entry)]
+    while todo:
+        f, e = todo.pop()
+        if (f, e) in seen:
+            continue
+        seen.add((f, e))
+        chart = flows.get(f)
+        if chart is None and load is not None:
+            chart = load(f)
+            if chart is not None:
+                flows[f] = chart
+        if chart is not None and not e and chart.entries:
+            e = "EntryPoint0" if "EntryPoint0" in chart.entries else next(iter(chart.entries))  # the default
+        if chart is None or e not in chart.entries:
+            continue
+        stack, visited = [chart.entries[e]], set()
+        while stack:
+            i = stack.pop()
+            if i == NONE or i in visited or i >= len(chart.events):
                 continue
-            seen.add(i)
-            e = f.events[i]
-            if e['type'] == 0:
-                a = f.actors[e['actor']]
-                out.append((name, a['name'], a['actions'][e['action']], e['params']))
-                todo.append(e['next'])
-            elif e['type'] == 1:
-                a = f.actors[e['actor']]
-                v = answer(name, a['name'], a['queries'][e['query']], e['params']) if answer else None
-                todo.extend(reversed([c[1] for c in e['cases'] if v is None or c[0] == v]))
-            elif e['type'] == 2:
-                todo.append(e['join'])
-                todo.extend(reversed(e['forks']))
-            elif e['type'] == 3:
-                todo.append(e['next'])
-            elif e['type'] == 4:
-                go(e['flow'] or name, e['entry'])
-                todo.append(e['next'])
-
-    go(flow, entry)
+            visited.add(i)
+            ev = chart.events[i]
+            if ev.type == 0:
+                if ev.actor < len(chart.actors) and ev.action < len(chart.actors[ev.actor][2]):
+                    actor, action = chart.actors[ev.actor][0], chart.actors[ev.actor][2][ev.action]
+                    out.append((actor, action, ev.params))
+                    target = ev.params.get("EventName") if action == "EventTransition" else None
+                    if target and transition is not None and transition(target):
+                        todo.append(transition(target))
+                stack.append(ev.next)
+            elif ev.type == 1:
+                value = None
+                if answer is not None and ev.actor < len(chart.actors) and ev.actor < len(chart.queries)                         and ev.query < len(chart.queries[ev.actor]):
+                    value = answer(chart.actors[ev.actor][0], chart.queries[ev.actor][ev.query], ev.params)
+                if value is None or value not in ev.values:
+                    stack.extend(ev.cases)
+                else:
+                    stack.extend(c for c, v in zip(ev.cases, ev.values) if v == value)
+            elif ev.type == 2:
+                stack.extend(ev.forks)
+                stack.append(ev.join)
+            elif ev.type == 3:
+                stack.append(ev.next)
+            elif ev.type == 4:
+                out.append(("<subflow>", f"{ev.flowchart or f}:{ev.entry}", ev.params))
+                todo.append((ev.flowchart or f, ev.entry))
+                stack.append(ev.next)
     return out

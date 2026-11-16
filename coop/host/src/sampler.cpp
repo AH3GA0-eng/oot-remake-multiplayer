@@ -101,9 +101,12 @@ std::vector<Outgoing> Sampler::frame(const std::optional<PlayerReading>& reading
 
   std::uint8_t flags = flags_;
   if (reading->event_running) {
+    // G1 (event_owner.hpp): only an event our Link is in. Another player's event replayed here
+    // and our free Ocarina (its take-out is a plain event, ~4 s: issue 86) do not hold our puppet
+    // in the other games.
+    const bool ours = our_link_in_event(*reading->event_running, reading->event_whose);
     flags = static_cast<std::uint8_t>(
-        (flags & ~protocol::status::in_cutscene) |
-        (*reading->event_running ? protocol::status::in_cutscene : 0));
+        (flags & ~protocol::status::in_cutscene) | (ours ? protocol::status::in_cutscene : 0));
   }
   if (!status_sent_ || flags != flags_) {
     flags_ = flags;

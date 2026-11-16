@@ -3,6 +3,9 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -80,6 +83,11 @@ bool g_shown = false;        // the tab shows in Hookshot's menu
 std::string g_doing;         // what the tab started: "hosting", "joined", "" none
 bool g_copied = false;       // this session's invite code was put on the clipboard
 bool g_answer_copied = false;   // this join's answer code (WAIT_HOST) was put on the clipboard
+// Linux: the automatic copy is tried once per code (CopyThen, off the game's thread). A desktop where the tool
+// fails (Steam Deck Game Mode) fails again, and each try forks the whole game.
+bool g_copy_tried = false;
+bool g_answer_copy_tried = false;
+std::uint64_t g_session = 0;   // one more for each Host or Join: a clipboard result of an earlier one is dropped
 std::string g_answer_note;   // what became of the friend's answer code the host pasted ("" when none)
 std::string g_join_text;     // the code (or address) this join used: remembered once connected
 bool g_join_saved = false;
@@ -195,16 +203,88 @@ void RefreshSession(bool now) {
     }
 }
 
+// The clipboard without stopping the game. On Linux a copy or a paste runs wl-copy / wl-paste, xclip or xsel and
+// waits for it (up to 2 s); done on the game's thread, that stopped the frames (hosting in Steam Deck Game Mode,
+// where the tool fails, fell to a few frames a second). There it runs on the clipboard's own thread
+// (CoopClipboard::CopyLater / PasteLater) and `done` runs on a later Tick (Delivered), under g_mutex; SDL's own
+// clipboard (a paste on the window's thread) is read at once. Windows: at once, as before (OpenClipboard is quick).
+using CopyDone = std::function<void(bool)>;
+using PasteDone = std::function<void(std::optional<std::string>)>;
+#ifndef _WIN32
+std::vector<std::pair<std::uint64_t, CopyDone>> g_copying;
+std::vector<std::pair<std::uint64_t, PasteDone>> g_pasting;
+#endif
+
+void CopyThen(const std::string& text, CopyDone done) {
+#ifdef _WIN32
+    done(SetClipboardText(text));
+#else
+    g_copying.emplace_back(CoopClipboard::CopyLater(text), std::move(done));
+#endif
+}
+
+void PasteThen(PasteDone done) {
+#ifdef _WIN32
+    done(CoopFiles::ReadClipboard());
+#else
+    if (std::optional<std::string> now = CoopClipboard::PasteNow()) {
+        done(std::move(now));
+        return;
+    }
+    g_pasting.emplace_back(CoopClipboard::PasteLater(), std::move(done));
+#endif
+}
+
+// The clipboard's finished jobs, handed to their `done` (each may start another job).
+void Delivered() {
+#ifndef _WIN32
+    for (std::size_t i = 0; i < g_copying.size();) {
+        if (const auto d = CoopClipboard::Take(g_copying[i].first)) {
+            CopyDone done = std::move(g_copying[i].second);
+            g_copying.erase(g_copying.begin() + static_cast<std::ptrdiff_t>(i));
+            done(d->ok);
+        } else {
+            ++i;
+        }
+    }
+    for (std::size_t i = 0; i < g_pasting.size();) {
+        if (auto d = CoopClipboard::Take(g_pasting[i].first)) {
+            PasteDone done = std::move(g_pasting[i].second);
+            g_pasting.erase(g_pasting.begin() + static_cast<std::ptrdiff_t>(i));
+            done(std::move(d->text));
+        } else {
+            ++i;
+        }
+    }
+#endif
+}
+
 // What follows from co-op's state, whether the tab is shown or not: the invite code on the clipboard once there is
 // one (a guest's answer code too), the message logged, a connected join remembered and the host's save loaded.
 void Follow(const HosCoopStatus& st) {
     const bool host = g_doing == "hosting";
-    if (host && st.invite[0] != 0 && !g_copied) {
-        g_copied = SetClipboardText(st.invite);
-        LOG_INFO(Core, "coop: multiplayer tab: host: the invite code is on the clipboard{}", g_copied ? "" : " (it could not be)");
+    const std::uint64_t session = g_session;
+    if (host && st.invite[0] != 0 && !g_copied && !g_copy_tried) {
+#ifndef _WIN32
+        g_copy_tried = true;   // one try per code (Windows tries again each round: a busy clipboard frees up)
+#endif
+        CopyThen(st.invite, [session](bool ok) {
+            if (session != g_session) {
+                return;
+            }
+            g_copied = ok;
+            LOG_INFO(Core, "coop: multiplayer tab: host: the invite code is on the clipboard{}", ok ? "" : " (it could not be)");
+        });
     }
-    if (!host && st.state == HOS_COOP_WAIT_HOST && st.answer[0] != 0 && !g_answer_copied) {
-        g_answer_copied = SetClipboardText(st.answer);
+    if (!host && st.state == HOS_COOP_WAIT_HOST && st.answer[0] != 0 && !g_answer_copied && !g_answer_copy_tried) {
+#ifndef _WIN32
+        g_answer_copy_tried = true;
+#endif
+        CopyThen(st.answer, [session](bool ok) {
+            if (session == g_session) {
+                g_answer_copied = ok;
+            }
+        });
     }
     if (st.message[0] != 0) {
         static std::string said;
@@ -252,7 +332,9 @@ void Host() {
     h.pvp = o.pvp ? 1 : 0;
     h.max_players = static_cast<std::uint8_t>(o.max_players);
     g_doing = "hosting";
+    ++g_session;
     g_copied = false;
+    g_copy_tried = false;
     g_lan_lines.clear();
     g_answer_note.clear();
     if (!CoopHookshot::HostMenu().HostStart(&h)) {
@@ -300,7 +382,9 @@ void Join(const std::string& text) {
     g_doing = "joined";
     g_join_text = text;
     g_join_saved = false;
+    ++g_session;
     g_answer_copied = false;
+    g_answer_copy_tried = false;
     if (!CoopHookshot::HostMenu().Join(&j)) {
         RefreshSession(true);
         return;
@@ -404,14 +488,25 @@ void CopyLan(bool vpn) {
     }
     const CoopTitleMenu::LanSplit split = CoopTitleMenu::SplitLan(CoopFiles::LocalCards());
     const auto& addresses = vpn ? split.vpn : split.home;
-    const bool copied = !addresses.empty() &&
-                        SetClipboardText(CoopTitleMenu::LanJoinText(addresses.front().address, st.port, st.password));
-    g_lan_lines = vpn ? CoopTitleMenu::VpnLines(addresses, st.port, st.password, copied)
-                      : CoopTitleMenu::HomeLines(addresses, st.port, st.password, copied);
-    LOG_INFO(Core, "coop: multiplayer tab: host: {}: {} address(es){}", vpn ? "VPN" : "same network", addresses.size(),
-             copied ? ", the join line is on the clipboard" : "");
-    RefreshSession(true);
+    const std::uint64_t session = g_session;
+    const auto show = [vpn, session, addresses, port = st.port, password = std::string(st.password)](bool copied) {
+        if (session != g_session) {
+            return;   // (hosted again or joined since: these lines are old)
+        }
+        g_lan_lines = vpn ? CoopTitleMenu::VpnLines(addresses, port, password, copied)
+                          : CoopTitleMenu::HomeLines(addresses, port, password, copied);
+        LOG_INFO(Core, "coop: multiplayer tab: host: {}: {} address(es){}", vpn ? "VPN" : "same network",
+                 addresses.size(), copied ? ", the join line is on the clipboard" : "");
+        RefreshSession(true);
+    };
+    if (addresses.empty()) {
+        show(false);
+        return;
+    }
+    CopyThen(CoopTitleMenu::LanJoinText(addresses.front().address, st.port, st.password), show);
 }
+
+void TakeAnswer(const std::optional<std::string>& clip);   // (below)
 
 void PasteAnswer() {
     g_lan_lines.clear();
@@ -424,10 +519,23 @@ void PasteAnswer() {
                               "a VPN use the Same network or the VPN row."});
         return;
     }
+    const std::uint64_t session = g_session;
+    PasteThen([session](std::optional<std::string> clip) {
+        if (session == g_session) {
+            TakeAnswer(clip);
+        }
+    });
+}
+
+// The clipboard's text for PasteAnswer: the friend's answer code, given to the server.
+void TakeAnswer(const std::optional<std::string>& clip) {
+    const HosCoopStatus st = Status();
+    if (st.state != HOS_COOP_HOSTING || st.invite[0] == '\0') {
+        return;   // (the server stopped while the clipboard was read)
+    }
     const auto now = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
-    const CoopHostMenu::PastedAnswer paste =
-        CoopHostMenu::ReadPastedAnswer(CoopFiles::ReadClipboard(), st.invite, st.password, now);
+    const CoopHostMenu::PastedAnswer paste = CoopHostMenu::ReadPastedAnswer(clip, st.invite, st.password, now);
     if (!paste.ok || !CoopHookshot::HostMenu().Answer(paste.text.c_str())) {
         g_answer_note.clear();
         g_menu.SetNote({paste.ok ? "That answer code could not be used: host again and ask your friend to join again."
@@ -443,11 +551,12 @@ void PasteAnswer() {
 void Copy(const std::string& text, const char* what) {
     if (text.empty()) {
         g_menu.SetNote({std::string("No ") + what + " yet."});
-    } else if (SetClipboardText(text)) {
-        g_menu.SetNote({std::string("Copied: ") + text});
-    } else {
-        g_menu.SetNote({"The clipboard could not be used: write the code down instead."});
+        return;
     }
+    CopyThen(text, [text](bool ok) {
+        g_menu.SetNote({ok ? std::string("Copied: ") + text
+                           : std::string("The clipboard could not be used: write the code down instead.")});
+    });
 }
 
 void Act(const Request& r) {
@@ -464,15 +573,21 @@ void Act(const Request& r) {
         break;
     }
     case Request::Kind::kLookParts: g_menu.SetNote(ChooseLookParts(g_menu.look())); break;
-    case Request::Kind::kPaste: {
-        const std::optional<std::string> clip = CoopFiles::ReadClipboard();
-        g_menu.Paste(clip.value_or(std::string()));
-        if (!clip) {   // (said, not a silent nothing: what is missing, and the ways that still work)
-            g_menu.SetNote({kClipboardUnread});
-            LOG_INFO(Core, "coop: multiplayer tab: a paste found no clipboard to read");
-        }
+    case Request::Kind::kPaste:
+        // Into the field that asked only: on Linux the text may come a moment later (PasteThen), and a field the
+        // player moved to meanwhile (another row or page) does not get it.
+        PasteThen([page = g_menu.page(), row = g_menu.selected(), typing = g_menu.typing()](std::optional<std::string> clip) {
+            if (g_menu.page() != page || g_menu.selected() != row || g_menu.typing() != typing) {
+                LOG_INFO(Core, "coop: multiplayer tab: a paste came after the field changed: not used");
+                return;
+            }
+            g_menu.Paste(clip.value_or(std::string()));
+            if (!clip) {   // (said, not a silent nothing: what is missing, and the ways that still work)
+                g_menu.SetNote({kClipboardUnread});
+                LOG_INFO(Core, "coop: multiplayer tab: a paste found no clipboard to read");
+            }
+        });
         break;
-    }
     case Request::Kind::kCopyInvite:
         g_lan_lines.clear();
         Copy(Status().invite, "invite code");
@@ -569,6 +684,7 @@ void Init(bool coop_on) {
 
 void Tick() {
     std::lock_guard lock(g_mutex);
+    Delivered();   // (each frame: a finished copy or paste shows at once)
     const std::uint64_t now = NowMs();
     if (now < g_next_follow_ms) {
         return;
@@ -828,10 +944,14 @@ void Open(CoopPauseMenu::Page page) {
         const std::string coop = ReadText(CoopIni());
         const auto last = CoopTitleMenu::IniGet(coop, "last_invite");
         g_menu.SetRejoin(CoopTitleMenu::IniGet(coop, "last_host").value_or(""), last.value_or(""));
-        const std::string clip = ClipboardText();   // a new code copied already: ready to press Join
-        if (coop::server::nat::looks_like_code(clip) && (!last || clip.find(*last) == std::string::npos)) {
-            g_menu.Paste(clip);
-        }
+        // A new code copied already: ready to press Join (if the Join page is still open when the clipboard is read).
+        PasteThen([last](std::optional<std::string> got) {
+            const std::string clip = got.value_or(std::string());
+            if (g_menu.page() == CoopPauseMenu::Page::kJoin && coop::server::nat::looks_like_code(clip) &&
+                (!last || clip.find(*last) == std::string::npos)) {
+                g_menu.Paste(clip);
+            }
+        });
     }
     Settle();
     g_wanted = kMultiplayerTab;

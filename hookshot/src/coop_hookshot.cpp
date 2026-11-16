@@ -52,6 +52,7 @@
 #include "coop_actor_events.h"
 #include "coop_boss_native.h"
 #include "coop_boss_scenes.h"
+#include "coop_dbno_body.h"
 #include "coop_dbno_game.h"
 #include "coop_enemy_shots.h"
 #include "coop_mods_runtime.h"
@@ -64,6 +65,7 @@
 #include "coop_hud_hearts.h"
 #include "coop_link_sound.h"
 #include "coop_map_page.h"
+#include "coop_map_refresh.h"
 #include "coop_testinput.h"
 #include "coop_maps.h"
 #include "coop_live_events.h"
@@ -89,10 +91,12 @@
 #include "coop_title.h"
 #include "core/core.h"
 #include "coop_host_menu.h"
+#include "coop_null_page.h"
 #include "hos_coop_api.h"
 #include "hos_coop_actors.h"
 #include "hos_coop_bosses.h"
 #include "hos_coop_pads.h"
+#include "hos_coop_save_load.h"
 #include "hos_coop_sound.h"
 #include "hos_coop_host.h"
 #include "hos_coop_world.h"
@@ -191,6 +195,18 @@ bool PuppetGuardInExe() {
 #endif
 }
 
+// Before the game makes our first puppet: its null reads give 0 (issue 150, coop_null_page.h). Once.
+void ArmNullPage(const std::string& actor) {
+    if (actor.rfind("CoopPuppet_", 0) == 0) {
+        CoopNullPage::Arm(Env("HOS_COOP_NULL_READS"));
+    }
+}
+
+// Whether a perceived puppet is safe here (coop_null_page.h Armable); if not, quiet puppets everywhere.
+bool PerceivedSafe() {
+    return CoopNullPage::Armable(Env("HOS_COOP_NULL_READS"), CoopNullPage::Query());
+}
+
 // coop_hookshot.h AllowLinkPuppets / RefuseCreate: without patch 0002 a Link-model puppet crashes Hookshot's game.
 bool Refused(const CoopPuppet::Call& c) {
     static const bool allow = [] {
@@ -220,6 +236,7 @@ bool Refused(const CoopPuppet::Call& c) {
         }
     }
     if (!CoopHookshot::RefuseCreate(actor, allow)) {
+        ArmNullPage(actor);
         return false;
     }
     static bool said = false;
@@ -1049,7 +1066,7 @@ bool Start(const HosCoopApi* api) {
     // The same switches that make the emulator put its cave in.
     CoopLook::AgreeStartTunic();  // your start tunic from the pack's files, before the puppets read it (coop_look.h)
     if (EnvOn("LICHII_COOP_PUPPET") || EnvOn("LICHII_COOP_DEBUG_PUPPET")) {
-        CoopPuppetConfig::Configure();  // as the emulator's cave (coop_puppet_config.h)
+        CoopPuppetConfig::Configure(PerceivedSafe());  // as the emulator's cave (coop_puppet_config.h)
     }
     CoopPackNotice::Enable(CoopPuppetConfig::HasPack());  // no pack: the chat says so once (coop_pack_notice.h)
     g_hold = EnvOn("LICHII_COOP_OBJECTS_AI_HOLD");
@@ -1109,6 +1126,13 @@ void Frame(void* ctx, int site) {
     if (w.calls && ctx != nullptr) {
         RunFlagSetters(ctx);
         LogFlagNative();
+        {  // rows 63/76: the game's own HUD refresh after co-op wrote a dungeon item (coop_map_refresh.h). Patch 0018
+           // runs it at the HUD screen's own next update: never on a stored screen pointer.
+            const auto now_ms = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                               std::chrono::steady_clock::now().time_since_epoch())
+                                                               .count());
+            if (CoopMapRefresh::TheRefresher().Due(now_ms)) CoopMapPage::AskHudRefresh();
+        }
         RunCalls(ctx);
         LogBossNative();
         CoopMapPage::Frame(ctx, g_api);   // the Map page's panes, found once while the game plays
@@ -1148,6 +1172,19 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
             if ((level.wraps >> HOS_COOP_WRAP_SOUND_EMIT & 1) == 0) {
                 LOG_INFO(Core, "coop: this Hookshot has no sound wrap (patch 0014): our Link's sounds are not sent");
             }
+        }
+        {
+            // Patch 0024: the game's own save loads (docs/flags.md, "A load window"). All three wraps, or the old signs.
+            const bool loads = (level.wraps >> HOS_COOP_WRAP_SAVE_LOADED & 1) != 0 &&
+                               (level.wraps >> HOS_COOP_WRAP_SAVE_LOAD_START & 1) != 0 &&
+                               (level.wraps >> HOS_COOP_WRAP_TEMP_LOAD_START & 1) != 0 &&
+                               (level.wraps >> HOS_COOP_WRAP_GAME_OVER_SAVE & 1) != 0;
+            if (CoopSave::NativeSaveLoads() != loads || !loads) {
+                LOG_INFO(Core, "{}", loads ? "coop: save loads: the game's own load nodes tell every save load (patch 0024)"
+                                           : "coop: save loads: this Hookshot has no save-load wraps (patch 0024): a save "
+                                             "load is guessed from the flags and the title");
+            }
+            CoopSave::SetNativeSaveLoads(loads);
         }
         return 1;
     }
@@ -1315,6 +1352,20 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
         // wired, is a second handler of these ids: both must run, and either may take phase 0.)
         return CoopLocalGame::Wrap(id, phase, x);
     }
+    if (id == HOS_COOP_WRAP_GAME_OVER_SAVE) {
+        // Game Over saves its last state (Try Again or Quit Game; patch 0024). Reads nothing.
+        if (phase == 0) {
+            CoopSave::NoteGameOverSave();
+        }
+        return 0;
+    }
+    if (id == HOS_COOP_WRAP_SAVE_LOAD_START || id == HOS_COOP_WRAP_TEMP_LOAD_START || id == HOS_COOP_WRAP_SAVE_LOADED) {
+        // A save load starts, or the save is in (patch 0024): the game's own sequence nodes. Reads nothing.
+        if (phase == 0) {
+            CoopSave::NoteGameSaveLoad(id != HOS_COOP_WRAP_SAVE_LOADED);
+        }
+        return 0;
+    }
     if (id == HOS_COOP_WRAP_SOUND_EMIT) {
         // A sound the game starts (patch 0014): kept when it is on our own Link (coop_link_sound.h). Reads only.
         if (phase == 0) {
@@ -1360,11 +1411,21 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
     if (id == HOS_COOP_WRAP_ACTION_VERB && phase == 0) {
         // Native boss sync: a boss's action verb request (x0 BSA, x1 the request in guest memory).
         CoopBossNative::Table& t = CoopBossNative::TheTable();
-        if (!t.ActionsOn() || x[1] == 0) {
+        CoopDbno::Body::Crawl& crawl = CoopDbno::Body::TheCrawl();
+        if (x[1] == 0 || (!t.ActionsOn() && !crawl.IsOurs(x[0]))) {
             return 0;
         }
         CoopBossNative::Request r{};
         if (!CoopRuntime::Read(x[1], r.data(), r.size())) {
+            return 0;
+        }
+        // Down but not out (coop_dbno_body.h): while our Link is down it stays in the game's Crawl; the
+        // game's other actions for it (a hit's reaction, walk, items) are skipped, answered as taken.
+        if (crawl.Skip(x[0], r, t_own_call)) {
+            x[0] = CoopBossNative::addr::kActionTaken;
+            return 1;
+        }
+        if (!t.ActionsOn()) {
             return 0;
         }
         if (!t.OnActionVerb(x[0], r, (x[2] & 1) != 0, t_own_call)) {
@@ -1584,9 +1645,28 @@ void UseSaveSwitch() {
         [remount](const std::string& dir) { return remount(dir.c_str()) != 0; });
 }
 
+// Player report 120: patch 0025's opens of a slot's progress.sav, so the host sends the slot its game plays (not the
+// newest file on disk). An exe without it: the newest slot, as before.
+void UseSlotOpens() {
+    using OpenedFn = unsigned (*)(char*, size_t, int*);
+#ifdef _WIN32
+    const auto opened = reinterpret_cast<OpenedFn>(
+        reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(nullptr), "hos_coop_fs_save_slot_opened")));
+#else
+    const auto opened = reinterpret_cast<OpenedFn>(dlsym(RTLD_DEFAULT, "hos_coop_fs_save_slot_opened"));
+#endif
+    if (!opened) {
+        LOG_INFO(Core, "coop: save: this Hookshot does not say which save slot the game opens (patch 0025): the host "
+                       "sends its newest slot");
+        return;
+    }
+    CoopSave::SetSlotOpens(opened);   // (also read at each load-window mark, on the game's thread)
+}
+
 COOP_HOOKSHOT_EXPORT int hos_coop_start(const HosCoopApi* api) {
     if (!CoopHookshot::Start(api)) return 0;
     UseSaveSwitch();
+    UseSlotOpens();
     CoopHookshot::UseLocalPads();
     return 1;
 }

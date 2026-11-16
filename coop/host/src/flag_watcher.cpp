@@ -4,6 +4,7 @@
 #include <limits>
 #include <utility>
 
+#include "coop/host/game_items.hpp"
 #include "coop/host/map_drop_log.hpp"
 #include "coop/protocol/codec.hpp"
 
@@ -241,6 +242,8 @@ void FlagWatcher::set_role(FlagRole role) {
 }
 
 void FlagWatcher::set_loading(bool loading) {
+  link_loading_ = loading;
+  if (native_forced_) return;  // a load node's load holds it (frame())
   if (loading) {
     loading_ = true;
     settle_left_ = kSettleFrames;
@@ -331,8 +334,24 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
     end_window(store, resets);
     moved_ = false;
   }
+  // The game's own load nodes (set_native_loads): from a start until the save is in, the game is loading.
+  if (native_loading_ && frames_ - native_since_ > kNativeLoadMaxFrames) {
+    native_loading_ = false;
+    ++stats_.native_timeouts;
+  }
+  if (native_loading_ || native_loaded_) {
+    // Loading whatever Link does (set_loading's own value is kept for after it).
+    native_forced_ = true;
+    loading_ = true;
+    settle_left_ = kSettleFrames;
+  } else if (std::exchange(native_forced_, false)) {
+    const bool link = link_loading_;
+    set_loading(link);
+  }
   if (settling() && !window_) {
     window_ = true;
+    old_counted_ = false;
+    window_retry_ = false;
     moved_ = false;
     window_title_ = false;
     back_keys_.clear();
@@ -344,6 +363,21 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
   if (window_ && loading_ && !scene_readable_) no_scene_frames_ += static_cast<int>(step);
   if (window_ && title_seen_) window_title_ = true;
   see_save_load();
+  if (std::exchange(native_loaded_, false)) {
+    // The save is in: the save load, said by the game itself (the window is open: set_loading above).
+    native_loading_ = false;
+    ++stats_.native_loads;
+    if (std::exchange(native_retry_, false)) {
+      window_retry_ = true;
+      ++stats_.retry_loads;
+    }
+    if (window_ && !moved_) {
+      moved_ = true;
+      seen_ = true;
+      seen_flags_ = static_cast<int>(back_keys_.size());
+      seen_frames_ = no_scene_frames_;
+    }
+  }
   title_seen_ = title_up_;  // taken: what comes before the next frame() counts again
 
   Table changes;
@@ -387,6 +421,7 @@ void FlagWatcher::handle(FlagStore& store, Incoming& message, Table& answers) {
       ++stats_.ignored_messages;
       return;
     }
+    stats_.entries_in += set->flags.size();
     from_ = set->player_number;
     received_kind_ = ReceivedKind::live;
     recording_ = true;
@@ -399,6 +434,7 @@ void FlagWatcher::handle(FlagStore& store, Incoming& message, Table& answers) {
       ++stats_.ignored_messages;
       return;
     }
+    stats_.entries_in += reset->flags.size();
     from_ = reset->player_number;
     received_kind_ = ReceivedKind::reset;
     recording_ = true;
@@ -410,6 +446,7 @@ void FlagWatcher::handle(FlagStore& store, Incoming& message, Table& answers) {
     return;
   }
   if (auto* state = std::get_if<protocol::FlagState>(&message)) {
+    stats_.entries_in += state->flags.size();
     if (holding_) {
       held_states_.push_back(std::move(*state));
     } else {
@@ -427,6 +464,7 @@ void FlagWatcher::handle(FlagStore& store, Incoming& message, Table& answers) {
   }
 
   auto& part = std::get<protocol::FlagSnapshot>(message);
+  stats_.entries_in += part.flags.size();
   if (part.part >= part.part_count) {
     ++stats_.bad_snapshots;
     return;
@@ -533,11 +571,18 @@ bool FlagWatcher::write_exact(FlagStore& store, const FlagEntry& entry) {
 void FlagWatcher::see_save_load() {
   if (!window_ || !loading_ || moved_) return;
   const bool flags_back = static_cast<int>(back_keys_.size()) >= kSaveLoadMin && no_scene_frames_ >= kTitleFrames;
-  // A player's load through Hookshot's title menu (set_title) is a save load
-  // even when its save only goes forward of the group's (player report #96:
-  // a guest's own richer save). The host's loads keep the flags-back rule.
-  const bool title = role_ == FlagRole::player && window_title_;
+  // A load through Hookshot's title menu (set_title) is a save load even when
+  // its save only goes forward of the group's (player report #96: a guest's
+  // own richer save), and for the host too (forest-temple-a: a host's load
+  // mid-session through the title was never seen, so no FLAG_RESET went out
+  // and the old save's maps and floors were put into the new save).
+  const bool title = window_title_;
   if (!flags_back && !title) return;
+  if (native_loads_) {
+    // The game's own load nodes decide (set_native_loads): the old signs are only counted, for the log.
+    if (!std::exchange(old_counted_, true)) ++stats_.old_sign_loads;
+    return;
+  }
   if (!flags_back) ++stats_.title_loads;
   moved_ = true;
   seen_ = true;  // also with 0 flags back (the title sign): take_save_load reports it
@@ -557,13 +602,21 @@ void FlagWatcher::end_window(FlagStore& store, std::vector<Outgoing>& out) {
     // A room's own switch state the game resets itself (one way) is the
     // room's: never reset for the group, never put back.
     if (one_way_.contains(key)) continue;
-    if (role_ == FlagRole::host) {
+    if (role_ == FlagRole::host && window_retry_) {
+      // Game Over's Try Again: not a save the host chose. The group's values (last_: the host's game had them
+      // before the load) go back into our game, as a guest's load does; nothing goes out.
+      if (keeps_own(store, it->second)) continue;
+      if (store.write_exact(it->second)) {
+        ++stats_.load_reverts;
+        ++stats_.applied;
+      }
+    } else if (role_ == FlagRole::host) {
       changed[key] = *now;  // the save's value goes to everyone
       last_[key] = *now;
       if (!store.is_count(key)) note_group(*now, nullptr);
     } else if (keeps_own(store, it->second)) {
       continue;  // our value stays; last_ still holds the group's, so the next diff sends ours
-    } else if (store.write_exact(it->second)) {
+    } else if (store.write_load_back(it->second)) {
       ++stats_.load_reverts;  // back to the group's value from before the load
       ++stats_.applied;
     }
@@ -843,6 +896,7 @@ const std::vector<FlagKey>& FlagWatcher::diff_keys() {
 
 void FlagWatcher::diff(FlagStore& store, Table& changes) {
   const std::vector<FlagKey>& keys = diff_keys();
+  ++diff_pass_;
   for (std::size_t n = 0; n < keys.size(); ++n) {
     const FlagKey key = keys[n];
     std::optional<FlagEntry> now = store.read(key);
@@ -875,12 +929,27 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
             it->second = *now;
             continue;
           }
-          if (store.write_exact(group->second)) {
+          if (store.write_load_back(group->second)) {
             ++stats_.load_reverts;
             ++stats_.applied;
             it->second = group->second;
             continue;
           }
+        }
+      }
+      if (role_ == FlagRole::host && window_retry_ && !store.is_count(key) && !one_way_.contains(key) &&
+          it->second != *now && !keeps_own(store, it->second)) {
+        // The host's Game Over Try Again: the group's value (last_, not moved in this window) back at once, as a
+        // guest's load does above, so the room the host respawns in has it. Counts: end_window.
+        if (store.holds(key)) {
+          unwritten_[key] = it->second;
+          it->second = *now;  // (the game's value seen: else the retry takes our game's own as newer and drops it)
+          continue;
+        }
+        if (store.write_exact(it->second)) {
+          ++stats_.load_reverts;
+          ++stats_.applied;
+          continue;
         }
       }
       continue;  // a save load sends nothing; end_window decides
@@ -897,6 +966,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
           if (store.holds(key)) {
             ++stats_.load_reverts;
             unwritten_[key] = group->second;
+            it->second = *now;  // (as above: the retry must not take the load's value as our game's newer one)
             continue;
           }
           if (store.write(group->second)) {
@@ -919,7 +989,34 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
     const bool bool_drop = before.kind == protocol::FlagKind::boolean && before.value != 0 && now->value == 0;
     const bool bits_drop = before.kind == protocol::FlagKind::uint32 && now->kind == protocol::FlagKind::uint32 &&
                            (before.value & ~now->value) != 0;
-    if (!loading_ && (bool_drop || bits_drop) && store.is_one_way(key)) {
+    if (before.kind == protocol::FlagKind::boolean && before.value == 0 && now->value != 0 && is_one_way_item(key)) {
+      map_on_pass_[key] = diff_pass_;  // a map (or compass) got here: its floors may follow
+    }
+    bool game_floors = false;  // the game's own map get wrote these floors: kept
+    if (!loading_ && bits_drop && store.is_one_way(key)) {
+      // dungeon-sync-b (#63/#76): the game's own map get writes the dungeon's floors as it wants them. When the
+      // same dungeon's map turned on this frame or the one before (or is on now and was off at our last read),
+      // that write is the game's: kept, not ORed with our older bits.
+      bool map_get = false;
+      if (const auto map = map_of_floors(key)) {
+        const auto on = map_on_pass_.find(*map);
+        if (on != map_on_pass_.end() && diff_pass_ - on->second <= 1) {
+          map_get = true;
+        } else if (const auto seen = last_.find(*map); seen != last_.end() && seen->second.value == 0) {
+          const auto map_now = store.read(*map);
+          map_get = map_now && map_now->value != 0;
+        }
+      }
+      if (map_get) {
+        if (one_way_told_.insert(key).second) {
+          one_way_restored_.push_back({key, static_cast<std::uint32_t>(before.value),
+                                       static_cast<std::uint32_t>(now->value), static_cast<std::uint32_t>(now->value),
+                                       true});
+        }
+        game_floors = true;
+      }
+    }
+    if (!loading_ && !game_floors && (bool_drop || bits_drop) && store.is_one_way(key)) {
       // A map or compass the game took back (issue 146: both players opened
       // the Deku Tree's map chest and neither kept the map). Never right for
       // a one-way Bool: put it back, send nothing.
@@ -930,7 +1027,11 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
         ++stats_.one_way_restores;
         ++stats_.applied;
         it->second = before;  // a new floor in `back` goes out next frame as a change
-        if (one_way_told_.insert(key).second) one_way_restored_.push_back(key);
+        if (one_way_told_.insert(key).second) {
+          one_way_restored_.push_back({key, static_cast<std::uint32_t>(before.value),
+                                       static_cast<std::uint32_t>(now->value), static_cast<std::uint32_t>(back.value),
+                                       false});
+        }
         continue;
       }
       ++stats_.write_failures;

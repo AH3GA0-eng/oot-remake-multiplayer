@@ -1,13 +1,16 @@
 name: Build
 
 # Two tiers, so a push to a work branch does not fill the free runners' queue:
-# - fast tier, on a push to any branch: linux gcc unit tests and python-tools on
-#   ubuntu, Python 3.12. About 7 minutes, 2 jobs.
+# - fast tier, on a push to any branch: linux gcc unit tests (plus a compile of the
+#   Hookshot module, the hook code), python-tools on ubuntu with Python 3.12, and the
+#   hook compiles: windows-hook (the module with MSVC), linux-emulator (hook) and
+#   windows-emulator (hook), the emulator's hook files against its own headers with gcc
+#   and MSVC. So every pushed branch compiles all of lichii/hook on every platform.
 # - full tier: every job below. On a push to main or integrate-*, on a tag, on a
 #   pull request into main, and on a manual run (Actions > Build > Run workflow,
-#   pick the branch) when a branch wants the full proof before integration.
-#   linux-emulator (hook compile) is full tier too, and also runs on pushes to
-#   linux-build and linux-2.
+#   pick the branch) when a branch wants the full proof before integration. There
+#   windows builds the module itself, so windows-hook is skipped. linux-emulator's
+#   full part (the AppImage) runs on linux-build, linux-2, tags and by hand.
 # A pull request from a branch of this repo into anything but main runs nothing:
 # the push already ran it. A pull request from a fork runs the fast tier.
 # Docs-only changes skip Build; Content guard still checks them.
@@ -35,12 +38,15 @@ on:
 permissions:
   contents: read
 
-# A new push cancels the branch's older run. The event is in the group so a push
-# does not cancel a manual full run on the same branch. Runs on main and on tags
-# are kept: each merge keeps its own proof.
+# A new push to a work branch cancels that branch's older run. The event is in the
+# group so a push does not cancel a manual full run on the same branch. Runs on main,
+# integrate-* and tags are kept, each merge with its own finished proof: their group
+# also holds the commit, because a group keeps only one waiting run and a third push
+# would otherwise cancel the second while the first still runs (0.11.4: back-to-back
+# integration pushes left twelve merges without a finished run).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-') || startsWith(github.ref, 'refs/tags/')) && format('-{0}', github.sha) || '' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/heads/integrate-') && !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   # The puppet pack tool runs on the player's PC (Windows, any recent Python 3), so its
@@ -69,6 +75,10 @@ jobs:
         run: python tools/puppet_pack/tests/test_designed_enemies.py -v
       - name: Difficulty extra enemy spots tests
         run: python tools/puppet_pack/tests/test_extra_spots.py -v
+      - name: Story cutscene requests tests
+        run: python tools/puppet_pack/tests/test_story_requests.py -v
+      - name: Unnamed room bools tests
+        run: python tools/puppet_pack/tests/test_autogen_flags.py -v
       - name: Boss beaten sets tests
         run: python tools/puppet_pack/tests/test_boss_beaten.py -v
       - name: Save flags tests
@@ -183,6 +193,50 @@ jobs:
       - name: CI runner script checks
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/ci-runner/scripts_test.ps1
 
+  # The Windows module's compile (MSVC, the hook's own compiler) on the pushes the windows
+  # job skips (any branch but main, integrate-* and tags): hookshot_coop only, no tests or
+  # kit, so a worker branch sees its hook compile errors. Always GitHub's runner.
+  windows-hook:
+    if: (github.event_name != 'pull_request' || github.base_ref == 'main' || github.event.pull_request.head.repo.full_name != github.repository) && !(github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-') || startsWith(github.ref, 'refs/tags/'))))
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - name: Fetched libraries cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
+        with:
+          path: .deps
+          key: deps-${{ hashFiles('cmake/enet.cmake', 'cmake/doctest.cmake', 'cmake/monocypher.cmake') }}
+      - name: Fetch libraries (ENet, Monocypher) at their pinned commits
+        shell: bash
+        run: |
+          fetch() {  # name, url, cmake file with the GIT_TAG commit
+            local dir=".deps/$1" rev
+            rev=$(sed -n 's/.*GIT_TAG *\([0-9a-f]\{40\}\).*/\1/p' "$3")
+            [ -n "$rev" ] || { echo "no GIT_TAG commit in $3"; exit 1; }
+            if [ -f "$dir.rev" ] && [ "$(cat "$dir.rev")" = "$rev" ]; then return; fi
+            rm -rf "$dir"; git init -q "$dir"
+            git -C "$dir" fetch -q --depth 1 "$2" "$rev"
+            git -C "$dir" checkout -q FETCH_HEAD
+            echo "$rev" > "$dir.rev"
+          }
+          fetch enet https://github.com/lsalzman/enet.git cmake/enet.cmake
+          fetch monocypher https://github.com/LoupVaillant/Monocypher.git cmake/monocypher.cmake
+      - name: MSVC environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756  # v1.13.0
+      - name: sccache
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad  # v0.0.9
+      - name: Compile the hook code (the Hookshot module)
+        shell: bash
+        run: |
+          cmake -S . -B build -G Ninja -DCOOP_BUILD_TESTS=OFF -DCOOP_BUILD_HOOKSHOT=ON -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
+            -DFETCHCONTENT_SOURCE_DIR_ENET="$(pwd -W)/.deps/enet" \
+            -DFETCHCONTENT_SOURCE_DIR_MONOCYPHER="$(pwd -W)/.deps/monocypher"
+          cmake --build build --target hookshot_coop --parallel
+
   # gcc: Release, -Werror (fast tier). clang: the same with clang. asan: clang
   # Debug with ASan + UBSan. tsan: clang Debug with TSan. asan and tsan also run
   # coop_test with 2 clients for 20 seconds. Everything but gcc is full tier.
@@ -263,6 +317,20 @@ jobs:
           -DFETCHCONTENT_SOURCE_DIR_MONOCYPHER="$GITHUB_WORKSPACE/.deps/monocypher"
       - name: Build
         run: cmake --build build --parallel 4
+      # The hook code (lichii/hook, hookshot/src) builds only into the Hookshot module and
+      # the emulator, and the jobs that build those (windows, linux-longshot, linux-emulator)
+      # run on main, integrate-*, tags and pull requests only. This step is the one that
+      # compiles it on every other push, so a worker branch sees its own compile errors
+      # before the integrator's build. Without -Werror: the hook is held to the emulator's
+      # warnings (lichii/hook/core.cmake), not ours.
+      - name: Compile the hook code (the Hookshot module)
+        if: matrix.job == 'gcc'
+        run: |
+          cmake -S . -B build-hook -DCMAKE_BUILD_TYPE=Release -DCOOP_BUILD_HOOKSHOT=ON -DCOOP_BUILD_TESTS=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DFETCHCONTENT_SOURCE_DIR_ENET="$GITHUB_WORKSPACE/.deps/enet" \
+            -DFETCHCONTENT_SOURCE_DIR_MONOCYPHER="$GITHUB_WORKSPACE/.deps/monocypher"
+          cmake --build build-hook --target hookshot_coop --parallel 4
       - name: ccache stats
         run: ccache --show-stats
       - name: Test
@@ -360,12 +428,13 @@ jobs:
           retention-days: 14
 
   # The co-op emulator on Linux (issue 127): Fritchii at lichii/PIN with our patches and the
-  # hook, configured as Fritchii's own Linux release is (lichii/build-linux.sh). On every full-tier run
+  # hook, configured as Fritchii's own Linux release is (lichii/build-linux.sh). On every push
   # only the hook's files are compiled; the whole emulator, its AppImage and a start without a
   # game run on the linux-build and linux-2 branches, on tags and by hand (workflow_dispatch).
   linux-emulator:
-    # Full tier, plus pushes to the Linux branches (their full part, the AppImage, is gated below).
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-') || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/linux-build' || github.ref == 'refs/heads/linux-2'))
+    # Every push: its hook part is the only compile of the emulator-only hook file (coop_svc.cpp)
+    # against the emulator's own headers. The full part (AppImage) stays gated in the gate step.
+    if: github.event_name != 'pull_request' || github.base_ref == 'main' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-24.04
     name: linux-emulator (${{ matrix.part }})
     timeout-minutes: 300
@@ -464,3 +533,67 @@ jobs:
             ${{ runner.temp }}/kit/oot-coop-*-linux-*.tar.gz
             ${{ runner.temp }}/kit/oot-coop-*-linux-*.tar.gz.sha256
           retention-days: 14
+
+  # The co-op emulator's hook files with MSVC (the compiler of the Windows kit's lichii.exe),
+  # on every push: Fritchii at lichii/PIN with our patches (lichii/fetch.ps1), configured as
+  # lichii/README.md "Build (Windows)" says, then only the lichii/hook objects (core, the
+  # emulator-only coop_svc.cpp and the Qt panel coop_window.cpp / coop_cheats_window.cpp) are
+  # compiled. Nothing is linked or packaged. Always GitHub's runner, never the owner's PC.
+  windows-emulator:
+    if: github.event_name != 'pull_request' || github.base_ref == 'main' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: windows-2022
+    name: windows-emulator (hook)
+    timeout-minutes: 120
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - name: Fetch the emulator source with our patches
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File lichii\fetch.ps1 -Dest "$env:RUNNER_TEMP\fritchii"
+      # Fritchii keeps its downloaded dependencies in <source>/.cache/cpm (CPM_SOURCE_CACHE).
+      - name: Emulator dependency cache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ${{ runner.temp }}/fritchii/.cache/cpm
+          key: fritchii-cpm-windows-${{ hashFiles('lichii/PIN') }}
+      - name: MSVC environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756  # v1.13.0
+      - name: Install Qt
+        uses: jurplel/install-qt-action@d325aaf2a8baeeda41ad0b5d39f84a6af9bcf005  # v4.3.0
+        with:
+          version: "6.8.3"
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          modules: qtcharts
+          cache: true
+      # glslangValidator for the emulator's configure, as Fritchii's own Windows release gets it.
+      - name: Install the Vulkan SDK
+        shell: pwsh
+        working-directory: ${{ runner.temp }}/fritchii
+        run: ./tools/windows/install-vulkan-sdk.ps1
+      - name: sccache
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad  # v0.0.9
+      - name: Compile the co-op hook
+        shell: bash
+        env:
+          # lichii/README.md: the emulator's own files trip these. The -wd form, since Git Bash
+          # turns a leading / into a Windows path (C:/Program Files/Git/wd4456).
+          _CL_: -wd4456 -wd4457 -wd4458 -wd4459
+        run: |
+          set -euo pipefail
+          repo="$(pwd -W)"
+          src="$(cygpath -m "$RUNNER_TEMP/fritchii")"
+          cmake -S "$src" -B "$src/build/coop" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+            -DYUZU_TESTS=OFF -DYUZU_ROOM=OFF -DYUZU_ROOM_STANDALONE=OFF -DENABLE_UPDATE_CHECKER=OFF \
+            -DUSE_DISCORD_PRESENCE=OFF -DYUZU_USE_BUNDLED_QT=OFF "-DCMAKE_PREFIX_PATH=$(cygpath -m "$QT_ROOT_DIR")" \
+            -DLICHII_COOP=ON "-DLICHII_COOP_DIR=$repo" "-DCMAKE_PROJECT_TOP_LEVEL_INCLUDES=$repo/cmake/trim_paths.cmake" \
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+          # The object files of the hook, as lichii/build-linux.sh --hook-only picks them.
+          mapfile -t objects < <(ninja -C "$src/build/coop" -t targets all |
+            sed -n 's#^\([^:]*[/\\]lichii[/\\]hook[/\\][^:]*\.obj\):.*#\1#p' | sort -u)
+          [ "${#objects[@]}" -gt 0 ] || { echo "::error::no co-op hook objects (is LICHII_COOP on?)"; exit 1; }
+          echo "compiling ${#objects[@]} hook files"
+          printf '%s\n' "${objects[@]}" | grep -qE 'coop_svc|coop_window' || { echo "::error::coop_svc.cpp / coop_window.cpp not in the list"; exit 1; }
+          ninja -C "$src/build/coop" -k 0 "${objects[@]}"  # -k 0: every failing file in one run

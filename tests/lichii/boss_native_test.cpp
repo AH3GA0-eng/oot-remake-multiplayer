@@ -609,6 +609,36 @@ TEST_CASE("native boss: the owner's own boss and a forgotten copy are never held
     CHECK_FALSE(t.Watches(kLife));
 }
 
+TEST_CASE("native boss: a new mid-boss copy runs its own start, then takes the owner's state") {
+    // Issue 62 (Dodongo's Cavern): the second Lizalfos's copy took the owner's
+    // verbs at once, skipped its own appear and stayed unseen.
+    CHECK(RunsOwnStart("Enemy_MiddleBoss_Lizalfos"));
+    CHECK_FALSE(RunsOwnStart("Enemy_DungeonBoss_Gohma"));  // its intro is an event
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Boss{kActor, kBsa, Role::copy, "Enemy_MiddleBoss_Lizalfos", 2}});
+    t.Receive(kActor, BossBsa{3, 62, std::nullopt, {}});
+    FakeGuest g;
+    const std::int32_t at = 60;  // its own start's phase
+    g.Write(kBsa + addr::kBsaBrainVerb, &at, 4);
+    // Its own appear runs; the owner's verbs wait.
+    CHECK_FALSE(t.OnBrainVerb(kBsa, 61, false, false));
+    CHECK_FALSE(t.OnActionVerb(kBsa, GameRequest(5, kNode), true, false));
+    for (std::uint64_t i = 0; i + 1 < Table::kStartSteps; ++i) {
+        CHECK_FALSE(t.Step(g, false, 0, kMain));
+    }
+    // Over: the owner's phase is put in, and its own are skipped again.
+    auto c = t.Step(g, false, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kSetBrainVerb);
+    CHECK(c->x[1] == 62);
+    CHECK(t.OnBrainVerb(kBsa, 61, false, false));
+    // A hand-over of the same copy (not a new one) starts no own time.
+    t.Publish({Boss{kActor, kBsa, Role::copy, "Enemy_MiddleBoss_Lizalfos", 3}});
+    t.Receive(kActor, BossBsa{1, 62, std::nullopt, {}});
+    CHECK(t.OnBrainVerb(kBsa, 61, false, false));
+}
+
 // Player report #105: a black screen after Gohma's death in the host's game. The death setting our game is asked
 // (InsideTheDekuTree_BossDie) runs her own death in our copy; past the event the copy rules skipped its own
 // changes again and its Life step held her at 1, so the death never finished (no fade back, no warp).

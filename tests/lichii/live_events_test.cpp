@@ -115,6 +115,28 @@ TEST_CASE("live events: the tester's Deku Tree switches each start in their own 
           std::optional<std::string>("InsideTheDekuTree_Gimmick_CandleAndSpiderWeb"));
 }
 
+TEST_CASE("live events: an event asked from two rooms under one flag is never started here (Water Temple)") {
+    // deku-ladder: WaterTemple_EyeSwitch_Focus is asked by the eye of room 0 and of room 21 (36 m apart), the Dark
+    // Link room's door event by both its doors (51 m): which room played it is not known, so neither is started.
+    CHECK(CoopLiveEvents::SpansRooms("WaterTemple_EyeSwitch_Focus", "WaterTemple"));
+    CHECK(CoopLiveEvents::SpansRooms("WaterTemple_DarkLink_DoorMovement", "WaterTemple"));
+    // Two askers in one room stay startable.
+    CHECK_FALSE(CoopLiveEvents::SpansRooms("GerudoTrainingGround_10_AppearTreasureBox", "GerudoTrainingGround"));
+    CHECK_FALSE(CoopLiveEvents::SpansRooms("SpiritTemple_Level_Room_19_SwitchOn_01", "SpiritTemple"));
+    CHECK_FALSE(CoopLiveEvents::SpansRooms("InsideTheDekuTree_Gimmick_FallingLadder", "InsideTheDekuTree"));
+    // The same name in two scenes is one place per scene.
+    CHECK_FALSE(CoopLiveEvents::SpansRooms("ForestTemple_Room25_FirstTimeBLock", "ForestTemple"));
+    int spanning = 0;
+    for (const auto& p : CoopLiveEvents::Places()) {
+        spanning += CoopLiveEvents::SpansRooms(p.event, p.scene) ? 1 : 0;
+    }
+    CHECK(spanning == 6);  // the Water Temple lines: 4 for the two doors, 2 for the two eyes
+    CoopLiveEvents::Decider d;
+    const std::vector<std::string> held{"WaterTemple_EyeSwitch_Focus"};
+    CHECK_FALSE(d.Next(held, "WaterTemple", false, std::array<float, 3>{0.7f, 116.1f, -29.3f}).has_value());
+    CHECK_FALSE(d.Next(held, "WaterTemple", false, std::array<float, 3>{-33.5f, 118.9f, -40.7f}).has_value());
+}
+
 TEST_CASE("live events: every place is a shared gimmick event of a dungeon, in the scene its name says") {
     std::size_t deku = 0;
     for (const auto& p : CoopLiveEvents::Places()) {

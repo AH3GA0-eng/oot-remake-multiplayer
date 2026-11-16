@@ -61,9 +61,18 @@ struct Menu {
     bool menu_open = false;  // a game menu is in front
     bool map_page = false;   // the panel's Map page is shown
     std::uint64_t hud_screen = 0, panel_screen = 0;
+    // Patch 0018 (rows 63/76): how long ago the HUD screen last ran; -1 not since it was seen, or an exe whose patch
+    // 0018 does not say (then nothing is called on the screen).
+    std::int64_t hud_ran_ns_ago = -1;
+    std::uint32_t hud_refreshes = 0;  // patch 0018: HUD refreshes run for AskHudRefresh so far
+    // The HUD screen ran within the last 100 ms (a few frames).
+    bool HudRuns() const { return hud_screen != 0 && hud_ran_ns_ago >= 0 && hud_ran_ns_ago < 100'000'000; }
 };
 // None: the exe has no patch 0018. Any thread.
 std::optional<Menu> MenuState();
+// Rows 63/76: asks patch 0018's hos_coop_hud_refresh (the HUD screen's own refresh at its next update) and logs the
+// HUD copy before, and after once the refresh has run. False when this Longshot has no such export.
+bool AskHudRefresh();
 
 // A pane's box in the layout's units (x right, y down from the top left of
 // 3840 x 2160) from its global matrix and its size; none for a matrix that

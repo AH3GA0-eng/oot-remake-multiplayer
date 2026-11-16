@@ -79,8 +79,10 @@ FrameReport Session::frame(const std::optional<PlayerReading>& reading, FlagStor
       }
     }
     if (watcher_ && flags != nullptr) {
-      // No Link to read: the game is loading (FlagWatcher::set_loading).
-      watcher_->set_loading(!reading.has_value());
+      // No Link to read: the game is loading (FlagWatcher::set_loading). Hookshot's title menu up is never play
+      // either, Link or not (forest-temple-a: a host's save load through it was not seen as one, and the old
+      // save's floors were put back into the new save, once a frame).
+      watcher_->set_loading(!reading.has_value() || title_up_);
       watcher_->set_scene(scene_readable_);
       queue_flags(watcher_->frame(*flags), out);
     }
@@ -94,6 +96,7 @@ FrameReport Session::frame(const std::optional<PlayerReading>& reading, FlagStor
       report.save_load = true;
       report.save_load_flags = seen->flags;
       report.save_load_frames = seen->frames;
+      report.save_load_native = seen->native;
     }
   }
   report.queued = out.size();

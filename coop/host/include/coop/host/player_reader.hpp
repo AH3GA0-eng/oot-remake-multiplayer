@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 
+#include "coop/host/event_owner.hpp"
 #include "coop/host/game_memory.hpp"
 #include "coop/protocol/messages.hpp"
 
@@ -31,7 +32,17 @@ struct PlayerReading {
   std::optional<Quat> rotation;
   std::optional<protocol::Age> age;
   std::optional<std::string> scene;     // for example "spot00"
-  std::optional<bool> event_running;    // an event (cutscene) has control
+  // An event has control of our Link (a cutscene, a talk): the event manager's running word,
+  // or our Link's own event performer bound into an event (row 97: a Deku Scrub's talk and
+  // AttackedEvent leave the word 0). Every "our Link is in an event" rule reads this.
+  std::optional<bool> event_running;
+  // event_running is true only because our Link's performer is bound (the word is 0): for the log.
+  bool event_by_link = false;
+  // Our Link's own event performer is bound into an event (with the word or without).
+  bool link_bound = false;
+  // G1 (event_owner.hpp): whose the running event is. The reader cannot know (it reads one game
+  // frame); the hook's EventOwnerTracker sets it. `ours` by default: what event_running meant before.
+  EventWhose event_whose = EventWhose::ours;
   std::optional<protocol::Animation> animation;  // AS command in the main slot
   std::optional<protocol::Equipment> equipment;  // what the player wears
   bool operator==(const PlayerReading&) const = default;
@@ -63,7 +74,9 @@ class PlayerReader {
   std::optional<Quat> read_rotation();      // from the actor's matrix
   std::optional<protocol::Age> read_age();
   std::optional<std::string> read_scene();
-  std::optional<bool> read_event_running();
+  std::optional<bool> read_event_running();  // the word or our Link bound, as PlayerReading
+  std::optional<bool> read_event_word();     // the event manager's running word alone
+  std::optional<bool> read_link_bound();     // our Link's own performer holds an event link
   // The AS command playing in the player's main slot, its frame and rate.
   // Nothing when no command plays, or the name is not 1 to
   // protocol::kMaxAnimationChars printable ASCII characters, or the frame or

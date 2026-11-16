@@ -67,10 +67,13 @@ std::optional<std::uint64_t> OurLinkActor();
 void HurtOurLink(std::int32_t quarters, const std::array<float, 3>& at,
                  const std::array<float, 3>& from);
 
-// Emulator thread, each frame: whether our own Link is in an event (a talk, a
-// cutscene). While it is, shared changes to actors near it wait (coop_guard.h,
-// issue 144).
-void SetLocalEvent(bool in_event);
+// Emulator thread, each frame (G1, coop/host/event_owner.hpp): whether an event
+// runs in our game (`in_event`: the actors it binds here act for it and their
+// shared changes wait, whoever's event it is) and whether our own Link is in it
+// (`ours`: a talk, a cutscene of ours; shared changes to actors near our Link
+// wait, coop_guard.h, issue 144, and our event claims its actors). Another
+// player's event replayed here is in_event without ours.
+void SetLocalEvent(bool in_event, bool ours);
 
 // Network thread, from the session's on_event: takes the object messages.
 void OnEvent(const coop::net::Event& event);

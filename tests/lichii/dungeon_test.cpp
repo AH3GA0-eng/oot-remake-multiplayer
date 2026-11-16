@@ -28,7 +28,8 @@ TEST_CASE("dungeon: the Water Temple's water level and switches are in the list"
     bool shutter = false;
     for (const auto& f : CoopDungeon::Flags()) {
         level |= std::string(f.name) == "WaterTemple_Room00_WaterLevel" && f.is_int;
-        shutter |= std::string(f.name) == "WaterTemple_Room00_Switch_NearTheShutter";
+        // (Room00_Switch_NearTheShutter is where our Link stands, set both ways by an area: not shared.)
+        shutter |= std::string(f.name) == "WaterTemple_Room00_OpenDoor1F";
         // One player's own state is not shared.
         CHECK(std::string(f.name).find("NaviHelp") == std::string::npos);
         CHECK(std::string(f.name).find("IsPlayerIn") == std::string::npos);
@@ -129,6 +130,57 @@ TEST_CASE("dungeon: one player's failed or reset attempt is not shared (issue 14
     // The puzzle solved is shared: the Scrub Brothers' room opens for everyone.
     CHECK(names.count("InsideTheDekuTree_RoomK_Cleared") == 1);
     CHECK(names.count("InsideTheDekuTree_Dungeon_EnemyScrubDekuDestroy_003") == 1);
+}
+
+TEST_CASE("dungeon: where one player's Link stands in the Forest Temple is not shared (player report 108)") {
+    // Set true and false by a room graph's Player-layer areas, read only by
+    // that player's own event (the Song of Time block's, the fall-down one).
+    std::set<std::string> names;
+    for (const auto& f : CoopDungeon::Flags()) names.insert(f.name);
+    for (const char* out : {"ForestTemple_IsLeftOfTimeBLock", "ForestTemple_IsInFallingCeilingRoom"}) {
+        CHECK_MESSAGE(names.count(out) == 0, out);
+    }
+    // The block gone stays the group's: every game's room graph reads it live.
+    CHECK(names.count("Foresttemple_SongOfTimeBlock_A_01_Disappearance") == 1);
+    CHECK(names.count("ForestTemple_Room02_TimeBlock") == 1);
+}
+
+TEST_CASE("dungeon: where one player's Link stands is not shared in any dungeon (forest-temple-a sweep)") {
+  std::set<std::string> names;
+  for (const auto& f : CoopDungeon::Flags()) names.insert(f.name);
+  for (const char* out : {"BottomOfTheWell_Level_Room_01_InTheCenterArea",
+                          "BottomOfTheWell_Level_Room_01_InTheDivingArea",
+                          "BottomOfTheWell_Level_Room_01_InTheReturnArea",
+                          "BottomOfTheWell_Level_Room_09_NearRock",
+                          "DodongoCavern_Room05_NearTreasureBox",
+                          "DodongoCavern_Room10_PlayerOutOfRoom",
+                          "FireTemple_Room04_IsAtCorrectArea",
+                          "FireTemple_Room12_IsAtCorrectArea",
+                          "ForestTemple_Room08_ClimbIvy_Near",
+                          "GerudoTrainingGround_Dungeon_Room03_InSecretRoom",
+                          "GerudoTrainingGround_Dungeon_Room08_InSecretRoom",
+                          "InsideJabuJabuBelly_Room09_TBoxNearRuto",
+                          "InsideJabuJabuBelly_Room12_TBoxNearRuto",
+                          "InsideJabuJabuBelly_Room14_IsNearGimmick",
+                          "InsideJabuJabuBelly_Room14_PlayerIsUnder",
+                          "InsideJabuJabuBelly_Room18_IsInHiddenArea",
+                          "InsideTheDekuTree_RoomA_NearScaffold",
+                          "ShadowTemple_Level_Room_09_Away",
+                          "ShadowTemple_Level_Room_13_PlayerPosCheck",
+                          "SpiritTemple_LevelRoom_02_PlayerPosChange1_2",
+                          "SpiritTemple_LevelRoom_02_PlayerPosChange2",
+                          "SpiritTemple_LevelRoom_02_PlayerPosChange2_2",
+                          "SpiritTemple_Level_Room_02_PlayerPosChange1",
+                          "SpiritTemple_Room16_PlayerPosCheck",
+                          "WaterTemple_Room00_Switch_NearThePlatform",
+                          "WaterTemple_Room00_Switch_NearTheShutter",
+                          "IceCavern_Room01Demo_Far"}) {
+    CHECK_MESSAGE(names.count(out) == 0, out);
+  }
+  // Room state set both ways by a graph stays shared (a switch, a fire, an air wall).
+  CHECK(names.count("FireTemple_Room04_SwitchHit") == 1);
+  CHECK(names.count("FireTemple_Room14_AirWallEnemyMove00") == 1);
+  CHECK(names.count("ForestTemple_TwistCorridor01_IsConstraint") == 1);
 }
 
 TEST_CASE("dungeon: Merge adds to the list, makes one when there is none, or does nothing when off") {
@@ -315,6 +367,59 @@ TEST_CASE("dungeon: the Deku torch plate's unnamed autogen bool is shared (deku-
     wa.receive(proto::Message{proto::FlagState{1, set->flags}});
     wa.frame(a);
     CHECK(a.values[key].value == 1);
+}
+
+TEST_CASE("dungeon: the Fire Temple pillar's fallen state and every room's unnamed bool are shared (#116)") {
+    namespace proto = coop::protocol;
+    std::optional<host::SharedFlags> list;
+    CoopDungeon::Merge(list, true);
+    REQUIRE(list);
+    std::set<std::uint32_t> autogen;
+    std::map<std::string, int> per_dungeon;
+    for (const auto& f : CoopDungeon::AutogenFlags()) {
+        autogen.insert(f.hash);
+        ++per_dungeon[f.dungeon];
+    }
+    // Generated from the romfs (tools/puppet_pack/autogen_flags.py): 47 room bools in 6 dungeons.
+    CHECK(autogen.size() == 47);
+    CHECK(per_dungeon["FireTemple"] == 18);
+    CHECK(per_dungeon["GerudoTrainingGround"] == 22);
+    // The big pillar's Buried (Logic/FireTemple_Level_Room_10_Prefab_3284; its event flow waits on the name),
+    // the two hammer floors under it, and the Deku torch plate seen in a game.
+    for (const std::uint32_t h : {0xa82cc7a2u, 0xce19219cu, 0x03a335cbu, 0x0f8f3fa3u}) {
+        CHECK(autogen.contains(h));
+    }
+    // One player's own stay out: the refill respawns (pots, grass), a gossip stone's fairy, Ganon's Castle
+    // room 24's "walked in".
+    for (const std::uint32_t h : {0x21958973u, 0xfe6d1779u, 0x58445aa7u, 0x186adf43u, 0xaecf3cfeu, 0x9de51737u,
+                                  0x0fa9d971u, 0xbd902a5bu}) {
+        CHECK_FALSE(autogen.contains(h));
+        CHECK_FALSE(list->contains(host::FlagKey(h, std::uint16_t{0})));
+    }
+
+    // A hammered the pillar from its top (it rode down, its game buried it); B stood on top too. B's game
+    // gets the bool, so its room graph makes the fallen pillar and the respawn swap at the bottom.
+    const auto key = host::FlagKey(0xa82cc7a2, std::uint16_t{0});
+    REQUIRE(list->contains(key));
+    Game a;
+    Game b;
+    a.set(key, 0);
+    b.set(key, 0);
+    host::FlagWatcher wa(*list, host::FlagRole::player);
+    host::FlagWatcher wb(*list, host::FlagRole::player);
+    wa.frame(a);
+    wb.frame(b);
+    a.set(key, 1);
+    const auto out = wa.frame(a);
+    REQUIRE(out.size() == 1);
+    proto::Message m;
+    REQUIRE(proto::decode(out[0].bytes, m) == proto::Error::none);
+    const auto* set = std::get_if<proto::FlagSet>(&m);
+    REQUIRE(set);
+    REQUIRE(set->flags.size() == 1);
+    wb.receive(proto::Message{proto::FlagState{1, set->flags}});
+    wb.frame(b);
+    CHECK(b.values[key].value == 1);
 }
 
 TEST_CASE("dungeon: the slingshot room's ladder event played in A is set in B (issue 129)") {

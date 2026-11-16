@@ -42,6 +42,7 @@ add_executable(coop_tests
   host/save_transfer_test.cpp
   host/session_test.cpp
   host/scene_test.cpp
+  host/event_owner_test.cpp
   overlay/overlay_test.cpp
   overlay/map_icons_test.cpp
   lichii/camera_test.cpp
@@ -52,6 +53,7 @@ add_executable(coop_tests
   lichii/callers_test.cpp
   lichii/hit_replay_test.cpp
   lichii/fairy_test.cpp
+  lichii/map_refresh_test.cpp
   lichii/rooms_test.cpp
   lichii/objects_test.cpp
   lichii/show_delay_test.cpp
@@ -62,9 +64,11 @@ add_executable(coop_tests
   lichii/enemy_shots_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_enemy_shots.cpp
   lichii/drops_test.cpp
   lichii/guard_test.cpp
+  lichii/event_member_test.cpp
   lichii/snap_test.cpp
   lichii/follow_test.cpp
   lichii/scrub_talk_test.cpp
+  lichii/scrub_sale_test.cpp
   lichii/chests_test.cpp
   lichii/colors_test.cpp
   lichii/dungeon_test.cpp
@@ -78,6 +82,9 @@ add_executable(coop_tests
   lichii/local_test.cpp
   lichii/local_game_test.cpp
   lichii/local_view_test.cpp
+  lichii/solo_view_test.cpp
+  lichii/session_gate_test.cpp
+  lichii/session_end_test.cpp
   lichii/world_test.cpp
   lichii/ocarina_test.cpp
   lichii/ocarina_sound_test.cpp
@@ -97,6 +104,7 @@ add_executable(coop_tests
   lichii/teleport_test.cpp
   lichii/pvp_test.cpp
   lichii/dbno_test.cpp
+  lichii/dbno_body_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_dbno_body.cpp
   lichii/difficulty_test.cpp
   lichii/live_events_test.cpp
   lichii/logic_probe_test.cpp
@@ -121,6 +129,7 @@ add_executable(coop_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_local_net.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_shared_scenes.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_fairy.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_map_refresh.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_rooms.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_objects_sync.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_npc_anim.cpp
@@ -131,6 +140,7 @@ add_executable(coop_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_world.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_logic_probe.cpp
   lichii/lift_ride_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_lift_ride.cpp
+  lichii/eye_switch_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_eye_switch.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_ocarina.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_ocarina_sound.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_look_share.cpp

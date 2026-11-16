@@ -59,6 +59,7 @@
 #include "coop_difficulty.h"
 #include "coop_puppet.h"
 #include "coop_pvp_game.h"
+#include "coop_dbno_body.h"
 #include "coop_dbno_game.h"
 #include "coop_svc.h"
 
@@ -106,7 +107,11 @@
 #include "coop_logic_probe.h"
 #include "coop_platforms.h"
 #include "coop_counters.h"
+#include "coop_scrub_talk.h"
+#include "coop_scrub_sale.h"
 #include "coop_scrubs.h"
+#include "coop_event_member.h"
+#include "coop_event_owner.h"
 #include <set>
 
 namespace CoopObjects {
@@ -178,6 +183,7 @@ CoopWorld::GrassSync& TheGrass() {
 // looks and receives, the calc thread's cave gives the others' hits.
 constexpr int kScrubsCallerOrder = 62;
 constexpr int kLiftRideCallerOrder = 47;  // jabu-lifts (#65): after the boss table (45), before the boss rooms (50)
+constexpr int kDbnoBodyCallerOrder = 48;  // down but not out: our downed Link's crawl, shield, unseen (coop_dbno_body.h)
 
 std::string EnvText(const char* name);  // below EnvOn  // after the live events (60) and the teleport's (61)
 
@@ -235,6 +241,8 @@ constexpr u64 kBlockSize = kBlockNames + kNameCell * kNameCells;
 // The pause counters' ring (coop_counters.h): made once with the game's
 // malloc on the calc thread, its address put where the cave reads it.
 constexpr int kCountersCallerOrder = 63;
+// deku-switches (LICHII_COOP_LOGIC_PROBE): a room's event asker (coop_live_events.h kAskerNames).
+bool IsRoomAsker(std::string_view name) { return name == "EventRequestActor" || name == "EventProxyRequestActor"; }
 struct CounterRingBox {
     std::mutex mutex;
     u64 main = 0;    // set by Share while sharing; 0: nothing to do
@@ -555,6 +563,20 @@ public:
                 wanted_.erase(w);
             }
         }
+    }
+
+    // Present thread (report 109): a copy's own wake play that a put-back
+    // took away is played again once at the next game frame. The owner's
+    // play wished for it before is dropped, and the wake is no hand-over's
+    // to replay later (wanted_).
+    void GiveBack(u64 actor, std::string name) {
+        std::lock_guard lock(mutex_);
+        LOG_INFO(Core, "coop: objects: copy {:#x}: its own wake '{}' is played again (report 109)", actor, name);
+        if (wakes_.size() < 64) {
+            wakes_.emplace_back(actor, std::move(name));
+        }
+        std::erase_if(plays_, [actor](const PlayWish& p) { return p.address == actor && p.slot == 0; });
+        wanted_.erase(actor);
     }
 
     // Releases made since the last ask: bit found set and cleared, and not.
@@ -1239,11 +1261,18 @@ Mover& TheMover() {
     return mover;
 }
 
-// Whether our own Link is in an event (a talk, a cutscene), from the hook's
-// reading each frame (SetLocalEvent; issue 144).
+// Whether an event runs in our game, from the hook's reading each frame
+// (SetLocalEvent; issue 144).
 std::atomic<bool>& TheLocalEvent() {
     static std::atomic<bool> in_event{false};
     return in_event;
+}
+
+// G1: whether our own Link is in that event (not another player's replayed here,
+// not the free Ocarina; coop/host/event_owner.hpp).
+std::atomic<bool>& TheOwnEvent() {
+    static std::atomic<bool> ours{false};
+    return ours;
 }
 
 // The MaxLife flag as the session left it (SetMaxLife); -1: not known.
@@ -1330,6 +1359,11 @@ public:
                 world_.Reset();
                 block_retry_.clear();
                 ForgetBosses();  // (not connected, or no scene: the title)
+                // No owner or copy any more: our game runs every boss of its own again (a copy held at life 1
+                // for its owner could not die after a leave or a drop).
+                if (CoopBossNative::Table& bosses = CoopBossNative::TheTable(); bosses.BrainOn()) {
+                    bosses.Publish({});
+                }
                 sharing_ = false;
             }
             return;
@@ -1376,6 +1410,9 @@ public:
         if (!Collect(r, seen)) {
             return;
         }
+        // Issue 200, row 97: our event's actors become ours (Sync::SetEvent).
+        // G1: another player's event here: its bound actors act for it, none is claimed.
+        sync_.SetEvent(TheLocalEvent().load(), server_now_us, TheOwnEvent().load());
         NoteBosses(seen, sync_.Owned(), *scene);
         const u8 self =
             session->with_client([](coop::net::Client& c) { return c.player_number(); });
@@ -1633,7 +1670,7 @@ public:
                 ScrubsBox& box = TheScrubs();
                 std::lock_guard lock(box.mutex);
                 box.main = main_;
-                box.puzzle.SetEvent(TheLocalEvent().load(), CoopEvery::NowUs());  // issue 144
+                box.puzzle.SetEvent(TheOwnEvent().load(), CoopEvery::NowUs());  // issue 144; G1: our Link's event
                 box.puzzle.Look(*scene, scrubs_seen_, player_, CoopEvery::NowUs(), out);
             }
             for (auto& h : out.send) {
@@ -1799,7 +1836,8 @@ public:
             for (const auto& g : gimmicks_) {
                 if (!player_ || (g.name.find("ElevatorLift") == std::string::npos && g.name.find("FallingLadder_") == std::string::npos &&
                                  g.name.find("Stopper_") == std::string::npos &&
-                                 g.name.find("MoveFloor") == std::string::npos)) {
+                                 g.name.find("MoveFloor") == std::string::npos &&
+                                 g.name.find("EyeSwitch_") == std::string::npos && !IsRoomAsker(g.name))) {
                     continue;
                 }
                 float d2 = 0.0f;
@@ -1873,7 +1911,7 @@ public:
                 const u64 who = CoopGuard::Who(s.hash, s.name, object);
                 where_.emplace(s.address, std::make_pair(s.position, who));
             }
-            const CoopGuard::Local local = GuardLocal();
+            const CoopGuard::Local local = GuardLocal(server_now_us);
             auto passed = held_writes_.Pass(
                 std::move(writes), local, [this](std::uint64_t a) { return Where(a); },
                 [this](std::uint64_t a) { return HashAt(a); });
@@ -2074,7 +2112,14 @@ public:
         [](LifeWrite& kept, LifeWrite&& newer) { CoopGuard::MergeLife(kept, std::move(newer)); }};
     std::string guard_scene_;
     bool guard_said_ = false;
-    CoopGuard::Local GuardLocal() const { return {TheLocalEvent().load(), player_}; }
+    // Row 97: the event's partners wait wherever they are (Sync::EventPartner).
+    CoopGuard::Local GuardLocal(u64 now_us) const {
+        // G1: near-by changes wait in our Link's event; the event's own actors in any event here.
+        const bool any = TheLocalEvent().load();
+        const bool ours = any && TheOwnEvent().load();
+        return {ours, player_,
+                [this, now_us](std::uint64_t a) { return sync_.EventPartner(a, now_us); }, any && !ours};
+    }
     std::optional<coop::protocol::Vec3> Where(u64 address) const {
         const auto it = where_.find(address);
         if (it == where_.end()) {
@@ -2193,6 +2238,34 @@ private:
             }
             return words;
         };
+        // Issue 194: the game's own ride state of each platform near our Link, its AI's bool plug
+        // RideOnPlayer (CoopLogicProbe::Read; the plug's key is Murmur3 ^ 7): no clock write while he rides it.
+        if (player_) {
+            const std::vector<coop::protocol::Vec3> others = sync_.OthersHere(server_now_us);
+            for (auto& d : platform_drivers_) {
+                d.ride_plug.reset();  // read fresh each tick
+                d.other_on = std::any_of(others.begin(), others.end(), [&d](const coop::protocol::Vec3& o) {
+                    return CoopPlatforms::PlatformSync::OnFootprint(d.position, o);
+                });
+                const float dx = d.position[0] - (*player_)[0];
+                const float dy = d.position[1] - (*player_)[1];
+                const float dz = d.position[2] - (*player_)[2];
+                const float near_m = CoopPlatforms::PlatformSync::kNearM;
+                if (dx * dx + dy * dy + dz * dz > near_m * near_m) {
+                    continue;
+                }
+                const auto plugs = CoopLogicProbe::Read([&r](u64 a) { return r.Get<u64>(a); }, d.address);
+                if (!plugs) {
+                    continue;
+                }
+                for (const CoopLogicProbe::Plug& p : *plugs) {
+                    if (p.key == (CoopLiftRide::kRideOnPlayer ^ 7u) && p.type == CoopLogicProbe::kBool && p.value) {
+                        d.ride_plug = *p.value != 0;
+                        break;
+                    }
+                }
+            }
+        }
         CoopPlatforms::PlatformSync::Out out;
         platforms_.Tick(scene, self, CoopEvery::NowUs(), server_now_us, platform_drivers_, player_, read,
                         platforms_mode_ == 2, out);
@@ -2582,6 +2655,14 @@ private:
             return false;
         }
         std::optional<coop::protocol::Vec3> player;
+        // Issue 144 and the scrubs' one-time sales: the scrubs whose flags may delete them from under
+        // an event of ours (coop_scrub_talk.h, coop_scrub_sale.h).
+        struct TalkScrub {
+            u64 hash = 0;
+            coop::protocol::Vec3 at{};
+            std::optional<bool> in_event;  // its own performer bound into a running event
+        };
+        std::vector<TalkScrub> talk_scrubs;
         std::unordered_map<u64, std::pair<std::string, u64>> names;
         std::unordered_map<u64, u64> life_components;
         {
@@ -2631,8 +2712,10 @@ private:
                                        extras_.Holds(known.first, now_ms);
             if (CoopDifficulty::IsEnemy(known.first, CoopEnemyShots::IsEnemyShot(known.first))) {
                 // Difficulty: an attacker (a boss, one with its copies' weight folded in, or plain).
-                CoopDifficulty::TheKinds().Mark(a, CoopDifficulty::AttackerKind(known.first, known.second,
-                                                                                extras_.NoSpot(known.second)));
+                // A no-spot enemy folds by its own missing extras (FoldCount), keyed by its placement.
+                const bool no_spot = extras_.NoSpot(known.second);
+                CoopDifficulty::TheKinds().Mark(a, CoopDifficulty::AttackerKind(known.first, known.second, no_spot),
+                                                no_spot ? known.second : 0);
             } else {
                 CoopDifficulty::TheKinds().Forget(a);  // difficulty: a reused address (our bomb where a Keese was)
             }
@@ -2700,6 +2783,17 @@ private:
                     }
                 }
             }
+            if (CoopScrubTalk::FindNearScrub(known.second) != nullptr ||
+                CoopScrubSale::FindSeller(known.second) != nullptr) {
+                TalkScrub t;  // how near our Link (after the walk), and whether an event of ours binds it
+                t.hash = known.second;
+                for (std::size_t i = 0; i < 3; ++i) {
+                    t.at[i] = r.Get<float>(a + kActorPosition + 4 * i).value_or(0.0f);
+                }
+                // Read whatever event_running says: it has not been seen during a scrub's event.
+                t.in_event = CoopEventMember::InEvent([&r](std::uint64_t at) { return r.Get<u64>(at); }, a);
+                talk_scrubs.push_back(t);
+            }
             if (scrubs_on_ && (CoopScrubs::FindBrother(known.second) != nullptr ||
                                CoopScrubs::IsManager(known.second))) {
                 CoopScrubs::Seen sc;  // issue 149: the Scrub Brothers and their manager
@@ -2733,7 +2827,8 @@ private:
                 }
                 ride_lifts_.push_back(std::move(l));
             }
-            if ((gimmick_probe_on_ || logic_probe_on_) && CoopWorld::IsGimmick(known.first)) {
+            if (((gimmick_probe_on_ || logic_probe_on_) && CoopWorld::IsGimmick(known.first)) ||
+                (logic_probe_on_ && IsRoomAsker(known.first))) {  // deku-switches: the asker's EventRequestTrigger
                 CoopWorld::GimmickProbe::Gimmick g;
                 g.address = a;
                 g.hash = known.second;
@@ -2781,14 +2876,21 @@ private:
                             life_components.emplace(*component, a);  // (whose Life step is whose: StepHits)
                             s.life_component = *component;
                             if (CoopDifficulty::IsEnemy(s.name, false)) {  // difficulty: its hits are scaled
+                                const bool no_spot = extras_.NoSpot(s.hash);
                                 CoopDifficulty::TheKinds().Mark(*component,
-                                                                CoopDifficulty::LifeKind(s.name, s.hash,
-                                                                                         extras_.NoSpot(s.hash)));
+                                                                CoopDifficulty::LifeKind(s.name, s.hash, no_spot),
+                                                                no_spot ? s.hash : 0);
                             } else {
                                 CoopDifficulty::TheKinds().Forget(*component);  // (a reused address)
                             }
                         }
                     }
+                }
+                // Row 97: whether our running event binds it (coop_event_member.h). Read only
+                // while our Link is in an event; the Sync claims such an actor at any distance.
+                if (TheLocalEvent().load()) {
+                    s.event_member = CoopEventMember::InEvent(
+                        [&r](std::uint64_t at) { return r.Get<u64>(at); }, a);
                 }
                 out.push_back(std::move(s));
             }
@@ -2797,9 +2899,24 @@ private:
         names_ = std::move(names);
         life_components_ = std::move(life_components);
         sync_.SetPlayer(player);
-        sync_.SetEvent(TheLocalEvent().load());  // issue 200: our cutscene's NPCs become ours
         sync_.SetLures(CoopProjectiles::TheLures().Get());  // issue 151: our cast lures
         player_ = player;
+        {  // issue 144 / scrub sales: a scrub near our Link or bound into our event holds its flags
+            const std::uint64_t now_us = CoopEvery::NowUs();
+            for (const TalkScrub& t : talk_scrubs) {
+                float distance = std::numeric_limits<float>::infinity();  // no player: only the event counts
+                if (player) {
+                    float d2 = 0.0f;
+                    for (std::size_t i = 0; i < 3; ++i) {
+                        const float d = t.at[i] - (*player)[i];
+                        d2 += d * d;
+                    }
+                    distance = std::sqrt(d2);
+                }
+                CoopScrubTalk::TheNear().See(t.hash, distance, now_us, t.in_event);
+                CoopScrubSale::TheBusy().See(t.hash, distance, now_us, t.in_event);
+            }
+        }
         if (debug_) {  // research: the field grass that is no actor (world.md)
             for (const std::string& line : foliage_.Look(
                      [&r](u64 address) { return r.Get<u64>(address); }, main_, player)) {
@@ -2938,6 +3055,19 @@ private:
         const auto table = r.Ptr(link + kActorComponents);
         const auto component = table ? r.Ptr(*table + kComponentLife) : std::nullopt;
         CoopDbno::SetOurLifeComponent(component.value_or(0));
+        // Our downed Link's crawl, shield and unseen (coop_dbno_body.h): its BSA and PerceptionEmitter, and the
+        // caller that asks the game.
+        const auto bsa = table ? r.Ptr(*table + CoopDbno::Body::addr::kComponentBsa) : std::nullopt;
+        const auto emitter = table ? r.Ptr(*table + CoopDbno::Body::addr::kComponentEmitter) : std::nullopt;
+        CoopDbno::SetOurComponents(bsa.value_or(0), emitter.value_or(0));
+        static const bool body_caller = [] {
+            CoopSvc::AddCaller(kDbnoBodyCallerOrder, [](CoopPuppet::Guest& guest, bool after_call,
+                                                        std::uint64_t result, std::uint64_t now_ms) {
+                return CoopDbno::Body::TheCrawl().Next(guest, after_call, result, now_ms, TheBossMain().load());
+            });
+            return true;
+        }();
+        (void)body_caller;
         const auto want = CoopDbno::TakeLifeWrite();
         if (!want || life < 0 || *want == life || memory_ == nullptr ||
             !memory_->IsValidVirtualAddressRange(life_at, 4)) {
@@ -3376,7 +3506,59 @@ private:
         }
     }
 
-    // Issue 200 (npc-anim). The townspeople our event claimed (Sync::EventNpc)
+    // Row 97 (event-copy): our Link's event in the log. When it begins: its
+    // kind and the name-like strings it points at (CoopEventMember::ReadRunning);
+    // each change of the actors it is with (address, name, owner, why, distance);
+    // every kEventStillUs while it runs, how long and which shared copies near our
+    // Link still get their owner's motion; and how long it ran when it ends.
+    static constexpr u64 kEventStillUs = 30'000'000;
+    void EventLog(Reader& r, u64 now_us) {
+        const bool running = TheLocalEvent().load();
+        if (running && event_began_us_ == 0) {
+            event_began_us_ = now_us;
+            event_still_us_ = now_us;
+            const auto ev = CoopEventMember::ReadRunning([&r](std::uint64_t at) { return r.Get<u64>(at); }, main_);
+            CoopEventOwner::RunNames(ev.names, CoopEvery::NowUs());  // G1: whose it is, by its name
+            std::string names;
+            for (const std::string& n : ev.names) {
+                names += (names.empty() ? "" : ", ") + n;
+            }
+            LOG_INFO(Core, "coop: event: {} event began: {:#x} kind {} ({} in the session); names seen: {}",
+                     TheOwnEvent().load() ? "our Link's" : "an event without our Link (another player's or the Ocarina)",
+                     ev.event, ev.kind ? std::to_string(*ev.kind) : std::string("?"), ev.count,
+                     names.empty() ? std::string("none") : names);
+        } else if (!running && event_began_us_ != 0) {
+            LOG_INFO(Core, "coop: event: our Link's event ended after {:.1f} s",
+                     static_cast<double>(now_us - event_began_us_) / 1e6);
+            event_began_us_ = 0;
+            event_partners_.clear();
+        }
+        if (!running) {
+            return;
+        }
+        static constexpr const char* kWhy[] = {"none", "bound by the event", "its own AI acts", "townsperson"};
+        std::set<u64> now_partners;
+        const auto list = sync_.EventPartnerList(now_us);
+        for (const auto& p : list) {
+            now_partners.insert(p.address);
+        }
+        if (now_partners != event_partners_) {
+            std::string text;
+            for (const auto& p : list) {
+                text += fmt::format("{}{} {:#x} (owner P{}, {}, {:.1f} m)", text.empty() ? "" : "; ", p.name,
+                                    p.address, p.owner, kWhy[static_cast<int>(p.why)], p.metres);
+            }
+            LOG_INFO(Core, "coop: event: the actors our event is with: {}", text.empty() ? std::string("none") : text);
+            event_partners_ = std::move(now_partners);
+        }
+        if (now_us - event_still_us_ >= kEventStillUs) {
+            event_still_us_ = now_us;
+            LOG_INFO(Core, "coop: event: our Link is still in its event after {:.0f} s ({} actors claimed)",
+                     static_cast<double>(now_us - event_began_us_) / 1e6, list.size());
+        }
+    }
+
+    // Issue 200 (npc-anim). The townspeople our event claimed (Sync::EventPartner)
     // keep this game's cutscene motion while the server hands them to us: the
     // owner's routine is not put on them. Logs the claim (our side) and, on the
     // other games, each NPC copy that moves to another owner; with
@@ -3385,23 +3567,26 @@ private:
     // (coop_npc_anim.h): the 5 s line of plays and frame sets.
     void NpcAnim(Reader& r, u64 now_us, std::vector<u64>& removes,
                  std::vector<Mover::Pose>& wish, std::vector<PlayWish>& plays) {
-        std::erase_if(removes, [&](u64 a) { return sync_.EventNpc(a, now_us); });
-        std::erase_if(wish, [&](const Mover::Pose& p) { return sync_.EventNpc(p.actor, now_us); });
-        std::erase_if(plays, [&](const PlayWish& p) { return sync_.EventNpc(p.address, now_us); });
-        const std::size_t claimed = sync_.EventNpcs(now_us);
+        // Row 97: every actor the event is with (Sync::EventPartner), not only
+        // townspeople: its own game runs it for the event.
+        std::erase_if(removes, [&](u64 a) { return sync_.EventPartner(a, now_us); });
+        std::erase_if(wish, [&](const Mover::Pose& p) { return sync_.EventPartner(p.actor, now_us); });
+        std::erase_if(plays, [&](const PlayWish& p) { return sync_.EventPartner(p.address, now_us); });
+        EventLog(r, now_us);
+        const std::size_t claimed = sync_.EventPartners(now_us);
         if ((claimed == 0) != (npc_claimed_ == 0)) {
             if (claimed != 0) {
-                LOG_INFO(Core, "coop: npc-anim: our Link is in an event: {} NPCs near it claimed", claimed);
+                LOG_INFO(Core, "coop: npc-anim: our Link is in an event: {} actors it is with claimed", claimed);
             } else {
-                LOG_INFO(Core, "coop: npc-anim: the event's NPCs are free again");
+                LOG_INFO(Core, "coop: npc-anim: the event's actors are free again");
             }
         }
         // The hand-over itself (the server may give them 0.5 s later, or
         // keep one in another game's fight lock): log each change of how
         // many of the claimed ones are ours.
-        const std::size_t ours = claimed == 0 ? 0 : sync_.EventNpcsOurs(now_us);
+        const std::size_t ours = claimed == 0 ? 0 : sync_.EventPartnersOurs(now_us);
         if (ours != npc_ours_ && claimed != 0) {  // the end has its own line
-            LOG_INFO(Core, "coop: npc-anim: {} of the {} claimed NPCs are ours now", ours, claimed);
+            LOG_INFO(Core, "coop: npc-anim: {} of the {} claimed actors are ours now", ours, claimed);
         }
         npc_ours_ = ours;
         npc_claimed_ = claimed;
@@ -3552,6 +3737,9 @@ private:
         if (const auto ours = sync_.TakeOursNow(); release_ && !ours.empty()) {
             TheMover().Release(ours);
         }
+        for (auto& [a, name] : sync_.TakeOwnWakes()) {
+            TheMover().GiveBack(a, std::move(name));  // report 109
+        }
         std::vector<u64> removes = sync_.Removes();
         for (const u64 a : horde_.Removes()) {
             removes.push_back(a);  // difficulty: night horde beside a roll the spawner took away
@@ -3562,7 +3750,7 @@ private:
         // Issue 144: nothing near our Link is removed, moved or made to play while
         // it is in an event; they come again each frame and are made after it.
         {
-            const CoopGuard::Local local = GuardLocal();
+            const CoopGuard::Local local = GuardLocal(now_us);
             const auto where = [this](std::uint64_t a) { return Where(a); };
             CoopGuard::Skip(removes, local, where, [](u64 a) { return a; });
             // Issue 194: a world object another game moves (coop_world: a falling ladder,
@@ -3790,6 +3978,9 @@ private:
     std::optional<Mover::Pose> drive_pose_;
     // Issue 200 (npc-anim): the log of our event's claim and of NPC copies.
     std::size_t npc_claimed_ = 0;
+    u64 event_began_us_ = 0;    // row 97: EventLog
+    u64 event_still_us_ = 0;
+    std::set<u64> event_partners_;
     std::size_t npc_ours_ = 0;     // how many of them the server gave us (log)
     u64 npc_log_at_ = 0;
     u64 npc_calls_at_ = 0;  // the 5 s line of the walking townspeople
@@ -3869,7 +4060,8 @@ Objects& Instance() {
 
 } // namespace
 
-void SetLocalEvent(bool in_event) {
+void SetLocalEvent(bool in_event, bool ours) {
+    TheOwnEvent().store(in_event && ours);
     TheLocalEvent().store(in_event);
 }
 

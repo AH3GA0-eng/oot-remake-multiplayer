@@ -445,3 +445,94 @@ TEST_CASE("quests: Get_StoneOfFire is shared, in the game's order, from Ready (i
     CHECK(c.store.write(done));
     CHECK(c.at(kFire, "Complete"));
 }
+
+// Issue 94: every shared quest's GameData step also goes to the game's own
+// ChallengeMgr (the Threads of Time tab and the game's logic read it), not only
+// after a reload.
+namespace {
+
+std::map<std::uint32_t, std::uint32_t> AllAt(const char* step_of_each) {
+    std::map<std::uint32_t, std::uint32_t> at;
+    for (const auto& q : CoopQuests::Quests()) at[q.hash] = host::flag_hash(step_of_each);
+    return at;
+}
+
+CoopQuest::ReadEnum Reader(const std::map<std::uint32_t, std::uint32_t>& at) {
+    return [&at](std::uint32_t h) -> std::optional<std::uint32_t> {
+        const auto it = at.find(h);
+        if (it == at.end()) return std::nullopt;
+        return it->second;
+    };
+}
+
+const CoopQuest::StepWant* WantOf(const std::vector<CoopQuest::StepWant>& wants, const char* name) {
+    for (const auto& w : wants) {
+        if (w.name == name) return &w;
+    }
+    return nullptr;
+}
+
+} // namespace
+
+TEST_CASE("quests live: each challenge is flag_hash of the quest's name (the manager's own hashes)") {
+    // The hashes the manager entries carry (read from the game, coop_quest.cpp).
+    CHECK(host::flag_hash("Get_StoneOfFire") == 0xe4c584e6u);
+    CHECK(host::flag_hash("DoorOfTime") == 0xe8dafe6cu);
+    CHECK(host::flag_hash("Get_StoneOfForest") == 0x628de7a6u);
+    CHECK(host::flag_hash("Get_StoneOfWater") == 0x0aa38424u);
+    CHECK(host::flag_hash("SageOfFire") == 0x533999f4u);
+    CHECK(host::flag_hash("SageOfForest") == 0x5a2be4b5u);
+    CHECK(host::flag_hash("Get_Epona") == 0xe873ce22u);
+}
+
+TEST_CASE("quests live: a step past Ready goes to the manager, with the quest's steps in order") {
+    auto at = AllAt("Complete");
+    const auto wants = CoopQuests::LiveWants(Reader(at));
+    const auto* forest = WantOf(wants, "Get_StoneOfForest");
+    REQUIRE(forest != nullptr);
+    CHECK(forest->challenge == 0x628de7a6u);
+    CHECK(forest->step == host::flag_hash("Complete"));
+    REQUIRE(forest->steps.size() == 8);
+    CHECK(forest->steps.front() == host::flag_hash("NotReady"));
+    CHECK(forest->steps.back() == host::flag_hash("Complete"));
+    CHECK(WantOf(wants, "SageOfFire") != nullptr);
+    CHECK(WantOf(wants, "Goto_HyruleCastle") != nullptr);
+    CHECK(WantOf(wants, "Get_Epona") != nullptr);  // its end is shared
+    // Get_StoneOfFire is CoopQuest's own (live since issue 171): not twice.
+    CHECK(WantOf(wants, "Get_StoneOfFire") == nullptr);
+    for (const auto& w : wants) {
+        CHECK(w.challenge == host::flag_hash(w.name.c_str()));
+    }
+}
+
+TEST_CASE("quests live: Ready, NotReady, an unknown or unread step and a step under the floor are not sent") {
+    auto at = AllAt("Ready");
+    CHECK(CoopQuests::LiveWants(Reader(at)).empty());
+    at = AllAt("NotReady");
+    CHECK(CoopQuests::LiveWants(Reader(at)).empty());
+    at = AllAt("NoSuchStep");
+    CHECK(CoopQuests::LiveWants(Reader(at)).empty());
+    std::map<std::uint32_t, std::uint32_t> none;
+    CHECK(CoopQuests::LiveWants(Reader(none)).empty());
+    // Goto_HyruleCastle's floor is Step01 (index 2): Step01 itself is sent.
+    at.clear();
+    at[kGotoCastle] = host::flag_hash("Step01");
+    CHECK(WantOf(CoopQuests::LiveWants(Reader(at)), "Goto_HyruleCastle") != nullptr);
+}
+
+TEST_CASE("quests live: Get_Epona only at Complete (its other steps are each player's own)") {
+    std::map<std::uint32_t, std::uint32_t> at;
+    at[kEpona] = host::flag_hash("AfterGetEponaSong");
+    CHECK(WantOf(CoopQuests::LiveWants(Reader(at)), "Get_Epona") == nullptr);
+    at[kEpona] = host::flag_hash("Complete");
+    CHECK(WantOf(CoopQuests::LiveWants(Reader(at)), "Get_Epona") != nullptr);
+}
+
+TEST_CASE("quests live: a mid step goes as it is (Meet_GreatFairy GoToFountain)") {
+    std::map<std::uint32_t, std::uint32_t> at;
+    at[kFairy] = host::flag_hash("GoToFountain");
+    const auto wants = CoopQuests::LiveWants(Reader(at));
+    REQUIRE(wants.size() == 1);
+    CHECK(wants[0].name == "Meet_GreatFairy");
+    CHECK(wants[0].step == host::flag_hash("GoToFountain"));
+}

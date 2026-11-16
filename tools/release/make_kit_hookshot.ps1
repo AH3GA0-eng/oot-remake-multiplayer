@@ -20,6 +20,8 @@
 #   hookshot\               hookshot_coop.dll (the co-op module), the runtime, PIN, TOOLS.txt, patches\
 #   scripts\                everything else the launcher runs; collect-logs.cmd for bug reports
 #   tools\puppet_pack\      builds the other players' Link from the player's own game
+#   nucleus\                OoTCoop.js, the Nucleus Co-op split-screen handler (tools\nucleus), and README.txt: how
+#                           to install it (Nucleus's + / Add game) and play, also with friends on other PCs
 #   docs\                   SETUP.md, KNOWN-ISSUES.md
 #   licenses\               GPL-3.0, THIRD_PARTY_NOTICES.md, SOURCE.txt, ENet and fmt licences
 #   logs\, VERSION.txt, MANIFEST.txt (the kit's own files, for the updater)
@@ -154,6 +156,10 @@ foreach ($f in ($packFiles | Sort-Object -Unique)) {
     if (-not (Test-Path (Join-Path $packTool $f))) { throw "tools\puppet_pack\$f (needed by build.py) is not in the repo" }
     Copy-Text (Join-Path $packTool $f) (Join-Path $kit "tools\puppet_pack\$f")
 }
+
+# The Nucleus Co-op handler (split screen on one PC; docs/play-lan.md) and its few steps.
+Copy-Text (Join-Path $repo 'tools\nucleus\OoTCoop.js') (Join-Path $kit 'nucleus\OoTCoop.js')
+Copy-Text (Join-Path $src 'nucleus\README.txt') (Join-Path $kit 'nucleus\README.txt')
 
 foreach ($doc in $KitDocs) { Copy-Text (Join-Path $repo "docs\$($doc[0])") (Join-Path $kit "docs\$($doc[1])") }
 $lic = Join-Path $kit 'licenses'

@@ -90,8 +90,8 @@ def _num(v):
     return int(getattr(v, "v", v))
 
 
-def normal_world(_flow, _actor, query, params):
-    """The dungeon's own path: not the dream world, not the boss rush (0 is true, evfl.walk_flows)."""
+def normal_world(_actor, query, params):
+    """The dungeon's own path: not the dream world, not the boss rush (0 is true, evfl.actions_of)."""
     if query == "EventQueryIsDreamWorld":
         return 1
     if query == "EventQueryIsGameDataBool" and str(params.get("GameDataName", "")).startswith("DreamWorld_BossRush"):
@@ -113,7 +113,7 @@ def beaten_set(boss, actions, game_bools, quests):
 
     step = None
     played = [death, boss_in]
-    for _flow, _actor, action, params in actions:
+    for _actor, action, params in actions:
         if action == "EventTriggerSetGameDataBool" and isinstance(params.get("Value"), bool):
             add(params["GameDataName"], params["Value"])
         elif action == "EventTransition" and params.get("EventName"):
@@ -160,16 +160,17 @@ def read_romfs(romfs):
     flows = {}
 
     def load(fname):
-        if fname not in flows:
-            with open(os.path.join(romfs, "Event", "EventFlow", fname + ".bfevfl.zs"), "rb") as f:
-                flows[fname] = evfl.Flow(dicts.decompress(f.read()))
-        return flows[fname]
+        path = os.path.join(romfs, "Event", "EventFlow", fname + ".bfevfl.zs")
+        if not os.path.exists(path):
+            return None
+        with open(path, "rb") as f:
+            return evfl.parse(dicts.decompress(f.read()))
 
     out = []
     for boss in BOSSES:
         row = settings[boss[2]]
         fname = row["FlowchartFileName"].split("/")[-1].rsplit(".", 1)[0]
-        actions = evfl.walk_flows(load, fname, row["EntryPointName"], normal_world)
+        actions = evfl.actions_of(flows, fname, row["EntryPointName"], load=load, answer=normal_world)
         out.append(beaten_set(boss, actions, game_bools, quests))
     return out
 

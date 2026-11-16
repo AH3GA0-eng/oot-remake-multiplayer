@@ -109,6 +109,15 @@ std::span<const Place> Places();
 // from that door, so that room's event waits until we are in it.
 inline constexpr float kNearM = 18.0f;
 
+// deku-ladder (Water Temple): an event asked from places farther apart than this in one scene is asked from more
+// than one room under ONE played flag (WaterTemple_EyeSwitch_Focus, a camera shot asked by the eye in room 0 and in
+// room 21; WaterTemple_DarkLink_DoorMovement, the two doors of the Dark Link room). The flag is shared as the game
+// keeps it (one flag), but the decider never starts such an event here: which room's eye or door played it is not
+// known, and starting it near ours plays the other room's camera or door in the wrong room. Each room's own state
+// has its own flags (WaterTemple_Room00_ShootSwitchOnce, WaterTemple_Room21_OpenShutterBySwitch), shared as usual.
+inline constexpr float kOneRoomM = 20.0f;  // same-room pairs: 13.8 m (GTG room 10), 11.2 m (Spirit room 19)
+bool SpansRooms(std::string_view event, std::string_view scene);
+
 // The actors that ask a room's gimmick event (the Banc placements of Places() are these): the room graph's
 // ActorLogicEventRequestActor / ActorLogicEventProxyRequestActor. An actor stands where it is placed, so it is
 // within kAskerNearM of the place (the table rounds to 0.1 m).
@@ -272,6 +281,11 @@ public:
     // Log lines since the last call.
     std::vector<std::string> TakeNotes();
     std::uint64_t Block() const { return block_; }
+    // G1 (coop/host/event_owner.hpp): called with the event's name on the calc thread when
+    // the game took one of our asks, so the hook knows the event that starts now is another
+    // player's (CoopEventOwner::CoopAsked). Not set: no mark (the teleport's own trip).
+    void OnTaken(std::function<void(const std::string&)> taken) { on_taken_ = std::move(taken); }
+
 
 private:
     enum class Next { none, malloc, build, link, request, free1, free2, own_request };
@@ -307,6 +321,7 @@ private:
     Next next_ = Next::none;  // the call made last, whose return comes next
     bool malloc_failed_ = false;
     std::vector<std::string> notes_;
+    std::function<void(const std::string&)> on_taken_;
 };
 
 // The game's own event requests, on Hookshot (docs/hookshot.md "World hooks", HOS_COOP_WRAP_EVENT_REQUEST): every

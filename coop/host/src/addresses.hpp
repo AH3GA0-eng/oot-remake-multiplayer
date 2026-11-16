@@ -200,5 +200,14 @@ inline constexpr std::uint64_t kBancPathCapacity = 0x48;
 // as the map's peek reads.
 inline constexpr std::uint64_t kEventManagerPtr = 0x4e94840;
 inline constexpr std::uint64_t kEventRunning = 0x68;
+// Row 97: that word stays 0 in a Deku Scrub's talk and AttackedEvent (scrub-sale-a's runs). An
+// event binds every actor it uses through the actor's own event performer:
+// [[actor + kActorComponents] + 0x88] (or + 0x90, the slot 0xc70560 reads for the player), whose
+// +0x10 is the actor; +0x18 holds the event's link while it is bound, 0 otherwise (read in the
+// deku-sync-fix probe runs, as lichii/hook/coop_event_member.h).
+inline constexpr std::uint64_t kPerformerSlot = 0x88;
+inline constexpr std::uint64_t kPerformerSlotAlt = 0x90;
+inline constexpr std::uint64_t kPerformerActor = 0x10;
+inline constexpr std::uint64_t kPerformerLink = 0x18;
 
 }  // namespace coop::host::addr

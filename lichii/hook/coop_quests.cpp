@@ -26,7 +26,8 @@ namespace {
 //     and forth: Ready, Playing, Retry, Finish);
 //   - SubEvent_GetSwordBigGoron (the trading sequence and the egg's timer),
 //     SubEvent_MaskSalesman (the mask rentals): steps of one player's own
-//     items;
+//     items (the trade's step follows the shared trade item held instead:
+//     coop_hook.cpp FollowTradeItem, row 117);
 //   - DoorOfTime (time travel stays each game's own, docs/flags.md), AllSage
 //     (the Chamber of Sages; its Step01_00_01 to _03 are not in an order),
 //     Defeat_Ganon and EscapeFromCrumblingGanonCastle (the final battle).
@@ -175,6 +176,27 @@ bool On() {
     return !EnvOff("LICHII_COOP_QUESTS");
 }
 
+std::vector<CoopQuest::StepWant> LiveWants(const CoopQuest::ReadEnum& value) {
+    std::vector<CoopQuest::StepWant> wants;
+    for (const Quest& quest : Table()) {
+        const bool sent = std::any_of(CoopQuest::Quests().begin(), CoopQuest::Quests().end(),
+                                      [&](const CoopQuest::Quest& q) { return q.hash == quest.hash && q.live != 0; });
+        if (sent) continue;
+        const auto now = value(quest.hash);
+        const auto rank = now ? Rank(quest, *now) : std::nullopt;
+        if (!rank || *rank < std::max<std::int32_t>(quest.floor, 2)) continue;
+        if (quest.complete_only && *rank != Last(quest)) continue;
+        CoopQuest::StepWant w{coop::host::flag_hash(quest.name), *now, {}, quest.name};
+        for (const char* step : quest.steps) w.steps.push_back(coop::host::flag_hash(step));
+        wants.push_back(std::move(w));
+    }
+    return wants;
+}
+
+bool LiveOn() {
+    return !EnvOff("LICHII_COOP_QUEST_LIVE");
+}
+
 void AddShared(std::optional<coop::host::SharedFlags>& shared) {
     const bool on = On();
     const std::size_t added = Merge(shared, on);
@@ -274,6 +296,11 @@ bool Store::write(const coop::protocol::FlagEntry& entry) {
 bool Store::write_exact(const coop::protocol::FlagEntry& entry) {
     const Quest* quest = Plain(entry.key) ? Find(entry.key.hash) : nullptr;
     return quest != nullptr ? put(*quest, entry, true) : inner_.write_exact(entry);
+}
+
+bool Store::write_load_back(const coop::protocol::FlagEntry& entry) {
+    const Quest* quest = Plain(entry.key) ? Find(entry.key.hash) : nullptr;
+    return quest != nullptr ? put(*quest, entry, true) : inner_.write_load_back(entry);
 }
 
 bool Store::busy(coop::host::FlagKey key) {

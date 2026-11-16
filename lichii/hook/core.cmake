@@ -13,6 +13,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_pvp.cpp"
     "${_coop_hook}/coop_dbno.cpp"
     "${_coop_hook}/coop_dbno_game.cpp"
+    "${_coop_hook}/coop_dbno_body.cpp"
     "${_coop_hook}/coop_pvp_game.cpp"
     "${_coop_hook}/coop_lobby.cpp"
     "${_coop_hook}/coop_lobby_game.cpp"
@@ -39,6 +40,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_shared_scenes.cpp"
     "${_coop_hook}/coop_scrubs.cpp"
     "${_coop_hook}/coop_fairy.cpp"
+    "${_coop_hook}/coop_map_refresh.cpp"
     "${_coop_hook}/coop_rooms.cpp"
     "${_coop_hook}/coop_maps.cpp"
     "${_coop_hook}/coop_flags.cpp"
@@ -63,6 +65,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_world.cpp"
     "${_coop_hook}/coop_logic_probe.cpp"
     "${_coop_hook}/coop_lift_ride.cpp"
+    "${_coop_hook}/coop_eye_switch.cpp"
     "${_coop_hook}/coop_ocarina.cpp"
     "${_coop_hook}/coop_ocarina_sound.cpp"
     "${_coop_hook}/coop_look_share.cpp"
@@ -78,15 +81,19 @@ target_sources(core PRIVATE
 target_include_directories(core PUBLIC "${_coop_hook}")
 target_compile_definitions(core PUBLIC LICHII_COOP)
 target_link_libraries(core PRIVATE coop coop_net coop_host coop_presence coop_overlay coop_voice)
-# Which co-op commit is built in, for the log ("coop: build ..."). Read when
-# CMake configures, so reconfigure after a pull to keep it current.
-execute_process(COMMAND git -C "${LICHII_COOP_DIR}" describe --tags --always --dirty
-    OUTPUT_VARIABLE _coop_version OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-if(NOT _coop_version)
-    set(_coop_version "unknown")
-endif()
-set_property(SOURCE "${_coop_hook}/coop_hook.cpp" APPEND PROPERTY
-    COMPILE_DEFINITIONS "LICHII_COOP_VERSION=\"${_coop_version}\"")
+# Which co-op commit is built in, for the log ("coop: build ..."). git describe runs on
+# every build (cmake/coop_version.cmake), not once at configure: a cached configure-time
+# string made 0.11.3 say v0.11.2-18-gab129f5b. The header changes only with the string.
+set(_coop_version_dir "${CMAKE_CURRENT_BINARY_DIR}/coop_version")
+add_custom_target(coop_version_emu ALL
+    COMMAND "${CMAKE_COMMAND}" "-DCOOP_GIT_DIR=${LICHII_COOP_DIR}" "-DCOOP_VERSION_PREFIX="
+            "-DCOOP_VERSION_OUT=${_coop_version_dir}/coop_version.h"
+            -P "${LICHII_COOP_DIR}/cmake/coop_version.cmake"
+    BYPRODUCTS "${_coop_version_dir}/coop_version.h"
+    COMMENT "co-op version (git describe)"
+    VERBATIM)
+add_dependencies(core coop_version_emu)
+target_include_directories(core PRIVATE "${_coop_version_dir}")
 # GCC and Clang (the Linux build, issue 127): Fritchii's src/CMakeLists.txt makes -Wall,
 # -Wextra, -Wmissing-declarations, -Wshadow and -Wunused errors for everything in core. The
 # hook is built with MSVC on Windows, which never sees them, so here they stay warnings for

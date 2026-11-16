@@ -9,6 +9,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))
 
 from puppet_pack import boss_beaten as bb  # noqa: E402
+from puppet_pack import evfl  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 HOOK = os.path.join(REPO, "lichii", "hook")
@@ -29,7 +30,7 @@ def saved(*names, reset=bb.SAVED):
 
 
 def act(action, **params):
-    return ("Get_StoneOfForest", "Actor", action, params)
+    return ("Actor", action, params)  # as evfl.actions_of gives them
 
 
 class Murmur(unittest.TestCase):
@@ -64,10 +65,10 @@ class BeatenSet(unittest.TestCase):
         self.assertEqual(s["below"], STEPS[:6])  # never Complete: a finished dungeon is not stepped back
 
     def test_no_boss_out_or_no_step_or_a_wrong_step_is_an_error(self):
-        acts = [a for a in self.actions() if a[2] != "EventTransition"]
+        acts = [a for a in self.actions() if a[1] != "EventTransition"]
         with self.assertRaises(ValueError):
             bb.beaten_set(GOHMA, acts, self.flags(), QUESTS)
-        acts = [a for a in self.actions() if a[2] != "EventExecuteProgressChallengeStep"]
+        acts = [a for a in self.actions() if a[1] != "EventExecuteProgressChallengeStep"]
         with self.assertRaises(ValueError):
             bb.beaten_set(GOHMA, acts, self.flags(), QUESTS)
         acts = self.actions()[:-1] + [act("EventExecuteProgressChallengeStep", ChallengeName="Get_StoneOfForest",
@@ -76,10 +77,34 @@ class BeatenSet(unittest.TestCase):
             bb.beaten_set(GOHMA, acts, self.flags(), QUESTS)
 
     def test_normal_world_answers(self):
-        self.assertEqual(bb.normal_world("f", "GameSystemActor", "EventQueryIsDreamWorld", {}), 1)
-        self.assertEqual(bb.normal_world("f", "GameDataActor", "EventQueryIsGameDataBool",
+        self.assertEqual(bb.normal_world("GameSystemActor", "EventQueryIsDreamWorld", {}), 1)
+        self.assertEqual(bb.normal_world("GameDataActor", "EventQueryIsGameDataBool",
                                          {"GameDataName": "DreamWorld_BossRush"}), 1)
-        self.assertIsNone(bb.normal_world("f", "Player_Event", "EventQueryPlayerIsChild", {}))
+        self.assertIsNone(bb.normal_world("Player_Event", "EventQueryPlayerIsChild", {}))
+
+
+class ReaderAnswers(unittest.TestCase):
+    """evfl.actions_of with `answer`: only the answered case of a switch (the dungeon's path of a boss's death)."""
+
+    def chart(self):
+        def ev(kind, nxt=evfl.NONE, actor=evfl.NONE, action=evfl.NONE, cases=(), values=(), query=evfl.NONE):
+            return evfl.Event(kind, nxt, actor, action, cases, (), evfl.NONE, "", "", {}, query, values)
+        actors = [("GameSystemActor", "", ["Rush", "Dungeon"])]
+        return evfl.Flowchart("Death", actors, [
+            ev(1, actor=0, query=0, cases=(1, 2), values=(0, 1)),  # IsDreamWorld: 0 is true
+            ev(0, actor=0, action=0),
+            ev(0, actor=0, action=1),
+        ], {"Win": 0}, [["EventQueryIsDreamWorld"]])
+
+    def actions(self, answer):
+        return [a[1] for a in evfl.actions_of({"Death": self.chart()}, "Death", "Win", answer=answer)]
+
+    def test_answered_case_only(self):
+        self.assertEqual(self.actions(bb.normal_world), ["Dungeon"])
+
+    def test_no_answer_or_an_unknown_value_takes_every_case(self):
+        self.assertEqual(sorted(self.actions(None)), ["Dungeon", "Rush"])
+        self.assertEqual(sorted(self.actions(lambda *_: 7)), ["Dungeon", "Rush"])
 
 
 class AgainstTheCode(unittest.TestCase):
