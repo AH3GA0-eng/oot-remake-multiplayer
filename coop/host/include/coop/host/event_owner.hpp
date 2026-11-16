@@ -32,6 +32,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "coop/host/scene.hpp"
 
@@ -81,11 +82,20 @@ inline bool local_event_hides(bool event_running, EventWhose whose, std::optiona
 // - Frame: `running` is PlayerReading::event_running, `link_bound` our Link's
 //   own performer bound, `own_anim` our Link's main AS command (the Ocarina's
 //   animation counts as the Ocarina where the wrap gives no name: the emulator).
-//   A run is classified when it starts and stays so until it ends.
+//   A run is classified when it starts and stays so until it ends, except:
+// - RunNames: the running event's own name-like strings, as the game keeps them
+//   (CoopEventMember::ReadRunning, both platforms, read once the run started). The
+//   name of our last co-op ask among them makes the run a replay whatever the time
+//   since the ask; the free Ocarina's setting among them makes it the Ocarina; other
+//   names with no co-op ask in them make a run the time guess called a replay ours.
+//   So the 3 s window decides only while the game gives no name (By() says which).
 // Pure: tested in tests/host/event_owner_test.cpp.
 class EventOwnerTracker {
  public:
   static constexpr std::uint64_t kReplayUs = 3'000'000;
+  // How long a co-op ask may still be matched by the event's name (a slow start).
+  static constexpr std::uint64_t kNameMatchUs = 60'000'000;
+  enum class By : std::uint8_t { none, time, name, request };
 
   void CoopAsked(std::string_view name, std::uint64_t now_us) {
     coop_name_ = std::string(name);
@@ -93,8 +103,39 @@ class EventOwnerTracker {
     coop_set_ = true;
   }
 
+  void RunNames(const std::vector<std::string>& names, std::uint64_t now_us) {
+    if (!running_ || names.empty()) return;
+    const auto has = [&names](std::string_view n) {
+      for (const std::string& x : names) {
+        if (x == n) return true;
+      }
+      return false;
+    };
+    if (!run_coop_name_.empty() && now_us - run_coop_us_ <= kNameMatchUs && has(run_coop_name_)) {
+      replay_ = true;
+      ocarina_ = false;
+      by_ = By::name;
+      return;
+    }
+    for (const std::string& x : names) {
+      if (free_ocarina_event(x)) {
+        ocarina_ = true;
+        replay_ = false;
+        by_ = By::name;
+        return;
+      }
+    }
+    if (replay_ && by_ == By::time) {  // the game names the event, and it is not the one we asked for
+      replay_ = false;
+      by_ = By::name;
+    }
+  }
+
   void GameAsked(std::string_view name, std::uint64_t now_us) {
-    if (coop_set_ && name == coop_name_) return;  // our replay, seen by the wrap
+    if (coop_set_ && name == coop_name_) {  // our replay, seen by the wrap
+      coop_by_request_ = true;
+      return;
+    }
     coop_set_ = false;                            // the game's own request after ours: the next run is ours
     game_ocarina_ = free_ocarina_event(name);
     game_us_ = now_us;
@@ -102,6 +143,7 @@ class EventOwnerTracker {
     if (running_) {
       ocarina_ = game_ocarina_;  // a song's reaction ends the free play; a new free play starts one
       replay_ = false;
+      by_ = By::request;
     }
   }
 
@@ -119,7 +161,11 @@ class EventOwnerTracker {
       running_ = true;
       replay_ = coop_set_ && now_us - coop_us_ <= kReplayUs;
       ocarina_ = !replay_ && game_set_ && game_ocarina_ && now_us - game_us_ <= kReplayUs;
+      by_ = replay_ ? (coop_by_request_ ? By::request : By::time) : ocarina_ ? By::request : By::none;
+      run_coop_name_ = coop_name_;  // kept for RunNames whatever the window said
+      run_coop_us_ = coop_us_;
       coop_set_ = false;
+      coop_by_request_ = false;
       game_set_ = false;
     }
     if (ocarina_ || activity_of(own_anim) == Activity::ocarina) return EventWhose::ocarina;
@@ -128,6 +174,8 @@ class EventOwnerTracker {
   }
 
   bool Replay() const { return running_ && replay_; }
+  // What decided the running event's kind: time (the window alone), name (RunNames), request (the wrap).
+  By Decided() const { return by_; }
 
  private:
   std::string coop_name_;
@@ -139,6 +187,20 @@ class EventOwnerTracker {
   bool running_ = false;
   bool replay_ = false;
   bool ocarina_ = false;
+  bool coop_by_request_ = false;
+  std::string run_coop_name_;
+  std::uint64_t run_coop_us_ = 0;
+  By by_ = By::none;
 };
+
+inline const char* by_name(EventOwnerTracker::By b) {
+  switch (b) {
+    case EventOwnerTracker::By::none: return "no co-op ask";
+    case EventOwnerTracker::By::time: return "by time alone";
+    case EventOwnerTracker::By::name: return "by the event's name";
+    case EventOwnerTracker::By::request: return "by the game's request";
+  }
+  return "?";
+}
 
 }  // namespace coop::host

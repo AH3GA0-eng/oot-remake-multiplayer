@@ -247,7 +247,11 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
         local.self = self;
         local.scene = scene;
         local.status = status;
-        local.event = reading && reading->event_running.value_or(false);
+        // G1 (coop/host/event_owner.hpp): only an event our Link is in. During another player's
+        // event replayed here, and while playing the Ocarina, our Link stands in the open and
+        // can be hit as usual.
+        local.event = reading && coop::host::our_link_in_event(reading->event_running.value_or(false),
+                                                               reading->event_whose);
         local.life = CoopObjects::OurLinkLife();
         if (!reading) {
             local.status |= proto::status::loading;  // no Link to read: a load

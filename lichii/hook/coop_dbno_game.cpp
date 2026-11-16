@@ -326,7 +326,7 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
     }
 
     // Beside a downed teammate: hold A.
-    const bool event = reading && reading->event_running.value_or(false);
+    const bool event = reading && reading->event_running.value_or(false);  // G1: any event (a revive starts the game's own event; one at a time)
     const bool able = connected && rules.on && out.state == State::up && reading.has_value() && !event;
     const Reviver::Out rev =
         g.reviver.Frame(now_us, able, g.button.load(), in.position, scene, fallen);

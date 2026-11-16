@@ -296,26 +296,37 @@ void MendStory(EmulatorMemory& memory, MendClocks& since_us) {
     }
 }
 
-// G1 (coop/host/event_owner.hpp): whose the running event is, logged on each change. Once a frame,
-// from the session's frame or the frame without one (only one of them runs in a frame).
-void ApplyEventOwner(coop::host::PlayerReading& reading) {
+// G1 (coop/host/event_owner.hpp): whose the running event is, logged on each change (with what
+// decided it). Once a frame, from the session's frame or the frame without one (only one runs).
+coop::host::EventWhose ClassifyEvent(bool running, bool link_bound, std::optional<std::string_view> anim) {
     static std::uint64_t cursor = 0;
     static int said = -1;
+    static int said_by = -1;
     const std::uint64_t now_us = CoopEvery::NowUs();
     for (const auto& r : CoopLiveEvents::TheGameRequests().Since(cursor)) {
         if (r.taken) CoopEventOwner::GameAsked(r.name, now_us);
     }
-    const auto whose = CoopEventOwner::Apply(reading, now_us);
-    const int now = reading.event_running.value_or(false) ? static_cast<int>(whose) : -1;
-    if (now != said) {
+    coop::host::EventOwnerTracker::By by{};
+    const auto whose = CoopEventOwner::Classify(running, link_bound, anim, now_us, &by);
+    const int now = running ? static_cast<int>(whose) : -1;
+    if (now != said || (now >= 0 && static_cast<int>(by) != said_by)) {
         if (now >= 0) {
-            LOG_INFO(Core, "coop: event: the running event is {}{}", coop::host::whose_name(whose),
+            LOG_INFO(Core, "coop: event: the running event is {} ({}){}", coop::host::whose_name(whose),
+                     coop::host::by_name(by),
                      whose == coop::host::EventWhose::ours
-                         ? " (our Link is in it: the others are hidden, holds apply)"
-                         : " (our Link is not held by it: no hide, no hold, no claim; its actors here act for it)");
+                         ? ": our Link is in it, the others are hidden, holds apply"
+                         : ": our Link is not held by it, no hide, no hold, no claim; its actors here act for it");
         }
         said = now;
+        said_by = static_cast<int>(by);
     }
+    return whose;
+}
+
+void ApplyEventOwner(coop::host::PlayerReading& reading) {
+    reading.event_whose = ClassifyEvent(
+        reading.event_running.value_or(false), reading.link_bound,
+        reading.animation ? std::optional<std::string_view>(reading.animation->name) : std::nullopt);
 }
 
 class Coop {
@@ -2751,6 +2762,28 @@ void LocalFrameOff(Core::System& system, bool writes) {
     if (writes) {
         CoopLocalGame::Frame(facts);
     }
+    // G1: whose the running event is, every frame (the tracker sees each run start and end). The
+    // animation and our Link's performer are read only while an event runs.
+    bool solo_running = false;
+    std::optional<std::string> solo_anim_name;
+    coop::host::EventWhose solo_whose = coop::host::EventWhose::ours;
+    if (full) {
+        ApplyEventOwner(*full);
+        solo_running = full->event_running.value_or(false);
+        if (full->animation) solo_anim_name = full->animation->name;
+        solo_whose = full->event_whose;
+    } else {
+        solo_running = reader.read_event_running().value_or(false);
+        bool bound = false;
+        if (solo_running) {
+            if (const auto animation = reader.read_animation()) solo_anim_name = animation->name;
+            bound = reader.read_link_bound().value_or(false);
+        }
+        solo_whose = ClassifyEvent(solo_running, bound,
+                                   solo_anim_name ? std::optional<std::string_view>(*solo_anim_name) : std::nullopt);
+    }
+    const std::optional<std::string_view> solo_anim =
+        solo_anim_name ? std::optional<std::string_view>(*solo_anim_name) : std::nullopt;
     {
         const auto scene = full ? full->scene : reader.read_scene();
         {   // Row 112: our Link for the Customize picture with no session, as a session's frame gives it.
@@ -2759,14 +2792,8 @@ void LocalFrameOff(Core::System& system, bool writes) {
                 solo.position = std::array<float, 3>{(*facts.position)[0], (*facts.position)[1], (*facts.position)[2]};
                 solo.scene = scene;
                 solo.adult = facts.adult;
-                // Our own event (a cutscene, not the Ocarina): the animation is read only while one runs.
-                const auto running = full ? full->event_running : reader.read_event_running();
-                if (running.value_or(false)) {
-                    std::optional<coop::protocol::Animation> animation =
-                        full ? full->animation : reader.read_animation();
-                    solo.event = coop::host::local_event_hides(
-                        true, animation ? std::optional<std::string_view>(animation->name) : std::nullopt);
-                }
+                // Our own event (a cutscene, not the Ocarina, not another player's): G1, classified above.
+                solo.event = coop::host::local_event_hides(solo_running, solo_whose, solo_anim);
             }
             g_solo_view.Publish(solo, CoopSoloView::Clock::now());
         }
@@ -2785,7 +2812,7 @@ void LocalFrameOff(Core::System& system, bool writes) {
     }
     if (!step.Publish(CoopLocalGame::HasSeats())) return;
     if (!full) full = reader.read();   // seats came in this frame's step
-    if (full) ApplyEventOwner(*full);  // G1: the free Ocarina by its event too, not only its animation
+    if (full) full->event_whose = solo_whose;  // G1: classified once this frame, above
     // The extra local players' Players are made (and deleted) by the puppet Director, as online (no remote players).
     const bool event =
         full && coop::host::local_event_hides(full->event_running.value_or(false), full->event_whose,

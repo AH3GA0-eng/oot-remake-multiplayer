@@ -2,7 +2,9 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include "coop/host/event_owner.hpp"
 #include "coop/host/sampler.hpp"
@@ -122,4 +124,31 @@ TEST_CASE("event owner: issue 200, only the game whose event it is hides others 
                    std::string_view("spot00"), 0) == Visibility::show);
   CHECK(visibility(std::string_view("spot00"), local_event_hides(true, EventWhose::ours, std::nullopt),
                    std::string_view("spot00"), 0) == Visibility::hide);
+}
+
+TEST_CASE("event owner: the event's own name decides, not the time since the ask (review)") {
+  using By = EventOwnerTracker::By;
+  // A replay that starts late (beyond the window): the time guess says ours, its name says another player's.
+  EventOwnerTracker t;
+  t.CoopAsked("InsideTheDekuTree_Room_Ladder", kStart);
+  CHECK(t.Frame(true, false, kStart + EventOwnerTracker::kReplayUs + 500 * kMs) == EventWhose::ours);
+  t.RunNames({"Event_Common", "InsideTheDekuTree_Room_Ladder"}, kStart + EventOwnerTracker::kReplayUs + 520 * kMs);
+  CHECK(t.Frame(true, false, kStart + EventOwnerTracker::kReplayUs + 532 * kMs) == EventWhose::others);
+  CHECK(t.Decided() == By::name);
+  t.Frame(false, false, kStart + 10'000'000);
+  // Our own event inside the window: the time guess says a replay, its name (not ours asked) says ours.
+  t.CoopAsked("InsideTheDekuTree_Room_Ladder", kStart + 11'000'000);
+  CHECK(t.Frame(true, false, kStart + 11'500'000) == EventWhose::others);
+  CHECK(t.Decided() == By::time);
+  t.RunNames({"Npc_Kokiri_Talk"}, kStart + 11'520'000);
+  CHECK(t.Frame(true, false, kStart + 11'532'000) == EventWhose::ours);
+  CHECK(t.Decided() == By::name);
+  t.Frame(false, false, kStart + 20'000'000);
+  // The free Ocarina named by the event itself (the emulator: no request wrap), even in its EvtWait take-out.
+  CHECK(t.Frame(true, true, kStart + 21'000'000, std::string_view("EvtWait")) == EventWhose::ours);
+  t.RunNames({"Dm_SY_Ocarina"}, kStart + 21'020'000);
+  CHECK(t.Frame(true, true, kStart + 21'032'000, std::string_view("EvtWait")) == EventWhose::ocarina);
+  // No names: nothing changes.
+  t.RunNames({}, kStart + 21'040'000);
+  CHECK(t.Frame(true, true, kStart + 21'050'000, std::string_view("EvtWait")) == EventWhose::ocarina);
 }
