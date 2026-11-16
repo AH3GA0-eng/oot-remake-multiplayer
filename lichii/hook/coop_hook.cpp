@@ -537,13 +537,11 @@ public:
             }
             if (sharing_) {
                 // A small key or token we and another player took at once: ours
-                // goes back. A token taken elsewhere: its Skulltula's key here
-                // (docs/world.md, small keys and tokens).
+                // goes back (docs/world.md, small keys and tokens). No key is
+                // written for another game's token: its own placement key is
+                // the game's to write, and it arrives through the flag list.
                 for (const std::string& count : CoopWorld::TakeGiveBacks()) {
                     LOG_INFO(Core, "coop: {}", CoopWorld::GiveBack(*game_store, count));
-                }
-                for (const std::uint64_t key : CoopWorld::TakeTakenKeys()) {
-                    LOG_INFO(Core, "coop: {}", CoopWorld::SetTakenKey(*game_store, key));
                 }
             }
             if (sharing_) {

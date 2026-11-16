@@ -153,6 +153,11 @@ std::uint64_t TokenId(std::uint64_t skulltula_hash) {
     return id == 0 || id == ~std::uint64_t{0} ? id ^ 1u : id;  // never 0 or ~0 on the wire
 }
 
+bool IsGoldSkulltulaKey(std::uint64_t hash) {
+    const auto keys = coop::host::gold_skulltula_keys();
+    return std::binary_search(keys.begin(), keys.end(), hash);
+}
+
 bool IsShifter(std::string_view name) {
     // From the romfs (breakables-2): no LifeRef, moved or turned by their AI
     // when hit, and no 64-bit key, so before this nothing of them was shared.
@@ -211,7 +216,6 @@ std::optional<std::string> KeyCountOf(std::string_view scene) {
 namespace {
 std::mutex give_back_mutex;
 std::vector<std::string> give_backs;
-std::vector<std::uint64_t> taken_keys;
 } // namespace
 
 void QueueGiveBack(std::string count) {
@@ -221,34 +225,9 @@ void QueueGiveBack(std::string count) {
     }
 }
 
-void QueueTakenKey(std::uint64_t key) {
-    std::lock_guard lock(give_back_mutex);
-    if (taken_keys.size() < 256) {
-        taken_keys.push_back(key);
-    }
-}
-
-std::vector<std::uint64_t> TakeTakenKeys() {
-    std::lock_guard lock(give_back_mutex);
-    return std::exchange(taken_keys, {});
-}
-
 std::vector<std::string> TakeGiveBacks() {
     std::lock_guard lock(give_back_mutex);
     return std::exchange(give_backs, {});
-}
-
-std::string SetTakenKey(coop::host::FlagStore& game, std::uint64_t key) {
-    char hex[24];
-    std::snprintf(hex, sizeof hex, "%016llx", static_cast<unsigned long long>(key));
-    const auto flag = coop::protocol::FlagKey::key64_flag(key);
-    if (const auto now = game.read(flag); now && now->value != 0) {
-        return std::string("world: key64 ") + hex + " is 1 already";
-    }
-    if (!game.write(coop::protocol::FlagEntry(flag, coop::protocol::FlagKind::boolean, 1))) {
-        return std::string("world: key64 ") + hex + ": write failed";
-    }
-    return std::string("world: key64 ") + hex + " set to 1 (a token taken elsewhere)";
 }
 
 std::string GiveBack(coop::host::FlagStore& game, std::string_view count) {
@@ -462,6 +441,10 @@ std::uint64_t WorldSync::IdentifyToken(const proto::Vec3& at, std::uint64_t now_
         return 0;
     }
     auto& spots = token_spots_[scene_];
+    // The id only says which token a break is about; it is never written into
+    // the game (see Token()). So the nearest guess is good enough here: the
+    // side that receives the break finds its own token by where it was, not by
+    // this id (Token()).
     std::uint64_t best = 0;
     float best_m = kTokenNearM;
     for (const auto& [hash, where] : skulltulas_) {
@@ -516,8 +499,34 @@ void WorldSync::Token(const proto::WorldBreak& b) {
             if (spots.size() < 512 && Finite(b.position)) {
                 spots.emplace(b.hash, b.position);
             }
-            taken_keys_.push_back(hash);
+            // No key is set here (issue 89, 2026-11-16). The placement key is
+            // the game's to write: the game that took the token set it at the
+            // pickup, and it reaches every other game through the flag list
+            // like any pickup key (all 100 are shared from the start,
+            // guard_count). Setting it from this side used a guessed id
+            // (IdentifyToken's distance match), so a second, wrong placement's
+            // key went to 1 and that Skulltula was gone in every game that
+            // loaded the scene afterwards, while the count stayed right (the
+            // save with one key more than tokens). What stays here is the token
+            // itself: its spot is kept, and the actor with this id is deleted
+            // by the objects' taken rule.
             return;
+        }
+    }
+    // The id names no Skulltula we know here (the two games may have picked
+    // different ones for the same token). The token is still taken: every
+    // Gold token of this scene at the place the break names is removed, which
+    // is what the sender saw go.
+    if (!Finite(b.position)) {
+        return;
+    }
+    for (auto& [address, o] : objects_) {
+        if (!IsGoldToken(o.name) || !Finite(o.position)) {
+            continue;
+        }
+        if (Distance(o.position, b.position) <= kTokenSpotM) {
+            o.remove = true;
+            refund_notes_.push_back("world: a token taken elsewhere at this place: deleted");
         }
     }
 }
@@ -1169,8 +1178,6 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         out.give_back.push_back(std::move(count));
     }
     give_back_.clear();
-    out.taken_keys.insert(out.taken_keys.end(), taken_keys_.begin(), taken_keys_.end());
-    taken_keys_.clear();
 
     // A token has no placement: it gets its Skulltula's id (TokenId).
     std::vector<CoopObjects::Seen> with_tokens;

@@ -1620,9 +1620,6 @@ public:
             for (std::string& count : world.give_back) {
                 CoopWorld::QueueGiveBack(std::move(count));  // a small key or token both took
             }
-            for (const std::uint64_t key : world.taken_keys) {
-                CoopWorld::QueueTakenKey(key);  // a token taken elsewhere: its Skulltula's key
-            }
             block_fixes_ = std::move(world.blocks);  // issue 147, written below
             if (!world.hits.empty()) {
                 // A sign another player's sword passed: the same hit on ours.

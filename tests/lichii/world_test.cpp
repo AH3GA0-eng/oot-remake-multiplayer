@@ -2252,13 +2252,12 @@ TEST_CASE("world: a Gold Skulltula's token is known by its Skulltula, taken here
             sent.push_back(b);
         }
         CHECK(out.give_back.empty());
-        CHECK(out.taken_keys.empty());  // our own game set its key itself
     }
     REQUIRE(sent.size() == 1);
     CHECK(sent[0].hash == CoopWorld::TokenId(kGoldHash));
 }
 
-TEST_CASE("world: a token taken elsewhere goes at once here, its Skulltula's key is set, and a reload does not bring it back") {
+TEST_CASE("world: a token taken elsewhere is deleted here, and no key is written from the guess") {
     WorldSync b;
     GraveWalk(b, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
     GraveWalk(b, 1100 * kMs, {Token(0x200)});  // the kill was shared: our copy left a token too
@@ -2267,8 +2266,8 @@ TEST_CASE("world: a token taken elsewhere goes at once here, its Skulltula's key
     b.Receive(taken);
     auto out = GraveWalk(b, 1200 * kMs, {Token(0x200)});
     CHECK(Removed(b, 0x200));
-    REQUIRE(out.taken_keys.size() == 1);
-    CHECK(out.taken_keys[0] == kGoldHash);  // the persistent "taken" state
+    // The placement key is the game's to write at the pickup; this side never
+    // writes it, or a wrong guess would take a second Skulltula away (issue 89).
     CHECK(out.give_back.empty());
     for (std::uint64_t t = 1300; t <= 3000; t += 100) {
         out = GraveWalk(b, t * kMs, {});
@@ -2291,6 +2290,29 @@ TEST_CASE("world: a token taken elsewhere goes at once here, its Skulltula's key
     }
 }
 
+TEST_CASE("world: a token is deleted by the place the break names, whatever id the two games picked") {
+    // The two games' distance guesses can name different Skulltulas for the
+    // same token. The token still goes: an id nobody here knows is no reason
+    // to leave it standing, or it is taken a second time (issue 89).
+    WorldSync b;
+    GraveWalk(b, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(b, 1100 * kMs, {Token(0x200)});  // where the Skulltula died: its id here
+    proto::WorldBreak elsewhere = BreakOf(0x0123456789abcdefull, 0, kGrave);  // an id of no Skulltula here
+    elsewhere.position = {1.0f, 2.5f, 3.0f};
+    b.Receive(elsewhere);
+    GraveWalk(b, 1200 * kMs, {Token(0x200)});
+    CHECK(Removed(b, 0x200));
+    // A break whose place holds no token of ours deletes nothing nearby.
+    WorldSync d;
+    GraveWalk(d, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(d, 1100 * kMs, {Token(0x500)});
+    proto::WorldBreak far = BreakOf(0x0123456789abcdefull, 0, kGrave);
+    far.position = {40.0f, 2.5f, 3.0f};
+    d.Receive(far);
+    GraveWalk(d, 1200 * kMs, {Token(0x500)});
+    CHECK_FALSE(Removed(d, 0x500));
+}
+
 TEST_CASE("world: both players take the same token at once: one token goes back") {
     WorldSync a;
     GraveWalk(a, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
@@ -2306,31 +2328,18 @@ TEST_CASE("world: both players take the same token at once: one token goes back"
     }
 }
 
-TEST_CASE("world: a token taken elsewhere sets its Skulltula's key, once") {
+TEST_CASE("world: a token's count is given back once, and its placement key is the game's") {
     const std::uint32_t tokens = proto::flag_hash(CoopWorld::kTokenCount);
     CountStore game;
     game.values[tokens] = 5;
     CHECK(CoopWorld::GiveBack(game, CoopWorld::kTokenCount).find("5 -> 4") != std::string::npos);
     CHECK(game.values[tokens] == 4);
-    // SetTakenKey writes a 64-bit key: the store sees it under its key.
-    struct KeyStore final : public coop::host::FlagStore {
-        std::map<std::uint64_t, std::uint32_t> keys;
-        std::optional<proto::FlagEntry> read(coop::host::FlagKey k) override {
-            const auto it = keys.find(k.key);
-            if (it == keys.end()) return proto::FlagEntry(k, proto::FlagKind::boolean, 0);
-            return proto::FlagEntry(k, proto::FlagKind::boolean, it->second);
-        }
-        bool write(const proto::FlagEntry& e) override {
-            keys[e.key.key] = e.value;
-            return true;
-        }
-    } store;
-    CHECK(CoopWorld::SetTakenKey(store, kGoldHash).find("set to 1") != std::string::npos);
-    CHECK(store.keys[kGoldHash] == 1);
-    CHECK(CoopWorld::SetTakenKey(store, kGoldHash).find("1 already") != std::string::npos);
-    CoopWorld::QueueTakenKey(kGoldHash);
-    CHECK(CoopWorld::TakeTakenKeys() == std::vector<std::uint64_t>{kGoldHash});
-    CHECK(CoopWorld::TakeTakenKeys().empty());
+    // The placement key is never written by this side (issue 89, 2026-11-16):
+    // a guessed id would set a second Skulltula's key and take it away for
+    // good. What the two games share is the count above; the key itself comes
+    // from the game that took the token, through the flag list.
+    CHECK(CoopWorld::IsGoldSkulltulaKey(kGoldHash));
+    CHECK_FALSE(CoopWorld::IsGoldSkulltulaKey(0x1234567890abcdefull));
 }
 
 TEST_CASE("world: a pillar that does not fall on life 0 is written 10 times, then one line, then left (breakables)") {
