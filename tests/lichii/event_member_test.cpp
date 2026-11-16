@@ -44,69 +44,54 @@ constexpr std::uint64_t kEventLink = 0x106d7f9dd0;  // as in the probe run
 
 } // namespace
 
-TEST_CASE("event member: bound only into OUR running event, the performer in any slot (row 97)") {
+TEST_CASE("event member: in our Link's event only when its fixed-slot performer holds our Link's link (row 97)") {
     using namespace CoopEventMember;
-    constexpr std::uint64_t kMain = 0x7100000000;
-    constexpr std::uint64_t kManager = 0x50'0000, kSession = 0x60'0000, kEvents = 0x70'0000;
-    constexpr std::uint64_t kEvent = 0x80'0000, kOther = 0xb0'0000, kRecord = 0xc0'0000;
+    constexpr std::uint64_t kLink = 0x50'0000, kLinkParts = 0x51'0000, kLinkPerformer = 0x52'0000;
+    constexpr std::uint64_t kOurEvent = 0x106d7f9dd0;  // a link as the probe read it
     Memory m;
-    // Our running event: one session with one event.
-    m.Put(kMain + kEventManagerPtr, kManager);
-    m.Put(kManager + kEventSession, kSession);
-    m.Put(kSession + kSessionEvents, kEvents);
-    m.Put(kSession + kSessionCount, 1);
-    m.Put(kEvents, kEvent);
-    const Ours ours = ReadOurs(m.Reader(), kMain);
-    CHECK(ours.session == kSession);
-    REQUIRE(ours.events.size() == 1);
-    CHECK(ours.events[0] == kEvent);
-    // The actor's performer sits at slot 0x88 (the asker's, as the probe read it).
+    // Our Link: its performer at the player's slot 0x90.
+    m.Put(kLink + kActorParts, kLinkParts);
+    m.Put(kLinkParts + kPerformerSlotAlt, kLinkPerformer);
+    m.Put(kLinkPerformer + kPerformerActor, kLink);
+    m.Put(kLinkPerformer + kPerformerLink, 0);
+    CHECK(OurLinkOf(m.Reader(), kLink) == 0);  // in no event
+    m.Put(kLinkPerformer + kPerformerLink, kOurEvent);
+    const std::uint64_t ours = OurLinkOf(m.Reader(), kLink);
+    CHECK(ours == kOurEvent);
+    // The actor (a scrub, say), its performer at 0x88. Nothing here reads the event manager's
+    // word: a Deku Scrub's talk, which leaves it 0, is seen all the same.
     m.Put(kActor + kActorParts, kParts);
     m.Put(kParts + kPerformerSlot, kPerformer);
     m.Put(kPerformer + kPerformerActor, kActor);
     m.Put(kPerformer + kPerformerLink, 0);
-    Member r = MemberOf(m.Reader(), kActor, ours);
-    REQUIRE(r.bound);
-    CHECK_FALSE(*r.bound);  // its performer, no link
-    // Linked to our event itself, inside it, inside the session, or to a record that refers to it.
-    for (const std::pair<std::uint64_t, LinkHow>& c : std::vector<std::pair<std::uint64_t, LinkHow>>{
-             {kEvent, LinkHow::event}, {kEvent + 0x40, LinkHow::inside_event},
-             {kSession + 0x100, LinkHow::session}, {kRecord, LinkHow::refers}}) {
-        const std::uint64_t link = c.first;
-        const LinkHow how = c.second;
-        CAPTURE(link);
-        m.Put(kRecord + 0x10, kEvent);  // the record's third word is our event
-        m.Put(kPerformer + kPerformerLink, link);
-        r = MemberOf(m.Reader(), kActor, ours);
-        REQUIRE(r.bound);
-        CHECK(*r.bound);
-        CHECK(r.how == how);
-        CHECK(r.slot == kPerformerSlot);
+    REQUIRE(InOurEvent(m.Reader(), kActor, ours));
+    CHECK_FALSE(*InOurEvent(m.Reader(), kActor, ours));  // not bound
+    m.Put(kPerformer + kPerformerLink, kOurEvent);
+    CHECK(*InOurEvent(m.Reader(), kActor, ours));        // bound into our Link's event
+    CHECK_FALSE(*InOurEvent(m.Reader(), kActor, 0));     // our Link in no event: nothing is ours
+    // Another event's link (a butterfly's own) and heap neighbours of ours never count.
+    for (const std::uint64_t other : {std::uint64_t{0x106d900000}, kOurEvent + 8, kOurEvent - 8, kOurEvent + 0x880}) {
+        CAPTURE(other);
+        m.Put(kPerformer + kPerformerLink, other);
+        CHECK_FALSE(*InOurEvent(m.Reader(), kActor, ours));
     }
-    // A butterfly's own event (seen 26-32 m away in the scrub runs): a link to something else.
-    m.Put(kOther, 0x1234);
-    m.Put(kPerformer + kPerformerLink, kOther);
-    r = MemberOf(m.Reader(), kActor, ours);
-    REQUIRE(r.bound);
-    CHECK_FALSE(*r.bound);
-    CHECK(r.link == kOther);
-    CHECK(r.how == LinkHow::none);
-    // No running session (the manager's word 0): nothing is ours, whatever the link.
-    m.Put(kPerformer + kPerformerLink, kEvent);
-    CHECK_FALSE(MemberOf(m.Reader(), kActor, Ours{}).bound.value_or(false));
-    // The performer in another slot (a Deku Scrub's is not at 0x88 or 0x90): found there.
+    // A stray component of its own (owner back-pointer at +0x10, our link at +0x18) in another
+    // slot is never taken as the performer: no performer at 0x88/0x90, not known.
     m.Put(kParts + kPerformerSlot, 0);
-    m.Put(kParts + 0xa8, kPerformer);
-    r = MemberOf(m.Reader(), kActor, ours);
-    REQUIRE(r.bound);
-    CHECK(*r.bound);
-    CHECK(r.slot == 0xa8);
-    // A component that is not the actor's own (+0x10 another actor) never counts.
+    m.Put(kParts + 0xa8, 0x53'0000);
+    m.Put(0x53'0000 + kPerformerActor, kActor);
+    m.Put(0x53'0000 + kPerformerLink, kOurEvent);
+    CHECK_FALSE(InOurEvent(m.Reader(), kActor, ours));
+    // ... only the diagnostic scan names that slot.
+    const auto slots = ScanLinked(m.Reader(), kActor, ours);
+    REQUIRE(slots.size() == 1);
+    CHECK(slots[0] == 0xa8);
+    CHECK(ScanLinked(m.Reader(), kActor, 0).empty());
+    // The fixed slot holding another actor's performer: not ours either.
+    m.Put(kParts + kPerformerSlot, kPerformer);
     m.Put(kPerformer + kPerformerActor, 0x99);
-    CHECK_FALSE(MemberOf(m.Reader(), kActor, ours).bound);
-    // Unreadable or no actor: not known.
-    CHECK_FALSE(MemberOf(m.Reader(), 0, ours).bound);
-    CHECK_FALSE(MemberOf(m.Reader(), 0x77'0000, ours).bound);
+    CHECK_FALSE(InOurEvent(m.Reader(), kActor, ours));
+    CHECK_FALSE(InOurEvent(m.Reader(), 0, ours));
 }
 
 TEST_CASE("event member: our running event's kind and the names it points at, for the log") {

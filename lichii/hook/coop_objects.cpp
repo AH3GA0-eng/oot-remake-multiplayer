@@ -2654,27 +2654,32 @@ private:
         if (!List(r, actors)) {
             return false;
         }
-        // Row 97: our running event (its session and events), for which actors it binds
-        // (CoopEventMember::MemberOf: a link to another event, a butterfly's own, is not ours).
+        // Row 97: our own Link's event link (its performer's +0x18, CoopEventMember): an actor is in
+        // our event when its own performer holds that same link. Our Link's actor is the last walk's.
         const auto read_word = [&r](std::uint64_t at) { return r.Get<u64>(at); };
-        const CoopEventMember::Ours ours = CoopEventMember::ReadOurs(read_word, main_);
-        if (ours.session == 0) {
+        const u64 our_event_link = CoopEventMember::OurLinkOf(read_word, our_link_);
+        if (our_event_link == 0) {
             member_said_.clear();
         }
         const auto member_of = [&](u64 actor, const std::string& name) {
-            const CoopEventMember::Member m = CoopEventMember::MemberOf(read_word, actor, ours);
-            // Once per actor name and event, for the next run: where its performer is and what
-            // its link refers to (row 97: why our Deku Scrubs never read as bound).
-            if (ours.session != 0 && member_said_.size() < kMemberSaidMax && member_said_.insert(name).second) {
-                if (!m.bound) {
-                    LOG_INFO(Core, "coop: event: {} {:#x}: no performer of its own in the first {} slots", name,
-                             actor, CoopEventMember::kMaxSlots);
+            const std::optional<bool> in = CoopEventMember::InOurEvent(read_word, actor, our_event_link);
+            // Once per actor name and event, for the next run (diagnostic, never a claim): the
+            // fixed-slot read, and when it found no performer, which slots hold our Link's link.
+            if (our_event_link != 0 && member_said_.size() < kMemberSaidMax && member_said_.insert(name).second) {
+                if (in) {
+                    LOG_INFO(Core, "coop: event: {} {:#x}: its performer is {}in our Link's event (link {:#x})", name,
+                             actor, *in ? "" : "not ", our_event_link);
                 } else {
-                    LOG_INFO(Core, "coop: event: {} {:#x}: performer at slot {:#x}, link {:#x}: {}", name, actor,
-                             m.slot, m.link, CoopEventMember::LinkHowName(m.how));
+                    std::string slots;
+                    for (const u64 slot : CoopEventMember::ScanLinked(read_word, actor, our_event_link)) {
+                        slots += fmt::format("{}{:#x}", slots.empty() ? "" : " ", slot);
+                    }
+                    LOG_INFO(Core, "coop: event: {} {:#x}: no performer at slot 0x88/0x90; slots linked to our Link's "
+                                   "event (diagnostic): {}",
+                             name, actor, slots.empty() ? std::string("none") : slots);
                 }
             }
-            return m.bound;
+            return in;
         };
         std::optional<coop::protocol::Vec3> player;
         std::vector<coop::protocol::Vec3> foes;  // down but not out: living enemies, where they stand
