@@ -373,6 +373,7 @@ bool Glue::Scenes(Core::System& system, std::uint64_t main, const Local& local, 
         max_life_cap.reset();
         CoopBossNative::TheTable().SetDying({});
         CoopObjects::SetDyingBosses({});
+        CoopBossScenes::RefusedDeaths().store(0, std::memory_order_release);  // (no Director: nothing refused)
         std::lock_guard lock(searched_mutex);
         searched.clear();  // nothing takes them: none applied late when the rules come on
         return false;
