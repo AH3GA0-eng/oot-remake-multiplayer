@@ -633,6 +633,29 @@ std::optional<float> dive_depth_raise(std::int32_t silver, std::int32_t gold, fl
   return want;
 }
 
+std::optional<std::size_t> trade_step_rank(std::uint32_t step) {
+  const auto it = std::find(trade::kSteps.begin(), trade::kSteps.end(), step);
+  if (it == trade::kSteps.end()) return std::nullopt;
+  return static_cast<std::size_t>(it - trade::kSteps.begin());
+}
+
+std::optional<std::uint32_t> trade_step_raise(std::optional<std::uint32_t> step,
+                                              const std::function<std::optional<std::int32_t>(std::uint32_t)>& stock) {
+  if (!step) return std::nullopt;
+  const auto now = trade_step_rank(*step);
+  if (!now || *now < 1) return std::nullopt;  // unknown, or NotReady: left alone
+  std::optional<std::size_t> want;
+  for (const trade::Hold& h : trade::kHolds) {
+    const auto n = stock(h.item);
+    if (!n) return std::nullopt;  // an unread item: left alone
+    if (*n <= 0) continue;
+    const auto r = trade_step_rank(h.step);
+    if (r && (!want || *r > *want)) want = r;
+  }
+  if (!want || *want <= *now) return std::nullopt;  // ours is as far or further
+  return trade::kSteps[*want];
+}
+
 bool zelda_letter_spent(std::int32_t held, std::optional<bool> gate_open) {
   return held > 0 && gate_open == true;
 }
@@ -647,6 +670,10 @@ std::optional<bool> king_zora_moved(std::uint32_t live_step) {
 std::string_view ruto_wait_text(RutoWait why) {
   switch (why) {
     case RutoWait::not_got: return "nobody got it";
+    case RutoWait::shown: return "shown to King Zora in some game (HavePlayedEvent.Dm_Zora_0010): spent";
+    case RutoWait::shown_king_waits:
+      return "shown in another game, but King Zora (ChallengeMgr Get_StoneOfWater) has not moved here: ours is kept";
+    case RutoWait::shown_unread: return "HavePlayedEvent.Dm_Zora_0010 (King Zora read the letter) unread";
     case RutoWait::king_unread: return "King Zora's step (ChallengeMgr Get_StoneOfWater) unread";
     case RutoWait::king_moved: return "King Zora has moved here";
     case RutoWait::bottle_unread: return "a bottle unread";
@@ -657,28 +684,46 @@ std::string_view ruto_wait_text(RutoWait why) {
   return "?";
 }
 
-RutoLetter ruto_letter_plan(std::optional<bool> got, std::optional<bool> king_moved,
+RutoLetter ruto_letter_plan(std::optional<bool> got, std::optional<bool> shown, std::optional<bool> king_moved,
                             const std::function<std::optional<bool>(std::uint32_t)>& valid,
                             const std::function<std::optional<std::uint32_t>(std::uint32_t)>& item) {
-  if (got != true) return {RutoWait::not_got, std::nullopt};
-  if (!king_moved) return {RutoWait::king_unread, std::nullopt};
-  if (*king_moved) return {RutoWait::king_moved, std::nullopt};
+  // Shown in any game: never given again. A letter still held here is spent
+  // (row 117: the shower's went, the host kept one with no use), but only
+  // once our own King Zora has moved (Step07 or later read from our
+  // ChallengeMgr): while he still blocks the way, the letter is the only way
+  // past him, so it is kept until the quest catch-up moves him. Only a bottle
+  // read as holding the letter is touched; an unread one is left.
+  if (shown == true) {
+    for (const letters::Bottle& b : letters::kBottles) {
+      if (item(b.item) != letters::kLetter) continue;
+      if (king_moved != true) return {RutoWait::shown_king_waits, std::nullopt, std::nullopt};
+      return {RutoWait::shown, std::nullopt, b.item};
+    }
+    return {RutoWait::shown, std::nullopt, std::nullopt};
+  }
+  // Unread: neither given nor taken (a read that fails must not give a
+  // letter someone may have shown already).
+  if (!shown) return {RutoWait::shown_unread, std::nullopt, std::nullopt};
+  if (got != true) return {RutoWait::not_got, std::nullopt, std::nullopt};
+  if (!king_moved) return {RutoWait::king_unread, std::nullopt, std::nullopt};
+  if (*king_moved) return {RutoWait::king_moved, std::nullopt, std::nullopt};
   std::optional<std::uint32_t> empty;
   for (const letters::Bottle& b : letters::kBottles) {
     const auto v = valid(b.valid);
     const auto in = item(b.item);
-    if (!v || !in) return {RutoWait::bottle_unread, std::nullopt};  // leave every bottle alone
-    if (*in == letters::kLetter) return {RutoWait::has_letter, std::nullopt};
+    if (!v || !in) return {RutoWait::bottle_unread, std::nullopt, std::nullopt};  // leave every bottle alone
+    if (*in == letters::kLetter) return {RutoWait::has_letter, std::nullopt, std::nullopt};
     if (*v && *in == letters::kEmpty && !empty) empty = b.item;
   }
-  if (!empty) return {RutoWait::no_empty, std::nullopt};
-  return {RutoWait::give, empty};
+  if (!empty) return {RutoWait::no_empty, std::nullopt, std::nullopt};
+  return {RutoWait::give, empty, std::nullopt};
 }
 
-std::optional<std::uint32_t> ruto_letter_bottle(std::optional<bool> got, std::optional<bool> king_moved,
+std::optional<std::uint32_t> ruto_letter_bottle(std::optional<bool> got, std::optional<bool> shown,
+                                                std::optional<bool> king_moved,
                                                 const std::function<std::optional<bool>(std::uint32_t)>& valid,
                                                 const std::function<std::optional<std::uint32_t>(std::uint32_t)>& item) {
-  return ruto_letter_plan(got, king_moved, valid, item).bottle;
+  return ruto_letter_plan(got, shown, king_moved, valid, item).bottle;
 }
 
 std::optional<std::string_view> ocarina_equip_mend(std::int32_t fairy, std::int32_t time,

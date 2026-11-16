@@ -651,7 +651,10 @@ public:
                     // Issue 190: a shared ocarina is equipped too, or D-pad
                     // Left takes nothing out.
                     MendOcarina(*memory, reading && reading->event_running.value_or(false));
-                    MendLetters(*memory);  // issue 58: Zelda's Letter spent, Ruto's Letter for everyone
+                    // issue 58: Zelda's Letter spent, Ruto's Letter for everyone;
+                    // row 117: Ruto's Letter spent once shown in any game
+                    MendLetters(*memory, reading && reading->event_running.has_value() &&
+                                             !*reading->event_running);
                     if (CoopStory::On()) {
                         CatchUpQuest(*memory);  // issue 130: the Kokiri Shop opens
                     }
@@ -2376,7 +2379,42 @@ private:
         if (CoopQuests::LiveOn()) {  // issue 94: every shared quest, not only after a reload
             for (auto& w : CoopQuests::LiveWants(value)) wants.push_back(std::move(w));
         }
+        if (auto w = FollowTradeItem(memory)) wants.push_back(std::move(*w));
         challenges_.Want(std::move(wants));
+    }
+
+    // Row 117 (docs/items.md, "Every item the game takes away"): the adult
+    // trade's items are shared by mirror, but each trade NPC tests our own
+    // SubEvent_GetSwordBigGoron step. The step follows the item held: our
+    // GameData step (what the NPCs' _IsAfter_ Exps read) is raised to the
+    // step at which the game's own flow hands that item over, and the
+    // manager gets it through the game's setStep (Challenges, as the shared
+    // quests), so its own step start runs (a spoiling item's timer too). Only
+    // forward, never from NotReady, never in an event (our own trade's flow
+    // sets its step itself). Returns the manager's want for this quest.
+    std::optional<CoopQuest::StepWant> FollowTradeItem(EmulatorMemory& memory) {
+        namespace trade = coop::host::trade;
+        coop::host::GameFlags flags(memory);
+        const auto was = flags.get_enum(trade::kQuest);
+        const auto raise = coop::host::trade_step_raise(was, [&](std::uint32_t h) { return flags.get_int(h); });
+        if (raise && coop::host::GameFlags::set_enum(memory, trade::kQuest, *raise)) {
+            const char* held = "?";
+            for (const auto& h : trade::kHolds) {
+                if (h.step == *raise) held = h.name;
+            }
+            LOG_INFO(Core,
+                     "coop: items: trade quest SubEvent_GetSwordBigGoron {:#x} -> {:#x}: {} is held here "
+                     "(row 117)",
+                     *was, *raise, held);
+        }
+        const auto now = flags.get_enum(trade::kQuest);
+        const auto rank = now ? coop::host::trade_step_rank(*now) : std::nullopt;
+        if (!rank || *rank < 2) {
+            return std::nullopt;  // unread, NotReady or Ready: the manager is the game's own
+        }
+        CoopQuest::StepWant w{trade::kChallenge, *now, {}, "SubEvent_GetSwordBigGoron"};
+        w.steps.assign(trade::kSteps.begin(), trade::kSteps.end());
+        return w;
     }
 
     // Issue 125 (docs/items.md, "Strength"): raises PlayerStatus.LiftGrade to
@@ -2483,11 +2521,17 @@ private:
     // Kakariko guard's Bool is set (by any player; shared story), the guard
     // never asks for the letter again, so ours is taken out as the guard
     // takes the shower's. Ruto's Letter: a bottle's contents, per player, so
-    // another player got the bottle empty while King Zora (our own
-    // ChallengeMgr) never moved: while he has not, the letter goes into our
+    // another player got the bottle empty: until someone shows it, while our
+    // King Zora (our own ChallengeMgr) has not moved, the letter goes into our
     // first empty bottle, as the game's own get puts it there. Both through
     // the game's setters; anything unread is left alone.
-    void MendLetters(EmulatorMemory& memory) {
+    // Row 117: once any player has shown Ruto's Letter (King Zora's scene
+    // Dm_Zora_0010, shared story), it is never given again, and one still in
+    // a bottle here is emptied, as that scene empties the shower's, once our
+    // own King Zora has moved too (the quest catch-up; before that it is the
+    // only way past him). Only while our Link is known to be in no event, so
+    // our own King Zora scene takes ours itself.
+    void MendLetters(EmulatorMemory& memory, bool no_event) {
         namespace letters = coop::host::letters;
         coop::host::GameFlags flags(memory);
         const auto zelda = flags.get_int(letters::kZelda);
@@ -2499,7 +2543,8 @@ private:
             [&memory](std::uint64_t a, void* out, std::size_t n) { return ReadGuest(&memory, a, out, n); }, base_,
             letters::kStoneOfWater);
         const auto plan = coop::host::ruto_letter_plan(
-            flags.get_bool(letters::kRutoGot), live ? coop::host::king_zora_moved(*live) : std::nullopt,
+            flags.get_bool(letters::kRutoGot), flags.get_bool(letters::kKingRead),
+            live ? coop::host::king_zora_moved(*live) : std::nullopt,
             [&](std::uint32_t h) { return flags.get_bool(h); }, [&](std::uint32_t h) { return flags.get_enum(h); });
         // Each change of why it waits is logged once (the 0.11.2 big run's
         // letter never came and said nothing about which test held it).
@@ -2512,6 +2557,12 @@ private:
                                                base_, letters::kStoneOfWater);
             LOG_INFO(Core, "coop: items: Ruto's Letter waits: {} (Get_StoneOfWater: {}) (issue 58)",
                      coop::host::ruto_wait_text(plan.why), step);
+        }
+        if (plan.spent && no_event && coop::host::GameFlags::set_enum(memory, *plan.spent, letters::kEmpty)) {
+            LOG_INFO(Core,
+                     "coop: items: Ruto's Letter out of bottle {:#010x}: it was shown to King Zora "
+                     "(HavePlayedEvent.Dm_Zora_0010) (row 117)",
+                     *plan.spent);
         }
         if (plan.bottle && coop::host::GameFlags::set_enum(memory, *plan.bottle, letters::kLetter)) {
             ruto_why_ = plan.why;
