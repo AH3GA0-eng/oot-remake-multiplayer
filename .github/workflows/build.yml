@@ -569,7 +569,9 @@ jobs:
       - name: Compile the co-op hook
         shell: bash
         env:
-          _CL_: /wd4456 /wd4457 /wd4458 /wd4459  # lichii/README.md: the emulator's own files trip these
+          # lichii/README.md: the emulator's own files trip these. The -wd form, since Git Bash
+          # turns a leading / into a Windows path (C:/Program Files/Git/wd4456).
+          _CL_: -wd4456 -wd4457 -wd4458 -wd4459
         run: |
           set -euo pipefail
           repo="$(pwd -W)"
@@ -584,5 +586,5 @@ jobs:
             sed -n 's#^\([^:]*[/\\]lichii[/\\]hook[/\\][^:]*\.obj\):.*#\1#p' | sort -u)
           [ "${#objects[@]}" -gt 0 ] || { echo "::error::no co-op hook objects (is LICHII_COOP on?)"; exit 1; }
           echo "compiling ${#objects[@]} hook files"
-          printf '%s\n' "${objects[@]}" | grep -E 'coop_svc|coop_window' || { echo "::error::coop_svc.cpp / coop_window.cpp not in the list"; exit 1; }
+          printf '%s\n' "${objects[@]}" | grep -qE 'coop_svc|coop_window' || { echo "::error::coop_svc.cpp / coop_window.cpp not in the list"; exit 1; }
           ninja -C "$src/build/coop" "${objects[@]}"
