@@ -5391,7 +5391,7 @@ TEST_CASE("boss beaten: the group's boss death is told to a player who joins lat
   h.clear();
   h.join(3, "Saria");  // was not there (G2, player report #241)
   CHECK(messages_to<BossRoom>(h, 3) == std::vector<BossRoom>{{2, "InsideTheDekuTree", 0, BossState::defeated}});
-  h.receive(1, FlagReset{0, {}}, kChannelProgress);  // the host loaded a save from before the win
+  h.receive(1, FlagReset{0, {flag(5, 0)}}, kChannelProgress);  // the host loaded a save from before the win
   h.clear();
   h.join(4, "Darunia");
   CHECK(messages_to<BossRoom>(h, 4).empty());
