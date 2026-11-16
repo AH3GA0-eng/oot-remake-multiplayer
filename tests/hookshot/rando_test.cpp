@@ -1315,6 +1315,37 @@ TEST_CASE("rando: a winning mod whose table the kit merged is not held, a stale 
     CHECK_FALSE(MergedByKit(w.mods, "no-such-mod"));
 }
 
+TEST_CASE("rando: the mark's rule says what let the table through; an unknown rule is not trusted") {
+    World w;
+    Put(w.mods / kPackFolder / kTable, "puppet");
+    MarkMerged(w.mods, "ootrr-site", "site + puppet");  // (no rule line: an older kit's mark)
+    std::string rule;
+    CHECK(MergedByKit(w.mods, "ootrr-site", &rule));
+    CHECK(rule == "merged");
+    const std::string mark = Get(w.mods / "ootrr-site" / kMergedFile);
+    // a skins mod in a title's folder whose maker merged the pack's entries in by hand (kit: rule contains)
+    const std::string skins = "contents/0400486024DEC000/skins";
+    MarkMerged(w.mods, skins, "skins + puppet");
+    Put(w.mods / skins / kMergedFile, Get(w.mods / skins / kMergedFile) + "rule contains\r\n");
+    rule.clear();
+    CHECK(MergedByKit(w.mods, skins, &rule));
+    CHECK(rule == "contains");
+    std::string merged;
+    rule.clear();
+    CHECK_FALSE(OutsideSizeTable(w.mods, {Indexed(skins)}, false, &merged, &rule));  // by name above the pack
+    CHECK(merged == skins);
+    CHECK(rule == "contains");
+    Put(w.mods / "ootrr-site" / kMergedFile, mark + "rule merged\n");
+    CHECK(MergedByKit(w.mods, "ootrr-site", &rule));
+    CHECK(rule == "merged");
+    Put(w.mods / "ootrr-site" / kMergedFile, mark + "rule trust-me\n");
+    CHECK_FALSE(MergedByKit(w.mods, "ootrr-site"));
+    CHECK(OutsideSizeTable(w.mods, {Indexed("ootrr-site")}, true) == std::optional<std::string>("ootrr-site"));
+    // rule contains, but the table changed since the kit looked: stale as any mark
+    Put(w.mods / skins / kTable, "skins, without the puppet");
+    CHECK_FALSE(MergedByKit(w.mods, skins));
+}
+
 TEST_CASE("rando: a run that reads a kit-merged outside table makes the puppets and says nothing") {
     World w;
     Put(w.mods / kPackFolder / kTable, "puppet");

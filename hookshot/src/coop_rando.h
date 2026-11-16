@@ -128,20 +128,24 @@ std::string TablesStamp(const std::filesystem::path& mods_root, const std::vecto
 // romfs/System/Resource/*.rsizetable.zs counts. That mod's table was made without the pack's entries, so the puppets
 // cannot load (invisible, or a crash when the map loads). Empty when the winner is one of our seeds, the control
 // folder or the pack, and when the kit merged the pack's entries into the winner's table (MergedByKit; the module
-// reads no zstd, so it trusts that mark; `merged`, when given, gets that winner's name). A seed of ours is built beside
+// reads no zstd, so it trusts that mark; `merged`, when given, gets that winner's name and `rule` the mark's rule). A seed of ours is built beside
 // every other mod's table, StageSizeTables.
 std::optional<std::string> OutsideSizeTable(const std::filesystem::path& mods_root,
                                             const std::vector<CoopMods::Row>& rows, bool list_order,
-                                            std::string* merged = nullptr);
+                                            std::string* merged = nullptr, std::string* rule = nullptr);
 // The kit's size-table merge (#48 step 2: a seed folder from OOTRR's site just works): the kit start writes ONE table,
 // the mod's entries and the puppet pack's (and any other mod's), into the winning mod, and beside its romfs the mark
 // kMergedFile: "coop-merged 1", "table <file in romfs/System/Resource> <FNV-1a 64 of it, 16 lower-case hex>", "pack
 // <FNV-1a 64 of the pack's table of that name>". True only while both files are still those bytes: a new table
-// dropped in or a rebuilt pack makes the mark stale (held and said again until the next kit start merges).
+// dropped in or a rebuilt pack makes the mark stale (held and said again until the next kit start merges). Since
+// 0.11.3 a fourth line "rule merged|contains" says which rule let the table through: "merged" (the kit wrote it) or
+// "contains" (it held every pack entry at no smaller a size already, e.g. a skins mod whose maker merged them in by
+// hand; left as it was). No rule line reads as "merged" (an older kit); any other rule is not trusted. `rule`, when
+// given, gets it.
 inline constexpr const char* kMergedFile = "coop-merged.txt";
 inline constexpr const char* kPackFolder = "contents/0400486024DEC000/coop-puppet";
 std::string Fnv64Hex(std::string_view bytes);
-bool MergedByKit(const std::filesystem::path& mods_root, std::string_view mod);
+bool MergedByKit(const std::filesystem::path& mods_root, std::string_view mod, std::string* rule = nullptr);
 // This game's chat line for it (it repeats when joining), and the line the other players get (at most kTellChars).
 std::string OutsideLine(std::string_view mod);
 std::string OutsideTellLine(std::string_view mod);
