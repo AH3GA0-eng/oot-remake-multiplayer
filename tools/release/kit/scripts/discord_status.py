@@ -3,7 +3,9 @@
 
 Longshot shows a Discord status through the Discord application named in longshot_options.ini's
 discord_app_id= (next to the game), with the words of its discord_details= and discord_state= lines
-(patch 0026; the co-op module says "Solo" or "Co-op: N players" itself once it is loaded). Before every
+and the art of discord_image= (patch 0026; the co-op module says "Solo" or "Co-op: N players" itself
+once it is loaded). The Squadala! application has no Rich Presence art, so the kit writes
+discord_image=none: no image is sent and Discord shows the application's icon. Before every
 start the kit (scripts\\play.ps1, scripts/start.sh) runs this to put the Squadala! application and the
 kit's release into that file:
 
@@ -28,6 +30,7 @@ import tempfile
 APP_ID = "1571917068994089063"
 NAME = "Squadala!"
 SOLO = "Solo"
+NO_ART = "none"
 
 
 def release_of(version_file: str | None) -> str:
@@ -48,6 +51,8 @@ def wanted(release: str) -> list[tuple[str, str, object]]:
     details = f"{NAME} {release}" if release else NAME
     return [
         ("discord_app_id", APP_ID, lambda v: v == APP_ID),
+        # (no Rich Presence art in the application: none = no image, and Discord shows its icon, the logo)
+        ("discord_image", NO_ART, lambda v: v == NO_ART),
         # (any release's line: an update replaces the last release's)
         ("discord_details", details, lambda v: v == NAME or v.startswith(NAME + " ")),
         ("discord_state", SOLO, lambda v: v == SOLO),

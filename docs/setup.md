@@ -124,7 +124,7 @@ The Multiplayer tab's **Customize Link** page colours your tunic and each part o
 With Discord open on the same PC, your Discord profile shows **Playing Squadala!** with the Squadala! logo (the Korok with the propeller leaf and four fairies), the release (*Squadala! 0.11.4*), *Solo* or *Co-op: 3 players*, and how long you have played. Only that goes to Discord: no names, no addresses, no invite code. It works the same on Windows and Linux, hosting, joining or playing alone.
 
 - **Turn it off:** in the game press **Insert** (or F1), and set the **Discord status** row to off. It stays off.
-- **Your own words or application:** the kit writes three lines into `longshot_options.ini` next to the game before each start: `discord_app_id=`, `discord_details=` and `discord_state=`. Change one and the kit leaves it alone from then on; `discord_image=` and `discord_large_text=` may name an art asset of your own application ([hookshot/README.md, patch 0026](../hookshot/README.md)). The *Solo* / *Co-op* line comes from the co-op module and wins over `discord_state=`.
+- **Your own words or application:** the kit writes four lines into `longshot_options.ini` next to the game before each start: `discord_app_id=`, `discord_image=none` (no picture is sent, so Discord shows the application's icon, the logo), `discord_details=` and `discord_state=`. Change one and the kit leaves it alone from then on; `discord_image=` may instead name an art asset of your own application, and `discord_large_text=` its hover text. Without these lines the game shows Longshot's own status, as before ([hookshot/README.md, patch 0026](../hookshot/README.md)). The *Solo* / *Co-op* line comes from the co-op module and wins over `discord_state=`.
 
 ## In the game, saves, the emulator kit
 

@@ -14,7 +14,8 @@ ID = ds.APP_ID
 class Merge(unittest.TestCase):
     def test_new_file(self):
         self.assertEqual(ds.merge("", "0.11.4").splitlines(),
-                         [f"discord_app_id={ID}", "discord_details=Squadala! 0.11.4", "discord_state=Solo"])
+                         [f"discord_app_id={ID}", "discord_image=none", "discord_details=Squadala! 0.11.4",
+                          "discord_state=Solo"])
 
     def test_no_release(self):
         self.assertIn("discord_details=Squadala!\n", ds.merge("x=1\n", ""))
@@ -23,7 +24,7 @@ class Merge(unittest.TestCase):
         old = "output_res=1920x1080\npad_a=1\nkey_b=2\nmemory_budget=0\n"
         new = ds.merge(old, "0.11.4")
         self.assertTrue(new.startswith(old))
-        self.assertEqual(new.count("\n"), 7)
+        self.assertEqual(new.count("\n"), 8)
 
     def test_crlf_kept(self):
         new = ds.merge("output_res=1920x1080\r\nmemory_budget=0", "0.11.4")
@@ -31,11 +32,12 @@ class Merge(unittest.TestCase):
         self.assertIn("memory_budget=0\r\n", new)
 
     def test_update_replaces_the_kits_own_release(self):
-        old = f"discord_app_id={ID}\ndiscord_details=Squadala! 0.11.3\ndiscord_state=Solo\nx=1\n"
+        old = f"discord_app_id={ID}\ndiscord_image=none\ndiscord_details=Squadala! 0.11.3\ndiscord_state=Solo\nx=1\n"
         self.assertEqual(ds.merge(old, "0.11.4"), old.replace("0.11.3", "0.11.4"))
 
     def test_players_own_lines_kept(self):
-        old = "discord_app_id=1570559772111933578\ndiscord_details=My run\ndiscord_state=Any% speedrun\n"
+        old = ("discord_app_id=1570559772111933578\ndiscord_image=longshot\ndiscord_details=My run\n"
+               "discord_state=Any% speedrun\n")
         self.assertEqual(ds.merge(old, "0.11.4"), old)
 
     def test_idempotent(self):
@@ -46,7 +48,7 @@ class Merge(unittest.TestCase):
         # host/discord_rpc.c (patch 0026): an id of digits; words 2 to 127 bytes, no control character
         self.assertTrue(ID.isdigit() and len(ID) <= 20)
         for key, value, _ in ds.wanted("0.11.4-rc.1+abc"):
-            if key != "discord_app_id":
+            if key not in ("discord_app_id", "discord_image"):
                 self.assertTrue(2 <= len(value.encode()) <= 127, value)
                 self.assertTrue(all(ord(c) >= 0x20 for c in value), value)
 

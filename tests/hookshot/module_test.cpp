@@ -603,6 +603,17 @@ TEST_CASE("hookshot: a module tab may draw a picture beside its page (patch 0019
     CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_view(double eye[3], double target[3])") != std::string::npos);
 }
 
+TEST_CASE("hookshot: the Discord status header in patch 0026 is hookshot/src's, and the module gives its line") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0026-coop-discord-status.patch");
+    REQUIRE_FALSE(patch.empty());
+    CHECK(NewFile(patch, "host/hos_discord_activity.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_discord_activity.h"));
+    CHECK(patch.find("+    hos_discord_activity(activity, cap, \"Longshot\", version, LONGSHOT_DISCORD_IMAGE_DEFAULT,") !=
+          std::string::npos);
+    CHECK(patch.find("GetProcAddress(m, \"hos_coop_discord_state\")") != std::string::npos);
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_discord_state(char* out, size_t cap) noexcept") != std::string::npos);
+}
+
 TEST_CASE("hookshot: a module may have a texture drawn with other texels (patch 0020, hos_coop_texture.h)") {
     const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0020-coop-texture-override.patch");
     REQUIRE_FALSE(patch.empty());
