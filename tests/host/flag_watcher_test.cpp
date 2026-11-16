@@ -1278,6 +1278,50 @@ TEST_CASE("flag watcher: the host's Try Again puts the group's values back at on
   CHECK(w.stats().host_resets == 0);
 }
 
+TEST_CASE("flag watcher: the host's Try Again into a held flag writes the group's value once the hold ends") {
+  // A held flag (issue 129, HoldFlagStore): kept in unwritten_ and written later, not dropped by the retry as if our
+  // game had changed it (review of 159a4fd7).
+  FakeStore game_store = game();
+  bool hold = false;
+  HoldFlagStore store(game_store, [&hold](FlagKey key) { return hold && key == kDoor; });
+  FlagWatcher w(shared(), FlagRole::host);
+  w.set_native_loads(true);
+  w.frame(store);
+  game_store.set(kDoor, 1);
+  w.frame(store);
+  hold = true;
+  w.note_save_load_start();
+  game_store.set(kDoor, 0);  // the last save
+  w.frame(store);
+  w.note_save_loaded(true);
+  for (int i = 0; i < 5; ++i) w.frame(store);
+  CHECK(game_store.get(kDoor) == 0);  // held: not yet
+  hold = false;
+  for (const auto& m : decode(link_back(w, store))) CHECK_FALSE(std::holds_alternative<proto::FlagReset>(m));
+  CHECK(game_store.get(kDoor) == 1);  // the group's value, once the hold ended
+  CHECK(w.stats().host_resets == 0);
+}
+
+TEST_CASE("flag watcher: a guest's held load revert is written once the hold ends, not dropped") {
+  // The same missed assignment in the loading branch (no save load seen): the group's value kept for a held flag.
+  FakeStore game_store = game();
+  bool hold = false;
+  HoldFlagStore store(game_store, [&hold](FlagKey key) { return hold && key == kDoor; });
+  FlagWatcher w(shared(), FlagRole::player);
+  w.frame(store);
+  CHECK(w.receive(state({entry(kDoor, 1)})));
+  w.frame(store);
+  REQUIRE(game_store.get(kDoor) == 1);
+  hold = true;
+  w.set_loading(true);
+  game_store.set(kDoor, 0);  // a load puts an older value back
+  for (int i = 0; i < 5; ++i) w.frame(store);
+  CHECK(game_store.get(kDoor) == 0);
+  hold = false;
+  w.frame(store);
+  CHECK(game_store.get(kDoor) == 1);
+}
+
 TEST_CASE("flag watcher: a save in with no load start (the title's New Game) is still the save load (patch 0024)") {
   // NormalTitle.module runs AfterLoadSaveData itself: the on-load node with no SeqExecuteLoadSaveData before it.
   FakeStore store = game();

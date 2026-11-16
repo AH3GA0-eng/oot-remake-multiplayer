@@ -941,6 +941,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
         // guest's load does above, so the room the host respawns in has it. Counts: end_window.
         if (store.holds(key)) {
           unwritten_[key] = it->second;
+          it->second = *now;  // (the game's value seen: else the retry takes our game's own as newer and drops it)
           continue;
         }
         if (store.write_exact(it->second)) {
@@ -963,6 +964,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
           if (store.holds(key)) {
             ++stats_.load_reverts;
             unwritten_[key] = group->second;
+            it->second = *now;  // (as above: the retry must not take the load's value as our game's newer one)
             continue;
           }
           if (store.write(group->second)) {
