@@ -138,9 +138,15 @@ class Planner {
     asks_.insert(player);
     return true;
   }
-  void on_host_load(Time now) {
+  // `slot_known`: the host knows the slot it loaded (PlayedSlot): that slot on disk is the save just loaded, so it
+  // goes at once; otherwise the send waits for the game's next save (then the newest slot is the one played).
+  void on_host_load(Time now, bool slot_known = false) {
     reload_ = true;
-    loaded_at_ = now;
+    if (slot_known) {
+      loaded_at_.reset();
+    } else {
+      loaded_at_ = now;
+    }
   }
   // A player left: its ask goes, and a player with its number may ask again.
   void forget(std::uint8_t player) {
@@ -171,6 +177,94 @@ class Planner {
   bool reload_ = false;
   std::optional<Time> loaded_at_;  // the host's last load, until a save after it
 };
+
+// The slot the host's game plays (player report 120). The host used to answer every join with its newest slot on
+// disk by write time, which is another file whenever the player loaded an older slot (or saved another one earlier):
+// the guest got a save the host was not playing. Hookshot's patch 0025 reports each open of a slot's progress.sav
+// on the account save; patch 0024 (when there) brackets each save the game loads (title, System > Load, Game Over's
+// Try Again). Only definite signs set the slot:
+// - a write: the game saves into the slot it plays;
+// - a read inside a load window: the save being loaded (a load from temporary storage, Try Again's, opens none:
+//   the slot stays the one played). Each open and each window mark carries patch 0025's count of opens at that
+//   moment, so the order holds however the marks (game thread) and the polled opens (once a frame) arrive: a read
+//   counted after the window's start is inside it, one counted before is not;
+// - a read with no load windows on this runtime (no patch 0024): the last read when the load is seen.
+// The title's menu (a new pick follows) forgets the slot; after it, a load with no read in its window leaves it
+// unknown, and a game entered with no load since the title is a new game (nothing saved yet).
+class PlayedSlot {
+ public:
+  using Path = std::filesystem::path;
+  enum class Source : std::uint8_t { none, write, load_read, last_read };
+  // An open of `slot_dir`'s progress.sav (`write`: opened for writing); `opens`: the count with it.
+  void on_open(const Path& slot_dir, bool write, unsigned opens) {
+    if (write) {
+      set(slot_dir, Source::write);
+    } else if (in_window_ && opens != window_opens_) {
+      window_read_ = slot_dir;
+    } else {
+      last_read_ = slot_dir;
+    }
+  }
+  // Patch 0024's load window: a save load starts (`start`) or the save is in, with the opens as they were then
+  // (`opens`, the last one's `slot_dir` and `write`).
+  void on_load_window(bool start, unsigned opens, const Path& slot_dir, bool write) {
+    windows_ = true;
+    if (start) {
+      in_window_ = true;
+      window_opens_ = opens;
+      window_read_.reset();
+      return;
+    }
+    in_window_ = false;
+    loaded_ = true;
+    if (opens != window_opens_ && !write && !slot_dir.empty()) {
+      set(slot_dir, Source::load_read);   // the game read a slot between the two marks: the one it loaded
+    } else if (window_read_) {
+      set(*window_read_, Source::load_read);
+    }
+    window_read_.reset();
+  }
+  // The host's save load as the flag watcher sees it (no window on this runtime: the last read is the one loaded).
+  void on_load_seen() {
+    loaded_ = true;
+    if (!windows_ && last_read_) set(*last_read_, Source::last_read);
+  }
+  // The title's menu is up: the player picks again (a file, or New Game).
+  void on_title() {
+    slot_.reset();
+    source_ = Source::none;
+    loaded_ = false;
+    last_read_.reset();
+    in_window_ = false;   // (the game's own start begins a load with no save in after it: closed here)
+    window_read_.reset();
+  }
+  const std::optional<Path>& slot() const { return slot_; }
+  Source source() const { return source_; }
+  // In the game with no load since the title, on a runtime that shows loads: a new game, nothing saved yet.
+  bool new_game(bool in_game, bool title_seen) const {
+    return windows_ && title_seen && in_game && !loaded_ && !slot_;
+  }
+
+ private:
+  void set(const Path& p, Source s) {
+    slot_ = p;
+    source_ = s;
+  }
+  std::optional<Path> slot_;
+  Source source_ = Source::none;
+  std::optional<Path> last_read_;
+  std::optional<Path> window_read_;
+  bool in_window_ = false;
+  unsigned window_opens_ = 0;  // the opens at the window's start
+  bool windows_ = false;  // patch 0024's windows came at least once
+  bool loaded_ = false;   // a load since the title
+};
+
+// The slot to send: `played` when it is a slot_NN folder of `game_dir` with a progress.sav, else the newest
+// (newest_slot). `played_used` says which.
+std::optional<std::filesystem::path> slot_to_send(const std::filesystem::path& game_dir,
+                                                  const std::optional<std::filesystem::path>& played,
+                                                  bool* played_used = nullptr);
 
 // The newest slot_NN folder of a game save folder (by progress.sav's write
 // time), or nothing.
@@ -258,6 +352,14 @@ bool reask_due(const GuestSession& s, std::uint64_t now_us);
 // Once a session: the kGuestMaxAsks-th ask got nothing whole either (it would be due again, but the asks are used
 // up). The guest stops waiting: Loading ends (GuestNotices::on_gave_up) and the player plays on.
 bool give_up_due(const GuestSession& s, std::uint64_t now_us);
+
+// The Lobby tab's "Resync from host" (player report 120): a guest asks for the host's save again at any time. The
+// same path as on joining (SAVE_ASK, asked again until it is whole, GuestNotices in the chat); the save is written
+// and switched to only on the title's menu (pending_step), so a press during a cutscene, a load or play never
+// touches the running game. Refused for the host, without a session, where the save folder cannot switch (the
+// emulator: its folder is fixed at the start), and while a transfer is still coming in.
+enum class ResyncCheck : std::uint8_t { go, not_guest, no_switch, coming };
+ResyncCheck resync_check(bool connected_guest, bool can_switch, bool coming);
 
 // A guest's chat lines about the host's save (the owner's wording). The player loads the save themselves (nothing
 // presses the title's buttons); these lines say when:

@@ -898,7 +898,7 @@ index daa0ae5b..3a138767 100644
          # (--export-dynamic-symbol: the window's state, which the Vulkan back end's own Win32 calls read by name)
 +        # (oot-remake-multiplayer) and the functions hookshot_coop.so finds in this exe by name (dlsym(RTLD_DEFAULT), as
 +        # GetProcAddress on Windows, where they are dllexport): each by its own name, as the module has others of the same prefix
-+        coop = ["-Wl,--export-dynamic-symbol=" + s for s in ("hos_coop_fs_save_root", "hos_coop_fs_save_remount",
++        coop = ["-Wl,--export-dynamic-symbol=" + s for s in ("hos_coop_fs_save_root", "hos_coop_fs_save_remount", "hos_coop_fs_save_slot_opened",
 +                "hos_coop_input_select", "hos_coop_input_pad_name", "hos_coop_pad_info", "hos_coop_pad_read", "hos_coop_pad_take",
 +                "hos_coop_textures", "hos_coop_texture_override", "hos_coop_texture_overridden", "hos_coop_texture_overlay")]
          r = run_link([cc] + target() + ["-fuse-ld=lld", "-o", exe] + linker("-Map=" + exe + ".map") +

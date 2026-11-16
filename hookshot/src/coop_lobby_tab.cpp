@@ -191,6 +191,11 @@ std::vector<Tab::Line> Tab::Lines() const {
                     CoopI18n::Tr(Hearts(*lobby_.host_life) + " / " + Hearts(*lobby_.host_max) + " hearts");
         }
         note(std::move(game));
+        if (!lobby_.hosting && lobby_.can_resync) {
+            action("Resync from host", "", Act::kResync,
+                   "Gets the host's save again. Back on the title, it is switched to once the chat says Success; "
+                   "while you play nothing changes until then. Your own saves are never touched.");
+        }
         return out;
     }
 
@@ -346,6 +351,13 @@ void Tab::Decide(const Line& line) {
         r.kind = Request::Kind::kCopyInvite;
         request_ = std::move(r);
         note_ = "The invite code is on the clipboard.";
+        return;
+    }
+    case Act::kResync: {
+        Request r;
+        r.kind = Request::Kind::kResync;
+        request_ = std::move(r);
+        note_ = "Asked the host for its save: the chat says how it goes.";
         return;
     }
     case Act::kOwnVoice:

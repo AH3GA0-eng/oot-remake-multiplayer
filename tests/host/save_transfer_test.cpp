@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <random>
 #include <string>
 #include <vector>
@@ -662,4 +663,191 @@ TEST_CASE("save transfer: loaded too early, the save still comes and is switched
   CHECK(n.on_in_game(in_game).empty());
   CHECK(pending_step(slot_in, title, in_game) == PendingStep::go);
   CHECK(n.on_ready(in_game) == N::kSuccessTitle);
+}
+
+// Player report 120: the host answered joins with its newest slot on disk by write time, not the slot its game
+// plays. A player who loads an older slot (or saved another one earlier) gave the guests the wrong save
+// (roxas7833's host log: "sending slot_02 ... to player 2", then its game played slot_01).
+TEST_CASE("save transfer: the slot sent is the one the host's game plays, not the newest on disk (report 120)") {
+  TempDir dir("coop_tests_save_played");
+  const fs::path game = dir.path / "5a3c";
+  WriteFile(game / "slot_01" / "progress.sav", {1});
+  WriteFile(game / "slot_02" / "progress.sav", {2});
+  const auto t = fs::last_write_time(game / "slot_01" / "progress.sav");
+  fs::last_write_time(game / "slot_02" / "progress.sav", t + std::chrono::hours(1));  // slot_02 saved last
+  REQUIRE(save::newest_slot(game) == game / "slot_02");
+
+  bool used = true;
+  CHECK(save::slot_to_send(game, std::nullopt, &used) == game / "slot_02");  // not known: the newest, as before
+  CHECK_FALSE(used);
+  CHECK(save::slot_to_send(game, game / "slot_01", &used) == game / "slot_01");  // the played one
+  CHECK(used);
+  // Never a folder that is not one of this game's slots, or a slot with no progress.sav: the newest then.
+  CHECK(save::slot_to_send(game, dir.path / "other" / "slot_01", &used) == game / "slot_02");
+  CHECK_FALSE(used);
+  CHECK(save::slot_to_send(game, game / "slot_04", &used) == game / "slot_02");
+  CHECK_FALSE(used);
+  CHECK(save::slot_to_send(game, game / "slot_01.part", &used) == game / "slot_02");
+  CHECK_FALSE(used);
+}
+
+namespace {
+// Patch 0025's export as the module sees it: a count of opens and the last one. Marks (the game thread's load
+// window) and polls (once a frame) each read it at their own moment.
+struct Opens {
+  unsigned n = 0;
+  fs::path dir;
+  bool write = false;
+  void open(const fs::path& d, bool w) {
+    ++n;
+    dir = d;
+    write = w;
+  }
+  void mark(save::PlayedSlot& p, bool start) const { p.on_load_window(start, n, dir, write); }
+  void poll(save::PlayedSlot& p, unsigned& seen) const {
+    if (n != seen && !dir.empty()) {
+      seen = n;
+      p.on_open(dir, write, n);
+    }
+  }
+};
+}  // namespace
+
+TEST_CASE("save transfer: the played slot comes only from definite signs (writes, reads in a load window)") {
+  using S = save::PlayedSlot::Source;
+  const fs::path a = "save/slot_00", b = "save/slot_01", c = "save/slot_02";
+  Opens fs_;
+  unsigned seen = 0;
+
+  SUBCASE("a runtime with load windows (patch 0024): the title's reads never count, the load's read does") {
+    save::PlayedSlot p;
+    p.on_title();
+    fs_.open(a, false);  // the title's list may read every slot
+    fs_.poll(p, seen);
+    fs_.open(b, false);
+    fs_.open(c, false);
+    fs_.poll(p, seen);
+    CHECK_FALSE(p.slot());
+    fs_.mark(p, true);   // Continue on slot_01
+    fs_.open(b, false);
+    fs_.poll(p, seen);
+    CHECK_FALSE(p.slot());  // (only once the save is in)
+    fs_.mark(p, false);
+    CHECK(p.slot() == b);
+    CHECK(p.source() == S::load_read);
+    p.on_load_seen();       // the flag watcher's sight of the same load changes nothing
+    CHECK(p.slot() == b);
+    fs_.open(c, false);     // a read outside a load (the System menu's list): not the played slot
+    fs_.poll(p, seen);
+    CHECK(p.slot() == b);
+  }
+  SUBCASE("review: start, the read and the save in all before one poll: the read is not lost") {
+    save::PlayedSlot p;
+    p.on_title();
+    fs_.open(c, false);
+    fs_.poll(p, seen);
+    fs_.mark(p, true);
+    fs_.open(b, false);
+    fs_.mark(p, false);   // (the marks are applied first at the poll, each with its own count)
+    fs_.poll(p, seen);
+    CHECK(p.slot() == b);
+    CHECK(p.source() == S::load_read);
+  }
+  SUBCASE("review: a read just before the load's start, polled after it, is not taken as the load's") {
+    save::PlayedSlot p;
+    p.on_title();
+    fs_.open(c, false);   // the title list's last read, not polled yet
+    fs_.mark(p, true);    // the start, applied before the poll's open
+    fs_.poll(p, seen);    // count unchanged since the start: before the window
+    fs_.mark(p, false);   // a load with no read in it
+    CHECK_FALSE(p.slot());
+  }
+  SUBCASE("the game's own start (a load start with no save in) does not make the title's reads a load") {
+    save::PlayedSlot p;
+    fs_.mark(p, true);   // BeforeInitializeCommon's load start
+    p.on_title();
+    fs_.open(c, false);
+    fs_.poll(p, seen);
+    p.on_load_seen();
+    CHECK_FALSE(p.slot());
+  }
+  SUBCASE("a save into a slot is the slot played (a new game's first save, a save point, a door's autosave)") {
+    save::PlayedSlot p;
+    p.on_title();
+    CHECK_FALSE(p.new_game(false, true));
+    CHECK_FALSE(p.new_game(true, true));   // no windows on this runtime yet: never guessed
+    fs_.mark(p, true);                     // (a runtime with windows)
+    fs_.mark(p, false);                    // a load with no read in it (a temporary one): slot not known
+    CHECK_FALSE(p.slot());
+    p.on_title();
+    CHECK(p.new_game(true, true));         // New Game: in the game with no load since the title
+    CHECK_FALSE(p.new_game(true, false));  // (the title never seen this run: a load may have come before)
+    fs_.open(c, true);
+    fs_.poll(p, seen);
+    CHECK(p.slot() == c);
+    CHECK(p.source() == S::write);
+    CHECK_FALSE(p.new_game(true, true));
+  }
+  SUBCASE("System > Load, Try Again: a new load's read replaces the slot, a temporary load keeps it") {
+    save::PlayedSlot p;
+    fs_.mark(p, true);
+    fs_.open(a, false);
+    fs_.mark(p, false);
+    CHECK(p.slot() == a);
+    fs_.mark(p, true);   // System > Load of slot_02
+    fs_.open(c, false);
+    fs_.mark(p, false);
+    CHECK(p.slot() == c);
+    fs_.mark(p, true);   // Game Over's Try Again from temporary storage: no slot read
+    fs_.mark(p, false);
+    CHECK(p.slot() == c);
+  }
+  SUBCASE("no load windows (no patch 0024): the last read when the load is seen") {
+    save::PlayedSlot p;
+    fs_.open(a, false);
+    fs_.poll(p, seen);
+    fs_.open(b, false);
+    fs_.poll(p, seen);
+    CHECK_FALSE(p.slot());
+    p.on_load_seen();
+    CHECK(p.slot() == b);
+    CHECK(p.source() == S::last_read);
+  }
+  SUBCASE("the title's menu forgets the slot (a new pick follows)") {
+    save::PlayedSlot p;
+    fs_.open(a, true);
+    fs_.poll(p, seen);
+    CHECK(p.slot() == a);
+    p.on_title();
+    CHECK_FALSE(p.slot());
+    p.on_load_seen();  // no read since the title: still not known (never the read from before it)
+    CHECK_FALSE(p.slot());
+  }
+}
+
+TEST_CASE("save transfer: a host load of a known slot goes to every guest at once, not after the next save") {
+  using Send = save::Planner::Send;
+  const auto t0 = fs::file_time_type::clock::now();
+  save::Planner p;
+  p.on_host_load(t0 + std::chrono::seconds(30), true);
+  CHECK_FALSE(p.waiting());
+  CHECK(p.due(t0) == std::vector<Send>{{0, proto::SaveReason::host_load}});  // the slot on disk is the one loaded
+  CHECK(p.idle());
+  // Not known: waits for the next save, as before.
+  p.on_host_load(t0 + std::chrono::seconds(30), false);
+  CHECK(p.waiting());
+  CHECK(p.due(t0).empty());
+}
+
+TEST_CASE("save transfer: Resync from host goes only for a guest that can switch, and not twice at once") {
+  using save::ResyncCheck;
+  CHECK(save::resync_check(true, true, false) == ResyncCheck::go);
+  CHECK(save::resync_check(false, true, false) == ResyncCheck::not_guest);  // the host, solo, not connected
+  CHECK(save::resync_check(true, false, false) == ResyncCheck::no_switch);  // the emulator's fixed folder
+  CHECK(save::resync_check(true, true, true) == ResyncCheck::coming);       // a transfer on its way
+  // After a go, the guest's session starts again as on joining: it asks at once and the save waits for the title.
+  save::GuestSession g;
+  CHECK_FALSE(g.asked);
+  CHECK(save::pending_step(true, false, true) == save::PendingStep::keep);  // playing: never switched under the game
+  CHECK(save::pending_step(true, true, false) == save::PendingStep::go);     // the title's menu: switched
 }

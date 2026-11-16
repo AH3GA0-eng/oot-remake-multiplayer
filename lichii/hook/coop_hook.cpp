@@ -2893,6 +2893,7 @@ void LocalFrameOff(Core::System& system, bool writes) {
 
 void OnFrame(Core::System& system) {
     CoopObjects::OnFrame(system);
+    CoopSave::PollSlotOpens();   // player report 120: the slot our game plays (Hookshot's patch 0025; solo too)
     CoopTestInput::OnFrame(system);
     Start();
     // g_coop only changes in Start (before this), End (which keeps the old
