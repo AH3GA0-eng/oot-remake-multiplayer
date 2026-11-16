@@ -51,7 +51,7 @@ std::optional<std::vector<Plug>> Read(const ReadWord& read, std::uint64_t actor)
 // Logs each watched actor's plugs once, then every change of a plug's value. Reads only.
 class Watch {
 public:
-    static constexpr std::size_t kMaxActors = 4;
+    static constexpr std::size_t kMaxActors = 6;  // deku-switches: ladder, pillar, eye, asker(s)
     static constexpr int kMaxLines = 600;  // per session
     // `actors`: (address, name) of the actors to watch this walk.
     std::vector<std::string> Look(const ReadWord& read,

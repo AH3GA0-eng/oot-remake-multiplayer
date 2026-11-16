@@ -32,25 +32,12 @@
 #include <vector>
 
 #include "coop/protocol/messages.hpp"
+#include "coop_logic_set.h"
 #include "coop_puppet.h"
 
 namespace CoopLiftRide {
 
-namespace addr {
-inline constexpr std::uint64_t kExecute = 0x2727540;  // ExecuteLogicSetBool's execute (vtable slot 0xf0)
-inline constexpr std::uint64_t kVtable = 0x49a9550;   // ExecuteLogicSetBool's vtable
-inline constexpr std::uint64_t kMalloc = 0x14c6c90;   // as coop_puppet.h
-// Our node block.
-inline constexpr std::uint64_t kNodeFlags = 0x18;     // byte; bit 1 on
-inline constexpr std::uint64_t kNodeKey = 0x20;       // u32
-inline constexpr std::uint64_t kNodeValue = 0x38;     // -> value byte
-inline constexpr std::uint64_t kNodeOwner = 0x08;     // -> owner; [owner+8] -> holder; [holder+0x1f0] = actor
-inline constexpr std::uint64_t kOwner = 0x40;         // in the block
-inline constexpr std::uint64_t kHolder = 0x80;        // in the block
-inline constexpr std::uint64_t kHolderActor = 0x1f0;
-inline constexpr std::uint64_t kValueByte = 0x60;     // in the block
-inline constexpr std::uint64_t kBlockSize = kHolder + kHolderActor + 0x10;
-}  // namespace addr
+namespace addr = ::CoopLogicSet::addr;  // the set-bool node (coop_logic_set.h)
 
 inline constexpr std::uint32_t kRideOnPlayer = 0xa4ab760a;  // Murmur3("RideOnPlayer"); the plug's key is ^ 7
 

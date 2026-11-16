@@ -87,6 +87,7 @@
 #include "coop_quest.h"
 #include "coop_story.h"
 #include "coop_quests.h"
+#include "coop_eye_switch.h"
 #include "coop_live_events.h"
 #include "coop_local_game.h"
 #include "coop_local_net.h"
@@ -446,6 +447,19 @@ public:
                 return call;
             });
             LOG_INFO(Core, "coop: dungeon: live events on (off with LICHII_COOP_LIVE_EVENTS=0)");
+            eye_switch_on_ = CoopEyeSwitch::OnFromEnv(EnvString("LICHII_COOP_EYE_SWITCH"));
+            if (eye_switch_on_) {  // deku-switches: before the requester (60)
+                CoopSvc::AddCaller(59, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
+                                              std::uint64_t now_ms) {
+                    auto call = eye_switch_.Step(guest, after_call, result, base_, now_ms);
+                    for (const auto& line : eye_switch_.TakeNotes()) {
+                        LOG_INFO(Core, "coop: dungeon: {}", line);
+                    }
+                    return call;
+                });
+            }
+            LOG_INFO(Core, "coop: dungeon: eye switches by FirstOn {} (LICHII_COOP_EYE_SWITCH=1)",
+                     eye_switch_on_ ? "on" : "off");
         }
         // Shared story cutscenes: they start by the live-event requester.
         shared_scenes_ = live_events_ && CoopSharedScenes::OnFromEnv(EnvString("LICHII_COOP_SHARED_CUTSCENES"));
@@ -803,6 +817,22 @@ public:
                                            .value_or(false);
                                    });
         }
+        if (live_events_ && eye_switch_on_) {  // deku-switches: an eye that found nothing goes the old way
+            // deku-ladder: also dropped once our game has it played (our own asker ran it): the eye is never set again.
+            std::function<bool(const std::string&)> played;
+            if (memory) {
+                played = [&](const std::string& n) {
+                    return coop::host::GameFlags(*memory)
+                        .get_bool(coop::host::flag_hash("HavePlayedEvent." + n))
+                        .value_or(false);
+                };
+            }
+            eye_switch_.Expire(view.scene.value_or(std::string()), played);
+            for (auto& [event, scene] : eye_switch_.TakeFallbacks()) {
+                std::lock_guard lock(live_mutex_);
+                live_requester_.WantFromRoom(std::move(event), std::move(scene));
+            }
+        }
         // Issue 129: a held gimmick event is started here too when our Link is
         // near the place that asks for it, so its result happens live
         // (coop_live_events.h; off with LICHII_COOP_LIVE_EVENTS=0).
@@ -825,8 +855,11 @@ public:
             };
             if (const auto name = live_decider_.Next(held_events, hold_scene_, running, link, &room_of)) {
                 LOG_INFO(Core, "coop: dungeon: starting the event {} here (another player played it)", *name);
-                std::lock_guard lock(live_mutex_);
-                live_requester_.WantFromRoom(*name, hold_scene_);  // with our room's asker as its starter
+                // deku-switches: an eye-switch event by our eye's FirstOn, so our room's asker asks it itself.
+                if (!eye_switch_on_ || !eye_switch_.Want(*name, hold_scene_, link)) {
+                    std::lock_guard lock(live_mutex_);
+                    live_requester_.WantFromRoom(*name, hold_scene_);  // with our room's asker as its starter
+                }
             }
         }
         // The scrub flags of issue 144 have their own log line (above).
@@ -1879,6 +1912,10 @@ private:
     coop::host::LentKeys lent_keys_;  // dungeon-sync-b (#75): keys lent at another player's lock
     bool scrub_talk_on_ = EnvString("LICHII_COOP_SCRUB_TALK_HOLD") != "0";  // =0: off (the old softlock)
     bool live_events_ = false;     // LICHII_COOP_LIVE_EVENTS=1 (issue 129)
+    // deku-switches (#176 #129): an eye-switch room event starts by our eye's FirstOn (coop_eye_switch.h).
+    // Off unless LICHII_COOP_EYE_SWITCH=1 until the probe run (hs-eye-probe).
+    bool eye_switch_on_ = false;
+    CoopEyeSwitch::Switcher eye_switch_;
     // Chat notices, on unless LICHII_COOP_NOTIFY=0 (docs/setup.md).
     bool notify_ = EnvString("LICHII_COOP_NOTIFY") != "0";
     struct Names {
