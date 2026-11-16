@@ -242,6 +242,86 @@ A copy that dies in its own game (its hit judged lethal there, refused by the ow
 
 Autotests: `tools/autotest/groups/hookshot-boss-cutscenes.txt` (`hs-boss-cutscenes-gohma`: intro with B before the door, then the death; `hs-boss-far-gohma`: B far, chat lines only; `hs-boss-cutscenes-dodongo`: both start together in the boss rush, then the death). **Not proven in game:** that a boss event asked by name plays right in a game whose own trigger did not fire (the boss copy's state, the door), that the antechamber margin fits the walls, that the game's container pickup raises `MaxLife` (the cap and the claim read it), and that the heart container vanishes live on the other screens.
 
+## A non-owner's hits count (branch boss-hits, tracker 104, issue 150)
+
+**Seen.** "Still only the player targeted by the boss can damage it" (a player report on 0.11.2). Two logs show why. In one player's own log as Gohma's owner (0.11.0, the same replay path as 0.11.2), 23 `DAMAGE` came in from the other players (`share got damage 1 for 0xd45e52e43b253151`). Every one was replayed (`replays a hit of 1`, 10 of them `where it landed in the hitter's game`) and none was taken (19 lines `a hit the boss's game did not take: its life stays its game's`, no hurt taken). So the hit place from boss-intro (above) is not enough: her game judges the template sword hit as no eye hit. In hs-boss-full 20261115-122137, B took her at 21 while A's was 17. The plain lower waited for a replay that never came (`its damage step has not seen our replayed hit yet: nothing given (life 21, owner's 17)`), and then A's copy was raised back to 21 as well. Each hand-over healed her, so only the player who kept her could wear her down.
+
+**Now** (module only, `lichii/hook/coop_objects_sync.cpp`).
+- The owner still replays another player's hit first, so her game reacts where it takes it. If her life is still above the target after the wait (`kHurtWaitUs`), the rest goes into our game's own Life step (`LifeWrite::direct`, patch 0007), never as a write. The hitter's game already judged that hit with its own damage rules on its copy: its copy's life fell there. Her game clamps the sum as it does any (Gohma keeps 1 outside her chance time) and runs its own death. Log: `a hit our boss's game did not take as a replay: N given to its own Life step (the hitter's game judged it)`, then `share hurt ...: N through the game's Life step`. The 5 s line counts them: `(boss hits to its Life step N)`.
+- A boss copy that becomes ours with more life than its old owner's is lowered to the old owner's life through its own Life step (direct) instead of the plain lower. Log: `ours now with more life than its old owner's (21 > 17): lowered through its own Life step`.
+- Unchanged: a copy is never given its owner's refused hit (the owner judges), and a copy is still held at 1 until the owner's death.
+- Tests: `tests/lichii/objects_test.cpp` (boss-hits cases; the boss-intro case now expects the direct rest).
+
+**Not proven in game.** That the Life step takes a direct sum on the owner's Gohma in a real fight. The test kill showed it does (21 -> 1). The check is boss-autotest round 5: the guest's eye hits show the owner's `given to its own Life step` line, and her life falls in both games.
+
+## A copy's death runs in its own game (branch gohma-death, player report #105, 0.11.4)
+Revirie's 0.11.2 host held a copy Gohma; the guest owned her. The host's game was asked her death setting
+(`InsideTheDekuTree_BossDie`, guest-warp) while the copy rules still held her: Life at 1 (`HeldLifeStep`), the
+owner's killing hit refused, her own brain and action changes skipped again after the event. Her death in the host's
+game could never finish: a black screen, no fade back, no warp.
+- **SetDying.** While the area rules' fight for the scene's boss is at outro or later (our death, or the owner's
+  `outro_start`), the glue marks the room's bodies dying (`CoopBossNative::Table::SetDying`, `CoopObjects::
+  SetDyingBosses` -> `Sync::SetDying`). A dying copy runs all its own changes (the ones skipped in the last frames
+  are made late, once), its held Life slot is released, and its Life component is kept in `dying_life_` also after
+  the owner's dead remove takes it off the owned list. `HeldLifeStep` turns any positive sum on a dying copy into its
+  whole life (`max(sum, life)`): the next step ends it. A refused hit on a dying boss goes to its Life step after the
+  wait, as for any enemy. The list empties on scenes off, a new fight and Reset. Log: `its death has begun: the copy's
+  own Life step lets it die now`; totals `N ended in their death`.
+- **The Life-1 clamp (not solved).** In hs-gohma-death 20261115-191432 the same direct Life step that killed the
+  owner's Gohma (the test kill) left the copy at 1 (`21 -> 1`, then `1 given` forever): her own damage rules keep her
+  at 1 outside her stun or chance time, which a copy does not share. So a copy Gohma may never read dead in its own
+  game. Solving it needs her damage rules reverse engineered (`Enemy_DungeonBoss_Gohma` DamageRule or her AI's life
+  floor). Other bosses' rules are not checked.
+- **The owner's death finishes the copy (review-boss-0114, every boss).** Nothing used to give a released copy its
+  death: the owner's killing hit reaches it as a replay before the outro_start, its game refuses it, and after the
+  400 ms wait a boss copy is never written (bosses are never resent either). So a released copy stayed alive unless
+  that replay was still in flight when SetDying landed. Now `Sync` gives a copy boss that is dying AND whose owner
+  says it is dead (its dead remove, or its samples at life 0) its whole remaining life in its own Life step, once
+  (direct, never a write; `HeldLifeStep` passes it): its own game kills it and runs its own death. Not for our own
+  boss, and not while the owner's still lives. Log: `its owner's is dead and its death has begun here: its life N
+  given to its own Life step`; the share line counts `dying copies finished N`. Gohma's own clamp (above) may still
+  hold her at 1.
+- **The setting waits for the copy to read dead (boss-0113 fallback, boss-0114-a).** Another's death while our walk
+  reads our copy alive (`boss_ours` false, `boss_alive` true) never asks the setting at once: its flow would wait for
+  that copy's death. The copy is released and finished right after that tick (the glue runs SetDying after
+  `Director::Tick`; the finish above on the next share), so the Director waits up to `kCopyWaitUs` (1.5 s) for the
+  walk to read it dead (life 0), then asks the setting (`our copy of the boss died here: asking its own death`): the
+  whole death, the quest step and the warp in our game. Still alive then (a clamp): the death flow alone (the
+  timeline, as 0.11.1: `... asked again if it dies`), and once the copy reads dead with no event running, within
+  `kReaskUs` (25 s) of the death, the setting once (`our copy of the boss died after the death flow`; its death
+  cutscene then plays a second time; a refusal asks nothing more). `kReaskUs` stays below the 30 s a body off the
+  walk reads alive (row 114 below), so a copy deleted by its owner's dead remove (gone, not dead here) never gets a
+  setting that would wait for it. Our own game taking the death setting itself ends the wait. Never dead by then:
+  `never died here`, and that player's warp does nothing until their Link leaves the dungeon (#88).
+- Tests: `tests/lichii/boss_scenes_test.cpp` (report 88 case: the real order, a copy that dies after the release,
+  one held alive past the wait and dying after the flow, one that never dies, our game's own setting, leaving the
+  area), `boss_native_test.cpp` and `objects_test.cpp` (dying release, late changes, finish; the owner's death
+  finishing a copy whose killing replay timed out before SetDying).
+- In game: scenario `hs-gohma-death` (LANE1; PASS lines in its header).
+
+## Phantom Ganon with more than one player (player report row 114, boss-0114-a)
+PiscesGamer97's 0.11.2 host log (player-logs/piscesgamer97-phantomganon-20261116): the fight "bugs out" with two
+players, and the host's death left it "fully scuffed".
+- **Root cause: a boss off the walk read as dead.** Phantom Ganon leaves the object walk while he rides in a
+  painting (the share's `moved 4050 ... left`). `BossAlive` read "no body there" as dead, so the host's Game Over
+  (an event, boss "gone") was taken for his death: `boss beaten` and BOSS_STATE defeated went to everyone, and the
+  host's own rules came back to a beaten room. Any other event while he was in a painting would do the same.
+  Fixed where it starts: `CoopObjects::BossAliveKept` (used by `LastBossAlive`, so by every boss rule) reads a body
+  off the walk as alive for `kBossAwayKeepUs` (30 s) after a reading with life left. A boss's death is read at life
+  0 while it runs (its event deletes it later), so a real death still reads dead; a boss never seen this session
+  (a save that beat it) still reads dead. So the Game Over rule (boss-gameover-b: an event while our Link is dead
+  is the Game Over unless the boss reads gone) holds again: "gone" is now a real death.
+- **His painting show follows him.** `Enemy_GhostPicturePerformer_PhantomGanon`, `_PhantomGanonHorse` and their
+  `_Imitation` (the riders in the paintings, real and fake) were shared objects with their own owner: in the log
+  they stayed with player 2 while the boss went to player 1, so a copy game's riders came from another game than
+  its boss. They are now parts of his boss group (docs/objects.md, "Groups").
+- **Not causes (checked):** `PhantomGanon_Bullet_Thunder_Sho(ckwave)` "refused at create" in a copy game: the copy
+  of the owner's thunder ball makes its own shockwaves, and the owner's come as copies (one set, as for every
+  enemy shot). The older rules' `moving in (try N)` / `could not move ... giving up` lines while the area rules
+  are on are only logged: the glue drops that pull (the area rules move players).
+- Tests: `objects_test.cpp` (off the walk is away; the painting show's group).
+- Not proven in game: a two-player Phantom Ganon run (proposed scenario `hs-phantom-ganon` from the player's save).
+
 ## Not known yet (for the in-game check)
 
 1. Whether the force-set-matrix move into a room of the same scene loads that room's walls and floor, or Link falls through (the dungeon may stream rooms by `DungeonRoomIndex`). If he falls, the fallback is the scene change, which needs an event running.

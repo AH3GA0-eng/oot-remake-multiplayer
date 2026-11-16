@@ -14,3 +14,8 @@ hs-boss-cutscenes-dodongo  expect="A:Dm_DodongoCave_BossIn: our game started it"
 [boss-fix]
 hs-boss-fix-gohma       expect="B:our event: the copy runs its own"  expect="B:the copy takes the owner's state again"  expect="B:our own hit: the copy runs its own reaction"  label="#30 #31 Gohma two players"
 hs-boss-fix-gohma-rev   expect="A:our event: the copy runs its own"  expect="A:the copy takes the owner's state again"  label="#30 Gohma, guest first (reverse order)"
+
+# gohma-death (player report #105): the host (A) holds a copy Gohma, the guest (B) owns her and kills her; A's
+# game must play her whole death and come back from it (fade, container, blue warp). Header: hs-gohma-death.A.txt.
+[gohma-death]
+hs-gohma-death          expect="B:Dm_Deku_BossOut: our game started the death"  expect="A:its death has begun: the copy runs all its own"  expect="A:Dm_Deku_BossOut: playing it here too"  label="#105 host's copy Gohma dies: no black screen"

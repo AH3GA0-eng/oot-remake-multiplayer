@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <ostream>
 #include <optional>
 #include <set>
@@ -342,6 +343,103 @@ TEST_CASE("boss scenes: another's death is asked as the boss's own death setting
         CHECK_FALSE(out.play);
         CHECK(out.send.empty());  // player 1 started it
         CHECK(b.phase(kGohma) == Phase::outro);
+    }
+    SUBCASE("our copy lives at the death: the setting waits for it to die (report 105, review boss-0113)") {
+        // The real order: the owner's outro_start comes while our copy is held alive (life 1); the glue's
+        // SetDying releases it only after this Tick, so the copy can read dead on a later tick at the earliest.
+        const auto alive = [&with_boss](Local l, std::optional<bool> lives) {
+            l = with_boss(l);
+            l.boss_alive = lives;
+            return l;
+        };
+        const auto said = [](const Actions& out, const char* text) {
+            return std::any_of(out.log.begin(), out.log.end(),
+                               [&](const std::string& l) { return l.find(text) != std::string::npos; });
+        };
+        {
+            // Released, it dies in its own game a few frames later: the setting (quest step and warp here).
+            Director b;
+            b.Receive(death);
+            Actions out = b.Tick(alive(At(kInRoom, 2), true), {}, 1'000'000);
+            CHECK_FALSE(out.play);  // never the setting while it lives (Revirie's black screen)
+            CHECK(said(out, "our copy still lives: waiting for it to die here"));
+            CHECK(b.phase(kGohma) == Phase::outro);
+            CHECK_FALSE(b.Tick(alive(At(kInRoom, 2), true), {}, 1'250'000).play);
+            out = b.Tick(alive(At(kInRoom, 2), false), {}, 1'500'000);
+            CHECK(out.play == std::optional<std::string>("InsideTheDekuTree_BossDie"));
+            out = b.Tick(alive(At(kInRoom, 2, true), false), Took("InsideTheDekuTree_BossDie"), 1'600'000);
+            CHECK_FALSE(out.play);
+            // Its end: done, nothing asked again.
+            b.Tick(alive(At(kInRoom, 2, true), false), {}, 5'000'000);
+            out = b.Tick(alive(At(kInRoom, 2), std::nullopt), {}, 6'000'000);
+            CHECK_FALSE(out.play);
+            CHECK(b.phase(kGohma) == Phase::done);
+            CHECK_FALSE(b.Tick(alive(At(kInRoom, 2), false), {}, 7'000'000).play);
+        }
+        {
+            // Held alive by its own rules (Gohma at life 1): the death flow alone after kCopyWaitUs; then the
+            // setting once it reads dead with no event running, within kReaskUs; once only.
+            Director b;
+            b.Receive(death);
+            b.Tick(alive(At(kInRoom, 2), true), {}, 1'000'000);
+            Actions out = b.Tick(alive(At(kInRoom, 2), true), {}, 1'000'000 + Director::kCopyWaitUs);
+            CHECK(out.play == std::optional<std::string>("Dm_Deku_BossOut"));
+            CHECK(said(out, "our copy of the boss still lives"));
+            out = b.Tick(alive(At(kInRoom, 2, true), true), Took("Dm_Deku_BossOut"), 2'600'000);
+            CHECK_FALSE(out.play);
+            CHECK_FALSE(b.Tick(alive(At(kInRoom, 2, true), false), {}, 8'000'000).play);  // the flow still runs
+            out = b.Tick(alive(At(kInRoom, 2), false), {}, 9'000'000);  // the flow's end (the death is done here)
+            CHECK(b.phase(kGohma) == Phase::done);
+            CHECK(out.play == std::optional<std::string>("InsideTheDekuTree_BossDie"));
+            // Refused: nothing more (no second flow alone).
+            out = b.Tick(alive(At(kInRoom, 2), false), {Request{"InsideTheDekuTree_BossDie", false}}, 9'300'000);
+            CHECK_FALSE(out.play);
+            CHECK_FALSE(b.Tick(alive(At(kInRoom, 2), false), {}, 10'000'000).play);
+        }
+        {
+            // Never dies within kReaskUs: no setting after that (no warp here until our Link leaves: #88).
+            Director b;
+            b.Receive(death);
+            b.Tick(alive(At(kInRoom, 2), true), {}, 1'000'000);
+            CHECK(b.Tick(alive(At(kInRoom, 2), true), {}, 2'500'000).play ==
+                  std::optional<std::string>("Dm_Deku_BossOut"));
+            b.Tick(alive(At(kInRoom, 2, true), true), Took("Dm_Deku_BossOut"), 2'600'000);
+            b.Tick(alive(At(kInRoom, 2), true), {}, 9'000'000);
+            Actions out = b.Tick(alive(At(kInRoom, 2), true), {}, 1'000'000 + Director::kReaskUs + 1);
+            CHECK_FALSE(out.play);
+            CHECK(said(out, "never died here"));
+            CHECK_FALSE(b.Tick(alive(At(kInRoom, 2), false), {}, 1'000'000 + Director::kReaskUs + 500'000).play);
+        }
+        {
+            // Our copy's own death logic asks the setting itself while we wait: nothing more asked.
+            Director b;
+            b.Receive(death);
+            b.Tick(alive(At(kInRoom, 2), true), {}, 1'000'000);
+            Actions out = b.Tick(alive(At(kInRoom, 2, true), false), Took("InsideTheDekuTree_BossDie"), 1'250'000);
+            CHECK_FALSE(out.play);
+            CHECK_FALSE(b.Tick(alive(At(kInRoom, 2, true), false), {}, 3'000'000).play);
+        }
+        {
+            // Left the area while waiting: nothing asked.
+            Director b;
+            b.Receive(death);
+            b.Tick(alive(At(kInRoom, 2), true), {}, 1'000'000);
+            CHECK_FALSE(b.Tick(alive(At(kFar, 2), false), {}, 1'250'000).play);
+            CHECK_FALSE(b.Tick(alive(At(kInRoom, 2), false), {}, 1'500'000).play);
+        }
+        // Our copy already dead (or gone from the walk) when the death comes: the setting, as before.
+        Director d;
+        d.Receive(death);
+        CHECK(d.Tick(alive(At(kInRoom, 2), false), {}, 1'000'000).play ==
+              std::optional<std::string>("InsideTheDekuTree_BossDie"));
+        // The owner's own game (boss ours) never comes here with its own death; another's death while we own
+        // the boss (a hand-over in flight) still asks the setting.
+        Director e;
+        e.Receive(death);
+        Local owner = At(kInRoom, 2);
+        owner.boss_ours = true;
+        owner.boss_alive = true;
+        CHECK(e.Tick(owner, {}, 1'000'000).play == std::optional<std::string>("InsideTheDekuTree_BossDie"));
     }
     SUBCASE("the setting refused: the death flow alone, once") {
         Director b;

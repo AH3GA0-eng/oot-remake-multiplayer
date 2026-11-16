@@ -106,6 +106,9 @@ struct Local {
     // Whether our game owns the boss (the object walk): a death seen with no name is taken only from the owner,
     // so a copy that dies in its own game (its hit judged lethal there, refused by the owner) starts nothing.
     std::optional<bool> boss_ours;
+    // Whether the room's boss lives in our game (the object walk: life above 0; nothing when not seen). Another's
+    // death is asked as the boss's own death setting only once our copy does not (player report #105).
+    std::optional<bool> boss_alive;
 };
 
 // One of our game's own event requests since the last tick.
@@ -146,6 +149,12 @@ public:
     static constexpr std::uint64_t kMoveEveryUs = 3'000'000;
     static constexpr unsigned kMoveTries = 3;
     static constexpr std::int32_t kContainer = 4;  // one heart container: 4 quarter hearts
+    // Another's death while our copy lives: how long the setting waits for our released copy to read dead before
+    // the death flow alone, and until when after the death a copy that dies later still gets the setting.
+    static constexpr std::uint64_t kCopyWaitUs = 1'500'000;
+    // Below CoopObjects::kBossAwayKeepUs (30 s): a copy deleted by its owner's dead remove (not dead in its own
+    // game) reads alive for that long, so it never gets the setting (which would wait for a boss that is gone).
+    static constexpr std::uint64_t kReaskUs = 25'000'000;
     static constexpr float kNearStart = 6.0f;  // during the intro a joiner this near its spot is not moved
 
     // Network thread: BOSS_SCENE, BOSS_HEART, PLAYER_LEFT. Taken on the next Tick.
@@ -175,6 +184,10 @@ private:
         std::int32_t base = 0;     // our maximum when the boss's death was heard or started (0: unread)
         std::int32_t heart = 0;    // the server's answer (0: none yet)
         std::uint8_t heart_by = 0;
+        std::uint64_t died_at = 0;          // the owner's outro_start was heard
+        std::uint64_t wait_copy_since = 0;  // the setting waits for our copy to read dead (0: not)
+        bool flow_alone = false;            // the death flow alone played: the setting once the copy reads dead
+        bool reasked = false;               // the setting was asked after the flow (a refusal asks nothing more)
     };
     struct Playing {
         std::uint8_t boss = 0;
@@ -190,6 +203,7 @@ private:
     void Take(const coop::protocol::Message& m, const Local& local, std::uint64_t now_us, Actions& out);
     void Ours(const Request& r, const Local& local, std::uint64_t now_us, Actions& out);
     void Join(std::uint8_t b, Kind kind, const Local& local, std::uint64_t now_us, Actions& out);
+    void WaitForCopy(std::uint8_t b, const Local& local, std::uint64_t now_us, Actions& out);
     bool Here(std::uint8_t b, const Local& local) const;
     std::int32_t Base(const Local& local) const;
     void Say(Actions& out, std::uint8_t b, coop::protocol::BossSceneKind kind, const Local& local) const;

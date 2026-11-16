@@ -116,6 +116,7 @@ void ForgetBosses();  // below: a new session, the title or a new game run
 // Boss bodies whose intro this game has not played (SetUnreadyBosses, below).
 std::mutex g_unready_mutex;
 std::vector<std::string> g_unready;
+std::vector<std::string> g_dying;  // SetDyingBosses (same mutex)
 namespace {
 
 constexpr u64 kOcarinaProgramId = 0x0400486024DEC000ULL;
@@ -1464,6 +1465,7 @@ public:
         {
             std::lock_guard lock(g_unready_mutex);
             sync_.SetUnready(g_unready);
+            sync_.SetDying(g_dying);
         }
         sync_.Tick(*scene, self, server_now_us, seen, send, writes);
         if (const unsigned twice = sync_.ChestsOpenedTwice(); twice != chests_twice_seen_) {
@@ -3317,10 +3319,10 @@ private:
             return;  // never a write of ours
         }
         if (w.direct) {
-            LOG_INFO(Core, "coop: objects: test kill {:#x}: the game's Life step did not take it (or there is none: "
-                           "patch 0007): nothing written",
-                     w.address);
-            return;  // the test kill goes only through the game's own step, never a write of ours
+            LOG_INFO(Core, "coop: objects: a direct hit (test kill or boss hit) {:#x} '{}': the game's Life step "
+                           "did not take it (or there is none: patch 0007): nothing written",
+                     w.address, NameOf(w.address));
+            return;  // a test kill or a boss hit goes only through the game's own step, never a write of ours
         }
         if (ask.native) {
             // (no Life step here, or it could not take it: the hit is lost; never a write of ours)
@@ -3690,10 +3692,11 @@ private:
                 LOG_INFO(Core,
                          "coop: objects: share placed {} copies; off from where we put them "
                          "avg {:.3f} max {:.3f} over {}; game calls: {} moves, {} deletes, {} "
-                         "plays, {} frame sets; hurts taken {} missed {}",
+                         "plays, {} frame sets; hurts taken {} missed {} (boss hits to its Life step {}, dying copies "
+                         "finished {})",
                          placed_.size(), drift_count_ ? drift_sum_ / drift_count_ : 0.0f,
                          drift_max_, drift_count_, moved, deleted, played, framed, sync_.HurtsTaken(),
-                         sync_.HurtsMissed());
+                         sync_.HurtsMissed(), sync_.BossHitsStepped(), sync_.DyingFinished());
             }
             // Issue 101: which copy was furthest from where we put it, so
             // one run tells a copy the setter does not hold (a flying or
@@ -4098,6 +4101,7 @@ std::mutex g_bosses_mutex;
 std::vector<Seen> g_bosses;
 std::vector<std::uint64_t> g_bosses_ours;  // the bosses of g_bosses our game owns (boss-intro)
 std::map<std::string, BossOwnership, std::less<>> g_boss_last;  // the last ownership reading per boss (BossOurs)
+std::map<std::string, BossLifeSeen, std::less<>> g_boss_lives;  // the last life read per boss body (BossAliveKept)
 std::uint64_t g_bosses_at = 0;
 constexpr std::uint64_t kBossesFreshUs = 1'500'000;
 
@@ -4120,6 +4124,7 @@ void NoteBosses(const std::vector<Seen>& seen, const std::vector<std::pair<u64, 
     g_bosses = std::move(bosses);
     g_bosses_ours = std::move(ours);
     g_bosses_at = CoopEvery::NowUs();
+    NoteBossLives(g_bosses, g_bosses_at, g_boss_lives);
 }
 
 std::optional<bool> LastBossAlive(std::span<const std::string_view> bodies) {
@@ -4128,7 +4133,7 @@ std::optional<bool> LastBossAlive(std::span<const std::string_view> bodies) {
     if (g_bosses_at == 0 || now < g_bosses_at || now - g_bosses_at > kBossesFreshUs) {
         return std::nullopt;
     }
-    return BossAlive(g_bosses, bodies);
+    return BossAliveKept(g_bosses, bodies, now, g_boss_lives);
 }
 
 void ForgetBosses() {
@@ -4136,6 +4141,7 @@ void ForgetBosses() {
     g_bosses.clear();
     g_bosses_ours.clear();
     g_boss_last.clear();  // another session's (or run's) owner says nothing here
+    g_boss_lives.clear();
     g_bosses_at = 0;
 }
 
@@ -4151,6 +4157,11 @@ std::optional<bool> LastBossOurs(std::span<const std::string_view> bodies) {
 void SetUnreadyBosses(std::vector<std::string> bodies) {
     std::lock_guard lock(g_unready_mutex);
     g_unready = std::move(bodies);
+}
+
+void SetDyingBosses(std::vector<std::string> bodies) {
+    std::lock_guard lock(g_unready_mutex);
+    g_dying = std::move(bodies);
 }
 
 std::optional<bool> LastBossHurt(std::span<const std::string_view> bodies) {

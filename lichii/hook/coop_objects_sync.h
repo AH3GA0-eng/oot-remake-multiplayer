@@ -237,6 +237,20 @@ bool RemovedWhenTaken(std::string_view name);
 // there, or every one there is at 0 life; nothing when one is there whose
 // life was not read (unknown: the boss logic then keeps its old rule).
 std::optional<bool> BossAlive(const std::vector<Seen>& seen, std::span<const std::string_view> bodies);
+// Row 114: a boss off the walk is not dead. Phantom Ganon leaves the walk while he rides in a painting, and
+// "none there" read as his death: his host's Game Over was sent as the boss beaten. BossAliveKept is BossAlive,
+// except that when no body is in the walk, a body last read with life left within kBossAwayKeepUs is alive (away).
+// A boss's death is read at life 0 while its death runs (its event deletes it later), so that reading stays.
+// `last` keeps the last life read per body name (NoteBossLives, from each walk).
+struct BossLifeSeen {
+    std::int32_t life = 0;
+    std::uint64_t at_us = 0;
+};
+inline constexpr std::uint64_t kBossAwayKeepUs = 30'000'000;
+void NoteBossLives(const std::vector<Seen>& walk, std::uint64_t now_us,
+                   std::map<std::string, BossLifeSeen, std::less<>>& last);
+std::optional<bool> BossAliveKept(const std::vector<Seen>& walk, std::span<const std::string_view> bodies,
+                                  std::uint64_t now_us, const std::map<std::string, BossLifeSeen, std::less<>>& last);
 
 // boss-copy-b: whether a boss is still in its pre-battle phase in one walk,
 // from its body actors' own animation (AS slot 0): Gohma's `Sleep` and
@@ -697,6 +711,12 @@ public:
     // here): listed with object_presence::unready, so the server keeps them
     // with a game whose boss is fighting.
     void SetUnready(std::vector<std::string> names) { unready_ = std::move(names); }
+    // The boss actors whose death has begun (the boss glue; player report #105). A hit such a boss's game did
+    // not take (its owner's killing hit, refused outside Gohma's weak point) is given to its Life step as its
+    // life after the wait, as for any other enemy: its death plays out here (CoopBossNative lets it die).
+    void SetDying(std::vector<std::string> names) { dying_ = std::move(names); }
+    // Dying copy bosses whose owner said dead, given their remaining life once (review-boss-0114).
+    unsigned DyingFinished() const { return dying_finished_; }
     static constexpr float kWakeM = 10.0f;
     // Issue 157: the Mover puts the owner's animation back on the very next
     // game frame, so a copy whose AI asks for its wake animation once (a
@@ -820,6 +840,8 @@ public:
     std::uint8_t OwnerOf(const coop::protocol::ObjectId& id) const;
     std::size_t HurtsTaken() const { return hurt_taken_; }
     std::size_t HurtsMissed() const { return hurt_missed_; }
+    // Another player's hits our boss refused as a replay, given to its own Life step (boss-hits).
+    std::size_t BossHitsStepped() const { return boss_hits_stepped_; }
     // Copies dead here whose owner still showed life after every resend (a lost kill: the games stay split).
     std::size_t SplitKills() const { return split_kills_; }
     std::size_t HurtsLate() const { return hurt_late_; }
@@ -937,6 +959,7 @@ private:
         int resent = 0;
         std::uint64_t dead_at = 0;
         bool owner_life_zero = false;  // its owner's samples said life 0 (OwnerSaysDead)
+        bool death_given = false;      // a dying copy boss's remaining life went to its own Life step (once)
         bool dead_now = false;  // a kill from before we came: deleted at once
         // enemy-sync-3 (issue 133): our enemy, killed by another game's hit
         // that our game did not take, already said dead (OBJECT_REMOVE).
@@ -1177,9 +1200,12 @@ private:
     std::set<std::uint64_t> dead_;    // copies whose owner said dead kDeadGraceUs ago
     bool wake_ = true;
     std::vector<std::string> unready_;
+    std::vector<std::string> dying_;  // SetDying
+    unsigned dying_finished_ = 0;     // DyingFinished
     std::size_t hurt_taken_ = 0;   // hurts the game took as asked
     std::size_t hurt_late_ = 0;    // late falls put back
     std::size_t hurt_missed_ = 0;  // hurts not taken after the wait (given to the Life step, or lost: never written)
+    std::size_t boss_hits_stepped_ = 0;  // of those, another player's hits on our boss given to its Life step
     std::size_t split_kills_ = 0;  // copies dead here, owner alive after the resends
     BlastNear blast_near_;
     std::size_t blast_drops_ = 0;
