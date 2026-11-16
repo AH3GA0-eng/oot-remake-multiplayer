@@ -79,6 +79,7 @@ add_executable(coop_tests
   lichii/local_game_test.cpp
   lichii/local_view_test.cpp
   lichii/solo_view_test.cpp
+  lichii/session_gate_test.cpp
   lichii/world_test.cpp
   lichii/ocarina_test.cpp
   lichii/ocarina_sound_test.cpp
