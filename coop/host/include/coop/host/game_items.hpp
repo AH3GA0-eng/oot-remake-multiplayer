@@ -198,8 +198,13 @@ constexpr std::uint64_t kHolderEquipment = 0x200;        // holder -> the equipm
 constexpr std::array<std::uint32_t, 2> kEquipSlots{13, 16};
 }  // namespace ocarina
 
-// Asks the game to equip the ocarina from its flags once, after co-op changed them (OcarinaEquip). Thread-safe:
-// the hook's frame arms it, the game's calc thread steps it (a CoopCallers caller).
+// The best ocarina the flags hold when EquipOcarina already names it (else empty: none held, or the mend still has
+// to write the name, and wants it then).
+std::string_view ocarina_held(std::int32_t fairy, std::int32_t time, std::string_view current);
+
+// Asks the game to equip the ocarina from its flags: once after co-op changed them, and once per stay of our Link
+// while one is held (OcarinaEquip::link). Thread-safe: the hook's frame arms it, the game's calc thread steps it (a
+// CoopCallers caller).
 class OcarinaEquip {
  public:
   // Co-op wrote the ocarina's flags for `name` (the equipped name, or the Bools of an ocarina already named): the
@@ -213,6 +218,11 @@ class OcarinaEquip {
   // The calc thread: the next slot to ask, or nothing. `after_call` false starts a frame. After the last slot the
   // want is spent (a note says so).
   std::optional<std::uint32_t> step(bool after_call);
+  // Each frame: whether our Link is in the game, and `held` (ocarina_held). Once per stay of Link (a save load or a
+  // scene change ends one) a held ocarina is wanted. Asking only after a write of ours (0.11.3) missed every ocarina
+  // whose flags were already there and needed no mend: a save an earlier co-op mend wrote them into, the join
+  // snapshot, a load of the host's file (row 103). The game's own load asks the equipment for every slot the same way.
+  void link(bool in_game, std::string_view held);
   // The equipment could not be read: the want stays, and is asked again on a later frame.
   void not_now();
   // Lines for the log since the last call.
@@ -220,11 +230,14 @@ class OcarinaEquip {
   bool waiting() const;
 
  private:
+  void want_locked(std::string_view name);
+
   mutable std::mutex mutex_;
   std::optional<std::string> wanted_;
   bool armed_ = false;
   int seen_ = 0;
   std::size_t next_ = 0;
+  bool asked_this_stay_ = false;
   std::vector<std::string> notes_;
 };
 

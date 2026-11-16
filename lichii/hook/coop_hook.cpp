@@ -569,6 +569,8 @@ public:
                     if (CoopStory::On()) {
                         CatchUpQuest(*memory);  // issue 130: the Kokiri Shop opens
                     }
+                } else {
+                    ocarina_equip_.link(false, {});  // a load or scene change: the next stay asks again (row 103)
                 }
             }
         }
@@ -2175,6 +2177,9 @@ private:
         if (raised && !current->empty()) {
             ocarina_equip_.want(*current);
         }
+        // Row 103: and once per stay of our Link while one is held, also when its flags needed no write here (a save
+        // an earlier mend wrote, the join snapshot, the host's file).
+        ocarina_equip_.link(true, coop::host::ocarina_held(fairy, time, *current));
         std::uint8_t status = 0;
         if (session_) {
             session_->with_client([&](coop::net::Client& c) {

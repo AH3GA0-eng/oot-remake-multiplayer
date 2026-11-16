@@ -1200,6 +1200,48 @@ TEST_CASE("OcarinaEquip: the game equips a shared ocarina from its flags once (r
   CHECK_FALSE(f.step(false));
 }
 
+TEST_CASE("OcarinaEquip: a held ocarina is asked once per stay of Link, also with no write of ours (row 103)") {
+  using coop::host::OcarinaEquip;
+  using coop::host::ocarina_held;
+  // Held: the best ocarina the flags have, and only when EquipOcarina names it already.
+  CHECK(ocarina_held(1, 0, "Item_Ocarina_Fairy") == "Item_Ocarina_Fairy");
+  CHECK(ocarina_held(1, 1, "Item_Ocarina_Time") == "Item_Ocarina_Time");
+  CHECK(ocarina_held(1, 1, "Item_Ocarina_Fairy").empty());  // the mend writes the Time name and wants it then
+  CHECK(ocarina_held(0, 0, "Item_Ocarina_Fairy").empty());  // a name kept with no ocarina held
+  CHECK(ocarina_held(1, 0, "").empty());
+  const auto ask = [](OcarinaEquip& e, std::string_view name) {
+    for (int i = 0; i < OcarinaEquip::kSettleFrames; ++i) e.arm(name, true, false);
+    const auto first = e.step(false);
+    const auto second = e.step(true);
+    const bool done = !e.step(true);
+    return first == std::optional<std::uint32_t>(13) && second == std::optional<std::uint32_t>(16) && done;
+  };
+  // A save whose flags an earlier co-op mend wrote (0.11.2): nothing to write now, but the stay asks the game.
+  OcarinaEquip e;
+  e.link(true, "Item_Ocarina_Fairy");
+  CHECK(e.waiting());
+  CHECK(ask(e, "Item_Ocarina_Fairy"));
+  // Once per stay: later frames of the same stay ask nothing.
+  for (int i = 0; i < 100; ++i) e.link(true, "Item_Ocarina_Fairy");
+  CHECK_FALSE(e.waiting());
+  // Link gone (a load or a scene change), then back: asked again.
+  e.link(false, {});
+  e.link(true, "Item_Ocarina_Fairy");
+  CHECK(ask(e, "Item_Ocarina_Fairy"));
+  // No ocarina held: nothing asked, and the stay is not spent, so one that arrives held later in it is asked.
+  OcarinaEquip g;
+  g.link(true, {});
+  CHECK_FALSE(g.waiting());
+  g.link(true, "Item_Ocarina_Time");
+  CHECK(ask(g, "Item_Ocarina_Time"));
+  // A want of a write of ours in the same stay is the same ask (one count, one call pair).
+  OcarinaEquip h;
+  h.want("Item_Ocarina_Fairy");
+  h.link(true, "Item_Ocarina_Fairy");
+  CHECK(ask(h, "Item_Ocarina_Fairy"));
+  CHECK_FALSE(h.waiting());
+}
+
 // The randomizer (docs/mods.md, "Items in a randomized seed"): an item from a
 // randomized check is shared like any other, and the one who gets it from
 // another player must be able to use it. One case per dependency.
