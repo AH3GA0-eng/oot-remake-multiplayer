@@ -28,7 +28,8 @@ TEST_CASE("dungeon: the Water Temple's water level and switches are in the list"
     bool shutter = false;
     for (const auto& f : CoopDungeon::Flags()) {
         level |= std::string(f.name) == "WaterTemple_Room00_WaterLevel" && f.is_int;
-        shutter |= std::string(f.name) == "WaterTemple_Room00_Switch_NearTheShutter";
+        // (Room00_Switch_NearTheShutter is where our Link stands, set both ways by an area: not shared.)
+        shutter |= std::string(f.name) == "WaterTemple_Room00_OpenDoor1F";
         // One player's own state is not shared.
         CHECK(std::string(f.name).find("NaviHelp") == std::string::npos);
         CHECK(std::string(f.name).find("IsPlayerIn") == std::string::npos);
