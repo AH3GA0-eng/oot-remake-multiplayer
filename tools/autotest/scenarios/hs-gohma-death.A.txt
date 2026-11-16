@@ -7,14 +7,22 @@
 # baselines at quest Get_StoneOfForest = GoToBossRoom, as hs-boss-full: games closed, for lane N A and B, slots
 # 00-02: save_flags.py set <laneN-X>\autotest-save\slot_0*\progress.sav enum:0x7d776b61=0xb5df43cb (old file
 # kept in autotest-save-backup; put it back after). The scenario clears the Deku boss room flags itself.
+# OWNER: either game may own her when the kill comes (LANE1 run 4, 20261116-021330: she went to A 0.1 s after A's
+# "ready to own"; most likely the server's chase handover, A's copy running its own AI in A's own intro; chases are
+# not logged). So BOTH games run `kill` at b-k0: the owner's
+# test kill is a kill (past her life stops, boss-0114-a); the copy's is held at 1 and goes to the owner as a hit.
+# Below, OWNER = the game whose log has "Enemy_DungeonBoss_Gohma: now ours" last before the kill, COPY = the other.
 # PASS (all of):
-#  1. B: "Dm_Deku_BossOut: our game started the death" (VOID without it: the kill did not land).
-#  2. A: "InsideTheDekuTree_BossDie: player 2's boss died; our copy still lives: waiting for it to die here"
+#  1. OWNER: "Dm_Deku_BossOut: our game started the death" (VOID without it: the kill did not land; check OWNER's
+#     "owners' deaths past a copy's own life stops" / its life line "21 -> 0").
+#  2. COPY: "InsideTheDekuTree_BossDie: player N's boss died; our copy still lives: waiting for it to die here"
 #     (boss-0114-a), then EITHER "our copy of the boss died here: asking its own death" (the setting: her whole
-#     death, container and warp here) OR, after 1.5 s, "Dm_Deku_BossOut: ... the death flow alone: our copy of
-#     the boss still lives ... asked again if it dies" and later "our copy of the boss died after the death flow:
-#     asking its own death now" (or "never died here": her life-1 clamp, #88 again for A: note it, not a FAIL).
-#  3. A: "its death has begun: the copy runs all its own" (the fix), and no "the copy takes the owner's state
+#     death, container and warp here; expected since boss-0114-a 235eceb4: her life stops are passed, A's
+#     "owners' deaths past a copy's own life stops" > 0) OR, after 1.5 s, "Dm_Deku_BossOut: ... the death flow
+#     alone: our copy of the boss still lives ... one death cutscene here, nothing asked again" (#88 again for A:
+#     note it as a regression of 235eceb4, not a FAIL of #105). Never a second death cutscene in A (one
+#     "our game started"/"playing it here too" per game; later asks "not taken (refused at the request ...)").
+#  3. COPY: "its death has begun: the copy runs all its own" (the fix), and no "the copy takes the owner's state
 #     again" after it; her death ends here: A's "a hit the dying boss's game did not take: N given to its own
 #     Life step (its death has begun)" and/or "N ended in their death" > 0 in A's "coop: bosses:" totals line, and
 #     A's "our event is over" after the death (Revirie's 0.11.2 host log never had it: 'the boss is still
@@ -22,7 +30,8 @@
 #  4. A's shots a-d3 and a-walk1 are the boss room, not black; A's "goto" after a-d3 does not time out.
 #  5. A leaves the scene through the blue warp (A's log: the scene changes from InsideTheDekuTree after
 #     a-walk1), or at least A's "heart container: our pickup" / MaxLife +4 in A.
-# FAIL (= report #105): A's shots black from a-d3 on, A's goto timed out, A still in InsideTheDekuTree at end.
+#  (Checks 4-5 name A; when B is the COPY, read them for B: b-k1/b-k2 not black, B's warp or container.)
+# FAIL (= report #105): the COPY's shots black after the death, its goto timed out, still in InsideTheDekuTree.
 # Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-gohma-death
 #! noload
 #! start coop: test warp done
@@ -63,6 +72,7 @@ mark a-after-intro
 goto 12.0 67.5 1.5 600  # inside the room by the door, no hits: B stays the owner
 mark a-moved
 wait 3000               # B's kill comes now (b-k0)
+kill Enemy_DungeonBoss_Gohma   # with B's: whichever game owns her kills her (the other's is held at 1)
 mark a-d0
 wait 600
 mark a-d1               # the death cutscene here (asked as InsideTheDekuTree_BossDie)

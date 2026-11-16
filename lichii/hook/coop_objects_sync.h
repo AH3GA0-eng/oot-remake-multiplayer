@@ -185,6 +185,11 @@ struct LifeWrite {
     // a boss copy that becomes ours with less life than its old owner's had (held at 1 by HeldLifeStep, or
     // lowered by its own hits) takes the old owner's life, so one hit never kills a near-full boss (Barinade).
     bool heal = false;
+    // The test script's kill (`kill <name>`): a kill, as the game's own killing blow would be. In the game that owns
+    // the enemy it goes past its life stops (CoopActorEvents::PassStops; Gohma's stop at 1 outside her chance time
+    // held a test kill at 1 in LANE1 run 4). A copy's own Life step still holds a copy boss (HeldLifeStep); its hit
+    // goes to the owner as DAMAGE, judged there as any hit.
+    bool test_kill = false;
 };
 
 // Shared: enemies, animals (a cucco is Animal_Cucco), townspeople (Npc_, but
@@ -237,20 +242,28 @@ bool RemovedWhenTaken(std::string_view name);
 // there, or every one there is at 0 life; nothing when one is there whose
 // life was not read (unknown: the boss logic then keeps its old rule).
 std::optional<bool> BossAlive(const std::vector<Seen>& seen, std::span<const std::string_view> bodies);
-// Row 114: a boss off the walk is not dead. Phantom Ganon leaves the walk while he rides in a painting, and
-// "none there" read as his death: his host's Game Over was sent as the boss beaten. BossAliveKept is BossAlive,
-// except that when no body is in the walk, a body last read with life left within kBossAwayKeepUs is alive (away).
-// A boss's death is read at life 0 while its death runs (its event deletes it later), so that reading stays.
-// `last` keeps the last life read per body name (NoteBossLives, from each walk).
+// Row 114: a boss off the walk is not dead. Phantom Ganon left the walk at life 15, and "none there" read as his
+// death: his host's Game Over was sent as the boss beaten. A boss's death is the game's own life 0, read while its
+// death runs (its event deletes it later), so a body off the walk reads by what was last known of it, with no time:
+// - last read at life 0: dead (its death ran; deleted after it);
+// - last read with life left, no delete request for it since (the game took it off its list, as it does with live
+//   actors, churn-b): away, alive;
+// - last read with life left, then deleted (the game's delete request, patch 0007; or our own remove of a copy):
+//   removed alive. Never a death; it no longer keeps a boss of several bodies alive (Twinrova's sisters), but a
+//   boss whose bodies are all removed alive is not dead either.
+// A body never read this scene (a save that beat it): none there, dead as before. Without delete requests (the
+// emulator) a body off the walk with life left is away. `last` keeps the last reading per body name; it is
+// forgotten with the scene and on a new session (CoopObjects' NoteBosses and ForgetBosses).
 struct BossLifeSeen {
+    std::uint64_t address = 0;
     std::int32_t life = 0;
-    std::uint64_t at_us = 0;
+    bool removed = false;  // a delete request for `address` came after that reading
 };
-inline constexpr std::uint64_t kBossAwayKeepUs = 30'000'000;
-void NoteBossLives(const std::vector<Seen>& walk, std::uint64_t now_us,
-                   std::map<std::string, BossLifeSeen, std::less<>>& last);
+using BossLives = std::map<std::string, BossLifeSeen, std::less<>>;
+void NoteBossLives(const std::vector<Seen>& walk, BossLives& last);
+void NoteBossRemoved(std::uint64_t address, BossLives& last);
 std::optional<bool> BossAliveKept(const std::vector<Seen>& walk, std::span<const std::string_view> bodies,
-                                  std::uint64_t now_us, const std::map<std::string, BossLifeSeen, std::less<>>& last);
+                                  const BossLives& last);
 
 // boss-copy-b: whether a boss is still in its pre-battle phase in one walk,
 // from its body actors' own animation (AS slot 0): Gohma's `Sleep` and
