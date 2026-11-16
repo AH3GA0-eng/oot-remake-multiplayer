@@ -35,10 +35,16 @@
    whose first 8 bytes are the shooter's actor (the callers store it there: main+0x992e44, main+0xd36a0's same lines),
    b = x0, the shooter's shot record. Before that create's CREATE_FROM, on the same thread. */
 #define HOS_COOP_WORLD_SHOOT_FROM 7u
+/* main+0x49d8c0, the Life component's step again, after LIFE_STEP on the same thread, where it is about to test its
+   life stops (main+0x49dcbc: w10 = Life+0x70, how many stops the list at Life+0x60 holds; `cbnz w10` then clamps the
+   sum so life stays at each stop and records the crossing at Life+0x1be8): a = the component, b = the address (in
+   hookshot.exe) of a uint32 holding 0. The module may set it to 1: the step takes the sum past the stops this frame
+   (w10 = 0), as for a component with none. Only for a copy taking its owner's death (review-boss-0114 risk 2). */
+#define HOS_COOP_WORLD_LIFE_STOPS 8u
 
 /* The event numbers are one space with hos_coop_world.h's, which names the ranges: the actor events have
-   HOS_COOP_WORLD_ACTOR_FIRST to HOS_COOP_WORLD_ACTOR_LAST (2 to 15; 2 to 7 used). */
-#if HOS_COOP_WORLD_CREATE_REQUEST < HOS_COOP_WORLD_ACTOR_FIRST || HOS_COOP_WORLD_SHOOT_FROM > HOS_COOP_WORLD_ACTOR_LAST
+   HOS_COOP_WORLD_ACTOR_FIRST to HOS_COOP_WORLD_ACTOR_LAST (2 to 15; 2 to 8 used). */
+#if HOS_COOP_WORLD_CREATE_REQUEST < HOS_COOP_WORLD_ACTOR_FIRST || HOS_COOP_WORLD_LIFE_STOPS > HOS_COOP_WORLD_ACTOR_LAST
 #error "hos_coop_actors.h: an actor event number outside its range (hos_coop_world.h)"
 #endif
 

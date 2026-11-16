@@ -7,6 +7,7 @@
 #include <cmath>
 #include <map>
 #include <optional>
+#include <ostream>  // MSVC 14.51: doctest prints a string_view through it (not pulled in by the others)
 #include <set>
 
 #include "coop/protocol/codec.hpp"

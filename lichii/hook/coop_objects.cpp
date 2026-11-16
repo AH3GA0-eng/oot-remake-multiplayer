@@ -113,7 +113,9 @@
 #include <set>
 
 namespace CoopObjects {
-void NoteBosses(const std::vector<Seen>& seen, const std::vector<std::pair<u64, std::string>>& owned);  // issue 109, below
+void NoteBosses(const std::vector<Seen>& seen, const std::vector<std::pair<u64, std::string>>& owned,
+                const std::string& scene);  // issue 109, below
+void NoteBossDeleted(std::uint64_t address);  // below: the game's delete request (row 114)
 void ForgetBosses();  // below: a new session, the title or a new game run
 // Boss bodies whose intro this game has not played (SetUnreadyBosses, below).
 std::mutex g_unready_mutex;
@@ -1394,7 +1396,7 @@ public:
         // Issue 200, row 97: our event's actors become ours (Sync::SetEvent).
         // G1: another player's event here: its bound actors act for it, none is claimed.
         sync_.SetEvent(TheLocalEvent().load(), server_now_us, TheOwnEvent().load());
-        NoteBosses(seen, sync_.Owned());
+        NoteBosses(seen, sync_.Owned(), *scene);
         const u8 self =
             session->with_client([](coop::net::Client& c) { return c.player_number(); });
         if (self == 0) {
@@ -2320,6 +2322,7 @@ private:
             case CoopActorEvents::Kind::Delete: {
                 ++actor_deletes_;
                 sync_.GameDeleted(e.a, server_now_us);  // (gone at the first walk without it)
+                NoteBossDeleted(e.a);  // (a boss body off the walk: removed, not away)
                 const auto known = names_.find(e.a);
                 if (actor_event_lines_ < 40 && known != names_.end()) {
                     ++actor_event_lines_;
@@ -2345,9 +2348,11 @@ private:
         } else if (server_now_us >= actor_events_said_us_ + 10'000'000 &&
                    (actor_creates_ | actor_deletes_ | actor_hits_ | actor_events_lost_) != 0) {
             actor_events_said_us_ = server_now_us;
+            const std::uint64_t passed = CoopActorEvents::StopsPassed().load(std::memory_order_relaxed);
             LOG_INFO(Core, "coop: actors: in 10 s the game asked {} creates ({} copies' shots refused), {} deletes, "
-                           "{} hits (life {}), {} lost",
-                     actor_creates_, actor_stops_, actor_deletes_, actor_hits_, actor_hit_sum_, actor_events_lost_);
+                           "{} hits (life {}), {} lost; owners' deaths past a copy's own life stops {}",
+                     actor_creates_, actor_stops_, actor_deletes_, actor_hits_, actor_hit_sum_, actor_events_lost_,
+                     passed);
             actor_creates_ = actor_deletes_ = actor_hits_ = actor_events_lost_ = actor_stops_ = 0;
             actor_hit_sum_ = 0;
         }
@@ -3240,6 +3245,7 @@ private:
             w.hurt = std::max<std::int32_t>(best->life->life, 1);
             w.from = player_;
             w.direct = true;
+            w.test_kill = true;
             writes.push_back(w);
             LOG_INFO(Core, "coop: test kill {} {:#x} at {:.2f} {:.2f} {:.2f} ({:.1f} m, life {}): hit",
                      name, best->address, best->position[0], best->position[1], best->position[2],
@@ -3335,7 +3341,9 @@ private:
             return;
         case LifeRoute::step:
 #ifdef COOP_HOOKSHOT
-            if (steps.Give(*life, routed.amount)) {
+            // A life (not a hurt, not a raise) is the owner's for its copy: judged there (PassStops). A test kill
+            // is a kill (past the stops where it is not held: our own enemy).
+            if (steps.Give(*life, routed.amount, (w.hurt <= 0 && !w.heal) || w.test_kill)) {
                 LOG_INFO(Core, "coop: objects: share {} {:#x}: {} through the game's Life step at life {} (to {})",
                          w.hurt > 0 ? "hurt" : "life", w.address, routed.amount, old, w.life);
                 if (w.hurt <= 0) {
@@ -4156,13 +4164,15 @@ std::mutex g_bosses_mutex;
 std::vector<Seen> g_bosses;
 std::vector<std::uint64_t> g_bosses_ours;  // the bosses of g_bosses our game owns (boss-intro)
 std::map<std::string, BossOwnership, std::less<>> g_boss_last;  // the last ownership reading per boss (BossOurs)
-std::map<std::string, BossLifeSeen, std::less<>> g_boss_lives;  // the last life read per boss body (BossAliveKept)
+BossLives g_boss_lives;  // the last reading per boss body this scene, and its delete request (BossAliveKept)
+std::string g_boss_scene;  // the scene g_boss_lives is of
 std::uint64_t g_bosses_at = 0;
 constexpr std::uint64_t kBossesFreshUs = 1'500'000;
 
 } // namespace
 
-void NoteBosses(const std::vector<Seen>& seen, const std::vector<std::pair<u64, std::string>>& owned) {
+void NoteBosses(const std::vector<Seen>& seen, const std::vector<std::pair<u64, std::string>>& owned,
+                const std::string& scene) {
     std::vector<Seen> bosses;
     std::vector<std::uint64_t> ours;
     for (const Seen& s : seen) {
@@ -4179,7 +4189,16 @@ void NoteBosses(const std::vector<Seen>& seen, const std::vector<std::pair<u64, 
     g_bosses = std::move(bosses);
     g_bosses_ours = std::move(ours);
     g_bosses_at = CoopEvery::NowUs();
-    NoteBossLives(g_bosses, g_bosses_at, g_boss_lives);
+    if (scene != g_boss_scene) {
+        g_boss_lives.clear();  // another scene's bodies (left with the scene, not deleted one by one)
+        g_boss_scene = scene;
+    }
+    NoteBossLives(g_bosses, g_boss_lives);
+}
+
+void NoteBossDeleted(std::uint64_t address) {
+    std::lock_guard lock(g_bosses_mutex);
+    NoteBossRemoved(address, g_boss_lives);
 }
 
 std::optional<bool> LastBossAlive(std::span<const std::string_view> bodies) {
@@ -4188,7 +4207,7 @@ std::optional<bool> LastBossAlive(std::span<const std::string_view> bodies) {
     if (g_bosses_at == 0 || now < g_bosses_at || now - g_bosses_at > kBossesFreshUs) {
         return std::nullopt;
     }
-    return BossAliveKept(g_bosses, bodies, now, g_boss_lives);
+    return BossAliveKept(g_bosses, bodies, g_boss_lives);
 }
 
 void ForgetBosses() {
@@ -4197,6 +4216,7 @@ void ForgetBosses() {
     g_bosses_ours.clear();
     g_boss_last.clear();  // another session's (or run's) owner says nothing here
     g_boss_lives.clear();
+    g_boss_scene.clear();
     g_bosses_at = 0;
 }
 

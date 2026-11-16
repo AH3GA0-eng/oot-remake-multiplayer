@@ -574,9 +574,12 @@ TEST_CASE("native boss: a copy's own Life step holds it at 1 until the owner's d
     CHECK(t.HeldLifeStep(kLife, 1, 3) == 0);
     CHECK(t.HeldLifeStep(kLife + 0x10, 5, 21) == 21);  // another actor's: untouched
     CHECK(t.Totals().copy_life_held == 2);
-    // The owner's died: the same step lets ours die.
+    CHECK_FALSE(t.Finishes(kLife));  // held: its own stops stay (its death is not its owner's yet)
+    // The owner's died: the same step lets ours die, past its own life stops.
     copy.owner_dead = true;
     t.Publish({copy});
+    CHECK(t.Finishes(kLife));
+    CHECK_FALSE(t.Finishes(kLife + 0x10));
     CHECK(t.HeldLifeStep(kLife, 1, 1) == 1);
     CHECK(t.Totals().copy_killed == 1);
     const auto notes = t.TakeNotes();
@@ -592,6 +595,7 @@ TEST_CASE("native boss: the owner's own boss and a forgotten copy are never held
     owner.life_component = kLife;
     t.Publish({owner});
     CHECK_FALSE(t.Watches(kLife));
+    CHECK_FALSE(t.Finishes(kLife));  // our own boss: every stop is its game's
     CHECK(t.HeldLifeStep(kLife, 5, 21) == 21);
     Boss copy = Gohma(Role::copy);
     copy.life_component = kLife;
@@ -653,12 +657,14 @@ TEST_CASE("native boss: once its death has begun, a copy runs all its own and it
     CHECK(t.OnBrainVerb(kBsa, 9, true, false));  // a moment before: skipped (still a copy)
     CHECK(t.HeldLifeStep(kLife, 5, 21) == 4);
     // The owner's death is heard: its own death plays here, the skipped change made late.
+    CHECK_FALSE(t.Finishes(kLife));
     t.SetDying({"Enemy_DungeonBoss_Gohma"});
     auto c = t.Step(g, false, 0, kMain);
     REQUIRE(c);
     CHECK(c->x[1] == 9);
     CHECK_FALSE(t.Step(g, true, 0, kMain));
     CHECK(t.Watches(kLife));
+    CHECK(t.Finishes(kLife));  // its death has begun: past its own stops (Gohma's at 1, hs-gohma-death 20261115)
     CHECK(t.HeldLifeStep(kLife, 1, 1) == 1);  // dies of its own
     CHECK(t.HeldLifeStep(kLife, 5, 1) == 5);  // her own rules let 1 through: the step ends her all the same
     CHECK(t.Totals().copy_finished == 1);
@@ -679,8 +685,10 @@ TEST_CASE("native boss: once its death has begun, a copy runs all its own and it
     t.Publish({});
     CHECK(t.Watches(kLife));
     CHECK(t.HeldLifeStep(kLife, 5, 2) == 5);
+    CHECK(t.Finishes(kLife));  // (off the owned list, still dying)
     t.SetDying({});
     CHECK_FALSE(t.Watches(kLife));
+    CHECK_FALSE(t.Finishes(kLife));
     CHECK(t.HeldLifeStep(kLife, 5, 2) == 2);
     const auto notes = t.TakeNotes();
     CHECK(std::any_of(notes.begin(), notes.end(),

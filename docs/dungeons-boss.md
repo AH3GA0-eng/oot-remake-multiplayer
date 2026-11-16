@@ -267,11 +267,29 @@ game could never finish: a black screen, no fade back, no warp.
   whole life (`max(sum, life)`): the next step ends it. A refused hit on a dying boss goes to its Life step after the
   wait, as for any enemy. The list empties on scenes off, a new fight and Reset. Log: `its death has begun: the copy's
   own Life step lets it die now`; totals `N ended in their death`.
-- **The Life-1 clamp (not solved).** In hs-gohma-death 20261115-191432 the same direct Life step that killed the
-  owner's Gohma (the test kill) left the copy at 1 (`21 -> 1`, then `1 given` forever): her own damage rules keep her
-  at 1 outside her stun or chance time, which a copy does not share. So a copy Gohma may never read dead in its own
-  game. Solving it needs her damage rules reverse engineered (`Enemy_DungeonBoss_Gohma` DamageRule or her AI's life
-  floor). Other bosses' rules are not checked.
+- **The life stops (the Life-1 clamp, review-boss-0114 risk 2).** In hs-gohma-death 20261115-191432 the copy was
+  released (`its death has begun`) and its own Life step was given her whole life (`21 given ... (its death has
+  begun)`), but her game took her `21 -> 1` and held her at 1 against every `1 given` after it, while the owner's
+  test kill took the owner's `21 -> 0`. The hold is the game's Life step itself (main+0x49d8c0, read from the game's
+  code): after the frame's sum (main+0x49dcb0, LIFE_STEP) it tests `Life+0x70`, the count of the component's life
+  stops, a ring at `Life+0x60` (0x14 bytes each: a share of the maximum life at +4, or with +4 NaN and +0xc set an
+  absolute life at +8) that the actor's own code keeps. With stops, main+0x49ea94 cuts the sum so life stays at the
+  first stop it would cross and records the crossing (`Life+0x1be8[Life+0x1be0++]`, until `+0x1be4` are recorded);
+  bit 8 of `Life+0x1d18` takes nothing at all. The actor's code reads the crossings (Gohma: her death only in her
+  chance time). A copy's stops are its own game's state of a fight its owner runs, so Gohma's copy kept a stop at 1
+  that the owner's did not have. Fixed at that step: patch 0007's fifth hook (`HOS_COOP_WORLD_LIFE_STOPS`, after
+  main+0x49dcbc, words checked) asks the module before the stop test, and a module answer of 1 clears w10, so that
+  frame's sum goes past the stops as for a component with none. The module answers 1 only when the step takes the
+  component to its death (`sum >= life`) and that death is its owner's (`CoopActorEvents::PassStops`): a copy boss
+  whose death has begun or whose owner's died (`CoopBossNative::Table::Finishes`), or a judged give, the owner's life
+  for any copy (CoopObjects' Lower: `LifeTable::Give(..., judged)`), so every enemy copy whose owner died dies here
+  too, whatever its own stops. A hit our game judges (our own enemy, another player's hit on it) keeps every
+  stop. The test script's `kill` is a kill: in the game that owns the enemy it goes past the
+  stops too (`LifeWrite::test_kill`; LANE1 run 4 held a test kill at 1 outside her chance time); on a copy boss
+  HeldLifeStep still holds it and the owner judges its hit. A real hit outside her chance time still stops at 1, as
+  in a one-player game. Log: `the game's Life step asks the module before its life stops`, and the actors'
+  10 s line counts `owners' deaths past a copy's own life stops N`. A game built before this hook keeps the stops:
+  there a copy held by one still takes the death flow alone (below).
 - **The owner's death finishes the copy (review-boss-0114, every boss).** Nothing used to give a released copy its
   death: the owner's killing hit reaches it as a replay before the outro_start, its game refuses it, and after the
   400 ms wait a boss copy is never written (bosses are never resent either). So a released copy stayed alive unless
@@ -279,38 +297,55 @@ game could never finish: a black screen, no fade back, no warp.
   says it is dead (its dead remove, or its samples at life 0) its whole remaining life in its own Life step, once
   (direct, never a write; `HeldLifeStep` passes it): its own game kills it and runs its own death. Not for our own
   boss, and not while the owner's still lives. Log: `its owner's is dead and its death has begun here: its life N
-  given to its own Life step`; the share line counts `dying copies finished N`. Gohma's own clamp (above) may still
-  hold her at 1.
+  given to its own Life step`; the share line counts `dying copies finished N`. That step goes past the copy's own
+  life stops (above).
 - **The setting waits for the copy to read dead (boss-0113 fallback, boss-0114-a).** Another's death while our walk
   reads our copy alive (`boss_ours` false, `boss_alive` true) never asks the setting at once: its flow would wait for
   that copy's death. The copy is released and finished right after that tick (the glue runs SetDying after
   `Director::Tick`; the finish above on the next share), so the Director waits up to `kCopyWaitUs` (1.5 s) for the
   walk to read it dead (life 0), then asks the setting (`our copy of the boss died here: asking its own death`): the
-  whole death, the quest step and the warp in our game. Still alive then (a clamp): the death flow alone (the
-  timeline, as 0.11.1: `... asked again if it dies`), and once the copy reads dead with no event running, within
-  `kReaskUs` (25 s) of the death, the setting once (`our copy of the boss died after the death flow`; its death
-  cutscene then plays a second time; a refusal asks nothing more). `kReaskUs` stays below the 30 s a body off the
-  walk reads alive (row 114 below), so a copy deleted by its owner's dead remove (gone, not dead here) never gets a
-  setting that would wait for it. Our own game taking the death setting itself ends the wait. Never dead by then:
-  `never died here`, and that player's warp does nothing until their Link leaves the dungeon (#88).
+  whole death, the quest step and the warp in our game. With the life stops passed (above) a released copy reads
+  dead a few frames after the release, so the 1.5 s is a fault guard. Still alive then (a game built without
+  LIFE_STOPS, or a copy off the walk): the death flow alone (the timeline, as 0.11.1: `... one death cutscene here,
+  nothing asked again`), and that player's warp does nothing until their Link leaves the dungeon (#88). A copy
+  deleted by its owner's dead remove (gone, not dead here) reads removed alive (row 114 below), so it never gets a
+  setting that would wait for it. Our own game taking the death setting itself ends the wait.
+- **One death cutscene per game (review-boss-0114 risk 3).** The first version asked the setting again when the copy
+  died after the flow alone, so its death cutscene played a second time. That re-ask is gone, and nothing else may
+  play it twice: once our game took a boss's death (the flow or a setting, ours or its own logic's: `death_played`),
+  while our Link is in that boss's area and no event runs, the Director's `refuse_deaths` bit is set; the glue
+  publishes it (`CoopBossScenes::RefusedDeaths`) and the game's event request wrap (patch 0005,
+  `HOS_COOP_WRAP_EVENT_REQUEST`) refuses any ask of that boss's death flow or settings at the request
+  (`RefuseAsk`: the function is not run and x0 is 0, the manager's own "not taken"; phase 1 still reports it).
+  While an event runs nothing is refused by us: during its death the boss's own logic asks its setting every frame
+  and the manager refuses those itself, as it always has (about 50 asks in hs-gohma-death 20261115-191432 B, all
+  before its event ended). A refused late ask asks no flow either. Log: `our game asked it again, not taken
+  (refused at the request once its event is over)`.
 - Tests: `tests/lichii/boss_scenes_test.cpp` (report 88 case: the real order, a copy that dies after the release,
-  one held alive past the wait and dying after the flow, one that never dies, our game's own setting, leaving the
-  area), `boss_native_test.cpp` and `objects_test.cpp` (dying release, late changes, finish; the owner's death
-  finishing a copy whose killing replay timed out before SetDying).
+  one still alive past the wait (the flow alone, then nothing asked when it dies, its late ask refused), our
+  game's own setting, leaving the area; the owner's own death refused only after its event), `boss_native_test.cpp`
+  and `objects_test.cpp` (dying release, late changes, finish; the owner's death finishing a copy whose killing
+  replay timed out before SetDying), `actor_events_test.cpp` (PassStops, judged gives).
 - In game: scenario `hs-gohma-death` (LANE1; PASS lines in its header).
 
 ## Phantom Ganon with more than one player (player report row 114, boss-0114-a)
 PiscesGamer97's 0.11.2 host log (player-logs/piscesgamer97-phantomganon-20261116): the fight "bugs out" with two
 players, and the host's death left it "fully scuffed".
-- **Root cause: a boss off the walk read as dead.** Phantom Ganon leaves the object walk while he rides in a
-  painting (the share's `moved 4050 ... left`). `BossAlive` read "no body there" as dead, so the host's Game Over
-  (an event, boss "gone") was taken for his death: `boss beaten` and BOSS_STATE defeated went to everyone, and the
-  host's own rules came back to a beaten room. Any other event while he was in a painting would do the same.
+- **Root cause: a boss off the walk read as dead.** Phantom Ganon left the object walk at life 15 (the share's
+  `moved 4050 ... left`). `BossAlive` read "no body there" as dead, so the host's Game Over (an event, boss "gone")
+  was taken for his death: `boss beaten` and BOSS_STATE defeated went to everyone, and the host's own rules came
+  back to a beaten room. Any other event while he was off the walk would do the same.
   Fixed where it starts: `CoopObjects::BossAliveKept` (used by `LastBossAlive`, so by every boss rule) reads a body
-  off the walk as alive for `kBossAwayKeepUs` (30 s) after a reading with life left. A boss's death is read at life
-  0 while it runs (its event deletes it later), so a real death still reads dead; a boss never seen this session
-  (a save that beat it) still reads dead. So the Game Over rule (boss-gameover-b: an event while our Link is dead
-  is the Game Over unless the boss reads gone) holds again: "gone" is now a real death.
+  off the walk by what is known of it, with no timer (review-boss-0114 risk 1 replaced the first 30 s window).
+  A boss's death is the game's own life 0, read while its death runs (its event deletes it later). So: last read at
+  life 0 is dead; last read with life left and no delete request since is away (the game takes live actors off its
+  list, churn-b), alive; last read with life left and then deleted (the game's delete request, patch 0007, or our
+  own remove of a copy) is removed alive: never a death, and it no longer keeps a boss of several bodies alive
+  (Twinrova's sisters). A body never read this scene (a save that beat it) still reads dead. The readings are
+  forgotten with the scene (another scene's bodies leave with it, not one delete at a time) and on a new session.
+  The emulator has no delete requests: there a body off the walk with life left is away. So the Game Over rule
+  (boss-gameover-b: an event while our Link is dead is the Game Over unless the boss reads gone) holds again:
+  "gone" is now a real death.
 - **His painting show follows him.** `Enemy_GhostPicturePerformer_PhantomGanon`, `_PhantomGanonHorse` and their
   `_Imitation` (the riders in the paintings, real and fake) were shared objects with their own owner: in the log
   they stayed with player 2 while the boss went to player 1, so a copy game's riders came from another game than
@@ -319,7 +354,8 @@ players, and the host's death left it "fully scuffed".
   of the owner's thunder ball makes its own shockwaves, and the owner's come as copies (one set, as for every
   enemy shot). The older rules' `moving in (try N)` / `could not move ... giving up` lines while the area rules
   are on are only logged: the glue drops that pull (the area rules move players).
-- Tests: `objects_test.cpp` (off the walk is away; the painting show's group).
+- Tests: `objects_test.cpp` (off the walk: away, removed alive, died, never seen; Twinrova's removed sister; the
+  painting show's group).
 - Not proven in game: a two-player Phantom Ganon run (proposed scenario `hs-phantom-ganon` from the player's save).
 
 ## Not known yet (for the in-game check)

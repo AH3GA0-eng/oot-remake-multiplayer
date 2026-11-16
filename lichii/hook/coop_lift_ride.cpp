@@ -99,7 +99,7 @@ std::optional<CoopPuppet::Call> Rider::Next(CoopPuppet::Guest& guest, std::uint6
         // The execute reads [actor+0x270] without a check: only a lift whose logic has a live bool RideOnPlayer.
         const auto plug = CoopLogicSet::BoolPlug(guest, lift, kRideOnPlayer);
         if (!plug) continue;
-        if (plug->value == std::optional<std::uint8_t>(1)) continue;  // on already (our Link, or set this frame)
+        if (plug->value == std::uint8_t{1}) continue;  // on already (our Link, or set this frame)
         if (!CoopLogicSet::WriteNode(guest, block_, main, lift, kRideOnPlayer)) continue;
         {
             std::lock_guard lock(mutex_);

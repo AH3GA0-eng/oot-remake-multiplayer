@@ -203,9 +203,9 @@ void Director::Join(std::uint8_t b, Kind kind, const Local& local, std::uint64_t
     // Not while our copy still lives (player report #105, a black screen after Gohma's death in the host's game):
     // the setting's flow waits for the boss's own death. Our copy is released this tick (the glue's SetDying runs
     // after this Tick: its own changes made late, its Life step lets it die), so the setting waits up to
-    // kCopyWaitUs for our walk to read it dead; then the death flow alone, and the setting is asked again once the
-    // copy reads dead within kReaskUs (WaitForCopy). Review boss-0113 must-fix 1: without that, every guest's
-    // copy (always alive here) got the flow alone and #88 came back at every boss.
+    // kCopyWaitUs for our walk to read it dead (WaitForCopy); then the death flow alone, and nothing more. Review
+    // boss-0113 must-fix 1: without that, every guest's copy (always alive here) got the flow alone and #88 came
+    // back at every boss.
     const bool copy_alive = local.boss_ours == false && local.boss_alive == true;
     const std::string_view setting = DeathToAsk(boss, local.scene);
     if (kind == Kind::outro && copy_alive && setting != boss.outro) {
@@ -224,52 +224,31 @@ void Director::Join(std::uint8_t b, Kind kind, const Local& local, std::uint64_t
 
 // Another's death heard while our copy lived (Join): the boss's own death setting once our walk reads the copy
 // dead (it runs the boss's death, the quest step and the warp here, as in the owner's game); the death flow alone
-// if it still lives after kCopyWaitUs (its own rules may clamp it: Gohma at life 1, gohma-death-b), and the setting
-// then once it reads dead with no event running, within kReaskUs of the death. Never twice, and not once our own
-// game took the death itself (Ours clears it).
+// if it still lives after kCopyWaitUs. Either way one death cutscene: once the flow alone played nothing is asked
+// again, and a later ask of the setting by our own game is refused (refuse_deaths; review-boss-0114 risk 3).
 void Director::WaitForCopy(std::uint8_t b, const Local& local, std::uint64_t now_us, Actions& out) {
     Fight& f = fights_[b];
     const Boss& boss = kBosses[b];
-    if (out.play || (f.wait_copy_since == 0 && !f.flow_alone)) {
+    if (out.play || f.wait_copy_since == 0) {
         return;
     }
     if (!Here(b, local)) {
         f.wait_copy_since = 0;
-        f.flow_alone = false;
         return;
     }
-    const std::string_view setting = DeathToAsk(boss, local.scene);
-    const bool dead = local.boss_alive == false;
-    if (f.wait_copy_since != 0) {
-        if (dead) {
-            f.wait_copy_since = 0;
-            f.asked_at = now_us;
-            out.play = std::string(setting);
-            out.log.push_back(*out.play + ": our copy of the boss died here: asking its own death (player " +
-                              std::to_string(f.outro_by) + " started it)");
-        } else if (now_us - f.wait_copy_since >= kCopyWaitUs) {
-            f.wait_copy_since = 0;
-            f.flow_alone = true;
-            f.asked_at = now_us;
-            out.play = std::string(boss.outro);
-            out.log.push_back(*out.play + ": playing it here too (player " + std::to_string(f.outro_by) +
-                              " started it), the death flow alone: our copy of the boss still lives (its own death "
-                              "setting would wait for it); asked again if it dies");
-        }
-        return;
-    }
-    if (now_us - f.died_at > kReaskUs) {
-        f.flow_alone = false;
-        out.log.push_back(std::string(setting) + ": our copy of the boss never died here: no warp here until our "
-                                                 "Link leaves the dungeon (player report #88)");
-        return;
-    }
-    if (dead && !local.event && !playing_ && (f.phase == Phase::outro || f.phase == Phase::done)) {
-        f.flow_alone = false;
-        f.reasked = true;
+    if (local.boss_alive == false) {
+        f.wait_copy_since = 0;
         f.asked_at = now_us;
-        out.play = std::string(setting);
-        out.log.push_back(*out.play + ": our copy of the boss died after the death flow: asking its own death now");
+        out.play = std::string(DeathToAsk(boss, local.scene));
+        out.log.push_back(*out.play + ": our copy of the boss died here: asking its own death (player " +
+                          std::to_string(f.outro_by) + " started it)");
+    } else if (now_us - f.wait_copy_since >= kCopyWaitUs) {
+        f.wait_copy_since = 0;
+        f.asked_at = now_us;
+        out.play = std::string(boss.outro);
+        out.log.push_back(*out.play + ": playing it here too (player " + std::to_string(f.outro_by) +
+                          " started it), the death flow alone: our copy of the boss still lives (its own death "
+                          "setting would wait for it); one death cutscene here, nothing asked again");
     }
 }
 
@@ -356,7 +335,6 @@ void Director::Take(const proto::Message& m, const Local& local, std::uint64_t n
             }
             f.at = now_us;
             f.base = Base(local);  // our maximum when the boss died, wherever we are
-            f.died_at = now_us;
             Join(s->boss, Kind::outro, local, now_us, out);
         }
         break;
@@ -406,9 +384,13 @@ void Director::Ours(const Request& r, const Local& local, std::uint64_t now_us, 
     } suffix{out.log, out.log.size(), r.name == flow ? std::string() : " (asked as " + r.name + ")"};
     Fight& f = fights_[b];
     if (!r.taken) {
+        if (kind == Kind::outro && f.death_played) {
+            out.log.push_back(label + ": our game asked it again, not taken (refused at the request once its event "
+                                      "is over): its death cutscene played here already (one per game)");
+            return;
+        }
         out.log.push_back(label + ": our game did not take it");
-        if (kind == Kind::outro && r.name != flow && f.asked_at != 0 && now_us - f.asked_at <= kJoinUs &&
-            !f.reasked) {
+        if (kind == Kind::outro && r.name != flow && f.asked_at != 0 && now_us - f.asked_at <= kJoinUs) {
             // Our ask of the boss's own death setting was refused: the death flow alone, once (the cutscene
             // still plays; the quest step and the warp then wait until our Link is out of the dungeon).
             f.asked_at = now_us;
@@ -419,12 +401,9 @@ void Director::Ours(const Request& r, const Local& local, std::uint64_t now_us, 
     }
     const bool asked = f.asked_at != 0 && now_us - f.asked_at <= kJoinUs;
     f.asked_at = 0;
-    if (kind == Kind::outro && r.name != flow) {
-        f.wait_copy_since = 0;  // our game runs the boss's own death now (asked, or its own logic's): nothing more
-        f.flow_alone = false;
-    } else if (kind == Kind::outro && f.wait_copy_since != 0) {
-        f.wait_copy_since = 0;  // the flow alone runs: the setting once the copy reads dead (WaitForCopy)
-        f.flow_alone = true;
+    if (kind == Kind::outro) {
+        f.wait_copy_since = 0;  // our game runs the death now (asked, or its own logic's): nothing more to ask
+        f.death_played = true;  // one death cutscene here: a later ask is refused (refuse_deaths)
     }
     playing_ = Playing{b, kind};
     playing_->own_setting = r.name != flow;
@@ -576,7 +555,29 @@ Actions Director::Tick(const Local& local, const std::vector<Request>& ours, std
         playing_->skip_at = now_us;
         out.skip = true;
     }
+    // One death cutscene per game (review-boss-0114 risk 3): while we are in its area and no event runs, a played
+    // death is refused. (While its event runs the game's boss logic asks it again every frame and the manager
+    // refuses those itself, as it always has: hs-gohma-death 20261115-191432 B, about 50 asks.)
+    for (std::size_t i = 0; i < fights_.size(); ++i) {
+        if (!local.event && fights_[i].death_played && Here(static_cast<std::uint8_t>(i), local)) {
+            out.refuse_deaths |= static_cast<std::uint16_t>(1u << i);
+        }
+    }
     return out;
+}
+
+std::atomic<std::uint16_t>& RefusedDeaths() {
+    static std::atomic<std::uint16_t> mask{0};
+    return mask;
+}
+
+bool RefuseAsk(std::string_view name) {
+    const std::uint16_t mask = RefusedDeaths().load(std::memory_order_acquire);
+    if (mask == 0) {
+        return false;
+    }
+    const auto of = OfEvent(name);
+    return of && of->second == Kind::outro && (mask >> of->first & 1u) != 0;
 }
 
 } // namespace CoopBossScenes

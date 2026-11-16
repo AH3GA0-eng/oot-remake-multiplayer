@@ -498,6 +498,15 @@ TEST_CASE("hookshot: the actor events (patch 0007) use the world hook with the m
     CHECK(lift.find("(\"delete request\", 0xa65d0,") != std::string::npos);  // (where the request is accepted)
     CHECK(lift.find("(0xa65d0, 0xf94002c0)") != std::string::npos);
     CHECK(lift.find("(0x49dcb0, 0x0b090149)") != std::string::npos);
+    // The life stops: the same step, before its stop test; the module's 1 clears w10 (no stops this frame).
+    std::snprintf(call, sizeof call,
+                  "hos_coop_world_event(%uu, c->x[19], (uint64_t)(uintptr_t)&coop_pass); if (coop_pass) c->x[10] = 0;",
+                  HOS_COOP_WORLD_LIFE_STOPS);
+    CHECK(lift.find(call) != std::string::npos);
+    CHECK(lift.find("(\"life stops\", 0x49dcbc,") != std::string::npos);
+    CHECK(lift.find("(0x49dcb4, 0xb940726a)") != std::string::npos);  // ldr w10, [x19, #0x70]: the stops' count
+    CHECK(lift.find("(0x49dcc0, 0x35006eaa)") != std::string::npos);  // cbnz w10, main+0x49ea94
+    CHECK(HOS_COOP_WORLD_LIFE_STOPS <= HOS_COOP_WORLD_ACTOR_LAST);
     CHECK(patch.find("+    coop_actor_lift.install(lifter, img, build_id)") != std::string::npos);
     // New numbers follow the world hook's own (0 hello, 1 counter start).
     CHECK(HOS_COOP_WORLD_CREATE_REQUEST > HOS_COOP_WORLD_COUNTER_START);

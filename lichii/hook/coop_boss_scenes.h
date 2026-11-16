@@ -43,6 +43,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
@@ -138,7 +139,18 @@ struct Actions {
     std::optional<std::int32_t> max_life_cap;
     std::vector<ChatLine> chat;
     std::vector<std::string> log;
+    // Review-boss-0114 risk 3: one death cutscene per game. Bit b: boss b's death (its flow or a setting) played in
+    // our game, our Link is still in its area and no event runs, so any later ask of it by our game is refused at
+    // the request (RefuseAsk: the manager's own "not taken"), whoever asks (its own death logic, late). While an
+    // event runs the manager refuses such asks itself (the boss's logic asks every frame during its death).
+    std::uint16_t refuse_deaths = 0;
 };
+static_assert(kBossCount <= 16);
+
+// The glue publishes the last Tick's refuse_deaths here; the game's event request (any game thread) reads it.
+std::atomic<std::uint16_t>& RefusedDeaths();
+// Whether our game's ask of `name` is refused now: the death (flow or setting) of a boss in RefusedDeaths.
+bool RefuseAsk(std::string_view name);
 
 class Director {
 public:
@@ -150,11 +162,10 @@ public:
     static constexpr unsigned kMoveTries = 3;
     static constexpr std::int32_t kContainer = 4;  // one heart container: 4 quarter hearts
     // Another's death while our copy lives: how long the setting waits for our released copy to read dead before
-    // the death flow alone, and until when after the death a copy that dies later still gets the setting.
+    // the death flow alone. A fault guard, not the usual path: the released copy is given its whole life on the next
+    // share (two frames) and its Life step goes past its own stops (patch 0007 LIFE_STOPS), so it reads dead in a
+    // few frames; only a game without that hook (a stop holds it) or a copy off the walk gets here.
     static constexpr std::uint64_t kCopyWaitUs = 1'500'000;
-    // Below CoopObjects::kBossAwayKeepUs (30 s): a copy deleted by its owner's dead remove (not dead in its own
-    // game) reads alive for that long, so it never gets the setting (which would wait for a boss that is gone).
-    static constexpr std::uint64_t kReaskUs = 25'000'000;
     static constexpr float kNearStart = 6.0f;  // during the intro a joiner this near its spot is not moved
 
     // Network thread: BOSS_SCENE, BOSS_HEART, PLAYER_LEFT. Taken on the next Tick.
@@ -184,10 +195,8 @@ private:
         std::int32_t base = 0;     // our maximum when the boss's death was heard or started (0: unread)
         std::int32_t heart = 0;    // the server's answer (0: none yet)
         std::uint8_t heart_by = 0;
-        std::uint64_t died_at = 0;          // the owner's outro_start was heard
         std::uint64_t wait_copy_since = 0;  // the setting waits for our copy to read dead (0: not)
-        bool flow_alone = false;            // the death flow alone played: the setting once the copy reads dead
-        bool reasked = false;               // the setting was asked after the flow (a refusal asks nothing more)
+        bool death_played = false;          // our game took its death (flow or setting): never a second one here
     };
     struct Playing {
         std::uint8_t boss = 0;
