@@ -34,6 +34,30 @@ class RoomObjectsTest(unittest.TestCase):
         self.assertEqual(ro.wired_inputs(node(IsInPlayer=-100)), {"IsInPlayer"})  # the multi-input list
         self.assertEqual(ro.wired_inputs(node(Move=-1)), set())
 
+    def test_delivery_kinds(self):
+        place = (17.2, 112.3, -23.0)
+        step = ("actor", "DodongoCavern", "Obj_StepSwitch_A_01", place, "OnState", "ActorLogicX")
+        self.assertIn("SWITCH_STATE", ro.leaf_kind(step, frozenset()))
+        eye = {("DodongoCavern", "Obj_StepSwitch_A_01", place, "OnState")}
+        self.assertIn("CoopEyeSwitch", ro.leaf_kind(step, eye))
+        asker = ("actor", "X", "EventRequestActor", place, "EventBool", "ActorLogicEventRequestActor")
+        self.assertIn("asker", ro.leaf_kind(asker, frozenset()))
+        self.assertIn("flag", ro.leaf_kind(("node", "HoldGameDataGetBoolSimple", {}), frozenset()))
+        self.assertIn("contact", ro.leaf_kind(("node", "HoldActorObserverBySensorHitInfo", {}), frozenset()))
+        self.assertIn("blackboard", ro.leaf_kind(("node", "HoldBlackboardGetBool", {}), frozenset()))
+
+    def test_eye_switch_lines_parse(self):
+        import tempfile
+        line = ('    {"Ev", "DodongoCavern", "Obj_StepSwitch_A_01", {17.2f, 112.3f, -23.0f}, "FirstOn", '
+                '{19.0f, 118.0f, -23.0f}},\n')
+        with tempfile.NamedTemporaryFile("w", suffix=".cpp", delete=False, encoding="utf-8") as f:
+            f.write(line)
+        try:
+            self.assertEqual(ro.eye_switch_lines(f.name),
+                             {("DodongoCavern", "Obj_StepSwitch_A_01", (17.2, 112.3, -23.0), "FirstOn")})
+        finally:
+            os.unlink(f.name)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -103,6 +103,8 @@
 #include <unordered_map>
 #include "coop_world.h"
 #include "coop_lift_ride.h"
+#include "coop_room_objects.h"
+#include "coop_switch_share.h"
 #include "coop_logic_probe.h"
 #include "coop_platforms.h"
 #include "coop_counters.h"
@@ -179,6 +181,7 @@ CoopWorld::GrassSync& TheGrass() {
 // looks and receives, the calc thread's cave gives the others' hits.
 constexpr int kScrubsCallerOrder = 62;
 constexpr int kLiftRideCallerOrder = 47;  // jabu-lifts (#65): after the boss table (45), before the boss rooms (50)
+constexpr int kSwitchShareCallerOrder = 48;  // room-objects: another player's timed switch held on ours
 
 std::string EnvText(const char* name);  // below EnvOn  // after the live events (60) and the teleport's (61)
 
@@ -1422,6 +1425,12 @@ public:
                                       std::uint64_t now_ms) {
                                        return CoopLiftRide::TheRider().Step(guest, after_call, result, now_ms);
                                    });
+                // room-objects: another player's timed switch is on: ours held on through the game's set-bool.
+                CoopSvc::AddCaller(kSwitchShareCallerOrder,
+                                   [](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
+                                      std::uint64_t now_ms) {
+                                       return CoopSwitchShare::TheSetter().Step(guest, after_call, result, now_ms);
+                                   });
                 // Issue 149: another player's hit on a Scrub Brother, given to our manager.
                 CoopSvc::AddCaller(kScrubsCallerOrder,
                                    [](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
@@ -1910,6 +1919,9 @@ public:
         for (const LifeWrite& w : writes) {
             WriteLife(system.ApplicationMemory(), r, w);
         }
+        if (switch_share_mode_ != 0) {
+            SwitchShare(r, *scene, server_now_us, send);
+        }
         if (platforms_mode_ != 0) {
             Platforms(r, *scene, self, server_now_us, send);
         }
@@ -2029,6 +2041,11 @@ public:
                 platforms_in_.push_back(*pc);
             }
             return;
+        } else if (const auto* ss = std::get_if<coop::protocol::SwitchState>(&m)) {
+            if (switch_share_mode_ != 0) {
+                CoopSwitchShare::TheSharer().Receive(*ss, SteadyNowMs());  // room-objects
+            }
+            return;
         } else if (const auto* pk = std::get_if<coop::protocol::PlatformCounter>(&m)) {
             std::lock_guard lock(platforms_mutex_);
             if (counters_in_.size() < 64) {
@@ -2045,6 +2062,15 @@ public:
     // Moving platforms (coop_platforms.h, issues 196 and 194).
     // LICHII_COOP_PLATFORMS: on unless 0; "probe" finds and sends, never writes.
     int platforms_mode_ = 1;  // 0 off, 1 on, 2 probe
+    // room-objects (coop_switch_share.h): the timed switches' presses. LICHII_COOP_SWITCH_SHARE: on unless 0;
+    // "probe" sends and logs, never sets.
+    int switch_share_mode_ = 1;  // 0 off, 1 on, 2 probe
+    struct ShareSwitch {
+        u64 address = 0;
+        std::string name;
+        std::array<float, 3> position{};
+    };
+    std::vector<ShareSwitch> share_switches_;  // this walk's switches that have a SwitchPlugs line by name
     CoopPlatforms::PlatformSync platforms_;
     std::vector<CoopPlatforms::PlatformSync::Driver> platform_drivers_;
     std::mutex platforms_mutex_;
@@ -2177,6 +2203,46 @@ private:
 
     // The shared actors of one whole walk, with life and place. False when
     // the list changed under us (try the next frame).
+    // room-objects (coop_switch_share.h): our timed switches' presses out, the others' held on ours.
+    void SwitchShare(Reader& r, const std::string& scene, u64 server_now_us,
+                     std::vector<coop::protocol::Message>& send) {
+        std::vector<CoopSwitchShare::Seen> seen;
+        for (const ShareSwitch& s : share_switches_) {
+            for (const CoopRoomObjects::SwitchPlug* line : CoopRoomObjects::SwitchPlugsOf(scene, s.name, s.position)) {
+                CoopSwitchShare::Seen v;
+                v.line = line;
+                v.address = s.address;
+                const std::uint32_t key = CoopSwitchShare::PlugKey(line->plug) ^ 7u;
+                if (const auto plugs = CoopLogicProbe::Read([&r](u64 a) { return r.Get<u64>(a); }, s.address)) {
+                    for (const CoopLogicProbe::Plug& p : *plugs) {
+                        if (p.key == key && p.type == CoopLogicProbe::kBool && p.value) {
+                            v.on = *p.value != 0;
+                            break;
+                        }
+                    }
+                }
+                seen.push_back(v);
+            }
+        }
+        std::vector<coop::protocol::SwitchState> out;
+        std::vector<std::string> notes;
+        const auto holds = CoopSwitchShare::TheSharer().Tick(scene, seen, !sync_.OthersHere(server_now_us).empty(),
+                                                             SteadyNowMs(), out, notes);
+        for (auto& m : out) {
+            send.emplace_back(std::move(m));
+        }
+        if (switch_share_mode_ == 1) {
+            auto& setter = CoopSwitchShare::TheSetter();
+            setter.Want(holds, main_, SteadyNowMs());
+            for (const auto& line : setter.TakeNotes()) {
+                LOG_INFO(Core, "coop: {}", line);
+            }
+        }
+        for (const auto& line : notes) {
+            LOG_INFO(Core, "coop: {}{}", line, switch_share_mode_ == 2 ? " (probe: not set)" : "");
+        }
+    }
+
     // Moving platforms (coop_platforms.h): our drivers' clocks out, the
     // owners' clocks into ours.
     void Platforms(Reader& r, const std::string& scene, u8 self, u64 server_now_us,
@@ -2615,6 +2681,7 @@ private:
     bool Collect(Reader& r, std::vector<Seen>& out) {
         gimmicks_.clear();  // dungeon gimmicks for the probe
         ride_lifts_.clear();  // jabu-lifts (#65)
+        share_switches_.clear();  // room-objects
         platform_drivers_.clear();
         scrubs_seen_.clear();  // issue 149
         std::vector<u64> actors;
@@ -2782,6 +2849,15 @@ private:
                     d.position[i] = r.Get<float>(a + kActorPosition + 4 * i).value_or(0.0f);
                 }
                 platform_drivers_.push_back(std::move(d));
+            }
+            if (switch_share_mode_ != 0 && CoopRoomObjects::SharedSwitchName(known.first)) {
+                ShareSwitch s;  // room-objects: a timed switch some room object reads
+                s.address = a;
+                s.name = known.first;
+                for (std::size_t i = 0; i < 3; ++i) {
+                    s.position[i] = r.Get<float>(a + kActorPosition + 4 * i).value_or(0.0f);
+                }
+                share_switches_.push_back(std::move(s));
             }
             if (lift_ride_on_ && CoopLiftRide::IsRideLift(known.first)) {
                 CoopLiftRide::Lift l;
@@ -3977,6 +4053,8 @@ Objects& Instance() {
         {
             const std::string platforms = EnvText("LICHII_COOP_PLATFORMS");
             objects.platforms_mode_ = platforms == "0" ? 0 : platforms == "probe" ? 2 : 1;
+            const std::string share = EnvText("LICHII_COOP_SWITCH_SHARE");  // room-objects
+            objects.switch_share_mode_ = share == "0" ? 0 : share == "probe" ? 2 : 1;
         }
         objects.scrubs_on_ = EnvOn("LICHII_COOP_SCRUBS");  // issue 149, on unless =0
         objects.ocarina_probe_on_ = EnvFlag("LICHII_COOP_OCARINA_PROBE");  // issue 152, reads only

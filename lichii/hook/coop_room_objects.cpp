@@ -150,8 +150,45 @@ constexpr std::string_view kRiderNames[] = {
     "Obj_InsideJabu_Jabu_ElevatorLift_A_02",
     "Obj_InsideJabu_Jabu_MoveFloor_A_01",
 };
+
+// Shared switch plugs (the third table), each with the room objects that read it.
+constexpr SwitchPlug kSwitchPlugs[] = {
+    {"DodongoCavern", "Obj_EyeSwitch_A_05", {65.7f, 121.8f, -23.0f}, "OnState"},  // Obj_DodongoCave_FireWall_A_01
+    {"DodongoCavern", "Obj_EyeSwitch_A_05", {75.4f, 118.3f, -15.0f}, "OnState"},  // Obj_DodongoCave_FireWall_A_01
+    {"DodongoCavern", "Obj_StepSwitch_A_01", {-49.0f, 114.2f, -8.0f}, "OnState"},  // Obj_DodongoCave_SwitchShutter_A_01+Obj_SwitchShutter_A_06
+    {"DodongoCavern", "Obj_StepSwitch_A_01", {17.2f, 112.3f, -23.0f}, "OnState"},  // GroundControlActor_SimpleMoveTo+Obj_DodongoCave_MoveFloor_A_01
+    {"ForestTemple", "Obj_StepSwitch_A_01", {-74.0f, 125.5f, -1.0f}, "OnState"},  // LocationalLight_Amplifier_ParamChangeActor+Obj_ForestTemple_SwitchLamp_A_01+PushAirWall_Cone
+    {"ForestTemple", "Obj_StepSwitch_A_01", {56.5f, 124.6f, 2.1f}, "OnState"},  // Obj_SwitchCandleStick_A_01
+    {"GerudoTrainingGround", "Obj_EyeSwitch_A_03", {46.9f, 101.9f, -92.4f}, "OnState"},  // Obj_Gerudo_SwitchShutter_A_04+Obj_SwitchShutter_A_02
+    {"WaterTemple", "Obj_EyeSwitch_A_05", {-33.2f, 115.8f, -40.2f}, "OnState"},  // Obj_WaterTemple_SwitchShutter_A_02
+    {"WaterTemple", "Obj_EyeSwitch_A_05", {-4.5f, 116.6f, -26.3f}, "OnState"},  // Obj_WaterTemple_SwitchShutter_A_02
+    {"WaterTemple", "Obj_SwitchHit_A_02", {-38.6f, 94.0f, -15.8f}, "OnState"},  // Obj_WaterTemple_SwitchShutter_A_07
+    {"WaterTemple", "Obj_SwitchHit_A_06", {-28.5f, 111.5f, 3.5f}, "OnState"},  // Obj_WaterTemple_Fountain_A_01
+    {"WaterTemple", "Obj_SwitchHit_A_06", {52.1f, 110.0f, -23.2f}, "OffState"},  // Obj_WaterTemple_Fountain_A_01
+};
 // clang-format on
 }  // namespace
+
+std::span<const SwitchPlug> SwitchPlugs() { return kSwitchPlugs; }
+
+std::vector<const SwitchPlug*> SwitchPlugsOf(std::string_view scene, std::string_view name,
+                                             const std::array<float, 3>& at) {
+    std::vector<const SwitchPlug*> out;
+    for (const SwitchPlug& s : kSwitchPlugs) {
+        if (s.scene != scene || s.name != name) continue;
+        float d2 = 0.0f;
+        for (std::size_t i = 0; i < 3; ++i) d2 += (s.place[i] - at[i]) * (s.place[i] - at[i]);
+        if (d2 <= kSwitchMatchM * kSwitchMatchM) out.push_back(&s);
+    }
+    return out;
+}
+
+bool SharedSwitchName(std::string_view name) {
+    for (const SwitchPlug& s : kSwitchPlugs) {
+        if (s.name == name) return true;
+    }
+    return false;
+}
 
 std::span<const Placement> Placements() { return kPlacements; }
 

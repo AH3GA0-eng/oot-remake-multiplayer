@@ -22,6 +22,7 @@
 #include <array>
 #include <span>
 #include <string_view>
+#include <vector>
 
 namespace CoopRoomObjects {
 
@@ -42,5 +43,22 @@ bool Driven(std::string_view scene, std::string_view name, const std::array<floa
 
 // Its logic type has the bool output RideOnPlayer (the generated list): CoopLiftRide drives it.
 bool RiderName(std::string_view name);
+
+// The switch output plugs a room object reads (through gates, timers, delays and module inputs) that no CoopEyeSwitch
+// line covers: the timed switches. SWITCH_STATE carries their presses (coop_switch_share.h). Generated with
+// room_objects.py --eye-switches coop_eye_switch.cpp (its third table).
+struct SwitchPlug {
+    std::string_view scene;
+    std::string_view name;
+    std::array<float, 3> place;
+    std::string_view plug;
+};
+std::span<const SwitchPlug> SwitchPlugs();
+// The lines of a live switch `name` at `at` in `scene` (its placement within kSwitchMatchM).
+inline constexpr float kSwitchMatchM = 1.5f;
+std::vector<const SwitchPlug*> SwitchPlugsOf(std::string_view scene, std::string_view name,
+                                             const std::array<float, 3>& at);
+// A switch name some line has (any scene): the objects walk keeps these actors.
+bool SharedSwitchName(std::string_view name);
 
 }  // namespace CoopRoomObjects

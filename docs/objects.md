@@ -550,7 +550,41 @@ Two drivers then fought over one object, the follower's own logic and our write:
 
 **Still on the clock path:** free-running movers only, those with no wired input and no rider plug. Examples are the Deku Tree's water-room wave (`GroundControlActor_WaveLoop`, whose phase is the only difference) and animation-looped platforms (AS frame). Looping pause counters stay on their own path below.
 
-**Switch-wired objects found in the romfs (23):** 12 are covered by CoopEyeSwitch's table: the Deku lifts, the Deku torch and web, the GTG chest, the Spirit fire wall and mirrors, and a Dodongo fire wall. 11 have switches with no shared event, so no remote press is known yet (Dodongo's two other fire-wall eyes, the Forest lamp, air wall and `Obj_SwitchCandleStick_A_01`, the Water fountain and shutters A_02/A_07). They are listed in reports/room-objects-a.md.
+### Timed switches (`SWITCH_STATE`, review of 60567704)
+
+The rule above needs every driven object's INPUT to reach the follower. `room_objects.py --delivery` traces each of the 24 driven placements' inputs, through gates, timers, delays and module inputs into the calling graph, down to the leaves:
+
+| Driven placement | Its input reaches the follower by |
+|---|---|
+| Deku `ElevatorLift_A_01..03` (IsOn) and their `ElevatorLiftLim` parts | the plate's `OnState` (CoopEyeSwitch line `RoomD_PlatformUp`), the asker's `EventBool` (the same event) and a flag |
+| Jabu `ElevatorLift_A_01` (IsTargetFloor) | the asker's `EventBool` (`FocusOnGimmick_JabujabuLift`, CoopEyeSwitch) and RideOnPlayer (CoopLiftRide) |
+| Jabu `ElevatorLift_A_02`, `MoveFloor_A_01`, Forest `Elevator_A_01` x4, DreamWorld lifts | a player's contact (sensor; CoopLiftRide's RideOnPlayer for another player) and flags |
+| Dodongo `SimpleMoveTo` (MoveToPosX), `MoveFloor_A_01` (IsShortCutMove) and its `Airwall` | `Obj_StepSwitch_A_01` `OnState` through `HoldGeneralTimerSwitch`: **`SWITCH_STATE`** (new; before it, nothing) |
+| Fire `DiffentSpeedMoveTo` x2 | the asker's `EventBool`/`EventBoolEX1` (`Dm_FireTemple_0029`, hammer switch, CoopEyeSwitch) or the chest's `OpenState` (the chest-opened flag) |
+| Ice Cavern `RotateBlade_A_01` | flags and the silver-rupee counter's `AllGet` (`IceCavern_Room06_SilverRupeeGet`, a shared flag); `IsResetAngle` from an asker's event |
+| GTG `Rotate` (RotateAxisX) | a flag |
+| Shadow `RotateFloor_A_01` (IsOn) | `Obj_ShadowTemple_SkullPot_A_01.Dead` (a breakable: `WORLD_BREAK`) |
+| Market `SimpleMoveTo` (MoveToPosX) | the actor's own blackboard bool (its own state in each game, not a co-op object) |
+
+The one input with no path was a timed switch. So the timed switches get one mechanism, the switch's own state (`coop_switch_share.{h,cpp}`, `SWITCH_STATE`, [protocol.md](protocol.md)):
+- The presser's game sends the plug going on and off.
+- The others hold the same plug on their own switch with the game's set-bool every frame while it is on. Their own timer (`HoldGeneralTimerSwitch`), delays and gates then run, and their movers move.
+- The 12 plugs (`CoopRoomObjects::SwitchPlugs`, the generator's third table) are every switch output a room object reads that no CoopEyeSwitch line covers:
+  - Dodongo: the moving ground and shortcut plate, two fire-wall eyes, the room 12 shutter plate.
+  - Forest: the lamp, air wall and light plate, and the torch plate.
+  - GTG: the eye-switch shutter.
+  - Water: the two eye-switch shutters, the hit-switch shutter, and the fountain's `OnState` and `OffState`.
+
+Logs:
+- `coop: switch share: <switch> <plug> at x y z: our player's press: sent`
+- `...: another player's is on: ours held on, its own logic runs`
+- `...: another player's is off: let go`
+
+`LICHII_COOP_SWITCH_SHARE=0` turns it off; `=probe` sends and logs but never sets. Solo: nothing is sent with no other player in the scene, and nothing is held without a received press.
+
+Still open: the Deku Tree compass-room lifts' `OnPlayer` (not `RideOnPlayer`) is not set for another player standing on them in a follower's game. That is visual only (the lift may sink under their puppet).
+
+**Switch-wired objects found in the romfs (23, before SWITCH_STATE):** 12 are covered by CoopEyeSwitch's table: the Deku lifts, the Deku torch and web, the GTG chest, the Spirit fire wall and mirrors, and a Dodongo fire wall. The 11 others now go through `SWITCH_STATE` (above): Dodongo's two other fire-wall eyes, the Forest lamp, air wall and `Obj_SwitchCandleStick_A_01`, the Water fountain and shutters A_02/A_07.
 
 ### Moving platforms: the pause counters (branch `platforms-b2`)
 
