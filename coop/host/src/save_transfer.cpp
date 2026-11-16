@@ -299,6 +299,13 @@ std::optional<fs::path> newest_slot(const fs::path& game_dir) {
   return best;
 }
 
+ResyncCheck resync_check(bool connected_guest, bool can_switch, bool coming) {
+  if (!connected_guest) return ResyncCheck::not_guest;
+  if (!can_switch) return ResyncCheck::no_switch;
+  if (coming) return ResyncCheck::coming;
+  return ResyncCheck::go;
+}
+
 std::optional<fs::path> slot_to_send(const fs::path& game_dir, const std::optional<fs::path>& played,
                                      bool* played_used) {
   if (played_used) *played_used = false;

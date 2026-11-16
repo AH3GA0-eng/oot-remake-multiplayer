@@ -342,6 +342,14 @@ bool reask_due(const GuestSession& s, std::uint64_t now_us);
 // up). The guest stops waiting: Loading ends (GuestNotices::on_gave_up) and the player plays on.
 bool give_up_due(const GuestSession& s, std::uint64_t now_us);
 
+// The Lobby tab's "Resync from host" (player report 120): a guest asks for the host's save again at any time. The
+// same path as on joining (SAVE_ASK, asked again until it is whole, GuestNotices in the chat); the save is written
+// and switched to only on the title's menu (pending_step), so a press during a cutscene, a load or play never
+// touches the running game. Refused for the host, without a session, where the save folder cannot switch (the
+// emulator: its folder is fixed at the start), and while a transfer is still coming in.
+enum class ResyncCheck : std::uint8_t { go, not_guest, no_switch, coming };
+ResyncCheck resync_check(bool connected_guest, bool can_switch, bool coming);
+
 // A guest's chat lines about the host's save (the owner's wording). The player loads the save themselves (nothing
 // presses the title's buttons); these lines say when:
 // - kLoading once per transfer, when its first part comes;

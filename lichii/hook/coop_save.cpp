@@ -44,6 +44,8 @@ save::PlayedSlot g_played;
 std::function<unsigned(std::string&, bool&)> g_slot_opens;   // SetSlotOpens (Hookshot)
 unsigned g_slot_opens_seen = 0;
 bool g_title_seen = false;   // the title's menu was up in this run (PlayedSlot::new_game)
+bool g_resync = false;        // RequestResync: taken by the next OnFrame
+bool g_guest_live = false;    // a connected guest of this session (CanResync), set each OnFrame
 // This session's guest save state (save::GuestSession): fresh for each session (decide_again).
 save::GuestSession g_guest;
 std::deque<proto::SavePart> g_outbox;       // the host's parts, a frame each
@@ -341,6 +343,16 @@ void PollSlotOpens() {
     LogPlayed(before);
 }
 
+void RequestResync() {
+    std::lock_guard lock(g_mutex);
+    g_resync = true;
+}
+
+bool CanResync() {
+    std::lock_guard lock(g_mutex);
+    return g_guest_live && g_root && g_remount;
+}
+
 void NoteLoadWindow(bool start) {
     std::lock_guard lock(g_mutex);
     const auto before = g_played.slot();
@@ -478,10 +490,53 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
     WriteSlot(*slot);
 }
 
+namespace {
+// Under g_mutex, from OnFrame: the Lobby tab's Resync from host (save::resync_check). The guest's save session starts
+// again as on joining: the next OnFrame asks the host, the parts come, the slot waits for the title's menu
+// (PendingFrame) and is then written into the co-op folder and switched to. Its own saves are never touched.
+void Resync(bool connected_guest) {
+    const auto& a = g_guest.assembler;
+    const bool coming = g_guest.unwritten.has_value() ||
+                        (a.received() != 0 && a.received() < a.count() &&
+                         CoopEvery::NowUs() - g_guest.last_part_us < CoopEvery::kSaveStuckUs) ||
+                        (g_guest.asked && !g_guest.ready && !g_guest.no_save && !g_guest.gave_up);
+    switch (save::resync_check(connected_guest, g_root && g_remount && !g_dir.empty(), coming)) {
+    case save::ResyncCheck::not_guest:
+        LOG_INFO(Core, "coop: save: resync from host: refused (not a guest in a session)");
+        Say("Resync from host: only a guest in a session can ask for the host's save.");
+        return;
+    case save::ResyncCheck::no_switch:
+        LOG_INFO(Core, "coop: save: resync from host: refused (this game's save folder cannot switch)");
+        Say("Resync from host: this game cannot switch its save folder (see the log).");
+        return;
+    case save::ResyncCheck::coming:
+        LOG_INFO(Core, "coop: save: resync from host: the host's save is already on its way");
+        Say("Resync from host: the host's save is already on its way.");
+        return;
+    case save::ResyncCheck::go:
+        break;
+    }
+    const fs::path own = save::is_coop_dir(g_dir) ? save::own_dir_of(g_dir) : g_dir;
+    g_guest = save::GuestSession{};   // asks again at once (OnFrame), as on joining
+    g_lines = save::GuestNotices{};
+    g_use = true;
+    g_pending = save::coop_dir_of(own);   // written and switched to on the title's menu (PendingFrame)
+    g_suspended = false;
+    LOG_INFO(Core, "coop: save: resync from host: asking the host for its save again ({}; switched to on the "
+                   "title's menu)", g_in_game ? "a file is loaded" : "no file loaded");
+    Say(g_in_game ? "Resync from host: the host's save is coming. Go back to the title and load it once the chat "
+                    "says Success."
+                  : "Resync from host: the host's save is coming. Load a save once the chat says Success.");
+}
+}  // namespace
+
 void OnFrame(coop::net::Client& client, bool host_reset) {
     std::lock_guard lock(g_mutex);
     SwitchFrame(client);
-    if (client.state() != coop::net::State::connected || client.host_number() == 0) {
+    const bool connected = client.state() == coop::net::State::connected && client.host_number() != 0;
+    g_guest_live = connected && !client.is_host() && g_live;
+    if (std::exchange(g_resync, false)) Resync(g_guest_live);
+    if (!connected) {
         g_outbox.clear();
         return;
     }

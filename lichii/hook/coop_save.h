@@ -42,6 +42,10 @@ void SetSlotOpens(std::function<unsigned(std::string& slot_dir, bool& write)> op
 void PollSlotOpens();
 // Patch 0024's load window (start, then the save is in): reads inside it are the loaded slot.
 void NoteLoadWindow(bool start);
+// The Lobby tab's "Resync from host" (a guest; save::resync_check): taken at the next OnFrame, which asks the host
+// again; the chat says how it goes. CanResync: the row is shown (a connected guest on a switchable folder).
+void RequestResync();
+bool CanResync();
 
 // The host's save has been written whole into this game's co-op folder and (Hookshot) the game plays from it now:
 // a title menu may load it. Before that a guest's game stays on its own folder.

@@ -53,6 +53,7 @@ struct Lobby {
     std::vector<Player> players;        // by number
     std::string host_place;             // the host's game: where its Link is
     std::optional<std::uint16_t> host_life, host_max;   // quarter hearts
+    bool can_resync = false;            // a guest whose game can take the host's save again (CoopSave::CanResync)
     bool operator==(const Lobby&) const = default;
 };
 
@@ -62,6 +63,7 @@ struct Request {
         kOwnMute,     // our own mute of `player`: `what` (proto::lobby_mute bits) on or off
         kTeleport,    // /teleport to `name`
         kCopyInvite,  // the invite code onto the clipboard
+        kResync,      // a guest: the host's save again (CoopSave::RequestResync; player report 120)
     };
     Kind kind = Kind::kServer;
     coop::protocol::LobbyAction action{};
@@ -90,7 +92,7 @@ public:
 
 private:
     enum class Act : std::uint8_t {
-        kNone, kPlayer, kCopy, kOwnVoice, kOwnChat, kTeleport, kHostVoice, kHostChat, kKick, kBan
+        kNone, kPlayer, kCopy, kOwnVoice, kOwnChat, kTeleport, kHostVoice, kHostChat, kKick, kBan, kResync
     };
     struct Line;
     std::vector<Line> Lines() const;

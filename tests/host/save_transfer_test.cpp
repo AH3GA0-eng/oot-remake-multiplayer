@@ -776,3 +776,16 @@ TEST_CASE("save transfer: a host load of a known slot goes to every guest at onc
   CHECK(p.waiting());
   CHECK(p.due(t0).empty());
 }
+
+TEST_CASE("save transfer: Resync from host goes only for a guest that can switch, and not twice at once") {
+  using save::ResyncCheck;
+  CHECK(save::resync_check(true, true, false) == ResyncCheck::go);
+  CHECK(save::resync_check(false, true, false) == ResyncCheck::not_guest);  // the host, solo, not connected
+  CHECK(save::resync_check(true, false, false) == ResyncCheck::no_switch);  // the emulator's fixed folder
+  CHECK(save::resync_check(true, true, true) == ResyncCheck::coming);       // a transfer on its way
+  // After a go, the guest's session starts again as on joining: it asks at once and the save waits for the title.
+  save::GuestSession g;
+  CHECK_FALSE(g.asked);
+  CHECK(save::pending_step(true, false, true) == save::PendingStep::keep);  // playing: never switched under the game
+  CHECK(save::pending_step(true, true, false) == save::PendingStep::go);     // the title's menu: switched
+}
