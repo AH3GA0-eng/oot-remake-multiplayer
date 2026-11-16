@@ -140,7 +140,7 @@ void Search(void* ctx, const HosCoopApi* api, std::uint64_t screen, const char* 
 // dungeon's IsGetMap is set) and the cached IsGetMap, IsGetCompass, IsGetBossKey and 4th Bool (+0x1538..+0x153b).
 // Research only: it says whether a map get (the game's own, another player's, the randomizer's) reached the copy.
 void Probe(const Menu& menu) {
-    static const bool on = Env("LICHII_COOP_MAP_PROBE") == "1";
+    static const bool on = CoopFiles::Env("LICHII_COOP_MAP_PROBE") == "1";
     if (!on || menu.hud_screen == 0) {
         return;
     }
