@@ -290,7 +290,13 @@ const std::vector<PartRule>& PartRules() {
              {"Enemy_DungeonBoss_Barinade_Arm", "Enemy_DungeonBoss_Barinade_Attention",
               "Enemy_DungeonBoss_Barinade_Beam", "Enemy_DungeonBoss_Barinade_Jellyfish"},
              kAny);
-        boss("Enemy_DungeonBoss_PhantomGanon", {"Enemy_PhantomGanonHorse"}, kAny);
+        // His painting show (the rider in each painting, the real one and the imitation) is his fight: with its own
+        // owner, a copy game's real and fake riders came from another game than the boss (row 114).
+        boss("Enemy_DungeonBoss_PhantomGanon",
+             {"Enemy_PhantomGanonHorse", "Enemy_GhostPicturePerformer_PhantomGanon",
+              "Enemy_GhostPicturePerformer_PhantomGanonHorse", "Enemy_GhostPicturePerformer_PhantomGanonImitation",
+              "Enemy_GhostPicturePerformer_PhantomGanonHorse_Imitation"},
+             kAny);
         boss("Enemy_DungeonBoss_Morpha",
              {"Enemy_DungeonBoss_Morpha_Attention", "Enemy_DungeonBoss_Morpha_Attention_Spin",
               "Enemy_DungeonBoss_Morpha_Tentacle"},

@@ -322,7 +322,7 @@ Enemies made of several actors share one owner and one fight (issue 105). `CoopO
 | `Enemy_DungeonBoss_Gohma` | `Enemy_DungeonBoss_Gohma_Egg`, `Enemy_Gohma_Egg`, `Enemy_Gohma_Larva` | 40 m | yes |
 | `Enemy_DungeonBoss_Dodongo` | `_Attention`, `_Attention_RollingCenter`, `_SpawnBabyDodongo`; `Enemy_BabyDodongo` (40 m) | any | yes |
 | `Enemy_DungeonBoss_Barinade` | `_Arm`, `_Attention`, `_Beam`, `_Jellyfish` | any | yes |
-| `Enemy_DungeonBoss_PhantomGanon` | `Enemy_PhantomGanonHorse` | any | yes |
+| `Enemy_DungeonBoss_PhantomGanon` | `Enemy_PhantomGanonHorse`, his painting show `Enemy_GhostPicturePerformer_PhantomGanon`, `_PhantomGanonHorse`, `_PhantomGanonImitation`, `_PhantomGanonHorse_Imitation` (row 114: with their own owner a copy game's riders came from another game than the boss) | any | yes |
 | `Enemy_DungeonBoss_Morpha` | `_Attention`, `_Attention_Spin`, `_Tentacle` | any | yes |
 | `Enemy_DungeonBoss_BongoBongo` | `_LeftHand`, `_RightHand` | any | yes |
 | `Enemy_DungeonBoss_Ganon` | `_Attention`, `_Crystal`, `_LegAttention`, `_SecondHalfBattle` | any | yes |

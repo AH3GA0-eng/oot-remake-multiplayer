@@ -2434,6 +2434,14 @@ TEST_CASE("objects: group rules for parts and bosses") {
     CHECK(std::string(PartOf("Enemy_DungeonBoss_BongoBongo_LeftHand")->roots.front()) ==
           "Enemy_DungeonBoss_BongoBongo");
     CHECK(PartOf("Enemy_DungeonBoss_BongoBongo_LeftHand")->boss);
+    // Phantom Ganon's painting show follows him (row 114).
+    for (const char* show : {"Enemy_GhostPicturePerformer_PhantomGanon", "Enemy_GhostPicturePerformer_PhantomGanonHorse",
+                             "Enemy_GhostPicturePerformer_PhantomGanonImitation",
+                             "Enemy_GhostPicturePerformer_PhantomGanonHorse_Imitation"}) {
+        REQUIRE(PartOf(show) != nullptr);
+        CHECK(std::string(PartOf(show)->roots.front()) == "Enemy_DungeonBoss_PhantomGanon");
+        CHECK(PartOf(show)->boss);
+    }
     REQUIRE(PartOf("Enemy_Peahat_Larva") != nullptr);
     CHECK_FALSE(PartOf("Enemy_Peahat_Larva")->boss);
     // Independent larvae, the picture book and plain enemies are no parts.
