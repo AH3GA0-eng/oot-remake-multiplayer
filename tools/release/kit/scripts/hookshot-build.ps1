@@ -724,7 +724,13 @@ if (Test-Path -LiteralPath $ootrrPin) {
             else { [System.IO.File]::WriteAllText($ootrrStamp, "$ootrrWant`n") }
         }
         if ($why) { Write-Host "  The randomizer (OOTRR $($op.release)) was not set up: $why. Co-op works without it; run Build-Hookshot-Coop.bat again to retry." -ForegroundColor Yellow }
-        else { Write-Host "  randomizer: OOTRR $($op.release) -> $ootrrDir" }
+        else {
+            Write-Host "  randomizer: OOTRR $($op.release) -> $ootrrDir"
+            # (another release than the one before: its seeds are other worlds, Remove-KitRandoSeeds)
+            if ($ootrrHave -and ($ootrrHave -split ' ')[0] -ne $op.release) {
+                foreach ($l in @(Remove-KitRandoSeeds $exeDir $op.release)) { Write-Host "  $l" }
+            }
+        }
     }
 }
 
