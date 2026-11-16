@@ -21,6 +21,10 @@
 #include "coop_voice.h"
 #include "hos_coop_host.h"
 
+#ifndef _WIN32
+#include "coop_clipboard_posix.h"
+#endif
+
 namespace CoopLobbyTab {
 
 namespace {
@@ -160,7 +164,11 @@ void Carry(std::optional<Request> r) {
         st.size = sizeof st;
         CoopHookshot::HostMenu().Status(&st);
         if (st.invite[0] != '\0') {
+#ifdef _WIN32
             CoopFiles::SetClipboardText(st.invite);
+#else
+            CoopClipboard::CopyLater(st.invite, false);   // (off the game's thread: wl-copy or xclip may wait 2 s)
+#endif
         }
         break;
     }
