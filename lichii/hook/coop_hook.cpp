@@ -603,18 +603,32 @@ public:
                 hold_scene_.empty() ? std::nullopt : std::optional<std::string>(hold_scene_);
             // Issue 144 (coop_scrub_talk.h): a scrub's destroy flag waits while our
             // Link is in an event (its talk), or the room graph deletes the scrub mid-talk.
-            if (scrub_talk_on_ && scrub_talk_.Frame(reading && reading->event_running.value_or(false),
+            if (scrub_talk_on_ && !scrub_near_only_ && scrub_talk_.Frame(reading && reading->event_running.value_or(false),
                                   CoopEvery::NowUs())) {
                 LOG_INFO(Core, "coop: dungeon: {}", scrub_talk_.Holding()
                              ? "our Link is in an event: Deku Scrub destroy flags from others wait"
                              : "the event ended: Deku Scrub destroy flags from others go through");
             }
+            // Issue 144, second guard: also while our copy of that scrub is near our Link
+            // (CoopScrubTalk::Near, from the objects walk), whatever the event flag says.
+            const std::uint8_t near = scrub_talk_on_ ? CoopScrubTalk::TheNear().Mask(CoopEvery::NowUs()) : 0;
+            if (near != scrub_near_) {
+                for (std::size_t g = 0; g < CoopScrubTalk::kGroups; ++g) {
+                    const unsigned bit = 1u << g;
+                    if ((near & bit) != (scrub_near_ & bit)) {
+                        LOG_INFO(Core, "coop: dungeon: scrub near ({}): {}", CoopScrubTalk::GroupName(static_cast<CoopScrubTalk::Group>(g)),
+                                 (near & bit) ? "within 5 m of our Link, its destroy flags from others wait"
+                                              : "no longer near our Link, its destroy flags from others go through");
+                    }
+                }
+                scrub_near_ = near;
+            }
             const CoopScrubTalk::Hold talk = scrub_talk_;
-            hold.emplace(*quests, [link, scene, talk](coop::protocol::FlagKey key) {
+            hold.emplace(*quests, [link, scene, talk, near](coop::protocol::FlagKey key) {
                 if (key.kind != coop::protocol::FlagKeyKind::named || key.index != 0) {
                     return false;
                 }
-                if (talk.Holds(key.hash)) {
+                if (talk.Holds(key.hash) || CoopScrubTalk::NearHolds(near, key.hash)) {
                     return true;
                 }
                 if (!link || !scene) {
@@ -1852,8 +1866,11 @@ private:
     std::uint64_t flag_event_reads_ = 0, flag_event_misses_ = 0, flag_full_reads_ = 0;
 #endif
     CoopScrubTalk::Hold scrub_talk_;  // issue 144: scrub destroy flags wait for our event
+    std::uint8_t scrub_near_ = 0;     // issue 144: the scrub groups near our Link (for the log)
     coop::host::LentKeys lent_keys_;  // dungeon-sync-b (#75): keys lent at another player's lock
     bool scrub_talk_on_ = EnvString("LICHII_COOP_SCRUB_TALK_HOLD") != "0";  // =0: off (the old softlock)
+    // =near: only the near guard (CoopScrubTalk::Near), no event hold: a test proves it alone.
+    bool scrub_near_only_ = EnvString("LICHII_COOP_SCRUB_TALK_HOLD") == "near";
     bool live_events_ = false;     // LICHII_COOP_LIVE_EVENTS=1 (issue 129)
     // Chat notices, on unless LICHII_COOP_NOTIFY=0 (docs/setup.md).
     bool notify_ = EnvString("LICHII_COOP_NOTIFY") != "0";

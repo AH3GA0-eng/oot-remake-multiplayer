@@ -106,6 +106,7 @@
 #include "coop_logic_probe.h"
 #include "coop_platforms.h"
 #include "coop_counters.h"
+#include "coop_scrub_talk.h"
 #include "coop_scrubs.h"
 #include <set>
 
@@ -2566,6 +2567,7 @@ private:
             return false;
         }
         std::optional<coop::protocol::Vec3> player;
+        std::vector<std::pair<u64, coop::protocol::Vec3>> talk_scrubs;  // issue 144: the Deku Tree's scrubs
         std::unordered_map<u64, std::pair<std::string, u64>> names;
         std::unordered_map<u64, u64> life_components;
         {
@@ -2679,6 +2681,13 @@ private:
                     }
                 }
             }
+            if (CoopScrubTalk::FindNearScrub(known.second) != nullptr) {
+                coop::protocol::Vec3 at{};  // issue 144: how near our Link, after the walk
+                for (std::size_t i = 0; i < 3; ++i) {
+                    at[i] = r.Get<float>(a + kActorPosition + 4 * i).value_or(0.0f);
+                }
+                talk_scrubs.emplace_back(known.second, at);
+            }
             if (scrubs_on_ && (CoopScrubs::FindBrother(known.second) != nullptr ||
                                CoopScrubs::IsManager(known.second))) {
                 CoopScrubs::Seen sc;  // issue 149: the Scrub Brothers and their manager
@@ -2779,6 +2788,17 @@ private:
         sync_.SetEvent(TheLocalEvent().load());  // issue 200: our cutscene's NPCs become ours
         sync_.SetLures(CoopProjectiles::TheLures().Get());  // issue 151: our cast lures
         player_ = player;
+        if (player) {  // issue 144 (coop_scrub_talk.h, Near): a Deku Tree scrub near our Link holds its flags
+            const std::uint64_t now_us = CoopEvery::NowUs();
+            for (const auto& [hash, at] : talk_scrubs) {
+                float d2 = 0.0f;
+                for (std::size_t i = 0; i < 3; ++i) {
+                    const float d = at[i] - (*player)[i];
+                    d2 += d * d;
+                }
+                CoopScrubTalk::TheNear().See(hash, std::sqrt(d2), now_us);
+            }
+        }
         if (debug_) {  // research: the field grass that is no actor (world.md)
             for (const std::string& line : foliage_.Look(
                      [&r](u64 address) { return r.Get<u64>(address); }, main_, player)) {

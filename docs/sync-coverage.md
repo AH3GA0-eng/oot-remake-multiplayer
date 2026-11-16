@@ -204,7 +204,7 @@ Merged into `integrate-p11`, with unit tests and review. None of it is proven in
 | Enemy shots: every game shows the owner's shot | #189 | enemy-shots |
 | Enemy drops | #101 #102 | enemy-drops |
 | Where shots land (spark, sound) | #166 | shot-impacts |
-| Deku Scrubs; their talk and sales | #149, #144 | deku-scrubs, scrub-talk |
+| Deku Scrubs; their talk and sales | #149, #144 | deku-scrubs, scrub-talk, scrub-near |
 | Signs, rocks and more world objects | #84 #90, #146 #147 #171 | world-breakables, world-objects-2 |
 | Guards and town soldiers | #191 | guard-sync |
 | Boss targets, boss walk-in, Gohma and its larvae | #124 #150 #157, #148, #178 | boss-targets, boss-movein-2, gohma-sync |
