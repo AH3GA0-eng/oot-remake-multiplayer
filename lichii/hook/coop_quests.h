@@ -110,6 +110,7 @@ class Store final : public coop::host::FlagStore {
     std::optional<coop::protocol::FlagEntry> read(coop::host::FlagKey key) override;
     bool write(const coop::protocol::FlagEntry& entry) override;
     bool write_exact(const coop::protocol::FlagEntry& entry) override;
+    bool write_load_back(const coop::protocol::FlagEntry& entry) override;
     bool is_count(coop::host::FlagKey key) override { return inner_.is_count(key); }
     bool is_max(coop::host::FlagKey key) override;
     bool is_one_way(coop::host::FlagKey key) override { return inner_.is_one_way(key); }

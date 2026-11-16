@@ -111,11 +111,13 @@
 #include "coop_scrub_talk.h"
 #include "coop_sites.h"
 #include "coop_svc.h"
+#include "coop_map_refresh.h"
 #include "coop_time.h"
 #include "coop_testinput.h"
 #include "coop_world.h"
 
 namespace CoopHook {
+bool StartMapRefresh();  // rows 63/76: the game's HUD refresh after co-op writes a dungeon item (below)
 namespace {
 
 // The game and build the addresses in coop/host are for.
@@ -382,6 +384,7 @@ public:
                 }
             }  // issue 129: start another player's gimmick event here (coop_live_events.h)
         }
+        map_refresh_ = StartMapRefresh();  // rows 63/76, #146: the HUD's own copy of the map (coop_map_refresh.h)
         if (CoopStory::On()) {  // issue 171: shared quest steps into the game's ChallengeMgr
             CoopSvc::AddCaller(64, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
                                           std::uint64_t) {
@@ -743,6 +746,7 @@ public:
             session_->set_color(*color);
         }
         const auto report = session_->frame(reading, hold ? &*hold : nullptr);
+        CoopMapRefresh::TheRefresher().SetInPlay(reading.has_value());  // rows 63/76: no refresh off play (session)
         if (memory) {  // minimap-b: the current dungeon's map or compass going 1 -> 0, logged with its context
             WatchMapDrops(*memory, reading.has_value(),
                           reading ? reading->scene : coop::host::PlayerReader(*memory).read_scene(),
@@ -953,6 +957,14 @@ public:
                          ? "room gimmick flags from another player held until we leave this dungeon or load"
                          : "no room gimmick flags held");
         }
+        if (map_refresh_) {  // another player's map, compass, boss key or floors (also the join snapshot, a reset)
+            for (const auto& r : report.received) {
+                if (coop::host::is_hud_dungeon_item(r.key)) {
+                    CoopMapRefresh::TheRefresher().Want(SteadyMs());
+                    break;
+                }
+            }
+        }
         // Chat notices (docs/setup.md): what another player's change gave us.
         if (notify_ && !report.received.empty()) {
             std::uint8_t self = 0;
@@ -999,10 +1011,18 @@ public:
         // Issue 146: a map or compass the game took back, put back.
         // Each key logged the first time; the count says how often in all.
         for (const auto& k : session_->take_one_way_restores()) {
+            if (map_refresh_ && !k.kept) CoopMapRefresh::TheRefresher().Want(SteadyMs());  // our put-back
+            if (k.kept) {  // dungeon-sync-b (#63/#76)
+                LOG_INFO(Core,
+                         "coop: flags: {:#010x} (dungeon floors) {:#x} -> {:#x} with its map just got here: the "
+                         "game's own map get, kept (not ORed back)",
+                         k.key.hash, k.before, k.now);
+                continue;
+            }
             LOG_INFO(Core,
-                     "coop: flags: {:#010x} (dungeon map, compass or floors) went back here: put back "
-                     "({} put back this session)",
-                     k.hash, session_->one_way_restores());
+                     "coop: flags: {:#010x} (dungeon map, compass or floors) went back here: {:#x} -> {:#x}, put "
+                     "back {:#x} ({} put back this session)",
+                     k.key.hash, k.before, k.now, k.put, session_->one_way_restores());
         }
         for (const auto& g : session_->take_counts_guarded()) {  // issue 89 (docs/items.md)
             LOG_INFO(Core,
@@ -2047,6 +2067,7 @@ private:
     CoopEyeSwitch::Switcher eye_switch_;
     // Chat notices, on unless LICHII_COOP_NOTIFY=0 (docs/setup.md).
     bool notify_ = EnvString("LICHII_COOP_NOTIFY") != "0";
+    bool map_refresh_ = false;  // LICHII_COOP_MAP_REFRESH=1 (coop_map_refresh.h)
     struct Names {
         std::vector<std::pair<std::uint8_t, std::string>> list;
         std::string operator()(std::uint8_t n) const {
@@ -2576,6 +2597,26 @@ void Start() {
     }
 }
 
+// Rows 63/76, #146 (dungeon-sync-b, dungeon-maps-a). The Map page and the minimap draw from the HUD screen's own copy
+// of the dungeon's map, compass, boss key and floors, which the game reads in only at the HUD's init and its refresh
+// (main+0x33e4200; the game's get scene ends in one). A value co-op writes in play (another player's item, the join
+// snapshot, a reset, a put-back, the solo keeper) skips both, so the minimap stayed blank until the Map page or a
+// room load (run hs-map-opener 20261116-013911). This asks the game's own refresh once after such a write, in a
+// session and alone (Hookshot's frame asks it: coop_map_refresh.h). LICHII_COOP_MAP_REFRESH=0 turns it off. True when
+// on.
+bool StartMapRefresh() {
+    static const bool on = [] {
+        if (EnvString("LICHII_COOP_MAP_REFRESH") == "0") {
+            LOG_INFO(Core, "coop: map refresh off (LICHII_COOP_MAP_REFRESH=0)");
+            return false;
+        }
+        LOG_INFO(Core, "coop: map refresh on: the game's HUD refresh after a dungeon map, compass, boss key or "
+                       "floors written by co-op (run at the HUD screen's own update, Longshot patch 0018)");
+        return true;
+    }();
+    return on;
+}
+
 namespace {
 
 // minimap-b. Set when a session ran: the solo keeper forgets its baseline (the session's writes are not the game's).
@@ -2609,6 +2650,7 @@ void KeepMapsAlone(EmulatorMemory& memory, bool in_play, const std::optional<std
     const coop::host::MapDropBecause because("the solo keeper (minimap-b)");
     const auto restored = keeper.frame(flags, in_play, scene ? std::optional<std::string_view>(*scene) : std::nullopt);
     if (keeper.take_save_load()) coop::host::map_drop_log().note("save load (no scene for a while: the title)");
+    if (!restored.empty() && StartMapRefresh()) CoopMapRefresh::TheRefresher().Want(SteadyMs());
     for (const auto key : restored) {
         const auto* item = coop::host::find_item(key.hash);
         LOG_INFO(Core, "coop: items: {} went back to 0 with no session: written back (minimap-b guard; restores {})",
@@ -2690,6 +2732,7 @@ void LocalFrameOff(Core::System& system, bool writes) {
         }
         WatchMapDrops(memory, facts.position.has_value(), scene, facts.position);
         KeepMapsAlone(memory, facts.position.has_value(), scene);
+        CoopMapRefresh::TheRefresher().SetInPlay(facts.position.has_value());  // rows 63/76: no refresh off play (alone)
         static MendClocks mend_since_us{};
         if (facts.position.has_value()) {
             MendStory(memory, mend_since_us);  // issue 84: a stuck save, played alone

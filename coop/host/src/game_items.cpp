@@ -822,7 +822,12 @@ bool ItemFlagStore::write(const protocol::FlagEntry& entry) {
   const auto now = inner_.read(key);
   if (!now || now->kind != entry.kind) return inner_.write(entry);
   protocol::FlagEntry merged = entry;
-  merged.value = exact_ ? entry.value : merge_item(item->rule, item->kind, now->value, entry.value);
+  // An exact write (the host's save-load FLAG_RESET, the join snapshot) replaces the value: the host's save decides.
+  // A guest's own load write-back (keep_bits_) ORs a dungeon's floors (ItemRule::bits): a floor it entered is not
+  // taken off its map by its own load (#63/#76).
+  merged.value = exact_ && !(keep_bits_ && item->rule == ItemRule::bits)
+                     ? entry.value
+                     : merge_item(item->rule, item->kind, now->value, entry.value);
   const bool int_item = item->kind == protocol::FlagKind::int32;
   const auto held = [&](std::uint32_t v) { return int_item ? as_int(v) >= 1 : v != 0; };
   if (merged.value == now->value) {
@@ -877,6 +882,15 @@ bool is_one_way_item(FlagKey key) {
   return item != nullptr && one_way_entry(*item);
 }
 
+bool is_hud_dungeon_item(FlagKey key) {
+  if (key.kind != protocol::FlagKeyKind::named || key.index != 0) return false;
+  const ItemFlag* item = find_item(key.hash);
+  if (item == nullptr || !item->on || !item->name.starts_with("DungeonInfo.")) return false;
+  const std::string_view n = item->name;
+  return n.ends_with(".IsGetMap") || n.ends_with(".IsGetCompass") || n.ends_with(".IsGetBossKey") ||
+         n.ends_with(".EnteredFloorBit");
+}
+
 std::vector<FlagKey> one_way_item_flags() {
   std::vector<FlagKey> keys;
   for (const ItemFlag& item : item_flags()) {
@@ -885,12 +899,31 @@ std::vector<FlagKey> one_way_item_flags() {
   return keys;
 }
 
+std::optional<FlagKey> map_of_floors(FlagKey floors) {
+  if (floors.kind != protocol::FlagKeyKind::named || floors.index != 0) return std::nullopt;
+  const ItemFlag* item = find_item(floors.hash);
+  constexpr std::string_view kFloors = ".EnteredFloorBit";
+  if (item == nullptr || !item->name.starts_with("DungeonInfo.") || !item->name.ends_with(kFloors)) {
+    return std::nullopt;
+  }
+  std::string name(item->name.substr(0, item->name.size() - kFloors.size()));
+  name += ".IsGetMap";
+  return FlagKey{flag_hash(name), 0};
+}
+
 bool ItemFlagStore::is_one_way(FlagKey key) {
   if (is_one_way_item(key)) return true;
   // A dungeon's floors (EnteredFloorBit): a floor once on the map stays on it.
   if (key.kind != protocol::FlagKeyKind::named || key.index != 0) return false;
   const ItemFlag* item = find_item(key.hash);
   return item != nullptr && item->on && item->rule == ItemRule::bits;
+}
+
+bool ItemFlagStore::write_load_back(const protocol::FlagEntry& entry) {
+  keep_bits_ = true;
+  const bool ok = write_exact(entry);
+  keep_bits_ = false;
+  return ok;
 }
 
 bool ItemFlagStore::write_exact(const protocol::FlagEntry& entry) {

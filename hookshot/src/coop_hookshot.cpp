@@ -63,6 +63,7 @@
 #include "coop_hud_hearts.h"
 #include "coop_link_sound.h"
 #include "coop_map_page.h"
+#include "coop_map_refresh.h"
 #include "coop_testinput.h"
 #include "coop_maps.h"
 #include "coop_live_events.h"
@@ -1122,6 +1123,13 @@ void Frame(void* ctx, int site) {
     if (w.calls && ctx != nullptr) {
         RunFlagSetters(ctx);
         LogFlagNative();
+        {  // rows 63/76: the game's own HUD refresh after co-op wrote a dungeon item (coop_map_refresh.h). Patch 0018
+           // runs it at the HUD screen's own next update: never on a stored screen pointer.
+            const auto now_ms = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                               std::chrono::steady_clock::now().time_since_epoch())
+                                                               .count());
+            if (CoopMapRefresh::TheRefresher().Due(now_ms)) CoopMapPage::AskHudRefresh();
+        }
         RunCalls(ctx);
         LogBossNative();
         CoopMapPage::Frame(ctx, g_api);   // the Map page's panes, found once while the game plays

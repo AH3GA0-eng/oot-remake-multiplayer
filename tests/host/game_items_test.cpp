@@ -1549,3 +1549,30 @@ TEST_CASE("items: Ruto's Letter says why it waits (issue 58, the 0.11.2 big run)
   CHECK_FALSE(ruto_letter_plan(true, moved("Ready"), v, in).bottle);
   CHECK(coop::host::ruto_wait_text(RutoWait::king_unread).find("ChallengeMgr") != std::string_view::npos);
 }
+
+TEST_CASE("game items: every dungeon's map, compass, boss key and floors ask the HUD refresh (rows 63/76, #146)") {
+  // docs/items.md, "Dungeon items": IsGetMap, IsGetCompass, IsGetBossKey, SmallKeyNum, EnteredFloorBit of all 14.
+  struct Row {
+    std::uint32_t map, compass, boss_key, small_keys, floors;
+  };
+  const Row rows[] = {
+      {0x89787395, 0x06c51ff2, 0xf6995cee, 0x0914ba07, 0x5c6c21c1}, {0xa52c3a19, 0x8b93edf9, 0xfaabc084, 0x3fdbc3d0, 0x46913e20},
+      {0xfcadd210, 0x9a2218db, 0x656bd5ee, 0x1470a816, 0x7d59d22a}, {0xe704f9b4, 0xf240eeb2, 0x427333a0, 0x90237092, 0x4321ac04},
+      {0x5b3ac0ba, 0x0aa068b6, 0xb72d73df, 0x1df11487, 0x3a014bac}, {0x4a4402ab, 0x2e82c8fe, 0x79daf80a, 0x877bdcee, 0x45408bef},
+      {0xf6177b93, 0x1e2feec5, 0xc33c66cf, 0x5edda9e3, 0x445aeb73}, {0xb85002ba, 0x9bd1181c, 0x1984c03f, 0x79eeec8e, 0x36346d00},
+      {0x77c47ec9, 0x9d6efaac, 0x9402715c, 0x7dd79d10, 0x7f9b6ea4}, {0x322f2a94, 0xea1846e6, 0x275f4512, 0xfa5d133d, 0x70446601},
+      {0x4b36041e, 0x3d9a2750, 0x6d155841, 0xea9786f5, 0xf464c91f}, {0x9bbc0c4a, 0xc4d4734e, 0x2fd59293, 0xfbfd2910, 0xbe80d86d},
+      {0xb3b65c1a, 0x874493ce, 0x6d0fea11, 0xa04bfd48, 0xb71065f6}, {0xbcaad6ce, 0x5eb80679, 0x95fbcb7c, 0x3a28b6a4, 0x843ae593},
+  };
+  for (const Row& r : rows) {
+    for (const std::uint32_t h : {r.map, r.compass, r.boss_key, r.floors}) {
+      CAPTURE(h);
+      REQUIRE(find_item(h) != nullptr);
+      CHECK(coop::host::is_hud_dungeon_item(FlagKey{h, 0}));
+      CHECK_FALSE(coop::host::is_hud_dungeon_item(FlagKey::key64_flag(h)));  // a placement key, not the item
+    }
+    CAPTURE(r.small_keys);
+    CHECK_FALSE(coop::host::is_hud_dungeon_item(FlagKey{r.small_keys, 0}));  // a count the HUD does not copy
+  }
+  CHECK_FALSE(coop::host::is_hud_dungeon_item(FlagKey{0x405d8a0f, 0}));  // Weapon_Sword_Kokiri: not a dungeon item
+}
