@@ -318,6 +318,12 @@ TEST_CASE("dbno: the game over when nobody is left: out, the life goes, the game
     CHECK(g.Step().state == State::up);
     CHECK(g.Saw(Event::back));
     CHECK(g.sent.back() == proto::DbnoStatus{});
+    // The teammate was spectating, so it went out with us (its own Game Over). Until it is back up,
+    // nobody else is up: the game's own rules (no last stand alone).
+    g.team[0].state = State::out;
+    CHECK(g.Step().guard == Guard::off);
+    // Its continue: up again, and the last stand is back for both.
+    g.team[0].state = State::up;
     CHECK(g.Step().guard == Guard::last_stand);
 }
 

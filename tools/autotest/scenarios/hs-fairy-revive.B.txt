@@ -1,6 +1,6 @@
-# hs-fairy-revive, B: lands in Hyrule Field in front of Kakariko with a fairy in bottle A, at half a heart if the
-# game takes PlayerStatus.Life (else its save's hearts), and stands at 213 14 while A's sword takes its life
-# (see hs-fairy-revive.A.txt). The game's own death then uses the fairy.
+# hs-fairy-revive, B: lands in Hyrule Field in front of Kakariko, puts a fairy in bottle A, then takes the game's own
+# hits on its Link, a heart each (`hurt 4`), until the life is gone: the game's death uses the fairy
+# (see hs-fairy-revive.A.txt). Stays where it lands (no walking).
 mark start
 warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
 wait 1200
@@ -19,18 +19,21 @@ wait 30
 setflag PlayerStatus.AssignableItem.BottleInfo.BottleA.IsValid 1
 wait 30
 setenum PlayerStatus.AssignableItem.BottleInfo.BottleA.BottleItem Fairy
-wait 30
-setflag PlayerStatus.Life 2
+wait 300                # A has turned down but not out off by now (its chat at its own "field" mark)
+mark hurt-start
+# A heart a second. The kit save has 12 quarter hearts (run 1: "life 12 of 16"), so the third hit is lethal and the
+# game's death uses the fairy. Nothing more for 20 s (no hit lands during the revive), then two more hearts in case
+# this save had more life (the revive measured is the first 0 -> above 0).
+hurt 4
 wait 60
-goto 213.0 14.0 0.4 600
-toward 215.0 14.0 6     # face A
-mark standing
-wait 1800
-mark mid
-wait 1800
-mark after-swings
-# Fallback when PvP's sword did not reach (no 'coop: pvp: hit' lines): the test kill of the nearest Player_Child
-# with a life (our own Link, through the game's own damage), if the objects walk lists it; else 'none here'.
-kill Player_Child
-wait 1500
+hurt 4
+wait 60
+hurt 4
+mark lethal
+wait 1200
+mark late-hurts
+hurt 4
+wait 60
+hurt 4
+wait 1200
 mark end
