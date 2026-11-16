@@ -301,18 +301,38 @@ TEST_CASE("the played check of a story cutscene asked by an entry reads that ent
     CHECK(coop::host::flag_hash("HavePlayedEvent.Dm_Kokiri_0140") == 0xebaec07fu);
     CHECK(PlayedFlagsFor("Meet_DekuTree", "LostWoods") == std::vector<std::string>{"HavePlayedEvent.Meet_DekuTree"});
 
+    // Played, read as the hook reads it: a save's flags by name, nothing for a flag the game does not have.
+    const std::string kEntryFlag = "HavePlayedEvent.KokiriForest_Meet_DekuTree_MeetDekuTree_01";
+    const auto game = [&](bool met) {
+        return [&, met](const std::string& f) -> std::optional<bool> {
+            if (f == kEntryFlag) {
+                return met;
+            }
+            if (f == "HavePlayedEvent.Dm_Kokiri_0140") {
+                return false;
+            }
+            return std::nullopt;  // HavePlayedEvent.Meet_DekuTree, .Get_StoneOfForest, .Meet_GreatFairy: not in the game
+        };
+    };
+    using CoopSharedScenes::Played;
+    CHECK(Played("Meet_DekuTree", "KokiriForest_Child", game(true)));
+    CHECK_FALSE(Played("Meet_DekuTree", "KokiriForest_Child", game(false)));
+    CHECK_FALSE(Played("Dm_Kokiri_0140", "KokiriForest_Child", game(false)));
+    // No flag the game has (quests asked by their own name): counted as played, never replayed.
+    CHECK(Played("Get_StoneOfForest", "InsideTheDekuTree", game(false)));
+    CHECK(Played("Meet_GreatFairy", "FairyFountain", game(false)));
+    CHECK(Played("Meet_DekuTree", "LostWoods", game(false)));
+
     // Through the joiner: B has met the Deku Tree (only its entry flag set, as the game keeps it); A starts
     // the meeting near B: B is not asked to play it again. A B that has not met it is.
-    const auto met = [](const std::string& n) {
-        const auto flags = PlayedFlagsFor(n, "KokiriForest_Child");
-        return std::find(flags.begin(), flags.end(), "HavePlayedEvent.KokiriForest_Meet_DekuTree_MeetDekuTree_01") !=
-               flags.end();
+    const auto in_forest = [&](bool met) {
+        return [&, met](const std::string& n) { return Played(n, "KokiriForest_Child", game(met)); };
     };
     CoopSharedScenes::Joiner seen;
     seen.Started(1, "Meet_DekuTree", "KokiriForest_Child", kBridge, 100);
-    CHECK_FALSE(seen.Next(Free(120, {15.0f, 0.0f, 22.0f}, "KokiriForest_Child"), met).has_value());
+    CHECK_FALSE(seen.Next(Free(120, {15.0f, 0.0f, 22.0f}, "KokiriForest_Child"), in_forest(true)).has_value());
     CoopSharedScenes::Joiner fresh;
     fresh.Started(1, "Meet_DekuTree", "KokiriForest_Child", kBridge, 100);
-    CHECK(fresh.Next(Free(120, {15.0f, 0.0f, 22.0f}, "KokiriForest_Child"), kNotPlayed) ==
+    CHECK(fresh.Next(Free(120, {15.0f, 0.0f, 22.0f}, "KokiriForest_Child"), in_forest(false)) ==
           std::optional<std::string>("Meet_DekuTree"));
 }

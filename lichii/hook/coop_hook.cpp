@@ -2063,17 +2063,15 @@ private:
         const auto name = shared_joiner_.Next(
             here,
             [&](const std::string& n) {
-                // The game's flag is per entry asked (review of report 110): the placed entry's, then the flow's.
+                // The game's flag is per entry asked (review of report 110): the placed entry's, then the flow's;
+                // a name with no flag in the game counts as played (CoopSharedScenes::Played).
                 if (!memory) {
                     return false;
                 }
-                const coop::host::GameFlags flags(*memory);
-                for (const std::string& f : CoopSharedScenes::PlayedFlagsFor(n, here.scene)) {
-                    if (flags.get_bool(coop::host::flag_hash(f)).value_or(false)) {
-                        return true;
-                    }
-                }
-                return false;
+                coop::host::GameFlags flags(*memory);
+                return CoopSharedScenes::Played(n, here.scene, [&](const std::string& f) {
+                    return flags.get_bool(coop::host::flag_hash(f));
+                });
             },
             [&](std::uint32_t h) {
                 return memory ? coop::host::GameFlags(*memory).get_bool(h) : std::optional<bool>{};

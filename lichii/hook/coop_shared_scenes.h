@@ -64,6 +64,26 @@ std::string_view RequestFor(std::string_view flow, std::string_view scene);
 // then the flow's (a story name asked by itself has just that one). Played
 // when any is set.
 std::vector<std::string> PlayedFlagsFor(std::string_view flow, std::string_view scene);
+// Whether our game has `flow` played in `scene`: `read(flag name)` gives a
+// flag's value, nothing when the game has no such flag. Played when any of
+// PlayedFlagsFor is set. Of the 211 story names, 5 have no HavePlayedEvent
+// flag of their own (Meet_DekuTree, Get_StoneOf{Forest,Fire,Water},
+// Meet_GreatFairy: quests; GameDataList.Product.110); where no placed entry
+// gives one either, the game cannot tell us, so it counts as played (not
+// joined): a joined replay of a quest's scene is the bug this guards.
+template <typename Read>
+bool Played(std::string_view flow, std::string_view scene, Read&& read) {
+    bool known = false;
+    for (const std::string& f : PlayedFlagsFor(flow, scene)) {
+        if (const std::optional<bool> v = read(f)) {
+            if (*v) {
+                return true;
+            }
+            known = true;
+        }
+    }
+    return !known;
+}
 
 // How near the starter must be to our Link for us to join: same room. The
 // Kokiri bridge and Saria are about 20 m apart; the Deku Tree's clearing is
