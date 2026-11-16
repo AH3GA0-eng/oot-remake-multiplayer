@@ -78,6 +78,26 @@ TEST_CASE("Discord status: discord_image=none sends no art (Discord shows the ap
     CHECK(hos_discord_valid_image("none"));
 }
 
+TEST_CASE("Discord status: all or nothing, the longest words fit discord_rpc.c's 1536 and 2048 bytes") {
+    char small[40];
+    CHECK(hos_discord_activity(small, sizeof small, "Longshot", "v3.0.0-rc.4", "longshot", nullptr, "", 1) == 0);
+    CHECK(std::string(small).empty());
+    CHECK(hos_discord_set_activity(small, sizeof small, 1, 2, "{\"details\":\"a long enough activity\"}") == 0);
+    CHECK(std::string(small).empty());
+    // The worst case: every word 127 quotes (254 escaped), a 255-byte image, a 255-byte module line cut by the reader.
+    HosDiscordWords w{};
+    const std::string quotes(127, '"');
+    std::snprintf(w.details, sizeof w.details, "%s", quotes.c_str());
+    std::snprintf(w.state, sizeof w.state, "%s", quotes.c_str());
+    std::snprintf(w.large_text, sizeof w.large_text, "%s", quotes.c_str());
+    std::snprintf(w.image, sizeof w.image, "%s", std::string(255, 'a').c_str());
+    char activity[1536];
+    char json[2048];
+    REQUIRE(hos_discord_activity(activity, sizeof activity, "Longshot", "v3.0.0-rc.4", "longshot", &w, quotes.c_str(),
+                                 -9223372036854775807LL - 1) == 1);
+    CHECK(hos_discord_set_activity(json, sizeof json, 4294967295u, static_cast<unsigned long>(-1), activity) == 1);
+}
+
 TEST_CASE("Discord status: the checks Discord needs") {
     CHECK(hos_discord_valid_text("Solo"));
     CHECK(hos_discord_valid_text("Ocarina \xc3\xa9t\xc3\xa9"));          // UTF-8

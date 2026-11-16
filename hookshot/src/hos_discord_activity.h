@@ -86,30 +86,52 @@ static inline void hos_discord_json_text(char *out, size_t cap, const char *s) {
     out[o] = 0;
 }
 
+/* Joins the strings of parts (NULL-ended) into out. All or nothing: 1 when the whole fits (out ended), else 0 and out "" (a cut
+   would leave half an escape or a JSON object without its end). No snprintf of a string of unknown length. */
+static inline int hos_discord_join(char *out, size_t cap, const char *const *parts) {
+    size_t o = 0;
+    if (!cap) return 0;
+    for (; *parts; parts++) {
+        const size_t n = strlen(*parts);
+        if (n >= cap - o) {
+            out[0] = 0;
+            return 0;
+        }
+        memcpy(out + o, *parts, n);
+        o += n;
+    }
+    out[o] = 0;
+    return 1;
+}
+
 /* The activity object: name ("Longshot") and version ("v3.0.0-rc.4") make the default words, default_image the default
-   art; w (may be NULL) the settings; module_line ("" or NULL: none) the second line, before the settings' state. */
-static inline void hos_discord_activity(char *out, size_t cap, const char *name, const char *version, const char *default_image,
-                                        const HosDiscordWords *w, const char *module_line, long long started) {
+   art; w (may be NULL) the settings; module_line ("" or NULL: none) the second line, before the settings' state.
+   1 when it fits in cap (1536 always does: each word is at most 254 bytes escaped, the image 255), else 0 and out "". */
+static inline int hos_discord_activity(char *out, size_t cap, const char *name, const char *version, const char *default_image,
+                                       const HosDiscordWords *w, const char *module_line, long long started) {
     static const HosDiscordWords none_set = {"", "", "", ""};
     if (!w) w = &none_set;
-    char own[256], details[256], state[256], large[256], image[300];
-    snprintf(own, sizeof own, "%s %s", name, version);
+    char own[256], details[256], state[256], large[256], image[300], start[24];
+    const char *const own_parts[] = {name, " ", version, NULL}, *const name_only[] = {name, NULL};
+    if (!hos_discord_join(own, sizeof own, own_parts)) hos_discord_join(own, sizeof own, name_only);
     hos_discord_json_text(details, sizeof details, *w->details ? w->details : name);
     hos_discord_json_text(state, sizeof state, module_line && *module_line ? module_line : *w->state ? w->state : own);
     hos_discord_json_text(large, sizeof large, *w->large_text ? w->large_text : own);
     hos_discord_json_text(image, sizeof image, *w->image ? w->image : default_image);
-    if (strcmp(image, "none"))
-        snprintf(out, cap,
-                 "{\"details\":\"%s\",\"state\":\"%s\",\"timestamps\":{\"start\":%lld},\"assets\":{\"large_image\":\"%s\","
-                 "\"large_text\":\"%s\"}}",
-                 details, state, started, image, large);
-    else
-        snprintf(out, cap, "{\"details\":\"%s\",\"state\":\"%s\",\"timestamps\":{\"start\":%lld}}", details, state, started);
+    snprintf(start, sizeof start, "%lld", started);   /* (at most 20 characters) */
+    const int art = strcmp(image, "none") != 0;
+    const char *const parts[] = {"{\"details\":\"", details, "\",\"state\":\"", state, "\",\"timestamps\":{\"start\":", start,
+                                 art ? "},\"assets\":{\"large_image\":\"" : "}}", art ? image : NULL, "\",\"large_text\":\"",
+                                 large, "\"}}", NULL};
+    return hos_discord_join(out, cap, parts);
 }
 
-/* The SET_ACTIVITY frame's JSON around an activity object */
-static inline void hos_discord_set_activity(char *out, size_t cap, unsigned nonce, unsigned long pid, const char *activity) {
-    snprintf(out, cap, "{\"cmd\":\"SET_ACTIVITY\",\"nonce\":\"%u\",\"args\":{\"pid\":%lu,\"activity\":%s}}", nonce, pid, activity);
+/* The SET_ACTIVITY frame's JSON around an activity object; 1 when it fits, else 0 and out "" */
+static inline int hos_discord_set_activity(char *out, size_t cap, unsigned nonce, unsigned long pid, const char *activity) {
+    char head[96];
+    snprintf(head, sizeof head, "{\"cmd\":\"SET_ACTIVITY\",\"nonce\":\"%u\",\"args\":{\"pid\":%lu,\"activity\":", nonce, pid);
+    const char *const parts[] = {head, activity, "}}", NULL};
+    return hos_discord_join(out, cap, parts);
 }
 
 #endif
