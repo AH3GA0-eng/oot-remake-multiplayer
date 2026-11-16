@@ -704,19 +704,19 @@ RutoLetter ruto_letter_plan(std::optional<bool> got, std::optional<bool> shown, 
   // Unread: neither given nor taken (a read that fails must not give a
   // letter someone may have shown already).
   if (!shown) return {RutoWait::shown_unread, std::nullopt, std::nullopt};
-  if (got != true) return {RutoWait::not_got, std::nullopt};
-  if (!king_moved) return {RutoWait::king_unread, std::nullopt};
-  if (*king_moved) return {RutoWait::king_moved, std::nullopt};
+  if (got != true) return {RutoWait::not_got, std::nullopt, std::nullopt};
+  if (!king_moved) return {RutoWait::king_unread, std::nullopt, std::nullopt};
+  if (*king_moved) return {RutoWait::king_moved, std::nullopt, std::nullopt};
   std::optional<std::uint32_t> empty;
   for (const letters::Bottle& b : letters::kBottles) {
     const auto v = valid(b.valid);
     const auto in = item(b.item);
-    if (!v || !in) return {RutoWait::bottle_unread, std::nullopt};  // leave every bottle alone
-    if (*in == letters::kLetter) return {RutoWait::has_letter, std::nullopt};
+    if (!v || !in) return {RutoWait::bottle_unread, std::nullopt, std::nullopt};  // leave every bottle alone
+    if (*in == letters::kLetter) return {RutoWait::has_letter, std::nullopt, std::nullopt};
     if (*v && *in == letters::kEmpty && !empty) empty = b.item;
   }
-  if (!empty) return {RutoWait::no_empty, std::nullopt};
-  return {RutoWait::give, empty};
+  if (!empty) return {RutoWait::no_empty, std::nullopt, std::nullopt};
+  return {RutoWait::give, empty, std::nullopt};
 }
 
 std::optional<std::uint32_t> ruto_letter_bottle(std::optional<bool> got, std::optional<bool> shown,
