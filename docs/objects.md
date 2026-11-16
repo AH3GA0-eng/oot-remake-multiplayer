@@ -450,6 +450,8 @@ The rule now (`Sync::EventPartner`, `Sync::EventPartnerWhy`): while our Link is 
 
 Not bosses: `CoopBossNative::SetEvent` already lets a boss copy run its own changes while our event runs, and the fight keeps its owner. Not fish (the lure rules, issue 151). The own-AI rule is only for actors with an AI of their own (enemies, guards, townspeople), never a world object another game moves (issue 194).
 
+A world object our event binds (a chest it opens, a block or platform it moves) is a member like any other actor: our event drives it, so the owner's place and play are not put on it while the event runs (the glue drops a partner's wishes even where `CoopGuard::Skip` would let an issue-194 world object follow at once). A world object our event does not bind still follows the other game at once, as issue 194 needs.
+
 A partner is claimed exactly as the townspeople are: flagged targeting so the server hands it to us, the owner's place, animation and remove are not put on it, and a kill or hurt from another game waits for the event's end (`CoopGuard::Local::partner`). 2 s after the event (`Sync::kEventKeepUs`) the normal owner rules come back.
 
 Logs (`coop: event:`): `our Link's event began: <event> kind <k> (<n> in the session); names seen: ...` (the kind: 0 flowchart, 1 timeline, 2 movie; the names are the name-like strings the event points at, since the event's name is not mapped), `the actors our event is with: <name> <address> (owner P<n>, bound by the event | its own AI acts | townsperson, <m> m); ...` on each change, `our Link is still in its event after <s> s (<n> actors claimed)` every 30 s, and `our Link's event ended after <s> s`. The `npc-anim` lines now count actors, not only NPCs.
