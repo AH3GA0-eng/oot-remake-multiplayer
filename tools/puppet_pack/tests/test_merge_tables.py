@@ -169,16 +169,63 @@ class MergeTablesTest(unittest.TestCase):
             mt.zs._zstd = real
         self.assertIn("no zstandard", out.getvalue())
 
-    def test_our_seeds_and_the_pack_are_left_alone(self):
+    def test_our_seeds_are_left_alone(self):
         self.put_table(PACK, {1: 100})
         self.put_table("randomizer-S1", {2: 5})  # ours: built beside every table already
         self.assertEqual(self.run_merge(), 0)
         self.assertEqual(self.lines, [])
         self.assertEqual(self.table("randomizer-S1").by_crc, {2: 5})
-        self.put_table("aaa-textures", {3: 3})  # under the pack (by name): the pack's table wins
+        self.assertEqual(self.table(PACK).by_crc, {1: 100})
+
+    def test_a_mod_under_the_pack_by_name_gets_its_entries_into_the_packs_table(self):
+        # Player report 101: "bestbuddy" (RSDB tables made larger, its own size table) sorts under "contents/", so
+        # the game reads the pack's table; without bestbuddy's sizes the game aborted 1 s into the start.
+        pack = self.put_table(PACK, {1: 100, 2: 50}, {"Puppet/new.bfres": 77})
+        own = read(pack)
+        self.put_table("bestbuddy", {2: 80, 3: 3}, {"RSDB/Challenge.Product.111.rstbl.byml": 9000})
+        self.assertEqual([n for n, _ in mt.load_order(self.mods)], ["bestbuddy", PACK])
+        self.assertEqual(self.run_merge(), 0)
+        t = self.table(PACK)
+        self.assertEqual(t.by_crc, {1: 100, 2: 80, 3: 3})
+        self.assertEqual(t.by_name, {"Puppet/new.bfres": 77, "RSDB/Challenge.Product.111.rstbl.byml": 9000})
+        self.assertIn("the puppet pack's", self.lines[0])
+        self.assertIn("bestbuddy", self.lines[0])
+        self.assertEqual(read(self.path(PACK, mt.KEEP_DIR, NAME)), own)  # the pack's own, kept
+        self.assertEqual(self.table("bestbuddy").by_crc, {2: 80, 3: 3})  # never changed
+        # The next start: nothing to write (a pack table rewritten at every start would make our seeds be built again).
+        before = read(pack)
+        self.run_merge()
+        self.assertIn("already", self.lines[0])
+        self.assertEqual(read(pack), before)
+        # The pack made again (a kit update): merged again from the new pack table.
+        self.put_table(PACK, {1: 100, 5: 55})
+        self.run_merge()
+        self.assertEqual(self.table(PACK).by_crc, {1: 100, 2: 80, 3: 3, 5: 55})
+        # Undo: the pack's own table back.
+        mt.undo(self.mods, self.say)
+        self.assertEqual(self.table(PACK).by_crc, {1: 100, 5: 55})
+        self.assertFalse(os.path.exists(self.path(PACK, mt.KEEP_DIR)))
+
+    def test_our_seed_under_a_winning_pack_is_not_merged_into_it(self):
+        self.put_table(PACK, {1: 100})
+        self.put_table("bestbuddy", {3: 3})
+        self.put_table("randomizer-S1", {4: 4})
+        with open(os.path.join(self.mods, mt.LIST_FILE), "w", encoding="utf-8", newline="\n") as f:
+            f.write(f"coop-mods 1\non {PACK}\non randomizer-S1\n")
+        self.assertEqual([n for n, _ in mt.load_order(self.mods)], ["bestbuddy", "randomizer-S1", PACK])
+        self.assertEqual(self.run_merge(), 0)
+        self.assertEqual(self.table(PACK).by_crc, {1: 100, 3: 3})  # bestbuddy's in, the seed's not
+        self.assertNotIn("randomizer-S1", self.lines[0])
+        self.assertEqual(self.table("randomizer-S1").by_crc, {4: 4})
+
+    def test_a_mod_switched_off_under_the_pack_is_not_merged(self):
+        self.put_table(PACK, {1: 100})
+        self.put_table("bestbuddy", {3: 3})
+        with open(os.path.join(self.mods, mt.LIST_FILE), "w", encoding="utf-8", newline="\n") as f:
+            f.write(f"coop-mods 1\non {PACK}\noff bestbuddy\n")
         self.assertEqual(self.run_merge(), 0)
         self.assertEqual(self.lines, [])
-        self.assertEqual(self.table("aaa-textures").by_crc, {3: 3})
+        self.assertEqual(self.table(PACK).by_crc, {1: 100})
 
     def mark_rule(self, mod):
         try:
@@ -267,7 +314,9 @@ class MergeTablesTest(unittest.TestCase):
         with open(os.path.join(self.mods, mt.LIST_FILE), "w", encoding="utf-8", newline="\n") as f:
             f.write("coop-mods 1\noff listed-off\n")
         self.assertEqual(self.run_merge(), 0)
-        self.assertEqual(self.lines, [])
+        # (report 101: the pack's table takes the unlisted mod's entries, never the switched-off one's)
+        self.assertIn("the puppet pack's", self.lines[0])
+        self.assertEqual(self.table(PACK).by_crc, {1: 100, 2: 5})
         self.assertEqual(self.table("Aaa-Site").by_crc, {2: 5})
         self.assertEqual([n for n, _ in mt.load_order(self.mods)], ["Aaa-Site", PACK])
         self.put_table("Zzz-Site", {3: 6})  # unlisted, sorts over contents/...: it wins and gets the others
