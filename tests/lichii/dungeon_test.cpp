@@ -144,6 +144,44 @@ TEST_CASE("dungeon: where one player's Link stands in the Forest Temple is not s
     CHECK(names.count("ForestTemple_Room02_TimeBlock") == 1);
 }
 
+TEST_CASE("dungeon: where one player's Link stands is not shared in any dungeon (forest-temple-a sweep)") {
+  std::set<std::string> names;
+  for (const auto& f : CoopDungeon::Flags()) names.insert(f.name);
+  for (const char* out : {"BottomOfTheWell_Level_Room_01_InTheCenterArea",
+                          "BottomOfTheWell_Level_Room_01_InTheDivingArea",
+                          "BottomOfTheWell_Level_Room_01_InTheReturnArea",
+                          "BottomOfTheWell_Level_Room_09_NearRock",
+                          "DodongoCavern_Room05_NearTreasureBox",
+                          "DodongoCavern_Room10_PlayerOutOfRoom",
+                          "FireTemple_Room04_IsAtCorrectArea",
+                          "FireTemple_Room12_IsAtCorrectArea",
+                          "ForestTemple_Room08_ClimbIvy_Near",
+                          "GerudoTrainingGround_Dungeon_Room03_InSecretRoom",
+                          "GerudoTrainingGround_Dungeon_Room08_InSecretRoom",
+                          "InsideJabuJabuBelly_Room09_TBoxNearRuto",
+                          "InsideJabuJabuBelly_Room12_TBoxNearRuto",
+                          "InsideJabuJabuBelly_Room14_IsNearGimmick",
+                          "InsideJabuJabuBelly_Room14_PlayerIsUnder",
+                          "InsideJabuJabuBelly_Room18_IsInHiddenArea",
+                          "InsideTheDekuTree_RoomA_NearScaffold",
+                          "ShadowTemple_Level_Room_09_Away",
+                          "ShadowTemple_Level_Room_13_PlayerPosCheck",
+                          "SpiritTemple_LevelRoom_02_PlayerPosChange1_2",
+                          "SpiritTemple_LevelRoom_02_PlayerPosChange2",
+                          "SpiritTemple_LevelRoom_02_PlayerPosChange2_2",
+                          "SpiritTemple_Level_Room_02_PlayerPosChange1",
+                          "SpiritTemple_Room16_PlayerPosCheck",
+                          "WaterTemple_Room00_Switch_NearThePlatform",
+                          "WaterTemple_Room00_Switch_NearTheShutter",
+                          "IceCavern_Room01Demo_Far"}) {
+    CHECK_MESSAGE(names.count(out) == 0, out);
+  }
+  // Room state set both ways by a graph stays shared (a switch, a fire, an air wall).
+  CHECK(names.count("FireTemple_Room04_SwitchHit") == 1);
+  CHECK(names.count("FireTemple_Room14_AirWallEnemyMove00") == 1);
+  CHECK(names.count("ForestTemple_TwistCorridor01_IsConstraint") == 1);
+}
+
 TEST_CASE("dungeon: Merge adds to the list, makes one when there is none, or does nothing when off") {
     std::optional<host::SharedFlags> none;
     CHECK(CoopDungeon::Merge(none, false) == 0);
