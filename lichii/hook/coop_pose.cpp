@@ -273,8 +273,16 @@ Pose Track::Fill(Pose pose) const {
     const auto& old = newest_->bones;
     while (i < pose.bones.size() || j < old.size()) {
         if (j == old.size() || (i < pose.bones.size() && pose.bones[i].bone <= old[j].bone)) {
-            if (j < old.size() && pose.bones[i].bone == old[j].bone) ++j;
-            merged.push_back(std::move(pose.bones[i++]));
+            BonePose b = std::move(pose.bones[i++]);
+            if (j < old.size() && b.bone == old[j].bone) {
+                // A part this pose lacks keeps its last value (a still part
+                // went whole earlier, StillPicker): never the puppet's own.
+                const BonePose& o = old[j++];
+                if (!b.rotation) b.rotation = o.rotation;
+                if (!b.translation) b.translation = o.translation;
+                if (!b.scale) b.scale = o.scale;
+            }
+            merged.push_back(std::move(b));
         } else {
             merged.push_back(old[j++]);
         }
@@ -373,6 +381,55 @@ std::vector<proto::PoseBone> BonePicker::Pick(std::uint32_t skeleton,
                                        return a.bone < b.bone;
                                    });
     });
+    return out;
+}
+
+std::vector<proto::PoseBone> StillPicker::Pick(std::uint32_t skeleton, const std::vector<proto::PoseBone>& all,
+                                               std::uint64_t now_ms, std::size_t budget) {
+    if (skeleton != skeleton_) {
+        skeleton_ = skeleton;
+        sent_ms_.clear();
+    }
+    struct Wanted {
+        std::uint64_t age;
+        std::size_t index;
+    };
+    std::vector<Wanted> wanted;
+    for (std::size_t i = 0; i < all.size(); ++i) {
+        const auto it = sent_ms_.find(all[i].bone);
+        if (it == sent_ms_.end()) {
+            wanted.push_back({~std::uint64_t{0}, i});  // never sent: first, in bone order
+        } else if (now_ms - std::min(now_ms, it->second) >= kStillRefreshMs) {
+            wanted.push_back({now_ms - it->second, i});
+        }
+    }
+    const std::size_t n = std::min(budget, wanted.size());
+    std::partial_sort(wanted.begin(), wanted.begin() + static_cast<std::ptrdiff_t>(n), wanted.end(),
+                      [](const Wanted& a, const Wanted& b) { return a.age != b.age ? a.age > b.age : a.index < b.index; });
+    wanted.resize(n);
+    std::sort(wanted.begin(), wanted.end(), [](const Wanted& a, const Wanted& b) { return a.index < b.index; });
+    std::vector<proto::PoseBone> out;
+    out.reserve(n);
+    for (const Wanted& w : wanted) {
+        out.push_back(all[w.index]);
+        sent_ms_[all[w.index].bone] = now_ms;
+    }
+    return out;
+}
+
+std::vector<proto::PoseBone> MergeBones(const std::vector<proto::PoseBone>& moving,
+                                        const std::vector<proto::PoseBone>& whole) {
+    std::vector<proto::PoseBone> out;
+    out.reserve(moving.size() + whole.size());
+    std::size_t i = 0, j = 0;
+    while (i < moving.size() || j < whole.size()) {
+        if (j < whole.size() && (i == moving.size() || whole[j].bone <= moving[i].bone)) {
+            if (i < moving.size() && moving[i].bone == whole[j].bone) ++i;
+            out.push_back(whole[j++]);
+        } else {
+            out.push_back(moving[i++]);
+        }
+    }
     return out;
 }
 
@@ -601,6 +658,9 @@ struct State {
     std::map<std::uint32_t, PieceSent> pieces_sent;
     // Which of Link's bones go in the next pose (kMaxSendBones).
     BonePicker picker;
+    // Every bone whole (StillPicker), from the same read as outbox.
+    std::optional<Pose> still_outbox;
+    StillPicker still_picker;
     // Received, per player 1 to kMaxPlayers, one track per skeleton: Link's
     // body and each held piece arrive as poses of their own skeleton.
     std::array<std::map<std::uint32_t, Track>, std::size_t{proto::kMaxPlayers} + 1> tracks;
@@ -651,6 +711,20 @@ std::optional<Pose> ReadLocal(State& s, CoopPuppet::Guest& guest, std::uint64_t 
     Pose pose;
     pose.skeleton = SkeletonId(skel->count, skel->model);
     s.local_model = skel->model;
+    Pose whole;
+    whole.skeleton = pose.skeleton;
+    whole.bones.reserve(bones.size());
+    for (std::size_t i = 0; i < bones.size(); ++i) {
+        const LocalMtx& b = bones[i];
+        BonePose out;
+        out.bone = static_cast<std::uint16_t>(i);
+        out.flags = static_cast<std::uint8_t>((b.flags & addr::kFlagMask) >> addr::kFlagShift);
+        out.rotation = RowsToQuat(RowsOf(b));
+        out.translation = Vec3{b.translation[0], b.translation[1], b.translation[2]};
+        out.scale = Vec3{b.scale[0], b.scale[1], b.scale[2]};
+        whole.bones.push_back(out);
+    }
+    s.still_outbox = std::move(whole);
     for (std::size_t i = 0; i < bones.size(); ++i) {
         const LocalMtx& b = bones[i];
         const LocalMtx& f = s.first[i];
@@ -962,6 +1036,9 @@ std::vector<proto::PlayerPose> TakeOutgoing(std::uint64_t server_now_us, std::ui
     // Sent even with no bone changed: the receiver keeps its puppet's pose
     // fresh (Drives) and its blend interval right.
     body.bones = s.picker.Pick(body.skeleton, Encode(*s.outbox), now_ms);
+    if (s.still_outbox && s.still_outbox->skeleton == body.skeleton) {
+        body.bones = MergeBones(body.bones, s.still_picker.Pick(body.skeleton, Encode(*s.still_outbox), now_ms));
+    }
     out.push_back(std::move(body));
     ++s.sent;
     // Each piece in our hands as a pose of its own skeleton: when it changed,

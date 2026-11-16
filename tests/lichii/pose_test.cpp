@@ -364,6 +364,92 @@ TEST_CASE("pose: the piece in a hand goes as a pose of its own skeleton (issue 1
     CHECK(CoopPose::Drives(3, 101'016));
 }
 
+TEST_CASE("pose: a bone our game holds still at its own value reaches the puppet whole (issue 152)") {
+    // held-piece: only bones that moved since the first read went in the moving pose, so a bone held
+    // still away from the puppet's value (Weapon_R, the Ocarina's hand bone) was never sent and the
+    // Ocarina hung turned. Every bone also goes whole now and then (StillPicker).
+    FakeGuest g;
+    const std::uint64_t player = 0x600000000, puppet = 0x700000000;
+    const std::uint64_t mine = MakeActor(g, player, "Player_t152");  // a new skeleton: a first read of its own
+    const std::uint64_t theirs = MakeActor(g, puppet, "Player_t152");
+    MakePlayerChain(g, player);
+    CoopPose::SetLog({}, false);
+    const std::vector<std::pair<std::uint8_t, std::uint64_t>> puppets{{4, puppet}};
+    // Bone 4 is held at a turn of its own from the first read on: it never "moves".
+    const std::uint64_t bone4 = mine + 4 * paddr::kLocalStride;
+    const float h = std::sqrt(0.5f);
+    const CoopPose::Rows r = CoopPose::QuatToRows({h, 0, 0, h});
+    for (int row = 0; row < 3; ++row) {
+        g.Put(bone4 + 0x20 + row * 16, CoopPose::Vec3{r[row * 3], r[row * 3 + 1], r[row * 3 + 2]});
+    }
+    g.Put(bone4 + 0x50, CoopPose::Vec3{0.0f, 0.25f, 0.0f});
+    CoopPose::OnCalcFrame(g, kMain, puppets, 200'000);
+    auto out = CoopPose::TakeOutgoing(5, 200'000);
+    REQUIRE_FALSE(out.empty());
+    bool has4 = false;
+    for (const auto& b : out[0].bones) {
+        if (b.bone == 4) {
+            has4 = b.rotation.has_value() && b.translation.has_value() && b.scale.has_value();
+        }
+    }
+    CHECK(has4);  // whole, though it never moved
+    CHECK(out[0].bones.size() <= CoopPose::kMaxSendBones + CoopPose::kStillBones);
+    for (auto& m : out) {
+        m.player_number = 4;
+        CoopPose::Receive(m, 200'000);
+    }
+    CoopPose::OnCalcFrame(g, kMain, puppets, 200'016);
+    const std::uint64_t copy4 = theirs + 4 * paddr::kLocalStride;
+    CHECK(Near(g.Get<float>(copy4 + 0x24), r[1]));
+    CHECK(Near(g.Get<float>(copy4 + 0x28), r[2]));
+    CHECK(Near(g.Get<float>(copy4 + 0x54), 0.25f));
+
+    // Sent again only after kStillRefreshMs.
+    CoopPose::StillPicker picker;
+    std::vector<coop::protocol::PoseBone> all(20);
+    for (std::size_t i = 0; i < all.size(); ++i) all[i].bone = static_cast<std::uint16_t>(i);
+    CHECK(picker.Pick(1, all, 1000).size() == CoopPose::kStillBones);
+    CHECK(picker.Pick(1, all, 1066).front().bone == CoopPose::kStillBones);  // the next ones, never sent
+    CHECK(picker.Pick(1, all, 1133).size() == all.size() - 2 * CoopPose::kStillBones);
+    CHECK(picker.Pick(1, all, 1200).empty());
+    CHECK(picker.Pick(1, all, 1000 + CoopPose::kStillRefreshMs).size() == CoopPose::kStillBones);
+    // Merged with the moving pick: one list in bone order, a bone in both once.
+    std::vector<coop::protocol::PoseBone> moving(2), whole(2);
+    moving[0].bone = 1; moving[1].bone = 5;
+    whole[0].bone = 3; whole[1].bone = 5; whole[1].scale.emplace();
+    const auto merged = CoopPose::MergeBones(moving, whole);
+    REQUIRE(merged.size() == 3);
+    CHECK(merged[0].bone == 1);
+    CHECK(merged[1].bone == 3);
+    CHECK(merged[2].bone == 5);
+    CHECK(merged[2].scale.has_value());
+}
+
+TEST_CASE("pose: Fill keeps a part a partial pose leaves out (a whole bone sent earlier)") {
+    CoopPose::Track track;
+    CoopPose::Pose whole;
+    whole.skeleton = 9;
+    CoopPose::BonePose b;
+    b.bone = 2;
+    b.rotation = CoopPose::Quat{0, 0, 0, 1};
+    b.translation = CoopPose::Vec3{0.5f, 0, 0};
+    b.scale = CoopPose::Vec3{1, 1, 1};
+    whole.bones.push_back(b);
+    track.Push(whole, 100);
+    CoopPose::Pose part;
+    part.skeleton = 9;
+    CoopPose::BonePose p;
+    p.bone = 2;
+    p.rotation = CoopPose::Quat{1, 0, 0, 0};
+    part.bones.push_back(p);
+    const auto got = track.Fill(part);
+    REQUIRE(got.bones.size() == 1);
+    CHECK((*got.bones[0].rotation)[0] == 1.0f);       // the new part
+    REQUIRE(got.bones[0].translation.has_value());     // the old one kept
+    CHECK((*got.bones[0].translation)[0] == 0.5f);
+    CHECK(got.bones[0].scale.has_value());
+}
+
 TEST_CASE("pose: poses of the highest player number are kept (16 players), one past it is not") {
     CoopPose::SetLog({}, false);
     const std::uint8_t top = coop::protocol::kMaxPlayers;
