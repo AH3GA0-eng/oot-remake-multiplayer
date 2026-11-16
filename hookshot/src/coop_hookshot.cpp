@@ -92,6 +92,7 @@
 #include "hos_coop_actors.h"
 #include "hos_coop_bosses.h"
 #include "hos_coop_pads.h"
+#include "hos_coop_save_load.h"
 #include "hos_coop_sound.h"
 #include "hos_coop_host.h"
 #include "hos_coop_world.h"
@@ -1145,6 +1146,18 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
                 LOG_INFO(Core, "coop: this Hookshot has no sound wrap (patch 0014): our Link's sounds are not sent");
             }
         }
+        {
+            // Patch 0024: the game's own save loads (docs/flags.md, "A load window"). All three wraps, or the old signs.
+            const bool loads = (level.wraps >> HOS_COOP_WRAP_SAVE_LOADED & 1) != 0 &&
+                               (level.wraps >> HOS_COOP_WRAP_SAVE_LOAD_START & 1) != 0 &&
+                               (level.wraps >> HOS_COOP_WRAP_TEMP_LOAD_START & 1) != 0;
+            if (CoopSave::NativeSaveLoads() != loads || !loads) {
+                LOG_INFO(Core, "{}", loads ? "coop: save loads: the game's own load nodes tell every save load (patch 0024)"
+                                           : "coop: save loads: this Hookshot has no save-load wraps (patch 0024): a save "
+                                             "load is guessed from the flags and the title");
+            }
+            CoopSave::SetNativeSaveLoads(loads);
+        }
         return 1;
     }
     case HOS_COOP_WORLD_COUNTER_START: {  // (coop_counters.h: the Objects walk reads the ring)
@@ -1282,6 +1295,13 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
         // Local co-op: an extra player's Player reads its own controller. (native-puppets-b2's remote input, once
         // wired, is a second handler of these ids: both must run, and either may take phase 0.)
         return CoopLocalGame::Wrap(id, phase, x);
+    }
+    if (id == HOS_COOP_WRAP_SAVE_LOAD_START || id == HOS_COOP_WRAP_TEMP_LOAD_START || id == HOS_COOP_WRAP_SAVE_LOADED) {
+        // A save load starts, or the save is in (patch 0024): the game's own sequence nodes. Reads nothing.
+        if (phase == 0) {
+            CoopSave::NoteGameSaveLoad(id != HOS_COOP_WRAP_SAVE_LOADED);
+        }
+        return 0;
     }
     if (id == HOS_COOP_WRAP_SOUND_EMIT) {
         // A sound the game starts (patch 0014): kept when it is on our own Link (coop_link_sound.h). Reads only.

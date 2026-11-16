@@ -56,6 +56,22 @@ void NoteTitle(bool title_up);
 // What NoteTitle last said (false on the emulator, which has no title module).
 bool TitleUp();
 
+// Hookshot's save-load wraps (patch 0024, hos_coop_save_load.h), from the game's thread: the game's own sequence
+// nodes start loading a save (start) or say the save is in (!start). Every save the game loads: the title, the System
+// menu's Load, Game Over's Try Again. The emulator never calls these.
+void NoteGameSaveLoad(bool start);
+// Whether this Hookshot has all three wraps (its hello's bits); false on the emulator.
+void SetNativeSaveLoads(bool on);
+bool NativeSaveLoads();
+// The starts and loads since the last call (the session's flag watcher takes them).
+struct GameSaveLoads {
+    unsigned starts = 0;
+    unsigned loads = 0;
+};
+GameSaveLoads TakeGameSaveLoads();
+// True once after each save load (the solo map keeper drops its baseline; with or without a session).
+bool TakeKeeperSaveLoad();
+
 // A guest's switch to the host's save that has not happened yet waits (the player picked a file on the title):
 // never while that file loads. Once Link is in the game the hold ends; the switch still waits (never under a game
 // being played) and goes when the player is back on the title's menu with no file loaded.

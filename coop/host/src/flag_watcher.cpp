@@ -241,6 +241,8 @@ void FlagWatcher::set_role(FlagRole role) {
 }
 
 void FlagWatcher::set_loading(bool loading) {
+  link_loading_ = loading;
+  if (native_forced_) return;  // a load node's load holds it (frame())
   if (loading) {
     loading_ = true;
     settle_left_ = kSettleFrames;
@@ -331,8 +333,23 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
     end_window(store, resets);
     moved_ = false;
   }
+  // The game's own load nodes (set_native_loads): from a start until the save is in, the game is loading.
+  if (native_loading_ && frames_ - native_since_ > kNativeLoadMaxFrames) {
+    native_loading_ = false;
+    ++stats_.native_timeouts;
+  }
+  if (native_loading_ || native_loaded_) {
+    // Loading whatever Link does (set_loading's own value is kept for after it).
+    native_forced_ = true;
+    loading_ = true;
+    settle_left_ = kSettleFrames;
+  } else if (std::exchange(native_forced_, false)) {
+    const bool link = link_loading_;
+    set_loading(link);
+  }
   if (settling() && !window_) {
     window_ = true;
+    old_counted_ = false;
     moved_ = false;
     window_title_ = false;
     back_keys_.clear();
@@ -344,6 +361,17 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
   if (window_ && loading_ && !scene_readable_) no_scene_frames_ += static_cast<int>(step);
   if (window_ && title_seen_) window_title_ = true;
   see_save_load();
+  if (std::exchange(native_loaded_, false)) {
+    // The save is in: the save load, said by the game itself (the window is open: set_loading above).
+    native_loading_ = false;
+    ++stats_.native_loads;
+    if (window_ && !moved_) {
+      moved_ = true;
+      seen_ = true;
+      seen_flags_ = static_cast<int>(back_keys_.size());
+      seen_frames_ = no_scene_frames_;
+    }
+  }
   title_seen_ = title_up_;  // taken: what comes before the next frame() counts again
 
   Table changes;
@@ -544,6 +572,11 @@ void FlagWatcher::see_save_load() {
   // and the old save's maps and floors were put into the new save).
   const bool title = window_title_;
   if (!flags_back && !title) return;
+  if (native_loads_) {
+    // The game's own load nodes decide (set_native_loads): the old signs are only counted, for the log.
+    if (!std::exchange(old_counted_, true)) ++stats_.old_sign_loads;
+    return;
+  }
   if (!flags_back) ++stats_.title_loads;
   moved_ = true;
   seen_ = true;  // also with 0 flags back (the title sign): take_save_load reports it

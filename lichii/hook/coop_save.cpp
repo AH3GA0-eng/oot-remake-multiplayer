@@ -2,6 +2,7 @@
 
 #include "coop_save.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <deque>
@@ -291,6 +292,39 @@ bool SessionLive() {
 void NoteTitle(bool title_up) {
     std::lock_guard lock(g_mutex);
     g_title_up = title_up;
+}
+
+namespace {
+std::atomic<unsigned> g_load_starts{0};
+std::atomic<unsigned> g_loads{0};
+std::atomic<bool> g_keeper_load{false};
+std::atomic<bool> g_native_loads{false};
+}  // namespace
+
+void NoteGameSaveLoad(bool start) {
+    if (start) {
+        g_load_starts.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    g_loads.fetch_add(1, std::memory_order_relaxed);
+    g_keeper_load.store(true, std::memory_order_relaxed);
+}
+
+void SetNativeSaveLoads(bool on) {
+    g_native_loads.store(on, std::memory_order_relaxed);
+}
+
+bool NativeSaveLoads() {
+    return g_native_loads.load(std::memory_order_relaxed);
+}
+
+GameSaveLoads TakeGameSaveLoads() {
+    return GameSaveLoads{g_load_starts.exchange(0, std::memory_order_relaxed),
+                         g_loads.exchange(0, std::memory_order_relaxed)};
+}
+
+bool TakeKeeperSaveLoad() {
+    return g_keeper_load.exchange(false, std::memory_order_relaxed);
 }
 
 bool TitleUp() {

@@ -64,6 +64,9 @@ struct FlagStats {
   std::uint64_t ignored_messages = 0;  // not a flag message, or not for this role
   std::uint64_t load_reverts = 0;      // the game's load undid a group value: written back
   std::uint64_t title_loads = 0;       // player: a load through the title, fewer flags back than kSaveLoadMin (#96)
+  std::uint64_t native_loads = 0;      // save loads the game's own load nodes said (set_native_loads, patch 0024)
+  std::uint64_t old_sign_loads = 0;    // with native loads on: windows the old signs called a save load (cross-check)
+  std::uint64_t native_timeouts = 0;   // a load node's start with no save in after kNativeLoadMaxFrames
   std::uint64_t offline_loads = 0;     // player: the title was up while not connected, our changes put back (#96)
   std::uint64_t one_way_restores = 0;  // a one-way Bool (map, compass) back to 0: written back
   std::uint64_t down_only_kept = 0;    // a group's 1 not written over our 0 (share_down_only)
@@ -279,6 +282,23 @@ class FlagWatcher {
     title_up_ = up;
     if (up) title_seen_ = true;
   }
+  // Hookshot's save-load wraps (patch 0024, hos_coop_save_load.h): the game's own sequence nodes that load a save
+  // (SeqExecuteLoadSaveData / SeqExecuteLoadTemporarySave's Enter) and say it is in
+  // (SeqOneShotOnloadGameSaveDataWorldMgr): every save the game loads, from the title, the System menu's Load and
+  // Game Over's Try Again. With them on, a save load is what they say and nothing else: from a start until the
+  // save is in, the game is loading (Link read or not), and the save in is the save load (moved_: a host's
+  // FLAG_RESET, a player's group values back). The old signs (no scene and flags back, the title menu) are only
+  // counted then (stats().old_sign_loads), as a cross-check in the log. Off (the emulator, an older Hookshot): the
+  // old signs decide, as before.
+  void set_native_loads(bool on) { native_loads_ = on; }
+  bool native_loads() const { return native_loads_; }
+  void note_save_load_start() {
+    native_loading_ = true;
+    native_since_ = frames_;
+  }
+  void note_save_loaded() { native_loaded_ = true; }
+  // A start with no save in after this long (a load the game gave up): loading no more.
+  static constexpr std::uint64_t kNativeLoadMaxFrames = 30 * 60;
   static constexpr int kTitleFrames = 30;
   static constexpr int kSaveLoadMin = 2;
   static constexpr int kSettleFrames = 120;
@@ -304,11 +324,12 @@ class FlagWatcher {
   struct SaveLoadSeen {
     int flags = 0;
     int frames = 0;
+    bool native = false;  // the game's own load nodes said it (set_native_loads), not the old signs
   };
   std::optional<SaveLoadSeen> take_save_load() {
     if (!seen_) return std::nullopt;
     seen_ = false;
-    SaveLoadSeen s{seen_flags_, seen_frames_};
+    SaveLoadSeen s{seen_flags_, seen_frames_, native_loads_};
     seen_flags_ = 0;
     seen_frames_ = 0;
     return s;
@@ -453,6 +474,13 @@ class FlagWatcher {
   int seen_flags_ = 0;           // take_save_load: the sign was taken with these
   int seen_frames_ = 0;
   int no_scene_frames_ = 0;  // frames in this window with no scene loaded
+  bool native_loads_ = false;    // set_native_loads
+  bool native_loading_ = false;  // note_save_load_start, until the save is in (or kNativeLoadMaxFrames)
+  std::uint64_t native_since_ = 0;
+  bool native_loaded_ = false;   // note_save_loaded, taken by the next frame()
+  bool native_forced_ = false;   // loading_ held true by a load node's load (frame())
+  bool link_loading_ = false;    // set_loading's last value (no Link), for when that ends
+  bool old_counted_ = false;     // this window's old sign counted in old_sign_loads
   bool scene_readable_ = true;  // set_scene
   bool title_up_ = false;       // set_title: up now
   bool title_seen_ = false;     // set_title: up since the last frame() (also while not connected)

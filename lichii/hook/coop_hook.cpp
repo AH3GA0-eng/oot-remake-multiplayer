@@ -654,6 +654,18 @@ public:
 #ifdef COOP_HOOKSHOT
         // The title's menu up: a guest's load through it is a save load (player report #96, docs/flags.md "Saves").
         session_->set_title_up(CoopSave::TitleUp());
+        // Patch 0024: every save the game loads, from its own load nodes (docs/flags.md, "A load window").
+        session_->set_native_save_loads(CoopSave::NativeSaveLoads());
+        if (const auto loads = CoopSave::TakeGameSaveLoads(); loads.starts != 0 || loads.loads != 0) {
+            if (loads.starts != 0) {
+                session_->note_save_load_start();
+            }
+            if (loads.loads != 0) {
+                session_->note_save_loaded();
+            }
+            LOG_INFO(Core, "coop: save: the game {}", loads.loads != 0 ? "loaded a save (its own load nodes)"
+                                                                       : "starts loading a save (its own load node)");
+        }
         // The game's own flag writes since the last frame (the applier's wrap, coop_flag_native.h): the watcher
         // reads those flags, not the whole list.
         CoopFlagNative::Feed(*session_);
@@ -714,8 +726,9 @@ public:
             }
         }
         if (report.save_load) {
-            LOG_INFO(Core, "coop: flags: save load seen ({} flags back, {} frames without a scene)",
-                     report.save_load_flags, report.save_load_frames);
+            LOG_INFO(Core, "coop: flags: save load seen ({} flags back, {} frames without a scene; {})",
+                     report.save_load_flags, report.save_load_frames,
+                     report.save_load_native ? "the game's own load nodes" : "the old signs");
             CoopTime::SaveLoaded(report.server_now_us);  // issue 159
             lent_keys_.forget();  // dungeon-sync-b: the save has its own key counts
             start_source_.Reset();  // deku-sync-fix: what the game asked before the load is not ours now
@@ -2430,6 +2443,8 @@ void KeepMapsAlone(EmulatorMemory& memory, bool in_play, const std::optional<std
     const bool title_up = CoopSave::TitleUp();
     if (title_up && !title_was_up) keeper.reset();
     title_was_up = title_up;
+    // Patch 0024: the game loaded a save (any way): another file's maps are not this one's.
+    if (CoopSave::TakeKeeperSaveLoad()) keeper.reset();
 #endif
     coop::host::GameFlagStore flags(memory);
     const coop::host::MapDropBecause because("the solo keeper (minimap-b)");

@@ -16,6 +16,7 @@
 #include "coop_counters.h"
 #include "coop_hold.h"
 #include "coop_hookshot.h"
+#include "hos_coop_save_load.h"
 #include "hos_coop_sound.h"
 #include "hos_coop_world.h"
 #include "hos_coop_actors.h"
@@ -610,6 +611,32 @@ TEST_CASE("hookshot: the sound wrap (patch 0014) is one row in 0005's table, its
     CHECK(HOS_COOP_WRAP_SOUND_EMIT < 64);
     const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
     CHECK(module.find("if (id == HOS_COOP_WRAP_SOUND_EMIT) {") != std::string::npos);
+}
+
+TEST_CASE("hookshot: the save-load wraps (patch 0024) are three rows in 0005's table, their header hookshot/src's") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0024-coop-save-load-wrap.patch");
+    CHECK(NewFile(patch, "host/hos_coop_save_load.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_save_load.h"));
+    const struct {
+        unsigned id;
+        const char* rest;
+    } rows[] = {
+        {HOS_COOP_WRAP_SAVE_LOADED, "0x32d8690, (0xd503237f, 0xa9be7bfd, 0xf9000bf3, 0x910003fd)),"},
+        {HOS_COOP_WRAP_SAVE_LOAD_START, "0x32c1db0, (0xd503237f, 0xa9bd7bfd, 0xf9000bf5, 0xa9024ff4)),"},
+        {HOS_COOP_WRAP_TEMP_LOAD_START, "0x32c2080, (0xd503237f, 0xa9bf7bfd, 0x910003fd, 0xb000dea8)),"},
+    };
+    for (const auto& r : rows) {
+        char row[128];
+        std::snprintf(row, sizeof row, "+    (%u, %s", r.id, r.rest);
+        CHECK_MESSAGE(patch.find(row) != std::string::npos, row);
+        // Free in the one wrap space (0005: 1-3, 0013: 4-5, 0010: 16-23, 0014: 24).
+        CHECK(r.id > HOS_COOP_WRAP_ACTION_VERB);
+        CHECK(r.id < 16);
+    }
+    // After 0013's last row, at the table's end.
+    CHECK(patch.find("     (5, 0xc08f0,") != std::string::npos);
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    CHECK(module.find("CoopSave::NoteGameSaveLoad(id != HOS_COOP_WRAP_SAVE_LOADED)") != std::string::npos);
+    CHECK(module.find("CoopSave::SetNativeSaveLoads(loads)") != std::string::npos);
 }
 
 TEST_CASE("hookshot: on Linux the exe exports every function the module finds in it by name") {
