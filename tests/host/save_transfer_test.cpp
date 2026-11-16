@@ -788,7 +788,7 @@ TEST_CASE("save transfer: the played slot comes only from definite signs (writes
     CHECK(p.source() == S::write);
     CHECK_FALSE(p.new_game(true, true));
   }
-  SUBCASE("System > Load, Try Again: a new load's read replaces the slot; a temporary load keeps it") {
+  SUBCASE("System > Load, Try Again: a new load's read replaces the slot, a temporary load keeps it") {
     save::PlayedSlot p;
     fs_.mark(p, true);
     fs_.open(a, false);
