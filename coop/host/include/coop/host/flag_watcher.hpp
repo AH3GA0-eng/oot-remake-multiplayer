@@ -66,7 +66,6 @@ struct FlagStats {
   std::uint64_t title_loads = 0;       // player: a load through the title, fewer flags back than kSaveLoadMin (#96)
   std::uint64_t offline_loads = 0;     // player: the title was up while not connected, our changes put back (#96)
   std::uint64_t one_way_restores = 0;  // a one-way Bool (map, compass) back to 0: written back
-  std::uint64_t one_way_fights = 0;    // one-way flags left to the game: it took each restore back at once
   std::uint64_t down_only_kept = 0;    // a group's 1 not written over our 0 (share_down_only)
   std::uint64_t up_only_kept = 0;      // a group's 0 not written over our 1 (share_up_only)
   std::uint64_t host_resets = 0;       // host: FLAG_RESETs sent after its save load
@@ -152,14 +151,6 @@ class FlagWatcher {
   // wrote back to 1 since the last call, for the log (issue 146). Each key
   // only the first time it is put back; stats().one_way_restores counts all.
   std::vector<FlagKey> take_one_way_restores() { return std::exchange(one_way_restored_, {}); }
-  // A one-way flag whose restore the game took back again at once, kOneWayFightRestores times in a row
-  // (each within kOneWayFightFrames of the last): the game keeps its own copy and writes it every frame
-  // (forest-temple-a: after a host's save load mid-session, the Forest Temple's floors were put back and
-  // taken back once a frame, 4,000 writes, until the game closed). That flag is left to the game until the
-  // next load or session; these are the keys given up since the last call, for the log.
-  std::vector<FlagKey> take_one_way_fights() { return std::exchange(one_way_fought_, {}); }
-  static constexpr int kOneWayFightRestores = 5;
-  static constexpr std::uint64_t kOneWayFightFrames = 30;
   static constexpr std::size_t kMaxWrittenForOthers = 1024;
 
   // The counts (small keys, ...) our game itself lowered since the last call,
@@ -282,7 +273,8 @@ class FlagWatcher {
   // richer save no longer sends its items into the host's file (player report
   // #96). A title while not connected puts back, at the next connection's
   // first frame with Link, what our game changed meanwhile. Never set on the
-  // emulator (the old rule holds there); the host's loads never use it.
+  // emulator (the old rule holds there). A host's load window with the title
+  // in it is a save load too (forest-temple-a): its FLAG_RESET goes out.
   void set_title(bool up) {
     title_up_ = up;
     if (up) title_seen_ = true;
@@ -396,18 +388,9 @@ class FlagWatcher {
   // holds at 0, or lower an up-only Bool it holds at 1; the group's value
   // here becomes ours.
   bool keeps_own(FlagStore& store, const protocol::FlagEntry& entry);
-  // A one-way restore about to be made for `key`: true when it is the game's fight (take_one_way_fights).
-  bool one_way_fight(FlagKey key);
   std::vector<FlagKey> written_for_others_;  // take_written_for_others
   std::vector<FlagKey> one_way_restored_;    // take_one_way_restores
   std::set<FlagKey> one_way_told_;           // keys take_one_way_restores gave once
-  struct OneWayFight {
-    std::uint64_t last = 0;  // frame of the last restore
-    int streak = 0;          // restores in a row, each within kOneWayFightFrames of the last
-  };
-  std::map<FlagKey, OneWayFight> one_way_streaks_;  // until the next load or session
-  std::set<FlagKey> one_way_left_;                  // given up: left to the game until the next load or session
-  std::vector<FlagKey> one_way_fought_;             // take_one_way_fights
   std::vector<FlagKey> own_count_drops_;     // take_own_count_drops
   struct Guard {
     std::int32_t held = 0;          // own gain not sent yet

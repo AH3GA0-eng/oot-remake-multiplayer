@@ -240,25 +240,8 @@ void FlagWatcher::set_role(FlagRole role) {
   }
 }
 
-bool FlagWatcher::one_way_fight(FlagKey key) {
-  OneWayFight& f = one_way_streaks_[key];
-  f.streak = f.streak != 0 && frames_ - f.last <= kOneWayFightFrames ? f.streak + 1 : 1;
-  f.last = frames_;
-  if (f.streak <= kOneWayFightRestores) return false;
-  // The game took it back after each of the last kOneWayFightRestores restores: it writes its own value
-  // every frame, so another restore only starts the next round. Its value stands until a load.
-  one_way_streaks_.erase(key);
-  one_way_left_.insert(key);
-  one_way_fought_.push_back(key);
-  ++stats_.one_way_fights;
-  return true;
-}
-
 void FlagWatcher::set_loading(bool loading) {
   if (loading) {
-    // A load may end the game's own copy: one-way restores are tried again.
-    one_way_streaks_.clear();
-    one_way_left_.clear();
     loading_ = true;
     settle_left_ = kSettleFrames;
   } else {
@@ -295,8 +278,6 @@ void FlagWatcher::reset() {
     g.put_back = 0;
   }
   raced_.clear();
-  one_way_streaks_.clear();
-  one_way_left_.clear();
   resend_pending_ = role_ == FlagRole::player && !pending_.empty();
   check_offline_ = true;  // the title seen meanwhile (set_title) is looked at by the next frame()
 }
@@ -555,14 +536,13 @@ bool FlagWatcher::write_exact(FlagStore& store, const FlagEntry& entry) {
 
 void FlagWatcher::see_save_load() {
   if (!window_ || !loading_ || moved_) return;
-  // Flags back, and the title: no scene for kTitleFrames, or Hookshot's title menu seen in the window (its
-  // screens may read a scene: forest-temple-a, a host's save load mid-session through it went unseen).
-  const bool flags_back = static_cast<int>(back_keys_.size()) >= kSaveLoadMin &&
-                          (no_scene_frames_ >= kTitleFrames || window_title_);
-  // A player's load through Hookshot's title menu (set_title) is a save load
-  // even when its save only goes forward of the group's (player report #96:
-  // a guest's own richer save). The host's loads keep the flags-back rule.
-  const bool title = role_ == FlagRole::player && window_title_;
+  const bool flags_back = static_cast<int>(back_keys_.size()) >= kSaveLoadMin && no_scene_frames_ >= kTitleFrames;
+  // A load through Hookshot's title menu (set_title) is a save load even when
+  // its save only goes forward of the group's (player report #96: a guest's
+  // own richer save), and for the host too (forest-temple-a: a host's load
+  // mid-session through the title was never seen, so no FLAG_RESET went out
+  // and the old save's maps and floors were put into the new save).
+  const bool title = window_title_;
   if (!flags_back && !title) return;
   if (!flags_back) ++stats_.title_loads;
   moved_ = true;
@@ -945,8 +925,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
     const bool bool_drop = before.kind == protocol::FlagKind::boolean && before.value != 0 && now->value == 0;
     const bool bits_drop = before.kind == protocol::FlagKind::uint32 && now->kind == protocol::FlagKind::uint32 &&
                            (before.value & ~now->value) != 0;
-    if (!loading_ && (bool_drop || bits_drop) && store.is_one_way(key) && !one_way_left_.contains(key) &&
-        !one_way_fight(key)) {
+    if (!loading_ && (bool_drop || bits_drop) && store.is_one_way(key)) {
       // A map or compass the game took back (issue 146: both players opened
       // the Deku Tree's map chest and neither kept the map). Never right for
       // a one-way Bool: put it back, send nothing.

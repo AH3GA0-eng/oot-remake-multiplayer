@@ -890,14 +890,6 @@ public:
                      "({} put back this session)",
                      k.hash, session_->one_way_restores());
         }
-        // forest-temple-a: a one-way flag the game took back after every restore (its own copy, written
-        // each frame): left to the game until the next load, so co-op stops writing it once a frame.
-        for (const auto& k : session_->take_one_way_fights()) {
-            LOG_INFO(Core,
-                     "coop: flags: {:#010x} (dungeon map, compass or floors) taken back by the game after each of "
-                     "{} put-backs: left to the game until the next load",
-                     k.hash, coop::host::FlagWatcher::kOneWayFightRestores);
-        }
         for (const auto& g : session_->take_counts_guarded()) {  // issue 89 (docs/items.md)
             LOG_INFO(Core,
                      "coop: flags: count {:#010x} +{} here was a pickup another player had taken: "
@@ -1896,11 +1888,10 @@ private:
         }
         flag_traffic_sum_ = sum;
         LOG_INFO(Core, "coop: flags: traffic: {} changes sent, {} answers sent, {} entries came, {} written here "
-                       "({} count deltas, {} load reverts, {} one-way put back ({} left to the game), {} from a host reset), "
-                       "{} kept over "
+                       "({} count deltas, {} load reverts, {} one-way put back, {} from a host reset), {} kept over "
                        "our own, {} not shared, {} write failures, {} messages not for us, {} bad snapshots",
                  s.changes_sent, s.answers_sent, s.entries_in, s.applied, s.deltas_added, s.load_reverts,
-                 s.one_way_restores, s.one_way_fights, s.reset_applied, s.kept_local, s.not_shared, s.write_failures, s.ignored_messages,
+                 s.one_way_restores, s.reset_applied, s.kept_local, s.not_shared, s.write_failures, s.ignored_messages,
                  s.bad_snapshots);
     }
     CoopEvery::Every flag_traffic_log_{10 * CoopEvery::kSecondUs};
