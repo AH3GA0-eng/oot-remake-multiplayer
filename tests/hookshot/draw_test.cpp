@@ -129,6 +129,27 @@ TEST_CASE("hookshot draw: chat at the bottom left, oldest first, long lines wrap
     CHECK(c.Of("rect").size() == texts.size());  // a dark box behind each row
 }
 
+TEST_CASE("hookshot draw: a long notice breaks after a space, and the space is not drawn") {
+    Canvas c(1280, 720);
+    CoopDraw::Scene s;
+    std::string words;
+    for (int i = 0; i < 60; ++i) {
+        words += (i == 0 ? "" : " ") + std::string("word");
+    }
+    s.chat = {{words, true, 1.0f}};
+    CoopDraw::Draw(c.d, s);
+    const auto texts = c.Of("text");
+    REQUIRE(texts.size() > 1);
+    std::size_t letters = 0;
+    for (const auto& t : texts) {
+        // a row ends at a word: its backing is no wider than its text
+        CHECK(t.text.back() != ' ');
+        CHECK(t.text.front() != ' ');
+        letters += t.text.size() - static_cast<std::size_t>(std::count(t.text.begin(), t.text.end(), ' '));
+    }
+    CHECK(letters == 60 * 4);   // no word lost
+}
+
 TEST_CASE("hookshot draw: a chat line in Chinese wraps between characters") {
     // Chinese has no spaces to break at, so a row breaks where the next character
     // would pass the room (the difficulty notice is ~70 characters wide).

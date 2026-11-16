@@ -147,7 +147,12 @@ std::vector<std::string> Wrapped(const HosCoopDraw& d, float px, const std::stri
         if (!line.empty() && d.text_width(d.user, px, next.c_str()) > limit) {
             // break here: after the last space when there was one, else between characters
             if (!last_break.empty() && last_break.size() > line.size() / 4) {
-                out.push_back(last_break);
+                // the space it broke at is not drawn: the chat's backing is as wide as the text
+                std::string kept = last_break;
+                while (!kept.empty() && kept.back() == ' ') {
+                    kept.pop_back();
+                }
+                out.push_back(kept);
                 line = line.substr(last_break.size());
                 while (!line.empty() && line.front() == ' ') {
                     line.erase(0, 1);
