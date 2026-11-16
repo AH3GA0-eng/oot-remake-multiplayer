@@ -221,7 +221,16 @@ bool IsOwnPuzzle(std::string_view name) {
     // Ruto, so she dropped as soon as she was picked up, and again when the
     // owner left the room (a new owner). Each game runs its own Ruto; the
     // room flags she sets (switches, rooms cleared) stay shared.
-    return name.starts_with("Enemy_Scrub_Deku_Brothers") ||
+    // Player report #100 (GitHub #253). A Business Scrub
+    // (Enemy_Scrub_Business, _Leaf, _Seed) is a shop: once beaten, its talk
+    // event (Event/EventFlow/Enemy_Scrub_Business_Common) turns it to our
+    // Link (EventScrubBusinessTurnAround), plays its 'Talk' animations and
+    // makes the sale in that game's own event, and its one-time sale flags
+    // (Lostwood_Enemy_Scrub_Business_DekuNutsPouch_01 ...) are each player's.
+    // Shared as an enemy copy, the owner's animations and place were played
+    // over a scrub our Link had beaten and was talking to (the fishman's and
+    // Ruto's case). Each game runs its own; the items it sells stay shared.
+    return name.starts_with("Enemy_Scrub_Deku_Brothers") || name.starts_with("Enemy_Scrub_Business") ||
            name.starts_with("Enemy_Scrub_ForestStage") || name.starts_with("Npc_Hylia_Fishman") ||
            name.starts_with("Npc_Zora_Ruto_Child");
 }

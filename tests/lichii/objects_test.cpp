@@ -443,10 +443,20 @@ TEST_CASE("objects: order-puzzle scrubs are each game's own (issue 149)") {
     CHECK_FALSE(CoopObjects::IsShared("Enemy_Scrub_Deku_Brothers"));
     CHECK(CoopObjects::IsOwnPuzzle("Enemy_Scrub_Deku_Brothers"));
     CHECK_FALSE(CoopObjects::IsShared("Enemy_Scrub_ForestStage"));
-    // The lone scrubs and business scrubs stay shared enemies.
+    // The lone scrubs stay shared enemies.
     CHECK(CoopObjects::IsShared("Enemy_Scrub_Deku"));
-    CHECK(CoopObjects::IsShared("Enemy_Scrub_Business_Seed"));
     CHECK_FALSE(CoopObjects::IsOwnPuzzle("Enemy_Scrub_Deku"));
+}
+
+TEST_CASE("objects: Business Scrubs are each game's own shop (GitHub 253)") {
+    for (const char* name : {"Enemy_Scrub_Business", "Enemy_Scrub_Business_Leaf", "Enemy_Scrub_Business_Seed"}) {
+        CAPTURE(name);
+        CHECK_FALSE(CoopObjects::IsShared(name));
+        CHECK(CoopObjects::IsOwnPuzzle(name));
+    }
+    // Other scrubs and enemies are not caught by the prefix.
+    CHECK(CoopObjects::IsShared("Enemy_Scrub_Mad"));
+    CHECK(CoopObjects::IsShared("Enemy_Scrub_Deku"));
 }
 
 TEST_CASE("objects: Jabu-Jabu's child Ruto is each game's own, so a carried Ruto is never put down by a copy (#64)") {
