@@ -346,43 +346,7 @@ public:
         pickups_given_ = 0;
         // Called by service() on the network thread, with the client.
         session.on_event = [this](const coop::net::Event& event, coop::net::Client& client) {
-            Log(event);
-            CoopPuppet::OnEvent(event);
-            CoopPose::OnEvent(event, SteadyMs());
-            Chat(event, client);
-            CoopObjects::OnEvent(event);
-            CoopSpawn::OnEvent(event);
-            CoopDrops::OnEvent(event);
-            CoopTime::OnEvent(event);
-            CoopBoss::OnEvent(event);  // docs/dungeons-boss.md
-            CoopTeleport::OnEvent(event, client);  // /teleport (docs/setup.md "Chat commands")
-            CoopPvp::OnEvent(event, client);  // PvP (docs/play-online.md "PvP")
-            CoopDbno::OnEvent(event, client);  // down but not out (docs/play-online.md)
-            CoopDifficulty::OnEvent(event, client);  // docs/play-online.md "Difficulty"
-            CoopModShare::OnEvent(event, client);  // mods (docs/mods.md "Mods in co-op")
-            CoopSave::OnEvent(event, client);  // the host's save for the guests (issue 167)
-            CoopHud::OnEvent(event);  // the others' hearts for the HUD (PLAYER_LIFE)
-            CoopLookShare::OnEvent(event, client);  // looks of several parts (PLAYER_LOOK, coop_look_share.h)
-            if (event.kind == coop::net::EventKind::message) {  // deku-dungeon-2
-                if (const auto* e = std::get_if<coop::protocol::DungeonEvent>(&event.message)) {
-                    std::lock_guard lock(dungeon_events_mutex_);
-                    // A story cutscene's start (coop_shared_scenes.h) has its own queue.
-                    auto& in = CoopSharedScenes::IsShared(e->name) ? story_events_in_ : dungeon_events_in_;
-                    if (in.size() < 16) {
-                        in.push_back(*e);
-                    }
-                }
-            }
-            CoopRide::OnEvent(event);  // their horses (PLAYER_RIDE, issue 199)
-            CoopLobby::OnEvent(event, client);  // the Lobby's mutes and the host's actions
-            // Their voices (VOICE_FRAME, docs/voice.md), but one we muted ourselves (the Lobby).
-            if (const auto* v = event.kind == coop::net::EventKind::message
-                                    ? std::get_if<coop::protocol::VoiceFrame>(&event.message)
-                                    : nullptr;
-                v == nullptr || !CoopLobby::VoiceHidden(v->player_number)) {
-                CoopVoice::OnEvent(event);
-            }
-            CoopLocalNet::OnEvent(event);  // split screen's seats in the session (coop_local_net.h)
+            OnSessionEvent(event, client, false);
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
                          EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_AS"));
@@ -485,6 +449,54 @@ public:
         }
         thread_ = std::thread([this] { Run(); });
         return true;
+    }
+
+    // Each event from the server, to every part of co-op. `left`: the player left from the menu while connected
+    // (Run's end): the client sends no event then, so the parts get a `disconnected` here and forget the
+    // session as on a drop (the difficulty, PvP, down but not out, ...), and playing on alone is the game as
+    // it is. Not logged or put in the chat as a lost connection. The network thread, with the client.
+    void OnSessionEvent(const coop::net::Event& event, coop::net::Client& client, bool left) {
+        if (!left) {
+            Log(event);
+        }
+        CoopPuppet::OnEvent(event);
+        CoopPose::OnEvent(event, SteadyMs());
+        if (!left) {
+            Chat(event, client);
+        }
+        CoopObjects::OnEvent(event);
+        CoopSpawn::OnEvent(event);
+        CoopDrops::OnEvent(event);
+        CoopTime::OnEvent(event);
+        CoopBoss::OnEvent(event);  // docs/dungeons-boss.md
+        CoopTeleport::OnEvent(event, client);  // /teleport (docs/setup.md "Chat commands")
+        CoopPvp::OnEvent(event, client);  // PvP (docs/play-online.md "PvP")
+        CoopDbno::OnEvent(event, client);  // down but not out (docs/play-online.md)
+        CoopDifficulty::OnEvent(event, client);  // docs/play-online.md "Difficulty"
+        CoopModShare::OnEvent(event, client);  // mods (docs/mods.md "Mods in co-op")
+        CoopSave::OnEvent(event, client);  // the host's save for the guests (issue 167)
+        CoopHud::OnEvent(event);  // the others' hearts for the HUD (PLAYER_LIFE)
+        CoopLookShare::OnEvent(event, client);  // looks of several parts (PLAYER_LOOK, coop_look_share.h)
+        if (event.kind == coop::net::EventKind::message) {  // deku-dungeon-2
+            if (const auto* e = std::get_if<coop::protocol::DungeonEvent>(&event.message)) {
+                std::lock_guard lock(dungeon_events_mutex_);
+                // A story cutscene's start (coop_shared_scenes.h) has its own queue.
+                auto& in = CoopSharedScenes::IsShared(e->name) ? story_events_in_ : dungeon_events_in_;
+                if (in.size() < 16) {
+                    in.push_back(*e);
+                }
+            }
+        }
+        CoopRide::OnEvent(event);  // their horses (PLAYER_RIDE, issue 199)
+        CoopLobby::OnEvent(event, client);  // the Lobby's mutes and the host's actions
+        // Their voices (VOICE_FRAME, docs/voice.md), but one we muted ourselves (the Lobby).
+        if (const auto* v = event.kind == coop::net::EventKind::message
+                                ? std::get_if<coop::protocol::VoiceFrame>(&event.message)
+                                : nullptr;
+            v == nullptr || !CoopLobby::VoiceHidden(v->player_number)) {
+            CoopVoice::OnEvent(event);
+        }
+        CoopLocalNet::OnEvent(event);  // split screen's seats in the session (coop_local_net.h)
     }
 
     // `quiet`: no logging, for the end of the program, when the log may be gone.
@@ -1661,9 +1673,15 @@ private:
             }
             session_->wait(2);
         }
-        session_->with_client([](coop::net::Client& c) {
+        session_->with_client([&](coop::net::Client& c) {
+            const bool was_connected = c.state() == coop::net::State::connected;
             c.stop();
             c.service(0);
+            if (was_connected) {  // solo after a session: nothing of it stays (OnSessionEvent)
+                coop::net::Event left;
+                left.kind = coop::net::EventKind::disconnected;
+                OnSessionEvent(left, c, true);
+            }
         });
         if (!quiet_) {
             LOG_INFO(Core, "coop: stopped");
