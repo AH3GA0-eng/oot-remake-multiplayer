@@ -185,7 +185,9 @@ class Planner {
 // Try Again). Only definite signs set the slot:
 // - a write: the game saves into the slot it plays;
 // - a read inside a load window: the save being loaded (a load from temporary storage, Try Again's, opens none:
-//   the slot stays the one played);
+//   the slot stays the one played). Each open and each window mark carries patch 0025's count of opens at that
+//   moment, so the order holds however the marks (game thread) and the polled opens (once a frame) arrive: a read
+//   counted after the window's start is inside it, one counted before is not;
 // - a read with no load windows on this runtime (no patch 0024): the last read when the load is seen.
 // The title's menu (a new pick follows) forgets the slot; after it, a load with no read in its window leaves it
 // unknown, and a game entered with no load since the title is a new game (nothing saved yet).
@@ -193,27 +195,33 @@ class PlayedSlot {
  public:
   using Path = std::filesystem::path;
   enum class Source : std::uint8_t { none, write, load_read, last_read };
-  // An open of `slot_dir`'s progress.sav (`write`: opened for writing).
-  void on_open(const Path& slot_dir, bool write) {
+  // An open of `slot_dir`'s progress.sav (`write`: opened for writing); `opens`: the count with it.
+  void on_open(const Path& slot_dir, bool write, unsigned opens) {
     if (write) {
       set(slot_dir, Source::write);
-    } else if (in_window_) {
+    } else if (in_window_ && opens != window_opens_) {
       window_read_ = slot_dir;
     } else {
       last_read_ = slot_dir;
     }
   }
-  // Patch 0024's load window: a save load starts (`start`) or the save is in.
-  void on_load_window(bool start) {
+  // Patch 0024's load window: a save load starts (`start`) or the save is in, with the opens as they were then
+  // (`opens`, the last one's `slot_dir` and `write`).
+  void on_load_window(bool start, unsigned opens, const Path& slot_dir, bool write) {
     windows_ = true;
     if (start) {
       in_window_ = true;
+      window_opens_ = opens;
       window_read_.reset();
       return;
     }
     in_window_ = false;
     loaded_ = true;
-    if (window_read_) set(*window_read_, Source::load_read);
+    if (opens != window_opens_ && !write && !slot_dir.empty()) {
+      set(slot_dir, Source::load_read);   // the game read a slot between the two marks: the one it loaded
+    } else if (window_read_) {
+      set(*window_read_, Source::load_read);
+    }
     window_read_.reset();
   }
   // The host's save load as the flag watcher sees it (no window on this runtime: the last read is the one loaded).
@@ -227,6 +235,8 @@ class PlayedSlot {
     source_ = Source::none;
     loaded_ = false;
     last_read_.reset();
+    in_window_ = false;   // (the game's own start begins a load with no save in after it: closed here)
+    window_read_.reset();
   }
   const std::optional<Path>& slot() const { return slot_; }
   Source source() const { return source_; }
@@ -245,6 +255,7 @@ class PlayedSlot {
   std::optional<Path> last_read_;
   std::optional<Path> window_read_;
   bool in_window_ = false;
+  unsigned window_opens_ = 0;  // the opens at the window's start
   bool windows_ = false;  // patch 0024's windows came at least once
   bool loaded_ = false;   // a load since the title
 };

@@ -2,6 +2,7 @@
 
 #include "coop_save.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <deque>
@@ -41,7 +42,12 @@ fs::path g_dir;      // the folder the game opened for its account save
 save::Planner g_planner;
 // Player report 120: the slot our game plays (patch 0025's opens, patch 0024's load windows), sent to the guests.
 save::PlayedSlot g_played;
-std::function<unsigned(std::string&, bool&)> g_slot_opens;   // SetSlotOpens (Hookshot)
+std::atomic<SlotOpenedFn> g_slot_opened{nullptr};   // SetSlotOpens (Hookshot's patch 0025)
+struct SlotOpens {
+    unsigned opens = 0;   // the count of opens so far (0: none)
+    fs::path dir;         // the last one's slot folder
+    bool write = false;
+};
 unsigned g_slot_opens_seen = 0;
 bool g_title_seen = false;   // the title's menu was up in this run (PlayedSlot::new_game)
 bool g_resync = false;        // RequestResync: taken by the next OnFrame
@@ -295,7 +301,26 @@ bool SessionLive() {
     return g_live;
 }
 
+namespace {
+std::atomic<unsigned> g_load_starts{0};
+std::atomic<long long> g_load_start_ms{0};
+std::atomic<unsigned> g_loads{0};
+std::atomic<long long> g_game_over_ms{0};  // NoteGameOverSave; 0: none, or the title came since
+std::atomic<bool> g_load_retry{false};     // the last save in came after a fresh Game Over mark
+std::atomic<bool> g_keeper_load{false};
+std::atomic<bool> g_native_loads{false};
+
+long long NowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+}  // namespace
+
 void NoteTitle(bool title_up) {
+    if (title_up) {
+        g_game_over_ms.store(0, std::memory_order_relaxed);  // Game Over's Quit Game: the next load is the player's pick
+    }
     std::lock_guard lock(g_mutex);
     if (title_up && !g_title_up) {
         g_played.on_title();   // (a new pick follows: a file, or New Game)
@@ -304,9 +329,8 @@ void NoteTitle(bool title_up) {
     g_title_up = title_up;
 }
 
-void SetSlotOpens(std::function<unsigned(std::string&, bool&)> opens) {
-    std::lock_guard lock(g_mutex);
-    g_slot_opens = std::move(opens);
+void SetSlotOpens(SlotOpenedFn opened) {
+    g_slot_opened.store(opened, std::memory_order_release);
 }
 
 namespace {
@@ -320,26 +344,57 @@ const char* SourceName(save::PlayedSlot::Source s) {
     return "not known";
 }
 
-// Under g_mutex: a change of the played slot, logged once.
+// Under g_mutex: a change of the played slot, logged once, in a session only (solo writes no co-op save lines).
 void LogPlayed(const std::optional<fs::path>& before) {
-    if (g_played.slot() == before) return;
+    if (g_played.slot() == before || !g_live) return;
     if (g_played.slot()) {
         LOG_INFO(Core, "coop: save: our game plays {} ({})", g_played.slot()->filename().string(),
                  SourceName(g_played.source()));
     }
 }
+
+// Patch 0025's opens now (no lock of ours: the exe's own lock, held for a copy).
+SlotOpens ReadSlotOpens() {
+    SlotOpens o;
+    if (const auto opened = g_slot_opened.load(std::memory_order_acquire)) {
+        char buf[1024];
+        int w = 0;
+        o.opens = opened(buf, sizeof buf, &w);
+        if (o.opens != 0) o.dir = fs::path(buf).lexically_normal();
+        o.write = w != 0;
+    }
+    return o;
+}
+
+// The game thread's load-window marks (NoteGameSaveLoad), each with patch 0025's opens at that moment, for the next
+// PollSlotOpens. Their own small lock: only a push or a swap under it, never g_mutex or disk work (the game's save
+// load never waits on the host's save reads).
+std::mutex g_window_mutex;
+std::vector<std::pair<bool, SlotOpens>> g_windows;
+
+void NoteLoadWindowMark(bool start) {
+    auto opens = ReadSlotOpens();
+    std::lock_guard lock(g_window_mutex);
+    if (g_windows.size() < 64) g_windows.emplace_back(start, std::move(opens));
+}
 }  // namespace
 
 void PollSlotOpens() {
+    std::vector<std::pair<bool, SlotOpens>> windows;
+    {
+        std::lock_guard lock(g_window_mutex);
+        windows.swap(g_windows);
+    }
+    const SlotOpens now = ReadSlotOpens();
     std::lock_guard lock(g_mutex);
-    if (!g_slot_opens) return;
-    std::string dir;
-    bool write = false;
-    const unsigned opens = g_slot_opens(dir, write);
-    if (opens == g_slot_opens_seen || dir.empty()) return;
-    g_slot_opens_seen = opens;   // (several opens in one frame: the last counts; the game opens one slot per load)
     const auto before = g_played.slot();
-    g_played.on_open(fs::path(dir).lexically_normal(), write);
+    // The window marks first, each with the opens as they were at it: a load's read is never lost, nor a read from
+    // before the load taken as inside it, whatever the frame's timing (save::PlayedSlot counts the opens).
+    for (const auto& [start, at] : windows) g_played.on_load_window(start, at.opens, at.dir, at.write);
+    if (now.opens != g_slot_opens_seen && !now.dir.empty()) {
+        g_slot_opens_seen = now.opens;   // (several opens in one frame: the last counts; one slot per load)
+        g_played.on_open(now.dir, now.write, now.opens);
+    }
     LogPlayed(before);
 }
 
@@ -353,11 +408,45 @@ bool CanResync() {
     return g_guest_live && g_root && g_remount;
 }
 
-void NoteLoadWindow(bool start) {
-    std::lock_guard lock(g_mutex);
-    const auto before = g_played.slot();
-    g_played.on_load_window(start);
-    LogPlayed(before);
+void NoteGameSaveLoad(bool start) {
+    NoteLoadWindowMark(start);   // player report 120: the slot the game loads (save::PlayedSlot)
+    const long long now = NowMs();
+    if (start) {
+        g_load_starts.fetch_add(1, std::memory_order_relaxed);
+        g_load_start_ms.store(now, std::memory_order_relaxed);
+        return;
+    }
+    const long long over = g_game_over_ms.exchange(0, std::memory_order_relaxed);
+    g_load_retry.store(over != 0 && now - over <= kGameOverFreshMs, std::memory_order_relaxed);
+    g_loads.fetch_add(1, std::memory_order_relaxed);
+    g_keeper_load.store(true, std::memory_order_relaxed);
+}
+
+void NoteGameOverSave() {
+    g_game_over_ms.store(NowMs(), std::memory_order_relaxed);
+}
+
+void SetNativeSaveLoads(bool on) {
+    g_native_loads.store(on, std::memory_order_relaxed);
+}
+
+bool NativeSaveLoads() {
+    return g_native_loads.load(std::memory_order_relaxed);
+}
+
+GameSaveLoads TakeGameSaveLoads() {
+    GameSaveLoads out;
+    out.starts = g_load_starts.exchange(0, std::memory_order_relaxed);
+    if (out.starts != 0 && NowMs() - g_load_start_ms.load(std::memory_order_relaxed) > kGameSaveLoadFreshMs) {
+        out.starts = 0;  // (the game's own start, before any session: no load of ours)
+    }
+    out.loads = g_loads.exchange(0, std::memory_order_relaxed);
+    out.retry = out.loads != 0 && g_load_retry.load(std::memory_order_relaxed);
+    return out;
+}
+
+bool TakeKeeperSaveLoad() {
+    return g_keeper_load.exchange(false, std::memory_order_relaxed);
 }
 
 bool TitleUp() {
