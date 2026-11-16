@@ -42,6 +42,7 @@ add_executable(coop_tests
   host/save_transfer_test.cpp
   host/session_test.cpp
   host/scene_test.cpp
+  host/event_owner_test.cpp
   overlay/overlay_test.cpp
   overlay/map_icons_test.cpp
   lichii/camera_test.cpp

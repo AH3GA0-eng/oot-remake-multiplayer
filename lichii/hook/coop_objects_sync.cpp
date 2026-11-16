@@ -2326,12 +2326,15 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         // runs, so the other games see them move as they do here. Row 97: so
         // is every actor the event is with, of any kind and at any distance
         // (SetEvent): its own game runs it for the event.
+        // G1: another player's event here keeps only its bound actors, and claims none.
         if (in_event_) {
             const PartnerWhy why = EventPartnerWhy(o);
-            if (why != PartnerWhy::none) {
+            if (why == PartnerWhy::member || (event_ours_ && why != PartnerWhy::none)) {
                 o.event_until = now_us + kEventKeepUs;
                 o.event_why = why;
-                o.chase_until = std::max(o.chase_until, o.event_until);
+                if (event_ours_) {
+                    o.chase_until = std::max(o.chase_until, o.event_until);
+                }
             }
         }
         if (o.chase_until > now_us && !o.fish) {

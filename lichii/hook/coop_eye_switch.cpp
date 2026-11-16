@@ -290,6 +290,9 @@ std::optional<CoopPuppet::Call> Switcher::Frame(CoopPuppet::Guest& guest, std::u
         notes_.emplace_back(text);
     }
     t.set = true;
+    if (on_set_) {
+        on_set_(t.event);
+    }
     next_ = Next::execute;
     return CoopLogicSet::Execute(main, block_);
 }

@@ -84,6 +84,7 @@
 #include "coop_difficulty.h"
 #include "coop_drops.h"
 #include "coop_every.h"
+#include "coop_event_owner.h"  // G1: whose the running event is
 #include "coop_dungeon.h"
 #include "coop_quest.h"
 #include "coop_story.h"
@@ -295,6 +296,28 @@ void MendStory(EmulatorMemory& memory, MendClocks& since_us) {
     }
 }
 
+// G1 (coop/host/event_owner.hpp): whose the running event is, logged on each change. Once a frame,
+// from the session's frame or the frame without one (only one of them runs in a frame).
+void ApplyEventOwner(coop::host::PlayerReading& reading) {
+    static std::uint64_t cursor = 0;
+    static int said = -1;
+    const std::uint64_t now_us = CoopEvery::NowUs();
+    for (const auto& r : CoopLiveEvents::TheGameRequests().Since(cursor)) {
+        if (r.taken) CoopEventOwner::GameAsked(r.name, now_us);
+    }
+    const auto whose = CoopEventOwner::Apply(reading, now_us);
+    const int now = reading.event_running.value_or(false) ? static_cast<int>(whose) : -1;
+    if (now != said) {
+        if (now >= 0) {
+            LOG_INFO(Core, "coop: event: the running event is {}{}", coop::host::whose_name(whose),
+                     whose == coop::host::EventWhose::ours
+                         ? " (our Link is in it: the others are hidden, holds apply)"
+                         : " (our Link is not held by it: no hide, no hold, no claim; its actors here act for it)");
+        }
+        said = now;
+    }
+}
+
 class Coop {
 public:
     // main's address in a game process (split screen with co-op off: LocalFrameOff below).
@@ -413,6 +436,14 @@ public:
             return c;
         });
         if (live_events_) {
+            {
+                // G1: every event this requester asks for is another player's (a held live event, a
+                // shared scene joined): the hook's tracker marks the run it starts (coop_event_owner.h).
+                std::lock_guard lock(live_mutex_);
+                const auto mark = [](const std::string& name) { CoopEventOwner::CoopAsked(name, CoopEvery::NowUs()); };
+                live_requester_.OnTaken(mark);
+                eye_switch_.OnSet(mark);
+            }
             CoopSvc::AddCaller(60, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
                                           std::uint64_t) {
                 std::lock_guard lock(live_mutex_);
@@ -670,7 +701,8 @@ public:
                 hold_scene_.empty() ? std::nullopt : std::optional<std::string>(hold_scene_);
             // Issue 144 (coop_scrub_talk.h): a scrub's destroy flag waits while our
             // Link is in an event (its talk), or the room graph deletes the scrub mid-talk.
-            if (scrub_talk_on_ && !scrub_near_only_ && scrub_talk_.Frame(reading && reading->event_running.value_or(false),
+            // G1: only an event our Link is in (not another player's replayed here, not the Ocarina).
+            if (scrub_talk_on_ && !scrub_near_only_ && scrub_talk_.Frame(OurLinkInEvent(reading),
                                   CoopEvery::NowUs())) {
                 LOG_INFO(Core, "coop: dungeon: {}", scrub_talk_.Holding()
                              ? "our Link is in an event: Deku Scrub destroy flags from others wait"
@@ -696,7 +728,7 @@ public:
             // event_running is read here directly: scrub_talk_ is not updated with
             // LICHII_COOP_SCRUB_TALK_HOLD=0 or =near.
             CoopScrubSale::Here sale_here;
-            sale_here.in_event = talk.Holding() || (reading && reading->event_running.value_or(false));
+            sale_here.in_event = talk.Holding() || OurLinkInEvent(reading);
             sale_here.busy = CoopScrubSale::TheBusy().Mask(CoopEvery::NowUs());
             if (reading && reading->scene) {
                 sale_here.known = true;
@@ -1032,7 +1064,7 @@ public:
                      g.count.hash, g.amount);
         }
         {  // issue 195: a chest another player had opened, opened again here
-            const bool in_event = reading && reading->event_running.value_or(false);
+            const bool in_event = OurLinkInEvent(reading);  // G1: our Link's get scene, not another player's event here
             for (unsigned n = CoopObjects::TakeChestsOpenedTwice(); n > 0; --n) {
                 if (session_->expect_doubled_gain()) {
                     LOG_INFO(Core, "coop: flags: a chest another player had opened was opened here too: "
@@ -1128,7 +1160,9 @@ public:
         }
         // Issue 144: changes from the others to actors near our Link wait while
         // our Link is in an event (a talk, a cutscene).
-        CoopObjects::SetLocalEvent(reading && reading->event_running.value_or(false));
+        // G1: any event in our game lets the actors it binds here act for it; only our Link's own
+        // holds near-by changes and claims actors (coop/host/event_owner.hpp).
+        CoopObjects::SetLocalEvent(reading && reading->event_running.value_or(false), OurLinkInEvent(reading));
         {
             // Row 97: which sign says our Link is in an event (PlayerReading::event_running):
             // the event manager's word, or only our Link's own performer (a Deku Scrub's talk
@@ -1146,10 +1180,11 @@ public:
             }
         }
         // Our own event hides the others (puppet, Navi, marker); playing the
-        // Ocarina does not (coop/host/scene.hpp, local_event_hides).
+        // Ocarina does not, nor another player's event replayed here (G1,
+        // coop/host/event_owner.hpp, local_event_hides).
         const bool event =
             reading && coop::host::local_event_hides(
-                           reading->event_running.value_or(false),
+                           reading->event_running.value_or(false), reading->event_whose,
                            reading->animation ? std::optional<std::string_view>(reading->animation->name)
                                               : std::nullopt);
         view.event = event;  // (the map icons, CurrentMapView)
@@ -1588,6 +1623,11 @@ private:
                  p[0], p[1], p[2], clip[0], clip[1], clip[2], clip[3], where);
     }
 
+    // G1: an event our own Link is in (coop/host/event_owner.hpp our_link_in_event).
+    static bool OurLinkInEvent(const std::optional<coop::host::PlayerReading>& reading) {
+        return reading && coop::host::our_link_in_event(reading->event_running.value_or(false), reading->event_whose);
+    }
+
     std::optional<coop::host::PlayerReading> Read(Core::System& system, FrameView& view) {
         auto* process = system.ApplicationProcess();
         if (process == nullptr) {
@@ -1641,9 +1681,11 @@ private:
             view.position = reading->position;
             view.scene = reading->scene;
             view.age = reading->age;
+            ApplyEventOwner(*reading);
         }
         return reading;
     }
+
 
     // The loader's own list (the NSOs it loaded, by file name), else the
     // modules found in memory by their path names. Fritchii v5 maps Ocarina's
@@ -2743,9 +2785,10 @@ void LocalFrameOff(Core::System& system, bool writes) {
     }
     if (!step.Publish(CoopLocalGame::HasSeats())) return;
     if (!full) full = reader.read();   // seats came in this frame's step
+    if (full) ApplyEventOwner(*full);  // G1: the free Ocarina by its event too, not only its animation
     // The extra local players' Players are made (and deleted) by the puppet Director, as online (no remote players).
     const bool event =
-        full && coop::host::local_event_hides(full->event_running.value_or(false),
+        full && coop::host::local_event_hides(full->event_running.value_or(false), full->event_whose,
                                               full->animation ? std::optional<std::string_view>(full->animation->name)
                                                               : std::nullopt);
     CoopPuppet::Publish(full ? base : 0, full ? full->scene : std::nullopt,
