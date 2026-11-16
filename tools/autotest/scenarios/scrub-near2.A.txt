@@ -8,6 +8,9 @@
 # ..._EnemyScrubDekuDestroy_003 (0x60c22ed7) are shared, which is the #144 case. A keeps only
 # the near guard (LICHII_COOP_SCRUB_TALK_HOLD=near); for the both-guards check run it again
 # with that switch removed from this line.
+# B:LICHII_COOP_OBJECTS=0 (lane1-a, run 20261116-001834 INCONCLUSIVE): with enemy sharing on,
+# B's brothers were copies of A's (A owns them, "(ours)" only in A), so B's shots never beat
+# its own One and B never talked. Sharing stays on in A: A's near guard comes from its objects walk.
 # Saves: clear 0xd2f46f66 and 0x60c22ed7 in both lane baselines first
 # (tools/autotest/save_flags.py set ...=0), put them back after (or restore a backup).
 # Timeline: both scripts start together (hookshot.py waits for both renderers). Same moves
@@ -26,7 +29,7 @@
 # on end-A.png). Before/after: LICHII_COOP_SCRUB_TALK_HOLD=0 should show that.
 #! noload
 #! start coop: test warp done
-#! switches LICHII_COOP_SCRUBS=0,LICHII_COOP_SCRUB_TALK_HOLD=near,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! switches LICHII_COOP_SCRUBS=0,B:LICHII_COOP_OBJECTS=0,LICHII_COOP_SCRUB_TALK_HOLD=near,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
 #! timeout 480
 mark start
 warp InsideTheDekuTree Entrance
