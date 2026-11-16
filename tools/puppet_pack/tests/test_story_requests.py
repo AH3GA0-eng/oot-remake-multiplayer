@@ -56,7 +56,7 @@ class StoryRequestsTest(unittest.TestCase):
                          ("PouchSystemActor", "EventTriggerSetForGetWindow", {})],
             "EntryPoint1": [("Player_Event", "EventTriggerPlayerRequestCreateDynamicEquipmentNoRelationPouch", {}),
                             ("Player_Event", "EventDeleteShowItem", {})],  # a model and a put-away: not own
-            "Get_StoneOfWater_RutoGetStone": [("<subflow>", "Dm_SY_Ocarina:PlayOcarinaSequence", {})],
+            "Get_StoneOfWater_RutoGetStone": [("PouchSystemActor", "EventTriggerSetForGetWindow", {})],  # shared
         }
         rows = {r[0]: r[2] for r in sr.table(settings, story, {"StoneOfWater_ElevatedFloor"},
                                              lambda flow, entry: runs.get(entry, []))}
@@ -65,7 +65,7 @@ class StoryRequestsTest(unittest.TestCase):
             "Get_StoneOfWater_TalkWithImpa": "story",
             "Get_StoneOfWater_ShowLetter": "own",
             "Dm_FireTemple_0015": "story",
-            "Get_StoneOfWater_RutoGetStone": "own",
+            "Get_StoneOfWater_RutoGetStone": "story",
             "Get_StoneOfWater_DestroyBoss": "boss",
             "Get_StoneOfFire_AppearBoss": "boss",
             "StoneOfWater_ElevatedFloor": "gimmick",
@@ -79,27 +79,47 @@ class StoryRequestsTest(unittest.TestCase):
                          ["Get_StoneOfFire", "Get_StoneOfForest", "Get_StoneOfWater", "Meet_DekuTree",
                           "Meet_GreatFairy"])
 
-    def test_touches_own(self):
-        self.assertIn("ShowItemBottle", sr.touches_own([("Player_Event", "EventCreateShowItemBottle", {})]))
-        self.assertIn("Dm_SY_Ocarina", sr.touches_own([("<subflow>", "Dm_SY_Ocarina:PlayOcarinaSequence", {})]))
-        self.assertIn("Dm_MelodyGet_Zelda",
-                      sr.touches_own([("EventSystemActor", "EventTransition", {"EventName": "Dm_MelodyGet_Zelda"})]))
-        self.assertIn("IsGet.Bomb", sr.touches_own([("GameDataActor", "EventTriggerSetGameDataBool",
-                                                     {"GameDataName": "IsGet.Bomb"})]))
-        self.assertIn("Rupee", sr.touches_own([("PouchSystemActor", "EventTriggerIncreaseRupee", {})]))
-        self.assertEqual(sr.touches_own([("Player_Event", "EventTriggerHealLifeMax", {}),
-                                         ("Player_Event", "EventDeleteShowItem", {}),
-                                         ("GameDataActor", "EventTriggerSetGameDataBool", {"GameDataName": "Talked"}),
-                                         ("<subflow>", "InitTalk:Sub_InitFlag_Npc", {})]), "")
+    def test_touches_own_only_what_is_the_players_own(self):
+        pouch = "EventTriggerAddOrRemovePouchContent"
+        # Own: a trade (Num < 0), a consumable added, rupees, a bottle's contents, ocarina input, gear from the
+        # pouch, a shop, a chest.
+        self.assertIn("Item_AlarmCucco", sr.touches_own([("PouchSystemActor", pouch,
+                                                          {"Actor": "Item_AlarmCucco", "Num": -1})]))
+        self.assertIn("Item_Arrow", sr.touches_own([("PouchSystemActor", pouch, {"Actor": "Item_Arrow", "Num": 10})]))
+        self.assertIn("rupees", sr.touches_own([("PouchSystemActor", "EventTriggerIncreaseRupee", {})]))
+        self.assertIn("bottle", sr.touches_own([("Player_Event", "EventCreateShowItemBottle", {})]))
+        self.assertIn("ocarina", sr.touches_own([("GameSystemActor", "EventWaitOcarinaInputForSequence", {})]))
+        self.assertIn("pouch", sr.touches_own([("Player_Event", "EventTriggerPlayerEquipDynamicEquipmentFromPouch", {})]))
+        self.assertIn("shop", sr.touches_own([("Npc_EventStarter", "EventTriggerGetItemAtShop", {})]))
+        self.assertIn("chest", sr.touches_own([("EventSystemActor", "EventTransition",
+                                                {"EventName": "Dm_SY_Treasurebox"})]))
+        # Not own: a +1 of an item co-op shares, a tier, a get window, a shown item, the empty bottle every get
+        # passes, rupee UI, hearts, a song subflow by name, a flag.
+        self.assertEqual(sr.touches_own([
+            ("PouchSystemActor", pouch, {"Actor": "Item_Ocarina_Fairy", "Num": 1}),
+            ("PouchSystemActor", pouch, {"Actor": "Item_BulletBag_Large", "Num": 1}),
+            ("PouchSystemActor", pouch, {"Num": 1}),
+            ("PouchSystemActor", "EventTriggerSetForGetWindow", {}),
+            ("PouchSystemActor", "EventTriggerSetHavePlayedGetEvent", {}),
+            ("Player_Event", "EventCreateShowItemFromActorFileName", {}),
+            ("PouchSystemActor", "EventTriggerPushToEmptyBottle", {}),
+            ("UISystemActor", "EventOpenRupeeDisplay", {}),
+            ("Player_Event", "EventTriggerHealLifeMax", {}),
+            ("<subflow>", "Dm_MelodyGet_Zelda:Main", {}),
+            ("GameDataActor", "EventTriggerSetGameDataBool", {"GameDataName": "IsGet.Item_Bottle"}),
+        ]), "")
 
     def test_own_story_names(self):
-        settings = sr.event_settings([setting("Dm_HrlCastle_0050", "Dm_HrlCastle_0050"),
-                                      setting("Dm_Kokiri_0070", "Dm_Kokiri_0070"),
+        settings = sr.event_settings([setting("Dm_HrlCastle_0020", "Dm_HrlCastle_0020"),
+                                      setting("Dm_HrlCastle_0050", "Dm_HrlCastle_0050"),
                                       {"__RowId": "Dm_Kokiri_0150"}])  # a movie only: nothing to read
-        runs = {"Dm_HrlCastle_0050": [("Player_Event", "EventCreateShowItemFromActorFileName", {})]}
-        self.assertEqual(sr.own_story({"Dm_HrlCastle_0050", "Dm_Kokiri_0070", "Dm_Kokiri_0150"}, settings,
+        runs = {"Dm_HrlCastle_0020": [("PouchSystemActor", "EventTriggerAddOrRemovePouchContent",
+                                       {"Actor": "Item_AlarmCucco", "Num": -1})],
+                "Dm_HrlCastle_0050": [("Player_Event", "EventCreateShowItemFromActorFileName", {}),
+                                      ("PouchSystemActor", "EventTriggerSetForGetWindow", {})]}  # a gift: shared
+        self.assertEqual(sr.own_story({"Dm_HrlCastle_0020", "Dm_HrlCastle_0050", "Dm_Kokiri_0150"}, settings,
                                       lambda flow, entry: runs.get(flow, [])),
-                         [("Dm_HrlCastle_0050", "runs Player_Event EventCreateShowItemFromActorFileName")])
+                         [("Dm_HrlCastle_0020", "takes Item_AlarmCucco from the pouch")])
 
     def test_gimmick_names_from_the_hook(self):
         dungeon = '{0xfd1a276a, false, "HavePlayedEvent.StoneOfWater_ElevatedFloor"}, {1, true, "Other.Flag"},'

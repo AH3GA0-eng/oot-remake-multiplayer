@@ -238,17 +238,18 @@ TEST_CASE("a story cutscene asked by its event setting is sent and joined by tha
     CHECK_FALSE(StoryOfRequest("Npc_Kokiri_Mido_Child").has_value());                     // a talk
     CHECK_FALSE(StoryOfRequest("GoronCity_SecretHole_AppearTreasureBox").has_value());    // a gimmick
     CHECK_FALSE(StoryOfRequest("Get_StoneOfFire_AppearBoss").has_value());                // a boss event
-    // The key is the setting: Ruto's meeting is shared, her taking the stone (a get window: the player's own)
-    // is not, though both are Get_StoneOfWater in InsideJabuJabuBelly.
+    // The key is the setting: Ruto's meeting and her taking the stone are two shared settings of
+    // Get_StoneOfWater in InsideJabuJabuBelly, not one flow name.
     CHECK(IsStorySetting("Get_StoneOfWater_MeetRuto"));
-    CHECK_FALSE(IsStorySetting("Get_StoneOfWater_RutoGetStone"));
+    CHECK(IsStorySetting("Get_StoneOfWater_RutoGetStone"));
     // Every named setting of a story flow is classified from the game's data (story_requests.py): shared ones
     // whether placed or asked another way (Impa at the castle, the Fire Temple's Gorons) ...
     CHECK(IsStorySetting("Get_StoneOfWater_TalkWithImpa"));
     CHECK(StoryOfRequest("Dm_FireTemple_0015") == std::optional<std::string_view>("Dm_FireTemple_0020"));
     // ... and not: a boss event, a dungeon gimmick, the player's own talk, a room event, and the ones whose flow
-    // changes the player's own things (read from the flow: the letter shown from a bottle, the fish given from
-    // one, the ocarina played at the waterfall and Darunia's door, the bomb bag, the Kokiri Sword).
+    // changes what is the player's own (read from the flow: the letter shown from a bottle, the fish given from
+    // one, the ocarina input at the waterfall and Darunia's door, the bomb bag's chest, the Kokiri Sword equipped
+    // from the pouch).
     for (const std::string_view n : {"Get_StoneOfWater_DestroyBoss", "StoneOfWater_ElevatedFloor",
                                      "Meet_Darunia_PlayOcarina", "Check_DaruniaDoor", "Talk_Deku_01_Attacked",
                                      "Get_StoneOfWater_ShowLetter", "Get_StoneOfWater_JabuJabuEat",
@@ -256,10 +257,13 @@ TEST_CASE("a story cutscene asked by its event setting is sent and joined by tha
                                      "Get_StoneOfFire_GetBombBag", "Get_StoneOfForest_GetSword"}) {
         CHECK_MESSAGE(!IsStory(n), std::string(n));
     }
-    // A story name whose flow changes the player's own things (Zelda's letter) is neither sent nor joined.
-    CHECK(CoopSharedScenes::IsShared("Dm_HrlCastle_0050"));
-    CHECK_FALSE(Askable("Dm_HrlCastle_0050"));
-    CHECK(CoopSharedScenes::NotShared("Dm_HrlCastle_0050") == "it changes the player's own things");
+    // A story name whose flow changes what is the player's own (Talon woken: the Cucco taken from the pouch) is
+    // neither sent nor joined; a gift of an item co-op shares is (Zelda's letter, Saria's ocarina).
+    CHECK(CoopSharedScenes::IsShared("Dm_HrlCastle_0020"));
+    CHECK_FALSE(Askable("Dm_HrlCastle_0020"));
+    CHECK(CoopSharedScenes::NotShared("Dm_HrlCastle_0020") == "it changes the player's own things");
+    CHECK(Askable("Dm_HrlCastle_0050"));
+    CHECK(Askable("Dm_Kokiri_0155"));
     CHECK(CoopSharedScenes::NotShared("Meet_GreatFairy") == "the game has no event setting of that name");
     CHECK(CoopSharedScenes::NotShared("Dm_Kokiri_0070").empty());
     CHECK(Askable("Dm_FairyFountain_Din"));  // a heal only: shared
@@ -340,9 +344,35 @@ TEST_CASE("a joined story setting reads its own played flag, and a story name wi
     const auto notes = quest.TakeNotes();
     REQUIRE(notes.size() == 1);
     CHECK(notes[0].find("no event setting") != std::string::npos);
-    // Nor a story cutscene that gives the player something (Zelda's letter).
-    Joiner letter;
-    letter.Started(1, "Dm_HrlCastle_0050", "HyruleCastle", kBridge, 100);
-    CHECK(letter.Waiting() == 0);
-    CHECK(letter.TakeNotes()[0].find("the player's own things") != std::string::npos);
+    // Nor a story cutscene that takes the player's own things (Talon woken with the Cucco).
+    Joiner cucco;
+    cucco.Started(1, "Dm_HrlCastle_0020", "LonLonRanch", kBridge, 100);
+    CHECK(cucco.Waiting() == 0);
+    CHECK(cucco.TakeNotes()[0].find("the player's own things") != std::string::npos);
+}
+
+TEST_CASE("no story cutscene shared in 0.11.3 stops being shared unless the game's data gives a reason") {
+    // Regression (review of report 110): every name of the story list is still sent and joined, but the
+    // ones the game has no event setting of and the ones whose flow changes what is the player's own (a
+    // trade, rupees, gear from the pouch). A new name here needs its reason in coop_story_requests.inc.
+    const std::vector<std::string_view> allowed = {
+        // no event setting (kNoSetting)
+        "Dm_FinalBattle_0000", "Dm_LostWood_0030", "Get_StoneOfFire", "Get_StoneOfForest", "Get_StoneOfWater",
+        "Meet_DekuTree", "Meet_GreatFairy",
+        // the player's own (kOwnStory)
+        "Dm_DeathMtTrail_0050",  // takes the Eye Drops (Biggoron's trade)
+        "Dm_HrlCastle_0020",     // takes the Cucco (Talon)
+        "Dm_Kokiri_0063",        // equips the Kokiri Sword from the pouch
+        "Dm_LonLon_0030",        // rupees
+        "Dm_LostWood_0015",      // takes the Pocket Egg (a trade)
+    };
+    std::size_t dropped = 0;
+    for (const std::string_view n : CoopSharedScenes::Names()) {
+        if (!CoopSharedScenes::Askable(n)) {
+            ++dropped;
+            CHECK_MESSAGE(std::find(allowed.begin(), allowed.end(), n) != allowed.end(), std::string(n));
+            CHECK_MESSAGE(!CoopSharedScenes::NotShared(n).empty(), std::string(n));
+        }
+    }
+    CHECK(dropped == allowed.size());
 }

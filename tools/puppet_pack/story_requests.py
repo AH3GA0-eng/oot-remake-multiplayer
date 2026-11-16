@@ -20,13 +20,13 @@ name is not that flow's is classified here from the game's data, first rule that
   own      started inside a talk of the player's own (components NPCTalk*, or an entry Talk*):
            another game has no talk to continue;
   own      played where the player is, on that player's own arrival (base PlayerPos);
-  own      it changes the player's own things: read from the event flow its entry runs (subflows,
-           switches, forks, and the settings it goes on to by EventTransition, which a game asked for
-           it plays too; puppet_pack/evfl.py): an item got or shown (Pouch actors, Dm_SY_Get,
-           GetPouchContent, Dm_SY_Treasurebox, ShowItem), a song (Dm_MelodyGet*), a bottle, the
-           player's ocarina (Dm_SY_Ocarina), a shop, rupees, or a PouchData./PlayerStatus./IsGet.
-           flag (hearts healed are not counted). A movie with no flowchart (a timeline only) is not
-           read;
+  own      it changes what is the player's own (docs/items.md "Per player"), read from the event flow
+           its entry runs (subflows, switches, forks, and the settings it goes on to by EventTransition,
+           which a game asked for it plays too; puppet_pack/evfl.py): an item taken from the pouch
+           (a trade), a consumable added, rupees, a bottle's contents, the player's ocarina input awaited,
+           gear equipped from the pouch, a shop, a chest opened. A +1 of an item co-op shares, a get
+           window or a shown
+           item is not. A movie with no flowchart (a timeline only) is not read;
   story    a `Dm_` cutscene entry of a `Dm_` story flow, or a name that carries its flow's name as
            a whole part (`Get_StoneOfWater_ShowLetter`): shared, sent and joined by its name;
   never    anything else: a room or object event the flow's file also holds (a door, a hole).
@@ -90,32 +90,41 @@ def carries(name, flow):
     return f"_{flow}_" in f"_{name}_"
 
 
-OWN_FLOWS = ("Dm_SY_Ocarina", "Dm_MelodyGet")  # the player's ocarina; a song learnt (some are movies only)
-OWN_FLAGS = ("PouchData.", "PlayerStatus.", "IsGet.")
-OWN_WORDS = ("ShowItem", "Bottle", "Ocarina", "Shop", "Rupee", "Pouch")
-NOT_OWN_WORDS = ("NoRelationPouch", "DeleteShowItem")  # a model of equipment only; a shown item put away
+# What a game asked for a scene would change of that player's own (docs/items.md "Per player": rupees,
+# ammo and other consumables, bottle contents, equipped gear). Items co-op shares (key items, stones,
+# songs, medallions, the Ocarina, bag/quiver/wallet tiers: max/OR) are not: a +1 of one in the joining
+# game gives nothing new, and a get window or a shown item alone changes nothing.
+RUPEE_ACTIONS = ("IncreaseRupee", "DecreaseRupee", "SendRupee", "PayItemPrice")
+OCARINA_INPUT = ("EventWaitOcarinaInput", "EventPlayerPlayOcarinaFree")  # waits for the player to play
+CONSUMABLES = ("Item_Arrow", "Item_Bomb", "Item_DekuNut", "Item_DekuStick", "Item_Bullet", "Item_MagicBean",
+               "Item_Rupee", "Obj_Rupee")  # their counts are per player (not a bag/quiver tier)
 
 
 def touches_own(actions):
-    """Why the actions an entry runs (evfl.actions_of) change the player's own things, or "": an item got
-    or shown (the Pouch actors, the item get and show flows), a song learnt (Dm_MelodyGet*), a bottle, the
-    player's ocarina, a shop, rupees, or a flag of the player's pouch or status. Hearts healed are not
-    counted (harmless to a player who joins)."""
+    """Why the actions an entry runs (evfl.actions_of) change what is the player's own, or "": an item
+    taken from the pouch (AddOrRemovePouchContent with Num < 0: a trade) or a consumable added, rupees,
+    a bottle's contents (any Bottle action but PushToEmptyBottle, which every item get passes), the
+    player's ocarina input awaited, gear equipped from the player's pouch, a shop, a chest opened
+    (Dm_SY_Treasurebox: the item comes over by the shared items anyway)."""
     for actor, action, params in actions:
-        if actor == "<subflow>":
-            if action.split(":")[0].startswith(OWN_FLOWS):
-                return f"runs {action}"
-            continue
-        if action == "EventTransition" and str(params.get("EventName", "")).startswith(OWN_FLOWS):
-            return f"goes on to {params['EventName']}"
-        if any(w in action for w in NOT_OWN_WORDS):
-            continue
-        if actor.startswith("Pouch") or (actor in ("Player_Event", "GameSystemActor", "Npc_EventStarter")
-                                          and any(w in action for w in OWN_WORDS)):
-            return f"runs {actor} {action}"
-        flag = params.get("GameDataName", "") if actor == "GameDataActor" else ""
-        if flag.startswith(OWN_FLAGS):
-            return f"sets {flag}"
+        if action == "EventTransition" and params.get("EventName") == "Dm_SY_Treasurebox":
+            return "goes on to Dm_SY_Treasurebox (a chest the player opens)"
+        if action == "EventTriggerAddOrRemovePouchContent":
+            num, item = params.get("Num", 0), str(params.get("Actor", ""))
+            if isinstance(num, int) and num < 0:
+                return f"takes {item or 'an item'} from the pouch"
+            if num > 0 and item.startswith(CONSUMABLES) and "Bag" not in item and "Quiver" not in item:
+                return f"adds {item}, a consumable"
+        elif any(w in action for w in RUPEE_ACTIONS):
+            return f"runs {actor} {action} (rupees)"
+        elif "Bottle" in action and action != "EventTriggerPushToEmptyBottle" and actor != "UISystemActor":
+            return f"runs {actor} {action} (a bottle's contents)"
+        elif action.startswith(OCARINA_INPUT):
+            return f"runs {actor} {action} (the player's ocarina)"
+        elif "EquipDynamicEquipmentFromPouch" in action:
+            return f"runs {actor} {action} (gear from the player's pouch)"
+        elif actor == "Npc_EventStarter" and "Shop" in action:
+            return f"runs {actor} {action} (a shop)"
     return ""
 
 

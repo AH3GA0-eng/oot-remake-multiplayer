@@ -79,10 +79,11 @@ std::vector<std::string_view> RequestNames();
 //   settings): asking it plays nothing, and a game could not tell it played
 //   it. Their cutscenes are settings of their own (the table above,
 //   Dm_FairyFountain_*, the boss events);
-// - a story name whose event flow changes the player's own things (an item got
-//   or shown, a bottle, rupees, the pouch: Zelda's letter Dm_HrlCastle_0050,
-//   kOwnStory with why, read from the game's flows by story_requests.py):
-//   another game asked for it would be given or charged them too.
+// - a story name whose event flow changes what is the player's own (a trade
+//   item taken, rupees, gear equipped from the pouch: Talon woken with the
+//   Cucco Dm_HrlCastle_0020; kOwnStory with why, read from the game's flows by
+//   story_requests.py): another game asked for it would be charged or changed
+//   too. A gift of an item co-op shares stays shared (Zelda's letter).
 std::string_view NotShared(std::string_view name);
 // NotShared(name) is "".
 bool Askable(std::string_view name);
