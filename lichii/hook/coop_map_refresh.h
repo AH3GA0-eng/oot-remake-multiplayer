@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// Player reports #63/#76 (dungeon-sync-b, for 0.11.3; off by default): a dungeon map another player got shows on
+// Player reports #63/#76 (dungeon-sync-b, dungeon-maps-a; on unless LICHII_COOP_MAP_REFRESH=0): a dungeon map, compass,
+// boss key or floors written by co-op (another player's, the join snapshot, a reset, a put-back, the solo keeper) shows on
 // our Map page and minimap.
 //
 // The Map page and the minimap do not read the save's flags live. The HUD screen (Longshot patch 0018's
@@ -8,13 +9,15 @@
 // key at +0x1538..0x153b. The game reads that copy in only at the screen's init (main+0x33e12c0) and refresh
 // (main+0x33e4200), which its HUD state machine (main+0x33e4bf0) calls. On each floor change the game writes the
 // copy back to DungeonInfo.<dungeon>.EnteredFloorBit (main+0x5851ac), so a shared IsGetMap or floors write
-// alone never shows (reports/dungeon-sync-b.md, "What the Map page draws from").
+// alone does not show until the game's next refresh: the Map page, a room or scene load, an event's end
+// (reports/dungeon-sync-b.md, "What the Map page draws from"; reports/dungeon-maps-a.md).
 //
 // So when a shared map or floors value comes from another player, this calls the game's own refresh on the HUD
 // screen, once, a moment later (after the game's setter has taken the flag). It never writes the screen's copy.
-// Each call logs the copy before and after (research: the walk-in run proves it, then it can be on by default).
+// Each call logs the copy before and after. Proven: lane1-a hs-map-deku-walkin 20261116-003904 (guest), hs-map-opener
+// 20261116-013911 (without it the receiver's minimap stayed blank until the Map page or a room load).
 //
-// LICHII_COOP_MAP_REFRESH=1 turns it on. No emulator code (tests/lichii/map_refresh_test.cpp).
+// LICHII_COOP_MAP_REFRESH=0 turns it off. No emulator code (tests/lichii/map_refresh_test.cpp).
 #pragma once
 
 #include <cstdint>

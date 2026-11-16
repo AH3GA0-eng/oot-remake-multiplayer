@@ -65,6 +65,10 @@ SharedFlags item_shared_flags(bool with_off = false);
 // issue 146): a Bool the game never takes back once got. Only entries that
 // are on.
 bool is_one_way_item(FlagKey key);
+// Rows 63/76, #146: a dungeon item the HUD screen keeps its own copy of for the Map page and the minimap
+// (DungeonInfo.<dungeon>.IsGetMap, IsGetCompass, IsGetBossKey, EnteredFloorBit; every dungeon): a co-op write of
+// one asks the game's HUD refresh (lichii/hook/coop_map_refresh.h).
+bool is_hud_dungeon_item(FlagKey key);
 // Every such flag, sorted by hash.
 std::vector<FlagKey> one_way_item_flags();
 // dungeon-sync-b (#63/#76): a dungeon's floors flag (DungeonInfo.<dungeon>.EnteredFloorBit) gives the same

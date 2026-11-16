@@ -861,6 +861,15 @@ bool is_one_way_item(FlagKey key) {
   return item != nullptr && one_way_entry(*item);
 }
 
+bool is_hud_dungeon_item(FlagKey key) {
+  if (key.kind != protocol::FlagKeyKind::named || key.index != 0) return false;
+  const ItemFlag* item = find_item(key.hash);
+  if (item == nullptr || !item->on || !item->name.starts_with("DungeonInfo.")) return false;
+  const std::string_view n = item->name;
+  return n.ends_with(".IsGetMap") || n.ends_with(".IsGetCompass") || n.ends_with(".IsGetBossKey") ||
+         n.ends_with(".EnteredFloorBit");
+}
+
 std::vector<FlagKey> one_way_item_flags() {
   std::vector<FlagKey> keys;
   for (const ItemFlag& item : item_flags()) {
