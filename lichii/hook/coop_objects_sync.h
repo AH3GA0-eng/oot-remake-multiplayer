@@ -1056,7 +1056,9 @@ private:
     };
     std::map<coop::protocol::ObjectId, Held> held_;
     // Report 99 review: placed ids whose copy (decided_) was killed here this
-    // visit. Our own one with that id is the same enemy, dead.
+    // visit. Our own one with that id is the same enemy, dead. Forgotten once
+    // used (our own one died), on a new OBJECT_SPAWN for it (a respawn) and
+    // on a scene change.
     std::set<coop::protocol::ObjectId> copy_killed_;
     void HoldEncounters(std::uint64_t now_us);
     std::map<std::uint64_t, std::uint64_t> bound_;  // actor to director key

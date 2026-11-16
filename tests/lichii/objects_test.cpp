@@ -2208,8 +2208,8 @@ TEST_CASE("objects: report 99 review, our own one of a copy killed here is dead,
         lowered = lowered || (w.address == 0x950 && w.life == 0);
     }
     CHECK(lowered);
-    // ... is never listed (the server keeps the kill: no respawn), never
-    // announced, and no second copy is made from a resent spawn.
+    // ... is never listed (the server keeps the kill: no respawn) and never
+    // announced.
     for (const auto& p : All<proto::ObjectPresent>(step)) {
         for (const auto& e : p.objects) CHECK_FALSE(e.id == id);
     }
@@ -2219,10 +2219,75 @@ TEST_CASE("objects: report 99 review, our own one of a copy killed here is dead,
     for (const auto& p : All<proto::ObjectPresent>(later)) {
         for (const auto& e : p.objects) CHECK_FALSE(e.id == id);
     }
-    b.Receive(relayed);
+
+    // Re-review: the kill is used once. The guest's room loads again (it left
+    // and came back): its game makes the guard anew, a real respawn. It is
+    // listed alive as the game made it (the server's dead_for rule decides),
+    // not killed again.
     Tick(b, 17000 * kMs, {}, 2);
-    Tick(b, 17000 * kMs + 2 * kEncounterWaitUs, {}, 2);
-    for (const auto& cr : b.Creates()) CHECK(cr.removed);
+    Tick(b, 17100 * kMs, {}, 2);
+    Tick(b, 17200 * kMs, {}, 2);
+    const auto reload = Tick(b, 25000 * kMs, {Enemy(0x960, kHash, 4, 23.0f, kThief)}, 2);
+    for (const auto& w : reload.writes) CHECK_FALSE((w.address == 0x960 && w.life == 0));
+    const auto present = All<proto::ObjectPresent>(reload);
+    REQUIRE_FALSE(present.empty());
+    CHECK(std::any_of(present.back().objects.begin(), present.back().objects.end(),
+                      [&](const auto& e) { return e.id == id; }));
+}
+
+TEST_CASE("objects: report 99 re-review, a new spawn after a copy was killed here is a respawn") {
+    constexpr std::uint64_t kHash = 0x2e80bd2b39d06e43ULL;
+    const std::string kThief = "Enemy_MiddleBoss_GerudoThief";
+    const proto::ObjectId id{proto::ObjectKind::placed, 0, kHash};
+    proto::ObjectSpawn relayed;
+    relayed.player_number = 1;
+    relayed.id = id;
+    relayed.actor = kThief;
+    relayed.state.position = proto::Vec3{23.0f, 0.0f, 0.0f};
+
+    Sync g;
+    g.SetHurt(true);
+    g.SetPlayer(proto::Vec3{25.0f, 0.0f, 0.0f});
+    Tick(g, 0, {}, 2);
+    g.Receive(relayed);
+    Tick(g, 8300 * kMs, {}, 2);
+    Tick(g, 8400 * kMs, {}, 2);
+    Tick(g, 8400 * kMs + kEncounterWaitUs, {}, 2);
+    REQUIRE(g.Creates().size() == 1);
+    const auto first = g.Creates()[0].key;
+    g.Bind({{first, 0x900}});
+    Tick(g, 10000 * kMs, {Enemy(0x900, ~0ULL, 4, 23.0f, kThief)}, 2);
+    // The host kills it; the copy dies and leaves.
+    g.Receive(proto::ObjectRemove{1, id, 0, proto::RemoveReason::dead, {}});
+    g.Bind({{first, 0x900}});
+    Tick(g, 10100 * kMs, {Enemy(0x900, ~0ULL, 0, 23.0f, kThief)}, 2);
+    Tick(g, 12000 * kMs, {}, 2);
+    Tick(g, 12100 * kMs, {}, 2);
+
+    // The host's room loads again and its guard respawns: announced anew.
+    // Held, then copied when near, as a new enemy.
+    g.Receive(relayed);
+    Tick(g, 20000 * kMs, {}, 2);
+    Tick(g, 20100 * kMs, {}, 2);
+    Tick(g, 20100 * kMs + kEncounterWaitUs, {}, 2);
+    const auto live = [&] {
+        std::size_t n = 0;
+        for (const auto& cr : g.Creates()) n += cr.removed ? 0 : 1;
+        return n;
+    };
+    REQUIRE(live() == 1);
+    const auto creates = g.Creates();
+    const auto copy = std::find_if(creates.begin(), creates.end(), [](const auto& cr) { return !cr.removed; });
+    CHECK(copy->key != first);
+    CHECK(copy->name == kThief);
+
+    // And our own one made later is no longer taken for the dead one: it
+    // takes the id from the copy, alive.
+    g.Bind({{copy->key, 0x910}});
+    const auto own = Tick(g, 22000 * kMs, {Enemy(0x910, ~0ULL, 4, 23.0f, kThief), Enemy(0x970, kHash, 4, 23.0f, kThief)}, 2);
+    for (const auto& w : own.writes) CHECK_FALSE((w.address == 0x970 && w.life == 0));
+    REQUIRE(g.IdOf(0x970));
+    CHECK(*g.IdOf(0x970) == id);
 }
 
 TEST_CASE("objects: a hurt carries the hitter's place, an animal's life is written") {

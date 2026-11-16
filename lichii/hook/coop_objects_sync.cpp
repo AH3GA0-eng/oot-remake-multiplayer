@@ -1936,6 +1936,9 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 own.dead_now = true;
             }
             owners_.erase(own.id);
+            // Used: a later one of ours (the room loaded again) is a respawn,
+            // listed alive as the game made it (the server's dead_for rule).
+            copy_killed_.erase(own.id);
             notes_.emplace_back("its copy was killed here, our own one dies too: " + own.name);
         }
     }
@@ -2488,14 +2491,27 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 continue;
             }
             const bool encounter = !made && IsLateEncounter(spawn->actor);
-            if (!made && ((!IsAnnounced(spawn->actor) && !encounter) || find(spawn->id) != nullptr ||
+            // An encounter of ours that is dying (killed, or its copy killed
+            // here) is no longer "ours": a new announcement is a respawn.
+            const Object* have = find(spawn->id);
+            const bool have_live = have != nullptr && !(encounter && have->dead_at != 0);
+            if (!made && ((!IsAnnounced(spawn->actor) && !encounter) || have_live ||
                           spawn->player_number == self)) {
                 continue;  // we have that placement ourselves
             }
-            const bool known = std::any_of(decided_.begin(), decided_.end(),
-                                           [&](const auto& e) { return e.second.id == spawn->id; });
-            if (known || (!made && copy_killed_.contains(spawn->id))) {
+            // A copy still being deleted is no longer it (a respawn makes a new one).
+            const bool known = std::any_of(decided_.begin(), decided_.end(), [&](const auto& e) {
+                return e.second.id == spawn->id && !(encounter && e.second.removed);
+            });
+            if (known) {
                 continue;
+            }
+            // Report 99 re-review: a new OBJECT_SPAWN for an enemy whose copy
+            // was killed here is its respawn (its owner's room loaded again;
+            // the server resends nothing to a player already in the scene and
+            // never a removed object): alive again, held and copied as new.
+            if (!made) {
+                copy_killed_.erase(spawn->id);
             }
             if (encounter) {
                 // Held until our Link is near (report 99): see HoldEncounters.
