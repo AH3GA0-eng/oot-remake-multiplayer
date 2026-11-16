@@ -4,10 +4,16 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
+#include <map>
+#include <mutex>
+#include <thread>
+#include <utility>
 
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -170,6 +176,106 @@ std::optional<std::string> SdlPaste() {
     return out;
 }
 
+// Trailing line ends dropped, at most kMax bytes (what Paste gives).
+std::optional<std::string> Trimmed(std::optional<std::string> got) {
+    if (!got) {
+        return std::nullopt;
+    }
+    std::string out = std::move(*got);
+    while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) {
+        out.pop_back();
+    }
+    if (out.size() > kMax) {
+        out.resize(kMax);
+    }
+    return out;
+}
+
+// The clipboard's own thread (CopyLater, PasteLater): started with the first job; at unload it is told to stop
+// and waited for (at most one tool's 2 s), so it never runs code that is gone. Jobs still queued then are dropped.
+class Worker {
+public:
+    std::uint64_t Add(bool copy, std::string text, bool keep) {
+        std::lock_guard lock(mutex_);
+        const std::uint64_t ticket = ++last_;
+        jobs_.push_back(Job{ticket, copy, keep, std::move(text)});
+        if (!thread_.joinable()) {
+            thread_ = std::thread([this] { Work(); });
+        }
+        wake_.notify_one();
+        return ticket;
+    }
+
+    std::optional<Done> Take(std::uint64_t ticket) {
+        std::lock_guard lock(mutex_);
+        const auto it = done_.find(ticket);
+        if (it == done_.end()) {
+            return std::nullopt;
+        }
+        Done d = std::move(it->second);
+        done_.erase(it);
+        return d;
+    }
+
+    ~Worker() {
+        {
+            std::lock_guard lock(mutex_);
+            stop_ = true;
+        }
+        wake_.notify_one();
+        if (thread_.joinable()) {
+            thread_.join();
+        }
+    }
+
+private:
+    struct Job {
+        std::uint64_t ticket = 0;
+        bool copy = false;
+        bool keep = false;
+        std::string text;
+    };
+
+    void Work() {
+        for (;;) {
+            Job job;
+            {
+                std::unique_lock lock(mutex_);
+                wake_.wait(lock, [this] { return stop_ || !jobs_.empty(); });
+                if (stop_) {
+                    return;
+                }
+                job = std::move(jobs_.front());
+                jobs_.pop_front();
+            }
+            Done d;
+            if (job.copy) {
+                d.ok = Run(true, job.text, nullptr) == Ran::kOk;
+            } else {
+                d.text = Trimmed(ToolPaste());
+                d.ok = d.text.has_value();
+            }
+            if (job.keep) {
+                std::lock_guard lock(mutex_);
+                done_[job.ticket] = std::move(d);
+            }
+        }
+    }
+
+    std::mutex mutex_;
+    std::condition_variable wake_;
+    std::deque<Job> jobs_;
+    std::map<std::uint64_t, Done> done_;
+    std::uint64_t last_ = 0;
+    bool stop_ = false;
+    std::thread thread_;
+};
+
+Worker& TheWorker() {
+    static Worker worker;
+    return worker;
+}
+
 }  // namespace
 
 bool Copy(const std::string& text) {
@@ -215,18 +321,30 @@ std::optional<std::string> PickPaste(const std::optional<std::string>& sdl,
 }
 
 std::optional<std::string> Paste() {
-    std::optional<std::string> got = PickPaste(t_sdl_thread ? SdlPaste() : std::nullopt, ToolPaste);
-    if (!got) {
+    return Trimmed(PickPaste(t_sdl_thread ? SdlPaste() : std::nullopt, ToolPaste));
+}
+
+std::uint64_t CopyLater(std::string text, bool keep) {
+    return TheWorker().Add(true, std::move(text), keep);
+}
+
+std::uint64_t PasteLater() {
+    return TheWorker().Add(false, {}, true);
+}
+
+std::optional<std::string> PasteNow() {
+    if (!t_sdl_thread) {
         return std::nullopt;
     }
-    std::string out = std::move(*got);
-    while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) {
-        out.pop_back();
+    std::optional<std::string> got = Trimmed(SdlPaste());
+    if (got && got->empty()) {
+        return std::nullopt;
     }
-    if (out.size() > kMax) {
-        out.resize(kMax);
-    }
-    return out;
+    return got;
+}
+
+std::optional<Done> Take(std::uint64_t ticket) {
+    return TheWorker().Take(ticket);
 }
 
 }  // namespace CoopClipboard
