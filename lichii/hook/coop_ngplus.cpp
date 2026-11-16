@@ -173,15 +173,21 @@ void Frame(CoopHook::EmulatorMemory& memory, bool in_game, bool may_give) {
             LOG_INFO(Core, "coop: New Game+: Ganon counted beaten (OOT_COOP_TEST_NGPLUS_BEAT, tests only)");
         }
     }
-    coop::host::GameFlagStore store(memory);
     const proto::FlagKey max_key{kMaxLifeHash, 0};
-    const auto max_life = in_game ? store.read(max_key) : std::nullopt;
-    const bool known = max_life && max_life->kind == proto::FlagKind::int32;
+    // The save's MaxLife, read only when it is needed (Ganon's death, or a level on and a new file): New Game+ off
+    // reads nothing, so the game alone runs as without it.
+    auto read_max = [&]() -> std::optional<proto::FlagEntry> {
+        if (!in_game) return std::nullopt;
+        coop::host::GameFlagStore reader(memory);
+        auto e = reader.read(max_key);
+        return e && e->kind == proto::FlagKind::int32 ? e : std::nullopt;
+    };
     if (beaten && (g.beaten_at == 0 || now_us - g.beaten_at >= kBeatenAgainUs)) {
         g.beaten_at = now_us;
+        const auto max_life = read_max();
         std::lock_guard lock(g.mutex);
         const Saved was = g.saved;
-        g.saved = Beaten(g.saved, known ? static_cast<std::int32_t>(max_life->value) : 0);
+        g.saved = Beaten(g.saved, max_life ? static_cast<std::int32_t>(max_life->value) : 0);
         Keep(g);
         LOG_INFO(Core, "coop: New Game+: Ganon beaten at level {}: unlocked {}, hearts {}", was.level, g.saved.unlocked,
                  g.saved.hearts);
@@ -201,9 +207,13 @@ void Frame(CoopHook::EmulatorMemory& memory, bool in_game, bool may_give) {
     Give give;
     give.level = static_cast<std::uint8_t>(packed & 0xff);
     give.hearts = static_cast<std::int32_t>(packed >> 16);
-    give.max_life = known ? std::optional<std::int32_t>(static_cast<std::int32_t>(max_life->value)) : std::nullopt;
     give.new_file = g.new_file;
     give.may_give = may_give;
+    if (give.level == 0 || give.hearts <= 0 || !give.new_file || !give.may_give) {
+        return;   // (nothing to give: MaxLife is not read)
+    }
+    const auto max_life = read_max();
+    give.max_life = max_life ? std::optional<std::int32_t>(static_cast<std::int32_t>(max_life->value)) : std::nullopt;
     const auto to = HeartsToGive(give);
     if (!to) {
         return;
@@ -212,6 +222,7 @@ void Frame(CoopHook::EmulatorMemory& memory, bool in_game, bool may_give) {
     // the path the boss's one heart container takes (coop_hook.cpp, CoopBoss::TakeMaxLifeWrite). In a session the
     // object walk carries it into Link's own hearts as for any MaxLife a heart container raised (issue 88,
     // docs/items.md); the max rule shares it, so it reaches the guests as the host's save does.
+    coop::host::GameFlagStore store(memory);
     auto set = *max_life;
     set.value = static_cast<std::uint32_t>(*to);
     const bool ok = store.write(set);
