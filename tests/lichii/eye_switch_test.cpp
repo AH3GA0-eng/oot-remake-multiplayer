@@ -154,7 +154,7 @@ TEST_CASE("eye switch: the table, its places and FirstOn's key") {
     CHECK_FALSE(CoopEyeSwitch::OnFromEnv("0"));
 }
 
-TEST_CASE("eye switch: one malloc, then FirstOn through the game's set-bool until the asker's event runs") {
+TEST_CASE("eye switch: one malloc, then the plug through the game's set-bool until the asker's event runs") {
     FakeGuest g;
     World w;
     Eye(g, kEye);
@@ -188,7 +188,7 @@ TEST_CASE("eye switch: one malloc, then FirstOn through the game's set-bool unti
     CHECK(s.TakeFallbacks().empty());
     const auto notes = s.TakeNotes();
     REQUIRE(notes.size() == 2);
-    CHECK(notes[0].find("FirstOn set") != std::string::npos);
+    CHECK(notes[0].find("OnState set") != std::string::npos);
     CHECK(notes[1].find("event started") != std::string::npos);
     CHECK_FALSE(s.Step(g, false, 0, kMain, 148));  // nothing left
 }
