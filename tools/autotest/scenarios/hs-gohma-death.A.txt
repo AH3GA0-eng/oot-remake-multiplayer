@@ -9,7 +9,10 @@
 # kept in autotest-save-backup; put it back after). The scenario clears the Deku boss room flags itself.
 # PASS (all of):
 #  1. B: "Dm_Deku_BossOut: our game started the death" (VOID without it: the kill did not land).
-#  2. A: "Dm_Deku_BossOut: playing it here too" (asked as InsideTheDekuTree_BossDie) or "ours started with".
+#  2. A: "Dm_Deku_BossOut: playing it here too (player 2 started it), the death flow alone: our copy of the boss
+#     still lives" (from the copy-alive fallback, 0.11.4), or the setting (asked as InsideTheDekuTree_BossDie)
+#     only when A's copy already reads dead. With the flow alone A's warp may do nothing until A leaves the
+#     dungeon (#88 again for that player): note it, it is not a FAIL of this scenario.
 #  3. A: "its death has begun: the copy runs all its own" (the fix), and no "the copy takes the owner's state
 #     again" after it; her death ends here: A's "a hit the dying boss's game did not take: N given to its own
 #     Life step (its death has begun)" and/or "N ended in their death" > 0 in A's "coop: bosses:" totals line, and
