@@ -322,6 +322,30 @@ inline constexpr float kMinionReachM = 40.0f;
 // a copy, and deletes the copy if its own one turns up.
 bool IsAnnounced(std::string_view name);
 
+// Player report 99 (issue 252): an enemy placed in the scene that a game
+// makes from its own logic or event, so the games need not all have it:
+// the Gerudo Fortress jail guards (Enemy_MiddleBoss_GerudoThief*, made by
+// GerudoFortress_Common_Level_CarpenterSet_0N when that player walks into
+// the cell), and every other placed enemy a Logic_Create, ambush, room or
+// gimmick makes (mini-boss rooms, Gimmick_*_Appearance, ...). Only the game
+// whose player set it off has it; the others never did. A game's logic may
+// also make it at the scene's load (its own per-game flags say the guard is
+// out), so its owner names it whenever it is first seen, at load or later
+// (IsAnnounced only later); a game without that placement makes a copy once its
+// Link is within kEncounterNearM of it and its own did not come in
+// kEncounterWaitUs (one that only streams in by distance comes by then), and
+// deletes the copy if its own one turns up. If the copy was killed here
+// (OBJECT_REMOVE dead), our own one that turns up later in this visit is that
+// same enemy, already dead: it dies at once and is never listed, so the
+// server keeps the kill (issue 133, no respawn). A held one whose owner's
+// samples stop for kEncounterStaleUs is dropped (its owner left or unloaded
+// it). Not the bosses and their parts
+// (the boss sync) and not the enemies the sync makes or keeps its own way.
+bool IsLateEncounter(std::string_view name);
+inline constexpr float kEncounterNearM = 40.0f;
+inline constexpr std::uint64_t kEncounterWaitUs = 1'500'000;
+inline constexpr std::uint64_t kEncounterStaleUs = 5'000'000;
+
 // An enemy animation that plays as it dies ("Die", "Dead_Fall",
 // "Damage_Death"): a word Die, Dead or Death at the start or after '_'. An
 // owned enemy that leaves the walk while playing one died, even when its life
@@ -875,7 +899,7 @@ private:
         std::uint64_t seen_at = 0;
         std::string name;
         std::uint64_t fight_until = 0;
-        bool late = false;       // a placed IsAnnounced actor first seen after kLateUs
+        bool late = false;       // to announce: a placed IsAnnounced actor first seen after kLateUs, or any IsLateEncounter
         bool announced = false;  // its OBJECT_SPAWN went out
         // Owner side.
         std::uint64_t sent_at = 0;
@@ -1084,6 +1108,23 @@ private:
     std::map<std::uint64_t, Object> objects_;  // by actor address
     std::vector<std::uint64_t> ours_now_;     // copies that became ours (TakeOursNow)
     std::map<std::uint64_t, Decided> decided_;  // by director key
+    // Report 99: late encounters other games announced that we lack, held
+    // until our Link is near (IsLateEncounter). By id; first heard at got_us,
+    // near since near_us (0: not near yet).
+    struct Held {
+        std::string name;
+        coop::protocol::Vec3 position{};
+        std::uint8_t owner = 0;
+        std::uint64_t near_us = 0;
+        std::uint64_t heard_us = 0;  // its OBJECT_SPAWN or last OBJECT_SAMPLE
+    };
+    std::map<coop::protocol::ObjectId, Held> held_;
+    // Report 99 review: placed ids whose copy (decided_) was killed here this
+    // visit. Our own one with that id is the same enemy, dead. Forgotten once
+    // used (our own one died), on a new OBJECT_SPAWN for it (a respawn) and
+    // on a scene change.
+    std::set<coop::protocol::ObjectId> copy_killed_;
+    void HoldEncounters(std::uint64_t now_us);
     std::map<std::uint64_t, std::uint64_t> bound_;  // actor to director key
     std::uint64_t next_key_ = 1;
     std::uint64_t made_counter_ = 0;
