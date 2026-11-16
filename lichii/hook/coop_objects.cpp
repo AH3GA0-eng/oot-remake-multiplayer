@@ -3148,6 +3148,7 @@ private:
             w.hurt = std::max<std::int32_t>(best->life->life, 1);
             w.from = player_;
             w.direct = true;
+            w.test_kill = true;
             writes.push_back(w);
             LOG_INFO(Core, "coop: test kill {} {:#x} at {:.2f} {:.2f} {:.2f} ({:.1f} m, life {}): hit",
                      name, best->address, best->position[0], best->position[1], best->position[2],
@@ -3243,8 +3244,9 @@ private:
             return;
         case LifeRoute::step:
 #ifdef COOP_HOOKSHOT
-            // A life (not a hurt, not a raise) is the owner's for its copy: judged there (PassStops).
-            if (steps.Give(*life, routed.amount, w.hurt <= 0 && !w.heal)) {
+            // A life (not a hurt, not a raise) is the owner's for its copy: judged there (PassStops). A test kill
+            // is a kill (past the stops where it is not held: our own enemy).
+            if (steps.Give(*life, routed.amount, (w.hurt <= 0 && !w.heal) || w.test_kill)) {
                 LOG_INFO(Core, "coop: objects: share {} {:#x}: {} through the game's Life step at life {} (to {})",
                          w.hurt > 0 ? "hurt" : "life", w.address, routed.amount, old, w.life);
                 if (w.hurt <= 0) {

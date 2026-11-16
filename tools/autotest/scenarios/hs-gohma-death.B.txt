@@ -43,7 +43,7 @@ wait 1500               # A's intro (A walks in now)
 mark b-watch0
 wait 1500
 mark b-k0
-kill Enemy_DungeonBoss_Gohma   # the owner's Gohma dies: B's own death; A's copy must play its whole death too
+kill Enemy_DungeonBoss_Gohma   # with A's: the owner's Gohma dies (B or A owns her); the copy must play its whole death
 wait 600
 mark b-k1
 wait 2400

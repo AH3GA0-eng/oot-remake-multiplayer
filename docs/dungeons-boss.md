@@ -282,8 +282,11 @@ game could never finish: a black screen, no fade back, no warp.
   component to its death (`sum >= life`) and that death is its owner's (`CoopActorEvents::PassStops`): a copy boss
   whose death has begun or whose owner's died (`CoopBossNative::Table::Finishes`), or a judged give, the owner's life
   for any copy (CoopObjects' Lower: `LifeTable::Give(..., judged)`), so every enemy copy whose owner died dies here
-  too, whatever its own stops. A hit our game judges (our own enemy, another player's hit on it, a test kill on our
-  own boss) keeps every stop. Log: `the game's Life step asks the module before its life stops`, and the actors'
+  too, whatever its own stops. A hit our game judges (our own enemy, another player's hit on it) keeps every
+  stop. The test script's `kill` is a kill: in the game that owns the enemy it goes past the
+  stops too (`LifeWrite::test_kill`; LANE1 run 4 held a test kill at 1 outside her chance time); on a copy boss
+  HeldLifeStep still holds it and the owner judges its hit. A real hit outside her chance time still stops at 1, as
+  in a one-player game. Log: `the game's Life step asks the module before its life stops`, and the actors'
   10 s line counts `owners' deaths past a copy's own life stops N`. A game built before this hook keeps the stops:
   there a copy held by one still takes the death flow alone (below).
 - **The owner's death finishes the copy (review-boss-0114, every boss).** Nothing used to give a released copy its

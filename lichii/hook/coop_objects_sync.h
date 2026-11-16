@@ -182,6 +182,11 @@ struct LifeWrite {
     // a boss copy that becomes ours with less life than its old owner's had (held at 1 by HeldLifeStep, or
     // lowered by its own hits) takes the old owner's life, so one hit never kills a near-full boss (Barinade).
     bool heal = false;
+    // The test script's kill (`kill <name>`): a kill, as the game's own killing blow would be. In the game that owns
+    // the enemy it goes past its life stops (CoopActorEvents::PassStops; Gohma's stop at 1 outside her chance time
+    // held a test kill at 1 in LANE1 run 4). A copy's own Life step still holds a copy boss (HeldLifeStep); its hit
+    // goes to the owner as DAMAGE, judged there as any hit.
+    bool test_kill = false;
 };
 
 // Shared: enemies, animals (a cucco is Animal_Cucco), townspeople (Npc_, but
