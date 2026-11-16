@@ -1473,7 +1473,9 @@ public:
         // an already-true key is deleted as the next walk sees it, whatever
         // wrote the key. Once a scene, after the scene's first Tick (that Tick
         // resets the sync, which would drop takes queued before it).
-        if (*scene != keys_scene_ && main_ != 0) {
+        if (main_ == 0) {
+            // (no game: nothing to read)
+        } else if (*scene != keys_scene_) {
             keys_scene_ = *scene;
             CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main_);
             coop::host::GameFlags flags(memory);
@@ -1496,12 +1498,16 @@ public:
                 LOG_INFO(Core, "coop: objects: {} Gold Skulltulas this save has taken are left out of {}",
                          took, *scene);
             }
-        } else if (main_ != 0 && gold_baseline_scene_ == *scene &&
-                   gold_sweep_.Due(CoopEvery::NowUs())) {
-            // The token count rose since the last walk here: this game took a
+        } else if (gold_baseline_scene_ == *scene && gold_sweep_.Due(CoopEvery::NowUs())) {
+            // The token count rose since the last look here: this game took a
             // token (a token made and taken between two walks never crossed our
             // walk, so no break was sent for it — issue 89, 2026-11-17). Only
             // then are the 100 keys read: one binary search each.
+            //
+            // Twice a second, not every two frames: one Int read is cheap but a
+            // walk runs 500 times a second, and this must cost nothing on a slow
+            // frame (it was every two frames, and a frame-rate complaint
+            // followed). A token taken is noticed within half a second.
             CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main_);
             coop::host::GameFlags flags(memory);
             const std::int32_t now_tokens = flags.get_int(coop::host::kGoldTokenCount).value_or(0);
@@ -3885,7 +3891,7 @@ private:
     std::set<u64> gold_taken_;
     std::string gold_baseline_scene_;
     std::int32_t gold_baseline_tokens_ = 0;
-    CoopEvery::Every gold_sweep_{CoopEvery::kTwoFramesUs};
+    CoopEvery::Every gold_sweep_{CoopEvery::kHalfSecondUs};  // the token count, twice a second
     Sync sync_;
     Kernel::KProcess* process_ = nullptr;
     u64 main_ = 0;
