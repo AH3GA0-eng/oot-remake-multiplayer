@@ -253,6 +253,42 @@ Autotests: `tools/autotest/groups/hookshot-boss-cutscenes.txt` (`hs-boss-cutscen
 
 **Not proven in game.** That the Life step takes a direct sum on the owner's Gohma in a real fight. The test kill showed it does (21 -> 1). The check is boss-autotest round 5: the guest's eye hits show the owner's `given to its own Life step` line, and her life falls in both games.
 
+## A copy's death runs in its own game (branch gohma-death, player report #105, 0.11.4)
+Revirie's 0.11.2 host held a copy Gohma; the guest owned her. The host's game was asked her death setting
+(`InsideTheDekuTree_BossDie`, guest-warp) while the copy rules still held her: Life at 1 (`HeldLifeStep`), the
+owner's killing hit refused, her own brain and action changes skipped again after the event. Her death in the host's
+game could never finish: a black screen, no fade back, no warp.
+- **SetDying.** While the area rules' fight for the scene's boss is at outro or later (our death, or the owner's
+  `outro_start`), the glue marks the room's bodies dying (`CoopBossNative::Table::SetDying`, `CoopObjects::
+  SetDyingBosses` -> `Sync::SetDying`). A dying copy runs all its own changes (the ones skipped in the last frames
+  are made late, once), its held Life slot is released, and its Life component is kept in `dying_life_` also after
+  the owner's dead remove takes it off the owned list. `HeldLifeStep` turns any positive sum on a dying copy into its
+  whole life (`max(sum, life)`): the next step ends it. A refused hit on a dying boss goes to its Life step after the
+  wait, as for any enemy. The list empties on scenes off, a new fight and Reset. Log: `its death has begun: the copy's
+  own Life step lets it die now`; totals `N ended in their death`.
+- **The Life-1 clamp (not solved).** In hs-gohma-death 20261115-191432 the same direct Life step that killed the
+  owner's Gohma (the test kill) left the copy at 1 (`21 -> 1`, then `1 given` forever): her own damage rules keep her
+  at 1 outside her stun or chance time, which a copy does not share. So a copy Gohma may never read dead in its own
+  game. Solving it needs her damage rules reverse engineered (`Enemy_DungeonBoss_Gohma` DamageRule or her AI's life
+  floor). Other bosses' rules are not checked.
+- **The setting waits for the copy (boss-0113 fallback, boss-0114-a).** Another's death while our walk reads our copy
+  alive (`boss_ours` false, `boss_alive` true) never asks the setting at once: its flow would wait for that copy's
+  death. SetDying releases the copy right after that tick (the glue runs it after `Director::Tick`), so the Director
+  waits up to `kCopyWaitUs` (1.5 s) for the walk to read it dead, then asks the setting (`our copy of the boss died
+  here: asking its own death`): the whole death, the quest step and the warp in our game. Still alive then: the death
+  flow alone (the timeline, as 0.11.1: `the death flow alone: our copy of the boss still lives ... asked again if it
+  dies`), and once the copy reads dead with no event running, within `kReaskUs` (45 s) of the death, the setting once
+  (`our copy of the boss died after the death flow: asking its own death now`; a refusal asks nothing more). Our own
+  game taking the death setting itself (the copy's own death logic) ends the wait. Never dead by then: `never died
+  here`, and that player's warp does nothing until their Link leaves the dungeon (#88). With the Life-1 clamp above,
+  that is the expected path for a copy Gohma until her clamp is solved. The first boss-0113 fallback asked the flow
+  alone at once and never again; the copy is always held alive at that tick, so #88 came back for every non-owner
+  (review-boss-0113 must-fix 1).
+- Tests: `tests/lichii/boss_scenes_test.cpp` (report 88 case: the real order, a copy that dies after the release,
+  one held alive past the wait and dying after the flow, one that never dies, our game's own setting, leaving the
+  area), `boss_native_test.cpp` and `objects_test.cpp` (dying release, late changes, finish).
+- In game: scenario `hs-gohma-death` (LANE1; PASS lines in its header).
+
 ## Not known yet (for the in-game check)
 
 1. Whether the force-set-matrix move into a room of the same scene loads that room's walls and floor, or Link falls through (the dungeon may stream rooms by `DungeonRoomIndex`). If he falls, the fallback is the scene change, which needs an event running.
