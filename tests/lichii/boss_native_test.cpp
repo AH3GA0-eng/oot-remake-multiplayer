@@ -628,8 +628,10 @@ TEST_CASE("native boss: once its death has begun, a copy runs all its own and it
     REQUIRE(c);
     CHECK(c->x[1] == 9);
     CHECK_FALSE(t.Step(g, true, 0, kMain));
+    CHECK(t.Watches(kLife));
     CHECK(t.HeldLifeStep(kLife, 1, 1) == 1);  // dies of its own
-    CHECK(t.Totals().copy_killed == 1);
+    CHECK(t.HeldLifeStep(kLife, 5, 1) == 5);  // her own rules let 1 through: the step ends her all the same
+    CHECK(t.Totals().copy_finished == 1);
     // Long after our event is over and with the owner's (fight) state still coming: never skipped, never put back.
     t.SetEvent(true);
     t.SetEvent(false);
@@ -643,6 +645,13 @@ TEST_CASE("native boss: once its death has begun, a copy runs all its own and it
     t.Publish({copy});
     CHECK_FALSE(t.OnBrainVerb(kBsa, 13, false, false));
     CHECK(t.HeldLifeStep(kLife, 5, 21) == 21);
+    // The owner's dead remove takes her off the owned list: her Life step still ends her while she is dying.
+    t.Publish({});
+    CHECK(t.Watches(kLife));
+    CHECK(t.HeldLifeStep(kLife, 5, 2) == 5);
+    t.SetDying({});
+    CHECK_FALSE(t.Watches(kLife));
+    CHECK(t.HeldLifeStep(kLife, 5, 2) == 2);
     const auto notes = t.TakeNotes();
     CHECK(std::any_of(notes.begin(), notes.end(),
                       [](const std::string& n) { return n.find("its death has begun") != std::string::npos; }));

@@ -8,7 +8,10 @@
 #  1. B: "Dm_Deku_BossOut: our game started the death" (VOID without it: the kill did not land).
 #  2. A: "Dm_Deku_BossOut: playing it here too" (asked as InsideTheDekuTree_BossDie) or "ours started with".
 #  3. A: "its death has begun: the copy runs all its own" (the fix), and no "the copy takes the owner's state
-#     again" after it.
+#     again" after it; her death ends here: A's "a hit the dying boss's game did not take: N given to its own
+#     Life step (its death has begun)" and/or "N ended in their death" > 0 in A's "coop: bosses:" totals line, and
+#     A's "our event is over" after the death (Revirie's 0.11.2 host log never had it: 'the boss is still
+#     there', then 'a hit the boss's game did not take: its life stays its game's' over and over).
 #  4. A's shots a-d3 and a-walk1 are the boss room, not black; A's "goto" after a-d3 does not time out.
 #  5. A leaves the scene through the blue warp (A's log: the scene changes from InsideTheDekuTree after
 #     a-walk1), or at least A's "heart container: our pickup" / MaxLife +4 in A.
