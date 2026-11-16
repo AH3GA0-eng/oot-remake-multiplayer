@@ -14,10 +14,13 @@ the table through); it holds the puppets again when either file changed since. `
 
 A winning table that already holds every puppet pack entry, each at least the pack's size (a mod maker merged the
 pack's entries in by hand, e.g. a skins mod), needs no merge: it is left as it is and marked `rule contains`. That is
-also the only way a winner under `contents/` (a title's own mod folder, never rewritten here) keeps the puppets on.
+also the only way a winner under `contents/` other than the pack (a title's own mod folder, never rewritten here)
+keeps the puppets on.
 
-Our own seeds (`randomizer-*`) and the puppet pack are left alone when they win: the module builds a seed beside
-every other table already (coop_rando StageSizeTables).
+Our own seeds (`randomizer-*`) are left alone when they win: the module builds a seed beside every other table
+already (coop_rando StageSizeTables). When the puppet pack wins (a mod the Mods list does not name that sorts under
+`contents/` by name, e.g. "bestbuddy"), the other mods' entries go into the pack's table, our seeds' not: without
+them a file that mod made larger has no size the game accepts and the game aborts at the start (player report 101).
 
     python -I merge_tables.py --mods <game>/mods [--romfs <game>/romfs] [--undo]
 
@@ -260,13 +263,23 @@ def merge_mods(root, romfs, say=print):
     for fname in sorted({f for _, _, fs_ in order for f in fs_}):
         having = [(n, p) for n, p, fs_ in order if fname in fs_]
         win_name, win_path = having[-1]
-        if len(having) < 2 or is_ours(win_name) or fold(win_name) == PACK:
-            continue  # (one table, one of our seeds, or the puppet pack itself)
-        others = having[:-1]
-        pack_in = [p for n, p in others if fold(n) == PACK]
-        title_mod = fold(win_name).startswith("contents/")
-        if title_mod and not pack_in:
-            continue  # (a title's own mod, nothing of the puppets' under it: left alone as ever)
+        if fold(win_name) == PACK:
+            # The puppet pack wins (another mod sorts under it by name, e.g. "bestbuddy" < "contents/", and the Mods
+            # list does not name it): that mod's entries go into the pack's table, else a file it made larger has no
+            # size the game accepts and the game aborts at the start (player report 101). Our seeds are left out:
+            # each is built beside every other table, and the pack's table changing makes them be built again.
+            others = [(n, p) for n, p in having[:-1] if not is_ours(n)]
+            if not others:
+                continue  # (the pack's table alone, or with our seeds only)
+            pack_in, title_mod = [], False
+        else:
+            if len(having) < 2 or is_ours(win_name):
+                continue  # (one table, or one of our seeds)
+            others = having[:-1]
+            pack_in = [p for n, p in others if fold(n) == PACK]
+            title_mod = fold(win_name).startswith("contents/")
+            if title_mod and not pack_in:
+                continue  # (a title's own mod, nothing of the puppets' under it: left alone as ever)
         try:
             merged_before = os.path.isfile(os.path.join(win_path, KEEP_DIR, STAMP))
             if pack_in and (title_mod or (len(others) == 1 and not merged_before)):
@@ -337,7 +350,8 @@ def merge_one(root, codec, fname, win_name, win_path, others, say):
     write_atomic(table_path, data)
     write_mark(root, win_path, fname)
     names = ", ".join("the puppet pack" if fold(n) == PACK else n for n, _ in others)
-    say(f"Size tables: the game reads {win_name}'s; merged in the entries of {names} "
+    shown = "the puppet pack" if fold(win_name) == PACK else win_name
+    say(f"Size tables: the game reads {shown}'s; merged in the entries of {names} "
         f"({added} added, {raised} made larger). Its own table is kept in {win_name}/{KEEP_DIR}"
         " (merge_tables.py --undo puts it back).")
     return 0
