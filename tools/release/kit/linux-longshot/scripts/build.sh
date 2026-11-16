@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the co-op game on this PC from your own copy of the game (start-oot-coop.sh runs it; the
+# Builds the co-op game on this PC from your own copy of the game (start-squadala.sh runs it; the
 # Linux twin of the Windows kit's scripts/hookshot-build.ps1). Longshot (Team MagicBean, GPL-3.0,
 # git.magicbean.dev/MagicBeanDev/Longshot) is a static recompilation of the game: it is compiled
 # here, from your files, and nothing of the game leaves this PC.
@@ -167,7 +167,7 @@ if [[ -z $game ]] && ((!ready || rebuild || check_only)); then
     fi
 fi
 if [[ -z $game ]] && ((!ready || rebuild || check_only)); then
-    kit_tty || fail 'The game is not built yet and needs your game file. Start start-oot-coop.sh from a terminal once (Steam Deck: in Desktop Mode, right-click it, "Run in Konsole"), then it starts from anywhere.'
+    kit_tty || fail 'The game is not built yet and needs your game file. Start start-squadala.sh from a terminal once (Steam Deck: in Desktop Mode, right-click it, "Run in Konsole"), then it starts from anywhere.'
     say ''
     say "Drag your game's .nup file (or its romfs folder) into this window and press Enter:"
     read -r game || game=''
@@ -326,7 +326,7 @@ find_pack_game() {
     fi
 }
 # The drag prompt is asked once, not at every start: data/pack-asked.txt keeps what it asked about (the game file named
-# and the pack tool's hash), so a new game file or tool asks again; start-oot-coop.sh --pack removes it and asks.
+# and the pack tool's hash), so a new game file or tool asks again; start-squadala.sh --pack removes it and asks.
 pack_asked=$DATA/pack-asked.txt
 ask_key="${pack_from:-}|${pack_stamp##* tool:}"
 if [[ ! -e ${pack_from:-} ]] && ! [[ -f $mod/coop_puppet.json && $(cat "$mod/.coop-stamp" 2>/dev/null) == "$pack_stamp" && -z $(pack_gap) ]]; then
@@ -336,7 +336,7 @@ if [[ ! -e ${pack_from:-} ]] && ! [[ -f $mod/coop_puppet.json && $(cat "$mod/.co
         pack_from=$found
         printf '%s\n' "$pack_from" >"$remembered"
     elif [[ $(cat "$pack_asked" 2>/dev/null) == "$ask_key" ]]; then
-        say '  (Not asked again at every start: bash start-oot-coop.sh --pack asks for your game file and makes the pack.)'
+        say '  (Not asked again at every start: bash start-squadala.sh --pack asks for your game file and makes the pack.)'
     elif kit_tty && [[ -z ${CI-} ]]; then
         say "  The puppet pack (how you see the other players) is made from your game file, and the kit cannot find it$([[ -n $pack_from ]] && printf ' (not at %s any more)' "$pack_from")."
         a=''
