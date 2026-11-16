@@ -2343,6 +2343,12 @@ Coop* Get() {
     return g_coop.get();
 }
 
+// The session End stopped last (kept until Shutdown), or none.
+Coop* LastEnded() {
+    std::lock_guard lock(g_mutex);
+    return g_ended.empty() ? nullptr : g_ended.back().get();
+}
+
 } // namespace
 
 // The Lobby (docs/protocol.md "Lobby"): the player's own key, from
@@ -2530,11 +2536,28 @@ void OnFrame(Core::System& system) {
     auto* coop = Get();
     {   // minimap-b: a session started or ended (the drop log's line; the solo keeper's baseline is dropped)
         static bool had = false;
+        static Coop* seen = nullptr;     // the session of the last frames
+        static Coop* last_due = nullptr; // ended, waiting for its last frame (below)
+        if (coop != nullptr) {
+            seen = coop;
+            last_due = nullptr;
+        }
         if ((coop != nullptr) != had) {
             had = coop != nullptr;
             coop::host::map_drop_log().note(had ? "co-op session started" : "co-op session ended");
             g_keeper_reset.store(true);
             g_solo_view.Clear();  // row 112: the session's frame from now, and a fresh reading after it
+            // Left from the menu (End): every part forgets the session on a frame that is not connected (the
+            // objects' owners and copies, bosses held for their owner, spawns, drops, the time, the HUD, ...),
+            // as on a drop, but no frame came after End. The ended session gets that one frame, once End has
+            // stopped its client and kept it (End runs on the menu's thread), so solo play goes on with nothing
+            // of the session left.
+            if (!had) {
+                last_due = seen;
+            }
+        }
+        if (last_due != nullptr && !g_mod_refused && LastEnded() == last_due) {
+            std::exchange(last_due, nullptr)->Frame(system);
         }
     }
     // The game's main may be patched (or refused for a code mod) after co-op
