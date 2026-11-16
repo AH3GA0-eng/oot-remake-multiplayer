@@ -2310,7 +2310,42 @@ private:
         if (CoopQuests::LiveOn()) {  // issue 94: every shared quest, not only after a reload
             for (auto& w : CoopQuests::LiveWants(value)) wants.push_back(std::move(w));
         }
+        if (auto w = FollowTradeItem(memory)) wants.push_back(std::move(*w));
         challenges_.Want(std::move(wants));
+    }
+
+    // Row 117 (docs/items.md, "Every item the game takes away"): the adult
+    // trade's items are shared by mirror, but each trade NPC tests our own
+    // SubEvent_GetSwordBigGoron step. The step follows the item held: our
+    // GameData step (what the NPCs' _IsAfter_ Exps read) is raised to the
+    // step at which the game's own flow hands that item over, and the
+    // manager gets it through the game's setStep (Challenges, as the shared
+    // quests), so its own step start runs (a spoiling item's timer too). Only
+    // forward, never from NotReady, never in an event (our own trade's flow
+    // sets its step itself). Returns the manager's want for this quest.
+    std::optional<CoopQuest::StepWant> FollowTradeItem(EmulatorMemory& memory) {
+        namespace trade = coop::host::trade;
+        coop::host::GameFlags flags(memory);
+        const auto was = flags.get_enum(trade::kQuest);
+        const auto raise = coop::host::trade_step_raise(was, [&](std::uint32_t h) { return flags.get_int(h); });
+        if (raise && coop::host::GameFlags::set_enum(memory, trade::kQuest, *raise)) {
+            const char* held = "?";
+            for (const auto& h : trade::kHolds) {
+                if (h.step == *raise) held = h.name;
+            }
+            LOG_INFO(Core,
+                     "coop: items: trade quest SubEvent_GetSwordBigGoron {:#x} -> {:#x}: {} is held here "
+                     "(row 117)",
+                     *was, *raise, held);
+        }
+        const auto now = flags.get_enum(trade::kQuest);
+        const auto rank = now ? coop::host::trade_step_rank(*now) : std::nullopt;
+        if (!rank || *rank < 2) {
+            return std::nullopt;  // unread, NotReady or Ready: the manager is the game's own
+        }
+        CoopQuest::StepWant w{trade::kChallenge, *now, {}, "SubEvent_GetSwordBigGoron"};
+        w.steps.assign(trade::kSteps.begin(), trade::kSteps.end());
+        return w;
     }
 
     // Issue 125 (docs/items.md, "Strength"): raises PlayerStatus.LiftGrade to

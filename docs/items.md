@@ -351,7 +351,7 @@ So the game sets up something for the ocarina at the save load (or in the pouch 
 | What the game takes | Flow | Get | Use in the other games |
 |---|---|---|---|
 | Child trade: Weird Egg, Pocket Cucco (Alarm), Zelda's Letter shown | `Goto_HyruleCastle`, `Dm_HrlCastle_0020`, `Npc_Hylia_Soldier_003` | mirror; Zelda's Letter max | mirror copies the hand-over; Zelda's Letter spent by the shared gate Bool (`zelda_letter_spent`, above) |
-| Adult trade: Pocket Egg, Pocket Cucco, Cojiro, Odd Mushroom, Odd Potion, Poacher's Saw, Broken Sword, Prescription, Eyeball Frog, Eye Drops, Claim Check | `Npc_Hylia_049/017/053_Adult`, `Npc_Kokiri_Fado_Adult`, `Npc_Hylia_012_Adult`, `Npc_Goron_Biggoron_Adult`, `Npc_Zora_KingZora_adult`, `Npc_Hylia_045_Adult`, `Dm_DeathMtTrail_0050`, `SubEvent_GetSwordBigGoron` | mirror | mirror: the last change crosses, so a hand-over removes it everywhere. Same-class risk found (not changed here): each trade NPC's flow also tests that game's own `SubEvent_GetSwordBigGoron` step (`..._IsAfter_StepNN_Exp`), and that quest is not shared ([flags.md](flags.md), left out), so a player who did not trade holds the next item while their own step lags; whether their NPC then refuses it is not checked in a run |
+| Adult trade: Pocket Egg, Pocket Cucco, Cojiro, Odd Mushroom, Odd Potion, Poacher's Saw, Broken Sword, Prescription, Eyeball Frog, Eye Drops, Claim Check | `Npc_Hylia_049/017/053_Adult`, `Npc_Kokiri_Fado_Adult`, `Npc_Hylia_012_Adult`, `Npc_Goron_Biggoron_Adult`, `Npc_Zora_KingZora_adult`, `Npc_Hylia_045_Adult`, `Dm_DeathMtTrail_0050`, `SubEvent_GetSwordBigGoron` | mirror | mirror: the last change crosses, so a hand-over removes it everywhere; the trade quest's step follows the item held ([below](#the-adult-trade-follows-the-item-row-117)) |
 | Ruto's Letter | `Dm_Zora_0010` | shared (any) | spent by the shared scene Bool (above) |
 | Bottle contents (potions drunk, fairies, fish, bugs, poes sold, milk) | many | per player | per player: nothing crosses |
 | Small keys used | doors | count (delta) | the −1 crosses |
@@ -360,6 +360,28 @@ So the game sets up something for the ocarina at the save load (or in the pouch 
 | Master Sword (Door of Time, final battle) | `DoorOfTime`, `Dm_FinalBattle_0010` | max | a max drop is kept in that game only (`max_drops_kept`): time travel and the fight are each game's own |
 | Ocarina, songs, shields, Biggoron's Sword shown in a get scene | `Dm_SY_GetInEvent`, `Dm_SY_Ocarina`, `Dm_Kokiri_0155`, `Dm_MelodyGet_Time` | max / any | shown or given, not taken |
 | Randomizer items | OOTRR places the same items; its own flows are the game's | as above | as above (Ruto's Letter's chest is shared; open fountain above) |
+
+Other shared items next to a quest step that stays each game's own (same audit): the masks (`SubEvent_MaskSalesman`, kept per player, above); `Get_Epona` is shared by its end; the Gerudo membership card is a shared item with a shared get scene (`Dm_Gerudo_0025`), and the `SageOfSpirit` steps the Gerudo flows read (`Step02`, `Step03`) are set by talking to the guard and arriving in the valley (`Npc_Gerudo_006`, `Dm_SY_BancChangeArrive`), not by the card. No other shared item is handed over against a per-player step.
+
+### The adult trade follows the item (row 117)
+
+The trade items are shared by mirror, but every trade NPC's flow also tests that game's own `SubEvent_GetSwordBigGoron` step (GameData Enum `Step_SubEvent_GetSwordBigGoron`, 0x26a2e01c, through `SubEvent_GetSwordBigGoron_IsAfter_StepNN_Exp`), and the quest is each game's own (`CoopQuests` leaves it out: a spoiled item sends it back). So the player who did not trade held the next item while their NPCs still waited for the one before. Now the step follows the item: the hook (`FollowTradeItem`, in the story catch-up, outside events) raises our GameData step to the step at which the game's own flow hands that item over, and the quest manager gets it through the game's own `setStep` (`CoopQuest::Challenges`, as the shared quests), so the step's own start runs (a spoiling item's timer too). From the romfs flows' `EventExecuteProgressChallengeStep`:
+
+| Held | Step | Handed over by |
+|---|---|---|
+| Pocket Egg | `StartSubEvent` | Anju (`Npc_Hylia_049_Adult`) |
+| Pocket Cucco | `EggHatched` | the egg (`SubEvent_GetSwordBigGoron`) |
+| Cojiro | `Step03` | Anju |
+| Odd Mushroom | `Step04` | the Lost Woods' man (`Npc_Hylia_017_Adult`, again after `Step03_03`, spoiled) |
+| Odd Potion | `Step05` | Granny (`Npc_Hylia_053_Adult`) |
+| Poacher's Saw | `Step06` | Fado (`Npc_Kokiri_Fado_Adult`) |
+| Broken Goron's Sword | `Step07` | the carpenters' boss (`Npc_Hylia_012_Adult`) |
+| Prescription | `Step08` | Biggoron (`Npc_Goron_Biggoron_Adult`) |
+| Eyeball Frog | `Step09` | King Zora (`Npc_Zora_KingZora_adult`, again after `Step08_01`) |
+| Eye Drops | `Step10` | the lab (`Npc_Hylia_045_Adult`, again after `Step09_01`) |
+| Claim Check | `Step11` | Biggoron (`Dm_DeathMtTrail_0050`) |
+
+Only forward (the furthest item held), never from `NotReady` (the manager readies the quest: a child or a game before it is left alone), never to `Complete` (Biggoron's Sword is its own shared item), and an unread step or item leaves it alone. Log: `coop: items: trade quest SubEvent_GetSwordBigGoron 0x... -> 0x...: <item> is held here (row 117)`. A spoiled item is the giving game's own: its timer deletes the item there, the mirror takes it everywhere, and each game's own timer sets its spoiled step when it runs out; a new item from the retry brings the others forward again. Needs story sharing on (the catch-up runs only then); co-op idle runs none of it. Unit tests: "the adult trade's tables are the game's names, in its order", "a trade item another player handed on brings our trade step to it", "the trade step only goes forward, from Ready, never to Complete", "the egg and its hatch follow the item too", "a spoiled trade item's retry and the timers follow the item". Not checked in a run: that the manager's step start starts the timer in the following game.
 
 ## Not done
 

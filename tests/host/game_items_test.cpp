@@ -6,6 +6,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -1664,4 +1665,147 @@ TEST_CASE("items: Ruto's Letter on an open-fountain seed becomes an empty bottle
   const auto after = coop::host::ruto_letter_plan(true, true, step07, v, in);
   CHECK_FALSE(after.spent);
   CHECK_FALSE(after.bottle);
+}
+
+namespace {
+// A trade quest view: our step and the trade items held (StockNum), by name.
+struct TradeGame {
+  std::map<std::uint32_t, std::int32_t> stock;
+  TradeGame() {
+    for (const auto& h : coop::host::trade::kHolds) stock[h.item] = 0;
+  }
+  void hold(const char* name, std::int32_t n = 1) {
+    stock.at(coop::host::flag_hash(std::string("PouchData.") + name + ".StockNum")) = n;
+  }
+  std::optional<std::uint32_t> raise(const char* step) const {
+    return raise_from(coop::host::flag_hash(step));
+  }
+  std::optional<std::uint32_t> raise_from(std::optional<std::uint32_t> step) const {
+    return coop::host::trade_step_raise(step, [this](std::uint32_t h) -> std::optional<std::int32_t> {
+      const auto it = stock.find(h);
+      return it == stock.end() ? std::nullopt : std::optional(it->second);
+    });
+  }
+};
+std::uint32_t step_hash(const char* name) { return coop::host::flag_hash(name); }
+}  // namespace
+
+TEST_CASE("items: the adult trade's tables are the game's names, in its order (row 117)") {
+  namespace trade = coop::host::trade;
+  CHECK(coop::host::flag_hash("Step_SubEvent_GetSwordBigGoron") == trade::kQuest);
+  CHECK(coop::host::flag_hash("SubEvent_GetSwordBigGoron") == trade::kChallenge);
+  const char* steps[] = {"NotReady", "Ready", "StartSubEvent", "WaitEggHatch", "EggHatched", "Step01", "Step01_01",
+                         "Step02", "Step03", "Step03_01", "Step03_02", "Step03_03", "Step04", "Step05",
+                         "Step05_01", "Step06", "Step06_01", "Step06_02", "Step06_03", "Step07", "Step08",
+                         "Step08_01", "Step09", "Step09_01", "Step10", "Step11", "Complete"};
+  REQUIRE(std::size(steps) == trade::kSteps.size());
+  for (std::size_t i = 0; i < trade::kSteps.size(); ++i) {
+    CAPTURE(steps[i]);
+    CHECK(coop::host::flag_hash(steps[i]) == trade::kSteps[i]);
+  }
+  const std::pair<const char*, const char*> holds[] = {
+      {"Item_PocketEgg", "StartSubEvent"}, {"Item_PocketCucco", "EggHatched"}, {"Item_CojiroCucco", "Step03"},
+      {"Item_OddMushroom", "Step04"},      {"Item_OddPowder", "Step05"},       {"Item_PoacherSaw", "Step06"},
+      {"Item_BrokenSword", "Step07"},      {"Item_Prescription", "Step08"},    {"Item_EyeballFrog", "Step09"},
+      {"Item_EyeDrop", "Step10"},          {"Item_ClaimCheck", "Step11"}};
+  REQUIRE(std::size(holds) == trade::kHolds.size());
+  for (std::size_t i = 0; i < trade::kHolds.size(); ++i) {
+    CAPTURE(holds[i].first);
+    CHECK(std::string_view(trade::kHolds[i].name) == holds[i].first);
+    const std::uint32_t item = coop::host::flag_hash(std::string("PouchData.") + holds[i].first + ".StockNum");
+    CHECK(trade::kHolds[i].item == item);
+    CHECK(trade::kHolds[i].step == coop::host::flag_hash(holds[i].second));
+    const auto* flag = find_item(item);
+    REQUIRE(flag != nullptr);
+    CHECK(flag->rule == coop::host::ItemRule::mirror);  // the item crosses; its step must follow
+    if (i > 0) {  // the chain goes forward
+      CHECK(*coop::host::trade_step_rank(trade::kHolds[i].step) >
+            *coop::host::trade_step_rank(trade::kHolds[i - 1].step));
+    }
+  }
+}
+
+TEST_CASE("items: a trade item another player handed on brings our trade step to it (row 117)") {
+  namespace trade = coop::host::trade;
+  // The chain: a player who never traded (Ready) holds whatever the mirror
+  // brought; the step becomes the one the item's own hand-over sets.
+  for (const auto& h : trade::kHolds) {
+    TradeGame g;
+    g.hold(h.name);
+    CAPTURE(h.name);
+    CHECK(g.raise("Ready") == h.step);
+    CHECK_FALSE(g.raise_from(h.step));  // there already
+  }
+  // A step at a time: B is one trade behind A when A trades the saw for the
+  // Broken Sword; B's carpenter (Step06) gave nothing, B's Biggoron needs Step07.
+  TradeGame b;
+  b.hold("Item_BrokenSword");
+  CHECK(b.raise("Step06") == step_hash("Step07"));
+  CHECK(b.raise("Step06_03") == step_hash("Step07"));
+}
+
+TEST_CASE("items: the trade step only goes forward, from Ready, never to Complete (row 117)") {
+  TradeGame g;
+  g.hold("Item_OddMushroom");
+  CHECK_FALSE(g.raise("Step05"));    // ours is further: kept
+  CHECK_FALSE(g.raise("Complete"));  // done here: kept
+  CHECK_FALSE(g.raise("NotReady"));  // the manager readies the quest (a child, or before it): left alone
+  CHECK_FALSE(g.raise_from(std::nullopt));                       // unread
+  CHECK_FALSE(g.raise_from(step_hash("SomethingElse")));        // not in the list
+  TradeGame none;
+  CHECK_FALSE(none.raise("Ready"));  // nothing held: nothing to follow
+  // Biggoron took the Claim Check (mirror: gone everywhere): nothing raises
+  // to Complete; Biggoron's Sword is a shared item of its own.
+  CHECK_FALSE(none.raise("Step11"));
+  // An unread item: left alone.
+  TradeGame unread;
+  unread.hold("Item_EyeDrop");
+  unread.stock.erase(coop::host::trade::kHolds[0].item);
+  CHECK_FALSE(unread.raise("Ready"));
+  // Two held at once (a mirror between two hand-overs): the furthest wins.
+  TradeGame two;
+  two.hold("Item_PoacherSaw");
+  two.hold("Item_BrokenSword");
+  CHECK(two.raise("Ready") == step_hash("Step07"));
+}
+
+TEST_CASE("items: the egg and its hatch follow the item too (row 117)") {
+  TradeGame egg;
+  egg.hold("Item_PocketEgg");
+  CHECK(egg.raise("Ready") == step_hash("StartSubEvent"));
+  CHECK_FALSE(egg.raise("WaitEggHatch"));  // our own egg is waiting to hatch: kept
+  TradeGame chick;
+  chick.hold("Item_PocketCucco");  // another player's egg hatched: the mirror brought the cucco
+  CHECK(chick.raise("WaitEggHatch") == step_hash("EggHatched"));
+  CHECK(chick.raise("StartSubEvent") == step_hash("EggHatched"));
+  CHECK_FALSE(chick.raise("Step01_01"));  // waking Talon with it: ours already further
+}
+
+TEST_CASE("items: a spoiled trade item's retry and the timers follow the item (row 117)") {
+  // Each spoiling item has a spoiled step before its own (Step03_03,
+  // Step08_01, Step09_01): the game sets it when the timer runs out and the
+  // giver hands a new one over, setting the item's step again. A new item
+  // another player got that way brings ours back to the timed step.
+  const std::tuple<const char*, const char*, const char*> retries[] = {
+      {"Item_OddMushroom", "Step03_03", "Step04"},
+      {"Item_EyeballFrog", "Step08_01", "Step09"},
+      {"Item_EyeDrop", "Step09_01", "Step10"},
+  };
+  for (const auto& r : retries) {
+    const char* item = std::get<0>(r);
+    const char* spoiled = std::get<1>(r);
+    const char* step = std::get<2>(r);
+    CAPTURE(item);
+    TradeGame g;
+    g.hold(item);
+    CHECK(g.raise(spoiled) == step_hash(step));
+    // Spoiled here and gone (the mirror took it everywhere): nothing to follow.
+    TradeGame gone;
+    CHECK_FALSE(gone.raise(spoiled));
+  }
+  // The Claim Check: Biggoron's wait (Step11) is reached as the item's own.
+  TradeGame claim;
+  claim.hold("Item_ClaimCheck");
+  CHECK(claim.raise("Step10") == step_hash("Step11"));
+  CHECK(claim.raise("Step09_01") == step_hash("Step11"));
 }

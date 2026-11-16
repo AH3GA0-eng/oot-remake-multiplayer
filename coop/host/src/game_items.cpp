@@ -633,6 +633,29 @@ std::optional<float> dive_depth_raise(std::int32_t silver, std::int32_t gold, fl
   return want;
 }
 
+std::optional<std::size_t> trade_step_rank(std::uint32_t step) {
+  const auto it = std::find(trade::kSteps.begin(), trade::kSteps.end(), step);
+  if (it == trade::kSteps.end()) return std::nullopt;
+  return static_cast<std::size_t>(it - trade::kSteps.begin());
+}
+
+std::optional<std::uint32_t> trade_step_raise(std::optional<std::uint32_t> step,
+                                              const std::function<std::optional<std::int32_t>(std::uint32_t)>& stock) {
+  if (!step) return std::nullopt;
+  const auto now = trade_step_rank(*step);
+  if (!now || *now < 1) return std::nullopt;  // unknown, or NotReady: left alone
+  std::optional<std::size_t> want;
+  for (const trade::Hold& h : trade::kHolds) {
+    const auto n = stock(h.item);
+    if (!n) return std::nullopt;  // an unread item: left alone
+    if (*n <= 0) continue;
+    const auto r = trade_step_rank(h.step);
+    if (r && (!want || *r > *want)) want = r;
+  }
+  if (!want || *want <= *now) return std::nullopt;  // ours is as far or further
+  return trade::kSteps[*want];
+}
+
 bool zelda_letter_spent(std::int32_t held, std::optional<bool> gate_open) {
   return held > 0 && gate_open == true;
 }
