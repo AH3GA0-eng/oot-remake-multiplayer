@@ -163,14 +163,14 @@ std::string SeedlessMineLine(std::string_view seed) {
 
 std::string SeedOtherLine(std::uint8_t number, std::string_view name, std::string_view seed) {
     return "Mods: " + Who(number, name) + " has the randomizer seed " + std::string(seed) +
-           " built unlike the host's: on another co-op kit (another OOTRR) it is another world (other items in "
-           "chests); everyone needs the same kit";
+           " built unlike the host's: on another kit (another OOTRR) it is another world (other items in chests); "
+           "all need the same kit";
 }
 
 std::string SeedOtherMineLine(std::string_view seed) {
     return "Mods: your randomizer seed " + std::string(seed) +
-           " is built unlike the host's: on another co-op kit (another OOTRR) it is another world (other items in "
-           "chests); update to the host's kit";
+           " is built unlike the host's: on another kit (another OOTRR) it is another world (other items in chests); "
+           "update to the host's kit";
 }
 
 std::string SeedBackLine(std::uint8_t number, std::string_view name) {
