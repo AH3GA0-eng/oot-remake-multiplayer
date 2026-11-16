@@ -1835,6 +1835,98 @@ TEST_CASE("flag watcher: an up-only Bool still goes up from the group (issue 84)
   CHECK(w.stats().up_only_kept == 0);
 }
 
+TEST_CASE("flag watcher: an up-only gate from the host's save load reaches a guest at the title and stays through its own load (issue 61)") {
+  // The final 0.11.2 smoke's order (quest-flags, 20261115-143129): the guest joins at the
+  // title (the join snapshot has the host's title 0), the host loads a save with Zora's
+  // waterfall open (FLAG_RESET 1), then the guest loads its own save, which has it shut.
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::player);
+  REQUIRE(w.share_up_only(kDoor));
+  w.set_loading(true);
+  w.set_scene(false);
+  w.frame(store);
+  CHECK(w.receive(proto::FlagSnapshot{0, 1, {entry(kDoor, 0), entry(kChest, 0), entry(kKey0, 0)}}));
+  CHECK(w.frame(store).empty());
+  CHECK(store.get(kDoor) == 0);
+
+  CHECK(w.receive(proto::Message{proto::FlagReset{1, {entry(kDoor, 1), entry(kChest, 1), entry(kKey0, 1)}}}));
+  CHECK(w.frame(store).empty());
+  CHECK(store.get(kDoor) == 1);
+  for (int i = 0; i < FlagWatcher::kTitleFrames; ++i) CHECK(w.frame(store).empty());
+
+  // The guest's own save (a test's own-save guest): none of the three.
+  store.set(kDoor, 0);
+  store.set(kChest, 0);
+  store.set(kKey0, 0);
+  CHECK(w.frame(store).empty());
+  CHECK(store.get(kDoor) == 1);  // the group's 1 back at once
+  w.set_scene(true);
+  w.set_loading(false);
+  for (int i = 0; i <= FlagWatcher::kSettleFrames; ++i) CHECK(w.frame(store).empty());
+  CHECK(store.get(kDoor) == 1);
+  CHECK(store.get(kChest) == 1);
+  CHECK(w.stats().up_only_kept == 0);
+  // Later frames leave it open and send nothing.
+  for (int i = 0; i < 10; ++i) CHECK(w.frame(store).empty());
+  CHECK(store.get(kDoor) == 1);
+}
+
+TEST_CASE("flag watcher: an up-only gate the guest's load alone shuts again is put back (issue 61)") {
+  // Only the gate goes back to 0 (one flag back: no sign of a save load): the
+  // load's older value is still not the group's.
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::player);
+  w.share_up_only(kDoor);
+  w.frame(store);
+  CHECK(w.receive(state({entry(kDoor, 1)})));
+  w.frame(store);
+  REQUIRE(store.get(kDoor) == 1);
+  w.set_loading(true);
+  w.set_scene(false);
+  for (int i = 0; i < FlagWatcher::kTitleFrames; ++i) w.frame(store);
+  store.set(kDoor, 0);
+  CHECK(w.frame(store).empty());
+  CHECK(store.get(kDoor) == 1);
+  w.set_scene(true);
+  w.set_loading(false);
+  for (int i = 0; i <= FlagWatcher::kSettleFrames; ++i) CHECK(w.frame(store).empty());
+  CHECK(store.get(kDoor) == 1);
+}
+
+TEST_CASE("flag watcher, host: an up-only gate goes out live and in the host's save-load reset (issue 61)") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::host);
+  w.share_up_only(kDoor);
+  w.frame(store);
+  // Zelda's Lullaby at the falls: the game sets the gate.
+  store.set(kDoor, 1);
+  CHECK(only<proto::FlagState>(w.frame(store)) == std::vector{entry(kDoor, 1)});
+
+  // Back to the title, then a save with the gate open loads (the title's
+  // defaults had it 0; two other flags going back are the sign of a load).
+  store.set(kDoor, 0);
+  store.set(kChest, 1);
+  store.set(kKey0, 1);
+  w.frame(store);
+  w.set_loading(true);
+  w.set_scene(false);
+  for (int i = 0; i < FlagWatcher::kTitleFrames; ++i) w.frame(store);
+  store.set(kChest, 0);
+  store.set(kKey0, 0);
+  store.set(kDoor, 1);
+  CHECK(w.frame(store).empty());
+  w.set_scene(true);
+  w.set_loading(false);
+  std::vector<proto::FlagEntry> reset;
+  for (int i = 0; i <= FlagWatcher::kSettleFrames; ++i) {
+    for (const auto& m : decode(w.frame(store))) {
+      if (const auto* r = std::get_if<proto::FlagReset>(&m)) reset.insert(reset.end(), r->flags.begin(), r->flags.end());
+    }
+  }
+  CHECK(std::find(reset.begin(), reset.end(), entry(kDoor, 1)) != reset.end());
+  CHECK(w.stats().host_resets == 1);
+}
+
 TEST_CASE("flag watcher: a host at 1 answers a player's 0 of an up-only Bool with 1 (issue 84)") {
   FakeStore store = game();
   store.set(kDoor, 1);
