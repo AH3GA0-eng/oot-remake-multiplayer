@@ -80,6 +80,11 @@ bool g_shown = false;        // the tab shows in Hookshot's menu
 std::string g_doing;         // what the tab started: "hosting", "joined", "" none
 bool g_copied = false;       // this session's invite code was put on the clipboard
 bool g_answer_copied = false;   // this join's answer code (WAIT_HOST) was put on the clipboard
+// The automatic copy is tried ONCE per code: on Linux it runs wl-copy or xclip on the game's frame
+// thread and waits up to 2 s for it, so a desktop where the tool fails (Steam Deck game mode, gamescope) must
+// not have it tried again every 250 ms: that held the game at a few frames a second while hosting.
+bool g_copy_tried = false;
+bool g_answer_copy_tried = false;
 std::string g_answer_note;   // what became of the friend's answer code the host pasted ("" when none)
 std::string g_join_text;     // the code (or address) this join used: remembered once connected
 bool g_join_saved = false;
@@ -199,11 +204,13 @@ void RefreshSession(bool now) {
 // one (a guest's answer code too), the message logged, a connected join remembered and the host's save loaded.
 void Follow(const HosCoopStatus& st) {
     const bool host = g_doing == "hosting";
-    if (host && st.invite[0] != 0 && !g_copied) {
+    if (host && st.invite[0] != 0 && !g_copy_tried) {
+        g_copy_tried = true;
         g_copied = SetClipboardText(st.invite);
         LOG_INFO(Core, "coop: multiplayer tab: host: the invite code is on the clipboard{}", g_copied ? "" : " (it could not be)");
     }
-    if (!host && st.state == HOS_COOP_WAIT_HOST && st.answer[0] != 0 && !g_answer_copied) {
+    if (!host && st.state == HOS_COOP_WAIT_HOST && st.answer[0] != 0 && !g_answer_copy_tried) {
+        g_answer_copy_tried = true;
         g_answer_copied = SetClipboardText(st.answer);
     }
     if (st.message[0] != 0) {
@@ -253,6 +260,7 @@ void Host() {
     h.max_players = static_cast<std::uint8_t>(o.max_players);
     g_doing = "hosting";
     g_copied = false;
+    g_copy_tried = false;
     g_lan_lines.clear();
     g_answer_note.clear();
     if (!CoopHookshot::HostMenu().HostStart(&h)) {
@@ -301,6 +309,7 @@ void Join(const std::string& text) {
     g_join_text = text;
     g_join_saved = false;
     g_answer_copied = false;
+    g_answer_copy_tried = false;
     if (!CoopHookshot::HostMenu().Join(&j)) {
         RefreshSession(true);
         return;
