@@ -886,7 +886,7 @@ public:
                                            .value_or(false);
                                    });
         }
-        if (live_events_ && eye_switch_on_) {  // deku-switches: an eye that found nothing goes the old way
+        if (live_events_ && eye_switch_on_) {  // deku-switches: a switch that found nothing goes the old way
             // deku-ladder: also dropped once our game has it played (our own asker ran it): the eye is never set again.
             std::function<bool(const std::string&)> played;
             if (memory) {
@@ -924,7 +924,8 @@ public:
             };
             if (const auto name = live_decider_.Next(held_events, hold_scene_, running, link, &room_of)) {
                 LOG_INFO(Core, "coop: dungeon: starting the event {} here (another player played it)", *name);
-                // deku-switches: an eye-switch event by our eye's FirstOn, so our room's asker asks it itself.
+                // deku-switches / deku-ladder: a switch event by our switch's plug (the one its room graph wires to the
+                // asker's trigger), so our room's asker asks it itself (coop_eye_switch.h).
                 if (!eye_switch_on_ || !eye_switch_.Want(*name, hold_scene_, link)) {
                     std::lock_guard lock(live_mutex_);
                     live_requester_.WantFromRoom(*name, hold_scene_);  // with our room's asker as its starter
