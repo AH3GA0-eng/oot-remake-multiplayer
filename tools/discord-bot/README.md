@@ -1,0 +1,54 @@
+# Bug-report bot (Discord)
+
+Players type `/report` in the Squadala! Discord server, describe the bug and can attach the
+zip from the kit's collect-logs. The bot:
+
+1. posts the report (player, kit version, description, the zip) to the private dev channel;
+2. saves `description.txt` and `logs.zip` to `coord-multiplayer/player-logs/<user>-<UTC date-time>/`;
+3. adds a row marked `NEW (bot)` to `coord-multiplayer/reports/player-reports.md`;
+4. answers the player privately: "Thanks, report #N received."
+
+It runs on the owner's PC only (no server). It uses slash commands only: no privileged intents
+and no access to message content. It stores only what the player sends with `/report`.
+Limits: zip files only (checked by name and by the zip signature; never unzipped), 25 MB at most,
+3 reports per player per hour.
+
+## Setup (once)
+
+1. **Bot user.** In the Discord Developer Portal, open the Squadala! application, tab **Bot**:
+   add a bot, press **Reset Token** and copy the token. Leave every "Privileged Gateway Intent" off.
+2. **Invite it** to the server (open this link, pick the server):
+   `https://discord.com/oauth2/authorize?client_id=1571917068994089063&scope=bot+applications.commands&permissions=117760`
+   (scopes `bot` + `applications.commands`; permissions View Channel, Send Messages, Embed Links,
+   Attach Files, Read Message History).
+3. **Channels.** Make a private `#dev-reports` channel (only the team and the bot can see it).
+   Optional: a public channel where players may use `/report`; without one it works in any channel.
+   In Discord, Settings > Advanced > Developer Mode on, then right-click > Copy ID for the server
+   and the channels.
+4. **Config file** (outside the repo, never committed):
+   `coord-multiplayer\secrets\discord-bot.json`
+
+   ```json
+   {
+     "token": "paste the bot token here",
+     "guild_id": "server id",
+     "dev_channel_id": "#dev-reports id",
+     "report_channel_id": ""
+   }
+   ```
+
+5. **Python package** (once): `uv pip install --python ..\oot-remake-recomp\.venv\Scripts\python.exe -r tools\discord-bot\requirements.txt`
+
+## Run
+
+- Now: `powershell -ExecutionPolicy Bypass -File tools\discord-bot\run-bot.ps1`
+  (restarts the bot if it stops; stops for good on a bad config or token).
+- At every logon: `powershell -ExecutionPolicy Bypass -File tools\discord-bot\install-task.ps1`
+  registers the task "Squadala report bot"; `-Remove` removes it.
+
+The bot's own log is `coord-multiplayer\player-logs\discord-bot.log`; the token is never written to it.
+If the token ever leaks, press **Reset Token** in the portal and put the new one in the config file.
+
+## Tests
+
+`python tools/discord-bot/tests/test_report_core.py -v` (no network, no discord.py needed; CI runs it).
