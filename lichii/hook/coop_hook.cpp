@@ -623,13 +623,11 @@ public:
             }
             if (sharing_) {
                 // A small key or token we and another player took at once: ours
-                // goes back. A token taken elsewhere: its Skulltula's key here
-                // (docs/world.md, small keys and tokens).
+                // goes back (docs/world.md, small keys and tokens). No key is
+                // written for another game's token: its own placement key is
+                // the game's to write, and it arrives through the flag list.
                 for (const std::string& count : CoopWorld::TakeGiveBacks()) {
                     LOG_INFO(Core, "coop: {}", CoopWorld::GiveBack(*game_store, count));
-                }
-                for (const std::uint64_t key : CoopWorld::TakeTakenKeys()) {
-                    LOG_INFO(Core, "coop: {}", CoopWorld::SetTakenKey(*game_store, key));
                 }
             }
             if (sharing_) {
@@ -1118,6 +1116,15 @@ public:
             for (const auto& k : taken) {
                 if (k.kind == coop::protocol::FlagKeyKind::key64) {
                     keys.push_back(k.key);
+                    // Issue 89 (2026-11-17): a Gold Skulltula's placement key just
+                    // went 1 here for another player. The world sync takes that
+                    // Skulltula and the token it made away with it: the token is
+                    // made and taken in one run, so it never went through our
+                    // walk, and no break was ever sent for it (ROGX kept it and
+                    // the count went 41 -> 42).
+                    if (CoopWorld::IsGoldSkulltulaKey(k.key)) {
+                        CoopWorld::QueueTakenPlacement(k.key);
+                    }
                 } else if (const auto chest = CoopChests::KeyOfOpened(k.hash)) {
                     keys.push_back(*chest);  // a chest's opened flag: that chest (issue 87)
                 }

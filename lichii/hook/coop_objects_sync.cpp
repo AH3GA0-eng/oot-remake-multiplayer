@@ -723,8 +723,22 @@ void Sync::Take(std::uint64_t hash) {
         return;
     }
     std::lock_guard lock(inbox_mutex_);
-    if (takes_in_.size() < 1024) {
-        takes_in_.push_back(hash);
+    if (takes_in_.size() >= 1024) {
+        return;
+    }
+    takes_in_.push_back(hash);
+    // A Gold Skulltula's placement key arrives here as the placement hash, but
+    // the token the game made for it has no placement: its id is
+    // TokenId(placement). Both are taken, so the Skulltula and the token it
+    // already made go (issue 89: the token stayed and counted a second
+    // time). Only for the 100 placements: any other key would name a token
+    // that cannot exist.
+    if (!CoopWorld::IsGoldSkulltulaKey(hash)) {
+        return;
+    }
+    const std::uint64_t token = CoopWorld::TokenId(hash);
+    if (token != 0 && token != kNoHash && takes_in_.size() < 1024) {
+        takes_in_.push_back(token);
     }
 }
 
