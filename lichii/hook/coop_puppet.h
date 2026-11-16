@@ -730,12 +730,14 @@ struct PlannerSettings {
     // (PackLookItems). None: every puppet wears the game's items.
     std::vector<std::string> look_items;
     std::size_t look_copies = 0;
-    // Blade copies (coop_puppet.json "blade_items", look_items.BLADE_ITEMS):
-    // the swords the pack has one copy of per player number, and how many
-    // numbers. A sword's blade is a material switch kept with its model
-    // resource, which every actor of one name shares, so a puppet in the
-    // game's own sword shows its blade only while our own sword is out. A
-    // puppet with no ready Look copy wears `<sword>_Blade<its number>`
+    // Wearer copies (coop_puppet.json "blade_items", look_items.is_wearer_item):
+    // the items the pack has one copy of per player number (every player item
+    // with the game's weapon component: swords, hammer, Deku Stick, bottles,
+    // fishing rod), and how many numbers. That component writes the model's
+    // shader values from the wearer every frame (a sword's blade), into the
+    // model resource every actor of one name shares, so a puppet in the
+    // game's own sword showed its blade only while our own sword was out. A
+    // puppet with no ready Look copy wears `<item>_Blade<its number>`
     // (DressInBlades): a resource of its own, on every runtime, for every
     // player number. LICHII_COOP_BLADE_COPIES=0: none.
     std::vector<std::string> blade_items;

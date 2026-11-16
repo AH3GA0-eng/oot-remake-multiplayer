@@ -1187,23 +1187,37 @@ class FullBuildTest(unittest.TestCase):
         self.assertIsNone(m["look_items"])
 
     def test_blade_copies(self):
-        # held-piece: every sword gets one copy per player number, `<sword>_Blade<n>`, a model
-        # resource of its own (the blade switch lives there) with the game's bytes and textures,
-        # with or without tunics or Look slots.
+        # held-piece: every player item with the game's weapon component (WeaponRef, through its
+        # $parents) gets one copy per player number, `<item>_Blade<n>`, on a model project copy of
+        # its own per number (the game's bytes and textures), read from the romfs; a shield (no
+        # WeaponRef), an enemy's weapon (PerimeterAnalyserRef) and a `_Base` get none.
         from puppet_pack import look_items, zs
         plain = zstandard.ZstdCompressor()
         item = "Weapon_Sword_Kokiri"
-        info = f"Component/ModelInfo/{item}.engine__component__ModelInfo.bgyml"
-        members = {f"Actor/{item}.engine__actor__ActorParam.bgyml": byml.dumps({"Components": {"ModelInfoRef": "?" + info}}),
-                   info: byml.dumps({"FmdbName": item, "ModelProjectName": item})}
-        self.write(f"Pack/Actor/{item}.pack.zs", plain.compress(sarc.write(members)))
+        d = zs.Dicts.from_romfs(self.romfs)
+        ai = byml.loads(d.decompress(build.read(os.path.join(self.romfs, "RSDB/ActorInfo.Product.999.rstbl.byml.zs"))))
+
+        def add(name, project, comps, parent=None):
+            info = f"Component/ModelInfo/{name}.engine__component__ModelInfo.bgyml"
+            ap = {"Components": dict(comps, ModelInfoRef="?" + info)}
+            members = {info: byml.dumps({"FmdbName": project, "ModelProjectName": project})}
+            if parent:
+                ap["$parent"] = "Work/Actor/Weapon_Sword_Base.engine__actor__ActorParam.gyml"
+                members["Actor/Weapon_Sword_Base.engine__actor__ActorParam.bgyml"] = byml.dumps(
+                    {"Components": {"WeaponRef": "?Component/WeaponParam/W.bgyml"}})
+            members[f"Actor/{name}.engine__actor__ActorParam.bgyml"] = byml.dumps(ap)
+            self.write(f"Pack/Actor/{name}.pack.zs", plain.compress(sarc.write(members)))
+            ai.append({"__RowId": name, "ActorName": name, "FmdbName": project, "ModelProjectName": project,
+                       "InstanceHeapSize": 1000})
+
+        add(item, item, {}, parent=True)                                   # WeaponRef from its parent
+        add("Weapon_Sword_KokiriTwin", item, {"WeaponRef": "?W"})          # the same model project
+        add("Weapon_Shield_Wood", "Weapon_Shield_Wood", {"ShieldRef": "?S"})
+        add("Weapon_PoeLamp", item, {"WeaponRef": "?W", "PerimeterAnalyserRef": "?P"})
+        add("Weapon_Sword_Base", item, {"WeaponRef": "?W"})
         model = b"FRES" + bytes(12) + b"\x1b\x00Mt_Weapon_Sword_Kokiri_Alb\x00" + f"{item}\x00".encode()
         raw = plain.compress(model)
         self.write(f"Model/{item}.{item}.bfres.zs", raw)
-        d = zs.Dicts.from_romfs(self.romfs)
-        ai = byml.loads(d.decompress(build.read(os.path.join(self.romfs, "RSDB/ActorInfo.Product.999.rstbl.byml.zs"))))
-        ai.append({"__RowId": item, "ActorName": item, "FmdbName": item, "ModelProjectName": item,
-                   "InstanceHeapSize": 1000})
         self.write("RSDB/ActorInfo.Product.999.rstbl.byml.zs", plain.compress(byml.dumps(ai)))
         self.write("RSDB/GameActorInfo.Product.999.rstbl.byml.zs",
                    plain.compress(byml.dumps([{"__RowId": r["__RowId"]} for r in ai])))
@@ -1213,25 +1227,32 @@ class FullBuildTest(unittest.TestCase):
         out = os.path.join(mod, "romfs")
         self.assertIsNone(m["look_items"])
         self.assertEqual(m["blade_items"]["copies"], 3, said)
-        self.assertEqual(m["blade_items"]["actors"], [item])
-        self.assertTrue(any("Weapon_Sword_Master" in line for line in said))   # not in this romfs: said
+        self.assertEqual(m["blade_items"]["actors"], [item, "Weapon_Sword_KokiriTwin"])
         rows = {r["__RowId"]: r for r in byml.loads(d.decompress(build.read(
             os.path.join(out, "RSDB/ActorInfo.Product.999.rstbl.byml.zs"))))}
         t = rstb.Rstb.loads(d.decompress(build.read(os.path.join(
             out, "System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs"))))
+        model_copies = [f for f in m["blade_items"]["files"] if f.startswith("Model/")]
+        self.assertEqual(len(model_copies), 3)   # once per project and number, not per item
         for n in (1, 2, 3):
+            project = look_items.blade_name(item, n)
+            for name in (item, "Weapon_Sword_KokiriTwin"):
+                actor = look_items.blade_name(name, n)
+                self.assertEqual(rows[actor]["ModelProjectName"], project)
+                self.assertEqual(rows[actor]["FmdbName"], item)
+                files = sarc.read(d.decompress(build.read(os.path.join(out, f"Pack/Actor/{actor}.pack.zs"))))
+                comps = byml.loads(files[f"Actor/{actor}.engine__actor__ActorParam.bgyml"])["Components"]
+                self.assertEqual(byml.loads(files[comps["ModelInfoRef"][1:]]),
+                                 {"FmdbName": item, "ModelProjectName": project})
             actor = look_items.blade_name(item, n)
-            self.assertEqual(rows[actor]["ModelProjectName"], actor)
-            self.assertEqual(rows[actor]["FmdbName"], item)
-            files = sarc.read(d.decompress(build.read(os.path.join(out, f"Pack/Actor/{actor}.pack.zs"))))
-            comps = byml.loads(files[f"Actor/{actor}.engine__actor__ActorParam.bgyml"])["Components"]
-            self.assertEqual(byml.loads(files[comps["ModelInfoRef"][1:]]), {"FmdbName": item, "ModelProjectName": actor})
             # The model under the copy's project, byte for byte the game's: the game's textures.
             self.assertEqual(build.read(os.path.join(out, f"Model/{actor}.{item}.bfres.zs")), raw)
             for f in (f"Pack/Actor/{actor}.pack", f"Model/{actor}.{item}.bfres"):
                 self.assertGreater(t.get(f) or 0, 0, f)
         self.assertFalse(os.path.exists(os.path.join(out, f"Pack/Actor/{item}_Blade4.pack.zs")))
         self.assertEqual(look_items.BLADE_COPIES, 16)   # the protocol's kMaxPlayers
+        for none in ("Weapon_Shield_Wood", "Weapon_PoeLamp", "Weapon_Sword_Base"):
+            self.assertFalse(os.path.exists(os.path.join(out, f"Pack/Actor/{none}_Blade1.pack.zs")), none)
         m = build.build(self.romfs, os.path.join(self.dir, "modb0"), log=lambda *_: None, tunics=(), blade_copies=0)
         self.assertIsNone(m["blade_items"])
 

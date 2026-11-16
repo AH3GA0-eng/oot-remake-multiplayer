@@ -52,29 +52,58 @@ ITEMS = (
 
 PREFIX = "Mt_"
 
-# Blade copies (held-piece). A sword's blade is a material switch kept with its model resource,
-# which every actor of one name shares (docs/puppet.md, "Sword not seen in the puppet's hand"):
-# each wearer's weapon update sets it from its own state, so a puppet in the game's own sword
-# shows its blade only while your own sword is out, and the blade flickers when two wearers
-# disagree. The Look copies above give a puppet a resource of its own only while it holds a
-# colour slot (4 slots, Hookshot with patch 0020). So every sword also gets one copy per player
-# number, `<sword>_Blade<n>` (n = 1..BLADE_COPIES, the protocol's kMaxPlayers): the game's pack
-# under the copy's name and its model files under the copy's project, unchanged (the game's own
-# textures, so the copy draws exactly as the game's item, with no painting). A puppet without a
-# ready Look copy wears its player number's blade copy (lichii/hook/coop_puppet.cpp
-# DressInBlades), on every runtime.
-BLADE_ITEMS = (
-    "Weapon_Sword_Kokiri",
-    "Weapon_Sword_Master",
-    "Weapon_Sword_Biggoron",
-    "Weapon_Sword_Giant",
-    "Weapon_Sword_BrokenGiant",
-)
+# Wearer copies (held-piece). The weapon component (an ActorParam's `WeaponRef`; its update
+# f_710093e720, read from the game's code) writes shader values into the item's model by name
+# hash every frame, from the item's state and its wearer's EquipmentUser (0x673475da: drawn or
+# swinging, with the wearer's SwingStrength; 0xe7159148: 0; 0x29efb878 only with the tag
+# Equipment_IsHideBladeMaterial, which no actor of this game has). Those values live with the
+# model resource, which every actor of one name shares: a puppet in the game's own sword shows
+# its blade only while your own sword is out, and flickers when two wearers disagree. The Look
+# copies above give a puppet a resource of its own only in a colour slot (4 slots, Hookshot with
+# patch 0020). So every player item with a weapon component gets one copy per player number,
+# `<item>_Blade<n>` (n = 1..BLADE_COPIES, the protocol's kMaxPlayers), whose models are the
+# model project's once per number, `<project>_Blade<n>` (the Giant's Knife and the broken one
+# share the Biggoron's): the game's bytes and textures, unchanged. The list is read from the
+# romfs (wearer_items): an item pack whose ActorParam, with its $parents, has a WeaponRef and a
+# model, and no PerimeterAnalyserRef (the Poes' weapons: enemies hold them), not a `_Base`.
+# A puppet without a ready Look copy wears its player number's copy
+# (lichii/hook/coop_puppet.cpp DressInBlades), on every runtime.
 BLADE_COPIES = 16
+WEARER_COMPONENT = "WeaponRef"
+ENEMY_COMPONENT = "PerimeterAnalyserRef"
 
 
 def blade_name(item, number):
     return f"{item}_Blade{number}"
+
+
+def actor_components(members, item):
+    """The item's ActorParam components with its $parents (from its pack) merged in; None when
+    the pack lacks its ActorParam or a parent."""
+    path = actor_param_path(item)
+    comps, seen = {}, set()
+    while path is not None:
+        if path in seen or path not in members:
+            return None
+        seen.add(path)
+        doc = byml.loads(members[path])
+        for k, v in (doc.get("Components") or {}).items():
+            comps.setdefault(k, v)
+        parent = doc.get("$parent")
+        if parent is None:
+            break
+        path = parent[len("Work/"):] if parent.startswith("Work/") else parent
+        path = path[:-len(".gyml")] + ".bgyml" if path.endswith(".gyml") else path
+    return comps
+
+
+def is_wearer_item(members, item):
+    """Whether the game's weapon component sets this item's model values from its wearer."""
+    if item.endswith("_Base"):
+        return False
+    comps = actor_components(members, item)
+    return (comps is not None and WEARER_COMPONENT in comps and ENEMY_COMPONENT not in comps
+            and "ModelInfoRef" in comps)
 
 
 def actor_name(item, slot):
@@ -164,17 +193,18 @@ def model_info(members, item):
     return fmdb, project, path
 
 
-def copy_model_info(members, item, actor):
+def copy_model_info(members, item, actor, project_name=None):
     """The copy's ModelInfo: the item's whole ModelInfo (its `$parent`s merged in), every model
     project the item's own (its main model and any SubModels) renamed to the copy's. Only the
     names changed: a ModelInfo of the names alone lost the rest (the Biggoron's colour
     ModelVariationAnims, the Giant's Knife's broken SubModel)."""
     _, project, path = model_info(members, item)
     info = _resolved(members, item, path)
-    info["ModelProjectName"] = actor
+    new = project_name or actor
+    info["ModelProjectName"] = new
     subs = info.get("SubModels")
     if isinstance(subs, list):
-        info["SubModels"] = [dict(m, ModelProjectName=actor)
+        info["SubModels"] = [dict(m, ModelProjectName=new)
                              if isinstance(m, dict) and m.get("ModelProjectName") == project else m
                              for m in subs]
     return info
@@ -186,11 +216,12 @@ def copy_pack(members, item, slot):
     return copy_pack_as(members, item, actor_name(item, slot))
 
 
-def copy_pack_as(members, item, actor):
-    """copy_pack for any copy name (a Look slot's or a blade copy's)."""
+def copy_pack_as(members, item, actor, project_name=None):
+    """copy_pack for any copy name (a Look slot's or a blade copy's); `project_name`: the model
+    project it names, if not one of its own name (blade copies share one per model project)."""
     doc = byml.loads(members[actor_param_path(item)])
     doc["Components"]["ModelInfoRef"] = "?" + model_info_path(actor)
-    info = byml.dumps(copy_model_info(members, item, actor))
+    info = byml.dumps(copy_model_info(members, item, actor, project_name))
     ap = byml.dumps(doc)
     files = {k: v for k, v in members.items() if k != actor_param_path(item)}
     files[actor_param_path(actor)] = ap
@@ -203,13 +234,13 @@ def info_row(row, item, slot):
     return info_row_as(row, actor_name(item, slot))
 
 
-def info_row_as(row, actor):
+def info_row_as(row, actor, project_name=None):
     """info_row for any copy name."""
     out = dict(row)
     out["__RowId"] = actor
     if "ActorName" in out:
         out["ActorName"] = actor
-    out["ModelProjectName"] = actor
+    out["ModelProjectName"] = project_name or actor
     return out
 
 

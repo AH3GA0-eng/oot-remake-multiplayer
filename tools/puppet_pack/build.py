@@ -1024,30 +1024,38 @@ def write_look_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows, slots, l
 
 
 def write_blade_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows, copies, log=print):
-    """The swords' blade copies (look_items.BLADE_ITEMS): per player number, each sword's actor and
-    its model files under the copy's project, the game's bytes unchanged. Returns (the manifest's
-    blade_items, new ActorInfo rows, new GameActorInfo rows); a sword this romfs lacks is said."""
+    """Wearer copies (look_items, "Wearer copies"): every player item whose weapon component
+    sets its model's values from its wearer, read from the romfs (look_items.is_wearer_item), once
+    per player number; its models once per model project and number, the game's bytes unchanged.
+    Returns (the manifest's blade_items, new ActorInfo rows, new GameActorInfo rows)."""
     made, new_ai, new_gai, files = [], [], [], []
-    for item in look_items.BLADE_ITEMS:
-        src = os.path.join(romfs, "Pack", "Actor", f"{item}.pack.zs")
-        if not os.path.isfile(src) or item not in ai_rows:
-            log(f"blade copies: no {item} in this romfs")
+    pdir = os.path.join(romfs, "Pack", "Actor")
+    mdir = os.path.join(romfs, "Model")
+    model_files = sorted(f for f in os.listdir(mdir) if f.endswith(".bfres.zs")) if os.path.isdir(mdir) else []
+    projects_done = set()
+    for f in sorted(os.listdir(pdir)) if os.path.isdir(pdir) else []:
+        if not f.startswith("Weapon_") or not f.endswith(".pack.zs"):
             continue
+        item = f[:-len(".pack.zs")]
         try:
-            members = sarc.read(dicts.decompress(read(src)))
+            members = sarc.read(dicts.decompress(read(os.path.join(pdir, f))))
+            if not look_items.is_wearer_item(members, item):
+                continue
             _, project, info_src = look_items.model_info(members, item)
         except (look_items.TunicError, ValueError, KeyError) as e:
-            log(f"blade copies: {item} left out ({e})")
+            log(f"wearer copies: {item} left out ({e})")
             continue
-        models = sorted(f for f in os.listdir(os.path.join(romfs, "Model"))
-                        if f.startswith(project + ".") and f.endswith(".bfres.zs"))
+        if item not in ai_rows:
+            log(f"wearer copies: {item} has no ActorInfo row, left out")
+            continue
+        models = [m for m in model_files if m.startswith(project + ".")]
         if not models:
-            log(f"blade copies: no Model/{project}.* in this romfs, {item} left out")
+            log(f"wearer copies: no Model/{project}.* in this romfs, {item} left out")
             continue
-        raws = {m: read(os.path.join(romfs, "Model", m)) for m in models}
         for n in range(1, copies + 1):
             actor = look_items.blade_name(item, n)
-            pack, ap, info = look_items.copy_pack_as(members, item, actor)
+            copy_project = look_items.blade_name(project, n)
+            pack, ap, info = look_items.copy_pack_as(members, item, actor, copy_project)
             dst = f"Pack/Actor/{actor}.pack.zs"
             write(os.path.join(out_romfs, dst), dicts.compress(pack, PACK_DICT))
             table.add_new(strip_zs(dst), ((len(pack) + 0x1F) & ~0x1F) + PACK_SIZE_MARGIN)
@@ -1055,18 +1063,22 @@ def write_blade_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows, copies,
             table.add_new(look_items.actor_param_path(actor), max(ap_size, len(ap) + PACK_SIZE_MARGIN))
             info_size = table.get(info_src) or 0
             table.add_new(look_items.model_info_path(actor), max(info_size, len(info) + PACK_SIZE_MARGIN))
-            new_ai.append(look_items.info_row_as(ai_rows[item], actor))
+            new_ai.append(look_items.info_row_as(ai_rows[item], actor, copy_project))
             new_gai.append(dict(gai_rows.get(item, {}), __RowId=actor))
             files.append(dst)
-            for m, raw in raws.items():
-                m_dst = f"Model/{actor}{m[len(project):]}"
+            if (project, n) in projects_done:
+                continue   # (the Giant's Knife on the Biggoron's: its models are there already)
+            projects_done.add((project, n))
+            for m in models:
+                raw = read(os.path.join(mdir, m))
+                m_dst = f"Model/{copy_project}{m[len(project):]}"
                 write(os.path.join(out_romfs, m_dst), raw)
                 table.add_new(strip_zs(m_dst), table.get(strip_zs(f"Model/{m}")) or len(dicts.decompress(raw)))
                 files.append(m_dst)
         made.append(item)
     if made:
-        log(f"blade copies: {len(made)} swords x {copies} player numbers ({len(files)} files): "
-            "every puppet's sword has its own blade")
+        log(f"wearer copies: {len(made)} items ({', '.join(made)}) x {copies} player numbers, "
+            f"{len({p for p, _ in projects_done})} model projects ({len(files)} files): every puppet's own")
     return ({"copies": copies, "actors": made, "files": files} if made else None), new_ai, new_gai
 
 
@@ -1413,7 +1425,7 @@ def main(argv=None):
                     help="how many players' puppets wear gear colours of their own (look_items.py; 0 to 4, 0: none)")
     ap.add_argument("--blade-copies", type=int, default=look_items.BLADE_COPIES, metavar="N",
                     help="copies of each sword per player number, so every puppet's blade is its own "
-                         "(look_items.BLADE_ITEMS; 0: none, puppets wear the game's swords)")
+                         "(look_items.is_wearer_item; 0: none, puppets wear the game's items)")
     a = ap.parse_args(argv)
     from_nup = os.path.isfile(a.romfs) and nup.is_nup(a.romfs)
     if from_nup:
