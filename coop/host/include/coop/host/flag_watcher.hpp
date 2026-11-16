@@ -47,6 +47,7 @@ enum class FlagRole : std::uint8_t {
 
 struct FlagStats {
   std::uint64_t changes_sent = 0;      // entries in FLAG_SET or own FLAG_STATE
+  std::uint64_t entries_in = 0;        // entries of every flag message that came (forest-temple-b log)
   std::uint64_t answers_sent = 0;      // host: entries answering a FLAG_SET
   std::uint64_t applied = 0;           // entries written into the game
   std::uint64_t deltas_added = 0;      // host: count deltas added to the game (in applied too)

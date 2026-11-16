@@ -387,6 +387,7 @@ void FlagWatcher::handle(FlagStore& store, Incoming& message, Table& answers) {
       ++stats_.ignored_messages;
       return;
     }
+    stats_.entries_in += set->flags.size();
     from_ = set->player_number;
     received_kind_ = ReceivedKind::live;
     recording_ = true;
@@ -399,6 +400,7 @@ void FlagWatcher::handle(FlagStore& store, Incoming& message, Table& answers) {
       ++stats_.ignored_messages;
       return;
     }
+    stats_.entries_in += reset->flags.size();
     from_ = reset->player_number;
     received_kind_ = ReceivedKind::reset;
     recording_ = true;
@@ -410,6 +412,7 @@ void FlagWatcher::handle(FlagStore& store, Incoming& message, Table& answers) {
     return;
   }
   if (auto* state = std::get_if<protocol::FlagState>(&message)) {
+    stats_.entries_in += state->flags.size();
     if (holding_) {
       held_states_.push_back(std::move(*state));
     } else {
@@ -427,6 +430,7 @@ void FlagWatcher::handle(FlagStore& store, Incoming& message, Table& answers) {
   }
 
   auto& part = std::get<protocol::FlagSnapshot>(message);
+  stats_.entries_in += part.flags.size();
   if (part.part >= part.part_count) {
     ++stats_.bad_snapshots;
     return;

@@ -308,6 +308,22 @@ TEST_CASE("flag watcher: the game's own change wins over a write still to retry"
   CHECK(w.frame(store).empty());
 }
 
+TEST_CASE("flag watcher: every entry that comes is counted, written or not (player reports 106-108)") {
+  FakeStore store = game();
+  FlagWatcher player(shared(), FlagRole::player);
+  player.frame(store);
+  player.receive(state({entry(kChest, 1), entry(kDoor, 0)}));  // the door is 0 already: nothing written
+  player.receive(proto::FlagSnapshot{0, 1, {entry(kKey0, 1)}});
+  player.frame(store);
+  CHECK(player.stats().entries_in == 3);
+  CHECK(player.stats().applied >= 1);
+  FlagWatcher host(shared(), FlagRole::host);
+  host.frame(store);
+  host.receive(proto::FlagSet{2, {entry(kKey1, 1)}});
+  host.frame(store);
+  CHECK(host.stats().entries_in == 1);
+}
+
 TEST_CASE("flag watcher: a player ignores FLAG_SET, a host snapshots") {
   FlagWatcher player(shared(), FlagRole::player);
   CHECK_FALSE(player.receive(proto::FlagSet{2, {entry(kChest, 1)}}));
