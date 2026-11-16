@@ -96,7 +96,8 @@ TEST_CASE("switch share: our press is sent, held on the other game's switch whil
     b.sharer.Receive(a.sent.back(), t);
     b.Tick(t += 50);
     CHECK(b.holds.empty());
-    CHECK(Has(b.notes, "let go"));
+    CHECK(Has(b.notes, "let go after"));
+    CHECK(Has(a.notes, "our player's press ended after"));
     b.on = false;
     for (int i = 0; i < 20; ++i) b.Tick(t += 100);
     CHECK(b.sent.empty());

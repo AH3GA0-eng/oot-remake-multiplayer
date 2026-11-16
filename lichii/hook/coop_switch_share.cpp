@@ -59,9 +59,13 @@ std::vector<Hold> Sharer::Tick(const std::string& scene, const std::vector<Seen>
             s.held = false;
             s.told_held = false;
             s.echo_until_ms = now_ms + kEchoMs;  // the switch's AI puts its own 0 back
-            notes.push_back("switch share: " + Describe(*v.line) + ": another player's is off: let go");
+            char text[64];
+            std::snprintf(text, sizeof text, ": another player's is off: let go after %.1f s held",
+                          static_cast<double>(now_ms - s.held_since_ms) / 1000.0);
+            notes.push_back("switch share: " + Describe(*v.line) + text);
         }
         if (remote) {
+            if (!s.held) s.held_since_ms = now_ms;
             s.held = true;
             if (v.on != std::optional<bool>(true)) holds.push_back(Hold{v.address, PlugKey(v.line->plug)});
             if (!s.told_held) {
@@ -86,6 +90,7 @@ std::vector<Hold> Sharer::Tick(const std::string& scene, const std::vector<Seen>
             if (!others_here) continue;  // solo: nobody to tell
             if (!s.sent_on || now_ms >= s.last_send_ms + kResendMs) {
                 message(true);
+                if (!s.sent_on) s.pressed_since_ms = now_ms;
                 if (!s.sent_on && !s.told_sent) {
                     s.told_sent = true;
                     notes.push_back("switch share: " + Describe(*v.line) + ": our player's press: sent");
@@ -96,6 +101,10 @@ std::vector<Hold> Sharer::Tick(const std::string& scene, const std::vector<Seen>
             message(false);
             s.sent_on = false;
             s.told_sent = false;
+            char text[64];
+            std::snprintf(text, sizeof text, ": our player's press ended after %.1f s: sent",
+                          static_cast<double>(now_ms - s.pressed_since_ms) / 1000.0);
+            notes.push_back("switch share: " + Describe(*v.line) + text);
         }
     }
     return holds;

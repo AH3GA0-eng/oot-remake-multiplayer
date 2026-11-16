@@ -85,6 +85,8 @@ private:
         bool held = false;
         bool told_held = false;
         bool told_sent = false;
+        std::uint64_t held_since_ms = 0;  // for the log: how long we held it, how long our press lasted
+        std::uint64_t pressed_since_ms = 0;
     };
     bool RemoteOn(State& s, std::uint64_t now_ms);
 
