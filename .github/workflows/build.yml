@@ -181,6 +181,50 @@ jobs:
       - name: CI runner script checks
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/ci-runner/scripts_test.ps1
 
+  # The Windows module's compile (MSVC, the hook's own compiler) on the pushes the windows
+  # job skips (any branch but main, integrate-* and tags): hookshot_coop only, no tests or
+  # kit, so a worker branch sees its hook compile errors. Always GitHub's runner.
+  windows-hook:
+    if: (github.event_name != 'pull_request' || github.base_ref == 'main' || github.event.pull_request.head.repo.full_name != github.repository) && !(github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-') || startsWith(github.ref, 'refs/tags/'))))
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - name: Fetched libraries cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
+        with:
+          path: .deps
+          key: deps-${{ hashFiles('cmake/enet.cmake', 'cmake/doctest.cmake', 'cmake/monocypher.cmake') }}
+      - name: Fetch libraries (ENet, Monocypher) at their pinned commits
+        shell: bash
+        run: |
+          fetch() {  # name, url, cmake file with the GIT_TAG commit
+            local dir=".deps/$1" rev
+            rev=$(sed -n 's/.*GIT_TAG *\([0-9a-f]\{40\}\).*/\1/p' "$3")
+            [ -n "$rev" ] || { echo "no GIT_TAG commit in $3"; exit 1; }
+            if [ -f "$dir.rev" ] && [ "$(cat "$dir.rev")" = "$rev" ]; then return; fi
+            rm -rf "$dir"; git init -q "$dir"
+            git -C "$dir" fetch -q --depth 1 "$2" "$rev"
+            git -C "$dir" checkout -q FETCH_HEAD
+            echo "$rev" > "$dir.rev"
+          }
+          fetch enet https://github.com/lsalzman/enet.git cmake/enet.cmake
+          fetch monocypher https://github.com/LoupVaillant/Monocypher.git cmake/monocypher.cmake
+      - name: MSVC environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756  # v1.13.0
+      - name: sccache
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad  # v0.0.9
+      - name: Compile the hook code (the Hookshot module)
+        shell: bash
+        run: |
+          cmake -S . -B build -G Ninja -DCOOP_BUILD_TESTS=OFF -DCOOP_BUILD_HOOKSHOT=ON -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
+            -DFETCHCONTENT_SOURCE_DIR_ENET="$(pwd -W)/.deps/enet" \
+            -DFETCHCONTENT_SOURCE_DIR_MONOCYPHER="$(pwd -W)/.deps/monocypher"
+          cmake --build build --target hookshot_coop --parallel
+
   # gcc: Release, -Werror (fast tier). clang: the same with clang. asan: clang
   # Debug with ASan + UBSan. tsan: clang Debug with TSan. asan and tsan also run
   # coop_test with 2 clients for 20 seconds. Everything but gcc is full tier.
@@ -261,6 +305,20 @@ jobs:
           -DFETCHCONTENT_SOURCE_DIR_MONOCYPHER="$GITHUB_WORKSPACE/.deps/monocypher"
       - name: Build
         run: cmake --build build --parallel 4
+      # The hook code (lichii/hook, hookshot/src) builds only into the Hookshot module and
+      # the emulator, and the jobs that build those (windows, linux-longshot, linux-emulator)
+      # run on main, integrate-*, tags and pull requests only. This step is the one that
+      # compiles it on every other push, so a worker branch sees its own compile errors
+      # before the integrator's build. Without -Werror: the hook is held to the emulator's
+      # warnings (lichii/hook/core.cmake), not ours.
+      - name: Compile the hook code (the Hookshot module)
+        if: matrix.job == 'gcc'
+        run: |
+          cmake -S . -B build-hook -DCMAKE_BUILD_TYPE=Release -DCOOP_BUILD_HOOKSHOT=ON -DCOOP_BUILD_TESTS=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DFETCHCONTENT_SOURCE_DIR_ENET="$GITHUB_WORKSPACE/.deps/enet" \
+            -DFETCHCONTENT_SOURCE_DIR_MONOCYPHER="$GITHUB_WORKSPACE/.deps/monocypher"
+          cmake --build build-hook --target hookshot_coop --parallel 4
       - name: ccache stats
         run: ccache --show-stats
       - name: Test
@@ -362,8 +420,9 @@ jobs:
   # only the hook's files are compiled; the whole emulator, its AppImage and a start without a
   # game run on the linux-build and linux-2 branches, on tags and by hand (workflow_dispatch).
   linux-emulator:
-    # Full tier, plus pushes to the Linux branches (their full part, the AppImage, is gated below).
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-') || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/linux-build' || github.ref == 'refs/heads/linux-2'))
+    # Every push: its hook part is the only compile of the emulator-only hook file (coop_svc.cpp)
+    # against the emulator's own headers. The full part (AppImage) stays gated in the gate step.
+    if: github.event_name != 'pull_request' || github.base_ref == 'main' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-24.04
     name: linux-emulator (${{ matrix.part }})
     timeout-minutes: 300
