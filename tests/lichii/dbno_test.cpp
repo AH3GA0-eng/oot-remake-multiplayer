@@ -2,10 +2,14 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <thread>
+#include <utility>
+#include <variant>
 #include <vector>
 
 #include "coop/protocol/codec.hpp"
