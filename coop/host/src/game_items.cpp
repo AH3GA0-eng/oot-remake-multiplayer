@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <utility>
 #include <vector>
 
 namespace coop::host {
@@ -702,6 +703,55 @@ std::vector<std::uint32_t> ocarina_bools_mend(std::int32_t fairy, std::int32_t t
     if (get(hash) == false) out.push_back(hash);  // unreadable (nullopt) is left alone
   }
   return out;
+}
+
+void OcarinaEquip::want(std::string_view name) {
+  std::lock_guard lock(mutex_);
+  if (name.empty() || (wanted_ && *wanted_ == name)) return;  // (asked already: its count goes on)
+  wanted_ = std::string(name);
+  armed_ = false;
+  seen_ = 0;
+  next_ = 0;
+}
+
+void OcarinaEquip::arm(std::optional<std::string_view> live, bool link_known, bool busy) {
+  std::lock_guard lock(mutex_);
+  const bool reads = wanted_ && live && *live == *wanted_;
+  seen_ = reads ? std::min(seen_ + 1, kSettleFrames) : 0;
+  armed_ = reads && seen_ >= kSettleFrames && link_known && !busy;
+}
+
+std::optional<std::uint32_t> OcarinaEquip::step(bool after_call) {
+  std::lock_guard lock(mutex_);
+  if (!after_call) {
+    if (!armed_ || !wanted_) return std::nullopt;
+    next_ = 0;
+  } else if (next_ == 0) {
+    return std::nullopt;  // (a call that was not ours)
+  }
+  if (next_ < ocarina::kEquipSlots.size()) return ocarina::kEquipSlots[next_++];
+  notes_.push_back("ocarina '" + *wanted_ + "' equipped by the game from its flags (slots 13, 16)");
+  wanted_.reset();
+  armed_ = false;
+  seen_ = 0;
+  next_ = 0;
+  return std::nullopt;
+}
+
+void OcarinaEquip::not_now() {
+  std::lock_guard lock(mutex_);
+  armed_ = false;
+  next_ = 0;
+}
+
+std::vector<std::string> OcarinaEquip::take_notes() {
+  std::lock_guard lock(mutex_);
+  return std::exchange(notes_, {});
+}
+
+bool OcarinaEquip::waiting() const {
+  std::lock_guard lock(mutex_);
+  return wanted_.has_value();
 }
 
 void ItemFlagStore::grant(std::uint32_t item, bool new_item) {

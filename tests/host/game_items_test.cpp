@@ -2,6 +2,7 @@
 
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <string_view>
@@ -1131,6 +1132,72 @@ TEST_CASE("ocarina_bools_mend: a shared ocarina gets the Bools a real get sets (
   CHECK(want == std::vector<std::uint32_t>{oc::kIsGetTime, oc::kGotTime, oc::kSlotA, oc::kPrepared});
   // Playable at once (playtest 11: a shared ocarina played only after a reload).
   CHECK(oc::kPrepared == protocol::flag_hash("HavePreparedToPlayOcarina"));
+}
+
+TEST_CASE("OcarinaEquip: the game equips a shared ocarina from its flags once (rows 93, 103)") {
+  using coop::host::OcarinaEquip;
+  namespace oc = coop::host::ocarina;
+  const auto settle = [](OcarinaEquip& e, std::optional<std::string_view> live, bool link, bool busy) {
+    for (int i = 0; i < OcarinaEquip::kSettleFrames; ++i) e.arm(live, link, busy);
+  };
+  OcarinaEquip e;
+  CHECK_FALSE(e.step(false));  // nothing wanted: no call
+  e.want("Item_Ocarina_Fairy");
+  CHECK(e.waiting());
+  // The live name not there yet ("" while the String64 waits), unread, or another name: no call.
+  settle(e, std::string_view(""), true, false);
+  CHECK_FALSE(e.step(false));
+  settle(e, std::nullopt, true, false);
+  CHECK_FALSE(e.step(false));
+  // Read for fewer than kSettleFrames frames: not yet (a queued write reads so before the applier wrote it).
+  for (int i = 0; i + 1 < OcarinaEquip::kSettleFrames; ++i) e.arm("Item_Ocarina_Fairy", true, false);
+  CHECK_FALSE(e.step(false));
+  // An event, menu or load, or no Link: not now, and the want stays.
+  e.arm("Item_Ocarina_Fairy", true, true);
+  CHECK_FALSE(e.step(false));
+  e.arm("Item_Ocarina_Fairy", false, false);
+  CHECK_FALSE(e.step(false));
+  CHECK(e.waiting());
+  // Wanted again with the same name: its count goes on (the mend may say so again).
+  e.want("Item_Ocarina_Fairy");
+  e.arm("Item_Ocarina_Fairy", true, false);
+  // Ready: slot 13, then 16 (as the game's own refreshes), then done with a note.
+  auto slot = e.step(false);
+  REQUIRE(slot);
+  CHECK(*slot == 13);
+  slot = e.step(true);
+  REQUIRE(slot);
+  CHECK(*slot == 16);
+  CHECK_FALSE(e.step(true));
+  CHECK_FALSE(e.waiting());
+  const auto notes = e.take_notes();
+  REQUIRE(notes.size() == 1);
+  CHECK(notes[0].find("Item_Ocarina_Fairy") != std::string::npos);
+  CHECK(e.take_notes().empty());
+  // Once only: the next frame asks nothing.
+  settle(e, std::string_view("Item_Ocarina_Fairy"), true, false);
+  CHECK_FALSE(e.step(false));
+  CHECK_FALSE(e.step(true));  // a call that was not ours
+  // The equipment unread: asked again on a later frame, from slot 13.
+  e.want("Item_Ocarina_Time");
+  settle(e, std::string_view("Item_Ocarina_Time"), true, false);
+  REQUIRE(e.step(false) == std::optional<std::uint32_t>(13));
+  e.not_now();
+  CHECK_FALSE(e.step(true));
+  CHECK_FALSE(e.step(false));  // disarmed until the next arm
+  e.arm("Item_Ocarina_Time", true, false);
+  CHECK(e.step(false) == std::optional<std::uint32_t>(13));
+  // Read from the recomp's main (docs/items.md, "The game's own equip").
+  CHECK(oc::kEquipFromGameData == 0x2df6c80);
+  CHECK(oc::kActorEquipment == 0x270);
+  CHECK(oc::kHolderEquipment == 0x200);
+  // A name changed while waiting replaces it, from the start of its count.
+  OcarinaEquip f;
+  f.want("Item_Ocarina_Fairy");
+  settle(f, std::string_view("Item_Ocarina_Fairy"), true, false);
+  f.want("Item_Ocarina_Time");
+  f.arm("Item_Ocarina_Time", true, false);
+  CHECK_FALSE(f.step(false));
 }
 
 // The randomizer (docs/mods.md, "Items in a randomized seed"): an item from a
