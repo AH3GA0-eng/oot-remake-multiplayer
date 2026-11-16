@@ -316,7 +316,7 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<co
         local.position = Vec{reading->position[0], reading->position[1], reading->position[2]};
         local.rotation = reading->rotation;
         local.age = reading->age;
-        local.event = reading->event_running.value_or(false);
+        local.event = reading->event_running.value_or(false);  // G1: any event (the trip is an event of its own; the game takes one at a time)
         local.fighting = CoopBoss::Fighting();
         CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main_base);
         coop::host::GameFlags flags(memory);

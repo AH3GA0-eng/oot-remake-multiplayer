@@ -1,6 +1,6 @@
-From ca36cf2122fbb836fb2d08482dabe983f387522f Mon Sep 17 00:00:00 2001
+From 05f232655a34bf8e922d617528851235bec2a6d4 Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
-Date: Mon, 16 Nov 2026 07:02:27 -0900
+Date: Mon, 16 Nov 2026 12:42:25 -0900
 Subject: [PATCH] Co-op Discord status: the words and art from the options
  file, the module's line
 
@@ -32,10 +32,10 @@ line of its own).
  create mode 100644 host/hos_discord_activity.h
 
 diff --git a/host/discord_rpc.c b/host/discord_rpc.c
-index 5cb38b7..0ca15f6 100644
+index dda093b..dc127f7 100644
 --- a/host/discord_rpc.c
 +++ b/host/discord_rpc.c
-@@ -14,8 +14,18 @@
+@@ -14,9 +14,19 @@
  
     The protocol is Discord's documented IPC (discord-rpc's rpc_connection.h): a frame is <opcode u32 LE><length u32 LE><JSON>,
     Handshake 0, Frame 1, Close 2, Ping 3, Pong 4. The handshake {"v":1,"client_id":...} is answered by a Ready frame; a
@@ -50,12 +50,13 @@ index 5cb38b7..0ca15f6 100644
 +   line itself through the optional export hos_coop_discord_state (found by name, as host/coop_world.c finds its exports): 1 = a
 +   line was written, 0 = none (the file's or Longshot's line). The words are checked every 5 s and a change is sent at once; the
 +   file is read again every 15 s, as the id was. */
- #include "hos_paths.h"   /* (first: hos_game_path_a, and windows.h on Windows) */
+ #include "hos_paths.h"   /* (first: windows.h on Windows) */
+ #include "options_path.h"
 +#include <stddef.h>   /* (patch 0026: offsetof) */
  #include <stdint.h>
  #include <stdio.h>
  #include <stdlib.h>
-@@ -25,6 +35,7 @@
+@@ -26,6 +36,7 @@
  #ifdef _WIN32
  #include <windows.h>
  #else
@@ -63,7 +64,7 @@ index 5cb38b7..0ca15f6 100644
  #include <errno.h>
  #include <poll.h>
  #include <pthread.h>
-@@ -34,6 +45,7 @@
+@@ -35,6 +46,7 @@
  #endif
  
  #include "../gpu/vk/vk_api.h"
@@ -71,7 +72,7 @@ index 5cb38b7..0ca15f6 100644
  
  #define LONGSHOT_DISCORD_APP_ID_DEFAULT "1570559772111933578"   /* (the Longshot application's id, digits) */
  #define LONGSHOT_DISCORD_IMAGE_DEFAULT "longshot"     /* (its large-image art asset key) */
-@@ -135,9 +147,23 @@ static int valid_app_id(const char *s) {
+@@ -136,22 +148,68 @@ static int valid_app_id(const char *s) {
          if (*s < '0' || *s > '9') return 0;
      return 1;
  }
@@ -95,33 +96,27 @@ index 5cb38b7..0ca15f6 100644
 +    };
 +    memset(s, 0, sizeof *s);
 +    snprintf(s->app_id, sizeof s->app_id, "%s", LONGSHOT_DISCORD_APP_ID_DEFAULT);
-     char path[1024];
-     const DWORD n = hos_game_path_a(path, (DWORD)sizeof path);
-     char *slash = n ? (strrchr(path, '\\') ? strrchr(path, '\\') : strrchr(path, '/')) : NULL;
-@@ -145,18 +171,50 @@ static void read_app_id(char *out, size_t cap) {
-         snprintf(slash + 1, (size_t)(path + sizeof path - slash - 1), "longshot_options.ini");
-         FILE *f = fopen(path, "r");
-         if (f) {
--            char line[128];
--            while (fgets(line, sizeof line, f))
--                if (!strncmp(line, "discord_app_id=", 15)) {
--                    line[strcspn(line, "\r\n")] = 0;
--                    if (valid_app_id(line + 15)) snprintf(out, cap, "%s", line + 15);
-+            char line[512];
-+            int line_start = 1;   /* (the rest of a line longer than the buffer is no line of its own) */
-+            while (fgets(line, sizeof line, f)) {
-+                const int starts = line_start;
-+                line_start = strchr(line, '\n') != NULL;
-+                if (!starts) continue;
-+                line[strcspn(line, "\r\n")] = 0;
-+                for (size_t k = 0; k < sizeof keys / sizeof *keys; k++) {
-+                    const size_t kn = strlen(keys[k].key);
-+                    if (strncmp(line, keys[k].key, kn) || !keys[k].ok(line + kn)) continue;
-+                    snprintf((char *)s + keys[k].at, keys[k].cap, "%s", line + kn);
-                 }
-+            }
-             fclose(f);
-         }
+     FILE *f = fopen(hos_options_file(), "r");   /* (host/options_path.c) */
+     if (f) {
+-        char line[128];
+-        while (fgets(line, sizeof line, f))
+-            if (!strncmp(line, "discord_app_id=", 15)) {
+-                line[strcspn(line, "\r\n")] = 0;
+-                if (valid_app_id(line + 15)) snprintf(out, cap, "%s", line + 15);
++        char line[512];
++        int line_start = 1;   /* (the rest of a line longer than the buffer is no line of its own) */
++        while (fgets(line, sizeof line, f)) {
++            const int starts = line_start;
++            line_start = strchr(line, '\n') != NULL;
++            if (!starts) continue;
++            line[strcspn(line, "\r\n")] = 0;
++            for (size_t k = 0; k < sizeof keys / sizeof *keys; k++) {
++                const size_t kn = strlen(keys[k].key);
++                if (strncmp(line, keys[k].key, kn) || !keys[k].ok(line + kn)) continue;
++                snprintf((char *)s + keys[k].at, keys[k].cap, "%s", line + kn);
+             }
++        }
+         fclose(f);
      }
      const char *e = getenv("HOS_DISCORD_APP_ID");
 -    if (e && valid_app_id(e)) snprintf(out, cap, "%s", e);
@@ -156,7 +151,7 @@ index 5cb38b7..0ca15f6 100644
  }
  
  /* ---- frames ---- */
-@@ -217,17 +275,21 @@ static Ipc connect_client(const char *app_id) {
+@@ -212,17 +270,21 @@ static Ipc connect_client(const char *app_id) {
      }
      return IPC_NONE;
  }
@@ -187,7 +182,7 @@ index 5cb38b7..0ca15f6 100644
      if (!write_frame(p, OP_FRAME, json)) return 0;
      uint32_t op = 0;
      const int r = read_frame(p, &op, answer, sizeof answer, 2000);
-@@ -242,19 +304,19 @@ static int send_activity(Ipc p, long long started) {
+@@ -237,19 +299,19 @@ static int send_activity(Ipc p, long long started) {
  
  /* ---- the presence thread ---- */
  static void presence_main(void) {
@@ -214,7 +209,7 @@ index 5cb38b7..0ca15f6 100644
                  if (ipc != IPC_NONE) ipc_close(ipc), ipc = IPC_NONE;
                  retry_at = 0, said_no_app = 0;
              }
-@@ -264,7 +326,7 @@ static void presence_main(void) {
+@@ -259,7 +321,7 @@ static void presence_main(void) {
              if (ipc != IPC_NONE) ipc_close(ipc), ipc = IPC_NONE;
              continue;
          }
@@ -223,7 +218,7 @@ index 5cb38b7..0ca15f6 100644
              if (!said_no_app)
                  hos_log("discord: no application id: discord_app_id= in longshot_options.ini or HOS_DISCORD_APP_ID (the "
                          "Discord application named Longshot); the status stays off");
-@@ -272,23 +334,40 @@ static void presence_main(void) {
+@@ -267,23 +329,40 @@ static void presence_main(void) {
              continue;
          }
          if (ipc == IPC_NONE && now_ms() >= retry_at) {

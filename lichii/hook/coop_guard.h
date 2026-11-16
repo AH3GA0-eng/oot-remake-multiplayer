@@ -58,6 +58,10 @@ struct Local {
     // Row 97: whether the actor at an address is one our running event is with
     // (Sync::EventPartner), wherever it stands; empty: none known.
     std::function<bool(std::uint64_t address)> partner{};
+    // G1 (coop/host/event_owner.hpp): an event runs in our game that our Link is not in
+    // (another player's, replayed here). `in_event` is then false: nothing near our Link
+    // waits, but the event's own actors (partner) still do, or the event here waits on them.
+    bool others_event = false;
 };
 
 // True when a shared change to an actor at `at` must wait now. An actor whose place is not
@@ -74,7 +78,7 @@ inline bool Waits(const Local& local, const std::optional<Vec3>& at) {
 
 // Waits, for the actor at `address`: also when our event is with it, however far (row 97).
 inline bool WaitsFor(const Local& local, std::uint64_t address, const std::optional<Vec3>& at) {
-    if (!local.in_event) {
+    if (!local.in_event && !local.others_event) {
         return false;
     }
     return (local.partner && local.partner(address)) || Waits(local, at);
@@ -140,7 +144,7 @@ public:
 
     Result Pass(std::vector<Change> now, const Local& local, const Where& where, const HashOf& hash_of) {
         Result out;
-        if (!local.in_event) {
+        if (!local.in_event && !local.others_event) {
             for (const std::uint64_t address : order_) {
                 Entry& e = held_.at(address);
                 const auto hash = hash_of(address);
@@ -203,7 +207,7 @@ template <typename Change, typename AddressOf>
 std::size_t Skip(std::vector<Change>& changes, const Local& local,
                  const std::function<std::optional<Vec3>(std::uint64_t)>& where, AddressOf address_of,
                  const std::function<bool(std::uint64_t)>& never_waits = {}) {
-    if (!local.in_event) {
+    if (!local.in_event && !local.others_event) {
         return 0;
     }
     const auto before = changes.size();

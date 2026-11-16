@@ -413,6 +413,10 @@ TEST_CASE("boss scenes: another's death is asked as the boss's own death setting
             out = b.Tick(alive(At(kInRoom, 2), false), {Request{"InsideTheDekuTree_BossDie", false}}, 40'000'000);
             CHECK_FALSE(out.play);
             CHECK(said(out, "refused at the request"));
+            // Its logic asks again (every frame): said once per fight (review-boss-0114 nit).
+            out = b.Tick(alive(At(kInRoom, 2), false), {Request{"InsideTheDekuTree_BossDie", false}}, 40'100'000);
+            CHECK_FALSE(out.play);
+            CHECK_FALSE(said(out, "refused at the request"));
             // Out of its area: nothing refused (the bit is only for where its death played).
             CHECK(b.Tick(alive(At(kFar, 2), false), {}, 41'000'000).refuse_deaths == 0);
         }

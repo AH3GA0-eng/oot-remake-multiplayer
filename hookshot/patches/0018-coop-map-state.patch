@@ -1,4 +1,4 @@
-From 2fe6d8a320a0bc39865ea918c758ac946413ab0c Mon Sep 17 00:00:00 2001
+From a6c07c426179712ca722de0c8b2ab60a1b074736 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Fri, 13 Nov 2026 16:01:26 -0900
 Subject: [PATCH] Co-op map state: the game's menu state for the players on the
@@ -25,7 +25,7 @@ Both new fields are filled when the module's struct is that long.
  1 file changed, 57 insertions(+), 1 deletion(-)
 
 diff --git a/host/oot_menu.c b/host/oot_menu.c
-index 15bc6430..b7e66fc7 100644
+index 7c38611b..367b3546 100644
 --- a/host/oot_menu.c
 +++ b/host/oot_menu.c
 @@ -22,6 +22,7 @@

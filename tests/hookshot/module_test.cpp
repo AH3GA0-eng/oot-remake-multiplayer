@@ -18,6 +18,7 @@
 #include "coop_hold.h"
 #include "coop_hookshot.h"
 #include "coop_null_page.h"
+#include "hos_coop_save_load.h"
 #include "hos_coop_sound.h"
 #include "hos_coop_world.h"
 #include "hos_coop_actors.h"
@@ -603,22 +604,65 @@ TEST_CASE("hookshot: a module tab may draw a picture beside its page (patch 0019
     CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_view(double eye[3], double target[3])") != std::string::npos);
 }
 
+namespace {
+
+// s without spaces, tabs and line ends.
+std::string Squashed(const std::string& s) {
+    std::string out;
+    for (const char c : s) {
+        if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
+            out += c;
+        }
+    }
+    return out;
+}
+
+// A patched file's code as the patch leaves it (its hunks' '+' and ' ' lines, without the diff's first column),
+// with every space, tab and line end taken out: a search matches the code, not the diff's layout, so a refreshed
+// patch (other context, a statement that moved from '+' to context) still matches while the code is the same.
+std::string PatchedCode(const std::string& patch, const std::string& path) {
+    std::string code;
+    auto at = patch.find("+++ b/" + path + "\n");
+    if (at == std::string::npos) {
+        return code;
+    }
+    at = patch.find('\n', at) + 1;
+    while (at < patch.size()) {
+        const auto end = patch.find('\n', at);
+        const std::string line = patch.substr(at, end == std::string::npos ? std::string::npos : end - at);
+        if (line.rfind("diff --git ", 0) == 0 || line == "-- ") {
+            break;   // (the next file, or the patch's end)
+        }
+        if (!line.empty() && (line[0] == '+' || line[0] == ' ')) {
+            code += line.substr(1);
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        at = end + 1;
+    }
+    return Squashed(code);
+}
+
+}  // namespace
+
 TEST_CASE("hookshot: the Discord status header in patch 0026 is hookshot/src's, and the module gives its line") {
     const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0026-coop-discord-status.patch");
     REQUIRE_FALSE(patch.empty());
     CHECK(NewFile(patch, "host/hos_discord_activity.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_discord_activity.h"));
-    CHECK(patch.find("+    hos_discord_activity(activity, cap, \"Longshot\", version, LONGSHOT_DISCORD_IMAGE_DEFAULT,") !=
-          std::string::npos);
-    CHECK(patch.find("GetProcAddress(m, \"hos_coop_discord_state\")") != std::string::npos);
+    const std::string rpc = PatchedCode(patch, "host/discord_rpc.c");
+    REQUIRE_FALSE(rpc.empty());
+    const auto has = [&rpc](const char* code) { return rpc.find(Squashed(code)) != std::string::npos; };
+    CHECK(has("hos_discord_activity(activity, cap, \"Longshot\", version, LONGSHOT_DISCORD_IMAGE_DEFAULT, &s->words,"));
+    CHECK(has("GetProcAddress(m, \"hos_coop_discord_state\")"));
+    CHECK(has("dlsym(m, \"hos_coop_discord_state\")"));
     // Words or a frame that do not fit (hos_discord_activity / hos_discord_set_activity give 0 and "": the
     // header's test) send no frame, and that is no broken connection.
-    CHECK(patch.find("+    if (!hos_discord_set_activity(json, sizeof json, nonce + 1, process_id(), activity)) return -1;\n"
-                     "+    ++nonce;\n"
-                     "+    if (!write_frame(p, OP_FRAME, json)) return 0;\n") != std::string::npos);
-    CHECK(patch.find("+        if (made && ipc != IPC_NONE && (now_ms() >= send_at || strcmp(activity, sent))) {\n") !=
-          std::string::npos);
-    CHECK(patch.find("+            if (r < 0) {   /* (no frame: tried again at the keep-alive, the connection kept) */\n") !=
-          std::string::npos);
+    CHECK(has("if (!hos_discord_set_activity(json, sizeof json, nonce + 1, process_id(), activity)) return -1; ++nonce;"
+              " if (!write_frame(p, OP_FRAME, json)) return 0;"));
+    CHECK(has("const int made = make_activity(activity, sizeof activity, &set, module_line, started);"));
+    CHECK(has("if (made && ipc != IPC_NONE && (now_ms() >= send_at || strcmp(activity, sent))) {"));
+    CHECK(has("const int r = send_activity(ipc, activity); if (r < 0) {"));
     const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
     CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_discord_state(char* out, size_t cap) noexcept") != std::string::npos);
 }
@@ -636,15 +680,9 @@ TEST_CASE("hookshot: a module may have a texture drawn with other texels (patch 
     CHECK(patch.find("+        hos_coop_texture_made(o, o->gpu, o->L.size,") != std::string::npos);
     CHECK(patch.find("+    hos_coop_texture_gone(o);") != std::string::npos);
     CHECK(patch.find("+        x.overlay = (overlay_fn)look(\"hos_coop_texture_overlay\");") != std::string::npos);
-    // The WebGPU renderer's read (gpu/render, Windows only) is 0021, so the Linux kit can leave it out
-    // (make_kit_linux.sh's webgpu_only): 0020 changes no gpu/render file, 0021 nothing else.
+    // Longshot rc.5 has no WebGPU renderer (gpu/render keeps headers only): no patch reads through gpu/render.
     CHECK(patch.find("gpu/render/") == std::string::npos);
-    const std::string webgpu = ReadFile(kRepo / "hookshot" / "patches" / "0021-coop-texture-override-webgpu.patch");
-    REQUIRE_FALSE(webgpu.empty());
-    CHECK(webgpu.find("+        hos_coop_texture_overlay(va, scratch.data(), total);") != std::string::npos);
-    for (std::size_t at = webgpu.find("diff --git a/"); at != std::string::npos; at = webgpu.find("diff --git a/", at + 1)) {
-        CHECK(webgpu.compare(at, 24, "diff --git a/gpu/render/") == 0);
-    }
+    CHECK_FALSE(std::filesystem::exists(kRepo / "hookshot" / "patches" / "0021-coop-texture-override-webgpu.patch"));
     // Nothing of the game is written: no lift, no guest write (only the pages marked for the renderers).
     for (std::size_t at = patch.find("diff --git a/"); at != std::string::npos; at = patch.find("diff --git a/", at + 1)) {
         CHECK((patch.compare(at, 18, "diff --git a/host/") == 0 || patch.compare(at, 17, "diff --git a/gpu/") == 0));
@@ -670,6 +708,35 @@ TEST_CASE("hookshot: the sound wrap (patch 0014) is one row in 0005's table, its
     CHECK(HOS_COOP_WRAP_SOUND_EMIT < 64);
     const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
     CHECK(module.find("if (id == HOS_COOP_WRAP_SOUND_EMIT) {") != std::string::npos);
+}
+
+TEST_CASE("hookshot: the save-load wraps (patch 0024) are four rows in 0005's table, their header hookshot/src's") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0024-coop-save-load-wrap.patch");
+    CHECK(NewFile(patch, "host/hos_coop_save_load.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_save_load.h"));
+    const struct {
+        unsigned id;
+        const char* rest;
+    } rows[] = {
+        {HOS_COOP_WRAP_SAVE_LOADED, "0x32d8690, (0xd503237f, 0xa9be7bfd, 0xf9000bf3, 0x910003fd)),"},
+        {HOS_COOP_WRAP_SAVE_LOAD_START, "0x32c1db0, (0xd503237f, 0xa9bd7bfd, 0xf9000bf5, 0xa9024ff4)),"},
+        {HOS_COOP_WRAP_TEMP_LOAD_START, "0x32c2080, (0xd503237f, 0xa9bf7bfd, 0x910003fd, 0xb000dea8)),"},
+        {HOS_COOP_WRAP_GAME_OVER_SAVE, "0x32bbce0, (0xd503237f, 0xa9be7bfd, 0xf9000bf3, 0x910003fd)),"},
+    };
+    for (const auto& r : rows) {
+        char row[128];
+        std::snprintf(row, sizeof row, "+    (%u, %s", r.id, r.rest);
+        CHECK_MESSAGE(patch.find(row) != std::string::npos, row);
+        // Free in the one wrap space (0005: 1-3, 0013: 4-5, 0010: 16-23, 0014: 24).
+        CHECK(r.id > HOS_COOP_WRAP_ACTION_VERB);
+        CHECK(r.id < 16);
+    }
+    // After 0013's last row, at the table's end.
+    CHECK(patch.find("     (5, 0xc08f0,") != std::string::npos);
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    CHECK(module.find("CoopSave::NoteGameSaveLoad(id != HOS_COOP_WRAP_SAVE_LOADED)") != std::string::npos);
+    CHECK(module.find("CoopSave::NoteGameOverSave()") != std::string::npos);
+    CHECK(module.find("(level.wraps >> HOS_COOP_WRAP_GAME_OVER_SAVE & 1) != 0") != std::string::npos);
+    CHECK(module.find("CoopSave::SetNativeSaveLoads(loads)") != std::string::npos);
 }
 
 TEST_CASE("hookshot: on Linux the exe exports every function the module finds in it by name") {

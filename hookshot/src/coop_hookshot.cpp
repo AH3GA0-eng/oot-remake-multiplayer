@@ -52,6 +52,7 @@
 #include "coop_actor_events.h"
 #include "coop_boss_native.h"
 #include "coop_boss_scenes.h"
+#include "coop_dbno_body.h"
 #include "coop_dbno_game.h"
 #include "coop_enemy_shots.h"
 #include "coop_mods_runtime.h"
@@ -96,6 +97,7 @@
 #include "hos_coop_actors.h"
 #include "hos_coop_bosses.h"
 #include "hos_coop_pads.h"
+#include "hos_coop_save_load.h"
 #include "hos_coop_sound.h"
 #include "hos_coop_host.h"
 #include "hos_coop_world.h"
@@ -1172,6 +1174,19 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
                 LOG_INFO(Core, "coop: this Hookshot has no sound wrap (patch 0014): our Link's sounds are not sent");
             }
         }
+        {
+            // Patch 0024: the game's own save loads (docs/flags.md, "A load window"). All three wraps, or the old signs.
+            const bool loads = (level.wraps >> HOS_COOP_WRAP_SAVE_LOADED & 1) != 0 &&
+                               (level.wraps >> HOS_COOP_WRAP_SAVE_LOAD_START & 1) != 0 &&
+                               (level.wraps >> HOS_COOP_WRAP_TEMP_LOAD_START & 1) != 0 &&
+                               (level.wraps >> HOS_COOP_WRAP_GAME_OVER_SAVE & 1) != 0;
+            if (CoopSave::NativeSaveLoads() != loads || !loads) {
+                LOG_INFO(Core, "{}", loads ? "coop: save loads: the game's own load nodes tell every save load (patch 0024)"
+                                           : "coop: save loads: this Hookshot has no save-load wraps (patch 0024): a save "
+                                             "load is guessed from the flags and the title");
+            }
+            CoopSave::SetNativeSaveLoads(loads);
+        }
         return 1;
     }
     case HOS_COOP_WORLD_COUNTER_START: {  // (coop_counters.h: the Objects walk reads the ring)
@@ -1338,6 +1353,20 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
         // wired, is a second handler of these ids: both must run, and either may take phase 0.)
         return CoopLocalGame::Wrap(id, phase, x);
     }
+    if (id == HOS_COOP_WRAP_GAME_OVER_SAVE) {
+        // Game Over saves its last state (Try Again or Quit Game; patch 0024). Reads nothing.
+        if (phase == 0) {
+            CoopSave::NoteGameOverSave();
+        }
+        return 0;
+    }
+    if (id == HOS_COOP_WRAP_SAVE_LOAD_START || id == HOS_COOP_WRAP_TEMP_LOAD_START || id == HOS_COOP_WRAP_SAVE_LOADED) {
+        // A save load starts, or the save is in (patch 0024): the game's own sequence nodes. Reads nothing.
+        if (phase == 0) {
+            CoopSave::NoteGameSaveLoad(id != HOS_COOP_WRAP_SAVE_LOADED);
+        }
+        return 0;
+    }
     if (id == HOS_COOP_WRAP_SOUND_EMIT) {
         // A sound the game starts (patch 0014): kept when it is on our own Link (coop_link_sound.h). Reads only.
         if (phase == 0) {
@@ -1383,11 +1412,21 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
     if (id == HOS_COOP_WRAP_ACTION_VERB && phase == 0) {
         // Native boss sync: a boss's action verb request (x0 BSA, x1 the request in guest memory).
         CoopBossNative::Table& t = CoopBossNative::TheTable();
-        if (!t.ActionsOn() || x[1] == 0) {
+        CoopDbno::Body::Crawl& crawl = CoopDbno::Body::TheCrawl();
+        if (x[1] == 0 || (!t.ActionsOn() && !crawl.IsOurs(x[0]))) {
             return 0;
         }
         CoopBossNative::Request r{};
         if (!CoopRuntime::Read(x[1], r.data(), r.size())) {
+            return 0;
+        }
+        // Down but not out (coop_dbno_body.h): while our Link is down it stays in the game's Crawl; the
+        // game's other actions for it (a hit's reaction, walk, items) are skipped, answered as taken.
+        if (crawl.Skip(x[0], r, t_own_call)) {
+            x[0] = CoopBossNative::addr::kActionTaken;
+            return 1;
+        }
+        if (!t.ActionsOn()) {
             return 0;
         }
         if (!t.OnActionVerb(x[0], r, (x[2] & 1) != 0, t_own_call)) {
@@ -1607,9 +1646,28 @@ void UseSaveSwitch() {
         [remount](const std::string& dir) { return remount(dir.c_str()) != 0; });
 }
 
+// Player report 120: patch 0025's opens of a slot's progress.sav, so the host sends the slot its game plays (not the
+// newest file on disk). An exe without it: the newest slot, as before.
+void UseSlotOpens() {
+    using OpenedFn = unsigned (*)(char*, size_t, int*);
+#ifdef _WIN32
+    const auto opened = reinterpret_cast<OpenedFn>(
+        reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(nullptr), "hos_coop_fs_save_slot_opened")));
+#else
+    const auto opened = reinterpret_cast<OpenedFn>(dlsym(RTLD_DEFAULT, "hos_coop_fs_save_slot_opened"));
+#endif
+    if (!opened) {
+        LOG_INFO(Core, "coop: save: this Hookshot does not say which save slot the game opens (patch 0025): the host "
+                       "sends its newest slot");
+        return;
+    }
+    CoopSave::SetSlotOpens(opened);   // (also read at each load-window mark, on the game's thread)
+}
+
 COOP_HOOKSHOT_EXPORT int hos_coop_start(const HosCoopApi* api) {
     if (!CoopHookshot::Start(api)) return 0;
     UseSaveSwitch();
+    UseSlotOpens();
     CoopHookshot::UseLocalPads();
     return 1;
 }

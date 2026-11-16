@@ -77,23 +77,12 @@ install -m 644 "$module" "$kit/data/longshot/hookshot_coop.so"
 text "$pin" "$kit/data/longshot/PIN"
 text "$linux_pin" "$kit/data/longshot/LINUX.txt"
 text "$repo/tools/release/kit/hookshot/OOTRR.txt" "$kit/data/longshot/OOTRR.txt"   # (the randomizer build.sh fetches)
-# (byte for byte) Every patch but those for the WebGPU renderer (gpu/render's .cpp files): Longshot's Linux builder
-# carries gpu/render's headers only and builds the Vulkan renderer, so those patches have nothing to apply to. The list
-# is explicit: a patch not on it that changes a gpu/render .cpp stops the kit, as does a name on it that is gone.
-webgpu_only=(0021-coop-texture-override-webgpu.patch)
-for w in "${webgpu_only[@]}"; do [[ -f $repo/hookshot/patches/$w ]] || die "hookshot/patches/$w (webgpu_only) is not in the repo"; done
+# (byte for byte) Every patch. Longshot (since rc.5) has no WebGPU renderer and gpu/render holds headers only, on Windows
+# and Linux alike, so a patch that changes a gpu/render .cpp has nothing to apply to: it stops the kit.
 for p in "$repo"/hookshot/patches/*.patch; do
     n=${p##*/}
-    if printf '%s\n' "${webgpu_only[@]}" | grep -qxF -- "$n"; then
-        # (the file list captured first: grep -q quitting early under pipefail would make a pipe here fail)
-        diffs=$(grep -E '^diff --git ' "$p" || true)
-        [[ -n $diffs ]] || die "hookshot/patches/$n (webgpu_only) changes no file"
-        others=$(grep -vE '^diff --git a/gpu/render/' <<<"$diffs" || true)
-        [[ -z $others ]] || die "hookshot/patches/$n (webgpu_only) changes more than gpu/render"
-        continue
-    fi
     if grep -qE '^diff --git a/gpu/render/[^ ]*\.cpp ' "$p"; then
-        die "hookshot/patches/$n changes gpu/render (the WebGPU renderer, not in Longshot's Linux source): split that part into a patch of its own and add it to webgpu_only"
+        die "hookshot/patches/$n changes gpu/render (the WebGPU renderer, gone from Longshot since rc.5)"
     fi
     cp -- "$p" "$kit/data/longshot/patches/"
 done
@@ -126,7 +115,7 @@ The co-op code (the module, the server, the puppet pack tool, these scripts), GP
 Longshot: Team MagicBean's static recompilation, GPL-3.0. Not in this kit: start-squadala.sh
 downloads Longshot $ls_tag's own Linux builder (data/longshot/LINUX.txt) and builds the game on your PC from your own game:
   https://git.magicbean.dev/MagicBeanDev/Longshot/src/commit/$ls_commit
-  with the patches in data/longshot/patches (hookshot/patches in the co-op repo, less the WebGPU renderer's).
+  with the patches in data/longshot/patches (hookshot/patches in the co-op repo).
 
 If a link stops working, open an issue on the co-op repo and the source will be sent to you.
 EOF

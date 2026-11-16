@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 
+#include "coop/host/event_owner.hpp"
 #include "coop/host/game_memory.hpp"
 #include "coop/protocol/messages.hpp"
 
@@ -37,6 +38,11 @@ struct PlayerReading {
   std::optional<bool> event_running;
   // event_running is true only because our Link's performer is bound (the word is 0): for the log.
   bool event_by_link = false;
+  // Our Link's own event performer is bound into an event (with the word or without).
+  bool link_bound = false;
+  // G1 (event_owner.hpp): whose the running event is. The reader cannot know (it reads one game
+  // frame); the hook's EventOwnerTracker sets it. `ours` by default: what event_running meant before.
+  EventWhose event_whose = EventWhose::ours;
   std::optional<protocol::Animation> animation;  // AS command in the main slot
   std::optional<protocol::Equipment> equipment;  // what the player wears
   bool operator==(const PlayerReading&) const = default;
