@@ -1,12 +1,12 @@
 # scrub-near (#144, scrubs-b): scrub-talk with ONLY the new near guard in A
 # (LICHII_COOP_SCRUB_TALK_HOLD=near: no event hold), so it proves that our copy of a scrub
-# within 5 m of our Link keeps another player's destroy flags waiting, whatever the game's
+# within talking distance of our Link keeps another player's destroy flags waiting, whatever the game's
 # event flag says (coop_scrub_talk.h, Near). Same moves as scrub-talk.A.txt (A solves the
 # Scrub Brothers alone, walks to One, leaves One's text up 60 s while B ends its own talk).
 # Saves: clear 0xd2f46f66 and 0x60c22ed7 in both autotest-save baselines first
 # (tools/autotest/save_flags.py set), and put them back after.
 # Expect (A's log):
-#  - "coop: dungeon: scrub near (the Scrub Brothers): within 5 m of our Link, its destroy
+#  - "coop: dungeon: scrub near (the Scrub Brothers): within talking distance of our Link, its destroy
 #    flags from others wait" before B's talk ends; NO "our Link is in an event" line (off).
 #  - B's two flags (0xd2f46f66, 0x60c22ed7) are not written in A while A's text is up.
 #  - A's talk ends; after "mark talk-end" A walks back to the room centre (goto), then

@@ -147,9 +147,14 @@ inline const char* GroupName(Group g) {
 // last time each group was seen alive near our Link.
 class Near {
 public:
-    // A talk starts next to the scrub (Link walks up to it); 5 m keeps a
-    // player who only stands in the brothers' room from holding the doors.
-    static constexpr float kNearM = 5.0f;
+    // How far a talk starts: in lane1-a's scrub-near2 run (20261116-002801)
+    // B talked to its own One from 5.29 m of One's actor place (Link at
+    // -23.29 52.88 34.69, One at -23.72 52.97 39.96), and A, at the same spot
+    // 5.25 m away, was not held at 5 m: the old radius was shorter than a
+    // talk. 8 m covers it with room to spare and still lets a player who only
+    // stands in the brothers' room go: the entry and the aiming spots are 10.5
+    // to 12.4 m from the nearest brother.
+    static constexpr float kNearM = 8.0f;
     static constexpr std::uint64_t kFreshUs = 1'500'000;  // a walk is ~4 a second; it may stop
 
     // One scrub of the walk: its placement hash and its distance to our Link.

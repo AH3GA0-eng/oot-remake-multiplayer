@@ -129,12 +129,14 @@ TEST_CASE("scrub talk near: every held flag has its scrubs, and the brothers are
     CHECK(CoopScrubTalk::FindNearScrub(0x1234) == nullptr);
 }
 
-TEST_CASE("scrub talk near: a scrub within 5 m holds its own group only, and lets go 1.5 s after the last walk") {
+TEST_CASE("scrub talk near: a scrub within talking distance holds its own group only, and lets go 1.5 s after the last walk") {
     CoopScrubTalk::Near n;
     const std::uint64_t room_b = 0xaa6f22763e99e851ULL;
     const std::uint64_t one = 0x9b04ae25f50c7fcaULL;
     CHECK(n.Mask(1'000'000) == 0);
-    n.See(room_b, 6.0f, 1'000'000);  // too far: nothing
+    n.See(room_b, 8.1f, 1'000'000);  // too far: nothing
+    CHECK(n.Mask(1'000'000) == 0);
+    n.See(room_b, 10.5f, 1'000'000);  // aiming from the room's side: nothing
     CHECK(n.Mask(1'000'000) == 0);
     n.See(room_b, std::nanf(""), 1'000'000);  // a bad read: nothing
     CHECK(n.Mask(1'000'000) == 0);
@@ -149,7 +151,7 @@ TEST_CASE("scrub talk near: a scrub within 5 m holds its own group only, and let
     CHECK_FALSE(CoopScrubTalk::NearHolds(m, kOther));
     CHECK(n.Mask(2'499'999) != 0);
     CHECK(n.Mask(2'500'000) == 0);  // no walk saw it near since: released
-    n.See(one, 4.9f, 3'000'000);
+    n.See(one, 5.29f, 3'000'000);  // where B talked to One in run 20261116-002801
     CHECK(CoopScrubTalk::NearHolds(n.Mask(3'000'000), 0xd2f46f66));  // RoomK_Cleared
     n.Reset();
     CHECK(n.Mask(3'000'000) == 0);
