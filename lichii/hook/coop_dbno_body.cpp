@@ -139,9 +139,9 @@ std::optional<CoopPuppet::Call> Crawl::Step(CoopPuppet::Guest& guest, Hold& h, P
     }
     CoopPuppet::Call c;
     if (kind == Pending::shield) {
-        c.function = main_base + (want_on ? addr::kInvincibleOn : addr::kInvincibleOff);
+        c.function = main_base + addr::kInvincibleNoReaction;
         c.x[0] = now_at;
-        c.x[1] = 1;  // IsNoReaction
+        c.x[1] = want_on ? 1 : 0;  // Bool: add our key / take it out
         c.x[2] = block_ + addr::kBlockKey;
     } else {
         c.function = main_base + addr::kEmitterSwitch;

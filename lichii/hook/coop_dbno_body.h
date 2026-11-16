@@ -18,10 +18,12 @@
 //   The verb values are read from the scheduler modules' selector cases.
 // - Shield. The game's own named invincibility, as the AI node
 //   OneShotLifeSetInvincible gives it (run main+0x8d7520; inputs Bool,
-//   InvincibleFlagName, IsNoReaction): on is main+0x8d75e0, off main+0xb34800,
-//   each (x0 the Life component, w1 IsNoReaction, x2 -> the name's u32 key).
-//   Ours: our own key (kOurKey) with IsNoReaction 1: a hit takes nothing and
-//   plays no reaction.
+//   InvincibleFlagName, IsNoReaction). IsNoReaction picks the list and so the
+//   function: main+0x8d75e0 keeps the no-reaction keys (Life+0x1c60),
+//   main+0xb34800 the others (Life+0x1c28); each takes (x0 the Life component,
+//   w1 Bool: 1 adds the key, 0 takes it out, x2 -> the name's u32 key). Ours:
+//   our own key (kOurKey) in the no-reaction list: a hit takes nothing and
+//   plays no reaction. We never touch the other list.
 // - Unseen. The game's own perception switch, as the AI node
 //   OneShotPerceptionSetEnableOrDisable does it with ApplyToEmitter (run
 //   main+0x974a60): main+0x1278e0 (x0 the PerceptionEmitter component
@@ -57,8 +59,8 @@ namespace addr {
 inline constexpr std::uint64_t kComponentBsa = CoopBossNative::addr::kComponentBsa;  // [actor+0x270]+0x188
 inline constexpr std::uint64_t kComponentEmitter = 0x328;  // [actor+0x270]+0x328, PerceptionEmitter
 inline constexpr std::uint64_t kEmitterKeys = 0x20;        // its set of "off" keys
-inline constexpr std::uint64_t kInvincibleOn = 0x8d75e0;   // main+, (life, no_reaction, &key)
-inline constexpr std::uint64_t kInvincibleOff = 0xb34800;  // main+, the same arguments
+inline constexpr std::uint64_t kInvincibleNoReaction = 0x8d75e0;  // main+, (life, add, &key): the no-reaction list
+inline constexpr std::uint64_t kInvincibleList = 0xb34800;  // main+, the same for the other list (not used: the test's check)
 inline constexpr std::uint64_t kEmitterSwitch = 0x1278e0;  // main+, (emitter + 0x20, &key, enable)
 // Our key for both (the game keys each by a name's hash; any value no game name has).
 inline constexpr std::uint32_t kOurKey = 0xC0DB0D01u;

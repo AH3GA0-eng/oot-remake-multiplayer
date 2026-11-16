@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <cstring>
 #include <map>
+#include <set>
+#include <utility>
 #include <vector>
 
 #include "coop_dbno_body.h"
@@ -58,6 +60,18 @@ Crawl::Wanted Want(bool lying, bool event = false) {
     return w;
 }
 
+// The game's key lists as its functions keep them: (component, key).
+struct GameLists {
+    std::set<std::pair<std::uint64_t, std::uint32_t>> no_reaction;  // Life+0x1c60 (main+0x8d75e0)
+    std::set<std::pair<std::uint64_t, std::uint32_t>> other;        // Life+0x1c28 (main+0xb34800)
+    std::set<std::pair<std::uint64_t, std::uint32_t>> emitter_off;  // emitter+0x20 (main+0x1278e0)
+    bool Holds(std::uint64_t at, std::uint32_t key) const {
+        const auto k = std::make_pair(at, key);
+        return no_reaction.count(k) + other.count(k) + emitter_off.count(k) != 0;
+    }
+};
+GameLists g_lists;
+
 struct Made {
     std::uint64_t function = 0;  // main+
     std::uint64_t x0 = 0, x1 = 0, x2 = 0;
@@ -84,6 +98,21 @@ std::vector<Made> RunFrame(Crawl& c, Guest& g, std::uint64_t now_ms, std::uint64
             std::uint32_t key = 0;
             g.Read(kBlock + addr::kBlockKey, &key, sizeof key);
             CHECK(key == addr::kOurKey);
+            // What the game's function does with it.
+            if (m.function == addr::kInvincibleNoReaction || m.function == addr::kInvincibleList) {
+                auto& list = m.function == addr::kInvincibleNoReaction ? g_lists.no_reaction : g_lists.other;
+                if ((m.x1 & 1) != 0) {
+                    list.insert({m.x0, key});  // Bool 1: added
+                } else {
+                    list.erase({m.x0, key});   // Bool 0: taken out
+                }
+            } else if (m.function == addr::kEmitterSwitch) {
+                if ((m.x2 & 1) == 0) {
+                    g_lists.emitter_off.insert({m.x0, key});  // IsEnable 0: our key turns it off
+                } else {
+                    g_lists.emitter_off.erase({m.x0, key});
+                }
+            }
         }
         made.push_back(m);
         call = c.Next(g, true, r, now_ms, kMain);
@@ -261,14 +290,15 @@ TEST_CASE("dbno body: an event of ours pauses the crawl; it is asked again after
 TEST_CASE("dbno body: shield and unseen through the game's own functions, on while down, off when up") {
     Guest g;
     Crawl c;
+    g_lists = {};
     c.Want(Want(true));
     const auto down = RunFrame(c, g, 1000);
-    REQUIRE(Count(down, addr::kInvincibleOn) == 1);
+    REQUIRE(Count(down, addr::kInvincibleNoReaction) == 1);
     REQUIRE(Count(down, addr::kEmitterSwitch) == 1);
     for (const Made& m : down) {
-        if (m.function == addr::kInvincibleOn) {
+        if (m.function == addr::kInvincibleNoReaction) {
             CHECK(m.x0 == kLife);
-            CHECK(m.x1 == 1);  // IsNoReaction
+            CHECK(m.x1 == 1);  // Bool: add our key to the no-reaction list
             CHECK(m.x2 == kBlock + addr::kBlockKey);
         }
         if (m.function == addr::kEmitterSwitch) {
@@ -277,19 +307,33 @@ TEST_CASE("dbno body: shield and unseen through the game's own functions, on whi
             CHECK(m.x2 == 0);  // IsEnable 0: off
         }
     }
+    CHECK(g_lists.no_reaction.count({kLife, addr::kOurKey}) == 1);
+    CHECK(g_lists.emitter_off.count({kEmitter + addr::kEmitterKeys, addr::kOurKey}) == 1);
+    CHECK(g_lists.other.empty());
     CHECK(RunFrame(c, g, 1100).empty());  // once
     CHECK(c.Totals().shield_on == 1);
     CHECK(c.Totals().unseen_on == 1);
 
     c.Want(Want(false));
     const auto up = RunFrame(c, g, 2000);
-    CHECK(Count(up, addr::kInvincibleOff) == 1);
+    CHECK(Count(up, addr::kInvincibleNoReaction) == 1);
+    CHECK(Count(up, addr::kInvincibleList) == 0);  // the other list is never touched
     REQUIRE(Count(up, addr::kEmitterSwitch) == 1);
     for (const Made& m : up) {
+        if (m.function == addr::kInvincibleNoReaction) {
+            CHECK(m.x0 == kLife);
+            CHECK(m.x1 == 0);  // Bool 0: our key taken out
+        }
         if (m.function == addr::kEmitterSwitch) {
             CHECK(m.x2 == 1);  // IsEnable: on again
         }
     }
+    // On -> off: our key is gone from every list the game keeps.
+    CHECK_FALSE(g_lists.Holds(kLife, addr::kOurKey));
+    CHECK_FALSE(g_lists.Holds(kEmitter + addr::kEmitterKeys, addr::kOurKey));
+    CHECK(g_lists.no_reaction.empty());
+    CHECK(g_lists.other.empty());
+    CHECK(g_lists.emitter_off.empty());
     CHECK(RunFrame(c, g, 2100).empty());
 }
 
@@ -303,7 +347,7 @@ TEST_CASE("dbno body: a new Link (scene change) gets them again; the old compone
     w.emitter = 0x4400;
     c.Want(w);
     const auto again = RunFrame(c, g, 1100);
-    CHECK(Count(again, addr::kInvincibleOn) == 1);
+    CHECK(Count(again, addr::kInvincibleNoReaction) == 1);
     CHECK(Count(again, addr::kEmitterSwitch) == 1);
     // Up while on a Link that has gone (the components changed again): no call on a freed component.
     Crawl::Wanted gone = Want(false);
@@ -311,8 +355,26 @@ TEST_CASE("dbno body: a new Link (scene change) gets them again; the old compone
     gone.emitter = 0x4500;
     c.Want(gone);
     const auto up = RunFrame(c, g, 1200);
-    CHECK(Count(up, addr::kInvincibleOff) == 0);
+    CHECK(Count(up, addr::kInvincibleNoReaction) == 0);
     CHECK(Count(up, addr::kEmitterSwitch) == 0);
+}
+
+TEST_CASE("dbno body: down and up several times leaves none of our keys behind") {
+    Guest g;
+    Crawl c;
+    g_lists = {};
+    std::uint64_t ms = 1000;
+    for (int i = 0; i < 3; ++i) {
+        c.Want(Want(true));
+        RunFrame(c, g, ms += 100);
+        CHECK(g_lists.no_reaction.size() == 1);
+        CHECK(g_lists.emitter_off.size() == 1);
+        c.Want(Want(false));
+        RunFrame(c, g, ms += 100);
+        CHECK(g_lists.no_reaction.empty());
+        CHECK(g_lists.emitter_off.empty());
+    }
+    CHECK(g_lists.other.empty());
 }
 
 TEST_CASE("dbno body: never down, the game is never called") {
