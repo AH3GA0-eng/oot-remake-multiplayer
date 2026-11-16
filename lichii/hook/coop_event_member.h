@@ -59,21 +59,6 @@ inline std::uint64_t PerformerOf(const ReadWord& read, std::uint64_t actor) {
     return 0;
 }
 
-// Whether the actor is bound into a running event (its performer holds an
-// event link). nullopt: no performer of its own was found (an actor class
-// whose performer sits elsewhere): the other rules decide for it.
-inline std::optional<bool> InEvent(const ReadWord& read, std::uint64_t actor) {
-    const std::uint64_t performer = PerformerOf(read, actor);
-    if (performer == 0) {
-        return std::nullopt;
-    }
-    const auto link = read(performer + kPerformerLink);
-    if (!link) {
-        return std::nullopt;
-    }
-    return *link != 0;
-}
-
 // For the log (row 97: the stuck event had no name in the log). Our running
 // event as the event manager has it (docs player-state-map, "The event
 // object"): [main + 0x4e94840] +0x68 the session S; S +0xeb8 its events,
@@ -159,6 +144,139 @@ inline Running ReadRunning(const ReadWord& read, std::uint64_t main) {
         if (!name.empty() && std::find(out.names.begin(), out.names.end(), name) == out.names.end()) {
             out.names.push_back(std::move(name));
         }
+    }
+    return out;
+}
+
+// Row 97 review (A #36): "bound" must mean bound into OUR running event. In the scrub runs
+// (20261116-085755, -133559) an Animal_Butterfly 26-32 m away read as bound during each of our
+// events: an ambient actor whose performer link is not 0 for an event of its own. And our Deku
+// Scrubs were never read as bound during our talk with them: their performer is not in slot 0x88
+// or 0x90. So:
+// - the performer is looked for in every slot of the component table (kMaxSlots words): a
+//   component whose +0x10 is the actor and whose +0x18 is a link;
+// - the link counts only when it refers to our running event (Ours, from the event manager:
+//   its session and the session's events): it is one of them, lies inside one (an event's
+//   member record: kEventSpan covers the largest event class, 0x878) or inside the session
+//   (kSessionSpan, as kScanSession), or one of its first kLinkHopWords words is one of them.
+//   A link to anything else (a butterfly's own event) is not ours.
+// Without a running session (the manager's word 0) nothing is ours.
+inline constexpr std::uint64_t kMaxSlots = 0x40;
+inline constexpr std::uint64_t kEventSpan = 0x900;
+inline constexpr std::uint64_t kSessionSpan = 0x1000;
+inline constexpr std::uint64_t kLinkHopWords = 8;
+inline constexpr std::uint32_t kMaxEvents = 32;
+
+struct Ours {
+    std::uint64_t session = 0;          // 0: no event runs
+    std::vector<std::uint64_t> events;  // the session's events
+};
+
+inline Ours ReadOurs(const ReadWord& read, std::uint64_t main) {
+    Ours out;
+    const auto manager = read(main + kEventManagerPtr);
+    const auto session = manager && *manager ? read(*manager + kEventSession) : std::nullopt;
+    if (!session || *session == 0) {
+        return out;
+    }
+    out.session = *session;
+    const auto events = read(*session + kSessionEvents);
+    const auto count = read(*session + kSessionCount);
+    if (events && *events != 0 && count) {
+        const auto n = std::min<std::uint32_t>(static_cast<std::uint32_t>(*count), kMaxEvents);
+        for (std::uint32_t i = 0; i < n; ++i) {
+            if (const auto e = read(*events + 8ull * i); e && *e != 0) {
+                out.events.push_back(*e);
+            }
+        }
+    }
+    return out;
+}
+
+enum class LinkHow : std::uint8_t { none, event, inside_event, session, refers };
+
+inline const char* LinkHowName(LinkHow h) {
+    switch (h) {
+    case LinkHow::event: return "an event of ours";
+    case LinkHow::inside_event: return "inside an event of ours";
+    case LinkHow::session: return "in our event session";
+    case LinkHow::refers: return "refers to our event";
+    default: return "not our event";
+    }
+}
+
+inline LinkHow LinkIsOurs(const ReadWord& read, std::uint64_t link, const Ours& ours) {
+    if (ours.session == 0 || link == 0) {
+        return LinkHow::none;
+    }
+    const auto ours_word = [&ours](std::uint64_t w) {
+        return w == ours.session || std::find(ours.events.begin(), ours.events.end(), w) != ours.events.end();
+    };
+    if (std::find(ours.events.begin(), ours.events.end(), link) != ours.events.end()) {
+        return LinkHow::event;
+    }
+    for (const std::uint64_t e : ours.events) {
+        if (link > e && link < e + kEventSpan) {
+            return LinkHow::inside_event;
+        }
+    }
+    if (link >= ours.session && link < ours.session + kSessionSpan) {
+        return LinkHow::session;
+    }
+    for (std::uint64_t k = 0; k < kLinkHopWords; ++k) {
+        if (const auto w = read(link + 8 * k); w && ours_word(*w)) {
+            return LinkHow::refers;
+        }
+    }
+    return LinkHow::none;
+}
+
+struct Member {
+    std::optional<bool> bound;   // nullopt: no performer of its own found
+    std::uint64_t slot = 0;      // the table slot of the performer read
+    std::uint64_t link = 0;      // its link (the first non-zero one when none is ours)
+    LinkHow how = LinkHow::none;
+};
+
+// Whether our running event binds the actor (see above).
+inline Member MemberOf(const ReadWord& read, std::uint64_t actor, const Ours& ours) {
+    Member out;
+    if (actor == 0) {
+        return out;
+    }
+    const auto parts = read(actor + kActorParts);
+    if (!parts || *parts == 0) {
+        return out;
+    }
+    bool found = false;
+    for (std::uint64_t slot = 0; slot < kMaxSlots * 8; slot += 8) {
+        const auto c = read(*parts + slot);
+        if (!c || *c < 0x10000) {
+            continue;
+        }
+        const auto owner = read(*c + kPerformerActor);
+        if (!owner || *owner != actor) {
+            continue;
+        }
+        const auto link = read(*c + kPerformerLink);
+        if (!link) {
+            continue;
+        }
+        if (!found || (out.link == 0 && *link != 0)) {
+            out.slot = slot;
+            out.link = *link;
+        }
+        found = true;
+        if (const LinkHow how = LinkIsOurs(read, *link, ours); how != LinkHow::none) {
+            out.bound = true;
+            out.slot = slot;
+            out.link = *link;
+            out.how = how;
+            return out;
+        }
+    }
+    if (found) {
+        out.bound = false;
     }
     return out;
 }
