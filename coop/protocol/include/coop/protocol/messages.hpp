@@ -1296,9 +1296,8 @@ struct DropAsk {
 // boss. `in_room` is sent on entering and every 2 s while there, so a game
 // in the same dungeon (one that joined or respawned too) moves its player in;
 // the intro's start and end let the others leave the intro together; `left`
-// and `defeated` end the pull. Relayed to everyone else. `defeated` from a
-// player is no proof of a death (also sent on a guess); from player 0 it is
-// the server's record of a BOSS_SCENE outro_start, told to a joiner (G2).
+// and `defeated` end the pull. Relayed to everyone else. `defeated` is no
+// proof of a death (also sent on a guess): G2 takes BOSS_SCENE's outro.
 enum class BossState : std::uint8_t {
   in_room = 1,
   intro_start = 2,

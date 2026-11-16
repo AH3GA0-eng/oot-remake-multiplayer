@@ -182,7 +182,7 @@ TEST_CASE("boss beaten: a boss beaten while we stand in a field is given at once
     CHECK(a.Check(std::string("KokiriForest"), true, beaten, 1, std::ref(f)).size() == s.bools.size() + 1);
 }
 
-TEST_CASE("boss beaten: only a proven death is one (a game took the death event, or the server's record)") {
+TEST_CASE("boss beaten: only a proven death is one (a game took the boss's death event itself)") {
     namespace proto = coop::protocol;
     const std::string deku(CoopBoss::RoomByIndex(0)->scene);
     const auto scene = [](std::uint8_t boss, const std::string& where, proto::BossSceneKind kind) {
@@ -191,16 +191,13 @@ TEST_CASE("boss beaten: only a proven death is one (a game took the death event,
     CHECK(CoopBossBeaten::ProvenDeath(scene(0, deku, proto::BossSceneKind::outro_start)) == std::uint8_t{0});
     CHECK_FALSE(CoopBossBeaten::ProvenDeath(scene(0, "GohmaStage", proto::BossSceneKind::outro_start)));  // boss rush
     CHECK_FALSE(CoopBossBeaten::ProvenDeath(scene(0, deku, proto::BossSceneKind::intro_start)));
-    CHECK_FALSE(CoopBossBeaten::ProvenDeath(scene(0, deku, proto::BossSceneKind::outro_end)));
+    CHECK(CoopBossBeaten::ProvenDeath(scene(0, deku, proto::BossSceneKind::outro_end)) == std::uint8_t{0});
     CHECK_FALSE(CoopBossBeaten::ProvenDeath(scene(8, "InsideGanonCastle", proto::BossSceneKind::outro_start)));
-    // A player's BOSS_ROOM defeated is maybe a guess (a long event, no reading): never one.
-    CHECK_FALSE(CoopBossBeaten::ProvenDeath(proto::Message{proto::BossRoom{2, deku, 0, proto::BossState::defeated}}));
-    // The server's record (player 0), told to a joiner, in the boss's own dungeon only.
-    CHECK(CoopBossBeaten::ProvenDeath(proto::Message{proto::BossRoom{0, deku, 0, proto::BossState::defeated}}) ==
-          std::uint8_t{0});
-    CHECK_FALSE(
-        CoopBossBeaten::ProvenDeath(proto::Message{proto::BossRoom{0, "GohmaStage", 0, proto::BossState::defeated}}));
-    CHECK_FALSE(CoopBossBeaten::ProvenDeath(proto::Message{proto::BossRoom{0, deku, 0, proto::BossState::left}}));
+    // BOSS_ROOM defeated is maybe a guess (a long event, no reading): never one, from anyone.
+    for (const std::uint8_t player : {std::uint8_t{0}, std::uint8_t{2}}) {
+        CHECK_FALSE(
+            CoopBossBeaten::ProvenDeath(proto::Message{proto::BossRoom{player, deku, 0, proto::BossState::defeated}}));
+    }
 }
 
 TEST_CASE("boss beaten: BOSS_SCENE's boss index is the room for the eight dungeon bosses") {

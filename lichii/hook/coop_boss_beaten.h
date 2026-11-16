@@ -53,12 +53,13 @@ std::span<const BeatenSet> Sets();
 const BeatenSet* ForRoom(std::uint8_t room);
 
 // The room whose boss `m` proves dead, or nothing. The same rule as the server's (server/session.cpp):
-// - BOSS_SCENE outro_start: a game took the boss's death event itself (its own death setting or Dm_<Dungeon>_BossOut,
-//   by name; a copy's game only once its owner died), in that boss's dungeon scene (not the boss rush). Its boss
-//   index 0 to 7 is the room (coop_boss_scenes.cpp kBosses);
-// - BOSS_ROOM defeated from player 0: the server's record of such a death, told to a player who joins.
-// BOSS_ROOM defeated from a player is never one: it only says that player's fight is over (maybe a guess: a long
-// event, no reading). Our own game's proof is also Sync's beaten_here (the walk read the boss gone).
+// a BOSS_SCENE outro_start or outro_end: a game took the boss's death event itself (its own death setting or
+// Dm_<Dungeon>_BossOut, by name; a copy's game only once its owner died) and, for outro_end, that game's death event
+// ended (only the game that started it sends it). In that boss's own dungeon scene (not the boss rush). Its boss index
+// 0 to 7 is the room (coop_boss_scenes.cpp kBosses). The server keeps the outro_starts and tells a joiner each as an
+// outro_end from the same player (its cutscene rules do nothing with an end of a death they never saw).
+// BOSS_ROOM defeated is never one: it only says that player's fight is over (maybe a guess: a long event, no
+// reading). Our own game's proof is also Sync's beaten_here (the walk read the boss gone).
 std::optional<std::uint8_t> ProvenDeath(const coop::protocol::Message& m);
 
 // The rooms whose boss the group beat this session. BOSS_ROOM messages come on the network thread; the hook's frame

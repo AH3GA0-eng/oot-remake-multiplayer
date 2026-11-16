@@ -365,10 +365,11 @@ or an old build without the life-stops hook) kept the boss alive while the share
 reload brought the fight back with no container to win (#241, row 52).
 
 - **The record: proven deaths only** (review of 5d801cb9: a beaten set written on a guess would stay in an absent
-  player's save for good). `CoopBossBeaten::ProvenDeath`, the same rule on the server: a `BOSS_SCENE` outro_start (a
-  game took the boss's death event itself, by name; a copy's game only once its owner died) in that boss's dungeon
-  scene (not the boss rush), or the server's record of one (`BOSS_ROOM` defeated from player 0, told to a joiner);
-  and in our own game Sync's `beaten_here` (the walk read the boss gone). Never a player's `BOSS_ROOM` defeated:
+  player's save for good). `CoopBossBeaten::ProvenDeath`, the same rule on the server: a `BOSS_SCENE` outro_start or
+  outro_end (a game took the boss's death event itself, by name, a copy's game only once its owner died; only that
+  game sends the end) in that boss's dungeon scene (not the boss rush); the server keeps the outro_starts and tells a
+  joiner each as the same player's outro_end. In our own game also Sync's `beaten_here` (the walk read the boss
+  gone). Never a `BOSS_ROOM` defeated:
   Sync sends it from `Died` (proven) and from `GuessedOver` (an event in the fight with the boss not read, a long
   event with the boss hurt, an event that ended with the reading lost: Twinrova's merge, Phantom Ganon's paintings,
   Bongo Bongo, Morpha's grab), and it only ends the pull. Every game keeps the rooms for the session

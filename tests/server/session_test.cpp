@@ -5388,12 +5388,13 @@ TEST_CASE("boss beaten: a game's own death of a boss is told to a player who joi
   CHECK(only_message_to<BossScene>(h, 1).has_value());  // relayed as before
   h.receive(2, BossScene{0, "InsideTheDekuTree", 0, BossSceneKind::outro_start, {1.0f, 2.0f, 3.0f}}, kChannelSession);
   h.clear();
-  h.join(3, "Saria");  // was not there (G2, player report #241): told once, from the server (player 0)
-  CHECK(messages_to<BossRoom>(h, 3) == std::vector<BossRoom>{{0, "InsideTheDekuTree", 0, BossState::defeated}});
+  h.join(3, "Saria");  // was not there (G2, player report #241): told once, as the same player's death ended
+  CHECK(messages_to<BossScene>(h, 3) ==
+        std::vector<BossScene>{{2, "InsideTheDekuTree", 0, BossSceneKind::outro_end, {1.0f, 2.0f, 3.0f}}});
   h.receive(1, FlagReset{0, {flag(5, 0)}}, kChannelProgress);  // the host loaded a save from before the win
   h.clear();
   h.join(4, "Darunia");
-  CHECK(messages_to<BossRoom>(h, 4).empty());
+  CHECK(messages_to<BossScene>(h, 4).empty());
 }
 
 TEST_CASE("boss beaten: a player's BOSS_ROOM defeated (maybe a guess) and the other cutscenes are never kept") {
@@ -5404,7 +5405,7 @@ TEST_CASE("boss beaten: a player's BOSS_ROOM defeated (maybe a guess) and the ot
   h.receive(1, BossScene{0, "WaterTemple", 5, BossSceneKind::outro_end, {}}, kChannelSession);
   h.clear();
   h.join(2, "Zelda");
-  CHECK(messages_to<BossRoom>(h, 2).empty());
+  CHECK(messages_to<BossScene>(h, 2).empty());
 }
 
 TEST_CASE("boss beaten: a new group (the session emptied) starts with no boss beaten") {
@@ -5414,5 +5415,5 @@ TEST_CASE("boss beaten: a new group (the session emptied) starts with no boss be
   h.session.disconnected(1, h.now);
   h.clear();
   h.join(2, "Zelda");
-  CHECK(messages_to<BossRoom>(h, 2).empty());
+  CHECK(messages_to<BossScene>(h, 2).empty());
 }

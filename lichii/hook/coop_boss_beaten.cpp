@@ -71,15 +71,12 @@ std::optional<std::uint8_t> ProvenDeath(const coop::protocol::Message& m) {
         }
         return room;
     };
-    if (const auto* s = std::get_if<proto::BossScene>(&m);
-        s != nullptr && s->kind == proto::BossSceneKind::outro_start) {
-        return in_its_dungeon(s->boss, s->scene);
+    const auto* s = std::get_if<proto::BossScene>(&m);
+    if (s == nullptr ||
+        (s->kind != proto::BossSceneKind::outro_start && s->kind != proto::BossSceneKind::outro_end)) {
+        return std::nullopt;  // never BOSS_ROOM defeated: a game also sends it on a guess
     }
-    if (const auto* r = std::get_if<proto::BossRoom>(&m);
-        r != nullptr && r->state == proto::BossState::defeated && r->player_number == 0) {
-        return in_its_dungeon(r->room, r->scene);
-    }
-    return std::nullopt;
+    return in_its_dungeon(s->boss, s->scene);
 }
 
 Record& TheRecord() {
