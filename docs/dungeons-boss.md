@@ -266,11 +266,26 @@ game could never finish: a black screen, no fade back, no warp.
   whole life (`max(sum, life)`): the next step ends it. A refused hit on a dying boss goes to its Life step after the
   wait, as for any enemy. The list empties on scenes off, a new fight and Reset. Log: `its death has begun: the copy's
   own Life step lets it die now`; totals `N ended in their death`.
-- **The Life-1 clamp (not solved).** In hs-gohma-death 20261115-191432 the same direct Life step that killed the
-  owner's Gohma (the test kill) left the copy at 1 (`21 -> 1`, then `1 given` forever): her own damage rules keep her
-  at 1 outside her stun or chance time, which a copy does not share. So a copy Gohma may never read dead in its own
-  game. Solving it needs her damage rules reverse engineered (`Enemy_DungeonBoss_Gohma` DamageRule or her AI's life
-  floor). Other bosses' rules are not checked.
+- **The life stops (the Life-1 clamp, review-boss-0114 risk 2).** In hs-gohma-death 20261115-191432 the copy was
+  released (`its death has begun`) and its own Life step was given her whole life (`21 given ... (its death has
+  begun)`), but her game took her `21 -> 1` and held her at 1 against every `1 given` after it, while the owner's
+  test kill took the owner's `21 -> 0`. The hold is the game's Life step itself (main+0x49d8c0, read from the game's
+  code): after the frame's sum (main+0x49dcb0, LIFE_STEP) it tests `Life+0x70`, the count of the component's life
+  stops, a ring at `Life+0x60` (0x14 bytes each: a share of the maximum life at +4, or with +4 NaN and +0xc set an
+  absolute life at +8) that the actor's own code keeps. With stops, main+0x49ea94 cuts the sum so life stays at the
+  first stop it would cross and records the crossing (`Life+0x1be8[Life+0x1be0++]`, until `+0x1be4` are recorded);
+  bit 8 of `Life+0x1d18` takes nothing at all. The actor's code reads the crossings (Gohma: her death only in her
+  chance time). A copy's stops are its own game's state of a fight its owner runs, so Gohma's copy kept a stop at 1
+  that the owner's did not have. Fixed at that step: patch 0007's fifth hook (`HOS_COOP_WORLD_LIFE_STOPS`, after
+  main+0x49dcbc, words checked) asks the module before the stop test, and a module answer of 1 clears w10, so that
+  frame's sum goes past the stops as for a component with none. The module answers 1 only when the step takes the
+  component to its death (`sum >= life`) and that death is its owner's (`CoopActorEvents::PassStops`): a copy boss
+  whose death has begun or whose owner's died (`CoopBossNative::Table::Finishes`), or a judged give, the owner's life
+  for any copy (CoopObjects' Lower: `LifeTable::Give(..., judged)`), so every enemy copy whose owner died dies here
+  too, whatever its own stops. A hit our game judges (our own enemy, another player's hit on it, a test kill on our
+  own boss) keeps every stop. Log: `the game's Life step asks the module before its life stops`, and the actors'
+  10 s line counts `owners' deaths past a copy's own life stops N`. A game built before this hook keeps the stops:
+  there a copy held by one still takes the death flow alone (below).
 - **The owner's death finishes the copy (review-boss-0114, every boss).** Nothing used to give a released copy its
   death: the owner's killing hit reaches it as a replay before the outro_start, its game refuses it, and after the
   400 ms wait a boss copy is never written (bosses are never resent either). So a released copy stayed alive unless
@@ -278,8 +293,8 @@ game could never finish: a black screen, no fade back, no warp.
   says it is dead (its dead remove, or its samples at life 0) its whole remaining life in its own Life step, once
   (direct, never a write; `HeldLifeStep` passes it): its own game kills it and runs its own death. Not for our own
   boss, and not while the owner's still lives. Log: `its owner's is dead and its death has begun here: its life N
-  given to its own Life step`; the share line counts `dying copies finished N`. Gohma's own clamp (above) may still
-  hold her at 1.
+  given to its own Life step`; the share line counts `dying copies finished N`. That step goes past the copy's own
+  life stops (above).
 - **The setting waits for the copy to read dead (boss-0113 fallback, boss-0114-a).** Another's death while our walk
   reads our copy alive (`boss_ours` false, `boss_alive` true) never asks the setting at once: its flow would wait for
   that copy's death. The copy is released and finished right after that tick (the glue runs SetDying after

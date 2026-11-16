@@ -1126,6 +1126,8 @@ thread_local bool t_create_stop = false;
 // the create the shoot code itself makes, by its return address)
 thread_local std::uint64_t t_shooter = 0;
 constexpr std::uint64_t kShootCreateReturn = 0xc17300;  // (after the bl at main+0xc172fc)
+// (LIFE_STEP's verdict for its component until that step's LIFE_STOPS: past its own life stops)
+thread_local std::uint64_t t_life_pass = 0;
 
 // The world hooks (patch 0005): the game's C hands its world events here instead of into caves and guest rings.
 int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
@@ -1237,15 +1239,25 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
                 return CoopRuntime::Read(a + CoopDifficulty::kHitAttacker, &attacker, sizeof attacker) ? attacker
                                                                                                          : 0;
             });
-        *sum = CoopActorEvents::Step(CoopActorEvents::TheRing(), CoopActorEvents::TheLifeTable(), a, own);
-        // One boss death for everyone (coop_boss_native.h HeldLifeStep): a copy boss's own Life step
-        // keeps it at life 1 until its owner's has died; then this same step lets it die.
-        if (CoopBossNative::Table& bosses = CoopBossNative::TheTable(); *sum > 0 && bosses.Watches(a)) {
+        t_life_pass = 0;
+        bool judged = false;
+        *sum = CoopActorEvents::Step(CoopActorEvents::TheRing(), CoopActorEvents::TheLifeTable(), a, own, &judged);
+        const auto life_now = [a]() -> std::optional<std::int32_t> {
             std::uint64_t value = 0;
             std::int32_t life = 0;
             if (CoopRuntime::Read(a + CoopDbno::kLifeValueEntry, &value, sizeof value) && value != 0 &&
                 CoopRuntime::Read(value + 8, &life, sizeof life)) {
-                *sum = bosses.HeldLifeStep(a, life, *sum);
+                return life;
+            }
+            return std::nullopt;
+        };
+        // One boss death for everyone (coop_boss_native.h HeldLifeStep): a copy boss's own Life step
+        // keeps it at life 1 until its owner's has died; then this same step lets it die.
+        bool finishing = false;
+        if (CoopBossNative::Table& bosses = CoopBossNative::TheTable(); *sum > 0 && bosses.Watches(a)) {
+            if (const auto life = life_now()) {
+                *sum = bosses.HeldLifeStep(a, *life, *sum);
+                finishing = bosses.Finishes(a);
             }
         }
         // Down but not out (coop_dbno_game.h): our Link's last life is held back, after every other
@@ -1257,6 +1269,24 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
                 CoopRuntime::Read(value + 8, &life, sizeof life)) {
                 *sum = CoopDbno::LifeStep(a, life, *sum);
             }
+        }
+        // The owner's death goes past the copy's own life stops (CoopActorEvents::PassStops; LIFE_STOPS below).
+        if (*sum > 0 && (judged || finishing)) {
+            if (const auto life = life_now(); life && CoopActorEvents::PassStops(*sum, *life, judged, finishing)) {
+                t_life_pass = a;
+            }
+        }
+        return 1;
+    }
+    case HOS_COOP_WORLD_LIFE_STOPS: {  // (b: our C's uint32, in hookshot.exe's memory)
+        auto* pass = reinterpret_cast<std::uint32_t*>(static_cast<std::uintptr_t>(b));
+        if (!CoopActorEvents::LifeStopsSeen().exchange(true, std::memory_order_relaxed)) {
+            LOG_INFO(Core, "coop: actors: the game's Life step asks the module before its life stops (patch 0007): "
+                           "an owner's death goes past a copy's own");
+        }
+        if (pass != nullptr && a != 0 && std::exchange(t_life_pass, 0) == a) {
+            *pass = 1;
+            CoopActorEvents::StopsPassed().fetch_add(1, std::memory_order_relaxed);
         }
         return 1;
     }

@@ -225,6 +225,24 @@ bool Table::Watches(std::uint64_t component) const {
     return false;
 }
 
+bool Table::Finishes(std::uint64_t component) const {
+    if (component == 0) {
+        return false;
+    }
+    for (const auto& slot : dying_life_) {
+        if (slot.load(std::memory_order_acquire) == component) {
+            return true;
+        }
+    }
+    for (const auto& slot : held_life_) {
+        const std::uint64_t v = slot.load(std::memory_order_acquire);
+        if ((v & ~kReleased) == component) {
+            return (v & kReleased) != 0;
+        }
+    }
+    return false;
+}
+
 std::int32_t Table::HeldLifeStep(std::uint64_t component, std::int32_t life, std::int32_t sum) {
     if (component == 0 || sum <= 0) {
         return sum;

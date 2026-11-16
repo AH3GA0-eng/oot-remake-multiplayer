@@ -177,6 +177,9 @@ public:
     std::int32_t HeldLifeStep(std::uint64_t component, std::int32_t life, std::int32_t sum);
     // A copy boss's Life component HeldLifeStep watches (the hook reads its life only then). Lock-free.
     bool Watches(std::uint64_t component) const;
+    // A copy boss whose death is its owner's: its death has begun here (SetDying) or its owner's died (released).
+    // Its Life step then goes past its own life stops (CoopActorEvents::PassStops). Lock-free.
+    bool Finishes(std::uint64_t component) const;
 
     // A create request (any game thread): true when a boss named `maker` is a
     // copy here that takes its owner's verbs, so its own minion is not made

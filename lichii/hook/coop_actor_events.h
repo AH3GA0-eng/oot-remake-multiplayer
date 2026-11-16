@@ -157,7 +157,9 @@ public:
     static constexpr std::size_t kSlots = 256;
     static constexpr std::size_t kProbes = 16;
 
-    bool Give(std::uint64_t component, std::int32_t amount) noexcept {
+    // `judged`: the life its owner's game says this copy has (CoopObjects' Lower), not a hit for our game to judge:
+    // a step that takes it to a death goes past the component's own life stops (PassStops).
+    bool Give(std::uint64_t component, std::int32_t amount, bool judged = false) noexcept {
         if (component == 0 || amount == 0) {
             return false;
         }
@@ -170,6 +172,9 @@ public:
                 key = component;
             }
             if (key == component) {
+                if (judged) {
+                    s.judged.store(true, std::memory_order_release);
+                }
                 s.add.fetch_add(amount, std::memory_order_acq_rel);
                 return true;
             }
@@ -177,12 +182,18 @@ public:
         return false;
     }
     // What the step adds this frame (0 for a component never given any).
-    std::int32_t Take(std::uint64_t component) noexcept {
+    // judged (when given): whether any of it was a judged give.
+    std::int32_t Take(std::uint64_t component, bool* judged = nullptr) noexcept {
         Slot* s = Find(component);
         if (s == nullptr || s->add.load(std::memory_order_relaxed) == 0) {
             return 0;
         }
-        return s->add.exchange(0, std::memory_order_acq_rel);
+        const std::int32_t add = s->add.exchange(0, std::memory_order_acq_rel);
+        const bool was = s->judged.exchange(false, std::memory_order_acq_rel);
+        if (judged != nullptr) {
+            *judged = was && add != 0;
+        }
+        return add;
     }
     // Given and not yet taken (for the Objects step's fallback and logs).
     std::int32_t Pending(std::uint64_t component) noexcept {
@@ -192,6 +203,7 @@ public:
     void Clear() noexcept {
         for (auto& s : slots_) {
             s.add.store(0, std::memory_order_relaxed);
+            s.judged.store(false, std::memory_order_relaxed);
             s.key.store(0, std::memory_order_release);
         }
     }
@@ -200,6 +212,7 @@ private:
     struct Slot {
         std::atomic<std::uint64_t> key{0};
         std::atomic<std::int32_t> add{0};
+        std::atomic<bool> judged{false};
     };
     static std::size_t Hash(std::uint64_t c) noexcept {
         return static_cast<std::size_t>(((c >> 4) * 0x9e3779b97f4a7c15ull) >> 56);
@@ -235,9 +248,24 @@ inline std::atomic<bool>& LifeStepSeen() {
     return seen;
 }
 
+// Set once the step's life stop test has called the module (LIFE_STOPS, the
+// hook is in this Hookshot build): a copy's own stops no longer hold its
+// owner's death back.
+inline std::atomic<bool>& LifeStopsSeen() {
+    static std::atomic<bool> seen{false};
+    return seen;
+}
+// Steps that went past their component's own life stops (for the log).
+inline std::atomic<std::uint64_t>& StopsPassed() {
+    static std::atomic<std::uint64_t> passed{0};
+    return passed;
+}
+
 // One Life step through the module: the damage the game dealt this frame
 // (pushed as a Damage event when not 0) and the sum the step then takes.
-inline std::int32_t Step(Ring& ring, LifeTable& table, std::uint64_t component, std::int32_t sum) noexcept {
+// judged: whether the given part was a judged give (LifeTable::Give).
+inline std::int32_t Step(Ring& ring, LifeTable& table, std::uint64_t component, std::int32_t sum,
+                         bool* judged = nullptr) noexcept {
     if (sum != 0) {
         Event e;
         e.kind = Kind::Damage;
@@ -245,7 +273,23 @@ inline std::int32_t Step(Ring& ring, LifeTable& table, std::uint64_t component, 
         e.b = static_cast<std::uint32_t>(sum);
         ring.Push(e);
     }
-    return sum + table.Take(component);
+    return sum + table.Take(component, judged);
+}
+
+// Review-boss-0114 risk 2 (Gohma's copy held at life 1): the game's Life step
+// (main+0x49d8c0) cuts a frame's sum at each of the component's life stops
+// (the list at Life+0x60, count +0x70, that its actor's own code keeps: an
+// absolute life, or a share of the maximum), so life stays at the stop and
+// the crossing is recorded (Life+0x1be8). A copy's stops are its own game's
+// state of a fight its owner runs: Gohma's copy kept her stop at 1 while the
+// owner's had none, and the owner's death (21) left the copy at 1 for good.
+// So a step that takes a component to its death (sum >= life) goes past its
+// own stops when that death is its owner's: a judged give (the owner's life
+// for a copy), or a copy boss whose death has begun or whose owner's died
+// (CoopBossNative::Table::Finishes). A hit our game judges (our own enemy,
+// another player's hit on it) keeps every stop.
+constexpr bool PassStops(std::int32_t sum, std::int32_t life, bool judged, bool finishing) noexcept {
+    return life > 0 && sum >= life && (judged || finishing);
 }
 
 } // namespace CoopActorEvents

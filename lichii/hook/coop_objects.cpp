@@ -2292,9 +2292,11 @@ private:
         } else if (server_now_us >= actor_events_said_us_ + 10'000'000 &&
                    (actor_creates_ | actor_deletes_ | actor_hits_ | actor_events_lost_) != 0) {
             actor_events_said_us_ = server_now_us;
+            const std::uint64_t passed = CoopActorEvents::StopsPassed().load(std::memory_order_relaxed);
             LOG_INFO(Core, "coop: actors: in 10 s the game asked {} creates ({} copies' shots refused), {} deletes, "
-                           "{} hits (life {}), {} lost",
-                     actor_creates_, actor_stops_, actor_deletes_, actor_hits_, actor_hit_sum_, actor_events_lost_);
+                           "{} hits (life {}), {} lost; owners' deaths past a copy's own life stops {}",
+                     actor_creates_, actor_stops_, actor_deletes_, actor_hits_, actor_hit_sum_, actor_events_lost_,
+                     passed);
             actor_creates_ = actor_deletes_ = actor_hits_ = actor_events_lost_ = actor_stops_ = 0;
             actor_hit_sum_ = 0;
         }
@@ -3241,7 +3243,8 @@ private:
             return;
         case LifeRoute::step:
 #ifdef COOP_HOOKSHOT
-            if (steps.Give(*life, routed.amount)) {
+            // A life (not a hurt, not a raise) is the owner's for its copy: judged there (PassStops).
+            if (steps.Give(*life, routed.amount, w.hurt <= 0 && !w.heal)) {
                 LOG_INFO(Core, "coop: objects: share {} {:#x}: {} through the game's Life step at life {} (to {})",
                          w.hurt > 0 ? "hurt" : "life", w.address, routed.amount, old, w.life);
                 if (w.hurt <= 0) {
