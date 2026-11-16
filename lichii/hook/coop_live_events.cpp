@@ -48,6 +48,24 @@ std::optional<bool> NearPlace(std::string_view event, std::string_view scene,
 
 } // namespace
 
+bool SpansRooms(std::string_view event, std::string_view scene) {
+    const Place* first = nullptr;
+    for (const Place& p : Places()) {
+        if (p.event != event || p.scene != scene) {
+            continue;
+        }
+        if (first == nullptr) {
+            first = &p;
+            continue;
+        }
+        const float dx = p.x - first->x, dy = p.y - first->y, dz = p.z - first->z;
+        if (dx * dx + dy * dy + dz * dz > kOneRoomM * kOneRoomM) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::optional<std::string> Decider::Next(const std::vector<std::string>& held, const std::string& scene,
                                          bool event_running, std::optional<std::array<float, 3>> link,
                                          const RoomOf* room_of) {
@@ -71,6 +89,9 @@ std::optional<std::string> Decider::Next(const std::vector<std::string>& held, c
         }
         if (asked_.contains(name)) {
             continue;
+        }
+        if (SpansRooms(name, scene)) {
+            continue;  // deku-ladder: one played flag for two rooms; which one played is not known here
         }
         const auto near = NearPlace(name, scene, link, room_of);
         if (near ? !*near : !named) {

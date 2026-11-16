@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 
+#include "coop/protocol/codec.hpp"
 #include "coop_fairy.h"
 #include "coop_live_events.h"
 #include "coop_logic_set.h"
@@ -12,25 +13,76 @@
 namespace CoopEyeSwitch {
 
 namespace {
-// tools/puppet_pack/eye_switches.py on the romfs of build e0f3ccfaf50065ae (1.1.1), 2026-11-16.
+// tools/puppet_pack/eye_switches.py --places coop_live_places.cpp on the romfs of build e0f3ccfaf50065ae (1.1.1),
+// 2026-11-16. 64 lines, 63 events.
+// clang-format off
 constexpr Switch kSwitches[] = {
-    {"DodongoCavern_Gimmick_EyeSwitch", "DodongoCavern", "Obj_EyeSwitch_A_05", {80.5f, 121.0f, -6.6f}, {68.2f, 127.3f, -6.6f}},
-    {"FireTemple_06_EyeSwitch", "FireTemple", "Obj_EyeSwitch_A_02", {34.2f, 151.6f, 0.1f}, {36.7f, 150.8f, 3.9f}},
-    {"ForestTemple_Room11_TBoxAppear", "ForestTemple", "Obj_EyeSwitch_A_02", {-52.8f, 119.5f, 5.9f}, {-52.8f, 115.0f, 2.0f}},
-    {"ForestTemple_Room17_ShutterOpen", "ForestTemple", "Obj_EyeSwitch_A_02", {-13.8f, 118.9f, -59.5f}, {-7.5f, 121.5f, -59.5f}},
-    {"ForestTemple_Room27_ShutterOpen", "ForestTemple", "Obj_EyeSwitch_A_02", {24.9f, 62.1f, -3.5f}, {0.0f, 65.7f, -19.6f}},
-    {"GerudoTrainingGround_00_FallTreasureBox", "GerudoTrainingGround", "Obj_EyeSwitch_A_02", {-1.8f, 109.8f, 10.8f}, {2.5f, 99.5f, -9.8f}},
-    {"GerudoTrainingGround_03_ShutterOpen", "GerudoTrainingGround", "Obj_EyeSwitch_GlassTruth_A_02", {-47.3f, 109.2f, -110.6f}, {-36.3f, 119.5f, -92.9f}},
-    {"GerudoTrainingGround_04_ActStoneGimmick", "GerudoTrainingGround", "Obj_EyeSwitch_A_05", {24.1f, 102.5f, -82.4f}, {13.1f, 99.9f, -87.5f}},
-    {"GerudoTrainingGround_05_ShutterOpen", "GerudoTrainingGround", "Obj_EyeSwitch_A_03", {46.9f, 101.9f, -92.4f}, {34.4f, 108.5f, -89.8f}},
-    {"GerudoTrainingGround_10_FallTreasureBox", "GerudoTrainingGround", "Obj_EyeSwitch_A_02", {-54.2f, 109.1f, -131.7f}, {-51.4f, 103.5f, -131.8f}},
-    {"InsideTheDekuTree_Gimmick_FallingLadder", "InsideTheDekuTree", "Obj_EyeSwitch_A_02", {-35.6f, 114.3f, 10.7f}, {-37.5f, 117.8f, 12.5f}},
-    {"InsideTheDekuTree_Gimmick_RoomF_EyeSwitch", "InsideTheDekuTree", "Obj_EyeSwitch_A_02", {-17.1f, 83.0f, 29.6f}, {-14.5f, 82.7f, 27.8f}},
-    {"SpiritTemple_Level_Room_04_EyeSwitchOn", "SpiritTemple", "Obj_EyeSwitch_A_02", {-33.6f, 104.0f, -86.0f}, {-31.3f, 107.9f, -81.7f}},
-    {"SpiritTemple_Level_Room_30_BoardNetFall", "SpiritTemple", "Obj_EyeSwitch_A_03", {14.4f, 152.7f, -76.7f}, {19.8f, 159.5f, -77.8f}},
-    {"WaterTemple_EyeSwitch_Focus", "WaterTemple", "Obj_EyeSwitch_A_05", {-33.2f, 115.8f, -40.2f}, {-33.5f, 118.9f, -40.7f}},
-    {"WaterTemple_EyeSwitch_Focus", "WaterTemple", "Obj_EyeSwitch_A_05", {-4.5f, 116.6f, -26.3f}, {0.7f, 116.1f, -29.3f}},
+    {"Dm_FireTemple_0029", "FireTemple", "Obj_HammerSwitch_A_01", {-49.6f, 179.5f, -24.8f}, "OnState", {-46.9f, 186.5f, -22.4f}},
+    {"DodongoCavern_Gimmick_EyeSwitch", "DodongoCavern", "Obj_EyeSwitch_A_05", {80.5f, 121.0f, -6.6f}, "OnState", {68.2f, 127.3f, -6.6f}},
+    {"DodongoCavern_Gimmick_SwitchShortcut", "DodongoCavern", "Obj_StepSwitch_A_01", {17.2f, 112.3f, -23.0f}, "FirstOn", {19.0f, 118.0f, -23.0f}},
+    {"DodongoCavern_Gimmick_SwitchShutter_Room01", "DodongoCavern", "Obj_StepSwitch_A_01", {25.0f, 103.0f, -23.0f}, "FirstOn", {16.0f, 103.8f, -23.0f}},
+    {"DodongoCavern_Gimmick_SwitchShutter_Room12", "DodongoCavern", "Obj_StepSwitch_A_01", {-49.0f, 114.2f, -8.0f}, "FirstOn", {-43.5f, 116.0f, -8.0f}},
+    {"FireTemple_06_EyeSwitch", "FireTemple", "Obj_EyeSwitch_A_02", {34.2f, 151.6f, 0.1f}, "FirstOn", {36.7f, 150.8f, 3.9f}},
+    {"FireTemple_SwitchFireCamera_Room04", "FireTemple", "Obj_SwitchHit_A_04", {87.8f, 133.1f, 16.1f}, "OnState", {93.1f, 141.0f, 16.3f}},
+    {"FireTemple_SwitchFireCamera_Room12", "FireTemple", "Obj_SwitchHit_A_04", {-73.4f, 178.6f, 16.5f}, "OnState", {-67.5f, 187.3f, 14.2f}},
+    {"FocusOnGimmick_InsideJabuJabuBelly_02", "InsideJabuJabuBelly", "Obj_InsideJabu_Jabu_SwitchHit_A_03", {21.9f, 83.4f, -38.1f}, "OnState", {20.0f, 79.5f, -35.0f}},
+    {"FocusOnGimmick_JabujabuLift", "InsideJabuJabuBelly", "Obj_InsideJabu_Jabu_SwitchHit_A_01", {-4.3f, 81.0f, -42.6f}, "OnState", {-1.0f, 77.5f, -41.2f}},
+    {"ForestTemple_Room02_ShutterOpen", "ForestTemple", "Obj_StepSwitch_A_01", {17.1f, 100.0f, -17.2f}, "FirstOn", {16.4f, 101.7f, -12.3f}},
+    {"ForestTemple_Room11_TBoxAppear", "ForestTemple", "Obj_EyeSwitch_A_02", {-52.8f, 119.5f, 5.9f}, "OnState", {-52.8f, 115.0f, 2.0f}},
+    {"ForestTemple_Room12_WaterLevelDrop", "ForestTemple", "Obj_StepSwitch_A_01", {-31.9f, 113.9f, -50.7f}, "FirstOn", {-29.1f, 107.4f, -34.9f}},
+    {"ForestTemple_Room17_ShutterOpen", "ForestTemple", "Obj_EyeSwitch_A_02", {-13.8f, 118.9f, -59.5f}, "OnState", {-7.5f, 121.5f, -59.5f}},
+    {"ForestTemple_Room22_ShutterOpen", "ForestTemple", "Obj_StepSwitch_A_01", {51.2f, 104.0f, -37.2f}, "FirstOn", {54.3f, 104.9f, -19.8f}},
+    {"ForestTemple_Room27_CandleLight", "ForestTemple", "Obj_StepSwitch_A_01", {-15.9f, 60.7f, -19.5f}, "OnState", {-10.4f, 61.0f, 6.9f}},
+    {"ForestTemple_Room27_ShutterOpen", "ForestTemple", "Obj_EyeSwitch_A_02", {24.9f, 62.1f, -3.5f}, "OnState", {0.0f, 65.7f, -19.6f}},
+    {"GerudoTrainingGround_00_FallTreasureBox", "GerudoTrainingGround", "Obj_EyeSwitch_A_02", {-1.8f, 109.8f, 10.8f}, "OnState", {2.5f, 99.5f, -9.8f}},
+    {"GerudoTrainingGround_03_ShutterOpen", "GerudoTrainingGround", "Obj_EyeSwitch_GlassTruth_A_02", {-47.3f, 109.2f, -110.6f}, "OnState", {-36.3f, 119.5f, -92.9f}},
+    {"GerudoTrainingGround_04_ActStoneGimmick", "GerudoTrainingGround", "Obj_EyeSwitch_A_05", {24.1f, 102.5f, -82.4f}, "OnState", {13.1f, 99.9f, -87.5f}},
+    {"GerudoTrainingGround_05_DisappearFire", "GerudoTrainingGround", "Obj_StepSwitch_A_04", {52.2f, 97.5f, -86.0f}, "OnState", {44.9f, 107.6f, -84.4f}},
+    {"GerudoTrainingGround_05_ShutterOpen", "GerudoTrainingGround", "Obj_EyeSwitch_A_03", {46.9f, 101.9f, -92.4f}, "FirstOn", {34.4f, 108.5f, -89.8f}},
+    {"GerudoTrainingGround_06_DisappearFire", "GerudoTrainingGround", "Obj_StepSwitch_A_02", {32.5f, 94.0f, -40.0f}, "OnState", {32.8f, 107.6f, -35.6f}},
+    {"GerudoTrainingGround_08_FenceFallDown", "GerudoTrainingGround", "Obj_StepSwitch_A_01", {-1.9f, 98.0f, -45.1f}, "FirstOn", {0.7f, 101.1f, -45.0f}},
+    {"GerudoTrainingGround_10_FallTreasureBox", "GerudoTrainingGround", "Obj_EyeSwitch_A_02", {-54.2f, 109.1f, -131.7f}, "OnState", {-51.4f, 103.5f, -131.8f}},
+    {"InsideGanonCastle_Dungeon_AppaerTreasureBox_08", "InsideGanonCastle", "Obj_StepSwitch_A_01", {63.6f, 102.9f, -110.3f}, "OnState", {47.2f, 103.9f, -103.4f}},
+    {"InsideGanonCastle_Dungeon_AppearExtendingPlatform_03", "InsideGanonCastle", "Obj_StepSwitch_A_01", {46.3f, 99.0f, 50.0f}, "OnState", {39.7f, 102.8f, 41.4f}},
+    {"InsideGanonCastle_Dungeon_EnemyAppear01", "InsideGanonCastle", "Obj_SolarSwitch_A_03", {-38.4f, 108.2f, 39.9f}, "isLightMax", {-35.2f, 109.1f, 38.6f}},
+    {"InsideGanonCastle_Dungeon_EnemyAppear02", "InsideGanonCastle", "Obj_SolarSwitch_A_03", {-28.0f, 108.2f, 46.0f}, "isLightMax", {-28.5f, 110.2f, 45.3f}},
+    {"InsideGanonCastle_Dungeon_EnemyAppear03", "InsideGanonCastle", "Obj_SolarSwitch_A_03", {-22.0f, 108.2f, 35.5f}, "isLightMax", {-24.5f, 110.0f, 35.3f}},
+    {"InsideGanonCastle_Dungeon_ShutterOpen_06_01", "InsideGanonCastle", "Obj_HammerSwitch_A_01", {78.8f, 102.8f, -38.4f}, "OnState", {84.6f, 107.9f, -27.2f}},
+    {"InsideGanonCastle_Dungeon_ShutterOpen_08_01", "InsideGanonCastle", "Obj_StepSwitch_A_01", {45.6f, 105.5f, -123.6f}, "OnState", {46.3f, 109.1f, -126.4f}},
+    {"InsideGanonCastle_Dungeon_ShutterOpen_17_01", "InsideGanonCastle", "Obj_SwitchHit_A_02", {-48.1f, 105.1f, 12.5f}, "OnState", {-46.4f, 114.6f, 24.6f}},
+    {"InsideGanonCastle_Dungeon_ShutterOpen_17_02", "InsideGanonCastle", "Obj_SolarSwitch_A_02", {-32.3f, 108.2f, 29.5f}, "isLightMax", {-29.4f, 114.1f, 25.1f}},
+    {"InsideJabuJabuBellyRoom01StepSwitch", "InsideJabuJabuBelly", "Obj_InsideJabu_Jabu_StepSwitch_A_03", {8.5f, 102.5f, -51.4f}, "OnState", {7.3f, 109.7f, -48.1f}},
+    {"InsideJabuJabuBellyRoom05Swich", "InsideJabuJabuBelly", "Obj_InsideJabu_Jabu_SwitchHit_A_02", {31.1f, 111.8f, -56.8f}, "OnState", {26.8f, 106.4f, -57.4f}},
+    {"InsideJabuJabuBellyRoom07StepSwitch", "InsideJabuJabuBelly", "Obj_InsideJabu_Jabu_StepSwitch_A_03", {7.7f, 92.3f, -141.3f}, "OnState", {15.0f, 100.7f, -138.8f}},
+    {"InsideJabuJabuBellyRoom14StepSwitch", "InsideJabuJabuBelly", "Obj_InsideJabu_Jabu_StepSwitch_A_04", {29.2f, 77.5f, -66.7f}, "OnState", {32.0f, 78.0f, -69.6f}},
+    {"InsideJabuJabuBellyRoom14StepSwitch_Under", "InsideJabuJabuBelly", "Obj_InsideJabu_Jabu_StepSwitch_A_04", {28.9f, 74.5f, -58.5f}, "OnState", {26.5f, 78.0f, -69.6f}},
+    {"InsideJabuJabuBelly_FocusOnGimmick", "InsideJabuJabuBelly", "Obj_InsideJabu_Jabu_SwitchHit_A_01", {-0.0f, 97.5f, -21.5f}, "OnState", {-1.5f, 92.6f, -24.6f}},
+    {"InsideTheDekuTree_Gimmick_CandleAndSpiderWeb", "InsideTheDekuTree", "Obj_StepSwitch_A_05", {-10.2f, 79.4f, -9.0f}, "FirstOn", {-10.0f, 82.5f, -9.5f}},
+    {"InsideTheDekuTree_Gimmick_FallingLadder", "InsideTheDekuTree", "Obj_EyeSwitch_A_02", {-35.6f, 114.3f, 10.7f}, "OnState", {-37.5f, 117.8f, 12.5f}},
+    {"InsideTheDekuTree_Gimmick_RoomD_PlatformUp", "InsideTheDekuTree", "Obj_StepSwitch_A_02", {-17.5f, 119.6f, -4.9f}, "OnState", {-22.6f, 122.6f, -3.8f}},
+    {"InsideTheDekuTree_Gimmick_RoomF_EyeSwitch", "InsideTheDekuTree", "Obj_EyeSwitch_A_02", {-17.1f, 83.0f, 29.6f}, "OnState", {-14.5f, 82.7f, 27.8f}},
+    {"InsideTheDekuTree_Gimmick_RoomG_WaterLevelDrop", "InsideTheDekuTree", "Obj_DiveSwitch_A_01", {-25.6f, 74.2f, 40.6f}, "OnState", {-23.5f, 81.0f, 34.5f}},
+    {"SpiritTemple_Level_Room_03_BoardNetFall", "SpiritTemple", "Obj_SwitchHit_A_03", {-51.9f, 104.7f, -58.6f}, "OnState", {-55.0f, 107.3f, -51.8f}},
+    {"SpiritTemple_Level_Room_04_EyeSwitchOn", "SpiritTemple", "Obj_EyeSwitch_A_02", {-33.6f, 104.0f, -86.0f}, "FirstOn", {-31.3f, 107.9f, -81.7f}},
+    {"SpiritTemple_Level_Room_10_SwitchOn_01", "SpiritTemple", "Obj_SolarSwitch_A_01", {-44.5f, 131.5f, -26.0f}, "isLightMax", {-59.0f, 132.8f, -27.7f}},
+    {"SpiritTemple_Level_Room_19_SwitchOn_01", "SpiritTemple", "Obj_SolarSwitch_A_02", {28.0f, 121.5f, -40.1f}, "isLightMax", {31.4f, 120.0f, -41.6f}},
+    {"SpiritTemple_Level_Room_19_SwitchOn_01", "SpiritTemple", "Obj_SolarSwitch_A_02", {45.8f, 121.5f, -47.5f}, "isLightMax", {40.9f, 119.2f, -47.5f}},
+    {"SpiritTemple_Level_Room_19_wallmaster", "SpiritTemple", "Obj_SolarSwitch_A_03", {42.8f, 121.5f, -40.1f}, "isLightMax", {41.9f, 125.7f, -41.9f}},
+    {"SpiritTemple_Level_Room_30_BoardNetFall", "SpiritTemple", "Obj_EyeSwitch_A_03", {14.4f, 152.7f, -76.7f}, "FirstOn", {19.8f, 159.5f, -77.8f}},
+    {"SpiritTemple_Level_Room_32_SwitchOn_01", "SpiritTemple", "Obj_SolarSwitch_A_02", {-21.2f, 162.9f, -39.9f}, "isLightMax", {-23.8f, 159.9f, -49.7f}},
+    {"SpiritTemple_Room19_SunSwitchShutterOpen", "SpiritTemple", "Obj_SolarSwitch_A_02", {35.4f, 121.5f, -37.2f}, "isLightMax", {27.1f, 120.7f, -47.6f}},
+    {"SpritTemple_Room07_AppearTreasure", "SpiritTemple", "Obj_SwitchHit_A_05", {-35.2f, 123.5f, -38.0f}, "OnState", {-39.2f, 119.2f, -41.9f}},
+    {"SpritTemple_Room08_OpenShutter", "SpiritTemple", "Obj_HammerSwitch_A_01", {18.0f, 129.1f, -68.5f}, "OnState", {1.5f, 118.4f, -51.4f}},
+    {"SpritTemple_Room14_OpenShutter", "SpiritTemple", "Obj_SwitchHit_A_02", {33.6f, 111.8f, -30.7f}, "OnState", {33.4f, 104.8f, -34.3f}},
+    {"SpritTemple_Room22_StepSwitch", "SpiritTemple", "Obj_StepSwitch_A_01", {47.1f, 130.0f, -24.6f}, "FirstOn", {46.5f, 134.0f, -25.3f}},
+    {"SpritTemple_Room23_SunSwitch", "SpiritTemple", "Obj_SolarSwitch_A_02", {55.8f, 137.3f, -41.1f}, "isLightMax", {55.9f, 133.0f, -33.6f}},
+    {"SpritTemple_Room30_StepSwitch", "SpiritTemple", "Obj_StepSwitch_A_01", {19.8f, 151.0f, -82.2f}, "FirstOn", {23.1f, 150.9f, -71.4f}},
+    {"SpritTemple_Room31_OpenShutter", "SpiritTemple", "Obj_SwitchHit_A_05", {0.0f, 153.1f, -46.0f}, "OnState", {-3.0f, 158.1f, -46.9f}},
+    {"WaterTemple_FocusonGimmick_02", "WaterTemple", "Obj_SwitchHit_A_02", {2.0f, 90.5f, -4.5f}, "OnState", {-6.7f, 89.6f, -4.5f}},
+    {"WaterTemple_Room06_Waterlevelrise_FocusOnGimmick", "WaterTemple", "Obj_SwitchHit_A_06", {-78.9f, 120.0f, -15.0f}, "OnState", {-71.8f, 121.2f, -15.1f}},
+    {"WaterTemple_Waterlevelrise_FocusOnGimmick", "WaterTemple", "Obj_StepSwitch_A_01", {-27.0f, 100.0f, 20.1f}, "FirstOn", {-35.4f, 103.8f, 17.4f}},
 };
+// clang-format on
 
 float Dist2(const std::array<float, 3>& a, const std::array<float, 3>& b) {
     const float dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
@@ -55,11 +107,13 @@ std::vector<const Switch*> FindAll(std::string_view event, std::string_view scen
     }
     if (link) {
         std::stable_sort(out.begin(), out.end(), [&](const Switch* x, const Switch* y) {
-            return Dist2(x->eye_at, *link) < Dist2(y->eye_at, *link);
+            return Dist2(x->at, *link) < Dist2(y->at, *link);
         });
     }
     return out;
 }
+
+std::uint32_t PlugKey(std::string_view plug) { return coop::protocol::flag_hash(plug); }
 
 std::vector<std::uint64_t> FindActors(CoopPuppet::Guest& guest, std::uint64_t main,
                                       std::span<const std::string_view> names, const std::array<float, 3>& at,
@@ -170,22 +224,22 @@ std::optional<CoopPuppet::Call> Switcher::Frame(CoopPuppet::Guest& guest, std::u
     if (t.until_ms == 0) t.until_ms = now_ms + kTryMs;
     const auto lines = FindAll(t.event, t.scene, t.link);
     if (lines.empty()) {
-        End("not in the eye table: asked the old way", true);
+        End("not in the switch table: asked the old way", true);
         return std::nullopt;
     }
     const bool running = EventRunning(guest, main);
     if (t.set && running) {
-        End("an event started after our eye's FirstOn (the room's asker asked it)", false);
+        End("an event started after our switch's plug (the room's asker asked it)", false);
         return std::nullopt;
     }
     if (now_ms > t.until_ms) {
-        End(t.set ? "FirstOn set but no event started in time: asked the old way (cutscene only; plan (b) needed)"
-                  : "our eye or its FirstOn plug not found in time: asked the old way",
+        End(t.set ? "the plug set but no event started in time: asked the old way (cutscene only; plan (b) needed)"
+                  : "our switch or its plug not found in time: asked the old way",
             true);
         return std::nullopt;
     }
     if (running) return std::nullopt;  // another event: wait (not set while one runs)
-    // The first line (nearest our Link) whose asker is here; then only its own eye, at its placement.
+    // The first line (nearest our Link) whose asker is here; then only its own switch, at its placement.
     const Switch* line = nullptr;
     for (const Switch* l : lines) {
         if (!find_(guest, main, CoopLiveEvents::kAskerNames, l->asker_at, CoopLiveEvents::kAskerNearM).empty()) {
@@ -195,16 +249,17 @@ std::optional<CoopPuppet::Call> Switcher::Frame(CoopPuppet::Guest& guest, std::u
     }
     if (line == nullptr) {
         // No asker: the room is cleared here (its asker deleted itself) or not loaded; the old way would not ask either.
-        End(t.set ? "our room's asker is gone after FirstOn (its event ran)" : "no room asker here: not started",
+        End(t.set ? "our room's asker is gone after the plug (its event ran)" : "no room asker here: not started",
             false);
         return std::nullopt;
     }
-    const std::string_view eye_name[] = {line->eye};
-    const auto eyes = find_(guest, main, eye_name, line->eye_at, kEyeAtM);
+    const std::string_view switch_name[] = {line->actor};
+    const auto eyes = find_(guest, main, switch_name, line->at, kEyeAtM);
+    const std::uint32_t key = PlugKey(line->plug);
     std::uint64_t target = 0;
     bool any_plug = false;
     for (const std::uint64_t eye : eyes) {
-        const auto plug = CoopLogicSet::BoolPlug(guest, eye, kFirstOn);
+        const auto plug = CoopLogicSet::BoolPlug(guest, eye, key);
         if (!plug) continue;
         any_plug = true;
         if (plug->value != std::optional<std::uint8_t>(1)) target = eye;  // 1: latched, or our own shot
@@ -212,24 +267,26 @@ std::optional<CoopPuppet::Call> Switcher::Frame(CoopPuppet::Guest& guest, std::u
     }
     if (target == 0) {
         if (any_plug && !t.set) {
-            End("our eye's FirstOn is 1 already (our own shot): nothing to do", false);
+            End("our switch's " + std::string(line->plug) + " is 1 already (our own hit): nothing to do", false);
         } else if (!t.told_waiting) {
             t.told_waiting = true;
             notes_.push_back("eye switch: " + t.event + ": waiting (" + std::to_string(eyes.size()) + " " +
-                             std::string(line->eye) + " at its place, " +
-                             (t.set ? "FirstOn on" : "no live FirstOn plug yet") + ")");
+                             std::string(line->actor) + " at its place, " + std::string(line->plug) +
+                             (t.set ? " on" : " not a live plug yet") + ")");
         }
         return std::nullopt;
     }
-    if (!CoopLogicSet::WriteNode(guest, block_, main, target, kFirstOn)) return std::nullopt;
+    if (!CoopLogicSet::WriteNode(guest, block_, main, target, key)) return std::nullopt;
     if (!t.set) {
         std::array<float, 3> p{};
         guest.Read(target + CoopPuppet::addr::kActorPosition, p.data(), sizeof p);
         const float d = std::sqrt(Dist2(p, line->asker_at));
         char text[256];
         std::snprintf(text, sizeof text,
-                      "eye switch: %s: our eye 0x%llx (%.1f m from the asker) FirstOn set through the game's set-bool",
-                      t.event.c_str(), static_cast<unsigned long long>(target), static_cast<double>(d));
+                      "eye switch: %s: our %.*s 0x%llx (%.1f m from the asker) %.*s set through the game's set-bool",
+                      t.event.c_str(), static_cast<int>(line->actor.size()), line->actor.data(),
+                      static_cast<unsigned long long>(target), static_cast<double>(d), static_cast<int>(line->plug.size()),
+                      line->plug.data());
         notes_.emplace_back(text);
     }
     t.set = true;

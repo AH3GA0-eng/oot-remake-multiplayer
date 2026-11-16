@@ -18,10 +18,15 @@
 // the eye or its FirstOn plug is never found, or no event starts in time, the event goes back to the old way
 // (Requester::WantFromRoom, TakeFallbacks): no worse than before.
 //
-// deku-ladder (tracker rows 90, 102): the root cause is the same in every room whose event an eye's FirstOn starts
-// (the asker's trigger comes from the room graph, not from an ask), so the table holds all of them, read from the
-// romfs: the Deku Tree (rooms C and F), Dodongo's Cavern, the Forest, Fire, Water and Spirit Temples and the Gerudo
-// Training Ground. Each line names the one eye its asker links to, at its placement; no other eye is ever set.
+// deku-ladder (tracker rows 90, 102): the cause is the same for every room event whose asker's EventRequestTrigger is
+// wired in the room graph to a switch's output plug, so the table holds all of them, read from the romfs wiring by
+// tools/puppet_pack/eye_switches.py (gates, multi-inputs and module inputs followed to the switch): 63 events in 9
+// scenes, eye, step, hit, hammer, dive and sun switches. Each line names its switch at its placement and the plug the
+// graph reads: OnState (the Deku Tree's eyes: NOT FirstOn, the graph reads the eye's OnState), FirstOn, or isLightMax
+// (sun switches). Every asker has exactly one switch on its trigger (no AND of two switches). Not here: askers with no
+// wired trigger (the Water Temple's WaterTemple_EyeSwitch_Focus: the eye's own AI asks it; it spans two rooms,
+// CoopLiveEvents::SpansRooms), the Forest Temple's room spins (silver eyes' isHit; their flags are not shared, they
+// are rides: coop_dungeon.cpp), and events with no live place (not shared or not startable).
 //
 // OFF unless LICHII_COOP_EYE_SWITCH=1 until the probe run (scenario hs-eye-probe) shows FirstOn's key on the eye,
 // whether it latches, and that the asker's trigger follows it. No emulator code (tests/lichii/eye_switch_test.cpp).
@@ -45,26 +50,28 @@ namespace CoopEyeSwitch {
 
 inline constexpr std::uint32_t kFirstOn = 0x2d9754fd;  // Murmur3("FirstOn"); the plug's key is ^ 7
 
-// A room event started by an eye switch's FirstOn, one per (event, eye). Generated from the romfs by
-// tools/puppet_pack/eye_switches.py (deku-ladder): the room graph has an IsFirstOnEventTrigger node, and the graph's
-// EventRequestActor (RequestEventName = event) has a Reference link to that eye. 15 events, 16 eyes, 7 dungeons. The
-// Water Temple's WaterTemple_EyeSwitch_Focus is asked in two rooms (two lines); the one nearest our Link is used.
+// A room event started by a switch's output plug, one per (event, asker). Generated (see above). An event asked
+// by two askers (SpiritTemple_Level_Room_19_SwitchOn_01) has two lines; the one nearest our Link whose asker is
+// here is used.
 struct Switch {
     std::string_view event;  // without "HavePlayedEvent."
     std::string_view scene;
-    std::string_view eye;    // the eye's actor name
-    std::array<float, 3> eye_at;    // the eye's placement (x, height, z); eyes do not move
+    std::string_view actor;      // the switch's actor name
+    std::array<float, 3> at;     // the switch's placement (x, height, z); switches do not move
+    std::string_view plug;       // the output the room graph reads (OnState, FirstOn, isLightMax)
     std::array<float, 3> asker_at;  // its asker's placement (a CoopLiveEvents::Places() place)
 };
 std::span<const Switch> Switches();
-// The first switch line of `event` in `scene`, if it is one.
+// The first line of `event` in `scene`, if it is one.
 const Switch* Find(std::string_view event, std::string_view scene);
-// Every line of `event` in `scene`, nearest eye to `link` first (table order without `link`).
+// Every line of `event` in `scene`, nearest switch to `link` first (table order without `link`).
 std::vector<const Switch*> FindAll(std::string_view event, std::string_view scene,
                                    const std::optional<std::array<float, 3>>& link = std::nullopt);
+// The plug's key as the node block names it (Murmur3 of the name; the plug keeps it ^ 7).
+std::uint32_t PlugKey(std::string_view plug);
 
-// Our eye is the one of its name within this of its placement (the placement is exact; the room's other eyes are
-// metres away: Dodongo's Cavern's fire-wall eyes, 9 and 19 m from its event's eye, start other graphs).
+// Our switch is the one of its name within this of its placement (the placement is exact; other switches of the
+// room are metres away: Dodongo's Cavern's fire-wall eyes, 9 and 19 m from its event's eye, start other graphs).
 inline constexpr float kEyeAtM = 1.5f;
 // How long the set is tried (and then waited for the asker's event) before the old way is taken.
 inline constexpr std::uint64_t kTryMs = 2000;
