@@ -705,8 +705,29 @@ std::vector<std::uint32_t> ocarina_bools_mend(std::int32_t fairy, std::int32_t t
   return out;
 }
 
+std::string_view ocarina_held(std::int32_t fairy, std::int32_t time, std::string_view current) {
+  const std::string_view best =
+      time >= 1 ? ocarina::kTimeName : fairy >= 1 ? ocarina::kFairyName : std::string_view{};
+  return !best.empty() && current == best ? best : std::string_view{};
+}
+
 void OcarinaEquip::want(std::string_view name) {
   std::lock_guard lock(mutex_);
+  want_locked(name);
+}
+
+void OcarinaEquip::link(bool in_game, std::string_view held) {
+  std::lock_guard lock(mutex_);
+  if (!in_game) {
+    asked_this_stay_ = false;
+    return;
+  }
+  if (asked_this_stay_ || held.empty()) return;
+  asked_this_stay_ = true;
+  want_locked(held);
+}
+
+void OcarinaEquip::want_locked(std::string_view name) {
   if (name.empty() || (wanted_ && *wanted_ == name)) return;  // (asked already: its count goes on)
   wanted_ = std::string(name);
   armed_ = false;
