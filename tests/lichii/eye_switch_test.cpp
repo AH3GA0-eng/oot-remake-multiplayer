@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <ostream>
 #include <map>
 #include <optional>
 #include <set>
@@ -415,4 +416,55 @@ TEST_CASE("eye switch: guard flags (a negated trigger flag, an asker's delete fl
     s.Expire("KokiriForest");
     s.Expire(kDeku);
     CHECK(s.HoldsGuard(cleared, kDeku));
+}
+
+TEST_CASE("eye switch: every end of a try releases its guard flags (no asker here: not held the whole visit)") {
+    const auto cleared = coop::protocol::flag_hash("InsideTheDekuTree_RoomC_Cleared");
+    SUBCASE("no asker") {
+        FakeGuest g;
+        World w;
+        w.asker = 0;
+        Eye(g, kEye);
+        CoopEyeSwitch::Switcher s(w.Finder());
+        s.Expire(kDeku);
+        REQUIRE(s.Want(kLadder, kDeku));
+        CHECK(s.HoldsGuard(cleared, kDeku));  // waiting for its try
+        s.Step(g, false, 0, kMain, 100);
+        CHECK_FALSE(s.Step(g, true, kBlock, kMain, 100));
+        CHECK(s.TakeNotes().back().find("no room asker") != std::string::npos);
+        CHECK_FALSE(s.HoldsGuard(cleared, kDeku));
+    }
+    SUBCASE("our own hit") {
+        FakeGuest g;
+        World w;
+        Eye(g, kEye, 1);
+        CoopEyeSwitch::Switcher s(w.Finder());
+        s.Expire(kDeku);
+        REQUIRE(s.Want(kLadder, kDeku));
+        s.Step(g, false, 0, kMain, 100);
+        s.Step(g, true, kBlock, kMain, 100);
+        CHECK_FALSE(s.HoldsGuard(cleared, kDeku));
+    }
+    SUBCASE("our copy ran") {
+        FakeGuest g;
+        World w;
+        Eye(g, kEye);
+        CoopEyeSwitch::Switcher s(w.Finder());
+        s.Expire(kDeku);
+        REQUIRE(s.Want(kLadder, kDeku));
+        s.Step(g, false, 0, kMain, 100);
+        REQUIRE(s.Step(g, true, kBlock, kMain, 100));
+        s.Step(g, true, 0, kMain, 100);
+        EventRunning(g, true);
+        s.Step(g, false, 0, kMain, 116);
+        CHECK_FALSE(s.HoldsGuard(cleared, kDeku));
+    }
+    SUBCASE("dropped: our game has it played") {
+        World w;
+        CoopEyeSwitch::Switcher s(w.Finder());
+        s.Expire(kDeku);
+        REQUIRE(s.Want(kLadder, kDeku));
+        s.Expire(kDeku, [](const std::string&) { return true; });
+        CHECK_FALSE(s.HoldsGuard(cleared, kDeku));
+    }
 }

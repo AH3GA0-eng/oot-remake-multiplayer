@@ -220,7 +220,7 @@ void Switcher::Expire(const std::string& scene, const std::function<bool(const s
     std::lock_guard lock(mutex_);
     if (!scene.empty() && scene != scene_) {  // a new visit: every event may be tried again
         scene_ = scene;
-        given_up_.clear();
+        ended_.clear();
     }
     for (auto it = wanted_.begin(); it != wanted_.end();) {
         const bool busy = it == wanted_.begin() && next_ != Next::none;  // a call of ours is out: next Step ends it
@@ -229,6 +229,7 @@ void Switcher::Expire(const std::string& scene, const std::function<bool(const s
             it = wanted_.erase(it);
         } else if (!busy && played && played(it->event)) {
             notes_.push_back("eye switch: " + it->event + " dropped (our game has it played)");
+            if (std::find(ended_.begin(), ended_.end(), it->event) == ended_.end()) ended_.push_back(it->event);
             it = wanted_.erase(it);
         } else {
             ++it;
@@ -247,7 +248,7 @@ bool Switcher::HoldsGuard(std::uint32_t hash, std::string_view scene) {
     for (std::size_t i = 0; i < hashes.size(); ++i) {
         const Guard& g = kGuards[i];
         if (hashes[i] == hash && g.scene == scene &&
-            std::find(given_up_.begin(), given_up_.end(), g.event) == given_up_.end()) {
+            std::find(ended_.begin(), ended_.end(), g.event) == ended_.end()) {
             return true;
         }
     }
@@ -279,9 +280,10 @@ bool Switcher::EventRunning(CoopPuppet::Guest& guest, std::uint64_t main) {
 void Switcher::End(const std::string& why, bool fallback) {
     const Try& t = wanted_.front();
     notes_.push_back("eye switch: " + t.event + ": " + why);
-    if (fallback && std::find(given_up_.begin(), given_up_.end(), t.event) == given_up_.end()) {
-        given_up_.push_back(t.event);  // its guard flags come as before (HoldsGuard)
-    }
+    // Every end is final for this visit (the decider asks an event once a visit): our copy ran (its own event set the
+    // guard flags natively), or it did not and will not (no asker, our own hit, the old way): either way its guard
+    // flags come as before from now on (HoldsGuard).
+    if (std::find(ended_.begin(), ended_.end(), t.event) == ended_.end()) ended_.push_back(t.event);
     if (fallback) fallbacks_.emplace_back(t.event, t.scene);
     wanted_.pop_front();
 }

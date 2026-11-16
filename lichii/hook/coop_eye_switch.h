@@ -77,8 +77,8 @@ std::uint32_t PlugKey(std::string_view plug);
 // asker is gone or our gate is false, and setting our switch starts nothing. These are the guards (generated with
 // the table, only flags that coop_dungeon.cpp shares): while the switch path is on, the hook holds each guard flag in
 // its dungeon (like the held HavePlayedEvent flags and RoomC_Cleared, coop_dungeon.h HeldIn) until our own event sets
-// it, we leave the dungeon or load, or the switch path gave up on its event this visit (the old way: then the flag
-// comes as before). The other inputs the tool finds are listed in coop_eye_switch.cpp (not covered, with why).
+// it, we leave the dungeon or load, or the switch path's try of its event ended this visit without our copy running
+// (no asker, our own hit, the old way: then the flag comes as before). The other inputs the tool finds are listed in coop_eye_switch.cpp (not covered, with why).
 struct Guard {
     std::string_view flag;
     std::string_view scene;
@@ -121,8 +121,8 @@ public:
     std::vector<std::string> TakeNotes();
     // (event, scene) to ask the old way (Requester::WantFromRoom).
     std::vector<std::pair<std::string, std::string>> TakeFallbacks();
-    // Any thread (the flag hold): whether the shared flag `hash` is a guard (Guards()) of an event of `scene` that
-    // the switch path has not given up on this visit, so it waits in our game.
+    // Any thread (the flag hold): whether the shared flag `hash` is a guard (Guards()) of an event of `scene` whose
+    // try has not ended this visit, so it waits in our game.
     bool HoldsGuard(std::uint32_t hash, std::string_view scene);
 
 private:
@@ -148,7 +148,7 @@ private:
     Next next_ = Next::none;
     bool failed_ = false;  // the malloc gave nothing: every event the old way
     std::string scene_;                    // the scene of this visit (Expire)
-    std::vector<std::string> given_up_;    // events of this visit that went the old way: their guards come as before
+    std::vector<std::string> ended_;       // events of this visit whose try ended (any way): their guards come as before
 };
 
 }  // namespace CoopEyeSwitch
