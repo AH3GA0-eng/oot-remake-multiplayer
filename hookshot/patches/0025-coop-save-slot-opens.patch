@@ -1,6 +1,6 @@
-From 93930e8d7c34e0efa784c95458702b42a8af1bcf Mon Sep 17 00:00:00 2001
+From c18a1e989b84ef43bf75c81a69ea3115d1f6f4b4 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
-Date: Mon, 16 Nov 2026 06:48:15 -0900
+Date: Mon, 16 Nov 2026 11:37:15 -0900
 Subject: [PATCH] Co-op save slot opens: the slot folder the game opened last,
  for the module
 
@@ -9,13 +9,12 @@ records the slot folder (<save root>\slot_NN) whose progress.sav the game
 opened last on the account save's mount, whether for reading or writing,
 and counts those opens. hookshot_coop.dll reads it through
 hos_coop_fs_save_slot_opened (found by name in the exe, like patch 0008's
-exports; nx2/build.py exports it on Linux): the host sends its guests the
-slot the game loaded and plays, not the newest file on disk. Nothing else
-changes: the open itself is as before.
+exports; patch 0001's nx2/build.py list exports it on Linux): the host
+sends its guests the slot the game loaded and plays, not the newest file
+on disk. Nothing else changes: the open itself is as before.
 ---
  host/nn_fs.c | 33 +++++++++++++++++++++++++++++++++
- nx2/build.py |  1 +
- 2 files changed, 34 insertions(+)
+ 1 file changed, 33 insertions(+)
 
 diff --git a/host/nn_fs.c b/host/nn_fs.c
 index 13396d4c..435ee070 100644
@@ -68,18 +67,6 @@ index 13396d4c..435ee070 100644
      if (hos_trace || fs_trace()) hos_log("fs: OpenFile(%s)", g);
      RET(0);
  }
-diff --git a/nx2/build.py b/nx2/build.py
-index 54a05816..93a24427 100644
---- a/nx2/build.py
-+++ b/nx2/build.py
-@@ -1454,6 +1454,7 @@ def main():
-         # (oot-remake-multiplayer) and the functions hookshot_coop.so finds in this exe by name (dlsym(RTLD_DEFAULT), as
-         # GetProcAddress on Windows, where they are dllexport): each by its own name, as the module has others of the same prefix
-         coop = ["-Wl,--export-dynamic-symbol=" + s for s in ("hos_coop_fs_save_root", "hos_coop_fs_save_remount",
-+                "hos_coop_fs_save_slot_opened",
-                 "hos_coop_input_select", "hos_coop_input_pad_name", "hos_coop_pad_info", "hos_coop_pad_read", "hos_coop_pad_take",
-                 "hos_coop_textures", "hos_coop_texture_override", "hos_coop_texture_overridden", "hos_coop_texture_overlay")]
-         r = subprocess.run([cc] + target() + ["-fuse-ld=lld", "-o", exe] + linker("-Map=" + exe + ".map") +
 -- 
 2.56.0.windows.4
 
