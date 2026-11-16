@@ -87,6 +87,9 @@ struct Seen {
     // Its Life component (0: none read); a copy boss's is held at life 1 by its own Life step
     // (CoopBossNative::Table::HeldLifeStep) until its owner's dies.
     std::uint64_t life_component = 0;
+    // Row 97 (coop_event_member.h): whether a running event binds it (its own event
+    // performer holds an event link); nullopt when it has no performer we know.
+    std::optional<bool> event_member;
 };
 
 // An animation a copy should play (the owner's AS slot 0 command). The
@@ -582,23 +585,52 @@ public:
     // is flagged targeting in OBJECT_PRESENT, so the server gives it to us
     // (or, ours already, keeps it in a fight lock): every other game's copy
     // then plays our NPC's cutscene motion (place, rotation, AS command and
-    // frame, the usual copy) instead of its own routine. kEventNpcKeepUs
+    // frame, the usual copy) instead of its own routine. kEventKeepUs
     // after the event the flag drops and the normal owner rules come back;
     // the copies stay where our NPC was left. No new message.
-    void SetEvent(bool in_event) { in_event_ = in_event; }
-    // A copy our event claimed (within kEventNpcKeepUs of the last Tick that
+    //
+    // Row 97 (event-copy): not only townspeople. Every shared actor our event
+    // is with is claimed the same way, whatever its kind and however far from
+    // our Link: one the event binds (Seen::event_member, coop_event_member.h:
+    // a scrub whose entrance or talk it is, a shopkeeper, a story event's
+    // actor, a mini-game's), and one whose own AI asked for another animation
+    // than its owner's while our event runs (NoteTakeover; within kEventNpcM:
+    // the event moves it). Its own game runs it for the event: the owner's
+    // place, animation and remove are not put on it (EventPartner) and the
+    // server hands it to us. Before, only Npc_ within kEventNpcM were, and the
+    // 8 m rule (coop_guard.h) covered the rest: a Deku Scrub copy further away
+    // was made to sleep by its absent owner every frame and our Link's event
+    // that waited on it never ended (Mr. Shorty's 15 min softlock).
+    void SetEvent(bool in_event, std::uint64_t now_us = 0) {
+        if (in_event && !in_event_) {
+            event_since_ = now_us;
+        }
+        in_event_ = in_event;
+    }
+    // A copy our event claimed (within kEventKeepUs of the last Tick that
     // flagged it): the owner's routine is not put on it while the hand-over
     // runs, as the 8 m event rule (coop_guard.h) does nearer.
-    bool EventNpc(std::uint64_t address, std::uint64_t now_us) const;
+    bool EventPartner(std::uint64_t address, std::uint64_t now_us) const;
     // Who owns the object at `address` (0: not known, or not on our list).
     std::uint8_t OwnerAt(std::uint64_t address) const;
-    // How many townspeople our event flags now (for the log).
-    std::size_t EventNpcs(std::uint64_t now_us) const;
+    // How many actors our event flags now (for the log).
+    std::size_t EventPartners(std::uint64_t now_us) const;
     // How many of them the server has handed to us already (for the log:
     // the claim is a wish, this is the hand-over).
-    std::size_t EventNpcsOurs(std::uint64_t now_us) const;
+    std::size_t EventPartnersOurs(std::uint64_t now_us) const;
+    // Why an actor is our event's partner (for the log).
+    enum class PartnerWhy : std::uint8_t { none, member, own_ai, townsperson };
+    struct Partner {
+        std::uint64_t address = 0;
+        std::string name;
+        std::uint8_t owner = 0;
+        PartnerWhy why = PartnerWhy::none;
+        float metres = -1.0f;  // from our Link; -1 when not known
+    };
+    // Every actor our event claims now, with why (the log names them).
+    std::vector<Partner> EventPartnerList(std::uint64_t now_us) const;
     static constexpr float kEventNpcM = 30.0f;
-    static constexpr std::uint64_t kEventNpcKeepUs = 2'000'000;
+    static constexpr std::uint64_t kEventKeepUs = 2'000'000;
 
     // Issue 151. Present thread, before Tick: where our own cast lures are
     // (CoopProjectiles::TheLures). Each Tick sends FISH_LURE (fishing-3):
@@ -883,6 +915,9 @@ private:
         bool play_frame = false;                // PlaysByFrame
         CoopNpcAnim::Loop frame_loop;           // its owner's animation loop, from the samples (play_frame)
         std::uint64_t event_until = 0;          // flagged by our event until then
+        PartnerWhy event_why = PartnerWhy::none; // ... and why (row 97)
+        std::optional<bool> event_member;       // Seen::event_member, the last walk (row 97)
+        std::uint64_t own_ai_at = 0;            // its own AI's play put back last (NoteTakeover, any kind)
         coop::protocol::Vec3 first_position{};  // where it was first seen
         int missed = 0;                         // walks in a row without it
         std::uint64_t deleted_until = 0;        // GameDeleted: gone at the first miss until then
@@ -1004,6 +1039,12 @@ private:
     std::uint64_t scene_since_ = 0;  // server time of the scene's first walk
     std::optional<coop::protocol::Vec3> player_;
     bool in_event_ = false;  // issue 200: SetEvent
+    // Row 97: why `o` is our running event's partner now (none: it is not):
+    // the event binds it (member); its performer is not known to us and its
+    // own AI asked for another animation since the event began, within
+    // kEventNpcM (own_ai); a townsperson within kEventNpcM (issue 200).
+    PartnerWhy EventPartnerWhy(const Object& o) const;
+    std::uint64_t event_since_ = 0;  // row 97: when our event began (SetEvent)
     std::vector<coop::protocol::Vec3> lures_;  // our own cast lures (SetLures)
     std::vector<coop::protocol::FishLureEntry> fish_sent_;  // the last FISH_LURE
     std::uint64_t fish_at_ = 0;

@@ -107,6 +107,7 @@
 #include "coop_platforms.h"
 #include "coop_counters.h"
 #include "coop_scrubs.h"
+#include "coop_event_member.h"
 #include <set>
 
 namespace CoopObjects {
@@ -1375,6 +1376,8 @@ public:
         if (!Collect(r, seen)) {
             return;
         }
+        // Issue 200, row 97: our event's actors become ours (Sync::SetEvent).
+        sync_.SetEvent(TheLocalEvent().load(), server_now_us);
         NoteBosses(seen, sync_.Owned());
         const u8 self =
             session->with_client([](coop::net::Client& c) { return c.player_number(); });
@@ -1872,7 +1875,7 @@ public:
                 const u64 who = CoopGuard::Who(s.hash, s.name, object);
                 where_.emplace(s.address, std::make_pair(s.position, who));
             }
-            const CoopGuard::Local local = GuardLocal();
+            const CoopGuard::Local local = GuardLocal(server_now_us);
             auto passed = held_writes_.Pass(
                 std::move(writes), local, [this](std::uint64_t a) { return Where(a); },
                 [this](std::uint64_t a) { return HashAt(a); });
@@ -2073,7 +2076,11 @@ public:
         [](LifeWrite& kept, LifeWrite&& newer) { CoopGuard::MergeLife(kept, std::move(newer)); }};
     std::string guard_scene_;
     bool guard_said_ = false;
-    CoopGuard::Local GuardLocal() const { return {TheLocalEvent().load(), player_}; }
+    // Row 97: the event's partners wait wherever they are (Sync::EventPartner).
+    CoopGuard::Local GuardLocal(u64 now_us) const {
+        return {TheLocalEvent().load(), player_,
+                [this, now_us](std::uint64_t a) { return sync_.EventPartner(a, now_us); }};
+    }
     std::optional<coop::protocol::Vec3> Where(u64 address) const {
         const auto it = where_.find(address);
         if (it == where_.end()) {
@@ -2815,6 +2822,12 @@ private:
                         }
                     }
                 }
+                // Row 97: whether our running event binds it (coop_event_member.h). Read only
+                // while our Link is in an event; the Sync claims such an actor at any distance.
+                if (TheLocalEvent().load()) {
+                    s.event_member = CoopEventMember::InEvent(
+                        [&r](std::uint64_t at) { return r.Get<u64>(at); }, a);
+                }
                 out.push_back(std::move(s));
             }
             names.emplace(a, std::move(known));
@@ -2822,7 +2835,6 @@ private:
         names_ = std::move(names);
         life_components_ = std::move(life_components);
         sync_.SetPlayer(player);
-        sync_.SetEvent(TheLocalEvent().load());  // issue 200: our cutscene's NPCs become ours
         sync_.SetLures(CoopProjectiles::TheLures().Get());  // issue 151: our cast lures
         player_ = player;
         if (debug_) {  // research: the field grass that is no actor (world.md)
@@ -3398,7 +3410,57 @@ private:
         }
     }
 
-    // Issue 200 (npc-anim). The townspeople our event claimed (Sync::EventNpc)
+    // Row 97 (event-copy): our Link's event in the log. When it begins: its
+    // kind and the name-like strings it points at (CoopEventMember::ReadRunning);
+    // each change of the actors it is with (address, name, owner, why, distance);
+    // every kEventStillUs while it runs, how long and which shared copies near our
+    // Link still get their owner's motion; and how long it ran when it ends.
+    static constexpr u64 kEventStillUs = 30'000'000;
+    void EventLog(Reader& r, u64 now_us) {
+        const bool running = TheLocalEvent().load();
+        if (running && event_began_us_ == 0) {
+            event_began_us_ = now_us;
+            event_still_us_ = now_us;
+            const auto ev = CoopEventMember::ReadRunning([&r](std::uint64_t at) { return r.Get<u64>(at); }, main_);
+            std::string names;
+            for (const std::string& n : ev.names) {
+                names += (names.empty() ? "" : ", ") + n;
+            }
+            LOG_INFO(Core, "coop: event: our Link's event began: {:#x} kind {} ({} in the session); names seen: {}",
+                     ev.event, ev.kind ? std::to_string(*ev.kind) : std::string("?"), ev.count,
+                     names.empty() ? std::string("none") : names);
+        } else if (!running && event_began_us_ != 0) {
+            LOG_INFO(Core, "coop: event: our Link's event ended after {:.1f} s",
+                     static_cast<double>(now_us - event_began_us_) / 1e6);
+            event_began_us_ = 0;
+            event_partners_.clear();
+        }
+        if (!running) {
+            return;
+        }
+        static constexpr const char* kWhy[] = {"none", "bound by the event", "its own AI acts", "townsperson"};
+        std::set<u64> now_partners;
+        const auto list = sync_.EventPartnerList(now_us);
+        for (const auto& p : list) {
+            now_partners.insert(p.address);
+        }
+        if (now_partners != event_partners_) {
+            std::string text;
+            for (const auto& p : list) {
+                text += fmt::format("{}{} {:#x} (owner P{}, {}, {:.1f} m)", text.empty() ? "" : "; ", p.name,
+                                    p.address, p.owner, kWhy[static_cast<int>(p.why)], p.metres);
+            }
+            LOG_INFO(Core, "coop: event: the actors our event is with: {}", text.empty() ? std::string("none") : text);
+            event_partners_ = std::move(now_partners);
+        }
+        if (now_us - event_still_us_ >= kEventStillUs) {
+            event_still_us_ = now_us;
+            LOG_INFO(Core, "coop: event: our Link is still in its event after {:.0f} s ({} actors claimed)",
+                     static_cast<double>(now_us - event_began_us_) / 1e6, list.size());
+        }
+    }
+
+    // Issue 200 (npc-anim). The townspeople our event claimed (Sync::EventPartner)
     // keep this game's cutscene motion while the server hands them to us: the
     // owner's routine is not put on them. Logs the claim (our side) and, on the
     // other games, each NPC copy that moves to another owner; with
@@ -3407,23 +3469,26 @@ private:
     // (coop_npc_anim.h): the 5 s line of plays and frame sets.
     void NpcAnim(Reader& r, u64 now_us, std::vector<u64>& removes,
                  std::vector<Mover::Pose>& wish, std::vector<PlayWish>& plays) {
-        std::erase_if(removes, [&](u64 a) { return sync_.EventNpc(a, now_us); });
-        std::erase_if(wish, [&](const Mover::Pose& p) { return sync_.EventNpc(p.actor, now_us); });
-        std::erase_if(plays, [&](const PlayWish& p) { return sync_.EventNpc(p.address, now_us); });
-        const std::size_t claimed = sync_.EventNpcs(now_us);
+        // Row 97: every actor the event is with (Sync::EventPartner), not only
+        // townspeople: its own game runs it for the event.
+        std::erase_if(removes, [&](u64 a) { return sync_.EventPartner(a, now_us); });
+        std::erase_if(wish, [&](const Mover::Pose& p) { return sync_.EventPartner(p.actor, now_us); });
+        std::erase_if(plays, [&](const PlayWish& p) { return sync_.EventPartner(p.address, now_us); });
+        EventLog(r, now_us);
+        const std::size_t claimed = sync_.EventPartners(now_us);
         if ((claimed == 0) != (npc_claimed_ == 0)) {
             if (claimed != 0) {
-                LOG_INFO(Core, "coop: npc-anim: our Link is in an event: {} NPCs near it claimed", claimed);
+                LOG_INFO(Core, "coop: npc-anim: our Link is in an event: {} actors it is with claimed", claimed);
             } else {
-                LOG_INFO(Core, "coop: npc-anim: the event's NPCs are free again");
+                LOG_INFO(Core, "coop: npc-anim: the event's actors are free again");
             }
         }
         // The hand-over itself (the server may give them 0.5 s later, or
         // keep one in another game's fight lock): log each change of how
         // many of the claimed ones are ours.
-        const std::size_t ours = claimed == 0 ? 0 : sync_.EventNpcsOurs(now_us);
+        const std::size_t ours = claimed == 0 ? 0 : sync_.EventPartnersOurs(now_us);
         if (ours != npc_ours_ && claimed != 0) {  // the end has its own line
-            LOG_INFO(Core, "coop: npc-anim: {} of the {} claimed NPCs are ours now", ours, claimed);
+            LOG_INFO(Core, "coop: npc-anim: {} of the {} claimed actors are ours now", ours, claimed);
         }
         npc_ours_ = ours;
         npc_claimed_ = claimed;
@@ -3584,7 +3649,7 @@ private:
         // Issue 144: nothing near our Link is removed, moved or made to play while
         // it is in an event; they come again each frame and are made after it.
         {
-            const CoopGuard::Local local = GuardLocal();
+            const CoopGuard::Local local = GuardLocal(now_us);
             const auto where = [this](std::uint64_t a) { return Where(a); };
             CoopGuard::Skip(removes, local, where, [](u64 a) { return a; });
             // Issue 194: a world object another game moves (coop_world: a falling ladder,
@@ -3811,6 +3876,9 @@ private:
     std::optional<Mover::Pose> drive_pose_;
     // Issue 200 (npc-anim): the log of our event's claim and of NPC copies.
     std::size_t npc_claimed_ = 0;
+    u64 event_began_us_ = 0;    // row 97: EventLog
+    u64 event_still_us_ = 0;
+    std::set<u64> event_partners_;
     std::size_t npc_ours_ = 0;     // how many of them the server gave us (log)
     u64 npc_log_at_ = 0;
     u64 npc_calls_at_ = 0;  // the 5 s line of the walking townspeople

@@ -4147,7 +4147,7 @@ TEST_CASE("objects: townspeople near our Link in an event are flagged targeting 
                 flags = p.objects[0].flags;
             }
         }
-        const bool waits = sync.EventNpc(0x100, 700 * kMs);
+        const bool waits = sync.EventPartner(0x100, 700 * kMs);
         CHECK(waits == (flags && (*flags & kTargeting) != 0));
         return flags && (*flags & kTargeting) != 0;
     };
@@ -4159,7 +4159,7 @@ TEST_CASE("objects: townspeople near our Link in an event are flagged targeting 
     CHECK_FALSE(run(5.0f, true, "Animal_Cucco", false));    // not a townsperson
 }
 
-TEST_CASE("objects: an event's townsperson is let go kEventNpcKeepUs after the event (issue 200)") {
+TEST_CASE("objects: an event's townsperson is let go kEventKeepUs after the event (issue 200)") {
     Sync sync;
     sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
     const Seen npc = Acting(0x100, 0x11, 100, 3.0f, "Wait", "Npc_Kokiri_Saria");
@@ -4169,13 +4169,13 @@ TEST_CASE("objects: an event's townsperson is let go kEventNpcKeepUs after the e
     sync.SetEvent(true);
     Tick(sync, 100 * kMs, {npc});  // applies the OBJECT_OWNER too
     CHECK(sync.OwnerAt(0x100) == 2);
-    CHECK(sync.EventNpc(0x100, 100 * kMs));
-    CHECK(sync.EventNpcs(100 * kMs) == 1);
-    CHECK(sync.EventNpcsOurs(100 * kMs) == 0);  // claimed, not handed over yet
+    CHECK(sync.EventPartner(0x100, 100 * kMs));
+    CHECK(sync.EventPartners(100 * kMs) == 1);
+    CHECK(sync.EventPartnersOurs(100 * kMs) == 0);  // claimed, not handed over yet
     Own(sync, id, 1, 1);                         // the server gives it to us (P1)
     Tick(sync, 120 * kMs, {npc});
     CHECK(sync.OwnerAt(0x100) == 1);
-    CHECK(sync.EventNpcsOurs(120 * kMs) == 1);
+    CHECK(sync.EventPartnersOurs(120 * kMs) == 1);
     sync.SetEvent(false);
     std::optional<std::uint8_t> flags;
     for (std::uint64_t t = 166; t <= 4000; t += 66) {
@@ -4183,11 +4183,80 @@ TEST_CASE("objects: an event's townsperson is let go kEventNpcKeepUs after the e
             flags = p.objects[0].flags;
         }
     }
-    CHECK_FALSE(sync.EventNpc(0x100, 4000 * kMs));
-    CHECK(sync.EventNpcs(4000 * kMs) == 0);
+    CHECK_FALSE(sync.EventPartner(0x100, 4000 * kMs));
+    CHECK(sync.EventPartners(4000 * kMs) == 0);
     REQUIRE(flags);
     CHECK((*flags & kTargeting) == 0);
     CHECK(sync.OwnerAt(0x999) == 0);
+}
+
+TEST_CASE("objects: every actor our event is with is claimed, any kind and any distance (row 97)") {
+    // Mr. Shorty's softlock: a Deku Scrub copy owned by P2 (who had left the room)
+    // stood further than the 8 m event rule from our Link while our event waited on
+    // it; the owner's 'Sleep' was put on it every frame and the event never ended.
+    constexpr const char* kScrub = "Enemy_Scrub_Deku";
+    struct Case {
+        float x = 20.0f;
+        bool event = true;
+        std::optional<bool> member;            // what the walk read of its performer
+        std::optional<std::uint64_t> own_at;   // NoteTakeover at this ms
+    };
+    auto run = [&](const Case& c) {
+        Sync sync;
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        Seen scrub = Acting(0x100, 0x11, 100, c.x, "Sleep", kScrub);
+        Tick(sync, 0, {scrub});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, 2);
+        if (c.own_at && *c.own_at < 10) {
+            sync.NoteTakeover(0x100, *c.own_at * kMs, "Appear");  // before the event
+        }
+        sync.SetEvent(c.event, 10 * kMs);
+        scrub.event_member = c.member;
+        std::optional<std::uint8_t> flags;
+        for (std::uint64_t t = 10; t < 700; t += 66) {
+            sync.Receive(OwnerSample(id, 2, t * kMs, c.x, 100, "Sleep"));
+            if (c.own_at && *c.own_at >= 10 && t >= *c.own_at) {
+                sync.NoteTakeover(0x100, t * kMs, "Appear");
+            }
+            for (const auto& p : All<proto::ObjectPresent>(Tick(sync, t * kMs, {scrub}))) {
+                flags = p.objects[0].flags;
+            }
+        }
+        const bool claimed = flags && (*flags & kTargeting) != 0;
+        CHECK(sync.EventPartner(0x100, 700 * kMs) == claimed);
+        return claimed;
+    };
+    CHECK(run({20.0f, true, true, {}}));                 // bound by our event, beyond 8 m
+    CHECK(run({80.0f, true, true, {}}));                 // bound, far across the room
+    CHECK_FALSE(run({20.0f, false, true, {}}));          // no event of ours
+    CHECK_FALSE(run({20.0f, true, false, {}}));          // the event does not bind it
+    CHECK(run({20.0f, true, std::nullopt, 200}));        // performer unknown: its own AI acts in our event
+    CHECK_FALSE(run({20.0f, true, std::nullopt, 5}));    // ... but only since the event began
+    CHECK_FALSE(run({40.0f, true, std::nullopt, 200}));  // ... and within 30 m
+    CHECK_FALSE(run({20.0f, true, false, 200}));         // its performer says it is not in it
+    CHECK_FALSE(run({20.0f, true, std::nullopt, {}}));   // an enemy nothing ties to the event
+
+    // The log names them, with why.
+    Sync sync;
+    sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+    Seen scrub = Acting(0x100, 0x11, 100, 20.0f, "Sleep", kScrub);
+    Tick(sync, 0, {scrub});
+    Own(sync, *sync.IdOf(0x100), 2);
+    sync.SetEvent(true, 10 * kMs);
+    scrub.event_member = true;
+    Tick(sync, 50 * kMs, {scrub});
+    const auto list = sync.EventPartnerList(50 * kMs);
+    REQUIRE(list.size() == 1);
+    CHECK(list[0].name == kScrub);
+    CHECK(list[0].owner == 2);
+    CHECK(list[0].why == Sync::PartnerWhy::member);
+    CHECK(list[0].metres == doctest::Approx(20.0f));
+    // kEventKeepUs after the event it is let go.
+    sync.SetEvent(false, 100 * kMs);
+    Tick(sync, 100 * kMs, {scrub});
+    CHECK(sync.EventPartner(0x100, 100 * kMs + Sync::kEventKeepUs - 60 * kMs));
+    CHECK_FALSE(sync.EventPartner(0x100, 100 * kMs + Sync::kEventKeepUs));
 }
 
 TEST_CASE("objects: a boss's minion is made by the game that owns the boss, the others make that one (native boss sync)") {

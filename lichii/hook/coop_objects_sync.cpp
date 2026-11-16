@@ -1075,9 +1075,9 @@ void Sync::ChaseStep(Object& o, std::uint64_t now_us) {
     }
 }
 
-bool Sync::EventNpc(std::uint64_t address, std::uint64_t now_us) const {
+bool Sync::EventPartner(std::uint64_t address, std::uint64_t now_us) const {
     const auto it = objects_.find(address);
-    return it != objects_.end() && it->second.npc && it->second.event_until > now_us;
+    return it != objects_.end() && it->second.event_until > now_us;
 }
 
 std::uint8_t Sync::OwnerAt(std::uint64_t address) const {
@@ -1085,19 +1085,60 @@ std::uint8_t Sync::OwnerAt(std::uint64_t address) const {
     return it == objects_.end() ? 0 : OwnerOf(it->second.id);
 }
 
-std::size_t Sync::EventNpcs(std::uint64_t now_us) const {
+std::size_t Sync::EventPartners(std::uint64_t now_us) const {
     return static_cast<std::size_t>(std::count_if(objects_.begin(), objects_.end(), [now_us](const auto& e) {
-        return e.second.npc && e.second.event_until > now_us;
+        return e.second.event_until > now_us;
     }));
 }
 
-std::size_t Sync::EventNpcsOurs(std::uint64_t now_us) const {
+std::size_t Sync::EventPartnersOurs(std::uint64_t now_us) const {
     if (self_ == 0) {
         return 0;
     }
     return static_cast<std::size_t>(std::count_if(objects_.begin(), objects_.end(), [&](const auto& e) {
-        return e.second.npc && e.second.event_until > now_us && OwnerOf(e.second.id) == self_;
+        return e.second.event_until > now_us && OwnerOf(e.second.id) == self_;
     }));
+}
+
+Sync::PartnerWhy Sync::EventPartnerWhy(const Object& o) const {
+    // A boss runs its own changes in our event already (CoopBossNative::SetEvent) and keeps
+    // its fight's owner; a fish keeps the lure rules (issue 151).
+    if (IsBoss(o.name) || o.fish) {
+        return PartnerWhy::none;
+    }
+    if (o.event_member.value_or(false)) {
+        return PartnerWhy::member;
+    }
+    const bool near = player_ && Distance(o.position, *player_) <= kEventNpcM;
+    // Its own AI acting: only an actor with one (an enemy, a guard, a townsperson), not a
+    // world object another game moves (issue 194: those follow at once).
+    if (!o.event_member && near && (o.reacts || o.guard || o.npc) && o.own_ai_at != 0 &&
+        o.own_ai_at >= event_since_) {
+        return PartnerWhy::own_ai;
+    }
+    if (o.npc && near) {
+        return PartnerWhy::townsperson;
+    }
+    return PartnerWhy::none;
+}
+
+std::vector<Sync::Partner> Sync::EventPartnerList(std::uint64_t now_us) const {
+    std::vector<Partner> out;
+    for (const auto& [address, o] : objects_) {
+        if (o.event_until <= now_us) {
+            continue;
+        }
+        Partner p;
+        p.address = address;
+        p.name = o.name;
+        p.owner = OwnerOf(o.id);
+        p.why = o.event_why;
+        if (player_) {
+            p.metres = Distance(o.position, *player_);
+        }
+        out.push_back(std::move(p));
+    }
+    return out;
 }
 
 void Sync::NoteTakeover(std::uint64_t address, std::uint64_t now_us, std::string_view name) {
@@ -1106,6 +1147,7 @@ void Sync::NoteTakeover(std::uint64_t address, std::uint64_t now_us, std::string
         return;
     }
     Object& o = it->second;
+    o.own_ai_at = now_us;  // row 97: any kind; read only while our event runs
     if (o.reacts || (o.guard && IsGuardReaction(name))) {
         o.took_over_at = now_us;
         o.took_over_name = std::string(name);
@@ -1521,6 +1563,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.animation = s.animation;
         o.slots = s.slots;
         o.bsa = s.bsa;
+        o.event_member = s.event_member;  // row 97
         if (s.hit_at) {
             // (its life drop may be read a walk later than the hit id: kept kHitPlaceKeepUs for it)
             o.place_seen = s.hit_at;
@@ -1807,6 +1850,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.fish = IsFish(s->name);
         o.guard = IsGuard(s->name);
         o.npc = s->name.starts_with("Npc_");
+        o.event_member = s->event_member;  // row 97
         o.play_frame = PlaysByFrame(s->name);
         o.first_position = s->position;
         if (s->animation) {
@@ -2158,10 +2202,16 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             fish.push_back(FishClaim(o, self, now_us));
         }
         // Issue 200: our cutscene's (or talk's) townspeople are ours while it
-        // runs, so the other games see them move as they do here.
-        if (o.npc && in_event_ && player_ && Distance(o.position, *player_) <= kEventNpcM) {
-            o.event_until = now_us + kEventNpcKeepUs;
-            o.chase_until = std::max(o.chase_until, o.event_until);
+        // runs, so the other games see them move as they do here. Row 97: so
+        // is every actor the event is with, of any kind and at any distance
+        // (SetEvent): its own game runs it for the event.
+        if (in_event_) {
+            const PartnerWhy why = EventPartnerWhy(o);
+            if (why != PartnerWhy::none) {
+                o.event_until = now_us + kEventKeepUs;
+                o.event_why = why;
+                o.chase_until = std::max(o.chase_until, o.event_until);
+            }
         }
         if (o.chase_until > now_us && !o.fish) {
             flags |= proto::object_presence::targeting;
