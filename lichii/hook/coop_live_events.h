@@ -121,6 +121,7 @@ inline constexpr float kNearM = 18.0f;
 // keeps it (one flag), but the decider never starts such an event here: which room's eye or door played it is not
 // known, and starting it near ours plays the other room's camera or door in the wrong room. Each room's own state
 // has its own flags (WaterTemple_Room00_ShootSwitchOnce, WaterTemple_Room21_OpenShutterBySwitch), shared as usual.
+// With both places' rooms known (Place::room) their rooms decide instead; the distance is for a place of room -1.
 inline constexpr float kOneRoomM = 20.0f;  // same-room pairs: 13.8 m (GTG room 10), 11.2 m (Spirit room 19)
 bool SpansRooms(std::string_view event, std::string_view scene);
 

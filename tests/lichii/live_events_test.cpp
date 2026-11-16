@@ -142,7 +142,7 @@ TEST_CASE("live events: a place's own room, not a guess (Jabu-Jabu room 1's swit
     // (nearer that room's placements), so the decider waited forever. Places carry their room (place_rooms.py).
     int known = 0;
     for (const auto& p : CoopLiveEvents::Places()) known += p.room >= 0 ? 1 : 0;
-    CHECK(known == 202);
+    CHECK(known == 190);  // round 5: ties and rooms our Link is (almost) never guessed in near the place stay -1
     const auto room_of_place = [](std::string_view event) {
         for (const auto& p : CoopLiveEvents::Places()) {
             if (p.event == event) return p.room;
@@ -152,6 +152,12 @@ TEST_CASE("live events: a place's own room, not a guess (Jabu-Jabu room 1's swit
     CHECK(room_of_place("InsideJabuJabuBellyRoom01StepSwitch") == 17);
     CHECK(room_of_place("InsideTheDekuTree_Gimmick_RoomG_WaterLevelDrop") == 6);
     CHECK(room_of_place("InsideTheDekuTree_Gimmick_FallingLadder") == 2);
+    // Review round 5: a vote our Link near the place never reaches (one far member), or a tie, is not kept: guessed.
+    CHECK(room_of_place("InsideGanonCastle_Dungeon_BarrierRemove_Water") == -1);   // voted 7, Link there: 5/6
+    CHECK(room_of_place("InsideGanonCastle_Dungeon_BarrierRemove_Shadow") == -1);  // voted 9, 78 m off
+    CHECK(room_of_place("FocusGimmick_GreenTentacleGimmick") == -1);               // a tie {3, 2}
+    // Two known rooms decide SpansRooms: the Water Temple eyes' camera is in rooms 0 and 21.
+    CHECK(room_of_place("WaterTemple_EyeSwitch_Focus") == 0);
     const CoopLiveEvents::RoomOf wrong_guess = [](const std::array<float, 3>& at) -> std::optional<int> {
         return at[1] > 105.0f ? 5 : 17;  // the asker's place (y 109.7) guessed in room 5; Link (y 102.5) in 17
     };
