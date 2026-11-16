@@ -1,6 +1,6 @@
 # The randomizer in co-op: step by step
 
-For 0.11.2 (OOTRR 0.6.0 comes with the kit). The full reference is [mods.md](mods.md#the-randomizer); this page is only the steps.
+For 0.11.2 and later. OOTRR comes with the kit: 0.6.0 in 0.11.2, 0.6.1 in 0.11.3. The full reference is [mods.md](mods.md#the-randomizer); this page is only the steps.
 
 The randomizer is **off** until the host turns it on. Each game builds the seed by itself in the background, so every player (the host too) needs **one restart** after their build. Nobody has to download or install anything: do not put OOTRR into `mods` by hand.
 
@@ -15,7 +15,7 @@ The randomizer is **off** until the host turns it on. Each game builds the seed 
 2. Turn **Randomizer** on. The row that shows "on" in the mod list is only the mod itself; the **Randomizer** switch inside Settings is what turns the randomizer on.
 3. Choose the world:
    - **Seed**: leave it empty for a new one, or type a seed word to play a seed again.
-   - **Settings**: **default** or **keysanity** (the two presets OOTRR 0.6.0 builds).
+   - **Settings**: **default** or **keysanity** (the two presets the kit's OOTRR builds).
    - Or **Settings string**: paste a string from OOTRR's page (it starts with `OOTRR1-`). It replaces Settings.
 4. The chat says "Randomizer on: keep the game open until this chat says the seed is ready ...". **Keep the game open** for about a minute.
 5. The chat says "Randomizer seed X is ready: RESTART the game now and start a NEW save". Close the game and start it again.
@@ -50,6 +50,6 @@ Guests can join one after another. Each one waits for its own build and restarts
 - **Guests loading old saves.** A guest who joined with an older save loaded brought that save's items into the host's new file (#96, #97; fixed for 0.11.3). Until then: guests close the game, start it fresh, join from the title, and load only after "Success, load any save.". Deleting your save folder does not help, because the items came from another player's running game.
 - **Not restarting, or restarting too early.** The seed plays only after the restart that follows "is ready". A restart before that line stops the build; it starts again at the next start.
 - **No new save.** The host starts a New Game after the restart.
-- **Different kits.** A guest on 0.11.1 (OOTRR 0.5.0) builds another world from the same seed word.
-- **After a kit update** (0.11.1 to 0.11.2): the new OOTRR cannot use the old seeds, so the kit removes them. Each game builds the seed again at its next start, then needs one more restart, and the host needs a New Game.
-- **Even a randomized seed leaves many spots vanilla.** OOTRR 0.6.0 does not shuffle everything yet, so some vanilla chests are normal.
+- **Different kits.** A guest on another release (for example 0.11.1 with OOTRR 0.5.0 next to a 0.11.2 host) builds another world from the same seed word.
+- **After a kit update that brings another OOTRR** (0.11.1 to 0.11.2, 0.11.2 to 0.11.3): the new OOTRR cannot use the old seeds, so the kit removes them. Each game builds the seed again at its next start, then needs one more restart, and the host needs a New Game.
+- **Even a randomized seed leaves many spots vanilla.** OOTRR does not shuffle everything yet, so some vanilla chests are normal.
