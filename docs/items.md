@@ -403,6 +403,25 @@ Found by Lixyas in a two-player test (2026-11-10): the Deku Tree map reached bot
 
 **Not known until a run:** whether the game's delete call takes a chest away cleanly (it has `AlwaysRespawn`). If it refuses, the chest stays and could be opened twice. Not known either: whether a chest whose key is written while its room is loading shows open.
 
+## One-time sales (Business Scrubs, tracker row 100)
+
+A Business Scrub that sells one thing once (the shop flow's `Onetime_Shop`) sets a saved Bool after the buy, and its prefab graph deletes the scrub from that Bool. Read from the romfs (GameDataList, Banc, `Logic/*.ainb`, `Event/EventFlow/Enemy_Scrub_Business_Common`); every saved Bool whose name holds `_Enemy_Scrub_Business_` is one of these four:
+
+| Flag | Hash | Scrub | Sells |
+|------|------|-------|-------|
+| `Lostwood_Enemy_Scrub_Business_DekuNutsPouch_01` | 0x5ef24799 | Lost Woods grotto, front (child and adult) | nut bag |
+| `LostWood_Enemy_Scrub_Business_DekuStickPouch_01` | 0x8c98cf5a | Lost Woods and Kokiri Forest (one flag, both places) | stick bag |
+| `HyruleField_Enemy_Scrub_Business_HeartPiece_01` | 0xe41e1597 | Hyrule Field | heart piece |
+| `DeathMountain_Enemy_Scrub_Business_HeartPiece_01` | 0x6b8fc751 | Death Mountain Crater | heart piece |
+
+The randomizer (OOTRR 0.6, setting `shuffle_scrubs_b`) makes two more one-time sales of a placed item, each gated by a spare saved Bool: its new flow entry leaves at once when the Bool is set. `HavePlayedEvent.Enemy_Scrub_Business_DekuStick_01` (0x1ef2f533) is the Lost Woods grotto's rear scrub, `HavePlayedEvent.Enemy_Scrub_Business_RedPotion_01` (0x25359a9e) Jabu-Jabu's scrub. No placement plays those two entries, so nothing else sets them.
+
+Before, none of the six was shared, while what they sell is: the bags by max, a heart piece as a count. So every other game still had the scrub after one player's buy, and could buy again: the next bag step (the menu offers `Item_NutBag_Large` once `IsGet` Medium is shared) or one more heart piece for the whole group. Now (`lichii/hook/coop_scrub_sale.h`) they are shared by the pickup rule of a chest's opened Bool (`share_pickup_named`): 0 to 1 goes out, a 1 never goes back to 0. Another player's buy waits while that flag's scrub may be in an event of ours, so the event never loses its scrub (the softlock of issue 144): while the scrub's own event performer is bound into a running event (event-copy's `CoopEventMember::InEvent`, read by the objects walk for these scrubs whatever `event_running` says, at any distance: the heart-piece and Jabu sellers' attacked event starts when a deflected nut hits them, and `event_running` has not been seen during a scrub's event); while our Link is within 11 m of it in its scene (the scrub's `PerceptionReceiverParam` Alert reach of 10 m, where it fights, plus 1 m; the walk's actor place, and the Banc place of each, both ages); and while our Link is in an event. Once none holds it lands, and our scrub is gone as in the buyer's game. Known limit: two players in the same sale menu at the same moment both buy (the hold stops the softlock, not that race). Log: `coop: scrubs: sharing 6 one-time sale flags`, `coop: scrubs: <scrub> was bought by another player: waits while we are near it or in an event`, `coop: scrubs: a one-time sale from another player goes through`. Off with `LICHII_COOP_SCRUB_SALE=0`. Co-op idle (no session): nothing changes. Tests: `tests/lichii/scrub_sale_test.cpp`.
+
+Left out on purpose: the Boss Rush room's scrubs (`DreamWorld_Scrub_Dream_*`, ResetTypeValue 1: one run, not the save), the menu scrubs that sell again and again (seeds, nuts, bombs, potions, arrows; their only saved Bools are `HavePlayedEvent.*` of their talks), and the Deku and Mad Scrubs (enemies; their item drops are not saved).
+
+Not the cause of row 100's "See you later." (Lost Woods grotto, 0.11.2 randomizer): with `shuffle_scrubs_b` off (OOTRR's default) the rear scrub's menu hides the seeds until `IsGet` Slingshot and the jar until a magic item (shared flags: co-op can only add choices), so a child without them gets only "See you later." in solo too (scrub-grotto's reading). With `shuffle_scrubs_b` on, the same text is what a sold rear scrub says; before this branch another player's buy did not reach our game, so it could not cause it either.
+
 ## Loot: one rule for every drop (issue 102)
 
 Lixyas (2026-11-10): enemy loot is shared (one player takes a Deku Stick and it disappears for the other), but bush loot is not (each can take it).

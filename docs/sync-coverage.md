@@ -171,6 +171,7 @@ Status: **Fixed** (on main, or in this branch), **OK** (the rules already cover 
 | I4 | Zelda's Letter, Ocarina of Time, songs, stones and medallions | **OK** | Shared items let the other player do the per-game event themselves (Kakariko gate, Temple of Time door) or skip it. |
 | I5 | Deku Shield bought once for everyone (#130) | **P2** | Shared again (max, branch shop-shield-2; items-progress had made it per player); the shop opens for every player (quest catch-up); autotest `shop-buy`. |
 | I6 | Keys and dungeon items with a join at another save point | **P2** | A late joiner takes the host's totals. A key the joiner's save had in hand but the host's did not is lost to the joiner; the chest it came from stays open in the joiner's game but closed in the host's, so the host player can take it again for both. Advice: join with saves from the same point. |
+| I7 | Business Scrubs' one-time sales (nut bag, stick bag, two heart pieces; the randomizer's grotto rear and Jabu-Jabu scrubs) bought again by a second player | **Fixed (branch `scrub-sale`)** | The sale's saved Bool was each game's own while the item it gives is shared, so the scrub stayed in the other games: a second bag step or heart piece. The six Bools are shared one way, held while that scrub is bound into an event of ours (any distance), our Link is within 11 m of it (its Alert reach + 1 m) or in an event ([items.md](items.md), "One-time sales"). Unit tests; not run in a game. |
 
 ### Story, time travel, saves
 
@@ -204,7 +205,7 @@ Merged into `integrate-p11`, with unit tests and review. None of it is proven in
 | Enemy shots: every game shows the owner's shot | #189 | enemy-shots |
 | Enemy drops | #101 #102 | enemy-drops |
 | Where shots land (spark, sound) | #166 | shot-impacts |
-| Deku Scrubs; their talk and sales | #149, #144 | deku-scrubs, scrub-talk |
+| Deku Scrubs; their talk and sales | #149, #144 | deku-scrubs, scrub-talk, scrub-near, scrub-near2 |
 | Signs, rocks and more world objects | #84 #90, #146 #147 #171 | world-breakables, world-objects-2 |
 | Guards and town soldiers | #191 | guard-sync |
 | Boss targets, boss walk-in, Gohma and its larvae | #124 #150 #157, #148, #178 | boss-targets, boss-movein-2, gohma-sync |

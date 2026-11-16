@@ -103,6 +103,7 @@
 #include "coop_voice.h"
 #include "coop_settings.h"
 #include "coop_spawn.h"
+#include "coop_scrub_sale.h"
 #include "coop_scrub_talk.h"
 #include "coop_sites.h"
 #include "coop_svc.h"
@@ -331,6 +332,10 @@ public:
         if (flag_error.empty()) CoopStory::AddShared(session.shared);  // docs/flags.md, "Story and cutscenes"
         if (flag_error.empty()) CoopQuests::AddShared(session.shared);  // docs/flags.md, "Threads of Time"
         if (flag_error.empty()) CoopChests::AddShared(session.shared);  // docs/items.md, "Chests"
+        if (flag_error.empty() && scrub_sale_on_) {  // docs/items.md, "One-time sales"
+            const std::size_t added = CoopScrubSale::Merge(session.shared);
+            LOG_INFO(Core, "coop: scrubs: sharing {} one-time sale flags (off with LICHII_COOP_SCRUB_SALE=0)", added);
+        }
         if (!flag_error.empty()) {
             LOG_ERROR(Core, "coop: {}; flags are not shared", flag_error);
         }
@@ -489,6 +494,11 @@ public:
                 session_->share_pickup_named(coop::protocol::FlagKey(o.flag, std::uint16_t{0}));
             }
         }
+        if (sharing_ && scrub_sale_on_) {  // a Business Scrub's one-time sale: bought once for everyone
+            for (const auto& f : CoopScrubSale::kSaleFlags) {
+                session_->share_pickup_named(coop::protocol::FlagKey(f.hash, std::uint16_t{0}));
+            }
+        }
         if (pickups_) {  // issue 89: every Gold Skulltula's key, and the token count guarded by them
             std::vector<coop::protocol::FlagKey> skulltulas;
             for (const std::uint64_t key : coop::host::gold_skulltula_keys()) {
@@ -641,19 +651,55 @@ public:
                 hold_scene_.empty() ? std::nullopt : std::optional<std::string>(hold_scene_);
             // Issue 144 (coop_scrub_talk.h): a scrub's destroy flag waits while our
             // Link is in an event (its talk), or the room graph deletes the scrub mid-talk.
-            if (scrub_talk_on_ && scrub_talk_.Frame(reading && reading->event_running.value_or(false),
+            if (scrub_talk_on_ && !scrub_near_only_ && scrub_talk_.Frame(reading && reading->event_running.value_or(false),
                                   CoopEvery::NowUs())) {
                 LOG_INFO(Core, "coop: dungeon: {}", scrub_talk_.Holding()
                              ? "our Link is in an event: Deku Scrub destroy flags from others wait"
                              : "the event ended: Deku Scrub destroy flags from others go through");
             }
+            // Issue 144, second guard: also while our copy of that scrub is near our Link
+            // (CoopScrubTalk::Near, from the objects walk), whatever the event flag says.
+            const std::uint8_t near = scrub_talk_on_ ? CoopScrubTalk::TheNear().Mask(CoopEvery::NowUs()) : 0;
+            if (near != scrub_near_) {
+                for (std::size_t g = 0; g < CoopScrubTalk::kGroups; ++g) {
+                    const unsigned bit = 1u << g;
+                    if ((near & bit) != (scrub_near_ & bit)) {
+                        LOG_INFO(Core, "coop: dungeon: scrub near ({}): {}", CoopScrubTalk::GroupName(static_cast<CoopScrubTalk::Group>(g)),
+                                 (near & bit) ? "within talking distance of our Link or in our event, its destroy flags from others wait"
+                                              : "no longer near our Link nor in our event, its destroy flags from others go through");
+                    }
+                }
+                scrub_near_ = near;
+            }
             const CoopScrubTalk::Hold talk = scrub_talk_;
-            hold.emplace(*quests, [link, scene, talk](coop::protocol::FlagKey key) {
+            // A scrub's one-time sale bought by another player waits while that scrub may be in an
+            // event of ours (coop_scrub_sale.h): its prefab graph deletes the scrub from the flag.
+            // event_running is read here directly: scrub_talk_ is not updated with
+            // LICHII_COOP_SCRUB_TALK_HOLD=0 or =near.
+            CoopScrubSale::Here sale_here;
+            sale_here.in_event = talk.Holding() || (reading && reading->event_running.value_or(false));
+            sale_here.busy = CoopScrubSale::TheBusy().Mask(CoopEvery::NowUs());
+            if (reading && reading->scene) {
+                sale_here.known = true;
+                sale_here.x = reading->position[0];
+                sale_here.y = reading->position[1];
+                sale_here.z = reading->position[2];
+            }
+            const std::string sale_scene = reading && reading->scene ? *reading->scene : std::string();
+            const bool sale_on = scrub_sale_on_;
+            hold.emplace(*quests, [link, scene, talk, near, sale_here, sale_scene, sale_on](coop::protocol::FlagKey key) {
                 if (key.kind != coop::protocol::FlagKeyKind::named || key.index != 0) {
                     return false;
                 }
-                if (talk.Holds(key.hash)) {
+                if (talk.Holds(key.hash) || CoopScrubTalk::NearHolds(near, key.hash)) {
                     return true;
+                }
+                if (sale_on) {
+                    CoopScrubSale::Here here = sale_here;
+                    here.scene = sale_scene;
+                    if (CoopScrubSale::Waits(key.hash, here)) {
+                        return true;
+                    }
                 }
                 if (!link || !scene) {
                     return false;
@@ -865,10 +911,26 @@ public:
                 }
             }
         }
-        // The scrub flags of issue 144 have their own log line (above).
+        // The scrub flags of issue 144 and the scrubs' one-time sales have their own log lines.
         const bool gimmick_held =
-            hold && std::any_of(hold->held_keys().begin(), hold->held_keys().end(),
-                                [](const coop::protocol::FlagKey& k) { return !CoopScrubTalk::IsTalkFlag(k.hash); });
+            hold && std::any_of(hold->held_keys().begin(), hold->held_keys().end(), [](const coop::protocol::FlagKey& k) {
+                return !CoopScrubTalk::IsTalkFlag(k.hash) && !CoopScrubSale::IsSaleFlag(k.hash);
+            });
+        if (hold) {
+            std::uint32_t sale = 0;
+            for (const auto& k : hold->held_keys()) {
+                if (CoopScrubSale::IsSaleFlag(k.hash)) sale = k.hash;
+            }
+            if (sale != sale_held_logged_) {
+                if (sale != 0) {
+                    LOG_INFO(Core, "coop: scrubs: {} was bought by another player: waits while we are near it or in an event",
+                             CoopScrubSale::Find(sale)->what);
+                } else {
+                    LOG_INFO(Core, "coop: scrubs: a one-time sale from another player goes through");
+                }
+                sale_held_logged_ = sale;
+            }
+        }
         if (hold && gimmick_held != holding_logged_) {
             holding_logged_ = gimmick_held;
             LOG_INFO(Core, "coop: dungeon: {}", holding_logged_
@@ -1890,6 +1952,7 @@ private:
     static constexpr std::uint64_t kDoubledNoEventMs = 1000;
     std::size_t pickups_given_ = 0;  // CoopPickups keys handed to the session
     bool holding_logged_ = false;  // issue 129: HoldFlagStore held something last frame
+    std::uint32_t sale_held_logged_ = 0;  // a scrub sale flag the hold kept last frame (log)
 #ifdef COOP_HOOKSHOT
     // Every 10 s while the flag watcher goes by the game's events (coop_flag_native.h): what it read, and what its
     // audit found that no event had named (0 when the applier's wrap sees every write).
@@ -1933,8 +1996,12 @@ private:
     CoopEvery::Every flag_traffic_log_{10 * CoopEvery::kSecondUs};
     std::uint64_t flag_traffic_sum_ = 0;
     CoopScrubTalk::Hold scrub_talk_;  // issue 144: scrub destroy flags wait for our event
+    std::uint8_t scrub_near_ = 0;     // issue 144: the scrub groups near our Link (for the log)
     coop::host::LentKeys lent_keys_;  // dungeon-sync-b (#75): keys lent at another player's lock
     bool scrub_talk_on_ = EnvString("LICHII_COOP_SCRUB_TALK_HOLD") != "0";  // =0: off (the old softlock)
+    // =near: only the near guard (CoopScrubTalk::Near), no event hold: a test proves it alone.
+    bool scrub_near_only_ = EnvString("LICHII_COOP_SCRUB_TALK_HOLD") == "near";
+    bool scrub_sale_on_ = EnvString("LICHII_COOP_SCRUB_SALE") != "0";  // =0: one-time sales each game's own
     bool live_events_ = false;     // LICHII_COOP_LIVE_EVENTS=1 (issue 129)
     // deku-switches (#176 #129): an eye-switch room event starts by our eye's FirstOn (coop_eye_switch.h).
     // Off unless LICHII_COOP_EYE_SWITCH=1 until the probe run (hs-eye-probe).

@@ -249,8 +249,9 @@ bool IsOwnPuzzle(std::string_view name) {
     // (Enemy_Scrub_Business, _Leaf, _Seed) is a shop: once beaten, its talk
     // event (Event/EventFlow/Enemy_Scrub_Business_Common) turns it to our
     // Link (EventScrubBusinessTurnAround), plays its 'Talk' animations and
-    // makes the sale in that game's own event, and its one-time sale flags
-    // (Lostwood_Enemy_Scrub_Business_DekuNutsPouch_01 ...) are each player's.
+    // makes the sale in that game's own event. Its one-time sale flags
+    // (Lostwood_Enemy_Scrub_Business_DekuNutsPouch_01 ...) are shared by the
+    // flag sync instead (coop_scrub_sale.h): bought once for everyone.
     // Shared as an enemy copy, the owner's animations and place were played
     // over a scrub our Link had beaten and was talking to (the fishman's and
     // Ruto's case). Each game runs its own; the items it sells stay shared.
