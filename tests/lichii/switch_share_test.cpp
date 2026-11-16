@@ -130,7 +130,7 @@ TEST_CASE("switch share: our plug still 1 just after we held it is not a press o
     CHECK(b.sent.size() == 1);
 }
 
-TEST_CASE("switch share: solo sends nothing and holds nothing; a remote on not sent again is let go") {
+TEST_CASE("switch share: solo sends nothing and holds nothing, and a remote on not sent again is let go") {
     Game a;
     std::uint64_t t = 1000;
     a.on = true;
