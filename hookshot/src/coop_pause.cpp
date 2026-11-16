@@ -574,7 +574,13 @@ void Act(const Request& r) {
     }
     case Request::Kind::kLookParts: g_menu.SetNote(ChooseLookParts(g_menu.look())); break;
     case Request::Kind::kPaste:
-        PasteThen([](std::optional<std::string> clip) {
+        // Into the field that asked only: on Linux the text may come a moment later (PasteThen), and a field the
+        // player moved to meanwhile (another row or page) does not get it.
+        PasteThen([page = g_menu.page(), row = g_menu.selected(), typing = g_menu.typing()](std::optional<std::string> clip) {
+            if (g_menu.page() != page || g_menu.selected() != row || g_menu.typing() != typing) {
+                LOG_INFO(Core, "coop: multiplayer tab: a paste came after the field changed: not used");
+                return;
+            }
             g_menu.Paste(clip.value_or(std::string()));
             if (!clip) {   // (said, not a silent nothing: what is missing, and the ways that still work)
                 g_menu.SetNote({kClipboardUnread});
