@@ -51,6 +51,7 @@ struct FlagStats {
   std::uint64_t applied = 0;           // entries written into the game
   std::uint64_t deltas_added = 0;      // host: count deltas added to the game (in applied too)
   std::uint64_t kept_local = 0;        // snapshot entries skipped over a pending change
+  std::uint64_t snapshot_exact = 0;    // player: join snapshot values written as they are (#96)
   std::uint64_t not_shared = 0;        // incoming entries not in the shared list
   std::uint64_t pickups_learned = 0;   // 64-bit keys taken as pickups from a message
   std::uint64_t pickup_resets = 0;     // a pickup's 0, ours or incoming: not passed on
@@ -339,6 +340,9 @@ class FlagWatcher {
   void apply_snapshot(FlagStore& store);
   // The host's save load (FLAG_RESET): every value written exactly.
   void apply_reset(FlagStore& store, const std::vector<protocol::FlagEntry>& flags);
+  // The group's value written as it is (no OR, max or mirror rule), except a
+  // one-way flag that keeps our own value (keeps_own). True when written.
+  bool write_exact(FlagStore& store, const protocol::FlagEntry& entry);
   // A load window (settling()) ends. Host: when its save load moved named
   // flags, the flags that moved go out as FLAG_RESET. Player: when its own
   // save load moved them, they go back to what the group had before.

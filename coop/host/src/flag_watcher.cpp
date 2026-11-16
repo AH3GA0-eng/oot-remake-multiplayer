@@ -480,30 +480,35 @@ void FlagWatcher::apply_reset(FlagStore& store, const std::vector<FlagEntry>& fl
     const FlagKey key = key_of(entry);
     if (!shared_.contains(key) || is_delta(entry)) continue;  // no one-way rule here
     pending_.erase(key);  // the host's save wins over a change of ours
-    if (keeps_own(store, entry)) {
-      unwritten_.erase(key);
-      last_[key] = entry;  // the next diff sends our own value
-      continue;
-    }
-    note_for_others(store, entry);
-    const auto seen = last_.find(key);
-    const std::optional<FlagEntry> before =
-        seen != last_.end() ? std::optional<FlagEntry>(seen->second) : std::nullopt;
-    if (!store.write_exact(entry)) {
-      ++stats_.write_failures;
-      unwritten_[key] = entry;
-      if (!written_for_others_.empty() && written_for_others_.back() == key) {
-        written_for_others_.pop_back();
-      }
-      continue;
-    }
-    ++stats_.applied;
-    ++stats_.reset_applied;
-    unwritten_.erase(key);
-    if (!store.is_count(key)) note_group(entry, nullptr);
-    last_[key] = entry;
-    if (before) note_received(key, *before, entry);
+    if (write_exact(store, entry)) ++stats_.reset_applied;
   }
+}
+
+bool FlagWatcher::write_exact(FlagStore& store, const FlagEntry& entry) {
+  const FlagKey key = key_of(entry);
+  if (keeps_own(store, entry)) {
+    unwritten_.erase(key);
+    last_[key] = entry;  // the next diff sends our own value
+    return false;
+  }
+  note_for_others(store, entry);
+  const auto seen = last_.find(key);
+  const std::optional<FlagEntry> before =
+      seen != last_.end() ? std::optional<FlagEntry>(seen->second) : std::nullopt;
+  if (!store.write_exact(entry)) {
+    ++stats_.write_failures;
+    unwritten_[key] = entry;
+    if (!written_for_others_.empty() && written_for_others_.back() == key) {
+      written_for_others_.pop_back();
+    }
+    return false;
+  }
+  ++stats_.applied;
+  unwritten_.erase(key);
+  if (!store.is_count(key)) note_group(entry, nullptr);
+  last_[key] = entry;
+  if (before) note_received(key, *before, entry);
+  return true;
 }
 
 void FlagWatcher::see_save_load() {
@@ -554,8 +559,14 @@ void FlagWatcher::apply_snapshot(FlagStore& store) {
       // not shared here, or a pickup's 0
     } else if (pending_.contains(key)) {
       ++stats_.kept_local;  // the host's answer to it is still to come
-    } else {
-      write(store, entry);
+    } else if (is_delta(entry) || store.is_count(key)) {
+      write(store, entry);  // a count's total, plus our change not sent yet
+    } else if (write_exact(store, entry)) {
+      // The host's save decides (docs/flags.md, "Saves"): a game that joins
+      // takes the group's value as it is, a lower one too. Merged (OR, max),
+      // a guest's older save filled the host's new file with that save's
+      // items and quests at once (player report #96).
+      ++stats_.snapshot_exact;
     }
   }
   snapshot_.clear();

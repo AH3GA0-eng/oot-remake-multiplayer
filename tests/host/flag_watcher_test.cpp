@@ -839,6 +839,70 @@ TEST_CASE("flag watcher: a FLAG_RESET lowers an item through the item store (no 
   CHECK(game_store.get(kHookshot) == 0);
 }
 
+TEST_CASE("flag watcher: a guest's older save joining a host's new file takes the host's items, sends none (#96)") {
+  // Player report #96: the host deleted its saves and started a new file; a
+  // guest whose game still had the old group's save loaded joined, and its
+  // items, songs and quests went into the host's new file at once. The join
+  // snapshot was merged by the max rule, so the guest kept its items and its
+  // next diff sent them. The host's save decides: the snapshot is exact.
+  constexpr FlagKey kHookshot{0x8573d2cdu, 0};  // PouchData.Item_Hookshot.StockNum, max
+  constexpr FlagKey kEmerald{0x1234u, 0};
+  FakeStore guest_game;
+  guest_game.values[kHookshot] = entry(kHookshot, 1, proto::FlagKind::int32);
+  guest_game.values[kEmerald] = entry(kEmerald, 1);
+  ItemFlagStore store(guest_game);
+  FlagWatcher w(SharedFlags({kHookshot, kEmerald}), FlagRole::player);
+  CHECK(w.frame(store).empty());  // the baseline: the guest's old save
+  w.reset();                      // a new connection
+  CHECK(w.receive(proto::FlagSnapshot{
+      0, 1, {entry(kHookshot, 0, proto::FlagKind::int32), entry(kEmerald, 0)}}));
+  for (int i = 0; i < 10; ++i) CHECK(w.frame(store).empty());  // nothing goes to the group
+  CHECK(guest_game.get(kHookshot) == 0);
+  CHECK(guest_game.get(kEmerald) == 0);
+  CHECK(w.stats().snapshot_exact == 2);
+  // From now on the guest plays the host's file: its own new pickup goes out.
+  guest_game.values[kHookshot] = entry(kHookshot, 1, proto::FlagKind::int32);
+  CHECK(only<proto::FlagSet>(w.frame(store)) ==
+        std::vector{entry(kHookshot, 1, proto::FlagKind::int32)});
+}
+
+TEST_CASE("flag watcher: a host's new file never gets a joining guest's old items (#96, both games)") {
+  constexpr FlagKey kHookshot{0x8573d2cdu, 0};
+  FakeStore host_game, guest_game;
+  host_game.values[kHookshot] = entry(kHookshot, 0, proto::FlagKind::int32);
+  guest_game.values[kHookshot] = entry(kHookshot, 1, proto::FlagKind::int32);
+  ItemFlagStore host_store(host_game), guest_store(guest_game);
+  FlagWatcher h(SharedFlags({kHookshot}), FlagRole::host);
+  FlagWatcher g(SharedFlags({kHookshot}), FlagRole::player);
+  h.frame(host_store);
+  g.frame(guest_store);
+  // The join: the host's table reaches the guest (the server passes it on).
+  h.request_snapshot();
+  for (const auto& o : h.frame(host_store)) CHECK(g.receive(o.bytes));
+  for (int i = 0; i < 60; ++i) {
+    for (const auto& o : g.frame(guest_store)) CHECK(h.receive(o.bytes));
+    for (const auto& o : h.frame(host_store)) CHECK(g.receive(o.bytes));
+  }
+  CHECK(host_game.get(kHookshot) == 0);
+  CHECK(guest_game.get(kHookshot) == 0);
+}
+
+TEST_CASE("flag watcher: a guest's own change still on its way is kept over the join snapshot") {
+  constexpr FlagKey kHookshot{0x8573d2cdu, 0};
+  FakeStore guest_game;
+  guest_game.values[kHookshot] = entry(kHookshot, 0, proto::FlagKind::int32);
+  ItemFlagStore store(guest_game);
+  FlagWatcher w(SharedFlags({kHookshot}), FlagRole::player);
+  w.frame(store);
+  guest_game.values[kHookshot] = entry(kHookshot, 1, proto::FlagKind::int32);  // taken just now
+  CHECK(only<proto::FlagSet>(w.frame(store)) ==
+        std::vector{entry(kHookshot, 1, proto::FlagKind::int32)});
+  CHECK(w.receive(proto::FlagSnapshot{0, 1, {entry(kHookshot, 0, proto::FlagKind::int32)}}));
+  w.frame(store);
+  CHECK(guest_game.get(kHookshot) == 1);  // the host's answer decides it
+  CHECK(w.stats().kept_local == 1);
+}
+
 TEST_CASE("flag watcher: a host ignores a FLAG_RESET, and a new host does not reset") {
   FakeStore store = game();
   FlagWatcher w(shared(), FlagRole::player);
