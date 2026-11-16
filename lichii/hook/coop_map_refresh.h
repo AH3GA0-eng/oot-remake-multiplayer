@@ -12,8 +12,10 @@
 // alone does not show until the game's next refresh: the Map page, a room or scene load, an event's end
 // (reports/dungeon-sync-b.md, "What the Map page draws from"; reports/dungeon-maps-a.md).
 //
-// So when a shared map or floors value comes from another player, this calls the game's own refresh on the HUD
-// screen, once, a moment later (after the game's setter has taken the flag). It never writes the screen's copy.
+// So after such a write this asks the game's own refresh once, a moment later (after the game's setter has taken the
+// flag), through Longshot patch 0018's hos_coop_hud_refresh: the refresh then runs at the HUD screen's own next
+// update on the game's thread, so it only ever runs on a screen that is alive (no stored screen pointer is called).
+// It never writes the screen's copy. Lichii (the emulator) has no such export: there it does nothing.
 // Each call logs the copy before and after. Proven: lane1-a hs-map-deku-walkin 20261116-003904 (guest), hs-map-opener
 // 20261116-013911 (without it the receiver's minimap stayed blank until the Map page or a room load).
 //
@@ -22,50 +24,32 @@
 
 #include <cstdint>
 #include <mutex>
-#include <optional>
-#include <string>
-#include <vector>
-
-#include "coop_puppet.h"
 
 namespace CoopMapRefresh {
 
 namespace addr {
-inline constexpr std::uint64_t kRefresh = 0x33e4200;  // the HUD screen's refresh: x0 = the screen
-inline constexpr std::uint64_t kFloors = 0x1500;      // the screen's floors byte (read for the log only)
-inline constexpr std::uint64_t kHeld = 0x1538;        // map, compass, boss key, 0x251d4c2a (bytes; log only)
+inline constexpr std::uint64_t kFloors = 0x1500;  // the HUD screen's floors byte (read for the log only)
+inline constexpr std::uint64_t kHeld = 0x1538;    // map, compass, boss key, 0x251d4c2a (bytes; log only)
 }  // namespace addr
 
 // A shared value lands through the game's own setter a frame or more later: the refresh waits this long.
 inline constexpr std::uint64_t kDelayMs = 300;
 
-// The svc caller (CoopCallers::Caller contract).
+// When to ask the refresh: once, kDelayMs after the last write, and only while Link is in play.
 class Refresher {
 public:
-    // The hook's flag report (any thread): another player's map or floors arrived.
+    // A co-op write of a HUD dungeon item (any thread): a later one moves the time, one refresh after the last.
     void Want(std::uint64_t now_ms);
-    // The Hookshot frame (any thread): the HUD screen that runs now (0: none) and main's base.
-    // `screen` only when the HUD screen ran a moment ago (patch 0018's hud_ran_ns_ago, CoopMapPage::Menu::HudRuns),
-    // else 0: patch 0018 forgets a HUD screen whose slot was reused, so no call is made on one that may be freed.
-    void SetScreen(std::uint64_t screen, std::uint64_t main);
-    // The hook's frame (calc thread): Link is in play (a scene loaded, the first Link there). Not at the title, a
-    // load or a reload: the refresh waits.
+    // The hook's frame, in a session and alone: Link is in play (a scene loaded, the first Link there). Not at the
+    // title, a load or a reload: the refresh waits.
     void SetInPlay(bool in_play);
-    // The calc thread.
-    std::optional<CoopPuppet::Call> Step(CoopPuppet::Guest& guest, bool after_call, std::uint64_t now_ms);
-    std::vector<std::string> TakeNotes();
+    // The Hookshot frame: true once when the refresh is to be asked now.
+    bool Due(std::uint64_t now_ms);
 
 private:
-    std::string Copy(CoopPuppet::Guest& guest, std::uint64_t screen);
-
     std::mutex mutex_;
     std::uint64_t due_ms_ = 0;  // 0: nothing wanted
-    std::uint64_t screen_ = 0;
     bool in_play_ = false;
-    std::uint64_t main_ = 0;
-    std::uint64_t called_on_ = 0;  // the calc thread's: the screen of the call made, until its after_call
-    std::string before_;
-    std::vector<std::string> notes_;
 };
 
 Refresher& TheRefresher();

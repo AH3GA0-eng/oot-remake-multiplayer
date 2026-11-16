@@ -1344,7 +1344,7 @@ TEST_CASE("item store: a reset that lowers the hearts holds life to the new maxi
   CHECK(game_store.get(kLife) == 8);
 }
 
-TEST_CASE("item store: a guest's load write-back never takes a floor off; the host's reset decides (#63/#76)") {
+TEST_CASE("item store: a guest's load write-back never takes a floor off, the host's reset decides (#63/#76)") {
   constexpr FlagKey kFloors{0x46913e20u, 0};  // DungeonInfo.DodongoCavern.EnteredFloorBit
   constexpr FlagKey kMaxLife{0xfbe01da1u, 0};
   FakeStore game_store;

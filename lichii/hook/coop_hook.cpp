@@ -666,6 +666,7 @@ public:
             session_->set_color(*color);
         }
         const auto report = session_->frame(reading, hold ? &*hold : nullptr);
+        CoopMapRefresh::TheRefresher().SetInPlay(reading.has_value());  // rows 63/76: no refresh off play (session)
         if (memory) {  // minimap-b: the current dungeon's map or compass going 1 -> 0, logged with its context
             WatchMapDrops(*memory, reading.has_value(),
                           reading ? reading->scene : coop::host::PlayerReader(*memory).read_scene(),
@@ -2409,21 +2410,16 @@ void Start() {
 // (main+0x33e4200; the game's get scene ends in one). A value co-op writes in play (another player's item, the join
 // snapshot, a reset, a put-back, the solo keeper) skips both, so the minimap stayed blank until the Map page or a
 // room load (run hs-map-opener 20261116-013911). This asks the game's own refresh once after such a write, in a
-// session and alone. LICHII_COOP_MAP_REFRESH=0 turns it off. Registered once; true when on.
+// session and alone (Hookshot's frame asks it: coop_map_refresh.h). LICHII_COOP_MAP_REFRESH=0 turns it off. True when
+// on.
 bool StartMapRefresh() {
     static const bool on = [] {
         if (EnvString("LICHII_COOP_MAP_REFRESH") == "0") {
             LOG_INFO(Core, "coop: map refresh off (LICHII_COOP_MAP_REFRESH=0)");
             return false;
         }
-        CoopSvc::AddCaller(66, [](CoopPuppet::Guest& guest, bool after_call, std::uint64_t, std::uint64_t) {
-            auto& r = CoopMapRefresh::TheRefresher();
-            auto call = r.Step(guest, after_call, SteadyMs());
-            for (const auto& line : r.TakeNotes()) LOG_INFO(Core, "coop: {}", line);
-            return call;
-        });
         LOG_INFO(Core, "coop: map refresh on: the game's HUD refresh after a dungeon map, compass, boss key or "
-                       "floors written by co-op");
+                       "floors written by co-op (run at the HUD screen's own update, Longshot patch 0018)");
         return true;
     }();
     return on;
@@ -2507,7 +2503,7 @@ void LocalFrameOff(Core::System& system) {
         const auto scene = full ? full->scene : reader.read_scene();
         WatchMapDrops(memory, facts.position.has_value(), scene, facts.position);
         KeepMapsAlone(memory, facts.position.has_value(), scene);
-        CoopMapRefresh::TheRefresher().SetInPlay(facts.position.has_value());  // rows 63/76: no refresh off play
+        CoopMapRefresh::TheRefresher().SetInPlay(facts.position.has_value());  // rows 63/76: no refresh off play (alone)
         static MendClocks mend_since_us{};
         if (facts.position.has_value()) {
             MendStory(memory, mend_since_us);  // issue 84: a stuck save, played alone

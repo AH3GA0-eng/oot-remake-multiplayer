@@ -1108,12 +1108,12 @@ void Frame(void* ctx, int site) {
     if (w.calls && ctx != nullptr) {
         RunFlagSetters(ctx);
         LogFlagNative();
-        {  // #63/#76: the HUD screen the game's own map refresh is called on (coop_map_refresh.h)
-            // Only a HUD screen that ran a moment ago (patch 0018 forgets one whose slot was reused): never one that
-            // may be freed at the title or a reload.
-            const auto menu = CoopMapPage::MenuState();
-            CoopMapRefresh::TheRefresher().SetScreen(menu && menu->HudRuns() ? menu->hud_screen : 0,
-                                                     CoopRuntime::MainBase());
+        {  // rows 63/76: the game's own HUD refresh after co-op wrote a dungeon item (coop_map_refresh.h). Patch 0018
+           // runs it at the HUD screen's own next update: never on a stored screen pointer.
+            const auto now_ms = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                               std::chrono::steady_clock::now().time_since_epoch())
+                                                               .count());
+            if (CoopMapRefresh::TheRefresher().Due(now_ms)) CoopMapPage::AskHudRefresh();
         }
         RunCalls(ctx);
         LogBossNative();

@@ -29,6 +29,7 @@ struct HosCoopMenuState {
     std::int32_t map_page, menu_open, reserved;
     std::uint64_t hud_screen, panel_screen;
     std::int64_t hud_ran_ns_ago;  // (rows 63/76; an older exe answers with the struct up to here)
+    std::uint32_t hud_refreshes, reserved2;
 };
 using MenuStateFn = int (*)(HosCoopMenuState*);
 
@@ -184,8 +185,43 @@ std::optional<Menu> MenuState() {
         return std::nullopt;
     }
     Menu m{s.menu_open != 0, s.map_page != 0, s.hud_screen, s.panel_screen};
-    if (s.size >= sizeof s) m.hud_ran_ns_ago = s.hud_ran_ns_ago;
+    if (s.size >= sizeof s) m.hud_ran_ns_ago = s.hud_ran_ns_ago, m.hud_refreshes = s.hud_refreshes;
     return m;
+}
+
+namespace {
+std::string HudCopy(std::uint64_t screen) {
+    std::uint8_t floors = 0, held[4]{};
+    if (screen == 0 || !CoopRuntime::Read(screen + 0x1500, &floors, 1) || !CoopRuntime::Read(screen + 0x1538, held, 4)) {
+        return "not readable";
+    }
+    return fmt::format("floors 0x{:02x}, map {} compass {} boss key {}", floors, held[0], held[1], held[2]);
+}
+std::atomic<std::uint32_t> g_refresh_asked_at{0};  // hud_refreshes when the last one was asked
+std::atomic<bool> g_refresh_pending{false};
+}  // namespace
+
+bool AskHudRefresh() {
+#ifdef _WIN32
+    using Fn = int (*)();
+    static const Fn fn = reinterpret_cast<Fn>(
+        reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(nullptr), "hos_coop_hud_refresh")));
+    static bool told = false;
+    if (fn == nullptr) {
+        if (!told) LOG_INFO(Core, "coop: map refresh: this Longshot's patch 0018 has no HUD refresh: not asked");
+        told = true;
+        return false;
+    }
+    const auto menu = MenuState();
+    g_refresh_asked_at = menu ? menu->hud_refreshes : 0;
+    g_refresh_pending = true;
+    fn();
+    LOG_INFO(Core, "coop: map refresh: asked (a dungeon item written by co-op); the HUD screen's copy {}",
+             menu ? HudCopy(menu->hud_screen) : std::string("unknown"));
+    return true;
+#else
+    return false;
+#endif
 }
 
 void Frame(void* ctx, const HosCoopApi* api) {
@@ -197,6 +233,10 @@ void Frame(void* ctx, const HosCoopApi* api) {
         return;
     }
     Probe(*menu);
+    if (g_refresh_pending && menu->hud_refreshes != g_refresh_asked_at) {  // rows 63/76: the asked refresh has run
+        g_refresh_pending = false;
+        LOG_INFO(Core, "coop: map refresh: run at the HUD screen's update; its copy now {}", HudCopy(menu->hud_screen));
+    }
     if (menu->hud_screen != 0 && menu->hud_screen != g_searched_hud.load()) {
         const std::uint64_t old = g_searched_hud.exchange(menu->hud_screen);
         Forget(g_field, old), Forget(g_dungeon, old);
