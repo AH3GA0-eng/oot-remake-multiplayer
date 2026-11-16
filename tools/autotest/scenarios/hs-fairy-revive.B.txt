@@ -1,0 +1,36 @@
+# hs-fairy-revive, B: lands in Hyrule Field in front of Kakariko with a fairy in bottle A, at half a heart if the
+# game takes PlayerStatus.Life (else its save's hearts), and stands at 213 14 while A's sword takes its life
+# (see hs-fairy-revive.A.txt). The game's own death then uses the fairy.
+mark start
+warp HyruleField_Child HyruleField_FrontOfKakarikoVillage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark field
+setflag PouchData.BottleA.StockNum 1
+wait 30
+setflag PlayerStatus.AssignableItem.BottleInfo.BottleA.IsValid 1
+wait 30
+setenum PlayerStatus.AssignableItem.BottleInfo.BottleA.BottleItem Fairy
+wait 30
+setflag PlayerStatus.Life 2
+wait 60
+goto 213.0 14.0 0.4 600
+toward 215.0 14.0 6     # face A
+mark standing
+wait 1800
+mark mid
+wait 1800
+mark after-swings
+# Fallback when PvP's sword did not reach (no 'coop: pvp: hit' lines): the test kill of the nearest Player_Child
+# with a life (our own Link, through the game's own damage), if the objects walk lists it; else 'none here'.
+kill Player_Child
+wait 1500
+mark end
