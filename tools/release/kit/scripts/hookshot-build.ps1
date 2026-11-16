@@ -11,6 +11,10 @@
 #   Build-Hookshot-Coop.bat -Jobs <n>               at most n compilers at once
 #   Build-Hookshot-Coop.bat -CheckOnly              get the tools and check your game files; build nothing
 #   Build-Hookshot-Coop.bat -PackOnly               only make the puppet pack again (make-puppet-pack.cmd)
+#   Build-Hookshot-Coop.bat -Dlss                   with NVIDIA DLSS ("NVIDIA DLSS.bat"): asks you to accept NVIDIA's
+#                                                   license once, then every build of this kit fetches NVIDIA's DLSS
+#                                                   SDK and builds with it (hookshot\dlss.txt remembers the choice)
+#   Build-Hookshot-Coop.bat -NoDlss                 without DLSS again (the game is built again without it)
 #   (for tools\hookshot\hs.py) -Tools <folder> -Work <folder>: Hookshot's tools and source, and its work folder,
 #   somewhere else than this kit's hookshot\ (one of each per pin, shared by every kit: hs-build-speed)
 #
@@ -46,6 +50,8 @@ param(
     [switch]$Rebuild,
     [switch]$CheckOnly,
     [switch]$PackOnly,
+    [switch]$Dlss,
+    [switch]$NoDlss,
     # A Longshot game folder of the player's own (kit-friction): its saves and, through its builder, Longshot's downloads
     # (and compiled objects, same release only) are copied from it. 'none': do not ask. Asked once before a first build.
     [string]$Longshot = ''
@@ -468,6 +474,33 @@ $gameRejected = Join-Path $hs 'game-rejected.txt'
 function Save-KitGameRejected([string]$What, [string]$Why) {
     try { [System.IO.File]::WriteAllText($gameRejected, "$What`r`nWhy: $Why`r`n") } catch { }
 }
+
+# NVIDIA DLSS (#234): Longshot has it only in a game built with NVIDIA's DLSS SDK, which nobody may pass on: each
+# build downloads it for itself, once NVIDIA's license is accepted. -Dlss asks once and hookshot\dlss.txt keeps the
+# answer, so the builds after an update keep DLSS; -NoDlss takes it back. Not in coop-built-from.txt: that stamp is
+# the release, pin and patches the other kits, the game cache and Get-KitHookshotNeed compare.
+# A game with DLSS has its runtime in <game>\ngx (make_game.py's place_ngx_runtime; gone again without the SDK).
+$dlssNote = Join-Path $hs 'dlss.txt'
+if ($NoDlss) {
+    Remove-Item -LiteralPath $dlssNote -Force -ErrorAction SilentlyContinue
+} elseif ($Dlss -and -not (Test-Path -LiteralPath $dlssNote)) {
+    Write-Host ''
+    Write-Host 'NVIDIA DLSS (NVIDIA RTX graphics cards): the build downloads NVIDIA''s DLSS SDK, under NVIDIA''s own license:' -ForegroundColor Yellow
+    Write-Host '  https://github.com/NVIDIA/DLSS/blob/9981c6350dc58c0ce21f024fd65e31e851c31689/LICENSE.txt (the build prints NVIDIA''s notice too).'
+    Write-Host '  The game folder then holds NVIDIA''s files: never share it, and never post builds made with them.'
+    $answer = "$(Read-Host '  Accept NVIDIA''s license and build with DLSS? (y/n)')".Trim()
+    if ($answer -notmatch '^(?i)(y|yes|j|ja)$') { Fail 'NVIDIA''s license not accepted: nothing changed (the game stays as it is, without DLSS).' }
+    [System.IO.File]::WriteAllText($dlssNote, "nvidia-license=accepted`n")
+}
+$wantDlss = -not $NoDlss -and (Test-Path -LiteralPath $dlssNote)
+$ngxSdk = Join-Path $work 'ngx-sdk'
+$gameDlss = Test-Path -LiteralPath (Join-Path $Out 'ngx\nvngx_dlss.dll')
+if ($gameReady -and ($wantDlss -ne $gameDlss) -and ($wantDlss -or $NoDlss)) {
+    Write-Host $(if ($wantDlss) { 'NVIDIA DLSS: the game has no DLSS yet, so it is built again with it (much shorter than the first build).' }
+        else { 'NVIDIA DLSS off: the game is built again without it.' })
+    $gameReady = $false
+}
+
 if (-not $Game -and (-not $gameReady -or $Rebuild -or $CheckOnly)) {
     # As make-puppet-pack.cmd: the .nup in a folder of the emulator's game list.
     $check = Join-Path $kit 'tools\puppet_pack\dumpcheck.py'
@@ -566,6 +599,8 @@ function Invoke-MakeGame([string[]]$MoreArgs, [string]$Log = '') {
     foreach ($v in 'LONGSHOT_NGX_SDK', 'LONGSHOT_FFX_SDK', 'LONGSHOT_MSVC', 'EMSDK', 'LONGSHOT_BUILDER_EXE', 'LONGSHOT_TOOLS') {
         Remove-Item "Env:\$v" -ErrorAction SilentlyContinue
     }
+    # (NVIDIA DLSS: make_game.py fetches NVIDIA's SDK into this folder (--fetch-ngx-sdk) and builds the renderer with it)
+    if ($wantDlss) { $env:LONGSHOT_NGX_SDK = $ngxSdk }
     # (a shared work folder keeps all its build files, the translated C too: the next build of this pin
     # skips the translation unless a lift file changed. A kit's own folder keeps Longshot's default.)
     if ($sharedWork) { $env:LONGSHOT_KEEP_BUILD_FILES = '1' }
@@ -624,6 +659,8 @@ if ($gameReady -and -not $Rebuild -and -not $CheckOnly) {
     $buildLog = Join-Path $hs 'build.log'
     $buildArgs = $gameArgs + @('--out', $Out, '--work', $work, '--language', $Language)
     if ($Jobs) { $buildArgs += @('--jobs', "$Jobs") }
+    # (only what is missing is downloaded; the license was accepted above, hookshot\dlss.txt)
+    if ($wantDlss) { $buildArgs += @('--fetch-ngx-sdk', '--accept-nvidia-license') }
     New-Item -ItemType Directory -Force -Path $Out | Out-Null
     # (your own Longshot of the same release: its compiled objects, keyed by source, flags and headers and never by folder,
     # so the files co-op does not change are not compiled again. Only into a work folder with none yet; copied, not moved)

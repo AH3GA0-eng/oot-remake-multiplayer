@@ -16,6 +16,7 @@
 #   start-server.cmd        a dedicated server, for those who want one; with server\ it also marks the kit
 #                           folder for the module (hookshot/src/coop_title.cpp, FindKit)
 #   make-puppet-pack.cmd    the puppet pack made again on its own (hookshot-build.ps1 -PackOnly; the start makes it too)
+#   NVIDIA DLSS.bat         the game built again with NVIDIA DLSS, after NVIDIA's license (hookshot-build.ps1 -Dlss)
 #   server\                 coop_server.exe and the Visual C++ runtime
 #   hookshot\               hookshot_coop.dll (the co-op module), the runtime, PIN, TOOLS.txt, patches\
 #   scripts\                everything else the launcher runs; collect-logs.cmd for bug reports
@@ -57,7 +58,7 @@ function Test-BinaryHas([string]$Path, [string]$Text) {
 function Get-Sha([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
 
 # What goes in. Files listed here and nowhere else, so a review sees the whole kit in one place.
-$KitTop = @('Start Squadala.bat', 'Start OoT Co-op.bat', 'README.txt', 'Revert.bat', 'start-server.cmd', 'make-puppet-pack.cmd', 'coop-options.ini')
+$KitTop = @('Start Squadala.bat', 'Start OoT Co-op.bat', 'README.txt', 'Revert.bat', 'start-server.cmd', 'make-puppet-pack.cmd', 'coop-options.ini', 'NVIDIA DLSS.bat')
 $KitScripts = @('start.ps1', 'start-checks.ps1', 'play.ps1', 'coop-ini.ps1', 'kit-paths.ps1', 'hosting.ps1', 'relay-join.ps1',
     'invite.ps1', 'hookshot-build.ps1', 'apply_patch.py', 'update.ps1', 'start-server.ps1', 'collect-logs.ps1', 'collect-logs.cmd',
     'log-mask.ps1', 'windows-checks.ps1', 'console-mode.ps1')

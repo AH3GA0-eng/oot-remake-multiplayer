@@ -57,6 +57,7 @@ On Linux the same is `bash revert.sh` and `bash scripts/update.sh --version <tag
 | `Update.bat` | Updates by hand (the start does it by itself) |
 | `Revert.bat` | Goes back to the version before the last update ([above](#going-back-to-an-older-version)); `previous\` holds the versions kept for it |
 | `coop-options.ini` | Co-op switches; the game's Co-op Settings write it too |
+| `NVIDIA DLSS.bat` | Builds the game again with NVIDIA DLSS ([below](#nvidia-dlss)) |
 | `start-server.cmd`, `server\` | A dedicated co-op server, only if you want one (Host in the game needs neither) |
 | `hookshot\` | The co-op module and Longshot's pin and patches; after the first start also `tools\` (1.1 GB), `downloads\` (0.3 GB), `work\` (0.7 GB; kept so updates are quick, deleting them makes the next build take the full time) and `game\` (your built game, 35 GB) |
 | `scripts\`, `tools\` | What the start runs; `scripts\collect-logs.cmd` makes a log zip for a bug report |
@@ -124,6 +125,16 @@ The Multiplayer tab's **Customize Link** page colours your tunic and each part o
 <a id="co-op-on-hookshot"></a><a id="saves"></a><a id="emulator-setup-for-new-players"></a><a id="4-the-puppet-pack"></a><a id="linux-and-steam-deck"></a>
 
 The co-op keys in the game (chat **T**, player list **F6**, panel **F7**, item cheats **F8**), the chat commands and how saves are shared are the same as in the emulator kits: [setup-emulator.md](setup-emulator.md#co-op-on-hookshot) and [setup-emulator.md, "Saves"](setup-emulator.md#saves). That guide also covers the older emulator kits themselves (keys, firmware, the puppet pack, Linux).
+
+## NVIDIA DLSS
+
+Longshot has **NVIDIA DLSS** and **DLAA** (and DLSS Frame Generation on RTX 40 and newer) only in a game built with NVIDIA's DLSS SDK. That SDK is under NVIDIA's own license, and nobody may pass it on: the kit never carries it, and a normal build offers only AMD FSR 3.1 and the game's own upscaler. With an NVIDIA RTX card:
+
+1. Double-click `NVIDIA DLSS.bat` in the kit folder. It shows NVIDIA's license and asks whether you accept it (**y**).
+2. It downloads NVIDIA's DLSS SDK (into `hookshot\work\ngx-sdk`) and builds the game again with it: much shorter than the first build, since only what changes is compiled.
+3. In the game: **Graphics → Upscaler: NVIDIA DLSS** (DLAA is DLSS's **Native** on the Render resolution row).
+
+The kit remembers the choice (`hookshot\dlss.txt`): the builds after an update keep DLSS. `"NVIDIA DLSS.bat" -NoDlss` builds the game again without it. A game built with DLSS holds NVIDIA's files (`ngx\`): never share that game folder. Linux: `bash start-oot-coop.sh --dlss` ([setup-linux.md](setup-linux.md#nvidia-dlss)).
 
 ## Low frame rate
 
