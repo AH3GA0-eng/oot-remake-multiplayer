@@ -15,6 +15,7 @@
 #include <fmt/format.h>
 
 #include "common/logging.h"
+#include "coop_pause_files.h"
 #include "coop_runtime.h"
 
 namespace CoopMapPage {
@@ -133,6 +134,42 @@ void Search(void* ctx, const HosCoopApi* api, std::uint64_t screen, const char* 
                   : std::string());
 }
 
+// dungeon-maps-a (row 76, #146): LICHII_COOP_MAP_PROBE=1 logs the HUD screen's own map copy whenever it changes, read
+// only: the mode (+0x1358: 0 field, 2 dungeon, ...), the floors shown (+0x1368: floor, count, lowest), the floors
+// byte the minimap and the Map page draw (+0x1500, filled by the game's rebuild main+0xb28380: every floor when the
+// dungeon's IsGetMap is set) and the cached IsGetMap, IsGetCompass, IsGetBossKey and 4th Bool (+0x1538..+0x153b).
+// Research only: it says whether a map get (the game's own, another player's, the randomizer's) reached the copy.
+void Probe(const Menu& menu) {
+    static const bool on = Env("LICHII_COOP_MAP_PROBE") == "1";
+    if (!on || menu.hud_screen == 0) {
+        return;
+    }
+    struct Copy {
+        std::int32_t mode = 0, floor = 0, count = 0, lowest = 0;
+        std::uint8_t floors = 0, cached[4]{};
+        bool operator==(const Copy&) const = default;
+    } now{};
+    const std::uint64_t s = menu.hud_screen;
+    std::int32_t f[3]{};
+    if (!CoopRuntime::Read(s + 0x1358, &now.mode, sizeof now.mode) || !CoopRuntime::Read(s + kHudFloors, f, sizeof f) ||
+        !CoopRuntime::Read(s + 0x1500, &now.floors, 1) || !CoopRuntime::Read(s + 0x1538, now.cached, 4)) {
+        return;
+    }
+    now.floor = f[0], now.count = f[1], now.lowest = f[2];
+    static Copy was{};
+    static std::uint64_t was_screen = 0;
+    if (now == was && s == was_screen) {
+        return;
+    }
+    LOG_INFO(Core,
+             "coop: map probe: the HUD screen {:#x}{}: mode {} floor {} of {} (lowest {}) floors 0x{:02x}, map {} "
+             "compass {} boss key {} bool4 {} (menu {}, Map page {})",
+             s, s != was_screen ? " (new)" : "", now.mode, now.floor, now.count, now.lowest, now.floors, now.cached[0],
+             now.cached[1], now.cached[2], now.cached[3], menu.menu_open ? "open" : "closed",
+             menu.map_page ? "shown" : "not shown");
+    was = now, was_screen = s;
+}
+
 }  // namespace
 
 std::optional<Menu> MenuState() {
@@ -156,6 +193,7 @@ void Frame(void* ctx, const HosCoopApi* api) {
     if (!menu) {
         return;
     }
+    Probe(*menu);
     if (menu->hud_screen != 0 && menu->hud_screen != g_searched_hud.load()) {
         const std::uint64_t old = g_searched_hud.exchange(menu->hud_screen);
         Forget(g_field, old), Forget(g_dungeon, old);
