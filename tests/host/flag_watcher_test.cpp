@@ -1255,6 +1255,29 @@ TEST_CASE("flag watcher: the host's Game Over Try Again keeps the group's progre
   CHECK_FALSE(w.take_reset());
 }
 
+TEST_CASE("flag watcher: the host's Try Again puts the group's values back at once, not after the settle") {
+  // The room the host respawns in loads with the group's state, as a guest's (review of a8c86567).
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::host);
+  w.set_native_loads(true);
+  w.frame(store);
+  store.set(kDoor, 1);
+  w.frame(store);
+  w.note_save_load_start();
+  store.set(kDoor, 0);  // the last save
+  w.frame(store);
+  w.note_save_loaded(true);
+  w.frame(store);  // the frame the save is in: still loading
+  CHECK(w.settling());
+  CHECK(store.get(kDoor) == 1);  // back already
+  store.set(kDoor, 0);           // the game's load writes the save's value again
+  w.frame(store);
+  CHECK(store.get(kDoor) == 1);
+  for (const auto& m : decode(link_back(w, store))) CHECK_FALSE(std::holds_alternative<proto::FlagReset>(m));
+  CHECK(store.get(kDoor) == 1);
+  CHECK(w.stats().host_resets == 0);
+}
+
 TEST_CASE("flag watcher: a save in with no load start (the title's New Game) is still the save load (patch 0024)") {
   // NormalTitle.module runs AfterLoadSaveData itself: the on-load node with no SeqExecuteLoadSaveData before it.
   FakeStore store = game();

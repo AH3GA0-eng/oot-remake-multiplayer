@@ -935,6 +935,20 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
           }
         }
       }
+      if (role_ == FlagRole::host && window_retry_ && !store.is_count(key) && !one_way_.contains(key) &&
+          it->second != *now && !keeps_own(store, it->second)) {
+        // The host's Game Over Try Again: the group's value (last_, not moved in this window) back at once, as a
+        // guest's load does above, so the room the host respawns in has it. Counts: end_window.
+        if (store.holds(key)) {
+          unwritten_[key] = it->second;
+          continue;
+        }
+        if (store.write_exact(it->second)) {
+          ++stats_.load_reverts;
+          ++stats_.applied;
+          continue;
+        }
+      }
       continue;  // a save load sends nothing; end_window decides
     }
     if (window_ && loading_) {
