@@ -220,13 +220,11 @@ inline constexpr std::uint64_t kSpectateMinUs = 3'000'000;
 // Life a spectating player comes back with: 3 hearts, as the game's own
 // continue after a Game Over (capped at the player's hearts).
 inline constexpr std::int32_t kRespawnLife = 12;
-// A teammate who is up and loading (a door, a loading zone, a teleport)
-// still counts as up this long since they last had a Link, so a load of the
-// last one standing never ends everyone's game. The title screen does not.
-inline constexpr std::uint64_t kAwayUpUs = 30'000'000;
 // Our own Link at no life while up: the game's death may still be saved (a
 // fairy in a bottle reads 0 while it revives him). Out only once the Link is
-// gone (the Game Over screen, a reload) or the life stays 0 this long.
+// gone (the Game Over screen, a reload) or the life stays 0 this long: a
+// fallback only (the Game Over screen is the game's own sign); the bottle
+// fairy's revive is to be measured in the research run (must be shorter).
 inline constexpr std::uint64_t kDyingUs = 8'000'000;
 // The respawn's move (the /teleport trip, then the entrance) that has not
 // answered in this long counts as failed.
@@ -338,7 +336,6 @@ private:
     std::uint64_t move_since_us_ = 0;
     std::uint64_t dying_since_us_ = 0;  // up at no life: since when; 0 not
     std::array<std::uint64_t, proto::kMaxPlayers + 1> hold_us_{};  // last hold per player; 0 none
-    std::array<std::uint64_t, proto::kMaxPlayers + 1> in_game_us_{};  // when each teammate last had a Link
     std::optional<proto::DbnoStatus> sent_;
     std::uint64_t sent_us_ = 0;
     bool tell_again_ = false;

@@ -286,18 +286,13 @@ Output Machine::Frame(const Input& in) {
                                                            : std::min(in.now_us - last_us_, kMaxStepUs);
     last_us_ = in.now_us;
     const bool active = in.rules.on && in.connected && in.guard_live;
-    // Up counts while in the game, or loading (a door, a loading zone, a
-    // teleport) for at most kAwayUpUs since they last had a Link.
-    for (const Teammate& t : in.team) {
-        if (ValidPlayer(t.number) && t.in_game) {
-            in_game_us_[t.number] = std::max<std::uint64_t>(in.now_us, 1);
-        }
-    }
+    // Up counts while in the game or loading (a door, a loading zone, a
+    // teleport, however long it takes): a teammate in `team` is connected; a
+    // stuck or gone one leaves the session (player_left) and the team. The
+    // title screen (no scene, not loading) is not up.
     const bool someone_up =
-        in.connected && std::any_of(in.team.begin(), in.team.end(), [&](const Teammate& t) {
-            return ValidPlayer(t.number) && t.state == State::up &&
-                   (t.in_game || (t.loading && in_game_us_[t.number] != 0 &&
-                                   in.now_us < in_game_us_[t.number] + kAwayUpUs));
+        in.connected && std::any_of(in.team.begin(), in.team.end(), [](const Teammate& t) {
+            return ValidPlayer(t.number) && t.state == State::up && (t.in_game || t.loading);
         });
     const std::int32_t revive_life =
         std::max<std::int32_t>(kDownedLife, in.max_life && *in.max_life > 0

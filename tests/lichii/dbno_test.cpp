@@ -1163,18 +1163,19 @@ TEST_CASE("dbno spectate: a move that never answers counts as failed after kResp
     CHECK(g.machine.Now() == State::up);
 }
 
-TEST_CASE("dbno: the last one up loading (a door, a teleport) is still up for the wipe, for a while") {
+TEST_CASE("dbno: the last one up loading (a door, a teleport) is still up for the wipe while connected") {
     Game g;
     g.team = {Mate(2, {30, 0, 0}), Threatened(Mate(3, {31, 0, 0}), CoopDbno::Threat::enemy)};
+    g.rules.bleed_s = 120;  // the wipe, not the bleed-out
     g.Down();
     g.team[0].state = State::downed;
     g.team[1].in_game = false;  // 3 takes a door
     g.team[1].loading = true;
-    CHECK(g.Run(10 * kS).state == State::downed);
+    CHECK(g.Run(40 * kS).state == State::downed);  // a slow first load: as long as it takes
     CHECK_FALSE(g.Saw(Event::wiped));
-    // A load that never ends (a crash): kAwayUpUs after its last Link, the wipe.
-    g.Run(CoopDbno::kAwayUpUs);
-    CHECK(g.machine.Now() == State::out);
+    // They leave the session (a crash, a quit): nobody up, the wipe.
+    g.team.pop_back();
+    CHECK(g.Run(CoopDbno::kWipeGraceUs + kFrame).state == State::out);
     CHECK(g.Saw(Event::wiped));
 }
 
