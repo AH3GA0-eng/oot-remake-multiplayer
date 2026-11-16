@@ -52,6 +52,30 @@ ITEMS = (
 
 PREFIX = "Mt_"
 
+# Blade copies (held-piece). A sword's blade is a material switch kept with its model resource,
+# which every actor of one name shares (docs/puppet.md, "Sword not seen in the puppet's hand"):
+# each wearer's weapon update sets it from its own state, so a puppet in the game's own sword
+# shows its blade only while your own sword is out, and the blade flickers when two wearers
+# disagree. The Look copies above give a puppet a resource of its own only while it holds a
+# colour slot (4 slots, Hookshot with patch 0020). So every sword also gets one copy per player
+# number, `<sword>_Blade<n>` (n = 1..BLADE_COPIES, the protocol's kMaxPlayers): the game's pack
+# under the copy's name and its model files under the copy's project, unchanged (the game's own
+# textures, so the copy draws exactly as the game's item, with no painting). A puppet without a
+# ready Look copy wears its player number's blade copy (lichii/hook/coop_puppet.cpp
+# DressInBlades), on every runtime.
+BLADE_ITEMS = (
+    "Weapon_Sword_Kokiri",
+    "Weapon_Sword_Master",
+    "Weapon_Sword_Biggoron",
+    "Weapon_Sword_Giant",
+    "Weapon_Sword_BrokenGiant",
+)
+BLADE_COPIES = 16
+
+
+def blade_name(item, number):
+    return f"{item}_Blade{number}"
+
 
 def actor_name(item, slot):
     return f"{item}_Look{slot}"
@@ -159,7 +183,11 @@ def copy_model_info(members, item, actor):
 def copy_pack(members, item, slot):
     """(pack bytes, actor param bytes, model info bytes) of the slot's copy of `item`: the game's
     pack, its ActorParam under the copy's name naming a ModelInfo of the copy's own project."""
-    actor = actor_name(item, slot)
+    return copy_pack_as(members, item, actor_name(item, slot))
+
+
+def copy_pack_as(members, item, actor):
+    """copy_pack for any copy name (a Look slot's or a blade copy's)."""
     doc = byml.loads(members[actor_param_path(item)])
     doc["Components"]["ModelInfoRef"] = "?" + model_info_path(actor)
     info = byml.dumps(copy_model_info(members, item, actor))
@@ -172,7 +200,11 @@ def copy_pack(members, item, slot):
 
 def info_row(row, item, slot):
     """The copy's ActorInfo row: the item's, under the copy's name and model project."""
-    actor = actor_name(item, slot)
+    return info_row_as(row, actor_name(item, slot))
+
+
+def info_row_as(row, actor):
+    """info_row for any copy name."""
     out = dict(row)
     out["__RowId"] = actor
     if "ActorName" in out:

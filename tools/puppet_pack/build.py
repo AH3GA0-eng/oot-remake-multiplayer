@@ -1023,9 +1023,56 @@ def write_look_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows, slots, l
     return {"slots": slots, "copies": copies, "actors": made, "files": files} if made else None, new_ai, new_gai
 
 
+def write_blade_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows, copies, log=print):
+    """The swords' blade copies (look_items.BLADE_ITEMS): per player number, each sword's actor and
+    its model files under the copy's project, the game's bytes unchanged. Returns (the manifest's
+    blade_items, new ActorInfo rows, new GameActorInfo rows); a sword this romfs lacks is said."""
+    made, new_ai, new_gai, files = [], [], [], []
+    for item in look_items.BLADE_ITEMS:
+        src = os.path.join(romfs, "Pack", "Actor", f"{item}.pack.zs")
+        if not os.path.isfile(src) or item not in ai_rows:
+            log(f"blade copies: no {item} in this romfs")
+            continue
+        try:
+            members = sarc.read(dicts.decompress(read(src)))
+            _, project, info_src = look_items.model_info(members, item)
+        except (look_items.TunicError, ValueError, KeyError) as e:
+            log(f"blade copies: {item} left out ({e})")
+            continue
+        models = sorted(f for f in os.listdir(os.path.join(romfs, "Model"))
+                        if f.startswith(project + ".") and f.endswith(".bfres.zs"))
+        if not models:
+            log(f"blade copies: no Model/{project}.* in this romfs, {item} left out")
+            continue
+        raws = {m: read(os.path.join(romfs, "Model", m)) for m in models}
+        for n in range(1, copies + 1):
+            actor = look_items.blade_name(item, n)
+            pack, ap, info = look_items.copy_pack_as(members, item, actor)
+            dst = f"Pack/Actor/{actor}.pack.zs"
+            write(os.path.join(out_romfs, dst), dicts.compress(pack, PACK_DICT))
+            table.add_new(strip_zs(dst), ((len(pack) + 0x1F) & ~0x1F) + PACK_SIZE_MARGIN)
+            ap_size = table.get(look_items.actor_param_path(item)) or 0
+            table.add_new(look_items.actor_param_path(actor), max(ap_size, len(ap) + PACK_SIZE_MARGIN))
+            info_size = table.get(info_src) or 0
+            table.add_new(look_items.model_info_path(actor), max(info_size, len(info) + PACK_SIZE_MARGIN))
+            new_ai.append(look_items.info_row_as(ai_rows[item], actor))
+            new_gai.append(dict(gai_rows.get(item, {}), __RowId=actor))
+            files.append(dst)
+            for m, raw in raws.items():
+                m_dst = f"Model/{actor}{m[len(project):]}"
+                write(os.path.join(out_romfs, m_dst), raw)
+                table.add_new(strip_zs(m_dst), table.get(strip_zs(f"Model/{m}")) or len(dicts.decompress(raw)))
+                files.append(m_dst)
+        made.append(item)
+    if made:
+        log(f"blade copies: {len(made)} swords x {copies} player numbers ({len(files)} files): "
+            "every puppet's sword has its own blade")
+    return ({"copies": copies, "actors": made, "files": files} if made else None), new_ai, new_gai
+
+
 def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None,
           tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False, title_rows=False,
-          look_slots=look_items.SLOTS, perception=False):
+          look_slots=look_items.SLOTS, perception=False, blade_copies=look_items.BLADE_COPIES):
     """`tunics`: the tunic colours to make puppets of (puppet_pack.tunic.COLORS; each is a model,
     a tile and an actor per age, CoopPuppet_<age>_<Colour>). `test_tunic`: give the plain puppets
     that colour too (a test of the colours with a hook that knows none).
@@ -1100,6 +1147,13 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         gai_rows = {r["__RowId"]: r for r in gai}
         look_item_files, rows, grows = write_look_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows,
                                                         look_slots, log)
+        new_ai += rows
+        new_gai += grows
+    blade_files = None
+    if blade_copies > 0:
+        gai_rows = {r["__RowId"]: r for r in gai}
+        blade_files, rows, grows = write_blade_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows,
+                                                     blade_copies, log)
         new_ai += rows
         new_gai += grows
     jobs = [(v, None) for v in VARIANTS] + [(v, c) for v in VARIANTS for c in tunics]
@@ -1265,6 +1319,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "self_files": self_files,
         "look_files": look_files,
         "look_items": look_item_files,
+        "blade_items": blade_files,
         "tunics_off": tunics_off,
         "test_tunic": test_tunic,
         "sound": sound,
@@ -1356,6 +1411,9 @@ def main(argv=None):
                     help="Hookshot's game: Host, Join and Co-op Settings as rows of the title (title_menu.py)")
     ap.add_argument("--look-slots", type=int, default=look_items.SLOTS, metavar="N",
                     help="how many players' puppets wear gear colours of their own (look_items.py; 0 to 4, 0: none)")
+    ap.add_argument("--blade-copies", type=int, default=look_items.BLADE_COPIES, metavar="N",
+                    help="copies of each sword per player number, so every puppet's blade is its own "
+                         "(look_items.BLADE_ITEMS; 0: none, puppets wear the game's swords)")
     a = ap.parse_args(argv)
     from_nup = os.path.isfile(a.romfs) and nup.is_nup(a.romfs)
     if from_nup:
@@ -1411,7 +1469,8 @@ def _main_build(a, romfs, hud_reader=None):
               sound_user=a.sound_user, tunics=tunics, test_tunic=a.test_tunic,
               stand_in_effects=a.seed_trail and not a.no_seed_trail, basic_xlink=a.basic_xlink,
               title_rows=a.title_rows, look_slots=max(0, min(a.look_slots, look_items.MAX_SLOTS)),
-              perception=a.perception and not a.no_perception)
+              perception=a.perception and not a.no_perception,
+              blade_copies=max(0, min(a.blade_copies, look_items.BLADE_COPIES)))
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

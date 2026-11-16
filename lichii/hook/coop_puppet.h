@@ -729,6 +729,16 @@ struct PlannerSettings {
     // (PackLookItems). None: every puppet wears the game's items.
     std::vector<std::string> look_items;
     std::size_t look_copies = 0;
+    // Blade copies (coop_puppet.json "blade_items", look_items.BLADE_ITEMS):
+    // the swords the pack has one copy of per player number, and how many
+    // numbers. A sword's blade is a material switch kept with its model
+    // resource, which every actor of one name shares, so a puppet in the
+    // game's own sword shows its blade only while our own sword is out. A
+    // puppet with no ready Look copy wears `<sword>_Blade<its number>`
+    // (DressInBlades): a resource of its own, on every runtime, for every
+    // player number. LICHII_COOP_BLADE_COPIES=0: none.
+    std::vector<std::string> blade_items;
+    std::size_t blade_copies = 0;
     // Scenes with stealth guards (coop_puppet.json "quiet_scenes",
     // tools/puppet_pack/build.py guard_scenes): there each puppet is its
     // quiet copy (QuietActor), which no perception sees, so a guard of this
@@ -751,7 +761,8 @@ struct LookItems {
     std::vector<std::string> actors;
     std::size_t copies = 0;
 };
-LookItems PackLookItems(std::string_view manifest);
+// `key`: "look_items", or "blade_items" (the same shape, "copies" per player number).
+LookItems PackLookItems(std::string_view manifest, std::string_view key = "look_items");
 
 // The pack's "quiet_scenes" (a list of scene names; none for a pack made
 // before them, or without perception).
@@ -767,6 +778,11 @@ std::string QuietActor(std::string_view actor);
 std::string LookItemName(std::string_view item, std::size_t copy);
 // Every piece of `gear` the pack has a copy of becomes that copy.
 void DressInLook(Gear& gear, std::size_t copy, const std::vector<std::string>& items);
+// A blade copy: "Weapon_Sword_Kokiri", 5 -> "Weapon_Sword_Kokiri_Blade5".
+std::string BladeItemName(std::string_view item, std::size_t number);
+// Every piece of `gear` that is still one of `items` (a Look copy is left
+// as it is) becomes player `number`'s blade copy, if the pack has that many.
+void DressInBlades(Gear& gear, std::size_t number, const std::vector<std::string>& items, std::size_t copies);
 
 // A puppet pack's coop_puppet.json lists both green puppets
 // (CoopPuppet_Child_Green, CoopPuppet_Adult_Green): only then may

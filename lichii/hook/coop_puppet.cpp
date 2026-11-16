@@ -2072,6 +2072,7 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         if (r.look_copy && *r.look_copy >= 1 && *r.look_copy <= settings_.look_copies) {
             DressInLook(t.gear, *r.look_copy, settings_.look_items);
         }
+        DressInBlades(t.gear, r.number, settings_.blade_items, settings_.blade_copies);
         t.drawn = r.drawn;
         t.ocarina = r.ocarina;
         if (show != Show::hide && CoopLinkSound::InHearing(position, r.position)) {
@@ -2159,15 +2160,32 @@ void DressInLook(Gear& gear, std::size_t copy, const std::vector<std::string>& i
     }
 }
 
-LookItems PackLookItems(std::string_view manifest) {
+std::string BladeItemName(std::string_view item, std::size_t number) {
+    return std::string(item) + "_Blade" + std::to_string(number);
+}
+
+void DressInBlades(Gear& gear, std::size_t number, const std::vector<std::string>& items, std::size_t copies) {
+    if (number < 1 || number > copies) {
+        return;
+    }
+    for (auto& piece : gear) {
+        if (piece && std::find(items.begin(), items.end(), *piece) != items.end()) {
+            piece = BladeItemName(*piece, number);
+        }
+    }
+}
+
+LookItems PackLookItems(std::string_view manifest, std::string_view key) {
     // "look_items": {"slots": N, "copies": 2N, "actors": ["...", ...], "files": [...]}, as
-    // build.py writes it (json.dumps); null for a pack without them.
+    // build.py writes it (json.dumps); null for a pack without them. "blade_items" the same,
+    // without "slots".
     LookItems out;
-    const auto at = manifest.find("\"look_items\"");
+    const std::string quoted = "\"" + std::string(key) + "\"";
+    const auto at = manifest.find(quoted);
     if (at == std::string_view::npos) {
         return out;
     }
-    const auto open = manifest.find_first_not_of(" \t\r\n:", at + 12);
+    const auto open = manifest.find_first_not_of(" \t\r\n:", at + quoted.size());
     if (open == std::string_view::npos || manifest[open] != '{') {
         return out;   // null: none
     }
