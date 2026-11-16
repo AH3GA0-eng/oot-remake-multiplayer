@@ -648,6 +648,8 @@ std::string_view ruto_wait_text(RutoWait why) {
   switch (why) {
     case RutoWait::not_got: return "nobody got it";
     case RutoWait::shown: return "shown to King Zora in some game (HavePlayedEvent.Dm_Zora_0010): spent";
+    case RutoWait::shown_king_waits:
+      return "shown in another game, but King Zora (ChallengeMgr Get_StoneOfWater) has not moved here: ours is kept";
     case RutoWait::shown_unread: return "HavePlayedEvent.Dm_Zora_0010 (King Zora read the letter) unread";
     case RutoWait::king_unread: return "King Zora's step (ChallengeMgr Get_StoneOfWater) unread";
     case RutoWait::king_moved: return "King Zora has moved here";
@@ -662,12 +664,17 @@ std::string_view ruto_wait_text(RutoWait why) {
 RutoLetter ruto_letter_plan(std::optional<bool> got, std::optional<bool> shown, std::optional<bool> king_moved,
                             const std::function<std::optional<bool>(std::uint32_t)>& valid,
                             const std::function<std::optional<std::uint32_t>(std::uint32_t)>& item) {
-  // Shown in any game: never given again, and a letter still held here is
-  // spent (row 117: the shower's went, the host kept one with no use). Only
-  // a bottle read as holding the letter is touched; an unread one is left.
+  // Shown in any game: never given again. A letter still held here is spent
+  // (row 117: the shower's went, the host kept one with no use), but only
+  // once our own King Zora has moved (Step07 or later read from our
+  // ChallengeMgr): while he still blocks the way, the letter is the only way
+  // past him, so it is kept until the quest catch-up moves him. Only a bottle
+  // read as holding the letter is touched; an unread one is left.
   if (shown == true) {
     for (const letters::Bottle& b : letters::kBottles) {
-      if (item(b.item) == letters::kLetter) return {RutoWait::shown, std::nullopt, b.item};
+      if (item(b.item) != letters::kLetter) continue;
+      if (king_moved != true) return {RutoWait::shown_king_waits, std::nullopt, std::nullopt};
+      return {RutoWait::shown, std::nullopt, b.item};
     }
     return {RutoWait::shown, std::nullopt, std::nullopt};
   }

@@ -1556,8 +1556,8 @@ TEST_CASE("items: Ruto's Letter shown to King Zora in one game is spent in every
   using coop::host::ruto_letter_plan;
   CHECK(coop::host::flag_hash("HavePlayedEvent.Dm_Zora_0010") == letters::kKingRead);
   // The report: the host's BottleB still holds the letter (BottleA a fish),
-  // the non-host showed theirs; the host's own King Zora step lags (its
-  // ChallengeMgr is not shared) and may read "not moved".
+  // the non-host showed theirs; the host's own King Zora step comes by the
+  // quest catch-up, separately from the scene's Bool.
   std::map<std::uint32_t, bool> valid;
   std::map<std::uint32_t, std::uint32_t> item;
   for (std::size_t i = 0; i < 5; ++i) {
@@ -1575,10 +1575,19 @@ TEST_CASE("items: Ruto's Letter shown to King Zora in one game is spent in every
     return it == item.end() ? std::nullopt : std::optional(it->second);
   };
   const auto moved = [](const char* step) { return coop::host::king_zora_moved(coop::host::flag_hash(step)); };
-  for (const auto king : {moved("Ready"), moved("Step07"), std::optional<bool>{}}) {
-    const auto plan = ruto_letter_plan(true, true, king, v, in);
+  for (const char* step : {"Step07", "Complete"}) {
+    const auto plan = ruto_letter_plan(true, true, moved(step), v, in);
     CHECK(plan.why == RutoWait::shown);
     CHECK(plan.spent == letters::kBottles[1].item);  // emptied here, as the scene emptied the shower's
+    CHECK_FALSE(plan.bottle);
+  }
+  // Shown elsewhere, but our King Zora has not moved (the catch-up has not
+  // reached Step07, or his step is unread): the letter is the only way past
+  // him, so it is kept; the next tick spends it once he has moved.
+  for (const auto king : {moved("Ready"), moved("Step06"), std::optional<bool>{}}) {
+    const auto plan = ruto_letter_plan(true, true, king, v, in);
+    CHECK(plan.why == RutoWait::shown_king_waits);
+    CHECK_FALSE(plan.spent);
     CHECK_FALSE(plan.bottle);
   }
   // Not shown yet: the held letter stays (King Zora still needs it here).

@@ -2417,15 +2417,16 @@ private:
     // Kakariko guard's Bool is set (by any player; shared story), the guard
     // never asks for the letter again, so ours is taken out as the guard
     // takes the shower's. Ruto's Letter: a bottle's contents, per player, so
-    // another player got the bottle empty while King Zora (our own
-    // ChallengeMgr) never moved: while he has not, the letter goes into our
+    // another player got the bottle empty: until someone shows it, while our
+    // King Zora (our own ChallengeMgr) has not moved, the letter goes into our
     // first empty bottle, as the game's own get puts it there. Both through
     // the game's setters; anything unread is left alone.
     // Row 117: once any player has shown Ruto's Letter (King Zora's scene
-    // Dm_Zora_0010, shared story), the letter is spent in every game: never
-    // given again, and one still in a bottle here is emptied, as that scene
-    // empties the shower's. Only while our Link is known to be in no event,
-    // so our own King Zora scene takes ours itself.
+    // Dm_Zora_0010, shared story), it is never given again, and one still in
+    // a bottle here is emptied, as that scene empties the shower's, once our
+    // own King Zora has moved too (the quest catch-up; before that it is the
+    // only way past him). Only while our Link is known to be in no event, so
+    // our own King Zora scene takes ours itself.
     void MendLetters(EmulatorMemory& memory, bool no_event) {
         namespace letters = coop::host::letters;
         coop::host::GameFlags flags(memory);

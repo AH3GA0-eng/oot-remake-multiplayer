@@ -256,15 +256,17 @@ namespace letters {
 constexpr std::uint32_t kZelda = 0x6be5c3b0;     // PouchData.Item_ZeldaLetter.StockNum
 constexpr std::uint32_t kGateOpen = 0x19898d14;  // Npc_Hylia_Soldier_003_GateOpen
 // Ruto's Letter is a bottle's contents (BottleItem Enum "Letter"), per player as
-// every bottle's contents: another player got only the bottle, empty, and King
-// Zora (the game's ChallengeMgr, per game) never moved for them.
+// every bottle's contents: another player got only the bottle, empty. King Zora
+// moves in each game by its own ChallengeMgr step (Get_StoneOfWater Step07),
+// which the shared quest catch-up (coop_quest.cpp) raises there, separately
+// from the scene's Bool below.
 constexpr std::uint32_t kRutoGot = 0x170b5df2;   // IsGet.Item_Bottle_Letter
 constexpr std::uint32_t kLetter = 0x0f24e808;    // the Enum value "Letter"
 // The scene of King Zora reading the letter and moving aside (romfs
 // Event/EventFlow/Dm_Zora_0010: the flow takes Item_Bottle_Letter out of the
 // bottle). Its HavePlayedEvent Bool is shared story (coop_story.cpp), so once
-// any player has shown the letter, every game has it: the letter is spent for
-// everyone, as the get was shared (tracker row 117).
+// any player has shown the letter, every game has it: never given again, and
+// spent in a game once its own King Zora has moved too (tracker row 117).
 constexpr std::uint32_t kKingRead = 0xbf9dfc7e;  // HavePlayedEvent.Dm_Zora_0010
 constexpr std::uint32_t kEmpty = 0xbe69de49;     // the Enum value "Empty"
 struct Bottle {
@@ -298,7 +300,8 @@ std::optional<bool> king_zora_moved(std::uint32_t live_step);
 // run where it never came said nothing about which test held it back.
 enum class RutoWait {
   not_got,        // IsGet.Item_Bottle_Letter unset (or unread)
-  shown,          // the letter was shown to King Zora in some game (kKingRead): spent
+  shown,          // the letter was shown to King Zora in some game (kKingRead): never given
+  shown_king_waits,  // shown elsewhere, but our King Zora has not moved (or is unread): ours is kept
   shown_unread,   // kKingRead unread: neither given nor taken
   king_unread,    // our ChallengeMgr's Get_StoneOfWater unread or at a step not in the quest
   king_moved,     // King Zora has moved here: no letter needed
@@ -310,8 +313,8 @@ enum class RutoWait {
 struct RutoLetter {
   RutoWait why = RutoWait::not_got;
   std::optional<std::uint32_t> bottle;  // the BottleItem flag, with `give`
-  // With `shown`: a bottle that still holds the letter, to empty as King
-  // Zora's own scene empties the shower's (the letter is spent everywhere).
+  // With `shown` and our King Zora moved: a bottle that still holds the
+  // letter, to empty as his own scene empties the shower's.
   std::optional<std::uint32_t> spent;
 };
 std::string_view ruto_wait_text(RutoWait why);
