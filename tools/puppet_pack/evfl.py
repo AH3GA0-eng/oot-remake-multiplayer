@@ -77,7 +77,7 @@ class Flow:
         elif t == 1:  # switch
             nc, cases = self.u16(o + 0xa), self.u64(o + 0x18)
             e.update(actor=self.u16(o + 0xc), query=self.u16(o + 0xe), params=self.container(self.u64(o + 0x10)),
-                     cases=[(self.u32(cases + 0x10 * k), self.u16(cases + 0x10 * k + 8)) for k in range(nc)])
+                     cases=[(self.u32(cases + 8 * k), self.u16(cases + 8 * k + 4)) for k in range(nc)])  # 8 bytes: value, event
         elif t == 2:  # fork
             nf, join, forks = self.u16(o + 0xa), self.u16(o + 0xc), self.u64(o + 0x10)
             e.update(join=join, forks=[self.u16(forks + 2 * k) for k in range(nf)])
@@ -117,3 +117,44 @@ class Flow:
         if e['type'] == 4:
             return f"subflow {e['flow']}:{e['entry']} {e['params']}"
         return ('fork', 'join')[e['type'] - 2] if e['type'] in (2, 3) else str(e)
+
+
+def walk_flows(load, flow, entry, answer=None):
+    """Every action reachable from `flow`:`entry`, sub flows followed (an empty flow name is the same file), as
+    (flow name, actor name, action name, params) in a depth-first order, each sub flow entry once. `load(name)`
+    gives the Flow of a file name. `answer(flow, actor, query, params)` gives a switch's case value, or None to take
+    every case. The game's Bool queries answer 0 for true: IsDreamWorld's case 0 is the boss rush's banc change in
+    Get_StoneOfFire_DefeatBoss, its case 1 the dungeon's death (BossOut, the quest step)."""
+    out, done = [], set()
+
+    def go(name, ent):
+        if (name, ent) in done:
+            return
+        done.add((name, ent))
+        f = load(name)
+        todo, seen = [f.entries[ent]], set()
+        while todo:
+            i = todo.pop()
+            if i == 0xffff or i in seen or i >= len(f.events):
+                continue
+            seen.add(i)
+            e = f.events[i]
+            if e['type'] == 0:
+                a = f.actors[e['actor']]
+                out.append((name, a['name'], a['actions'][e['action']], e['params']))
+                todo.append(e['next'])
+            elif e['type'] == 1:
+                a = f.actors[e['actor']]
+                v = answer(name, a['name'], a['queries'][e['query']], e['params']) if answer else None
+                todo.extend(reversed([c[1] for c in e['cases'] if v is None or c[0] == v]))
+            elif e['type'] == 2:
+                todo.append(e['join'])
+                todo.extend(reversed(e['forks']))
+            elif e['type'] == 3:
+                todo.append(e['next'])
+            elif e['type'] == 4:
+                go(e['flow'] or name, e['entry'])
+                todo.append(e['next'])
+
+    go(flow, entry)
+    return out
