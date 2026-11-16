@@ -22,6 +22,9 @@ using CoopObjects::LifeWrite;
 using CoopObjects::PlayWish;
 using CoopObjects::Seen;
 using CoopObjects::Sync;
+using CoopObjects::IsLateEncounter;
+using CoopObjects::kEncounterNearM;
+using CoopObjects::kEncounterWaitUs;
 
 namespace {
 
@@ -2019,6 +2022,119 @@ TEST_CASE("objects: a Gold Skulltula shaken out of a tree is announced and copie
     c.Receive(relayed);
     Tick(c, 100 * kMs, {Enemy(0x300, kHash, 1, 9.0f, "Enemy_Skulltula_Gold")}, 3);
     CHECK(c.Creates().empty());
+}
+
+TEST_CASE("objects: report 99, which placed enemies a game's own logic makes later (late encounters)") {
+    // The Gerudo Fortress jail guards (CarpenterSet logic) and mini-boss or
+    // ambush enemies of the same kind.
+    CHECK(IsLateEncounter("Enemy_MiddleBoss_GerudoThief"));
+    CHECK(IsLateEncounter("Enemy_MiddleBoss_GerudoThief_04"));
+    CHECK(IsLateEncounter("Enemy_MiddleBoss_Lizalfos"));
+    CHECK(IsLateEncounter("Enemy_MiddleBoss_FlareDancer"));
+    CHECK(IsLateEncounter("Enemy_Wolfos"));
+    // Not: the Gold Skulltula (announced at once, its own rule), bosses and
+    // their parts, what the sync makes or keeps its own way, non-enemies.
+    CHECK_FALSE(IsLateEncounter("Enemy_Skulltula_Gold"));
+    CHECK_FALSE(IsLateEncounter("Enemy_DungeonBoss_Gohma"));
+    CHECK_FALSE(IsLateEncounter("Enemy_Gohma_Larva"));
+    CHECK_FALSE(IsLateEncounter("Enemy_DungeonBoss_Gohma_Egg"));
+    CHECK_FALSE(IsLateEncounter("Enemy_MiddleBoss_FlareDancer_FireBody"));
+    CHECK_FALSE(IsLateEncounter("Enemy_Shabom_BigOctoChild"));
+    CHECK_FALSE(IsLateEncounter("Enemy_KotakeKoumeBattleManager"));
+    CHECK_FALSE(IsLateEncounter("Enemy_Stalchild"));
+    CHECK_FALSE(IsLateEncounter("Enemy_Poe"));
+    CHECK_FALSE(IsLateEncounter("Enemy_Stalfos_Dictionary"));
+    CHECK_FALSE(IsLateEncounter("Npc_Gerudo_FortressGuard"));
+    CHECK_FALSE(IsLateEncounter("Obj_Dungeon_SmallKey_GerudoFortress_01"));
+}
+
+TEST_CASE("objects: report 99, a jail guard only the host's logic made is copied to the guest near it") {
+    constexpr std::uint64_t kHash = 0x2e80bd2b39d06e43ULL;  // GerudoFortress cell 1's guard
+    const std::string kThief = "Enemy_MiddleBoss_GerudoThief";
+    const proto::ObjectId id{proto::ObjectKind::placed, 0, kHash};
+    Sync a;
+    // Host: the guard is made when its player walks into the cell, 8 s in.
+    Tick(a, 0, {}, 1);
+    const std::vector<Seen> guard = {Enemy(0x100, kHash, 4, 23.0f, kThief)};
+    CHECK(All<proto::ObjectSpawn>(Tick(a, 8000 * kMs, guard, 1)).empty());
+    Own(a, id, 1, 2);
+    const auto spawns = All<proto::ObjectSpawn>(Tick(a, 8100 * kMs, guard, 1));
+    REQUIRE(spawns.size() == 1);
+    CHECK(spawns[0].id == id);
+    CHECK(spawns[0].actor == kThief);
+    CHECK(All<proto::ObjectSpawn>(Tick(a, 8200 * kMs, guard, 1)).empty());
+
+    // One loaded with the scene is not announced (every game has it).
+    Sync early;
+    Tick(early, 0, guard, 1);
+    Own(early, id, 1);
+    CHECK(All<proto::ObjectSpawn>(Tick(early, 100 * kMs, guard, 1)).empty());
+
+    proto::ObjectSpawn relayed = spawns[0];
+    relayed.player_number = 1;
+
+    // Guest far away (another part of the fortress): held, no copy.
+    Sync b;
+    b.SetPlayer(proto::Vec3{23.0f + kEncounterNearM + 10.0f, 0.0f, 0.0f});
+    Tick(b, 0, {}, 2);
+    b.Receive(relayed);
+    Tick(b, 8300 * kMs, {}, 2);
+    Tick(b, 20000 * kMs, {}, 2);
+    CHECK(b.Creates().empty());
+    // Guest walks up to the cell: after kEncounterWaitUs without its own, a copy.
+    b.SetPlayer(proto::Vec3{25.0f, 0.0f, 0.0f});
+    Tick(b, 21000 * kMs, {}, 2);
+    CHECK(b.Creates().empty());
+    Tick(b, 21000 * kMs + kEncounterWaitUs, {}, 2);
+    auto creates = b.Creates();
+    REQUIRE(creates.size() == 1);
+    CHECK(creates[0].name == kThief);
+    CHECK(creates[0].position[0] == doctest::Approx(23.0f));
+    CHECK(b.OwnerOf(id) == 1);
+    b.Bind({{creates[0].key, 0x900}});
+    Tick(b, 23000 * kMs, {Enemy(0x900, ~0ULL, 4, 23.0f, kThief)}, 2);
+    REQUIRE(b.IdOf(0x900));
+    CHECK(*b.IdOf(0x900) == id);
+    // The guest's own logic makes its guard too (walked into the cell): the copy goes.
+    b.Bind({{creates[0].key, 0x900}});
+    Tick(b, 23100 * kMs, {Enemy(0x900, ~0ULL, 4, 23.0f, kThief), Enemy(0x950, kHash, 4, 23.0f, kThief)}, 2);
+    CHECK(*b.IdOf(0x950) == id);
+    CHECK_FALSE(b.IdOf(0x900));
+    REQUIRE(b.Creates().size() == 1);
+    CHECK(b.Creates()[0].removed);
+
+    // Guest near, its own guard made in the wait: no copy.
+    Sync c;
+    c.SetPlayer(proto::Vec3{25.0f, 0.0f, 0.0f});
+    Tick(c, 0, {}, 2);
+    c.Receive(relayed);
+    Tick(c, 8300 * kMs, {}, 2);
+    Tick(c, 8400 * kMs, {Enemy(0x300, kHash, 4, 23.0f, kThief)}, 2);
+    Tick(c, 8400 * kMs + 2 * kEncounterWaitUs, {Enemy(0x300, kHash, 4, 23.0f, kThief)}, 2);
+    CHECK(c.Creates().empty());
+
+    // The host beat it before the guest came near: never copied.
+    Sync d;
+    d.SetPlayer(proto::Vec3{200.0f, 0.0f, 0.0f});
+    Tick(d, 0, {}, 2);
+    d.Receive(relayed);
+    Tick(d, 8300 * kMs, {}, 2);
+    d.Receive(proto::ObjectRemove{1, id, 2, proto::RemoveReason::gone, {}});
+    Tick(d, 8400 * kMs, {}, 2);
+    d.SetPlayer(proto::Vec3{25.0f, 0.0f, 0.0f});
+    Tick(d, 9000 * kMs, {}, 2);
+    Tick(d, 9000 * kMs + kEncounterWaitUs, {}, 2);
+    CHECK(d.Creates().empty());
+
+    // A scene change forgets what was held.
+    Sync e;
+    e.SetPlayer(proto::Vec3{25.0f, 0.0f, 0.0f});
+    Tick(e, 0, {}, 2);
+    e.Receive(relayed);
+    Tick(e, 8300 * kMs, {}, 2);
+    Tick(e, 8400 * kMs, {}, 2, "GerudoValley");
+    Tick(e, 8400 * kMs + 2 * kEncounterWaitUs, {}, 2, "GerudoValley");
+    CHECK(e.Creates().empty());
 }
 
 TEST_CASE("objects: a hurt carries the hitter's place, an animal's life is written") {
