@@ -290,7 +290,7 @@ void Sync::EndFight(Actions& out) {
 
 void Sync::Died(Actions& out) {
     EndFight(out);
-    out.beaten_here = here_;  // the walk read the boss gone: its death, proven
+    out.beaten_here = here_;  // a body read at life 0: its death, proven
     out.log.push_back("boss beaten (" + std::string(here_->outro) + ")");
 }
 
@@ -526,8 +526,10 @@ Actions Sync::Step(const Local& local, std::uint64_t now_us) {
                     // Maybe the death, maybe a grab: decided while it runs.
                     provisional_ = true;
                     out.log.push_back("an event in the fight; the boss is still there: waiting to see");
+                } else if (local.boss_read_dead) {
+                    Died(out);  // read at life 0
                 } else if (local.boss_alive.has_value()) {
-                    Died(out);  // read gone
+                    GuessedOver(out, "the boss gone without a reading at life 0");
                 } else {
                     GuessedOver(out, "an event in the fight, the boss not read");
                 }
@@ -542,10 +544,11 @@ Actions Sync::Step(const Local& local, std::uint64_t now_us) {
                 const bool long_event = now_us - outro_at_ >= kLongEventUs && !untouched;
                 if (gone || (long_event && local.event)) {
                     provisional_ = false;
-                    if (gone) {
+                    if (gone && local.boss_read_dead) {
                         Died(out);
                     } else {
-                        GuessedOver(out, "a long event with the boss hurt");
+                        GuessedOver(out, gone ? "the boss gone without a reading at life 0"
+                                              : "a long event with the boss hurt");
                     }
                 } else if (fell) {
                     provisional_ = false;

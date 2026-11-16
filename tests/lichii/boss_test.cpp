@@ -181,7 +181,8 @@ TEST_CASE("boss: our own intro and death, read with no name, are told to the are
         CHECK(g.phase() == Sync::Phase::outro);
     }
     Local dying = At("ForestTemple", Forest().arrive, true);
-    dying.boss_alive = false;  // the walk read it gone
+    dying.boss_alive = false;  // the walk read it at life 0
+    dying.boss_read_dead = true;
     a = s.Tick(dying, 90 * kS);
     CHECK(a.beaten_here == &Forest());
     CHECK(a.intro_here == nullptr);
@@ -364,6 +365,7 @@ namespace {
 Local Alive(Vec p, bool event, std::optional<bool> alive, std::uint8_t self = 2) {
     Local l = At("ForestTemple", p, event, self);
     l.boss_alive = alive;
+    l.boss_read_dead = alive == false;  // these fights' deaths are read at life 0
     return l;
 }
 
@@ -504,7 +506,21 @@ TEST_CASE("boss: a heuristic Defeat never reaches the record") {
     a = u.Tick(Alive(Forest().arrive, false, std::nullopt), 33 * kS);
     CHECK(Has(a, proto::BossState::defeated));
     CHECK_FALSE(Recorded(a));
-    // A proven death (the walk read the boss gone) reaches it, once.
+    // 4. Gone without any reading at life 0 (a body never read this scene): a guess too.
+    Sync w;
+    ToFight(w);
+    Local gone = Alive(Forest().arrive, true, false);
+    gone.boss_read_dead = false;
+    a = w.Tick(gone, 30 * kS);
+    CHECK(Has(a, proto::BossState::defeated));
+    CHECK_FALSE(Recorded(a));
+    Sync x;
+    ToFight(x);
+    x.Tick(Alive(Forest().arrive, true, true), 30 * kS);  // provisional
+    a = x.Tick(gone, 31 * kS);
+    CHECK(Has(a, proto::BossState::defeated));
+    CHECK_FALSE(Recorded(a));
+    // A proven death (a body read at life 0) reaches it, once.
     Sync v;
     ToFight(v);
     a = v.Tick(Alive(Forest().arrive, true, false), 30 * kS);

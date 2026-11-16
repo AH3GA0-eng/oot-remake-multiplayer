@@ -265,6 +265,7 @@ struct Glue {
         if (scene) {
             if (const Room* room = RoomOfScene(*scene)) {
                 local.boss_alive = CoopObjects::LastBossAlive(Bodies(*room));
+                local.boss_read_dead = CoopObjects::LastBossReadDead(Bodies(*room));
                 local.boss_hurt = CoopObjects::LastBossHurt(Bodies(*room));
                 // A Game Over here is no boss's death (boss-gameover-b): Link's own Life at 0.
                 if (const auto life = CoopObjects::OurLinkLife()) {
@@ -314,7 +315,6 @@ struct Glue {
                 searched.emplace_back(act.intro_here->intro);
             }
             if (act.beaten_here != nullptr) {
-                CoopBossBeaten::TheRecord().Add(act.beaten_here->index);  // the walk read it gone: proven (G2)
                 searched.emplace_back(act.beaten_here->outro);
             }
         }

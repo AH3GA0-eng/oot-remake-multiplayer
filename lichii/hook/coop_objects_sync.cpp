@@ -164,6 +164,24 @@ std::optional<bool> BossAliveKept(const std::vector<Seen>& walk, std::span<const
     return removed_alive ? std::optional<bool>(true) : alive;
 }
 
+bool BossReadDead(const std::vector<Seen>& walk, std::span<const std::string_view> bodies, const BossLives& last) {
+    if (BossAliveKept(walk, bodies, last) != false) {
+        return false;
+    }
+    for (const Seen& s : walk) {
+        if (std::find(bodies.begin(), bodies.end(), s.name) != bodies.end() && s.life && s.life->life <= 0) {
+            return true;
+        }
+    }
+    for (const std::string_view body : bodies) {
+        const auto it = last.find(body);
+        if (it != last.end() && it->second.life <= 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::optional<bool> BossOurs(const std::vector<Seen>& walk, std::span<const std::uint64_t> ours,
                              std::span<const std::string_view> bodies, std::uint64_t now_us,
                              std::map<std::string, BossOwnership, std::less<>>& last) {
