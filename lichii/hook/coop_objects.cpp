@@ -1327,6 +1327,11 @@ public:
                 world_.Reset();
                 block_retry_.clear();
                 ForgetBosses();  // (not connected, or no scene: the title)
+                // No owner or copy any more: our game runs every boss of its own again (a copy held at life 1
+                // for its owner could not die after a leave or a drop).
+                if (CoopBossNative::Table& bosses = CoopBossNative::TheTable(); bosses.BrainOn()) {
+                    bosses.Publish({});
+                }
                 sharing_ = false;
             }
             return;
