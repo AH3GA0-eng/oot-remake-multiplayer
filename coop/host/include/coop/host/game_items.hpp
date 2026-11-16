@@ -17,10 +17,13 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <functional>
+#include <mutex>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -182,6 +185,48 @@ std::optional<std::string_view> ocarina_equip_mend(std::int32_t fairy, std::int3
 // raised; nothing for an ocarina not held.
 std::vector<std::uint32_t> ocarina_bools_mend(std::int32_t fairy, std::int32_t time,
                                               const std::function<std::optional<bool>(std::uint32_t)>& get);
+
+// Rows 93 and 103 (docs/items.md, "The game's own equip"): the flags alone never let a shared ocarina out. The
+// game equips what PlayerStatus.Equip<slot> names only when it asks Link's equipment for it: at a save load, and
+// in the AI node OneShotPlayerEquipDynamicEquipmentFromGameData (main+0x290b1b0), which calls
+// f_7102df6c80(equipment, slot). Slots 13 and 16 both read EquipOcarina; the game's own refreshes (main+0xf201b0,
+// +0xf202c0, +0x2df6290) ask both, 13 first. Link's equipment: actor +0x270, then +0x200 (f_71007f7690).
+namespace ocarina {
+constexpr std::uint64_t kEquipFromGameData = 0x2df6c80;  // main offset: (equipment, slot)
+constexpr std::uint64_t kActorEquipment = 0x270;         // Player actor -> its equipment holder
+constexpr std::uint64_t kHolderEquipment = 0x200;        // holder -> the equipment the node passes
+constexpr std::array<std::uint32_t, 2> kEquipSlots{13, 16};
+}  // namespace ocarina
+
+// Asks the game to equip the ocarina from its flags once, after co-op changed them (OcarinaEquip). Thread-safe:
+// the hook's frame arms it, the game's calc thread steps it (a CoopCallers caller).
+class OcarinaEquip {
+ public:
+  // Co-op wrote the ocarina's flags for `name` (the equipped name, or the Bools of an ocarina already named): the
+  // game is asked once the live name reads `name`.
+  void want(std::string_view name);
+  // Each frame: `live` is EquipOcarina as read now (nothing: unread). Ready to ask once it has read the wanted name
+  // for kSettleFrames frames in a row (a queued String64 already reads so before the game's applier wrote it),
+  // with Link's actor known and nothing running (`busy`: an event, a menu, the pause or a load).
+  static constexpr int kSettleFrames = 30;
+  void arm(std::optional<std::string_view> live, bool link_known, bool busy);
+  // The calc thread: the next slot to ask, or nothing. `after_call` false starts a frame. After the last slot the
+  // want is spent (a note says so).
+  std::optional<std::uint32_t> step(bool after_call);
+  // The equipment could not be read: the want stays, and is asked again on a later frame.
+  void not_now();
+  // Lines for the log since the last call.
+  std::vector<std::string> take_notes();
+  bool waiting() const;
+
+ private:
+  mutable std::mutex mutex_;
+  std::optional<std::string> wanted_;
+  bool armed_ = false;
+  int seen_ = 0;
+  std::size_t next_ = 0;
+  std::vector<std::string> notes_;
+};
 
 // The two letters (issue 58, docs/items.md, "The letters").
 namespace letters {
