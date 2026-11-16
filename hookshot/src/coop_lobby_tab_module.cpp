@@ -96,7 +96,7 @@ Lobby Read(int max_players) {
         p.host_mutes = s.host_mutes;
         p.own_mutes = s.own_mutes;
         p.talking = s.self ? CoopVoice::Talking() : CoopVoice::Speaking(s.number);
-        if (s.dbno == proto::DbnoState::downed) {
+        if (s.dbno == proto::DbnoState::downed || s.dbno == proto::DbnoState::spectating) {  // spectating: still down
             p.life = Player::Life::downed;
         } else if (s.dbno == proto::DbnoState::out) {
             p.life = Player::Life::out;

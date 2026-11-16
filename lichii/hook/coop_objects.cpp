@@ -2627,6 +2627,7 @@ private:
             return false;
         }
         std::optional<coop::protocol::Vec3> player;
+        std::vector<coop::protocol::Vec3> foes;  // down but not out: living enemies, where they stand
         // Issue 144 and the scrubs' one-time sales: the scrubs whose flags may delete them from under
         // an event of ours (coop_scrub_talk.h, coop_scrub_sale.h).
         struct TalkScrub {
@@ -2682,6 +2683,16 @@ private:
             // Difficulty: a made actor that may be an extra the director has not bound yet waits for it.
             const bool extra_unbound = (known.second == 0 || known.second == ~u64{0}) &&
                                        extras_.Holds(known.first, now_ms);
+            if (CoopDifficulty::IsEnemy(known.first, false)) {
+                // Down but not out (CoopDbno::NoteEnemiesNear): where the living enemies stand.
+                if (const auto value = LifeValue(r, a); value && r.Get<s32>(value->first + 8).value_or(0) > 0) {
+                    coop::protocol::Vec3 at{};
+                    for (std::size_t i = 0; i < 3; ++i) {
+                        at[i] = r.Get<float>(a + kActorPosition + 4 * i).value_or(0.0f);
+                    }
+                    foes.push_back(at);
+                }
+            }
             if (CoopDifficulty::IsEnemy(known.first, CoopEnemyShots::IsEnemyShot(known.first))) {
                 // Difficulty: an attacker (a boss, one with its copies' weight folded in, or plain).
                 CoopDifficulty::TheKinds().Mark(a, CoopDifficulty::AttackerKind(known.first, known.second,
@@ -2867,6 +2878,7 @@ private:
         }
         names_ = std::move(names);
         life_components_ = std::move(life_components);
+        CoopDbno::NoteEnemiesNear(player && CoopDbno::AnyNear(*player, foes));
         sync_.SetPlayer(player);
         sync_.SetLures(CoopProjectiles::TheLures().Get());  // issue 151: our cast lures
         player_ = player;

@@ -253,6 +253,16 @@ bool OnChat(std::string_view text, coop::host::Session& session) {
     return true;
 }
 
+bool Beside(std::uint8_t number, std::string name) {
+    Glue& g = TheGlue();
+    std::lock_guard lock(g.mutex);
+    if (!g.on || number == 0) {
+        return false;
+    }
+    g.want = std::make_pair(number, std::move(name));
+    return true;
+}
+
 void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
     using coop::net::EventKind;
     Glue& g = TheGlue();

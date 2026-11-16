@@ -38,6 +38,11 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client);
 void Frame(Core::System& system, std::uint64_t main_base, const std::optional<coop::host::PlayerReading>& reading,
            coop::host::Session* session);
 
+// Down but not out (coop_dbno_game.cpp): a spectating player comes back
+// beside player `number` (`name` for the chat), as /teleport takes them
+// there. Any thread. False when teleport is off in this game.
+bool Beside(std::uint8_t number, std::string name);
+
 // The chat notices since the last call (for the chat box).
 std::vector<std::string> TakeLines();
 

@@ -1691,7 +1691,22 @@ COOP_HOOKSHOT_EXPORT int hos_coop_menu_picture(int tab, HosCoopMenuPicture* out)
 }
 // The gameplay camera (hos_coop_view.h, patch 0019): around your own Link while the Customize page shows him.
 COOP_HOOKSHOT_EXPORT int hos_coop_view(double eye[3], double target[3]) {
-    return g_on && CoopLookView::Camera(eye, target) ? 1 : 0;
+    if (!g_on || eye == nullptr || target == nullptr) {
+        return 0;
+    }
+    if (CoopLookView::Camera(eye, target)) {
+        return 1;
+    }
+    // Down but not out, spectating (coop_dbno_game.h): the game's own camera, as it follows our Link, moved
+    // onto the player we watch, so it follows them the same way (the right stick still turns it).
+    if (const auto off = CoopDbno::SpectateOffset()) {
+        for (int i = 0; i < 3; ++i) {
+            eye[i] += (*off)[i];
+            target[i] += (*off)[i];
+        }
+        return 1;
+    }
+    return 0;
 }
 COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) {
     if (!g_on || stick == nullptr) {

@@ -8,6 +8,7 @@
 #include <cctype>
 #include <charconv>
 #include <cmath>
+#include <iterator>
 
 #include "coop_pvp.h"  // Hearts
 
@@ -186,6 +187,69 @@ void Machine::Enter(State state, std::uint64_t now_us) {
     out_seen_dead_ = false;
     out_written_us_ = now_us;
     hold_us_.fill(0);
+    watch_ = 0;
+    spectate_since_us_ = now_us;
+    quiet_us_ = 0;
+}
+
+std::uint8_t Machine::PickWatch(const Input& in) const {
+    // Who may be watched: up and in the game, in the order of their numbers.
+    std::vector<const Teammate*> up;
+    for (const Teammate& t : in.team) {
+        if (ValidPlayer(t.number) && t.state == State::up && t.in_game) {
+            up.push_back(&t);
+        }
+    }
+    if (up.empty()) {
+        return 0;
+    }
+    std::sort(up.begin(), up.end(), [](const Teammate* a, const Teammate* b) { return a->number < b->number; });
+    const auto at = std::find_if(up.begin(), up.end(), [&](const Teammate* t) { return t->number == watch_; });
+    if (at != up.end()) {
+        // The one watched stays, until the switch button: then the next.
+        if (!in.next) {
+            return watch_;
+        }
+        return std::next(at) == up.end() ? up.front()->number : (*std::next(at))->number;
+    }
+    // A first pick (or the one watched is no longer up): the nearest in our
+    // scene, else the lowest number elsewhere.
+    const Teammate* best = nullptr;
+    float best_m = 0.0f;
+    for (const Teammate* t : up) {
+        if (!t->scene || !in.scene || *t->scene != *in.scene || !t->position || !Finite(*t->position)) {
+            continue;
+        }
+        const float m = Level(in.position, *t->position);
+        if (best == nullptr || m < best_m) {
+            best = t;
+            best_m = m;
+        }
+    }
+    return (best != nullptr ? best : up.front())->number;
+}
+
+bool Machine::Quiet(const Input& in) const {
+    // The one watched, and everyone up in its scene: no enemy near any of them.
+    const Teammate* watched = nullptr;
+    for (const Teammate& t : in.team) {
+        if (t.number == watch_) {
+            watched = &t;
+        }
+    }
+    if (watched == nullptr || watched->state != State::up || !watched->in_game) {
+        return false;
+    }
+    for (const Teammate& t : in.team) {
+        if (t.state != State::up || !t.in_game) {
+            continue;
+        }
+        const bool with_them = &t == watched || (t.scene && watched->scene && *t.scene == *watched->scene);
+        if (with_them && t.threat == Threat::near) {
+            return false;
+        }
+    }
+    return true;
 }
 
 std::uint8_t Machine::PickReviver(const Input& in) const {
@@ -239,6 +303,12 @@ Output Machine::Frame(const Input& in) {
             Enter(State::downed, in.now_us);
             left_us_ = in.rules.BleedUs();
             out.events.push_back(Event::went_down);
+        } else if (active && in.life && *in.life <= 0) {
+            // The last one standing (the guard was off) or a pit: the game's
+            // own death runs. Out, so the others know nobody is left up.
+            Enter(State::out, in.now_us);
+            out_seen_dead_ = true;
+            out.events.push_back(Event::died);
         }
         break;
     case State::downed:
@@ -275,10 +345,58 @@ Output Machine::Frame(const Input& in) {
             mercy_until_us_ = in.now_us + kMercyUs;
             out.write_life = revive_life;
             out.events.push_back(Event::revived);
-        } else if (left_us_ == 0 || alone_us_ >= kWipeGraceUs) {
-            out.events.push_back(left_us_ == 0 ? Event::bled_out : Event::wiped);
+        } else if (alone_us_ >= kWipeGraceUs) {
+            out.events.push_back(Event::wiped);
             Enter(State::out, in.now_us);
             out.write_life = 0;
+        } else if (left_us_ == 0) {
+            // Not revived in time: watch the others until the fight is over.
+            Enter(State::spectating, in.now_us);
+            watch_ = PickWatch(in);
+            out.by = watch_;
+            out.events.push_back(Event::bled_out);
+            if (in.life && *in.life != kDownedLife) {
+                out.write_life = kDownedLife;
+            }
+        } else if (in.life && *in.life != kDownedLife) {
+            out.write_life = kDownedLife;
+        }
+        break;
+    case State::spectating:
+        if (in.life && *in.life <= 0) {
+            Enter(State::out, in.now_us);
+            out_seen_dead_ = true;
+            out.events.push_back(Event::died);
+            break;
+        }
+        if (in.connected && !in.rules.on) {
+            Enter(State::up, in.now_us);
+            out.write_life = revive_life;
+            out.events.push_back(Event::got_up);
+            break;
+        }
+        if (gone_since_us_ != 0 && in.now_us >= gone_since_us_ + kGoneUs) {
+            Enter(State::up, in.now_us);
+            break;
+        }
+        alone_us_ = someone_up || !in.connected ? 0 : alone_us_ + step;
+        if (alone_us_ >= kWipeGraceUs) {
+            out.events.push_back(Event::wiped);
+            Enter(State::out, in.now_us);
+            out.write_life = 0;
+            break;
+        }
+        watch_ = PickWatch(in);
+        quiet_us_ = in.connected && Quiet(in) ? quiet_us_ + step : 0;
+        if (quiet_us_ >= kQuietUs && in.now_us >= spectate_since_us_ + kSpectateMinUs) {
+            const std::uint8_t beside = watch_;
+            Enter(State::up, in.now_us);
+            mercy_until_us_ = in.now_us + kMercyUs;
+            out.write_life = std::max<std::int32_t>(
+                kDownedLife,
+                in.max_life && *in.max_life > 0 ? std::min(kRespawnLife, *in.max_life) : kRespawnLife);
+            out.by = beside;
+            out.events.push_back(Event::respawned);
         } else if (in.life && *in.life != kDownedLife) {
             out.write_life = kDownedLife;
         }
@@ -311,6 +429,10 @@ Output Machine::Frame(const Input& in) {
                            ? 0.0f
                            : std::min(1.0f, static_cast<float>(held_us_) /
                                                 static_cast<float>(in.rules.ReviveUs()));
+        break;
+    case State::spectating:
+        out.guard = Guard::shielded;
+        out.watching = watch_;
         break;
     case State::out:
         out.guard = Guard::off;
@@ -391,6 +513,30 @@ std::uint64_t Roster::LeftUs(const Entry& entry, std::uint64_t now_us) {
     return said - std::min(said, now_us - entry.at_us);
 }
 
+// --- Enemies near our Link ---
+
+bool AnyNear(const Vec3& self, std::span<const Vec3> foes) {
+    if (!Finite(self)) {
+        return false;
+    }
+    return std::any_of(foes.begin(), foes.end(), [&](const Vec3& f) {
+        return Finite(f) && std::fabs(f[1] - self[1]) <= kReviveHighM * 4.0f && Level(self, f) <= kThreatReachM;
+    });
+}
+
+std::optional<proto::DbnoThreat> ThreatTeller::Frame(std::uint64_t now_us, bool able, bool near) {
+    if (!able) {
+        sent_.reset();
+        return std::nullopt;
+    }
+    if (sent_ && *sent_ == near && now_us < sent_us_ + kThreatSendUs) {
+        return std::nullopt;
+    }
+    sent_ = near;
+    sent_us_ = now_us;
+    return proto::DbnoThreat{0, near};
+}
+
 // --- The reviver's side ---
 
 void Reviver::Reset() {
@@ -457,6 +603,14 @@ Pad DownedPad(const Pad& in) {
     return out;
 }
 
+Pad SpectatorPad(const Pad& in) {
+    Pad out;
+    out.buttons = in.buttons & (pad::plus | pad::minus | pad::stick_r_dirs);
+    out.stick[2] = in.stick[2];
+    out.stick[3] = in.stick[3];
+    return out;
+}
+
 Pad ReviverPad(const Pad& in) {
     Pad out = in;
     out.buttons &= ~pad::a;
@@ -495,7 +649,10 @@ std::optional<std::string> OwnLine(Event event, std::string_view by_name) {
     case Event::revived:
         return std::string(by_name.empty() ? "A teammate" : by_name) + " revived you";
     case Event::bled_out:
-        return "Nobody reached you in time";
+        return "Nobody reached you in time: you watch " + std::string(by_name.empty() ? "a teammate" : by_name) +
+               " and come back once no enemy is near (A: watch the next player)";
+    case Event::respawned:
+        return "No enemy is near: you are back beside " + std::string(by_name.empty() ? "a teammate" : by_name);
     case Event::wiped:
         return "Nobody is left standing";
     case Event::got_up:
@@ -520,13 +677,15 @@ std::optional<std::string> TheirLine(const std::optional<proto::DbnoStatus>& bef
         return who + " is down: hold A beside them to revive";
     case State::out:
         return who + " is out";
+    case State::spectating:
+        return who + " is watching: back once no enemy is near";
     case State::up:
         if (was == State::downed && before->reviver != 0) {
             return std::string(reviver_name.empty() ? "P" + std::to_string(before->reviver)
                                                     : std::string(reviver_name)) +
                    " revived " + who;
         }
-        if (was == State::downed) {
+        if (was == State::downed || was == State::spectating) {
             return who + " is up again";
         }
         break;  // back after out: the game's own business
