@@ -166,14 +166,19 @@ class Config(TempDir):
         p = self.write({"token": tok, "guild_id": "123", "dev_channel_id": 456, "report_channel_id": ""})
         c = core.load_config(p)
         self.assertEqual((c["guild_id"], c["dev_channel_id"], c["report_channel_id"]), (123, 456, None))
+        self.assertIsNone(c["application_id"])
+        p = self.write({"token": tok, "application_id": "789", "guild_id": "", "dev_channel_id": "456"})
+        c = core.load_config(p)
+        self.assertEqual((c["guild_id"], c["application_id"], c["dev_channel_id"]), (None, 789, 456))
         self.assertEqual(c["coord_dir"], (self.dir / "coord").resolve())
 
     def test_errors_never_show_token(self):
         tok = "SECRET" * 10
         cases = [
-            {"token": tok, "dev_channel_id": 1},
+            {"token": tok, "guild_id": 1},  # no dev channel
             {"token": tok, "guild_id": "abc", "dev_channel_id": 1},
-            {"token": tok, "guild_id": 1},
+            {"token": tok, "dev_channel_id": "#dev-reports"},
+            {"token": tok, "dev_channel_id": 1, "application_id": -5},
             {"token": "short", "guild_id": 1, "dev_channel_id": 1},
         ]
         for obj in cases:

@@ -64,7 +64,9 @@ def load_config(path):
     coord = raw.get("coord_dir") or str(path.resolve().parent.parent)
     return {
         "token": token.strip(),
-        "guild_id": snowflake("guild_id", True),
+        # Optional: without it the bot reads the server from the dev channel.
+        "guild_id": snowflake("guild_id", False),
+        "application_id": snowflake("application_id", False),
         "dev_channel_id": snowflake("dev_channel_id", True),
         "report_channel_id": snowflake("report_channel_id", False),
         "coord_dir": Path(coord),

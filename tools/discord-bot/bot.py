@@ -65,21 +65,32 @@ class ReportBot(discord.Client):
     def __init__(self, cfg):
         intents = discord.Intents.none()
         intents.guilds = True  # channel cache only; not privileged
-        super().__init__(intents=intents, allowed_mentions=discord.AllowedMentions.none())
+        super().__init__(intents=intents, allowed_mentions=discord.AllowedMentions.none(),
+                         application_id=cfg.get("application_id"))
         self.cfg = cfg
-        self.guild = discord.Object(id=cfg["guild_id"])
+        self.guild = None  # set in setup_hook
         self.tree = app_commands.CommandTree(self)
         self.limiter = core.RateLimiter(limit=3, window=3600.0)
         self.lock = asyncio.Lock()
         self.logs_dir = cfg["coord_dir"] / "player-logs"
         self.tracker = cfg["coord_dir"] / "reports" / core.TRACKER_NAME
-        self._add_commands()
 
     async def setup_hook(self):
-        # Guild commands show up at once (global ones can take an hour). Global
-        # commands of the application are left alone.
+        # The server: from the config, else from the dev channel (the bot must see it).
+        guild_id = self.cfg["guild_id"]
+        if guild_id is None:
+            try:
+                channel = await self.fetch_channel(self.cfg["dev_channel_id"])
+                guild_id = getattr(channel, "guild_id", None) or getattr(getattr(channel, "guild", None), "id", None)
+            except discord.HTTPException as e:
+                log.warning("cannot read the dev channel %s (%s); is the bot in the server?",
+                            self.cfg["dev_channel_id"], type(e).__name__)
+        self.guild = discord.Object(id=guild_id) if guild_id else None
+        self._add_commands()
+        # Server commands show up at once; global ones (fallback) can take up to an hour.
         synced = await self.tree.sync(guild=self.guild)
-        log.info("commands synced to the server: %s", ", ".join(c.name for c in synced))
+        where = f"server {guild_id}" if self.guild else "all servers (global)"
+        log.info("commands synced to %s: %s", where, ", ".join(c.name for c in synced))
 
     async def on_ready(self):
         log.info("online as %s", self.user)
@@ -100,7 +111,7 @@ class ReportBot(discord.Client):
         ):
             await self.handle_report(interaction, description, logs, version)
 
-        self.tree.add_command(report, guild=self.guild)
+        self.tree.add_command(report, guild=self.guild)  # guild=None: global
 
     async def handle_report(self, interaction, description, logs, version):
         user = interaction.user

@@ -15,27 +15,32 @@ Limits: zip files only (checked by name and by the zip signature; never unzipped
 
 ## Setup (once)
 
-1. **Bot user.** In the Discord Developer Portal, open the Squadala! application, tab **Bot**:
-   add a bot, press **Reset Token** and copy the token. Leave every "Privileged Gateway Intent" off.
+1. **Bot user.** In the Discord Developer Portal, make an application for the bot (its own one,
+   not the Squadala! status app), tab **Bot**: press **Reset Token** and copy the token.
+   Leave every "Privileged Gateway Intent" off.
 2. **Invite it** to the server (open this link, pick the server):
-   `https://discord.com/oauth2/authorize?client_id=1571917068994089063&scope=bot+applications.commands&permissions=117760`
+   `https://discord.com/oauth2/authorize?client_id=<application id>&scope=bot+applications.commands&permissions=117760`
    (scopes `bot` + `applications.commands`; permissions View Channel, Send Messages, Embed Links,
    Attach Files, Read Message History).
 3. **Channels.** Make a private `#dev-reports` channel (only the team and the bot can see it).
    Optional: a public channel where players may use `/report`; without one it works in any channel.
-   In Discord, Settings > Advanced > Developer Mode on, then right-click > Copy ID for the server
-   and the channels.
+   In Discord, Settings > Advanced > Developer Mode on, then right-click > Copy ID for the channels.
 4. **Config file** (outside the repo, never committed):
    `coord-multiplayer\secrets\discord-bot.json`
 
    ```json
    {
      "token": "paste the bot token here",
-     "guild_id": "server id",
+     "application_id": "the bot application's id (optional)",
+     "guild_id": "",
      "dev_channel_id": "#dev-reports id",
      "report_channel_id": ""
    }
    ```
+
+   `guild_id` may stay empty: the bot reads the server from the dev channel when it starts and
+   registers `/report` there (shows up at once). Only if it cannot see that channel does it
+   register `/report` globally, which can take up to an hour to appear.
 
 5. **Python package** (once): `uv pip install --python ..\oot-remake-recomp\.venv\Scripts\python.exe -r tools\discord-bot\requirements.txt`
 
