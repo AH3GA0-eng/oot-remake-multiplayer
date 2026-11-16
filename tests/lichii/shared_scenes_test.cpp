@@ -5,6 +5,8 @@
 #include <optional>
 #include <ostream>   // (CHECK_MESSAGE prints a string_view: MSVC needs operator<< declared)
 #include <string>
+#include <string_view>
+#include <vector>
 
 #include "coop/protocol/codec.hpp"
 #include "coop_live_events.h"
@@ -219,4 +221,50 @@ TEST_CASE("intro-ocarina: Saria's gift is never started in a game still in the o
     Joiner other;
     other.Started(1, "Dm_Kokiri_0050", "KokiriForest", kBridge, 100);
     CHECK(other.Next(Free(120), kNotPlayed, flag) == std::optional<std::string>("Dm_Kokiri_0050"));
+}
+
+TEST_CASE("a story cutscene asked by an entry of its flow counts as that story cutscene (player report 110)") {
+    using CoopSharedScenes::RequestFor;
+    using CoopSharedScenes::StoryOfRequest;
+    // The Deku Tree's meeting, as the EventRequestActor in KokiriForest_Child asks it.
+    constexpr std::string_view kEntry = "KokiriForest_Meet_DekuTree_MeetDekuTree_01";
+    CHECK(StoryOfRequest(kEntry) == std::optional<std::string_view>("Meet_DekuTree"));
+    CHECK(StoryOfRequest("Meet_DekuTree") == std::optional<std::string_view>("Meet_DekuTree"));
+    CHECK(StoryOfRequest("Get_StoneOfFire_MeetDarnia") == std::optional<std::string_view>("Get_StoneOfFire"));
+    CHECK_FALSE(StoryOfRequest("Npc_Kokiri_Mido_Child").has_value());          // a talk
+    CHECK_FALSE(StoryOfRequest("GoronCity_SecretHole_AppearTreasureBox").has_value());  // a gimmick
+    // A game that joins asks as the starter's did: the placed entry of that scene, else the flow's name.
+    CHECK(RequestFor("Meet_DekuTree", "KokiriForest_Child") == kEntry);
+    CHECK(RequestFor("Meet_DekuTree", "LostWoods") == "Meet_DekuTree");
+    CHECK(RequestFor("Dm_Kokiri_0070", "KokiriForest_Child") == "Dm_Kokiri_0070");
+    for (const auto& r : CoopSharedScenes::StoryRequests()) {
+        CHECK_MESSAGE(CoopSharedScenes::IsShared(r.flow), std::string(r.flow));
+        CHECK(StoryOfRequest(r.request) == std::optional<std::string_view>(r.flow));
+        CHECK(RequestFor(r.flow, r.scene) == r.request);
+    }
+
+    // The guard (intro-ocarina) with the game's request as it came, and as the hook now maps it.
+    auto request = [](std::string_view name) {
+        CoopLiveEvents::GameRequest r;
+        std::copy(name.begin(), name.end(), r.name);
+        r.taken = true;
+        return r;
+    };
+    const auto names_span = CoopSharedScenes::Names();
+    const std::vector<std::string_view> names(names_span.begin(), names_span.end());
+    const std::vector<CoopLiveEvents::GameRequest> as_asked{request(kEntry)};
+    CHECK(CoopLiveEvents::RequestedOtherOf(as_asked, names));     // before: "another event", its search refused
+    CHECK_FALSE(CoopLiveEvents::RequestedOf(as_asked, names).has_value());
+    const std::vector<CoopLiveEvents::GameRequest> mapped{request(*StoryOfRequest(kEntry))};
+    CHECK_FALSE(CoopLiveEvents::RequestedOtherOf(mapped, names));
+    CHECK(CoopLiveEvents::RequestedOf(mapped, names) == std::optional<std::string>("Meet_DekuTree"));
+
+    // Through the start source: given once, by the request, while the search keeps finding it.
+    CoopLiveEvents::StartSource source;
+    source.Scene("KokiriForest_Child");
+    const auto find = [] { return std::optional<std::string>("Meet_DekuTree"); };
+    CHECK(source.Frame(CoopLiveEvents::RequestedOf(mapped, names), CoopLiveEvents::RequestedOtherOf(mapped, names),
+                       true, true, find) == std::optional<std::string>("Meet_DekuTree"));
+    CHECK_FALSE(source.Frame(std::nullopt, false, true, true, find).has_value());
+    CHECK(source.Refused() == 0);
 }

@@ -20,6 +20,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -2027,7 +2028,16 @@ private:
             // Only the story path refuses the search's finds while another asked-for event runs (intro-ocarina);
             // the dungeon gimmicks above keep their net as it was (a gimmick may start inside a talk's flow).
             story_source_.Scene(here.scene);
-            const auto asked = by_request ? requests.Since(story_cursor_) : std::vector<CoopLiveEvents::GameRequest>{};
+            auto asked = by_request ? requests.Since(story_cursor_) : std::vector<CoopLiveEvents::GameRequest>{};
+            // Player report 110: a story cutscene asked by an entry of its flow (the Deku Tree's meeting by
+            // KokiriForest_Meet_DekuTree_MeetDekuTree_01) counts as asked by the flow's name, not as another event.
+            for (CoopLiveEvents::GameRequest& r : asked) {
+                const auto story = CoopSharedScenes::StoryOfRequest(r.name);
+                if (story && *story != std::string_view(r.name) && story->size() < sizeof r.name) {
+                    std::memcpy(r.name, story->data(), story->size());
+                    r.name[story->size()] = 0;
+                }
+            }
             const auto found = story_source_.Frame(
                 by_request ? CoopLiveEvents::RequestedOf(asked, names) : std::nullopt,
                 CoopLiveEvents::RequestedOtherOf(asked, names), by_request, running,
@@ -2065,7 +2075,9 @@ private:
         }
         if (name) {
             std::lock_guard lock(live_mutex_);
-            live_requester_.Want(*name, here.scene, now_us, CoopSharedScenes::kJoinUs);
+            // Asked as the starter's game asked it: by the placed entry of its flow there (report 110), else by name.
+            live_requester_.Want(std::string(CoopSharedScenes::RequestFor(*name, here.scene)), here.scene, now_us,
+                                 CoopSharedScenes::kJoinUs);
         }
     }
 

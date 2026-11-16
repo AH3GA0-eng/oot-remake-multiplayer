@@ -37,6 +37,27 @@ namespace CoopSharedScenes {
 std::span<const std::string_view> Names();
 bool IsShared(std::string_view name);
 
+// Player report 110 (Deku Tree): a story cutscene is often asked for by an
+// entry of its flow, not by the flow's name. The Great Deku Tree's meeting is
+// asked by the EventRequestActor placed in KokiriForest_Child as
+// "KokiriForest_Meet_DekuTree_MeetDekuTree_01" (flow Meet_DekuTree); the
+// game's request then named no story event, the story search's
+// "Meet_DekuTree" counted as a leftover of another event (intro-ocarina) and
+// was never sent: each player watched it alone. The placed story entries
+// (coop_story_requests.inc, tools/puppet_pack/story_requests.py).
+struct StoryRequest {
+    std::string_view scene;    // where it is placed
+    std::string_view request;  // its RequestEventName
+    std::string_view flow;     // the shared story cutscene it starts
+};
+std::span<const StoryRequest> StoryRequests();
+// The shared story cutscene a request of our game starts: `request` itself
+// when it is a story name, the flow of a placed story entry, else nothing.
+std::optional<std::string_view> StoryOfRequest(std::string_view request);
+// What our game is asked for to play `flow` in `scene`: the placed story
+// entry there (the request the starter's game made), else the flow's name.
+std::string_view RequestFor(std::string_view flow, std::string_view scene);
+
 // How near the starter must be to our Link for us to join: same room. The
 // Kokiri bridge and Saria are about 20 m apart; the Deku Tree's clearing is
 // about 40 m across.

@@ -80,6 +80,36 @@ bool IsShared(std::string_view name) {
     return std::binary_search(std::begin(kNames), std::end(kNames), name);
 }
 
+namespace {
+#include "coop_story_requests.inc"
+}  // namespace
+
+std::span<const StoryRequest> StoryRequests() {
+    return kStoryRequests;
+}
+
+std::optional<std::string_view> StoryOfRequest(std::string_view request) {
+    if (const auto it = std::lower_bound(std::begin(kNames), std::end(kNames), request);
+        it != std::end(kNames) && *it == request) {
+        return *it;
+    }
+    for (const StoryRequest& r : kStoryRequests) {
+        if (r.request == request) {
+            return r.flow;
+        }
+    }
+    return std::nullopt;
+}
+
+std::string_view RequestFor(std::string_view flow, std::string_view scene) {
+    for (const StoryRequest& r : kStoryRequests) {
+        if (r.scene == scene && r.flow == flow) {
+            return r.request;
+        }
+    }
+    return flow;
+}
+
 void Joiner::Visit(const std::string& scene) {
     if (scene.empty() || scene == scene_) {
         return;  // a load keeps what waits; its scene decides next frame
