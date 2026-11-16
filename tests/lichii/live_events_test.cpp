@@ -486,14 +486,15 @@ TEST_CASE("a gimmick event whose place is near but in another room waits for our
     // room is not loaded there, and the event's camera would show black.
     const std::vector<std::string> held{"InsideTheDekuTree_Gimmick_FallingLadder"};
     const std::array<float, 3> link{-37.5f, 117.8f, 1.5f};
-    int link_room = 2;
+    // deku-ladder: the place carries its own room (2, place_rooms.py); the guess is only asked for our Link.
+    int link_room = 5;
     const CoopLiveEvents::RoomOf room_of = [&](const std::array<float, 3>& at) -> std::optional<int> {
-        return at == link ? link_room : 5;  // the place is in room 5
+        return at == link ? link_room : 9;  // a guess for the place would say 9: not used
     };
     CoopLiveEvents::Decider d;
     CHECK_FALSE(d.Next(held, "InsideTheDekuTree", false, link, &room_of).has_value());
     CHECK_FALSE(d.Next(held, "InsideTheDekuTree", false, link, &room_of).has_value());  // it waits
-    link_room = 5;  // we walked in
+    link_room = 2;  // we walked in
     CHECK(d.Next(held, "InsideTheDekuTree", false, link, &room_of) ==
           std::optional<std::string>("InsideTheDekuTree_Gimmick_FallingLadder"));
 }
