@@ -159,7 +159,7 @@ TEST_CASE("boss beaten: given one way, once per scene load, never in the boss's 
     CHECK(a.Check(std::string("HyruleField"), true, beaten, 1, std::ref(f)).size() == s.bools.size() + 1);
 }
 
-TEST_CASE("boss beaten: a finished dungeon is never stepped back; unread flags are left alone") {
+TEST_CASE("boss beaten: a finished dungeon is never stepped back, unread flags are left alone") {
     const BeatenSet& s = Gohma();
     const std::vector<std::uint8_t> beaten{0};
     Flags f = Alive(s);
