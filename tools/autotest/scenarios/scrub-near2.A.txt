@@ -18,7 +18,7 @@
 # through its talk (~30 s), so B's flags reach A while A's text is up.
 # Expect:
 #  - A: "scrubs: brother One ... took the last hit" and B: the same line (each its own solve).
-#  - A: "scrub near (the Scrub Brothers): within talking distance of our Link, its destroy flags from
+#  - A: "scrub near (the Scrub Brothers): within talking distance of our Link or in our event, its destroy flags from
 #    others wait" before B's talk ends.
 #  - B: "flags debug: bool 0xd2f46f66 ... 0 -> 1" (its own talk) BEFORE A's mark talk-end;
 #    A: no "flags debug" line for 0xd2f46f66 / 0x60c22ed7 between A's marks "talk" and "hold".

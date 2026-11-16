@@ -6,7 +6,7 @@
 # Saves: clear 0xd2f46f66 and 0x60c22ed7 in both autotest-save baselines first
 # (tools/autotest/save_flags.py set), and put them back after.
 # Expect (A's log):
-#  - "coop: dungeon: scrub near (the Scrub Brothers): within talking distance of our Link, its destroy
+#  - "coop: dungeon: scrub near (the Scrub Brothers): within talking distance of our Link or in our event, its destroy
 #    flags from others wait" before B's talk ends; NO "our Link is in an event" line (off).
 #  - B's two flags (0xd2f46f66, 0x60c22ed7) are not written in A while A's text is up.
 #  - A's talk ends; after "mark talk-end" A walks back to the room centre (goto), then

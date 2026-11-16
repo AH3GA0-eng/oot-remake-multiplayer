@@ -157,6 +157,19 @@ TEST_CASE("scrub talk near: a scrub within talking distance holds its own group 
     CHECK(n.Mask(3'000'000) == 0);
 }
 
+TEST_CASE("scrub talk near: a scrub bound into our event holds its group at any distance") {
+    CoopScrubTalk::Near n;
+    const std::uint64_t room_b = 0xaa6f22763e99e851ULL;
+    n.See(room_b, 15.0f, 1'000'000, false);         // far and not in an event
+    n.See(room_b, 15.0f, 1'000'000, std::nullopt);  // far, performer not read
+    CHECK(n.Mask(1'000'000) == 0);
+    n.See(room_b, 15.0f, 1'000'000, true);  // a deflected nut started Talk_Deku_01_Attacked from afar
+    CHECK(CoopScrubTalk::NearHolds(n.Mask(1'000'000), kDestroy001));
+    CHECK_FALSE(CoopScrubTalk::NearHolds(n.Mask(1'000'000), 0x1d493033));  // room F's
+    n.See(0x1234, 1.0f, 1'000'000, true);  // not one of these scrubs: nothing more
+    CHECK(n.Mask(2'600'000) == 0);
+}
+
 TEST_CASE("scrub talk near: another player's flag waits while the scrub is near, even with no event flag") {
     Store game;
     game.values[kDestroy001] = 0;

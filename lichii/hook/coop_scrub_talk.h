@@ -97,6 +97,13 @@ private:
 // deleted it) the flag lands, and the room graph deletes the scrub as in the
 // first game. A scrub we have not beaten yet waits the same way: we may beat
 // it and talk to it ourselves; our own talk sets the same flag.
+// The root guard (review of scrub-sale): a scrub whose own event performer is
+// bound into a running event (CoopEventMember::InEvent, event-copy's check)
+// holds its flags at any distance. A Deku Scrub's talk starts when a nut it
+// spat is deflected back into it (Talk_Deku_0N_Attacked), so Link can stand
+// far from it, and event_running has not been seen during a scrub's event:
+// the objects walk reads the performer for these scrubs whatever
+// event_running says.
 //
 // Read from the romfs (Banc/InsideTheDekuTree/InsideTheDekuTree_Static,
 // build e0f3ccfaf50065ae): the placement hashes of the scrubs, by group.
@@ -147,20 +154,26 @@ inline const char* GroupName(Group g) {
 // last time each group was seen alive near our Link.
 class Near {
 public:
-    // How far a talk starts: in lane1-a's scrub-near2 run (20261116-002801)
-    // B talked to its own One from 5.29 m of One's actor place (Link at
-    // -23.29 52.88 34.69, One at -23.72 52.97 39.96), and A, at the same spot
-    // 5.25 m away, was not held at 5 m: the old radius was shorter than a
-    // talk. 8 m covers it with room to spare and still lets a player who only
-    // stands in the brothers' room go: the entry and the aiming spots are 10.5
-    // to 12.4 m from the nearest brother.
+    // How far a talk starts, from the game data: the scrub's EventOn
+    // attention fan reaches 2.0 m from Link, plus its CharacterBoundingRadius
+    // 2.3 m, plus AutoMargin up to 1.0 m: about 5.3 m from the actor place.
+    // Seen in lane1-a's scrub-near2 run (20261116-002801): B talked to its One
+    // from 5.29 m (Link at -23.29 52.88 34.69, One at -23.72 52.97 39.96), and
+    // A, 5.25 m away, was not held under the old 5 m. 8 m covers a talk and
+    // still lets a player who only stands in the brothers' room go: the entry
+    // and the aiming spots are 10.5 to 12.4 m from the nearest brother. An
+    // event that starts further away (a deflected nut) is held by `in_event`.
     static constexpr float kNearM = 8.0f;
     static constexpr std::uint64_t kFreshUs = 1'500'000;  // a walk is ~4 a second; it may stop
 
-    // One scrub of the walk: its placement hash and its distance to our Link.
-    void See(std::uint64_t hash, float distance_m, std::uint64_t now_us) {
+    // One scrub of the walk: its placement hash, its distance to our Link and
+    // whether its own performer is bound into a running event (nullopt: not read).
+    void See(std::uint64_t hash, float distance_m, std::uint64_t now_us,
+             std::optional<bool> in_event = std::nullopt) {
         const NearScrub* s = FindNearScrub(hash);
-        if (s == nullptr || !std::isfinite(distance_m) || distance_m > kNearM) return;
+        if (s == nullptr) return;
+        const bool near = std::isfinite(distance_m) && distance_m <= kNearM;
+        if (!near && !in_event.value_or(false)) return;
         last_us_[static_cast<std::size_t>(s->group)].store(now_us, std::memory_order_relaxed);
     }
     // The groups held now, a bit each (bit = Group).

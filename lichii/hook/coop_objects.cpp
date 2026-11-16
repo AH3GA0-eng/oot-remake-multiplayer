@@ -107,6 +107,7 @@
 #include "coop_platforms.h"
 #include "coop_counters.h"
 #include "coop_scrub_talk.h"
+#include "coop_scrub_sale.h"
 #include "coop_scrubs.h"
 #include "coop_event_member.h"
 #include <set>
@@ -2614,7 +2615,14 @@ private:
             return false;
         }
         std::optional<coop::protocol::Vec3> player;
-        std::vector<std::pair<u64, coop::protocol::Vec3>> talk_scrubs;  // issue 144: the Deku Tree's scrubs
+        // Issue 144 and the scrubs' one-time sales: the scrubs whose flags may delete them from under
+        // an event of ours (coop_scrub_talk.h, coop_scrub_sale.h).
+        struct TalkScrub {
+            u64 hash = 0;
+            coop::protocol::Vec3 at{};
+            std::optional<bool> in_event;  // its own performer bound into a running event
+        };
+        std::vector<TalkScrub> talk_scrubs;
         std::unordered_map<u64, std::pair<std::string, u64>> names;
         std::unordered_map<u64, u64> life_components;
         {
@@ -2733,12 +2741,16 @@ private:
                     }
                 }
             }
-            if (CoopScrubTalk::FindNearScrub(known.second) != nullptr) {
-                coop::protocol::Vec3 at{};  // issue 144: how near our Link, after the walk
+            if (CoopScrubTalk::FindNearScrub(known.second) != nullptr ||
+                CoopScrubSale::FindSeller(known.second) != nullptr) {
+                TalkScrub t;  // how near our Link (after the walk), and whether an event of ours binds it
+                t.hash = known.second;
                 for (std::size_t i = 0; i < 3; ++i) {
-                    at[i] = r.Get<float>(a + kActorPosition + 4 * i).value_or(0.0f);
+                    t.at[i] = r.Get<float>(a + kActorPosition + 4 * i).value_or(0.0f);
                 }
-                talk_scrubs.emplace_back(known.second, at);
+                // Read whatever event_running says: it has not been seen during a scrub's event.
+                t.in_event = CoopEventMember::InEvent([&r](std::uint64_t at) { return r.Get<u64>(at); }, a);
+                talk_scrubs.push_back(t);
             }
             if (scrubs_on_ && (CoopScrubs::FindBrother(known.second) != nullptr ||
                                CoopScrubs::IsManager(known.second))) {
@@ -2846,15 +2858,20 @@ private:
         sync_.SetPlayer(player);
         sync_.SetLures(CoopProjectiles::TheLures().Get());  // issue 151: our cast lures
         player_ = player;
-        if (player) {  // issue 144 (coop_scrub_talk.h, Near): a Deku Tree scrub near our Link holds its flags
+        {  // issue 144 / scrub sales: a scrub near our Link or bound into our event holds its flags
             const std::uint64_t now_us = CoopEvery::NowUs();
-            for (const auto& [hash, at] : talk_scrubs) {
-                float d2 = 0.0f;
-                for (std::size_t i = 0; i < 3; ++i) {
-                    const float d = at[i] - (*player)[i];
-                    d2 += d * d;
+            for (const TalkScrub& t : talk_scrubs) {
+                float distance = std::numeric_limits<float>::infinity();  // no player: only the event counts
+                if (player) {
+                    float d2 = 0.0f;
+                    for (std::size_t i = 0; i < 3; ++i) {
+                        const float d = t.at[i] - (*player)[i];
+                        d2 += d * d;
+                    }
+                    distance = std::sqrt(d2);
                 }
-                CoopScrubTalk::TheNear().See(hash, std::sqrt(d2), now_us);
+                CoopScrubTalk::TheNear().See(t.hash, distance, now_us, t.in_event);
+                CoopScrubSale::TheBusy().See(t.hash, distance, now_us, t.in_event);
             }
         }
         if (debug_) {  // research: the field grass that is no actor (world.md)

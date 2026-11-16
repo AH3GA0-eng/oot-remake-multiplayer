@@ -1,6 +1,7 @@
 // Tests for the Business Scrubs' one-time sales shared between games (lichii/hook/coop_scrub_sale.h).
 #include <doctest/doctest.h>
 
+#include <limits>
 #include <map>
 #include <optional>
 #include <string>
@@ -107,9 +108,50 @@ TEST_CASE("scrub sale: another player's buy waits only while we may be talking t
     CHECK_FALSE(CoopScrubSale::Waits(kNutBag, At("HyruleField_Child", 7.3f, 82.9f, -85.6f)));
     CHECK_FALSE(CoopScrubSale::Waits(kFieldHeart, At("LostWood_Child", 7.3f, 82.9f, -85.6f)));
     CHECK_FALSE(CoopScrubSale::Waits(kNutBag, CoopScrubSale::Here{}));
-    // Just past kNearM.
-    CHECK_FALSE(CoopScrubSale::Waits(kFieldHeart, At("HyruleField_Child", 25.0f + 8.1f, 129.9f, 22.1f)));
-    CHECK(CoopScrubSale::Waits(kFieldHeart, At("HyruleField_Child", 25.0f + 7.9f, 129.9f, 22.1f)));
+    // The scrub's reach (Alert 10 m) is held, with its 1 m margin; past kNearM it lands.
+    CHECK(CoopScrubSale::kNearM == doctest::Approx(11.0f));
+    CHECK(CoopScrubSale::Waits(kFieldHeart, At("HyruleField_Child", 25.0f + 9.5f, 129.9f, 22.1f)));
+    CHECK(CoopScrubSale::Waits(kFieldHeart, At("HyruleField_Child", 25.0f + 10.5f, 129.9f, 22.1f)));
+    CHECK(CoopScrubSale::Waits(kFieldHeart, At("HyruleField_Child", 25.0f + 10.9f, 129.9f, 22.1f)));
+    CHECK_FALSE(CoopScrubSale::Waits(kFieldHeart, At("HyruleField_Child", 25.0f + 11.1f, 129.9f, 22.1f)));
+}
+
+TEST_CASE("scrub sale: a scrub bound into our event holds its flag at any distance (Busy, from the walk)") {
+    constexpr std::uint64_t kDmcSeller = 0x22f23970504a8bcfULL;   // DeathMountainCrater_Child_Static
+    constexpr std::uint64_t kJabuSeller = 0x83c9e5108c604316ULL;  // OOTRR's Jabu-Jabu seller
+    constexpr std::uint32_t kDmcHeart = 0x6b8fc751;
+    constexpr std::uint32_t kJabu = 0x25359a9e;
+    CHECK(CoopScrubSale::FindSeller(kDmcSeller)->flag == kDmcHeart);
+    CHECK(CoopScrubSale::FindSeller(0x1234) == nullptr);
+    CoopScrubSale::Busy b;
+    CHECK(b.Mask(1'000'000) == 0);
+    b.See(kDmcSeller, 30.0f, 1'000'000, false);         // far, not in an event: nothing
+    b.See(kDmcSeller, 30.0f, 1'000'000, std::nullopt);  // far, performer not read: nothing
+    b.See(0x1234, 1.0f, 1'000'000, true);                // not a seller
+    CHECK(b.Mask(1'000'000) == 0);
+    b.See(kDmcSeller, 30.0f, 1'000'000, true);  // a deflected nut started its attacked event from afar
+    CoopScrubSale::Here far = At("LostWood_Child", 0, 0, 0);  // not even near: only Busy says so
+    far.busy = b.Mask(1'200'000);
+    CHECK(CoopScrubSale::Waits(kDmcHeart, far));
+    CHECK_FALSE(CoopScrubSale::Waits(kJabu, far));  // only that flag
+    CHECK_FALSE(CoopScrubSale::Waits(kNutBag, far));
+    b.See(kJabuSeller, std::numeric_limits<float>::infinity(), 1'000'000, true);  // no player read: the event counts
+    CHECK((b.Mask(1'000'000) & (1u << CoopScrubSale::IndexOf(kJabu))) != 0);
+    b.See(kJabuSeller, 10.5f, 2'000'000, false);  // within the scrub's reach
+    CHECK((b.Mask(2'000'000) & (1u << CoopScrubSale::IndexOf(kJabu))) != 0);
+    CHECK(b.Mask(3'500'000) == 0);  // no walk saw either since: released
+    b.See(kDmcSeller, 5.0f, 4'000'000, std::nullopt);
+    b.Reset();
+    CHECK(b.Mask(4'000'000) == 0);
+}
+
+TEST_CASE("scrub sale: event_running alone also holds every sale flag") {
+    CoopScrubSale::Here h;  // no reading, no walk
+    h.in_event = true;
+    for (const auto& f : CoopScrubSale::kSaleFlags) {
+        CHECK(CoopScrubSale::Waits(f.hash, h));
+    }
+    CHECK_FALSE(CoopScrubSale::Waits(kOther, h));
 }
 
 TEST_CASE("scrub sale: in the HoldFlagStore the buy lands once our Link walks away") {

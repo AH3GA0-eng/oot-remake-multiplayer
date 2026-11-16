@@ -665,17 +665,20 @@ public:
                     const unsigned bit = 1u << g;
                     if ((near & bit) != (scrub_near_ & bit)) {
                         LOG_INFO(Core, "coop: dungeon: scrub near ({}): {}", CoopScrubTalk::GroupName(static_cast<CoopScrubTalk::Group>(g)),
-                                 (near & bit) ? "within talking distance of our Link, its destroy flags from others wait"
-                                              : "no longer near our Link, its destroy flags from others go through");
+                                 (near & bit) ? "within talking distance of our Link or in our event, its destroy flags from others wait"
+                                              : "no longer near our Link nor in our event, its destroy flags from others go through");
                     }
                 }
                 scrub_near_ = near;
             }
             const CoopScrubTalk::Hold talk = scrub_talk_;
-            // A scrub's one-time sale bought by another player waits while we may be talking to
-            // that scrub (coop_scrub_sale.h): its prefab graph deletes the scrub from the flag.
+            // A scrub's one-time sale bought by another player waits while that scrub may be in an
+            // event of ours (coop_scrub_sale.h): its prefab graph deletes the scrub from the flag.
+            // event_running is read here directly: scrub_talk_ is not updated with
+            // LICHII_COOP_SCRUB_TALK_HOLD=0 or =near.
             CoopScrubSale::Here sale_here;
-            sale_here.in_event = talk.Holding();
+            sale_here.in_event = talk.Holding() || (reading && reading->event_running.value_or(false));
+            sale_here.busy = CoopScrubSale::TheBusy().Mask(CoopEvery::NowUs());
             if (reading && reading->scene) {
                 sale_here.known = true;
                 sale_here.x = reading->position[0];
