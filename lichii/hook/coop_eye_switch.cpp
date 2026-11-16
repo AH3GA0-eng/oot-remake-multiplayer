@@ -82,6 +82,69 @@ constexpr Switch kSwitches[] = {
     {"WaterTemple_Room06_Waterlevelrise_FocusOnGimmick", "WaterTemple", "Obj_SwitchHit_A_06", {-78.9f, 120.0f, -15.0f}, "OnState", {-71.8f, 121.2f, -15.1f}},
     {"WaterTemple_Waterlevelrise_FocusOnGimmick", "WaterTemple", "Obj_StepSwitch_A_01", {-27.0f, 100.0f, 20.1f}, "FirstOn", {-35.4f, 103.8f, 17.4f}},
 };
+// The guard flags (see the header), from the same run with --dungeon coop_dungeon.cpp: 43.
+constexpr Guard kGuards[] = {
+    {"FireTemple_FireStair_First_WasOn", "FireTemple", "FireTemple_SwitchFireCamera_Room04"},  // deletes the asker
+    {"FireTemple_FireStair_Second_WasOn", "FireTemple", "FireTemple_SwitchFireCamera_Room12"},  // deletes the asker
+    {"FireTemple_Room14_HammmerStair_Complete", "FireTemple", "Dm_FireTemple_0029"},  // the trigger reads it negated
+    {"ForestTemple_Room02_GoldEyeSwitch_On", "ForestTemple", "ForestTemple_Room02_ShutterOpen"},  // deletes the asker
+    {"ForestTemple_Room07_Cleard", "ForestTemple", "ForestTemple_Room12_WaterLevelDrop"},  // deletes the asker
+    {"ForestTemple_Room08_EyeSwitch_Clear", "ForestTemple", "ForestTemple_Room11_TBoxAppear"},  // deletes the asker
+    {"ForestTemple_Room15_Cleard", "ForestTemple", "ForestTemple_Room22_ShutterOpen"},  // deletes the asker
+    {"GerudoTrainingGround_Dungeon_Room00_EyeSwitch", "GerudoTrainingGround", "GerudoTrainingGround_00_FallTreasureBox"},  // deletes the asker
+    {"GerudoTrainingGround_Dungeon_Room03_StepSwitch", "GerudoTrainingGround", "GerudoTrainingGround_03_ShutterOpen"},  // the trigger reads it negated
+    {"GerudoTrainingGround_Dungeon_Room04_StoneStatue", "GerudoTrainingGround", "GerudoTrainingGround_04_ActStoneGimmick"},  // the trigger reads it negated
+    {"GerudoTrainingGround_Dungeon_Room05_StepSwitch", "GerudoTrainingGround", "GerudoTrainingGround_05_DisappearFire"},  // deletes the asker
+    {"GerudoTrainingGround_Dungeon_Room06_Fire", "GerudoTrainingGround", "GerudoTrainingGround_06_DisappearFire"},  // the trigger reads it negated
+    {"GerudoTrainingGround_Room10_EyeSwitchTBox", "GerudoTrainingGround", "GerudoTrainingGround_10_FallTreasureBox"},  // deletes the asker
+    {"InsideGanonCastle_Dungeon_Room03_StepSwitch", "InsideGanonCastle", "InsideGanonCastle_Dungeon_AppearExtendingPlatform_03"},  // deletes the asker
+    {"InsideGanonCastle_Dungeon_Room06_HmmerSwitch", "InsideGanonCastle", "InsideGanonCastle_Dungeon_ShutterOpen_06_01"},  // deletes the asker
+    {"InsideGanonCastle_Dungeon_Room08_HummerSwitch", "InsideGanonCastle", "InsideGanonCastle_Dungeon_ShutterOpen_08_01"},  // deletes the asker
+    {"InsideGanonCastle_Dungeon_Room08_StepSwitch", "InsideGanonCastle", "InsideGanonCastle_Dungeon_AppaerTreasureBox_08"},  // deletes the asker
+    {"InsideGanonCastle_Dungeon_Room17_HitSwitch_Bombchu", "InsideGanonCastle", "InsideGanonCastle_Dungeon_ShutterOpen_17_01"},  // deletes the asker
+    {"InsideGanonCastle_Dungeon_Room17_SolarSwitch", "InsideGanonCastle", "InsideGanonCastle_Dungeon_ShutterOpen_17_02"},  // deletes the asker
+    {"InsideGanonCastle_Dungeon_Room17_SolarSwitch_Fake01", "InsideGanonCastle", "InsideGanonCastle_Dungeon_EnemyAppear01"},  // deletes the asker
+    {"InsideGanonCastle_Dungeon_Room17_SolarSwitch_Fake02", "InsideGanonCastle", "InsideGanonCastle_Dungeon_EnemyAppear02"},  // deletes the asker
+    {"InsideGanonCastle_Dungeon_Room17_SolarSwitch_Fake03", "InsideGanonCastle", "InsideGanonCastle_Dungeon_EnemyAppear03"},  // deletes the asker
+    {"InsideJabuJabuBelly_Gimmick_Onswitch_first", "InsideJabuJabuBelly", "InsideJabuJabuBellyRoom01StepSwitch"},  // the trigger reads it negated
+    {"InsideJabuJabuBelly_Room01_LiftMoveDown_GimmickClear", "InsideJabuJabuBelly", "FocusOnGimmick_JabujabuLift"},  // the trigger reads it negated
+    {"InsideJabuJabuBelly_Room14_PlayedSwitchEvent_Lower", "InsideJabuJabuBelly", "InsideJabuJabuBellyRoom14StepSwitch_Under"},  // deletes the asker
+    {"InsideJabuJabuBelly_Room14_PlayedSwitchEvent_Upper", "InsideJabuJabuBelly", "InsideJabuJabuBellyRoom14StepSwitch"},  // deletes the asker
+    {"InsideTheDekuTree_RoomC_Cleared", "InsideTheDekuTree", "InsideTheDekuTree_Gimmick_FallingLadder"},  // deletes the asker
+    {"InsideTheDekuTree_RoomD_StepSwitch_On_01", "InsideTheDekuTree", "InsideTheDekuTree_Gimmick_RoomD_PlatformUp"},  // deletes the asker
+    {"InsideTheDekuTree_RoomF_Cleared", "InsideTheDekuTree", "InsideTheDekuTree_Gimmick_RoomF_EyeSwitch"},  // deletes the asker
+    {"InsideTheDekuTree_RoomG_WaterLevel", "InsideTheDekuTree", "InsideTheDekuTree_Gimmick_RoomG_WaterLevelDrop"},  // deletes the asker
+    {"Insidejabujabu_Gimmick_Room7Event", "InsideJabuJabuBelly", "InsideJabuJabuBellyRoom07StepSwitch"},  // deletes the asker + the trigger reads it negated
+    {"Insidejabujabu_Room0_Cleared", "InsideJabuJabuBelly", "InsideJabuJabuBelly_FocusOnGimmick"},  // deletes the asker
+    {"Insidejabujabu_Room14_Cleared", "InsideJabuJabuBelly", "FocusOnGimmick_InsideJabuJabuBelly_02"},  // the trigger reads it negated
+    {"Insidejabujabu_Room5_Cleared", "InsideJabuJabuBelly", "InsideJabuJabuBellyRoom05Swich"},  // deletes the asker
+    {"SpiritTemple_Room03_BoardNet_On", "SpiritTemple", "SpiritTemple_Level_Room_03_BoardNetFall"},  // deletes the asker + the trigger reads it negated
+    {"SpiritTemple_Room07_TBox_On", "SpiritTemple", "SpritTemple_Room07_AppearTreasure"},  // deletes the asker
+    {"SpiritTemple_Room10_Unlocked", "SpiritTemple", "SpiritTemple_Level_Room_10_SwitchOn_01"},  // deletes the asker
+    {"SpiritTemple_Room19_LightSwitch_On_01", "SpiritTemple", "SpiritTemple_Level_Room_19_SwitchOn_01"},  // deletes the asker
+    {"SpiritTemple_Room19_LightSwitch_On_04", "SpiritTemple", "SpiritTemple_Level_Room_19_wallmaster"},  // deletes the asker
+    {"SpiritTemple_Room30_Floor_On", "SpiritTemple", "SpiritTemple_Level_Room_30_BoardNetFall"},  // deletes the asker
+    {"SpiritTemple_Room32_TBox_On", "SpiritTemple", "SpiritTemple_Level_Room_32_SwitchOn_01"},  // deletes the asker
+    {"WaterTemple_Room02_00", "WaterTemple", "WaterTemple_FocusonGimmick_02"},  // deletes the asker + the trigger reads it negated
+    {"WaterTemple_Waterlevelrise_Room06", "WaterTemple", "WaterTemple_Room06_Waterlevelrise_FocusOnGimmick"},  // the trigger reads it negated
+};
+// Not covered (the tool's list; each with why):
+//   ForestTemple_Room17_ShutterOpen: Enemy_Stalfos_Weak.Dead (in an OR)
+//   ForestTemple_Room17_ShutterOpen: ForestTemple_After_Appearance_TreasureChest.Bool (in an OR)
+//   InsideJabuJabuBellyRoom14StepSwitch: Gimmick_Insidejabujabu_Updown_MoveWater.Bool
+//   InsideJabuJabuBellyRoom14StepSwitch: Gimmick_Insidejabujabu_Updown_MoveWaterSwitch.Bool
+//   InsideJabuJabuBellyRoom14StepSwitch_Under: Gimmick_Insidejabujabu_Updown_MoveWaterSwitch.Bool
+//   SpiritTemple_Level_Room_19_SwitchOn_01: HoldPlayerrCheckEventQueryPlayerState.IsNotState
+//   SpiritTemple_Room19_SunSwitchShutterOpen: HoldPlayerrCheckEventQueryPlayerState.IsNotState
+//   DodongoCavern_Gimmick_EyeSwitch: DodongoCavern_NaviHelp_14_00 (the trigger reads it negated; not shared: each game's own)
+//   InsideJabuJabuBellyRoom14StepSwitch_Under: Gimmick_Insidejabujabu_Updown_MoveWater (the trigger reads it negated; not shared: each game's own)
+//   WaterTemple_Waterlevelrise_FocusOnGimmick: WaterTemple_Room03_FocusOnGimmick (the trigger reads it negated; not shared: each game's own)
+//   -> ForestTemple_Room17: the OR's shared flag (After_Appearance_TreasureChest) comes with the other player's chest
+//      event; its Stalfos are shared enemies. Spirit room 19: our Link's own state (IsNotState: not in a held state),
+//      true unless he is mid-action. The not-shared flags are each game's own room state (Jabu room 14's water up or
+//      down, Navi's hint, the Water Temple room-3 camera): the same in both games when both play the room the same
+//      way; when not, the event waits for our own switch (the old way after 2 s). Spirit room 10's box IsStop
+//      (the extra actor input the tool prints) is the box at rest: true unless it is being pushed.
 // clang-format on
 
 float Dist2(const std::array<float, 3>& a, const std::array<float, 3>& b) {
@@ -91,6 +154,8 @@ float Dist2(const std::array<float, 3>& a, const std::array<float, 3>& b) {
 }  // namespace
 
 std::span<const Switch> Switches() { return kSwitches; }
+
+std::span<const Guard> Guards() { return kGuards; }
 
 const Switch* Find(std::string_view event, std::string_view scene) {
     for (const auto& s : kSwitches) {
@@ -153,6 +218,10 @@ bool Switcher::Want(const std::string& event, const std::string& scene, std::opt
 
 void Switcher::Expire(const std::string& scene, const std::function<bool(const std::string&)>& played) {
     std::lock_guard lock(mutex_);
+    if (!scene.empty() && scene != scene_) {  // a new visit: every event may be tried again
+        scene_ = scene;
+        given_up_.clear();
+    }
     for (auto it = wanted_.begin(); it != wanted_.end();) {
         const bool busy = it == wanted_.begin() && next_ != Next::none;  // a call of ours is out: next Step ends it
         if (!busy && !scene.empty() && it->scene != scene) {
@@ -165,6 +234,24 @@ void Switcher::Expire(const std::string& scene, const std::function<bool(const s
             ++it;
         }
     }
+}
+
+bool Switcher::HoldsGuard(std::uint32_t hash, std::string_view scene) {
+    static const std::vector<std::uint32_t> hashes = [] {
+        std::vector<std::uint32_t> out;
+        for (const Guard& g : kGuards) out.push_back(coop::protocol::flag_hash(g.flag));
+        return out;
+    }();
+    std::lock_guard lock(mutex_);
+    if (failed_) return false;  // every event goes the old way: nothing waits
+    for (std::size_t i = 0; i < hashes.size(); ++i) {
+        const Guard& g = kGuards[i];
+        if (hashes[i] == hash && g.scene == scene &&
+            std::find(given_up_.begin(), given_up_.end(), g.event) == given_up_.end()) {
+            return true;
+        }
+    }
+    return false;
 }
 
 std::vector<std::string> Switcher::TakeNotes() {
@@ -192,6 +279,9 @@ bool Switcher::EventRunning(CoopPuppet::Guest& guest, std::uint64_t main) {
 void Switcher::End(const std::string& why, bool fallback) {
     const Try& t = wanted_.front();
     notes_.push_back("eye switch: " + t.event + ": " + why);
+    if (fallback && std::find(given_up_.begin(), given_up_.end(), t.event) == given_up_.end()) {
+        given_up_.push_back(t.event);  // its guard flags come as before (HoldsGuard)
+    }
     if (fallback) fallbacks_.emplace_back(t.event, t.scene);
     wanted_.pop_front();
 }

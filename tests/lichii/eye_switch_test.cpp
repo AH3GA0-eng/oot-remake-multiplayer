@@ -10,6 +10,7 @@
 #include <set>
 
 #include "coop/protocol/codec.hpp"
+#include "coop_dungeon.h"
 #include "coop_eye_switch.h"
 #include "coop_live_events.h"
 #include "coop_logic_probe.h"
@@ -379,4 +380,39 @@ TEST_CASE("eye switch: dropped once our game has the event played (our asker ran
     CHECK(FirstOn(g, kEye) == 0);
     CHECK(s.TakeFallbacks().empty());
     CHECK(s.TakeNotes().front().find("has it played") != std::string::npos);
+}
+
+TEST_CASE("eye switch: guard flags (a negated trigger flag, an asker's delete flag) wait while the switch path works") {
+    // deku-ladder round 3: generated with the table; only flags coop_dungeon.cpp shares, each for a table event.
+    CHECK(CoopEyeSwitch::Guards().size() == 43);
+    std::set<std::string_view> shared;
+    for (const auto& f : CoopDungeon::Flags()) shared.insert(f.name);
+    for (const auto& g : CoopEyeSwitch::Guards()) {
+        CHECK(shared.contains(g.flag));
+        CHECK(CoopEyeSwitch::Find(g.event, g.scene) != nullptr);
+        CHECK_FALSE(g.flag.starts_with("HavePlayedEvent."));  // those are held already (coop_dungeon.h HeldIn)
+    }
+    const auto cleared = coop::protocol::flag_hash("InsideTheDekuTree_RoomC_Cleared");  // deletes the ladder's asker
+    const auto fire = coop::protocol::flag_hash("GerudoTrainingGround_Dungeon_Room06_Fire");  // read negated
+    FakeGuest g;
+    World w;
+    Eye(g, kEye, 0, 0x1234);  // no live plug: the switch path gives up after kTryMs
+    CoopEyeSwitch::Switcher s(w.Finder());
+    s.Expire(kDeku);
+    CHECK(s.HoldsGuard(cleared, kDeku));
+    CHECK_FALSE(s.HoldsGuard(cleared, "GerudoTrainingGround"));  // its own dungeon only
+    CHECK(s.HoldsGuard(fire, "GerudoTrainingGround"));
+    CHECK_FALSE(s.HoldsGuard(coop::protocol::flag_hash("ForestTemple_After_Appearance_TreasureChest"), "ForestTemple"));
+    // The path gave up on the ladder this visit: its guard comes as before (the old way); others still wait.
+    REQUIRE(s.Want(kLadder, kDeku));
+    s.Step(g, false, 0, kMain, 100);
+    s.Step(g, true, kBlock, kMain, 100);
+    s.Step(g, false, 0, kMain, 101 + CoopEyeSwitch::kTryMs);
+    REQUIRE(s.TakeFallbacks().size() == 1);
+    CHECK_FALSE(s.HoldsGuard(cleared, kDeku));
+    CHECK(s.HoldsGuard(coop::protocol::flag_hash("InsideTheDekuTree_RoomF_Cleared"), kDeku));
+    // A new visit: tried again, so it waits again.
+    s.Expire("KokiriForest");
+    s.Expire(kDeku);
+    CHECK(s.HoldsGuard(cleared, kDeku));
 }
