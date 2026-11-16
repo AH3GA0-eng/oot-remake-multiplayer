@@ -90,6 +90,7 @@
 #include "coop_local_game.h"
 #include "coop_local_net.h"
 #include "coop_shared_scenes.h"
+#include "coop_solo_view.h"
 #include "coop_objects.h"
 #include "coop_link_sound.h"
 #include "coop_look_share.h"
@@ -2389,6 +2390,10 @@ namespace {
 // minimap-b. Set when a session ran: the solo keeper forgets its baseline (the session's writes are not the game's).
 std::atomic<bool> g_keeper_reset{false};
 
+// Row 112 (#74): our own Link with no session, for CurrentMapView (the Customize page's live picture). LocalFrameOff
+// publishes it, a session's start clears it (coop_solo_view.h).
+CoopSoloView::Store g_solo_view;
+
 // A guard, not a fix (the cause is not found yet): with no session, a map or compass the game gave in this save is
 // written back if the game takes it back while Link is in that dungeon (coop/host/one_way_keeper.hpp). In a session
 // the flag watcher does it (issue 146). Through the game's own Bool setter (GameFlagStore). LICHII_COOP_KEEP_MAPS=0
@@ -2437,6 +2442,7 @@ void LocalFrameOff(Core::System& system) {
     if (process == nullptr || system.GetApplicationProcessProgramID() != kOcarinaProgramId ||
         CoopGameBuild::Find(Hex(system.GetApplicationProcessBuildID(), 8)) == nullptr) {
         CoopLocalGame::Frame({});
+        g_solo_view.Publish({}, CoopSoloView::Clock::now());
         return;
     }
     if (process != seen) {
@@ -2459,6 +2465,23 @@ void LocalFrameOff(Core::System& system) {
     CoopLocalGame::Frame(facts);
     {
         const auto scene = full ? full->scene : reader.read_scene();
+        {   // Row 112: our Link for the Customize picture with no session, as a session's frame gives it.
+            CoopSoloView::Reading solo;
+            if (facts.position && scene) {
+                solo.position = std::array<float, 3>{(*facts.position)[0], (*facts.position)[1], (*facts.position)[2]};
+                solo.scene = scene;
+                solo.adult = facts.adult;
+                // Our own event (a cutscene, not the Ocarina): the animation is read only while one runs.
+                const auto running = full ? full->event_running : reader.read_event_running();
+                if (running.value_or(false)) {
+                    std::optional<coop::protocol::Animation> animation =
+                        full ? full->animation : reader.read_animation();
+                    solo.event = coop::host::local_event_hides(
+                        true, animation ? std::optional<std::string_view>(animation->name) : std::nullopt);
+                }
+            }
+            g_solo_view.Publish(solo, CoopSoloView::Clock::now());
+        }
         WatchMapDrops(memory, facts.position.has_value(), scene, facts.position);
         KeepMapsAlone(memory, facts.position.has_value(), scene);
         static MendClocks mend_since_us{};
@@ -2493,6 +2516,7 @@ void OnFrame(Core::System& system) {
             had = coop != nullptr;
             coop::host::map_drop_log().note(had ? "co-op session started" : "co-op session ended");
             g_keeper_reset.store(true);
+            g_solo_view.Clear();  // row 112: the session's frame from now, and a fresh reading after it
         }
     }
     // The game's main may be patched (or refused for a code mod) after co-op
@@ -2587,8 +2611,20 @@ bool CurrentMapView(MapView& out) {
     if (g_mod_refused) {
         return false;
     }
-    auto* coop = Get();
-    return coop != nullptr && coop->CurrentMapView(out);
+    if (auto* coop = Get()) {
+        return coop->CurrentMapView(out);
+    }
+    // Row 112 (#74): co-op idle is not "no Link": our own Link as LocalFrameOff read it, no other players.
+    CoopSoloView::View solo;
+    if (!g_solo_view.Get(solo, CoopSoloView::Clock::now())) {
+        return false;
+    }
+    out.scene.assign(solo.scene);
+    out.self = solo.self;
+    out.adult = solo.adult;
+    out.event = solo.event;
+    out.others.clear();
+    return true;
 }
 
 bool SendChat(const std::string& text) {
