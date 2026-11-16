@@ -1150,7 +1150,8 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
             // Patch 0024: the game's own save loads (docs/flags.md, "A load window"). All three wraps, or the old signs.
             const bool loads = (level.wraps >> HOS_COOP_WRAP_SAVE_LOADED & 1) != 0 &&
                                (level.wraps >> HOS_COOP_WRAP_SAVE_LOAD_START & 1) != 0 &&
-                               (level.wraps >> HOS_COOP_WRAP_TEMP_LOAD_START & 1) != 0;
+                               (level.wraps >> HOS_COOP_WRAP_TEMP_LOAD_START & 1) != 0 &&
+                               (level.wraps >> HOS_COOP_WRAP_GAME_OVER_SAVE & 1) != 0;
             if (CoopSave::NativeSaveLoads() != loads || !loads) {
                 LOG_INFO(Core, "{}", loads ? "coop: save loads: the game's own load nodes tell every save load (patch 0024)"
                                            : "coop: save loads: this Hookshot has no save-load wraps (patch 0024): a save "
@@ -1295,6 +1296,13 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
         // Local co-op: an extra player's Player reads its own controller. (native-puppets-b2's remote input, once
         // wired, is a second handler of these ids: both must run, and either may take phase 0.)
         return CoopLocalGame::Wrap(id, phase, x);
+    }
+    if (id == HOS_COOP_WRAP_GAME_OVER_SAVE) {
+        // Game Over saves its last state (Try Again or Quit Game; patch 0024). Reads nothing.
+        if (phase == 0) {
+            CoopSave::NoteGameOverSave();
+        }
+        return 0;
     }
     if (id == HOS_COOP_WRAP_SAVE_LOAD_START || id == HOS_COOP_WRAP_TEMP_LOAD_START || id == HOS_COOP_WRAP_SAVE_LOADED) {
         // A save load starts, or the save is in (patch 0024): the game's own sequence nodes. Reads nothing.

@@ -661,10 +661,13 @@ public:
                 session_->note_save_load_start();
             }
             if (loads.loads != 0) {
-                session_->note_save_loaded();
+                session_->note_save_loaded(loads.retry);
             }
-            LOG_INFO(Core, "coop: save: the game {}", loads.loads != 0 ? "loaded a save (its own load nodes)"
-                                                                       : "starts loading a save (its own load node)");
+            LOG_INFO(Core, "coop: save: the game {}",
+                     loads.loads == 0 ? "starts loading a save (its own load node)"
+                     : loads.retry    ? "loaded a save: Game Over's Try Again (its own load nodes): the group's "
+                                        "progress stays"
+                                      : "loaded a save (its own load nodes)");
         }
         // The game's own flag writes since the last frame (the applier's wrap, coop_flag_native.h): the watcher
         // reads those flags, not the whole list.

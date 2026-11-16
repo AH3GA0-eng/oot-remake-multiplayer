@@ -350,6 +350,7 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
   if (settling() && !window_) {
     window_ = true;
     old_counted_ = false;
+    window_retry_ = false;
     moved_ = false;
     window_title_ = false;
     back_keys_.clear();
@@ -365,6 +366,10 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
     // The save is in: the save load, said by the game itself (the window is open: set_loading above).
     native_loading_ = false;
     ++stats_.native_loads;
+    if (std::exchange(native_retry_, false)) {
+      window_retry_ = true;
+      ++stats_.retry_loads;
+    }
     if (window_ && !moved_) {
       moved_ = true;
       seen_ = true;
@@ -596,7 +601,15 @@ void FlagWatcher::end_window(FlagStore& store, std::vector<Outgoing>& out) {
     // A room's own switch state the game resets itself (one way) is the
     // room's: never reset for the group, never put back.
     if (one_way_.contains(key)) continue;
-    if (role_ == FlagRole::host) {
+    if (role_ == FlagRole::host && window_retry_) {
+      // Game Over's Try Again: not a save the host chose. The group's values (last_: the host's game had them
+      // before the load) go back into our game, as a guest's load does; nothing goes out.
+      if (keeps_own(store, it->second)) continue;
+      if (store.write_exact(it->second)) {
+        ++stats_.load_reverts;
+        ++stats_.applied;
+      }
+    } else if (role_ == FlagRole::host) {
       changed[key] = *now;  // the save's value goes to everyone
       last_[key] = *now;
       if (!store.is_count(key)) note_group(*now, nullptr);

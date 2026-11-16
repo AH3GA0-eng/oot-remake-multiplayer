@@ -60,14 +60,22 @@ bool TitleUp();
 // nodes start loading a save (start) or say the save is in (!start). Every save the game loads: the title, the System
 // menu's Load, Game Over's Try Again. The emulator never calls these.
 void NoteGameSaveLoad(bool start);
-// Whether this Hookshot has all three wraps (its hello's bits); false on the emulator.
+// Game Over saved its last state (its Try Again or its Quit Game: SeqExecuteAutoSaveMgrLastGameOverSave). A save load
+// after it with no title menu between (NoteTitle) is Try Again.
+void NoteGameOverSave();
+// Whether this Hookshot has all four wraps (its hello's bits); false on the emulator.
 void SetNativeSaveLoads(bool on);
 bool NativeSaveLoads();
 // The starts and loads since the last call (the session's flag watcher takes them).
+// Only fresh ones: a start older than kGameSaveLoadFreshMs (the game's own start loads a save before any session) or
+// a Game Over mark older than kGameOverFreshMs is dropped.
 struct GameSaveLoads {
     unsigned starts = 0;
     unsigned loads = 0;
+    bool retry = false;  // the save in is Game Over's Try Again (NoteGameOverSave, no title since)
 };
+inline constexpr long long kGameSaveLoadFreshMs = 30'000;
+inline constexpr long long kGameOverFreshMs = 120'000;
 GameSaveLoads TakeGameSaveLoads();
 // True once after each save load (the solo map keeper drops its baseline; with or without a session).
 bool TakeKeeperSaveLoad();

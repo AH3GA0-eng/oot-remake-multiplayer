@@ -289,25 +289,46 @@ bool SessionLive() {
     return g_live;
 }
 
+namespace {
+std::atomic<unsigned> g_load_starts{0};
+std::atomic<long long> g_load_start_ms{0};
+std::atomic<unsigned> g_loads{0};
+std::atomic<long long> g_game_over_ms{0};  // NoteGameOverSave; 0: none, or the title came since
+std::atomic<bool> g_load_retry{false};     // the last save in came after a fresh Game Over mark
+std::atomic<bool> g_keeper_load{false};
+std::atomic<bool> g_native_loads{false};
+
+long long NowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+}  // namespace
+
 void NoteTitle(bool title_up) {
+    if (title_up) {
+        g_game_over_ms.store(0, std::memory_order_relaxed);  // Game Over's Quit Game: the next load is the player's pick
+    }
     std::lock_guard lock(g_mutex);
     g_title_up = title_up;
 }
 
-namespace {
-std::atomic<unsigned> g_load_starts{0};
-std::atomic<unsigned> g_loads{0};
-std::atomic<bool> g_keeper_load{false};
-std::atomic<bool> g_native_loads{false};
-}  // namespace
 
 void NoteGameSaveLoad(bool start) {
+    const long long now = NowMs();
     if (start) {
         g_load_starts.fetch_add(1, std::memory_order_relaxed);
+        g_load_start_ms.store(now, std::memory_order_relaxed);
         return;
     }
+    const long long over = g_game_over_ms.exchange(0, std::memory_order_relaxed);
+    g_load_retry.store(over != 0 && now - over <= kGameOverFreshMs, std::memory_order_relaxed);
     g_loads.fetch_add(1, std::memory_order_relaxed);
     g_keeper_load.store(true, std::memory_order_relaxed);
+}
+
+void NoteGameOverSave() {
+    g_game_over_ms.store(NowMs(), std::memory_order_relaxed);
 }
 
 void SetNativeSaveLoads(bool on) {
@@ -319,8 +340,14 @@ bool NativeSaveLoads() {
 }
 
 GameSaveLoads TakeGameSaveLoads() {
-    return GameSaveLoads{g_load_starts.exchange(0, std::memory_order_relaxed),
-                         g_loads.exchange(0, std::memory_order_relaxed)};
+    GameSaveLoads out;
+    out.starts = g_load_starts.exchange(0, std::memory_order_relaxed);
+    if (out.starts != 0 && NowMs() - g_load_start_ms.load(std::memory_order_relaxed) > kGameSaveLoadFreshMs) {
+        out.starts = 0;  // (the game's own start, before any session: no load of ours)
+    }
+    out.loads = g_loads.exchange(0, std::memory_order_relaxed);
+    out.retry = out.loads != 0 && g_load_retry.load(std::memory_order_relaxed);
+    return out;
 }
 
 bool TakeKeeperSaveLoad() {

@@ -120,8 +120,8 @@ class Session {
   void note_save_load_start() {
     if (watcher_) watcher_->note_save_load_start();
   }
-  void note_save_loaded() {
-    if (watcher_) watcher_->note_save_loaded();
+  void note_save_loaded(bool retry = false) {
+    if (watcher_) watcher_->note_save_loaded(retry);
   }
 
   // Emulator thread, once per emulated frame. `reading` is this frame's

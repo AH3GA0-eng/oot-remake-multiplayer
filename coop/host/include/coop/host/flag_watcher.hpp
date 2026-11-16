@@ -67,6 +67,7 @@ struct FlagStats {
   std::uint64_t native_loads = 0;      // save loads the game's own load nodes said (set_native_loads, patch 0024)
   std::uint64_t old_sign_loads = 0;    // with native loads on: windows the old signs called a save load (cross-check)
   std::uint64_t native_timeouts = 0;   // a load node's start with no save in after kNativeLoadMaxFrames
+  std::uint64_t retry_loads = 0;       // of native_loads: Game Over's Try Again (the group's values back, no reset)
   std::uint64_t offline_loads = 0;     // player: the title was up while not connected, our changes put back (#96)
   std::uint64_t one_way_restores = 0;  // a one-way Bool (map, compass) back to 0: written back
   std::uint64_t down_only_kept = 0;    // a group's 1 not written over our 0 (share_down_only)
@@ -296,7 +297,13 @@ class FlagWatcher {
     native_loading_ = true;
     native_since_ = frames_;
   }
-  void note_save_loaded() { native_loaded_ = true; }
+  // `retry`: Game Over's Try Again (patch 0024's Game Over mark, no title since). Not a save the player chose: as
+  // host too, the group's values go back into our game and no FLAG_RESET goes out, so a host's death never takes
+  // the group's unsaved progress (coordinator A's decision, 2026-11-16). A guest's load does that anyway.
+  void note_save_loaded(bool retry = false) {
+    native_loaded_ = true;
+    native_retry_ = native_retry_ || retry;
+  }
   // A start with no save in after this long (a load the game gave up): loading no more.
   static constexpr std::uint64_t kNativeLoadMaxFrames = 30 * 60;
   static constexpr int kTitleFrames = 30;
@@ -479,6 +486,8 @@ class FlagWatcher {
   std::uint64_t native_since_ = 0;
   bool native_loaded_ = false;   // note_save_loaded, taken by the next frame()
   bool native_forced_ = false;   // loading_ held true by a load node's load (frame())
+  bool native_retry_ = false;    // note_save_loaded(true), taken with it
+  bool window_retry_ = false;    // this window's save load is Game Over's Try Again
   bool link_loading_ = false;    // set_loading's last value (no Link), for when that ends
   bool old_counted_ = false;     // this window's old sign counted in old_sign_loads
   bool scene_readable_ = true;  // set_scene

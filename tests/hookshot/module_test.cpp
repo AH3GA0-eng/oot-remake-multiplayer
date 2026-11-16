@@ -613,7 +613,7 @@ TEST_CASE("hookshot: the sound wrap (patch 0014) is one row in 0005's table, its
     CHECK(module.find("if (id == HOS_COOP_WRAP_SOUND_EMIT) {") != std::string::npos);
 }
 
-TEST_CASE("hookshot: the save-load wraps (patch 0024) are three rows in 0005's table, their header hookshot/src's") {
+TEST_CASE("hookshot: the save-load wraps (patch 0024) are four rows in 0005's table, their header hookshot/src's") {
     const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0024-coop-save-load-wrap.patch");
     CHECK(NewFile(patch, "host/hos_coop_save_load.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_save_load.h"));
     const struct {
@@ -623,6 +623,7 @@ TEST_CASE("hookshot: the save-load wraps (patch 0024) are three rows in 0005's t
         {HOS_COOP_WRAP_SAVE_LOADED, "0x32d8690, (0xd503237f, 0xa9be7bfd, 0xf9000bf3, 0x910003fd)),"},
         {HOS_COOP_WRAP_SAVE_LOAD_START, "0x32c1db0, (0xd503237f, 0xa9bd7bfd, 0xf9000bf5, 0xa9024ff4)),"},
         {HOS_COOP_WRAP_TEMP_LOAD_START, "0x32c2080, (0xd503237f, 0xa9bf7bfd, 0x910003fd, 0xb000dea8)),"},
+        {HOS_COOP_WRAP_GAME_OVER_SAVE, "0x32bbce0, (0xd503237f, 0xa9be7bfd, 0xf9000bf3, 0x910003fd)),"},
     };
     for (const auto& r : rows) {
         char row[128];
@@ -636,6 +637,8 @@ TEST_CASE("hookshot: the save-load wraps (patch 0024) are three rows in 0005's t
     CHECK(patch.find("     (5, 0xc08f0,") != std::string::npos);
     const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
     CHECK(module.find("CoopSave::NoteGameSaveLoad(id != HOS_COOP_WRAP_SAVE_LOADED)") != std::string::npos);
+    CHECK(module.find("CoopSave::NoteGameOverSave()") != std::string::npos);
+    CHECK(module.find("(level.wraps >> HOS_COOP_WRAP_GAME_OVER_SAVE & 1) != 0") != std::string::npos);
     CHECK(module.find("CoopSave::SetNativeSaveLoads(loads)") != std::string::npos);
 }
 

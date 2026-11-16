@@ -1236,6 +1236,48 @@ TEST_CASE("flag watcher: a guest's own load node puts the group's values back (p
   CHECK(w.stats().native_loads == 1);
 }
 
+TEST_CASE("flag watcher: the host's Game Over Try Again keeps the group's progress, no FLAG_RESET (patch 0024)") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::host);
+  w.set_native_loads(true);
+  w.frame(store);
+  store.set(kDoor, 1);  // the group's progress since the last save
+  w.frame(store);
+  w.note_save_load_start();
+  store.set(kDoor, 0);  // the last save, from before it
+  w.frame(store);
+  w.note_save_loaded(true);  // after Game Over's own save, no title between
+  for (const auto& m : decode(link_back(w, store))) CHECK_FALSE(std::holds_alternative<proto::FlagReset>(m));
+  CHECK(store.get(kDoor) == 1);  // the group's value back in the host's game
+  CHECK(w.stats().host_resets == 0);
+  CHECK(w.stats().retry_loads == 1);
+  CHECK(w.stats().native_loads == 1);
+  CHECK_FALSE(w.take_reset());
+}
+
+TEST_CASE("flag watcher: a save in with no load start (the title's New Game) is still the save load (patch 0024)") {
+  // NormalTitle.module runs AfterLoadSaveData itself: the on-load node with no SeqExecuteLoadSaveData before it.
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::host);
+  w.set_native_loads(true);
+  w.frame(store);
+  store.set(kDoor, 1);
+  w.frame(store);
+  store.set(kDoor, 0);  // a new file
+  w.note_save_loaded();
+  bool reset = false;
+  for (const auto& m : decode(link_back(w, store))) {
+    if (const auto* r = std::get_if<proto::FlagReset>(&m)) {
+      reset = reset || std::find(r->flags.begin(), r->flags.end(), entry(kDoor, 0)) != r->flags.end();
+    }
+  }
+  CHECK(reset);  // the group follows the host's new file (host-save)
+  CHECK(w.stats().native_loads == 1);
+  CHECK(w.stats().retry_loads == 0);
+  CHECK(w.stats().host_resets == 1);
+  CHECK(store.get(kDoor) == 0);
+}
+
 TEST_CASE("flag watcher: a load node's start with no save in ends after kNativeLoadMaxFrames (patch 0024)") {
   FakeStore store = game();
   FlagWatcher w(shared(), FlagRole::player);
