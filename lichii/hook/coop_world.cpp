@@ -1363,8 +1363,26 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
             o.rest_rotation = s.rotation;
             o.sent_position = s.position;
             o.kept = IsLock(s.name);
+            // A Skulltula the group has taken is never "back": the game makes
+            // the actor again because it reads the placement key only when it
+            // places actors, and the key came in after this room loaded (issue
+            // 89, 2026-11-17: ZoraRiver_Adult's token was taken twice — 44 -> 45
+            // — because the Skulltula came back and this rule said "break
+            // forgotten", undoing the take). A taken token's actor is removed by
+            // TakenKey, never restored.
+            const bool taken_token = IsGoldToken(s.name) && IsTokenTaken(s.hash);
+            const bool taken_skulltula = s.name == "Enemy_Skulltula_Gold" && IsSkulltulaTaken(s.hash);
+            if (taken_token || taken_skulltula) {
+                // Made again for a key the group already has (the game reads a
+                // placement's key only when it places actors). It is gone: ask
+                // for its deletion, and never call it "back" — the take stands.
+                o.remove = true;
+                objects_.emplace(s.address, std::move(o));
+                continue;
+            }
             if (const auto b = broken_.find(s.hash);
-                !o.kept && b != broken_.end() && b->second.seen_go && now_us - b->second.gone_us >= kRespawnUs &&
+                !o.kept && b != broken_.end() &&
+                b->second.seen_go && now_us - b->second.gone_us >= kRespawnUs &&
                 (!life || *life > 0)) {
                 // We saw it go and here it is again: the game put it back.
                 broken_.erase(b);
@@ -1424,8 +1442,12 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
                 TakeBack(b->second, o.hash, now_us, "the lock left the walk");
             }
         } else if (o.breakable && player && (!o.life || *o.life > 0)) {
+            // A Gold Skulltula or token the group has taken left because we
+            // asked for its deletion (TakenKey): that is not a break of ours.
+            const bool taken = (IsGoldToken(o.name) && IsTokenTaken(o.hash)) ||
+                               (o.name == "Enemy_Skulltula_Gold" && IsSkulltulaTaken(o.hash));
             const bool moved = Distance(o.position, o.first_position) >= 0.5f;
-            if (from_link <= (moved ? kBreakNearM : kBreakReachM)) {
+            if (!taken && from_link <= (moved ? kBreakNearM : kBreakReachM)) {
                 gone_.push_back({o, now_us});
             }
         }

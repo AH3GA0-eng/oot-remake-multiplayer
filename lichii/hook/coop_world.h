@@ -558,6 +558,14 @@ public:
     // be taken a second time (41 -> 42). The key is the fact that crosses
     // every game; the token's actor is what it removes.
     void TakenKey(std::uint64_t placement);
+    // Whether this token id / Gold Skulltula placement is one the group has
+    // taken (the sets TakenKey fills): its actor is never "back from the dead".
+    bool IsTokenTaken(std::uint64_t token_id) const {
+        return taken_token_ids_.contains(token_id);
+    }
+    bool IsSkulltulaTaken(std::uint64_t placement) const {
+        return taken_skulltulas_.contains(placement);
+    }
     // The place a taken Skulltula stood at, and whether `at` is that place:
     // a token's id is a guess, its place is not.
     void RememberTakenPlace(const coop::protocol::Vec3& at);

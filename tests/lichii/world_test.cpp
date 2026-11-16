@@ -2338,6 +2338,31 @@ TEST_CASE("world: a key that goes 1 with no break at all still takes the Skulltu
     CHECK_FALSE(Removed(w, 0x400));
 }
 
+TEST_CASE("world: a token the group has taken is never 'back' (issue 89, the Zora River double)") {
+    // Player test, 2026-11-17: ZoraRiver_Adult's Gold Skulltula was killed and
+    // its token taken (44). Out and back in, the game made the Skulltula again
+    // (it reads the placement key only when it places actors), the "it came
+    // back, so the break was a lie" rule undid the take, and the token counted
+    // a second time (45). A taken token's actor must never be restored.
+    WorldSync w;
+    GraveWalk(w, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(w, 1100 * kMs, {Token(0x200)});
+    GraveWalk(w, 1200 * kMs, {});  // taken: the Skulltula and its token go
+    w.TakenKey(kGoldHash);
+    GraveWalk(w, 1300 * kMs, {});
+    // The room loads again and the game makes both actors again.
+    for (std::uint64_t t = 5000; t <= 9000; t += 500) {
+        const auto out = GraveWalk(w, t * kMs,
+                                   {Thing(0x300, kGoldHash, 1, kGold, kGoldAt), Token(0x400)});
+        CHECK(Sent<proto::WorldBreak>(out).empty());  // never "restored"
+    }
+    // Both are gone (removed) rather than restored: the walk asked for their
+    // deletion, and nothing went out to undo the take.
+    CHECK(w.Removes().size() >= 1);
+    CHECK(w.IsSkulltulaTaken(kGoldHash));
+    CHECK(w.IsTokenTaken(CoopWorld::TokenId(kGoldHash)));
+}
+
 TEST_CASE("world: both players take the same token at once: one token goes back") {
     WorldSync a;
     GraveWalk(a, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
