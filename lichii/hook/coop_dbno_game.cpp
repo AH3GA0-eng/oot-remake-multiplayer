@@ -406,6 +406,12 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
     body.emitter = g.emitter.load(std::memory_order_acquire);
     body.bsa = g.bsa.load(std::memory_order_acquire);
     body.life = g.life_component.load(std::memory_order_acquire);
+    // A downed (or spectating) teammate's puppet is unseen in our game too (issue 150 with row 113).
+    for (const Teammate& t : team) {
+        if (t.state == State::downed || t.state == State::spectating) {
+            body.unseen_puppets.push_back(t.number);
+        }
+    }
     Body::TheCrawl().Want(body);
     for (auto& note : Body::TheCrawl().TakeNotes()) {
         LOG_INFO(Core, "coop: dbno: {}", note);

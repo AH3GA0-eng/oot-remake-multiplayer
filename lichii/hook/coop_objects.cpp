@@ -2066,6 +2066,8 @@ public:
     }
 
     bool debug_ = false;
+    bool aggro_ = false;   // LICHII_COOP_DEBUG_AGGRO (Aggro)
+    u64 aggro_at_ = 0;
     u64 grass_made_logged_ = 0;
     CoopWorld::WorldSync world_;
     CoopWorld::GimmickProbe gimmick_probe_;  // LICHII_COOP_GIMMICK_PROBE=1 turns it on
@@ -3073,6 +3075,16 @@ private:
         const auto emitter = table ? r.Ptr(*table + CoopDbno::Body::addr::kComponentEmitter) : std::nullopt;
         CoopDbno::SetOurComponents(bsa.value_or(0), emitter.value_or(0));
         static const bool body_caller = [] {
+            // A downed teammate's puppet (issue 150): its actor, from the puppet director's slots (the same
+            // calc-thread caller chain, so its slots are not changing meanwhile).
+            CoopDbno::Body::TheCrawl().SetPuppetActor([](std::uint8_t number) -> std::uint64_t {
+                for (const auto& slot : CoopPuppet::TheDirector().Slots()) {
+                    if (slot.number == number && slot.phase == CoopPuppet::Phase::live) {
+                        return slot.actor;
+                    }
+                }
+                return 0;
+            });
             CoopSvc::AddCaller(kDbnoBodyCallerOrder, [](CoopPuppet::Guest& guest, bool after_call,
                                                         std::uint64_t result, std::uint64_t now_ms) {
                 return CoopDbno::Body::TheCrawl().Next(guest, after_call, result, now_ms, TheBossMain().load());
@@ -3577,6 +3589,57 @@ private:
     // LICHII_COOP_DEBUG_NPC=1 every NPC copy's place and animation once a second.
     // Walking townspeople
     // (coop_npc_anim.h): the 5 s line of plays and frame sets.
+    // LICHII_COOP_DEBUG_AGGRO=1 (issue 150 proof, research only): once a second, every live Enemy_ within
+    // kAggroM of our Link: the Link it faces (ours or a puppet: a perceived puppet is who the game's own
+    // perception may pick), by its forward axis (rotation column 2) on the ground, and each Link's distance
+    // and angle off that axis. Read only; nothing is written.
+    static constexpr float kAggroM = 30.0f;
+    void Aggro(Reader& r, u64 now_us) {
+        if (!aggro_ || !player_ || now_us - aggro_at_ < 1'000'000) {
+            return;
+        }
+        aggro_at_ = now_us;
+        struct Seen {
+            std::string who;
+            std::array<float, 3> at;
+        };
+        std::vector<Seen> links{{"Link", *player_}};
+        for (const auto& [a, known] : names_) {
+            if (known.first.starts_with("CoopPuppet_") && r.Get<u32>(a + kActorState).value_or(0) == kStateAlive) {
+                if (const auto at = r.Get<std::array<float, 3>>(a + kActorPosition)) {
+                    links.push_back({fmt::format("puppet {:#x}", a), *at});
+                }
+            }
+        }
+        for (const auto& [a, known] : names_) {
+            if (!known.first.starts_with("Enemy_") || r.Get<u32>(a + kActorState).value_or(0) != kStateAlive) {
+                continue;
+            }
+            const auto at = r.Get<std::array<float, 3>>(a + kActorPosition);
+            const auto m = r.Get<std::array<float, 9>>(a + kActorRotation);
+            if (!at || !m || Apart(*player_, *at) > kAggroM) {
+                continue;
+            }
+            const float yaw = std::atan2((*m)[2], (*m)[8]);
+            std::string each;
+            std::size_t best = 0;
+            float best_off = 1e9f;
+            for (std::size_t i = 0; i < links.size(); ++i) {
+                const float dx = links[i].at[0] - (*at)[0];
+                const float dz = links[i].at[2] - (*at)[2];
+                float off = std::fabs(std::remainder(std::atan2(dx, dz) - yaw, 6.2831853f)) * 57.29578f;
+                if (off < best_off) {
+                    best_off = off;
+                    best = i;
+                }
+                each += fmt::format("; {} {:.1f} m off {:.0f} deg", links[i].who, std::sqrt(dx * dx + dz * dz), off);
+            }
+            // owner P0: not shared (yet), or not on our list.
+            LOG_INFO(Core, "coop: aggro: {} {:#x} (owner P{}) faces {} (off {:.0f} deg){}", known.first, a,
+                     sync_.OwnerAt(a), links[best].who, best_off, each);
+        }
+    }
+
     void NpcAnim(Reader& r, u64 now_us, std::vector<u64>& removes,
                  std::vector<Mover::Pose>& wish, std::vector<PlayWish>& plays) {
         // Row 97: every actor the event is with (Sync::EventPartner), not only
@@ -3790,6 +3853,7 @@ private:
             }
         }
         NpcAnim(r, now_us, removes, wish, plays);
+        Aggro(r, now_us);
         TheMover().Want(main_, std::move(wish), std::move(removes), std::move(plays));
         if (now_us - drift_at_ >= kDriftLogUs) {
             const auto [moved, deleted, played, framed] = TheMover().TakeCounts();
@@ -4037,6 +4101,7 @@ Objects& Instance() {
     static Objects objects;  // first called on the present thread
     static const bool once = [] {
         objects.debug_ = EnvFlag("LICHII_COOP_DEBUG_OBJECTS");
+        objects.aggro_ = EnvFlag("LICHII_COOP_DEBUG_AGGRO");
         objects.cheat_ = EnvFlag("LICHII_COOP_OBJECTS_CHEAT");
         objects.share_ = EnvFlag("LICHII_COOP_OBJECTS");
         objects.pose_ = EnvOn("LICHII_COOP_OBJECTS_POSE");
