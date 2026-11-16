@@ -91,6 +91,8 @@
 #include "coop_local_net.h"
 #include "coop_shared_scenes.h"
 #include "coop_solo_view.h"
+#include "coop_session_end.h"
+#include "coop_boss_native.h"
 #include "coop_objects.h"
 #include "coop_link_sound.h"
 #include "coop_look_share.h"
@@ -2458,14 +2460,17 @@ void WatchMapDrops(EmulatorMemory& memory, bool in_play, const std::optional<std
 // Split screen needs no session (docs/local-coop.md): with co-op off, the first Link is read here for local co-op's
 // frame step, as Coop::Read does while it is on. Only Ocarina of Time on a build the table knows. What is read and
 // when the Director is published: CoopLocalGame::OffFrame (tested).
-void LocalFrameOff(Core::System& system) {
+// `writes`: false with a code mod (issue 136): only our Link for the Customize picture is read, nothing written.
+void LocalFrameOff(Core::System& system, bool writes) {
     static Kernel::KProcess* seen = nullptr;
     static u64 base = 0;
     static CoopLocalGame::OffFrame step;
     auto* process = system.ApplicationProcess();
     if (process == nullptr || system.GetApplicationProcessProgramID() != kOcarinaProgramId ||
         CoopGameBuild::Find(Hex(system.GetApplicationProcessBuildID(), 8)) == nullptr) {
-        CoopLocalGame::Frame({});
+        if (writes) {
+            CoopLocalGame::Frame({});
+        }
         g_solo_view.Publish({}, CoopSoloView::Clock::now());
         return;
     }
@@ -2477,7 +2482,7 @@ void LocalFrameOff(Core::System& system) {
     coop::host::PlayerReader reader(memory);
     std::optional<coop::host::PlayerReading> full;
     CoopLocalGame::Facts facts;
-    if (step.FullRead(CoopLocalGame::HasSeats())) {
+    if (writes && step.FullRead(CoopLocalGame::HasSeats())) {
         full = reader.read();
         facts = {full.has_value(), full ? std::optional(full->position) : std::nullopt,
                  full && full->age == coop::protocol::Age::adult};
@@ -2486,7 +2491,9 @@ void LocalFrameOff(Core::System& system) {
         const auto position = reader.read_position();
         facts = {position.has_value(), position, position && reader.read_age() == coop::protocol::Age::adult};
     }
-    CoopLocalGame::Frame(facts);
+    if (writes) {
+        CoopLocalGame::Frame(facts);
+    }
     {
         const auto scene = full ? full->scene : reader.read_scene();
         {   // Row 112: our Link for the Customize picture with no session, as a session's frame gives it.
@@ -2505,6 +2512,9 @@ void LocalFrameOff(Core::System& system) {
                 }
             }
             g_solo_view.Publish(solo, CoopSoloView::Clock::now());
+        }
+        if (!writes) {
+            return;  // a code mod: only the reading above
         }
         WatchMapDrops(memory, facts.position.has_value(), scene, facts.position);
         KeepMapsAlone(memory, facts.position.has_value(), scene);
@@ -2535,29 +2545,17 @@ void OnFrame(Core::System& system) {
     // emulation has stopped), so it stays valid for this frame.
     auto* coop = Get();
     {   // minimap-b: a session started or ended (the drop log's line; the solo keeper's baseline is dropped)
-        static bool had = false;
-        static Coop* seen = nullptr;     // the session of the last frames
-        static Coop* last_due = nullptr; // ended, waiting for its last frame (below)
-        if (coop != nullptr) {
-            seen = coop;
-            last_due = nullptr;
-        }
-        if ((coop != nullptr) != had) {
-            had = coop != nullptr;
-            coop::host::map_drop_log().note(had ? "co-op session started" : "co-op session ended");
+        static CoopSessionEnd::LastFrame<Coop> last;
+        if (const auto change = last.Note(coop); change.started || change.ended) {
+            coop::host::map_drop_log().note(change.started ? "co-op session started" : "co-op session ended");
             g_keeper_reset.store(true);
             g_solo_view.Clear();  // row 112: the session's frame from now, and a fresh reading after it
-            // Left from the menu (End): every part forgets the session on a frame that is not connected (the
-            // objects' owners and copies, bosses held for their owner, spawns, drops, the time, the HUD, ...),
-            // as on a drop, but no frame came after End. The ended session gets that one frame, once End has
-            // stopped its client and kept it (End runs on the menu's thread), so solo play goes on with nothing
-            // of the session left.
-            if (!had) {
-                last_due = seen;
-            }
         }
-        if (last_due != nullptr && !g_mod_refused && LastEnded() == last_due) {
-            std::exchange(last_due, nullptr)->Frame(system);
+        // Left from the menu (End): every part forgets the session on a frame that is not connected (the objects'
+        // owners and copies, bosses held for their owner, spawns, drops, the time, the HUD, ...), as on a drop,
+        // but no frame came after End. The ended session gets that one frame once End has stopped and kept it.
+        if (Coop* ended = last.Take(LastEnded(), g_mod_refused)) {
+            ended->Frame(system);
         }
     }
     // The game's main may be patched (or refused for a code mod) after co-op
@@ -2570,11 +2568,30 @@ void OnFrame(Core::System& system) {
                           "in the game's Add-Ons. Disconnecting.",
                     CoopSvc::Refusal());
         coop->End(false);
+        // Our own table only (no game write): a copy boss held at life 1 for its owner can die again here.
+        if (CoopBossNative::Table& bosses = CoopBossNative::TheTable(); bosses.BrainOn()) {
+            bosses.Publish({});
+        }
     }
-    if (coop && !g_mod_refused) {
+    switch (CoopSessionEnd::PathOf(coop != nullptr, g_mod_refused)) {
+    case CoopSessionEnd::Path::session:
         coop->Frame(system);
-    } else if (CoopLocalGame::OffFrame::Runs(coop != nullptr, g_mod_refused)) {
-        LocalFrameOff(system);
+        break;
+    case CoopSessionEnd::Path::solo:
+        LocalFrameOff(system, true);
+        break;
+    case CoopSessionEnd::Path::read_only: {
+        // Issue 136, with or without a session before: what is not multiplayer and only reads the game goes on
+        // (the Customize picture; the menus and settings never needed a session), nothing is written to it.
+        static bool said = false;
+        if (!std::exchange(said, true)) {
+            LOG_INFO(Core, "coop: a code mod is installed: solo features that only read the game go on (the "
+                           "Customize picture, menus, settings); nothing is written to the game (story and map "
+                           "mends, split screen, a left session's clean-up) while the mod is installed");
+        }
+        LocalFrameOff(system, false);
+        break;
+    }
     }
 }
 
@@ -2649,13 +2666,14 @@ std::optional<Markers> CurrentMarkers() {
 }
 
 bool CurrentMapView(MapView& out) {
-    if (g_mod_refused) {
-        return false;
+    // A session's frame, but never one stopped for a code mod (issue 136: its Coop stays until Shutdown).
+    if (!g_mod_refused) {
+        if (auto* coop = Get()) {
+            return coop->CurrentMapView(out);
+        }
     }
-    if (auto* coop = Get()) {
-        return coop->CurrentMapView(out);
-    }
-    // Row 112 (#74): co-op idle is not "no Link": our own Link as LocalFrameOff read it, no other players.
+    // Row 112 (#74): co-op idle is not "no Link": our own Link as LocalFrameOff read it, no other players. Also with
+    // a code mod: the Customize picture only reads the game.
     CoopSoloView::View solo;
     if (!g_solo_view.Get(solo, CoopSoloView::Clock::now())) {
         return false;
