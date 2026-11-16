@@ -418,7 +418,7 @@ TEST_CASE("eye switch: guard flags (a negated trigger flag, an asker's delete fl
     CHECK(s.HoldsGuard(cleared, kDeku));
 }
 
-TEST_CASE("eye switch: every end of a try releases its guard flags (no asker here: not held the whole visit)") {
+TEST_CASE("eye switch: guard flags after a try: released when our copy did not run, held until played when it ran") {
     const auto cleared = coop::protocol::flag_hash("InsideTheDekuTree_RoomC_Cleared");
     SUBCASE("no asker") {
         FakeGuest g;
@@ -443,6 +443,10 @@ TEST_CASE("eye switch: every end of a try releases its guard flags (no asker her
         REQUIRE(s.Want(kLadder, kDeku));
         s.Step(g, false, 0, kMain, 100);
         s.Step(g, true, kBlock, kMain, 100);
+        CHECK(s.HoldsGuard(cleared, kDeku));  // our own event runs: the other player's value must not land mid-event
+        s.Expire(kDeku, [](const std::string&) { return false; });
+        CHECK(s.HoldsGuard(cleared, kDeku));
+        s.Expire(kDeku, [](const std::string& n) { return n == kLadder; });
         CHECK_FALSE(s.HoldsGuard(cleared, kDeku));
     }
     SUBCASE("our copy ran") {
@@ -457,7 +461,34 @@ TEST_CASE("eye switch: every end of a try releases its guard flags (no asker her
         s.Step(g, true, 0, kMain, 100);
         EventRunning(g, true);
         s.Step(g, false, 0, kMain, 116);
+        CHECK(s.TakeNotes().back().find("event started") != std::string::npos);
+        // Held while our event runs (most guards delete the asker), until our game has it played.
+        CHECK(s.HoldsGuard(cleared, kDeku));
+        s.Expire(kDeku, nullptr);  // no flags read: still held
+        CHECK(s.HoldsGuard(cleared, kDeku));
+        s.Expire(kDeku, [](const std::string&) { return false; });
+        CHECK(s.HoldsGuard(cleared, kDeku));
+        s.Expire(kDeku, [](const std::string& n) { return n == kLadder; });
         CHECK_FALSE(s.HoldsGuard(cleared, kDeku));
+        // A new visit after it played: the try may come again (the decider asks once a visit), so it waits again.
+        s.Expire("KokiriForest");
+        s.Expire(kDeku);
+        CHECK(s.HoldsGuard(cleared, kDeku));
+    }
+    SUBCASE("ran, then we left before it was played: a new visit starts clean") {
+        FakeGuest g;
+        World w;
+        Eye(g, kEye);
+        CoopEyeSwitch::Switcher s(w.Finder());
+        s.Expire(kDeku);
+        REQUIRE(s.Want(kLadder, kDeku));
+        s.Step(g, false, 0, kMain, 100);
+        REQUIRE(s.Step(g, true, kBlock, kMain, 100));
+        s.Step(g, true, 0, kMain, 100);
+        EventRunning(g, true);
+        s.Step(g, false, 0, kMain, 116);
+        s.Expire("KokiriForest");
+        CHECK_FALSE(s.HoldsGuard(cleared, "KokiriForest"));
     }
     SUBCASE("dropped: our game has it played") {
         World w;

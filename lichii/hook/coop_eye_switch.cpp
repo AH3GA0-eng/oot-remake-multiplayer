@@ -221,6 +221,15 @@ void Switcher::Expire(const std::string& scene, const std::function<bool(const s
     if (!scene.empty() && scene != scene_) {  // a new visit: every event may be tried again
         scene_ = scene;
         ended_.clear();
+        ran_.clear();
+    }
+    for (auto it = ran_.begin(); it != ran_.end();) {  // our copy ran: its guards come once our game has it played
+        if (played && played(*it)) {
+            ended_.push_back(*it);
+            it = ran_.erase(it);
+        } else {
+            ++it;
+        }
     }
     for (auto it = wanted_.begin(); it != wanted_.end();) {
         const bool busy = it == wanted_.begin() && next_ != Next::none;  // a call of ours is out: next Step ends it
@@ -277,13 +286,15 @@ bool Switcher::EventRunning(CoopPuppet::Guest& guest, std::uint64_t main) {
     return guest.Read(manager + le::kEventSession, &session, 8) && session != 0;
 }
 
-void Switcher::End(const std::string& why, bool fallback) {
+void Switcher::End(const std::string& why, bool fallback, bool ran) {
     const Try& t = wanted_.front();
     notes_.push_back("eye switch: " + t.event + ": " + why);
-    // Every end is final for this visit (the decider asks an event once a visit): our copy ran (its own event set the
-    // guard flags natively), or it did not and will not (no asker, our own hit, the old way): either way its guard
-    // flags come as before from now on (HoldsGuard).
-    if (std::find(ended_.begin(), ended_.end(), t.event) == ended_.end()) ended_.push_back(t.event);
+    // Every end is final for this visit (the decider asks an event once a visit). Our copy did not run and will not
+    // (no asker, the old way): its guard flags come as before from now on. Our copy runs (an event started after our
+    // plug, or our own hit): its guards stay held until our game has the event played (Expire's played()), since
+    // most of them delete the asker and the other player's value would land in the middle of our event.
+    auto& list = ran ? ran_ : ended_;
+    if (std::find(list.begin(), list.end(), t.event) == list.end()) list.push_back(t.event);
     if (fallback) fallbacks_.emplace_back(t.event, t.scene);
     wanted_.pop_front();
 }
@@ -321,7 +332,7 @@ std::optional<CoopPuppet::Call> Switcher::Frame(CoopPuppet::Guest& guest, std::u
     }
     const bool running = EventRunning(guest, main);
     if (t.set && running) {
-        End("an event started after our switch's plug (the room's asker asked it)", false);
+        End("an event started after our switch's plug (the room's asker asked it)", false, true);
         return std::nullopt;
     }
     if (now_ms > t.until_ms) {
@@ -342,7 +353,7 @@ std::optional<CoopPuppet::Call> Switcher::Frame(CoopPuppet::Guest& guest, std::u
     if (line == nullptr) {
         // No asker: the room is cleared here (its asker deleted itself) or not loaded; the old way would not ask either.
         End(t.set ? "our room's asker is gone after the plug (its event ran)" : "no room asker here: not started",
-            false);
+            false, t.set);
         return std::nullopt;
     }
     const std::string_view switch_name[] = {line->actor};
@@ -359,7 +370,7 @@ std::optional<CoopPuppet::Call> Switcher::Frame(CoopPuppet::Guest& guest, std::u
     }
     if (target == 0) {
         if (any_plug && !t.set) {
-            End("our switch's " + std::string(line->plug) + " is 1 already (our own hit): nothing to do", false);
+            End("our switch's " + std::string(line->plug) + " is 1 already (our own hit): nothing to do", false, true);
         } else if (!t.told_waiting) {
             t.told_waiting = true;
             notes_.push_back("eye switch: " + t.event + ": waiting (" + std::to_string(eyes.size()) + " " +
