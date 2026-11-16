@@ -11,8 +11,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from puppet_pack import story_requests as sr  # noqa: E402
 
 
-def request(name):
-    return {"Gyaml": "EventRequestActor", "Dynamic": {"RequestEventName": name}}
+def setting(name, flow, entry="", base="StarterPos", comp="FlowchartEvent"):
+    return {"__RowId": name, "FlowchartFileName": f"Work/Event/EventFlow/{flow}.evfc", "EntryPointName": entry,
+            "EventBaseSetting": f"Work/Event/EventSetting/X/{base}.game__event__GameEventBaseSetting.gyml",
+            "EventSettingComponentList": f"Work/Event/EventSetting/Y/{comp}.engine__event__EventSettingComponentList.gyml"}
 
 
 class StoryRequestsTest(unittest.TestCase):
@@ -22,38 +24,52 @@ class StoryRequestsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             sr.story_names("nothing here")
 
-    def test_settings_of_story_flows_only(self):
-        scenes = {
-            "KokiriForest_Child": [request("KokiriForest_Meet_DekuTree_MeetDekuTree_01"), request("Dm_Kokiri_0070"),
-                                   {"Gyaml": "Obj_Pot_A_01"}],
-            "InsideJabuJabuBelly": [request("Get_StoneOfWater_MeetRuto"), request("Get_StoneOfWater_RutoGetStone"),
-                                    request("StoneOfWater_ElevatedFloor")],
-            "DodongoCavern": [request("Get_StoneOfFire_AppearBoss")],
-            "Room": [request("Room_Gimmick_Open")],
-        }
+    def test_every_named_setting_of_a_story_flow_is_classified(self):
         settings = sr.event_settings([
-            {"__RowId": "KokiriForest_Meet_DekuTree_MeetDekuTree_01",
-             "FlowchartFileName": "Work/Event/EventFlow/Meet_DekuTree.evfc"},
-            {"__RowId": "Dm_Kokiri_0070", "FlowchartFileName": "Work/Event/EventFlow/Dm_Kokiri_0070.evfc"},
-            {"__RowId": "Get_StoneOfWater_MeetRuto", "FlowchartFileName": "Work/Event/EventFlow/Get_StoneOfWater.evfc"},
-            {"__RowId": "Get_StoneOfWater_RutoGetStone",
-             "FlowchartFileName": "Work/Event/EventFlow/Get_StoneOfWater.evfc"},
-            {"__RowId": "StoneOfWater_ElevatedFloor", "FlowchartFileName": "Work/Event/EventFlow/Get_StoneOfWater.evfc"},
-            {"__RowId": "Get_StoneOfFire_AppearBoss", "FlowchartFileName": "Work/Event/EventFlow/Get_StoneOfFire.evfc"},
-            {"__RowId": "Room_Gimmick_Open", "FlowchartFileName": "Work/Event/EventFlow/Room_Gimmick.evfc"},
-            {"__RowId": "123_456_D_T"},
+            setting("KokiriForest_Meet_DekuTree_MeetDekuTree_01", "Meet_DekuTree"),
+            setting("Dm_Kokiri_0070", "Dm_Kokiri_0070"),                           # a story name: not in the table
+            setting("Dm_FireTemple_0020", "Dm_FireTemple_0020"),
+            setting("Get_StoneOfWater_ShowLetter", "Get_StoneOfWater"),             # placed or not: shared
+            setting("Dm_FireTemple_0015", "Dm_FireTemple_0020", "EntryPoint1"),    # an entry of a Dm_ cutscene
+            setting("Get_StoneOfWater_DestroyBoss", "Get_StoneOfWater", comp="BossDie"),
+            setting("Get_StoneOfFire_AppearBoss", "Get_StoneOfFire"),
+            setting("StoneOfWater_ElevatedFloor", "Get_StoneOfWater"),
+            setting("Meet_Darunia_PlayOcarina", "Get_StoneOfFire", comp="NPCTalk"),
+            setting("Talk_Deku_01_Attacked", "Get_StoneOfForest", "Talk_Deku_01_Attacked"),
+            setting("Get_StoneOfWater_ArriveJabuJabuBelly", "Get_StoneOfWater", base="PlayerPos"),
+            setting("Get_StoneOfForest_GetSword", "Get_StoneOfForest", "GetSword"),
+            setting("Get_StoneOfWater_RutoGetStone", "Get_StoneOfWater"),          # a stone: shared
+            setting("Check_DaruniaDoor", "Get_StoneOfFire"),
+            setting("Room_Gimmick_Open", "Room_Gimmick"),                           # not a story flow
+            setting("3838149862_1053658113_1523149261_D_T", "Get_StoneOfFire"),    # a talk row id
         ])
-        self.assertEqual(settings["Get_StoneOfWater_MeetRuto"], "Get_StoneOfWater")
-        self.assertEqual(settings["123_456_D_T"], "")
-        story = {"Meet_DekuTree", "Get_StoneOfFire", "Get_StoneOfWater", "Dm_Kokiri_0070", "Meet_GreatFairy"}
-        rows = sr.table(sr.requests(scenes), settings, story)
-        self.assertEqual(rows, [
-            ("InsideJabuJabuBelly", "Get_StoneOfWater_MeetRuto", "Get_StoneOfWater"),
-            ("InsideJabuJabuBelly", "Get_StoneOfWater_RutoGetStone", "Get_StoneOfWater"),  # two in one scene
-            ("KokiriForest_Child", "KokiriForest_Meet_DekuTree_MeetDekuTree_01", "Meet_DekuTree"),
-        ])  # a story name that is a setting itself, a gimmick, a boss event and a non-story flow are left out
+        self.assertEqual(settings["Meet_Darunia_PlayOcarina"].components, "NPCTalk")
+        self.assertEqual(settings["Get_StoneOfWater_ArriveJabuJabuBelly"].base, "PlayerPos")
+        story = {"Meet_DekuTree", "Get_StoneOfFire", "Get_StoneOfWater", "Get_StoneOfForest", "Dm_Kokiri_0070",
+                 "Dm_FireTemple_0020", "Meet_GreatFairy"}
+        rows = {r[0]: r[2] for r in sr.table(settings, story, {"StoneOfWater_ElevatedFloor"})}
+        self.assertEqual(rows, {
+            "KokiriForest_Meet_DekuTree_MeetDekuTree_01": "story",
+            "Get_StoneOfWater_ShowLetter": "story",
+            "Dm_FireTemple_0015": "story",
+            "Get_StoneOfWater_RutoGetStone": "story",
+            "Get_StoneOfWater_DestroyBoss": "boss",
+            "Get_StoneOfFire_AppearBoss": "boss",
+            "StoneOfWater_ElevatedFloor": "gimmick",
+            "Meet_Darunia_PlayOcarina": "own",
+            "Talk_Deku_01_Attacked": "own",
+            "Get_StoneOfWater_ArriveJabuJabuBelly": "own",
+            "Get_StoneOfForest_GetSword": "own",
+            "Check_DaruniaDoor": "never",
+        })
         self.assertEqual(sr.no_setting(story, settings),
-                         ["Get_StoneOfFire", "Get_StoneOfWater", "Meet_DekuTree", "Meet_GreatFairy"])
+                         ["Get_StoneOfFire", "Get_StoneOfForest", "Get_StoneOfWater", "Meet_DekuTree",
+                          "Meet_GreatFairy"])
+
+    def test_gimmick_names_from_the_hook(self):
+        dungeon = '{0xfd1a276a, false, "HavePlayedEvent.StoneOfWater_ElevatedFloor"}, {1, true, "Other.Flag"},'
+        places = '{"Dm_FireTemple_0029", "FireTemple", -46.9f, 186.5f, -22.4f},'
+        self.assertEqual(sr.gimmick_names(dungeon, places), {"StoneOfWater_ElevatedFloor", "Dm_FireTemple_0029"})
 
     def test_carries_whole_parts(self):
         self.assertTrue(sr.carries("KokiriForest_Meet_DekuTree_MeetDekuTree_01", "Meet_DekuTree"))
@@ -62,10 +78,12 @@ class StoryRequestsTest(unittest.TestCase):
         self.assertFalse(sr.carries("GoronCity_SecretHole_AppearTreasureBox", "Get_StoneOfFire"))
 
     def test_render(self):
-        text = sr.render([("KokiriForest_Child", "KokiriForest_Meet_DekuTree_MeetDekuTree_01", "Meet_DekuTree")],
+        text = sr.render([("KokiriForest_Meet_DekuTree_MeetDekuTree_01", "Meet_DekuTree", "story", ""),
+                          ("Get_StoneOfForest_GetSword", "Get_StoneOfForest", "own", "an item each player gets")],
                          ["Meet_GreatFairy"])
-        self.assertIn('{"KokiriForest_Child", "KokiriForest_Meet_DekuTree_MeetDekuTree_01", "Meet_DekuTree"},', text)
-        self.assertIn("constexpr StoryRequest kStoryRequests[] = {", text)
+        self.assertIn('{"KokiriForest_Meet_DekuTree_MeetDekuTree_01", "Meet_DekuTree"},', text)
+        self.assertIn("constexpr StorySetting kStorySettings[] = {", text)
+        self.assertIn("//   own     Get_StoneOfForest_GetSword (Get_StoneOfForest): an item each player gets", text)
         self.assertIn("constexpr std::string_view kNoSetting[] = {", text)
         self.assertIn('    "Meet_GreatFairy",', text)
 

@@ -241,6 +241,17 @@ TEST_CASE("a story cutscene asked by its event setting is sent and joined by tha
     // Two settings of one flow in one scene stay two (Ruto, then her stone): the key is the setting.
     CHECK(IsStorySetting("Get_StoneOfWater_MeetRuto"));
     CHECK(IsStorySetting("Get_StoneOfWater_RutoGetStone"));
+    // Every named setting of a story flow is classified from the game's data (story_requests.py): shared ones
+    // whether placed or asked another way (King Zora's letter, the waterfall, the Fire Temple's Gorons) ...
+    CHECK(IsStorySetting("Get_StoneOfWater_ShowLetter"));
+    CHECK(IsStorySetting("Get_StoneOfWater_WaterfallSplit"));
+    CHECK(StoryOfRequest("Dm_FireTemple_0015") == std::optional<std::string_view>("Dm_FireTemple_0020"));
+    // ... and not: a boss event, a dungeon gimmick, the player's own talk or item, a room event.
+    for (const std::string_view n : {"Get_StoneOfWater_DestroyBoss", "StoneOfWater_ElevatedFloor",
+                                     "Meet_Darunia_PlayOcarina", "Get_StoneOfForest_GetSword",
+                                     "Get_StoneOfFire_GetBombBag", "Check_DaruniaDoor", "Talk_Deku_01_Attacked"}) {
+        CHECK_MESSAGE(!IsStory(n), std::string(n));
+    }
     CHECK(IsStory(kEntry));
     CHECK(IsStory("Dm_Kokiri_0070"));
     CHECK_FALSE(IsStory("Npc_Kokiri_Mido_Child"));
@@ -252,9 +263,8 @@ TEST_CASE("a story cutscene asked by its event setting is sent and joined by tha
     }
     CHECK(Askable(kEntry));
     CHECK(Askable("Dm_Kokiri_0150"));
-    for (const auto& r : CoopSharedScenes::StoryRequests()) {
+    for (const auto& r : CoopSharedScenes::StorySettings()) {
         CHECK_MESSAGE(CoopSharedScenes::IsShared(r.flow), std::string(r.flow));
-        CHECK_MESSAGE(!Askable(r.flow), std::string(r.flow));  // the table is of the flows with no setting
         CHECK(Askable(r.request));
         CHECK(StoryOfRequest(r.request) == std::optional<std::string_view>(r.flow));
     }

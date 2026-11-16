@@ -41,22 +41,23 @@ bool IsShared(std::string_view name);
 // setting* (RSDB EventSetting: a name, the flow and the entry it plays), and
 // keeps "already played" per setting (HavePlayedEvent.<setting>; every one of
 // the game's 2172 named settings has that flag). Most story cutscenes are a
-// setting of their own name; the story quests are not: the Great Deku Tree's
-// meeting is the setting KokiriForest_Meet_DekuTree_MeetDekuTree_01 (flow
-// Meet_DekuTree), asked by the EventRequestActor placed in KokiriForest_Child.
-// The game's request then named no story event, the story search's
-// "Meet_DekuTree" counted as a leftover of another event (intro-ocarina) and
-// was never sent: each player watched it alone. So the key of such a cutscene
-// is its setting: the starter sends it, a game that joins asks for it and
-// reads its played flag (coop_story_requests.inc,
-// tools/puppet_pack/story_requests.py: the placed settings of the story flows
-// that are no setting themselves, gimmicks and boss events left out).
-struct StoryRequest {
-    std::string_view scene;    // where it is placed
-    std::string_view request;  // the setting (its RequestEventName)
+// setting of their own name; many settings play a story flow under another
+// name: the Great Deku Tree's meeting is the setting
+// KokiriForest_Meet_DekuTree_MeetDekuTree_01 (flow Meet_DekuTree), the Fire
+// Temple's freed Gorons Dm_FireTemple_0014.._0022 (flow Dm_FireTemple_0020).
+// The game's request then named no story event, the story search's flow name
+// counted as a leftover of another event (intro-ocarina) and was never sent:
+// each player watched it alone. So the key of such a cutscene is its setting:
+// the starter sends it, a game that joins asks for it and reads its played
+// flag. coop_story_requests.inc (tools/puppet_pack/story_requests.py) holds
+// every named setting of a story flow under another name, classified from the
+// game's data: the shared ones here, the others (boss events, dungeon
+// gimmicks, talks, arrivals, items, room events) in comments with why.
+struct StorySetting {
+    std::string_view request;  // the setting's name (what the game's request names)
     std::string_view flow;     // the shared story flow it plays
 };
-std::span<const StoryRequest> StoryRequests();
+std::span<const StorySetting> StorySettings();
 // The shared story flow a request of our game plays: `request` itself when it
 // is a story name, the flow of a story setting in the table, else nothing.
 std::optional<std::string_view> StoryOfRequest(std::string_view request);

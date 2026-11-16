@@ -84,8 +84,8 @@ namespace {
 #include "coop_story_requests.inc"
 }  // namespace
 
-std::span<const StoryRequest> StoryRequests() {
-    return kStoryRequests;
+std::span<const StorySetting> StorySettings() {
+    return kStorySettings;
 }
 
 std::optional<std::string_view> StoryOfRequest(std::string_view request) {
@@ -93,7 +93,7 @@ std::optional<std::string_view> StoryOfRequest(std::string_view request) {
         it != std::end(kNames) && *it == request) {
         return *it;
     }
-    for (const StoryRequest& r : kStoryRequests) {
+    for (const StorySetting& r : kStorySettings) {
         if (r.request == request) {
             return r.flow;
         }
@@ -102,7 +102,7 @@ std::optional<std::string_view> StoryOfRequest(std::string_view request) {
 }
 
 bool IsStorySetting(std::string_view name) {
-    for (const StoryRequest& r : kStoryRequests) {
+    for (const StorySetting& r : kStorySettings) {
         if (r.request == name) {
             return true;
         }
@@ -116,7 +116,7 @@ bool IsStory(std::string_view name) {
 
 std::vector<std::string_view> RequestNames() {
     std::vector<std::string_view> out(std::begin(kNames), std::end(kNames));
-    for (const StoryRequest& r : kStoryRequests) {
+    for (const StorySetting& r : kStorySettings) {
         out.push_back(r.request);
     }
     return out;
