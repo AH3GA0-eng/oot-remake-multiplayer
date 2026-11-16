@@ -47,6 +47,7 @@ param(
     [ValidateRange(0, 256)][int]$Jobs = 0,
     [string]$Tools = '',
     [string]$Work = '',
+    [string]$DlssSdk = '',
     [switch]$Rebuild,
     [switch]$CheckOnly,
     [switch]$PackOnly,
@@ -130,6 +131,31 @@ $toolsPin = Read-KeyFile (Join-Path $hs 'TOOLS.txt')
 foreach ($k in 'repo', 'commit') { if (-not $pin[$k]) { Fail "hookshot\PIN has no $k=." } }
 foreach ($k in 'release', 'lock_sha256', 'source_commit', 'source_sha256') { if (-not $toolsPin[$k]) { Fail "hookshot\TOOLS.txt has no $k=." } }
 if ($pin.commit -notmatch '^[0-9a-f]{40}$') { Fail "hookshot\PIN: commit=$($pin.commit) is not a full commit id." }
+
+# NVIDIA's DLSS SDK already on this PC (#229), for a kit that opted in to DLSS (-Dlss, hookshot\dlss.txt below): its
+# files are copied into the build's own SDK folder first, so make_game.py's --fetch-ngx-sdk, which checks every file's
+# SHA-256 against its pin, downloads only what differs (nothing, offline too, when it is the same SDK version).
+# -DlssSdk names one (and asks for DLSS); otherwise the folders a Longshot Builder or the Longshot Launcher fetches
+# into. Never a LONGSHOT_NGX_SDK set on the PC: the build clears that one (Invoke-MakeGame), as Longshot's Builder does.
+# Never DLSS without the opt-in: a PC with an SDK but no dlss.txt builds as before.
+function Find-NgxSdk([string]$Wanted) {
+    $lib = 'nvsdk_ngx_s.lib'
+    $tries = if ($Wanted) { @($Wanted) } elseif ($env:LOCALAPPDATA) {
+        @('LongshotBuilder', 'LongshotLauncher', 'HookshotBuilder') | ForEach-Object { Join-Path $env:LOCALAPPDATA "$_\ngx-sdk" }
+    } else { @() }
+    foreach ($t in $tries) {
+        if (-not $t -or -not (Test-Path -LiteralPath $t -PathType Container)) { continue }
+        if (Test-Path -LiteralPath (Join-Path $t "lib\$lib")) { return (Resolve-Path -LiteralPath $t).Path }
+    }
+    return ''
+}
+if ($DlssSdk) {
+    if (-not (Find-NgxSdk $DlssSdk)) {
+        Fail "No NVIDIA DLSS SDK at ${DlssSdk}: it needs lib\nvsdk_ngx_s.lib. Longshot Builder's NVIDIA DLSS tick or the Longshot Launcher fetches one."
+    }
+    if ($NoDlss) { Fail '-DlssSdk and -NoDlss together: choose one.' }
+    $Dlss = $true
+}
 # (Longshot lives on Team MagicBean's Forgejo; its release files and source archive come from there)
 if ($pin.repo -notmatch '^(https://git\.magicbean\.dev)/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(\.git)?$') { Fail "hookshot\PIN: repo=$($pin.repo) is not a git.magicbean.dev repository." }
 $repoUrl = "$($Matches[1])/$($Matches[2])"
@@ -596,6 +622,8 @@ function Invoke-MakeGame([string[]]$MoreArgs, [string]$Log = '') {
     $env:PYTHONIOENCODING = 'utf-8'
     $env:RX_CPM = Join-Path $tools 'cpm'
     $env:LONGSHOT_MINGW = Join-Path $tools 'llvm-mingw'
+    # (LONGSHOT_NGX_SDK too: Longshot Builder's Runner.cs removes it as well, a folder set on the PC is not one the
+    # player asked for. Without the opt-in the back end is built with vk_dlss.cpp's stubs, as before DLSS.)
     foreach ($v in 'LONGSHOT_NGX_SDK', 'LONGSHOT_FFX_SDK', 'LONGSHOT_MSVC', 'EMSDK', 'LONGSHOT_BUILDER_EXE', 'LONGSHOT_TOOLS') {
         Remove-Item "Env:\$v" -ErrorAction SilentlyContinue
     }
@@ -661,6 +689,16 @@ if ($gameReady -and -not $Rebuild -and -not $CheckOnly) {
     if ($Jobs) { $buildArgs += @('--jobs', "$Jobs") }
     # (only what is missing is downloaded; the license was accepted above, hookshot\dlss.txt)
     if ($wantDlss) { $buildArgs += @('--fetch-ngx-sdk', '--accept-nvidia-license') }
+    # (#229: an SDK the Longshot Builder or Launcher already fetched on this PC, or -DlssSdk, seeds the build's own SDK
+    # folder; the fetch then keeps each file whose SHA-256 is the pinned one and downloads only the rest. Copied, never
+    # used in place: the fetch would otherwise write into the Builder's folder)
+    $ngxFrom = if ($wantDlss) { Find-NgxSdk $DlssSdk } else { '' }
+    if ($ngxFrom -and ([System.IO.Path]::GetFullPath($ngxFrom).TrimEnd('\') -ine [System.IO.Path]::GetFullPath($ngxSdk).TrimEnd('\'))) {
+        Write-Host "  NVIDIA DLSS: starting from the SDK already on this PC ($ngxFrom); only files that differ are downloaded."
+        & robocopy $ngxFrom $ngxSdk /E /R:1 /W:1 /NFL /NDL /NJH /NJS /NP /XF *.part | Out-Null
+        if ($LASTEXITCODE -ge 8) { Write-Host "  (not copied, robocopy $($LASTEXITCODE): the build downloads it)" }
+        $global:LASTEXITCODE = 0
+    }
     New-Item -ItemType Directory -Force -Path $Out | Out-Null
     # (your own Longshot of the same release: its compiled objects, keyed by source, flags and headers and never by folder,
     # so the files co-op does not change are not compiled again. Only into a work folder with none yet; copied, not moved)
