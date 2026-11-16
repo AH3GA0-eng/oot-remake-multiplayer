@@ -1088,7 +1088,7 @@ std::string SlotsText(Guest& guest, std::uint64_t actor, std::optional<std::uint
 }  // namespace
 
 bool Director::LeftOff(const std::string& name) const {
-    return GearIsUnsafe(name) && !UnsafeSwitch().value_or(null_reads_zero_);
+    return GearIsUnsafe(name) && !UnsafeSwitch().value_or(null_reads_zero_.load());
 }
 
 // One equip call for a live puppet whose player's gear differs from what it

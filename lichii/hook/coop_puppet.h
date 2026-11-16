@@ -387,7 +387,8 @@ public:
     // Whether the game's reads through a puppet's missing components give 0
     // here (the emulator; Hookshot once its null page is armed). Without that
     // a GearIsUnsafe piece stays off the puppet (issue 232). Default: yes.
-    void SetNullReadsZero(bool on) { null_reads_zero_ = on; }
+    // (Atomic: Hookshot's create hook may turn it off on another thread.)
+    void SetNullReadsZero(bool on) { null_reads_zero_.store(on); }
     // A piece Equip leaves off the puppet: nothing is made for it, and the
     // piece its slot may still hold is neither put away nor re-worn.
     bool LeftOff(const std::string& name) const;
@@ -645,7 +646,7 @@ private:
     bool pose_copy_ = false;
     bool matrix_call_ = false;
     float tint_ = 0.0f;
-    bool null_reads_zero_ = true;
+    std::atomic<bool> null_reads_zero_{true};
     mutable std::mutex tunic_mutex_;
     std::set<std::string> tunic_failed_;           // guarded by tunic_mutex_
     std::map<std::string, int> tunic_timeouts_;    // by actor name
