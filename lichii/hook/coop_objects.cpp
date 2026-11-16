@@ -1478,12 +1478,17 @@ public:
             CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main_);
             coop::host::GameFlags flags(memory);
             std::size_t took = 0;
+            gold_taken_.clear();
+            gold_baseline_scene_ = *scene;
+            gold_baseline_tokens_ = flags.get_int(coop::host::kGoldTokenCount).value_or(0);
             for (const std::uint64_t key : coop::host::gold_skulltula_keys()) {
                 // A placement is its key and key + 2 (docs/items.md).
                 if (flags.get_key64(key).value_or(false) ||
                     flags.get_key64(key + 2).value_or(false)) {
                     sync_.Take(key);
                     sync_.Take(key + 2);
+                    world_.TakenKey(key);
+                    gold_taken_.insert(key);
                     ++took;
                 }
             }
@@ -1491,6 +1496,36 @@ public:
                 LOG_INFO(Core, "coop: objects: {} Gold Skulltulas this save has taken are left out of {}",
                          took, *scene);
             }
+        } else if (main_ != 0 && gold_baseline_scene_ == *scene &&
+                   gold_sweep_.Due(CoopEvery::NowUs())) {
+            // The token count rose since the last walk here: this game took a
+            // token (a token made and taken between two walks never crossed our
+            // walk, so no break was sent for it — issue 89, 2026-11-17). Only
+            // then are the 100 keys read: one binary search each.
+            CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main_);
+            coop::host::GameFlags flags(memory);
+            const std::int32_t now_tokens = flags.get_int(coop::host::kGoldTokenCount).value_or(0);
+            if (now_tokens > gold_baseline_tokens_) {
+                std::vector<std::uint64_t> fresh;
+                for (const std::uint64_t key : coop::host::gold_skulltula_keys()) {
+                    if (gold_taken_.contains(key)) {
+                        continue;
+                    }
+                    if (flags.get_key64(key).value_or(false) ||
+                        flags.get_key64(key + 2).value_or(false)) {
+                        fresh.push_back(key);
+                    }
+                }
+                for (const std::uint64_t key : fresh) {
+                    gold_taken_.insert(key);
+                    world_.TakenKey(key);
+                    char hex[24];
+                    std::snprintf(hex, sizeof hex, "%016llx", static_cast<unsigned long long>(key));
+                    LOG_INFO(Core, "coop: objects: Gold Skulltula {} is taken in this save: its token goes",
+                             hex);
+                }
+            }
+            gold_baseline_tokens_ = (std::max)(now_tokens, gold_baseline_tokens_);
         }
         if (const unsigned twice = sync_.ChestsOpenedTwice(); twice != chests_twice_seen_) {
             // Issue 195: a chest shown open that our Link opened again; the
@@ -3843,6 +3878,14 @@ private:
     // The scene the save's Gold Skulltula keys were fed for (issue 89, Share's
     // key scan): a scene's actors are made once, so one scan a scene is enough.
     std::string keys_scene_;
+    // The Gold Skulltula placements known to be 1 here, and the scene that set the
+    // baseline (issue 89, 2026-11-17): a key that is 1 now and was 0 at the
+    // baseline is one this game took, and its Skulltula and token go at once
+    // (a token made and taken between two walks was never sent as a break).
+    std::set<u64> gold_taken_;
+    std::string gold_baseline_scene_;
+    std::int32_t gold_baseline_tokens_ = 0;
+    CoopEvery::Every gold_sweep_{CoopEvery::kTwoFramesUs};
     Sync sync_;
     Kernel::KProcess* process_ = nullptr;
     u64 main_ = 0;

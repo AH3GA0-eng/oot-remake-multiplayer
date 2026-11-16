@@ -918,6 +918,15 @@ public:
             for (const auto& k : taken) {
                 if (k.kind == coop::protocol::FlagKeyKind::key64) {
                     keys.push_back(k.key);
+                    // Issue 89 (2026-11-17): a Gold Skulltula's placement key just
+                    // went 1 here for another player. The world sync takes that
+                    // Skulltula and the token it made away with it: the token is
+                    // made and taken in one run, so it never went through our
+                    // walk, and no break was ever sent for it (ROGX kept it and
+                    // the count went 41 -> 42).
+                    if (CoopWorld::IsGoldSkulltulaKey(k.key)) {
+                        CoopWorld::QueueTakenPlacement(k.key);
+                    }
                 } else if (const auto chest = CoopChests::KeyOfOpened(k.hash)) {
                     keys.push_back(*chest);  // a chest's opened flag: that chest (issue 87)
                 }

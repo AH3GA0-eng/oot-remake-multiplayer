@@ -2313,6 +2313,31 @@ TEST_CASE("world: a token is deleted by the place the break names, whatever id t
     CHECK_FALSE(Removed(d, 0x500));
 }
 
+TEST_CASE("world: a key that goes 1 with no break at all still takes the Skulltula and its token away") {
+    // Issue 89, 2026-11-17: 4090 killed and took a token in one run. The token
+    // lived less than one walk, so the world sync never saw it and no break
+    // went out; ROGX kept a token and counted it a second time (41 -> 42).
+    // The placement key is what crosses every game, so the key alone is enough.
+    WorldSync w;
+    GraveWalk(w, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(w, 1100 * kMs, {Thing(0x100, kGoldHash, 0, kGold, kGoldAt),
+                             Token(0x200)});  // dead, its token made (and about to be taken)
+    // The key is 1 now, no break was ever sent: the token goes with it.
+    w.TakenKey(kGoldHash);
+    GraveWalk(w, 1200 * kMs, {Thing(0x100, kGoldHash, 0, kGold, kGoldAt), Token(0x200)});
+    CHECK(Removed(w, 0x200));
+    // The Skulltula goes too, so a room loaded again has neither.
+    CHECK(w.Removes().size() >= 1);
+    // A token the game makes later (its own copy died after the key came) is
+    // taken away as the walk sees it, without another key check.
+    GraveWalk(w, 1300 * kMs, {Thing(0x100, kGoldHash, 0, kGold, kGoldAt)});
+    GraveWalk(w, 1400 * kMs, {Token(0x300, {1.0f, 2.5f, 3.0f})});
+    CHECK(Removed(w, 0x300));
+    // A token far from that place and with no matching id is left alone.
+    GraveWalk(w, 1500 * kMs, {Token(0x400, {40.0f, 2.0f, 3.0f})});
+    CHECK_FALSE(Removed(w, 0x400));
+}
+
 TEST_CASE("world: both players take the same token at once: one token goes back") {
     WorldSync a;
     GraveWalk(a, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
