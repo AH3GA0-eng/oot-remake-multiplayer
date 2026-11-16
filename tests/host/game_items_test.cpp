@@ -1495,19 +1495,19 @@ TEST_CASE("items: Ruto's Letter goes into the first empty bottle while King Zora
     const auto it = item.find(h);
     return it == item.end() ? std::nullopt : std::optional(it->second);
   };
-  CHECK(ruto_letter_bottle(true, false, v, in) == letters::kBottles[1].item);
-  CHECK_FALSE(ruto_letter_bottle(false, false, v, in));         // nobody got it
-  CHECK_FALSE(ruto_letter_bottle(true, true, v, in));           // King Zora moved here: not needed
-  CHECK_FALSE(ruto_letter_bottle(true, std::nullopt, v, in));   // no manager read: left alone
-  CHECK_FALSE(ruto_letter_bottle(std::nullopt, false, v, in));
+  CHECK(ruto_letter_bottle(true, false, false, v, in) == letters::kBottles[1].item);
+  CHECK_FALSE(ruto_letter_bottle(false, false, false, v, in));         // nobody got it
+  CHECK_FALSE(ruto_letter_bottle(true, false, true, v, in));           // King Zora moved here: not needed
+  CHECK_FALSE(ruto_letter_bottle(true, false, std::nullopt, v, in));   // no manager read: left alone
+  CHECK_FALSE(ruto_letter_bottle(std::nullopt, false, false, v, in));
   item[letters::kBottles[2].item] = letters::kLetter;            // a bottle holds it already
-  CHECK_FALSE(ruto_letter_bottle(true, false, v, in));
+  CHECK_FALSE(ruto_letter_bottle(true, false, false, v, in));
   item[letters::kBottles[2].item] = coop::host::flag_hash("Bug");
   item[letters::kBottles[1].item] = coop::host::flag_hash("Fairy");
-  CHECK_FALSE(ruto_letter_bottle(true, false, v, in));          // no empty bottle: it waits
+  CHECK_FALSE(ruto_letter_bottle(true, false, false, v, in));          // no empty bottle: it waits
   valid.erase(letters::kBottles[4].valid);                       // a bottle unread: left alone
   item[letters::kBottles[1].item] = letters::kEmpty;
-  CHECK_FALSE(ruto_letter_bottle(true, false, v, in));
+  CHECK_FALSE(ruto_letter_bottle(true, false, false, v, in));
 }
 
 TEST_CASE("items: Ruto's Letter says why it waits (issue 58, the 0.11.2 big run)") {
@@ -1530,24 +1530,79 @@ TEST_CASE("items: Ruto's Letter says why it waits (issue 58, the 0.11.2 big run)
     return it == item.end() ? std::nullopt : std::optional(it->second);
   };
   const auto moved = [](const char* step) { return coop::host::king_zora_moved(coop::host::flag_hash(step)); };
-  CHECK(ruto_letter_plan(false, moved("Ready"), v, in).why == RutoWait::not_got);
-  CHECK(ruto_letter_plan(std::nullopt, moved("Ready"), v, in).why == RutoWait::not_got);
-  CHECK(ruto_letter_plan(true, std::nullopt, v, in).why == RutoWait::king_unread);
-  CHECK(ruto_letter_plan(true, moved("SomethingElse"), v, in).why == RutoWait::king_unread);
-  CHECK(ruto_letter_plan(true, moved("Step07"), v, in).why == RutoWait::king_moved);
+  CHECK(ruto_letter_plan(false, false, moved("Ready"), v, in).why == RutoWait::not_got);
+  CHECK(ruto_letter_plan(std::nullopt, false, moved("Ready"), v, in).why == RutoWait::not_got);
+  CHECK(ruto_letter_plan(true, false, std::nullopt, v, in).why == RutoWait::king_unread);
+  CHECK(ruto_letter_plan(true, false, moved("SomethingElse"), v, in).why == RutoWait::king_unread);
+  CHECK(ruto_letter_plan(true, false, moved("Step07"), v, in).why == RutoWait::king_moved);
   for (const char* step : {"NotReady", "Ready", "Step06"}) {
-    const auto plan = ruto_letter_plan(true, moved(step), v, in);
+    const auto plan = ruto_letter_plan(true, false, moved(step), v, in);
     CHECK(plan.why == RutoWait::give);
     CHECK(plan.bottle == letters::kBottles[0].item);
   }
   item[letters::kBottles[0].item] = coop::host::flag_hash("Fish");
-  CHECK(ruto_letter_plan(true, moved("Ready"), v, in).why == RutoWait::no_empty);
+  CHECK(ruto_letter_plan(true, false, moved("Ready"), v, in).why == RutoWait::no_empty);
   item[letters::kBottles[3].item] = letters::kLetter;
-  CHECK(ruto_letter_plan(true, moved("Ready"), v, in).why == RutoWait::has_letter);
+  CHECK(ruto_letter_plan(true, false, moved("Ready"), v, in).why == RutoWait::has_letter);
   item.erase(letters::kBottles[2].item);
-  CHECK(ruto_letter_plan(true, moved("Ready"), v, in).why == RutoWait::bottle_unread);
-  CHECK_FALSE(ruto_letter_plan(true, moved("Ready"), v, in).bottle);
+  CHECK(ruto_letter_plan(true, false, moved("Ready"), v, in).why == RutoWait::bottle_unread);
+  CHECK_FALSE(ruto_letter_plan(true, false, moved("Ready"), v, in).bottle);
   CHECK(coop::host::ruto_wait_text(RutoWait::king_unread).find("ChallengeMgr") != std::string_view::npos);
+}
+
+TEST_CASE("items: Ruto's Letter shown to King Zora in one game is spent in every game (row 117)") {
+  namespace letters = coop::host::letters;
+  using coop::host::RutoWait;
+  using coop::host::ruto_letter_plan;
+  CHECK(coop::host::flag_hash("HavePlayedEvent.Dm_Zora_0010") == letters::kKingRead);
+  // The report: the host's BottleB still holds the letter (BottleA a fish),
+  // the non-host showed theirs; the host's own King Zora step lags (its
+  // ChallengeMgr is not shared) and may read "not moved".
+  std::map<std::uint32_t, bool> valid;
+  std::map<std::uint32_t, std::uint32_t> item;
+  for (std::size_t i = 0; i < 5; ++i) {
+    valid[letters::kBottles[i].valid] = i < 2;
+    item[letters::kBottles[i].item] = letters::kEmpty;
+  }
+  item[letters::kBottles[0].item] = coop::host::flag_hash("Fish");
+  item[letters::kBottles[1].item] = letters::kLetter;
+  const auto v = [&](std::uint32_t h) -> std::optional<bool> {
+    const auto it = valid.find(h);
+    return it == valid.end() ? std::nullopt : std::optional(it->second);
+  };
+  const auto in = [&](std::uint32_t h) -> std::optional<std::uint32_t> {
+    const auto it = item.find(h);
+    return it == item.end() ? std::nullopt : std::optional(it->second);
+  };
+  const auto moved = [](const char* step) { return coop::host::king_zora_moved(coop::host::flag_hash(step)); };
+  for (const auto king : {moved("Ready"), moved("Step07"), std::optional<bool>{}}) {
+    const auto plan = ruto_letter_plan(true, true, king, v, in);
+    CHECK(plan.why == RutoWait::shown);
+    CHECK(plan.spent == letters::kBottles[1].item);  // emptied here, as the scene emptied the shower's
+    CHECK_FALSE(plan.bottle);
+  }
+  // Not shown yet: the held letter stays (King Zora still needs it here).
+  const auto kept = ruto_letter_plan(true, false, moved("Ready"), v, in);
+  CHECK(kept.why == RutoWait::has_letter);
+  CHECK_FALSE(kept.spent);
+  // The scene's flag unread: neither taken nor given.
+  const auto unread = ruto_letter_plan(true, std::nullopt, moved("Ready"), v, in);
+  CHECK(unread.why == RutoWait::shown_unread);
+  CHECK_FALSE(unread.spent);
+  CHECK_FALSE(unread.bottle);
+  // Shown and no letter held (the shower, or emptied already): nothing to do,
+  // and an empty bottle never gets the letter back (the ChallengeMgr lag must
+  // not give it again).
+  item[letters::kBottles[1].item] = letters::kEmpty;
+  const auto done = ruto_letter_plan(true, true, moved("Ready"), v, in);
+  CHECK(done.why == RutoWait::shown);
+  CHECK_FALSE(done.spent);
+  CHECK_FALSE(done.bottle);
+  CHECK_FALSE(coop::host::ruto_letter_bottle(true, true, moved("Ready"), v, in));
+  // Every other bottle content stays: only the letter is spent.
+  item[letters::kBottles[1].item] = coop::host::flag_hash("Fairy");
+  CHECK_FALSE(ruto_letter_plan(true, true, moved("Ready"), v, in).spent);
+  CHECK(coop::host::ruto_wait_text(RutoWait::shown).find("Dm_Zora_0010") != std::string_view::npos);
 }
 
 TEST_CASE("game items: every dungeon's map, compass, boss key and floors ask the HUD refresh (rows 63/76, #146)") {

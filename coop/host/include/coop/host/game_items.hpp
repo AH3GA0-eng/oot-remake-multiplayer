@@ -260,6 +260,12 @@ constexpr std::uint32_t kGateOpen = 0x19898d14;  // Npc_Hylia_Soldier_003_GateOp
 // Zora (the game's ChallengeMgr, per game) never moved for them.
 constexpr std::uint32_t kRutoGot = 0x170b5df2;   // IsGet.Item_Bottle_Letter
 constexpr std::uint32_t kLetter = 0x0f24e808;    // the Enum value "Letter"
+// The scene of King Zora reading the letter and moving aside (romfs
+// Event/EventFlow/Dm_Zora_0010: the flow takes Item_Bottle_Letter out of the
+// bottle). Its HavePlayedEvent Bool is shared story (coop_story.cpp), so once
+// any player has shown the letter, every game has it: the letter is spent for
+// everyone, as the get was shared (tracker row 117).
+constexpr std::uint32_t kKingRead = 0xbf9dfc7e;  // HavePlayedEvent.Dm_Zora_0010
 constexpr std::uint32_t kEmpty = 0xbe69de49;     // the Enum value "Empty"
 struct Bottle {
   std::uint32_t valid;  // PlayerStatus.AssignableItem.BottleInfo.Bottle<X>.IsValid
@@ -292,6 +298,8 @@ std::optional<bool> king_zora_moved(std::uint32_t live_step);
 // run where it never came said nothing about which test held it back.
 enum class RutoWait {
   not_got,        // IsGet.Item_Bottle_Letter unset (or unread)
+  shown,          // the letter was shown to King Zora in some game (kKingRead): spent
+  shown_unread,   // kKingRead unread: neither given nor taken
   king_unread,    // our ChallengeMgr's Get_StoneOfWater unread or at a step not in the quest
   king_moved,     // King Zora has moved here: no letter needed
   bottle_unread,  // a bottle's IsValid or BottleItem unread
@@ -302,16 +310,20 @@ enum class RutoWait {
 struct RutoLetter {
   RutoWait why = RutoWait::not_got;
   std::optional<std::uint32_t> bottle;  // the BottleItem flag, with `give`
+  // With `shown`: a bottle that still holds the letter, to empty as King
+  // Zora's own scene empties the shower's (the letter is spent everywhere).
+  std::optional<std::uint32_t> spent;
 };
 std::string_view ruto_wait_text(RutoWait why);
-RutoLetter ruto_letter_plan(std::optional<bool> got, std::optional<bool> king_moved,
+RutoLetter ruto_letter_plan(std::optional<bool> got, std::optional<bool> shown, std::optional<bool> king_moved,
                             const std::function<std::optional<bool>(std::uint32_t)>& valid,
                             const std::function<std::optional<std::uint32_t>(std::uint32_t)>& item);
 
 // The BottleItem flag to put Ruto's Letter in, or nothing: when the letter was
-// got (by anyone), King Zora has not moved here, no bottle holds it, and a
+// got (by anyone), nobody has shown it yet (kKingRead), King Zora has not moved here, no bottle holds it, and a
 // bottle is owned and empty (the first). Anything unread leaves it alone.
-std::optional<std::uint32_t> ruto_letter_bottle(std::optional<bool> got, std::optional<bool> king_moved,
+std::optional<std::uint32_t> ruto_letter_bottle(std::optional<bool> got, std::optional<bool> shown,
+                                                std::optional<bool> king_moved,
                                                 const std::function<std::optional<bool>(std::uint32_t)>& valid,
                                                 const std::function<std::optional<std::uint32_t>(std::uint32_t)>& item);
 

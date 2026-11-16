@@ -609,7 +609,10 @@ public:
                     // Issue 190: a shared ocarina is equipped too, or D-pad
                     // Left takes nothing out.
                     MendOcarina(*memory, reading && reading->event_running.value_or(false));
-                    MendLetters(*memory);  // issue 58: Zelda's Letter spent, Ruto's Letter for everyone
+                    // issue 58: Zelda's Letter spent, Ruto's Letter for everyone;
+                    // row 117: Ruto's Letter spent once shown in any game
+                    MendLetters(*memory, reading && reading->event_running.has_value() &&
+                                             !*reading->event_running);
                     if (CoopStory::On()) {
                         CatchUpQuest(*memory);  // issue 130: the Kokiri Shop opens
                     }
@@ -2418,7 +2421,12 @@ private:
     // ChallengeMgr) never moved: while he has not, the letter goes into our
     // first empty bottle, as the game's own get puts it there. Both through
     // the game's setters; anything unread is left alone.
-    void MendLetters(EmulatorMemory& memory) {
+    // Row 117: once any player has shown Ruto's Letter (King Zora's scene
+    // Dm_Zora_0010, shared story), the letter is spent in every game: never
+    // given again, and one still in a bottle here is emptied, as that scene
+    // empties the shower's. Only while our Link is known to be in no event,
+    // so our own King Zora scene takes ours itself.
+    void MendLetters(EmulatorMemory& memory, bool no_event) {
         namespace letters = coop::host::letters;
         coop::host::GameFlags flags(memory);
         const auto zelda = flags.get_int(letters::kZelda);
@@ -2430,7 +2438,8 @@ private:
             [&memory](std::uint64_t a, void* out, std::size_t n) { return ReadGuest(&memory, a, out, n); }, base_,
             letters::kStoneOfWater);
         const auto plan = coop::host::ruto_letter_plan(
-            flags.get_bool(letters::kRutoGot), live ? coop::host::king_zora_moved(*live) : std::nullopt,
+            flags.get_bool(letters::kRutoGot), flags.get_bool(letters::kKingRead),
+            live ? coop::host::king_zora_moved(*live) : std::nullopt,
             [&](std::uint32_t h) { return flags.get_bool(h); }, [&](std::uint32_t h) { return flags.get_enum(h); });
         // Each change of why it waits is logged once (the 0.11.2 big run's
         // letter never came and said nothing about which test held it).
@@ -2443,6 +2452,12 @@ private:
                                                base_, letters::kStoneOfWater);
             LOG_INFO(Core, "coop: items: Ruto's Letter waits: {} (Get_StoneOfWater: {}) (issue 58)",
                      coop::host::ruto_wait_text(plan.why), step);
+        }
+        if (plan.spent && no_event && coop::host::GameFlags::set_enum(memory, *plan.spent, letters::kEmpty)) {
+            LOG_INFO(Core,
+                     "coop: items: Ruto's Letter out of bottle {:#010x}: it was shown to King Zora "
+                     "(HavePlayedEvent.Dm_Zora_0010) (row 117)",
+                     *plan.spent);
         }
         if (plan.bottle && coop::host::GameFlags::set_enum(memory, *plan.bottle, letters::kLetter)) {
             ruto_why_ = plan.why;
