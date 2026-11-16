@@ -1631,3 +1631,28 @@ TEST_CASE("game items: every dungeon's map, compass, boss key and floors ask the
   }
   CHECK_FALSE(coop::host::is_hud_dungeon_item(FlagKey{0x405d8a0f, 0}));  // Weapon_Sword_Kokiri: not a dungeon item
 }
+
+TEST_CASE("items: Ruto's Letter on an open-fountain seed becomes an empty bottle in a session (row 117)") {
+  // OOTRR's open Zora's Fountain (start_state.rs FOUNTAIN_STEPS/FOUNTAIN_FLAGS)
+  // starts with Get_StoneOfWater at Step07 and HavePlayedEvent.Dm_Zora_0010 set.
+  // The letter found in a chest then has no use: the hook (only while co-op
+  // shares items, never solo) empties its bottle, which stays owned.
+  namespace letters = coop::host::letters;
+  using coop::host::RutoWait;
+  std::map<std::uint32_t, std::uint32_t> item;
+  for (const auto& b : letters::kBottles) item[b.item] = letters::kEmpty;
+  item[letters::kBottles[0].item] = letters::kLetter;  // the chest's letter, in BottleA
+  const auto v = [](std::uint32_t) -> std::optional<bool> { return true; };
+  const auto in = [&](std::uint32_t h) -> std::optional<std::uint32_t> { return item.at(h); };
+  const auto step07 = coop::host::king_zora_moved(coop::host::flag_hash("Step07"));
+  REQUIRE(step07 == true);
+  const auto plan = coop::host::ruto_letter_plan(true, true, step07, v, in);
+  CHECK(plan.why == RutoWait::shown);
+  CHECK(plan.spent == letters::kBottles[0].item);
+  CHECK_FALSE(plan.bottle);
+  // Emptied: nothing more to do, and it is not given back.
+  item[letters::kBottles[0].item] = letters::kEmpty;
+  const auto after = coop::host::ruto_letter_plan(true, true, step07, v, in);
+  CHECK_FALSE(after.spent);
+  CHECK_FALSE(after.bottle);
+}

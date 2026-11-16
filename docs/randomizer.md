@@ -52,4 +52,5 @@ Guests can join one after another. Each one waits for its own build and restarts
 - **No new save.** The host starts a New Game after the restart.
 - **Different kits.** A guest on another release (for example 0.11.1 with OOTRR 0.5.0 next to a 0.11.2 host) builds another world from the same seed word.
 - **After a kit update that brings another OOTRR** (0.11.1 to 0.11.2, 0.11.2 to 0.11.3): the new OOTRR cannot use the old seeds, so the kit removes them. Each game builds the seed again at its next start, then needs one more restart, and the host needs a New Game.
+- **Ruto's Letter on a seed with Zora's Fountain open.** In a co-op session the letter turns into an empty bottle as soon as you find it: King Zora has already moved, so the letter has no use. Playing alone, you keep the letter as before.
 - **Even a randomized seed leaves many spots vanilla.** OOTRR does not shuffle everything yet, so some vanilla chests are normal.
