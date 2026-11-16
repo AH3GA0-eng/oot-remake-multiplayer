@@ -93,7 +93,7 @@ TEST_CASE("event member: bound only into OUR running event, the performer in any
     CHECK(r.how == LinkHow::none);
     // No running session (the manager's word 0): nothing is ours, whatever the link.
     m.Put(kPerformer + kPerformerLink, kEvent);
-    CHECK_FALSE(*MemberOf(m.Reader(), kActor, Ours{}).bound);
+    CHECK_FALSE(MemberOf(m.Reader(), kActor, Ours{}).bound.value_or(false));
     // The performer in another slot (a Deku Scrub's is not at 0x88 or 0x90): found there.
     m.Put(kParts + kPerformerSlot, 0);
     m.Put(kParts + 0xa8, kPerformer);

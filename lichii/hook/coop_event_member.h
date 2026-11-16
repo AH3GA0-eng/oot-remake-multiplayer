@@ -241,8 +241,8 @@ struct Member {
 // Whether our running event binds the actor (see above).
 inline Member MemberOf(const ReadWord& read, std::uint64_t actor, const Ours& ours) {
     Member out;
-    if (actor == 0) {
-        return out;
+    if (actor == 0 || ours.session == 0) {
+        return out;  // no running event of ours: nothing is bound into it (and no slots are read)
     }
     const auto parts = read(actor + kActorParts);
     if (!parts || *parts == 0) {
