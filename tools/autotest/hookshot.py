@@ -61,7 +61,7 @@ STICK_KEYS = {  # full stick directions: (stick, x, y)
     "RSTICK_UP": ("R", 0, 1), "RSTICK_DOWN": ("R", 0, -1), "RSTICK_LEFT": ("R", -1, 0), "RSTICK_RIGHT": ("R", 1, 0),
 }
 WEAR_SLOTS = ("weapon", "shield", "head", "armor", "boots", "hand")
-MODULE_ONLY = ("chat", "give", "wear", "assign", "place", "kill", "setflag", "setenum")
+MODULE_ONLY = ("chat", "give", "wear", "assign", "place", "kill", "setflag", "setenum", "menu")
 
 
 class ScriptError(Exception):
@@ -243,6 +243,10 @@ def parse(text):
             if len(w) != 2:
                 fail("want: assign ITEM")
             s.kind, s.name = "assign", w[1]
+        elif cmd == "MENU":
+            if len(w) != 2 or w[1].lower() not in ("customize", "close"):
+                fail("want: menu customize|close")
+            s.kind, s.name = "menu", w[1].lower()
         elif cmd == "MARK":
             if len(w) != 2:
                 fail("want: mark NAME (one word)")
@@ -720,7 +724,9 @@ def to_play(bridge, log, timeout, clock=time.monotonic, sleep=time.sleep):
 
 # The renderer's start is done: its pipelines are made (from the caches or compiled now). Until then the game shows
 # nothing and reads no controller; with a cold driver cache that is minutes (~170 s seen), so a run waits for it.
-RENDERER_READY = re.compile(r"vk: precompile: \d+ programs, .* in \d+ ms")
+# Longshot rc.4 builds pipelines at their create (RX_VK_LOAD=create) and logs "vk: start-up: the shaders took N s"
+# instead of rc.3's precompile total.
+RENDERER_READY = re.compile(r"vk: precompile: \d+ programs, .* in \d+ ms|vk: start-up: the shaders took \d")
 
 
 def read_text(path):
@@ -768,12 +774,20 @@ def exe_dir(game):
     return os.path.join(game, "bin") if os.path.isfile(os.path.join(game, "bin", "longshot.exe")) else game
 
 
-def find_log(game):
+def log_candidates(game):
+    """Where the game's longshot_log.txt can be: beside the exe or in the game folder (rc.3), or in their logs\\ (rc.4)."""
+    out = []
     for d in (exe_dir(game), game):
-        p = os.path.join(d, "longshot_log.txt")
-        if os.path.isfile(p):
-            return p
-    return None
+        for p in (os.path.join(d, "longshot_log.txt"), os.path.join(d, "logs", "longshot_log.txt")):
+            if p not in out:
+                out.append(p)
+    return out
+
+
+def find_log(game):
+    """The newest of the game's longshot_log.txt files (an older one elsewhere is from another build), else None."""
+    found = [p for p in log_candidates(game) if os.path.isfile(p)]
+    return max(found, key=os.path.getmtime) if found else None
 
 
 # ---------------------------------------------------------------------------------------------- the kit's own start
@@ -915,8 +929,11 @@ def run(a):
                 # Every session has a join password (it encrypts the traffic): in the
                 # environment, never on the command line.
                 senv = dict(os.environ, OOT_COOP_TEST_PASSWORD=a.password)
-                server = subprocess.Popen([a.server, "--port", str(a.port), "--password-env", "OOT_COOP_TEST_PASSWORD"],
-                                          stdout=so, stderr=subprocess.STDOUT, env=senv)
+                delay = test_delay_args(a.test_delay_ms, a.test_jitter_ms)
+                if delay:
+                    senv["OOT_COOP_TEST"] = "1"   # coop_server refuses the delay without it
+                server = subprocess.Popen([a.server, "--port", str(a.port), "--password-env", "OOT_COOP_TEST_PASSWORD"]
+                                          + delay, stdout=so, stderr=subprocess.STDOUT, env=senv)
             time.sleep(1)
         for i, x in enumerate(tags):
             g = games[x]
@@ -1067,6 +1084,22 @@ def run(a):
     return 0
 
 
+
+def test_delay_args(delay_ms, jitter_ms):
+    """coop_server's TEST-ONLY bad connection (server/test_delay.hpp) as its arguments; [] when off.
+    The server also needs OOT_COOP_TEST=1 in its environment for them."""
+    if not (delay_ms or jitter_ms):
+        return []
+    return ["--test-delay-ms", str(int(delay_ms)), "--test-jitter-ms", str(int(jitter_ms))]
+
+
+def add_test_delay_options(parser):
+    """--test-delay-ms / --test-jitter-ms for the server a run starts (run.ps1 -Lag / -Jitter on Longshot)."""
+    parser.add_argument("--test-delay-ms", type=int, default=0,
+                        help="TEST ONLY: the server holds every packet, this round trip in ms (half each way)")
+    parser.add_argument("--test-jitter-ms", type=int, default=0,
+                        help="TEST ONLY: +- up to this many ms on each packet, each way, order kept")
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = p.add_subparsers(dest="what", required=True)
@@ -1102,6 +1135,7 @@ def main(argv=None):
     r.add_argument("--renderer-wait", type=int, default=600,
                    help="seconds each game may take to start its renderer before the load (0: no wait)")
     r.add_argument("--pipe", help="default coop-auto (a lane: its own)")
+    add_test_delay_options(r)
     r.add_argument("--kit-a", help="start game A through this kit's own start (play.ps1 choose -Hookshot; its "
                                    "hookshot/game-folder.txt names --game-a): tools/autotest/kit_pair.py")
     r.add_argument("--kit-b", help="the same for game B")

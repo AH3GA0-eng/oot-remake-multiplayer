@@ -230,6 +230,22 @@ constexpr bool GearIsArmor(std::size_t i, std::string_view name) {
 constexpr bool GearIsCarried(std::size_t i) {
     return i == kGearHeld || (i >= kGearSubWeapon && i <= kGearSubTool);
 }
+// A piece the game must not make on a puppet (issue 232, 2026-11-16). Worn on
+// the puppet, `Weapon_Range_Hookshot` takes the other game down a few seconds
+// later: the game's own update of that piece reads a pointer a puppet does not
+// have (guest 0x7d8 on BaseProcExecutor, the same missing-Player read patch
+// 0002's null page turns into 0 for the create) and the read faults. Seen
+// three times in a row, on the frame after `wears held
+// 'Weapon_Range_Hookshot' (returned 0x1)`, with every other piece of the same
+// player worn fine, and the player never fired it: the piece is stepped by the
+// game and cannot follow the puppet, parked or not. The Longshot is the same
+// actor family. Such a piece stays off the puppet: only its own player's Link
+// shows it. LICHII_COOP_PUPPET_HOOKSHOT=1 wears it again (a test). By name and
+// not by slot: it is the piece the game steps, whichever slot sends it.
+constexpr bool GearIsUnsafe(std::string_view name) {
+    return name.find("Hookshot") != std::string_view::npos ||
+           name.find("Longshot") != std::string_view::npos;
+}
 // The equipment slot each of them lands in (seen in the game: the sword in
 // slot 0, the shield in slot 4, the slingshot in slot 3); -1: not a piece
 // that is drawn or put away.
@@ -584,6 +600,20 @@ private:
     void Tint(Slot& slot, Guest& guest, std::uint32_t color);
     void Pose(Slot& slot, Guest& guest, const Vec3& position, const Mat3* rotation,
               std::uint64_t now_ms);
+    // Park the puppet under the floor with everything it holds: a held piece is an
+    // actor of its own (the Hookshot's claw is bound to a bone, a bottle to the hand),
+    // and moving only the puppet leaves the pieces where they were. The game keeps
+    // stepping them, and one whose owner it can no longer follow crashes it
+    // (0xc0000005 reading a null + 0x7d8, seen 2026-11-15 while the other player
+    // changed to the Hookshot as the puppet came and went).
+    void Park(Slot& slot, Guest& guest, const Vec3& position, std::uint64_t now_ms);
+    // The actors the game keeps for the puppet's equipment slots (a worn piece, a
+    // held one); empty when it has no EquipmentUser yet.
+    struct PieceActor {
+        std::uint64_t actor = 0;
+        std::uint32_t state = 0;
+    };
+    std::vector<PieceActor> Pieces(Slot& slot, Guest& guest) const;
     void DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint64_t now_ms);
     void Poll(Slot& slot, Guest& guest, std::uint64_t now_ms);
     const Target* Wanted(std::uint8_t number) const;

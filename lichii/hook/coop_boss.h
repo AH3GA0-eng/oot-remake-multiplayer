@@ -51,6 +51,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "coop/protocol/messages.hpp"
@@ -137,6 +138,14 @@ struct Actions {
     // the boss was beaten here (only when the walk read the boss gone, not a guess from a long event). The area rules (coop_boss_scenes) take them when no request named the event.
     const Room* intro_here = nullptr;
     const Room* beaten_here = nullptr;
+    // Chat lines for the players left in a boss room (player report #50): another player who was past
+    // the door went out of it, "took the blue warp" once the boss is beaten, else "left the boss room".
+    // The hook puts the player's name first.
+    struct Notice {
+        std::uint8_t player = 0;
+        std::string text;
+    };
+    std::vector<Notice> chat;
 };
 
 // This game's Link, read this frame.
@@ -157,6 +166,10 @@ struct Local {
     // An untouched boss is not dying, so a long event then is not its death
     // (Gohma's ceiling intro starts well after the room's entry event).
     std::optional<bool> boss_hurt;
+    // Whether our own Link is dead: his Life component read at 0 by the object
+    // walk (CoopObjects::OurLinkLife), nothing when unread. A Game Over is a long
+    // event in the boss room with the boss alive; it is never the boss's death.
+    std::optional<bool> link_dead;
 };
 
 class Sync {
@@ -182,6 +195,9 @@ public:
     // An event shorter than this near a boss room with no shut-in flag is not
     // its intro (a door opening, a text, Navi): it moves no one in (issue 148).
     static constexpr std::uint64_t kMinIntroUs = 3'000'000;
+    // A leave notice (Actions::chat) waits this long, and is dropped when we have gone out of the room
+    // meanwhile: a group that leaves together leaves no one behind to tell (#50).
+    static constexpr std::uint64_t kLeaveNoticeUs = 1'000'000;
 
     // Network thread: BOSS_ROOM from the others. Taken on the next Tick.
     void Receive(const coop::protocol::Message& message);
@@ -202,9 +218,19 @@ private:
         bool in_room = false;   // last heard in the room
         bool fighting = false;  // their intro is over (or never ran)
         bool committed = false; // their intro started or their fight is on: they are past the door (issue 148)
+        bool beaten = false;    // they said defeated for this room
         std::uint64_t heard_at = 0;
     };
-    void Take(const coop::protocol::BossRoom& m, std::uint64_t now_us);
+    // A leave notice waiting for kLeaveNoticeUs (#50).
+    struct Leaving {
+        std::uint8_t player = 0;
+        const Room* room = nullptr;
+        bool warp = false;  // the boss was beaten: the blue warp
+        std::uint64_t at = 0;
+    };
+    void Take(const coop::protocol::BossRoom& m, std::uint64_t now_us, std::uint8_t self);
+    void Notices(Actions& out, std::uint64_t now_us);
+    Actions Step(const Local& local, std::uint64_t now_us);  // Tick without the notices
     void Defeat(Actions& out, bool read_gone);  // our game saw the boss's death (read_gone: the walk read it gone)
     void Say(Actions& out, const Room& room, coop::protocol::BossState state);
     bool FightActive(const Room& room, std::uint64_t now_us) const;
@@ -214,6 +240,9 @@ private:
     // Our side.
     const Room* here_ = nullptr;
     bool provisional_ = false;   // outro from an event while the boss may be alive
+    // Our Link died in this room (the Game Over, then a continue or a reload): until he is up
+    // again with no event, no event of ours is taken for the intro or the boss's death.
+    bool died_ = false;
     std::uint64_t outro_at_ = 0;
     std::uint64_t fight_at_ = 0;  // when our fight phase began (kMinFightUs)
     Phase phase_ = Phase::none;
@@ -228,6 +257,8 @@ private:
     std::uint64_t last_now_ = 0;  // the clock never goes back (server time can)
     std::optional<std::string> scene_;  // the scene of the last Tick with one
     std::vector<std::uint8_t> defeated_;  // rooms beaten while we were in this scene
+    std::vector<Leaving> leaving_;        // leave notices waiting (#50)
+    std::vector<std::uint32_t> told_;     // notices given in this scene: player | room << 8 | warp << 16
     // Pulling.
     unsigned pulls_ = 0;
     std::uint64_t pulled_at_ = 0;
@@ -257,6 +288,30 @@ private:
     bool armed_ = false;
 };
 
+// Whether our game may own the boss of the room we are in (boss-copy-b; the
+// server never gives a boss to a game that is not, object_presence::unready).
+// Ready when our game has played the room's intro (its HavePlayedEvent flag),
+// or when our boss was seen in its pre-battle phase and then out of it this
+// visit: a late joiner's copy that follows an owner already in the fight is
+// in the fight too, though its game never plays the intro. Kept until the
+// room changes (Reset). A boss never seen pre-battle (no such animation
+// known) is ready by the flag only. Pure: the glue reads both.
+class Readiness {
+public:
+    // `intro_played`: nothing when the flag is not read. `pre_battle`:
+    // CoopObjects::LastBossPreBattle. `room`: the room we are in.
+    bool Step(std::uint8_t room, std::optional<bool> intro_played, std::optional<bool> pre_battle);
+    void Reset();
+    // True once, at the Step that found our boss out of its pre-battle phase.
+    bool TakeFoughtNews() { return std::exchange(fought_news_, false); }
+
+private:
+    std::optional<std::uint8_t> room_;
+    bool seen_pre_battle_ = false;
+    bool fought_ = false;
+    bool fought_news_ = false;
+};
+
 // The emulator side (coop_boss_game.cpp). LICHII_COOP_BOSS=0 turns it off;
 // LICHII_COOP_BOSS_MOVE=matrix (default: auto) never uses the scene change;
 // LICHII_COOP_DEBUG_BOSS=1 logs the phase each second.
@@ -270,6 +325,9 @@ void Frame(Core::System& system, std::uint64_t main_base, const std::optional<st
 
 // Network thread, from the session's on_event.
 void OnEvent(const coop::net::Event& event);
+// The host loaded a save (FLAG_RESET): the fights this session knew (beaten bosses, the heart
+// container's answer and cap, an intro in progress) are forgotten, as on a disconnect.
+void ForgetFights();
 
 // For /teleport (coop_teleport.h), present thread:
 // - our boss fight runs (its intro, fight or outro phase);

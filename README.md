@@ -1,6 +1,6 @@
-# oot-remake-multiplayer
+# Squadala!
 
-Online co-op for the Ocarina of Time remake on PC.
+Squadala! - online co-op for the Ocarina of Time remake on PC. (The repository keeps its name, `oot-remake-multiplayer`.)
 
 The goal of this project is working multiplayer in two stages:
 
@@ -9,25 +9,27 @@ The goal of this project is working multiplayer in two stages:
 
 Both stages share one design, one wire protocol and one server, so what is learned on the emulator carries straight over to the recomp.
 
-**Discord:** https://discord.gg/GwtRKAqng5, for players, testers and contributors.
+**Discord:** the Squadala! server, https://discord.gg/GwtRKAqng5, for players, testers and contributors.
 
 ## Play the newest release
 
-**[OoT Co-op 0.11.1 (Longshot)](https://github.com/daurosk/oot-remake-multiplayer/releases/tag/v0.11.1)** is the newest build (the releases are pre-releases, which GitHub's "latest" link skips; the [releases page](https://github.com/daurosk/oot-remake-multiplayer/releases) lists them all). It runs on [Longshot](https://git.magicbean.dev/MagicBeanDev/Longshot) v3.0.0-rc.3 (Team MagicBean and contributors, GPL-3.0; its changes are being merged into [Hookshot](https://git.notrexed.dev/Hookshot/Hookshot) by NotRexed and contributors), a native PC version of the game that the kit builds on your PC from your own copy. Longshot is the version we build on until something better is out.
+**[Squadala! v0.11.2](https://github.com/daurosk/oot-remake-multiplayer/releases/tag/v0.11.2)** is the newest build (the releases are pre-releases, which GitHub's "latest" link skips; the [releases page](https://github.com/daurosk/oot-remake-multiplayer/releases) lists them all). It runs on [Longshot](https://git.magicbean.dev/MagicBeanDev/Longshot) v3.0.0-rc.4 (Team MagicBean and contributors, GPL-3.0; its changes are being merged into [Hookshot](https://git.notrexed.dev/Hookshot/Hookshot) by NotRexed and contributors), a native PC version of the game that the kit builds on your PC from your own copy. Longshot is the version we build on until something better is out.
 
-**New here?** Download `oot-coop-v0.11.1-windows.zip` (Linux and Steam Deck, experimental: `oot-coop-v0.11.1-linux.zip`, see [setup-linux.md](docs/setup-linux.md)), unzip it to a short folder such as `C:\oot-coop`, and double-click **Start OoT Co-op.bat**. The first time it asks for your game file (drag your `.nup` into the window) and builds the game from it: 10 to 45 minutes and about 60 GB free, once; it also makes the puppet pack from your own game files by itself. Then **Host** or **Join** in the game's menu, **Multiplayer** tab (see below). It needs 64-bit Windows, a graphics card with mesh shaders (NVIDIA RTX 20 or newer, AMD RX 6000 or newer) and 16 GB of RAM. Each player needs their own copy of the game. Full steps: **[setup.md](docs/setup.md)**.
+**New here?** Download `oot-coop-v0.11.2-windows.zip` (Linux and Steam Deck, experimental: `oot-coop-v0.11.2-linux.zip`, see [setup-linux.md](docs/setup-linux.md)), unzip it to a short folder such as `C:\oot-coop`, and double-click **Start OoT Co-op.bat**. The first time it asks for your game file (drag your `.nup` into the window) and builds the game from it: 10 to 45 minutes and about 60 GB free, once; it also makes the puppet pack from your own game files by itself. Then **Host** or **Join** in the game's menu, **Multiplayer** tab (see below). It needs 64-bit Windows, a graphics card with mesh shaders (NVIDIA RTX 20 or newer, AMD RX 6000 or newer) and 16 GB of RAM. Each player needs their own copy of the game. Full steps: **[setup.md](docs/setup.md)**.
 
 **Emulator players:** this release has no emulator. Keep playing on the last emulator release, the early test release of 2026-11-12 on the [releases page](https://github.com/daurosk/oot-remake-multiplayer/releases) (it cannot join a Longshot game). To move to Longshot, unzip the 0.11.0 kit into a new folder rather than updating the emulator kit.
 
 **Opening the Multiplayer tab:** on a controller press **−** and **+** together (on an Xbox-style pad **View** and **Menu**), or **Home**; on the keyboard **F1** (Insert and Esc also open it unless you changed that in the menu); on the title screen **−** alone. The Multiplayer tab is the first one; the D-pad or the arrow keys choose, A or Enter confirms, B or Esc goes back.
 
-**Already have a kit?** This release is protocol 12, so everyone updates. A 0.10.1 kit offers the update when you start it; or download **Update.bat** from the release page into your kit folder and double-click it. The first start after the update puts the new co-op into the game and makes the puppet pack again (a few minutes). **Revert.bat** in the kit folder goes back to the version you had before (everyone you play with needs the same one).
+**Already have a kit?** A 0.10.1 or newer kit offers the update when you start it; or download **Update.bat** from the release page into your kit folder and double-click it. 0.11.2 builds the game again once (Longshot v3.0.0-rc.4 and changed game patches: 10 to 45 minutes), then makes the puppet pack. It is still protocol 12, so a 0.11.1 player can join, but the boss, door and quest fixes need every player on 0.11.2: update together. **Revert.bat** in the kit folder goes back to the version you had before (everyone you play with needs the same one).
+
+**New in 0.11.2 (bug fixes from your reports, game rebuild; many not yet checked in a game, see the release notes):** the Gohma softlock after her intro; bosses that only one player could hurt, that could not be stunned, did not die for everyone or ignored the difficulty (on Automatic, more boss life per player), and the blue warp for guests; Mido still blocking Kokiri Forest after the Deku Tree (a stuck save is mended); the Threads of Time and Door of Time, Zora's waterfall, the shared ocarina and both letters for players who were not there; small-key doors, the Dodongo's Cavern Lizalfos door, carrying Ruto and Jabu-Jabu's lifts in every game; smoother enemies on slow connections; missing Deku Nut and stick effects; a crash when a player takes out the Hookshot (#232, thanks to cirnoice9); your own colours blinking in cutscenes; IP address, Port and Password rows for joining (thanks to bmitch87); the whole co-op interface in Chinese (thanks to cirnoice9); a Microphone row; Linux saves, pads, colours and typing (thanks to StarAppeal); Nucleus controllers; adult Link's live 3D preview in Customize; kit windows that no longer pause on a click and a game-file question that takes a pasted path; randomizer seeds with settings from OOTRR's website. Full list: [the release notes](https://github.com/daurosk/oot-remake-multiplayer/releases/tag/v0.11.2).
 
 **New in 0.11.1 (hotfix, no game rebuild):** customization fixes (everyone no longer wears the host's colour; the Kokiri keep their own; adult Goron and Zora tunics), the rupee flood (and the lag and missing effects it caused), randomizer seeds that hid the other players or crashed, other players stuck in one pose, moving platforms during a pause, a PvP hit on a downed player, Gold Skulltula tokens counted twice, Join's code field (paste replaces, Clear), download retries with a mirror, the puppet pack made again when needed, and collect-logs zips. Full list: [the release notes](https://github.com/daurosk/oot-remake-multiplayer/releases/tag/v0.11.1).
 
 **New in 0.11.0:** **Customize Link** in the Multiplayer tab: your tunic and gear colours (shields, swords, boots, gauntlets), on your own Link and on the others' screens; the **randomizer** built in (below); the other players' Links move smoothly (an even game-frame clock for them and for the townspeople copied from another game) with their sword in their hand; the dungeon map no longer vanishes from the minimap and the other players show on it; the host's time of day is everyone's (#192); difficulty set by the host or by the number of players, and helping up a player at zero hearts; the Kakariko gate and Zelda's Letter now go through the game's own quest steps (#171) and the Kakariko graveyard's Poe and the gravestones players push are shared (both new, tell us how they go); extra enemies no longer stand on one spot; Revert.bat; Chinese text for the Multiplayer tab (thanks to cirnoice9).
 
-**Randomizer:** [OOTRR](https://github.com/REALAZK/ootrr) 0.5.0 by REALAZK comes with the kit (it downloads it during the build): Mods tab, **OoT Remake Randomizer**, **Settings**, turn **Randomizer** on. In co-op the host's seed is everyone's: each guest's game builds it by itself. Do not install OOTRR by hand next to co-op (a second copy of 0.5.0 crashes the game at start). An OOTRR update is due soon; a co-op update moves to it ([mods.md](docs/mods.md#the-randomizer)).
+**Randomizer:** [OOTRR](https://github.com/REALAZK/ootrr) 0.6.0 by REALAZK comes with the kit since 0.11.2 (0.11.1 had 0.5.0; the kit downloads it during the build): Mods tab, **OoT Remake Randomizer**, **Settings**, turn **Randomizer** on. In co-op the host's seed is everyone's: each guest's game builds it by itself. The host and every guest need the same co-op release, so they also have the same OOTRR. Do not install OOTRR by hand next to co-op (a second copy of OOTRR crashed the game at start with 0.5.0); the kit's own is enough ([mods.md](docs/mods.md#the-randomizer)).
 
 **Split screen (experimental):** two full games on one PC with [Nucleus Co-op](docs/play-lan.md#split-screen-experimental), one per player, each with its own controller (about 10 GB of RAM per player and a strong graphics card). Native split screen (one game) comes in a later release.
 
@@ -98,9 +100,10 @@ Thanks to zizerak and Hot Onion for development tips (Hot Onion's tip, sharing e
 
 People who contributed code:
 
-- bmitch87 (Linux Longshot: GCC module build and clean-PC kit test, PR #221).
+- bmitch87 (Linux Longshot: GCC module build and clean-PC kit test, PR #221; IP address and Port rows for joining and hosting, PR #230).
 - SrAjoloteuwu (bosses: Gohma's long intro is not her death, PR #210; no teleport to the other age's Link, PR #211; boss ready guard, PR #209).
-- cirnoice9 (Chinese text for the Multiplayer tab, PR #224).
+- cirnoice9 (Chinese text for the Multiplayer tab, PR #224; the whole co-op interface in Chinese, PR #231; the Hookshot crash fix, PR #233).
+- StarAppeal (Linux Longshot: the game's functions the co-op module finds by name, PR #228).
 
 Every contributor whose pull request is merged is added here. GitHub's list: [contributors](https://github.com/daurosk/oot-remake-multiplayer/graphs/contributors).
 

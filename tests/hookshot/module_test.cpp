@@ -325,7 +325,8 @@ TEST_CASE("hookshot: co-op draws over the picture through Hookshot's ImGui (chat
 TEST_CASE("hookshot: the chat box gets Hookshot's keys first, and the game none while it types") {
     const std::string patch = Patch();
     CHECK(patch.find("+        if (hos_coop_key((unsigned)wp, (lp & (1 << 30)) != 0)) {") != std::string::npos);
-    CHECK(patch.find("+        if (hos_coop_char((unsigned)wp)) return 0;") != std::string::npos);
+    // (Longshot rc.4 has its own WM_CHAR for the Insert menu's text fields: the module is asked first inside it)
+    CHECK(patch.find("+        if (!trail && hos_coop_char((unsigned)wp)) return 0;") != std::string::npos);
     CHECK(patch.find("+static int key(int vk) { return !rx_option(1, 0) && !hos_coop_keys_taken() &&") != std::string::npos);
     CHECK(patch.find("GetProcAddress(m, \"hos_coop_keys_taken\")") != std::string::npos);
     const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
@@ -346,13 +347,14 @@ TEST_CASE("hookshot: the mouse reaches the cheats panel first, a click it takes 
 
 TEST_CASE("hookshot: on Linux the window's keys, typed text and mouse reach co-op too (display_sdl.c)") {
     const std::string patch = Patch();
-    // SDL's text events (both SDLs' layouts) and text input started on the window.
-    CHECK(patch.find("+        case 0x303: {   /* (SDL_TextInputEvent: the text's pointer at 24") != std::string::npos);
-    CHECK(patch.find("+        memcpy(e->text, raw + 12, sizeof e->text - 1);") != std::string::npos);
-    CHECK(patch.find("+    hos_sdl_text_input(window);") != std::string::npos);
+    // SDL's text events are Longshot's own since rc.4 (hos_sdl.c); text input stays on while co-op has the keys.
+    CHECK(patch.find("+            const int text_wanted = hos_text_focus() || hos_coop_keys_taken();") != std::string::npos);
+    CHECK(patch.find("+            if (text_wanted != text_on) hos_sdl_text_input(window, text_on = text_wanted);") !=
+          std::string::npos);
+    CHECK(patch.find("diff --git a/host/hos_sdl.c") == std::string::npos);
     // Keys by virtual-key code first, text as code points, the mouse as on Windows.
     CHECK(patch.find("+                    if (cvk && hos_coop_key(cvk, e.repeat)) {") != std::string::npos);
-    CHECK(patch.find("+                    coop_text(e.text);") != std::string::npos);
+    CHECK(patch.find("+                    if (!hos_text_focus()) coop_text(e.text);") != std::string::npos);
     CHECK(patch.find("+                    else if (e.button == 1 && !mouse_captured && coop_mouse(e.x, e.y, 1)) {}") !=
           std::string::npos);
     // The key state for F6, F7 and the closing keys.
@@ -608,4 +610,56 @@ TEST_CASE("hookshot: the sound wrap (patch 0014) is one row in 0005's table, its
     CHECK(HOS_COOP_WRAP_SOUND_EMIT < 64);
     const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
     CHECK(module.find("if (id == HOS_COOP_WRAP_SOUND_EMIT) {") != std::string::npos);
+}
+
+TEST_CASE("hookshot: on Linux the exe exports every function the module finds in it by name") {
+    // The module finds these with dlsym(RTLD_DEFAULT, ...), which sees only an exe's dynamic symbols. Hookshot's Linux
+    // link exports hos_posix_* alone, so patch 0001 names each of ours there; without it the module found none of them
+    // on Linux (no host save for a guest, no pad choice, no local pads), while Windows finds them as dllexport.
+    std::vector<std::string> names;
+    const auto collect = [&names](const std::string& text, const std::string& before) {
+        for (auto at = text.find(before); at != std::string::npos; at = text.find(before, at + 1)) {
+            const auto start = at + before.size();
+            names.push_back(text.substr(start, text.find('"', start) - start));
+        }
+    };
+    collect(ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp"), "dlsym(RTLD_DEFAULT, \"");
+    const std::string pads = ReadFile(kRepo / "hookshot" / "src" / "hos_coop_pads.h");
+    for (const char* d : {"#define HOS_COOP_PAD_INFO \"", "#define HOS_COOP_PAD_READ \"", "#define HOS_COOP_PAD_TAKE \""}) {
+        collect(pads, d);
+    }
+    // Patch 0020's texture exports: the module's live look finds two, the exe's own renderers the other two.
+    collect(ReadFile(kRepo / "hookshot" / "src" / "coop_look_live.cpp"), "look(\"");
+    collect(ReadFile(kRepo / "hookshot" / "patches" / "0020-coop-texture-override.patch"), "look(\"");
+    CHECK(names.size() >= 11);
+    const std::string patch = Patch();
+    const auto start = patch.find("+++ b/nx2/build.py\n");
+    REQUIRE(start != std::string::npos);
+    const std::string build = patch.substr(start, patch.find("\ndiff --git", start) - start);
+    REQUIRE(build.find("+                           [\"-Wl,--gc-sections\", \"-Wl,--export-dynamic-symbol=hos_posix_*\"] + coop") !=
+            std::string::npos);
+    for (const auto& name : names) {
+        CAPTURE(name);
+        CHECK(build.find("\"" + name + "\"") != std::string::npos);
+    }
+}
+
+TEST_CASE("hookshot: typing in a co-op field keeps the keyboard from the menu (patch 0022), Insert and F1 stay the menu's") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0022-coop-menu-typing-keys.patch");
+    REQUIRE_FALSE(patch.empty());
+    // the menu asks the module (by name, with its other exports) and drops its own key presses while it types:
+    // Linux reads the keys' state, so Q and E changed the tab there (player report, Linux and Steam Deck)
+    CHECK(patch.find("+    keys_taken_fn.store((int (*)(void))look(\"hos_coop_keys_taken\"), std::memory_order_release);") !=
+          std::string::npos);
+    CHECK(patch.find("+    const bool coop_typing = coop::keys_taken();") != std::string::npos);
+    CHECK(patch.find("+            if (keys[i] != VK_INSERT && keys[i] != VK_F1) press[i] = false;") != std::string::npos);
+    CHECK(patch.find("+            const bool down = (held[i] && !coop_typing) ||") != std::string::npos);   // no arrow repeat
+    CHECK(patch.find("+    if (coop_typing) tune_cancelled = true;") != std::string::npos);   // Shift: no compact menu
+    // the module says so while a field of its tab is typed into
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_keys_taken(void) {") != std::string::npos);
+    // menu files only: no lift, no host change
+    for (std::size_t at = patch.find("diff --git a/"); at != std::string::npos; at = patch.find("diff --git a/", at + 1)) {
+        CHECK(patch.compare(at, 20, "diff --git a/gpu/vk/") == 0);
+    }
 }

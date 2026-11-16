@@ -2349,13 +2349,15 @@ TEST_CASE("out of a fight an enemy goes to the player near it after 3 s, with it
   h.receive(2, ObjectSample{0, placed(7), 1, state_at(3, 9)}, kChannelObjectSamples);
   CHECK(messages_to<ObjectSample>(h, 1).size() == 1);
 
-  // It does not go straight back: 5 s must pass after a change, then 3 s.
+  // It does not go straight back: not to the player who just gave it up for
+  // handover_back_us (15 s, report 37), though 5 s + 3 s would allow another.
   h.stand(1, 5);
   h.stand(2, 50);
   h.clear();
-  h.run(4 * kSecond);
+  h.run(9 * kSecond);
   CHECK(messages_to<HandoverAsk>(h, 2).empty());
-  h.run(5 * kSecond);
+  CHECK(h.session.stats().handover_back_held > 0);
+  h.run(8 * kSecond);
   CHECK(messages_to<HandoverAsk>(h, 2) == std::vector<HandoverAsk>{{placed(7), 1, 1}});
 }
 
@@ -2780,6 +2782,33 @@ TEST_CASE("issue 101: a copy that chases its player gives that player the enemy,
   h.clear();
   h.run(10 * kSecond);
   CHECK(messages_to<HandoverAsk>(h, 2).empty());
+}
+
+TEST_CASE("report 37: an enemy is not handed back to the player who just gave it up for handover_back_us") {
+  OwnerHarness h;
+  h.stand(1, 34);
+  h.stand(2, 60);
+  h.run(4 * kSecond);
+  h.receive(2, chasing_in("Field", {placed(7)}), kChannelOwnership);
+  h.run(750'000);
+  REQUIRE(h.asks() == 1);
+  h.receive(1, HandoverState{0, placed(7), 0, state_at(0, 12)}, kChannelOwnership);
+  REQUIRE(h.session.object_owner(placed(7)) == owned(2, 1));
+  const auto changed = h.now;
+
+  // 1's copy chases 1 now, 2's enemy chases nobody: it would go back after
+  // the 5 s cooldown (Revirie's log: P2, P3, P2, P3 ...). It stays with 2.
+  h.receive(2, present_in("Field", {placed(7)}), kChannelOwnership);  // present, not chasing
+  h.receive(1, chasing_in("Field", {placed(7)}), kChannelOwnership);
+  h.clear();
+  h.run(10 * kSecond);
+  CHECK(messages_to<HandoverAsk>(h, 2).empty());
+  CHECK(h.session.stats().handover_back_held > 0);
+
+  // Once handover_back_us has passed since the change, the chase moves it.
+  h.run(quiet_config().handover_back_us - (h.now - changed) + kSecond);
+  REQUIRE(messages_to<HandoverAsk>(h, 2).size() == 1);
+  CHECK(messages_to<HandoverAsk>(h, 2)[0] == HandoverAsk{placed(7), 1, 1});
 }
 
 TEST_CASE("issue 101: a chase shorter than 500 ms, or one the owner's enemy shares, moves nothing") {
@@ -5248,4 +5277,104 @@ TEST_CASE("a boss never goes to a game whose boss has not begun its fight (unrea
   h.clear();
   h.receive(2, Damage{0, placed(7), 0, 0, 0, {}, {}}, kChannelOwnership);
   CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+}
+
+namespace {
+ObjectPresent boss_presence(std::uint8_t flags) {
+  ObjectPresent p = present_in("Field", {placed(7)});
+  p.objects[0].flags = flags;
+  return p;
+}
+}  // namespace
+
+TEST_CASE("boss-copy-b: a game whose boss has not played its intro never takes it by its copy's chase or by being near") {
+  OwnerHarness h;
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  // Player 2's copy on the ceiling looks at its Link (targeting), its intro not played (unready).
+  h.receive(2, boss_presence(object_presence::awake | object_presence::targeting | object_presence::unready),
+            kChannelOwnership);
+  h.stand(1, 40);
+  h.stand(2, 3);
+  h.clear();
+  h.run(10 * kSecond);
+  CHECK(h.asks() == 0);
+  CHECK(h.session.stats().handover_chased == 0);
+  // Its intro played (no unready bit): the chase rule applies again.
+  h.receive(2, boss_presence(object_presence::awake | object_presence::targeting), kChannelOwnership);
+  h.run(250'000);
+  CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+  CHECK(h.session.stats().handover_chased == 1);
+}
+
+TEST_CASE("boss-copy-b: a boss owned by a game that has not played its intro goes to one that has") {
+  OwnerHarness h;
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  // Both unready (no intro played anywhere yet): it stays.
+  h.receive(1, boss_presence(object_presence::awake | object_presence::unready), kChannelOwnership);
+  h.receive(2, boss_presence(object_presence::awake | object_presence::unready), kChannelOwnership);
+  h.stand(1, 3);
+  h.stand(2, 30);
+  h.clear();
+  h.run(2 * kSecond);
+  CHECK(h.asks() == 0);
+  // Player 2's own intro began the fight there (ready): the boss goes to it at once, far or not.
+  h.receive(2, boss_presence(object_presence::awake), kChannelOwnership);
+  h.run(250'000);
+  CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+  CHECK(h.session.stats().boss_to_ready == 1);
+  h.receive(1, HandoverState{0, placed(7), 0, state_at(0, 12)}, kChannelOwnership);
+  CHECK(h.session.object_owner(placed(7)) == owned(2, 1));
+  // The unready game is not given it back by the rules.
+  h.clear();
+  h.stand(1, 30);
+  h.stand(2, 60);
+  h.run(10 * kSecond);
+  CHECK(messages_to<HandoverAsk>(h, 2).empty());
+}
+
+TEST_CASE("boss-copy-b: when a boss's owner leaves, a game that has played its intro takes it before a nearer one that has not") {
+  ObjectHarness h;
+  h.receive(3, present_in("Field", {placed(7)}), kChannelOwnership);
+  h.receive(3, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h.receive(1, boss_presence(object_presence::awake | object_presence::unready), kChannelOwnership);
+  h.receive(2, present_in("Field", {placed(7)}), kChannelOwnership);
+  h.receive(3, ObjectSample{0, placed(7), 0, state_at(4, 6)}, kChannelObjectSamples);
+  h.clear();
+  h.session.disconnected(3, h.now);
+  h.collect();
+  CHECK(h.session.object_owner(placed(7)) == owned(2, 1));
+}
+
+TEST_CASE("boss-copy-b: a late joiner's stun hands it the boss once its game says ready (its copy left pre-battle)") {
+  OwnerHarness h;
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h.receive(2, boss_presence(object_presence::awake | object_presence::unready), kChannelOwnership);
+  h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);  // a fight
+  h.stand(1, 12);
+  h.stand(2, 3);
+  h.run(20 * kSecond);  // past the owner's own hit (the fight's life drop): only readiness holds it now
+  h.clear();
+  h.receive(2, Damage{0, placed(7), 0, 0, 0, {}, {}}, kChannelOwnership);  // a stun while unready
+  CHECK(messages_to<HandoverAsk>(h, 1).empty());
+  // Its copy now follows the owner's fight: its game sends no unready bit.
+  h.receive(2, boss_presence(object_presence::awake), kChannelOwnership);
+  h.run(3 * kSecond);
+  h.clear();
+  h.receive(2, Damage{0, placed(7), 0, 0, 0, {}, {}}, kChannelOwnership);
+  CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+  CHECK(h.session.stats().boss_to_hitter == 1);
+}
+
+TEST_CASE("boss heart: the host loading a save forgets the claims (the boss fights again, player report #52)") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  h.receive(2, BossHeart{0, 0, false, 16}, kChannelSession);
+  CHECK(h.session.stats().boss_hearts_given == 1);
+  h.receive(1, FlagReset{0, {flag(5, 0)}}, kChannelProgress);  // the host loaded a save from before the win
+  h.clear();
+  h.receive(1, BossHeart{0, 0, false, 16}, kChannelSession);  // the refight's pickup
+  CHECK(only_message_to<BossHeart>(h, 2) == BossHeart{1, 0, true, 16});
+  CHECK(h.session.stats().boss_hearts_given == 2);
 }

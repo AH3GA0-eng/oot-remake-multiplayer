@@ -9,10 +9,13 @@ stamp=$(date +%Y%m%d-%H%M%S)
 host=$(hostname 2>/dev/null || uname -n)
 out=$KIT/coop-logs-$stamp.tar.gz  # no PC name: it is masked inside too
 stage=$(mktemp -d "${TMPDIR:-/tmp}/coop-logs-XXXXXX")
+# Says at once that it runs, then one line per file (issue #67: a big game log takes a while to mask).
+echo 'Collecting your logs (this can take a few minutes)...'
 found=0
 pick() {  # pick FROM TO
     if [[ -f $1 ]]; then
         mkdir -p "$stage/$(dirname "$2")"
+        echo "  $2 ($(du -h -- "$1" 2>/dev/null | cut -f1))"
         cp -- "$1" "$stage/$2" && found=$((found + 1))
     else
         echo "Missing: ${1#"$KIT"/}"
@@ -27,7 +30,9 @@ for p in /proc/[0-9]*; do
     [[ ${e##*/} == longshot ]] && log_dirs+=("${e%/*}")
 done
 for d in "${log_dirs[@]}"; do
+    # (Longshot rc.4 writes its log into logs/ there, older games beside the program)
     for f in "$d"/longshot_log*.txt; do [[ -f $f ]] && pick "$f" "game/${f##*/}" && game_logs=$((game_logs + 1)); done
+    for f in "$d"/logs/longshot_log*.txt; do [[ -f $f ]] && pick "$f" "game/logs/${f##*/}" && game_logs=$((game_logs + 1)); done
     ((game_logs)) && break
 done
 for f in "$LOGS"/longshot_log*.txt; do [[ -f $f ]] && pick "$f" "game/copied/${f##*/}" && game_logs=$((game_logs + 1)); done
@@ -49,6 +54,16 @@ pick "$GAME/mods/contents/0400486024DEC000/coop-puppet/coop_puppet.json" game/co
     command -v vulkaninfo >/dev/null && vulkaninfo --summary 2>/dev/null | grep -E 'deviceName|driverInfo|apiVersion' | sed 's/^[[:space:]]*/vulkan: /'
     command -v ip >/dev/null && ip -4 -o addr show 2>/dev/null | awk '$4 !~ /^169\.254\./ { print "ip: " $4 " (" $2 ")" }'
     df -h "$DATA" 2>/dev/null | tail -n1 | sed 's/^/disk: /'
+    # Memory now (issue 85: a host's game crashed with the commit limit nearly used up): RAM, swap,
+    # the commit charge and its limit, and the 10 programs using the most memory (resident, summed
+    # by name; names only, masked below like the rest).
+    awk '/^(MemTotal|MemAvailable|SwapTotal|SwapFree|CommitLimit|Committed_AS):/ { v[substr($1, 1, length($1) - 1)] = $2 / 1048576 }
+         END { printf "memory now: RAM %.1f GB available of %.1f GB; swap %.1f GB free of %.1f GB; commit %.1f GB used of %.1f GB limit\n",
+               v["MemAvailable"], v["MemTotal"], v["SwapFree"], v["SwapTotal"], v["Committed_AS"], v["CommitLimit"] }' /proc/meminfo 2>/dev/null
+    command -v ps >/dev/null && ps -eo comm=,rss= 2>/dev/null |
+        awk '{ n = NF - 1; name = $1; for (i = 2; i <= n; i++) name = name " " $i; kb[name] += $NF; c[name]++ }
+             END { for (k in kb) printf "%d\t%s\t%d\n", kb[k], k, c[k] }' |
+        sort -rn | head -n 10 | awk -F '\t' '{ printf "top memory: %s (%d running), %.2f GB resident\n", $2, $3, $1 / 1048576 }'
     kit_game_running && echo 'running: the game'
 } >"$stage/about-this-pc.txt"
 # What identifies a player is masked, as the Windows kit's log-mask.ps1 does: a set password
@@ -109,6 +124,7 @@ FNR == 1 { if (outfile != "") close(outfile); outfile = FILENAME ".masked" }
     t = words(t, pc, "<pc>")
     print t > outfile
 }'
+echo 'Masking addresses and names in the copies, then packing them...'
 find "$stage" -type f ! -path '*/crash_dumps/*' | while IFS= read -r f; do
     { awk -v user="$(id -un 2>/dev/null)" -v pc="$host" "$mask_awk" "$f" && mv -f "$f.masked" "$f"; } || rm -f "$f" "$f.masked"   # never an unmasked file in the tarball
 done
@@ -121,7 +137,7 @@ if ((game_logs == 0)); then
     # (as in the tarball: the user name masked)
     u=$(id -un 2>/dev/null)
     {
-        echo "The game's log (longshot_log.txt) is not in this file: none in $GAME."
+        echo "The game's log (longshot_log.txt) is not in this file: none in $GAME or $GAME/logs."
     if [[ -x $GAME/longshot ]]; then
         echo '  Start the game once (it writes the log when it starts), close it, then run this again (bash start-oot-coop.sh --logs).'
     else

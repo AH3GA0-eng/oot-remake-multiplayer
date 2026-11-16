@@ -56,7 +56,7 @@ function Get-Sha([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm SH
 $KitTop = @('Start OoT Co-op.bat', 'README.txt', 'Revert.bat', 'start-server.cmd', 'make-puppet-pack.cmd', 'coop-options.ini')
 $KitScripts = @('start.ps1', 'start-checks.ps1', 'play.ps1', 'coop-ini.ps1', 'kit-paths.ps1', 'hosting.ps1', 'relay-join.ps1',
     'invite.ps1', 'hookshot-build.ps1', 'apply_patch.py', 'update.ps1', 'start-server.ps1', 'collect-logs.ps1', 'collect-logs.cmd',
-    'log-mask.ps1', 'windows-checks.ps1')
+    'log-mask.ps1', 'windows-checks.ps1', 'console-mode.ps1')
 $KitDocs = @(@('setup.md', 'SETUP.md'), @('known-issues.md', 'KNOWN-ISSUES.md'))
 # Never in this kit (emulator kits only); make_kit_hookshot refuses a kit that has one.
 $EmulatorOnly = '(?i)(^|\\)(emulator\\|lichii|fritchii|.*\.nx2recipe$|Host\.bat$|Join\.bat$|Host-Hookshot\.bat$|Join-Hookshot\.bat$|Play-OoT-Coop\.bat$|Build-Hookshot-Coop\.bat$|play\.cmd$|start-join\.cmd$|start-relay\.cmd$|check-hosting\.cmd$|puppet-pack\.ps1$|qt6|Qt6|SDL2\.dll$)'
@@ -144,7 +144,7 @@ foreach ($p in $hsPatches) { Copy-Item -LiteralPath $p.FullName -Destination (Jo
 $packTool = Join-Path $repo 'tools\puppet_pack'
 # (make_kit.ps1's list: its tests and the scene-placing test helper stay out), plus every module build.py imports.
 $packFiles = @('ainb.py', 'build.py', '__init__.py', 'byml.py', 'dumpcheck.py', 'dungeon_rooms.py', 'hud.py', 'nup.py', 'rstb.py',
-    'sarc.py', 'texture.py', 'title_menu.py', 'tunic.py', 'tunic_extra.py', 'zs.py')
+    'sarc.py', 'texture.py', 'title_menu.py', 'tunic.py', 'tunic_extra.py', 'zs.py', 'merge_tables.py')   # (merge_tables.py: play.ps1, #48)
 foreach ($line in (Get-Content (Join-Path $packTool 'build.py') | Where-Object { $_ -match '^\s*from \. import ' })) {
     $packFiles += (($line -replace '#.*$', '') -replace '^\s*from \. import ', '').Split(',') | ForEach-Object { "$($_.Trim()).py" } | Where-Object { $_ -ne '.py' }
 }

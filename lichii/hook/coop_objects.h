@@ -13,6 +13,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace Core {
@@ -87,6 +88,8 @@ unsigned TakeChestsOpenedTwice();
 std::optional<bool> LastBossAlive(std::span<const std::string_view> bodies);
 // The same walk: whether the boss has lost life (BossHurt).
 std::optional<bool> LastBossHurt(std::span<const std::string_view> bodies);
+// The same walk: whether the boss is still in its pre-battle phase (BossPreBattle).
+std::optional<bool> LastBossPreBattle(std::span<const std::string_view> bodies);
 // Whether our game owned the dungeon's boss in the last walk (nothing when it is not seen, or the walk is stale).
 std::optional<bool> LastBossOurs(std::span<const std::string_view> bodies);
 // The boss bodies our game is not ready to own (its intro not played here);
@@ -97,6 +100,10 @@ void SetUnreadyBosses(std::vector<std::string> bodies);
 // had, or at the same moment with the higher player number (docs/dungeon.md,
 // "Locked doors"). Taken by the hook, which adds 1 to each in the game.
 std::vector<std::uint32_t> TakeKeyRefunds();
+// dungeon-sync-b (#75): small keys to lend to our game only (false) or to
+// take back unused (true), by the SmallKeyNum flag (WorldSync::Out::key_lends,
+// lend_returns). The hook keeps them from the group (coop::host::LentKeys).
+std::vector<std::pair<std::uint32_t, bool>> TakeKeyLends();
 // Our own game lowered these counts (Session::take_own_count_drops): a key
 // spent here. A lock's second key goes back only against one of these.
 void OwnCountDrops(const std::vector<std::uint32_t>& key_flags);

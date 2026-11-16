@@ -147,6 +147,21 @@ std::optional<bool> BossOurs(const std::vector<Seen>& walk, std::span<const std:
     return out;
 }
 
+bool IsPreBattleAnimation(std::string_view name) {
+    return name == "Sleep" || name.starts_with("Pre_Battle_");
+}
+
+std::optional<bool> BossPreBattle(const std::vector<Seen>& seen, std::span<const std::string_view> bodies) {
+    bool any = false;
+    for (const Seen& s : seen) {
+        if (std::find(bodies.begin(), bodies.end(), s.name) == bodies.end() || !s.animation) continue;
+        if (IsPreBattleAnimation(s.animation->name)) return true;
+        any = true;
+    }
+    if (!any) return std::nullopt;
+    return false;
+}
+
 std::optional<bool> BossHurt(const std::vector<Seen>& seen, std::span<const std::string_view> bodies) {
     bool any = false;
     for (const Seen& s : seen) {
@@ -199,8 +214,16 @@ bool IsOwnPuzzle(std::string_view name) {
     // and _GetGoldScale, coop/host game_items). The fish are shared (IsFish,
     // fishing-2): the lure rules give each fish to the game whose lure it
     // goes for.
+    // Player report #64 (dungeon-sync-b, Revirie's 0.11.0 log). Child Ruto in
+    // Jabu-Jabu (Npc_Zora_Ruto_Child_001) is lifted and carried by one Link
+    // (her 'Act_LiftRest' animations): her AI follows that game's own Link.
+    // Shared as an NPC copy, the owner's 'Crouch' was played over the carried
+    // Ruto, so she dropped as soon as she was picked up, and again when the
+    // owner left the room (a new owner). Each game runs its own Ruto; the
+    // room flags she sets (switches, rooms cleared) stay shared.
     return name.starts_with("Enemy_Scrub_Deku_Brothers") ||
-           name.starts_with("Enemy_Scrub_ForestStage") || name.starts_with("Npc_Hylia_Fishman");
+           name.starts_with("Enemy_Scrub_ForestStage") || name.starts_with("Npc_Hylia_Fishman") ||
+           name.starts_with("Npc_Zora_Ruto_Child");
 }
 
 bool IsFish(std::string_view name) {
@@ -326,6 +349,13 @@ bool NativeOnlyName(std::string_view name) {
 }
 
 LifeRouted RouteLife(const LifeAsk& a) {
+    if (a.heal) {
+        // Only through the game's own Life step (a negative sum), never a write; nothing to do when not lower.
+        if (a.step_seen && a.has_component && a.old >= 0 && a.life > a.old) {
+            return {LifeRoute::step, a.old - a.life};  // (a stale give was taken back: the whole raise again)
+        }
+        return {LifeRoute::lost, 0};
+    }
     if (a.hurt > 0 && a.replay_on && !a.direct && a.has_player) {
         return {LifeRoute::replay, a.hurt};
     }
@@ -474,6 +504,27 @@ bool IsDeathAnimation(std::string_view name) {
     return false;
 }
 
+bool IsHideAnimation(std::string_view name) {
+    constexpr std::string_view word = "Visible_Off";
+    for (std::size_t at = name.find(word); at != std::string_view::npos; at = name.find(word, at + 1)) {
+        if (at == 0 || name[at - 1] == '_') {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool IsCeilingWait(std::string_view name) {
+    return AnimationBase(name).starts_with("CeilingWait");
+}
+
+bool UnderCeilingEnemy(const proto::Vec3& enemy, const proto::Vec3& link) {
+    const float dx = enemy[0] - link[0];
+    const float dz = enemy[2] - link[2];
+    const float above = enemy[1] - link[1];
+    return dx * dx + dz * dz <= kCeilingUnderM * kCeilingUnderM && above > 0.0f && above <= kCeilingDropM;
+}
+
 bool IsStunAnimation(std::string_view name) {
     const std::string_view base = AnimationBase(name);
     const std::string_view first = base.substr(0, base.find('_'));
@@ -573,6 +624,32 @@ void Sync::Receive(const proto::Message& message) {
     if (inbox_.size() < 4096) {
         inbox_.push_back(message);
     }
+}
+
+std::string Sync::ChestAlreadyOpenWhy(const Seen& s, std::uint64_t now_us) const {
+    // chest-late-b (row #35 (2), Bean Seller's 0.11.0 log: 3 chests read
+    // OpenWait when the other's flag came, and the player saw them closed
+    // until near): how long it has read the open idle, whether it was closed
+    // here before, and how far our Link is, so the next log tells a chest
+    // made open from one whose AS changed before the flag (and its distance).
+    std::string why = " (";
+    const auto c = chest_animations_.find(s.address);
+    if (c == chest_animations_.end() || c->second.changed_us == 0 || now_us < c->second.changed_us) {
+        why += "open idle since first seen";
+    } else {
+        char age[48];
+        std::snprintf(age, sizeof age, "open idle for %.1f s", (now_us - c->second.changed_us) / 1e6);
+        why += age;
+    }
+    if (c != chest_animations_.end() && c->second.seen_closed) {
+        why += ", closed here before";
+    }
+    if (player_ && Finite(*player_) && Finite(s.position)) {
+        char away[48];
+        std::snprintf(away, sizeof away, ", our Link %.1f m away", Distance(*player_, s.position));
+        why += away;
+    }
+    return why + ")";
 }
 
 void Sync::Take(std::uint64_t hash) {
@@ -707,6 +784,7 @@ void Sync::Reset() {
     decided_.clear();
     eggs_.clear();
     copy_eggs_.clear();
+    away_.clear();
     bound_.clear();
     refused_.clear();
     decider_ = 0;
@@ -785,6 +863,24 @@ std::size_t Sync::PlayersNear(const proto::Vec3& at, std::uint64_t now_us) const
     return near;
 }
 
+std::vector<proto::Vec3> Sync::OthersHere(std::uint64_t now_us) const {
+    const auto fresh = [now_us](std::uint64_t t) {
+        return t <= now_us ? now_us - t < kSceneStaleUs : t - now_us < kSceneStaleUs;
+    };
+    std::vector<proto::Vec3> out;
+    std::lock_guard lock(inbox_mutex_);
+    for (const auto& [player, seen] : scenes_) {
+        if (player == self_ || player == 0 || !fresh(seen.second) || seen.first != scene_) {
+            continue;
+        }
+        const auto place = places_.find(player);
+        if (place != places_.end() && fresh(place->second.second)) {
+            out.push_back(place->second.first);
+        }
+    }
+    return out;
+}
+
 void Sync::Bind(const std::map<std::uint64_t, std::uint64_t>& live) {
     bound_.clear();
     for (const auto& [key, address] : live) {
@@ -836,6 +932,11 @@ std::optional<std::uint8_t> Sync::OwnerOf(std::uint64_t address) const {
     return owner->second.player;
 }
 
+bool Sync::OwnerSaysDead(std::uint64_t address) const {
+    const auto it = objects_.find(address);
+    return it != objects_.end() && (it->second.dead_at != 0 || it->second.owner_life_zero);
+}
+
 std::vector<std::pair<std::uint64_t, std::string>> Sync::Owned() const {
     std::vector<std::pair<std::uint64_t, std::string>> out;
     for (const auto& [address, o] : objects_) {
@@ -877,6 +978,8 @@ void Sync::GameDeleted(std::uint64_t address, std::uint64_t now_us) {
     if (it != objects_.end()) {
         it->second.deleted_until = now_us + kDeletedKeepUs;
     }
+    // Asked while off the walk: gone now, not away.
+    std::erase_if(away_, [address](const Away& a) { return a.address == address; });
 }
 
 void Sync::Stepped(std::uint64_t address, std::int32_t amount, std::uint64_t now_us) {
@@ -1104,8 +1207,10 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 continue;
             }
             ChestAnimation now{s.animation ? s.animation->name : std::string(), 0};
+            now.seen_closed = now.name.find(kChestClosedIdle) != std::string::npos;
             if (const auto was = chest_animations_.find(s.address); was != chest_animations_.end()) {
                 now.changed_us = was->second.name == now.name ? was->second.changed_us : now_us;
+                now.seen_closed = now.seen_closed || was->second.seen_closed;
             }
             chests.emplace(s.address, std::move(now));
         }
@@ -1182,7 +1287,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                                 // Made open already (its flag came before it
                                 // was made): left so (the old rule removed these too).
                                 tk.shown_open.insert(s.address);
-                                notes_.emplace_back(s.name + ": opened in another game, already shows open here");
+                                notes_.emplace_back(s.name + ": opened in another game, already shows open here" +
+                                                    ChestAlreadyOpenWhy(s, now_us));
                                 continue;
                             }
                             const auto shown = chest_shown_.find(s.address);
@@ -1567,6 +1673,15 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         // others delete their copies.
         const Object& o = it->second;
         const auto owner = owners_.find(o.id);
+        // churn-b: alive, no delete request, a placed id with an owner: away, not gone.
+        if (delete_events_ && !deleted && o.id.kind == proto::ObjectKind::placed && owner != owners_.end() &&
+            owner->second.player != 0 && o.dead_at == 0 && !o.dead_said && !(o.life && *o.life <= 0) &&
+            !(o.animation && IsDeathAnimation(o.animation->name)) && !IsHatchingEgg(o.name) &&
+            !bound_.contains(o.address)) {
+            away_.push_back({o.id, o.address, now_us + kAwayKeepUs, o.name});
+            it = objects_.erase(it);
+            continue;
+        }
         if (o.id.kind == proto::ObjectKind::made && o.id.maker == self && owner != owners_.end() &&
             owner->second.player == self) {
             proto::ObjectRemove r;
@@ -1923,8 +2038,23 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         }
     }
 
+    // churn-b: an away object that came back goes on with its owner; one
+    // still off the walk after kAwayKeepUs is gone (left), its owner forgotten.
+    std::erase_if(away_, [this, now_us](const Away& a) {
+        if (std::any_of(objects_.begin(), objects_.end(), [&a](const auto& e) { return e.second.id == a.id; })) {
+            return true;
+        }
+        if (now_us < a.until) {
+            return false;
+        }
+        owners_.erase(a.id);
+        notes_.emplace_back("gone " + a.name + ": off our walk " + std::to_string(kAwayKeepUs / 1'000'000) +
+                            " s with no delete request: left");
+        return true;
+    });
+
     std::vector<proto::ObjectPresence> present;
-    present.reserve(objects_.size());
+    present.reserve(objects_.size() + away_.size());
     std::vector<proto::FishLureEntry> fish;  // issue 151: FISH_LURE
     for (auto& [address, o] : objects_) {
         if (o.dead_said) {
@@ -1982,7 +2112,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                        now_seen.contains(address) && Distance(o.position, *player_) <= wake_m &&
                        !o.received.empty() && now_us >= o.received.back().time &&
                        now_us - o.received.back().time <= kPoseStaleUs &&
-                       !(o.react_at != 0 && now_us < o.react_at + kReactHoldUs)) {
+                       !(o.react_at != 0 && now_us < o.react_at + AnswerHoldUs(kReactHoldUs, owner->second.player))) {
                 // A copy near our Link whose own AI plays something else than
                 // the owner's enemy (issue 132): it wants to act on our Link.
                 const auto& wanted = o.received.back().animation;
@@ -1996,6 +2126,19 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 if (differs || put_back) {
                     ChaseStep(o, now_us);
                 }
+            }
+            // Issue 35 (3): a copy whose owner's enemy waits on the ceiling
+            // (a Skulltula's "CeilingWait") with our Link under it. The
+            // owner's AI drops it only on its own Link, and the copy's wake
+            // above may never show (too high, or its AI held). Flagged
+            // targeting, the server hands it to us (issue 101) and our
+            // game's own AI drops it on our Link.
+            if (wake_ && o.reacts && owner != owners_.end() && owner->second.player != 0 &&
+                owner->second.player != self && now_seen.contains(address) && !o.received.empty() &&
+                now_us >= o.received.back().time && now_us - o.received.back().time <= kPoseStaleUs &&
+                o.received.back().animation && IsCeilingWait(o.received.back().animation->name) &&
+                UnderCeilingEnemy(o.position, *player_)) {
+                ChaseStep(o, now_us);
             }
         }
         // Issue 151 (fishing-3): how near our lure is to each fish. The
@@ -2018,6 +2161,14 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             flags |= proto::object_presence::unready;
         }
         present.push_back({o.id, flags});
+    }
+    // churn-b: an away object stays listed as it was last listed.
+    for (const Away& a : away_) {
+        if (std::none_of(present.begin(), present.end(), [&a](const auto& p) { return p.id == a.id; })) {
+            const auto last = std::find_if(present_sent_.begin(), present_sent_.end(),
+                                           [&a](const auto& p) { return p.id == a.id; });
+            present.push_back({a.id, last != present_sent_.end() ? last->flags : proto::object_presence::awake});
+        }
     }
     // gohma-larva: an egg of ours that just left the walk alive stays on the
     // list while its hatchling may still come, so the server keeps it ours
@@ -2436,15 +2587,20 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 continue;
             }
             const std::int32_t life = sample->state.life->life;
+            o->owner_life_zero = life <= 0;
             const std::int32_t have = o->hurt_until != 0 ? o->hurt_target : *o->life;
-            const bool holding = o->hit_sum > 0 || now_us - o->hit_at < kHitHoldUs;
+            const bool holding =
+                o->hit_sum > 0 || now_us - o->hit_at < AnswerHoldUs(kHitHoldUs, sample->player_number);
             if (life < have) {
                 // Who hit it is not sent: its owner is the best guess.
                 Lower(*o, life, now_us, writes, sample->player_number);
                 o->fight_until = now_us + kFightUs;
             } else if (life > have && !holding && have <= 0 && o->killed_at != 0 &&
                        now_us - o->killed_at < kKilledKeepUs && o->dead_at == 0 &&
-                       o->resent < kResendMax) {
+                       o->resent < kResendMax && !IsBoss(o->name)) {
+                // (never a boss: its DAMAGE resent would be the copy's whole life in one hit, the owner's
+                // weak point bypassed (seed N2BTEYKM: Barinade's instant death). A boss copy is held at
+                // life 1 by its own Life step and dies with its owner's: CoopBossNative HeldLifeStep.)
                 // We killed it here and the owner's enemy still lives (the
                 // DAMAGE was lost, or crossed a change of owner): not healed
                 // back, the hit is sent again (issue 133). After kResendMax
@@ -2516,8 +2672,24 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
         } else if (const auto* handed = std::get_if<proto::HandoverState>(&m)) {
             Object* o = find(handed->id);
             // The lower life of the two, so an enemy never heals across a
-            // hand-over. Its place stays our own enemy's.
-            if (o != nullptr && handed->state.life && o->life &&
+            // hand-over. Its place stays our own enemy's. A boss is the
+            // exception: one boss death for everyone holds a copy at 1 (and
+            // its own hits lowered it where the owner refused them), so it
+            // takes the old owner's life, raised through its own Life step.
+            if (o != nullptr && handed->state.life && o->life && IsBoss(o->name) &&
+                handed->state.life->life > *o->life && handed->state.life->life > 0) {
+                LifeWrite raise;
+                raise.address = o->address;
+                raise.life = handed->state.life->life;
+                raise.heal = true;
+                writes.push_back(raise);
+                notes_.emplace_back("ours now with less life than its old owner's (" + std::to_string(*o->life) +
+                                    " < " + std::to_string(handed->state.life->life) +
+                                    "): raised through its own Life step: " + o->name);
+                o->life = handed->state.life->life;
+                o->hurt_left = 0;
+                o->hurt_until = 0;
+            } else if (o != nullptr && handed->state.life && o->life &&
                 handed->state.life->life < *o->life) {
                 write(*o, handed->state.life->life);
                 if (handed->state.life->life <= 0) {
@@ -2584,7 +2756,6 @@ void Sync::Lower(Object& o, std::int32_t life, std::uint64_t now_us,
 }
 
 void Sync::Poses(std::uint64_t now_us, std::vector<PoseWrite>& out) const {
-    const std::uint64_t t = now_us > kBehindUs ? now_us - kBehindUs : 0;
     for (const auto& [address, o] : objects_) {
         if (o.received.empty() || now_us < o.received.back().time ||
             now_us - o.received.back().time > kPoseStaleUs) {
@@ -2594,6 +2765,9 @@ void Sync::Poses(std::uint64_t now_us, std::vector<PoseWrite>& out) const {
         if (owner == owners_.end() || owner->second.player == 0 || owner->second.player == self_) {
             continue;
         }
+        // Shown as late as its owner's puppet (report 37: that owner's delay, coop_show_delay.h).
+        const std::uint64_t behind = BehindUs(owner->second.player);
+        const std::uint64_t t = now_us > behind ? now_us - behind : 0;
         PoseWrite w;
         w.address = address;
         const Received& last = o.received.back();
@@ -2733,18 +2907,24 @@ void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
         if (!wanted || wanted->name.empty()) {
             continue;
         }
+        // Issue 35 (4): the owner's hide is not ours to play (IsHideAnimation).
+        // The copy shows its own animation until its own game kills it
+        // (OBJECT_REMOVE dead, the Life step) or deletes it kDeadGraceUs later.
+        if (o.reacts && !IsBoss(o.name) && IsHideAnimation(wanted->name)) {
+            continue;
+        }
         // Just hit here: the copy's own game shows the hit. The owner's
         // animation from before the hit waits; its next one (its own
         // reaction to our DAMAGE) is played as usual.
-        if (o.react_at != 0 && now_us < o.react_at + kReactHoldUs &&
+        if (o.react_at != 0 && now_us < o.react_at + AnswerHoldUs(kReactHoldUs, owner->second.player) &&
             wanted->name == o.react_over) {
             continue;
         }
         const float rate = std::isfinite(wanted->rate) && wanted->rate > 0.0f ? wanted->rate : 1.0f;
-        // Shown kBehindUs late, as the pose; no further ahead than a pose is.
-        const std::int64_t age = std::clamp<std::int64_t>(
-            static_cast<std::int64_t>(now_us - last.time) - static_cast<std::int64_t>(kBehindUs),
-            -static_cast<std::int64_t>(kBehindUs), static_cast<std::int64_t>(kExtrapolateUs));
+        // Shown as late as the pose (its owner's delay); no further ahead than a pose is.
+        const auto behind = static_cast<std::int64_t>(BehindUs(owner->second.player));
+        const std::int64_t age = std::clamp<std::int64_t>(static_cast<std::int64_t>(now_us - last.time) - behind,
+                                                          -behind, static_cast<std::int64_t>(kExtrapolateUs));
         out.push_back({address, wanted->name, rate, FrameAfter(wanted->frame, rate, age),
                        last.time, 0, {}});
         if (o.play_frame) {

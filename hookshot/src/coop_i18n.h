@@ -52,6 +52,12 @@ const Lang* ForCode(std::string_view code);
 // `en` in that language; `en` itself when the table has no line for it, and
 // when `en` is built around something the table's shapes do not know.
 std::string Tr(std::string_view en);
+
+// A place's name (places.json's English, lichii/hook/coop_hud_places.h) in the
+// table's language; the name as it is when that language has no line for it,
+// and for English. Separate from Tr(): a place is the game's data, not a line of
+// the module's source, so the table of them is separate too.
+std::string Place(std::string_view en);
 // The same in `lang` (nullptr: English).
 std::string Tr(const Lang* lang, std::string_view en);
 

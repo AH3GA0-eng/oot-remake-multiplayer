@@ -10,6 +10,7 @@
 // (coop_difficulty_game.cpp).
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -64,6 +65,11 @@ bool Set(const Choice& choice);
 // Any thread: the values in force now (the game as it is while not in a
 // session or before the server said them).
 Values Now();
+// The values in one word, for Now() on any thread: all five percents (boss
+// life and boss damage too), 12 bits each (kMaxBossHpPct 1600 is the most;
+// a bigger one is kept at 4095).
+std::uint64_t PackValues(const Values& v) noexcept;
+Values UnpackValues(std::uint64_t word) noexcept;
 
 // The menu's rows. A preset or a moved slider turns the automatic scaler
 // off: what the host sets stays, whoever joins or leaves.
@@ -176,7 +182,15 @@ public:
                                       : kind == Kind::boss_life ? values.boss_hp_pct
                                                                 : Folded(values.hp_pct, values.count_pct);
             const std::int32_t passed = Passed(*s, sum, now_ms);
-            return passed == sum ? sum : passed + Scaled(*s, sum - passed, pct, &EnemyTakes, enemy_hits_);
+            const std::int32_t took =
+                passed == sum ? sum : passed + Scaled(*s, sum - passed, pct, &EnemyTakes, enemy_hits_);
+            if (kind == Kind::boss_life) {
+                // (traced apart: does a boss's damage reach this step, and what of it is taken)
+                boss_steps_.fetch_add(1, std::memory_order_relaxed);
+                boss_in_.fetch_add(static_cast<std::uint64_t>(sum), std::memory_order_relaxed);
+                boss_took_.fetch_add(static_cast<std::uint64_t>(std::max(took, 0)), std::memory_order_relaxed);
+            }
+            return took;
         }
         if (kind == Kind::our_link_life) {
             const Kind by = Of(attacker());
@@ -192,6 +206,10 @@ public:
     // How many hits Step changed: on enemies, on our Link (for the log).
     std::uint64_t EnemyHits() const noexcept { return enemy_hits_.load(std::memory_order_relaxed); }
     std::uint64_t LinkHits() const noexcept { return link_hits_.load(std::memory_order_relaxed); }
+    // A boss's Life steps with damage (Kind::boss_life), the damage that came in and what the game took.
+    std::uint64_t BossSteps() const noexcept { return boss_steps_.load(std::memory_order_relaxed); }
+    std::uint64_t BossDamageIn() const noexcept { return boss_in_.load(std::memory_order_relaxed); }
+    std::uint64_t BossDamageTaken() const noexcept { return boss_took_.load(std::memory_order_relaxed); }
     // Marks the full table refused since the last Clear.
     std::uint64_t Unmarked() const noexcept { return unmarked_.load(std::memory_order_relaxed); }
 
@@ -217,6 +235,9 @@ private:
     std::array<Slot, kSlots> slots_{};
     std::atomic<std::uint64_t> enemy_hits_{0};
     std::atomic<std::uint64_t> link_hits_{0};
+    std::atomic<std::uint64_t> boss_steps_{0};
+    std::atomic<std::uint64_t> boss_in_{0};
+    std::atomic<std::uint64_t> boss_took_{0};
     std::atomic<std::uint64_t> unmarked_{0};
 };
 Kinds& TheKinds();

@@ -19,6 +19,7 @@
 // We do the same from the cave.
 
 #include "coop_boss.h"
+#include "coop_boss_native.h"
 #include "coop_boss_scenes.h"
 #include "coop_live_events.h"
 #include "coop_objects.h"
@@ -159,6 +160,7 @@ struct Glue {
     std::uint64_t tick_at = 0;  // steady clock, us
     bool connected = false;
     bool unready_logged_ = true;  // the last state logged: ready
+    Readiness readiness;          // boss-copy-b: may our game own the room's boss
     std::uint64_t debug_at = 0;
     Sync sync;
     Mover mover;
@@ -243,6 +245,7 @@ struct Glue {
             if (connected) {
                 sync.Reset();
                 scenes.Reset();
+                readiness.Reset();
                 max_life_cap.reset();
                 connected = false;
             }
@@ -260,6 +263,10 @@ struct Glue {
             if (const Room* room = RoomOfScene(*scene)) {
                 local.boss_alive = CoopObjects::LastBossAlive(Bodies(*room));
                 local.boss_hurt = CoopObjects::LastBossHurt(Bodies(*room));
+                // A Game Over here is no boss's death (boss-gameover-b): Link's own Life at 0.
+                if (const auto life = CoopObjects::OurLinkLife()) {
+                    local.link_dead = *life <= 0;
+                }
                 // Not ready to own the boss until our game has played its
                 // intro: before it our boss is still in its pre-battle phase
                 // (Gohma on the ceiling), and as owner it would hold every
@@ -268,8 +275,15 @@ struct Glue {
                 coop::host::GameFlags flags(memory);
                 const auto intro = flags.get_bool(
                     coop::host::flag_hash("HavePlayedEvent." + std::string(room->intro)));
+                // boss-copy-b: also ready once our boss left its pre-battle
+                // phase here (a late joiner's copy following the fight).
+                const bool ready =
+                    readiness.Step(room->index, intro, CoopObjects::LastBossPreBattle(Bodies(*room)));
+                if (readiness.TakeFoughtNews() && intro.has_value() && !*intro) {
+                    LOG_INFO(Core, "coop: boss: our boss left its pre-battle phase here: ready to own it without our intro");
+                }
                 std::vector<std::string> unready;
-                if (intro.has_value() && !*intro) {
+                if (!ready) {
                     for (const auto body : Bodies(*room)) unready.emplace_back(body);
                 }
                 if (unready.empty() != unready_logged_) {
@@ -280,6 +294,7 @@ struct Glue {
                 }
                 CoopObjects::SetUnreadyBosses(std::move(unready));
             } else {
+                readiness.Reset();  // out of the boss room: her next visit starts over
                 CoopObjects::SetUnreadyBosses({});
             }
         }
@@ -334,6 +349,16 @@ struct Glue {
                                  sent ? "" : " (not sent)");
                     }
                 }
+            });
+        }
+        if (!act.chat.empty()) {  // "<name> took the blue warp" (#50); the chat draws it in the menu's language
+            session->with_client([&](coop::net::Client& c) {
+                for (auto& line : act.chat) {
+                    const auto* p = c.find_player(line.player);
+                    lines.push_back((p != nullptr ? p->nickname : "player " + std::to_string(line.player)) + " " +
+                                    line.text);
+                }
+                return 0;
             });
         }
     }
@@ -436,6 +461,8 @@ Glue& TheGlue() {
 void Frame(Core::System& system, std::uint64_t main_base, const std::optional<std::string>& scene,
            const std::optional<coop::protocol::Vec3>& position, bool event_running, std::optional<bool> shut_in,
            coop::host::Session* session, std::uint64_t server_now_us) {
+    // Native boss sync: during our event a copy boss runs its own changes (the intro's, the death's; boss-fix).
+    CoopBossNative::TheTable().SetEvent(main_base != 0 && event_running);
     TheGlue().Frame(system, main_base, scene, position, event_running, shut_in, session, server_now_us);
 }
 
@@ -463,6 +490,15 @@ void OnEvent(const coop::net::Event& event) {
                      m->scene);
         }
     }
+}
+
+void ForgetFights() {
+    Glue& g = TheGlue();
+    g.sync.Reset();
+    g.scenes.Reset();
+    g.readiness.Reset();
+    g.max_life_cap.reset();
+    LOG_INFO(Core, "coop: boss: the host loaded a save: the fights this session knew are forgotten");
 }
 
 void SetMaxLife(std::optional<std::int32_t> max_life) {

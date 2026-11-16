@@ -213,7 +213,7 @@ function Read-KitOptions([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) { return $values }
     foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
         $t = $line.Trim()
-        if (-not $t -or $t.StartsWith('#') -or $t.StartsWith(';') -or $t -match '^(auto_update|verify_signature|server_allow|server_bind|server_password|public_address_lookup|upnp|invite|stun_servers|relay|relay_key|pvp)\s*=') { continue }
+        if (-not $t -or $t.StartsWith('#') -or $t.StartsWith(';') -or $t -match '^(auto_update|verify_signature|server_allow|server_bind|server_port|server_password|max_players|public_address_lookup|upnp|invite|stun_servers|relay|relay_key|pvp)\s*=') { continue }
         if ($t -match '^color\s*=\s*(.*?)\s*$') {
             $c = $Matches[1] -replace '\s+[#;].*$', ''  # a comment after it: 'color = blue  # mine'
             if (-not $c) { continue }  # none chosen: the player number's colour
@@ -836,9 +836,10 @@ function Get-KitLogGameExes([string]$Kit, [string[]]$Running = $null) {
     }
 }
 
-# Where a game's longshot_log*.txt, coop.ini and mods\ are: beside longshot.exe, and for a builder's bin\ layout
-# (bin\longshot.exe beside image.bin) the game folder above it, where Longshot writes them (hos_paths.h:
-# hos_game_path_a gives the folder's path then). Each folder once, the game folder first.
+# Where a game's coop.ini and mods\ are (and its longshot_log*.txt up to Longshot rc.3): beside longshot.exe, and for
+# a builder's bin\ layout (bin\longshot.exe beside image.bin) the game folder above it, where Longshot writes them
+# (hos_paths.h: hos_game_path_a gives the folder's path then). Each folder once, the game folder first.
+# Longshot rc.4 writes its log into logs\ in that folder: Get-KitHookshotLogFiles looks in both.
 function Get-KitHookshotLogDirs([string]$Exe) {
     if (-not $Exe) { return @() }
     $dir = Split-Path -Parent $Exe
@@ -847,6 +848,18 @@ function Get-KitHookshotLogDirs([string]$Exe) {
         return @($up, $dir)
     }
     return @($dir)
+}
+
+# The game's log files (longshot_log*.txt, hookshot_log*.txt) for one game folder of Get-KitHookshotLogDirs: in it
+# (Longshot up to rc.3, 0.11.1's games) and in its logs\ (rc.4). Each as @{ File; Sub } with Sub '' or 'logs'.
+function Get-KitHookshotLogFiles([string]$Dir) {
+    if (-not $Dir) { return @() }
+    foreach ($sub in '', 'logs') {
+        $d = if ($sub) { Join-Path $Dir $sub } else { $Dir }
+        if (-not (Test-Path -LiteralPath $d -PathType Container)) { continue }
+        Get-ChildItem (Join-Path $d '*') -Include 'longshot_log*.txt', 'hookshot_log*.txt' -File -ErrorAction SilentlyContinue |
+            ForEach-Object { [pscustomobject]@{ File = $_; Sub = $sub } }
+    }
 }
 
 # The stamp the kit's hookshot-build.ps1 writes to the game's coop-built-from.txt: release, pin, patches.
@@ -1003,6 +1016,25 @@ function Get-KitOtherSizeTables([string]$ModsDir) {
     }
     & $walk $ModsDir 0
     return $out.ToArray()
+}
+
+# Another OOTRR release replaced the game's (an update of hookshot\OOTRR.txt): its seeds are other worlds than the
+# old one's for the same seed word, and the old release's seed files do not build with the new one (OOTRR 0.6.0:
+# "Seeds made with older versions will not build"). So every built seed (mods\randomizer-*\coop-seed.txt) and its
+# seed file go: the game makes each one again with the new OOTRR at its next start (about a minute), so every player
+# of the same kit plays the same world. Run while the game is closed (the module step). The lines to show.
+function Remove-KitRandoSeeds([string]$ExeDir, [string]$Release) {
+    $lines = @()
+    $mods = Join-Path $ExeDir 'mods'
+    $control = Join-Path $mods 'oot-remake-randomizer'
+    foreach ($d in @(Get-ChildItem -LiteralPath $mods -Directory -Filter 'randomizer-*' -ErrorAction SilentlyContinue)) {
+        if (-not (Test-Path -LiteralPath (Join-Path $d.FullName 'coop-seed.txt'))) { continue }
+        Remove-Item -LiteralPath $d.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path $control "$($d.Name).ootrr") -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $d.FullName) { $lines += "randomizer: seed $($d.Name) could not be removed for OOTRR $Release" }
+        else { $lines += "randomizer: seed $($d.Name) removed for OOTRR $Release`: the game makes it again at its next start (another world: start a new save)" }
+    }
+    return $lines
 }
 
 # Built randomizer seeds (mods\randomizer-*\coop-seed.txt) whose size table is older than another mod's (a puppet
@@ -1423,4 +1455,25 @@ function Get-KitDownloadFailText([string]$File, [string]$Why, [string]$TestUrl, 
         'If the browser downloads it but this script cannot, the antivirus or a proxy blocks PowerShell. Start again: what was'
         'downloaded is kept. Still stuck: scripts\collect-logs.cmd, and send its zip.'
     ) -join "`n"
+}
+
+# #48: Longshot serves ONE resource size table, the winning mod's. A seed made on OOTRR's website (its folder put into
+# mods by hand) has its own, made without the puppet pack's entries, so the others could not be shown. Before the game
+# starts, tools\puppet_pack\merge_tables.py writes ONE table where the game reads it: that mod's entries and every
+# other mod's that is on (the pack's too), keeping its own in <mod>\_coop-size-table (undo: merge_tables.py --undo).
+# Last it writes <mod>\coop-merged.txt, which the module checks (MergedByKit) to keep the puppets on. Never stops the start. The lines it says, for the window.
+function Invoke-KitSizeTableMerge([string]$Kit, [string]$ExeDir) {
+    $python = Join-Path $Kit 'hookshot\tools\python\python.exe'
+    $tool = Join-Path $Kit 'tools\puppet_pack\merge_tables.py'
+    $mods = Join-Path $ExeDir 'mods'
+    if (-not (Test-Path -LiteralPath $tool) -or -not (Test-Path -LiteralPath $mods)) { return @() }
+    if (-not (Test-Path -LiteralPath $python)) { return @("Size tables: not merged (no Python in $(Split-Path -Parent $python)): with a mod that has its own size table, the other players can't be shown.") }
+    $romfs = @((Join-Path $ExeDir 'romfs'), (Join-Path (Split-Path -Parent $ExeDir) 'romfs')) | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'Pack') } | Select-Object -First 1
+    $pyArgs = @('-I', '-B', $tool, '--mods', $mods)
+    if ($romfs) { $pyArgs += @('--romfs', $romfs) }
+    $before = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { $out = @(& $python @pyArgs 2>&1 | ForEach-Object { "$_" }) } catch { $out = @("Size tables: not merged ($($_.Exception.Message)).") }
+    $ErrorActionPreference = $before
+    return $out
 }

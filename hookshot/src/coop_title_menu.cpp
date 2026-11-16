@@ -293,12 +293,27 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
         } else if (!k.empty()) {
             o.voice_key = "your key";   // (a key code: coop_voice's SettingsFrom reads it)
         }
+        // (the whole line, as the launcher hands it over: a device's name may hold " #" or " ;", no comment here)
+        for (const auto& [k, v] : KitVariables(options_ini)) {
+            if (k == "LICHII_COOP_VOICE_MIC") {
+                o.voice_mic = v;
+            }
+        }
     }
     o.map_players = !Off(IniGet(options_ini, "LICHII_COOP_MAP"));
     o.map_names = !Off(IniGet(options_ini, "LICHII_COOP_MAP_NAMES"));
     if (const auto v = IniGet(options_ini, "max_players"); v && !v->empty() && v->size() <= 2 &&
         std::all_of(v->begin(), v->end(), [](char c) { return c >= '0' && c <= '9'; })) {
         o.max_players = std::clamp(std::stoi(*v), kMinPlayers, kMaxPlayers);
+    }
+    if (const auto v = IniGet(options_ini, "server_port")) {
+        if (const auto p = ParsePort(*v)) {
+            o.host_port = *p;
+        }
+    } else if (const auto v = IniGet(coop_ini, "host_port")) {
+        if (const auto p = ParsePort(*v)) {
+            o.host_port = *p;
+        }
     }
     return o;
 }
@@ -320,7 +335,11 @@ void Options::Write(std::string& coop_ini, std::string& options_ini) const {
     o = cheats ? IniSet(o, "LICHII_COOP_CHEATS", "1", false) : IniUnset(o, "LICHII_COOP_CHEATS");
     // (voice-mode: open = on with open mic, ptt = push to talk, the line gone = off, the default)
     o = voice ? IniSet(o, "LICHII_COOP_VOICE", VoiceMode(), false) : IniUnset(o, "LICHII_COOP_VOICE");
+    // (kept while voice is off too: turning it on again uses the same microphone)
+    o = voice_mic.empty() ? IniUnset(o, "LICHII_COOP_VOICE_MIC") : IniSet(o, "LICHII_COOP_VOICE_MIC", voice_mic, false);
     o = IniSet(o, "max_players", std::to_string(std::clamp(max_players, kMinPlayers, kMaxPlayers)), true);
+    const std::uint16_t port = host_port != 0 ? host_port : kDefaultPort;
+    o = port == kDefaultPort ? IniUnset(o, "server_port") : IniSet(o, "server_port", std::to_string(port), true);
     o = map_players ? IniUnset(o, "LICHII_COOP_MAP") : IniSet(o, "LICHII_COOP_MAP", "0", false);
     o = map_names ? IniUnset(o, "LICHII_COOP_MAP_NAMES") : IniSet(o, "LICHII_COOP_MAP_NAMES", "0", false);
     options_ini = std::move(o);
@@ -336,6 +355,7 @@ std::vector<std::pair<std::string, std::string>> Options::Environment() const {
         {"LICHII_COOP_DEBUG_PANEL", debug_panel ? "1" : ""},
         {"LICHII_COOP_CHEATS", cheats ? "1" : ""},
         {"LICHII_COOP_VOICE", voice ? VoiceMode() : ""},
+        {"LICHII_COOP_VOICE_MIC", voice_mic},
         {"LICHII_COOP_MAP", map_players ? "" : "0"},
         {"LICHII_COOP_MAP_NAMES", map_names ? "" : "0"},
     };
@@ -382,6 +402,19 @@ std::vector<std::pair<std::string, std::string>> KitVariables(std::string_view o
     return out;
 }
 
+std::optional<std::uint16_t> ParsePort(std::string_view text) {
+    const std::string_view port = Trim(text);
+    if (port.empty() || port.size() > 5 ||
+        !std::all_of(port.begin(), port.end(), [](char c) { return c >= '0' && c <= '9'; })) {
+        return std::nullopt;
+    }
+    const int p = std::stoi(std::string(port));
+    if (p < 1 || p > 65535) {
+        return std::nullopt;
+    }
+    return static_cast<std::uint16_t>(p);
+}
+
 bool AddressOk(std::string_view typed) {
     const std::string_view t = Trim(typed);
     const std::size_t colon = t.find(':');
@@ -396,12 +429,7 @@ bool AddressOk(std::string_view typed) {
         return true;
     }
     const std::string_view port = t.substr(colon + 1);
-    if (port.empty() || port.size() > 5 ||
-        !std::all_of(port.begin(), port.end(), [](char c) { return c >= '0' && c <= '9'; })) {
-        return false;
-    }
-    const int p = std::stoi(std::string(port));
-    return p >= 1 && p <= 65535;
+    return port == Trim(port) && ParsePort(port).has_value();
 }
 
 JoinTarget ReadJoin(std::string_view typed, const CodeResult& code) {

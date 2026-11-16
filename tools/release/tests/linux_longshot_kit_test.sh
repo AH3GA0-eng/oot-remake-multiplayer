@@ -217,6 +217,19 @@ printf 'release=v0.5.0\nurl=https://example.invalid/ootrr\nlinux=OOTRR-test-linu
 OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-o4.txt" 2>&1; export CODE=$?
 check 'build offline: the OOTRR tarball already here (its SHA-256 matched) is put in, no download' \
     bash -c '[ $CODE -eq 0 ] && [ -x "$1/game/tools/ootrr/ootrr" ] && ! grep -q downloading "$2"' _ "$D" "$tmp/build-o4.txt"
+# Another OOTRR release (0.5.0 -> 0.6.0): the built seeds and their seed files go (the game makes them again with
+# it); another mod and a folder with no coop-seed.txt stay. The same release again removes nothing.
+mkdir -p "$D/game/mods/randomizer-EF" "$D/game/mods/randomizer-half" "$D/game/mods/oot-remake-randomizer" "$D/game/mods/hd/romfs"
+echo EF >"$D/game/mods/randomizer-EF/coop-seed.txt"
+echo '{}' >"$D/game/mods/oot-remake-randomizer/randomizer-EF.ootrr"
+printf 'release=v0.6.0\nurl=https://example.invalid/ootrr\nlinux=OOTRR-test-linux.tar.gz\nlinux_sha256=%s\n' "$o_sha" >"$kit/data/longshot/OOTRR.txt"
+OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-o6.txt" 2>&1; export CODE=$?
+check 'build: another OOTRR release removes the built seeds (the game makes them again), keeps the rest' \
+    bash -c '[ $CODE -eq 0 ] && grep -q "seed randomizer-EF removed for OOTRR v0.6.0" "$1" && [ ! -e "$2/game/mods/randomizer-EF" ] && [ ! -e "$2/game/mods/oot-remake-randomizer/randomizer-EF.ootrr" ] && [ -d "$2/game/mods/randomizer-half" ] && [ -d "$2/game/mods/hd/romfs" ]' _ "$tmp/build-o6.txt" "$D"
+mkdir -p "$D/game/mods/randomizer-GH" && echo GH >"$D/game/mods/randomizer-GH/coop-seed.txt"
+OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-o7.txt" 2>&1
+check 'build: the same OOTRR release again keeps the seeds' bash -c '[ -f "$1/game/mods/randomizer-GH/coop-seed.txt" ] && ! grep -q "removed for OOTRR" "$2"' _ "$D" "$tmp/build-o7.txt"
+rm -rf "$D/game/mods/randomizer-GH" "$D/game/mods/randomizer-half" "$D/game/mods/hd"
 rm -rf "$D/game/tools/ootrr" "$D/builder/OOTRR-test-linux.tar.gz"
 OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-o5.txt" 2>&1; export CODE=$?
 check 'build offline: no OOTRR here -> no download try, one offline line, the game still ready' \

@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "mod_temp.h"
+#include "coop_mod_json.h"
 #include "coop_mod_library.h"
 #include "coop_mods.h"
 #include "coop_rando.h"
@@ -141,10 +142,64 @@ TEST_CASE("rando: the control mod's mod.json is valid, with the seed and preset 
     for (const auto& s : m->settings) {
         if (s.shared) shared.insert(s.key);
     }
-    CHECK(shared == std::set<std::string>{"on", "seed", "preset"});
+    CHECK(shared == std::set<std::string>{"on", "seed", "preset", "settings"});
     CHECK(m->settings[2].initial == "default");
     CHECK(m->settings[2].choices.size() == std::size(kPresets));
+    // Each choice is {"value", "name"}: OOTRR and the folder get the value, the
+    // Mods tab shows the name (English here; the loader picks the language's
+    // with TextIn, which the tab's own test covers).
+    for (std::size_t i = 0; i < m->settings[2].choices.size(); ++i) {
+        CHECK(m->settings[2].choices[i].first == kPresets[i]);
+        CHECK_FALSE(m->settings[2].choices[i].second.empty());
+    }
+    // The kit's own mod carries its text in both Chinese tables, so a Chinese menu
+    // shows it translated without a translation of the mod's file.
+    CHECK(ManifestText().find("\"name_zh-Hans\"") != std::string::npos);
+    CHECK(ManifestText().find("\"help_zh-Hant\"") != std::string::npos);
+    CHECK(ManifestText().find("\"description_zh-Hans\"") != std::string::npos);
+
+    // The loader's caps (coop_mod_library.cpp) are characters, and the Chinese
+    // halves are three bytes a character: the longest of them (the author line)
+    // is 71 bytes. Counted in bytes it was refused, and the whole manifest with
+    // it; counted in characters it fits. The tests run in English, so TextIn
+    // reads the plain fields above; this keeps the numbers of the others true.
+    const auto chars = [](const std::string& text) {
+        return static_cast<std::size_t>(
+            std::count_if(text.begin(), text.end(), [](char c) { return (static_cast<unsigned char>(c) & 0xC0) != 0x80; }));
+    };
+    std::size_t localised = 0;
+    const auto fits = [&](const CoopModJson::Value& object, const char* key, std::size_t most) {
+        for (const char* code : {"zh-Hans", "zh-Hant"}) {
+            const std::string name = std::string(key) + '_' + code;
+            if (const CoopModJson::Value* v = object.Get(name); v != nullptr && v->kind == CoopModJson::Value::Kind::String) {
+                ++localised;
+                INFO(name);
+                CHECK(chars(v->string) <= most);
+            }
+        }
+    };
+    const auto json = CoopModJson::Parse(ManifestText());
+    REQUIRE(json);
+    fits(*json, "name", 64);
+    fits(*json, "author", 64);
+    fits(*json, "description", 512);
+    for (const CoopModJson::Value& setting : json->Get("settings")->array) {
+        fits(setting, "name", 64);
+        fits(setting, "help", 256);
+        const CoopModJson::Value* choices = setting.Get("choices");
+        if (choices == nullptr) {
+            continue;
+        }
+        for (const CoopModJson::Value& choice : choices->array) {
+            if (choice.kind == CoopModJson::Value::Kind::Object) {
+                fits(choice, "name", 64);
+            }
+        }
+    }
+    CHECK(localised >= 12);
 }
+
+
 
 TEST_CASE("rando: seed words and folders as OOTRR names them") {
     CHECK(SeedWord("Hello World!") == "HelloWorld");
@@ -572,6 +627,14 @@ TEST_CASE("rando: a guest that cannot build the host's seed tells the others, on
     rando.Wait();
     CHECK(w.runs.empty());
     {
+        // loud in this game's own chat, with what to do (#59)
+        const auto chat = rando.TakeLines();
+        CHECK(std::count_if(chat.begin(), chat.end(), [](const std::string& l) {
+                  return l.rfind("Randomizer: NO SEED - you play the BASE GAME, not the host's seed HOST9", 0) == 0 &&
+                         l.find("OOTRR") != std::string::npos && l.find("To fix: start the game again") != std::string::npos;
+              }) == 1);
+    }
+    {
         const std::lock_guard lock(told_mutex);
         CHECK(told.empty());  // not connected: kept
         connected = true;
@@ -785,6 +848,11 @@ TEST_CASE("rando: only the presets this OOTRR can make are offered, a bad one go
         loader.Start();
         Rando rando(loader, w.Hooks());
         rando.Start();
+        // Start's manifest rewrite (the names in the player's language) keeps the refused one out.
+        const auto choices = PresetChoices(loader);
+        CHECK(std::find(choices.begin(), choices.end(), "full_shuffle") == choices.end());
+        CHECK(std::find(choices.begin(), choices.end(), "keysanity") != choices.end());
+        CHECK(Get(w.mods / kFolder / CoopMods::kManifestFile).find("\"name_zh-Hans\"") != std::string::npos);
         REQUIRE(loader.Set(kFolder, "seed", "PRE2"));
         rando.Wait();
         CHECK(w.runs.size() == before + 2);  // generate and build only
@@ -1195,6 +1263,72 @@ TEST_CASE("rando: a run that reads an outside mod's size table holds the pack an
     CHECK(rando.HoldPack());  // the whole run
 }
 
+TEST_CASE("rando: FNV-1a 64 as the kit's merge writes it") {
+    CHECK(Fnv64Hex("") == "cbf29ce484222325");
+    CHECK(Fnv64Hex("a") == "af63dc4c8601ec8c");
+    CHECK(Fnv64Hex("foobar") == "85944171f73967e8");
+}
+
+namespace {
+// The kit's merge (#48 step 2) as it leaves a mod: its table rewritten, and the mark beside its romfs.
+void MarkMerged(const fs::path& mods, const std::string& mod, const std::string& table_text) {
+    Put(mods / mod / kTable, table_text);
+    const std::string pack = Get(mods / kPackFolder / kTable);
+    Put(mods / mod / kMergedFile, "coop-merged 1\r\ntable " + kTable.filename().string() + " " +
+                                      Fnv64Hex(table_text) + "\r\npack " + Fnv64Hex(pack) + "\r\n");
+}
+}  // namespace
+
+TEST_CASE("rando: a winning mod whose table the kit merged is not held, a stale mark is") {
+    World w;
+    Put(w.mods / kPackFolder / kTable, "puppet");
+    MarkMerged(w.mods, "ootrr-site", "site + puppet");
+    CHECK(MergedByKit(w.mods, "ootrr-site"));
+    std::string merged;
+    CHECK_FALSE(OutsideSizeTable(w.mods, {Indexed("ootrr-site")}, true, &merged));
+    CHECK(merged == "ootrr-site");
+    CHECK_FALSE(OutsideSizeTable(w.mods, {Indexed("ootrr-site")}, false));
+    // a new seed table dropped over it: stale
+    Put(w.mods / "ootrr-site" / kTable, "another site seed");
+    CHECK_FALSE(MergedByKit(w.mods, "ootrr-site"));
+    CHECK(OutsideSizeTable(w.mods, {Indexed("ootrr-site")}, true) == std::optional<std::string>("ootrr-site"));
+    // the pack rebuilt since the merge: stale
+    MarkMerged(w.mods, "ootrr-site", "site + puppet");
+    Put(w.mods / kPackFolder / kTable, "puppet, rebuilt");
+    CHECK_FALSE(MergedByKit(w.mods, "ootrr-site"));
+    // a mark of another version, a path for a table name, or no pack: not trusted
+    Put(w.mods / kPackFolder / kTable, "puppet");
+    MarkMerged(w.mods, "ootrr-site", "site + puppet");
+    CHECK(MergedByKit(w.mods, "ootrr-site"));
+    const std::string good = Get(w.mods / "ootrr-site" / kMergedFile);
+    std::string other = good;
+    other.replace(0, std::string("coop-merged 1").size(), "coop-merged 2");
+    Put(w.mods / "ootrr-site" / kMergedFile, other);
+    CHECK_FALSE(MergedByKit(w.mods, "ootrr-site"));
+    Put(w.mods / "ootrr-site" / kMergedFile,
+        "coop-merged 1\ntable ../../coop-puppet/romfs/System/Resource/T.rsizetable.zs " + Fnv64Hex("puppet") +
+            "\npack " + Fnv64Hex("puppet") + "\n");
+    CHECK_FALSE(MergedByKit(w.mods, "ootrr-site"));
+    Put(w.mods / "ootrr-site" / kMergedFile, good);
+    fs::remove(w.mods / kPackFolder / kTable);
+    CHECK_FALSE(MergedByKit(w.mods, "ootrr-site"));
+    CHECK_FALSE(MergedByKit(w.mods, "no-such-mod"));
+}
+
+TEST_CASE("rando: a run that reads a kit-merged outside table makes the puppets and says nothing") {
+    World w;
+    Put(w.mods / kPackFolder / kTable, "puppet");
+    MarkMerged(w.mods, "ootrr-site", "site + puppet");
+    PlaysSeed(w, "ootrr-site", 7);
+    CoopMods::Loader loader(w.mods, {nullptr, 7, nullptr});
+    loader.Start();
+    Rando rando(loader, w.Hooks());
+    rando.Start();
+    rando.Wait();
+    CHECK_FALSE(rando.HoldPack());
+    CHECK(Count(rando.TakeLines(), ChatSafe(OutsideLine("ootrr-site"), 300)) == 0);
+}
+
 TEST_CASE("rando: a run that reads our own seed's size table is not held for an outside mod") {
     World w;
     Put(w.mods / "ootrr-site" / kTable, "site");
@@ -1207,4 +1341,84 @@ TEST_CASE("rando: a run that reads our own seed's size table is not held for an 
     rando.Wait();
     CHECK_FALSE(rando.HoldPack());
     for (const std::string& line : rando.TakeLines()) CHECK(line.find("own size table") == std::string::npos);
+}
+
+TEST_CASE("rando: a settings string from OOTRR's page is known, named short, and gets a short folder") {
+    CHECK(IsSettingsString("OOTRR1-EYAQCTABAHIHE"));
+    CHECK_FALSE(IsSettingsString("OOTRR"));
+    CHECK_FALSE(IsSettingsString("default"));
+    CHECK_FALSE(IsSettingsString("OOTRR1-AB CD"));
+    CHECK_FALSE(IsSettingsString("OOTRR1-..\\x"));
+    CHECK_FALSE(IsSettingsString("OOTRR1-" + std::string(kSettingsMax, 'A')));
+    CHECK(SettingsString("  OOTRR1-EYAQCTABAHIHE\r\n") == "OOTRR1-EYAQCTABAHIHE");
+    CHECK(SettingsString("keysanity").empty());
+    CHECK(SettingsString("   ").empty());
+    CHECK(SettingsName("keysanity") == "keysanity");
+    CHECK(SettingsName("") == "default");
+    CHECK(SettingsName("OOTRR1-EYAQCTABAHIHE") == "settings OOTRR1-EYAQCTABA...");
+    const std::string folder = FolderFor("AB12", "OOTRR1-EYAQCTABAHIHE");
+    CHECK(folder.rfind("randomizer-AB12-s", 0) == 0);
+    CHECK(folder.size() == std::string("randomizer-AB12-s").size() + 8);
+    CHECK(folder != FolderFor("AB12", "OOTRR1-EYAQCTABAHIHF"));
+    CHECK(folder == FolderFor("AB12", "OOTRR1-EYAQCTABAHIHE"));
+}
+
+TEST_CASE("rando: the host's settings string is built in place of the preset, in the guest's game too") {
+    World w;
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    loader.Start();
+    Rando rando(loader, w.Hooks());
+    rando.Start();
+    w.Settings(loader);
+    loader.SetHostValues(std::vector<CoopMods::SharedValue>{{kId, "on", "1"},
+                                                            {kId, "seed", "SITE1"},
+                                                            {kId, "preset", "default"},
+                                                            {kId, "settings", "OOTRR1-EYAQCTABAHIHE"}});
+    rando.Wait();
+    REQUIRE(w.runs.size() == 2);
+    CHECK(w.runs[0].find(L"generate") != std::wstring::npos);
+    CHECK(w.runs[0].find(L"OOTRR1-EYAQCTABAHIHE") != std::wstring::npos);  // in place of the preset
+    CHECK(w.runs[0].find(L"default") == std::wstring::npos);
+    const std::string folder = FolderFor("SITE1", "OOTRR1-EYAQCTABAHIHE");
+    CHECK(On(loader, folder));
+    CHECK(Get(w.mods / folder / kPresetFile) == "OOTRR1-EYAQCTABAHIHE\n");
+    // Built once: the same settings again build nothing.
+    rando.Recheck();
+    rando.Wait();
+    CHECK(w.runs.size() == 2);
+}
+
+TEST_CASE("rando: a Settings string that is not one is said once and the preset is used") {
+    World w;
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    loader.Start();
+    Rando rando(loader, w.Hooks());
+    rando.Start();
+    w.Settings(loader);
+    (void)rando.TakeLines();
+    REQUIRE(loader.Set(kFolder, "settings", "not a string"));
+    REQUIRE(loader.Set(kFolder, "seed", "BAD1"));
+    REQUIRE(loader.Set(kFolder, "on", "1"));
+    rando.Wait();
+    std::size_t said = 0;
+    for (const std::string& line : rando.TakeLines()) said += line.find("Settings string is not") != std::string::npos;
+    CHECK(said == 1);
+    CHECK(On(loader, FolderFor("BAD1", "default")));
+}
+
+TEST_CASE("rando: a control mod written before the Settings string gets it at the start") {
+    World w;
+    std::string old = ManifestText();
+    const auto from = old.find("    {\"key\": \"settings\"");
+    REQUIRE(from != std::string::npos);
+    old.erase(from, old.find('\n', old.find("\"help\"", from)) + 1 - from);
+    REQUIRE(old.find("\"key\": \"settings\"") == std::string::npos);
+    Put(w.mods / kFolder / "mod.json", old);
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    loader.Start();
+    Rando rando(loader, w.Hooks());
+    rando.Start();
+    bool has = false;
+    for (const CoopMods::SettingRow& s : loader.Settings(kFolder)) has = has || s.setting.key == "settings";
+    CHECK(has);
 }

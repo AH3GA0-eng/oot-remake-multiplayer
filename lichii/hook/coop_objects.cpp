@@ -102,6 +102,8 @@
 #include <atomic>
 #include <unordered_map>
 #include "coop_world.h"
+#include "coop_lift_ride.h"
+#include "coop_logic_probe.h"
 #include "coop_platforms.h"
 #include "coop_counters.h"
 #include "coop_scrubs.h"
@@ -172,6 +174,7 @@ CoopWorld::GrassSync& TheGrass() {
 // Issue 149 (coop_scrubs.h): the Scrub Brothers' hits. The present thread
 // looks and receives, the calc thread's cave gives the others' hits.
 constexpr int kScrubsCallerOrder = 62;
+constexpr int kLiftRideCallerOrder = 47;  // jabu-lifts (#65): after the boss table (45), before the boss rooms (50)
 
 std::string EnvText(const char* name);  // below EnvOn  // after the live events (60) and the teleport's (61)
 
@@ -327,6 +330,10 @@ std::mutex& KeyRefundMutex() {
 }
 std::vector<std::uint32_t>& KeyRefundQueue() {
     static std::vector<std::uint32_t> q;
+    return q;
+}
+std::vector<std::pair<std::uint32_t, bool>>& KeyLendQueue() {  // lends (false) and take-backs (true)
+    static std::vector<std::pair<std::uint32_t, bool>> q;
     return q;
 }
 std::vector<std::uint32_t>& OwnDropQueue() {  // our own key spends, for WorldSync
@@ -1387,6 +1394,12 @@ public:
                                       std::uint64_t result, std::uint64_t now_ms) {
                                        return TheGrass().Step(guest, after_call, result, now_ms);
                                    });
+                // jabu-lifts (#65): another player on our lift: its RideOnPlayer through the game's set-bool.
+                CoopSvc::AddCaller(kLiftRideCallerOrder,
+                                   [](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
+                                      std::uint64_t now_ms) {
+                                       return CoopLiftRide::TheRider().Step(guest, after_call, result, now_ms);
+                                   });
                 // Issue 149: another player's hit on a Scrub Brother, given to our manager.
                 CoopSvc::AddCaller(kScrubsCallerOrder,
                                    [](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
@@ -1475,7 +1488,7 @@ public:
                 if (owner && *owner != 0) {
                     list.push_back({s.address, s.bsa_component,
                                     *owner == self ? CoopBossNative::Role::owner : CoopBossNative::Role::copy, s.name,
-                                    *owner});
+                                    *owner, s.life_component, sync_.OwnerSaysDead(s.address)});
                 }
             }
             TheBossMain().store(main_);
@@ -1532,12 +1545,14 @@ public:
                     world_.ForgetKept();
                 }
             }
-            // A lock another player opened is deleted here, as before door-unlock. Keeping it with a lent
-            // key (LICHII_COOP_LOCK_DELETE=0) is off: in a two-game run the lent key was shared to the
-            // other players as a found key, so the group ended with more keys than it had.
+            // dungeon-sync-b (#75): a lock another player opened is kept here and our player opens it
+            // with a lent key, the game's own way: the door set unlocks only on the lock's
+            // ReceiveDoAttention pulse, so a deleted lock left the door shut. The lent key stays in our
+            // game (coop::host::LentKeys), so the group's count is right. LICHII_COOP_LOCK_DELETE=1:
+            // deleted, as in 0.11.0.
             static const bool delete_locks = [] {
                 const char* v = std::getenv("LICHII_COOP_LOCK_DELETE");
-                return v == nullptr || std::string_view(v) != "0";
+                return v != nullptr && std::string_view(v) == "1";
             }();
             world_.SetDeleteLocks(delete_locks);
             world_.Tick(*scene, self, server_now_us, seen, player_, world);
@@ -1546,6 +1561,16 @@ public:
             }
             writes.insert(writes.end(), world.lives.begin(), world.lives.end());
             TestKills(seen, writes);
+            if (!world.key_lends.empty() || !world.lend_returns.empty()) {
+                std::lock_guard lock(KeyRefundMutex());
+                auto& lends = KeyLendQueue();
+                for (const std::uint32_t key : world.key_lends) {
+                    lends.emplace_back(key, false);
+                }
+                for (const std::uint32_t key : world.lend_returns) {
+                    lends.emplace_back(key, true);
+                }
+            }
             if (!world.key_refunds.empty()) {
                 std::lock_guard lock(KeyRefundMutex());
                 auto& refunds = KeyRefundQueue();
@@ -1672,7 +1697,7 @@ public:
                         [&r](u64 address) { return r.Get<u64>(address); }, fix.address, main_);
                     // Stale: both its start and target still hold the old
                     // rest (read only). Mid-push here (one of them): tried
-                    // again on the next walks, as when it is not found.
+                    // again on the next walks (not when it is not found: report 37).
                     const auto stale = node ? CoopWorld::NodeRestWords(
                                                   [&r](u64 address) { return r.Get<u64>(address); },
                                                   *node, fix.from, fix.to)
@@ -1688,11 +1713,14 @@ public:
                                            "where it rests: left alone",
                                      fix.hash, fix.name, *node);
                         }
-                    } else if (++fix.tries < kBlockNodeTries) {
+                    } else if (node && ++fix.tries < kBlockNodeTries) {
+                        // Report 37 (an fps drop in the other game at each push): only a busy node is
+                        // looked for again. A search that found none (up to kNodeLooks objects, every
+                        // 8-byte word of each into a set) finds none on the next walk either; it ran
+                        // 21 times for every rest of the block (every player log: "not found").
                         if (first) {
-                            LOG_INFO(Core, "coop: world: {:016x} {} push node {}: tried again for {} walks",
-                                     fix.hash, fix.name, node ? "busy (mid-push here)" : "not found",
-                                     kBlockNodeTries);
+                            LOG_INFO(Core, "coop: world: {:016x} {} push node busy (mid-push here): tried again for {} walks",
+                                     fix.hash, fix.name, kBlockNodeTries);
                         }
                         block_retry_.push_back(fix);
                     } else {
@@ -1741,6 +1769,37 @@ public:
         if (gimmick_probe_on_) {
             for (const auto& line : gimmick_probe_.Look([&r](u64 address) { return r.Get<u64>(address); },
                                                         gimmicks_, player_, server_now_us)) {
+                LOG_INFO(Core, "coop: {}", line);
+            }
+        }
+        // jabu-lifts (#65): our lifts another player stands on get RideOnPlayer, as our Link's contact gives it.
+        if (lift_ride_on_) {
+            auto& rider = CoopLiftRide::TheRider();
+            rider.Want(CoopLiftRide::Ridden(ride_lifts_, sync_.OthersHere(server_now_us)), main_, SteadyNowMs());
+            for (const auto& line : rider.TakeNotes()) {
+                LOG_INFO(Core, "coop: {}", line);
+            }
+        }
+        // jabu-lifts (#65, #176): the lifts' logic plugs (RideOnCharacter, ...) and the Deku ladder and pillar's, as the game's set-bool sees them.
+        if (logic_probe_on_) {
+            std::vector<std::pair<float, const CoopWorld::GimmickProbe::Gimmick*>> near;
+            for (const auto& g : gimmicks_) {
+                if (!player_ || (g.name.find("ElevatorLift") == std::string::npos && g.name.find("FallingLadder_") == std::string::npos &&
+                                 g.name.find("Stopper_") == std::string::npos &&
+                                 g.name.find("MoveFloor") == std::string::npos)) {
+                    continue;
+                }
+                float d2 = 0.0f;
+                for (std::size_t i = 0; i < 3; ++i) {
+                    const float d = g.position[i] - (*player_)[i];
+                    d2 += d * d;
+                }
+                if (d2 <= 20.0f * 20.0f) near.emplace_back(d2, &g);
+            }
+            std::sort(near.begin(), near.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+            std::vector<std::pair<u64, std::string>> lifts;
+            for (const auto& [d2, g] : near) lifts.emplace_back(g->address, g->name);
+            for (const auto& line : logic_probe_.Look([&r](u64 address) { return r.Get<u64>(address); }, lifts)) {
                 LOG_INFO(Core, "coop: {}", line);
             }
         }
@@ -1979,6 +2038,10 @@ public:
     std::size_t platform_lines_ = 0;
     std::vector<CoopWorld::GimmickProbe::Gimmick> gimmicks_;
     bool gimmick_probe_on_ = false;
+    CoopLogicProbe::Watch logic_probe_;  // LICHII_COOP_LOGIC_PROBE=1 (jabu-lifts)
+    bool logic_probe_on_ = false;
+    std::vector<CoopLiftRide::Lift> ride_lifts_;  // jabu-lifts (#65): this walk's lifts
+    bool lift_ride_on_ = true;                    // LICHII_COOP_LIFT_RIDE=0 turns it off
     bool scrubs_on_ = true;  // LICHII_COOP_SCRUBS=0 turns it off (issue 149)
     std::vector<CoopScrubs::Seen> scrubs_seen_;
     bool ocarina_probe_on_ = false;           // issue 152: LICHII_COOP_OCARINA_PROBE=1
@@ -2163,6 +2226,7 @@ private:
         std::size_t lost = 0;
         const auto events = CoopActorEvents::TheRing().Drain(&lost);
         actor_events_lost_ += lost;
+        sync_.SetDeleteEvents(true);  // churn-b: off the walk with no delete request is away, not gone
         for (const auto& e : events) {
             switch (e.kind) {
             case CoopActorEvents::Kind::Create:
@@ -2494,6 +2558,7 @@ private:
 
     bool Collect(Reader& r, std::vector<Seen>& out) {
         gimmicks_.clear();  // dungeon gimmicks for the probe
+        ride_lifts_.clear();  // jabu-lifts (#65)
         platform_drivers_.clear();
         scrubs_seen_.clear();  // issue 149
         std::vector<u64> actors;
@@ -2638,7 +2703,16 @@ private:
                 }
                 platform_drivers_.push_back(std::move(d));
             }
-            if (gimmick_probe_on_ && CoopWorld::IsGimmick(known.first)) {
+            if (lift_ride_on_ && CoopLiftRide::IsRideLift(known.first)) {
+                CoopLiftRide::Lift l;
+                l.address = a;
+                l.name = known.first;
+                for (std::size_t i = 0; i < 3; ++i) {
+                    l.position[i] = r.Get<float>(a + kActorPosition + 4 * i).value_or(0.0f);
+                }
+                ride_lifts_.push_back(std::move(l));
+            }
+            if ((gimmick_probe_on_ || logic_probe_on_) && CoopWorld::IsGimmick(known.first)) {
                 CoopWorld::GimmickProbe::Gimmick g;
                 g.address = a;
                 g.hash = known.second;
@@ -2684,6 +2758,7 @@ private:
                         const auto table = r.Ptr(a + kActorComponents);
                         if (const auto component = table ? r.Ptr(*table + kComponentLife) : std::nullopt) {
                             life_components.emplace(*component, a);  // (whose Life step is whose: StepHits)
+                            s.life_component = *component;
                             if (CoopDifficulty::IsEnemy(s.name, false)) {  // difficulty: its hits are scaled
                                 CoopDifficulty::TheKinds().Mark(*component,
                                                                 CoopDifficulty::LifeKind(s.name, s.hash,
@@ -2815,6 +2890,8 @@ private:
         if (*id == TheMover().ReplayedId(*life)) {
             return std::nullopt;  // our replay of the owner's hit, not one of our game's
         }
+        // Our game's own hit: a copy boss runs its own reaction (the stun; boss-fix).
+        CoopBossNative::TheTable().NoteOwnHit(a);
         const auto at = r.Get<std::array<float, 3>>(*life + kHitPlace);
         if (!at) {
             return std::nullopt;
@@ -3081,6 +3158,7 @@ private:
         ask.hurt = w.hurt;
         ask.life = w.life;
         ask.old = old;
+        ask.heal = w.heal;
         std::optional<u64> life;
 #ifdef COOP_HOOKSHOT
         // Hookshot with patch 0007: the hit (or the life the owner says this
@@ -3102,7 +3180,7 @@ private:
                 ask.replay_seen = ReplaySeen(r, *life);
             }
         }
-        const bool steppable = ask.step_seen && life && old >= 0 && (w.hurt > 0 || w.life < old) &&
+        const bool steppable = ask.step_seen && life && old >= 0 && (w.hurt > 0 || w.life < old || (w.heal && w.life > old)) &&
                                !(w.hurt > 0 && replay_ && !w.direct && player != 0);
         if (steppable) {
             ask.stale = steps.Take(*life);
@@ -3173,6 +3251,12 @@ private:
             }
 #endif
             break;
+        }
+        if (w.heal) {
+            LOG_INFO(Core, "coop: objects: share raise {:#x} '{}': not taken by its game's Life step: its life stays {} "
+                           "(old owner's {})",
+                     w.address, NameOf(w.address), old, w.life);
+            return;  // never a write of ours
         }
         if (w.direct) {
             LOG_INFO(Core, "coop: objects: test kill {:#x}: the game's Life step did not take it (or there is none: "
@@ -3729,6 +3813,8 @@ Objects& Instance() {
         objects.share_ = EnvFlag("LICHII_COOP_OBJECTS");
         objects.pose_ = EnvOn("LICHII_COOP_OBJECTS_POSE");
         objects.gimmick_probe_on_ = EnvFlag("LICHII_COOP_GIMMICK_PROBE");  // opt-in: many reads
+        objects.logic_probe_on_ = EnvFlag("LICHII_COOP_LOGIC_PROBE");      // jabu-lifts: reads only
+        objects.lift_ride_on_ = EnvOn("LICHII_COOP_LIFT_RIDE");            // jabu-lifts (#65), on unless =0
         {
             const std::string platforms = EnvText("LICHII_COOP_PLATFORMS");
             objects.platforms_mode_ = platforms == "0" ? 0 : platforms == "probe" ? 2 : 1;
@@ -3848,6 +3934,13 @@ std::vector<std::uint32_t> TakeKeyRefunds() {
     return out;
 }
 
+std::vector<std::pair<std::uint32_t, bool>> TakeKeyLends() {
+    std::lock_guard lock(KeyRefundMutex());
+    std::vector<std::pair<std::uint32_t, bool>> out;
+    out.swap(KeyLendQueue());
+    return out;
+}
+
 unsigned TakeChestsOpenedTwice() {
     return TheChestsOpenedTwice().exchange(0);
 }
@@ -3944,6 +4037,15 @@ std::optional<bool> LastBossHurt(std::span<const std::string_view> bodies) {
         return std::nullopt;
     }
     return BossHurt(g_bosses, bodies);
+}
+
+std::optional<bool> LastBossPreBattle(std::span<const std::string_view> bodies) {
+    std::lock_guard lock(g_bosses_mutex);
+    const std::uint64_t now = CoopEvery::NowUs();
+    if (g_bosses_at == 0 || now < g_bosses_at || now - g_bosses_at > kBossesFreshUs) {
+        return std::nullopt;
+    }
+    return BossPreBattle(g_bosses, bodies);
 }
 
 } // namespace CoopObjects

@@ -38,6 +38,17 @@ std::string ShownCode(const std::string& code, bool typing) {
     return code.substr(0, Utf8Start(code, kShownCodeEnds)) + "..." +
            code.substr(Utf8Start(code, code.size() - kShownCodeEnds)) + " (" + std::to_string(code.size()) + ")";
 }
+constexpr std::size_t kMaxIpBytes = 259;   // host (up to 253) + ':' + port (up to 5)
+constexpr std::size_t kMaxPortBytes = 5;
+
+const char* const kHostPortHelp =
+    "The UDP port other players reach you on (default 27510). Type a number from 1 to 65535; changing it while "
+    "hosting restarts hosting: friends join again with the new code.";
+
+// A join password is never drawn: one star per character.
+std::string Masked(const std::string& password) {
+    return std::string(CodePoints(password), '*');
+}
 
 std::string Joined(const std::vector<std::string>& lines) {
     std::string out;
@@ -130,6 +141,37 @@ const std::vector<Command>& Commands() {
     return list;
 }
 
+std::vector<std::string> MicChoices(const std::vector<std::string>& listed, const std::string& chosen) {
+    std::vector<std::string> out{std::string()};
+    for (const std::string& n : listed) {
+        if (!n.empty() && std::find(out.begin(), out.end(), n) == out.end()) {
+            out.push_back(n);
+        }
+    }
+    if (std::find(out.begin(), out.end(), chosen) == out.end()) {
+        out.push_back(chosen);
+    }
+    return out;
+}
+
+std::string MicWords(const std::string& chosen, const std::vector<std::string>& listed) {
+    if (chosen.empty()) {
+        return "Default";
+    }
+    std::string words = chosen;
+    if (CodePoints(words) > kMicChars) {
+        std::size_t at = 0;
+        for (std::size_t points = 0; at < words.size(); ++at) {   // (the byte where character kMicChars - 3 starts)
+            if ((static_cast<unsigned char>(words[at]) & 0xc0) != 0x80 && points++ == kMicChars - 3) {
+                break;
+            }
+        }
+        words = words.substr(0, at) + "...";
+    }
+    const bool there = std::find(listed.begin(), listed.end(), chosen) != listed.end();
+    return there ? words : words + " (not connected)";
+}
+
 std::string ChatKeyWords(const std::string& chat_key) {
     std::string k = chat_key.empty() ? std::string("T") : chat_key;
     std::string low = k;
@@ -192,7 +234,9 @@ std::vector<Menu::Line> Menu::Lines() const {
                        "the result. Your Link wears it when you close the menu; the other players see your tunic's colour."});
         out.push_back({Action("Commands"), Act::kOpenCommands, "The chat's commands, and the key that opens the chat."});
         break;
-    case Page::kHost:
+    case Page::kHost: {
+        const bool typing_port = typing_ && typing_act_ == Act::kHostPort;
+        const std::string port_value = typing_port ? port_text_ + "_" : std::to_string(options_.host_port);
         if (host) {
             out.push_back({Action("Copy the code again", "Copy", session_.code.empty()), Act::kCopyInvite,
                            "Puts your code on the clipboard again. Share it in DMs only: it contains your internet address."});
@@ -205,6 +249,7 @@ std::vector<Menu::Line> Menu::Lines() const {
             out.push_back({Action("VPN", "Copy the line"), Act::kCopyVpn,
                            "For friends on a VPN with you (Radmin VPN, Hamachi, ZeroTier, Tailscale, WireGuard): copies one "
                            "line with this PC's VPN address. They paste it in Join a game instead of the code."});
+            out.push_back({Action("Port", port_value), Act::kHostPort, kHostPortHelp});
             out.push_back({Action("Stop hosting", confirm_leave_ ? "Press again to confirm" : "Stop"), Act::kLeave,
                            "Ends your game for everyone in it."});
         } else {
@@ -212,8 +257,10 @@ std::vector<Menu::Line> Menu::Lines() const {
                            "Starts a game on this PC and makes a code for your friends."});
             out.push_back({Choice("Players", std::to_string(options_.max_players)), Act::kPlayers,
                            "The most players in your game, you included."});
+            out.push_back({Action("Port", port_value), Act::kHostPort, kHostPortHelp});
         }
         break;
+    }
     case Page::kJoin:
         if (guest) {
             if (session_.state == State::kWaitHost) {
@@ -230,9 +277,18 @@ std::vector<Menu::Line> Menu::Lines() const {
                                "Joins the last game you were in, with the same code. It works while your friend is still "
                                "hosting that game."});
             }
-            const bool typing = typing_ && page_ == Page::kJoin;
-            out.push_back({Action(rejoin_code_.empty() ? "Friend's code" : "Or a new code",
-                                  join_.empty() && !typing ? std::string("Paste") : ShownCode(join_, typing), off),
+            const bool typing_code = typing_ && typing_act_ == Act::kCode;
+            const bool typing_ip = typing_ && typing_act_ == Act::kJoinIp;
+            const bool typing_port = typing_ && typing_act_ == Act::kJoinPort;
+            const bool typing_password = typing_ && typing_act_ == Act::kJoinPassword;
+            // An address line's password (pasted, or from the Password row) is shown as stars here too.
+            std::string code_shown = join_.empty() && !typing_code ? std::string("Paste") : ShownCode(join_, typing_code);
+            if (!typing_code && !join_password_.empty() && join_.size() > join_password_.size() &&
+                join_.compare(join_.size() - join_password_.size() - 1, std::string::npos, " " + join_password_) == 0) {
+                code_shown = ShownCode(join_.substr(0, join_.size() - join_password_.size() - 1), false) + " " +
+                             Masked(join_password_);
+            }
+            out.push_back({Action(rejoin_code_.empty() ? "Friend's code" : "Or a new code", code_shown, off),
                            Act::kCode,
                            "Copy the code from your friend's message, then press this: it is pasted. On the same home "
                            "network or a VPN with your friend? Paste the line from Same network or from VPN on their "
@@ -241,8 +297,27 @@ std::vector<Menu::Line> Menu::Lines() const {
                 out.push_back({Action("Clear the code", "Clear", off), Act::kClearCode,
                                "Empties the code field. Then paste or type your friend's code again."});
             }
+            out.push_back({Action("IP address",
+                                  typing_ip ? join_ip_ + "_" : join_ip_.empty() ? std::string("Type") : join_ip_, off),
+                           Act::kJoinIp,
+                           "Type the host's IP address or host name directly (no invite code needed)."});
+            out.push_back({Action("Port",
+                                  typing_port ? port_text_ + "_"
+                                              : join_port_.empty() ? std::to_string(CoopTitleMenu::kDefaultPort)
+                                                                   : join_port_,
+                                  off),
+                           Act::kJoinPort,
+                           "The host's UDP port (default 27510). Type a number from 1 to 65535."});
+            out.push_back({Action("Password",
+                                  typing_password ? Masked(join_password_) + "_"
+                                                  : join_password_.empty() ? std::string("Type") : Masked(join_password_),
+                                  off),
+                           Act::kJoinPassword,
+                           "The host's join password, for an IP address: the word after the address on their Same "
+                           "network or VPN line. An invite code has it inside."});
             out.push_back({Action("Join", "Join", off || Trim(join_).empty()), Act::kJoinNow,
-                           Trim(join_).empty() ? "Paste your friend's code first." : "Joins your friend's game."});
+                           Trim(join_).empty() ? "Paste your friend's code or enter an IP address first."
+                                               : "Joins your friend's game."});
         }
         break;
     case Page::kLocal:
@@ -265,7 +340,8 @@ std::vector<Menu::Line> Menu::Lines() const {
         break;
     }
     case Page::kSettings:
-        out.push_back({Action("Your name", typing_ ? options_.name + "_" : options_.name), Act::kName,
+        out.push_back({Action("Your name", typing_ && typing_act_ == Act::kName ? options_.name + "_" : options_.name),
+                       Act::kName,
                        "The name the other players see: 1 to 16 characters, typed with the keyboard."});
         out.push_back({Choice("Link's look", options_.colour.empty() ? std::string("By player number") : options_.colour),
                        Act::kLook,
@@ -273,17 +349,35 @@ std::vector<Menu::Line> Menu::Lines() const {
                        "number: each player's own colour."});
         out.push_back({Choice("Players when you host", std::to_string(options_.max_players)), Act::kPlayers,
                        "The most players in a game you host, you included."});
+        out.push_back({Action("Port when you host",
+                              typing_ && typing_act_ == Act::kHostPort ? port_text_ + "_"
+                                                                       : std::to_string(options_.host_port)),
+                       Act::kHostPort,
+                       "The UDP port your game listens on when you host (default 27510). Type a number from 1 to "
+                       "65535."});
         out.push_back({Toggle("Proximity voice chat", options_.voice), Act::kVoice,
                        "Talk with players near your Link through your microphone; they sound quieter the farther away "
                        "they are. Off: you neither send nor hear voices."});
+        if (options_.voice && microphones_) {
+            out.push_back({Choice("Microphone", MicWords(options_.voice_mic, *microphones_)), Act::kMic,
+                           "The microphone your voice is recorded from. Default: the one Longshot's Insert menu "
+                           "chooses (Gameplay: Microphone), the Ocarina's too. Left and Right go through the "
+                           "microphones plugged in now. One unplugged: the others hear nothing until it is back."});
+        }
         if (options_.voice) {
-            out.push_back({Choice("Voice mode", options_.voice_ptt ? "Push to talk (" + options_.voice_key + ")"
-                                                                    : std::string("Open mic")),
-                           Act::kVoiceMode,
-                           "Open mic: you are heard whenever you speak (silence and quiet noise are not sent). Push "
-                           "to talk: only while you hold " + options_.voice_key +
-                               ". On speakers, not headphones? Push to talk keeps the others' voices from coming "
-                               "back to them through your microphone."});
+            // The table's words around the key (data), put together here: "Push to
+            // talk (T)" as one line of a table would need the key inside it.
+            const std::string mode =
+                options_.voice_ptt ? CoopI18n::Tr("Push to talk") + " (" + options_.voice_key + ")"
+                                   : CoopI18n::Tr("Open mic");
+            // The help has the key in it twice, so its two halves are put
+            // together around the key: neither is a line of the table alone.
+            const std::string voice_help =
+                CoopI18n::Tr("Open mic: you are heard whenever you speak (silence and quiet noise are not sent).") +
+                " " + CoopI18n::Tr("Push to talk: only while you hold") + " " + options_.voice_key + ". " +
+                CoopI18n::Tr("On speakers, not headphones? Push to talk keeps the others' voices from coming back to "
+                             "them through your microphone.");
+            out.push_back({Choice("Voice mode", mode), Act::kVoiceMode, voice_help});
         }
         out.push_back({Choice("Chat key", ChatKeyWords(options_.chat_key)), Act::kChatKey,
                        "The key that opens the chat box in the game. Off: no chat box."});
@@ -317,6 +411,8 @@ bool Menu::Selectable(const Line& line) const {
 void Menu::Go(Page page, Act select) {
     page_ = page;
     typing_ = false;
+    typing_act_ = Act::kNone;
+    typing_fresh_ = false;
     confirm_leave_ = false;
     selected_ = 0;
     const auto lines = Lines();
@@ -364,6 +460,9 @@ void Menu::Move(int step) {
 void Menu::Show(const CoopTitleMenu::Options& options) {
     options_ = options;
     typing_ = false;
+    typing_act_ = Act::kNone;
+    typing_fresh_ = false;
+    port_text_.clear();
     confirm_leave_ = false;
     note_.clear();
     Clamp();
@@ -401,9 +500,12 @@ void Menu::SetSession(Session session) {
     const Act act = selected_ < before.size() ? before[selected_].act : Act::kNone;
     session_ = std::move(session);
     const auto after = Lines();
-    if (typing_ && page_ == Page::kJoin &&
-        std::none_of(after.begin(), after.end(), [](const Line& l) { return l.act == Act::kCode && !l.row.fixed; })) {
-        typing_ = false;   // (the code's field went away under the typing)
+    if (typing_ &&
+        std::none_of(after.begin(), after.end(), [this](const Line& l) { return l.act == typing_act_ && !l.row.fixed; })) {
+        typing_ = false;   // (the typed field went away under the typing)
+        typing_act_ = Act::kNone;
+        typing_fresh_ = false;
+        port_text_.clear();
     }
     // The same row selected when it is still there (the rows of Host and Join change with the session).
     const auto same = std::find_if(after.begin(), after.end(), [act](const Line& l) { return l.act == act; });
@@ -433,6 +535,18 @@ void Menu::SetRejoin(std::string host, std::string code) {
     Clamp();
 }
 
+void Menu::SetMicrophones(std::optional<std::vector<std::string>> listed) {
+    const auto before = Lines();
+    const Act act = selected_ < before.size() ? before[selected_].act : Act::kNone;
+    microphones_ = std::move(listed);
+    const auto after = Lines();
+    const auto same = std::find_if(after.begin(), after.end(), [act](const Line& l) { return l.act == act; });
+    if (same != after.end()) {
+        selected_ = static_cast<std::size_t>(same - after.begin());
+    }
+    Clamp();
+}
+
 void Menu::SetInputRows(std::string controller, std::string keyboard) {
     const auto before = Lines();
     const Act act = selected_ < before.size() ? before[selected_].act : Act::kNone;
@@ -459,18 +573,86 @@ std::string* Menu::Typed() {
     if (!typing_) {
         return nullptr;
     }
-    return page_ == Page::kSettings ? &options_.name : page_ == Page::kJoin ? &join_ : nullptr;
+    switch (typing_act_) {
+    case Act::kName: return &options_.name;
+    case Act::kCode: return &join_;
+    case Act::kJoinIp: return &join_ip_;
+    case Act::kJoinPassword: return &join_password_;
+    case Act::kHostPort:
+    case Act::kJoinPort: return &port_text_;
+    default: break;
+    }
+    return nullptr;
 }
 
-// Typing ends. keep: with what was typed (a name the server would refuse is
-// not kept); else a name goes back to what it was.
+void Menu::SyncManualJoinFromText() {
+    join_ip_.clear();
+    join_port_.clear();
+    join_password_.clear();
+    const std::string_view t = Trim(join_);
+    if (t.empty()) {
+        return;
+    }
+    const std::size_t space = t.find_first_of(" \t");
+    const std::string_view address = t.substr(0, space);
+    if (!CoopTitleMenu::AddressOk(address)) {
+        return;
+    }
+    // Invite codes (groups of 5 letters/digits separated by '-') also match AddressOk's
+    // character set, so only mirror strings that look like host addresses or host:port lines.
+    const bool has_dot_or_colon = address.find('.') != std::string_view::npos ||
+                                  address.find(':') != std::string_view::npos;
+    if (!has_dot_or_colon && space == std::string_view::npos && address.find('-') != std::string_view::npos) {
+        return;
+    }
+    const std::size_t colon = address.find(':');
+    join_ip_ = std::string(address.substr(0, colon));
+    if (colon != std::string_view::npos) {
+        const std::string_view port = address.substr(colon + 1);
+        const auto parsed = CoopTitleMenu::ParsePort(port);
+        if (!parsed || *parsed != CoopTitleMenu::kDefaultPort) {
+            join_port_ = std::string(port);
+        }
+    }
+    if (space != std::string_view::npos) {
+        const std::string_view pw = Trim(t.substr(space));
+        if (CoopTitleMenu::PasswordOk(pw)) {
+            join_password_ = std::string(pw);
+        }
+    }
+}
+
+void Menu::UpdateJoinFromIpPort() {
+    const std::string_view ip = Trim(join_ip_);
+    if (ip.empty()) {
+        join_.clear();
+        return;
+    }
+    std::string server(ip);
+    const std::string_view port = Trim(join_port_);
+    if (!port.empty()) {
+        server += ':';
+        server += port;
+    }
+    if (!join_password_.empty()) {
+        server += ' ';
+        server += join_password_;
+    }
+    join_ = std::move(server);
+}
+
+// Typing ends. keep: with what was typed (an invalid name, IP or port is
+// not kept); else the edited field goes back to what it was.
 void Menu::EndTyping(bool keep) {
     if (!typing_) {
         return;
     }
+    const Act act = typing_act_;
     typing_ = false;
     replace_typed_ = false;
-    if (page_ == Page::kSettings) {
+    typing_act_ = Act::kNone;
+    typing_fresh_ = false;
+    if (act == Act::kName) {
         if (keep && CoopTitleMenu::NameOk(options_.name)) {
             options_.name = std::string(Trim(options_.name));
             if (options_.name != name_before_) {
@@ -482,8 +664,94 @@ void Menu::EndTyping(bool keep) {
             note_ = {"Your name: 1 to 16 characters. It was not changed."};
         }
         options_.name = name_before_;
-    } else if (page_ == Page::kJoin && keep && !Trim(join_).empty()) {
-        Go(Page::kJoin, Act::kJoinNow);
+    } else if (act == Act::kCode) {
+        if (keep) {
+            SyncManualJoinFromText();
+        }
+    } else if (act == Act::kJoinIp) {
+        if (!keep) {
+            join_ip_ = ip_before_;
+            return;
+        }
+        const std::string trimmed(Trim(join_ip_));
+        if (trimmed.empty()) {
+            join_ip_.clear();
+            if (!ip_before_.empty()) {
+                join_password_.clear();
+                UpdateJoinFromIpPort();
+            }
+            return;
+        }
+        if (!CoopTitleMenu::AddressOk(trimmed)) {
+            note_ = {"IP address: enter a valid IP address or host name (with optional :port). It was not changed."};
+            join_ip_ = ip_before_;
+            return;
+        }
+        const std::size_t colon = trimmed.find(':');
+        if (colon != std::string::npos) {
+            join_ip_ = trimmed.substr(0, colon);
+            const std::string port = trimmed.substr(colon + 1);
+            const auto parsed = CoopTitleMenu::ParsePort(port);
+            join_port_ = parsed && *parsed == CoopTitleMenu::kDefaultPort ? std::string() : port;
+        } else {
+            join_ip_ = trimmed;
+        }
+        if (join_ip_ != ip_before_) {   // another host: its password is typed after it
+            join_password_.clear();
+        }
+        UpdateJoinFromIpPort();
+    } else if (act == Act::kJoinPassword) {
+        const std::string trimmed(Trim(join_password_));
+        const bool ok = trimmed.empty() || CoopTitleMenu::PasswordOk(trimmed);   // empty: no password
+        if (keep && !ok) {
+            note_ = {"Password: no spaces, at most 128 characters. It was not changed."};
+        }
+        if (!keep || !ok) {
+            join_password_ = password_before_;
+            return;
+        }
+        join_password_ = trimmed;
+        if (!Trim(join_ip_).empty()) {
+            UpdateJoinFromIpPort();
+        }
+    } else if (act == Act::kJoinPort) {
+        if (!keep) {
+            port_text_.clear();
+            return;
+        }
+        const std::string trimmed(Trim(port_text_));
+        port_text_.clear();
+        if (trimmed.empty()) {
+            join_port_.clear();
+        } else if (const auto p = CoopTitleMenu::ParsePort(trimmed)) {
+            join_port_ = *p == CoopTitleMenu::kDefaultPort ? std::string() : std::to_string(*p);
+        } else {
+            note_ = {"Port: enter a number from 1 to 65535. It was not changed."};
+            return;
+        }
+        if (!Trim(join_ip_).empty()) {
+            UpdateJoinFromIpPort();
+        }
+    } else if (act == Act::kHostPort) {
+        if (!keep) {
+            port_text_.clear();
+            return;
+        }
+        const std::uint16_t before = options_.host_port;
+        const std::string trimmed(Trim(port_text_));
+        port_text_.clear();
+        if (trimmed.empty()) {
+            options_.host_port = CoopTitleMenu::kDefaultPort;
+        } else if (const auto p = CoopTitleMenu::ParsePort(trimmed)) {
+            options_.host_port = *p;
+        } else {
+            note_ = {"Port: enter a number from 1 to 65535. It was not changed."};
+            return;
+        }
+        if (options_.host_port != before) {
+            const bool hosting = page_ == Page::kHost && InSession() && !session_.by_launcher && session_.hosting;
+            request_ = Request{hosting ? Request::Kind::kHost : Request::Kind::kSave, {}};
+        }
     }
 }
 
@@ -514,19 +782,27 @@ bool Menu::Press(Input input) {
         confirm_leave_ = false;
     }
     if (typing_) {
+        const Act act = typing_act_;
         switch (input) {
         case Input::kUp:
         case Input::kDown:
         {
-            const bool to_join = page_ == Page::kJoin && !Trim(join_).empty();   // (EndTyping goes to Join)
+            const bool to_join = act == Act::kCode && !Trim(join_).empty();
             EndTyping(true);
-            if (!to_join) {
+            if (to_join) {
+                Go(Page::kJoin, Act::kJoinNow);
+            } else {
+                Go(page_, act);   // rows may have come or gone (Clear the code): step from the typed one
                 Move(input == Input::kUp ? -1 : 1);
             }
             return true;
         }
         case Input::kDecide:
             EndTyping(true);
+            if (note_.empty() && (act == Act::kCode || act == Act::kJoinIp || act == Act::kJoinPort || act == Act::kJoinPassword) &&
+                !Trim(join_).empty()) {
+                Go(Page::kJoin, Act::kJoinNow);
+            }
             return true;
         case Input::kBack:
             EndTyping(false);
@@ -535,6 +811,7 @@ bool Menu::Press(Input input) {
             request_ = Request{Request::Kind::kPaste, {}};
             return true;
         case Input::kErase:
+            typing_fresh_ = false;
             if (std::string* t = Typed(); t != nullptr && !t->empty()) {
                 CoopTitleMenu::PopCodePoint(*t);
             }
@@ -594,7 +871,7 @@ bool Menu::Press(Input input) {
         return true;
     case Input::kPaste:
         if (page_ == Page::kJoin && std::any_of(lines.begin(), lines.end(), [](const Line& l) {
-                return l.act == Act::kCode && !l.row.fixed;
+                return (l.act == Act::kCode || l.act == Act::kJoinIp || l.act == Act::kJoinPort) && !l.row.fixed;
             })) {
             request_ = Request{Request::Kind::kPaste, {}};
             return true;
@@ -672,13 +949,40 @@ void Menu::Decide(Act act) {
         // paste the old code stays to be edited, but the first character typed (or pasted as keystrokes, as
         // Win+V's clipboard history and on-screen keyboards do) starts a new code instead of going beside it.
         typing_ = true;
+        typing_act_ = Act::kCode;
+        typing_fresh_ = false;
         replace_typed_ = !join_.empty();
         request_ = Request{Request::Kind::kPaste, {}};
         break;
     case Act::kClearCode:
         join_.clear();
+        SyncManualJoinFromText();
         replace_typed_ = false;
         Go(Page::kJoin, Act::kCode);
+        break;
+    case Act::kJoinIp:
+        ip_before_ = join_ip_;
+        typing_ = true;
+        typing_act_ = Act::kJoinIp;
+        typing_fresh_ = false;
+        break;
+    case Act::kJoinPassword:
+        password_before_ = join_password_;
+        typing_ = true;
+        typing_act_ = Act::kJoinPassword;
+        typing_fresh_ = false;
+        break;
+    case Act::kJoinPort:
+        port_text_ = join_port_.empty() ? std::to_string(CoopTitleMenu::kDefaultPort) : join_port_;
+        typing_ = true;
+        typing_act_ = Act::kJoinPort;
+        typing_fresh_ = true;
+        break;
+    case Act::kHostPort:
+        port_text_ = std::to_string(options_.host_port);
+        typing_ = true;
+        typing_act_ = Act::kHostPort;
+        typing_fresh_ = true;
         break;
     case Act::kJoinNow:
         request_ = Request{Request::Kind::kJoin, join_};
@@ -686,10 +990,13 @@ void Menu::Decide(Act act) {
     case Act::kName:
         name_before_ = options_.name;
         typing_ = true;
+        typing_act_ = Act::kName;
+        typing_fresh_ = false;
         break;
     case Act::kLook:
     case Act::kPlayers:
     case Act::kVoiceMode:
+    case Act::kMic:
     case Act::kChatKey:
     case Act::kController:
     case Act::kKeyboard:
@@ -727,6 +1034,17 @@ void Menu::Change(Act act, int step) {
         options_.voice = step > 0 ? true : step < 0 ? false : !options_.voice;
         request_ = Request{Request::Kind::kSave, {}};
         break;
+    case Act::kMic: {
+        if (!microphones_) {
+            break;
+        }
+        const auto list = MicChoices(*microphones_, options_.voice_mic);
+        const auto at = std::find(list.begin(), list.end(), options_.voice_mic);
+        const std::size_t n = list.size(), i = static_cast<std::size_t>(at - list.begin());
+        options_.voice_mic = list[(i + (step < 0 ? n - 1 : 1)) % n];
+        request_ = Request{Request::Kind::kSave, {}};
+        break;
+    }
     case Act::kVoiceMode:   // (two choices: either arrow flips it)
         options_.voice_ptt = !options_.voice_ptt;
         request_ = Request{Request::Kind::kSave, {}};
@@ -805,6 +1123,20 @@ bool Menu::Char(std::uint32_t cp) {
     if (cp < 0x20 || cp == 0x7F) {
         return true;
     }
+    if (typing_act_ == Act::kHostPort || typing_act_ == Act::kJoinPort) {
+        if (cp < '0' || cp > '9') {
+            return true;
+        }
+        if (typing_fresh_) {
+            t->clear();
+            typing_fresh_ = false;
+        }
+        if (t->size() >= kMaxPortBytes) {
+            return true;
+        }
+        t->push_back(static_cast<char>(cp));
+        return true;
+    }
     const std::string add = CoopTitleMenu::Utf8(cp);
     if (add.empty()) {
         return true;
@@ -813,7 +1145,10 @@ bool Menu::Char(std::uint32_t cp) {
         join_.clear();
     }
     replace_typed_ = false;
-    if (t == &options_.name ? CodePoints(*t) >= CoopTitleMenu::kMaxNameChars : t->size() + add.size() > kMaxJoinBytes) {
+    const std::size_t max_bytes = typing_act_ == Act::kJoinIp         ? kMaxIpBytes
+                                  : typing_act_ == Act::kJoinPassword ? CoopTitleMenu::kMaxPasswordBytes
+                                                                      : kMaxJoinBytes;
+    if (typing_act_ == Act::kName ? CodePoints(*t) >= CoopTitleMenu::kMaxNameChars : t->size() + add.size() > max_bytes) {
         return true;
     }
     *t += add;
@@ -822,6 +1157,51 @@ bool Menu::Char(std::uint32_t cp) {
 
 bool Menu::Paste(std::string_view text) {
     const std::string line = std::string(Trim(CoopTitleMenu::OneLine(text)));
+    if (typing_ && typing_act_ == Act::kJoinIp) {
+        if (line.empty()) {
+            return true;
+        }
+        const auto target = CoopTitleMenu::ReadJoin(line, {});
+        if (const auto* addr = std::get_if<CoopTitleMenu::JoinAddress>(&target)) {
+            join_ip_ = addr->server;
+            EndTyping(true);
+            if (!addr->password.empty()) {
+                join_password_ = addr->password;
+                UpdateJoinFromIpPort();
+            }
+        } else {
+            join_ip_ = line.substr(0, kMaxIpBytes);
+            EndTyping(true);
+        }
+        if (note_.empty() && !Trim(join_).empty()) {
+            Go(Page::kJoin, Act::kJoinNow);
+        }
+        return true;
+    }
+    if (typing_ && typing_act_ == Act::kJoinPassword) {
+        if (line.empty()) {
+            return true;
+        }
+        join_password_ = line.substr(0, Utf8Start(line, std::min(line.size(), CoopTitleMenu::kMaxPasswordBytes)));
+        EndTyping(true);
+        if (note_.empty() && !Trim(join_).empty()) {
+            Go(Page::kJoin, Act::kJoinNow);
+        }
+        return true;
+    }
+    if (typing_ && (typing_act_ == Act::kJoinPort || typing_act_ == Act::kHostPort)) {
+        if (line.empty()) {
+            return true;
+        }
+        const Act was = typing_act_;
+        typing_fresh_ = false;
+        port_text_ = line.substr(0, kMaxPortBytes);
+        EndTyping(true);
+        if (note_.empty() && was == Act::kJoinPort && !Trim(join_).empty()) {
+            Go(Page::kJoin, Act::kJoinNow);
+        }
+        return true;
+    }
     if (page_ == Page::kJoin) {
         const auto lines = Lines();
         if (std::none_of(lines.begin(), lines.end(), [](const Line& l) { return l.act == Act::kCode && !l.row.fixed; })) {
@@ -834,7 +1214,10 @@ bool Menu::Paste(std::string_view text) {
             return true;
         }
         join_ = line.substr(0, Utf8Start(line, std::min(line.size(), kMaxJoinBytes)));   // in place of the old one
+        SyncManualJoinFromText();
         typing_ = false;
+        typing_act_ = Act::kNone;
+        typing_fresh_ = false;
         replace_typed_ = false;
         Go(Page::kJoin, Act::kJoinNow);
         return true;
@@ -946,7 +1329,10 @@ View Menu::view() const {
         if (line->act == Act::kCommand) {
             // (nothing to press: the row is read)
         } else if (line->row.kind == RowKind::kAction) {
-            v.confirm = line->row.value.empty() ? "Open" : line->act == Act::kName ? "Type" : "Choose";
+            const bool typed_row = line->act == Act::kName || line->act == Act::kHostPort ||
+                                   line->act == Act::kJoinIp || line->act == Act::kJoinPort ||
+                                   line->act == Act::kJoinPassword;
+            v.confirm = line->row.value.empty() ? "Open" : typed_row ? "Type" : "Choose";
         } else {
             v.change = "Change";
         }

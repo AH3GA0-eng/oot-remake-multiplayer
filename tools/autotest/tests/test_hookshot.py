@@ -197,6 +197,11 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(steps[11].name, "/teleport  Saria")
         self.assertEqual((steps[13].start, steps[13].name), ("boots", "HoverBoot"))
 
+    def test_menu_step_goes_to_the_module(self):
+        steps = hs.parse("menu Customize\nmenu close\n")
+        self.assertEqual([(s.kind, s.name) for s in steps], [("menu", "customize"), ("menu", "close")])
+        self.assertIn("menu", hs.MODULE_ONLY)
+
     def test_key_names(self):
         s = hs.parse("hold DUP+LCLICK+RCLICK+MINUS+RSTICK_LEFT 5")[0]
         self.assertEqual(s.buttons, ["UP", "LS", "RS", "MINUS"])
@@ -206,7 +211,8 @@ class ParseTest(unittest.TestCase):
         for text, want in (("wait", "line 1: want: wait TICKS"), ("\n\nhold Q 3", "line 3: unknown key Q"),
                            ("stick 2 0 5", "line 1: want: STICK"), ("goto 1 2 0.1", "radius at least 0.2"),
                            ("jump", "unknown command jump"), ("# only", "no steps"),
-                           ("wear cape X", "want: wear")):
+                           ("wear cape X", "want: wear"), ("menu", "want: menu customize|close"),
+                           ("menu map", "want: menu customize|close")):
             with self.assertRaises(hs.ScriptError) as e:
                 hs.parse(text)
             self.assertIn(want, str(e.exception))
@@ -500,6 +506,12 @@ class RendererWaitTest(unittest.TestCase):
         self.assertEqual(len(reads), 5)
         self.assertAlmostEqual(waited, 2.0, places=2)
 
+    def test_rc4_start_up_line_is_ready_too(self):
+        log = ("[hos host] vk: precompile: load at create (RX_VK_LOAD=create): 32623 noted pipelines found, none built\n"
+               "[hos host] vk: start-up: the shaders took 6.5 s\n")
+        self.assertEqual(hs.wait_renderer(lambda: log, lambda: True, 60, clock=Clock(), sleep=Clock().sleep), 0.0)
+        self.assertFalse(hs.RENDERER_READY.search(log.splitlines()[0]))
+
     def test_times_out_and_notices_a_closed_game(self):
         c = Clock()
         with self.assertRaises(TimeoutError):
@@ -594,6 +606,54 @@ class RunTest(unittest.TestCase):
             self.assertEqual([p.env["LICHII_COOP_TEST_COMMANDS"] for p in started],
                              [os.path.join(out, "commands-%s.txt" % x) for x in "AB"])
             self.assertIn("coop: test script done", a_log)
+
+
+class FindLogTest(unittest.TestCase):
+    def test_rc3_and_rc4_places_newest_wins(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as game:
+            self.assertIsNone(hs.find_log(game))
+            rc3 = os.path.join(game, "longshot_log.txt")
+            with open(rc3, "w") as f:
+                f.write("rc3")
+            self.assertEqual(hs.find_log(game), rc3)
+            os.makedirs(os.path.join(game, "logs"))
+            rc4 = os.path.join(game, "logs", "longshot_log.txt")
+            with open(rc4, "w") as f:
+                f.write("rc4")
+            os.utime(rc3, (1000, 1000))  # an rc.3 log left from an older build
+            self.assertEqual(hs.find_log(game), rc4)
+            os.utime(rc4, (500, 500))
+            self.assertEqual(hs.find_log(game), rc3)
+
+    def test_bin_layout(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as game:
+            os.makedirs(os.path.join(game, "bin", "logs"))
+            open(os.path.join(game, "bin", "longshot.exe"), "w").close()
+            log = os.path.join(game, "bin", "logs", "longshot_log.txt")
+            with open(log, "w") as f:
+                f.write("x")
+            self.assertEqual(hs.find_log(game), log)
+            self.assertIn(os.path.join(game, "logs", "longshot_log.txt"), hs.log_candidates(game))
+
+
+class TestDelayTest(unittest.TestCase):
+    """The server's TEST-ONLY delay (server/test_delay.hpp) from run.ps1 -Lag / -Jitter on Longshot."""
+
+    def test_args(self):
+        self.assertEqual(hs.test_delay_args(0, 0), [])
+        self.assertEqual(hs.test_delay_args(250, 60), ["--test-delay-ms", "250", "--test-jitter-ms", "60"])
+        self.assertEqual(hs.test_delay_args(0, 20), ["--test-delay-ms", "0", "--test-jitter-ms", "20"])
+
+    def test_options(self):
+        import argparse
+        p = argparse.ArgumentParser()
+        hs.add_test_delay_options(p)
+        a = p.parse_args(["--test-delay-ms", "250", "--test-jitter-ms", "60"])
+        self.assertEqual((a.test_delay_ms, a.test_jitter_ms), (250, 60))
+        a = p.parse_args([])
+        self.assertEqual((a.test_delay_ms, a.test_jitter_ms), (0, 0))
 
 
 if __name__ == "__main__":

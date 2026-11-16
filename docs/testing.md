@@ -1,4 +1,4 @@
-# Testing co-op on two PCs
+# Testing Squadala! on two PCs
 
 How to test the co-op build with the test kit: the server on one PC, the patched emulator on both, each with its own copy of the game. The kit is made by `tools/release/make_kit.ps1` ([Making the kit](#making-the-kit)); in the kit this file is `TESTING.md`.
 
@@ -384,6 +384,7 @@ The emulator reads scripted input from the file in `LICHII_COOP_TEST_SCRIPT` ([c
 | `setenum 0x9472302b MeetPierre` | test only: sets this game's Enum flag (a GameDataList name, or `0x` and its hash: a Threads of Time quest's name is not in the romfs) to the value of that name (`flag_hash`), through the game's queue; logs `coop: test setenum NAME VALUE: set` (or `NOT set`, `unknown`). Scenario `threads-of-time` (#193) |
 | `wear head Armor_Child_Mask_Keaton` | test only: sets this game's `PlayerStatus.Equip*` flag for `weapon`, `shield`, `head`, `armor`, `boots` or `hand` (gauntlets) ([items.md](items.md)). Only the flag changes, not this game's Link; the other games' puppets wear it (scenario `wear`). `wear head none` empties the flag: the piece is taken off |
 | `assign Bow` | test only: puts an item on ZR, for both ages, through the game's Enum queue (`PlayerStatus.AssignableItem.Child` and `.Adult`); the name is the button enum's (`Bow`, `Hookshot`, `Hammer`, `SlingShot`, `Bomb`, `DekuStick`, ...; GameDataList spelling). The item must be owned (`give`). R is the quick-select carousel and assigns nothing |
+| `menu customize` / `menu close` | test only (Longshot): opens the game's menu on Multiplayer > Customize Link (`CoopPause::TestMenu`, as the title's rows open the tab), or closes the menu; logs `coop: test menu customize: asked`. The page's `coop: look: the Customize picture ...` lines then say live or flat. Scenario `hs-customize` (#74) |
 | `mark name` | logs `coop: test mark name`; the runner takes a screenshot then |
 
 `goto` and `toward` steer from Link's position and the game camera's ground directions (from its world-to-clip matrix), read each frame; a push that gets nowhere for a second steps aside. Positions are the ones the objects debug log prints (`at x y z`, y is height), or the `Translate` of a placement in the romfs Banc files.
@@ -479,7 +480,7 @@ Port 27510 is the default game port and the owner's own server: no lane uses it,
 The other runs start `longshot.exe` themselves, so the kit's own start path never runs in them. That path is the pack step, the colour read, the module install and the randomizer seed rebuild, and 0.11.0's player bugs were in it. Kit mode starts each game the way **Start OoT Co-op.bat** does (`play.ps1 choose -Hookshot`, with `-NoUpdate`), then plays the scenario as usual (control pipe, shots, logs):
 
 1. **Set up (lane 1, one pair):** `python -I tools/autotest/kit_pair.py setup --zip <kit>.zip [--game <.nup>]`. It first backs up what a kit's start writes into `ls\lane1-A` and `-B`: `hookshot_coop.dll`, `coop.ini`, `coop-options.ini`, `mods\` (puppet pack, seeds) and `tools\` (randomizer). The backup goes to `ls\lane1-kit-backup\`. Then it unzips the kit twice into `ls\kit-A` and `ls\kit-B`. Each kit's `hookshot\game-folder.txt` names `lane1-A` or `-B`, so the exe paths stay the same as in every lane run and no firewall prompt comes up. Its `hookshot\game-files.txt` names the game file, which the pack is made from. A kit older than 0.11.1 gets the autotest's hook (below) put into its own `play.ps1`, and nothing else is changed.
-2. **Run:** `run.ps1 -Lane 1 -Kit "<kit root>\ls\kit-A","<kit root>\ls\kit-B" -Scenario walk`. With groups, use `groups.py run <file> --lane 1 --kit <kit-A>,<kit-B>`. Each kit's window text is saved in the run folder as `kit-start-A.txt` and `-B.txt`. A freshly unzipped kit's first start downloads Longshot's build tools and source before its module step, even when the game is built already. That is the players' path too. It took 12 min for kit A and 3 min for kit B on the first run (2026-11-15). The game's log is its own `longshot_log.txt`.
+2. **Run:** `run.ps1 -Lane 1 -Kit "<kit root>\ls\kit-A","<kit root>\ls\kit-B" -Scenario walk`. With groups, use `groups.py run <file> --lane 1 --kit <kit-A>,<kit-B>`. Each kit's window text is saved in the run folder as `kit-start-A.txt` and `-B.txt`. A freshly unzipped kit's first start downloads Longshot's build tools and source before its module step, even when the game is built already. That is the players' path too. It took 12 min for kit A and 3 min for kit B on the first run (2026-11-15). The game's log is its own `longshot_log.txt`: Longshot rc.4 writes it into the game's `logs\` folder, rc.3 beside `longshot.exe`; `hookshot.py` (`find_log`) and `collect-logs` look in both and take the newest.
 3. **Restore:** `python -I tools/autotest/kit_pair.py restore` puts the lane back. `status` says whether a backup is still waiting. Setup and restore both refuse to run while a game runs in the lane.
 
 How the start is driven: every question gets the answer `n`. A long game build (a new pin, or no game yet) is therefore never started by a test. The start stops instead, and the run fails with the kit's own words. The module step needs no answer and runs. The autotest's hook is `OOT_COOP_TEST_KIT=<file>`. With it, the title start keeps the test server and join password in the game's variables (`LICHII_COOP_SERVER` and `LICHII_COOP_PASSWORD`, which a player sets through the title menu's Join). It also writes the game's process id into that file. Nothing is written into `coop.ini`. Steps files and `-NoCoop` do not run in kit mode yet. `start.ps1`'s checks before `play.ps1` (zip, path, antivirus, other kits) are not run either, because they would register the test kits in the PC's own kit list.
@@ -542,6 +543,16 @@ tools\autotest\run.ps1 -Scenario walk -Lag 150 -Jitter 20 -Loss 2 -Spike 500/10
 ```
 
 `-NetSimFor A` puts only A behind the relay (B connects straight: A slow, B fine). `-NetSimArgs` passes more relay options, `A:` or `B:` for one game only: `-NetSimArgs "--seed 3","B:--down loss=10"`. The relay's Python is the recomp's `.venv` beside the repo, else `py -3` or `python` (`-Python` sets it). The run folder gets `netsim.txt` (the conditions and each relay's command line) and `netsim-A.txt` / `netsim-B.txt` (each relay's counts).
+
+### On Longshot: the server's test delay
+
+Longshot games cannot be put behind the relay, so with `-Runtime hookshot` (and `-Kit`, `groups.py --lag N --jitter J`) `-Lag` and `-Jitter` go to the server instead: `coop_server --test-delay-ms N --test-jitter-ms J` holds every packet (`server/test_delay.hpp`). The same rules as the relay: `N` is the added round trip, half each way; each packet gets ± up to `J` ms on top, each way; one player's packets in one direction keep their order, so reliable stays reliable. Both games get it (no `-NetSimFor`); `-Loss`, `-Spike` and `-NetSimArgs` stay emulator-only. ENet's own round trip does not see it (its acknowledgements are not held), the game's PING/PONG does.
+
+```
+tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-puppets -Lag 250 -Jitter 60
+```
+
+**Tests only.** The server refuses both options unless its environment has `OOT_COOP_TEST=1` (`hookshot.py` and `hs_steps.py` set it for their server only) and prints `TEST DELAY on: ...` in `server-out.txt` when it runs with them. Never put them in a kit's start-server.
 
 ### What it does to the puppet
 

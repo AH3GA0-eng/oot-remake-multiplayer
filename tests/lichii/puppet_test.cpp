@@ -859,6 +859,66 @@ TEST_CASE("puppet gear: a mask is worn in state 1, other pieces in state 2") {
     CHECK(calls[1].x[1] == 8u);
     CHECK(calls[1].x[3] == 2u);
 }
+TEST_CASE("puppet gear: the Hookshot is left off the puppet, and its slot is not ours (issue 232)") {
+    Game g;
+    Director d;
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    g.guest.Map(kParts, 0x1000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    Target t = At(1, 4, 5, 6);
+    t.gear[2] = "Armor_Child_Mask_Skull";
+    d.SetInput(Wants({t}));
+    auto calls = Frame(d, g, 20);
+    REQUIRE(calls.size() == 1);  // the mask only
+    CHECK(calls[0].x[1] == 7u);
+
+    // The held slot is the Hookshot: no call is made for it, now or later.
+    t.gear[CoopPuppet::kGearHeld] = "Weapon_Range_Hookshot";
+    d.SetInput(Wants({t}));
+    CHECK(Frame(d, g, 100).empty());
+    CHECK(Frame(d, g, 3000).empty());
+    CHECK(Frame(d, g, 9000).empty());
+
+    // Its going away is no take-off either: the mask stays, nothing is made again.
+    t.gear[CoopPuppet::kGearHeld] = "";
+    d.SetInput(Wants({t}));
+    CHECK(Frame(d, g, 10000).empty());
+    CHECK(Frame(d, g, 20000).empty());
+
+    // Any other piece of the same slot is worn as before: the slingshot, kind 5.
+    t.gear[CoopPuppet::kGearHeld] = "Weapon_Range_SlingShot";
+    d.SetInput(Wants({t}));
+    calls = Frame(d, g, 30000);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kEquip);
+    CHECK(calls[0].x[1] == 5u);
+
+    // Slingshot -> Hookshot: the slingshot must not stay in slot 3, and no
+    // call is known to take a held piece away, so the puppet is made again
+    // without it (daurosk, PR 233: "the slingshot stays in slot 3").
+    // (the frame that learns it only marks the remake: the delete is the next
+    // frame's, as for a mask taken off)
+    t.gear[CoopPuppet::kGearHeld] = "Weapon_Range_Hookshot";
+    d.SetInput(Wants({t}));
+    CHECK(Frame(d, g, 40000).empty());
+    calls = Frame(d, g, 41000);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kRequestDelete);
+    // Made again (a delete, then a malloc and a create over the next frames),
+    // and the Hookshot is never worn on it.
+    bool equipped = false;
+    for (std::uint64_t ms = 42000; ms <= 60000; ms += 1000) {
+        for (const auto& c : Frame(d, g, ms)) {
+            if (c.function == kBase + addr::kEquip) {
+                equipped = true;
+            }
+        }
+    }
+    CHECK_FALSE(equipped);
+}
 TEST_CASE("puppet gear: a mask taken off is taken off with the game's call, a held item is only put away") {
     Game g;
     Director d;
@@ -1185,6 +1245,59 @@ TEST_CASE("puppet move: the game's setter once a frame when asked for") {
         CHECK(calls[0].x[1] == 0u);
     }
     CheckPosition(g2.guest, kActor + addr::kActorPosition, 4, 5, 6);
+}
+
+
+TEST_CASE("puppet: parking a hidden puppet takes its held pieces with it") {
+    // A held piece is an actor of its own, and the game keeps stepping it. Parked with
+    // the puppet left behind, the game follows a piece whose owner is 500 m below it;
+    // seen 2026-11-15 as the other player changed to the Hookshot while the puppet came
+    // and went: 0xc0000005 reading a null + 0x7d8 on a guest thread.
+    Game g;
+    Director d;
+    MakeLive(d, g);
+
+    // The puppet's equipment: one slot with a piece actor in it (after MakeLive: it
+    // writes the actor's own state as the game does).
+    const std::uint64_t kParts = 0x500000000;
+    const std::uint64_t kEu = 0x500001000;
+    const std::uint64_t kHolder = 0x500002000;
+    const std::uint64_t kPiece = 0x500003000;
+    g.guest.Map(kParts, 0x400);
+    g.guest.Map(kEu, 0x1600);
+    g.guest.Map(kHolder, 0x100);
+    g.guest.Map(kPiece, 0x600);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    g.guest.Set(kEu + addr::kEquipSlots + addr::kEquipSlotStride * 3 + addr::kEquipSlotId,
+                std::uint32_t{0x1234});
+    g.guest.Set(kEu + addr::kEquipSlots + addr::kEquipSlotStride * 3 + addr::kEquipSlotHolder, kHolder);
+    g.guest.Set(kHolder + addr::kHolderActor, kPiece);
+    g.guest.Set(kPiece + addr::kActorState, std::uint32_t{addr::kStatePresent});
+    const float at[3] = {4.0f, 5.0f, 6.0f};
+    for (std::uint64_t i = 0; i < 3; ++i) {
+        g.guest.Set(kPiece + addr::kActorPosition + 4 * i, at[i]);
+    }
+
+    // Parked: the piece moves down with it, not left where the puppet was.
+    Target hidden = At(1, 40, 5, 6);
+    hidden.show = CoopPuppet::Show::hide;
+    // (the piece's own record: what the test wrote must still be there)
+    CHECK(g.guest.Get<std::uint64_t>(kActor + addr::kActorParts) == kParts);
+    CHECK(g.guest.Get<std::uint64_t>(kParts + addr::kPartsEquipmentUser) == kEu);
+    CHECK(g.guest.Get<std::uint32_t>(kEu + addr::kEquipSlots + addr::kEquipSlotStride * 3 +
+                                    addr::kEquipSlotId) == 0x1234u);
+    d.SetInput(Wants({hidden}));
+    Frame(d, g, 100);
+    CheckPosition(g.guest, kActor + addr::kActorPosition, 40, 5 - Director::kHideDrop, 6);
+    CheckPosition(g.guest, kPiece + addr::kActorPosition, 40, 5 - Director::kHideDrop, 6);
+
+    // Shown again at their place: the puppet comes back up (the piece follows the
+    // game's own bone bind from there, so it is not parked again).
+    Target shown = At(1, 40, 5, 6);
+    d.SetInput(Wants({shown}));
+    Frame(d, g, 200);
+    CheckPosition(g.guest, kActor + addr::kActorPosition, 40, 5, 6);
 }
 
 TEST_CASE("puppet scene filter: hold freezes its frame and follows its place, hide parks it") {

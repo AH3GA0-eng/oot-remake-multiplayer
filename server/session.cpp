@@ -904,6 +904,13 @@ void Session::on_host_reset() {
   // Owners of session-wide kept state add their clear here (docs/flags.md, "Saves").
   world_.forget_kept();  // locked doors' kept breaks (docs/dungeon.md, "Locked doors")
   dead_.clear();         // kills-late: the save's enemies are alive again
+  // Bosses beaten after the save the host loaded are alive again, their heart containers back in the
+  // game: an old claim would answer the refight's pickup from the fight before (player report #52).
+  if (!boss_hearts_.empty()) {
+    log("the host loaded a save: " + std::to_string(boss_hearts_.size()) +
+        " boss heart container claim(s) forgotten (those bosses fight again)");
+  }
+  boss_hearts_.clear();
 }
 
 // A host's table, merged in part by part. A flag the server lacks is kept and
@@ -1377,7 +1384,7 @@ void Session::on_damage(ConnectionId id, Connection& c, Damage& d, std::uint64_t
   }
   const auto theirs = distance_to(owner->second, o, now_us);
   if (mine && theirs && *mine <= config_.handover_near_m &&
-      *mine + config_.handover_margin_m <= *theirs) {
+      *mine + config_.handover_margin_m <= *theirs && !hands_back_soon(o, id, now_us)) {
     ask_handover(d.id, o, id, now_us);
   }
 }
@@ -1624,13 +1631,19 @@ std::optional<ConnectionId> Session::best_other(const Object& o,
   std::optional<ConnectionId> best;
   std::optional<double> best_distance;
   std::uint8_t best_number = 0;
+  bool best_ready = false;
   for (ConnectionId other : o.present) {
     if (other == except || !has_loaded(other, o)) continue;
     const Connection& oc = connections_.at(other);
     if (fit_only && busy(oc)) continue;
     const auto d = distance_to(oc, o, now_us);
+    // A game whose boss has played its intro before one whose has not
+    // (unready): taken only when no other is left (boss-copy-b).
+    const bool ready = !o.unready.contains(other);
     bool better = !best;
-    if (best) {
+    if (best && ready != best_ready) {
+      better = ready;
+    } else if (best) {
       if (d.has_value() != best_distance.has_value()) {
         better = d.has_value();  // a known place before an unknown one
       } else if (d && *d != *best_distance) {
@@ -1643,6 +1656,7 @@ std::optional<ConnectionId> Session::best_other(const Object& o,
       best = other;
       best_distance = d;
       best_number = oc.number;
+      best_ready = ready;
     }
   }
   return best;
@@ -1650,6 +1664,13 @@ std::optional<ConnectionId> Session::best_other(const Object& o,
 
 bool Session::owner_hit_lately(const Object& o, std::uint64_t now_us) const {
   return o.owner_hit_at != 0 && now_us - o.owner_hit_at < config_.boss_owner_hit_hold_us;
+}
+
+bool Session::hands_back_soon(const Object& o, ConnectionId to, std::uint64_t now_us) {
+  const bool soon = config_.handover_back_us != 0 && o.previous_owner == to && o.changed_at != 0 &&
+                    now_us - o.changed_at < config_.handover_back_us;
+  if (soon) ++stats_.handover_back_held;
+  return soon;
 }
 
 void Session::mark_fight(Object& o, std::uint64_t now_us) {
@@ -1887,6 +1908,20 @@ void Session::run_ownership(std::uint64_t now_us) {
       continue;
     }
 
+    // A boss whose owner's game has not played its intro (unready: its boss
+    // still in the pre-battle phase, Gohma on the ceiling) goes to a game
+    // that has. Else that game's copy, which began the fight in its own
+    // intro, is put back into the owner's pre-battle phase when the intro
+    // ends, and its own AI asks the intro again: the copy stays at the intro
+    // spot (boss-copy-b).
+    if (o.boss && o.unready.contains(owner)) {
+      if (auto next = best_other(o, owner, true, now_us); next && !o.unready.contains(*next)) {
+        ++stats_.boss_to_ready;
+        ask_handover(oid, o, *next, now_us);
+        continue;
+      }
+    }
+
     // A boss in a fight: the player clearly nearer it than its owner (issue
     // 150). Its AI chases only its owner's Link, so the near one gets it.
     if (o.boss && config_.boss_near_hold_us != 0 && in_fight(o, now_us)) {
@@ -1939,7 +1974,7 @@ void Session::run_ownership(std::uint64_t now_us) {
     // enemy's AI chases only its own game's Link, so that game is the only
     // one whose enemy goes where it should. A group's root takes its
     // members' chases as its own.
-    if (auto chaser = chased_by(o, owner, now_us)) {
+    if (auto chaser = chased_by(o, owner, now_us); chaser && !hands_back_soon(o, *chaser, now_us)) {
       ++stats_.handover_chased;
       ask_handover(oid, o, *chaser, now_us);
       continue;
@@ -1952,6 +1987,7 @@ void Session::run_ownership(std::uint64_t now_us) {
       double best = 0;
       for (ConnectionId other : o.present) {
         if (other == owner || !has_loaded(other, o)) continue;
+        if (o.unready.contains(other)) continue;  // its boss has not begun the fight (boss-copy-b)
         const Connection& pc = connections_.at(other);
         if (busy(pc)) continue;
         const auto mine = distance_to(pc, o, now_us);
@@ -1976,7 +2012,7 @@ void Session::run_ownership(std::uint64_t now_us) {
       o.candidate = want;
       o.candidate_since = now_us;
     }
-    if (now_us - o.candidate_since >= config_.handover_hold_us) {
+    if (now_us - o.candidate_since >= config_.handover_hold_us && !hands_back_soon(o, *want, now_us)) {
       ask_handover(oid, o, *want, now_us);
     }
   }
@@ -1990,6 +2026,10 @@ std::optional<ConnectionId> Session::chased_by(const Object& o, ConnectionId own
   auto consider = [&](const Object& from) {
     for (const auto& [other, since] : from.chased_by) {
       if (other == owner || !has_loaded(other, o)) continue;
+      // A boss whose intro has not played there (unready): its copy on the
+      // ceiling looks at that Link, but as owner it would hold every game's
+      // boss in its pre-battle phase (boss-copy-b).
+      if (o.unready.contains(other)) continue;
       if (now_us < since || now_us - since < config_.handover_chased_us) continue;
       const Connection& pc = connections_.at(other);
       if (busy(pc)) continue;

@@ -28,21 +28,12 @@ namespace {
 namespace proto = coop::protocol;
 namespace fs = std::filesystem;
 
-// The three values in one word, for any thread.
-std::uint64_t Packed(const Values& v) {
-    return static_cast<std::uint64_t>(v.hp_pct) | static_cast<std::uint64_t>(v.damage_pct) << 16 |
-           static_cast<std::uint64_t>(v.count_pct) << 32;
-}
-
-Values Unpacked(std::uint64_t word) {
-    return {static_cast<std::uint16_t>(word), static_cast<std::uint16_t>(word >> 16),
-            static_cast<std::uint16_t>(word >> 32)};
-}
-
 struct Glue {
     std::mutex mutex;
     State state;                    // network thread writes, under mutex
-    std::atomic<std::uint64_t> now{Packed(Values{})};  // state.values, for any thread
+    // state.values for any thread, all five (PackValues). Issue 55: the boss percents were left out of
+    // this word, so the Life step read boss life and damage as 100% whatever the host's difficulty said.
+    std::atomic<std::uint64_t> now{PackValues(Values{})};
     std::optional<Choice> wish;     // Set -> Frame
     std::optional<Choice> kept;     // the file's, read once
     bool kept_read = false;
@@ -119,7 +110,7 @@ State Get() {
 }
 
 Values Now() {
-    return Unpacked(TheGlue().now.load());
+    return UnpackValues(TheGlue().now.load());
 }
 
 bool Set(const Choice& choice) {
@@ -145,7 +136,7 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
         // Each connection starts with the game as it is; the server says the rest.
         std::lock_guard lock(g.mutex);
         g.state = State{};
-        g.now.store(Packed(Values{}));
+        g.now.store(PackValues(Values{}));
         g.wish.reset();
         g.offered = false;
         return;
@@ -179,7 +170,7 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
     }
     g.state.values = m->values;
     g.state.set_by = m->set_by;
-    g.now.store(Packed(m->values));
+    g.now.store(PackValues(m->values));
     const std::size_t players = client.players().size();  // (this client included)
     if (changed) {
         g.Line("Difficulty: " + Describe(g.state.choice, m->values, players));
@@ -209,14 +200,29 @@ static void LogHits() {
     }
     const std::uint64_t enemy = TheKinds().EnemyHits();
     const std::uint64_t link = TheKinds().LinkHits();
-    if (enemy == enemy_said && link == link_said) {
+    static std::uint64_t boss_said = 0;
+    static std::uint64_t boss_in_said = 0;
+    static std::uint64_t boss_took_said = 0;
+    const std::uint64_t boss = TheKinds().BossSteps();
+    const std::uint64_t boss_in = TheKinds().BossDamageIn();
+    const std::uint64_t boss_took = TheKinds().BossDamageTaken();
+    if (enemy == enemy_said && link == link_said && boss == boss_said) {
         return;
     }
     const Values v = Now();
     LOG_INFO(Core, "coop: difficulty: the Life step scaled {} hits on enemies (life {}%) and {} on our Link (damage {}%)",
              enemy - enemy_said, v.hp_pct, link - link_said, v.damage_pct);
+    if (boss != boss_said) {
+        // Boss life scaling, traced apart (seed N2BTEYKM: "boss life not scaled"): a boss hit that never shows
+        // here does not go through the game's Life step sum.
+        LOG_INFO(Core, "coop: difficulty: bosses: {} Life steps with damage, {} damage in, {} taken (boss life {}%)",
+                 boss - boss_said, boss_in - boss_in_said, boss_took - boss_took_said, v.boss_hp_pct);
+    }
     enemy_said = enemy;
     link_said = link;
+    boss_said = boss;
+    boss_in_said = boss_in;
+    boss_took_said = boss_took;
 }
 
 void Frame(coop::host::Session* session) {

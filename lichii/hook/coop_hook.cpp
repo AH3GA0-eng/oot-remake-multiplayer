@@ -43,6 +43,7 @@
 #include "coop/host/game_items.hpp"
 #include "coop/host/game_memory.hpp"
 #include "coop/host/notify.hpp"
+#include "coop/host/lent_keys.hpp"
 #include "coop/host/map_drop_log.hpp"
 #include "coop/host/one_way_keeper.hpp"
 #include "coop/host/player_reader.hpp"
@@ -252,6 +253,39 @@ struct RoomView {
     bool encrypted = false;  // docs/protocol.md "Encrypted traffic"
 };
 
+// Issue 84: a one-way story flag back on the wrong side in a game whose own
+// quest proves the right value (Mido blocks again past him; the Deku Tree's
+// mouth shut with the quest Complete): a shared value from a save behind the
+// group put it there. Set back through the game's Bool setter
+// (CoopStory::Mends says which and when). Held 3 s first, so a host save load
+// whose quest and scene flags land a few frames after the flag is not fought.
+// In a session (Coop::CatchUpQuest) and with none (LocalFrameOff), so a save
+// stuck that way is mended when it is played alone too. `since_us`: the
+// caller's own hold clocks, one per mend.
+using MendClocks = std::array<std::uint64_t, CoopStory::kMends>;
+void MendStory(EmulatorMemory& memory, MendClocks& since_us) {
+    static constexpr std::uint64_t kHoldUs = 3'000'000;
+    if (!CoopStory::On()) return;
+    namespace quest = CoopStory::quest;
+    coop::host::GameFlags flags(memory);
+    const auto step = flags.get_enum(quest::kMeetDekuTree);
+    const auto met = flags.get_bool(quest::kMetDekuTree);
+    const std::uint64_t now_us = CoopEvery::NowUs();
+    for (std::size_t i = 0; i < CoopStory::kMends; ++i) {
+        const auto& mend = CoopStory::Mends()[i];
+        auto& since = since_us[i];
+        if (!mend.due(step, flags.get_bool(mend.flag), met)) {
+            since = 0;
+        } else if (since == 0) {
+            since = now_us;
+        } else if (now_us - since >= kHoldUs && coop::host::GameFlags::set_bool(memory, mend.flag, mend.value)) {
+            since = 0;
+            LOG_INFO(Core, "coop: story: {} (Meet_DekuTree {:#x}): set to {} (issue 84)", mend.what,
+                     step.value_or(0), mend.value ? 1 : 0);
+        }
+    }
+}
+
 class Coop {
 public:
     // main's address in a game process (split screen with co-op off: LocalFrameOff below).
@@ -395,6 +429,16 @@ public:
         shared_scenes_ = live_events_ && CoopSharedScenes::OnFromEnv(EnvString("LICHII_COOP_SHARED_CUTSCENES"));
         LOG_INFO(Core, "coop: cutscene: shared story cutscenes {}",
                  shared_scenes_ ? "on (off with LICHII_COOP_SHARED_CUTSCENES=0)" : "off");
+        if (CoopStory::On()) {  // issue 84: story flags the game moves one way never go back here
+            for (const auto& f : CoopStory::OneWays()) {
+                const coop::protocol::FlagKey key(f.hash, std::uint16_t{0});
+                if (f.way == CoopStory::Way::down) {
+                    session_->share_down_only(key);
+                } else {
+                    session_->share_up_only(key);
+                }
+            }
+        }
         if (CoopDungeon::On()) {  // room switch flags the game resets itself: one way, no load write-back
             for (const auto& f : CoopDungeon::LiveFlags()) {
                 session_->share_one_way(coop::protocol::FlagKey(f.hash, std::uint16_t{0}));
@@ -500,6 +544,7 @@ public:
                     // Issue 190: a shared ocarina is equipped too, or D-pad
                     // Left takes nothing out.
                     MendOcarina(*memory);
+                    MendLetters(*memory);  // issue 58: Zelda's Letter spent, Ruto's Letter for everyone
                     if (CoopStory::On()) {
                         CatchUpQuest(*memory);  // issue 130: the Kokiri Shop opens
                     }
@@ -520,9 +565,23 @@ public:
         std::optional<coop::host::HoldFlagStore> hold;
         // Issue 193: the Threads of Time quests, ordered (coop_quests.h).
         std::optional<CoopQuests::Store> quests;
+        // dungeon-sync-b (#75): small keys lent at a lock another player opened
+        // stay in our game; the watcher sees the counts without them.
+        std::optional<coop::host::LentKeyStore> lent_view;
         if (store) {
+            for (const auto& [count, back] : CoopObjects::TakeKeyLends()) {
+                if (back) {
+                    lent_keys_.give_back(coop::protocol::FlagKey{count, 0});
+                } else {
+                    lent_keys_.lend(coop::protocol::FlagKey{count, 0});
+                }
+            }
+            for (const std::string& line : lent_keys_.frame(*store)) {
+                LOG_INFO(Core, "coop: {}", line);
+            }
+            lent_view.emplace(*store, lent_keys_);
             quests.emplace(
-                *store,
+                *lent_view,
                 [&memory](std::uint32_t hash) { return coop::host::GameFlags(*memory).get_enum(hash); },
                 [&memory](std::uint32_t hash, std::uint32_t value) {
                     return coop::host::GameFlags::set_enum(*memory, hash, value);
@@ -634,6 +693,7 @@ public:
             LOG_INFO(Core, "coop: flags: save load seen ({} flags back, {} frames without a scene)",
                      report.save_load_flags, report.save_load_frames);
             CoopTime::SaveLoaded(report.server_now_us);  // issue 159
+            lent_keys_.forget();  // dungeon-sync-b: the save has its own key counts
             start_source_.Reset();  // deku-sync-fix: what the game asked before the load is not ours now
             story_source_.Reset();
             coop::host::map_drop_log().note("save load seen (" + std::to_string(report.save_load_flags) + " flags back)");
@@ -778,6 +838,8 @@ public:
             // locked doors' kept breaks, the kills-late dead list, ...).
             LOG_INFO(Core, "coop: flags: the host loaded a save: the group follows it");
             CoopObjects::ForgetKeptBreaks();  // locked doors' kept breaks (docs/dungeon.md)
+            CoopBoss::ForgetFights();         // bosses beaten after that save fight again (player report #52)
+            lent_keys_.forget();              // the host's save has its own key counts
         }
         // Issue 167: the host's save for the guests (coop_save.h): a guest asks
         // once, the host sends its newest save a part a frame, and again to
@@ -864,6 +926,9 @@ public:
         {  // our own key spends, for the locks' give-back (docs/dungeon.md, "Locked doors")
             std::vector<std::uint32_t> drops;
             for (const auto& k : session_->take_own_count_drops()) {
+                drops.push_back(k.hash);
+            }
+            for (const auto& k : lent_keys_.take_spent()) {  // a lent key used on its lock
                 drops.push_back(k.hash);
             }
             CoopObjects::OwnCountDrops(drops);
@@ -1594,7 +1659,7 @@ private:
             break;
         case EventKind::refused:
             note_ = "refused: " +
-                    std::string(coop::net::refuse_reason_text(event.refuse_reason));
+                    std::string(coop::net::refuse_text(event));
             LOG_WARNING(Core, "coop: server {}", note_);
             break;
         case EventKind::disconnected:
@@ -1787,6 +1852,7 @@ private:
     std::uint64_t flag_event_reads_ = 0, flag_event_misses_ = 0, flag_full_reads_ = 0;
 #endif
     CoopScrubTalk::Hold scrub_talk_;  // issue 144: scrub destroy flags wait for our event
+    coop::host::LentKeys lent_keys_;  // dungeon-sync-b (#75): keys lent at another player's lock
     bool scrub_talk_on_ = EnvString("LICHII_COOP_SCRUB_TALK_HOLD") != "0";  // =0: off (the old softlock)
     bool live_events_ = false;     // LICHII_COOP_LIVE_EVENTS=1 (issue 129)
     // Chat notices, on unless LICHII_COOP_NOTIFY=0 (docs/setup.md).
@@ -1985,9 +2051,10 @@ private:
     // scene another player played does not leave our quest behind. Only ever
     // raised. Issue 171: the game's logic reads its ChallengeMgr, not the
     // GameData Enum co-op writes, so Get_StoneOfFire's GameData step (the
-    // Kakariko gate's; only that quest in 0.11: CoopQuest::LiveWant) goes to
-    // the manager too, through the game's setStep (challenges_, a caller on
-    // the calc thread); never while our Link is in an event.
+    // Kakariko gate's) and DoorOfTime's stone steps (issue 60: Zelda's escape
+    // in the field; CoopQuest::LiveWant) go to the manager too, through the
+    // game's setStep (challenges_, a caller on the calc thread); never while
+    // our Link is in an event.
     CoopEvery::Every quest_catch_up_{CoopEvery::kSecondUs};
     CoopQuest::Challenges challenges_;
     void CatchUpQuests(EmulatorMemory& memory, bool in_event) {
@@ -2052,9 +2119,12 @@ private:
 
     // Issue 190 (docs/items.md, "The ocarina"): equips the best held ocarina
     // when PlayerStatus.EquipOcarina is "" (an ocarina from another player)
-    // or the Fairy Ocarina while the Ocarina of Time is held. The String64 is
-    // written straight into its buffer (the game has no queue for it), as the
-    // teleport does. A flag that cannot be read is left alone.
+    // or the Fairy Ocarina while the Ocarina of Time is held. The String64 goes
+    // through the game's own String64 push (GameFlags::set_string64), so the
+    // saved copy changes too: written straight into the live text, it went
+    // back to "" at every scene load, before Link took it out (issue 57,
+    // a player's log: the mend wrote it again after each load). A flag that
+    // cannot be read is left alone.
     void MendOcarina(EmulatorMemory& memory) {
         namespace oc = coop::host::ocarina;
         coop::host::GameFlags flags(memory);
@@ -2077,7 +2147,7 @@ private:
         if (!want) {
             return;
         }
-        if (coop::host::GameFlags::set_string64_now(memory, oc::kEquip, *want)) {
+        if (coop::host::GameFlags::set_string64(memory, oc::kEquip, *want)) {
             LOG_INFO(Core, "coop: items: ocarina '{}' -> '{}' for the held ocarina", *current, *want);
         } else if (!ocarina_mend_failed_logged_) {
             ocarina_mend_failed_logged_ = true;
@@ -2085,6 +2155,48 @@ private:
         }
     }
     bool ocarina_mend_failed_logged_ = false;
+
+    // Issue 58 (docs/items.md, "The letters"). Zelda's Letter: once the
+    // Kakariko guard's Bool is set (by any player; shared story), the guard
+    // never asks for the letter again, so ours is taken out as the guard
+    // takes the shower's. Ruto's Letter: a bottle's contents, per player, so
+    // another player got the bottle empty while King Zora (our own
+    // ChallengeMgr) never moved: while he has not, the letter goes into our
+    // first empty bottle, as the game's own get puts it there. Both through
+    // the game's setters; anything unread is left alone.
+    void MendLetters(EmulatorMemory& memory) {
+        namespace letters = coop::host::letters;
+        coop::host::GameFlags flags(memory);
+        const auto zelda = flags.get_int(letters::kZelda);
+        if (zelda && coop::host::zelda_letter_spent(*zelda, flags.get_bool(letters::kGateOpen)) &&
+            coop::host::GameFlags::set_int(memory, letters::kZelda, 0)) {
+            LOG_INFO(Core, "coop: items: Zelda's Letter {} -> 0: the Kakariko gate is open (issue 58)", *zelda);
+        }
+        const auto live = CoopQuest::LiveStep(
+            [&memory](std::uint64_t a, void* out, std::size_t n) { return ReadGuest(&memory, a, out, n); }, base_,
+            letters::kStoneOfWater);
+        const auto plan = coop::host::ruto_letter_plan(
+            flags.get_bool(letters::kRutoGot), live ? coop::host::king_zora_moved(*live) : std::nullopt,
+            [&](std::uint32_t h) { return flags.get_bool(h); }, [&](std::uint32_t h) { return flags.get_enum(h); });
+        // Each change of why it waits is logged once (the 0.11.2 big run's
+        // letter never came and said nothing about which test held it).
+        if (plan.why != ruto_why_ && plan.why != coop::host::RutoWait::give) {
+            ruto_why_ = plan.why;
+            const std::string step =
+                live ? fmt::format("{:#010x}", *live)
+                     : CoopQuest::LiveDescribe([&memory](std::uint64_t a, void* out,
+                                                         std::size_t n) { return ReadGuest(&memory, a, out, n); },
+                                               base_, letters::kStoneOfWater);
+            LOG_INFO(Core, "coop: items: Ruto's Letter waits: {} (Get_StoneOfWater: {}) (issue 58)",
+                     coop::host::ruto_wait_text(plan.why), step);
+        }
+        if (plan.bottle && coop::host::GameFlags::set_enum(memory, *plan.bottle, letters::kLetter)) {
+            ruto_why_ = plan.why;
+            LOG_INFO(Core, "coop: items: Ruto's Letter into bottle {:#010x}: King Zora has not moved here (issue 58)",
+                     *plan.bottle);
+        }
+    }
+    std::optional<coop::host::RutoWait> ruto_why_;  // issue 58, the last reason logged
 
     // Issue 130 (docs/flags.md, "Story and cutscenes"): raises our own
     // Meet_DekuTree quest to what the shared story says (Mido let someone by:
@@ -2100,7 +2212,9 @@ private:
             LOG_INFO(Core, "coop: story: quest Meet_DekuTree {:#x} -> {:#x} (shared story; issue 130)",
                      *step, *raise);
         }
+        MendStory(memory, mend_since_us_);  // issue 84
     }
+    MendClocks mend_since_us_{};  // CatchUpQuest's (game thread)
 
     // Set by Begin before the network thread starts; the session borrows the
     // client and locks it, so neither is touched directly after that.
@@ -2301,6 +2415,12 @@ void LocalFrameOff(Core::System& system) {
         const auto scene = full ? full->scene : reader.read_scene();
         WatchMapDrops(memory, facts.position.has_value(), scene, facts.position);
         KeepMapsAlone(memory, facts.position.has_value(), scene);
+        static MendClocks mend_since_us{};
+        if (facts.position.has_value()) {
+            MendStory(memory, mend_since_us);  // issue 84: a stuck save, played alone
+        } else {
+            mend_since_us = {};  // the title or a load: nothing to read yet
+        }
     }
     if (!step.Publish(CoopLocalGame::HasSeats())) return;
     if (!full) full = reader.read();   // seats came in this frame's step

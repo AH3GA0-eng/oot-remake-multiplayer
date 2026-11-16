@@ -13,6 +13,7 @@
 #include <array>
 #include <cstdint>
 #include <optional>
+#include <string>
 
 namespace CoopLookView {
 
@@ -31,9 +32,12 @@ struct Shot {
     Vec3 target{};
 };
 
-// The game's vertical field of view, in radians (not read from the game: its
-// camera's projection is not mapped; measured on a screenshot).
+// The game's vertical field of view, in radians, when its camera is not
+// handed over (FovFromClip has none): measured on a screenshot.
 inline constexpr double kFovY = 0.785398;   // 45 degrees
+// The field of view FovFromClip believes: outside it, kFovY.
+inline constexpr double kFovMin = 0.17;   // 10 degrees
+inline constexpr double kFovMax = 2.1;    // 120 degrees
 // One turn around Link, in seconds; the camera a little above his middle.
 inline constexpr double kTurnSeconds = 16.0;
 inline constexpr double kElevation = 0.14;   // radians (8 degrees)
@@ -42,6 +46,13 @@ inline constexpr double kFill = 0.85;
 // Asked for no later than this ago: still the picture (the menu draws at the
 // display's rate, the game frames its camera at its own).
 inline constexpr std::uint64_t kHoldMs = 250;
+
+// The game's vertical field of view from its world-to-clip matrix (row-major,
+// clip = m * p: the camera block Hookshot hands the name tags, CoopCamera).
+// Its y row is the view's up scaled by 1/tan(fov/2), its w row the view's
+// depth axis at scale 1, so the fov is 2 atan(|w| / |y|) (the xyz parts).
+// None for a matrix that is not such a perspective.
+std::optional<double> FovFromClip(const std::array<float, 16>& clip_from_world);
 
 // The shot that shows Link (his feet, his height) in the middle of the
 // window, from `yaw` (the direction from him to the eye, as atan2(x, z): the
@@ -70,14 +81,65 @@ public:
     void Ask(const Window& window, std::uint64_t now_ms);
     bool Asked(std::uint64_t now_ms) const;
     // The game's thread: the shot for now, or none (the game's camera).
+    // `fov_y`: the game's (FovFromClip), else kFovY.
     std::optional<Shot> Camera(const Vec3& game_eye, const Vec3& game_target, const std::optional<Subject>& link,
-                               std::uint64_t now_ms);
+                               std::uint64_t now_ms, double fov_y = kFovY);
 
 private:
     Window window_{};
     std::optional<std::uint64_t> asked_ms_;
     std::optional<std::uint64_t> start_ms_;   // the turn's start; none: no turn
     double start_yaw_ = 0;
+};
+
+// What the page shows, for the log (0.11.1: adult Link got the flat picture
+// where a child got the live one; the log now says which and why).
+enum class Showing : std::uint8_t {
+    live_child,     // the live picture, a child Link
+    live_adult,     // the live picture, an adult Link
+    flat_no_link,   // the flat one: the hook has no Link (no game, scene or place) for longer than Keep::kGapMs
+    live_event,     // the live picture while our own event (a cutscene) runs: the camera still turns around him
+};
+const char* Describe(Showing showing);
+
+// Your own Link as the page last saw him, kept through a short gap (#74: the
+// picture flipped to the flat one for a moment after each scene entry, when
+// the hook had no Link for a frame or two). Not thread-safe: the caller's lock.
+struct Seen {
+    Subject link;
+    Showing showing = Showing::live_child;
+};
+class Keep {
+public:
+    static constexpr std::uint64_t kGapMs = 1500;
+    // This moment's Link (none: the hook has none): him, or the last one seen
+    // no longer than kGapMs ago, or none.
+    std::optional<Seen> Take(const std::optional<Seen>& now, std::uint64_t now_ms);
+
+private:
+    std::optional<Seen> last_;
+    std::uint64_t seen_ms_ = 0;
+};
+
+// One line to the log each time the page's picture changes (and again at
+// each opening of the page), and once when a live picture's camera is never
+// framed (the game's view routine did not ask for it). Not thread-safe: the
+// caller's lock.
+class Watch {
+public:
+    // How long a live picture may go without a framed camera before it is said.
+    static constexpr std::uint64_t kUnframedMs = 2000;
+    // The menu's thread, each drawing of the page: a line to log, or none.
+    std::optional<std::string> Drawn(Showing showing, std::uint64_t now_ms);
+    // The game's thread: the camera was framed around Link.
+    void Framed(std::uint64_t now_ms);
+
+private:
+    std::optional<Showing> last_;
+    std::uint64_t drawn_ms_ = 0;
+    std::uint64_t live_since_ms_ = 0;
+    std::optional<std::uint64_t> framed_ms_;
+    bool told_unframed_ = false;
 };
 
 // The module's one orbit, with your own Link from the co-op hook

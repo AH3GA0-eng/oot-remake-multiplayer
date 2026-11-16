@@ -667,3 +667,54 @@ TEST_CASE("title menu: a refusal's row keeps the part before the first ':'") {
     CHECK(ShortReason("a: b: c") == "a");
     CHECK(RefusedLine("x: y") == "Your friend's game turned this one away: x.");
 }
+
+TEST_CASE("title menu: the voice's microphone in coop-options.ini") {
+    CHECK(Options::Read("", "").voice_mic.empty());
+    Options o = Options::Read("", "LICHII_COOP_VOICE=open\r\nLICHII_COOP_VOICE_MIC=Headset Microphone (USB)\r\n");
+    CHECK(o.voice_mic == "Headset Microphone (USB)");
+    // a name with " #" or " ;" in it is all of the name, not a comment (as the launcher reads the line)
+    CHECK(Options::Read("", "LICHII_COOP_VOICE_MIC=Mic #2 ; left\r\n").voice_mic == "Mic #2 ; left");
+    std::string c, opt;
+    o.voice_mic = "Webcam";
+    o.Write(c, opt);
+    CHECK(IniGet(opt, "LICHII_COOP_VOICE_MIC") == "Webcam");
+    o.voice = false;   // voice off: the microphone is kept for next time
+    o.Write(c, opt);
+    CHECK(IniGet(opt, "LICHII_COOP_VOICE_MIC") == "Webcam");
+    o.voice_mic.clear();   // Default: no line
+    o.Write(c, opt);
+    CHECK_FALSE(IniGet(opt, "LICHII_COOP_VOICE_MIC").has_value());
+    o.voice_mic = "Webcam";
+    bool seen = false;
+    for (const auto& [k, v] : o.Environment()) {
+        seen |= k == "LICHII_COOP_VOICE_MIC" && v == "Webcam";
+    }
+    CHECK(seen);
+}
+
+TEST_CASE("title menu: ParsePort and host port, 1 to 65535, read and written") {
+    CHECK(ParsePort("27510") == std::uint16_t{27510});
+    CHECK(ParsePort(" 1 ") == std::uint16_t{1});
+    CHECK(ParsePort("65535") == std::uint16_t{65535});
+    CHECK_FALSE(ParsePort("").has_value());
+    CHECK_FALSE(ParsePort("0").has_value());
+    CHECK_FALSE(ParsePort("65536").has_value());
+    CHECK_FALSE(ParsePort("27510a").has_value());
+    CHECK(AddressOk("192.168.1.50:28000"));
+    CHECK_FALSE(AddressOk("192.168.1.50: 28000"));
+
+    CHECK(Options::Read("", "").host_port == kDefaultPort);
+    CHECK(Options::Read("host_port = 28000\r\n", "").host_port == 28000);
+    CHECK(Options::Read("host_port = 28000\r\n", "server_port = 29000\r\n").host_port == 29000);
+    CHECK(Options::Read("", "server_port = 99999\r\n").host_port == kDefaultPort);
+
+    Options o;
+    o.host_port = 28123;
+    std::string coop, opt = "# server_port = 27510\r\n";
+    o.Write(coop, opt);
+    CHECK(IniGet(opt, "server_port") == "28123");
+    CHECK(Options::Read("", opt).host_port == 28123);
+    o.host_port = kDefaultPort;
+    o.Write(coop, opt);
+    CHECK_FALSE(IniGet(opt, "server_port").has_value());
+}
