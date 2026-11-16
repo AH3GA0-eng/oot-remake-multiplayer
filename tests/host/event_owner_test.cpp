@@ -91,11 +91,21 @@ TEST_CASE("event owner: a mark too old, or a request of the game's own after it,
 TEST_CASE("event owner: the revive and PvP rules (G1 review)") {
   // DBNO revive waits in our own event and the Ocarina (our Link is held by the game's event),
   // not in another player's event replayed here (our Link walks freely). PvP: our Link's event only.
-  const auto revive_waits = [](bool running, EventWhose w) { return running && w != EventWhose::others; };
-  CHECK(revive_waits(true, EventWhose::ours));
-  CHECK(revive_waits(true, EventWhose::ocarina));
-  CHECK_FALSE(revive_waits(true, EventWhose::others));
+  // The Reviver's gate is event_blocks_revive (coop_dbno_game.cpp), tested here as it runs.
+  CHECK(event_blocks_revive(true, EventWhose::ours));
+  CHECK(event_blocks_revive(true, EventWhose::ocarina));  // the free Ocarina keeps its A button
+  CHECK_FALSE(event_blocks_revive(true, EventWhose::others));
+  CHECK_FALSE(event_blocks_revive(false, EventWhose::ours));
   CHECK_FALSE(our_link_in_event(true, EventWhose::ocarina));  // PvP: hittable while playing
+}
+
+TEST_CASE("event owner: a downed Link's body follows only our Link's own event (down-crawl + G1)") {
+  // body.event (coop_dbno_game.cpp) = our_link_in_event: our own event drives the downed body;
+  // another player's replay and our free Ocarina leave it crawling.
+  CHECK(our_link_in_event(true, EventWhose::ours));
+  CHECK_FALSE(our_link_in_event(true, EventWhose::others));
+  CHECK_FALSE(our_link_in_event(true, EventWhose::ocarina));
+  CHECK_FALSE(our_link_in_event(false, EventWhose::ours));
 }
 
 TEST_CASE("event owner: issue 86, the free Ocarina's take-out holds and hides nobody") {

@@ -25,7 +25,9 @@
 //     Only `ours` also claims them from their owner (hands them over): a
 //     replay of another player's event leaves them with that player.
 //   - "The game is busy" (no second event asked, no quest catch-up, no time
-//     nudge, no revive): any kind (event_in_our_game).
+//     nudge): any kind (event_in_our_game).
+//   - No revive (event_blocks_revive): ours or ocarina: a revive asks no event; a replay
+//     leaves our Link free.
 #pragma once
 
 #include <cstdint>
@@ -63,6 +65,13 @@ inline bool our_link_in_event(bool event_running, EventWhose whose) {
 
 // The game runs an event of any kind: the "game busy" sites and the event's own actors here.
 inline bool event_in_our_game(bool event_running) { return event_running; }
+
+// The Reviver (coop_dbno_game.cpp) takes no revive while an event holds our Link or our hands:
+// our own event, or our free Ocarina (its A button stays the Ocarina's). Another player's event
+// replayed here leaves our Link free, so it may revive.
+inline bool event_blocks_revive(bool event_running, EventWhose whose) {
+  return event_running && whose != EventWhose::others;
+}
 
 // local_event_hides with the owner: only our own event hides the others (not another player's
 // replayed here, not the Ocarina by its event or by our Link's animation).
