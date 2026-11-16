@@ -3,7 +3,11 @@
 // set through the game's set-bool, so our room's asker asks the event itself.
 #include <doctest/doctest.h>
 
+#include <algorithm>
+#include <cmath>
 #include <map>
+#include <optional>
+#include <set>
 
 #include "coop/protocol/codec.hpp"
 #include "coop_eye_switch.h"
@@ -77,17 +81,31 @@ struct World {
     std::uint64_t asker = kAsker;
     std::vector<std::uint64_t> eyes{kEye};
     std::vector<std::string> asked;  // the names looked for
+    struct Look {
+        std::string name;
+        std::array<float, 3> at;
+        float max_m;
+    };
+    std::vector<Look> looks;  // where
+    // The asker only at this place (unset: everywhere).
+    std::optional<std::array<float, 3>> asker_only_at;
     CoopEyeSwitch::Finder Finder() {
         return [this](CoopPuppet::Guest&, std::uint64_t, std::span<const std::string_view> names,
-                      const std::array<float, 3>&, float) {
+                      const std::array<float, 3>& at, float max_m) {
             asked.emplace_back(names.front());
+            looks.push_back({std::string(names.front()), at, max_m});
             if (names.front() == "EventRequestActor") {
-                return asker ? std::vector<std::uint64_t>{asker} : std::vector<std::uint64_t>{};
+                const bool here = asker != 0 && (!asker_only_at || *asker_only_at == at);
+                return here ? std::vector<std::uint64_t>{asker} : std::vector<std::uint64_t>{};
             }
             return eyes;
         };
     }
 };
+
+float Dist(const std::array<float, 3>& v, float x, float y, float z) {
+    return std::sqrt((v[0] - x) * (v[0] - x) + (v[1] - y) * (v[1] - y) + (v[2] - z) * (v[2] - z));
+}
 
 }  // namespace
 
@@ -96,11 +114,23 @@ TEST_CASE("eye switch: the table, its places and FirstOn's key") {
     CHECK(CoopEyeSwitch::Find(kLadder, kDeku) != nullptr);
     CHECK(CoopEyeSwitch::Find(kLadder, "DodongoCavern") == nullptr);
     CHECK(CoopEyeSwitch::Find("InsideTheDekuTree_Gimmick_RoomD_PlatformUp", kDeku) == nullptr);  // a plate, not an eye
-    for (const auto& s : CoopEyeSwitch::Switches()) {  // each has a place: its asker is found there
+    CHECK(CoopEyeSwitch::Find("FocusOnGimmick_Basic", "DodongoCavern") == nullptr);  // the fire-wall eyes' own graphs
+    // deku-ladder: every room of the romfs whose asker an eye's FirstOn starts (tools/puppet_pack/eye_switches.py).
+    CHECK(CoopEyeSwitch::Switches().size() == 16);
+    std::set<std::string_view> scenes;
+    for (const auto& s : CoopEyeSwitch::Switches()) {
+        scenes.insert(s.scene);
+        CHECK(s.eye.starts_with("Obj_EyeSwitch_"));
+        // Its asker stands at one of the event's live places (the decider starts it there), and its eye is nearby.
         const auto places = CoopLiveEvents::Places();
-        CHECK(std::any_of(places.begin(), places.end(),
-                          [&](const CoopLiveEvents::Place& pl) { return pl.event == s.event && pl.scene == s.scene; }));
+        CHECK(std::any_of(places.begin(), places.end(), [&](const CoopLiveEvents::Place& pl) {
+            return pl.event == s.event && pl.scene == s.scene && Dist(s.asker_at, pl.x, pl.y, pl.z) < 0.2f;
+        }));
+        CHECK(Dist(s.eye_at, s.asker_at[0], s.asker_at[1], s.asker_at[2]) < 30.0f);
     }
+    CHECK(scenes.size() == 8);
+    CHECK(CoopEyeSwitch::FindAll("WaterTemple_EyeSwitch_Focus", "WaterTemple").size() == 2);
+    CHECK(CoopEyeSwitch::FindAll("DodongoCavern_Gimmick_EyeSwitch", "DodongoCavern").size() == 1);  // one eye, not three
     CHECK(CoopEyeSwitch::OnFromEnv("1"));
     CHECK_FALSE(CoopEyeSwitch::OnFromEnv(""));
     CHECK_FALSE(CoopEyeSwitch::OnFromEnv("0"));
@@ -228,21 +258,35 @@ TEST_CASE("eye switch: our own shot, no asker, no eye, an event running, another
     }
 }
 
-TEST_CASE("eye switch: Dodongo's Cavern sets each of its eyes, the Deku Tree only the nearest") {
+namespace {
+std::uint64_t NodeActor(FakeGuest& g) {
+    return g.Get<std::uint64_t>(g.Get<std::uint64_t>(g.Get<std::uint64_t>(kBlock + a::kNodeOwner) + 8) +
+                                a::kHolderActor);
+}
+}  // namespace
+
+TEST_CASE("eye switch: only the eye its asker links to, at its placement (Dodongo's Cavern's fire-wall eyes stay)") {
+    // deku-ladder: the old table set every A_05 eye within 25 m in Dodongo's Cavern; two of them start the fire-wall
+    // graphs (FocusOnGimmick_Basic), so our walls went out. Now the eye is looked for at its own placement only.
     FakeGuest g;
     World w;
-    w.eyes = {kEye, kEye2};
+    w.eyes = {kEye, kEye2};  // a finder that (wrongly) gives two: only the first is ever used
     Eye(g, kEye);
     Eye(g, kEye2);
     CoopEyeSwitch::Switcher dc(w.Finder());
     REQUIRE(dc.Want("DodongoCavern_Gimmick_EyeSwitch", "DodongoCavern"));
     dc.Step(g, false, 0, kMain, 100);
     REQUIRE(dc.Step(g, true, kBlock, kMain, 100));
-    g.Put<std::uint8_t>(kEye + 0x1000 + 0x5000, 1);  // the first latched
+    CHECK(NodeActor(g) == kEye);
+    const auto& look = w.looks.back();
+    CHECK(look.name == "Obj_EyeSwitch_A_05");
+    CHECK(look.at == std::array<float, 3>{80.5f, 121.0f, -6.6f});
+    CHECK(look.max_m == CoopEyeSwitch::kEyeAtM);
+    g.Put<std::uint8_t>(kEye + 0x1000 + 0x5000, 1);  // it latched
     dc.Step(g, true, 0, kMain, 100);
-    REQUIRE(dc.Step(g, false, 0, kMain, 116));
-    CHECK(g.Get<std::uint64_t>(g.Get<std::uint64_t>(g.Get<std::uint64_t>(kBlock + a::kNodeOwner) + 8) +
-                               a::kHolderActor) == kEye2);
+    CHECK_FALSE(dc.Step(g, false, 0, kMain, 116));  // waits for the asker; the other eye never set
+    CHECK_FALSE(dc.Step(g, false, 0, kMain, 132));
+    CHECK(FirstOn(g, kEye2) == 0);
 
     FakeGuest g2;
     Eye(g2, kEye, 1);
@@ -250,6 +294,54 @@ TEST_CASE("eye switch: Dodongo's Cavern sets each of its eyes, the Deku Tree onl
     CoopEyeSwitch::Switcher deku(w.Finder());
     REQUIRE(deku.Want(kLadder, kDeku));
     deku.Step(g2, false, 0, kMain, 100);
-    CHECK_FALSE(deku.Step(g2, true, kBlock, kMain, 100));  // the nearest is on: our own shot; the far one untouched
+    CHECK_FALSE(deku.Step(g2, true, kBlock, kMain, 100));  // ours is on: our own shot; nothing else touched
     CHECK(deku.TakeNotes().back().find("already") != std::string::npos);
+    CHECK(FirstOn(g2, kEye2) == 0);
+}
+
+TEST_CASE("eye switch: the Water Temple's two rooms of one event: the one whose asker is here, nearest our Link") {
+    const std::array<float, 3> room00_eye{-4.5f, 116.6f, -26.3f}, room00_asker{0.7f, 116.1f, -29.3f};
+    const std::array<float, 3> room21_eye{-33.2f, 115.8f, -40.2f}, room21_asker{-33.5f, 118.9f, -40.7f};
+    const std::string water = "WaterTemple", focus = "WaterTemple_EyeSwitch_Focus";
+    SUBCASE("both askers loaded: Link's room") {
+        FakeGuest g;
+        World w;
+        Eye(g, kEye);
+        CoopEyeSwitch::Switcher s(w.Finder());
+        REQUIRE(s.Want(focus, water, std::array<float, 3>{-30.0f, 116.0f, -38.0f}));  // Link in room 21
+        s.Step(g, false, 0, kMain, 100);
+        REQUIRE(s.Step(g, true, kBlock, kMain, 100));
+        CHECK(w.looks.front().at == room21_asker);
+        CHECK(w.looks.back().at == room21_eye);
+    }
+    SUBCASE("Link nearer room 00, but only room 21's asker is loaded") {
+        FakeGuest g;
+        World w;
+        w.asker_only_at = room21_asker;
+        Eye(g, kEye);
+        CoopEyeSwitch::Switcher s(w.Finder());
+        REQUIRE(s.Want(focus, water, std::array<float, 3>{0.0f, 116.0f, -28.0f}));
+        s.Step(g, false, 0, kMain, 100);
+        REQUIRE(s.Step(g, true, kBlock, kMain, 100));
+        CHECK(w.looks[0].at == room00_asker);  // tried first, not here
+        CHECK(w.looks[1].at == room21_asker);
+        CHECK(w.looks.back().at == room21_eye);
+    }
+    (void)room00_eye;
+}
+
+TEST_CASE("eye switch: dropped once our game has the event played (our asker ran it)") {
+    FakeGuest g;
+    World w;
+    Eye(g, kEye);
+    CoopEyeSwitch::Switcher s(w.Finder());
+    REQUIRE(s.Want(kLadder, kDeku));
+    s.Expire(kDeku, [](const std::string&) { return false; });
+    s.Expire(kDeku, nullptr);  // no flags read: kept
+    s.Expire(kDeku, [&](const std::string& n) { return n == kLadder; });
+    s.Step(g, false, 0, kMain, 100);
+    CHECK_FALSE(s.Step(g, true, kBlock, kMain, 100));
+    CHECK(FirstOn(g, kEye) == 0);
+    CHECK(s.TakeFallbacks().empty());
+    CHECK(s.TakeNotes().front().find("has it played") != std::string::npos);
 }
