@@ -2419,8 +2419,10 @@ void Sync::HoldEncounters(std::uint64_t now_us) {
     // by distance comes in that time, and then takes the id: no copy).
     for (auto it = held_.begin(); it != held_.end();) {
         Held& h = it->second;
+        // A dying one (its kill, or its copy's, in the grace before the delete)
+        // is not ours any more: a respawn announced meanwhile still gets a copy.
         const bool ours = std::any_of(objects_.begin(), objects_.end(),
-                                      [&](const auto& e) { return e.second.id == it->first; });
+                                      [&](const auto& e) { return e.second.id == it->first && e.second.dead_at == 0; });
         if (ours || now_us - h.heard_us > kEncounterStaleUs) {
             it = held_.erase(it);  // ours came, or its owner left or unloaded it
             continue;

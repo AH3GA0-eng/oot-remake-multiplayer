@@ -2288,6 +2288,35 @@ TEST_CASE("objects: report 99 re-review, a new spawn after a copy was killed her
     for (const auto& w : own.writes) CHECK_FALSE((w.address == 0x970 && w.life == 0));
     REQUIRE(g.IdOf(0x970));
     CHECK(*g.IdOf(0x970) == id);
+
+    // Review nit: the respawn is announced while the killed copy is still
+    // dying here (inside the delete grace): a new copy all the same.
+    Sync h;
+    h.SetHurt(true);
+    h.SetPlayer(proto::Vec3{25.0f, 0.0f, 0.0f});
+    Tick(h, 0, {}, 2);
+    h.Receive(relayed);
+    Tick(h, 8300 * kMs, {}, 2);
+    Tick(h, 8400 * kMs, {}, 2);
+    Tick(h, 8400 * kMs + kEncounterWaitUs, {}, 2);
+    REQUIRE(h.Creates().size() == 1);
+    const auto dying = h.Creates()[0].key;
+    h.Bind({{dying, 0x900}});
+    Tick(h, 10000 * kMs, {Enemy(0x900, ~0ULL, 4, 23.0f, kThief)}, 2);
+    h.Receive(proto::ObjectRemove{1, id, 0, proto::RemoveReason::dead, {}});
+    h.Bind({{dying, 0x900}});
+    Tick(h, 10100 * kMs, {Enemy(0x900, ~0ULL, 0, 23.0f, kThief)}, 2);
+    // Still on our walk, dying, when the respawn comes.
+    h.Receive(relayed);
+    h.Bind({{dying, 0x900}});
+    Tick(h, 10200 * kMs, {Enemy(0x900, ~0ULL, 0, 23.0f, kThief)}, 2);
+    h.Bind({{dying, 0x900}});
+    Tick(h, 10300 * kMs, {Enemy(0x900, ~0ULL, 0, 23.0f, kThief)}, 2);
+    h.Bind({{dying, 0x900}});
+    Tick(h, 10300 * kMs + kEncounterWaitUs, {Enemy(0x900, ~0ULL, 0, 23.0f, kThief)}, 2);
+    std::size_t fresh = 0;
+    for (const auto& cr : h.Creates()) fresh += (!cr.removed && cr.key != dying) ? 1 : 0;
+    CHECK(fresh == 1);
 }
 
 TEST_CASE("objects: a hurt carries the hitter's place, an animal's life is written") {
