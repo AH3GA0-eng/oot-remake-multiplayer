@@ -131,6 +131,19 @@ TEST_CASE("dungeon: one player's failed or reset attempt is not shared (issue 14
     CHECK(names.count("InsideTheDekuTree_Dungeon_EnemyScrubDekuDestroy_003") == 1);
 }
 
+TEST_CASE("dungeon: where one player's Link stands in the Forest Temple is not shared (player report 108)") {
+    // Set true and false by a room graph's Player-layer areas, read only by
+    // that player's own event (the Song of Time block's, the fall-down one).
+    std::set<std::string> names;
+    for (const auto& f : CoopDungeon::Flags()) names.insert(f.name);
+    for (const char* out : {"ForestTemple_IsLeftOfTimeBLock", "ForestTemple_IsInFallingCeilingRoom"}) {
+        CHECK_MESSAGE(names.count(out) == 0, out);
+    }
+    // The block gone stays the group's: every game's room graph reads it live.
+    CHECK(names.count("Foresttemple_SongOfTimeBlock_A_01_Disappearance") == 1);
+    CHECK(names.count("ForestTemple_Room02_TimeBlock") == 1);
+}
+
 TEST_CASE("dungeon: Merge adds to the list, makes one when there is none, or does nothing when off") {
     std::optional<host::SharedFlags> none;
     CHECK(CoopDungeon::Merge(none, false) == 0);

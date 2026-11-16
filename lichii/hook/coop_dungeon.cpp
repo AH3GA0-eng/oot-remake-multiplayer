@@ -54,6 +54,16 @@ constexpr std::array<std::string_view, 6> kNotShared{
 // them out cannot strand a switch. The solve itself
 // (InsideTheDekuTree_RoomK_Cleared, ..._EnemyScrubDekuDestroy_003) is shared,
 // and so are _001/_002 (each set once when a lone scrub is beaten).
+// Also left out (forest-temple-b, player report #108): where ONE player's Link
+// stands. Each is set true and false by its room graph's two Player-layer
+// areas and read only by that player's own event, by no room graph:
+//   ForestTemple_IsLeftOfTimeBLock (Room 02's Song of Time block, and the Fire
+//     Temple Room 11 and Hiding Hole 23 copies of that graph; read by the
+//     block's song event, Event/EventFlow/ForestTemple_Gimmick),
+//   ForestTemple_IsInFallingCeilingRoom (Room 15; read by DmF_SY_FallDown).
+// Shared, another player's event would take our Link's side or room. The
+// block's own state (Foresttemple_SongOfTimeBlock_A_01_Disappearance, read by
+// HoldGameDataGetBoolSimple with UpdateOnce false, so live) stays shared.
 constexpr std::array kFlags = std::to_array<Flag>({
     {0xfff1ad87, false, "BottomOfTheWell_BubbleAppear"},
     {0x0b5b3b0c, false, "BottomOfTheWell_CoffinRoomCheck"},
@@ -207,8 +217,6 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xaeac59d4, false, "ForestTemple_Ghost_Appear_Block"},
     {0x5a9f90e7, false, "ForestTemple_HidingHole23_TimeBlockOFF"},
     {0x6dc517d4, false, "ForestTemple_InRoom11_AfterGetBow"},
-    {0xece4e747, false, "ForestTemple_IsInFallingCeilingRoom"},
-    {0xaa70c440, false, "ForestTemple_IsLeftOfTimeBLock"},
     {0x24e06e44, false, "ForestTemple_Level_Room_06_PressedEyeball"},
     {0xaa9dc048, false, "ForestTemple_Level_Room_08_IN"},
     {0xf07bad26, false, "ForestTemple_Level_Room_21_Clear"},
