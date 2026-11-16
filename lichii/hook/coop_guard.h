@@ -2,9 +2,10 @@
 //
 // When a shared change must wait (issue 144). One rule for everything another game does to an
 // actor of ours (a kill, a remove, a new place, a played animation): never while our own Link
-// is in an event (a talk, a cutscene) with that actor. Which actor the event is with is not
-// read, so every actor within kEventNearM of our Link waits while an event runs, and the
-// change is made right after the event ends.
+// is in an event (a talk, a cutscene) with that actor. Every actor within kEventNearM of our
+// Link waits while an event runs, and so does every actor the event is with at any distance
+// (Local::partner, row 97: the Sync's event partners, coop_event_member.h); the change is
+// made right after the event ends.
 //
 // Seen in a player test: B beat a Deku Scrub and was in its talk; A beat the same scrub in A's game; the
 // kill reached B's scrub during B's talk and B's event waited on an actor that was gone, until
@@ -54,6 +55,9 @@ inline bool Near(const std::optional<Vec3>& link, const std::optional<Vec3>& at,
 struct Local {
     bool in_event = false;
     std::optional<Vec3> link;
+    // Row 97: whether the actor at an address is one our running event is with
+    // (Sync::EventPartner), wherever it stands; empty: none known.
+    std::function<bool(std::uint64_t address)> partner{};
 };
 
 // True when a shared change to an actor at `at` must wait now. An actor whose place is not
@@ -66,6 +70,14 @@ inline bool Waits(const Local& local, const std::optional<Vec3>& at) {
         return true;
     }
     return !local.link || Near(local.link, at, kEventNearM);
+}
+
+// Waits, for the actor at `address`: also when our event is with it, however far (row 97).
+inline bool WaitsFor(const Local& local, std::uint64_t address, const std::optional<Vec3>& at) {
+    if (!local.in_event) {
+        return false;
+    }
+    return (local.partner && local.partner(address)) || Waits(local, at);
 }
 
 // Who an actor at an address is, for Held: its placement hash, its name and the object id the
@@ -143,7 +155,7 @@ public:
             order_.clear();
         }
         for (auto& c : now) {
-            if (Waits(local, where(c.address))) {
+            if (WaitsFor(local, c.address, where(c.address))) {
                 const std::uint64_t address = c.address;
                 const auto found = held_.find(address);
                 if (found == held_.end()) {
@@ -200,7 +212,7 @@ std::size_t Skip(std::vector<Change>& changes, const Local& local,
         if (never_waits && never_waits(a)) {
             return false;
         }
-        return Waits(local, where(a));
+        return WaitsFor(local, a, where(a));
     });
     return before - changes.size();
 }

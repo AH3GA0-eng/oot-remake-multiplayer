@@ -430,14 +430,29 @@ The server's per-player limits (60 a second on channels 0 to 2, 240 on 3 and 4) 
 
 A player test: while one player was in a cutscene, the others saw the cutscene's NPCs walk their normal routine. Townspeople (`Npc_`) were already shared, but with whichever game the server picked; the game in the cutscene kept its own NPCs for itself (the 8 m rule below), so the others copied the owner's routine instead.
 
-The rule (`Sync::SetEvent`, `Sync::EventNpc`): the NPCs are synced, not the cutscene. Players outside a cutscene keep playing.
+The rule (`Sync::SetEvent`, `Sync::EventPartner`): the NPCs are synced, not the cutscene. Players outside a cutscene keep playing.
 - While our Link is in an event (a cutscene or a talk, `event_running`), every shared townsperson within 30 m of Link (`Sync::kEventNpcM`) is flagged targeting in `OBJECT_PRESENT`. The server gives a copy flagged so to us after 0.5 s (`handover_chased_us`); one we own already is held (a fight lock). From then on every other game's copy plays our NPC's motion: place, rotation, AS command and frame, smoothly, as any shared object.
 - Until the hand-over lands, the owner's routine is not put on our claimed copies (no place, play or remove), also beyond the 8 m event rule.
-- 2 s after the event (`kEventNpcKeepUs`) the flag drops; the fight lock (12 s) then the normal distance rule decide the owner again. The copies stay where our NPC was left, or follow its routine back.
+- 2 s after the event (`kEventKeepUs`) the flag drops; the fight lock (12 s) then the normal distance rule decide the owner again. The copies stay where our NPC was left, or follow its routine back.
 - NPCs no player is in an event with stay as before. No new message; types 390 to 394, claimed for this branch, are not used.
 - Logs: `coop: npc-anim: our Link is in an event: N NPCs near it claimed`, `M of the N claimed NPCs are ours now` (each time the hand-over count changes: the claim is only a wish, the server may hand them over 0.5 s later or keep one in another game's fight lock) and `the event's NPCs are free again` on the game in the event; on the others `coop: npc-anim: <name> copied from P<n> at x y z plays '<anim>' frame f` when an NPC copy's owner changes, and once a second for each NPC copy with `LICHII_COOP_DEBUG_NPC=1`. Autotest: `tools/autotest/scenarios/npc-anim.A.txt`: A talks to Dampe in the Graveyard (he walks his rounds; in the talk he stops and turns to A) after B, standing by him, owns him by the distance rule; B's owner of him must go P2 to P1 right after A's `talk` mark.
 - Side effect, not fixed: any event (a signpost, a chest, a shop talk) claims every townsperson within 30 m, not just the ones it moves. If B starts its own talk within 30 m of A's cutscene NPCs, B also drops the owner's wishes for them while its event runs (A keeps them by the fight lock), so B sees them on B's own routine until its talk ends.
 - Not known: whether a story cutscene makes its own NPC actors (no placement hash) instead of moving the placed ones. Those would not be shared at all, and would need the spawn sync.
+
+### Every actor the event is with (row 97, branch `event-copy`)
+
+A player's log (Mr. Shorty, 0.11.1, Deku Tree): his Link was held in an event for 15 minutes. Both Deku Scrubs of that room were copies owned by a player who had moved on; the copies played the owner's `Sleep`, put on them every frame by the Mover, because the 8 m rule (`coop_guard.h`) only kept back actors near our Link and the claim above only took townspeople. An event that waits on an actor further away (a scrub's entrance or talk, a shopkeeper, a story event's actor, a mini-game's) then waited for good. The root cause is the same for every kind of event: a copy the event uses kept getting its owner's motion.
+
+The rule now (`Sync::EventPartner`, `Sync::EventPartnerWhy`): while our Link is in an event, a shared actor is our event's partner when
+- the event binds it (`coop_event_member.h`): its own event performer (`[[actor + 0x270] + 0x88]`, or `+ 0x90`, whose `+0x10` is the actor) holds an event link at `+0x18`. The deku-sync-fix probe runs read that word go from 0 to the event's link (with 1 at `+0x20` and state 3 at `+0x28`) at the event's start and back to 0 at its end. Any distance, any kind of actor;
+- or its performer is not one we know and its own AI asked for another animation than its owner's since the event began (the Mover's put-back, `NoteTakeover`), within 30 m;
+- or it is a townsperson within 30 m (issue 200, as above).
+
+Not bosses: `CoopBossNative::SetEvent` already lets a boss copy run its own changes while our event runs, and the fight keeps its owner. Not fish (the lure rules, issue 151). The own-AI rule is only for actors with an AI of their own (enemies, guards, townspeople), never a world object another game moves (issue 194).
+
+A partner is claimed exactly as the townspeople are: flagged targeting so the server hands it to us, the owner's place, animation and remove are not put on it, and a kill or hurt from another game waits for the event's end (`CoopGuard::Local::partner`). 2 s after the event (`Sync::kEventKeepUs`) the normal owner rules come back.
+
+Logs (`coop: event:`): `our Link's event began: <event> kind <k> (<n> in the session); names seen: ...` (the kind: 0 flowchart, 1 timeline, 2 movie; the names are the name-like strings the event points at, since the event's name is not mapped), `the actors our event is with: <name> <address> (owner P<n>, bound by the event | its own AI acts | townsperson, <m> m); ...` on each change, `our Link is still in its event after <s> s (<n> actors claimed)` every 30 s, and `our Link's event ended after <s> s`. The `npc-anim` lines now count actors, not only NPCs.
 
 ## Walking townspeople (branch `npc-anim-2`, `coop_npc_anim.h`)
 
