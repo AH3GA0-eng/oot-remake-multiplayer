@@ -87,6 +87,7 @@
 #include "core/loader/loader.h"
 #include "core/memory.h"
 #include "coop/host/game_flags.hpp"
+#include "coop/host/game_items.hpp"
 #include "coop/host/session.hpp"
 #include "coop/net/client.hpp"
 #include "coop_objects_sync.h"
@@ -1461,6 +1462,36 @@ public:
             sync_.SetUnready(g_unready);
         }
         sync_.Tick(*scene, self, server_now_us, seen, send, writes);
+        // A Gold Skulltula whose key this save already holds is not made again
+        // (issue 89, 2026-11-16). The game reads a placement's key once, when
+        // the scene's actors are made, and never looks again, so a key that
+        // came in from another game after the scene loaded does not take the
+        // actor away (docs/items.md, "the loaded Skulltula stays"): the
+        // Skulltula stayed on the wall, and in a game that never saw the other
+        // player it came back after every reload. The keys are fed to the same
+        // "taken elsewhere" path a pickup takes, so an actor the game made for
+        // an already-true key is deleted as the next walk sees it, whatever
+        // wrote the key. Once a scene, after the scene's first Tick (that Tick
+        // resets the sync, which would drop takes queued before it).
+        if (*scene != keys_scene_ && main_ != 0) {
+            keys_scene_ = *scene;
+            CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main_);
+            coop::host::GameFlags flags(memory);
+            std::size_t took = 0;
+            for (const std::uint64_t key : coop::host::gold_skulltula_keys()) {
+                // A placement is its key and key + 2 (docs/items.md).
+                if (flags.get_key64(key).value_or(false) ||
+                    flags.get_key64(key + 2).value_or(false)) {
+                    sync_.Take(key);
+                    sync_.Take(key + 2);
+                    ++took;
+                }
+            }
+            if (took != 0) {
+                LOG_INFO(Core, "coop: objects: {} Gold Skulltulas this save has taken are left out of {}",
+                         took, *scene);
+            }
+        }
         if (const unsigned twice = sync_.ChestsOpenedTwice(); twice != chests_twice_seen_) {
             // Issue 195: a chest shown open that our Link opened again; the
             // flag watcher takes back its content's count (TakeChestsOpenedTwice).
@@ -3812,6 +3843,9 @@ private:
     CoopDifficulty::Extras extras_{CoopDifficulty::AreaOf, SpecialForExtras};
     CoopDifficulty::Horde horde_;    // difficulty: the night horde we made beside our own rolls
     u64 share_now_us_ = 0;  // this Share's server time (WriteLife)
+    // The scene the save's Gold Skulltula keys were fed for (issue 89, Share's
+    // key scan): a scene's actors are made once, so one scan a scene is enough.
+    std::string keys_scene_;
     Sync sync_;
     Kernel::KProcess* process_ = nullptr;
     u64 main_ = 0;
