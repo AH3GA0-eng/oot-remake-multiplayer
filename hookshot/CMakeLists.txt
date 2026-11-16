@@ -71,10 +71,15 @@ if(MSVC)
   target_compile_options(hookshot_coop PRIVATE /wd4456 /wd4457 /wd4458 /wd4459 /bigobj)
 endif()
 
-execute_process(COMMAND git -C "${CMAKE_CURRENT_SOURCE_DIR}/.." describe --tags --always --dirty
-    OUTPUT_VARIABLE _coop_version OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-if(NOT _coop_version)
-  set(_coop_version "unknown")
-endif()
-set_property(SOURCE "${_coop_hook}/coop_hook.cpp" APPEND PROPERTY
-    COMPILE_DEFINITIONS "LICHII_COOP_VERSION=\"hookshot ${_coop_version}\"")
+# The co-op commit for the log, from git describe on every build (cmake/coop_version.cmake;
+# a configure-time string went stale: 0.11.3's module said v0.11.2-18-gab129f5b).
+set(_coop_version_dir "${CMAKE_CURRENT_BINARY_DIR}/coop_version")
+add_custom_target(coop_version_hookshot ALL
+  COMMAND "${CMAKE_COMMAND}" "-DCOOP_GIT_DIR=${CMAKE_CURRENT_SOURCE_DIR}/.." "-DCOOP_VERSION_PREFIX=hookshot"
+          "-DCOOP_VERSION_OUT=${_coop_version_dir}/coop_version.h"
+          -P "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/coop_version.cmake"
+  BYPRODUCTS "${_coop_version_dir}/coop_version.h"
+  COMMENT "co-op version (git describe)"
+  VERBATIM)
+add_dependencies(hookshot_coop coop_version_hookshot)
+target_include_directories(hookshot_coop PRIVATE "${_coop_version_dir}")
