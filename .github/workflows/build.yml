@@ -88,6 +88,8 @@ jobs:
       - name: Kit patch applier tests
         if: hashFiles('tools/release/tests/test_apply_patch.py') != ''
         run: python tools/release/tests/test_apply_patch.py -v
+      - name: Kit Discord status tests
+        run: python tools/release/tests/test_discord_status.py -v
       - name: Puppet pack command lines
         run: |
           python tools/puppet_pack/build.py --help

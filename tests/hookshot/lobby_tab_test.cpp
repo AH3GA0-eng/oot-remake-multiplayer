@@ -277,3 +277,15 @@ TEST_CASE("lobby tab: in the session before a file is loaded, the players show w
         CHECK_FALSE(Has(t.view(), "Load your file to play: the others see you once you do."));
     }
 }
+
+TEST_CASE("Lobby tab: the Discord status line is Solo with co-op idle and the count in a session") {
+    CHECK(DiscordState(false, 0) == "Solo");
+    CHECK(DiscordState(false, 3) == "Solo");   // still starting: not in the session yet
+    CHECK(DiscordState(true, 1) == "Co-op: 1 player");
+    CHECK(DiscordState(true, 3) == "Co-op: 3 players");
+    // The patch's checks (host/discord_rpc.c valid_text): 2 to 127 bytes, no control character.
+    for (const std::string& s : {DiscordState(false, 0), DiscordState(true, 1), DiscordState(true, 255)}) {
+        CHECK(s.size() >= 2);
+        CHECK(s.size() <= 127);
+    }
+}
