@@ -683,6 +683,8 @@ public:
     // not take (its owner's killing hit, refused outside Gohma's weak point) is given to its Life step as its
     // life after the wait, as for any other enemy: its death plays out here (CoopBossNative lets it die).
     void SetDying(std::vector<std::string> names) { dying_ = std::move(names); }
+    // Dying copy bosses whose owner said dead, given their remaining life once (review-boss-0114).
+    unsigned DyingFinished() const { return dying_finished_; }
     static constexpr float kWakeM = 10.0f;
     // Issue 157: the Mover puts the owner's animation back on the very next
     // game frame, so a copy whose AI asks for its wake animation once (a
@@ -922,6 +924,7 @@ private:
         int resent = 0;
         std::uint64_t dead_at = 0;
         bool owner_life_zero = false;  // its owner's samples said life 0 (OwnerSaysDead)
+        bool death_given = false;      // a dying copy boss's remaining life went to its own Life step (once)
         bool dead_now = false;  // a kill from before we came: deleted at once
         // enemy-sync-3 (issue 133): our enemy, killed by another game's hit
         // that our game did not take, already said dead (OBJECT_REMOVE).
@@ -1157,6 +1160,7 @@ private:
     bool wake_ = true;
     std::vector<std::string> unready_;
     std::vector<std::string> dying_;  // SetDying
+    unsigned dying_finished_ = 0;     // DyingFinished
     std::size_t hurt_taken_ = 0;   // hurts the game took as asked
     std::size_t hurt_late_ = 0;    // late falls put back
     std::size_t hurt_missed_ = 0;  // hurts not taken after the wait (given to the Life step, or lost: never written)

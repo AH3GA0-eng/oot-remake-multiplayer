@@ -1950,6 +1950,30 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         }
     }
 
+    // A copy boss whose death has begun (SetDying) and whose owner says it is dead: its game runs that death only
+    // once it is dead here too, and nothing else gives it the killing hit (the owner's replay timed out in the
+    // "copy is never written" rule before the death began here, and bosses are never resent). Its whole remaining
+    // life goes to its own Life step once (direct, never a write), which CoopBossNative lets end it
+    // (review-boss-0114, at every boss; Gohma's own clamp may still hold her at 1).
+    for (auto& [address, o] : objects_) {
+        if (o.death_given || o.hurt_until != 0 || !o.life || *o.life <= 0 || !IsBoss(o.name) ||
+            !(o.dead_at != 0 || o.owner_life_zero) ||
+            std::find(dying_.begin(), dying_.end(), o.name) == dying_.end()) {
+            continue;
+        }
+        const auto own = owners_.find(o.id);
+        if (own != owners_.end() && own->second.player == self) {
+            continue;  // ours: its own game's death
+        }
+        o.death_given = true;
+        ++dying_finished_;
+        LifeWrite w{o.address, 0, *o.life, std::nullopt};
+        w.direct = true;
+        writes.push_back(w);
+        notes_.emplace_back("its owner's is dead and its death has begun here: its life " + std::to_string(*o.life) +
+                            " given to its own Life step: " + o.name);
+    }
+
     for (auto& [address, o] : objects_) {
         // A hurt the game did not take (or took differently) in time: the
         // rest goes to the game's own Life step (WriteLife; an enemy's life is
@@ -1980,6 +2004,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 // black for good. The rest goes into its own Life step (never a write), which CoopBossNative
                 // lets end it now (SetDying): her death plays out here as in the owner's game.
                 ++hurt_missed_;
+                o.death_given = o.hurt_target <= 0;  // the owner's killing hit: given once
                 LifeWrite w{o.address, o.hurt_target, *o.life - o.hurt_target, std::nullopt};
                 w.direct = true;
                 writes.push_back(w);

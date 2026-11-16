@@ -271,22 +271,31 @@ game could never finish: a black screen, no fade back, no warp.
   at 1 outside her stun or chance time, which a copy does not share. So a copy Gohma may never read dead in its own
   game. Solving it needs her damage rules reverse engineered (`Enemy_DungeonBoss_Gohma` DamageRule or her AI's life
   floor). Other bosses' rules are not checked.
-- **The setting waits for the copy (boss-0113 fallback, boss-0114-a).** Another's death while our walk reads our copy
-  alive (`boss_ours` false, `boss_alive` true) never asks the setting at once: its flow would wait for that copy's
-  death. SetDying releases the copy right after that tick (the glue runs it after `Director::Tick`), so the Director
-  waits up to `kCopyWaitUs` (1.5 s) for the walk to read it dead, then asks the setting (`our copy of the boss died
-  here: asking its own death`): the whole death, the quest step and the warp in our game. Still alive then: the death
-  flow alone (the timeline, as 0.11.1: `the death flow alone: our copy of the boss still lives ... asked again if it
-  dies`), and once the copy reads dead with no event running, within `kReaskUs` (45 s) of the death, the setting once
-  (`our copy of the boss died after the death flow: asking its own death now`; a refusal asks nothing more). Our own
-  game taking the death setting itself (the copy's own death logic) ends the wait. Never dead by then: `never died
-  here`, and that player's warp does nothing until their Link leaves the dungeon (#88). With the Life-1 clamp above,
-  that is the expected path for a copy Gohma until her clamp is solved. The first boss-0113 fallback asked the flow
-  alone at once and never again; the copy is always held alive at that tick, so #88 came back for every non-owner
-  (review-boss-0113 must-fix 1).
+- **The owner's death finishes the copy (review-boss-0114, every boss).** Nothing used to give a released copy its
+  death: the owner's killing hit reaches it as a replay before the outro_start, its game refuses it, and after the
+  400 ms wait a boss copy is never written (bosses are never resent either). So a released copy stayed alive unless
+  that replay was still in flight when SetDying landed. Now `Sync` gives a copy boss that is dying AND whose owner
+  says it is dead (its dead remove, or its samples at life 0) its whole remaining life in its own Life step, once
+  (direct, never a write; `HeldLifeStep` passes it): its own game kills it and runs its own death. Not for our own
+  boss, and not while the owner's still lives. Log: `its owner's is dead and its death has begun here: its life N
+  given to its own Life step`; the share line counts `dying copies finished N`. Gohma's own clamp (above) may still
+  hold her at 1.
+- **The setting waits for the copy to read dead (boss-0113 fallback, boss-0114-a).** Another's death while our walk
+  reads our copy alive (`boss_ours` false, `boss_alive` true) never asks the setting at once: its flow would wait for
+  that copy's death. The copy is released and finished right after that tick (the glue runs SetDying after
+  `Director::Tick`; the finish above on the next share), so the Director waits up to `kCopyWaitUs` (1.5 s) for the
+  walk to read it dead (life 0), then asks the setting (`our copy of the boss died here: asking its own death`): the
+  whole death, the quest step and the warp in our game. Still alive then (a clamp): the death flow alone (the
+  timeline, as 0.11.1: `... asked again if it dies`), and once the copy reads dead with no event running, within
+  `kReaskUs` (25 s) of the death, the setting once (`our copy of the boss died after the death flow`; its death
+  cutscene then plays a second time; a refusal asks nothing more). `kReaskUs` stays below the 30 s a body off the
+  walk reads alive (row 114 below), so a copy deleted by its owner's dead remove (gone, not dead here) never gets a
+  setting that would wait for it. Our own game taking the death setting itself ends the wait. Never dead by then:
+  `never died here`, and that player's warp does nothing until their Link leaves the dungeon (#88).
 - Tests: `tests/lichii/boss_scenes_test.cpp` (report 88 case: the real order, a copy that dies after the release,
   one held alive past the wait and dying after the flow, one that never dies, our game's own setting, leaving the
-  area), `boss_native_test.cpp` and `objects_test.cpp` (dying release, late changes, finish).
+  area), `boss_native_test.cpp` and `objects_test.cpp` (dying release, late changes, finish; the owner's death
+  finishing a copy whose killing replay timed out before SetDying).
 - In game: scenario `hs-gohma-death` (LANE1; PASS lines in its header).
 
 ## Phantom Ganon with more than one player (player report row 114, boss-0114-a)

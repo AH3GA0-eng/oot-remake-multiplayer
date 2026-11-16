@@ -4604,6 +4604,54 @@ TEST_CASE("objects: an enemy that is not a boss still never heals across a hand-
     CHECK(std::none_of(step.writes.begin(), step.writes.end(), [](const CoopObjects::LifeWrite& w) { return w.heal; }));
 }
 
+TEST_CASE("objects: a dying copy boss gets its remaining life once when its owner's is dead (review-boss-0114)") {
+    // The real order: the owner's killing hit reaches our copy as a replay, our game refuses it (never written)
+    // and the 400 ms wait ends; only then does the owner's outro_start come and the glue mark the boss dying.
+    // Nothing else would give our copy its death: its whole life goes to its own Life step once (direct).
+    const std::string boss = "Enemy_DungeonBoss_Barinade";
+    const auto body = [&boss](std::int32_t life) { return Enemy(0x100, 0x11, life, 0.0f, boss); };
+    Sync copy;
+    copy.SetHurt(true);
+    Tick(copy, 0, {body(5)});
+    const proto::ObjectId id = *copy.IdOf(0x100);
+    Own(copy, id, 2);  // player 2's; we are player 1
+    Tick(copy, 10 * kMs, {body(5)});
+    copy.Receive(Dead(id, 2));
+    auto step = Tick(copy, 20 * kMs, {body(5)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK_FALSE(step.writes[0].direct);
+    step = Tick(copy, 500 * kMs, {body(5)});  // refused, the wait over: never written
+    CHECK(step.writes.empty());
+    step = Tick(copy, 800 * kMs, {body(5)});  // not dying yet: nothing
+    CHECK(step.writes.empty());
+    copy.SetDying({boss});
+    step = Tick(copy, 900 * kMs, {body(5)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].direct);
+    CHECK(step.writes[0].life == 0);
+    CHECK(step.writes[0].hurt == 5);
+    CHECK(copy.DyingFinished() == 1);
+    CHECK(Tick(copy, 1000 * kMs, {body(5)}).writes.empty());  // once
+    CHECK(copy.DyingFinished() == 1);
+
+    // Dying while its owner's still lives (our own game's death event, a copy): nothing.
+    Sync early;
+    early.SetHurt(true);
+    Tick(early, 0, {body(5)});
+    Own(early, *early.IdOf(0x100), 2);
+    early.SetDying({boss});
+    CHECK(Tick(early, 10 * kMs, {body(5)}).writes.empty());
+    // Our own boss dying: its own game's death, nothing given.
+    Sync ours;
+    ours.SetHurt(true);
+    Tick(ours, 0, {body(5)});
+    const proto::ObjectId own_id = *ours.IdOf(0x100);
+    Own(ours, own_id, 1);
+    ours.SetDying({boss});
+    CHECK(Tick(ours, 10 * kMs, {body(5)}).writes.empty());
+    CHECK(ours.DyingFinished() == 0);
+}
+
 TEST_CASE("objects: a boss is pre-battle while a body plays Sleep or Pre_Battle_* (boss-copy-b)") {
     constexpr std::array<std::string_view, 1> kGohma{"Enemy_DungeonBoss_Gohma"};
     CHECK(CoopObjects::IsPreBattleAnimation("Sleep"));
