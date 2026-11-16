@@ -2189,6 +2189,34 @@ private:
             }
             return words;
         };
+        // Issue 194: the game's own ride state of each platform near our Link, its AI's bool plug
+        // RideOnPlayer (CoopLogicProbe::Read; the plug's key is Murmur3 ^ 7): no clock write while he rides it.
+        if (player_) {
+            const std::vector<coop::protocol::Vec3> others = sync_.OthersHere(server_now_us);
+            for (auto& d : platform_drivers_) {
+                d.ride_plug.reset();  // read fresh each tick
+                d.other_on = std::any_of(others.begin(), others.end(), [&d](const coop::protocol::Vec3& o) {
+                    return CoopPlatforms::PlatformSync::OnFootprint(d.position, o);
+                });
+                const float dx = d.position[0] - (*player_)[0];
+                const float dy = d.position[1] - (*player_)[1];
+                const float dz = d.position[2] - (*player_)[2];
+                const float near_m = CoopPlatforms::PlatformSync::kNearM;
+                if (dx * dx + dy * dy + dz * dz > near_m * near_m) {
+                    continue;
+                }
+                const auto plugs = CoopLogicProbe::Read([&r](u64 a) { return r.Get<u64>(a); }, d.address);
+                if (!plugs) {
+                    continue;
+                }
+                for (const CoopLogicProbe::Plug& p : *plugs) {
+                    if (p.key == (CoopLiftRide::kRideOnPlayer ^ 7u) && p.type == CoopLogicProbe::kBool && p.value) {
+                        d.ride_plug = *p.value != 0;
+                        break;
+                    }
+                }
+            }
+        }
         CoopPlatforms::PlatformSync::Out out;
         platforms_.Tick(scene, self, CoopEvery::NowUs(), server_now_us, platform_drivers_, player_, read,
                         platforms_mode_ == 2, out);
