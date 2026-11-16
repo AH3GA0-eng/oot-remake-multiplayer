@@ -255,7 +255,7 @@ TEST_CASE("Linux clipboard: CopyLater and PasteLater do not wait for a slow tool
     CHECK(pasted->text == "ABCD-EFGH-1234");   // (trimmed as Paste)
 }
 
-TEST_CASE("Linux clipboard: later jobs run in order; a copy nobody asks about is not kept; no tool fails") {
+TEST_CASE("Linux clipboard: later jobs run in order, a copy nobody asks about is not kept, no tool fails") {
     Desktop d("wayland-0", "");
     const std::uint64_t first = CoopClipboard::CopyLater("first", false);
     const std::uint64_t then = CoopClipboard::PasteLater();
