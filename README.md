@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/images/squadala-logo.jpg" alt="Squadala! logo: a Korok holding a propeller leaf, with a blue, a red, an orange and a green fairy" width="320"></p>
+
 # Squadala!
 
 Squadala! - online co-op for the Ocarina of Time remake on PC. (The repository keeps its name, `oot-remake-multiplayer`.)
