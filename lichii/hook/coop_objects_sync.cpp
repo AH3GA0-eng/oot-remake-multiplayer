@@ -796,6 +796,7 @@ void Sync::Reset() {
     fish_at_ = 0;
     decided_.clear();
     held_.clear();
+    copy_killed_.clear();
     eggs_.clear();
     copy_eggs_.clear();
     away_.clear();
@@ -1831,7 +1832,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             o.id = d.id;
         } else if (s->hash != 0 && s->hash != kNoHash) {
             o.id = {proto::ObjectKind::placed, 0, s->hash};
-            o.late = (IsAnnounced(s->name) || IsLateEncounter(s->name)) && now_us - scene_since_ >= kLateUs;
+            o.late = (IsAnnounced(s->name) && now_us - scene_since_ >= kLateUs) || IsLateEncounter(s->name);
             held_.erase(o.id);  // our own one: no copy needed
             // Our own one of an announced copy came: the copy goes.
             for (auto& [key, d] : decided_) {
@@ -1921,7 +1922,22 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 notes_.emplace_back("hatched here out of a copy egg (waits for its owner's): " + s->name);
             }
         }
-        objects_.emplace(s->address, o);
+        const auto made = objects_.emplace(s->address, o);
+        if (made.second && o.id.kind == proto::ObjectKind::placed && copy_killed_.contains(o.id)) {
+            // Report 99 review: its copy was killed here, so our own one is
+            // that enemy, dead. Our game kills it itself (its room counter and
+            // shutter count it); never listed, so no respawn on the server.
+            Object& own = made.first->second;
+            own.dead_said = true;
+            own.dead_at = now_us;
+            if (own.life && *own.life > 0) {
+                Lower(own, 0, now_us, writes, 0);
+            } else {
+                own.dead_now = true;
+            }
+            owners_.erase(own.id);
+            notes_.emplace_back("its copy was killed here, our own one dies too: " + own.name);
+        }
     }
     refused_ = std::move(refused);
 
@@ -2009,7 +2025,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         }
         // A Gold Skulltula that came out of a tree here, or an encounter
         // our logic made (report 99): name it for the games that do not have it.
-        if (known && owner->second.player == self && o.late && !o.announced &&
+        if (known && owner->second.player == self && o.late && !o.announced && !o.dead_said &&
             o.id.kind == proto::ObjectKind::placed) {
             proto::ObjectSpawn spawn;
             spawn.id = o.id;
@@ -2402,8 +2418,8 @@ void Sync::HoldEncounters(std::uint64_t now_us) {
         Held& h = it->second;
         const bool ours = std::any_of(objects_.begin(), objects_.end(),
                                       [&](const auto& e) { return e.second.id == it->first; });
-        if (ours) {
-            it = held_.erase(it);
+        if (ours || now_us - h.heard_us > kEncounterStaleUs) {
+            it = held_.erase(it);  // ours came, or its owner left or unloaded it
             continue;
         }
         const bool near = !player_ || Distance(*player_, h.position) <= kEncounterNearM;
@@ -2478,7 +2494,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             }
             const bool known = std::any_of(decided_.begin(), decided_.end(),
                                            [&](const auto& e) { return e.second.id == spawn->id; });
-            if (known) {
+            if (known || (!made && copy_killed_.contains(spawn->id))) {
                 continue;
             }
             if (encounter) {
@@ -2487,6 +2503,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 h.name = spawn->actor;
                 h.position = *spawn->state.position;
                 h.owner = spawn->player_number;
+                h.heard_us = now_us;
                 continue;
             }
             // boss-sync-2 (issue 178): the owner's hatchling, and our game
@@ -2518,6 +2535,9 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             for (auto& [key, d] : decided_) {
                 if (d.id == remove->id) {
                     d.removed = true;
+                    if (remove->reason == proto::RemoveReason::dead && remove->id.kind == proto::ObjectKind::placed) {
+                        copy_killed_.insert(remove->id);
+                    }
                 }
             }
             // A placed enemy its owner saw die (issue 133): ours dies too.
@@ -2621,6 +2641,12 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 o->late_left = 0;
             }
         } else if (const auto* sample = std::get_if<proto::ObjectSample>(&m)) {
+            if (const auto h = held_.find(sample->id); h != held_.end()) {
+                h->second.heard_us = now_us;  // its owner still has it
+                if (sample->state.position && Finite(*sample->state.position)) {
+                    h->second.position = *sample->state.position;
+                }
+            }
             Object* o = find(sample->id);
             const auto own = owners_.find(sample->id);
             if (o == nullptr || (own != owners_.end() && own->second.player == self)) {

@@ -2064,14 +2064,32 @@ TEST_CASE("objects: report 99, a jail guard only the host's logic made is copied
     CHECK(spawns[0].actor == kThief);
     CHECK(All<proto::ObjectSpawn>(Tick(a, 8200 * kMs, guard, 1)).empty());
 
-    // One loaded with the scene is not announced (every game has it).
+    // Made at the scene's load by the host's own per-game flags (it went in
+    // before, then came back): announced all the same (review, point 2).
     Sync early;
     Tick(early, 0, guard, 1);
     Own(early, id, 1);
-    CHECK(All<proto::ObjectSpawn>(Tick(early, 100 * kMs, guard, 1)).empty());
+    const auto at_load = All<proto::ObjectSpawn>(Tick(early, 100 * kMs, guard, 1));
+    REQUIRE(at_load.size() == 1);
+    CHECK(at_load[0].id == id);
+    // A Gold Skulltula loaded with the scene is still not announced.
+    Sync gold;
+    const std::vector<Seen> tree = {Enemy(0x100, 0x1111, 1, 0.0f, "Enemy_Skulltula_Gold")};
+    Tick(gold, 0, tree, 1);
+    Own(gold, {proto::ObjectKind::placed, 0, 0x1111}, 1);
+    CHECK(All<proto::ObjectSpawn>(Tick(gold, 100 * kMs, tree, 1)).empty());
 
     proto::ObjectSpawn relayed = spawns[0];
     relayed.player_number = 1;
+    // The owner's samples, relayed to the whole scene.
+    const auto heard = [&](Sync& s) {
+        proto::ObjectSample smp;
+        smp.player_number = 1;
+        smp.id = id;
+        smp.epoch = 2;
+        smp.state.position = proto::Vec3{23.0f, 0.0f, 0.0f};
+        s.Receive(smp);
+    };
 
     // Guest far away (another part of the fortress): held, no copy.
     Sync b;
@@ -2079,25 +2097,27 @@ TEST_CASE("objects: report 99, a jail guard only the host's logic made is copied
     Tick(b, 0, {}, 2);
     b.Receive(relayed);
     Tick(b, 8300 * kMs, {}, 2);
-    Tick(b, 20000 * kMs, {}, 2);
+    heard(b);
+    Tick(b, 11000 * kMs, {}, 2);
     CHECK(b.Creates().empty());
     // Guest walks up to the cell: after kEncounterWaitUs without its own, a copy.
     b.SetPlayer(proto::Vec3{25.0f, 0.0f, 0.0f});
-    Tick(b, 21000 * kMs, {}, 2);
+    heard(b);
+    Tick(b, 12000 * kMs, {}, 2);
     CHECK(b.Creates().empty());
-    Tick(b, 21000 * kMs + kEncounterWaitUs, {}, 2);
+    Tick(b, 12000 * kMs + kEncounterWaitUs, {}, 2);
     auto creates = b.Creates();
     REQUIRE(creates.size() == 1);
     CHECK(creates[0].name == kThief);
     CHECK(creates[0].position[0] == doctest::Approx(23.0f));
     CHECK(b.OwnerOf(id) == 1);
     b.Bind({{creates[0].key, 0x900}});
-    Tick(b, 23000 * kMs, {Enemy(0x900, ~0ULL, 4, 23.0f, kThief)}, 2);
+    Tick(b, 14000 * kMs, {Enemy(0x900, ~0ULL, 4, 23.0f, kThief)}, 2);
     REQUIRE(b.IdOf(0x900));
     CHECK(*b.IdOf(0x900) == id);
     // The guest's own logic makes its guard too (walked into the cell): the copy goes.
     b.Bind({{creates[0].key, 0x900}});
-    Tick(b, 23100 * kMs, {Enemy(0x900, ~0ULL, 4, 23.0f, kThief), Enemy(0x950, kHash, 4, 23.0f, kThief)}, 2);
+    Tick(b, 14100 * kMs, {Enemy(0x900, ~0ULL, 4, 23.0f, kThief), Enemy(0x950, kHash, 4, 23.0f, kThief)}, 2);
     CHECK(*b.IdOf(0x950) == id);
     CHECK_FALSE(b.IdOf(0x900));
     REQUIRE(b.Creates().size() == 1);
@@ -2135,6 +2155,73 @@ TEST_CASE("objects: report 99, a jail guard only the host's logic made is copied
     Tick(e, 8400 * kMs, {}, 2, "GerudoValley");
     Tick(e, 8400 * kMs + 2 * kEncounterWaitUs, {}, 2, "GerudoValley");
     CHECK(e.Creates().empty());
+
+    // Review point 3: the owner left (no samples for kEncounterStaleUs) before
+    // we came near: dropped, no copy that nobody drives.
+    Sync f;
+    f.SetPlayer(proto::Vec3{200.0f, 0.0f, 0.0f});
+    Tick(f, 0, {}, 2);
+    f.Receive(relayed);
+    Tick(f, 8300 * kMs, {}, 2);
+    Tick(f, 8300 * kMs + kEncounterStaleUs + 100 * kMs, {}, 2);
+    f.SetPlayer(proto::Vec3{25.0f, 0.0f, 0.0f});
+    Tick(f, 15000 * kMs, {}, 2);
+    Tick(f, 15000 * kMs + kEncounterWaitUs, {}, 2);
+    CHECK(f.Creates().empty());
+}
+
+TEST_CASE("objects: report 99 review, our own one of a copy killed here is dead, not a respawn (issue 133)") {
+    constexpr std::uint64_t kHash = 0x2e80bd2b39d06e43ULL;
+    const std::string kThief = "Enemy_MiddleBoss_GerudoThief";
+    const proto::ObjectId id{proto::ObjectKind::placed, 0, kHash};
+    proto::ObjectSpawn relayed;
+    relayed.player_number = 1;
+    relayed.id = id;
+    relayed.actor = kThief;
+    relayed.state.position = proto::Vec3{23.0f, 0.0f, 0.0f};
+
+    Sync b;
+    b.SetHurt(true);
+    b.SetPlayer(proto::Vec3{25.0f, 0.0f, 0.0f});
+    Tick(b, 0, {}, 2);
+    b.Receive(relayed);
+    Tick(b, 8300 * kMs, {}, 2);
+    Tick(b, 8400 * kMs, {}, 2);
+    Tick(b, 8400 * kMs + kEncounterWaitUs, {}, 2);
+    auto creates = b.Creates();
+    REQUIRE(creates.size() == 1);
+    b.Bind({{creates[0].key, 0x900}});
+    Tick(b, 10000 * kMs, {Enemy(0x900, ~0ULL, 4, 23.0f, kThief)}, 2);
+    REQUIRE(b.IdOf(0x900));
+    // The host kills it: the copy dies and goes.
+    b.Receive(proto::ObjectRemove{1, id, 0, proto::RemoveReason::dead, {}});
+    b.Bind({{creates[0].key, 0x900}});
+    Tick(b, 10100 * kMs, {Enemy(0x900, ~0ULL, 0, 23.0f, kThief)}, 2);
+    Tick(b, 12000 * kMs, {}, 2);
+
+    // The guest then walks into the cell: its own logic makes the guard.
+    const auto step = Tick(b, 15000 * kMs, {Enemy(0x950, kHash, 4, 23.0f, kThief)}, 2);
+    // It dies at once through the game (its room counter counts it) ...
+    bool lowered = false;
+    for (const auto& w : step.writes) {
+        lowered = lowered || (w.address == 0x950 && w.life == 0);
+    }
+    CHECK(lowered);
+    // ... is never listed (the server keeps the kill: no respawn), never
+    // announced, and no second copy is made from a resent spawn.
+    for (const auto& p : All<proto::ObjectPresent>(step)) {
+        for (const auto& e : p.objects) CHECK_FALSE(e.id == id);
+    }
+    Own(b, id, 2);
+    const auto later = Tick(b, 16000 * kMs, {Enemy(0x950, kHash, 4, 23.0f, kThief)}, 2);
+    CHECK(All<proto::ObjectSpawn>(later).empty());
+    for (const auto& p : All<proto::ObjectPresent>(later)) {
+        for (const auto& e : p.objects) CHECK_FALSE(e.id == id);
+    }
+    b.Receive(relayed);
+    Tick(b, 17000 * kMs, {}, 2);
+    Tick(b, 17000 * kMs + 2 * kEncounterWaitUs, {}, 2);
+    for (const auto& cr : b.Creates()) CHECK(cr.removed);
 }
 
 TEST_CASE("objects: a hurt carries the hitter's place, an animal's life is written") {
