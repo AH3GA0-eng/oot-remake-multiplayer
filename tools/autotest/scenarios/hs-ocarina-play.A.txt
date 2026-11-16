@@ -8,7 +8,8 @@
 # BEFORE the run: take the ocarinas out of B's baseline (save_flags.py no-ocarina, as hs-ocarina-given),
 # put it back from autotest-save-backup afterwards.
 # Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-ocarina-play
-# Pass (from the game's own state, B's log): after mark out-1, "ocarina probe: our Link plays the ocarina"
+# Fix (rows 93/103): B logs "coop: items: ocarina 'Item_Ocarina_Fairy' equipped by the game from its flags
+# (slots 13, 16)" before mark start. Pass (from the game's own state, B's log): after mark out-1, "ocarina probe: our Link plays the ocarina"
 # and "coop: ocarina note 11 (Ocarina_A) sent"; after mark lullaby, notes 7, 13, 11 sent (Left, Up, Right).
 # Shots out-1 / note-a / lullaby: the ocarina in B's hands. Also after the Kakariko load (out-2).
 # Today (0.11.2) expected FAIL: no probe line, no note lines, nothing in B's hands.

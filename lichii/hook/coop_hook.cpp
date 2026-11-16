@@ -413,6 +413,27 @@ public:
                 return challenges_.Step(guest, after_call, result, base_);
             });
         }
+        // Rows 93/103: the game equips a shared ocarina from its flags (OneShotPlayerEquipDynamicEquipmentFromGameData's
+        // call), once after the mend wrote them, outside events (coop::host::OcarinaEquip).
+        CoopSvc::AddCaller(66, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t,
+                                      std::uint64_t) -> std::optional<CoopPuppet::Call> {
+            namespace oc = coop::host::ocarina;
+            const auto slot = ocarina_equip_.step(after_call);
+            if (!slot) return std::nullopt;
+            const auto actor = CoopObjects::OurLinkActor();
+            std::uint64_t holder = 0, equipment = 0;
+            if (!actor || base_ == 0 || !guest.Read(*actor + oc::kActorEquipment, &holder, sizeof holder) ||
+                holder == 0 || !guest.Read(holder + oc::kHolderEquipment, &equipment, sizeof equipment) ||
+                equipment == 0) {
+                ocarina_equip_.not_now();
+                return std::nullopt;
+            }
+            CoopPuppet::Call c;
+            c.function = base_ + oc::kEquipFromGameData;
+            c.x[0] = equipment;
+            c.x[1] = *slot;
+            return c;
+        });
         if (live_events_) {
             CoopSvc::AddCaller(60, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
                                           std::uint64_t) {
@@ -543,7 +564,7 @@ public:
                     MendDiveDepth(*memory);  // a shared scale dives as deep
                     // Issue 190: a shared ocarina is equipped too, or D-pad
                     // Left takes nothing out.
-                    MendOcarina(*memory);
+                    MendOcarina(*memory, reading && reading->event_running.value_or(false));
                     MendLetters(*memory);  // issue 58: Zelda's Letter spent, Ruto's Letter for everyone
                     if (CoopStory::On()) {
                         CatchUpQuest(*memory);  // issue 130: the Kokiri Shop opens
@@ -2127,9 +2148,13 @@ private:
     // back to "" at every scene load, before Link took it out (issue 57,
     // a player's log: the mend wrote it again after each load). A flag that
     // cannot be read is left alone.
-    void MendOcarina(EmulatorMemory& memory) {
+    void MendOcarina(EmulatorMemory& memory, bool in_event) {
         namespace oc = coop::host::ocarina;
         coop::host::GameFlags flags(memory);
+        for (const auto& line : ocarina_equip_.take_notes()) {
+            LOG_INFO(Core, "coop: items: {}", line);
+        }
+        bool raised = false;
         // The Bools a real get sets beside the count: without them D-pad Left
         // took nothing out of a shared ocarina (ocarina-given, issue 190).
         const auto fairy = flags.get_int(oc::kFairy).value_or(0);
@@ -2138,18 +2163,36 @@ private:
              coop::host::ocarina_bools_mend(fairy, time, [&](std::uint32_t h) { return flags.get_bool(h); })) {
             if (coop::host::GameFlags::set_bool(memory, hash, true)) {
                 LOG_INFO(Core, "coop: items: ocarina bool {:#010x} 0 -> 1 for the held ocarina", hash);
+                raised = true;
             }
         }
         const auto current = flags.get_string64(oc::kEquip);
         if (!current) {
             return;
         }
+        // Rows 93/103: the flags alone never let it out; the game is asked to equip it from them once the live
+        // name reads what was written (docs/items.md, "The game's own equip").
+        if (raised && !current->empty()) {
+            ocarina_equip_.want(*current);
+        }
+        std::uint8_t status = 0;
+        if (session_) {
+            session_->with_client([&](coop::net::Client& c) {
+                if (const auto* me = c.find_player(c.player_number())) status = me->status.value_or(0);
+                return 0;
+            });
+        }
+        const bool busy =
+            in_event || (status & (coop::protocol::status::paused | coop::protocol::status::in_menu |
+                                coop::protocol::status::loading)) != 0;
+        ocarina_equip_.arm(*current, CoopObjects::OurLinkActor().has_value(), busy);
         const auto want = coop::host::ocarina_equip_mend(flags.get_int(oc::kFairy).value_or(0),
                                                          flags.get_int(oc::kTime).value_or(0), *current);
         if (!want) {
             return;
         }
         if (coop::host::GameFlags::set_string64(memory, oc::kEquip, *want)) {
+            ocarina_equip_.want(*want);
             LOG_INFO(Core, "coop: items: ocarina '{}' -> '{}' for the held ocarina", *current, *want);
         } else if (!ocarina_mend_failed_logged_) {
             ocarina_mend_failed_logged_ = true;
@@ -2157,6 +2200,7 @@ private:
         }
     }
     bool ocarina_mend_failed_logged_ = false;
+    coop::host::OcarinaEquip ocarina_equip_;  // rows 93/103: the game's own equip of a shared ocarina
 
     // Issue 58 (docs/items.md, "The letters"). Zelda's Letter: once the
     // Kakariko guard's Bool is set (by any player; shared story), the guard
