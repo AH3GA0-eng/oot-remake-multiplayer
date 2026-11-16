@@ -4180,6 +4180,15 @@ void NoteBosses(const std::vector<Seen>& seen, const std::vector<std::pair<u64, 
         g_boss_lives.clear();  // another scene's bodies (left with the scene, not deleted one by one)
         g_boss_scene = scene;
     }
+    for (const Seen& s : g_bosses) {
+        // Every boss body's death as our walk reads it (the LANE1 checks look for this line in each game).
+        const auto was = g_boss_lives.find(s.name);
+        if (s.life && s.life->life <= 0 && (was == g_boss_lives.end() || was->second.life > 0)) {
+            LOG_INFO(Core, "coop: bosses: {} {:#x} read at life 0 here ({}): its death", s.name, s.address,
+                     was == g_boss_lives.end() ? std::string("first reading")
+                                               : "from " + std::to_string(was->second.life));
+        }
+    }
     NoteBossLives(g_bosses, g_boss_lives);
 }
 

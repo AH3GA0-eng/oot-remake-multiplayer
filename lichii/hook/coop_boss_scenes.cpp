@@ -385,8 +385,10 @@ void Director::Ours(const Request& r, const Local& local, std::uint64_t now_us, 
     Fight& f = fights_[b];
     if (!r.taken) {
         if (kind == Kind::outro && f.death_played) {
-            out.log.push_back(label + ": our game asked it again, not taken (refused at the request once its event "
-                                      "is over): its death cutscene played here already (one per game)");
+            if (!std::exchange(f.refused_said, true)) {  // (its logic asks every frame: said once per fight)
+                out.log.push_back(label + ": our game asked it again, not taken (refused at the request once its "
+                                          "event is over): its death cutscene played here already (one per game)");
+            }
             return;
         }
         out.log.push_back(label + ": our game did not take it");

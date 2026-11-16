@@ -197,6 +197,7 @@ private:
         std::uint8_t heart_by = 0;
         std::uint64_t wait_copy_since = 0;  // the setting waits for our copy to read dead (0: not)
         bool death_played = false;          // our game took its death (flow or setting): never a second one here
+        bool refused_said = false;          // a late ask of it was logged (once per fight)
     };
     struct Playing {
         std::uint8_t boss = 0;
