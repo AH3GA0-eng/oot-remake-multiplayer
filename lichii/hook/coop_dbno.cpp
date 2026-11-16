@@ -190,6 +190,10 @@ void Machine::Enter(State state, std::uint64_t now_us) {
     watch_ = 0;
     spectate_since_us_ = now_us;
     quiet_us_ = 0;
+    move_ = Move::none;
+    move_to_ = 0;
+    move_since_us_ = 0;
+    dying_since_us_ = 0;
 }
 
 std::uint8_t Machine::PickWatch(const Input& in) const {
@@ -245,7 +249,7 @@ bool Machine::Quiet(const Input& in) const {
             continue;
         }
         const bool with_them = &t == watched || (t.scene && watched->scene && *t.scene == *watched->scene);
-        if (with_them && t.threat == Threat::near) {
+        if (with_them && t.threat == Threat::enemy) {
             return false;
         }
     }
@@ -282,10 +286,19 @@ Output Machine::Frame(const Input& in) {
                                                            : std::min(in.now_us - last_us_, kMaxStepUs);
     last_us_ = in.now_us;
     const bool active = in.rules.on && in.connected && in.guard_live;
-    const bool someone_up = in.connected &&
-                            std::any_of(in.team.begin(), in.team.end(), [](const Teammate& t) {
-                                return t.state == State::up && t.in_game;
-                            });
+    // Up counts while in the game, or loading (a door, a loading zone, a
+    // teleport) for at most kAwayUpUs since they last had a Link.
+    for (const Teammate& t : in.team) {
+        if (ValidPlayer(t.number) && t.in_game) {
+            in_game_us_[t.number] = std::max<std::uint64_t>(in.now_us, 1);
+        }
+    }
+    const bool someone_up =
+        in.connected && std::any_of(in.team.begin(), in.team.end(), [&](const Teammate& t) {
+            return ValidPlayer(t.number) && t.state == State::up &&
+                   (t.in_game || (t.loading && in_game_us_[t.number] != 0 &&
+                                   in.now_us < in_game_us_[t.number] + kAwayUpUs));
+        });
     const std::int32_t revive_life =
         std::max<std::int32_t>(kDownedLife, in.max_life && *in.max_life > 0
                                                 ? std::min<std::int32_t>(in.rules.revive_life, *in.max_life)
@@ -303,12 +316,20 @@ Output Machine::Frame(const Input& in) {
             Enter(State::downed, in.now_us);
             left_us_ = in.rules.BleedUs();
             out.events.push_back(Event::went_down);
-        } else if (active && in.life && *in.life <= 0) {
+        } else if (active && dying_since_us_ != 0 &&
+                   (!in.life || (*in.life <= 0 && in.now_us >= dying_since_us_ + kDyingUs))) {
             // The last one standing (the guard was off) or a pit: the game's
-            // own death runs. Out, so the others know nobody is left up.
+            // own death ran and no fairy saved him (the Game Over took the
+            // Link, or the life stayed 0). Out, so the others know nobody is up.
             Enter(State::out, in.now_us);
             out_seen_dead_ = true;
             out.events.push_back(Event::died);
+        } else if (active && in.life && *in.life <= 0) {
+            if (dying_since_us_ == 0) {
+                dying_since_us_ = std::max<std::uint64_t>(in.now_us, 1);  // still up: a fairy may save him
+            }
+        } else if (!active || (in.life && *in.life > 0)) {
+            dying_since_us_ = 0;
         }
         break;
     case State::downed:
@@ -388,16 +409,46 @@ Output Machine::Frame(const Input& in) {
         }
         watch_ = PickWatch(in);
         quiet_us_ = in.connected && Quiet(in) ? quiet_us_ + step : 0;
-        if (quiet_us_ >= kQuietUs && in.now_us >= spectate_since_us_ + kSpectateMinUs) {
-            const std::uint8_t beside = watch_;
-            Enter(State::up, in.now_us);
-            mercy_until_us_ = in.now_us + kMercyUs;
-            out.write_life = std::max<std::int32_t>(
-                kDownedLife,
-                in.max_life && *in.max_life > 0 ? std::min(kRespawnLife, *in.max_life) : kRespawnLife);
-            out.by = beside;
-            out.events.push_back(Event::respawned);
-        } else if (in.life && *in.life != kDownedLife) {
+        {
+            // Coming back: first our Link is moved (beside the one watched,
+            // else to the entrance), then up. Never up where we lay with an
+            // enemy near us.
+            bool respawn = false;
+            if (move_ != Move::none) {
+                const bool late = in.now_us >= move_since_us_ + kRespawnWaitUs;
+                if (in.moved == Moved::done) {
+                    respawn = true;
+                } else if (in.moved == Moved::failed || late) {
+                    if (move_ == Move::beside) {
+                        move_ = Move::entrance;
+                        move_since_us_ = in.now_us;
+                        out.move_entrance = true;
+                    } else if (!in.enemy_near_us) {
+                        respawn = true;  // up where we lay: nothing near
+                    } else {
+                        move_ = Move::none;  // try again once it is quiet again
+                        quiet_us_ = 0;
+                    }
+                }
+            } else if (quiet_us_ >= kQuietUs && in.now_us >= spectate_since_us_ + kSpectateMinUs) {
+                move_ = Move::beside;
+                move_to_ = watch_;
+                move_since_us_ = in.now_us;
+                out.move_beside = watch_;
+            }
+            if (respawn) {
+                const std::uint8_t beside = move_to_;
+                Enter(State::up, in.now_us);
+                mercy_until_us_ = in.now_us + kMercyUs;
+                out.write_life = std::max<std::int32_t>(
+                    kDownedLife,
+                    in.max_life && *in.max_life > 0 ? std::min(kRespawnLife, *in.max_life) : kRespawnLife);
+                out.by = beside;
+                out.events.push_back(Event::respawned);
+                break;
+            }
+        }
+        if (in.life && *in.life != kDownedLife) {
             out.write_life = kDownedLife;
         }
         break;
@@ -524,17 +575,17 @@ bool AnyNear(const Vec3& self, std::span<const Vec3> foes) {
     });
 }
 
-std::optional<proto::DbnoThreat> ThreatTeller::Frame(std::uint64_t now_us, bool able, bool near) {
+std::optional<proto::DbnoThreat> ThreatTeller::Frame(std::uint64_t now_us, bool able, bool enemy_near) {
     if (!able) {
         sent_.reset();
         return std::nullopt;
     }
-    if (sent_ && *sent_ == near && now_us < sent_us_ + kThreatSendUs) {
+    if (sent_ && *sent_ == enemy_near && now_us < sent_us_ + kThreatSendUs) {
         return std::nullopt;
     }
-    sent_ = near;
+    sent_ = enemy_near;
     sent_us_ = now_us;
-    return proto::DbnoThreat{0, near};
+    return proto::DbnoThreat{0, enemy_near};
 }
 
 // --- The reviver's side ---

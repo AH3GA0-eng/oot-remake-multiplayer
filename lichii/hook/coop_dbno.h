@@ -220,16 +220,31 @@ inline constexpr std::uint64_t kSpectateMinUs = 3'000'000;
 // Life a spectating player comes back with: 3 hearts, as the game's own
 // continue after a Game Over (capped at the player's hearts).
 inline constexpr std::int32_t kRespawnLife = 12;
+// A teammate who is up and loading (a door, a loading zone, a teleport)
+// still counts as up this long since they last had a Link, so a load of the
+// last one standing never ends everyone's game. The title screen does not.
+inline constexpr std::uint64_t kAwayUpUs = 30'000'000;
+// Our own Link at no life while up: the game's death may still be saved (a
+// fairy in a bottle reads 0 while it revives him). Out only once the Link is
+// gone (the Game Over screen, a reload) or the life stays 0 this long.
+inline constexpr std::uint64_t kDyingUs = 8'000'000;
+// The respawn's move (the /teleport trip, then the entrance) that has not
+// answered in this long counts as failed.
+inline constexpr std::uint64_t kRespawnWaitUs = 20'000'000;
+
+// How the respawn's move went (coop_teleport_game.h Beside / ToEntrance).
+enum class Moved : std::uint8_t { none, done, failed };
 
 // What a player's last DBNO_THREAT said (unknown: none heard lately, which
 // never holds a spectating player back: a build without it, a lost message).
-enum class Threat : std::uint8_t { unknown, clear, near };
+enum class Threat : std::uint8_t { unknown, clear, enemy };
 
 // Another player as presence and their DBNO_STATE show them.
 struct Teammate {
     std::uint8_t number = 0;
     State state = State::up;
     bool in_game = false;             // has a Link now (not on the title, not loading)
+    bool loading = false;             // a scene load (a door, a loading zone, a teleport, a Try Again)
     std::optional<std::string> scene;
     std::optional<Vec3> position;     // at the feet, as our game shows them
     Threat threat = Threat::unknown;  // their DBNO_THREAT
@@ -251,6 +266,8 @@ struct Input {
     Vec3 position{};
     std::span<const Teammate> team;
     bool next = false;                    // spectating: the switch button went down this frame
+    Moved moved = Moved::none;            // spectating: how the respawn's move asked earlier went
+    bool enemy_near_us = false;           // an enemy of our game within kThreatReachM of our own Link
 };
 
 enum class Event : std::uint8_t {
@@ -278,6 +295,11 @@ struct Output {
     // Spectating: whom the camera watches (0 nobody). Bled out and respawned
     // name that player in `by`.
     std::uint8_t watching = 0;
+    // Spectating, ready to come back: move our Link beside this player first
+    // (the /teleport trip); or, that failed, to the entrance (the game's own
+    // scene start). The respawn follows once Input::moved says done.
+    std::uint8_t move_beside = 0;
+    bool move_entrance = false;
 };
 
 class Machine {
@@ -310,7 +332,13 @@ private:
     std::uint8_t watch_ = 0;          // spectating: whom we watch
     std::uint64_t spectate_since_us_ = 0;
     std::uint64_t quiet_us_ = 0;      // spectating: how long no enemy has been near them
+    // Spectating: the respawn's move under way (beside, then entrance) and since when.
+    enum class Move : std::uint8_t { none, beside, entrance } move_ = Move::none;
+    std::uint8_t move_to_ = 0;
+    std::uint64_t move_since_us_ = 0;
+    std::uint64_t dying_since_us_ = 0;  // up at no life: since when; 0 not
     std::array<std::uint64_t, proto::kMaxPlayers + 1> hold_us_{};  // last hold per player; 0 none
+    std::array<std::uint64_t, proto::kMaxPlayers + 1> in_game_us_{};  // when each teammate last had a Link
     std::optional<proto::DbnoStatus> sent_;
     std::uint64_t sent_us_ = 0;
     bool tell_again_ = false;
@@ -354,7 +382,7 @@ class ThreatTeller {
 public:
     // Each frame. `able`: connected, the mode on, we are up and have a Link;
     // else nothing is sent (and the next able frame tells at once).
-    std::optional<proto::DbnoThreat> Frame(std::uint64_t now_us, bool able, bool near);
+    std::optional<proto::DbnoThreat> Frame(std::uint64_t now_us, bool able, bool enemy_near);
 
 private:
     std::optional<bool> sent_;

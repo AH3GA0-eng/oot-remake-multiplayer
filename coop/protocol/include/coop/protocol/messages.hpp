@@ -1524,7 +1524,7 @@ struct DbnoRevive {
 // watches does, when the others are elsewhere).
 struct DbnoThreat {
   std::uint8_t player_number = kPlayerSelf;
-  bool near = false;
+  bool enemy_near = false;
   bool operator==(const DbnoThreat&) const = default;
 };
 

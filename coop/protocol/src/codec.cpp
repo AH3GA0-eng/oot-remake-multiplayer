@@ -2795,17 +2795,17 @@ Error decode_body(Reader& r, DbnoRevive& m) {
 Error encode_body(const DbnoThreat& m, Writer& w) {
   if (!valid_player_or_self(m.player_number)) return Error::bad_value;
   w.u8(m.player_number);
-  w.u8(m.near ? 1 : 0);
+  w.u8(m.enemy_near ? 1 : 0);
   return Error::none;
 }
 
 Error decode_body(Reader& r, DbnoThreat& m) {
   m = DbnoThreat{};
-  std::uint8_t near = 0;
+  std::uint8_t value = 0;
   COOP_READ(r.u8(m.player_number));
-  COOP_READ(r.u8(near));
-  if (!valid_player_or_self(m.player_number) || near > 1) return Error::bad_value;
-  m.near = near == 1;
+  COOP_READ(r.u8(value));
+  if (!valid_player_or_self(m.player_number) || value > 1) return Error::bad_value;
+  m.enemy_near = value == 1;
   return Error::none;
 }
 

@@ -27,7 +27,9 @@ std::string Caption(const CoopDbno::View& view) {
         return view.name.empty() ? CoopI18n::Tr("You are down") : view.name + " " + CoopI18n::Tr("is reviving you");
     }
     if (view.kind == Kind::spectating) {
-        return CoopI18n::Tr("Watching") + " " + view.name + "  " + CoopI18n::Tr("A: next player");
+        return CoopI18n::Tr("Watching") + " " + view.name +
+               (view.elsewhere ? " " + CoopI18n::Tr("(out of sight)") : std::string()) + "  " +
+               CoopI18n::Tr("A: next player");
     }
     return CoopI18n::Tr(view.holding ? "Reviving" : "Hold A to revive") + " " + view.name;
 }

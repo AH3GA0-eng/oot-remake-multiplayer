@@ -78,6 +78,7 @@ struct View {
     std::uint64_t left_us = 0; // the bleed-out time left (theirs, when reviving)
     float progress = 0.0f;     // 0 to 1; the ring
     bool holding = false;      // reviving: A is held
+    bool elsewhere = false;    // spectating: the one watched is where our camera cannot follow (another scene or room)
 };
 
 // What to draw now; nothing when there is nothing. Any thread.
@@ -88,7 +89,7 @@ std::optional<View> Shown();
 // The objects walk (coop_objects.cpp), each walk: whether an enemy of our
 // game (CoopDifficulty::IsEnemy, alive) is within kThreatReachM of our Link.
 // Told to the others as DBNO_THREAT while we are up.
-void NoteEnemiesNear(bool near);
+void NoteEnemiesNear(bool any);
 
 // While we spectate a player in our scene: how far the camera moves from our
 // Link to them (their puppet's feet less our Link's, metres). The game's own
