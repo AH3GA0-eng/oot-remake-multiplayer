@@ -110,7 +110,9 @@
 #include <set>
 
 namespace CoopObjects {
-void NoteBosses(const std::vector<Seen>& seen, const std::vector<std::pair<u64, std::string>>& owned);  // issue 109, below
+void NoteBosses(const std::vector<Seen>& seen, const std::vector<std::pair<u64, std::string>>& owned,
+                const std::string& scene);  // issue 109, below
+void NoteBossDeleted(std::uint64_t address);  // below: the game's delete request (row 114)
 void ForgetBosses();  // below: a new session, the title or a new game run
 // Boss bodies whose intro this game has not played (SetUnreadyBosses, below).
 std::mutex g_unready_mutex;
@@ -1374,7 +1376,7 @@ public:
         if (!Collect(r, seen)) {
             return;
         }
-        NoteBosses(seen, sync_.Owned());
+        NoteBosses(seen, sync_.Owned(), *scene);
         const u8 self =
             session->with_client([](coop::net::Client& c) { return c.player_number(); });
         if (self == 0) {
@@ -2264,6 +2266,7 @@ private:
             case CoopActorEvents::Kind::Delete: {
                 ++actor_deletes_;
                 sync_.GameDeleted(e.a, server_now_us);  // (gone at the first walk without it)
+                NoteBossDeleted(e.a);  // (a boss body off the walk: removed, not away)
                 const auto known = names_.find(e.a);
                 if (actor_event_lines_ < 40 && known != names_.end()) {
                     ++actor_event_lines_;
@@ -4001,13 +4004,15 @@ std::mutex g_bosses_mutex;
 std::vector<Seen> g_bosses;
 std::vector<std::uint64_t> g_bosses_ours;  // the bosses of g_bosses our game owns (boss-intro)
 std::map<std::string, BossOwnership, std::less<>> g_boss_last;  // the last ownership reading per boss (BossOurs)
-std::map<std::string, BossLifeSeen, std::less<>> g_boss_lives;  // the last life read per boss body (BossAliveKept)
+BossLives g_boss_lives;  // the last reading per boss body this scene, and its delete request (BossAliveKept)
+std::string g_boss_scene;  // the scene g_boss_lives is of
 std::uint64_t g_bosses_at = 0;
 constexpr std::uint64_t kBossesFreshUs = 1'500'000;
 
 } // namespace
 
-void NoteBosses(const std::vector<Seen>& seen, const std::vector<std::pair<u64, std::string>>& owned) {
+void NoteBosses(const std::vector<Seen>& seen, const std::vector<std::pair<u64, std::string>>& owned,
+                const std::string& scene) {
     std::vector<Seen> bosses;
     std::vector<std::uint64_t> ours;
     for (const Seen& s : seen) {
@@ -4024,7 +4029,16 @@ void NoteBosses(const std::vector<Seen>& seen, const std::vector<std::pair<u64, 
     g_bosses = std::move(bosses);
     g_bosses_ours = std::move(ours);
     g_bosses_at = CoopEvery::NowUs();
-    NoteBossLives(g_bosses, g_bosses_at, g_boss_lives);
+    if (scene != g_boss_scene) {
+        g_boss_lives.clear();  // another scene's bodies (left with the scene, not deleted one by one)
+        g_boss_scene = scene;
+    }
+    NoteBossLives(g_bosses, g_boss_lives);
+}
+
+void NoteBossDeleted(std::uint64_t address) {
+    std::lock_guard lock(g_bosses_mutex);
+    NoteBossRemoved(address, g_boss_lives);
 }
 
 std::optional<bool> LastBossAlive(std::span<const std::string_view> bodies) {
@@ -4033,7 +4047,7 @@ std::optional<bool> LastBossAlive(std::span<const std::string_view> bodies) {
     if (g_bosses_at == 0 || now < g_bosses_at || now - g_bosses_at > kBossesFreshUs) {
         return std::nullopt;
     }
-    return BossAliveKept(g_bosses, bodies, now, g_boss_lives);
+    return BossAliveKept(g_bosses, bodies, g_boss_lives);
 }
 
 void ForgetBosses() {
@@ -4042,6 +4056,7 @@ void ForgetBosses() {
     g_bosses_ours.clear();
     g_boss_last.clear();  // another session's (or run's) owner says nothing here
     g_boss_lives.clear();
+    g_boss_scene.clear();
     g_bosses_at = 0;
 }
 

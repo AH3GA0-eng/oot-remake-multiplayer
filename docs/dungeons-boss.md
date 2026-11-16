@@ -288,9 +288,8 @@ game could never finish: a black screen, no fade back, no warp.
   whole death, the quest step and the warp in our game. Still alive then (a clamp): the death flow alone (the
   timeline, as 0.11.1: `... asked again if it dies`), and once the copy reads dead with no event running, within
   `kReaskUs` (25 s) of the death, the setting once (`our copy of the boss died after the death flow`; its death
-  cutscene then plays a second time; a refusal asks nothing more). `kReaskUs` stays below the 30 s a body off the
-  walk reads alive (row 114 below), so a copy deleted by its owner's dead remove (gone, not dead here) never gets a
-  setting that would wait for it. Our own game taking the death setting itself ends the wait. Never dead by then:
+  cutscene then plays a second time; a refusal asks nothing more). A copy deleted by its owner's dead remove (gone,
+  not dead here) reads removed alive (row 114 below), so it never gets a setting that would wait for it. Our own game taking the death setting itself ends the wait. Never dead by then:
   `never died here`, and that player's warp does nothing until their Link leaves the dungeon (#88).
 - Tests: `tests/lichii/boss_scenes_test.cpp` (report 88 case: the real order, a copy that dies after the release,
   one held alive past the wait and dying after the flow, one that never dies, our game's own setting, leaving the
@@ -301,15 +300,21 @@ game could never finish: a black screen, no fade back, no warp.
 ## Phantom Ganon with more than one player (player report row 114, boss-0114-a)
 PiscesGamer97's 0.11.2 host log (player-logs/piscesgamer97-phantomganon-20261116): the fight "bugs out" with two
 players, and the host's death left it "fully scuffed".
-- **Root cause: a boss off the walk read as dead.** Phantom Ganon leaves the object walk while he rides in a
-  painting (the share's `moved 4050 ... left`). `BossAlive` read "no body there" as dead, so the host's Game Over
-  (an event, boss "gone") was taken for his death: `boss beaten` and BOSS_STATE defeated went to everyone, and the
-  host's own rules came back to a beaten room. Any other event while he was in a painting would do the same.
+- **Root cause: a boss off the walk read as dead.** Phantom Ganon left the object walk at life 15 (the share's
+  `moved 4050 ... left`). `BossAlive` read "no body there" as dead, so the host's Game Over (an event, boss "gone")
+  was taken for his death: `boss beaten` and BOSS_STATE defeated went to everyone, and the host's own rules came
+  back to a beaten room. Any other event while he was off the walk would do the same.
   Fixed where it starts: `CoopObjects::BossAliveKept` (used by `LastBossAlive`, so by every boss rule) reads a body
-  off the walk as alive for `kBossAwayKeepUs` (30 s) after a reading with life left. A boss's death is read at life
-  0 while it runs (its event deletes it later), so a real death still reads dead; a boss never seen this session
-  (a save that beat it) still reads dead. So the Game Over rule (boss-gameover-b: an event while our Link is dead
-  is the Game Over unless the boss reads gone) holds again: "gone" is now a real death.
+  off the walk by what is known of it, with no timer (review-boss-0114 risk 1 replaced the first 30 s window).
+  A boss's death is the game's own life 0, read while its death runs (its event deletes it later). So: last read at
+  life 0 is dead; last read with life left and no delete request since is away (the game takes live actors off its
+  list, churn-b), alive; last read with life left and then deleted (the game's delete request, patch 0007, or our
+  own remove of a copy) is removed alive: never a death, and it no longer keeps a boss of several bodies alive
+  (Twinrova's sisters). A body never read this scene (a save that beat it) still reads dead. The readings are
+  forgotten with the scene (another scene's bodies leave with it, not one delete at a time) and on a new session.
+  The emulator has no delete requests: there a body off the walk with life left is away. So the Game Over rule
+  (boss-gameover-b: an event while our Link is dead is the Game Over unless the boss reads gone) holds again:
+  "gone" is now a real death.
 - **His painting show follows him.** `Enemy_GhostPicturePerformer_PhantomGanon`, `_PhantomGanonHorse` and their
   `_Imitation` (the riders in the paintings, real and fake) were shared objects with their own owner: in the log
   they stayed with player 2 while the boss went to player 1, so a copy game's riders came from another game than
@@ -318,7 +323,8 @@ players, and the host's death left it "fully scuffed".
   of the owner's thunder ball makes its own shockwaves, and the owner's come as copies (one set, as for every
   enemy shot). The older rules' `moving in (try N)` / `could not move ... giving up` lines while the area rules
   are on are only logged: the glue drops that pull (the area rules move players).
-- Tests: `objects_test.cpp` (off the walk is away; the painting show's group).
+- Tests: `objects_test.cpp` (off the walk: away, removed alive, died, never seen; Twinrova's removed sister; the
+  painting show's group).
 - Not proven in game: a two-player Phantom Ganon run (proposed scenario `hs-phantom-ganon` from the player's save).
 
 ## Not known yet (for the in-game check)

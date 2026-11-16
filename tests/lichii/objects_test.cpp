@@ -3162,30 +3162,64 @@ TEST_CASE("objects: a boss is alive while a body actor has life left, unknown wi
     CHECK(CoopObjects::BossAlive({koume, kotake}, kTwinrova) == std::optional<bool>(false));
 }
 
-TEST_CASE("objects: a boss off the walk with life left is away, not dead (row 114, Phantom Ganon's paintings)") {
+TEST_CASE("objects: a boss off the walk reads by its last life and its delete request, never by time (row 114)") {
     constexpr std::array<std::string_view, 1> kGanon{"Enemy_DungeonBoss_PhantomGanon"};
     using CoopObjects::BossAliveKept;
-    std::map<std::string, CoopObjects::BossLifeSeen, std::less<>> last;
+    CoopObjects::BossLives last;
     Seen boss = Chest(0x900, 0);
     boss.name = "Enemy_DungeonBoss_PhantomGanon";
     boss.life = coop::protocol::ObjectLife{15, 42};
-    // Never seen this session (a save that beat him): none there is dead, as before.
-    CHECK(BossAliveKept({}, kGanon, 1'000'000, last) == std::optional<bool>(false));
-    CoopObjects::NoteBossLives({boss}, 1'000'000, last);
-    CHECK(BossAliveKept({boss}, kGanon, 1'000'000, last) == std::optional<bool>(true));
-    // In a painting: off the walk, alive.
-    CHECK(BossAliveKept({}, kGanon, 5'000'000, last) == std::optional<bool>(true));
-    // Away past the keep: none there again.
-    CHECK(BossAliveKept({}, kGanon, 1'000'000 + CoopObjects::kBossAwayKeepUs + 1, last) == std::optional<bool>(false));
-    // His death is read at life 0 while it runs; deleted after it: dead.
+    // Never seen this scene (a save that beat him): none there is dead, as before.
+    CHECK(BossAliveKept({}, kGanon, last) == std::optional<bool>(false));
+    CoopObjects::NoteBossLives({boss}, last);
+    CHECK(BossAliveKept({boss}, kGanon, last) == std::optional<bool>(true));
+    // Off the walk with life left and no delete request: away, alive, however long (no 30 s guess).
+    CHECK(BossAliveKept({}, kGanon, last) == std::optional<bool>(true));
+    // Another actor's delete request changes nothing.
+    CoopObjects::NoteBossRemoved(0x1234, last);
+    CHECK(BossAliveKept({}, kGanon, last) == std::optional<bool>(true));
+    // His own delete request with life left (removed alive): still no death (a Game Over is never his death).
+    CoopObjects::NoteBossRemoved(0x900, last);
+    CHECK(BossAliveKept({}, kGanon, last) == std::optional<bool>(true));
+    // Back on the walk (a new reading): as read.
+    CoopObjects::NoteBossLives({boss}, last);
+    CHECK_FALSE(last.at("Enemy_DungeonBoss_PhantomGanon").removed);
+    // His death is read at life 0 while it runs; deleted after it: dead, before and after its delete request.
     boss.life = coop::protocol::ObjectLife{0, 42};
-    CoopObjects::NoteBossLives({boss}, 6'000'000, last);
-    CHECK(BossAliveKept({boss}, kGanon, 6'000'000, last) == std::optional<bool>(false));
-    CHECK(BossAliveKept({}, kGanon, 7'000'000, last) == std::optional<bool>(false));
+    CoopObjects::NoteBossLives({boss}, last);
+    CHECK(BossAliveKept({boss}, kGanon, last) == std::optional<bool>(false));
+    CHECK(BossAliveKept({}, kGanon, last) == std::optional<bool>(false));
+    CoopObjects::NoteBossRemoved(0x900, last);
+    CHECK(BossAliveKept({}, kGanon, last) == std::optional<bool>(false));
     // A body there with its life unread stays unknown.
     Seen unread = boss;
     unread.life.reset();
-    CHECK_FALSE(BossAliveKept({unread}, kGanon, 7'000'000, last).has_value());
+    CHECK_FALSE(BossAliveKept({unread}, kGanon, last).has_value());
+}
+
+TEST_CASE("objects: a body removed alive keeps no boss of several bodies alive; one away does (row 114, Twinrova)") {
+    constexpr std::array<std::string_view, 3> kTwinrova{"Enemy_DungeonBoss_Twinrova", "Enemy_DungeonBoss_Koume",
+                                                        "Enemy_DungeonBoss_Kotake"};
+    using CoopObjects::BossAliveKept;
+    CoopObjects::BossLives last;
+    Seen koume = Chest(0x910, 0);
+    koume.name = "Enemy_DungeonBoss_Koume";
+    koume.life = coop::protocol::ObjectLife{8, 8};
+    Seen twin = Chest(0x920, 0);
+    twin.name = "Enemy_DungeonBoss_Twinrova";
+    twin.life = coop::protocol::ObjectLife{24, 24};
+    CoopObjects::NoteBossLives({koume, twin}, last);
+    // The sister deleted alive (merged), Twinrova then dies and is deleted after her death: dead.
+    CoopObjects::NoteBossRemoved(0x910, last);
+    twin.life = coop::protocol::ObjectLife{0, 24};
+    CoopObjects::NoteBossLives({twin}, last);
+    CoopObjects::NoteBossRemoved(0x920, last);
+    CHECK(BossAliveKept({}, kTwinrova, last) == std::optional<bool>(false));
+    // The sister only away (off the list, no delete request): she still keeps the boss alive.
+    CoopObjects::BossLives away;
+    koume.life = coop::protocol::ObjectLife{8, 8};
+    CoopObjects::NoteBossLives({koume, twin}, away);
+    CHECK(BossAliveKept({}, kTwinrova, away) == std::optional<bool>(true));
 }
 
 TEST_CASE("objects: a boss is hurt once a body's life is below its maximum (Gohma's intro)") {

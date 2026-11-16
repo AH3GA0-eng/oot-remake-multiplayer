@@ -152,8 +152,8 @@ public:
     // Another's death while our copy lives: how long the setting waits for our released copy to read dead before
     // the death flow alone, and until when after the death a copy that dies later still gets the setting.
     static constexpr std::uint64_t kCopyWaitUs = 1'500'000;
-    // Below CoopObjects::kBossAwayKeepUs (30 s): a copy deleted by its owner's dead remove (not dead in its own
-    // game) reads alive for that long, so it never gets the setting (which would wait for a boss that is gone).
+    // A copy deleted by its owner's dead remove (not dead in its own game) reads alive (removed alive,
+    // CoopObjects::BossAliveKept), so it never gets the setting (which would wait for a boss that is gone).
     static constexpr std::uint64_t kReaskUs = 25'000'000;
     static constexpr float kNearStart = 6.0f;  // during the intro a joiner this near its spot is not moved
 
