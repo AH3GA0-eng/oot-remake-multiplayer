@@ -631,6 +631,8 @@ public:
             session_->set_scene_readable(coop::host::PlayerReader(*memory).read_scene().has_value());
         }
 #ifdef COOP_HOOKSHOT
+        // The title's menu up: a guest's load through it is a save load (player report #96, docs/flags.md "Saves").
+        session_->set_title_up(CoopSave::TitleUp());
         // The game's own flag writes since the last frame (the applier's wrap, coop_flag_native.h): the watcher
         // reads those flags, not the whole list.
         CoopFlagNative::Feed(*session_);

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <utility>
 
 #include "coop/host/map_drop_log.hpp"
 #include "coop/protocol/codec.hpp"
@@ -278,6 +279,7 @@ void FlagWatcher::reset() {
   }
   raced_.clear();
   resend_pending_ = role_ == FlagRole::player && !pending_.empty();
+  check_offline_ = true;  // the title seen meanwhile (set_title) is looked at by the next frame()
 }
 
 std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
@@ -315,9 +317,24 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
   for (auto& message : queue) handle(store, message, answers);
 
   std::vector<Outgoing> resets;
+  if (std::exchange(check_offline_, false) && !loading_ && title_seen_ && role_ == FlagRole::player &&
+      !window_ && !last_.empty()) {
+    // A connection's first frame, Link in the game, and the title was up
+    // while we were not connected (set_title): our game may have loaded
+    // another save meanwhile, which no load window saw (frame() does not run
+    // then). What it changed since our last frame goes back to that (the
+    // group's then), as a guest's save load does: it is never sent as our
+    // progress (player report #96). With no Link now the load window below
+    // takes the title instead.
+    ++stats_.offline_loads;
+    moved_ = true;
+    end_window(store, resets);
+    moved_ = false;
+  }
   if (settling() && !window_) {
     window_ = true;
     moved_ = false;
+    window_title_ = false;
     back_keys_.clear();
     no_scene_frames_ = 0;
   } else if (!settling() && window_) {
@@ -325,7 +342,9 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
     end_window(store, resets);
   }
   if (window_ && loading_ && !scene_readable_) no_scene_frames_ += static_cast<int>(step);
+  if (window_ && title_seen_) window_title_ = true;
   see_save_load();
+  title_seen_ = title_up_;  // taken: what comes before the next frame() counts again
 
   Table changes;
   if (!holding_) {
@@ -513,7 +532,13 @@ bool FlagWatcher::write_exact(FlagStore& store, const FlagEntry& entry) {
 
 void FlagWatcher::see_save_load() {
   if (!window_ || !loading_ || moved_) return;
-  if (static_cast<int>(back_keys_.size()) < kSaveLoadMin || no_scene_frames_ < kTitleFrames) return;
+  const bool flags_back = static_cast<int>(back_keys_.size()) >= kSaveLoadMin && no_scene_frames_ >= kTitleFrames;
+  // A player's load through Hookshot's title menu (set_title) is a save load
+  // even when its save only goes forward of the group's (player report #96:
+  // a guest's own richer save). The host's loads keep the flags-back rule.
+  const bool title = role_ == FlagRole::player && window_title_;
+  if (!flags_back && !title) return;
+  if (!flags_back) ++stats_.title_loads;
   moved_ = true;
   seen_flags_ = static_cast<int>(back_keys_.size());
   seen_frames_ = no_scene_frames_;

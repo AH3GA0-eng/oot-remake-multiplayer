@@ -603,6 +603,139 @@ TEST_CASE("flag watcher: a guest's save load takes the group's values and sends 
   CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(kDoor, 0)});
 }
 
+namespace {
+
+// A guest at Hookshot's title: joined, the group's table in, the title menu up.
+void at_title_with_group(FlagWatcher& w, FlagStore& store, std::vector<proto::FlagEntry> group) {
+  w.set_loading(true);
+  w.set_scene(false);
+  w.set_title(true);
+  w.frame(store);
+  CHECK(w.receive(proto::FlagSnapshot{0, 1, std::move(group)}));
+  CHECK(w.frame(store).empty());
+}
+
+// The save is in and Link comes: the load window runs to its end. Everything sent is returned.
+std::vector<Outgoing> link_back(FlagWatcher& w, FlagStore& store) {
+  w.set_title(false);
+  w.set_scene(true);
+  w.set_loading(false);
+  std::vector<Outgoing> sent;
+  for (int i = 0; i <= FlagWatcher::kSettleFrames + 1; ++i) {
+    for (auto& o : w.frame(store)) sent.push_back(std::move(o));
+  }
+  CHECK_FALSE(w.settling());
+  return sent;
+}
+
+}  // namespace
+
+TEST_CASE("flag watcher: a guest's own richer save loaded through the title sends nothing (#96)") {
+  // Player report #96, the second way in: a guest joins on the title, then
+  // loads its own file, which is only ahead of the host's new one (no flag
+  // goes back, so the flags-back sign never came). Its items went to the host.
+  constexpr FlagKey kHookshot{0x8573d2cdu, 0};  // max
+  FakeStore game_store;
+  for (FlagKey k : {kChest, kDoor, kKey0, kKey1}) game_store.set(k, 0);
+  game_store.values[kHookshot] = entry(kHookshot, 0, proto::FlagKind::int32);
+  ItemFlagStore store(game_store);
+  FlagWatcher w(SharedFlags({kChest, kDoor, kKey0, kKey1, kHookshot}), FlagRole::player);
+  at_title_with_group(w, store, {entry(kDoor, 0), entry(kKey0, 0), entry(kHookshot, 0, proto::FlagKind::int32)});
+  for (int i = 0; i < 5; ++i) CHECK(w.frame(store).empty());
+  // The richer save loads: only progress forward.
+  game_store.set(kDoor, 1);
+  game_store.set(kKey0, 1);
+  game_store.values[kHookshot] = entry(kHookshot, 1, proto::FlagKind::int32);
+  CHECK(w.frame(store).empty());
+  CHECK(link_back(w, store).empty());
+  CHECK(game_store.get(kDoor) == 0);  // the group's (the host's file)
+  CHECK(game_store.get(kKey0) == 0);
+  CHECK(game_store.get(kHookshot) == 0);
+  CHECK(w.stats().title_loads == 1);
+  // Its own play after that goes out as always.
+  game_store.set(kKey1, 1);
+  CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(kKey1, 1)});
+}
+
+TEST_CASE("flag watcher: a guest loading the host's save copy through the title sees no change, sends nothing (#96)") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::player);
+  at_title_with_group(w, store, {entry(kDoor, 1), entry(kKey0, 1), entry(kChest, 0), entry(kKey1, 0)});
+  // The co-op folder's copy of the host's save: the group's values. The title's memory may have had others.
+  store.set(kDoor, 1);
+  store.set(kKey0, 1);
+  CHECK(w.frame(store).empty());
+  CHECK(link_back(w, store).empty());
+  CHECK(store.get(kDoor) == 1);
+  CHECK(store.get(kKey0) == 1);
+  CHECK(store.get(kChest) == 0);
+  CHECK(w.stats().load_reverts == 0);
+  store.set(kChest, 1);
+  CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(kChest, 1)});
+}
+
+TEST_CASE("flag watcher: the host's load through the title keeps the flags-back rule (#96)") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::host);
+  w.set_loading(true);
+  w.set_scene(false);
+  w.set_title(true);
+  for (int i = 0; i < FlagWatcher::kTitleFrames + 2; ++i) w.frame(store);
+  store.set(kDoor, 1);  // the host's save: forward only
+  w.frame(store);
+  const auto sent = link_back(w, store);
+  for (const auto& m : decode(sent)) CHECK_FALSE(std::holds_alternative<proto::FlagReset>(m));
+  CHECK(w.stats().host_resets == 0);
+  CHECK(w.stats().title_loads == 0);
+  CHECK(store.get(kDoor) == 1);
+}
+
+TEST_CASE("flag watcher: with no title (the emulator) a guest's forward-only load is still sent (#96)") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::player);
+  w.set_loading(true);
+  w.set_scene(false);
+  for (int i = 0; i < FlagWatcher::kTitleFrames + 2; ++i) w.frame(store);
+  store.set(kDoor, 1);
+  w.frame(store);
+  const auto sent = link_back(w, store);
+  bool door = false;
+  for (const auto& m : decode(sent)) {
+    if (const auto* set = std::get_if<proto::FlagSet>(&m)) {
+      door = door || std::find(set->flags.begin(), set->flags.end(), entry(kDoor, 1)) != set->flags.end();
+    }
+  }
+  CHECK(door);
+  CHECK(w.stats().title_loads == 0);
+}
+
+TEST_CASE("flag watcher: the title while not connected: what the game changed meanwhile goes back (#96)") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::player);
+  w.frame(store);  // in the game, connected: the baseline (the group's values)
+  // The connection goes; the player goes to the title and loads another save.
+  w.set_title(true);
+  w.set_title(false);
+  store.set(kDoor, 1);
+  store.set(kKey0, 1);
+  w.reset();  // connected again, Link in the game
+  CHECK(w.frame(store).empty());
+  CHECK(store.get(kDoor) == 0);
+  CHECK(store.get(kKey0) == 0);
+  CHECK(w.stats().offline_loads == 1);
+  for (int i = 0; i < 5; ++i) CHECK(w.frame(store).empty());
+}
+
+TEST_CASE("flag watcher: a short drop with no title keeps the game's own change and sends it") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::player);
+  w.frame(store);
+  store.set(kChest, 1);  // taken while the connection was away
+  w.reset();
+  CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(kChest, 1)});
+  CHECK(w.stats().offline_loads == 0);
+}
+
 TEST_CASE("flag watcher: one flag back with no Link is no save load: the old rules hold for a guest") {
   FakeStore store = game();
   FlagWatcher w(shared(), FlagRole::player);

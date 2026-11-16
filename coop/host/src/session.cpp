@@ -62,6 +62,10 @@ FrameReport Session::frame(const std::optional<PlayerReading>& reading, FlagStor
     }
   }
 
+  // Every frame, connected or not: a title while not connected matters at the
+  // next connection (FlagWatcher::set_title, player report #96).
+  if (watcher_) watcher_->set_title(title_up_);
+
   std::vector<Outbound> out;
   if (report.connected) {
     if (std::exchange(reset_sampler_, false)) sampler_.reset();
