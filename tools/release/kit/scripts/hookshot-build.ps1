@@ -16,7 +16,7 @@
 #
 # What it does:
 # 1. Hookshot's own build tools: the parts of the Hookshot release named in hookshot\TOOLS.txt (its
-#    Python, llvm-mingw, the Vulkan/FFmpeg headers, wgpu-native and the prebuilt third-party files),
+#    Python, llvm-mingw, the Vulkan/FFmpeg headers and the prebuilt third-party files),
 #    downloaded from Longshot's release (git.magicbean.dev) and checked against the SHA-256 in that release's
 #    hookshot-setup.txt (whose own SHA-256 is in TOOLS.txt). About 400 MB, once. Each download is tried several
 #    times, then with curl.exe, then from the co-op mirror (TOOLS.txt mirror=); nothing unverified is used.
@@ -332,7 +332,7 @@ if ($toolsReady) {
     # tools.lock: "tool <name> <version> <system> <sha256> <size> <dest> <prefix> <url> [<url> ...]"; the URLs are
     # tried in order (Longshot's Cloudflare copy, git.magicbean.dev, then upstream). Of the windows-x64 tools, emsdk
     # is not fetched (llvm-mingw builds the game; the builder sets EMSDK only when its folder is there).
-    $wanted = @('llvm-mingw', 'python', 'cpm', 'wgpu-native', 'third-party')
+    $wanted = @('llvm-mingw', 'python', 'cpm', 'third-party')
     $parts = @()
     foreach ($line in Get-Content -LiteralPath $lock) {
         $f = $line.Trim() -split '\s+'
@@ -562,7 +562,6 @@ function Invoke-MakeGame([string[]]$MoreArgs, [string]$Log = '') {
     $script:MakeGameErrors = @()
     $env:PYTHONIOENCODING = 'utf-8'
     $env:RX_CPM = Join-Path $tools 'cpm'
-    $env:WGPU_NATIVE = Join-Path $tools 'wgpu-native'
     $env:LONGSHOT_MINGW = Join-Path $tools 'llvm-mingw'
     foreach ($v in 'LONGSHOT_NGX_SDK', 'LONGSHOT_FFX_SDK', 'LONGSHOT_MSVC', 'EMSDK', 'LONGSHOT_BUILDER_EXE', 'LONGSHOT_TOOLS') {
         Remove-Item "Env:\$v" -ErrorAction SilentlyContinue
