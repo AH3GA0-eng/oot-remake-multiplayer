@@ -40,6 +40,18 @@ bool g_use = false;
 std::mutex g_mutex;  // everything below; the game's file service and the network thread
 fs::path g_dir;      // the folder the game opened for its account save
 save::Planner g_planner;
+// Player report 120: the slot our game plays (patch 0025's opens, patch 0024's load windows), sent to the guests.
+save::PlayedSlot g_played;
+std::atomic<SlotOpenedFn> g_slot_opened{nullptr};   // SetSlotOpens (Hookshot's patch 0025)
+struct SlotOpens {
+    unsigned opens = 0;   // the count of opens so far (0: none)
+    fs::path dir;         // the last one's slot folder
+    bool write = false;
+};
+unsigned g_slot_opens_seen = 0;
+bool g_title_seen = false;   // the title's menu was up in this run (PlayedSlot::new_game)
+bool g_resync = false;        // RequestResync: taken by the next OnFrame
+bool g_guest_live = false;    // a connected guest of this session (CanResync), set each OnFrame
 // This session's guest save state (save::GuestSession): fresh for each session (decide_again).
 save::GuestSession g_guest;
 std::deque<proto::SavePart> g_outbox;       // the host's parts, a frame each
@@ -310,11 +322,94 @@ void NoteTitle(bool title_up) {
         g_game_over_ms.store(0, std::memory_order_relaxed);  // Game Over's Quit Game: the next load is the player's pick
     }
     std::lock_guard lock(g_mutex);
+    if (title_up && !g_title_up) {
+        g_played.on_title();   // (a new pick follows: a file, or New Game)
+        g_title_seen = true;
+    }
     g_title_up = title_up;
 }
 
+void SetSlotOpens(SlotOpenedFn opened) {
+    g_slot_opened.store(opened, std::memory_order_release);
+}
+
+namespace {
+const char* SourceName(save::PlayedSlot::Source s) {
+    switch (s) {
+    case save::PlayedSlot::Source::write: return "the game saved into it";
+    case save::PlayedSlot::Source::load_read: return "the game loaded it";
+    case save::PlayedSlot::Source::last_read: return "the last one the game read before its load";
+    case save::PlayedSlot::Source::none: break;
+    }
+    return "not known";
+}
+
+// Under g_mutex: a change of the played slot, logged once, in a session only (solo writes no co-op save lines).
+void LogPlayed(const std::optional<fs::path>& before) {
+    if (g_played.slot() == before || !g_live) return;
+    if (g_played.slot()) {
+        LOG_INFO(Core, "coop: save: our game plays {} ({})", g_played.slot()->filename().string(),
+                 SourceName(g_played.source()));
+    }
+}
+
+// Patch 0025's opens now (no lock of ours: the exe's own lock, held for a copy).
+SlotOpens ReadSlotOpens() {
+    SlotOpens o;
+    if (const auto opened = g_slot_opened.load(std::memory_order_acquire)) {
+        char buf[1024];
+        int w = 0;
+        o.opens = opened(buf, sizeof buf, &w);
+        if (o.opens != 0) o.dir = fs::path(buf).lexically_normal();
+        o.write = w != 0;
+    }
+    return o;
+}
+
+// The game thread's load-window marks (NoteGameSaveLoad), each with patch 0025's opens at that moment, for the next
+// PollSlotOpens. Their own small lock: only a push or a swap under it, never g_mutex or disk work (the game's save
+// load never waits on the host's save reads).
+std::mutex g_window_mutex;
+std::vector<std::pair<bool, SlotOpens>> g_windows;
+
+void NoteLoadWindowMark(bool start) {
+    auto opens = ReadSlotOpens();
+    std::lock_guard lock(g_window_mutex);
+    if (g_windows.size() < 64) g_windows.emplace_back(start, std::move(opens));
+}
+}  // namespace
+
+void PollSlotOpens() {
+    std::vector<std::pair<bool, SlotOpens>> windows;
+    {
+        std::lock_guard lock(g_window_mutex);
+        windows.swap(g_windows);
+    }
+    const SlotOpens now = ReadSlotOpens();
+    std::lock_guard lock(g_mutex);
+    const auto before = g_played.slot();
+    // The window marks first, each with the opens as they were at it: a load's read is never lost, nor a read from
+    // before the load taken as inside it, whatever the frame's timing (save::PlayedSlot counts the opens).
+    for (const auto& [start, at] : windows) g_played.on_load_window(start, at.opens, at.dir, at.write);
+    if (now.opens != g_slot_opens_seen && !now.dir.empty()) {
+        g_slot_opens_seen = now.opens;   // (several opens in one frame: the last counts; one slot per load)
+        g_played.on_open(now.dir, now.write, now.opens);
+    }
+    LogPlayed(before);
+}
+
+void RequestResync() {
+    std::lock_guard lock(g_mutex);
+    g_resync = true;
+}
+
+bool CanResync() {
+    std::lock_guard lock(g_mutex);
+    return g_guest_live && g_root && g_remount;
+}
 
 void NoteGameSaveLoad(bool start) {
+    NoteLoadWindowMark(start);   // player report 120: the slot the game loads (save::PlayedSlot)
     const long long now = NowMs();
     if (start) {
         g_load_starts.fetch_add(1, std::memory_order_relaxed);
@@ -484,10 +579,53 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
     WriteSlot(*slot);
 }
 
+namespace {
+// Under g_mutex, from OnFrame: the Lobby tab's Resync from host (save::resync_check). The guest's save session starts
+// again as on joining: the next OnFrame asks the host, the parts come, the slot waits for the title's menu
+// (PendingFrame) and is then written into the co-op folder and switched to. Its own saves are never touched.
+void Resync(bool connected_guest) {
+    const auto& a = g_guest.assembler;
+    const bool coming = g_guest.unwritten.has_value() ||
+                        (a.received() != 0 && a.received() < a.count() &&
+                         CoopEvery::NowUs() - g_guest.last_part_us < CoopEvery::kSaveStuckUs) ||
+                        (g_guest.asked && !g_guest.ready && !g_guest.no_save && !g_guest.gave_up);
+    switch (save::resync_check(connected_guest, g_root && g_remount && !g_dir.empty(), coming)) {
+    case save::ResyncCheck::not_guest:
+        LOG_INFO(Core, "coop: save: resync from host: refused (not a guest in a session)");
+        Say("Resync from host: only a guest in a session can ask for the host's save.");
+        return;
+    case save::ResyncCheck::no_switch:
+        LOG_INFO(Core, "coop: save: resync from host: refused (this game's save folder cannot switch)");
+        Say("Resync from host: this game cannot switch its save folder (see the log).");
+        return;
+    case save::ResyncCheck::coming:
+        LOG_INFO(Core, "coop: save: resync from host: the host's save is already on its way");
+        Say("Resync from host: the host's save is already on its way.");
+        return;
+    case save::ResyncCheck::go:
+        break;
+    }
+    const fs::path own = save::is_coop_dir(g_dir) ? save::own_dir_of(g_dir) : g_dir;
+    g_guest = save::GuestSession{};   // asks again at once (OnFrame), as on joining
+    g_lines = save::GuestNotices{};
+    g_use = true;
+    g_pending = save::coop_dir_of(own);   // written and switched to on the title's menu (PendingFrame)
+    g_suspended = false;
+    LOG_INFO(Core, "coop: save: resync from host: asking the host for its save again ({}; switched to on the "
+                   "title's menu)", g_in_game ? "a file is loaded" : "no file loaded");
+    Say(g_in_game ? "Resync from host: the host's save is coming. Go back to the title and load it once the chat "
+                    "says Success."
+                  : "Resync from host: the host's save is coming. Load a save once the chat says Success.");
+}
+}  // namespace
+
 void OnFrame(coop::net::Client& client, bool host_reset) {
     std::lock_guard lock(g_mutex);
     SwitchFrame(client);
-    if (client.state() != coop::net::State::connected || client.host_number() == 0) {
+    const bool connected = client.state() == coop::net::State::connected && client.host_number() != 0;
+    g_guest_live = connected && !client.is_host() && g_live;
+    if (std::exchange(g_resync, false)) Resync(g_guest_live);
+    if (!connected) {
         g_outbox.clear();
         return;
     }
@@ -529,14 +667,27 @@ void OnFrame(coop::net::Client& client, bool host_reset) {
         return;
     }
     if (host_reset) {
-        g_planner.on_host_load(fs::file_time_type::clock::now());
-        LOG_INFO(Core, "coop: save: we loaded a save: a guest that asks gets our newest save at once, and every "
-                       "guest gets this one after the game's next save (a door or a save point)");
+        const auto before = g_played.slot();
+        g_played.on_load_seen();
+        LogPlayed(before);
+        const bool known = g_played.slot().has_value();
+        g_planner.on_host_load(fs::file_time_type::clock::now(), known);
+        if (known) {
+            LOG_INFO(Core, "coop: save: we loaded {}: every guest gets it now", g_played.slot()->filename().string());
+        } else {
+            LOG_INFO(Core, "coop: save: we loaded a save (which slot is not known here): a guest that asks gets our "
+                           "newest save at once, and every guest gets this one after the game's next save (a door "
+                           "or a save point)");
+        }
     }
+    // A new game not saved yet: the guests hear "no save yet", never another slot of ours (player report 120).
+    const bool new_game = g_played.new_game(g_in_game, g_title_seen);
     // Twice a second: what the host owes (it reads the folder's file times).
     if (!g_dir.empty() && !g_planner.idle() && g_folder_every.Due(CoopEvery::NowUs())) {
-        for (const auto& send : g_planner.due(save::newest_write(g_dir))) {
-            const auto slot_dir = send.no_save ? std::nullopt : save::newest_slot(g_dir);
+        const auto newest = new_game ? std::nullopt : save::newest_write(g_dir);
+        for (const auto& send : g_planner.due(newest)) {
+            bool played = false;
+            const auto slot_dir = send.no_save ? std::nullopt : save::slot_to_send(g_dir, g_played.slot(), &played);
             const auto slot = slot_dir ? save::read_slot(*slot_dir) : std::nullopt;
             const auto packed =
                 send.no_save ? save::pack_no_save() : (slot ? save::pack(*slot) : std::vector<std::uint8_t>{});
@@ -555,8 +706,12 @@ void OnFrame(coop::net::Client& client, bool host_reset) {
                 g_planner.retry(send);
                 continue;
             }
-            LOG_INFO(Core, "coop: save: sending {} ({} bytes, {} parts) to {}",
-                     send.no_save ? std::string("'no save yet'") : slot_dir->filename().string(), packed.size(),
+            LOG_INFO(Core, "coop: save: sending {} ({}; {} bytes, {} parts) to {}",
+                     send.no_save ? std::string("'no save yet'") : slot_dir->filename().string(),
+                     send.no_save ? (new_game ? "a new game, not saved yet" : "nothing on disk")
+                                  : (played ? "the slot our game plays"
+                                            : "the newest on disk: the slot played is not known"),
+                     packed.size(),
                      parts.size(),
                      send.to_player == 0 ? std::string("every guest")
                                          : fmt::format("player {}", send.to_player));

@@ -299,6 +299,30 @@ std::optional<fs::path> newest_slot(const fs::path& game_dir) {
   return best;
 }
 
+ResyncCheck resync_check(bool connected_guest, bool can_switch, bool coming) {
+  if (!connected_guest) return ResyncCheck::not_guest;
+  if (!can_switch) return ResyncCheck::no_switch;
+  if (coming) return ResyncCheck::coming;
+  return ResyncCheck::go;
+}
+
+std::optional<fs::path> slot_to_send(const fs::path& game_dir, const std::optional<fs::path>& played,
+                                     bool* played_used) {
+  if (played_used) *played_used = false;
+  if (played) {
+    std::error_code ec;
+    const fs::path p = played->lexically_normal();
+    const bool ours = p.parent_path().lexically_normal() == game_dir.lexically_normal() &&
+                      slot_name(p.filename().string()) &&
+                      fs::is_regular_file(p / std::string(kSlotFiles[0]), ec);
+    if (ours) {
+      if (played_used) *played_used = true;
+      return p;
+    }
+  }
+  return newest_slot(game_dir);
+}
+
 std::optional<fs::file_time_type> newest_write(const fs::path& game_dir) {
   const auto slot = newest_slot(game_dir);
   if (!slot) return std::nullopt;

@@ -9,6 +9,7 @@
 // for its save; the host sends its newest slot, and again to everyone after
 // its own save load (once the game has saved after it).
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -34,6 +35,17 @@ void SetSwitch(std::function<std::string()> root, std::function<bool(const std::
 
 // Each frame: whether Link is in the game (a loaded save): no switch then.
 void NoteInGame(bool in_game);
+// Player report 120, Hookshot's patch 0025 (hos_coop_fs_save_slot_opened): the count of opens of a slot's
+// progress.sav on the account save, the last one's slot folder and whether it was a write, so the host sends the slot
+// its game plays (save::PlayedSlot). Unset (the emulator, an older Hookshot): the newest slot on disk, as before.
+using SlotOpenedFn = unsigned (*)(char* slot_dir, std::size_t cap, int* write);
+void SetSlotOpens(SlotOpenedFn opened);
+// Each frame, also without a session: takes the new opens and the load windows (cheap when there are none).
+void PollSlotOpens();
+// The Lobby tab's "Resync from host" (a guest; save::resync_check): taken at the next OnFrame, which asks the host
+// again; the chat says how it goes. CanResync: the row is shown (a connected guest on a switchable folder).
+void RequestResync();
+bool CanResync();
 
 // The host's save has been written whole into this game's co-op folder and (Hookshot) the game plays from it now:
 // a title menu may load it. Before that a guest's game stays on its own folder.
