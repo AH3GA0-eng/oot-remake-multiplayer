@@ -587,4 +587,4 @@ jobs:
           [ "${#objects[@]}" -gt 0 ] || { echo "::error::no co-op hook objects (is LICHII_COOP on?)"; exit 1; }
           echo "compiling ${#objects[@]} hook files"
           printf '%s\n' "${objects[@]}" | grep -qE 'coop_svc|coop_window' || { echo "::error::coop_svc.cpp / coop_window.cpp not in the list"; exit 1; }
-          ninja -C "$src/build/coop" "${objects[@]}"
+          ninja -C "$src/build/coop" -k 0 "${objects[@]}"  # -k 0: every failing file in one run
