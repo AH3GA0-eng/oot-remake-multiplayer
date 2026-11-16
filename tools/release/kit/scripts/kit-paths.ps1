@@ -747,7 +747,7 @@ function Get-KitHeldFolderText([string]$Folder, [string]$Why, [string[]]$Holders
     $text = "Windows would not let the build move or delete $Folder ($Why). Something still has a file in it open"
     $text += $(if ($Holders) { ': ' + ($Holders -join ', ') + '.' } else { '.' })
     if ($Sync) {
-        $text += " This folder is in a cloud-sync folder ($Sync), and the sync client opens every new file to upload it: move the kit out of it, to a short folder such as C:\OoT-Coop, and start it there."
+        $text += " This folder is in a cloud-sync folder ($Sync), and the sync client opens every new file to upload it: move the kit out of it, to a short folder such as C:\Squadala, and start it there."
         return $text
     }
     $text += (' Most often it is the antivirus scanning the files just unpacked, or an Explorer window or the search indexer. ' +
@@ -1119,7 +1119,7 @@ function Test-KitPuppetPackStale([string]$Manifest, [string]$ToolDir) {
 # The line said before Build-Hookshot-Coop runs for that need ('game', 'moved' and 'pin' ask first:
 # Get-KitHookshotNeedQuestion). A tester read the old "No co-op Hookshot game" as "couldn't find Hookshot"
 # and stopped: these say what is missing and that the kit sets it up.
-# $HsOnly: a Hookshot-only kit ("Start OoT Co-op.bat"), which has no emulator and no Build-Hookshot-Coop.bat.
+# $HsOnly: a Hookshot-only kit ("Start Squadala.bat"), which has no emulator and no Build-Hookshot-Coop.bat.
 function Get-KitHookshotNeedText([string]$Need, [string]$Game = '', [bool]$HsOnly = $false) {
     # (kit-friction: players who had built Longshot asked whether it could be used, or moved it into the kit; one asked
     # where 60 GB goes. Sizes measured on a built kit, 2026-11-14)
