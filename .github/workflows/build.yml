@@ -74,6 +74,8 @@ jobs:
         run: python tools/puppet_pack/tests/test_extra_spots.py -v
       - name: Story cutscene requests tests
         run: python tools/puppet_pack/tests/test_story_requests.py -v
+      - name: Unnamed room bools tests
+        run: python tools/puppet_pack/tests/test_autogen_flags.py -v
       - name: Save flags tests
         run: python tools/autotest/tests/test_save_flags.py -v
       - name: Hookshot autotest driver tests
