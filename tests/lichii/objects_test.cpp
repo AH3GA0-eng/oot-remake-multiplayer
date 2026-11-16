@@ -25,6 +25,7 @@ using CoopObjects::Sync;
 using CoopObjects::IsLateEncounter;
 using CoopObjects::kEncounterNearM;
 using CoopObjects::kEncounterWaitUs;
+using CoopObjects::kEncounterStaleUs;
 
 namespace {
 
