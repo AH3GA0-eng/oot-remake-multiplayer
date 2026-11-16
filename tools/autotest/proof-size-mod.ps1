@@ -15,10 +15,12 @@ param(
     [Parameter(Mandatory)][string]$KitA,
     [Parameter(Mandatory)][string]$KitB,
     [string]$Scenario = 'hs-puppets',
-    [int]$Timeout = 300
+    [int]$Timeout = 300,
+    [string]$Server = ''   # default: the 0.11.2 integrator's server, a path that ran before (no firewall prompt)
 )
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
+if (-not $Server) { $Server = [System.IO.Path]::GetFullPath((Join-Path $here '..\..\..\integrate-0112\build\server\coop_server.exe')) }
 $repo = [System.IO.Path]::GetFullPath((Join-Path $here '..\..'))
 $py = Join-Path $repo '..\oot-remake-recomp\.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $py)) { $py = Join-Path $KitA 'hookshot\tools\python\python.exe' }
@@ -50,7 +52,11 @@ $modsA = Join-Path $gameA 'mods'
 $fake = Join-Path $modsA 'bestbuddy'
 $romfs = Join-Path $gameA 'romfs'
 $ours = Join-Path $repo 'tools\puppet_pack\merge_tables.py'
-$keep = Join-Path $repo '..\coop-kit\proof-size-mod'   # (outside the repo: game data and the kits' own tool)
+# coop-kit\ is the kits' grandparent (coop-kit\ls\kit-A); run.ps1 from the main checkout beside it, which finds the lanes
+# there (from a .worktrees checkout it would look in .worktrees\coop-kit)
+$coopKit = Split-Path -Parent (Split-Path -Parent ([System.IO.Path]::GetFullPath($KitA)))
+$runPs1 = [System.IO.Path]::GetFullPath((Join-Path $coopKit '..\oot-remake-multiplayer\tools\autotest\run.ps1'))
+$keep = Join-Path $coopKit 'proof-size-mod'   # (outside the repo: game data and the kits' own tool)
 New-Item -ItemType Directory -Force -Path $keep | Out-Null
 Write-Host "game A: $gameA"
 Write-Host "game B: $gameB"
@@ -86,7 +92,7 @@ if ($Step -eq 'after') {
 foreach ($g in $gameA, $gameB) { Save-CrashRecords $g (Join-Path $keep 'crash-records') }
 $started = Get-Date
 $env:HOS_CRASH_WATCH = '0'   # (no modal crash window: the abort is read from the log)
-& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $here 'run.ps1') -Lane 1 -Kit $KitA, $KitB -Scenario $Scenario -Timeout $Timeout
+& powershell -NoProfile -ExecutionPolicy Bypass -File $runPs1 -Runtime hookshot -Lane 1 -Kit "$KitA,$KitB" -Scenario $Scenario -Timeout $Timeout -Server $Server
 $runCode = $LASTEXITCODE
 Remove-Item Env:\HOS_CRASH_WATCH -ErrorAction SilentlyContinue
 
@@ -96,7 +102,7 @@ $rsdb = [regex]::Matches($text, 'mods: RSDB/\S+ <- .*bestbuddy').Count
 $fatal = $text -match 'FATAL: the game aborted'
 $table = [regex]::Match($text, 'mods: System/Resource/ResourceSizeTable\S+ <- (.*)').Groups[1].Value
 $puppet = [regex]::Matches($text, 'CoopPuppet_\S+ spawned').Count
-$startText = @(Get-ChildItem -Path (Join-Path $repo "..\coop-kit\ls\shots-lane1\$Scenario") -Recurse -Filter 'kit-start-A.txt' -ErrorAction SilentlyContinue |
+$startText = @(Get-ChildItem -Path (Join-Path $coopKit "ls\shots-lane1\$Scenario") -Recurse -Filter 'kit-start-A.txt' -ErrorAction SilentlyContinue |
     Where-Object { $_.LastWriteTime -ge $started } | ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) }) -join "`n"
 $merged = $startText -match "Size tables: the game reads the puppet pack's; merged in the entries of bestbuddy"
 Write-Host ''
