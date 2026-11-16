@@ -2507,6 +2507,7 @@ void LocalFrameOff(Core::System& system) {
         const auto scene = full ? full->scene : reader.read_scene();
         WatchMapDrops(memory, facts.position.has_value(), scene, facts.position);
         KeepMapsAlone(memory, facts.position.has_value(), scene);
+        CoopMapRefresh::TheRefresher().SetInPlay(facts.position.has_value());  // rows 63/76: no refresh off play
         static MendClocks mend_since_us{};
         if (facts.position.has_value()) {
             MendStory(memory, mend_since_us);  // issue 84: a stuck save, played alone

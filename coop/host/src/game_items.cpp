@@ -801,10 +801,10 @@ bool ItemFlagStore::write(const protocol::FlagEntry& entry) {
   const auto now = inner_.read(key);
   if (!now || now->kind != entry.kind) return inner_.write(entry);
   protocol::FlagEntry merged = entry;
-  // An exact write (the host's save-load FLAG_RESET, a guest's load write-back) replaces the value, except a
-  // dungeon's floors (ItemRule::bits): a floor once entered is never taken off a player's map (#63/#76: a
-  // guest's own floors lost to the host's value).
-  merged.value = exact_ && item->rule != ItemRule::bits
+  // An exact write (the host's save-load FLAG_RESET, the join snapshot) replaces the value: the host's save decides.
+  // A guest's own load write-back (keep_bits_) ORs a dungeon's floors (ItemRule::bits): a floor it entered is not
+  // taken off its map by its own load (#63/#76).
+  merged.value = exact_ && !(keep_bits_ && item->rule == ItemRule::bits)
                      ? entry.value
                      : merge_item(item->rule, item->kind, now->value, entry.value);
   const bool int_item = item->kind == protocol::FlagKind::int32;
@@ -896,6 +896,13 @@ bool ItemFlagStore::is_one_way(FlagKey key) {
   if (key.kind != protocol::FlagKeyKind::named || key.index != 0) return false;
   const ItemFlag* item = find_item(key.hash);
   return item != nullptr && item->on && item->rule == ItemRule::bits;
+}
+
+bool ItemFlagStore::write_load_back(const protocol::FlagEntry& entry) {
+  keep_bits_ = true;
+  const bool ok = write_exact(entry);
+  keep_bits_ = false;
+  return ok;
 }
 
 bool ItemFlagStore::write_exact(const protocol::FlagEntry& entry) {

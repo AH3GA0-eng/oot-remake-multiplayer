@@ -35,6 +35,7 @@ constexpr std::uint64_t kScreen = 0x5000;
 TEST_CASE("map refresh: one call of the game's refresh on the HUD screen, a moment after a map arrives") {
     FakeGuest g;
     CoopMapRefresh::Refresher r;
+    r.SetInPlay(true);
     CHECK_FALSE(r.Step(g, false, 100));  // nothing wanted
     r.Want(100);
     r.SetScreen(kScreen, kMain);
@@ -57,11 +58,37 @@ TEST_CASE("map refresh: one call of the game's refresh on the HUD screen, a mome
     CHECK_FALSE(r.Step(g, false, 1000));  // once
 }
 
-TEST_CASE("map refresh: no HUD screen (no patch 0018, a title screen): nothing called, kept until one runs") {
+TEST_CASE("map refresh: no running HUD screen (an older patch 0018, a screen not run lately): nothing called, kept until one runs") {
     FakeGuest g;
     CoopMapRefresh::Refresher r;
+    r.SetInPlay(true);
     r.Want(100);
     CHECK_FALSE(r.Step(g, false, 1000));
     r.SetScreen(kScreen, kMain);
     CHECK(r.Step(g, false, 1100));
+}
+
+TEST_CASE("map refresh: not in play (the title, a load, a reload): nothing called, kept until Link is back") {
+    FakeGuest g;
+    CoopMapRefresh::Refresher r;
+    r.SetScreen(kScreen, kMain);
+    r.Want(100);
+    r.SetInPlay(false);
+    CHECK_FALSE(r.Step(g, false, 1000));
+    r.SetInPlay(true);
+    CHECK(r.Step(g, false, 1100));
+}
+
+TEST_CASE("map refresh: the HUD screen stops running before the call: none made on it") {
+    FakeGuest g;
+    CoopMapRefresh::Refresher r;
+    r.SetInPlay(true);
+    r.SetScreen(kScreen, kMain);
+    r.Want(100);
+    r.SetScreen(0, kMain);  // patch 0018: not run for 100 ms, or its slot reused (the title, a new HUD)
+    CHECK_FALSE(r.Step(g, false, 1000));
+    r.SetScreen(kScreen + 0x100, kMain);  // a new HUD screen that runs
+    const auto c = r.Step(g, false, 1100);
+    REQUIRE(c);
+    CHECK(c->x[0] == kScreen + 0x100);
 }

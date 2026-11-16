@@ -276,6 +276,11 @@ bool Store::write_exact(const coop::protocol::FlagEntry& entry) {
     return quest != nullptr ? put(*quest, entry, true) : inner_.write_exact(entry);
 }
 
+bool Store::write_load_back(const coop::protocol::FlagEntry& entry) {
+    const Quest* quest = Plain(entry.key) ? Find(entry.key.hash) : nullptr;
+    return quest != nullptr ? put(*quest, entry, true) : inner_.write_load_back(entry);
+}
+
 bool Store::busy(coop::host::FlagKey key) {
     const Quest* quest = Plain(key) ? Find(key.hash) : nullptr;
     if (quest != nullptr && quest->complete_only) {

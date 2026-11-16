@@ -564,7 +564,7 @@ void FlagWatcher::end_window(FlagStore& store, std::vector<Outgoing>& out) {
       if (!store.is_count(key)) note_group(*now, nullptr);
     } else if (keeps_own(store, it->second)) {
       continue;  // our value stays; last_ still holds the group's, so the next diff sends ours
-    } else if (store.write_exact(it->second)) {
+    } else if (store.write_load_back(it->second)) {
       ++stats_.load_reverts;  // back to the group's value from before the load
       ++stats_.applied;
     }
@@ -877,7 +877,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
             it->second = *now;
             continue;
           }
-          if (store.write_exact(group->second)) {
+          if (store.write_load_back(group->second)) {
             ++stats_.load_reverts;
             ++stats_.applied;
             it->second = group->second;

@@ -1344,21 +1344,27 @@ TEST_CASE("item store: a reset that lowers the hearts holds life to the new maxi
   CHECK(game_store.get(kLife) == 8);
 }
 
-TEST_CASE("item store: an exact write never takes a floor off a dungeon's floors (#63/#76)") {
+TEST_CASE("item store: a guest's load write-back never takes a floor off; the host's reset decides (#63/#76)") {
   constexpr FlagKey kFloors{0x46913e20u, 0};  // DungeonInfo.DodongoCavern.EnteredFloorBit
   constexpr FlagKey kMaxLife{0xfbe01da1u, 0};
   FakeStore game_store;
   game_store.values[kFloors] = entry(kFloors, 0b0110, proto::FlagKind::uint32);
   game_store.values[kMaxLife] = entry(kMaxLife, 20, proto::FlagKind::int32);
   ItemFlagStore store(game_store);
-  // The host's save has fewer floors (a guest entered more): the guest keeps its own and takes the host's.
-  CHECK(store.write_exact(entry(kFloors, 0b0001, proto::FlagKind::uint32)));
+  // The guest's own load, the group's floors written back: the floors it entered stay, the group's are added.
+  CHECK(store.write_load_back(entry(kFloors, 0b0001, proto::FlagKind::uint32)));
   CHECK(game_store.get(kFloors) == 0b0111);
-  CHECK(store.write_exact(entry(kFloors, 0, proto::FlagKind::uint32)));
+  CHECK(store.write_load_back(entry(kFloors, 0, proto::FlagKind::uint32)));
   CHECK(game_store.get(kFloors) == 0b0111);
-  // Any other item still takes the exact value.
-  CHECK(store.write_exact(entry(kMaxLife, 12, proto::FlagKind::int32)));
+  // Any other item still takes the exact value on a load write-back.
+  CHECK(store.write_load_back(entry(kMaxLife, 12, proto::FlagKind::int32)));
   CHECK(game_store.get(kMaxLife) == 12);
+  // The host's FLAG_RESET or the join snapshot: the host's save decides, floors too (docs/flags.md, "Saves").
+  CHECK(store.write_exact(entry(kFloors, 0b0001, proto::FlagKind::uint32)));
+  CHECK(game_store.get(kFloors) == 0b0001);
+  // And the next plain write merges again (the bits rule's union).
+  CHECK(store.write(entry(kFloors, 0b0100, proto::FlagKind::uint32)));
+  CHECK(game_store.get(kFloors) == 0b0101);
 }
 
 TEST_CASE("flag watcher, host: two flags back with a scene loaded is no save load (doors, enter flags, death)") {

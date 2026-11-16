@@ -28,6 +28,7 @@ struct HosCoopMenuState {
     std::uint32_t size;
     std::int32_t map_page, menu_open, reserved;
     std::uint64_t hud_screen, panel_screen;
+    std::int64_t hud_ran_ns_ago;  // (rows 63/76; an older exe answers with the struct up to here)
 };
 using MenuStateFn = int (*)(HosCoopMenuState*);
 
@@ -182,7 +183,9 @@ std::optional<Menu> MenuState() {
     if (!fn(&s)) {
         return std::nullopt;
     }
-    return Menu{s.menu_open != 0, s.map_page != 0, s.hud_screen, s.panel_screen};
+    Menu m{s.menu_open != 0, s.map_page != 0, s.hud_screen, s.panel_screen};
+    if (s.size >= sizeof s) m.hud_ran_ns_ago = s.hud_ran_ns_ago;
+    return m;
 }
 
 void Frame(void* ctx, const HosCoopApi* api) {

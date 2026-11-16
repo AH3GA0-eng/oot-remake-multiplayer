@@ -1109,8 +1109,11 @@ void Frame(void* ctx, int site) {
         RunFlagSetters(ctx);
         LogFlagNative();
         {  // #63/#76: the HUD screen the game's own map refresh is called on (coop_map_refresh.h)
+            // Only a HUD screen that ran a moment ago (patch 0018 forgets one whose slot was reused): never one that
+            // may be freed at the title or a reload.
             const auto menu = CoopMapPage::MenuState();
-            CoopMapRefresh::TheRefresher().SetScreen(menu ? menu->hud_screen : 0, CoopRuntime::MainBase());
+            CoopMapRefresh::TheRefresher().SetScreen(menu && menu->HudRuns() ? menu->hud_screen : 0,
+                                                     CoopRuntime::MainBase());
         }
         RunCalls(ctx);
         LogBossNative();

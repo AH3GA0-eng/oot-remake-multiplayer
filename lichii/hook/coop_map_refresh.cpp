@@ -17,6 +17,11 @@ void Refresher::SetScreen(std::uint64_t screen, std::uint64_t main) {
     main_ = main;
 }
 
+void Refresher::SetInPlay(bool in_play) {
+    std::lock_guard lock(mutex_);
+    in_play_ = in_play;
+}
+
 std::vector<std::string> Refresher::TakeNotes() {
     std::lock_guard lock(mutex_);
     std::vector<std::string> out;
@@ -49,7 +54,7 @@ std::optional<CoopPuppet::Call> Refresher::Step(CoopPuppet::Guest& guest, bool a
     std::uint64_t screen = 0, main = 0;
     {
         std::lock_guard lock(mutex_);
-        if (due_ms_ == 0 || now_ms < due_ms_ || screen_ == 0 || main_ == 0) return std::nullopt;
+        if (due_ms_ == 0 || now_ms < due_ms_ || screen_ == 0 || main_ == 0 || !in_play_) return std::nullopt;
         due_ms_ = 0;
         screen = screen_;
         main = main_;

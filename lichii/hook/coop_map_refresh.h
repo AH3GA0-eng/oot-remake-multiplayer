@@ -45,7 +45,12 @@ public:
     // The hook's flag report (any thread): another player's map or floors arrived.
     void Want(std::uint64_t now_ms);
     // The Hookshot frame (any thread): the HUD screen that runs now (0: none) and main's base.
+    // `screen` only when the HUD screen ran a moment ago (patch 0018's hud_ran_ns_ago, CoopMapPage::Menu::HudRuns),
+    // else 0: patch 0018 forgets a HUD screen whose slot was reused, so no call is made on one that may be freed.
     void SetScreen(std::uint64_t screen, std::uint64_t main);
+    // The hook's frame (calc thread): Link is in play (a scene loaded, the first Link there). Not at the title, a
+    // load or a reload: the refresh waits.
+    void SetInPlay(bool in_play);
     // The calc thread.
     std::optional<CoopPuppet::Call> Step(CoopPuppet::Guest& guest, bool after_call, std::uint64_t now_ms);
     std::vector<std::string> TakeNotes();
@@ -56,6 +61,7 @@ private:
     std::mutex mutex_;
     std::uint64_t due_ms_ = 0;  // 0: nothing wanted
     std::uint64_t screen_ = 0;
+    bool in_play_ = false;
     std::uint64_t main_ = 0;
     std::uint64_t called_on_ = 0;  // the calc thread's: the screen of the call made, until its after_call
     std::string before_;
