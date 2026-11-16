@@ -121,17 +121,20 @@ std::vector<std::filesystem::path> OtherSizeTables(const std::filesystem::path& 
 // invisible with the randomizer on).
 std::string TablesStamp(const std::filesystem::path& mods_root, const std::vector<std::filesystem::path>& tables);
 // The mod whose resource size table this run of the game reads, when it is none of co-op's own: any mod with its
-// own size table above the puppet pack (player report #48: a seed made on OOTRR's own page, put into mods by hand). Longshot serves one size table, the winning
-// mod's: with the Mods list (ExeReadsList, `list_order`) the first row of `rows` (the puppet pack is never listed and
-// sits under every listed mod), else Hookshot's own order (by name, the last wins; the pack is
-// contents/0400486024DEC000/coop-puppet). Only a mod the game indexed at its start (Row::on_now) and that holds
+// own size table above the puppet pack (player report #48: a seed made on OOTRR's own page, put into mods by hand).
+// Longshot serves one size table, the last indexed mod's. With the Mods list (patch 0011) `indexed` is what the game
+// indexed, in its order (Loader::Indexed): the list's rows ranked first row last, under them, at rank 0, the mods the
+// list does not name (one dropped in since the list was written; the pack, never listed) by name, so such a mod loses
+// to the pack when its name sorts under contents/0400486024DEC000/coop-puppet. Null: Hookshot's own order, from
+// `rows` (by name, the last wins; only a row the game indexed, Row::on_now). Only a mod holding
 // romfs/System/Resource/*.rsizetable.zs counts. That mod's table was made without the pack's entries, so the puppets
 // cannot load (invisible, or a crash when the map loads). Empty when the winner is one of our seeds, the control
 // folder or the pack, and when the kit merged the pack's entries into the winner's table (MergedByKit; the module
-// reads no zstd, so it trusts that mark; `merged`, when given, gets that winner's name and `rule` the mark's rule). A seed of ours is built beside
-// every other mod's table, StageSizeTables.
+// reads no zstd, so it trusts that mark; `merged`, when given, gets that winner's name and `rule` the mark's rule). A
+// seed of ours is built beside every other mod's table, StageSizeTables.
 std::optional<std::string> OutsideSizeTable(const std::filesystem::path& mods_root,
-                                            const std::vector<CoopMods::Row>& rows, bool list_order,
+                                            const std::vector<CoopMods::Row>& rows,
+                                            const std::vector<std::string>* indexed,
                                             std::string* merged = nullptr, std::string* rule = nullptr);
 // The kit's size-table merge (#48 step 2: a seed folder from OOTRR's site just works): the kit start writes ONE table,
 // the mod's entries and the puppet pack's (and any other mod's), into the winning mod, and beside its romfs the mark
