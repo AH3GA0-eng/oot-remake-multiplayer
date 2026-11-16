@@ -19,6 +19,7 @@
 // We do the same from the cave.
 
 #include "coop_boss.h"
+#include "coop_boss_beaten.h"
 #include "coop_boss_native.h"
 #include "coop_boss_scenes.h"
 #include "coop_live_events.h"
@@ -245,6 +246,7 @@ struct Glue {
             if (connected) {
                 sync.Reset();
                 scenes.Reset();
+                CoopBossBeaten::TheRecord().Clear();  // out of the session: the server tells us again on a join
                 CoopBossScenes::RefusedDeaths().store(0, std::memory_order_release);
                 readiness.Reset();
                 max_life_cap.reset();
@@ -345,6 +347,9 @@ struct Glue {
             session->with_client([&](coop::net::Client& c) {
                 for (auto& m : act.send) {
                     const bool sent = c.send(coop::protocol::Message{m});
+                    if (m.state == coop::protocol::BossState::defeated) {
+                        CoopBossBeaten::TheRecord().Add(m.room);  // our own read of the death: the group's too (G2)
+                    }
                     if (debug || m.state != coop::protocol::BossState::in_room) {
                         LOG_INFO(Core, "coop: boss: sent {} for {}{}", static_cast<int>(m.state), m.scene,
                                  sent ? "" : " (not sent)");
@@ -508,6 +513,13 @@ void OnEvent(const coop::net::Event& event) {
             LOG_INFO(Core, "coop: boss: player {} says {} for {}", m->player_number, static_cast<int>(m->state),
                      m->scene);
         }
+        // G2: the group beat this boss (the server repeats it to a player who joins later). A game whose own flags
+        // lack it gets its beaten set at a scene outside the boss's (coop_boss_beaten.h, coop_hook.cpp).
+        if (m != nullptr && m->state == coop::protocol::BossState::defeated &&
+            CoopBossBeaten::TheRecord().Add(m->room)) {
+            LOG_INFO(Core, "coop: boss: the group beat the boss of room {} ({}): kept for this session", m->room,
+                     m->scene);
+        }
     }
 }
 
@@ -518,6 +530,7 @@ void ForgetFights() {
     CoopBossScenes::RefusedDeaths().store(0, std::memory_order_release);
     g.readiness.Reset();
     g.max_life_cap.reset();
+    CoopBossBeaten::TheRecord().Clear();  // bosses beaten after that save are alive again (G2, as #52)
     LOG_INFO(Core, "coop: boss: the host loaded a save: the fights this session knew are forgotten");
 }
 
