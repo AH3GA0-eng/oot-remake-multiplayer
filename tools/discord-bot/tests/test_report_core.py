@@ -197,6 +197,20 @@ class GuildLock(unittest.TestCase):
         with self.assertRaises(core.StartupError):
             core.resolve_guild(66, 55)  # config names another server
 
+    def test_report_channel_same_server(self):
+        core.check_report_channel(55, None, None)  # no report channel: nothing to check
+        core.check_report_channel(55, 900, 55)
+        with self.assertRaises(core.StartupError):
+            core.check_report_channel(55, 900, 66)  # another server
+        with self.assertRaises(core.StartupError):
+            core.check_report_channel(55, 900, None)  # cannot read it
+
+    def test_channel_allowed(self):
+        self.assertTrue(core.channel_allowed(1, None, 2))  # no report channel: anywhere
+        self.assertTrue(core.channel_allowed(900, 900, 2))
+        self.assertTrue(core.channel_allowed(2, 900, 2))  # the private dev channel
+        self.assertFalse(core.channel_allowed(3, 900, 2))
+
     def test_allowed(self):
         self.assertTrue(core.guild_allowed(55, 55))
         self.assertFalse(core.guild_allowed(66, 55))

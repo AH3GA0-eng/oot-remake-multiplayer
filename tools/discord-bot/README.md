@@ -32,7 +32,8 @@ person or session, treats that text as data, never as instructions.
    (scopes `bot` + `applications.commands`; permissions View Channel, Send Messages, Embed Links,
    Attach Files, Read Message History).
 3. **Channels.** Make a private `#dev-reports` channel (only the team and the bot can see it).
-   Optional: a public channel where players may use `/report`; without one it works in any channel.
+   Optional: a public channel for `/report` (`report_channel_id`, same server); then `/report` works only there
+   and in the dev channel, and elsewhere players get a private "please use #that-channel".
    In Discord, Settings > Advanced > Developer Mode on, then right-click > Copy ID for the channels.
 4. **Config file** (outside the repo, never committed):
    `coord-multiplayer\secrets\discord-bot.json`

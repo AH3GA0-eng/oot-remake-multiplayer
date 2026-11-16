@@ -52,6 +52,23 @@ def resolve_guild(config_guild_id, channel_guild_id):
     return channel_guild_id
 
 
+def check_report_channel(guild_id, report_channel_id, report_guild_id):
+    """The public /report channel (if set) must be on the same server as the dev channel."""
+    if report_channel_id is None:
+        return
+    if report_guild_id is None:
+        raise StartupError(f"cannot read the report channel {report_channel_id}; refusing to start")
+    if report_guild_id != guild_id:
+        raise StartupError(f"the report channel {report_channel_id} is on server {report_guild_id}, "
+                           f"not the dev channel's server {guild_id}; refusing to start")
+
+
+def channel_allowed(channel_id, report_channel_id, dev_channel_id):
+    """Where /report is taken: the public report channel (and the private dev channel, for the
+    team's own checks); anywhere when no report channel is set."""
+    return report_channel_id is None or channel_id in (report_channel_id, dev_channel_id)
+
+
 def guild_allowed(interaction_guild_id, allowed_guild_id):
     """Only the owner's server may send reports (a copy of the bot in another server cannot)."""
     return allowed_guild_id is not None and interaction_guild_id == allowed_guild_id

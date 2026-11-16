@@ -68,18 +68,25 @@ class ReportBot(discord.Client):
     async def setup_hook(self):
         # The server is the dev channel's server (the config's guild_id, if set, must match).
         # Fail closed: without it the bot stops; it never registers /report globally.
-        channel_guild = None
-        try:
-            channel = await self.fetch_channel(self.cfg["dev_channel_id"])
-            channel_guild = getattr(channel, "guild_id", None) or getattr(getattr(channel, "guild", None), "id", None)
-        except discord.HTTPException as e:
-            log.error("cannot read the dev channel %s (%s)", self.cfg["dev_channel_id"], type(e).__name__)
-        # Raises core.StartupError (caught in main, exit 2) when the server is unknown.
-        self.guild_id = core.resolve_guild(self.cfg["guild_id"], channel_guild)
+        # Raises core.StartupError (caught in main, exit 2) when the server is unknown or the
+        # report channel is on another server.
+        self.guild_id = core.resolve_guild(self.cfg["guild_id"], await self._channel_guild("dev_channel_id"))
+        if self.cfg["report_channel_id"] is not None:
+            core.check_report_channel(self.guild_id, self.cfg["report_channel_id"],
+                                      await self._channel_guild("report_channel_id"))
         guild = discord.Object(id=self.guild_id)
         self._add_commands(guild)
         synced = await self.tree.sync(guild=guild)
         log.info("commands synced to server %s: %s", self.guild_id, ", ".join(c.name for c in synced))
+
+    async def _channel_guild(self, key):
+        """The server id of a configured channel, or None if the bot cannot read it."""
+        try:
+            channel = await self.fetch_channel(self.cfg[key])
+        except discord.HTTPException as e:
+            log.error("cannot read the %s channel %s (%s)", key.split("_")[0], self.cfg[key], type(e).__name__)
+            return None
+        return getattr(channel, "guild_id", None) or getattr(getattr(channel, "guild", None), "id", None)
 
     async def on_ready(self):
         log.info("online as %s", self.user)
@@ -127,7 +134,7 @@ class ReportBot(discord.Client):
             await self.refuse(interaction, "This bot only takes reports in the Squadala! server.")
             return
         allowed = self.cfg["report_channel_id"]
-        if allowed and interaction.channel_id not in (allowed, self.cfg["dev_channel_id"]):
+        if not core.channel_allowed(interaction.channel_id, allowed, self.cfg["dev_channel_id"]):
             await self.refuse(interaction, f"Please use /report in <#{allowed}>.")
             return
         if logs is not None:
