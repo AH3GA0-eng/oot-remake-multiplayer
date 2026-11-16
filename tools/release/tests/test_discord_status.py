@@ -26,6 +26,9 @@ class Merge(unittest.TestCase):
         self.assertTrue(new.startswith(old))
         self.assertEqual(new.count("\n"), 8)
 
+    def test_new_file_is_lf_everywhere(self):
+        self.assertNotIn("\r", ds.merge("", "0.11.4"))
+
     def test_crlf_kept(self):
         new = ds.merge("output_res=1920x1080\r\nmemory_budget=0", "0.11.4")
         self.assertNotIn("\n", new.replace("\r\n", ""))

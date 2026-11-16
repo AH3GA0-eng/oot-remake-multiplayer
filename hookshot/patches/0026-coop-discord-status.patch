@@ -1,4 +1,4 @@
-From 70d8ea9749c217646c287d4aea756d159600968c Mon Sep 17 00:00:00 2001
+From 5eac5749e8474538684455d60c892748c9953e02 Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Mon, 16 Nov 2026 07:02:27 -0900
 Subject: [PATCH] Co-op Discord status: the words and art from the options
@@ -258,7 +258,7 @@ index 5cb38b7..60dd4e1 100644
      }
 diff --git a/host/hos_discord_activity.h b/host/hos_discord_activity.h
 new file mode 100644
-index 0000000..859a234
+index 0000000..6b77a31
 --- /dev/null
 +++ b/host/hos_discord_activity.h
 @@ -0,0 +1,115 @@
@@ -341,9 +341,9 @@ index 0000000..859a234
 +            p++;
 +            continue;
 +        }
-+        const size_t need = (*p == '"' || *p == '\\') ? 2 : k;
-+        if (o + need + 1 > cap) break;
-+        if (need == 2) out[o++] = '\\';
++        const size_t escape = (*p == '"' || *p == '\\') ? 1 : 0;   /* (only " and \: k is 1 for them) */
++        if (o + escape + k + 1 > cap) break;
++        if (escape) out[o++] = '\\';
 +        memcpy(out + o, p, k);
 +        o += k, p += k;
 +    }

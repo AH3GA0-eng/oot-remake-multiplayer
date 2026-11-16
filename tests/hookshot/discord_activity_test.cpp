@@ -101,6 +101,21 @@ TEST_CASE("Discord status: JSON text is escaped, and bytes that are no UTF-8 are
     CHECK(std::string(out) == "say \\\"hi\\\" \\\\ ok");
     hos_discord_json_text(out, sizeof out, "caf\xe9 \xc3\xa9\x01!");
     CHECK(std::string(out) == "caf \xc3\xa9!");
+    // 2-, 3- and 4-byte characters pass as they are, with no escape; next to quotes and backslashes too.
+    hos_discord_json_text(out, sizeof out, "caf\xc3\xa9");
+    CHECK(std::string(out) == "caf\xc3\xa9");
+    hos_discord_json_text(out, sizeof out, "\xe3\x83\x8a\xe3\x83\x93");   // (two 3-byte characters)
+    CHECK(std::string(out) == "\xe3\x83\x8a\xe3\x83\x93");
+    hos_discord_json_text(out, sizeof out, "\xf0\x9f\xa7\x9a!");        // (a 4-byte character)
+    CHECK(std::string(out) == "\xf0\x9f\xa7\x9a!");
+    hos_discord_json_text(out, sizeof out, "\"\xc3\xa9\\\xe3\x83\x8a\"");
+    CHECK(std::string(out) == "\\\"\xc3\xa9\\\\\xe3\x83\x8a\\\"");
+    // And the whole activity with them is the plain text between the quotes.
+    HosDiscordWords w{};
+    std::snprintf(w.details, sizeof w.details, "%s", "Caf\xc3\xa9 \"Squadala!\"");
+    char activity[512];
+    hos_discord_activity(activity, sizeof activity, "Longshot", "v3", "none", &w, "", 1);
+    CHECK(std::string(activity) == "{\"details\":\"Caf\xc3\xa9 \\\"Squadala!\\\"\",\"state\":\"Longshot v3\",\"timestamps\":{\"start\":1}}");
     // Cut before a character that does not fit: never half an escape or half a sequence.
     char small[5];
     hos_discord_json_text(small, sizeof small, "ab\"c");

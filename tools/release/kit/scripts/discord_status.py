@@ -61,7 +61,8 @@ def wanted(release: str) -> list[tuple[str, str, object]]:
 
 def merge(text: str, release: str) -> str:
     """text (the file as it is, '' none) with the kit's lines in it."""
-    newline = "\r\n" if "\r\n" in text else ("\n" if text else os.linesep)
+    # (the file's own line ends; a new file gets "\n" on every system: Longshot reads either)
+    newline = "\r\n" if "\r\n" in text else "\n"
     lines = text.splitlines(keepends=True)
     if lines and not lines[-1].endswith(("\n", "\r")):
         lines[-1] += newline

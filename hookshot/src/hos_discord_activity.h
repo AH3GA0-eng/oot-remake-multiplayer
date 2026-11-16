@@ -77,9 +77,9 @@ static inline void hos_discord_json_text(char *out, size_t cap, const char *s) {
             p++;
             continue;
         }
-        const size_t need = (*p == '"' || *p == '\\') ? 2 : k;
-        if (o + need + 1 > cap) break;
-        if (need == 2) out[o++] = '\\';
+        const size_t escape = (*p == '"' || *p == '\\') ? 1 : 0;   /* (only " and \: k is 1 for them) */
+        if (o + escape + k + 1 > cap) break;
+        if (escape) out[o++] = '\\';
         memcpy(out + o, p, k);
         o += k, p += k;
     }
