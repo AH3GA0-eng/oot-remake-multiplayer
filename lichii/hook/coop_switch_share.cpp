@@ -45,7 +45,9 @@ std::vector<Hold> Sharer::Tick(const std::string& scene, const std::vector<Seen>
                                std::vector<std::string>& notes) {
     std::lock_guard lock(mutex_);
     if (scene != scene_) {
-        states_.clear();  // a new scene: nothing of the old one is held or owed
+        // A new scene: nothing of the old one is held or owed. A press of this scene received before our first walk
+        // here is kept.
+        std::erase_if(states_, [&scene](const auto& kv) { return kv.first->scene != scene; });
         scene_ = scene;
     }
     std::vector<Hold> holds;
