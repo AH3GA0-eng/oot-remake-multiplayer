@@ -289,6 +289,30 @@ game could never finish: a black screen, no fade back, no warp.
   area), `boss_native_test.cpp` and `objects_test.cpp` (dying release, late changes, finish).
 - In game: scenario `hs-gohma-death` (LANE1; PASS lines in its header).
 
+## Phantom Ganon with more than one player (player report row 114, boss-0114-a)
+PiscesGamer97's 0.11.2 host log (player-logs/piscesgamer97-phantomganon-20261116): the fight "bugs out" with two
+players, and the host's death left it "fully scuffed".
+- **Root cause: a boss off the walk read as dead.** Phantom Ganon leaves the object walk while he rides in a
+  painting (the share's `moved 4050 ... left`). `BossAlive` read "no body there" as dead, so the host's Game Over
+  (an event, boss "gone") was taken for his death: `boss beaten` and BOSS_STATE defeated went to everyone, and the
+  host's own rules came back to a beaten room. Any other event while he was in a painting would do the same.
+  Fixed where it starts: `CoopObjects::BossAliveKept` (used by `LastBossAlive`, so by every boss rule) reads a body
+  off the walk as alive for `kBossAwayKeepUs` (30 s) after a reading with life left. A boss's death is read at life
+  0 while it runs (its event deletes it later), so a real death still reads dead; a boss never seen this session
+  (a save that beat it) still reads dead. And while our Link is dead, an event is always the Game Over
+  (`coop_boss.cpp`, also with the boss read gone); the boss's real death comes from its owner.
+- **His painting show follows him.** `Enemy_GhostPicturePerformer_PhantomGanon`, `_PhantomGanonHorse` and their
+  `_Imitation` (the riders in the paintings, real and fake) were shared objects with their own owner: in the log
+  they stayed with player 2 while the boss went to player 1, so a copy game's riders came from another game than
+  its boss. They are now parts of his boss group (docs/objects.md, "Groups").
+- **Not causes (checked):** `PhantomGanon_Bullet_Thunder_Sho(ckwave)` "refused at create" in a copy game: the copy
+  of the owner's thunder ball makes its own shockwaves, and the owner's come as copies (one set, as for every
+  enemy shot). The older rules' `moving in (try N)` / `could not move ... giving up` lines while the area rules
+  are on are only logged: the glue drops that pull (the area rules move players).
+- Tests: `objects_test.cpp` (off the walk is away; the painting show's group), `boss_test.cpp` (a Game Over with the
+  boss off the walk).
+- Not proven in game: a two-player Phantom Ganon run (proposed scenario `hs-phantom-ganon` from the player's save).
+
 ## Not known yet (for the in-game check)
 
 1. Whether the force-set-matrix move into a room of the same scene loads that room's walls and floor, or Link falls through (the dungeon may stream rooms by `DungeonRoomIndex`). If he falls, the fallback is the scene change, which needs an event running.

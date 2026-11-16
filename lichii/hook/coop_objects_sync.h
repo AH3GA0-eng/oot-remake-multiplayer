@@ -234,6 +234,20 @@ bool RemovedWhenTaken(std::string_view name);
 // there, or every one there is at 0 life; nothing when one is there whose
 // life was not read (unknown: the boss logic then keeps its old rule).
 std::optional<bool> BossAlive(const std::vector<Seen>& seen, std::span<const std::string_view> bodies);
+// Row 114: a boss off the walk is not dead. Phantom Ganon leaves the walk while he rides in a painting, and
+// "none there" read as his death: his host's Game Over was sent as the boss beaten. BossAliveKept is BossAlive,
+// except that when no body is in the walk, a body last read with life left within kBossAwayKeepUs is alive (away).
+// A boss's death is read at life 0 while its death runs (its event deletes it later), so that reading stays.
+// `last` keeps the last life read per body name (NoteBossLives, from each walk).
+struct BossLifeSeen {
+    std::int32_t life = 0;
+    std::uint64_t at_us = 0;
+};
+inline constexpr std::uint64_t kBossAwayKeepUs = 30'000'000;
+void NoteBossLives(const std::vector<Seen>& walk, std::uint64_t now_us,
+                   std::map<std::string, BossLifeSeen, std::less<>>& last);
+std::optional<bool> BossAliveKept(const std::vector<Seen>& walk, std::span<const std::string_view> bodies,
+                                  std::uint64_t now_us, const std::map<std::string, BossLifeSeen, std::less<>>& last);
 
 // boss-copy-b: whether a boss is still in its pre-battle phase in one walk,
 // from its body actors' own animation (AS slot 0): Gohma's `Sleep` and

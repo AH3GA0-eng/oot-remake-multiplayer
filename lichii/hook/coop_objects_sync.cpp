@@ -127,6 +127,30 @@ std::optional<bool> BossAlive(const std::vector<Seen>& seen, std::span<const std
     return false;
 }
 
+void NoteBossLives(const std::vector<Seen>& walk, std::uint64_t now_us,
+                   std::map<std::string, BossLifeSeen, std::less<>>& last) {
+    for (const Seen& s : walk) {
+        if (s.life) last[s.name] = BossLifeSeen{s.life->life, now_us};
+    }
+}
+
+std::optional<bool> BossAliveKept(const std::vector<Seen>& walk, std::span<const std::string_view> bodies,
+                                  std::uint64_t now_us, const std::map<std::string, BossLifeSeen, std::less<>>& last) {
+    const auto alive = BossAlive(walk, bodies);
+    if (alive != false) return alive;
+    for (const Seen& s : walk) {
+        if (std::find(bodies.begin(), bodies.end(), s.name) != bodies.end()) return alive;  // there, at life 0
+    }
+    for (const std::string_view body : bodies) {  // none there: away, if last read with life left lately
+        const auto it = last.find(body);
+        if (it != last.end() && it->second.life > 0 && now_us >= it->second.at_us &&
+            now_us - it->second.at_us <= kBossAwayKeepUs) {
+            return true;
+        }
+    }
+    return alive;
+}
+
 std::optional<bool> BossOurs(const std::vector<Seen>& walk, std::span<const std::uint64_t> ours,
                              std::span<const std::string_view> bodies, std::uint64_t now_us,
                              std::map<std::string, BossOwnership, std::less<>>& last) {

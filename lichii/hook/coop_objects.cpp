@@ -4000,6 +4000,7 @@ std::mutex g_bosses_mutex;
 std::vector<Seen> g_bosses;
 std::vector<std::uint64_t> g_bosses_ours;  // the bosses of g_bosses our game owns (boss-intro)
 std::map<std::string, BossOwnership, std::less<>> g_boss_last;  // the last ownership reading per boss (BossOurs)
+std::map<std::string, BossLifeSeen, std::less<>> g_boss_lives;  // the last life read per boss body (BossAliveKept)
 std::uint64_t g_bosses_at = 0;
 constexpr std::uint64_t kBossesFreshUs = 1'500'000;
 
@@ -4022,6 +4023,7 @@ void NoteBosses(const std::vector<Seen>& seen, const std::vector<std::pair<u64, 
     g_bosses = std::move(bosses);
     g_bosses_ours = std::move(ours);
     g_bosses_at = CoopEvery::NowUs();
+    NoteBossLives(g_bosses, g_bosses_at, g_boss_lives);
 }
 
 std::optional<bool> LastBossAlive(std::span<const std::string_view> bodies) {
@@ -4030,7 +4032,7 @@ std::optional<bool> LastBossAlive(std::span<const std::string_view> bodies) {
     if (g_bosses_at == 0 || now < g_bosses_at || now - g_bosses_at > kBossesFreshUs) {
         return std::nullopt;
     }
-    return BossAlive(g_bosses, bodies);
+    return BossAliveKept(g_bosses, bodies, now, g_boss_lives);
 }
 
 void ForgetBosses() {
@@ -4038,6 +4040,7 @@ void ForgetBosses() {
     g_bosses.clear();
     g_bosses_ours.clear();
     g_boss_last.clear();  // another session's (or run's) owner says nothing here
+    g_boss_lives.clear();
     g_bosses_at = 0;
 }
 

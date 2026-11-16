@@ -3162,6 +3162,32 @@ TEST_CASE("objects: a boss is alive while a body actor has life left, unknown wi
     CHECK(CoopObjects::BossAlive({koume, kotake}, kTwinrova) == std::optional<bool>(false));
 }
 
+TEST_CASE("objects: a boss off the walk with life left is away, not dead (row 114, Phantom Ganon's paintings)") {
+    constexpr std::array<std::string_view, 1> kGanon{"Enemy_DungeonBoss_PhantomGanon"};
+    using CoopObjects::BossAliveKept;
+    std::map<std::string, CoopObjects::BossLifeSeen, std::less<>> last;
+    Seen boss = Chest(0x900, 0);
+    boss.name = "Enemy_DungeonBoss_PhantomGanon";
+    boss.life = coop::protocol::ObjectLife{15, 42};
+    // Never seen this session (a save that beat him): none there is dead, as before.
+    CHECK(BossAliveKept({}, kGanon, 1'000'000, last) == std::optional<bool>(false));
+    CoopObjects::NoteBossLives({boss}, 1'000'000, last);
+    CHECK(BossAliveKept({boss}, kGanon, 1'000'000, last) == std::optional<bool>(true));
+    // In a painting: off the walk, alive.
+    CHECK(BossAliveKept({}, kGanon, 5'000'000, last) == std::optional<bool>(true));
+    // Away past the keep: none there again.
+    CHECK(BossAliveKept({}, kGanon, 1'000'000 + CoopObjects::kBossAwayKeepUs + 1, last) == std::optional<bool>(false));
+    // His death is read at life 0 while it runs; deleted after it: dead.
+    boss.life = coop::protocol::ObjectLife{0, 42};
+    CoopObjects::NoteBossLives({boss}, 6'000'000, last);
+    CHECK(BossAliveKept({boss}, kGanon, 6'000'000, last) == std::optional<bool>(false));
+    CHECK(BossAliveKept({}, kGanon, 7'000'000, last) == std::optional<bool>(false));
+    // A body there with its life unread stays unknown.
+    Seen unread = boss;
+    unread.life.reset();
+    CHECK_FALSE(BossAliveKept({unread}, kGanon, 7'000'000, last).has_value());
+}
+
 TEST_CASE("objects: a boss is hurt once a body's life is below its maximum (Gohma's intro)") {
     constexpr std::array<std::string_view, 1> kGohma{"Enemy_DungeonBoss_Gohma"};
     Seen boss = Chest(0x940, 0);
