@@ -1,4 +1,4 @@
-From 7120ebfcaca4c75bf66381fee1e60ba3918b3fd7 Mon Sep 17 00:00:00 2001
+From 6431540f547572fee30ce1c295d1c850dc4316b8 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Thu, 12 Nov 2026 13:32:10 -0900
 Subject: [PATCH] Co-op voice: the module's voices in the game's final mix
@@ -220,10 +220,10 @@ index 00000000..6873d47c
 +
 +#endif
 diff --git a/host/nn_audio.c b/host/nn_audio.c
-index 74269e23..ee9c4048 100644
+index d3c991f8..c0ac58f8 100644
 --- a/host/nn_audio.c
 +++ b/host/nn_audio.c
-@@ -620,6 +620,18 @@ static void render_frame(int16_t *pcm, int channels) {   /* 240 frames of the de
+@@ -621,6 +621,18 @@ static void render_frame(int16_t *pcm, int channels) {   /* 240 frames of the de
      float out[6][FRAME];
      memset(out, 0, sizeof out);
      if (sink_mix >= 0 && mixes[sink_mix].used) {
@@ -243,7 +243,7 @@ index 74269e23..ee9c4048 100644
          Mix *f = &mixes[sink_mix];
          const float g = f->volume;
 diff --git a/host/nn_audio_in.c b/host/nn_audio_in.c
-index afd07b14..bcd1cbfd 100644
+index 24ee247b..f227ceec 100644
 --- a/host/nn_audio_in.c
 +++ b/host/nn_audio_in.c
 @@ -55,6 +55,7 @@ typedef struct {
