@@ -107,6 +107,9 @@ def touches_own(actions):
     player's ocarina input awaited, gear equipped from the player's pouch, a shop, a chest opened
     (Dm_SY_Treasurebox: the item comes over by the shared items anyway)."""
     for actor, action, params in actions:
+        if actor == "<subflow>":
+            continue  # a call, named "flow:entry"; the actions it runs are listed after it (G2 review: the
+            # get window's OpenGetWindowForBottle_SubProcess, which every item get can reach, is only text)
         if action == "EventTransition" and params.get("EventName") == "Dm_SY_Treasurebox":
             return "goes on to Dm_SY_Treasurebox (a chest the player opens)"
         if action == "EventTriggerAddOrRemovePouchContent":

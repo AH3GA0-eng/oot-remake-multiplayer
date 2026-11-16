@@ -88,6 +88,10 @@ class StoryRequestsTest(unittest.TestCase):
         self.assertIn("Item_Arrow", sr.touches_own([("PouchSystemActor", pouch, {"Actor": "Item_Arrow", "Num": 10})]))
         self.assertIn("rupees", sr.touches_own([("PouchSystemActor", "EventTriggerIncreaseRupee", {})]))
         self.assertIn("bottle", sr.touches_own([("Player_Event", "EventCreateShowItemBottle", {})]))
+        # A subflow call is no action (G2 review: every item get can reach the get window's text for a bottle,
+        # GetPouchContent:OpenGetWindowForBottle_SubProcess; what a subflow runs is listed after it).
+        call = ("<subflow>", "GetPouchContent:OpenGetWindowForBottle_SubProcess", {})
+        self.assertEqual(sr.touches_own([call]), "")
         self.assertIn("ocarina", sr.touches_own([("GameSystemActor", "EventWaitOcarinaInputForSequence", {})]))
         self.assertIn("pouch", sr.touches_own([("Player_Event", "EventTriggerPlayerEquipDynamicEquipmentFromPouch", {})]))
         self.assertIn("shop", sr.touches_own([("Npc_EventStarter", "EventTriggerGetItemAtShop", {})]))

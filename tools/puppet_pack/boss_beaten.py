@@ -11,7 +11,8 @@ The set is what the boss's death setting writes in the dungeon (not the boss rus
   - HavePlayedEvent of the setting itself, of every event it plays (EventTransition: Dm_<Dungeon>_BossOut) and of
     the boss's intro (Dm_<Dungeon>_BossIn, played before any death);
   - the dungeon quest's step it moves to (EventExecuteProgressChallengeStep): the step right after the quest's last boss
-    step (RSDB Challenge `IsBossBattle`; the earlier ones are mid-bosses: Big Octo, the Forest Temple's), raised to only from a step before it (never from Complete: a save that
+    step (RSDB Challenge `IsBossBattle`; the earlier ones are mid-bosses: Big Octo, the Forest Temple's),
+    raised to only from a step before it (never from Complete: a save that
     finished the dungeon is never stepped back, docs/dungeons-boss.md "boss_ours").
 Left out: flags that are not saved, and the fight's own state that co-op never shares and the stale-flag mend clears
 (CoopDungeon::NotShared: the shut boss door, Dodongo's and Volvagia's arena floor).

@@ -155,7 +155,9 @@ def actions_of(flows, flow, entry, load=None, transition=None, answer=None):
                 stack.append(ev.next)
             elif ev.type == 1:
                 value = None
-                if answer is not None and ev.actor < len(chart.actors) and ev.actor < len(chart.queries)                         and ev.query < len(chart.queries[ev.actor]):
+                known = ev.actor < len(chart.actors) and ev.actor < len(chart.queries) \
+                    and ev.query < len(chart.queries[ev.actor])
+                if answer is not None and known:
                     value = answer(chart.actors[ev.actor][0], chart.queries[ev.actor][ev.query], ev.params)
                 if value is None or value not in ev.values:
                     stack.extend(ev.cases)

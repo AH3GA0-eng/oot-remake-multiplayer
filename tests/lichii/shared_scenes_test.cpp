@@ -266,7 +266,10 @@ TEST_CASE("a story cutscene asked by its event setting is sent and joined by tha
     CHECK(Askable("Dm_Kokiri_0155"));
     CHECK(CoopSharedScenes::NotShared("Meet_GreatFairy") == "the game has no event setting of that name");
     CHECK(CoopSharedScenes::NotShared("Dm_Kokiri_0070").empty());
-    CHECK(Askable("Dm_FairyFountain_Din"));  // a heal only: shared
+    // A Great Fairy's fountain: its flow has the paid heal (Dm_FairyFountain_Din:Pay, 500 rupees), read once the
+    // reader took a switch's cases right (8 bytes each; the old 0x10 never reached it): the player's own.
+    CHECK_FALSE(Askable("Dm_FairyFountain_Din"));
+    CHECK(CoopSharedScenes::NotShared("Dm_FairyFountain_Din") == "it changes the player's own things");
     CHECK(IsStory(kEntry));
     CHECK(IsStory("Dm_Kokiri_0070"));
     CHECK_FALSE(IsStory("Npc_Kokiri_Mido_Child"));
@@ -364,7 +367,11 @@ TEST_CASE("no story cutscene shared in 0.11.3 stops being shared unless the game
         "Dm_HrlCastle_0020",     // takes the Cucco (Talon)
         "Dm_Kokiri_0063",        // equips the Kokiri Sword from the pouch
         "Dm_LonLon_0030",        // rupees
-        "Dm_LostWood_0015",      // takes the Pocket Egg (a trade)
+        // the Great Fairies' paid heal (Dm_FairyFountain_Din:Pay, 500 rupees). Dm_LostWood_0015 is no longer
+        // here: the old reader's misread switch case reached SubEvent_GetSwordBigGoron's event 0 (a Pocket Egg
+        // taken) from SubEvent_TimerCheck_Demo, whose real cases never take it.
+        "Dm_FairyFountain_Courage", "Dm_FairyFountain_Din", "Dm_FairyFountain_Frore", "Dm_FairyFountain_Nayru",
+        "Dm_FairyFountain_Power", "Dm_FairyFountain_Wisdom",
     };
     std::size_t dropped = 0;
     for (const std::string_view n : CoopSharedScenes::Names()) {
