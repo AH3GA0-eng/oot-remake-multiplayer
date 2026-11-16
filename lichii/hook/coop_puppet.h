@@ -239,9 +239,19 @@ constexpr bool GearIsCarried(std::size_t i) {
 // 'Weapon_Range_Hookshot' (returned 0x1)`, with every other piece of the same
 // player worn fine, and the player never fired it: the piece is stepped by the
 // game and cannot follow the puppet, parked or not. The Longshot is the same
-// actor family. Such a piece stays off the puppet: only its own player's Link
-// shows it. LICHII_COOP_PUPPET_HOOKSHOT=1 wears it again (a test). By name and
-// not by slot: it is the piece the game steps, whichever slot sends it.
+// actor family. By name and not by slot: it is the piece the game steps,
+// whichever slot sends it.
+//
+// Root cause (held-piece, 2026-11-16): the read is the one every held piece
+// makes (f_7102dcee60 after a held-item change, the wearer's Player
+// component at component table +0x358, which a puppet has not). In the
+// 0.11.1 to 0.11.3 packs a puppet carries the perception's Physics in its
+// component slot 10, so patch 0002's guard (armed by a Link with no slot 10)
+// never armed the null page and the read faulted. The module now arms that
+// page itself before its first puppet (hookshot/src/coop_null_page.h), and
+// the emulator reads 0 there anyway. So such a piece is left off a puppet
+// only where null reads cannot give 0 (Director::SetNullReadsZero(false));
+// LICHII_COOP_PUPPET_HOOKSHOT=0 leaves it off, =1 wears it, everywhere.
 constexpr bool GearIsUnsafe(std::string_view name) {
     return name.find("Hookshot") != std::string_view::npos ||
            name.find("Longshot") != std::string_view::npos;
@@ -374,6 +384,13 @@ public:
     // alpha of the game's hit-flash colour, coop_colors.h); 0, the default,
     // writes no colour (the fairies' director).
     void SetTint(float strength) { tint_ = strength; }
+    // Whether the game's reads through a puppet's missing components give 0
+    // here (the emulator; Hookshot once its null page is armed). Without that
+    // a GearIsUnsafe piece stays off the puppet (issue 232). Default: yes.
+    void SetNullReadsZero(bool on) { null_reads_zero_ = on; }
+    // A piece Equip leaves off the puppet: nothing is made for it, and the
+    // piece its slot may still hold is neither put away nor re-worn.
+    bool LeftOff(const std::string& name) const;
     // Tunic puppets (CoopPuppet_<Age>_<Colour>) found not to work: the mod is
     // a pack from before the colours (two create timeouts of that actor while
     // no tunic puppet has spawned yet), or one spawned without a Player_ model
@@ -628,6 +645,7 @@ private:
     bool pose_copy_ = false;
     bool matrix_call_ = false;
     float tint_ = 0.0f;
+    bool null_reads_zero_ = true;
     mutable std::mutex tunic_mutex_;
     std::set<std::string> tunic_failed_;           // guarded by tunic_mutex_
     std::map<std::string, int> tunic_timeouts_;    // by actor name
@@ -721,6 +739,9 @@ struct PlannerSettings {
     // page cannot be armed, hookshot/src/coop_null_page.h), so no puppet
     // carries the perception's Physics.
     bool quiet_everywhere = false;
+    // Reads through a puppet's missing components give 0 (the emulator, or
+    // Hookshot's null page armable): Director::SetNullReadsZero.
+    bool null_reads_zero = true;
 };
 
 // The puppet pack's item copies (coop_puppet.json "look_items",

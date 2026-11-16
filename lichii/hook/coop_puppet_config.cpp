@@ -190,6 +190,11 @@ bool HasPack() { return !PackManifests().empty(); }
 void Configure(bool perceived_safe) {
     std::vector<std::string> lines;
     auto settings = Settings(Env, PackGreenPuppets, &lines, PackTunicPuppets, PackLook);
+    settings.null_reads_zero = perceived_safe;
+    if (!perceived_safe) {
+        lines.push_back("coop: null-pointer reads cannot give 0 here: other players' Hookshot and Longshot stay off "
+                        "their puppets (issue 232)");
+    }
     if (settings.actor.empty() && !settings.native_player) {
         settings.quiet_scenes = PackQuiet();
         if (!settings.quiet_scenes.empty()) {
