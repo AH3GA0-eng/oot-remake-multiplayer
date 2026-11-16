@@ -51,9 +51,9 @@ LifeGuard& TheGuard();
 // step to know it. Any thread.
 void SetOurLifeComponent(std::uint64_t component);
 std::uint64_t OurLifeComponent();
-// The objects walk: our Link's BSA component (0: none), for the crawl
-// (coop_dbno_body.h). Any thread.
-void SetOurBsa(std::uint64_t bsa);
+// The objects walk: our Link's BSA and PerceptionEmitter components (0:
+// none), for the crawl and unseen (coop_dbno_body.h). Any thread.
+void SetOurComponents(std::uint64_t bsa, std::uint64_t emitter);
 
 // The Life step hook (any game thread): the sum to take off `component`,
 // whose life is `life`, when the frame's own sum is `sum`. Our Link's goes

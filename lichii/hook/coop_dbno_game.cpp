@@ -59,7 +59,8 @@ struct Glue {
     // The game's threads.
     LifeGuard guard;
     std::atomic<std::uint64_t> life_component{0};
-    std::atomic<std::uint64_t> bsa{0};  // our Link's BSA (the objects walk)
+    std::atomic<std::uint64_t> bsa{0};      // our Link's BSA (the objects walk)
+    std::atomic<std::uint64_t> emitter{0};  // our Link's PerceptionEmitter (the objects walk)
     std::atomic<std::int32_t> life_write{-1};  // raise to this (-1: none); the objects walk writes it
     Lowering take_to;                          // lower to this; the Life step takes it
     std::atomic<PadMode> pad_mode{PadMode::game};
@@ -339,11 +340,13 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
         LOG_INFO(Core, "coop: dbno: the Life step did not raise our Link in time: written");
     }
 
-    // Our downed Link's body (coop_dbno_body.h): crawl and shield while down;
-    // an event of ours drives our Link meanwhile.
+    // Our downed Link's body (coop_dbno_body.h): crawl, shield and unseen while
+    // down; an event of ours drives our Link meanwhile. (The one event gate:
+    // our_link_in_event once event-own is merged.)
     Body::Crawl::Wanted body;
-    body.lying = out.state == State::downed;
+    body.lying = out.state == State::downed;  // (with down-spectate: || State::spectating)
     body.event = reading && reading->event_running.value_or(false);
+    body.emitter = g.emitter.load(std::memory_order_acquire);
     body.bsa = g.bsa.load(std::memory_order_acquire);
     body.life = g.life_component.load(std::memory_order_acquire);
     Body::TheCrawl().Want(body);
@@ -440,8 +443,9 @@ std::int32_t LifeStep(std::uint64_t component, std::int32_t life, std::int32_t s
     return Body::Raised(life, sum, Body::TheRaising().Peek());
 }
 
-void SetOurBsa(std::uint64_t bsa) {
+void SetOurComponents(std::uint64_t bsa, std::uint64_t emitter) {
     TheGlue().bsa.store(bsa, std::memory_order_release);
+    TheGlue().emitter.store(emitter, std::memory_order_release);
 }
 
 std::optional<std::int32_t> TakeLifeWrite() {

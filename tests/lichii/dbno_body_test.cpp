@@ -1,9 +1,10 @@
-// Tests for our downed Link's body: crawl, shield, heal (lichii/hook/coop_dbno_body.cpp).
+// Tests for our downed Link's body: crawl, shield, unseen, heal (lichii/hook/coop_dbno_body.cpp).
 #include <doctest/doctest.h>
 
 #include <cstdint>
 #include <cstring>
 #include <map>
+#include <vector>
 
 #include "coop_dbno_body.h"
 
@@ -34,28 +35,14 @@ public:
 
 constexpr std::uint64_t kBsa = 0x1000;
 constexpr std::uint64_t kLife = 0x2000;
+constexpr std::uint64_t kEmitter = 0x4000;
 constexpr std::uint64_t kNode = 0x3000;
 constexpr std::uint64_t kMain = 0x80000000;
 constexpr std::uint64_t kBlock = 0x9000;
 
-// The flags word behind the fake compare-and-swap.
-std::uint32_t g_flags = 0;
-int g_cas_calls = 0;
-bool Cas(std::uint64_t address, std::uint32_t expected, std::uint32_t desired, std::uint32_t& seen) {
-    ++g_cas_calls;
-    if (address != kLife + addr::kLifeFlags) {
-        return false;
-    }
-    seen = g_flags;
-    if (g_flags == expected) {
-        g_flags = desired;
-    }
-    return true;
-}
-
-bn::Request Req(std::int32_t verb, std::int32_t slot = 0, std::uint64_t node = kNode) {
+bn::Request Req(std::int32_t v, std::int32_t slot = 0, std::uint64_t node = kNode) {
     coop::protocol::BossAction a;
-    a.verb = verb;
+    a.verb = v;
     a.slot = slot;
     a.flags = 3;
     return bn::RequestFromAction(a, node);
@@ -67,33 +54,69 @@ Crawl::Wanted Want(bool lying, bool event = false) {
     w.event = event;
     w.bsa = kBsa;
     w.life = kLife;
+    w.emitter = kEmitter;
     return w;
 }
 
-std::int32_t VerbOf(Guest& g) {
-    std::int32_t verb = 0;
-    g.Read(kBlock + bn::addr::kReqVerb, &verb, sizeof verb);
-    return verb;
+struct Made {
+    std::uint64_t function = 0;  // main+
+    std::uint64_t x0 = 0, x1 = 0, x2 = 0;
+    std::int32_t verb = 0;  // an action request's verb
+};
+
+// One frame of the caller: action requests answered `result`, the malloc
+// kBlock, the rest 0. Returns every call made.
+std::vector<Made> RunFrame(Crawl& c, Guest& g, std::uint64_t now_ms, std::uint64_t result = 0) {
+    std::vector<Made> made;
+    auto call = c.Next(g, false, 0, now_ms, kMain);
+    while (call) {
+        Made m{call->function - kMain, call->x[0], call->x[1], call->x[2], 0};
+        std::uint64_t r = 0;
+        if (m.function == bn::addr::kMalloc) {
+            CHECK(call->x[0] == addr::kBlockSize);
+            r = kBlock;
+        } else if (m.function == bn::addr::kRequestActionVerb) {
+            CHECK(m.x0 == kBsa);
+            CHECK(m.x1 == kBlock);
+            g.Read(kBlock + bn::addr::kReqVerb, &m.verb, sizeof m.verb);
+            r = result;
+        } else {
+            std::uint32_t key = 0;
+            g.Read(kBlock + addr::kBlockKey, &key, sizeof key);
+            CHECK(key == addr::kOurKey);
+        }
+        made.push_back(m);
+        call = c.Next(g, true, r, now_ms, kMain);
+    }
+    return made;
 }
 
-// Runs one frame of the caller: every call made is answered `result`
-// (the malloc with kBlock). Returns the action verbs asked this frame.
-std::vector<std::int32_t> RunFrame(Crawl& c, Guest& g, std::uint64_t now_ms, std::uint64_t result = 0) {
-    std::vector<std::int32_t> asked;
-    auto call = c.Next(g, false, 0, now_ms, kMain, &Cas);
-    while (call) {
-        std::uint64_t r = result;
-        if (call->function == kMain + bn::addr::kMalloc) {
-            r = kBlock;
-        } else {
-            CHECK(call->function == kMain + bn::addr::kRequestActionVerb);
-            CHECK(call->x[0] == kBsa);
-            CHECK(call->x[1] == kBlock);
-            asked.push_back(VerbOf(g));
+std::vector<std::int32_t> Verbs(const std::vector<Made>& made) {
+    std::vector<std::int32_t> out;
+    for (const Made& m : made) {
+        if (m.function == bn::addr::kRequestActionVerb) {
+            out.push_back(m.verb);
         }
-        call = c.Next(g, true, r, now_ms, kMain, &Cas);
     }
-    return asked;
+    return out;
+}
+
+int Count(const std::vector<Made>& made, std::uint64_t function) {
+    int n = 0;
+    for (const Made& m : made) {
+        n += m.function == function ? 1 : 0;
+    }
+    return n;
+}
+
+// A Crawl that has learnt our Link's node and is crawling at 1000 ms.
+void Crawling(Crawl& c, Guest& g) {
+    c.Want(Want(false));
+    c.Skip(kBsa, Req(verb::kWait, 2), false);
+    c.Want(Want(true));
+    const auto v = Verbs(RunFrame(c, g, 1000));
+    REQUIRE(v.size() == 1);
+    REQUIRE(v[0] == verb::kCrawl);
 }
 
 }  // namespace
@@ -125,131 +148,179 @@ TEST_CASE("dbno body: Raising waits for the step, then is written once") {
     CHECK_FALSE(r.Frame(1, 4'000'000));
 }
 
-TEST_CASE("dbno body: the invincible bit") {
-    CHECK(WithInvincible(0x1008, true) == 0x1048);
-    CHECK(WithInvincible(0x1048, false) == 0x1008);
-    CHECK(WithInvincible(0, false) == 0);
+TEST_CASE("dbno body: the verbs the world forces pass") {
+    for (const std::int32_t v : {verb::kFall, verb::kLand, verb::kSwim, verb::kWaterDive, verb::kSlide,
+                                 verb::kSlippingDown, verb::kSlideLand, verb::kPreAbyss, verb::kPreEvent,
+                                 verb::kPreDie}) {
+        CHECK(Passes(v));
+    }
+    CHECK_FALSE(Passes(134));  // a small hit's reaction
+    CHECK_FALSE(Passes(verb::kWalk));
+    CHECK_FALSE(Passes(verb::kCrawl));
 }
 
-TEST_CASE("dbno body: only our downed Link's own non-crawl actions are skipped") {
+TEST_CASE("dbno body: only our crawling Link's own non-crawl actions are skipped") {
+    Guest g;
     Crawl c;
     c.Want(Want(false));
-    CHECK_FALSE(c.Skip(kBsa, Req(addr::kVerbWalk), false));  // up: the game's
-    c.Want(Want(true));
-    CHECK(c.Skip(kBsa, Req(134), false));                      // a hit's reaction (row 34)
-    CHECK(c.Skip(kBsa, Req(addr::kVerbWalk), false));
-    CHECK_FALSE(c.Skip(kBsa, Req(addr::kVerbCrawl), false));   // the crawl itself
-    CHECK_FALSE(c.Skip(kBsa, Req(134), true));                 // our own call
-    CHECK_FALSE(c.Skip(0x5000, Req(134), false));              // another actor (an enemy)
+    CHECK_FALSE(c.Skip(kBsa, Req(verb::kWalk), false));  // up: the game's
+    Crawling(c, g);
+    CHECK(c.Skip(kBsa, Req(134), false));                  // a hit's reaction (row 34)
+    CHECK(c.Skip(kBsa, Req(verb::kWalk), false));
+    CHECK_FALSE(c.Skip(kBsa, Req(verb::kCrawl), false));   // the crawl itself
+    CHECK_FALSE(c.Skip(kBsa, Req(134), true));             // our own call
+    CHECK_FALSE(c.Skip(0x5000, Req(134), false));          // another actor (an enemy)
     CHECK_FALSE(c.Skip(0, Req(134), false));
     c.Want(Want(true, true));
-    CHECK_FALSE(c.Skip(kBsa, Req(134), false));                // our event drives our Link
+    CHECK_FALSE(c.Skip(kBsa, Req(134), false));            // our event drives our Link
     const auto t = c.Totals();
     CHECK(t.skipped == 2);
     CHECK(t.skipped_verbs.size() == 2);
+}
+
+TEST_CASE("dbno body: a refused crawl skips nothing (a ladder, water, mid-air)") {
+    Guest g;
+    Crawl c;
+    c.Want(Want(false));
+    c.Skip(kBsa, Req(verb::kWait), false);
+    c.Want(Want(true));
+    CHECK(Verbs(RunFrame(c, g, 1000, 2)) == std::vector<std::int32_t>{verb::kCrawl});  // 2: refused
+    CHECK_FALSE(c.Skip(kBsa, Req(71), false));  // climbing a ladder: the game's own
+    CHECK_FALSE(c.Skip(kBsa, Req(134), false));
+    CHECK(c.Totals().skipped == 0);
+}
+
+TEST_CASE("dbno body: a fall or water while crawling passes, and the crawl is asked again on the ground") {
+    Guest g;
+    Crawl c;
+    Crawling(c, g);
+    CHECK_FALSE(c.Skip(kBsa, Req(verb::kFall), false));  // off a ledge
+    CHECK(c.Totals().passed == 1);
+    CHECK_FALSE(c.Skip(kBsa, Req(verb::kLand), false));  // no longer crawling: the game's
+    CHECK_FALSE(c.Skip(kBsa, Req(134), false));
+    // Asked again (refused while in the air: spaced, at most kMaxAsks).
+    int asks = 0;
+    for (std::uint64_t ms = 1100; ms < 9000; ms += 100) {
+        asks += static_cast<int>(Verbs(RunFrame(c, g, ms, 2)).size());
+    }
+    CHECK(asks == Crawl::kMaxAsks);
+    // Back on the ground (the game's own Wait): asked at once, taken, skipping again.
+    CHECK_FALSE(c.Skip(kBsa, Req(verb::kWait), false));
+    CHECK(Verbs(RunFrame(c, g, 9000)) == std::vector<std::int32_t>{verb::kCrawl});
+    CHECK(c.Skip(kBsa, Req(134), false));
+
+    // Swimming: passes the same way.
+    CHECK_FALSE(c.Skip(kBsa, Req(verb::kSwim), false));
+    CHECK(c.Totals().passed == 2);
 }
 
 TEST_CASE("dbno body: nothing is asked before our Link's own node is known, nor when up") {
     Guest g;
     Crawl c;
     c.Want(Want(true));
-    CHECK(RunFrame(c, g, 1000).empty());  // no node learnt yet
+    CHECK(Verbs(RunFrame(c, g, 1000)).empty());  // no node learnt yet
     c.Want(Want(false));
-    c.Skip(kBsa, Req(addr::kVerbWait, 2), false);  // learnt (up: not skipped)
-    CHECK(RunFrame(c, g, 1100).empty());           // up and never crawled: nothing
-    CHECK(c.Totals().asked == 0);
+    c.Skip(kBsa, Req(verb::kWait, 2), false);   // learnt (up: not skipped)
+    RunFrame(c, g, 1100);
+    CHECK(RunFrame(c, g, 1200).empty());        // up, everything off again: nothing
 }
 
 TEST_CASE("dbno body: down -> Crawl once with the scheduler's node; up -> Wait once") {
     Guest g;
     Crawl c;
     c.Want(Want(false));
-    c.Skip(kBsa, Req(77, 5, 0x7777), false);              // not Walk/Wait: not learnt from
-    c.Skip(kBsa, Req(addr::kVerbWalk, 2), false);         // the scheduler's main slot
+    c.Skip(kBsa, Req(77, 5, 0x7777), false);   // not Walk/Wait: not learnt from
+    c.Skip(kBsa, Req(verb::kWalk, 2), false);  // the scheduler's main slot
     c.Want(Want(true));
-    const auto first = RunFrame(c, g, 1000);
-    REQUIRE(first.size() == 1);
-    CHECK(first[0] == addr::kVerbCrawl);
+    CHECK(Verbs(RunFrame(c, g, 1000)) == std::vector<std::int32_t>{verb::kCrawl});
     std::uint64_t node = 0;
     g.Read(kBlock + bn::addr::kReqNode, &node, sizeof node);
     CHECK(node == kNode);
     std::int32_t slot = -1;
     g.Read(kBlock + bn::addr::kReqSlot, &slot, sizeof slot);
     CHECK(slot == 2);
-    CHECK(RunFrame(c, g, 1100).empty());  // taken: not asked again
-    CHECK(RunFrame(c, g, 5000).empty());
+    CHECK(Verbs(RunFrame(c, g, 1100)).empty());  // taken: not asked again
+    CHECK(Verbs(RunFrame(c, g, 5000)).empty());
 
     c.Want(Want(false));
-    const auto up = RunFrame(c, g, 6000);
-    REQUIRE(up.size() == 1);
-    CHECK(up[0] == addr::kVerbWait);
-    CHECK(RunFrame(c, g, 6100).empty());
+    CHECK(Verbs(RunFrame(c, g, 6000)) == std::vector<std::int32_t>{verb::kWait});
+    CHECK(Verbs(RunFrame(c, g, 6100)).empty());
     CHECK(c.Totals().asked == 2);
-}
-
-TEST_CASE("dbno body: a refused crawl is asked again, spaced, at most kMaxAsks times") {
-    Guest g;
-    Crawl c;
-    c.Want(Want(false));
-    c.Skip(kBsa, Req(addr::kVerbWait), false);
-    c.Want(Want(true));
-    int asks = 0;
-    for (std::uint64_t ms = 1000; ms < 20000; ms += 100) {
-        asks += static_cast<int>(RunFrame(c, g, ms, 2).size());  // 2: the game's refusal
-    }
-    CHECK(asks == Crawl::kMaxAsks);
-    CHECK(c.Totals().refused == static_cast<std::uint64_t>(Crawl::kMaxAsks));
-    // Up and down again: asked anew (refused crawl: no Wait needed).
-    c.Want(Want(false));
-    CHECK(RunFrame(c, g, 21000).empty());
-    c.Want(Want(true));
-    CHECK(RunFrame(c, g, 21100).size() == 1);
 }
 
 TEST_CASE("dbno body: an event of ours pauses the crawl; it is asked again after") {
     Guest g;
     Crawl c;
-    c.Want(Want(false));
-    c.Skip(kBsa, Req(addr::kVerbWait), false);
-    c.Want(Want(true));
-    CHECK(RunFrame(c, g, 1000).size() == 1);
+    Crawling(c, g);
     c.Want(Want(true, true));
-    CHECK(RunFrame(c, g, 2000).empty());
+    CHECK(Verbs(RunFrame(c, g, 2000)).empty());
     c.Want(Want(true));
-    const auto again = RunFrame(c, g, 3000);
-    REQUIRE(again.size() == 1);
-    CHECK(again[0] == addr::kVerbCrawl);
+    CHECK(Verbs(RunFrame(c, g, 3000)) == std::vector<std::int32_t>{verb::kCrawl});
 }
 
-TEST_CASE("dbno body: the shield sets the game's invincible bit, and clears only its own") {
+TEST_CASE("dbno body: shield and unseen through the game's own functions, on while down, off when up") {
     Guest g;
     Crawl c;
-    g_flags = 0x1008;  // the game's other bits stay
+    c.Want(Want(true));
+    const auto down = RunFrame(c, g, 1000);
+    REQUIRE(Count(down, addr::kInvincibleOn) == 1);
+    REQUIRE(Count(down, addr::kEmitterSwitch) == 1);
+    for (const Made& m : down) {
+        if (m.function == addr::kInvincibleOn) {
+            CHECK(m.x0 == kLife);
+            CHECK(m.x1 == 1);  // IsNoReaction
+            CHECK(m.x2 == kBlock + addr::kBlockKey);
+        }
+        if (m.function == addr::kEmitterSwitch) {
+            CHECK(m.x0 == kEmitter + addr::kEmitterKeys);
+            CHECK(m.x1 == kBlock + addr::kBlockKey);
+            CHECK(m.x2 == 0);  // IsEnable 0: off
+        }
+    }
+    CHECK(RunFrame(c, g, 1100).empty());  // once
+    CHECK(c.Totals().shield_on == 1);
+    CHECK(c.Totals().unseen_on == 1);
+
+    c.Want(Want(false));
+    const auto up = RunFrame(c, g, 2000);
+    CHECK(Count(up, addr::kInvincibleOff) == 1);
+    REQUIRE(Count(up, addr::kEmitterSwitch) == 1);
+    for (const Made& m : up) {
+        if (m.function == addr::kEmitterSwitch) {
+            CHECK(m.x2 == 1);  // IsEnable: on again
+        }
+    }
+    CHECK(RunFrame(c, g, 2100).empty());
+}
+
+TEST_CASE("dbno body: a new Link (scene change) gets them again; the old component is left alone") {
+    Guest g;
+    Crawl c;
     c.Want(Want(true));
     RunFrame(c, g, 1000);
-    CHECK(g_flags == 0x1048);
-    CHECK(c.Totals().shield_on == 1);
-    g_flags = 0x1008;  // the game cleared it: set again
-    RunFrame(c, g, 1100);
-    CHECK(g_flags == 0x1048);
+    Crawl::Wanted w = Want(true);
+    w.life = 0x2200;
+    w.emitter = 0x4400;
+    c.Want(w);
+    const auto again = RunFrame(c, g, 1100);
+    CHECK(Count(again, addr::kInvincibleOn) == 1);
+    CHECK(Count(again, addr::kEmitterSwitch) == 1);
+    // Up while on a Link that has gone (the components changed again): no call on a freed component.
+    Crawl::Wanted gone = Want(false);
+    gone.life = 0x2300;
+    gone.emitter = 0x4500;
+    c.Want(gone);
+    const auto up = RunFrame(c, g, 1200);
+    CHECK(Count(up, addr::kInvincibleOff) == 0);
+    CHECK(Count(up, addr::kEmitterSwitch) == 0);
+}
+
+TEST_CASE("dbno body: never down, the game is never called") {
+    Guest g;
+    Crawl c;
     c.Want(Want(false));
-    RunFrame(c, g, 1200);
-    CHECK(g_flags == 0x1008);
-
-    // The game's own invincibility (its bit already set when we went down): left set.
-    Crawl d;
-    g_flags = 0x0040;
-    d.Want(Want(true));
-    RunFrame(d, g, 1000);
-    CHECK(g_flags == 0x0040);
-    d.Want(Want(false));
-    RunFrame(d, g, 1100);
-    CHECK(g_flags == 0x0040);
-
-    // Never down: the word is not touched at all.
-    Crawl e;
-    g_cas_calls = 0;
-    e.Want(Want(false));
-    RunFrame(e, g, 1000);
-    CHECK(g_cas_calls == 0);
+    c.Skip(kBsa, Req(verb::kWait), false);
+    for (std::uint64_t ms = 1000; ms < 3000; ms += 100) {
+        CHECK(RunFrame(c, g, ms).empty());
+    }
 }
