@@ -2433,6 +2433,13 @@ void KeepMapsAlone(EmulatorMemory& memory, bool in_play, const std::optional<std
     }();
     if (!on) return;
     if (g_keeper_reset.exchange(false)) keeper.reset();
+#ifdef COOP_HOOKSHOT
+    // The title menu: the next save is another file (forest-temple-a: the no-scene sign alone may not come there).
+    static bool title_was_up = false;
+    const bool title_up = CoopSave::TitleUp();
+    if (title_up && !title_was_up) keeper.reset();
+    title_was_up = title_up;
+#endif
     coop::host::GameFlagStore flags(memory);
     const coop::host::MapDropBecause because("the solo keeper (minimap-b)");
     const auto restored = keeper.frame(flags, in_play, scene ? std::optional<std::string_view>(*scene) : std::nullopt);

@@ -555,7 +555,10 @@ bool FlagWatcher::write_exact(FlagStore& store, const FlagEntry& entry) {
 
 void FlagWatcher::see_save_load() {
   if (!window_ || !loading_ || moved_) return;
-  const bool flags_back = static_cast<int>(back_keys_.size()) >= kSaveLoadMin && no_scene_frames_ >= kTitleFrames;
+  // Flags back, and the title: no scene for kTitleFrames, or Hookshot's title menu seen in the window (its
+  // screens may read a scene: forest-temple-a, a host's save load mid-session through it went unseen).
+  const bool flags_back = static_cast<int>(back_keys_.size()) >= kSaveLoadMin &&
+                          (no_scene_frames_ >= kTitleFrames || window_title_);
   // A player's load through Hookshot's title menu (set_title) is a save load
   // even when its save only goes forward of the group's (player report #96:
   // a guest's own richer save). The host's loads keep the flags-back rule.

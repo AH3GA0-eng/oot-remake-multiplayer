@@ -1163,6 +1163,39 @@ TEST_CASE("flag watcher: a one-way flag the game takes back every frame is left 
   CHECK(w.stats().one_way_restores == static_cast<std::uint64_t>(n) + 1);
 }
 
+TEST_CASE("flag watcher: the host's save load through the title with a scene read is a save load (forest-temple-a)") {
+  // A player's 0.11.2 host log: the host went to Hookshot's title mid-session and loaded a save without the Forest
+  // Temple map; no save load was seen, and the old save's floors were put back into the new one, once a frame.
+  FakeStore game_store = dungeon_game();
+  ItemFlagStore store(game_store);
+  FlagWatcher w(SharedFlags({kDekuMap, kDekuCompass, kGotBomb}), FlagRole::host);
+  w.set_scene(true);
+  w.frame(store);
+  game_store.set(kDekuMap, 1);
+  game_store.set(kDekuCompass, 1);
+  w.frame(store);  // in play: the old save's map and compass
+  // The title menu: a scene is still read there, so only the title sign says it is a save load.
+  w.set_loading(true);
+  w.set_title(true);
+  w.frame(store);
+  game_store.set(kDekuMap, 0);  // the new save has neither
+  game_store.set(kDekuCompass, 0);
+  for (int i = 0; i < 5; ++i) w.frame(store);
+  bool reset = false;
+  for (const auto& m : decode(link_back(w, store))) {
+    if (const auto* r = std::get_if<proto::FlagReset>(&m)) {
+      reset = std::find(r->flags.begin(), r->flags.end(), entry(kDekuMap, 0)) != r->flags.end();
+    }
+  }
+  CHECK(reset);  // the group follows the host's new save (#96)
+  CHECK(w.stats().host_resets == 1);
+  CHECK(w.stats().one_way_restores == 0);  // the old save's map is not put into the new save
+  CHECK(game_store.get(kDekuMap) == 0);
+  for (int i = 0; i < 10; ++i) w.frame(store);
+  CHECK(game_store.get(kDekuMap) == 0);
+  CHECK(w.stats().one_way_restores == 0);
+}
+
 TEST_CASE("flag watcher: a one-way flag the game drops now and then is always put back (forest-temple-a)") {
   FakeStore game_store = dungeon_game();
   ItemFlagStore store(game_store);
