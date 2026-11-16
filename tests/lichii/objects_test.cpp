@@ -4482,3 +4482,38 @@ TEST_CASE("objects: a boss is pre-battle while a body plays Sleep or Pre_Battle_
     egg.animation = proto::Animation{"Sleep", 0.0f, 1.0f};
     CHECK(CoopObjects::BossPreBattle({boss, egg}, kGohma) == std::optional<bool>(false));  // not a body
 }
+
+TEST_CASE("objects: a boss whose death has begun takes a refused killing hit as its life (player report #105)") {
+    // The owner's killing hit reaches a copy Gohma as a hurt her game refuses outside her weak point. In a fight a
+    // boss is never written; once her death has begun (the glue's SetDying) it goes to her Life step after the
+    // wait, so the death setting our game plays finds her dead.
+    const std::string boss = "Enemy_DungeonBoss_Gohma";
+    for (const bool dying : {false, true}) {
+        Sync sync;
+        sync.SetHurt(true);
+        if (dying) {
+            sync.SetDying({boss});
+        }
+        const auto gohma = [&boss](std::int32_t life) { return Enemy(0x100, 0x11, life, 0.0f, boss); };
+        Tick(sync, 0, {gohma(3)});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, 1);
+        proto::Damage d;
+        d.player_number = 2;
+        d.id = id;
+        d.amount = 3;
+        sync.Receive(d);
+        auto step = Tick(sync, 10 * kMs, {gohma(3)});
+        REQUIRE(step.writes.size() == 1);
+        CHECK(step.writes[0].hurt == 3);
+        step = Tick(sync, 430 * kMs, {gohma(3)});
+        if (dying) {
+            REQUIRE(step.writes.size() == 1);
+            CHECK(step.writes[0].hurt == 0);
+            CHECK(step.writes[0].life == 0);
+        } else {
+            CHECK(step.writes.empty());
+        }
+        CHECK(sync.HurtsMissed() == 1);
+    }
+}

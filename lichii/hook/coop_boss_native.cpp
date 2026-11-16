@@ -172,6 +172,8 @@ void Table::Publish(const std::vector<Boss>& bosses) {
         e.role = b.role;
         e.name = b.name;
         e.owner = b.owner;
+        e.life_component = b.life_component;
+        e.dying = Dying(b.name);
         next.emplace(b.bsa, std::move(e));
     }
     by_bsa_ = std::move(next);
@@ -185,7 +187,7 @@ void Table::Publish(const std::vector<Boss>& bosses) {
         if (b.role != Role::copy || b.life_component == 0 || (b.life_component & kReleased) != 0 || n == kMaxHeld) {
             continue;
         }
-        want[n++] = b.life_component | (b.owner_dead ? kReleased : 0);
+        want[n++] = b.life_component | (b.owner_dead || Dying(b.name) ? kReleased : 0);
     }
     for (std::size_t i = 0; i < kMaxHeld; ++i) {
         const std::uint64_t was = held_life_[i].load(std::memory_order_relaxed);
@@ -193,7 +195,8 @@ void Table::Publish(const std::vector<Boss>& bosses) {
             if ((want[i] & kReleased) != 0 && (was & ~kReleased) == (want[i] & ~kReleased) && (was & kReleased) == 0) {
                 for (const Boss& b : bosses) {
                     if (b.life_component == (want[i] & ~kReleased)) {
-                        Note(b.name + ": its owner's died: the copy's own Life step lets it die now");
+                        Note(b.name + (b.owner_dead ? ": its owner's died" : ": its death has begun") +
+                             ": the copy's own Life step lets it die now");
                     }
                 }
             }
@@ -327,7 +330,50 @@ bool Table::OnActionVerb(std::uint64_t bsa, const Request& request, bool changed
 }
 
 bool Table::OwnTime(const Entry& e) const {
-    return event_ || steps_ < e.react_until;
+    return event_ || e.dying || steps_ < e.react_until;
+}
+
+bool Table::Dying(std::string_view name) const {
+    return std::find(dying_.begin(), dying_.end(), name) != dying_.end();
+}
+
+void Table::Release(std::uint64_t component) {
+    if (component == 0) {
+        return;
+    }
+    for (auto& slot : held_life_) {
+        const std::uint64_t v = slot.load(std::memory_order_relaxed);
+        if (v == component) {
+            slot.store(v | kReleased, std::memory_order_release);
+        }
+    }
+}
+
+void Table::SetDying(std::vector<std::string> bodies) {
+    std::lock_guard lock(mutex_);
+    if (bodies == dying_) {
+        return;
+    }
+    dying_ = std::move(bodies);
+    for (auto& [bsa, e] : by_bsa_) {
+        const bool now = Dying(e.name);
+        if (now == e.dying) {
+            continue;
+        }
+        e.dying = now;
+        if (e.role != Role::copy) {
+            continue;
+        }
+        if (now) {
+            if (e.wanted && !event_ && steps_ >= e.react_until) {
+                MakeLate(e);  // its own death's first changes, skipped a moment ago
+            }
+            Release(e.life_component);
+            Note(e.name + ": its death has begun: the copy runs all its own from now on (its Life not held)");
+        } else {
+            e.react_until = std::max(e.react_until, steps_ + kAfterEventSteps);
+        }
+    }
 }
 
 void Table::Keep(Entry& e, std::variant<BossBrain, BossAction> what) {
@@ -695,6 +741,7 @@ void Table::Reset() {
     for (auto& slot : held_life_) {
         slot.store(0, std::memory_order_relaxed);
     }
+    dying_.clear();
     life_held_.store(0, std::memory_order_relaxed);
     life_killed_.store(0, std::memory_order_relaxed);
     notes_.clear();

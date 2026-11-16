@@ -1926,7 +1926,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         // never written: if its damage step never saw the replay, or there is
         // no Life step, the hit is lost and its life stays its game's).
         if (o.hurt_until != 0 && now_us >= o.hurt_until) {
-            if (o.life && *o.life != o.hurt_target && IsBoss(o.name)) {
+            const bool dying = std::find(dying_.begin(), dying_.end(), o.name) != dying_.end();
+            if (o.life && *o.life != o.hurt_target && IsBoss(o.name) && !dying) {
                 // A boss is never written (boss-intro, the native rule): its game refused the hit (Gohma holds
                 // her life at 1 outside her weak point), so its life stays what its own game says.
                 ++hurt_missed_;
