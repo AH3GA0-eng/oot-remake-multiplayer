@@ -372,6 +372,28 @@ fs::path own_dir_of(const fs::path& coop_dir) {
   return p.parent_path() / name.substr(0, name.size() - kCoopSuffix.size());
 }
 
+bool copy_dir_whole(const fs::path& from, const fs::path& to, std::string* error) {
+  auto fail = [error](const std::string& why) {
+    if (error != nullptr) *error = why;
+    return false;
+  };
+  std::error_code ec;
+  if (fs::exists(to, ec)) return fail("already there");
+  if (!fs::is_directory(from, ec)) return fail("no folder to copy from");
+  fs::path part = to;
+  part += ".part";
+  fs::remove_all(part, ec);  // an earlier try's
+  if (ec) return fail("could not remove an earlier copy: " + ec.message());
+  fs::copy(from, part, fs::copy_options::recursive, ec);
+  if (!ec) fs::rename(part, to, ec);
+  if (ec) {
+    const std::string why = ec.message();
+    fs::remove_all(part, ec);
+    return fail(why);
+  }
+  return true;
+}
+
 WriteResult write_coop_save(const fs::path& coop_dir, const SaveSlot& slot, const fs::path& own_dir) {
   if (!is_coop_dir(coop_dir) || is_coop_dir(own_dir) || slot.files.empty()) return WriteResult::not_coop;
   std::error_code ec;

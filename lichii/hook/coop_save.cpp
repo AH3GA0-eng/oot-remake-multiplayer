@@ -384,10 +384,13 @@ std::string ApplySaveSetLocked() {
     if (want == now) return g_mp_saves ? "Multiplayer saves." : "Solo saves.";
     std::error_code ec;
     if (g_mp_saves && !fs::exists(want, ec)) {   // (the first time: the solo saves as they are, to start from)
-        fs::copy(solo, want, fs::copy_options::recursive, ec);
+        // Copied to a temporary folder and renamed once whole: a failed copy leaves no half folder (review of PR 236).
+        // The solo saves are only read.
+        std::string why;
+        const bool made = save::copy_dir_whole(solo, want, &why);
         LOG_INFO(Core, "coop: save: the multiplayer saves made as a copy of the solo saves: {}{}", want.string(),
-                 ec ? " (copy failed: " + ec.message() + ")" : std::string());
-        if (ec) return "The multiplayer saves could not be made (see the log).";
+                 made ? std::string() : " (copy failed: " + why + ")");
+        if (!made) return "The multiplayer saves could not be made (see the log).";
     }
     if (!g_remount(want.string())) {
         LOG_WARNING(Core, "coop: save: could not switch the saves to {}", want.string());
