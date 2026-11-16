@@ -15,6 +15,9 @@
 #                                                   license once, then every build of this kit fetches NVIDIA's DLSS
 #                                                   SDK and builds with it (hookshot\dlss.txt remembers the choice)
 #   Build-Hookshot-Coop.bat -NoDlss                 without DLSS again (the game is built again without it)
+#   Build-Hookshot-Coop.bat -DlssSdk <folder>       as -Dlss, starting from NVIDIA's SDK in that folder (one the Longshot
+#                                                   Builder or Launcher fetched is found by itself): only what differs is
+#                                                   downloaded
 #   (for tools\hookshot\hs.py) -Tools <folder> -Work <folder>: Hookshot's tools and source, and its work folder,
 #   somewhere else than this kit's hookshot\ (one of each per pin, shared by every kit: hs-build-speed)
 #
@@ -431,6 +434,27 @@ function Find-HookshotExe([string]$Folder) {
     }
     return $null
 }
+# NVIDIA DLSS (#234): Longshot has it only in a game built with NVIDIA's DLSS SDK, which nobody may pass on: each
+# build downloads it for itself, once NVIDIA's license is accepted. -Dlss asks once and hookshot\dlss.txt keeps the
+# answer, so the builds after an update keep DLSS; -NoDlss takes it back. Not in coop-built-from.txt: that stamp is
+# the release, pin and patches the other kits, the game cache and Get-KitHookshotNeed compare.
+# A game with DLSS has its runtime in <game>\ngx (make_game.py's place_ngx_runtime; gone again without the SDK):
+# Test-KitHookshotDlss. Decided here, before the copies below, so they take only a game with DLSS as chosen.
+$dlssNote = Join-Path $hs 'dlss.txt'
+if ($NoDlss) {
+    Remove-Item -LiteralPath $dlssNote -Force -ErrorAction SilentlyContinue
+} elseif ($Dlss -and -not (Test-Path -LiteralPath $dlssNote)) {
+    Write-Host ''
+    Write-Host 'NVIDIA DLSS (NVIDIA RTX graphics cards): the build downloads NVIDIA''s DLSS SDK, under NVIDIA''s own license:' -ForegroundColor Yellow
+    Write-Host "  $(Get-KitNgxLicenseUrl $tools) (the build prints NVIDIA's notice too)."
+    Write-Host '  The game folder then holds NVIDIA''s files: never share it, and never post builds made with them.'
+    $answer = "$(Read-Host '  Accept NVIDIA''s license and build with DLSS? (y/n)')".Trim()
+    if ($answer -notmatch '^(?i)(y|yes|j|ja)$') { Fail 'NVIDIA''s license not accepted: nothing changed (the game stays as it is, without DLSS).' }
+    [System.IO.File]::WriteAllText($dlssNote, "nvidia-license=accepted`n")
+}
+$wantDlss = -not $NoDlss -and (Test-Path -LiteralPath $dlssNote)
+$ngxSdk = Join-Path $work 'ngx-sdk'
+
 # A second kit on this PC (unzipped twice, or a Windows copy of a kit): another kit's game made from the same
 # release, pin and patches is copied into this kit's own hookshot\game (a minute or two) instead of built again
 # (10 to 45 minutes). A copy, never the other kit's folder itself: two kits never start one game. Its coop.ini,
@@ -445,7 +469,7 @@ if (-not $Rebuild -and -not $CheckOnly -and $Out -ieq $defaultOut -and -not (Fin
     }
     $list = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'OoT-Coop\kits.txt' } else { '' }
     if ($list -and (Test-Path -LiteralPath $list)) { $others += @(Get-Content -LiteralPath $list | Where-Object { $_ }) }
-    $from = Find-KitHookshotGameToCopy $kit $stamp $others
+    $from = Find-KitHookshotGameToCopy $kit $stamp $others -Dlss $wantDlss
     if ($from) {
         Step "The game: copying the one another kit on this PC built ($from), instead of building it again"
         Write-Host '  The copy starts with that kit''s saves (as they are now); from then on each kit has its own.'
@@ -470,7 +494,7 @@ $oldStamp = Join-Path $Out 'coop-built-from.txt'
 if (-not $Rebuild -and -not $CheckOnly -and (Find-HookshotExe $Out) -and (Test-Path -LiteralPath $oldStamp)) {
     $base = { param($s) (@("$s" -replace "`r", '' -split "`n") | Where-Object { $_ -match '^(release|commit)=' }) -join "`n" }
     if ((& $base ([System.IO.File]::ReadAllText($oldStamp))) -ne (& $base $stamp)) {
-        $from = Find-KitHookshotCachedGame $stamp
+        $from = Find-KitHookshotCachedGame $stamp -Dlss $wantDlss
         # (the same layout only: longshot.exe at the top, or in bin\ in both)
         $flat = { param($g) (Split-Path -Parent (Find-HookshotExe $g)).TrimEnd('\') -ieq ([System.IO.Path]::GetFullPath($g)).TrimEnd('\') }
         if ($from -and (& $flat $from) -ne (& $flat $Out)) { $from = '' }
@@ -484,6 +508,8 @@ if (-not $Rebuild -and -not $CheckOnly -and (Find-HookshotExe $Out) -and (Test-P
             if ($LASTEXITCODE -ge 8 -or -not (Find-HookshotExe $Out)) {
                 Write-Host "  Copying failed (robocopy $LASTEXITCODE): the game is built again instead." -ForegroundColor Yellow
             } else {
+                # (a copy without DLSS over a game that had it: NVIDIA's runtimes go too, as make_game.py's place_ngx_runtime does)
+                if (-not $wantDlss) { Remove-Item -LiteralPath (Join-Path $Out 'ngx') -Recurse -Force -ErrorAction SilentlyContinue }
                 Copy-Item -LiteralPath (Join-Path $from 'coop-built-from.txt') -Destination $oldStamp -Force
                 Write-Host "  Copied into $Out; your saves and settings there are as they were."
             }
@@ -501,26 +527,8 @@ function Save-KitGameRejected([string]$What, [string]$Why) {
     try { [System.IO.File]::WriteAllText($gameRejected, "$What`r`nWhy: $Why`r`n") } catch { }
 }
 
-# NVIDIA DLSS (#234): Longshot has it only in a game built with NVIDIA's DLSS SDK, which nobody may pass on: each
-# build downloads it for itself, once NVIDIA's license is accepted. -Dlss asks once and hookshot\dlss.txt keeps the
-# answer, so the builds after an update keep DLSS; -NoDlss takes it back. Not in coop-built-from.txt: that stamp is
-# the release, pin and patches the other kits, the game cache and Get-KitHookshotNeed compare.
-# A game with DLSS has its runtime in <game>\ngx (make_game.py's place_ngx_runtime; gone again without the SDK).
-$dlssNote = Join-Path $hs 'dlss.txt'
-if ($NoDlss) {
-    Remove-Item -LiteralPath $dlssNote -Force -ErrorAction SilentlyContinue
-} elseif ($Dlss -and -not (Test-Path -LiteralPath $dlssNote)) {
-    Write-Host ''
-    Write-Host 'NVIDIA DLSS (NVIDIA RTX graphics cards): the build downloads NVIDIA''s DLSS SDK, under NVIDIA''s own license:' -ForegroundColor Yellow
-    Write-Host '  https://github.com/NVIDIA/DLSS/blob/9981c6350dc58c0ce21f024fd65e31e851c31689/LICENSE.txt (the build prints NVIDIA''s notice too).'
-    Write-Host '  The game folder then holds NVIDIA''s files: never share it, and never post builds made with them.'
-    $answer = "$(Read-Host '  Accept NVIDIA''s license and build with DLSS? (y/n)')".Trim()
-    if ($answer -notmatch '^(?i)(y|yes|j|ja)$') { Fail 'NVIDIA''s license not accepted: nothing changed (the game stays as it is, without DLSS).' }
-    [System.IO.File]::WriteAllText($dlssNote, "nvidia-license=accepted`n")
-}
-$wantDlss = -not $NoDlss -and (Test-Path -LiteralPath $dlssNote)
-$ngxSdk = Join-Path $work 'ngx-sdk'
-$gameDlss = Test-Path -LiteralPath (Join-Path $Out 'ngx\nvngx_dlss.dll')
+# (the DLSS choice was made above, before the copies: here a game that does not have it as chosen is built again)
+$gameDlss = Test-KitHookshotDlss $Out
 if ($gameReady -and ($wantDlss -ne $gameDlss) -and ($wantDlss -or $NoDlss)) {
     Write-Host $(if ($wantDlss) { 'NVIDIA DLSS: the game has no DLSS yet, so it is built again with it (much shorter than the first build).' }
         else { 'NVIDIA DLSS off: the game is built again without it.' })
@@ -716,7 +724,11 @@ if ($gameReady -and -not $Rebuild -and -not $CheckOnly) {
         }
     }
     $code = Invoke-MakeGame $buildArgs $buildLog
-    if ($code -ne 0) { Fail "The build stopped (exit $code). Its log: $buildLog" }
+    if ($code -ne 0) {
+        # (make_game.py's own words for a failed SDK download are the Builder's, "untick NVIDIA DLSS": the kit's way is -NoDlss)
+        $noDlssHint = if ($wantDlss) { ' This build was with NVIDIA DLSS: if NVIDIA''s SDK could not be downloaded (offline?), "NVIDIA DLSS.bat" -NoDlss builds the game without it.' } else { '' }
+        Fail "The build stopped (exit $code). Its log: $buildLog$noDlssHint"
+    }
     $exe = Find-HookshotExe $Out
     if (-not $exe) { Fail "The build finished but there is no longshot.exe in $Out. Its log: $buildLog" }
     [System.IO.File]::WriteAllText($gameStamp, $stamp)

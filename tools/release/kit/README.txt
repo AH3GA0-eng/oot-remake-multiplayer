@@ -6,6 +6,5 @@ Squadala! (Longshot) - online co-op: play Ocarina of Time together, each player 
    or - alone on the title screen. Its first tab, Multiplayer: Host gives you a code for your friends; Join takes one.
 It updates itself (Revert.bat goes back); every player needs the same version. Needs 64-bit Windows and a graphics card with mesh shaders.
 Something wrong? The window says what to do. Others only names, no Link? make-puppet-pack.cmd makes the puppet pack again.
-NVIDIA RTX card? NVIDIA DLSS.bat builds the game with DLSS (asks for NVIDIA's license; docs\SETUP.md, "NVIDIA DLSS").
-More help: docs\SETUP.md. Logs for a bug report: scripts\collect-logs.cmd.
+More help: docs\SETUP.md (NVIDIA RTX card? "NVIDIA DLSS.bat" adds DLSS). Logs for a bug report: scripts\collect-logs.cmd.
 Nothing of the game is in this kit, and nothing of yours leaves your PC except the co-op traffic while you play. Licence: GPL-3.0 (licenses\). The source: licenses\SOURCE.txt.

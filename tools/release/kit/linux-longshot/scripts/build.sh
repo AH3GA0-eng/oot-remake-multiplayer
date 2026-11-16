@@ -160,7 +160,9 @@ elif ((dlss)) && [[ ! -f $dlss_note ]]; then
     kit_tty || fail 'NVIDIA DLSS needs NVIDIA'"'"'s license accepted: run bash scripts/build.sh --dlss from a terminal.'
     say ''
     warn "NVIDIA DLSS (NVIDIA RTX graphics cards): the build downloads NVIDIA's DLSS SDK, under NVIDIA's own license:"
-    say '  https://github.com/NVIDIA/DLSS/blob/9981c6350dc58c0ce21f024fd65e31e851c31689/LICENSE.txt (the build prints NVIDIA'"'"'s notice too).'
+    # (the link as the pinned Longshot's scripts/ngx_sdk.py names it, so a pin that moves NVIDIA's commit moves it too)
+    ngx_commit=$(sed -n 's/^COMMIT *= *"\([0-9a-f]\{40\}\)".*/\1/p' "$SRC/scripts/ngx_sdk.py" 2>/dev/null | head -n 1 || true)
+    say "  https://github.com/NVIDIA/DLSS/blob/${ngx_commit:-main}/LICENSE.txt (the build prints NVIDIA's notice too)."
     say "  The game folder then holds NVIDIA's files: never share it, and never post builds made with them."
     read -r -p "  Accept NVIDIA's license and build with DLSS? (y/n) " answer || answer=''
     [[ ${answer,,} =~ ^(y|yes|j|ja)$ ]] || fail "NVIDIA's license not accepted: nothing changed (the game stays as it is, without DLSS)."
@@ -248,7 +250,10 @@ else
     ((want_dlss)) && build_args+=(--fetch-ngx-sdk --accept-nvidia-license)
     mkdir -p "$GAME"
     ((want_dlss)) && export LONGSHOT_NGX_SDK=$WORK/ngx-sdk
-    make_game "${build_args[@]}" || fail "The build stopped. Its log: $LOGS/build.log"
+    # (make_game.py's own words for a failed SDK download are the Builder's, "untick NVIDIA DLSS": the kit's way is --no-dlss)
+    no_dlss_hint=''
+    ((want_dlss)) && no_dlss_hint=" This build was with NVIDIA DLSS: if NVIDIA's SDK could not be downloaded (offline?), bash start-squadala.sh --no-dlss builds the game without it."
+    make_game "${build_args[@]}" || fail "The build stopped. Its log: $LOGS/build.log$no_dlss_hint"
     [[ -n $(kit_game_exe) ]] || fail "The build finished but there is no game in $GAME. Its log: $LOGS/build.log"
     printf '%s' "$src_stamp" >"$game_stamp"
 fi

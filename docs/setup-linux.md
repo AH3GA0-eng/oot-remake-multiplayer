@@ -64,7 +64,7 @@ addresses and your user name are masked). Send that file.
 
 ## NVIDIA DLSS
 
-A normal build offers AMD FSR 3.1 and the game's own upscaler: Longshot has **NVIDIA DLSS** and **DLAA** only in a game built with NVIDIA's DLSS SDK, which is under NVIDIA's own license and never in the kit. With an NVIDIA RTX card, run `bash start-oot-coop.sh --dlss` from a terminal once: it asks whether you accept NVIDIA's license (**y**), downloads the SDK into `data/work/ngx-sdk` and builds the game again with it. Then in the game: **Graphics → Upscaler: NVIDIA DLSS**.
+A normal build offers AMD FSR 3.1 and the game's own upscaler: Longshot has **NVIDIA DLSS** and **DLAA** only in a game built with NVIDIA's DLSS SDK, which is under NVIDIA's own license and never in the kit. With an NVIDIA RTX card, run `bash start-squadala.sh --dlss` from a terminal once: it asks whether you accept NVIDIA's license (**y**), downloads the SDK into `data/work/ngx-sdk` and builds the game again with it. Then in the game: **Graphics → Upscaler: NVIDIA DLSS**.
 
 The kit remembers it (`data/dlss.txt`), so the builds after an update keep DLSS; `--no-dlss` builds the game again without it. NVIDIA's Linux driver loads DLSS only from a folder whose whole path is plain ASCII: keep the kit in a folder such as `~/OoT-Coop`. A game built with DLSS holds NVIDIA's files (`data/game/ngx/`): never share it.
 

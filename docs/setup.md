@@ -131,10 +131,10 @@ The co-op keys in the game (chat **T**, player list **F6**, panel **F7**, item c
 Longshot has **NVIDIA DLSS** and **DLAA** (and DLSS Frame Generation on RTX 40 and newer) only in a game built with NVIDIA's DLSS SDK. That SDK is under NVIDIA's own license, and nobody may pass it on: the kit never carries it, and a normal build offers only AMD FSR 3.1 and the game's own upscaler. With an NVIDIA RTX card:
 
 1. Double-click `NVIDIA DLSS.bat` in the kit folder. It shows NVIDIA's license and asks whether you accept it (**y**).
-2. It downloads NVIDIA's DLSS SDK (into `hookshot\work\ngx-sdk`) and builds the game again with it: much shorter than the first build, since only what changes is compiled.
+2. It downloads NVIDIA's DLSS SDK (into `hookshot\work\ngx-sdk`) and builds the game again with it: much shorter than the first build, since only what changes is compiled. If the Longshot Builder or the Longshot Launcher already fetched the SDK on this PC, the kit starts from that copy and downloads only what differs (`"NVIDIA DLSS.bat" -DlssSdk <folder>` names another one). If the download fails (offline?), `"NVIDIA DLSS.bat" -NoDlss` builds the game without DLSS.
 3. In the game: **Graphics → Upscaler: NVIDIA DLSS** (DLAA is DLSS's **Native** on the Render resolution row).
 
-The kit remembers the choice (`hookshot\dlss.txt`): the builds after an update keep DLSS. `"NVIDIA DLSS.bat" -NoDlss` builds the game again without it. A game built with DLSS holds NVIDIA's files (`ngx\`): never share that game folder. Linux: `bash start-oot-coop.sh --dlss` ([setup-linux.md](setup-linux.md#nvidia-dlss)).
+The kit remembers the choice (`hookshot\dlss.txt`): the builds after an update keep DLSS. `"NVIDIA DLSS.bat" -NoDlss` builds the game again without it. A game built with DLSS holds NVIDIA's files (`ngx\`): never share that game folder. Linux: `bash start-squadala.sh --dlss` ([setup-linux.md](setup-linux.md#nvidia-dlss)).
 
 ## Low frame rate
 

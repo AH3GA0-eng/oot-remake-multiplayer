@@ -104,8 +104,8 @@ People who contributed code:
 
 - bmitch87 (Linux Longshot: GCC module build and clean-PC kit test, PR #221; IP address and Port rows for joining and hosting, PR #230).
 - SrAjoloteuwu (bosses: Gohma's long intro is not her death, PR #210; no teleport to the other age's Link, PR #211; boss ready guard, PR #209).
-- cirnoice9 (Chinese text for the Multiplayer tab, PR #224; the whole co-op interface in Chinese, PR #231; the Hookshot crash fix, PR #233).
-- StarAppeal (Linux Longshot: the game's functions the co-op module finds by name, PR #228).
+- cirnoice9 (Chinese text for the Multiplayer tab, PR #224; the whole co-op interface in Chinese, PR #231; the Hookshot crash fix, PR #233; NVIDIA DLSS from an SDK already on the PC, PR #229).
+- StarAppeal (Linux Longshot: the game's functions the co-op module finds by name, PR #228; NVIDIA DLSS for the Longshot kits, PR #235).
 
 Every contributor whose pull request is merged is added here. GitHub's list: [contributors](https://github.com/daurosk/oot-remake-multiplayer/graphs/contributors).
 
