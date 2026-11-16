@@ -2,6 +2,7 @@
 #include "coop_boss_beaten.h"
 
 #include <algorithm>
+#include <variant>
 
 #include "coop_boss.h"
 
@@ -59,6 +60,26 @@ std::vector<std::uint8_t> Record::Rooms() const {
 std::uint64_t Record::Version() const {
     std::lock_guard lock(mutex_);
     return version_;
+}
+
+std::optional<std::uint8_t> ProvenDeath(const coop::protocol::Message& m) {
+    namespace proto = coop::protocol;
+    const auto in_its_dungeon = [](std::uint8_t room, const std::string& scene) -> std::optional<std::uint8_t> {
+        const CoopBoss::Room* where = CoopBoss::RoomByIndex(room);
+        if (ForRoom(room) == nullptr || where == nullptr || where->scene != scene) {
+            return std::nullopt;
+        }
+        return room;
+    };
+    if (const auto* s = std::get_if<proto::BossScene>(&m);
+        s != nullptr && s->kind == proto::BossSceneKind::outro_start) {
+        return in_its_dungeon(s->boss, s->scene);
+    }
+    if (const auto* r = std::get_if<proto::BossRoom>(&m);
+        r != nullptr && r->state == proto::BossState::defeated && r->player_number == 0) {
+        return in_its_dungeon(r->room, r->scene);
+    }
+    return std::nullopt;
 }
 
 Record& TheRecord() {

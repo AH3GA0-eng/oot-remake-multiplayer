@@ -810,9 +810,10 @@ class Session {
   // comes late, or after the winner left, gets the same answer; forgotten
   // when the session empties.
   std::map<std::uint8_t, protocol::BossHeart> boss_hearts_;
-  // The dungeon bosses the group beat (BOSS_ROOM defeated), by room: told to a player who joins, so its game
-  // gets their beaten sets (G2, #241). Forgotten when the host loads a save and when the session empties.
-  std::map<std::uint8_t, protocol::BossRoom> boss_beaten_;
+  // The bosses whose death a game took (BOSS_SCENE outro_start), by boss and scene, as the BOSS_ROOM defeated
+  // from player 0 a joiner is told, so its game gets their beaten sets (G2, #241). Forgotten when the host loads
+  // a save and when the session empties.
+  std::map<std::pair<std::uint8_t, std::string>, protocol::BossRoom> boss_beaten_;
   // Difficulty (protocol/difficulty.hpp): automatic, by the number of
   // players, until the host chooses; the host's choice then stays whoever
   // joins or leaves, a new host included. Automatic again when the session

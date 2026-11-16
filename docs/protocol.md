@@ -463,7 +463,7 @@ The server relays a frame only to the players in the speaker's scene whose Link 
 
 ### Boss rooms (`BOSS_ROOM`)
 
-Where a player stands with a dungeon's boss ([dungeons-boss.md](dungeons-boss.md)). On channel 0; the server relays it to everyone else with the sender's number in the player field. It keeps only the last state 5 (the boss beaten) of each room, and tells those to a player who joins, after the flag snapshot; it forgets them when the host loads a save (`FLAG_RESET`) and when the session empties (G2, player report #241: [dungeons-boss.md](dungeons-boss.md#beaten-by-the-group-g2-player-report-241)). No layout change.
+Where a player stands with a dungeon's boss ([dungeons-boss.md](dungeons-boss.md)). On channel 0; the server relays it to everyone else with the sender's number in the player field. State 5 from a player says only that its fight is over: a game also sends it on a guess (a long event, the boss not read), so nothing keeps it as a death. From player 0 it is the server's: a boss death it kept from a `BOSS_SCENE` outro_start (a game took the boss's death event itself), by boss and scene, told to a player who joins after the flag snapshot and forgotten when the host loads a save (`FLAG_RESET`) and when the session empties (G2, player report #241: [dungeons-boss.md](dungeons-boss.md#beaten-by-the-group-g2-player-report-241)). No layout change.
 
 | Type | Name | Channel | Sent by | Body |
 |---|---|---|---|---|

@@ -314,6 +314,7 @@ struct Glue {
                 searched.emplace_back(act.intro_here->intro);
             }
             if (act.beaten_here != nullptr) {
+                CoopBossBeaten::TheRecord().Add(act.beaten_here->index);  // the walk read it gone: proven (G2)
                 searched.emplace_back(act.beaten_here->outro);
             }
         }
@@ -347,9 +348,6 @@ struct Glue {
             session->with_client([&](coop::net::Client& c) {
                 for (auto& m : act.send) {
                     const bool sent = c.send(coop::protocol::Message{m});
-                    if (m.state == coop::protocol::BossState::defeated) {
-                        CoopBossBeaten::TheRecord().Add(m.room);  // our own read of the death: the group's too (G2)
-                    }
                     if (debug || m.state != coop::protocol::BossState::in_room) {
                         LOG_INFO(Core, "coop: boss: sent {} for {}{}", static_cast<int>(m.state), m.scene,
                                  sent ? "" : " (not sent)");
@@ -457,9 +455,13 @@ bool Glue::Scenes(Core::System& system, std::uint64_t main, const Local& local, 
     max_life_cap = a.max_life_cap;
     session->with_client([&](coop::net::Client& c) {
         for (auto& m : a.send) {
-            const bool sent = c.send(coop::protocol::Message{m});
+            const coop::protocol::Message msg{m};
+            const bool sent = c.send(msg);
             LOG_INFO(Core, "coop: boss: sent cutscene {} of boss {}{}", static_cast<int>(m.kind), m.boss,
                      sent ? "" : " (not sent)");
+            if (const auto room = CoopBossBeaten::ProvenDeath(msg)) {
+                CoopBossBeaten::TheRecord().Add(*room);  // our game took the death itself (G2)
+            }
         }
         for (auto& m : a.claims) {
             const bool sent = c.send(coop::protocol::Message{m});
@@ -513,12 +515,12 @@ void OnEvent(const coop::net::Event& event) {
             LOG_INFO(Core, "coop: boss: player {} says {} for {}", m->player_number, static_cast<int>(m->state),
                      m->scene);
         }
-        // G2: the group beat this boss (the server repeats it to a player who joins later). A game whose own flags
-        // lack it gets its beaten set at a scene outside the boss's (coop_boss_beaten.h, coop_hook.cpp).
-        if (m != nullptr && m->state == coop::protocol::BossState::defeated &&
-            CoopBossBeaten::TheRecord().Add(m->room)) {
-            LOG_INFO(Core, "coop: boss: the group beat the boss of room {} ({}): kept for this session", m->room,
-                     m->scene);
+        // G2: a proven death of a dungeon boss (another game took its death event, or the server's record of one
+        // for a player who joins; never a player's BOSS_ROOM defeated, maybe a guess). A game whose own flags lack
+        // it gets its beaten set at a scene outside the boss's (coop_boss_beaten.h, coop_hook.cpp).
+        if (const auto room = CoopBossBeaten::ProvenDeath(event.message);
+            room && CoopBossBeaten::TheRecord().Add(*room)) {
+            LOG_INFO(Core, "coop: boss: the group beat the boss of room {}: kept for this session", *room);
         }
     }
 }

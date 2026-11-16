@@ -632,13 +632,16 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     on_status(c, st->flags, now_us);
   }
   if (sender_of(message)) set_sender(message, c.number);
-  // G2 (player report #241): the group beat a dungeon boss. Kept for players who join later (told after the
-  // flag snapshot), so a game that was not there gets that boss's beaten set (lichii/hook/coop_boss_beaten.h).
-  if (const auto* boss = std::get_if<BossRoom>(&message);
-      boss != nullptr && boss->state == BossState::defeated && boss->room <= kMaxBossRoom) {
-    if (boss_beaten_.insert_or_assign(boss->room, *boss).second) {
-      log("boss of room " + std::to_string(boss->room) + " (" + boss->scene + ") beaten by the group, read by player " +
-          std::to_string(c.number));
+  // G2 (player report #241): a proven boss death, the same rule as the games' (CoopBossBeaten::ProvenDeath): a game
+  // took the boss's death event itself (BOSS_SCENE outro_start). Never BOSS_ROOM defeated, which a game also sends
+  // on a guess. Kept, by boss and scene, for players who join later (told after the flag snapshot as BOSS_ROOM
+  // defeated from player 0); each game keeps only a boss's own dungeon scene (not the boss rush).
+  if (const auto* death = std::get_if<BossScene>(&message);
+      death != nullptr && death->kind == BossSceneKind::outro_start && death->boss <= kMaxBossRoom) {
+    const BossRoom kept{0, death->scene, death->boss, BossState::defeated};
+    if (boss_beaten_.size() < 64 && boss_beaten_.emplace(std::pair{death->boss, death->scene}, kept).second) {
+      log("boss " + std::to_string(death->boss) + " died in " + death->scene + " (player " + std::to_string(c.number) +
+          "'s game took its death): kept for players who join");
     }
   }
   if (std::holds_alternative<PlayerSample>(message) || std::holds_alternative<PlayerPose>(message)) {

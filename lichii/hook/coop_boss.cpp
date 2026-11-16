@@ -281,15 +281,22 @@ void Sync::Take(const proto::BossRoom& m, std::uint64_t now_us, std::uint8_t sel
     }
 }
 
-void Sync::Defeat(Actions& out, bool read_gone) {
-    Say(out, *here_, proto::BossState::defeated);
+void Sync::EndFight(Actions& out) {
+    Say(out, *here_, proto::BossState::defeated);  // the fight here is over: no proof of a death (protocol.md)
     if (std::find(defeated_.begin(), defeated_.end(), here_->index) == defeated_.end()) {
         defeated_.push_back(here_->index);
     }
-    if (read_gone) {
-        out.beaten_here = here_;  // only when the walk read the boss gone, never a guess from the event alone
-    }
+}
+
+void Sync::Died(Actions& out) {
+    EndFight(out);
+    out.beaten_here = here_;  // the walk read the boss gone: its death, proven
     out.log.push_back("boss beaten (" + std::string(here_->outro) + ")");
+}
+
+void Sync::GuessedOver(Actions& out, const char* why) {
+    EndFight(out);  // pulls stop; never a death anyone keeps (no beaten_here; G2's record takes proofs only)
+    out.log.push_back("boss beaten (" + std::string(here_->outro) + ") (a guess: " + why + ")");
 }
 
 void Sync::Commit(Actions& out, const char* why) {
@@ -519,8 +526,10 @@ Actions Sync::Step(const Local& local, std::uint64_t now_us) {
                     // Maybe the death, maybe a grab: decided while it runs.
                     provisional_ = true;
                     out.log.push_back("an event in the fight; the boss is still there: waiting to see");
+                } else if (local.boss_alive.has_value()) {
+                    Died(out);  // read gone
                 } else {
-                    Defeat(out, local.boss_alive.has_value());  // read gone, or no reading at all
+                    GuessedOver(out, "an event in the fight, the boss not read");
                 }
             }
             break;
@@ -533,12 +542,15 @@ Actions Sync::Step(const Local& local, std::uint64_t now_us) {
                 const bool long_event = now_us - outro_at_ >= kLongEventUs && !untouched;
                 if (gone || (long_event && local.event)) {
                     provisional_ = false;
-                    Defeat(out, gone);
-                    if (!gone) out.log.back() += " after a long event";
+                    if (gone) {
+                        Died(out);
+                    } else {
+                        GuessedOver(out, "a long event with the boss hurt");
+                    }
                 } else if (fell) {
                     provisional_ = false;
                     if (!local.boss_alive.has_value()) {
-                        Defeat(out, false);  // no reading at the end: as before
+                        GuessedOver(out, "the event ended with the boss not read");  // as before
                     } else {
                         phase_ = Phase::fight;
                         out.log.push_back("the event is over and the boss is alive: the fight goes on");

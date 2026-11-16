@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "coop_boss.h"
+#include "coop_boss_beaten.h"
 
 namespace proto = coop::protocol;
 using CoopBoss::Actions;
@@ -467,6 +468,49 @@ TEST_CASE("boss: the boss dead when the event starts, or no reading, is the deat
     a = u.Tick(Alive(Forest().arrive, false, std::nullopt), 33 * kS);
     CHECK(Has(a, proto::BossState::defeated));
     CHECK(u.phase() == Sync::Phase::done);
+}
+
+// G2 review: what the fight's guesses send must never reach the beaten record: neither beaten_here nor a message
+// CoopBossBeaten::ProvenDeath takes. The record is written into absent players' saves, for good.
+bool Recorded(const Actions& a) {
+    if (a.beaten_here != nullptr) {
+        return true;
+    }
+    return std::any_of(a.send.begin(), a.send.end(), [](const proto::BossRoom& m) {
+        return CoopBossBeaten::ProvenDeath(proto::Message{m}).has_value();
+    });
+}
+
+TEST_CASE("boss: a heuristic Defeat never reaches the record") {
+    // 1. An event in the fight with the boss not read (coop_boss.cpp: GuessedOver at the event's start).
+    Sync s;
+    ToFight(s);
+    auto a = s.Tick(Alive(Forest().arrive, true, std::nullopt), 30 * kS);
+    CHECK(Has(a, proto::BossState::defeated));  // the pull still ends
+    CHECK_FALSE(Recorded(a));
+    // 2. A long event with the boss hurt and still read alive (Morpha's grab, Phantom Ganon's paintings).
+    Sync t;
+    ToFight(t);
+    Local l = Alive(Forest().arrive, true, true);
+    l.boss_hurt = true;
+    t.Tick(l, 30 * kS);
+    a = t.Tick(l, 46 * kS);
+    CHECK(Has(a, proto::BossState::defeated));
+    CHECK_FALSE(Recorded(a));
+    // 3. The event ends with the reading lost.
+    Sync u;
+    ToFight(u);
+    u.Tick(Alive(Forest().arrive, true, true), 30 * kS);
+    a = u.Tick(Alive(Forest().arrive, false, std::nullopt), 33 * kS);
+    CHECK(Has(a, proto::BossState::defeated));
+    CHECK_FALSE(Recorded(a));
+    // A proven death (the walk read the boss gone) reaches it, once.
+    Sync v;
+    ToFight(v);
+    a = v.Tick(Alive(Forest().arrive, true, false), 30 * kS);
+    CHECK(a.beaten_here == &Forest());
+    CHECK(Recorded(a));
+    CHECK_FALSE(Recorded(v.Tick(Alive(Forest().arrive, true, false), 31 * kS)));
 }
 
 TEST_CASE("boss: an event right after a skipped intro is not the boss's death (integrate-p8)") {

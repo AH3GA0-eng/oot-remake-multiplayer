@@ -5379,28 +5379,38 @@ TEST_CASE("boss heart: the host loading a save forgets the claims (the boss figh
   CHECK(h.session.stats().boss_hearts_given == 2);
 }
 
-TEST_CASE("boss beaten: the group's boss death is told to a player who joins later, until the host loads a save") {
+TEST_CASE("boss beaten: a game's own death of a boss is told to a player who joins later, until the host loads a save") {
   Harness h;
   h.join(1, "Link");
   h.join(2, "Zelda");
   h.clear();
-  const BossRoom died{0, "InsideTheDekuTree", 0, BossState::defeated};
-  h.receive(2, died, kChannelSession);
-  CHECK(only_message_to<BossRoom>(h, 1) == BossRoom{2, "InsideTheDekuTree", 0, BossState::defeated});
-  h.receive(2, BossRoom{0, "InsideTheDekuTree", 0, BossState::in_room}, kChannelSession);  // never kept
+  h.receive(2, BossScene{0, "InsideTheDekuTree", 0, BossSceneKind::outro_start, {1.0f, 2.0f, 3.0f}}, kChannelSession);
+  CHECK(only_message_to<BossScene>(h, 1).has_value());  // relayed as before
+  h.receive(2, BossScene{0, "InsideTheDekuTree", 0, BossSceneKind::outro_start, {1.0f, 2.0f, 3.0f}}, kChannelSession);
   h.clear();
-  h.join(3, "Saria");  // was not there (G2, player report #241)
-  CHECK(messages_to<BossRoom>(h, 3) == std::vector<BossRoom>{{2, "InsideTheDekuTree", 0, BossState::defeated}});
+  h.join(3, "Saria");  // was not there (G2, player report #241): told once, from the server (player 0)
+  CHECK(messages_to<BossRoom>(h, 3) == std::vector<BossRoom>{{0, "InsideTheDekuTree", 0, BossState::defeated}});
   h.receive(1, FlagReset{0, {flag(5, 0)}}, kChannelProgress);  // the host loaded a save from before the win
   h.clear();
   h.join(4, "Darunia");
   CHECK(messages_to<BossRoom>(h, 4).empty());
 }
 
+TEST_CASE("boss beaten: a player's BOSS_ROOM defeated (maybe a guess) and the other cutscenes are never kept") {
+  Harness h;
+  h.join(1, "Link");
+  h.receive(1, BossRoom{0, "WaterTemple", 5, BossState::defeated}, kChannelSession);  // a long event, no reading
+  h.receive(1, BossScene{0, "WaterTemple", 5, BossSceneKind::intro_start, {}}, kChannelSession);
+  h.receive(1, BossScene{0, "WaterTemple", 5, BossSceneKind::outro_end, {}}, kChannelSession);
+  h.clear();
+  h.join(2, "Zelda");
+  CHECK(messages_to<BossRoom>(h, 2).empty());
+}
+
 TEST_CASE("boss beaten: a new group (the session emptied) starts with no boss beaten") {
   Harness h;
   h.join(1, "Link");
-  h.receive(1, BossRoom{0, "DodongoCavern", 1, BossState::defeated}, kChannelSession);
+  h.receive(1, BossScene{0, "DodongoCavern", 1, BossSceneKind::outro_start, {}}, kChannelSession);
   h.session.disconnected(1, h.now);
   h.clear();
   h.join(2, "Zelda");

@@ -231,7 +231,12 @@ private:
     void Take(const coop::protocol::BossRoom& m, std::uint64_t now_us, std::uint8_t self);
     void Notices(Actions& out, std::uint64_t now_us);
     Actions Step(const Local& local, std::uint64_t now_us);  // Tick without the notices
-    void Defeat(Actions& out, bool read_gone);  // our game saw the boss's death (read_gone: the walk read it gone)
+    // The fight here is over. Died: the walk read the boss gone (a proven death: beaten_here). GuessedOver: an
+    // event taken for the death without that reading (a long event, no reading): it ends the pull, never more.
+    // Both send BOSS_ROOM defeated, which says only "the fight is over" (G2 keeps proven deaths only).
+    void EndFight(Actions& out);
+    void Died(Actions& out);
+    void GuessedOver(Actions& out, const char* why);
     void Say(Actions& out, const Room& room, coop::protocol::BossState state);
     bool FightActive(const Room& room, std::uint64_t now_us) const;
     bool OtherFinishedIntro(const Room& room, std::uint64_t now_us) const;
