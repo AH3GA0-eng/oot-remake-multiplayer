@@ -184,6 +184,9 @@ public:
     // What the step adds this frame (0 for a component never given any).
     // judged (when given): whether any of it was a judged give.
     std::int32_t Take(std::uint64_t component, bool* judged = nullptr) noexcept {
+        if (judged != nullptr) {
+            *judged = false;  // (nothing given: nothing judged)
+        }
         Slot* s = Find(component);
         if (s == nullptr || s->add.load(std::memory_order_relaxed) == 0) {
             return 0;
