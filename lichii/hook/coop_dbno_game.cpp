@@ -21,6 +21,7 @@
 #include "coop/host/session.hpp"
 #include "coop/net/client.hpp"
 #include "coop_actor_events.h"
+#include "coop_dbno_body.h"
 #include "coop_objects.h"
 #include "coop_puppet.h"
 
@@ -58,6 +59,7 @@ struct Glue {
     // The game's threads.
     LifeGuard guard;
     std::atomic<std::uint64_t> life_component{0};
+    std::atomic<std::uint64_t> bsa{0};  // our Link's BSA (the objects walk)
     std::atomic<std::int32_t> life_write{-1};  // raise to this (-1: none); the objects walk writes it
     Lowering take_to;                          // lower to this; the Life step takes it
     std::atomic<PadMode> pad_mode{PadMode::game};
@@ -308,21 +310,45 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
     in.team = team;
     const Output out = g.machine.Frame(in);
     g.guard.Set(out.guard);
+    Body::Raising& raise = Body::TheRaising();
     if (out.write_life) {
-        // Less: through the game's own Life step (its death at 0). More (a
-        // revive): written, as the step heals nothing.
-        // The step not taken in time: written after all (it skips frames).
+        // Both ways through the game's own Life step: less as its damage (its
+        // death at 0), more (a revive, a respawn) as a negative sum, its heal
+        // (coop_dbno_body.h). The step not taken in time: written after all
+        // (it skips frames).
         if (in.life && *out.write_life < *in.life) {
+            raise.Drop();
             if (const auto late = g.take_to.Ask(*out.write_life, now_us)) {
                 g.life_write.store(*late);
                 LOG_INFO(Core, "coop: dbno: the Life step did not lower our Link in time: written");
             }
+        } else if (in.life && GuardLive()) {
+            g.take_to.Drop();
+            raise.Start(*out.write_life, now_us);
+            LOG_INFO(Core, "coop: dbno: our Link's life {} -> {}: asked through the game's Life step (its heal)",
+                     *in.life, *out.write_life);
         } else {
             g.take_to.Drop();
-            g.life_write.store(*out.write_life);
+            g.life_write.store(*out.write_life);  // no Life step (or no life read): written
         }
     } else if (out.state == State::up) {
         g.take_to.Drop();  // up again (a fairy, the title screen): nothing left to lower
+    }
+    if (const auto late = raise.Frame(in.life, now_us)) {
+        g.life_write.store(*late);
+        LOG_INFO(Core, "coop: dbno: the Life step did not raise our Link in time: written");
+    }
+
+    // Our downed Link's body (coop_dbno_body.h): crawl and shield while down;
+    // an event of ours drives our Link meanwhile.
+    Body::Crawl::Wanted body;
+    body.lying = out.state == State::downed;
+    body.event = reading && reading->event_running.value_or(false);
+    body.bsa = g.bsa.load(std::memory_order_acquire);
+    body.life = g.life_component.load(std::memory_order_acquire);
+    Body::TheCrawl().Want(body);
+    for (auto& note : Body::TheCrawl().TakeNotes()) {
+        LOG_INFO(Core, "coop: dbno: {}", note);
     }
 
     // Beside a downed teammate: hold A.
@@ -407,7 +433,15 @@ std::int32_t LifeStep(std::uint64_t component, std::int32_t life, std::int32_t s
         return sum;
     }
     sum = g.guard.Step(life, sum);
-    return Lowered(life, sum, g.take_to.Take());
+    sum = Lowered(life, sum, g.take_to.Take());
+    // A raise (revive, respawn) as a negative sum: the game's heal. Kept until
+    // the frame sees the life reached (Raising::Frame), as the step may not
+    // apply it this frame.
+    return Body::Raised(life, sum, Body::TheRaising().Peek());
+}
+
+void SetOurBsa(std::uint64_t bsa) {
+    TheGlue().bsa.store(bsa, std::memory_order_release);
 }
 
 std::optional<std::int32_t> TakeLifeWrite() {

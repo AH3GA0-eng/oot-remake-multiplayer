@@ -52,6 +52,7 @@
 #include "coop_actor_events.h"
 #include "coop_boss_native.h"
 #include "coop_boss_scenes.h"
+#include "coop_dbno_body.h"
 #include "coop_dbno_game.h"
 #include "coop_enemy_shots.h"
 #include "coop_mods_runtime.h"
@@ -1382,11 +1383,21 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
     if (id == HOS_COOP_WRAP_ACTION_VERB && phase == 0) {
         // Native boss sync: a boss's action verb request (x0 BSA, x1 the request in guest memory).
         CoopBossNative::Table& t = CoopBossNative::TheTable();
-        if (!t.ActionsOn() || x[1] == 0) {
+        CoopDbno::Body::Crawl& crawl = CoopDbno::Body::TheCrawl();
+        if (x[1] == 0 || (!t.ActionsOn() && !crawl.IsOurs(x[0]))) {
             return 0;
         }
         CoopBossNative::Request r{};
         if (!CoopRuntime::Read(x[1], r.data(), r.size())) {
+            return 0;
+        }
+        // Down but not out (coop_dbno_body.h): while our Link is down it stays in the game's Crawl; the
+        // game's other actions for it (a hit's reaction, walk, items) are skipped, answered as taken.
+        if (crawl.Skip(x[0], r, t_own_call)) {
+            x[0] = CoopBossNative::addr::kActionTaken;
+            return 1;
+        }
+        if (!t.ActionsOn()) {
             return 0;
         }
         if (!t.OnActionVerb(x[0], r, (x[2] & 1) != 0, t_own_call)) {

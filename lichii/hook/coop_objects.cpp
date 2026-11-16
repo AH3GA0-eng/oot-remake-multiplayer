@@ -59,6 +59,10 @@
 #include "coop_difficulty.h"
 #include "coop_puppet.h"
 #include "coop_pvp_game.h"
+#include "coop_dbno_body.h"
+#ifdef COOP_HOOKSHOT
+#include "coop_runtime.h"  // compare-and-swap for the shield (coop_dbno_body.h)
+#endif
 #include "coop_dbno_game.h"
 #include "coop_svc.h"
 
@@ -181,6 +185,7 @@ CoopWorld::GrassSync& TheGrass() {
 // looks and receives, the calc thread's cave gives the others' hits.
 constexpr int kScrubsCallerOrder = 62;
 constexpr int kLiftRideCallerOrder = 47;  // jabu-lifts (#65): after the boss table (45), before the boss rooms (50)
+constexpr int kDbnoBodyCallerOrder = 48;  // down but not out: our downed Link's crawl and shield (coop_dbno_body.h)
 
 std::string EnvText(const char* name);  // below EnvOn  // after the live events (60) and the teleport's (61)
 
@@ -3024,6 +3029,23 @@ private:
         const auto table = r.Ptr(link + kActorComponents);
         const auto component = table ? r.Ptr(*table + kComponentLife) : std::nullopt;
         CoopDbno::SetOurLifeComponent(component.value_or(0));
+        // Our downed Link's crawl and shield (coop_dbno_body.h): its BSA, and the caller that asks the game.
+        const auto bsa = table ? r.Ptr(*table + CoopDbno::Body::addr::kComponentBsa) : std::nullopt;
+        CoopDbno::SetOurBsa(bsa.value_or(0));
+        static const bool body_caller = [] {
+            CoopSvc::AddCaller(kDbnoBodyCallerOrder, [](CoopPuppet::Guest& guest, bool after_call,
+                                                        std::uint64_t result, std::uint64_t now_ms) {
+#ifdef COOP_HOOKSHOT
+                const CoopDbno::Body::Crawl::Cas cas = &CoopRuntime::Cas32;
+#else
+                const CoopDbno::Body::Crawl::Cas cas = nullptr;  // (no compare-and-swap: no shield)
+#endif
+                return CoopDbno::Body::TheCrawl().Next(guest, after_call, result, now_ms, TheBossMain().load(),
+                                                       cas);
+            });
+            return true;
+        }();
+        (void)body_caller;
         const auto want = CoopDbno::TakeLifeWrite();
         if (!want || life < 0 || *want == life || memory_ == nullptr ||
             !memory_->IsValidVirtualAddressRange(life_at, 4)) {
