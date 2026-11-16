@@ -35,6 +35,11 @@ void Sharer::Receive(const coop::protocol::SwitchState& m, std::uint64_t now_ms)
     }
 }
 
+void Sharer::Forget(std::uint8_t player) {
+    std::lock_guard lock(mutex_);
+    for (auto& kv : states_) kv.second.remote.erase(player);
+}
+
 bool Sharer::RemoteOn(State& s, std::uint64_t now_ms) {
     std::erase_if(s.remote, [now_ms](const auto& r) { return !r.second.on || now_ms > r.second.until_ms; });
     return !s.remote.empty();

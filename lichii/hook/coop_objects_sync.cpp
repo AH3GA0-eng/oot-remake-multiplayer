@@ -127,28 +127,41 @@ std::optional<bool> BossAlive(const std::vector<Seen>& seen, std::span<const std
     return false;
 }
 
-void NoteBossLives(const std::vector<Seen>& walk, std::uint64_t now_us,
-                   std::map<std::string, BossLifeSeen, std::less<>>& last) {
+void NoteBossLives(const std::vector<Seen>& walk, BossLives& last) {
     for (const Seen& s : walk) {
-        if (s.life) last[s.name] = BossLifeSeen{s.life->life, now_us};
+        if (s.life) last[s.name] = BossLifeSeen{s.address, s.life->life, false};
+    }
+}
+
+void NoteBossRemoved(std::uint64_t address, BossLives& last) {
+    for (auto& [name, seen] : last) {
+        if (address != 0 && seen.address == address) seen.removed = true;
     }
 }
 
 std::optional<bool> BossAliveKept(const std::vector<Seen>& walk, std::span<const std::string_view> bodies,
-                                  std::uint64_t now_us, const std::map<std::string, BossLifeSeen, std::less<>>& last) {
+                                  const BossLives& last) {
     const auto alive = BossAlive(walk, bodies);
     if (alive != false) return alive;
     for (const Seen& s : walk) {
         if (std::find(bodies.begin(), bodies.end(), s.name) != bodies.end()) return alive;  // there, at life 0
     }
-    for (const std::string_view body : bodies) {  // none there: away, if last read with life left lately
+    // None there: by the last reading of each body (no time: see the header).
+    bool died = false;
+    bool removed_alive = false;
+    for (const std::string_view body : bodies) {
         const auto it = last.find(body);
-        if (it != last.end() && it->second.life > 0 && now_us >= it->second.at_us &&
-            now_us - it->second.at_us <= kBossAwayKeepUs) {
-            return true;
+        if (it == last.end()) continue;  // never read here
+        if (it->second.life <= 0) {
+            died = true;
+        } else if (!it->second.removed) {
+            return true;  // away: alive
+        } else {
+            removed_alive = true;
         }
     }
-    return alive;
+    if (died) return false;
+    return removed_alive ? std::optional<bool>(true) : alive;
 }
 
 std::optional<bool> BossOurs(const std::vector<Seen>& walk, std::span<const std::uint64_t> ours,
@@ -1187,6 +1200,35 @@ std::vector<Sync::Partner> Sync::EventPartnerList(std::uint64_t now_us) const {
     return out;
 }
 
+void Sync::OwnWake(Object& o, bool taken_away, std::uint64_t now_us) {
+    const auto& wanted = o.received.empty() ? std::nullopt : o.received.back().animation;
+    if (!o.reacts || o.npc || IsBoss(o.name) || !wanted || wanted->name.empty() ||
+        IsDeathAnimation(wanted->name) || IsHideAnimation(wanted->name) ||
+        (o.own_wake_at != 0 && now_us < o.own_wake_at + kOwnWakeAgainUs)) {
+        return;
+    }
+    // The owner's enemy rests (its first animation) or idles: no new
+    // animation for kOwnWakeIdleUs. Its fight is never overplayed.
+    const bool resting = !o.rest_animation.empty() &&
+                         AnimationBase(wanted->name) == AnimationBase(o.rest_animation);
+    const bool idle = o.owner_anim_since != 0 && now_us >= o.owner_anim_since &&
+                      now_us - o.owner_anim_since >= kOwnWakeIdleUs;
+    if (!resting && !idle) {
+        return;
+    }
+    o.own_wake_at = now_us;
+    o.own_wake_over = wanted->name;
+    o.own_wake_given = false;
+    notes_.emplace_back(o.name + ": its own wake for our Link runs; the owner's '" + wanted->name +
+                        "' is not put back over it (report 109)");
+    // The walk sees the owner's animation again: the Mover put the copy's
+    // own play back already, and its AI waits for that play's end.
+    if (taken_away && !o.took_over_name.empty() && own_wakes_.size() < 64) {
+        own_wakes_.emplace_back(o.address, o.took_over_name);
+        o.own_wake_given = true;
+    }
+}
+
 void Sync::NoteTakeover(std::uint64_t address, std::uint64_t now_us, std::string_view name) {
     const auto it = objects_.find(address);
     if (it == objects_.end()) {
@@ -1197,6 +1239,24 @@ void Sync::NoteTakeover(std::uint64_t address, std::uint64_t now_us, std::string
     if (o.reacts || (o.guard && IsGuardReaction(name))) {
         o.took_over_at = now_us;
         o.took_over_name = std::string(name);
+    }
+    // Report 109: put back during its own wake (a wish from before it began):
+    // given back, at most once per own wake, and only while the owner's
+    // latest animation is still the one the wake holds back (own_wake_over).
+    // Once the owner's enemy plays a new one (its Link came, it rose or
+    // fights), Plays wishes that one and the Mover's put-back is right: no
+    // give-back, or the two would swap each tick (review of baba-pose).
+    if (o.own_wake_at == 0 || o.own_wake_given || name.empty() || now_us < o.own_wake_at ||
+        own_wakes_.size() >= 64 || o.received.empty() || !o.received.back().animation) {
+        return;
+    }
+    const auto owner = owners_.find(o.id);
+    const std::uint64_t hold =
+        owner != owners_.end() ? AnswerHoldUs(kOwnWakeUs, owner->second.player) : kOwnWakeUs;
+    if (now_us - o.own_wake_at < hold &&
+        AnimationBase(o.received.back().animation->name) == AnimationBase(o.own_wake_over)) {
+        own_wakes_.emplace_back(address, std::string(name));
+        o.own_wake_given = true;
     }
 }
 
@@ -2299,6 +2359,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                                       now_us - o.took_over_at <= kWakeLatchUs;
                 if (differs || put_back) {
                     ChaseStep(o, now_us);
+                    OwnWake(o, put_back && !differs, now_us);
                 }
             }
             // Issue 35 (3): a copy whose owner's enemy waits on the ceiling
@@ -2326,12 +2387,15 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         // runs, so the other games see them move as they do here. Row 97: so
         // is every actor the event is with, of any kind and at any distance
         // (SetEvent): its own game runs it for the event.
+        // G1: another player's event here keeps only its bound actors, and claims none.
         if (in_event_) {
             const PartnerWhy why = EventPartnerWhy(o);
-            if (why != PartnerWhy::none) {
+            if (why == PartnerWhy::member || (event_ours_ && why != PartnerWhy::none)) {
                 o.event_until = now_us + kEventKeepUs;
                 o.event_why = why;
-                o.chase_until = std::max(o.chase_until, o.event_until);
+                if (event_ours_) {
+                    o.chase_until = std::max(o.chase_until, o.event_until);
+                }
             }
         }
         if (o.chase_until > now_us && !o.fish) {
@@ -2794,6 +2858,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 o->place_seen.reset();
                 o->hit_at = 0;
                 o->react_at = 0;
+                o->own_wake_at = 0;
                 o->sent_once = false;
                 if (before != 0 && (o->reacts || o->guard) && ours_now_.size() < 64) {
                     ours_now_.push_back(o->address);  // was a copy: its hold ends
@@ -2825,6 +2890,13 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             if (sample->state.position && Finite(*sample->state.position)) {
                 const std::uint64_t t = sample->state.time.server_time_us;
                 if (o->received.empty() || t > o->received.back().time) {
+                    // Report 109: since when the owner shows this animation.
+                    const auto& was = o->received.empty() ? std::nullopt : o->received.back().animation;
+                    const auto& now_anim = sample->state.animation;
+                    if (o->owner_anim_since == 0 || !was || !now_anim ||
+                        AnimationBase(was->name) != AnimationBase(now_anim->name)) {
+                        o->owner_anim_since = t;
+                    }
                     o->received.push_back({t, *sample->state.position, sample->state.rotation,
                                            sample->state.velocity, sample->state.animation,
                                            sample->state.slots.value_or(
@@ -3188,6 +3260,13 @@ void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
         // reaction to our DAMAGE) is played as usual.
         if (o.react_at != 0 && now_us < o.react_at + AnswerHoldUs(kReactHoldUs, owner->second.player) &&
             wanted->name == o.react_over) {
+            continue;
+        }
+        // Report 109: the copy's own wake for our Link (OwnWake) runs; the
+        // owner's animation of that moment waits, its next one plays.
+        if (o.own_wake_at != 0 && now_us >= o.own_wake_at &&
+            now_us < o.own_wake_at + AnswerHoldUs(kOwnWakeUs, owner->second.player) &&
+            AnimationBase(wanted->name) == AnimationBase(o.own_wake_over)) {
             continue;
         }
         const float rate = std::isfinite(wanted->rate) && wanted->rate > 0.0f ? wanted->rate : 1.0f;

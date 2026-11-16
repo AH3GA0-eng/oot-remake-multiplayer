@@ -19,6 +19,7 @@
 // We do the same from the cave.
 
 #include "coop_boss.h"
+#include "coop_caller_orders.h"
 #include "coop_boss_native.h"
 #include "coop_boss_scenes.h"
 #include "coop_live_events.h"
@@ -59,7 +60,7 @@ constexpr std::uint64_t kActorState = 0x2c;
 constexpr std::uint32_t kActorStatePresent = 4;
 constexpr std::uint64_t kActorPosition = 0x31c;
 constexpr std::uint64_t kSetMatrix = 0x4c6580;  // vtable slot 0x218 of every actor seen
-constexpr int kCallerOrder = 50;  // after the puppets, spawn, fairy, objects, time
+constexpr int kCallerOrder = CoopCallerOrders::kBossRooms;  // after the puppets, spawn, fairy, objects, time
 // Ten times a second on the steady clock, not by presented frames (issue
 // 106: with the emulator's speed-up, frames come faster).
 constexpr std::uint64_t kTickEveryUs = 100'000;
@@ -248,6 +249,7 @@ struct Glue {
         if (step == CoopSessionGate::Step::forget) {
             sync.Reset();
             scenes.Reset();
+            CoopBossScenes::RefusedDeaths().store(0, std::memory_order_release);
             readiness.Reset();
             max_life_cap.reset();
         }
@@ -374,6 +376,7 @@ bool Glue::Scenes(Core::System& system, std::uint64_t main, const Local& local, 
         max_life_cap.reset();
         CoopBossNative::TheTable().SetDying({});
         CoopObjects::SetDyingBosses({});
+        CoopBossScenes::RefusedDeaths().store(0, std::memory_order_release);  // (no Director: nothing refused)
         std::lock_guard lock(searched_mutex);
         searched.clear();  // nothing takes them: none applied late when the rules come on
         return false;
@@ -415,6 +418,8 @@ bool Glue::Scenes(Core::System& system, std::uint64_t main, const Local& local, 
         }
     }
     CoopBossScenes::Actions a = scenes.Tick(here, ours, now_us);
+    // (one death cutscene per game: the event request refuses a played death while we are in its area)
+    CoopBossScenes::RefusedDeaths().store(a.refuse_deaths, std::memory_order_release);
     // Player report #105 (a black screen after Gohma's death): once her death has begun in any game, our copy is
     // no copy any more; its own game runs its death (the setting we ask it, its warp and its container).
     std::vector<std::string> dying;
@@ -513,6 +518,7 @@ void ForgetFights() {
     Glue& g = TheGlue();
     g.sync.Reset();
     g.scenes.Reset();
+    CoopBossScenes::RefusedDeaths().store(0, std::memory_order_release);
     g.readiness.Reset();
     g.max_life_cap.reset();
     LOG_INFO(Core, "coop: boss: the host loaded a save: the fights this session knew are forgotten");

@@ -42,6 +42,7 @@ add_executable(coop_tests
   host/save_transfer_test.cpp
   host/session_test.cpp
   host/scene_test.cpp
+  host/event_owner_test.cpp
   overlay/overlay_test.cpp
   overlay/map_icons_test.cpp
   lichii/camera_test.cpp
@@ -102,6 +103,7 @@ add_executable(coop_tests
   lichii/teleport_test.cpp
   lichii/pvp_test.cpp
   lichii/dbno_test.cpp
+  lichii/dbno_body_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_dbno_body.cpp
   lichii/difficulty_test.cpp
   lichii/live_events_test.cpp
   lichii/logic_probe_test.cpp
@@ -138,6 +140,7 @@ add_executable(coop_tests
   lichii/lift_ride_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_lift_ride.cpp
   lichii/room_objects_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_room_objects.cpp
   lichii/switch_share_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_switch_share.cpp
+  lichii/caller_orders_test.cpp
   lichii/eye_switch_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_eye_switch.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_ocarina.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_ocarina_sound.cpp

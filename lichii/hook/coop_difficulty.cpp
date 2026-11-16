@@ -3,6 +3,7 @@
 // Difficulty, the rules (coop_difficulty.h). No emulator code.
 
 #include "coop_difficulty.h"
+#include "coop_dungeon.h"
 
 #include <algorithm>
 #include <array>
@@ -209,7 +210,7 @@ std::size_t Kinds::Hash(std::uint64_t address) noexcept {
     return static_cast<std::size_t>(((address >> 4) * 0x9e3779b97f4a7c15ull) >> 54);  // 10 bits: kSlots
 }
 
-bool Kinds::Mark(std::uint64_t address, Kind kind) noexcept {
+bool Kinds::Mark(std::uint64_t address, Kind kind, std::uint64_t fold_key) noexcept {
     if (address == 0) {
         return false;
     }
@@ -222,11 +223,13 @@ bool Kinds::Mark(std::uint64_t address, Kind kind) noexcept {
             // first, so a reader that finds the key reads its kind.
             s.carry.store(0, std::memory_order_relaxed);
             s.pass.store(0, std::memory_order_relaxed);
+            s.fold_key.store(fold_key, std::memory_order_relaxed);
             s.kind.store(k, std::memory_order_release);
             s.key.store(address, std::memory_order_release);
             return true;
         }
         if (key == address) {
+            s.fold_key.store(fold_key, std::memory_order_release);
             if (s.kind.load(std::memory_order_relaxed) != k) {
                 s.carry.store(0, std::memory_order_relaxed);  // another actor at that address now
                 s.pass.store(0, std::memory_order_relaxed);
@@ -303,6 +306,7 @@ void Kinds::Clear() noexcept {
     for (Slot& s : slots_) {
         s.key.store(0, std::memory_order_release);
         s.kind.store(0, std::memory_order_relaxed);
+        s.fold_key.store(0, std::memory_order_relaxed);
         s.carry.store(0, std::memory_order_relaxed);
         s.pass.store(0, std::memory_order_relaxed);
     }
@@ -489,6 +493,13 @@ std::uint16_t Folded(std::uint16_t pct, std::uint16_t count_pct) {
     return static_cast<std::uint16_t>(std::min<std::uint32_t>(folded, 0xffff));
 }
 
+std::uint16_t FoldCount(std::uint64_t fold_key, std::uint16_t count_pct) {
+    if (fold_key == 0 || count_pct <= 100) {
+        return count_pct;
+    }
+    return static_cast<std::uint16_t>(std::min<std::uint32_t>(100u * (1u + ExtraCount(fold_key, count_pct)), 0xffff));
+}
+
 std::uint64_t PackValues(const Values& v) noexcept {
     const auto field = [](std::uint16_t pct, unsigned at) {
         return static_cast<std::uint64_t>(std::min<std::uint16_t>(pct, 0xfff)) << at;
@@ -553,6 +564,10 @@ std::string_view TreatmentWhy(std::string_view name, std::uint64_t hash) {
         return DesignedWhy(placed->why);
     }
     return rule != nullptr ? rule->why : std::string_view{};
+}
+
+bool ExtrasIn(std::string_view scene) {
+    return !CoopDungeon::IsDungeonScene(scene);
 }
 
 bool GetsExtras(std::string_view name, std::uint64_t hash, bool has_life, bool special) {
@@ -694,6 +709,17 @@ std::size_t Extras::Plan(std::string_view scene, const std::vector<Original>& wa
         scene_ = std::string(scene);
     }
     if (boss_here || count_pct <= 100) {
+        return 0;
+    }
+    if (!ExtrasIn(scene)) {
+        // Player report 111: in a dungeon an extra is made with no placement
+        // data, so no DefaultDungeonRoomIndex, and a Deku Baba extra never
+        // woke in its owner's game either (the room check). Weight instead:
+        // each enemy folds by its own would-be extras (FoldCount), so the
+        // dungeon is as strong as with them; one with none stays x1.
+        for (const Original& o : walk) {
+            no_spot_.insert(o.hash);
+        }
         return 0;
     }
     std::vector<const Original*> sorted;

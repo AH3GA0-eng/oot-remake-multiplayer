@@ -278,3 +278,26 @@ TEST_CASE("Linux clipboard: PasteNow reads only SDL's clipboard, and only on SDL
     REQUIRE(CoopClipboard::Copy("TOOLTEXT"));
     CHECK_FALSE(CoopClipboard::PasteNow().has_value());   // (not SDL's thread: never a tool here)
 }
+
+TEST_CASE("Linux clipboard: a tool that hangs (no timeout program) is killed, and later jobs still run") {
+    Desktop d("wayland-0", "");
+    d.Remove("timeout");   // (as a system without coreutils' timeout: only the module's own deadline is left)
+    const std::string clip = (d.dir / "clip.txt").string();
+    d.Tool("wl-copy", "sleep 30\n");
+    const auto start = std::chrono::steady_clock::now();
+    CHECK_FALSE(CoopClipboard::Copy("never"));
+    const auto took = std::chrono::steady_clock::now() - start;
+    CHECK(took >= std::chrono::milliseconds(2500));
+    CHECK(took < std::chrono::seconds(6));
+
+    d.Tool("wl-paste", "sleep 30\n");
+    const auto hung = Wait(CoopClipboard::PasteLater());   // (Wait: 5 s at most; the deadline is 3 s)
+    REQUIRE(hung.has_value());
+    CHECK(hung->text == "");   // (the tool ran and was stopped: believed, as a failed tool's output)
+
+    d.Tool("wl-copy", "cat > '" + clip + "'\n");
+    const auto copied = Wait(CoopClipboard::CopyLater("after"));
+    REQUIRE(copied.has_value());
+    CHECK(copied->ok);
+    CHECK(d.Clip() == "after");
+}

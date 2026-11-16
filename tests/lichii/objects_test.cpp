@@ -3322,6 +3322,134 @@ TEST_CASE("objects: a copy whose wake the Mover put back once is flagged targeti
     CHECK_FALSE((flags && (*flags & kTargeting) != 0));
 }
 
+TEST_CASE("objects: a copy's own wake for our Link runs, the owner's rest is not put back (report 109)") {
+    // Player report 109: a Deku Baba copy rose for our Link ("GetUp"); the
+    // owner's buried "Wait" was put back over it, so it came out late and
+    // then stood frozen in the rise's pose.
+    struct Run {
+        std::vector<std::string> plays;  // the owner's animations wished for the copy at the end
+        std::vector<std::pair<std::uint64_t, std::string>> given_back;
+        bool targeting = false;
+    };
+    // `own`: what the copy's own AI plays from 100 ms on (the walk sees it);
+    // `taken`: the Mover put that play back at 100 ms (the walk sees "Wait").
+    auto run = [](float x, const std::string& own, bool taken, const std::string& owners,
+                  std::uint64_t until = 1500, bool owners_new = false) {
+        Sync sync;
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        Tick(sync, 0, {Acting(0x100, 0x11, 2, x, "Wait")});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, 2);
+        Run r;
+        for (std::uint64_t t = 10; t <= until; t += 66) {
+            if (taken && t >= 100 && t < 166) {
+                sync.NoteTakeover(0x100, t * kMs, own);
+            }
+            // owners_new: the owner's enemy changed animation just now (it fights).
+            const std::string theirs = owners_new && t >= 1000 ? owners : (t < 1000 ? "Wait" : owners);
+            sync.Receive(OwnerSample(id, 2, t * kMs, x, 2, theirs));
+            const std::string shown = t >= 100 && !taken ? own : "Wait";
+            for (const auto& p : All<proto::ObjectPresent>(Tick(sync, t * kMs, {Acting(0x100, 0x11, 2, x, shown)}))) {
+                r.targeting = (p.objects[0].flags & kTargeting) != 0;
+            }
+            for (auto& g : sync.TakeOwnWakes()) {
+                r.given_back.push_back(std::move(g));
+            }
+        }
+        std::vector<PlayWish> plays;
+        sync.Plays(until * kMs + 5 * kMs, plays);
+        for (const PlayWish& p : plays) {
+            r.plays.push_back(p.name);
+        }
+        return r;
+    };
+    // Its rise seen by the walk: the owner's "Wait" is not wished over it, and
+    // the wake still hands it to us.
+    Run seen = run(5.0f, "GetUp", false, "Wait");
+    CHECK(seen.plays.empty());
+    CHECK(seen.given_back.empty());
+    CHECK(seen.targeting);
+    // Its rise already put back by the Mover: given back once, "Wait" not wished.
+    Run taken = run(5.0f, "GetUp", true, "Wait");
+    CHECK(taken.plays.empty());
+    REQUIRE(taken.given_back.size() == 1);
+    CHECK(taken.given_back[0] == std::pair<std::uint64_t, std::string>{0x100, "GetUp"});
+    // The owner's next animation (its own Baba rose too) is played as usual.
+    CHECK(run(5.0f, "GetUp", false, "GetUp", 1500).plays == std::vector<std::string>{"GetUp"});
+    // Over 10 m from our Link: no wake, the owner's rest is played.
+    CHECK(run(15.0f, "GetUp", false, "Wait").plays == std::vector<std::string>{"Wait"});
+    // After kOwnWakeUs the owner's animation is played again (the old rule).
+    CHECK(run(5.0f, "GetUp", false, "Wait", 3500).plays == std::vector<std::string>{"Wait"});
+}
+
+TEST_CASE("objects: a copy's own wake gives its rise back once, never over the owner's new animation (report 109)") {
+    // The review's case: own wake starts over the owner's "Wait"; the owner's
+    // Link then reaches its Baba, which rises ("GetUp"). Plays wishes that, the
+    // Mover puts it over the copy's own play: no give-back (no ping-pong).
+    auto start = [](Sync& sync) {
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        Tick(sync, 0, {Acting(0x100, 0x11, 2, 5.0f, "Wait")});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, 2);
+        for (std::uint64_t t = 10; t <= 300; t += 66) {
+            sync.Receive(OwnerSample(id, 2, t * kMs, 5.0f, 2, "Wait"));
+            Tick(sync, t * kMs, {Acting(0x100, 0x11, 2, 5.0f, t >= 100 ? "GetUp" : "Wait")});
+        }
+        CHECK(sync.TakeOwnWakes().empty());  // seen by the walk: nothing to give back
+        return id;
+    };
+    {
+        Sync sync;
+        const proto::ObjectId id = start(sync);
+        sync.Receive(OwnerSample(id, 2, 400 * kMs, 5.0f, 2, "Attack"));
+        Tick(sync, 400 * kMs, {Acting(0x100, 0x11, 2, 5.0f, "Wait")});  // the put-back shows
+        sync.NoteTakeover(0x100, 420 * kMs, "GetUp");
+        CHECK(sync.TakeOwnWakes().empty());
+        sync.NoteTakeover(0x100, 490 * kMs, "GetUp");
+        CHECK(sync.TakeOwnWakes().empty());
+    }
+    // While the owner's "Wait" is still the latest: given back once, not twice.
+    {
+        Sync sync;
+        const proto::ObjectId id = start(sync);
+        sync.Receive(OwnerSample(id, 2, 400 * kMs, 5.0f, 2, "Wait"));
+        Tick(sync, 400 * kMs, {Acting(0x100, 0x11, 2, 5.0f, "Wait")});  // the put-back shows
+        sync.NoteTakeover(0x100, 420 * kMs, "GetUp");
+        CHECK(sync.TakeOwnWakes().size() == 1);
+        sync.NoteTakeover(0x100, 490 * kMs, "GetUp");
+        CHECK(sync.TakeOwnWakes().empty());
+    }
+}
+
+TEST_CASE("objects: a copy's own wake never plays over the owner's fight (report 109)") {
+    Sync sync;
+    sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+    Tick(sync, 0, {Acting(0x100, 0x11, 2, 5.0f, "Wait")});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2);
+    // The owner's Baba attacks its own Link ("Attack" since 1 s ago); our
+    // copy's AI turns to ours. The owner's "Attack" stays on the copy.
+    for (std::uint64_t t = 10; t <= 2000; t += 66) {
+        sync.Receive(OwnerSample(id, 2, t * kMs, 5.0f, 2, t < 1000 ? "GetUp" : "Attack"));
+        Tick(sync, t * kMs, {Acting(0x100, 0x11, 2, 5.0f, t < 1000 ? "GetUp" : "Turn")});
+    }
+    std::vector<PlayWish> plays;
+    sync.Plays(2005 * kMs, plays);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0].name == "Attack");
+    CHECK(sync.TakeOwnWakes().empty());
+
+    // The owner's Baba then stays in one animation (no new one for 3 s:
+    // it idles): our copy's own AI acts on our Link.
+    for (std::uint64_t t = 2010; t <= 5500; t += 66) {
+        sync.Receive(OwnerSample(id, 2, t * kMs, 5.0f, 2, "Attack"));
+        Tick(sync, t * kMs, {Acting(0x100, 0x11, 2, 5.0f, "Turn")});
+    }
+    plays.clear();
+    sync.Plays(5505 * kMs, plays);
+    CHECK(plays.empty());
+}
+
 TEST_CASE("objects: an enemy of ours woken near our Link is flagged too, so it stays ours") {
     auto run = [](float x, const std::string& now, std::uint64_t until = 1500) {
         Sync sync;
@@ -3470,30 +3598,64 @@ TEST_CASE("objects: a boss is alive while a body actor has life left, unknown wi
     CHECK(CoopObjects::BossAlive({koume, kotake}, kTwinrova) == std::optional<bool>(false));
 }
 
-TEST_CASE("objects: a boss off the walk with life left is away, not dead (row 114, Phantom Ganon's paintings)") {
+TEST_CASE("objects: a boss off the walk reads by its last life and its delete request, never by time (row 114)") {
     constexpr std::array<std::string_view, 1> kGanon{"Enemy_DungeonBoss_PhantomGanon"};
     using CoopObjects::BossAliveKept;
-    std::map<std::string, CoopObjects::BossLifeSeen, std::less<>> last;
+    CoopObjects::BossLives last;
     Seen boss = Chest(0x900, 0);
     boss.name = "Enemy_DungeonBoss_PhantomGanon";
     boss.life = coop::protocol::ObjectLife{15, 42};
-    // Never seen this session (a save that beat him): none there is dead, as before.
-    CHECK(BossAliveKept({}, kGanon, 1'000'000, last) == std::optional<bool>(false));
-    CoopObjects::NoteBossLives({boss}, 1'000'000, last);
-    CHECK(BossAliveKept({boss}, kGanon, 1'000'000, last) == std::optional<bool>(true));
-    // In a painting: off the walk, alive.
-    CHECK(BossAliveKept({}, kGanon, 5'000'000, last) == std::optional<bool>(true));
-    // Away past the keep: none there again.
-    CHECK(BossAliveKept({}, kGanon, 1'000'000 + CoopObjects::kBossAwayKeepUs + 1, last) == std::optional<bool>(false));
-    // His death is read at life 0 while it runs; deleted after it: dead.
+    // Never seen this scene (a save that beat him): none there is dead, as before.
+    CHECK(BossAliveKept({}, kGanon, last) == std::optional<bool>(false));
+    CoopObjects::NoteBossLives({boss}, last);
+    CHECK(BossAliveKept({boss}, kGanon, last) == std::optional<bool>(true));
+    // Off the walk with life left and no delete request: away, alive, however long (no 30 s guess).
+    CHECK(BossAliveKept({}, kGanon, last) == std::optional<bool>(true));
+    // Another actor's delete request changes nothing.
+    CoopObjects::NoteBossRemoved(0x1234, last);
+    CHECK(BossAliveKept({}, kGanon, last) == std::optional<bool>(true));
+    // His own delete request with life left (removed alive): still no death (a Game Over is never his death).
+    CoopObjects::NoteBossRemoved(0x900, last);
+    CHECK(BossAliveKept({}, kGanon, last) == std::optional<bool>(true));
+    // Back on the walk (a new reading): as read.
+    CoopObjects::NoteBossLives({boss}, last);
+    CHECK_FALSE(last.at("Enemy_DungeonBoss_PhantomGanon").removed);
+    // His death is read at life 0 while it runs; deleted after it: dead, before and after its delete request.
     boss.life = coop::protocol::ObjectLife{0, 42};
-    CoopObjects::NoteBossLives({boss}, 6'000'000, last);
-    CHECK(BossAliveKept({boss}, kGanon, 6'000'000, last) == std::optional<bool>(false));
-    CHECK(BossAliveKept({}, kGanon, 7'000'000, last) == std::optional<bool>(false));
+    CoopObjects::NoteBossLives({boss}, last);
+    CHECK(BossAliveKept({boss}, kGanon, last) == std::optional<bool>(false));
+    CHECK(BossAliveKept({}, kGanon, last) == std::optional<bool>(false));
+    CoopObjects::NoteBossRemoved(0x900, last);
+    CHECK(BossAliveKept({}, kGanon, last) == std::optional<bool>(false));
     // A body there with its life unread stays unknown.
     Seen unread = boss;
     unread.life.reset();
-    CHECK_FALSE(BossAliveKept({unread}, kGanon, 7'000'000, last).has_value());
+    CHECK_FALSE(BossAliveKept({unread}, kGanon, last).has_value());
+}
+
+TEST_CASE("objects: a body removed alive keeps no boss of several bodies alive, one away does (row 114, Twinrova)") {
+    constexpr std::array<std::string_view, 3> kTwinrova{"Enemy_DungeonBoss_Twinrova", "Enemy_DungeonBoss_Koume",
+                                                        "Enemy_DungeonBoss_Kotake"};
+    using CoopObjects::BossAliveKept;
+    CoopObjects::BossLives last;
+    Seen koume = Chest(0x910, 0);
+    koume.name = "Enemy_DungeonBoss_Koume";
+    koume.life = coop::protocol::ObjectLife{8, 8};
+    Seen twin = Chest(0x920, 0);
+    twin.name = "Enemy_DungeonBoss_Twinrova";
+    twin.life = coop::protocol::ObjectLife{24, 24};
+    CoopObjects::NoteBossLives({koume, twin}, last);
+    // The sister deleted alive (merged), Twinrova then dies and is deleted after her death: dead.
+    CoopObjects::NoteBossRemoved(0x910, last);
+    twin.life = coop::protocol::ObjectLife{0, 24};
+    CoopObjects::NoteBossLives({twin}, last);
+    CoopObjects::NoteBossRemoved(0x920, last);
+    CHECK(BossAliveKept({}, kTwinrova, last) == std::optional<bool>(false));
+    // The sister only away (off the list, no delete request): she still keeps the boss alive.
+    CoopObjects::BossLives away;
+    koume.life = coop::protocol::ObjectLife{8, 8};
+    CoopObjects::NoteBossLives({koume, twin}, away);
+    CHECK(BossAliveKept({}, kTwinrova, away) == std::optional<bool>(true));
 }
 
 TEST_CASE("objects: a boss is hurt once a body's life is below its maximum (Gohma's intro)") {
@@ -4658,6 +4820,49 @@ TEST_CASE("objects: every actor our event is with is claimed, any kind and any d
     Tick(sync, 100 * kMs, {scrub});
     CHECK(sync.EventPartner(0x100, 100 * kMs + Sync::kEventKeepUs - 60 * kMs));
     CHECK_FALSE(sync.EventPartner(0x100, 100 * kMs + Sync::kEventKeepUs));
+}
+
+TEST_CASE("objects: another player's event here keeps its bound actors acting, claims none (G1, issues 251, 200)") {
+    // Our game plays another player's event (a live dungeon event, a shared scene joined):
+    // the actors it binds here must act for it (or it waits on them: issue 251's softlock),
+    // but they stay with their owner (no targeting: two games never pull one NPC to and fro,
+    // issue 200), and nothing is guessed in by our Link's nearness or its own AI.
+    constexpr const char* kScrub = "Enemy_Scrub_Deku";
+    struct Out {
+        bool partner = false;
+        bool targeting = false;
+    };
+    auto run = [&](bool ours, std::optional<bool> member, std::optional<std::uint64_t> own_at) {
+        Sync sync;
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        Seen scrub = Acting(0x100, 0x11, 100, 20.0f, "Sleep", kScrub);
+        Tick(sync, 0, {scrub});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, 2);
+        sync.SetEvent(true, 10 * kMs, ours);
+        scrub.event_member = member;
+        std::optional<std::uint8_t> flags;
+        for (std::uint64_t t = 10; t < 700; t += 66) {
+            sync.Receive(OwnerSample(id, 2, t * kMs, 20.0f, 100, "Sleep"));
+            if (own_at && t >= *own_at) {
+                sync.NoteTakeover(0x100, t * kMs, "Appear");
+            }
+            for (const auto& p : All<proto::ObjectPresent>(Tick(sync, t * kMs, {scrub}))) {
+                flags = p.objects[0].flags;
+            }
+        }
+        return Out{sync.EventPartner(0x100, 700 * kMs), flags && (*flags & kTargeting) != 0};
+    };
+    const Out bound_theirs = run(false, true, {});
+    CHECK(bound_theirs.partner);          // acts for the event here: no owner's motion, changes wait
+    CHECK_FALSE(bound_theirs.targeting);  // not claimed: stays with its owner
+    const Out bound_ours = run(true, true, {});
+    CHECK(bound_ours.partner);
+    CHECK(bound_ours.targeting);          // our Link's event claims it, as row 97
+    const Out guessed_theirs = run(false, std::nullopt, 200);
+    CHECK_FALSE(guessed_theirs.partner);  // its own AI in another player's event: not ours to take
+    CHECK_FALSE(guessed_theirs.targeting);
+    CHECK(run(true, std::nullopt, 200).targeting);  // in our Link's event it is, as before
 }
 
 TEST_CASE("objects: a boss or a fish our event binds stays unclaimed (row 97)") {

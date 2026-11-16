@@ -185,6 +185,11 @@ struct LifeWrite {
     // a boss copy that becomes ours with less life than its old owner's had (held at 1 by HeldLifeStep, or
     // lowered by its own hits) takes the old owner's life, so one hit never kills a near-full boss (Barinade).
     bool heal = false;
+    // The test script's kill (`kill <name>`): a kill, as the game's own killing blow would be. In the game that owns
+    // the enemy it goes past its life stops (CoopActorEvents::PassStops; Gohma's stop at 1 outside her chance time
+    // held a test kill at 1 in LANE1 run 4). A copy's own Life step still holds a copy boss (HeldLifeStep); its hit
+    // goes to the owner as DAMAGE, judged there as any hit.
+    bool test_kill = false;
 };
 
 // Shared: enemies, animals (a cucco is Animal_Cucco), townspeople (Npc_, but
@@ -237,20 +242,28 @@ bool RemovedWhenTaken(std::string_view name);
 // there, or every one there is at 0 life; nothing when one is there whose
 // life was not read (unknown: the boss logic then keeps its old rule).
 std::optional<bool> BossAlive(const std::vector<Seen>& seen, std::span<const std::string_view> bodies);
-// Row 114: a boss off the walk is not dead. Phantom Ganon leaves the walk while he rides in a painting, and
-// "none there" read as his death: his host's Game Over was sent as the boss beaten. BossAliveKept is BossAlive,
-// except that when no body is in the walk, a body last read with life left within kBossAwayKeepUs is alive (away).
-// A boss's death is read at life 0 while its death runs (its event deletes it later), so that reading stays.
-// `last` keeps the last life read per body name (NoteBossLives, from each walk).
+// Row 114: a boss off the walk is not dead. Phantom Ganon left the walk at life 15, and "none there" read as his
+// death: his host's Game Over was sent as the boss beaten. A boss's death is the game's own life 0, read while its
+// death runs (its event deletes it later), so a body off the walk reads by what was last known of it, with no time:
+// - last read at life 0: dead (its death ran; deleted after it);
+// - last read with life left, no delete request for it since (the game took it off its list, as it does with live
+//   actors, churn-b): away, alive;
+// - last read with life left, then deleted (the game's delete request, patch 0007; or our own remove of a copy):
+//   removed alive. Never a death; it no longer keeps a boss of several bodies alive (Twinrova's sisters), but a
+//   boss whose bodies are all removed alive is not dead either.
+// A body never read this scene (a save that beat it): none there, dead as before. Without delete requests (the
+// emulator) a body off the walk with life left is away. `last` keeps the last reading per body name; it is
+// forgotten with the scene and on a new session (CoopObjects' NoteBosses and ForgetBosses).
 struct BossLifeSeen {
+    std::uint64_t address = 0;
     std::int32_t life = 0;
-    std::uint64_t at_us = 0;
+    bool removed = false;  // a delete request for `address` came after that reading
 };
-inline constexpr std::uint64_t kBossAwayKeepUs = 30'000'000;
-void NoteBossLives(const std::vector<Seen>& walk, std::uint64_t now_us,
-                   std::map<std::string, BossLifeSeen, std::less<>>& last);
+using BossLives = std::map<std::string, BossLifeSeen, std::less<>>;
+void NoteBossLives(const std::vector<Seen>& walk, BossLives& last);
+void NoteBossRemoved(std::uint64_t address, BossLives& last);
 std::optional<bool> BossAliveKept(const std::vector<Seen>& walk, std::span<const std::string_view> bodies,
-                                  std::uint64_t now_us, const std::map<std::string, BossLifeSeen, std::less<>>& last);
+                                  const BossLives& last);
 
 // boss-copy-b: whether a boss is still in its pre-battle phase in one walk,
 // from its body actors' own animation (AS slot 0): Gohma's `Sleep` and
@@ -639,11 +652,19 @@ public:
     // 8 m rule (coop_guard.h) covered the rest: a Deku Scrub copy further away
     // was made to sleep by its absent owner every frame and our Link's event
     // that waited on it never ended (Mr. Shorty's 15 min softlock).
-    void SetEvent(bool in_event, std::uint64_t now_us = 0) {
+    //
+    // G1 (coop/host/event_owner.hpp): `ours` false is another player's event that our game
+    // plays (a live dungeon event, a shared scene joined, an eye switch's event): its bound
+    // actors (member) still act for it here (EventPartner: no owner's motion, changes wait),
+    // but none is claimed (no targeting flag: it stays with the player whose event it is, so
+    // two games never pull one actor to and fro), and no actor is guessed in (own_ai,
+    // townsperson: our Link is not in it).
+    void SetEvent(bool in_event, std::uint64_t now_us = 0, bool ours = true) {
         if (in_event && !in_event_) {
             event_since_ = now_us;
         }
         in_event_ = in_event;
+        event_ours_ = in_event && ours;
     }
     // A copy our event claimed (within kEventKeepUs of the last Tick that
     // flagged it): the owner's routine is not put on it while the hand-over
@@ -751,6 +772,24 @@ public:
     // IsGuardReaction one).
     void NoteTakeover(std::uint64_t address, std::uint64_t now_us, std::string_view name = {});
     static constexpr std::uint64_t kWakeLatchUs = 1'200'000;
+    // Player report 109 (Deku Babas slow to come out, then stuck upright): a
+    // copy's own AI that wakes for our Link (it rises out of the ground) had
+    // the owner's resting animation put back over its rise on the next frame.
+    // Its AI then waited for the end of a play it no longer had (frozen in
+    // the rise's pose) and only the hand-over (kChaseHoldUs and the server)
+    // let it act. Now, as after our own hit (kReactHoldUs), the copy's own
+    // wake runs: the owner's animation of that moment is not put back for
+    // kOwnWakeUs, and a rise the Mover already took away is given back once
+    // (TakeOwnWakes). Only while the owner's enemy rests or idles (its rest
+    // animation, or no new animation for kOwnWakeIdleUs), never over the
+    // owner's own fight; at most once each kOwnWakeAgainUs. Its next
+    // animation is played as usual, and the wake hands it to us meanwhile.
+    static constexpr std::uint64_t kOwnWakeUs = 3'000'000;
+    static constexpr std::uint64_t kOwnWakeIdleUs = 3'000'000;
+    static constexpr std::uint64_t kOwnWakeAgainUs = 10'000'000;
+    // Present thread: copies whose own wake play the Mover put back, with
+    // that play, to give back once at the next game frame.
+    std::vector<std::pair<std::uint64_t, std::string>> TakeOwnWakes() { return std::exchange(own_wakes_, {}); }
     // The owner side flags a woken enemy only this long after it left its
     // rest animation, so an enemy that patrols or flies near its owner's
     // Link is not held in a fight for good (that would stop the chase rule).
@@ -976,6 +1015,11 @@ private:
         std::uint64_t woke_at = 0;  // left its rest animation (0 = resting)
         std::uint64_t took_over_at = 0;  // issue 157: its own AI's play put back (NoteTakeover)
         std::string took_over_name;      // ... and what it was (a guard's, issue 191)
+        // Report 109: its own wake (kOwnWakeUs) began then, over the owner's animation `own_wake_over`.
+        std::uint64_t own_wake_at = 0;
+        std::string own_wake_over;
+        bool own_wake_given = false;  // its rise was given back once in this own wake (TakeOwnWakes)
+        std::uint64_t owner_anim_since = 0;  // the owner's animation (base name) is this one since
         // Our own hit took its life to 0 here (the DAMAGE resend's mark).
         std::uint64_t killed_at = 0;
         // Issue 133: resends of a DAMAGE for a copy we killed here, and when
@@ -1005,6 +1049,8 @@ private:
 
     // One step of `o` towards our Link at `now_us` (NoteDrift).
     static void ChaseStep(Object& o, std::uint64_t now_us);
+    // Report 109: a copy's own AI woke for our Link (`taken_away`: the Mover put its play back already).
+    void OwnWake(Object& o, bool taken_away, std::uint64_t now_us);
 
     // Takes `o` down to `life`: a hurt when hurt is on, else a write.
     // The hits the game's Life step dealt o that count now (SetLifeEvents);
@@ -1086,6 +1132,7 @@ private:
     std::uint64_t scene_since_ = 0;  // server time of the scene's first walk
     std::optional<coop::protocol::Vec3> player_;
     bool in_event_ = false;  // issue 200: SetEvent
+    bool event_ours_ = false;  // G1: our Link is in it (SetEvent's ours)
     // Row 97: why `o` is our running event's partner now (none: it is not):
     // the event binds it (member); its performer is not known to us and its
     // own AI asked for another animation since the event began, within
@@ -1107,6 +1154,7 @@ private:
     std::vector<std::string> notes_;
     std::map<std::uint64_t, Object> objects_;  // by actor address
     std::vector<std::uint64_t> ours_now_;     // copies that became ours (TakeOursNow)
+    std::vector<std::pair<std::uint64_t, std::string>> own_wakes_;  // report 109 (TakeOwnWakes)
     std::map<std::uint64_t, Decided> decided_;  // by director key
     // Report 99: late encounters other games announced that we lack, held
     // until our Link is near (IsLateEncounter). By id; first heard at got_us,

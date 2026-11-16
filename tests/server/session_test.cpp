@@ -3963,11 +3963,32 @@ TEST_CASE("dbno: a state is relayed to everyone else") {
   CHECK(h.to(1).empty());
 }
 
+TEST_CASE("dbno: a threat and a spectating state are relayed to everyone else") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.clear();
+  h.receive(1, DbnoThreat{0, true}, kChannelSession);
+  CHECK(only_message_to<DbnoThreat>(h, 2) == DbnoThreat{1, true});
+  CHECK(only_message_to<DbnoThreat>(h, 3) == DbnoThreat{1, true});
+  CHECK(h.to(1).empty());
+  h.clear();
+  h.receive(2, DbnoStatus{0, DbnoState::spectating, 0, 0, 0}, kChannelSession);
+  CHECK(only_message_to<DbnoStatus>(h, 1) == DbnoStatus{2, DbnoState::spectating, 0, 0, 0});
+  CHECK(h.to(2).empty());
+}
+
 TEST_CASE("dbno: a downed owner gives its enemy up, even in a fight, and is not given one") {
   OwnerHarness h;
   h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);  // a fight
   SUBCASE("downed") {
     h.receive(1, DbnoStatus{0, DbnoState::downed, 400, 0, 0}, kChannelSession);
+    h.run(250'000);
+    CHECK(h.asks() == 1);
+  }
+  SUBCASE("spectating: as downed") {
+    h.receive(1, DbnoStatus{0, DbnoState::spectating, 0, 0, 0}, kChannelSession);
     h.run(250'000);
     CHECK(h.asks() == 1);
   }

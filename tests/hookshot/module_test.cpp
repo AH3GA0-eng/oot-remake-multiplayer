@@ -18,6 +18,7 @@
 #include "coop_hold.h"
 #include "coop_hookshot.h"
 #include "coop_null_page.h"
+#include "hos_coop_save_load.h"
 #include "hos_coop_sound.h"
 #include "hos_coop_world.h"
 #include "hos_coop_actors.h"
@@ -498,6 +499,15 @@ TEST_CASE("hookshot: the actor events (patch 0007) use the world hook with the m
     CHECK(lift.find("(\"delete request\", 0xa65d0,") != std::string::npos);  // (where the request is accepted)
     CHECK(lift.find("(0xa65d0, 0xf94002c0)") != std::string::npos);
     CHECK(lift.find("(0x49dcb0, 0x0b090149)") != std::string::npos);
+    // The life stops: the same step, before its stop test; the module's 1 clears w10 (no stops this frame).
+    std::snprintf(call, sizeof call,
+                  "hos_coop_world_event(%uu, c->x[19], (uint64_t)(uintptr_t)&coop_pass); if (coop_pass) c->x[10] = 0;",
+                  HOS_COOP_WORLD_LIFE_STOPS);
+    CHECK(lift.find(call) != std::string::npos);
+    CHECK(lift.find("(\"life stops\", 0x49dcbc,") != std::string::npos);
+    CHECK(lift.find("(0x49dcb4, 0xb940726a)") != std::string::npos);  // ldr w10, [x19, #0x70]: the stops' count
+    CHECK(lift.find("(0x49dcc0, 0x35006eaa)") != std::string::npos);  // cbnz w10, main+0x49ea94
+    CHECK(HOS_COOP_WORLD_LIFE_STOPS <= HOS_COOP_WORLD_ACTOR_LAST);
     CHECK(patch.find("+    coop_actor_lift.install(lifter, img, build_id)") != std::string::npos);
     // New numbers follow the world hook's own (0 hello, 1 counter start).
     CHECK(HOS_COOP_WORLD_CREATE_REQUEST > HOS_COOP_WORLD_COUNTER_START);
@@ -641,6 +651,35 @@ TEST_CASE("hookshot: the sound wrap (patch 0014) is one row in 0005's table, its
     CHECK(HOS_COOP_WRAP_SOUND_EMIT < 64);
     const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
     CHECK(module.find("if (id == HOS_COOP_WRAP_SOUND_EMIT) {") != std::string::npos);
+}
+
+TEST_CASE("hookshot: the save-load wraps (patch 0024) are four rows in 0005's table, their header hookshot/src's") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0024-coop-save-load-wrap.patch");
+    CHECK(NewFile(patch, "host/hos_coop_save_load.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_save_load.h"));
+    const struct {
+        unsigned id;
+        const char* rest;
+    } rows[] = {
+        {HOS_COOP_WRAP_SAVE_LOADED, "0x32d8690, (0xd503237f, 0xa9be7bfd, 0xf9000bf3, 0x910003fd)),"},
+        {HOS_COOP_WRAP_SAVE_LOAD_START, "0x32c1db0, (0xd503237f, 0xa9bd7bfd, 0xf9000bf5, 0xa9024ff4)),"},
+        {HOS_COOP_WRAP_TEMP_LOAD_START, "0x32c2080, (0xd503237f, 0xa9bf7bfd, 0x910003fd, 0xb000dea8)),"},
+        {HOS_COOP_WRAP_GAME_OVER_SAVE, "0x32bbce0, (0xd503237f, 0xa9be7bfd, 0xf9000bf3, 0x910003fd)),"},
+    };
+    for (const auto& r : rows) {
+        char row[128];
+        std::snprintf(row, sizeof row, "+    (%u, %s", r.id, r.rest);
+        CHECK_MESSAGE(patch.find(row) != std::string::npos, row);
+        // Free in the one wrap space (0005: 1-3, 0013: 4-5, 0010: 16-23, 0014: 24).
+        CHECK(r.id > HOS_COOP_WRAP_ACTION_VERB);
+        CHECK(r.id < 16);
+    }
+    // After 0013's last row, at the table's end.
+    CHECK(patch.find("     (5, 0xc08f0,") != std::string::npos);
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    CHECK(module.find("CoopSave::NoteGameSaveLoad(id != HOS_COOP_WRAP_SAVE_LOADED)") != std::string::npos);
+    CHECK(module.find("CoopSave::NoteGameOverSave()") != std::string::npos);
+    CHECK(module.find("(level.wraps >> HOS_COOP_WRAP_GAME_OVER_SAVE & 1) != 0") != std::string::npos);
+    CHECK(module.find("CoopSave::SetNativeSaveLoads(loads)") != std::string::npos);
 }
 
 TEST_CASE("hookshot: on Linux the exe exports every function the module finds in it by name") {

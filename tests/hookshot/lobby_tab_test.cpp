@@ -277,3 +277,32 @@ TEST_CASE("lobby tab: in the session before a file is loaded, the players show w
         CHECK_FALSE(Has(t.view(), "Load your file to play: the others see you once you do."));
     }
 }
+
+// Player report 120: a guest asks for the host's save again from the Lobby tab (CoopSave::RequestResync).
+TEST_CASE("lobby tab: Resync from host is a guest's row only, and asks once per press") {
+    Tab t;
+    t.Show();
+    Lobby guest = Game(false);
+    guest.can_resync = true;
+    t.Set(guest);
+    REQUIRE(Has(t.view(), "Resync from host"));
+    Choose(t, "Resync from host");
+    const auto r = t.TakeRequest();
+    REQUIRE(r);
+    CHECK(r->kind == Request::Kind::kResync);
+    CHECK_FALSE(t.TakeRequest());
+    CHECK(t.view().gold == "Asked the host for its save: the chat says how it goes.");
+
+    // Never for the host, never where the game cannot take it (the emulator), never out of a session (solo).
+    Lobby host = Game(true);
+    host.can_resync = true;
+    t.Set(host);
+    CHECK_FALSE(Has(t.view(), "Resync from host"));
+    guest.can_resync = false;
+    t.Set(guest);
+    CHECK_FALSE(Has(t.view(), "Resync from host"));
+    Lobby solo;
+    solo.can_resync = true;
+    t.Set(solo);
+    CHECK_FALSE(Has(t.view(), "Resync from host"));
+}

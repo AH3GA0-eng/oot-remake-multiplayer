@@ -1947,7 +1947,8 @@ TEST_CASE("bad down but not out messages are refused") {
   CHECK(encode(DbnoMode{0, false, 0, 30, 12}, out) == Error::bad_value);
 
   CHECK(encode(DbnoStatus{kMaxPlayers + 1, DbnoState::up, 0, 0, 0}, out) == Error::bad_value);
-  CHECK(encode(DbnoStatus{0, static_cast<DbnoState>(3), 0, 0, 0}, out) == Error::bad_value);
+  CHECK(encode(DbnoStatus{0, static_cast<DbnoState>(4), 0, 0, 0}, out) == Error::bad_value);
+  CHECK(encode(DbnoStatus{0, DbnoState::spectating, 0, 2, 0}, out) == Error::bad_value);  // a reviver while spectating
   CHECK(encode(DbnoStatus{0, DbnoState::downed, kDbnoMaxLeftTenths + 1, 0, 0}, out) == Error::bad_value);
   CHECK(encode(DbnoStatus{0, DbnoState::up, 1, 0, 0}, out) == Error::bad_value);      // time left while up
   CHECK(encode(DbnoStatus{0, DbnoState::out, 0, 2, 0}, out) == Error::bad_value);     // a reviver while out
@@ -1969,7 +1970,7 @@ TEST_CASE("bad down but not out messages are refused") {
   b[kHeaderSize + 2] = 0;  // bleed-out seconds
   CHECK(decode(b, back) == Error::bad_value);
   b = must_encode(DbnoStatus{0, DbnoState::downed, 10, 0, 0});
-  b[kHeaderSize + 1] = 3;  // state
+  b[kHeaderSize + 1] = 4;  // state
   CHECK(decode(b, back) == Error::bad_value);
   b = must_encode(DbnoStatus{0, DbnoState::downed, 10, 0, 0});
   b[kHeaderSize + 1] = 0;  // up, with time left
@@ -1980,6 +1981,31 @@ TEST_CASE("bad down but not out messages are refused") {
   b = must_encode(DbnoRevive{0, 2, true});
   b[kHeaderSize + 1] = 0;  // target
   CHECK(decode(b, back) == Error::bad_value);
+}
+
+TEST_CASE("down but not out: type 473 DBNO_THREAT on the session channel, both ways, and state 3 spectating") {
+  CHECK(static_cast<int>(MessageType::dbno_threat) == 473);
+  CHECK(static_cast<int>(DbnoState::spectating) == 3);
+  CHECK(channel_of(MessageType::dbno_threat) == kChannelSession);
+  CHECK_FALSE(allowed_on_channel(MessageType::dbno_threat, kChannelOwnership));
+  CHECK(may_send(Sender::client, MessageType::dbno_threat));
+  CHECK(may_send(Sender::server, MessageType::dbno_threat));
+  Message threat = DbnoThreat{0, true};
+  Bytes b = must_encode(threat);
+  REQUIRE(b.size() == kHeaderSize + 2);
+  CHECK(set_sender(threat, 3));
+  CHECK(sender_of(threat) == std::optional<std::uint8_t>{3});
+  Message back;
+  REQUIRE(decode(must_encode(threat), back) == Error::none);
+  CHECK(back == threat);
+  b[kHeaderSize + 1] = 2;  // near
+  CHECK(decode(b, back) == Error::bad_value);
+  Bytes out;
+  CHECK(encode(DbnoThreat{kMaxPlayers + 1, false}, out) == Error::bad_value);
+  // Spectating: no time, no reviver.
+  REQUIRE(decode(must_encode(DbnoStatus{0, DbnoState::spectating, 0, 0, 0}), back) == Error::none);
+  CHECK(std::get<DbnoStatus>(back).state == DbnoState::spectating);
+  CHECK(encode(DbnoStatus{0, DbnoState::spectating, 5, 0, 0}, out) == Error::bad_value);
 }
 
 TEST_CASE("difficulty message: type 480, on the session channel, both ways") {

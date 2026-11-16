@@ -369,6 +369,59 @@ TEST_CASE("dungeon: the Deku torch plate's unnamed autogen bool is shared (deku-
     CHECK(a.values[key].value == 1);
 }
 
+TEST_CASE("dungeon: the Fire Temple pillar's fallen state and every room's unnamed bool are shared (#116)") {
+    namespace proto = coop::protocol;
+    std::optional<host::SharedFlags> list;
+    CoopDungeon::Merge(list, true);
+    REQUIRE(list);
+    std::set<std::uint32_t> autogen;
+    std::map<std::string, int> per_dungeon;
+    for (const auto& f : CoopDungeon::AutogenFlags()) {
+        autogen.insert(f.hash);
+        ++per_dungeon[f.dungeon];
+    }
+    // Generated from the romfs (tools/puppet_pack/autogen_flags.py): 47 room bools in 6 dungeons.
+    CHECK(autogen.size() == 47);
+    CHECK(per_dungeon["FireTemple"] == 18);
+    CHECK(per_dungeon["GerudoTrainingGround"] == 22);
+    // The big pillar's Buried (Logic/FireTemple_Level_Room_10_Prefab_3284; its event flow waits on the name),
+    // the two hammer floors under it, and the Deku torch plate seen in a game.
+    for (const std::uint32_t h : {0xa82cc7a2u, 0xce19219cu, 0x03a335cbu, 0x0f8f3fa3u}) {
+        CHECK(autogen.contains(h));
+    }
+    // One player's own stay out: the refill respawns (pots, grass), a gossip stone's fairy, Ganon's Castle
+    // room 24's "walked in".
+    for (const std::uint32_t h : {0x21958973u, 0xfe6d1779u, 0x58445aa7u, 0x186adf43u, 0xaecf3cfeu, 0x9de51737u,
+                                  0x0fa9d971u, 0xbd902a5bu}) {
+        CHECK_FALSE(autogen.contains(h));
+        CHECK_FALSE(list->contains(host::FlagKey(h, std::uint16_t{0})));
+    }
+
+    // A hammered the pillar from its top (it rode down, its game buried it); B stood on top too. B's game
+    // gets the bool, so its room graph makes the fallen pillar and the respawn swap at the bottom.
+    const auto key = host::FlagKey(0xa82cc7a2, std::uint16_t{0});
+    REQUIRE(list->contains(key));
+    Game a;
+    Game b;
+    a.set(key, 0);
+    b.set(key, 0);
+    host::FlagWatcher wa(*list, host::FlagRole::player);
+    host::FlagWatcher wb(*list, host::FlagRole::player);
+    wa.frame(a);
+    wb.frame(b);
+    a.set(key, 1);
+    const auto out = wa.frame(a);
+    REQUIRE(out.size() == 1);
+    proto::Message m;
+    REQUIRE(proto::decode(out[0].bytes, m) == proto::Error::none);
+    const auto* set = std::get_if<proto::FlagSet>(&m);
+    REQUIRE(set);
+    REQUIRE(set->flags.size() == 1);
+    wb.receive(proto::Message{proto::FlagState{1, set->flags}});
+    wb.frame(b);
+    CHECK(b.values[key].value == 1);
+}
+
 TEST_CASE("dungeon: the slingshot room's ladder event played in A is set in B (issue 129)") {
     namespace proto = coop::protocol;
     std::optional<host::SharedFlags> list;

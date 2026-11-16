@@ -127,6 +127,7 @@ enum class MessageType : std::uint16_t {
   dbno_mode = 470,  // 470 to 479: down but not out (docs/protocol.md, "Down but not out")
   dbno_state = 471,
   dbno_revive = 472,
+  dbno_threat = 473,
   difficulty = 480,  // 480 to 489: difficulty (docs/protocol.md, "Difficulty")
   voice_frame = 420,  // 420 to 424: proximity voice chat (docs/protocol.md, "Voice")
   mod_list = 490,  // 490 to 499: mods (docs/protocol.md, "Mods")
@@ -1503,7 +1504,10 @@ struct DbnoMode {
 enum class DbnoState : std::uint8_t {
   up = 0,
   downed = 1,  // crawling, bleeding out, can be revived
-  out = 2,     // bled out, or nobody was left standing: the game's own death runs
+  out = 2,     // nobody was left standing: the game's own death (Game Over) runs
+  // Not revived in time: watches a player still up until no enemy is near
+  // the players still up, then comes back beside the one watched.
+  spectating = 3,
 };
 
 // Most bleed-out time a DBNO_STATE may carry, tenths of a second.
@@ -1529,6 +1533,17 @@ struct DbnoRevive {
   std::uint8_t target = 0;                   // 1 to kMaxPlayers, not the reviver
   bool holding = false;
   bool operator==(const DbnoRevive&) const = default;
+};
+
+// DBNO_THREAT: whether an enemy is near the sender's Link, as the sender's
+// own game sees its enemies. Sent by a player who is up, when it changes and
+// again every few seconds; relayed to everyone else. A spectating player
+// comes back when every player still up says "none near" (or the one it
+// watches does, when the others are elsewhere).
+struct DbnoThreat {
+  std::uint8_t player_number = kPlayerSelf;
+  bool enemy_near = false;
+  bool operator==(const DbnoThreat&) const = default;
 };
 
 // BOSS_SCENE (boss-cutscenes, docs/dungeons-boss.md "Boss cutscenes"): the
@@ -1742,7 +1757,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              JoinChallenge, JoinProof, SaveAsk, SavePart, PlayerLife,
                              PvpMode, PvpHit, PvpHurt, FishLure, RejoinToken, RejoinClaim, DungeonEvent, PlayerRide,
                              OcarinaNote, PlatformClock, PlatformCounter,
-                             DbnoMode, DbnoStatus, DbnoRevive, Difficulty, VoiceFrame,
+                             DbnoMode, DbnoStatus, DbnoRevive, DbnoThreat, Difficulty, VoiceFrame,
                              ModList, ModSettings, LobbyAction, LobbyMutes, LobbyResult,
                              LocalJoin, LocalJoined, LocalLeave, LocalSample, LocalMessage, LinkSound,
                              BossScene, BossHeart, PlayerLook, SwitchState>;

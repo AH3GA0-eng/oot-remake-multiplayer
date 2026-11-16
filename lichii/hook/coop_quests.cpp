@@ -26,7 +26,8 @@ namespace {
 //     and forth: Ready, Playing, Retry, Finish);
 //   - SubEvent_GetSwordBigGoron (the trading sequence and the egg's timer),
 //     SubEvent_MaskSalesman (the mask rentals): steps of one player's own
-//     items;
+//     items (the trade's step follows the shared trade item held instead:
+//     coop_hook.cpp FollowTradeItem, row 117);
 //   - DoorOfTime (time travel stays each game's own, docs/flags.md), AllSage
 //     (the Chamber of Sages; its Step01_00_01 to _03 are not in an order),
 //     Defeat_Ganon and EscapeFromCrumblingGanonCastle (the final battle).

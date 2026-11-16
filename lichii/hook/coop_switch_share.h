@@ -63,6 +63,8 @@ class Sharer {
 public:
     // Network thread.
     void Receive(const coop::protocol::SwitchState& message, std::uint64_t now_ms);
+    // Network thread: PLAYER_LEFT. That player's switches are let go at the next walk, not after kRemoteHoldMs.
+    void Forget(std::uint8_t player);
 
     // Present thread, each objects walk. `others_here`: another player is in our scene (else nothing is sent).
     // Fills `send` (our presses) and returns what to hold; notes are log lines.

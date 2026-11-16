@@ -262,7 +262,7 @@ std::optional<CoopPuppet::Call> Switcher::Frame(CoopPuppet::Guest& guest, std::u
         const auto plug = CoopLogicSet::BoolPlug(guest, eye, key);
         if (!plug) continue;
         any_plug = true;
-        if (plug->value != std::optional<std::uint8_t>(1)) target = eye;  // 1: latched, or our own shot
+        if (plug->value != std::uint8_t{1}) target = eye;  // 1: latched, or our own shot
         break;
     }
     if (target == 0) {
@@ -290,6 +290,9 @@ std::optional<CoopPuppet::Call> Switcher::Frame(CoopPuppet::Guest& guest, std::u
         notes_.emplace_back(text);
     }
     t.set = true;
+    if (on_set_) {
+        on_set_(t.event);
+    }
     next_ = Next::execute;
     return CoopLogicSet::Execute(main, block_);
 }

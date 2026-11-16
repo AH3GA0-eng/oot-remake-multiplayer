@@ -221,3 +221,28 @@ TEST_CASE("guard: an actor our event is with waits at any distance (row 97)") {
     REQUIRE(removes.size() == 1);
     CHECK(removes[0] == 0x300);
 }
+
+TEST_CASE("guard: another player's event here holds only its own actors, nothing near our Link (G1, issue 251)") {
+    who = {{0x100, 0xa}, {0x200, 0xb}};
+    // Our game plays another player's event; it binds the far actor 0x200. Our Link is not in it.
+    Local replay{false, Vec3{0, 0, 0}, [](std::uint64_t a) { return a == 0x200; }, true};
+    CHECK(CoopGuard::WaitsFor(replay, 0x200, Where(0x200)));         // the event's actor waits
+    CHECK_FALSE(CoopGuard::WaitsFor(replay, 0x100, Where(0x100)));   // near our Link: goes through
+    CHECK_FALSE(CoopGuard::Waits(replay, Where(0x100)));
+    // Held: a kill of the event's actor waits, one of the near actor is made at once.
+    CoopGuard::Held<Change> held;
+    auto r = held.Pass({{0x200, 0}, {0x100, 0}}, replay, Where, Who);
+    REQUIRE(r.apply.size() == 1);
+    CHECK(r.apply[0].address == 0x100);
+    CHECK(held.Size() == 1);
+    replay.others_event = false;  // the event ended
+    r = held.Pass({}, replay, Where, Who);
+    REQUIRE(r.apply.size() == 1);
+    CHECK(r.apply[0].address == 0x200);
+    // Skip: only the event's actor is left out while it runs.
+    replay.others_event = true;
+    std::vector<std::uint64_t> removes{0x100, 0x200};
+    CHECK(CoopGuard::Skip(removes, replay, Where, [](std::uint64_t a) { return a; }) == 1);
+    REQUIRE(removes.size() == 1);
+    CHECK(removes[0] == 0x100);
+}

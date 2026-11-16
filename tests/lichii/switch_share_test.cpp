@@ -163,6 +163,32 @@ TEST_CASE("switch share: solo sends nothing and holds nothing, and a remote on n
     CHECK(b.holds.empty());
 }
 
+TEST_CASE("switch share: a player who leaves is let go at once, not after the timeout") {
+    Game b;
+    b.self = 2;
+    std::uint64_t t = 1000;
+    proto::SwitchState on;
+    on.player_number = 1;
+    on.scene = kScene;
+    on.name = "Obj_StepSwitch_A_01";
+    on.place = {17.2f, 112.3f, -23.0f};
+    on.plug = PlugKey("OnState");
+    on.on = true;
+    b.sharer.Receive(on, t);
+    auto three = on;
+    three.player_number = 3;
+    b.sharer.Receive(three, t);
+    b.Tick(t += 100);
+    REQUIRE(b.holds.size() == 1);
+    b.sharer.Forget(1);
+    b.Tick(t += 100);
+    CHECK(b.holds.size() == 1);  // player 3's is still on
+    b.sharer.Forget(3);
+    b.Tick(t += 100);  // well before kRemoteHoldMs
+    CHECK(b.holds.empty());
+    CHECK(Has(b.notes, "let go after"));
+}
+
 TEST_CASE("switch share: a new scene forgets what was held") {
     Game b;
     b.self = 2;

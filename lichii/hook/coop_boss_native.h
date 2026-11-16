@@ -47,6 +47,7 @@
 #include <vector>
 
 #include "coop/protocol/messages.hpp"
+#include "coop_caller_orders.h"
 #include "coop_puppet.h"
 
 namespace CoopBossNative {
@@ -183,6 +184,9 @@ public:
     std::int32_t HeldLifeStep(std::uint64_t component, std::int32_t life, std::int32_t sum);
     // A copy boss's Life component HeldLifeStep watches (the hook reads its life only then). Lock-free.
     bool Watches(std::uint64_t component) const;
+    // A copy boss whose death is its owner's: its death has begun here (SetDying) or its owner's died (released).
+    // Its Life step then goes past its own life stops (CoopActorEvents::PassStops). Lock-free.
+    bool Finishes(std::uint64_t component) const;
 
     // A create request (any game thread): true when a boss named `maker` is a
     // copy here that takes its owner's verbs, so its own minion is not made
@@ -210,7 +214,7 @@ public:
     // Everything forgotten, the block too (tests; co-op off).
     void Reset();
 
-    static constexpr int kCallerOrder = 45;  // after the drops (40), before the boss rooms (50)
+    static constexpr int kCallerOrder = CoopCallerOrders::kBossTable;  // after the drops (40), before the boss rooms (50)
     // Steps a copy's brain verb may differ from the owner's (nothing queued)
     // before it is put back (about a second at the game's 60 frames).
     static constexpr int kDriftSteps = 60;

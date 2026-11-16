@@ -51,6 +51,8 @@
 #include "coop_difficulty.h"
 #include "coop_actor_events.h"
 #include "coop_boss_native.h"
+#include "coop_boss_scenes.h"
+#include "coop_dbno_body.h"
 #include "coop_dbno_game.h"
 #include "coop_enemy_shots.h"
 #include "coop_mods_runtime.h"
@@ -94,6 +96,7 @@
 #include "hos_coop_actors.h"
 #include "hos_coop_bosses.h"
 #include "hos_coop_pads.h"
+#include "hos_coop_save_load.h"
 #include "hos_coop_sound.h"
 #include "hos_coop_host.h"
 #include "hos_coop_world.h"
@@ -1148,6 +1151,8 @@ thread_local bool t_create_stop = false;
 // the create the shoot code itself makes, by its return address)
 thread_local std::uint64_t t_shooter = 0;
 constexpr std::uint64_t kShootCreateReturn = 0xc17300;  // (after the bl at main+0xc172fc)
+// (LIFE_STEP's verdict for its component until that step's LIFE_STOPS: past its own life stops)
+thread_local std::uint64_t t_life_pass = 0;
 
 // The world hooks (patch 0005): the game's C hands its world events here instead of into caves and guest rings.
 int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
@@ -1167,6 +1172,19 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
             if ((level.wraps >> HOS_COOP_WRAP_SOUND_EMIT & 1) == 0) {
                 LOG_INFO(Core, "coop: this Hookshot has no sound wrap (patch 0014): our Link's sounds are not sent");
             }
+        }
+        {
+            // Patch 0024: the game's own save loads (docs/flags.md, "A load window"). All three wraps, or the old signs.
+            const bool loads = (level.wraps >> HOS_COOP_WRAP_SAVE_LOADED & 1) != 0 &&
+                               (level.wraps >> HOS_COOP_WRAP_SAVE_LOAD_START & 1) != 0 &&
+                               (level.wraps >> HOS_COOP_WRAP_TEMP_LOAD_START & 1) != 0 &&
+                               (level.wraps >> HOS_COOP_WRAP_GAME_OVER_SAVE & 1) != 0;
+            if (CoopSave::NativeSaveLoads() != loads || !loads) {
+                LOG_INFO(Core, "{}", loads ? "coop: save loads: the game's own load nodes tell every save load (patch 0024)"
+                                           : "coop: save loads: this Hookshot has no save-load wraps (patch 0024): a save "
+                                             "load is guessed from the flags and the title");
+            }
+            CoopSave::SetNativeSaveLoads(loads);
         }
         return 1;
     }
@@ -1259,15 +1277,25 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
                 return CoopRuntime::Read(a + CoopDifficulty::kHitAttacker, &attacker, sizeof attacker) ? attacker
                                                                                                          : 0;
             });
-        *sum = CoopActorEvents::Step(CoopActorEvents::TheRing(), CoopActorEvents::TheLifeTable(), a, own);
-        // One boss death for everyone (coop_boss_native.h HeldLifeStep): a copy boss's own Life step
-        // keeps it at life 1 until its owner's has died; then this same step lets it die.
-        if (CoopBossNative::Table& bosses = CoopBossNative::TheTable(); *sum > 0 && bosses.Watches(a)) {
+        t_life_pass = 0;
+        bool judged = false;
+        *sum = CoopActorEvents::Step(CoopActorEvents::TheRing(), CoopActorEvents::TheLifeTable(), a, own, &judged);
+        const auto life_now = [a]() -> std::optional<std::int32_t> {
             std::uint64_t value = 0;
             std::int32_t life = 0;
             if (CoopRuntime::Read(a + CoopDbno::kLifeValueEntry, &value, sizeof value) && value != 0 &&
                 CoopRuntime::Read(value + 8, &life, sizeof life)) {
-                *sum = bosses.HeldLifeStep(a, life, *sum);
+                return life;
+            }
+            return std::nullopt;
+        };
+        // One boss death for everyone (coop_boss_native.h HeldLifeStep): a copy boss's own Life step
+        // keeps it at life 1 until its owner's has died; then this same step lets it die.
+        bool finishing = false;
+        if (CoopBossNative::Table& bosses = CoopBossNative::TheTable(); *sum > 0 && bosses.Watches(a)) {
+            if (const auto life = life_now()) {
+                *sum = bosses.HeldLifeStep(a, *life, *sum);
+                finishing = bosses.Finishes(a);
             }
         }
         // Down but not out (coop_dbno_game.h): our Link's last life is held back, after every other
@@ -1279,6 +1307,24 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
                 CoopRuntime::Read(value + 8, &life, sizeof life)) {
                 *sum = CoopDbno::LifeStep(a, life, *sum);
             }
+        }
+        // The owner's death goes past the copy's own life stops (CoopActorEvents::PassStops; LIFE_STOPS below).
+        if (*sum > 0 && (judged || finishing)) {
+            if (const auto life = life_now(); life && CoopActorEvents::PassStops(*sum, *life, judged, finishing)) {
+                t_life_pass = a;
+            }
+        }
+        return 1;
+    }
+    case HOS_COOP_WORLD_LIFE_STOPS: {  // (b: our C's uint32, in hookshot.exe's memory)
+        auto* pass = reinterpret_cast<std::uint32_t*>(static_cast<std::uintptr_t>(b));
+        if (!CoopActorEvents::LifeStopsSeen().exchange(true, std::memory_order_relaxed)) {
+            LOG_INFO(Core, "coop: actors: the game's Life step asks the module before its life stops (patch 0007): "
+                           "an owner's death goes past a copy's own");
+        }
+        if (pass != nullptr && a != 0 && std::exchange(t_life_pass, 0) == a) {
+            *pass = 1;
+            CoopActorEvents::StopsPassed().fetch_add(1, std::memory_order_relaxed);
         }
         return 1;
     }
@@ -1306,6 +1352,20 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
         // wired, is a second handler of these ids: both must run, and either may take phase 0.)
         return CoopLocalGame::Wrap(id, phase, x);
     }
+    if (id == HOS_COOP_WRAP_GAME_OVER_SAVE) {
+        // Game Over saves its last state (Try Again or Quit Game; patch 0024). Reads nothing.
+        if (phase == 0) {
+            CoopSave::NoteGameOverSave();
+        }
+        return 0;
+    }
+    if (id == HOS_COOP_WRAP_SAVE_LOAD_START || id == HOS_COOP_WRAP_TEMP_LOAD_START || id == HOS_COOP_WRAP_SAVE_LOADED) {
+        // A save load starts, or the save is in (patch 0024): the game's own sequence nodes. Reads nothing.
+        if (phase == 0) {
+            CoopSave::NoteGameSaveLoad(id != HOS_COOP_WRAP_SAVE_LOADED);
+        }
+        return 0;
+    }
     if (id == HOS_COOP_WRAP_SOUND_EMIT) {
         // A sound the game starts (patch 0014): kept when it is on our own Link (coop_link_sound.h). Reads only.
         if (phase == 0) {
@@ -1325,6 +1385,12 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
             named = x[1] != 0 && CoopRuntime::Read(x[1] + CoopLiveEvents::addr::kArgName, &text, sizeof text) &&
                     text != 0 && CoopRuntime::Read(text, name, sizeof name - 1);
             name[sizeof name - 1] = 0;
+            // One death cutscene per game (coop_boss_scenes.h refuse_deaths): a boss's death asked again after it
+            // played here is not run; x0 0 is the manager's own "not taken" (phase 1 still reports it).
+            if (named && CoopBossScenes::RefuseAsk(name)) {
+                x[0] = 0;
+                return 1;
+            }
         } else if (named) {
             named = false;
             CoopLiveEvents::TheGameRequests().Push(name, x[0] != 0);
@@ -1345,11 +1411,21 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
     if (id == HOS_COOP_WRAP_ACTION_VERB && phase == 0) {
         // Native boss sync: a boss's action verb request (x0 BSA, x1 the request in guest memory).
         CoopBossNative::Table& t = CoopBossNative::TheTable();
-        if (!t.ActionsOn() || x[1] == 0) {
+        CoopDbno::Body::Crawl& crawl = CoopDbno::Body::TheCrawl();
+        if (x[1] == 0 || (!t.ActionsOn() && !crawl.IsOurs(x[0]))) {
             return 0;
         }
         CoopBossNative::Request r{};
         if (!CoopRuntime::Read(x[1], r.data(), r.size())) {
+            return 0;
+        }
+        // Down but not out (coop_dbno_body.h): while our Link is down it stays in the game's Crawl; the
+        // game's other actions for it (a hit's reaction, walk, items) are skipped, answered as taken.
+        if (crawl.Skip(x[0], r, t_own_call)) {
+            x[0] = CoopBossNative::addr::kActionTaken;
+            return 1;
+        }
+        if (!t.ActionsOn()) {
             return 0;
         }
         if (!t.OnActionVerb(x[0], r, (x[2] & 1) != 0, t_own_call)) {
@@ -1569,9 +1645,28 @@ void UseSaveSwitch() {
         [remount](const std::string& dir) { return remount(dir.c_str()) != 0; });
 }
 
+// Player report 120: patch 0025's opens of a slot's progress.sav, so the host sends the slot its game plays (not the
+// newest file on disk). An exe without it: the newest slot, as before.
+void UseSlotOpens() {
+    using OpenedFn = unsigned (*)(char*, size_t, int*);
+#ifdef _WIN32
+    const auto opened = reinterpret_cast<OpenedFn>(
+        reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(nullptr), "hos_coop_fs_save_slot_opened")));
+#else
+    const auto opened = reinterpret_cast<OpenedFn>(dlsym(RTLD_DEFAULT, "hos_coop_fs_save_slot_opened"));
+#endif
+    if (!opened) {
+        LOG_INFO(Core, "coop: save: this Hookshot does not say which save slot the game opens (patch 0025): the host "
+                       "sends its newest slot");
+        return;
+    }
+    CoopSave::SetSlotOpens(opened);   // (also read at each load-window mark, on the game's thread)
+}
+
 COOP_HOOKSHOT_EXPORT int hos_coop_start(const HosCoopApi* api) {
     if (!CoopHookshot::Start(api)) return 0;
     UseSaveSwitch();
+    UseSlotOpens();
     CoopHookshot::UseLocalPads();
     return 1;
 }
@@ -1654,7 +1749,22 @@ COOP_HOOKSHOT_EXPORT int hos_coop_menu_picture(int tab, HosCoopMenuPicture* out)
 }
 // The gameplay camera (hos_coop_view.h, patch 0019): around your own Link while the Customize page shows him.
 COOP_HOOKSHOT_EXPORT int hos_coop_view(double eye[3], double target[3]) {
-    return g_on && CoopLookView::Camera(eye, target) ? 1 : 0;
+    if (!g_on || eye == nullptr || target == nullptr) {
+        return 0;
+    }
+    if (CoopLookView::Camera(eye, target)) {
+        return 1;
+    }
+    // Down but not out, spectating (coop_dbno_game.h): the game's own camera, as it follows our Link, moved
+    // onto the player we watch, so it follows them the same way (the right stick still turns it).
+    if (const auto off = CoopDbno::SpectateOffset()) {
+        for (int i = 0; i < 3; ++i) {
+            eye[i] += (*off)[i];
+            target[i] += (*off)[i];
+        }
+        return 1;
+    }
+    return 0;
 }
 COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) {
     if (!g_on || stick == nullptr) {
