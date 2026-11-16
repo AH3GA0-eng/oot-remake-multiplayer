@@ -36,7 +36,7 @@ Code: `coop/host/event_owner.hpp` (the rule, tested in `tests/host/event_owner_t
 
 What each kind does at each site:
 - **Only our Link's own event**: the "in a cutscene" status sent to the others (their games hold our puppet), hiding the other players, the Deku Scrub talk, sale and Scrub Brothers' hit holds, holding shared changes near our Link, the chest get scene, and claiming actors from their owner (townspeople, actors whose own AI acts, actors the event binds).
-- **Any event in our game**: the actors it binds here act for it (no owner's motion on them, their shared changes wait), or the event waits on them forever (issue 251). Also the "game is busy" checks: no second event asked, no quest catch-up, no time nudge, no revive, no shared scene start, no teleport.
+- **Any event in our game**: the actors it binds here act for it (no owner's motion on them, their shared changes wait), or the event waits on them forever (issue 251). Also the "game is busy" checks: no second event asked, no quest catch-up, no time nudge, no shared scene start, no teleport. A revive (DBNO) and PvP hits wait while the game's event holds our Link (PvP: our own event only; revive: ours or the Ocarina), not in another player's event.
 - So another player's event replayed here hides nobody and holds nothing near our Link, and it claims none of its actors: they stay with the player whose event it is, so two games never pull one NPC to and fro (issue 200).
 - The log says `coop: event: the running event is ours | another player's | our free Ocarina` on each change.
 
