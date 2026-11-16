@@ -254,7 +254,7 @@ TEST_CASE("dbno body: nothing is asked before our Link's own node is known, nor 
     CHECK(RunFrame(c, g, 1200).empty());        // up, everything off again: nothing
 }
 
-TEST_CASE("dbno body: down -> Crawl once with the scheduler's node; up -> Wait once") {
+TEST_CASE("dbno body: down -> Crawl once with the scheduler's node, up -> Wait once") {
     Guest g;
     Crawl c;
     c.Want(Want(false));
@@ -277,7 +277,7 @@ TEST_CASE("dbno body: down -> Crawl once with the scheduler's node; up -> Wait o
     CHECK(c.Totals().asked == 2);
 }
 
-TEST_CASE("dbno body: an event of ours pauses the crawl; it is asked again after") {
+TEST_CASE("dbno body: an event of ours pauses the crawl, it is asked again after") {
     Guest g;
     Crawl c;
     Crawling(c, g);
@@ -337,7 +337,7 @@ TEST_CASE("dbno body: shield and unseen through the game's own functions, on whi
     CHECK(RunFrame(c, g, 2100).empty());
 }
 
-TEST_CASE("dbno body: a new Link (scene change) gets them again; the old component is left alone") {
+TEST_CASE("dbno body: a new Link (scene change) gets them again, the old component is left alone") {
     Guest g;
     Crawl c;
     c.Want(Want(true));
