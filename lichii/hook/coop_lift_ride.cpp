@@ -113,7 +113,7 @@ std::optional<CoopPuppet::Call> Rider::Next(CoopPuppet::Guest& guest, std::uint6
             return p.key == (kRideOnPlayer ^ 7u) && p.type == CoopLogicProbe::kBool;
         });
         if (plug == plugs->end()) continue;
-        if (plug->value == std::optional<std::uint8_t>(1)) continue;  // on already (our Link, or set this frame)
+        if (plug->value == std::uint8_t{1}) continue;  // on already (our Link, or set this frame)
         const std::uint64_t vtable = main + addr::kVtable;
         const std::uint64_t owner = block_ + addr::kOwner;
         const std::uint64_t holder = block_ + addr::kHolder;
