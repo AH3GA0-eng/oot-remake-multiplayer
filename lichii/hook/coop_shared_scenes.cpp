@@ -110,6 +110,15 @@ std::string_view RequestFor(std::string_view flow, std::string_view scene) {
     return flow;
 }
 
+std::vector<std::string> PlayedFlagsFor(std::string_view flow, std::string_view scene) {
+    const std::string_view entry = RequestFor(flow, scene);
+    std::vector<std::string> out{"HavePlayedEvent." + std::string(entry)};
+    if (entry != flow) {
+        out.push_back("HavePlayedEvent." + std::string(flow));
+    }
+    return out;
+}
+
 void Joiner::Visit(const std::string& scene) {
     if (scene.empty() || scene == scene_) {
         return;  // a load keeps what waits; its scene decides next frame

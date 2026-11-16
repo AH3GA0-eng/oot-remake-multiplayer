@@ -55,6 +55,15 @@ class StoryRequestsTest(unittest.TestCase):
         self.assertIn('{"KokiriForest_Child", "KokiriForest_Meet_DekuTree_MeetDekuTree_01", "Meet_DekuTree"},', text)
         self.assertIn("constexpr StoryRequest kStoryRequests[] = {", text)
 
+    def test_played_flag_is_the_entry_asked(self):
+        # The game's own hash of a flag name (coop_shared_scenes.cpp has HavePlayedEvent.Dm_Kokiri_0140 so).
+        self.assertEqual(sr.murmur3("HavePlayedEvent.Dm_Kokiri_0140"), 0xEBAEC07F)
+        self.assertEqual(sr.played_flag("Get_StoneOfFire_MeetDarnia"), "HavePlayedEvent.Get_StoneOfFire_MeetDarnia")
+        rows = [("GoronCity_Child", "Get_StoneOfFire_MeetDarnia", "Get_StoneOfFire"),
+                ("KokiriForest_Child", "KokiriForest_Meet_DekuTree_MeetDekuTree_01", "Meet_DekuTree")]
+        gamedata = b"\x00" * 8 + sr.murmur3(sr.played_flag(rows[0][1])).to_bytes(4, "big") + b"\x00" * 8
+        self.assertEqual(sr.missing_played_flags(rows, gamedata), [rows[1]])
+        self.assertEqual(sr.missing_played_flags(rows[:1], gamedata), [])
 
 if __name__ == "__main__":
     unittest.main()

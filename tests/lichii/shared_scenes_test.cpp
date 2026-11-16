@@ -8,6 +8,7 @@
 #include <string_view>
 #include <vector>
 
+#include "coop/host/flag_watcher.hpp"
 #include "coop/protocol/codec.hpp"
 #include "coop_live_events.h"
 #include "coop_shared_scenes.h"
@@ -267,4 +268,51 @@ TEST_CASE("a story cutscene asked by an entry of its flow counts as that story c
                        true, true, find) == std::optional<std::string>("Meet_DekuTree"));
     CHECK_FALSE(source.Frame(std::nullopt, false, true, true, find).has_value());
     CHECK(source.Refused() == 0);
+}
+
+TEST_CASE("the played check of a story cutscene asked by an entry reads that entry's flag (review of report 110)") {
+    using CoopSharedScenes::PlayedFlagsFor;
+    // The game has HavePlayedEvent per entry asked, none for these flow names (GameDataList.Product.110):
+    // the hashes below are the entries' flags found there; HavePlayedEvent.Meet_DekuTree is not in it.
+    struct Row {
+        std::string_view scene, flow;
+        std::uint32_t hash;
+    };
+    constexpr Row kRows[] = {
+        {"KokiriForest_Child", "Meet_DekuTree", 0xef98d829u},
+        {"GoronCity_Child", "Get_StoneOfFire", 0x507d99c9u},
+        {"DeathMountainTrail_Child", "Get_StoneOfFire", 0x516ed011u},
+        {"InsideJabuJabuBelly", "Get_StoneOfWater", 0x64d3877fu},
+        {"ZoraFountain_Child", "Get_StoneOfWater", 0xfb7c9b2cu},
+    };
+    CHECK(CoopSharedScenes::StoryRequests().size() == std::size(kRows));
+    for (const Row& r : kRows) {
+        const auto flags = PlayedFlagsFor(r.flow, r.scene);
+        REQUIRE(flags.size() == 2);
+        CHECK_MESSAGE(coop::host::flag_hash(flags[0]) == r.hash, flags[0]);
+        CHECK(flags[0] == "HavePlayedEvent." + std::string(CoopSharedScenes::RequestFor(r.flow, r.scene)));
+        CHECK(flags[1] == "HavePlayedEvent." + std::string(r.flow));
+    }
+    CHECK(PlayedFlagsFor("Meet_DekuTree", "KokiriForest_Child").front() ==
+          "HavePlayedEvent.KokiriForest_Meet_DekuTree_MeetDekuTree_01");
+    // A story name asked by itself keeps its one flag (the story order's Dm_Kokiri_0140 is in the game).
+    CHECK(PlayedFlagsFor("Dm_Kokiri_0140", "KokiriForest_Child") ==
+          std::vector<std::string>{"HavePlayedEvent.Dm_Kokiri_0140"});
+    CHECK(coop::host::flag_hash("HavePlayedEvent.Dm_Kokiri_0140") == 0xebaec07fu);
+    CHECK(PlayedFlagsFor("Meet_DekuTree", "LostWoods") == std::vector<std::string>{"HavePlayedEvent.Meet_DekuTree"});
+
+    // Through the joiner: B has met the Deku Tree (only its entry flag set, as the game keeps it); A starts
+    // the meeting near B: B is not asked to play it again. A B that has not met it is.
+    const auto met = [](const std::string& n) {
+        const auto flags = PlayedFlagsFor(n, "KokiriForest_Child");
+        return std::find(flags.begin(), flags.end(), "HavePlayedEvent.KokiriForest_Meet_DekuTree_MeetDekuTree_01") !=
+               flags.end();
+    };
+    CoopSharedScenes::Joiner seen;
+    seen.Started(1, "Meet_DekuTree", "KokiriForest_Child", kBridge, 100);
+    CHECK_FALSE(seen.Next(Free(120, {15.0f, 0.0f, 22.0f}, "KokiriForest_Child"), met).has_value());
+    CoopSharedScenes::Joiner fresh;
+    fresh.Started(1, "Meet_DekuTree", "KokiriForest_Child", kBridge, 100);
+    CHECK(fresh.Next(Free(120, {15.0f, 0.0f, 22.0f}, "KokiriForest_Child"), kNotPlayed) ==
+          std::optional<std::string>("Meet_DekuTree"));
 }

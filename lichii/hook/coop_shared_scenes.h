@@ -57,6 +57,13 @@ std::optional<std::string_view> StoryOfRequest(std::string_view request);
 // What our game is asked for to play `flow` in `scene`: the placed story
 // entry there (the request the starter's game made), else the flow's name.
 std::string_view RequestFor(std::string_view flow, std::string_view scene);
+// The game's "already played" flags for `flow` in `scene`, the first the one
+// to trust: the game keeps HavePlayedEvent per entry asked
+// (HavePlayedEvent.KokiriForest_Meet_DekuTree_MeetDekuTree_01; there is no
+// HavePlayedEvent.Meet_DekuTree), so a placed story entry gives its own flag,
+// then the flow's (a story name asked by itself has just that one). Played
+// when any is set.
+std::vector<std::string> PlayedFlagsFor(std::string_view flow, std::string_view scene);
 
 // How near the starter must be to our Link for us to join: same room. The
 // Kokiri bridge and Saria are about 20 m apart; the Deku Tree's clearing is
