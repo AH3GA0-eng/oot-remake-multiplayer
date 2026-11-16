@@ -635,6 +635,42 @@ TEST_CASE("difficulty: water enemies get their weight, never a land spot") {
   }
 }
 
+TEST_CASE("difficulty: no extras in a dungeon, each gets its weight instead (player report 111)") {
+  CHECK(CoopDifficulty::ExtrasIn("Lake"));
+  CHECK(CoopDifficulty::ExtrasIn("KokiriForest_Child"));
+  CHECK_FALSE(CoopDifficulty::ExtrasIn("InsideTheDekuTree"));
+  CHECK_FALSE(CoopDifficulty::ExtrasIn("DodongoCavern"));
+  World w;
+  const World::Data& d = w.Grid("InsideTheDekuTree", "Enemy_Dekubaba", 0x0dec'0000'0000ULL, 6);
+  const auto walk = Walk(d);
+  CoopDifficulty::Extras e(w.Lookup());
+  CHECK(e.Plan("InsideTheDekuTree", walk, 200, false, 0) == 0);
+  CHECK(e.All().empty());
+  for (const auto& o : walk) {
+    CHECK(e.NoSpot(o.hash));  // its life and hits are folded instead
+  }
+  // The same enemies outside a dungeon get their extras.
+  World w2;
+  const World::Data& d2 = w2.Grid("Lake", "Enemy_Dekubaba", 0x0dec'0000'0000ULL, 6);
+  CoopDifficulty::Extras f(w2.Lookup());
+  CHECK(f.Plan("Lake", Walk(d2), 200, false, 0) > 0);
+  // 125% (Automatic, 2 players, the report's case): only about 1 in 4 has an
+  // ExtraCount there, but every one folds, so the total is 125%, not ~106%.
+  World w3;
+  const World::Data& d3 = w3.Grid("InsideTheDekuTree", "Enemy_Dekubaba", 0x0dec'0000'0000ULL, 12);
+  const auto walk3 = Walk(d3);
+  CoopDifficulty::Extras g(w3.Lookup());
+  CHECK(g.Plan("InsideTheDekuTree", walk3, 125, false, 0) == 0);
+  CHECK(g.All().empty());
+  std::size_t without_extra = 0;
+  for (const auto& o : walk3) {
+    CHECK(g.NoSpot(o.hash));
+    without_extra += CoopDifficulty::ExtraCount(o.hash, 125) == 0 ? 1 : 0;
+  }
+  CHECK(without_extra > 0);  // the case the old rule missed is in the set
+  CHECK(g.NoSpots() == walk3.size());
+}
+
 TEST_CASE("difficulty: every game plans the same extras whatever it has loaded and wherever its enemies walked") {
   World w;
   const World::Data& d =
@@ -883,6 +919,51 @@ TEST_CASE("difficulty: an enemy that gets no copies has the enemy count folded i
   // A reused address is forgotten as for any enemy.
   kinds->Forget(kPoe);
   CHECK(kinds->Of(kPoe) == Kind::none);
+}
+
+TEST_CASE("difficulty: an enemy with no ground for its copies folds by the extras it would have had") {
+  using CoopDifficulty::ExtraCount;
+  using CoopDifficulty::FoldCount;
+  using CoopDifficulty::Kind;
+  CHECK(FoldCount(0, 150) == 150);  // a patrol (Treatment::fold): the whole count
+  CHECK(FoldCount(0x1234, 100) == 100);
+  CHECK(FoldCount(0x1234, 80) == 80);
+  // Placement keys with 0 and with 1 extra at 150% and at 125%.
+  for (const std::uint16_t pct : {std::uint16_t(125), std::uint16_t(150), std::uint16_t(200), std::uint16_t(300)}) {
+    std::uint64_t none = 0, one = 0;
+    unsigned total = 0, extras = 0;
+    for (std::uint64_t k = 1; k <= 400; ++k) {
+      const unsigned e = ExtraCount(k, pct);
+      CHECK(FoldCount(k, pct) == 100 * (1 + e));
+      total += FoldCount(k, pct);
+      extras += 100 * (1 + e);
+      if (e == pct / 100u - 1u && none == 0 && pct % 100 != 0) none = k;
+      if (e == pct / 100u && one == 0) one = k;
+    }
+    CHECK(total == extras);  // the folded strength is exactly what the extras would add
+    if (pct % 100 == 0) {
+      continue;
+    }
+    REQUIRE(none != 0);
+    REQUIRE(one != 0);
+    // Life and damage of each, as the Life step scales them.
+    auto kinds = std::make_unique<CoopDifficulty::Kinds>();
+    constexpr std::uint64_t kLifeNone = 0x30'0000'1000, kLifeOne = 0x30'0000'2000;
+    constexpr std::uint64_t kNone = 0x30'0000'3000, kOne = 0x30'0000'4000, kLinkLife = 0x30'0000'5000;
+    CHECK(kinds->Mark(kLifeNone, Kind::folded_enemy_life, none));
+    CHECK(kinds->Mark(kLifeOne, Kind::folded_enemy_life, one));
+    CHECK(kinds->Mark(kNone, Kind::folded_enemy, none));
+    CHECK(kinds->Mark(kOne, Kind::folded_enemy, one));
+    CHECK(kinds->Mark(kLinkLife, Kind::our_link_life));
+    std::uint64_t attacker = kNone;
+    auto attacker_of = [&] { return attacker; };
+    const Values count_only{100, 100, pct};
+    CHECK(kinds->Step(kLifeNone, 4, count_only, 1000, attacker_of) == 4);  // x1: it would have had none
+    CHECK(kinds->Step(kLifeOne, 4, count_only, 1000, attacker_of) == 2);   // x2: itself and its one extra
+    CHECK(kinds->Step(kLinkLife, 4, count_only, 1000, attacker_of) == 4);
+    attacker = kOne;
+    CHECK(kinds->Step(kLinkLife, 4, count_only, 1000, attacker_of) == 8);
+  }
 }
 
 namespace {

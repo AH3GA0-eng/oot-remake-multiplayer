@@ -562,6 +562,20 @@ public:
         }
     }
 
+    // Present thread (report 109): a copy's own wake play that a put-back
+    // took away is played again once at the next game frame. The owner's
+    // play wished for it before is dropped, and the wake is no hand-over's
+    // to replay later (wanted_).
+    void GiveBack(u64 actor, std::string name) {
+        std::lock_guard lock(mutex_);
+        LOG_INFO(Core, "coop: objects: copy {:#x}: its own wake '{}' is played again (report 109)", actor, name);
+        if (wakes_.size() < 64) {
+            wakes_.emplace_back(actor, std::move(name));
+        }
+        std::erase_if(plays_, [actor](const PlayWish& p) { return p.address == actor && p.slot == 0; });
+        wanted_.erase(actor);
+    }
+
     // Releases made since the last ask: bit found set and cleared, and not.
     // Also the ones dropped because the frame's list was full.
     std::tuple<std::size_t, std::size_t, std::size_t> TakeReleases() {
@@ -2684,8 +2698,10 @@ private:
                                        extras_.Holds(known.first, now_ms);
             if (CoopDifficulty::IsEnemy(known.first, CoopEnemyShots::IsEnemyShot(known.first))) {
                 // Difficulty: an attacker (a boss, one with its copies' weight folded in, or plain).
-                CoopDifficulty::TheKinds().Mark(a, CoopDifficulty::AttackerKind(known.first, known.second,
-                                                                                extras_.NoSpot(known.second)));
+                // A no-spot enemy folds by its own missing extras (FoldCount), keyed by its placement.
+                const bool no_spot = extras_.NoSpot(known.second);
+                CoopDifficulty::TheKinds().Mark(a, CoopDifficulty::AttackerKind(known.first, known.second, no_spot),
+                                                no_spot ? known.second : 0);
             } else {
                 CoopDifficulty::TheKinds().Forget(a);  // difficulty: a reused address (our bomb where a Keese was)
             }
@@ -2846,9 +2862,10 @@ private:
                             life_components.emplace(*component, a);  // (whose Life step is whose: StepHits)
                             s.life_component = *component;
                             if (CoopDifficulty::IsEnemy(s.name, false)) {  // difficulty: its hits are scaled
+                                const bool no_spot = extras_.NoSpot(s.hash);
                                 CoopDifficulty::TheKinds().Mark(*component,
-                                                                CoopDifficulty::LifeKind(s.name, s.hash,
-                                                                                         extras_.NoSpot(s.hash)));
+                                                                CoopDifficulty::LifeKind(s.name, s.hash, no_spot),
+                                                                no_spot ? s.hash : 0);
                             } else {
                                 CoopDifficulty::TheKinds().Forget(*component);  // (a reused address)
                             }
@@ -3690,6 +3707,9 @@ private:
         }
         if (const auto ours = sync_.TakeOursNow(); release_ && !ours.empty()) {
             TheMover().Release(ours);
+        }
+        for (auto& [a, name] : sync_.TakeOwnWakes()) {
+            TheMover().GiveBack(a, std::move(name));  // report 109
         }
         std::vector<u64> removes = sync_.Removes();
         for (const u64 a : horde_.Removes()) {
