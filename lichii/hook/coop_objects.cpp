@@ -1277,6 +1277,15 @@ std::atomic<u64>& TheLinkLifeAt() {
     static std::atomic<u64> ms{0};
     return ms;
 }
+// Rows 93/103 (OurLinkActor): our Link's actor as the last walk saw it, and when (steady ms; 0: never).
+std::atomic<u64>& TheLinkActor() {
+    static std::atomic<u64> actor{0};
+    return actor;
+}
+std::atomic<u64>& TheLinkActorAt() {
+    static std::atomic<u64> ms{0};
+    return ms;
+}
 struct PvpAsk {
     s32 take = 0;
     std::array<float, 3> at{};
@@ -2625,6 +2634,11 @@ private:
             if (known.first.starts_with("Player_")) {  // our own Link, for coop_world
                 if (known.first == "Player_Child" || known.first == "Player_Adult") {
                     our_link_ = a;  // the ocarina probe (issue 152)
+                    TheLinkActor().store(a);  // the ocarina's equip (rows 93/103, OurLinkActor)
+                    {
+                        const u64 now = SteadyNowMs();
+                        TheLinkActorAt().store(now == 0 ? 1 : now);
+                    }
                     // Difficulty: the Life component whose hits from enemies are scaled.
                     if (const auto table = r.Ptr(a + kActorComponents)) {
                         if (const auto component = r.Ptr(*table + kComponentLife)) {
@@ -3869,6 +3883,15 @@ std::optional<std::int32_t> OurLinkLife() {
         return std::nullopt;
     }
     return life;
+}
+
+std::optional<std::uint64_t> OurLinkActor() {
+    const u64 at = TheLinkActorAt().load();
+    const u64 actor = TheLinkActor().load();
+    if (at == 0 || actor == 0 || SteadyNowMs() > at + kLinkLifeStaleMs) {
+        return std::nullopt;
+    }
+    return actor;
 }
 
 void HurtOurLink(std::int32_t quarters, const std::array<float, 3>& at,

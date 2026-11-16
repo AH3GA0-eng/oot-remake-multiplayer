@@ -57,6 +57,9 @@ std::optional<LinkHearts> OurLife();
 // Link's life in quarter hearts as the object walk last read it; nothing
 // when no walk saw our Link in the last 1.5 s. Any thread.
 std::optional<std::int32_t> OurLinkLife();
+// Rows 93/103 (docs/items.md, "The game's own equip"): our Link's actor (Player_Child or Player_Adult) as the
+// object walk last saw it; nothing when no walk saw it in the last 1.5 s. Any thread.
+std::optional<std::uint64_t> OurLinkActor();
 // Any thread: take `quarters` off our Link at the next walk, as the game's
 // own hit at `at` from `from` (Link flinches), or by writing the life when
 // the game does not take that hit within 0.4 s (LICHII_COOP_PVP_REPLAY=0:
