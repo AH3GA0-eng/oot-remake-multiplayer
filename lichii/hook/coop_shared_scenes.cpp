@@ -101,22 +101,29 @@ std::optional<std::string_view> StoryOfRequest(std::string_view request) {
     return std::nullopt;
 }
 
-std::string_view RequestFor(std::string_view flow, std::string_view scene) {
+bool IsStorySetting(std::string_view name) {
     for (const StoryRequest& r : kStoryRequests) {
-        if (r.scene == scene && r.flow == flow) {
-            return r.request;
+        if (r.request == name) {
+            return true;
         }
     }
-    return flow;
+    return false;
 }
 
-std::vector<std::string> PlayedFlagsFor(std::string_view flow, std::string_view scene) {
-    const std::string_view entry = RequestFor(flow, scene);
-    std::vector<std::string> out{"HavePlayedEvent." + std::string(entry)};
-    if (entry != flow) {
-        out.push_back("HavePlayedEvent." + std::string(flow));
+bool IsStory(std::string_view name) {
+    return IsShared(name) || IsStorySetting(name);
+}
+
+std::vector<std::string_view> RequestNames() {
+    std::vector<std::string_view> out(std::begin(kNames), std::end(kNames));
+    for (const StoryRequest& r : kStoryRequests) {
+        out.push_back(r.request);
     }
     return out;
+}
+
+bool Askable(std::string_view name) {
+    return std::find(std::begin(kNoSetting), std::end(kNoSetting), name) == std::end(kNoSetting);
 }
 
 void Joiner::Visit(const std::string& scene) {
@@ -131,6 +138,11 @@ void Joiner::Visit(const std::string& scene) {
 
 void Joiner::Started(std::uint8_t player, const std::string& name, const std::string& scene,
                      std::optional<Vec3> starter, std::uint64_t now_us, std::optional<int> room) {
+    if (!Askable(name)) {
+        notes_.push_back("player " + std::to_string(player) + " started the story cutscene " + name +
+                         ": not played here (the game has no event setting of that name)");
+        return;
+    }
     for (const Pending& p : pending_) {
         if (p.name == name && p.scene == scene) {
             return;  // two players started it: one is enough

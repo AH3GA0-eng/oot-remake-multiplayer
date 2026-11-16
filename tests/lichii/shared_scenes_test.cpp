@@ -74,14 +74,15 @@ TEST_CASE("another player's story cutscene near us plays here once, at once") {
 }
 
 TEST_CASE("a story cutscene our game starts goes out once, a later start from another player is not replayed") {
+    const std::string kMeet = "KokiriForest_Meet_DekuTree_MeetDekuTree_01";  // the Deku Tree's meeting (a setting)
     Joiner j;
-    CHECK(j.Ours("Meet_DekuTree", "KokiriForest"));
-    CHECK_FALSE(j.Ours("Meet_DekuTree", "KokiriForest"));  // the watch finds it again: sent once
-    j.Started(1, "Meet_DekuTree", "KokiriForest", kBridge, 10);  // both started it together
+    CHECK(j.Ours(kMeet, "KokiriForest"));
+    CHECK_FALSE(j.Ours(kMeet, "KokiriForest"));  // the watch finds it again: sent once
+    j.Started(1, kMeet, "KokiriForest", kBridge, 10);  // both started it together
     CHECK_FALSE(j.Next(Free(20), kNotPlayed));
     // A new visit of the scene: it may go out again.
     CHECK_FALSE(j.Next(Free(30, kBridge, "LostWoods"), kNotPlayed));
-    CHECK(j.Ours("Meet_DekuTree", "KokiriForest"));
+    CHECK(j.Ours(kMeet, "KokiriForest"));
 }
 
 TEST_CASE("players not in the room, in another scene, or with it played are not pulled in") {
@@ -224,27 +225,41 @@ TEST_CASE("intro-ocarina: Saria's gift is never started in a game still in the o
     CHECK(other.Next(Free(120), kNotPlayed, flag) == std::optional<std::string>("Dm_Kokiri_0050"));
 }
 
-TEST_CASE("a story cutscene asked by an entry of its flow counts as that story cutscene (player report 110)") {
-    using CoopSharedScenes::RequestFor;
+TEST_CASE("a story cutscene asked by its event setting is sent and joined by that setting (player report 110)") {
+    using CoopSharedScenes::Askable;
+    using CoopSharedScenes::IsStory;
+    using CoopSharedScenes::IsStorySetting;
     using CoopSharedScenes::StoryOfRequest;
     // The Deku Tree's meeting, as the EventRequestActor in KokiriForest_Child asks it.
     constexpr std::string_view kEntry = "KokiriForest_Meet_DekuTree_MeetDekuTree_01";
     CHECK(StoryOfRequest(kEntry) == std::optional<std::string_view>("Meet_DekuTree"));
-    CHECK(StoryOfRequest("Meet_DekuTree") == std::optional<std::string_view>("Meet_DekuTree"));
     CHECK(StoryOfRequest("Get_StoneOfFire_MeetDarnia") == std::optional<std::string_view>("Get_StoneOfFire"));
-    CHECK_FALSE(StoryOfRequest("Npc_Kokiri_Mido_Child").has_value());          // a talk
-    CHECK_FALSE(StoryOfRequest("GoronCity_SecretHole_AppearTreasureBox").has_value());  // a gimmick
-    // A game that joins asks as the starter's did: the placed entry of that scene, else the flow's name.
-    CHECK(RequestFor("Meet_DekuTree", "KokiriForest_Child") == kEntry);
-    CHECK(RequestFor("Meet_DekuTree", "LostWoods") == "Meet_DekuTree");
-    CHECK(RequestFor("Dm_Kokiri_0070", "KokiriForest_Child") == "Dm_Kokiri_0070");
+    CHECK(StoryOfRequest("Dm_Kokiri_0070") == std::optional<std::string_view>("Dm_Kokiri_0070"));
+    CHECK_FALSE(StoryOfRequest("Npc_Kokiri_Mido_Child").has_value());                     // a talk
+    CHECK_FALSE(StoryOfRequest("GoronCity_SecretHole_AppearTreasureBox").has_value());    // a gimmick
+    CHECK_FALSE(StoryOfRequest("Get_StoneOfFire_AppearBoss").has_value());                // a boss event
+    // Two settings of one flow in one scene stay two (Ruto, then her stone): the key is the setting.
+    CHECK(IsStorySetting("Get_StoneOfWater_MeetRuto"));
+    CHECK(IsStorySetting("Get_StoneOfWater_RutoGetStone"));
+    CHECK(IsStory(kEntry));
+    CHECK(IsStory("Dm_Kokiri_0070"));
+    CHECK_FALSE(IsStory("Npc_Kokiri_Mido_Child"));
+    // The story names with no setting: no game can be asked for them.
+    for (const std::string_view n : {"Meet_DekuTree", "Meet_GreatFairy", "Get_StoneOfForest", "Get_StoneOfFire",
+                                     "Get_StoneOfWater", "Dm_FinalBattle_0000", "Dm_LostWood_0030"}) {
+        CHECK_MESSAGE(CoopSharedScenes::IsShared(n), std::string(n));
+        CHECK_MESSAGE(!Askable(n), std::string(n));
+    }
+    CHECK(Askable(kEntry));
+    CHECK(Askable("Dm_Kokiri_0150"));
     for (const auto& r : CoopSharedScenes::StoryRequests()) {
         CHECK_MESSAGE(CoopSharedScenes::IsShared(r.flow), std::string(r.flow));
+        CHECK_MESSAGE(!Askable(r.flow), std::string(r.flow));  // the table is of the flows with no setting
+        CHECK(Askable(r.request));
         CHECK(StoryOfRequest(r.request) == std::optional<std::string_view>(r.flow));
-        CHECK(RequestFor(r.flow, r.scene) == r.request);
     }
 
-    // The guard (intro-ocarina) with the game's request as it came, and as the hook now maps it.
+    // The guard (intro-ocarina): the setting is a story start, not "another event".
     auto request = [](std::string_view name) {
         CoopLiveEvents::GameRequest r;
         std::copy(name.begin(), name.end(), r.name);
@@ -252,87 +267,56 @@ TEST_CASE("a story cutscene asked by an entry of its flow counts as that story c
         return r;
     };
     const auto names_span = CoopSharedScenes::Names();
-    const std::vector<std::string_view> names(names_span.begin(), names_span.end());
-    const std::vector<CoopLiveEvents::GameRequest> as_asked{request(kEntry)};
-    CHECK(CoopLiveEvents::RequestedOtherOf(as_asked, names));     // before: "another event", its search refused
-    CHECK_FALSE(CoopLiveEvents::RequestedOf(as_asked, names).has_value());
-    const std::vector<CoopLiveEvents::GameRequest> mapped{request(*StoryOfRequest(kEntry))};
-    CHECK_FALSE(CoopLiveEvents::RequestedOtherOf(mapped, names));
-    CHECK(CoopLiveEvents::RequestedOf(mapped, names) == std::optional<std::string>("Meet_DekuTree"));
+    const std::vector<std::string_view> flows(names_span.begin(), names_span.end());
+    const std::vector<std::string_view> names = CoopSharedScenes::RequestNames();
+    const std::vector<CoopLiveEvents::GameRequest> asked{request(kEntry)};
+    CHECK(CoopLiveEvents::RequestedOtherOf(asked, flows));  // by flow names only (before): refused
+    CHECK_FALSE(CoopLiveEvents::RequestedOtherOf(asked, names));
+    CHECK(CoopLiveEvents::RequestedOf(asked, names) == std::optional<std::string>(kEntry));
+    // A talk setting of the same quest (a row id) is another event: the search's flow name is refused.
+    const std::vector<CoopLiveEvents::GameRequest> talk{request("178488356_1871805950_2638247227_D_T")};
+    CHECK(CoopLiveEvents::RequestedOtherOf(talk, names));
 
-    // Through the start source: given once, by the request, while the search keeps finding it.
+    // Through the start source: the setting given once, by the request; the search's flow name after it is
+    // not given again (it is no setting: a leftover of the running event).
     CoopLiveEvents::StartSource source;
     source.Scene("KokiriForest_Child");
     const auto find = [] { return std::optional<std::string>("Meet_DekuTree"); };
-    CHECK(source.Frame(CoopLiveEvents::RequestedOf(mapped, names), CoopLiveEvents::RequestedOtherOf(mapped, names),
-                       true, true, find) == std::optional<std::string>("Meet_DekuTree"));
+    CHECK(source.Frame(CoopLiveEvents::RequestedOf(asked, names), CoopLiveEvents::RequestedOtherOf(asked, names),
+                       true, true, find) == std::optional<std::string>(kEntry));
     CHECK_FALSE(source.Frame(std::nullopt, false, true, true, find).has_value());
     CHECK(source.Refused() == 0);
 }
 
-TEST_CASE("the played check of a story cutscene asked by an entry reads that entry's flag (review of report 110)") {
-    using CoopSharedScenes::PlayedFlagsFor;
-    // The game has HavePlayedEvent per entry asked, none for these flow names (GameDataList.Product.110):
-    // the hashes below are the entries' flags found there; HavePlayedEvent.Meet_DekuTree is not in it.
-    struct Row {
-        std::string_view scene, flow;
-        std::uint32_t hash;
-    };
-    constexpr Row kRows[] = {
-        {"KokiriForest_Child", "Meet_DekuTree", 0xef98d829u},
-        {"GoronCity_Child", "Get_StoneOfFire", 0x507d99c9u},
-        {"DeathMountainTrail_Child", "Get_StoneOfFire", 0x516ed011u},
-        {"InsideJabuJabuBelly", "Get_StoneOfWater", 0x64d3877fu},
-        {"ZoraFountain_Child", "Get_StoneOfWater", 0xfb7c9b2cu},
-    };
-    CHECK(CoopSharedScenes::StoryRequests().size() == std::size(kRows));
-    for (const Row& r : kRows) {
-        const auto flags = PlayedFlagsFor(r.flow, r.scene);
-        REQUIRE(flags.size() == 2);
-        CHECK_MESSAGE(coop::host::flag_hash(flags[0]) == r.hash, flags[0]);
-        CHECK(flags[0] == "HavePlayedEvent." + std::string(CoopSharedScenes::RequestFor(r.flow, r.scene)));
-        CHECK(flags[1] == "HavePlayedEvent." + std::string(r.flow));
-    }
-    CHECK(PlayedFlagsFor("Meet_DekuTree", "KokiriForest_Child").front() ==
-          "HavePlayedEvent.KokiriForest_Meet_DekuTree_MeetDekuTree_01");
-    // A story name asked by itself keeps its one flag (the story order's Dm_Kokiri_0140 is in the game).
-    CHECK(PlayedFlagsFor("Dm_Kokiri_0140", "KokiriForest_Child") ==
-          std::vector<std::string>{"HavePlayedEvent.Dm_Kokiri_0140"});
+TEST_CASE("a joined story setting reads its own played flag; a story name with no setting is not joined") {
+    // The flags the game has (GameDataList.Product.110): HavePlayedEvent per setting; none for the quests' flows.
+    CHECK(coop::host::flag_hash("HavePlayedEvent.KokiriForest_Meet_DekuTree_MeetDekuTree_01") == 0xef98d829u);
+    CHECK(coop::host::flag_hash("HavePlayedEvent.Get_StoneOfFire_MeetDarnia") == 0x507d99c9u);
+    CHECK(coop::host::flag_hash("HavePlayedEvent.Get_StoneOfFire_DodongoCavernOpne") == 0x516ed011u);
+    CHECK(coop::host::flag_hash("HavePlayedEvent.Get_StoneOfWater_MeetRuto") == 0x64d3877fu);
+    CHECK(coop::host::flag_hash("HavePlayedEvent.Get_StoneOfWater_JabuJabuEat") == 0xfb7c9b2cu);
     CHECK(coop::host::flag_hash("HavePlayedEvent.Dm_Kokiri_0140") == 0xebaec07fu);
-    CHECK(PlayedFlagsFor("Meet_DekuTree", "LostWoods") == std::vector<std::string>{"HavePlayedEvent.Meet_DekuTree"});
 
-    // Played, read as the hook reads it: a save's flags by name, nothing for a flag the game does not have.
-    const std::string kEntryFlag = "HavePlayedEvent.KokiriForest_Meet_DekuTree_MeetDekuTree_01";
-    const auto game = [&](bool met) {
-        return [&, met](const std::string& f) -> std::optional<bool> {
-            if (f == kEntryFlag) {
-                return met;
-            }
-            if (f == "HavePlayedEvent.Dm_Kokiri_0140") {
-                return false;
-            }
-            return std::nullopt;  // HavePlayedEvent.Meet_DekuTree, .Get_StoneOfForest, .Meet_GreatFairy: not in the game
-        };
+    const std::string kEntry = "KokiriForest_Meet_DekuTree_MeetDekuTree_01";
+    // The hook's played check: HavePlayedEvent.<name joined>.
+    const auto saw = [&](bool met) {
+        return [&, met](const std::string& n) { return met && "HavePlayedEvent." + n == "HavePlayedEvent." + kEntry; };
     };
-    using CoopSharedScenes::Played;
-    CHECK(Played("Meet_DekuTree", "KokiriForest_Child", game(true)));
-    CHECK_FALSE(Played("Meet_DekuTree", "KokiriForest_Child", game(false)));
-    CHECK_FALSE(Played("Dm_Kokiri_0140", "KokiriForest_Child", game(false)));
-    // No flag the game has (quests asked by their own name): counted as played, never replayed.
-    CHECK(Played("Get_StoneOfForest", "InsideTheDekuTree", game(false)));
-    CHECK(Played("Meet_GreatFairy", "FairyFountain", game(false)));
-    CHECK(Played("Meet_DekuTree", "LostWoods", game(false)));
-
-    // Through the joiner: B has met the Deku Tree (only its entry flag set, as the game keeps it); A starts
-    // the meeting near B: B is not asked to play it again. A B that has not met it is.
-    const auto in_forest = [&](bool met) {
-        return [&, met](const std::string& n) { return Played(n, "KokiriForest_Child", game(met)); };
-    };
-    CoopSharedScenes::Joiner seen;
-    seen.Started(1, "Meet_DekuTree", "KokiriForest_Child", kBridge, 100);
-    CHECK_FALSE(seen.Next(Free(120, {15.0f, 0.0f, 22.0f}, "KokiriForest_Child"), in_forest(true)).has_value());
-    CoopSharedScenes::Joiner fresh;
-    fresh.Started(1, "Meet_DekuTree", "KokiriForest_Child", kBridge, 100);
-    CHECK(fresh.Next(Free(120, {15.0f, 0.0f, 22.0f}, "KokiriForest_Child"), in_forest(false)) ==
-          std::optional<std::string>("Meet_DekuTree"));
+    const Here here = Free(120, {15.0f, 0.0f, 22.0f}, "KokiriForest_Child");
+    // B has met the Deku Tree; A starts the meeting near B: B is not asked to play it again.
+    Joiner seen;
+    seen.Started(1, kEntry, "KokiriForest_Child", kBridge, 100);
+    CHECK_FALSE(seen.Next(here, saw(true)).has_value());
+    // A B that has not met it is asked for that same setting.
+    Joiner fresh;
+    fresh.Started(1, kEntry, "KokiriForest_Child", kBridge, 100);
+    CHECK(fresh.Next(here, saw(false)) == std::optional<std::string>(kEntry));
+    // A quest's flow name (an older game, or the search with no request) is never joined: nothing to ask.
+    Joiner quest;
+    quest.Started(1, "Get_StoneOfForest", "KokiriForest_Child", kBridge, 100);
+    CHECK(quest.Waiting() == 0);
+    CHECK_FALSE(quest.Next(here, kNotPlayed).has_value());
+    const auto notes = quest.TakeNotes();
+    REQUIRE(notes.size() == 1);
+    CHECK(notes[0].find("no event setting") != std::string::npos);
 }

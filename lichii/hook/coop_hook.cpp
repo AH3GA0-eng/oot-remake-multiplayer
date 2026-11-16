@@ -367,7 +367,7 @@ public:
                 if (const auto* e = std::get_if<coop::protocol::DungeonEvent>(&event.message)) {
                     std::lock_guard lock(dungeon_events_mutex_);
                     // A story cutscene's start (coop_shared_scenes.h) has its own queue.
-                    auto& in = CoopSharedScenes::IsShared(e->name) ? story_events_in_ : dungeon_events_in_;
+                    auto& in = CoopSharedScenes::IsStory(e->name) ? story_events_in_ : dungeon_events_in_;
                     if (in.size() < 16) {
                         in.push_back(*e);
                     }
@@ -2028,23 +2028,24 @@ private:
             // Only the story path refuses the search's finds while another asked-for event runs (intro-ocarina);
             // the dungeon gimmicks above keep their net as it was (a gimmick may start inside a talk's flow).
             story_source_.Scene(here.scene);
-            auto asked = by_request ? requests.Since(story_cursor_) : std::vector<CoopLiveEvents::GameRequest>{};
-            // Player report 110: a story cutscene asked by an entry of its flow (the Deku Tree's meeting by
-            // KokiriForest_Meet_DekuTree_MeetDekuTree_01) counts as asked by the flow's name, not as another event.
-            for (CoopLiveEvents::GameRequest& r : asked) {
-                const auto story = CoopSharedScenes::StoryOfRequest(r.name);
-                if (story && *story != std::string_view(r.name) && story->size() < sizeof r.name) {
-                    std::memcpy(r.name, story->data(), story->size());
-                    r.name[story->size()] = 0;
-                }
-            }
+            const auto asked =
+                by_request ? requests.Since(story_cursor_) : std::vector<CoopLiveEvents::GameRequest>{};
+            // Player report 110: a story cutscene asked by its event setting (the Deku Tree's meeting:
+            // KokiriForest_Meet_DekuTree_MeetDekuTree_01, flow Meet_DekuTree) is a story start by that setting,
+            // not another event; it is sent and joined by the setting (coop_shared_scenes.h).
+            static const std::vector<std::string_view> request_names = CoopSharedScenes::RequestNames();
             const auto found = story_source_.Frame(
-                by_request ? CoopLiveEvents::RequestedOf(asked, names) : std::nullopt,
-                CoopLiveEvents::RequestedOtherOf(asked, names), by_request, running,
+                by_request ? CoopLiveEvents::RequestedOf(asked, request_names) : std::nullopt,
+                CoopLiveEvents::RequestedOtherOf(asked, request_names), by_request, running,
                 [&] { return CoopLiveEvents::FindRunningEvent(&ReadGuest, &*memory, base_, names); });
             LogScanOnly(story_source_, story_scan_only_, "cutscene", &story_refused_);
             const auto story_flag = [&](std::uint32_t h) { return coop::host::GameFlags(*memory).get_bool(h); };
-            if (found && !CoopSharedScenes::GateHolds(*found, story_flag)) {
+            if (found && !CoopSharedScenes::Askable(*found)) {
+                // A story quest's flow (Get_StoneOfWater) the search found while one of its settings runs that
+                // this game's request did not name: no game can be asked for it (report 110 review).
+                LOG_INFO(Core, "coop: cutscene: the search found {}, which the game has no event setting of: not "
+                               "sent", *found);
+            } else if (found && !CoopSharedScenes::GateHolds(*found, story_flag)) {
                 // Our game cannot be in that scene now (intro-ocarina): a name left in the session.
                 LOG_INFO(Core, "coop: cutscene: the search found the story cutscene {}, which our story is not at "
                                "yet: not sent", *found);
@@ -2063,15 +2064,10 @@ private:
         const auto name = shared_joiner_.Next(
             here,
             [&](const std::string& n) {
-                // The game's flag is per entry asked (review of report 110): the placed entry's, then the flow's;
-                // a name with no flag in the game counts as played (CoopSharedScenes::Played).
-                if (!memory) {
-                    return false;
-                }
-                coop::host::GameFlags flags(*memory);
-                return CoopSharedScenes::Played(n, here.scene, [&](const std::string& f) {
-                    return flags.get_bool(coop::host::flag_hash(f));
-                });
+                // A story name or setting: its own played flag (every event setting has one).
+                return memory && coop::host::GameFlags(*memory)
+                                     .get_bool(coop::host::flag_hash("HavePlayedEvent." + n))
+                                     .value_or(false);
             },
             [&](std::uint32_t h) {
                 return memory ? coop::host::GameFlags(*memory).get_bool(h) : std::optional<bool>{};
@@ -2081,9 +2077,8 @@ private:
         }
         if (name) {
             std::lock_guard lock(live_mutex_);
-            // Asked as the starter's game asked it: by the placed entry of its flow there (report 110), else by name.
-            live_requester_.Want(std::string(CoopSharedScenes::RequestFor(*name, here.scene)), here.scene, now_us,
-                                 CoopSharedScenes::kJoinUs);
+            // Asked as the starter's game asked it: by the story name or setting it sent (report 110).
+            live_requester_.Want(*name, here.scene, now_us, CoopSharedScenes::kJoinUs);
         }
     }
 

@@ -37,53 +37,44 @@ namespace CoopSharedScenes {
 std::span<const std::string_view> Names();
 bool IsShared(std::string_view name);
 
-// Player report 110 (Deku Tree): a story cutscene is often asked for by an
-// entry of its flow, not by the flow's name. The Great Deku Tree's meeting is
-// asked by the EventRequestActor placed in KokiriForest_Child as
-// "KokiriForest_Meet_DekuTree_MeetDekuTree_01" (flow Meet_DekuTree); the
-// game's request then named no story event, the story search's
+// Player report 110 (Deku Tree): the game asks for an event by its *event
+// setting* (RSDB EventSetting: a name, the flow and the entry it plays), and
+// keeps "already played" per setting (HavePlayedEvent.<setting>; every one of
+// the game's 2172 named settings has that flag). Most story cutscenes are a
+// setting of their own name; the story quests are not: the Great Deku Tree's
+// meeting is the setting KokiriForest_Meet_DekuTree_MeetDekuTree_01 (flow
+// Meet_DekuTree), asked by the EventRequestActor placed in KokiriForest_Child.
+// The game's request then named no story event, the story search's
 // "Meet_DekuTree" counted as a leftover of another event (intro-ocarina) and
-// was never sent: each player watched it alone. The placed story entries
-// (coop_story_requests.inc, tools/puppet_pack/story_requests.py).
+// was never sent: each player watched it alone. So the key of such a cutscene
+// is its setting: the starter sends it, a game that joins asks for it and
+// reads its played flag (coop_story_requests.inc,
+// tools/puppet_pack/story_requests.py: the placed settings of the story flows
+// that are no setting themselves, gimmicks and boss events left out).
 struct StoryRequest {
     std::string_view scene;    // where it is placed
-    std::string_view request;  // its RequestEventName
-    std::string_view flow;     // the shared story cutscene it starts
+    std::string_view request;  // the setting (its RequestEventName)
+    std::string_view flow;     // the shared story flow it plays
 };
 std::span<const StoryRequest> StoryRequests();
-// The shared story cutscene a request of our game starts: `request` itself
-// when it is a story name, the flow of a placed story entry, else nothing.
+// The shared story flow a request of our game plays: `request` itself when it
+// is a story name, the flow of a story setting in the table, else nothing.
 std::optional<std::string_view> StoryOfRequest(std::string_view request);
-// What our game is asked for to play `flow` in `scene`: the placed story
-// entry there (the request the starter's game made), else the flow's name.
-std::string_view RequestFor(std::string_view flow, std::string_view scene);
-// The game's "already played" flags for `flow` in `scene`, the first the one
-// to trust: the game keeps HavePlayedEvent per entry asked
-// (HavePlayedEvent.KokiriForest_Meet_DekuTree_MeetDekuTree_01; there is no
-// HavePlayedEvent.Meet_DekuTree), so a placed story entry gives its own flag,
-// then the flow's (a story name asked by itself has just that one). Played
-// when any is set.
-std::vector<std::string> PlayedFlagsFor(std::string_view flow, std::string_view scene);
-// Whether our game has `flow` played in `scene`: `read(flag name)` gives a
-// flag's value, nothing when the game has no such flag. Played when any of
-// PlayedFlagsFor is set. Of the 211 story names, 5 have no HavePlayedEvent
-// flag of their own (Meet_DekuTree, Get_StoneOf{Forest,Fire,Water},
-// Meet_GreatFairy: quests; GameDataList.Product.110); where no placed entry
-// gives one either, the game cannot tell us, so it counts as played (not
-// joined): a joined replay of a quest's scene is the bug this guards.
-template <typename Read>
-bool Played(std::string_view flow, std::string_view scene, Read&& read) {
-    bool known = false;
-    for (const std::string& f : PlayedFlagsFor(flow, scene)) {
-        if (const std::optional<bool> v = read(f)) {
-            if (*v) {
-                return true;
-            }
-            known = true;
-        }
-    }
-    return !known;
-}
+// A setting in the table (sent and joined by that name).
+bool IsStorySetting(std::string_view name);
+// A story start to send or join: a story name or a story setting.
+bool IsStory(std::string_view name);
+// The names a request of our game counts as a story start by: the story
+// names and the story settings (RequestedOf / RequestedOtherOf).
+std::vector<std::string_view> RequestNames();
+// Whether a game can be asked for `name`: false for the story names the game
+// has no event setting of (the quests Meet_DekuTree, Meet_GreatFairy,
+// Get_StoneOf{Forest,Fire,Water}, which also have no played flag, and
+// Dm_FinalBattle_0000, Dm_LostWood_0030, played inside other settings). Such
+// a name is neither sent nor joined: asking it plays nothing, and a game
+// could not tell that it played it. Their cutscenes are settings of their
+// own (the table above, Dm_FairyFountain_*, the boss events).
+bool Askable(std::string_view name);
 
 // How near the starter must be to our Link for us to join: same room. The
 // Kokiri bridge and Saria are about 20 m apart; the Deku Tree's clearing is

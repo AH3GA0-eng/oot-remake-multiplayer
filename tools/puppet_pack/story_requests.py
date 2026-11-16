@@ -1,25 +1,23 @@
-"""Writes lichii/hook/coop_story_requests.inc: which shared story cutscene each placed event request starts.
+"""Writes lichii/hook/coop_story_requests.inc: the event settings the shared story cutscenes are asked by.
 
     python -m puppet_pack.story_requests --romfs <romfs> --out lichii/hook/coop_story_requests.inc
 
-A story cutscene is often not asked for by its event flow's name. The Great Deku Tree's
-meeting is asked by an `EventRequestActor` placed in KokiriForest_Child whose
-`RequestEventName` is `KokiriForest_Meet_DekuTree_MeetDekuTree_01`, an entry point of the
-flow `Meet_DekuTree` (player report 110, docs/scenes.md "Shared story cutscenes"). Of the
-game's 465 placed request names only 45 are flow names; the rest are entries, each written
-in the flow file that holds it.
+The game asks for an event by its event setting (RSDB/EventSetting: a name, the flow and the entry
+it plays) and keeps "already played" per setting (`HavePlayedEvent.<setting>`). Most shared story
+cutscenes (`kNames` in lichii/hook/coop_shared_scenes.cpp) are a setting of their own name. Seven
+are not: the quests Meet_DekuTree, Meet_GreatFairy and Get_StoneOf{Forest,Fire,Water}, and
+Dm_FinalBattle_0000 and Dm_LostWood_0030. The Great Deku Tree's meeting is the setting
+`KokiriForest_Meet_DekuTree_MeetDekuTree_01` (flow Meet_DekuTree), asked by an EventRequestActor
+placed in KokiriForest_Child (player report 110, docs/scenes.md "Shared story cutscenes").
 
-For every placement with a `RequestEventName` that is not itself a flow name, the table
-keeps (scene, request name, flow) when exactly one flow file holds that name, the flow is one
-of the shared story cutscenes (`kNames` in lichii/hook/coop_shared_scenes.cpp), and the request
-name carries the flow's name as a whole part (`KokiriForest_Meet_DekuTree_MeetDekuTree_01`,
-`Get_StoneOfFire_MeetDarnia`). That leaves out the room gimmicks a story flow's file also holds
-(`GoronCity_SecretHole_AppearTreasureBox`, `InsideTheDekuTree_BossArea_ShutIn`): they are no
-story moment, and the live events have the dungeon ones. One entry per scene and flow is kept
-(the first by name), so a game that joins asks for the same request as the starter's.
-The game keeps "already played" per entry asked (`HavePlayedEvent.<entry>`; there is no
-`HavePlayedEvent.Meet_DekuTree`), and a joining game reads that flag before it plays: every
-row's flag must be in GameData/GameDataList.Product.*.byml.zs, else the tool stops.
+The table keeps (scene, setting, flow) for every placed `RequestEventName` whose setting plays a
+story flow that is no setting itself, and whose name carries the flow's name as a whole part
+(`Get_StoneOfWater_MeetRuto`). That leaves out the room gimmicks such a flow also plays
+(`GoronCity_SecretHole_AppearTreasureBox`, `InsideTheDekuTree_BossArea_ShutIn`) and the boss
+events (a name with `Boss`: the boss scenes have them, docs/dungeons-boss.md). It also writes
+`kNoSetting`, the story names with no setting: no game can be asked for them, so they are neither
+sent nor joined. Every row's setting and every other story name must have its played flag in
+GameData/GameDataList.Product.*.byml.zs, else the tool stops.
 Names only: nothing of the game's data but its own event and scene names.
 """
 import argparse
@@ -32,7 +30,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "puppet_pack"  # noqa: A001
 
-from . import zs  # noqa: E402
+from . import byml, zs  # noqa: E402
 from .designed_enemies import scene_actors  # noqa: E402
 
 SHARED_SCENES_CPP = os.path.join(os.path.dirname(__file__), "..", "..", "lichii", "hook", "coop_shared_scenes.cpp")
@@ -57,19 +55,28 @@ def requests(scenes):
     return out
 
 
-def table(found, flows, story):
-    """[(scene, request, flow)] sorted: `flows` is {flow name: its file's bytes}."""
-    rows = []
-    for scene, name in sorted(found):
-        if name in flows:
-            continue  # asked by the flow's own name: the story list has it already
-        holders = [f for f, data in flows.items() if name.encode() in data]
-        if len(holders) != 1 or holders[0] not in story or not carries(name, holders[0]):
-            continue
-        if any(r[0] == scene and r[2] == holders[0] for r in rows):
-            continue  # one entry per scene and flow
-        rows.append((scene, name, holders[0]))
-    return rows
+def event_settings(rows):
+    """{setting name: flow name} from the rows of RSDB/EventSetting (a setting with no flow: "")."""
+    out = {}
+    for r in rows:
+        flow = os.path.basename(r.get("FlowchartFileName", "") or "")
+        out[r["__RowId"]] = flow[: -len(".evfc")] if flow.endswith(".evfc") else flow
+    return out
+
+
+def table(found, settings, story):
+    """[(scene, setting, flow)] sorted: the placed settings of the story flows that are no setting."""
+    rows = set()
+    for scene, name in found:
+        flow = settings.get(name)
+        if flow in story and flow not in settings and carries(name, flow) and "Boss" not in name:
+            rows.add((scene, name, flow))
+    return sorted(rows)
+
+
+def no_setting(story, settings):
+    """The story names the game has no event setting of."""
+    return sorted(n for n in story if n not in settings)
 
 
 def carries(name, flow):
@@ -109,48 +116,55 @@ def played_flag(request):
     return "HavePlayedEvent." + request
 
 
-def missing_played_flags(rows, gamedata):
-    """Rows whose played flag's hash is not in `gamedata` (the decompressed, big-endian GameDataList)."""
-    return [r for r in rows if murmur3(played_flag(r[1])).to_bytes(4, "big") not in gamedata]
+def missing_played_flags(names, gamedata):
+    """The names whose played flag's hash is not in `gamedata` (the decompressed, big-endian GameDataList)."""
+    return [n for n in names if murmur3(played_flag(n)).to_bytes(4, "big") not in gamedata]
 
 
-def render(rows):
+def render(rows, nosetting):
     lines = [
-        "// Generated by tools/puppet_pack/story_requests.py from the game's Banc placements and event flows;",
-        "// do not edit. A placed event request (scene, RequestEventName) that starts a shared story cutscene",
-        "// by an entry of its flow (coop_shared_scenes.cpp StoryOfRequest, RequestFor).",
+        "// Generated by tools/puppet_pack/story_requests.py from the game's EventSetting, Banc placements and",
+        "// GameDataList; do not edit. The placed event settings (scene, RequestEventName) of the shared story",
+        "// flows that are no setting themselves (coop_shared_scenes.h StoryRequest), then those story names.",
         "constexpr StoryRequest kStoryRequests[] = {",
     ]
     for scene, name, flow in rows:
         lines.append(f'    {{"{scene}", "{name}", "{flow}"}},')
+    lines.append("};")
+    lines.append("constexpr std::string_view kNoSetting[] = {")
+    for n in nosetting:
+        lines.append(f'    "{n}",')
     lines.append("};")
     return "\n".join(lines) + "\n"
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--romfs", required=True, help="your own extracted game (holds Banc and Event/EventFlow)")
+    ap.add_argument("--romfs", required=True, help="your own extracted game (holds Banc, RSDB and GameData)")
     ap.add_argument("--out", required=True)
     args = ap.parse_args(argv)
     with open(SHARED_SCENES_CPP, encoding="utf-8") as fh:
         story = story_names(fh.read())
     dicts = zs.Dicts.from_romfs(args.romfs)
-    flows = {}
-    for path in glob.glob(os.path.join(args.romfs, "Event", "EventFlow", "*.bfevfl.zs")):
-        with open(path, "rb") as fh:
-            flows[os.path.basename(path)[: -len(".bfevfl.zs")]] = dicts.decompress(fh.read())
-    rows = table(requests(scene_actors(args.romfs)), flows, story)
-    lists = sorted(glob.glob(os.path.join(args.romfs, "GameData", "GameDataList.Product.*.byml.zs")))
-    if not lists:
-        raise SystemExit("no GameData/GameDataList.Product.*.byml.zs in the romfs")
-    with open(lists[-1], "rb") as fh:
-        gamedata = zs.maybe_decompress(dicts, fh.read())
-    missing = missing_played_flags(rows, gamedata)
+
+    def read(*parts):
+        paths = sorted(glob.glob(os.path.join(args.romfs, *parts)))
+        if not paths:
+            raise SystemExit(f"no {'/'.join(parts)} in the romfs")
+        with open(paths[-1], "rb") as fh:
+            return zs.maybe_decompress(dicts, fh.read())
+
+    settings = event_settings(byml.loads(read("RSDB", "EventSetting.Product.*.rstbl.byml.zs")))
+    rows = table(requests(scene_actors(args.romfs)), settings, story)
+    nosetting = no_setting(story, settings)
+    gamedata = read("GameData", "GameDataList.Product.*.byml.zs")
+    asked = [r[1] for r in rows] + sorted(story - set(nosetting))
+    missing = missing_played_flags(asked, gamedata)
     if missing:
-        raise SystemExit("no played flag in the game for: " + ", ".join(played_flag(r[1]) for r in missing))
+        raise SystemExit("no played flag in the game for: " + ", ".join(played_flag(n) for n in missing))
     with open(args.out, "w", newline="\n") as fh:
-        fh.write(render(rows))
-    print(f"{len(rows)} story requests by entry name")
+        fh.write(render(rows, nosetting))
+    print(f"{len(rows)} story settings, {len(nosetting)} story names with no setting")
 
 
 if __name__ == "__main__":
