@@ -703,11 +703,10 @@ private:
     std::optional<std::string> TookKey(std::uint64_t hash) const;  // its count
     // A token's id (TokenId) from where it is, or 0: not known.
     std::uint64_t IdentifyToken(const coop::protocol::Vec3& at, std::uint64_t now_us);
-    // Another player's break of a token we know: its spot is kept, and its
     // Another player's break of a token we know: its spot is kept, and our own
-// token at that place (or with that id) is taken away. No 64-bit key is set
-// here: the placement key is the game's to write at the pickup, and it comes
-// in through the flag list.
+    // token at that place (or with that id) is taken away. No 64-bit key is set
+    // here: the placement key is the game's to write at the pickup, and it comes
+    // in through the flag list.
     void Token(const coop::protocol::WorldBreak& b);
     void LocalBreak(Object& o, std::uint64_t now_us, const char* how, Out& out);
     void MakeBreak(Object& o, Break& b, std::uint64_t now_us, Out& out);

@@ -418,6 +418,14 @@ void WorldSync::Reset() {
     lend_quiet_until_ = 0;
     player_.reset();
     probe_.Reset();
+    // What the last save or session had taken (TakenKey): another save, or the
+    // same one after a disconnect, is read again from its own keys on the next
+    // scene (coop_objects.cpp, ForgetGold). Kept, it would delete a Skulltula
+    // and token this save never took.
+    taken_token_ids_.clear();
+    taken_skulltulas_.clear();
+    taken_places_.clear();
+    TakeTakenPlacements();
     std::lock_guard lock(inbox_mutex_);
     inbox_.clear();
 }
@@ -1381,7 +1389,12 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
                 continue;
             }
             if (const auto b = broken_.find(s.hash);
-                !o.kept && b != broken_.end() &&
+                // A lying key or token (o.key) is taken once: made again (its
+                // room loaded again in a game whose own flag the other player's
+                // take never set) it is deleted again by MakeBreak, never
+                // "back" for everyone. Same root as the Gold Skulltula above
+                // (issue 89): only what respawns by itself (pots, grass) is back.
+                !o.kept && !o.key && b != broken_.end() &&
                 b->second.seen_go && now_us - b->second.gone_us >= kRespawnUs &&
                 (!life || *life > 0)) {
                 // We saw it go and here it is again: the game put it back.

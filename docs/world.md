@@ -86,7 +86,7 @@ The grass of the fields is drawn by `game::foliage::Module`; a cut is no actor a
 
 - has had the object for a while: writes life 0, so the game breaks it itself. If the object still stands, it is deleted with the game's own delete call: grass after 0.4 s whatever its life says (the Kokiri-side tufts kept standing at life 0), anything without a life after 0.4 s, anything else after 6 s and only if its life is back above 0 (a crate takes 4.6 s to go by itself).
 - sees the object for the first time after the break (a late joiner, an area that loaded later): deletes it at once, no break effect.
-- A game that saw its own copy go and sees it again 3 s or more later (a respawning pot) sends the break with `restored`; everyone forgets the break.
+- A game that saw its own copy go and sees it again 3 s or more later (a respawning pot) sends the break with `restored`; everyone forgets the break. Never for a pickup (a lying small key or a Gold token, `o.key`) or a Gold Skulltula whose key is 1: taken once, it is deleted again when its room makes it again (issue 89; restoring it let it be taken twice).
 
 When the last player leaves a scene the server forgets its breaks, as the game restores everything on a reload.
 

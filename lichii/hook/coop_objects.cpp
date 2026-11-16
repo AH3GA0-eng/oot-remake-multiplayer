@@ -1358,6 +1358,7 @@ public:
             if (sharing_) {
                 sync_.Reset();
                 world_.Reset();
+                ForgetGold();
                 block_retry_.clear();
                 ForgetBosses();  // (not connected, or no scene: the title)
                 // No owner or copy any more: our game runs every boss of its own again (a copy held at life 1
@@ -1572,7 +1573,9 @@ public:
                              hex);
                 }
             }
-            gold_baseline_tokens_ = (std::max)(now_tokens, gold_baseline_tokens_);
+            // The last count seen, not the highest: after a give-back (both took
+            // the same token) the next real take is a rise again.
+            gold_baseline_tokens_ = now_tokens;
         }
         if (const unsigned twice = sync_.ChestsOpenedTwice(); twice != chests_twice_seen_) {
             // Issue 195: a chest shown open that our Link opened again; the
@@ -2258,6 +2261,7 @@ private:
             TheMover().ForgetReplayed();
             sync_.Reset();
             world_.Reset();
+            ForgetGold();
             block_retry_.clear();
             ForgetBosses();
             boss_hit_ids_.clear();
@@ -4106,6 +4110,13 @@ private:
     std::string gold_baseline_scene_;
     std::int32_t gold_baseline_tokens_ = 0;
     CoopEvery::Every gold_sweep_{CoopEvery::kHalfSecondUs};  // the token count, twice a second
+    // With world_.Reset(): the next scene reads this save's keys again (issue 89).
+    void ForgetGold() {
+        keys_scene_.clear();
+        gold_taken_.clear();
+        gold_baseline_scene_.clear();
+        gold_baseline_tokens_ = 0;
+    }
     Sync sync_;
     Kernel::KProcess* process_ = nullptr;
     u64 main_ = 0;

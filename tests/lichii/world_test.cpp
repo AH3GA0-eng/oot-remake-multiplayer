@@ -2927,3 +2927,37 @@ TEST_CASE("world: a moving floor moved in one game is sent and held in the other
     Walk(far, 1000 * kMs, {at(1.0f)}, away);
     CHECK(Walk(far, 1100 * kMs, {at(3.0f)}, away).send.empty());
 }
+
+TEST_CASE("world: a small key taken elsewhere and made again by its room is deleted again, never 'back'") {
+    // Same root as the Zora River token (issue 89): our game never set the key's
+    // own flag (another player took it), so a room loaded again makes it again.
+    // The "back: break forgotten" rule is for what respawns by itself (pots), not
+    // for a pickup: restored, the key could be taken a second time.
+    WorldSync b;
+    WellWalk(b, 1000 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey)});
+    b.Receive(KeyBreak(0x77));
+    WellWalk(b, 1100 * kMs, {Thing(0x100, 0x77, std::nullopt, kKey)});
+    CHECK(Removed(b, 0x100));
+    for (std::uint64_t t = 1200; t <= 2000; t += 100) {
+        WellWalk(b, t * kMs, {});  // gone (seen go)
+    }
+    for (std::uint64_t t = 6000; t <= 8000; t += 100) {
+        const auto out = WellWalk(b, t * kMs, {Thing(0x500, 0x77, std::nullopt, kKey)});
+        CHECK(Sent<proto::WorldBreak>(out).empty());  // never "restored"
+        CHECK(out.give_back.empty());
+    }
+    CHECK(Removed(b, 0x500));
+}
+
+TEST_CASE("world: what TakenKey remembered is forgotten with the session (another save)") {
+    WorldSync w;
+    w.TakenKey(kGoldHash);
+    CHECK(w.IsSkulltulaTaken(kGoldHash));
+    CHECK(w.IsTokenTaken(CoopWorld::TokenId(kGoldHash)));
+    w.Reset();  // disconnected, or another game: the next scene reads its own keys
+    CHECK_FALSE(w.IsSkulltulaTaken(kGoldHash));
+    CHECK_FALSE(w.IsTokenTaken(CoopWorld::TokenId(kGoldHash)));
+    GraveWalk(w, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(w, 1100 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    CHECK_FALSE(Removed(w, 0x100));
+}
