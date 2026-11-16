@@ -94,6 +94,7 @@ struct FrameReport {
   bool save_load = false;  // (save_load_flags may be 0: a load through the title, #96)
   int save_load_flags = 0;
   int save_load_frames = 0;
+  bool save_load_native = false;  // said by the game's own load nodes (patch 0024), not the old signs
 };
 
 class Session {
@@ -110,6 +111,18 @@ class Session {
   // (FlagWatcher::set_title; passed on also while not connected). Never set
   // on the emulator.
   void set_title_up(bool up) { title_up_ = up; }
+  // Emulator thread, before frame(): Hookshot's save-load wraps (patch 0024; FlagWatcher::set_native_loads,
+  // note_save_load_start, note_save_loaded). Passed on also while not connected: a load then is taken at the
+  // connection's first frame. Never set on the emulator.
+  void set_native_save_loads(bool on) {
+    if (watcher_) watcher_->set_native_loads(on);
+  }
+  void note_save_load_start() {
+    if (watcher_) watcher_->note_save_load_start();
+  }
+  void note_save_loaded(bool retry = false) {
+    if (watcher_) watcher_->note_save_loaded(retry);
+  }
 
   // Emulator thread, once per emulated frame. `reading` is this frame's
   // PlayerReader::read() (nothing when the game is not the right one);
