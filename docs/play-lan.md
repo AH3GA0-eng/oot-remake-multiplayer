@@ -100,7 +100,7 @@ Split screen is **experimental** in this release: each player runs a **full game
 3. **The first time**, Windows asks to let Nucleus make changes. Nucleus makes the links to the game's files as administrator. Later starts do not ask.
 4. The games start one after another, about 15 seconds apart. Player 1's start also opens the server in a window of its own (with **This PC only**: port 27590, a new join password each session, nothing to type). Each game on this PC joins it by itself. Player 1 hosts and plays their own saves. Players 2 to 4 get the host's save when they join, and their own files stay in `nucleus-players\player2` to `player4` beside the game.
 5. Each controller works in its own window, even while another window is in front. The keyboard and mouse go to the keyboard player's window when it is in front: click it to play there. If a game reads the wrong controller, choose the right one on its **Multiplayer** tab, under **Settings > Controller** (it applies at once).
-6. **To stop**, end the session in Nucleus. It closes the games and the server. It closes **every** `coop_server.exe` on this PC, so do not host with `Host.bat` or `start-server.cmd` at the same time.
+6. **To stop**, end the session in Nucleus. It closes the games and the server. It closes **every** `coop_server.exe` on this PC, so do not host with `Host.bat` or `start-server.cmd` at the same time. If one of those (or a session not ended) is still running when you press **Play**, the handler starts no server and says so: close that server window, end the session and press **Play** again.
 
 ### Friends on other PCs (Allow online players)
 

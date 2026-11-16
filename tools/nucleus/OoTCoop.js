@@ -148,8 +148,9 @@ function coopStartOnline(kit) {
     if (made) {
         password = coopNewKey();
     }
-    // server_bind: the server listens on that address only, so the players on this PC go there too. server_allow:
-    // this PC (127.0.0.1) is added, else its own players would be refused.
+    // server_bind: the server listens on that address only, so the players on this PC go there too (and come from
+    // it). server_allow: this PC's address the players come from (127.0.0.1, or the bound one) is added, else its own
+    // players would be refused.
     var bind = coopGetKey(options, "server_bind");
     var allow = coopGetKey(options, "server_allow").replace(/\s/g, "");
     var args = String(port);
@@ -159,16 +160,21 @@ function coopStartOnline(kit) {
         bind = "";
     }
     if (/^[0-9.\/,]+$/.test(allow)) {
-        args += " -Allow " + allow + ",127.0.0.1";
+        args += " -Allow " + allow + ",127.0.0.1" + (bind !== "" ? "," + bind : "");
     }
-    var cmd = System.Environment.GetEnvironmentVariable("ComSpec") || "C:\\Windows\\System32\\cmd.exe";
-    if (made) {
-        System.Environment.SetEnvironmentVariable("OOT_COOP_SESSION_PASSWORD", password);
-    }
-    Context.StartProcess(String(cmd), "/c start \"Squadala server\" /d \"" + kit + "\" \"" +
-                         coopPath(kit, "start-server.cmd") + "\" " + args, false);
-    if (made) {
-        System.Environment.SetEnvironmentVariable("OOT_COOP_SESSION_PASSWORD", null);
+    // A window of its own that closes with the server: start runs cmd /c (a .cmd started by itself would be cmd /k,
+    // whose window stays open after Nucleus closes coop_server). The inner cmd /c drops the outer pair of quotes.
+    var cmd = String(System.Environment.GetEnvironmentVariable("ComSpec") || "C:\\Windows\\System32\\cmd.exe");
+    try {
+        if (made) {
+            System.Environment.SetEnvironmentVariable("OOT_COOP_SESSION_PASSWORD", password);
+        }
+        Context.StartProcess(cmd, "/c start \"Squadala server\" /d \"" + kit + "\" \"" + cmd + "\" /c \"\"" +
+                             coopPath(kit, "start-server.cmd") + "\" " + args + "\"", false);
+    } finally {
+        if (made) {
+            System.Environment.SetEnvironmentVariable("OOT_COOP_SESSION_PASSWORD", null);
+        }
     }
     return { password: password, server: bind !== "" ? bind : "127.0.0.1", port: port, pads: 0 };
 }
@@ -243,6 +249,28 @@ function coopNewKey() {
     return String(System.Guid.NewGuid().ToString("N"));
 }
 
+// How many coop_server.exe run on this PC now (0 when it cannot be told). A CLR array may come over with Length or
+// length.
+function coopServersRunning() {
+    try {
+        var ps = System.Diagnostics.Process.GetProcessesByName("coop_server");
+        var n = ps.Length !== undefined ? ps.Length : ps.length;
+        return Number(n) || 0;
+    } catch (e) {
+        return 0;
+    }
+}
+
+// A message for the player: a message box when the script may show one, and Nucleus's log either way.
+function coopTell(text) {
+    Context.Log("OoT Co-op: " + text);
+    try {
+        System.Windows.Forms.MessageBox.Show(text, "Squadala!");
+    } catch (e) {
+        // no Windows Forms in this script engine: the log only
+    }
+}
+
 Game.Play = function () {
     var player = Context.PlayerID + 1;                  // 1 to 4
     var game = String(Context.RootInstallFolder);       // the game folder Nucleus was given
@@ -255,7 +283,16 @@ Game.Play = function () {
     // The session: player 1 makes it and starts the server; the others take it.
     // session.txt: the join password, the server's address, its port (a line each).
     if (player === 1) {
-        if (kit !== "" && coopWantsOnline()) {
+        var running = kit !== "" ? coopServersRunning() : 0;
+        if (running > 0) {
+            // Another server (Host.bat, start-server.cmd, an earlier session not ended) holds the port or has
+            // another join password: this session's games could not join. Nothing is started; it is not closed here
+            // (a friend may be playing on it).
+            coopSession = { password: coopNewKey(), server: "127.0.0.1", port: COOP_PORT, pads: 0 };
+            coopTell("A co-op server (coop_server.exe) is already running on this PC, so this session starts none " +
+                     "and its games cannot join. Close that server's window, end this " +
+                     "session in Nucleus and press Play again.");
+        } else if (kit !== "" && coopWantsOnline()) {
             coopSession = coopStartOnline(kit);
             Context.Log("OoT Co-op: online players allowed: the server window shows the invite code (also copied)");
         } else {

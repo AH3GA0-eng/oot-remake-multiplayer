@@ -80,7 +80,14 @@ var System = {
             return { ToString: function () { return "0123456789abcdef0123456789abcd" + (k < 10 ? "0" : "") + k; } };
         }
     },
-    Threading: { Thread: { Sleep: function () { } } }
+    Threading: { Thread: { Sleep: function () { } } },
+    // coop_server.exe processes running now (running), as a CLR array comes over (Length).
+    Diagnostics: {
+        Process: {
+            running: 0,
+            GetProcessesByName: function (n) { return { Length: n === "coop_server" ? System.Diagnostics.Process.running : 0 }; }
+        }
+    }
 };
 
 // A made-up kit: <root>\kit\server\coop_server.exe, the game in <root>\kit\hookshot\game, three instance folders.
@@ -109,11 +116,14 @@ var Game = {
     }
 };
 var startedWindows = [];   // cmd /c start ...: what ran, and OOT_COOP_SESSION_PASSWORD at that moment
+var failStart = false;     // the next cmd /c start throws (Process.Start failing in Nucleus)
+var logged = [];
 var Context = {
-    Log: function (s) { WScript.Echo("log: " + s); },
+    Log: function (s) { logged.push(s); },
     StartProcess: function (path, args) {
         if (/cmd\.exe$/i.test(path) && /^\/c start /.test(args)) {
             startedWindows.push({ args: args, password: System.Environment.vars.OOT_COOP_SESSION_PASSWORD });
+            if (failStart) { failStart = false; throw new Error("Process.Start failed"); }
         } else if (/cmd\.exe$/i.test(path)) {
             shell.Run("\"" + path + "\" " + args, 0, true);
         } else {
@@ -253,8 +263,10 @@ var on1 = playAs(0, "Allow online players"), on2 = playAs(1, "Allow online playe
 check(startedServers.length === 0, "online: coop_server not started directly: " + startedServers.join(" | "));
 check(startedWindows.length === 1, "online: one server window");
 var win = startedWindows.length ? startedWindows[0] : { args: "" };
-check(win.args === "/c start \"Squadala server\" /d \"" + kit + "\" \"" + fso.BuildPath(kit, "start-server.cmd") +
-      "\" 27515", "online: start-server.cmd on the kit's port: " + win.args);
+var comspec = shell.ExpandEnvironmentStrings("%ComSpec%");
+check(win.args === "/c start \"Squadala server\" /d \"" + kit + "\" \"" + comspec + "\" /c \"\"" +
+      fso.BuildPath(kit, "start-server.cmd") + "\" 27515\"",
+      "online: start-server.cmd through cmd /c (the window closes with the server), the kit's port: " + win.args);
 var onPw = coopSession.password;
 check(/^[0-9a-f]{32}$/.test(onPw) && win.password === onPw, "online: a new session password, handed over: " + onPw);
 check(System.Environment.vars.OOT_COOP_SESSION_PASSWORD === undefined, "online: the password not left in the env");
@@ -275,8 +287,8 @@ writeFile(kitOptions, kitOptionsText + "server_password = hunter2x\r\nserver_bin
 newSession();
 var b1 = playAs(0, "Allow online players"), b2 = playAs(2, "Allow online players");
 win = startedWindows.length ? startedWindows[0] : { args: "" };
-check(/\.cmd" 27515 -Bind 25\.1\.2\.3 -Allow 25\.0\.0\.0\/8,26\.1\.2\.3,127\.0\.0\.1$/.test(win.args),
-      "online: -Bind and -Allow (+127.0.0.1): " + win.args);
+check(/\.cmd" 27515 -Bind 25\.1\.2\.3 -Allow 25\.0\.0\.0\/8,26\.1\.2\.3,127\.0\.0\.1,25\.1\.2\.3"$/.test(win.args),
+      "online: -Bind and -Allow (+127.0.0.1 and the bound address the local players come from): " + win.args);
 check(win.password === undefined, "online: the kit's own password is not handed over (start-server reads it)");
 check(b1.indexOf("server = 25.1.2.3\r\n") >= 0 && b1.indexOf("password = hunter2x\r\n") >= 0 &&
       b2.indexOf("server = 25.1.2.3\r\n") >= 0 && b2.indexOf("password = hunter2x\r\n") >= 0,
@@ -298,7 +310,27 @@ for (var lc = 0; lc < locals.length; lc++) {
 writeFile(fso.BuildPath(kit, "coop.ini"), "port = lots\r\n");
 newSession();
 playAs(0, "Allow online players");
-check(startedWindows.length === 1 && /\.cmd" 27510$/.test(startedWindows[0].args), "online: no kit port: 27510");
+check(startedWindows.length === 1 && /\.cmd" 27510"$/.test(startedWindows[0].args), "online: no kit port: 27510");
+
+// The start fails (Nucleus's Process.Start throws): the password is still taken out of the environment.
+newSession();
+failStart = true;
+var threw = false;
+try { playAs(0, "Allow online players"); } catch (e) { threw = true; }
+check(threw && startedWindows.length === 1 && /^[0-9a-f]{32}$/.test(startedWindows[0].password) &&
+      System.Environment.vars.OOT_COOP_SESSION_PASSWORD === undefined, "online: a failed start clears the env too");
+
+// A coop_server already running (Host.bat, start-server.cmd, a session not ended): nothing started, the player told.
+var modesRun = ["Allow online players", "This PC only"];
+for (var mr = 0; mr < modesRun.length; mr++) {
+    newSession();
+    logged = [];
+    System.Diagnostics.Process.running = 1;
+    playAs(0, modesRun[mr]);
+    System.Diagnostics.Process.running = 0;
+    check(startedWindows.length === 0 && startedServers.length === 0, modesRun[mr] + ": a running server: none started");
+    check(logged.join("\n").indexOf("already running") >= 0, modesRun[mr] + ": the player is told: " + logged.join(" | "));
+}
 // A session.txt of an older handler (the password only): 127.0.0.1, port 27590.
 writeFile(sessionTxt, "oldpassword\r\n");
 coopSession = null;
