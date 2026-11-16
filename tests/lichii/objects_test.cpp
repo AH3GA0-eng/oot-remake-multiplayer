@@ -4362,6 +4362,36 @@ TEST_CASE("objects: every actor our event is with is claimed, any kind and any d
     CHECK_FALSE(sync.EventPartner(0x100, 100 * kMs + Sync::kEventKeepUs));
 }
 
+TEST_CASE("objects: a boss or a fish our event binds stays unclaimed (row 97)") {
+    // A boss runs its own changes in our event through CoopBossNative::SetEvent and keeps its
+    // fight's owner; a fish keeps the lure rules (issue 151). Neither is an event partner, even
+    // bound by the event and near, nor through its own AI acting.
+    for (const std::string name : {"Enemy_DungeonBoss_Goma", "Enemy_MiddleBoss_Test", "Animal_Fish_Bass"}) {
+        CAPTURE(name);
+        for (const bool member : {true, false}) {
+            Sync sync;
+            sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+            Seen actor = Acting(0x100, 0x11, 100, 5.0f, "Wait", name);
+            Tick(sync, 0, {actor});
+            const proto::ObjectId id = *sync.IdOf(0x100);
+            Own(sync, id, 2);
+            sync.SetEvent(true, 10 * kMs);
+            actor.event_member = member ? std::optional<bool>(true) : std::nullopt;
+            std::optional<std::uint8_t> flags;
+            for (std::uint64_t t = 10; t < 700; t += 66) {
+                sync.Receive(OwnerSample(id, 2, t * kMs, 5.0f, 100, "Wait"));
+                sync.NoteTakeover(0x100, t * kMs, "Appear");
+                for (const auto& p : All<proto::ObjectPresent>(Tick(sync, t * kMs, {actor}))) {
+                    flags = p.objects[0].flags;
+                }
+            }
+            CHECK_FALSE(sync.EventPartner(0x100, 700 * kMs));
+            CHECK(sync.EventPartnerList(700 * kMs).empty());
+            CHECK(sync.EventPartners(700 * kMs) == 0);
+        }
+    }
+}
+
 TEST_CASE("objects: a boss's minion is made by the game that owns the boss, the others make that one (native boss sync)") {
     const std::string dodongo = "Enemy_DungeonBoss_Dodongo";
     const std::string baby = "Enemy_DungeonBoss_Dodongo_SpawnBabyDodongo";
