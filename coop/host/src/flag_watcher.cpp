@@ -540,6 +540,7 @@ void FlagWatcher::see_save_load() {
   if (!flags_back && !title) return;
   if (!flags_back) ++stats_.title_loads;
   moved_ = true;
+  seen_ = true;  // also with 0 flags back (the title sign): take_save_load reports it
   seen_flags_ = static_cast<int>(back_keys_.size());
   seen_frames_ = no_scene_frames_;
 }

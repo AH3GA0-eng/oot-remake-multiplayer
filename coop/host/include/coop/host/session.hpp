@@ -91,6 +91,7 @@ struct FrameReport {
   std::vector<FlagWatcher::Received> received;
   // A save load was seen this frame (FlagWatcher::take_save_load): distinct
   // flags gone back, frames with no scene. 0 when not.
+  bool save_load = false;  // (save_load_flags may be 0: a load through the title, #96)
   int save_load_flags = 0;
   int save_load_frames = 0;
 };

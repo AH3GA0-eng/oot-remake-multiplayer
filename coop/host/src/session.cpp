@@ -91,6 +91,7 @@ FrameReport Session::frame(const std::optional<PlayerReading>& reading, FlagStor
     report.host_reset = watcher_->take_reset();
     report.received = watcher_->take_received();
     if (const auto seen = watcher_->take_save_load()) {
+      report.save_load = true;
       report.save_load_flags = seen->flags;
       report.save_load_frames = seen->frames;
     }

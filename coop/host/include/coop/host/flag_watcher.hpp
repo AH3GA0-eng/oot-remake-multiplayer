@@ -304,7 +304,8 @@ class FlagWatcher {
     int frames = 0;
   };
   std::optional<SaveLoadSeen> take_save_load() {
-    if (seen_flags_ == 0) return std::nullopt;
+    if (!seen_) return std::nullopt;
+    seen_ = false;
     SaveLoadSeen s{seen_flags_, seen_frames_};
     seen_flags_ = 0;
     seen_frames_ = 0;
@@ -446,6 +447,7 @@ class FlagWatcher {
   bool window_ = false;
   bool moved_ = false;  // a save was loaded in it (the title seen, kSaveLoadMin flags back)
   std::set<FlagKey> back_keys_;  // distinct named flags gone back with no Link in this window
+  bool seen_ = false;            // take_save_load: a save load was seen, not taken yet
   int seen_flags_ = 0;           // take_save_load: the sign was taken with these
   int seen_frames_ = 0;
   int no_scene_frames_ = 0;  // frames in this window with no scene loaded

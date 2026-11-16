@@ -652,6 +652,9 @@ TEST_CASE("flag watcher: a guest's own richer save loaded through the title send
   CHECK(game_store.get(kKey0) == 0);
   CHECK(game_store.get(kHookshot) == 0);
   CHECK(w.stats().title_loads == 1);
+  const auto seen = w.take_save_load();  // reported with 0 flags back, so the hook resets its per-save state
+  REQUIRE(seen);
+  CHECK(seen->flags == 0);
   // Its own play after that goes out as always.
   game_store.set(kKey1, 1);
   CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(kKey1, 1)});

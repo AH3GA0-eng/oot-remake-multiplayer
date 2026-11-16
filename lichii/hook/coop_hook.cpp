@@ -691,7 +691,7 @@ public:
                 LOG_INFO(Core, "coop: live events: a new co-op session: the game's earlier event requests are forgotten");
             }
         }
-        if (report.save_load_flags != 0) {
+        if (report.save_load) {
             LOG_INFO(Core, "coop: flags: save load seen ({} flags back, {} frames without a scene)",
                      report.save_load_flags, report.save_load_frames);
             CoopTime::SaveLoaded(report.server_now_us);  // issue 159
