@@ -36,7 +36,8 @@ std::optional<bool> NearPlace(std::string_view event, std::string_view scene,
         }
         if (link_room) {
             // Near, but through a wall: that room is not loaded here.
-            const auto place_room = (*room_of)(std::array<float, 3>{p.x, p.y, p.z});
+            const auto place_room = p.room >= 0 ? std::optional<int>(p.room)
+                                                : (*room_of)(std::array<float, 3>{p.x, p.y, p.z});
             if (place_room && *place_room != *link_room) {
                 continue;
             }

@@ -137,6 +137,35 @@ TEST_CASE("live events: an event asked from two rooms under one flag is never st
     CHECK_FALSE(d.Next(held, "WaterTemple", false, std::array<float, 3>{-33.5f, 118.9f, -40.7f}).has_value());
 }
 
+TEST_CASE("live events: a place's own room, not a guess (Jabu-Jabu room 1's switch asker high on the wall)") {
+    // deku-ladder LANE1 hs-and-gate: the players at the switch were in room 17, the asker's place was guessed in room 5
+    // (nearer that room's placements), so the decider waited forever. Places carry their room (place_rooms.py).
+    int known = 0;
+    for (const auto& p : CoopLiveEvents::Places()) known += p.room >= 0 ? 1 : 0;
+    CHECK(known == 202);
+    const auto room_of_place = [](std::string_view event) {
+        for (const auto& p : CoopLiveEvents::Places()) {
+            if (p.event == event) return p.room;
+        }
+        return -2;
+    };
+    CHECK(room_of_place("InsideJabuJabuBellyRoom01StepSwitch") == 17);
+    CHECK(room_of_place("InsideTheDekuTree_Gimmick_RoomG_WaterLevelDrop") == 6);
+    CHECK(room_of_place("InsideTheDekuTree_Gimmick_FallingLadder") == 2);
+    const CoopLiveEvents::RoomOf wrong_guess = [](const std::array<float, 3>& at) -> std::optional<int> {
+        return at[1] > 105.0f ? 5 : 17;  // the asker's place (y 109.7) guessed in room 5; Link (y 102.5) in 17
+    };
+    CoopLiveEvents::Decider d;
+    const std::vector<std::string> held{"InsideJabuJabuBellyRoom01StepSwitch"};
+    CHECK(d.Next(held, "InsideJabuJabuBelly", false, std::array<float, 3>{10.2f, 102.4f, -51.4f}, &wrong_guess) ==
+          std::optional<std::string>("InsideJabuJabuBellyRoom01StepSwitch"));
+    // Still never through a wall: our Link in another room waits.
+    CoopLiveEvents::Decider d2;
+    const CoopLiveEvents::RoomOf elsewhere = [](const std::array<float, 3>&) -> std::optional<int> { return 5; };
+    CHECK_FALSE(d2.Next(held, "InsideJabuJabuBelly", false, std::array<float, 3>{10.2f, 102.4f, -51.4f}, &elsewhere)
+                    .has_value());
+}
+
 TEST_CASE("live events: every place is a shared gimmick event of a dungeon, in the scene its name says") {
     std::size_t deku = 0;
     for (const auto& p : CoopLiveEvents::Places()) {

@@ -133,6 +133,10 @@ TEST_CASE("eye switch: the table, its places and FirstOn's key") {
         }));
         CHECK(Dist(s.at, s.asker_at[0], s.asker_at[1], s.asker_at[2]) < 30.0f);
         CHECK_FALSE(CoopLiveEvents::SpansRooms(s.event, s.scene));
+        // deku-ladder: every switch asker's place has its own room (the decider never waits on a wrong guess).
+        CHECK(std::any_of(places.begin(), places.end(), [&](const CoopLiveEvents::Place& pl) {
+            return pl.event == s.event && pl.scene == s.scene && Dist(s.asker_at, pl.x, pl.y, pl.z) < 0.2f && pl.room >= 0;
+        }));
     }
     CHECK(scenes.size() == 9);
     CHECK(events.size() == 63);
