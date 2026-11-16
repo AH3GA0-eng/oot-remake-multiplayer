@@ -1306,23 +1306,24 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         // and so does the token it made: a kill and a pickup that crossed no
         // walk of ours would otherwise leave both here for a second pickup
         // (issue 89, 2026-11-17: 41 -> 42).
-        if (s.name == "Enemy_Skulltula_Gold" && taken_skulltulas_.contains(s.hash)) {
+        //
+        // A Gold Skulltula whose key is already 1 (TakenKey) goes as the walk sees it,
+        // and so does the token it made: a kill and a pickup that crossed no
+        // walk of ours would otherwise leave both here for a second pickup
+        // (issue 89, 2026-11-17: 41 -> 42).
+        //
+        // Cost measured (bench_walk.cpp, 300 actors, 500 walks a second): the
+        // name test for every actor and one set lookup is 0.38 ms a second,
+        // about 0.02% of the frame budget, and the token test was already there
+        // upstream. So this stays plain: no extra branch to save it.
+        if ((token && (IsTokenTaken(s.hash) || NearTakenPlace(s.position))) ||
+            (s.name == "Enemy_Skulltula_Gold" && IsSkulltulaTaken(s.hash))) {
             if (objects_.size() < 4096) {
-                Object& gone = objects_[s.address];
-                gone.address = s.address;
-                gone.hash = s.hash;
-                gone.name = s.name;
-                gone.remove = true;
-            }
-            continue;
-        }
-        if (IsGoldToken(s.name) && (taken_token_ids_.contains(s.hash) || NearTakenPlace(s.position))) {
-            if (objects_.size() < 4096) {
-                Object& gone = objects_[s.address];
-                gone.address = s.address;
-                gone.hash = s.hash;
-                gone.name = s.name;
-                gone.remove = true;
+                Object& g = objects_[s.address];
+                g.address = s.address;
+                g.hash = s.hash;
+                g.name = s.name;
+                g.remove = true;
             }
             continue;
         }
@@ -1444,8 +1445,12 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
         } else if (o.breakable && player && (!o.life || *o.life > 0)) {
             // A Gold Skulltula or token the group has taken left because we
             // asked for its deletion (TakenKey): that is not a break of ours.
-            const bool taken = (IsGoldToken(o.name) && IsTokenTaken(o.hash)) ||
-                               (o.name == "Enemy_Skulltula_Gold" && IsSkulltulaTaken(o.hash));
+            // (Both sets are empty in a session that took nothing: the name test
+            // is only reached then for a Gold Skulltula or a token, as o.breakable
+            // holds for anything else.)
+            const bool taken = (!taken_token_ids_.empty() && IsGoldToken(o.name) && IsTokenTaken(o.hash)) ||
+                               (!taken_skulltulas_.empty() && o.name == "Enemy_Skulltula_Gold" &&
+                                IsSkulltulaTaken(o.hash));
             const bool moved = Distance(o.position, o.first_position) >= 0.5f;
             if (!taken && from_link <= (moved ? kBreakNearM : kBreakReachM)) {
                 gone_.push_back({o, now_us});
