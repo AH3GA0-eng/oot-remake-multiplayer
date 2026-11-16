@@ -1119,6 +1119,67 @@ TEST_CASE("flag watcher: a dungeon map or compass the game drops to 0 is put bac
   CHECK(w.take_one_way_restores().empty());
 }
 
+TEST_CASE("flag watcher: a one-way flag the game takes back every frame is left to it until a load (forest-temple-a)") {
+  FakeStore game_store = dungeon_game();
+  ItemFlagStore store(game_store);
+  FlagWatcher w(SharedFlags({kDekuMap, kDekuCompass, kGotBomb}), FlagRole::host);
+  w.frame(store);
+  game_store.set(kDekuMap, 1);
+  w.frame(store);
+  constexpr int n = FlagWatcher::kOneWayFightRestores;
+  // The game writes its own 0 every frame (its own copy): put back n times, then left to it.
+  for (int i = 0; i < n; ++i) {
+    game_store.set(kDekuMap, 0);
+    w.frame(store);
+    CHECK(game_store.get(kDekuMap) == 1);
+  }
+  CHECK(w.take_one_way_fights().empty());
+  game_store.set(kDekuMap, 0);
+  w.frame(store);
+  CHECK(game_store.get(kDekuMap) == 0);
+  CHECK(w.stats().one_way_restores == static_cast<std::uint64_t>(n));
+  CHECK(w.stats().one_way_fights == 1);
+  CHECK(w.take_one_way_fights() == std::vector<FlagKey>{kDekuMap});
+  CHECK(w.take_one_way_fights().empty());
+  // No more writes from us for it: the loop is over.
+  for (int i = 0; i < 20; ++i) {
+    game_store.set(kDekuMap, 1);
+    w.frame(store);
+    game_store.set(kDekuMap, 0);
+    w.frame(store);
+    CHECK(game_store.get(kDekuMap) == 0);
+  }
+  CHECK(w.stats().one_way_restores == static_cast<std::uint64_t>(n));
+  CHECK(w.take_one_way_fights().empty());
+  // After a load the rule is back.
+  w.set_loading(true);
+  w.frame(store);
+  w.set_loading(false);
+  game_store.set(kDekuMap, 1);
+  w.frame(store);
+  game_store.set(kDekuMap, 0);
+  w.frame(store);
+  CHECK(game_store.get(kDekuMap) == 1);
+  CHECK(w.stats().one_way_restores == static_cast<std::uint64_t>(n) + 1);
+}
+
+TEST_CASE("flag watcher: a one-way flag the game drops now and then is always put back (forest-temple-a)") {
+  FakeStore game_store = dungeon_game();
+  ItemFlagStore store(game_store);
+  FlagWatcher w(SharedFlags({kDekuMap, kDekuCompass, kGotBomb}), FlagRole::player);
+  w.frame(store);
+  game_store.set(kDekuMap, 1);
+  w.frame(store);
+  for (int i = 0; i < 3 * FlagWatcher::kOneWayFightRestores; ++i) {
+    game_store.set(kDekuMap, 0);
+    w.frame(store);
+    CHECK(game_store.get(kDekuMap) == 1);
+    for (std::uint64_t f = 0; f <= FlagWatcher::kOneWayFightFrames; ++f) w.frame(store);
+  }
+  CHECK(w.stats().one_way_fights == 0);
+  CHECK(w.take_one_way_fights().empty());
+}
+
 TEST_CASE("flag watcher: both players open the map chest at the same time and both keep the map (issue 146)") {
   FakeStore host_game = dungeon_game();
   FakeStore player_game = dungeon_game();
