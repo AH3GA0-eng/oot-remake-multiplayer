@@ -1107,6 +1107,22 @@ public:
         // Issue 144: changes from the others to actors near our Link wait while
         // our Link is in an event (a talk, a cutscene).
         CoopObjects::SetLocalEvent(reading && reading->event_running.value_or(false));
+        {
+            // Row 97: which sign says our Link is in an event (PlayerReading::event_running):
+            // the event manager's word, or only our Link's own performer (a Deku Scrub's talk
+            // or AttackedEvent leaves the word 0). Logged on each change.
+            static int said = -1;  // -1 not yet, 0 none, 1 the word, 2 our Link's performer only
+            const int now = !(reading && reading->event_running.value_or(false)) ? 0
+                            : reading->event_by_link                                ? 2
+                                                                                    : 1;
+            if (now != said) {
+                if (now == 2 || said == 2) {
+                    LOG_INFO(Core, "coop: event: our Link {} (by its own event performer; the manager's word is 0)",
+                             now == 2 ? "is in an event" : "left the event its performer was bound into");
+                }
+                said = now;
+            }
+        }
         // Our own event hides the others (puppet, Navi, marker); playing the
         // Ocarina does not (coop/host/scene.hpp, local_event_hides).
         const bool event =

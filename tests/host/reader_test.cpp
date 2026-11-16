@@ -730,3 +730,50 @@ TEST_CASE("host reader: what the player wears") {
     CHECK(alone.read_equipment()->drawn == 0x00);
   }
 }
+
+TEST_CASE("host reader: our Link bound into an event counts as in an event, word 0 or not (row 97)") {
+  // A Deku Scrub's talk and AttackedEvent leave the event manager's word 0; the event binds our
+  // Link through its own performer ([[actor + 0x270] + 0x88 or 0x90], +0x10 the actor, +0x18 the link).
+  FakeMemory m;
+  const Layout l = make_game(m);
+  constexpr std::uint64_t kParts = 0x92000000, kPerformer = 0x92100000;
+  m.put_u64(l.actor1 + addr::kActorComponents, kParts);
+  m.put_u64(kParts + addr::kPerformerSlotAlt, kPerformer);  // the player's slot
+  m.put_u64(kPerformer + addr::kPerformerActor, l.actor1);
+  m.put_u64(kPerformer + addr::kPerformerLink, 0);
+  {
+    PlayerReader reader(m);
+    const auto r = reader.read();
+    REQUIRE(r);
+    CHECK(r->event_running == false);
+    CHECK_FALSE(r->event_by_link);
+  }
+  m.put_u64(kPerformer + addr::kPerformerLink, 0x106d7f9dd0);  // the scrub's talk binds it
+  {
+    PlayerReader reader(m);
+    const auto r = reader.read();
+    REQUIRE(r);
+    CHECK(r->event_running == true);
+    CHECK(r->event_by_link);
+    CHECK(reader.read_event_running() == true);
+    CHECK(reader.read_event_word() == false);
+  }
+  m.put_u64(l.events + addr::kEventRunning, 0x10000);  // the word too: not "by the link only"
+  {
+    PlayerReader reader(m);
+    const auto r = reader.read();
+    REQUIRE(r);
+    CHECK(r->event_running == true);
+    CHECK_FALSE(r->event_by_link);
+  }
+  // A performer that is not our Link's own (+0x10 another actor) is never read as ours.
+  m.put_u64(l.events + addr::kEventRunning, 0);
+  m.put_u64(kPerformer + addr::kPerformerActor, 0x12345678);
+  {
+    PlayerReader reader(m);
+    CHECK(reader.read_link_bound() == std::nullopt);
+    const auto r = reader.read();
+    REQUIRE(r);
+    CHECK(r->event_running == false);
+  }
+}
