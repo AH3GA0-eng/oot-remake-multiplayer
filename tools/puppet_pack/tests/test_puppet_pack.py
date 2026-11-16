@@ -1186,6 +1186,55 @@ class FullBuildTest(unittest.TestCase):
         m = build.build(self.romfs, os.path.join(self.dir, "mod0"), log=lambda *_: None, tunics=("red",), look_slots=0)
         self.assertIsNone(m["look_items"])
 
+    def test_look_copy_keeps_the_whole_model_info(self):
+        # held-piece: a copy's ModelInfo is the item's own with only the model project renamed,
+        # its `$parent`s merged in (the Giant's Knife names its model only through one), so the
+        # Biggoron's colour anims and the Giant's broken SubModel stay on the copies.
+        from puppet_pack import look_items
+        mi = "Component/ModelInfo/{}.engine__component__ModelInfo.bgyml"
+        item = "Weapon_Sword_Giant"
+        members = {
+            f"Actor/{item}.engine__actor__ActorParam.bgyml": byml.dumps(
+                {"Components": {"ModelInfoRef": "?" + mi.format(item + "_With_SubModel")}}),
+            mi.format(item + "_With_SubModel"): byml.dumps({
+                "$parent": "Work/" + mi.format(item)[:-len(".bgyml")] + ".gyml",
+                "IsExclusiveControl": True,
+                "ModelVariationAnims": [{"Fmab": "A.fmab", "Frame": 1.0}, {"Fmab": "B.fmab", "Frame": 1.0}],
+                "SubModels": [{"FmdbName": "Weapon_Sword_BrokenBiggoron", "ModelProjectName": "Weapon_Sword_Biggoron",
+                               "SearchModelKey": "Broken"},
+                              {"FmdbName": "Other", "ModelProjectName": "Other"}],
+            }),
+            mi.format(item): byml.dumps({
+                "DebugModelScale": {"X": 1.0, "Y": 1.0, "Z": 1.0},
+                "FmdbName": "Weapon_Sword_Biggoron", "ModelProjectName": "Weapon_Sword_Biggoron",
+                "ModelVariationAnims": [{"Fmab": "A.fmab", "Frame": 1.0}],
+            }),
+        }
+        self.assertEqual(look_items.model_info(members, item)[:2], ("Weapon_Sword_Biggoron", "Weapon_Sword_Biggoron"))
+        pack, ap, info = look_items.copy_pack(members, item, 2)
+        got = byml.loads(info)
+        self.assertNotIn("$parent", got)
+        self.assertEqual(got["FmdbName"], "Weapon_Sword_Biggoron")
+        self.assertEqual(got["ModelProjectName"], f"{item}_Look2")
+        self.assertEqual(got["DebugModelScale"], {"X": 1.0, "Y": 1.0, "Z": 1.0})
+        self.assertTrue(got["IsExclusiveControl"])
+        self.assertEqual([a["Fmab"] for a in got["ModelVariationAnims"]], ["A.fmab", "B.fmab"])   # the child's list
+        self.assertEqual(got["SubModels"][0]["ModelProjectName"], f"{item}_Look2")
+        self.assertEqual(got["SubModels"][0]["FmdbName"], "Weapon_Sword_BrokenBiggoron")
+        self.assertEqual(got["SubModels"][1]["ModelProjectName"], "Other")   # not the item's project: kept
+        self.assertEqual(sarc.read(pack)[look_items.model_info_path(f"{item}_Look2")], info)
+        self.assertIn(item, look_items.ITEMS)
+        self.assertIn("Weapon_Sword_BrokenGiant", look_items.ITEMS)
+        # A $parent that is not in the pack, or that loops, is said, not guessed.
+        broken = dict(members)
+        del broken[mi.format(item)]
+        with self.assertRaises(look_items.TunicError):
+            look_items.model_info(broken, item)
+        looped = dict(members)
+        looped[mi.format(item)] = byml.dumps({"$parent": "Work/" + mi.format(item + "_With_SubModel")[:-6] + ".gyml"})
+        with self.assertRaises(look_items.TunicError):
+            look_items.model_info(looped, item)
+
     def test_build_from_nup_has_the_gear(self):
         # The 0.11.0 kit made its pack from the player's .nup, which took out only dumpcheck's files:
         # coop_look/gear.bin had the boots alone (your own sword, shields and gauntlets kept the

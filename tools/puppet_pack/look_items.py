@@ -37,6 +37,11 @@ ITEMS = (
     "Weapon_Sword_Kokiri",
     "Weapon_Sword_Master",
     "Weapon_Sword_Biggoron",
+    # The Giant's Knife and the broken one are their own actors on the Biggoron model project
+    # (their ModelInfo names it, the Giant's through `$parent`): copies of their own, or a puppet
+    # holding one wears the game's actor, whose blade shows only while your own sword is out.
+    "Weapon_Sword_Giant",
+    "Weapon_Sword_BrokenGiant",
     "Armor_Adult_HoverBoot",
     "Armor_Adult_HeavyBoot",
     "Armor_Adult_Gauntlet_Silver",
@@ -87,8 +92,40 @@ def _member(ref):
     return ref[1:]
 
 
+def _merged(base, over):
+    """`over` on top of `base`, as a `$parent` is: maps merge key by key, anything else is replaced."""
+    out = dict(base)
+    for k, v in over.items():
+        out[k] = _merged(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
+
+
+def _resolved(members, item, path):
+    """The ModelInfo at `path` with its `$parent`s (from the same pack) merged in, `$parent` dropped."""
+    chain = []
+    while path is not None:
+        if path in chain:
+            raise TunicError(f"{item}: its ModelInfo's $parent loops at {path}")
+        if path not in members:
+            raise TunicError(f"{item}: its ModelInfo {path} is not in the pack")
+        chain.append(path)
+        parent = byml.loads(members[path]).get("$parent")
+        if parent is None:
+            break
+        if not isinstance(parent, str):
+            raise TunicError(f"{item}: its ModelInfo has a $parent that is no path")
+        # `Work/<path>.gyml` names the pack's `<path>.bgyml`.
+        path = parent[len("Work/"):] if parent.startswith("Work/") else parent
+        path = path[:-len(".gyml")] + ".bgyml" if path.endswith(".gyml") else path
+    doc = {}
+    for p in reversed(chain):
+        doc = _merged(doc, byml.loads(members[p]))
+    doc.pop("$parent", None)
+    return doc
+
+
 def model_info(members, item):
-    """(FmdbName, ModelProjectName, member path) of the item's own model."""
+    """(FmdbName, ModelProjectName, member path) of the item's own model, through its `$parent`s."""
     ap = members.get(actor_param_path(item))
     if ap is None:
         raise TunicError(f"{item}: no {actor_param_path(item)} in its pack")
@@ -96,21 +133,36 @@ def model_info(members, item):
     path = _member(comps.get("ModelInfoRef"))
     if path is None or path not in members:
         raise TunicError(f"{item}: its ActorParam names no ModelInfo in the pack")
-    info = byml.loads(members[path])
+    info = _resolved(members, item, path)
     fmdb, project = info.get("FmdbName"), info.get("ModelProjectName")
     if not isinstance(fmdb, str) or not isinstance(project, str):
         raise TunicError(f"{item}: its ModelInfo has no FmdbName and ModelProjectName")
     return fmdb, project, path
 
 
+def copy_model_info(members, item, actor):
+    """The copy's ModelInfo: the item's whole ModelInfo (its `$parent`s merged in), every model
+    project the item's own (its main model and any SubModels) renamed to the copy's. Only the
+    names changed: a ModelInfo of the names alone lost the rest (the Biggoron's colour
+    ModelVariationAnims, the Giant's Knife's broken SubModel)."""
+    _, project, path = model_info(members, item)
+    info = _resolved(members, item, path)
+    info["ModelProjectName"] = actor
+    subs = info.get("SubModels")
+    if isinstance(subs, list):
+        info["SubModels"] = [dict(m, ModelProjectName=actor)
+                             if isinstance(m, dict) and m.get("ModelProjectName") == project else m
+                             for m in subs]
+    return info
+
+
 def copy_pack(members, item, slot):
     """(pack bytes, actor param bytes, model info bytes) of the slot's copy of `item`: the game's
     pack, its ActorParam under the copy's name naming a ModelInfo of the copy's own project."""
-    fmdb, _, _ = model_info(members, item)
     actor = actor_name(item, slot)
     doc = byml.loads(members[actor_param_path(item)])
     doc["Components"]["ModelInfoRef"] = "?" + model_info_path(actor)
-    info = byml.dumps({"FmdbName": fmdb, "ModelProjectName": actor})
+    info = byml.dumps(copy_model_info(members, item, actor))
     ap = byml.dumps(doc)
     files = {k: v for k, v in members.items() if k != actor_param_path(item)}
     files[actor_param_path(actor)] = ap
