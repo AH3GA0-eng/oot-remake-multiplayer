@@ -88,6 +88,16 @@ TEST_CASE("event owner: a mark too old, or a request of the game's own after it,
   CHECK(t.Frame(true, false, kStart + 6'016'000) == EventWhose::ours);
 }
 
+TEST_CASE("event owner: the revive and PvP rules (G1 review)") {
+  // DBNO revive waits in our own event and the Ocarina (our Link is held by the game's event),
+  // not in another player's event replayed here (our Link walks freely). PvP: our Link's event only.
+  const auto revive_waits = [](bool running, EventWhose w) { return running && w != EventWhose::others; };
+  CHECK(revive_waits(true, EventWhose::ours));
+  CHECK(revive_waits(true, EventWhose::ocarina));
+  CHECK_FALSE(revive_waits(true, EventWhose::others));
+  CHECK_FALSE(our_link_in_event(true, EventWhose::ocarina));  // PvP: hittable while playing
+}
+
 TEST_CASE("event owner: issue 86, the free Ocarina's take-out holds and hides nobody") {
   EventOwnerTracker t;
   t.Frame(false, false, kStart);
@@ -136,13 +146,13 @@ TEST_CASE("event owner: the event's own name decides, not the time since the ask
   CHECK(t.Frame(true, false, kStart + EventOwnerTracker::kReplayUs + 532 * kMs) == EventWhose::others);
   CHECK(t.Decided() == By::name);
   t.Frame(false, false, kStart + 10'000'000);
-  // Our own event inside the window: the time guess says a replay, its name (not ours asked) says ours.
+  // Other names are no proof (ReadRunning's strings may not hold the setting): the time rule stays.
   t.CoopAsked("InsideTheDekuTree_Room_Ladder", kStart + 11'000'000);
   CHECK(t.Frame(true, false, kStart + 11'500'000) == EventWhose::others);
   CHECK(t.Decided() == By::time);
   t.RunNames({"Npc_Kokiri_Talk"}, kStart + 11'520'000);
-  CHECK(t.Frame(true, false, kStart + 11'532'000) == EventWhose::ours);
-  CHECK(t.Decided() == By::name);
+  CHECK(t.Frame(true, false, kStart + 11'532'000) == EventWhose::others);
+  CHECK(t.Decided() == By::time);
   t.Frame(false, false, kStart + 20'000'000);
   // The free Ocarina named by the event itself (the emulator: no request wrap), even in its EvtWait take-out.
   CHECK(t.Frame(true, true, kStart + 21'000'000, std::string_view("EvtWait")) == EventWhose::ours);

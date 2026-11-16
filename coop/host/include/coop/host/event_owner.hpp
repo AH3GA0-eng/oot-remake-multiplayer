@@ -86,9 +86,10 @@ inline bool local_event_hides(bool event_running, EventWhose whose, std::optiona
 // - RunNames: the running event's own name-like strings, as the game keeps them
 //   (CoopEventMember::ReadRunning, both platforms, read once the run started). The
 //   name of our last co-op ask among them makes the run a replay whatever the time
-//   since the ask; the free Ocarina's setting among them makes it the Ocarina; other
-//   names with no co-op ask in them make a run the time guess called a replay ours.
-//   So the 3 s window decides only while the game gives no name (By() says which).
+//   since the ask; the free Ocarina's setting among them makes it the Ocarina. A name is
+//   only ever positive proof: other names change nothing (that ReadRunning holds the asked
+//   setting is not seen in a game yet), so the 3 s window still decides then (By() says
+//   which sign decided; the LANE1 log shows whether the names hold it).
 // Pure: tested in tests/host/event_owner_test.cpp.
 class EventOwnerTracker {
  public:
@@ -124,10 +125,6 @@ class EventOwnerTracker {
         by_ = By::name;
         return;
       }
-    }
-    if (replay_ && by_ == By::time) {  // the game names the event, and it is not the one we asked for
-      replay_ = false;
-      by_ = By::name;
     }
   }
 
