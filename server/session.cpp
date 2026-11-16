@@ -447,6 +447,10 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
     send_to_others(id, kChannelSession, LobbyMutes{c.number, flags});
   }
   send_snapshot(id);
+  // G2: the dungeon bosses the group beat this session (after the snapshot: the joiner's flags first).
+  for (const auto& [room, beaten] : boss_beaten_) {
+    send(id, kChannelSession, beaten);
+  }
   log("player " + std::to_string(c.number) + " joined: " + c.nickname);
 }
 
@@ -628,6 +632,15 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     on_status(c, st->flags, now_us);
   }
   if (sender_of(message)) set_sender(message, c.number);
+  // G2 (player report #241): the group beat a dungeon boss. Kept for players who join later (told after the
+  // flag snapshot), so a game that was not there gets that boss's beaten set (lichii/hook/coop_boss_beaten.h).
+  if (const auto* boss = std::get_if<BossRoom>(&message);
+      boss != nullptr && boss->state == BossState::defeated && boss->room <= kMaxBossRoom) {
+    if (boss_beaten_.insert_or_assign(boss->room, *boss).second) {
+      log("boss of room " + std::to_string(boss->room) + " (" + boss->scene + ") beaten by the group, read by player " +
+          std::to_string(c.number));
+    }
+  }
   if (std::holds_alternative<PlayerSample>(message) || std::holds_alternative<PlayerPose>(message)) {
     send_streamed(id, c, channel, message, now_us);
   } else {
@@ -911,6 +924,7 @@ void Session::on_host_reset() {
         " boss heart container claim(s) forgotten (those bosses fight again)");
   }
   boss_hearts_.clear();
+  boss_beaten_.clear();  // G2: as the claims, those bosses are alive again in the save
 }
 
 // A host's table, merged in part by part. A flag the server lacks is kept and
@@ -2415,6 +2429,7 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
     world_.clear();
     dead_.clear();
     boss_hearts_.clear();  // as the flags: a new group (a new save) has its own containers
+    boss_beaten_.clear();
   } else if (host_ == id) {
     // The remaining player with the lowest number takes over. Everyone is
     // told on the progress channel, so the new host learns it hosts before
