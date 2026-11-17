@@ -37,9 +37,14 @@ inline constexpr std::uint64_t kValueByte = 0x60;     // in the block
 inline constexpr std::uint64_t kBlockSize = kHolder + kHolderActor + 0x10;
 }  // namespace addr
 
-// The actor's bool plug named by `key` (Murmur3 of the name) in its live logic, or nothing (not there, not live,
-// not a bool). Reads only.
-inline std::optional<CoopLogicProbe::Plug> BoolPlug(CoopPuppet::Guest& guest, std::uint64_t actor, std::uint32_t key) {
+// The type byte (plug + 0x38) of an INPUT plug: 0 (the probe lists the asker's EventRequestTrigger f446f53d as 0;
+// outputs are CoopLogicProbe::kBool, 7, the only type the game's set-bool writes).
+inline constexpr std::uint8_t kInputType = 0;
+
+// The actor's plug named by `key` (Murmur3 of the name) of type byte `type` in its live logic, or nothing (not
+// there, not live, another type). Reads only.
+inline std::optional<CoopLogicProbe::Plug> FindPlug(CoopPuppet::Guest& guest, std::uint64_t actor, std::uint32_t key,
+                                                    std::uint8_t type) {
     const auto plugs = CoopLogicProbe::Read(
         [&guest](std::uint64_t at) -> std::optional<std::uint64_t> {
             std::uint64_t v = 0;
@@ -48,11 +53,39 @@ inline std::optional<CoopLogicProbe::Plug> BoolPlug(CoopPuppet::Guest& guest, st
         },
         actor);
     if (!plugs) return std::nullopt;
-    const auto plug = std::find_if(plugs->begin(), plugs->end(), [key](const CoopLogicProbe::Plug& p) {
-        return p.key == (key ^ 7u) && p.type == CoopLogicProbe::kBool;
+    const auto plug = std::find_if(plugs->begin(), plugs->end(), [key, type](const CoopLogicProbe::Plug& p) {
+        return p.key == (key ^ 7u) && p.type == type;
     });
     if (plug == plugs->end()) return std::nullopt;
     return *plug;
+}
+
+// The actor's bool output plug `key` (what the set-bool's execute writes), or nothing.
+inline std::optional<CoopLogicProbe::Plug> BoolPlug(CoopPuppet::Guest& guest, std::uint64_t actor, std::uint32_t key) {
+    return FindPlug(guest, actor, key, CoopLogicProbe::kBool);
+}
+
+// deku-ladder (A #39): the actor's input plug `key`, or nothing. The game's set-bool refuses an input (it wants type
+// 7), so SetInput does the set-bool's own store (f_7102727540 after its checks: the value byte at [plug + 0x28] & ~3).
+// It stays only on an UNWIRED input (its value is its own default): a wired input's value is its source's output,
+// rewritten every frame by that source, so callers set only inputs the room graph leaves unwired
+// (tools/puppet_pack/eye_switches.py --classify).
+inline std::optional<CoopLogicProbe::Plug> InputPlug(CoopPuppet::Guest& guest, std::uint64_t actor,
+                                                     std::uint32_t key) {
+    return FindPlug(guest, actor, key, kInputType);
+}
+
+// Whether SetInput can store into `plug`: a value address, and no change mark (bit 1: the set-bool then also calls
+// f_7103c41cf0/41d00, which we do not mirror).
+inline bool CanSetInput(const CoopLogicProbe::Plug& plug) {
+    return (plug.value_word & ~std::uint64_t{3}) != 0 && (plug.value_word & 2) == 0;
+}
+
+// Stores 1 into the input `plug` (CanSetInput). False when it cannot.
+inline bool SetInput(CoopPuppet::Guest& guest, const CoopLogicProbe::Plug& plug) {
+    if (!CanSetInput(plug)) return false;
+    const std::uint8_t one = 1;
+    return guest.Write(plug.value_word & ~std::uint64_t{3}, &one, 1);
 }
 
 // Fills our node block so the execute sets `actor`'s plug `key` to 1. False when a write fails.

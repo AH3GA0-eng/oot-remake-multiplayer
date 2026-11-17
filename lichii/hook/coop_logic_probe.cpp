@@ -56,6 +56,7 @@ std::optional<std::vector<Plug>> Read(const ReadWord& read, std::uint64_t actor)
         p.key = static_cast<std::uint32_t>(read(node + addr::kKey).value_or(0));
         p.type = static_cast<std::uint8_t>(read(node + addr::kType).value_or(0));
         if (const auto v = read(node + addr::kValue); v && (*v & ~std::uint64_t{3}) != 0) {
+            p.value_word = *v;
             if (const auto b = read(*v & ~std::uint64_t{3})) p.value = static_cast<std::uint8_t>(*b);
         }
         plugs.push_back(p);

@@ -74,8 +74,30 @@ std::uint32_t PlugKey(std::string_view plug);
 // FirstOn is a first-on latch. A step switch's OnState (and a hit, hammer, dive or sun switch's OnState/isLightMax)
 // is rewritten by the switch's own AI every frame from its contact/hit/light: our 1 read back 0 every frame for 2 s
 // (Jabu-Jabu room 1, no event), and no game function sets its inputs (ForceControl) yet. Those lines stay in the
-// table (generated) but are not driven: their events go the old way at once, and their guard flags are not held.
+// table (generated) but are not driven: their events go the old way at once, and their guard flags are not held -
+// except the lines of Inputs() (below), which are driven through the switch's input.
 bool Latches(const Switch& s);
+
+// deku-ladder (A #39): the 39 lines whose plug does not latch, classified from the romfs wiring
+// (tools/puppet_pack/eye_switches.py --classify): 36 are class A - every room result of the event reaches our room
+// through a shared flag (the switch's ON input, the room's actors, the asker's delete all read it), or is only the
+// event's moment (camera, a chest's appear act, the event's own air walls): the other player's live flags are the
+// native path and our room ends as theirs does after a reload. 3 are class B - a result hangs on OUR asker only.
+// Two of them (Jabu-Jabu room 14's water switch, upper and lower: the event toggles the water through flags that
+// are each game's own and re-arms the switch) have an ON input the room graph leaves unwired (FirstOn): we set that
+// input (the set-bool's own store, CoopLogicSet::SetInput), the switch's own AI turns it on and keeps OnState, and
+// our asker asks the event. The third (Gerudo Training Ground room 6's fire: its burn sign ANDs the asker's
+// EventBool) has no settable input (a step switch: BootUp only) and stays on the old way (coop_eye_switch.cpp).
+struct Input {
+    std::string_view event;
+    std::string_view scene;
+    std::string_view actor;   // the switch, as its Switch line
+    std::array<float, 3> at;  // its placement, as its Switch line
+    std::string_view input;   // the unwired ON input we set
+};
+std::span<const Input> Inputs();
+// The input line of `s`, if it has one.
+const Input* InputOf(const Switch& s);
 
 // AND-gated triggers (deku-ladder round 3): a trigger can AND the switch with a saved room flag read NEGATED (the
 // room's "done" flag: GTG room 6's fire, Jabu room 1's first press), and the asker itself is deleted by a room flag
