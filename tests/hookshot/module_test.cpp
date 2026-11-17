@@ -841,8 +841,7 @@ TEST_CASE("hookshot: on Linux the exe exports every function the module finds in
     collect(ReadFile(kRepo / "hookshot" / "patches" / "0020-coop-texture-override.patch"), "look(\"");
     // Patch 0018's exports (the menu state, the HUD refresh): every function it marks dllexport, which Linux builds too
     const std::string map_state = ReadFile(kRepo / "hookshot" / "patches" / "0018-coop-map-state.patch");
-    const std::string exported = "
-+__declspec(dllexport) int ";
+    const std::string exported = "\n+__declspec(dllexport) int ";
     std::size_t map_exports = 0;
     for (auto at = map_state.find(exported); at != std::string::npos; at = map_state.find(exported, at + 1)) {
         const auto start = at + exported.size();
@@ -891,25 +890,17 @@ TEST_CASE("hookshot: patch 0018's screens' tracker and menu state build on Linux
     // Linux players, issue 150). The file's one '#if defined(_WIN32)' is gone; each mouse block has its own guard.
     const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0018-coop-map-state.patch");
     REQUIRE_FALSE(patch.empty());
-    CHECK(patch.find("
--#if defined(_WIN32)
-+/* (oot-remake-multiplayer's patch 0018) The screens' tracker") != std::string::npos);
-    CHECK(patch.find("
--void hos_oot_menu_tick(Ctx *c, uint64_t screen) { (void)c, (void)screen; }
-") != std::string::npos);
+    CHECK(patch.find("\n-#if defined(_WIN32)\n+/* (oot-remake-multiplayer's patch 0018) The screens' tracker") != std::string::npos);
+    CHECK(patch.find("\n-void hos_oot_menu_tick(Ctx *c, uint64_t screen) { (void)c, (void)screen; }\n") != std::string::npos);
     // the guards open and close in pairs (the file's last '#else' stays Linux's focus hook, which Longshot's
     // tests/test_hold_toggle.py compiles alone)
     std::size_t opened = 0, closed = 0;
-    for (auto at = patch.find("
-+#if defined(_WIN32)   /* (patch 0018: the mouse's"); at != std::string::npos;
-         at = patch.find("
-+#if defined(_WIN32)   /* (patch 0018: the mouse's", at + 1)) {
+    for (auto at = patch.find("\n+#if defined(_WIN32)   /* (patch 0018: the mouse's"); at != std::string::npos;
+         at = patch.find("\n+#if defined(_WIN32)   /* (patch 0018: the mouse's", at + 1)) {
         ++opened;
     }
-    for (auto at = patch.find("
-+#endif   /* (patch 0018) */"); at != std::string::npos;
-         at = patch.find("
-+#endif   /* (patch 0018) */", at + 1)) {
+    for (auto at = patch.find("\n+#endif   /* (patch 0018) */"); at != std::string::npos;
+         at = patch.find("\n+#endif   /* (patch 0018) */", at + 1)) {
         ++closed;
     }
     CHECK(opened == 6);
