@@ -126,6 +126,10 @@ void ForgetKeptBreaks();
 // name to our Link takes a hit of its whole life from our Link in the next
 // walk of LICHII_COOP_OBJECTS (logs "coop: test kill ..."). Any thread.
 void QueueTestKill(std::string name);
+// Test only ("hit NAME N"): as QueueTestKill, a hit of `amount` through the game's own Life step.
+void QueueTestHit(std::string name, std::int32_t amount);
+// Test only ("stun NAME"): our copy of the nearest boss of that name says its owner a stun (Sync::TestStun).
+void QueueTestStun(std::string name);
 
 // Present thread: the actors of the shared things this game owns now (for
 // coop_drops: a drop beside one of them is its owner's to decide).

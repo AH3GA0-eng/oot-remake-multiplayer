@@ -5186,8 +5186,14 @@ TEST_CASE("objects: a boss copy held at 1 that becomes ours takes its old owner'
     Tick(sync, 0, {Enemy(0x100, 0x11, 21, 50.0f, kBoss)});
     const proto::ObjectId id = *sync.IdOf(0x100);
     Own(sync, id, 2);
-    // Held at 1 here (HeldLifeStep) while the owner's boss is at 21.
+    // Held at 1 here (HeldLifeStep) while the owner's boss is at 21. Our hits that took it there were SENT
+    // (the second Tick, kDamageSumUs later) and the owner's game refused them: its life 21 is the life to take.
+    // (Still unsent at the hand-over, they would come off the old owner's life instead: H3.)
     Tick(sync, 100 * kMs, {Enemy(0x100, 0x11, 1, 50.0f, kBoss)});
+    const auto sent = Tick(sync, 200 * kMs, {Enemy(0x100, 0x11, 1, 50.0f, kBoss)});
+    const auto hits = All<proto::Damage>(sent);
+    REQUIRE(hits.size() == 1);
+    CHECK(hits[0].amount == 20);
     proto::HandoverState h;
     h.player_number = 2;
     h.id = id;
@@ -5195,7 +5201,7 @@ TEST_CASE("objects: a boss copy held at 1 that becomes ours takes its old owner'
     h.state.life = proto::ObjectLife{21, 21};
     sync.Receive(h);
     Own(sync, id, 1, 1);
-    const auto step = Tick(sync, 200 * kMs, {Enemy(0x100, 0x11, 1, 50.0f, kBoss)});
+    const auto step = Tick(sync, 300 * kMs, {Enemy(0x100, 0x11, 1, 50.0f, kBoss)});
     const auto raise = std::find_if(step.writes.begin(), step.writes.end(),
                                     [](const CoopObjects::LifeWrite& w) { return w.heal; });
     REQUIRE(raise != step.writes.end());
@@ -5303,7 +5309,8 @@ TEST_CASE("objects: a boss copy with more life than its old owner's is lowered t
     step = Tick(sync, 300 * kMs, {Enemy(0x100, 0x11, 17, 50.0f, kBoss)});
     CHECK(All<proto::Damage>(step).empty());
     CHECK(step.writes.empty());
-    // A kill in the hand-over is not a direct lower (the old path: dead in the hand-over).
+    // A kill in the hand-over (its old owner's life 0): never a write on a boss either; its own Life step to 0,
+    // given once, runs its own death here (fable-g2-bosses; only the owner's life 0 is a death).
     Sync dead;
     Tick(dead, 0, {Enemy(0x100, 0x11, 21, 50.0f, kBoss)});
     const proto::ObjectId did = *dead.IdOf(0x100);
@@ -5313,7 +5320,11 @@ TEST_CASE("objects: a boss copy with more life than its old owner's is lowered t
     dead.Receive(h);
     Own(dead, did, 1, 1);
     step = Tick(dead, 200 * kMs, {Enemy(0x100, 0x11, 21, 50.0f, kBoss)});
-    CHECK(std::none_of(step.writes.begin(), step.writes.end(), [](const CoopObjects::LifeWrite& w) { return w.direct; }));
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].direct);
+    CHECK(step.writes[0].life == 0);
+    CHECK(step.writes[0].hurt == 21);
+    CHECK(All<proto::ObjectRemove>(step).empty());
 }
 
 TEST_CASE("objects: an enemy that is not a boss still never heals across a hand-over") {
@@ -5330,6 +5341,173 @@ TEST_CASE("objects: an enemy that is not a boss still never heals across a hand-
     Own(sync, id, 1, 1);
     const auto step = Tick(sync, 200 * kMs, {Enemy(0x100, 0x11, 1, 50.0f)});
     CHECK(std::none_of(step.writes.begin(), step.writes.end(), [](const CoopObjects::LifeWrite& w) { return w.heal; }));
+}
+
+// Hand-over life (fable-g2-bosses, rows 104/118, issue 150): the life the new owner takes has every hit in it.
+namespace {
+proto::HandoverState Handed(const proto::ObjectId& id, std::int32_t life, std::int32_t max, std::uint16_t epoch = 1) {
+    proto::HandoverState h;
+    h.player_number = 2;
+    h.id = id;
+    h.epoch = epoch;
+    h.state.life = proto::ObjectLife{life, max};
+    return h;
+}
+proto::Damage HitBy(const proto::ObjectId& id, std::uint8_t player, std::int32_t amount, std::uint16_t epoch = 0) {
+    proto::Damage d;
+    d.player_number = player;
+    d.id = id;
+    d.epoch = epoch;
+    d.amount = amount;
+    return d;
+}
+bool NoPlainWrite(const std::vector<LifeWrite>& writes) {
+    return std::all_of(writes.begin(), writes.end(),
+                       [](const LifeWrite& w) { return w.direct || w.heal || w.hurt > 0; });
+}
+}  // namespace
+
+TEST_CASE("objects: an owner asked for its boss hands over the life with its pending DAMAGE in it (H1)") {
+    const std::string kBoss = "Enemy_DungeonBoss_Gohma";
+    Sync owner;
+    owner.SetHurt(true);
+    Tick(owner, 0, {Enemy(0x200, 0x11, 21, 0.0f, kBoss)});
+    const proto::ObjectId id = *owner.IdOf(0x200);
+    Own(owner, id, 1);
+    owner.Receive(HitBy(id, 2, 2));
+    REQUIRE(Tick(owner, 100 * kMs, {Enemy(0x200, 0x11, 21, 0.0f, kBoss)}).writes.size() == 1);  // the replay
+    owner.Receive(proto::HandoverAsk{id, 0, 2});  // before its game took it
+    const auto answer = All<proto::HandoverState>(Tick(owner, 150 * kMs, {Enemy(0x200, 0x11, 21, 0.0f, kBoss)}));
+    REQUIRE(answer.size() == 1);
+    REQUIRE(answer[0].state.life);
+    CHECK(answer[0].state.life->life == 19);
+    // Nothing pending: the life as read.
+    owner.Receive(proto::HandoverAsk{id, 0, 2});
+    const auto later = All<proto::HandoverState>(Tick(owner, 900 * kMs, {Enemy(0x200, 0x11, 19, 0.0f, kBoss)}));
+    REQUIRE(later.size() == 1);
+    CHECK(later[0].state.life->life == 19);
+}
+
+TEST_CASE("objects: a boss copy's own hit not sent yet comes off the life it is handed (H3)") {
+    const std::string kBoss = "Enemy_DungeonBoss_Gohma";
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 21, 0.0f, kBoss)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 21, 0.0f, kBoss)});
+    Tick(sync, 20 * kMs, {Enemy(0x100, 0x11, 19, 0.0f, kBoss)});  // our hit of 2, summed, not sent yet
+    sync.Receive(Handed(id, 10, 21));
+    Own(sync, id, 1, 1);
+    auto step = Tick(sync, 50 * kMs, {Enemy(0x100, 0x11, 19, 0.0f, kBoss)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].direct);
+    CHECK(step.writes[0].life == 8);
+    CHECK(step.writes[0].hurt == 11);
+    CHECK(All<proto::Damage>(step).empty());
+    step = Tick(sync, 300 * kMs, {Enemy(0x100, 0x11, 8, 0.0f, kBoss)});
+    CHECK(All<proto::Damage>(step).empty());
+    CHECK(step.writes.empty());
+
+    // An enemy with less life than its old owner's keeps its own (our hit is in it): nothing written.
+    Sync enemy;
+    Tick(enemy, 0, {Enemy(0x100, 0x11, 2)});
+    const proto::ObjectId eid = *enemy.IdOf(0x100);
+    Own(enemy, eid, 2);
+    Tick(enemy, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(enemy, 20 * kMs, {Enemy(0x100, 0x11, 1)});
+    enemy.Receive(Handed(eid, 2, 2));
+    Own(enemy, eid, 1, 1);
+    step = Tick(enemy, 50 * kMs, {Enemy(0x100, 0x11, 1)});
+    CHECK(step.writes.empty());
+    CHECK(All<proto::Damage>(step).empty());
+}
+
+TEST_CASE("objects: a boss whose own unsent hit ends it in the hand-over dies through its Life step, once") {
+    const std::string kBoss = "Enemy_DungeonBoss_Gohma";
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 21, 0.0f, kBoss)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 21, 0.0f, kBoss)});
+    Tick(sync, 20 * kMs, {Enemy(0x100, 0x11, 19, 0.0f, kBoss)});  // our 2 = all she had left at her owner's
+    sync.Receive(Handed(id, 2, 21));
+    Own(sync, id, 1, 1);
+    auto step = Tick(sync, 50 * kMs, {Enemy(0x100, 0x11, 19, 0.0f, kBoss)});
+    CHECK(NoPlainWrite(step.writes));
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].direct);
+    CHECK(step.writes[0].life == 0);
+    CHECK(step.writes[0].hurt == 19);
+    CHECK(All<proto::ObjectRemove>(step).empty());  // its own game's death, not a removal
+    // Her game holds her (a stop): our hit that crossed the hand-over gives no second death.
+    sync.Receive(HitBy(id, 1, 1));
+    step = Tick(sync, 100 * kMs, {Enemy(0x100, 0x11, 1, 0.0f, kBoss)});
+    CHECK(step.writes.empty());
+}
+
+TEST_CASE("objects: our own DAMAGE that crossed the hand-over is taken off the life we were handed (H4)") {
+    const std::string kBoss = "Enemy_DungeonBoss_Gohma";
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 21, 0.0f, kBoss)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2);
+    sync.Receive(Handed(id, 21, 21));
+    Own(sync, id, 1, 1);
+    CHECK(Tick(sync, 50 * kMs, {Enemy(0x100, 0x11, 21, 0.0f, kBoss)}).writes.empty());
+    sync.Receive(HitBy(id, 1, 3));  // given back by the server
+    auto step = Tick(sync, 100 * kMs, {Enemy(0x100, 0x11, 21, 0.0f, kBoss)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].direct);
+    CHECK(step.writes[0].life == 18);
+    CHECK(step.writes[0].hurt == 3);
+    // After the window: nothing.
+    sync.Receive(HitBy(id, 1, 3));
+    CHECK(Tick(sync, 2500 * kMs, {Enemy(0x100, 0x11, 18, 0.0f, kBoss)}).writes.empty());
+
+    // An enemy that took its old owner's life: written, to 0 a death.
+    Sync enemy;
+    Tick(enemy, 0, {Enemy(0x100, 0x11, 2)});
+    const proto::ObjectId eid = *enemy.IdOf(0x100);
+    Own(enemy, eid, 2);
+    enemy.Receive(Handed(eid, 1, 2));
+    Own(enemy, eid, 1, 1);
+    step = Tick(enemy, 50 * kMs, {Enemy(0x100, 0x11, 2)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].life == 1);
+    enemy.Receive(HitBy(eid, 1, 1));
+    step = Tick(enemy, 100 * kMs, {Enemy(0x100, 0x11, 1)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].life == 0);
+    CHECK_FALSE(step.writes[0].direct);
+    CHECK(All<proto::ObjectRemove>(step).size() == 1);
+
+    // An enemy that kept its own life (lower than the old owner's): the hit is in it already.
+    Sync kept;
+    Tick(kept, 0, {Enemy(0x100, 0x11, 1)});
+    const proto::ObjectId kid = *kept.IdOf(0x100);
+    Own(kept, kid, 2);
+    kept.Receive(Handed(kid, 2, 2));
+    Own(kept, kid, 1, 1);
+    Tick(kept, 50 * kMs, {Enemy(0x100, 0x11, 1)});
+    kept.Receive(HitBy(kid, 1, 1));
+    CHECK(Tick(kept, 100 * kMs, {Enemy(0x100, 0x11, 1)}).writes.empty());
+}
+
+TEST_CASE("objects: after a hand-over our hits on a copy count again once it moves on (D1)") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2);
+    sync.Receive(Handed(id, 2, 2));
+    Own(sync, id, 1, 1);
+    Tick(sync, 50 * kMs, {Enemy(0x100, 0x11, 2)});
+    Own(sync, id, 3, 2);  // a stun hands it on within the 2 s
+    Tick(sync, 100 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 200 * kMs, {Enemy(0x100, 0x11, 1)});  // our hit on the copy
+    const auto damage = All<proto::Damage>(Tick(sync, 350 * kMs, {Enemy(0x100, 0x11, 1)}));
+    REQUIRE(damage.size() == 1);
+    CHECK(damage[0].amount == 1);
+    CHECK(damage[0].epoch == 2);
 }
 
 TEST_CASE("objects: a dying copy boss gets its remaining life once when its owner's is dead (review-boss-0114)") {
@@ -5434,4 +5612,42 @@ TEST_CASE("objects: a copy boss whose death has begun gets its owner's refused k
         CHECK(copy.HurtsMissed() == 1);
         CHECK(copy.BossHitsStepped() == 0);  // (not boss-hits' own-boss rule)
     }
+}
+
+TEST_CASE("objects: Ganondorf and Volvagia are single bosses, Volvagia's other actors are each game's own") {
+    // From the game's Pack/Actor (fable-g2-bosses): Ganondorf has no part actors; Volvagia's appear sign, breath,
+    // breath field and cutscene actor are not enemies, so never shared and never owned.
+    using CoopObjects::IsBoss;
+    using CoopObjects::IsShared;
+    using CoopObjects::PartOf;
+    for (const char* boss : {"Enemy_DungeonBoss_Ganondorf", "Enemy_DungeonBoss_Volvagia"}) {
+        CHECK(IsBoss(boss));
+        CHECK(IsShared(boss));
+        CHECK(PartOf(boss) == nullptr);
+    }
+    CHECK_FALSE(IsBoss("Enemy_DungeonBoss_Ganondorf_Dictionary"));
+    for (const char* own : {"Dm_Enemy_DungeonBoss_Volvagia", "DungeonBossVolvagia_Appear_Sign",
+                            "DungeonBossVolvagia_FireBreath", "DungeonBossVolvagia_FireBreathField"}) {
+        CHECK_FALSE(IsShared(own));
+        CHECK(PartOf(own) == nullptr);
+    }
+}
+
+TEST_CASE("objects: the test stun makes our boss copy say a stun to its owner, never for our own boss") {
+    const std::string kBoss = "Enemy_DungeonBoss_Gohma";
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 21, 0.0f, kBoss)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    CHECK_FALSE(sync.TestStun(kBoss, std::nullopt, 1));  // no owner known yet
+    Own(sync, id, 1);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 21, 0.0f, kBoss)});
+    CHECK_FALSE(sync.TestStun(kBoss, std::nullopt, 1));  // ours
+    Own(sync, id, 2, 1);
+    Tick(sync, 20 * kMs, {Enemy(0x100, 0x11, 21, 0.0f, kBoss)});
+    CHECK_FALSE(sync.TestStun("Enemy_DungeonBoss_Barinade", std::nullopt, 1));
+    REQUIRE(sync.TestStun(kBoss, proto::Vec3{1.0f, 0.0f, 0.0f}, 1));
+    const auto damage = All<proto::Damage>(Tick(sync, 30 * kMs, {Enemy(0x100, 0x11, 21, 0.0f, kBoss)}));
+    REQUIRE(damage.size() == 1);
+    CHECK(damage[0].amount == 0);
+    CHECK(damage[0].epoch == 1);
 }

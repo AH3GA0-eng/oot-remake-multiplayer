@@ -2228,7 +2228,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         // Our hits on a copy, summed over 100 ms, go to the owner.
         if (o.hit_sum > 0 && now_us - o.hit_since >= kDamageSumUs &&
             (known || now_us - o.hit_since >= kHitKeepUs)) {
-            if (known && owner->second.player != self) {
+            // (not between a HANDOVER_STATE and its owner news: it is ours already, the fall is in its life)
+            if (known && owner->second.player != self && now_us >= o.handed_until) {
                 proto::Damage d;
                 d.id = o.id;
                 d.epoch = owner->second.epoch;
@@ -2873,6 +2874,11 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 continue;  // an older change, late
             }
             owners_[owner->id] = {owner->owner, owner->epoch};
+            if (Object* h = find(owner->id); h != nullptr) {
+                // The news a HANDOVER_STATE waited for (or a later one): our hits on it count again from here,
+                // to whoever owns it now (a stun hands it on within the old 2 s, and every hit there was lost).
+                h->handed_until = 0;
+            }
             Object* o = owner->owner != before ? find(owner->id) : nullptr;
             if (o == nullptr) {
                 continue;
@@ -2993,7 +2999,37 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 continue;
             }
             if (damage->player_number == self) {
-                continue;  // our own hit, sent before it became ours: already in its life
+                // Our own hit, sent while ours was a copy and passed back by the server: it crossed the
+                // hand-over, so the old owner's life we took there has no such hit in it. Where we kept our own
+                // life (an enemy that had less than its old owner's) it is in it already.
+                if (!o->handed_took || now_us >= o->returned_until || *o->life <= 0) {
+                    continue;
+                }
+                const std::int32_t from = *o->life;
+                const std::int32_t to = std::max(0, from - damage->amount);
+                if (IsBoss(o->name)) {
+                    // Our game judged this hit on its copy already: into its own Life step, never a write
+                    // (to 0 too: the step keeps the game's stops and runs its own death, given once).
+                    if (to <= 0 && o->death_given) {
+                        continue;
+                    }
+                    LifeWrite lower{o->address, to, from - to, std::nullopt};
+                    lower.direct = true;
+                    writes.push_back(lower);
+                    o->death_given = o->death_given || to <= 0;
+                    o->life = to;  // a second returned hit in this pass counts from here
+                    if (o->hurt_until != 0) {
+                        o->hurt_target = std::max(0, o->hurt_target - (from - to));
+                    }
+                } else {
+                    write(*o, to);
+                    if (to <= 0) {
+                        DeadByWrite(*o, damage->epoch, now_us, send, "our hit that crossed the hand-over");
+                    }
+                }
+                notes_.emplace_back("our own hit crossed the hand-over (" + std::to_string(damage->amount) +
+                                    "): taken off the life its old owner gave: " + o->name);
+                continue;
             }
             std::int32_t amount = damage->amount;
             if (o->blast_credit > 0 && now_us < o->blast_until) {
@@ -3025,30 +3061,98 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             state.epoch = ask->epoch;
             if (Object* o = find(ask->id)) {
                 state.state = StateOf(*o, now_us);
+                // The life it hands over has every DAMAGE we were given in it, taken by our game yet or not
+                // (a replay waits up to kHurtWaitUs; Gohma's game never takes one): the new owner's game gets
+                // no later chance at them (we are a copy by then), and the server takes off what it passes on
+                // after this ask. A life as read gave the boss those hits back at every hand-over.
+                if (state.state.life && o->hurt_until != 0 && o->hurt_target < state.state.life->life) {
+                    state.state.life->life = std::max(0, o->hurt_target);
+                }
             } else {
                 state.state.time = {now_us, 0};
             }
             send.emplace_back(std::move(state));
         } else if (const auto* handed = std::get_if<proto::HandoverState>(&m)) {
             Object* o = find(handed->id);
+            // The old owner's life never has our own hits of the last kDamageSumUs in it (summed here, not sent
+            // yet): they come off it, or the hand-over gives that life back. A boss always takes its old owner's
+            // life; an enemy only where that is the lower one (its own life has our hits in it otherwise).
+            std::int32_t theirs = 0;
+            if (o != nullptr && handed->state.life && o->life) {
+                theirs = handed->state.life->life;
+                const bool takes = IsBoss(o->name) || theirs < *o->life;
+                if (takes && theirs > 0 && o->hit_sum > 0) {
+                    notes_.emplace_back("ours now with a hit of ours not sent yet (" + std::to_string(o->hit_sum) +
+                                        "): taken off its old owner's life " + std::to_string(theirs) + ": " +
+                                        o->name);
+                    theirs = std::max(0, theirs - o->hit_sum);
+                }
+                o->hit_sum = 0;
+                o->hit_place.reset();
+                o->handed_took = takes;
+                o->handed_until = now_us + kHandedUs;
+                o->returned_until = now_us + kHandedUs;
+            }
             // The lower life of the two, so an enemy never heals across a
             // hand-over. Its place stays our own enemy's. A boss is the
             // exception: one boss death for everyone holds a copy at 1 (and
             // its own hits lowered it where the owner refused them), so it
             // takes the old owner's life, raised through its own Life step.
-            if (o != nullptr && handed->state.life && handed->state.life->life > 0 &&
-                TakeOwnerLife(*o, handed->state.life->life, writes, "ours now")) {
+            if (o != nullptr && handed->state.life && o->life && theirs > 0 &&
+                TakeOwnerLife(*o, theirs, writes, "ours now")) {
                 // (a boss: one boss death for everyone held its copy at 1, or its own hits lowered it)
-            } else if (o != nullptr && handed->state.life && o->life &&
-                handed->state.life->life < *o->life) {
-                write(*o, handed->state.life->life);
-                if (handed->state.life->life <= 0) {
+            } else if (o != nullptr && handed->state.life && o->life && IsBoss(o->name) && theirs <= 0 &&
+                       theirs < *o->life) {
+                // A boss down to 0 (dead in the old owner's game, or our own unsent hit ends it): never written,
+                // and only the owner's life 0 is a death. Its own Life step keeps the game's stops and runs its
+                // own death here, given once (as a dying copy's in Tick).
+                if (!o->death_given) {
+                    LifeWrite lower{o->address, theirs, *o->life - theirs, std::nullopt};
+                    lower.direct = true;
+                    writes.push_back(lower);
+                    o->death_given = true;
+                }
+                notes_.emplace_back("ours now at life 0 (" + std::to_string(*o->life) + " > " +
+                                    std::to_string(theirs) + "): lowered through its own Life step: " + o->name);
+                o->hurt_left = 0;
+                o->hurt_until = 0;
+            } else if (o != nullptr && handed->state.life && o->life && theirs < *o->life) {
+                write(*o, theirs);
+                if (theirs <= 0) {
                     // Killed in the old owner's game as it came to us.
                     DeadByWrite(*o, handed->epoch, now_us, send, "dead in the hand-over");
                 }
             }
         }
     }
+}
+
+bool Sync::TestStun(std::string_view name, const std::optional<proto::Vec3>& near, std::uint8_t self) {
+    Object* best = nullptr;
+    float best_d2 = 0.0f;
+    for (auto& [address, o] : objects_) {
+        const auto own = owners_.find(o.id);
+        if (o.name != name || !IsBoss(o.name) || own == owners_.end() || own->second.player == 0 ||
+            own->second.player == self) {
+            continue;
+        }
+        float d2 = 0.0f;
+        if (near) {
+            for (std::size_t i = 0; i < 3; ++i) {
+                const float d = o.position[i] - (*near)[i];
+                d2 += d * d;
+            }
+        }
+        if (best == nullptr || d2 < best_d2) {
+            best = &o;
+            best_d2 = d2;
+        }
+    }
+    if (best == nullptr) {
+        return false;
+    }
+    best->stun_due = true;
+    return true;
 }
 
 bool Sync::TakeOwnerLife(Object& o, std::int32_t owner_life, std::vector<LifeWrite>& writes, std::string_view why) {

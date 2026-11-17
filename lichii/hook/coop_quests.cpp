@@ -35,6 +35,12 @@ namespace {
 //     look out of order or branched (GotGlassTruth before GetGlassTruth,
 //     Step07 before Step07_pre00, Step07_1_Safety), and with the max rule a
 //     wrong order skips a step. Back in once checked against their event flows.
+//     (Checked for the mid-bosses: the RawValues are the RSDB order, but the
+//     game sets SageOfSpirit Step07_00 at the adult's arrival whenever it
+//     plays, so a max would still move steps the wrong way. The steps a
+//     mid-boss's death gives, Dark Link's SageOfWater Step07_1 and the Iron
+//     Knuckle's SageOfSpirit Step08_01, are raised by CoopQuest from the
+//     shared death records instead: coop_quest.cpp, "Mid-bosses".)
 //
 // Get_StoneOfFire (the Goron Ruby) is shared since issue 60: its RawValues are
 // the RSDB row's steps in the story's order (KokiriForestFire before

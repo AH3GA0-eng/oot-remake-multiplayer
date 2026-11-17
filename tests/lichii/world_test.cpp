@@ -2660,49 +2660,6 @@ void BlockMemory(FakeGame& g) {
 
 } // namespace
 
-TEST_CASE("world: RestWords puts the new rest place where the block's memory keeps the old (issue 147)") {
-    FakeGame g;
-    BlockMemory(g);
-    PutFloats(g, kBlockActor + 0x31c, {10.0f, 20.0f, 30.0f});  // its own place: the setter's
-    PutFloats(g, kBlockActor + 0x100, {10.0f, 20.0f, 30.0f});  // a remembered place
-    PutFloats(g, kBlockComp + 0x40, {10.01f, 20.0f, 29.99f}, 16);  // a 3x4 matrix's translation
-    PutFloats(g, kBlockRoot + 0x1d0, {10.0f, 20.0f, 30.0f});   // the physics root
-    PutFloats(g, kBlockActor + 0x200, {10.0f, 20.0f, 31.0f});  // not the place (z off)
-    const proto::Vec3 from{10.0f, 20.0f, 30.0f}, to{12.0f, 20.0f, 30.0f};
-    const auto scan = CoopWorld::RestWords(g.Reader(), kBlockActor, from, to);
-    CHECK_FALSE(scan.too_many);
-    REQUIRE(scan.where.size() == 3);
-    CHECK(scan.where[0] == "actor+0x100");
-    CHECK(scan.where[1] == "c+0x10+0x40 (matrix)");
-    CHECK(scan.where[2] == "physics root+0x1d0");
-    REQUIRE(scan.writes.size() == 9);
-    for (const auto& w : scan.writes) {
-        g.Put(w.address, &w.value, 4);
-    }
-    CHECK(FloatAt(g, kBlockActor + 0x100) == 12.0f);
-    CHECK(FloatAt(g, kBlockActor + 0x104) == 20.0f);
-    CHECK(FloatAt(g, kBlockComp + 0x40) == 12.0f);
-    CHECK(FloatAt(g, kBlockComp + 0x50) == 20.0f);
-    CHECK(FloatAt(g, kBlockComp + 0x60) == 30.0f);
-    CHECK(FloatAt(g, kBlockRoot + 0x1d0) == 12.0f);
-    CHECK(FloatAt(g, kBlockActor + 0x31c) == 10.0f);  // left alone
-    CHECK(FloatAt(g, kBlockActor + 0x200) == 10.0f);  // not a match
-
-    // No real move, a place near the origin (zeros would match), or too many: nothing.
-    CHECK(CoopWorld::RestWords(g.Reader(), kBlockActor, from, {10.01f, 20.0f, 30.0f}).writes.empty());
-    FakeGame z;
-    BlockMemory(z);
-    CHECK(CoopWorld::RestWords(z.Reader(), kBlockActor, {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}).writes.empty());
-    FakeGame many;
-    BlockMemory(many);
-    for (std::uint64_t i = 0; i <= CoopWorld::kMaxRestTriplets; ++i) {
-        PutFloats(many, kBlockActor + 0x20 * i, {10.0f, 20.0f, 30.0f});
-    }
-    const auto lots = CoopWorld::RestWords(many.Reader(), kBlockActor, from, to);
-    CHECK(lots.too_many);
-    CHECK(lots.writes.empty());
-}
-
 TEST_CASE("world: only push blocks get a rest fix, not an Armos statue (issue 147 review)") {
     CHECK(CoopWorld::IsPushBlock(kBox));
     CHECK(CoopWorld::IsPushBlock("Obj_MovableBox_A_01"));
@@ -2718,21 +2675,6 @@ TEST_CASE("world: only push blocks get a rest fix, not an Armos statue (issue 14
         const auto out = Walk(w, 1700 * kMs, {Thing(0x100, 0x50, std::nullopt, name, {4.0f, 2.0f, 3.0f})});
         CHECK(out.blocks.size() == (std::string_view(name).starts_with("Obj_SliderBox_") ? 1u : 0u));
     }
-}
-
-TEST_CASE("world: RestWords skips exact zeros and finds a place ending on a region's last float") {
-    FakeGame g;
-    BlockMemory(g);
-    // The old place has a 0.0 axis: zeros everywhere would match, so no match is taken.
-    PutFloats(g, kBlockActor + 0x100, {10.0f, 0.0f, 30.0f});
-    CHECK(CoopWorld::RestWords(g.Reader(), kBlockActor, {10.0f, 0.0f, 30.0f}, {12.0f, 0.0f, 30.0f})
-              .where.empty());
-    // A place whose last float is the component's last (0x1fc of 0x200) is found.
-    PutFloats(g, kBlockComp + 0x1f4, {10.0f, 20.0f, 30.0f});
-    const auto scan =
-        CoopWorld::RestWords(g.Reader(), kBlockActor, {10.0f, 20.0f, 30.0f}, {12.0f, 20.0f, 30.0f});
-    REQUIRE(scan.where.size() == 1);
-    CHECK(scan.where[0] == "c+0x10+0x1f4");
 }
 
 TEST_CASE("world: a token far from where its Skulltula was seen is its own when the Skulltula just died (items-sync)") {
@@ -2833,7 +2775,7 @@ TEST_CASE("world: two tokens after one Skulltula died: only one takes its id (it
 namespace {
 
 // The block's push node (ExecuteMovableBoxControl), as the game lays it out:
-// both vtables, owner chain [[[node+8]+8]+0x1f0] = actor, reached from a
+// its vtable, owner chain [[[node+8]+8]+0x1f0] = actor, reached from a
 // component through one more object.
 constexpr std::uint64_t kNodeMain = 0x0080004000, kNodeHolder = 0x2100600000, kNode = 0x2100700000,
                         kNodeCtx = 0x2100800000, kNodeAi = 0x2100900000;
@@ -2845,7 +2787,6 @@ void BlockNodeMemory(FakeGame& g) {
     g.Word(kBlockComp + 0x38, kNodeHolder);  // component -> holder -> node
     g.Word(kNodeHolder + 0x10, kNode);
     g.Word(kNode, kNodeMain + CoopWorld::BlockNode::kVtable);
-    g.Word(kNode + 0x20, kNodeMain + CoopWorld::BlockNode::kVtable2);
     g.Word(kNode + 8, kNodeCtx);
     g.Word(kNodeCtx + 8, kNodeAi);
     g.Word(kNodeAi + 0x1f0, kBlockActor);
@@ -2853,23 +2794,64 @@ void BlockNodeMemory(FakeGame& g) {
 
 } // namespace
 
-TEST_CASE("world: the block's push node is found by its vtables and owner (issue 147)") {
+TEST_CASE("world: the block's push node is the one its start named, checked by vtable and owner (issue 147)") {
     FakeGame g;
     BlockNodeMemory(g);
-    const auto node = CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain);
+    CoopWorld::NodeStarts starts;
+    // Never started (no patch 0029, or not entered yet): none, and no heap search.
+    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain, starts));
+    starts.Push(kNode, kBlockActor);
+    const auto node = CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain, starts);
     REQUIRE(node);
     CHECK(*node == kNode);
-    // Another block's node (owner is not this actor): not taken.
+    // Another actor's start does not name this block's node.
+    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor + 0x1000, kNodeMain, starts));
+    // The node now another block's (owner is not this actor): not taken.
     g.Word(kNodeAi + 0x1f0, kBlockActor + 0x1000);
-    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain));
+    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain, starts));
     g.Word(kNodeAi + 0x1f0, kBlockActor);
-    // Only the first vtable right: not taken.
-    g.Word(kNode + 0x20, 0);
-    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain));
-    g.Word(kNode + 0x20, kNodeMain + CoopWorld::BlockNode::kVtable2);
+    // Freed and reused (another vtable): not taken.
+    g.Word(kNode, kNodeMain + 0x1234);
+    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain, starts));
+    // The two node classes built on ExecuteMovableBoxControl, whose Enter runs the same start: taken.
+    for (const std::uint64_t vtable : CoopWorld::BlockNode::kVtables) {
+        g.Word(kNode, kNodeMain + vtable);
+        CHECK(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain, starts) == std::optional<std::uint64_t>(kNode));
+    }
     // Another main: not taken.
-    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain + 0x1000));
-    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, 0));
+    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain + 0x1000, starts));
+    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, 0, starts));
+}
+
+TEST_CASE("world: node starts keep each actor's newest node, a torn or stale pair fails the owner check") {
+    FakeGame g;
+    BlockNodeMemory(g);
+    CoopWorld::NodeStarts starts;
+    starts.Push(0, kBlockActor);  // (nothing kept without a node or an actor)
+    starts.Push(kNode, 0);
+    CHECK(starts.Count() == 0);
+    // An older node of this actor (since freed: its owner chain is gone) before the live one.
+    constexpr std::uint64_t kOldNode = 0x2100a00000;
+    for (std::uint64_t a = 0; a < 0x40; a += 8) g.Word(kOldNode + a, 0);
+    g.Word(kOldNode, kNodeMain + CoopWorld::BlockNode::kVtable);
+    starts.Push(kOldNode, kBlockActor);
+    starts.Push(kNode, kBlockActor);
+    starts.Push(kNode, kBlockActor);  // entered again: listed once
+    CHECK((starts.NewestFor(kBlockActor) == std::vector<std::uint64_t>{kNode, kOldNode}));
+    CHECK(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain, starts) == std::optional<std::uint64_t>(kNode));
+    // A pair naming this actor with another actor's node (torn): its owner chain says no.
+    CoopWorld::NodeStarts torn;
+    torn.Push(kOldNode, kBlockActor);
+    CHECK_FALSE(CoopWorld::FindBlockNode(g.Reader(), kBlockActor, kNodeMain, torn));
+    // The ring keeps the newest kSlots starts: one pushed out is not found any more.
+    for (std::size_t i = 0; i < CoopWorld::NodeStarts::kSlots; ++i) {
+        starts.Push(0x2200000000 + 0x1000 * i, 0x2300000000 + 0x1000 * i);
+    }
+    CHECK(starts.NewestFor(kBlockActor).empty());
+    starts.Push(kNode, kBlockActor);
+    CHECK((starts.NewestFor(kBlockActor) == std::vector<std::uint64_t>{kNode}));
+    starts.Clear();
+    CHECK(starts.NewestFor(kBlockActor).empty());
 }
 
 TEST_CASE("world: a followed push puts the new rest in the push node's target and start (issue 147)") {
