@@ -129,8 +129,8 @@ def pin_dir(stamp_text):
     """The shared folder of a pin: tools/ (Hookshot's tools and patched source), work/ (its build files and object
     cache) and game/ (THE game folder of the pin, built again in place). Every build of that pin, whatever the patches,
     goes through it: Hookshot's own lift key and object cache decide what is done again. The game folder must stay the
-    same path: the lift key hashes it (make_game.py: OOT_DUMP, OOT_ROMFS), and it keeps .longshot_exefs and the prepared
-    shaders. Not a cache entry (cache_prune leaves it); the cache gets a copy of the game folder."""
+    same path: it keeps .longshot_exefs and the prepared shaders (and before Longshot rc.6 the lift key hashed it, make_game.py:
+    OOT_DUMP, OOT_ROMFS; rc.6 keys the contents only). Not a cache entry (cache_prune leaves it); the cache gets a copy of the game folder."""
     return os.path.join(cache_root(), "pins", pin_of(stamp_text))
 
 

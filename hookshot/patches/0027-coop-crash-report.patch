@@ -1,0 +1,87 @@
+From 66e3532103dcff5a961b50d148f60f33ad0d3dd7 Mon Sep 17 00:00:00 2001
+From: coop-fetch <coop-fetch@localhost>
+Date: Mon, 16 Nov 2026 17:21:30 -0900
+Subject: [PATCH] Co-op crash report: co-op's log lines stay out of what is
+ sent
+
+Longshot rc.6's crash report (host/hos_crash_dialog.c, #983) takes the run
+log's last lines into the report Send posts (crash_lines) and the one it
+saves and copies (read_log). The co-op module logs into that log (patch
+0001's bridge_log): the server's address, the players' nicknames, a
+microphone's name, none of which the report's redaction takes out. Both
+readers now skip a co-op line (host/hos_coop_crash.h: "coop:" or "coop
+voice:" after hos_log's tags and the module's level word).
+---
+ host/hos_coop_crash.h   | 34 ++++++++++++++++++++++++++++++++++
+ host/hos_crash_dialog.c |  3 +++
+ 2 files changed, 37 insertions(+)
+ create mode 100644 host/hos_coop_crash.h
+
+diff --git a/host/hos_coop_crash.h b/host/hos_coop_crash.h
+new file mode 100644
+index 00000000..9c9dc474
+--- /dev/null
++++ b/host/hos_coop_crash.h
+@@ -0,0 +1,34 @@
++/* SPDX-License-Identifier: GPL-3.0-or-later
++   (oot-remake-multiplayer's patch 0027) Co-op's log lines stay out of the crash report.
++
++   The co-op module logs through hos_log (patch 0001's bridge_log), so its lines are in the run's log: the server's address,
++   the players' nicknames, a microphone's name. Longshot's crash report (host/hos_crash_dialog.c, rc.6's #983) takes the log's
++   last lines into what Send posts (crash_lines) and into the report it saves and copies (read_log); its redaction takes out
++   the home folder, the user name and the chosen microphone, not those. Both readers ask this first and skip such a line.
++
++   A line as hos_log writes it: "[hos <thread>] [<level>] <text>" (the level tag only when not info); the module's own level
++   word ("warning: ", "error: ", "critical: ", hookshot/compat/common/logging.h) may lead the text. Co-op's text begins with
++   "coop:" (the module, patch 0001's bridge) or "coop voice:" (patch 0009). Plain C. */
++#ifndef HOS_COOP_CRASH_H
++#define HOS_COOP_CRASH_H
++#include <string.h>
++
++static inline const char *hos_coop_crash_skip_tag(const char *p) {   /* (one "[...] " at p, when there is one) */
++    if (*p != '[') return p;
++    const char *end = strchr(p, ']');
++    if (!end) return p;
++    for (p = end + 1; *p == ' '; p++) {}
++    return p;
++}
++
++static inline int hos_coop_crash_private(const char *line) {
++    const char *p = hos_coop_crash_skip_tag(hos_coop_crash_skip_tag(line));
++    static const char *const levels[] = {"warning: ", "error: ", "critical: "};
++    for (size_t i = 0; i < sizeof levels / sizeof *levels; i++)
++        if (!strncmp(p, levels[i], strlen(levels[i]))) {
++            p += strlen(levels[i]);
++            break;
++        }
++    return !strncmp(p, "coop:", 5) || !strncmp(p, "coop voice:", 11);
++}
++#endif
+diff --git a/host/hos_crash_dialog.c b/host/hos_crash_dialog.c
+index 4edd1a15..e33c8ac4 100644
+--- a/host/hos_crash_dialog.c
++++ b/host/hos_crash_dialog.c
+@@ -28,6 +28,7 @@
+ #include "hos_crash_dialog.h"
+ #include "hos_crash_record.h"
+ #include "options_path.h"
++#include "hos_coop_crash.h"   /* (oot-remake-multiplayer's patch 0027: co-op's log lines are not in the report) */
+ #include "../gpu/vk/crash_window_api.h"
+ #include "../gpu/vk/compat/longshot_env.h"
+ #include <errno.h>
+@@ -301,6 +302,7 @@ static void read_log(RunLog *r, const Who *who) {
+     for (uint64_t taken = 0; taken < (256ull << 20) && fgets(line, sizeof line, f);) {
+         const size_t n = strlen(line);
+         taken += n;
++        if (hos_coop_crash_private(line)) continue;   /* (patch 0027) */
+         char *clean = redacted(who, line, n);
+         if (!clean) continue;
+         hos_crash_log_line(&r->facts, clean);
+@@ -1246,6 +1248,7 @@ static int crash_lines(const Shown *s, Lines *tail, Lines *crash) {
+     for (uint64_t taken = 0; taken < (256ull << 20) && fgets(line, sizeof line, f);) {
+         taken += strlen(line);
+         line[strcspn(line, "\r\n")] = 0;
++        if (hos_coop_crash_private(line)) continue;   /* (patch 0027) */
+         if (!found && hos_crash_starts(line)) found = 1;
+         if (!found) {   /* (the lines before it: the last 150, a ring) */
+             if (ring.n < HOS_CRASH_TAIL_LINES) lines_add(&ring, line);

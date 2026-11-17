@@ -563,7 +563,8 @@ function Invoke-MakeGame([string[]]$MoreArgs, [string]$Log = '') {
     $env:PYTHONIOENCODING = 'utf-8'
     $env:RX_CPM = Join-Path $tools 'cpm'
     $env:LONGSHOT_MINGW = Join-Path $tools 'llvm-mingw'
-    foreach ($v in 'LONGSHOT_NGX_SDK', 'LONGSHOT_FFX_SDK', 'LONGSHOT_MSVC', 'EMSDK', 'LONGSHOT_BUILDER_EXE', 'LONGSHOT_TOOLS') {
+    foreach ($v in 'LONGSHOT_NGX_SDK', 'LONGSHOT_FFX_SDK', 'LONGSHOT_MSVC', 'EMSDK', 'LONGSHOT_BUILDER_EXE', 'LONGSHOT_TOOLS',
+             'LONGSHOT_ROMFS_FROM') {   # (a launcher's: game files hard-linked from another folder, Longshot rc.6 #360)
         Remove-Item "Env:\$v" -ErrorAction SilentlyContinue
     }
     # (a shared work folder keeps all its build files, the translated C too: the next build of this pin
@@ -572,8 +573,9 @@ function Invoke-MakeGame([string[]]$MoreArgs, [string]$Log = '') {
     # (the release the menu names, top left: the source archive has no git history and no VERSION file, so
     # without this the builder's nx2\version.py says "unknown")
     if ($pin.tag) { $env:LONGSHOT_VERSION = $pin.tag }
-    # (Longshot's lift key hashes every A64_/OOT_/RX_ variable it is started with: co-op's own OOT_COOP_* ones
-    # (the test cache, the test password) would make a new key, and a whole new translation, for nothing)
+    # (co-op's own OOT_COOP_* ones (the test cache, the test password) are no business of the build's: before rc.6
+    # Longshot's lift key hashed every A64_/OOT_/RX_ variable, a whole new translation for nothing; rc.6's (#22) keys
+    # only the A64_*, SUYU_RECOMP_* and RX_TARGET ones)
     Get-ChildItem Env: | Where-Object { $_.Name -like 'OOT_COOP_*' } | ForEach-Object { Remove-Item "Env:\$($_.Name)" }
     $logArgs = if ($Log) { @('--log', $Log) } else { @() }
     Push-Location $tools

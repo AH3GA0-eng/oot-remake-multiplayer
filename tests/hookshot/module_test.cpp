@@ -19,6 +19,7 @@
 #include "coop_hookshot.h"
 #include "coop_null_page.h"
 #include "hos_coop_save_load.h"
+#include "hos_coop_crash.h"
 #include "hos_coop_sound.h"
 #include "hos_coop_world.h"
 #include "hos_coop_actors.h"
@@ -792,4 +793,28 @@ TEST_CASE("hookshot: typing in a co-op field keeps the keyboard from the menu (p
     for (std::size_t at = patch.find("diff --git a/"); at != std::string::npos; at = patch.find("diff --git a/", at + 1)) {
         CHECK(patch.compare(at, 20, "diff --git a/gpu/vk/") == 0);
     }
+}
+
+TEST_CASE("hookshot: co-op's log lines stay out of Longshot's crash report (patch 0027), its header hookshot/src's") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0027-coop-crash-report.patch");
+    CHECK(NewFile(patch, "host/hos_coop_crash.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_crash.h"));
+    // Both readers of the run log skip such a line: read_log (the saved and copied report) and crash_lines (what Send posts).
+    CHECK(patch.find("+        if (hos_coop_crash_private(line)) continue;   /* (patch 0027) */\n         char *clean = redacted(") !=
+          std::string::npos);
+    CHECK(patch.find("+        if (hos_coop_crash_private(line)) continue;   /* (patch 0027) */\n         if (!found && hos_crash_starts(") !=
+          std::string::npos);
+    // As hos_log writes them (host/hos_thread.c: "[hos <thread>] [<level>] "), the module's level word after.
+    CHECK(hos_coop_crash_private("[hos main] coop: on, server 192.0.2.7:27015, name 'Saria', join password none\n"));
+    CHECK(hos_coop_crash_private("[hos net] coop: player 2 'Mido' joined"));
+    CHECK(hos_coop_crash_private("[hos main] [warn] warning: coop: voice: microphone Headset is not connected"));
+    CHECK(hos_coop_crash_private("[hos main] error: coop: server refused"));
+    CHECK(hos_coop_crash_private("[hos audio] coop voice: on (the voices in the game's final mix)"));
+    CHECK(hos_coop_crash_private("coop: module loaded"));
+    // Longshot's own lines stay (the crash itself, the renderer, the maps).
+    CHECK_FALSE(hos_coop_crash_private("[hos main] CRASH: exception 0xc0000005 (read 0x8) at longshot.exe+0x1a2b3c"));
+    CHECK_FALSE(hos_coop_crash_private("[hos main] vk: status: 3.1 of 15.9 GB"));
+    CHECK_FALSE(hos_coop_crash_private("[hos main] hid: controller \"Pad\" is pad 1"));
+    CHECK_FALSE(hos_coop_crash_private("[hos main] map: coop:"));
+    CHECK_FALSE(hos_coop_crash_private("[hos main"));
+    CHECK_FALSE(hos_coop_crash_private(""));
 }

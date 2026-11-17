@@ -1,4 +1,4 @@
-From 2415d96d7a37dc4f37e3e8c8cfd5971dd8e5986c Mon Sep 17 00:00:00 2001
+From daeb2c2a478d1243a39f9b62dfa3629d379f1572 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Thu, 12 Nov 2026 18:34:41 -0900
 Subject: [PATCH] Co-op host save: the account save's folder and a re-mount,
