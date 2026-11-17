@@ -2026,9 +2026,9 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
             continue;
         }
         const std::optional<std::string_view> theirs =
-            r.scene ? std::optional<std::string_view>(*r.scene) : std::nullopt;
+            coop::host::view_of(r.scene);
         const std::optional<std::string_view> anim =
-            r.anim ? std::optional<std::string_view>(r.anim->name) : std::nullopt;
+            coop::host::name_of(r.anim);
         Show show = Show::show;
         const char* why = "";
         switch (coop::host::visibility(in.scene, local_event, theirs, r.status, anim)) {

@@ -35,7 +35,7 @@ inline void GameAsked(std::string_view name) {
 }
 
 // This frame's kind from the raw facts (the frame without a session reads no full reading).
-inline coop::host::EventWhose Classify(bool running, bool link_bound, std::optional<std::string_view> anim,
+inline coop::host::EventWhose Classify(bool running, bool link_bound, const std::optional<std::string_view>& anim,
                                        coop::host::EventOwnerTracker::By* by = nullptr) {
     Box& b = The();
     std::lock_guard lock(b.mutex);
@@ -49,8 +49,7 @@ inline coop::host::EventWhose Apply(coop::host::PlayerReading& reading) {
     Box& b = The();
     std::lock_guard lock(b.mutex);
     reading.event_whose = b.tracker.Frame(
-        reading.event_running.value_or(false), reading.link_bound,
-        reading.animation ? std::optional<std::string_view>(reading.animation->name) : std::nullopt);
+        reading.event_running.value_or(false), reading.link_bound, coop::host::name_of(reading.animation));
     return reading.event_whose;
 }
 
