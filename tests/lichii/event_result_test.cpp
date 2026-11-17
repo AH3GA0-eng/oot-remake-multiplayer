@@ -3,6 +3,7 @@
 // RESULT only (our asker's outputs, set with the game's set-bool), never a replay that binds our Link.
 #include <doctest/doctest.h>
 
+#include <array>
 #include <map>
 #include <optional>
 #include <set>
@@ -400,4 +401,36 @@ TEST_CASE("event result: the kill keeper: the largest live enemy of an unplayed 
     played = false;
     CHECK(CoopEventResult::KillKeepers("WaterTemple", [&](std::uint64_t h) { return alive.contains(h); }, is_played)
               .count(0xf8119818b5e22a95ULL) == 0);
+}
+
+TEST_CASE("event result: the follow keepers: blocks on press switches wait, the box puzzle's largest corner waits") {
+    std::set<std::string> played;
+    const auto is_played = [&](const std::string& e) { return played.contains(e); };
+    // Forest Temple Dm_ForestTemple_0014 (ForestTemple_MovableBox_Puzzle_Manager.CorrectPos): its four corners; only
+    // the largest waits, so another game's pushes alone never complete our puzzle.
+    constexpr std::array<std::uint64_t, 4> kCorners{0x1f0b64dac1bb1499ULL, 0x794f8e0396597b84ULL,
+                                                    0x9340d4ba68f5feccULL, 0xebddc3cef6e36708ULL};
+    auto k = CoopEventResult::FollowKeepers("ForestTemple", is_played);
+    CHECK(k.contains(0xebddc3cef6e36708ULL));
+    for (std::size_t i = 0; i + 1 < kCorners.size(); ++i) CHECK_FALSE(k.contains(kCorners[i]));
+    // Dodongo's Cavern room 19: every block in the press switch's room waits (any of them can rest on it).
+    constexpr std::array<std::uint64_t, 4> kRoom19{0x0f6a348ed7daaef4ULL, 0x244fd0ef8c5e5e01ULL,
+                                                   0x641bc828409e0c24ULL, 0xfc81551012767634ULL};
+    k = CoopEventResult::FollowKeepers("DodongoCavern", is_played);
+    for (const auto h : kRoom19) CHECK(k.contains(h));
+    CHECK(k.contains(0x8342f68da2a61311ULL));  // room 12's statue
+    // A hammer switch (Spirit Temple room 8): the switch itself.
+    CHECK(CoopEventResult::FollowKeepers("SpiritTemple", is_played).contains(0xcb61a9de736c9e1cULL));
+    // Played here: that event's keepers go, the others stay; another scene: none of them.
+    played.insert("DodongoCavern_Gimmick_SwitchShutter_Room19");
+    k = CoopEventResult::FollowKeepers("DodongoCavern", is_played);
+    for (const auto h : kRoom19) CHECK_FALSE(k.contains(h));
+    CHECK(k.contains(0x8342f68da2a61311ULL));
+    CHECK_FALSE(CoopEventResult::FollowKeepers("WaterTemple", is_played).contains(0xebddc3cef6e36708ULL));
+    // The flag hold never takes a follow line (the world sync holds them).
+    const auto h = CoopEventResult::HoldFor("ForestTemple", {}, is_played);
+    for (const auto c : kCorners) CHECK_FALSE(h.WaitsKey(c));
+    std::size_t follows = 0;
+    for (const auto& t : CoopEventResult::Triggers()) follows += t.kind == CoopEventResult::Trigger::follow;
+    CHECK(follows == 22);
 }

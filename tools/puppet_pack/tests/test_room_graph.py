@@ -261,9 +261,55 @@ class TriggerGuardsTest(unittest.TestCase):
     raise is a guard (a shared flag, a silver rupee counter's key and its tokens, a kill); every other leaf is a proof
     line saying why it cannot rise."""
 
-    def guards(self, trigger, shared=(), keys=(), one_way=(), plugs=None):
+    def guards(self, trigger, shared=(), keys=(), one_way=(), plugs=None, world=None):
         askers = {("Ev", "Scene", (1.0, 0.0, 0.0)): {"trigger": trigger}}
-        return eye_switches.trigger_guards(askers, None, set(shared), set(keys), set(one_way), plugs or {})
+        return eye_switches.trigger_guards(askers, None, set(shared), set(keys), set(one_way), plugs or {},
+                                           {"Scene": world} if world else None)
+
+    def test_followed_world_objects_are_follow_guards(self):
+        # Review of 70ba0763: coop_world follows another game's blocks to their rest place, so their push can raise
+        # our trigger: a block in a press switch's room (each waits), a puzzle manager's linked blocks (group = the
+        # manager: the hook keeps the largest), a followed trigger actor itself (a hammer switch's press).
+        world = {
+            50: ("Obj_StepSwitch_A_01", 3, (0.0, 0.0, 0.0), ()),
+            51: ("Obj_MovableBox_A_01", 3, (5.0, 0.0, 0.0), ()),
+            52: ("Obj_AmosStatue_A_01", 3, (9.0, 0.0, 0.0), ()),
+            53: ("Obj_MovableBox_A_01", 4, (1.0, 0.0, 0.0), ()),        # another room: cannot rest on it
+            54: ("Obj_MovableBox_BasePosAnchor", 3, (5.0, 0.0, 0.0), ()),  # an anchor: not followed on its own
+            60: ("ForestTemple_MovableBox_Puzzle_Manager", None, (0.0, 0.0, 0.0), (61, 62, 54)),
+            61: ("Obj_ForestTemple_MovableBox_A_01", 25, (0.0, 0.0, 0.0), ()),
+            62: ("Obj_ForestTemple_MovableBox_A_02", 25, (0.0, 0.0, 0.0), ()),
+            70: ("Obj_HammerSwitch_A_01", 3, (0.0, 0.0, 0.0), ()),
+            80: ("Obj_EyeSwitch_A_02", 3, (0.0, 0.0, 0.0), ()),
+        }
+        guards, proofs = self.guards([("actor", "Obj_StepSwitch_A_01", 50, "FirstOn", False, 0, (0.0, 0.0, 0.0), ()),
+                                      ("actor", "ForestTemple_MovableBox_Puzzle_Manager", 60, "CorrectPos", False, 0,
+                                       (0.0, 0.0, 0.0), ()),
+                                      ("actor", "Obj_HammerSwitch_A_01", 70, "OnState", False, 0, (0.0, 0.0, 0.0), ()),
+                                      ("actor", "Obj_EyeSwitch_A_02", 80, "OnState", False, 0, (0.0, 0.0, 0.0), ())],
+                                     world=world)
+        follow = sorted((g[4], g[5]) for g in guards if g[0] == "follow")
+        self.assertEqual(follow, [(51, 0), (52, 0), (61, 60), (62, 60), (70, 0)])
+        self.assertEqual(len(guards), 5)
+        self.assertEqual(len(proofs), 1)
+        self.assertIn("a followed block in its room cannot drive it", proofs[0][2])
+
+    def test_a_press_switch_with_no_room_takes_the_blocks_in_reach(self):
+        world = {50: ("Obj_StepSwitch_A_01", None, (0.0, 0.0, 0.0), ()),
+                 51: ("Obj_MovableBox_A_01", None, (10.0, 0.0, 0.0), ()),
+                 52: ("Obj_MovableBox_A_01", None, (30.0, 0.0, 0.0), ())}
+        guards, _ = self.guards([("actor", "Obj_StepSwitch_A_01", 50, "OnState", False, 0, (0.0, 0.0, 0.0), ())],
+                                world=world)
+        self.assertEqual([g[4] for g in guards], [51])
+
+    def test_is_followed_matches_coop_world(self):
+        for name in ("Obj_MovableBox_A_01", "Obj_SliderBox_A_01", "Obj_AmosStatue_A_01", "Obj_RollingRock_A_01",
+                     "Obj_HammerSwitch_A_01", "Obj_FireTemple_HammerDropPillar_A_01", "Obj_Deku_MoveFloor_A_01",
+                     "Obj_InsideTheDekuTree_FallingLadder_A_01"):
+            self.assertTrue(eye_switches.is_followed(name), name)
+        for name in ("Obj_MovableBox_BasePosAnchor", "Obj_StepSwitch_A_01", "Obj_RollingRockArea_A_01",
+                     "Enemy_Wolfos", "Obj_Pot_A_01"):
+            self.assertFalse(eye_switches.is_followed(name), name)
 
     def test_a_shared_flag_waits_and_an_unshared_or_negated_one_is_proved(self):
         guards, proofs = self.guards([("flag", "Shared_On", 0, "Bool", False, 0, (), ()),

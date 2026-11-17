@@ -1714,6 +1714,10 @@ public:
                 return v != nullptr && std::string_view(v) == "1";
             }();
             world_.SetDeleteLocks(delete_locks);
+            // Row 98(2) trigger guards (Trigger::follow): another game's push of a block onto a press switch, its press
+            // of a hammer switch or the box puzzle's last corner would raise our own asker's trigger here (a replay
+            // that binds our Link): those world objects follow only once our game has played the event.
+            world_.SetTriggerKeepers(TriggerFollowKeepers(system, *scene));
             world_.Tick(*scene, self, server_now_us, seen, player_, world);
             for (auto& m : world.send) {
                 send.emplace_back(std::move(m));
@@ -2254,6 +2258,18 @@ public:
     std::map<u64, std::pair<LifeWrite, u64>> trigger_kept_;  // address -> the kill, the placement hash there
     std::set<u64> keeper_addresses_;                          // this walk's keepers (Place skips their removes)
     std::string keeper_scene_;
+    // The follow keepers (CoopEventResult::FollowKeepers) of `scene` by our game's played flags; none before the game's
+    // main is known.
+    std::set<std::uint64_t> TriggerFollowKeepers(Core::System& system, const std::string& scene) const {
+        if (main_ == 0) {
+            return {};
+        }
+        CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main_);
+        coop::host::GameFlags flags(memory);
+        return CoopEventResult::FollowKeepers(scene, [&flags](const std::string& e) {
+            return flags.get_bool(coop::host::flag_hash("HavePlayedEvent." + e)).value_or(false);
+        });
+    }
     void KeepTriggerKills(Core::System& system, const std::string& scene, const std::vector<Seen>& seen,
                           std::vector<LifeWrite>& writes, u64 now_us) {
         if (scene != keeper_scene_) {

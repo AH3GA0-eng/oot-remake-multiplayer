@@ -150,7 +150,7 @@ def _leaf(kind, what, plug, neg, under_or):
             _place(what), links)
 
 
-def switch_events(romfs, dicts=None, wiring=None, askers=None):
+def switch_events(romfs, dicts=None, wiring=None, askers=None, world=None):
     """(lines, guards, extras), each sorted.
 
     lines:  (event, scene, switch name, switch place, plug, asker place)
@@ -166,6 +166,8 @@ def switch_events(romfs, dicts=None, wiring=None, askers=None):
     askers: when a dict, filled for EVERY asker of an event (with a switch or not; row 98(2), result only), keyed
             (event, scene, asker place): {"actor": its name, "outputs": {output: [results]} (only outputs that
             drive something), "results": all of them, "delete": [flags that delete it]}. asker_class() reads it.
+    world:  when a dict, filled per scene with every placed actor: {scene: {hash: (name, DefaultDungeonRoomIndex or
+            None, place, the placements all its links name)}}. trigger_guards() reads it (followed world objects).
     """
     if dicts is None:
         dicts = zs.Dicts.from_romfs(romfs)
@@ -190,6 +192,10 @@ def switch_events(romfs, dicts=None, wiring=None, askers=None):
             actors += root.get("Actors", []) or []
             groups += root.get("AiGroups", []) or []
         by_hash = {_int(a["Hash"]): a for a in actors if "Hash" in a}
+        if world is not None:
+            world[scene] = {h: (str(a.get("Gyaml", "")), (a.get("Dynamic") or {}).get("DefaultDungeonRoomIndex"),
+                                _place(a), tuple(sorted(_int(k["Dst"]) for k in a.get("Links", []) or [])))
+                            for h, a in by_hash.items()}
         for g in groups:
             refs = g.get("References", []) or []
             mods = [("", g.get("Logic", ""), None)]
@@ -475,10 +481,37 @@ def asker_class(key, wire, shared):
 
 # An actor's trigger plug that a kill rises (the object sync's shared kills and removes, docs/objects.md).
 KILL_PLUGS = ("Dead", "IsDeadNotDelay", "IsDeathEventPlay")
+# A press switch: what a pushed block (or a statue, a rolling rock) can rest on.
+PRESS_SWITCH = re.compile(r"^Obj_(?:[A-Za-z_]+_)?(?:StepSwitch|Stepswitch)(?:_|$)")
+# A movable's reach when the switch or the movable has no room index: places (m) this near the switch.
+FOLLOW_REACH_M = 20.0
+
+
+def is_movable(name):
+    """lichii/hook/coop_world.cpp IsMovable (with IsRoller, IsGravestone): what coop_world follows to another game's
+    rest place (push blocks, slider boxes, Amos statues, rolling rocks, graves)."""
+    if not name.startswith("Obj_") or "BasePosAnchor" in name:
+        return False
+    return ("MovableBox_" in name or name.startswith("Obj_SliderBox_") or name.startswith("Obj_AmosStatue_")
+            or ("RollingRock_" in name and "RollingRockArea" not in name) or name.startswith("Obj_Tombstone_")
+            or name in ("Obj_Graveyard_Tombstone_A_01", "Obj_Graveyard_Tombstone_A_02"))
+
+
+def is_followed(name):
+    """coop_world.cpp's followers whose state another game's sync changes here other than by a kill or a key:
+    IsMovable (moves, rest place), IsFaller (life 0: a pillar falls, a hammer switch is pressed), IsShifter (put where
+    another game left it), IsGimmickMover (the Deku Tree's moving floor). Breakables go by the kill guard (their
+    break is a life write or a remove), lying keys and tokens by their keys."""
+    return (is_movable(name) or name.startswith("Obj_FireTemple_HammerSlipPillar_")
+            or name.startswith("Obj_HammerSwitch_") or name.startswith("Obj_FireTemple_HammerDropFloor_")
+            or name.startswith("Obj_FireTemple_HammerDropPillar_") or name.startswith("Obj_FireTemple_HammerStair_")
+            or name.startswith("Obj_InsideTheDekuTree_FallingLadder_")
+            or name.startswith("Obj_InsideTheDekuTree_FallingFloor_") or name == "Obj_ShadowTemple_FallingFloor_A_03"
+            or name.startswith("Obj_Deku_MoveFloor_"))
 SILVER_COUNTER = re.compile(r"^Obj_silverRupeeCounter(?:_|$)")
 
 
-def trigger_guards(askers, keep, shared, keys, one_way, plugs):
+def trigger_guards(askers, keep, shared, keys, one_way, plugs, world=None):
     """(guards, proofs) for row 98(2)'s trigger guards: what another player's game can raise on our asker's
     EventRequestTrigger, so our asker would ask the event here (a replay, review-a38-5). Every leaf of every asker's
     trigger (both classes) is either a guard or a proof line.
@@ -490,11 +523,47 @@ def trigger_guards(askers, keep, shared, keys, one_way, plugs):
               the hook keeps the largest one missing here waiting and lets the others land (a split collection), so
               shared keys never complete our counter;
       "kill"  an actor whose Dead (IsDeadNotDelay, IsDeathEventPlay, a negated Logic_Alive) the trigger reads, killed
-              or removed by the object sync: the largest live one of the event waits, the others die.
+              or removed by the object sync: the largest live one of the event waits, the others die;
+      "follow" a world object coop_world follows (is_followed) that can raise the trigger: the trigger actor itself
+              (a hammer switch's press, a statue's or block's stop), each movable that can rest on a press switch the
+              trigger reads (one in the switch's room, group 0: each waits), or a block a trigger actor links (a
+              puzzle manager's corners: group = that actor's hash: only the LARGEST waits, the others land, so
+              followed pushes alone never complete it): another game's move, rest place or fall of it waits until
+              our game has played the event, then lands.
     proofs: (event, scene, text) - a leaf shared state cannot raise, and why.
     keys: the shared placement keys (coop_dungeon.cpp kKeys); one_way: shared flags whose 0 is never sent
-    (kLiveFlags); plugs: {(scene, switch name): [(place, plug)]} the switch share holds (coop_room_objects.cpp)."""
+    (kLiveFlags); plugs: {(scene, switch name): [(place, plug)]} the switch share holds (coop_room_objects.cpp);
+    world: switch_events()' world (none: no followed world object is known)."""
     guards, proofs = set(), set()
+    world = world or {}
+
+    def room_of(scene, hash_):
+        own = world.get(scene, {}).get(hash_)
+        return own[1] if own else None
+
+    def follow(scene, event, name, hash_, place):
+        """The follow guards of one trigger actor (empty: no followed world object can drive it)."""
+        actors = world.get(scene, {})
+        found = set()
+        if is_followed(name):
+            found.add(("follow", scene, event, "", hash_, 0, f"{name}: another game's move or fall of it"))
+        own = actors.get(hash_)
+        for dst in (own[3] if own else ()):
+            other = actors.get(dst)
+            if other and is_movable(other[0]):
+                found.add(("follow", scene, event, "", dst, hash_, f"{other[0]}, a block {name} links"))
+        if PRESS_SWITCH.match(name):
+            room = own[1] if own else None
+            for h, (other, other_room, at, _) in actors.items():
+                if h == hash_ or not is_movable(other):
+                    continue
+                if room is not None and other_room is not None:
+                    near = other_room == room
+                else:
+                    near = sum((a - b) ** 2 for a, b in zip(at, place)) < FOLLOW_REACH_M ** 2
+                if near:
+                    found.add(("follow", scene, event, "", h, 0, f"{other} may rest on {name}"))
+        return found
     for key in sorted(askers):
         event, scene, _ = key
         if keep is not None and (event, scene) not in keep:
@@ -533,14 +602,27 @@ def trigger_guards(askers, keep, shared, keys, one_way, plugs):
             if hash_ in keys:
                 guards.add(("key", scene, event, "", hash_, 0, f"{name}'s key"))
                 continue
+            followed = follow(scene, event, name, hash_, place)
+            if followed:
+                guards |= followed
+                continue
             near = [p for at, p in plugs.get((scene, name), [])
                     if sum((a - b) ** 2 for a, b in zip(at, place)) < 1.5 ** 2]
             if plug in near:
                 proofs.add((event, scene, f"{name}.{plug}: HELD BY THE SWITCH SHARE (not covered)"))
+            elif any(is_movable(other) and other_room is not None and other_room == room_of(scene, hash_)
+                     for other, other_room, _, _ in world.get(scene, {}).values()):
+                proofs.add((event, scene, f"{name}.{plug}: each game's own (a followed block in its room cannot "
+                                          "drive it: a block rests only on press switches; no shared flag, key, kill "
+                                          "or switch share line)"))
             else:
-                proofs.add((event, scene, f"{name}.{plug}: each game's own (no shared flag, key, kill or switch "
-                                          "share line)"))
-    return sorted(guards), sorted(proofs)
+                proofs.add((event, scene, f"{name}.{plug}: each game's own (no shared flag, key, kill, switch "
+                                          "share line or followed world object that can drive it)"))
+    # One line per (kind, scene, event, id, group): a block can be a trigger actor and rest on a press switch too.
+    once = {}
+    for g in sorted(guards):
+        once.setdefault(g[:6], g)
+    return sorted(once.values()), sorted(proofs)
 
 
 def shared_keys(path):
@@ -597,7 +679,8 @@ def main(argv=None):
     shared = shared_flags(args.dungeon) if args.dungeon else None
     wiring = {} if args.classify else None
     askers = {} if args.results else None
-    lines, guards, extras, others = switch_events(args.romfs, wiring=wiring, askers=askers)
+    world = {} if args.results else None
+    lines, guards, extras, others = switch_events(args.romfs, wiring=wiring, askers=askers, world=world)
     if args.results:
         print("// kResults (event, scene, asker place, the outputs to set: none for class live)")
         guarded = []
@@ -621,7 +704,7 @@ def main(argv=None):
         dungeon = args.dungeon or ""
         objects = args.room_objects or os.path.join(os.path.dirname(dungeon), "coop_room_objects.cpp")
         guards, proofs = trigger_guards(askers, keep, shared or set(), shared_keys(dungeon) if dungeon else set(),
-                                        one_way_flags(dungeon) if dungeon else set(), switch_plugs(objects))
+                                        one_way_flags(dungeon) if dungeon else set(), switch_plugs(objects), world)
         print("// kTriggers (what another game can raise on our asker's trigger: waits until our game played the event)")
         for kind, scene, event, flag, id_, group, why in guards:
             print(f'    {{Trigger::{kind}, "{scene}", "{event}", "{flag}", {id_:#018x}, {group:#018x}}},  // {why}')

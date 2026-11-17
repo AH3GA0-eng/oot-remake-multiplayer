@@ -78,14 +78,20 @@ std::vector<std::string_view> SplitOutputs(std::string_view outputs);
 //   the one that waits does not depend on which arrive). Our Link taking that token itself completes it: our own play.
 // - kill: an actor whose death (Dead, IsDeadNotDelay, IsDeathEventPlay, a negated Logic_Alive) the trigger reads; the
 //   object sync's kill or remove of the LARGEST live one of the event waits (KillKeepers), the others die.
+// - follow: a world object coop_world follows (review of 70ba0763): the trigger actor itself (a hammer switch's press,
+//   a hammer pillar's fall, a statue's or block's stop), a block, statue or rolling rock that can rest on a press
+//   switch the trigger reads (one in the switch's room: each waits), or a block a trigger actor links (`group` = that
+//   actor's placement hash: the Forest Temple box puzzle's four corners: only the LARGEST waits, the others land, so
+//   another game's pushes alone never complete it; our Link pushing it is our own play). Another game's move, rest
+//   place and fall of a keeper wait in coop_world (FollowKeepers) and land once our game has played the event.
 struct Trigger {
-    enum Kind : std::uint8_t { flag, key, token, kill };
+    enum Kind : std::uint8_t { flag, key, token, kill, follow };
     Kind kind;
     std::string_view scene;
     std::string_view event;
     std::string_view name;  // kind flag: the flag's name
-    std::uint64_t id;       // key, token: the placement key; kill: the actor's placement hash
-    std::uint64_t group;    // token: its counter's key
+    std::uint64_t id;       // key, token: the placement key; kill, follow: the actor's placement hash
+    std::uint64_t group;    // token: its counter's key; follow: the linking actor's hash (0: this one waits)
 };
 std::span<const Trigger> Triggers();
 
@@ -112,6 +118,11 @@ Hold HoldFor(std::string_view scene, const std::set<std::string>& applied,
 // it is no keeper any more (the event played here, or a scene change).
 std::set<std::uint64_t> KillKeepers(std::string_view scene, const std::function<bool(std::uint64_t)>& alive,
                                     const std::function<bool(const std::string&)>& played);
+
+// The follow triggers' keepers in `scene` (pure): for each event our game has not played, its follow actors of group
+// 0 and the largest of each linked group. coop_world (WorldSync::SetTriggerKeepers) keeps another game's move, rest
+// place and fall of a keeper until it is no keeper any more (the event played here, or a scene change).
+std::set<std::uint64_t> FollowKeepers(std::string_view scene, const std::function<bool(const std::string&)>& played);
 
 // Frames an output must read back 1 (after our set, or already) to count as set; and how long one event is tried.
 inline constexpr int kApplyFrames = 3;
