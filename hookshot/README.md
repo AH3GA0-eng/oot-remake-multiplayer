@@ -19,6 +19,7 @@ Co-op inside [Longshot](https://git.magicbean.dev/MagicBeanDev/Longshot) (Team M
 | `compat/` | Stand-ins for the slice of the emulator's API that `lichii/hook` uses, answered from the bridge's table, so every hook file compiles unchanged for Hookshot: one copy of co-op for both. |
 | `CMakeLists.txt` | Target `hookshot_coop` (Windows, MSVC): `lichii/hook`'s files as `core.cmake` lists them, but the emulator's cave and input injection, plus `src/`. |
 | `proof.py` | The two-game check on one PC (both games, the server, shots of both pictures, the co-op log lines). |
+| `../tools/hookshot/host_compile_check.ps1` | CI's windows job: Longshot's source at the pin with these patches, and the `host/*.c` they change (or whose headers they change) compiled syntax only by Longshot's own llvm-mingw clang, plus the patched `.py` files. Nothing else compiles the Windows host code before a game build (the Linux jobs build the renderer alone). Run it by hand before pushing a patch that changes `host/`. |
 
 ## A co-op Hookshot game, for development (Windows)
 
