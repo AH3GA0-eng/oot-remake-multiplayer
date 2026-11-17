@@ -748,7 +748,7 @@ TEST_CASE("pose: a stopped stream or another skeleton leaves the puppet to its A
 }
 
 // puppet-smooth (owner 2026-11-16: "Animations seem a bit jittery and choppy").
-TEST_CASE("pose: the stream is sized by who watches it; 16 players keep the floor") {
+TEST_CASE("pose: the stream is sized by who watches it, 16 players keep the floor") {
     struct Want {
         std::size_t watchers;
         int hz;
