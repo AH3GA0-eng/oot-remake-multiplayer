@@ -82,9 +82,15 @@ bool Latches(const Switch& s);
 // (tools/puppet_pack/eye_switches.py --classify): 36 are class A - every room result of the event reaches our room
 // through a shared flag (the switch's ON input, the room's actors, the asker's delete all read it), or is only the
 // event's moment (camera, a chest's appear act, the event's own air walls): the other player's live flags are the
-// native path and our room ends as theirs does after a reload. 3 are class B - a result hangs on OUR asker only.
+// native path and our room ends as theirs does after a reload. g3-objects: 38 class A, 1 class B (GTG room 6,
+// below); Inputs() is EMPTY. Jabu-Jabu room 14's water switches (upper and lower) were the two input lines while
+// the water flags were each game's own; with those flags shared (coop_dungeon.cpp) both are class A, and running
+// our own asker would write the shared two-way water flags a second time, late (a second writer: it could flip the
+// water back for everyone). The tool refuses an input or split drive for any asker that writes a shared flag some
+// asker also writes the other way. The input path below stays for a future class B line with no such write.
+// Before g3-objects: 36 class A, 3 class B - a result hangs on OUR asker only.
 // Two of them (Jabu-Jabu room 14's water switch, upper and lower: the event toggles the water through flags that
-// are each game's own and re-arms the switch) have an ON input the room graph leaves unwired (FirstOn): we set that
+// were each game's own and re-arms the switch) had an ON input the room graph leaves unwired (FirstOn): we set that
 // input (the set-bool's own store, CoopLogicSet::SetInput), the switch's own AI turns it on and keeps OnState, and
 // our asker asks the event. Only where the input's value address is provably that plug's own on this instance
 // (CoopLogicSet::InputNotOwn; else the old way), and the old byte is stored back when the try ends (the event
@@ -100,6 +106,18 @@ struct Input {
 std::span<const Input> Inputs();
 // The input line of `s`, if it has one.
 const Input* InputOf(const Switch& s);
+// Tests only (g3-objects): Inputs() is empty in the generated table, so the input path's tests put their own lines
+// in for one scope (the previous table comes back on scope exit). Not thread-safe; never used by the hook.
+class ScopedInputsForTest {
+public:
+    explicit ScopedInputsForTest(std::span<const Input> lines);
+    ~ScopedInputsForTest();
+    ScopedInputsForTest(const ScopedInputsForTest&) = delete;
+    ScopedInputsForTest& operator=(const ScopedInputsForTest&) = delete;
+
+private:
+    std::span<const Input> old_;
+};
 
 // AND-gated triggers (deku-ladder round 3): a trigger can AND the switch with a saved room flag read NEGATED (the
 // room's "done" flag: GTG room 6's fire, Jabu room 1's first press), and the asker itself is deleted by a room flag

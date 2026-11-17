@@ -368,7 +368,17 @@ def switch_events(romfs, dicts=None, wiring=None):
     return sorted(lines), sorted(guards), sorted(extras), sorted(others)
 
 
-def classify(line, wire, shared):
+def two_way_flags(wiring):
+    """The flags some asker sets and some asker (the same or another) clears, over all lines (g3-objects)."""
+    seen = {}
+    for wire in wiring.values():
+        for kind, what, detail in wire["results"]:
+            if kind == "flag" and detail in ("set", "clear"):
+                seen.setdefault(what, set()).add(detail)
+    return {f for f, d in seen.items() if d == {"set", "clear"}}
+
+
+def classify(line, wire, shared, two_way=frozenset()):
     """(class, fix, why) of a switch line whose plug does not latch (deku-ladder, A #39).
 
     class "A": every room result of the event reaches the room through a shared flag: the asker's outputs only set
@@ -381,9 +391,16 @@ def classify(line, wire, shared):
     switch's own AI turns on and keeps its output; "split" - the ON input reads a shared flag that does not delete
     the asker: hold only the asker's delete flags (the ON flag comes, our switch turns on, our asker asks); "none" -
     the ON input's flag also deletes the asker (or no ON input): no native way, reported.
+    An actor input is also covered by a shared flag ORed into it that the asker's own results drive the same way
+    (the asker clears it and the OR reads it negated, or sets it and the OR reads it as is: g3-objects, Jabu room
+    14's upper switch re-arms from `not Updown_MoveWater`, which its event clears).
+    A class B fix that runs our asker (input, split) is refused ("none") when the asker writes a shared flag that
+    some asker also writes the other way (`two_way`): our late run would be a second writer and could undo the
+    other player's newer write for everyone (g3-objects: Jabu room 14's water flags once they are shared).
     """
     event, scene, switch, at, plug, asker_at = line
     on_flags = {w for _, srcs in wire["on"] for k, w, ng in srcs if k == "flag" and not ng and w in shared}
+    writes = {(w, d) for k, w, d in wire["results"] if k == "flag" and d in ("set", "clear")}
     misses = []
     for kind, what, detail in wire["results"]:
         if kind == "flag":
@@ -401,12 +418,17 @@ def classify(line, wire, shared):
             polarity = {ng for w, ng, _ in also if w == "EventRequestActor"}
             covered = any((uo or not polarity) and (not polarity or ng in polarity) and
                           (w in shared or (w == switch and on_flags)) for w, ng, uo in also)
+            covered = covered or any(uo and w in shared and (w, "clear" if ng else "set") in writes
+                                     for w, ng, uo in also)
             if not covered:
                 misses.append(f"{what}.{name}")
     if not misses:
         return "A", "", "results through shared flags"
     misses = sorted(set(misses))
-    forced = [n for n, srcs in wire["on"] if n != "BootUp" and n != "Active" and not srcs]
+    second = sorted(w for w, _ in writes if w in shared and w in two_way)
+    if second:
+        return "B", "none", "; ".join(misses) + f"; our asker would write shared two-way {', '.join(second)} again"
+    forced =[n for n, srcs in wire["on"] if n != "BootUp" and n != "Active" and not srcs]
     wired = [w for n, srcs in wire["on"] if n in ("BootUp", "ForceControl", "FirstOn", "isCleared")
              for k, w, ng in srcs if k == "flag" and not ng]
     if wired and set(wired) <= shared and not set(wired) & set(wire["delete"]):
@@ -441,13 +463,14 @@ def main(argv=None):
     wiring = {} if args.classify else None
     lines, guards, extras, others = switch_events(args.romfs, wiring=wiring)
     if args.classify:
+        two_way = two_way_flags(wiring)
         rows = []
         for line in lines:
             event, scene, switch, at, plug, _ = line
             if (keep is not None and (event, scene) not in keep) or switch.startswith("Obj_EyeSwitch") or \
                     plug == "FirstOn" or line not in wiring:
                 continue
-            rows.append((line, *classify(line, wiring[line], shared or set())))
+            rows.append((line, *classify(line, wiring[line], shared or set(), two_way)))
         print("// kInputs (class B, the switch's ON input unwired: set it)")
         for (event, scene, switch, at, _, _), _, fix, why in rows:
             if fix.startswith("input "):

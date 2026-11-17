@@ -80,6 +80,33 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(self.classify(wire(on=[("BootUp", [("flag", "Room_Done", False)])], results=[reads_switch]))[0], "A")
         self.assertEqual(self.classify(wire(on=[("BootUp", [])], results=[reads_switch]))[0], "B")
 
+    def test_a_shared_flag_the_asker_drives_the_same_way_covers(self):
+        # g3-objects, Jabu room 14 upper: the switch re-arms from `asker OR not Updown`, and the event clears Updown
+        rearm = ("actor", "Obj_Switch", ("BootUp", (("EventRequestActor", False, True), ("Room_Done", True, True))))
+        self.assertEqual(self.classify(wire(results=[rearm, ("flag", "Room_Done", "clear")]))[0], "A")
+        # ... the event sets it instead (the OR's negated term goes false): not covered
+        self.assertEqual(self.classify(wire(results=[rearm, ("flag", "Room_Done", "set")]))[0], "B")
+        # ... an unshared flag driven the same way does not cover either
+        own = ("actor", "Obj_Switch", ("BootUp", (("EventRequestActor", False, True), ("Room_Own", True, True))))
+        self.assertEqual(self.classify(wire(results=[own, ("flag", "Room_Own", "clear")]))[0], "B")
+
+    def test_no_drive_of_an_asker_that_writes_a_shared_two_way_flag(self):
+        # g3-objects: our asker run late would write the flag again and could undo the other player's newer write
+        miss = [("flag", "Gimmick_Water", "set"), ("flag", "Room_Done", "clear")]
+        on = [("BootUp", []), ("FirstOn", [])]
+        self.assertEqual(eye_switches.classify(LINE, wire(on=on, results=miss), SHARED)[:2], ("B", "input FirstOn"))
+        cls, fix, why = eye_switches.classify(LINE, wire(on=on, results=miss), SHARED, {"Room_Done"})
+        self.assertEqual((cls, fix), ("B", "none"))
+        self.assertIn("two-way Room_Done", why)
+        # a two-way flag that is not shared is each game's own: our asker may still run
+        self.assertEqual(eye_switches.classify(LINE, wire(on=on, results=miss), SHARED, {"Gimmick_Water"})[:2],
+                         ("B", "input FirstOn"))
+
+    def test_two_way_flags(self):
+        wiring = {1: wire(results=[("flag", "W", "set"), ("flag", "X", "set")]),
+                  2: wire(results=[("flag", "W", "clear"), ("actor", "X", ("BootUp", ()))])}
+        self.assertEqual(eye_switches.two_way_flags(wiring), {"W"})
+
 
 if __name__ == "__main__":
     unittest.main()
