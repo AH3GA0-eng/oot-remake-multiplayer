@@ -56,8 +56,8 @@ inline constexpr std::uint32_t kFlagMask = 0xffu << kFlagShift;
 }  // namespace addr
 
 inline constexpr std::size_t kMaxBones = 512;
-// Link's pose goes 15 times a second (30 before the 16-player work); the
-// receiver's Track blends the last two, so it still plays smooth.
+// The floor of Link's pose stream (the 16-player work): 15 times a second, at most
+// kMaxSendBones bones. A smaller session sends more (PlanFor, puppet-smooth).
 inline constexpr int kSendHz = 15;
 // At most this many of Link's bones go in one pose (about 300 move). First up
 // to kRefreshBones of those unsent for kBoneRefreshMs or longer, oldest first
@@ -69,6 +69,26 @@ inline constexpr int kSendHz = 15;
 // 30/s was about 160 KB/s.
 inline constexpr std::size_t kMaxSendBones = 48;
 inline constexpr std::uint64_t kBoneRefreshMs = 500;
+// puppet-smooth (owner 2026-11-16: "Animations seem a bit jittery and choppy"). kSendHz and
+// kMaxSendBones are the 16-player floor, and were sent to every session: in a 2-player game ~120
+// of Link's bones move while he walks, so most of them went every 2nd to 8th pose and were held,
+// then jumped (a stair-step at a few steps a second), and the fast limbs were 15 Hz straight
+// lines. Now the stream is sized by how many players watch it (the other players whose poses
+// reach us: the server sends poses both ways by the same interest). The host relays
+// (watchers + 1) x watchers pose streams; kPoseRelayBytes is what they may take of its upload
+// (~1.9 Mbit/s, the old 2-player stream). Each sender's share buys bones at 15 Hz first; a share
+// big enough for kFullBodyBones at kFastHz goes 30 times a second. Never less than the floor.
+//   1 watcher: 30 Hz, 222 bones (every moving bone); 2: 15 Hz, 148; 3: 15 Hz, 74; 4+: 15 Hz, 48.
+inline constexpr std::size_t kPoseRelayBytes = 240'000;  // bytes a second, all pose streams
+inline constexpr std::size_t kBoneBytes = 18;            // one bone on the wire, about
+inline constexpr int kFastHz = 30;
+inline constexpr std::size_t kFullBodyBones = 160;       // ~120 move in a walk, and a margin
+struct StreamPlan {
+    int hz = kSendHz;
+    std::size_t bones = kMaxSendBones;
+};
+// `watchers`: the other players our poses go to (0 is taken as 1).
+StreamPlan PlanFor(std::size_t watchers);
 inline constexpr std::size_t kRefreshBones = 8;
 // A bone is changed once a packed part moved more than this (in the packed
 // units: 1/32767 of a quaternion part, 1/kPoseUnit of a translation or scale).
@@ -187,18 +207,43 @@ private:
 // jitter-3's proof number: how even the shown pose's change is from frame to
 // frame (the summed bone turn), as CoopFollow::Steps reads the place: the mean
 // |1 - change / last change| over frames that both moved; 0 is even.
+// puppet-smooth: the change is taken per second of frame time (an uneven frame rate is not the
+// puppet's unevenness; `Raw` keeps the old per-frame number to compare with older logs), and
+// `Jumps` counts a bone shown exactly the same (a held copy) for kJumpHeldFrames frames or more that
+// then moves more than kJumpRad in one: the stair-step a bone left out of poses makes. Smooth
+// playback has about none (a bone the sender skips at a turning point, unchanged, holds one interval).
+// Only a bone that moved before its hold counts: a puppet coming into view is held on its first
+// pose for kShowDelayMs (nothing earlier to blend from) and then starts, which is no stair-step.
+struct EvenReport {
+    float uneven = 0.0f;  // by frame time
+    float raw = 0.0f;     // per frame, as before puppet-smooth
+    int moving = 0;       // frames that moved, of both
+    float jumps_per_s = 0.0f;
+};
 class Evenness {
 public:
     // A report every kEvenReportMs, else nothing.
     std::optional<float> Step(const Pose& shown, std::uint64_t now_ms, int* frames = nullptr);
+    // The whole report of the last Step that gave one.
+    const EvenReport& Last() const { return report_; }
 
 private:
     std::optional<Pose> last_;
+    static constexpr int kNotMoved = 255;  // held_: not moved since the bone list (re)started
+    std::vector<std::uint8_t> held_;  // per bone index: frames shown exactly the same, in a row
+    std::uint64_t last_ms_ = 0;
     float last_change_ = 0.0f;
+    float last_rate_ = 0.0f;
     float sum_ = 0.0f;
+    float raw_sum_ = 0.0f;
     int moving_ = 0;
+    int jumps_ = 0;
     std::uint64_t start_ms_ = 0;
+    EvenReport report_;
 };
+inline constexpr float kJumpRad = 0.01f;   // ~0.6 degree in one frame after a held one
+inline constexpr int kJumpHeldFrames = 3;  // ~50 ms: longer than one 30/s interval
+inline constexpr float kHeldChord = 2e-6f;  // |a - b| of a held copy blended (float rounding)
 inline constexpr std::uint64_t kEvenReportMs = 5000;
 inline constexpr float kEvenMovingRad = 0.02f;  // summed over the bones
 
