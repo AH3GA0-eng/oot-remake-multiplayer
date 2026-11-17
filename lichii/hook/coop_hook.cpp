@@ -76,6 +76,7 @@
 #include "coop_flags.h"
 #ifdef COOP_HOOKSHOT
 #include "coop_flag_native.h"
+#include "coop_map_page.h"  // patch 0018's menu state: PLAYER_STATUS in_menu/paused (Read)
 #endif
 #include "coop_save.h"
 #include "coop_game_build.h"
@@ -1735,6 +1736,17 @@ private:
             view.scene = reading->scene;
             view.age = reading->age;
             ApplyEventOwner(*reading);
+            // PLAYER_STATUS's away bits (coop/host/sampler.hpp status_bits; docs/puppet.md "Away"), from the game's
+            // own state: our Link's Life component at 0 (the objects walk's read of his actor: Game Over or downed),
+            // and the game's menu screens (Longshot's patch 0018: one of them in front, f_802f1380's screens).
+            if (const auto life = CoopObjects::OurLinkLife()) {
+                reading->dead = *life <= 0;
+            }
+#ifdef COOP_HOOKSHOT
+            if (const auto menu = CoopMapPage::MenuState()) {
+                reading->in_menu = menu->menu_open;
+            }
+#endif
         }
         return reading;
     }

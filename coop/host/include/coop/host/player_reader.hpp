@@ -45,6 +45,14 @@ struct PlayerReading {
   EventWhose event_whose = EventWhose::ours;
   std::optional<protocol::Animation> animation;  // AS command in the main slot
   std::optional<protocol::Equipment> equipment;  // what the player wears
+  // PLAYER_STATUS's away bits (docs/protocol.md), which the reader cannot see in one frame of memory: the hook sets
+  // them from the game's own state (docs/puppet.md, "Away"). Nothing: not known in this build (kept as 0, never sent).
+  // A game menu is in front: one of the game's menu screens (its update f_802f1380) has a focused button: the pause
+  // menu, the Key Items / Threads of Time / Map panel, a dialog (Longshot's patch 0018, hos_coop_menu_state).
+  std::optional<bool> in_menu;
+  // Our Link's own Life component at 0 (his actor's, as the objects walk reads it: CoopObjects::OurLinkLife): Game
+  // Over, or downed. Nothing: not read lately (the last value sent is kept).
+  std::optional<bool> dead;
   bool operator==(const PlayerReading&) const = default;
 };
 

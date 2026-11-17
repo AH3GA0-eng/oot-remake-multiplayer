@@ -72,7 +72,7 @@ FrameReport Session::frame(const std::optional<PlayerReading>& reading, FlagStor
     sampler_.set_player_number(number);
     const std::uint64_t sample_us =
         frame_aligned_us(report.server_now_us, game_frame_age_us_ ? game_frame_age_us_() : 0);
-    for (const Outgoing& m : sampler_.frame(reading, sample_us)) {
+    for (const Outgoing& m : sampler_.frame(reading, sample_us, title_up_)) {
       protocol::Message message;
       if (protocol::decode(m.bytes, message) == protocol::Error::none) {
         out.emplace_back(std::move(message));
