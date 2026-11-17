@@ -236,6 +236,10 @@ constexpr u64 kBlockSize = kBlockNames + kNameCell * kNameCells;
 constexpr int kCountersCallerOrder = 63;
 // deku-switches (LICHII_COOP_LOGIC_PROBE): a room's event asker (coop_live_events.h kAskerNames).
 bool IsRoomAsker(std::string_view name) { return name == "EventRequestActor" || name == "EventProxyRequestActor"; }
+// deku-ladder (LICHII_COOP_LOGIC_PROBE): switch kinds that are not gimmicks (CoopWorld::IsGimmick) but start room events.
+bool IsProbeSwitch(std::string_view name) {
+    return name.find("HammerSwitch_") != std::string_view::npos || name.find("DiveSwitch_") != std::string_view::npos;
+}
 struct CounterRingBox {
     std::mutex mutex;
     u64 main = 0;    // set by Share while sharing; 0: nothing to do
@@ -1807,7 +1811,8 @@ public:
                                  // deku-ladder: the other switch kinds whose plug starts a room event (step, hit, sun)
                                  g.name.find("StepSwitch_") == std::string::npos &&
                                  g.name.find("SwitchHit_") == std::string::npos &&
-                                 g.name.find("SolarSwitch_") == std::string::npos && !IsRoomAsker(g.name))) {
+                                 g.name.find("SolarSwitch_") == std::string::npos && !IsProbeSwitch(g.name) &&
+                                 !IsRoomAsker(g.name))) {
                     continue;
                 }
                 float d2 = 0.0f;
@@ -2771,7 +2776,7 @@ private:
                 ride_lifts_.push_back(std::move(l));
             }
             if (((gimmick_probe_on_ || logic_probe_on_) && CoopWorld::IsGimmick(known.first)) ||
-                (logic_probe_on_ && IsRoomAsker(known.first))) {  // deku-switches: the asker's EventRequestTrigger
+                (logic_probe_on_ && (IsRoomAsker(known.first) || IsProbeSwitch(known.first)))) {  // the asker's trigger
                 CoopWorld::GimmickProbe::Gimmick g;
                 g.address = a;
                 g.hash = known.second;
