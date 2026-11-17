@@ -455,6 +455,10 @@ bool OnBrainPath(std::string_view name) {
            !IsOwnPuzzle(name) && !CoopEnemyShots::IsEnemyShot(name);
 }
 
+bool EnemyBrainSwitch(std::string_view value) {
+    return !value.empty() && value != "0";
+}
+
 bool IsBoss(std::string_view name) {
     if (name.find("_Dictionary") != std::string_view::npos) return false;
     if (name.starts_with("Enemy_DungeonBoss_") || name.starts_with("Enemy_MiddleBoss_")) {

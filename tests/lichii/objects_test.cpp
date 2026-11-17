@@ -512,6 +512,13 @@ TEST_CASE("objects: animals and townspeople are shared too (hits on a cucco)") {
     CHECK_FALSE(CoopObjects::IsShared("Npc_Invisible_Hylia_Dampe_001"));
 }
 
+TEST_CASE("objects: the enemies' brain path is opt-in: unset, empty or 0 is off (g4-enemies)") {
+    // The first g4-enemies probe ran the path in its switch-off runs too: the switch read as on-unless-0.
+    CHECK_FALSE(CoopObjects::EnemyBrainSwitch(""));
+    CHECK_FALSE(CoopObjects::EnemyBrainSwitch("0"));
+    CHECK(CoopObjects::EnemyBrainSwitch("1"));
+}
+
 TEST_CASE("objects: the enemies' brain path takes plain enemies only (fable-g4-enemies)") {
     CHECK(CoopObjects::OnBrainPath("Enemy_Dekubaba"));
     CHECK(CoopObjects::OnBrainPath("Enemy_Skulltula"));

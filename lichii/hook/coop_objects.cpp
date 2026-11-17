@@ -419,8 +419,11 @@ int EnvNumber(const char* name) {
 #endif
 }
 
-// Unset or anything but "0": on.
-bool EnvOn(const char* name) {
+// Unset or anything but "0": on (a switch that is on by default). An opt-in switch (off unless set) reads EnvFlag
+// above. g4-enemies: this was named EnvOn, the name the other files (coop_drops, coop_svc, coop_fairy, the
+// Hookshot module) give the opt-in reading, so LICHII_COOP_ENEMY_BRAIN and LICHII_COOP_DEBUG_NPC, both opt-in, read
+// as on for everyone.
+bool EnvOnUnlessZero(const char* name) {
 #ifdef _WIN32
     char* value = nullptr;
     std::size_t size = 0;
@@ -1849,7 +1852,7 @@ public:
                 // (found by its vtables and owner; read only) runs its own
                 // start again (the Mover's call), so its next push starts
                 // where the block rests now. On unless LICHII_COOP_BLOCK_NODE=0.
-                static const bool node_on = EnvOn("LICHII_COOP_BLOCK_NODE");
+                static const bool node_on = EnvOnUnlessZero("LICHII_COOP_BLOCK_NODE");
                 const bool first = fix.tries == 0;
                 if (node_on) {
                     const auto node = CoopWorld::FindBlockNode(
@@ -3087,7 +3090,12 @@ private:
                 // so a copy's own AI no longer moves it against the owner's place. A plain one's Life is not held
                 // and its death, own hit and own wake run its own brain (CoopBossNative, Boss::plain). Its
                 // animation slots and its samples' hit place stay as a plain enemy's.
-                static const bool enemy_brain = EnvOn("LICHII_COOP_ENEMY_BRAIN");
+                static const bool enemy_brain = [] {
+                    const bool on = EnemyBrainSwitch(EnvText("LICHII_COOP_ENEMY_BRAIN"));  // opt-in
+                    LOG_INFO(Core, "coop: objects: enemies' brain path {} (LICHII_COOP_ENEMY_BRAIN)",
+                             on ? "on: plain enemies take the owner's verbs" : "off: plain copies are posed");
+                    return on;
+                }();
                 if (enemy_brain && OnBrainPath(s.name)) {
                     if (const auto table = r.Ptr(a + kActorComponents)) {
                         s.bsa_component = r.Ptr(*table + CoopBossNative::addr::kComponentBsa).value_or(0);
@@ -3892,7 +3900,7 @@ private:
         }
         npc_ours_ = ours;
         npc_claimed_ = claimed;
-        static const bool debug_npc = EnvOn("LICHII_COOP_DEBUG_NPC");
+        static const bool debug_npc = EnvFlag("LICHII_COOP_DEBUG_NPC");  // opt-in debug lines
         const bool every = debug_npc && now_us - npc_log_at_ >= 1'000'000;
         if (every) {
             npc_log_at_ = now_us;
@@ -4382,33 +4390,33 @@ Objects& Instance() {
         objects.aggro_ = EnvFlag("LICHII_COOP_DEBUG_AGGRO");
         objects.cheat_ = EnvFlag("LICHII_COOP_OBJECTS_CHEAT");
         objects.share_ = EnvFlag("LICHII_COOP_OBJECTS");
-        objects.pose_ = EnvOn("LICHII_COOP_OBJECTS_POSE");
+        objects.pose_ = EnvOnUnlessZero("LICHII_COOP_OBJECTS_POSE");
         objects.gimmick_probe_on_ = EnvFlag("LICHII_COOP_GIMMICK_PROBE");  // opt-in: many reads
         objects.logic_probe_on_ = EnvFlag("LICHII_COOP_LOGIC_PROBE");      // jabu-lifts: reads only
-        objects.lift_ride_on_ = EnvOn("LICHII_COOP_LIFT_RIDE");            // jabu-lifts (#65), on unless =0
+        objects.lift_ride_on_ = EnvOnUnlessZero("LICHII_COOP_LIFT_RIDE");            // jabu-lifts (#65), on unless =0
         {
             const std::string platforms = EnvText("LICHII_COOP_PLATFORMS");
             objects.platforms_mode_ = platforms == "0" ? 0 : platforms == "probe" ? 2 : 1;
             const std::string share = EnvText("LICHII_COOP_SWITCH_SHARE");  // room-objects
             objects.switch_share_mode_ = share == "0" ? 0 : share == "probe" ? 2 : 1;
         }
-        objects.scrubs_on_ = EnvOn("LICHII_COOP_SCRUBS");  // issue 149, on unless =0
+        objects.scrubs_on_ = EnvOnUnlessZero("LICHII_COOP_SCRUBS");  // issue 149, on unless =0
         objects.ocarina_probe_on_ = EnvFlag("LICHII_COOP_OCARINA_PROBE");  // issue 152, reads only
         // On by default (=0 turns it off): a life an enemy must lose is given
         // to the game as a whole hit, so it flinches, is knocked back and a
         // Stalchild loses its head on every screen. An amount alone at
         // Life + 0x228 is not taken (live test, 2026-11-09).
-        objects.replay_ = EnvOn("LICHII_COOP_OBJECTS_HIT_REPLAY");
+        objects.replay_ = EnvOnUnlessZero("LICHII_COOP_OBJECTS_HIT_REPLAY");
         objects.hurt_ = EnvFlag("LICHII_COOP_OBJECTS_HURT") || objects.replay_;
         objects.drive_ = EnvFlag("LICHII_COOP_OBJECTS_TEST_DRIVE");
         objects.ai_hold_ = EnvNumber("LICHII_COOP_OBJECTS_AI_HOLD");
         objects.test_take_ = EnvHex("LICHII_COOP_OBJECTS_TEST_TAKE");
         objects.drive_mode_ = objects.drive_ ? EnvNumber("LICHII_COOP_OBJECTS_TEST_DRIVE") : 0;
-        objects.hearts_to_link_ = EnvOn("LICHII_COOP_HEARTS_TO_LINK");
-        objects.wake_ = EnvOn("LICHII_COOP_OBJECTS_WAKE");
-        objects.release_ = EnvOn("LICHII_COOP_OBJECTS_RELEASE");
-        objects.pvp_replay_ = EnvOn("LICHII_COOP_PVP_REPLAY");
-        objects.wake_far_ = EnvOn("LICHII_COOP_OBJECTS_ASLEEP");
+        objects.hearts_to_link_ = EnvOnUnlessZero("LICHII_COOP_HEARTS_TO_LINK");
+        objects.wake_ = EnvOnUnlessZero("LICHII_COOP_OBJECTS_WAKE");
+        objects.release_ = EnvOnUnlessZero("LICHII_COOP_OBJECTS_RELEASE");
+        objects.pvp_replay_ = EnvOnUnlessZero("LICHII_COOP_PVP_REPLAY");
+        objects.wake_far_ = EnvOnUnlessZero("LICHII_COOP_OBJECTS_ASLEEP");
         return true;
     }();
     (void)once;

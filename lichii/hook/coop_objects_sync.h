@@ -418,6 +418,10 @@ bool IsBoss(std::string_view name);
 // a townsperson has its own sync), a fish or a world object. Of these, only one with a BSA component is
 // published (a part with none follows its root as before).
 bool OnBrainPath(std::string_view name);
+// LICHII_COOP_ENEMY_BRAIN's text (empty when unset): the brain path is opt-in, on only for a value other than
+// "0". Unset or empty leaves every plain enemy on the old path (the first g4-enemies probe ran it on everywhere,
+// its switch read as on-unless-0).
+bool EnemyBrainSwitch(std::string_view value);
 
 // enemy-anim-b: an actor whose slot 0 is sent and set by its playing frame
 // (AS slot +0x10c, what the game's getter 0x37b5e70 reads): townspeople
