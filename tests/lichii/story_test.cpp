@@ -501,7 +501,7 @@ TEST_CASE("story: the host frees a carpenter, the guest's game has the whole res
 // item). The five other fountain flows ask exactly those two: not played -> the first offer; played and no
 // reward -> the offer again; played and the reward -> a heal. A fountain one player emptied heals the others
 // (its reward is theirs already) and is never paid out twice.
-TEST_CASE("story: the Great Fairy fountains open by each game's own flags; their scenes and rewards are shared (issue 244)") {
+TEST_CASE("story: the Great Fairy fountains open by each game's own flags, their scenes and rewards are shared (issue 244)") {
     for (const char* played : {"HavePlayedEvent.Dm_FairyFountain_Courage", "HavePlayedEvent.Dm_FairyFountain_Din",
                                "HavePlayedEvent.Dm_FairyFountain_Frore", "HavePlayedEvent.Dm_FairyFountain_Nayru",
                                "HavePlayedEvent.Dm_FairyFountain_Power", "HavePlayedEvent.Dm_FairyFountain_Wisdom"}) {
@@ -528,10 +528,18 @@ TEST_CASE("story: the Great Fairy fountains open by each game's own flags; their
         CHECK_MESSAGE(CoopQuests::Find(h) == nullptr, own);
         CHECK_MESSAGE(!dungeon.contains(h), own);
     }
-    // The hashes of the names above, read from the game's GameDataList (a misspelt name would pass the checks
-    // above for nothing).
+    // The hashes of all 12 names above, each found in the game's GameDataList (a misspelt name would pass the
+    // checks above for nothing).
     CHECK(host::flag_hash("FairyFountain_OcarinaEventOff") == 0x1dada1c7u);
     CHECK(host::flag_hash("GreatFairy_AlreadyAppeared") == 0x73b4cc1au);
     CHECK(host::flag_hash("GreatFairy_MeetFirst") == 0x508b472du);
+    CHECK(host::flag_hash("GreatFairy_HasNoMPOnDinDemo") == 0xccb86260u);
+    CHECK(host::flag_hash("GreatFairyFountain_In") == 0xaae0bd8bu);
     CHECK(host::flag_hash("Meet_GreatFairy_RemainNumber") == 0x53c5f0eau);
+    CHECK(host::flag_hash("Meet_GreatFairy_01") == 0x9cfe9836u);
+    CHECK(host::flag_hash("Meet_GreatFairy_02") == 0xf8106300u);
+    CHECK(host::flag_hash("Meet_GreatFairy_03") == 0x3ff29ed3u);
+    CHECK(host::flag_hash("Meet_GreatFairy_04") == 0x732acbf1u);
+    CHECK(host::flag_hash("Meet_GreatFairy_05") == 0xbe878637u);
+    CHECK(host::flag_hash("Meet_GreatFairy_CompleteMessage") == 0x2fe03182u);
 }
