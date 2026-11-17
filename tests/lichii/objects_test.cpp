@@ -5511,7 +5511,7 @@ TEST_CASE("objects: a copy boss whose death has begun gets its owner's refused k
     }
 }
 
-TEST_CASE("objects: Ganondorf and Volvagia are single bosses; Volvagia's other actors are each game's own") {
+TEST_CASE("objects: Ganondorf and Volvagia are single bosses, Volvagia's other actors are each game's own") {
     // From the game's Pack/Actor (fable-g2-bosses): Ganondorf has no part actors; Volvagia's appear sign, breath,
     // breath field and cutscene actor are not enemies, so never shared and never owned.
     using CoopObjects::IsBoss;
