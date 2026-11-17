@@ -89,6 +89,8 @@ jobs:
         run: python tools/autotest/tests/test_kit_pair.py -v
       - name: Bad-connection relay tests
         run: python tools/netsim/tests/test_netsim.py -v
+      - name: Content guard tests (test names with ';')
+        run: python tools/tests/test_check_content.py -v
       # The kit's patch applier for Hookshot (hookshot-kit); skipped until that branch is merged.
       - name: Kit patch applier tests
         if: hashFiles('tools/release/tests/test_apply_patch.py') != ''
