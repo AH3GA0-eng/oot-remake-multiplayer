@@ -100,6 +100,35 @@ class RoomObjectsTest(unittest.TestCase):
         finally:
             os.unlink(f.name)
 
+    def test_eye_switch_lines_only_the_driven_ones(self):
+        # g3-objects: a step/hit/sun switch's OnState is not driven by CoopEyeSwitch (its AI rewrites it), so it is no
+        # longer left out of the switch plugs as covered; an eye's OnState, a FirstOn plug and a kInputs line are.
+        import tempfile
+        text = ('constexpr Switch kSwitches[] = {\n'
+                '    {"E1", "S", "Obj_EyeSwitch_A_02", {1.0f, 0.0f, 0.0f}, "OnState", {0.0f, 0.0f, 0.0f}},\n'
+                '    {"E2", "S", "Obj_StepSwitch_A_01", {2.0f, 0.0f, 0.0f}, "FirstOn", {0.0f, 0.0f, 0.0f}},\n'
+                '    {"E3", "S", "Obj_StepSwitch_A_03", {3.0f, 0.0f, 0.0f}, "OnState", {0.0f, 0.0f, 0.0f}},\n'
+                '    {"E4", "S", "Obj_StepSwitch_A_04", {4.0f, 0.0f, 0.0f}, "OnState", {0.0f, 0.0f, 0.0f}},\n'
+                '};\n'
+                'constexpr Input kInputs[] = {\n'
+                '    {"E4", "S", "Obj_StepSwitch_A_04", {4.0f, 0.0f, 0.0f}, "FirstOn"},\n'
+                '};\n')
+        with tempfile.NamedTemporaryFile("w", suffix=".cpp", delete=False, encoding="utf-8") as f:
+            f.write(text)
+        try:
+            driven = ro.eye_switch_lines(f.name)
+            self.assertEqual({line[1] for line in driven},
+                             {"Obj_EyeSwitch_A_02", "Obj_StepSwitch_A_01", "Obj_StepSwitch_A_04"})
+            every = ro.eye_switch_lines(f.name, driven_only=False)
+            self.assertEqual(every - driven, {("S", "Obj_StepSwitch_A_03", (3.0, 0.0, 0.0), "OnState")})
+            # an empty generated input table (std::array<Input, 0> kInputs{}) drives nothing extra
+            with open(f.name, "w", encoding="utf-8") as g:
+                g.write(text[: text.index("constexpr Input")] + "constexpr std::array<Input, 0> kInputs{};\n")
+            self.assertEqual({line[1] for line in ro.eye_switch_lines(f.name)},
+                             {"Obj_EyeSwitch_A_02", "Obj_StepSwitch_A_01"})
+        finally:
+            os.unlink(f.name)
+
 
 if __name__ == "__main__":
     unittest.main()

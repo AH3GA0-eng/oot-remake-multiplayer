@@ -220,6 +220,20 @@ constexpr SwitchPlug kSwitchPlugs[] = {
     {"WaterTemple", "Obj_SwitchHit_A_06", {-28.5f, 111.5f, 3.5f}, "OnState"},  // Obj_WaterTemple_Fountain_A_01
     {"WaterTemple", "Obj_SwitchHit_A_06", {52.1f, 110.0f, -23.2f}, "OffState"},  // Obj_WaterTemple_Fountain_A_01
 };
+// g3-objects (room_objects.py --eye-switches coop_eye_switch.cpp --dungeon coop_dungeon.cpp): read by room objects,
+// but the plug also raises our event asker (a CoopEyeSwitch line it does not drive: the switch's AI rewrites the
+// plug, deku-ladder). NOT in the table: holding one would raise our own asker before the presser's played/guard flag
+// arrives, a replay of the gimmick event (owner 07:40 UTC 2026-11-17: result only). Open (reports/fable-g3-objects.md):
+// a hold gated on the line's guard flags being on in our game first.
+//   GerudoTrainingGround Obj_StepSwitch_A_04 {52.2, 97.5, -86.0} OnState: Obj_TBox_A_01
+//   InsideJabuJabuBelly Obj_InsideJabu_Jabu_StepSwitch_A_03 {8.5, 102.5, -51.4} OnState: Obj_InsideJabu_Jabu_SwitchShutter_A_01+Obj_InsideJabu_Jabu_SwitchShutter_A_02
+//   InsideTheDekuTree Obj_StepSwitch_A_02 {-17.5, 119.6, -4.9} OnState: Obj_InsideTheDekuTree_ElevatorLift_A_01+Obj_InsideTheDekuTree_ElevatorLift_A_02+Obj_InsideTheDekuTree_ElevatorLift_A_03
+//   SpiritTemple Obj_HammerSwitch_A_01 {18.0, 129.1, -68.5} OnState: Obj_SpiritTemple_SwitchShutter_A_01+Obj_SwitchShutter_A_06
+//   SpiritTemple Obj_SolarSwitch_A_02 {28.0, 121.5, -40.1} isLightMax: Obj_SpiritTemple_CapstanMirror_A_01
+//   SpiritTemple Obj_SolarSwitch_A_02 {35.4, 121.5, -37.2} isLightMax: Obj_SpiritTemple_CapstanMirror_A_01
+//   SpiritTemple Obj_SolarSwitch_A_02 {45.8, 121.5, -47.5} isLightMax: Obj_SpiritTemple_CapstanMirror_A_01
+//   SpiritTemple Obj_SwitchHit_A_02 {33.6, 111.8, -30.7} OnState: Obj_SpiritTemple_SwitchShutter_A_01+Obj_SwitchShutter_A_06
+//   SpiritTemple Obj_SwitchHit_A_05 {0.0, 153.1, -46.0} OnState: Obj_SpiritTemple_SwitchShutter_A_01+Obj_SwitchShutter_A_06
 // clang-format on
 }  // namespace
 

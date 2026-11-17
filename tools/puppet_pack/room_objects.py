@@ -224,8 +224,11 @@ def leaf_kind(leaf, eye_lines):
     return f"{ntype}: own logic node"
 
 
-def room_switches(romfs, eye_lines=frozenset(), dicts=None):
+def room_switches(romfs, eye_lines=frozenset(), dicts=None, shared_flags=None):
     """(shared switch plugs, delivery) from the room graphs.
+
+    `shared_flags` (coop_dungeon.cpp's flag names, g3-objects): a flag leaf not in it is followed on to its setters' inputs
+    in the same group, since that flag is each game's own; None: every flag leaf ends the walk (as before).
 
     Shared: [(scene, switch name, place, plug, consumers)] for every switch output plug that a room object (not a
     switch, not an event asker) reads, straight or through gates, timers, delays and module inputs, and that is not a
@@ -291,6 +294,19 @@ def room_switches(romfs, eye_lines=frozenset(), dicts=None):
                                         if name == node["imm"]["Name"]:
                                             found += leaves(ppre, parent, a, b, depth + 1, seen)
                     return found or [("node", "", dict(node["imm"]))]
+                flag = node["sdef"].get("GameDataNameBool", "") if node["type"].startswith("HoldGameDataGetBool") else ""
+                if flag and shared_flags is not None and flag not in shared_flags:
+                    # g3-objects: a flag each game keeps on its own reaches no follower; what sets it in this group
+                    # (its setters' inputs: a switch plug, a sensor) is what must reach it.
+                    found = []
+                    for spre, slogic, _ in mods:
+                        sg = graph(slogic) if slogic else None
+                        for setter in (sg[0] if sg else []):
+                            if setter["type"].startswith("TriggerGameDataSetBool") and \
+                                    setter["sdef"].get("GameDataNameBool") == flag:
+                                for _, a, b in setter["in"]["bool"]:
+                                    found += leaves(spre, sg, a, b, depth + 1, seen)
+                    return found or [("node", node["type"], dict(node["imm"]))]
                 wired = [(a, b) for _, a, b in node["in"]["bool"] if a >= 0 or a <= -100]
                 if not wired:
                     return [("node", node["type"], dict(node["imm"]))]
@@ -321,11 +337,37 @@ def room_switches(romfs, eye_lines=frozenset(), dicts=None):
     return rows, {k: sorted(v) for k, v in delivery.items()}
 
 
-def eye_switch_lines(path):
-    """{(scene, switch, place, plug)} of lichii/hook/coop_eye_switch.cpp's kSwitches."""
+def eye_switch_lines(path, driven_only=True):
+    """{(scene, switch, place, plug)} of the lichii/hook/coop_eye_switch.cpp lines CoopEyeSwitch DRIVES (all of its
+    kSwitches lines with driven_only=False).
+
+    g3-objects: only a line whose plug latches (CoopEyeSwitch::Latches: an eye's OnState, a FirstOn plug, or a
+    kInputs line) is set by the remote event; a step, hit, hammer or sun switch's OnState/isLightMax is rewritten by
+    the switch's own AI every frame and is not driven (deku-ladder), so a room object reading it needs SWITCH_STATE
+    like any other switch plug - but such a plug also raises our own event asker (main prints those apart: holding
+    it would replay the gimmick event in the follower's game). Without kSwitches (an old file or a test line): every line, as before.
+    """
     text = open(path, encoding="utf-8").read()
-    found = re.findall(r'\{"\w+", "(\w+)", "(\w+)", \{([-\d.]+)f, ([-\d.]+)f, ([-\d.]+)f\}, "(\w+)"', text)
-    return {(sc, sw, (float(x), float(y), float(z)), plug) for sc, sw, x, y, z, plug in found}
+    pat = r'\{"\w+", "(\w+)", "(\w+)", \{([-\d.]+)f, ([-\d.]+)f, ([-\d.]+)f\}, "(\w+)"'
+
+    def block(name):
+        at = text.find(name)
+        if at < 0:
+            return None
+        body = text[at:]
+        return body[: body.index("};")] if "[] = {" in body[:80] else ""
+
+    def parse(chunk):
+        return {(sc, sw, (float(x), float(y), float(z)), plug) for sc, sw, x, y, z, plug in re.findall(pat, chunk)}
+
+    switches = block("kSwitches")
+    if switches is None:
+        return parse(text)
+    if not driven_only:
+        return parse(switches)
+    inputs = {(sc, sw, at) for sc, sw, at, _ in parse(block("kInputs") or "")}
+    return {line for line in parse(switches)
+            if line[1].startswith("Obj_EyeSwitch") or line[3] == "FirstOn" or line[:3] in inputs}
 
 
 def main(argv=None):
@@ -334,7 +376,8 @@ def main(argv=None):
     ap.add_argument("--eye-switches", help="coop_eye_switch.cpp: its lines are left to CoopEyeSwitch")
     ap.add_argument("--delivery", action="store_true", help="print how each driven placement's input reaches a follower")
     ap.add_argument("--groups", action="store_true", help="print the placement groups with a saved flag (kGroupFlags)")
-    ap.add_argument("--dungeon", help="coop_dungeon.cpp: with --groups, say which group flags its list has")
+    ap.add_argument("--dungeon", help="coop_dungeon.cpp: with --groups, say which group flags its list has; "
+                    "else follow the flags it does not share to their setters")
     args = ap.parse_args(argv)
     if args.groups:
         shared = shared_names(args.dungeon) if args.dungeon else None
@@ -346,7 +389,9 @@ def main(argv=None):
         return 0
     rows, riders = room_objects(args.romfs)
     eye = eye_switch_lines(args.eye_switches) if args.eye_switches else frozenset()
-    switches, delivery = room_switches(args.romfs, eye)
+    flags = shared_names(args.dungeon) if args.dungeon else None
+    switches, delivery = room_switches(args.romfs, eye, shared_flags=flags)
+    asking = (eye_switch_lines(args.eye_switches, driven_only=False) - eye) if args.eye_switches else set()
     if args.delivery:
         for scene, name, p, why in rows:
             if why and not why.startswith("with "):
@@ -363,7 +408,12 @@ def main(argv=None):
         print(f'    "{name}",')
     print()
     for scene, name, p, plug, users in switches:
-        print(f'    {{"{scene}", "{name}", {{{p[0]}f, {p[1]}f, {p[2]}f}}, "{plug}"}},  // {users}')
+        if (scene, name, p, plug) not in asking:
+            print(f'    {{"{scene}", "{name}", {{{p[0]}f, {p[1]}f, {p[2]}f}}, "{plug}"}},  // {users}')
+    print("// read by room objects, but the plug also raises our event asker (a CoopEyeSwitch line it does not drive):")
+    for scene, name, p, plug, users in switches:
+        if (scene, name, p, plug) in asking:
+            print(f"//   {scene} {name} {{{p[0]}, {p[1]}, {p[2]}}} {plug}: {users}")
     return 0
 
 

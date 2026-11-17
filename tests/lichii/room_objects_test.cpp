@@ -96,3 +96,13 @@ TEST_CASE("room objects: every dungeon mover group's flag is shared, or left out
     }
     CHECK(ints == 4);
 }
+
+TEST_CASE("room objects: a switch plug that also raises an event asker is not held by SWITCH_STATE (g3-objects)") {
+    // room_objects.py lists 9 such plugs apart (coop_room_objects.cpp, after kSwitchPlugs): holding one would raise
+    // the follower's own asker before the presser's played flag arrives (a replay; owner 07:40 UTC 11-17: result only).
+    CHECK(CoopRoomObjects::SwitchPlugsOf("InsideJabuJabuBelly", "Obj_InsideJabu_Jabu_StepSwitch_A_03",
+                                         {8.5f, 102.5f, -51.4f}).empty());
+    CHECK(CoopRoomObjects::SwitchPlugsOf("InsideTheDekuTree", "Obj_StepSwitch_A_02", {-17.5f, 119.6f, -4.9f}).empty());
+    CHECK(CoopRoomObjects::SwitchPlugsOf("SpiritTemple", "Obj_SolarSwitch_A_02", {28.0f, 121.5f, -40.1f}).empty());
+    CHECK(CoopRoomObjects::SwitchPlugs().size() == 12);
+}
