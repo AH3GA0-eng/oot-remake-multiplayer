@@ -462,7 +462,7 @@ struct Guest {
 };
 
 // A UDP socket like Join.bat's lookup.
-LookupResult socket_lookup(ENetSocket s, std::uint16_t relay_port, const Message& lookup,
+LookupResult socket_lookup(ENetSocket s, std::uint16_t relay_port, const relay::Message& lookup,
                            const std::function<void()>& pump) {
   ENetAddress to{};
   enet_address_set_host_ip(&to, "127.0.0.1");
