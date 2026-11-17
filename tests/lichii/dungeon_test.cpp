@@ -1,9 +1,11 @@
 // Tests for the shared dungeon flags (lichii/hook/coop_dungeon.cpp).
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <map>
 #include <set>
 #include <string>
+#include <string_view>
 
 #include "coop_dungeon.h"
 #include "coop/host/flag_watcher.hpp"
@@ -21,6 +23,22 @@ TEST_CASE("dungeon: every flag's hash is the hash of its name, once") {
     }
     CHECK(CoopDungeon::Flags().size() > 700);
     CHECK(ints > 10);
+}
+
+TEST_CASE("dungeon: a mid-boss beaten is shared, its fight start is not (mid-boss end state)") {
+    const auto has = [](std::string_view name) {
+        const auto flags = CoopDungeon::Flags();
+        return std::any_of(flags.begin(), flags.end(), [&](const auto& f) { return f.name == name; });
+    };
+    CHECK(has("Get_StoneOfWater_BigOctoDefeat"));
+    CHECK(has("Enemy_MiddleBoss_IronKnuckle_Nabooru_BossDefeat"));
+    CHECK(has("BottomOfTheWell_Level_Room_06_Boss_Defeat"));  // Dead Hand, the rule they follow
+    CHECK(has("WaterTemple_DarkLink_Death"));
+    CHECK(has("ForestTemple_DefeatMeg"));
+    CHECK(has("FireTemple_Room24_FlareDancerisDead"));
+    CHECK(has("Gimmick_DefeatEnemy_Open_DodongoCave_02"));  // the second Lizalfos room
+    CHECK_FALSE(has("Get_StoneOfWater_BigOctoAppear"));
+    CHECK_FALSE(has("Enemy_MiddleBoss_IronKnuckle_Nabooru_BossAppear"));
 }
 
 TEST_CASE("dungeon: the Water Temple's water level and switches are in the list") {

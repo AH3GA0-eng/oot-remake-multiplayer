@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 
+#include "coop_dungeon.h"
 #include "coop_quest.h"
 #include "coop_story.h"
 
@@ -96,10 +97,13 @@ TEST_CASE("quest: the step hashes are the step names, and each quest's steps are
         }
         for (const auto& r : q.rules) {
             CHECK(CoopQuest::Rank(q, r.step).has_value());
-            // Every rule flag is a shared story flag; a rule without one
-            // (the stones, issue 60) names the quests that must be Complete.
+            // Every rule flag is a shared story flag or a shared dungeon flag
+            // (a mid-boss's death record); a rule without one (the stones,
+            // issue 60) names the quests that must be Complete.
             if (r.flag != 0) {
-                CHECK(CoopStory::Find(r.flag) != nullptr);
+                bool dungeon = false;
+                for (const auto& f : CoopDungeon::Flags()) dungeon = dungeon || f.hash == r.flag;
+                CHECK((CoopStory::Find(r.flag) != nullptr || dungeon));
             } else {
                 CHECK(r.done_a != 0);
             }
@@ -235,6 +239,114 @@ TEST_CASE("quest: the letter shown at A's gate opens B's (issue 171), once B's I
     CHECK(ahead.enums[f.hash] == Hash("GoronCityIn"));
 }
 
+TEST_CASE("quest: SageOfWater's and SageOfSpirit's Enums and steps are the game's names") {
+    const auto& w = Q("SageOfWater");
+    CHECK(w.hash == Hash("Step_SageOfWater"));
+    CHECK(w.live == Hash("SageOfWater"));
+    const char* water[] = {"NotReady", "Ready", "Step00", "Step01", "Step03", "Step04", "Step05", "Step06",
+                           "Step07", "Step07_00", "Step07_1", "Step07_1_Safety", "Step07_2", "Step08",
+                           "Complete"};
+    REQUIRE(w.steps.size() == std::size(water));
+    for (std::size_t i = 0; i < w.steps.size(); ++i) CHECK_MESSAGE(w.steps[i] == Hash(water[i]), water[i]);
+    CHECK(w.steps[w.floor] == Hash("Step07"));
+    CHECK(w.steps[w.live_floor] == Hash("Step07_1"));
+    REQUIRE(w.rules.size() == 1);
+    CHECK(w.rules[0].flag == Hash("WaterTemple_DarkLink_Death"));
+    CHECK(w.rules[0].step == Hash("Step07_1"));
+
+    const auto& s = Q("SageOfSpirit");
+    CHECK(s.hash == Hash("Step_SageOfSpirit"));
+    CHECK(s.live == Hash("SageOfSpirit"));
+    const char* spirit[] = {"NotReady",  "Ready",  "Step01",    "Step02",    "Step03",       "Step04",
+                            "Step05",    "Step05_01", "Step05_02", "Step05_03", "Step06",     "Step07",
+                            "Step07_pre00", "Step07_00", "Step08", "Step08_01", "Step09",    "Step09_01",
+                            "Step10",    "Complete"};
+    REQUIRE(s.steps.size() == std::size(spirit));
+    for (std::size_t i = 0; i < s.steps.size(); ++i) CHECK_MESSAGE(s.steps[i] == Hash(spirit[i]), spirit[i]);
+    CHECK(s.steps[s.floor] == Hash("Step07"));
+    CHECK(s.steps[s.live_floor] == Hash("Step08_01"));
+    REQUIRE(s.rules.size() == 1);
+    CHECK(s.rules[0].flag == Hash("Enemy_MiddleBoss_IronKnuckle_Nabooru_BossDefeat"));
+    CHECK(s.rules[0].step == Hash("Step08_01"));
+}
+
+TEST_CASE("quest: Dark Link beaten in A's game moves B's SageOfWater to Step07_1, once B is in the temple") {
+    const auto& w = Q("SageOfWater");
+    const std::uint32_t death = Hash("WaterTemple_DarkLink_Death");
+    Game b;
+    b.enums[w.hash] = Hash("Step07");  // B saw Ruto in the temple, was not in Dark Link's room
+    b.Frame();
+    CHECK(b.enums[w.hash] == Hash("Step07"));  // nothing shared yet
+    b.bools[death] = true;  // A beat him
+    b.Frame();
+    CHECK(b.enums[w.hash] == Hash("Step07_1"));  // Room 23 (the way to Morpha) opens for B too
+    // The manager gets it (Room 23's logic reads the manager).
+    const auto want = CoopQuest::LiveWant(w, b.value);
+    REQUIRE(want.has_value());
+    CHECK(want->challenge == Hash("SageOfWater"));
+    CHECK(want->step == Hash("Step07_1"));
+
+    Game fight;  // B in the fight itself: its own death gives the same step
+    fight.enums[w.hash] = Hash("Step07_00");
+    fight.bools[death] = true;
+    fight.Frame();
+    CHECK(fight.enums[w.hash] == Hash("Step07_1"));
+
+    Game early;  // B not in the temple yet: its own story first (Ruto's scene)
+    early.enums[w.hash] = Hash("Step06");
+    early.bools[death] = true;
+    early.Frame();
+    CHECK(early.enums[w.hash] == Hash("Step06"));
+    CHECK_FALSE(CoopQuest::LiveWant(w, early.value).has_value());
+    early.enums[w.hash] = Hash("Step07");  // B's own Ruto scene
+    early.Frame();
+    CHECK(early.enums[w.hash] == Hash("Step07_1"));
+
+    for (const char* later : {"Step07_1_Safety", "Step07_2", "Step08", "Complete"}) {
+        Game ahead;  // never lowered
+        ahead.enums[w.hash] = Hash(later);
+        ahead.bools[death] = true;
+        ahead.Frame();
+        CHECK_MESSAGE(ahead.enums[w.hash] == Hash(later), later);
+    }
+}
+
+TEST_CASE("quest: the Iron Knuckle beaten in A's game moves B's SageOfSpirit to Step08_01, also after B's arrival") {
+    const auto& s = Q("SageOfSpirit");
+    const std::uint32_t defeat = Hash("Enemy_MiddleBoss_IronKnuckle_Nabooru_BossDefeat");
+    for (const char* at : {"Step07", "Step07_pre00", "Step07_00", "Step08"}) {
+        Game b;
+        b.enums[s.hash] = Hash(at);
+        b.bools[defeat] = true;
+        b.Frame();
+        CHECK_MESSAGE(b.enums[s.hash] == Hash("Step08_01"), at);
+    }
+    Game b;
+    b.enums[s.hash] = Hash("Step08_01");
+    b.bools[defeat] = true;
+    // The adult's arrival at the temple sets Step07_00 whenever it plays: raised again.
+    b.enums[s.hash] = Hash("Step07_00");
+    b.Frame();
+    CHECK(b.enums[s.hash] == Hash("Step08_01"));
+    const auto want = CoopQuest::LiveWant(s, b.value);
+    REQUIRE(want.has_value());
+    CHECK(want->step == Hash("Step08_01"));
+
+    Game child;  // before Nabooru was taken away: left alone
+    child.enums[s.hash] = Hash("Step06");
+    child.bools[defeat] = true;
+    child.Frame();
+    CHECK(child.enums[s.hash] == Hash("Step06"));
+
+    for (const char* later : {"Step09", "Step09_01", "Step10", "Complete"}) {
+        Game ahead;
+        ahead.enums[s.hash] = Hash(later);
+        ahead.bools[defeat] = true;
+        ahead.Frame();
+        CHECK_MESSAGE(ahead.enums[s.hash] == Hash(later), later);
+    }
+}
+
 TEST_CASE("quest: the held steps are the table's boss and minigame steps") {
     using CoopQuest::HeldStep;
     CHECK(HeldStep(Hash("Get_StoneOfFire"), Hash("BossBattle")));
@@ -254,6 +366,14 @@ TEST_CASE("quest: the held steps are the table's boss and minigame steps") {
     }
     CHECK(HeldStep(Hash("SubEvent_GetStormSong"), Hash("BeforeBossRoom")));
     CHECK(HeldStep(Hash("SubEvent_GetStormSong"), Hash("step04")));
+    for (const char* s : {"Step07_00", "Step07_1_Safety", "Step07_2", "Step08"}) {
+        CHECK_MESSAGE(HeldStep(Hash("SageOfWater"), Hash(s)), s);
+    }
+    for (const char* s : {"Step08", "Step09", "Step09_01", "Step10"}) {
+        CHECK_MESSAGE(HeldStep(Hash("SageOfSpirit"), Hash(s)), s);
+    }
+    CHECK_FALSE(HeldStep(Hash("SageOfWater"), Hash("Step07_1")));
+    CHECK_FALSE(HeldStep(Hash("SageOfSpirit"), Hash("Step08_01")));
     CHECK_FALSE(HeldStep(Hash("Get_StoneOfFire"), Hash("KakarikoVillageLetter")));
     CHECK_FALSE(HeldStep(Hash("Get_StoneOfForest"), Hash("Complete")));
     CHECK_FALSE(HeldStep(Hash("Goto_HyruleCastle"), Hash("Step04")));  // another quest's Step04
@@ -478,16 +598,20 @@ TEST_CASE("quest: a player in a boss fight or minigame step is never moved out o
     CHECK(c.Step(g.m, false, 0, kMain).has_value());
 }
 
-TEST_CASE("quest: Get_StoneOfFire and DoorOfTime go to the live manager, each from its floor") {
+TEST_CASE("quest: Get_StoneOfFire, DoorOfTime and the mid-boss quests go to the live manager, each from its floor") {
     Game g;
     const auto& f = Q("Get_StoneOfFire");
     const auto& d = Q("DoorOfTime");
+    // SageOfWater (Room 23's logic) and SageOfSpirit (Room 34's) read the manager too.
+    const auto& water = Q("SageOfWater");
+    const auto& spirit = Q("SageOfSpirit");
     for (const auto& q : CoopQuest::Quests()) {
         g.enums[q.hash] = q.steps[q.steps.size() - 2];  // every quest far along
     }
     for (const auto& q : CoopQuest::Quests()) {
         const auto w = CoopQuest::LiveWant(q, g.value);
-        CHECK_MESSAGE(w.has_value() == (q.hash == f.hash || q.hash == d.hash), q.name);
+        const bool live = q.hash == f.hash || q.hash == d.hash || q.hash == water.hash || q.hash == spirit.hash;
+        CHECK_MESSAGE(w.has_value() == live, q.name);
         if (w) {
             CHECK(w->challenge == Hash(q.name));
             CHECK(w->step == g.enums[q.hash]);

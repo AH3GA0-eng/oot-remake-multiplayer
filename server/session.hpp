@@ -392,6 +392,11 @@ struct Stats {
   std::uint64_t boss_to_near = 0;       // a boss asked over to the player near it (issue 150)
   std::uint64_t boss_to_ready = 0;      // a boss asked from a game that has not played its intro to one that has
   std::uint64_t damage_dropped = 0;     // DAMAGE with no owner, or from it
+  // DAMAGE that crossed a hand-over to its own sender (sent as a copy, here
+  // after the sender became the owner): given back to it, so its game takes
+  // the hit off the life the hand-over gave it.
+  std::uint64_t damage_returned = 0;
+  std::uint64_t damage_held = 0;        // DAMAGE kept through the owner hold
   // Field grass (docs/world.md). Relayed ones count in relayed too.
   std::uint64_t grass_relayed = 0;   // GRASS_CUT kept and passed on to its scene
   std::uint64_t grass_repeated = 0;  // GRASS_CUT the scene already has: not passed on
@@ -603,8 +608,15 @@ class Session {
     struct Ask {
       ConnectionId to = 0;
       std::uint64_t at = 0;
+      // DAMAGE passed on to the owner after the ask went out. The channel
+      // keeps the order, so the owner's answer was read before any of it:
+      // finish_handover takes exactly this much off the answer's life.
+      std::int64_t hits = 0;
     };
     std::optional<Ask> ask;
+    // DAMAGE that came while the owner hold had not chosen its owner yet
+    // (Object::held), with who sent it: passed on when the hold ends.
+    std::vector<std::pair<ConnectionId, protocol::Damage>> held_hits;
     // DAMAGE passed on lately: the life before the first, and their sum.
     std::optional<std::int32_t> hit_base;
     std::int64_t hit_sum = 0;
@@ -859,6 +871,7 @@ class Session {
   };
   std::map<std::string, std::map<protocol::ObjectId, Dead>> dead_;
   static constexpr std::size_t kMaxDeadPerScene = 1024;
+  static constexpr std::size_t kHeldHitsMax = 16;  // per object, through the owner hold
   WorldStore world_;
   std::vector<Action> actions_;
   Stats stats_;

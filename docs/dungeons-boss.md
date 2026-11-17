@@ -281,6 +281,14 @@ Autotests: `tools/autotest/groups/hookshot-boss-cutscenes.txt` (`hs-boss-cutscen
 - Unchanged: a copy is never given its owner's refused hit (the owner judges), and a copy is still held at 1 until the owner's death.
 - Tests: `tests/lichii/objects_test.cpp` (boss-hits cases; the boss-intro case now expects the direct rest).
 
+**The life a hand-over carries has every hit in it (branch fable-g2-bosses, rows 104/118, issue 150).** A boss changes owner on every stun by a non-owner, and the old `HANDOVER_STATE` carried the old owner's life as read, so any hit not yet in that number was given back to the boss at each hand-over. Five such hits, each now counted once:
+- H1, the old owner's pending replay (`kHurtWaitUs`): it answers the ask with the life after it (`hurt_target`).
+- H2, a `DAMAGE` the server passes on after the ask (the old owner reads it as a copy): `finish_handover` takes the hits passed on since the ask off the answer's life. The old cap (`hit_base - hit_sum`) stays as a minimum for older games.
+- H3, the new owner's own hit summed but not sent yet (100 ms): taken off the life it is handed.
+- H4, the new owner's own `DAMAGE` still on the wire (its epoch older than the change): the server gives it back to its sender (stat `damage_returned`), whose game takes it off within 2 s: a boss through its own Life step, an enemy by write.
+- H5, a `DAMAGE` while the object has no owner yet (owner hold after a start): kept (16 at most, stat `damage_held`) and passed on to the owner when the hold ends, unless it is the owner's own.
+A boss is never written, also at 0: a handed life of 0 (or one our own unsent hit ends) goes into its own Life step once (`death_given`), and its own game runs the death. Our hits on a copy are held back only until the owner news that follows a `HANDOVER_STATE`, not a fixed 2 s, so a boss handed on again at once keeps them. Logs: `ours now with a hit of ours not sent yet`, `our own hit crossed the hand-over`. Tests: `tests/server/session_test.cpp` and `tests/lichii/objects_test.cpp` (cases named "boss hand-over", H1-H5, D1). Not proven in game.
+
 **Not proven in game.** That the Life step takes a direct sum on the owner's Gohma in a real fight. The test kill showed it does (21 -> 1). The check is boss-autotest round 5: the guest's eye hits show the owner's `given to its own Life step` line, and her life falls in both games.
 
 ## A copy's death runs in its own game (branch gohma-death, player report #105, 0.11.4)
@@ -426,8 +434,23 @@ reload brought the fight back with no container to win (#241, row 52).
   | Morpha | SageOfWater -> Step08 | Morpha_DeleteWater |
   | Bongo Bongo | SageOfShadow -> GoToWarpPoint | |
   | Twinrova | SageOfSpirit -> Step10 | |
+  | Ganondorf (8) | Defeat_Ganon -> Step06 | |
+  | Ganon (9) | Defeat_Ganon -> Complete | FinalBattleField_DefeatGanonStart; `HavePlayedEvent` of the sage, ending and credits events it plays |
 
   Every row also has the three `HavePlayedEvent` flags (the setting, BossIn, BossOut).
+- **Ganondorf and Ganon** (bosses-next-a-2, 2026-11-17). Root: the record, the proof and the "never in its own scene"
+  rule all went through `CoopBoss::Rooms()`, which has the eight dungeon rooms only, so the final fights were never
+  kept and `Defeat_Ganon` (each game's own: `coop_quests.cpp` leaves the final battle out) stayed where it was for a
+  player who was not there. Now each set has its boss index (BOSS_SCENE's: 8 Ganondorf, 9 Ganon), a death scene
+  (`CoopBossBeaten::DeathScene`: `InsideGanonCastle`, Room_26's `Create_Ganondorf`; `FinalBattleField`, the Banc in
+  `Banc/GanonCastle/`; never their boss rush `GanondorfStage`/`GanonStage`) and the scenes it is never given in
+  (`KeptScene`: for both the whole end sequence, `InsideGanonCastle`, `CrumblingGanonCastle`, `FinalBattleField`).
+  Ganondorf's death moves `Defeat_Ganon` to Step06 (after the boss step Step05), Ganon's to Complete (after Step09);
+  both set: one write, the furthest step, in whatever order the record holds them. `EscapeFromCrumblingGanonCastle`
+  is read only by `CrumblingGanonCastle`'s own logic, so neither set gives it. Check in game: a player away from the
+  final fight gets Step06 (then Complete) at the next load outside the castle; a Step06 save entering
+  `InsideGanonCastle` finds no Ganondorf (Room_26 creates him only up to Step05) and gets on as a save made during
+  the escape does.
 - **Given one way, outside the boss's scene, only at a scene load.** The bosses the record holds when a scene is
   first seen are given there, once, while our Link stands in any scene but the boss's dungeon. A boss beaten while we
   stand in a scene waits for the next load (a door, a warp, a reload), never mid-scene: some of the set is read live
