@@ -1837,7 +1837,11 @@ public:
                 if (!player_ || (g.name.find("ElevatorLift") == std::string::npos && g.name.find("FallingLadder_") == std::string::npos &&
                                  g.name.find("Stopper_") == std::string::npos &&
                                  g.name.find("MoveFloor") == std::string::npos &&
-                                 g.name.find("EyeSwitch_") == std::string::npos && !IsRoomAsker(g.name))) {
+                                 g.name.find("EyeSwitch_") == std::string::npos &&
+                                 // deku-ladder: the other switch kinds whose plug starts a room event (step, hit, sun)
+                                 g.name.find("StepSwitch_") == std::string::npos &&
+                                 g.name.find("SwitchHit_") == std::string::npos &&
+                                 g.name.find("SolarSwitch_") == std::string::npos && !IsRoomAsker(g.name))) {
                     continue;
                 }
                 float d2 = 0.0f;
