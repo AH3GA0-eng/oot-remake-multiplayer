@@ -5407,6 +5407,43 @@ TEST_CASE("objects: at the session's end nothing is given to our own boss, a dea
     }
 }
 
+TEST_CASE("objects: at the session's end our boss copy's hit not sent yet comes off its owner's life (H3)") {
+    const std::string kBoss = "Enemy_DungeonBoss_Gohma";
+    std::vector<CoopObjects::LifeWrite> keep;
+    {  // owner at 12, our unsent hit of 2 already in our copy's 10: nothing given back
+        Sync sync;
+        Tick(sync, 0, {Enemy(0x100, 0x11, 12, 0.0f, kBoss)});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, 2, 1);
+        sync.Receive(LifeSample(id, 12, 21));
+        Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 12, 0.0f, kBoss)});
+        Tick(sync, 20 * kMs, {Enemy(0x100, 0x11, 10, 0.0f, kBoss)});  // our hit of 2, summed, not sent yet
+        sync.KeepBossLives(1, keep);
+        CHECK(keep.empty());  // (was: raised back to 12)
+    }
+    {  // owner at 2 (another player's hit), our unsent hit of 2: its death, through its own Life step, once
+        Sync sync;
+        Tick(sync, 0, {Enemy(0x100, 0x11, 3, 0.0f, kBoss)});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, 2, 1);
+        sync.Receive(LifeSample(id, 3, 21));
+        Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 3, 0.0f, kBoss)});
+        Tick(sync, 20 * kMs, {Enemy(0x100, 0x11, 1, 0.0f, kBoss)});  // our hit of 2 (held at 1), not sent yet
+        sync.Receive(LifeSample(id, 2, 21));
+        Tick(sync, 50 * kMs, {Enemy(0x100, 0x11, 1, 0.0f, kBoss)});
+        keep.clear();
+        sync.KeepBossLives(1, keep);
+        REQUIRE(keep.size() == 1);
+        CHECK(keep[0].direct);
+        CHECK_FALSE(keep[0].heal);
+        CHECK(keep[0].life == 0);
+        CHECK(keep[0].hurt == 1);
+        keep.clear();
+        sync.KeepBossLives(1, keep);
+        CHECK(keep.empty());  // given once
+    }
+}
+
 TEST_CASE("objects: a boss copy with more life than its old owner's is lowered through its Life step (boss-hits)") {
     // hs-boss-full 20261115-122137: B took Gohma at 21 while A's was 17; the plain lower waited for a replay
     // that never came ("nothing given"), so the hand-over healed her.

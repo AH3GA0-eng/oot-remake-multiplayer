@@ -145,4 +145,25 @@ std::optional<std::string> HurtLine(const coop::protocol::PvpHurt& hurt, std::ui
 // "1/2 heart", "1 heart", "1 3/4 hearts".
 std::string Hearts(std::int32_t quarters);
 
+// --- Hurts being given to our Link (coop_objects.cpp GivePvp) ---
+
+// One PvP hurt our game gives its Link: first as the game's own hit (the hit replay), then, if the game has not
+// taken it in time, by writing the life. It is taken once Link's life is at `expect` or below.
+struct PendingGive {
+    std::int32_t take = 0;
+    std::int32_t expect = 0;  // the life after it
+    std::uint64_t asked_ms = 0;
+    bool replayed = false;
+};
+
+// Our Link's life moved from `before` to `now` between two reads. `expect` is a life, so every change that is not
+// the PvP hit itself moves it too, else that change is booked as the PvP hit (g2-bosses, the copy-hit rule the
+// other way): a fall in a read where Link's last hit id moved to an id we did not replay (`own_hit`: a monster's
+// hit, our game's own) lowers every expect by that fall; when our replayed id was reached in the same read
+// (`replay_hit`) the replayed hurts take their part of the fall first. A rise (a heart, a fairy, a revive) raises
+// every expect, so the written fallback never takes it back. A fall with no hit id of ours moved stays the
+// replay landing, as before. `before` < 0: not read yet, nothing moves.
+void FollowLife(std::vector<PendingGive>& gives, std::int32_t before, std::int32_t now, bool own_hit,
+                bool replay_hit);
+
 } // namespace CoopPvp

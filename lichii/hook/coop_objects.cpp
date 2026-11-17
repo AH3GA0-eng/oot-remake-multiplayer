@@ -59,6 +59,7 @@
 #include "coop_boss_native.h"
 #include "coop_difficulty.h"
 #include "coop_puppet.h"
+#include "coop_pvp.h"
 #include "coop_pvp_game.h"
 #include "coop_dbno_body.h"
 #include "coop_dbno_game.h"
@@ -1413,6 +1414,7 @@ public:
             life_given_.clear();
             step_hits_.clear();
             boss_hit_ids_.clear();  // (actors of the scene before; an address reused here starts fresh)
+            pvp_life_ = -1;  // (our Link of the scene before)
             TheMover().ForgetReplayed();  // its Life components may sit where the old ones were
         }
         ActorEvents(server_now_us);
@@ -2277,14 +2279,9 @@ public:
     s32 link_max_logged_ = -1;
     s32 flag_max_logged_ = -1;
     bool hearts_to_link_ = true;  // LICHII_COOP_HEARTS_TO_LINK, on unless =0 (issue 88)
-    // PvP hurts being given to our Link (GivePvp).
-    struct PvpGive {
-        s32 take = 0;
-        s32 expect = 0;  // the life after it
-        u64 asked_ms = 0;
-        bool replayed = false;
-    };
-    std::vector<PvpGive> pvp_;
+    // PvP hurts being given to our Link (GivePvp, CoopPvp::FollowLife).
+    std::vector<CoopPvp::PendingGive> pvp_;
+    s32 pvp_life_ = -1;  // our Link's life at the last GivePvp (after its write); -1: none (a new scene)
     bool pvp_replay_ = true;  // LICHII_COOP_PVP_REPLAY=0: write the life only
     Core::Memory::Memory* memory_ = nullptr;  // set by Share for Collect
     bool cheat_ = false;
@@ -2329,6 +2326,7 @@ private:
             block_retry_.clear();
             ForgetBosses();
             boss_hit_ids_.clear();
+            pvp_life_ = -1;
             extras_.Reset();  // difficulty: that run's extra enemies are gone with it
             horde_.Reset();
             {
@@ -2982,7 +2980,7 @@ private:
                                  life, max, flag);
                     }
                     if (known.first == "Player_Child" || known.first == "Player_Adult") {
-                        GivePvp(a, value->first + 8, life);  // PvP (coop_pvp_game.cpp)
+                        GivePvp(r, a, value->first + 8, life);  // PvP (coop_pvp_game.cpp)
                     }
                     if (known.first == "Player_Child" || known.first == "Player_Adult") {
                         GiveDbno(r, a, value->first + 8, life);  // down but not out (coop_dbno_game.h)
@@ -3332,20 +3330,26 @@ private:
     // flinches and is knocked away from the attacker), then, if the game has
     // not taken it within kPvpHitWaitMs, by writing the life directly (as
     // docs/objects.md "Damage" found enough for any actor).
-    void GivePvp(u64 link, u64 life_at, s32 life) {
+    void GivePvp(Reader& r, u64 link, u64 life_at, s32 life) {
         const u64 now = SteadyNowMs();
         TheLinkLife().store(life);
         TheLinkLifeAt().store(now == 0 ? 1 : now);
         if (life < 0) {
             return;  // not read: nothing is given until it is
         }
+        // A monster's hit or a heart since the last read is not the PvP hit (its id is not ours): the pending
+        // hurts' expected lives move with it (CoopPvp::FollowLife).
+        Seen hits;
+        NewHits(r, link, hits);
+        CoopPvp::FollowLife(pvp_, pvp_life_, life, hits.own_hit, hits.replay_hit);
+        pvp_life_ = life;
         std::vector<PvpAsk> asks;
         {
             std::lock_guard lock(PvpMutex());
             asks.swap(PvpAsks());
         }
         for (const PvpAsk& ask : asks) {
-            PvpGive h;
+            CoopPvp::PendingGive h;
             h.take = ask.take;
             h.expect = std::max<s32>(0, life - ask.take);
             h.asked_ms = now;
@@ -3385,6 +3389,7 @@ private:
                     LOG_INFO(Core, "coop: pvp: our Link's life {} -> {}{}", life, to,
                              it->replayed ? " (the game's hit was not taken)" : "");
                     life = to;
+                    pvp_life_ = to;
                 }
                 it = pvp_.erase(it);
                 continue;

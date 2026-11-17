@@ -260,4 +260,30 @@ std::optional<std::string> HurtLine(const proto::PvpHurt& hurt, std::uint8_t sel
     return who + " hit " + whom + " (-" + Hearts(hurt.amount) + ")";
 }
 
+void FollowLife(std::vector<PendingGive>& gives, std::int32_t before, std::int32_t now, bool own_hit,
+                bool replay_hit) {
+    if (before < 0 || now < 0 || now == before || gives.empty()) {
+        return;
+    }
+    if (now > before) {
+        for (PendingGive& g : gives) {
+            g.expect += now - before;
+        }
+        return;
+    }
+    if (!own_hit) {
+        return;  // the replay landing (life <= expect books it)
+    }
+    std::int32_t replayed = 0;
+    if (replay_hit) {
+        for (const PendingGive& g : gives) {
+            replayed += g.replayed ? g.take : 0;
+        }
+    }
+    const std::int32_t theirs = std::max<std::int32_t>(0, (before - now) - replayed);
+    for (PendingGive& g : gives) {
+        g.expect = std::max<std::int32_t>(0, g.expect - theirs);
+    }
+}
+
 } // namespace CoopPvp

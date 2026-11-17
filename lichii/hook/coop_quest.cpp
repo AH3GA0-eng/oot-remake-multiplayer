@@ -205,8 +205,10 @@ constexpr std::array kQuests{
     Quest{kSageOfWater, "SageOfWater", kWaterSteps, kWaterRules, 8, 0, 0, kSageOfWaterName, 10},
     // From Step07 (index 11, Nabooru taken away: the Iron Knuckle is her). The
     // adult's arrival (Dm_SY_BancChangeArrive FromColossus_ArriveSpiritTemple)
-    // sets Step07_00 whenever it plays, also after Step08_01: the raise comes
-    // again. The manager from Step08_01 (index 15) on.
+    // sets Step07_00 only from Step07 or Step07_pre00 (its flow asks the step
+    // first), so a game raised to Step08_01 stays there; a game still at
+    // Step07..Step08 is raised from any of them. The manager from Step08_01
+    // (index 15) on.
     Quest{kSageOfSpirit, "SageOfSpirit", kSpiritSteps, kSpiritRules, 11, 0, 0, kSageOfSpiritName, 15},
 };
 

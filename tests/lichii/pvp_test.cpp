@@ -188,3 +188,38 @@ TEST_CASE("pvp: chat lines") {
           "Saria defeated Mido");
     CHECK_FALSE(CoopPvp::HurtLine(proto::PvpHurt{2, 1, 0, 10, proto::pvp_hurt::guarded}, 1, "Mido", "Saria"));
 }
+
+TEST_CASE("pvp: a monster's hit while a replayed PvP hit waits is not booked as the PvP hit") {
+    using CoopPvp::PendingGive;
+    // Life 12, a PvP hurt of 4 replayed (expect 8); a monster takes 4 before the game takes ours.
+    std::vector<PendingGive> gives{PendingGive{4, 8, 100, true}};
+    CoopPvp::FollowLife(gives, 12, 8, /*own_hit*/ true, /*replay_hit*/ false);
+    REQUIRE(gives.size() == 1);
+    CHECK(gives[0].expect == 4);  // still waits: life 8 > 4, so a refused replay ends in the written 4
+    // Both in one read: the replay takes its 4 first, the monster the rest.
+    gives = {PendingGive{4, 8, 100, true}};
+    CoopPvp::FollowLife(gives, 12, 2, true, true);
+    CHECK(gives[0].expect == 2);  // life 2 <= 2: taken
+    // A fall with no id of ours moved is the replay landing, as before.
+    gives = {PendingGive{4, 8, 100, true}};
+    CoopPvp::FollowLife(gives, 12, 8, false, true);
+    CHECK(gives[0].expect == 8);
+    CoopPvp::FollowLife(gives, 12, 8, false, false);
+    CHECK(gives[0].expect == 8);
+    // Never below 0.
+    gives = {PendingGive{4, 2, 100, true}};
+    CoopPvp::FollowLife(gives, 6, 0, true, false);
+    CHECK(gives[0].expect == 0);
+}
+
+TEST_CASE("pvp: a heart while a PvP hit waits is not taken back by the written life") {
+    using CoopPvp::PendingGive;
+    std::vector<PendingGive> gives{PendingGive{4, 8, 100, true}, PendingGive{2, 6, 120, false}};
+    CoopPvp::FollowLife(gives, 12, 16, false, false);
+    CHECK(gives[0].expect == 12);
+    CHECK(gives[1].expect == 10);
+    // Not read yet, or unchanged: nothing moves.
+    CoopPvp::FollowLife(gives, -1, 4, true, false);
+    CoopPvp::FollowLife(gives, 16, 16, true, false);
+    CHECK(gives[0].expect == 12);
+}

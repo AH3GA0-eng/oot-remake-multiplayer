@@ -3232,7 +3232,35 @@ void Sync::KeepBossLives(std::uint8_t self, std::vector<LifeWrite>& writes) {
         if (o.dead_at != 0 || o.owner_life_zero || !o.owner_life) {
             continue;  // its owner said it died (it dies here too), or no life of the owner's heard
         }
-        TakeOwnerLife(o, *o.owner_life, writes, "the session ended: our copy");
+        // Our own hits of the last kDamageSumUs (summed, never sent now) are not in the owner's life: they come
+        // off it, as at a hand-over (H3), or the session's end gives that life back.
+        if (!IsBoss(o.name)) {
+            continue;  // an enemy copy is never healed (the native rule)
+        }
+        std::int32_t life = *o.owner_life;
+        if (o.hit_sum > 0) {
+            notes_.emplace_back("the session ended with a hit of ours not sent yet (" + std::to_string(o.hit_sum) +
+                                "): taken off its owner's life " + std::to_string(life) + ": " + o.name);
+            life = std::max(0, life - o.hit_sum);
+            o.hit_sum = 0;
+            o.hit_place.reset();
+        }
+        if (life > 0) {
+            TakeOwnerLife(o, life, writes, "the session ended: our copy");
+            continue;
+        }
+        // Our unsent hit ends it: the boss is ours alone now, so this is its death, never a write. Its own Life
+        // step takes the rest and runs its own death, given once (as the hand-over's boss at 0).
+        if (o.life && *o.life > 0 && !o.death_given) {
+            LifeWrite lower{o.address, 0, *o.life, std::nullopt};
+            lower.direct = true;
+            writes.push_back(lower);
+            o.death_given = true;
+            notes_.emplace_back("the session ended: our copy at life 0 (" + std::to_string(*o.life) +
+                                " > 0): lowered through its own Life step: " + o.name);
+            o.hurt_left = 0;
+            o.hurt_until = 0;
+        }
     }
 }
 

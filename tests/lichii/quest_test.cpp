@@ -311,7 +311,7 @@ TEST_CASE("quest: Dark Link beaten in A's game moves B's SageOfWater to Step07_1
     }
 }
 
-TEST_CASE("quest: the Iron Knuckle beaten in A's game moves B's SageOfSpirit to Step08_01, also after B's arrival") {
+TEST_CASE("quest: the Iron Knuckle beaten in A's game moves B's SageOfSpirit to Step08_01 from any step Step07..Step08") {
     const auto& s = Q("SageOfSpirit");
     const std::uint32_t defeat = Hash("Enemy_MiddleBoss_IronKnuckle_Nabooru_BossDefeat");
     for (const char* at : {"Step07", "Step07_pre00", "Step07_00", "Step08"}) {
@@ -324,7 +324,8 @@ TEST_CASE("quest: the Iron Knuckle beaten in A's game moves B's SageOfSpirit to 
     Game b;
     b.enums[s.hash] = Hash("Step08_01");
     b.bools[defeat] = true;
-    // The adult's arrival at the temple sets Step07_00 whenever it plays: raised again.
+    // (The adult's arrival sets Step07_00 only from Step07 / Step07_pre00, never after Step08_01; were the step
+    // ever lowered there, the raise would come again.)
     b.enums[s.hash] = Hash("Step07_00");
     b.Frame();
     CHECK(b.enums[s.hash] == Hash("Step08_01"));
