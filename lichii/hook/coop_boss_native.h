@@ -103,6 +103,9 @@ enum class Role : std::uint8_t { owner, copy };
 // event: SetEvent covers it).
 bool RunsOwnStart(std::string_view name);
 
+// Whether a plain enemy's death runs here now: its life is 0 in our game, or its owner's died.
+bool PlainDeath(std::optional<std::int32_t> life, bool owner_dead);
+
 // One boss the Objects step saw in its walk.
 struct Boss {
     std::uint64_t actor = 0;
@@ -115,6 +118,15 @@ struct Boss {
     // died (its life 0 in the owner's samples, or its ObjectRemove dead).
     std::uint64_t life_component = 0;
     bool owner_dead = false;
+    // A plain enemy (every Enemy_ that is not IsBoss: a Deku Baba, a Skulltula, a Lizalfos outside a mid-boss
+    // room), on the same path as a boss: one model for every enemy (fable-g4-enemies). What differs:
+    // - its Life is never held here: the Sync's own rules share its kills (issue 133), a copy dies of our hit;
+    // - `own_death`: its death runs here now (its life is 0 in our game, or its owner's died): the copy runs
+    //   every change of its own from then on, as a boss's named by SetDying;
+    // - its own brain asking for another brain verb than the owner's is told (TakeOwnWants): it wants to act
+    //   on our Link (the wake and chase rules of the Sync hand it over, and NoteOwnWake lets it run).
+    bool plain = false;
+    bool own_death = false;
 };
 
 struct Counts {
@@ -134,6 +146,9 @@ struct Counts {
     std::uint64_t copy_life_held = 0; // a copy's own Life step that would have killed it, held at 1
     std::uint64_t copy_killed = 0;    // a copy let die by its Life step after its owner's died
     std::uint64_t copy_finished = 0;  // a dying copy's Life step that its own rules left alive, ended (#105)
+    std::uint64_t plain_wants = 0;    // a plain enemy copy's own brain asked another brain verb than its owner's
+    std::uint64_t plain_wakes = 0;    // a plain enemy copy's own wake let run (NoteOwnWake)
+    std::uint64_t plain_deaths = 0;   // a plain enemy copy whose death began here: its own runs
 };
 
 class Table {
@@ -164,6 +179,13 @@ public:
     // last hit id moved, not to one we replayed). A copy then runs its own
     // reaction for kReactSteps.
     void NoteOwnHit(std::uint64_t actor);
+    // A plain enemy copy wakes for our Link (the Sync's own wake, reports 109/111: a Deku Baba rising while its
+    // owner's rests): its own brain runs for kWakeSteps, the change it asked a moment ago is made late (its
+    // rise), then the owner's state again (by then the wake has handed it to us, or the owner's enemy acts).
+    void NoteOwnWake(std::uint64_t actor);
+    // The plain enemy copies whose own brain asked for another brain verb than their owner's since the last
+    // call (skipped at the wrap): their own AI wants to act here. At most kMaxWants kept.
+    std::vector<std::uint64_t> TakeOwnWants();
     // The boss's death has begun (the boss glue, every frame: the area rules'
     // fight is at its death or past it, ours or the owner's; player report
     // #105, a black screen after Gohma's death). Bodies named here are copies
@@ -235,6 +257,9 @@ public:
     // Steps a new mid-boss copy runs its own start (RunsOwnStart; about 3 s:
     // a Lizalfos's jump into the fight) before the owner's state.
     static constexpr std::uint64_t kStartSteps = 180;
+    // Steps a plain enemy copy runs its own wake (about 3 s, the Sync's kOwnWakeUs).
+    static constexpr std::uint64_t kWakeSteps = 180;
+    static constexpr std::size_t kMaxWants = 64;
     static constexpr std::size_t kMaxSkippedKept = 8;
     static constexpr std::size_t kMaxHeld = 8;  // copy bosses held at once (more: not held)
 
@@ -272,7 +297,8 @@ private:
         // Owner: our event ended: send our brain verb as a change.
         bool record_after_event = false;
         std::uint64_t life_component = 0;  // (Publish's, for SetDying's release)
-        bool dying = false;                // its death has begun (SetDying): its own game runs it
+        bool dying = false;                // its death has begun (SetDying; a plain one's own_death): its own game runs it
+        bool plain = false;                // (Boss::plain)
     };
     bool OwnTime(const Entry& e) const;   // the copy's own changes run now
     void Keep(Entry& e, std::variant<BossBrain, BossAction> what);
@@ -296,6 +322,13 @@ private:
     bool Dying(std::string_view name) const;
     void Release(std::uint64_t component);  // its held_life_ slot: let die
     std::uint64_t steps_ = 0;      // Step calls (game frames)
+    // The copy whose call Step made last: the next Step looks from the one after it, so one copy with a change
+    // every frame never keeps the others waiting (dozens of plain enemies share the one call a frame).
+    std::uint64_t served_ = 0;
+    std::vector<std::uint64_t> wants_;  // (TakeOwnWants)
+    // One entry's turn in Step. True: Step ends with `call` (a call, or none while the block is asked).
+    bool StepOne(CoopPuppet::Guest& guest, std::uint64_t bsa, Entry& e, std::uint64_t main_base,
+                 std::optional<CoopPuppet::Call>& call);
     Counts counts_{};
     std::vector<std::string> notes_;
     // The Life components HeldLifeStep reads (Publish writes, any thread

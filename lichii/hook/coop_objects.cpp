@@ -1546,9 +1546,14 @@ public:
                 }
                 const std::optional<u8> owner = sync_.OwnerOf(s.address);
                 if (owner && *owner != 0) {
+                    const bool owner_dead = sync_.OwnerSaysDead(s.address);
+                    const bool plain = !IsBoss(s.name);  // (seen with a BSA only under LICHII_COOP_ENEMY_BRAIN)
+                    const std::optional<std::int32_t> life =
+                        s.life ? std::optional<std::int32_t>(s.life->life) : std::nullopt;
                     list.push_back({s.address, s.bsa_component,
                                     *owner == self ? CoopBossNative::Role::owner : CoopBossNative::Role::copy, s.name,
-                                    *owner, s.life_component, sync_.OwnerSaysDead(s.address)});
+                                    *owner, s.life_component, owner_dead, plain,
+                                    plain && CoopBossNative::PlainDeath(life, owner_dead)});
                 }
             }
             TheBossMain().store(main_);
@@ -2980,17 +2985,20 @@ private:
                 s.animation = PlaysByFrame(s.name)
                                   ? AnimationAt(r, a, 0, false, CoopNpcAnim::kSlotPlayFrame)
                                   : Animation(r, a);
-                // G4 probe, off by default: LICHII_COOP_ENEMY_BRAIN=1 puts every plain Enemy_ on the bosses'
-                // native path too (the owner's brain and action verbs through the game's own two functions, the
-                // copy's own brain's changes skipped), so a copy's own AI no longer moves it against the owner's
-                // place. Unproven in game (reports: fable-g4-enemies); its animation slots stay as a plain enemy's.
+                // One model for every enemy (fable-g4-enemies), off by default until its game run:
+                // LICHII_COOP_ENEMY_BRAIN=1 puts every plain Enemy_ on the bosses' native path (the owner's brain
+                // and action verbs through the game's own two functions, the copy's own brain's changes skipped),
+                // so a copy's own AI no longer moves it against the owner's place. A plain one's Life is not held
+                // and its death, own hit and own wake run its own brain (CoopBossNative, Boss::plain). Its
+                // animation slots and its samples' hit place stay as a plain enemy's.
                 static const bool enemy_brain = EnvOn("LICHII_COOP_ENEMY_BRAIN");
-                if (enemy_brain && !IsBoss(s.name) && s.name.starts_with("Enemy_")) {
+                if (enemy_brain && OnBrainPath(s.name)) {
                     if (const auto table = r.Ptr(a + kActorComponents)) {
                         s.bsa_component = r.Ptr(*table + CoopBossNative::addr::kComponentBsa).value_or(0);
                     }
                     if (s.bsa_component != 0) {
                         s.bsa = CoopBossNative::TheTable().OwnerState(a);
+                        (void)NewOwnHitAt(r, a, s.position);  // our own hit: its own reaction runs (NoteOwnHit)
                     }
                 }
                 if (IsBoss(s.name)) {
@@ -3877,6 +3885,11 @@ private:
         for (const auto& [a, name] : TheMover().TakeTakeovers()) {
             sync_.NoteTakeover(a, now_us, name);
         }
+        // The enemies' brain path: a plain copy whose own brain asked for another phase than its owner's wants
+        // to act here, as one whose own play was put back (no play to give back: its brain is let run instead).
+        for (const u64 a : CoopBossNative::TheTable().TakeOwnWants()) {
+            sync_.NoteTakeover(a, now_us);
+        }
         for (const PoseWrite& w : poses) {
             const u32 state = r.Get<u32>(w.address + kActorState).value_or(0);
             bool asleep = false;
@@ -3937,6 +3950,9 @@ private:
         }
         for (auto& [a, name] : sync_.TakeOwnWakes()) {
             TheMover().GiveBack(a, std::move(name));  // report 109
+        }
+        for (const u64 a : sync_.TakeOwnWakeStarts()) {
+            CoopBossNative::TheTable().NoteOwnWake(a);  // (a plain copy on the brain path; else nothing)
         }
         std::vector<u64> removes = sync_.Removes();
         for (const u64 a : horde_.Removes()) {

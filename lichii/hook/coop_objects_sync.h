@@ -411,6 +411,13 @@ const GroupPart* PartOf(std::string_view name);
 // A boss or mini-boss on its own (Enemy_DungeonBoss_*, Enemy_MiddleBoss_*,
 // and the roots of boss groups); never a picture book _Dictionary actor.
 bool IsBoss(std::string_view name);
+// A plain enemy whose copy takes its owner's brain and action verbs as a boss's does (CoopBossNative,
+// Boss::plain; fable-g4-enemies): every Enemy_ that is no boss, except the ones each game runs of its own
+// (IsOwnPuzzle: the scrub puzzles and shops), an enemy's shot (CoopEnemyShots: made by the shooter's game) and
+// the picture book's _Dictionary actors. Never an Npc_ (a guard is handed over on its own reaction, issue 191;
+// a townsperson has its own sync), a fish or a world object. Of these, only one with a BSA component is
+// published (a part with none follows its root as before).
+bool OnBrainPath(std::string_view name);
 
 // enemy-anim-b: an actor whose slot 0 is sent and set by its playing frame
 // (AS slot +0x10c, what the game's getter 0x37b5e70 reads): townspeople
@@ -794,6 +801,10 @@ public:
     // Present thread: copies whose own wake play the Mover put back, with
     // that play, to give back once at the next game frame.
     std::vector<std::pair<std::uint64_t, std::string>> TakeOwnWakes() { return std::exchange(own_wakes_, {}); }
+    // Present thread: the copies whose own wake began since the last call (every one, also those with no play
+    // to give back). With the enemies' brain path (CoopBossNative, Boss::plain) the copy's own brain is let
+    // run for the wake (NoteOwnWake): the rise is its brain's, not a play put back.
+    std::vector<std::uint64_t> TakeOwnWakeStarts() { return std::exchange(own_wake_starts_, {}); }
     // The owner side flags a woken enemy only this long after it left its
     // rest animation, so an enemy that patrols or flies near its owner's
     // Link is not held in a fight for good (that would stop the chase rule).
@@ -1159,6 +1170,7 @@ private:
     std::map<std::uint64_t, Object> objects_;  // by actor address
     std::vector<std::uint64_t> ours_now_;     // copies that became ours (TakeOursNow)
     std::vector<std::pair<std::uint64_t, std::string>> own_wakes_;  // report 109 (TakeOwnWakes)
+    std::vector<std::uint64_t> own_wake_starts_;                    // (TakeOwnWakeStarts)
     std::map<std::uint64_t, Decided> decided_;  // by director key
     // Report 99: late encounters other games announced that we lack, held
     // until our Link is near (IsLateEncounter). By id; first heard at got_us,

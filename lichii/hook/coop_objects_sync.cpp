@@ -450,6 +450,11 @@ bool PlaysByFrame(std::string_view name) {
     return name.starts_with("Npc_") || (name.starts_with("Enemy_") && !IsBoss(name));
 }
 
+bool OnBrainPath(std::string_view name) {
+    return name.starts_with("Enemy_") && name.find("_Dictionary") == std::string_view::npos && !IsBoss(name) &&
+           !IsOwnPuzzle(name) && !CoopEnemyShots::IsEnemyShot(name);
+}
+
 bool IsBoss(std::string_view name) {
     if (name.find("_Dictionary") != std::string_view::npos) return false;
     if (name.starts_with("Enemy_DungeonBoss_") || name.starts_with("Enemy_MiddleBoss_")) {
@@ -1237,6 +1242,9 @@ void Sync::OwnWake(Object& o, bool taken_away, std::uint64_t now_us) {
     o.own_wake_at = now_us;
     o.own_wake_over = wanted->name;
     o.own_wake_given = false;
+    if (own_wake_starts_.size() < 64) {
+        own_wake_starts_.push_back(o.address);
+    }
     notes_.emplace_back(o.name + ": its own wake for our Link runs; the owner's '" + wanted->name +
                         "' is not put back over it (report 109)");
     // The walk sees the owner's animation again: the Mover put the copy's
