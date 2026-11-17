@@ -129,6 +129,35 @@ class RoomObjectsTest(unittest.TestCase):
         finally:
             os.unlink(f.name)
 
+    def test_asking_plug_held_only_when_every_asker_has_a_shared_guard(self):
+        # g3-objects: wiring lines are (event, scene, switch, place, plug, asker place)
+        key = ("S", "Obj_StepSwitch_A_02", (1.0, 0.0, 0.0), "OnState")
+
+        def line(event, asker):
+            return (event, *key, asker)
+
+        def w(guards, on=(), sets=()):
+            return {"guards": list(guards), "on": list(on), "results": [("flag", f, "set") for f in sets]}
+
+        shared = {"Done", "Unlocked"}
+        # one asker, stopped by a shared flag: held behind it
+        self.assertEqual(ro.asking_plug(key, {line("E", (0, 0, 0)): w(["Done"])}, shared), (["Done"], ["E"], []))
+        # a guard that is not shared does not count
+        self.assertEqual(ro.asking_plug(key, {line("E", (0, 0, 0)): w(["Own"])}, shared)[0], None)
+        # two askers (Spirit room 19): one has no guard -> never held, however the other is guarded
+        two = {line("E", (0, 0, 0)): w(["Done"]), line("E", (5, 0, 0)): w([])}
+        self.assertIsNone(ro.asking_plug(key, two, shared)[0])
+        # not held: the native path is the switch's own ON input reading a shared flag the event sets
+        hammer = {line("H", (0, 0, 0)): w([], on=[("ForceControl", [("flag", "Unlocked", False)]),
+                                                   ("BootUp", [("flag", "Unlocked", False)])], sets=["Unlocked"])}
+        self.assertEqual(ro.asking_plug(key, hammer, shared),
+                         (None, ["H"], [("BootUp", "Unlocked"), ("ForceControl", "Unlocked")]))
+        # a flag the event does not set, or a negated read, is no native path (OPEN)
+        other = {line("H", (0, 0, 0)): w([], on=[("ForceControl", [("flag", "Unlocked", True)])], sets=["Unlocked"])}
+        self.assertEqual(ro.asking_plug(key, other, shared)[2], [])
+        # no line at all for the plug: nothing to hold
+        self.assertEqual(ro.asking_plug(key, {}, shared), (None, [], []))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,12 +1,15 @@
 // Tests for which room objects their own logic drives (lichii/hook/coop_room_objects.cpp, room-objects).
 #include <doctest/doctest.h>
 
+#include <array>
 #include <cstddef>
 #include <set>
 #include <string>
 #include <string_view>
 
+#include "coop/protocol/codec.hpp"
 #include "coop_dungeon.h"
+#include "coop_eye_switch.h"
 #include "coop_room_objects.h"
 
 using namespace CoopRoomObjects;
@@ -97,12 +100,74 @@ TEST_CASE("room objects: every dungeon mover group's flag is shared, or left out
     CHECK(ints == 4);
 }
 
-TEST_CASE("room objects: a switch plug that also raises an event asker is not held by SWITCH_STATE (g3-objects)") {
-    // room_objects.py lists 9 such plugs apart (coop_room_objects.cpp, after kSwitchPlugs): holding one would raise
-    // the follower's own asker before the presser's played flag arrives (a replay; owner 07:40 UTC 11-17: result only).
-    CHECK(CoopRoomObjects::SwitchPlugsOf("InsideJabuJabuBelly", "Obj_InsideJabu_Jabu_StepSwitch_A_03",
-                                         {8.5f, 102.5f, -51.4f}).empty());
-    CHECK(CoopRoomObjects::SwitchPlugsOf("InsideTheDekuTree", "Obj_StepSwitch_A_02", {-17.5f, 119.6f, -4.9f}).empty());
-    CHECK(CoopRoomObjects::SwitchPlugsOf("SpiritTemple", "Obj_SolarSwitch_A_02", {28.0f, 121.5f, -40.1f}).empty());
-    CHECK(CoopRoomObjects::SwitchPlugs().size() == 12);
+TEST_CASE("room objects: a switch plug that also raises an event asker is held only behind its asker's guard (g3-objects)") {
+    // room_objects.py: such a plug (a CoopEyeSwitch line the switch's AI rewrites, so it is not driven) is a line only
+    // when shared flags stop EVERY asker it raises; the hold waits for them (owner 07:40 UTC 11-17: result only).
+    std::set<std::string> shared;
+    for (const auto& f : CoopDungeon::Flags()) shared.insert(f.name);
+    struct Want {
+        std::string_view scene, name;
+        std::array<float, 3> at;
+        std::string_view plug, guard, event;
+    };
+    const Want held[] = {
+        // a step switch's OnState: Jabu-Jabu room 1's shutters (the trigger reads the flag negated)
+        {"InsideJabuJabuBelly", "Obj_InsideJabu_Jabu_StepSwitch_A_03", {8.5f, 102.5f, -51.4f}, "OnState",
+         "InsideJabuJabuBelly_Gimmick_Onswitch_first", "InsideJabuJabuBellyRoom01StepSwitch"},
+        // a step switch's OnState: the Deku Tree room D lifts (the flag deletes the asker)
+        {"InsideTheDekuTree", "Obj_StepSwitch_A_02", {-17.5f, 119.6f, -4.9f}, "OnState",
+         "InsideTheDekuTree_RoomD_StepSwitch_On_01", "InsideTheDekuTree_Gimmick_RoomD_PlatformUp"},
+        // a step switch's OnState read by a chest: GTG room 5
+        {"GerudoTrainingGround", "Obj_StepSwitch_A_04", {52.2f, 97.5f, -86.0f}, "OnState",
+         "GerudoTrainingGround_Dungeon_Room05_StepSwitch", "GerudoTrainingGround_05_DisappearFire"},
+        // a sun switch's isLightMax: Spirit room 19's mirror (this asker of the event is deleted by the flag)
+        {"SpiritTemple", "Obj_SolarSwitch_A_02", {45.8f, 121.5f, -47.5f}, "isLightMax",
+         "SpiritTemple_Room19_LightSwitch_On_01", "SpiritTemple_Level_Room_19_SwitchOn_01"},
+    };
+    for (const Want& w : held) {
+        CAPTURE(w.name);
+        const auto lines = SwitchPlugsOf(w.scene, w.name, w.at);
+        REQUIRE(lines.size() == 1);
+        CHECK(lines[0]->plug == w.plug);
+        CHECK(lines[0]->guard == w.guard);
+        const auto guards = GuardFlags(*lines[0]);
+        REQUIRE(guards.size() == 1);
+        CHECK(guards[0] == w.guard);
+        CHECK(shared.contains(std::string(w.guard)));  // the presser's flag reaches us live
+        // the same flag is a guard of that event in the eye-switch table (the tool reads the same wiring)
+        bool listed = false;
+        for (const CoopEyeSwitch::Guard& g : CoopEyeSwitch::Guards()) {
+            if (g.flag == w.guard && g.scene == w.scene && g.event == w.event) listed = true;
+        }
+        CHECK(listed);
+        // not held in the dungeon (coop_dungeon HeldIn): else the hold would never be armed while we are there
+        CHECK_FALSE(CoopDungeon::HeldIn(coop::protocol::flag_hash(w.guard)).has_value());
+    }
+    // A hammer or hit switch's OnState and Spirit room 19's other two suns: no shared flag stops their askers, so they
+    // are never held; the event's result flag turns the follower's switch on through its own ON input (ForceControl,
+    // isCleared), the native path. That flag must be shared.
+    const Want not_held[] = {
+        {"SpiritTemple", "Obj_HammerSwitch_A_01", {18.0f, 129.1f, -68.5f}, "OnState", "SpiritTemple_Room08_Unlocked_01", ""},
+        {"SpiritTemple", "Obj_SwitchHit_A_02", {33.6f, 111.8f, -30.7f}, "OnState", "SpiritTemple_Room14_Unlocked_01", ""},
+        {"SpiritTemple", "Obj_SwitchHit_A_05", {0.0f, 153.1f, -46.0f}, "OnState", "SpiritTemple_Room31_Unlocked", ""},
+        {"SpiritTemple", "Obj_SolarSwitch_A_02", {28.0f, 121.5f, -40.1f}, "isLightMax", "SpiritTemple_Room19_LightSwitch_On_02", ""},
+        {"SpiritTemple", "Obj_SolarSwitch_A_02", {35.4f, 121.5f, -37.2f}, "isLightMax", "SpiritTemple_Room19_LightSwitch_On_03", ""},
+    };
+    for (const Want& w : not_held) {
+        CAPTURE(w.at[0]);
+        CHECK(SwitchPlugsOf(w.scene, w.name, w.at).empty());
+        CHECK(shared.contains(std::string(w.guard)));
+    }
+    // Every guarded line is one of the four; the timed switches keep no guard.
+    std::size_t guarded = 0;
+    for (const SwitchPlug& s : SwitchPlugs()) {
+        if (!s.guard.empty()) ++guarded;
+    }
+    CHECK(guarded == 4);
+    CHECK(SwitchPlugs().size() == 16);
+    CHECK(GuardFlags(SwitchPlug{"S", "N", {0.0f, 0.0f, 0.0f}, "OnState", ""}).empty());
+    const auto two = GuardFlags(SwitchPlug{"S", "N", {0.0f, 0.0f, 0.0f}, "OnState", "A+B"});
+    REQUIRE(two.size() == 2);
+    CHECK(two[0] == "A");
+    CHECK(two[1] == "B");
 }

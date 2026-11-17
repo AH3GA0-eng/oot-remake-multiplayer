@@ -148,7 +148,8 @@ def switch_events(romfs, dicts=None, wiring=None):
     wiring: when a dict, filled per line (the lines' tuple) with {"on": [(input, [(kind, what, negated)])] (the
             switch's ON inputs and their sources, [] = unwired), "results": [(kind, what, detail)] (what the asker's
             outputs drive, forward through gates, module outputs and module calls), "delete": [flags that delete the
-            asker]}. classify() reads it.
+            asker], "guards": asker_guards() of THIS asker (an event asked by two askers has two lines, each with
+            its own)}. classify() and room_objects.py read it.
     """
     if dicts is None:
         dicts = zs.Dicts.from_romfs(romfs)
@@ -364,8 +365,26 @@ def switch_events(romfs, dicts=None, wiring=None):
                                     on.append((name, [(k, str(w.get("Gyaml")) if k == "actor" else w, ng)
                                                       for k, w, _, ng, _ in srcs]))
                         line = (event, scene, str(actor["Gyaml"]), _place(actor), plug, _place(asker))
-                        wiring[line] = {"on": on, "results": sorted(set(results)), "delete": deletes}
+                        wiring[line] = {"on": on, "results": sorted(set(results)), "delete": deletes,
+                                        "guards": asker_guards(trigger, delete)}
     return sorted(lines), sorted(guards), sorted(extras), sorted(others)
+
+
+def asker_guards(trigger, delete):
+    """The saved flags that stop ONE asker (g3-objects): a flag its trigger reads negated outside an OR (on: the
+    trigger is false whatever the switch says), or a flag that deletes it (on: no asker). HavePlayedEvent.* is left
+    out (coop_dungeon.cpp holds those in the dungeon). `trigger`/`delete`: leaves() of its EventRequestTrigger and
+    Logic_Delete, (kind, what, plug, negated, under an OR).
+
+    A negated flag under an OR counts only when it is the trigger's ONE leaf under an OR (Jabu-Jabu room 1:
+    OnState AND an OR whose other inputs are unwired, i.e. the flag alone); with two or more leaves under ORs the
+    tool cannot tell which OR holds which, so none of them counts (no hold: the safe side)."""
+    in_or = [x for x in trigger if x[4]]
+    out = {what for kind, what, _, neg, under_or in trigger
+           if kind == "flag" and neg and (not under_or or len(in_or) == 1)}
+    out |= {what for kind, what, _, neg, _ in delete
+            if kind == "flag" and not neg and not what.startswith("HavePlayedEvent.")}
+    return sorted(out)
 
 
 def two_way_flags(wiring):

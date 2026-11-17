@@ -59,7 +59,16 @@ std::vector<Hold> Sharer::Tick(const std::string& scene, const std::vector<Seen>
     for (const Seen& v : seen) {
         if (v.line == nullptr || v.line->scene != scene) continue;
         State& s = states_[v.line];
-        const bool remote = RemoteOn(s, now_ms);
+        const bool remote_on = RemoteOn(s, now_ms);
+        // g3-objects: a plug that also raises our event asker is held only once that asker cannot fire (Seen::armed);
+        // until then another player's press is not ours to hold, and our own plug is still our own.
+        const bool remote = remote_on && v.armed;
+        if (remote_on && !v.armed && !s.told_waiting) {
+            s.told_waiting = true;
+            notes.push_back("switch share: " + Describe(*v.line) + ": another player's is on: waiting for " +
+                            std::string(v.line->guard) + " here (our asker would replay the event)");
+        }
+        if (v.armed) s.told_waiting = false;
         if (s.held && !remote) {
             s.held = false;
             s.told_held = false;

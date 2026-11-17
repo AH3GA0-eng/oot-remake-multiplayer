@@ -48,7 +48,7 @@ if __package__ in (None, ""):
     __package__ = "puppet_pack"  # noqa: A001
 
 from . import byml, zs  # noqa: E402
-from .eye_switches import SWITCH, _int, _place, _prefix, read_graph  # noqa: E402
+from .eye_switches import SWITCH, _int, _place, _prefix, read_graph, switch_events  # noqa: E402
 
 PARTS = ("ElevatorLift", "_Elevator_", "MoveFloor", "RotateFloor", "RotateBlade", "MoveSpike",
          "ExtendingPlatform", "_lift_", "ElevatorMirror", "ElevatorPit", "UpDown")
@@ -370,6 +370,35 @@ def eye_switch_lines(path, driven_only=True):
             if line[1].startswith("Obj_EyeSwitch") or line[3] == "FirstOn" or line[:3] in inputs}
 
 
+def asking_plug(key, wiring, shared):
+    """How a switch plug that also raises event askers (a CoopEyeSwitch line it does not drive) reaches a follower
+    (g3-objects, A #44; owner 07:40 UTC 2026-11-17: gimmick events give the result only, no replay).
+
+    `key` (scene, switch, place, plug); `wiring` eye_switches.switch_events' per-line dict; `shared` the flags
+    coop_dungeon.cpp shares. Returns (guards, events, native):
+    guards: the shared flags that, all on in our game, stop EVERY asker this plug raises (each asker's own
+            asker_guards(), joined), so a SWITCH_STATE hold then runs only the room objects: the result. None when
+            some asker has no shared guard: a hold could start our own copy of the event (a replay), never held.
+    events: the askers' events.
+    native: (input, flag) for the switch's own ON inputs that read a shared flag some asker's event sets: the
+            result reaches the follower's switch through that flag, the game's own path (what a not-held plug
+            relies on; [] with guards None: open).
+    """
+    lines = [(line, w) for line, w in wiring.items() if (line[1], line[2], line[3], line[4]) == key]
+    events = sorted({line[0] for line, _ in lines})
+    guards = set()
+    for _, w in lines:
+        own = [f for f in w.get("guards", []) if f in shared]
+        if not own:
+            guards = None
+            break
+        guards.update(own)
+    sets = {what for _, w in lines for kind, what, detail in w["results"] if kind == "flag" and detail == "set"}
+    native = sorted({(inp, what) for _, w in lines for inp, srcs in w["on"]
+                     for kind, what, neg in srcs if kind == "flag" and not neg and what in sets and what in shared})
+    return (sorted(guards) if guards is not None and lines else None), events, native
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--romfs", required=True)
@@ -407,13 +436,25 @@ def main(argv=None):
     for name in riders:
         print(f'    "{name}",')
     print()
+    wiring = {}
+    if asking:
+        switch_events(args.romfs, wiring=wiring)
+    not_held = []
     for scene, name, p, plug, users in switches:
-        if (scene, name, p, plug) not in asking:
-            print(f'    {{"{scene}", "{name}", {{{p[0]}f, {p[1]}f, {p[2]}f}}, "{plug}"}},  // {users}')
-    print("// read by room objects, but the plug also raises our event asker (a CoopEyeSwitch line it does not drive):")
-    for scene, name, p, plug, users in switches:
-        if (scene, name, p, plug) in asking:
-            print(f"//   {scene} {name} {{{p[0]}, {p[1]}, {p[2]}}} {plug}: {users}")
+        key = (scene, name, p, plug)
+        if key not in asking:
+            print(f'    {{"{scene}", "{name}", {{{p[0]}f, {p[1]}f, {p[2]}f}}, "{plug}", ""}},  // {users}')
+            continue
+        guards, events, native = asking_plug(key, wiring, flags or set())
+        if guards is None:
+            not_held.append((key, users, events, native))
+            continue
+        print(f'    {{"{scene}", "{name}", {{{p[0]}f, {p[1]}f, {p[2]}f}}, "{plug}", "{"+".join(guards)}"}},  '
+              f'// {users}; asks {"+".join(events)}')
+    print("// read by room objects, but the plug also raises an event asker that no shared flag stops: not held")
+    for (scene, name, p, plug), users, events, native in not_held:
+        how = ", ".join(f"{inp} <- {flag}" for inp, flag in native) or "OPEN: no shared flag reaches the switch"
+        print(f"//   {scene} {name} {{{p[0]}, {p[1]}, {p[2]}}} {plug}: {users}; asks {'+'.join(events)}; {how}")
     return 0
 
 

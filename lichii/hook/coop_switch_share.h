@@ -9,7 +9,9 @@
 // (OnState, OffState) the room graph reads through its own timer (HoldGeneralTimerSwitch), delay or gates, with no
 // event and no saved flag. Dodongo's Cavern's moving ground and shortcut floor (Obj_StepSwitch_A_01 OnState through a
 // timer), its fire walls and shutters, the Forest Temple's lamp, air wall and torch, the GTG and Water Temple's
-// shutters and fountain: 12 plugs (CoopRoomObjects::SwitchPlugs, generated from the room graphs).
+// shutters and fountain: 12 plugs (CoopRoomObjects::SwitchPlugs, generated from the room graphs). g3-objects: 4 more
+// whose plug also raises an event asker (Jabu-Jabu room 1's shutters, the Deku Tree room D lifts, GTG room 5's chest,
+// Spirit room 19's mirror), held only once their guard flags are on in our game (Seen::armed): the result, no replay.
 //
 // One mechanism for all of them, the switch's own state: the game whose player pressed the switch sends SWITCH_STATE
 // on (the plug went 1 with no remote press held) and off (it went back to 0), again every kResendMs while on. A game
@@ -46,10 +48,14 @@ inline constexpr std::uint64_t kSetHoldMs = 400;      // the caller keeps settin
 std::uint32_t PlugKey(std::string_view plug);
 
 // One of our switches seen this walk, and its line's plug as our game has it now (nothing: not read).
+// `armed` (g3-objects): the line's guard flags (CoopRoomObjects::SwitchPlug::guard) are all on in our game, so our
+// own event asker can no longer fire; a line with no guard is always armed. A line not armed is never held: another
+// player's press waits (its played flags come first, then the hold gives the result only, no replay of the event).
 struct Seen {
     const CoopRoomObjects::SwitchPlug* line = nullptr;
     std::uint64_t address = 0;
     std::optional<bool> on;
+    bool armed = true;
 };
 
 // A plug to set this frame (another player's switch is on, ours is not).
@@ -87,6 +93,7 @@ private:
         bool held = false;
         bool told_held = false;
         bool told_sent = false;
+        bool told_waiting = false;  // another player's is on, ours not armed yet (its guard flags)
         std::uint64_t held_since_ms = 0;  // for the log: how long we held it, how long our press lasted
         std::uint64_t pressed_since_ms = 0;
     };

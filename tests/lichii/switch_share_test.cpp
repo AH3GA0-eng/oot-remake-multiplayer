@@ -1,6 +1,7 @@
 // Tests for the timed switches' presses (lichii/hook/coop_switch_share.cpp, room-objects).
 #include <doctest/doctest.h>
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -31,7 +32,7 @@ struct Game {
 
     void Tick(std::uint64_t now_ms, bool others = true, const std::string& scene = kScene) {
         std::vector<proto::SwitchState> out;
-        holds = sharer.Tick(scene, {Seen{Plate(), 0x1000, on}}, others, now_ms, out, notes);
+        holds = sharer.Tick(scene, {Seen{Plate(), 0x1000, on, true}}, others, now_ms, out, notes);
         for (auto& m : out) {
             m.player_number = self;  // the server's relay writes the sender
             sent.push_back(m);
@@ -49,7 +50,7 @@ bool Has(const std::vector<std::string>& notes, const char* text) {
 }  // namespace
 
 TEST_CASE("switch share: the generated lines are the timed switches no CoopEyeSwitch line covers") {
-    CHECK(CoopRoomObjects::SwitchPlugs().size() == 12);
+    CHECK(CoopRoomObjects::SwitchPlugs().size() == 16);  // 12 timed + 4 behind an asker guard (g3-objects)
     CHECK(Plate()->plug == "OnState");
     // The Water Temple fountain reads one switch's OffState.
     CHECK(CoopRoomObjects::SwitchPlugsOf("WaterTemple", "Obj_SwitchHit_A_06", {52.1f, 110.0f, -23.2f}).size() == 1);
@@ -205,4 +206,70 @@ TEST_CASE("switch share: a new scene forgets what was held") {
     b.Tick(t += 100, true, "KokiriForest");
     b.Tick(t += 100);
     CHECK(b.holds.empty());
+}
+
+TEST_CASE("switch share: a plug that also raises our event asker is held only once its guard flags are on here") {
+    // g3-objects, one line per class: a step switch's OnState read by shutters (Jabu-Jabu room 1), by lifts (Deku Tree
+    // room D) and by a chest (GTG room 5), and a sun switch's isLightMax (Spirit room 19). Before the presser's guard
+    // flag reaches our game our own asker could still fire on the plug (a replay): no hold, and a note.
+    struct Line {
+        const char* scene;
+        const char* name;
+        std::array<float, 3> at;
+        const char* plug;
+    };
+    const Line lines[] = {
+        {"InsideJabuJabuBelly", "Obj_InsideJabu_Jabu_StepSwitch_A_03", {8.5f, 102.5f, -51.4f}, "OnState"},
+        {"InsideTheDekuTree", "Obj_StepSwitch_A_02", {-17.5f, 119.6f, -4.9f}, "OnState"},
+        {"GerudoTrainingGround", "Obj_StepSwitch_A_04", {52.2f, 97.5f, -86.0f}, "OnState"},
+        {"SpiritTemple", "Obj_SolarSwitch_A_02", {45.8f, 121.5f, -47.5f}, "isLightMax"},
+    };
+    for (const Line& l : lines) {
+        CAPTURE(l.name);
+        const auto found = CoopRoomObjects::SwitchPlugsOf(l.scene, l.name, l.at);
+        REQUIRE(found.size() == 1);
+        REQUIRE_FALSE(found[0]->guard.empty());
+        Sharer b;
+        std::vector<proto::SwitchState> out;
+        std::vector<std::string> notes;
+        std::uint64_t t = 1000;
+        proto::SwitchState on;
+        on.player_number = 1;
+        on.scene = l.scene;
+        on.name = l.name;
+        on.place = l.at;
+        on.plug = PlugKey(l.plug);
+        on.on = true;
+        b.Receive(on, t);
+        // Not armed: nothing held, nothing sent (our plug is 0), the wait is logged once.
+        for (int i = 0; i < 5; ++i) {
+            const auto holds = b.Tick(l.scene, {Seen{found[0], 0x2000, false, false}}, true, t += 100, out, notes);
+            CHECK(holds.empty());
+        }
+        CHECK(out.empty());
+        CHECK(Has(notes, "waiting for"));
+        // The guard flag came (our asker is gone or its trigger is false): the hold runs the room objects only.
+        b.Receive(on, t);
+        auto holds = b.Tick(l.scene, {Seen{found[0], 0x2000, false, true}}, true, t += 100, out, notes);
+        REQUIRE(holds.size() == 1);
+        CHECK(holds[0] == Hold{0x2000, PlugKey(l.plug)});
+        CHECK(Has(notes, "ours held on"));
+        // Our plug now 1 from that hold is not sent back as a press of ours.
+        holds = b.Tick(l.scene, {Seen{found[0], 0x2000, true, true}}, true, t += 100, out, notes);
+        CHECK(out.empty());
+    }
+}
+
+TEST_CASE("switch share: a guarded line not armed is still our own: our press is sent") {
+    // The presser's game: its own guard flag is not on yet when its player steps on (its asker plays the event).
+    const auto found = CoopRoomObjects::SwitchPlugsOf("InsideTheDekuTree", "Obj_StepSwitch_A_02", {-17.5f, 119.6f, -4.9f});
+    REQUIRE(found.size() == 1);
+    Sharer a;
+    std::vector<proto::SwitchState> out;
+    std::vector<std::string> notes;
+    const auto holds = a.Tick("InsideTheDekuTree", {Seen{found[0], 0x3000, true, false}}, true, 1000, out, notes);
+    CHECK(holds.empty());
+    REQUIRE(out.size() == 1);
+    CHECK(out[0].on);
+    CHECK(out[0].plug == PlugKey("OnState"));
 }

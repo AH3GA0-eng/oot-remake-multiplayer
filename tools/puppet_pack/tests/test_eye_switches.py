@@ -107,6 +107,21 @@ class ClassifyTest(unittest.TestCase):
                   2: wire(results=[("flag", "W", "clear"), ("actor", "X", ("BootUp", ()))])}
         self.assertEqual(eye_switches.two_way_flags(wiring), {"W"})
 
+    def test_asker_guards(self):
+        # g3-objects: the saved flags that stop ONE asker: (kind, what, plug, negated, under an OR)
+        sw = ("actor", {"Gyaml": "Obj_StepSwitch_A_01"}, "OnState", False, False)
+        # negated outside an OR, and a delete flag; a positive trigger flag and HavePlayedEvent.* are not guards
+        trig = [sw, ("flag", "Done", "Bool", True, False), ("flag", "Lit", "Bool", False, False)]
+        dele = [("flag", "Gone", "Bool", False, False), ("flag", "HavePlayedEvent.Ev", "Bool", False, False)]
+        self.assertEqual(eye_switches.asker_guards(trig, dele), ["Done", "Gone"])
+        # Jabu-Jabu room 1: the negated flag is the trigger's one leaf under an OR (the OR's other inputs unwired)
+        self.assertEqual(eye_switches.asker_guards([sw, ("flag", "First", "Bool", True, True)], []), ["First"])
+        # two leaves under ORs: which OR holds which is unknown, none counts (no hold)
+        self.assertEqual(eye_switches.asker_guards(
+            [sw, ("flag", "A", "Bool", True, True), ("flag", "B", "Bool", False, True)], []), [])
+        # a negated delete flag deletes nothing once on
+        self.assertEqual(eye_switches.asker_guards([sw], [("flag", "Gone", "Bool", True, False)]), [])
+
 
 if __name__ == "__main__":
     unittest.main()

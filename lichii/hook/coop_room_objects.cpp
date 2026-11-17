@@ -205,39 +205,53 @@ constexpr GroupFlag kGroupFlags[] = {
     {"ZoraRiver", "MiniGame_FrogTenors_StormSong", false, {12.7f, 109.6f, -44.1f}, "Obj_WaterPlaneDynamic_A_01"},
 };
 
-// Shared switch plugs (the third table), each with the room objects that read it.
+// Shared switch plugs (the third table), each with the room objects that read it. A line with a fifth field
+// (g3-objects) is a plug that also raises an event asker (a CoopEyeSwitch line it does not drive): held only once
+// those flags are all on in our game, so our asker can no longer fire and the hold runs the room objects only (the
+// result; owner 07:40 UTC 2026-11-17: no replay of a gimmick event).
 constexpr SwitchPlug kSwitchPlugs[] = {
-    {"DodongoCavern", "Obj_EyeSwitch_A_05", {65.7f, 121.8f, -23.0f}, "OnState"},  // Obj_DodongoCave_FireWall_A_01
-    {"DodongoCavern", "Obj_EyeSwitch_A_05", {75.4f, 118.3f, -15.0f}, "OnState"},  // Obj_DodongoCave_FireWall_A_01
-    {"DodongoCavern", "Obj_StepSwitch_A_01", {-49.0f, 114.2f, -8.0f}, "OnState"},  // Obj_DodongoCave_SwitchShutter_A_01+Obj_SwitchShutter_A_06
-    {"DodongoCavern", "Obj_StepSwitch_A_01", {17.2f, 112.3f, -23.0f}, "OnState"},  // GroundControlActor_SimpleMoveTo+Obj_DodongoCave_MoveFloor_A_01
-    {"ForestTemple", "Obj_StepSwitch_A_01", {-74.0f, 125.5f, -1.0f}, "OnState"},  // LocationalLight_Amplifier_ParamChangeActor+Obj_ForestTemple_SwitchLamp_A_01+PushAirWall_Cone
-    {"ForestTemple", "Obj_StepSwitch_A_01", {56.5f, 124.6f, 2.1f}, "OnState"},  // Obj_SwitchCandleStick_A_01
-    {"GerudoTrainingGround", "Obj_EyeSwitch_A_03", {46.9f, 101.9f, -92.4f}, "OnState"},  // Obj_Gerudo_SwitchShutter_A_04+Obj_SwitchShutter_A_02
-    {"WaterTemple", "Obj_EyeSwitch_A_05", {-33.2f, 115.8f, -40.2f}, "OnState"},  // Obj_WaterTemple_SwitchShutter_A_02
-    {"WaterTemple", "Obj_EyeSwitch_A_05", {-4.5f, 116.6f, -26.3f}, "OnState"},  // Obj_WaterTemple_SwitchShutter_A_02
-    {"WaterTemple", "Obj_SwitchHit_A_02", {-38.6f, 94.0f, -15.8f}, "OnState"},  // Obj_WaterTemple_SwitchShutter_A_07
-    {"WaterTemple", "Obj_SwitchHit_A_06", {-28.5f, 111.5f, 3.5f}, "OnState"},  // Obj_WaterTemple_Fountain_A_01
-    {"WaterTemple", "Obj_SwitchHit_A_06", {52.1f, 110.0f, -23.2f}, "OffState"},  // Obj_WaterTemple_Fountain_A_01
+    {"DodongoCavern", "Obj_EyeSwitch_A_05", {65.7f, 121.8f, -23.0f}, "OnState", ""},  // Obj_DodongoCave_FireWall_A_01
+    {"DodongoCavern", "Obj_EyeSwitch_A_05", {75.4f, 118.3f, -15.0f}, "OnState", ""},  // Obj_DodongoCave_FireWall_A_01
+    {"DodongoCavern", "Obj_StepSwitch_A_01", {-49.0f, 114.2f, -8.0f}, "OnState", ""},  // Obj_DodongoCave_SwitchShutter_A_01+Obj_SwitchShutter_A_06
+    {"DodongoCavern", "Obj_StepSwitch_A_01", {17.2f, 112.3f, -23.0f}, "OnState", ""},  // GroundControlActor_SimpleMoveTo+Obj_DodongoCave_MoveFloor_A_01
+    {"ForestTemple", "Obj_StepSwitch_A_01", {-74.0f, 125.5f, -1.0f}, "OnState", ""},  // LocationalLight_Amplifier_ParamChangeActor+Obj_ForestTemple_SwitchLamp_A_01+PushAirWall_Cone
+    {"ForestTemple", "Obj_StepSwitch_A_01", {56.5f, 124.6f, 2.1f}, "OnState", ""},  // Obj_SwitchCandleStick_A_01
+    {"GerudoTrainingGround", "Obj_EyeSwitch_A_03", {46.9f, 101.9f, -92.4f}, "OnState", ""},  // Obj_Gerudo_SwitchShutter_A_04+Obj_SwitchShutter_A_02
+    {"GerudoTrainingGround", "Obj_StepSwitch_A_04", {52.2f, 97.5f, -86.0f}, "OnState", "GerudoTrainingGround_Dungeon_Room05_StepSwitch"},  // Obj_TBox_A_01; asks GerudoTrainingGround_05_DisappearFire
+    {"InsideJabuJabuBelly", "Obj_InsideJabu_Jabu_StepSwitch_A_03", {8.5f, 102.5f, -51.4f}, "OnState", "InsideJabuJabuBelly_Gimmick_Onswitch_first"},  // Obj_InsideJabu_Jabu_SwitchShutter_A_01+Obj_InsideJabu_Jabu_SwitchShutter_A_02; asks InsideJabuJabuBellyRoom01StepSwitch
+    {"InsideTheDekuTree", "Obj_StepSwitch_A_02", {-17.5f, 119.6f, -4.9f}, "OnState", "InsideTheDekuTree_RoomD_StepSwitch_On_01"},  // Obj_InsideTheDekuTree_ElevatorLift_A_01+Obj_InsideTheDekuTree_ElevatorLift_A_02+Obj_InsideTheDekuTree_ElevatorLift_A_03; asks InsideTheDekuTree_Gimmick_RoomD_PlatformUp
+    {"SpiritTemple", "Obj_SolarSwitch_A_02", {45.8f, 121.5f, -47.5f}, "isLightMax", "SpiritTemple_Room19_LightSwitch_On_01"},  // Obj_SpiritTemple_CapstanMirror_A_01; asks SpiritTemple_Level_Room_19_SwitchOn_01
+    {"WaterTemple", "Obj_EyeSwitch_A_05", {-33.2f, 115.8f, -40.2f}, "OnState", ""},  // Obj_WaterTemple_SwitchShutter_A_02
+    {"WaterTemple", "Obj_EyeSwitch_A_05", {-4.5f, 116.6f, -26.3f}, "OnState", ""},  // Obj_WaterTemple_SwitchShutter_A_02
+    {"WaterTemple", "Obj_SwitchHit_A_02", {-38.6f, 94.0f, -15.8f}, "OnState", ""},  // Obj_WaterTemple_SwitchShutter_A_07
+    {"WaterTemple", "Obj_SwitchHit_A_06", {-28.5f, 111.5f, 3.5f}, "OnState", ""},  // Obj_WaterTemple_Fountain_A_01
+    {"WaterTemple", "Obj_SwitchHit_A_06", {52.1f, 110.0f, -23.2f}, "OffState", ""},  // Obj_WaterTemple_Fountain_A_01
 };
 // g3-objects (room_objects.py --eye-switches coop_eye_switch.cpp --dungeon coop_dungeon.cpp): read by room objects,
-// but the plug also raises our event asker (a CoopEyeSwitch line it does not drive: the switch's AI rewrites the
-// plug, deku-ladder). NOT in the table: holding one would raise our own asker before the presser's played/guard flag
-// arrives, a replay of the gimmick event (owner 07:40 UTC 2026-11-17: result only). Open (reports/fable-g3-objects.md):
-// a hold gated on the line's guard flags being on in our game first.
-//   GerudoTrainingGround Obj_StepSwitch_A_04 {52.2, 97.5, -86.0} OnState: Obj_TBox_A_01
-//   InsideJabuJabuBelly Obj_InsideJabu_Jabu_StepSwitch_A_03 {8.5, 102.5, -51.4} OnState: Obj_InsideJabu_Jabu_SwitchShutter_A_01+Obj_InsideJabu_Jabu_SwitchShutter_A_02
-//   InsideTheDekuTree Obj_StepSwitch_A_02 {-17.5, 119.6, -4.9} OnState: Obj_InsideTheDekuTree_ElevatorLift_A_01+Obj_InsideTheDekuTree_ElevatorLift_A_02+Obj_InsideTheDekuTree_ElevatorLift_A_03
-//   SpiritTemple Obj_HammerSwitch_A_01 {18.0, 129.1, -68.5} OnState: Obj_SpiritTemple_SwitchShutter_A_01+Obj_SwitchShutter_A_06
-//   SpiritTemple Obj_SolarSwitch_A_02 {28.0, 121.5, -40.1} isLightMax: Obj_SpiritTemple_CapstanMirror_A_01
-//   SpiritTemple Obj_SolarSwitch_A_02 {35.4, 121.5, -37.2} isLightMax: Obj_SpiritTemple_CapstanMirror_A_01
-//   SpiritTemple Obj_SolarSwitch_A_02 {45.8, 121.5, -47.5} isLightMax: Obj_SpiritTemple_CapstanMirror_A_01
-//   SpiritTemple Obj_SwitchHit_A_02 {33.6, 111.8, -30.7} OnState: Obj_SpiritTemple_SwitchShutter_A_01+Obj_SwitchShutter_A_06
-//   SpiritTemple Obj_SwitchHit_A_05 {0.0, 153.1, -46.0} OnState: Obj_SpiritTemple_SwitchShutter_A_01+Obj_SwitchShutter_A_06
+// but the plug also raises an event asker that no shared flag stops (no flag deletes it or gates its trigger), so a
+// hold could start our own copy of the event: never held. Each says how the result still reaches a follower: the
+// switch's own ON input reads a shared flag the event sets (its own AI turns it on: the native path).
+// read by room objects, but the plug also raises an event asker that no shared flag stops: not held
+//   SpiritTemple Obj_HammerSwitch_A_01 {18.0, 129.1, -68.5} OnState: Obj_SpiritTemple_SwitchShutter_A_01+Obj_SwitchShutter_A_06; asks SpritTemple_Room08_OpenShutter; BootUp <- SpiritTemple_Room08_Unlocked_01, ForceControl <- SpiritTemple_Room08_Unlocked_01
+//   SpiritTemple Obj_SolarSwitch_A_02 {28.0, 121.5, -40.1} isLightMax: Obj_SpiritTemple_CapstanMirror_A_01; asks SpiritTemple_Level_Room_19_SwitchOn_01; isCleared <- SpiritTemple_Room19_LightSwitch_On_02
+//   SpiritTemple Obj_SolarSwitch_A_02 {35.4, 121.5, -37.2} isLightMax: Obj_SpiritTemple_CapstanMirror_A_01; asks SpiritTemple_Room19_SunSwitchShutterOpen; isCleared <- SpiritTemple_Room19_LightSwitch_On_03
+//   SpiritTemple Obj_SwitchHit_A_02 {33.6, 111.8, -30.7} OnState: Obj_SpiritTemple_SwitchShutter_A_01+Obj_SwitchShutter_A_06; asks SpritTemple_Room14_OpenShutter; BootUp <- SpiritTemple_Room14_Unlocked_01, ForceControl <- SpiritTemple_Room14_Unlocked_01
+//   SpiritTemple Obj_SwitchHit_A_05 {0.0, 153.1, -46.0} OnState: Obj_SpiritTemple_SwitchShutter_A_01+Obj_SwitchShutter_A_06; asks SpritTemple_Room31_OpenShutter; BootUp <- SpiritTemple_Room31_Unlocked, ForceControl <- SpiritTemple_Room31_Unlocked
 // clang-format on
 }  // namespace
 
 std::span<const SwitchPlug> SwitchPlugs() { return kSwitchPlugs; }
+
+std::vector<std::string_view> GuardFlags(const SwitchPlug& line) {
+    std::vector<std::string_view> out;
+    std::string_view rest = line.guard;
+    while (!rest.empty()) {
+        const std::size_t plus = rest.find('+');
+        out.push_back(rest.substr(0, plus));
+        rest = plus == std::string_view::npos ? std::string_view() : rest.substr(plus + 1);
+    }
+    return out;
+}
 
 std::span<const GroupFlag> GroupFlags() { return kGroupFlags; }
 

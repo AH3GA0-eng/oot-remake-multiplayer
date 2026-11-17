@@ -64,13 +64,25 @@ std::span<const GroupFlag> GroupFlags();
 // The switch output plugs a room object reads (through gates, timers, delays and module inputs) that no CoopEyeSwitch
 // line covers: the timed switches. SWITCH_STATE carries their presses (coop_switch_share.h). Generated with
 // room_objects.py --eye-switches coop_eye_switch.cpp (its third table).
+//
+// g3-objects (A #44): some of these plugs also raise an event asker (a CoopEyeSwitch line whose plug the switch's AI
+// rewrites, so CoopEyeSwitch does not drive it). Holding such a plug in a follower would start the follower's own
+// copy of the gimmick event (owner 07:40 UTC 2026-11-17: result only, no replay). So such a line names its `guard`:
+// the shared flags ('+'-joined) that stop every asker it raises (a flag that deletes the asker, or one its trigger
+// reads negated). It is held only while all of them are on in our game: our asker can no longer fire, and the hold
+// runs the room objects only (Jabu-Jabu room 1's shutters, the Deku Tree room D lifts, GTG room 5's chest, Spirit
+// room 19's mirror). A plug whose asker no shared flag stops is not in the table (its result reaches the follower's
+// switch through a shared flag on its own ON input: coop_room_objects.cpp lists them).
 struct SwitchPlug {
     std::string_view scene;
     std::string_view name;
     std::array<float, 3> place;
     std::string_view plug;
+    std::string_view guard = {};  // "" no asker; else the flags that must all be on in our game before a hold
 };
 std::span<const SwitchPlug> SwitchPlugs();
+// A line's guard flags, split ("" none).
+std::vector<std::string_view> GuardFlags(const SwitchPlug& line);
 // The lines of a live switch `name` at `at` in `scene` (its placement within kSwitchMatchM).
 inline constexpr float kSwitchMatchM = 1.5f;
 std::vector<const SwitchPlug*> SwitchPlugsOf(std::string_view scene, std::string_view name,
