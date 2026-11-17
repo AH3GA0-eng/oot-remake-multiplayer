@@ -89,6 +89,7 @@
 #include "core/loader/loader.h"
 #include "core/memory.h"
 #include "coop/host/game_flags.hpp"
+#include "coop/host/game_items.hpp"
 #include "coop/host/session.hpp"
 #include "coop/net/client.hpp"
 #include "coop_objects_sync.h"
@@ -1382,6 +1383,7 @@ public:
                 }
                 sync_.Reset();
                 world_.Reset();
+                ForgetGold();  // issue 89: the next save's keys are read afresh
                 block_retry_.clear();
                 ForgetBosses();  // (not connected, or no scene: the title)
                 // No owner or copy any more: our game runs every boss of its own again (a copy held at life 1
@@ -1533,6 +1535,80 @@ public:
             sync_.SetDying(g_dying);
         }
         sync_.Tick(*scene, self, server_now_us, seen, send, writes);
+        // A Gold Skulltula whose key this save already holds is not made again
+        // (issue 89, 2026-11-16). The game reads a placement's key once, when
+        // the scene's actors are made, and never looks again, so a key that
+        // came in from another game after the scene loaded does not take the
+        // actor away (docs/items.md, "the loaded Skulltula stays"): the
+        // Skulltula stayed on the wall, and in a game that never saw the other
+        // player it came back after every reload. The keys are fed to the same
+        // "taken elsewhere" path a pickup takes, so an actor the game made for
+        // an already-true key is deleted as the next walk sees it, whatever
+        // wrote the key. Once a scene, after the scene's first Tick (that Tick
+        // resets the sync, which would drop takes queued before it).
+        if (main_ == 0) {
+            // (no game: nothing to read)
+        } else if (*scene != keys_scene_) {
+            keys_scene_ = *scene;
+            CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main_);
+            coop::host::GameFlags flags(memory);
+            std::size_t took = 0;
+            gold_taken_.clear();
+            gold_baseline_scene_ = *scene;
+            gold_baseline_tokens_ = flags.get_int(coop::host::kGoldTokenCount).value_or(0);
+            for (const std::uint64_t key : coop::host::gold_skulltula_keys()) {
+                // A placement is its key and key + 2 (docs/items.md).
+                if (flags.get_key64(key).value_or(false) ||
+                    flags.get_key64(key + 2).value_or(false)) {
+                    sync_.Take(key);
+                    sync_.Take(key + 2);
+                    world_.TakenKey(key);
+                    gold_taken_.insert(key);
+                    ++took;
+                }
+            }
+            if (took != 0) {
+                LOG_INFO(Core, "coop: objects: {} Gold Skulltulas this save has taken are left out of {}",
+                         took, *scene);
+            }
+        } else if (gold_baseline_scene_ == *scene && gold_sweep_.Due(CoopEvery::NowUs())) {
+            // The token count rose since the last look here: this game took a
+            // token (a token made and taken between two walks never crossed our
+            // walk, so no break was sent for it — issue 89, 2026-11-17). Only
+            // then are the 100 keys read: one binary search each.
+            //
+            // Twice a second, not every two frames: one Int read is cheap but a
+            // walk runs 500 times a second, and this must cost nothing on a slow
+            // frame (it was every two frames, and a frame-rate complaint
+            // followed). A token taken is noticed within half a second.
+            CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main_);
+            coop::host::GameFlags flags(memory);
+            const std::int32_t now_tokens = flags.get_int(coop::host::kGoldTokenCount).value_or(0);
+            if (now_tokens > gold_baseline_tokens_) {
+                std::vector<std::uint64_t> fresh;
+                for (const std::uint64_t key : coop::host::gold_skulltula_keys()) {
+                    if (gold_taken_.contains(key)) {
+                        continue;
+                    }
+                    if (flags.get_key64(key).value_or(false) ||
+                        flags.get_key64(key + 2).value_or(false)) {
+                        fresh.push_back(key);
+                    }
+                }
+                for (const std::uint64_t key : fresh) {
+                    gold_taken_.insert(key);
+                    world_.TakenKey(key);
+                    char hex[24];
+                    std::snprintf(hex, sizeof hex, "%016llx", static_cast<unsigned long long>(key));
+                    LOG_INFO(Core, "coop: objects: Gold Skulltula {} is taken in this save: its token goes",
+                             hex);
+                }
+            }
+            // The last count, not the highest (review of #257): after a
+            // give-back (40 -> 41 -> 40) a next real take to 41 is a rise
+            // again; keeping the highest would miss it.
+            gold_baseline_tokens_ = now_tokens;
+        }
         if (const unsigned twice = sync_.ChestsOpenedTwice(); twice != chests_twice_seen_) {
             // Issue 195: a chest shown open that our Link opened again; the
             // flag watcher takes back its content's count (TakeChestsOpenedTwice).
@@ -1660,9 +1736,6 @@ public:
             sign_words_ = std::move(world.words);  // written after the probe's look
             for (std::string& count : world.give_back) {
                 CoopWorld::QueueGiveBack(std::move(count));  // a small key or token both took
-            }
-            for (const std::uint64_t key : world.taken_keys) {
-                CoopWorld::QueueTakenKey(key);  // a token taken elsewhere: its Skulltula's key
             }
             block_fixes_ = std::move(world.blocks);  // issue 147, written below
             if (!world.hits.empty()) {
@@ -2247,6 +2320,7 @@ private:
             TheMover().ForgetReplayed();
             sync_.Reset();
             world_.Reset();
+            ForgetGold();  // issue 89: a new game process, its own keys
             block_retry_.clear();
             ForgetBosses();
             boss_hit_ids_.clear();
@@ -4243,6 +4317,28 @@ private:
     CoopDifficulty::Extras extras_{CoopDifficulty::AreaOf, SpecialForExtras};
     CoopDifficulty::Horde horde_;    // difficulty: the night horde we made beside our own rolls
     u64 share_now_us_ = 0;  // this Share's server time (WriteLife)
+    // The scene the save's Gold Skulltula keys were fed for (issue 89, Share's
+    // key scan): a scene's actors are made once, so one scan a scene is enough.
+    std::string keys_scene_;
+    // The Gold Skulltula placements known to be 1 here, and the scene that set the
+    // baseline (issue 89, 2026-11-17): a key that is 1 now and was 0 at the
+    // baseline is one this game took, and its Skulltula and token go at once
+    // (a token made and taken between two walks was never sent as a break).
+    std::set<u64> gold_taken_;
+    std::string gold_baseline_scene_;
+    std::int32_t gold_baseline_tokens_ = 0;
+    CoopEvery::Every gold_sweep_{CoopEvery::kHalfSecondUs};  // the token count, twice a second
+    // A new session, the title, or a new game run: what the last save's keys said
+    // is forgotten, so the next save's own keys are read (review of #257: a
+    // player who reconnects and loads another save must not have that save's
+    // untaken Gold Skulltulas deleted). Same thread as Share.
+    void ForgetGold() {
+        keys_scene_.clear();
+        gold_taken_.clear();
+        gold_baseline_scene_.clear();
+        gold_baseline_tokens_ = 0;
+        gold_sweep_.Reset();
+    }
     Sync sync_;
     Kernel::KProcess* process_ = nullptr;
     u64 main_ = 0;
