@@ -680,23 +680,50 @@ TEST_CASE("hookshot: the Discord status header in patch 0026 is hookshot/src's, 
 }
 
 // Player report 133: the title loaded the newest save by itself (no New Game), the pad unplugged. Longshot's Skip title
-// screen (host/oot_autoload.c) taps A every 2 s from 20 s after the start while longshot_options.ini has
-// skip_title_screen=1, which kit updates keep. A co-op build presses nothing on the title by itself (owner, 2026-11-14).
-TEST_CASE("hookshot: nothing presses on the title by itself (patch 0028, Skip title screen off)") {
-    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0028-coop-title-no-autopress.patch");
+// screen (host/oot_autoload.c, off by default; longshot_options.ini keeps it across kit updates) tapped A every 2 s from
+// 20 s after the start. Owner (2026-11-17): keep the row, no pressed buttons: patch 0028 makes its choices the game's own
+// way (Button::Decide on the focused button, at a menu screen's update), stops on any press of the player's and while
+// the co-op module holds it.
+TEST_CASE("hookshot: Skip title screen chooses the game's own way, presses nothing (patch 0028)") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0028-coop-skip-title-native.patch");
     REQUIRE_FALSE(patch.empty());
+    CHECK_FALSE(std::filesystem::exists(kRepo / "hookshot" / "patches" / "0028-coop-title-no-autopress.patch"));
     const std::string autoload = PatchedCode(patch, "host/oot_autoload.c");
     REQUIRE_FALSE(autoload.empty());
-    // The one place its presses are armed is gone (active stays 0, so its hos_hid_tap is never reached); a saved 1 is
-    // only logged.
-    CHECK(patch.find("\n-        active = 1;\n") != std::string::npos);
-    CHECK(autoload.find(Squashed("active = 1;")) == std::string::npos);
-    CHECK(autoload.find(Squashed("hos_log(\"skip title: not in a co-op build: the title screen waits for the player")) !=
+    const auto has = [&autoload](const char* code) { return autoload.find(Squashed(code)) != std::string::npos; };
+    // The taps are gone, the call and its declaration both.
+    CHECK(patch.find("\n-    hos_hid_tap(\"0:A/200\");\n") != std::string::npos);
+    CHECK(patch.find("\n-extern void hos_hid_tap(const char *presses);") != std::string::npos);
+    CHECK(autoload.find(Squashed("hos_hid_tap(")) == std::string::npos);
+    // The choice: the game's Button::Decide(button, 0) on the one focused button, steady first, its answer read.
+    CHECK(has("static const uint64_t kButtonDecide = 0x80020000ULL + 0x3771db0ULL;"));
+    CHECK(has("const A64Fn decide = a64_lookup(kButtonDecide);"));
+    CHECK(has("c->x[0] = button, c->x[1] = 0, c->x[30] = 0; decide(c); const int chosen = (int)(c->x[0] & 1); *c = saved;"));
+    CHECK(has("if (now - steady_ms < kSteadyMs) return;"));
+    CHECK(has("if (state && (state & 0xfe) != 4) { if (found) return 0; found = button; }"));
+    // Its stops: any press of the player's, the module's hold, the row off, Link running, the time and the count.
+    CHECK(has("if (__atomic_load_n(&hos_coop_pad, __ATOMIC_RELAXED) != 0) {"));
+    CHECK(has("if (hos_coop_title_hold_now()) {"));
+    CHECK(has("if (!rx_option(HOS_OPT_SKIP_TITLE, 0)) { stop(\"the row was turned off while waiting\");"));
+    CHECK(has("if (hos_oot_player_seen()) { stop(\"loaded, the player is running\");"));
+    CHECK(has("if (choices >= kMaxChoices) stop("));
+    // (Armed only by the row, off by default: Longshot's own start test, unchanged, outside the patch's hunks.)
+    // Both platforms' screen hook hand each menu screen to it, before the screen's own update.
+    const std::string menu = PatchedCode(patch, "host/oot_menu.c");
+    CHECK(menu.find(Squashed("void hos_oot_menu_tick(Ctx *c, uint64_t screen) { if (!screen) return; "
+                             "hos_oot_autoload_screen(c, screen);")) != std::string::npos);
+    CHECK(menu.find(Squashed("void hos_oot_menu_tick(Ctx *c, uint64_t screen) { hos_oot_autoload_screen(c, screen); }")) !=
           std::string::npos);
-    // The row is off the menu (and so off the control bridge's option_set, which takes shown rows only).
-    const std::string menu = PatchedCode(patch, "gpu/vk/vk_menu.cpp");
-    CHECK(menu.find(Squashed("bool row_shown(int i) { const int* v = rows[i].value; "
-                             "if (v == &opts.skip_title) return false;")) != std::string::npos);
+    // The bridge asks the module's optional export; no module or co-op off: 0 (solo skips the title).
+    const std::string bridge = PatchedCode(patch, "host/coop_bridge.c");
+    CHECK(bridge.find(Squashed("coop_title_hold = (int (*)(void))(void *)GetProcAddress(m, \"hos_coop_title_hold\");")) !=
+          std::string::npos);
+    CHECK(bridge.find(Squashed("return __atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_title_hold ? "
+                               "coop_title_hold() : 0;")) != std::string::npos);
+    // The row stays (no menu change) and the module gives the hold.
+    CHECK(patch.find("gpu/vk/vk_menu.cpp") == std::string::npos);
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_title_hold(void) noexcept {") != std::string::npos);
     // No co-op patch adds a press of its own (hos_hid_tap is the host's press; the module's pad filter only takes
     // bits away: coop_title.cpp OnPad, coop_dbno.cpp).
     for (const auto& e : std::filesystem::directory_iterator(kRepo / "hookshot" / "patches")) {
