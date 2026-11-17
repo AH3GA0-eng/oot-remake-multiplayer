@@ -2,9 +2,10 @@
 # a bit jittery and choppy"). A walks and runs back and forth in front of B for ~40 s; B stands and watches.
 # Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-puppet-smooth -Lane 1
 # Read B's log (A's the same with P2), every 5 s while A moves:
-#   "pose: P1 limbs: uneven U (M moving frames, ...); raw R, jumps J/s; we send H/s x B bones"
-# PASS (puppet-smooth): J about 0 (no bone held a frame and then jumped), "we send 30/s x 222 bones" in both
-# logs (two players: every moving bone, 30 a second). An older module logs only "uneven U" (= today's raw R).
+#   "pose: P1 limbs: uneven U (M moving frames, ...); raw R, jumps J/s; we send H/s x B bones, N of P bytes"
+# PASS (puppet-smooth, puppet-budget): J about 0 (no bone held a frame and then jumped), "we send 30/s x" and
+# "of 3960 bytes" in both logs (two players: 30 a second, 3960 bytes a send), N <= 3960. An older module logs
+# "we send H/s x B bones" with no bytes (puppet-smooth d48dcfdb: "30/s x 222 bones"), older still only "uneven U".
 # Shots: B's at the walk/run marks show A's puppet mid-stride.
 #! switches LICHII_COOP_PUPPET=1
 mark start
