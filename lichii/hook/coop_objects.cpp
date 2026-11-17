@@ -1415,6 +1415,7 @@ public:
             step_hits_.clear();
             boss_hit_ids_.clear();  // (actors of the scene before; an address reused here starts fresh)
             pvp_life_ = -1;  // (our Link of the scene before)
+            pvp_watch_.Reset();
             TheMover().ForgetReplayed();  // its Life components may sit where the old ones were
         }
         ActorEvents(server_now_us);
@@ -2282,6 +2283,7 @@ public:
     // PvP hurts being given to our Link (GivePvp, CoopPvp::FollowLife).
     std::vector<CoopPvp::PendingGive> pvp_;
     s32 pvp_life_ = -1;  // our Link's life at the last GivePvp (after its write); -1: none (a new scene)
+    CoopPvp::LinkLifeWatch pvp_watch_;  // pairs a fall with its hit id across one read (GivePvp)
     bool pvp_replay_ = true;  // LICHII_COOP_PVP_REPLAY=0: write the life only
     Core::Memory::Memory* memory_ = nullptr;  // set by Share for Collect
     bool cheat_ = false;
@@ -2327,6 +2329,7 @@ private:
             ForgetBosses();
             boss_hit_ids_.clear();
             pvp_life_ = -1;
+            pvp_watch_.Reset();
             extras_.Reset();  // difficulty: that run's extra enemies are gone with it
             horde_.Reset();
             {
@@ -3079,7 +3082,16 @@ private:
                 s.animation = PlaysByFrame(s.name)
                                   ? AnimationAt(r, a, 0, false, CoopNpcAnim::kSlotPlayFrame)
                                   : Animation(r, a);
-                const std::optional<u64> own_hit_life = NewHits(r, a, s);
+                // Its life, read between two reads of its hit id (NewHits).
+                const auto life_value = LifeValue(r, a);
+                std::optional<s32> life_read;
+                std::optional<s32> max_read;
+                const std::optional<u64> own_hit_life = NewHits(r, a, s, [&] {
+                    if (life_value) {
+                        life_read = r.Get<s32>(life_value->first + 8);
+                        max_read = r.Get<s32>(life_value->second + 8);
+                    }
+                });
                 if (IsBoss(s.name)) {
                     s.slots = OtherSlots(r, a);  // issue 150
                     // Native boss sync (coop_boss_native.h): its BSA
@@ -3092,9 +3104,9 @@ private:
                         s.hit_at = NewOwnHitAt(r, a, *own_hit_life, s.position);
                     }
                 }
-                if (const auto value = LifeValue(r, a)) {
-                    const auto life = r.Get<s32>(value->first + 8);
-                    const auto max = r.Get<s32>(value->second + 8);
+                if (const auto value = life_value) {
+                    const auto life = life_read;
+                    const auto max = max_read;
                     if (life && max) {
                         s.life = coop::protocol::ObjectLife{*life, *max};
                         const auto table = r.Ptr(a + kActorComponents);
@@ -3242,10 +3254,22 @@ private:
     // Whose hits reached this actor since the last walk (Seen::own_hit, Seen::replay_hit): its Life component's last
     // hit id moved (hit ids only grow); to one we did not replay is our game's own hit. Returns its Life component
     // when our game's own hit came (for a boss's hit place).
-    std::optional<u64> NewHits(Reader& r, u64 a, Seen& s) {
+    //
+    // `read_life` reads the actor's life. It runs between two reads of the hit id: the game's Life step sets both on
+    // the calc thread while this walk reads them one after the other, so a step landing between the reads would
+    // show its id and its fall in different walks (review of 367e23f3: a replay's fall booked as harm on our Link
+    // and its PvP hit dealt again; on a copy, our own hit's fall booked as the replay landing). When the id moved
+    // between the reads, the life is read again after it, so the id and the life read are of the same step.
+    template <typename ReadLife>
+    std::optional<u64> NewHits(Reader& r, u64 a, Seen& s, ReadLife&& read_life) {
         const auto table = r.Ptr(a + kActorComponents);
         const auto life = table ? r.Ptr(*table + kComponentLife) : std::nullopt;
+        const auto first = life ? r.Get<u32>(*life + kLastHitId) : std::nullopt;
+        read_life();
         const auto id = life ? r.Get<u32>(*life + kLastHitId) : std::nullopt;
+        if (first && id && *first != *id) {
+            read_life();  // (a step landed between the reads: its life, after its id)
+        }
         if (!id) {
             return std::nullopt;
         }
@@ -3339,14 +3363,15 @@ private:
             return;  // not read: nothing is given until it is
         }
         // A monster's hit, a fall, fire or a heart since the last read is not the PvP hit: the pending hurts'
-        // expected lives move with it (CoopPvp::FollowLife). The game's Life step moves Link's last hit id in the
-        // same step that takes a hit's life (a refused hit moves it with no fall), so with the id read a fall
-        // that did not reach our replayed id is not our replay landing: a monster's hit (an id not ours) or harm
-        // with no hit record at all (no id moved). Id not read: as before (a fall is the landing).
+        // expected lives move with it; a fall and its hit id read a walk apart are paired (CoopPvp::LinkLifeWatch).
         Seen hits;
-        NewHits(r, link, hits);
-        const bool other = hits.own_hit || (hits.hit_id_read && !hits.replay_hit);
-        CoopPvp::FollowLife(pvp_, pvp_life_, life, other, hits.replay_hit);
+        NewHits(r, link, hits, [&] {
+            if (const auto now_life = r.Get<s32>(life_at)) {
+                life = *now_life;  // (of the same step as the id: NewHits)
+            }
+        });
+        TheLinkLife().store(life);
+        const bool hold = pvp_watch_.Follow(pvp_, pvp_life_, life, hits.own_hit, hits.replay_hit, hits.hit_id_read);
         pvp_life_ = life;
         std::vector<PvpAsk> asks;
         {
@@ -3373,7 +3398,7 @@ private:
                      h.replayed ? "the game's hit" : "written");
             pvp_.push_back(h);
         }
-        for (auto it = pvp_.begin(); it != pvp_.end();) {
+        for (auto it = pvp_.begin(); !hold && it != pvp_.end();) {
             if (life <= it->expect) {
                 if (it->replayed) {
                     LOG_INFO(Core, "coop: pvp: the game took the hit (life {})", life);

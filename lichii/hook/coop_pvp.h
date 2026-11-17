@@ -156,15 +156,33 @@ struct PendingGive {
     bool replayed = false;
 };
 
-// Our Link's life moved from `before` to `now` between two reads. `expect` is a life, so every change that is not
-// the PvP hit itself moves it too, else that change is booked as the PvP hit (g2-bosses, the copy-hit rule the
-// other way): a fall that is not our replay landing (`other`: Link's last hit id moved to an id we did not
-// replay, a monster's hit; or it did not move at all, harm with no hit record: a fall, fire, drowning) lowers
-// every expect by that fall; when our replayed id was reached in the same read (`replay_hit`) the replayed hurts
-// take their part of the fall first. A rise (a heart, a fairy, a revive) raises every expect, so the written
-// fallback never takes it back. A fall that is not `other` is the replay landing (life <= expect books it).
-// `before` < 0: not read yet, nothing moves.
-void FollowLife(std::vector<PendingGive>& gives, std::int32_t before, std::int32_t now, bool other,
-                bool replay_hit);
+// Our Link's life between two reads, against the PvP hurts waiting on it. `expect` is a life, so every change that
+// is not the PvP hit itself moves it too, else that change is booked as the PvP hit (g2-bosses, the copy-hit rule
+// the other way): a fall that is not our replay landing lowers every expect by that fall (a monster's hit: Link's
+// last hit id moved to an id we did not replay; harm with no hit record, a fall, fire, drowning: no id moved), and
+// a rise (a heart, a fairy, a revive) raises it, so the written fallback never takes a heal back.
+//
+// The walk reads the life and the hit id one after the other on the present thread while the game's Life step
+// sets both on the calc thread, so a step can land between the two reads: its id is then seen one read before or
+// after its fall (review of 367e23f3: a replay's fall read a walk after its id was booked as harm, and the
+// fallback dealt the PvP hit again). So the two are paired across one read, both ways:
+// - our replayed id reached with no fall: its fall may come next read (`reached`), and is the landing then;
+// - a fall with no id moved (id read): its id may come next read, so it is held one read (`Follow` returns true:
+//   nothing is booked or written that read); next read it is the landing if our replayed id came, else harm.
+// Id not read (`id_read` false): a fall is the landing, as before.
+class LinkLifeWatch {
+public:
+    // Returns true when this read must not book or write any wait (a fall held for its id).
+    bool Follow(std::vector<PendingGive>& gives, std::int32_t before, std::int32_t now, bool own_hit,
+                bool replay_hit, bool id_read);
+    void Reset() {
+        held_ = 0;
+        reached_ = 0;
+    }
+
+private:
+    std::int32_t held_ = 0;     // a fall with no id moved, last read
+    std::int32_t reached_ = 0;  // our replayed id reached with no fall, last read: its takes
+};
 
 } // namespace CoopPvp

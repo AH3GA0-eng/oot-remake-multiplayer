@@ -192,50 +192,82 @@ TEST_CASE("pvp: chat lines") {
 TEST_CASE("pvp: a monster's hit while a replayed PvP hit waits is not booked as the PvP hit") {
     using CoopPvp::PendingGive;
     // Life 12, a PvP hurt of 4 replayed (expect 8); a monster takes 4 before the game takes ours.
+    CoopPvp::LinkLifeWatch w;
     std::vector<PendingGive> gives{PendingGive{4, 8, 100, true}};
-    CoopPvp::FollowLife(gives, 12, 8, /*other*/ true, /*replay_hit*/ false);
-    REQUIRE(gives.size() == 1);
+    CHECK_FALSE(w.Follow(gives, 12, 8, /*own_hit*/ true, /*replay_hit*/ false, /*id_read*/ true));
     CHECK(gives[0].expect == 4);  // still waits: life 8 > 4, so a refused replay ends in the written 4
     // Both in one read: the replay takes its 4 first, the monster the rest.
+    w.Reset();
     gives = {PendingGive{4, 8, 100, true}};
-    CoopPvp::FollowLife(gives, 12, 2, true, true);
+    CHECK_FALSE(w.Follow(gives, 12, 2, true, true, true));
     CHECK(gives[0].expect == 2);  // life 2 <= 2: taken
-    // Our replayed id reached with the fall (or the id not read): the replay landing, booked by life <= expect.
+    // Our replayed id with the fall: the landing.
+    w.Reset();
     gives = {PendingGive{4, 8, 100, true}};
-    CoopPvp::FollowLife(gives, 12, 8, false, true);
+    CHECK_FALSE(w.Follow(gives, 12, 8, false, true, true));
     CHECK(gives[0].expect == 8);
-    CoopPvp::FollowLife(gives, 12, 8, false, false);
+    // The id not read: a fall is the landing, as before.
+    w.Reset();
+    CHECK_FALSE(w.Follow(gives, 12, 8, false, false, false));
     CHECK(gives[0].expect == 8);
     // Never below 0.
+    w.Reset();
     gives = {PendingGive{4, 2, 100, true}};
-    CoopPvp::FollowLife(gives, 6, 0, true, false);
+    w.Follow(gives, 6, 0, true, false, true);
     CHECK(gives[0].expect == 0);
 }
 
 TEST_CASE("pvp: a heart while a PvP hit waits is not taken back by the written life") {
     using CoopPvp::PendingGive;
+    CoopPvp::LinkLifeWatch w;
     std::vector<PendingGive> gives{PendingGive{4, 8, 100, true}, PendingGive{2, 6, 120, false}};
-    CoopPvp::FollowLife(gives, 12, 16, false, false);
+    CHECK_FALSE(w.Follow(gives, 12, 16, false, false, true));
     CHECK(gives[0].expect == 12);
     CHECK(gives[1].expect == 10);
     // Not read yet, or unchanged: nothing moves.
-    CoopPvp::FollowLife(gives, -1, 4, true, false);
-    CoopPvp::FollowLife(gives, 16, 16, true, false);
+    w.Follow(gives, -1, 4, true, false, true);
+    w.Follow(gives, 16, 16, true, false, true);
     CHECK(gives[0].expect == 12);
 }
 
-TEST_CASE("pvp: a fall, fire or drowning (no hit id moved) while a PvP hit waits is not booked as the PvP hit") {
+TEST_CASE("pvp: a fall, fire or drowning (no hit id moved) is held one read, then not booked as the PvP hit") {
     using CoopPvp::PendingGive;
-    // GivePvp passes `other` when Link's last hit id was read and did not reach our replayed id: the game's Life
-    // step moves the id in the same step that takes a hit's life, so a fall with no id moved has no hit record.
+    CoopPvp::LinkLifeWatch w;
     std::vector<PendingGive> gives{PendingGive{4, 8, 100, true}};
-    CoopPvp::FollowLife(gives, 12, 10, /*other*/ true, /*replay_hit*/ false);  // fire: 2
-    CHECK(gives[0].expect == 6);  // life 10 > 6: still waits for the game's hit, else the written 6
-    CoopPvp::FollowLife(gives, 10, 6, false, true);  // then the replay lands
+    CHECK(w.Follow(gives, 12, 10, false, false, true));  // fire 2: held (its id may come next read)
+    CHECK(gives[0].expect == 8);
+    CHECK_FALSE(w.Follow(gives, 10, 10, false, false, true));  // no id came: harm
+    CHECK(gives[0].expect == 6);
+    CHECK_FALSE(w.Follow(gives, 10, 6, false, true, true));  // then the replay lands with its id
     CHECK(gives[0].expect == 6);  // life 6 <= 6: taken once
-    // Then the replay refused (its id reached, no fall), and a fall in a later read: that fall is the void's.
+    // A refused replay (its id, no fall) and a fall two reads later: that fall is the void's.
+    w.Reset();
     gives = {PendingGive{4, 8, 100, true}};
-    CoopPvp::FollowLife(gives, 12, 12, false, true);
-    CoopPvp::FollowLife(gives, 12, 9, true, false);
+    w.Follow(gives, 12, 12, false, true, true);
+    w.Follow(gives, 12, 12, false, false, true);
+    CHECK(w.Follow(gives, 12, 9, false, false, true));
+    w.Follow(gives, 9, 9, false, false, true);
     CHECK(gives[0].expect == 5);  // the PvP hit still owed: written to 5 after the wait
+}
+
+TEST_CASE("pvp: the replay's step landing between the life and hit id reads is taken once (review of 367e23f3)") {
+    using CoopPvp::PendingGive;
+    // Its fall read a walk after its id: the id read alone carries its take into the next read.
+    CoopPvp::LinkLifeWatch w;
+    std::vector<PendingGive> gives{PendingGive{4, 8, 100, true}};
+    CHECK_FALSE(w.Follow(gives, 12, 12, false, true, true));
+    CHECK_FALSE(w.Follow(gives, 12, 8, false, false, true));
+    CHECK(gives[0].expect == 8);  // life 8 <= 8: the landing, not written again (was: lowered to 4, dealt twice)
+    // Its fall read a walk before its id: held, then paired with the id.
+    w.Reset();
+    gives = {PendingGive{4, 8, 100, true}};
+    CHECK(w.Follow(gives, 12, 8, false, false, true));  // nothing booked or written this read
+    CHECK_FALSE(w.Follow(gives, 8, 8, false, true, true));
+    CHECK(gives[0].expect == 8);  // the landing
+    // A monster's hit read before its id: held, then lowered as harm once the id is not ours.
+    w.Reset();
+    gives = {PendingGive{4, 8, 100, true}};
+    CHECK(w.Follow(gives, 12, 9, false, false, true));
+    CHECK_FALSE(w.Follow(gives, 9, 9, true, false, true));
+    CHECK(gives[0].expect == 5);
 }
