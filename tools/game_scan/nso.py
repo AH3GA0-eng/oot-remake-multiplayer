@@ -32,6 +32,13 @@ class NsoError(ValueError):
 
 def lz4_block(src, size):
     """One LZ4 block (no frame) decompressed to `size` bytes."""
+    try:
+        return _lz4_block(src, size)
+    except IndexError:
+        raise NsoError("LZ4 block cut short") from None
+
+
+def _lz4_block(src, size):
     out = bytearray()
     i, n = 0, len(src)
     while i < n:

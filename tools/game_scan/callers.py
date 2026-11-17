@@ -59,13 +59,34 @@ class Targets:
         return None
 
 
+def is_store(w):
+    """Whether a load/store instruction stores (its Rt is read, not written)."""
+    if w & 0x0A000000 != 0x08000000:
+        return False                       # not a load or store
+    if w & 0x3A000000 == 0x28000000 or w & 0x3F000000 == 0x08000000:
+        return not w >> 22 & 1             # pair, or exclusive/ordered: L is bit 22
+    if w & 0x38000000 == 0x38000000:       # register: unsigned immediate, unscaled, indexed, register offset
+        v, opc = w >> 26 & 1, w >> 22 & 3
+        return opc & 1 == 0 if v else opc == 0   # SIMD: opc 0 and 2 store (STR b/h/s/d, STR q)
+    return False
+
+
+def writes(w, rd):
+    """Whether an instruction may put a new value in register rd (so it no longer holds an ADRP page)."""
+    if w & 31 != rd:
+        return False
+    if w & 0x1C000000 == 0x14000000:       # branches, exceptions, system
+        return False
+    return not is_store(w)
+
+
 def ls_unsigned(w):
     """(kind, scale, imm12) for a load or store with an unsigned immediate, else None."""
     if w & 0x3B000000 != 0x39000000:
         return None
     size, v, opc = w >> 30, w >> 26 & 1, w >> 22 & 3
     scale = 4 if v and opc & 2 else size
-    kind = "write" if opc == 0 else "read"
+    kind = "write" if is_store(w) else "read"
     return kind, scale, w >> 10 & 0xFFF
 
 
@@ -95,8 +116,8 @@ def scan_code(m, t):
             for j in range(i + 1, min(i + 1 + WINDOW, n)):
                 u = words[j]
                 if (u >> 5) & 31 != rd:
-                    if u & 0xFC000000 in (0x94000000, 0x14000000) or u == vtables.RET:
-                        break
+                    if u & 0xFC000000 in (0x94000000, 0x14000000) or u == vtables.RET or writes(u, rd):
+                        break   # a branch, or rd now holds something else (mov x8, x0)
                     continue
                 if u & 0xFF800000 == 0x91000000:   # ADD Xd, Xn, #imm{, lsl 12}
                     a = page + ((u >> 10 & 0xFFF) << (12 if u >> 22 & 1 else 0))
@@ -117,6 +138,8 @@ def scan_code(m, t):
                             hits.append((t0 + 4 * j, "via pointer", v, a))
                     if kind == "read" and u & 31 == rd:
                         break
+                elif writes(u, rd):
+                    break
             continue
         if top == 0x10000000:   # ADR
             pc = t0 + 4 * i
@@ -147,8 +170,10 @@ def load_functions(path):
     with open(path, encoding="utf-8") as f:
         for line in f:
             parts = line.split()
-            if parts:
+            try:
                 starts.append(int(parts[0], 16))
+            except (IndexError, ValueError):
+                continue   # an empty line, a comment or a header
     return sorted(starts)
 
 
@@ -185,15 +210,16 @@ def main(argv=None):
         for v in vts:
             starts.update(s for s in v.slots if isinstance(s, int))
         starts, exact = sorted(starts), False
-    vt_at = sorted((v.addr, v) for v in vts)
+    vts = sorted(vts, key=lambda v: v.addr)
+    vt_addrs = [v.addr for v in vts]
     for pc, kind, target, slot in sorted(code):
         extra = f" (slot 0x{slot:x})" if slot is not None else ""
         print(f"0x{pc:x}\t{kind}\t0x{target:x}{extra}\t{where(starts, pc, exact)}")
     for slot, value in data:
         note = ""
-        k = bisect.bisect_right(vt_at, (slot, None)) - 1 if vt_at else -1
+        k = bisect.bisect_right(vt_addrs, slot) - 1
         if k >= 0:
-            v = vt_at[k][1]
+            v = vts[k]
             if v.addr <= slot < v.addr + 8 * len(v.slots):
                 name = ", ".join(n for _, n in v.names) or "no name"
                 note = f"vtable 0x{v.addr:x} ({name}) slot {(slot - v.addr) // 8}"

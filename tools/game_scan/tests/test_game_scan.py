@@ -23,12 +23,13 @@ TEXT, RO, DATA, SEG = 0x0, 0x1000, 0x2000, 0x1000
 NAME_FN, CTOR, CREATE, CALLER = 0x100, 0x200, 0x300, 0x400
 SCREEN_FNS = (0x500, 0x510, 0x520)
 TYPED_FN, PURE_FN = 0x530, 0x540
+OVERWRITE, SIMD = 0x600, 0x640   # an ADRP whose register is overwritten; a SIMD store and load
 # Read-only data
 MOD0, NAME_STR, TYPE_NAME, DYNSTR, DYNSYM, DYNAMIC, RELA, RELR = (
     0x1000, 0x1100, 0x1120, 0x1200, 0x1300, 0x1400, 0x1500, 0x1600)
 # Data: four vtables, a type info object, a global pointer and a global value
 FACTORY_VT, SCREEN_VT, TYPED_VT, PURE_VT = 0x2010, 0x2030, 0x2058, 0x2070
-TYPE_INFO, GLOBAL_PTR, GLOBAL_VAL = 0x2100, 0x2200, 0x2208
+TYPE_INFO, GLOBAL_PTR, GLOBAL_VAL, WIDE = 0x2100, 0x2200, 0x2208, 0x2210
 
 
 def adrp(rd, pc, target):
@@ -53,6 +54,13 @@ def bl(pc, target):
 
 
 RET = 0xD65F03C0
+MOV_X8_X0 = 0xAA0003E8          # orr x8, xzr, x0
+STR_Q0 = 0x3D800000             # str q0, [xN, #imm * 16]
+LDR_Q1 = 0x3DC00001             # ldr q1, [xN, #imm * 16]
+
+
+def simd(op, rn, off):
+    return op | (off // 16) << 10 | rn << 5
 
 
 def code(img, at, words):
@@ -73,6 +81,9 @@ def make_image():
                        ldr64(10, 9, GLOBAL_PTR & 0xFFF), ldr64(11, 9, GLOBAL_VAL & 0xFFF), RET])
     for f in SCREEN_FNS + (TYPED_FN, PURE_FN):
         code(img, f, [RET])
+    # x8 gets the page of GLOBAL_VAL, then something else: the load after it is not a read of GLOBAL_VAL.
+    code(img, OVERWRITE, [adrp(8, B + OVERWRITE, B + GLOBAL_VAL), MOV_X8_X0, ldr64(9, 8, GLOBAL_VAL & 0xFFF), RET])
+    code(img, SIMD, [adrp(9, B + SIMD, B + WIDE), simd(STR_Q0, 9, WIDE & 0xFFF), simd(LDR_Q1, 9, WIDE & 0xFFF), RET])
     img[NAME_STR:NAME_STR + 11] = b"TestScreen\0"
     img[TYPE_NAME:TYPE_NAME + 14] = b"N4test5ThingE\0"
     names = b"\0__cxa_pure_virtual\0_ZTVN10__cxxabiv117__class_type_infoE\0"
@@ -162,6 +173,12 @@ class NsoTest(unittest.TestCase):
         # One literal 'a', a match of 8 at offset 1 (overlapping), then a last literal 'b'.
         self.assertEqual(nso.lz4_block(bytes([0x14, 0x61, 1, 0, 0x10, 0x62]), 10), b"aaaaaaaaab")
 
+    def test_lz4_cut_short(self):
+        with self.assertRaises(nso.NsoError):
+            nso.lz4_block(bytes([0xF0]), 20)        # 15 or more literals, but the length byte is missing
+        with self.assertRaises(nso.NsoError):
+            nso.lz4_block(bytes([0x14, 0x61, 1]), 10)   # the match offset is cut in half
+
     def test_not_an_nso(self):
         with self.assertRaises(nso.NsoError):
             nso.Main(b"ELF" + bytes(0x200))
@@ -241,7 +258,37 @@ class CallersTest(unittest.TestCase):
         code, _, _ = self.hits(B + SCREEN_VT)
         self.assertEqual(code, {(CTOR + 4, "address")})
         code, _, _ = self.hits(B + GLOBAL_VAL)
-        self.assertEqual(code, {(CALLER + 12, "read")})
+        self.assertEqual(code, {(CALLER + 12, "read")})   # not OVERWRITE + 8: x8 was overwritten before it
+
+    def test_simd_store_and_load(self):
+        code, _, _ = self.hits(B + WIDE)
+        self.assertEqual(code, {(SIMD + 4, "write"), (SIMD + 8, "read")})
+
+    def test_is_store(self):
+        for word, store in ((0xF9000000, True), (0xF9400000, False),     # STR x, LDR x
+                            (0x3D800000, True), (0x3DC00000, False),     # STR q, LDR q
+                            (0xFD000000, True), (0xFD400000, False),     # STR d, LDR d
+                            (0xA9000000, True), (0xA9400000, False),     # STP x, LDP x
+                            (0xF8000000, True), (0xF8400000, False),     # STUR x, LDUR x
+                            (MOV_X8_X0, False), (RET, False)):
+            self.assertEqual(callers.is_store(word), store, hex(word))
+
+    def test_functions_file_skips_other_lines(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "functions.txt")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("# start size\n\n80020100 4\nnot hex\n80020000 2\n")
+            self.assertEqual(callers.load_functions(path), [0x80020000, 0x80020100])
+
+    def test_cli_slot_zero(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "main")
+            with open(path, "wb") as f:
+                f.write(make_nso())
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(callers.main([path, f"main+0x{CREATE:x}"]), 0)
+            self.assertIn(f"vtable 0x{B + FACTORY_VT:x} (TestScreen) slot 0", out.getvalue())
 
     def test_cli_names_the_vtable_slot(self):
         with tempfile.TemporaryDirectory() as d:
