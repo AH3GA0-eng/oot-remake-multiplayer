@@ -718,3 +718,59 @@ TEST_CASE("title menu: ParsePort and host port, 1 to 65535, read and written") {
     o.Write(coop, opt);
     CHECK_FALSE(IniGet(opt, "server_port").has_value());
 }
+
+TEST_CASE("title menu: the save list is re-read once after a switch, only when the game's list is idle") {
+    using R = SaveListRefresh;
+    R r;
+    R::Input in;
+    in.title = true;
+    in.manager = true;
+    in.now_ms = 1000;
+    CHECK(r.Step(in) == R::Action::none);   // no switch: nothing asked
+    in.stale = true;
+    in.state = 2;                            // the game is reading already: wait for it
+    CHECK(r.Step(in) == R::Action::none);
+    CHECK(r.pending());
+    in.stale = false;
+    in.state = 0;
+    CHECK(r.Step(in) == R::Action::ask);     // idle: asked once
+    CHECK(r.asked());
+    CHECK(r.Step(in) == R::Action::none);    // not asked again while it may still start
+    in.state = 1;
+    in.now_ms = 1050;
+    CHECK(r.Step(in) == R::Action::none);
+    in.state = 0;
+    in.now_ms = 1100;
+    CHECK(r.Step(in) == R::Action::done);    // read, then idle
+    CHECK(r.Step(in) == R::Action::none);
+}
+
+TEST_CASE("title menu: the save list waits for the title and the manager, settles, gives up, asks again") {
+    using R = SaveListRefresh;
+    R r;
+    R::Input in;
+    in.stale = true;
+    in.now_ms = 0;
+    CHECK(r.Step(in) == R::Action::none);    // no title, no manager: kept
+    in.stale = false;
+    in.title = true;
+    CHECK(r.Step(in) == R::Action::none);    // no manager yet
+    in.manager = true;
+    CHECK(r.Step(in) == R::Action::ask);
+    in.now_ms = R::kSettleMs - 1;
+    CHECK(r.Step(in) == R::Action::none);
+    in.now_ms = R::kSettleMs;
+    CHECK(r.Step(in) == R::Action::done);    // never seen reading: done once settled
+
+    in.stale = true;
+    in.now_ms = 10000;
+    CHECK(r.Step(in) == R::Action::ask);
+    in.stale = true;                         // another switch while the game reads
+    in.state = 3;
+    CHECK(r.Step(in) == R::Action::none);
+    in.stale = false;
+    in.now_ms = 10000 + R::kGiveUpMs;
+    CHECK(r.Step(in) == R::Action::gave_up);
+    in.state = 0;
+    CHECK(r.Step(in) == R::Action::ask);     // the later switch: asked again
+}

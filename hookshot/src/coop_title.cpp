@@ -49,6 +49,16 @@ constexpr std::uint64_t kTitleLayout = 0x28;          // the screen's layout
 constexpr std::uint64_t kMsgRefInit = 0x80a86f70;     // (ref): {0, 0, -1}, 24 bytes
 constexpr std::uint64_t kMsgRefSet = 0x80a8afe0;      // (ref, &"LayoutMsg/...", &"label", 1)
 constexpr std::uint64_t kPaneText = 0x80a87d30;       // (layout, "pane/T_Btn_00", ref, 1, 0)
+// The game's save list (player report 124; read from main, see docs/hookshot.md "The save list"): the caption
+// manager, whose bytes the title's SeqQueryIsExistSave reads (+0x8e a save, +0x8f a Master Quest save, +0x88 the
+// latest slot), and the body of SeqOneshotRequestLoadAndSerializeCaption, which re-reads every slot's caption from the
+// mounted save folder (the boot's BeforeInitializeCommon and the way back to the title run it).
+constexpr std::uint64_t kCaptionMgrGot = 0x84c81660;  // GOT: -> the global that holds the caption manager
+constexpr std::uint64_t kCaptionReload = 0x80f6da40;  // (mgr): request the re-read (waits itself if one runs)
+constexpr std::uint64_t kCaptionState = 0x8c;         // u8: 0 idle, 1-4 reading (f_833ad380)
+constexpr std::uint64_t kCaptionLatest = 0x88;        // s32: the latest slot, -1 none
+constexpr std::uint64_t kCaptionAnySave = 0x8e;       // u8: a save exists (Continue)
+constexpr std::uint64_t kCaptionAnyMq = 0x8f;         // u8: a Master Quest save exists
 // The title's own co-op rows (tools/puppet_pack/title_menu.py adds them to Title_00 and their
 // texts to LayoutMsg/Title_00): Pa_Button_04 Host, _05 Join, _06 Co-op Settings. Each opens
 // Hookshot's menu on the Multiplayer tab at that page (coop_pause.h).
@@ -70,6 +80,7 @@ std::atomic<bool> g_step_seen{false};
 std::atomic<bool> g_rows{false};
 
 // Everything below. Never held while calling into CoopPause (it calls in here: StartSaveWait, StopSaveWait).
+CoopTitleMenu::SaveListRefresh g_list;   // the title's step only (one thread)
 std::mutex g_mutex;
 CoopTitleMenu::SaveWait g_wait;   // Join at the title -> what the title says while the host's save comes
 std::uint64_t g_pad_last = 0;
@@ -217,6 +228,64 @@ bool SetRowTexts(void* ctx, std::uint64_t screen) {
 }
 
 
+// The caption manager (0: not made yet).
+std::uint64_t CaptionMgr() {
+    const std::uint64_t global = Read64(kCaptionMgrGot);
+    return global != 0 ? Read64(global) : 0;
+}
+
+std::string CaptionLine(std::uint64_t mgr) {
+    std::uint8_t any = 0, mq = 0;
+    std::int32_t latest = -1;
+    CoopRuntime::Read(mgr + kCaptionAnySave, &any, 1);
+    CoopRuntime::Read(mgr + kCaptionAnyMq, &mq, 1);
+    CoopRuntime::Read(mgr + kCaptionLatest, &latest, sizeof latest);
+    return fmt::format("a save {}, a Master Quest save {}, latest slot {}", any != 0 ? "yes" : "no",
+                       mq != 0 ? "yes" : "no", latest);
+}
+
+// From the title's step (its ctx may call()): after a switch of the save folder (CoopSave::TakeSaveListStale) the game
+// re-reads its save list with its own SeqOneshotRequestLoadAndSerializeCaption body, once its caption manager is idle.
+// Nothing of the list is written here: the game fills it.
+void RefreshSaveList(void* ctx) {
+    if (g_api == nullptr || g_api->call == nullptr || ctx == nullptr) {
+        return;   // (the switch stays marked: taken at a step that may call)
+    }
+    const std::uint64_t mgr = CaptionMgr();
+    std::uint8_t state = 0;
+    const bool found = mgr != 0 && CoopRuntime::Read(mgr + kCaptionState, &state, 1);
+    CoopTitleMenu::SaveListRefresh::Input in;
+    in.stale = CoopSave::TakeSaveListStale();
+    in.title = true;
+    in.manager = found;
+    in.state = state;
+    in.now_ms = NowMs();
+    switch (g_list.Step(in)) {
+    case CoopTitleMenu::SaveListRefresh::Action::none:
+        return;
+    case CoopTitleMenu::SaveListRefresh::Action::ask: {
+        LOG_INFO(Core, "coop: title: save list: the save folder changed: the game re-reads its save list (before: {})",
+                 CaptionLine(mgr));
+        HosCoopCall k{};
+        k.function = kCaptionReload;
+        k.x[0] = mgr;
+        std::uint64_t x0 = 0;
+        if (!g_api->call(ctx, &k, &x0)) {
+            LOG_WARNING(Core, "coop: title: save list: the game's re-read could not be called: Continue shows after a "
+                              "restart");
+        }
+        return;
+    }
+    case CoopTitleMenu::SaveListRefresh::Action::done:
+        LOG_INFO(Core, "coop: title: save list: read again by the game: {}", CaptionLine(mgr));
+        return;
+    case CoopTitleMenu::SaveListRefresh::Action::gave_up:
+        LOG_WARNING(Core, "coop: title: save list: the game was still reading after {} s ({})",
+                    CoopTitleMenu::SaveListRefresh::kGiveUpMs / 1000, CaptionLine(mgr));
+        return;
+    }
+}
+
 // Link is in the game: this game's own row has a scene (CoopHook::PlayerList).
 bool InGame() {
     for (const auto& row : CoopHook::PlayerList()) {
@@ -319,6 +388,7 @@ void OnTitle(void* ctx, std::uint64_t screen, int event) {
         if (!g_step_seen.exchange(true)) {
             LOG_INFO(Core, "coop: title: the title screen's step runs");
         }
+        RefreshSaveList(ctx);
         g_last_step_ms = NowMs();
         const int f = FocusedIndex(screen);
         std::lock_guard lock(g_mutex);

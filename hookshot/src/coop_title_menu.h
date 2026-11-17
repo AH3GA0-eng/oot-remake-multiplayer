@@ -298,4 +298,35 @@ std::string Utf8(std::uint32_t cp);
 // On one line: line ends and tabs become spaces.
 std::string OneLine(std::string_view text);
 
+// ---------------------------------------------------------------------------
+// Player report 124: after the save folder is switched (CoopSave, a join's host's save, Resync from host, a new
+// session back on the player's own folder) the game's save list still shows the old folder: no Continue until a
+// restart. The game keeps that list in its caption manager (the title's SeqQueryIsExistSave reads it); the game
+// fills it with its own SeqOneshotRequestLoadAndSerializeCaption (at boot and when it goes back to the title).
+// SaveListRefresh says when the title's step has the game run that same re-read, and when the game is done with it.
+// Only on the title (its step), only when the caption manager is idle (its state byte 0), once per switch.
+class SaveListRefresh {
+public:
+    struct Input {
+        bool stale = false;          // CoopSave::TakeSaveListStale() this step
+        bool title = false;          // the title's step runs (on its menu)
+        bool manager = false;        // the caption manager was found
+        std::uint8_t state = 0;      // its state byte (0: idle; 1-4: reading)
+        std::uint64_t now_ms = 0;
+    };
+    enum class Action { none, ask, done, gave_up };
+    static constexpr std::uint64_t kSettleMs = 500;     // idle this long after the ask with no reading seen: done
+    static constexpr std::uint64_t kGiveUpMs = 10000;   // still reading after this: said once, not asked again
+
+    Action Step(const Input& in);
+    bool pending() const { return pending_; }
+    bool asked() const { return asked_; }
+
+private:
+    bool pending_ = false;   // a switch happened, the game has not re-read its list since
+    bool asked_ = false;
+    bool seen_busy_ = false;
+    std::uint64_t asked_ms_ = 0;
+};
+
 }  // namespace CoopTitleMenu
