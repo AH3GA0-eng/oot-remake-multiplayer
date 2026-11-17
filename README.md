@@ -11,7 +11,7 @@ The goal of this project is working multiplayer in two stages:
 
 Both stages share one design, one wire protocol and one server, so what is learned on the emulator carries straight over to the recomp.
 
-**Discord:** the Squadala! server, https://discord.gg/GwtRKAqng5, for players, testers and contributors.
+**Discord:** the Squadala! server, https://discord.gg/GwtRKAqng5, for players, testers and contributors. Found a bug? Type `/bugreport` there and attach the zip from `scripts\collect-logs.cmd` ([how](docs/setup.md#reporting-a-problem)).
 
 ## Play the newest release
 
