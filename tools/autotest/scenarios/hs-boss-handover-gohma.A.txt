@@ -14,7 +14,7 @@
 # bug; lower = a hit taken twice), and she dies in both games after turn 10 and not before. Notes counted:
 # "ours now with a hit of ours not sent yet", "our own hit crossed the hand-over", the server's "given back across
 # a hand-over N". A death that never comes while every L is right is INCONCLUSIVE (a life stop held her), not FAIL.
-# Run: toolsutotestun.ps1 -Runtime hookshot -Lane 1 -Scenario hs-boss-handover-gohma
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-boss-handover-gohma
 #! noload
 #! start coop: test warp done
 #! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1

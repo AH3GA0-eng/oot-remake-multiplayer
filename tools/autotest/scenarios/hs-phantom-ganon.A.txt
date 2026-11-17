@@ -17,7 +17,7 @@
 #     or B's hits fall on the owner's life, and his death comes in B's game after t7.
 #  4. Reported, not judged: A's game after its Continue (the Forest Temple's beaten record, "beaten"), any
 #     "disconnect", "exception", "crash" line, and the screenshots t4..end on both sides (A not black / stuck).
-# Run: toolsutotestun.ps1 -Runtime hookshot -Lane 1 -Scenario hs-phantom-ganon
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-phantom-ganon
 #! noload
 #! start coop: test warp done
 #! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1

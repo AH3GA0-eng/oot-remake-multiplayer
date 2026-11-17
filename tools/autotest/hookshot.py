@@ -9,7 +9,7 @@ Windows, a Unix socket on Linux, newline-delimited JSON. This module is our clie
   wait, hold, press, stick and rstick as bridge inputs let go by `release` when their time is up; `mark` logged and
   shot; `warp` as the bridge's teleport (retried until the game takes it, as the hook does); `goto` and `toward`
   steered from Link's position read through guest memory (`HOS_CONTROL_MEM=ro`). Steps that need the co-op module
-  inside the game (chat, give, wear, assign, place, kill, hurt, setflag, setenum, menu) are written, as the script has them, to
+  inside the game (chat, give, wear, assign, place, kill, hit, stun, hurt, setflag, setenum, menu) are written, as the script has them, to
   the game's LICHII_COOP_TEST_COMMANDS file: the module (lichii/hook/coop_testinput.cpp) plays them on its next
   check (4 a second) and empties the file, so the player knows they were taken. Without that file they are logged as
   skipped.
@@ -61,7 +61,7 @@ STICK_KEYS = {  # full stick directions: (stick, x, y)
     "RSTICK_UP": ("R", 0, 1), "RSTICK_DOWN": ("R", 0, -1), "RSTICK_LEFT": ("R", -1, 0), "RSTICK_RIGHT": ("R", 1, 0),
 }
 WEAR_SLOTS = ("weapon", "shield", "head", "armor", "boots", "hand")
-MODULE_ONLY = ("chat", "give", "wear", "assign", "place", "kill", "hurt", "setflag", "setenum", "menu")
+MODULE_ONLY = ("chat", "give", "wear", "assign", "place", "kill", "hit", "stun", "hurt", "setflag", "setenum", "menu")
 
 
 class ScriptError(Exception):
@@ -227,6 +227,14 @@ def parse(text):
             if len(w) != 2:
                 fail("want: %s %s" % (cmd.lower(), "ACTOR" if cmd == "KILL" else "ITEM"))
             s.kind, s.name = cmd.lower(), w[1]
+        elif cmd == "HIT":
+            if len(w) != 3 or not w[2].isdigit() or not 1 <= int(w[2]) <= 80:
+                fail("want: hit ACTOR N (1 to 80)")
+            s.kind, s.name, s.start = "hit", w[1], w[2]
+        elif cmd == "STUN":
+            if len(w) != 2:
+                fail("want: stun BOSS")
+            s.kind, s.name = "stun", w[1]
         elif cmd == "HURT":
             if len(w) != 2 or not w[1].isdigit() or not 1 <= int(w[1]) <= 80:
                 fail("want: hurt QUARTER_HEARTS (1 to 80)")

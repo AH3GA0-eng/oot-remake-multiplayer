@@ -180,10 +180,12 @@ class ParseTest(unittest.TestCase):
             mark done
             wear boots HoverBoot
             setflag Rupee 50
+            hit Enemy_DungeonBoss_Gohma 2
+            stun Enemy_DungeonBoss_Gohma
         """)
         kinds = [s.kind for s in steps]
         self.assertEqual(kinds, ["timed", "timed", "timed", "timed", "timed", "timed", "timed", "timed", "goto",
-                                 "toward", "warp", "chat", "mark", "wear", "setflag"])
+                                 "toward", "warp", "chat", "mark", "wear", "setflag", "hit", "stun"])
         self.assertEqual(steps[0].ticks, 120)
         self.assertEqual((steps[1].buttons, steps[1].left, steps[1].ticks, steps[1].name), (["A"], (0, 1), 90, "mid"))
         self.assertEqual((steps[2].buttons, steps[2].ticks), (["ZR", "A"], 10))
@@ -196,6 +198,10 @@ class ParseTest(unittest.TestCase):
         self.assertEqual((steps[10].name, steps[10].start), ("KakarikoVillage_Child", "Kakariko_WellSide"))
         self.assertEqual(steps[11].name, "/teleport  Saria")
         self.assertEqual((steps[13].start, steps[13].name), ("boots", "HoverBoot"))
+        self.assertEqual((steps[15].name, steps[15].start), ("Enemy_DungeonBoss_Gohma", "2"))
+        self.assertEqual(steps[16].name, "Enemy_DungeonBoss_Gohma")
+        self.assertIn("hit", hs.MODULE_ONLY)   # module steps, as coop_testinput.cpp reads them
+        self.assertIn("stun", hs.MODULE_ONLY)
 
     def test_menu_step_goes_to_the_module(self):
         steps = hs.parse("menu Customize\nmenu close\n")
@@ -214,7 +220,11 @@ class ParseTest(unittest.TestCase):
                            ("wear cape X", "want: wear"), ("menu", "want: menu customize|close"),
                            ("menu map", "want: menu customize|close"), ("hurt", "want: hurt QUARTER_HEARTS"),
                            ("hurt 0", "want: hurt QUARTER_HEARTS"), ("hurt 81", "want: hurt QUARTER_HEARTS"),
-                           ("hurt 2x", "want: hurt QUARTER_HEARTS")):
+                           ("hurt 2x", "want: hurt QUARTER_HEARTS"), ("hit Enemy_DungeonBoss_Gohma", "want: hit ACTOR N"),
+                           ("hit Enemy_DungeonBoss_Gohma 0", "want: hit ACTOR N"),
+                           ("hit Enemy_DungeonBoss_Gohma 81", "want: hit ACTOR N"),
+                           ("hit Enemy_DungeonBoss_Gohma 2x", "want: hit ACTOR N"), ("stun", "want: stun BOSS"),
+                           ("stun A B", "want: stun BOSS")):
             with self.assertRaises(hs.ScriptError) as e:
                 hs.parse(text)
             self.assertIn(want, str(e.exception))

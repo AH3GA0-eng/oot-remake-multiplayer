@@ -451,22 +451,13 @@ TEST_CASE("testinput: kill hands the hook an actor name as written, then the scr
 
 TEST_CASE("testinput: hit and stun hand the hook an actor name (and an amount), then the script goes on") {
     std::string error;
-    CHECK_FALSE(Parse("hit Enemy_DungeonBoss_Gohma
-", error));
-    CHECK_FALSE(Parse("hit Enemy_DungeonBoss_Gohma 0
-", error));
-    CHECK_FALSE(Parse("hit Enemy_DungeonBoss_Gohma 81
-", error));
-    CHECK_FALSE(Parse("hit Enemy_DungeonBoss_Gohma 2x
-", error));
-    CHECK_FALSE(Parse("stun
-", error));
-    CHECK_FALSE(Parse("stun Enemy_DungeonBoss_Gohma now
-", error));
-    Runner r(Must("hit Enemy_DungeonBoss_Gohma 2
-stun Enemy_DungeonBoss_Gohma
-mark struck
-"));
+    CHECK_FALSE(Parse("hit Enemy_DungeonBoss_Gohma\n", error));
+    CHECK_FALSE(Parse("hit Enemy_DungeonBoss_Gohma 0\n", error));
+    CHECK_FALSE(Parse("hit Enemy_DungeonBoss_Gohma 81\n", error));
+    CHECK_FALSE(Parse("hit Enemy_DungeonBoss_Gohma 2x\n", error));
+    CHECK_FALSE(Parse("stun\n", error));
+    CHECK_FALSE(Parse("stun Enemy_DungeonBoss_Gohma now\n", error));
+    Runner r(Must("hit Enemy_DungeonBoss_Gohma 2\nstun Enemy_DungeonBoss_Gohma\nmark struck\n"));
     std::vector<std::string> log;
     r.Advance(0.0, std::nullopt, log);
     const auto requests = r.TakeRequests();
