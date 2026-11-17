@@ -158,12 +158,13 @@ struct PendingGive {
 
 // Our Link's life moved from `before` to `now` between two reads. `expect` is a life, so every change that is not
 // the PvP hit itself moves it too, else that change is booked as the PvP hit (g2-bosses, the copy-hit rule the
-// other way): a fall in a read where Link's last hit id moved to an id we did not replay (`own_hit`: a monster's
-// hit, our game's own) lowers every expect by that fall; when our replayed id was reached in the same read
-// (`replay_hit`) the replayed hurts take their part of the fall first. A rise (a heart, a fairy, a revive) raises
-// every expect, so the written fallback never takes it back. A fall with no hit id of ours moved stays the
-// replay landing, as before. `before` < 0: not read yet, nothing moves.
-void FollowLife(std::vector<PendingGive>& gives, std::int32_t before, std::int32_t now, bool own_hit,
+// other way): a fall that is not our replay landing (`other`: Link's last hit id moved to an id we did not
+// replay, a monster's hit; or it did not move at all, harm with no hit record: a fall, fire, drowning) lowers
+// every expect by that fall; when our replayed id was reached in the same read (`replay_hit`) the replayed hurts
+// take their part of the fall first. A rise (a heart, a fairy, a revive) raises every expect, so the written
+// fallback never takes it back. A fall that is not `other` is the replay landing (life <= expect books it).
+// `before` < 0: not read yet, nothing moves.
+void FollowLife(std::vector<PendingGive>& gives, std::int32_t before, std::int32_t now, bool other,
                 bool replay_hit);
 
 } // namespace CoopPvp

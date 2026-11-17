@@ -3250,6 +3250,7 @@ private:
             return std::nullopt;
         }
         const auto [it, fresh] = boss_hit_ids_.try_emplace(a, *id);
+        s.hit_id_read = !fresh;
         if (fresh || it->second == *id) {
             return std::nullopt;
         }
@@ -3337,11 +3338,15 @@ private:
         if (life < 0) {
             return;  // not read: nothing is given until it is
         }
-        // A monster's hit or a heart since the last read is not the PvP hit (its id is not ours): the pending
-        // hurts' expected lives move with it (CoopPvp::FollowLife).
+        // A monster's hit, a fall, fire or a heart since the last read is not the PvP hit: the pending hurts'
+        // expected lives move with it (CoopPvp::FollowLife). The game's Life step moves Link's last hit id in the
+        // same step that takes a hit's life (a refused hit moves it with no fall), so with the id read a fall
+        // that did not reach our replayed id is not our replay landing: a monster's hit (an id not ours) or harm
+        // with no hit record at all (no id moved). Id not read: as before (a fall is the landing).
         Seen hits;
         NewHits(r, link, hits);
-        CoopPvp::FollowLife(pvp_, pvp_life_, life, hits.own_hit, hits.replay_hit);
+        const bool other = hits.own_hit || (hits.hit_id_read && !hits.replay_hit);
+        CoopPvp::FollowLife(pvp_, pvp_life_, life, other, hits.replay_hit);
         pvp_life_ = life;
         std::vector<PvpAsk> asks;
         {

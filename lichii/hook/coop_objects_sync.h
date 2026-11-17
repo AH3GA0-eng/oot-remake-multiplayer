@@ -90,6 +90,8 @@ struct Seen {
     // probe 20261117-114108: two of A's hits on Gohma's copy were booked as B's refused replay and never sent).
     bool own_hit = false;
     bool replay_hit = false;
+    // Its last hit id was read in this walk and in the one before (so "did not move" is known; PvP's FollowLife).
+    bool hit_id_read = false;
     // Its Life component (0: none read); a copy boss's is held at life 1 by its own Life step
     // (CoopBossNative::Table::HeldLifeStep) until its owner's dies.
     std::uint64_t life_component = 0;

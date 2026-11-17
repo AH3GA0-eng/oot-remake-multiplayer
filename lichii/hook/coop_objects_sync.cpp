@@ -1739,7 +1739,9 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 // mid-bosses) lost a hit the same way inside kHurtWaitUs and kHurtLateUs.
                 const bool own_hit = s.own_hit || (o.test_own_hit_until != 0 && now_us < o.test_own_hit_until);
                 if (drop > 0 && own_hit && (o.hurt_left > 0 || (o.late_left > 0 && now_us < o.late_until))) {
-                    // Our replay landing in the same walk (its id reached too, not refused) takes its part first.
+                    // Our replay landing in the same walk (its id reached too, not refused) takes its part first:
+                    // while it waits (hurt_left), or taken late after its wait (late_left), as the late branch
+                    // below books it (put back unless the actor reacts, never sent as ours).
                     std::int32_t replay = 0;
                     if (s.replay_hit && o.hurt_left > 0) {
                         replay = std::min(drop, o.hurt_left);
@@ -1747,9 +1749,20 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                         if (o.hurt_left == 0) {
                             o.hurt_until = std::min(o.hurt_until, now_us);  // checked below
                         }
+                    } else if (s.replay_hit && o.late_left > 0 && now_us < o.late_until) {
+                        replay = std::min(drop, o.late_left);
+                        o.late_left -= replay;
+                        if (!o.reacts) {
+                            life->life += replay;
+                            writes.push_back({o.address, life->life, 0, {}});
+                        }
+                        ++hurt_late_;
                     }
                     drop -= replay;
-                    if (o.hurt_until != 0) {
+                    // With step events (patch 0007) this rest waits for its step (`loose`, below), and the step
+                    // lowers hurt_target when it comes (top of this block): not lowered here too, or one hit took it
+                    // down twice.
+                    if (o.hurt_until != 0 && !stepped) {
                         // The owner takes our hit too: the life to reach is that much lower (as with a stepped
                         // hit above), so neither the replay's wait nor its end writes it back up over our hit.
                         o.hurt_target = std::max(0, o.hurt_target - drop);
