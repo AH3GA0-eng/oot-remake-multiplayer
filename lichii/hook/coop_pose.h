@@ -78,16 +78,39 @@ inline constexpr std::uint64_t kBoneRefreshMs = 500;
 // (watchers + 1) x watchers pose streams; kPoseRelayBytes is what they may take of its upload
 // (~1.9 Mbit/s, the old 2-player stream). Each sender's share buys bones at 15 Hz first; a share
 // big enough for kFullBodyBones at kFastHz goes 30 times a second. Never less than the floor.
-//   1 watcher: 30 Hz, 222 bones (every moving bone); 2: 15 Hz, 148; 3: 15 Hz, 74; 4+: 15 Hz, 48.
+// puppet-budget: the plan is a budget in wire BYTES per send, and everything one send carries
+// counts in it: each message's header, the moving bones, the whole bones (StillPicker, issue 152)
+// and the held pieces (issue 158). Before, the plan counted only the moving bones (at an
+// estimated kBoneBytes each) and the whole bones and pieces went on top of it.
+// A send goes every IntervalMs() (whole milliseconds: 33 at 30 Hz, 66 at 15 Hz, so 15.15 sends a
+// second), and its bytes are sized by that interval, not by hz, so a second never holds more.
+//   1 watcher: 30 Hz x 3960 B; 2: 15 Hz x 2640 B; 3: 15 Hz x 1320 B; 4+: 15 Hz x 864 B (the floor).
 inline constexpr std::size_t kPoseRelayBytes = 240'000;  // bytes a second, all pose streams
-inline constexpr std::size_t kBoneBytes = 18;            // one bone on the wire, about
+inline constexpr std::size_t kBoneBytes = 18;            // a bone with rotation and translation
 inline constexpr int kFastHz = 30;
 inline constexpr std::size_t kFullBodyBones = 160;       // ~120 move in a walk, and a margin
+// One PLAYER_POSE on the wire (coop/protocol codec): u16 type + u16 length, then u8 player,
+// u64 time, u32 sequence, u32 skeleton, u16 bone count; per bone u16 bone, u8 parts, u8 flags,
+// then 4 x s16 rotation, 3 x s16 translation, 3 x s16 scale as it has them.
+inline constexpr std::size_t kPoseHeaderBytes = 4 + 1 + 8 + 4 + 4 + 2;
+inline constexpr std::size_t kWholeBoneBytes = 4 + 8 + 6 + 6;
+std::size_t WireBytes(const coop::protocol::PoseBone& bone);
+std::size_t WireBytes(const coop::protocol::PlayerPose& pose);
+// The 16-player floor in bytes (about 13 KB/s at kSendHz): kMaxSendBones x kBoneBytes a send,
+// headers, whole bones and pieces included. A send never has less.
+inline constexpr std::size_t kFloorSendBytes = kMaxSendBones * kBoneBytes;
 struct StreamPlan {
     int hz = kSendHz;
-    std::size_t bones = kMaxSendBones;
+    std::size_t bytes = kFloorSendBytes;  // every pose of one send together
+    std::uint64_t IntervalMs() const { return static_cast<std::uint64_t>(1000 / hz); }
 };
+// The relay share of one stream: kPoseRelayBytes / ((watchers + 1) x watchers), bytes a second.
+std::size_t ShareFor(std::size_t watchers);
+// What one stream may send a second: its share, or the floor (kFloorSendBytes every kSendHz
+// interval, rounded up) where the share is smaller (4 or more watchers: the 16-player design).
+std::size_t BudgetFor(std::size_t watchers);
 // `watchers`: the other players our poses go to (0 is taken as 1).
+// bytes x 1000 / IntervalMs() <= BudgetFor(watchers).
 StreamPlan PlanFor(std::size_t watchers);
 inline constexpr std::size_t kRefreshBones = 8;
 // A bone is changed once a packed part moved more than this (in the packed
@@ -265,9 +288,11 @@ class StillPicker {
 public:
     // `all`: every bone of the skeleton, whole, increasing order. Returns at
     // most `budget` of them, increasing order, remembered as sent at now_ms.
+    // puppet-budget: and at most `bytes` of them on the wire.
     std::vector<coop::protocol::PoseBone> Pick(std::uint32_t skeleton,
                                                const std::vector<coop::protocol::PoseBone>& all,
-                                               std::uint64_t now_ms, std::size_t budget = kStillBones);
+                                               std::uint64_t now_ms, std::size_t budget = kStillBones,
+                                               std::size_t bytes = SIZE_MAX);
 
 private:
     std::uint32_t skeleton_ = 0;
@@ -281,12 +306,18 @@ std::vector<coop::protocol::PoseBone> MergeBones(const std::vector<coop::protoco
 // The sender's side of kMaxSendBones: which of a full pose's bones to send now.
 class BonePicker {
 public:
-    // `full`: every moving bone, increasing order. Returns at most `budget`
-    // of them, increasing order, and remembers them as sent at now_ms.
+    // `refresh_ms`: a bone unsent this long goes in the refresh tier (kBoneRefreshMs for Link,
+    // kPieceRefreshMs for a held piece).
+    explicit BonePicker(std::uint64_t refresh_ms = kBoneRefreshMs) : refresh_ms_(refresh_ms) {}
+    // `full`: every moving bone, increasing order. Returns as many of them as fit in `bytes` on
+    // the wire (WireBytes; puppet-budget: was a bone count), increasing order, and remembers them
+    // as sent at now_ms. `going`: bones (increasing) this pose already carries whole
+    // (StillPicker): remembered as sent with `full`'s value, not picked again, cost nothing here.
     std::vector<coop::protocol::PoseBone> Pick(std::uint32_t skeleton,
                                                const std::vector<coop::protocol::PoseBone>& full,
                                                std::uint64_t now_ms,
-                                               std::size_t budget = kMaxSendBones);
+                                               std::size_t bytes = kFloorSendBytes - kPoseHeaderBytes,
+                                               const std::vector<std::uint16_t>& going = {});
     // How far `now` is from `then`, in packed units; a part come or gone is far.
     static int Change(const coop::protocol::PoseBone& then, const coop::protocol::PoseBone& now);
 
@@ -295,6 +326,7 @@ private:
         coop::protocol::PoseBone bone;
         std::uint64_t ms = 0;
     };
+    std::uint64_t refresh_ms_;
     std::uint32_t skeleton_ = 0;
     std::map<std::uint16_t, Sent> sent_;
 };

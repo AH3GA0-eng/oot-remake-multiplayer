@@ -356,20 +356,40 @@ int BonePicker::Change(const proto::PoseBone& then, const proto::PoseBone& now) 
     return most;
 }
 
-StreamPlan PlanFor(std::size_t watchers) {
+std::size_t WireBytes(const proto::PoseBone& bone) {
+    return 4 + (bone.rotation ? 8 : 0) + (bone.translation ? 6 : 0) + (bone.scale ? 6 : 0);
+}
+
+std::size_t WireBytes(const proto::PlayerPose& pose) {
+    std::size_t n = kPoseHeaderBytes;
+    for (const proto::PoseBone& b : pose.bones) n += WireBytes(b);
+    return n;
+}
+
+std::size_t ShareFor(std::size_t watchers) {
     const std::size_t w = std::max<std::size_t>(watchers, 1);
-    const std::size_t share = kPoseRelayBytes / ((w + 1) * w);  // bytes a second, our stream
+    return kPoseRelayBytes / ((w + 1) * w);
+}
+
+std::size_t BudgetFor(std::size_t watchers) {
+    const std::size_t floor_ms = static_cast<std::size_t>(StreamPlan{kSendHz, kFloorSendBytes}.IntervalMs());
+    return std::max(ShareFor(watchers), (kFloorSendBytes * 1000 + floor_ms - 1) / floor_ms);
+}
+
+StreamPlan PlanFor(std::size_t watchers) {
+    const std::size_t share = ShareFor(watchers);  // bytes a second, our stream
     StreamPlan plan;
     if (share >= static_cast<std::size_t>(kFastHz) * kFullBodyBones * kBoneBytes) {
         plan.hz = kFastHz;
     }
-    plan.bones = std::clamp(share / (static_cast<std::size_t>(plan.hz) * kBoneBytes), kMaxSendBones, kMaxBones);
+    plan.bytes = std::max(share * static_cast<std::size_t>(plan.IntervalMs()) / 1000, kFloorSendBytes);
     return plan;
 }
 
 std::vector<proto::PoseBone> BonePicker::Pick(std::uint32_t skeleton,
                                               const std::vector<proto::PoseBone>& full,
-                                              std::uint64_t now_ms, std::size_t budget) {
+                                              std::uint64_t now_ms, std::size_t bytes,
+                                              const std::vector<std::uint16_t>& going) {
     if (skeleton != skeleton_) {
         skeleton_ = skeleton;
         sent_.clear();
@@ -391,6 +411,10 @@ std::vector<proto::PoseBone> BonePicker::Pick(std::uint32_t skeleton,
     std::vector<Wanted> wanted, aged;
     wanted.reserve(full.size());
     for (std::size_t i = 0; i < full.size(); ++i) {
+        if (std::binary_search(going.begin(), going.end(), full[i].bone)) {
+            sent_[full[i].bone] = {full[i], now_ms};  // whole in this pose already
+            continue;
+        }
         const auto it = sent_.find(full[i].bone);
         if (it == sent_.end()) {
             wanted.push_back({std::int64_t{1} << 40, i});
@@ -399,7 +423,7 @@ std::vector<proto::PoseBone> BonePicker::Pick(std::uint32_t skeleton,
         const std::uint64_t age = now_ms - std::min(now_ms, it->second.ms);
         const int change = Change(it->second.bone, full[i]);
         const std::int64_t priority = change + static_cast<std::int64_t>(age);
-        if (age >= kBoneRefreshMs) {
+        if (age >= refresh_ms_) {
             aged.push_back({static_cast<std::int64_t>(age), i});
             wanted.push_back({priority, i, change > kBoneStep});  // also in the change tier, below
         } else if (change > kBoneStep) {
@@ -410,22 +434,27 @@ std::vector<proto::PoseBone> BonePicker::Pick(std::uint32_t skeleton,
         if (a.changed != b.changed) return a.changed;
         return a.priority != b.priority ? a.priority > b.priority : a.index < b.index;
     };
-    const std::size_t refresh = std::min({kRefreshBones, budget, aged.size()});
-    std::partial_sort(aged.begin(), aged.begin() + static_cast<std::ptrdiff_t>(refresh),
-                      aged.end(), first);
-    aged.resize(refresh);
-    if (refresh > 0) {
-        std::vector<bool> taken(full.size(), false);
-        for (const Wanted& w : aged) taken[w.index] = true;
-        std::erase_if(wanted, [&](const Wanted& w) { return taken[w.index]; });
-        budget -= refresh;
-    }
-    if (wanted.size() > budget) {
-        std::nth_element(wanted.begin(), wanted.begin() + static_cast<std::ptrdiff_t>(budget),
-                         wanted.end(), first);
-        wanted.resize(budget);
-    }
-    wanted.insert(wanted.end(), aged.begin(), aged.end());
+    // puppet-budget: each tier takes bones in its order while their wire bytes fit; one that
+    // does not fit is passed over for a smaller one after it.
+    std::vector<bool> taken(full.size(), false);
+    std::vector<Wanted> picked;
+    const auto take = [&](std::vector<Wanted>& tier, std::size_t most) {
+        std::sort(tier.begin(), tier.end(), first);
+        std::size_t n = 0;
+        for (const Wanted& w : tier) {
+            if (n == most) break;
+            if (taken[w.index]) continue;
+            const std::size_t cost = WireBytes(full[w.index]);
+            if (cost > bytes) continue;
+            bytes -= cost;
+            taken[w.index] = true;
+            picked.push_back(w);
+            ++n;
+        }
+    };
+    take(aged, kRefreshBones);
+    take(wanted, SIZE_MAX);
+    wanted = std::move(picked);
     std::sort(wanted.begin(), wanted.end(),
               [](const Wanted& a, const Wanted& b) { return a.index < b.index; });
     std::vector<proto::PoseBone> out;
@@ -445,7 +474,7 @@ std::vector<proto::PoseBone> BonePicker::Pick(std::uint32_t skeleton,
 }
 
 std::vector<proto::PoseBone> StillPicker::Pick(std::uint32_t skeleton, const std::vector<proto::PoseBone>& all,
-                                               std::uint64_t now_ms, std::size_t budget) {
+                                               std::uint64_t now_ms, std::size_t budget, std::size_t bytes) {
     if (skeleton != skeleton_) {
         skeleton_ = skeleton;
         sent_ms_.clear();
@@ -463,13 +492,19 @@ std::vector<proto::PoseBone> StillPicker::Pick(std::uint32_t skeleton, const std
             wanted.push_back({now_ms - it->second, i});
         }
     }
-    const std::size_t n = std::min(budget, wanted.size());
-    std::partial_sort(wanted.begin(), wanted.begin() + static_cast<std::ptrdiff_t>(n), wanted.end(),
-                      [](const Wanted& a, const Wanted& b) { return a.age != b.age ? a.age > b.age : a.index < b.index; });
+    std::sort(wanted.begin(), wanted.end(),
+              [](const Wanted& a, const Wanted& b) { return a.age != b.age ? a.age > b.age : a.index < b.index; });
+    std::size_t n = 0;
+    for (std::size_t k = 0; k < wanted.size() && n < budget; ++k) {
+        const std::size_t cost = WireBytes(all[wanted[k].index]);
+        if (cost > bytes) continue;
+        bytes -= cost;
+        wanted[n++] = wanted[k];
+    }
     wanted.resize(n);
     std::sort(wanted.begin(), wanted.end(), [](const Wanted& a, const Wanted& b) { return a.index < b.index; });
     std::vector<proto::PoseBone> out;
-    out.reserve(n);
+    out.reserve(wanted.size());
     for (const Wanted& w : wanted) {
         out.push_back(all[w.index]);
         sent_ms_[all[w.index].bone] = now_ms;
@@ -742,20 +777,22 @@ struct State {
     std::uint64_t last_send_ms = 0;
     std::uint32_t sequence = 0;
     std::size_t last_size = 0;
-    // What each piece skeleton was last sent as, and when: an unchanged
-    // piece is sent again only after kPieceRefreshMs.
+    // Each piece skeleton's bones within its share of the send (puppet-budget): a changed bone
+    // goes at once, an unchanged one again after kPieceRefreshMs. `out_ms`: last seen in a hand.
     struct PieceSent {
-        std::vector<proto::PoseBone> bones;
-        std::uint64_t ms = 0;
+        BonePicker picker{kPieceRefreshMs};
+        std::uint64_t out_ms = 0;
     };
     std::map<std::uint32_t, PieceSent> pieces_sent;
-    // Which of Link's bones go in the next pose (plan.bones).
+    std::size_t piece_turn = 0;
+    // Which of Link's moving bones go in the next pose (what plan.bytes leaves them).
     BonePicker picker;
     // Every bone whole (StillPicker), from the same read as outbox.
     std::optional<Pose> still_outbox;
     StillPicker still_picker;
-    // puppet-smooth: our stream's rate and bone budget, by who watches it (PlanFor).
+    // puppet-smooth: our stream's rate and byte budget, by who watches it (PlanFor).
     StreamPlan plan;
+    std::size_t last_bones = 0, last_bytes = 0;  // our newest send: Link's bones, every pose's bytes
     // Received, per player 1 to kMaxPlayers, one track per skeleton: Link's
     // body and each held piece arrive as poses of their own skeleton.
     std::array<std::map<std::uint32_t, Track>, std::size_t{proto::kMaxPlayers} + 1> tracks;
@@ -1016,13 +1053,13 @@ Wrote WriteFor(State& s, CoopPuppet::Guest& guest, std::uint8_t number, std::uin
             // puppet-smooth: by frame time, the old per-frame number, the held-then-jumped bones,
             // and the stream we send (the other side's is in its own log).
             const EvenReport& r = s.evenness[number].Last();
-            char buf[224];
+            char buf[288];
             std::snprintf(buf, sizeof(buf),
                           "P%u limbs: uneven %.2f (%d moving frames, %s, %zu bones eased); raw %.2f, "
-                          "jumps %.1f/s; we send %d/s x %zu bones",
+                          "jumps %.1f/s; we send %d/s x %zu bones, %zu of %zu bytes",
                           static_cast<unsigned>(number), *u, moving,
                           it->second.Timed() ? "at the place's time" : "by arrival", it->second.Eased(),
-                          r.raw, r.jumps_per_s, s.plan.hz, s.plan.bones);
+                          r.raw, r.jumps_per_s, s.plan.hz, s.last_bones, s.last_bytes, s.plan.bytes);
             Say(s, buf);
         }
     }
@@ -1135,14 +1172,14 @@ std::vector<proto::PlayerPose> TakeOutgoing(std::uint64_t server_now_us, std::ui
     }
     s.plan = PlanFor(watchers);
     if (!s.outbox || s.outbox_serial == s.sent_serial ||
-        now_ms - s.last_send_ms < static_cast<std::uint64_t>(1000 / s.plan.hz)) {
+        now_ms - s.last_send_ms < s.plan.IntervalMs()) {
         return out;
     }
     s.sent_serial = s.outbox_serial;
     // puppet-smooth: on the rate's own beat, not "an interval after the network thread's tick
     // that passed it" (that rounded every interval up to the next tick: fewer sends a second
     // than the rate, unevenly spaced). A late send (a stall) starts the beat again from now.
-    const std::uint64_t interval = static_cast<std::uint64_t>(1000 / s.plan.hz);
+    const std::uint64_t interval = s.plan.IntervalMs();
     s.last_send_ms = now_ms - s.last_send_ms < 2 * interval ? s.last_send_ms + interval : now_ms;
     proto::PlayerPose body;
     // jitter-3: stamped with the frame it was read on, not with this send.
@@ -1153,30 +1190,55 @@ std::vector<proto::PlayerPose> TakeOutgoing(std::uint64_t server_now_us, std::ui
     body.skeleton = s.outbox->skeleton;
     // Sent even with no bone changed: the receiver keeps its puppet's pose
     // fresh (Drives) and its blend interval right.
-    // The moving bones within puppet-smooth's budget, then up to kStillBones whole ones (issue 152).
-    body.bones = s.picker.Pick(body.skeleton, Encode(*s.outbox), now_ms, s.plan.bones);
+    // puppet-budget: everything this send carries fits plan.bytes on the wire (headers included):
+    // first up to kStillBones whole bones (issue 152: a bone held still at its own value), then
+    // the held pieces (issue 158) in at most half of what is left, then Link's moving bones in the
+    // rest. A bone that goes whole is not sent again as a moving one.
+    std::size_t left = s.plan.bytes - kPoseHeaderBytes;
+    std::vector<proto::PoseBone> whole;
     if (s.still_outbox && s.still_outbox->skeleton == body.skeleton) {
-        body.bones = MergeBones(body.bones, s.still_picker.Pick(body.skeleton, Encode(*s.still_outbox), now_ms));
+        whole = s.still_picker.Pick(body.skeleton, Encode(*s.still_outbox), now_ms, kStillBones, left);
     }
+    std::vector<std::uint16_t> going;
+    going.reserve(whole.size());
+    for (const proto::PoseBone& b : whole) {
+        going.push_back(b.bone);
+        left -= WireBytes(b);
+    }
+    // Each piece in our hands as a pose of its own skeleton: its changed bones, and the rest
+    // now and then while it holds still (a late joiner, a lost packet). The first piece to
+    // pick turns each send, so one piece moving all the time never starves another.
+    std::size_t room = left / 2;
+    std::vector<proto::PlayerPose> pieces;
+    const std::size_t n_pieces = s.pieces_outbox.size();
+    const std::size_t turn = n_pieces == 0 ? 0 : s.piece_turn++ % n_pieces;
+    for (std::size_t k = 0; k < n_pieces; ++k) {
+        const Pose& piece = s.pieces_outbox[(turn + k) % n_pieces];
+        auto& p = s.pieces_sent[piece.skeleton];
+        p.out_ms = now_ms;
+        if (room <= kPoseHeaderBytes) continue;
+        proto::PlayerPose m;
+        m.time = {server_now_us, 0};
+        m.skeleton = piece.skeleton;
+        m.bones = p.picker.Pick(piece.skeleton, Encode(piece), now_ms, room - kPoseHeaderBytes);
+        if (m.bones.empty()) continue;
+        room -= WireBytes(m);
+        left -= WireBytes(m);
+        pieces.push_back(std::move(m));
+    }
+    body.bones = MergeBones(s.picker.Pick(body.skeleton, Encode(*s.outbox), now_ms, left, going), whole);
+    s.last_bones = body.bones.size();
+    s.last_bytes = WireBytes(body);
     out.push_back(std::move(body));
     ++s.sent;
-    // Each piece in our hands as a pose of its own skeleton: when it changed,
-    // or now and then while it holds still (a late joiner, a lost packet).
-    for (const Pose& piece : s.pieces_outbox) {
-        std::vector<proto::PoseBone> bones = Encode(piece);
-        auto& last = s.pieces_sent[piece.skeleton];
-        if (last.ms != 0 && last.bones == bones && now_ms - last.ms < kPieceRefreshMs) continue;
-        last.bones = bones;
-        last.ms = now_ms;
-        proto::PlayerPose m;
-        m.time = {server_now_us, ++s.sequence};
-        m.skeleton = piece.skeleton;
-        m.bones = std::move(bones);
+    for (proto::PlayerPose& m : pieces) {
+        m.time.sequence = ++s.sequence;
+        s.last_bytes += WireBytes(m);
         out.push_back(std::move(m));
         ++s.pieces_sent_n;
     }
     std::erase_if(s.pieces_sent, [&](const auto& kv) {
-        return now_ms - kv.second.ms > 10 * kPieceRefreshMs;  // put away long ago
+        return now_ms - kv.second.out_ms > 10 * kPieceRefreshMs;  // put away long ago
     });
     return out;
 }
