@@ -805,3 +805,34 @@ TEST_CASE("hookshot: typing in a co-op field keeps the keyboard from the menu (p
         CHECK(patch.compare(at, 20, "diff --git a/gpu/vk/") == 0);
     }
 }
+
+TEST_CASE("hookshot: every switch of the save folder marks the game's save list for a re-read (player report 124)") {
+    // One path: the only call of the exe's remount is in CoopSave's RemountLocked, which marks the list stale; the
+    // title's step has the game re-read it (its own SeqOneshotRequestLoadAndSerializeCaption body).
+    const std::string save = ReadFile(kRepo / "lichii" / "hook" / "coop_save.cpp");
+    const auto first = save.find("g_remount(");
+    REQUIRE(first != std::string::npos);
+    CHECK(save.find("g_remount(", first + 1) == std::string::npos);
+    const auto helper = save.find("bool RemountLocked(const fs::path& dir) {");
+    REQUIRE(helper != std::string::npos);
+    CHECK(first > helper);
+    CHECK(save.find("g_list_stale = true;", helper) != std::string::npos);
+    const std::string title = ReadFile(kRepo / "hookshot" / "src" / "coop_title.cpp");
+    CHECK(title.find("constexpr std::uint64_t kCaptionReload = 0x80f6da40;") != std::string::npos);
+    CHECK(title.find("constexpr std::uint64_t kCaptionBusy = 0x833ad380;") != std::string::npos);
+    CHECK(title.find("constexpr std::uint64_t kCaptionReset = 0x80bafd40;") != std::string::npos);
+    // The game's order: its idle test, its reset, then its read (a read starts only from state 0).
+    const auto busy = title.find("GameCall(ctx, kCaptionBusy, mgr)");
+    const auto reset = title.find("GameCall(ctx, kCaptionReset, 0)");
+    const auto read = title.find("GameCall(ctx, kCaptionReload, mgr)");
+    REQUIRE(busy != std::string::npos);
+    REQUIRE(reset != std::string::npos);
+    REQUIRE(read != std::string::npos);
+    CHECK(busy < reset);
+    CHECK(reset < read);
+    CHECK(title.find("constexpr std::uint64_t kCaptionMgrGot = 0x84c81660;") != std::string::npos);
+    CHECK(title.find("in.stale = CoopSave::TakeSaveListStale();") != std::string::npos);
+    const auto step = title.find("if (event == HOS_COOP_TITLE_STEP) {");
+    REQUIRE(step != std::string::npos);
+    CHECK(title.find("RefreshSaveList(ctx);", step) != std::string::npos);
+}
