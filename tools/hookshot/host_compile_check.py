@@ -9,7 +9,10 @@ nx2/build.py --standalone --dry-run is run in this process (no game needed: it s
 its list of compiles is taken from it at that point: each job's compiler, source and flags, exactly as a game build would
 run them on this system. Of those, the files a patch changes and the files that include a header a patch changes are
 compiled again here with -fsyntax-only (host/*.c, host/posix/*.c on Linux, gpu/vk/*.cpp). Unknown escape sequences and
-multi-character constants are errors (a lost backslash makes either). Then every .py a patch changes is compiled
+multi-character constants are errors (a lost backslash makes either). Before that, the lift's two generated headers
+that rt/a64.h includes (a64_suyu.h, a64_fpx.h) are written into the gen folder on the jobs' -I path by the lift's own
+generators, as nx2/lift.py writes them: the dry run has no lift, and without them every file that includes hos.h stops
+at a64.h before our code is parsed. Then every .py a patch changes is compiled
 (py_compile). A patched C or C++ file the dry run would not compile on this system is listed as such (host/posix on
 Windows, display.c on Linux), never silently left out.
 
@@ -60,6 +63,41 @@ def dry_run_jobs(src):
         sys.argv = saved
 
 
+def write_lift_headers(src, jobs):
+    """a64_suyu.h and a64_fpx.h, the headers rt/a64.h includes from the lift's gen folder, written there by the lift's own
+    generators with nx2/lift.py's changes installed (a64_rtgen.py + suyu_rt_fixes; a64_lift.Lifter.write's a64_fpx.h, with
+    fastfp's addition). The dry run makes the gen folder but no lift, so they are missing there. The guard shapes of a64_fpx.h
+    are the ones the lift found in the game (none here): host code does not call those helpers by name."""
+    import kit
+    gen = os.path.join(kit.WORK, "sa", "gen")
+    if not any("-I" + gen in job[3] for job in jobs):
+        raise SystemExit("host_compile_check: the lift's gen folder %s is not on the dry run's include path: "
+                         "update write_lift_headers" % gen)
+    for sub in ("lift", "tools"):   # (as nx2/lift.py and kit.py: the vendored a64-kit)
+        p = os.path.join(kit.KIT, sub)
+        if p not in sys.path:
+            sys.path.insert(0, p)
+    import a64_lift
+    import a64_rtgen
+    import fastfp
+    import insn
+    import lift_fixes
+    import suyu_rt_fixes
+    insn.install()
+    fastfp.install()
+    lift_fixes.install()
+    suyu_rt_fixes.install()
+    a64_rtgen.write(gen)   # (builds a64emit with the host compiler first, as a lift does: build_emit.py)
+    with open(os.path.join(gen, "a64_fpx.h"), "w", newline="\n") as f:   # (a64_lift.Lifter.write, then fastfp's wrap)
+        f.write(a64_lift.fpx_header(set()))
+        if a64_lift.local_flags():
+            f.write(a64_lift.FCMPK_HEADER)
+        if fastfp.fastfp_mode():
+            f.write(fastfp.FASTFP_HEADER)
+    for name in ("a64_suyu.h", "a64_fpx.h"):
+        print("generated %s (%d bytes) in %s" % (name, os.path.getsize(os.path.join(gen, name)), gen), flush=True)
+
+
 def touched_files(patches):
     out = set()
     for name in sorted(os.listdir(patches)):
@@ -76,6 +114,7 @@ def main():
     src, patches = os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2])
     touched = touched_files(patches)
     jobs = dry_run_jobs(src)
+    write_lift_headers(src, jobs)
     rel = lambda p: os.path.relpath(os.path.abspath(p), src).replace(os.sep, "/")
     headers = {os.path.basename(t) for t in touched if t.endswith(H_EXT)}
     inc = re.compile(r'#\s*include\s*"(?:[^"]*/)?([^"/]+)"')
@@ -106,7 +145,9 @@ def main():
         else:
             print("ok   %s (%s)" % (r, why), flush=True)
     for t in sorted(touched):
-        if t.endswith(C_EXT) and t not in seen:
+        if t.endswith(C_EXT) and t not in seen and not os.path.isfile(os.path.join(src, t)):
+            print("not in the patched source (a later patch deletes it): %s" % t, flush=True)
+        elif t.endswith(C_EXT) and t not in seen:
             print("not compiled on this system (build.py has no job for it here): %s" % t, flush=True)
     with tempfile.TemporaryDirectory() as tmp:
         for t in sorted(x for x in touched if x.endswith(".py")):
