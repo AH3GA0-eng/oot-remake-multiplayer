@@ -718,12 +718,12 @@ TEST_CASE("hookshot: Skip title screen chooses the game's own way, presses nothi
               "if (next == HOS_SKIP_STOP) {"));
     CHECK(has("const uint64_t vtable = peek64(screen); char name[64]; button_name(button, name, sizeof name);"));
     // (Armed only by the row, off by default: Longshot's own start test, unchanged, outside the patch's hunks.)
-    // Both platforms' screen hook hand each menu screen to it, before the screen's own update.
+    // The screen hook hands each menu screen to it, before the screen's own update. One tick for both platforms:
+    // patch 0018 builds it on Linux too (Linux's stub is gone), so 0028 adds no Linux-only tick.
     const std::string menu = PatchedCode(patch, "host/oot_menu.c");
     CHECK(menu.find(Squashed("void hos_oot_menu_tick(Ctx *c, uint64_t screen) { if (!screen) return; "
                              "hos_oot_autoload_screen(c, screen);")) != std::string::npos);
-    CHECK(menu.find(Squashed("void hos_oot_menu_tick(Ctx *c, uint64_t screen) { hos_oot_autoload_screen(c, screen); }")) !=
-          std::string::npos);
+    CHECK(patch.find("+void hos_oot_menu_tick(") == std::string::npos);
     // The bridge asks the module's optional export; no module or co-op off: 0 (solo skips the title).
     const std::string bridge = PatchedCode(patch, "host/coop_bridge.c");
     CHECK(bridge.find(Squashed("coop_title_hold = (int (*)(void))(void *)GetProcAddress(m, \"hos_coop_title_hold\");")) !=
@@ -839,7 +839,17 @@ TEST_CASE("hookshot: on Linux the exe exports every function the module finds in
     // Patch 0020's texture exports: the module's live look finds two, the exe's own renderers the other two.
     collect(ReadFile(kRepo / "hookshot" / "src" / "coop_look_live.cpp"), "look(\"");
     collect(ReadFile(kRepo / "hookshot" / "patches" / "0020-coop-texture-override.patch"), "look(\"");
-    CHECK(names.size() >= 11);
+    // Patch 0018's exports (the menu state, the HUD refresh): every function it marks dllexport, which Linux builds too
+    const std::string map_state = ReadFile(kRepo / "hookshot" / "patches" / "0018-coop-map-state.patch");
+    const std::string exported = "\n+__declspec(dllexport) int ";
+    std::size_t map_exports = 0;
+    for (auto at = map_state.find(exported); at != std::string::npos; at = map_state.find(exported, at + 1)) {
+        const auto start = at + exported.size();
+        names.push_back(map_state.substr(start, map_state.find('(', start) - start));
+        ++map_exports;
+    }
+    CHECK(map_exports == 2);
+    CHECK(names.size() >= 13);
     const std::string patch = Patch();
     const auto start = patch.find("+++ b/nx2/build.py\n");
     REQUIRE(start != std::string::npos);
@@ -873,6 +883,33 @@ TEST_CASE("hookshot: typing in a co-op field keeps the keyboard from the menu (p
     for (std::size_t at = patch.find("diff --git a/"); at != std::string::npos; at = patch.find("diff --git a/", at + 1)) {
         CHECK(patch.compare(at, 20, "diff --git a/gpu/vk/") == 0);
     }
+}
+
+TEST_CASE("hookshot: patch 0018's screens' tracker and menu state build on Linux too, the mouse stays Windows'") {
+    // Linux's oot_menu.c was a stub: no tracker, so hos_coop_menu_state said nothing there (no in_menu/paused for
+    // Linux players, issue 150). The file's one '#if defined(_WIN32)' is gone; each mouse block has its own guard.
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0018-coop-map-state.patch");
+    REQUIRE_FALSE(patch.empty());
+    CHECK(patch.find("\n-#if defined(_WIN32)\n+/* (oot-remake-multiplayer's patch 0018) The screens' tracker") != std::string::npos);
+    CHECK(patch.find("\n-void hos_oot_menu_tick(Ctx *c, uint64_t screen) { (void)c, (void)screen; }\n") != std::string::npos);
+    // the guards open and close in pairs (the file's last '#else' stays Linux's focus hook, which Longshot's
+    // tests/test_hold_toggle.py compiles alone)
+    std::size_t opened = 0, closed = 0;
+    for (auto at = patch.find("\n+#if defined(_WIN32)   /* (patch 0018: the mouse's"); at != std::string::npos;
+         at = patch.find("\n+#if defined(_WIN32)   /* (patch 0018: the mouse's", at + 1)) {
+        ++opened;
+    }
+    for (auto at = patch.find("\n+#endif   /* (patch 0018) */"); at != std::string::npos;
+         at = patch.find("\n+#endif   /* (patch 0018) */", at + 1)) {
+        ++closed;
+    }
+    CHECK(opened == 6);
+    CHECK(closed == opened);
+    // Linux's focus hook hands the tracker the pause menu's screen (its Map page is not the pause menu's frame)
+    CHECK(patch.find("+    hos_oot_menu_pause_focus(screen);") != std::string::npos);
+    CHECK(patch.find("+void hos_oot_menu_pause_focus(uint64_t screen) { InterlockedExchange64(&pause_screen, (LONG64)screen); }") !=
+          std::string::npos);
+    CHECK(patch.find("+    assert(pause_focus == 0x84000100);") != std::string::npos);
 }
 
 TEST_CASE("hookshot: co-op's log lines stay out of Longshot's crash report (patch 0027), its header hookshot/src's") {
