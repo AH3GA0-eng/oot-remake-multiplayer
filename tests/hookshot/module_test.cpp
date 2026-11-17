@@ -813,9 +813,7 @@ TEST_CASE("hookshot: a guest that joins with a file loaded asks for the host's s
     const auto body = [&](const char* head) {
         const auto at = save.find(head);
         REQUIRE(at != std::string::npos);
-        const auto end = save.find("
-}
-", at);
+        const auto end = save.find("\n}\n", at);
         REQUIRE(end != std::string::npos);
         return save.substr(at, end - at);
     };
