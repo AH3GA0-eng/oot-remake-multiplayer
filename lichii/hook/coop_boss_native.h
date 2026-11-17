@@ -135,7 +135,8 @@ struct Counts {
     std::uint64_t plug_actions = 0;   // of those, named through a plug (places not sent)
     std::uint64_t copy_skipped = 0;   // a copy's own changes not run
     std::uint64_t brain_applied = 0;  // owner's brain verbs put into a copy
-    std::uint64_t brain_came = 0;     // owner's brain verbs a copy was given (a change queued, or a resync's state)
+    std::uint64_t brain_came = 0;     // owner's brain verbs a copy took from its queue (a change, or a resync's state);
+                                      // one queued and then replaced by a resync is not counted
     std::uint64_t brain_already = 0;  // of those, a resync's brain verb the copy was in already (no call made)
     std::uint64_t action_applied = 0; // owner's actions put into a copy
     std::uint64_t action_waiting = 0; // owner's actions waiting for the copy's own node
@@ -285,6 +286,7 @@ private:
         struct Due {
             BossChange change;
             bool resync = false;  // the state now, not a call the owner made: skipped when already so
+            bool counted = false; // (a brain verb: counted in brain_came once, also when asked again)
         };
         std::deque<Due> due;
         std::uint32_t queued_seq = 0;  // the owner's newest change queued (or made)
@@ -300,6 +302,9 @@ private:
         };
         std::deque<Skipped> skipped;
         std::deque<std::variant<BossBrain, BossAction>> own_late;
+        // The front change of `due` or `own_late` is in the call Step asked last: it leaves its queue only once
+        // that call is made (Step's after_call); a call not made asks it again. A queue cleared meanwhile: none.
+        enum class Asking : std::uint8_t { none, due, late } asking = Asking::none;
         std::uint64_t react_until = 0;  // (also a new mid-boss copy's start, kStartSteps)
         bool held = false;
         // Owner: our event ended: send our brain verb as a change.
@@ -356,7 +361,9 @@ private:
     std::uint64_t block_ = 0;      // our request in guest memory (kRequestSize)
     std::uint64_t main_base_ = 0;  // the game the block belongs to
     bool allocating_ = false;
-    enum class Pending : std::uint8_t { none, malloc, brain, action } pending_ = Pending::none;
+    enum class Pending : std::uint8_t { none, malloc, brain, action, late } pending_ = Pending::none;
+    std::uint64_t pending_bsa_ = 0;  // the copy whose change pending_ is (brain, action, late)
+    void Made(bool made);            // pending_bsa_'s asked change: out of its queue (made) or asked again
 };
 
 Table& TheTable();

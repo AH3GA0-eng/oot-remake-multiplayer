@@ -160,6 +160,7 @@ void Table::Publish(const std::vector<Boss>& bosses) {
                 }
                 e.wanted.reset();
                 e.due.clear();
+                e.asking = Entry::Asking::none;
                 e.queued_seq = 0;
                 e.drift = 0;
                 e.drift_fixes = 0;
@@ -556,8 +557,10 @@ void Table::Resync(Entry& e, const BossBsa& state) {
     // again: a joiner or a resync starts the owner's current move over
     // (the game holds no "action now" we could compare with).
     e.due.clear();
+    if (e.asking == Entry::Asking::due) {
+        e.asking = Entry::Asking::none;  // (its asked change is gone: the call, if made, takes nothing out)
+    }
     e.due.push_back({BossChange{state.seq, BossBrain{state.brain_verb, true}}, true});
-    ++counts_.brain_came;
     if (actions_on_ && state.action) {
         e.due.push_back({BossChange{state.seq, *state.action}, true});
     }
@@ -639,9 +642,6 @@ void Table::Receive(std::uint64_t actor, const BossBsa& state) {
             if (!actions_on_ && std::holds_alternative<BossAction>(it->what)) {
                 continue;
             }
-            if (std::holds_alternative<BossBrain>(it->what)) {
-                ++counts_.brain_came;
-            }
             e->due.push_back({*it, false});
         }
         e->queued_seq = state.seq;
@@ -682,9 +682,12 @@ bool Table::StepOne(CoopPuppet::Guest& guest, std::uint64_t bsa, Entry& e, std::
         if (!e.own_late.empty()) {
             bool made = false;
             auto c = Ask(guest, e, bsa, e.own_late.front(), main_base, &made);
-            if (made) {
-                e.own_late.pop_front();
-                ++counts_.copy_own_late;
+            if (made && !c) {
+                e.own_late.pop_front();  // (nothing to call: dropped)
+            } else if (made) {
+                e.asking = Entry::Asking::late;  // out of own_late once the call is made
+                pending_ = Pending::late;
+                pending_bsa_ = bsa;
             }
             if (c) {
                 call = std::move(c);
@@ -696,14 +699,20 @@ bool Table::StepOne(CoopPuppet::Guest& guest, std::uint64_t bsa, Entry& e, std::
     if (std::exchange(e.held, false)) {
         // Its own time is over: from the owner's state now.
         e.own_late.clear();
+        if (e.asking == Entry::Asking::late) {
+            e.asking = Entry::Asking::none;
+        }
         Resync(e, *e.wanted);
         Note(e.name + ": the copy takes the owner's state again");
     }
     std::int32_t now = 0;
     const bool read = guest.Read(bsa + addr::kBsaBrainVerb, &now, sizeof now);
     while (!e.due.empty()) {
-        const Entry::Due& d = e.due.front();
+        Entry::Due& d = e.due.front();
         if (const auto* brain = std::get_if<BossBrain>(&d.change.what)) {
+            if (!std::exchange(d.counted, true)) {
+                ++counts_.brain_came;
+            }
             if (d.resync && read && now == brain->verb) {
                 ++counts_.brain_already;
                 e.due.pop_front();  // already so
@@ -715,8 +724,9 @@ bool Table::StepOne(CoopPuppet::Guest& guest, std::uint64_t bsa, Entry& e, std::
             c.x[1] = static_cast<std::uint32_t>(brain->verb);
             c.x[2] = 1;  // force: the change is the owner's, already decided
             c.x[3] = 0;  // (the asking node: not read by the function)
-            e.due.pop_front();
+            e.asking = Entry::Asking::due;  // out of due once the call is made
             pending_ = Pending::brain;
+            pending_bsa_ = bsa;
             call = std::move(c);
             return true;
         }
@@ -747,8 +757,9 @@ bool Table::StepOne(CoopPuppet::Guest& guest, std::uint64_t bsa, Entry& e, std::
         c.x[0] = bsa;
         c.x[1] = block_;
         c.x[2] = action.changed ? 1 : 0;
-        e.due.pop_front();
+        e.asking = Entry::Asking::due;  // out of due once the call is made
         pending_ = Pending::action;
+        pending_bsa_ = bsa;
         call = std::move(c);
         return true;
     }
@@ -781,9 +792,12 @@ std::optional<CoopPuppet::Call> Table::Step(CoopPuppet::Guest& guest, bool after
         ++steps_;  // once a frame (coop_callers.h)
     }
     if (!after_call && pending_ != Pending::none) {
-        // Last frame's call was not made (the runtime could not): ask again.
+        // Last frame's call was not made (the runtime could not, or the
+        // frame's calls ran out): its change stays queued and is asked again.
         if (pending_ == Pending::malloc) {
             allocating_ = false;
+        } else {
+            Made(false);
         }
         pending_ = Pending::none;
     }
@@ -798,9 +812,15 @@ std::optional<CoopPuppet::Call> Table::Step(CoopPuppet::Guest& guest, bool after
             break;
         case Pending::brain:
             ++counts_.brain_applied;
+            Made(true);
             break;
         case Pending::action:
             ++counts_.action_applied;
+            Made(true);
+            break;
+        case Pending::late:
+            ++counts_.copy_own_late;
+            Made(true);
             break;
         case Pending::none:
             break;
@@ -835,6 +855,22 @@ std::optional<CoopPuppet::Call> Table::Step(CoopPuppet::Guest& guest, bool after
         }
     }
     return std::nullopt;
+}
+
+void Table::Made(bool made) {
+    Entry* e = Find(std::exchange(pending_bsa_, 0));
+    if (e == nullptr) {
+        return;  // (gone from the walk meanwhile)
+    }
+    const Entry::Asking asking = std::exchange(e->asking, Entry::Asking::none);
+    if (!made) {
+        return;  // the change is still at the front of its queue
+    }
+    if (asking == Entry::Asking::due && !e->due.empty()) {
+        e->due.pop_front();
+    } else if (asking == Entry::Asking::late && !e->own_late.empty()) {
+        e->own_late.pop_front();
+    }
 }
 
 std::optional<CoopPuppet::Call> Table::Ask(CoopPuppet::Guest& guest, Entry& e, std::uint64_t bsa, const std::variant<BossBrain, BossAction>& what,

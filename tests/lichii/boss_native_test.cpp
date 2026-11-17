@@ -793,6 +793,91 @@ TEST_CASE("native boss: the owner's brain verbs a copy is given are counted, als
     CHECK(t.Totals().brain_applied == 1);
 }
 
+TEST_CASE("native boss: a first state queued in our event and replaced after it is counted once") {
+    // g4-enemies-2 probe (Deku Tree): 'given 33' for 16 copies, all 'already so' after the event: the first
+    // state's resync came in our event and the one after the event replaced it; both were counted.
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Baba(Role::copy)});
+    t.SetEvent(true);
+    t.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    FakeGuest g;
+    const std::int32_t at = 4;
+    g.Write(kBsa + addr::kBsaBrainVerb, &at, 4);
+    CHECK_FALSE(t.Step(g, false, 0, kMain));  // our event: its own runs
+    t.SetEvent(false);
+    for (std::uint64_t i = 0; i <= Table::kAfterEventSteps + 1; ++i) {
+        CHECK_FALSE(t.Step(g, false, 0, kMain));  // then the owner's state: already so
+    }
+    CHECK(t.Totals().brain_came == 1);
+    CHECK(t.Totals().brain_already == 1);
+}
+
+TEST_CASE("native boss: a change whose call was not made is asked again, not lost") {
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Gohma(Role::copy)});
+    t.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    FakeGuest g;
+    const std::int32_t at = 4;
+    g.Write(kBsa + addr::kBsaBrainVerb, &at, 4);
+    CHECK_FALSE(t.Step(g, false, 0, kMain));
+    t.Receive(kActor, BossBsa{4, 6, std::nullopt, {BossChange{4, BossBrain{6, false}}}});
+    auto c = t.Step(g, false, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->x[1] == 6);
+    // The runtime could not make it (the frame's calls ran out): the next frame asks the same change.
+    c = t.Step(g, false, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kSetBrainVerb);
+    CHECK(c->x[1] == 6);
+    CHECK_FALSE(t.Step(g, true, 0, kMain));  // made: out of the queue
+    CHECK(t.Totals().brain_applied == 1);
+    CHECK(t.Totals().brain_came == 2);  // (the first state, already so, and 6 once though asked twice)
+    const std::int32_t six = 6;
+    g.Write(kBsa + addr::kBsaBrainVerb, &six, 4);
+    CHECK_FALSE(t.Step(g, false, 0, kMain));  // nothing left
+    // An action not made: asked again with the same values.
+    CHECK(t.OnActionVerb(kBsa, GameRequest(5, kNode), true, false));  // its own ask, skipped: its node seen
+    const BossAction a = *ActionFromRequest(GameRequest(11, 0));
+    t.Receive(kActor, BossBsa{5, 6, a, {BossChange{5, a}}});
+    c = t.Step(g, false, 0, kMain);  // the request block first
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kMalloc);
+    c = t.Step(g, true, kBlock, kMain);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kRequestActionVerb);
+    c = t.Step(g, false, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kRequestActionVerb);
+    CHECK_FALSE(t.Step(g, true, 0, kMain));
+    CHECK(t.Totals().action_applied == 1);
+    CHECK_FALSE(t.Step(g, false, 0, kMain));
+}
+
+TEST_CASE("native boss: a copy's own late change whose call was not made is asked again") {
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Gohma(Role::copy)});
+    t.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    FakeGuest g;
+    const std::int32_t at = 4;
+    g.Write(kBsa + addr::kBsaBrainVerb, &at, 4);
+    CHECK_FALSE(t.Step(g, false, 0, kMain));
+    CHECK(t.OnBrainVerb(kBsa, 9, true, false));
+    t.SetEvent(true);
+    auto c = t.Step(g, false, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->x[1] == 9);
+    c = t.Step(g, false, 0, kMain);  // not made
+    REQUIRE(c);
+    CHECK(c->x[1] == 9);
+    CHECK(t.Totals().copy_own_late == 0);
+    CHECK_FALSE(t.Step(g, true, 0, kMain));
+    CHECK(t.Totals().copy_own_late == 1);
+    CHECK_FALSE(t.Step(g, false, 0, kMain));
+}
+
 TEST_CASE("native boss: a plain enemy copy's own wake runs its own brain for a while, a boss's does not") {
     Table t;
     t.SetOn(true, true);
