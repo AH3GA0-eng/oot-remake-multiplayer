@@ -157,10 +157,11 @@ TEST_CASE("eye switch: the table, its places and FirstOn's key") {
     CHECK(CoopEyeSwitch::FindAll("WaterTemple_EyeSwitch_Focus", "WaterTemple").empty());
     CHECK(CoopEyeSwitch::Find("ForestTemple_Room11_RoomSpin", "ForestTemple") == nullptr);
     // Driven only where our set stays (offline hs-step-probe): eye switches and FirstOn latches, 25 of the 64 lines,
-    // and (deku-ladder, A #39) the 2 class-B lines whose switch's ON input is unwired: 27.
+    // and the class-B lines whose switch's ON input is unwired: none since g3-objects (Jabu room 14 is class A once its
+    // water flags are shared; deku-ladder had 2): 25.
     int driven = 0;
     for (const auto& s : CoopEyeSwitch::Switches()) driven += CoopEyeSwitch::Latches(s) ? 1 : 0;
-    CHECK(driven == 27);
+    CHECK(driven == 25);
     CHECK(CoopEyeSwitch::FindAll("SpiritTemple_Level_Room_19_SwitchOn_01", "SpiritTemple").empty());  // sun: rewritten
     CHECK(CoopEyeSwitch::FindAll("InsideJabuJabuBellyRoom01StepSwitch", "InsideJabuJabuBelly").empty());  // step OnState
     CHECK(CoopEyeSwitch::FindAll("ForestTemple_Room02_ShutterOpen", "ForestTemple").size() == 1);  // step FirstOn
