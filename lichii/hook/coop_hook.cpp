@@ -324,6 +324,7 @@ void MendStory(EmulatorMemory& memory, MendClocks& clocks, bool idle) {
             switch (clocks.given.Take(*due[i])) {
             case CoopStory::EffectsGiven::Verdict::give:
                 if (coop::host::GameFlags::set_bool(memory, due[i]->flag, due[i]->value)) {
+                    clocks.given.Given(*due[i]);  // only once written: a failed write is tried again
                     LOG_INFO(Core, "coop: story: {} set to {}: {} was played here by another game (row 129)",
                              due[i]->name, due[i]->value ? 1 : 0, due[i]->setting);
                 }

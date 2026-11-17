@@ -479,14 +479,17 @@ EffectsGiven::Verdict EffectsGiven::Take(const Effect& due) {
         return std::find(v.begin(), v.end(), due.flag) != v.end();
     };
     if (!has(given_)) {
-        given_.push_back(due.flag);
-        return Verdict::give;
+        return Verdict::give;  // recorded by Given() once set
     }
     if (has(said_)) {
         return Verdict::quiet;
     }
     said_.push_back(due.flag);
     return Verdict::set_back;
+}
+
+void EffectsGiven::Given(const Effect& due) {
+    if (std::find(given_.begin(), given_.end(), due.flag) == given_.end()) given_.push_back(due.flag);
 }
 
 void EffectsGiven::NewLoad() {
