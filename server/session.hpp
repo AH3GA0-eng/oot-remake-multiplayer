@@ -616,7 +616,7 @@ class Session {
     std::optional<Ask> ask;
     // DAMAGE that came while the owner hold had not chosen its owner yet
     // (Object::held), with who sent it: passed on when the hold ends.
-    std::vector<std::pair<ConnectionId, Damage>> held_hits;
+    std::vector<std::pair<ConnectionId, protocol::Damage>> held_hits;
     // DAMAGE passed on lately: the life before the first, and their sum.
     std::optional<std::int32_t> hit_base;
     std::int64_t hit_sum = 0;
