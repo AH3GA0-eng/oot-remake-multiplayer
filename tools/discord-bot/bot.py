@@ -1,6 +1,6 @@
 """Squadala! bug-report bot.
 
-One slash command, /report, in one server (the dev channel's server). A report is
+One slash command, /bugreport, in one server (the dev channel's server). A report is
 saved under coord-multiplayer/player-logs/<user>-<UTC time>/, added to
 coord-multiplayer/reports/player-reports.md as 'NEW (bot)' and posted to the
 private dev channel. Everything the player types is stored and shown as quoted,
@@ -67,7 +67,7 @@ class ReportBot(discord.Client):
 
     async def setup_hook(self):
         # The server is the dev channel's server (the config's guild_id, if set, must match).
-        # Fail closed: without it the bot stops; it never registers /report globally.
+        # Fail closed: without it the bot stops; it never registers /bugreport globally.
         # Raises core.StartupError (caught in main, exit 2) when the server is unknown or the
         # report channel is on another server.
         self.guild_id = core.resolve_guild(self.cfg["guild_id"], await self._channel_guild("dev_channel_id"))
@@ -103,7 +103,7 @@ class ReportBot(discord.Client):
             pass
 
     def _add_commands(self, guild):
-        @app_commands.command(name="report", description="Send a bug report (and your logs zip) to the Squadala! team.")
+        @app_commands.command(name="bugreport", description="Send a bug report (and your logs zip) to the Squadala! team.")
         @app_commands.describe(
             description="What happened, and what you were doing (solo or co-op, host or guest).",
             logs="Optional: the zip from the kit's collect-logs (zip only, 25 MB max).",
@@ -130,12 +130,12 @@ class ReportBot(discord.Client):
         user = interaction.user
         # Only the owner's server, even if the bot is ever added to another one.
         if not core.guild_allowed(interaction.guild_id, self.guild_id):
-            log.warning("refused /report from server %s (not ours)", interaction.guild_id)
+            log.warning("refused /bugreport from server %s (not ours)", interaction.guild_id)
             await self.refuse(interaction, "This bot only takes reports in the Squadala! server.")
             return
         allowed = self.cfg["report_channel_id"]
         if not core.channel_allowed(interaction.channel_id, allowed, self.cfg["dev_channel_id"]):
-            await self.refuse(interaction, f"Please use /report in <#{allowed}>.")
+            await self.refuse(interaction, f"Please use /bugreport in <#{allowed}>.")
             return
         if logs is not None:
             problem = core.check_attachment_meta(logs.filename, logs.size)

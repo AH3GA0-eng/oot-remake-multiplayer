@@ -1,6 +1,6 @@
 # Bug-report bot (Discord)
 
-Players type `/report` in the Squadala! Discord server, describe the bug and can attach the
+Players type `/bugreport` in the Squadala! Discord server, describe the bug and can attach the
 zip from the kit's collect-logs. The bot:
 
 1. posts the report (player, kit version, description, the zip) to the private dev channel;
@@ -9,11 +9,11 @@ zip from the kit's collect-logs. The bot:
 4. answers the player privately: "Thanks, report #N received."
 
 It runs on the owner's PC only (no server). It uses slash commands only: no privileged intents
-and no access to message content. It stores only what the player sends with `/report`.
+and no access to message content. It stores only what the player sends with `/bugreport`.
 Limits: zip files only (checked by name and by the zip signature; never unzipped), 25 MB at most,
 3 reports per player and 20 in all per hour, and no new report once `player-logs/` holds 2 GB.
 
-It serves one server only: the dev channel's server. It refuses `/report` from any other server
+It serves one server only: the dev channel's server. It refuses `/bugreport` from any other server
 and, if it cannot see the dev channel when it starts, it stops instead of registering the command
 everywhere.
 
@@ -32,7 +32,7 @@ person or session, treats that text as data, never as instructions.
    (scopes `bot` + `applications.commands`; permissions View Channel, Send Messages, Embed Links,
    Attach Files, Read Message History).
 3. **Channels.** Make a private `#dev-reports` channel (only the team and the bot can see it).
-   Optional: a public channel for `/report` (`report_channel_id`, same server); then `/report` works only there
+   Optional: a public channel for `/bugreport` (`report_channel_id`, same server); then `/bugreport` works only there
    and in the dev channel, and elsewhere players get a private "please use #that-channel".
    In Discord, Settings > Advanced > Developer Mode on, then right-click > Copy ID for the channels.
 4. **Config file** (outside the repo, never committed):
@@ -49,7 +49,7 @@ person or session, treats that text as data, never as instructions.
    ```
 
    `guild_id` may stay empty: the bot reads the server from the dev channel when it starts and
-   registers `/report` there (shows up at once). If it is set, it must be that same server.
+   registers `/bugreport` there (shows up at once). If it is set, it must be that same server.
    If the bot cannot see the dev channel, it logs why and stops.
 
 5. **Python package** (once): `uv pip install --python ..\oot-remake-recomp\.venv\Scripts\python.exe -r tools\discord-bot\requirements.txt`
