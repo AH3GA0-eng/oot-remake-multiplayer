@@ -69,7 +69,7 @@ def read_graph(data):
     commands, count = u32(0x0C), u32(0x10)
     io, multi_at, imm = u32(0x34), u32(0x38), u32(0x2C)
     starts = [u32(io + 4 * i) for i in range(12)] + [multi_at]
-    ins, outs, defaults = {}, {}, []
+    ins, outs, defaults, bools = {}, {}, [], []
     for t, name in enumerate(TYPES):
         lst, o = [], starts[2 * t]
         while o < starts[2 * t + 1]:
@@ -77,6 +77,8 @@ def read_graph(data):
             lst.append((text(u32(o) & 0x3FFFFFFF), s16(at), s16(at + 2)))
             if name == "string":  # its default value (a flag's name) at +0x0c
                 defaults.append(text(u32(o + 12)))
+            elif name == "bool":  # its default value at +0x0c (an unwired input's constant: a gate's UpdateOnce)
+                bools.append(u32(o + 12) & 1)
             o += IN_SIZE[name]
         ins[name] = lst
         lst, o = [], starts[2 * t + 1]
@@ -89,7 +91,7 @@ def read_graph(data):
     for i in range(count):
         n = 0x74 + commands * 0x18 + i * 0x3C
         body = u32(n + 0x14)
-        node = {"type": text(u32(n + 8)), "in": {}, "out": {}, "imm": {}, "sdef": {}}
+        node = {"type": text(u32(n + 8)), "in": {}, "out": {}, "imm": {}, "sdef": {}, "bdef": {}}
         for t, name in enumerate(TYPES):
             a, b = u32(body + 0x30 + 16 * t), u32(body + 0x34 + 16 * t)
             c, d = u32(body + 0x38 + 16 * t), u32(body + 0x3C + 16 * t)
@@ -97,6 +99,8 @@ def read_graph(data):
             node["out"][name] = outs[name][c: c + d]
             if name == "string":
                 node["sdef"] = {k[0]: v for k, v in zip(ins[name][a: a + b], defaults[a: a + b])}
+            elif name == "bool":
+                node["bdef"] = {k[0]: v for k, v in zip(ins[name][a: a + b], bools[a: a + b]) if k[1] == -1}
         first, n_str = u32(body + 0x18), u32(body + 0x1C)
         for k in range(first, first + n_str):
             o = string_imm + 0x0C * k
@@ -178,13 +182,15 @@ def switch_events(romfs, dicts=None, wiring=None):
             by_id = {(_prefix(r["Path"]), r["Id"]): by_hash[_int(r["Reference"])]
                      for r in refs if "Reference" in r and _int(r["Reference"]) in by_hash}
 
-            def leaves(pre, g_, src, outp, depth, seen, neg=False, under_or=False):
-                """[(kind, actor or flag name, plug, negated, under an OR)], kind "actor", "flag" or "node"."""
+            def leaves(pre, g_, src, outp, depth, seen, neg=False, under_or=False, once=False):
+                """[(kind, actor or flag name, plug, negated, under an OR)], kind "actor", "flag" or "node"; a flag
+                behind a gate whose UpdateOnce input is 1 (the game reads it once, when the room loads: the Deku
+                Tree ladder's RoomC_Cleared) is kind "flag-once": it carries no live result."""
                 nodes, multi = g_
                 if src <= -100:
                     found = []
                     for a, b in multi(-100 - src, outp):
-                        found += leaves(pre, g_, a, b, depth + 1, seen, neg, under_or)
+                        found += leaves(pre, g_, a, b, depth + 1, seen, neg, under_or, once)
                     return found
                 if src < 0 or src >= len(nodes) or depth > 12 or (id(g_), src, outp) in seen:
                     return []
@@ -209,19 +215,21 @@ def switch_events(romfs, dicts=None, wiring=None):
                                 if call["type"] == mtype and call["imm"].get("InstanceName") == minst:
                                     for name, a, b in call["in"]["bool"]:
                                         if name == node["imm"]["Name"]:
-                                            found += leaves(ppre, parent, a, b, depth + 1, seen, neg, under_or)
+                                            found += leaves(ppre, parent, a, b, depth + 1, seen, neg, under_or, once)
                     return found
                 if node["type"].startswith("HoldGameDataGetBool"):
                     name = node["sdef"].get("GameDataNameBool", "")
-                    return [("flag", name, plug, neg, under_or)] if name else []
+                    return [("flag-once" if once else "flag", name, plug, neg, under_or)] if name else []
                 if not node["in"]["bool"]:
                     return [("node", node["type"], plug, neg, under_or)]
                 # A gate, or a module call (InvBool, ...): its False output (or an inverter) negates.
                 flip = plug == "False" or "InvBool" in node["type"]
                 is_or = "OR" in node["type"].upper().replace("OPERATE", "")[:2] or node["type"].startswith("OperateOR")
+                once = once or node.get("bdef", {}).get("UpdateOnce") == 1
                 found = []
-                for _, a, b in node["in"]["bool"]:
-                    found += leaves(pre, g_, a, b, depth + 1, seen, neg != flip, under_or or is_or)
+                for name, a, b in node["in"]["bool"]:
+                    if name != "UpdateOnce":
+                        found += leaves(pre, g_, a, b, depth + 1, seen, neg != flip, under_or or is_or, once)
                 return found
 
             def calls(pre, name, inner):
