@@ -1563,7 +1563,7 @@ TEST_CASE("rando: every built seed carries OOTRR's spoiler.txt and its settings.
     }
 }
 
-TEST_CASE("rando: a settings string seed's settings.txt is that string; an OOTRR with no spoiler log does not loop") {
+TEST_CASE("rando: a settings string seed's settings.txt is that string, and an OOTRR with no spoiler log does not loop") {
     World w;
     w.spoiler = false;
     const std::string s = "OOTRR1-EYAQCTABAHIHE";
