@@ -1,4 +1,4 @@
-From f2b6bdef854225297dc07210d53afb2217b345cc Mon Sep 17 00:00:00 2001
+From efa9410514651db10000df40f3048010dc7247db Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Fri, 13 Nov 2026 02:56:35 -0900
 Subject: [PATCH] Co-op pad select: this game's controller and keyboard, for
@@ -23,10 +23,10 @@ the exe: hos_coop_input_select and hos_coop_input_pad_name.
  3 files changed, 114 insertions(+), 3 deletions(-)
 
 diff --git a/host/display.c b/host/display.c
-index 8c3865dd..4809c55f 100644
+index a95ebd65..b38147d4 100644
 --- a/host/display.c
 +++ b/host/display.c
-@@ -41,6 +41,7 @@ static int renderer;   /* the renderer presents into the window */
+@@ -42,6 +42,7 @@ static int renderer;   /* the renderer presents into the window */
  /* mouse capture: raw motion accumulated here, taken by nn_hid.c */
  static volatile LONG mouse_dx, mouse_dy;
  static volatile LONG mouse_captured;
@@ -34,16 +34,16 @@ index 8c3865dd..4809c55f 100644
  static int cursor_hidden;
  
  int hos_mouse_take(int32_t *dx, int32_t *dy) {
-@@ -368,6 +369,8 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
-         return 0;
-     case WM_TIMER: {
+@@ -467,6 +468,8 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
+             if (fullscreen) set_fullscreen(w,1); /* selection/hotplug changes, on the window thread */
+         }
          pointer_update(w, 0, 0);
 +        if (mouse_captured && hos_input_keyboard_mode() == 2) mouse_capture(w, 0);   /* (patch 0015: keyboard and mouse
 +                                                                                      off: a capture from before let go) */
          /* (longshot, #1532) a controller is not input to Windows: playing with one, the display went off at the power
             plan's timeout. While the game's window is in front and not minimized, the display's idle timer is reset every
             30 s (ES_DISPLAY_REQUIRED without ES_CONTINUOUS: nothing is held when the game is left or closed).
-@@ -410,7 +413,7 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
+@@ -509,7 +512,7 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
          if (coop_mouse(w, (POINT){(short)LOWORD(lp), (short)HIWORD(lp)}, 1)) return 0;   /* (oot-remake-multiplayer) */
          if (menu_open) menu_press(w, lp, HOS_MOUSE_LEFT);
          else if (game_menu_open) game_menu_press(lp, HOS_MOUSE_LEFT);

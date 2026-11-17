@@ -1,4 +1,4 @@
-From 1e4a6d1c85d80e335755fea00ecc8971b00523c3 Mon Sep 17 00:00:00 2001
+From 8d6abad31c1a7a5cffd8821467d8639abae572e6 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Wed, 11 Nov 2026 22:08:58 -0900
 Subject: [PATCH] Co-op bridge: frame hook, AI hold and the co-op module's
@@ -315,7 +315,7 @@ index 4690bcf6..ffe419ac 100644
      }
      uint8_t types[8];
 diff --git a/gpu/vk/vk_menu.cpp b/gpu/vk/vk_menu.cpp
-index ef58c271..ed1ab868 100644
+index 980eab6d..2fe30100 100644
 --- a/gpu/vk/vk_menu.cpp
 +++ b/gpu/vk/vk_menu.cpp
 @@ -41,6 +41,7 @@
@@ -326,7 +326,7 @@ index ef58c271..ed1ab868 100644
  #include "vk_menu_keys.h"   // (which gamepad buttons confirm and go back: those A and B are bound to)         // (how it looks: Dear ImGui, vk_imgui.h)
  #include "vk_dlss.h"
  #include "vk_framegen.h"   // (Frame generation by: who makes the frames now, framegen_maker)
-@@ -6468,7 +6469,8 @@ void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h) {
+@@ -6551,7 +6552,8 @@ void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h) {
      const bool start = startup_on.load(std::memory_order_acquire);
      const bool fps = opts.show_fps && !start;   // (no game frames yet: not "0 FPS" over the start-up screen)
      const bool open = open_now.load(std::memory_order_relaxed);
@@ -336,7 +336,7 @@ index ef58c271..ed1ab868 100644
          // (but a new window size or Menu size since the last bake: one frame with nothing drawn that bakes the menu's glyphs
          // and measures its page for the new size, so the next open has no hitch whatever was resized while nothing showed)
          if (prebake_needed(w, h) && ui::begin(w, h)) {
-@@ -6491,6 +6493,7 @@ void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h) {
+@@ -6574,6 +6576,7 @@ void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h) {
      ui::Ctx c = ui_ctx(w, h);
      prebake(c);   // (the menu's glyphs at this size, before it opens: no hitch then)
      if (start) draw_startup(c);   // (under the menu)
@@ -344,7 +344,7 @@ index ef58c271..ed1ab868 100644
      if (open) draw_menu(c);
      if (fps) draw_fps(c, open);
      ::mkwvk::rec::boundary(::mkwvk::rec::B_DIRECT);   // (Dear ImGui records into cmd directly, its backend through its own pointers: what this thread recorded through vk_work.h reaches cmd first)
-@@ -6500,9 +6503,11 @@ void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h) {
+@@ -6583,9 +6586,11 @@ void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h) {
  void menu_record_image(VkCommandBuffer cmd, VkImage image, VkImageView view, uint32_t w, uint32_t h) {
      const bool open = open_now.load(std::memory_order_relaxed);
      const bool fps = opts.show_fps && !startup_on.load(std::memory_order_acquire);
@@ -568,10 +568,10 @@ index 00000000..63de418a
 +    return __atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 ? coop_hold(component, bits) : bits;
 +}
 diff --git a/host/display.c b/host/display.c
-index cf1c37bc..8c3865dd 100644
+index d66d9c26..a95ebd65 100644
 --- a/host/display.c
 +++ b/host/display.c
-@@ -308,10 +308,20 @@ void hos_display_paste(void) {
+@@ -398,10 +398,20 @@ void hos_display_paste(void) {
      if (hwnd) PostMessageA(hwnd, WM_APP + 12, 0, 0);
  }
  
@@ -592,7 +592,7 @@ index cf1c37bc..8c3865dd 100644
          gm_mouse_moved(w);
          if (!pointer_tracking) {
              TRACKMOUSEEVENT t = {sizeof t, TME_LEAVE, w, 0};
-@@ -324,7 +334,11 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
+@@ -414,7 +424,11 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
          pointer_tracking = 0;
          pointer_update(w, 0, 0);
          return 0;
@@ -605,7 +605,7 @@ index cf1c37bc..8c3865dd 100644
          if (menu_open || game_menu_open) pointer_update(w, 0, GET_WHEEL_DELTA_WPARAM(wp));   /* (hidden or not) */
          else if ((LONG64)hos_now_ns() - InterlockedCompareExchange64(&play_wheel_ns, 0, 0) < 200000000LL)
              InterlockedExchangeAdd(&play_wheel, GET_WHEEL_DELTA_WPARAM(wp));   /* (a screen that takes the wheel only) */
-@@ -393,11 +407,18 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
+@@ -492,11 +506,18 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
          return DefWindowProcA(w, msg, wp, lp);
      }
      case WM_LBUTTONDOWN:
@@ -624,7 +624,7 @@ index cf1c37bc..8c3865dd 100644
          extern void hos_vk_note_key_press(unsigned key);
          if (!(lp & (1 << 30))) hos_vk_note_key_press((unsigned)wp);
          if (wp == VK_ESCAPE) {   /* (it may open the Insert menu too: a capture let go here comes back) */
-@@ -423,6 +444,8 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
+@@ -522,6 +543,8 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
                           takes; a double-byte character's two (a lead byte, then its trail) are left out together */
          static int trail;
          const BYTE c = (BYTE)wp;
@@ -766,10 +766,10 @@ index 59f863b2..ca144ae7 100644
  
  /* ---- NVN2 (mkw-recomp): what the Switch 2's NVN adds, as MKW uses it ---- */
 diff --git a/host/posix/display_sdl.c b/host/posix/display_sdl.c
-index 266069df..dc76d8c4 100644
+index bf44d74b..b96230d9 100644
 --- a/host/posix/display_sdl.c
 +++ b/host/posix/display_sdl.c
-@@ -86,6 +86,43 @@ static void pointer_update(uint32_t pressed, int wheel) {
+@@ -87,6 +87,43 @@ static void pointer_update(uint32_t pressed, int wheel) {
  static uint32_t sdl_button_bit(int b) { return b == 1 ? HOS_MOUSE_LEFT : b == 3 ? HOS_MOUSE_RIGHT : b == 2 ? HOS_MOUSE_MIDDLE : 0; }
  
  /* ---- keys: SDL's scancodes (USB HID usages) as Windows' virtual keys ---- */
@@ -813,7 +813,7 @@ index 266069df..dc76d8c4 100644
  static void keys_update(void) {
      int n = 0;
      const uint8_t *k = hos_sdl_keys(&n);
-@@ -139,6 +176,12 @@ static void text_key(const HosSdlEvent *e) {
+@@ -140,6 +177,12 @@ static void text_key(const HosSdlEvent *e) {
  }
  
  /* ---- the window ---- */
@@ -826,7 +826,7 @@ index 266069df..dc76d8c4 100644
  static volatile int renderer;   /* the renderer presents into the window */
  static HANDLE renderer_up;   /* (set once rx_start has returned, ready or not: hos_renderer_wait) */
  static int fullscreen;
-@@ -380,6 +423,11 @@ void hos_display_loop(void) {
+@@ -420,6 +463,11 @@ void hos_display_loop(void) {
                      ptr_in = 1;
                      break;
                  case HOS_SDL_EV_KEY_DOWN: {
@@ -838,7 +838,7 @@ index 266069df..dc76d8c4 100644
                      const int scancode = e.scancode, mod = e.mod;
                      if (e.scancode == 41) {   /* Esc (it may open the Insert menu too: the capture comes back) */
                          if (!menu_open && mouse_captured) esc_had_capture = 1;
-@@ -393,6 +441,7 @@ void hos_display_loop(void) {
+@@ -433,6 +481,7 @@ void hos_display_loop(void) {
                      ptr_in = 1;
                      ptr_held |= sdl_button_bit(e.button);
                      if (menu_open) pointer_publish_at(e.x, e.y, sdl_button_bit(e.button), 0);   /* (the menu's click) */
@@ -846,7 +846,7 @@ index 266069df..dc76d8c4 100644
                      else if (renderer && !mouse_captured) mouse_capture(1);
                      break;
                  case HOS_SDL_EV_MOUSE_UP:
-@@ -400,9 +449,14 @@ void hos_display_loop(void) {
+@@ -440,9 +489,14 @@ void hos_display_loop(void) {
                      break;
                  case HOS_SDL_EV_MOUSE_WHEEL:
                      if (menu_open) pointer_update(0, (int)(e.wheel * 120));
@@ -862,7 +862,7 @@ index 266069df..dc76d8c4 100644
                      if (mouse_captured) {   /* (SDL3's motion comes in fractions of a pixel: the remainders kept for the next) */
                          static float rx, ry;
                          rx += e.dx, ry += e.dy;
-@@ -414,12 +468,16 @@ void hos_display_loop(void) {
+@@ -454,12 +508,16 @@ void hos_display_loop(void) {
                      break;
                  case HOS_SDL_EV_TEXT:
                      hos_text_put_utf8(e.text, 0);

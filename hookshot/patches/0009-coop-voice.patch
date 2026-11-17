@@ -1,4 +1,4 @@
-From 3bfc25c46f976989808692cf562487ecbdc0385f Mon Sep 17 00:00:00 2001
+From ba91589529630cea59d40464f82bca6b1aec44ea Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Thu, 12 Nov 2026 13:32:10 -0900
 Subject: [PATCH] Co-op voice: the module's voices in the game's final mix

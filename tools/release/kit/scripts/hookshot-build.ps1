@@ -757,12 +757,10 @@ if ($lsImage) {
     foreach ($l in (Copy-KitLongshotSaves $lsImage $ourImage)) { Write-Host "  $l" }
 }
 
-# A desktop shortcut to the kit's launcher ("Start Squadala.bat"; "Start OoT Co-op.bat" up to v0.11.2,
-# Play-OoT-Coop.bat in an older emulator kit), once, for the kit's own game (not for a game hs.py builds elsewhere).
-# "Play Squadala" (its name up to v0.11.2, "Play OoT Co-op", counts as there: start.ps1 renames it).
+# A desktop shortcut to the kit's one start file, "Start Squadala.bat", once, for the kit's own game (not for a game
+# hs.py builds elsewhere). "Play Squadala" (its name up to v0.11.2, "Play OoT Co-op", counts as there: start.ps1
+# renames it; update.ps1 Update-KitStartLinks points every older shortcut at "Start Squadala.bat").
 $launcher = Join-Path $kit 'Start Squadala.bat'
-if (-not (Test-Path -LiteralPath $launcher)) { $launcher = Join-Path $kit 'Start OoT Co-op.bat' }
-if (-not (Test-Path -LiteralPath $launcher)) { $launcher = Join-Path $kit 'Play-OoT-Coop.bat' }
 if (-not $PSBoundParameters.ContainsKey('Out') -and -not $Tools -and (Test-Path -LiteralPath $launcher) -and
     -not $env:OOT_COOP_NO_SHORTCUT) {
     try {

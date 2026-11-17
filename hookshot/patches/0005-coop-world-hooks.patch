@@ -1,4 +1,4 @@
-From 28cb55639c03848eb0f979b707abfcae7baf7461 Mon Sep 17 00:00:00 2001
+From d4e11a0d0562cff395dced1d2018bf2801ff7c20 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Thu, 12 Nov 2026 13:00:23 -0900
 Subject: [PATCH] Co-op world hooks: game events and wrapped game functions to

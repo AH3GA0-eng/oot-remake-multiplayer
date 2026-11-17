@@ -1,4 +1,4 @@
-From 5050bea88994761982cdc6872228510233c3c358 Mon Sep 17 00:00:00 2001
+From f947336e419e6360ff9d165fea9bb07e23487ecd Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Mon, 16 Nov 2026 17:21:30 -0900
 Subject: [PATCH] Co-op and Longshot's crash reports: nothing sent, co-op's
@@ -119,10 +119,10 @@ index d21bccb4..f26e6ae2 100644
                                                                : " (the changes from the defaults in short: not all of them fit in a link)") : "") +
              ":\n" + link + "\n";
 diff --git a/gpu/vk/vk_menu.cpp b/gpu/vk/vk_menu.cpp
-index 0af8b237..895b7b78 100644
+index 81858b22..87aba47e 100644
 --- a/gpu/vk/vk_menu.cpp
 +++ b/gpu/vk/vk_menu.cpp
-@@ -3581,7 +3581,8 @@ int debug_rows(int* out, int* dev, int* dev_head) {
+@@ -3651,7 +3651,8 @@ int debug_rows(int* out, int* dev, int* dev_head) {
      for (int k = 0; k < count; ++k) {
          const Row& r = rows[tab_row_to_global(TAB_DEBUG, k)];
          if (r.heading) *dev_head = k;
@@ -132,7 +132,7 @@ index 0af8b237..895b7b78 100644
      }
      return n;
  }
-@@ -3793,9 +3794,10 @@ const char* bug_report_cell() {
+@@ -3863,9 +3864,10 @@ const char* bug_report_cell() {
  /// Under its help once saved: where the report is and what to do with it (the game opens nothing: no browser or file manager is
  /// sure to be there, as on a Steam Deck in Game Mode)
  std::string bug_report_saved_text(const std::string& folder) {
@@ -146,7 +146,7 @@ index 0af8b237..895b7b78 100644
  }
  /// Under its help once pressed: how the report goes
  const char* bug_report_hint() {
-@@ -6654,7 +6656,7 @@ void menu_tick() {
+@@ -6737,7 +6739,7 @@ void menu_tick() {
          }
          else if (press[7] && is_motion_row(r)) cur_tab = TAB_MOTION, tab_selected[TAB_MOTION] = 0, press[7] = false, changed = true;
          else if (press[7] && is_fps_dev_row(r)) cur_tab = TAB_FPS_DEV, tab_selected[TAB_FPS_DEV] = 0, press[7] = false, changed = true;
