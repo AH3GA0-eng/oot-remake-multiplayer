@@ -136,4 +136,41 @@ struct Mend {
 inline constexpr std::size_t kMends = 2;
 std::span<const Mend, kMends> Mends();
 
+// Row 129 (GitHub #173): a story event whose played flag is shared never
+// runs in a game behind the group (the game counts it as played), so what
+// its own flow sets there never happens. The owl in Hyrule Field is the only
+// setter of HyruleField_ArriveEntrance, and the game's clock stays stopped
+// until that flag is 1 (docs/time.md, "Clock gate"). Each effect is a saved
+// Bool such an event sets on its unconditional path, one way only in every
+// event flow and AI graph of the game, and not shared itself
+// (tools/puppet_pack/story_effects.py writes the list from the romfs): once
+// the event has played it holds that value for good, so a game with the
+// played flag and not the value is given it through the game's own Bool
+// setter (co-op idle too: a save that got the played flag in a session).
+struct Effect {
+    std::uint32_t played;  // HavePlayedEvent.<setting>
+    std::uint32_t flag;
+    bool value;
+    const char* setting;
+    const char* name;
+};
+std::span<const Effect> Effects();
+inline constexpr std::size_t kEffectsMax = 32;  // Effects().size() stays under it (story_test)
+
+// The effects due now: the played flag is 1 and the effect's flag is known
+// and not its value. `read` gives a Bool's value, nothing when unread
+// (unknown inputs count as "not due").
+template <class ReadBool>
+std::size_t EffectsDue(ReadBool&& read, std::span<const Effect*> out) {
+    std::size_t n = 0;
+    for (const Effect& e : Effects()) {
+        if (n == out.size()) break;
+        const std::optional<bool> played = read(e.played);
+        if (!played || !*played) continue;
+        const std::optional<bool> now = read(e.flag);
+        if (now && *now != e.value) out[n++] = &e;
+    }
+    return n;
+}
+
 } // namespace CoopStory
