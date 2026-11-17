@@ -186,10 +186,36 @@ def find_exe(folder):
     return None
 
 
-def copy_tree(src, dst, skip_top=PER_PLAYER, dry=False, say=print, runtime_too=False, in_cache=False):
+SHARED_TOP = {"romfs"}   # (the game files, ~26 GB: never written by the game or by us; hard links, as lanes.py's)
+
+
+def same_file(a, b):
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def link_or_copy(s, d):
+    """d becomes a hard link to s (no new disk space); its own copy where a link can't be made (another drive, FAT).
+    An old d is unlinked first, never written into: it may be shared with other folders. Returns True for a link."""
+    if os.path.lexists(d):
+        os.unlink(d)
+    try:
+        os.link(s, d)
+        return True
+    except OSError:
+        shutil.copy2(s, d)
+        return False
+
+
+def copy_tree(src, dst, skip_top=PER_PLAYER, dry=False, say=print, runtime_too=False, in_cache=False, share=False):
     """Copies src into dst: new or changed files (size or mtime) only, links recreated as links (never followed),
     the top-level names in skip_top left alone on both sides; dst's runtime caches (at the top, or in the top's
-    cache folder: in_cache) kept unless runtime_too. Returns (files copied, links made)."""
+    cache folder: in_cache) kept unless runtime_too. Returns (files copied, links made).
+    A top-level folder in SHARED_TOP (romfs: the game files) is hard-linked file by file, not copied (share): every
+    game folder made from one (a pin, the cache's entries, the test pairs) shares one copy of its ~26 GB. Copied in
+    full to every one of them, they filled the disk (longshot-rc6-a's offline run 2: no space left for the next pin)."""
     copied = links = 0
     for name in sorted(os.listdir(src)):
         if name.lower() in skip_top:
@@ -207,18 +233,24 @@ def copy_tree(src, dst, skip_top=PER_PLAYER, dry=False, say=print, runtime_too=F
             if not dry:
                 os.makedirs(d, exist_ok=True)
             c, n = copy_tree(s, d, set(), dry, say, runtime_too,
-                             in_cache=skip_top is PER_PLAYER and name.lower() == CACHE_DIR)
+                             in_cache=skip_top is PER_PLAYER and name.lower() == CACHE_DIR,
+                             share=share or (skip_top is PER_PLAYER and name.lower() in SHARED_TOP))
             copied, links = copied + c, links + n
         else:
             if os.path.isfile(d) and not is_link(d):
                 if (skip_top is PER_PLAYER or in_cache) and RUNTIME_CACHE.match(name) and not runtime_too:
                     continue
+                if share and same_file(s, d):
+                    continue   # (already the same file)
                 a, b = os.stat(s), os.stat(d)
-                if a.st_size == b.st_size and int(a.st_mtime) == int(b.st_mtime):
+                if a.st_size == b.st_size and int(a.st_mtime) == int(b.st_mtime) and not share:
                     continue
             copied += 1
             if not dry:
                 os.makedirs(dst, exist_ok=True)
+                if share:
+                    link_or_copy(s, d)
+                    continue
                 if os.path.isfile(d) and os.stat(d).st_nlink > 1:
                     os.unlink(d)   # a hard link shared with another folder (a test lane): never written into
                 shutil.copy2(s, d)
@@ -705,7 +737,25 @@ def build_script_args(script):
             text = f.read()
     except OSError:
         return set()
-    return {a for a in ("Tools", "Work") if re.search(r"\[string\]\$%s\b" % a, text)}
+    return {a for a in ("Tools", "Work", "RomfsFrom") if re.search(r"\[string\]\$%s\b" % a, text)}
+
+
+def romfs_source(out, root=None):
+    """For a pin's game folder with no game files of its own yet: the newest other pin's game folder that unpacked its
+    own (romfs/ and Longshot's .longshot_romfs stamp), for Longshot's --romfs-from (rc.6, #360): it hard-links that
+    folder's files when its stamp is this .nup's and they are on one drive, else reads the .nup as before. None when
+    out has its own, or there is no other."""
+    if os.path.isfile(os.path.join(out, ".longshot_romfs")):
+        return None
+    pins = os.path.join(root or cache_root(), "pins")
+    found = []
+    for name in os.listdir(pins) if os.path.isdir(pins) else ():
+        game = os.path.join(pins, name, "game")
+        stamp_file = os.path.join(game, ".longshot_romfs")
+        if same_file(game, out) or not (os.path.isdir(os.path.join(game, "romfs")) and os.path.isfile(stamp_file)):
+            continue
+        found.append((os.path.getmtime(stamp_file), game))
+    return max(found)[1] if found else None
 
 
 def build(pairs, build_dir, kit=None, game=None, jobs=0, keep=3, repo=REPO, dry=False, say=print, root=None,
@@ -733,7 +783,8 @@ def build(pairs, build_dir, kit=None, game=None, jobs=0, keep=3, repo=REPO, dry=
                 raise Fail("cache miss for %s: pass --kit <a made kit> --game <your .nup/.xci> to build the game once,"
                            " or `cache store --from <a game folder built from this stamp>`" % k)
             script = os.path.join(kit, "scripts", "hookshot-build.ps1")
-            shared = pin_dir(st) if build_script_args(script) >= {"Tools", "Work"} else None
+            takes = build_script_args(script)
+            shared = pin_dir(st) if takes >= {"Tools", "Work"} else None
             # (the pin's one game folder, built again in place and kept; an old kit: a new folder, removed after)
             out = os.path.join(shared, "game") if shared else os.path.join(cache_root(), k + ".build")
             cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-Out", out]
@@ -743,6 +794,11 @@ def build(pairs, build_dir, kit=None, game=None, jobs=0, keep=3, repo=REPO, dry=
                 cmd += ["-Game", game]
             if shared:
                 cmd += ["-Tools", os.path.join(shared, "tools"), "-Work", os.path.join(shared, "work")]
+                # (a new pin: the game files hard-linked from an older pin's, not the .nup's ~26 GB again)
+                other = romfs_source(out) if "RomfsFrom" in takes and game and game.lower().endswith(".nup") else None
+                if other:
+                    cmd += ["-RomfsFrom", other]
+                    say("cache: the new pin's game files come from %s (hard links where the drive allows)" % other)
                 say("cache: miss; building the pin's game folder %s again in place (only what changed since its last"
                     " build)" % out)
             else:

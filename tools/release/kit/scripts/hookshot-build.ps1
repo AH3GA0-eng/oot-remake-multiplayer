@@ -43,6 +43,7 @@ param(
     [ValidateRange(0, 256)][int]$Jobs = 0,
     [string]$Tools = '',
     [string]$Work = '',
+    [string]$RomfsFrom = '',   # (tools/hookshot/hs.py: another game folder of the same .nup, its game files hard-linked)
     [switch]$Rebuild,
     [switch]$CheckOnly,
     [switch]$PackOnly,
@@ -626,6 +627,15 @@ if ($gameReady -and -not $Rebuild -and -not $CheckOnly) {
     $buildLog = Join-Path $hs 'build.log'
     $buildArgs = $gameArgs + @('--out', $Out, '--work', $work, '--language', $Language)
     if ($Jobs) { $buildArgs += @('--jobs', "$Jobs") }
+    # (-RomfsFrom: another game folder unpacked from the same .nup. Longshot's --romfs-from (since rc.6, #360) hard-links its
+    # game files instead of writing the .nup's ~26 GB again; Longshot itself checks the folder's .nup stamp and the drive,
+    # and reads the .nup when it can't. Only with a .nup, and only a Longshot that has the option)
+    $makeGame = Join-Path $tools 'nx2\make_game.py'
+    if ($RomfsFrom -and $gameArgs[0] -eq '--nup' -and (Test-Path -LiteralPath $RomfsFrom -PathType Container) -and
+        (Test-Path -LiteralPath $makeGame) -and (Select-String -LiteralPath $makeGame -SimpleMatch '"--romfs-from"' -Quiet)) {
+        $buildArgs += @('--romfs-from', $RomfsFrom)
+        Write-Host "  the game files from $RomfsFrom (hard links where the drive allows)"
+    }
     New-Item -ItemType Directory -Force -Path $Out | Out-Null
     # (your own Longshot of the same release: its compiled objects, keyed by source, flags and headers and never by folder,
     # so the files co-op does not change are not compiled again. Only into a work folder with none yet; copied, not moved)
