@@ -43,7 +43,10 @@ your applications menu. Each start checks for a new co-op version and offers it;
    Multiplayer tab to read out or type.
 
 Updates: the first start after a new version asks in the terminal; in Game Mode there is no terminal, so start it
-once from Desktop Mode (step 3) when a friend has a newer version.
+once from Desktop Mode (step 3) when a friend has a newer version. A kit older than 0.11.3 (started with
+`start-oot-coop.sh`) updates in two steps: to 0.11.3 first, then to the newest on the next start. From 0.11.4 the kit has
+one start file, `start-squadala.sh`: the update moves your menu entry and Steam entry over to it (if Steam was open,
+restart it once).
 
 ## If something goes wrong
 
