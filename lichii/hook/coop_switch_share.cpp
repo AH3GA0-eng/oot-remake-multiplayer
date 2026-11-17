@@ -186,7 +186,7 @@ std::optional<CoopPuppet::Call> Setter::Next(CoopPuppet::Guest& guest, std::uint
         // The execute reads [actor+0x270] without a check: only a switch whose logic has a live bool plug of that key.
         const auto plug = CoopLogicSet::BoolPlug(guest, h.address, h.key);
         if (!plug) continue;
-        if (plug->value == std::optional<std::uint8_t>(1)) continue;  // on already
+        if (plug->value == std::optional<std::uint8_t>(std::uint8_t{1})) continue;  // on already
         if (!CoopLogicSet::WriteNode(guest, block_, main, h.address, h.key)) continue;
         return CoopLogicSet::Execute(main, block_);
     }
