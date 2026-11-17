@@ -32,6 +32,7 @@ class Base(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         self.cache = os.path.join(self.tmp, "cache")
         os.environ["OOT_COOP_HS_CACHE"] = self.cache
+        hs.LINKS_REFUSED.clear()   # (one run's memory: each test is a run of its own)
         self.out = io.StringIO()
         self.say = lambda *a: self.out.write(" ".join(str(x) for x in a) + "\n")
 
@@ -86,6 +87,35 @@ class ShareTest(Base):
         hs.copy_tree(src, dst, say=self.say)
         self.assertEqual(read(os.path.join(dst, "romfs", "Scene", "a.zs")), "scene a, changed")
         self.assertEqual(read(os.path.join(other, "romfs", "Scene", "a.zs")), "scene a")   # the other folder kept its own
+
+    def test_where_links_are_refused_the_copies_are_not_made_again(self):
+        # (a cache on another drive, a FAT disk: every link refused) the first run copies, the second copies nothing
+        src, dst = self.game(), os.path.join(self.tmp, "dst")
+        real = os.link
+        try:
+            def refuse(*_a, **_k):
+                raise OSError("no hard links here")
+            os.link = refuse
+            first, _ = hs.copy_tree(src, dst, say=self.say)
+            hs.LINKS_REFUSED.clear()   # (a new run: it finds out again, with one file at most)
+            second, _ = hs.copy_tree(src, dst, say=self.say)
+            third, _ = hs.copy_tree(src, dst, say=self.say)
+        finally:
+            os.link = real
+        self.assertEqual(first, 4)   # (the exe, two game files, data/romfs/c.txt)
+        self.assertLessEqual(second, 1)
+        self.assertEqual(third, 0)
+        self.assertEqual(read(os.path.join(dst, "romfs", "Scene", "a.zs")), "scene a")
+
+    def test_can_link(self):
+        class St:
+            def __init__(self, dev, nlink=1):
+                self.st_dev, self.st_nlink = dev, nlink
+        self.assertTrue(hs.can_link(St(1), St(1)))
+        self.assertFalse(hs.can_link(St(1), St(2)))   # (another drive: a copy stays a copy)
+        self.assertFalse(hs.can_link(St(1, hs.NTFS_MAX_LINKS), St(1)))   # (NTFS: no more names for that file)
+        hs.LINKS_REFUSED.add((1, 1))
+        self.assertFalse(hs.can_link(St(1), St(1)))   # (refused once in this run)
 
     def test_a_link_that_cannot_be_made_is_a_copy(self):
         src = os.path.join(self.tmp, "s.bin")

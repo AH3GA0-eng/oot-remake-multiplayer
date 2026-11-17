@@ -196,6 +196,16 @@ def same_file(a, b):
         return False
 
 
+NTFS_MAX_LINKS = 1023
+LINKS_REFUSED = set()   # ((source drive, destination drive)): a link was refused there in this run (link_or_copy)
+
+
+def can_link(a, b):
+    """Whether a hard link to the file of stat a could replace the file of stat b: the same drive, a below the file
+    system's limit of names (NTFS: 1023), and no link refused between those drives in this run"""
+    return a.st_dev == b.st_dev and a.st_nlink < NTFS_MAX_LINKS and (a.st_dev, b.st_dev) not in LINKS_REFUSED
+
+
 def link_or_copy(s, d):
     """d becomes a hard link to s (no new disk space); its own copy where a link can't be made (another drive, FAT).
     An old d is unlinked first, never written into: it may be shared with other folders. Returns True for a link."""
@@ -206,6 +216,7 @@ def link_or_copy(s, d):
         return True
     except OSError:
         shutil.copy2(s, d)
+        LINKS_REFUSED.add((os.stat(s).st_dev, os.stat(d).st_dev))   # (the rest of this run keeps its copies as they are)
         return False
 
 
@@ -243,7 +254,9 @@ def copy_tree(src, dst, skip_top=PER_PLAYER, dry=False, say=print, runtime_too=F
                 if share and same_file(s, d):
                     continue   # (already the same file)
                 a, b = os.stat(s), os.stat(d)
-                if a.st_size == b.st_size and int(a.st_mtime) == int(b.st_mtime) and not share:
+                # (a separate copy of the same file: left as it is unless a link can take its place, so a cache on
+                # another drive, a FAT disk or a file at NTFS's 1023 links is not copied again on every run)
+                if a.st_size == b.st_size and int(a.st_mtime) == int(b.st_mtime) and not (share and can_link(a, b)):
                     continue
             copied += 1
             if not dry:
