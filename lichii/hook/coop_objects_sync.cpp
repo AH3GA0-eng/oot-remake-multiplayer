@@ -1305,6 +1305,16 @@ void Sync::NoteTakeover(std::uint64_t address, std::uint64_t now_us, std::string
     }
 }
 
+void Sync::NoteOwnBrainWant(std::uint64_t address, std::uint64_t now_us) {
+    const auto it = objects_.find(address);
+    if (it == objects_.end() || !it->second.reacts) {
+        return;  // (the brain path is the enemies')
+    }
+    Object& o = it->second;
+    o.own_ai_at = now_us;  // row 97: its own AI acts (read while our event runs)
+    o.brain_want_at = now_us;
+}
+
 std::optional<float> Sync::LureDistance(const proto::Vec3& at) const {
     std::optional<float> best;
     for (const proto::Vec3& lure : lures_) {
@@ -2402,7 +2412,10 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 // Or the Mover had to put the owner's one back lately (issue 157).
                 const bool put_back = o.took_over_at != 0 && now_us >= o.took_over_at &&
                                       now_us - o.took_over_at <= kWakeLatchUs;
-                if (differs || put_back) {
+                // Or, on the enemies' brain path, its own brain asked for another phase (issue 101).
+                const bool brain_wants = o.brain_want_at != 0 && now_us >= o.brain_want_at &&
+                                         now_us - o.brain_want_at <= kWakeLatchUs;
+                if (differs || put_back || brain_wants) {
                     ChaseStep(o, now_us);
                     OwnWake(o, put_back && !differs, now_us);
                 }

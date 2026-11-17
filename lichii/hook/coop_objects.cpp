@@ -3990,9 +3990,9 @@ private:
             sync_.NoteTakeover(a, now_us, name);
         }
         // The enemies' brain path: a plain copy whose own brain asked for another phase than its owner's wants
-        // to act here, as one whose own play was put back (no play to give back: its brain is let run instead).
+        // to act on our Link (issue 101; no play to give back: its brain is let run instead).
         for (const u64 a : CoopBossNative::TheTable().TakeOwnWants()) {
-            sync_.NoteTakeover(a, now_us);
+            sync_.NoteOwnBrainWant(a, now_us);
         }
         for (const PoseWrite& w : poses) {
             const u32 state = r.Get<u32>(w.address + kActorState).value_or(0);

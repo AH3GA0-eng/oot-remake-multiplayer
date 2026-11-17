@@ -3366,6 +3366,40 @@ TEST_CASE("objects: a copy whose wake the Mover put back once is flagged targeti
     CHECK_FALSE((flags && (*flags & kTargeting) != 0));
 }
 
+TEST_CASE("objects: a plain copy whose own brain wants another phase near our Link is flagged targeting (issue 101)") {
+    // The enemies' brain path: the copy's own brain is skipped and it plays the owner's phase, so its animation
+    // never differs and it is never pulled towards our Link; the brain's own ask (TakeOwnWants) is what shows it.
+    auto run = [](float x, std::uint64_t from, std::uint64_t until, std::uint8_t owner = 2, bool wake = true) {
+        Sync sync;
+        sync.SetWake(wake);
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        Tick(sync, 0, {Acting(0x100, 0x11, 2, x, "Wait")});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, owner);
+        std::optional<std::uint8_t> flags;
+        for (std::uint64_t t = 10; t < 1500; t += 66) {
+            if (t >= from && t < until) {
+                sync.NoteOwnBrainWant(0x100, t * kMs);
+            }
+            sync.Receive(OwnerSample(id, owner, t * kMs, x, 2, "Wait"));
+            for (const auto& p : All<proto::ObjectPresent>(Tick(sync, t * kMs, {Acting(0x100, 0x11, 2, x, "Wait")}))) {
+                flags = p.objects[0].flags;
+            }
+        }
+        return flags && (*flags & kTargeting) != 0;
+    };
+    CHECK(run(5.0f, 100, 1500));             // wants to act on our Link for over a second: the server gets the chase
+    CHECK_FALSE(run(5.0f, 0, 0));            // its brain wants the owner's phase: nothing
+    CHECK_FALSE(run(15.0f, 100, 1500));      // over kWakeM from our Link
+    CHECK_FALSE(run(5.0f, 100, 1500, 2, false));  // LICHII_COOP_OBJECTS_WAKE=0
+    CHECK_FALSE(run(5.0f, 1200, 1500));      // under a second: not yet
+    CHECK_FALSE(run(5.0f, 100, 1500, 1));    // ours: not a copy (its own brain runs anyway)
+    // An unknown actor: nothing (no crash, no entry).
+    Sync sync;
+    sync.NoteOwnBrainWant(0x999, 10 * kMs);
+    CHECK_FALSE(sync.IdOf(0x999));
+}
+
 TEST_CASE("objects: a copy's own wake for our Link runs, the owner's rest is not put back (report 109)") {
     // Player report 109: a Deku Baba copy rose for our Link ("GetUp"); the
     // owner's buried "Wait" was put back over it, so it came out late and

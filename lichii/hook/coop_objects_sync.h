@@ -786,6 +786,12 @@ public:
     // `name` is what the copy's own AI played (a guard is taken only for an
     // IsGuardReaction one).
     void NoteTakeover(std::uint64_t address, std::uint64_t now_us, std::string_view name = {});
+    // Issue 101 on the enemies' brain path (CoopBossNative::Table::TakeOwnWants): a plain enemy copy whose own
+    // brain asked for another phase than its owner's (skipped: the copy plays the owner's, so neither its
+    // animation nor a pull towards our Link shows it). Near our Link (kWakeM) it chases us as a put-back one
+    // does (kWakeLatchUs): OBJECT_PRESENT flags it targeting and the server hands it over, never while its
+    // owner's game fights it (in_fight, the owner's Link nearer). Present thread.
+    void NoteOwnBrainWant(std::uint64_t address, std::uint64_t now_us);
     static constexpr std::uint64_t kWakeLatchUs = 1'200'000;
     // Player report 109 (Deku Babas slow to come out, then stuck upright): a
     // copy's own AI that wakes for our Link (it rises out of the ground) had
@@ -1041,6 +1047,7 @@ private:
         std::uint64_t woke_at = 0;  // left its rest animation (0 = resting)
         std::uint64_t took_over_at = 0;  // issue 157: its own AI's play put back (NoteTakeover)
         std::string took_over_name;      // ... and what it was (a guard's, issue 191)
+        std::uint64_t brain_want_at = 0; // issue 101: its own brain asked for another phase (NoteOwnBrainWant)
         // Report 109: its own wake (kOwnWakeUs) began then, over the owner's animation `own_wake_over`.
         std::uint64_t own_wake_at = 0;
         std::string own_wake_over;
