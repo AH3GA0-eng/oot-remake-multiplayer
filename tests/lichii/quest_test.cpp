@@ -598,16 +598,20 @@ TEST_CASE("quest: a player in a boss fight or minigame step is never moved out o
     CHECK(c.Step(g.m, false, 0, kMain).has_value());
 }
 
-TEST_CASE("quest: Get_StoneOfFire and DoorOfTime go to the live manager, each from its floor") {
+TEST_CASE("quest: Get_StoneOfFire, DoorOfTime and the mid-boss quests go to the live manager, each from its floor") {
     Game g;
     const auto& f = Q("Get_StoneOfFire");
     const auto& d = Q("DoorOfTime");
+    // SageOfWater (Room 23's logic) and SageOfSpirit (Room 34's) read the manager too.
+    const auto& water = Q("SageOfWater");
+    const auto& spirit = Q("SageOfSpirit");
     for (const auto& q : CoopQuest::Quests()) {
         g.enums[q.hash] = q.steps[q.steps.size() - 2];  // every quest far along
     }
     for (const auto& q : CoopQuest::Quests()) {
         const auto w = CoopQuest::LiveWant(q, g.value);
-        CHECK_MESSAGE(w.has_value() == (q.hash == f.hash || q.hash == d.hash), q.name);
+        const bool live = q.hash == f.hash || q.hash == d.hash || q.hash == water.hash || q.hash == spirit.hash;
+        CHECK_MESSAGE(w.has_value() == live, q.name);
         if (w) {
             CHECK(w->challenge == Hash(q.name));
             CHECK(w->step == g.enums[q.hash]);

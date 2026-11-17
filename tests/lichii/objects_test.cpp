@@ -5162,8 +5162,14 @@ TEST_CASE("objects: a boss copy held at 1 that becomes ours takes its old owner'
     Tick(sync, 0, {Enemy(0x100, 0x11, 21, 50.0f, kBoss)});
     const proto::ObjectId id = *sync.IdOf(0x100);
     Own(sync, id, 2);
-    // Held at 1 here (HeldLifeStep) while the owner's boss is at 21.
+    // Held at 1 here (HeldLifeStep) while the owner's boss is at 21. Our hits that took it there were SENT
+    // (the second Tick, kDamageSumUs later) and the owner's game refused them: its life 21 is the life to take.
+    // (Still unsent at the hand-over, they would come off the old owner's life instead: H3.)
     Tick(sync, 100 * kMs, {Enemy(0x100, 0x11, 1, 50.0f, kBoss)});
+    const auto sent = Tick(sync, 200 * kMs, {Enemy(0x100, 0x11, 1, 50.0f, kBoss)});
+    const auto hits = All<proto::Damage>(sent);
+    REQUIRE(hits.size() == 1);
+    CHECK(hits[0].amount == 20);
     proto::HandoverState h;
     h.player_number = 2;
     h.id = id;
@@ -5171,7 +5177,7 @@ TEST_CASE("objects: a boss copy held at 1 that becomes ours takes its old owner'
     h.state.life = proto::ObjectLife{21, 21};
     sync.Receive(h);
     Own(sync, id, 1, 1);
-    const auto step = Tick(sync, 200 * kMs, {Enemy(0x100, 0x11, 1, 50.0f, kBoss)});
+    const auto step = Tick(sync, 300 * kMs, {Enemy(0x100, 0x11, 1, 50.0f, kBoss)});
     const auto raise = std::find_if(step.writes.begin(), step.writes.end(),
                                     [](const CoopObjects::LifeWrite& w) { return w.heal; });
     REQUIRE(raise != step.writes.end());
