@@ -645,6 +645,10 @@ TEST_CASE("doors: a small-key lock is a kept breakable, a shop's night lock is n
     CHECK(CoopWorld::SmallKeyFlag("WaterTemple") == 0x877bdceeu);  // DungeonInfo.WaterTemple.SmallKeyNum
     CHECK(CoopWorld::SmallKeyFlag("InsideTheDekuTree") == 0x0914ba07u);
     CHECK(CoopWorld::SmallKeyFlag("KakarikoVillage") == 0u);
+    // A scene with a suffix is its dungeon (rows 106/107: the lock give-back was dead there).
+    CHECK(CoopWorld::SmallKeyFlag("GerudoFortress_Adult") == 0x3a28b6a4u);  // DungeonInfo.GerudoFortress.SmallKeyNum
+    CHECK(CoopWorld::SmallKeyFlag("ForestTemple") == 0x90237092u);
+    CHECK(CoopWorld::SmallKeyFlag("HyruleField_Child") == 0u);
 }
 
 TEST_CASE("doors: our lock opened next to Link goes out as a kept break") {

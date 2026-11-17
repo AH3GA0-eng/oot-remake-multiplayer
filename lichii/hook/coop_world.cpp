@@ -56,18 +56,10 @@ bool IsLock(std::string_view name) {
 }
 
 std::uint32_t SmallKeyFlag(std::string_view scene) {
-    // The dungeons with a DungeonInfo.<name>.SmallKeyNum (coop/host game_items).
-    static constexpr std::array<std::string_view, 14> kKeyScenes{
-        "InsideTheDekuTree", "DodongoCavern", "InsideJabuJabuBelly", "ForestTemple",
-        "FireTemple", "WaterTemple", "ShadowTemple", "SpiritTemple", "BottomOfTheWell",
-        "IceCavern", "GerudoTrainingGround", "InsideGanonCastle", "GerudoFortress",
-        "FinalBattleField"};
-    for (const auto s : kKeyScenes) {
-        if (s == scene) {
-            return coop::protocol::flag_hash("DungeonInfo." + std::string(scene) + ".SmallKeyNum");
-        }
-    }
-    return 0;
+    // One rule with KeyCountOf (rows 106/107): the dungeon is the scene, or the part before its first '_'
+    // (GerudoFortress_Adult), and the dungeons are the item list's DungeonInfo.<name>.SmallKeyNum counts.
+    const std::optional<std::string> count = KeyCountOf(scene);
+    return count ? coop::protocol::flag_hash(*count) : 0;
 }
 
 bool IsBreakable(std::string_view name) {
