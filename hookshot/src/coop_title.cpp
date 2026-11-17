@@ -53,11 +53,13 @@ constexpr std::uint64_t kPaneText = 0x80a87d30;       // (layout, "pane/T_Btn_00
 // manager, whose bytes the title's SeqQueryIsExistSave reads (+0x8e a save, +0x8f a Master Quest save, +0x88 the
 // latest slot), and the body of SeqOneshotRequestLoadAndSerializeCaption, which re-reads every slot's caption from the
 // mounted save folder (the boot's BeforeInitializeCommon and the way back to the title run it).
-constexpr std::uint64_t kCaptionMgrGot = 0x84c81660;  // GOT: -> the global that holds the caption manager
-constexpr std::uint64_t kCaptionBusy = 0x833ad380;   // (mgr) -> bool: the game's own test, still reading
-constexpr std::uint64_t kCaptionReset = 0x80bafd40;   // () -> bool: the game's list reset (registered callback;
+// Addresses as the game runs them, main at 0x80020000 (rtld before it): main+0x4c81660, +0x33ad380, +0xbafd40,
+// +0xf6da40. The body (f_80f8da00) reads kCaptionMgrGot and calls kCaptionReload.
+constexpr std::uint64_t kCaptionMgrGot = 0x84ca1660;  // GOT: -> the global that holds the caption manager
+constexpr std::uint64_t kCaptionBusy = 0x833cd380;   // (mgr) -> bool: the game's own test, still reading
+constexpr std::uint64_t kCaptionReset = 0x80bcfd40;   // () -> bool: the game's list reset (registered callback;
                                                       // to state 0 when idle and no save screen holds it)
-constexpr std::uint64_t kCaptionReload = 0x80f6da40;  // (mgr): the re-read; starts only from state 0
+constexpr std::uint64_t kCaptionReload = 0x80f8da40;  // (mgr): the re-read; starts only from state 0
 constexpr std::uint64_t kCaptionState = 0x8c;         // u8: 0 cleared, 1-3 reading, 4 read
 constexpr std::uint64_t kCaptionLatest = 0x88;        // s32: the latest slot, -1 none
 constexpr std::uint64_t kCaptionAnySave = 0x8e;       // u8: a save exists (Continue)
