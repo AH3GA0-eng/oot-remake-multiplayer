@@ -263,7 +263,7 @@ TEST_CASE("host sampler: status_bits, every away bit (issue 150, away-status)") 
   PlayerReading r = at(1.0f, false);
 
   SUBCASE("play, nothing away") { CHECK(status_bits(0, r, false) == 0); }
-  SUBCASE("no Link: loading; the menus clear, the cutscene and dead keep") {
+  SUBCASE("no Link: loading, the menus clear, the cutscene and dead keep") {
     const std::uint8_t all = st::paused | st::in_menu | st::in_cutscene | st::dead;
     CHECK(status_bits(all, std::nullopt, false) == (st::loading | st::in_cutscene | st::dead));
     CHECK(status_bits(0, std::nullopt, false) == st::loading);
