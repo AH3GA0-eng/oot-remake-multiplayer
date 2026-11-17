@@ -119,7 +119,13 @@ class BymlTest(unittest.TestCase):
 
     def test_rejects_bad_magic(self):
         with self.assertRaises(byml.BymlError):
-            byml.loads(b"BY\x00\x07" + b"\0" * 12)
+            byml.loads(b"XY\x00\x07" + b"\0" * 12)
+
+    def test_reads_big_endian(self):
+        # "BY": big-endian, as GameData/GameDataList (boss_beaten reads it). Root: an array of one int, -2.
+        data = b"BY\x00\x07" + struct.pack(">III", 0, 0, 0x10) + bytes([0xC0, 0, 0, 1, 0xD1, 0, 0, 0])
+        data += struct.pack(">i", -2)
+        self.assertEqual(byml.loads(data), [-2])
 
 
 class SarcTest(unittest.TestCase):

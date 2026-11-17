@@ -4,6 +4,7 @@
 set(_coop_hook "${LICHII_COOP_DIR}/lichii/hook")
 target_sources(core PRIVATE
     "${_coop_hook}/coop_boss.cpp"
+    "${_coop_hook}/coop_boss_beaten.cpp"
     "${_coop_hook}/coop_boss_game.cpp"
     "${_coop_hook}/coop_boss_native.cpp"
     "${_coop_hook}/coop_boss_scenes.cpp"

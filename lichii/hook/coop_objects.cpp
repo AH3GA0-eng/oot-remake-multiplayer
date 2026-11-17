@@ -4268,6 +4268,15 @@ std::optional<bool> LastBossAlive(std::span<const std::string_view> bodies) {
     return BossAliveKept(g_bosses, bodies, g_boss_lives);
 }
 
+bool LastBossReadDead(std::span<const std::string_view> bodies) {
+    std::lock_guard lock(g_bosses_mutex);
+    const std::uint64_t now = CoopEvery::NowUs();
+    if (g_bosses_at == 0 || now < g_bosses_at || now - g_bosses_at > kBossesFreshUs) {
+        return false;
+    }
+    return BossReadDead(g_bosses, bodies, g_boss_lives);
+}
+
 void ForgetBosses() {
     std::lock_guard lock(g_bosses_mutex);
     g_bosses.clear();
