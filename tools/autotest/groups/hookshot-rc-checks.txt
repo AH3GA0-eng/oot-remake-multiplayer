@@ -14,4 +14,4 @@ hs-deku-torch-away  expect='B:our game started the event InsideTheDekuTree_Gimmi
 hs-deku-torch-reload  label="#177 torch flame after a reload (shots: torch lit, no web, in both)"
 deku-block  expect='A:world hooks: first AI node start from hookshot.exe'  expect='B:world hooks: first AI node start from hookshot.exe'  expect='B:push node [0-9a-f]+: its own start \(main\+0x2751790\) asked to run again'  label="#147 push block: B's push after A's (patch 0029)"
 hs-lift-ride  expect='A:coop: lift ride: another player is on our lift'  label="#249 row 65 Jabu lift: a lift another Link rides moves in both"
-hs-jabu-water  expect='B:bool 0xc517f1b5 \(entry \d+\) 0 -> 1'  expect='A:bool 0xc517f1b5 \(entry \d+\) 0 -> 1'  label="#249 Jabu room 14 water: the other player's switch moves the water in both"
+hs-jabu-water  expect='B:bool 0xc517f1b5 \(entry \d+\) 0 -> 1'  expect='A:bool 0xc517f1b5 \(entry \d+\) 0 -> 1'  label="#249 Jabu room 14 water: the other player's under switch raises the water in both"
