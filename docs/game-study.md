@@ -6,6 +6,8 @@ read or print goes into the repository; only names, addresses and notes go into 
 
 All three are plain Python 3.10 or newer, with `zstandard` only for the message archives. Run them with `python -I`.
 
+What they found about the game's UI is in [game-ui.md](game-ui.md); the names go in `tools/game_scan/game_names.tsv`.
+
 ## The game's main
 
 The tools read main as an NSO, plain or compressed. A Longshot game folder holds a plain one:
