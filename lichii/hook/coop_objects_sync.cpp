@@ -3127,6 +3127,34 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
     }
 }
 
+bool Sync::TestStun(std::string_view name, const std::optional<proto::Vec3>& near, std::uint8_t self) {
+    Object* best = nullptr;
+    float best_d2 = 0.0f;
+    for (auto& [address, o] : objects_) {
+        const auto own = owners_.find(o.id);
+        if (o.name != name || !IsBoss(o.name) || own == owners_.end() || own->second.player == 0 ||
+            own->second.player == self) {
+            continue;
+        }
+        float d2 = 0.0f;
+        if (near) {
+            for (std::size_t i = 0; i < 3; ++i) {
+                const float d = o.position[i] - (*near)[i];
+                d2 += d * d;
+            }
+        }
+        if (best == nullptr || d2 < best_d2) {
+            best = &o;
+            best_d2 = d2;
+        }
+    }
+    if (best == nullptr) {
+        return false;
+    }
+    best->stun_due = true;
+    return true;
+}
+
 void Sync::DeadByWrite(Object& o, std::uint16_t epoch, std::uint64_t now_us,
                        std::vector<proto::Message>& send, const char* why) {
     if (!o.reacts || o.dead_at != 0 || o.dead_said) {

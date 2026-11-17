@@ -565,6 +565,10 @@ public:
 
     // Hurt through the game's damage field (LifeWrite::hurt); off: write life.
     void SetHurt(bool on) { hurt_ = on; }
+    // Test only (coop_testinput's "stun NAME"): our copy of the boss of that name nearest `near` (another
+    // player owns it) tells its owner at the next Tick it is stunned here, as our game's own stun does (a
+    // DAMAGE of 0, issue 150's hand-over). False: no such copy (none, or ours).
+    bool TestStun(std::string_view name, const std::optional<coop::protocol::Vec3>& near, std::uint8_t self);
 
     // Hookshot with patch 0007 (coop_actor_events.h): the game's own Life
     // step says every hit it deals, so a hit of this game's on a copy is

@@ -359,8 +359,12 @@ bool& ForgetKeptFlag() {  // a host save load: WorldSync::ForgetKept before the 
     static bool f = false;
     return f;
 }
-std::vector<std::string>& TestKillQueue() {  // the test script's kill steps (QueueTestKill)
-    static std::vector<std::string> q;
+struct TestStrike {
+    std::string name;
+    std::int32_t amount = 0;  // 0: a kill (its whole life); -1: a stun (TestStun)
+};
+std::vector<TestStrike>& TestKillQueue() {  // the test script's kill, hit and stun steps (QueueTestKill)
+    static std::vector<TestStrike> q;
     return q;
 }
 
@@ -1620,7 +1624,7 @@ public:
                 send.emplace_back(std::move(m));
             }
             writes.insert(writes.end(), world.lives.begin(), world.lives.end());
-            TestKills(seen, writes);
+            TestKills(seen, writes, self);
             if (!world.key_lends.empty() || !world.lend_returns.empty()) {
                 std::lock_guard lock(KeyRefundMutex());
                 auto& lends = KeyLendQueue();
@@ -3377,13 +3381,19 @@ private:
         }
     }
 
-    void TestKills(const std::vector<Seen>& seen, std::vector<LifeWrite>& writes) {
-        std::vector<std::string> names;
+    void TestKills(const std::vector<Seen>& seen, std::vector<LifeWrite>& writes, std::uint8_t self) {
+        std::vector<TestStrike> strikes;
         {
             std::lock_guard lock(KeyRefundMutex());
-            names.swap(TestKillQueue());
+            strikes.swap(TestKillQueue());
         }
-        for (const std::string& name : names) {
+        for (const TestStrike& strike : strikes) {
+            const std::string& name = strike.name;
+            if (strike.amount < 0) {
+                LOG_INFO(Core, "coop: test stun {}: {}", name,
+                         sync_.TestStun(name, player_, self) ? "said" : "not a copy (none here, or ours)");
+                continue;
+            }
             const Seen* best = nullptr;
             float best_m = 0.0f;
             for (const Seen& s : seen) {
@@ -3403,7 +3413,20 @@ private:
                 }
             }
             if (!best) {
-                LOG_INFO(Core, "coop: test kill {}: none here with a life", name);
+                LOG_INFO(Core, "coop: test {} {}: none here with a life", strike.amount > 0 ? "hit" : "kill", name);
+                continue;
+            }
+            if (strike.amount > 0) {
+                // A partial hit: through the game's own Life step, never past its stops (no test_kill).
+                LifeWrite w;
+                w.address = best->address;
+                w.hurt = std::min(strike.amount, best->life->life);
+                w.life = best->life->life - w.hurt;
+                w.from = player_;
+                w.direct = true;
+                writes.push_back(w);
+                LOG_INFO(Core, "coop: test hit {} {} {:#x} ({:.1f} m, life {}): hit", name, w.hurt, best->address,
+                         best_m, best->life->life);
                 continue;
             }
             LifeWrite w;
@@ -4335,7 +4358,21 @@ void OwnCountDrops(const std::vector<std::uint32_t>& key_flags) {
 void QueueTestKill(std::string name) {
     std::lock_guard lock(KeyRefundMutex());
     if (TestKillQueue().size() < 16) {
-        TestKillQueue().push_back(std::move(name));
+        TestKillQueue().push_back({std::move(name), 0});
+    }
+}
+
+void QueueTestHit(std::string name, std::int32_t amount) {
+    std::lock_guard lock(KeyRefundMutex());
+    if (TestKillQueue().size() < 16 && amount > 0) {
+        TestKillQueue().push_back({std::move(name), amount});
+    }
+}
+
+void QueueTestStun(std::string name) {
+    std::lock_guard lock(KeyRefundMutex());
+    if (TestKillQueue().size() < 16) {
+        TestKillQueue().push_back({std::move(name), -1});
     }
 }
 

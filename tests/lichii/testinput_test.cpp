@@ -449,6 +449,38 @@ TEST_CASE("testinput: kill hands the hook an actor name as written, then the scr
     CHECK(r.Done());
 }
 
+TEST_CASE("testinput: hit and stun hand the hook an actor name (and an amount), then the script goes on") {
+    std::string error;
+    CHECK_FALSE(Parse("hit Enemy_DungeonBoss_Gohma
+", error));
+    CHECK_FALSE(Parse("hit Enemy_DungeonBoss_Gohma 0
+", error));
+    CHECK_FALSE(Parse("hit Enemy_DungeonBoss_Gohma 81
+", error));
+    CHECK_FALSE(Parse("hit Enemy_DungeonBoss_Gohma 2x
+", error));
+    CHECK_FALSE(Parse("stun
+", error));
+    CHECK_FALSE(Parse("stun Enemy_DungeonBoss_Gohma now
+", error));
+    Runner r(Must("hit Enemy_DungeonBoss_Gohma 2
+stun Enemy_DungeonBoss_Gohma
+mark struck
+"));
+    std::vector<std::string> log;
+    r.Advance(0.0, std::nullopt, log);
+    const auto requests = r.TakeRequests();
+    REQUIRE(requests.size() == 2);
+    CHECK(requests[0].kind == Kind::hit);
+    CHECK(requests[0].name == "Enemy_DungeonBoss_Gohma");
+    CHECK(requests[0].start == "2");
+    CHECK(requests[1].kind == Kind::stun);
+    CHECK(requests[1].name == "Enemy_DungeonBoss_Gohma");
+    REQUIRE(log.size() == 1);
+    CHECK(log[0] == "mark struck");
+    CHECK(r.Done());
+}
+
 TEST_CASE("testinput: setflag hands the hook a flag name and a whole number (issue 130)") {
     std::string error;
     CHECK_FALSE(Parse("setflag\n", error));

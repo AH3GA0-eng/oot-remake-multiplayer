@@ -5510,3 +5510,41 @@ TEST_CASE("objects: a copy boss whose death has begun gets its owner's refused k
         CHECK(copy.BossHitsStepped() == 0);  // (not boss-hits' own-boss rule)
     }
 }
+
+TEST_CASE("objects: Ganondorf and Volvagia are single bosses; Volvagia's other actors are each game's own") {
+    // From the game's Pack/Actor (fable-g2-bosses): Ganondorf has no part actors; Volvagia's appear sign, breath,
+    // breath field and cutscene actor are not enemies, so never shared and never owned.
+    using CoopObjects::IsBoss;
+    using CoopObjects::IsShared;
+    using CoopObjects::PartOf;
+    for (const char* boss : {"Enemy_DungeonBoss_Ganondorf", "Enemy_DungeonBoss_Volvagia"}) {
+        CHECK(IsBoss(boss));
+        CHECK(IsShared(boss));
+        CHECK(PartOf(boss) == nullptr);
+    }
+    CHECK_FALSE(IsBoss("Enemy_DungeonBoss_Ganondorf_Dictionary"));
+    for (const char* own : {"Dm_Enemy_DungeonBoss_Volvagia", "DungeonBossVolvagia_Appear_Sign",
+                            "DungeonBossVolvagia_FireBreath", "DungeonBossVolvagia_FireBreathField"}) {
+        CHECK_FALSE(IsShared(own));
+        CHECK(PartOf(own) == nullptr);
+    }
+}
+
+TEST_CASE("objects: the test stun makes our boss copy say a stun to its owner, never for our own boss") {
+    const std::string kBoss = "Enemy_DungeonBoss_Gohma";
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 21, 0.0f, kBoss)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    CHECK_FALSE(sync.TestStun(kBoss, std::nullopt, 1));  // no owner known yet
+    Own(sync, id, 1);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 21, 0.0f, kBoss)});
+    CHECK_FALSE(sync.TestStun(kBoss, std::nullopt, 1));  // ours
+    Own(sync, id, 2, 1);
+    Tick(sync, 20 * kMs, {Enemy(0x100, 0x11, 21, 0.0f, kBoss)});
+    CHECK_FALSE(sync.TestStun("Enemy_DungeonBoss_Barinade", std::nullopt, 1));
+    REQUIRE(sync.TestStun(kBoss, proto::Vec3{1.0f, 0.0f, 0.0f}, 1));
+    const auto damage = All<proto::Damage>(Tick(sync, 30 * kMs, {Enemy(0x100, 0x11, 21, 0.0f, kBoss)}));
+    REQUIRE(damage.size() == 1);
+    CHECK(damage[0].amount == 0);
+    CHECK(damage[0].epoch == 1);
+}
