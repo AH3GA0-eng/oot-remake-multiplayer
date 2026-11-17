@@ -1412,6 +1412,7 @@ public:
             CoopDifficulty::TheKinds().Clear();  // difficulty: the kinds of the scene before
             life_given_.clear();
             step_hits_.clear();
+            boss_hit_ids_.clear();  // (actors of the scene before; an address reused here starts fresh)
             TheMover().ForgetReplayed();  // its Life components may sit where the old ones were
         }
         ActorEvents(server_now_us);
@@ -3080,6 +3081,7 @@ private:
                 s.animation = PlaysByFrame(s.name)
                                   ? AnimationAt(r, a, 0, false, CoopNpcAnim::kSlotPlayFrame)
                                   : Animation(r, a);
+                const std::optional<u64> own_hit_life = NewHits(r, a, s);
                 if (IsBoss(s.name)) {
                     s.slots = OtherSlots(r, a);  // issue 150
                     // Native boss sync (coop_boss_native.h): its BSA
@@ -3088,7 +3090,9 @@ private:
                         s.bsa_component = r.Ptr(*table + CoopBossNative::addr::kComponentBsa).value_or(0);
                     }
                     s.bsa = CoopBossNative::TheTable().OwnerState(a);
-                    s.hit_at = NewOwnHitAt(r, a, s.position);
+                    if (own_hit_life) {
+                        s.hit_at = NewOwnHitAt(r, a, *own_hit_life, s.position);
+                    }
                 }
                 if (const auto value = LifeValue(r, a)) {
                     const auto life = r.Get<s32>(value->first + 8);
@@ -3236,8 +3240,11 @@ private:
     // game (DAMAGE's hit_at); the owner's game builds the rest of the hit itself (boss-intro).
     static constexpr float kHitNearBoss = 12.0f;
     static constexpr u64 kHitPlace = 0x27c;
-    std::unordered_map<u64, u32> boss_hit_ids_;  // actor: the last hit id seen
-    std::optional<coop::protocol::Vec3> NewOwnHitAt(Reader& r, u64 a, const coop::protocol::Vec3& boss) {
+    std::unordered_map<u64, u32> boss_hit_ids_;  // actor: the last hit id seen (every actor with a Life component)
+    // Whose hits reached this actor since the last walk (Seen::own_hit, Seen::replay_hit): its Life component's last
+    // hit id moved (hit ids only grow); to one we did not replay is our game's own hit. Returns its Life component
+    // when our game's own hit came (for a boss's hit place).
+    std::optional<u64> NewHits(Reader& r, u64 a, Seen& s) {
         const auto table = r.Ptr(a + kActorComponents);
         const auto life = table ? r.Ptr(*table + kComponentLife) : std::nullopt;
         const auto id = life ? r.Get<u32>(*life + kLastHitId) : std::nullopt;
@@ -3248,13 +3255,20 @@ private:
         if (fresh || it->second == *id) {
             return std::nullopt;
         }
-        it->second = *id;
-        if (*id == TheMover().ReplayedId(*life)) {
+        const u32 before = std::exchange(it->second, *id);
+        const u32 ours = TheMover().ReplayedId(*life);
+        // (our replay inside the move: before < ours <= now, in the ids' own wrap-around order)
+        s.replay_hit = ours != 0xffffffffu && static_cast<s32>(ours - before) > 0 && static_cast<s32>(*id - ours) >= 0;
+        if (*id == ours) {
             return std::nullopt;  // our replay of the owner's hit, not one of our game's
         }
+        s.own_hit = true;
+        return *life;
+    }
+    std::optional<coop::protocol::Vec3> NewOwnHitAt(Reader& r, u64 a, u64 life, const coop::protocol::Vec3& boss) {
         // Our game's own hit: a copy boss runs its own reaction (the stun; boss-fix).
         CoopBossNative::TheTable().NoteOwnHit(a);
-        const auto at = r.Get<std::array<float, 3>>(*life + kHitPlace);
+        const auto at = r.Get<std::array<float, 3>>(life + kHitPlace);
         if (!at) {
             return std::nullopt;
         }
@@ -3521,6 +3535,8 @@ private:
                 w.from = player_;
                 w.direct = true;
                 writes.push_back(w);
+                // (given straight to the Life step, no hit id moves: its fall is marked as our game's own hit)
+                sync_.TestOwnHit(best->address, share_now_us_);
                 LOG_INFO(Core, "coop: test hit {} {} {:#x} ({:.1f} m, life {}): hit", name, w.hurt, best->address,
                          best_m, best->life->life);
                 continue;
@@ -4115,10 +4131,11 @@ private:
                          "coop: objects: share placed {} copies; off from where we put them "
                          "avg {:.3f} max {:.3f} over {}; game calls: {} moves, {} deletes, {} "
                          "plays, {} frame sets; hurts taken {} missed {} (boss hits to its Life step {}, dying copies "
-                         "finished {})",
+                         "finished {}); own hits kept while a replay waited {}",
                          placed_.size(), drift_count_ ? drift_sum_ / drift_count_ : 0.0f,
                          drift_max_, drift_count_, moved, deleted, played, framed, sync_.HurtsTaken(),
-                         sync_.HurtsMissed(), sync_.BossHitsStepped(), sync_.DyingFinished());
+                         sync_.HurtsMissed(), sync_.BossHitsStepped(), sync_.DyingFinished(),
+                         sync_.OwnHitsKept());
             }
             // Issue 101: which copy was furthest from where we put it, so
             // one run tells a copy the setter does not hold (a flying or

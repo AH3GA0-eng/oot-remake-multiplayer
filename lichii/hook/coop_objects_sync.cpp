@@ -1731,8 +1731,38 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                     // hit too), so it is not written back up over it.
                     o.hurt_target = std::max(0, o.hurt_target - *stepped);
                 }
+                // Our game's own hit since the last walk (its Life component's last hit id moved to one we did
+                // not replay; or the test's stand-in for it): a fall then is ours, not a replay landing late. A boss
+                // copy's game refuses the owner's replayed hit (Gohma) and the next sample asks for it again, so
+                // its replay waits all fight long: every hit of ours fell into the branches below and was never
+                // sent (probe boss-handover 20261117-114108: 2 of A's 3 hits on Gohma's copy lost). Enemies (and
+                // mid-bosses) lost a hit the same way inside kHurtWaitUs and kHurtLateUs.
+                const bool own_hit = s.own_hit || (o.test_own_hit_until != 0 && now_us < o.test_own_hit_until);
+                if (drop > 0 && own_hit && (o.hurt_left > 0 || (o.late_left > 0 && now_us < o.late_until))) {
+                    // Our replay landing in the same walk (its id reached too, not refused) takes its part first.
+                    std::int32_t replay = 0;
+                    if (s.replay_hit && o.hurt_left > 0) {
+                        replay = std::min(drop, o.hurt_left);
+                        o.hurt_left -= replay;
+                        if (o.hurt_left == 0) {
+                            o.hurt_until = std::min(o.hurt_until, now_us);  // checked below
+                        }
+                    }
+                    drop -= replay;
+                    if (o.hurt_until != 0) {
+                        // The owner takes our hit too: the life to reach is that much lower (as with a stepped
+                        // hit above), so neither the replay's wait nor its end writes it back up over our hit.
+                        o.hurt_target = std::max(0, o.hurt_target - drop);
+                    }
+                    o.test_own_hit_until = 0;
+                    ++own_hits_kept_;
+                    notes_.emplace_back("our own hit while a replay waited: " + std::to_string(drop) +
+                                        " counted as ours (not the replay): " + o.name);
+                }
                 if (drop == 0) {
                     // (all of it the game's own hits)
+                } else if (own_hit) {
+                    // (counted above: falls through to the hit below)
                 } else if (o.hurt_left > 0) {
                     // Our own hurt landing (or the game taking more for it):
                     // not a hit of ours.
@@ -3124,6 +3154,13 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 }
             }
         }
+    }
+}
+
+void Sync::TestOwnHit(std::uint64_t address, std::uint64_t now_us) {
+    const auto it = objects_.find(address);
+    if (it != objects_.end()) {
+        it->second.test_own_hit_until = now_us + kTestOwnHitUs;
     }
 }
 
