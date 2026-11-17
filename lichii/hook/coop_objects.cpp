@@ -1326,6 +1326,7 @@ public:
             if (sharing_) {
                 sync_.Reset();
                 world_.Reset();
+                ForgetGold();  // issue 89: the next save's keys are read afresh
                 block_retry_.clear();
                 ForgetBosses();  // (not connected, or no scene: the title)
                 sharing_ = false;
@@ -1531,7 +1532,10 @@ public:
                              hex);
                 }
             }
-            gold_baseline_tokens_ = (std::max)(now_tokens, gold_baseline_tokens_);
+            // The last count, not the highest (review of #257): after a
+            // give-back (40 -> 41 -> 40) a next real take to 41 is a rise
+            // again; keeping the highest would miss it.
+            gold_baseline_tokens_ = now_tokens;
         }
         if (const unsigned twice = sync_.ChestsOpenedTwice(); twice != chests_twice_seen_) {
             // Issue 195: a chest shown open that our Link opened again; the
@@ -2209,6 +2213,7 @@ private:
             TheMover().ForgetReplayed();
             sync_.Reset();
             world_.Reset();
+            ForgetGold();  // issue 89: a new game process, its own keys
             block_retry_.clear();
             ForgetBosses();
             boss_hit_ids_.clear();
@@ -3892,6 +3897,17 @@ private:
     std::string gold_baseline_scene_;
     std::int32_t gold_baseline_tokens_ = 0;
     CoopEvery::Every gold_sweep_{CoopEvery::kHalfSecondUs};  // the token count, twice a second
+    // A new session, the title, or a new game run: what the last save's keys said
+    // is forgotten, so the next save's own keys are read (review of #257: a
+    // player who reconnects and loads another save must not have that save's
+    // untaken Gold Skulltulas deleted). Same thread as Share.
+    void ForgetGold() {
+        keys_scene_.clear();
+        gold_taken_.clear();
+        gold_baseline_scene_.clear();
+        gold_baseline_tokens_ = 0;
+        gold_sweep_.Reset();
+    }
     Sync sync_;
     Kernel::KProcess* process_ = nullptr;
     u64 main_ = 0;

@@ -2338,6 +2338,50 @@ TEST_CASE("world: a key that goes 1 with no break at all still takes the Skulltu
     CHECK_FALSE(Removed(w, 0x400));
 }
 
+TEST_CASE("world: a new session forgets what the last save took (review of #257)") {
+    // A player reconnects and loads a different save: the taken sets of the
+    // session before must not delete the Gold Skulltulas that save never took
+    // (Reset skips them otherwise).
+    WorldSync w;
+    GraveWalk(w, 1000 * kMs, {Thing(0x100, kGoldHash, 1, kGold, kGoldAt)});
+    GraveWalk(w, 1100 * kMs, {Token(0x200)});
+    w.TakenKey(kGoldHash);
+    GraveWalk(w, 1200 * kMs, {});
+    CHECK(w.IsSkulltulaTaken(kGoldHash));
+    CHECK(w.IsTokenTaken(CoopWorld::TokenId(kGoldHash)));
+
+    w.Reset();  // the session ended (or a new save was loaded)
+    CHECK_FALSE(w.IsSkulltulaTaken(kGoldHash));
+    CHECK_FALSE(w.IsTokenTaken(CoopWorld::TokenId(kGoldHash)));
+
+    // The next session's save never took it: it is made and stays.
+    GraveWalk(w, 2000 * kMs, {Thing(0x300, kGoldHash, 1, kGold, kGoldAt), Token(0x400)});
+    for (std::uint64_t t = 2100; t <= 5000; t += 100) {
+        const auto out = GraveWalk(w, t * kMs,
+                                   {Thing(0x300, kGoldHash, 1, kGold, kGoldAt), Token(0x400)});
+        CHECK(Sent<proto::WorldBreak>(out).empty());
+        CHECK_FALSE(Removed(w, 0x300));
+    }
+}
+
+TEST_CASE("world: a lying small key the group has taken is never 'back' either (review of #257)") {
+    // Lying small keys have no 64-bit flag, so a reloaded room makes them again
+    // in a game whose flag the take never set; "it came back, so the break was
+    // a lie" would undo the take for everyone and it could be taken twice.
+    const char* lying = "Obj_Dungeon_SmallKey_A_01";
+    WorldSync w;
+    Walk(w, 1000 * kMs, {Thing(0x100, 0x11, std::nullopt, lying)});
+    Walk(w, 1100 * kMs, {});                      // gone next to Link: a break
+    for (std::uint64_t t = 1200; t <= 4000; t += 100) {
+        Walk(w, t * kMs, {});
+    }
+    // The room reloads and the game makes the key again.
+    for (std::uint64_t t = 5000; t <= 9000; t += 500) {
+        const auto out = Walk(w, t * kMs, {Thing(0x300, 0x11, std::nullopt, lying)});
+        CHECK(Sent<proto::WorldBreak>(out).empty());   // never "restored"
+    }
+}
+
 TEST_CASE("world: a token the group has taken is never 'back' (issue 89, the Zora River double)") {
     // Player test, 2026-11-17: ZoraRiver_Adult's Gold Skulltula was killed and
     // its token taken (44). Out and back in, the game made the Skulltula again

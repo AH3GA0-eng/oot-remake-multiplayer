@@ -406,6 +406,13 @@ void WorldSync::Reset() {
     skulltulas_seen_us_.clear();
     skulltulas_dead_.clear();
     token_spots_.clear();
+    // What TakenKey remembered belongs to the session that took it (review of
+    // #257): a player who reconnects and loads a different save would otherwise
+    // have the Gold Skulltulas that save never took deleted for him. The
+    // sets are filled again from the keys of whatever save is loaded.
+    taken_token_ids_.clear();
+    taken_skulltulas_.clear();
+    taken_places_.clear();
     early_.clear();
     anchors_.clear();
     anchor_holds_.clear();
@@ -1381,8 +1388,14 @@ void WorldSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t 
                 objects_.emplace(s.address, std::move(o));
                 continue;
             }
+            // A lying small key has the same fault as a token (review of #257):
+            // no 64-bit flag, so a room reloaded in a game whose flag the other
+            // player's take never set makes it again, and "it came back, so the
+            // break was a lie" would undo the take for everyone — and it can be
+            // taken a second time. Its break is what removes it, so it is never
+            // called back. Pots and grass keep coming back as before.
             if (const auto b = broken_.find(s.hash);
-                !o.kept && b != broken_.end() &&
+                !o.kept && !o.key && b != broken_.end() &&
                 b->second.seen_go && now_us - b->second.gone_us >= kRespawnUs &&
                 (!life || *life > 0)) {
                 // We saw it go and here it is again: the game put it back.
