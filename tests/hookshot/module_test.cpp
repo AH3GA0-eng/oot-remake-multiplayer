@@ -912,6 +912,42 @@ TEST_CASE("hookshot: patch 0018's screens' tracker and menu state build on Linux
     CHECK(patch.find("+    assert(pause_focus == 0x84000100);") != std::string::npos);
 }
 
+TEST_CASE("hookshot: our patches call game functions as main + offset, never a bare 0x8 address (patch 0018's HUD refresh)") {
+    // Patch 0018 called the HUD refresh at 0x833e4200: main's offset 0x33e4200 put on 0x80000000 (rtld's base), not on
+    // main's 0x80020000. That is the middle of f_833e4190, so a64_lookup found nothing, guest_call gave 0 and the
+    // refresh (rows 63/76) never ran while hud_refreshes still counted. No line a patch adds calls guest_call or
+    // a64_lookup with a bare 0x8... literal: a function is named by a constant written as main + offset.
+    const std::string bridge = Patch();
+    REQUIRE(bridge.find("+    api.main_base = 0x80020000ULL;") != std::string::npos);   // (the main the offsets are on)
+    std::size_t patches = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(kRepo / "hookshot" / "patches")) {
+        if (entry.path().extension() != ".patch") continue;
+        ++patches;
+        std::istringstream lines(ReadFile(entry.path()));
+        for (std::string line; std::getline(lines, line);) {
+            if (line.rfind("+", 0) != 0 || line.rfind("+++", 0) == 0) continue;
+            for (const char* call : {"guest_call(", "a64_lookup("}) {
+                const auto at = line.find(call);
+                if (at == std::string::npos) continue;
+                INFO(entry.path().filename().string() << ": " << line);
+                CHECK(line.find("0x8", at) == std::string::npos);
+            }
+        }
+    }
+    CHECK(patches > 20);
+    // The HUD refresh: main + 0x33e4200 (f_83404200), looked up first; counted only when it ran, else one log line.
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0018-coop-map-state.patch");
+    CHECK(patch.find("+#define HUD_REFRESH_FN (0x80020000ULL + 0x33e4200ULL)\n") != std::string::npos);
+    CHECK(patch.find("833e4200ULL") == std::string::npos);
+    CHECK(patch.find("+        if (a64_lookup(HUD_REFRESH_FN)) {\n"
+                     "+            guest_call(c, HUD_REFRESH_FN, screen, 0, NULL, NULL);\n"
+                     "+            InterlockedIncrement(&hud_refreshes);\n"
+                     "+        } else if (!InterlockedExchange(&hud_refresh_gone, 1)) {\n") != std::string::npos);
+    // patch 0028's Button::Decide is written the same way
+    const std::string skip = ReadFile(kRepo / "hookshot" / "patches" / "0028-coop-skip-title-native.patch");
+    CHECK(skip.find("+static const uint64_t kButtonDecide = 0x80020000ULL + 0x3771db0ULL;") != std::string::npos);
+}
+
 TEST_CASE("hookshot: co-op's log lines stay out of Longshot's crash report (patch 0027), its header hookshot/src's") {
     const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0027-coop-crash-report.patch");
     CHECK(NewFile(patch, "host/hos_coop_crash.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_crash.h"));
