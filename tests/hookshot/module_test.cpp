@@ -195,6 +195,18 @@ TEST_CASE("hookshot: Link puppets follow the puppet guard in longshot.exe") {
     CHECK_FALSE(CoopHookshot::AllowLinkPuppets("0", true));
 }
 
+TEST_CASE("hookshot: no Link puppet where the null page could not be armed (player report 131)") {
+    // Armed (or Linux): made. Not armed: refused, every held piece and the puppet's own update read through null.
+    CHECK_FALSE(CoopHookshot::RefuseUnarmed("CoopPuppet_Child_Green", true, ""));
+    CHECK(CoopHookshot::RefuseUnarmed("CoopPuppet_Child_Green", false, ""));
+    CHECK(CoopHookshot::RefuseUnarmed("CoopPuppet_ChildQuiet_Red", false, "1"));
+    // HOS_COOP_NULL_READS=0 asks for the faults (a test): still made.
+    CHECK_FALSE(CoopHookshot::RefuseUnarmed("CoopPuppet_Adult", false, "0"));
+    // Not a Link puppet (the fairy, gear): never refused here.
+    CHECK_FALSE(CoopHookshot::RefuseUnarmed("Dm_Npc_Navi", false, ""));
+    CHECK_FALSE(CoopHookshot::RefuseUnarmed("Weapon_Range_SlingShot", false, ""));
+}
+
 TEST_CASE("hookshot: the module's null page covers the guest's first MB only (issue 150)") {
     using CoopNullPage::GuestOffset;
     CHECK(GuestOffset(0x1000000007d8ULL) == std::optional<std::uint64_t>(0x7d8));  // the perception crash's read
@@ -216,7 +228,7 @@ TEST_CASE("hookshot: perceived puppets only where null reads can give 0 (issue 1
 
 TEST_CASE("hookshot: the null page is armed before the first puppet create reaches the game (issue 150)") {
     const std::string src = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
-    const auto arm = src.find("ArmNullPage(actor);");
+    const auto arm = src.find("return !ArmNullPage(actor);");
     const auto call = src.find("g_api->call(ctx, &k, &x0)");
     REQUIRE(arm != std::string::npos);
     REQUIRE(call != std::string::npos);
