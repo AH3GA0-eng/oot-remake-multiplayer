@@ -92,9 +92,10 @@ jobs:
           if [ -z "$base" ] || ! files=$(git diff --name-only "$base" HEAD); then
             echo "no base found: the emulator compiles run"; echo "emulator=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          emu=$(printf '%s\n' "$files" | grep -E '^lichii/' |
-            grep -vE '^lichii/hook/' ; printf '%s\n' "$files" |
-            grep -E '^lichii/hook/(coop_svc|coop_window|coop_cheats_window|.*CMakeLists\.txt$|.*\.cmake$)')
+          # The runner adds -e to `shell: bash`, and grep exits 1 on no match: each grep pipeline ends in `|| true`.
+          emu=$( { printf '%s\n' "$files" | grep -E '^lichii/' | grep -vE '^lichii/hook/' || true; }
+            { printf '%s\n' "$files" |
+              grep -E '^lichii/hook/(coop_svc|coop_window|coop_cheats_window|.*CMakeLists\.txt$|.*\.cmake$)' || true; } )
           echo "base $base; emulator-only files changed:"; printf '%s\n' "$emu" | sed '/^$/d'
           if [ -n "$(printf '%s' "$emu" | tr -d '[:space:]')" ]; then
             echo "emulator=true" >> "$GITHUB_OUTPUT"
@@ -521,8 +522,10 @@ jobs:
     # is the only compile of the emulator-only hook file (coop_svc.cpp) against the emulator's
     # own headers. The full part (AppImage) is in the matrix only where it runs (the gate step
     # below still checks), so other pushes do not hold a runner just to skip it.
+    # !cancelled(): a failed `changes` must never skip these on the full tier (it did on integrate-0114
+    # f5b92d2c); on a branch a failed `changes` runs them, as its own 'no base found' does.
     needs: changes
-    if: (github.event_name != 'pull_request' || github.base_ref == 'main' || github.event.pull_request.head.repo.full_name != github.repository) && ((github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-') || startsWith(github.ref, 'refs/tags/')))) || needs.changes.outputs.emulator == 'true' || github.ref == 'refs/heads/linux-build' || github.ref == 'refs/heads/linux-2')
+    if: "!cancelled() && ((github.event_name != 'pull_request' || github.base_ref == 'main' || github.event.pull_request.head.repo.full_name != github.repository) && ((github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-') || startsWith(github.ref, 'refs/tags/')))) || needs.changes.outputs.emulator == 'true' || needs.changes.result == 'failure' || github.ref == 'refs/heads/linux-build' || github.ref == 'refs/heads/linux-2'))"
     runs-on: ubuntu-24.04
     name: linux-emulator (${{ matrix.part }})
     timeout-minutes: 300
@@ -647,8 +650,10 @@ jobs:
   # compiled. Nothing is linked or packaged. Always GitHub's runner, never the owner's PC.
   windows-emulator:
     # Full tier, and a branch push that changes an emulator-only file (`changes`).
+    # !cancelled(): a failed `changes` must never skip these on the full tier (it did on integrate-0114
+    # f5b92d2c); on a branch a failed `changes` runs them, as its own 'no base found' does.
     needs: changes
-    if: (github.event_name != 'pull_request' || github.base_ref == 'main' || github.event.pull_request.head.repo.full_name != github.repository) && ((github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-') || startsWith(github.ref, 'refs/tags/')))) || needs.changes.outputs.emulator == 'true')
+    if: "!cancelled() && ((github.event_name != 'pull_request' || github.base_ref == 'main' || github.event.pull_request.head.repo.full_name != github.repository) && ((github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integrate-') || startsWith(github.ref, 'refs/tags/')))) || needs.changes.outputs.emulator == 'true' || needs.changes.result == 'failure'))"
     runs-on: windows-2022
     name: windows-emulator (hook)
     timeout-minutes: 120
