@@ -537,6 +537,15 @@ void Table::NoteOwnWake(std::uint64_t actor) {
     e->react_until = std::max(e->react_until, steps_ + kWakeSteps);
 }
 
+bool Table::WakesOwnBrain(std::uint64_t actor) const {
+    std::lock_guard lock(mutex_);
+    if (!brain_on_) {
+        return false;
+    }
+    const Entry* e = FindActor(actor);
+    return e != nullptr && e->plain && e->role == Role::copy && e->wanted.has_value();
+}
+
 std::vector<std::uint64_t> Table::TakeOwnWants() {
     std::lock_guard lock(mutex_);
     return std::exchange(wants_, {});

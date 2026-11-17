@@ -4052,8 +4052,12 @@ private:
         if (const auto ours = sync_.TakeOursNow(); release_ && !ours.empty()) {
             TheMover().Release(ours);
         }
+        // Report 109: a copy's own wake. On the enemies' brain path its own brain runs it (NoteOwnWake); the
+        // pose-era give-back of the wake's animation is for the other copies only (one maker, rows 109/111).
         for (auto& [a, name] : sync_.TakeOwnWakes()) {
-            TheMover().GiveBack(a, std::move(name));  // report 109
+            if (!CoopBossNative::TheTable().WakesOwnBrain(a)) {
+                TheMover().GiveBack(a, std::move(name));
+            }
         }
         for (const u64 a : sync_.TakeOwnWakeStarts()) {
             CoopBossNative::TheTable().NoteOwnWake(a);  // (a plain copy on the brain path; else nothing)

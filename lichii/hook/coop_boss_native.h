@@ -186,6 +186,10 @@ public:
     // owner's rests): its own brain runs for kWakeSteps, the change it asked a moment ago is made late (its
     // rise), then the owner's state again (by then the wake has handed it to us, or the owner's enemy acts).
     void NoteOwnWake(std::uint64_t actor);
+    // Whether NoteOwnWake runs this actor's wake: a plain enemy copy whose own brain is skipped (the owner's
+    // verbs came). Its wake is then its own brain's alone; the Mover's pose-era give-back of the wake's
+    // animation (Sync::TakeOwnWakes) is for the other copies only, or the rise is played twice (rows 109/111).
+    bool WakesOwnBrain(std::uint64_t actor) const;
     // The plain enemy copies whose own brain asked for another brain verb than their owner's since the last
     // call (skipped at the wrap): their own AI wants to act here. At most kMaxWants kept.
     std::vector<std::uint64_t> TakeOwnWants();
