@@ -170,6 +170,10 @@ struct PendingGive {
 // - a fall with no id moved (id read): its id may come next read, so it is held one read (`Follow` returns true:
 //   nothing is booked or written that read); next read it is the landing if our replayed id came, else harm.
 // Id not read (`id_read` false): a fall is the landing, as before.
+// When our replayed id comes with a fall held last read, the held fall and this read's are booked as one change
+// (our replay's part first, the rest harm), never held again. A held fall is applied only to the gives waiting when
+// it was held: the caller takes no new PvP asks on a hold read (review-a38-4: a give pushed then, its expect taken
+// from a life that already had the held fall in it, was lowered by that fall again next read).
 class LinkLifeWatch {
 public:
     // Returns true when this read must not book or write any wait (a fall held for its id).
@@ -184,5 +188,11 @@ private:
     std::int32_t held_ = 0;     // a fall with no id moved, last read
     std::int32_t reached_ = 0;  // our replayed id reached with no fall, last read: its takes
 };
+
+// The life a new PvP hurt `take` expects our Link at: after every hurt still waiting (each one's `expect` already
+// counts the ones before it), so one hurt's landing or written fallback is never booked as another's (two asks of
+// equal take: the first landing booked both, and the second, refused by Link's invincible frames, was lost; with
+// the replay off the first write booked the second unwritten).
+std::int32_t NextExpect(const std::vector<PendingGive>& gives, std::int32_t life, std::int32_t take);
 
 } // namespace CoopPvp

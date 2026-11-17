@@ -282,38 +282,35 @@ bool LinkLifeWatch::Follow(std::vector<PendingGive>& gives, std::int32_t before,
     for (const PendingGive& g : gives) {
         takes += g.replayed ? g.take : 0;
     }
-    // Last read's fall with no id: the landing if our replayed id came now (its step landed between the reads),
-    // else harm with no hit record.
-    bool replay_used = false;
-    if (held_ > 0) {
-        const std::int32_t landing = replay_hit ? std::min(held_, takes) : 0;
-        replay_used = landing > 0;
-        Lower(gives, held_ - landing);
-        held_ = 0;
-    }
+    const std::int32_t held = std::exchange(held_, 0);
     const std::int32_t carried = std::exchange(reached_, 0);
     if (now > before) {
+        // Last read's held fall first (the landing if our replayed id came now, else harm), then the rise.
+        Lower(gives, held - (replay_hit ? std::min(held, takes) : 0));
         for (PendingGive& g : gives) {
             g.expect += now - before;
         }
         return false;
     }
     const std::int32_t fall = before - now;
-    if (fall == 0) {
-        reached_ = replay_hit && !replay_used ? takes : 0;  // its fall may be read next
+    if (replay_hit) {
+        // Our replayed id came now: last read's held fall and this read's fall are one change, our replay's part
+        // first and the rest harm, lowered once. (Was: the held fall took the landing, and this read's fall, with
+        // the replay already used, was held again and lowered next read: the replay's own fall counted as harm.)
+        const std::int32_t moved = held + fall;
+        if (moved == 0) {
+            reached_ = takes;  // its fall may be read next
+            return false;
+        }
+        Lower(gives, moved - std::min(moved, takes));
         return false;
     }
-    if (!id_read) {
-        return false;  // the replay landing (life <= expect books it), as before
+    Lower(gives, held);  // no id came for last read's fall: harm with no hit record
+    if (fall == 0 || !id_read) {
+        return false;  // (id not read: a fall is the landing, life <= expect books it, as before)
     }
-    // Our replay's part first: its id now, or reached last read with no fall then.
-    std::int32_t landing = 0;
-    if (replay_hit && !replay_used) {
-        landing = std::min(fall, takes);
-    } else if (carried > 0) {
-        landing = std::min(fall, carried);
-    }
-    const std::int32_t rest = fall - landing;
+    // Our replayed id reached last read with no fall: this fall is its landing first.
+    const std::int32_t rest = fall - std::min(fall, carried);
     if (own_hit) {
         Lower(gives, rest);  // a monster's hit: its id came with it
         return false;
@@ -323,6 +320,14 @@ bool LinkLifeWatch::Follow(std::vector<PendingGive>& gives, std::int32_t before,
         return true;
     }
     return false;
+}
+
+std::int32_t NextExpect(const std::vector<PendingGive>& gives, std::int32_t life, std::int32_t take) {
+    std::int32_t after = life;
+    for (const PendingGive& g : gives) {
+        after = std::min(after, g.expect);
+    }
+    return std::max<std::int32_t>(0, after - take);
 }
 
 } // namespace CoopPvp

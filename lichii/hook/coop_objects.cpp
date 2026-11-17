@@ -3373,15 +3373,17 @@ private:
         TheLinkLife().store(life);
         const bool hold = pvp_watch_.Follow(pvp_, pvp_life_, life, hits.own_hit, hits.replay_hit, hits.hit_id_read);
         pvp_life_ = life;
+        // A hold read takes no new asks (they wait in PvpAsks for the next read): the held fall is booked next read
+        // against the hurts waiting now only, and `life` here already has it in it (review-a38-4).
         std::vector<PvpAsk> asks;
-        {
+        if (!hold) {
             std::lock_guard lock(PvpMutex());
             asks.swap(PvpAsks());
         }
         for (const PvpAsk& ask : asks) {
             CoopPvp::PendingGive h;
             h.take = ask.take;
-            h.expect = std::max<s32>(0, life - ask.take);
+            h.expect = CoopPvp::NextExpect(pvp_, life, ask.take);
             h.asked_ms = now;
             if (replay_ && pvp_replay_) {
                 Mover::Hit hit;
