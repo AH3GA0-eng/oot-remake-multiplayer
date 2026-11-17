@@ -911,6 +911,70 @@ TEST_CASE("hookshot: a guest that joins with a file loaded asks for the host's s
     const std::string frame = body("void SwitchFrame(coop::net::Client& client) {");
     CHECK(frame.find("choice == save::FolderChoice::coop_later") != std::string::npos);
     CHECK(frame.find("save::rejoined_in_game(g_decided, g_ended, connected, g_in_game)") != std::string::npos);
+    // On the title before the new save is in, a game still on an earlier host's co-op folder goes back to its own
+    // first, through the one switch path (never the older save offered).
+    const std::string pending = body("void PendingFrame() {");
+    const auto first = pending.find("save::old_coop_first(");
+    REQUIRE(first != std::string::npos);
+    CHECK(pending.find("RemountLocked(own)", first) < pending.find("save::clear_coop_slots(g_pending)", first));
+    CHECK(pending.find("g_remount(") == std::string::npos);
+}
+
+TEST_CASE("hookshot: a guest's ask makes the host's game save first, with the call its own event node makes") {
+    // Case 1 of the join's state (player reports 107, 129, 132): the host's file on disk is as old as its last door.
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    const auto body = [&](const char* head) {
+        const auto at = module.find(head);
+        REQUIRE(at != std::string::npos);
+        const auto end = module.find("\n}\n", at);
+        REQUIRE(end != std::string::npos);
+        return module.substr(at, end - at);
+    };
+    // main offsets read from the binary: EventTriggerRequestAutoSave's body (main+0x31f2f50) calls
+    // main+0xba7880(system, 0xc) and then main+0xba7730(mgr, 5, 0); the system from the GOT at main+0x4c7e178.
+    CHECK(module.find("constexpr std::uint64_t kGameSystemGot = 0x4c7e178;") != std::string::npos);
+    CHECK(module.find("constexpr std::uint64_t kSystemComponent = 0xba7880;") != std::string::npos);
+    CHECK(module.find("constexpr std::uint64_t kAutoSaveMgrIndex = 0xc;") != std::string::npos);
+    CHECK(module.find("constexpr std::uint64_t kRequestAutoSave = 0xba7730;") != std::string::npos);
+    CHECK(module.find("constexpr std::uint64_t kAutoSaveKindEvent = 5;") != std::string::npos);
+    const std::string ask = body("void RequestHostAutoSave(void* ctx) {");
+    CHECK(ask.find("if (!CoopSave::TakeSaveRequest()) return;") != std::string::npos);   // only a guest's ask
+    CHECK(ask.find("base + kSystemComponent") != std::string::npos);
+    CHECK(ask.find("base + kRequestAutoSave") != std::string::npos);
+    CHECK(ask.find("g_api->write") == std::string::npos);   // the game's own call; nothing written by us
+    CHECK(ask.find("Write(") == std::string::npos);
+    // made on the calc thread's call site, after the module's own calls; the save module told at start
+    const auto calls = module.find("        RunCalls(ctx);\n        RequestHostAutoSave(ctx);");
+    CHECK(calls != std::string::npos);
+    CHECK(module.find("CoopSave::SetSaveRequests(true);") != std::string::npos);
+    // The host side asks only while it plays a file (not on the title, not in a new game never saved)
+    const std::string save = ReadFile(kRepo / "lichii" / "hook" / "coop_save.cpp");
+    CHECK(save.find("const bool fresh = g_save_requests && g_in_game && "
+                    "!g_played.new_game(g_in_game, g_title_seen);") != std::string::npos);
+    CHECK(save.find("return g_in_game && g_planner.take_save_request();") != std::string::npos);
+    CHECK(save.find(": send.fresh ? save::newest_slot(g_dir)") != std::string::npos);
+}
+
+TEST_CASE("hookshot: the title's game addresses are main's offsets plus main's guest base 0x80020000") {
+    // The save list's addresses were once written as 0x80000000 + the offset (0x20000 short): docs/hookshot.md names
+    // the main offsets; each constant in coop_title.cpp must be 0x80020000 + one of them.
+    const std::string title = ReadFile(kRepo / "hookshot" / "src" / "coop_title.cpp");
+    const std::string docs = ReadFile(kRepo / "docs" / "hookshot.md");
+    const struct {
+        const char* name;
+        std::uint64_t main_offset;
+    } want[] = {{"kCaptionMgrGot", 0x4c81660}, {"kCaptionBusy", 0x33ad380}, {"kCaptionReset", 0xbafd40},
+                {"kCaptionReload", 0xf6da40}};
+    for (const auto& w : want) {
+        INFO(w.name);
+        char doc_text[32];
+        std::snprintf(doc_text, sizeof doc_text, "main+0x%llx", static_cast<unsigned long long>(w.main_offset));
+        char code_text[96];
+        std::snprintf(code_text, sizeof code_text, "constexpr std::uint64_t %s = 0x%llx;", w.name,
+                      static_cast<unsigned long long>(0x80020000ull + w.main_offset));
+        CHECK(docs.find(doc_text) != std::string::npos);
+        CHECK(title.find(code_text) != std::string::npos);
+    }
 }
 
 TEST_CASE("hookshot: patch 0018's screens' tracker and menu state build on Linux too, the mouse stays Windows'") {
@@ -1069,9 +1133,9 @@ TEST_CASE("hookshot: every switch of the save folder marks the game's save list 
     CHECK(first > helper);
     CHECK(save.find("g_list_stale = true;", helper) != std::string::npos);
     const std::string title = ReadFile(kRepo / "hookshot" / "src" / "coop_title.cpp");
-    CHECK(title.find("constexpr std::uint64_t kCaptionReload = 0x80f6da40;") != std::string::npos);
-    CHECK(title.find("constexpr std::uint64_t kCaptionBusy = 0x833ad380;") != std::string::npos);
-    CHECK(title.find("constexpr std::uint64_t kCaptionReset = 0x80bafd40;") != std::string::npos);
+    CHECK(title.find("constexpr std::uint64_t kCaptionReload = 0x80f8da40;") != std::string::npos);
+    CHECK(title.find("constexpr std::uint64_t kCaptionBusy = 0x833cd380;") != std::string::npos);
+    CHECK(title.find("constexpr std::uint64_t kCaptionReset = 0x80bcfd40;") != std::string::npos);
     // The game's order: its idle test, its reset, then its read (a read starts only from state 0).
     const auto busy = title.find("GameCall(ctx, kCaptionBusy, mgr)");
     const auto reset = title.find("GameCall(ctx, kCaptionReset, 0)");
@@ -1081,7 +1145,7 @@ TEST_CASE("hookshot: every switch of the save folder marks the game's save list 
     REQUIRE(read != std::string::npos);
     CHECK(busy < reset);
     CHECK(reset < read);
-    CHECK(title.find("constexpr std::uint64_t kCaptionMgrGot = 0x84c81660;") != std::string::npos);
+    CHECK(title.find("constexpr std::uint64_t kCaptionMgrGot = 0x84ca1660;") != std::string::npos);
     CHECK(title.find("in.stale = CoopSave::TakeSaveListStale();") != std::string::npos);
     const auto step = title.find("if (event == HOS_COOP_TITLE_STEP) {");
     REQUIRE(step != std::string::npos);

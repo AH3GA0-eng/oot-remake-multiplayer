@@ -901,3 +901,95 @@ TEST_CASE("save transfer: Resync from host goes only for a guest that can switch
   CHECK(save::pending_step(true, false, true) == save::PendingStep::keep);  // playing: never switched under the game
   CHECK(save::pending_step(true, true, false) == save::PendingStep::go);     // the title's menu: switched
 }
+
+TEST_CASE("save transfer: an ask while the host plays a file waits for the save its game is asked for (case 1)") {
+  using Send = save::Planner::Send;
+  constexpr std::uint64_t kLimit = save::Planner::kFreshSaveUs;
+  static_assert(kLimit < save::kGuestReaskUs);   // the guest does not ask again while the host waits
+  const auto t0 = fs::file_time_type::clock::now();
+  const auto ask = t0 + std::chrono::seconds(60);   // the host's last door was a minute before the ask
+  const auto saved = ask + std::chrono::seconds(1);
+
+  SUBCASE("asked and saved in time: the guest gets the save written after the ask") {
+    save::Planner p;
+    CHECK(p.on_ask(2, 1'000, ask));
+    CHECK(p.round_open());
+    CHECK(p.take_save_request());
+    CHECK_FALSE(p.take_save_request());   // once a round
+    CHECK(p.due(t0, 2'000).empty());       // only the older save on disk: it waits
+    CHECK(p.due(saved, 3'000) == std::vector<Send>{{2, proto::SaveReason::join, false, true}});
+    CHECK_FALSE(p.round_open());
+    CHECK(p.idle());
+  }
+  SUBCASE("asked and the game refused (a cutscene, a boss room, its cooldown): the last save after the limit") {
+    save::Planner p;
+    CHECK(p.on_ask(2, 1'000, ask));
+    CHECK(p.take_save_request());
+    CHECK(p.due(t0, 1'000 + kLimit - 1).empty());
+    CHECK(p.due(t0, 1'000 + kLimit) == std::vector<Send>{{2, proto::SaveReason::join, false, false}});
+    CHECK(p.idle());
+    CHECK_FALSE(p.take_save_request());
+  }
+  SUBCASE("asked on the title or in a new game never saved: at once, as before (no round, no request)") {
+    save::Planner p;
+    CHECK(p.on_ask(2, 1'000));   // (the hook gives no fresh_after there)
+    CHECK_FALSE(p.round_open());
+    CHECK_FALSE(p.take_save_request());
+    CHECK(p.due(t0, 1'000) == std::vector<Send>{{2, proto::SaveReason::join}});
+    // a new game never saved: the hook passes no newest write, so "no save yet" (player report 120), round or not
+    CHECK(p.on_ask(3, 2'000, ask));
+    CHECK(p.due(std::nullopt, 2'000) == std::vector<Send>{{3, proto::SaveReason::join, true}});
+    CHECK_FALSE(p.round_open());
+  }
+  SUBCASE("two guests asking close together: one request, two sends of the same save") {
+    save::Planner p;
+    CHECK(p.on_ask(2, 1'000, ask));
+    CHECK(p.take_save_request());
+    CHECK(p.on_ask(3, 500'000, ask + std::chrono::milliseconds(500)));   // joins the open round
+    CHECK_FALSE(p.take_save_request());
+    CHECK(p.due(saved, 600'000) == std::vector<Send>{{2, proto::SaveReason::join, false, true},
+                                                     {3, proto::SaveReason::join, false, true}});
+    // a later ask opens a new round of its own
+    CHECK(p.on_ask(4, 20'000'000, saved + std::chrono::seconds(20)));
+    CHECK(p.take_save_request());
+  }
+  SUBCASE("the host alone: no ask, no round, no request") {
+    save::Planner p;
+    CHECK(p.idle());
+    CHECK_FALSE(p.take_save_request());
+    CHECK(p.due(saved, 1'000).empty());
+  }
+  SUBCASE("the asker left during the round: the round ends with it") {
+    save::Planner p;
+    CHECK(p.on_ask(2, 1'000, ask));
+    p.forget(2);
+    CHECK_FALSE(p.round_open());
+    CHECK(p.due(saved, 2'000).empty());
+  }
+  SUBCASE("a fresh send that could not go out stays fresh at its retry") {
+    save::Planner p;
+    CHECK(p.on_ask(2, 1'000, ask));
+    const auto sends = p.due(saved, 2'000);
+    REQUIRE(sends.size() == 1);
+    p.retry(sends.front());
+    CHECK(p.due(saved, 3'000) == std::vector<Send>{{2, proto::SaveReason::join, false, true}});
+  }
+  SUBCASE("the host loads a save during the round: the save after the load goes to everyone") {
+    save::Planner p;
+    CHECK(p.on_ask(2, 1'000, ask));
+    p.on_host_load(ask);
+    CHECK(p.due(saved, 2'000) == std::vector<Send>{{0, proto::SaveReason::host_load}});
+    CHECK_FALSE(p.round_open());
+    CHECK(p.idle());
+  }
+}
+
+TEST_CASE("save transfer: a rejoin with the game on an earlier host's save goes back to its own folder on the title") {
+  // (AskAtTitle while the co-op folder holds the OLDER host's save: never offered by the title)
+  CHECK(save::old_coop_first(true, false, true, false, true));
+  CHECK_FALSE(save::old_coop_first(true, false, false, true, true));   // a file played: nothing under it
+  CHECK_FALSE(save::old_coop_first(true, true, true, false, true));    // the new save is in: written and switched
+  CHECK_FALSE(save::old_coop_first(true, false, true, false, false));  // on its own folder already (a first join)
+  CHECK_FALSE(save::old_coop_first(false, false, true, false, true));  // nothing asked (solo, the host)
+  CHECK_FALSE(save::old_coop_first(true, false, false, false, true));  // a pick loading (suspended): after it
+}

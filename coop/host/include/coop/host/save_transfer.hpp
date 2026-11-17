@@ -115,6 +115,17 @@ inline constexpr std::size_t kMaxOutboxParts = 4 * protocol::kMaxSaveParts;
 // slot on disk may not be the loaded one (an older manual save loaded, a newer
 // autosave on disk), so when the game writes a save after the load (the game
 // saves at every door) every guest gets that one too (host_load).
+//
+// A save asked for (player reports 107, 129, 132: the root's case 1, the file
+// on disk is as old as the host's last door): while the host plays a file,
+// an ask opens a ROUND (on_ask with `fresh_after`): the hook asks the host's
+// game for its own autosave once (take_save_request), and the ask is answered
+// with the first save written after it (Send::fresh: the newest slot, the
+// game now). The game may refuse (its own gate: autosave off in a cutscene or
+// a boss room, its cooldown right after a door, a player state it does not
+// save in); after kFreshSaveUs the ask is answered with the save on disk as
+// today (Send::fresh false: the host's last save, and the log says so).
+// Asks during a round join it: one save, a send to each.
 class Planner {
  public:
   using Time = std::filesystem::file_time_type;
@@ -122,22 +133,40 @@ class Planner {
     std::uint8_t to_player = 0;  // 0: every guest (host_load)
     protocol::SaveReason reason = protocol::SaveReason::join;
     bool no_save = false;  // the host has no save on disk: send pack_no_save()
+    bool fresh = false;    // written after the ask (a round): the newest slot is the host's game now
     bool operator==(const Send&) const = default;
   };
+  // How long an ask waits for the save it asked the host's game for (well under the guest's re-ask,
+  // kGuestReaskUs; the game writes a slot in about a second once it saves).
+  static constexpr std::uint64_t kFreshSaveUs = 6'000'000;
   // A repeated ask within kReaskUs of the last one taken is ignored, so a
   // guest cannot make the host send its save over and over; after that it is
   // taken again (a guest whose ask or answer was lost asks again: GuestSession
   // reask_due; or a rejoin under the same number before PLAYER_LEFT came).
   // `now_us`: a steady clock in microseconds. Returns whether it was taken.
   static constexpr std::uint64_t kReaskUs = 10'000'000;
-  bool on_ask(std::uint8_t player, std::uint64_t now_us) {
+  // `fresh_after`: the host plays a file (not the title, not a new game never saved), the folder's clock now: the
+  // ask opens a round (or joins the open one) and waits for a save written after it. Without it the ask is
+  // answered at the next look, as before.
+  bool on_ask(std::uint8_t player, std::uint64_t now_us, std::optional<Time> fresh_after = std::nullopt) {
     if (const auto it = answered_.find(player); it != answered_.end() && now_us - it->second < kReaskUs) {
       return false;
     }
     answered_[player] = now_us;
     asks_.insert(player);
+    if (fresh_after && !round_) {
+      round_ = Round{*fresh_after, now_us, true};
+    }
     return true;
   }
+  // Once a round: whether the host's game is to be asked for its autosave now (the hook makes the call).
+  bool take_save_request() {
+    if (!round_ || !round_->request) return false;
+    round_->request = false;
+    return true;
+  }
+  // An ask waits for the save of a round.
+  bool round_open() const { return round_.has_value(); }
   // `slot_known`: the host knows the slot it loaded (PlayedSlot): that slot on disk is the save just loaded, so it
   // goes at once; otherwise the send waits for the game's next save (then the newest slot is the one played).
   void on_host_load(Time now, bool slot_known = false) {
@@ -152,6 +181,8 @@ class Planner {
   void forget(std::uint8_t player) {
     asks_.erase(player);
     answered_.erase(player);
+    fresh_owed_.erase(player);
+    if (asks_.empty()) round_.reset();   // (nobody waits for its save any more)
   }
   // A Send that could not go out (the outbox full): owed again at the next look. A player who left meanwhile is
   // not asked for again.
@@ -160,6 +191,7 @@ class Planner {
       reload_ = true;  // (loaded_at_ is gone: the next look sends)
     } else if (answered_.count(send.to_player) != 0) {
       asks_.insert(send.to_player);
+      if (send.fresh) fresh_owed_.insert(send.to_player);   // (the save of its round, not an older one)
     }
   }
   // Nothing owed: no ask and no reload.
@@ -168,10 +200,17 @@ class Planner {
   bool waiting() const { return reload_ && loaded_at_.has_value(); }
   // What to send now, given the newest slot's write time (nothing when the
   // host has no save yet: then each ask gets a no_save Send). Each Send is
-  // handed out once.
-  std::vector<Send> due(std::optional<Time> newest_write);
+  // handed out once. `now_us`: the clock of on_ask (a round's time limit).
+  std::vector<Send> due(std::optional<Time> newest_write, std::uint64_t now_us = 0);
 
  private:
+  struct Round {
+    Time since;               // the folder's clock at the ask that opened it
+    std::uint64_t start_us;   // on_ask's clock then
+    bool request;             // take_save_request not taken yet
+  };
+  std::optional<Round> round_;
+  std::set<std::uint8_t> fresh_owed_;   // a fresh Send that could not go out (retry)
   std::set<std::uint8_t> asks_;
   std::map<std::uint8_t, std::uint64_t> answered_;  // asks taken (when), until the player leaves
   bool reload_ = false;
@@ -328,6 +367,13 @@ bool rejoined_in_game(bool decided, bool ended, bool connected, bool in_game);
 // title loads (CoopSave::CancelPendingSwitch, ResumePendingSwitch).
 enum class PendingStep { keep, go };
 PendingStep pending_step(bool slot_in, bool title_up, bool in_game);
+// A guest that asked without a switch (a join with a file loaded, Resync from host: AskAtTitle) while its game
+// already plays from the co-op folder (it played an earlier host's save) holds the OLDER host's save there. Once it
+// is on the title's menu with no file loaded and the new save not in yet, the title would offer that older one: the
+// game goes back to its own folder first and the co-op folder is emptied, as on any join (folder_choice's `coop`),
+// and the new save is then written and switched to as always. `on_pending_dir`: the folder mounted is the pending
+// co-op folder.
+bool old_coop_first(bool pending, bool slot_in, bool title_up, bool in_game, bool on_pending_dir);
 
 // A guest's save state for ONE session (CoopSave): the ask sent, the parts coming in, a slot that came before the
 // save folder was open, whether the host's save is written, the "stuck" note said. A new session starts from a
