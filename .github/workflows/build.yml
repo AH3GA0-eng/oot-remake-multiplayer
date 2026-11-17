@@ -79,8 +79,6 @@ jobs:
         run: python tools/autotest/tests/test_kit_pair.py -v
       - name: Bad-connection relay tests
         run: python tools/netsim/tests/test_netsim.py -v
-      - name: Problem reports tests
-        run: python tools/problem_reports/tests/test_problem_reports.py -v
       # The kit's patch applier for Hookshot (hookshot-kit); skipped until that branch is merged.
       - name: Kit patch applier tests
         if: hashFiles('tools/release/tests/test_apply_patch.py') != ''
@@ -178,6 +176,8 @@ jobs:
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/tests/paste_test.ps1
       - name: Kit log masking tests
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/tests/log_mask_test.ps1
+      - name: Kit problem report tests
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/tests/problem_report_test.ps1
       - name: CI runner hook tests
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/ci-runner/job_started_test.ps1
       - name: CI runner script checks
