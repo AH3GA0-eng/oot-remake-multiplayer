@@ -15,11 +15,14 @@ A game that joins is refused only for these (`server/session.cpp` `admit`, `chec
   speaks 12.
 - **The game build** (`game_build_id`): the session's first player decides it, or `coop_server --game-build`. Every
   supported client runs the same build, `e0f3ccfaf50065ae` (1.1.1).
-- **The join password**, and the usual limits (a full server, a name in use, a ban).
+- **The join password**, and the usual limits: a full server, a name in use or a bad one (blank, or with hidden
+  characters), a ban, and a traffic key share the server cannot use (refused as a protocol mismatch).
 
 What the game runs the module in (its HELLO's `build_id`) is never a reason to refuse it. Each build names itself there
 (`lichii/hook/coop_hook.cpp` `kBuildId`): the Hookshot/Longshot module `coop hookshot <version>`, the Fritchii emulator
-`coop fritchii-v5 <version>` (before, every build sent the same `lichii fritchii-v5 coop`). The server writes it in its log
+`coop fritchii-v5 <version>` (before, every build sent the same `lichii fritchii-v5 coop`). It is cut to HELLO's limit of
+64 characters (`kMaxBuildIdChars`, `clamp_build_id` in `messages.hpp`), at a character, so a long version text (a long
+`git describe`, a launcher's own version) never keeps the HELLO from being sent. The server writes it in its log
 beside each player's name, so a problem between two clients can be told apart:
 
 ```
@@ -29,7 +32,11 @@ player 3 joined: Saria (client: coop fritchii-v5 0.11.3)
 
 `tests/server/session_test.cpp` holds both: players whose HELLOs name four different clients (the kit's module, a
 launcher's build of it, a Hookshot build and Fritchii) share one session, and the client's name in the log is printable
-and at most 48 characters, whatever another game sends.
+and at most 48 characters, whatever another game sends. `tests/protocol/codec_test.cpp` checks that a long version is
+cut so the HELLO can always be sent.
+
+A split-screen player who joins with another (`... joined: <name> (split screen with player N)`) runs in that player's
+game, so that line names no client of its own: it is the client of player N's line.
 
 ## Keeping a client compatible
 

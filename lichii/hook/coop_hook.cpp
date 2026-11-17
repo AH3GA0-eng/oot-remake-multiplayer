@@ -312,7 +312,7 @@ public:
         coop::net::ClientConfig config;
         config.host = settings_.server;
         config.port = settings_.port;
-        config.hello.build_id = kBuildId;
+        config.hello.build_id = coop::protocol::clamp_build_id(kBuildId);   // (a long version text: cut, never unsendable)
         config.hello.game_build_id = std::string(kGameBuildId);
         config.hello.game_version = std::string(kGameVersion);
         config.hello.nickname = settings_.name;
