@@ -87,8 +87,8 @@ struct Seen {
     // Its Life component (0: none read); a copy boss's is held at life 1 by its own Life step
     // (CoopBossNative::Table::HeldLifeStep) until its owner's dies.
     std::uint64_t life_component = 0;
-    // Row 97 (coop_event_member.h): whether a running event binds it (its own event
-    // performer holds an event link); nullopt when it has no performer we know.
+    // Row 97 (coop_event_member.h): whether it is an event member in our Link's event
+    // (InSameEvent, the game's own test); nullopt when it has no event member component.
     std::optional<bool> event_member;
 };
 
@@ -1150,7 +1150,7 @@ private:
     bool in_event_ = false;  // issue 200: SetEvent
     bool event_ours_ = false;  // G1: our Link is in it (SetEvent's ours)
     // Row 97: why `o` is our running event's partner now (none: it is not):
-    // the event binds it (member); its performer is not known to us and its
+    // it is an event member in our Link's event (member); it has no event member component and its
     // own AI asked for another animation since the event began, within
     // kEventNpcM (own_ai); a townsperson within kEventNpcM (issue 200).
     PartnerWhy EventPartnerWhy(const Object& o) const;

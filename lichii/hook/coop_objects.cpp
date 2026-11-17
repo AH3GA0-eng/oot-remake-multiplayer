@@ -2827,17 +2827,17 @@ private:
         if (!List(r, actors)) {
             return false;
         }
-        // Row 97: our own Link's event link (its performer's +0x18, CoopEventMember): an actor is in
-        // our event when its own performer holds that same link. Our Link's actor is the last walk's.
+        // Row 97 / G1: our own Link's EventMember, read with the game's own test
+        // (CoopEventMember::ReadMember): an actor is in our event when a member slot of its own holds
+        // the same event as one of our Link's (InSameEvent). Our Link's actor is the last walk's.
+        // Also logged: our Link's on each change, with the running event and the event ring; every
+        // other actor's while an event runs here or our Link's member says anything.
         const auto read_word = [&r](std::uint64_t at) { return r.Get<u64>(at); };
-        const u64 our_event_link = CoopEventMember::OurLinkOf(read_word, our_link_);
-        if (our_event_link == 0) {
+        const CoopEventMember::MemberRead link_member = CoopEventMember::ReadMember(read_word, our_link_);
+        const bool link_in_event = link_member.Member();
+        if (!link_in_event) {
             member_said_.clear();
         }
-        // G1: the game's own membership test (CoopEventMember::ReadMember), for the log only: our
-        // Link's on each change, with the running event and the event ring; every other actor's
-        // while an event runs here or our Link's member says anything.
-        const CoopEventMember::MemberRead link_member = CoopEventMember::ReadMember(read_word, our_link_);
         const bool members_wanted = TheLocalEvent().load() || link_member.SomeReason() || link_member.state != 0;
         {
             const auto bits = CoopEventMember::PerformerBits(read_word, our_link_);
@@ -2873,22 +2873,13 @@ private:
             members_said_[actor] = std::move(text);
         };
         const auto member_of = [&](u64 actor, const std::string& name) {
-            const std::optional<bool> in = CoopEventMember::InOurEvent(read_word, actor, our_event_link);
-            // Once per actor name and event, for the next run (diagnostic, never a claim): the
-            // fixed-slot read, and when it found no performer, which slots hold our Link's link.
-            if (our_event_link != 0 && member_said_.size() < kMemberSaidMax && member_said_.insert(name).second) {
-                if (in) {
-                    LOG_INFO(Core, "coop: event: {} {:#x}: its performer is {}in our Link's event (link {:#x})", name,
-                             actor, *in ? "" : "not ", our_event_link);
-                } else {
-                    std::string slots;
-                    for (const u64 slot : CoopEventMember::ScanLinked(read_word, actor, our_event_link)) {
-                        slots += fmt::format("{}{:#x}", slots.empty() ? "" : " ", slot);
-                    }
-                    LOG_INFO(Core, "coop: event: {} {:#x}: no performer at slot 0x88/0x90; slots linked to our Link's "
-                                   "event (diagnostic): {}",
-                             name, actor, slots.empty() ? std::string("none") : slots);
-                }
+            const std::optional<bool> in = CoopEventMember::InSameEvent(read_word, actor, link_member);
+            // Once per actor name and event, for the next run.
+            if (link_in_event && member_said_.size() < kMemberSaidMax && member_said_.insert(name).second) {
+                LOG_INFO(Core, "coop: event: {} {:#x}: {}", name, actor,
+                         !in   ? "no event member component"
+                         : *in ? "an event member in our Link's event"
+                               : "not an event member in our Link's event");
             }
             return in;
         };
@@ -2899,7 +2890,7 @@ private:
         struct TalkScrub {
             u64 hash = 0;
             coop::protocol::Vec3 at{};
-            std::optional<bool> in_event;  // its own performer bound into a running event
+            std::optional<bool> in_event;  // an event member in our Link's event (InSameEvent)
         };
         std::vector<TalkScrub> talk_scrubs;
         std::unordered_map<u64, std::pair<std::string, u64>> names;
@@ -4320,7 +4311,7 @@ private:
     u64 event_began_us_ = 0;    // row 97: EventLog
     u64 event_still_us_ = 0;
     std::set<u64> event_partners_;
-    std::set<std::string> member_said_;  // row 97: names whose performer read was logged this event
+    std::set<std::string> member_said_;  // row 97: names whose event member read was logged this event
     static constexpr std::size_t kMemberSaidMax = 32;
     // G1: the game's own member test in the log: our Link's last line, and each actor's last line
     // while an event runs (by address: cleared when no event runs and our Link's member is idle).
