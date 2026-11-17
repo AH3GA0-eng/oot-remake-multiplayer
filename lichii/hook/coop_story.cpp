@@ -474,6 +474,26 @@ std::span<const Effect> Effects() {
     return kEffects;
 }
 
+EffectsGiven::Verdict EffectsGiven::Take(const Effect& due) {
+    const auto has = [&](const std::vector<std::uint32_t>& v) {
+        return std::find(v.begin(), v.end(), due.flag) != v.end();
+    };
+    if (!has(given_)) {
+        given_.push_back(due.flag);
+        return Verdict::give;
+    }
+    if (has(said_)) {
+        return Verdict::quiet;
+    }
+    said_.push_back(due.flag);
+    return Verdict::set_back;
+}
+
+void EffectsGiven::NewLoad() {
+    given_.clear();
+    said_.clear();
+}
+
 bool On() {
     return !EnvOff("LICHII_COOP_STORY");
 }

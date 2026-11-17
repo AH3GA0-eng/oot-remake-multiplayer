@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <vector>
 
 #include "coop/host/flags.hpp"
 
@@ -155,6 +156,25 @@ struct Effect {
     const char* name;
 };
 std::span<const Effect> Effects();
+
+// Review of owl-time (should-fix): each effect's flag is given at most once per load. A flag set back after that in
+// the same load (no such writer is known: story_effects.py reads the romfs, not the game's code) is then left alone,
+// said once, instead of being fought every 3 s with a log line each time. A new load (an older save reloaded, the
+// flag 0 there again) may give it once more. The caller's hold and the "due" rule (EffectsDue) are unchanged.
+class EffectsGiven {
+public:
+    enum class Verdict : std::uint8_t {
+        give,      // not given since this load: set it
+        set_back,  // given since this load and due again: left alone, say so (once)
+        quiet,     // left alone, said already
+    };
+    Verdict Take(const Effect& due);
+    void NewLoad();  // the title or a load: nothing read now
+
+private:
+    std::vector<std::uint32_t> given_;  // flags given since this load
+    std::vector<std::uint32_t> said_;   // of those, set back and said
+};
 inline constexpr std::size_t kEffectsMax = 32;  // Effects().size() stays under it (story_test)
 
 // The effects due now: the played flag is 1 and the effect's flag is known

@@ -283,6 +283,12 @@ struct RoomView {
 struct MendClocks {
     std::array<std::uint64_t, CoopStory::kMends> mends{};
     std::uint64_t effects = 0;
+    CoopStory::EffectsGiven given;  // once per flag per load (review of owl-time)
+    void NewLoad() {  // the title or a load: nothing to read yet
+        mends = {};
+        effects = 0;
+        given.NewLoad();
+    }
 };
 void MendStory(EmulatorMemory& memory, MendClocks& clocks, bool idle) {
     static constexpr std::uint64_t kHoldUs = 3'000'000;
@@ -315,9 +321,19 @@ void MendStory(EmulatorMemory& memory, MendClocks& clocks, bool idle) {
     } else if (now_us - clocks.effects >= kHoldUs) {
         clocks.effects = 0;
         for (std::size_t i = 0; i < n; ++i) {
-            if (coop::host::GameFlags::set_bool(memory, due[i]->flag, due[i]->value)) {
-                LOG_INFO(Core, "coop: story: {} set to {}: {} was played here by another game (row 129)",
-                         due[i]->name, due[i]->value ? 1 : 0, due[i]->setting);
+            switch (clocks.given.Take(*due[i])) {
+            case CoopStory::EffectsGiven::Verdict::give:
+                if (coop::host::GameFlags::set_bool(memory, due[i]->flag, due[i]->value)) {
+                    LOG_INFO(Core, "coop: story: {} set to {}: {} was played here by another game (row 129)",
+                             due[i]->name, due[i]->value ? 1 : 0, due[i]->setting);
+                }
+                break;
+            case CoopStory::EffectsGiven::Verdict::set_back:
+                LOG_INFO(Core, "coop: story: {} was set back after we gave it ({}): left alone until the next load",
+                         due[i]->name, due[i]->setting);
+                break;
+            case CoopStory::EffectsGiven::Verdict::quiet:
+                break;
             }
         }
     }
@@ -663,6 +679,7 @@ public:
                 // Issue 138: grants wait for a loaded save, and the capacities
                 // of held items are mended for a while after each load.
                 const bool mend = load_mend_.frame(reading.has_value());
+                if (!reading) mend_since_us_.NewLoad();  // the story effects: once per flag per load (owl-time)
                 CoopSave::NoteInGame(reading.has_value());  // issue 167: no save-folder switch once a save is loaded
                 store.emplace(*game_store, &load_mend_);
                 if (mend) {
@@ -2931,7 +2948,7 @@ void LocalFrameOff(Core::System& system, bool writes) {
             MendStory(memory, mend_since_us, solo_running_known.has_value() && !*solo_running_known);  // issue 84,
             // row 129: a stuck save, played alone
         } else {
-            mend_since_us = {};  // the title or a load: nothing to read yet
+            mend_since_us.NewLoad();  // the title or a load: nothing to read yet
         }
     }
     if (!step.Publish(CoopLocalGame::HasSeats())) return;

@@ -554,3 +554,28 @@ TEST_CASE("story effects: every one comes from a shared played flag and is not s
         CHECK(seen.insert({e.played, e.flag}).second);  // no row twice
     }
 }
+
+TEST_CASE("story effects: given once per flag per load, a flag set back then is left alone and said once") {
+    // Review of owl-time: a flag the game's own code sets back is not fought every 3 s.
+    const auto& effects = CoopStory::Effects();
+    REQUIRE(effects.size() >= 1);
+    const CoopStory::Effect& owl = effects.front();
+    using V = CoopStory::EffectsGiven::Verdict;
+    CoopStory::EffectsGiven given;
+    CHECK(given.Take(owl) == V::give);
+    // Set back in the same load: said once, then quiet however often it is due again.
+    CHECK(given.Take(owl) == V::set_back);
+    CHECK(given.Take(owl) == V::quiet);
+    CHECK(given.Take(owl) == V::quiet);
+    // Another flag is its own.
+    for (const CoopStory::Effect& e : effects) {
+        if (e.flag != owl.flag) {
+            CHECK(given.Take(e) == V::give);
+            break;
+        }
+    }
+    // A new load (an older save reloaded, the flag back at 0 there): given once more.
+    given.NewLoad();
+    CHECK(given.Take(owl) == V::give);
+    CHECK(given.Take(owl) == V::set_back);
+}
