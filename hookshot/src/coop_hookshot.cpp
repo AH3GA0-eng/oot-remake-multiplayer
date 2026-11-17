@@ -196,9 +196,11 @@ bool PuppetGuardInExe() {
 }
 
 // Before the game makes our first puppet: its null reads give 0 (issue 150, coop_null_page.h). Once.
+// Where that failed after all (the MB could not be committed), the puppets' director learns it before
+// the puppet exists, so no piece that needs those reads (GearIsUnsafe, issue 232) is ever worn.
 void ArmNullPage(const std::string& actor) {
-    if (actor.rfind("CoopPuppet_", 0) == 0) {
-        CoopNullPage::Arm(Env("HOS_COOP_NULL_READS"));
+    if (actor.rfind("CoopPuppet_", 0) == 0 && !CoopNullPage::Arm(Env("HOS_COOP_NULL_READS"))) {
+        CoopPuppet::TheDirector().SetNullReadsZero(false);
     }
 }
 

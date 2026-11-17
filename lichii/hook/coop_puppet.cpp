@@ -39,22 +39,18 @@ bool OcarinaSoundOn() {
     return on;
 }
 
-// Whether a piece the game crashed on is worn on a puppet anyway (issue 232).
-// Off by default: a GearIsUnsafe piece stays off. LICHII_COOP_PUPPET_HOOKSHOT=1
-// puts them back, for a test that checks whether a later build can take them.
-bool WearsUnsafe() {
-    static const bool on = [] {
+// LICHII_COOP_PUPPET_HOOKSHOT (issue 232): "1" wears a GearIsUnsafe piece on
+// a puppet whatever the null page, "0" leaves it off; unset (the default) it
+// follows Director::SetNullReadsZero.
+std::optional<bool> UnsafeSwitch() {
+    static const std::optional<bool> on = []() -> std::optional<bool> {
         const char* v = std::getenv("LICHII_COOP_PUPPET_HOOKSHOT");
-        return v != nullptr && v[0] != '\0' && std::string_view(v) != "0";
+        if (v == nullptr || v[0] == '\0') {
+            return std::nullopt;
+        }
+        return std::string_view(v) != "0";
     }();
     return on;
-}
-
-// A piece `Equip` leaves off the puppet: nothing is made for it, and the piece
-// its slot may still hold is neither put away nor re-worn: that slot is not
-// ours to change while the player wears one of these.
-bool GearLeftOff(const std::string& name) {
-    return GearIsUnsafe(name) && !WearsUnsafe();
 }
 
 template <typename T>
@@ -1091,6 +1087,10 @@ std::string SlotsText(Guest& guest, std::uint64_t actor, std::optional<std::uint
 }
 }  // namespace
 
+bool Director::LeftOff(const std::string& name) const {
+    return GearIsUnsafe(name) && !UnsafeSwitch().value_or(null_reads_zero_.load());
+}
+
 // One equip call for a live puppet whose player's gear differs from what it
 // wears, or none. An empty name (nothing in that slot): a carried piece (the
 // held item, the tool slots) is only put away, as its player's is; a worn one
@@ -1132,10 +1132,10 @@ std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& gue
     }
     for (std::size_t i = 0; i < target.gear.size(); ++i) {
         const auto& want = target.gear[i];
-        if (want && !want->empty() && GearLeftOff(*want)) {
+        if (want && !want->empty() && LeftOff(*want)) {
             // Issue 232: the game crashed with this piece on a puppet (the
-            // Hookshot, in the held slot). It stays off; its player's own Link
-            // still shows it.
+            // Hookshot, in the held slot) where null reads cannot give 0. It stays
+            // off there; its player's own Link still shows it.
             //
             // The piece that was in this slot before it was worn stays where
             // the game put it: the slingshot in slot 3 outlived a switch to the
@@ -1145,8 +1145,8 @@ std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& gue
             // is known to take a held piece away.
             if (slot.worn[i] != *want) {
                 Say("P" + std::to_string(slot.number) + " " + kGearNames[i] + " '" + *want +
-                    "' stays off the puppet: the game crashed with it worn here (issue 232; "
-                    "LICHII_COOP_PUPPET_HOOKSHOT=1 wears it again)");
+                    "' stays off the puppet: null reads cannot give 0 here, and the game "
+                    "crashed with it worn so (issue 232; LICHII_COOP_PUPPET_HOOKSHOT=1 wears it)");
                 const bool had_piece = !slot.worn[i].empty();
                 const std::string was = slot.worn[i];
                 slot.worn[i] = *want;  // (kept as theirs, so the slot is not asked again)
@@ -1160,7 +1160,7 @@ std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& gue
             continue;
         }
         if (want && want->empty() && !slot.worn[i].empty() && !GearIsCarried(i) &&
-            !GearLeftOff(slot.worn[i])) {
+            !LeftOff(slot.worn[i])) {
             // Empty for a moment (a load) is not taken off: kTakeOffMs first.
             if (slot.off_since_ms[i] == 0) {
                 slot.off_since_ms[i] = std::max<std::uint64_t>(now_ms, 1);
@@ -1241,7 +1241,7 @@ void Director::LeftBehind(Slot& slot, Guest& guest, std::uint64_t now_ms) {
     }
     for (std::size_t i = 0; i < kGearSlots.size(); ++i) {
         const int s = kGearSlots[i];
-        if (s < 0 || slot.worn[i].empty() || GearLeftOff(slot.worn[i])) {
+        if (s < 0 || slot.worn[i].empty() || LeftOff(slot.worn[i])) {
             continue;  // (a piece left off the puppet, issue 232: its slot is not ours)
         }
         if (GearIsCarried(i) && (slot.in_hand & (1u << s)) == 0) {
@@ -1317,7 +1317,7 @@ std::optional<Call> Director::Hold(Slot& slot, const Target& target, Guest& gues
     std::uint64_t check_eu = 0;
     for (std::size_t i = 0; i < kGearSlots.size(); ++i) {
         const int s = kGearSlots[i];
-        if (s < 0 || slot.worn[i].empty() || GearLeftOff(slot.worn[i])) {
+        if (s < 0 || slot.worn[i].empty() || LeftOff(slot.worn[i])) {
             continue;  // (a piece left off the puppet, issue 232: its slot is not ours)
         }
         const auto bit = static_cast<std::uint8_t>(1u << s);
@@ -2072,6 +2072,7 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         if (r.look_copy && *r.look_copy >= 1 && *r.look_copy <= settings_.look_copies) {
             DressInLook(t.gear, *r.look_copy, settings_.look_items);
         }
+        DressInBlades(t.gear, r.number, settings_.blade_items, settings_.blade_copies);
         t.drawn = r.drawn;
         t.ocarina = r.ocarina;
         if (show != Show::hide && CoopLinkSound::InHearing(position, r.position)) {
@@ -2159,15 +2160,32 @@ void DressInLook(Gear& gear, std::size_t copy, const std::vector<std::string>& i
     }
 }
 
-LookItems PackLookItems(std::string_view manifest) {
+std::string BladeItemName(std::string_view item, std::size_t number) {
+    return std::string(item) + "_Blade" + std::to_string(number);
+}
+
+void DressInBlades(Gear& gear, std::size_t number, const std::vector<std::string>& items, std::size_t copies) {
+    if (number < 1 || number > copies) {
+        return;
+    }
+    for (auto& piece : gear) {
+        if (piece && std::find(items.begin(), items.end(), *piece) != items.end()) {
+            piece = BladeItemName(*piece, number);
+        }
+    }
+}
+
+LookItems PackLookItems(std::string_view manifest, std::string_view key) {
     // "look_items": {"slots": N, "copies": 2N, "actors": ["...", ...], "files": [...]}, as
-    // build.py writes it (json.dumps); null for a pack without them.
+    // build.py writes it (json.dumps); null for a pack without them. "blade_items" the same,
+    // without "slots".
     LookItems out;
-    const auto at = manifest.find("\"look_items\"");
+    const std::string quoted = "\"" + std::string(key) + "\"";
+    const auto at = manifest.find(quoted);
     if (at == std::string_view::npos) {
         return out;
     }
-    const auto open = manifest.find_first_not_of(" \t\r\n:", at + 12);
+    const auto open = manifest.find_first_not_of(" \t\r\n:", at + quoted.size());
     if (open == std::string_view::npos || manifest[open] != '{') {
         return out;   // null: none
     }
@@ -2391,6 +2409,7 @@ void Configure(PlannerSettings settings, bool verbose, Director::Log log) {
     std::call_once(g_once, [&] {
         g_director = std::make_unique<Director>(std::move(log), verbose, settings.debug_anim);
         g_director->SetPoseCopy(true);
+        g_director->SetNullReadsZero(settings.null_reads_zero);
         // docs/puppet.md, "Colour". LICHII_COOP_PUPPET_TINT: 0 to 1, or off.
         // The model tint darkens the whole Link (reports puppet-colors-2): off
         // unless asked for; the colour is the tunic (PlannerSettings::tunics).
