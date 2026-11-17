@@ -134,13 +134,13 @@ TEST_CASE("eye switch: the table, its places and FirstOn's key") {
         }));
         CHECK(Dist(s.at, s.asker_at[0], s.asker_at[1], s.asker_at[2]) < 30.0f);
         CHECK_FALSE(CoopLiveEvents::SpansRooms(s.event, s.scene));
-        // deku-ladder: a switch asker's place has its own room, or -1 (a tie / no room graph: the guess, as before).
+        // deku-ladder: a switch asker's place has its own room, or -1 (a tie / a room Link near it is not in: the guess).
         known_rooms += std::any_of(places.begin(), places.end(), [&](const CoopLiveEvents::Place& pl) {
             return pl.event == s.event && pl.scene == s.scene && Dist(s.asker_at, pl.x, pl.y, pl.z) < 0.2f && pl.room >= 0;
         }) ? 1 : 0;
     }
     CHECK(scenes.size() == 9);
-    CHECK(known_rooms == 62);  // FocusOnGimmick_JabujabuLift (a tie) and DC SwitchShutter_Room01 (no room graph): -1
+    CHECK(known_rooms == 62);  // FocusOnGimmick_JabujabuLift (a tie) and DC SwitchShutter_Room01 (room 9 voted, reached in 9%): -1
     CHECK(events.size() == 63);
     // The Deku Tree's eyes: OnState (the graph's wire), not FirstOn; the Fire Temple's room-6 eye: FirstOn.
     REQUIRE(CoopEyeSwitch::Find(kLadder, kDeku) != nullptr);
