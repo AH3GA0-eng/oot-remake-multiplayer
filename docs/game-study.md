@@ -37,7 +37,7 @@ vtable. The tool:
    at offset 0 of the object they make, and gives the largest one the factory's name. This is how the screens get
    their names: `UITitleScreen` is `0x84c106e8`, named through its factory `0x84c10a50`.
 
-On build 1.1.1: about 17,800 vtables, about 8,600 named, 57 `UI...Screen` classes with their own vtable named.
+On build 1.1.1: about 17,800 vtables, about 8,600 named, 58 `UI...Screen` classes with their own vtable named.
 
 Output: one line per named vtable (address, slot count, name, how it was named); `--vtable ADDR` lists one vtable's
 slots with the name functions and imports in them (an address inside a vtable works too). It is a heuristic: a name
