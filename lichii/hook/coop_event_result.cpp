@@ -303,12 +303,18 @@ Hold HoldFor(std::string_view scene, const std::set<std::string>& applied,
             if (g.event == event) h.released.push_back(coop::protocol::flag_hash(g.flag));
         }
     }
-    for (const auto& g : kGuards) {
-        const std::string event(g.event);
-        if (g.scene != scene || applied.contains(event) || (played && played(event))) continue;
-        const auto hash = coop::protocol::flag_hash(g.flag);
-        if (!h.Releases(hash)) h.waiting.push_back(hash);
-    }
+    const auto wait = [&](std::string_view flag, std::string_view guard_scene, std::string_view guard_event) {
+        const std::string event(guard_event);
+        if (guard_scene != scene || applied.contains(event) || (played && played(event))) return;
+        // Only an event with an output of our asker to set: a class-live event's result is its flags; nothing waits.
+        if (AskerLines(guard_event, guard_scene).empty()) return;
+        const auto hash = coop::protocol::flag_hash(flag);
+        if (!h.Releases(hash) && !h.Waits(hash)) h.waiting.push_back(hash);
+    };
+    for (const auto& g : kGuards) wait(g.flag, g.scene, g.event);
+    // The eye switch path's guards (coop_eye_switch.h): they kept our asker for its replay; the replay is retired, so
+    // they keep it for our result now, by the same rule.
+    for (const auto& g : CoopEyeSwitch::Guards()) wait(g.flag, g.scene, g.event);
     return h;
 }
 

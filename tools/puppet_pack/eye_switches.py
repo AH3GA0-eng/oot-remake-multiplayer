@@ -470,7 +470,8 @@ def live_places(path):
 
 def shared_flags(path):
     """The flag names of lichii/hook/coop_dungeon.cpp's tables (the flags another player's game sends us)."""
-    text = open(path, encoding="utf-8").read()
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
     return set(re.findall(r'\{0x[0-9a-f]+, (?:true|false), "([A-Za-z0-9_.]+)"\}', text))
 
 

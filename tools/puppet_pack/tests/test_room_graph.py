@@ -211,5 +211,50 @@ class AskerClassTest(unittest.TestCase):
         self.assertIn(("EventRequestActor", False, 1), also)  # alone in the OR
 
 
+class ResultsOutputTest(unittest.TestCase):
+    """--results (row 98(2)): a class-asker line names its outputs; a shared live flag that deletes its asker is a
+    result guard (coop_event_result.cpp kGuards); a flag read once at load is none."""
+
+    def run_main(self, once):
+        from unittest import mock
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as romfs:
+            os.makedirs(os.path.join(romfs, "Logic"))
+            os.makedirs(os.path.join(romfs, "Banc", "Scene"))
+            nodes = room(once) + [{"type": "ActorLogicLift", "imm": {"InstanceName": "Lift"},
+                                   "bool": [("IsOn", 0, 1, 0)], "out": ["Dead"]}]
+            with open(os.path.join(romfs, "Logic", "Room.logic.module.ainb"), "wb") as f:
+                f.write(ainb(nodes))
+            actors = [{"Hash": 1, "Gyaml": "EventRequestActor", "Dynamic": {"RequestEventName": "Ev"},
+                       "Translate": [1.0, 0.0, 0.0]},
+                      {"Hash": 2, "Gyaml": "Obj_StepSwitch_A_01", "Translate": [0.0, 0.0, 0.0]},
+                      {"Hash": 3, "Gyaml": "Obj_Lift", "Translate": [5.0, 0.0, 0.0]}]
+            groups = [{"Logic": "Work/Logic/Room.logic.module.ain",
+                       "References": [{"Path": n, "Id": n, "Reference": h}
+                                      for n, h in (("Asker", 1), ("Switch", 2), ("Lift", 3))]}]
+            with open(os.path.join(romfs, "Banc", "Scene", "Room.bcett.byml.zs"), "wb") as f:
+                f.write(byml.dumps({"Actors": actors, "AiGroups": groups}))
+            dungeon = os.path.join(romfs, "coop_dungeon.cpp")
+            with open(dungeon, "w", encoding="utf-8") as f:
+                f.write('    {0x12345678, false, "Room_Flag"},\n')
+            out = io.StringIO()
+            with mock.patch.object(eye_switches.zs.Dicts, "from_romfs", return_value=_Plain()), \
+                    contextlib.redirect_stdout(out):
+                self.assertEqual(eye_switches.main(["--romfs", romfs, "--dungeon", dungeon, "--results"]), 0)
+            return out.getvalue()
+
+    def test_a_live_delete_of_a_class_asker_asker_is_a_result_guard(self):
+        text = self.run_main(0)
+        self.assertIn('{"Ev", "Scene", {1.0f, 0.0f, 0.0f}, "EventBool"},  // asker', text)
+        guards = text.split("// kResultGuards", 1)[1]
+        self.assertIn('{"Room_Flag", "Scene", "Ev"},', guards)
+
+    def test_a_delete_read_once_at_load_is_no_result_guard(self):
+        text = self.run_main(1)
+        guards = text.split("// kResultGuards", 1)[1]
+        self.assertNotIn("Room_Flag", guards)
+
+
 if __name__ == "__main__":
     unittest.main()
