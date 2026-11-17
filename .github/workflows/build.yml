@@ -482,9 +482,9 @@ jobs:
           release=$(if [ "$GITHUB_REF_TYPE" = tag ]; then echo "$GITHUB_REF_NAME"; else echo "ci-${GITHUB_SHA::8}"; fi)
           bash tools/release/make_kit_linux.sh --module "$MODULE" --server "$SERVER" --licenses build \
             --release "$release" --out "$RUNNER_TEMP/kit"
-          # Squadala-<tag>-linux.zip, and the same bytes as oot-coop-<tag>-linux.zip (the name the kits up to v0.11.2 update from)
-          (cd "$RUNNER_TEMP/kit" && sha256sum -c Squadala-*-linux.zip.sha256 oot-coop-*-linux.zip.sha256)
-          cmp "$RUNNER_TEMP"/kit/Squadala-*-linux.zip "$RUNNER_TEMP"/kit/oot-coop-*-linux.zip
+          # Squadala-<tag>-linux.zip and its .sha256 only (no oot-coop-* copy from v0.11.4 on)
+          (cd "$RUNNER_TEMP/kit" && sha256sum -c Squadala-*-linux.zip.sha256)
+          if ls "$RUNNER_TEMP"/kit/oot-coop-* >/dev/null 2>&1; then echo "::error::the kit has an oot-coop-* asset"; exit 1; fi
           unzip -l "$RUNNER_TEMP"/kit/Squadala-*-linux.zip | tail -n +4 | head -n 60
           echo "KIT=$(ls -d "$RUNNER_TEMP"/kit/Squadala-*-linux)" >> "$GITHUB_ENV"
       - name: Longshot's Linux builder with our patches, and the patched renderer (no game)
@@ -500,18 +500,14 @@ jobs:
           code=$?
           printf '%s\n' "$out" | tail -n 15
           [ $code -ne 0 ] && printf '%s' "$out" | grep -q 'needs your game file' || { echo "::error::expected the no-game message"; exit 1; }
-          # the old name (up to v0.11.2; menu entries and Steam shortcuts still start it) does the same
-          out=$(bash "$KIT/start-oot-coop.sh" --no-update </dev/null 2>&1)
-          code=$?
-          [ $code -ne 0 ] && printf '%s' "$out" | grep -q 'needs your game file' || { echo "::error::start-oot-coop.sh: expected the no-game message"; exit 1; }
+          # one start file: the old name (start-oot-coop.sh, up to v0.11.3) is not in the kit
+          [ ! -e "$KIT/start-oot-coop.sh" ] || { echo "::error::the kit still has start-oot-coop.sh"; exit 1; }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: oot-coop-linux
           path: |
             ${{ runner.temp }}/kit/Squadala-*-linux.zip
             ${{ runner.temp }}/kit/Squadala-*-linux.zip.sha256
-            ${{ runner.temp }}/kit/oot-coop-*-linux.zip
-            ${{ runner.temp }}/kit/oot-coop-*-linux.zip.sha256
           retention-days: 14
 
   # The co-op emulator on Linux (issue 127): Fritchii at lichii/PIN with our patches and the
