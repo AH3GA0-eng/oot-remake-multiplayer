@@ -491,6 +491,7 @@ def main(argv=None):
     lines, guards, extras, others = switch_events(args.romfs, wiring=wiring, askers=askers)
     if args.results:
         print("// kResults (event, scene, asker place, the outputs to set: none for class live)")
+        guarded = []
         for key in sorted(askers):
             event, scene, at = key
             if keep is not None and (event, scene) not in keep:
@@ -499,6 +500,15 @@ def main(argv=None):
             outs = "+".join(o for o in ASKER_OUTPUTS if o in askers[key]["outputs"]) if cls == "asker" else ""
             print(f'    {{"{event}", "{scene}", {{{at[0]}f, {at[1]}f, {at[2]}f}}, "{outs}"}},  '
                   f'// {cls} ({askers[key]["actor"]}): {why}')
+            if cls == "asker":
+                guarded += [(f, scene, event) for f in askers[key]["delete"] if shared is None or f in shared]
+        # An event of a live place with no asker actor (a shutter's or door's own field asks it): nothing of ours to
+        # set, its results are the room's shared flags (class live).
+        for event, scene in sorted((keep or set()) - {(e, s) for e, s, _ in askers}):
+            print(f'    {{"{event}", "{scene}", {{0.0f, 0.0f, 0.0f}}, ""}},  // live (no asker actor: a field asks it)')
+        print("// kResultGuards (a shared flag that deletes an asker of class asker: waits until our result is set)")
+        for flag, scene, event in sorted(set(guarded)):
+            print(f'    {{"{flag}", "{scene}", "{event}"}},')
         return 0
     if args.classify:
         rows = []
