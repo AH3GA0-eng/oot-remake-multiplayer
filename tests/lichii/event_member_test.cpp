@@ -124,3 +124,101 @@ TEST_CASE("event member: our running event's kind and the names it points at, fo
     m.Put(kSession + kSessionCurrent, 2);  // past the count: none
     CHECK(ReadRunning(m.Reader(), kMain).event == 0);
 }
+
+TEST_CASE("event member: the game's own test, a slot pointer with its flag bit (G1)") {
+    using namespace CoopEventMember;
+    constexpr std::uint64_t kRecord = 0x40'0000, kEventA = 0x41'0000, kEventB = 0x42'0000;
+    const auto slot = [&](std::size_t i) { return kRecord + kRecordSlots + kMemberSlotSize * i; };
+    Memory m;
+    CHECK_FALSE(IsMember(m.Reader(), kActor));  // nothing readable
+    CHECK_FALSE(IsMember(m.Reader(), 0));
+    CHECK(ReadMember(m.Reader(), kActor).member == 0);
+    CHECK(MemberText(ReadMember(m.Reader(), kActor)) == "no member");
+    m.Put(kActor + kActorParts, kParts);
+    m.Put(kParts + kMemberSlot, kPerformer);
+    m.Put(kPerformer + kMemberState, 0xffffffff'00000003ull);  // u32: the high half is another field
+    m.Put(kPerformer + kMemberRecord, 0);
+    {
+        const MemberRead r = ReadMember(m.Reader(), kActor);
+        CHECK(r.member == kPerformer);
+        CHECK(r.state == 3);
+        CHECK(r.record == 0);  // no record: in no event
+        CHECK_FALSE(r.Member());
+        CHECK_FALSE(r.SomeReason());
+        CHECK(MemberText(r) == "state 3 record 0x0 slots none");
+        CHECK(MemberDump(m.Reader(), r) == "no slot used");
+    }
+    // A record whose slots are all free: not a member.
+    m.Put(kPerformer + kMemberRecord, kRecord);
+    for (std::size_t i = 0; i < kMemberSlots; ++i) {
+        m.Put(slot(i), 0);
+        m.Put(slot(i) + kSlotFlags, 0);
+    }
+    CHECK_FALSE(IsMember(m.Reader(), kActor));
+    // A flag without a pointer: free. A pointer without the flag: "some reason" only.
+    m.Put(slot(0) + kSlotFlags, 1);
+    CHECK_FALSE(IsMember(m.Reader(), kActor));
+    CHECK_FALSE(ReadMember(m.Reader(), kActor).SomeReason());
+    m.Put(slot(1), kEventA);
+    m.Put(slot(1) + kSlotFlags, 0xffffffff'ffffff02ull);  // u8, bit 0 clear
+    CHECK_FALSE(IsMember(m.Reader(), kActor));
+    CHECK(ReadMember(m.Reader(), kActor).SomeReason());
+    CHECK(MemberText(ReadMember(m.Reader(), kActor)) == "state 3 record 0x400000 slots 1:0x410000/0x2");
+    // Pointer and flag in any of the four slots: a member.
+    for (std::size_t i = 0; i < kMemberSlots; ++i) {
+        CAPTURE(i);
+        m.Put(slot(i), kEventB);
+        m.Put(slot(i) + kSlotFlags, 0x101);  // only the low byte is the flag
+        CHECK(IsMember(m.Reader(), kActor));
+        CHECK(ReadMember(m.Reader(), kActor).slots[i].flags == 1);
+        m.Put(slot(i), i == 1 ? kEventA : 0);
+        m.Put(slot(i) + kSlotFlags, i == 1 ? 2 : 0);
+        CHECK_FALSE(IsMember(m.Reader(), kActor));
+    }
+    // A slot that cannot be read is free, never a member.
+    m.Put(slot(3), kEventB);
+    m.words.erase(slot(3) + kSlotFlags);
+    CHECK_FALSE(IsMember(m.Reader(), kActor));
+    CHECK(ReadMember(m.Reader(), kActor).slots[3].pointer == 0);
+    // Past the fourth slot nothing is read.
+    m.Put(slot(3), 0);
+    m.Put(slot(3) + kSlotFlags, 0);
+    m.Put(slot(4), kEventB);
+    m.Put(slot(4) + kSlotFlags, 1);
+    CHECK_FALSE(IsMember(m.Reader(), kActor));
+    // The dump: the slot's seven words, then four words its pointer leads to ('?' unread).
+    m.Put(kEventA, 0x1234);
+    const std::string dump = MemberDump(m.Reader(), ReadMember(m.Reader(), kActor));
+    CHECK(dump == "slot 1: 0x410000 0x2 ? ? ? ? ? -> 0x1234 ? ? ?");
+}
+
+TEST_CASE("event member: the EventPerformer bits are the u16 at +0x8c of the 0x90 component (G1)") {
+    using namespace CoopEventMember;
+    Memory m;
+    CHECK_FALSE(PerformerBits(m.Reader(), kActor));
+    CHECK_FALSE(PerformerBits(m.Reader(), 0));
+    m.Put(kActor + kActorParts, kParts);
+    m.Put(kParts + kEventPerformerSlot, 0);
+    CHECK_FALSE(PerformerBits(m.Reader(), kActor));  // no component there
+    m.Put(kParts + kEventPerformerSlot, kPerformer);
+    CHECK_FALSE(PerformerBits(m.Reader(), kActor));  // unreadable
+    m.Put(kPerformer + 0x88, 0xaaaa'0003'5555'5555ull);  // +0x88 u32, +0x8c u16, +0x8e u16
+    REQUIRE(PerformerBits(m.Reader(), kActor));
+    CHECK(*PerformerBits(m.Reader(), kActor) == 3);
+    // The member component (0x88) is not read for it.
+    m.Put(kParts + kMemberSlot, 0x99'0000);
+    CHECK(*PerformerBits(m.Reader(), kActor) == 3);
+}
+
+TEST_CASE("event member: the ring of live events and hex, for the log (G1)") {
+    using namespace CoopEventMember;
+    constexpr std::uint64_t kMain = 0x7100000000;
+    Memory m;
+    CHECK(Hex(0) == "0x0");
+    CHECK(Hex(0x106d7f9dd0) == "0x106d7f9dd0");
+    CHECK(EventRingText(m.Reader(), kMain) == "? ? ? ?");
+    m.Put(kMain + kEventRing, 0x80'0000);
+    m.Put(kMain + kEventRing + 8, 0);
+    m.Put(kMain + kEventRing + 24, 0x81'0000);
+    CHECK(EventRingText(m.Reader(), kMain) == "0x800000 0x0 ? 0x810000");
+}

@@ -2738,6 +2738,44 @@ private:
         if (our_event_link == 0) {
             member_said_.clear();
         }
+        // G1: the game's own membership test (CoopEventMember::ReadMember), for the log only: our
+        // Link's on each change, with the running event and the event ring; every other actor's
+        // while an event runs here or our Link's member says anything.
+        const CoopEventMember::MemberRead link_member = CoopEventMember::ReadMember(read_word, our_link_);
+        const bool members_wanted = TheLocalEvent().load() || link_member.SomeReason() || link_member.state != 0;
+        {
+            const auto bits = CoopEventMember::PerformerBits(read_word, our_link_);
+            std::string text = CoopEventMember::MemberText(link_member) + " performer bits " +
+                               (bits ? CoopEventMember::Hex(*bits) : std::string("?"));
+            if (our_link_ != 0 && text != link_member_said_) {
+                const auto ev = CoopEventMember::ReadRunning(read_word, main_);
+                LOG_INFO(Core, "coop: event: member: our Link {:#x}: {}{}; running event {:#x}, ring {}; {}", our_link_,
+                         text, link_member.Member() ? " (an event member, the game's test)" : "", ev.event,
+                         CoopEventMember::EventRingText(read_word, main_),
+                         CoopEventMember::MemberDump(read_word, link_member));
+                link_member_said_ = std::move(text);
+            }
+            if (!members_wanted) {
+                members_said_.clear();
+            }
+        }
+        const auto member_log = [&](u64 actor, const std::string& name) {
+            if (!members_wanted || actor == our_link_) {
+                return;
+            }
+            const CoopEventMember::MemberRead m = CoopEventMember::ReadMember(read_word, actor);
+            const auto said = members_said_.find(actor);
+            if (!m.SomeReason() && m.state == 0 && said == members_said_.end()) {
+                return;  // in no event and asking for none since this one began: nothing to say
+            }
+            std::string text = CoopEventMember::MemberText(m);
+            if (said != members_said_.end() ? said->second == text : members_said_.size() >= kMembersSaidMax) {
+                return;
+            }
+            LOG_INFO(Core, "coop: event: member: {} {:#x}: {}{}; {}", name, actor, text,
+                     m.Member() ? " (an event member, the game's test)" : "", CoopEventMember::MemberDump(read_word, m));
+            members_said_[actor] = std::move(text);
+        };
         const auto member_of = [&](u64 actor, const std::string& name) {
             const std::optional<bool> in = CoopEventMember::InOurEvent(read_word, actor, our_event_link);
             // Once per actor name and event, for the next run (diagnostic, never a claim): the
@@ -2812,6 +2850,7 @@ private:
             if (const auto extra = extras_.HashOf(a, known.first)) {
                 known.second = *extra;  // difficulty: an extra enemy is shared by its own placement id
             }
+            member_log(a, known.first);  // G1: the game's own event member test, for the log
             // Difficulty: a made actor that may be an extra the director has not bound yet waits for it.
             const bool extra_unbound = (known.second == 0 || known.second == ~u64{0}) &&
                                        extras_.Holds(known.first, now_ms);
@@ -4169,6 +4208,11 @@ private:
     std::set<u64> event_partners_;
     std::set<std::string> member_said_;  // row 97: names whose performer read was logged this event
     static constexpr std::size_t kMemberSaidMax = 32;
+    // G1: the game's own member test in the log: our Link's last line, and each actor's last line
+    // while an event runs (by address: cleared when no event runs and our Link's member is idle).
+    std::string link_member_said_;
+    std::map<u64, std::string> members_said_;
+    static constexpr std::size_t kMembersSaidMax = 160;
     std::size_t npc_ours_ = 0;     // how many of them the server gave us (log)
     u64 npc_log_at_ = 0;
     u64 npc_calls_at_ = 0;  // the 5 s line of the walking townspeople
