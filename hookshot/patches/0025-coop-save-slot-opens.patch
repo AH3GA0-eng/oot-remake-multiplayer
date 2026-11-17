@@ -1,4 +1,4 @@
-From 242274dd980a9c6a1aab0c4cb8f9d018030d0c8a Mon Sep 17 00:00:00 2001
+From a48b629d88e8c6928a9d8f84db6e6ec749320196 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Mon, 16 Nov 2026 11:37:15 -0900
 Subject: [PATCH] Co-op save slot opens: the slot folder the game opened last,

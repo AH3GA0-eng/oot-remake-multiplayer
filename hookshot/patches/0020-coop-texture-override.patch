@@ -1,4 +1,4 @@
-From 08238f57595517463886bd077847b376be1e46cf Mon Sep 17 00:00:00 2001
+From 60c9264f83a48a7a3ad1c79a18cacdde9159e33c Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Fri, 13 Nov 2026 20:38:47 -0900
 Subject: [PATCH] Co-op texture overrides: a module may have a texture drawn
@@ -18,27 +18,19 @@ override set or taken away marks its pages written, so the texture is
 uploaded again. A texture finalized takes its overrides with it.
 The Link customizer paints Link's gear with it.
 ---
- gpu/vk/vk_texture.cpp   |  55 ++++++++++-
+ gpu/vk/vk_texture.cpp   |  54 ++++++++++-
  host/coop_texture.c     | 196 ++++++++++++++++++++++++++++++++++++++++
  host/hos_coop_texture.h |  43 +++++++++
  host/nvn_native.c       |   9 ++
- 4 files changed, 299 insertions(+), 4 deletions(-)
+ 4 files changed, 298 insertions(+), 4 deletions(-)
  create mode 100644 host/coop_texture.c
  create mode 100644 host/hos_coop_texture.h
 
 diff --git a/gpu/vk/vk_texture.cpp b/gpu/vk/vk_texture.cpp
-index 18a08420..dfd8ae6e 100644
+index 18a08420..6db5422a 100644
 --- a/gpu/vk/vk_texture.cpp
 +++ b/gpu/vk/vk_texture.cpp
-@@ -19,6 +19,7 @@
- #if defined(__linux__)
- #include <dlfcn.h>
- #include <malloc.h>
-+#include <dlfcn.h>   // (patch 0020: dlsym)
- #endif
- #include <atomic>
- #include <chrono>
-@@ -1044,8 +1045,40 @@ LevelGeo level_geo(const Texture& tex, uint32_t level) {   // (level: the image'
+@@ -1044,8 +1044,40 @@ LevelGeo level_geo(const Texture& tex, uint32_t level) {   // (level: the image'
      return g;
  }
  
@@ -80,7 +72,7 @@ index 18a08420..dfd8ae6e 100644
      uint64_t avail = 0;
      const uint8_t* p = host->gpu_ptr(gpu, &avail);
      // (below 1 TB the GPU address is the guest's: the storage as it was at the submit being replayed, where the game has
-@@ -1073,6 +1106,15 @@ const uint8_t* guest_bytes(uint64_t gpu, uint64_t n, std::vector<uint8_t>& scrat
+@@ -1073,6 +1105,15 @@ const uint8_t* guest_bytes(uint64_t gpu, uint64_t n, std::vector<uint8_t>& scrat
      }
      return scratch.data();
  }
@@ -96,7 +88,7 @@ index 18a08420..dfd8ae6e 100644
  
  void widen_rows(uint8_t* dst, const uint8_t* src, size_t texels, int from, int to) {
      const int comp = from / 3;
-@@ -1792,12 +1834,15 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
+@@ -1792,12 +1833,15 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
      up_route = UP_CPU;
      if (tex.bc) return false;   // (no CPU path into BC3)
      // (the GPU's unswizzle reads guest memory as it is: not where the capture kept the storage as it was at its submit)
@@ -114,7 +106,7 @@ index 18a08420..dfd8ae6e 100644
      const int src_bpb = tex.bpb;
      const int out_bpb = tex.astc ? 4 : widen_from ? (widen_from == 3 ? 4 : widen_from == 6 ? 8 : 16) : src_bpb;
      const uint32_t copy_layers = tex.type == VK_IMAGE_TYPE_3D ? 1 : tex.layers;
-@@ -1872,7 +1917,7 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
+@@ -1872,7 +1916,7 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
                                                    ? std::clamp(std::thread::hardware_concurrency() / 2, 1u, 8u) : 1u;
                      uint64_t avail = 0;
                      const uint8_t* direct = host->gpu_ptr(tex.gpu + from, &avail);
@@ -123,7 +115,7 @@ index 18a08420..dfd8ae6e 100644
                      const uint8_t* src = nullptr;
                      if (gather_parts) {
                      } else if (from < total && total - from >= need) {
-@@ -1880,6 +1925,8 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
+@@ -1880,6 +1924,8 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
                      } else {
                          scratch.assign(need, 0);
                          if (from < total) host->gpu_read(tex.gpu + from, scratch.data(), total - from);

@@ -1,4 +1,4 @@
-From dbbc3dac95ff2f31b5fbacc40ee17dfb3d3baafe Mon Sep 17 00:00:00 2001
+From 5022ffec9ac1db1a124217faf630f49047cda97f Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Fri, 13 Nov 2026 01:34:58 -0900
 Subject: [PATCH] Co-op menu tabs: the module's tabs lead the menu's strip

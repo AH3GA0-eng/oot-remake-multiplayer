@@ -1,4 +1,4 @@
-From aeb22c96398ee06742350ad2f05cf4a6c5526813 Mon Sep 17 00:00:00 2001
+From 614719f95dea905d35096f98a2f11557751ba512 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Fri, 13 Nov 2026 16:01:26 -0900
 Subject: [PATCH] Co-op map state: the game's menu state for the players on the

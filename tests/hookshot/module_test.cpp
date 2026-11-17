@@ -818,3 +818,56 @@ TEST_CASE("hookshot: co-op's log lines stay out of Longshot's crash report (patc
     CHECK_FALSE(hos_coop_crash_private("[hos main"));
     CHECK_FALSE(hos_coop_crash_private(""));
 }
+
+TEST_CASE("hookshot: a co-op build sends nothing to Longshot and is never a Longshot release (patch 0027)") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0027-coop-crash-report.patch");
+    // No address is read, so neither Report automatically nor longshot_crash.ini's silent send is offered.
+    CHECK(patch.find("+    s->reports[0] = s->issue[0] = 0;\n }") != std::string::npos);
+    CHECK(patch.find("-    char *stamp = join(path, sizeof path, s->dir, \"longshot_version.txt\")") != std::string::npos);
+    // The release flag is always 0.
+    CHECK(patch.find("-    in.release = hos_crash_release(in.bare_version, source, stamp_source);\n+    in.release = 0;") !=
+          std::string::npos);
+    // No performance summary is measured or written.
+    CHECK(patch.find("bool perf_report_init() {\n     folder = game_dir_path();\n+") != std::string::npos);
+    CHECK(patch.find("+    if (true) return false;") != std::string::npos);
+    // Every address empty, so the build's stamp has none and a sender has nowhere to send.
+    for (const char* key : {"crash_reports", "crash_issue", "perf_reports"}) {
+        CHECK(patch.find(std::string("\n+") + key + " =\n") != std::string::npos);
+        CHECK(patch.find(std::string("\n-") + key + " = https://") != std::string::npos);
+    }
+    // Report manually opens co-op's page, not Longshot's issue form.
+    CHECK(patch.find("+#define HOS_CRASH_ISSUES HOS_COOP_CRASH_REPORT_PAGE") != std::string::npos);
+    CHECK(patch.find("+    snprintf(out->url, sizeof out->url, \"%s\", HOS_COOP_CRASH_REPORT_PAGE);") != std::string::npos);
+    CHECK(std::string(HOS_COOP_CRASH_REPORT_PAGE).rfind("https://github.com/daurosk/oot-remake-multiplayer/", 0) == 0);
+    CHECK(patch.find("+                           \"your browser (this is a co-op build: not Longshot's to fix). %s\",") !=
+          std::string::npos);
+}
+
+TEST_CASE("hookshot: no patch logs a microphone, pad, player or server name outside co-op's own lines") {
+    // A line our patches add to Longshot's log reaches its crash report unless it is co-op's ("coop..."; patch 0027).
+    // So a name a player chose or a device carries goes only into co-op's own lines (the device's own connect line is
+    // Longshot's). 0009: the co-op voice's source logs a fixed word; 0015: the pad's number without its name again.
+    static const char* const kNames[] = {"voice_name", "named ? name", "hos_sdl_pad_name", "nickname", "server", "src->want",
+                                         "sel_name", "dev_names"};
+    for (const auto& entry : std::filesystem::directory_iterator(kRepo / "hookshot" / "patches")) {
+        if (entry.path().extension() != ".patch") continue;
+        std::istringstream lines(ReadFile(entry.path()));
+        for (std::string line; std::getline(lines, line);) {
+            const auto at = line.find("hos_log(\"");
+            if (line.rfind("+", 0) != 0 || at == std::string::npos) continue;
+            const bool coop = line.compare(at + 9, 4, "coop") == 0;
+            for (const char* name : kNames) {
+                INFO(entry.path().filename().string() << ": " << line);
+                CHECK((coop || line.find(name) == std::string::npos));
+            }
+        }
+    }
+    const std::string voice = ReadFile(kRepo / "hookshot" / "patches" / "0009-coop-voice.patch");
+    CHECK(voice.find("+    return src->own ? \"the co-op voice's microphone\" : src->mode == 2 ? src->want : \"the default microphone\";") !=
+          std::string::npos);
+    CHECK(voice.find("+    hos_log(\"coop voice: microphone: %s\"") != std::string::npos);
+    // rc.6's fifth source (the microphone test's slot) is free for the co-op voice too.
+    CHECK(voice.find("+    while (named && i < MAX_STREAMS + 1 && sources[i].used) i++;") != std::string::npos);
+    const std::string pads = ReadFile(kRepo / "hookshot" / "patches" / "0015-coop-pad-select.patch");
+    CHECK(pads.find("+                    hos_log(\"hid: that controller is pad %d\", n);") != std::string::npos);
+}

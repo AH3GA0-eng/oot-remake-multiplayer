@@ -1,4 +1,4 @@
-From ff7485487896d17c9e8fc0a711a44aff08816527 Mon Sep 17 00:00:00 2001
+From 6af542badd5bb929a912ecb6bd8df2de54ae4992 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Fri, 13 Nov 2026 01:29:09 -0900
 Subject: [PATCH] Co-op sound wrap: the sounds the game starts, to the module

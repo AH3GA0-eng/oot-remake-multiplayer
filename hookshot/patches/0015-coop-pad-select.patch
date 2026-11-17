@@ -1,4 +1,4 @@
-From 78c51497a7529f9dc6624928cf3f46adc3a9e345 Mon Sep 17 00:00:00 2001
+From f2b6bdef854225297dc07210d53afb2217b345cc Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Fri, 13 Nov 2026 02:56:35 -0900
 Subject: [PATCH] Co-op pad select: this game's controller and keyboard, for
@@ -112,7 +112,7 @@ index a02f267d..45b3e69d 100644
      for (int i = 0; i < HOS_SW_N; i++)
          if (bound_down(i, 0)) *buttons |= 1ULL << i, player_used();
 diff --git a/host/pad_sdl.c b/host/pad_sdl.c
-index f587e3b1..1c76f4ff 100644
+index f587e3b1..44f5d5e0 100644
 --- a/host/pad_sdl.c
 +++ b/host/pad_sdl.c
 @@ -188,6 +188,31 @@ static int hd_poll(int i, const uint8_t side[3][4], long long now) {
@@ -173,7 +173,7 @@ index f587e3b1..1c76f4ff 100644
 +                    for (int i = 0; i < MAX_PADS; i++)
 +                        if (i != slot && pads[i].gc && pad_rank[i] == n) n++, i = -1;
 +                    pad_rank[slot] = n;
-+                    hos_log("hid: controller \"%s\" is pad %d", hos_sdl_pad_name(gc), n);
++                    hos_log("hid: that controller is pad %d", n);   /* (its name: the line before, Longshot's own) */
 +                }
 +            }
 +            {   /* (patch 0015) the open pads' names by number */

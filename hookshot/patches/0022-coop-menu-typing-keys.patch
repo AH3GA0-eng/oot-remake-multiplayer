@@ -1,4 +1,4 @@
-From 5e4e1363fa7726e24773f8ca8cdae9c74c026455 Mon Sep 17 00:00:00 2001
+From 1a4647418106117d84d530a8d7a44dc05f07fa90 Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Sun, 15 Nov 2026 08:39:40 -0900
 Subject: [PATCH] Co-op typing: the menu leaves the keyboard to a text field

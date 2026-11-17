@@ -1,4 +1,4 @@
-From a6db298368e63507195c20d5d64678339135be2e Mon Sep 17 00:00:00 2001
+From 4913217b0e7d60d62edadefda27bcd438cc67b16 Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Fri, 13 Nov 2026 12:26:46 -0900
 Subject: [PATCH] Co-op local pads: split-screen players get Npads 2 to 4
@@ -155,7 +155,7 @@ index 45b3e69d..f83eef85 100644
 +}
 +HOS_COOP_HID_EXPORT int hos_coop_pad_take(int n, uint32_t serial, int npad) { return hos_sdl_pad_take(n, serial, npad); }
 diff --git a/host/pad_sdl.c b/host/pad_sdl.c
-index 1c76f4ff..5116a403 100644
+index 44f5d5e0..0686cea6 100644
 --- a/host/pad_sdl.c
 +++ b/host/pad_sdl.c
 @@ -66,6 +66,22 @@ static uint64_t state_buttons;

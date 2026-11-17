@@ -1,4 +1,4 @@
-From 123eb0b78af8c1335a64afc22134be5d2903c735 Mon Sep 17 00:00:00 2001
+From 5652b501d9170f7e4792aee9fe8258ba59fe0fae Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Fri, 13 Nov 2026 16:33:05 -0900
 Subject: [PATCH] Co-op menu picture: a module tab may draw shapes, or show the
