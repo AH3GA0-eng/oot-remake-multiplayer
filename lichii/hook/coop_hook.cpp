@@ -1185,12 +1185,13 @@ public:
                 LOG_INFO(Core, "coop: boss: {} was left set in this save (an older co-op build shared it): {}",
                          name, ok ? "cleared" : "could not clear");
             }
-            // G2 (#241): a boss the group beat while our game did not see it die gets its beaten set, one way, in a
-            // scene other than the boss's (coop_boss_beaten.h). Solo or co-op idle: the record is empty.
+            // G2 (#241): a boss the group beat while our game did not see it die gets its beaten set, one way, at the
+            // next load of a scene other than the boss's, never mid-scene (coop_boss_beaten.h). Solo or co-op idle: the
+            // record is empty.
             const CoopBossBeaten::Record& record = CoopBossBeaten::TheRecord();
             const std::vector<std::uint8_t> beaten = record.Rooms();
             for (const CoopBossBeaten::Write& w : boss_beaten_.Check(
-                     view.scene, at.has_value(), beaten, record.Version(), [&](std::uint32_t hash) {
+                     view.scene, at.has_value(), beaten, [&](std::uint32_t hash) {
                          const auto v = game_store->read(coop::protocol::FlagKey{hash, 0});
                          return v ? std::optional<std::uint32_t>(v->value) : std::nullopt;
                      })) {
