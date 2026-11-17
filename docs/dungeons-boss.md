@@ -399,8 +399,13 @@ reload brought the fight back with no container to win (#241, row 52).
   | Twinrova | SageOfSpirit -> Step10 | |
 
   Every row also has the three `HavePlayedEvent` flags (the setting, BossIn, BossOut).
-- **Given one way, outside the boss's scene.** Once per scene load (and again when the record changes), while our
-  Link stands in any scene but the boss's dungeon, each Bool not at its beaten value is written to it, and the quest
+- **Given one way, outside the boss's scene, only at a scene load.** The bosses the record holds when a scene is
+  first seen are given there, once, while our Link stands in any scene but the boss's dungeon. A boss beaten while we
+  stand in a scene waits for the next load (a door, a warp, a reload), never mid-scene: some of the set is read live
+  outside the dungeon (`Gohma_DefeatBoss` by Kokiri Forest's `Npc_Kokiri_011`, `HavePlayedEvent.Dm_DodongoCave_BossOut`
+  by Death Mountain Trail's `DeathMountainTrail_Child_Prefab_6f34`, `SageOfForest_IsBefore_Step08` by Kokiri Forest's
+  `Level_All_01` and `Level_Area_01`; romfs `Logic`), and in the game alone a kill is always in another scene, so those
+  scenes never see them change while loaded (review of c78d17c4, boss-away-crash). Then each Bool not at its beaten value is written to it, and the quest
   is raised to the step only from a step before it: a save that finished the dungeon (Complete) is never stepped
   back. Never in the boss's own dungeon scene: its room's logic is loaded there (maybe a fight); the next scene gives
   it. The dungeon then loads as a beaten save's: no boss, the blue warp there; a reload of an older save of ours gets
