@@ -116,7 +116,15 @@ constexpr u64 kOcarinaProgramId = 0x0400486024DEC000ULL;
 // The builds it knows: coop_game_build.h (docs/game-builds.md).
 constexpr std::string_view kGameBuildId = CoopGameBuild::kPrimary.id;
 constexpr std::string_view kGameVersion = CoopGameBuild::kPrimary.version;
-constexpr const char* kBuildId = "lichii fritchii-v5 coop";
+// The client this game runs the module in, for HELLO's build_id (docs/crossplay.md): the server writes it beside the
+// player's name in its log, so a problem between two clients can be told apart. Nothing is decided by it. The Fritchii
+// emulator (stage 1): "coop fritchii-v5 <version>"; the Hookshot/Longshot module (COOP_HOOKSHOT, whose
+// LICHII_COOP_VERSION starts with "hookshot "): "coop hookshot <version>".
+#ifdef COOP_HOOKSHOT
+constexpr const char* kBuildId = "coop " LICHII_COOP_VERSION;
+#else
+constexpr const char* kBuildId = "coop fritchii-v5 " LICHII_COOP_VERSION;
+#endif
 
 // A frame older than this means the game is not running (stopped, paused).
 constexpr auto kFrameStale = std::chrono::seconds(1);
