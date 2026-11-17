@@ -1355,6 +1355,23 @@ public:
                const std::optional<std::string>& scene, u64 server_now_us) {
         if (session == nullptr || !scene || scene->empty() || server_now_us == 0) {
             if (sharing_) {
+                if (scene && !scene->empty() && Ready(system)) {
+                    // Row 127: the session ended with our game still in its scene (we left, the server dropped:
+                    // the host's game crashed). Our boss copies are no copies any more (Publish({}) below); one
+                    // held at life 1 for its owner takes the owner's last life first, through its own Life step,
+                    // so the next hit does not kill it (Sync::KeepBossLives; no new network data).
+                    std::vector<LifeWrite> keep;
+                    sync_.KeepBossLives(self_, keep);
+                    if (!keep.empty()) {
+                        Reader r(system.ApplicationMemory());
+                        for (const LifeWrite& w : keep) {
+                            WriteLife(system.ApplicationMemory(), r, w);
+                        }
+                    }
+                    for (const std::string& note : sync_.TakeNotes()) {
+                        LOG_INFO(Core, "coop: objects: {}", note);
+                    }
+                }
                 sync_.Reset();
                 world_.Reset();
                 block_retry_.clear();
