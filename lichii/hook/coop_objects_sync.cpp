@@ -1178,8 +1178,9 @@ std::size_t Sync::EventPartnersOurs(std::uint64_t now_us) const {
 }
 
 Sync::PartnerWhy Sync::EventPartnerWhy(const Object& o) const {
-    // A boss runs its own changes in our event already (CoopBossNative::SetEvent) and keeps
-    // its fight's owner; a fish keeps the lure rules (issue 151).
+    // A boss runs its own changes in our event already (CoopBossNative::SetEvent; row 130: its owner's
+    // motion waits meanwhile, CopiesRunningOwn) and keeps its fight's owner; a fish keeps the lure rules
+    // (issue 151).
     if (IsBoss(o.name) || o.fish) {
         return PartnerWhy::none;
     }

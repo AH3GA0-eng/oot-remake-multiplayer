@@ -3806,6 +3806,24 @@ private:
                 }
             }
         }
+        // Row 130 (two players entering Gohma's room together; only one could beat her): a boss copy that runs
+        // its own changes now (CoopBossNative OwnTime: our event, our hit's reaction, a mid-boss's own start, its
+        // death) gets none of its owner's place, animation or frame meanwhile. Else its own game's event waited
+        // for a boss the owner's motion put back every frame (her appear: C01 at frame 1 over Pre_Battle_*), and
+        // our Link stayed in it until the owner's game killed her. Its owner's remove still comes.
+        {
+            const auto own = CoopBossNative::TheTable().CopiesRunningOwn();
+            const auto runs_own = [&own](u64 a) { return std::find(own.begin(), own.end(), a) != own.end(); };
+            std::erase_if(wish, [&](const Mover::Pose& p) { return runs_own(p.actor); });
+            std::erase_if(plays, [&](const PlayWish& p) { return runs_own(p.address); });
+            if (own.empty() == boss_own_said_) {
+                boss_own_said_ = !own.empty();
+                LOG_INFO(Core, "coop: objects: {}", boss_own_said_
+                             ? fmt::format("{} boss copy(ies) run their own (our event, our hit, their start or "
+                                           "death): their owner's place and animation wait", own.size())
+                             : std::string("boss copies take their owner's place and animation again"));
+            }
+        }
         NpcAnim(r, now_us, removes, wish, plays);
         TheMover().Want(main_, std::move(wish), std::move(removes), std::move(plays));
         if (now_us - drift_at_ >= kDriftLogUs) {
@@ -4023,6 +4041,7 @@ private:
     static constexpr float kDriftWorstM = 1.0f;
     std::size_t drift_count_ = 0;
     u64 drift_at_ = 0;
+    bool boss_own_said_ = false;  // row 130: the last 'boss copies run their own' line logged
     CoopEvery::Every scan_{CoopEvery::kTwoFramesUs};
     CoopEvery::Every cheat_every_{CoopEvery::kSecondUs};
     CoopCheatItems::State cheat_state_;
