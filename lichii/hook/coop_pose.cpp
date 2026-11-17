@@ -239,10 +239,7 @@ std::size_t Track::Add(Pose sent, std::uint64_t now_ms, std::uint64_t made_ms) {
             const std::uint64_t gap = last != sent_ms_.end() && made_ms > last->second ? made_ms - last->second : 0;
             if (was == nullptr || gap <= kRampAfterMs ||
                 !SlowStep(*was, b, static_cast<float>(gap) / 1000.0f)) {
-                // A real move (or a first): as sent. puppet-smooth: and when it was left out of
-                // the poses since it was last sent, its path through them, not held.
-                const bool ramping = ramps_.erase(b.bone) != 0;
-                if (was != nullptr && !ramping && gap > 0) Bridge(b, last->second, made_ms);
+                ramps_.erase(b.bone);  // a real move (or a first): as sent
                 continue;
             }
             Ramp r{*was, b, shown_ms, std::min(gap, kRampMaxMs)};
@@ -269,28 +266,6 @@ std::size_t Track::Add(Pose sent, std::uint64_t now_ms, std::uint64_t made_ms) {
     }
     Push(Fill(std::move(sent)), now_ms, made_ms);
     return ramps_.size();
-}
-
-void Track::Bridge(const BonePose& to, std::uint64_t from_ms, std::uint64_t to_ms) {
-    // Every kept pose after from_ms (all before to_ms) held the bone as it was sent then. It moves
-    // from where it is shown now (shown_ms_, At's last show time) when that is later: the poses
-    // already played stay as they were, and the one being shown changes by at most its share.
-    const std::uint64_t start_ms = std::max(from_ms, shown_ms_);
-    std::size_t k = 0;
-    for (std::size_t i = 0; i < timed_.size() && timed_[i].first <= start_ms; ++i) k = i;
-    if (timed_.empty() || start_ms >= to_ms || timed_[k].first >= to_ms) return;
-    const BonePose* from = FindBone(timed_[k].second, to.bone);
-    if (from == nullptr || !SameParts(*from, to)) return;
-    const BonePose start = *from;
-    const float span = static_cast<float>(to_ms - start_ms);
-    for (std::size_t i = k + 1; i < timed_.size() && timed_[i].first < to_ms; ++i) {
-        auto& bones = timed_[i].second.bones;
-        const auto it = std::lower_bound(bones.begin(), bones.end(), to.bone,
-                                         [](const BonePose& b, std::uint16_t n) { return b.bone < n; });
-        if (it == bones.end() || it->bone != to.bone || !SameParts(*it, to)) continue;
-        const std::uint64_t at = std::max(timed_[i].first, start_ms);
-        *it = Between(start, to, static_cast<float>(at - start_ms) / span);
-    }
 }
 
 Pose Track::Fill(Pose pose) const {
@@ -418,7 +393,6 @@ std::vector<proto::PoseBone> BonePicker::Pick(std::uint32_t skeleton,
 std::optional<Pose> Track::At(std::uint64_t now_ms, std::uint64_t delay_ms) const {
     if (!timed_.empty()) {
         const std::uint64_t show = now_ms - std::min(now_ms, delay_ms);
-        shown_ms_ = show;  // puppet-smooth: Bridge starts here
         if (show <= timed_.front().first) return timed_.front().second;
         for (std::size_t i = 0; i + 1 < timed_.size(); ++i) {
             const auto& [a_ms, a] = timed_[i];
@@ -454,12 +428,22 @@ std::optional<float> Evenness::Step(const Pose& shown, std::uint64_t now_ms, int
             const auto& a = shown.bones[i].rotation;
             const auto& b = last_->bones[i].rotation;
             if (a && b) {
-                const float d = std::fabs((*a)[0] * (*b)[0] + (*a)[1] * (*b)[1] + (*a)[2] * (*b)[2] +
-                                          (*a)[3] * (*b)[3]);
-                const float turn = 2.0f * std::acos(std::min(d, 1.0f));
+                // The turn from the chord |a - b| (b on a's side): acos of the dot product reads
+                // every turn under ~0.7 mrad as 0 in float, a moving bone as a held one.
+                const float sign = (*a)[0] * (*b)[0] + (*a)[1] * (*b)[1] + (*a)[2] * (*b)[2] + (*a)[3] * (*b)[3] < 0.0f
+                                       ? -1.0f
+                                       : 1.0f;
+                float chord = 0.0f;
+                for (int k = 0; k < 4; ++k) {
+                    const float d = (*a)[k] - sign * (*b)[k];
+                    chord += d * d;
+                }
+                const float c = std::sqrt(chord);
+                const float turn = 4.0f * std::asin(std::min(c / 2.0f, 1.0f));
                 change += turn;
-                if (held_[i] && turn > kJumpRad) ++jumps_;
-                held_[i] = turn < kHeldRad ? 1 : 0;
+                const bool same = c < kHeldChord;  // a held copy (Fill), to float rounding of its blend
+                if (!same && held_[i] >= kJumpHeldFrames && turn > kJumpRad) ++jumps_;
+                held_[i] = same ? static_cast<std::uint8_t>(std::min(held_[i] + 1, 255)) : 0;
             }
         }
         const float rate = change / static_cast<float>(dt);

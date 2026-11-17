@@ -202,11 +202,6 @@ private:
     };
     std::map<std::uint16_t, std::uint64_t> sent_ms_;
     std::map<std::uint16_t, Ramp> ramps_;
-    // puppet-smooth: a bone sent again after a gap (left out of the poses between: the sender's
-    // bone budget) moves from its value at from_ms to `to` at to_ms across the kept poses between,
-    // which held it (Fill). Those not shown yet then play its real path, not a hold and a jump.
-    void Bridge(const BonePose& to, std::uint64_t from_ms, std::uint64_t to_ms);
-    mutable std::uint64_t shown_ms_ = 0;  // the time At last showed (timed)
 };
 
 // jitter-3's proof number: how even the shown pose's change is from frame to
@@ -214,8 +209,9 @@ private:
 // |1 - change / last change| over frames that both moved; 0 is even.
 // puppet-smooth: the change is taken per second of frame time (an uneven frame rate is not the
 // puppet's unevenness; `Raw` keeps the old per-frame number to compare with older logs), and
-// `Jumps` counts a bone held still for a frame that then moves more than kJumpRad: the stair-step
-// a bone left out of poses makes. Smooth playback has about none.
+// `Jumps` counts a bone shown exactly the same (a held copy) for kJumpHeldFrames frames or more that
+// then moves more than kJumpRad in one: the stair-step a bone left out of poses makes. Smooth
+// playback has about none (a bone the sender skips at a turning point, unchanged, holds one interval).
 struct EvenReport {
     float uneven = 0.0f;  // by frame time
     float raw = 0.0f;     // per frame, as before puppet-smooth
@@ -231,7 +227,7 @@ public:
 
 private:
     std::optional<Pose> last_;
-    std::vector<std::uint8_t> held_;  // per bone index: it did not move the frame before
+    std::vector<std::uint8_t> held_;  // per bone index: frames shown exactly the same, in a row
     std::uint64_t last_ms_ = 0;
     float last_change_ = 0.0f;
     float last_rate_ = 0.0f;
@@ -243,7 +239,8 @@ private:
     EvenReport report_;
 };
 inline constexpr float kJumpRad = 0.01f;   // ~0.6 degree in one frame after a held one
-inline constexpr float kHeldRad = 1e-5f;   // not moved at all (a held copy)
+inline constexpr int kJumpHeldFrames = 3;  // ~50 ms: longer than one 30/s interval
+inline constexpr float kHeldChord = 2e-6f;  // |a - b| of a held copy blended (float rounding)
 inline constexpr std::uint64_t kEvenReportMs = 5000;
 inline constexpr float kEvenMovingRad = 0.02f;  // summed over the bones
 
