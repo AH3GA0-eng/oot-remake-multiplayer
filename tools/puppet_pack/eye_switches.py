@@ -4,6 +4,7 @@ Run by a developer against their own romfs dump; nothing from the game is in
 this tool:
 
     python -m puppet_pack.eye_switches --romfs <romfs> [--places lichii/hook/coop_live_places.cpp]
+                                       [--dungeon lichii/hook/coop_dungeon.cpp]
 
 A room's gimmick event is asked by its EventRequestActor when the actor's
 input `EventRequestTrigger` rises. That input is wired in the room's logic
@@ -33,6 +34,7 @@ AI file layout read here (version 0x408), as far as needed:
   (+8 for user types); a source <= -100 is the multi-input list from entry
   (-100 - source), count = the output field; multi entry 8 bytes: node, output
   string immediate 0x0c: +0x00 name, +0x08 value (InstanceName, Name)
+  string input: +0x0c its default value (HoldGameDataGetBool's GameDataNameBool: the flag's name)
 """
 import argparse
 import glob
@@ -67,12 +69,14 @@ def read_graph(data):
     commands, count = u32(0x0C), u32(0x10)
     io, multi_at, imm = u32(0x34), u32(0x38), u32(0x2C)
     starts = [u32(io + 4 * i) for i in range(12)] + [multi_at]
-    ins, outs = {}, {}
+    ins, outs, defaults = {}, {}, []
     for t, name in enumerate(TYPES):
         lst, o = [], starts[2 * t]
         while o < starts[2 * t + 1]:
             at = o + (8 if name == "udt" else 4)
             lst.append((text(u32(o) & 0x3FFFFFFF), s16(at), s16(at + 2)))
+            if name == "string":  # its default value (a flag's name) at +0x0c
+                defaults.append(text(u32(o + 12)))
             o += IN_SIZE[name]
         ins[name] = lst
         lst, o = [], starts[2 * t + 1]
@@ -85,12 +89,14 @@ def read_graph(data):
     for i in range(count):
         n = 0x74 + commands * 0x18 + i * 0x3C
         body = u32(n + 0x14)
-        node = {"type": text(u32(n + 8)), "in": {}, "out": {}, "imm": {}}
+        node = {"type": text(u32(n + 8)), "in": {}, "out": {}, "imm": {}, "sdef": {}}
         for t, name in enumerate(TYPES):
             a, b = u32(body + 0x30 + 16 * t), u32(body + 0x34 + 16 * t)
             c, d = u32(body + 0x38 + 16 * t), u32(body + 0x3C + 16 * t)
             node["in"][name] = ins[name][a: a + b]
             node["out"][name] = outs[name][c: c + d]
+            if name == "string":
+                node["sdef"] = {k[0]: v for k, v in zip(ins[name][a: a + b], defaults[a: a + b])}
         first, n_str = u32(body + 0x18), u32(body + 0x1C)
         for k in range(first, first + n_str):
             o = string_imm + 0x0C * k
@@ -116,7 +122,15 @@ def _prefix(path):
 
 
 def switch_events(romfs, dicts=None):
-    """[(event, scene, switch name, switch place, plug, asker place)], sorted."""
+    """(lines, guards, extras), each sorted.
+
+    lines:  (event, scene, switch name, switch place, plug, asker place)
+    guards: (flag, scene, event, why) - a saved flag that keeps the event from starting in our game when it comes
+            from another player first: one that deletes the asker (why "deletes the asker"), or one the trigger reads
+            negated (why "the trigger reads it negated")
+    extras: (event, scene, actor name, actor place, plug) - another actor's plug the trigger ANDs with the switch
+    others: (event, scene, what) - any other input on the trigger (a positive flag, a player state, ...), for notes
+    """
     if dicts is None:
         dicts = zs.Dicts.from_romfs(romfs)
     graphs = {}
@@ -127,7 +141,7 @@ def switch_events(romfs, dicts=None):
             graphs[path] = read_graph(open(path, "rb").read()) if os.path.exists(path) else None
         return graphs[path]
 
-    out = set()
+    lines, guards, extras, others = set(), set(), set(), set()
     for folder in sorted(glob.glob(os.path.join(romfs, "Banc", "*"))):
         scene = os.path.basename(folder)
         actors, groups = [], []
@@ -144,12 +158,13 @@ def switch_events(romfs, dicts=None):
             by_id = {(_prefix(r["Path"]), r["Id"]): by_hash[_int(r["Reference"])]
                      for r in refs if "Reference" in r and _int(r["Reference"]) in by_hash}
 
-            def leaves(pre, g_, src, outp, depth, seen):
+            def leaves(pre, g_, src, outp, depth, seen, neg=False, under_or=False):
+                """[(kind, actor or flag name, plug, negated, under an OR)], kind "actor", "flag" or "node"."""
                 nodes, multi = g_
                 if src <= -100:
                     found = []
                     for a, b in multi(-100 - src, outp):
-                        found += leaves(pre, g_, a, b, depth + 1, seen)
+                        found += leaves(pre, g_, a, b, depth + 1, seen, neg, under_or)
                     return found
                 if src < 0 or src >= len(nodes) or depth > 12 or (id(g_), src, outp) in seen:
                     return []
@@ -158,9 +173,8 @@ def switch_events(romfs, dicts=None):
                 plugs = node["out"]["bool"]
                 plug = plugs[outp] if 0 <= outp < len(plugs) else ""
                 inst = node["imm"].get("InstanceName")
-                if inst:
-                    actor = by_id.get((pre, inst))
-                    return [(actor, plug)] if actor is not None else []
+                if inst and (pre, inst) in by_id:
+                    return [("actor", by_id[(pre, inst)], plug, neg, under_or)]
                 if not node["type"] and "Name" in node["imm"]:  # a module input: follow it in the calling graph
                     found = []
                     for mpre, logic, minst in mods:
@@ -171,15 +185,23 @@ def switch_events(romfs, dicts=None):
                             parent = graph(plogic) if plogic and ppre != pre and pre.startswith(ppre) else None
                             if parent is None:
                                 continue
-                            for k, call in enumerate(parent[0]):
+                            for call in parent[0]:
                                 if call["type"] == mtype and call["imm"].get("InstanceName") == minst:
                                     for name, a, b in call["in"]["bool"]:
                                         if name == node["imm"]["Name"]:
-                                            found += leaves(ppre, parent, a, b, depth + 1, seen)
+                                            found += leaves(ppre, parent, a, b, depth + 1, seen, neg, under_or)
                     return found
+                if node["type"].startswith("HoldGameDataGetBool"):
+                    name = node["sdef"].get("GameDataNameBool", "")
+                    return [("flag", name, plug, neg, under_or)] if name else []
+                if not node["in"]["bool"]:
+                    return [("node", node["type"], plug, neg, under_or)]
+                # A gate, or a module call (InvBool, ...): its False output (or an inverter) negates.
+                flip = plug == "False" or "InvBool" in node["type"]
+                is_or = "OR" in node["type"].upper().replace("OPERATE", "")[:2] or node["type"].startswith("OperateOR")
                 found = []
                 for _, a, b in node["in"]["bool"]:
-                    found += leaves(pre, g_, a, b, depth + 1, seen)
+                    found += leaves(pre, g_, a, b, depth + 1, seen, neg != flip, under_or or is_or)
                 return found
 
             for pre, logic, _ in mods:
@@ -193,14 +215,32 @@ def switch_events(romfs, dicts=None):
                     event = (asker or {}).get("Dynamic", {}).get("RequestEventName") if asker else None
                     if not event:
                         continue
+                    trigger, delete = [], []
                     for name, a, b in node["in"]["bool"]:
-                        if name != "EventRequestTrigger":
+                        if name == "EventRequestTrigger":
+                            trigger = leaves(pre, g_, a, b, 0, set())
+                        elif name == "Logic_Delete":
+                            delete = leaves(pre, g_, a, b, 0, set())
+                    switches = [t for t in trigger if t[0] == "actor" and SWITCH.match(str(t[1].get("Gyaml", ""))) and t[2]]
+                    if not switches:
+                        continue
+                    event = str(event)
+                    for _, actor, plug, _, _ in switches:
+                        lines.add((event, scene, str(actor["Gyaml"]), _place(actor), plug, _place(asker)))
+                    for kind, what, plug, neg, under_or in trigger:
+                        if kind == "actor" and SWITCH.match(str(what.get("Gyaml", ""))):
                             continue
-                        for actor, plug in leaves(pre, g_, a, b, 0, set()):
-                            gyaml = str(actor.get("Gyaml", ""))
-                            if SWITCH.match(gyaml) and plug:
-                                out.add((str(event), scene, gyaml, _place(actor), plug, _place(asker)))
-    return sorted(out)
+                        if kind == "flag" and neg:
+                            guards.add((what, scene, event, "the trigger reads it negated"))
+                        elif kind == "actor" and not neg and not under_or and plug:
+                            extras.add((event, scene, str(what["Gyaml"]), _place(what), plug))
+                        else:
+                            label = str(what.get("Gyaml")) if kind == "actor" else what
+                            others.add((event, scene, f"{'not ' if neg else ''}{label}.{plug}{' (in an OR)' if under_or else ''}"))
+                    for kind, what, plug, neg, under_or in delete:
+                        if kind == "flag" and not neg and not what.startswith("HavePlayedEvent."):
+                            guards.add((what, scene, event, "deletes the asker"))
+    return sorted(lines), sorted(guards), sorted(extras), sorted(others)
 
 
 def live_places(path):
@@ -209,17 +249,45 @@ def live_places(path):
     return set(re.findall(r'\{"(\w+)", "(\w+)", [-\d.]+f', text))
 
 
+def shared_flags(path):
+    """The flag names of lichii/hook/coop_dungeon.cpp's tables (the flags another player's game sends us)."""
+    text = open(path, encoding="utf-8").read()
+    return set(re.findall(r'\{0x[0-9a-f]+, (?:true|false), "([A-Za-z0-9_.]+)"\}', text))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--romfs", required=True)
     ap.add_argument("--places", help="coop_live_places.cpp: print only events that have a live place")
+    ap.add_argument("--dungeon", help="coop_dungeon.cpp: print only guard flags that are shared")
     args = ap.parse_args(argv)
     keep = live_places(args.places) if args.places else None
-    for event, scene, switch, s, plug, a in switch_events(args.romfs):
-        if keep is not None and (event, scene) not in keep:
-            continue
-        print(f'    {{"{event}", "{scene}", "{switch}", {{{s[0]}f, {s[1]}f, {s[2]}f}}, "{plug}", '
-              f'{{{a[0]}f, {a[1]}f, {a[2]}f}}}},')
+    shared = shared_flags(args.dungeon) if args.dungeon else None
+    lines, guards, extras, others = switch_events(args.romfs)
+    wanted = {(e, s) for e, s, *_ in lines if keep is None or (e, s) in keep}
+    print("// kSwitches")
+    for event, scene, switch, s, plug, a in lines:
+        if (event, scene) in wanted:
+            print(f'    {{"{event}", "{scene}", "{switch}", {{{s[0]}f, {s[1]}f, {s[2]}f}}, "{plug}", '
+                  f'{{{a[0]}f, {a[1]}f, {a[2]}f}}}},')
+    print("// kExtras")
+    for event, scene, actor, p, plug in extras:
+        if (event, scene) in wanted:
+            print(f'    {{"{event}", "{scene}", "{actor}", {{{p[0]}f, {p[1]}f, {p[2]}f}}, "{plug}"}},')
+    print("// kGuards")
+    whys = {}
+    for flag, scene, event, why in guards:
+        if (event, scene) in wanted and (shared is None or flag in shared):
+            whys.setdefault((flag, scene, event), set()).add(why)
+    for (flag, scene, event), why in sorted(whys.items()):
+        print(f'    {{"{flag}", "{scene}", "{event}"}},  // {" + ".join(sorted(why))}')
+    print("// not covered (other inputs on a trigger: a guard flag that is not shared, a player state, an OR branch)")
+    for event, scene, what in others:
+        if (event, scene) in wanted:
+            print(f"//   {event}: {what}")
+    for flag, scene, event, why in guards:
+        if (event, scene) in wanted and shared is not None and flag not in shared:
+            print(f"//   {event}: {flag} ({why}; not shared: each game's own)")
     return 0
 
 

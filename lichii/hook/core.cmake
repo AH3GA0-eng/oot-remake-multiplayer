@@ -4,6 +4,7 @@
 set(_coop_hook "${LICHII_COOP_DIR}/lichii/hook")
 target_sources(core PRIVATE
     "${_coop_hook}/coop_boss.cpp"
+    "${_coop_hook}/coop_boss_beaten.cpp"
     "${_coop_hook}/coop_boss_game.cpp"
     "${_coop_hook}/coop_boss_native.cpp"
     "${_coop_hook}/coop_boss_scenes.cpp"
@@ -64,6 +65,8 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_world.cpp"
     "${_coop_hook}/coop_logic_probe.cpp"
     "${_coop_hook}/coop_lift_ride.cpp"
+    "${_coop_hook}/coop_room_objects.cpp"
+    "${_coop_hook}/coop_switch_share.cpp"
     "${_coop_hook}/coop_eye_switch.cpp"
     "${_coop_hook}/coop_ocarina.cpp"
     "${_coop_hook}/coop_ocarina_sound.cpp"

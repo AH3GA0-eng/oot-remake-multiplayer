@@ -202,6 +202,37 @@ private:
 inline constexpr std::uint64_t kEvenReportMs = 5000;
 inline constexpr float kEvenMovingRad = 0.02f;  // summed over the bones
 
+// Still bones (held-piece, issue 152). Only bones (and parts of bones) that
+// moved since the first read go in the moving pose above; a bone our game
+// holds still at a value of its own (Weapon_R, the right hand's bind bone,
+// which the Ocarina, the shield in hand and the right-hand tools hang from)
+// was never sent, so the puppet kept its own value for it, and what hangs
+// from it showed turned (the upside-down Ocarina). So every bone also goes
+// whole (rotation, translation and scale) now and then: up to kStillBones a
+// pose, a bone never sent first, then the one unsent longest, each again
+// after kStillRefreshMs. About 500 bones / (8 x 15 a second): every bone
+// within ~4 s of joining, then every ~4-8 s.
+inline constexpr std::size_t kStillBones = 8;
+inline constexpr std::uint64_t kStillRefreshMs = 4000;
+
+// The sender's side of kStillBones: which whole bones go in this pose.
+class StillPicker {
+public:
+    // `all`: every bone of the skeleton, whole, increasing order. Returns at
+    // most `budget` of them, increasing order, remembered as sent at now_ms.
+    std::vector<coop::protocol::PoseBone> Pick(std::uint32_t skeleton,
+                                               const std::vector<coop::protocol::PoseBone>& all,
+                                               std::uint64_t now_ms, std::size_t budget = kStillBones);
+
+private:
+    std::uint32_t skeleton_ = 0;
+    std::map<std::uint16_t, std::uint64_t> sent_ms_;
+};
+
+// Two picks of one pose as one increasing list; a bone in both is `whole`'s.
+std::vector<coop::protocol::PoseBone> MergeBones(const std::vector<coop::protocol::PoseBone>& moving,
+                                                 const std::vector<coop::protocol::PoseBone>& whole);
+
 // The sender's side of kMaxSendBones: which of a full pose's bones to send now.
 class BonePicker {
 public:

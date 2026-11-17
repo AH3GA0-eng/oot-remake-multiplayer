@@ -12,6 +12,7 @@
 // view_mutex. OnFrame never holds two at once.
 
 #include "coop_hook.h"
+#include "coop_caller_orders.h"
 #include "coop_version.h" // LICHII_COOP_VERSION, written on each build (cmake/coop_version.cmake)
 
 #include <algorithm>
@@ -56,6 +57,7 @@
 #include "coop/presence/presence.hpp"
 #include "coop/version.hpp"
 #include "coop_boss.h"
+#include "coop_boss_beaten.h"
 #include "coop_frame_clock.h"
 #include "coop_boss_scenes.h"
 #include "coop_teleport_game.h"
@@ -126,7 +128,15 @@ constexpr u64 kOcarinaProgramId = 0x0400486024DEC000ULL;
 // The builds it knows: coop_game_build.h (docs/game-builds.md).
 constexpr std::string_view kGameBuildId = CoopGameBuild::kPrimary.id;
 constexpr std::string_view kGameVersion = CoopGameBuild::kPrimary.version;
-constexpr const char* kBuildId = "lichii fritchii-v5 coop";
+// The client this game runs the module in, for HELLO's build_id (docs/crossplay.md): the server writes it beside the
+// player's name in its log, so a problem between two clients can be told apart. Nothing is decided by it. The Fritchii
+// emulator (stage 1): "coop fritchii-v5 <version>"; the Hookshot/Longshot module (COOP_HOOKSHOT, whose
+// LICHII_COOP_VERSION starts with "hookshot "): "coop hookshot <version>".
+#ifdef COOP_HOOKSHOT
+constexpr const char* kBuildId = "coop " LICHII_COOP_VERSION;
+#else
+constexpr const char* kBuildId = "coop fritchii-v5 " LICHII_COOP_VERSION;
+#endif
 
 // A frame older than this means the game is not running (stopped, paused).
 constexpr auto kFrameStale = std::chrono::seconds(1);
@@ -347,7 +357,7 @@ public:
         coop::net::ClientConfig config;
         config.host = settings_.server;
         config.port = settings_.port;
-        config.hello.build_id = kBuildId;
+        config.hello.build_id = coop::protocol::clamp_build_id(kBuildId);   // (a long version text: cut, never unsendable)
         config.hello.game_build_id = std::string(kGameBuildId);
         config.hello.game_version = std::string(kGameVersion);
         config.hello.nickname = settings_.name;
@@ -420,14 +430,14 @@ public:
         }
         map_refresh_ = StartMapRefresh();  // rows 63/76, #146: the HUD's own copy of the map (coop_map_refresh.h)
         if (CoopStory::On()) {  // issue 171: shared quest steps into the game's ChallengeMgr
-            CoopSvc::AddCaller(64, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
+            CoopSvc::AddCaller(CoopCallerOrders::kStory, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
                                           std::uint64_t) {
                 return challenges_.Step(guest, after_call, result, base_);
             });
         }
         // Rows 93/103: the game equips a shared ocarina from its flags (OneShotPlayerEquipDynamicEquipmentFromGameData's
         // call), once after the mend wrote them, outside events (coop::host::OcarinaEquip).
-        CoopSvc::AddCaller(66, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t,
+        CoopSvc::AddCaller(CoopCallerOrders::kOcarinaEquip, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t,
                                       std::uint64_t) -> std::optional<CoopPuppet::Call> {
             namespace oc = coop::host::ocarina;
             const auto slot = ocarina_equip_.step(after_call);
@@ -455,7 +465,7 @@ public:
                 live_requester_.OnTaken(mark);
                 eye_switch_.OnSet(mark);
             }
-            CoopSvc::AddCaller(60, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
+            CoopSvc::AddCaller(CoopCallerOrders::kLiveEvents, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
                                           std::uint64_t) {
                 std::lock_guard lock(live_mutex_);
                 auto call = live_requester_.Step(guest, after_call, result, base_);
@@ -467,7 +477,7 @@ public:
             LOG_INFO(Core, "coop: dungeon: live events on (off with LICHII_COOP_LIVE_EVENTS=0)");
             eye_switch_on_ = CoopEyeSwitch::OnFromEnv(EnvString("LICHII_COOP_EYE_SWITCH"));
             if (eye_switch_on_) {  // deku-switches: before the requester (60)
-                CoopSvc::AddCaller(59, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
+                CoopSvc::AddCaller(CoopCallerOrders::kEyeSwitch, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
                                               std::uint64_t now_ms) {
                     auto call = eye_switch_.Step(guest, after_call, result, base_, now_ms);
                     for (const auto& line : eye_switch_.TakeNotes()) {
@@ -750,7 +760,9 @@ public:
             }
             const std::string sale_scene = reading && reading->scene ? *reading->scene : std::string();
             const bool sale_on = scrub_sale_on_;
-            hold.emplace(*quests, [link, scene, talk, near, sale_here, sale_scene, sale_on](coop::protocol::FlagKey key) {
+            // deku-ladder: the switch path's guard flags wait too (coop_eye_switch.h Guards), only while it is on.
+            CoopEyeSwitch::Switcher* const eye_guard = live_events_ && eye_switch_on_ ? &eye_switch_ : nullptr;
+            hold.emplace(*quests, [link, scene, talk, near, sale_here, sale_scene, sale_on, eye_guard](coop::protocol::FlagKey key) {
                 if (key.kind != coop::protocol::FlagKeyKind::named || key.index != 0) {
                     return false;
                 }
@@ -769,6 +781,9 @@ public:
                 }
                 if (CoopQuests::Find(key.hash) != nullptr) {
                     return CoopDungeon::IsDungeonScene(*scene);  // a quest step waits outside dungeons
+                }
+                if (eye_guard != nullptr && eye_guard->HoldsGuard(key.hash, *scene)) {
+                    return true;
                 }
                 const auto in = CoopDungeon::HeldIn(key.hash);
                 return in && (in->empty() ? CoopDungeon::IsDungeonScene(*scene) : *scene == *in);
@@ -1149,6 +1164,23 @@ public:
                     coop::protocol::FlagEntry{key(name), coop::protocol::FlagKind::boolean, 0});
                 LOG_INFO(Core, "coop: boss: {} was left set in this save (an older co-op build shared it): {}",
                          name, ok ? "cleared" : "could not clear");
+            }
+            // G2 (#241): a boss the group beat while our game did not see it die gets its beaten set, one way, in a
+            // scene other than the boss's (coop_boss_beaten.h). Solo or co-op idle: the record is empty.
+            const CoopBossBeaten::Record& record = CoopBossBeaten::TheRecord();
+            const std::vector<std::uint8_t> beaten = record.Rooms();
+            for (const CoopBossBeaten::Write& w : boss_beaten_.Check(
+                     view.scene, at.has_value(), beaten, record.Version(), [&](std::uint32_t hash) {
+                         const auto v = game_store->read(coop::protocol::FlagKey{hash, 0});
+                         return v ? std::optional<std::uint32_t>(v->value) : std::nullopt;
+                     })) {
+                const bool ok = game_store->write(coop::protocol::FlagEntry{
+                    coop::protocol::FlagKey{w.hash, 0},
+                    w.is_enum ? coop::protocol::FlagKind::uint32 : coop::protocol::FlagKind::boolean, w.value});
+                const CoopBossBeaten::BeatenSet* set = CoopBossBeaten::ForRoom(w.room);
+                LOG_INFO(Core, "coop: boss: {} was beaten by the group, not in this game: {} {} {}", set->boss, w.name,
+                         w.is_enum ? std::string("-> ") + set->step_name : std::string("= ") + std::to_string(w.value),
+                         ok ? "(written)" : "(could not write)");
             }
         }
         {  // our own key spends, for the locks' give-back (docs/dungeon.md, "Locked doors")
@@ -2082,6 +2114,7 @@ private:
     coop::host::PlayerReader::DrawnState drawn_state_{};
     bool sharing_ = false;  // a flag list is shared; set by Begin
     CoopBoss::StaleBossFlags stale_boss_;  // issue 148: shut boss doors from older builds
+    CoopBossBeaten::Apply boss_beaten_;    // G2: a boss the group beat, given to a game that did not see it die
     std::string_view boss_shut_in_name_;  // issue 148: CoopBoss::ShutInFlag, and its hash
     std::uint32_t boss_shut_in_hash_ = 0;
     bool pickups_ = false;  // one-time pickups are shared (coop_pickups.h)

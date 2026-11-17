@@ -5,12 +5,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <ostream>
 #include <map>
 #include <optional>
-#include <ostream>  // MSVC 14.51: doctest prints a string_view through it (not pulled in by the others)
 #include <set>
 
 #include "coop/protocol/codec.hpp"
+#include "coop_dungeon.h"
 #include "coop_eye_switch.h"
 #include "coop_live_events.h"
 #include "coop_logic_probe.h"
@@ -120,6 +121,7 @@ TEST_CASE("eye switch: the table, its places and FirstOn's key") {
     // deku-ladder: every asker whose trigger the romfs wiring leads to a switch plug (tools/puppet_pack/eye_switches.py).
     CHECK(CoopEyeSwitch::Switches().size() == 64);
     std::set<std::string_view> scenes, events;
+    int known_rooms = 0;
     for (const auto& s : CoopEyeSwitch::Switches()) {
         scenes.insert(s.scene);
         events.insert(s.event);
@@ -132,8 +134,13 @@ TEST_CASE("eye switch: the table, its places and FirstOn's key") {
         }));
         CHECK(Dist(s.at, s.asker_at[0], s.asker_at[1], s.asker_at[2]) < 30.0f);
         CHECK_FALSE(CoopLiveEvents::SpansRooms(s.event, s.scene));
+        // deku-ladder: a switch asker's place has its own room, or -1 (a tie / a room Link near it is not in: the guess).
+        known_rooms += std::any_of(places.begin(), places.end(), [&](const CoopLiveEvents::Place& pl) {
+            return pl.event == s.event && pl.scene == s.scene && Dist(s.asker_at, pl.x, pl.y, pl.z) < 0.2f && pl.room >= 0;
+        }) ? 1 : 0;
     }
     CHECK(scenes.size() == 9);
+    CHECK(known_rooms == 62);  // FocusOnGimmick_JabujabuLift (a tie) and DC SwitchShutter_Room01 (room 9 voted, reached in 9%): -1
     CHECK(events.size() == 63);
     // The Deku Tree's eyes: OnState (the graph's wire), not FirstOn; the Fire Temple's room-6 eye: FirstOn.
     REQUIRE(CoopEyeSwitch::Find(kLadder, kDeku) != nullptr);
@@ -147,7 +154,13 @@ TEST_CASE("eye switch: the table, its places and FirstOn's key") {
     // Not here: no wired trigger (Water), not shared (room spins).
     CHECK(CoopEyeSwitch::FindAll("WaterTemple_EyeSwitch_Focus", "WaterTemple").empty());
     CHECK(CoopEyeSwitch::Find("ForestTemple_Room11_RoomSpin", "ForestTemple") == nullptr);
-    CHECK(CoopEyeSwitch::FindAll("SpiritTemple_Level_Room_19_SwitchOn_01", "SpiritTemple").size() == 2);
+    // Driven only where our set stays (offline hs-step-probe): eye switches and FirstOn latches, 25 of the 64 lines.
+    int driven = 0;
+    for (const auto& s : CoopEyeSwitch::Switches()) driven += CoopEyeSwitch::Latches(s) ? 1 : 0;
+    CHECK(driven == 25);
+    CHECK(CoopEyeSwitch::FindAll("SpiritTemple_Level_Room_19_SwitchOn_01", "SpiritTemple").empty());  // sun: rewritten
+    CHECK(CoopEyeSwitch::FindAll("InsideJabuJabuBellyRoom01StepSwitch", "InsideJabuJabuBelly").empty());  // step OnState
+    CHECK(CoopEyeSwitch::FindAll("ForestTemple_Room02_ShutterOpen", "ForestTemple").size() == 1);  // step FirstOn
     CHECK(CoopEyeSwitch::FindAll("DodongoCavern_Gimmick_EyeSwitch", "DodongoCavern").size() == 1);  // one eye, not three
     CHECK(CoopEyeSwitch::PlugKey("FirstOn") == CoopEyeSwitch::kFirstOn);
     CHECK(CoopEyeSwitch::OnFromEnv("1"));
@@ -318,39 +331,18 @@ TEST_CASE("eye switch: only the eye its asker links to, at its placement (Dodong
     CHECK(FirstOn(g2, kEye2) == 0);
 }
 
-TEST_CASE("eye switch: an event with two askers: the one that is here, nearest our Link") {
-    // SpiritTemple_Level_Room_19_SwitchOn_01: two sun switches, each with its own asker, in one room.
-    const std::array<float, 3> west_switch{28.0f, 121.5f, -40.1f}, west_asker{31.4f, 120.0f, -41.6f};
-    const std::array<float, 3> east_switch{45.8f, 121.5f, -47.5f}, east_asker{40.9f, 119.2f, -47.5f};
-    const std::string spirit = "SpiritTemple", event = "SpiritTemple_Level_Room_19_SwitchOn_01";
-    const std::uint32_t light = CoopEyeSwitch::PlugKey("isLightMax");
-    SUBCASE("both askers here: Link's side") {
-        FakeGuest g;
-        World w;
-        Eye(g, kEye, 0, light ^ 7u);
-        CoopEyeSwitch::Switcher s(w.Finder());
-        REQUIRE(s.Want(event, spirit, std::array<float, 3>{46.0f, 121.0f, -46.0f}));  // Link by the east switch
-        s.Step(g, false, 0, kMain, 100);
-        REQUIRE(s.Step(g, true, kBlock, kMain, 100));
-        CHECK(w.looks.front().at == east_asker);
-        CHECK(w.looks.back().at == east_switch);
-        CHECK(w.looks.back().name == "Obj_SolarSwitch_A_02");
-        CHECK(g.Get<std::uint32_t>(kBlock + a::kNodeKey) == light);
-    }
-    SUBCASE("Link nearer the west one, but only the east asker is here") {
-        FakeGuest g;
-        World w;
-        w.asker_only_at = east_asker;
-        Eye(g, kEye, 0, light ^ 7u);
-        CoopEyeSwitch::Switcher s(w.Finder());
-        REQUIRE(s.Want(event, spirit, std::array<float, 3>{29.0f, 121.0f, -40.0f}));
-        s.Step(g, false, 0, kMain, 100);
-        REQUIRE(s.Step(g, true, kBlock, kMain, 100));
-        CHECK(w.looks[0].at == west_asker);  // tried first, not here
-        CHECK(w.looks[1].at == east_asker);
-        CHECK(w.looks.back().at == east_switch);
-    }
-    (void)west_switch;
+TEST_CASE("eye switch: a switch whose own AI rewrites the plug is not driven (step OnState, sun isLightMax)") {
+    // Offline hs-step-probe (2026-11-16): B's Jabu room-1 step switch OnState, set through the set-bool, read back 0
+    // every frame for 2 s (its AI writes it from contact) and no event came; A's own press raised the asker's trigger.
+    World w;
+    CoopEyeSwitch::Switcher s(w.Finder());
+    s.Expire("InsideJabuJabuBelly");
+    CHECK_FALSE(s.Want("InsideJabuJabuBellyRoom01StepSwitch", "InsideJabuJabuBelly"));  // the old way at once
+    CHECK_FALSE(s.Want("SpritTemple_Room23_SunSwitch", "SpiritTemple"));
+    CHECK_FALSE(s.Want("InsideJabuJabuBellyRoom05Swich", "InsideJabuJabuBelly"));  // hit switch OnState
+    // ... and their guard flags come as before (nothing waits for a copy we do not drive).
+    CHECK_FALSE(s.HoldsGuard(coop::protocol::flag_hash("InsideJabuJabuBelly_Gimmick_Onswitch_first"), "InsideJabuJabuBelly"));
+    CHECK(s.Want(kLadder, kDeku));  // an eye: driven
 }
 
 TEST_CASE("eye switch: the plug the graph reads, never another (an eye with only FirstOn is not set for OnState)") {
@@ -380,4 +372,121 @@ TEST_CASE("eye switch: dropped once our game has the event played (our asker ran
     CHECK(FirstOn(g, kEye) == 0);
     CHECK(s.TakeFallbacks().empty());
     CHECK(s.TakeNotes().front().find("has it played") != std::string::npos);
+}
+
+TEST_CASE("eye switch: guard flags (a negated trigger flag, an asker's delete flag) wait while the switch path works") {
+    // deku-ladder round 3: generated with the table; only flags coop_dungeon.cpp shares, each for a table event.
+    CHECK(CoopEyeSwitch::Guards().size() == 43);
+    std::set<std::string_view> shared;
+    for (const auto& f : CoopDungeon::Flags()) shared.insert(f.name);
+    for (const auto& g : CoopEyeSwitch::Guards()) {
+        CHECK(shared.contains(g.flag));
+        CHECK(CoopEyeSwitch::Find(g.event, g.scene) != nullptr);
+        CHECK_FALSE(g.flag.starts_with("HavePlayedEvent."));  // those are held already (coop_dungeon.h HeldIn)
+    }
+    const auto cleared = coop::protocol::flag_hash("InsideTheDekuTree_RoomC_Cleared");  // deletes the ladder's asker
+    const auto fire = coop::protocol::flag_hash("GerudoTrainingGround_Dungeon_Room06_Fire");  // read negated
+    FakeGuest g;
+    World w;
+    Eye(g, kEye, 0, 0x1234);  // no live plug: the switch path gives up after kTryMs
+    CoopEyeSwitch::Switcher s(w.Finder());
+    s.Expire(kDeku);
+    CHECK(s.HoldsGuard(cleared, kDeku));
+    CHECK_FALSE(s.HoldsGuard(cleared, "GerudoTrainingGround"));  // its own dungeon only
+    CHECK_FALSE(s.HoldsGuard(fire, "GerudoTrainingGround"));  // a step switch's OnState event: not driven, not held
+    CHECK_FALSE(s.HoldsGuard(coop::protocol::flag_hash("ForestTemple_After_Appearance_TreasureChest"), "ForestTemple"));
+    // The path gave up on the ladder this visit: its guard comes as before (the old way); others still wait.
+    REQUIRE(s.Want(kLadder, kDeku));
+    s.Step(g, false, 0, kMain, 100);
+    s.Step(g, true, kBlock, kMain, 100);
+    s.Step(g, false, 0, kMain, 101 + CoopEyeSwitch::kTryMs);
+    REQUIRE(s.TakeFallbacks().size() == 1);
+    CHECK_FALSE(s.HoldsGuard(cleared, kDeku));
+    CHECK(s.HoldsGuard(coop::protocol::flag_hash("InsideTheDekuTree_RoomF_Cleared"), kDeku));
+    // A new visit: tried again, so it waits again.
+    s.Expire("KokiriForest");
+    s.Expire(kDeku);
+    CHECK(s.HoldsGuard(cleared, kDeku));
+}
+
+TEST_CASE("eye switch: guard flags after a try: released when our copy did not run, held until played when it ran") {
+    const auto cleared = coop::protocol::flag_hash("InsideTheDekuTree_RoomC_Cleared");
+    SUBCASE("no asker") {
+        FakeGuest g;
+        World w;
+        w.asker = 0;
+        Eye(g, kEye);
+        CoopEyeSwitch::Switcher s(w.Finder());
+        s.Expire(kDeku);
+        REQUIRE(s.Want(kLadder, kDeku));
+        CHECK(s.HoldsGuard(cleared, kDeku));  // waiting for its try
+        s.Step(g, false, 0, kMain, 100);
+        CHECK_FALSE(s.Step(g, true, kBlock, kMain, 100));
+        CHECK(s.TakeNotes().back().find("no room asker") != std::string::npos);
+        CHECK_FALSE(s.HoldsGuard(cleared, kDeku));
+    }
+    SUBCASE("our own hit") {
+        FakeGuest g;
+        World w;
+        Eye(g, kEye, 1);
+        CoopEyeSwitch::Switcher s(w.Finder());
+        s.Expire(kDeku);
+        REQUIRE(s.Want(kLadder, kDeku));
+        s.Step(g, false, 0, kMain, 100);
+        s.Step(g, true, kBlock, kMain, 100);
+        CHECK(s.HoldsGuard(cleared, kDeku));  // our own event runs: the other player's value must not land mid-event
+        s.Expire(kDeku, [](const std::string&) { return false; });
+        CHECK(s.HoldsGuard(cleared, kDeku));
+        s.Expire(kDeku, [](const std::string& n) { return n == kLadder; });
+        CHECK_FALSE(s.HoldsGuard(cleared, kDeku));
+    }
+    SUBCASE("our copy ran") {
+        FakeGuest g;
+        World w;
+        Eye(g, kEye);
+        CoopEyeSwitch::Switcher s(w.Finder());
+        s.Expire(kDeku);
+        REQUIRE(s.Want(kLadder, kDeku));
+        s.Step(g, false, 0, kMain, 100);
+        REQUIRE(s.Step(g, true, kBlock, kMain, 100));
+        s.Step(g, true, 0, kMain, 100);
+        EventRunning(g, true);
+        s.Step(g, false, 0, kMain, 116);
+        CHECK(s.TakeNotes().back().find("event started") != std::string::npos);
+        // Held while our event runs (most guards delete the asker), until our game has it played.
+        CHECK(s.HoldsGuard(cleared, kDeku));
+        s.Expire(kDeku, nullptr);  // no flags read: still held
+        CHECK(s.HoldsGuard(cleared, kDeku));
+        s.Expire(kDeku, [](const std::string&) { return false; });
+        CHECK(s.HoldsGuard(cleared, kDeku));
+        s.Expire(kDeku, [](const std::string& n) { return n == kLadder; });
+        CHECK_FALSE(s.HoldsGuard(cleared, kDeku));
+        // A new visit after it played: the try may come again (the decider asks once a visit), so it waits again.
+        s.Expire("KokiriForest");
+        s.Expire(kDeku);
+        CHECK(s.HoldsGuard(cleared, kDeku));
+    }
+    SUBCASE("ran, then we left before it was played: a new visit starts clean") {
+        FakeGuest g;
+        World w;
+        Eye(g, kEye);
+        CoopEyeSwitch::Switcher s(w.Finder());
+        s.Expire(kDeku);
+        REQUIRE(s.Want(kLadder, kDeku));
+        s.Step(g, false, 0, kMain, 100);
+        REQUIRE(s.Step(g, true, kBlock, kMain, 100));
+        s.Step(g, true, 0, kMain, 100);
+        EventRunning(g, true);
+        s.Step(g, false, 0, kMain, 116);
+        s.Expire("KokiriForest");
+        CHECK_FALSE(s.HoldsGuard(cleared, "KokiriForest"));
+    }
+    SUBCASE("dropped: our game has it played") {
+        World w;
+        CoopEyeSwitch::Switcher s(w.Finder());
+        s.Expire(kDeku);
+        REQUIRE(s.Want(kLadder, kDeku));
+        s.Expire(kDeku, [](const std::string&) { return true; });
+        CHECK_FALSE(s.HoldsGuard(cleared, kDeku));
+    }
 }

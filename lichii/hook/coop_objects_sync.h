@@ -264,6 +264,10 @@ void NoteBossLives(const std::vector<Seen>& walk, BossLives& last);
 void NoteBossRemoved(std::uint64_t address, BossLives& last);
 std::optional<bool> BossAliveKept(const std::vector<Seen>& walk, std::span<const std::string_view> bodies,
                                   const BossLives& last);
+// Whether that "dead" (BossAliveKept false) is a reading of its death: a body read at life 0, on this walk or as its
+// last reading this scene. False for a boss none of whose bodies was read here (a save that beat it, or the walk
+// never saw it): dead for the pull, never proof of a death (G2 review: a beaten set must never come from it).
+bool BossReadDead(const std::vector<Seen>& walk, std::span<const std::string_view> bodies, const BossLives& last);
 
 // boss-copy-b: whether a boss is still in its pre-battle phase in one walk,
 // from its body actors' own animation (AS slot 0): Gohma's `Sleep` and

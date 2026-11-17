@@ -3657,6 +3657,25 @@ TEST_CASE("objects: a boss off the walk reads by its last life and its delete re
     CHECK_FALSE(BossAliveKept({unread}, kGanon, last).has_value());
 }
 
+TEST_CASE("objects: a boss's death is read only at life 0, never from a body not read here (G2 review)") {
+    constexpr std::array<std::string_view, 1> kGanon{"Enemy_DungeonBoss_PhantomGanon"};
+    using CoopObjects::BossReadDead;
+    CoopObjects::BossLives last;
+    Seen boss = Chest(0x900, 0);
+    boss.name = "Enemy_DungeonBoss_PhantomGanon";
+    boss.life = coop::protocol::ObjectLife{15, 42};
+    // Never read this scene: dead for the pull (BossAliveKept), no reading of a death.
+    CHECK_FALSE(BossReadDead({}, kGanon, last));
+    CoopObjects::NoteBossLives({boss}, last);
+    CHECK_FALSE(BossReadDead({boss}, kGanon, last));  // alive
+    CoopObjects::NoteBossRemoved(0x900, last);
+    CHECK_FALSE(BossReadDead({}, kGanon, last));  // removed alive
+    boss.life = coop::protocol::ObjectLife{0, 42};
+    CHECK(BossReadDead({boss}, kGanon, last));  // read at life 0 on this walk
+    CoopObjects::NoteBossLives({boss}, last);
+    CHECK(BossReadDead({}, kGanon, last));  // its last reading at life 0, then gone
+}
+
 TEST_CASE("objects: a body removed alive keeps no boss of several bodies alive, one away does (row 114, Twinrova)") {
     constexpr std::array<std::string_view, 3> kTwinrova{"Enemy_DungeonBoss_Twinrova", "Enemy_DungeonBoss_Koume",
                                                         "Enemy_DungeonBoss_Kotake"};

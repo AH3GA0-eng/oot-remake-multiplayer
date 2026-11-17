@@ -59,6 +59,7 @@
 #include "coop_rando.h"
 #include "coop_hook.h"
 #include "coop_lobby_game.h"
+#include "coop_lobby_tab.h"
 #include "coop_voice.h"
 #include "coop_hud.h"
 #include "coop_hud_dim.h"
@@ -196,9 +197,11 @@ bool PuppetGuardInExe() {
 }
 
 // Before the game makes our first puppet: its null reads give 0 (issue 150, coop_null_page.h). Once.
+// Where that failed after all (the MB could not be committed), the puppets' director learns it before
+// the puppet exists, so no piece that needs those reads (GearIsUnsafe, issue 232) is ever worn.
 void ArmNullPage(const std::string& actor) {
-    if (actor.rfind("CoopPuppet_", 0) == 0) {
-        CoopNullPage::Arm(Env("HOS_COOP_NULL_READS"));
+    if (actor.rfind("CoopPuppet_", 0) == 0 && !CoopNullPage::Arm(Env("HOS_COOP_NULL_READS"))) {
+        CoopPuppet::TheDirector().SetNullReadsZero(false);
     }
 }
 
@@ -1715,6 +1718,25 @@ COOP_HOOKSHOT_EXPORT int hos_coop_char(uint32_t ch) {
 }
 COOP_HOOKSHOT_EXPORT int hos_coop_keys_taken(void) {
     return CoopHookshot::KeysTaken() ? 1 : 0;
+}
+// The Discord status's second line (Longshot patch 0026, host/discord_rpc.c, every 5 s on its own thread):
+// "Co-op: N players" in a session, "Solo" with co-op idle. 1 = written (cut to cap, always ended); 0 = none
+// (nothing thrown crosses into Longshot's C: a failed copy of the session is no line, Longshot's own stays).
+COOP_HOOKSHOT_EXPORT int hos_coop_discord_state(char* out, size_t cap) noexcept {
+    if (out == nullptr || cap == 0) {
+        return 0;
+    }
+    out[0] = '\0';
+    try {
+        const CoopLobby::Seen seen = CoopLobby::Now();
+        const std::string line = CoopLobbyTab::DiscordState(seen.connected, seen.players.size());
+        const size_t n = line.size() < cap - 1 ? line.size() : cap - 1;
+        std::memcpy(out, line.data(), n);
+        out[n] = '\0';
+        return 1;
+    } catch (...) {
+        return 0;
+    }
 }
 // The mouse (hos_coop_api.h): the cheats panel's clicks.
 COOP_HOOKSHOT_EXPORT int hos_coop_mouse(float fx, float fy, int event) {

@@ -197,7 +197,7 @@ Now:
 
 **The game's own target choice.** An enemy picks its target with the game's perception search: Gohma's wander phase runs the AI module `EnemyCommmon.PerceptionTargetSearchAndSet`, her hanging battle `Common.MinimumPerceptionSetTarget`, and each egg runs `EnemyCommmon.PerceptionTargetSearchAndSet` before it hatches (`AI/Enemy_Gohma_Egg.root.ainb`). It finds actors that emit perception (`PerceptionEmitterRef`) of an affiliation the enemy targets: Gohma's and her eggs' `AffiliationParam/EnemyCommon` has `TargetAffiliations` Player (murmur3 145979025), the player's `AffiliationParam/Player` has `DefaultAffiliation` Player. The puppets had neither component, so each game's Gohma, and each game's eggs, saw only that game's own Link: the owner's boss went for the owner alone (issue 150), and an egg hatched only in the game whose Link came near it (issue 178).
 
-(0.11: this is **off by default** in the pack tool, `--perception` turns it on, because with it a game crashed with a puppet in customized gear holding the slingshot; [puppet.md](puppet.md). So 0.11 ships with issue 150 open.) The puppet pack can give each puppet the player's `AffiliationRef`, a `PerceptionEmitter` of its own (the player's param without `AdvancedEmitters`: `AimTerror` is worked by the player's aiming code) and a body-less `Physics` component (InterestSpotActor's: a `ProjectBase` physics param with an empty controller set, as every logic-only perception emitter in the game has one). The puppet still collides with nothing. `tools/puppet_pack/build.py` (`PERCEPTION_SOURCE`, `add_perception`), on by default (`--no-perception` builds the pack without it). So in the owner's game Gohma's own perception can pick player 2's puppet, and the copies run her moves toward player 2 through the native verbs; after a stun the owner's next turn and walk name player 2's place, so player 2's copy turns to player 2 (the second half of issue 150), with no target written from outside.
+(It was off in 0.11 because a game crashed with a puppet in customized gear holding the slingshot; that cause is fixed and it is on by default since the lane proof, [puppet.md](puppet.md). How an enemy chooses among the Links it sees, read from the game's AI: `EnemyCommon.SetTargetFromParceptionAndChangeBrain` / `EnemyCommmon.PerceptionTargetSearchAndSet` take a Link its senses perceive inside its territory and keep it while it stays perceived (`DontUpdateIfSameTarget`, `TrackTarget`) until it is defeated or leaves; in battle `EnemyCommon.BattleCommon` pushes the last attacker into its memory (`ExecuteMemoryPushLastAttacker`). No threat table: first seen, sticky, and a hit draws it.) **Only players who can be fought.** A teammate who is downed or spectating, or whose PLAYER_STATUS is away (paused, in a menu, loading, in their own event or talk, dead; `proto::status::away`, the same set PvP never hits) has their puppet's perception switched off in every other game with the game's own switch (`coop_dbno_body.h`, `UnseenWhy`), and back on when they play again: an enemy never sticks to an idle player's puppet or attacks a player mid-talk. Log: `the game's perception emitter off for player N's puppet: they are <why>` / `on again ...: they are back`. (Decision for the owner: real AFK players stay targets in some games; here they do not.) The puppet pack can give each puppet the player's `AffiliationRef`, a `PerceptionEmitter` of its own (the player's param without `AdvancedEmitters`: `AimTerror` is worked by the player's aiming code) and a body-less `Physics` component (InterestSpotActor's: a `ProjectBase` physics param with an empty controller set, as every logic-only perception emitter in the game has one). The puppet still collides with nothing. `tools/puppet_pack/build.py` (`PERCEPTION_SOURCE`, `add_perception`), on by default (`--no-perception` builds the pack without it). So in the owner's game Gohma's own perception can pick player 2's puppet, and the copies run her moves toward player 2 through the native verbs; after a stun the owner's next turn and walk name player 2's place, so player 2's copy turns to player 2 (the second half of issue 150), with no target written from outside.
 
 **Guards never see a puppet.** The stealth guards (`AffiliationParam/NpcSecurityGuard`: `Npc_Hylia_Soldier_SecurityGuard`, the castle's child soldiers `Npc_Hylia_Soldier_0NN_Child`, `Npc_Gerudo_*` and `Npc_Gerudo_FortressGuard`, 37 actors) target Enemy and Player, and their AI (`NpcSecurityGuard.SetIsObserve`, `brain.prioritySecurity`) takes any perceived emitter with `IsAffiliationPlayer` as Link: a puppet in view would catch this game's Link. Read from the game's data, nothing keeps them apart from the enemies: every enemy's `TargetAffiliations` is Player alone (EnemyCommon, Enemy_Dodongo, the scrubs), and the sight filters are physics sub-layer masks (`Phive/Config/PhiveConfig.byml` in the Bootup pack, `SubLayerHitMaskSensorCollection`): the eggs' `PerceptionFilterPlayerOnly` is mask 2 (the `PerceptionPlayer` sub-layer alone), the guards' `PerceptionFilterNone` is 0x41803FFF, which has that bit too. So the pack makes each puppet twice: the perceived one under its usual name and a quiet copy with no perception (`CoopPuppet_ChildQuiet`, `CoopPuppet_AdultQuiet_Red`, ...; `quiet_name`), and lists in `coop_puppet.json` the scenes whose placements (Banc) have a stealth guard (`guard_scenes`: `quiet_scenes` and `guards`; in the game's data `GerudoFortress_Adult` 19 guards, `HyruleCastle` 13, `GerudoValley_Child` 1). There the hook makes the quiet copies (`Planner::ActorFor`, `PackQuietScenes`, `QuietActor`): the guards see only this game's Link, as before, and so do that scene's enemies (Gerudo Fortress's thieves). A pack without `quiet_scenes` (older, or `--no-perception`) has no perceived puppets, so nothing changes with it. Log: `coop: puppets are seen by enemies; quiet puppets (no guard sees them) in ...`.
 
@@ -357,6 +357,65 @@ players, and the host's death left it "fully scuffed".
 - Tests: `objects_test.cpp` (off the walk: away, removed alive, died, never seen; Twinrova's removed sister; the
   painting show's group).
 - Not proven in game: a two-player Phantom Ganon run (proposed scenario `hs-phantom-ganon` from the player's save).
+
+## Beaten by the group (G2, player report #241)
+
+D9 ([sync-coverage.md](sync-coverage.md)) stays: every game in the boss's area runs the boss's own death setting itself,
+which sets that game's flags, quest step and warp as a solo kill does. A game that did not (its player was elsewhere,
+or an old build without the life-stops hook) kept the boss alive while the shared heart container key was taken, so a
+reload brought the fight back with no container to win (#241, row 52).
+
+- **The record: proven deaths only** (review of 5d801cb9: a beaten set written on a guess would stay in an absent
+  player's save for good). `CoopBossBeaten::ProvenDeath`, the same rule on the server: a `BOSS_SCENE` outro_start or
+  outro_end (a game took the boss's death event itself, by name, a copy's game only once its owner died; only that
+  game sends the end) in that boss's dungeon scene (not the boss rush); the server keeps the outro_starts and tells a
+  joiner each as the same player's outro_end. In our own game also Sync's `beaten_here` (the walk read the boss
+  gone). Never a `BOSS_ROOM` defeated:
+  Sync sends it from `Died` (proven) and from `GuessedOver` (an event in the fight with the boss not read, a long
+  event with the boss hurt, an event that ended with the reading lost: Twinrova's merge, Phantom Ganon's paintings,
+  Bongo Bongo, Morpha's grab), and it only ends the pull. Every game keeps the rooms for the session
+  (`CoopBossBeaten::Record`); the server keeps the deaths and tells a player who joins later. Forgotten when the host loads a save (`CoopBoss::ForgetFights`, the server's `on_host_reset`: those bosses
+  fight again, as the heart container claims, #52) and when the game leaves the session or the session empties.
+- **The beaten set** (`lichii/hook/coop_boss_beaten.inc`, generated by `tools/puppet_pack/boss_beaten.py` from the
+  romfs): what the boss's death setting writes in the dungeon (its flow walked with sub flows, not the dream world or
+  the boss rush): the saved Bools it sets with their values, `HavePlayedEvent` of the setting, of its
+  `Dm_<Dungeon>_BossOut` and of the intro `Dm_<Dungeon>_BossIn`, and the dungeon quest's step after its last boss step
+  (RSDB Challenge `IsBossBattle`). Left out: unsaved flags (`PhantomGanonPaintings_TemporaryDelete`) and the fight's
+  own state (`CoopDungeon::NotShared`, which the stale-flag mend clears). The rooms' own logic reads exactly these
+  (`Logic/*_Level_Room_*`): Gohma's room `Gohma_DefeatBoss` and `Get_StoneOfForest_IsAfter_GoToWarpPoint_Exp`;
+  Dodongo's `HavePlayedEvent.Dm_DodongoCave_BossOut` and `Enemy_DungeonBoss_Dodongo_BossAppear`; Volvagia's
+  `Enemy_DungeonBoss_Volvagia_BossAppear`, `HavePlayedEvent.Dm_FireTemple_BossIn` and `SageOfFire_IsAfter_DefeatBoss_Exp`;
+  the other five their quest's `IsAfter_<step>_Exp`.
+
+  | Boss | Quest -> step | Bools |
+  |---|---|---|
+  | Queen Gohma | Get_StoneOfForest -> GoToWarpPoint | Gohma_DefeatBoss |
+  | King Dodongo | Get_StoneOfFire -> EscapeDungeon | Enemy_DungeonBoss_Dodongo_BossAppear = 0 |
+  | Barinade | Get_StoneOfWater -> Step14 | |
+  | Phantom Ganon | SageOfForest -> Step09 | SageOfForest_IsBefore_Step08 = 0 |
+  | Volvagia | SageOfFire -> GoToWarpPoint | Volvagia_TemporaryDelete, Enemy_DungeonBoss_Volvagia_BossAppear = 0 |
+  | Morpha | SageOfWater -> Step08 | Morpha_DeleteWater |
+  | Bongo Bongo | SageOfShadow -> GoToWarpPoint | |
+  | Twinrova | SageOfSpirit -> Step10 | |
+
+  Every row also has the three `HavePlayedEvent` flags (the setting, BossIn, BossOut).
+- **Given one way, outside the boss's scene.** Once per scene load (and again when the record changes), while our
+  Link stands in any scene but the boss's dungeon, each Bool not at its beaten value is written to it, and the quest
+  is raised to the step only from a step before it: a save that finished the dungeon (Complete) is never stepped
+  back. Never in the boss's own dungeon scene: its room's logic is loaded there (maybe a fight); the next scene gives
+  it. The dungeon then loads as a beaten save's: no boss, the blue warp there; a reload of an older save of ours gets
+  it again at the next scene. Log: `coop: boss: <boss> was beaten by the group, not in this game: <flag> ...`.
+- **The heart container.** Its placement key is shared (taken), and the game that took it raised everyone's maximum
+  (BOSS_HEART). With the set given, an absent player never meets a refight whose container is already gone.
+- Solo or co-op idle: nothing is recorded, nothing written.
+- Tests: `tests/lichii/boss_beaten_test.cpp` (the table against CoopQuests and NotShared; ProvenDeath; the record;
+  once per scene load; never in the boss's scene; Complete kept; unread flags kept), `boss_test.cpp` (a heuristic
+  Defeat never reaches the record), `tests/server/session_test.cpp` (a later joiner is
+  told; not after the host's save load; a new group starts with none), `tools/puppet_pack/tests/test_boss_beaten.py`.
+- Not proven in game: B beats Gohma while A is outside the Deku Tree; A walks into the boss room: no boss, the warp
+  works; A reloads: still beaten. Dodongo and Volvagia: their arena floor (`BossGroundChange`) is not in the set
+  (NotShared, the stale mend clears it); an absent player's beaten room must still show a floor that works. A player still inside the dungeon (not in the room) at the kill gets the set only
+  once they leave its scene; until then, as before, nobody is pulled into that room again.
 
 ## Not known yet (for the in-game check)
 

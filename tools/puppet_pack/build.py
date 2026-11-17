@@ -98,14 +98,17 @@ FOOTSTEP_SUFFIX = ".game__component__SoundFootStepParam.bgyml"
 # worked by the player's own aiming code). Every perception emitter in the game has a Physics component; the
 # puppet gets the one of InterestSpotActor, a logic-only emitter whose controller set is empty (no body: the
 # puppet still collides with nothing).
-# OFF by default for 0.11 (own-look-2, lane1 2026-11-15): with the emitter on, a game crashes ~8 s after the save
+# Was OFF for 0.11 (own-look-2, lane1 2026-11-15): with the emitter on, a game crashes ~8 s after the save
 # loads when a child puppet wears a gear copy (Weapon_Sword_Kokiri_Look1) and holds the slingshot (guest null
 # read 0x7d8, lr 0x82deeef8; the slingshot actor in x19). The same pack built without it plays on. Cause (perception-a,
 # from the lane logs: every crashed game had no 'puppet guard' line, every game that played on had one): the
 # perception's Physics fills the puppet's component slot 10, so Hookshot patch 0002's guard, which arms the null page
 # when slot 10 is missing, never runs; the game's later read of the puppet's missing Player component faults. The
 # module now arms the page itself before its first puppet (hookshot/src/coop_null_page.h, no game rebuild) and makes
-# the quiet copies everywhere when it cannot. `--perception` builds it; default OFF until a lane run proves it.
+# the quiet copies everywhere when it cannot. ON by default since the lane proof (perception-on-a, 2026-11-16: module
+# with the null page + this pack, 9 lane-1 runs: gear copies and colours, held items, slingshot and tools, a scene
+# change, a player leaving/crashing/rejoining, a downed player, a chase, Queen Gohma; no crash, every game armed the
+# page; Gohma, her larvae and other enemies turned to the other player when nearer). `--no-perception` turns it off.
 # Guards (review-boss-sync must-fix): the stealth guards (AffiliationParam NpcSecurityGuard: the castle's child
 # soldiers, the Gerudo) target Player too, and their AI (NpcSecurityGuard.SetIsObserve) takes any perceived
 # emitter of affiliation Player as Link: a puppet in view would catch this game's Link. Nothing in the data keeps
@@ -1023,9 +1026,68 @@ def write_look_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows, slots, l
     return {"slots": slots, "copies": copies, "actors": made, "files": files} if made else None, new_ai, new_gai
 
 
+def write_blade_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows, copies, log=print):
+    """Wearer copies (look_items, "Wearer copies"): every player item whose weapon component
+    sets its model's values from its wearer, read from the romfs (look_items.is_wearer_item), once
+    per player number; its models once per model project and number, the game's bytes unchanged.
+    Returns (the manifest's blade_items, new ActorInfo rows, new GameActorInfo rows)."""
+    made, new_ai, new_gai, files = [], [], [], []
+    pdir = os.path.join(romfs, "Pack", "Actor")
+    mdir = os.path.join(romfs, "Model")
+    model_files = sorted(f for f in os.listdir(mdir) if f.endswith(".bfres.zs")) if os.path.isdir(mdir) else []
+    projects_done = set()
+    for f in sorted(os.listdir(pdir)) if os.path.isdir(pdir) else []:
+        if not f.startswith("Weapon_") or not f.endswith(".pack.zs"):
+            continue
+        item = f[:-len(".pack.zs")]
+        try:
+            members = sarc.read(dicts.decompress(read(os.path.join(pdir, f))))
+            if not look_items.is_wearer_item(members, item):
+                continue
+            _, project, info_src = look_items.model_info(members, item)
+        except (look_items.TunicError, ValueError, KeyError) as e:
+            log(f"wearer copies: {item} left out ({e})")
+            continue
+        if item not in ai_rows:
+            log(f"wearer copies: {item} has no ActorInfo row, left out")
+            continue
+        models = [m for m in model_files if m.startswith(project + ".")]
+        if not models:
+            log(f"wearer copies: no Model/{project}.* in this romfs, {item} left out")
+            continue
+        for n in range(1, copies + 1):
+            actor = look_items.blade_name(item, n)
+            copy_project = look_items.blade_name(project, n)
+            pack, ap, info = look_items.copy_pack_as(members, item, actor, copy_project)
+            dst = f"Pack/Actor/{actor}.pack.zs"
+            write(os.path.join(out_romfs, dst), dicts.compress(pack, PACK_DICT))
+            table.add_new(strip_zs(dst), ((len(pack) + 0x1F) & ~0x1F) + PACK_SIZE_MARGIN)
+            ap_size = table.get(look_items.actor_param_path(item)) or 0
+            table.add_new(look_items.actor_param_path(actor), max(ap_size, len(ap) + PACK_SIZE_MARGIN))
+            info_size = table.get(info_src) or 0
+            table.add_new(look_items.model_info_path(actor), max(info_size, len(info) + PACK_SIZE_MARGIN))
+            new_ai.append(look_items.info_row_as(ai_rows[item], actor, copy_project))
+            new_gai.append(dict(gai_rows.get(item, {}), __RowId=actor))
+            files.append(dst)
+            if (project, n) in projects_done:
+                continue   # (the Giant's Knife on the Biggoron's: its models are there already)
+            projects_done.add((project, n))
+            for m in models:
+                raw = read(os.path.join(mdir, m))
+                m_dst = f"Model/{copy_project}{m[len(project):]}"
+                write(os.path.join(out_romfs, m_dst), raw)
+                table.add_new(strip_zs(m_dst), table.get(strip_zs(f"Model/{m}")) or len(dicts.decompress(raw)))
+                files.append(m_dst)
+        made.append(item)
+    if made:
+        log(f"wearer copies: {len(made)} items ({', '.join(made)}) x {copies} player numbers, "
+            f"{len({p for p, _ in projects_done})} model projects ({len(files)} files): every puppet's own")
+    return ({"copies": copies, "actors": made, "files": files} if made else None), new_ai, new_gai
+
+
 def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None,
           tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False, title_rows=False,
-          look_slots=look_items.SLOTS, perception=False):
+          look_slots=look_items.SLOTS, perception=True, blade_copies=look_items.BLADE_COPIES):
     """`tunics`: the tunic colours to make puppets of (puppet_pack.tunic.COLORS; each is a model,
     a tile and an actor per age, CoopPuppet_<age>_<Colour>). `test_tunic`: give the plain puppets
     that colour too (a test of the colours with a hook that knows none).
@@ -1036,7 +1098,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
     instead of the player's (test switch, the pack before puppet-looks). `look_slots`: how many
     players' puppets can wear gear colours of their own (puppet_pack.look_items; 0: none).
     `perception`: True makes the puppets a target of the game's perception (PERCEPTION_SOURCE), each with a
-    quiet copy (quiet_name) for the scenes with stealth guards (guard_scenes); off for 0.11 (PERCEPTION_SOURCE)."""
+    quiet copy (quiet_name) for the scenes with stealth guards (guard_scenes); on by default (PERCEPTION_SOURCE)."""
     heaps = heaps or {}
     if not os.path.isfile(os.path.join(romfs, "Pack", "ZsDic.pack.zs")):
         raise BuildError(f"{romfs} does not look like the game's romfs (no Pack/ZsDic.pack.zs)")
@@ -1100,6 +1162,13 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         gai_rows = {r["__RowId"]: r for r in gai}
         look_item_files, rows, grows = write_look_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows,
                                                         look_slots, log)
+        new_ai += rows
+        new_gai += grows
+    blade_files = None
+    if blade_copies > 0:
+        gai_rows = {r["__RowId"]: r for r in gai}
+        blade_files, rows, grows = write_blade_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows,
+                                                     blade_copies, log)
         new_ai += rows
         new_gai += grows
     jobs = [(v, None) for v in VARIANTS] + [(v, c) for v in VARIANTS for c in tunics]
@@ -1265,6 +1334,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "self_files": self_files,
         "look_files": look_files,
         "look_items": look_item_files,
+        "blade_items": blade_files,
         "tunics_off": tunics_off,
         "test_tunic": test_tunic,
         "sound": sound,
@@ -1331,10 +1401,10 @@ def main(argv=None):
     ap.add_argument("--test-tunic", metavar="COLOUR",
                     help="give the plain puppets this tunic colour too (a test with a hook that knows no colours)")
     ap.add_argument("--perception", action="store_true",
-                    help="puppets the game's perception sees, with quiet copies for the stealth guards' scenes "
-                         "(issue 150; off for 0.11: a puppet with a gear copy and the slingshot crashes the game)")
+                    help="the default now: puppets the game's perception sees (enemies go for every player), with "
+                         "quiet copies for the stealth guards' scenes (issue 150); kept so older commands still work")
     ap.add_argument("--no-perception", action="store_true",
-                    help="puppets no perception sees (the default for 0.11; kept for older scripts)")
+                    help="puppets no perception sees (enemies go only for each game's own Link; the pack before issue 150)")
     ap.add_argument("--no-sound", action="store_true",
                     help="build the puppets without Link's sounds (the pack before issue 131)")
     ap.add_argument("--seed-trail", action="store_true",
@@ -1356,6 +1426,9 @@ def main(argv=None):
                     help="Hookshot's game: Host, Join and Co-op Settings as rows of the title (title_menu.py)")
     ap.add_argument("--look-slots", type=int, default=look_items.SLOTS, metavar="N",
                     help="how many players' puppets wear gear colours of their own (look_items.py; 0 to 4, 0: none)")
+    ap.add_argument("--blade-copies", type=int, default=look_items.BLADE_COPIES, metavar="N",
+                    help="copies of each sword per player number, so every puppet's blade is its own "
+                         "(look_items.is_wearer_item; 0: none, puppets wear the game's items)")
     a = ap.parse_args(argv)
     from_nup = os.path.isfile(a.romfs) and nup.is_nup(a.romfs)
     if from_nup:
@@ -1411,7 +1484,8 @@ def _main_build(a, romfs, hud_reader=None):
               sound_user=a.sound_user, tunics=tunics, test_tunic=a.test_tunic,
               stand_in_effects=a.seed_trail and not a.no_seed_trail, basic_xlink=a.basic_xlink,
               title_rows=a.title_rows, look_slots=max(0, min(a.look_slots, look_items.MAX_SLOTS)),
-              perception=a.perception and not a.no_perception)
+              perception=not a.no_perception,
+              blade_copies=max(0, min(a.blade_copies, look_items.BLADE_COPIES)))
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
