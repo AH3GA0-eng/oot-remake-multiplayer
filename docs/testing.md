@@ -501,13 +501,14 @@ Before a chunk, `hs.py cache status` says HIT (module only) or MISS (one game bu
 
 ## CI
 
-GitHub Actions runs `Build` in two tiers (`.github/workflows/build.yml`), so work branches do not fill the free runners' queue:
+GitHub Actions runs `Build` in two tiers (`.github/workflows/build.yml`): one full run per batch of branches, not one per branch.
 
-- Fast tier, on a push to any branch: `linux (gcc)` (unit tests, `-Werror`) and `python-tools (ubuntu-latest, 3.12)`. About 2 jobs.
-- Full tier, on a push to `main` or `integrate-*`, on a tag, on a pull request into `main`, and on a manual run: the fast tier plus Windows (MSVC, unit and kit script tests), linux clang, ASan + UBSan, TSan and python-tools on Windows and Python 3.10. To get the full proof for a branch before integration: Actions, Build, Run workflow, pick the branch (or `gh workflow run build.yml --ref <branch>`).
-- A pull request from a branch of this repo into anything but `main` runs nothing (its push already did); a pull request from a fork runs the fast tier.
-- A newer push cancels the branch's older run (not on `main` or tags). Docs-only changes (`docs/`, `*.md`, issue templates) skip `Build`; `Content guard` runs on every push.
-- Caches: ccache on linux, sccache on Windows, and the fetched libraries (ENet, doctest, Monocypher) at their pinned commits. `linux-emulator` (the hook compile) is full tier too, and also runs on pushes to `linux-build` and `linux-2`.
+- Branch tier, on a push to any other branch: `linux (gcc)` (unit tests, `-Werror`, and the Hookshot module's compile of the hook), `python-tools (ubuntu-latest, 3.12)` and Content guard. The emulator's hook compiles (`linux-emulator (hook)`, `windows-emulator`) join only when the push changes an emulator-only file: anything under `lichii/` except the hook's core files (so the Fritchii pin, patches, fetch and build scripts, `coop_svc`, the Qt panel and the hook's build files). The small `changes` job decides from the push's previous commit, or for a new branch from the nearest of `main` and `integrate-*`.
+- A branch's real gate is the local check: `coord-multiplayer\offline\local-ci.ps1 -Ref <branch> -Expect <sha>` (the offline queue runs it): the MSVC build with the Hookshot module, ctest, and the `windows` job's script and Python steps. So a branch does not dispatch the full tier any more.
+- Batch tier (the full tier), on a push to `main` or `integrate-*` (the integrator's merge of the GO'd branches), on a tag, on a pull request into `main`, and on a manual run: every job: Windows (MSVC, unit and kit script tests), linux gcc, clang, ASan + UBSan, TSan, python-tools on Windows and Python 3.10, linux-longshot, both emulator hook compiles. It runs once per integrator push; when it fails, the integrator finds the branch by running local-ci on halves of the batch and fixes it there.
+- `windows-hook` (the module's MSVC compile alone) runs only for a pull request from a fork into a branch other than `main`, which has no local check. A pull request from a branch of this repo into anything but `main` runs nothing (its push already did); a pull request from a fork runs the branch tier.
+- `linux-emulator (full)` (the AppImage and a start without a game) runs on `linux-build`, `linux-2`, tags and by hand; `linux-emulator (hook)` also runs on pushes to `linux-build` and `linux-2`.
+- Caches: ccache on linux and on `linux-emulator`, sccache on Windows (the GitHub Actions cache), and the fetched libraries at their pinned commits. MSVC flags we add must use the dash form (`-d1trimfile:`, not `/d1trimfile:`): sccache reads a slash flag it does not know as a second source file and caches nothing ("multiple input files" in the `sccache stats` step).
 
 ## Bad connections
 
