@@ -3778,7 +3778,6 @@ private:
             event_began_us_ = now_us;
             event_still_us_ = now_us;
             const auto ev = CoopEventMember::ReadRunning([&r](std::uint64_t at) { return r.Get<u64>(at); }, main_);
-            CoopEventOwner::RunNames(ev.names, CoopEvery::NowUs());  // G1: whose it is, by its name
             std::string names;
             for (const std::string& n : ev.names) {
                 names += (names.empty() ? "" : ", ") + n;
