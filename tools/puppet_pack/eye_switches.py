@@ -606,9 +606,14 @@ def trigger_guards(askers, keep, shared, keys, one_way, plugs, world=None):
             if followed:
                 guards |= followed
                 continue
-            near = [p for at, p in plugs.get((scene, name), [])
-                    if sum((a - b) ** 2 for a, b in zip(at, place)) < 1.5 ** 2]
-            if plug in near:
+            near = [(p, guard) for at, p, guard in plugs.get((scene, name), [])
+                    if p == plug and sum((a - b) ** 2 for a, b in zip(at, place)) < 1.5 ** 2]
+            if near and all(guard for _, guard in near):
+                # g3-objects' guarded line: the share holds the plug only once the guard flags are all on in our
+                # game, and those disarm our asker, so the shared plug cannot make it ask the event.
+                proofs.add((event, scene, f"{name}.{plug}: held by the switch share only behind its guard "
+                                          f"{' / '.join(sorted({g for _, g in near}))} (on: our asker is disarmed)"))
+            elif near:
                 proofs.add((event, scene, f"{name}.{plug}: HELD BY THE SWITCH SHARE (not covered)"))
             elif any(is_movable(other) and other_room is not None and other_room == room_of(scene, hash_)
                      for other, other_room, _, _ in world.get(scene, {}).values()):
@@ -641,13 +646,15 @@ def one_way_flags(path):
 
 
 def switch_plugs(path):
-    """{(scene, switch name): [(place, plug)]} of lichii/hook/coop_room_objects.cpp kSwitchPlugs."""
+    """{(scene, switch name): [(place, plug, guard)]} of lichii/hook/coop_room_objects.cpp kSwitchPlugs. Both line
+    forms: {scene, name, {x, y, z}, plug} and g3-objects' {scene, name, {x, y, z}, plug, guard} (guard "" = none;
+    flags joined by '+', "load:<flag>" allowed)."""
     out = {}
     if path and os.path.exists(path):
         with open(path, encoding="utf-8") as f:
-            for scene, name, x, y, z, plug in re.findall(
-                    r'\{"(\w+)", "(\w+)", \{([-\d.]+)f, ([-\d.]+)f, ([-\d.]+)f\}, "(\w+)"\}', f.read()):
-                out.setdefault((scene, name), []).append(((float(x), float(y), float(z)), plug))
+            for scene, name, x, y, z, plug, guard in re.findall(
+                    r'\{"(\w+)", "(\w+)", \{([-\d.]+)f, ([-\d.]+)f, ([-\d.]+)f\}, "(\w+)"(?:, "([^"]*)")?\}', f.read()):
+                out.setdefault((scene, name), []).append(((float(x), float(y), float(z)), plug, guard))
     return out
 
 

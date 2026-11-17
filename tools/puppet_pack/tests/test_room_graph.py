@@ -349,12 +349,38 @@ class TriggerGuardsTest(unittest.TestCase):
                                       ("actor", "Obj_StepSwitch_A_01", 41, "OnState", False, 0, (2.0, 0.0, 0.0), ()),
                                       ("actor", "Obj_EyeSwitch_A_02", 42, "OnState", False, 0, (9.0, 0.0, 0.0), ()),
                                       ("node", "HoldPlayerState", 0, "Out", False, 0, (), ())],
-                                     keys=(40,), plugs={("Scene", "Obj_StepSwitch_A_01"): [((2.5, 0.0, 0.0), "OnState")]})
+                                     keys=(40,), plugs={("Scene", "Obj_StepSwitch_A_01"): [((2.5, 0.0, 0.0), "OnState", "")]})
         self.assertEqual(guards, [("key", "Scene", "Ev", "", 40, 0, "Obj_Ice_A_01's key")])
         text = " ".join(t for _, _, t in proofs)
         self.assertIn("Obj_StepSwitch_A_01.OnState: HELD BY THE SWITCH SHARE", text)
         self.assertIn("Obj_EyeSwitch_A_02.OnState: each game's own", text)
         self.assertIn("our own game's state", text)
+
+    def test_switch_plugs_reads_both_line_forms_and_a_guarded_line_is_proved(self):
+        # Lines as in g3-objects 59a488df's coop_room_objects.cpp kSwitchPlugs (5 fields) and the 4-field form.
+        lines = ['    {"DodongoCavern", "Obj_EyeSwitch_A_05", {65.7f, 121.8f, -23.0f}, "OnState", '
+                 '"DodongoCavern_NaviHelp_17_00"},  // Obj_DodongoCave_FireWall_A_01; asks FocusOnGimmick_Basic',
+                 '    {"DodongoCavern", "Obj_StepSwitch_A_01", {-49.0f, 114.2f, -8.0f}, "OnState", ""},  // shutter',
+                 '    {"Scene", "Obj_SwitchHit_A_01", {1.0f, 2.0f, 3.0f}, "OnState"},',
+                 '    {"Scene", "Obj_SwitchHit_A_02", {1.0f, 2.0f, 3.0f}, "OnState", "load:Room_Flag+Other_Flag"},']
+        text = "\n".join(lines) + "\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "coop_room_objects.cpp")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+            plugs = eye_switches.switch_plugs(path)
+        self.assertEqual(plugs[("DodongoCavern", "Obj_EyeSwitch_A_05")],
+                         [((65.7, 121.8, -23.0), "OnState", "DodongoCavern_NaviHelp_17_00")])
+        self.assertEqual(plugs[("DodongoCavern", "Obj_StepSwitch_A_01")], [((-49.0, 114.2, -8.0), "OnState", "")])
+        self.assertEqual(plugs[("Scene", "Obj_SwitchHit_A_01")], [((1.0, 2.0, 3.0), "OnState", "")])
+        self.assertEqual(plugs[("Scene", "Obj_SwitchHit_A_02")][0][2], "load:Room_Flag+Other_Flag")
+        _, proofs = self.guards([("actor", "Obj_EyeSwitch_A_05", 9, "OnState", False, 0, (65.7, 121.8, -23.0), ()),
+                                 ("actor", "Obj_StepSwitch_A_01", 8, "OnState", False, 0, (-49.0, 114.2, -8.0), ())],
+                                plugs={("Scene", k[1]): v for k, v in plugs.items() if k[0] == "DodongoCavern"})
+        text = " ".join(t for _, _, t in proofs)
+        self.assertIn("Obj_EyeSwitch_A_05.OnState: held by the switch share only behind its guard "
+                      "DodongoCavern_NaviHelp_17_00", text)
+        self.assertIn("Obj_StepSwitch_A_01.OnState: HELD BY THE SWITCH SHARE (not covered)", text)
 
     def test_the_results_output_prints_the_trigger_table(self):
         text = ResultsOutputTest().run_main(0)
