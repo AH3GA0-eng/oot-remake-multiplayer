@@ -467,9 +467,9 @@ What each case does now. "Handled" is by code and unit tests; none of these is p
 | `in_cutscene` | Our Link is in an event (G1) | The event manager's running word or our Link's bound performer (`PlayerReading::event_running`, `our_link_in_event`) |
 | `in_menu` | A game menu is in front | Longshot's patch 0018 `hos_coop_menu_state().menu_open`: one of the game's menu screens (their update f_802f1380) has a focused button: the pause menu, the Key Items / Threads of Time / Map panel, a dialog |
 | `paused` | A game menu is in front and our Link is in no event | The same; the pause menu and the panel stop the game's world, a talk's choices (a menu inside an event) do not |
-| `dead` | Our Link's life is 0 (a Game Over, or downed) | His actor's Life component, as the objects walk reads it each frame (`CoopObjects::OurLinkLife`) |
+| `dead` | The player's life is 0 (a Game Over; down but not out keeps a downed Link at a quarter heart) | The player actor's own Life component (`PlayerReader::read_life`: component table +0x2b8, value +0x1c10, s32 at +8, the objects walk's read since issue 88); a split-screen seat reads its own actor |
 
-While `loading`, `in_menu` and `paused` are clear and `in_cutscene` and `dead` keep what they were; an unknown value (no life read for 1.5 s, no event word) keeps the bit. Not known, so never set: `in_menu`/`paused` on the emulator and on Linux Longshot (patch 0018's menu tracking is Windows only), and `dead` for a split-screen seat (its own Life is not read; seats take `in_menu` from the screen they share).
+While `loading`, `in_menu` and `paused` are clear and `in_cutscene` and `dead` keep what they were; an unknown value (no life read, no event word) keeps the bit. Not known, so never set: `in_menu`/`paused` on the emulator and on Linux Longshot (patch 0018's menu tracking is Windows only); seats take `in_menu` from the screen they share.
 
 ### Cutscenes without snaps (issue 194, branch `cutscene-snap`)
 
