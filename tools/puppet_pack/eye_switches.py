@@ -162,7 +162,10 @@ def switch_events(romfs, dicts=None, wiring=None):
     def graph(logic):
         path = os.path.join(romfs, "Logic", os.path.basename(str(logic)) + "b")
         if path not in graphs:
-            graphs[path] = read_graph(open(path, "rb").read()) if os.path.exists(path) else None
+            graphs[path] = None
+            if os.path.exists(path):
+                with open(path, "rb") as f:
+                    graphs[path] = read_graph(f.read())
         return graphs[path]
 
     lines, guards, extras, others = set(), set(), set(), set()
