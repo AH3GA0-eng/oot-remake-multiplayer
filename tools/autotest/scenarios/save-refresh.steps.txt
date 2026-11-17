@@ -13,6 +13,6 @@ shot a-loaded
 sleep 60
 shot b-title-after
 lines b-switched B min=1 coop: save: now playing from the co-op save folder
-lines b-list-asked B min=1 coop: title: save list: reset (state 0), read started
+lines b-list-asked B min=1 coop: title: save list: reset \(state 0\), read started
 lines b-list-read B min=1 coop: title: save list: read again by the game: a save yes
 lines b-no-crash B max=0 unhandled exception|fault at|coop: null read
