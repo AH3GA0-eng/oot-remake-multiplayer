@@ -12,8 +12,8 @@ $script:RelayRoomPattern = '^[A-Za-z0-9_-]{3,24}$'
 # Port = 27530 }, or $null when it is not a join code with a relay.
 #
 # A room name works the same way (issue 261): 'forest-gang@relay.example.net:27530', when the host
-# set relay_room. Then Code is $null and Room is the name. A name that is also shaped like a join
-# code (8 code letters) gets both: the code is tried first, then the room.
+# set relay_room. Then Code is $null and Room is the name. A text that can be both (8 code letters,
+# with or without a dash: 'lake-gang') gets both: the code is tried first, then the room.
 function ConvertTo-RelayJoin([string]$Text) {
     if ($null -eq $Text) { return $null }
     $t = ($Text -replace '[\s"''<>]', '').TrimEnd('/', '.', ',', ';')
@@ -25,11 +25,8 @@ function ConvertTo-RelayJoin([string]$Text) {
     $code = ($what -replace '-', '').ToUpperInvariant()
     $isCode = $code.Length -eq 8 -and $what.Length -le 9 -and $what -notmatch '_' -and
         -not ($code.ToCharArray() | Where-Object { $script:RelayCodeLetters.IndexOf($_) -lt 0 })
-    # A room name: 3 to 24 letters, digits, - or _ (server/relay_wire.hpp, normalize_room). A text laid
-    # out as a code ('abcd-efgh': four, a dash, four) was typed as a code: a code or nothing.
-    $codeLayout = $what -match '^[A-Za-z0-9]{4}-[A-Za-z0-9]{4}$'
-    if ($codeLayout -and -not $isCode) { return $null }
-    $isRoom = $what -match $script:RelayRoomPattern -and -not $codeLayout
+    # A room name: 3 to 24 letters, digits, - or _ (server/relay_wire.hpp, normalize_room).
+    $isRoom = $what -match $script:RelayRoomPattern
     if (-not $isCode -and -not $isRoom) { return $null }
     return @{ Code = $(if ($isCode) { $code } else { $null }); Room = $(if ($isRoom) { $what } else { $null });
         Relay = $relay; Port = $port }
@@ -111,7 +108,11 @@ function Get-RelayLookupHelp([string]$Result, $Join) {
             return @("Join code accepted by the relay $($Join.Relay). The game connects through it.")
         }
         'unknown' {
-            if ($room) {
+            if ($Join.Code -and $Join.Room) {
+                return @("The relay knows no join code or room '$($Join.Room)' right now. Check it with the host: a join code changes",
+                    'every time the host starts the server, and a room is free again 30 seconds after the host stops.')
+            }
+            if ($Join.Room) {
                 return @("The relay has no room '$($Join.Room)' right now. Check the name with the host: their server window",
                     'says room "...@relay" is yours while it runs, and a room is free again 30 seconds after the host stops.')
             }

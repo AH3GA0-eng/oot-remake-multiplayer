@@ -130,11 +130,15 @@ Check ($j -and $j.Code -eq 'ABCDEFGH' -and $j.Relay -eq 'relay.example.net' -and
 $j = ConvertTo-RelayJoin 'ABCDEFGH@1.2.3.4'
 Check ($j -and $j.Port -eq 27530 -and $j.Relay -eq '1.2.3.4') 'relay: no port is the relay port 27530'
 Check ((Format-RelayJoin $j) -eq 'ABCD-EFGH@1.2.3.4:27530') 'relay: shown as the host''s window shows it'
-foreach ($bad in @('ABCD-EFGI@1.2.3.4', 'ABCD-EFGH', 'ABCD-EFGH@', 'ABCD-EFGH@1.2.3.4:0', '26.1.2.3', 'ABCD-EFGH@bad;host',
+foreach ($bad in @('ABCD-EFGH', 'ABCD-EFGH@', 'ABCD-EFGH@1.2.3.4:0', '26.1.2.3', 'ABCD-EFGH@bad;host',
         'ab@1.2.3.4', 'forest.gang@1.2.3.4', ('x' * 25) + '@1.2.3.4')) {
     Check (-not (ConvertTo-RelayJoin $bad)) "relay: '$bad' is not a join code or room name with a relay"
 }
-Check (-not (ConvertTo-RelayJoin 'ABCD-EFGH@1.2.3.4').Room) 'relay: a code laid out as one (four, dash, four) is only a code'
+$r = ConvertTo-RelayJoin 'lake-gang@1.2.3.4'
+Check ($r -and $r.Code -eq 'LAKEGANG' -and $r.Room -eq 'lake-gang') 'relay: laid out as a code and a room name too: both, the code first'
+$r = ConvertTo-RelayJoin 'bird-song@1.2.3.4'
+Check ($r -and -not $r.Code -and $r.Room -eq 'bird-song') 'relay: laid out as a code, but I and O are no code letters: a room'
+Check ((Get-RelayLookupHelp 'unknown' (ConvertTo-RelayJoin 'lake-gang@1.2.3.4')) -join ' ' -match "no join code or room 'lake-gang'") 'relay: unknown as both is said once'
 
 # Room names (issue 261): name@relay, kept as typed; a name shaped like a code gets both.
 $r = ConvertTo-RelayJoin ' Forest-Gang@relay.example.net:27600 '
