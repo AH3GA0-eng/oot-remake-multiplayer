@@ -544,6 +544,7 @@ public:
     static constexpr std::uint64_t kExtrapolateUs = 150'000;
     static constexpr std::uint64_t kPoseStaleUs = 2'500'000;  // no sample this long: let it be
     static constexpr std::uint64_t kHurtWaitUs = 400'000;     // then write life directly
+    static constexpr std::uint64_t kHandedUs = 2'000'000;     // a DAMAGE of ours that crossed a hand-over is back by then
     static constexpr std::uint64_t kHitPlaceKeepUs = 200'000;  // a hit's place waits this long for its life drop
     static constexpr std::size_t kKeepSamples = 16;
     static constexpr std::uint64_t kSceneStaleUs = 5'000'000;  // a player's scene, from its samples
@@ -961,6 +962,11 @@ private:
         std::optional<coop::protocol::Vec3> hit_place;  // where our own hit summed now landed (a boss; cleared with the sum)
         std::uint64_t hit_since = 0;
         std::uint64_t hit_at = 0;  // last DAMAGE sent
+        // A HANDOVER_STATE made it ours (the owner news follows it): until then a fall here is our own enemy's,
+        // no DAMAGE. `handed_took`: its life became the old owner's there, so a DAMAGE of ours that crossed the
+        // hand-over (the server gives it back, player_number our own) is not in it yet.
+        std::uint64_t handed_until = 0;
+        bool handed_took = false;
         std::uint64_t react_at = 0;  // our last hit on it, as seen in its life
         std::string react_over;      // the owner's animation at that moment
         std::deque<Received> received;  // the owner's samples, oldest first
