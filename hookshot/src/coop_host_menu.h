@@ -21,6 +21,7 @@
 
 #include "hos_coop_host.h"
 #include "nat_codes.hpp"
+#include "relay_link.hpp"
 
 namespace CoopHostMenu {
 
@@ -74,7 +75,7 @@ public:
 
 private:
     struct HostJob {
-        std::string name, password, relay_via, relay_key;
+        std::string name, password, relay_via, relay_key, relay_room;
         std::uint16_t port = 0;
         bool upnp = false, invite = false, pvp = false;
         std::uint8_t max_players = 0;  // HostMaxPlayers'
@@ -84,12 +85,18 @@ private:
         std::string name, password;
         coop::server::nat::Addr host;
     };
+    // "<join code or room>@relay": the relay lets this PC's address in, then the game connects to the relay.
+    struct RelayJoinJob {
+        std::string name, password;
+        coop::server::relay::RelayJoin join;
+    };
     bool Busy(const char* what);
     void StopThread();  // with calls_ held
     void Fail(const std::string& why, int problem);
     void Say(const std::string& text) const;
     void RunHost(HostJob job);
     void RunJoin(JoinJob job);
+    void RunRelayJoin(RelayJoinJob job);
     std::vector<coop::server::nat::Addr> StunServers() const;
     std::string NameOr(const char* given) const;
 

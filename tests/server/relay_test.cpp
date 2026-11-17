@@ -4,12 +4,14 @@
 
 #include <doctest/doctest.h>
 
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <functional>
 #include <span>
 #include <string>
+#include <thread>
 #include <variant>
 #include <vector>
 
@@ -277,6 +279,59 @@ TEST_CASE("relay: wrong room names count with wrong codes against one limit (iss
   CHECK(f.lookup_room("forest-gang", kGuest, 200) == LookupResult::kSlowDown);
   CHECK(f.lookup(code, kGuest, 200) == LookupResult::kSlowDown);
   CHECK(f.lookup_room("forest-gang", Endpoint{0x0300000Au, 1}, 200) == LookupResult::kOk);
+}
+
+TEST_CASE("relay join text: a code or a room name with its relay, as Join.bat reads it (issue 261)") {
+  auto j = parse_relay_join(" abcd-efgh@relay.example.net:27600 ");
+  REQUIRE(j.has_value());
+  CHECK(j->code == "ABCDEFGH");
+  CHECK(j->room == "abcd-efgh");  // a room name too: the code is tried first
+  CHECK(j->relay_host == "relay.example.net");
+  CHECK(j->relay_port == 27600);
+
+  j = parse_relay_join("Forest-Gang@1.2.3.4");
+  REQUIRE(j.has_value());
+  CHECK(j->code.empty());
+  CHECK(j->room == "Forest-Gang");
+  CHECK(j->relay_port == kDefaultRelayPort);
+
+  j = parse_relay_join("zeldafan@1.2.3.4");  // shaped like a code: both, the code first
+  REQUIRE(j.has_value());
+  CHECK(j->code == "ZELDAFAN");
+  CHECK(j->room == "zeldafan");
+
+  j = parse_relay_join("ABCD-EFG@1.2.3.4");  // seven letters: only a room
+  REQUIRE(j.has_value());
+  CHECK(j->code.empty());
+  CHECK(j->room == "ABCD-EFG");
+
+  j = parse_relay_join("lake-gang@1.2.3.4");  // laid out as a code, and a room name too: both
+  REQUIRE(j.has_value());
+  CHECK(j->code == "LAKEGANG");
+  CHECK(j->room == "lake-gang");
+
+  j = parse_relay_join("bird-song@1.2.3.4");  // laid out as a code, but I and O are no code letters: a room
+  REQUIRE(j.has_value());
+  CHECK(j->code.empty());
+  CHECK(j->room == "bird-song");
+
+  for (const char* bad : {"forest-gang", "forest-gang@", "ab@1.2.3.4", "forest gang@1.2.3.4",
+                          "forest-gang@1.2.3.4:0", "forest-gang@bad;host", "@1.2.3.4"}) {
+    CHECK_MESSAGE(!parse_relay_join(bad).has_value(), bad);
+  }
+
+  RelayJoin room;
+  room.room = "forest-gang";
+  room.relay_host = "relay.example.net";
+  CHECK(lookup_text(LookupResult::kUnknown, room).find("no room \"forest-gang\"") != std::string::npos);
+  CHECK(lookup_text(std::nullopt, room).find("before room names") != std::string::npos);
+  RelayJoin code;
+  code.code = "ABCDEFGH";
+  CHECK(lookup_text(LookupResult::kUnknown, code).find("join code") != std::string::npos);
+  RelayJoin both = room;
+  both.code = "LAKEGANG";
+  CHECK(lookup_text(LookupResult::kUnknown, both).find("no join code or room \"forest-gang\"") != std::string::npos);
+  CHECK(lookup_text(LookupResult::kOk, code).find("connecting") != std::string::npos);
 }
 
 TEST_CASE("relay: a host gets a code, and a guest with it reaches the host and back") {
@@ -657,6 +712,30 @@ TEST_CASE("relay loopback: a host's link holds a room name and a second host can
   RelayLink bad(link_config("no spaces"));
   CHECK_FALSE(bad.start(why));
   CHECK(why.find("not a room name") != std::string::npos);
+
+  // lookup_on_relay, as the game's Join page uses it: the room, the code, and a room shaped like a code that
+  // falls back from the code. The relay serves on this thread between the tries.
+  ENetAddress relay_at{};
+  enet_address_set_host_ip(&relay_at, "127.0.0.1");
+  relay_at.port = relay_port;
+  std::atomic<bool> done{false};
+  std::thread serve([&] {
+    while (!done) {
+      relay_server.service(5);
+      first.service();
+    }
+  });
+  auto parsed = parse_relay_join("FOREST-GANG@127.0.0.1:" + std::to_string(relay_port));
+  REQUIRE(parsed.has_value());
+  CHECK(lookup_on_relay(relay_at, *parsed) == LookupResult::kOk);
+  parsed = parse_relay_join(show_code(first.code()) + "@127.0.0.1:" + std::to_string(relay_port));
+  REQUIRE(parsed.has_value());
+  CHECK(lookup_on_relay(relay_at, *parsed) == LookupResult::kOk);
+  parsed = parse_relay_join("lakegang@127.0.0.1:" + std::to_string(relay_port));
+  REQUIRE(parsed.has_value());
+  CHECK(lookup_on_relay(relay_at, *parsed) == LookupResult::kUnknown);
+  done = true;
+  serve.join();
 
   first.stop();
   second.stop();
