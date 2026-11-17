@@ -15,6 +15,7 @@
 
 #include "coop_boss_native.h"
 #include "coop_counters.h"
+#include "coop_world.h"
 #include "coop_hold.h"
 #include "coop_hookshot.h"
 #include "coop_null_page.h"
@@ -23,6 +24,7 @@
 #include "hos_coop_sound.h"
 #include "hos_coop_world.h"
 #include "hos_coop_actors.h"
+#include "hos_coop_nodes.h"
 #include "hos_coop_bosses.h"
 #include "coop_svc.h"
 
@@ -789,6 +791,29 @@ TEST_CASE("hookshot: the sound wrap (patch 0014) is one row in 0005's table, its
     CHECK(HOS_COOP_WRAP_SOUND_EMIT < 64);
     const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
     CHECK(module.find("if (id == HOS_COOP_WRAP_SOUND_EMIT) {") != std::string::npos);
+}
+
+TEST_CASE("hookshot: the AI node starts (patch 0029) are one generic world event, their header hookshot/src's") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0029-coop-node-starts.patch");
+    CHECK(NewFile(patch, "host/hos_coop_nodes.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_nodes.h"));
+    const std::string lift = NewFile(patch, "nx2/coop_node_lift.py");
+    REQUIRE(!lift.empty());
+    // One event naming the node (x0) and its actor (x9, just read from [[[node + 8] + 8] + 0x1f0]).
+    char call[96];
+    std::snprintf(call, sizeof call, "hos_coop_world_event(%uu, c->x[0], c->x[9])", HOS_COOP_WORLD_NODE_START);
+    CHECK(lift.find(call) != std::string::npos);
+    CHECK(HOS_COOP_WORLD_NODE_START >= HOS_COOP_WORLD_NEXT_FIRST);
+    CHECK(HOS_COOP_WORLD_NODE_START <= HOS_COOP_WORLD_NEXT_LAST);
+    // The push node's start (the module's BlockNode::kStartFn), after the actor's load; words checked.
+    CHECK(lift.find("(\"push node\", 0x27517c0,") != std::string::npos);
+    CHECK(lift.find("(0x2751790, 0xd503237f)") != std::string::npos);
+    CHECK(lift.find("(0x27517c0, 0xf940f929)") != std::string::npos);  // ldr x9, [x9, #0x1f0]
+    CHECK(CoopWorld::BlockNode::kStartFn == 0x2751790);
+    CHECK(patch.find("+    coop_node_lift.install(lifter, img, build_id)") != std::string::npos);
+    // Generic: no block-only event or file in the hook layer, and patch 0005's files are left to it.
+    CHECK(patch.find("BLOCK") == std::string::npos);
+    CHECK(patch.find("diff --git a/host/hos_coop_world.h") == std::string::npos);
+    CHECK(patch.find("diff --git a/host/coop_world.c") == std::string::npos);
 }
 
 TEST_CASE("hookshot: the save-load wraps (patch 0024) are four rows in 0005's table, their header hookshot/src's") {

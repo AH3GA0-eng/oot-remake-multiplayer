@@ -48,6 +48,7 @@
 #include "coop_save.h"
 #include "coop_hold.h"
 #include "coop_counters.h"
+#include "coop_world.h"
 #include "coop_difficulty.h"
 #include "coop_actor_events.h"
 #include "coop_boss_native.h"
@@ -96,6 +97,7 @@
 #include "coop_null_page.h"
 #include "hos_coop_api.h"
 #include "hos_coop_actors.h"
+#include "hos_coop_nodes.h"
 #include "hos_coop_bosses.h"
 #include "hos_coop_pads.h"
 #include "hos_coop_save_load.h"
@@ -1212,6 +1214,15 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
         static std::atomic<bool> said{false};
         if (!said.exchange(true)) {
             LOG_INFO(Core, "coop: world hooks: first pause counter start from hookshot.exe (node {:#x})", a);
+        }
+        return 1;
+    }
+    case HOS_COOP_WORLD_NODE_START: {  // (patch 0029, hos_coop_nodes.h: coop_world.h's NodeStarts; the Objects walk
+                                       // looks a pushed block's node up there, FindBlockNode)
+        CoopWorld::TheNodeStarts().Push(a, b);
+        static std::atomic<bool> said{false};
+        if (!said.exchange(true)) {
+            LOG_INFO(Core, "coop: world hooks: first AI node start from hookshot.exe (node {:#x}, actor {:#x})", a, b);
         }
         return 1;
     }

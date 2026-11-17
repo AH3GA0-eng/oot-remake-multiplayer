@@ -970,7 +970,7 @@ public:
             const u64 node = n.node;
             u64 table = 0;
             if (block_ == 0 || !Alive(guest, n.actor) || !guest.Read(node, &table, 8) ||
-                table != main_ + CoopWorld::BlockNode::kVtable) {
+                !CoopWorld::BlockNode::IsNodeVtable(table, main_)) {
                 ++node_skipped_;
                 continue;
             }
@@ -1841,80 +1841,53 @@ public:
                     continue;  // deku-visuals-b: logged by WorldSync only
                 }
                 // world-objects-2, deku-visuals-b: the block's push node
-                // (found by its vtables and owner; read only) runs its own
-                // start again (the Mover's call), so its next push starts
+                // (named by the game's own start, patch 0029's node-start
+                // event; checked by its vtable and owner; read only) runs its
+                // own start again (the Mover's call), so its next push starts
                 // where the block rests now. On unless LICHII_COOP_BLOCK_NODE=0.
                 static const bool node_on = EnvOn("LICHII_COOP_BLOCK_NODE");
                 const bool first = fix.tries == 0;
-                if (node_on) {
-                    const auto node = CoopWorld::FindBlockNode(
-                        [&r](u64 address) { return r.Get<u64>(address); }, fix.address, main_);
-                    // Stale: both its start and target still hold the old
-                    // rest (read only). Mid-push here (one of them): tried
-                    // again on the next walks (not when it is not found: report 37).
-                    const auto stale = node ? CoopWorld::NodeRestWords(
-                                                  [&r](u64 address) { return r.Get<u64>(address); },
-                                                  *node, fix.from, fix.to)
-                                            : CoopWorld::RestScan{};
-                    if (node && !stale.busy) {
-                        if (!stale.writes.empty()) {
-                            TheMover().StartBlockNode(*node, fix.address, fix.from, fix.to);
-                            LOG_INFO(Core, "coop: world: {:016x} {} push node {:x}: its own start "
-                                           "(main+{:#x}) asked to run again, from where it rests now",
-                                     fix.hash, fix.name, *node, CoopWorld::BlockNode::kStartFn);
-                        } else {
-                            LOG_INFO(Core, "coop: world: {:016x} {} push node {:x} already starts from "
-                                           "where it rests: left alone",
-                                     fix.hash, fix.name, *node);
-                        }
-                    } else if (node && ++fix.tries < kBlockNodeTries) {
-                        // Report 37 (an fps drop in the other game at each push): only a busy node is
-                        // looked for again. A search that found none (up to kNodeLooks objects, every
-                        // 8-byte word of each into a set) finds none on the next walk either; it ran
-                        // 21 times for every rest of the block (every player log: "not found").
-                        if (first) {
-                            LOG_INFO(Core, "coop: world: {:016x} {} push node busy (mid-push here): tried again for {} walks",
-                                     fix.hash, fix.name, kBlockNodeTries);
-                        }
-                        block_retry_.push_back(fix);
-                    } else {
-                        LOG_INFO(Core, "coop: world: {:016x} {} push node {}: its next push may start "
-                                       "from the old place",
-                                 fix.hash, fix.name, node ? "still busy" : "not found");
-                    }
-                }
-                if (!first) {
-                    continue;  // the wide search below ran on the fix's first walk
-                }
-                const auto scan = CoopWorld::RestWords(
-                    [&r](u64 address) { return r.Get<u64>(address); }, fix.address, fix.from,
-                    fix.to);
-                std::string where;
-                for (const auto& w : scan.where) {
-                    where += " " + w;
-                }
-                if (scan.too_many) {
-                    LOG_INFO(Core, "coop: world: {:016x} {} rest place {:.2f} {:.2f} {:.2f} found {} times, "
-                                   "not written (too many):{}",
-                             fix.hash, fix.name, fix.from[0], fix.from[1], fix.from[2],
-                             scan.where.size(), where);
+                if (!node_on) {
                     continue;
                 }
-                // The searched sizes are not known object sizes (review):
-                // written only with LICHII_COOP_BLOCK_REST=1; otherwise only
-                // where they would go is logged, for a run to name the word.
-                static const bool write_rest = EnvFlag("LICHII_COOP_BLOCK_REST");
-                if (write_rest) {
-                    for (const auto& w : scan.writes) {
-                        memory_->Write32(w.address, w.value);
+                const auto node = CoopWorld::FindBlockNode(
+                    [&r](u64 address) { return r.Get<u64>(address); }, fix.address, main_,
+                    CoopWorld::TheNodeStarts());
+                // Stale: both its start and target still hold the old rest
+                // (read only). Mid-push here (one of them), or not started
+                // yet: tried again on the next walks (a lookup in our own
+                // table of started nodes, no heap search: report 37).
+                const auto stale = node ? CoopWorld::NodeRestWords(
+                                              [&r](u64 address) { return r.Get<u64>(address); },
+                                              *node, fix.from, fix.to)
+                                        : CoopWorld::RestScan{};
+                if (node && !stale.busy) {
+                    if (!stale.writes.empty()) {
+                        TheMover().StartBlockNode(*node, fix.address, fix.from, fix.to);
+                        LOG_INFO(Core, "coop: world: {:016x} {} push node {:x}: its own start "
+                                       "(main+{:#x}) asked to run again, from where it rests now",
+                                 fix.hash, fix.name, *node, CoopWorld::BlockNode::kStartFn);
+                    } else {
+                        LOG_INFO(Core, "coop: world: {:016x} {} push node {:x} already starts from "
+                                       "where it rests: left alone",
+                                 fix.hash, fix.name, *node);
                     }
+                } else if (++fix.tries < kBlockNodeTries) {
+                    if (first) {
+                        LOG_INFO(Core, "coop: world: {:016x} {} push node {}: tried again for {} walks",
+                                 fix.hash, fix.name, node ? "busy (mid-push here)" : "not started yet",
+                                 kBlockNodeTries);
+                    }
+                    block_retry_.push_back(fix);
+                } else {
+                    LOG_INFO(Core, "coop: world: {:016x} {} push node {}: its next push may start "
+                                   "from the old place",
+                             fix.hash, fix.name,
+                             node ? "still busy"
+                                  : (CoopWorld::TheNodeStarts().Count() == 0
+                                         ? "not found (no node start from the game: patch 0029 missing)"
+                                         : "not found among the started nodes"));
                 }
-                LOG_INFO(Core, "coop: world: {:016x} {} old rest {:.2f} {:.2f} {:.2f} -> {:.2f} {:.2f} {:.2f}: "
-                               "{} places {}{}{}",
-                         fix.hash, fix.name, fix.from[0], fix.from[1], fix.from[2], fix.to[0],
-                         fix.to[1], fix.to[2], scan.where.size(),
-                         write_rest ? "rewritten" : "found, not written (LICHII_COOP_BLOCK_REST off)",
-                         where.empty() ? "" : ":", where);
             }
             block_fixes_.clear();
         }
@@ -2656,6 +2629,7 @@ private:
                 CoopActorEvents::TheLifeTable().Clear();  // (another heap's components)
                 CoopDifficulty::TheKinds().Clear();
                 CoopActorEvents::TheRing().Forget();
+                CoopWorld::TheNodeStarts().Clear();  // (patch 0029: another heap's nodes)
 #endif
                 CoopDbno::SetOurLifeComponent(0);  // down but not out: until our Link is seen again
             }
