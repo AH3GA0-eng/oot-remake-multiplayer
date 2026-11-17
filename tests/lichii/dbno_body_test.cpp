@@ -436,7 +436,7 @@ TEST_CASE("dbno body: a downed teammate's puppet: our key in its emitter while d
     CHECK(RunFrame(c, g, 2100).empty());
 }
 
-TEST_CASE("dbno body: a remade puppet gets the key again; a gone one is never called") {
+TEST_CASE("dbno body: a remade puppet gets the key again, a gone one is never called") {
     Guest g;
     Crawl c;
     g_lists = {};
