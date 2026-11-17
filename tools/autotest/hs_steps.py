@@ -356,6 +356,7 @@ class HookshotGames:
         self.procs, self.bridges, self.runs, self.expected_exit = {}, {}, {"A": 0, "B": 0}, set()
         self.server, self.server_runs = None, 0
         self.server_delay = []   # hookshot.py test_delay_args: the TEST-ONLY delay (needs OOT_COOP_TEST=1)
+        self.renderer = None     # (wait, stall, limit) for hookshot.wait_renderer; None: (timeout, its defaults)
         self.commands = {x: os.path.join(out, "commands-%s.txt" % x) for x in games}
 
     def _log_path(self, x):
@@ -448,16 +449,20 @@ class HookshotGames:
             self.wait_joined(x)
 
     def wait_joined(self, x):
+        # Drawing first: a game whose shaders still compile reads no controller and joins only after (a cold driver
+        # cache: minutes, its length not fixed), so this wait follows the compile's progress (hookshot.wait_renderer)
+        # and the join's own timeout counts from there.
+        wait, stall, limit = self.renderer or (self.timeout, self.hk.RENDERER_STALL, self.hk.RENDERER_LIMIT)
+        waited = self.hk.wait_renderer(lambda: self.log(x), lambda: self.alive(x), wait, stall, limit)
+        self.say("%s: renderer ready (%.0f s waited)" % (x, waited))
         t0 = time.monotonic()
         while JOINED not in self.log(x):
             if not self.alive(x):
                 raise RuntimeError("game %s closed while starting" % x)
             if time.monotonic() - t0 > self.timeout:
-                raise TimeoutError("game %s did not reach '%s' in %d s" % (x, JOINED, self.timeout))
+                raise TimeoutError("game %s did not reach '%s' in %d s after its renderer started"
+                                   % (x, JOINED, self.timeout))
             time.sleep(0.5)
-        # and drawing: a game whose shaders still compile reads no controller (a cold cache: minutes)
-        waited = self.hk.wait_renderer(lambda: self.log(x), lambda: self.alive(x), self.timeout)
-        self.say("%s: renderer ready (%.0f s waited)" % (x, waited))
 
     def load(self, xs):
         hk, res, errs = self.hk, [], {}
@@ -615,6 +620,11 @@ def main(argv=None):
     r.add_argument("--test-delay-ms", type=int, default=0,
                    help="TEST ONLY: the server holds every packet, this round trip in ms (half each way)")
     r.add_argument("--test-jitter-ms", type=int, default=0, help="TEST ONLY: +- up to this many ms each way")
+    r.add_argument("--renderer-wait", type=int, help="seconds a game may take to start its renderer with no compile "
+                                                     "progress logged (default: --timeout)")
+    r.add_argument("--renderer-stall", type=int, help="while the compile logs progress: seconds without a rise "
+                                                      "before it fails (default: hookshot.py's)")
+    r.add_argument("--renderer-limit", type=int, help="seconds in all for one renderer start (default: hookshot.py's)")
     a = ap.parse_args(argv)
     if a.cmd == "check":
         bad = 0
@@ -658,6 +668,8 @@ def main(argv=None):
     games = HookshotGames(hk, {"A": os.path.abspath(a.game_a), "B": os.path.abspath(a.game_b)}, a.out, a.server,
                           a.port, a.pipe, a.env, head["timeout"] or a.timeout, head, restore=not a.no_restore, say=say)
     games.server_delay = hk.test_delay_args(a.test_delay_ms, a.test_jitter_ms)
+    games.renderer = (a.renderer_wait or games.timeout, a.renderer_stall or hk.RENDERER_STALL,
+                      a.renderer_limit or hk.RENDERER_LIMIT)
     fails = 1
     try:
         games.server_start()

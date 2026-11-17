@@ -172,8 +172,9 @@ def lane_setup(lane, name, kit_root, run_root):
             "shots": os.path.join(run_root, name)}
 
 
-def plan(groups, kit_root, run_root, server, lane=0, kits=None, lag=0, jitter=0):
-    """lag / jitter: run.ps1 -Lag / -Jitter for every run (on Longshot the server holds the packets, TEST ONLY)."""
+def plan(groups, kit_root, run_root, server, lane=0, kits=None, lag=0, jitter=0, renderer=(0, 0, 0)):
+    """lag / jitter: run.ps1 -Lag / -Jitter for every run (on Longshot the server holds the packets, TEST ONLY).
+    renderer: run.ps1 -RendererWait / -RendererStall / -RendererLimit for every run (0: the harness default)."""
     if kits and not lane:
         raise Fail("--kit runs in a test lane only (--lane N): the kits start that lane's pair (kit_pair.py setup)")
     if kits and len(kits) != 2:
@@ -190,6 +191,9 @@ def plan(groups, kit_root, run_root, server, lane=0, kits=None, lag=0, jitter=0)
             cmds = [c + ["-Lane", str(lane)] for c in cmds]
         if lag or jitter:
             cmds = [c + ["-Lag", str(int(lag)), "-Jitter", str(int(jitter))] for c in cmds]
+        for flag, v in zip(("-RendererWait", "-RendererStall", "-RendererLimit"), renderer):
+            if v:
+                cmds = [c + [flag, str(int(v))] for c in cmds]
         planned.append((s, runs, cmds))
     return planned
 
@@ -424,6 +428,11 @@ def main(argv=None):
         p.add_argument("--lag", type=int, default=0,
                        help="run.ps1 -Lag for every run: added round trip in ms (Longshot: the server's TEST-ONLY delay)")
         p.add_argument("--jitter", type=int, default=0, help="run.ps1 -Jitter for every run: +- ms each way")
+        p.add_argument("--renderer-wait", type=int, default=0, help="run.ps1 -RendererWait for every run (0: default)")
+        p.add_argument("--renderer-stall", type=int, default=0,
+                       help="run.ps1 -RendererStall for every run (0: default)")
+        p.add_argument("--renderer-limit", type=int, default=0,
+                       help="run.ps1 -RendererLimit for every run (0: default)")
         p.add_argument("--kit", help="A,B: kit folders whose own start starts the lane's games (run.ps1 -Kit; "
                                      "kit_pair.py setup)")
     m = sub.add_parser("merge")
@@ -448,7 +457,8 @@ def main(argv=None):
         with open(a.groups, encoding="utf-8-sig") as f:   # a file with or without a BOM
             groups = parse_groups(f.read())
         kits = [os.path.abspath(k.strip()) for k in a.kit.split(",") if k.strip()] if a.kit else None
-        planned = plan(groups, kit, run_root, server, a.lane or 0, kits, a.lag, a.jitter)
+        planned = plan(groups, kit, run_root, server, a.lane or 0, kits, a.lag, a.jitter,
+                       (a.renderer_wait, a.renderer_stall, a.renderer_limit))
         if a.cmd == "prepare" and a.lane:
             raise Fail("a lane's pair is filled by lanes.py setup --lane %d (hard links for read-only files only)"
                        % a.lane)
