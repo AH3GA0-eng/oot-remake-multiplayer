@@ -2980,6 +2980,19 @@ private:
                 s.animation = PlaysByFrame(s.name)
                                   ? AnimationAt(r, a, 0, false, CoopNpcAnim::kSlotPlayFrame)
                                   : Animation(r, a);
+                // G4 probe, off by default: LICHII_COOP_ENEMY_BRAIN=1 puts every plain Enemy_ on the bosses'
+                // native path too (the owner's brain and action verbs through the game's own two functions, the
+                // copy's own brain's changes skipped), so a copy's own AI no longer moves it against the owner's
+                // place. Unproven in game (reports: fable-g4-enemies); its animation slots stay as a plain enemy's.
+                static const bool enemy_brain = EnvOn("LICHII_COOP_ENEMY_BRAIN");
+                if (enemy_brain && !IsBoss(s.name) && s.name.starts_with("Enemy_")) {
+                    if (const auto table = r.Ptr(a + kActorComponents)) {
+                        s.bsa_component = r.Ptr(*table + CoopBossNative::addr::kComponentBsa).value_or(0);
+                    }
+                    if (s.bsa_component != 0) {
+                        s.bsa = CoopBossNative::TheTable().OwnerState(a);
+                    }
+                }
                 if (IsBoss(s.name)) {
                     s.slots = OtherSlots(r, a);  // issue 150
                     // Native boss sync (coop_boss_native.h): its BSA
