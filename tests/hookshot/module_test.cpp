@@ -682,6 +682,38 @@ TEST_CASE("hookshot: the Discord status header in patch 0026 is hookshot/src's, 
     CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_discord_state(char* out, size_t cap) noexcept") != std::string::npos);
 }
 
+// Player report 133: the title loaded the newest save by itself (no New Game), the pad unplugged. Longshot's Skip title
+// screen (host/oot_autoload.c) taps A every 2 s from 20 s after the start while longshot_options.ini has
+// skip_title_screen=1, which kit updates keep. A co-op build presses nothing on the title by itself (owner, 2026-11-14).
+TEST_CASE("hookshot: nothing presses on the title by itself (patch 0028, Skip title screen off)") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0028-coop-title-no-autopress.patch");
+    REQUIRE_FALSE(patch.empty());
+    const std::string autoload = PatchedCode(patch, "host/oot_autoload.c");
+    REQUIRE_FALSE(autoload.empty());
+    // The one place its presses are armed is gone (active stays 0, so its hos_hid_tap is never reached); a saved 1 is
+    // only logged.
+    CHECK(patch.find("\n-        active = 1;\n") != std::string::npos);
+    CHECK(autoload.find(Squashed("active = 1;")) == std::string::npos);
+    CHECK(autoload.find(Squashed("hos_log(\"skip title: not in a co-op build: the title screen waits for the player")) !=
+          std::string::npos);
+    // The row is off the menu (and so off the control bridge's option_set, which takes shown rows only).
+    const std::string menu = PatchedCode(patch, "gpu/vk/vk_menu.cpp");
+    CHECK(menu.find(Squashed("bool row_shown(int i) { const int* v = rows[i].value; "
+                             "if (v == &opts.skip_title) return false;")) != std::string::npos);
+    // No co-op patch adds a press of its own (hos_hid_tap is the host's press; the module's pad filter only takes
+    // bits away: coop_title.cpp OnPad, coop_dbno.cpp).
+    for (const auto& e : std::filesystem::directory_iterator(kRepo / "hookshot" / "patches")) {
+        const std::string text = ReadFile(e.path());
+        std::istringstream lines(text);
+        for (std::string line; std::getline(lines, line);) {
+            if (!line.empty() && line[0] == '+' && line.rfind("+++", 0) != 0) {
+                INFO(e.path().filename().string() << ": " << line);
+                CHECK(line.find("hos_hid_tap(") == std::string::npos);
+            }
+        }
+    }
+}
+
 TEST_CASE("hookshot: a module may have a texture drawn with other texels (patch 0020, hos_coop_texture.h)") {
     const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0020-coop-texture-override.patch");
     REQUIRE_FALSE(patch.empty());
