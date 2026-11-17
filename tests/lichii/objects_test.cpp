@@ -5205,6 +5205,79 @@ TEST_CASE("objects: a boss copy held at 1 that becomes ours takes its old owner'
     CHECK_FALSE(raise->direct);
 }
 
+TEST_CASE("objects: at the session's end a boss copy held at 1 takes its owner's last life (row 127)") {
+    // Navi's report: the host's game crashed, the server dropped, and the guests' Gohma copies, held at 1 for their
+    // owner, died of the next hit. Before the Reset each live copy takes its owner's last life (no network data).
+    const std::string kBoss = "Enemy_DungeonBoss_Gohma";
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 21, 50.0f, kBoss)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2);
+    // Our hits on the copy went to the owner; HeldLifeStep held it at 1 here. The owner's boss is at 12.
+    Tick(sync, 50 * kMs, {Enemy(0x100, 0x11, 1, 50.0f, kBoss)});
+    proto::ObjectSample s;
+    s.player_number = 2;
+    s.id = id;
+    s.state.life = proto::ObjectLife{12, 21};
+    sync.Receive(s);
+    Tick(sync, 100 * kMs, {Enemy(0x100, 0x11, 1, 50.0f, kBoss)});
+    std::vector<CoopObjects::LifeWrite> keep;
+    sync.KeepBossLives(1, keep);
+    REQUIRE(keep.size() == 1);
+    CHECK(keep[0].address == 0x100);
+    CHECK(keep[0].heal);
+    CHECK(keep[0].life == 12);
+    CHECK_FALSE(keep[0].direct);
+}
+
+TEST_CASE("objects: at the session's end nothing is given to our own boss, a dead one, a plain enemy or an unheard one") {
+    const std::string kBoss = "Enemy_DungeonBoss_Gohma";
+    std::vector<CoopObjects::LifeWrite> keep;
+    {  // ours: our game judged it all along
+        Sync sync;
+        Tick(sync, 0, {Enemy(0x100, 0x11, 5, 50.0f, kBoss)});
+        Own(sync, *sync.IdOf(0x100), 1);
+        sync.KeepBossLives(1, keep);
+        CHECK(keep.empty());
+    }
+    {  // the owner said it died (life 0): it dies here too
+        Sync sync;
+        Tick(sync, 0, {Enemy(0x100, 0x11, 1, 50.0f, kBoss)});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, 2);
+        proto::ObjectSample s;
+        s.player_number = 2;
+        s.id = id;
+        s.state.life = proto::ObjectLife{0, 21};
+        sync.Receive(s);
+        Tick(sync, 50 * kMs, {Enemy(0x100, 0x11, 1, 50.0f, kBoss)});
+        sync.KeepBossLives(1, keep);
+        CHECK(std::none_of(keep.begin(), keep.end(), [](const CoopObjects::LifeWrite& w) { return w.heal; }));
+        keep.clear();
+    }
+    {  // no owner's life heard
+        Sync sync;
+        Tick(sync, 0, {Enemy(0x100, 0x11, 1, 50.0f, kBoss)});
+        Own(sync, *sync.IdOf(0x100), 2);
+        sync.KeepBossLives(1, keep);
+        CHECK(keep.empty());
+    }
+    {  // not a boss: an enemy copy is never healed (the native rule)
+        Sync sync;
+        Tick(sync, 0, {Enemy(0x100, 0x11, 1)});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, 2);
+        proto::ObjectSample s;
+        s.player_number = 2;
+        s.id = id;
+        s.state.life = proto::ObjectLife{3, 4};
+        sync.Receive(s);
+        Tick(sync, 50 * kMs, {Enemy(0x100, 0x11, 1)});
+        sync.KeepBossLives(1, keep);
+        CHECK(keep.empty());
+    }
+}
+
 TEST_CASE("objects: a boss copy with more life than its old owner's is lowered through its Life step (boss-hits)") {
     // hs-boss-full 20261115-122137: B took Gohma at 21 while A's was 17; the plain lower waited for a replay
     // that never came ("nothing given"), so the hand-over healed her.

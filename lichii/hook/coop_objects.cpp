@@ -248,6 +248,10 @@ constexpr u64 kBlockSize = kBlockNames + kNameCell * kNameCells;
 constexpr int kCountersCallerOrder = CoopCallerOrders::kCounters;
 // deku-switches (LICHII_COOP_LOGIC_PROBE): a room's event asker (coop_live_events.h kAskerNames).
 bool IsRoomAsker(std::string_view name) { return name == "EventRequestActor" || name == "EventProxyRequestActor"; }
+// deku-ladder (LICHII_COOP_LOGIC_PROBE): switch kinds that are not gimmicks (CoopWorld::IsGimmick) but start room events.
+bool IsProbeSwitch(std::string_view name) {
+    return name.find("HammerSwitch_") != std::string_view::npos || name.find("DiveSwitch_") != std::string_view::npos;
+}
 struct CounterRingBox {
     std::mutex mutex;
     u64 main = 0;    // set by Share while sharing; 0: nothing to do
@@ -1360,6 +1364,23 @@ public:
                const std::optional<std::string>& scene, u64 server_now_us) {
         if (session == nullptr || !scene || scene->empty() || server_now_us == 0) {
             if (sharing_) {
+                if (scene && !scene->empty() && Ready(system)) {
+                    // Row 127: the session ended with our game still in its scene (we left, the server dropped:
+                    // the host's game crashed). Our boss copies are no copies any more (Publish({}) below); one
+                    // held at life 1 for its owner takes the owner's last life first, through its own Life step,
+                    // so the next hit does not kill it (Sync::KeepBossLives; no new network data).
+                    std::vector<LifeWrite> keep;
+                    sync_.KeepBossLives(self_, keep);
+                    if (!keep.empty()) {
+                        Reader r(system.ApplicationMemory());
+                        for (const LifeWrite& w : keep) {
+                            WriteLife(system.ApplicationMemory(), r, w);
+                        }
+                    }
+                    for (const std::string& note : sync_.TakeNotes()) {
+                        LOG_INFO(Core, "coop: objects: {}", note);
+                    }
+                }
                 sync_.Reset();
                 world_.Reset();
                 ForgetGold();  // issue 89: the next save's keys are read afresh
@@ -1924,7 +1945,8 @@ public:
                                  // deku-ladder: the other switch kinds whose plug starts a room event (step, hit, sun)
                                  g.name.find("StepSwitch_") == std::string::npos &&
                                  g.name.find("SwitchHit_") == std::string::npos &&
-                                 g.name.find("SolarSwitch_") == std::string::npos && !IsRoomAsker(g.name))) {
+                                 g.name.find("SolarSwitch_") == std::string::npos && !IsProbeSwitch(g.name) &&
+                                 !IsRoomAsker(g.name))) {
                     continue;
                 }
                 float d2 = 0.0f;
@@ -3026,7 +3048,7 @@ private:
                 ride_lifts_.push_back(std::move(l));
             }
             if (((gimmick_probe_on_ || logic_probe_on_) && CoopWorld::IsGimmick(known.first)) ||
-                (logic_probe_on_ && IsRoomAsker(known.first))) {  // deku-switches: the asker's EventRequestTrigger
+                (logic_probe_on_ && (IsRoomAsker(known.first) || IsProbeSwitch(known.first)))) {  // the asker's trigger
                 CoopWorld::GimmickProbe::Gimmick g;
                 g.address = a;
                 g.hash = known.second;
@@ -4036,6 +4058,24 @@ private:
                 }
             }
         }
+        // Row 130 (two players entering Gohma's room together; only one could beat her): a boss copy that runs
+        // its own changes now (CoopBossNative OwnTime: our event, our hit's reaction, a mid-boss's own start, its
+        // death) gets none of its owner's place, animation or frame meanwhile. Else its own game's event waited
+        // for a boss the owner's motion put back every frame (her appear: C01 at frame 1 over Pre_Battle_*), and
+        // our Link stayed in it until the owner's game killed her. Its owner's remove still comes.
+        {
+            const auto own = CoopBossNative::TheTable().CopiesRunningOwn();
+            const auto runs_own = [&own](u64 a) { return std::find(own.begin(), own.end(), a) != own.end(); };
+            std::erase_if(wish, [&](const Mover::Pose& p) { return runs_own(p.actor); });
+            std::erase_if(plays, [&](const PlayWish& p) { return runs_own(p.address); });
+            if (own.empty() == boss_own_said_) {
+                boss_own_said_ = !own.empty();
+                LOG_INFO(Core, "coop: objects: {}", boss_own_said_
+                             ? fmt::format("{} boss copy(ies) run their own (our event, our hit, their start or "
+                                           "death): their owner's place and animation wait", own.size())
+                             : std::string("boss copies take their owner's place and animation again"));
+            }
+        }
         NpcAnim(r, now_us, removes, wish, plays);
         Aggro(r, now_us);
         TheMover().Want(main_, std::move(wish), std::move(removes), std::move(plays));
@@ -4256,6 +4296,7 @@ private:
     static constexpr float kDriftWorstM = 1.0f;
     std::size_t drift_count_ = 0;
     u64 drift_at_ = 0;
+    bool boss_own_said_ = false;  // row 130: the last 'boss copies run their own' line logged
     CoopEvery::Every scan_{CoopEvery::kTwoFramesUs};
     CoopEvery::Every cheat_every_{CoopEvery::kSecondUs};
     CoopCheatItems::State cheat_state_;

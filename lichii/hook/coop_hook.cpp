@@ -77,6 +77,7 @@
 #include "coop_flags.h"
 #ifdef COOP_HOOKSHOT
 #include "coop_flag_native.h"
+#include "coop_map_page.h"  // patch 0018's menu state: PLAYER_STATUS in_menu/paused (Read)
 #endif
 #include "coop_save.h"
 #include "coop_game_build.h"
@@ -280,12 +281,23 @@ struct RoomView {
 // (CoopStory::Mends says which and when). Held 3 s first, so a host save load
 // whose quest and scene flags land a few frames after the flag is not fought.
 // In a session (Coop::CatchUpQuest) and with none (LocalFrameOff), so a save
-// stuck that way is mended when it is played alone too. `since_us`: the
-// caller's own hold clocks, one per mend.
-using MendClocks = std::array<std::uint64_t, CoopStory::kMends>;
-void MendStory(EmulatorMemory& memory, MendClocks& since_us) {
+// stuck that way is mended when it is played alone too. `clocks`: the
+// caller's own hold clocks.
+//
+// Row 129 (GitHub #173): then what a shared story event sets in the game that
+// plays it, in a game where its played flag came from another game and its
+// flow never ran (CoopStory::Effects: the owl's HyruleField_ArriveEntrance,
+// without which the game's clock never starts). Only while no event runs here
+// (`idle`: known to run none), so an event this game plays itself sets its own
+// flags first, and after the same 3 s hold.
+struct MendClocks {
+    std::array<std::uint64_t, CoopStory::kMends> mends{};
+    std::uint64_t effects = 0;
+};
+void MendStory(EmulatorMemory& memory, MendClocks& clocks, bool idle) {
     static constexpr std::uint64_t kHoldUs = 3'000'000;
     if (!CoopStory::On()) return;
+    auto& since_us = clocks.mends;
     namespace quest = CoopStory::quest;
     coop::host::GameFlags flags(memory);
     const auto step = flags.get_enum(quest::kMeetDekuTree);
@@ -302,6 +314,21 @@ void MendStory(EmulatorMemory& memory, MendClocks& since_us) {
             since = 0;
             LOG_INFO(Core, "coop: story: {} (Meet_DekuTree {:#x}): set to {} (issue 84)", mend.what,
                      step.value_or(0), mend.value ? 1 : 0);
+        }
+    }
+    std::array<const CoopStory::Effect*, CoopStory::kEffectsMax> due{};
+    const std::size_t n = idle ? CoopStory::EffectsDue([&](std::uint32_t h) { return flags.get_bool(h); }, due) : 0;
+    if (n == 0) {
+        clocks.effects = 0;
+    } else if (clocks.effects == 0) {
+        clocks.effects = now_us;
+    } else if (now_us - clocks.effects >= kHoldUs) {
+        clocks.effects = 0;
+        for (std::size_t i = 0; i < n; ++i) {
+            if (coop::host::GameFlags::set_bool(memory, due[i]->flag, due[i]->value)) {
+                LOG_INFO(Core, "coop: story: {} set to {}: {} was played here by another game (row 129)",
+                         due[i]->name, due[i]->value ? 1 : 0, due[i]->setting);
+            }
         }
     }
 }
@@ -664,7 +691,8 @@ public:
                     MendLetters(*memory, reading && reading->event_running.has_value() &&
                                              !*reading->event_running);
                     if (CoopStory::On()) {
-                        CatchUpQuest(*memory);  // issue 130: the Kokiri Shop opens
+                        CatchUpQuest(*memory, reading && reading->event_running.has_value() &&
+                                                  !*reading->event_running);  // issue 130: the Kokiri Shop opens
                     }
                 } else {
                     ocarina_equip_.link(false, {});  // a load or scene change: the next stay asks again (row 103)
@@ -1165,12 +1193,13 @@ public:
                 LOG_INFO(Core, "coop: boss: {} was left set in this save (an older co-op build shared it): {}",
                          name, ok ? "cleared" : "could not clear");
             }
-            // G2 (#241): a boss the group beat while our game did not see it die gets its beaten set, one way, in a
-            // scene other than the boss's (coop_boss_beaten.h). Solo or co-op idle: the record is empty.
+            // G2 (#241): a boss the group beat while our game did not see it die gets its beaten set, one way, at the
+            // next load of a scene other than the boss's, never mid-scene (coop_boss_beaten.h). Solo or co-op idle: the
+            // record is empty.
             const CoopBossBeaten::Record& record = CoopBossBeaten::TheRecord();
             const std::vector<std::uint8_t> beaten = record.Rooms();
             for (const CoopBossBeaten::Write& w : boss_beaten_.Check(
-                     view.scene, at.has_value(), beaten, record.Version(), [&](std::uint32_t hash) {
+                     view.scene, at.has_value(), beaten, [&](std::uint32_t hash) {
                          const auto v = game_store->read(coop::protocol::FlagKey{hash, 0});
                          return v ? std::optional<std::uint32_t>(v->value) : std::nullopt;
                      })) {
@@ -1751,6 +1780,14 @@ private:
             view.scene = reading->scene;
             view.age = reading->age;
             ApplyEventOwner(*reading);
+            // PLAYER_STATUS's in_menu/paused (coop/host/sampler.hpp status_bits; docs/puppet.md "Away"; dead is the
+            // reader's own, PlayerReader::read_life): the game's menu screens (Longshot's patch 0018: one of them in
+            // front, f_802f1380's screens).
+#ifdef COOP_HOOKSHOT
+            if (const auto menu = CoopMapPage::MenuState()) {
+                reading->in_menu = menu->menu_open;
+            }
+#endif
         }
         return reading;
     }
@@ -2616,7 +2653,7 @@ private:
     // Meet_DekuTree quest to what the shared story says (Mido let someone by:
     // Step03; the Deku Tree scene played: Complete), so the Kokiri Shop sells
     // here too. Only ever raised; anything unread is left alone.
-    void CatchUpQuest(EmulatorMemory& memory) {
+    void CatchUpQuest(EmulatorMemory& memory, bool idle) {
         namespace quest = CoopStory::quest;
         coop::host::GameFlags flags(memory);
         const auto step = flags.get_enum(quest::kMeetDekuTree);
@@ -2626,7 +2663,7 @@ private:
             LOG_INFO(Core, "coop: story: quest Meet_DekuTree {:#x} -> {:#x} (shared story; issue 130)",
                      *step, *raise);
         }
-        MendStory(memory, mend_since_us_);  // issue 84
+        MendStory(memory, mend_since_us_, idle);  // issue 84, row 129
     }
     MendClocks mend_since_us_{};  // CatchUpQuest's (game thread)
 
@@ -2874,15 +2911,18 @@ void LocalFrameOff(Core::System& system, bool writes) {
     // G1: whose the running event is, every frame (the tracker sees each run start and end). The
     // animation and our Link's performer are read only while an event runs.
     bool solo_running = false;
+    std::optional<bool> solo_running_known;  // nothing: not read
     std::optional<std::string> solo_anim_name;
     coop::host::EventWhose solo_whose = coop::host::EventWhose::ours;
     if (full) {
         ApplyEventOwner(*full);
-        solo_running = full->event_running.value_or(false);
+        solo_running_known = full->event_running;
+        solo_running = solo_running_known.value_or(false);
         if (full->animation) solo_anim_name = full->animation->name;
         solo_whose = full->event_whose;
     } else {
-        solo_running = reader.read_event_running().value_or(false);
+        solo_running_known = reader.read_event_running();
+        solo_running = solo_running_known.value_or(false);
         bool bound = false;
         if (solo_running) {
             if (const auto animation = reader.read_animation()) solo_anim_name = animation->name;
@@ -2914,7 +2954,8 @@ void LocalFrameOff(Core::System& system, bool writes) {
         CoopMapRefresh::TheRefresher().SetInPlay(facts.position.has_value());  // rows 63/76: no refresh off play (alone)
         static MendClocks mend_since_us{};
         if (facts.position.has_value()) {
-            MendStory(memory, mend_since_us);  // issue 84: a stuck save, played alone
+            MendStory(memory, mend_since_us, solo_running_known.has_value() && !*solo_running_known);  // issue 84,
+            // row 129: a stuck save, played alone
         } else {
             mend_since_us = {};  // the title or a load: nothing to read yet
         }

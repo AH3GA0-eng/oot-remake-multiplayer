@@ -466,6 +466,14 @@ std::span<const Mend, kMends> Mends() {
     return kMendList;
 }
 
+namespace {
+#include "coop_story_effects.inc"
+} // namespace
+
+std::span<const Effect> Effects() {
+    return kEffects;
+}
+
 bool On() {
     return !EnvOff("LICHII_COOP_STORY");
 }
