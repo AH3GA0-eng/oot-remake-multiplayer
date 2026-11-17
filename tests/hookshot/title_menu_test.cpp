@@ -719,58 +719,64 @@ TEST_CASE("title menu: ParsePort and host port, 1 to 65535, read and written") {
     CHECK_FALSE(IniGet(opt, "server_port").has_value());
 }
 
-TEST_CASE("title menu: the save list is re-read once after a switch, only when the game's list is idle") {
+TEST_CASE("title menu: the save list is re-read once after a switch, when the game's own test says idle") {
     using R = SaveListRefresh;
     R r;
     R::Input in;
     in.title = true;
     in.manager = true;
+    in.busy = false;
+    in.state = R::kRead;                     // the game's list after its boot read (state 4): idle
     in.now_ms = 1000;
-    CHECK(r.Step(in) == R::Action::none);   // no switch: nothing asked
+    CHECK(r.Step(in) == R::Action::none);    // no switch: nothing asked
+    CHECK(r.waiting() == R::Wait::none);
     in.stale = true;
-    in.state = 2;                            // the game is reading already: wait for it
+    in.busy = true;                          // the game is reading already: wait for it
+    in.state = 2;
     CHECK(r.Step(in) == R::Action::none);
     CHECK(r.pending());
+    CHECK(r.waiting() == R::Wait::busy);
     in.stale = false;
-    in.state = 0;
-    CHECK(r.Step(in) == R::Action::ask);     // idle: asked once
+    in.busy = false;
+    in.state = R::kRead;
+    CHECK(r.Step(in) == R::Action::ask);     // idle at state 4 (the case the first run missed): asked once
     CHECK(r.asked());
-    CHECK(r.Step(in) == R::Action::none);    // not asked again while it may still start
-    in.state = 1;
-    in.now_ms = 1050;
+    in.state = 0;                            // reset, read not begun yet
     CHECK(r.Step(in) == R::Action::none);
-    in.state = 0;
-    in.now_ms = 1100;
-    CHECK(r.Step(in) == R::Action::done);    // read, then idle
+    in.busy = true;
+    in.state = 1;
+    CHECK(r.Step(in) == R::Action::none);
+    in.busy = false;
+    in.state = R::kRead;
+    CHECK(r.Step(in) == R::Action::done);    // read, idle again
     CHECK(r.Step(in) == R::Action::none);
 }
 
-TEST_CASE("title menu: the save list waits for the title and the manager, settles, gives up, asks again") {
+TEST_CASE("title menu: the save list waits for the title and the manager, retries a refused reset, gives up") {
     using R = SaveListRefresh;
     R r;
     R::Input in;
     in.stale = true;
-    in.now_ms = 0;
-    CHECK(r.Step(in) == R::Action::none);    // no title, no manager: kept
+    in.busy = false;
+    in.state = R::kRead;
+    CHECK(r.Step(in) == R::Action::none);    // no title: kept
+    CHECK(r.waiting() == R::Wait::title);
     in.stale = false;
     in.title = true;
     CHECK(r.Step(in) == R::Action::none);    // no manager yet
+    CHECK(r.waiting() == R::Wait::manager);
     in.manager = true;
     CHECK(r.Step(in) == R::Action::ask);
-    in.now_ms = R::kSettleMs - 1;
+    r.Refused();                             // the game's reset said not now (a save screen holds the list)
+    CHECK(r.pending());
+    CHECK(r.Step(in) == R::Action::ask);     // asked again
+    in.state = 0;                            // never read
+    in.now_ms = R::kGiveUpMs - 1;
     CHECK(r.Step(in) == R::Action::none);
-    in.now_ms = R::kSettleMs;
-    CHECK(r.Step(in) == R::Action::done);    // never seen reading: done once settled
-
-    in.stale = true;
-    in.now_ms = 10000;
-    CHECK(r.Step(in) == R::Action::ask);
-    in.stale = true;                         // another switch while the game reads
-    in.state = 3;
-    CHECK(r.Step(in) == R::Action::none);
-    in.stale = false;
-    in.now_ms = 10000 + R::kGiveUpMs;
+    in.stale = true;                         // another switch meanwhile
+    in.now_ms = R::kGiveUpMs;
     CHECK(r.Step(in) == R::Action::gave_up);
-    in.state = 0;
+    in.stale = false;
+    in.state = R::kRead;
     CHECK(r.Step(in) == R::Action::ask);     // the later switch: asked again
 }
