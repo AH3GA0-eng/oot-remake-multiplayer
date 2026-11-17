@@ -851,15 +851,28 @@ TEST_CASE("hookshot: no patch logs a microphone, pad, player or server name outs
                                          "sel_name", "dev_names"};
     for (const auto& entry : std::filesystem::directory_iterator(kRepo / "hookshot" / "patches")) {
         if (entry.path().extension() != ".patch") continue;
+        // (the whole call, from hos_log( to its ");", over every added line its arguments wrap to)
         std::istringstream lines(ReadFile(entry.path()));
+        std::string call;
         for (std::string line; std::getline(lines, line);) {
-            const auto at = line.find("hos_log(\"");
-            if (line.rfind("+", 0) != 0 || at == std::string::npos) continue;
-            const bool coop = line.compare(at + 9, 4, "coop") == 0;
-            for (const char* name : kNames) {
-                INFO(entry.path().filename().string() << ": " << line);
-                CHECK((coop || line.find(name) == std::string::npos));
+            if (line.rfind("+", 0) != 0) {
+                call.clear();
+                continue;
             }
+            if (call.empty()) {
+                const auto at = line.find("hos_log(");
+                if (at == std::string::npos) continue;
+                call = line.substr(at);
+            } else {
+                call += " " + line.substr(1);
+            }
+            if (call.find(");") == std::string::npos) continue;
+            const bool coop = call.rfind("hos_log(\"coop", 0) == 0;
+            for (const char* name : kNames) {
+                INFO(entry.path().filename().string() << ": " << call);
+                CHECK((coop || call.find(name) == std::string::npos));
+            }
+            call.clear();
         }
     }
     const std::string voice = ReadFile(kRepo / "hookshot" / "patches" / "0009-coop-voice.patch");
@@ -870,4 +883,31 @@ TEST_CASE("hookshot: no patch logs a microphone, pad, player or server name outs
     CHECK(voice.find("+    while (named && i < MAX_STREAMS + 1 && sources[i].used) i++;") != std::string::npos);
     const std::string pads = ReadFile(kRepo / "hookshot" / "patches" / "0015-coop-pad-select.patch");
     CHECK(pads.find("+                    hos_log(\"hid: that controller is pad %d\", n);") != std::string::npos);
+}
+
+TEST_CASE("hookshot: the Insert menu files nothing with Longshot in a co-op build (patch 0027)") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0027-coop-crash-report.patch");
+    // Bug report: co-op's page, not Longshot's issue chooser or its game-problem form; co-op's lines out of the copied logs.
+    CHECK(patch.find("-constexpr const char* kIssues = \"https://git.magicbean.dev/") != std::string::npos);
+    CHECK(patch.find("-constexpr const char* kForm = \"https://git.magicbean.dev/") != std::string::npos);
+    CHECK(patch.find("+constexpr const char* kIssues = HOS_COOP_CRASH_REPORT_PAGE;") != std::string::npos);
+    CHECK(patch.find("+    link = kIssues, link_short = false;") != std::string::npos);
+    CHECK(patch.find("+        if (hos_coop_crash_private(line.c_str())) {") != std::string::npos);
+    CHECK(patch.find("+    return \"Saved in the game folder as \" + folder + \". To send it, open co-op's Reporting a problem page") !=
+          std::string::npos);
+    // Save my pipeline list (Longshot issue 14): never listed on the Debug tab, and its press does nothing.
+    CHECK(patch.find("&& !is_share_row(r))") != std::string::npos);
+    CHECK(patch.find("-        else if (press[7] && is_share_row(r)) share_pipeline_list(), press[7] = false, changed = true;\n"
+                     "+        else if (press[7] && is_share_row(r)) press[7] = false;") != std::string::npos);
+    // No patch adds a Longshot issue, form or telemetry address anywhere.
+    for (const auto& entry : std::filesystem::directory_iterator(kRepo / "hookshot" / "patches")) {
+        if (entry.path().extension() != ".patch") continue;
+        std::istringstream lines(ReadFile(entry.path()));
+        for (std::string line; std::getline(lines, line);) {
+            if (line.rfind("+", 0) != 0 || line.rfind("+++", 0) == 0) continue;
+            INFO(entry.path().filename().string() << ": " << line);
+            CHECK(line.find("git.magicbean.dev") == std::string::npos);
+            CHECK(line.find("data-services.magicbean.dev") == std::string::npos);
+        }
+    }
 }
