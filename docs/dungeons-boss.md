@@ -405,8 +405,23 @@ reload brought the fight back with no container to win (#241, row 52).
   | Morpha | SageOfWater -> Step08 | Morpha_DeleteWater |
   | Bongo Bongo | SageOfShadow -> GoToWarpPoint | |
   | Twinrova | SageOfSpirit -> Step10 | |
+  | Ganondorf (8) | Defeat_Ganon -> Step06 | |
+  | Ganon (9) | Defeat_Ganon -> Complete | FinalBattleField_DefeatGanonStart; `HavePlayedEvent` of the sage, ending and credits events it plays |
 
   Every row also has the three `HavePlayedEvent` flags (the setting, BossIn, BossOut).
+- **Ganondorf and Ganon** (bosses-next-a-2, 2026-11-17). Root: the record, the proof and the "never in its own scene"
+  rule all went through `CoopBoss::Rooms()`, which has the eight dungeon rooms only, so the final fights were never
+  kept and `Defeat_Ganon` (each game's own: `coop_quests.cpp` leaves the final battle out) stayed where it was for a
+  player who was not there. Now each set has its boss index (BOSS_SCENE's: 8 Ganondorf, 9 Ganon), a death scene
+  (`CoopBossBeaten::DeathScene`: `InsideGanonCastle`, Room_26's `Create_Ganondorf`; `FinalBattleField`, the Banc in
+  `Banc/GanonCastle/`; never their boss rush `GanondorfStage`/`GanonStage`) and the scenes it is never given in
+  (`KeptScene`: for both the whole end sequence, `InsideGanonCastle`, `CrumblingGanonCastle`, `FinalBattleField`).
+  Ganondorf's death moves `Defeat_Ganon` to Step06 (after the boss step Step05), Ganon's to Complete (after Step09);
+  both set: one write, the furthest step, in whatever order the record holds them. `EscapeFromCrumblingGanonCastle`
+  is read only by `CrumblingGanonCastle`'s own logic, so neither set gives it. Check in game: a player away from the
+  final fight gets Step06 (then Complete) at the next load outside the castle; a Step06 save entering
+  `InsideGanonCastle` finds no Ganondorf (Room_26 creates him only up to Step05) and gets on as a save made during
+  the escape does.
 - **Given one way, outside the boss's scene, only at a scene load.** The bosses the record holds when a scene is
   first seen are given there, once, while our Link stands in any scene but the boss's dungeon. A boss beaten while we
   stand in a scene waits for the next load (a door, a warp, a reload), never mid-scene: some of the set is read live
