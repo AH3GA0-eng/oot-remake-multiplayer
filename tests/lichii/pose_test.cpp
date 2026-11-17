@@ -96,11 +96,46 @@ TEST_CASE("pose: translations and scales pack in 1/8192") {
 TEST_CASE("pose: a different bone list starts the blend over") {
     CoopPose::Track t;
     t.Push(OneBone({0, 0, 0, 1}, 0.0f), 0);
+    auto other = OneBone({0, 0, 0, 1}, 4.0f);
+    other.bones[0].bone = 9;  // bone 3 is gone: nothing to blend from
+    t.Push(other, 40);
+    CHECK(Near(t.At(50)->bones[0].translation->at(0), 4.0f));
+}
+
+// puppet-smooth-a-2: a pose that only adds a bone (one that moved for the first time, the rest of
+// a first pose the budget split) keeps the blend; starting over held the puppet, then jumped it.
+TEST_CASE("pose: a pose that adds a bone keeps the blend (timed and untimed)") {
     auto two = OneBone({0, 0, 0, 1}, 4.0f);
     two.bones.push_back(two.bones[0]);
     two.bones[1].bone = 9;
+    two.bones[1].translation = CoopPose::Vec3{7.0f, 0, 0};
+    CoopPose::Track t;
+    t.Push(OneBone({0, 0, 0, 1}, 0.0f), 0);
     t.Push(two, 40);
-    CHECK(Near(t.At(50)->bones[0].translation->at(0), 4.0f));
+    auto at = t.At(60);
+    REQUIRE(at);
+    REQUIRE(at->bones.size() == 2);
+    CHECK(Near(at->bones[0].translation->at(0), 2.0f));  // half way, not the newest at once
+    CHECK(Near(at->bones[1].translation->at(0), 7.0f));  // the new bone as first heard
+
+    CoopPose::Track timed;
+    timed.Push(OneBone({0, 0, 0, 1}, 0.0f), 1000, 1000);
+    timed.Push(two, 1040, 1040);
+    at = timed.At(1020 + CoopPose::kShowDelayMs);
+    REQUIRE(at);
+    REQUIRE(at->bones.size() == 2);
+    CHECK(Near(at->bones[0].translation->at(0), 2.0f));
+    CHECK(Near(at->bones[1].translation->at(0), 7.0f));
+
+    // A part a kept bone did not have is added the same way.
+    auto more = two;
+    more.bones[1].scale = CoopPose::Vec3{1.0f, 1.0f, 1.0f};
+    timed.Push(more, 1080, 1080);
+    at = timed.At(1060 + CoopPose::kShowDelayMs);
+    REQUIRE(at);
+    REQUIRE(at->bones.size() == 2);
+    CHECK(Near(at->bones[0].translation->at(0), 4.0f));
+    CHECK(at->bones[1].scale.has_value());
 }
 
 namespace {
@@ -875,4 +910,55 @@ TEST_CASE("pose: evenness is taken by frame time: an even move on uneven frames 
     CHECK(e.Last().uneven < 0.05f);
     CHECK(e.Last().raw > 0.3f);  // the old per-frame number read the frame rate
     CHECK(e.Last().jumps_per_s == 0.0f);
+}
+
+// puppet-smooth-a-2: the jumps count is a stair-step (moved, held, moved), not a puppet's start.
+TEST_CASE("pose: jumps count a bone held between moves, not its first move after a start") {
+    auto at = [](float a) { return OneBone({std::sin(a / 2), 0, 0, std::cos(a / 2)}, 0.0f); };
+    CoopPose::Evenness e;
+    std::uint64_t now = 1000;
+    std::optional<float> u;
+    // Held on its first pose (as a puppet coming into view is), then moving: no jump.
+    float a = 0.0f;
+    for (int i = 0; i < 10; ++i) e.Step(at(a), now += 16);
+    for (int i = 0; i < 20; ++i) e.Step(at(a += 0.05f), now += 16);
+    // Then held 6 frames and on again with a step: one jump.
+    for (int i = 0; i < 6; ++i) e.Step(at(a), now += 16);
+    for (int i = 0; i <= 600 && !u; ++i) u = e.Step(at(a += 0.05f), now += 16);
+    REQUIRE(u);
+    CHECK(e.Last().jumps_per_s * static_cast<float>(CoopPose::kEvenReportMs) / 1000.0f == doctest::Approx(1.0f).epsilon(0.02));
+}
+
+// puppet-smooth-a-2: still bones (face, fingers) are sent together, so they age together; by age
+// alone a clump of them outranked limbs turning slowly (near a turning point) every
+// kBoneRefreshMs, and those limbs were held a pose or two, then jumped. A changed bone goes first.
+TEST_CASE("pose: a bone that changed is sent before still bones that only aged (3 players, 148)") {
+    const CoopPose::StreamPlan plan = CoopPose::PlanFor(2);
+    REQUIRE(plan.bones == 148);
+    constexpr std::uint16_t kMoving = 120, kAll = 300;
+    auto pose = [&](int send) {
+        std::vector<proto16::PoseBone> bones;
+        for (std::uint16_t i = 0; i < kAll; ++i) {
+            proto16::PoseBone b;
+            b.bone = i;
+            // A slow limb: 20 packed units a send (over kBoneStep, far under kBoneRefreshMs).
+            const std::int16_t v = i < kMoving ? static_cast<std::int16_t>(send * 20 + i) : 0;
+            b.rotation = std::array<std::int16_t, 4>{v, 0, 0, 30000};
+            bones.push_back(b);
+        }
+        return bones;
+    };
+    CoopPose::BonePicker picker;
+    const std::uint64_t interval = 1000 / static_cast<std::uint64_t>(plan.hz);
+    std::uint64_t ms = 10'000;
+    int missed = 0;
+    for (int send = 0; send < 4 * plan.hz; ++send, ms += interval) {  // 4 s: several clumps aged
+        const auto sent = picker.Pick(0x1234, pose(send), ms, plan.bones);
+        CHECK(sent.size() <= plan.bones);
+        if (send < 4) continue;  // everyone sent once first (300 bones, 148 a pose)
+        std::vector<bool> in(kAll, false);
+        for (const auto& b : sent) in[b.bone] = true;
+        for (std::uint16_t i = 0; i < kMoving; ++i) missed += in[i] ? 0 : 1;
+    }
+    CHECK(missed == 0);
 }

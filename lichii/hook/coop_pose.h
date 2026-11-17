@@ -212,6 +212,8 @@ private:
 // `Jumps` counts a bone shown exactly the same (a held copy) for kJumpHeldFrames frames or more that
 // then moves more than kJumpRad in one: the stair-step a bone left out of poses makes. Smooth
 // playback has about none (a bone the sender skips at a turning point, unchanged, holds one interval).
+// Only a bone that moved before its hold counts: a puppet coming into view is held on its first
+// pose for kShowDelayMs (nothing earlier to blend from) and then starts, which is no stair-step.
 struct EvenReport {
     float uneven = 0.0f;  // by frame time
     float raw = 0.0f;     // per frame, as before puppet-smooth
@@ -227,6 +229,7 @@ public:
 
 private:
     std::optional<Pose> last_;
+    static constexpr int kNotMoved = 255;  // held_: not moved since the bone list (re)started
     std::vector<std::uint8_t> held_;  // per bone index: frames shown exactly the same, in a row
     std::uint64_t last_ms_ = 0;
     float last_change_ = 0.0f;
