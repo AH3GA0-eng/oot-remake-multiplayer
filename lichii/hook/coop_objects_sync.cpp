@@ -3229,8 +3229,8 @@ void Sync::KeepBossLives(std::uint8_t self, std::vector<LifeWrite>& writes) {
         if (own == owners_.end() || own->second.player == self || own->second.player == 0) {
             continue;  // ours (our game judged it all along) or no owner known
         }
-        if (o.dead_at != 0 || o.owner_life_zero || !o.owner_life) {
-            continue;  // its owner said it died (it dies here too), or no life of the owner's heard
+        if (o.dead_at != 0 || o.owner_life_zero || !o.owner_life || o.death_given) {
+            continue;  // its owner said it died (it dies here too), its death was given here, or no owner's life heard
         }
         // Our own hits of the last kDamageSumUs (summed, never sent now) are not in the owner's life: they come
         // off it, as at a hand-over (H3), or the session's end gives that life back.

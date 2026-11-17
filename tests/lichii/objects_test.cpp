@@ -5344,12 +5344,13 @@ TEST_CASE("objects: at the session's end a boss copy held at 1 takes its owner's
     Own(sync, id, 2);
     // Our hits on the copy went to the owner; HeldLifeStep held it at 1 here. The owner's boss is at 12.
     Tick(sync, 50 * kMs, {Enemy(0x100, 0x11, 1, 50.0f, kBoss)});
+    Tick(sync, 200 * kMs, {Enemy(0x100, 0x11, 1, 50.0f, kBoss)});  // (sent: none left unsent for H3)
     proto::ObjectSample s;
     s.player_number = 2;
     s.id = id;
     s.state.life = proto::ObjectLife{12, 21};
     sync.Receive(s);
-    Tick(sync, 100 * kMs, {Enemy(0x100, 0x11, 1, 50.0f, kBoss)});
+    Tick(sync, 250 * kMs, {Enemy(0x100, 0x11, 1, 50.0f, kBoss)});
     std::vector<CoopObjects::LifeWrite> keep;
     sync.KeepBossLives(1, keep);
     REQUIRE(keep.size() == 1);
