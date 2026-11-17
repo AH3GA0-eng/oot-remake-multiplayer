@@ -381,6 +381,14 @@ def switch_events(romfs, dicts=None, wiring=None):
     return sorted(lines), sorted(guards), sorted(extras), sorted(others)
 
 
+LOAD_GUARD = "load:"  # asker_guards(): a flag the room reads only when it loads (kind "flag-once")
+
+
+def load_guard(guard):
+    """(flag, read only at the room's load) of one asker_guards() entry."""
+    return (guard[len(LOAD_GUARD):], True) if guard.startswith(LOAD_GUARD) else (guard, False)
+
+
 def asker_guards(trigger, delete):
     """The saved flags that stop ONE asker (g3-objects): a flag its trigger reads negated outside an OR (on: the
     trigger is false whatever the switch says), or a flag that deletes it (on: no asker). HavePlayedEvent.* is left
@@ -389,13 +397,25 @@ def asker_guards(trigger, delete):
 
     A negated flag under an OR counts only when it is the trigger's ONE leaf under an OR (Jabu-Jabu room 1:
     OnState AND an OR whose other inputs are unwired, i.e. the flag alone); with two or more leaves under ORs the
-    tool cannot tell which OR holds which, so none of them counts (no hold: the safe side)."""
+    tool cannot tell which OR holds which, so none of them counts (no hold: the safe side).
+
+    A flag behind a gate with UpdateOnce 1 (kind "flag-once") is read only when the room loads: on at the load it
+    stops the asker for that visit, but landing live (the other player's press) stops nothing. It is returned as
+    a LOAD guard, "load:<flag>" (load_guard() splits it): the Deku Tree room D compass asker, deleted by
+    RoomD_StepSwitch_On_01 only at a load (events-next-a-5, Room_D_Prefab_b6c3). The C++ gate arms such a guard
+    only when the flag was already on when our room loaded (CoopSwitchShare: the visit's first sight of the
+    switch), never by a mid-visit turn-on (our asker still exists then: a hold would replay the event)."""
     in_or = [x for x in trigger if x[4]]
-    out = {what for kind, what, _, neg, under_or in trigger
-           if kind == "flag" and neg and (not under_or or len(in_or) == 1)}
-    out |= {what for kind, what, _, neg, _ in delete
-            if kind == "flag" and not neg and not what.startswith("HavePlayedEvent.")}
-    return sorted(out)
+    out = set()
+    for kind, what, _, neg, under_or in trigger:
+        # under_or == 1: in an OR with no AND on the way (g1-events 9fce0c8f: 2 = also behind an AND, not alone)
+        if kind in ("flag", "flag-once") and neg and (not under_or or (under_or == 1 and len(in_or) == 1)):
+            out.add(what if kind == "flag" else LOAD_GUARD + what)
+    for kind, what, _, neg, _ in delete:
+        if kind in ("flag", "flag-once") and not neg and not what.startswith("HavePlayedEvent."):
+            out.add(what if kind == "flag" else LOAD_GUARD + what)
+    # read live AND once at the load (two paths to the same flag): the live read stops the asker at any time
+    return sorted(g for g in out if not (load_guard(g)[1] and load_guard(g)[0] in out))
 
 
 def two_way_flags(wiring):
@@ -446,9 +466,9 @@ def classify(line, wire, shared, two_way=frozenset()):
             # the asker's own polarity on that input (a False output or an inverter flips it); not found (it is
             # behind a module port): any
             polarity = {ng for w, ng, _ in also if w == "EventRequestActor"}
-            covered = any((uo or not polarity) and (not polarity or ng in polarity) and
+            covered = any((uo == 1 or not polarity) and (not polarity or ng in polarity) and
                           (w in shared or (w == switch and on_flags)) for w, ng, uo in also)
-            covered = covered or any(uo and w in shared and (w, "clear" if ng else "set") in writes
+            covered = covered or any(uo == 1 and w in shared and (w, "clear" if ng else "set") in writes
                                      for w, ng, uo in also)
             if not covered:
                 misses.append(f"{what}.{name}")

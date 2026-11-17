@@ -121,6 +121,29 @@ class ClassifyTest(unittest.TestCase):
             [sw, ("flag", "A", "Bool", True, True), ("flag", "B", "Bool", False, True)], []), [])
         # a negated delete flag deletes nothing once on
         self.assertEqual(eye_switches.asker_guards([sw], [("flag", "Gone", "Bool", True, False)]), [])
+        # g1-events 9fce0c8f: under an OR AND an AND (2) the negated flag is not alone: no guard
+        self.assertEqual(eye_switches.asker_guards([sw, ("flag", "First", "Bool", True, 2)], []), [])
+
+    def test_asker_guards_read_once_at_load_are_load_guards(self):
+        # objects-next-a-6: a flag behind a gate with UpdateOnce 1 ("flag-once") stops the asker only if it was on at
+        # the room's load: a LOAD guard, marked "load:" (the Deku Tree room D compass asker, RoomD_StepSwitch_On_01)
+        sw = ("actor", {"Gyaml": "Obj_StepSwitch_A_02"}, "OnState", False, False)
+        dele = [("flag-once", "RoomD_On", "Bool", False, False)]
+        self.assertEqual(eye_switches.asker_guards([sw], dele), ["load:RoomD_On"])
+        self.assertEqual(eye_switches.load_guard("load:RoomD_On"), ("RoomD_On", True))
+        self.assertEqual(eye_switches.load_guard("RoomD_On"), ("RoomD_On", False))
+        # a negated trigger flag read once: the same (the trigger is false for the visit only if it was on at load)
+        self.assertEqual(eye_switches.asker_guards([sw, ("flag-once", "Done", "Bool", True, False)], []),
+                         ["load:Done"])
+        # negated once at load deletes nothing; HavePlayedEvent.* stays out as for a live flag
+        self.assertEqual(eye_switches.asker_guards([sw], [("flag-once", "Gone", "Bool", True, False),
+                                                          ("flag-once", "HavePlayedEvent.Ev", "Bool", False, False)]), [])
+        # the same flag read live too: the live read stops the asker at any time, so it is a live guard only
+        self.assertEqual(eye_switches.asker_guards([sw], dele + [("flag", "RoomD_On", "Bool", False, False)]),
+                         ["RoomD_On"])
+        # a live and a load guard of different flags: both, each marked
+        self.assertEqual(eye_switches.asker_guards([sw, ("flag", "Done", "Bool", True, False)], dele),
+                         ["Done", "load:RoomD_On"])
 
 
 if __name__ == "__main__":

@@ -114,7 +114,8 @@ TEST_CASE("room objects: a switch plug that also raises an event asker is held o
         // a step switch's OnState: Jabu-Jabu room 1's shutters (the trigger reads the flag negated)
         {"InsideJabuJabuBelly", "Obj_InsideJabu_Jabu_StepSwitch_A_03", {8.5f, 102.5f, -51.4f}, "OnState",
          "InsideJabuJabuBelly_Gimmick_Onswitch_first", "InsideJabuJabuBellyRoom01StepSwitch"},
-        // a step switch's OnState: the Deku Tree room D lifts (the flag deletes the asker)
+        // a step switch's OnState: the Deku Tree room D lifts (the flag deletes the asker, read only at the room's
+        // load: a load guard, see below)
         {"InsideTheDekuTree", "Obj_StepSwitch_A_02", {-17.5f, 119.6f, -4.9f}, "OnState",
          "InsideTheDekuTree_RoomD_StepSwitch_On_01", "InsideTheDekuTree_Gimmick_RoomD_PlatformUp"},
         // a step switch's OnState read by a chest: GTG room 5
@@ -129,17 +130,21 @@ TEST_CASE("room objects: a switch plug that also raises an event asker is held o
         const auto lines = SwitchPlugsOf(w.scene, w.name, w.at);
         REQUIRE(lines.size() == 1);
         CHECK(lines[0]->plug == w.plug);
-        CHECK(lines[0]->guard == w.guard);
+        // objects-next-a-6: the Deku Tree room D compass asker reads its delete flag only at the room's load (an AND
+        // with UpdateOnce 1, Room_D_Prefab_b6c3): a load guard. The others are read live.
+        const bool at_load = w.scene == "InsideTheDekuTree";
+        CHECK(lines[0]->guard == (at_load ? "load:" + std::string(w.guard) : std::string(w.guard)));
         const auto guards = GuardFlags(*lines[0]);
         REQUIRE(guards.size() == 1);
-        CHECK(guards[0] == w.guard);
+        CHECK(guards[0] == GuardFlag{w.guard, at_load});
         CHECK(shared.contains(std::string(w.guard)));  // the presser's flag reaches us live
-        // the same flag is a guard of that event in the eye-switch table (the tool reads the same wiring)
+        // a live guard is also a guard of that event in the eye-switch table (the tool reads the same wiring); a
+        // load guard is not (landing it live deletes nothing: g1-events c9e1b780)
         bool listed = false;
         for (const CoopEyeSwitch::Guard& g : CoopEyeSwitch::Guards()) {
             if (g.flag == w.guard && g.scene == w.scene && g.event == w.event) listed = true;
         }
-        CHECK(listed);
+        CHECK(listed == !at_load);
         // not held in the dungeon (coop_dungeon HeldIn): else the hold would never be armed while we are there
         CHECK_FALSE(CoopDungeon::HeldIn(coop::protocol::flag_hash(w.guard)).has_value());
     }
@@ -190,6 +195,17 @@ TEST_CASE("room objects: a switch plug that also raises an event asker is held o
     CHECK(GuardFlags(SwitchPlug{"S", "N", {0.0f, 0.0f, 0.0f}, "OnState", ""}).empty());
     const auto two = GuardFlags(SwitchPlug{"S", "N", {0.0f, 0.0f, 0.0f}, "OnState", "A+B"});
     REQUIRE(two.size() == 2);
-    CHECK(two[0] == "A");
-    CHECK(two[1] == "B");
+    CHECK(two[0] == GuardFlag{"A", false});
+    CHECK(two[1] == GuardFlag{"B", false});
+    const auto marked = GuardFlags(SwitchPlug{"S", "N", {0.0f, 0.0f, 0.0f}, "OnState", "A+load:B"});
+    REQUIRE(marked.size() == 2);
+    CHECK(marked[0] == GuardFlag{"A", false});
+    CHECK(marked[1] == GuardFlag{"B", true});
+    // the one load guard in the table: the Deku Tree room D lifts (every UpdateOnce gate in the romfs checked by
+    // objects-next-a-6: no other asker reads a flag once at load)
+    std::size_t loads = 0;
+    for (const SwitchPlug& s : SwitchPlugs()) {
+        for (const GuardFlag& g : GuardFlags(s)) loads += g.at_load ? 1 : 0;
+    }
+    CHECK(loads == 1);
 }

@@ -245,23 +245,109 @@ TEST_CASE("switch share: a plug that also raises our event asker is held only on
         on.plug = PlugKey(l.plug);
         on.on = true;
         b.Receive(on, t);
+        // objects-next-a-6: the Deku Tree room D guard is read by the room only at its load (Seen::load_on)
+        const bool at_load = CoopRoomObjects::GuardFlags(*found[0])[0].at_load;
+        CHECK(at_load == (std::string_view(l.scene) == "InsideTheDekuTree"));
+        const auto seen = [&](bool plug, bool guard_on) {
+            return std::vector<Seen>{Seen{found[0], 0x2000, plug, at_load || guard_on, !at_load || guard_on}};
+        };
         // Not armed: nothing held, nothing sent (our plug is 0), the wait is logged once.
         for (int i = 0; i < 5; ++i) {
-            const auto holds = b.Tick(l.scene, {Seen{found[0], 0x2000, false, false}}, true, t += 100, out, notes);
+            const auto holds = b.Tick(l.scene, seen(false, false), true, t += 100, out, notes);
             CHECK(holds.empty());
         }
         CHECK(out.empty());
         CHECK(Has(notes, "waiting for"));
+        if (at_load) {
+            // The load guard came live: our asker still exists (it is deleted only at a load): still no hold.
+            b.Receive(on, t);
+            CHECK(b.Tick(l.scene, seen(false, true), true, t += 100, out, notes).empty());
+            b.Tick(l.scene, {}, true, t += 100, out, notes);  // the room reloads: a walk without the switch
+        }
         // The guard flag came (our asker is gone or its trigger is false): the hold runs the room objects only.
         b.Receive(on, t);
-        auto holds = b.Tick(l.scene, {Seen{found[0], 0x2000, false, true}}, true, t += 100, out, notes);
+        auto holds = b.Tick(l.scene, seen(false, true), true, t += 100, out, notes);
         REQUIRE(holds.size() == 1);
         CHECK(holds[0] == Hold{0x2000, PlugKey(l.plug)});
         CHECK(Has(notes, "ours held on"));
         // Our plug now 1 from that hold is not sent back as a press of ours.
-        holds = b.Tick(l.scene, {Seen{found[0], 0x2000, true, true}}, true, t += 100, out, notes);
+        holds = b.Tick(l.scene, seen(true, true), true, t += 100, out, notes);
         CHECK(out.empty());
     }
+}
+
+namespace {
+// The Deku Tree room D compass lifts' plate: its asker is deleted by RoomD_StepSwitch_On_01 only at the room's load.
+struct DekuD {
+    const CoopRoomObjects::SwitchPlug* line = nullptr;
+    Sharer b;
+    std::vector<proto::SwitchState> out;
+    std::vector<std::string> notes;
+    std::uint64_t t = 1000;
+    DekuD() {
+        const auto found =
+            CoopRoomObjects::SwitchPlugsOf("InsideTheDekuTree", "Obj_StepSwitch_A_02", {-17.5f, 119.6f, -4.9f});
+        REQUIRE(found.size() == 1);
+        line = found[0];
+    }
+    void Press() {
+        proto::SwitchState on;
+        on.player_number = 1;
+        on.scene = "InsideTheDekuTree";
+        on.name = "Obj_StepSwitch_A_02";
+        on.place = {-17.5f, 119.6f, -4.9f};
+        on.plug = PlugKey("OnState");
+        on.on = true;
+        b.Receive(on, t);
+    }
+    // One walk: our switch at `address`, the load guard on in our game now or not.
+    bool Held(bool flag_on, std::uint64_t address = 0x2000) {
+        Press();
+        return !b.Tick("InsideTheDekuTree", {Seen{line, address, false, true, flag_on}}, true, t += 100, out, notes)
+                    .empty();
+    }
+    // One walk of this room without the switch (its room unloaded, or the game is reloading).
+    void Gone() { b.Tick("InsideTheDekuTree", {}, true, t += 100, out, notes); }
+};
+}  // namespace
+
+TEST_CASE("switch share: a load guard that lands mid-visit never arms, a room load with it on does") {
+    // objects-next-a-6 (events-next-a-5, Room_D_Prefab_b6c3): the lifts are ORPulse(asker.EventBool, AND(flag,
+    // plate)) and the asker's delete reads the flag through UpdateOnce 1. The other player's press lands the flag here
+    // mid-visit: our asker still exists, so holding our plate would make it ask the event again (a replay).
+    DekuD d;
+    CHECK_FALSE(d.Held(false));  // the room loaded with the flag off
+    CHECK(Has(d.notes, "load guard off"));
+    for (int i = 0; i < 20; ++i) CHECK_FALSE(d.Held(true));  // the flag came live: never armed this visit
+    CHECK(Has(d.notes, "waiting for load:InsideTheDekuTree_RoomD_StepSwitch_On_01"));
+    // No walk for a long time (a pause menu) is no room load: still not armed.
+    d.t += 60000;
+    CHECK_FALSE(d.Held(true));
+    // The room loads again (a reload, or the player came back after it unloaded): a walk without the switch, then
+    // seen with the flag on; our asker was deleted at that load: the hold gives the result.
+    d.Gone();
+    CHECK(d.Held(true));
+    CHECK(Has(d.notes, "load guard on"));
+    CHECK(d.Held(true));
+}
+
+TEST_CASE("switch share: a load guard on at the room's load arms at once, a new switch actor is a new load") {
+    DekuD d;
+    CHECK(d.Held(true));  // the save had the flag: the asker never came
+    // A new switch actor (the room reloaded from an older save, the flag off): latched again, not held.
+    CHECK_FALSE(d.Held(false, 0x5000));
+    CHECK_FALSE(d.Held(true, 0x5000));  // and the flag landing live afterwards changes nothing
+    // Back to a new load with it on.
+    CHECK(d.Held(true, 0x6000));
+}
+
+TEST_CASE("switch share: a new scene forgets the load guard's latch") {
+    DekuD d;
+    CHECK_FALSE(d.Held(false));
+    std::vector<proto::SwitchState> out;
+    std::vector<std::string> notes;
+    d.b.Tick("KokiriForest", {}, true, d.t += 50, out, notes);  // another scene, then back
+    CHECK(d.Held(true));
 }
 
 TEST_CASE("switch share: a remote press that ends while not armed logs the next wait again") {
@@ -284,7 +370,7 @@ TEST_CASE("switch share: a remote press that ends while not armed logs the next 
         for (const std::string& s : notes) n += s.find("waiting for") != std::string::npos ? 1 : 0;
         return n;
     };
-    const std::vector<Seen> unarmed{Seen{found[0], 0x2000, false, false}};
+    const std::vector<Seen> unarmed{Seen{found[0], 0x2000, false, true, false}};  // its load guard off at the load
     b.Receive(on, t);
     b.Tick("InsideTheDekuTree", unarmed, true, t += 100, out, notes);
     b.Tick("InsideTheDekuTree", unarmed, true, t += 100, out, notes);
@@ -306,7 +392,7 @@ TEST_CASE("switch share: a guarded line not armed is still our own: our press is
     Sharer a;
     std::vector<proto::SwitchState> out;
     std::vector<std::string> notes;
-    const auto holds = a.Tick("InsideTheDekuTree", {Seen{found[0], 0x3000, true, false}}, true, 1000, out, notes);
+    const auto holds = a.Tick("InsideTheDekuTree", {Seen{found[0], 0x3000, true, true, false}}, true, 1000, out, notes);
     CHECK(holds.empty());
     REQUIRE(out.size() == 1);
     CHECK(out[0].on);

@@ -168,6 +168,10 @@ class RoomObjectsTest(unittest.TestCase):
         # a flag the event does not set, or a negated read, is no native path (OPEN)
         other = {line("H", (0, 0, 0)): w([], on=[("ForceControl", [("flag", "Unlocked", True)])], sets=["Unlocked"])}
         self.assertEqual(ro.asking_plug(key, other, shared)[2], [])
+        # objects-next-a-6: a load guard keeps its mark; it counts as shared by its flag's name (Deku Tree room D)
+        self.assertEqual(ro.asking_plug(key, {line("E", (0, 0, 0)): w(["Own", "load:Done"])}, shared)[0],
+                         ["load:Done"])
+        self.assertEqual(ro.asking_plug(key, {line("E", (0, 0, 0)): w(["load:Own"])}, shared)[0], ["load:Own"])
         # no line at all for the plug: nothing to hold
         self.assertEqual(ro.asking_plug(key, {}, shared), (None, [], []))
 

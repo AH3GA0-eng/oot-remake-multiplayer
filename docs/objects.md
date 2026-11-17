@@ -578,8 +578,11 @@ The one input with no path was a timed switch. So the timed switches get one mec
   - GTG: the eye-switch shutter.
   - Water: the two eye-switch shutters, the hit-switch shutter, and the fountain's `OnState` and `OffState`.
 
+Plugs that also raise an event asker (g3-objects; owner 07:40 UTC 2026-11-17: a gimmick event gives the result only, no replay) carry guard flags: held only while they are all on in our game, so our asker can no longer fire. A guard the asker reads only when its room loads (a gate with `UpdateOnce` 1; the generator writes it `load:<flag>`) counts only if it was on at that load: the Sharer keeps its value from the switch's first sight after a room load (a new switch actor, or the first sight after a walk without it; not by time: a pause menu stops the walks mid-visit). The one such guard is the Deku Tree compass room's `RoomD_StepSwitch_On_01` (its asker is deleted by it only at the load, `Room_D_Prefab_b6c3`): landing live from the other player mid-visit it arms nothing (holding the plate would make our asker ask the event again); after a reload with it on, the plate is held and the lifts rise. Mid-visit the lifts' result comes from our asker's `EventBool` (row 98(2), g1-events). Every `UpdateOnce` gate in the romfs was checked (15 in 14 room graphs): no other event asker reads a flag that way.
+
 Logs:
 - `coop: switch share: <switch> <plug> at x y z: our player's press: sent`
+- `...: room loaded with its load guard on: our asker is gone` / `...off: our asker stays, not held this visit`
 - `...: another player's is on: ours held on, its own logic runs`
 - `...: another player's is off: let go`
 

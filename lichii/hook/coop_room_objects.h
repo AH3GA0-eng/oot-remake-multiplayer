@@ -73,6 +73,11 @@ std::span<const GroupFlag> GroupFlags();
 // runs the room objects only (Jabu-Jabu room 1's shutters, the Deku Tree room D lifts, GTG room 5's chest, Spirit
 // room 19's mirror). A plug whose asker no shared flag stops is not in the table (its result reaches the follower's
 // switch through a shared flag on its own ON input: coop_room_objects.cpp lists them).
+// A guard written "load:<flag>" is a flag the room reads only when it loads (a gate with UpdateOnce 1): on at the
+// load, it stopped our asker for this visit; landing live (the other player's press) stops nothing, our asker still
+// exists. Such a guard counts only when it was on at our room's load (CoopSwitchShare::Sharer latches it at the
+// switch's first sight): the Deku Tree room D lifts, whose compass asker RoomD_StepSwitch_On_01 deletes only at a load
+// (Room_D_Prefab_b6c3). Mid-visit, that result reaches the follower through the asker's own EventBool (row 98(2)).
 struct SwitchPlug {
     std::string_view scene;
     std::string_view name;
@@ -81,8 +86,14 @@ struct SwitchPlug {
     std::string_view guard = {};  // "" no asker; else the flags that must all be on in our game before a hold
 };
 std::span<const SwitchPlug> SwitchPlugs();
-// A line's guard flags, split ("" none).
-std::vector<std::string_view> GuardFlags(const SwitchPlug& line);
+inline constexpr std::string_view kLoadGuard = "load:";
+struct GuardFlag {
+    std::string_view flag;
+    bool at_load = false;  // written "load:<flag>": read by the room only when it loads
+    bool operator==(const GuardFlag&) const = default;
+};
+// A line's guard flags, split ("" none), the "load:" mark taken off into at_load.
+std::vector<GuardFlag> GuardFlags(const SwitchPlug& line);
 // The lines of a live switch `name` at `at` in `scene` (its placement within kSwitchMatchM).
 inline constexpr float kSwitchMatchM = 1.5f;
 std::vector<const SwitchPlug*> SwitchPlugsOf(std::string_view scene, std::string_view name,

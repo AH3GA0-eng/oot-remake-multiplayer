@@ -210,7 +210,8 @@ constexpr GroupFlag kGroupFlags[] = {
 // coop_eye_switch.cpp lists; review-a38-3): held only once those flags are all on in our game, so our asker can no
 // longer fire and the hold runs the room objects only (the result; owner 07:40 UTC 2026-11-17: no replay of a gimmick
 // event). A guard is shared when the asker has a shared one; else the asker's own flag (Dodongo 17's NaviHelp_17_0x,
-// on after that player's own first camera focus).
+// on after that player's own first camera focus). "load:<flag>": the asker reads it only at the room's load
+// (UpdateOnce 1), so it counts only if it was on when our room loaded (coop_room_objects.h).
 constexpr SwitchPlug kSwitchPlugs[] = {
     {"DodongoCavern", "Obj_EyeSwitch_A_05", {65.7f, 121.8f, -23.0f}, "OnState", "DodongoCavern_NaviHelp_17_00"},  // Obj_DodongoCave_FireWall_A_01; asks FocusOnGimmick_Basic
     {"DodongoCavern", "Obj_EyeSwitch_A_05", {75.4f, 118.3f, -15.0f}, "OnState", "DodongoCavern_NaviHelp_17_01"},  // Obj_DodongoCave_FireWall_A_01; asks FocusOnGimmick_Basic
@@ -221,7 +222,7 @@ constexpr SwitchPlug kSwitchPlugs[] = {
     {"GerudoTrainingGround", "Obj_EyeSwitch_A_03", {46.9f, 101.9f, -92.4f}, "OnState", ""},  // Obj_Gerudo_SwitchShutter_A_04+Obj_SwitchShutter_A_02
     {"GerudoTrainingGround", "Obj_StepSwitch_A_04", {52.2f, 97.5f, -86.0f}, "OnState", "GerudoTrainingGround_Dungeon_Room05_StepSwitch"},  // Obj_TBox_A_01; asks GerudoTrainingGround_05_DisappearFire
     {"InsideJabuJabuBelly", "Obj_InsideJabu_Jabu_StepSwitch_A_03", {8.5f, 102.5f, -51.4f}, "OnState", "InsideJabuJabuBelly_Gimmick_Onswitch_first"},  // Obj_InsideJabu_Jabu_SwitchShutter_A_01+Obj_InsideJabu_Jabu_SwitchShutter_A_02; asks InsideJabuJabuBellyRoom01StepSwitch
-    {"InsideTheDekuTree", "Obj_StepSwitch_A_02", {-17.5f, 119.6f, -4.9f}, "OnState", "InsideTheDekuTree_RoomD_StepSwitch_On_01"},  // Obj_InsideTheDekuTree_ElevatorLift_A_01+Obj_InsideTheDekuTree_ElevatorLift_A_02+Obj_InsideTheDekuTree_ElevatorLift_A_03; asks InsideTheDekuTree_Gimmick_RoomD_PlatformUp
+    {"InsideTheDekuTree", "Obj_StepSwitch_A_02", {-17.5f, 119.6f, -4.9f}, "OnState", "load:InsideTheDekuTree_RoomD_StepSwitch_On_01"},  // Obj_InsideTheDekuTree_ElevatorLift_A_01+Obj_InsideTheDekuTree_ElevatorLift_A_02+Obj_InsideTheDekuTree_ElevatorLift_A_03; asks InsideTheDekuTree_Gimmick_RoomD_PlatformUp
     {"SpiritTemple", "Obj_SolarSwitch_A_02", {45.8f, 121.5f, -47.5f}, "isLightMax", "SpiritTemple_Room19_LightSwitch_On_01"},  // Obj_SpiritTemple_CapstanMirror_A_01; asks SpiritTemple_Level_Room_19_SwitchOn_01
     {"WaterTemple", "Obj_EyeSwitch_A_05", {-33.2f, 115.8f, -40.2f}, "OnState", ""},  // Obj_WaterTemple_SwitchShutter_A_02
     {"WaterTemple", "Obj_EyeSwitch_A_05", {-4.5f, 116.6f, -26.3f}, "OnState", ""},  // Obj_WaterTemple_SwitchShutter_A_02
@@ -244,12 +245,15 @@ constexpr SwitchPlug kSwitchPlugs[] = {
 
 std::span<const SwitchPlug> SwitchPlugs() { return kSwitchPlugs; }
 
-std::vector<std::string_view> GuardFlags(const SwitchPlug& line) {
-    std::vector<std::string_view> out;
+std::vector<GuardFlag> GuardFlags(const SwitchPlug& line) {
+    std::vector<GuardFlag> out;
     std::string_view rest = line.guard;
     while (!rest.empty()) {
         const std::size_t plus = rest.find('+');
-        out.push_back(rest.substr(0, plus));
+        std::string_view one = rest.substr(0, plus);
+        const bool at_load = one.starts_with(kLoadGuard);
+        if (at_load) one.remove_prefix(kLoadGuard.size());
+        out.push_back(GuardFlag{one, at_load});
         rest = plus == std::string_view::npos ? std::string_view() : rest.substr(plus + 1);
     }
     return out;

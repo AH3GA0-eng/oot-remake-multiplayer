@@ -146,12 +146,15 @@ class SwitchEventsTest(unittest.TestCase):
         self.assertEqual(lines[0][:3], ("Ev", "Scene", "Obj_StepSwitch_A_01"))
         self.assertEqual(guards, [("Room_Flag", "Scene", "Ev", "deletes the asker")])
         self.assertEqual(wiring[lines[0]]["delete"], ["Room_Flag"])
+        self.assertEqual(wiring[lines[0]]["guards"], ["Room_Flag"])  # g3-objects: a live guard
 
     def test_a_delete_flag_read_once_at_load_is_no_guard(self):
         lines, guards, wiring = self.run_room(1)
         self.assertEqual(len(lines), 1)
         self.assertEqual(guards, [])
         self.assertEqual(wiring[lines[0]]["delete"], [])
+        # objects-next-a-6: for g3-objects' hold it is a LOAD guard (on at our room's load: our asker is gone)
+        self.assertEqual(wiring[lines[0]]["guards"], ["load:Room_Flag"])
 
 
 if __name__ == "__main__":

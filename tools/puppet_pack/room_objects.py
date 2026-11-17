@@ -48,7 +48,7 @@ if __package__ in (None, ""):
     __package__ = "puppet_pack"  # noqa: A001
 
 from . import byml, zs  # noqa: E402
-from .eye_switches import SWITCH, _int, _place, _prefix, read_graph, switch_events  # noqa: E402
+from .eye_switches import SWITCH, _int, _place, _prefix, load_guard, read_graph, switch_events  # noqa: E402
 
 PARTS = ("ElevatorLift", "_Elevator_", "MoveFloor", "RotateFloor", "RotateBlade", "MoveSpike",
          "ExtendingPlatform", "_lift_", "ElevatorMirror", "ElevatorPit", "UpDown")
@@ -379,7 +379,9 @@ def asking_plug(key, wiring, shared):
     guards: the flags that, all on in our game, stop EVERY asker this plug raises (each asker's own asker_guards(),
             its shared ones when it has any, else its unshared ones; joined), so a SWITCH_STATE hold then runs only
             the room objects: the result. None when some asker has no guard at all: a hold could start our own copy
-            of the event (a replay), never held.
+            of the event (a replay), never held. A flag the asker reads only at the room's load stays marked
+            "load:<flag>" (eye_switches.asker_guards): the C++ gate counts it only if it was on when our room
+            loaded (Deku Tree room D's compass asker; a live turn-on deletes nothing).
     events: the askers' events.
     native: (input, flag) for the switch's own ON inputs that read a shared flag some asker's event sets: the
             result reaches the follower's switch through that flag, the game's own path (what a not-held plug
@@ -392,7 +394,7 @@ def asking_plug(key, wiring, shared):
         # Each guard alone stops its asker. A shared one arrives from the presser's game; when an asker has none, its
         # own (unshared) ones still stop it once our game has them (review-a38-3, Dodongo 17's NaviHelp_17_00/01: on
         # after this player's own first camera focus; until then the plug is not held and that asker never replays).
-        own = [f for f in w.get("guards", []) if f in shared] or list(w.get("guards", []))
+        own = [f for f in w.get("guards", []) if load_guard(f)[0] in shared] or list(w.get("guards", []))
         if not own:
             guards = None
             break
