@@ -223,6 +223,10 @@ TEST_CASE("switch share: a plug that also raises our event asker is held only on
         {"InsideTheDekuTree", "Obj_StepSwitch_A_02", {-17.5f, 119.6f, -4.9f}, "OnState"},
         {"GerudoTrainingGround", "Obj_StepSwitch_A_04", {52.2f, 97.5f, -86.0f}, "OnState"},
         {"SpiritTemple", "Obj_SolarSwitch_A_02", {45.8f, 121.5f, -47.5f}, "isLightMax"},
+        // review-a38-3: askers with no live place: Forest room 11's step switch (shared guard) and a Dodongo room 17
+        // eye switch (its own NaviHelp flag guard)
+        {"ForestTemple", "Obj_StepSwitch_A_01", {-74.0f, 125.5f, -1.0f}, "OnState"},
+        {"DodongoCavern", "Obj_EyeSwitch_A_05", {65.7f, 121.8f, -23.0f}, "OnState"},
     };
     for (const Line& l : lines) {
         CAPTURE(l.name);
@@ -258,6 +262,41 @@ TEST_CASE("switch share: a plug that also raises our event asker is held only on
         holds = b.Tick(l.scene, {Seen{found[0], 0x2000, true, true}}, true, t += 100, out, notes);
         CHECK(out.empty());
     }
+}
+
+TEST_CASE("switch share: a remote press that ends while not armed logs the next wait again") {
+    // review-a38-3 nit: told_waiting was reset only once armed, so a second unarmed press went unlogged.
+    const auto found = CoopRoomObjects::SwitchPlugsOf("InsideTheDekuTree", "Obj_StepSwitch_A_02", {-17.5f, 119.6f, -4.9f});
+    REQUIRE(found.size() == 1);
+    Sharer b;
+    std::vector<proto::SwitchState> out;
+    std::vector<std::string> notes;
+    std::uint64_t t = 1000;
+    proto::SwitchState on;
+    on.player_number = 1;
+    on.scene = "InsideTheDekuTree";
+    on.name = "Obj_StepSwitch_A_02";
+    on.place = {-17.5f, 119.6f, -4.9f};
+    on.plug = PlugKey("OnState");
+    on.on = true;
+    const auto waits = [&notes] {
+        std::size_t n = 0;
+        for (const std::string& s : notes) n += s.find("waiting for") != std::string::npos ? 1 : 0;
+        return n;
+    };
+    const std::vector<Seen> unarmed{Seen{found[0], 0x2000, false, false}};
+    b.Receive(on, t);
+    b.Tick("InsideTheDekuTree", unarmed, true, t += 100, out, notes);
+    b.Tick("InsideTheDekuTree", unarmed, true, t += 100, out, notes);
+    CHECK(waits() == 1);
+    proto::SwitchState off = on;
+    off.on = false;
+    b.Receive(off, t);
+    b.Tick("InsideTheDekuTree", unarmed, true, t += 100, out, notes);
+    CHECK(waits() == 1);
+    b.Receive(on, t);
+    b.Tick("InsideTheDekuTree", unarmed, true, t += 100, out, notes);
+    CHECK(waits() == 2);
 }
 
 TEST_CASE("switch share: a guarded line not armed is still our own: our press is sent") {

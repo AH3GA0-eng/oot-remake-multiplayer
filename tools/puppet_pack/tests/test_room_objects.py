@@ -129,7 +129,18 @@ class RoomObjectsTest(unittest.TestCase):
         finally:
             os.unlink(f.name)
 
-    def test_asking_plug_held_only_when_every_asker_has_a_shared_guard(self):
+    def test_asking_lines_take_every_romfs_asker(self):
+        # review-a38-3: an asker with no live place (absent from coop_eye_switch.cpp, Dodongo 17 / Forest 11) still
+        # makes its plug an asking one; only the lines CoopEyeSwitch drives are left out
+        dodongo = ("FocusOnGimmick_Basic", "DodongoCavern", "Obj_EyeSwitch_A_05", (65.7, 121.8, -23.0), "OnState",
+                   (70.4, 127.8, -23.0))
+        driven = ("E", "S", "Obj_EyeSwitch_A_01", (1.0, 2.0, 3.0), "OnState", (0.0, 0.0, 0.0))
+        wiring = {dodongo: {}, driven: {}}
+        self.assertEqual(ro.asking_lines(wiring, {driven[1:5]}),
+                         {("DodongoCavern", "Obj_EyeSwitch_A_05", (65.7, 121.8, -23.0), "OnState")})
+        self.assertEqual(len(ro.asking_lines(wiring)), 2)
+
+    def test_asking_plug_held_only_when_every_asker_has_a_guard(self):
         # g3-objects: wiring lines are (event, scene, switch, place, plug, asker place)
         key = ("S", "Obj_StepSwitch_A_02", (1.0, 0.0, 0.0), "OnState")
 
@@ -142,8 +153,10 @@ class RoomObjectsTest(unittest.TestCase):
         shared = {"Done", "Unlocked"}
         # one asker, stopped by a shared flag: held behind it
         self.assertEqual(ro.asking_plug(key, {line("E", (0, 0, 0)): w(["Done"])}, shared), (["Done"], ["E"], []))
-        # a guard that is not shared does not count
-        self.assertEqual(ro.asking_plug(key, {line("E", (0, 0, 0)): w(["Own"])}, shared)[0], None)
+        # an asker with only its own (unshared) guard: held behind that (Dodongo 17's NaviHelp_17_0x)
+        self.assertEqual(ro.asking_plug(key, {line("E", (0, 0, 0)): w(["Own"])}, shared)[0], ["Own"])
+        # a shared guard wins over the asker's own ones (each alone stops it; the shared one arrives from the presser)
+        self.assertEqual(ro.asking_plug(key, {line("E", (0, 0, 0)): w(["Own", "Done"])}, shared)[0], ["Done"])
         # two askers (Spirit room 19): one has no guard -> never held, however the other is guarded
         two = {line("E", (0, 0, 0)): w(["Done"]), line("E", (5, 0, 0)): w([])}
         self.assertIsNone(ro.asking_plug(key, two, shared)[0])

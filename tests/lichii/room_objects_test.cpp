@@ -101,8 +101,8 @@ TEST_CASE("room objects: every dungeon mover group's flag is shared, or left out
 }
 
 TEST_CASE("room objects: a switch plug that also raises an event asker is held only behind its asker's guard (g3-objects)") {
-    // room_objects.py: such a plug (a CoopEyeSwitch line the switch's AI rewrites, so it is not driven) is a line only
-    // when shared flags stop EVERY asker it raises; the hold waits for them (owner 07:40 UTC 11-17: result only).
+    // room_objects.py: such a plug (any romfs asker; not a line CoopEyeSwitch drives) is a line only when flags stop
+    // EVERY asker it raises; the hold waits for them (owner 07:40 UTC 11-17: result only).
     std::set<std::string> shared;
     for (const auto& f : CoopDungeon::Flags()) shared.insert(f.name);
     struct Want {
@@ -143,6 +143,28 @@ TEST_CASE("room objects: a switch plug that also raises an event asker is held o
         // not held in the dungeon (coop_dungeon HeldIn): else the hold would never be armed while we are there
         CHECK_FALSE(CoopDungeon::HeldIn(coop::protocol::flag_hash(w.guard)).has_value());
     }
+    // review-a38-3: askers with no live place (not in coop_eye_switch.cpp) count too. Forest room 11's step switch is
+    // held behind its shared flag; Dodongo room 17's eye switches (camera focus, Navi flags never shared) behind each
+    // asker's own flag, on once that player's own focus has played: never a replay, never held blindly.
+    const Want romfs_only[] = {
+        {"ForestTemple", "Obj_StepSwitch_A_01", {-74.0f, 125.5f, -1.0f}, "OnState",
+         "ForestTemple_SageOfForest_ElevatorSwitch_01", "ForestTemple_Room11_ElevatorStart"},
+        {"DodongoCavern", "Obj_EyeSwitch_A_05", {65.7f, 121.8f, -23.0f}, "OnState", "DodongoCavern_NaviHelp_17_00",
+         "FocusOnGimmick_Basic"},
+        {"DodongoCavern", "Obj_EyeSwitch_A_05", {75.4f, 118.3f, -15.0f}, "OnState", "DodongoCavern_NaviHelp_17_01",
+         "FocusOnGimmick_Basic"},
+    };
+    for (const Want& w : romfs_only) {
+        CAPTURE(w.at[0]);
+        const auto lines = SwitchPlugsOf(w.scene, w.name, w.at);
+        REQUIRE(lines.size() == 1);
+        CHECK(lines[0]->plug == w.plug);
+        CHECK(lines[0]->guard == w.guard);
+        CHECK(shared.contains(std::string(w.guard)) == (w.scene == "ForestTemple"));
+        for (const CoopEyeSwitch::Guard& g : CoopEyeSwitch::Guards()) {
+            CHECK_FALSE((g.scene == w.scene && g.event == w.event));  // the case the C++ table could not see
+        }
+    }
     // A hammer or hit switch's OnState and Spirit room 19's other two suns: no shared flag stops their askers, so they
     // are never held; the event's result flag turns the follower's switch on through its own ON input (ForceControl,
     // isCleared), the native path. That flag must be shared.
@@ -158,12 +180,12 @@ TEST_CASE("room objects: a switch plug that also raises an event asker is held o
         CHECK(SwitchPlugsOf(w.scene, w.name, w.at).empty());
         CHECK(shared.contains(std::string(w.guard)));
     }
-    // Every guarded line is one of the four; the timed switches keep no guard.
+    // Every guarded line is one of the seven above; the timed switches keep no guard.
     std::size_t guarded = 0;
     for (const SwitchPlug& s : SwitchPlugs()) {
         if (!s.guard.empty()) ++guarded;
     }
-    CHECK(guarded == 4);
+    CHECK(guarded == 7);
     CHECK(SwitchPlugs().size() == 16);
     CHECK(GuardFlags(SwitchPlug{"S", "N", {0.0f, 0.0f, 0.0f}, "OnState", ""}).empty());
     const auto two = GuardFlags(SwitchPlug{"S", "N", {0.0f, 0.0f, 0.0f}, "OnState", "A+B"});

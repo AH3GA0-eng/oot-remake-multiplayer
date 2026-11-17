@@ -376,9 +376,10 @@ def asking_plug(key, wiring, shared):
 
     `key` (scene, switch, place, plug); `wiring` eye_switches.switch_events' per-line dict; `shared` the flags
     coop_dungeon.cpp shares. Returns (guards, events, native):
-    guards: the shared flags that, all on in our game, stop EVERY asker this plug raises (each asker's own
-            asker_guards(), joined), so a SWITCH_STATE hold then runs only the room objects: the result. None when
-            some asker has no shared guard: a hold could start our own copy of the event (a replay), never held.
+    guards: the flags that, all on in our game, stop EVERY asker this plug raises (each asker's own asker_guards(),
+            its shared ones when it has any, else its unshared ones; joined), so a SWITCH_STATE hold then runs only
+            the room objects: the result. None when some asker has no guard at all: a hold could start our own copy
+            of the event (a replay), never held.
     events: the askers' events.
     native: (input, flag) for the switch's own ON inputs that read a shared flag some asker's event sets: the
             result reaches the follower's switch through that flag, the game's own path (what a not-held plug
@@ -388,7 +389,10 @@ def asking_plug(key, wiring, shared):
     events = sorted({line[0] for line, _ in lines})
     guards = set()
     for _, w in lines:
-        own = [f for f in w.get("guards", []) if f in shared]
+        # Each guard alone stops its asker. A shared one arrives from the presser's game; when an asker has none, its
+        # own (unshared) ones still stop it once our game has them (review-a38-3, Dodongo 17's NaviHelp_17_00/01: on
+        # after this player's own first camera focus; until then the plug is not held and that asker never replays).
+        own = [f for f in w.get("guards", []) if f in shared] or list(w.get("guards", []))
         if not own:
             guards = None
             break
@@ -397,6 +401,14 @@ def asking_plug(key, wiring, shared):
     native = sorted({(inp, what) for _, w in lines for inp, srcs in w["on"]
                      for kind, what, neg in srcs if kind == "flag" and not neg and what in sets and what in shared})
     return (sorted(guards) if guards is not None and lines else None), events, native
+
+
+def asking_lines(wiring, driven=frozenset()):
+    """{(scene, switch, place, plug)} of every switch plug that raises an event asker in the romfs, less the lines
+    CoopEyeSwitch drives. `wiring` is eye_switches.switch_events' per-line dict for EVERY asker (review-a38-3: the
+    coop_eye_switch.cpp table lists only askers with a live place, so taking the askers from it missed Dodongo 17's
+    eye switches and Forest 11's step switch, and those plugs were held blindly = a replay in the follower's game)."""
+    return {(line[1], line[2], line[3], line[4]) for line in wiring} - set(driven)
 
 
 def main(argv=None):
@@ -420,7 +432,6 @@ def main(argv=None):
     eye = eye_switch_lines(args.eye_switches) if args.eye_switches else frozenset()
     flags = shared_names(args.dungeon) if args.dungeon else None
     switches, delivery = room_switches(args.romfs, eye, shared_flags=flags)
-    asking = (eye_switch_lines(args.eye_switches, driven_only=False) - eye) if args.eye_switches else set()
     if args.delivery:
         for scene, name, p, why in rows:
             if why and not why.startswith("with "):
@@ -437,8 +448,8 @@ def main(argv=None):
         print(f'    "{name}",')
     print()
     wiring = {}
-    if asking:
-        switch_events(args.romfs, wiring=wiring)
+    switch_events(args.romfs, wiring=wiring)
+    asking = asking_lines(wiring, eye)
     not_held = []
     for scene, name, p, plug, users in switches:
         key = (scene, name, p, plug)
@@ -451,7 +462,7 @@ def main(argv=None):
             continue
         print(f'    {{"{scene}", "{name}", {{{p[0]}f, {p[1]}f, {p[2]}f}}, "{plug}", "{"+".join(guards)}"}},  '
               f'// {users}; asks {"+".join(events)}')
-    print("// read by room objects, but the plug also raises an event asker that no shared flag stops: not held")
+    print("// read by room objects, but the plug also raises an event asker that no flag stops: not held")
     for (scene, name, p, plug), users, events, native in not_held:
         how = ", ".join(f"{inp} <- {flag}" for inp, flag in native) or "OPEN: no shared flag reaches the switch"
         print(f"//   {scene} {name} {{{p[0]}, {p[1]}, {p[2]}}} {plug}: {users}; asks {'+'.join(events)}; {how}")

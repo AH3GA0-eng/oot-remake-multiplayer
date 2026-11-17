@@ -206,15 +206,17 @@ constexpr GroupFlag kGroupFlags[] = {
 };
 
 // Shared switch plugs (the third table), each with the room objects that read it. A line with a fifth field
-// (g3-objects) is a plug that also raises an event asker (a CoopEyeSwitch line it does not drive): held only once
-// those flags are all on in our game, so our asker can no longer fire and the hold runs the room objects only (the
-// result; owner 07:40 UTC 2026-11-17: no replay of a gimmick event).
+// (g3-objects) is a plug that also raises an event asker (any asker in the romfs wiring, not only the live-place ones
+// coop_eye_switch.cpp lists; review-a38-3): held only once those flags are all on in our game, so our asker can no
+// longer fire and the hold runs the room objects only (the result; owner 07:40 UTC 2026-11-17: no replay of a gimmick
+// event). A guard is shared when the asker has a shared one; else the asker's own flag (Dodongo 17's NaviHelp_17_0x,
+// on after that player's own first camera focus).
 constexpr SwitchPlug kSwitchPlugs[] = {
-    {"DodongoCavern", "Obj_EyeSwitch_A_05", {65.7f, 121.8f, -23.0f}, "OnState", ""},  // Obj_DodongoCave_FireWall_A_01
-    {"DodongoCavern", "Obj_EyeSwitch_A_05", {75.4f, 118.3f, -15.0f}, "OnState", ""},  // Obj_DodongoCave_FireWall_A_01
+    {"DodongoCavern", "Obj_EyeSwitch_A_05", {65.7f, 121.8f, -23.0f}, "OnState", "DodongoCavern_NaviHelp_17_00"},  // Obj_DodongoCave_FireWall_A_01; asks FocusOnGimmick_Basic
+    {"DodongoCavern", "Obj_EyeSwitch_A_05", {75.4f, 118.3f, -15.0f}, "OnState", "DodongoCavern_NaviHelp_17_01"},  // Obj_DodongoCave_FireWall_A_01; asks FocusOnGimmick_Basic
     {"DodongoCavern", "Obj_StepSwitch_A_01", {-49.0f, 114.2f, -8.0f}, "OnState", ""},  // Obj_DodongoCave_SwitchShutter_A_01+Obj_SwitchShutter_A_06
     {"DodongoCavern", "Obj_StepSwitch_A_01", {17.2f, 112.3f, -23.0f}, "OnState", ""},  // GroundControlActor_SimpleMoveTo+Obj_DodongoCave_MoveFloor_A_01
-    {"ForestTemple", "Obj_StepSwitch_A_01", {-74.0f, 125.5f, -1.0f}, "OnState", ""},  // LocationalLight_Amplifier_ParamChangeActor+Obj_ForestTemple_SwitchLamp_A_01+PushAirWall_Cone
+    {"ForestTemple", "Obj_StepSwitch_A_01", {-74.0f, 125.5f, -1.0f}, "OnState", "ForestTemple_SageOfForest_ElevatorSwitch_01"},  // LocationalLight_Amplifier_ParamChangeActor+Obj_ForestTemple_SwitchLamp_A_01+PushAirWall_Cone; asks ForestTemple_Room11_ElevatorStart
     {"ForestTemple", "Obj_StepSwitch_A_01", {56.5f, 124.6f, 2.1f}, "OnState", ""},  // Obj_SwitchCandleStick_A_01
     {"GerudoTrainingGround", "Obj_EyeSwitch_A_03", {46.9f, 101.9f, -92.4f}, "OnState", ""},  // Obj_Gerudo_SwitchShutter_A_04+Obj_SwitchShutter_A_02
     {"GerudoTrainingGround", "Obj_StepSwitch_A_04", {52.2f, 97.5f, -86.0f}, "OnState", "GerudoTrainingGround_Dungeon_Room05_StepSwitch"},  // Obj_TBox_A_01; asks GerudoTrainingGround_05_DisappearFire
@@ -228,10 +230,10 @@ constexpr SwitchPlug kSwitchPlugs[] = {
     {"WaterTemple", "Obj_SwitchHit_A_06", {52.1f, 110.0f, -23.2f}, "OffState", ""},  // Obj_WaterTemple_Fountain_A_01
 };
 // g3-objects (room_objects.py --eye-switches coop_eye_switch.cpp --dungeon coop_dungeon.cpp): read by room objects,
-// but the plug also raises an event asker that no shared flag stops (no flag deletes it or gates its trigger), so a
+// but the plug also raises an event asker that no flag stops (no flag deletes it or gates its trigger), so a
 // hold could start our own copy of the event: never held. Each says how the result still reaches a follower: the
 // switch's own ON input reads a shared flag the event sets (its own AI turns it on: the native path).
-// read by room objects, but the plug also raises an event asker that no shared flag stops: not held
+// read by room objects, but the plug also raises an event asker that no flag stops: not held
 //   SpiritTemple Obj_HammerSwitch_A_01 {18.0, 129.1, -68.5} OnState: Obj_SpiritTemple_SwitchShutter_A_01+Obj_SwitchShutter_A_06; asks SpritTemple_Room08_OpenShutter; BootUp <- SpiritTemple_Room08_Unlocked_01, ForceControl <- SpiritTemple_Room08_Unlocked_01
 //   SpiritTemple Obj_SolarSwitch_A_02 {28.0, 121.5, -40.1} isLightMax: Obj_SpiritTemple_CapstanMirror_A_01; asks SpiritTemple_Level_Room_19_SwitchOn_01; isCleared <- SpiritTemple_Room19_LightSwitch_On_02
 //   SpiritTemple Obj_SolarSwitch_A_02 {35.4, 121.5, -37.2} isLightMax: Obj_SpiritTemple_CapstanMirror_A_01; asks SpiritTemple_Room19_SunSwitchShutterOpen; isCleared <- SpiritTemple_Room19_LightSwitch_On_03
