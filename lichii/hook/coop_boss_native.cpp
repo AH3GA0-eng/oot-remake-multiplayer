@@ -724,6 +724,7 @@ bool Table::StepOne(CoopPuppet::Guest& guest, std::uint64_t bsa, Entry& e, std::
             c.x[1] = static_cast<std::uint32_t>(brain->verb);
             c.x[2] = 1;  // force: the change is the owner's, already decided
             c.x[3] = 0;  // (the asking node: not read by the function)
+            c.copy_game = true;
             e.asking = Entry::Asking::due;  // out of due once the call is made
             pending_ = Pending::brain;
             pending_bsa_ = bsa;
@@ -757,6 +758,7 @@ bool Table::StepOne(CoopPuppet::Guest& guest, std::uint64_t bsa, Entry& e, std::
         c.x[0] = bsa;
         c.x[1] = block_;
         c.x[2] = action.changed ? 1 : 0;
+        c.copy_game = true;
         e.asking = Entry::Asking::due;  // out of due once the call is made
         pending_ = Pending::action;
         pending_bsa_ = bsa;
@@ -885,6 +887,7 @@ std::optional<CoopPuppet::Call> Table::Ask(CoopPuppet::Guest& guest, Entry& e, s
         c.x[1] = static_cast<std::uint32_t>(brain->verb);
         c.x[2] = brain->force ? 1 : 0;
         c.x[3] = 0;  // (the asking node: not read by the function)
+        c.copy_game = true;
         *made = true;
         return c;
     }
@@ -914,6 +917,7 @@ std::optional<CoopPuppet::Call> Table::Ask(CoopPuppet::Guest& guest, Entry& e, s
     c.x[0] = bsa;
     c.x[1] = block_;
     c.x[2] = action.changed ? 1 : 0;
+    c.copy_game = true;
     return c;
 }
 

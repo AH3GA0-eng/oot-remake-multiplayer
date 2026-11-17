@@ -831,6 +831,7 @@ TEST_CASE("native boss: a change whose call was not made is asked again, not los
     REQUIRE(c);
     CHECK(c->function == kMain + addr::kSetBrainVerb);
     CHECK(c->x[1] == 6);
+    CHECK(c->copy_game);  // (#189: what the copy's game makes inside it is judged as its own)
     CHECK_FALSE(t.Step(g, true, 0, kMain));  // made: out of the queue
     CHECK(t.Totals().brain_applied == 1);
     CHECK(t.Totals().brain_came == 2);  // (the first state, already so, and 6 once though asked twice)
@@ -844,12 +845,14 @@ TEST_CASE("native boss: a change whose call was not made is asked again, not los
     c = t.Step(g, false, 0, kMain);  // the request block first
     REQUIRE(c);
     CHECK(c->function == kMain + addr::kMalloc);
+    CHECK_FALSE(c->copy_game);  // (our own block)
     c = t.Step(g, true, kBlock, kMain);
     REQUIRE(c);
     CHECK(c->function == kMain + addr::kRequestActionVerb);
     c = t.Step(g, false, 0, kMain);
     REQUIRE(c);
     CHECK(c->function == kMain + addr::kRequestActionVerb);
+    CHECK(c->copy_game);
     CHECK_FALSE(t.Step(g, true, 0, kMain));
     CHECK(t.Totals().action_applied == 1);
     CHECK_FALSE(t.Step(g, false, 0, kMain));
@@ -872,6 +875,7 @@ TEST_CASE("native boss: a copy's own late change whose call was not made is aske
     c = t.Step(g, false, 0, kMain);  // not made
     REQUIRE(c);
     CHECK(c->x[1] == 9);
+    CHECK(c->copy_game);
     CHECK(t.Totals().copy_own_late == 0);
     CHECK_FALSE(t.Step(g, true, 0, kMain));
     CHECK(t.Totals().copy_own_late == 1);
