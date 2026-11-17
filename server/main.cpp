@@ -314,6 +314,7 @@ int main(int argc, char** argv) {
     config.test_delay = line->test_delay;
     config.relay_via = line->relay_via;
     config.relay_key = line->relay_key;
+    config.relay_room = line->relay_room;
     config.log = say;
     HostService host(config);
     std::string why;
