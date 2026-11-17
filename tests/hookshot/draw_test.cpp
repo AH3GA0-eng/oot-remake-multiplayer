@@ -164,13 +164,26 @@ TEST_CASE("hookshot draw: a chat line in Chinese wraps between characters") {
     std::string joined;
     for (const auto& t : texts) {
         CHECK(t.text.find("...") == std::string::npos);
-        // a row ends on a whole character, not in the middle of one
-        const unsigned char last = static_cast<unsigned char>(t.text.back());
-        const bool whole = last < 0x80 || (last & 0xC0) != 0x80;
+        // a row ends on a whole character, not in the middle of one: each lead
+        // byte's sequence ends inside the row
+        bool whole = true;
+        for (std::size_t i = 0; i < t.text.size();) {
+            const unsigned char b = static_cast<unsigned char>(t.text[i]);
+            const std::size_t n = b < 0x80 ? 1 : (b & 0xE0) == 0xC0 ? 2 : (b & 0xF0) == 0xE0 ? 3 : 4;
+            whole = whole && i + n <= t.text.size();
+            i += n;
+        }
         CHECK(whole);
+        // a row broken at a space does not draw that space
+        CHECK(t.text.front() != ' ');
+        CHECK(t.text.back() != ' ');
         joined += t.text;
     }
-    CHECK(joined == notice);   // nothing lost, nothing repeated
+    // nothing lost, nothing repeated (only the spaces the rows broke at are not drawn)
+    std::string bare = notice;
+    bare.erase(std::remove(bare.begin(), bare.end(), ' '), bare.end());
+    joined.erase(std::remove(joined.begin(), joined.end(), ' '), joined.end());
+    CHECK(joined == bare);
 }
 
 TEST_CASE("hookshot draw: name tags scaled from the scene target to the picture") {

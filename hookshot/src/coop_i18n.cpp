@@ -2577,6 +2577,12 @@ std::string Tr(const Lang* lang, std::string_view en) {
             return std::string(e->text).replace(std::string(e->text).find("{}"), 2, note);
         }
     }
+    // A notice of the chat (a pickup, a save the group follows, a refusal) first: its
+    // reader takes only a whole line of its own form, while a shape with an empty end
+    // ("Player {}") takes any line that starts so ("Player 3 got a Heart Container ...").
+    if (std::string notice; NoticeLine(lang, en, notice)) {
+        return notice;
+    }
     // A line built around a number, a name or a code: the table's shape for it
     // fills in what the tab put there. Its middle, when it is a word of the
     // table too ("invite code", "hosting"), is translated as well.
@@ -2639,9 +2645,6 @@ std::string Tr(const Lang* lang, std::string_view en) {
         // (the table knows the ends but not the whole line: the ends in that
         // language, the middle as it is)
         return Tr(lang, shape.before) + std::string(text) + Tr(lang, shape.after);
-    }
-    if (std::string notice; NoticeLine(lang, en, notice)) {
-        return notice;
     }
     if (best_split != nullptr) {
         const SplitShape& shape = *best_split;
