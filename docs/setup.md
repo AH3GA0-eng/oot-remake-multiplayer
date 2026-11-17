@@ -52,7 +52,6 @@ On Linux the same is `bash revert.sh` and `bash scripts/update.sh --version <tag
 | What | Why |
 |---|---|
 | `Start Squadala.bat` | The only file you start |
-| `Start OoT Co-op.bat` | Its old name (up to v0.11.2), kept so old shortcuts and older updaters still work: it starts `Start Squadala.bat` |
 | `README.txt` | The steps above, short |
 | `Update.bat` | Updates by hand (the start does it by itself) |
 | `Revert.bat` | Goes back to the version before the last update ([above](#going-back-to-an-older-version)); `previous\` holds the versions kept for it |
@@ -72,7 +71,7 @@ Nothing of the game is in the kit. The built game and the puppet pack are made f
 The start window says what is wrong and what to do. What it checks:
 
 - **"This kit is still inside its zip file."** You opened the zip and double-clicked the file inside it. Close it, right-click the zip, **Extract All...**, and start `Start Squadala.bat` in the folder it made.
-- **"OoT Co-op is already starting in another window."** You double-clicked twice. Wait for the first window (the first build takes a while).
+- **"Squadala is already starting in another window."** You double-clicked twice. Wait for the first window (the first build takes a while).
 - **"This folder is in OneDrive"**, **"...letters the game build cannot handle"**, **"...too long"**, **"...cannot be written to"**: the first build cannot work in this folder. It offers to copy the kit to `C:\OoT-Coop` and start it there; say yes (or move the folder yourself). Once the game is built, the kit no longer asks.
 - **"Your antivirus has most likely removed..."**: Windows Security (or another antivirus) took a file of the kit or of the built game. Open **Windows Security > Virus & threat protection > Protection history**, restore the file, and add the kit folder under **Exclusions**. Then start again: the game is not built again.
 - **"The game isn't set up yet... Set it up now?"**: the first start. Answer **Y** (or wait a minute) and it builds the game once; **n** builds nothing until the next start.
