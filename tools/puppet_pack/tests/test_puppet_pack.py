@@ -16,7 +16,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from puppet_pack import build, byml, dumpcheck, dungeon_rooms, map_captures, nup, rstb, sarc, zs  # noqa: E402
+from puppet_pack import build, byml, dumpcheck, dungeon_rooms, map_captures, nup, place_rooms, rstb, sarc, zs  # noqa: E402
 
 # The co-op HUD's tests run with these (CI runs this file).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -2220,6 +2220,33 @@ class DungeonRoomsTest(unittest.TestCase):
                 best = min(pts, key=lambda q: (q[1][0] - p[0]) ** 2 + (2 * (q[1][1] - p[1])) ** 2
                            + (q[1][2] - p[2]) ** 2)
                 self.assertEqual(best[0], room, f"{scene} {p}")
+
+
+class PlaceRoomsTest(unittest.TestCase):
+    """deku-ladder: a live place's own room is its room graph's vote, kept only when it is not a tie and our Link
+    near the place is guessed in that room (review round 5)."""
+
+    def test_a_tie_is_no_room(self):
+        self.assertIsNone(place_rooms.choose({3: 1, 2: 1}))  # Jabu's GreenTentacle asker
+        self.assertIsNone(place_rooms.choose({}))
+        self.assertEqual(place_rooms.choose({17: 3, 5: 1}), 17)
+
+    def test_a_room_link_is_never_in_near_the_place_is_not_kept(self):
+        # Rooms 5 and 6 around the place; room 7's only placement 45 m away (Ganon's BarrierRemove_Water).
+        points = [(5, 0.0, 0.0, 0.0), (5, 6.0, 0.0, 0.0), (6, 0.0, 0.0, 8.0), (7, 45.0, 0.0, 0.0)]
+        room, why = place_rooms.place_room({7: 1}, points, (0.0, 0.0, 0.0))
+        self.assertEqual(room, -1)
+        self.assertIn("voted", why)
+        room, _ = place_rooms.place_room({5: 2, 6: 1}, points, (0.0, 0.0, 0.0))
+        self.assertEqual(room, 5)
+        room, why = place_rooms.place_room({5: 1, 6: 1}, points, (0.0, 0.0, 0.0))
+        self.assertEqual((room, why[:5]), (-1, "a tie"))
+
+    def test_the_guess_is_coop_rooms(self):
+        points = [(1, 0.0, 0.0, 0.0), (2, 0.0, 4.0, 0.0)]
+        self.assertEqual(place_rooms.guess(points, (0.0, 1.5, 0.0)), 1)  # height counts twice
+        self.assertEqual(place_rooms.guess(points, (0.0, 2.5, 0.0)), 2)
+        self.assertIsNone(place_rooms.guess(points, (30.0, 0.0, 0.0)))  # beyond kFar
 
 
 if __name__ == "__main__":

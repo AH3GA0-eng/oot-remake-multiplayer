@@ -752,7 +752,9 @@ public:
             }
             const std::string sale_scene = reading && reading->scene ? *reading->scene : std::string();
             const bool sale_on = scrub_sale_on_;
-            hold.emplace(*quests, [link, scene, talk, near, sale_here, sale_scene, sale_on](coop::protocol::FlagKey key) {
+            // deku-ladder: the switch path's guard flags wait too (coop_eye_switch.h Guards), only while it is on.
+            CoopEyeSwitch::Switcher* const eye_guard = live_events_ && eye_switch_on_ ? &eye_switch_ : nullptr;
+            hold.emplace(*quests, [link, scene, talk, near, sale_here, sale_scene, sale_on, eye_guard](coop::protocol::FlagKey key) {
                 if (key.kind != coop::protocol::FlagKeyKind::named || key.index != 0) {
                     return false;
                 }
@@ -771,6 +773,9 @@ public:
                 }
                 if (CoopQuests::Find(key.hash) != nullptr) {
                     return CoopDungeon::IsDungeonScene(*scene);  // a quest step waits outside dungeons
+                }
+                if (eye_guard != nullptr && eye_guard->HoldsGuard(key.hash, *scene)) {
+                    return true;
                 }
                 const auto in = CoopDungeon::HeldIn(key.hash);
                 return in && (in->empty() ? CoopDungeon::IsDungeonScene(*scene) : *scene == *in);

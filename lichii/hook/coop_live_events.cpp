@@ -36,7 +36,8 @@ std::optional<bool> NearPlace(std::string_view event, std::string_view scene,
         }
         if (link_room) {
             // Near, but through a wall: that room is not loaded here.
-            const auto place_room = (*room_of)(std::array<float, 3>{p.x, p.y, p.z});
+            const auto place_room = p.room >= 0 ? std::optional<int>(p.room)
+                                                : (*room_of)(std::array<float, 3>{p.x, p.y, p.z});
             if (place_room && *place_room != *link_room) {
                 continue;
             }
@@ -49,18 +50,28 @@ std::optional<bool> NearPlace(std::string_view event, std::string_view scene,
 } // namespace
 
 bool SpansRooms(std::string_view event, std::string_view scene) {
-    const Place* first = nullptr;
+    // Two places in two rooms: by their rooms when both are known (round 5: a room-22 event's two doors are one
+    // room), else by distance (kOneRoomM).
+    std::vector<const Place*> mine;
     for (const Place& p : Places()) {
-        if (p.event != event || p.scene != scene) {
-            continue;
+        if (p.event == event && p.scene == scene) {
+            mine.push_back(&p);
         }
-        if (first == nullptr) {
-            first = &p;
-            continue;
-        }
-        const float dx = p.x - first->x, dy = p.y - first->y, dz = p.z - first->z;
-        if (dx * dx + dy * dy + dz * dz > kOneRoomM * kOneRoomM) {
-            return true;
+    }
+    for (std::size_t i = 0; i < mine.size(); ++i) {
+        for (std::size_t j = i + 1; j < mine.size(); ++j) {
+            const Place& a = *mine[i];
+            const Place& b = *mine[j];
+            if (a.room >= 0 && b.room >= 0) {
+                if (a.room != b.room) {
+                    return true;
+                }
+                continue;
+            }
+            const float dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+            if (dx * dx + dy * dy + dz * dz > kOneRoomM * kOneRoomM) {
+                return true;
+            }
         }
     }
     return false;
