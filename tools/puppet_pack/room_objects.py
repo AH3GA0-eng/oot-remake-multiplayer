@@ -22,7 +22,20 @@ logic type has that plug: a rider lift). Inputs that only reset or warp it
 drive it. A placement with no logic node is free.
 
 Then the names whose logic type has the bool output RideOnPlayer (the rider
-lifts CoopLiftRide drives).
+lifts CoopLiftRide drives). Riders are taken by their logic, whatever their
+name (fable-g3-objects: the name rule missed the Fire Temple's
+Obj_FireTemple_RiseFloor_A_02 and Ganon's Castle's
+Obj_InsideGanonCastle_ElevatedFloor_A_01, the same logic as the Forest
+Temple's elevators).
+
+    python -m puppet_pack.room_objects --romfs <romfs> --groups [--dungeon coop_dungeon.cpp]
+
+prints the placement groups with a saved flag (kGroupFlags): actors that share
+a Phive.Placement.GroupGUID with a GroundControlActor_ResidentMoveTo, which
+moves the whole group when the flag the scene's PlgGdTable gives that group
+changes (a water plane, a cage, a hanging floor, enemy air walls). That flag is
+the group's only input, so co-op shares the flag and never writes a member's
+place. With --dungeon each line says whether coop_dungeon.cpp's list has it.
 """
 import argparse
 import glob
@@ -60,6 +73,62 @@ def wired_inputs(node):
             if name not in NOT_DRIVING and (src >= 0 or src <= -100):
                 out.add(name)
     return out
+
+
+def is_rider(node, name):
+    """A room object whose logic has the rider plug (CoopLiftRide sets it for another player on it)."""
+    return name.startswith(("Obj_", "Land_")) and RIDER_PLUG in node["out"]["bool"]
+
+
+CONTROLLER = "GroundControlActor_ResidentMoveTo"
+
+
+def groups_of(actors, table):
+    """[(flag, type, controller place, member names)] of one scene's Banc.
+
+    `actors`: the placements; `table`: its PlgGdTable ([{PlgGuid, GameDataPath, GameDataType}]). A group is every
+    placement with one Phive.Placement.GroupGUID; only groups the table gives a flag are returned. The place is the
+    group's ResidentMoveTo controller's (else its first member's); the members are the other names, sorted.
+    """
+    flags = {_int(e["PlgGuid"]): (str(e["GameDataPath"]).split("?")[-1], str(e.get("GameDataType", "Bool")))
+             for e in table or []}
+    members = {}
+    for a in actors:
+        guid = ((a.get("Phive") or {}).get("Placement") or {}).get("GroupGUID")
+        if guid is not None and _int(guid) in flags:
+            members.setdefault(_int(guid), []).append(a)
+    out = []
+    for guid, group in members.items():
+        ctl = [a for a in group if str(a.get("Gyaml", "")) == CONTROLLER]
+        names = sorted(str(a.get("Gyaml", "")) for a in group if str(a.get("Gyaml", "")) != CONTROLLER)
+        flag, kind = flags[guid]
+        out.append((flag, kind, _place((ctl or group)[0]), tuple(names)))
+    return sorted(out)
+
+
+def placement_groups(romfs, dicts=None):
+    """[(scene, flag, type, place, member names)] for every scene: groups_of over its Banc files."""
+    if dicts is None:
+        dicts = zs.Dicts.from_romfs(romfs)
+    rows = []
+    for folder in sorted(glob.glob(os.path.join(romfs, "Banc", "*"))):
+        scene = os.path.basename(folder)
+        actors, table = [], []
+        for path in sorted(glob.glob(os.path.join(folder, "*.bcett.byml.zs"))):
+            with open(path, "rb") as f:
+                root = byml.loads(dicts.decompress(f.read()))
+            actors += root.get("Actors", []) or []
+            table += root.get("PlgGdTable", []) or []
+        rows += [(scene,) + g for g in groups_of(actors, table)]
+    return sorted(set(rows))
+
+
+def shared_names(path):
+    """The flag names of lichii/hook/coop_dungeon.cpp's kFlags (the list before the placement keys)."""
+    text = open(path, encoding="utf-8").read()
+    text = text[text.index("kFlags"):]
+    text = text[: text.index("});")]
+    return set(re.findall(r'\{0x[0-9a-f]{8}, (?:false|true), "([^"]+)"\}', text))
 
 
 def room_objects(romfs, dicts=None):
@@ -100,12 +169,16 @@ def room_objects(romfs, dicts=None):
                     continue
                 for node in g_[0]:
                     h = by_id.get((pre, node["imm"].get("InstanceName")))
-                    if h is None or h not in why:
+                    if h is None:
+                        continue
+                    rider = is_rider(node, str(by_hash[h].get("Gyaml", "")))
+                    if rider:
+                        riders.add(str(by_hash[h]["Gyaml"]))  # by its logic, whatever its name
+                    if h not in why:
                         continue
                     why[h] |= wired_inputs(node)
-                    if RIDER_PLUG in node["out"]["bool"]:
+                    if rider:
                         why[h].add(RIDER_PLUG)
-                        riders.add(str(by_hash[h]["Gyaml"]))
         # A part with no logic of its own placed where a driven one is (the Deku Tree's ElevatorLiftLim_A_0n on its
         # ElevatorLift_A_0n) moves with it: driven too.
         driven = [(by_hash[h], r) for h, r in why.items() if r]
@@ -260,7 +333,17 @@ def main(argv=None):
     ap.add_argument("--romfs", required=True)
     ap.add_argument("--eye-switches", help="coop_eye_switch.cpp: its lines are left to CoopEyeSwitch")
     ap.add_argument("--delivery", action="store_true", help="print how each driven placement's input reaches a follower")
+    ap.add_argument("--groups", action="store_true", help="print the placement groups with a saved flag (kGroupFlags)")
+    ap.add_argument("--dungeon", help="coop_dungeon.cpp: with --groups, say which group flags its list has")
     args = ap.parse_args(argv)
+    if args.groups:
+        shared = shared_names(args.dungeon) if args.dungeon else None
+        for scene, flag, kind, p, names in placement_groups(args.romfs):
+            what = "+".join(dict.fromkeys(names)) or "(nothing else)"  # each member name once
+            note = "" if shared is None else ("  // shared" if flag in shared else "  // NOT in coop_dungeon.cpp")
+            is_int = "true" if kind == "Int" else "false"
+            print(f'    {{"{scene}", "{flag}", {is_int}, {{{p[0]}f, {p[1]}f, {p[2]}f}}, "{what}"}},{note}')
+        return 0
     rows, riders = room_objects(args.romfs)
     eye = eye_switch_lines(args.eye_switches) if args.eye_switches else frozenset()
     switches, delivery = room_switches(args.romfs, eye)

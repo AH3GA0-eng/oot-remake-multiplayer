@@ -41,8 +41,25 @@ const Placement* Nearest(std::string_view scene, std::string_view name, const st
 // Driven by its own logic (its placement's `why` is not empty): never written from outside.
 bool Driven(std::string_view scene, std::string_view name, const std::array<float, 3>& at);
 
-// Its logic type has the bool output RideOnPlayer (the generated list): CoopLiftRide drives it.
+// Its logic type has the bool output RideOnPlayer (the generated list): CoopLiftRide drives it. Taken by the logic,
+// whatever the name: the Fire Temple's RiseFloor_A_02 and Ganon's Castle's ElevatedFloor_A_01 run the Forest
+// Temple elevator's logic and are no CoopPlatforms::IsDriver name.
 bool RiderName(std::string_view name);
+
+// A placement group with a saved flag (fable-g3-objects, issue 249): actors that share a Phive.Placement.GroupGUID
+// with a GroundControlActor_ResidentMoveTo. The controller has no input in the room graph; it moves the whole
+// group (a water plane, a cage, a hanging floor, enemy air walls) when the flag the scene's PlgGdTable gives the
+// group changes. So the flag is the group's only input: co-op shares the flag (coop_dungeon.cpp) and never writes
+// a member's place. A test holds every dungeon group's flag to the shared list or to the list of flags left out
+// on purpose (docs/dungeon.md, "Movers with a group flag").
+struct GroupFlag {
+    std::string_view scene;
+    std::string_view flag;
+    bool is_int;
+    std::array<float, 3> place;  // the group's controller
+    std::string_view moves;      // the other members' names
+};
+std::span<const GroupFlag> GroupFlags();
 
 // The switch output plugs a room object reads (through gates, timers, delays and module inputs) that no CoopEyeSwitch
 // line covers: the timed switches. SWITCH_STATE carries their presses (coop_switch_share.h). Generated with

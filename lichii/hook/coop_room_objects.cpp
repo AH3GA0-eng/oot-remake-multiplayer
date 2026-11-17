@@ -145,10 +145,64 @@ constexpr Placement kPlacements[] = {
 };
 
 constexpr std::string_view kRiderNames[] = {
+    "Obj_FireTemple_RiseFloor_A_02",
     "Obj_ForestTemple_Elevator_A_01",
+    "Obj_InsideGanonCastle_ElevatedFloor_A_01",
     "Obj_InsideJabu_Jabu_ElevatorLift_A_01",
     "Obj_InsideJabu_Jabu_ElevatorLift_A_02",
     "Obj_InsideJabu_Jabu_MoveFloor_A_01",
+};
+
+// Placement groups with a saved flag (room_objects.py --groups; fable-g3-objects): the scene's PlgGdTable gives the
+// group's flag, its GroundControlActor_ResidentMoveTo (at `place`) moves the members when the flag changes.
+// 46 groups.
+constexpr GroupFlag kGroupFlags[] = {
+    {"BottomOfTheWell", "BottomOfTheWell_Room_01_Blow_Ocarina", false, {-36.7f, 124.0f, -35.5f}, "Obj_WaterPlaneDynamic_A_01"},
+    {"BottomOfTheWell", "BottomOfTheWell_Room_01_Blow_Ocarina", false, {13.6f, 129.1f, -69.6f}, "Obj_Well_WaterPlane_A_03"},
+    {"BottomOfTheWell", "BottomOfTheWell_Room_01_Blow_Ocarina", false, {13.6f, 133.3f, 7.1f}, "Obj_Well_WaterPlane_A_04"},
+    {"BottomOfTheWell", "BottomOfTheWell_Room_01_Blow_Ocarina", false, {13.6f, 137.4f, -42.4f}, "Obj_Well_WaterPlane_A_02"},
+    {"DesertColossus", "DessertClossus_IsStormSongPlayed", false, {-83.4f, 102.3f, 76.1f}, "Obj_WaterPlane_Field_A_01"},
+    {"DreamWorld", "DreamWorld_BossAppear", false, {-0.6f, 52.0f, 58.2f}, "EventRequestActor+Obj_InsideTheDekuTree_SwitchShutter_A_01"},
+    {"FireTemple", "FireTemple_Room14_AirWallEnemyMove00", false, {-41.8f, 181.0f, -26.4f}, "FldObj_AirWall_DedicatedEnemy"},
+    {"FireTemple", "FireTemple_Room14_AirWallEnemyMove01", false, {-39.4f, 181.0f, -23.1f}, "FldObj_AirWall_DedicatedEnemy"},
+    {"FireTemple", "FireTemple_Room14_AirWallEnemyMove02", false, {-36.6f, 181.0f, -19.7f}, "FldObj_AirWall_DedicatedEnemy"},
+    {"FireTemple", "FireTemple_Room14_AirWallEnemyMove03", false, {-34.1f, 181.0f, -16.8f}, "FldObj_AirWall_DedicatedEnemy"},
+    {"FireTemple", "FireTemple_Room14_AirWallEnemyMove04", false, {-30.9f, 181.0f, -14.1f}, "FldObj_AirWall_DedicatedEnemy"},
+    {"FireTemple", "Npc_Goron_001_ShutterisOpen", false, {33.7f, 107.8f, -42.6f}, "Obj_FireTemple_PrisonCage_A_01"},
+    {"FireTemple", "Npc_Goron_002_ShutterisOpen", false, {74.9f, 145.0f, -1.6f}, "Obj_FireTemple_PrisonCage_A_01"},
+    {"FireTemple", "Npc_Goron_002_ShutterisOpen", false, {80.6f, 145.0f, -1.6f}, "Obj_FireTemple_PrisonCage_A_01"},
+    {"FireTemple", "Npc_Goron_003_ShutterisOpen", false, {39.3f, 107.8f, 46.5f}, "Obj_FireTemple_PrisonCage_A_01"},
+    {"FireTemple", "Npc_Goron_004_ShutterisOpen", false, {-20.5f, 149.5f, -29.3f}, "Obj_FireTemple_PrisonCage_A_01"},
+    {"FireTemple", "Npc_Goron_005_ShutterisOpen", false, {-35.4f, 107.5f, 24.8f}, "Obj_FireTemple_PrisonCage_A_01"},
+    {"FireTemple", "Npc_Goron_007_ShutterisOpen", false, {48.5f, 149.5f, -39.1f}, "Obj_FireTemple_PrisonCage_A_01"},
+    {"FireTemple", "Npc_Goron_008_ShutterisOpen", false, {47.0f, 153.0f, 28.6f}, "Obj_FireTemple_PrisonCage_A_01"},
+    {"FireTemple", "Npc_Goron_009_ShutterisOpen", false, {-47.2f, 148.3f, -0.7f}, "Obj_FireTemple_PrisonCage_A_01"},
+    {"FireTemple", "Npc_Goron_009_ShutterisOpen", false, {-40.6f, 148.3f, -1.1f}, "Obj_FireTemple_PrisonCage_A_01"},
+    {"FireTemple", "Npc_Goron_010_ShutterisOpen", false, {-9.9f, 101.5f, -13.2f}, "Obj_FireTemple_PrisonCage_A_01"},
+    {"FireTemple", "Npc_Goron_010_ShutterisOpen", false, {-9.9f, 103.2f, -5.3f}, "Obj_FireTemple_PrisonCage_A_01"},
+    {"ForestTemple", "ForestTemple_Room07_Cleard", false, {-24.3f, 110.1f, -32.6f}, "EventRequestActor+Obj_ForestTemple_WaterPlaneDynamic_A_01"},
+    {"ForestTemple", "ForestTemple_SageOfForest_TwistedCorridor_A_03", false, {-55.5f, 124.4f, -79.1f}, "EventRequestActor+Obj_TBox_A_03_NoBake"},
+    {"GerudoTrainingGround", "GerudoTrainingGround_Dungeon_Room04_StoneStatue", false, {-2.0f, 103.8f, -105.0f}, "Land_GerudoTrainingGround_Lava_A_01"},
+    {"InsideGanonCastle", "InsideGanonCastle_ExtendingPlatform_ON", false, {47.0f, 99.6f, 37.9f}, "EventRequestActor+Obj_HookShotTarget_A_09+Obj_InsideGanonCastle_ExtendingPlatform_A_01"},
+    {"InsideJabuJabuBelly", "Gimmick_Insidejabujabu_Updown_MoveWater", false, {42.4f, 84.2f, -67.9f}, "FldObj_AirWall_DedicatedEnemy+Obj_WaterPlaneDynamic_A_01"},
+    {"InsideJabuJabuBelly", "Gimmick_Insidejabujabu_down_MoveWater", false, {45.7f, 83.9f, -56.6f}, "FldObj_AirWall_DedicatedEnemy"},
+    {"InsideJabuJabuBelly", "Gimmick_Insidejabujabu_down_MoveWater", false, {46.1f, 83.9f, -51.7f}, "FldObj_AirWall_DedicatedEnemy"},
+    {"InsideTheDekuTree", "InsideTheDekuTree_BossArea_ShutIn", false, {-0.6f, 52.0f, 58.2f}, "EventRequestActor+Obj_InsideTheDekuTree_SwitchShutter_A_01"},
+    {"InsideTheDekuTree", "InsideTheDekuTree_RoomG_WaterLevel_timing", false, {-27.5f, 87.5f, 28.1f}, "Obj_WaterPlaneDynamic_A_01"},
+    {"KakarikoVillage", "KakarikoVillage_Npc_Hylia_009_Child_OcarinaPlayedFirsttime", false, {-23.6f, 101.2f, 46.4f}, "Obj_WaterPlaneCircle_A_01"},
+    {"KakarikoVillage", "Npc_Hylia_Soldier_003_GateClose", false, {-30.6f, 119.5f, -13.6f}, "Obj_Kakariko_SwitchShutter_A_01"},
+    {"KakarikoVillage", "Npc_Hylia_Soldier_003_GateOpen", false, {-47.5f, 118.9f, -12.3f}, "EventProxyRequestActor+Obj_Kakariko_SwitchShutter_A_01"},
+    {"SpiritTemple", "SpiritTemple_Room31_Lift_On", false, {-0.0f, 157.0f, -54.7f}, "EventRequestActor+Obj_HookShotTarget_A_14+Obj_SpiritTemple_HangingFloor_A_01"},
+    {"WaterTemple", "WaterTemple_Room00_WaterLevel", true, {-35.0f, 170.0f, -7.0f}, "Obj_WaterTemple_WaterPlane_A_01"},
+    {"WaterTemple", "WaterTemple_Room00_WaterLevel", true, {-12.0f, 170.0f, 46.9f}, "Obj_WaterTemple_WaterPlane_A_01"},
+    {"WaterTemple", "WaterTemple_Room00_WaterLevel", true, {25.7f, 170.0f, 18.8f}, "Obj_WaterTemple_WaterPlane_A_01"},
+    {"WaterTemple", "WaterTemple_Room00_WaterLevel", true, {55.5f, 170.0f, 22.1f}, "Obj_WaterTemple_WaterPlane_A_01"},
+    {"WaterTemple", "WaterTemple_Room03_00", false, {-39.2f, 114.6f, 8.6f}, "EventRequestActor+Obj_HookShotTarget_A_01+Obj_WaterTemple_HookShotDecoration_A_04+Obj_WaterTemple_HookShotTargetStand_A_03+Obj_WaterTemple_HookShotTarget_A_03"},
+    {"WaterTemple", "WaterTemple_Room06_00", false, {-80.0f, 119.5f, 7.5f}, "Obj_HookShotTarget_A_13+Obj_WaterTemple_HookShotDecoration_A_04+Obj_WaterTemple_HookShotTarget_B_01"},
+    {"WaterTemple", "WaterTemple_Room06_00", false, {-50.5f, 119.5f, 7.5f}, "Obj_WaterTemple_WaterPlane_A_01"},
+    {"WaterTemple", "WaterTemple_Room14_00", false, {-13.2f, 111.3f, -114.6f}, "FldObj_AirWall_DedicatedEnemy"},
+    {"WaterTemple", "WaterTemple_Room14_00", false, {-4.0f, 111.3f, -114.6f}, "FldObj_AirWall_DedicatedEnemy+Obj_WaterTemple_WaterPlane_A_01"},
+    {"ZoraRiver", "MiniGame_FrogTenors_StormSong", false, {12.7f, 109.6f, -44.1f}, "Obj_WaterPlaneDynamic_A_01"},
 };
 
 // Shared switch plugs (the third table), each with the room objects that read it.
@@ -170,6 +224,8 @@ constexpr SwitchPlug kSwitchPlugs[] = {
 }  // namespace
 
 std::span<const SwitchPlug> SwitchPlugs() { return kSwitchPlugs; }
+
+std::span<const GroupFlag> GroupFlags() { return kGroupFlags; }
 
 std::vector<const SwitchPlug*> SwitchPlugsOf(std::string_view scene, std::string_view name,
                                              const std::array<float, 3>& at) {

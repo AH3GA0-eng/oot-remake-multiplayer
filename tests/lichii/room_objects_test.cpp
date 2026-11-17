@@ -1,9 +1,12 @@
 // Tests for which room objects their own logic drives (lichii/hook/coop_room_objects.cpp, room-objects).
 #include <doctest/doctest.h>
 
+#include <cstddef>
 #include <set>
 #include <string>
+#include <string_view>
 
+#include "coop_dungeon.h"
 #include "coop_room_objects.h"
 
 using namespace CoopRoomObjects;
@@ -55,6 +58,41 @@ TEST_CASE("room objects: the rider names are the logic types with RideOnPlayer")
     CHECK(RiderName("Obj_InsideJabu_Jabu_ElevatorLift_A_01"));
     CHECK(RiderName("Obj_InsideJabu_Jabu_ElevatorLift_A_02"));
     CHECK(RiderName("Obj_InsideJabu_Jabu_MoveFloor_A_01"));
+    // fable-g3-objects: by the logic, whatever the name (no platform name part in these two).
+    CHECK(RiderName("Obj_FireTemple_RiseFloor_A_02"));
+    CHECK(RiderName("Obj_InsideGanonCastle_ElevatedFloor_A_01"));
+    CHECK_FALSE(RiderName("Obj_FireTemple_RiseFloor_A_01"));  // GimmickOn, no rider plug
     CHECK_FALSE(RiderName("Obj_InsideTheDekuTree_ElevatorLift_A_01"));  // OnPlayer, no RideOnPlayer
     CHECK_FALSE(RiderName("GroundControlActor_WaveLoop"));
+}
+
+TEST_CASE("room objects: every dungeon mover group's flag is shared, or left out on purpose (issue 249)") {
+    // The flag is the group's only input (its ResidentMoveTo has none in the room graph), so a group whose flag does
+    // not reach the other games never moves there: Jabu-Jabu's room 14 water, before this.
+    std::set<std::string> shared;
+    for (const auto& f : CoopDungeon::Flags()) shared.insert(f.name);
+    std::set<std::string> own;
+    for (const std::string_view n : CoopDungeon::NotShared()) own.insert(std::string(n));
+    std::size_t dungeon_groups = 0;
+    for (const CoopRoomObjects::GroupFlag& g : CoopRoomObjects::GroupFlags()) {
+        if (!CoopDungeon::IsDungeonScene(g.scene)) continue;  // overworld groups: docs/dungeon.md
+        ++dungeon_groups;
+        CAPTURE(std::string(g.scene));
+        CAPTURE(std::string(g.flag));
+        const std::string flag(g.flag);
+        CHECK((shared.contains(flag) || own.contains(flag)));
+        CHECK(shared.contains(flag) != own.contains(flag));
+    }
+    CHECK(dungeon_groups >= 30);
+    CHECK(shared.contains("Gimmick_Insidejabujabu_Updown_MoveWater"));
+    CHECK(shared.contains("Gimmick_Insidejabujabu_down_MoveWater"));
+    CHECK(own.contains("InsideTheDekuTree_BossArea_ShutIn"));  // where one player is in the boss fight (issue 148)
+    // The Water Temple's level is the one Int.
+    std::size_t ints = 0;
+    for (const CoopRoomObjects::GroupFlag& g : CoopRoomObjects::GroupFlags()) {
+        if (!g.is_int) continue;
+        ++ints;
+        CHECK(g.flag == "WaterTemple_Room00_WaterLevel");
+    }
+    CHECK(ints == 4);
 }

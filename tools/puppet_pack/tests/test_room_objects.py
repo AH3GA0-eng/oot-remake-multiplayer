@@ -46,6 +46,48 @@ class RoomObjectsTest(unittest.TestCase):
         self.assertIn("contact", ro.leaf_kind(("node", "HoldActorObserverBySensorHitInfo", {}), frozenset()))
         self.assertIn("blackboard", ro.leaf_kind(("node", "HoldBlackboardGetBool", {}), frozenset()))
 
+    def test_riders_by_logic_not_by_name(self):
+        n = node()
+        n["out"]["bool"] = ["Dead", "Moving", "RideOnPlayer"]
+        self.assertFalse(ro.is_driver("Obj_FireTemple_RiseFloor_A_02"))  # no platform name part
+        self.assertTrue(ro.is_rider(n, "Obj_FireTemple_RiseFloor_A_02"))
+        self.assertTrue(ro.is_rider(n, "Obj_ForestTemple_Elevator_A_01"))
+        self.assertFalse(ro.is_rider(n, "Npc_Something"))
+        self.assertFalse(ro.is_rider(node(), "Obj_InsideTheDekuTree_ElevatorLift_A_01"))  # OnPlayer only
+
+    def test_placement_groups(self):
+        def actor(name, x, guid=None):
+            a = {"Gyaml": name, "Hash": 1, "Translate": [x, 2.0, 3.0]}
+            if guid is not None:
+                a["Phive"] = {"Placement": {"GroupGUID": guid, "ID": 9}}
+            return a
+        actors = [actor("GroundControlActor_ResidentMoveTo", 1.0, 70), actor("Obj_WaterPlaneDynamic_A_01", 5.0, 70),
+                  actor("FldObj_AirWall_DedicatedEnemy", 6.0, 70), actor("FldObj_AirWall_DedicatedEnemy", 7.0, 70),
+                  actor("GroundControlActor_WaveLoop", 8.0, 71), actor("Obj_Deku_MoveFloor_A_01", 9.0, 71),
+                  actor("Obj_Pot_A_01", 10.0)]
+        table = [{"PlgGuid": 70, "GameDataPath": "Work/GameData/Entity/Flag_A.gmdentity.json?Flag_A",
+                  "GameDataType": "Bool"}]
+        got = ro.groups_of(actors, table)
+        self.assertEqual(len(got), 1)  # the wave's group has no flag: its own driver moves it
+        flag, kind, place, names = got[0]
+        self.assertEqual((flag, kind), ("Flag_A", "Bool"))
+        self.assertEqual(place, (1.0, 2.0, 3.0))  # the controller's
+        self.assertEqual(names, ("FldObj_AirWall_DedicatedEnemy", "FldObj_AirWall_DedicatedEnemy",
+                                 "Obj_WaterPlaneDynamic_A_01"))
+        self.assertEqual(ro.groups_of(actors, []), [])
+
+    def test_shared_names_reads_the_flag_list_only(self):
+        import tempfile
+        text = ('constexpr std::array kFlags = std::to_array<Flag>({\n'
+                '    {0x00000001, false, "A_Flag"},\n    {0x00000002, true, "An_Int"},\n});\n'
+                'constexpr std::array kKeys = std::to_array<Key>({\n    {0x00000003, false, "Not_A_Flag"},\n});\n')
+        with tempfile.NamedTemporaryFile("w", suffix=".cpp", delete=False, encoding="utf-8") as f:
+            f.write(text)
+        try:
+            self.assertEqual(ro.shared_names(f.name), {"A_Flag", "An_Int"})
+        finally:
+            os.unlink(f.name)
+
     def test_eye_switch_lines_parse(self):
         import tempfile
         line = ('    {"Ev", "DodongoCavern", "Obj_StepSwitch_A_01", {17.2f, 112.3f, -23.0f}, "FirstOn", '
