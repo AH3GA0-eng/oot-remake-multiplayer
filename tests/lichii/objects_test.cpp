@@ -512,6 +512,19 @@ TEST_CASE("objects: animals and townspeople are shared too (hits on a cucco)") {
     CHECK_FALSE(CoopObjects::IsShared("Npc_Invisible_Hylia_Dampe_001"));
 }
 
+TEST_CASE("objects: the enemies' brain path takes plain enemies only (fable-g4-enemies)") {
+    CHECK(CoopObjects::OnBrainPath("Enemy_Dekubaba"));
+    CHECK(CoopObjects::OnBrainPath("Enemy_Skulltula"));
+    CHECK(CoopObjects::OnBrainPath("Enemy_Scrub_Deku"));
+    // Bosses have their own entry; own puzzles, the picture book and everything that is no Enemy_ stay out.
+    CHECK_FALSE(CoopObjects::OnBrainPath("Enemy_DungeonBoss_Gohma"));
+    CHECK_FALSE(CoopObjects::OnBrainPath("Enemy_MiddleBoss_GerudoThief"));
+    CHECK_FALSE(CoopObjects::OnBrainPath("Enemy_Scrub_Deku_Brothers"));
+    CHECK_FALSE(CoopObjects::OnBrainPath("Enemy_Dekubaba_Dictionary"));
+    CHECK_FALSE(CoopObjects::OnBrainPath("Enemy_MoblinClub_ShockWave"));  // an enemy's shot
+    CHECK_FALSE(CoopObjects::OnBrainPath("Npc_Zora_Ruto_Child_001"));
+}
+
 TEST_CASE("objects: order-puzzle scrubs are each game's own (issue 149)") {
     CHECK_FALSE(CoopObjects::IsShared("Enemy_Scrub_Deku_Brothers"));
     CHECK(CoopObjects::IsOwnPuzzle("Enemy_Scrub_Deku_Brothers"));
