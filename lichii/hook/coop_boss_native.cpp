@@ -557,6 +557,7 @@ void Table::Resync(Entry& e, const BossBsa& state) {
     // (the game holds no "action now" we could compare with).
     e.due.clear();
     e.due.push_back({BossChange{state.seq, BossBrain{state.brain_verb, true}}, true});
+    ++counts_.brain_came;
     if (actions_on_ && state.action) {
         e.due.push_back({BossChange{state.seq, *state.action}, true});
     }
@@ -638,6 +639,9 @@ void Table::Receive(std::uint64_t actor, const BossBsa& state) {
             if (!actions_on_ && std::holds_alternative<BossAction>(it->what)) {
                 continue;
             }
+            if (std::holds_alternative<BossBrain>(it->what)) {
+                ++counts_.brain_came;
+            }
             e->due.push_back({*it, false});
         }
         e->queued_seq = state.seq;
@@ -701,6 +705,7 @@ bool Table::StepOne(CoopPuppet::Guest& guest, std::uint64_t bsa, Entry& e, std::
         const Entry::Due& d = e.due.front();
         if (const auto* brain = std::get_if<BossBrain>(&d.change.what)) {
             if (d.resync && read && now == brain->verb) {
+                ++counts_.brain_already;
                 e.due.pop_front();  // already so
                 continue;
             }

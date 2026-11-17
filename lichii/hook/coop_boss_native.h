@@ -135,6 +135,8 @@ struct Counts {
     std::uint64_t plug_actions = 0;   // of those, named through a plug (places not sent)
     std::uint64_t copy_skipped = 0;   // a copy's own changes not run
     std::uint64_t brain_applied = 0;  // owner's brain verbs put into a copy
+    std::uint64_t brain_came = 0;     // owner's brain verbs a copy was given (a change queued, or a resync's state)
+    std::uint64_t brain_already = 0;  // of those, a resync's brain verb the copy was in already (no call made)
     std::uint64_t action_applied = 0; // owner's actions put into a copy
     std::uint64_t action_waiting = 0; // owner's actions waiting for the copy's own node
     std::uint64_t resyncs = 0;        // a copy started again from the owner's state now

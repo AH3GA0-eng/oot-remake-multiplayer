@@ -768,6 +768,31 @@ TEST_CASE("native boss: a plain enemy copy skips its own brain, takes the owner'
     CHECK(b.TakeOwnWants().empty());
 }
 
+TEST_CASE("native boss: the owner's brain verbs a copy is given are counted, also the ones it was in already") {
+    // g4-enemies probe: Deku Tree copies showed 0 brain verbs put in; a resync whose verb the copy is in makes
+    // no call, so the count alone could not tell 'never came' from 'came, already so'.
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Baba(Role::copy)});
+    t.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});  // first state: a resync to brain 4
+    FakeGuest g;
+    const std::int32_t at = 4;
+    g.Write(kBsa + addr::kBsaBrainVerb, &at, 4);
+    CHECK_FALSE(t.Step(g, false, 0, kMain));  // already in 4: no call
+    CHECK(t.Totals().brain_came == 1);
+    CHECK(t.Totals().brain_already == 1);
+    CHECK(t.Totals().brain_applied == 0);
+    // The owner's next change, joined to the last: queued and put in.
+    t.Receive(kActor, BossBsa{4, 6, std::nullopt, {BossChange{4, BossBrain{6, false}}}});
+    const auto c = t.Step(g, false, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->x[1] == 6);
+    CHECK_FALSE(t.Step(g, true, 0, kMain));
+    CHECK(t.Totals().brain_came == 2);
+    CHECK(t.Totals().brain_already == 1);
+    CHECK(t.Totals().brain_applied == 1);
+}
+
 TEST_CASE("native boss: a plain enemy copy's own wake runs its own brain for a while, a boss's does not") {
     Table t;
     t.SetOn(true, true);
