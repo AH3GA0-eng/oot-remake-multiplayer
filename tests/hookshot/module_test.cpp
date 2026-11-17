@@ -706,7 +706,14 @@ TEST_CASE("hookshot: Skip title screen chooses the game's own way, presses nothi
     CHECK(has("if (hos_coop_title_hold_now()) {"));
     CHECK(has("if (!rx_option(HOS_OPT_SKIP_TITLE, 0)) { stop(\"the row was turned off while waiting\");"));
     CHECK(has("if (hos_oot_player_seen()) { stop(\"loaded, the player is running\");"));
-    CHECK(has("if (choices >= kMaxChoices) stop("));
+    // Only the known screens, in order (hos_skip_title.h, the same file as hookshot/src's: skip_title_test.cpp); after
+    // three choices nothing more is chosen.
+    CHECK(NewFile(patch, "host/hos_skip_title.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_skip_title.h"));
+    CHECK(has("#include \"hos_skip_title.h\""));
+    CHECK(has("if (choices >= HOS_SKIP_STEPS) return;"));
+    CHECK(has("const int next = hos_skip_title_next(choices, vtable, name, &why); if (next == HOS_SKIP_WAIT) return; "
+              "if (next == HOS_SKIP_STOP) {"));
+    CHECK(has("const uint64_t vtable = peek64(screen); char name[64]; button_name(button, name, sizeof name);"));
     // (Armed only by the row, off by default: Longshot's own start test, unchanged, outside the patch's hunks.)
     // Both platforms' screen hook hand each menu screen to it, before the screen's own update.
     const std::string menu = PatchedCode(patch, "host/oot_menu.c");
