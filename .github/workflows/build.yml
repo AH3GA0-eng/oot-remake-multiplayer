@@ -201,6 +201,8 @@ jobs:
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/tests/paste_test.ps1
       - name: Kit log masking tests
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/tests/log_mask_test.ps1
+      - name: Kit dependency licence tests
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/tests/kit_deps_test.ps1
       - name: CI runner hook tests
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/ci-runner/job_started_test.ps1
       - name: CI runner script checks
@@ -354,6 +356,9 @@ jobs:
       - name: Linux Longshot kit tests
         if: matrix.job == 'gcc'
         run: bash tools/release/tests/linux_longshot_kit_test.sh
+      - name: Kit dependency licence tests (Linux)
+        if: matrix.job == 'gcc'
+        run: bash tools/release/tests/kit_deps_test.sh
       - name: coop_test, 2 clients for 20 seconds
         if: env.COOP_SOAK == '1'
         run: |
