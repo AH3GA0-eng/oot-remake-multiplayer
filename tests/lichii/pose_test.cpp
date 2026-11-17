@@ -549,7 +549,7 @@ TEST_CASE("pose: 16 players: a running Link costs about 13 KB/s, not 160 (bone b
     // Before: every moving bone, 30 times a second.
     std::size_t before = 0;
     for (int f = 0; f < 60; f += 2) before += Bytes(Running(f));  // 30 sends in 1 s of 60 frames
-    // Now: 15 sends a second, at most kMaxSendBones each.
+    // Now: 15 sends a second, at most kFloorSendBytes each (48 bones of 18 bytes).
     CoopPose::BonePicker picker;
     std::size_t now = 0;
     for (int f = 0; f < 60; f += 4) {
@@ -571,14 +571,15 @@ TEST_CASE("pose: the receiver keeps the bones a pose leaves out, and catches up 
     std::uint64_t ms = 5000;
     auto send = [&](const std::vector<proto16::PoseBone>& full) {
         const auto sent = picker.Pick(0x1234, full, ms);
+        CHECK(Bytes(sent) <= CoopPose::kFloorSendBytes);  // the default budget: the floor's bytes
         CoopPose::Pose got = track.Fill(Unpacked(sent));
         track.Push(std::move(got), ms);
         ms += 1000 / CoopPose::kSendHz;
     };
-    // The first pose: only kMaxSendBones of 300, the rest follow in later ones.
+    // The first pose: only what the budget holds of 300, the rest follow in later ones.
     send(Running(0));
     REQUIRE(track.At(ms));
-    CHECK(track.At(ms)->bones.size() == CoopPose::kMaxSendBones);
+    CHECK(track.At(ms)->bones.size() < 300);
     for (int f = 4; f < 120; f += 4) send(Running(f));
     // Moving: every bone has been sent; the fast ones are near.
     auto shown = *track.At(ms + 1000);
@@ -596,7 +597,7 @@ TEST_CASE("pose: the receiver keeps the bones a pose leaves out, and catches up 
         CHECK(*shown.bones[i].rotation == *want.bones[i].rotation);
     }
     // And then, still: only the refreshes go, within the budget.
-    CHECK(picker.Pick(0x1234, still, ms).size() <= CoopPose::kMaxSendBones);
+    CHECK(Bytes(picker.Pick(0x1234, still, ms)) <= CoopPose::kFloorSendBytes);
 }
 
 TEST_CASE("pose: Fill puts the newest pose's bones under a partial one, in bone order") {
