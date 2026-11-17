@@ -86,7 +86,9 @@ bool Latches(const Switch& s);
 // Two of them (Jabu-Jabu room 14's water switch, upper and lower: the event toggles the water through flags that
 // are each game's own and re-arms the switch) have an ON input the room graph leaves unwired (FirstOn): we set that
 // input (the set-bool's own store, CoopLogicSet::SetInput), the switch's own AI turns it on and keeps OnState, and
-// our asker asks the event. The third (Gerudo Training Ground room 6's fire: its burn sign ANDs the asker's
+// our asker asks the event. Only where the input's value address is provably that plug's own on this instance
+// (CoopLogicSet::InputNotOwn; else the old way), and the old byte is stored back when the try ends (the event
+// started, it gave up, our game has it played: the switch is re-armed by its own event and must not stay on). The third (Gerudo Training Ground room 6's fire: its burn sign ANDs the asker's
 // EventBool) has no settable input (a step switch: BootUp only) and stays on the old way (coop_eye_switch.cpp).
 struct Input {
     std::string_view event;
@@ -115,6 +117,9 @@ struct Guard {
 };
 std::span<const Guard> Guards();
 
+// Other switches of the same kind within this of ours: their input's value address must differ from ours (InputNotOwn;
+// Jabu-Jabu room 14's upper and lower switches are 8 m apart).
+inline constexpr float kSameKindM = 60.0f;
 // Our switch is the one of its name within this of its placement (the placement is exact; other switches of the
 // room are metres away: Dodongo's Cavern's fire-wall eyes, 9 and 19 m from its event's eye, start other graphs).
 inline constexpr float kEyeAtM = 1.5f;
@@ -162,7 +167,18 @@ private:
         std::uint64_t until_ms = 0;  // 0: not begun
         bool set = false;            // FirstOn written at least once
         bool told_waiting = false;
+        struct Restore {  // an input line's store, to be taken back when the try ends
+            std::uint64_t actor = 0;
+            std::uint32_t key = 0;
+            std::uint64_t value_word = 0;
+            std::uint8_t old = 0;
+            std::string_view name;
+            std::array<float, 3> at{};
+        };
+        std::optional<Restore> restore;
     };
+    // Calc thread: stores each ended try's old input byte back, if its switch and plug are still the same.
+    void RestoreInputs(CoopPuppet::Guest& guest, std::uint64_t main);
     std::optional<CoopPuppet::Call> Frame(CoopPuppet::Guest& guest, std::uint64_t main, std::uint64_t now_ms);
     void End(const std::string& why, bool fallback, bool ran = false);
     static bool EventRunning(CoopPuppet::Guest& guest, std::uint64_t main);
@@ -179,6 +195,7 @@ private:
     std::string scene_;                    // the scene of this visit (Expire)
     std::vector<std::string> ended_;  // events of this visit whose guards come as before (not run here, or played)
     std::vector<std::string> ran_;    // events of this visit our copy ran: guards held until our game has them played
+    std::vector<Try::Restore> restores_;  // ended input stores, taken back on the next Step (calc thread)
 };
 
 }  // namespace CoopEyeSwitch

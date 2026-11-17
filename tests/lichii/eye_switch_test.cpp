@@ -401,7 +401,43 @@ TEST_CASE("eye switch: an input line stores 1 into the switch's unwired input (n
         const auto notes = s.TakeNotes();
         REQUIRE(notes.size() >= 2);
         CHECK(notes.front().find("FirstOn set (its unwired input") != std::string::npos);
+        CHECK(notes[1].find("old byte 0") != std::string::npos);  // the address and the old byte are logged
         CHECK(notes.back().find("event started") != std::string::npos);
+        // review Round 8: the old byte goes back once the try ended (the switch is re-armed by its own event).
+        CHECK(FirstOn(g, kEye) == 1);
+        CHECK_FALSE(s.Step(g, false, 0, kMain, 148));
+        CHECK(FirstOn(g, kEye) == 0);
+        CHECK(s.TakeNotes().back().find("taken back to 0") != std::string::npos);
+    }
+    SUBCASE("gave up (no event in time): the old way, and the old byte back") {
+        FakeGuest g;
+        World w;
+        Eye(g, kEye, 0, first_on, CoopLogicSet::kInputType, false);
+        CoopEyeSwitch::Switcher s(w.Finder());
+        REQUIRE(s.Want(upper, jabu));
+        s.Step(g, false, 0, kMain, 100);
+        s.Step(g, true, kBlock, kMain, 100);
+        CHECK(FirstOn(g, kEye) == 1);
+        CHECK_FALSE(s.Step(g, false, 0, kMain, 101 + CoopEyeSwitch::kTryMs));
+        CHECK(s.TakeFallbacks().size() == 1);
+        CHECK_FALSE(s.Step(g, false, 0, kMain, 120 + CoopEyeSwitch::kTryMs));
+        CHECK(FirstOn(g, kEye) == 0);
+    }
+    SUBCASE("we left the scene before the next Step: nothing written into the gone switch") {
+        FakeGuest g;
+        World w;
+        Eye(g, kEye, 0, first_on, CoopLogicSet::kInputType, false);
+        CoopEyeSwitch::Switcher s(w.Finder());
+        s.Expire(jabu);
+        REQUIRE(s.Want(upper, jabu));
+        s.Step(g, false, 0, kMain, 100);
+        s.Step(g, true, kBlock, kMain, 100);
+        EventRunning(g, true);
+        s.Step(g, false, 0, kMain, 116);  // ended: the take-back waits for the next Step
+        s.Expire("KokiriForest");
+        s.Step(g, false, 0, kMain, 132);
+        CHECK(FirstOn(g, kEye) == 1);  // not written (the real one is gone with the scene)
+        CHECK(s.TakeNotes().back().find("not taken back") != std::string::npos);
     }
     SUBCASE("an input whose changes the game marks: not set, the old way") {
         FakeGuest g;
@@ -414,6 +450,52 @@ TEST_CASE("eye switch: an input line stores 1 into the switch's unwired input (n
         CHECK(FirstOn(g, kEye) == 0);
         CHECK(s.TakeFallbacks().size() == 1);
         CHECK(s.TakeNotes().back().find("marks its changes") != std::string::npos);
+    }
+    // review Round 8: the value address must be this plug's own on this instance, or nothing is written.
+    SUBCASE("another plug of the switch shares the value address (a shared default): not set") {
+        FakeGuest g;
+        World w;
+        Eye(g, kEye, 0, first_on, CoopLogicSet::kInputType, false);
+        const std::uint64_t base = kEye + 0x1000;
+        g.Put<std::uint64_t>(base + 0x4000 + p::kLeft, base + 0x6000);  // a second plug, the same value address
+        g.Put<std::uint32_t>(base + 0x6000 + p::kKey, 0x1234u);
+        g.Put<std::uint8_t>(base + 0x6000 + p::kType, CoopLogicSet::kInputType);
+        g.Put<std::uint64_t>(base + 0x6000 + p::kValue, base + 0x5000);
+        CoopEyeSwitch::Switcher s(w.Finder());
+        REQUIRE(s.Want(upper, jabu));
+        s.Step(g, false, 0, kMain, 100);
+        CHECK_FALSE(s.Step(g, true, kBlock, kMain, 100));
+        CHECK(FirstOn(g, kEye) == 0);
+        CHECK(s.TakeFallbacks().size() == 1);
+        CHECK(s.TakeNotes().back().find("another plug of the switch shares it") != std::string::npos);
+    }
+    SUBCASE("the other switch of its kind has the same value address: not set") {
+        FakeGuest g;
+        World w;
+        w.eyes = {kEye, kEye2};
+        Eye(g, kEye, 0, first_on, CoopLogicSet::kInputType, false);
+        Eye(g, kEye2, 0, first_on, CoopLogicSet::kInputType, false);
+        g.Put<std::uint64_t>(kEye2 + 0x1000 + 0x4000 + p::kValue, kEye + 0x1000 + 0x5000);
+        CoopEyeSwitch::Switcher s(w.Finder());
+        REQUIRE(s.Want(upper, jabu));
+        s.Step(g, false, 0, kMain, 100);
+        CHECK_FALSE(s.Step(g, true, kBlock, kMain, 100));
+        CHECK(FirstOn(g, kEye) == 0);
+        CHECK(s.TakeNotes().back().find("another switch of its kind shares it") != std::string::npos);
+    }
+    SUBCASE("a value in the game's static image, or far from its plug: not set") {
+        for (const std::uint64_t at : {kMain + 0x4e85000, std::uint64_t{0x900000}}) {
+            FakeGuest g;
+            World w;
+            Eye(g, kEye, 0, first_on, CoopLogicSet::kInputType, false);
+            g.Put<std::uint64_t>(kEye + 0x1000 + 0x4000 + p::kValue, at);
+            CoopEyeSwitch::Switcher s(w.Finder());
+            REQUIRE(s.Want(upper, jabu));
+            s.Step(g, false, 0, kMain, 100);
+            CHECK_FALSE(s.Step(g, true, kBlock, kMain, 100));
+            CHECK(g.Get<std::uint8_t>(at) == 0);
+            CHECK(s.TakeFallbacks().size() == 1);
+        }
     }
     SUBCASE("only an output of that name: never written as the input") {
         FakeGuest g;

@@ -254,6 +254,8 @@ void Switcher::Expire(const std::string& scene, const std::function<bool(const s
         scene_ = scene;
         ended_.clear();
         ran_.clear();
+        if (!restores_.empty()) notes_.push_back("eye switch: input stores not taken back (we left the scene: its switches are gone)");
+        restores_.clear();
     }
     for (auto it = ran_.begin(); it != ran_.end();) {  // our copy ran: its guards come once our game has it played
         if (played && played(*it)) {
@@ -270,6 +272,7 @@ void Switcher::Expire(const std::string& scene, const std::function<bool(const s
             it = wanted_.erase(it);
         } else if (!busy && played && played(it->event)) {
             notes_.push_back("eye switch: " + it->event + " dropped (our game has it played)");
+            if (it->restore) restores_.push_back(*it->restore);
             if (std::find(ended_.begin(), ended_.end(), it->event) == ended_.end()) ended_.push_back(it->event);
             it = wanted_.erase(it);
         } else {
@@ -331,12 +334,36 @@ void Switcher::End(const std::string& why, bool fallback, bool ran) {
     auto& list = ran ? ran_ : ended_;
     if (std::find(list.begin(), list.end(), t.event) == list.end()) list.push_back(t.event);
     if (fallback) fallbacks_.emplace_back(t.event, t.scene);
+    if (t.restore) restores_.push_back(*t.restore);  // taken back on the next Step
     wanted_.pop_front();
+}
+
+void Switcher::RestoreInputs(CoopPuppet::Guest& guest, std::uint64_t main) {
+    for (const auto& r : restores_) {
+        // Only into the same plug of the same switch, still at its place (a reload makes new actors and blocks).
+        const std::string_view name[] = {r.name};
+        const auto here = find_(guest, main, name, r.at, kEyeAtM);
+        const auto plug = std::find(here.begin(), here.end(), r.actor) != here.end()
+                              ? CoopLogicSet::InputPlug(guest, r.actor, r.key)
+                              : std::nullopt;
+        char text[200];
+        if (plug && plug->value_word == r.value_word && CoopLogicSet::StoreInput(guest, *plug, r.old)) {
+            std::snprintf(text, sizeof text, "eye switch: our %.*s 0x%llx input taken back to %u",
+                          static_cast<int>(r.name.size()), r.name.data(), static_cast<unsigned long long>(r.actor),
+                          static_cast<unsigned>(r.old));
+        } else {
+            std::snprintf(text, sizeof text, "eye switch: our %.*s 0x%llx input not taken back (the switch or its plug is gone)",
+                          static_cast<int>(r.name.size()), r.name.data(), static_cast<unsigned long long>(r.actor));
+        }
+        notes_.emplace_back(text);
+    }
+    restores_.clear();
 }
 
 std::optional<CoopPuppet::Call> Switcher::Step(CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
                                                std::uint64_t main, std::uint64_t now_ms) {
     std::lock_guard lock(mutex_);
+    if (main != 0 && !restores_.empty()) RestoreInputs(guest, main);
     if (after_call) {
         const Next was = next_;
         next_ = Next::none;
@@ -430,8 +457,29 @@ std::optional<CoopPuppet::Call> Switcher::Frame(CoopPuppet::Guest& guest, std::u
         return std::nullopt;
     }
     if (input) {
-        // The set-bool's own store into the unwired input; it stays (no source rewrites it), so no call.
+        // The set-bool's own store into the unwired input; it stays (no source rewrites it), so no call. First the
+        // address must be this plug's own on this instance (review Round 8): else the old way.
+        const auto mine = CoopLogicSet::AllPlugs(guest, target);
+        std::vector<std::uint64_t> others;
+        for (const std::uint64_t other : find_(guest, main, switch_name, line->at, kSameKindM)) {
+            if (other == target) continue;
+            if (const auto o = CoopLogicSet::InputPlug(guest, other, key)) others.push_back(o->value_word);
+        }
+        const char* why = mine ? CoopLogicSet::InputNotOwn(*target_plug, *mine, others, main) : "its logic is gone";
+        if (why != nullptr) {
+            char text[256];
+            std::snprintf(text, sizeof text, "our switch's %.*s input not set (value 0x%llx, plug 0x%llx: %s): "
+                          "asked the old way", static_cast<int>(plug_name.size()), plug_name.data(),
+                          static_cast<unsigned long long>(target_plug->value_word),
+                          static_cast<unsigned long long>(target_plug->node), why);
+            End(text, true);
+            return std::nullopt;
+        }
         if (!CoopLogicSet::SetInput(guest, *target_plug)) return std::nullopt;
+        if (!t.restore) {
+            t.restore = Try::Restore{target, key, target_plug->value_word, target_plug->value.value_or(0), line->actor,
+                                     line->at};
+        }
     } else if (!CoopLogicSet::WriteNode(guest, block_, main, target, key)) {
         return std::nullopt;
     }
@@ -446,6 +494,13 @@ std::optional<CoopPuppet::Call> Switcher::Frame(CoopPuppet::Guest& guest, std::u
                       static_cast<unsigned long long>(target), static_cast<double>(d), static_cast<int>(plug_name.size()),
                       plug_name.data(), input ? "(its unwired input, the set-bool's store)" : "through the game's set-bool");
         notes_.emplace_back(text);
+        if (input) {
+            std::snprintf(text, sizeof text, "eye switch: %s: input value at 0x%llx (plug 0x%llx), old byte %u",
+                          t.event.c_str(), static_cast<unsigned long long>(target_plug->value_word & ~std::uint64_t{3}),
+                          static_cast<unsigned long long>(target_plug->node),
+                          static_cast<unsigned>(target_plug->value.value_or(0)));
+            notes_.emplace_back(text);
+        }
     }
     t.set = true;
     if (input) return std::nullopt;
