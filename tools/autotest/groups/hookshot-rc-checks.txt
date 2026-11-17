@@ -3,11 +3,15 @@
 #   hs-deku-torch-away, deku-block: pre-deku (the owner's checkpoint save '1. Deku Tree')
 #   hs-deku-torch-reload: torch-reload (pre-deku + bool:0x0f8f3fa3=1 0x46e8fcf9=1 0x429126ef=1, every slot, both)
 #   hs-lift-ride: the kit saves (base)
-# #196 (Deku B1 water floor) is hs-deku-water-floor in hookshot-deku.txt: its shots (floor place/phase the same in
-# both games, no "gave up syncing", no rubber-band of a Link on it) are the check; it is not run twice.
+#   hs-jabu-water: jabu-14 (the kit saves with room 14's five water/switch flags 0, every slot, both)
+# #196 (Deku B1 water floor) is hs-deku-water-floor, already in hookshot-deku.txt and hookshot-parity-wave3.txt (so it
+# runs twice in a big run; not added here): its shots (floor place/phase the same in both games, no "gave up syncing",
+# no rubber-band of a Link on it) are the check. wave3's expect is right only with g3-objects merged.
+# hs-jabu-water and the #196 / #249 checks need a tree with g3-objects merged; deku-block (#147) needs push-block.
 #   python -I tools/autotest/groups.py run tools/autotest/groups/hookshot-rc-checks.txt --kit-root <root>
 [g1]
 hs-deku-torch-away  expect='B:our game started the event InsideTheDekuTree_Gimmick_CandleAndSpiderWeb: sent to the others'  expect='A:bool 0x0f8f3fa3 \(entry \d+\) 0 -> 1'  expect='A:bool 0x46e8fcf9 \(entry \d+\) 0 -> 1'  label="#177 torch flame: the other player outside room E"
 hs-deku-torch-reload  label="#177 torch flame after a reload (shots: torch lit, no web, in both)"
 deku-block  expect='A:world hooks: first AI node start from hookshot.exe'  expect='B:world hooks: first AI node start from hookshot.exe'  expect='B:push node [0-9a-f]+: its own start \(main\+0x2751790\) asked to run again'  label="#147 push block: B's push after A's (patch 0029)"
 hs-lift-ride  expect='A:coop: lift ride: another player is on our lift'  label="#249 row 65 Jabu lift: a lift another Link rides moves in both"
+hs-jabu-water  expect='B:bool 0xc517f1b5 \(entry \d+\) 0 -> 1'  expect='A:bool 0xc517f1b5 \(entry \d+\) 0 -> 1'  label="#249 Jabu room 14 water: the other player's switch moves the water in both"
