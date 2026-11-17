@@ -90,6 +90,8 @@ FrameReport Session::frame(const std::optional<PlayerReading>& reading, FlagStor
   if (watcher_) {
     report.hosting = watcher_->role() == FlagRole::host;
     report.holding = watcher_->holding();
+    report.hold_timeout = watcher_->take_hold_timeout();
+    report.window_for = watcher_->window_for();
     report.host_reset = watcher_->take_reset();
     report.received = watcher_->take_received();
     if (const auto seen = watcher_->take_save_load()) {
