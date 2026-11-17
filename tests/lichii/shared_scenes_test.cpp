@@ -367,9 +367,9 @@ TEST_CASE("no story cutscene shared in 0.11.3 stops being shared unless the game
         "Dm_HrlCastle_0020",     // takes the Cucco (Talon)
         "Dm_Kokiri_0063",        // equips the Kokiri Sword from the pouch
         "Dm_LonLon_0030",        // rupees
-        // the Great Fairies' paid heal (Dm_FairyFountain_Din:Pay, 500 rupees). Dm_LostWood_0015 is no longer
-        // here: the old reader's misread switch case reached SubEvent_GetSwordBigGoron's event 0 (a Pocket Egg
-        // taken) from SubEvent_TimerCheck_Demo, whose real cases never take it.
+        "Dm_LostWood_0015",      // Biggoron's sword trade challenge removed (not the Pocket Egg: the old
+                                 // reader's misread case reached an egg taken that its real cases never do)
+        // the Great Fairies' paid heal (Dm_FairyFountain_Din:Pay, 500 rupees)
         "Dm_FairyFountain_Courage", "Dm_FairyFountain_Din", "Dm_FairyFountain_Frore", "Dm_FairyFountain_Nayru",
         "Dm_FairyFountain_Power", "Dm_FairyFountain_Wisdom",
     };

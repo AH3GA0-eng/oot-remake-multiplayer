@@ -90,6 +90,14 @@ class StoryRequestsTest(unittest.TestCase):
         self.assertIn("bottle", sr.touches_own([("Player_Event", "EventCreateShowItemBottle", {})]))
         # A subflow call is no action (G2 review: every item get can reach the get window's text for a bottle,
         # GetPouchContent:OpenGetWindowForBottle_SubProcess; what a subflow runs is listed after it).
+        # Every other inventory-changing action of the game's flows (G2 review), and the get's plumbing that is not.
+        for action in sr.OWN_ACTIONS:
+            self.assertNotEqual(sr.touches_own([("PouchSystemActor", action, {})]), "", action)
+        self.assertIn("trade challenge", sr.touches_own([("PouchSystemActor",
+                                                         "EventTriggerRemoveSwordBigGoronChallengeActor", {})]))
+        self.assertIn("rupees", sr.touches_own([("PouchSystemActor", "EventTriggerAddGameDataIntToRupee", {})]))
+        for plumbing in ("EventTriggerAddOwnToPouch", "EventTriggerRecoverByCureItem", "EventTriggerSetForGetWindow"):
+            self.assertEqual(sr.touches_own([("PouchSystemActor", plumbing, {})]), "", plumbing)
         call = ("<subflow>", "GetPouchContent:OpenGetWindowForBottle_SubProcess", {})
         self.assertEqual(sr.touches_own([call]), "")
         self.assertIn("ocarina", sr.touches_own([("GameSystemActor", "EventWaitOcarinaInputForSequence", {})]))

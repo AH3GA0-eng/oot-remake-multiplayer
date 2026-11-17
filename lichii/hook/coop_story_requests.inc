@@ -72,6 +72,7 @@ constexpr StoryOwn kOwnStory[] = {
     {"Dm_HrlCastle_0020", "takes Item_AlarmCucco from the pouch"},
     {"Dm_Kokiri_0063", "runs Player_Event EventTriggerPlayerEquipDynamicEquipmentFromPouch (gear from the player's pouch)"},
     {"Dm_LonLon_0030", "runs PouchSystemActor EventTriggerIncreaseRupee (rupees)"},
+    {"Dm_LostWood_0015", "runs PouchSystemActor EventTriggerRemoveSwordBigGoronChallengeActor (Biggoron's sword trade challenge)"},
 };
 constexpr std::string_view kNoSetting[] = {
     "Dm_FinalBattle_0000",

@@ -94,7 +94,21 @@ def carries(name, flow):
 # ammo and other consumables, bottle contents, equipped gear). Items co-op shares (key items, stones,
 # songs, medallions, the Ocarina, bag/quiver/wallet tiers: max/OR) are not: a +1 of one in the joining
 # game gives nothing new, and a get window or a shown item alone changes nothing.
-RUPEE_ACTIONS = ("IncreaseRupee", "DecreaseRupee", "SendRupee", "PayItemPrice")
+RUPEE_ACTIONS = ("IncreaseRupee", "DecreaseRupee", "SendRupee", "PayItemPrice", "IntToRupee")
+# Other actions that change the player's own pouch or gear, with why (every inventory-changing action of the game's
+# flows, listed 2026-11-16, G2 review). Not here: the item get's own plumbing every get passes (Dm_SY_Get's
+# AddOwnToPouch and RecoverByCureItem, GetPouchContent's PushToEmptyBottle and get windows), heals.
+OWN_ACTIONS = {
+    "EventTriggerRemoveSwordBigGoronChallengeActor": "Biggoron's sword trade challenge",
+    "EventTriggerRequestVanishExchangeItemAfterBancChanged": "a trade item vanishes",
+    "EventTriggerRemoveOwnedMask": "a mask given back",
+    "EventTriggerRemoveWeaponKeepSheath": "a weapon taken from the player",
+    "EventTriggerRequestDeletePlayerEquipmentFromPouch": "gear deleted from the pouch",
+    "EventPlayerSetItemForMiniGame": "a minigame's own items",
+    "EventTriggertExchangeEnemyMuseumPouchAndState": "the pouch swapped (the enemy museum)",
+    "EventTriggertExchangeEnemyMuseumPouchAndStateForContinuous": "the pouch swapped (the enemy museum)",
+    "EventTriggertRestorePouchFromEnemyMuseum": "the pouch swapped back (the enemy museum)",
+}
 OCARINA_INPUT = ("EventWaitOcarinaInput", "EventPlayerPlayOcarinaFree")  # waits for the player to play
 CONSUMABLES = ("Item_Arrow", "Item_Bomb", "Item_DekuNut", "Item_DekuStick", "Item_Bullet", "Item_MagicBean",
                "Item_Rupee", "Obj_Rupee")  # their counts are per player (not a bag/quiver tier)
@@ -118,6 +132,8 @@ def touches_own(actions):
                 return f"takes {item or 'an item'} from the pouch"
             if num > 0 and item.startswith(CONSUMABLES) and "Bag" not in item and "Quiver" not in item:
                 return f"adds {item}, a consumable"
+        elif action in OWN_ACTIONS:
+            return f"runs {actor} {action} ({OWN_ACTIONS[action]})"
         elif any(w in action for w in RUPEE_ACTIONS):
             return f"runs {actor} {action} (rupees)"
         elif "Bottle" in action and action != "EventTriggerPushToEmptyBottle" and actor != "UISystemActor":
