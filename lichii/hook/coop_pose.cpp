@@ -1214,7 +1214,7 @@ std::vector<proto::PlayerPose> TakeOutgoing(std::uint64_t server_now_us, std::ui
     const std::size_t turn = n_pieces == 0 ? 0 : s.piece_turn++ % n_pieces;
     for (std::size_t k = 0; k < n_pieces; ++k) {
         const Pose& piece = s.pieces_outbox[(turn + k) % n_pieces];
-        PieceSent& p = s.pieces_sent[piece.skeleton];
+        auto& p = s.pieces_sent[piece.skeleton];
         p.out_ms = now_ms;
         if (room <= kPoseHeaderBytes) continue;
         proto::PlayerPose m;
