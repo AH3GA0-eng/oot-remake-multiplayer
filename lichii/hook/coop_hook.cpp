@@ -1060,6 +1060,33 @@ public:
                 chat_.Add(std::move(line), true);
             }
         }
+        // Rows 106/107: the two states in which our game sends none of its own flag changes, made visible.
+        if (report.hold_timeout) {
+            const coop::host::FlagStats fs = session_->flag_stats();
+            LOG_WARNING(Core, "coop: flags: the host's progress (join snapshot) did not finish arriving in {} s: "
+                              "dropped, our changes are sent again ({} timeouts, {} bad snapshots this session)",
+                        coop::host::FlagWatcher::kHoldMaxFrames / 60, fs.hold_timeouts, fs.bad_snapshots);
+            if (!hold_timeout_told_) {
+                hold_timeout_told_ = true;
+                std::string line = "The host's progress did not finish arriving. If keys or dungeon items look "
+                                   "wrong, use Resync from host in the Lobby tab.";
+                LOG_INFO(Core, "coop: notice: {}", line);
+                chat_.Add(std::move(line), true);
+            }
+        }
+        if (report.window_for == 0) {
+            long_window_logged_ = 0;
+        } else if (report.window_for >= long_window_logged_ + kLongWindowFrames) {
+            long_window_logged_ = report.window_for;
+#ifdef COOP_HOOKSHOT
+            const bool title = CoopSave::TitleUp();
+#else
+            const bool title = false;
+#endif
+            LOG_WARNING(Core, "coop: flags: a load window open for {} s (our Link read: {}, title menu up: {}): "
+                              "our own flag changes are not sent while it lasts",
+                        report.window_for / 60, reading.has_value() ? "yes" : "no", title ? "yes" : "no");
+        }
         if (report.host_reset) {
             // docs/flags.md, "Saves": the host loaded a save. Session-wide state
             // kept outside the flags is dropped here (each owner adds its clear:
@@ -2145,20 +2172,27 @@ private:
             return;
         }
         const coop::host::FlagStats s = session_->flag_stats();
-        const std::uint64_t sum = s.changes_sent + s.answers_sent + s.entries_in + s.applied + s.write_failures;
+        // holding_frames and window_frames too: a game stuck in either state still prints (rows 106/107).
+        const std::uint64_t sum = s.changes_sent + s.answers_sent + s.entries_in + s.applied + s.write_failures +
+                                  s.holding_frames + s.window_frames;
         if (sum == flag_traffic_sum_) {
             return;
         }
         flag_traffic_sum_ = sum;
         LOG_INFO(Core, "coop: flags: traffic: {} changes sent, {} answers sent, {} entries came, {} written here "
                        "({} count deltas, {} load reverts, {} one-way put back, {} from a host reset), {} kept over "
-                       "our own, {} not shared, {} write failures, {} messages not for us, {} bad snapshots",
+                       "our own, {} not shared, {} write failures, {} messages not for us, {} bad snapshots; "
+                       "{} s holding a join snapshot ({} dropped unfinished), {} s in load windows, {} changes "
+                       "waiting for the host's answer",
                  s.changes_sent, s.answers_sent, s.entries_in, s.applied, s.deltas_added, s.load_reverts,
                  s.one_way_restores, s.reset_applied, s.kept_local, s.not_shared, s.write_failures, s.ignored_messages,
-                 s.bad_snapshots);
+                 s.bad_snapshots, s.holding_frames / 60, s.hold_timeouts, s.window_frames / 60, s.pending_now);
     }
     CoopEvery::Every flag_traffic_log_{10 * CoopEvery::kSecondUs};
     std::uint64_t flag_traffic_sum_ = 0;
+    bool hold_timeout_told_ = false;               // rows 106/107: the chat notice once a run
+    std::uint64_t long_window_logged_ = 0;         // the open window's length (1/60 s) last logged
+    static constexpr std::uint64_t kLongWindowFrames = 60 * 60;  // a load window open a minute is logged
     CoopScrubTalk::Hold scrub_talk_;  // issue 144: scrub destroy flags wait for our event
     std::uint8_t scrub_near_ = 0;     // issue 144: the scrub groups near our Link (for the log)
     coop::host::LentKeys lent_keys_;  // dungeon-sync-b (#75): keys lent at another player's lock

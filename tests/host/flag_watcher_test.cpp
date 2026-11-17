@@ -2673,3 +2673,116 @@ TEST_CASE("dungeon items: the host's save load gives every game that save's keys
     CHECK(t.host_game.get(r.boss_key) == 1);
   }
 }
+
+// Rows 106/107 (dungeon-items-next): a join snapshot whose last part never comes held a guest's game for as long
+// as the connection lasted: none of its own changes sent, no FLAG_STATE written, nothing logged.
+TEST_CASE("flag watcher: a join snapshot whose last part never comes is dropped after kHoldMaxFrames") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::player);
+  w.frame(store);
+  w.receive(proto::FlagSnapshot{0, 2, {entry(kChest, 1)}});
+  CHECK(w.frame(store).empty());
+  CHECK(w.holding());
+  store.set(kKey0, 1);              // our own change while held
+  w.receive(state({entry(kDoor, 1)}));  // another game's change while held
+  for (std::uint64_t i = 1; i < FlagWatcher::kHoldMaxFrames; ++i) {
+    CHECK(w.frame(store).empty());
+  }
+  CHECK(w.holding());
+  CHECK(w.stats().holding_frames >= FlagWatcher::kHoldMaxFrames - 1);
+  CHECK(w.holding_for() >= FlagWatcher::kHoldMaxFrames - 1);
+  CHECK(store.get(kDoor) == 0);     // held, not written
+  CHECK(w.stats().hold_timeouts == 0);
+
+  // Past the limit: dropped, the state written, our change sent; the unfinished snapshot is not written.
+  std::vector<Outgoing> out;
+  for (int i = 0; i < 3 && out.empty(); ++i) out = w.frame(store);
+  CHECK_FALSE(w.holding());
+  CHECK(w.holding_for() == 0);
+  CHECK(w.stats().hold_timeouts == 1);
+  CHECK(w.stats().bad_snapshots == 1);
+  CHECK(w.take_hold_timeout());
+  CHECK_FALSE(w.take_hold_timeout());
+  CHECK(store.get(kDoor) == 1);
+  CHECK(store.get(kChest) == 0);
+  CHECK(only<proto::FlagSet>(out) == std::vector{entry(kKey0, 1)});
+
+  // A whole snapshot after it is taken as usual.
+  w.receive(proto::FlagSnapshot{0, 1, {entry(kChest, 1)}});
+  w.frame(store);
+  CHECK_FALSE(w.holding());
+  CHECK(store.get(kChest) == 1);
+  CHECK(w.stats().hold_timeouts == 1);
+}
+
+TEST_CASE("flag watcher: a snapshot that finishes in time is not dropped") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::player);
+  w.frame(store);
+  w.receive(proto::FlagSnapshot{0, 2, {entry(kChest, 1)}});
+  for (std::uint64_t i = 0; i + 2 < FlagWatcher::kHoldMaxFrames; ++i) w.frame(store);
+  CHECK(w.holding());
+  w.receive(proto::FlagSnapshot{1, 2, {entry(kDoor, 1)}});
+  w.frame(store);
+  CHECK_FALSE(w.holding());
+  CHECK(store.get(kChest) == 1);
+  CHECK(store.get(kDoor) == 1);
+  CHECK(w.stats().hold_timeouts == 0);
+  CHECK(w.stats().bad_snapshots == 0);
+  CHECK_FALSE(w.take_hold_timeout());
+}
+
+TEST_CASE("flag watcher: more FLAG_STATEs than kHeldStatesMax while holding drop the snapshot at once") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::player);
+  w.frame(store);
+  w.receive(proto::FlagSnapshot{0, 2, {}});
+  w.frame(store);
+  for (std::size_t i = 0; i < FlagWatcher::kHeldStatesMax; ++i) {
+    w.receive(state({entry(kDoor, static_cast<std::uint32_t>(i % 2))}));
+  }
+  w.frame(store);
+  CHECK(w.holding());  // full, not past it
+  CHECK(store.get(kDoor) == 0);
+  w.receive(state({entry(kDoor, 1)}));
+  w.frame(store);
+  CHECK_FALSE(w.holding());
+  CHECK(w.stats().hold_timeouts == 1);
+  CHECK(store.get(kDoor) == 1);  // every held state, in order, then the newest
+}
+
+TEST_CASE("flag watcher: time in a load window is counted, and how long the open one has lasted") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::player);
+  w.frame(store);
+  CHECK(w.window_for() == 0);
+  w.set_loading(true);
+  for (int i = 0; i < 10; ++i) w.frame(store);
+  CHECK(w.window_for() >= 9);
+  CHECK(w.stats().window_frames >= 10);
+  w.set_loading(false);
+  for (int i = 0; i < FlagWatcher::kSettleFrames + 4; ++i) w.frame(store);
+  CHECK(w.window_for() == 0);
+}
+
+TEST_CASE("dungeon items: a guest held by an unfinished join snapshot sends its key after the limit, every dungeon (rows 106/107)") {
+  for (const DungeonRow& r : dungeon_rows()) {
+    CAPTURE(r.name);
+    TwoGames t(r);
+    t.keys(t.host_game, 2);
+    t.run();
+    REQUIRE(t.keys(t.guest_game) == 2);
+    t.guest.receive(proto::FlagSnapshot{0, 2, {}});
+    t.keys(t.guest_game, 3);   // the guest opens a key chest while held
+    t.keys(t.host_game, 1);    // the host uses a key meanwhile
+    t.run(2);
+    CHECK(t.keys(t.host_game) == 1);   // nothing of the guest's arrived
+    CHECK(t.guest.holding());
+    t.run(static_cast<int>(FlagWatcher::kHoldMaxFrames) + 4);
+    CHECK_FALSE(t.guest.holding());
+    // One group count: 2, the guest's +1 and the host's -1, in both games.
+    CHECK(t.keys(t.host_game) == 2);
+    CHECK(t.keys(t.guest_game) == 2);
+    CHECK(t.guest.stats().hold_timeouts == 1);
+  }
+}
