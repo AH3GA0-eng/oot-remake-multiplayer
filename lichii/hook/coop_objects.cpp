@@ -646,6 +646,18 @@ public:
         return drawn_;
     }
 
+    // Issue 239 probe, since the last ask: followed copies' steps against their step a written frame before
+    // (avg, max metres, count). Even movement: ~0; a turn, a start or a stop: a few cm.
+    std::tuple<float, float, std::size_t> TakeUneven() {
+        std::lock_guard lock(mutex_);
+        const auto out = std::make_tuple(uneven_count_ ? uneven_sum_ / uneven_count_ : 0.0f, uneven_max_,
+                                         uneven_count_);
+        uneven_sum_ = 0.0f;
+        uneven_max_ = 0.0f;
+        uneven_count_ = 0;
+        return out;
+    }
+
     // Townspeople, since the last ask: plays put under the copy's own AI's
     // name, names given back, frames set.
     std::array<std::size_t, 3> TakeNpc() {
@@ -742,6 +754,7 @@ public:
                                     [&f](const Pose& p) { return p.actor == f.first && p.velocity; });
             });
             std::erase_if(drawn_, [this](const auto& d) { return !follow_.contains(d.first); });
+            std::erase_if(steps_, [this](const auto& d) { return !follow_.contains(d.first); });
             if (resync_.Size() > 256) {  // jitter-b: copies that left
                 std::unordered_set<u64> playing;
                 for (const PlayWish& w : plays_) {
@@ -958,6 +971,27 @@ public:
                 const CoopFollow::Vec3 at{p.transform[0], p.transform[1], p.transform[2]};
                 const auto drawn = follow_[p.actor].Step(at, *p.velocity, want_ms_, cadence_.At(now_ms));  // jitter-2: even
                 std::copy(drawn.begin(), drawn.end(), followed.transform.begin());
+                // Issue 239 probe: how uneven the drawn steps are (this step against the last one, metres).
+                if (const auto was = drawn_.find(p.actor); was != drawn_.end()) {
+                    coop::protocol::Vec3 step{};
+                    for (std::size_t i = 0; i < 3; ++i) {
+                        step[i] = drawn[i] - was->second[i];
+                    }
+                    if (const auto last = steps_.find(p.actor); last != steps_.end()) {
+                        float u2 = 0.0f;
+                        for (std::size_t i = 0; i < 3; ++i) {
+                            const float u = step[i] - last->second[i];
+                            u2 += u * u;
+                        }
+                        const float u = std::sqrt(u2);
+                        if (std::isfinite(u)) {
+                            uneven_sum_ += u;
+                            uneven_max_ = std::max(uneven_max_, u);
+                            ++uneven_count_;
+                        }
+                    }
+                    steps_[p.actor] = step;
+                }
                 drawn_[p.actor] = {drawn[0], drawn[1], drawn[2]};
             }
             if (p.rotation) {
@@ -1214,6 +1248,10 @@ private:
     std::vector<Pose> poses_;
     std::unordered_map<u64, CoopFollow::Follower> follow_;  // jitter-b: by actor
     std::unordered_map<u64, coop::protocol::Vec3> drawn_;    // issue 239: the Follower's last place, by actor
+    std::unordered_map<u64, coop::protocol::Vec3> steps_;    // issue 239: its last step
+    float uneven_sum_ = 0.0f;
+    float uneven_max_ = 0.0f;
+    std::size_t uneven_count_ = 0;
     CoopFollow::Cadence cadence_;  // jitter-2: the game frames' time made even
     CoopNpcAnim::Resync resync_;  // jitter-b: townspeople's frame sets
     std::vector<u64> removes_;
@@ -4140,6 +4178,11 @@ private:
         TheMover().Want(main_, std::move(wish), std::move(removes), std::move(plays));
         if (now_us - drift_at_ >= kDriftLogUs) {
             const auto [moved, deleted, played, framed] = TheMover().TakeCounts();
+            if (const auto [uneven_avg, uneven_max, uneven_n] = TheMover().TakeUneven(); uneven_n > 0) {
+                LOG_INFO(Core, "coop: objects: followed copies' steps uneven avg {:.4f} max {:.3f} m over {} "
+                               "(issue 239: a step against the one before)",
+                         uneven_avg, uneven_max, uneven_n);
+            }
             if (const auto [started, skipped] = TheMover().TakeNodeStarts(); started + skipped > 0) {
                 LOG_INFO(Core, "coop: world: push node starts run {}, skipped {} (block gone, another "
                                "node, or busy by then)",
