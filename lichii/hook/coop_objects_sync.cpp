@@ -450,6 +450,11 @@ bool PlaysByFrame(std::string_view name) {
     return name.starts_with("Npc_") || (name.starts_with("Enemy_") && !IsBoss(name));
 }
 
+bool FollowedEachFrame(std::string_view name) {
+    return name.starts_with("Npc_") ||
+           (name.starts_with("Enemy_") && name.find("_Dictionary") == std::string_view::npos);
+}
+
 bool OnBrainPath(std::string_view name) {
     return name.starts_with("Enemy_") && name.find("_Dictionary") == std::string_view::npos && !IsBoss(name) &&
            !IsOwnPuzzle(name) && !CoopEnemyShots::IsEnemyShot(name);

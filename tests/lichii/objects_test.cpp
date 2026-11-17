@@ -532,6 +532,18 @@ TEST_CASE("objects: the enemies' brain path takes plain enemies only (fable-g4-e
     CHECK_FALSE(CoopObjects::OnBrainPath("Npc_Zora_Ruto_Child_001"));
 }
 
+TEST_CASE("objects: townspeople and every enemy copy are followed each game frame (jitter-b, issue 239)") {
+    CHECK(CoopObjects::FollowedEachFrame("Npc_Zora_Ruto_Child_001"));
+    CHECK(CoopObjects::FollowedEachFrame("Enemy_Dekubaba"));
+    CHECK(CoopObjects::FollowedEachFrame("Enemy_Peahat"));
+    CHECK(CoopObjects::FollowedEachFrame("Enemy_MiddleBoss_GerudoThief"));
+    CHECK(CoopObjects::FollowedEachFrame("Enemy_DungeonBoss_Gohma"));
+    CHECK(CoopObjects::FollowedEachFrame("Enemy_DungeonBoss_BongoBongo_LeftHand"));  // a part with its root
+    CHECK_FALSE(CoopObjects::FollowedEachFrame("Enemy_Dekubaba_Dictionary"));
+    CHECK_FALSE(CoopObjects::FollowedEachFrame("Obj_Kibako"));
+    CHECK_FALSE(CoopObjects::FollowedEachFrame(""));
+}
+
 TEST_CASE("objects: order-puzzle scrubs are each game's own (issue 149)") {
     CHECK_FALSE(CoopObjects::IsShared("Enemy_Scrub_Deku_Brothers"));
     CHECK(CoopObjects::IsOwnPuzzle("Enemy_Scrub_Deku_Brothers"));

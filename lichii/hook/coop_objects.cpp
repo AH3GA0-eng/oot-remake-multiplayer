@@ -639,6 +639,13 @@ public:
         return counts;
     }
 
+    // Issue 239: where the Follower last drew each followed copy (what was written, not the place wished),
+    // so the walk's own-AI pull (NoteDrift, issue 101) is measured from what the game was given.
+    std::unordered_map<u64, coop::protocol::Vec3> Drawn() {
+        std::lock_guard lock(mutex_);
+        return drawn_;
+    }
+
     // Townspeople, since the last ask: plays put under the copy's own AI's
     // name, names given back, frames set.
     std::array<std::size_t, 3> TakeNpc() {
@@ -734,6 +741,7 @@ public:
                 return std::none_of(work_.begin(), work_.end(),
                                     [&f](const Pose& p) { return p.actor == f.first && p.velocity; });
             });
+            std::erase_if(drawn_, [this](const auto& d) { return !follow_.contains(d.first); });
             if (resync_.Size() > 256) {  // jitter-b: copies that left
                 std::unordered_set<u64> playing;
                 for (const PlayWish& w : plays_) {
@@ -950,6 +958,7 @@ public:
                 const CoopFollow::Vec3 at{p.transform[0], p.transform[1], p.transform[2]};
                 const auto drawn = follow_[p.actor].Step(at, *p.velocity, want_ms_, cadence_.At(now_ms));  // jitter-2: even
                 std::copy(drawn.begin(), drawn.end(), followed.transform.begin());
+                drawn_[p.actor] = {drawn[0], drawn[1], drawn[2]};
             }
             if (p.rotation) {
                 guest.Write(p.actor + kActorPosition, followed.transform.data(), 48);
@@ -1204,6 +1213,7 @@ private:
     u64 main_ = 0;
     std::vector<Pose> poses_;
     std::unordered_map<u64, CoopFollow::Follower> follow_;  // jitter-b: by actor
+    std::unordered_map<u64, coop::protocol::Vec3> drawn_;    // issue 239: the Follower's last place, by actor
     CoopFollow::Cadence cadence_;  // jitter-2: the game frames' time made even
     CoopNpcAnim::Resync resync_;  // jitter-b: townspeople's frame sets
     std::vector<u64> removes_;
@@ -3994,6 +4004,8 @@ private:
         for (const u64 a : CoopBossNative::TheTable().TakeOwnWants()) {
             sync_.NoteOwnBrainWant(a, now_us);
         }
+        // Issue 239: a followed copy was written where the Follower drew it, not where it was wished.
+        const auto drawn = TheMover().Drawn();
         for (const PoseWrite& w : poses) {
             const u32 state = r.Get<u32>(w.address + kActorState).value_or(0);
             bool asleep = false;
@@ -4009,17 +4021,20 @@ private:
                 asleep = true;
                 ++asleep_placed_;
             }
-            if (const auto before = placed_.find(w.address); before != placed_.end()) {
+            const auto drew = drawn.find(w.address);
+            const auto put = placed_.find(w.address);
+            if (drew != drawn.end() || put != placed_.end()) {
+                const coop::protocol::Vec3& before = drew != drawn.end() ? drew->second : put->second;
                 coop::protocol::Vec3 now{};
                 float d2 = 0.0f;
                 for (std::size_t i = 0; i < 3; ++i) {
                     now[i] = r.Get<float>(w.address + kActorPosition + 4 * i).value_or(0.0f);
-                    const float d = now[i] - before->second[i];
+                    const float d = now[i] - before[i];
                     d2 += d * d;
                 }
                 const float d = std::sqrt(d2);
-                // A copy whose own AI pulls it at our Link (issue 101).
-                sync_.NoteDrift(w.address, before->second, now, now_us);
+                // A copy whose own AI pulls it at our Link (issue 101), from what it was last written at.
+                sync_.NoteDrift(w.address, before, now, now_us);
                 drift_sum_ += d;
                 if (d > drift_max_) {
                     drift_max_ = d;
@@ -4035,9 +4050,12 @@ private:
                 std::copy(w.rotation->begin(), w.rotation->end(), p.transform.begin() + 3);
                 p.rotation = true;
             }
-            // jitter-b: a townsperson is followed in even steps each game frame (coop_follow.h).
+            // jitter-b: a townsperson is followed in even steps each game frame (coop_follow.h). Issue 239 /
+            // rows 37, 54: an enemy copy too (plain, mid-boss, boss). Its place was worked out at the present
+            // and written on a later game frame, a different time apart each frame (the cause jitter-b fixed
+            // for townspeople): uneven steps, the more so the faster it moves. Same setter as before.
             if (const auto name = names_.find(w.address);
-                w.velocity && name != names_.end() && name->second.first.starts_with("Npc_")) {
+                w.velocity && name != names_.end() && FollowedEachFrame(name->second.first)) {
                 p.velocity = std::array<float, 3>{(*w.velocity)[0], (*w.velocity)[1], (*w.velocity)[2]};
             }
             wish.push_back(p);

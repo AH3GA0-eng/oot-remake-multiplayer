@@ -430,6 +430,10 @@ bool EnemyBrainSwitch(std::string_view value);
 // their frame was never corrected (owner's Deku Tree run, 2026-11-14).
 // Bosses keep +0xe8 for all their slots (issue 150, tested that way).
 bool PlaysByFrame(std::string_view name);
+// jitter-b / issue 239: a copy whose place the Mover follows each game frame (coop_follow.h) by the
+// velocity it came with: townspeople (Npc_) and every enemy (Enemy_: plain, mid-boss, boss and their parts),
+// never a picture book _Dictionary actor. Everything else is written where it is, as before.
+bool FollowedEachFrame(std::string_view name);
 
 // An actor whose life is never written (the owner's native rule): an enemy or a boss, and any actor whose name
 // we do not know (fail safe).
