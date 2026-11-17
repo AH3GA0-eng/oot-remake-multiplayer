@@ -102,16 +102,19 @@ inline bool local_event_hides(bool event_running, EventWhose whose, std::optiona
 // - GameAsked: the game's own request the manager took (Hookshot's request wrap,
 //   CoopLiveEvents::GameRequests). The free Ocarina's setting makes the run `ocarina` until another
 //   request is taken in it (a song's reaction, a warp). A request taken before the run starts is
-//   the one that starts it (the wrap sees only taken requests).
+//   the one that starts it (the wrap sees only taken requests). A request is used by the next
+//   Frame (the hook feeds the frame's requests first): by the run of that frame, or kept only until
+//   the next run starts when no event runs; never by a later run.
 // Pure: tested in tests/host/event_owner_test.cpp.
 class EventOwnerTracker {
  public:
   enum class By : std::uint8_t { none, member, request, animation };
 
+  // Kept for the next Frame only, which applies it to the frame's run (review of c431aafc: a request
+  // applied in a run used to stay pending and decide the run after it, even minutes later).
   void GameAsked(std::string_view name) {
     asked_ocarina_ = free_ocarina_event(name);
     asked_ = true;
-    if (running_) ocarina_ = asked_ocarina_;  // a song's reaction ends the free play; a new free play starts one
   }
 
   EventWhose Frame(bool running, bool link_member, std::optional<std::string_view> own_anim = std::nullopt) {
@@ -124,8 +127,10 @@ class EventOwnerTracker {
     if (!running_) {  // the run starts: the request taken for it, if the wrap saw one
       running_ = true;
       ocarina_ = asked_ && asked_ocarina_;
-      asked_ = false;
+    } else if (asked_) {  // taken in the run: a song's reaction ends the free play; a new free play starts one
+      ocarina_ = asked_ocarina_;
     }
+    asked_ = false;  // a request is used by the run of the frame it was taken in, or the run it starts
     if (ocarina_) {
       by_ = By::request;
       return EventWhose::ocarina;

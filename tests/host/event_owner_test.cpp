@@ -149,6 +149,40 @@ TEST_CASE("event owner: issue 86, the free Ocarina's take-out holds and hides no
   CHECK_FALSE(free_ocarina_event("Dm_SY_Ocarina_move"));  // a warp song's travel: a cutscene
 }
 
+TEST_CASE("event owner: a request taken in a run decides that run only, never the next one") {
+  // Review of c431aafc: the free Ocarina taken out while another event runs (the ~1 s event after a
+  // scene load, a talk) set the pending request, nothing cleared it, and the NEXT run, minutes later,
+  // was classified `ocarina`: no hide, no hold, no in_cutscene for our own cutscene.
+  EventOwnerTracker t;
+  t.Frame(false, false);
+  CHECK(t.Frame(true, true, std::string_view("EvtWait")) == EventWhose::ours);  // the load's event
+  t.GameAsked("Dm_SY_Ocarina");  // the take-out, taken in that run
+  CHECK(t.Frame(true, true, std::string_view("EvtWait")) == EventWhose::ocarina);
+  CHECK(t.Frame(false, false) == EventWhose::ours);  // the run ends
+  for (int i = 0; i < 600; ++i) t.Frame(false, false);
+  CHECK(t.Frame(true, true, std::string_view("EvtWait")) == EventWhose::ours);  // our own cutscene
+  CHECK(t.Decided() == EventOwnerTracker::By::member);
+  t.Frame(false, false);
+  // The same with a request that is not the Ocarina's (a song's reaction): the next run is decided
+  // by our Link's membership, not by that request.
+  t.Frame(true, false);
+  t.GameAsked("Npc_Bonooru_BlewOcarinaByPlayer");
+  CHECK(t.Frame(true, false) == EventWhose::others);
+  t.Frame(false, false);
+  CHECK(t.Frame(true, false) == EventWhose::others);
+  CHECK(t.Decided() == EventOwnerTracker::By::member);
+  t.Frame(false, false);
+  // A request taken in the frame the run ends starts the next run: kept over the gap.
+  t.Frame(true, true);
+  t.GameAsked("Dm_SY_Ocarina");
+  CHECK(t.Frame(false, false) == EventWhose::ours);
+  CHECK(t.Frame(false, false) == EventWhose::ours);
+  CHECK(t.Frame(true, true, std::string_view("EvtWait")) == EventWhose::ocarina);
+  CHECK(t.Decided() == EventOwnerTracker::By::request);
+  t.Frame(false, false);
+  CHECK(t.Frame(true, true, std::string_view("EvtWait")) == EventWhose::ours);  // used once
+}
+
 TEST_CASE("event owner: issues 144 and 243, the scrub holds follow only our Link's own event") {
   // The hook's scrub talk hold, sale hold and Scrub Brothers' hit hold take our_link_in_event:
   // a scrub's talk of ours holds; another player's dungeon event replayed here does not delay
