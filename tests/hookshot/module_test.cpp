@@ -718,12 +718,12 @@ TEST_CASE("hookshot: Skip title screen chooses the game's own way, presses nothi
               "if (next == HOS_SKIP_STOP) {"));
     CHECK(has("const uint64_t vtable = peek64(screen); char name[64]; button_name(button, name, sizeof name);"));
     // (Armed only by the row, off by default: Longshot's own start test, unchanged, outside the patch's hunks.)
-    // Both platforms' screen hook hand each menu screen to it, before the screen's own update.
+    // The screen hook hands each menu screen to it, before the screen's own update. One tick for both platforms:
+    // patch 0018 builds it on Linux too (Linux's stub is gone), so 0028 adds no Linux-only tick.
     const std::string menu = PatchedCode(patch, "host/oot_menu.c");
     CHECK(menu.find(Squashed("void hos_oot_menu_tick(Ctx *c, uint64_t screen) { if (!screen) return; "
                              "hos_oot_autoload_screen(c, screen);")) != std::string::npos);
-    CHECK(menu.find(Squashed("void hos_oot_menu_tick(Ctx *c, uint64_t screen) { hos_oot_autoload_screen(c, screen); }")) !=
-          std::string::npos);
+    CHECK(patch.find("+void hos_oot_menu_tick(") == std::string::npos);
     // The bridge asks the module's optional export; no module or co-op off: 0 (solo skips the title).
     const std::string bridge = PatchedCode(patch, "host/coop_bridge.c");
     CHECK(bridge.find(Squashed("coop_title_hold = (int (*)(void))(void *)GetProcAddress(m, \"hos_coop_title_hold\");")) !=
