@@ -116,6 +116,15 @@ class PlanTest(unittest.TestCase):
         plain = g.plan(g.parse_groups(GROUPS), "K", "R", "S.exe")
         self.assertNotIn("-Lag", plain[0][2][0])
 
+    def test_renderer_options_go_to_every_run(self):
+        planned = g.plan(g.parse_groups(GROUPS), "K", "R", "S.exe", renderer=(900, 240, 0))
+        for _, _, cmds in planned:
+            for c in cmds:
+                self.assertEqual(c[-4:], ["-RendererWait", "900", "-RendererStall", "240"])
+                self.assertNotIn("-RendererLimit", c)   # 0: run.ps1 / hookshot.py's default
+        plain = g.plan(g.parse_groups(GROUPS), "K", "R", "S.exe")
+        self.assertFalse([x for x in plain[0][2][0] if x.startswith("-Renderer")])
+
 
 class RunTest(unittest.TestCase):
     def setUp(self):
