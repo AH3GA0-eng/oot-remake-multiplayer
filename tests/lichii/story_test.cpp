@@ -1,15 +1,21 @@
 // Tests for the shared story flags (lichii/hook/coop_story.cpp, issue 173).
 #include <doctest/doctest.h>
 
+#include <algorithm>
+#include <array>
 #include <map>
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
+#include "coop_chests.h"
 #include "coop_dungeon.h"
+#include "coop_quests.h"
 #include "coop_story.h"
 #include "coop/host/flag_watcher.hpp"
+#include "coop/host/game_items.hpp"
 #include "coop/protocol/codec.hpp"
 
 namespace host = coop::host;
@@ -478,5 +484,73 @@ TEST_CASE("story: the host frees a carpenter, the guest's game has the whole res
     for (const std::string& name : RescueDone(2)) CHECK_MESSAGE(guest.get(Key(name.c_str())) == 1, name);
     for (const int cell : {1, 3, 4}) {
         for (const std::string& name : RescueDone(cell)) CHECK_MESSAGE(guest.get(Key(name.c_str())) == 0, name);
+    }
+}
+
+// Row 129 (GitHub #173): what a shared story event sets in the game that plays it, given to a game whose
+// played flag came from another game (CoopStory::Effects, tools/puppet_pack/story_effects.py).
+namespace {
+
+const CoopStory::Effect* FindEffect(std::string_view setting, std::string_view flag) {
+    for (const auto& e : CoopStory::Effects()) {
+        if (setting == e.setting && flag == e.name) return &e;
+    }
+    return nullptr;
+}
+
+std::vector<const CoopStory::Effect*> Due(const std::map<std::uint32_t, bool>& bools) {
+    std::array<const CoopStory::Effect*, CoopStory::kEffectsMax> out{};
+    const auto n = CoopStory::EffectsDue(
+        [&](std::uint32_t h) -> std::optional<bool> {
+            const auto it = bools.find(h);
+            return it == bools.end() ? std::nullopt : std::optional<bool>(it->second);
+        },
+        out);
+    return {out.begin(), out.begin() + n};
+}
+
+} // namespace
+
+TEST_CASE("story effects: the owl's HyruleField_ArriveEntrance, which starts the clock, is one (row 129)") {
+    const auto* owl = FindEffect("HyruleField_Goto_HyruleCastle_Kaepora", "HyruleField_ArriveEntrance");
+    REQUIRE(owl != nullptr);
+    CHECK(owl->played == 0x98bf10c1u);  // shared: CoopStory::Find
+    CHECK(owl->flag == 0x804aec99u);    // the clock gate's flag (docs/time.md)
+    CHECK(owl->value);
+    REQUIRE(CoopStory::Find(owl->played) != nullptr);
+}
+
+TEST_CASE("story effects: due only once the event played, while the flag is read and not its value") {
+    const auto* owl = FindEffect("HyruleField_Goto_HyruleCastle_Kaepora", "HyruleField_ArriveEntrance");
+    REQUIRE(owl != nullptr);
+    // A late joiner: the owl's played flag came from the host, its own flow never ran.
+    auto due = Due({{owl->played, true}, {owl->flag, false}});
+    CHECK(std::find(due.begin(), due.end(), owl) != due.end());
+    // Its own owl (or a mend before): nothing to do.
+    CHECK(Due({{owl->played, true}, {owl->flag, true}}).empty());
+    // The owl not seen anywhere yet: the clock stays as the game has it.
+    CHECK(Due({{owl->played, false}, {owl->flag, false}}).empty());
+    // Anything unread counts as not due.
+    CHECK(Due({{owl->flag, false}}).empty());
+    CHECK(Due({{owl->played, true}}).empty());
+}
+
+TEST_CASE("story effects: every one comes from a shared played flag and is not shared itself") {
+    std::optional<host::SharedFlags> shared = host::item_shared_flags();
+    CoopDungeon::AddShared(shared);
+    CoopStory::AddShared(shared);
+    CoopQuests::AddShared(shared);
+    CoopChests::AddShared(shared);
+    REQUIRE(shared.has_value());
+    REQUIRE_FALSE(CoopStory::Effects().empty());
+    CHECK(CoopStory::Effects().size() <= CoopStory::kEffectsMax);
+    std::set<std::pair<std::uint32_t, std::uint32_t>> seen;
+    for (const auto& e : CoopStory::Effects()) {
+        INFO(e.setting << ": " << e.name);
+        CHECK(e.played == host::flag_hash(std::string("HavePlayedEvent.") + e.setting));
+        CHECK(e.flag == host::flag_hash(e.name));
+        CHECK(shared->contains(host::FlagKey(e.played, std::uint16_t{0})));
+        CHECK_FALSE(shared->contains(host::FlagKey(e.flag, std::uint16_t{0})));
+        CHECK(seen.insert({e.played, e.flag}).second);  // no row twice
     }
 }
