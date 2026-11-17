@@ -12,6 +12,7 @@
 // view_mutex. OnFrame never holds two at once.
 
 #include "coop_hook.h"
+#include "coop_caller_orders.h"
 #include "coop_version.h" // LICHII_COOP_VERSION, written on each build (cmake/coop_version.cmake)
 
 #include <algorithm>
@@ -127,7 +128,15 @@ constexpr u64 kOcarinaProgramId = 0x0400486024DEC000ULL;
 // The builds it knows: coop_game_build.h (docs/game-builds.md).
 constexpr std::string_view kGameBuildId = CoopGameBuild::kPrimary.id;
 constexpr std::string_view kGameVersion = CoopGameBuild::kPrimary.version;
-constexpr const char* kBuildId = "lichii fritchii-v5 coop";
+// The client this game runs the module in, for HELLO's build_id (docs/crossplay.md): the server writes it beside the
+// player's name in its log, so a problem between two clients can be told apart. Nothing is decided by it. The Fritchii
+// emulator (stage 1): "coop fritchii-v5 <version>"; the Hookshot/Longshot module (COOP_HOOKSHOT, whose
+// LICHII_COOP_VERSION starts with "hookshot "): "coop hookshot <version>".
+#ifdef COOP_HOOKSHOT
+constexpr const char* kBuildId = "coop " LICHII_COOP_VERSION;
+#else
+constexpr const char* kBuildId = "coop fritchii-v5 " LICHII_COOP_VERSION;
+#endif
 
 // A frame older than this means the game is not running (stopped, paused).
 constexpr auto kFrameStale = std::chrono::seconds(1);
@@ -348,7 +357,7 @@ public:
         coop::net::ClientConfig config;
         config.host = settings_.server;
         config.port = settings_.port;
-        config.hello.build_id = kBuildId;
+        config.hello.build_id = coop::protocol::clamp_build_id(kBuildId);   // (a long version text: cut, never unsendable)
         config.hello.game_build_id = std::string(kGameBuildId);
         config.hello.game_version = std::string(kGameVersion);
         config.hello.nickname = settings_.name;
@@ -421,14 +430,14 @@ public:
         }
         map_refresh_ = StartMapRefresh();  // rows 63/76, #146: the HUD's own copy of the map (coop_map_refresh.h)
         if (CoopStory::On()) {  // issue 171: shared quest steps into the game's ChallengeMgr
-            CoopSvc::AddCaller(64, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
+            CoopSvc::AddCaller(CoopCallerOrders::kStory, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
                                           std::uint64_t) {
                 return challenges_.Step(guest, after_call, result, base_);
             });
         }
         // Rows 93/103: the game equips a shared ocarina from its flags (OneShotPlayerEquipDynamicEquipmentFromGameData's
         // call), once after the mend wrote them, outside events (coop::host::OcarinaEquip).
-        CoopSvc::AddCaller(66, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t,
+        CoopSvc::AddCaller(CoopCallerOrders::kOcarinaEquip, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t,
                                       std::uint64_t) -> std::optional<CoopPuppet::Call> {
             namespace oc = coop::host::ocarina;
             const auto slot = ocarina_equip_.step(after_call);
@@ -456,7 +465,7 @@ public:
                 live_requester_.OnTaken(mark);
                 eye_switch_.OnSet(mark);
             }
-            CoopSvc::AddCaller(60, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
+            CoopSvc::AddCaller(CoopCallerOrders::kLiveEvents, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
                                           std::uint64_t) {
                 std::lock_guard lock(live_mutex_);
                 auto call = live_requester_.Step(guest, after_call, result, base_);
@@ -468,7 +477,7 @@ public:
             LOG_INFO(Core, "coop: dungeon: live events on (off with LICHII_COOP_LIVE_EVENTS=0)");
             eye_switch_on_ = CoopEyeSwitch::OnFromEnv(EnvString("LICHII_COOP_EYE_SWITCH"));
             if (eye_switch_on_) {  // deku-switches: before the requester (60)
-                CoopSvc::AddCaller(59, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
+                CoopSvc::AddCaller(CoopCallerOrders::kEyeSwitch, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
                                               std::uint64_t now_ms) {
                     auto call = eye_switch_.Step(guest, after_call, result, base_, now_ms);
                     for (const auto& line : eye_switch_.TakeNotes()) {
