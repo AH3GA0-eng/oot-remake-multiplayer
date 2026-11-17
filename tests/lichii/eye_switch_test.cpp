@@ -542,7 +542,11 @@ TEST_CASE("eye switch: dropped once our game has the event played (our asker ran
 
 TEST_CASE("eye switch: guard flags (a negated trigger flag, an asker's delete flag) wait while the switch path works") {
     // deku-ladder round 3: generated with the table; only flags coop_dungeon.cpp shares, each for a table event.
-    CHECK(CoopEyeSwitch::Guards().size() == 43);
+    CHECK(CoopEyeSwitch::Guards().size() == 42);
+    for (const auto& g : CoopEyeSwitch::Guards()) {
+        // read once at the room's load (UpdateOnce 1): it deletes the compass asker only at a load, never live
+        CHECK(g.flag != "InsideTheDekuTree_RoomD_StepSwitch_On_01");
+    }
     std::set<std::string_view> shared;
     for (const auto& f : CoopDungeon::Flags()) shared.insert(f.name);
     for (const auto& g : CoopEyeSwitch::Guards()) {

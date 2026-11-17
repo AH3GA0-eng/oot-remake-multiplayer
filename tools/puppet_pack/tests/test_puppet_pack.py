@@ -24,6 +24,7 @@ from test_hud import *  # noqa: E402,F401,F403
 from test_self_tunic import *  # noqa: E402,F401,F403
 from test_merge_tables import *  # noqa: E402,F401,F403
 from test_eye_switches import *  # noqa: E402,F401,F403
+from test_room_graph import *  # noqa: E402,F401,F403
 
 try:
     import zstandard

@@ -82,7 +82,9 @@ constexpr Switch kSwitches[] = {
     {"WaterTemple_Room06_Waterlevelrise_FocusOnGimmick", "WaterTemple", "Obj_SwitchHit_A_06", {-78.9f, 120.0f, -15.0f}, "OnState", {-71.8f, 121.2f, -15.1f}},
     {"WaterTemple_Waterlevelrise_FocusOnGimmick", "WaterTemple", "Obj_StepSwitch_A_01", {-27.0f, 100.0f, 20.1f}, "FirstOn", {-35.4f, 103.8f, 17.4f}},
 };
-// The guard flags (see the header), from the same run with --dungeon coop_dungeon.cpp: 43.
+// The guard flags (see the header), from the same run with --dungeon coop_dungeon.cpp: 42. A flag the room reads
+// only when it loads (a gate with UpdateOnce 1: Deku room D's RoomD_StepSwitch_On_01 deletes the compass asker only
+// at a load) is no guard: landing it live deletes nothing.
 constexpr Guard kGuards[] = {
     {"FireTemple_FireStair_First_WasOn", "FireTemple", "FireTemple_SwitchFireCamera_Room04"},  // deletes the asker
     {"FireTemple_FireStair_Second_WasOn", "FireTemple", "FireTemple_SwitchFireCamera_Room12"},  // deletes the asker
@@ -111,7 +113,6 @@ constexpr Guard kGuards[] = {
     {"InsideJabuJabuBelly_Room14_PlayedSwitchEvent_Lower", "InsideJabuJabuBelly", "InsideJabuJabuBellyRoom14StepSwitch_Under"},  // deletes the asker
     {"InsideJabuJabuBelly_Room14_PlayedSwitchEvent_Upper", "InsideJabuJabuBelly", "InsideJabuJabuBellyRoom14StepSwitch"},  // deletes the asker
     {"InsideTheDekuTree_RoomC_Cleared", "InsideTheDekuTree", "InsideTheDekuTree_Gimmick_FallingLadder"},  // deletes the asker
-    {"InsideTheDekuTree_RoomD_StepSwitch_On_01", "InsideTheDekuTree", "InsideTheDekuTree_Gimmick_RoomD_PlatformUp"},  // deletes the asker
     {"InsideTheDekuTree_RoomF_Cleared", "InsideTheDekuTree", "InsideTheDekuTree_Gimmick_RoomF_EyeSwitch"},  // deletes the asker
     {"InsideTheDekuTree_RoomG_WaterLevel", "InsideTheDekuTree", "InsideTheDekuTree_Gimmick_RoomG_WaterLevelDrop"},  // deletes the asker
     {"Insidejabujabu_Gimmick_Room7Event", "InsideJabuJabuBelly", "InsideJabuJabuBellyRoom07StepSwitch"},  // deletes the asker + the trigger reads it negated
