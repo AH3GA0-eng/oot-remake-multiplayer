@@ -916,6 +916,34 @@ TEST_CASE("native boss: a plain enemy copy's own wake runs its own brain for a w
     CHECK(b.Totals().plain_wakes == 0);
 }
 
+TEST_CASE("native boss: only a plain enemy copy with the owner's state wakes by its own brain (rows 109/111)") {
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Baba(Role::copy)});
+    CHECK_FALSE(t.WakesOwnBrain(kActor));  // no owner's state yet: its own brain runs anyway, the Mover's wake too
+    t.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    CHECK(t.WakesOwnBrain(kActor));
+    CHECK_FALSE(t.WakesOwnBrain(kActor + 0x10));  // not in the Table
+    // The owner's own enemy is not a copy.
+    Table o;
+    o.SetOn(true, true);
+    o.Publish({Baba(Role::owner)});
+    o.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    CHECK_FALSE(o.WakesOwnBrain(kActor));
+    // A boss copy keeps the Mover's give-back.
+    Table b;
+    b.SetOn(true, true);
+    b.Publish({Gohma(Role::copy)});
+    b.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    CHECK_FALSE(b.WakesOwnBrain(kActor));
+    // Brain switch off: nothing is skipped, so the pose-era give-back stays.
+    Table off;
+    off.SetOn(false, true);
+    off.Publish({Baba(Role::copy)});
+    off.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    CHECK_FALSE(off.WakesOwnBrain(kActor));
+}
+
 TEST_CASE("native boss: a plain enemy copy's Life is never held and its death runs its own") {
     constexpr std::uint64_t kLife = 0x7700'0000;
     CHECK(PlainDeath(0, false));
