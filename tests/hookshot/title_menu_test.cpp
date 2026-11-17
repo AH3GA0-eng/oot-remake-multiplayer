@@ -718,3 +718,92 @@ TEST_CASE("title menu: ParsePort and host port, 1 to 65535, read and written") {
     o.Write(coop, opt);
     CHECK_FALSE(IniGet(opt, "server_port").has_value());
 }
+
+TEST_CASE("title menu: the save list is re-read once after a switch, when the game's own test says idle") {
+    using R = SaveListRefresh;
+    R r;
+    R::Input in;
+    in.title = true;
+    in.manager = true;
+    in.busy = false;
+    in.state = R::kRead;                     // the game's list after its boot read (state 4): idle
+    in.now_ms = 1000;
+    CHECK(r.Step(in) == R::Action::none);    // no switch: nothing asked
+    CHECK(r.waiting() == R::Wait::none);
+    in.stale = true;
+    in.busy = true;                          // the game is reading already: wait for it
+    in.state = 2;
+    CHECK(r.Step(in) == R::Action::none);
+    CHECK(r.pending());
+    CHECK(r.waiting() == R::Wait::busy);
+    in.stale = false;
+    in.busy = false;
+    in.state = R::kRead;
+    CHECK(r.Step(in) == R::Action::ask);     // idle at state 4 (the case the first run missed): asked once
+    CHECK(r.asked());
+    in.state = 0;                            // reset, read not begun yet
+    CHECK(r.Step(in) == R::Action::none);
+    in.busy = true;
+    in.state = 1;
+    CHECK(r.Step(in) == R::Action::none);
+    in.busy = false;
+    in.state = R::kRead;
+    CHECK(r.Step(in) == R::Action::done);    // read, idle again
+    CHECK(r.Step(in) == R::Action::none);
+}
+
+TEST_CASE("title menu: the save list waits for the title and the manager, retries a refused reset, gives up") {
+    using R = SaveListRefresh;
+    R r;
+    R::Input in;
+    in.stale = true;
+    in.busy = false;
+    in.state = R::kRead;
+    CHECK(r.Step(in) == R::Action::none);    // no title: kept
+    CHECK(r.waiting() == R::Wait::title);
+    in.stale = false;
+    in.title = true;
+    CHECK(r.Step(in) == R::Action::none);    // no manager yet
+    CHECK(r.waiting() == R::Wait::manager);
+    in.manager = true;
+    CHECK(r.Step(in) == R::Action::ask);
+    r.Refused();                             // the game's reset said not now (a save screen holds the list)
+    CHECK(r.pending());
+    CHECK(r.Step(in) == R::Action::ask);     // asked again
+    in.state = 0;                            // never read
+    in.now_ms = R::kGiveUpMs - 1;
+    CHECK(r.Step(in) == R::Action::none);
+    in.stale = true;                         // another switch meanwhile
+    in.now_ms = R::kGiveUpMs;
+    CHECK(r.Step(in) == R::Action::gave_up);
+    in.stale = false;
+    in.state = R::kRead;
+    CHECK(r.Step(in) == R::Action::ask);     // the later switch: asked again
+}
+
+TEST_CASE("title menu: Skip title screen is free solo and held while co-op does anything (patch 0028, report 133)") {
+    SkipTitleInput in;   // solo, co-op idle: Longshot's Skip title screen may choose
+    CHECK(SkipTitleHold(in) == nullptr);
+    for (const int state : {HOS_COOP_STARTING, HOS_COOP_HOSTING, HOS_COOP_JOINING, HOS_COOP_WAIT_HOST, HOS_COOP_CONNECTED,
+                            HOS_COOP_FAILED}) {
+        SkipTitleInput s;
+        s.host_state = state;
+        INFO("state " << state);
+        CHECK(SkipTitleHold(s) != nullptr);
+    }
+    SkipTitleInput live;
+    live.session_live = true;
+    CHECK(std::string(SkipTitleHold(live)) == "a co-op session is live");
+    SkipTitleInput coming;
+    coming.save_coming = true;
+    CHECK(std::string(SkipTitleHold(coming)) == "the host's save is on its way");
+    SkipTitleInput wait;
+    wait.save_wait = true;
+    CHECK(std::string(SkipTitleHold(wait)) == "the host's save is on its way");
+    SkipTitleInput host;
+    host.host_state = HOS_COOP_HOSTING;
+    CHECK(std::string(SkipTitleHold(host)) == "co-op is hosting");
+    SkipTitleInput join;
+    join.host_state = HOS_COOP_CONNECTED;
+    CHECK(std::string(SkipTitleHold(join)) == "co-op is joining");
+}

@@ -191,6 +191,11 @@ std::vector<Tab::Line> Tab::Lines() const {
                     CoopI18n::Tr(Hearts(*lobby_.host_life) + " / " + Hearts(*lobby_.host_max) + " hearts");
         }
         note(std::move(game));
+        if (!lobby_.hosting && lobby_.can_resync) {
+            action("Resync from host", "", Act::kResync,
+                   "Gets the host's save again. Back on the title, it is switched to once the chat says Success; "
+                   "while you play nothing changes until then. Your own saves are never touched.");
+        }
         return out;
     }
 
@@ -348,6 +353,13 @@ void Tab::Decide(const Line& line) {
         note_ = "The invite code is on the clipboard.";
         return;
     }
+    case Act::kResync: {
+        Request r;
+        r.kind = Request::Kind::kResync;
+        request_ = std::move(r);
+        note_ = "Asked the host for its save: the chat says how it goes.";
+        return;
+    }
     case Act::kOwnVoice:
     case Act::kOwnChat:
     case Act::kHostVoice:
@@ -479,6 +491,13 @@ View Tab::view() const {
     v.confirm = "Choose";
     v.back = player_ != 0 ? "Back" : "Close";
     return v;
+}
+
+std::string DiscordState(bool connected, std::size_t players) {
+    if (!connected) {
+        return "Solo";
+    }
+    return players == 1 ? "Co-op: 1 player" : "Co-op: " + std::to_string(players) + " players";
 }
 
 }  // namespace CoopLobbyTab

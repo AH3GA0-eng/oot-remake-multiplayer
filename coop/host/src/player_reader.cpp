@@ -133,12 +133,50 @@ std::optional<std::string> PlayerReader::read_scene() {
   return scene_from_path(text);
 }
 
-std::optional<bool> PlayerReader::read_event_running() {
+std::optional<bool> PlayerReader::read_event_word() {
   const auto events = read_ptr(memory_, memory_.main_base() + addr::kEventManagerPtr);
   if (!events) return std::nullopt;
   const auto running = read_u64(memory_, *events + addr::kEventRunning);
   if (!running) return std::nullopt;
   return *running != 0;
+}
+
+std::optional<bool> PlayerReader::read_link_bound() {
+  const auto actor = find_player_actor();
+  if (!actor) return std::nullopt;
+  const auto parts = read_ptr(memory_, *actor + addr::kActorComponents);
+  if (!parts) return std::nullopt;
+  for (const std::uint64_t slot : {addr::kPerformerSlot, addr::kPerformerSlotAlt}) {
+    const auto performer = read_ptr(memory_, *parts + slot);
+    if (!performer) continue;
+    const auto owner = read_u64(memory_, *performer + addr::kPerformerActor);
+    if (!owner || *owner != *actor) continue;  // not its own
+    const auto link = read_u64(memory_, *performer + addr::kPerformerLink);
+    if (!link) return std::nullopt;
+    return *link != 0;
+  }
+  return std::nullopt;  // no performer of its own found
+}
+
+std::optional<std::int32_t> PlayerReader::read_life() {
+  const auto actor = find_player_actor();
+  if (!actor) return std::nullopt;
+  const auto parts = read_ptr(memory_, *actor + addr::kActorComponents);
+  const auto life = parts ? read_ptr(memory_, *parts + addr::kComponentLife) : std::nullopt;
+  const auto value = life ? read_ptr(memory_, *life + addr::kLifeValue) : std::nullopt;
+  const auto word = value ? read_u32(memory_, *value + addr::kLifeValueWord) : std::nullopt;
+  if (!word) return std::nullopt;
+  const auto quarters = static_cast<std::int32_t>(*word);
+  if (quarters < 0 || quarters > protocol::kMaxLifeQuarters) return std::nullopt;
+  return quarters;
+}
+
+std::optional<bool> PlayerReader::read_event_running() {
+  const auto word = read_event_word();
+  const auto bound = read_link_bound();
+  if ((word && *word) || (bound && *bound)) return true;
+  if (word || bound) return false;
+  return std::nullopt;
 }
 
 std::optional<protocol::Animation> PlayerReader::read_animation() {
@@ -348,9 +386,20 @@ std::optional<PlayerReading> PlayerReader::read() {
   reading.rotation = read_rotation();
   reading.age = read_age();
   reading.scene = read_scene();
-  reading.event_running = read_event_running();
+  {
+    const auto word = read_event_word();
+    const auto bound = read_link_bound();
+    if ((word && *word) || (bound && *bound)) {
+      reading.event_running = true;
+      reading.event_by_link = !(word && *word);
+      reading.link_bound = bound && *bound;
+    } else if (word || bound) {
+      reading.event_running = false;
+    }
+  }
   reading.animation = read_animation();
   reading.equipment = read_equipment();
+  if (const auto life = read_life()) reading.dead = *life <= 0;
   return reading;
 }
 

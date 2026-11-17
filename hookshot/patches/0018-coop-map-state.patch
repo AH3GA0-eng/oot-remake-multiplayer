@@ -1,4 +1,4 @@
-From 3893d02b7c05cd18ea64bd921936db7e3e31fcb8 Mon Sep 17 00:00:00 2001
+From f0361fce3e4d408267284a61fd12ebdd9dd639af Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Fri, 13 Nov 2026 16:01:26 -0900
 Subject: [PATCH] Co-op map state: the game's menu state for the players on the
@@ -11,32 +11,68 @@ the exe): the HUD screen (its layout holds the minimap and the Map page's
 map), the panel's frame, whether the Map page is shown and whether a game
 menu is in front. The module hides the minimap's player icons behind the
 game's menus and puts the players on the Map page's map.
+
+The HUD's own refresh, for the module (rows 63/76): hos_coop_hud_refresh
+asks it once, and it runs at the HUD screen's next update, in
+hos_oot_menu_tick on the game's thread (f_833e4200, x0 = that screen), so
+it only ever runs on a screen that is alive; no stored pointer is called.
+The state says how many have run (hud_refreshes). The HUD screen handed
+out is also forgotten when the slot that held it is reused, and the state
+says how long ago it last ran (hud_ran_ns_ago, -1 not since it was seen).
+Both new fields are filled when the module's struct is that long.
 ---
- host/oot_menu.c | 24 ++++++++++++++++++++++++
- 1 file changed, 24 insertions(+)
+ host/oot_menu.c | 58 ++++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 57 insertions(+), 1 deletion(-)
 
 diff --git a/host/oot_menu.c b/host/oot_menu.c
-index 15bc6430..1a39dce1 100644
+index 7c38611b..367b3546 100644
 --- a/host/oot_menu.c
 +++ b/host/oot_menu.c
-@@ -235,6 +235,8 @@ static int panel_page(uint64_t screen) { return panel_page_vt(peek64(screen)); }
+@@ -22,6 +22,7 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <stddef.h>   /* (oot-remake-multiplayer's patch 0018: offsetof) */
+ #include "../gpu/vk/vk_api.h"   /* (HOS_MOUSE_*) */
+ 
+ /* A guest read, of the pointers the game's objects hold: inside the guest's space (below 1 MB: a null pointer's), it is
+@@ -235,6 +236,11 @@ static int panel_page(uint64_t screen) { return panel_page_vt(peek64(screen)); }
     many floors, +0x1370 the lowest; the top is the lowest + the count - 1. Kept as the screens are seen */
  #define HUD_SCREEN_VTABLE 0x84c08300ULL
  static volatile uint64_t hud_screen;
 +static volatile uint64_t panel_screen;   /* (oot-remake-multiplayer's patch 0018: the panel's frame, as seen) */
 +static volatile int64_t front_ns;        /* (patch 0018: when a screen last had the mouse: a game menu in front) */
++static volatile int64_t hud_seen_ns;     /* (patch 0018: when the HUD screen last ran; 0: not since it was seen) */
++static volatile LONG hud_refresh_wanted; /* (patch 0018: the module asked the HUD's own refresh, hos_coop_hud_refresh) */
++static volatile LONG hud_refreshes;      /* (patch 0018: refreshes made at the HUD screen's update) */
  static int map_floors(int *cur, int *top, int *bottom) {
      int32_t f[3];
      if (!hud_screen || !peek(hud_screen + 0x1368, f, sizeof f) || f[1] < 1 || f[1] > 12) return 0;
-@@ -754,6 +756,7 @@ static Seen *screen_seen(uint64_t screen, int64_t now) {
+@@ -751,9 +757,14 @@ static Seen *screen_seen(uint64_t screen, int64_t now) {
+         if (seen[i].screen == screen) return &seen[i];
+         if (!free_one || seen[i].seen_ns < free_one->seen_ns) free_one = &seen[i];   /* (the one gone longest) */
+     }
++    /* (patch 0018: a slot reused is a screen gone longest: the HUD or panel it held is no longer known to run, so it is
++       forgotten, never handed out as a screen that may be freed) */
++    if (free_one->screen && free_one->screen == hud_screen) hud_screen = 0, hud_seen_ns = 0;
++    if (free_one->screen && free_one->screen == panel_screen) panel_screen = 0;
      memset(free_one, 0, sizeof *free_one);
      free_one->screen = screen, free_one->first_ns = now, free_one->vt = peek64(screen);
-     if (free_one->vt == HUD_SCREEN_VTABLE) hud_screen = screen;
+-    if (free_one->vt == HUD_SCREEN_VTABLE) hud_screen = screen;
++    if (free_one->vt == HUD_SCREEN_VTABLE) hud_screen = screen, hud_seen_ns = 0;
 +    if (free_one->vt == PANEL_FRAME_VTABLE) panel_screen = screen;
      if (trace) {
          const uint64_t mgr = peek64(peek64(screen + 32) + 96);
          hos_log("menu: a screen: %#llx (vtable %#llx) entries %d, focus manager %#llx%s", (unsigned long long)screen,
-@@ -808,6 +811,7 @@ void hos_oot_menu_tick(Ctx *c, uint64_t screen) {
+@@ -774,6 +785,7 @@ void hos_oot_menu_tick(Ctx *c, uint64_t screen) {
+         if (trace) hos_log("menu: screen %#llx (vtable %#llx) runs", (unsigned long long)screen, (unsigned long long)peek64(screen));
+     }
+     me->seen_ns = now;
++    if (screen == hud_screen) hud_seen_ns = now;   /* (patch 0018: the HUD runs now) */
+     for (int i = 0; i < (int)(sizeof seen / sizeof *seen); i++)   /* (a screen with no update for 200 ms has stopped) */
+         if (seen[i].running && now - seen[i].seen_ns > 200000000) {
+             seen[i].running = 0;
+@@ -808,6 +820,7 @@ void hos_oot_menu_tick(Ctx *c, uint64_t screen) {
      static uint64_t front_was;
      if (trace && front && front->screen != front_was) hos_log("menu: the mouse is for screen %#llx", (unsigned long long)front->screen);
      front_was = front ? front->screen : 0;
@@ -44,10 +80,19 @@ index 15bc6430..1a39dce1 100644
      const int mine = front == me;
      /* (no screen has held the mouse for 50 ms of frames, the HUD's among them in play: the game's menus have closed,
         and the window gives the camera its mouse back now, not after display.c's 300 ms) */
-@@ -819,6 +823,26 @@ void hos_oot_menu_tick(Ctx *c, uint64_t screen) {
+@@ -818,6 +831,49 @@ void hos_oot_menu_tick(Ctx *c, uint64_t screen) {
+     if (gone) hos_mouse_game_menu_gone();
      if (mine) mouse_tick(c, screen);
      if (screen == pause_screen_now()) InterlockedIncrement(&ticks);
- }
++    /* (patch 0018, oot-remake-multiplayer rows 63/76) The HUD screen's own refresh f_833e4200 (it reads the dungeon's
++       map, compass, boss key and floors into the copy the minimap and the Map page draw), when the module asked for
++       it: here, at that screen's own update on the game's thread, so the screen it runs on is alive by definition; no
++       stored pointer is ever called on */
++    if (hud_refresh_wanted && peek64(screen) == HUD_SCREEN_VTABLE && InterlockedExchange(&hud_refresh_wanted, 0)) {
++        guest_call(c, 0x833e4200ULL, screen, 0, NULL, NULL);
++        InterlockedIncrement(&hud_refreshes);
++    }
++}
 +
 +/* (oot-remake-multiplayer's patch 0018, the other players on the game's maps) For hookshot_coop.dll, found by name in
 +   this exe, any thread: the HUD screen (its layout holds the minimap and the Map page's map), the panel's frame (Key
@@ -57,17 +102,31 @@ index 15bc6430..1a39dce1 100644
 +    uint32_t size;
 +    int32_t map_page, menu_open, reserved;
 +    uint64_t hud_screen, panel_screen;
++    int64_t hud_ran_ns_ago;   /* how long ago the HUD screen last ran (-1: not since it was seen); filled when size covers it */
++    uint32_t hud_refreshes;   /* the HUD refreshes made for hos_coop_hud_refresh so far */
++    uint32_t reserved2;
 +} HosCoopMenuState;
 +__declspec(dllexport) int hos_coop_menu_state(HosCoopMenuState *out) {
-+    if (!out || out->size < sizeof *out) return 0;
-+    out->size = sizeof *out;
++    if (!out || out->size < offsetof(HosCoopMenuState, hud_ran_ns_ago)) return 0;   /* (an older module's smaller one too) */
++    const int long_one = out->size >= sizeof *out;
++    out->size = long_one ? (uint32_t)sizeof *out : (uint32_t)offsetof(HosCoopMenuState, hud_ran_ns_ago);
 +    out->map_page = map_page;
 +    const int64_t at = front_ns;
 +    out->menu_open = at && hos_now_ns() - at < 150000000;
 +    out->reserved = 0;
 +    out->hud_screen = hud_screen, out->panel_screen = panel_screen;
++    if (long_one) {
++        const int64_t ran = hud_seen_ns;
++        out->hud_ran_ns_ago = out->hud_screen && ran ? hos_now_ns() - ran : -1;
++        out->hud_refreshes = (uint32_t)hud_refreshes, out->reserved2 = 0;
++    }
 +    return 1;
 +}
++/* (patch 0018, rows 63/76) The module asks the HUD screen's own refresh once: it runs at that screen's next update
++   (hos_oot_menu_tick), never on a stored pointer. 1: asked */
++__declspec(dllexport) int hos_coop_hud_refresh(void) {
++    InterlockedExchange(&hud_refresh_wanted, 1);
++    return 1;
+ }
  #else
  void hos_input_clear_toggles(void);
- /* The pause page's focus hook also runs on Linux, even without mouse menu navigation. */

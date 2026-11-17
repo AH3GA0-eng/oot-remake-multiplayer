@@ -414,6 +414,25 @@ TEST_CASE("testinput: place hands the hook a world point, then the script goes o
     CHECK(r.Done());
 }
 
+TEST_CASE("testinput: hurt hands the hook a hit on our own Link in quarter hearts, then the script goes on") {
+    std::string error;
+    CHECK_FALSE(Parse("hurt\n", error));
+    CHECK_FALSE(Parse("hurt 0\n", error));
+    CHECK_FALSE(Parse("hurt 81\n", error));
+    CHECK_FALSE(Parse("hurt 2x\n", error));
+    CHECK_FALSE(Parse("hurt 4 5\n", error));
+    Runner r(Must("hurt 4\nmark hurt\n"));
+    std::vector<std::string> log;
+    r.Advance(0.0, std::nullopt, log);
+    const auto requests = r.TakeRequests();
+    REQUIRE(requests.size() == 1);
+    CHECK(requests[0].kind == Kind::hurt);
+    CHECK(requests[0].name == "4");
+    REQUIRE(log.size() == 1);
+    CHECK(log[0] == "mark hurt");
+    CHECK(r.Done());
+}
+
 TEST_CASE("testinput: kill hands the hook an actor name as written, then the script goes on (items-sync)") {
     std::string error;
     CHECK_FALSE(Parse("kill\n", error));

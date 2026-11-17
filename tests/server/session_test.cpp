@@ -326,6 +326,47 @@ TEST_CASE("a game build other than the session's is refused") {
   }
 }
 
+TEST_CASE("crossplay: players on different clients of the same game build share one session") {
+  // docs/crossplay.md: what a game runs the module in (this kit's Longshot, Hookshot, another launcher's build) is
+  // never a reason to refuse it; only the protocol version, the game build and the join password are.
+  std::vector<std::string> lines;
+  SessionConfig config;
+  config.log = [&lines](const std::string& line) { lines.push_back(line); };
+  Harness h(config);
+  // (the Longshot kit's module, Navi's build of it, a Hookshot build, and the Fritchii emulator: stage 1)
+  const char* clients[] = {"coop hookshot 0.11.3", "coop hookshot b614270-dirty (Navi)", "coop hookshot longshot-mirror-v3.0.0-rc.5",
+                           "coop fritchii-v5 0.11.3"};
+  for (ConnectionId id = 1; id <= 4; ++id) {
+    h.connect(id);
+    Hello hello = hello_from(id == 1 ? "Link" : id == 2 ? "Zelda" : id == 3 ? "Saria" : "Darunia");
+    hello.build_id = clients[id - 1];
+    h.receive(id, hello, kChannelSession);
+    bool welcomed = false, refused = false;
+    for (const Sent& s : h.to(id)) {
+      welcomed = welcomed || std::holds_alternative<Welcome>(s.message);
+      refused = refused || std::holds_alternative<Refused>(s.message);
+    }
+    CHECK(welcomed);
+    CHECK_FALSE(refused);
+  }
+  CHECK(h.session.player_count() == 4);
+  // The server's log names each player's client, so a desync between two clients can be told apart
+  const auto joined_by = [&lines](const std::string& text) {
+    return std::any_of(lines.begin(), lines.end(), [&text](const std::string& l) { return l.find(text) != std::string::npos; });
+  };
+  CHECK(joined_by("joined: Link (client: coop hookshot 0.11.3)"));
+  CHECK(joined_by("joined: Zelda (client: coop hookshot b614270-dirty (Navi))"));
+  CHECK(joined_by("joined: Saria (client: coop hookshot longshot-mirror-v3.0.0-rc.5)"));
+  CHECK(joined_by("joined: Darunia (client: coop fritchii-v5 0.11.3)"));
+}
+
+TEST_CASE("crossplay: a client's name in the log is printable and short, whatever another game sends") {
+  CHECK(Session::client_label("") == "unnamed");
+  CHECK(Session::client_label("a\nb\x01" "c\x7f") == "abc");
+  CHECK(Session::client_label(std::string(200, 'x')).size() == 48);
+  CHECK(Session::client_label("hookshot 0.11.3") == "hookshot 0.11.3");
+}
+
 TEST_CASE("a nickname in use is refused as name taken, a blank one as bad name") {
   Harness h;
   h.join(1, "Link");
@@ -3963,11 +4004,32 @@ TEST_CASE("dbno: a state is relayed to everyone else") {
   CHECK(h.to(1).empty());
 }
 
+TEST_CASE("dbno: a threat and a spectating state are relayed to everyone else") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.clear();
+  h.receive(1, DbnoThreat{0, true}, kChannelSession);
+  CHECK(only_message_to<DbnoThreat>(h, 2) == DbnoThreat{1, true});
+  CHECK(only_message_to<DbnoThreat>(h, 3) == DbnoThreat{1, true});
+  CHECK(h.to(1).empty());
+  h.clear();
+  h.receive(2, DbnoStatus{0, DbnoState::spectating, 0, 0, 0}, kChannelSession);
+  CHECK(only_message_to<DbnoStatus>(h, 1) == DbnoStatus{2, DbnoState::spectating, 0, 0, 0});
+  CHECK(h.to(2).empty());
+}
+
 TEST_CASE("dbno: a downed owner gives its enemy up, even in a fight, and is not given one") {
   OwnerHarness h;
   h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);  // a fight
   SUBCASE("downed") {
     h.receive(1, DbnoStatus{0, DbnoState::downed, 400, 0, 0}, kChannelSession);
+    h.run(250'000);
+    CHECK(h.asks() == 1);
+  }
+  SUBCASE("spectating: as downed") {
+    h.receive(1, DbnoStatus{0, DbnoState::spectating, 0, 0, 0}, kChannelSession);
     h.run(250'000);
     CHECK(h.asks() == 1);
   }
@@ -4179,6 +4241,31 @@ TEST_CASE("a gimmick event start goes to the others in the sender's scene only, 
   h.clear();
   h.receive(3, sample_in("InsideTheDekuTree"), kChannelPlayerSamples);
   CHECK(messages_to<DungeonEvent>(h, 3).empty());
+}
+
+TEST_CASE("a switch state goes to the others in the sender's scene only, never kept (room-objects)") {
+  ObjectHarness h;
+  h.receive(1, sample_in("DodongoCavern"), kChannelPlayerSamples);
+  h.receive(2, sample_in("DodongoCavern"), kChannelPlayerSamples);
+  h.receive(3, sample_in("KokiriForest"), kChannelPlayerSamples);
+  h.clear();
+  SwitchState s;
+  s.scene = "DodongoCavern";
+  s.name = "Obj_StepSwitch_A_01";
+  s.place = {17.2f, 112.3f, -23.0f};
+  s.plug = 0x1234abcdu;
+  s.on = true;
+  h.receive(1, s, kChannelSession);
+  const auto got = messages_to<SwitchState>(h, 2);
+  REQUIRE(got.size() == 1);
+  CHECK(got.front().player_number == 1);
+  CHECK(got.front().on);
+  CHECK(messages_to<SwitchState>(h, 1).empty());
+  CHECK(messages_to<SwitchState>(h, 3).empty());
+  h.clear();
+  s.scene = "KokiriForest";  // late, from a scene the sender left
+  h.receive(1, s, kChannelSession);
+  CHECK(messages_to<SwitchState>(h, 3).empty());
 }
 
 TEST_CASE("a platform clock goes to the others in the sender's scene only, never kept (platforms-b)") {
@@ -5377,4 +5464,43 @@ TEST_CASE("boss heart: the host loading a save forgets the claims (the boss figh
   h.receive(1, BossHeart{0, 0, false, 16}, kChannelSession);  // the refight's pickup
   CHECK(only_message_to<BossHeart>(h, 2) == BossHeart{1, 0, true, 16});
   CHECK(h.session.stats().boss_hearts_given == 2);
+}
+
+TEST_CASE("boss beaten: a game's own death of a boss is told to a player who joins later, until the host loads a save") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  h.receive(2, BossScene{0, "InsideTheDekuTree", 0, BossSceneKind::outro_start, {1.0f, 2.0f, 3.0f}}, kChannelSession);
+  CHECK(only_message_to<BossScene>(h, 1).has_value());  // relayed as before
+  h.receive(2, BossScene{0, "InsideTheDekuTree", 0, BossSceneKind::outro_start, {1.0f, 2.0f, 3.0f}}, kChannelSession);
+  h.clear();
+  h.join(3, "Saria");  // was not there (G2, player report #241): told once, as the same player's death ended
+  CHECK(messages_to<BossScene>(h, 3) ==
+        std::vector<BossScene>{{2, "InsideTheDekuTree", 0, BossSceneKind::outro_end, {1.0f, 2.0f, 3.0f}}});
+  h.receive(1, FlagReset{0, {flag(5, 0)}}, kChannelProgress);  // the host loaded a save from before the win
+  h.clear();
+  h.join(4, "Darunia");
+  CHECK(messages_to<BossScene>(h, 4).empty());
+}
+
+TEST_CASE("boss beaten: a player's BOSS_ROOM defeated (maybe a guess) and the other cutscenes are never kept") {
+  Harness h;
+  h.join(1, "Link");
+  h.receive(1, BossRoom{0, "WaterTemple", 5, BossState::defeated}, kChannelSession);  // a long event, no reading
+  h.receive(1, BossScene{0, "WaterTemple", 5, BossSceneKind::intro_start, {}}, kChannelSession);
+  h.receive(1, BossScene{0, "WaterTemple", 5, BossSceneKind::outro_end, {}}, kChannelSession);
+  h.clear();
+  h.join(2, "Zelda");
+  CHECK(messages_to<BossScene>(h, 2).empty());
+}
+
+TEST_CASE("boss beaten: a new group (the session emptied) starts with no boss beaten") {
+  Harness h;
+  h.join(1, "Link");
+  h.receive(1, BossScene{0, "DodongoCavern", 1, BossSceneKind::outro_start, {}}, kChannelSession);
+  h.session.disconnected(1, h.now);
+  h.clear();
+  h.join(2, "Zelda");
+  CHECK(messages_to<BossScene>(h, 2).empty());
 }

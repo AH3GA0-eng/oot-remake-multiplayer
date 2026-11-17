@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_platforms.h"
 
+#include "coop_room_objects.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -74,6 +76,27 @@ bool IsDriver(std::string_view name) {
         }
     }
     return false;
+}
+
+bool PlatformSync::OnFootprint(const coop::protocol::Vec3& platform, const coop::protocol::Vec3& who) {
+    const float dx = who[0] - platform[0];
+    const float dz = who[2] - platform[2];
+    const float dy = who[1] - platform[1];
+    return dx * dx + dz * dz <= kRideRadiusM * kRideRadiusM && dy >= -kRideBelowM && dy <= kRideAboveM;
+}
+
+bool PlatformSync::OurLinkRides(const Driver& d, const coop::protocol::Vec3& player) {
+    if (d.ride_plug == false) {
+        return false;  // the game says no player is on it
+    }
+    if (d.name.starts_with("GroundControlActor_") || d.name.starts_with("GrouondControlActor_")) {
+        return d.ride_plug.value_or(false);
+    }
+    const bool ours_on = OnFootprint(d.position, player);
+    if (d.ride_plug == true) {
+        return ours_on || !d.other_on;  // only another player's puppet on it is not ours
+    }
+    return ours_on;
 }
 
 std::string Where(std::uint64_t key) {
@@ -213,8 +236,8 @@ void ClockFinder::Add(std::uint64_t now_us, const Floats& floats) {
     if (!chosen_) {
         std::optional<std::uint64_t> best;
         for (const auto& [key, cand] : candidates_) {
-            if (cand.good < kKeepAfter || cand.bad != 0) {
-                continue;
+            if (cand.good < kKeepAfter || cand.bad != 0 || !Trusted(key, cand.wave)) {
+                continue;  // room-objects: a guessed word is never the clock (it was a place or a frame counter)
             }
             if (!best) {
                 best = key;
@@ -239,6 +262,20 @@ void ClockFinder::Add(std::uint64_t now_us, const Floats& floats) {
         }
         chosen_ = best;
     }
+}
+
+bool ClockFinder::Trusted(std::uint64_t key, bool wave) {
+    return wave || (key >> 32) == kRegionAsFrame;
+}
+
+std::optional<std::string> PlatformSync::OwnLogic(const std::string& scene, const Driver& d) {
+    if (d.ride_plug.has_value()) {
+        return std::string("RideOnPlayer, live");  // a rider lift: CoopLiftRide drives it
+    }
+    if (const auto* p = CoopRoomObjects::Nearest(scene, d.name, d.position); p != nullptr && !p->why.empty()) {
+        return std::string(p->why);
+    }
+    return std::nullopt;
 }
 
 std::optional<std::uint64_t> ClockFinder::StalledKey() const {
@@ -367,6 +404,16 @@ void PlatformSync::Tick(const std::string& scene, std::uint8_t self, std::uint64
         if (d.hash == 0 || d.hash == ~std::uint64_t{0} || !IsDriver(d.name)) {
             continue;
         }
+        // room-objects: an object its own logic drives (a switch, a sensor, a rider) is never written from outside.
+        if (const auto why = OwnLogic(scene, d)) {
+            if (told_own_logic_.insert(d.hash).second) {
+                char text[200];
+                std::snprintf(text, sizeof text, "%016llx %s: driven by its own logic (%s): its clock is not shared",
+                              static_cast<unsigned long long>(d.hash), d.name.c_str(), why->c_str());
+                out.notes.emplace_back(text);
+            }
+            continue;
+        }
         const float m = Distance(d.position, *player);
         if (m <= kNearM) {
             near.emplace_back(m, &d);
@@ -382,6 +429,18 @@ void PlatformSync::Tick(const std::string& scene, std::uint8_t self, std::uint64
     message.server_time_us = server_us;
     for (const auto& [m, d] : near) {
         State& s = states_[d->hash];
+        // Issue 194: no clock write moves our Link; a jump on it (the plug 0 in the air) keeps the hold.
+        if (OurLinkRides(*d, *player)) {
+            s.ride_until_us = steady_us + kRideGraceUs;
+        }
+        const bool ridden = steady_us < s.ride_until_us;
+        if (s.held_for_ride && !ridden) {
+            s.held_for_ride = false;
+            char text[160];
+            std::snprintf(text, sizeof text, "%016llx %s: our Link is off it: its clock may be put in step again",
+                          static_cast<unsigned long long>(d->hash), d->name.c_str());
+            out.notes.emplace_back(text);
+        }
         if (s.last_look_us != 0 && steady_us < s.last_look_us + ClockFinder::kLookEveryUs) {
             continue;
         }
@@ -405,7 +464,7 @@ void PlatformSync::Tick(const std::string& scene, std::uint8_t self, std::uint64
             }
             bool resumed = false;
             if (const auto stood = std::exchange(s.paused_at, std::nullopt);
-                stood && s.sent && s.sent->key == clock->key && !probe_only && !s.gave_up &&
+                stood && s.sent && s.sent->key == clock->key && !probe_only && !s.gave_up && !ridden &&
                 DriftSeconds(clock->value, *stood, clock->rate, clock->cycle) <= kResumeS) {
                 const float want = Advance(s.sent->value, s.sent->rate, s.sent->cycle, s.sent_us, server_us);
                 if (DriftSeconds(clock->value, want, clock->rate, clock->cycle) > kDriftS) {
@@ -480,6 +539,21 @@ void PlatformSync::Tick(const std::string& scene, std::uint8_t self, std::uint64
             s.written.reset();
             continue;
         }
+        if (ridden) {
+            // Issue 194: written now, the platform would jump with our Link on it. Put in step once he is
+            // off; nothing was written, so the next write is not one the game "took back".
+            s.written.reset();
+            if (!s.held_for_ride) {
+                s.held_for_ride = true;
+                char text[200];
+                std::snprintf(text, sizeof text,
+                              "%016llx %s: our Link rides it (%s): its clock is left %.2f s off until he is off",
+                              static_cast<unsigned long long>(d->hash), d->name.c_str(),
+                              d->ride_plug ? "RideOnPlayer" : "footprint", static_cast<double>(drift));
+                out.notes.emplace_back(text);
+            }
+            continue;
+        }
         if (s.last_write_us != 0 && steady_us < s.last_write_us + kWriteEveryUs) {
             continue;
         }
@@ -521,6 +595,7 @@ void PlatformSync::Reset() {
     scene_.clear();
     heard_.clear();
     states_.clear();
+    told_own_logic_.clear();
 }
 
 }  // namespace CoopPlatforms

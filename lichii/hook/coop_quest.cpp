@@ -191,6 +191,10 @@ std::optional<std::size_t> IndexOf(const std::vector<std::uint32_t>& steps, std:
     return static_cast<std::size_t>(it - steps.begin());
 }
 
+std::uint64_t Key(const StepWant& w) {
+    return (std::uint64_t{w.challenge} << 32) | w.step;
+}
+
 std::string Hex(std::uint32_t v) {
     char buf[16];
     std::snprintf(buf, sizeof buf, "%#x", v);
@@ -268,6 +272,11 @@ std::optional<StepWant> LiveWant(const Quest& quest, const ReadEnum& value) {
 void Challenges::Want(std::vector<StepWant> wants) {
     std::lock_guard lock(mutex_);
     waiting_ = std::move(wants);
+    // The back-off counts fresh lists (one a second), not frames: Step(false)
+    // runs every frame (coop_callers.h).
+    for (auto& [key, r] : refused_) {
+        if (r.skip > 0) --r.skip;
+    }
 }
 
 std::vector<std::string> Challenges::TakeNotes() {
@@ -285,9 +294,23 @@ std::optional<CoopPuppet::Call> Challenges::Step(CoopPuppet::Guest& guest, bool 
         next_ = 0;
     } else if (next_ > 0 && next_ <= work_.size()) {
         const StepWant& w = work_[next_ - 1];
-        notes_.push_back("quest " + w.name + " " + Hex(asked_from_) + " -> " + Hex(w.step) +
-                         ((result & 1) != 0 ? " asked of the game's ChallengeMgr (issue 171)"
-                                            : " refused by the game's ChallengeMgr"));
+        const std::string head = "quest " + w.name + " " + Hex(asked_from_) + " -> " + Hex(w.step);
+        const auto it = refused_.find(Key(w));
+        if ((result & 1) != 0) {
+            const std::uint32_t before = it != refused_.end() ? it->second.count : 0;
+            notes_.push_back(head + " asked of the game's ChallengeMgr (issue 171)" +
+                             (before > 0 ? " after " + std::to_string(before) + " refusals" : ""));
+            if (it != refused_.end()) refused_.erase(it);
+        } else {
+            Refusal& r = refused_[Key(w)];
+            ++r.count;
+            r.skip = std::min<std::uint32_t>(1u << std::min<std::uint32_t>(r.count, 6), 60);
+            if (r.count == 1 || r.count == 10 || r.count == 100 || r.count == 1000) {
+                notes_.push_back(head + " refused by the game's ChallengeMgr" +
+                                 (r.count == 1 ? std::string(" (tried again less often; noted at 10, 100 refusals)")
+                                               : " " + std::to_string(r.count) + " times"));
+            }
+        }
     }
     if (main == 0) return std::nullopt;
     const auto mgr = Get<std::uint64_t>(guest, main + kChallengeMgr);
@@ -295,6 +318,7 @@ std::optional<CoopPuppet::Call> Challenges::Step(CoopPuppet::Guest& guest, bool 
     while (next_ < work_.size()) {
         const StepWant& w = work_[next_++];
         if (HeldStep(w.challenge, w.step)) continue;
+        if (const auto r = refused_.find(Key(w)); r != refused_.end() && r->second.skip > 0) continue;
         const auto want = IndexOf(w.steps, w.step);
         const std::uint64_t entry = FindEntry(guest, *mgr, w.challenge);
         if (!want || entry == 0) continue;

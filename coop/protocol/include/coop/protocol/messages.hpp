@@ -36,6 +36,19 @@ inline constexpr std::size_t kComponentHeaderSize = 4;
 // A string may also never be longer than 4 bytes per character, must be valid
 // UTF-8 and holds no control characters (U+0000-U+001F, U+007F-U+009F).
 inline constexpr std::size_t kMaxBuildIdChars = 64;
+
+// A client's name for HELLO's build_id (docs/crossplay.md) cut to kMaxBuildIdChars characters, so a long version text
+// (a long `git describe`, a launcher's own version) never keeps the HELLO from being encoded and the player from
+// joining. Cut at a character's start, never inside a UTF-8 sequence.
+inline std::string clamp_build_id(std::string_view id) {
+  std::size_t chars = 0;
+  for (std::size_t i = 0; i < id.size(); ++i) {
+    if ((static_cast<unsigned char>(id[i]) & 0xC0) != 0x80 && chars++ == kMaxBuildIdChars) {
+      return std::string(id.substr(0, i));
+    }
+  }
+  return std::string(id);
+}
 inline constexpr std::size_t kMaxGameBuildIdChars = 32;
 inline constexpr std::size_t kMaxGameVersionChars = 16;
 inline constexpr std::size_t kMaxNicknameChars = 16;
@@ -119,6 +132,7 @@ enum class MessageType : std::uint16_t {
   fish_lure = 320,  // 320 to 324: the fishing pond (docs/protocol.md, "Fishing")
   rejoin_token = 345,  // 345 to 349: rejoin after a crash or drop (docs/protocol.md, "Rejoin")
   rejoin_claim = 346,
+  switch_state = 356,  // room-objects: a room switch's own state (docs/protocol.md, "Switch states")
   dungeon_event = 355,  // 355 to 359: a room gimmick's event started (docs/protocol.md, "Gimmick events")
   player_ride = 385,  // 385 to 389: riding Epona (docs/protocol.md, "Riding")
   platform_clock = 400,  // 400 to 404: moving platforms' clocks (docs/protocol.md, "Moving platforms")
@@ -126,6 +140,7 @@ enum class MessageType : std::uint16_t {
   dbno_mode = 470,  // 470 to 479: down but not out (docs/protocol.md, "Down but not out")
   dbno_state = 471,
   dbno_revive = 472,
+  dbno_threat = 473,
   difficulty = 480,  // 480 to 489: difficulty (docs/protocol.md, "Difficulty")
   voice_frame = 420,  // 420 to 424: proximity voice chat (docs/protocol.md, "Voice")
   mod_list = 490,  // 490 to 499: mods (docs/protocol.md, "Mods")
@@ -326,6 +341,9 @@ inline constexpr std::uint8_t loading = 1u << 1;
 inline constexpr std::uint8_t in_cutscene = 1u << 2;
 inline constexpr std::uint8_t in_menu = 1u << 3;
 inline constexpr std::uint8_t dead = 1u << 4;
+// Not really here: a player who cannot fight or be fought now (PvP never hits them, and with the
+// puppets perceived no enemy picks their puppet: coop_pvp.cpp Guarded, coop_dbno_body.h UnseenWhy).
+inline constexpr std::uint8_t away = paused | loading | in_cutscene | in_menu | dead;
 }  // namespace status
 
 struct PlayerStatus {
@@ -1296,7 +1314,8 @@ struct DropAsk {
 // boss. `in_room` is sent on entering and every 2 s while there, so a game
 // in the same dungeon (one that joined or respawned too) moves its player in;
 // the intro's start and end let the others leave the intro together; `left`
-// and `defeated` end the pull. Relayed to everyone else.
+// and `defeated` end the pull. Relayed to everyone else. `defeated` is no
+// proof of a death (also sent on a guess): G2 takes BOSS_SCENE's outro.
 enum class BossState : std::uint8_t {
   in_room = 1,
   intro_start = 2,
@@ -1455,6 +1474,23 @@ struct DungeonEvent {
   bool operator==(const DungeonEvent&) const = default;
 };
 
+// SWITCH_STATE (room-objects; docs/protocol.md, "Switch states"): one of the sender's room switches (a timed step, eye
+// or hit switch whose output a room object reads) turned an output plug on or off by its own player's press. A game in
+// the same scene holds the same plug on its own switch while the sender's is on, so its own timers, gates and movers
+// run (lichii/hook/coop_switch_share.h). Reliable, relayed to the sender's scene, never kept; sent again every 2 s
+// while on, so a player who comes in late gets it.
+inline constexpr std::size_t kMaxSwitchNameChars = 64;
+
+struct SwitchState {
+  std::uint8_t player_number = kPlayerSelf;
+  std::string scene;
+  std::string name;        // the switch's actor name, 1 to kMaxSwitchNameChars
+  Vec3 place{};            // its placement (the romfs's), finite
+  std::uint32_t plug = 0;  // Murmur3 of the output plug's name (OnState, OffState, FirstOn, ...), not 0
+  bool on = false;
+  bool operator==(const SwitchState&) const = default;
+};
+
 // Down but not out (protocol 11; docs/protocol.md, "Down but not out"): a
 // player whose hearts run out is downed, not dead, and a teammate can revive
 // them. On unless the host turns it off.
@@ -1485,7 +1521,10 @@ struct DbnoMode {
 enum class DbnoState : std::uint8_t {
   up = 0,
   downed = 1,  // crawling, bleeding out, can be revived
-  out = 2,     // bled out, or nobody was left standing: the game's own death runs
+  out = 2,     // nobody was left standing: the game's own death (Game Over) runs
+  // Not revived in time: watches a player still up until no enemy is near
+  // the players still up, then comes back beside the one watched.
+  spectating = 3,
 };
 
 // Most bleed-out time a DBNO_STATE may carry, tenths of a second.
@@ -1511,6 +1550,17 @@ struct DbnoRevive {
   std::uint8_t target = 0;                   // 1 to kMaxPlayers, not the reviver
   bool holding = false;
   bool operator==(const DbnoRevive&) const = default;
+};
+
+// DBNO_THREAT: whether an enemy is near the sender's Link, as the sender's
+// own game sees its enemies. Sent by a player who is up, when it changes and
+// again every few seconds; relayed to everyone else. A spectating player
+// comes back when every player still up says "none near" (or the one it
+// watches does, when the others are elsewhere).
+struct DbnoThreat {
+  std::uint8_t player_number = kPlayerSelf;
+  bool enemy_near = false;
+  bool operator==(const DbnoThreat&) const = default;
 };
 
 // BOSS_SCENE (boss-cutscenes, docs/dungeons-boss.md "Boss cutscenes"): the
@@ -1724,10 +1774,10 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              JoinChallenge, JoinProof, SaveAsk, SavePart, PlayerLife,
                              PvpMode, PvpHit, PvpHurt, FishLure, RejoinToken, RejoinClaim, DungeonEvent, PlayerRide,
                              OcarinaNote, PlatformClock, PlatformCounter,
-                             DbnoMode, DbnoStatus, DbnoRevive, Difficulty, VoiceFrame,
+                             DbnoMode, DbnoStatus, DbnoRevive, DbnoThreat, Difficulty, VoiceFrame,
                              ModList, ModSettings, LobbyAction, LobbyMutes, LobbyResult,
                              LocalJoin, LocalJoined, LocalLeave, LocalSample, LocalMessage, LinkSound,
-                             BossScene, BossHeart, PlayerLook>;
+                             BossScene, BossHeart, PlayerLook, SwitchState>;
 
 MessageType type_of(const Message& message);
 

@@ -342,6 +342,30 @@ TEST_CASE("unknown reasons and status bits are kept, not refused") {
   CHECK(std::get<PlayerStatus>(m).flags == 0xFF);
 }
 
+TEST_CASE("a client's name with a long version is cut to HELLO's limit, so the HELLO can always be sent") {
+  // (docs/crossplay.md) "coop hookshot " + a long `git describe` (a mirror tag, many commits, a long hash, dirty)
+  const std::string long_id =
+      "coop hookshot longshot-mirror-v3.0.0-rc.4-1234-gbd02dd49a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6-dirty";
+  REQUIRE(long_id.size() > kMaxBuildIdChars);
+  Hello hello{kProtocolVersion, long_id, "e0f3ccfaf50065ae", "1.1.1", "Link"};
+  CHECK(encode(Message{hello}) == std::nullopt);   // (the reason: unclamped, it could never be sent)
+
+  hello.build_id = clamp_build_id(long_id);
+  CHECK(hello.build_id.size() == kMaxBuildIdChars);
+  CHECK(long_id.rfind(hello.build_id, 0) == 0);   // (its start, unchanged)
+  CHECK(encode(Message{hello}) != std::nullopt);
+
+  CHECK(clamp_build_id("coop hookshot 0.11.3") == "coop hookshot 0.11.3");   // (short: as it is)
+  CHECK(clamp_build_id("").empty());
+
+  // A launcher's version in other scripts: cut at a character, never inside one, and still sendable
+  std::string wide = "coop ";
+  for (int i = 0; i < 70; ++i) wide += "\xC3\xA9";   // (é, two bytes each)
+  hello.build_id = clamp_build_id(wide);
+  CHECK(hello.build_id.size() == 5 + 2 * (kMaxBuildIdChars - 5));
+  CHECK(encode(Message{hello}) != std::nullopt);
+}
+
 TEST_CASE("the protocol version check") {
   Hello hello{kProtocolVersion, "recomp 0.1", "e0f3ccfaf50065ae", "1.1.1", "Link"};
   CHECK(check_hello(hello, "e0f3ccfaf50065ae") == std::nullopt);
@@ -1947,7 +1971,8 @@ TEST_CASE("bad down but not out messages are refused") {
   CHECK(encode(DbnoMode{0, false, 0, 30, 12}, out) == Error::bad_value);
 
   CHECK(encode(DbnoStatus{kMaxPlayers + 1, DbnoState::up, 0, 0, 0}, out) == Error::bad_value);
-  CHECK(encode(DbnoStatus{0, static_cast<DbnoState>(3), 0, 0, 0}, out) == Error::bad_value);
+  CHECK(encode(DbnoStatus{0, static_cast<DbnoState>(4), 0, 0, 0}, out) == Error::bad_value);
+  CHECK(encode(DbnoStatus{0, DbnoState::spectating, 0, 2, 0}, out) == Error::bad_value);  // a reviver while spectating
   CHECK(encode(DbnoStatus{0, DbnoState::downed, kDbnoMaxLeftTenths + 1, 0, 0}, out) == Error::bad_value);
   CHECK(encode(DbnoStatus{0, DbnoState::up, 1, 0, 0}, out) == Error::bad_value);      // time left while up
   CHECK(encode(DbnoStatus{0, DbnoState::out, 0, 2, 0}, out) == Error::bad_value);     // a reviver while out
@@ -1969,7 +1994,7 @@ TEST_CASE("bad down but not out messages are refused") {
   b[kHeaderSize + 2] = 0;  // bleed-out seconds
   CHECK(decode(b, back) == Error::bad_value);
   b = must_encode(DbnoStatus{0, DbnoState::downed, 10, 0, 0});
-  b[kHeaderSize + 1] = 3;  // state
+  b[kHeaderSize + 1] = 4;  // state
   CHECK(decode(b, back) == Error::bad_value);
   b = must_encode(DbnoStatus{0, DbnoState::downed, 10, 0, 0});
   b[kHeaderSize + 1] = 0;  // up, with time left
@@ -1980,6 +2005,31 @@ TEST_CASE("bad down but not out messages are refused") {
   b = must_encode(DbnoRevive{0, 2, true});
   b[kHeaderSize + 1] = 0;  // target
   CHECK(decode(b, back) == Error::bad_value);
+}
+
+TEST_CASE("down but not out: type 473 DBNO_THREAT on the session channel, both ways, and state 3 spectating") {
+  CHECK(static_cast<int>(MessageType::dbno_threat) == 473);
+  CHECK(static_cast<int>(DbnoState::spectating) == 3);
+  CHECK(channel_of(MessageType::dbno_threat) == kChannelSession);
+  CHECK_FALSE(allowed_on_channel(MessageType::dbno_threat, kChannelOwnership));
+  CHECK(may_send(Sender::client, MessageType::dbno_threat));
+  CHECK(may_send(Sender::server, MessageType::dbno_threat));
+  Message threat = DbnoThreat{0, true};
+  Bytes b = must_encode(threat);
+  REQUIRE(b.size() == kHeaderSize + 2);
+  CHECK(set_sender(threat, 3));
+  CHECK(sender_of(threat) == std::optional<std::uint8_t>{3});
+  Message back;
+  REQUIRE(decode(must_encode(threat), back) == Error::none);
+  CHECK(back == threat);
+  b[kHeaderSize + 1] = 2;  // near
+  CHECK(decode(b, back) == Error::bad_value);
+  Bytes out;
+  CHECK(encode(DbnoThreat{kMaxPlayers + 1, false}, out) == Error::bad_value);
+  // Spectating: no time, no reviver.
+  REQUIRE(decode(must_encode(DbnoStatus{0, DbnoState::spectating, 0, 0, 0}), back) == Error::none);
+  CHECK(std::get<DbnoStatus>(back).state == DbnoState::spectating);
+  CHECK(encode(DbnoStatus{0, DbnoState::spectating, 5, 0, 0}, out) == Error::bad_value);
 }
 
 TEST_CASE("difficulty message: type 480, on the session channel, both ways") {
@@ -2193,6 +2243,32 @@ TEST_CASE("dungeon event has its number, the session channel and checked strings
         Error::string_too_long);
   CHECK(encode(DungeonEvent{0, "InsideTheDekuTree", std::string(kMaxEventNameChars, 'a')}, out) ==
         Error::none);
+}
+
+TEST_CASE("switch state: type 356, the session channel, a round trip and checked fields (room-objects)") {
+  CHECK(static_cast<int>(MessageType::switch_state) == 356);
+  CHECK(channel_of(MessageType::switch_state) == kChannelSession);
+  CHECK(allowed_on_channel(MessageType::switch_state, kChannelSession));
+  CHECK_FALSE(allowed_on_channel(MessageType::switch_state, kChannelProgress));
+  CHECK(may_send(Sender::client, MessageType::switch_state));
+  CHECK(may_send(Sender::server, MessageType::switch_state));
+  const SwitchState s{3, "DodongoCavern", "Obj_StepSwitch_A_01", {17.2f, 112.3f, -23.0f}, 0x1234abcdu, true};
+  Message back;
+  REQUIRE(decode(must_encode(s), back) == Error::none);
+  CHECK(std::get<SwitchState>(back) == s);
+  Message n = s;
+  CHECK(set_sender(n, 5));
+  CHECK(sender_of(n) == 5);
+  Bytes out;
+  CHECK(encode(SwitchState{0, "", "A", {}, 1, true}, out) == Error::bad_value);               // no scene
+  CHECK(encode(SwitchState{0, "DodongoCavern", "", {}, 1, true}, out) == Error::bad_value);   // no name
+  CHECK(encode(SwitchState{0, "DodongoCavern", "A", {}, 0, true}, out) == Error::bad_value);  // no plug
+  CHECK(encode(SwitchState{0, "DodongoCavern", "A", {std::nanf(""), 0.0f, 0.0f}, 1, true}, out) == Error::bad_value);
+  CHECK(encode(SwitchState{0, "DodongoCavern", std::string(kMaxSwitchNameChars + 1, 'a'), {}, 1, true}, out) ==
+        Error::string_too_long);
+  Bytes b = must_encode(SwitchState{0, "D", "A", {}, 1, false});
+  b.back() = 2;  // on is 0 or 1
+  CHECK(decode(b, back) == Error::bad_value);
 }
 
 TEST_CASE("player ride: type 385, samples channel, horse and offset, both ways") {

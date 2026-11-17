@@ -12,6 +12,8 @@
 // view_mutex. OnFrame never holds two at once.
 
 #include "coop_hook.h"
+#include "coop_caller_orders.h"
+#include "coop_version.h" // LICHII_COOP_VERSION, written on each build (cmake/coop_version.cmake)
 
 #include <algorithm>
 #include <array>
@@ -20,6 +22,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -54,6 +57,7 @@
 #include "coop/presence/presence.hpp"
 #include "coop/version.hpp"
 #include "coop_boss.h"
+#include "coop_boss_beaten.h"
 #include "coop_frame_clock.h"
 #include "coop_boss_scenes.h"
 #include "coop_teleport_game.h"
@@ -73,6 +77,7 @@
 #include "coop_flags.h"
 #ifdef COOP_HOOKSHOT
 #include "coop_flag_native.h"
+#include "coop_map_page.h"  // patch 0018's menu state: PLAYER_STATUS in_menu/paused (Read)
 #endif
 #include "coop_save.h"
 #include "coop_game_build.h"
@@ -82,14 +87,19 @@
 #include "coop_difficulty.h"
 #include "coop_drops.h"
 #include "coop_every.h"
+#include "coop_event_owner.h"  // G1: whose the running event is
 #include "coop_dungeon.h"
 #include "coop_quest.h"
 #include "coop_story.h"
 #include "coop_quests.h"
+#include "coop_eye_switch.h"
 #include "coop_live_events.h"
 #include "coop_local_game.h"
 #include "coop_local_net.h"
 #include "coop_shared_scenes.h"
+#include "coop_solo_view.h"
+#include "coop_session_end.h"
+#include "coop_boss_native.h"
 #include "coop_objects.h"
 #include "coop_link_sound.h"
 #include "coop_look_share.h"
@@ -101,14 +111,17 @@
 #include "coop_voice.h"
 #include "coop_settings.h"
 #include "coop_spawn.h"
+#include "coop_scrub_sale.h"
 #include "coop_scrub_talk.h"
 #include "coop_sites.h"
 #include "coop_svc.h"
+#include "coop_map_refresh.h"
 #include "coop_time.h"
 #include "coop_testinput.h"
 #include "coop_world.h"
 
 namespace CoopHook {
+bool StartMapRefresh();  // rows 63/76: the game's HUD refresh after co-op writes a dungeon item (below)
 namespace {
 
 // The game and build the addresses in coop/host are for.
@@ -116,7 +129,15 @@ constexpr u64 kOcarinaProgramId = 0x0400486024DEC000ULL;
 // The builds it knows: coop_game_build.h (docs/game-builds.md).
 constexpr std::string_view kGameBuildId = CoopGameBuild::kPrimary.id;
 constexpr std::string_view kGameVersion = CoopGameBuild::kPrimary.version;
-constexpr const char* kBuildId = "lichii fritchii-v5 coop";
+// The client this game runs the module in, for HELLO's build_id (docs/crossplay.md): the server writes it beside the
+// player's name in its log, so a problem between two clients can be told apart. Nothing is decided by it. The Fritchii
+// emulator (stage 1): "coop fritchii-v5 <version>"; the Hookshot/Longshot module (COOP_HOOKSHOT, whose
+// LICHII_COOP_VERSION starts with "hookshot "): "coop hookshot <version>".
+#ifdef COOP_HOOKSHOT
+constexpr const char* kBuildId = "coop " LICHII_COOP_VERSION;
+#else
+constexpr const char* kBuildId = "coop fritchii-v5 " LICHII_COOP_VERSION;
+#endif
 
 // A frame older than this means the game is not running (stopped, paused).
 constexpr auto kFrameStale = std::chrono::seconds(1);
@@ -260,12 +281,29 @@ struct RoomView {
 // (CoopStory::Mends says which and when). Held 3 s first, so a host save load
 // whose quest and scene flags land a few frames after the flag is not fought.
 // In a session (Coop::CatchUpQuest) and with none (LocalFrameOff), so a save
-// stuck that way is mended when it is played alone too. `since_us`: the
-// caller's own hold clocks, one per mend.
-using MendClocks = std::array<std::uint64_t, CoopStory::kMends>;
-void MendStory(EmulatorMemory& memory, MendClocks& since_us) {
+// stuck that way is mended when it is played alone too. `clocks`: the
+// caller's own hold clocks.
+//
+// Row 129 (GitHub #173): then what a shared story event sets in the game that
+// plays it, in a game where its played flag came from another game and its
+// flow never ran (CoopStory::Effects: the owl's HyruleField_ArriveEntrance,
+// without which the game's clock never starts). Only while no event runs here
+// (`idle`: known to run none), so an event this game plays itself sets its own
+// flags first, and after the same 3 s hold.
+struct MendClocks {
+    std::array<std::uint64_t, CoopStory::kMends> mends{};
+    std::uint64_t effects = 0;
+    CoopStory::EffectsGiven given;  // once per flag per load (review of owl-time)
+    void NewLoad() {  // the title or a load: nothing to read yet
+        mends = {};
+        effects = 0;
+        given.NewLoad();
+    }
+};
+void MendStory(EmulatorMemory& memory, MendClocks& clocks, bool idle) {
     static constexpr std::uint64_t kHoldUs = 3'000'000;
     if (!CoopStory::On()) return;
+    auto& since_us = clocks.mends;
     namespace quest = CoopStory::quest;
     coop::host::GameFlags flags(memory);
     const auto step = flags.get_enum(quest::kMeetDekuTree);
@@ -284,6 +322,65 @@ void MendStory(EmulatorMemory& memory, MendClocks& since_us) {
                      step.value_or(0), mend.value ? 1 : 0);
         }
     }
+    std::array<const CoopStory::Effect*, CoopStory::kEffectsMax> due{};
+    const std::size_t n = idle ? CoopStory::EffectsDue([&](std::uint32_t h) { return flags.get_bool(h); }, due) : 0;
+    if (n == 0) {
+        clocks.effects = 0;
+    } else if (clocks.effects == 0) {
+        clocks.effects = now_us;
+    } else if (now_us - clocks.effects >= kHoldUs) {
+        clocks.effects = 0;
+        for (std::size_t i = 0; i < n; ++i) {
+            switch (clocks.given.Take(*due[i])) {
+            case CoopStory::EffectsGiven::Verdict::give:
+                if (coop::host::GameFlags::set_bool(memory, due[i]->flag, due[i]->value)) {
+                    clocks.given.Given(*due[i]);  // only once written: a failed write is tried again
+                    LOG_INFO(Core, "coop: story: {} set to {}: {} was played here by another game (row 129)",
+                             due[i]->name, due[i]->value ? 1 : 0, due[i]->setting);
+                }
+                break;
+            case CoopStory::EffectsGiven::Verdict::set_back:
+                LOG_INFO(Core, "coop: story: {} was set back after we gave it ({}): left alone until the next load",
+                         due[i]->name, due[i]->setting);
+                break;
+            case CoopStory::EffectsGiven::Verdict::quiet:
+                break;
+            }
+        }
+    }
+}
+
+// G1 (coop/host/event_owner.hpp): whose the running event is, logged on each change (with what
+// decided it). Once a frame, from the session's frame or the frame without one (only one runs).
+coop::host::EventWhose ClassifyEvent(bool running, bool link_bound, std::optional<std::string_view> anim) {
+    static std::uint64_t cursor = 0;
+    static int said = -1;
+    static int said_by = -1;
+    const std::uint64_t now_us = CoopEvery::NowUs();
+    for (const auto& r : CoopLiveEvents::TheGameRequests().Since(cursor)) {
+        if (r.taken) CoopEventOwner::GameAsked(r.name, now_us);
+    }
+    coop::host::EventOwnerTracker::By by{};
+    const auto whose = CoopEventOwner::Classify(running, link_bound, anim, now_us, &by);
+    const int now = running ? static_cast<int>(whose) : -1;
+    if (now != said || (now >= 0 && static_cast<int>(by) != said_by)) {
+        if (now >= 0) {
+            LOG_INFO(Core, "coop: event: the running event is {} ({}){}", coop::host::whose_name(whose),
+                     coop::host::by_name(by),
+                     whose == coop::host::EventWhose::ours
+                         ? ": our Link is in it, the others are hidden, holds apply"
+                         : ": our Link is not held by it, no hide, no hold, no claim; its actors here act for it");
+        }
+        said = now;
+        said_by = static_cast<int>(by);
+    }
+    return whose;
+}
+
+void ApplyEventOwner(coop::host::PlayerReading& reading) {
+    reading.event_whose = ClassifyEvent(
+        reading.event_running.value_or(false), reading.link_bound,
+        reading.animation ? std::optional<std::string_view>(reading.animation->name) : std::nullopt);
 }
 
 class Coop {
@@ -304,7 +401,7 @@ public:
         coop::net::ClientConfig config;
         config.host = settings_.server;
         config.port = settings_.port;
-        config.hello.build_id = kBuildId;
+        config.hello.build_id = coop::protocol::clamp_build_id(kBuildId);   // (a long version text: cut, never unsendable)
         config.hello.game_build_id = std::string(kGameBuildId);
         config.hello.game_version = std::string(kGameVersion);
         config.hello.nickname = settings_.name;
@@ -329,6 +426,10 @@ public:
         if (flag_error.empty()) CoopStory::AddShared(session.shared);  // docs/flags.md, "Story and cutscenes"
         if (flag_error.empty()) CoopQuests::AddShared(session.shared);  // docs/flags.md, "Threads of Time"
         if (flag_error.empty()) CoopChests::AddShared(session.shared);  // docs/items.md, "Chests"
+        if (flag_error.empty() && scrub_sale_on_) {  // docs/items.md, "One-time sales"
+            const std::size_t added = CoopScrubSale::Merge(session.shared);
+            LOG_INFO(Core, "coop: scrubs: sharing {} one-time sale flags (off with LICHII_COOP_SCRUB_SALE=0)", added);
+        }
         if (!flag_error.empty()) {
             LOG_ERROR(Core, "coop: {}; flags are not shared", flag_error);
         }
@@ -345,43 +446,7 @@ public:
         pickups_given_ = 0;
         // Called by service() on the network thread, with the client.
         session.on_event = [this](const coop::net::Event& event, coop::net::Client& client) {
-            Log(event);
-            CoopPuppet::OnEvent(event);
-            CoopPose::OnEvent(event, SteadyMs());
-            Chat(event, client);
-            CoopObjects::OnEvent(event);
-            CoopSpawn::OnEvent(event);
-            CoopDrops::OnEvent(event);
-            CoopTime::OnEvent(event);
-            CoopBoss::OnEvent(event);  // docs/dungeons-boss.md
-            CoopTeleport::OnEvent(event, client);  // /teleport (docs/setup.md "Chat commands")
-            CoopPvp::OnEvent(event, client);  // PvP (docs/play-online.md "PvP")
-            CoopDbno::OnEvent(event, client);  // down but not out (docs/play-online.md)
-            CoopDifficulty::OnEvent(event, client);  // docs/play-online.md "Difficulty"
-            CoopModShare::OnEvent(event, client);  // mods (docs/mods.md "Mods in co-op")
-            CoopSave::OnEvent(event, client);  // the host's save for the guests (issue 167)
-            CoopHud::OnEvent(event);  // the others' hearts for the HUD (PLAYER_LIFE)
-            CoopLookShare::OnEvent(event, client);  // looks of several parts (PLAYER_LOOK, coop_look_share.h)
-            if (event.kind == coop::net::EventKind::message) {  // deku-dungeon-2
-                if (const auto* e = std::get_if<coop::protocol::DungeonEvent>(&event.message)) {
-                    std::lock_guard lock(dungeon_events_mutex_);
-                    // A story cutscene's start (coop_shared_scenes.h) has its own queue.
-                    auto& in = CoopSharedScenes::IsShared(e->name) ? story_events_in_ : dungeon_events_in_;
-                    if (in.size() < 16) {
-                        in.push_back(*e);
-                    }
-                }
-            }
-            CoopRide::OnEvent(event);  // their horses (PLAYER_RIDE, issue 199)
-            CoopLobby::OnEvent(event, client);  // the Lobby's mutes and the host's actions
-            // Their voices (VOICE_FRAME, docs/voice.md), but one we muted ourselves (the Lobby).
-            if (const auto* v = event.kind == coop::net::EventKind::message
-                                    ? std::get_if<coop::protocol::VoiceFrame>(&event.message)
-                                    : nullptr;
-                v == nullptr || !CoopLobby::VoiceHidden(v->player_number)) {
-                CoopVoice::OnEvent(event);
-            }
-            CoopLocalNet::OnEvent(event);  // split screen's seats in the session (coop_local_net.h)
+            OnSessionEvent(event, client, false);
         };
         CoopPose::SetLog([](const std::string& line) { LOG_INFO(Core, "coop: {}", line); },
                          EnvFlag("LICHII_COOP_DEBUG_POSE"), EnvFlag("LICHII_COOP_POSE_AS"));
@@ -407,15 +472,16 @@ public:
                 }
             }  // issue 129: start another player's gimmick event here (coop_live_events.h)
         }
+        map_refresh_ = StartMapRefresh();  // rows 63/76, #146: the HUD's own copy of the map (coop_map_refresh.h)
         if (CoopStory::On()) {  // issue 171: shared quest steps into the game's ChallengeMgr
-            CoopSvc::AddCaller(64, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
+            CoopSvc::AddCaller(CoopCallerOrders::kStory, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
                                           std::uint64_t) {
                 return challenges_.Step(guest, after_call, result, base_);
             });
         }
         // Rows 93/103: the game equips a shared ocarina from its flags (OneShotPlayerEquipDynamicEquipmentFromGameData's
         // call), once after the mend wrote them, outside events (coop::host::OcarinaEquip).
-        CoopSvc::AddCaller(66, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t,
+        CoopSvc::AddCaller(CoopCallerOrders::kOcarinaEquip, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t,
                                       std::uint64_t) -> std::optional<CoopPuppet::Call> {
             namespace oc = coop::host::ocarina;
             const auto slot = ocarina_equip_.step(after_call);
@@ -435,7 +501,15 @@ public:
             return c;
         });
         if (live_events_) {
-            CoopSvc::AddCaller(60, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
+            {
+                // G1: every event this requester asks for is another player's (a held live event, a
+                // shared scene joined): the hook's tracker marks the run it starts (coop_event_owner.h).
+                std::lock_guard lock(live_mutex_);
+                const auto mark = [](const std::string& name) { CoopEventOwner::CoopAsked(name, CoopEvery::NowUs()); };
+                live_requester_.OnTaken(mark);
+                eye_switch_.OnSet(mark);
+            }
+            CoopSvc::AddCaller(CoopCallerOrders::kLiveEvents, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
                                           std::uint64_t) {
                 std::lock_guard lock(live_mutex_);
                 auto call = live_requester_.Step(guest, after_call, result, base_);
@@ -445,6 +519,19 @@ public:
                 return call;
             });
             LOG_INFO(Core, "coop: dungeon: live events on (off with LICHII_COOP_LIVE_EVENTS=0)");
+            eye_switch_on_ = CoopEyeSwitch::OnFromEnv(EnvString("LICHII_COOP_EYE_SWITCH"));
+            if (eye_switch_on_) {  // deku-switches: before the requester (60)
+                CoopSvc::AddCaller(CoopCallerOrders::kEyeSwitch, [this](CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
+                                              std::uint64_t now_ms) {
+                    auto call = eye_switch_.Step(guest, after_call, result, base_, now_ms);
+                    for (const auto& line : eye_switch_.TakeNotes()) {
+                        LOG_INFO(Core, "coop: dungeon: {}", line);
+                    }
+                    return call;
+                });
+            }
+            LOG_INFO(Core, "coop: dungeon: eye switches by FirstOn {} (LICHII_COOP_EYE_SWITCH=1)",
+                     eye_switch_on_ ? "on" : "off");
         }
         // Shared story cutscenes: they start by the live-event requester.
         shared_scenes_ = live_events_ && CoopSharedScenes::OnFromEnv(EnvString("LICHII_COOP_SHARED_CUTSCENES"));
@@ -474,6 +561,11 @@ public:
                 session_->share_pickup_named(coop::protocol::FlagKey(o.flag, std::uint16_t{0}));
             }
         }
+        if (sharing_ && scrub_sale_on_) {  // a Business Scrub's one-time sale: bought once for everyone
+            for (const auto& f : CoopScrubSale::kSaleFlags) {
+                session_->share_pickup_named(coop::protocol::FlagKey(f.hash, std::uint16_t{0}));
+            }
+        }
         if (pickups_) {  // issue 89: every Gold Skulltula's key, and the token count guarded by them
             std::vector<coop::protocol::FlagKey> skulltulas;
             for (const std::uint64_t key : coop::host::gold_skulltula_keys()) {
@@ -484,6 +576,54 @@ public:
         }
         thread_ = std::thread([this] { Run(); });
         return true;
+    }
+
+    // Each event from the server, to every part of co-op. `left`: the player left from the menu while connected
+    // (Run's end): the client sends no event then, so the parts get a `disconnected` here and forget the
+    // session as on a drop (the difficulty, PvP, down but not out, ...), and playing on alone is the game as
+    // it is. Not logged or put in the chat as a lost connection. The network thread, with the client.
+    void OnSessionEvent(const coop::net::Event& event, coop::net::Client& client, bool left) {
+        if (!left) {
+            Log(event);
+        }
+        CoopPuppet::OnEvent(event);
+        CoopPose::OnEvent(event, SteadyMs());
+        if (!left) {
+            Chat(event, client);
+        }
+        CoopObjects::OnEvent(event);
+        CoopSpawn::OnEvent(event);
+        CoopDrops::OnEvent(event);
+        CoopTime::OnEvent(event);
+        CoopBoss::OnEvent(event);  // docs/dungeons-boss.md
+        CoopTeleport::OnEvent(event, client);  // /teleport (docs/setup.md "Chat commands")
+        CoopPvp::OnEvent(event, client);  // PvP (docs/play-online.md "PvP")
+        CoopDbno::OnEvent(event, client);  // down but not out (docs/play-online.md)
+        CoopDifficulty::OnEvent(event, client);  // docs/play-online.md "Difficulty"
+        CoopModShare::OnEvent(event, client);  // mods (docs/mods.md "Mods in co-op")
+        CoopSave::OnEvent(event, client);  // the host's save for the guests (issue 167)
+        CoopHud::OnEvent(event);  // the others' hearts for the HUD (PLAYER_LIFE)
+        CoopLookShare::OnEvent(event, client);  // looks of several parts (PLAYER_LOOK, coop_look_share.h)
+        if (event.kind == coop::net::EventKind::message) {  // deku-dungeon-2
+            if (const auto* e = std::get_if<coop::protocol::DungeonEvent>(&event.message)) {
+                std::lock_guard lock(dungeon_events_mutex_);
+                // A story cutscene's start (coop_shared_scenes.h) has its own queue.
+                auto& in = CoopSharedScenes::IsStory(e->name) ? story_events_in_ : dungeon_events_in_;
+                if (in.size() < 16) {
+                    in.push_back(*e);
+                }
+            }
+        }
+        CoopRide::OnEvent(event);  // their horses (PLAYER_RIDE, issue 199)
+        CoopLobby::OnEvent(event, client);  // the Lobby's mutes and the host's actions
+        // Their voices (VOICE_FRAME, docs/voice.md), but one we muted ourselves (the Lobby).
+        if (const auto* v = event.kind == coop::net::EventKind::message
+                                ? std::get_if<coop::protocol::VoiceFrame>(&event.message)
+                                : nullptr;
+            v == nullptr || !CoopLobby::VoiceHidden(v->player_number)) {
+            CoopVoice::OnEvent(event);
+        }
+        CoopLocalNet::OnEvent(event);  // split screen's seats in the session (coop_local_net.h)
     }
 
     // `quiet`: no logging, for the end of the program, when the log may be gone.
@@ -537,19 +677,18 @@ public:
             }
             if (sharing_) {
                 // A small key or token we and another player took at once: ours
-                // goes back. A token taken elsewhere: its Skulltula's key here
-                // (docs/world.md, small keys and tokens).
+                // goes back (docs/world.md, small keys and tokens). No key is
+                // written for another game's token: its own placement key is
+                // the game's to write, and it arrives through the flag list.
                 for (const std::string& count : CoopWorld::TakeGiveBacks()) {
                     LOG_INFO(Core, "coop: {}", CoopWorld::GiveBack(*game_store, count));
-                }
-                for (const std::uint64_t key : CoopWorld::TakeTakenKeys()) {
-                    LOG_INFO(Core, "coop: {}", CoopWorld::SetTakenKey(*game_store, key));
                 }
             }
             if (sharing_) {
                 // Issue 138: grants wait for a loaded save, and the capacities
                 // of held items are mended for a while after each load.
                 const bool mend = load_mend_.frame(reading.has_value());
+                if (!reading) mend_since_us_.NewLoad();  // the story effects: once per flag per load (owl-time)
                 CoopSave::NoteInGame(reading.has_value());  // issue 167: no save-folder switch once a save is loaded
                 store.emplace(*game_store, &load_mend_);
                 if (mend) {
@@ -565,10 +704,16 @@ public:
                     // Issue 190: a shared ocarina is equipped too, or D-pad
                     // Left takes nothing out.
                     MendOcarina(*memory, reading && reading->event_running.value_or(false));
-                    MendLetters(*memory);  // issue 58: Zelda's Letter spent, Ruto's Letter for everyone
+                    // issue 58: Zelda's Letter spent, Ruto's Letter for everyone;
+                    // row 117: Ruto's Letter spent once shown in any game
+                    MendLetters(*memory, reading && reading->event_running.has_value() &&
+                                             !*reading->event_running);
                     if (CoopStory::On()) {
-                        CatchUpQuest(*memory);  // issue 130: the Kokiri Shop opens
+                        CatchUpQuest(*memory, reading && reading->event_running.has_value() &&
+                                                  !*reading->event_running);  // issue 130: the Kokiri Shop opens
                     }
+                } else {
+                    ocarina_equip_.link(false, {});  // a load or scene change: the next stay asks again (row 103)
                 }
             }
         }
@@ -624,25 +769,67 @@ public:
                 hold_scene_.empty() ? std::nullopt : std::optional<std::string>(hold_scene_);
             // Issue 144 (coop_scrub_talk.h): a scrub's destroy flag waits while our
             // Link is in an event (its talk), or the room graph deletes the scrub mid-talk.
-            if (scrub_talk_on_ && scrub_talk_.Frame(reading && reading->event_running.value_or(false),
+            // G1: only an event our Link is in (not another player's replayed here, not the Ocarina).
+            if (scrub_talk_on_ && !scrub_near_only_ && scrub_talk_.Frame(OurLinkInEvent(reading),
                                   CoopEvery::NowUs())) {
                 LOG_INFO(Core, "coop: dungeon: {}", scrub_talk_.Holding()
                              ? "our Link is in an event: Deku Scrub destroy flags from others wait"
                              : "the event ended: Deku Scrub destroy flags from others go through");
             }
+            // Issue 144, second guard: also while our copy of that scrub is near our Link
+            // (CoopScrubTalk::Near, from the objects walk), whatever the event flag says.
+            const std::uint8_t near = scrub_talk_on_ ? CoopScrubTalk::TheNear().Mask(CoopEvery::NowUs()) : 0;
+            if (near != scrub_near_) {
+                for (std::size_t g = 0; g < CoopScrubTalk::kGroups; ++g) {
+                    const unsigned bit = 1u << g;
+                    if ((near & bit) != (scrub_near_ & bit)) {
+                        LOG_INFO(Core, "coop: dungeon: scrub near ({}): {}", CoopScrubTalk::GroupName(static_cast<CoopScrubTalk::Group>(g)),
+                                 (near & bit) ? "within talking distance of our Link or in our event, its destroy flags from others wait"
+                                              : "no longer near our Link nor in our event, its destroy flags from others go through");
+                    }
+                }
+                scrub_near_ = near;
+            }
             const CoopScrubTalk::Hold talk = scrub_talk_;
-            hold.emplace(*quests, [link, scene, talk](coop::protocol::FlagKey key) {
+            // A scrub's one-time sale bought by another player waits while that scrub may be in an
+            // event of ours (coop_scrub_sale.h): its prefab graph deletes the scrub from the flag.
+            // event_running is read here directly: scrub_talk_ is not updated with
+            // LICHII_COOP_SCRUB_TALK_HOLD=0 or =near.
+            CoopScrubSale::Here sale_here;
+            sale_here.in_event = talk.Holding() || OurLinkInEvent(reading);
+            sale_here.busy = CoopScrubSale::TheBusy().Mask(CoopEvery::NowUs());
+            if (reading && reading->scene) {
+                sale_here.known = true;
+                sale_here.x = reading->position[0];
+                sale_here.y = reading->position[1];
+                sale_here.z = reading->position[2];
+            }
+            const std::string sale_scene = reading && reading->scene ? *reading->scene : std::string();
+            const bool sale_on = scrub_sale_on_;
+            // deku-ladder: the switch path's guard flags wait too (coop_eye_switch.h Guards), only while it is on.
+            CoopEyeSwitch::Switcher* const eye_guard = live_events_ && eye_switch_on_ ? &eye_switch_ : nullptr;
+            hold.emplace(*quests, [link, scene, talk, near, sale_here, sale_scene, sale_on, eye_guard](coop::protocol::FlagKey key) {
                 if (key.kind != coop::protocol::FlagKeyKind::named || key.index != 0) {
                     return false;
                 }
-                if (talk.Holds(key.hash)) {
+                if (talk.Holds(key.hash) || CoopScrubTalk::NearHolds(near, key.hash)) {
                     return true;
+                }
+                if (sale_on) {
+                    CoopScrubSale::Here here = sale_here;
+                    here.scene = sale_scene;
+                    if (CoopScrubSale::Waits(key.hash, here)) {
+                        return true;
+                    }
                 }
                 if (!link || !scene) {
                     return false;
                 }
                 if (CoopQuests::Find(key.hash) != nullptr) {
                     return CoopDungeon::IsDungeonScene(*scene);  // a quest step waits outside dungeons
+                }
+                if (eye_guard != nullptr && eye_guard->HoldsGuard(key.hash, *scene)) {
+                    return true;
                 }
                 const auto in = CoopDungeon::HeldIn(key.hash);
                 return in && (in->empty() ? CoopDungeon::IsDungeonScene(*scene) : *scene == *in);
@@ -654,15 +841,32 @@ public:
 #ifdef COOP_HOOKSHOT
         // The title's menu up: a guest's load through it is a save load (player report #96, docs/flags.md "Saves").
         session_->set_title_up(CoopSave::TitleUp());
+        // Patch 0024: every save the game loads, from its own load nodes (docs/flags.md, "A load window").
+        session_->set_native_save_loads(CoopSave::NativeSaveLoads());
+        if (const auto loads = CoopSave::TakeGameSaveLoads(); loads.starts != 0 || loads.loads != 0) {
+            if (loads.starts != 0) {
+                session_->note_save_load_start();
+            }
+            if (loads.loads != 0) {
+                session_->note_save_loaded(loads.retry);
+            }
+            LOG_INFO(Core, "coop: save: the game {}",
+                     loads.loads == 0 ? "starts loading a save (its own load node)"
+                     : loads.retry    ? "loaded a save: Game Over's Try Again (its own load nodes): the group's "
+                                        "progress stays"
+                                      : "loaded a save (its own load nodes)");
+        }
         // The game's own flag writes since the last frame (the applier's wrap, coop_flag_native.h): the watcher
         // reads those flags, not the whole list.
         CoopFlagNative::Feed(*session_);
         LogFlagEvents();
 #endif
+        LogFlagTraffic();
         if (auto color = TakeColor()) {  // the pause menu's look (hookshot/src/coop_look.h)
             session_->set_color(*color);
         }
         const auto report = session_->frame(reading, hold ? &*hold : nullptr);
+        CoopMapRefresh::TheRefresher().SetInPlay(reading.has_value());  // rows 63/76: no refresh off play (session)
         if (memory) {  // minimap-b: the current dungeon's map or compass going 1 -> 0, logged with its context
             WatchMapDrops(*memory, reading.has_value(),
                           reading ? reading->scene : coop::host::PlayerReader(*memory).read_scene(),
@@ -713,8 +917,9 @@ public:
             }
         }
         if (report.save_load) {
-            LOG_INFO(Core, "coop: flags: save load seen ({} flags back, {} frames without a scene)",
-                     report.save_load_flags, report.save_load_frames);
+            LOG_INFO(Core, "coop: flags: save load seen ({} flags back, {} frames without a scene; {})",
+                     report.save_load_flags, report.save_load_frames,
+                     report.save_load_native ? "the game's own load nodes" : "the old signs");
             CoopTime::SaveLoaded(report.server_now_us);  // issue 159
             lent_keys_.forget();  // dungeon-sync-b: the save has its own key counts
             start_source_.Reset();  // deku-sync-fix: what the game asked before the load is not ours now
@@ -802,6 +1007,22 @@ public:
                                            .value_or(false);
                                    });
         }
+        if (live_events_ && eye_switch_on_) {  // deku-switches: a switch that found nothing goes the old way
+            // deku-ladder: also dropped once our game has it played (our own asker ran it): the eye is never set again.
+            std::function<bool(const std::string&)> played;
+            if (memory) {
+                played = [&](const std::string& n) {
+                    return coop::host::GameFlags(*memory)
+                        .get_bool(coop::host::flag_hash("HavePlayedEvent." + n))
+                        .value_or(false);
+                };
+            }
+            eye_switch_.Expire(view.scene.value_or(std::string()), played);
+            for (auto& [event, scene] : eye_switch_.TakeFallbacks()) {
+                std::lock_guard lock(live_mutex_);
+                live_requester_.WantFromRoom(std::move(event), std::move(scene));
+            }
+        }
         // Issue 129: a held gimmick event is started here too when our Link is
         // near the place that asks for it, so its result happens live
         // (coop_live_events.h; off with LICHII_COOP_LIVE_EVENTS=0).
@@ -824,19 +1045,47 @@ public:
             };
             if (const auto name = live_decider_.Next(held_events, hold_scene_, running, link, &room_of)) {
                 LOG_INFO(Core, "coop: dungeon: starting the event {} here (another player played it)", *name);
-                std::lock_guard lock(live_mutex_);
-                live_requester_.WantFromRoom(*name, hold_scene_);  // with our room's asker as its starter
+                // deku-switches / deku-ladder: a switch event by our switch's plug (the one its room graph wires to the
+                // asker's trigger), so our room's asker asks it itself (coop_eye_switch.h).
+                if (!eye_switch_on_ || !eye_switch_.Want(*name, hold_scene_, link)) {
+                    std::lock_guard lock(live_mutex_);
+                    live_requester_.WantFromRoom(*name, hold_scene_);  // with our room's asker as its starter
+                }
             }
         }
-        // The scrub flags of issue 144 have their own log line (above).
+        // The scrub flags of issue 144 and the scrubs' one-time sales have their own log lines.
         const bool gimmick_held =
-            hold && std::any_of(hold->held_keys().begin(), hold->held_keys().end(),
-                                [](const coop::protocol::FlagKey& k) { return !CoopScrubTalk::IsTalkFlag(k.hash); });
+            hold && std::any_of(hold->held_keys().begin(), hold->held_keys().end(), [](const coop::protocol::FlagKey& k) {
+                return !CoopScrubTalk::IsTalkFlag(k.hash) && !CoopScrubSale::IsSaleFlag(k.hash);
+            });
+        if (hold) {
+            std::uint32_t sale = 0;
+            for (const auto& k : hold->held_keys()) {
+                if (CoopScrubSale::IsSaleFlag(k.hash)) sale = k.hash;
+            }
+            if (sale != sale_held_logged_) {
+                if (sale != 0) {
+                    LOG_INFO(Core, "coop: scrubs: {} was bought by another player: waits while we are near it or in an event",
+                             CoopScrubSale::Find(sale)->what);
+                } else {
+                    LOG_INFO(Core, "coop: scrubs: a one-time sale from another player goes through");
+                }
+                sale_held_logged_ = sale;
+            }
+        }
         if (hold && gimmick_held != holding_logged_) {
             holding_logged_ = gimmick_held;
             LOG_INFO(Core, "coop: dungeon: {}", holding_logged_
                          ? "room gimmick flags from another player held until we leave this dungeon or load"
                          : "no room gimmick flags held");
+        }
+        if (map_refresh_) {  // another player's map, compass, boss key or floors (also the join snapshot, a reset)
+            for (const auto& r : report.received) {
+                if (coop::host::is_hud_dungeon_item(r.key)) {
+                    CoopMapRefresh::TheRefresher().Want(SteadyMs());
+                    break;
+                }
+            }
         }
         // Chat notices (docs/setup.md): what another player's change gave us.
         if (notify_ && !report.received.empty()) {
@@ -854,6 +1103,33 @@ public:
                 LOG_INFO(Core, "coop: notice: {}", line);
                 chat_.Add(std::move(line), true);
             }
+        }
+        // Rows 106/107: the two states in which our game sends none of its own flag changes, made visible.
+        if (report.hold_timeout) {
+            const coop::host::FlagStats fs = session_->flag_stats();
+            LOG_WARNING(Core, "coop: flags: the host's progress (join snapshot) did not finish arriving in {} s: "
+                              "dropped, our changes are sent again ({} timeouts, {} bad snapshots this session)",
+                        coop::host::FlagWatcher::kHoldMaxFrames / 60, fs.hold_timeouts, fs.bad_snapshots);
+            if (!hold_timeout_told_) {
+                hold_timeout_told_ = true;
+                std::string line = "The host's progress did not finish arriving. If keys or dungeon items look "
+                                   "wrong, use Resync from host in the Lobby tab.";
+                LOG_INFO(Core, "coop: notice: {}", line);
+                chat_.Add(std::move(line), true);
+            }
+        }
+        if (report.window_for == 0) {
+            long_window_logged_ = 0;
+        } else if (report.window_for >= long_window_logged_ + kLongWindowFrames) {
+            long_window_logged_ = report.window_for;
+#ifdef COOP_HOOKSHOT
+            const bool title = CoopSave::TitleUp();
+#else
+            const bool title = false;
+#endif
+            LOG_WARNING(Core, "coop: flags: a load window open for {} s (our Link read: {}, title menu up: {}): "
+                              "our own flag changes are not sent while it lasts",
+                        report.window_for / 60, reading.has_value() ? "yes" : "no", title ? "yes" : "no");
         }
         if (report.host_reset) {
             // docs/flags.md, "Saves": the host loaded a save. Session-wide state
@@ -884,10 +1160,18 @@ public:
         // Issue 146: a map or compass the game took back, put back.
         // Each key logged the first time; the count says how often in all.
         for (const auto& k : session_->take_one_way_restores()) {
+            if (map_refresh_ && !k.kept) CoopMapRefresh::TheRefresher().Want(SteadyMs());  // our put-back
+            if (k.kept) {  // dungeon-sync-b (#63/#76)
+                LOG_INFO(Core,
+                         "coop: flags: {:#010x} (dungeon floors) {:#x} -> {:#x} with its map just got here: the "
+                         "game's own map get, kept (not ORed back)",
+                         k.key.hash, k.before, k.now);
+                continue;
+            }
             LOG_INFO(Core,
-                     "coop: flags: {:#010x} (dungeon map, compass or floors) went back here: put back "
-                     "({} put back this session)",
-                     k.hash, session_->one_way_restores());
+                     "coop: flags: {:#010x} (dungeon map, compass or floors) went back here: {:#x} -> {:#x}, put "
+                     "back {:#x} ({} put back this session)",
+                     k.key.hash, k.before, k.now, k.put, session_->one_way_restores());
         }
         for (const auto& g : session_->take_counts_guarded()) {  // issue 89 (docs/items.md)
             LOG_INFO(Core,
@@ -896,7 +1180,7 @@ public:
                      g.count.hash, g.amount);
         }
         {  // issue 195: a chest another player had opened, opened again here
-            const bool in_event = reading && reading->event_running.value_or(false);
+            const bool in_event = OurLinkInEvent(reading);  // G1: our Link's get scene, not another player's event here
             for (unsigned n = CoopObjects::TakeChestsOpenedTwice(); n > 0; --n) {
                 if (session_->expect_doubled_gain()) {
                     LOG_INFO(Core, "coop: flags: a chest another player had opened was opened here too: "
@@ -920,6 +1204,15 @@ public:
             for (const auto& k : taken) {
                 if (k.kind == coop::protocol::FlagKeyKind::key64) {
                     keys.push_back(k.key);
+                    // Issue 89 (2026-11-17): a Gold Skulltula's placement key just
+                    // went 1 here for another player. The world sync takes that
+                    // Skulltula and the token it made away with it: the token is
+                    // made and taken in one run, so it never went through our
+                    // walk, and no break was ever sent for it (ROGX kept it and
+                    // the count went 41 -> 42).
+                    if (CoopWorld::IsGoldSkulltulaKey(k.key)) {
+                        CoopWorld::QueueTakenPlacement(k.key);
+                    }
                 } else if (const auto chest = CoopChests::KeyOfOpened(k.hash)) {
                     keys.push_back(*chest);  // a chest's opened flag: that chest (issue 87)
                 }
@@ -944,6 +1237,24 @@ public:
                     coop::protocol::FlagEntry{key(name), coop::protocol::FlagKind::boolean, 0});
                 LOG_INFO(Core, "coop: boss: {} was left set in this save (an older co-op build shared it): {}",
                          name, ok ? "cleared" : "could not clear");
+            }
+            // G2 (#241): a boss the group beat while our game did not see it die gets its beaten set, one way, at the
+            // next load of a scene other than the boss's, never mid-scene (coop_boss_beaten.h). Solo or co-op idle: the
+            // record is empty.
+            const CoopBossBeaten::Record& record = CoopBossBeaten::TheRecord();
+            const std::vector<std::uint8_t> beaten = record.Rooms();
+            for (const CoopBossBeaten::Write& w : boss_beaten_.Check(
+                     view.scene, at.has_value(), beaten, [&](std::uint32_t hash) {
+                         const auto v = game_store->read(coop::protocol::FlagKey{hash, 0});
+                         return v ? std::optional<std::uint32_t>(v->value) : std::nullopt;
+                     })) {
+                const bool ok = game_store->write(coop::protocol::FlagEntry{
+                    coop::protocol::FlagKey{w.hash, 0},
+                    w.is_enum ? coop::protocol::FlagKind::uint32 : coop::protocol::FlagKind::boolean, w.value});
+                const CoopBossBeaten::BeatenSet* set = CoopBossBeaten::ForRoom(w.room);
+                LOG_INFO(Core, "coop: boss: {} was beaten by the group, not in this game: {} {} {}", set->boss, w.name,
+                         w.is_enum ? std::string("-> ") + set->step_name : std::string("= ") + std::to_string(w.value),
+                         ok ? "(written)" : "(could not write)");
             }
         }
         {  // our own key spends, for the locks' give-back (docs/dungeon.md, "Locked doors")
@@ -992,12 +1303,31 @@ public:
         }
         // Issue 144: changes from the others to actors near our Link wait while
         // our Link is in an event (a talk, a cutscene).
-        CoopObjects::SetLocalEvent(reading && reading->event_running.value_or(false));
+        // G1: any event in our game lets the actors it binds here act for it; only our Link's own
+        // holds near-by changes and claims actors (coop/host/event_owner.hpp).
+        CoopObjects::SetLocalEvent(reading && reading->event_running.value_or(false), OurLinkInEvent(reading));
+        {
+            // Row 97: which sign says our Link is in an event (PlayerReading::event_running):
+            // the event manager's word, or only our Link's own performer (a Deku Scrub's talk
+            // or AttackedEvent leaves the word 0). Logged on each change.
+            static int said = -1;  // -1 not yet, 0 none, 1 the word, 2 our Link's performer only
+            const int now = !(reading && reading->event_running.value_or(false)) ? 0
+                            : reading->event_by_link                                ? 2
+                                                                                    : 1;
+            if (now != said) {
+                if (now == 2 || said == 2) {
+                    LOG_INFO(Core, "coop: event: our Link {} (by its own event performer; the manager's word is 0)",
+                             now == 2 ? "is in an event" : "left the event its performer was bound into");
+                }
+                said = now;
+            }
+        }
         // Our own event hides the others (puppet, Navi, marker); playing the
-        // Ocarina does not (coop/host/scene.hpp, local_event_hides).
+        // Ocarina does not, nor another player's event replayed here (G1,
+        // coop/host/event_owner.hpp, local_event_hides).
         const bool event =
             reading && coop::host::local_event_hides(
-                           reading->event_running.value_or(false),
+                           reading->event_running.value_or(false), reading->event_whose,
                            reading->animation ? std::optional<std::string_view>(reading->animation->name)
                                               : std::nullopt);
         view.event = event;  // (the map icons, CurrentMapView)
@@ -1436,6 +1766,11 @@ private:
                  p[0], p[1], p[2], clip[0], clip[1], clip[2], clip[3], where);
     }
 
+    // G1: an event our own Link is in (coop/host/event_owner.hpp our_link_in_event).
+    static bool OurLinkInEvent(const std::optional<coop::host::PlayerReading>& reading) {
+        return reading && coop::host::our_link_in_event(reading->event_running.value_or(false), reading->event_whose);
+    }
+
     std::optional<coop::host::PlayerReading> Read(Core::System& system, FrameView& view) {
         auto* process = system.ApplicationProcess();
         if (process == nullptr) {
@@ -1489,9 +1824,19 @@ private:
             view.position = reading->position;
             view.scene = reading->scene;
             view.age = reading->age;
+            ApplyEventOwner(*reading);
+            // PLAYER_STATUS's in_menu/paused (coop/host/sampler.hpp status_bits; docs/puppet.md "Away"; dead is the
+            // reader's own, PlayerReader::read_life): the game's menu screens (Longshot's patch 0018: one of them in
+            // front, f_802f1380's screens).
+#ifdef COOP_HOOKSHOT
+            if (const auto menu = CoopMapPage::MenuState()) {
+                reading->in_menu = menu->menu_open;
+            }
+#endif
         }
         return reading;
     }
+
 
     // The loader's own list (the NSOs it loaded, by file name), else the
     // modules found in memory by their path names. Fritchii v5 maps Ocarina's
@@ -1660,9 +2005,15 @@ private:
             }
             session_->wait(2);
         }
-        session_->with_client([](coop::net::Client& c) {
+        session_->with_client([&](coop::net::Client& c) {
+            const bool was_connected = c.state() == coop::net::State::connected;
             c.stop();
             c.service(0);
+            if (was_connected) {  // solo after a session: nothing of it stays (OnSessionEvent)
+                coop::net::Event left;
+                left.kind = coop::net::EventKind::disconnected;
+                OnSessionEvent(left, c, true);
+            }
         });
         if (!quiet_) {
             LOG_INFO(Core, "coop: stopped");
@@ -1845,6 +2196,7 @@ private:
     coop::host::PlayerReader::DrawnState drawn_state_{};
     bool sharing_ = false;  // a flag list is shared; set by Begin
     CoopBoss::StaleBossFlags stale_boss_;  // issue 148: shut boss doors from older builds
+    CoopBossBeaten::Apply boss_beaten_;    // G2: a boss the group beat, given to a game that did not see it die
     std::string_view boss_shut_in_name_;  // issue 148: CoopBoss::ShutInFlag, and its hash
     std::uint32_t boss_shut_in_hash_ = 0;
     bool pickups_ = false;  // one-time pickups are shared (coop_pickups.h)
@@ -1853,6 +2205,7 @@ private:
     static constexpr std::uint64_t kDoubledNoEventMs = 1000;
     std::size_t pickups_given_ = 0;  // CoopPickups keys handed to the session
     bool holding_logged_ = false;  // issue 129: HoldFlagStore held something last frame
+    std::uint32_t sale_held_logged_ = 0;  // a scrub sale flag the hold kept last frame (log)
 #ifdef COOP_HOOKSHOT
     // Every 10 s while the flag watcher goes by the game's events (coop_flag_native.h): what it read, and what its
     // audit found that no event had named (0 when the applier's wrap sees every write).
@@ -1874,12 +2227,49 @@ private:
     CoopEvery::Every flag_events_log_{10 * CoopEvery::kSecondUs};
     std::uint64_t flag_event_reads_ = 0, flag_event_misses_ = 0, flag_full_reads_ = 0;
 #endif
+    // forest-temple-b (player reports #106-#108): every 10 s while it changed, the shared flags that went out, came
+    // in and were written, so a player's log says whether two games' flags reach each other at all.
+    void LogFlagTraffic() {
+        if (!session_ || !flag_traffic_log_.Due(CoopEvery::NowUs())) {
+            return;
+        }
+        const coop::host::FlagStats s = session_->flag_stats();
+        // holding_frames and window_frames too: a game stuck in either state still prints (rows 106/107).
+        const std::uint64_t sum = s.changes_sent + s.answers_sent + s.entries_in + s.applied + s.write_failures +
+                                  s.holding_frames + s.window_frames;
+        if (sum == flag_traffic_sum_) {
+            return;
+        }
+        flag_traffic_sum_ = sum;
+        LOG_INFO(Core, "coop: flags: traffic: {} changes sent, {} answers sent, {} entries came, {} written here "
+                       "({} count deltas, {} load reverts, {} one-way put back, {} from a host reset), {} kept over "
+                       "our own, {} not shared, {} write failures, {} messages not for us, {} bad snapshots; "
+                       "{} s holding a join snapshot ({} dropped unfinished), {} s in load windows, {} changes "
+                       "waiting for the host's answer",
+                 s.changes_sent, s.answers_sent, s.entries_in, s.applied, s.deltas_added, s.load_reverts,
+                 s.one_way_restores, s.reset_applied, s.kept_local, s.not_shared, s.write_failures, s.ignored_messages,
+                 s.bad_snapshots, s.holding_frames / 60, s.hold_timeouts, s.window_frames / 60, s.pending_now);
+    }
+    CoopEvery::Every flag_traffic_log_{10 * CoopEvery::kSecondUs};
+    std::uint64_t flag_traffic_sum_ = 0;
+    bool hold_timeout_told_ = false;               // rows 106/107: the chat notice once a run
+    std::uint64_t long_window_logged_ = 0;         // the open window's length (1/60 s) last logged
+    static constexpr std::uint64_t kLongWindowFrames = 60 * 60;  // a load window open a minute is logged
     CoopScrubTalk::Hold scrub_talk_;  // issue 144: scrub destroy flags wait for our event
+    std::uint8_t scrub_near_ = 0;     // issue 144: the scrub groups near our Link (for the log)
     coop::host::LentKeys lent_keys_;  // dungeon-sync-b (#75): keys lent at another player's lock
     bool scrub_talk_on_ = EnvString("LICHII_COOP_SCRUB_TALK_HOLD") != "0";  // =0: off (the old softlock)
+    // =near: only the near guard (CoopScrubTalk::Near), no event hold: a test proves it alone.
+    bool scrub_near_only_ = EnvString("LICHII_COOP_SCRUB_TALK_HOLD") == "near";
+    bool scrub_sale_on_ = EnvString("LICHII_COOP_SCRUB_SALE") != "0";  // =0: one-time sales each game's own
     bool live_events_ = false;     // LICHII_COOP_LIVE_EVENTS=1 (issue 129)
+    // deku-switches (#176 #129): an eye-switch room event starts by our eye's FirstOn (coop_eye_switch.h).
+    // Off unless LICHII_COOP_EYE_SWITCH=1 until the probe run (hs-eye-probe).
+    bool eye_switch_on_ = false;
+    CoopEyeSwitch::Switcher eye_switch_;
     // Chat notices, on unless LICHII_COOP_NOTIFY=0 (docs/setup.md).
     bool notify_ = EnvString("LICHII_COOP_NOTIFY") != "0";
+    bool map_refresh_ = false;  // LICHII_COOP_MAP_REFRESH=1 (coop_map_refresh.h)
     struct Names {
         std::vector<std::pair<std::uint8_t, std::string>> list;
         std::string operator()(std::uint8_t n) const {
@@ -2027,14 +2417,25 @@ private:
             // Only the story path refuses the search's finds while another asked-for event runs (intro-ocarina);
             // the dungeon gimmicks above keep their net as it was (a gimmick may start inside a talk's flow).
             story_source_.Scene(here.scene);
-            const auto asked = by_request ? requests.Since(story_cursor_) : std::vector<CoopLiveEvents::GameRequest>{};
+            const auto asked =
+                by_request ? requests.Since(story_cursor_) : std::vector<CoopLiveEvents::GameRequest>{};
+            // Player report 110: a story cutscene asked by its event setting (the Deku Tree's meeting:
+            // KokiriForest_Meet_DekuTree_MeetDekuTree_01, flow Meet_DekuTree) is a story start by that setting,
+            // not another event; it is sent and joined by the setting (coop_shared_scenes.h).
+            static const std::vector<std::string_view> request_names = CoopSharedScenes::RequestNames();
             const auto found = story_source_.Frame(
-                by_request ? CoopLiveEvents::RequestedOf(asked, names) : std::nullopt,
-                CoopLiveEvents::RequestedOtherOf(asked, names), by_request, running,
+                by_request ? CoopLiveEvents::RequestedOf(asked, request_names) : std::nullopt,
+                CoopLiveEvents::RequestedOtherOf(asked, request_names), by_request, running,
                 [&] { return CoopLiveEvents::FindRunningEvent(&ReadGuest, &*memory, base_, names); });
             LogScanOnly(story_source_, story_scan_only_, "cutscene", &story_refused_);
             const auto story_flag = [&](std::uint32_t h) { return coop::host::GameFlags(*memory).get_bool(h); };
-            if (found && !CoopSharedScenes::GateHolds(*found, story_flag)) {
+            if (found && !CoopSharedScenes::Askable(*found)) {
+                // A story quest's flow (Get_StoneOfWater) the search found while one of its settings runs that
+                // this game's request did not name (no game can be asked for it), or a story cutscene that gives
+                // or takes what is the player's own (a trade, rupees): not sent (report 110 review).
+                LOG_INFO(Core, "coop: cutscene: our game started {}: not sent ({})", *found,
+                         CoopSharedScenes::NotShared(*found));
+            } else if (found && !CoopSharedScenes::GateHolds(*found, story_flag)) {
                 // Our game cannot be in that scene now (intro-ocarina): a name left in the session.
                 LOG_INFO(Core, "coop: cutscene: the search found the story cutscene {}, which our story is not at "
                                "yet: not sent", *found);
@@ -2053,6 +2454,7 @@ private:
         const auto name = shared_joiner_.Next(
             here,
             [&](const std::string& n) {
+                // A story name or setting: its own played flag (every event setting has one).
                 return memory && coop::host::GameFlags(*memory)
                                      .get_bool(coop::host::flag_hash("HavePlayedEvent." + n))
                                      .value_or(false);
@@ -2065,6 +2467,7 @@ private:
         }
         if (name) {
             std::lock_guard lock(live_mutex_);
+            // Asked as the starter's game asked it: by the story name or setting it sent (report 110).
             live_requester_.Want(*name, here.scene, now_us, CoopSharedScenes::kJoinUs);
         }
     }
@@ -2102,7 +2505,45 @@ private:
         for (const auto& quest : CoopQuest::Quests()) {
             if (auto w = CoopQuest::LiveWant(quest, value)) wants.push_back(std::move(*w));
         }
+        if (CoopQuests::LiveOn()) {  // issue 94: every shared quest, not only after a reload
+            for (auto& w : CoopQuests::LiveWants(value)) wants.push_back(std::move(w));
+        }
+        if (auto w = FollowTradeItem(memory)) wants.push_back(std::move(*w));
         challenges_.Want(std::move(wants));
+    }
+
+    // Row 117 (docs/items.md, "Every item the game takes away"): the adult
+    // trade's items are shared by mirror, but each trade NPC tests our own
+    // SubEvent_GetSwordBigGoron step. The step follows the item held: our
+    // GameData step (what the NPCs' _IsAfter_ Exps read) is raised to the
+    // step at which the game's own flow hands that item over, and the
+    // manager gets it through the game's setStep (Challenges, as the shared
+    // quests), so its own step start runs (a spoiling item's timer too). Only
+    // forward, never from NotReady, never in an event (our own trade's flow
+    // sets its step itself). Returns the manager's want for this quest.
+    std::optional<CoopQuest::StepWant> FollowTradeItem(EmulatorMemory& memory) {
+        namespace trade = coop::host::trade;
+        coop::host::GameFlags flags(memory);
+        const auto was = flags.get_enum(trade::kQuest);
+        const auto raise = coop::host::trade_step_raise(was, [&](std::uint32_t h) { return flags.get_int(h); });
+        if (raise && coop::host::GameFlags::set_enum(memory, trade::kQuest, *raise)) {
+            const char* held = "?";
+            for (const auto& h : trade::kHolds) {
+                if (h.step == *raise) held = h.name;
+            }
+            LOG_INFO(Core,
+                     "coop: items: trade quest SubEvent_GetSwordBigGoron {:#x} -> {:#x}: {} is held here "
+                     "(row 117)",
+                     *was, *raise, held);
+        }
+        const auto now = flags.get_enum(trade::kQuest);
+        const auto rank = now ? coop::host::trade_step_rank(*now) : std::nullopt;
+        if (!rank || *rank < 2) {
+            return std::nullopt;  // unread, NotReady or Ready: the manager is the game's own
+        }
+        CoopQuest::StepWant w{trade::kChallenge, *now, {}, "SubEvent_GetSwordBigGoron"};
+        w.steps.assign(trade::kSteps.begin(), trade::kSteps.end());
+        return w;
     }
 
     // Issue 125 (docs/items.md, "Strength"): raises PlayerStatus.LiftGrade to
@@ -2175,6 +2616,9 @@ private:
         if (raised && !current->empty()) {
             ocarina_equip_.want(*current);
         }
+        // Row 103: and once per stay of our Link while one is held, also when its flags needed no write here (a save
+        // an earlier mend wrote, the join snapshot, the host's file).
+        ocarina_equip_.link(true, coop::host::ocarina_held(fairy, time, *current));
         std::uint8_t status = 0;
         if (session_) {
             session_->with_client([&](coop::net::Client& c) {
@@ -2206,11 +2650,17 @@ private:
     // Kakariko guard's Bool is set (by any player; shared story), the guard
     // never asks for the letter again, so ours is taken out as the guard
     // takes the shower's. Ruto's Letter: a bottle's contents, per player, so
-    // another player got the bottle empty while King Zora (our own
-    // ChallengeMgr) never moved: while he has not, the letter goes into our
+    // another player got the bottle empty: until someone shows it, while our
+    // King Zora (our own ChallengeMgr) has not moved, the letter goes into our
     // first empty bottle, as the game's own get puts it there. Both through
     // the game's setters; anything unread is left alone.
-    void MendLetters(EmulatorMemory& memory) {
+    // Row 117: once any player has shown Ruto's Letter (King Zora's scene
+    // Dm_Zora_0010, shared story), it is never given again, and one still in
+    // a bottle here is emptied, as that scene empties the shower's, once our
+    // own King Zora has moved too (the quest catch-up; before that it is the
+    // only way past him). Only while our Link is known to be in no event, so
+    // our own King Zora scene takes ours itself.
+    void MendLetters(EmulatorMemory& memory, bool no_event) {
         namespace letters = coop::host::letters;
         coop::host::GameFlags flags(memory);
         const auto zelda = flags.get_int(letters::kZelda);
@@ -2222,7 +2672,8 @@ private:
             [&memory](std::uint64_t a, void* out, std::size_t n) { return ReadGuest(&memory, a, out, n); }, base_,
             letters::kStoneOfWater);
         const auto plan = coop::host::ruto_letter_plan(
-            flags.get_bool(letters::kRutoGot), live ? coop::host::king_zora_moved(*live) : std::nullopt,
+            flags.get_bool(letters::kRutoGot), flags.get_bool(letters::kKingRead),
+            live ? coop::host::king_zora_moved(*live) : std::nullopt,
             [&](std::uint32_t h) { return flags.get_bool(h); }, [&](std::uint32_t h) { return flags.get_enum(h); });
         // Each change of why it waits is logged once (the 0.11.2 big run's
         // letter never came and said nothing about which test held it).
@@ -2236,6 +2687,12 @@ private:
             LOG_INFO(Core, "coop: items: Ruto's Letter waits: {} (Get_StoneOfWater: {}) (issue 58)",
                      coop::host::ruto_wait_text(plan.why), step);
         }
+        if (plan.spent && no_event && coop::host::GameFlags::set_enum(memory, *plan.spent, letters::kEmpty)) {
+            LOG_INFO(Core,
+                     "coop: items: Ruto's Letter out of bottle {:#010x}: it was shown to King Zora "
+                     "(HavePlayedEvent.Dm_Zora_0010) (row 117)",
+                     *plan.spent);
+        }
         if (plan.bottle && coop::host::GameFlags::set_enum(memory, *plan.bottle, letters::kLetter)) {
             ruto_why_ = plan.why;
             LOG_INFO(Core, "coop: items: Ruto's Letter into bottle {:#010x}: King Zora has not moved here (issue 58)",
@@ -2248,7 +2705,7 @@ private:
     // Meet_DekuTree quest to what the shared story says (Mido let someone by:
     // Step03; the Deku Tree scene played: Complete), so the Kokiri Shop sells
     // here too. Only ever raised; anything unread is left alone.
-    void CatchUpQuest(EmulatorMemory& memory) {
+    void CatchUpQuest(EmulatorMemory& memory, bool idle) {
         namespace quest = CoopStory::quest;
         coop::host::GameFlags flags(memory);
         const auto step = flags.get_enum(quest::kMeetDekuTree);
@@ -2258,7 +2715,7 @@ private:
             LOG_INFO(Core, "coop: story: quest Meet_DekuTree {:#x} -> {:#x} (shared story; issue 130)",
                      *step, *raise);
         }
-        MendStory(memory, mend_since_us_);  // issue 84
+        MendStory(memory, mend_since_us_, idle);  // issue 84, row 129
     }
     MendClocks mend_since_us_{};  // CatchUpQuest's (game thread)
 
@@ -2324,6 +2781,12 @@ Coop* Get() {
     return g_coop.get();
 }
 
+// The session End stopped last (kept until Shutdown), or none.
+Coop* LastEnded() {
+    std::lock_guard lock(g_mutex);
+    return g_ended.empty() ? nullptr : g_ended.back().get();
+}
+
 } // namespace
 
 // The Lobby (docs/protocol.md "Lobby"): the player's own key, from
@@ -2384,10 +2847,34 @@ void Start() {
     }
 }
 
+// Rows 63/76, #146 (dungeon-sync-b, dungeon-maps-a). The Map page and the minimap draw from the HUD screen's own copy
+// of the dungeon's map, compass, boss key and floors, which the game reads in only at the HUD's init and its refresh
+// (main+0x33e4200; the game's get scene ends in one). A value co-op writes in play (another player's item, the join
+// snapshot, a reset, a put-back, the solo keeper) skips both, so the minimap stayed blank until the Map page or a
+// room load (run hs-map-opener 20261116-013911). This asks the game's own refresh once after such a write, in a
+// session and alone (Hookshot's frame asks it: coop_map_refresh.h). LICHII_COOP_MAP_REFRESH=0 turns it off. True when
+// on.
+bool StartMapRefresh() {
+    static const bool on = [] {
+        if (EnvString("LICHII_COOP_MAP_REFRESH") == "0") {
+            LOG_INFO(Core, "coop: map refresh off (LICHII_COOP_MAP_REFRESH=0)");
+            return false;
+        }
+        LOG_INFO(Core, "coop: map refresh on: the game's HUD refresh after a dungeon map, compass, boss key or "
+                       "floors written by co-op (run at the HUD screen's own update, Longshot patch 0018)");
+        return true;
+    }();
+    return on;
+}
+
 namespace {
 
 // minimap-b. Set when a session ran: the solo keeper forgets its baseline (the session's writes are not the game's).
 std::atomic<bool> g_keeper_reset{false};
+
+// Row 112 (#74): our own Link with no session, for CurrentMapView (the Customize page's live picture). LocalFrameOff
+// publishes it, a session's start clears it (coop_solo_view.h).
+CoopSoloView::Store g_solo_view;
 
 // A guard, not a fix (the cause is not found yet): with no session, a map or compass the game gave in this save is
 // written back if the game takes it back while Link is in that dungeon (coop/host/one_way_keeper.hpp). In a session
@@ -2402,10 +2889,20 @@ void KeepMapsAlone(EmulatorMemory& memory, bool in_play, const std::optional<std
     }();
     if (!on) return;
     if (g_keeper_reset.exchange(false)) keeper.reset();
+#ifdef COOP_HOOKSHOT
+    // The title menu: the next save is another file (forest-temple-a: the no-scene sign alone may not come there).
+    static bool title_was_up = false;
+    const bool title_up = CoopSave::TitleUp();
+    if (title_up && !title_was_up) keeper.reset();
+    title_was_up = title_up;
+    // Patch 0024: the game loaded a save (any way): another file's maps are not this one's.
+    if (CoopSave::TakeKeeperSaveLoad()) keeper.reset();
+#endif
     coop::host::GameFlagStore flags(memory);
     const coop::host::MapDropBecause because("the solo keeper (minimap-b)");
     const auto restored = keeper.frame(flags, in_play, scene ? std::optional<std::string_view>(*scene) : std::nullopt);
     if (keeper.take_save_load()) coop::host::map_drop_log().note("save load (no scene for a while: the title)");
+    if (!restored.empty() && StartMapRefresh()) CoopMapRefresh::TheRefresher().Want(SteadyMs());
     for (const auto key : restored) {
         const auto* item = coop::host::find_item(key.hash);
         LOG_INFO(Core, "coop: items: {} went back to 0 with no session: written back (minimap-b guard; restores {})",
@@ -2429,14 +2926,18 @@ void WatchMapDrops(EmulatorMemory& memory, bool in_play, const std::optional<std
 // Split screen needs no session (docs/local-coop.md): with co-op off, the first Link is read here for local co-op's
 // frame step, as Coop::Read does while it is on. Only Ocarina of Time on a build the table knows. What is read and
 // when the Director is published: CoopLocalGame::OffFrame (tested).
-void LocalFrameOff(Core::System& system) {
+// `writes`: false with a code mod (issue 136): only our Link for the Customize picture is read, nothing written.
+void LocalFrameOff(Core::System& system, bool writes) {
     static Kernel::KProcess* seen = nullptr;
     static u64 base = 0;
     static CoopLocalGame::OffFrame step;
     auto* process = system.ApplicationProcess();
     if (process == nullptr || system.GetApplicationProcessProgramID() != kOcarinaProgramId ||
         CoopGameBuild::Find(Hex(system.GetApplicationProcessBuildID(), 8)) == nullptr) {
-        CoopLocalGame::Frame({});
+        if (writes) {
+            CoopLocalGame::Frame({});
+        }
+        g_solo_view.Publish({}, CoopSoloView::Clock::now());
         return;
     }
     if (process != seen) {
@@ -2447,7 +2948,7 @@ void LocalFrameOff(Core::System& system) {
     coop::host::PlayerReader reader(memory);
     std::optional<coop::host::PlayerReading> full;
     CoopLocalGame::Facts facts;
-    if (step.FullRead(CoopLocalGame::HasSeats())) {
+    if (writes && step.FullRead(CoopLocalGame::HasSeats())) {
         full = reader.read();
         facts = {full.has_value(), full ? std::optional(full->position) : std::nullopt,
                  full && full->age == coop::protocol::Age::adult};
@@ -2456,23 +2957,67 @@ void LocalFrameOff(Core::System& system) {
         const auto position = reader.read_position();
         facts = {position.has_value(), position, position && reader.read_age() == coop::protocol::Age::adult};
     }
-    CoopLocalGame::Frame(facts);
+    if (writes) {
+        CoopLocalGame::Frame(facts);
+    }
+    // G1: whose the running event is, every frame (the tracker sees each run start and end). The
+    // animation and our Link's performer are read only while an event runs.
+    bool solo_running = false;
+    std::optional<bool> solo_running_known;  // nothing: not read
+    std::optional<std::string> solo_anim_name;
+    coop::host::EventWhose solo_whose = coop::host::EventWhose::ours;
+    if (full) {
+        ApplyEventOwner(*full);
+        solo_running_known = full->event_running;
+        solo_running = solo_running_known.value_or(false);
+        if (full->animation) solo_anim_name = full->animation->name;
+        solo_whose = full->event_whose;
+    } else {
+        solo_running_known = reader.read_event_running();
+        solo_running = solo_running_known.value_or(false);
+        bool bound = false;
+        if (solo_running) {
+            if (const auto animation = reader.read_animation()) solo_anim_name = animation->name;
+            bound = reader.read_link_bound().value_or(false);
+        }
+        solo_whose = ClassifyEvent(solo_running, bound,
+                                   solo_anim_name ? std::optional<std::string_view>(*solo_anim_name) : std::nullopt);
+    }
+    const std::optional<std::string_view> solo_anim =
+        solo_anim_name ? std::optional<std::string_view>(*solo_anim_name) : std::nullopt;
     {
         const auto scene = full ? full->scene : reader.read_scene();
+        {   // Row 112: our Link for the Customize picture with no session, as a session's frame gives it.
+            CoopSoloView::Reading solo;
+            if (facts.position && scene) {
+                solo.position = std::array<float, 3>{(*facts.position)[0], (*facts.position)[1], (*facts.position)[2]};
+                solo.scene = scene;
+                solo.adult = facts.adult;
+                // Our own event (a cutscene, not the Ocarina, not another player's): G1, classified above.
+                solo.event = coop::host::local_event_hides(solo_running, solo_whose, solo_anim);
+            }
+            g_solo_view.Publish(solo, CoopSoloView::Clock::now());
+        }
+        if (!writes) {
+            return;  // a code mod: only the reading above
+        }
         WatchMapDrops(memory, facts.position.has_value(), scene, facts.position);
         KeepMapsAlone(memory, facts.position.has_value(), scene);
+        CoopMapRefresh::TheRefresher().SetInPlay(facts.position.has_value());  // rows 63/76: no refresh off play (alone)
         static MendClocks mend_since_us{};
         if (facts.position.has_value()) {
-            MendStory(memory, mend_since_us);  // issue 84: a stuck save, played alone
+            MendStory(memory, mend_since_us, solo_running_known.has_value() && !*solo_running_known);  // issue 84,
+            // row 129: a stuck save, played alone
         } else {
-            mend_since_us = {};  // the title or a load: nothing to read yet
+            mend_since_us.NewLoad();  // the title or a load: nothing to read yet
         }
     }
     if (!step.Publish(CoopLocalGame::HasSeats())) return;
     if (!full) full = reader.read();   // seats came in this frame's step
+    if (full) full->event_whose = solo_whose;  // G1: classified once this frame, above
     // The extra local players' Players are made (and deleted) by the puppet Director, as online (no remote players).
     const bool event =
-        full && coop::host::local_event_hides(full->event_running.value_or(false),
+        full && coop::host::local_event_hides(full->event_running.value_or(false), full->event_whose,
                                               full->animation ? std::optional<std::string_view>(full->animation->name)
                                                               : std::nullopt);
     CoopPuppet::Publish(full ? base : 0, full ? full->scene : std::nullopt,
@@ -2481,6 +3026,7 @@ void LocalFrameOff(Core::System& system) {
 
 void OnFrame(Core::System& system) {
     CoopObjects::OnFrame(system);
+    CoopSave::PollSlotOpens();   // player report 120: the slot our game plays (Hookshot's patch 0025; solo too)
     CoopTestInput::OnFrame(system);
     Start();
     // g_coop only changes in Start (before this), End (which keeps the old
@@ -2488,11 +3034,17 @@ void OnFrame(Core::System& system) {
     // emulation has stopped), so it stays valid for this frame.
     auto* coop = Get();
     {   // minimap-b: a session started or ended (the drop log's line; the solo keeper's baseline is dropped)
-        static bool had = false;
-        if ((coop != nullptr) != had) {
-            had = coop != nullptr;
-            coop::host::map_drop_log().note(had ? "co-op session started" : "co-op session ended");
+        static CoopSessionEnd::LastFrame<Coop> last;
+        if (const auto change = last.Note(coop); change.started || change.ended) {
+            coop::host::map_drop_log().note(change.started ? "co-op session started" : "co-op session ended");
             g_keeper_reset.store(true);
+            g_solo_view.Clear();  // row 112: the session's frame from now, and a fresh reading after it
+        }
+        // Left from the menu (End): every part forgets the session on a frame that is not connected (the objects'
+        // owners and copies, bosses held for their owner, spawns, drops, the time, the HUD, ...), as on a drop,
+        // but no frame came after End. The ended session gets that one frame once End has stopped and kept it.
+        if (Coop* ended = last.Take(LastEnded(), g_mod_refused)) {
+            ended->Frame(system);
         }
     }
     // The game's main may be patched (or refused for a code mod) after co-op
@@ -2505,11 +3057,30 @@ void OnFrame(Core::System& system) {
                           "in the game's Add-Ons. Disconnecting.",
                     CoopSvc::Refusal());
         coop->End(false);
+        // Our own table only (no game write): a copy boss held at life 1 for its owner can die again here.
+        if (CoopBossNative::Table& bosses = CoopBossNative::TheTable(); bosses.BrainOn()) {
+            bosses.Publish({});
+        }
     }
-    if (coop && !g_mod_refused) {
+    switch (CoopSessionEnd::PathOf(coop != nullptr, g_mod_refused)) {
+    case CoopSessionEnd::Path::session:
         coop->Frame(system);
-    } else if (CoopLocalGame::OffFrame::Runs(coop != nullptr, g_mod_refused)) {
-        LocalFrameOff(system);
+        break;
+    case CoopSessionEnd::Path::solo:
+        LocalFrameOff(system, true);
+        break;
+    case CoopSessionEnd::Path::read_only: {
+        // Issue 136, with or without a session before: what is not multiplayer and only reads the game goes on
+        // (the Customize picture; the menus and settings never needed a session), nothing is written to it.
+        static bool said = false;
+        if (!std::exchange(said, true)) {
+            LOG_INFO(Core, "coop: a code mod is installed: solo features that only read the game go on (the "
+                           "Customize picture, menus, settings); nothing is written to the game (story and map "
+                           "mends, split screen, a left session's clean-up) while the mod is installed");
+        }
+        LocalFrameOff(system, false);
+        break;
+    }
     }
 }
 
@@ -2584,11 +3155,24 @@ std::optional<Markers> CurrentMarkers() {
 }
 
 bool CurrentMapView(MapView& out) {
-    if (g_mod_refused) {
+    // A session's frame, but never one stopped for a code mod (issue 136: its Coop stays until Shutdown).
+    if (!g_mod_refused) {
+        if (auto* coop = Get()) {
+            return coop->CurrentMapView(out);
+        }
+    }
+    // Row 112 (#74): co-op idle is not "no Link": our own Link as LocalFrameOff read it, no other players. Also with
+    // a code mod: the Customize picture only reads the game.
+    CoopSoloView::View solo;
+    if (!g_solo_view.Get(solo, CoopSoloView::Clock::now())) {
         return false;
     }
-    auto* coop = Get();
-    return coop != nullptr && coop->CurrentMapView(out);
+    out.scene.assign(solo.scene);
+    out.self = solo.self;
+    out.adult = solo.adult;
+    out.event = solo.event;
+    out.others.clear();
+    return true;
 }
 
 bool SendChat(const std::string& text) {

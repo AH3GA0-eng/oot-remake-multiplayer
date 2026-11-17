@@ -67,10 +67,13 @@ std::optional<std::uint64_t> OurLinkActor();
 void HurtOurLink(std::int32_t quarters, const std::array<float, 3>& at,
                  const std::array<float, 3>& from);
 
-// Emulator thread, each frame: whether our own Link is in an event (a talk, a
-// cutscene). While it is, shared changes to actors near it wait (coop_guard.h,
-// issue 144).
-void SetLocalEvent(bool in_event);
+// Emulator thread, each frame (G1, coop/host/event_owner.hpp): whether an event
+// runs in our game (`in_event`: the actors it binds here act for it and their
+// shared changes wait, whoever's event it is) and whether our own Link is in it
+// (`ours`: a talk, a cutscene of ours; shared changes to actors near our Link
+// wait, coop_guard.h, issue 144, and our event claims its actors). Another
+// player's event replayed here is in_event without ours.
+void SetLocalEvent(bool in_event, bool ours);
 
 // Network thread, from the session's on_event: takes the object messages.
 void OnEvent(const coop::net::Event& event);
@@ -89,6 +92,8 @@ unsigned TakeChestsOpenedTwice();
 // alive in the last walk of LICHII_COOP_OBJECTS (BossAlive); nothing when
 // no walk ran in the last 1.5 s, or its life is not read. Any thread.
 std::optional<bool> LastBossAlive(std::span<const std::string_view> bodies);
+// The same walk: whether LastBossAlive's false is a body read at life 0 (BossReadDead); false when unread.
+bool LastBossReadDead(std::span<const std::string_view> bodies);
 // The same walk: whether the boss has lost life (BossHurt).
 std::optional<bool> LastBossHurt(std::span<const std::string_view> bodies);
 // The same walk: whether the boss is still in its pre-battle phase (BossPreBattle).
@@ -98,6 +103,9 @@ std::optional<bool> LastBossOurs(std::span<const std::string_view> bodies);
 // The boss bodies our game is not ready to own (its intro not played here);
 // empty when none. Any thread; used by the next share.
 void SetUnreadyBosses(std::vector<std::string> bodies);
+// The boss bodies whose death has begun in some game (player report #105): a refused hit is given to their Life
+// step after the wait (Sync::SetDying). Any thread; used by the next share.
+void SetDyingBosses(std::vector<std::string> bodies);
 // Small keys to give back to our game (the SmallKeyNum flag of the dungeon,
 // once each): a door's lock this game opened after another player already
 // had, or at the same moment with the higher player number (docs/dungeon.md,

@@ -574,9 +574,12 @@ TEST_CASE("native boss: a copy's own Life step holds it at 1 until the owner's d
     CHECK(t.HeldLifeStep(kLife, 1, 3) == 0);
     CHECK(t.HeldLifeStep(kLife + 0x10, 5, 21) == 21);  // another actor's: untouched
     CHECK(t.Totals().copy_life_held == 2);
-    // The owner's died: the same step lets ours die.
+    CHECK_FALSE(t.Finishes(kLife));  // held: its own stops stay (its death is not its owner's yet)
+    // The owner's died: the same step lets ours die, past its own life stops.
     copy.owner_dead = true;
     t.Publish({copy});
+    CHECK(t.Finishes(kLife));
+    CHECK_FALSE(t.Finishes(kLife + 0x10));
     CHECK(t.HeldLifeStep(kLife, 1, 1) == 1);
     CHECK(t.Totals().copy_killed == 1);
     const auto notes = t.TakeNotes();
@@ -592,6 +595,7 @@ TEST_CASE("native boss: the owner's own boss and a forgotten copy are never held
     owner.life_component = kLife;
     t.Publish({owner});
     CHECK_FALSE(t.Watches(kLife));
+    CHECK_FALSE(t.Finishes(kLife));  // our own boss: every stop is its game's
     CHECK(t.HeldLifeStep(kLife, 5, 21) == 21);
     Boss copy = Gohma(Role::copy);
     copy.life_component = kLife;
@@ -603,4 +607,174 @@ TEST_CASE("native boss: the owner's own boss and a forgotten copy are never held
     t.Publish({copy});
     t.Reset();
     CHECK_FALSE(t.Watches(kLife));
+}
+
+TEST_CASE("native boss: a new mid-boss copy runs its own start, then takes the owner's state") {
+    // Issue 62 (Dodongo's Cavern): the second Lizalfos's copy took the owner's
+    // verbs at once, skipped its own appear and stayed unseen.
+    CHECK(RunsOwnStart("Enemy_MiddleBoss_Lizalfos"));
+    CHECK_FALSE(RunsOwnStart("Enemy_DungeonBoss_Gohma"));  // its intro is an event
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Boss{kActor, kBsa, Role::copy, "Enemy_MiddleBoss_Lizalfos", 2}});
+    t.Receive(kActor, BossBsa{3, 62, std::nullopt, {}});
+    FakeGuest g;
+    const std::int32_t at = 60;  // its own start's phase
+    g.Write(kBsa + addr::kBsaBrainVerb, &at, 4);
+    // Its own appear runs; the owner's verbs wait.
+    CHECK_FALSE(t.OnBrainVerb(kBsa, 61, false, false));
+    CHECK_FALSE(t.OnActionVerb(kBsa, GameRequest(5, kNode), true, false));
+    for (std::uint64_t i = 0; i + 1 < Table::kStartSteps; ++i) {
+        CHECK_FALSE(t.Step(g, false, 0, kMain));
+    }
+    // Over: the owner's phase is put in, and its own are skipped again.
+    auto c = t.Step(g, false, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kSetBrainVerb);
+    CHECK(c->x[1] == 62);
+    CHECK(t.OnBrainVerb(kBsa, 61, false, false));
+    // A hand-over of the same copy (not a new one) starts no own time.
+    t.Publish({Boss{kActor, kBsa, Role::copy, "Enemy_MiddleBoss_Lizalfos", 3}});
+    t.Receive(kActor, BossBsa{1, 62, std::nullopt, {}});
+    CHECK(t.OnBrainVerb(kBsa, 61, false, false));
+}
+
+// Player report #105: a black screen after Gohma's death in the host's game. The death setting our game is asked
+// (InsideTheDekuTree_BossDie) runs her own death in our copy; past the event the copy rules skipped its own
+// changes again and its Life step held her at 1, so the death never finished (no fade back, no warp).
+TEST_CASE("native boss: once its death has begun, a copy runs all its own and its Life is not held") {
+    constexpr std::uint64_t kLife = 0x7700'0000;
+    Table t;
+    t.SetOn(true, true);
+    Boss copy = Gohma(Role::copy);
+    copy.life_component = kLife;
+    t.Publish({copy});
+    t.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    FakeGuest g;
+    const std::int32_t at = 4;
+    g.Write(kBsa + addr::kBsaBrainVerb, &at, 4);
+    CHECK_FALSE(t.Step(g, false, 0, kMain));
+    CHECK(t.OnBrainVerb(kBsa, 9, true, false));  // a moment before: skipped (still a copy)
+    CHECK(t.HeldLifeStep(kLife, 5, 21) == 4);
+    // The owner's death is heard: its own death plays here, the skipped change made late.
+    CHECK_FALSE(t.Finishes(kLife));
+    t.SetDying({"Enemy_DungeonBoss_Gohma"});
+    auto c = t.Step(g, false, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->x[1] == 9);
+    CHECK_FALSE(t.Step(g, true, 0, kMain));
+    CHECK(t.Watches(kLife));
+    CHECK(t.Finishes(kLife));  // its death has begun: past its own stops (Gohma's at 1, hs-gohma-death 20261115)
+    CHECK(t.HeldLifeStep(kLife, 1, 1) == 1);  // dies of its own
+    CHECK(t.HeldLifeStep(kLife, 5, 1) == 5);  // her own rules let 1 through: the step ends her all the same
+    CHECK(t.Totals().copy_finished == 1);
+    // Long after our event is over and with the owner's (fight) state still coming: never skipped, never put back.
+    t.SetEvent(true);
+    t.SetEvent(false);
+    t.Receive(kActor, BossBsa{4, 5, std::nullopt, {BossChange{4, BossBrain{5, false}}}});
+    for (std::uint64_t i = 0; i < Table::kAfterEventSteps + Table::kDriftSteps + 10; ++i) {
+        CHECK_FALSE(t.Step(g, false, 0, kMain));
+    }
+    CHECK_FALSE(t.OnBrainVerb(kBsa, 12, false, false));
+    CHECK_FALSE(t.OnActionVerb(kBsa, GameRequest(21, kNode), true, false));
+    // A walk's next publish keeps both (the dying list is the glue's, every frame).
+    t.Publish({copy});
+    CHECK_FALSE(t.OnBrainVerb(kBsa, 13, false, false));
+    CHECK(t.HeldLifeStep(kLife, 5, 21) == 21);
+    // The owner's dead remove takes her off the owned list: her Life step still ends her while she is dying.
+    t.Publish({});
+    CHECK(t.Watches(kLife));
+    CHECK(t.HeldLifeStep(kLife, 5, 2) == 5);
+    CHECK(t.Finishes(kLife));  // (off the owned list, still dying)
+    t.SetDying({});
+    CHECK_FALSE(t.Watches(kLife));
+    CHECK_FALSE(t.Finishes(kLife));
+    CHECK(t.HeldLifeStep(kLife, 5, 2) == 2);
+    const auto notes = t.TakeNotes();
+    CHECK(std::any_of(notes.begin(), notes.end(),
+                      [](const std::string& n) { return n.find("its death has begun") != std::string::npos; }));
+}
+
+TEST_CASE("native boss: a death list for another boss, or none, leaves a copy a copy") {
+    constexpr std::uint64_t kLife = 0x7700'0000;
+    Table t;
+    t.SetOn(true, true);
+    Boss copy = Gohma(Role::copy);
+    copy.life_component = kLife;
+    t.Publish({copy});
+    t.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    t.SetDying({"Enemy_DungeonBoss_Dodongo"});
+    CHECK(t.OnBrainVerb(kBsa, 9, false, false));
+    CHECK(t.HeldLifeStep(kLife, 5, 21) == 4);
+    // Her death, then a new fight (the host loaded a save: the list empties): a copy again after a moment.
+    t.SetDying({"Enemy_DungeonBoss_Gohma"});
+    CHECK_FALSE(t.OnBrainVerb(kBsa, 9, false, false));
+    t.SetDying({});
+    t.Publish({copy});
+    CHECK(t.HeldLifeStep(kLife, 5, 21) == 4);
+    FakeGuest g;
+    for (std::uint64_t i = 0; i <= Table::kAfterEventSteps; ++i) {
+        t.Step(g, false, 0, kMain);
+        t.Step(g, true, 0, kMain);
+    }
+    CHECK(t.OnBrainVerb(kBsa, 9, false, false));
+    // Reset forgets the list too.
+    t.SetDying({"Enemy_DungeonBoss_Gohma"});
+    t.Reset();
+    t.Publish({copy});
+    t.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    CHECK(t.OnBrainVerb(kBsa, 9, false, false));
+}
+
+// Row 130 (two players entering Gohma's room together; only one could beat her). The second game's own appear event
+// ran with a copy Gohma the objects layer kept putting into its owner's animation (C01 at frame 1 over her own
+// Pre_Battle_Ceiling_Find) every frame: the event waited for her for good. The table now names the copies that run
+// their own, and the objects layer puts none of their owner's motion on them meanwhile.
+TEST_CASE("native boss: the copies that run their own now are named for the objects layer (row 130)") {
+    constexpr std::uint64_t kOwned = kActor + 0x100;
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Gohma(Role::copy), Boss{kOwned, kBsa + 0x100, Role::owner, "Enemy_MiddleBoss_Stalfos", 1}});
+    t.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    FakeGuest g;
+    const std::int32_t at = 4;
+    g.Write(kBsa + addr::kBsaBrainVerb, &at, 4);
+    CHECK_FALSE(t.Step(g, false, 0, kMain));
+    using V = std::vector<std::uint64_t>;
+    CHECK(t.CopiesRunningOwn().empty());  // a copy taking its owner's verbs; our own boss is never named
+
+    SUBCASE("our event, and kAfterEventSteps after it") {
+        t.SetEvent(true);
+        CHECK(t.CopiesRunningOwn() == V{kActor});
+        t.SetEvent(false);
+        CHECK(t.CopiesRunningOwn() == V{kActor});
+        for (std::uint64_t i = 0; i < Table::kAfterEventSteps + 1; ++i) {
+            (void)t.Step(g, false, 0, kMain);
+        }
+        CHECK(t.CopiesRunningOwn().empty());
+    }
+    SUBCASE("our own hit's reaction") {
+        t.NoteOwnHit(kActor);
+        CHECK(t.CopiesRunningOwn() == V{kActor});
+        t.NoteOwnHit(kOwned);  // our own boss: never named
+        for (std::uint64_t i = 0; i < Table::kReactSteps + 1; ++i) {
+            (void)t.Step(g, false, 0, kMain);
+        }
+        CHECK(t.CopiesRunningOwn().empty());
+    }
+    SUBCASE("its death") {
+        t.SetDying({"Enemy_DungeonBoss_Gohma"});
+        CHECK(t.CopiesRunningOwn() == V{kActor});
+    }
+    SUBCASE("a new mid-boss copy's own start") {
+        Table m;
+        m.SetOn(true, true);
+        m.Publish({Boss{kActor, kBsa, Role::copy, "Enemy_MiddleBoss_Lizalfos", 2}});
+        CHECK(m.CopiesRunningOwn() == V{kActor});
+    }
+    SUBCASE("native sync off: none (the owner's motion is the only sync)") {
+        t.SetEvent(true);
+        t.SetOn(false, false);
+        CHECK(t.CopiesRunningOwn().empty());
+    }
 }

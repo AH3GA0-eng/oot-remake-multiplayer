@@ -73,6 +73,15 @@ inline constexpr std::uint64_t kActorComponents = 0x270;
 inline constexpr std::uint64_t kComponentsAs = 0x40;
 inline constexpr std::uint64_t kAsComponentInner = 0x18;
 inline constexpr std::uint64_t kAsInnerController = 0x18;
+
+// --- Life of an actor (PLAYER_STATUS dead, away-status) ----------------------
+// actor +0x270 (component table) -> +0x2b8 its Life component -> +0x1c10 the
+// value object, the life (s32, quarter hearts) at +8: the same walk as the
+// objects walk's (lichii/hook/coop_objects.cpp LifeValue, run in the game
+// since issue 88; coop_hit_replay.h kComponentLife).
+inline constexpr std::uint64_t kComponentLife = 0x2b8;
+inline constexpr std::uint64_t kLifeValue = 0x1c10;
+inline constexpr std::uint64_t kLifeValueWord = 0x8;
 // [dump] Controller: s32 slot count at +0x18, slot array at +0x20, 0x48 bytes
 // an entry, whose first 8 bytes point to the slot. Every reader bounds the
 // index by the count (0x3abebc0, 0x37b5d70, 0x2022a0). Checked.
@@ -200,5 +209,14 @@ inline constexpr std::uint64_t kBancPathCapacity = 0x48;
 // as the map's peek reads.
 inline constexpr std::uint64_t kEventManagerPtr = 0x4e94840;
 inline constexpr std::uint64_t kEventRunning = 0x68;
+// Row 97: that word stays 0 in a Deku Scrub's talk and AttackedEvent (scrub-sale-a's runs). An
+// event binds every actor it uses through the actor's own event performer:
+// [[actor + kActorComponents] + 0x88] (or + 0x90, the slot 0xc70560 reads for the player), whose
+// +0x10 is the actor; +0x18 holds the event's link while it is bound, 0 otherwise (read in the
+// deku-sync-fix probe runs, as lichii/hook/coop_event_member.h).
+inline constexpr std::uint64_t kPerformerSlot = 0x88;
+inline constexpr std::uint64_t kPerformerSlotAlt = 0x90;
+inline constexpr std::uint64_t kPerformerActor = 0x10;
+inline constexpr std::uint64_t kPerformerLink = 0x18;
 
 }  // namespace coop::host::addr

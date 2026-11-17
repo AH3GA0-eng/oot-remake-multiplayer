@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "coop/host/flags.hpp"
+#include "coop_quest.h"
 
 namespace CoopQuests {
 
@@ -68,6 +69,24 @@ bool On();
 // Merge, on unless LICHII_COOP_QUESTS=0; logs what it did.
 void AddShared(std::optional<coop::host::SharedFlags>& shared);
 
+// Issue 94: the shared quests' steps for the game's own ChallengeMgr. The
+// watcher writes another player's step into our GameData Enum at once, but the
+// Threads of Time tab and the game's logic read the manager, which takes the
+// GameData steps only when a save loads: a step got by another player showed
+// only after a reload. So each shared quest's GameData step also goes to the
+// manager (CoopQuest::Challenges, the game's ChallengeMgr::setStep), as
+// Get_StoneOfFire and DoorOfTime already do. The challenge is flag_hash of the
+// quest's name. Nothing at Ready or below (Ready comes from the manager
+// itself) or below the quest's floor; a complete_only quest (Get_Epona) only
+// at Complete; a quest CoopQuest already sends (live) is left to it. The
+// Challenges guards stay: never lowered, never from NotReady, never into or
+// out of a boss fight or minigame step, never while our Link is in an event.
+std::vector<CoopQuest::StepWant> LiveWants(const CoopQuest::ReadEnum& value);
+
+// False when LICHII_COOP_QUEST_LIVE=0 (then only CoopQuest's own quests reach
+// the manager, as in 0.11.2).
+bool LiveOn();
+
 // A step one game's quest was moved to by another player's progress.
 struct Raised {
     const char* quest;
@@ -91,6 +110,7 @@ class Store final : public coop::host::FlagStore {
     std::optional<coop::protocol::FlagEntry> read(coop::host::FlagKey key) override;
     bool write(const coop::protocol::FlagEntry& entry) override;
     bool write_exact(const coop::protocol::FlagEntry& entry) override;
+    bool write_load_back(const coop::protocol::FlagEntry& entry) override;
     bool is_count(coop::host::FlagKey key) override { return inner_.is_count(key); }
     bool is_max(coop::host::FlagKey key) override;
     bool is_one_way(coop::host::FlagKey key) override { return inner_.is_one_way(key); }

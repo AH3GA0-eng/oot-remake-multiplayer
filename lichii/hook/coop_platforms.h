@@ -28,6 +28,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -105,6 +106,11 @@ public:
     // hitched; Found() is empty then), else nothing.
     std::optional<std::uint64_t> StalledKey() const;
     void Reset();
+    // room-objects: only a word known to be a clock may be chosen: a wave mover's phase (WavePhaseCycle) or the AS
+    // slot 0 frame. Any other stepping float was a guess, and runs showed what it picked: the Deku Tree lifts' frame
+    // counter (written back by the game: "do not hold"), the water-room controller's place, a Jabu-Jabu floor's
+    // word at -0.066 a second. A guessed word is still watched (logs), never sent or written.
+    static bool Trusted(std::uint64_t key, bool wave);
 
 private:
     struct Candidate {
@@ -157,7 +163,31 @@ public:
         std::uint64_t hash = 0;
         std::string name;
         coop::protocol::Vec3 position{};
+        // Issue 194: the game's own ride state, the platform AI's bool plug RideOnPlayer (set every frame from a
+        // physics contact with a player; coop_lift_ride.h). Unset: the actor has no such plug.
+        std::optional<bool> ride_plug;
+        // Another player stands on its footprint (their samples): what else a plug of 1 can mean.
+        bool other_on = false;
     };
+    // Issue 194: our Link rides this platform, so a write of its clock would move him with it (the
+    // platform jumped, and bounced back each time the game took a write back). The plug RideOnPlayer
+    // is the game's word that a player is on it, but it is also 1 while another player's puppet rides
+    // our copy (CoopLiftRide sets it): a plug of 1 is ours unless another player is on the footprint
+    // and our Link is not (a platform wider than the footprint: our Link on its far edge is still
+    // ours). With no plug the footprint alone. A GroundControl controller is not where its floor is:
+    // only its plug.
+    static constexpr float kRideRadiusM = 1.8f;  // as CoopLiftRide's footprint
+    static constexpr float kRideBelowM = 0.5f;
+    static constexpr float kRideAboveM = 2.5f;
+    // The plug is 0 while our Link is in the air (a jump on the platform): still riding this long after
+    // the last look that said so, so no write moves the platform from under his landing.
+    static constexpr std::uint64_t kRideGraceUs = 1'000'000;
+    static bool OnFootprint(const coop::protocol::Vec3& platform, const coop::protocol::Vec3& who);
+    // room-objects (coop_room_objects.h): why this driver is moved by its own logic (a switch, sensor or event input
+    // in the room graph, or a rider plug: a live RideOnPlayer, which CoopLiftRide sets for the other players), so
+    // its clock is neither sent nor written; nothing when it runs free.
+    static std::optional<std::string> OwnLogic(const std::string& scene, const Driver& d);
+    static bool OurLinkRides(const Driver& d, const coop::protocol::Vec3& player);
     // The 8-byte words of a driver (SignProbe::Read), plus its AS slot 0
     // frame under Key(kRegionAsFrame, 0) when it has one. Empty: not there.
     using ReadDriver = std::function<std::map<std::uint64_t, std::uint64_t>(const Driver&)>;
@@ -219,12 +249,16 @@ private:
         std::uint64_t mine_key = 0;
         std::optional<float> mine_was;
         bool mine_moved = false;
+        // Issue 194: a write was held back while our Link rode it (logged once a ride).
+        bool held_for_ride = false;
+        std::uint64_t ride_until_us = 0;  // steady time: riding until then (kRideGraceUs after the last look)
     };
 
     std::string scene_;
     std::map<std::uint64_t, std::map<std::uint8_t, Heard>> heard_;  // by hash, then player
     std::map<std::uint64_t, State> states_;                          // by hash
     std::size_t writes_ = 0;
+    std::set<std::uint64_t> told_own_logic_;  // room-objects: logged once a scene
 };
 
 }  // namespace CoopPlatforms

@@ -9,6 +9,7 @@
 // for its save; the host sends its newest slot, and again to everyone after
 // its own save load (once the game has saved after it).
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -34,6 +35,17 @@ void SetSwitch(std::function<std::string()> root, std::function<bool(const std::
 
 // Each frame: whether Link is in the game (a loaded save): no switch then.
 void NoteInGame(bool in_game);
+// Player report 120, Hookshot's patch 0025 (hos_coop_fs_save_slot_opened): the count of opens of a slot's
+// progress.sav on the account save, the last one's slot folder and whether it was a write, so the host sends the slot
+// its game plays (save::PlayedSlot). Unset (the emulator, an older Hookshot): the newest slot on disk, as before.
+using SlotOpenedFn = unsigned (*)(char* slot_dir, std::size_t cap, int* write);
+void SetSlotOpens(SlotOpenedFn opened);
+// Each frame, also without a session: takes the new opens and the load windows (cheap when there are none).
+void PollSlotOpens();
+// The Lobby tab's "Resync from host" (a guest; save::resync_check): taken at the next OnFrame, which asks the host
+// again; the chat says how it goes. CanResync: the row is shown (a connected guest on a switchable folder).
+void RequestResync();
+bool CanResync();
 
 // The host's save has been written whole into this game's co-op folder and (Hookshot) the game plays from it now:
 // a title menu may load it. Before that a guest's game stays on its own folder.
@@ -55,6 +67,34 @@ bool SessionLive();
 void NoteTitle(bool title_up);
 // What NoteTitle last said (false on the emulator, which has no title module).
 bool TitleUp();
+// Player report 124: true once after each switch of the save folder (every switch: a join's host's save, Resync from
+// host, back to the player's own folder for a new session). Hookshot's title step then has the game re-read its save
+// list (its caption manager: Continue and Load), as the game itself does at boot.
+bool TakeSaveListStale();
+
+// Hookshot's save-load wraps (patch 0024, hos_coop_save_load.h), from the game's thread: the game's own sequence
+// nodes start loading a save (start) or say the save is in (!start). Every save the game loads: the title, the System
+// menu's Load, Game Over's Try Again. The emulator never calls these.
+void NoteGameSaveLoad(bool start);
+// Game Over saved its last state (its Try Again or its Quit Game: SeqExecuteAutoSaveMgrLastGameOverSave). A save load
+// after it with no title menu between (NoteTitle) is Try Again.
+void NoteGameOverSave();
+// Whether this Hookshot has all four wraps (its hello's bits); false on the emulator.
+void SetNativeSaveLoads(bool on);
+bool NativeSaveLoads();
+// The starts and loads since the last call (the session's flag watcher takes them).
+// Only fresh ones: a start older than kGameSaveLoadFreshMs (the game's own start loads a save before any session) or
+// a Game Over mark older than kGameOverFreshMs is dropped.
+struct GameSaveLoads {
+    unsigned starts = 0;
+    unsigned loads = 0;
+    bool retry = false;  // the save in is Game Over's Try Again (NoteGameOverSave, no title since)
+};
+inline constexpr long long kGameSaveLoadFreshMs = 30'000;
+inline constexpr long long kGameOverFreshMs = 120'000;
+GameSaveLoads TakeGameSaveLoads();
+// True once after each save load (the solo map keeper drops its baseline; with or without a session).
+bool TakeKeeperSaveLoad();
 
 // A guest's switch to the host's save that has not happened yet waits (the player picked a file on the title):
 // never while that file loads. Once Link is in the game the hold ends; the switch still waits (never under a game

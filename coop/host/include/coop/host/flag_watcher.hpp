@@ -47,6 +47,7 @@ enum class FlagRole : std::uint8_t {
 
 struct FlagStats {
   std::uint64_t changes_sent = 0;      // entries in FLAG_SET or own FLAG_STATE
+  std::uint64_t entries_in = 0;        // entries of every flag message that came (forest-temple-b log)
   std::uint64_t answers_sent = 0;      // host: entries answering a FLAG_SET
   std::uint64_t applied = 0;           // entries written into the game
   std::uint64_t deltas_added = 0;      // host: count deltas added to the game (in applied too)
@@ -63,6 +64,10 @@ struct FlagStats {
   std::uint64_t ignored_messages = 0;  // not a flag message, or not for this role
   std::uint64_t load_reverts = 0;      // the game's load undid a group value: written back
   std::uint64_t title_loads = 0;       // player: a load through the title, fewer flags back than kSaveLoadMin (#96)
+  std::uint64_t native_loads = 0;      // save loads the game's own load nodes said (set_native_loads, patch 0024)
+  std::uint64_t old_sign_loads = 0;    // with native loads on: windows the old signs called a save load (cross-check)
+  std::uint64_t native_timeouts = 0;   // a load node's start with no save in after kNativeLoadMaxFrames
+  std::uint64_t retry_loads = 0;       // of native_loads: Game Over's Try Again (the group's values back, no reset)
   std::uint64_t offline_loads = 0;     // player: the title was up while not connected, our changes put back (#96)
   std::uint64_t one_way_restores = 0;  // a one-way Bool (map, compass) back to 0: written back
   std::uint64_t down_only_kept = 0;    // a group's 1 not written over our 0 (share_down_only)
@@ -75,6 +80,11 @@ struct FlagStats {
   std::uint64_t entries_unsent = 0;    // entries a message kind cannot carry: left out, the rest sent
   std::uint64_t event_reads = 0;       // use_events: flags read because the game wrote them
   std::uint64_t event_misses = 0;      // use_events: a change the audit found that no event had named
+  // Rows 106/107: the two states in which a player sends none of its own changes (dungeon-items-next).
+  std::uint64_t holding_frames = 0;    // 1/60 s held for a join snapshot's last part: diff() off, FLAG_STATE held
+  std::uint64_t window_frames = 0;     // 1/60 s in a load window: our own changes not sent (docs/flags.md "Saves")
+  std::uint64_t hold_timeouts = 0;     // a snapshot whose last part never came (kHoldMaxFrames): dropped
+  std::uint64_t pending_now = 0;       // player: own changes sent and not answered yet (now, not a count)
   std::uint64_t full_reads = 0;        // use_events: frames that read the whole list (a load window, the first)
 };
 
@@ -149,7 +159,17 @@ class FlagWatcher {
   // One-way Bools (FlagStore::is_one_way) the game dropped to 0 and diff()
   // wrote back to 1 since the last call, for the log (issue 146). Each key
   // only the first time it is put back; stats().one_way_restores counts all.
-  std::vector<FlagKey> take_one_way_restores() { return std::exchange(one_way_restored_, {}); }
+  // dungeon-sync-b (#63/#76): with the values (a UInt's floors: before, the game's now, what was written), and
+  // `kept` when the game's own value was kept instead: its dungeon's map (game_items map_of_floors) turned on
+  // this frame or the one before, so the drop is the game's own map get writing its floors.
+  struct OneWayRestore {
+    FlagKey key;
+    std::uint32_t before = 0;
+    std::uint32_t now = 0;
+    std::uint32_t put = 0;
+    bool kept = false;
+  };
+  std::vector<OneWayRestore> take_one_way_restores() { return std::exchange(one_way_restored_, {}); }
   static constexpr std::size_t kMaxWrittenForOthers = 1024;
 
   // The counts (small keys, ...) our game itself lowered since the last call,
@@ -272,11 +292,41 @@ class FlagWatcher {
   // richer save no longer sends its items into the host's file (player report
   // #96). A title while not connected puts back, at the next connection's
   // first frame with Link, what our game changed meanwhile. Never set on the
-  // emulator (the old rule holds there); the host's loads never use it.
+  // emulator (the old rule holds there). A host's load window with the title
+  // in it is a save load too (forest-temple-a): its FLAG_RESET goes out.
   void set_title(bool up) {
     title_up_ = up;
     if (up) title_seen_ = true;
   }
+  // Hookshot's save-load wraps (patch 0024, hos_coop_save_load.h): the game's own sequence nodes that load a save
+  // (SeqExecuteLoadSaveData / SeqExecuteLoadTemporarySave's Enter) and say it is in
+  // (SeqOneShotOnloadGameSaveDataWorldMgr): every save the game loads, from the title, the System menu's Load and
+  // Game Over's Try Again. With them on, a save load is what they say and nothing else: from a start until the
+  // save is in, the game is loading (Link read or not), and the save in is the save load (moved_: a host's
+  // FLAG_RESET, a player's group values back). The old signs (no scene and flags back, the title menu) are only
+  // counted then (stats().old_sign_loads), as a cross-check in the log. Off (the emulator, an older Hookshot): the
+  // old signs decide, as before.
+  void set_native_loads(bool on) { native_loads_ = on; }
+  bool native_loads() const { return native_loads_; }
+  void note_save_load_start() {
+    native_loading_ = true;
+    native_since_ = frames_;
+  }
+  // `retry`: Game Over's Try Again (patch 0024's Game Over mark, no title since). Not a save the player chose: as
+  // host too, the group's values go back into our game and no FLAG_RESET goes out, so a host's death never takes
+  // the group's unsaved progress (coordinator A's decision, 2026-11-16). A guest's load does that anyway.
+  void note_save_loaded(bool retry = false) {
+    native_loaded_ = true;
+    native_retry_ = native_retry_ || retry;
+  }
+  // A start with no save in after this long (a load the game gave up): loading no more.
+  static constexpr std::uint64_t kNativeLoadMaxFrames = 30 * 60;
+  // A join snapshot whose last part has not come after this long is dropped as an out-of-order part is
+  // (rows 106/107): held, a player sends none of its own changes and writes no FLAG_STATE. The server sends
+  // every part at once on the reliable progress channel, so a whole snapshot takes well under a second.
+  static constexpr std::uint64_t kHoldMaxFrames = 10 * 60;
+  // FLAG_STATE messages kept while holding; one more drops the snapshot at once.
+  static constexpr std::size_t kHeldStatesMax = 512;
   static constexpr int kTitleFrames = 30;
   static constexpr int kSaveLoadMin = 2;
   static constexpr int kSettleFrames = 120;
@@ -302,11 +352,12 @@ class FlagWatcher {
   struct SaveLoadSeen {
     int flags = 0;
     int frames = 0;
+    bool native = false;  // the game's own load nodes said it (set_native_loads), not the old signs
   };
   std::optional<SaveLoadSeen> take_save_load() {
     if (!seen_) return std::nullopt;
     seen_ = false;
-    SaveLoadSeen s{seen_flags_, seen_frames_};
+    SaveLoadSeen s{seen_flags_, seen_frames_, native_loads_};
     seen_flags_ = 0;
     seen_frames_ = 0;
     return s;
@@ -339,6 +390,11 @@ class FlagWatcher {
 
   // A FLAG_SNAPSHOT has started and its last part has not come yet.
   bool holding() const { return holding_; }
+  // How long (1/60 s) the snapshot has been held, and the load window open; 0 when not.
+  std::uint64_t holding_for() const { return holding_ ? frames_ - holding_since_ : 0; }
+  std::uint64_t window_for() const { return window_ ? frames_ - window_since_ : 0; }
+  // A held snapshot was dropped by kHoldMaxFrames or kHeldStatesMax since the last call (the hook's notice).
+  bool take_hold_timeout() { return std::exchange(hold_timed_out_, false); }
   // Local changes sent and not answered yet.
   std::size_t pending() const { return pending_.size(); }
   const FlagStats& stats() const { return stats_; }
@@ -352,6 +408,8 @@ class FlagWatcher {
   void handle(FlagStore& store, Incoming& message, Table& answers);
   void apply_state(FlagStore& store, const std::vector<protocol::FlagEntry>& flags);
   void apply_snapshot(FlagStore& store);
+  // A snapshot that cannot finish: dropped, the game no longer held, what came meanwhile applied.
+  void drop_snapshot(FlagStore& store);
   // The host's save load (FLAG_RESET): every value written exactly.
   void apply_reset(FlagStore& store, const std::vector<protocol::FlagEntry>& flags);
   // The group's value written as it is (no OR, max or mirror rule), except a
@@ -387,7 +445,9 @@ class FlagWatcher {
   // here becomes ours.
   bool keeps_own(FlagStore& store, const protocol::FlagEntry& entry);
   std::vector<FlagKey> written_for_others_;  // take_written_for_others
-  std::vector<FlagKey> one_way_restored_;    // take_one_way_restores
+  std::vector<OneWayRestore> one_way_restored_;  // take_one_way_restores
+  std::map<FlagKey, std::uint64_t> map_on_pass_;  // a one-way map Bool's 0 -> 1, by diff pass
+  std::uint64_t diff_pass_ = 0;
   std::set<FlagKey> one_way_told_;           // keys take_one_way_restores gave once
   std::vector<FlagKey> own_count_drops_;     // take_own_count_drops
   struct Guard {
@@ -451,6 +511,15 @@ class FlagWatcher {
   int seen_flags_ = 0;           // take_save_load: the sign was taken with these
   int seen_frames_ = 0;
   int no_scene_frames_ = 0;  // frames in this window with no scene loaded
+  bool native_loads_ = false;    // set_native_loads
+  bool native_loading_ = false;  // note_save_load_start, until the save is in (or kNativeLoadMaxFrames)
+  std::uint64_t native_since_ = 0;
+  bool native_loaded_ = false;   // note_save_loaded, taken by the next frame()
+  bool native_forced_ = false;   // loading_ held true by a load node's load (frame())
+  bool native_retry_ = false;    // note_save_loaded(true), taken with it
+  bool window_retry_ = false;    // this window's save load is Game Over's Try Again
+  bool link_loading_ = false;    // set_loading's last value (no Link), for when that ends
+  bool old_counted_ = false;     // this window's old sign counted in old_sign_loads
   bool scene_readable_ = true;  // set_scene
   bool title_up_ = false;       // set_title: up now
   bool title_seen_ = false;     // set_title: up since the last frame() (also while not connected)
@@ -461,6 +530,9 @@ class FlagWatcher {
   bool resend_pending_ = false;
   bool snapshot_requested_ = false;
   bool holding_ = false;
+  std::uint64_t holding_since_ = 0;  // frames_ at part 0
+  bool hold_timed_out_ = false;      // take_hold_timeout
+  std::uint64_t window_since_ = 0;   // frames_ when window_ opened
   std::uint16_t snapshot_next_part_ = 0;
   std::uint16_t snapshot_part_count_ = 0;
   Table snapshot_;                        // parts so far

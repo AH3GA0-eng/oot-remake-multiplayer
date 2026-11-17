@@ -168,10 +168,24 @@ void Table::Publish(const std::vector<Boss>& bosses) {
             e.actor = b.actor;
             Note(b.name + ": native boss sync on (BSA " + Hex(b.bsa) + ", " +
                  (b.role == Role::owner ? "ours" : "a copy") + ")");
+            if (b.role == Role::copy && RunsOwnStart(b.name)) {
+                // Issue 62 (seed N2BTEYKM, Dodongo's Cavern): a mid-boss copy
+                // made while its owner already fights (the second Lizalfos,
+                // back in our walk after the first died) took the owner's
+                // verbs at once, its own appear was skipped and it stayed
+                // unseen. Its own start runs first; then the owner's state.
+                e.react_until = steps_ + kStartSteps;
+                Note(b.name + ": a new copy: its own start (appear) runs first, then the owner's state");
+            }
         }
         e.role = b.role;
         e.name = b.name;
         e.owner = b.owner;
+        e.life_component = b.life_component;
+        e.dying = Dying(b.name);
+        if (e.dying && b.role == Role::copy) {
+            AddDyingLife(b.life_component);
+        }
         next.emplace(b.bsa, std::move(e));
     }
     by_bsa_ = std::move(next);
@@ -185,7 +199,7 @@ void Table::Publish(const std::vector<Boss>& bosses) {
         if (b.role != Role::copy || b.life_component == 0 || (b.life_component & kReleased) != 0 || n == kMaxHeld) {
             continue;
         }
-        want[n++] = b.life_component | (b.owner_dead ? kReleased : 0);
+        want[n++] = b.life_component | (b.owner_dead || Dying(b.name) ? kReleased : 0);
     }
     for (std::size_t i = 0; i < kMaxHeld; ++i) {
         const std::uint64_t was = held_life_[i].load(std::memory_order_relaxed);
@@ -193,7 +207,8 @@ void Table::Publish(const std::vector<Boss>& bosses) {
             if ((want[i] & kReleased) != 0 && (was & ~kReleased) == (want[i] & ~kReleased) && (was & kReleased) == 0) {
                 for (const Boss& b : bosses) {
                     if (b.life_component == (want[i] & ~kReleased)) {
-                        Note(b.name + ": its owner's died: the copy's own Life step lets it die now");
+                        Note(b.name + (b.owner_dead ? ": its owner's died" : ": its death has begun") +
+                             ": the copy's own Life step lets it die now");
                     }
                 }
             }
@@ -206,6 +221,11 @@ bool Table::Watches(std::uint64_t component) const {
     if (component == 0) {
         return false;
     }
+    for (const auto& slot : dying_life_) {
+        if (slot.load(std::memory_order_acquire) == component) {
+            return true;
+        }
+    }
     for (const auto& slot : held_life_) {
         if ((slot.load(std::memory_order_acquire) & ~kReleased) == component) {
             return true;
@@ -214,8 +234,36 @@ bool Table::Watches(std::uint64_t component) const {
     return false;
 }
 
+bool Table::Finishes(std::uint64_t component) const {
+    if (component == 0) {
+        return false;
+    }
+    for (const auto& slot : dying_life_) {
+        if (slot.load(std::memory_order_acquire) == component) {
+            return true;
+        }
+    }
+    for (const auto& slot : held_life_) {
+        const std::uint64_t v = slot.load(std::memory_order_acquire);
+        if ((v & ~kReleased) == component) {
+            return (v & kReleased) != 0;
+        }
+    }
+    return false;
+}
+
 std::int32_t Table::HeldLifeStep(std::uint64_t component, std::int32_t life, std::int32_t sum) {
     if (component == 0 || sum <= 0) {
+        return sum;
+    }
+    for (const auto& slot : dying_life_) {
+        if (slot.load(std::memory_order_acquire) != component) {
+            continue;
+        }
+        if (life > 0 && sum < life) {
+            life_finished_.fetch_add(1, std::memory_order_relaxed);
+            return life;  // its death has begun: this step ends it (the owner's killing hit, here too)
+        }
         return sum;
     }
     for (const auto& slot : held_life_) {
@@ -326,8 +374,78 @@ bool Table::OnActionVerb(std::uint64_t bsa, const Request& request, bool changed
     return true;
 }
 
+bool RunsOwnStart(std::string_view name) {
+    return name.starts_with("Enemy_MiddleBoss_");
+}
+
 bool Table::OwnTime(const Entry& e) const {
-    return event_ || steps_ < e.react_until;
+    return event_ || e.dying || steps_ < e.react_until;
+}
+
+bool Table::Dying(std::string_view name) const {
+    return std::find(dying_.begin(), dying_.end(), name) != dying_.end();
+}
+
+void Table::Release(std::uint64_t component) {
+    if (component == 0) {
+        return;
+    }
+    for (auto& slot : held_life_) {
+        const std::uint64_t v = slot.load(std::memory_order_relaxed);
+        if (v == component) {
+            slot.store(v | kReleased, std::memory_order_release);
+        }
+    }
+}
+
+void Table::AddDyingLife(std::uint64_t component) {
+    if (component == 0 || (component & kReleased) != 0) {
+        return;
+    }
+    for (const auto& slot : dying_life_) {
+        if (slot.load(std::memory_order_relaxed) == component) {
+            return;
+        }
+    }
+    for (auto& slot : dying_life_) {
+        if (slot.load(std::memory_order_relaxed) == 0) {
+            slot.store(component, std::memory_order_release);
+            return;
+        }
+    }
+}
+
+void Table::SetDying(std::vector<std::string> bodies) {
+    std::lock_guard lock(mutex_);
+    if (bodies == dying_) {
+        return;
+    }
+    dying_ = std::move(bodies);
+    if (dying_.empty()) {
+        for (auto& slot : dying_life_) {
+            slot.store(0, std::memory_order_release);
+        }
+    }
+    for (auto& [bsa, e] : by_bsa_) {
+        const bool now = Dying(e.name);
+        if (now == e.dying) {
+            continue;
+        }
+        e.dying = now;
+        if (e.role != Role::copy) {
+            continue;
+        }
+        if (now) {
+            if (e.wanted && !event_ && steps_ >= e.react_until) {
+                MakeLate(e);  // its own death's first changes, skipped a moment ago
+            }
+            Release(e.life_component);
+            AddDyingLife(e.life_component);
+            Note(e.name + ": its death has begun: the copy runs all its own from now on (its Life not held)");
+        } else {
+            e.react_until = std::max(e.react_until, steps_ + kAfterEventSteps);
+        }
+    }
 }
 
 void Table::Keep(Entry& e, std::variant<BossBrain, BossAction> what) {
@@ -378,7 +496,7 @@ void Table::NoteOwnHit(std::uint64_t actor) {
         MakeLate(*e);
         Note(e->name + ": our own hit: the copy runs its own reaction");
     }
-    e->react_until = steps_ + kReactSteps;
+    e->react_until = std::max(e->react_until, steps_ + kReactSteps);
 }
 
 void Table::Record(Entry& e, std::variant<BossBrain, BossAction> what) {
@@ -418,6 +536,20 @@ bool Table::CopyMakes(std::string_view maker) {
         }
     }
     return false;
+}
+
+std::vector<std::uint64_t> Table::CopiesRunningOwn() const {
+    std::lock_guard lock(mutex_);
+    std::vector<std::uint64_t> out;
+    if (!brain_on_) {
+        return out;
+    }
+    for (const auto& [bsa, e] : by_bsa_) {
+        if (e.role == Role::copy && OwnTime(e)) {
+            out.push_back(e.actor);
+        }
+    }
+    return out;
 }
 
 std::optional<BossBsa> Table::OwnerState(std::uint64_t actor) const {
@@ -680,6 +812,7 @@ Counts Table::Totals() const {
     Counts c = counts_;
     c.copy_life_held = life_held_.load(std::memory_order_relaxed);
     c.copy_killed = life_killed_.load(std::memory_order_relaxed);
+    c.copy_finished = life_finished_.load(std::memory_order_relaxed);
     return c;
 }
 
@@ -695,6 +828,11 @@ void Table::Reset() {
     for (auto& slot : held_life_) {
         slot.store(0, std::memory_order_relaxed);
     }
+    dying_.clear();
+    for (auto& slot : dying_life_) {
+        slot.store(0, std::memory_order_relaxed);
+    }
+    life_finished_.store(0, std::memory_order_relaxed);
     life_held_.store(0, std::memory_order_relaxed);
     life_killed_.store(0, std::memory_order_relaxed);
     notes_.clear();

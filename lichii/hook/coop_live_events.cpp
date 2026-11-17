@@ -36,7 +36,8 @@ std::optional<bool> NearPlace(std::string_view event, std::string_view scene,
         }
         if (link_room) {
             // Near, but through a wall: that room is not loaded here.
-            const auto place_room = (*room_of)(std::array<float, 3>{p.x, p.y, p.z});
+            const auto place_room = p.room >= 0 ? std::optional<int>(p.room)
+                                                : (*room_of)(std::array<float, 3>{p.x, p.y, p.z});
             if (place_room && *place_room != *link_room) {
                 continue;
             }
@@ -47,6 +48,34 @@ std::optional<bool> NearPlace(std::string_view event, std::string_view scene,
 }
 
 } // namespace
+
+bool SpansRooms(std::string_view event, std::string_view scene) {
+    // Two places in two rooms: by their rooms when both are known (round 5: a room-22 event's two doors are one
+    // room), else by distance (kOneRoomM).
+    std::vector<const Place*> mine;
+    for (const Place& p : Places()) {
+        if (p.event == event && p.scene == scene) {
+            mine.push_back(&p);
+        }
+    }
+    for (std::size_t i = 0; i < mine.size(); ++i) {
+        for (std::size_t j = i + 1; j < mine.size(); ++j) {
+            const Place& a = *mine[i];
+            const Place& b = *mine[j];
+            if (a.room >= 0 && b.room >= 0) {
+                if (a.room != b.room) {
+                    return true;
+                }
+                continue;
+            }
+            const float dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+            if (dx * dx + dy * dy + dz * dz > kOneRoomM * kOneRoomM) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
 
 std::optional<std::string> Decider::Next(const std::vector<std::string>& held, const std::string& scene,
                                          bool event_running, std::optional<std::array<float, 3>> link,
@@ -71,6 +100,9 @@ std::optional<std::string> Decider::Next(const std::vector<std::string>& held, c
         }
         if (asked_.contains(name)) {
             continue;
+        }
+        if (SpansRooms(name, scene)) {
+            continue;  // deku-ladder: one played flag for two rooms; which one played is not known here
         }
         const auto near = NearPlace(name, scene, link, room_of);
         if (near ? !*near : !named) {
@@ -523,6 +555,9 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
         case Next::own_request:
             notes_.push_back("live event " + current_ + " asked by our room's asker itself (result " +
                              std::to_string(result & 0xff) + ")");
+            if ((result & 0xff) != 0 && on_taken_) {
+                on_taken_(current_);
+            }
             current_.clear();
             current_args_.clear();
             current_starter_ = 0;
@@ -531,6 +566,9 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
         case Next::request: {
             notes_.push_back("live event " + current_ + " asked of the game (result " + std::to_string(result & 0xff) +
                              ")");
+            if ((result & 0xff) != 0 && on_taken_) {
+                on_taken_(current_);
+            }
             return FreeFirst(guest, main);
         }
         case Next::free1: {

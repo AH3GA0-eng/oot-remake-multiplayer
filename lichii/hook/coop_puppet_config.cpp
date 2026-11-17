@@ -163,6 +163,26 @@ std::vector<std::string> PackQuiet() {
     return {};
 }
 
+// A manifest of a pack built with perception.
+bool PackPerceived() {
+    for (const auto& text : PackManifests()) {
+        if (CoopPuppet::PackPerception(text)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// The first manifest with blade copies.
+CoopPuppet::LookItems PackBlades() {
+    for (const auto& text : PackManifests()) {
+        if (auto items = CoopPuppet::PackLookItems(text, "blade_items"); items.copies > 0) {
+            return items;
+        }
+    }
+    return {};
+}
+
 // The first manifest with item copies.
 CoopPuppet::LookItems PackLook() {
     for (const auto& text : PackManifests()) {
@@ -177,9 +197,25 @@ CoopPuppet::LookItems PackLook() {
 
 bool HasPack() { return !PackManifests().empty(); }
 
-void Configure() {
+void Configure(bool perceived_safe) {
     std::vector<std::string> lines;
     auto settings = Settings(Env, PackGreenPuppets, &lines, PackTunicPuppets, PackLook);
+    settings.null_reads_zero = perceived_safe;
+    if (const auto v = Env("LICHII_COOP_BLADE_COPIES"); v != "0" && v != "off") {
+        auto blades = PackBlades();
+        settings.blade_items = std::move(blades.actors);
+        settings.blade_copies = settings.blade_items.empty() ? 0 : blades.copies;
+        lines.push_back(settings.blade_copies > 0
+                            ? "coop: the puppet pack has blade copies of " + std::to_string(settings.blade_items.size()) +
+                                  " swords for " + std::to_string(settings.blade_copies) +
+                                  " player numbers: every puppet's blade is its own"
+                            : std::string("coop: the puppet pack has no blade copies (make it again): a puppet without "
+                                          "gear colours shows its sword's blade only while yours is out"));
+    }
+    if (!perceived_safe) {
+        lines.push_back("coop: null-pointer reads cannot give 0 here: other players' Hookshot and Longshot stay off "
+                        "their puppets (issue 232)");
+    }
     if (settings.actor.empty() && !settings.native_player) {
         settings.quiet_scenes = PackQuiet();
         if (!settings.quiet_scenes.empty()) {
@@ -188,6 +224,11 @@ void Configure() {
                 names += (names.empty() ? "" : ", ") + s;
             }
             lines.push_back("coop: puppets are seen by enemies; quiet puppets (no guard sees them) in " + names);
+        }
+        if (!perceived_safe && PackPerceived()) {
+            settings.quiet_everywhere = true;
+            lines.push_back("coop: null-pointer reads cannot give 0 here (HOS_COOP_NULL_READS=0, or the guest's first "
+                            "MB is not free): quiet puppets everywhere, enemies see only their own Link");
         }
     }
     for (const auto& line : lines) {

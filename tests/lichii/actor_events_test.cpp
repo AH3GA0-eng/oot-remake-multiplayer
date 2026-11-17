@@ -112,6 +112,38 @@ TEST_CASE("actor events: a hit given goes in through the next Life step once, an
     CHECK(table.Pending(0x500) == 0);
 }
 
+TEST_CASE("actor events: a judged give is told to its step once, only an owner's death passes the life stops") {
+    static Ring ring;
+    static CoopActorEvents::LifeTable table;
+    bool judged = true;
+    CHECK(CoopActorEvents::Step(ring, table, 0x700, 0, &judged) == 0);
+    CHECK_FALSE(judged);
+    // Another player's hit on our own enemy: ours to judge.
+    CHECK(table.Give(0x700, 4));
+    CHECK(CoopActorEvents::Step(ring, table, 0x700, 0, &judged) == 4);
+    CHECK_FALSE(judged);
+    // The owner's life for its copy (judged there), with a hit of ours in the same frame: told, then cleared.
+    CHECK(table.Give(0x700, 3, true));
+    CHECK(table.Give(0x700, 2));
+    CHECK(CoopActorEvents::Step(ring, table, 0x700, 1, &judged) == 6);
+    CHECK(judged);
+    CHECK(CoopActorEvents::Step(ring, table, 0x700, 1, &judged) == 1);
+    CHECK_FALSE(judged);
+    ring.Drain();
+    // Gohma's copy at 21 with her own stop at 1: the owner's death (21) goes past it; anything less, or ours, not.
+    using CoopActorEvents::PassStops;
+    CHECK(PassStops(21, 21, true, false));
+    CHECK(PassStops(21, 21, false, true));   // a copy boss whose death has begun (or whose owner's died)
+    CHECK(PassStops(30, 21, true, false));
+    CHECK_FALSE(PassStops(20, 21, true, true));  // not a death: her stops stay hers
+    CHECK_FALSE(PassStops(21, 21, false, false)); // our own game's hit: judged here, stops and all
+    CHECK_FALSE(PassStops(1, 0, true, true));     // (already dead)
+    table.Give(0x700, 5, true);
+    table.Clear();
+    CHECK(CoopActorEvents::Step(ring, table, 0x700, 0, &judged) == 0);
+    CHECK_FALSE(judged);
+}
+
 TEST_CASE("actor events: a create keeps its name") {
     Event e;
     e.SetName("Shootable_DekuSeed");

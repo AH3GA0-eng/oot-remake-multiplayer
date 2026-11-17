@@ -1,4 +1,4 @@
-From 414ac292222ccd8e71fea76f71fdbd1198e12006 Mon Sep 17 00:00:00 2001
+From 0bd45b0669987236fa7cf6a8145a0d3ead7f7e94 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Thu, 12 Nov 2026 13:30:00 -0900
 Subject: [PATCH] Co-op actor events: creates, deletes and the Life step go to
@@ -20,21 +20,21 @@ without the patches numbered between them.
 The fourth is the game's shoot code (main+0xc16d24: SHOOT_FROM with
 the shooter's actor, before the create it makes).
 ---
- nx2/coop_actor_lift.py | 103 +++++++++++++++++++++++++++++++++++++++++
+ nx2/coop_actor_lift.py | 115 +++++++++++++++++++++++++++++++++++++++++
  nx2/coop_hooks.py      |   2 +
- 2 files changed, 105 insertions(+)
+ 2 files changed, 117 insertions(+)
  create mode 100644 nx2/coop_actor_lift.py
 
 diff --git a/nx2/coop_actor_lift.py b/nx2/coop_actor_lift.py
 new file mode 100644
-index 00000000..7e67e394
+index 00000000..2629c2b7
 --- /dev/null
 +++ b/nx2/coop_actor_lift.py
-@@ -0,0 +1,103 @@
+@@ -0,0 +1,115 @@
 +"""Co-op's actor events (oot-remake-multiplayer's patch 0007, its docs/hookshot.md "World hooks": enemies, breakables,
 +drops and projectiles straight from the game's C).
 +
-+Four C hooks, each after one ordinary instruction in a game function, hand what the function was asked to
++Five C hooks, each after one ordinary instruction in a game function, hand what the function was asked to
 +do to the co-op module through host/coop_world.c (patch 0005), the same world hook layer as the pause counters. The
 +event numbers are in the module's hookshot/src/hos_coop_actors.h:
 +
@@ -54,6 +54,11 @@ index 00000000..7e67e394
 +  of Life+0x1d18 set, or no life value at Life+0x1c10; on those frames there is no event): 4 = LIFE_STEP
 +  (a = the Life component, b = the address of an int32 holding w9 in our C). The module may change that number: a hit
 +  from another player goes in through the game's own step (its clamp, its death, its drop), and w9 takes the result.
++- the same step, after `bic w9, w9, w9, asr #31` (main+0x49dcbc: w10 = Life+0x70, how many life stops the list at
++  Life+0x60 holds; the next `cbnz w10` goes to main+0x49ea94, which cuts the sum so life stays at each stop and records
++  the crossing at Life+0x1be8): 8 = LIFE_STOPS (a = x19, the Life component, b = the address of a uint32 holding 0 in
++  our C). The module may set it to 1: w10 = 0, so this frame's sum goes past the component's own stops (a copy taking
++  its owner's death: the owner's game judged that death with its own).
 +
 +- main+0xc16cf0 the game's shoot code, which makes a shot with the create request at main+0xc172fc: after
 +  `mov x22, x1` (main+0xc16d24): 7 = SHOOT_FROM (a = x1, whose first 8 bytes are the shooter's actor: each of its
@@ -99,6 +104,13 @@ index 00000000..7e67e394
 +     "{ int32_t coop_sum = (int32_t)(uint32_t)c->x[9]; " + EVENT +
 +     "hos_coop_world_event(4u, c->x[19], (uint64_t)(uintptr_t)&coop_sum); c->x[9] = (uint32_t)coop_sum; }   "
 +     "/* (nx2/coop_actor_lift.py: co-op's actor events, 4 = LIFE_STEP) */"),
++    ("life stops", 0x49dcbc,
++     ((0x49dcb4, 0xb940726a),   # ldr w10, [x19, #0x70]: how many life stops
++      (0x49dcbc, 0x0aa97d29),   # bic w9, w9, w9, asr #31
++      (0x49dcc0, 0x35006eaa)),  # cbnz w10, main+0x49ea94: the stops
++     "{ uint32_t coop_pass = 0; " + EVENT +
++     "hos_coop_world_event(8u, c->x[19], (uint64_t)(uintptr_t)&coop_pass); if (coop_pass) c->x[10] = 0; }   "
++     "/* (nx2/coop_actor_lift.py: co-op's actor events, 8 = LIFE_STOPS) */"),
 +    ("shoot", 0xc16d24,
 +     ((0xc16cf0, 0xd503237f),   # pacibsp
 +      (0xc16d18, 0xaa0003f4),   # mov x20, x0
