@@ -1731,8 +1731,51 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                     // hit too), so it is not written back up over it.
                     o.hurt_target = std::max(0, o.hurt_target - *stepped);
                 }
+                // Our game's own hit since the last walk (its Life component's last hit id moved to one we did
+                // not replay; or the test's stand-in for it): a fall then is ours, not a replay landing late. A boss
+                // copy's game refuses the owner's replayed hit (Gohma) and the next sample asks for it again, so
+                // its replay waits all fight long: every hit of ours fell into the branches below and was never
+                // sent (probe boss-handover 20261117-114108: 2 of A's 3 hits on Gohma's copy lost). Enemies (and
+                // mid-bosses) lost a hit the same way inside kHurtWaitUs and kHurtLateUs.
+                const bool own_hit = s.own_hit || (o.test_own_hit_until != 0 && now_us < o.test_own_hit_until);
+                if (drop > 0 && own_hit && (o.hurt_left > 0 || (o.late_left > 0 && now_us < o.late_until))) {
+                    // Our replay landing in the same walk (its id reached too, not refused) takes its part first:
+                    // while it waits (hurt_left), or taken late after its wait (late_left), as the late branch
+                    // below books it (put back unless the actor reacts, never sent as ours).
+                    std::int32_t replay = 0;
+                    if (s.replay_hit && o.hurt_left > 0) {
+                        replay = std::min(drop, o.hurt_left);
+                        o.hurt_left -= replay;
+                        if (o.hurt_left == 0) {
+                            o.hurt_until = std::min(o.hurt_until, now_us);  // checked below
+                        }
+                    } else if (s.replay_hit && o.late_left > 0 && now_us < o.late_until) {
+                        replay = std::min(drop, o.late_left);
+                        o.late_left -= replay;
+                        if (!o.reacts) {
+                            life->life += replay;
+                            writes.push_back({o.address, life->life, 0, {}});
+                        }
+                        ++hurt_late_;
+                    }
+                    drop -= replay;
+                    // With step events (patch 0007) this rest waits for its step (`loose`, below), and the step
+                    // lowers hurt_target when it comes (top of this block): not lowered here too, or one hit took it
+                    // down twice.
+                    if (o.hurt_until != 0 && !stepped) {
+                        // The owner takes our hit too: the life to reach is that much lower (as with a stepped
+                        // hit above), so neither the replay's wait nor its end writes it back up over our hit.
+                        o.hurt_target = std::max(0, o.hurt_target - drop);
+                    }
+                    o.test_own_hit_until = 0;
+                    ++own_hits_kept_;
+                    notes_.emplace_back("our own hit while a replay waited: " + std::to_string(drop) +
+                                        " counted as ours (not the replay): " + o.name);
+                }
                 if (drop == 0) {
                     // (all of it the game's own hits)
+                } else if (own_hit) {
+                    // (counted above: falls through to the hit below)
                 } else if (o.hurt_left > 0) {
                     // Our own hurt landing (or the game taking more for it):
                     // not a hit of ours.
@@ -3127,6 +3170,13 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
     }
 }
 
+void Sync::TestOwnHit(std::uint64_t address, std::uint64_t now_us) {
+    const auto it = objects_.find(address);
+    if (it != objects_.end()) {
+        it->second.test_own_hit_until = now_us + kTestOwnHitUs;
+    }
+}
+
 bool Sync::TestStun(std::string_view name, const std::optional<proto::Vec3>& near, std::uint8_t self) {
     Object* best = nullptr;
     float best_d2 = 0.0f;
@@ -3192,10 +3242,38 @@ void Sync::KeepBossLives(std::uint8_t self, std::vector<LifeWrite>& writes) {
         if (own == owners_.end() || own->second.player == self || own->second.player == 0) {
             continue;  // ours (our game judged it all along) or no owner known
         }
-        if (o.dead_at != 0 || o.owner_life_zero || !o.owner_life) {
-            continue;  // its owner said it died (it dies here too), or no life of the owner's heard
+        if (o.dead_at != 0 || o.owner_life_zero || !o.owner_life || o.death_given) {
+            continue;  // its owner said it died (it dies here too), its death was given here, or no owner's life heard
         }
-        TakeOwnerLife(o, *o.owner_life, writes, "the session ended: our copy");
+        // Our own hits of the last kDamageSumUs (summed, never sent now) are not in the owner's life: they come
+        // off it, as at a hand-over (H3), or the session's end gives that life back.
+        if (!IsBoss(o.name)) {
+            continue;  // an enemy copy is never healed (the native rule)
+        }
+        std::int32_t life = *o.owner_life;
+        if (o.hit_sum > 0) {
+            notes_.emplace_back("the session ended with a hit of ours not sent yet (" + std::to_string(o.hit_sum) +
+                                "): taken off its owner's life " + std::to_string(life) + ": " + o.name);
+            life = std::max(0, life - o.hit_sum);
+            o.hit_sum = 0;
+            o.hit_place.reset();
+        }
+        if (life > 0) {
+            TakeOwnerLife(o, life, writes, "the session ended: our copy");
+            continue;
+        }
+        // Our unsent hit ends it: the boss is ours alone now, so this is its death, never a write. Its own Life
+        // step takes the rest and runs its own death, given once (as the hand-over's boss at 0).
+        if (o.life && *o.life > 0 && !o.death_given) {
+            LifeWrite lower{o.address, 0, *o.life, std::nullopt};
+            lower.direct = true;
+            writes.push_back(lower);
+            o.death_given = true;
+            notes_.emplace_back("the session ended: our copy at life 0 (" + std::to_string(*o.life) +
+                                " > 0): lowered through its own Life step: " + o.name);
+            o.hurt_left = 0;
+            o.hurt_until = 0;
+        }
     }
 }
 

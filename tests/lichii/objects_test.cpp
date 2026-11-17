@@ -300,6 +300,152 @@ TEST_CASE("objects: a boss copy's refused owner hit is still never given here (t
     CHECK(copy.BossHitsStepped() == 0);
 }
 
+namespace {
+proto::ObjectSample LifeSample(const proto::ObjectId& id, std::int32_t life, std::int32_t max) {
+    proto::ObjectSample s;
+    s.player_number = 2;
+    s.id = id;
+    s.epoch = 1;
+    s.state.life = proto::ObjectLife{life, max};
+    return s;
+}
+}  // namespace
+
+TEST_CASE("objects: our own hit on a boss copy while the owner's refused replay waits is sent, not booked as it") {
+    // Probe boss-handover 20261117-114108: Gohma's copy in A's game waited all fight on B's replayed hit (her game
+    // refuses it, the next sample asks again); A's own hits fell into "our own hurt landing" and 2 of 3 were never
+    // sent. Our game's own hit moves the Life component's last hit id to one we did not replay (Seen::own_hit).
+    const std::string kBoss = "Enemy_DungeonBoss_Gohma";
+    for (const bool own : {true, false}) {
+        Sync copy;
+        copy.SetHurt(true);
+        Tick(copy, 0, {Enemy(0x100, 0x11, 21, 0.0f, kBoss)});
+        const proto::ObjectId id = *copy.IdOf(0x100);
+        Own(copy, id, 2, 1);
+        copy.Receive(LifeSample(id, 18, 21));
+        REQUIRE(Tick(copy, 100 * kMs, {Enemy(0x100, 0x11, 21, 0.0f, kBoss)}).writes.size() == 1);  // the replay
+        Seen hit = Enemy(0x100, 0x11, 19, 0.0f, kBoss);
+        hit.own_hit = own;
+        Tick(copy, 150 * kMs, {hit});
+        const auto damage = All<proto::Damage>(Tick(copy, 300 * kMs, {Enemy(0x100, 0x11, 19, 0.0f, kBoss)}));
+        if (!own) {
+            CHECK(damage.empty());  // (no hit id of ours moved: the fall is the replay landing, as before)
+            continue;
+        }
+        REQUIRE(damage.size() == 1);
+        CHECK(damage[0].amount == 2);
+        CHECK(copy.OwnHitsKept() == 1);
+        // The owner takes it (18 - 2): no new replay is asked for our own hit.
+        copy.Receive(LifeSample(id, 16, 21));
+        CHECK(Tick(copy, 350 * kMs, {Enemy(0x100, 0x11, 19, 0.0f, kBoss)}).writes.empty());
+    }
+}
+
+TEST_CASE("objects: an enemy copy keeps our own hit made while a replay waits, also in the late window") {
+    for (const bool same_walk : {false, true}) {
+        Sync copy;
+        copy.SetHurt(true);
+        Tick(copy, 0, {Enemy(0x100, 0x11, 10)});
+        const proto::ObjectId id = *copy.IdOf(0x100);
+        Own(copy, id, 2, 1);
+        copy.Receive(LifeSample(id, 7, 10));
+        REQUIRE(Tick(copy, 100 * kMs, {Enemy(0x100, 0x11, 10)}).writes.size() == 1);  // the replay of 3
+        // Our hit of 2, alone or in the same walk as the replay landing (its id reached too).
+        Seen hit = Enemy(0x100, 0x11, same_walk ? 5 : 8);
+        hit.own_hit = true;
+        hit.replay_hit = same_walk;
+        Tick(copy, 150 * kMs, {hit});
+        const auto damage = All<proto::Damage>(Tick(copy, 300 * kMs, {Enemy(0x100, 0x11, same_walk ? 5 : 8)}));
+        REQUIRE(damage.size() == 1);
+        CHECK(damage[0].amount == 2);
+        if (!same_walk) {
+            // The replay never landed: at its end the life is the owner's with our hit in it (10 - 3 - 2).
+            const auto end = Tick(copy, 600 * kMs, {Enemy(0x100, 0x11, 8)});
+            REQUIRE(end.writes.size() == 1);
+            CHECK(end.writes[0].life == 5);
+        }
+    }
+    // The late window (the game may still take the written replay): our own hit there is ours, not put back.
+    Sync copy;
+    copy.SetHurt(true);
+    Tick(copy, 0, {Enemy(0x100, 0x11, 10)});
+    const proto::ObjectId id = *copy.IdOf(0x100);
+    Own(copy, id, 2, 1);
+    copy.Receive(LifeSample(id, 7, 10));
+    Tick(copy, 100 * kMs, {Enemy(0x100, 0x11, 10)});
+    // The replay was never taken: 7 given at its end, the late window open; its game keeps 10 for now.
+    REQUIRE(Tick(copy, 600 * kMs, {Enemy(0x100, 0x11, 10)}).writes.size() == 1);
+    Seen hit = Enemy(0x100, 0x11, 8);
+    hit.own_hit = true;
+    Tick(copy, 700 * kMs, {hit});
+    const auto damage = All<proto::Damage>(Tick(copy, 850 * kMs, {Enemy(0x100, 0x11, 8)}));
+    REQUIRE(damage.size() == 1);
+    CHECK(damage[0].amount == 2);  // (without own_hit: booked as the late take and lost)
+}
+
+TEST_CASE("objects: our own hit and the late replay taken in the same walk: only ours is sent (late window)") {
+    // review-a38-3 on 6bcc6066: in the late window (hurt_left 0, late_left > 0) the game took the given-up replay
+    // late in the same walk as our own hit (own_hit and replay_hit): the whole fall went out as ours. Only a
+    // reacting enemy has a late window (a pot, a crate or an animal gets its life written at once: Sync::Lower).
+    Sync copy;
+    copy.SetHurt(true);
+    Tick(copy, 0, {Enemy(0x100, 0x11, 10)});
+    const proto::ObjectId id = *copy.IdOf(0x100);
+    Own(copy, id, 2, 1);
+    copy.Receive(LifeSample(id, 7, 10));
+    Tick(copy, 100 * kMs, {Enemy(0x100, 0x11, 10)});
+    // The replay was never taken: 7 given at its end, the late window open; its game still reads 10.
+    REQUIRE(Tick(copy, 600 * kMs, {Enemy(0x100, 0x11, 10)}).writes.size() == 1);
+    // Now the game takes the late 3 and our own hit of 2 in one walk: 10 -> 5.
+    Seen hit = Enemy(0x100, 0x11, 5);
+    hit.own_hit = true;
+    hit.replay_hit = true;
+    CHECK(Tick(copy, 700 * kMs, {hit}).writes.empty());  // an enemy keeps what its game took (never written up)
+    const auto damage = All<proto::Damage>(Tick(copy, 850 * kMs, {Enemy(0x100, 0x11, 5)}));
+    REQUIRE(damage.size() == 1);
+    CHECK(damage[0].amount == 2);  // (was 5: the late take sent as ours, the owner hit twice)
+}
+
+TEST_CASE("objects: our own hit on our boss while a hitter's refused DAMAGE waits keeps both") {
+    const std::string kBoss = "Enemy_DungeonBoss_Gohma";
+    Sync owner;
+    owner.SetHurt(true);
+    Tick(owner, 0, {Enemy(0x200, 0x11, 20, 0.0f, kBoss)});
+    const proto::ObjectId oid = *owner.IdOf(0x200);
+    Own(owner, oid, 1);
+    proto::Damage d;
+    d.player_number = 2;
+    d.id = oid;
+    d.amount = 3;
+    owner.Receive(d);
+    REQUIRE(Tick(owner, 100 * kMs, {Enemy(0x200, 0x11, 20, 0.0f, kBoss)}).writes.size() == 1);  // the replay
+    Seen hit = Enemy(0x200, 0x11, 18, 0.0f, kBoss);
+    hit.own_hit = true;
+    Tick(owner, 150 * kMs, {hit});
+    // Her game refused the replay: the hitter's 3 goes to her own Life step on top of our 2 (20 - 2 - 3).
+    const auto step = Tick(owner, 600 * kMs, {Enemy(0x200, 0x11, 18, 0.0f, kBoss)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].direct);
+    CHECK(step.writes[0].life == 15);
+    CHECK(step.writes[0].hurt == 3);
+}
+
+TEST_CASE("objects: the test hit stands in for our game's own hit (TestOwnHit)") {
+    const std::string kBoss = "Enemy_DungeonBoss_Gohma";
+    Sync copy;
+    copy.SetHurt(true);
+    Tick(copy, 0, {Enemy(0x100, 0x11, 21, 0.0f, kBoss)});
+    const proto::ObjectId id = *copy.IdOf(0x100);
+    Own(copy, id, 2, 1);
+    copy.Receive(LifeSample(id, 18, 21));
+    Tick(copy, 100 * kMs, {Enemy(0x100, 0x11, 21, 0.0f, kBoss)});
+    copy.TestOwnHit(0x100, 120 * kMs);
+    Tick(copy, 150 * kMs, {Enemy(0x100, 0x11, 19, 0.0f, kBoss)});
+    const auto damage = All<proto::Damage>(Tick(copy, 300 * kMs, {Enemy(0x100, 0x11, 19, 0.0f, kBoss)}));
+    REQUIRE(damage.size() == 1);
+    CHECK(damage[0].amount == 2);
+}
+
 TEST_CASE("objects: a hit place never rides on a later DAMAGE (seen while ours, or an older sum)") {
     const proto::Vec3 eye{18.5f, 61.5f, 67.8f};
     const std::string kBoss = "Enemy_DungeonBoss_Gohma";
@@ -895,6 +1041,31 @@ TEST_CASE("objects: life events: our hit in the same frames as the owner's hurt 
     sent += DamageSent(Tick(other, 900 * kMs, {Enemy(0x100, 0x11, 3)}));
     CHECK(sent == 0);
     CHECK(other.HurtsTaken() == 1);
+}
+
+TEST_CASE("objects: life events: our own hit while a replay waits lowers its target once, by its step") {
+    // review-a38-3 on 6bcc6066: the own-hit block lowered hurt_target by the fall no step explained yet, and the
+    // step event lowered it again when it came: one hit of 2 took the target down by 4.
+    Sync sync;
+    sync.SetHurt(true);
+    sync.SetLifeEvents(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 10)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2, 1);
+    sync.Receive(LifeSample(id, 7, 10));
+    REQUIRE(Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 10)}).writes.size() == 1);  // the hurt of 3
+    // Our own hit of 2 read before its step event, the hurt not taken.
+    Seen hit = Enemy(0x100, 0x11, 8);
+    hit.own_hit = true;
+    std::int32_t sent = DamageSent(Tick(sync, 40 * kMs, {hit}));
+    sync.GameHit(0x100, 2);
+    sent += DamageSent(Tick(sync, 60 * kMs, {Enemy(0x100, 0x11, 8)}));
+    sent += DamageSent(Tick(sync, 200 * kMs, {Enemy(0x100, 0x11, 8)}));
+    CHECK(sent == 2);
+    // The hurt never taken: at its end the life to reach is the owner's with our hit in it (10 - 3 - 2), not 3.
+    const auto end = Tick(sync, 600 * kMs, {Enemy(0x100, 0x11, 8)});
+    REQUIRE(end.writes.size() == 1);
+    CHECK(end.writes[0].life == 5);
 }
 
 TEST_CASE("objects: life events: life we put through the step ourselves is no hit of this game's") {
@@ -5221,12 +5392,13 @@ TEST_CASE("objects: at the session's end a boss copy held at 1 takes its owner's
     Own(sync, id, 2);
     // Our hits on the copy went to the owner; HeldLifeStep held it at 1 here. The owner's boss is at 12.
     Tick(sync, 50 * kMs, {Enemy(0x100, 0x11, 1, 50.0f, kBoss)});
+    Tick(sync, 200 * kMs, {Enemy(0x100, 0x11, 1, 50.0f, kBoss)});  // (sent: none left unsent for H3)
     proto::ObjectSample s;
     s.player_number = 2;
     s.id = id;
     s.state.life = proto::ObjectLife{12, 21};
     sync.Receive(s);
-    Tick(sync, 100 * kMs, {Enemy(0x100, 0x11, 1, 50.0f, kBoss)});
+    Tick(sync, 250 * kMs, {Enemy(0x100, 0x11, 1, 50.0f, kBoss)});
     std::vector<CoopObjects::LifeWrite> keep;
     sync.KeepBossLives(1, keep);
     REQUIRE(keep.size() == 1);
@@ -5281,6 +5453,43 @@ TEST_CASE("objects: at the session's end nothing is given to our own boss, a dea
         Tick(sync, 50 * kMs, {Enemy(0x100, 0x11, 1)});
         sync.KeepBossLives(1, keep);
         CHECK(keep.empty());
+    }
+}
+
+TEST_CASE("objects: at the session's end our boss copy's hit not sent yet comes off its owner's life (H3)") {
+    const std::string kBoss = "Enemy_DungeonBoss_Gohma";
+    std::vector<CoopObjects::LifeWrite> keep;
+    {  // owner at 12, our unsent hit of 2 already in our copy's 10: nothing given back
+        Sync sync;
+        Tick(sync, 0, {Enemy(0x100, 0x11, 12, 0.0f, kBoss)});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, 2, 1);
+        sync.Receive(LifeSample(id, 12, 21));
+        Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 12, 0.0f, kBoss)});
+        Tick(sync, 20 * kMs, {Enemy(0x100, 0x11, 10, 0.0f, kBoss)});  // our hit of 2, summed, not sent yet
+        sync.KeepBossLives(1, keep);
+        CHECK(keep.empty());  // (was: raised back to 12)
+    }
+    {  // owner at 2 (another player's hit), our unsent hit of 2: its death, through its own Life step, once
+        Sync sync;
+        Tick(sync, 0, {Enemy(0x100, 0x11, 3, 0.0f, kBoss)});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, 2, 1);
+        sync.Receive(LifeSample(id, 3, 21));
+        Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 3, 0.0f, kBoss)});
+        Tick(sync, 20 * kMs, {Enemy(0x100, 0x11, 1, 0.0f, kBoss)});  // our hit of 2 (held at 1), not sent yet
+        sync.Receive(LifeSample(id, 2, 21));
+        Tick(sync, 50 * kMs, {Enemy(0x100, 0x11, 1, 0.0f, kBoss)});
+        keep.clear();
+        sync.KeepBossLives(1, keep);
+        REQUIRE(keep.size() == 1);
+        CHECK(keep[0].direct);
+        CHECK_FALSE(keep[0].heal);
+        CHECK(keep[0].life == 0);
+        CHECK(keep[0].hurt == 1);
+        keep.clear();
+        sync.KeepBossLives(1, keep);
+        CHECK(keep.empty());  // given once
     }
 }
 
