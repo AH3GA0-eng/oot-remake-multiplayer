@@ -962,10 +962,12 @@ private:
         std::optional<coop::protocol::Vec3> hit_place;  // where our own hit summed now landed (a boss; cleared with the sum)
         std::uint64_t hit_since = 0;
         std::uint64_t hit_at = 0;  // last DAMAGE sent
-        // A HANDOVER_STATE made it ours (the owner news follows it): until then a fall here is our own enemy's,
-        // no DAMAGE. `handed_took`: its life became the old owner's there, so a DAMAGE of ours that crossed the
-        // hand-over (the server gives it back, player_number our own) is not in it yet.
+        // A HANDOVER_STATE made it ours: until its owner news (any owner; cleared there) a fall here is our own
+        // enemy's, no DAMAGE. `handed_took`: its life became the old owner's there, so a DAMAGE of ours that
+        // crossed the hand-over (the server gives it back, player_number our own) is not in it yet; taken off
+        // until `returned_until` (kHandedUs), whoever owns it by then.
         std::uint64_t handed_until = 0;
+        std::uint64_t returned_until = 0;
         bool handed_took = false;
         std::uint64_t react_at = 0;  // our last hit on it, as seen in its life
         std::string react_over;      // the owner's animation at that moment

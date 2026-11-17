@@ -2859,6 +2859,11 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 continue;  // an older change, late
             }
             owners_[owner->id] = {owner->owner, owner->epoch};
+            if (Object* h = find(owner->id); h != nullptr) {
+                // The news a HANDOVER_STATE waited for (or a later one): our hits on it count again from here,
+                // to whoever owns it now (a stun hands it on within the old 2 s, and every hit there was lost).
+                h->handed_until = 0;
+            }
             Object* o = owner->owner != before ? find(owner->id) : nullptr;
             if (o == nullptr) {
                 continue;
@@ -2981,16 +2986,22 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 // Our own hit, sent while ours was a copy and passed back by the server: it crossed the
                 // hand-over, so the old owner's life we took there has no such hit in it. Where we kept our own
                 // life (an enemy that had less than its old owner's) it is in it already.
-                if (!o->handed_took || now_us >= o->handed_until) {
+                if (!o->handed_took || now_us >= o->returned_until || *o->life <= 0) {
                     continue;
                 }
                 const std::int32_t from = *o->life;
                 const std::int32_t to = std::max(0, from - damage->amount);
                 if (IsBoss(o->name)) {
-                    // Our game judged this hit on its copy already: into its own Life step, never a write.
+                    // Our game judged this hit on its copy already: into its own Life step, never a write
+                    // (to 0 too: the step keeps the game's stops and runs its own death, given once).
+                    if (to <= 0 && o->death_given) {
+                        continue;
+                    }
                     LifeWrite lower{o->address, to, from - to, std::nullopt};
                     lower.direct = true;
                     writes.push_back(lower);
+                    o->death_given = o->death_given || to <= 0;
+                    o->life = to;  // a second returned hit in this pass counts from here
                     if (o->hurt_until != 0) {
                         o->hurt_target = std::max(0, o->hurt_target - (from - to));
                     }
@@ -3064,6 +3075,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 o->hit_place.reset();
                 o->handed_took = takes;
                 o->handed_until = now_us + kHandedUs;
+                o->returned_until = now_us + kHandedUs;
             }
             // The lower life of the two, so an enemy never heals across a
             // hand-over. Its place stays our own enemy's. A boss is the
@@ -3084,16 +3096,21 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 o->hurt_left = 0;
                 o->hurt_until = 0;
             } else if (o != nullptr && handed->state.life && o->life && IsBoss(o->name) &&
-                       theirs < *o->life && handed->state.life->life > 0) {
+                       theirs < *o->life) {
                 // A boss copy that becomes ours with MORE life than its old owner's (its game refused the
                 // owner's replayed hits): the old owner's damage goes into its own Life step, never a write.
                 // A plain lower life waited for a replay that never came (hs-boss-full 20261115-122137: B
                 // took Gohma at 21 while A's was 17, "nothing given"), so every hand-over healed her, and
                 // only the player who kept her could wear her down (boss-hits, tracker 104).
-                // (down to 0 where our own unsent hit ends it: the Life step keeps the game's stops)
-                LifeWrite lower{o->address, theirs, *o->life - theirs, std::nullopt};
-                lower.direct = true;
-                writes.push_back(lower);
+                // Down to 0 too (dead in the old owner's game, or our own unsent hit ends it): a boss is never
+                // written, and only the owner's life 0 is a death. Its own Life step keeps the game's stops and
+                // runs its own death here, given once (as a dying copy's in Tick).
+                if (theirs > 0 || !o->death_given) {
+                    LifeWrite lower{o->address, theirs, *o->life - theirs, std::nullopt};
+                    lower.direct = true;
+                    writes.push_back(lower);
+                    o->death_given = o->death_given || theirs <= 0;
+                }
                 notes_.emplace_back("ours now with more life than its old owner's (" + std::to_string(*o->life) +
                                     " > " + std::to_string(theirs) +
                                     "): lowered through its own Life step: " + o->name);
