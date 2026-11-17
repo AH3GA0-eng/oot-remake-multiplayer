@@ -96,11 +96,11 @@ The start window says what is wrong and what to do. What it checks:
 
 ## Built Longshot yourself?
 
-The kit never plays a Longshot you built with Longshot's own builder, and moving that game into the kit folder does nothing: co-op needs its own build of the Longshot release the kit is made for (`hookshot\PIN`, now v3.0.0-rc.4), with co-op's changes in its source. A nightly or dev build is another version, so it cannot be used either.
+The kit never plays a Longshot you built with Longshot's own builder, and moving that game into the kit folder does nothing: co-op needs its own build of the Longshot release the kit is made for (`hookshot\PIN`, now v3.0.0-rc.5), with co-op's changes in its source. A nightly or dev build is another version, so it cannot be used either.
 
 Before the first build the kit asks once: **"Built Longshot yourself? ... Drag your Longshot game folder ... into this window"** (the folder with `longshot.exe`; just Enter, or 60 seconds, for no). The answer is kept in `hookshot\longshot-folder.txt`: to be asked again, delete that file before the game is built (once it is built, copy saves by hand, below). It then:
 - copies the tool downloads your Longshot's setup already has, when they are the very same files (by SHA-256): less to download;
-- copies its compiled files too when it is the same release (v3.0.0-rc.4), so that what co-op does not change is not compiled again (the game is still translated again, with co-op in it);
+- copies its compiled files too when it is the same release (v3.0.0-rc.5), so that what co-op does not change is not compiled again (the game is still translated again, with co-op in it);
 - copies your saves into the co-op game after the build (below).
 
 Nothing is ever changed in your Longshot's folders. Without a folder, the kit still reuses the downloads in Longshot Builder's home (`%LOCALAPPDATA%\LongshotBuilder`) when it finds one.
@@ -118,6 +118,13 @@ The kit brings the randomizer, OOTRR: the first build (and an update that moves 
 ## Customize Link
 
 The Multiplayer tab's **Customize Link** page colours your tunic and each part of your gear (shields, swords, boots, gauntlets). Your own Link wears it when the menu closes, the other players see it on your Link, and it is saved in `coop-options.ini` for the next start ([puppet.md, The Link customizer](puppet.md#the-link-customizer)). The kit makes the puppet pack these colours are drawn with from your own game by itself, and again after an update that changes it.
+
+## Discord status
+
+With Discord open on the same PC, your Discord profile shows **Playing Squadala!** with the Squadala! logo (the Korok with the propeller leaf and four fairies), the release (*Squadala! 0.11.4*), *Solo* or *Co-op: 3 players*, and how long you have played. Only that goes to Discord: no names, no addresses, no invite code. It works the same on Windows and Linux, hosting, joining or playing alone.
+
+- **Turn it off:** in the game press **Insert** (or F1), and set the **Discord status** row to off. It stays off.
+- **Your own words or application:** the kit writes four lines into `longshot_options.ini` next to the game before each start: `discord_app_id=`, `discord_image=none` (no picture is sent, so Discord shows the application's icon, the logo), `discord_details=` and `discord_state=`. Change one and the kit leaves it alone from then on; `discord_image=` may instead name an art asset of your own application, and `discord_large_text=` its hover text. Without these lines the game shows Longshot's own status, as before ([hookshot/README.md, patch 0026](../hookshot/README.md)). The *Solo* / *Co-op* line comes from the co-op module and wins over `discord_state=`.
 
 ## In the game, saves, the emulator kit
 

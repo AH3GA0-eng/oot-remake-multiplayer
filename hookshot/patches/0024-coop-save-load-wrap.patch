@@ -1,4 +1,4 @@
-From 527508f7b65e231f32ce65485b0366ca1e67678f Mon Sep 17 00:00:00 2001
+From bdd130bba895eba019a9d347f2017aac1766f08a Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Mon, 16 Nov 2026 01:38:18 -0900
 Subject: [PATCH] Co-op save-load wraps: every save the game loads, to the
@@ -98,6 +98,3 @@ index c50e9b55..20aca8a9 100644
  )
  
  
--- 
-2.56.0.windows.4
-

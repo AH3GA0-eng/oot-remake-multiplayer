@@ -19,6 +19,7 @@
 // We do the same from the cave.
 
 #include "coop_boss.h"
+#include "coop_boss_beaten.h"
 #include "coop_boss_native.h"
 #include "coop_boss_scenes.h"
 #include "coop_live_events.h"
@@ -248,6 +249,7 @@ struct Glue {
         if (step == CoopSessionGate::Step::forget) {
             sync.Reset();
             scenes.Reset();
+            CoopBossBeaten::TheRecord().Clear();  // out of the session: the server tells us again on a join
             CoopBossScenes::RefusedDeaths().store(0, std::memory_order_release);
             readiness.Reset();
             max_life_cap.reset();
@@ -265,6 +267,7 @@ struct Glue {
         if (scene) {
             if (const Room* room = RoomOfScene(*scene)) {
                 local.boss_alive = CoopObjects::LastBossAlive(Bodies(*room));
+                local.boss_read_dead = CoopObjects::LastBossReadDead(Bodies(*room));
                 local.boss_hurt = CoopObjects::LastBossHurt(Bodies(*room));
                 // A Game Over here is no boss's death (boss-gameover-b): Link's own Life at 0.
                 if (const auto life = CoopObjects::OurLinkLife()) {
@@ -454,9 +457,13 @@ bool Glue::Scenes(Core::System& system, std::uint64_t main, const Local& local, 
     max_life_cap = a.max_life_cap;
     session->with_client([&](coop::net::Client& c) {
         for (auto& m : a.send) {
-            const bool sent = c.send(coop::protocol::Message{m});
+            const coop::protocol::Message msg{m};
+            const bool sent = c.send(msg);
             LOG_INFO(Core, "coop: boss: sent cutscene {} of boss {}{}", static_cast<int>(m.kind), m.boss,
                      sent ? "" : " (not sent)");
+            if (const auto room = CoopBossBeaten::ProvenDeath(msg)) {
+                CoopBossBeaten::TheRecord().Add(*room);  // our game took the death itself (G2)
+            }
         }
         for (auto& m : a.claims) {
             const bool sent = c.send(coop::protocol::Message{m});
@@ -510,6 +517,13 @@ void OnEvent(const coop::net::Event& event) {
             LOG_INFO(Core, "coop: boss: player {} says {} for {}", m->player_number, static_cast<int>(m->state),
                      m->scene);
         }
+        // G2: a proven death of a dungeon boss (another game took its death event, or the server's record of one
+        // for a player who joins; never a player's BOSS_ROOM defeated, maybe a guess). A game whose own flags lack
+        // it gets its beaten set at a scene outside the boss's (coop_boss_beaten.h, coop_hook.cpp).
+        if (const auto room = CoopBossBeaten::ProvenDeath(event.message);
+            room && CoopBossBeaten::TheRecord().Add(*room)) {
+            LOG_INFO(Core, "coop: boss: the group beat the boss of room {}: kept for this session", *room);
+        }
     }
 }
 
@@ -520,6 +534,7 @@ void ForgetFights() {
     CoopBossScenes::RefusedDeaths().store(0, std::memory_order_release);
     g.readiness.Reset();
     g.max_life_cap.reset();
+    CoopBossBeaten::TheRecord().Clear();  // bosses beaten after that save are alive again (G2, as #52)
     LOG_INFO(Core, "coop: boss: the host loaded a save: the fights this session knew are forgotten");
 }
 

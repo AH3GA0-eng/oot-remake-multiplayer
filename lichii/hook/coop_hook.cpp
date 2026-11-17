@@ -56,6 +56,7 @@
 #include "coop/presence/presence.hpp"
 #include "coop/version.hpp"
 #include "coop_boss.h"
+#include "coop_boss_beaten.h"
 #include "coop_frame_clock.h"
 #include "coop_boss_scenes.h"
 #include "coop_teleport_game.h"
@@ -752,7 +753,9 @@ public:
             }
             const std::string sale_scene = reading && reading->scene ? *reading->scene : std::string();
             const bool sale_on = scrub_sale_on_;
-            hold.emplace(*quests, [link, scene, talk, near, sale_here, sale_scene, sale_on](coop::protocol::FlagKey key) {
+            // deku-ladder: the switch path's guard flags wait too (coop_eye_switch.h Guards), only while it is on.
+            CoopEyeSwitch::Switcher* const eye_guard = live_events_ && eye_switch_on_ ? &eye_switch_ : nullptr;
+            hold.emplace(*quests, [link, scene, talk, near, sale_here, sale_scene, sale_on, eye_guard](coop::protocol::FlagKey key) {
                 if (key.kind != coop::protocol::FlagKeyKind::named || key.index != 0) {
                     return false;
                 }
@@ -771,6 +774,9 @@ public:
                 }
                 if (CoopQuests::Find(key.hash) != nullptr) {
                     return CoopDungeon::IsDungeonScene(*scene);  // a quest step waits outside dungeons
+                }
+                if (eye_guard != nullptr && eye_guard->HoldsGuard(key.hash, *scene)) {
+                    return true;
                 }
                 const auto in = CoopDungeon::HeldIn(key.hash);
                 return in && (in->empty() ? CoopDungeon::IsDungeonScene(*scene) : *scene == *in);
@@ -1142,6 +1148,23 @@ public:
                     coop::protocol::FlagEntry{key(name), coop::protocol::FlagKind::boolean, 0});
                 LOG_INFO(Core, "coop: boss: {} was left set in this save (an older co-op build shared it): {}",
                          name, ok ? "cleared" : "could not clear");
+            }
+            // G2 (#241): a boss the group beat while our game did not see it die gets its beaten set, one way, in a
+            // scene other than the boss's (coop_boss_beaten.h). Solo or co-op idle: the record is empty.
+            const CoopBossBeaten::Record& record = CoopBossBeaten::TheRecord();
+            const std::vector<std::uint8_t> beaten = record.Rooms();
+            for (const CoopBossBeaten::Write& w : boss_beaten_.Check(
+                     view.scene, at.has_value(), beaten, record.Version(), [&](std::uint32_t hash) {
+                         const auto v = game_store->read(coop::protocol::FlagKey{hash, 0});
+                         return v ? std::optional<std::uint32_t>(v->value) : std::nullopt;
+                     })) {
+                const bool ok = game_store->write(coop::protocol::FlagEntry{
+                    coop::protocol::FlagKey{w.hash, 0},
+                    w.is_enum ? coop::protocol::FlagKind::uint32 : coop::protocol::FlagKind::boolean, w.value});
+                const CoopBossBeaten::BeatenSet* set = CoopBossBeaten::ForRoom(w.room);
+                LOG_INFO(Core, "coop: boss: {} was beaten by the group, not in this game: {} {} {}", set->boss, w.name,
+                         w.is_enum ? std::string("-> ") + set->step_name : std::string("= ") + std::to_string(w.value),
+                         ok ? "(written)" : "(could not write)");
             }
         }
         {  // our own key spends, for the locks' give-back (docs/dungeon.md, "Locked doors")
@@ -2075,6 +2098,7 @@ private:
     coop::host::PlayerReader::DrawnState drawn_state_{};
     bool sharing_ = false;  // a flag list is shared; set by Begin
     CoopBoss::StaleBossFlags stale_boss_;  // issue 148: shut boss doors from older builds
+    CoopBossBeaten::Apply boss_beaten_;    // G2: a boss the group beat, given to a game that did not see it die
     std::string_view boss_shut_in_name_;  // issue 148: CoopBoss::ShutInFlag, and its hash
     std::uint32_t boss_shut_in_hash_ = 0;
     bool pickups_ = false;  // one-time pickups are shared (coop_pickups.h)

@@ -70,6 +70,22 @@ std::vector<const Switch*> FindAll(std::string_view event, std::string_view scen
 // The plug's key as the node block names it (Murmur3 of the name; the plug keeps it ^ 7).
 std::uint32_t PlugKey(std::string_view plug);
 
+// AND-gated triggers (deku-ladder round 3): a trigger can AND the switch with a saved room flag read NEGATED (the
+// room's "done" flag: GTG room 6's fire, Jabu room 1's first press), and the asker itself is deleted by a room flag
+// (Logic_Delete: the Deku ladder's RoomC_Cleared, Ganon's Castle's switch flags). The other player's game sets that
+// flag during or at the end of its event and it is shared, so it reaches us BEFORE our copy of the event runs: our
+// asker is gone or our gate is false, and setting our switch starts nothing. These are the guards (generated with
+// the table, only flags that coop_dungeon.cpp shares): while the switch path is on, the hook holds each guard flag in
+// its dungeon (like the held HavePlayedEvent flags and RoomC_Cleared, coop_dungeon.h HeldIn) until our own event sets
+// it (our game has the event played), we leave the dungeon or load, or the switch path's try of its event ended this
+// visit without our copy running (no asker, the old way: then the flag comes as before). The other inputs the tool finds are listed in coop_eye_switch.cpp (not covered, with why).
+struct Guard {
+    std::string_view flag;
+    std::string_view scene;
+    std::string_view event;
+};
+std::span<const Guard> Guards();
+
 // Our switch is the one of its name within this of its placement (the placement is exact; other switches of the
 // room are metres away: Dodongo's Cavern's fire-wall eyes, 9 and 19 m from its event's eye, start other graphs).
 inline constexpr float kEyeAtM = 1.5f;
@@ -108,6 +124,9 @@ public:
     void OnSet(std::function<void(const std::string&)> set) { on_set_ = std::move(set); }
     // (event, scene) to ask the old way (Requester::WantFromRoom).
     std::vector<std::pair<std::string, std::string>> TakeFallbacks();
+    // Any thread (the flag hold): whether the shared flag `hash` is a guard (Guards()) of an event of `scene` that
+    // our copy has not played yet and whose try did not end without our copy running, so it waits in our game.
+    bool HoldsGuard(std::uint32_t hash, std::string_view scene);
 
 private:
     struct Try {
@@ -119,7 +138,7 @@ private:
         bool told_waiting = false;
     };
     std::optional<CoopPuppet::Call> Frame(CoopPuppet::Guest& guest, std::uint64_t main, std::uint64_t now_ms);
-    void End(const std::string& why, bool fallback);
+    void End(const std::string& why, bool fallback, bool ran = false);
     static bool EventRunning(CoopPuppet::Guest& guest, std::uint64_t main);
 
     Finder find_;
@@ -132,6 +151,9 @@ private:
     enum class Next { none, malloc, execute };
     Next next_ = Next::none;
     bool failed_ = false;  // the malloc gave nothing: every event the old way
+    std::string scene_;                    // the scene of this visit (Expire)
+    std::vector<std::string> ended_;  // events of this visit whose guards come as before (not run here, or played)
+    std::vector<std::string> ran_;    // events of this visit our copy ran: guards held until our game has them played
 };
 
 }  // namespace CoopEyeSwitch

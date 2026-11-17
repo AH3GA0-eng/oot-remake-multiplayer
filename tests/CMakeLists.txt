@@ -98,6 +98,7 @@ add_executable(coop_tests
   lichii/game_build_test.cpp
   lichii/game_scan_test.cpp
   lichii/boss_test.cpp
+  lichii/boss_beaten_test.cpp
   lichii/boss_native_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_boss_native.cpp
   lichii/boss_scenes_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_boss_scenes.cpp
   lichii/teleport_test.cpp
@@ -112,6 +113,7 @@ add_executable(coop_tests
   lichii/cheat_items_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_cheat_items.cpp
   # These hook files have no emulator code, so they are tested on their own.
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_boss.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_boss_beaten.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_callers.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_camera.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_drops.cpp
@@ -164,6 +166,7 @@ target_sources(coop_tests PRIVATE hookshot/module_test.cpp hookshot/draw_test.cp
   ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_draw.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_dbno_draw.cpp
   hookshot/hud_dim_test.cpp
+  hookshot/discord_activity_test.cpp
   hookshot/chatbox_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_chatbox.cpp
   hookshot/cheats_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_cheats_panel.cpp
   hookshot/png_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_png.cpp

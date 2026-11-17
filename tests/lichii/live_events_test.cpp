@@ -137,6 +137,41 @@ TEST_CASE("live events: an event asked from two rooms under one flag is never st
     CHECK_FALSE(d.Next(held, "WaterTemple", false, std::array<float, 3>{-33.5f, 118.9f, -40.7f}).has_value());
 }
 
+TEST_CASE("live events: a place's own room, not a guess (Jabu-Jabu room 1's switch asker high on the wall)") {
+    // deku-ladder LANE1 hs-and-gate: the players at the switch were in room 17, the asker's place was guessed in room 5
+    // (nearer that room's placements), so the decider waited forever. Places carry their room (place_rooms.py).
+    int known = 0;
+    for (const auto& p : CoopLiveEvents::Places()) known += p.room >= 0 ? 1 : 0;
+    CHECK(known == 190);  // round 5: ties and rooms our Link is (almost) never guessed in near the place stay -1
+    const auto room_of_place = [](std::string_view event) {
+        for (const auto& p : CoopLiveEvents::Places()) {
+            if (p.event == event) return p.room;
+        }
+        return -2;
+    };
+    CHECK(room_of_place("InsideJabuJabuBellyRoom01StepSwitch") == 17);
+    CHECK(room_of_place("InsideTheDekuTree_Gimmick_RoomG_WaterLevelDrop") == 6);
+    CHECK(room_of_place("InsideTheDekuTree_Gimmick_FallingLadder") == 2);
+    // Review round 5: a vote our Link near the place never reaches (one far member), or a tie, is not kept: guessed.
+    CHECK(room_of_place("InsideGanonCastle_Dungeon_BarrierRemove_Water") == -1);   // voted 7, Link there: 5/6
+    CHECK(room_of_place("InsideGanonCastle_Dungeon_BarrierRemove_Shadow") == -1);  // voted 9, 78 m off
+    CHECK(room_of_place("FocusGimmick_GreenTentacleGimmick") == -1);               // a tie {3, 2}
+    // Two known rooms decide SpansRooms: the Water Temple eyes' camera is in rooms 0 and 21.
+    CHECK(room_of_place("WaterTemple_EyeSwitch_Focus") == 0);
+    const CoopLiveEvents::RoomOf wrong_guess = [](const std::array<float, 3>& at) -> std::optional<int> {
+        return at[1] > 105.0f ? 5 : 17;  // the asker's place (y 109.7) guessed in room 5; Link (y 102.5) in 17
+    };
+    CoopLiveEvents::Decider d;
+    const std::vector<std::string> held{"InsideJabuJabuBellyRoom01StepSwitch"};
+    CHECK(d.Next(held, "InsideJabuJabuBelly", false, std::array<float, 3>{10.2f, 102.4f, -51.4f}, &wrong_guess) ==
+          std::optional<std::string>("InsideJabuJabuBellyRoom01StepSwitch"));
+    // Still never through a wall: our Link in another room waits.
+    CoopLiveEvents::Decider d2;
+    const CoopLiveEvents::RoomOf elsewhere = [](const std::array<float, 3>&) -> std::optional<int> { return 5; };
+    CHECK_FALSE(d2.Next(held, "InsideJabuJabuBelly", false, std::array<float, 3>{10.2f, 102.4f, -51.4f}, &elsewhere)
+                    .has_value());
+}
+
 TEST_CASE("live events: every place is a shared gimmick event of a dungeon, in the scene its name says") {
     std::size_t deku = 0;
     for (const auto& p : CoopLiveEvents::Places()) {
@@ -457,14 +492,15 @@ TEST_CASE("a gimmick event whose place is near but in another room waits for our
     // room is not loaded there, and the event's camera would show black.
     const std::vector<std::string> held{"InsideTheDekuTree_Gimmick_FallingLadder"};
     const std::array<float, 3> link{-37.5f, 117.8f, 1.5f};
-    int link_room = 2;
+    // deku-ladder: the place carries its own room (2, place_rooms.py); the guess is only asked for our Link.
+    int link_room = 5;
     const CoopLiveEvents::RoomOf room_of = [&](const std::array<float, 3>& at) -> std::optional<int> {
-        return at == link ? link_room : 5;  // the place is in room 5
+        return at == link ? link_room : 9;  // a guess for the place would say 9: not used
     };
     CoopLiveEvents::Decider d;
     CHECK_FALSE(d.Next(held, "InsideTheDekuTree", false, link, &room_of).has_value());
     CHECK_FALSE(d.Next(held, "InsideTheDekuTree", false, link, &room_of).has_value());  // it waits
-    link_room = 5;  // we walked in
+    link_room = 2;  // we walked in
     CHECK(d.Next(held, "InsideTheDekuTree", false, link, &room_of) ==
           std::optional<std::string>("InsideTheDekuTree_Gimmick_FallingLadder"));
 }

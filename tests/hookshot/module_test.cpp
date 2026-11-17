@@ -604,6 +604,69 @@ TEST_CASE("hookshot: a module tab may draw a picture beside its page (patch 0019
     CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_view(double eye[3], double target[3])") != std::string::npos);
 }
 
+namespace {
+
+// s without spaces, tabs and line ends.
+std::string Squashed(const std::string& s) {
+    std::string out;
+    for (const char c : s) {
+        if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
+            out += c;
+        }
+    }
+    return out;
+}
+
+// A patched file's code as the patch leaves it (its hunks' '+' and ' ' lines, without the diff's first column),
+// with every space, tab and line end taken out: a search matches the code, not the diff's layout, so a refreshed
+// patch (other context, a statement that moved from '+' to context) still matches while the code is the same.
+std::string PatchedCode(const std::string& patch, const std::string& path) {
+    std::string code;
+    auto at = patch.find("+++ b/" + path + "\n");
+    if (at == std::string::npos) {
+        return code;
+    }
+    at = patch.find('\n', at) + 1;
+    while (at < patch.size()) {
+        const auto end = patch.find('\n', at);
+        const std::string line = patch.substr(at, end == std::string::npos ? std::string::npos : end - at);
+        if (line.rfind("diff --git ", 0) == 0 || line == "-- ") {
+            break;   // (the next file, or the patch's end)
+        }
+        if (!line.empty() && (line[0] == '+' || line[0] == ' ')) {
+            code += line.substr(1);
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        at = end + 1;
+    }
+    return Squashed(code);
+}
+
+}  // namespace
+
+TEST_CASE("hookshot: the Discord status header in patch 0026 is hookshot/src's, and the module gives its line") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0026-coop-discord-status.patch");
+    REQUIRE_FALSE(patch.empty());
+    CHECK(NewFile(patch, "host/hos_discord_activity.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_discord_activity.h"));
+    const std::string rpc = PatchedCode(patch, "host/discord_rpc.c");
+    REQUIRE_FALSE(rpc.empty());
+    const auto has = [&rpc](const char* code) { return rpc.find(Squashed(code)) != std::string::npos; };
+    CHECK(has("hos_discord_activity(activity, cap, \"Longshot\", version, LONGSHOT_DISCORD_IMAGE_DEFAULT, &s->words,"));
+    CHECK(has("GetProcAddress(m, \"hos_coop_discord_state\")"));
+    CHECK(has("dlsym(m, \"hos_coop_discord_state\")"));
+    // Words or a frame that do not fit (hos_discord_activity / hos_discord_set_activity give 0 and "": the
+    // header's test) send no frame, and that is no broken connection.
+    CHECK(has("if (!hos_discord_set_activity(json, sizeof json, nonce + 1, process_id(), activity)) return -1; ++nonce;"
+              " if (!write_frame(p, OP_FRAME, json)) return 0;"));
+    CHECK(has("const int made = make_activity(activity, sizeof activity, &set, module_line, started);"));
+    CHECK(has("if (made && ipc != IPC_NONE && (now_ms() >= send_at || strcmp(activity, sent))) {"));
+    CHECK(has("const int r = send_activity(ipc, activity); if (r < 0) {"));
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_discord_state(char* out, size_t cap) noexcept") != std::string::npos);
+}
+
 TEST_CASE("hookshot: a module may have a texture drawn with other texels (patch 0020, hos_coop_texture.h)") {
     const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0020-coop-texture-override.patch");
     REQUIRE_FALSE(patch.empty());
@@ -617,15 +680,9 @@ TEST_CASE("hookshot: a module may have a texture drawn with other texels (patch 
     CHECK(patch.find("+        hos_coop_texture_made(o, o->gpu, o->L.size,") != std::string::npos);
     CHECK(patch.find("+    hos_coop_texture_gone(o);") != std::string::npos);
     CHECK(patch.find("+        x.overlay = (overlay_fn)look(\"hos_coop_texture_overlay\");") != std::string::npos);
-    // The WebGPU renderer's read (gpu/render, Windows only) is 0021, so the Linux kit can leave it out
-    // (make_kit_linux.sh's webgpu_only): 0020 changes no gpu/render file, 0021 nothing else.
+    // Longshot rc.5 has no WebGPU renderer (gpu/render keeps headers only): no patch reads through gpu/render.
     CHECK(patch.find("gpu/render/") == std::string::npos);
-    const std::string webgpu = ReadFile(kRepo / "hookshot" / "patches" / "0021-coop-texture-override-webgpu.patch");
-    REQUIRE_FALSE(webgpu.empty());
-    CHECK(webgpu.find("+        hos_coop_texture_overlay(va, scratch.data(), total);") != std::string::npos);
-    for (std::size_t at = webgpu.find("diff --git a/"); at != std::string::npos; at = webgpu.find("diff --git a/", at + 1)) {
-        CHECK(webgpu.compare(at, 24, "diff --git a/gpu/render/") == 0);
-    }
+    CHECK_FALSE(std::filesystem::exists(kRepo / "hookshot" / "patches" / "0021-coop-texture-override-webgpu.patch"));
     // Nothing of the game is written: no lift, no guest write (only the pages marked for the renderers).
     for (std::size_t at = patch.find("diff --git a/"); at != std::string::npos; at = patch.find("diff --git a/", at + 1)) {
         CHECK((patch.compare(at, 18, "diff --git a/host/") == 0 || patch.compare(at, 17, "diff --git a/gpu/") == 0));
@@ -706,7 +763,10 @@ TEST_CASE("hookshot: on Linux the exe exports every function the module finds in
     const auto start = patch.find("+++ b/nx2/build.py\n");
     REQUIRE(start != std::string::npos);
     const std::string build = patch.substr(start, patch.find("\ndiff --git", start) - start);
-    REQUIRE(build.find("+                           [\"-Wl,--gc-sections\", \"-Wl,--export-dynamic-symbol=hos_posix_*\"] + coop") !=
+    // (the exe's link: Longshot's run_link since rc.5, subprocess.run before; the line's indent follows the call)
+    const auto link = build.find("r = run_link([cc]");
+    REQUIRE(link != std::string::npos);
+    REQUIRE(build.find("[\"-Wl,--gc-sections\", \"-Wl,--export-dynamic-symbol=hos_posix_*\"] + coop", link) !=
             std::string::npos);
     for (const auto& name : names) {
         CAPTURE(name);

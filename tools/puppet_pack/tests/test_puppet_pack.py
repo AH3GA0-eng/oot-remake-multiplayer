@@ -16,7 +16,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from puppet_pack import build, byml, dumpcheck, dungeon_rooms, map_captures, nup, rstb, sarc, zs  # noqa: E402
+from puppet_pack import build, byml, dumpcheck, dungeon_rooms, map_captures, nup, place_rooms, rstb, sarc, zs  # noqa: E402
 
 # The co-op HUD's tests run with these (CI runs this file).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -119,7 +119,13 @@ class BymlTest(unittest.TestCase):
 
     def test_rejects_bad_magic(self):
         with self.assertRaises(byml.BymlError):
-            byml.loads(b"BY\x00\x07" + b"\0" * 12)
+            byml.loads(b"XY\x00\x07" + b"\0" * 12)
+
+    def test_reads_big_endian(self):
+        # "BY": big-endian, as GameData/GameDataList (boss_beaten reads it). Root: an array of one int, -2.
+        data = b"BY\x00\x07" + struct.pack(">III", 0, 0, 0x10) + bytes([0xC0, 0, 0, 1, 0xD1, 0, 0, 0])
+        data += struct.pack(">i", -2)
+        self.assertEqual(byml.loads(data), [-2])
 
 
 class SarcTest(unittest.TestCase):
@@ -1186,6 +1192,125 @@ class FullBuildTest(unittest.TestCase):
         m = build.build(self.romfs, os.path.join(self.dir, "mod0"), log=lambda *_: None, tunics=("red",), look_slots=0)
         self.assertIsNone(m["look_items"])
 
+    def test_blade_copies(self):
+        # held-piece: every player item with the game's weapon component (WeaponRef, through its
+        # $parents) gets one copy per player number, `<item>_Blade<n>`, on a model project copy of
+        # its own per number (the game's bytes and textures), read from the romfs; a shield (no
+        # WeaponRef), an enemy's weapon (PerimeterAnalyserRef) and a `_Base` get none.
+        from puppet_pack import look_items, zs
+        plain = zstandard.ZstdCompressor()
+        item = "Weapon_Sword_Kokiri"
+        d = zs.Dicts.from_romfs(self.romfs)
+        ai = byml.loads(d.decompress(build.read(os.path.join(self.romfs, "RSDB/ActorInfo.Product.999.rstbl.byml.zs"))))
+
+        def add(name, project, comps, parent=None):
+            info = f"Component/ModelInfo/{name}.engine__component__ModelInfo.bgyml"
+            ap = {"Components": dict(comps, ModelInfoRef="?" + info)}
+            members = {info: byml.dumps({"FmdbName": project, "ModelProjectName": project})}
+            if parent:
+                ap["$parent"] = "Work/Actor/Weapon_Sword_Base.engine__actor__ActorParam.gyml"
+                members["Actor/Weapon_Sword_Base.engine__actor__ActorParam.bgyml"] = byml.dumps(
+                    {"Components": {"WeaponRef": "?Component/WeaponParam/W.bgyml"}})
+            members[f"Actor/{name}.engine__actor__ActorParam.bgyml"] = byml.dumps(ap)
+            self.write(f"Pack/Actor/{name}.pack.zs", plain.compress(sarc.write(members)))
+            ai.append({"__RowId": name, "ActorName": name, "FmdbName": project, "ModelProjectName": project,
+                       "InstanceHeapSize": 1000})
+
+        add(item, item, {}, parent=True)                                   # WeaponRef from its parent
+        add("Weapon_Sword_KokiriTwin", item, {"WeaponRef": "?W"})          # the same model project
+        add("Weapon_Shield_Wood", "Weapon_Shield_Wood", {"ShieldRef": "?S"})
+        add("Weapon_PoeLamp", item, {"WeaponRef": "?W", "PerimeterAnalyserRef": "?P"})
+        add("Weapon_Sword_Base", item, {"WeaponRef": "?W"})
+        model = b"FRES" + bytes(12) + b"\x1b\x00Mt_Weapon_Sword_Kokiri_Alb\x00" + f"{item}\x00".encode()
+        raw = plain.compress(model)
+        self.write(f"Model/{item}.{item}.bfres.zs", raw)
+        self.write("RSDB/ActorInfo.Product.999.rstbl.byml.zs", plain.compress(byml.dumps(ai)))
+        self.write("RSDB/GameActorInfo.Product.999.rstbl.byml.zs",
+                   plain.compress(byml.dumps([{"__RowId": r["__RowId"]} for r in ai])))
+        mod = os.path.join(self.dir, "modb")
+        said = []
+        m = build.build(self.romfs, mod, log=said.append, tunics=(), look_slots=0, blade_copies=3)
+        out = os.path.join(mod, "romfs")
+        self.assertIsNone(m["look_items"])
+        self.assertEqual(m["blade_items"]["copies"], 3, said)
+        self.assertEqual(m["blade_items"]["actors"], [item, "Weapon_Sword_KokiriTwin"])
+        rows = {r["__RowId"]: r for r in byml.loads(d.decompress(build.read(
+            os.path.join(out, "RSDB/ActorInfo.Product.999.rstbl.byml.zs"))))}
+        t = rstb.Rstb.loads(d.decompress(build.read(os.path.join(
+            out, "System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs"))))
+        model_copies = [f for f in m["blade_items"]["files"] if f.startswith("Model/")]
+        self.assertEqual(len(model_copies), 3)   # once per project and number, not per item
+        for n in (1, 2, 3):
+            project = look_items.blade_name(item, n)
+            for name in (item, "Weapon_Sword_KokiriTwin"):
+                actor = look_items.blade_name(name, n)
+                self.assertEqual(rows[actor]["ModelProjectName"], project)
+                self.assertEqual(rows[actor]["FmdbName"], item)
+                files = sarc.read(d.decompress(build.read(os.path.join(out, f"Pack/Actor/{actor}.pack.zs"))))
+                comps = byml.loads(files[f"Actor/{actor}.engine__actor__ActorParam.bgyml"])["Components"]
+                self.assertEqual(byml.loads(files[comps["ModelInfoRef"][1:]]),
+                                 {"FmdbName": item, "ModelProjectName": project})
+            actor = look_items.blade_name(item, n)
+            # The model under the copy's project, byte for byte the game's: the game's textures.
+            self.assertEqual(build.read(os.path.join(out, f"Model/{actor}.{item}.bfres.zs")), raw)
+            for f in (f"Pack/Actor/{actor}.pack", f"Model/{actor}.{item}.bfres"):
+                self.assertGreater(t.get(f) or 0, 0, f)
+        self.assertFalse(os.path.exists(os.path.join(out, f"Pack/Actor/{item}_Blade4.pack.zs")))
+        self.assertEqual(look_items.BLADE_COPIES, 16)   # the protocol's kMaxPlayers
+        for none in ("Weapon_Shield_Wood", "Weapon_PoeLamp", "Weapon_Sword_Base"):
+            self.assertFalse(os.path.exists(os.path.join(out, f"Pack/Actor/{none}_Blade1.pack.zs")), none)
+        m = build.build(self.romfs, os.path.join(self.dir, "modb0"), log=lambda *_: None, tunics=(), blade_copies=0)
+        self.assertIsNone(m["blade_items"])
+
+    def test_look_copy_keeps_the_whole_model_info(self):
+        # held-piece: a copy's ModelInfo is the item's own with only the model project renamed,
+        # its `$parent`s merged in (the Giant's Knife names its model only through one), so the
+        # Biggoron's colour anims and the Giant's broken SubModel stay on the copies.
+        from puppet_pack import look_items
+        mi = "Component/ModelInfo/{}.engine__component__ModelInfo.bgyml"
+        item = "Weapon_Sword_Giant"
+        members = {
+            f"Actor/{item}.engine__actor__ActorParam.bgyml": byml.dumps(
+                {"Components": {"ModelInfoRef": "?" + mi.format(item + "_With_SubModel")}}),
+            mi.format(item + "_With_SubModel"): byml.dumps({
+                "$parent": "Work/" + mi.format(item)[:-len(".bgyml")] + ".gyml",
+                "IsExclusiveControl": True,
+                "ModelVariationAnims": [{"Fmab": "A.fmab", "Frame": 1.0}, {"Fmab": "B.fmab", "Frame": 1.0}],
+                "SubModels": [{"FmdbName": "Weapon_Sword_BrokenBiggoron", "ModelProjectName": "Weapon_Sword_Biggoron",
+                               "SearchModelKey": "Broken"},
+                              {"FmdbName": "Other", "ModelProjectName": "Other"}],
+            }),
+            mi.format(item): byml.dumps({
+                "DebugModelScale": {"X": 1.0, "Y": 1.0, "Z": 1.0},
+                "FmdbName": "Weapon_Sword_Biggoron", "ModelProjectName": "Weapon_Sword_Biggoron",
+                "ModelVariationAnims": [{"Fmab": "A.fmab", "Frame": 1.0}],
+            }),
+        }
+        self.assertEqual(look_items.model_info(members, item)[:2], ("Weapon_Sword_Biggoron", "Weapon_Sword_Biggoron"))
+        pack, ap, info = look_items.copy_pack(members, item, 2)
+        got = byml.loads(info)
+        self.assertNotIn("$parent", got)
+        self.assertEqual(got["FmdbName"], "Weapon_Sword_Biggoron")
+        self.assertEqual(got["ModelProjectName"], f"{item}_Look2")
+        self.assertEqual(got["DebugModelScale"], {"X": 1.0, "Y": 1.0, "Z": 1.0})
+        self.assertTrue(got["IsExclusiveControl"])
+        self.assertEqual([a["Fmab"] for a in got["ModelVariationAnims"]], ["A.fmab", "B.fmab"])   # the child's list
+        self.assertEqual(got["SubModels"][0]["ModelProjectName"], f"{item}_Look2")
+        self.assertEqual(got["SubModels"][0]["FmdbName"], "Weapon_Sword_BrokenBiggoron")
+        self.assertEqual(got["SubModels"][1]["ModelProjectName"], "Other")   # not the item's project: kept
+        self.assertEqual(sarc.read(pack)[look_items.model_info_path(f"{item}_Look2")], info)
+        self.assertIn(item, look_items.ITEMS)
+        self.assertIn("Weapon_Sword_BrokenGiant", look_items.ITEMS)
+        # A $parent that is not in the pack, or that loops, is said, not guessed.
+        broken = dict(members)
+        del broken[mi.format(item)]
+        with self.assertRaises(look_items.TunicError):
+            look_items.model_info(broken, item)
+        looped = dict(members)
+        looped[mi.format(item)] = byml.dumps({"$parent": "Work/" + mi.format(item + "_With_SubModel")[:-6] + ".gyml"})
+        with self.assertRaises(look_items.TunicError):
+            look_items.model_info(looped, item)
+
     def test_build_from_nup_has_the_gear(self):
         # The 0.11.0 kit made its pack from the player's .nup, which took out only dumpcheck's files:
         # coop_look/gear.bin had the boots alone (your own sword, shields and gauntlets kept the
@@ -2220,6 +2345,33 @@ class DungeonRoomsTest(unittest.TestCase):
                 best = min(pts, key=lambda q: (q[1][0] - p[0]) ** 2 + (2 * (q[1][1] - p[1])) ** 2
                            + (q[1][2] - p[2]) ** 2)
                 self.assertEqual(best[0], room, f"{scene} {p}")
+
+
+class PlaceRoomsTest(unittest.TestCase):
+    """deku-ladder: a live place's own room is its room graph's vote, kept only when it is not a tie and our Link
+    near the place is guessed in that room (review round 5)."""
+
+    def test_a_tie_is_no_room(self):
+        self.assertIsNone(place_rooms.choose({3: 1, 2: 1}))  # Jabu's GreenTentacle asker
+        self.assertIsNone(place_rooms.choose({}))
+        self.assertEqual(place_rooms.choose({17: 3, 5: 1}), 17)
+
+    def test_a_room_link_is_never_in_near_the_place_is_not_kept(self):
+        # Rooms 5 and 6 around the place; room 7's only placement 45 m away (Ganon's BarrierRemove_Water).
+        points = [(5, 0.0, 0.0, 0.0), (5, 6.0, 0.0, 0.0), (6, 0.0, 0.0, 8.0), (7, 45.0, 0.0, 0.0)]
+        room, why = place_rooms.place_room({7: 1}, points, (0.0, 0.0, 0.0))
+        self.assertEqual(room, -1)
+        self.assertIn("voted", why)
+        room, _ = place_rooms.place_room({5: 2, 6: 1}, points, (0.0, 0.0, 0.0))
+        self.assertEqual(room, 5)
+        room, why = place_rooms.place_room({5: 1, 6: 1}, points, (0.0, 0.0, 0.0))
+        self.assertEqual((room, why[:5]), (-1, "a tie"))
+
+    def test_the_guess_is_coop_rooms(self):
+        points = [(1, 0.0, 0.0, 0.0), (2, 0.0, 4.0, 0.0)]
+        self.assertEqual(place_rooms.guess(points, (0.0, 1.5, 0.0)), 1)  # height counts twice
+        self.assertEqual(place_rooms.guess(points, (0.0, 2.5, 0.0)), 2)
+        self.assertIsNone(place_rooms.guess(points, (30.0, 0.0, 0.0)))  # beyond kFar
 
 
 if __name__ == "__main__":

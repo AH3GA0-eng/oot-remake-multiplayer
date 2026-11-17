@@ -447,6 +447,10 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
     send_to_others(id, kChannelSession, LobbyMutes{c.number, flags});
   }
   send_snapshot(id);
+  // G2: the dungeon bosses the group beat this session (after the snapshot: the joiner's flags first).
+  for (const auto& [room, beaten] : boss_beaten_) {
+    send(id, kChannelSession, beaten);
+  }
   log("player " + std::to_string(c.number) + " joined: " + c.nickname);
 }
 
@@ -628,6 +632,19 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     on_status(c, st->flags, now_us);
   }
   if (sender_of(message)) set_sender(message, c.number);
+  // G2 (player report #241): a proven boss death, the same rule as the games' (CoopBossBeaten::ProvenDeath): a game
+  // took the boss's death event itself (BOSS_SCENE outro_start). Never BOSS_ROOM defeated, which a game also sends
+  // on a guess. Kept, by boss and scene, for players who join later (told after the flag snapshot as that player's
+  // outro_end, which a joiner's cutscene rules ignore); each game keeps only a boss's own dungeon scene.
+  if (const auto* death = std::get_if<BossScene>(&message);
+      death != nullptr && death->kind == BossSceneKind::outro_start) {
+    BossScene kept = *death;  // the sender's number is set above
+    kept.kind = BossSceneKind::outro_end;
+    if (boss_beaten_.size() < 64 && boss_beaten_.emplace(std::pair{death->boss, death->scene}, kept).second) {
+      log("boss " + std::to_string(death->boss) + " died in " + death->scene + " (player " + std::to_string(c.number) +
+          "'s game took its death): kept for players who join");
+    }
+  }
   if (std::holds_alternative<PlayerSample>(message) || std::holds_alternative<PlayerPose>(message)) {
     send_streamed(id, c, channel, message, now_us);
   } else {
@@ -911,6 +928,7 @@ void Session::on_host_reset() {
         " boss heart container claim(s) forgotten (those bosses fight again)");
   }
   boss_hearts_.clear();
+  boss_beaten_.clear();  // G2: as the claims, those bosses are alive again in the save
 }
 
 // A host's table, merged in part by part. A flag the server lacks is kept and
@@ -2415,6 +2433,7 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
     world_.clear();
     dead_.clear();
     boss_hearts_.clear();  // as the flags: a new group (a new save) has its own containers
+    boss_beaten_.clear();
   } else if (host_ == id) {
     // The remaining player with the lowest number takes over. Everyone is
     // told on the progress channel, so the new host learns it hosts before
