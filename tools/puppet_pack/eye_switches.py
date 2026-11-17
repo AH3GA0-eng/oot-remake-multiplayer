@@ -140,7 +140,7 @@ TRANSIENT_INPUTS = ("isSpawnAct", "IsSpawnAct")
 TRANSIENT_ACTORS = re.compile(r"AirWall|^Area$")
 
 
-def switch_events(romfs, dicts=None, wiring=None):
+def switch_events(romfs, dicts=None, wiring=None, askers=None):
     """(lines, guards, extras), each sorted.
 
     lines:  (event, scene, switch name, switch place, plug, asker place)
@@ -153,6 +153,9 @@ def switch_events(romfs, dicts=None, wiring=None):
             switch's ON inputs and their sources, [] = unwired), "results": [(kind, what, detail)] (what the asker's
             outputs drive, forward through gates, module outputs and module calls), "delete": [flags that delete the
             asker]}. classify() reads it.
+    askers: when a dict, filled for EVERY asker of an event (with a switch or not; row 98(2), result only), keyed
+            (event, scene, asker place): {"actor": its name, "outputs": {output: [results]} (only outputs that
+            drive something), "results": all of them, "delete": [flags that delete it]}. asker_class() reads it.
     """
     if dicts is None:
         dicts = zs.Dicts.from_romfs(romfs)
@@ -184,15 +187,19 @@ def switch_events(romfs, dicts=None, wiring=None):
             by_id = {(_prefix(r["Path"]), r["Id"]): by_hash[_int(r["Reference"])]
                      for r in refs if "Reference" in r and _int(r["Reference"]) in by_hash}
 
-            def leaves(pre, g_, src, outp, depth, seen, neg=False, under_or=False, once=False):
+            def leaves(pre, g_, src, outp, depth, seen, neg=False, under_or=False, once=False, anded=False):
                 """[(kind, actor or flag name, plug, negated, under an OR)], kind "actor", "flag" or "node"; a flag
                 behind a gate whose UpdateOnce input is 1 (the game reads it once, when the room loads: the Deku
-                Tree ladder's RoomC_Cleared) is kind "flag-once": it carries no live result."""
+                Tree ladder's RoomC_Cleared) is kind "flag-once": it carries no live result. "under an OR" is 0 (no
+                OR on its way), 1 (an OR and no AND: the leaf alone drives the input) or 2 (an OR and also an AND, a
+                gate with two or more wired inputs: the Deku Tree compass lifts' OR(asker, AND(RoomD_StepSwitch_On_01,
+                plate)), whose flag alone moves nothing); truthy = in an OR, as before."""
+                alone = (2 if anded else 1) if under_or else 0
                 nodes, multi = g_
                 if src <= -100:
                     found = []
                     for a, b in multi(-100 - src, outp):
-                        found += leaves(pre, g_, a, b, depth + 1, seen, neg, under_or, once)
+                        found += leaves(pre, g_, a, b, depth + 1, seen, neg, under_or, once, anded)
                     return found
                 if src < 0 or src >= len(nodes) or depth > 12 or (id(g_), src, outp) in seen:
                     return []
@@ -202,7 +209,7 @@ def switch_events(romfs, dicts=None, wiring=None):
                 plug = plugs[outp] if 0 <= outp < len(plugs) else ""
                 inst = node["imm"].get("InstanceName")
                 if inst and (pre, inst) in by_id:
-                    return [("actor", by_id[(pre, inst)], plug, neg, under_or)]
+                    return [("actor", by_id[(pre, inst)], plug, neg, alone)]
                 if not node["type"] and "Name" in node["imm"]:  # a module input: follow it in the calling graph
                     found = []
                     for mpre, logic, minst in mods:
@@ -217,21 +224,23 @@ def switch_events(romfs, dicts=None, wiring=None):
                                 if call["type"] == mtype and call["imm"].get("InstanceName") == minst:
                                     for name, a, b in call["in"]["bool"]:
                                         if name == node["imm"]["Name"]:
-                                            found += leaves(ppre, parent, a, b, depth + 1, seen, neg, under_or, once)
+                                            found += leaves(ppre, parent, a, b, depth + 1, seen, neg, under_or, once, anded)
                     return found
                 if node["type"].startswith("HoldGameDataGetBool"):
                     name = node["sdef"].get("GameDataNameBool", "")
-                    return [("flag-once" if once else "flag", name, plug, neg, under_or)] if name else []
+                    return [("flag-once" if once else "flag", name, plug, neg, alone)] if name else []
                 if not node["in"]["bool"]:
-                    return [("node", node["type"], plug, neg, under_or)]
+                    return [("node", node["type"], plug, neg, alone)]
                 # A gate, or a module call (InvBool, ...): its False output (or an inverter) negates.
                 flip = plug == "False" or "InvBool" in node["type"]
                 is_or = "OR" in node["type"].upper().replace("OPERATE", "")[:2] or node["type"].startswith("OperateOR")
                 once = once or node.get("bdef", {}).get("UpdateOnce") == 1
+                wired = sum(b if a <= -100 else int(a >= 0) for name, a, b in node["in"]["bool"] if name != "UpdateOnce")
+                anded = anded or (not is_or and wired > 1)
                 found = []
                 for name, a, b in node["in"]["bool"]:
                     if name != "UpdateOnce":
-                        found += leaves(pre, g_, a, b, depth + 1, seen, neg != flip, under_or or is_or, once)
+                        found += leaves(pre, g_, a, b, depth + 1, seen, neg != flip, under_or or is_or, once, anded)
                 return found
 
             def calls(pre, name, inner):
@@ -336,6 +345,19 @@ def switch_events(romfs, dicts=None, wiring=None):
                             trigger = leaves(pre, g_, a, b, 0, set())
                         elif name == "Logic_Delete":
                             delete = leaves(pre, g_, a, b, 0, set())
+                    if askers is not None:
+                        per = {}
+                        for out in ASKER_OUTPUTS:
+                            if out in node["out"]["bool"]:
+                                got = forward(pre, g_, index, node["out"]["bool"].index(out), 0, set())
+                                got = sorted({(k, str(w.get("Gyaml")) if k == "actor" else w, d) for k, w, d in got
+                                              if not (k == "actor" and w is asker)})
+                                if got:
+                                    per[out] = got
+                        askers[(str(event), scene, _place(asker))] = {
+                            "actor": str(asker.get("Gyaml")), "outputs": per,
+                            "results": sorted({r for v in per.values() for r in v}),
+                            "delete": sorted({w for k, w, _, ng, _ in delete if k == "flag" and not ng})}
                     switches = [t for t in trigger if t[0] == "actor" and SWITCH.match(str(t[1].get("Gyaml", ""))) and t[2]]
                     if not switches:
                         continue
@@ -410,7 +432,7 @@ def classify(line, wire, shared):
             # the asker's own polarity on that input (a False output or an inverter flips it); not found (it is
             # behind a module port): any
             polarity = {ng for w, ng, _ in also if w == "EventRequestActor"}
-            covered = any((uo or not polarity) and (not polarity or ng in polarity) and
+            covered = any((uo == 1 or not polarity) and (not polarity or ng in polarity) and
                           (w in shared or (w == switch and on_flags)) for w, ng, uo in also)
             if not covered:
                 misses.append(f"{what}.{name}")
@@ -425,6 +447,19 @@ def classify(line, wire, shared):
     if forced:
         return "B", f"input {forced[0]}", "; ".join(misses)
     return "B", "none", "; ".join(misses)
+
+
+def asker_class(key, wire, shared):
+    """(class, why) of one asker for result only (row 98(2), owner 07:40 UTC 2026-11-17: a gimmick event another
+    player played is never replayed here). "live": every room result of the asker reaches the room through a shared
+    flag the room reads live (classify's class A), so its held flags landing is the whole result; "asker": a result
+    hangs on our asker's outputs (an actor input, an unshared flag, a flag the room reads only at its load), so our
+    asker's outputs are set (the game's set-bool, what the event flow's EventTriggerSetEventBool does) before its held
+    flags land."""
+    event, scene, at = key
+    cls, _, why = classify((event, scene, "", at, "", at), {"on": [], "results": wire["results"],
+                                                             "delete": wire["delete"]}, shared)
+    return ("live", why) if cls == "A" else ("asker", why)
 
 
 def live_places(path):
@@ -444,13 +479,27 @@ def main(argv=None):
     ap.add_argument("--romfs", required=True)
     ap.add_argument("--places", help="coop_live_places.cpp: print only events that have a live place")
     ap.add_argument("--dungeon", help="coop_dungeon.cpp: print only guard flags that are shared")
+    ap.add_argument("--results", action="store_true",
+                    help="print every asker of a live-place event with its result class (needs --dungeon)")
     ap.add_argument("--classify", action="store_true",
                     help="print the A/B class of each line whose plug does not latch (needs --dungeon)")
     args = ap.parse_args(argv)
     keep = live_places(args.places) if args.places else None
     shared = shared_flags(args.dungeon) if args.dungeon else None
     wiring = {} if args.classify else None
-    lines, guards, extras, others = switch_events(args.romfs, wiring=wiring)
+    askers = {} if args.results else None
+    lines, guards, extras, others = switch_events(args.romfs, wiring=wiring, askers=askers)
+    if args.results:
+        print("// kResults (event, scene, asker place, the outputs to set: none for class live)")
+        for key in sorted(askers):
+            event, scene, at = key
+            if keep is not None and (event, scene) not in keep:
+                continue
+            cls, why = asker_class(key, askers[key], shared or set())
+            outs = "+".join(o for o in ASKER_OUTPUTS if o in askers[key]["outputs"]) if cls == "asker" else ""
+            print(f'    {{"{event}", "{scene}", {{{at[0]}f, {at[1]}f, {at[2]}f}}, "{outs}"}},  '
+                  f'// {cls} ({askers[key]["actor"]}): {why}')
+        return 0
     if args.classify:
         rows = []
         for line in lines:

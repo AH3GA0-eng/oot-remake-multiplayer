@@ -154,5 +154,62 @@ class SwitchEventsTest(unittest.TestCase):
         self.assertEqual(wiring[lines[0]]["delete"], [])
 
 
+def lift_room(flag_alone):
+    """A lift whose IsOn ORs the asker's EventBool with Room_Flag: alone (flag_alone) or ANDed with the switch (the
+    Deku Tree compass lifts' OR(asker, AND(RoomD_StepSwitch_On_01, plate)))."""
+    nodes = [
+        {"type": "ActorLogicEventRequestActor", "imm": {"InstanceName": "Asker"},
+         "bool": [("EventRequestTrigger", 1, 1, 0)], "out": ["Dead", "EventBool"]},
+        {"type": "ActorLogicBootUpAndForceTrunOffControlActor", "imm": {"InstanceName": "Switch"},
+         "out": ["OffState", "OnState"]},
+        {"type": "HoldGameDataGetBoolSimple", "string": [("GameDataNameBool", "Room_Flag")], "out": ["Bool"]},
+        {"type": "OperateAND", "bool": [("BoolMulti", -100, 2, 0), ("UpdateOnce", -1, 0, 0)], "out": ["False", "True"]},
+        {"type": "OperateOR", "bool": [("BoolMulti", -102, 2, 0), ("UpdateOnce", -1, 0, 0)], "out": ["False", "True"]},
+        {"type": "ActorLogicLift", "imm": {"InstanceName": "Lift"}, "bool": [("IsOn", 4, 1, 0)], "out": ["Dead"]},
+    ]
+    multi = [(2, 0), (1, 1), (0, 1), (2, 0) if flag_alone else (3, 1)]
+    return nodes, multi
+
+
+class AskerClassTest(unittest.TestCase):
+    def run_room(self, flag_alone):
+        with tempfile.TemporaryDirectory() as romfs:
+            os.makedirs(os.path.join(romfs, "Logic"))
+            os.makedirs(os.path.join(romfs, "Banc", "Scene"))
+            nodes, multi = lift_room(flag_alone)
+            with open(os.path.join(romfs, "Logic", "Room.logic.module.ainb"), "wb") as f:
+                f.write(ainb(nodes, multi))
+            actors = [{"Hash": 1, "Gyaml": "EventRequestActor", "Dynamic": {"RequestEventName": "Ev"},
+                       "Translate": [1.0, 0.0, 0.0]},
+                      {"Hash": 2, "Gyaml": "Obj_StepSwitch_A_01", "Translate": [0.0, 0.0, 0.0]},
+                      {"Hash": 3, "Gyaml": "Obj_Lift", "Translate": [5.0, 0.0, 0.0]}]
+            groups = [{"Logic": "Work/Logic/Room.logic.module.ain",
+                       "References": [{"Path": n, "Id": n, "Reference": h}
+                                      for n, h in (("Asker", 1), ("Switch", 2), ("Lift", 3))]}]
+            with open(os.path.join(romfs, "Banc", "Scene", "Room.bcett.byml.zs"), "wb") as f:
+                f.write(byml.dumps({"Actors": actors, "AiGroups": groups}))
+            askers = {}
+            eye_switches.switch_events(romfs, dicts=_Plain(), askers=askers)
+            return askers
+
+    def test_a_shared_flag_alone_in_the_or_is_live(self):
+        askers = self.run_room(True)
+        key = ("Ev", "Scene", (1.0, 0.0, 0.0))
+        self.assertEqual(list(askers), [key])
+        self.assertEqual(list(askers[key]["outputs"]), ["EventBool"])
+        self.assertEqual(eye_switches.asker_class(key, askers[key], {"Room_Flag"})[0], "live")
+        self.assertEqual(eye_switches.asker_class(key, askers[key], set())[0], "asker")  # not shared
+
+    def test_a_shared_flag_anded_in_the_or_is_no_live_result(self):
+        askers = self.run_room(False)
+        key = ("Ev", "Scene", (1.0, 0.0, 0.0))
+        cls, why = eye_switches.asker_class(key, askers[key], {"Room_Flag"})
+        self.assertEqual(cls, "asker")
+        self.assertIn("Obj_Lift.IsOn", why)
+        (_, _, (_, also)), = askers[key]["outputs"]["EventBool"]
+        self.assertIn(("Room_Flag", False, 2), also)  # in an OR, behind an AND
+        self.assertIn(("EventRequestActor", False, 1), also)  # alone in the OR
+
+
 if __name__ == "__main__":
     unittest.main()
