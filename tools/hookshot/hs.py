@@ -66,6 +66,12 @@ CACHE_DIR = "cache"
 # prepares in a separate process that does not write longshot_pipelines.bin.built (on NVIDIA that process's pipeline
 # cache does not answer the game's), so each new game folder's first start builds every noted pipeline (35269, about
 # 18 min; six at once took 9+ min per load in wave 1). One pair warmed, these files go to the others and the cache.
+# LIMIT (Windows + NVIDIA, Longshot rc.7, big-run-fix-a 2026-11-17): the copies do not warm the other folders there. Every
+# longshot.exe shares the driver's one shader cache (%LOCALAPPDATA%\NVIDIA\GLCache) and only the first game running is
+# served by it; a game started beside it logs "the driver's shader cache has 0 of 48 noted pipelines asked", drops
+# longshot_pipelines.bin.built and compiles every pipeline again at each start (~440 s), copied files or not
+# (__GL_SHADER_DISK_CACHE_PATH is ignored there). The harness's renderer wait follows that compile's progress instead
+# (tools/autotest/hookshot.py wait_renderer).
 WARM_FILES = re.compile(r"^(longshot_pipelines\.bin(\.built|\.predicted)?|longshot_(pipeline_states|computes|prepared)\.bin"
                         r"|longshot_programs\.(bin|idx)|mkw_vk_pipelines(_play_\d+)?\.bin"
                         r"|longshot_(compute_variants|module_ids)\.bin|longshot_vk_pipelines(_play_\d+)?\.bin"
