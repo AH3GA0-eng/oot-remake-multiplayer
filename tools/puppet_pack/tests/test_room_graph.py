@@ -252,8 +252,68 @@ class ResultsOutputTest(unittest.TestCase):
 
     def test_a_delete_read_once_at_load_is_no_result_guard(self):
         text = self.run_main(1)
-        guards = text.split("// kResultGuards", 1)[1]
+        guards = text.split("// kResultGuards", 1)[1].split("// kTriggers", 1)[0]
         self.assertNotIn("Room_Flag", guards)
+
+
+class TriggerGuardsTest(unittest.TestCase):
+    """--results' kTriggers (review-a38-5): every leaf of an asker's trigger that another game's shared state can
+    raise is a guard (a shared flag, a silver rupee counter's key and its tokens, a kill); every other leaf is a proof
+    line saying why it cannot rise."""
+
+    def guards(self, trigger, shared=(), keys=(), one_way=(), plugs=None):
+        askers = {("Ev", "Scene", (1.0, 0.0, 0.0)): {"trigger": trigger}}
+        return eye_switches.trigger_guards(askers, None, set(shared), set(keys), set(one_way), plugs or {})
+
+    def test_a_shared_flag_waits_and_an_unshared_or_negated_one_is_proved(self):
+        guards, proofs = self.guards([("flag", "Shared_On", 0, "Bool", False, 0, (), ()),
+                                      ("flag", "Shared_Done", 0, "Bool", True, 0, (), ()),
+                                      ("flag", "Own", 0, "Bool", False, 0, (), ()),
+                                      ("flag-once", "Shared_Load", 0, "Bool", False, 0, (), ())],
+                                     shared=("Shared_On", "Shared_Done", "Shared_Load"), one_way=("Shared_Done",))
+        self.assertEqual(guards, [("flag", "Scene", "Ev", "Shared_On", 0, 0, "a shared flag")])
+        text = " ".join(t for _, _, t in proofs)
+        self.assertIn("Shared_Done: read negated", text)
+        self.assertIn("its 0 is never sent (one way)", text)
+        self.assertIn("Own: not shared", text)
+        self.assertIn("Shared_Load: read once", text)
+
+    def test_a_silver_rupee_counter_guards_its_key_and_its_shared_tokens(self):
+        guards, _ = self.guards([("actor", "Obj_silverRupeeCounter_03", 100, "AllGet", False, 0, (0.0, 0.0, 0.0),
+                                  (7, 8, 9))], keys=(100, 7, 8))
+        self.assertIn(("key", "Scene", "Ev", "", 100, 0, "Obj_silverRupeeCounter_03's own key"), guards)
+        self.assertEqual(sorted(g[4] for g in guards if g[0] == "token"), [7, 8])
+        self.assertTrue(all(g[5] == 100 for g in guards if g[0] == "token"))
+
+    def test_an_unshared_counter_is_proved(self):
+        guards, proofs = self.guards([("actor", "Obj_silverRupeeCounter", 100, "AllGet", False, 0, (0.0, 0.0, 0.0),
+                                       (7,))], keys=(7,))
+        self.assertEqual(guards, [])
+        self.assertIn("not shared", proofs[0][2])
+
+    def test_kills_are_guards_and_a_live_plug_only_lowers(self):
+        guards, proofs = self.guards([("actor", "Enemy_TorchSlug", 5, "Dead", False, 0, (0.0, 0.0, 0.0), ()),
+                                      ("actor", "Enemy_Poe", 6, "Logic_Alive", True, 0, (0.0, 0.0, 0.0), ()),
+                                      ("actor", "Enemy_Poe", 6, "Logic_Alive", False, 2, (0.0, 0.0, 0.0), ())])
+        self.assertEqual(sorted(g[4] for g in guards if g[0] == "kill"), [5, 6])
+        self.assertIn("only lowers it", proofs[0][2])
+
+    def test_a_keyed_actor_is_a_key_and_a_switch_share_plug_is_flagged(self):
+        guards, proofs = self.guards([("actor", "Obj_Ice_A_01", 40, "isArrow", False, 0, (0.0, 0.0, 0.0), ()),
+                                      ("actor", "Obj_StepSwitch_A_01", 41, "OnState", False, 0, (2.0, 0.0, 0.0), ()),
+                                      ("actor", "Obj_EyeSwitch_A_02", 42, "OnState", False, 0, (9.0, 0.0, 0.0), ()),
+                                      ("node", "HoldPlayerState", 0, "Out", False, 0, (), ())],
+                                     keys=(40,), plugs={("Scene", "Obj_StepSwitch_A_01"): [((2.5, 0.0, 0.0), "OnState")]})
+        self.assertEqual(guards, [("key", "Scene", "Ev", "", 40, 0, "Obj_Ice_A_01's key")])
+        text = " ".join(t for _, _, t in proofs)
+        self.assertIn("Obj_StepSwitch_A_01.OnState: HELD BY THE SWITCH SHARE", text)
+        self.assertIn("Obj_EyeSwitch_A_02.OnState: each game's own", text)
+        self.assertIn("our own game's state", text)
+
+    def test_the_results_output_prints_the_trigger_table(self):
+        text = ResultsOutputTest().run_main(0)
+        self.assertIn("// kTriggers", text)
+        self.assertIn("// a trigger leaf shared state cannot raise, and why", text)
 
 
 if __name__ == "__main__":

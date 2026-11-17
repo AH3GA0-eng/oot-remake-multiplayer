@@ -301,3 +301,103 @@ TEST_CASE("event result: a wanted event is dropped once our game played it or we
     CHECK(cave.executes == 0);
     CHECK_FALSE(s.Applied().contains(kLadder));
 }
+
+namespace {
+constexpr std::uint64_t kGtg02Counter = 0xb1f683aa91daf209ULL;
+const std::vector<std::uint64_t> kGtg02Tokens = {0x0e741bc26e2c0697ULL, 0x1da71f60ac02ec12ULL, 0x4ab44ec9fa62841eULL,
+                                                 0x77f9feaac7f28534ULL, 0xe09a166c192d8995ULL};
+const std::vector<std::uint64_t> kFire15Slugs = {0x524d8f690c11944aULL, 0x7955892af6fcf0a2ULL, 0x8515bd766b65e010ULL,
+                                                 0xa36a08d01e93953cULL, 0xf8119818b5e22a95ULL, 0xfc367bdaeb7524efULL};
+}  // namespace
+
+TEST_CASE("event result: the trigger table covers silver rupees, kills and shared flags (both classes)") {
+    std::set<std::uint64_t> tokens;
+    bool counter = false, flag = false, live_kill = false;
+    for (const auto& t : CoopEventResult::Triggers()) {
+        if (t.event == "GerudoTrainingGround_02_SilverToken_Unlock") {
+            if (t.kind == CoopEventResult::Trigger::key) counter = counter || t.id == kGtg02Counter;
+            if (t.kind == CoopEventResult::Trigger::token && t.group == kGtg02Counter) tokens.insert(t.id);
+        }
+        if (t.kind == CoopEventResult::Trigger::flag && t.name == "ForestTemple_DefeatAmy") flag = true;
+        // a class-live event's kills too (its played flag lands live, but our asker asks at the kill)
+        if (t.kind == CoopEventResult::Trigger::kill && t.event == "GerudoTrainingGround_10_AppearTreasureBox") live_kill = true;
+    }
+    CHECK(counter);
+    CHECK(tokens == std::set<std::uint64_t>(kGtg02Tokens.begin(), kGtg02Tokens.end()));
+    CHECK(flag);
+    CHECK(live_kill);
+    CHECK(CoopEventResult::IsLive("GerudoTrainingGround_10_AppearTreasureBox"));
+    // the silver rupee line is class asker: its result is set, and its trigger is covered too
+    CHECK_FALSE(CoopEventResult::AskerLines("GerudoTrainingGround_02_SilverToken_Unlock", "GerudoTrainingGround").empty());
+}
+
+TEST_CASE("event result: shared silver rupees never complete our counter before our game played the event") {
+    std::set<std::uint64_t> have;
+    bool played = false;
+    const auto is_played = [&](const std::string& e) {
+        return played && e == "GerudoTrainingGround_02_SilverToken_Unlock";
+    };
+    const auto have_key = [&](std::uint64_t k) { return have.contains(k); };
+    const auto hold = [&] { return CoopEventResult::HoldFor("GerudoTrainingGround", {}, is_played, have_key); };
+    // nothing taken here: the counter's key and only the largest token wait; the other four land (a split collection)
+    auto h = hold();
+    CHECK(h.WaitsKey(kGtg02Counter));
+    CHECK(h.WaitsKey(0xe09a166c192d8995ULL));
+    for (std::size_t i = 0; i + 1 < kGtg02Tokens.size(); ++i) CHECK_FALSE(h.WaitsKey(kGtg02Tokens[i]));
+    // the other player took four (they landed), ours never took the largest: it still waits, the counter is one short
+    have.insert(kGtg02Tokens.begin(), kGtg02Tokens.end() - 1);
+    CHECK(hold().WaitsKey(0xe09a166c192d8995ULL));
+    // the largest landed first (our Link took it: our own key), then the last one missing waits instead
+    have = {0xe09a166c192d8995ULL, 0x0e741bc26e2c0697ULL, 0x1da71f60ac02ec12ULL, 0x4ab44ec9fa62841eULL};
+    h = hold();
+    CHECK(h.WaitsKey(0x77f9feaac7f28534ULL));
+    CHECK_FALSE(h.WaitsKey(0x0e741bc26e2c0697ULL));
+    // our game played it (the played flag landed: our asker is disarmed): everything lands
+    played = true;
+    h = hold();
+    CHECK_FALSE(h.WaitsKey(kGtg02Counter));
+    CHECK_FALSE(h.WaitsKey(0x77f9feaac7f28534ULL));
+    // another scene: nothing of it waits
+    played = false;
+    CHECK_FALSE(CoopEventResult::HoldFor("IceCavern", {}, is_played, have_key).WaitsKey(kGtg02Counter));
+}
+
+TEST_CASE("event result: a shared trigger flag waits until our game played the event, also once our result is set") {
+    const auto amy = coop::protocol::flag_hash("ForestTemple_DefeatAmy");
+    bool played = false;
+    const auto is_played = [&](const std::string& e) {
+        return played && e == "ForestTemple_Room25_CandleLight_ShutterOpen";
+    };
+    CHECK(CoopEventResult::HoldFor("ForestTemple", {}, is_played).Waits(amy));
+    CHECK_FALSE(CoopEventResult::HoldFor("DodongoCavern", {}, is_played).Waits(amy));
+    played = true;
+    CHECK_FALSE(CoopEventResult::HoldFor("ForestTemple", {}, is_played).Waits(amy));
+    // a class-asker event's counter: our result set this visit but the played flag not landed yet: still waits
+    const auto h = CoopEventResult::HoldFor("GerudoTrainingGround", {"GerudoTrainingGround_02_SilverToken_Unlock"},
+                                            [](const std::string&) { return false; });
+    CHECK(h.Releases(coop::protocol::flag_hash("HavePlayedEvent.GerudoTrainingGround_02_SilverToken_Unlock")));
+    CHECK(h.WaitsKey(kGtg02Counter));
+}
+
+TEST_CASE("event result: the kill keeper: the largest live enemy of an unplayed event waits, the others die") {
+    std::set<std::uint64_t> alive(kFire15Slugs.begin(), kFire15Slugs.end());
+    bool played = false;
+    const auto is_played = [&](const std::string& e) { return played && e == "FireTemple_15_OpenShutter"; };
+    const auto keepers = [&] {
+        return CoopEventResult::KillKeepers("FireTemple", [&](std::uint64_t h) { return alive.contains(h); }, is_played);
+    };
+    auto k = keepers();
+    CHECK(k.contains(0xfc367bdaeb7524efULL));
+    for (std::size_t i = 0; i + 1 < kFire15Slugs.size(); ++i) CHECK_FALSE(k.contains(kFire15Slugs[i]));
+    // our Link killed the largest itself: the next largest live one keeps the event
+    alive.erase(0xfc367bdaeb7524efULL);
+    k = keepers();
+    CHECK(k.contains(0xf8119818b5e22a95ULL));
+    CHECK_FALSE(k.contains(0xfc367bdaeb7524efULL));
+    // played here: nothing is kept; another scene: nothing either
+    played = true;
+    CHECK(keepers().empty());
+    played = false;
+    CHECK(CoopEventResult::KillKeepers("WaterTemple", [&](std::uint64_t h) { return alive.contains(h); }, is_played)
+              .count(0xf8119818b5e22a95ULL) == 0);
+}

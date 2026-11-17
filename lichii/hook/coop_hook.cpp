@@ -831,11 +831,28 @@ public:
                         .get_bool(coop::host::flag_hash("HavePlayedEvent." + n))
                         .value_or(false);
                 };
+                // Our game's value of a placement key (a silver rupee token: the counter's largest missing one waits).
+                const std::function<bool(std::uint64_t)> have_key = [&memory](std::uint64_t k) {
+                    return coop::host::GameFlags(*memory).get_key64(k).value_or(false);
+                };
                 event_result_.Visit(hold_scene_, played);
-                result_hold = CoopEventResult::HoldFor(hold_scene_, event_result_.Applied(), played);
+                result_hold = CoopEventResult::HoldFor(hold_scene_, event_result_.Applied(), played, have_key);
+                const std::pair<std::size_t, std::size_t> waits{result_hold.waiting_keys.size(),
+                                                                result_hold.waiting.size()};
+                if (waits != trigger_wait_logged_) {
+                    trigger_wait_logged_ = waits;
+                    LOG_INFO(Core, "coop: dungeon: trigger: in {} {} shared keys and {} flags wait (an asker's trigger "
+                                   "or result guard; each until our game played its event)",
+                             hold_scene_, waits.first, waits.second);
+                }
             }
             hold.emplace(*quests, [link, scene, talk, near, sale_here, sale_scene, sale_on,
                                    result_hold](coop::protocol::FlagKey key) {
+                if (key.kind == coop::protocol::FlagKeyKind::key64) {
+                    // Row 98(2) trigger guards: a shared key that would raise our asker's trigger (a silver rupee
+                    // counter's key, its last token, an ice block) waits until our game has played the event.
+                    return link && scene && result_hold.WaitsKey(key.key);
+                }
                 if (key.kind != coop::protocol::FlagKeyKind::named || key.index != 0) {
                     return false;
                 }
@@ -2302,6 +2319,8 @@ private:
     // Row 98(2) (owner 07:40 UTC 2026-11-17): a held gimmick event another player played sets our asker's result
     // outputs (coop_event_result.h) instead of replaying it here; only with live events on (in a session).
     CoopEventResult::Setter event_result_;
+    // The trigger guards' wait last logged (coop_event_result.h): placement keys, flags (hook thread).
+    std::pair<std::size_t, std::size_t> trigger_wait_logged_{0, 0};
     // Chat notices, on unless LICHII_COOP_NOTIFY=0 (docs/setup.md).
     bool notify_ = EnvString("LICHII_COOP_NOTIFY") != "0";
     bool map_refresh_ = false;  // LICHII_COOP_MAP_REFRESH=1 (coop_map_refresh.h)

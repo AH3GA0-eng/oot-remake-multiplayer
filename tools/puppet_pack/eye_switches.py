@@ -140,6 +140,16 @@ TRANSIENT_INPUTS = ("isSpawnAct", "IsSpawnAct")
 TRANSIENT_ACTORS = re.compile(r"AirWall|^Area$")
 
 
+def _leaf(kind, what, plug, neg, under_or):
+    """A trigger leaf kept for trigger_guards(): (kind, name, placement hash or 0, plug, negated, under an OR, place,
+    the placements its Reference links name (a silver rupee counter's tokens))."""
+    if kind != "actor":
+        return (kind, what, 0, plug, neg, under_or, (), ())
+    links = tuple(sorted(_int(k["Dst"]) for k in what.get("Links", []) or [] if k.get("Name") == "Reference"))
+    return ("actor", str(what.get("Gyaml")), _int(what["Hash"]) if "Hash" in what else 0, plug, neg, under_or,
+            _place(what), links)
+
+
 def switch_events(romfs, dicts=None, wiring=None, askers=None):
     """(lines, guards, extras), each sorted.
 
@@ -357,7 +367,8 @@ def switch_events(romfs, dicts=None, wiring=None, askers=None):
                         askers[(str(event), scene, _place(asker))] = {
                             "actor": str(asker.get("Gyaml")), "outputs": per,
                             "results": sorted({r for v in per.values() for r in v}),
-                            "delete": sorted({w for k, w, _, ng, _ in delete if k == "flag" and not ng})}
+                            "delete": sorted({w for k, w, _, ng, _ in delete if k == "flag" and not ng}),
+                            "trigger": sorted({_leaf(k, w, plug, ng, uo) for k, w, plug, ng, uo in trigger})}
                     switches = [t for t in trigger if t[0] == "actor" and SWITCH.match(str(t[1].get("Gyaml", ""))) and t[2]]
                     if not switches:
                         continue
@@ -462,6 +473,102 @@ def asker_class(key, wire, shared):
     return ("live", why) if cls == "A" else ("asker", why)
 
 
+# An actor's trigger plug that a kill rises (the object sync's shared kills and removes, docs/objects.md).
+KILL_PLUGS = ("Dead", "IsDeadNotDelay", "IsDeathEventPlay")
+SILVER_COUNTER = re.compile(r"^Obj_silverRupeeCounter(?:_|$)")
+
+
+def trigger_guards(askers, keep, shared, keys, one_way, plugs):
+    """(guards, proofs) for row 98(2)'s trigger guards: what another player's game can raise on our asker's
+    EventRequestTrigger, so our asker would ask the event here (a replay, review-a38-5). Every leaf of every asker's
+    trigger (both classes) is either a guard or a proof line.
+
+    guards: (kind, scene, event, flag, id, group, why), kind
+      "flag"  a shared flag the trigger reads (not negated): waits until our game has played the event;
+      "key"   a trigger actor whose saved placement key is shared (a silver rupee counter's own key): waits as a flag;
+      "token" a key the actor's state counts (a counter's tokens, its Reference links; group = the counter's key):
+              the hook keeps the largest one missing here waiting and lets the others land (a split collection), so
+              shared keys never complete our counter;
+      "kill"  an actor whose Dead (IsDeadNotDelay, IsDeathEventPlay, a negated Logic_Alive) the trigger reads, killed
+              or removed by the object sync: the largest live one of the event waits, the others die.
+    proofs: (event, scene, text) - a leaf shared state cannot raise, and why.
+    keys: the shared placement keys (coop_dungeon.cpp kKeys); one_way: shared flags whose 0 is never sent
+    (kLiveFlags); plugs: {(scene, switch name): [(place, plug)]} the switch share holds (coop_room_objects.cpp)."""
+    guards, proofs = set(), set()
+    for key in sorted(askers):
+        event, scene, _ = key
+        if keep is not None and (event, scene) not in keep:
+            continue
+        for kind, name, hash_, plug, neg, _, place, links in askers[key].get("trigger", []):
+            if kind in ("flag", "flag-once"):
+                if name not in shared:
+                    proofs.add((event, scene, f"flag {name}: not shared (each game's own)"))
+                elif kind == "flag-once":
+                    proofs.add((event, scene, f"flag {name}: read once at the room's load (UpdateOnce)"))
+                elif neg:
+                    proofs.add((event, scene, f"flag {name}: read negated: another game's 1 only lowers the trigger; "
+                                + ("its 0 is never sent (one way)" if name in one_way else
+                                   "a saved room flag the game never clears (a 0 comes only with a save load)")))
+                else:
+                    guards.add(("flag", scene, event, name, 0, 0, "a shared flag"))
+                continue
+            if kind == "node":
+                proofs.add((event, scene, f"{name}.{plug}: our own game's state (our Link, our room)"))
+                continue
+            if SILVER_COUNTER.match(name):
+                if hash_ not in keys:
+                    proofs.add((event, scene, f"{name}.{plug}: counter {hash_:#x} not shared"))
+                    continue
+                guards.add(("key", scene, event, "", hash_, 0, f"{name}'s own key"))
+                for t in links:
+                    if t in keys:
+                        guards.add(("token", scene, event, "", t, hash_, f"a token of {name}"))
+                continue
+            if plug in KILL_PLUGS or (plug == "Logic_Alive" and neg):
+                guards.add(("kill", scene, event, "", hash_, 0, f"{name}.{plug}"))
+                continue
+            if plug == "Logic_Alive":
+                proofs.add((event, scene, f"{name}.Logic_Alive: a kill or remove only lowers it"))
+                continue
+            if hash_ in keys:
+                guards.add(("key", scene, event, "", hash_, 0, f"{name}'s key"))
+                continue
+            near = [p for at, p in plugs.get((scene, name), [])
+                    if sum((a - b) ** 2 for a, b in zip(at, place)) < 1.5 ** 2]
+            if plug in near:
+                proofs.add((event, scene, f"{name}.{plug}: HELD BY THE SWITCH SHARE (not covered)"))
+            else:
+                proofs.add((event, scene, f"{name}.{plug}: each game's own (no shared flag, key, kill or switch "
+                                          "share line)"))
+    return sorted(guards), sorted(proofs)
+
+
+def shared_keys(path):
+    """The placement keys of lichii/hook/coop_dungeon.cpp's kKeys (shared one-time keys)."""
+    with open(path, encoding="utf-8") as f:
+        return {int(k, 16) for k in re.findall(r'\{0x([0-9a-f]{16}), "\w+", "\w+"\}', f.read())}
+
+
+def one_way_flags(path):
+    """The flag names of coop_dungeon.cpp's kLiveFlags (shared one way: a 0 is never sent)."""
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    at = text.find("kLiveFlags = ")
+    block = text[at: text.find("});", at)] if at >= 0 else ""
+    return set(re.findall(r'\{0x[0-9a-f]+, (?:true|false), "([A-Za-z0-9_.]+)"\}', block))
+
+
+def switch_plugs(path):
+    """{(scene, switch name): [(place, plug)]} of lichii/hook/coop_room_objects.cpp kSwitchPlugs."""
+    out = {}
+    if path and os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            for scene, name, x, y, z, plug in re.findall(
+                    r'\{"(\w+)", "(\w+)", \{([-\d.]+)f, ([-\d.]+)f, ([-\d.]+)f\}, "(\w+)"\}', f.read()):
+                out.setdefault((scene, name), []).append(((float(x), float(y), float(z)), plug))
+    return out
+
+
 def live_places(path):
     """{(event, scene)} of lichii/hook/coop_live_places.cpp."""
     text = open(path, encoding="utf-8").read()
@@ -480,6 +587,7 @@ def main(argv=None):
     ap.add_argument("--romfs", required=True)
     ap.add_argument("--places", help="coop_live_places.cpp: print only events that have a live place")
     ap.add_argument("--dungeon", help="coop_dungeon.cpp: print only guard flags that are shared")
+    ap.add_argument("--room-objects", help="coop_room_objects.cpp (the switch share's plugs; default: beside --dungeon)")
     ap.add_argument("--results", action="store_true",
                     help="print every asker of a live-place event with its result class (needs --dungeon)")
     ap.add_argument("--classify", action="store_true",
@@ -510,6 +618,16 @@ def main(argv=None):
         print("// kResultGuards (a shared flag that deletes an asker of class asker: waits until our result is set)")
         for flag, scene, event in sorted(set(guarded)):
             print(f'    {{"{flag}", "{scene}", "{event}"}},')
+        dungeon = args.dungeon or ""
+        objects = args.room_objects or os.path.join(os.path.dirname(dungeon), "coop_room_objects.cpp")
+        guards, proofs = trigger_guards(askers, keep, shared or set(), shared_keys(dungeon) if dungeon else set(),
+                                        one_way_flags(dungeon) if dungeon else set(), switch_plugs(objects))
+        print("// kTriggers (what another game can raise on our asker's trigger: waits until our game played the event)")
+        for kind, scene, event, flag, id_, group, why in guards:
+            print(f'    {{Trigger::{kind}, "{scene}", "{event}", "{flag}", {id_:#018x}, {group:#018x}}},  // {why}')
+        print("// a trigger leaf shared state cannot raise, and why")
+        for event, scene, text in proofs:
+            print(f"//   {event}: {text}")
         return 0
     if args.classify:
         rows = []

@@ -2,7 +2,7 @@
 # B's game sets that asker's outputs (no replay). B never presses a plate or shoots an eye itself.
 #! noload
 #! start coop: test warp done
-#! timeout 600
+#! timeout 900
 mark start
 warp InsideTheDekuTree Entrance
 wait 1200
@@ -41,3 +41,17 @@ wait 1500
 mark b-web
 wait 300
 mark b-end
+warp IceCavern             # 4. the silver rupee room: B beside the room-5 asker while A takes the rupees
+wait 2400
+setflag HaveEncountered_Token 1   # no first-sight token event of B's own
+wait 240
+place 12.0 108.5 -21.0     # 3 m from the asker (11.0 107.9 -24.0 / 14.9 107.9 -24.0), in room 5's rupee room
+wait 240
+toward 14.9 -24.0 10
+mark b-silver-placed
+wait 3000                  # A's four tokens, then the last one and the counter's key, come in this time
+mark b-silver-held
+wait 1500                  # A's played flag comes in this time
+mark b-silver-set
+wait 900
+mark b-silver-end

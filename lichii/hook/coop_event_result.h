@@ -65,17 +65,53 @@ bool IsLive(std::string_view event);
 // The names in `outputs` ("EventBool+EventFinish"), in order.
 std::vector<std::string_view> SplitOutputs(std::string_view outputs);
 
+// Trigger guards (review-a38-5): the game's OWN asker of an event asks it when its EventRequestTrigger rises, and
+// shared state can raise it: the other player's game plays the event and its state comes here (its shared flags, its
+// keys, its kills), our asker asks the event too = a replay that binds our Link. Generated from every asker's trigger
+// leaves (both classes; eye_switches.py --results, which also prints why every other leaf cannot rise from shared
+// state). Each waits in its scene until our game has played the event (`HavePlayedEvent.<event>`: our asker is then
+// disarmed; for class asker it lands once our result is set, for class live it lands live).
+// - flag: a shared flag the trigger reads (not negated).
+// - key: a trigger actor's shared placement key (a silver rupee counter's own key, an ice block's).
+// - token: a key the counter `group` counts (its tokens). A split collection still works: only the LARGEST token
+//   still missing here waits, the others land, so shared keys alone never complete our counter (no same-frame race:
+//   the one that waits does not depend on which arrive). Our Link taking that token itself completes it: our own play.
+// - kill: an actor whose death (Dead, IsDeadNotDelay, IsDeathEventPlay, a negated Logic_Alive) the trigger reads; the
+//   object sync's kill or remove of the LARGEST live one of the event waits (KillKeepers), the others die.
+struct Trigger {
+    enum Kind : std::uint8_t { flag, key, token, kill };
+    Kind kind;
+    std::string_view scene;
+    std::string_view event;
+    std::string_view name;  // kind flag: the flag's name
+    std::uint64_t id;       // key, token: the placement key; kill: the actor's placement hash
+    std::uint64_t group;    // token: its counter's key
+};
+std::span<const Trigger> Triggers();
+
 // What the flag hold does this frame (pure): `released` lands although held otherwise (the played flag, the result
 // guards and the eye switch guards of every event whose result we set this visit); `waiting` is held (the result
-// guards of `scene` whose event's result is not set here this visit and that our game has not played).
+// guards of `scene` whose event's result is not set here this visit and that our game has not played; the flag
+// triggers of `scene` whose event our game has not played); `waiting_keys` are placement keys held (the key triggers
+// and each counter's largest missing token, by `have_key`: our game's value of a key; none given: every token counts
+// as missing).
 struct Hold {
     std::vector<std::uint32_t> released;
     std::vector<std::uint32_t> waiting;
+    std::vector<std::uint64_t> waiting_keys;
     bool Releases(std::uint32_t hash) const;
     bool Waits(std::uint32_t hash) const;
+    bool WaitsKey(std::uint64_t key) const;
 };
 Hold HoldFor(std::string_view scene, const std::set<std::string>& applied,
-             const std::function<bool(const std::string&)>& played);
+             const std::function<bool(const std::string&)>& played,
+             const std::function<bool(std::uint64_t)>& have_key = nullptr);
+
+// The kill triggers' keepers in `scene` (pure): for each event our game has not played, the largest placement hash
+// of its kill actors that `alive` says is alive in our walk. The object sync keeps a kill or remove of a keeper until
+// it is no keeper any more (the event played here, or a scene change).
+std::set<std::uint64_t> KillKeepers(std::string_view scene, const std::function<bool(std::uint64_t)>& alive,
+                                    const std::function<bool(const std::string&)>& played);
 
 // Frames an output must read back 1 (after our set, or already) to count as set; and how long one event is tried.
 inline constexpr int kApplyFrames = 3;
