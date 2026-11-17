@@ -1,4 +1,4 @@
-From 69111e7000f0b6e5f084a5d4bae442babeb0bcea Mon Sep 17 00:00:00 2001
+From 030f2078c51c4e30edb347530b61475308d2d83b Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Thu, 12 Nov 2026 13:18:16 -0900
 Subject: [PATCH] Co-op title menu: the title screen's hooks, the pad first,
