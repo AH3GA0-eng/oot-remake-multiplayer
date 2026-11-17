@@ -327,6 +327,9 @@ inline constexpr std::uint8_t loading = 1u << 1;
 inline constexpr std::uint8_t in_cutscene = 1u << 2;
 inline constexpr std::uint8_t in_menu = 1u << 3;
 inline constexpr std::uint8_t dead = 1u << 4;
+// Not really here: a player who cannot fight or be fought now (PvP never hits them, and with the
+// puppets perceived no enemy picks their puppet: coop_pvp.cpp Guarded, coop_dbno_body.h UnseenWhy).
+inline constexpr std::uint8_t away = paused | loading | in_cutscene | in_menu | dead;
 }  // namespace status
 
 struct PlayerStatus {

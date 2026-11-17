@@ -247,7 +247,7 @@ One path for every kind of hit, as TotK's `TOTK_SYNC_DAMAGE` found worked best (
 - The owner takes the amount off its enemy (life at least 0) and sends a sample at once. Its life change starts the fight lock, but does not move the enemy (above).
 - Hits that change no life (a Deku nut's stun, a boomerang's stun, a hookshot pull) are not seen by a life read. They need the cause sent instead: `DAMAGE` with amount 0 and the cause, applied by whatever the game does for that cause. Not found yet.
 - Projectiles hit only on their maker's screen, so a remote player's arrow reaches a copy on the maker's game, and that game forwards the drop. Copies of projectiles never hit.
-- Players are not hurt by each other, and puppets have no life. Enemy attacks on a puppet do nothing; an enemy attacks the player of its owner's game. Whether enemies should target puppets is a later question.
+- Puppets have no life (players hurt each other only with PvP on). Enemies do target puppets (issue 150, on by default since perception-on: the pack gives each puppet a perception emitter, [puppet.md](puppet.md)): the owner's enemy may pick another player's puppet by the game's own rules. Its attack on a puppet itself does nothing (no body); the chase rule below hands the enemy to that player, whose game then fights its own Link. A puppet whose player cannot be fought now (downed, spectating, paused, in a menu, loading, in their own event, dead) is not perceived at all ([dungeons-boss.md](dungeons-boss.md), "Every player is a target").
 
 ## The hook side (first cut)
 
