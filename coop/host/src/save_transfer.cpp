@@ -462,8 +462,12 @@ bool decide_again(bool decided, bool over, bool in_game) {
 FolderChoice folder_choice(std::optional<bool> env, bool can_switch, bool connected, bool is_host, bool in_game) {
   if (!can_switch) return env && *env ? FolderChoice::coop : FolderChoice::own;
   if (!connected) return FolderChoice::wait;
-  if (is_host || in_game) return FolderChoice::own;
-  return FolderChoice::coop;
+  if (is_host) return FolderChoice::own;
+  return in_game ? FolderChoice::coop_later : FolderChoice::coop;
+}
+
+bool rejoined_in_game(bool decided, bool ended, bool connected, bool in_game) {
+  return decided && ended && connected && in_game;
 }
 
 }  // namespace coop::host::save

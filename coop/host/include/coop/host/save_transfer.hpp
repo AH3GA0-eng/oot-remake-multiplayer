@@ -299,17 +299,26 @@ WriteResult write_coop_save(const std::filesystem::path& coop_dir, const SaveSlo
 // (the join helper) and an old address may be a friend's while this player now hosts.
 // - Where the save folder can be switched while the game runs (Hookshot's patch 0008): the session decides at the
 //   first connection that has a host, whatever the start was (the title menu can Host or Join after any start): a guest
-//   plays from the co-op folder, the host from its own. A game that already has a save loaded (Link in the game) keeps
-//   its own: a switch then would mix two saves. `env` is not used there.
+//   plays from the co-op folder, the host from its own. A guest that already has a save loaded (Link in the game: a
+//   Join from the pause menu, a rejoin during play) is `coop_later`: it asks for the host's save all the same, but
+//   its folder is not touched under the game being played (that would mix two saves): the save is written and
+//   switched to on the title's menu (pending_step), and the chat tells the player to go there. Before, such a guest
+//   kept its own saves and never asked, so it had only the shared flags and nothing of the host's unshared state
+//   (player reports 107 and 120). `env` is not used there.
 // - Where it is fixed when the game starts (the emulator): `env`, LICHII_COOP_HOST_SAVE when set (play.ps1: 1 for a
 //   join, by address or invite; 0 for a host; or coop-options.ini), else its own.
-enum class FolderChoice { wait, own, coop };
+enum class FolderChoice { wait, own, coop, coop_later };
 FolderChoice folder_choice(std::optional<bool> env, bool can_switch, bool connected, bool is_host, bool in_game);
 // Where the folder can be switched, the choice is per SESSION (the title menu: Join, back to the title, then Host in
 // the same run plays from its own saves again): a choice made goes when the session that made it is over (`over`: a
 // new client, or the client idle, stopped or refused; a reconnect is not), but never with a save loaded (Link in
 // the game: no switch then).
 bool decide_again(bool decided, bool over, bool in_game);
+// A choice kept through a session's end because a save was loaded (decide_again says no), and now a NEW session is
+// connected while Link is still in the game (a rejoin from the pause menu, or the player now hosts): that session
+// chooses again at once, without touching the folder (folder_choice's `own` for the host, `coop_later` for a guest).
+// `ended`: the session the choice was made for was seen over since.
+bool rejoined_in_game(bool decided, bool ended, bool connected, bool in_game);
 
 // A guest's pending switch to the co-op folder (Hookshot), each frame: `go` only on the title's menu with the host's
 // save in and no file loaded (never during a load, where a re-mount changes the folder under the game's read: the
@@ -370,12 +379,19 @@ ResyncCheck resync_check(bool connected_guest, bool can_switch, bool coming);
 //   Success.
 class GuestNotices {
  public:
+  // `in_game`: Link is in the game when these lines start (a join or a Resync during play): that file was loaded
+  // before any host's save was asked for, so it is never "too early".
+  explicit GuestNotices(bool in_game = false) : was_in_game_(in_game) {}
   static constexpr std::string_view kLoading = "Host save loading, don't load a save.";
   static constexpr std::string_view kSuccessTitle = "Success, load any save.";
   static constexpr std::string_view kSuccessPlaying = "Success, load any save for changes to occur.";
   static constexpr std::string_view kTooEarly =
       "That save loaded before the host's save was in: go back to the title and load a save after Success.";
   static constexpr std::string_view kGaveUp = "The host's save did not come: play on, or join again to get it.";
+  // A guest that joined with a file loaded (FolderChoice::coop_later).
+  static constexpr std::string_view kJoinedPlaying =
+      "You joined with a file loaded: the host's save is coming. To play from the host's progress, go back to the "
+      "title and load a save once the chat says Success.";
   // A part of transfer `transfer_id` (of `count` parts) came: kLoading when it is a new transfer of a save, else "".
   // A "no save" answer is one part (pack_no_save: a few bytes); a save slot is about 170 KB, many parts.
   std::string on_part(std::uint32_t transfer_id, std::size_t count);

@@ -529,7 +529,57 @@ TEST_CASE("save transfer: which save folder a game plays from (issue 167)") {
   CHECK(folder_choice(std::nullopt, true, true, false, false) == FolderChoice::coop);   // a title-menu Join or an invite
   CHECK(folder_choice(std::nullopt, true, true, true, false) == FolderChoice::own);     // the host, even with an old
                                                                                          // friend's address in coop.ini
-  CHECK(folder_choice(std::nullopt, true, true, false, true) == FolderChoice::own);     // joined with a save loaded
+  // a guest that joins with a save loaded (the pause menu's Join) asks for the host's save too: before, it kept its
+  // own saves and never asked, so nothing of the host's unshared state reached it (player reports 107, 120)
+  CHECK(folder_choice(std::nullopt, true, true, false, true) == FolderChoice::coop_later);
+  CHECK(folder_choice(std::nullopt, true, true, true, true) == FolderChoice::own);      // the host, a save loaded
+  CHECK(folder_choice(std::nullopt, true, false, false, true) == FolderChoice::wait);
+  // the emulator's fixed folder never changes under a game: the variable only
+  CHECK(folder_choice(std::nullopt, false, true, false, true) == FolderChoice::own);
+  CHECK(folder_choice(true, false, true, false, true) == FolderChoice::coop);
+}
+
+TEST_CASE("save transfer: a guest that joins with a file loaded asks and gets the save on the title (reports 107, 120)") {
+  using N = save::GuestNotices;
+  // The folder played from is not touched: the slot that came waits (pending_step) until the title's menu is up.
+  const Bytes packed = save::pack(Slot(4));
+  save::GuestSession s;
+  N n{true};   // (Link is in the game when the session starts)
+  CHECK(n.on_in_game(true).empty());            // the file played was loaded before the ask: never "too early"
+  s.asked = true;
+  const auto parts = save::split(packed, 31, proto::SaveReason::join, 2);
+  REQUIRE(parts.size() > 1);
+  CHECK(n.on_part(31, parts.size()) == N::kLoading);
+  CHECK(n.on_in_game(true).empty());
+  for (const auto& part : parts) {
+    save::note_part(s, part.transfer_id, 1);
+    if (s.assembler.add(Relayed(part, 1), 1) == save::Assembler::Result::complete) s.unwritten = save::unpack(s.assembler.take());
+  }
+  REQUIRE(s.unwritten);
+  CHECK_FALSE(save::reask_due(s, 1 + save::kGuestReaskUs));   // the save is in: no more asks while it waits
+  using save::PendingStep;
+  CHECK(save::pending_step(true, false, true) == PendingStep::keep);   // in the game: nothing changes
+  CHECK(save::pending_step(true, true, true) == PendingStep::keep);    // (the title's mark with Link still there)
+  CHECK(save::pending_step(true, true, false) == PendingStep::go);     // back on the title: written and switched to
+  CHECK(n.on_in_game(false).empty());
+  CHECK(n.on_ready(false) == N::kSuccessTitle);
+  CHECK(n.on_in_game(true).empty());            // loading the host's save after Success
+  // The line the guest reads when it joins says where the save is taken.
+  CHECK(N::kJoinedPlaying.find("go back to the title") != std::string_view::npos);
+  CHECK(N::kJoinedPlaying.find("Success") != std::string_view::npos);
+}
+
+TEST_CASE("save transfer: a new session with a file still loaded chooses again without the title") {
+  using save::rejoined_in_game;
+  // The last session ended during play (decide_again keeps its choice: no switch under a game being played); the
+  // player joins or hosts again from the pause menu. Before, the old choice stayed and the new session had none: a
+  // guest did not ask, and Resync from host said "not a guest in a session".
+  CHECK_FALSE(save::decide_again(true, true, true));
+  CHECK(rejoined_in_game(true, true, true, true));
+  CHECK_FALSE(rejoined_in_game(true, false, true, true));   // the same session (a reconnect is not an end)
+  CHECK_FALSE(rejoined_in_game(true, true, false, true));   // not connected to a host yet
+  CHECK_FALSE(rejoined_in_game(true, true, true, false));   // on the title: decide_again's reset decides
+  CHECK_FALSE(rejoined_in_game(false, true, true, true));   // nothing chosen yet: the first choice decides
 }
 
 TEST_CASE("save transfer: a co-op folder is emptied of slots before the host's save comes (issue 167)") {

@@ -806,6 +806,36 @@ TEST_CASE("hookshot: typing in a co-op field keeps the keyboard from the menu (p
     }
 }
 
+TEST_CASE("hookshot: a guest that joins with a file loaded asks for the host's save and touches no folder") {
+    // Player reports 107 and 120: one path with Resync from host (AskAtTitle), and nothing of the folder changes
+    // under the game being played (no re-mount, no slots taken out): the title's PendingFrame does both.
+    const std::string save = ReadFile(kRepo / "lichii" / "hook" / "coop_save.cpp");
+    const auto body = [&](const char* head) {
+        const auto at = save.find(head);
+        REQUIRE(at != std::string::npos);
+        const auto end = save.find("
+}
+", at);
+        REQUIRE(end != std::string::npos);
+        return save.substr(at, end - at);
+    };
+    const std::string in_game = body("void DecideInGame(coop::net::Client& client) {");
+    CHECK(in_game.find("AskAtTitle();") != std::string::npos);
+    CHECK(in_game.find("Remount") == std::string::npos);
+    CHECK(in_game.find("clear_coop_slots") == std::string::npos);
+    CHECK(in_game.find("TestOwnSave()") != std::string::npos);   // (the autotests' games keep their scenario's save)
+    CHECK(in_game.find("save::GuestNotices::kJoinedPlaying") != std::string::npos);
+    const std::string ask = body("void AskAtTitle() {");
+    CHECK(ask.find("Remount") == std::string::npos);
+    CHECK(ask.find("g_pending = save::coop_dir_of(own);") != std::string::npos);
+    CHECK(ask.find("save::GuestNotices{g_in_game}") != std::string::npos);
+    CHECK(body("void Resync(bool connected_guest) {").find("AskAtTitle();") != std::string::npos);
+    // Both choices reach it: the first one of a run, and a new session after one that ended during play.
+    const std::string frame = body("void SwitchFrame(coop::net::Client& client) {");
+    CHECK(frame.find("choice == save::FolderChoice::coop_later") != std::string::npos);
+    CHECK(frame.find("save::rejoined_in_game(g_decided, g_ended, connected, g_in_game)") != std::string::npos);
+}
+
 TEST_CASE("hookshot: every switch of the save folder marks the game's save list for a re-read (player report 124)") {
     // One path: the only call of the exe's remount is in CoopSave's RemountLocked, which marks the list stale; the
     // title's step has the game re-read it (its own SeqOneshotRequestLoadAndSerializeCaption body).

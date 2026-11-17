@@ -79,6 +79,9 @@ bool g_title_up = false;   // the title's menu is up (NoteTitle, Hookshot's titl
 // the hold ends: a save that comes in during play is kept and switched to back on the title (PendingFrame).
 bool g_suspended = false;
 const void* g_decided_client = nullptr;   // the session's client it was made for
+// The session the choice was made for was seen over while a file was loaded (the choice is kept then: no switch under
+// a game being played). A new session connected in that state chooses again (save::rejoined_in_game).
+bool g_ended = false;
 bool g_live = false;   // decided and the session not over (SessionLive)
 // Player report 124: the save folder was switched (RemountLocked) and the game's own save list (its caption manager,
 // which the title's Continue and Load read) still shows the old folder's saves. Taken by the title's step
@@ -132,6 +135,36 @@ void NoteSaveDirLocked(const fs::path& dir);
 bool RemountLocked(const fs::path& dir);
 save::WriteResult WriteSlotTo(const fs::path& dir, const save::SaveSlot& slot, bool played_from = true);
 void PendingFrame();
+void AskAtTitle();
+
+// Under g_mutex: a session's choice with a file loaded (a Join from the pause menu, a rejoin during play): nothing
+// of the folder is touched under the game being played. A guest asks for the host's save as on any join; it is
+// written and switched to on the title's menu (AskAtTitle), and the chat says so.
+void DecideInGame(coop::net::Client& client) {
+    g_decided = true;
+    g_decided_client = &client;
+    g_ended = false;
+    if (client.is_host()) {
+        g_use = false;
+        g_guest = save::GuestSession{};   // (an earlier session's host's save, still waiting: not this game's)
+        g_lines = save::GuestNotices{g_in_game};
+        g_pending.clear();
+        g_suspended = false;
+        LOG_INFO(Core, "coop: save: the host (a file is loaded): this game keeps the saves it plays ({})",
+                 g_dir.string());
+        return;
+    }
+    if (TestOwnSave()) {
+        g_use = false;
+        LOG_INFO(Core, "coop: save: LICHII_COOP_TEST_OWN_SAVE: this guest keeps its own saves (a test)");
+        return;
+    }
+    AskAtTitle();
+    LOG_INFO(Core, "coop: save: a guest that joined with a file loaded: asking the host for its save; it is written "
+                   "to {} and switched to on the title's menu, the game played now keeps {}",
+             g_pending.string(), g_dir.string());
+    Say(std::string(save::GuestNotices::kJoinedPlaying));
+}
 
 // Under g_mutex, each frame where the folder can be switched (Hookshot): the folder as mounted, and the choice.
 void SwitchFrame(coop::net::Client& client) {
@@ -141,15 +174,24 @@ void SwitchFrame(coop::net::Client& client) {
     }
     {
         const auto st = client.state();
-        const bool over = &client != g_decided_client || st == coop::net::State::idle ||
-                          st == coop::net::State::stopped || st == coop::net::State::refused;
+        bool over = &client != g_decided_client || st == coop::net::State::idle ||
+                    st == coop::net::State::stopped || st == coop::net::State::refused;
         if (save::decide_again(g_decided, over, g_in_game)) {
             g_decided = false;   // the next session (the title menu's Host after a Join, a rejoin) decides again
             g_guest = save::GuestSession{};   // and asks for the host's save again: everything of the last one goes
             g_lines = save::GuestNotices{};
             g_pending.clear();
             g_suspended = false;
+            g_ended = false;
             LOG_INFO(Core, "coop: save: the session is over: the next one chooses the save folder again");
+        } else if (g_decided && over) {
+            g_ended = true;   // (a file is loaded: the choice is kept for the title, or for a rejoin below)
+        }
+        const bool connected = st == coop::net::State::connected && client.host_number() != 0;
+        if (!g_dir.empty() && save::rejoined_in_game(g_decided, g_ended, connected, g_in_game)) {
+            LOG_INFO(Core, "coop: save: a new session with a file loaded: it chooses again");
+            DecideInGame(client);
+            over = false;
         }
         g_live = g_decided && !over;   // (decided below in this frame: on from the next one)
     }
@@ -157,6 +199,11 @@ void SwitchFrame(coop::net::Client& client) {
         const bool connected = client.state() == coop::net::State::connected && client.host_number() != 0;
         auto choice = save::folder_choice(std::nullopt, true, connected, connected && client.is_host(), g_in_game);
         if (choice == save::FolderChoice::wait) return;
+        if (choice == save::FolderChoice::coop_later) {
+            DecideInGame(client);
+            PendingFrame();
+            return;
+        }
         if (choice == save::FolderChoice::coop && TestOwnSave()) {
             LOG_INFO(Core, "coop: save: LICHII_COOP_TEST_OWN_SAVE: this guest keeps its own saves (a test)");
             choice = save::FolderChoice::own;
@@ -184,10 +231,8 @@ void SwitchFrame(coop::net::Client& client) {
             LOG_INFO(Core, "coop: save: a guest: this game plays from the co-op save folder (the host's save) in {} "
                            "once the host's save is written there; until then it stays on {}",
                      g_pending.string(), g_dir.string());
-        } else {
-            LOG_INFO(Core, "coop: save: {}", connected && client.is_host()
-                                                 ? "the host: this game uses its own saves"
-                                                 : "a save is loaded already: this game keeps its own saves");
+        } else if (connected && client.is_host()) {
+            LOG_INFO(Core, "coop: save: the host: this game uses its own saves");
         }
     }
     PendingFrame();
@@ -222,6 +267,19 @@ void PendingFrame() {
     }
     LOG_INFO(Core, "coop: save: now playing from the co-op save folder {}", to.string());
     Say(g_lines.on_ready(g_in_game));
+}
+
+// Under g_mutex: THE one way a guest asks for the host's save without touching the folder it plays from (a join
+// with a file loaded, Resync from host): its save session starts again, so the next OnFrame asks the host, the parts
+// come, and the slot waits for the title's menu (PendingFrame), where it is written into the co-op folder and
+// switched to. Its own saves are never touched.
+void AskAtTitle() {
+    const fs::path own = save::is_coop_dir(g_dir) ? save::own_dir_of(g_dir) : g_dir;
+    g_guest = save::GuestSession{};
+    g_lines = save::GuestNotices{g_in_game};   // (the file played now was loaded before this ask: never "too early")
+    g_use = true;
+    g_pending = save::coop_dir_of(own);
+    g_suspended = false;
 }
 
 // Under g_mutex: THE one way this game's save folder is switched (Hookshot): every switch (back to its own folder for
@@ -625,12 +683,7 @@ void Resync(bool connected_guest) {
     case save::ResyncCheck::go:
         break;
     }
-    const fs::path own = save::is_coop_dir(g_dir) ? save::own_dir_of(g_dir) : g_dir;
-    g_guest = save::GuestSession{};   // asks again at once (OnFrame), as on joining
-    g_lines = save::GuestNotices{};
-    g_use = true;
-    g_pending = save::coop_dir_of(own);   // written and switched to on the title's menu (PendingFrame)
-    g_suspended = false;
+    AskAtTitle();   // asks again at once (OnFrame), as on joining
     LOG_INFO(Core, "coop: save: resync from host: asking the host for its save again ({}; switched to on the "
                    "title's menu)", g_in_game ? "a file is loaded" : "no file loaded");
     Say(g_in_game ? "Resync from host: the host's save is coming. Go back to the title and load it once the chat "
