@@ -1,0 +1,258 @@
+"""Tests for the study tools (nso.py, vtables.py, callers.py). Synthetic data only: no game files.
+
+    python tools/game_scan/tests/test_game_scan.py
+"""
+import contextlib
+import io
+import os
+import struct
+import sys
+import tempfile
+import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import callers  # noqa: E402
+import nso  # noqa: E402
+import vtables  # noqa: E402
+
+B = nso.BASE
+TEXT, RO, DATA, SEG = 0x0, 0x1000, 0x2000, 0x1000
+
+# Code (module offsets)
+NAME_FN, CTOR, CREATE, CALLER = 0x100, 0x200, 0x300, 0x400
+SCREEN_FNS = (0x500, 0x510, 0x520)
+TYPED_FN, PURE_FN = 0x530, 0x540
+# Read-only data
+MOD0, NAME_STR, TYPE_NAME, DYNSTR, DYNSYM, DYNAMIC, RELA, RELR = (
+    0x1000, 0x1100, 0x1120, 0x1200, 0x1300, 0x1400, 0x1500, 0x1600)
+# Data: four vtables, a type info object, a global pointer and a global value
+FACTORY_VT, SCREEN_VT, TYPED_VT, PURE_VT = 0x2010, 0x2030, 0x2058, 0x2070
+TYPE_INFO, GLOBAL_PTR, GLOBAL_VAL = 0x2100, 0x2200, 0x2208
+
+
+def adrp(rd, pc, target):
+    imm = (target >> 12) - (pc >> 12)
+    return 0x90000000 | (imm & 3) << 29 | ((imm >> 2) & 0x7FFFF) << 5 | rd
+
+
+def add(rd, rn, imm):
+    return 0x91000000 | imm << 10 | rn << 5 | rd
+
+
+def ldr64(rt, rn, off):
+    return 0xF9400000 | (off // 8) << 10 | rn << 5 | rt
+
+
+def str64(rt, rn, off):
+    return 0xF9000000 | (off // 8) << 10 | rn << 5 | rt
+
+
+def bl(pc, target):
+    return 0x94000000 | ((target - pc) // 4) & 0x3FFFFFF
+
+
+RET = 0xD65F03C0
+
+
+def code(img, at, words):
+    for k, w in enumerate(words):
+        struct.pack_into("<I", img, at + 4 * k, w)
+
+
+def make_image():
+    """A tiny main: text, ro and data as one module image (offsets from the module's start)."""
+    img = bytearray(3 * SEG)
+    struct.pack_into("<I", img, 4, MOD0)
+    # A name function, a constructor that stores the screen's vtable, a factory function that calls it,
+    # and a caller that calls the constructor, reads it through a global pointer and reads a global.
+    code(img, NAME_FN, [adrp(0, B + NAME_FN, B + NAME_STR), add(0, 0, NAME_STR & 0xFFF), RET])
+    code(img, CTOR, [adrp(8, B + CTOR, B + SCREEN_VT), add(8, 8, SCREEN_VT & 0xFFF), str64(8, 0, 0), RET])
+    code(img, CREATE, [bl(CREATE, CTOR), RET])
+    code(img, CALLER, [bl(CALLER, CTOR), adrp(9, B + CALLER + 4, B + GLOBAL_PTR),
+                       ldr64(10, 9, GLOBAL_PTR & 0xFFF), ldr64(11, 9, GLOBAL_VAL & 0xFFF), RET])
+    for f in SCREEN_FNS + (TYPED_FN, PURE_FN):
+        code(img, f, [RET])
+    img[NAME_STR:NAME_STR + 11] = b"TestScreen\0"
+    img[TYPE_NAME:TYPE_NAME + 14] = b"N4test5ThingE\0"
+    names = b"\0__cxa_pure_virtual\0_ZTVN10__cxxabiv117__class_type_infoE\0"
+    img[DYNSTR:DYNSTR + len(names)] = names
+    struct.pack_into("<IBBHQQ", img, DYNSYM + 24, 1, 0x12, 0, 0, 0, 0)    # __cxa_pure_virtual, imported
+    struct.pack_into("<IBBHQQ", img, DYNSYM + 48, 20, 0x11, 0, 0, 0, 0)   # the class_type_info vtable, imported
+    # Pointers the RELR table relocates (their stored values are module offsets).
+    relr = []
+
+    def ptr(at, value):
+        struct.pack_into("<Q", img, at, value)
+        relr.append(at)
+
+    ptr(FACTORY_VT, CREATE)
+    ptr(FACTORY_VT + 8, NAME_FN)
+    for k, f in enumerate(SCREEN_FNS):
+        ptr(SCREEN_VT + 8 * k, f)
+    ptr(TYPED_VT - 8, TYPE_INFO)
+    ptr(TYPED_VT, TYPED_FN)
+    ptr(PURE_VT, PURE_FN)
+    ptr(GLOBAL_PTR, CTOR)
+    struct.pack_into("<Q", img, GLOBAL_VAL, 1234)
+    for k, at in enumerate(relr):
+        struct.pack_into("<Q", img, RELR + 8 * k, at)
+    rela = [(TYPE_INFO, 2 << 32 | nso.R_AARCH64_ABS64, 16),          # the type info's vtable (an import)
+            (TYPE_INFO + 8, nso.R_AARCH64_RELATIVE, TYPE_NAME),      # its name
+            (PURE_VT + 8, 1 << 32 | nso.R_AARCH64_ABS64, 0)]         # a pure virtual slot
+    for k, r in enumerate(rela):
+        struct.pack_into("<QQq", img, RELA + 24 * k, *r)
+    dyn = [(nso.DT_RELR, RELR), (nso.DT_RELRSZ, 8 * len(relr)), (nso.DT_RELA, RELA), (nso.DT_RELASZ, 24 * len(rela)),
+           (nso.DT_SYMTAB, DYNSYM), (nso.DT_STRTAB, DYNSTR), (nso.DT_NULL, 0)]
+    for k, (tag, val) in enumerate(dyn):
+        struct.pack_into("<qQ", img, DYNAMIC + 16 * k, tag, val)
+    img[MOD0:MOD0 + 4] = b"MOD0"
+    struct.pack_into("<i", img, MOD0 + 4, DYNAMIC - MOD0)
+    return img
+
+
+def literal_block(raw):
+    """An LZ4 block holding `raw` as literals only (valid: the last sequence has no match)."""
+    n = len(raw)
+    out = bytearray([0xF0 if n >= 15 else n << 4])
+    if n >= 15:
+        rest = n - 15
+        while rest >= 255:
+            out.append(255)
+            rest -= 255
+        out.append(rest)
+    return bytes(out) + raw
+
+
+def make_nso(compress_text=False):
+    img = make_image()
+    segs = [img[TEXT:TEXT + SEG], img[RO:RO + SEG], img[DATA:DATA + SEG]]
+    stored = [literal_block(segs[0]) if compress_text else segs[0], segs[1], segs[2]]
+    head = bytearray(0x100)
+    head[0:4] = b"NSO0"
+    struct.pack_into("<I", head, 0x0C, 1 if compress_text else 0)
+    off = len(head)
+    for k, (mem, raw, body) in enumerate(zip((TEXT, RO, DATA), segs, stored)):
+        struct.pack_into("<III", head, 0x10 + 0x10 * k, off, mem, len(raw))
+        struct.pack_into("<I", head, 0x60 + 4 * k, len(body))
+        off += len(body)
+    struct.pack_into("<I", head, 0x3C, 0x100)
+    head[0x40:0x48] = bytes.fromhex("0123456789abcdef")
+    return bytes(head) + b"".join(stored)
+
+
+class NsoTest(unittest.TestCase):
+    def test_loads_and_relocates(self):
+        m = nso.Main(make_nso())
+        self.assertEqual(m.text, (B, B + SEG))
+        self.assertEqual(m.data, (B + DATA, B + DATA + SEG))
+        self.assertEqual(m.bss, (B + DATA + SEG, B + DATA + SEG + 0x100))
+        self.assertEqual(m.u64(B + SCREEN_VT), B + SCREEN_FNS[0])           # RELR
+        self.assertEqual(m.u64(B + TYPE_INFO + 8), B + TYPE_NAME)           # RELA relative
+        self.assertEqual(m.imports[B + PURE_VT + 8], "__cxa_pure_virtual")
+        self.assertEqual(m.imports[B + TYPE_INFO], "_ZTVN10__cxxabiv117__class_type_infoE+16")
+        self.assertEqual(m.cstr(B + NAME_STR), "TestScreen")
+        self.assertTrue(m.build_id.startswith("0123456789abcdef"))
+
+    def test_compressed_text(self):
+        plain, packed = nso.Main(make_nso()), nso.Main(make_nso(compress_text=True))
+        self.assertEqual(plain.image, packed.image)
+
+    def test_lz4_match(self):
+        # One literal 'a', a match of 8 at offset 1 (overlapping), then a last literal 'b'.
+        self.assertEqual(nso.lz4_block(bytes([0x14, 0x61, 1, 0, 0x10, 0x62]), 10), b"aaaaaaaaab")
+
+    def test_not_an_nso(self):
+        with self.assertRaises(nso.NsoError):
+            nso.Main(b"ELF" + bytes(0x200))
+
+    def test_addresses(self):
+        self.assertEqual(nso.parse_addr("main+0x200"), B + 0x200)
+        self.assertEqual(nso.parse_addr("f_80020200"), 0x80020200)
+        self.assertEqual(nso.parse_addr("0x80020200"), 0x80020200)
+        self.assertEqual(nso.parse_addr("80020200"), 0x80020200)
+
+
+class VtablesTest(unittest.TestCase):
+    def setUp(self):
+        self.m = nso.Main(make_nso())
+        self.vts = {v.addr - B: v for v in vtables.find_vtables(self.m)}
+        self.names = vtables.name_all(self.m, list(self.vts.values()))
+
+    def test_finds_every_vtable(self):
+        self.assertEqual(sorted(self.vts), [FACTORY_VT, SCREEN_VT, TYPED_VT, PURE_VT])
+        self.assertEqual(len(self.vts[SCREEN_VT].slots), 3)
+        self.assertEqual(self.vts[PURE_VT].slots, [B + PURE_FN, "__cxa_pure_virtual"])
+
+    def test_name_function(self):
+        self.assertEqual(self.names, {B + NAME_FN: "TestScreen"})
+        f = self.vts[FACTORY_VT]
+        self.assertEqual(f.names, [(1, "TestScreen")])
+        self.assertEqual(f.how, "name function in slot 1")
+
+    def test_made_by_factory(self):
+        s = self.vts[SCREEN_VT]
+        self.assertEqual(s.names, [(-1, "TestScreen")])
+        self.assertEqual(s.how, f"made by 0x{B + FACTORY_VT:x}")
+
+    def test_type_info(self):
+        t = self.vts[TYPED_VT]
+        self.assertEqual(t.names, [(-1, "test::Thing")])
+        self.assertEqual(t.how, "type info")
+
+    def test_demangle(self):
+        self.assertEqual(vtables.demangle("St9exception"), "std::exception")
+        self.assertEqual(vtables.demangle("N3gmd3FooE"), "gmd::Foo")
+        self.assertEqual(vtables.demangle("NSt3__14pairIiiEE"), "NSt3__14pairIiiEE")   # templates stay as they are
+
+    def test_cli(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "main")
+            with open(path, "wb") as f:
+                f.write(make_nso())
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(vtables.main([path, "--name", "screen"]), 0)
+            lines = out.getvalue().splitlines()
+            self.assertEqual(len(lines), 2)
+            self.assertTrue(lines[1].startswith(f"0x{B + SCREEN_VT:x}\t3\tTestScreen\tmade by"))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(vtables.main([path, "--vtable", f"main+0x{FACTORY_VT:x}"]), 0)
+            self.assertIn("name function: TestScreen", out.getvalue())
+
+
+class CallersTest(unittest.TestCase):
+    def setUp(self):
+        self.m = nso.Main(make_nso())
+
+    def hits(self, addr, size=1):
+        t = callers.Targets([(addr, addr + size)])
+        code, calls = callers.scan_code(self.m, t)
+        return {(pc - B, kind) for pc, kind, _, _ in code}, callers.scan_data(self.m, t), calls
+
+    def test_calls_and_pointer_loads(self):
+        code, data, calls = self.hits(B + CTOR)
+        self.assertEqual(code, {(CREATE, "call"), (CALLER, "call"), (CALLER + 8, "via pointer")})
+        self.assertEqual(data, [(B + GLOBAL_PTR, B + CTOR)])
+        self.assertIn(B + CTOR, calls)
+
+    def test_address_and_read(self):
+        code, _, _ = self.hits(B + SCREEN_VT)
+        self.assertEqual(code, {(CTOR + 4, "address")})
+        code, _, _ = self.hits(B + GLOBAL_VAL)
+        self.assertEqual(code, {(CALLER + 12, "read")})
+
+    def test_cli_names_the_vtable_slot(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "main")
+            with open(path, "wb") as f:
+                f.write(make_nso())
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(callers.main([path, f"main+0x{NAME_FN:x}"]), 0)
+            self.assertIn(f"vtable 0x{B + FACTORY_VT:x} (TestScreen) slot 1", out.getvalue())
+
+
+if __name__ == "__main__":
+    unittest.main()
