@@ -1035,7 +1035,19 @@ TEST_CASE("hookshot: every patch touches only what Longshot's Linux AppImage shi
     // tools/release/kit/linux-longshot/scripts/build.sh applies every hookshot/patches/*.patch to a copy of the
     // AppImage's usr/share/longshot, which holds only what Longshot's scripts/linux/appimage.sh copies (v3.0.0-rc.7):
     // no tests/, docs/, .forgejo/, most of third_party/. A hunk on anything else applies on Windows' full source and
-    // stops every Linux build. Keep this list to appimage.sh's when the pin moves.
+    // stops every Linux build. Keep this list to appimage.sh's when the pin moves: the list is for kShippedFor, and
+    // the test fails on any other tag in hookshot/LINUX.txt until the list is re-checked and kShippedFor moved.
+    const std::string kShippedFor = "v3.0.0-rc.7";
+    const std::string linux_pin = ReadFile(kRepo / "hookshot" / "LINUX.txt");
+    const auto tag_at = linux_pin.find("\ntag=");
+    REQUIRE(tag_at != std::string::npos);
+    const auto tag_start = tag_at + 5;
+    const std::string tag = linux_pin.substr(tag_start, linux_pin.find('\n', tag_start) - tag_start);
+    {
+        INFO("hookshot/LINUX.txt moved to " << tag << ": re-check this list against that tag's scripts/linux/appimage.sh, "
+             "then set kShippedFor to it");
+        REQUIRE(tag == kShippedFor);
+    }
     const char* const shipped[] = {
         "nx2/", "host/", "scripts/", "assets/", "builder/linux/", "gpu/vk/", "gpu/compat/", "gpu/third_party/",
         "third_party/opus/", "third_party/kenney_input/", "third_party/kenney_input_keyboard/", "third_party/imgui/",
