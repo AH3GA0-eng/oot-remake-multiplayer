@@ -186,6 +186,16 @@ def new_files(skin, game_table, ours=(), game_has=None):
     return out
 
 
+EFFECT_TOPS = ("Effect", "ELink2")
+
+
+def effect_files(skin):
+    """The mod's effect files (EFFECT_TOPS): its own copies of the game's effects, such as a recoloured
+    sword glow. The game finds them by its own names, so a skin takes them only on request
+    (build --skin-effects) and as they are."""
+    return [f for f in skin.files if f.split("/", 1)[0] in EFFECT_TOPS]
+
+
 def entry_size(skin, path, data_len, game_table=None):
     """Size-table entry for a file of the skin: the mod's own entry, else the game's for the same
     path, else the file's (unpacked) length plus a margin."""

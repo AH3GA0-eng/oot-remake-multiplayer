@@ -2007,6 +2007,34 @@ class FullBuildTest(unittest.TestCase):
         self.write("System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs", plain.compress(game.dumps()))
         return root
 
+    def test_build_skin_effects_only_on_request(self):
+        """A mod's own copy of a game effect (a recoloured sword glow) reaches every sword with that
+        effect, so a skin takes it only with skin_effects (--skin-effects), as it is, with a size entry and
+        in the skin's hash."""
+        mod_src = self.make_model_mod()
+        plain = zstandard.ZstdCompressor()
+        rel = "Effect/Weapon_Sword_Master.Test.vsetb.byml.zs"
+        data = b"VFXB red glow" + bytes(51)
+        self.write(rel, plain.compress(b"VFXB game glow" + bytes(50)))
+        path = os.path.join(mod_src, "romfs", *rel.split("/"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(plain.compress(data))
+        d = zs.Dicts.from_romfs(self.romfs)
+        plain_mod = os.path.join(self.dir, "mod_no_effects")
+        [off] = build.build(self.romfs, plain_mod, log=lambda _l: None, skins=[("Mod", mod_src)], look_slots=0)["skins"]
+        self.assertNotIn(rel, off["files"])
+        self.assertFalse(os.path.exists(os.path.join(plain_mod, "romfs", *rel.split("/"))))
+        fx_mod = os.path.join(self.dir, "mod_effects")
+        [on] = build.build(self.romfs, fx_mod, log=lambda _l: None, skins=[("Mod", mod_src)], look_slots=0,
+                           skin_effects=True)["skins"]
+        self.assertIn(rel, on["files"])
+        self.assertEqual(d.decompress(build.read(os.path.join(fx_mod, "romfs", *rel.split("/")))), data)
+        self.assertNotEqual(on["sha256"], off["sha256"])
+        t = rstb.Rstb.loads(d.decompress(build.read(os.path.join(
+            fx_mod, "romfs", "System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs"))))
+        self.assertGreaterEqual(t.get(rel[:-3]) or 0, len(data))
+
     def test_build_skin_gear_on_a_model_the_game_has(self):
         """A mod that points an item at another model the game already has (a recolour mod: the Master
         Sword on the dark sword's model) brings no model file of its own; the skin still gets a copy of
