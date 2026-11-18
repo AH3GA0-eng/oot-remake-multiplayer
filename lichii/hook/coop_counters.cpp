@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <utility>
 
 namespace CoopCounters {
 namespace {
@@ -182,6 +183,14 @@ void CounterSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_
             n.started_now = true;
             n.wait_known = s.wait >= 0;
             n.wait = s.wait > 0 ? 1 : 0;
+            if (n.wait_known && n.home_said < 2) {
+                ++n.home_said;
+                char text[200];
+                std::snprintf(text, sizeof text, "%016llx %s: a pause %.2f m from its placement (%s wait)",
+                              static_cast<unsigned long long>(n.owner_hash), n.owner_name.c_str(),
+                              static_cast<double>(s.home_m), n.wait == 0 ? "home" : "far");
+                out.notes.emplace_back(text);
+            }
             auto& ws = n.wait_start[static_cast<std::size_t>(n.wait)];
             if (ws != 0 && start > ws && start - ws >= kMinPeriodUs && start - ws <= kMaxPeriodUs) {
                 n.wait_period[static_cast<std::size_t>(n.wait)] = start - ws;
@@ -228,40 +237,51 @@ void CounterSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_
             }
         }
         n.last_remaining = s.remaining;
-        if (per_key[n.key] != 1 || s.remaining <= 0.0f || n.written_start_us == n.start_us || !Shared(n)) {
+        if (per_key[n.key] != 1 || s.remaining <= 0.0f || !Shared(n)) {
             continue;
         }
-        // One leader for this node, for every game (review: 3+ players never split into two groups).
-        const std::uint8_t leader = Leader(n, self);
-        if (leader == 0 || leader == self) {
-            continue;
-        }
-        // A wait known here, and the leader sends its waits: each pause lined up on the leader's same wait, every
-        // time (more than the period rule can: that lines up one wait a cycle and takes the moves to be the same).
+        // Pause by pause, when our wait is known and a leader sends its waits: the lowest number, the same in
+        // every game (review: counts compared at different times could leave every game thinking it leads).
         if (n.wait_known) {
-            if (const auto wk = theirs_.find(WaitKey(n.key, n.wait));
-                wk != theirs_.end() && wk->second.contains(leader)) {
-                AlignPause(n, s, leader, server_us, probe_only, out);
+            const std::uint8_t leader = Leader(n, self);
+            if (leader != 0) {
+                if (leader != self) {
+                    AlignPause(n, s, leader, server_us, probe_only, out);
+                }
                 continue;
             }
         }
-        // The period rule, when both loop and the periods agree (a leader that sends no waits: an older module);
-        // else this pause alone.
-        const Theirs* plain = nullptr;
-        if (const auto tk = theirs_.find(n.key); tk != theirs_.end()) {
-            if (const auto it = tk->second.find(leader); it != tk->second.end()) {
-                plain = &it->second;
-            }
+        if (!n.looping || n.ref_us == 0 || n.written_start_us == n.start_us) {
+            continue;
         }
-        if (!n.looping || n.ref_us == 0 || plain == nullptr || plain->start_us == 0 ||
-            !Close(plain->period_us, n.cycle_us, kPeriodSlack)) {
-            AlignPause(n, s, leader, server_us, probe_only, out);
+        // The period rule (no wait known, or a game that sends no waits: an older module): the game that has
+        // seen the most starts (then the lowest number), with the same period.
+        const auto tk = theirs_.find(n.key);
+        if (tk == theirs_.end()) {
             continue;
         }
         const std::uint64_t period = n.cycle_us;
-        const float gap = PhaseGap(n.ref_us, plain->start_us, period);
+        const Theirs* best = nullptr;
+        std::uint8_t best_player = 0;
+        for (const auto& [player, th] : tk->second) {
+            if (player == self || th.start_us == 0 || !Close(th.period_us, period, kPeriodSlack)) {
+                continue;
+            }
+            if (best == nullptr || th.starts > best->starts) {
+                best = &th;
+                best_player = player;
+            }
+        }
+        if (best == nullptr) {
+            continue;
+        }
+        const float gap = PhaseGap(n.ref_us, best->start_us, period);
         if (std::fabs(gap) <= kOffS) {
             continue;  // in phase: nothing to write
+        }
+        const bool we_move = n.starts < best->starts || (n.starts == best->starts && self > best_player);
+        if (!we_move) {
+            continue;
         }
         // Began later (gap > 0): end the pause sooner, if it has that long
         // left; else, and when it began earlier, make it longer (by the
@@ -270,21 +290,22 @@ void CounterSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_
         if (target < 0.0f) {
             target = s.remaining + (static_cast<float>(period) / 1e6f - gap) * kFramesPerSecond;
         }
-        WritePause(n, s, target, gap, leader, "", probe_only, out);
+        WritePause(n, s, target, gap, best_player, "", probe_only, out);
     }
     std::erase_if(nodes_, [&](const auto& p) { return !here.contains(p.first); });
-    coop::protocol::PlatformCounter m;
-    m.scene = scene;
-    m.server_time_us = server_us;
+    struct Tick {
+        std::uint64_t key, ref, cycle;
+        std::uint32_t starts;
+    };
+    std::vector<Tick> ticks;
     std::set<std::uint64_t> sent_keys;
     bool fresh = false;  // a start that goes into the message: sent at once, at most every kMinSendGapUs
     const auto add = [&](std::uint64_t key, std::uint64_t ref, std::uint64_t cycle, std::uint32_t starts) {
         if (ref == 0 || ref > server_us || cycle == 0 || cycle > 0xffffffffull || server_us - ref > 0xffffffffull ||
-            m.ticks.size() >= coop::protocol::kMaxPlatformCounters || !sent_keys.insert(key).second) {
+            !sent_keys.insert(key).second) {
             return false;
         }
-        m.ticks.push_back({key, static_cast<std::uint32_t>(cycle), static_cast<std::uint32_t>(server_us - ref),
-                           starts});
+        ticks.push_back({key, ref, cycle, starts});
         return true;
     };
     for (auto& [address, n] : nodes_) {
@@ -297,9 +318,11 @@ void CounterSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_
             // The loop and the start every game compares, under the node's key (the period rule).
             in = add(n.key, n.ref_us, n.cycle_us, n.starts) || in;
         }
-        // Each wait under its own key: its last start and the time between two starts of it.
-        for (std::size_t w = 0; w < 2; ++w) {
-            in = add(WaitKey(n.key, static_cast<int>(w)), n.wait_start[w], n.wait_period[w], n.starts) || in;
+        if (n.wait_known) {
+            // Each wait under its own key: its last start and the time between two starts of it.
+            for (std::size_t w = 0; w < 2; ++w) {
+                in = add(WaitKey(n.key, static_cast<int>(w)), n.wait_start[w], n.wait_period[w], n.starts) || in;
+            }
         }
         fresh = fresh || (started && in);
     }
@@ -309,7 +332,17 @@ void CounterSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_
         return;
     }
     last_send_us_ = server_us;
-    if (!m.ticks.empty()) {
+    // As many messages as it takes, kMaxPlatformCounters entries each (review: at 3 per node the cap filled at
+    // about 10 nodes, and the same nodes always missed out).
+    for (std::size_t from = 0; from < ticks.size(); from += coop::protocol::kMaxPlatformCounters) {
+        coop::protocol::PlatformCounter m;
+        m.scene = scene;
+        m.server_time_us = server_us;
+        for (std::size_t k = from; k < ticks.size() && k < from + coop::protocol::kMaxPlatformCounters; ++k) {
+            const Tick& t = ticks[k];
+            m.ticks.push_back({t.key, static_cast<std::uint32_t>(t.cycle),
+                               static_cast<std::uint32_t>(server_us - t.ref), t.starts});
+        }
         out.send.emplace_back(std::move(m));
     }
 }
@@ -319,76 +352,68 @@ bool CounterSync::Shared(const Node& n) {
 }
 
 std::uint8_t CounterSync::Leader(const Node& n, std::uint8_t self) const {
-    std::map<std::uint8_t, std::uint32_t> starts;  // per player: the most it sent under any of the node's keys
-    for (const std::uint64_t key : {n.key, WaitKey(n.key, 0), WaitKey(n.key, 1)}) {
+    std::uint8_t lowest = 0;
+    for (const std::uint64_t key : {WaitKey(n.key, 0), WaitKey(n.key, 1)}) {
         if (const auto tk = theirs_.find(key); tk != theirs_.end()) {
             for (const auto& [player, th] : tk->second) {
-                if (player != self && th.start_us != 0) {
-                    starts[player] = std::max(starts[player], th.starts);
+                if (player != self && th.start_us != 0 && (lowest == 0 || player < lowest)) {
+                    lowest = player;
                 }
             }
         }
     }
-    if (starts.empty()) {
-        return 0;
+    if (lowest == 0) {
+        return 0;  // nobody else sends this counter's waits
     }
-    starts[self] = n.starts;
-    std::uint8_t best = 0;
-    std::uint32_t best_starts = 0;
-    for (const auto& [player, count] : starts) {  // (by number: a tie keeps the lower)
-        if (best == 0 || count > best_starts) {
-            best = player;
-            best_starts = count;
-        }
-    }
-    return best;
+    return std::min(lowest, self);
 }
 
 bool CounterSync::AlignPause(Node& n, const Seen& s, std::uint8_t leader, std::uint64_t server_us,
                              bool probe_only, Out& out) {
-    if (n.start_us == 0 || !n.wait_known) {
-        return false;  // no wait known (no placement): its two waits can't be told apart, so only the period rule
+    if (!n.wait_known || n.start_us == 0 || n.aligned_start_us == n.start_us) {
+        return false;
     }
-    const auto w = static_cast<std::size_t>(n.wait);
     const auto tk = theirs_.find(WaitKey(n.key, n.wait));
-    if (tk == theirs_.end()) {
-        return false;
-    }
-    const auto it = tk->second.find(leader);
-    if (it == tk->second.end() || it->second.start_us == 0) {
-        return false;
-    }
-    const Theirs& th = it->second;
-    // The wait's period: the leader's, else ours (between two starts of this same wait).
-    const std::uint64_t period = th.period_us != 0 ? th.period_us : n.wait_period[w];
-    const auto pause_us = static_cast<std::int64_t>(static_cast<double>(s.duration) / kFramesPerSecond * 1e6);
-    float gap = 0.0f;
-    if (period != 0) {
-        gap = PhaseGap(n.start_us, th.start_us, period);  // the short way round this wait's period
-    } else {
-        const std::int64_t d = static_cast<std::int64_t>(n.start_us) - static_cast<std::int64_t>(th.start_us);
-        if (d >= pause_us || d <= -pause_us) {
-            return false;  // no period yet: only within one pause
+    const auto it = tk == theirs_.end() ? std::map<std::uint8_t, Theirs>::const_iterator{}
+                                        : tk->second.find(leader);
+    const Theirs* th = tk == theirs_.end() || it == tk->second.end() ? nullptr : &it->second;
+    const auto pause_us = static_cast<std::uint64_t>(static_cast<double>(s.duration) / kFramesPerSecond * 1e6);
+    // The leader's start of this same pause: no older than one pause before ours. Then ours ends when the
+    // leader's does, from that actual start (review: a guess from its last period is off by seconds).
+    if (th != nullptr && th->start_us != 0 && th->start_us + pause_us >= n.start_us) {
+        n.aligned_start_us = n.start_us;
+        const auto end_us = static_cast<std::int64_t>(th->start_us + pause_us);
+        const float gap = static_cast<float>(
+            static_cast<double>(static_cast<std::int64_t>(n.start_us) - static_cast<std::int64_t>(th->start_us)) / 1e6);
+        const float target = std::max(0.0f, static_cast<float>(static_cast<double>(end_us - static_cast<std::int64_t>(server_us)) /
+                                                                1e6 * kFramesPerSecond));
+        if (std::fabs(target - s.remaining) <= kOffS * kFramesPerSecond) {
+            return false;  // in step: nothing to write
         }
-        gap = static_cast<float>(static_cast<double>(d) / 1e6);
+        WritePause(n, s, target, gap, leader, n.wait == 0 ? " (this pause, home wait)" : " (this pause, far wait)",
+                   probe_only, out);
+        return true;
     }
-    if (std::fabs(gap) <= kOffS) {
+    // Not come yet: we began first, or the leader is more than a pause ahead (its next start of this wait is
+    // most of a period away). Held from running out until it comes, at most kMaxHoldUs.
+    if (server_us > n.start_us + kMaxHoldUs) {
+        n.aligned_start_us = n.start_us;  // given up: it runs out as the game has it
         return false;
     }
-    // Began later (gap > 0): end sooner, when the leader's pause of this wait ends. Less left than that: wait
-    // for the leader's next pause of this wait instead (once). Began earlier: wait for the leader's end.
-    float target = s.remaining - gap * kFramesPerSecond;
-    if (target < 0.0f) {
-        if (period == 0) {
-            target = 0.0f;
-        } else {
-            target = s.remaining + (static_cast<float>(static_cast<double>(period) / 1e6) - gap) * kFramesPerSecond;
-        }
+    if (n.held_start_us != n.start_us) {
+        n.held_start_us = n.start_us;
+        char text[200];
+        std::snprintf(text, sizeof text, "%016llx %s: pause counter %016llx held for player %u's start (%s wait)",
+                      static_cast<unsigned long long>(n.owner_hash), n.owner_name.c_str(),
+                      static_cast<unsigned long long>(n.key), static_cast<unsigned>(leader),
+                      n.wait == 0 ? "home" : "far");
+        out.notes.emplace_back(text);
     }
-    (void)server_us;
-    WritePause(n, s, target, gap, leader, n.wait == 0 ? " (this pause, home wait)" : " (this pause, far wait)",
-               probe_only, out);
-    return true;
+    if (s.remaining < kKeepFrames && !probe_only) {
+        out.writes.push_back({s.node, n.key, kKeepFrames * 2.0f, s.remaining});  // kept: not counted, not said
+        n.last_remaining = kKeepFrames * 2.0f;
+    }
+    return false;
 }
 
 void CounterSync::WritePause(Node& n, const Seen& s, float target, float gap, std::uint8_t leader, const char* how,

@@ -2608,6 +2608,8 @@ private:
         return last != 0xffffffffu && static_cast<s32>(last - ours) >= 0;
     }
     std::string life_scene_;
+    // Each counter node's placement in the room table, found once a scene (Counters).
+    std::unordered_map<u64, const CoopRoomObjects::Placement*> counter_places_;
     bool life_table_full_said_ = false;
     static constexpr std::size_t kStepHitsKept = 4096;
     static constexpr u64 kGivenWaitUs = 250'000;
@@ -2664,6 +2666,7 @@ private:
         }
         if (scene != counter_scene_) {
             counter_scene_ = scene;  // a new scene: its actors are new
+            counter_places_.clear();
             counter_nodes_.clear();
             counter_others_.Clear();
         }
@@ -2737,16 +2740,34 @@ private:
             s.duration = r.Get<float>(node + CoopCounters::kNodeDuration).value_or(0.0f);
             s.key = CoopCounters::KeyOf(s.owner_hash, s.duration, node, graph);
             // Which wait it is at, and whether its own logic moves it (report 138's review): from its placement in
-            // the room table, the same in every game. No placement known: no wait (the period rule only).
+            // the room table, the same in every game. The placement is found once per node (kept for the scene),
+            // by its horizontal place: a lift moves up and down, and Dodongo's three are 15 m apart, so its height
+            // never makes it look like another one. No placement known: no wait (the period rule only).
             std::array<float, 3> at{};
             for (std::size_t i = 0; i < 3; ++i) {
                 at[i] = r.Get<float>(actor + kActorPosition + 4 * i).value_or(0.0f);
             }
-            if (const CoopRoomObjects::Placement* p = CoopRoomObjects::Nearest(scene, s.owner_name, at)) {
+            auto [placed, fresh_node] = counter_places_.try_emplace(node, nullptr);
+            if (fresh_node) {
+                float best = 0.0f;
+                for (const CoopRoomObjects::Placement& p : CoopRoomObjects::Placements()) {
+                    if (p.scene != scene || p.name != s.owner_name) {
+                        continue;
+                    }
+                    const float dx = at[0] - p.place[0];
+                    const float dz = at[2] - p.place[2];
+                    if (placed->second == nullptr || dx * dx + dz * dz < best) {
+                        placed->second = &p;
+                        best = dx * dx + dz * dz;
+                    }
+                }
+            }
+            if (const CoopRoomObjects::Placement* p = placed->second) {
                 float d2 = 0.0f;
                 for (std::size_t i = 0; i < 3; ++i) {
                     d2 += (at[i] - p->place[i]) * (at[i] - p->place[i]);
                 }
+                s.home_m = std::sqrt(d2);
                 s.wait = d2 <= CoopCounters::kHomeM * CoopCounters::kHomeM ? 0 : 1;
                 s.driven = !p->why.empty();
             }

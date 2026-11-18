@@ -810,3 +810,117 @@ TEST_CASE("counters: a counter that restarts every few frames sends at most one 
     CHECK(sends > 0);
     CHECK(sends <= 10 * 4 + 1);  // at most one every 250 ms (the 3 s ones fall within them)
 }
+
+TEST_CASE("counters: a leader whose moves vary irregularly is followed from its actual starts, not a guess") {
+    WaitLift a;  // the leader (the lower number): a rider, slower frames, its periods change by seconds
+    WaitLift b;
+    a.self = 1;
+    b.self = 2;
+    a.moves = {7.5, 9.8, 6.1, 11.3, 8.0, 6.6};
+    b.moves = {7.5};
+    b.Advance(2.0);
+    std::uint64_t time = 0;
+    Run({&a, &b}, time, 300.0);
+    CHECK(a.sync.Writes() == 0);
+    CHECK(b.sync.Writes() > 0);
+    CHECK(WorstEndGap(a, b, 8) < 0.15);  // every recent pause ends with the leader's of the same wait
+    // No pause of b's was held for a whole period by a guess: each ended within one cycle of its start.
+    for (std::size_t i = 1; i < b.pause_ends.size(); ++i) {
+        CHECK(static_cast<double>(b.pause_ends[i].first - b.pause_ends[i - 1].first) / 1e6 < 40.0);
+    }
+}
+
+TEST_CASE("counters: two games with equal counts, the higher number more than a pause ahead, do not deadlock") {
+    WaitLift a;
+    WaitLift b;
+    a.self = 1;
+    b.self = 2;  // the higher number, ahead by more than one 3 s pause, as many starts as a
+    b.Advance(8.0);
+    std::uint64_t time = 0;
+    Run({&a, &b}, time, 300.0);
+    CHECK(a.sync.Writes() == 0);  // one leader in both games: the lower number
+    CHECK(b.sync.Writes() > 0);
+    CHECK(WorstEndGap(a, b, 6) < 0.15);
+}
+
+TEST_CASE("counters: a counter with no wait known sends no wait keys") {
+    WaitLift a;
+    a.self = 1;
+    a.moves = {7.5};
+    std::uint64_t time = 0;
+    std::vector<proto::PlatformCounter> all;
+    for (int i = 0; i < 60 * 120; ++i) {
+        time += 16'667;
+        a.Step(1.0 / 60.0, time);
+        Seen s;
+        s.node = a.node;
+        s.owner_hash = kHash;
+        s.owner_name = "Obj_DodongoCave_MoveFloor_A_01";
+        s.remaining = a.remaining;
+        s.duration = a.pause;
+        s.key = KeyOf(kHash, a.pause, a.node, a.graph);
+        s.wait = -1;  // no placement known
+        CounterSync::Out out;
+        a.sync.Tick("DodongoCavern", 1, time, {s}, false, out);
+        for (auto& m : out.send) {
+            all.push_back(std::get<proto::PlatformCounter>(m));
+        }
+        for (const auto& w : out.writes) {
+            a.remaining = w.remaining;
+        }
+    }
+    const std::uint64_t key = KeyOf(kHash, a.pause, a.node, a.graph);
+    bool any = false;
+    for (const auto& m : all) {
+        for (const auto& t : m.ticks) {
+            CHECK(t.key != WaitKey(key, 0));
+            CHECK(t.key != WaitKey(key, 1));
+            any = true;
+        }
+    }
+    CHECK(any);  // its loop is still sent, under its own key
+}
+
+TEST_CASE("counters: more entries than one message holds go in more messages, none left out") {
+    // Twelve lifts with their waits known: up to 3 entries each (the loop and two waits), 36 in all.
+    std::vector<WaitLift> lifts(12);
+    for (std::size_t k = 0; k < lifts.size(); ++k) {
+        lifts[k].node = 0x2140001000 + 0x1000 * k;
+        lifts[k].graph = 0x2140000f00 + 0x1000 * k;
+        lifts[k].Advance(0.7 * static_cast<double>(k));
+    }
+    CounterSync sync;
+    std::uint64_t time = 0;
+    std::vector<proto::PlatformCounter> last;
+    for (int i = 0; i < 60 * 120; ++i) {
+        time += 16'667;
+        std::vector<Seen> seen;
+        for (std::size_t k = 0; k < lifts.size(); ++k) {
+            lifts[k].Step(1.0 / 60.0, time);
+            Seen s;
+            s.node = lifts[k].node;
+            s.owner_hash = kHash + k;
+            s.owner_name = "Obj_DodongoCave_MoveFloor_A_01";
+            s.remaining = lifts[k].remaining;
+            s.duration = lifts[k].pause;
+            s.key = KeyOf(kHash + k, lifts[k].pause, lifts[k].node, lifts[k].graph);
+            s.wait = lifts[k].wait;
+            seen.push_back(s);
+        }
+        CounterSync::Out out;
+        sync.Tick("DodongoCavern", 1, time, seen, false, out);
+        if (!out.send.empty()) {
+            last.clear();
+            for (auto& m : out.send) {
+                last.push_back(std::get<proto::PlatformCounter>(m));
+            }
+        }
+    }
+    REQUIRE(last.size() >= 2);
+    std::size_t entries = 0;
+    for (const auto& m : last) {
+        CHECK(m.ticks.size() <= proto::kMaxPlatformCounters);
+        entries += m.ticks.size();
+    }
+    CHECK(entries > proto::kMaxPlatformCounters);  // all of them went, in more than one message
+}
