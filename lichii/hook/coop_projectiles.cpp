@@ -19,14 +19,14 @@ namespace {
 // Names from the actor packs (docs/objects.md, "The projectile actors").
 // Seen live: Shootable_DekuSeed and Item_DekuNut.
 constexpr std::array<Info, 8> kInfos{{
-    {"Item_Bomb", Kind::bomb, false, true, true},
-    {"Item_Bombchu", Kind::bombchu, false, false, true},
-    {"Item_DekuNut", Kind::nut, true, false, false},
-    {"Shootable_DekuSeed", Kind::seed, true, false, false},
-    {"NormalArrow", Kind::arrow, true, false, false},
-    {"Weapon_Boomerang", Kind::boomerang, false, false, false},
-    {"Shootable_Hook", Kind::hook, false, false, false},
-    {"Shootable_HookLong", Kind::hook_long, false, false, false},
+    {"Item_Bomb", Kind::bomb, false, true, true, false},
+    {"Item_Bombchu", Kind::bombchu, false, false, true, false},
+    {"Item_DekuNut", Kind::nut, true, false, false, true},
+    {"Shootable_DekuSeed", Kind::seed, true, false, false, false},
+    {"NormalArrow", Kind::arrow, true, false, false, false},
+    {"Weapon_Boomerang", Kind::boomerang, false, false, false, false},
+    {"Shootable_Hook", Kind::hook, false, false, false, false},
+    {"Shootable_HookLong", Kind::hook_long, false, false, false, false},
 }};
 
 bool Finite(const Vec3& v) {
@@ -342,8 +342,12 @@ std::uint64_t LandHoldUs(Kind kind) {
         return 1'500'000;  // sticks where it struck
     case Kind::seed:
         return 200'000;    // seen landing, then gone as on the owner's screen
+    case Kind::nut:
+        return 200'000;    // bursts where it stopped (the effect is asked for as the copy
+                           // gets there; the director's search and emit take a few
+                           // frames), then gone as on the owner's screen
     default:
-        return 0;          // a nut flashes by its own AI; the rest go at once
+        return 0;          // the rest go at once
     }
 }
 
@@ -366,6 +370,12 @@ std::string_view HitEffect(Kind kind) {
     case Kind::arrow:
         // (read from the romfs's ELink2 table: both users have it; docs/spawns.md)
         return "Hit_AdditionalAttacker";
+    case Kind::nut:
+        // The nut's own burst: its AI (Item_DekuNut.root.ainb) emits this key
+        // through OneShotXLinkSearchAndEmit (ELinkCall and SLinkCall) on its
+        // first contact; its ELink user is ExpandLightField, whose table has it
+        // (the flash assets Item_DekuNut_Flash_01 / _LowRes_00). docs/spawns.md.
+        return "Chemical_Light";
     default:
         return {};
     }
@@ -388,6 +398,11 @@ proto::RemoveReason GoneReason(const Info& info, std::uint64_t lifetime_us, floa
         // the game's help-box bomb (docs/spawns.md).
         return lifetime_us >= kExplodeMinUs ? proto::RemoveReason::exploded
                                             : proto::RemoveReason::gone;
+    }
+    if (info.bursts) {
+        // Its own AI burst it where it stopped, slow after its bounce or not
+        // (#248: sent as gone, the copies were deleted without the flash).
+        return proto::RemoveReason::hit;
     }
     if (info.ballistic && speed >= kHitSpeed) {
         return proto::RemoveReason::hit;
