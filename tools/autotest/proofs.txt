@@ -186,3 +186,7 @@ threads-of-time-B          *.A2-A-opened-B      160,80,960,520  refs
 # world-reset: the same grass and objects in each game after B's load
 world-reset-A              s*-still-60s-A     160,80,960,520  refs
 world-reset-B              s*-still-60s-B     160,80,960,520  refs
+# stalchild (#124, misc-fails-0115): at A's fight3 A fights a Stalchild on the open field in front of the Market; B,
+# 18 m away facing A, shows A's puppet and the same Stalchild (refs from the first run of the new spots)
+stalchild-A                A-fight3-A         160,80,960,520  refs
+stalchild-B                A-fight3-B         160,80,960,520  refs

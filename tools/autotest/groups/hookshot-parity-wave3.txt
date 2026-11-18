@@ -57,6 +57,6 @@ chest-notice  label="#195 chest notice"
 drops  label="#101 #102 enemy drops"
 sign  label="#90 sign cut live"
 peahat  label="#157 Peahat"
-stalchild  label="#124 Stalchildren (its own time switch: give it no switches=)"
+stalchild  expect='A:objects: \+ Enemy_Stalchild '  expect='B:objects: \+ Enemy_Stalchild '  label="#124 Stalchildren (its own time switch: give it no switches=)"  see=stalchild-A  see=stalchild-B
 deku-scrubs  label="#149 Deku Scrub brothers"
 navi-room  label="#145 Navi per room"
