@@ -5,7 +5,7 @@ visible (platforms, doors, ladders, actors, items, HUD, puppets) passes only whe
 shows the result. groups.py's see=<check> names a check defined here, in tools/autotest/proofs.txt:
 
     # name           shot (in the run folder)  region x,y,w,h (of a 1280x720 frame)  how
-    deku-lifts-A     A-up2-A                   340,200,480,180                         refs
+    deku-lifts-A     A-up1-A                   340,200,480,180                         refs
     door-open-B      B-after-B                 500,100,300,400                         change from=B-before-B min=18
 
 shot: the run's <scenario>-<shot>.png (hookshot.py run saves every `mark NAME` of script X as

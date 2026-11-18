@@ -4,9 +4,11 @@
 # picture). refs: <kit root>\proof-refs\<refs or name>\good-*.png / bad-*.png (local only: game screenshots never go
 # in the repo; add with proof.py ref add).
 
-# hs-deku-platforms (#176): at the A script's 'up1' both games play the event's camera on the lifts (the same view):
-# lifts up (cylinders) = good, down (flat discs in the floor) = bad. One reference set for both games.
-deku-lifts-A   A-up1-A  330,300,580,280  refs  refs=deku-lifts
+# hs-deku-platforms (#176): at the A script's 'up1' B (who pressed) plays the event's camera on the lifts: lifts up
+# (cylinders) = good, down (flat discs in the floor) = bad. A plays NO camera on a g1-events module (result only, no
+# replay): A's shot is A's own view from 5.4 m off the plate, facing the lifts (hs-deku-platforms.A 'toward -29.9 3.2'),
+# so A has its own reference set (stub, UNPROVEN until refs are captured from that view; same good/bad meaning).
+deku-lifts-A   A-up1-A  160,80,960,520   refs
 deku-lifts-B   A-up1-B  330,300,580,280  refs  refs=deku-lifts
 
 # --- stub checks (proof-shots, 2026-11-18): region is the play area; references come from the

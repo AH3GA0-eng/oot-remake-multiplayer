@@ -52,6 +52,7 @@
 #include "coop_caller_orders.h"
 #include "coop_hit_replay.h"
 #include "coop_every.h"
+#include "coop_event_result.h"
 #include "coop_cheat_items.h"
 #include "coop_flags.h"
 #include "coop_hold.h"
@@ -67,6 +68,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <map>
 #include <utility>
 #include <tuple>
 #include <array>
@@ -1776,6 +1778,10 @@ public:
                 return v != nullptr && std::string_view(v) == "1";
             }();
             world_.SetDeleteLocks(delete_locks);
+            // Row 98(2) trigger guards (Trigger::follow): another game's push of a block onto a press switch, its press
+            // of a hammer switch or the box puzzle's last corner would raise our own asker's trigger here (a replay
+            // that binds our Link): those world objects follow only once our game has played the event.
+            world_.SetTriggerKeepers(TriggerFollowKeepers(system, *scene));
             world_.Tick(*scene, self, server_now_us, seen, player_, world);
             for (auto& m : world.send) {
                 send.emplace_back(std::move(m));
@@ -2067,6 +2073,7 @@ public:
             for (std::size_t i = 0; i < passed.released; ++i) {
                 sync_.Written(writes[i].address, writes[i].life, server_now_us);
             }
+            KeepTriggerKills(system, *scene, seen, writes, server_now_us);
             if (held_writes_.Size() != 0 && !guard_said_) {
                 guard_said_ = true;
                 LOG_INFO(Core, "coop: objects: our Link is in an event: changes to {} actors near it wait until it ends",
@@ -2280,6 +2287,83 @@ public:
         [](LifeWrite& kept, LifeWrite&& newer) { CoopGuard::MergeLife(kept, std::move(newer)); }};
     std::string guard_scene_;
     bool guard_said_ = false;
+    // Row 98(2) trigger guards (coop_event_result.h, review-a38-5): a room event's asker asks it when the enemies its
+    // trigger reads die, so another game's kill of the last one would make our asker ask that player's event here (a
+    // replay that binds our Link). The event's keeper (its largest live kill actor, CoopEventResult::KillKeepers) is
+    // neither killed nor removed by another game until our game has played the event; its kill is kept (one per
+    // actor, the newest) and lands then, on the same actor. Our Link can still kill it: our own play.
+    std::map<u64, std::pair<LifeWrite, u64>> trigger_kept_;  // address -> the kill, the placement hash there
+    std::set<u64> keeper_addresses_;                          // this walk's keepers (Place skips their removes)
+    std::string keeper_scene_;
+    // The follow keepers (CoopEventResult::FollowKeepers) of `scene` by our game's played flags; none before the game's
+    // main is known.
+    std::set<std::uint64_t> TriggerFollowKeepers(Core::System& system, const std::string& scene) const {
+        if (main_ == 0) {
+            return {};
+        }
+        CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main_);
+        coop::host::GameFlags flags(memory);
+        return CoopEventResult::FollowKeepers(scene, [&flags](const std::string& e) {
+            return flags.get_bool(coop::host::flag_hash("HavePlayedEvent." + e)).value_or(false);
+        });
+    }
+    void KeepTriggerKills(Core::System& system, const std::string& scene, const std::vector<Seen>& seen,
+                          std::vector<LifeWrite>& writes, u64 now_us) {
+        if (scene != keeper_scene_) {
+            keeper_scene_ = scene;
+            trigger_kept_.clear();  // those actors are gone with the scene
+        }
+        std::unordered_map<u64, u64> hash_at;  // address -> placement hash
+        std::set<u64> alive;
+        for (const Seen& s : seen) {
+            hash_at.emplace(s.address, s.hash);
+            if (!s.life || s.life->life > 0) {
+                alive.insert(s.hash);
+            }
+        }
+        std::set<std::uint64_t> keepers;
+        if (main_ != 0) {
+            CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main_);
+            coop::host::GameFlags flags(memory);
+            keepers = CoopEventResult::KillKeepers(
+                scene, [&alive](std::uint64_t h) { return alive.contains(h); },
+                [&flags](const std::string& e) {
+                    return flags.get_bool(coop::host::flag_hash("HavePlayedEvent." + e)).value_or(false);
+                });
+        }
+        keeper_addresses_.clear();
+        for (const auto& [a, h] : hash_at) {
+            if (keepers.contains(h)) {
+                keeper_addresses_.insert(a);
+            }
+        }
+        // A kept kill whose actor is no keeper any more lands now, on the same actor (else it is dropped).
+        for (auto it = trigger_kept_.begin(); it != trigger_kept_.end();) {
+            if (keeper_addresses_.contains(it->first)) {
+                ++it;
+                continue;
+            }
+            const auto at = hash_at.find(it->first);
+            if (at != hash_at.end() && at->second == it->second.second) {
+                LOG_INFO(Core, "coop: dungeon: trigger: the kill of {:#x} kept for its event lands now", at->second);
+                sync_.Written(it->first, it->second.first.life, now_us);
+                writes.push_back(std::move(it->second.first));
+            }
+            it = trigger_kept_.erase(it);
+        }
+        std::erase_if(writes, [&](LifeWrite& w) {
+            if (w.life > 0 || w.heal || w.test_kill || !keeper_addresses_.contains(w.address)) {
+                return false;
+            }
+            const u64 hash = hash_at.at(w.address);
+            if (!trigger_kept_.contains(w.address)) {
+                LOG_INFO(Core, "coop: dungeon: trigger: another game's kill of {:#x} waits: the last enemy of a room "
+                               "event our game has not played (its asker would ask the event here)", hash);
+            }
+            trigger_kept_.insert_or_assign(w.address, std::make_pair(std::move(w), hash));
+            return true;
+        });
+    }
     // Row 97: the event's partners wait wherever they are (Sync::EventPartner).
     CoopGuard::Local GuardLocal(u64 now_us) const {
         // G1: near-by changes wait in our Link's event; the event's own actors in any event here.
@@ -4222,6 +4306,8 @@ private:
             const CoopGuard::Local local = GuardLocal(now_us);
             const auto where = [this](std::uint64_t a) { return Where(a); };
             CoopGuard::Skip(removes, local, where, [](u64 a) { return a; });
+            // Row 98(2): an event's last enemy is not removed by another game before our game played it.
+            std::erase_if(removes, [this](u64 a) { return keeper_addresses_.contains(a); });
             // Issue 194: a world object another game moves (coop_world: a falling ladder,
             // a block and its base anchor) is no event's partner: it follows at once, else
             // it jumped after.

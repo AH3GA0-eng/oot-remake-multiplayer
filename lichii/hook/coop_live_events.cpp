@@ -633,7 +633,8 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
                 return std::nullopt;
             }
             notes_.push_back("live event " + current_ + ": started by our room's asker at " + where +
-                             " (its EventBool moves the room)");
+                             " (camera only: the room moves on its asker's EventBool, which the asker's own AI "
+                             "keeps 0 until its own trigger rises)");
         }
         wanted_.pop_front();
         // deku-sync-fix: the asker asks the event itself, as its room graph's node does, so the event is its own.

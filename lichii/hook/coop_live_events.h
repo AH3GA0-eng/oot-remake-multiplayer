@@ -251,6 +251,11 @@ public:
     // kAskerNearM of one of the event's places in `scene`, Places()) is linked as its starter, as the game's own
     // member request does (kSetLink). None found: not asked at all (dungeon-sync-b), and a note says so: a start
     // by name only plays the camera, and it can keep the event system busy when the room needs it.
+    // deku-platforms-b21 (proven for the Deku Tree compass room): linked or asked through the asker's performer, the
+    // event STILL plays its camera only. The asker's own AI (AI/EventRequestActor.root.ainb) writes EventBool,
+    // EventBoolEX1 and EventFinish 0 every tick until its own EventRequestTrigger rises, so the flow's
+    // EventTriggerSetEventBool does not reach the room graph: the lifts never go on and the asker is not deleted.
+    // Held gimmick events no longer come here (row 98(2), coop_event_result.h); the eye switch's fallbacks still do.
     void WantFromRoom(std::string name, std::string scene);
     // review-p11-interactions: one requester takes gimmick and story events,
     // and an event waits while another runs. Once a frame, under the same
