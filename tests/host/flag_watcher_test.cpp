@@ -1535,6 +1535,40 @@ TEST_CASE("flag watcher: a held flag's retries are counted as held, not as write
   CHECK(game_store.get(kDoor) == 1);  // written once the hold ends
 }
 
+TEST_CASE("flag watcher: a busy key's retries are counted as waiting, not as write failures (review-0116-e)") {
+  // The same class as a hold: no room in the game's queue now (issue 175), kept and tried again each frame.
+  FakeStore store = game();
+  store.no_room.insert(kKey0);
+  FlagWatcher w(shared(), FlagRole::player);
+  w.frame(store);
+  CHECK(w.receive(state({entry(kKey0, 1)})));
+  for (int i = 0; i < 3; ++i) w.frame(store);
+  CHECK(store.get(kKey0) == 0);
+  CHECK(w.stats().held_retries >= 3);
+  CHECK(w.stats().write_failures == 0);
+  CHECK(w.stats().top_write_failure_count == 0);
+  store.no_room.clear();
+  w.frame(store);
+  CHECK(store.get(kKey0) == 1);  // written once there is room
+}
+
+TEST_CASE("flag watcher: a held key's 0 from a FLAG_RESET that the game refuses is a write failure (review-0116-e)") {
+  // write_exact lets a held key's 0 through the hold (the host's save has not played it); if the game itself
+  // refuses that 0, it is a real failure, not hidden as held.
+  FakeStore game_store = game();
+  game_store.set(kDoor, 1);
+  HoldFlagStore store(game_store, [](FlagKey key) { return key == kDoor; });
+  FlagWatcher w(shared(), FlagRole::player);
+  w.frame(store);
+  game_store.unwritable.insert(kDoor);
+  CHECK(w.receive(proto::Message{proto::FlagReset{1, {entry(kDoor, 0)}}}));
+  w.frame(store);
+  CHECK(game_store.get(kDoor) == 1);
+  CHECK(w.stats().write_failures >= 1);
+  CHECK(w.stats().top_write_failure == kDoor);
+  CHECK(std::string_view(w.stats().top_write_failure_site) == "write_exact");
+}
+
 TEST_CASE("flag watcher: the host's Try Again into a held flag writes the group's value once the hold ends") {
   // A held flag (issue 129, HoldFlagStore): kept in unwritten_ and written later, not dropped by the retry as if our
   // game had changed it (review of 159a4fd7).

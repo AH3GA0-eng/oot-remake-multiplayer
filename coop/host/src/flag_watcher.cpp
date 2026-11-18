@@ -575,9 +575,13 @@ void FlagWatcher::apply_reset(FlagStore& store, const std::vector<FlagEntry>& fl
   }
 }
 
-void FlagWatcher::note_write_failure(FlagStore& store, const FlagKey& key, const char* site) {
-  if (store.holds(key)) {
-    ++stats_.held_retries;  // held on purpose: not a failure (see FlagStats::held_retries)
+void FlagWatcher::note_write_failure(FlagStore& store, const FlagKey& key, const char* site, bool hold_applies) {
+  // Waiting on purpose, not a failure (FlagStats::held_retries): the store holds the key (HoldFlagStore), or the
+  // game's queue has no room for it now (busy, issue 175); the same pair answer_set() keeps for later. A hold
+  // applies only where it refuses the write: write_exact() lets a held key's 0 through (hold_applies false), so a
+  // refused 0 there is the game's own refusal and stays a write failure.
+  if (store.busy(key) || (hold_applies && store.holds(key))) {
+    ++stats_.held_retries;
     return;
   }
   ++stats_.write_failures;
@@ -607,7 +611,7 @@ bool FlagWatcher::write_exact(FlagStore& store, const FlagEntry& entry) {
   const std::optional<FlagEntry> before =
       seen != last_.end() ? std::optional<FlagEntry>(seen->second) : std::nullopt;
   if (!store.write_exact(entry)) {
-    note_write_failure(store, key, "write_exact");
+    note_write_failure(store, key, "write_exact", entry.value != 0);
     unwritten_[key] = entry;
     if (!written_for_others_.empty() && written_for_others_.back() == key) {
       written_for_others_.pop_back();

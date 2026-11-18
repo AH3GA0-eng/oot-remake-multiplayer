@@ -62,7 +62,8 @@ struct FlagStats {
   std::uint64_t read_failures = 0;
   std::uint64_t write_failures = 0;    // each failed try; it is tried again next frame
   // A write the store refused because it holds that key for now (HoldFlagStore: a room gimmick flag held until
-  // our game played its event or we leave the dungeon). Waiting by design, so not a write failure: tried again
+  // our game played its event or we leave the dungeon) or has no room for it in the game's queue now (busy, issue
+  // 175). Waiting by design, so not a write failure: tried again
   // every frame until the hold lets it, which counted ~60 failures a second (events-next-a-11 probe: named
   // 0xb3a4fe84 = HavePlayedEvent.InsideTheDekuTree_Gimmick_FallingLadder, 5561 of 9235 in 90 s).
   std::uint64_t held_retries = 0;
@@ -599,8 +600,9 @@ class FlagWatcher {
   // that is counted in write_failures only).
   static constexpr std::size_t kWriteFailureKeys = 256;
   std::map<FlagKey, std::uint64_t> write_failure_keys_;
-  // A refused write: held_retries when the store holds the key, else a write failure named by key and site.
-  void note_write_failure(FlagStore& store, const FlagKey& key, const char* site);
+  // A refused write: held_retries when the store holds the key (and the hold refuses this write: hold_applies) or
+  // is busy, else a write failure named by key and site.
+  void note_write_failure(FlagStore& store, const FlagKey& key, const char* site, bool hold_applies = true);
   // use_events
   const std::vector<FlagKey>& diff_keys();
   bool events_ = false;
