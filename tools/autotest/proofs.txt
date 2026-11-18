@@ -188,6 +188,11 @@ threads-of-time-B          *.A2-A-opened-B      160,80,960,520  refs
 # world-reset: the same grass and objects in each game after B's load
 world-reset-A              s*-still-60s-A     160,80,960,520  refs
 world-reset-B              s*-still-60s-B     160,80,960,520  refs
+# sign (#90): after A's three sword cuts the post by the Graveyard gate is in pieces in A, and the same in B. A: script A
+# 'after-cut' (A's own camera on the post); B: B's 'framed' shot of its own post (B stands ~6 m away facing it).
+# Region = the post's area. refs: good = post in pieces, bad = post whole (bigrun-0115: B's post stands whole, yellow top).
+sign-A   A-after-cut-A  300,100,500,520  refs
+sign-B   B-framed-B     400,150,500,450  refs
 # stalchild (#124, misc-fails-0115): at A's fight3 A fights a Stalchild on the open field in front of the Market; B,
 # 18 m away facing A, shows A's puppet and the same Stalchild (refs from the first run of the new spots)
 stalchild-A                A-fight3-A         160,80,960,520  refs

@@ -95,7 +95,7 @@ spawn-seed  expect='B:spawn: CoopShot(Fx)?_Seed: copy [0-9]+ is actor'  expect="
 # World and enemies on Hookshot as on the emulator: chest notice, drops, signs, Peahat, Stalchildren, scrubs, Navi.
 chest-notice  label="#195 chest notice"
 drops  label="#101 #102 enemy drops"
-sign  expect='A:a4bc132d2b5d7eae Obj_GuidePost_A_02 cut here: \d+ words sent'  expect='B:a4bc132d2b5d7eae Obj_GuidePost_A_02 cut by another player: \d+ of \d+ words to write'  label="#90 sign cut live"
+sign  expect='A:a4bc132d2b5d7eae Obj_GuidePost_A_02 cut here: \d+ words sent'  expect='B:a4bc132d2b5d7eae Obj_GuidePost_A_02 cut by another player: \d+ of \d+ words to write'  label="#90 sign cut live"  see=sign-A  see=sign-B
 peahat  label="#157 Peahat"
 stalchild  expect='A:objects: \+ Enemy_Stalchild '  expect='B:objects: \+ Enemy_Stalchild '  label="#124 Stalchildren (its own time switch: give it no switches=)"  see=stalchild-A  see=stalchild-B
 deku-scrubs  label="#149 Deku Scrub brothers"
