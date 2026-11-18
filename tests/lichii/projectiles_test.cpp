@@ -591,7 +591,7 @@ TEST_CASE("shots: a bounce is a turn of over 45 degrees at speed") {
     CHECK_FALSE(shots::Bounced({0, 0, 0}, {30, 0, 0}));    // the shot itself
     CHECK(shots::LandHoldUs(shots::Kind::seed) > 0);
     CHECK(shots::LandHoldUs(shots::Kind::arrow) > shots::LandHoldUs(shots::Kind::seed));
-    CHECK(shots::LandHoldUs(shots::Kind::nut) == 0);
+    CHECK(shots::LandHoldUs(shots::Kind::nut) > 0);  // #248: it bursts there, then goes
     CHECK(shots::LandHoldUs(shots::Kind::bomb) == 0);
 
     // A copy's track keeps its fall across a bounce: the turn is no gravity.
@@ -953,8 +953,9 @@ TEST_CASE("shots: a seed copy is seen landing where the owner's hit, a gone one 
 }
 
 TEST_CASE("shots: a nut copy that hit something reaches the spot before it goes") {
-    // A nut has no land hold: before, its copy was removed as the remove
-    // came, while shown 100 ms late it was still in flight.
+    // Before, its copy was removed as the remove came, while shown 100 ms
+    // late it was still in flight. #248: it then bursts there for its land
+    // hold (the nut's own Chemical_Light) before it goes.
     CoopSpawn::Sync sync;
     std::vector<proto::Message> send;
     std::vector<Copy> copies;
@@ -991,6 +992,13 @@ TEST_CASE("shots: a nut copy that hit something reaches the spot before it goes"
     CHECK(copies[0].position[0] == doctest::Approx(2.0f));  // at the wall
     copies.clear();
     sync.Tick(kScene, 2, got + shots::Track::kBehindUs, {}, live, send, copies);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].act == Act::show);  // reached the spot: it bursts there
+    CHECK(copies[0].position[0] == doctest::Approx(2.0f));
+    CHECK(copies[0].effect == "Chemical_Light");
+    copies.clear();
+    sync.Tick(kScene, 2, got + shots::Track::kBehindUs + shots::LandHoldUs(shots::Kind::nut), {}, live, send,
+              copies);
     REQUIRE(copies.size() == 1);
     CHECK(copies[0].act == Act::remove);
 }
