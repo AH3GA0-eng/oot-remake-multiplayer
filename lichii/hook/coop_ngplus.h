@@ -57,6 +57,35 @@ bool IsGanonDeath(std::string_view event);
 // An event the game asked for that is the opening of a new file.
 bool IsNewFileOpening(std::string_view event);
 
+// ngplus-hearts (results-0115-a: NG+ 1 on a real new file, no hearts given): the game does not ask its event
+// manager for the opening. New Game's own flow plays the setting Opening_LoadingKokiriForest (romfs
+// Event/EventFlow/OpeningEvent), which goes on to Dm_Kokiri_0000 by EventTransition, then Opening_Introduction
+// and Dm_Kokiri_0030 (the same), so the event request wrap (IsNewFileOpening) never sees them. Ganon's death is
+// played the same way (Defeat_Ganon's flow). The game keeps a played Bool per event setting
+// (HavePlayedEvent.<setting>, GameDataList; docs/scenes.md), set whichever way the setting started: a file whose
+// flag goes from unplayed to played has just played that event. The opening's flags are never shared (coop_story,
+// coop_shared_scenes leave the opening out), and every save after it has them set (the opening ends with
+// EventTriggerRequestAutoSave), so only a new file can see them rise.
+inline constexpr std::uint32_t kOpeningPlayed[] = {
+    0xa95bd438u,  // HavePlayedEvent.Opening_LoadingKokiriForest
+    0x3b5ca6c2u,  // HavePlayedEvent.Dm_Kokiri_0000
+    0x15b67d0eu,  // HavePlayedEvent.Opening_Introduction
+    0xb041ae87u,  // HavePlayedEvent.Dm_Kokiri_0030
+};
+inline constexpr std::uint32_t kGanonPlayed[] = {
+    0xa5e7a3ddu,  // HavePlayedEvent.InsideGanonCastle_Dungeon_BossDie_2 (Ganon's death setting)
+    0x44db9a38u,  // HavePlayedEvent.Dm_FinalBattle_BossOut
+};
+// One played flag, followed within one file: rises once, when it is read unplayed and then played. The title or a
+// save load forgets what was read (Reset), so a loaded save that has it set never rises.
+struct Played {
+    bool known = false;  // read since the last reset
+    bool was = false;
+};
+// Takes this read (nothing: unread now, kept as it was) and says whether the flag rose with it.
+bool Rose(Played& p, std::optional<bool> now);
+inline void Reset(Played& p) { p = Played{}; }
+
 // What decides the kept hearts for the loaded file.
 struct Give {
     std::uint8_t level = 0;                // the level chosen (0 off)

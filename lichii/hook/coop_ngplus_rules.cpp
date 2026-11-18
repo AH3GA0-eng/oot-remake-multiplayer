@@ -77,7 +77,18 @@ bool IsGanonDeath(std::string_view event) {
 bool IsNewFileOpening(std::string_view event) {
     // The opening of a new game (docs/flags.md, "Quests that follow the story": Dm_Kokiri_0000 to _0030). Only a new
     // file plays its first part; a loaded save starts after it.
-    return event == "Dm_Kokiri_0000";
+    // The opening's settings by name too (kOpeningPlayed), should a game ask for one: the flag is the main way.
+    return event == "Dm_Kokiri_0000" || event == "Opening_LoadingKokiriForest" || event == "Opening_Introduction";
+}
+
+bool Rose(Played& p, std::optional<bool> now) {
+    if (!now) {
+        return false;
+    }
+    const bool rose = p.known && !p.was && *now;
+    p.known = true;
+    p.was = *now;
+    return rose;
 }
 
 bool NewFileNow(const FileMark& m) {

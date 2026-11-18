@@ -9,7 +9,9 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <string_view>
 #include <system_error>
@@ -50,6 +52,12 @@ struct Glue {
     bool was_in_game = false;
     std::uint64_t link_at_us = 0;  // when our Link was last made (the end of a load)
     std::vector<std::string> lines;
+    // ngplus-hearts: the opening's and Ganon's played flags (kOpeningPlayed, kGanonPlayed), read a few times a second
+    // while our Link is in the scene.
+    Played opening[std::size(kOpeningPlayed)];
+    Played ganon[std::size(kGanonPlayed)];
+    CoopEvery::Every played_poll{CoopEvery::kQuarterUs};
+    bool played_said = false;
 };
 
 Glue& TheGlue() {
@@ -116,6 +124,57 @@ std::string Hearts(std::int32_t quarters) {
     return std::to_string(whole) + (part ? " " + std::to_string(part) + "/4" : std::string()) + " hearts";
 }
 
+// ngplus-hearts (coop_ngplus.h, kOpeningPlayed): the game plays the opening and Ganon's death from its own flows,
+// never through the event request wrap, so their played flags tell them. Only for a game that may give (alone or the
+// host): a guest's flags come from the host's save, so a guest that joins a host past Ganon would see them rise.
+// Forgotten at the title and at every save load the game starts (a loaded save's flags are its own, not a rise);
+// where the save loads are not seen (the emulator) whenever our Link is not made, so a file switch never rises.
+void PlayedFlags(Glue& g, CoopHook::EmulatorMemory& memory, bool in_game, bool may_give, FileMark& mark,
+                 bool& beaten) {
+    if (mark.title || mark.load_started || !may_give || (!mark.native_loads && !in_game)) {
+        for (auto& p : g.opening) Reset(p);
+        for (auto& p : g.ganon) Reset(p);
+        g.played_said = false;
+        return;
+    }
+    if (!in_game || !g.played_poll.Due(CoopEvery::NowUs())) {
+        return;
+    }
+    coop::host::GameFlagStore reader(memory);
+    auto read = [&](std::uint32_t hash) -> std::optional<bool> {
+        const auto e = reader.read(proto::FlagKey{hash, 0});
+        if (!e || e->kind != proto::FlagKind::boolean) {
+            return std::nullopt;
+        }
+        return e->value != 0;
+    };
+    // The opening only matters while hearts may still go into this file (a level on, hearts kept, not yet new).
+    const std::uint32_t packed = g.packed.load();
+    const bool want_opening = (packed & 0xff) != 0 && (packed >> 16) != 0 && !g.new_file;
+    std::string says;
+    for (std::size_t i = 0; want_opening && i < std::size(kOpeningPlayed); ++i) {
+        const auto now = read(kOpeningPlayed[i]);
+        if (!g.played_said && now) {
+            says += (says.empty() ? "" : ", ") + std::string(*now ? "1" : "0");
+        }
+        if (Rose(g.opening[i], now)) {
+            mark.opening = true;
+            LOG_INFO(Core, "coop: New Game+: the opening played in this file (HavePlayedEvent {:#010x} 0 -> 1)",
+                     kOpeningPlayed[i]);
+        }
+    }
+    if (!says.empty()) {
+        g.played_said = true;
+        LOG_INFO(Core, "coop: New Game+: the opening's played flags in this file: {}", says);
+    }
+    for (std::size_t i = 0; i < std::size(kGanonPlayed); ++i) {
+        if (Rose(g.ganon[i], read(kGanonPlayed[i]))) {
+            beaten = true;
+            LOG_INFO(Core, "coop: New Game+: Ganon's death seen (HavePlayedEvent {:#010x} 0 -> 1)", kGanonPlayed[i]);
+        }
+    }
+}
+
 }  // namespace
 
 std::uint8_t Level() {
@@ -170,6 +229,7 @@ void Frame(CoopHook::EmulatorMemory& memory, bool in_game, bool may_give, bool t
     mark.title = title;
     mark.load_started = loads != g.loads_seen;
     g.loads_seen = loads;
+    PlayedFlags(g, memory, in_game, may_give, mark, beaten);
     const bool new_file = NewFileNow(mark);
     if (new_file != g.new_file) {
         if (new_file && !g.new_file) {
