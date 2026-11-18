@@ -3,6 +3,7 @@
 #include <cstddef>
 
 #include <map>
+#include <string_view>
 #include <set>
 #include <string>
 #include <variant>
@@ -149,6 +150,22 @@ TEST_CASE("flag watcher: a FLAG_STATE is written and not sent back") {
   CHECK(w.receive(*bytes));
   CHECK(w.frame(store).empty());
   CHECK(store.get(kDoor) == 0);
+}
+
+TEST_CASE("flag watcher: a refused write names its key in the stats (events-next-a-11)") {
+  FakeStore store = game();
+  store.unwritable.insert(kDoor);
+  FlagWatcher w(shared(), FlagRole::player);
+  w.frame(store);
+  CHECK(w.stats().top_write_failure_count == 0);
+  CHECK(w.receive(state({entry(kDoor, 1), entry(kChest, 1)})));
+  w.frame(store);
+  w.frame(store);  // tried again
+  CHECK(store.get(kChest) == 1);
+  CHECK(w.stats().write_failures >= 1);
+  CHECK(w.stats().top_write_failure == kDoor);
+  CHECK(w.stats().top_write_failure_count == w.stats().write_failures);
+  CHECK(std::string_view(w.stats().top_write_failure_site) == "write");
 }
 
 TEST_CASE("flag watcher: 64-bit keys go out, come in and fill a snapshot") {

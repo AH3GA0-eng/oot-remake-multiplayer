@@ -24,6 +24,7 @@
 // inside frame(), on the game's thread. Not thread-safe: call both from one
 // thread, or lock around them.
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -60,6 +61,11 @@ struct FlagStats {
   std::uint64_t max_caps_kept = 0;     // a rise of our own past cap_max's cap: put back, not sent
   std::uint64_t read_failures = 0;
   std::uint64_t write_failures = 0;    // each failed try; it is tried again next frame
+  // The key with the most write failures so far, how many, and where (events-next-a-11: a log said ~60
+  // failures a second after an event without saying which flag). Count 0 = none yet.
+  FlagKey top_write_failure{};
+  std::uint64_t top_write_failure_count = 0;
+  const char* top_write_failure_site = "";
   std::uint64_t bad_snapshots = 0;     // parts out of order: the snapshot is dropped
   std::uint64_t ignored_messages = 0;  // not a flag message, or not for this role
   std::uint64_t load_reverts = 0;      // the game's load undid a group value: written back
@@ -538,6 +544,11 @@ class FlagWatcher {
   Table snapshot_;                        // parts so far
   std::vector<protocol::FlagState> held_states_;  // came while holding
   FlagStats stats_;
+  // write_failures per key, for FlagStats::top_write_failure; at most kWriteFailureKeys keys (a new key past
+  // that is counted in write_failures only).
+  static constexpr std::size_t kWriteFailureKeys = 256;
+  std::map<FlagKey, std::uint64_t> write_failure_keys_;
+  void note_write_failure(const FlagKey& key, const char* site);
   // use_events
   const std::vector<FlagKey>& diff_keys();
   bool events_ = false;

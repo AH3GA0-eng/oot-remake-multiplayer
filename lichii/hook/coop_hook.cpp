@@ -2307,6 +2307,17 @@ private:
                  s.changes_sent, s.answers_sent, s.entries_in, s.applied, s.deltas_added, s.load_reverts,
                  s.one_way_restores, s.reset_applied, s.kept_local, s.not_shared, s.write_failures, s.ignored_messages,
                  s.bad_snapshots, s.holding_frames / 60, s.hold_timeouts, s.window_frames / 60, s.pending_now);
+        // events-next-a-11: which flag the write failures are (a log showed ~60 a second after an event, no key).
+        if (s.top_write_failure_count > 0) {
+            const coop::protocol::FlagKey& k = s.top_write_failure;
+            if (k.kind == coop::protocol::FlagKeyKind::key64) {
+                LOG_INFO(Core, "coop: flags: top write failure: key64 0x{:016x} table {} ({} of {}, in {})", k.key,
+                         k.table, s.top_write_failure_count, s.write_failures, s.top_write_failure_site);
+            } else {
+                LOG_INFO(Core, "coop: flags: top write failure: named 0x{:08x}[{}] ({} of {}, in {})", k.hash,
+                         k.index, s.top_write_failure_count, s.write_failures, s.top_write_failure_site);
+            }
+        }
     }
     CoopEvery::Every flag_traffic_log_{10 * CoopEvery::kSecondUs};
     std::uint64_t flag_traffic_sum_ = 0;
