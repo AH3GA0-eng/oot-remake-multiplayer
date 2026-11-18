@@ -902,6 +902,38 @@ TEST_CASE("save transfer: Resync from host goes only for a guest that can switch
   CHECK(save::pending_step(true, true, false) == save::PendingStep::go);     // the title's menu: switched
 }
 
+TEST_CASE("save transfer: the first multiplayer saves are a whole copy, never a half folder") {
+  TempDir t("coop_copy_dir_whole_test");
+  const fs::path solo = t.path / "account";
+  const fs::path mp = t.path / "account-mp";
+  fs::create_directories(solo / "slot_00");
+  { std::ofstream(solo / "slot_00" / "progress.sav", std::ios::binary) << "save"; }
+  { std::ofstream(solo / "option.sav", std::ios::binary) << "opt"; }
+  // A half copy an earlier try left behind is thrown away, not used.
+  fs::create_directories(t.path / "account-mp.part" / "junk");
+  std::string why;
+  REQUIRE(save::copy_dir_whole(solo, mp, &why));
+  CHECK(fs::exists(mp / "slot_00" / "progress.sav"));
+  CHECK(fs::exists(mp / "option.sav"));
+  CHECK_FALSE(fs::exists(mp / "junk"));
+  CHECK_FALSE(fs::exists(t.path / "account-mp.part"));
+  CHECK(fs::exists(solo / "slot_00" / "progress.sav"));  // the solo saves are only read
+  // Once there it is never made again (nothing touched).
+  { std::ofstream(mp / "option.sav", std::ios::binary) << "played"; }
+  CHECK_FALSE(save::copy_dir_whole(solo, mp, &why));
+  std::ifstream kept(mp / "option.sav", std::ios::binary);
+  CHECK(std::string(std::istreambuf_iterator<char>(kept), {}) == "played");
+}
+
+TEST_CASE("save transfer: a copy with nothing to copy from leaves no folder") {
+  TempDir t("coop_copy_dir_whole_missing_test");
+  std::string why;
+  CHECK_FALSE(save::copy_dir_whole(t.path / "none", t.path / "none-mp", &why));
+  CHECK_FALSE(why.empty());
+  CHECK_FALSE(fs::exists(t.path / "none-mp"));
+  CHECK_FALSE(fs::exists(t.path / "none-mp.part"));
+}
+
 TEST_CASE("save transfer: an ask while the host plays a file waits for the save its game is asked for (case 1)") {
   using Send = save::Planner::Send;
   constexpr std::uint64_t kLimit = save::Planner::kFreshSaveUs;

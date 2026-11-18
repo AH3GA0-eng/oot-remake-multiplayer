@@ -256,6 +256,7 @@ void Menu::RunHost(HostJob job) {
             }
         }
         while (!stop_) {
+            host.set_ngplus(hooks_.ngplus_level ? hooks_.ngplus_level() : 0);   // (Navi) New Game+ (Hooks)
             host.service(kRoundMs);
             std::deque<std::string> pasted;
             {

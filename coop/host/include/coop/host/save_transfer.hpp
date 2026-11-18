@@ -318,6 +318,13 @@ bool is_coop_dir(const std::filesystem::path& dir);
 std::filesystem::path coop_dir_of(const std::filesystem::path& own_dir);
 std::filesystem::path own_dir_of(const std::filesystem::path& coop_dir);
 
+// The first multiplayer saves (the hook's solo/multiplayer save sets, coop_save ChooseSaveSet): `from` copied whole
+// to `to`. The copy goes to `to` + ".part" and is renamed to `to` only once it is complete, so a failed copy never
+// leaves a half `to` that would be played from ever after (a ".part" left by an earlier try is removed first). `from`
+// is only read. False when `to` already exists (nothing done), when `from` is not a folder, or on a failure (`to` then
+// absent, `error` says why).
+bool copy_dir_whole(const std::filesystem::path& from, const std::filesystem::path& to, std::string* error);
+
 enum class WriteResult {
   written,
   not_coop,  // refused: the folder is not a co-op save folder (never a player's own saves)

@@ -85,6 +85,7 @@
 #include "coop_pickups.h"
 #include "coop_fairy.h"
 #include "coop_difficulty.h"
+#include "coop_ngplus.h"
 #include "coop_drops.h"
 #include "coop_every.h"
 #include "coop_event_owner.h"  // G1: whose the running event is
@@ -1447,6 +1448,14 @@ public:
         // Difficulty (docs/play-online.md "Difficulty"): the host's choice goes out.
         CoopDifficulty::Frame(report.connected ? session_.get() : nullptr);
         for (auto& line : CoopDifficulty::TakeLines()) {
+            chat_.Add(std::move(line), true);
+        }
+        // (Navi) New Game+ (coop_ngplus.h): Ganon's death unlocks it; with a level on, the kept hearts.
+        if (memory) {
+            CoopNgPlus::Frame(*memory, reading.has_value(), !report.connected || report.hosting,  // host or alone
+                              CoopSave::TitleUp());
+        }
+        for (auto& line : CoopNgPlus::TakeLines()) {
             chat_.Add(std::move(line), true);
         }
         // Mods (docs/mods.md "Mods in co-op"): our list, the host's shared settings, a warning when they differ.
@@ -2960,6 +2969,11 @@ void LocalFrameOff(Core::System& system, bool writes) {
     }
     if (writes) {
         CoopLocalGame::Frame(facts);
+        // (Navi) New Game+ alone (coop_ngplus.h): no chat box here, the log and the Settings page say it.
+        CoopNgPlus::Frame(memory, facts.position.has_value(), true, CoopSave::TitleUp());
+        for (const auto& line : CoopNgPlus::TakeLines()) {
+            LOG_INFO(Core, "coop: {}", line);
+        }
     }
     // G1: whose the running event is, every frame (the tracker sees each run start and end). The
     // animation and our Link's performer are read only while an event runs.

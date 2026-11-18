@@ -1288,6 +1288,10 @@ TEST_CASE("hookshot: every switch of the save folder marks the game's save list 
     REQUIRE(helper != std::string::npos);
     CHECK(first > helper);
     CHECK(save.find("g_list_stale = true;", helper) != std::string::npos);
+    // (Navi's Saves row, ChooseSaveSet) the solo/multiplayer switch goes through it too: its new list shows at once.
+    const auto apply = save.find("std::string ApplySaveSetLocked() {");
+    REQUIRE(apply != std::string::npos);
+    CHECK(save.find("if (!RemountLocked(want)) {", apply) != std::string::npos);
     const std::string title = ReadFile(kRepo / "hookshot" / "src" / "coop_title.cpp");
     CHECK(title.find("constexpr std::uint64_t kCaptionReload = 0xf6da40;") != std::string::npos);
     CHECK(title.find("constexpr std::uint64_t kCaptionBusy = 0x33ad380;") != std::string::npos);
