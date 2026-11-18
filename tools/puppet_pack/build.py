@@ -1723,7 +1723,8 @@ def main(argv=None):
                          "CoopPuppet_<age>_Skin_<ID> (skin.py); may be given more than once")
     ap.add_argument("--skin-effects", action="store_true",
                     help="the --skin mods' own copies of the game's effect files (Effect/, ELink2/: a recoloured "
-                         "sword glow) go into the pack as they are; every sword with that effect shows it")
+                         "sword glow) go into the pack as they are. This changes every Master Sword in your game "
+                         "(and every sword with that effect), worn or not, solo too")
     ap.add_argument("--test-skin", metavar="ID",
                     help="test switch: every puppet wears the --skin of this id (a hook that knows no skins)")
     ap.add_argument("--look-slots", type=int, default=look_items.SLOTS, metavar="N",
