@@ -39,25 +39,32 @@ using CoopFiles::Utf8Path;
 using CoopFiles::WriteText;
 
 // --- The game (build e0f3ccfa..., the only one the module runs on) ---
-constexpr std::uint64_t kTitleVtable = 0x84c106e8;    // UITitleScreen
+// Addresses in main are OFFSETS in main (as read from main and as docs/hookshot.md names them, main+0x...), made
+// guest addresses only through Main(): main is mapped at CoopRuntime::MainBase() (0x80020000); no base is written here.
+std::uint64_t Main(std::uint64_t offset) {
+    return CoopRuntime::MainBase() + offset;
+}
+constexpr std::uint64_t kTitleVtable = 0x4bf06e8;     // main+: UITitleScreen
 constexpr std::uint64_t kTitleActive = 0x1a8;         // u8: 1 while its step runs its work (f_83426d70)
 constexpr std::uint64_t kTitleCount = 0x2c8;          // s32: its buttons
 constexpr std::uint64_t kTitleButtons = 0x2d0;        // its buttons' array
 constexpr std::uint64_t kTitleFocused = 0x2e0;        // the focused button (f_83426f40)
 constexpr std::uint64_t kTitleLayout = 0x28;          // the screen's layout
 // A pane's text from a message, as UISystemWindowScreen sets its buttons' (f_83425bc0):
-constexpr std::uint64_t kMsgRefInit = 0x80a86f70;     // (ref): {0, 0, -1}, 24 bytes
-constexpr std::uint64_t kMsgRefSet = 0x80a8afe0;      // (ref, &"LayoutMsg/...", &"label", 1)
-constexpr std::uint64_t kPaneText = 0x80a87d30;       // (layout, "pane/T_Btn_00", ref, 1, 0)
+constexpr std::uint64_t kMsgRefInit = 0xa66f70;       // main+: (ref): {0, 0, -1}, 24 bytes
+constexpr std::uint64_t kMsgRefSet = 0xa6afe0;        // main+: (ref, &"LayoutMsg/...", &"label", 1)
+constexpr std::uint64_t kPaneText = 0xa67d30;         // main+: (layout, "pane/T_Btn_00", ref, 1, 0)
 // The game's save list (player report 124; read from main, see docs/hookshot.md "The save list"): the caption
 // manager, whose bytes the title's SeqQueryIsExistSave reads (+0x8e a save, +0x8f a Master Quest save, +0x88 the
 // latest slot), and the body of SeqOneshotRequestLoadAndSerializeCaption, which re-reads every slot's caption from the
 // mounted save folder (the boot's BeforeInitializeCommon and the way back to the title run it).
-constexpr std::uint64_t kCaptionMgrGot = 0x84c81660;  // GOT: -> the global that holds the caption manager
-constexpr std::uint64_t kCaptionBusy = 0x833ad380;   // (mgr) -> bool: the game's own test, still reading
-constexpr std::uint64_t kCaptionReset = 0x80bafd40;   // () -> bool: the game's list reset (registered callback;
+// (These four were once written as 0x80000000 + the offset, 0x20000 short of main's base: a code word read as the GOT
+// and calls into the middle of other functions, so the list was never re-read. Offsets through Main() rule that out.)
+constexpr std::uint64_t kCaptionMgrGot = 0x4c81660;   // main+: GOT -> the global that holds the caption manager
+constexpr std::uint64_t kCaptionBusy = 0x33ad380;     // main+: (mgr) -> bool: the game's own test, still reading
+constexpr std::uint64_t kCaptionReset = 0xbafd40;     // main+: () -> bool: the game's list reset (registered callback;
                                                       // to state 0 when idle and no save screen holds it)
-constexpr std::uint64_t kCaptionReload = 0x80f6da40;  // (mgr): the re-read; starts only from state 0
+constexpr std::uint64_t kCaptionReload = 0xf6da40;    // main+: (mgr): the re-read; starts only from state 0
 constexpr std::uint64_t kCaptionState = 0x8c;         // u8: 0 cleared, 1-3 reading, 4 read
 constexpr std::uint64_t kCaptionLatest = 0x88;        // s32: the latest slot, -1 none
 constexpr std::uint64_t kCaptionAnySave = 0x8e;       // u8: a save exists (Continue)
@@ -110,7 +117,7 @@ bool HasScratch() {
 // seen) a step came in the last 300 ms.
 bool TitleUp() {
     const std::uint64_t s = g_screen.load();
-    if (s == 0 || Read64(s) != kTitleVtable) {
+    if (s == 0 || Read64(s) != Main(kTitleVtable)) {
         return false;
     }
     std::uint8_t active = 0;
@@ -208,19 +215,19 @@ bool SetRowTexts(void* ctx, std::uint64_t screen) {
         }
         std::uint64_t x0 = 0;
         HosCoopCall k{};
-        k.function = kMsgRefInit;
+        k.function = Main(kMsgRefInit);
         k.x[0] = base;
         if (!g_api->call(ctx, &k, &x0)) {
             return false;
         }
         k = HosCoopCall{};
-        k.function = kMsgRefSet;
+        k.function = Main(kMsgRefSet);
         k.x[0] = base, k.x[1] = base + 0x20, k.x[2] = base + 0x28, k.x[3] = 1;
         if (!g_api->call(ctx, &k, &x0)) {
             return false;
         }
         k = HosCoopCall{};
-        k.function = kPaneText;
+        k.function = Main(kPaneText);
         k.x[0] = layout, k.x[1] = at_pane, k.x[2] = base, k.x[3] = 1, k.x[4] = 0;
         if (!g_api->call(ctx, &k, &x0)) {
             return false;
@@ -233,7 +240,7 @@ bool SetRowTexts(void* ctx, std::uint64_t screen) {
 
 // The caption manager (0: not made yet).
 std::uint64_t CaptionMgr() {
-    const std::uint64_t global = Read64(kCaptionMgrGot);
+    const std::uint64_t global = Read64(Main(kCaptionMgrGot));
     return global != 0 ? Read64(global) : 0;
 }
 
@@ -275,7 +282,7 @@ void RefreshSaveList(void* ctx) {
     in.state = state;
     in.now_ms = NowMs();
     if (found && (g_list.pending() || g_list.asked() || in.stale)) {
-        const auto busy = GameCall(ctx, kCaptionBusy, mgr);
+        const auto busy = GameCall(ctx, Main(kCaptionBusy), mgr);
         in.busy = !busy || (*busy & 1) != 0;
     }
     const R::Wait before = g_list.waiting();
@@ -292,7 +299,7 @@ void RefreshSaveList(void* ctx) {
     case R::Action::ask: {
         LOG_INFO(Core, "coop: title: save list: the save folder changed: the game re-reads its save list (before: {}; "
                        "state {})", CaptionLine(mgr), state);
-        const auto reset = GameCall(ctx, kCaptionReset, 0);
+        const auto reset = GameCall(ctx, Main(kCaptionReset), 0);
         if (!reset || (*reset & 1) == 0) {
             g_list.Refused();
             LOG_INFO(Core, "coop: title: save list: the game's list reset said not now ({}): asked again",
@@ -301,7 +308,7 @@ void RefreshSaveList(void* ctx) {
         }
         std::uint8_t cleared = 0xff;
         CoopRuntime::Read(mgr + kCaptionState, &cleared, 1);
-        if (!GameCall(ctx, kCaptionReload, mgr)) {
+        if (!GameCall(ctx, Main(kCaptionReload), mgr)) {
             LOG_WARNING(Core, "coop: title: save list: the game's re-read could not be called: Continue shows after a "
                               "restart");
             return;

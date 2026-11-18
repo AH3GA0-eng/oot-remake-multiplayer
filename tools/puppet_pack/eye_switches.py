@@ -69,7 +69,7 @@ def read_graph(data):
     commands, count = u32(0x0C), u32(0x10)
     io, multi_at, imm = u32(0x34), u32(0x38), u32(0x2C)
     starts = [u32(io + 4 * i) for i in range(12)] + [multi_at]
-    ins, outs, defaults = {}, {}, []
+    ins, outs, defaults, bools = {}, {}, [], []
     for t, name in enumerate(TYPES):
         lst, o = [], starts[2 * t]
         while o < starts[2 * t + 1]:
@@ -77,6 +77,8 @@ def read_graph(data):
             lst.append((text(u32(o) & 0x3FFFFFFF), s16(at), s16(at + 2)))
             if name == "string":  # its default value (a flag's name) at +0x0c
                 defaults.append(text(u32(o + 12)))
+            elif name == "bool":  # its default value at +0x0c (an unwired input's constant: a gate's UpdateOnce)
+                bools.append(u32(o + 12) & 1)
             o += IN_SIZE[name]
         ins[name] = lst
         lst, o = [], starts[2 * t + 1]
@@ -89,7 +91,7 @@ def read_graph(data):
     for i in range(count):
         n = 0x74 + commands * 0x18 + i * 0x3C
         body = u32(n + 0x14)
-        node = {"type": text(u32(n + 8)), "in": {}, "out": {}, "imm": {}, "sdef": {}}
+        node = {"type": text(u32(n + 8)), "in": {}, "out": {}, "imm": {}, "sdef": {}, "bdef": {}}
         for t, name in enumerate(TYPES):
             a, b = u32(body + 0x30 + 16 * t), u32(body + 0x34 + 16 * t)
             c, d = u32(body + 0x38 + 16 * t), u32(body + 0x3C + 16 * t)
@@ -97,6 +99,8 @@ def read_graph(data):
             node["out"][name] = outs[name][c: c + d]
             if name == "string":
                 node["sdef"] = {k[0]: v for k, v in zip(ins[name][a: a + b], defaults[a: a + b])}
+            elif name == "bool":
+                node["bdef"] = {k[0]: v for k, v in zip(ins[name][a: a + b], bools[a: a + b]) if k[1] == -1}
         first, n_str = u32(body + 0x18), u32(body + 0x1C)
         for k in range(first, first + n_str):
             o = string_imm + 0x0C * k
@@ -148,7 +152,8 @@ def switch_events(romfs, dicts=None, wiring=None):
     wiring: when a dict, filled per line (the lines' tuple) with {"on": [(input, [(kind, what, negated)])] (the
             switch's ON inputs and their sources, [] = unwired), "results": [(kind, what, detail)] (what the asker's
             outputs drive, forward through gates, module outputs and module calls), "delete": [flags that delete the
-            asker]}. classify() reads it.
+            asker], "guards": asker_guards() of THIS asker (an event asked by two askers has two lines, each with
+            its own)}. classify() and room_objects.py read it.
     """
     if dicts is None:
         dicts = zs.Dicts.from_romfs(romfs)
@@ -157,7 +162,10 @@ def switch_events(romfs, dicts=None, wiring=None):
     def graph(logic):
         path = os.path.join(romfs, "Logic", os.path.basename(str(logic)) + "b")
         if path not in graphs:
-            graphs[path] = read_graph(open(path, "rb").read()) if os.path.exists(path) else None
+            graphs[path] = None
+            if os.path.exists(path):
+                with open(path, "rb") as f:
+                    graphs[path] = read_graph(f.read())
         return graphs[path]
 
     lines, guards, extras, others = set(), set(), set(), set()
@@ -177,13 +185,15 @@ def switch_events(romfs, dicts=None, wiring=None):
             by_id = {(_prefix(r["Path"]), r["Id"]): by_hash[_int(r["Reference"])]
                      for r in refs if "Reference" in r and _int(r["Reference"]) in by_hash}
 
-            def leaves(pre, g_, src, outp, depth, seen, neg=False, under_or=False):
-                """[(kind, actor or flag name, plug, negated, under an OR)], kind "actor", "flag" or "node"."""
+            def leaves(pre, g_, src, outp, depth, seen, neg=False, under_or=False, once=False):
+                """[(kind, actor or flag name, plug, negated, under an OR)], kind "actor", "flag" or "node"; a flag
+                behind a gate whose UpdateOnce input is 1 (the game reads it once, when the room loads: the Deku
+                Tree ladder's RoomC_Cleared) is kind "flag-once": it carries no live result."""
                 nodes, multi = g_
                 if src <= -100:
                     found = []
                     for a, b in multi(-100 - src, outp):
-                        found += leaves(pre, g_, a, b, depth + 1, seen, neg, under_or)
+                        found += leaves(pre, g_, a, b, depth + 1, seen, neg, under_or, once)
                     return found
                 if src < 0 or src >= len(nodes) or depth > 12 or (id(g_), src, outp) in seen:
                     return []
@@ -208,19 +218,21 @@ def switch_events(romfs, dicts=None, wiring=None):
                                 if call["type"] == mtype and call["imm"].get("InstanceName") == minst:
                                     for name, a, b in call["in"]["bool"]:
                                         if name == node["imm"]["Name"]:
-                                            found += leaves(ppre, parent, a, b, depth + 1, seen, neg, under_or)
+                                            found += leaves(ppre, parent, a, b, depth + 1, seen, neg, under_or, once)
                     return found
                 if node["type"].startswith("HoldGameDataGetBool"):
                     name = node["sdef"].get("GameDataNameBool", "")
-                    return [("flag", name, plug, neg, under_or)] if name else []
+                    return [("flag-once" if once else "flag", name, plug, neg, under_or)] if name else []
                 if not node["in"]["bool"]:
                     return [("node", node["type"], plug, neg, under_or)]
                 # A gate, or a module call (InvBool, ...): its False output (or an inverter) negates.
                 flip = plug == "False" or "InvBool" in node["type"]
                 is_or = "OR" in node["type"].upper().replace("OPERATE", "")[:2] or node["type"].startswith("OperateOR")
+                once = once or node.get("bdef", {}).get("UpdateOnce") == 1
                 found = []
-                for _, a, b in node["in"]["bool"]:
-                    found += leaves(pre, g_, a, b, depth + 1, seen, neg != flip, under_or or is_or)
+                for name, a, b in node["in"]["bool"]:
+                    if name != "UpdateOnce":
+                        found += leaves(pre, g_, a, b, depth + 1, seen, neg != flip, under_or or is_or, once)
                 return found
 
             def calls(pre, name, inner):
@@ -364,11 +376,59 @@ def switch_events(romfs, dicts=None, wiring=None):
                                     on.append((name, [(k, str(w.get("Gyaml")) if k == "actor" else w, ng)
                                                       for k, w, _, ng, _ in srcs]))
                         line = (event, scene, str(actor["Gyaml"]), _place(actor), plug, _place(asker))
-                        wiring[line] = {"on": on, "results": sorted(set(results)), "delete": deletes}
+                        wiring[line] = {"on": on, "results": sorted(set(results)), "delete": deletes,
+                                        "guards": asker_guards(trigger, delete)}
     return sorted(lines), sorted(guards), sorted(extras), sorted(others)
 
 
-def classify(line, wire, shared):
+LOAD_GUARD = "load:"  # asker_guards(): a flag the room reads only when it loads (kind "flag-once")
+
+
+def load_guard(guard):
+    """(flag, read only at the room's load) of one asker_guards() entry."""
+    return (guard[len(LOAD_GUARD):], True) if guard.startswith(LOAD_GUARD) else (guard, False)
+
+
+def asker_guards(trigger, delete):
+    """The saved flags that stop ONE asker (g3-objects): a flag its trigger reads negated outside an OR (on: the
+    trigger is false whatever the switch says), or a flag that deletes it (on: no asker). HavePlayedEvent.* is left
+    out (coop_dungeon.cpp holds those in the dungeon). `trigger`/`delete`: leaves() of its EventRequestTrigger and
+    Logic_Delete, (kind, what, plug, negated, under an OR).
+
+    A negated flag under an OR counts only when it is the trigger's ONE leaf under an OR (Jabu-Jabu room 1:
+    OnState AND an OR whose other inputs are unwired, i.e. the flag alone); with two or more leaves under ORs the
+    tool cannot tell which OR holds which, so none of them counts (no hold: the safe side).
+
+    A flag behind a gate with UpdateOnce 1 (kind "flag-once") is read only when the room loads: on at the load it
+    stops the asker for that visit, but landing live (the other player's press) stops nothing. It is returned as
+    a LOAD guard, "load:<flag>" (load_guard() splits it): the Deku Tree room D compass asker, deleted by
+    RoomD_StepSwitch_On_01 only at a load (events-next-a-5, Room_D_Prefab_b6c3). The C++ gate arms such a guard
+    only when the flag was already on when our room loaded (CoopSwitchShare: the visit's first sight of the
+    switch), never by a mid-visit turn-on (our asker still exists then: a hold would replay the event)."""
+    in_or = [x for x in trigger if x[4]]
+    out = set()
+    for kind, what, _, neg, under_or in trigger:
+        # under_or == 1: in an OR with no AND on the way (g1-events 9fce0c8f: 2 = also behind an AND, not alone)
+        if kind in ("flag", "flag-once") and neg and (not under_or or (under_or == 1 and len(in_or) == 1)):
+            out.add(what if kind == "flag" else LOAD_GUARD + what)
+    for kind, what, _, neg, _ in delete:
+        if kind in ("flag", "flag-once") and not neg and not what.startswith("HavePlayedEvent."):
+            out.add(what if kind == "flag" else LOAD_GUARD + what)
+    # read live AND once at the load (two paths to the same flag): the live read stops the asker at any time
+    return sorted(g for g in out if not (load_guard(g)[1] and load_guard(g)[0] in out))
+
+
+def two_way_flags(wiring):
+    """The flags some asker sets and some asker (the same or another) clears, over all lines (g3-objects)."""
+    seen = {}
+    for wire in wiring.values():
+        for kind, what, detail in wire["results"]:
+            if kind == "flag" and detail in ("set", "clear"):
+                seen.setdefault(what, set()).add(detail)
+    return {f for f, d in seen.items() if d == {"set", "clear"}}
+
+
+def classify(line, wire, shared, two_way=frozenset()):
     """(class, fix, why) of a switch line whose plug does not latch (deku-ladder, A #39).
 
     class "A": every room result of the event reaches the room through a shared flag: the asker's outputs only set
@@ -381,9 +441,16 @@ def classify(line, wire, shared):
     switch's own AI turns on and keeps its output; "split" - the ON input reads a shared flag that does not delete
     the asker: hold only the asker's delete flags (the ON flag comes, our switch turns on, our asker asks); "none" -
     the ON input's flag also deletes the asker (or no ON input): no native way, reported.
+    An actor input is also covered by a shared flag ORed into it that the asker's own results drive the same way
+    (the asker clears it and the OR reads it negated, or sets it and the OR reads it as is: g3-objects, Jabu room
+    14's upper switch re-arms from `not Updown_MoveWater`, which its event clears).
+    A class B fix that runs our asker (input, split) is refused ("none") when the asker writes a shared flag that
+    some asker also writes the other way (`two_way`): our late run would be a second writer and could undo the
+    other player's newer write for everyone (g3-objects: Jabu room 14's water flags once they are shared).
     """
     event, scene, switch, at, plug, asker_at = line
     on_flags = {w for _, srcs in wire["on"] for k, w, ng in srcs if k == "flag" and not ng and w in shared}
+    writes = {(w, d) for k, w, d in wire["results"] if k == "flag" and d in ("set", "clear")}
     misses = []
     for kind, what, detail in wire["results"]:
         if kind == "flag":
@@ -399,14 +466,19 @@ def classify(line, wire, shared):
             # the asker's own polarity on that input (a False output or an inverter flips it); not found (it is
             # behind a module port): any
             polarity = {ng for w, ng, _ in also if w == "EventRequestActor"}
-            covered = any((uo or not polarity) and (not polarity or ng in polarity) and
+            covered = any((uo == 1 or not polarity) and (not polarity or ng in polarity) and
                           (w in shared or (w == switch and on_flags)) for w, ng, uo in also)
+            covered = covered or any(uo == 1 and w in shared and (w, "clear" if ng else "set") in writes
+                                     for w, ng, uo in also)
             if not covered:
                 misses.append(f"{what}.{name}")
     if not misses:
         return "A", "", "results through shared flags"
     misses = sorted(set(misses))
-    forced = [n for n, srcs in wire["on"] if n != "BootUp" and n != "Active" and not srcs]
+    second = sorted(w for w, _ in writes if w in shared and w in two_way)
+    if second:
+        return "B", "none", "; ".join(misses) + f"; our asker would write shared two-way {', '.join(second)} again"
+    forced =[n for n, srcs in wire["on"] if n != "BootUp" and n != "Active" and not srcs]
     wired = [w for n, srcs in wire["on"] if n in ("BootUp", "ForceControl", "FirstOn", "isCleared")
              for k, w, ng in srcs if k == "flag" and not ng]
     if wired and set(wired) <= shared and not set(wired) & set(wire["delete"]):
@@ -441,13 +513,14 @@ def main(argv=None):
     wiring = {} if args.classify else None
     lines, guards, extras, others = switch_events(args.romfs, wiring=wiring)
     if args.classify:
+        two_way = two_way_flags(wiring)
         rows = []
         for line in lines:
             event, scene, switch, at, plug, _ = line
             if (keep is not None and (event, scene) not in keep) or switch.startswith("Obj_EyeSwitch") or \
                     plug == "FirstOn" or line not in wiring:
                 continue
-            rows.append((line, *classify(line, wiring[line], shared or set())))
+            rows.append((line, *classify(line, wiring[line], shared or set(), two_way)))
         print("// kInputs (class B, the switch's ON input unwired: set it)")
         for (event, scene, switch, at, _, _), _, fix, why in rows:
             if fix.startswith("input "):

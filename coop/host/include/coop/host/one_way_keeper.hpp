@@ -64,7 +64,7 @@ class OneWayKeeper {
 
   // One game frame. `in_play`: Link is read (not loading). `scene`: the
   // scene loaded, none while there is none. Returns the flags written back.
-  std::vector<FlagKey> frame(FlagStore& store, bool in_play, std::optional<std::string_view> scene);
+  std::vector<FlagKey> frame(FlagStore& store, bool in_play, const std::optional<std::string_view>& scene);
 
   // Whether a save load was taken since the last call (for the log).
   bool take_save_load() { return std::exchange(save_load_seen_, false); }

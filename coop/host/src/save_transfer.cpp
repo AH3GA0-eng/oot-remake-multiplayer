@@ -206,24 +206,38 @@ Assembler::Result Assembler::add(const proto::SavePart& part, std::uint8_t host_
 
 std::vector<std::uint8_t> Assembler::take() { return std::exchange(done_, {}); }
 
-std::vector<Planner::Send> Planner::due(std::optional<Time> newest) {
+std::vector<Planner::Send> Planner::due(std::optional<Time> newest, std::uint64_t now_us) {
   std::vector<Send> out;
   if (!newest) {
     // No save on disk (a new game): each asker hears so now instead of waiting for nothing.
     for (const std::uint8_t p : asks_) out.push_back({p, proto::SaveReason::join, true});
     asks_.clear();
+    fresh_owed_.clear();
+    round_.reset();
     return out;
   }
   if (reload_ && (!loaded_at_ || *newest > *loaded_at_)) {
     reload_ = false;
     loaded_at_.reset();
     asks_.clear();  // everyone gets this one
+    fresh_owed_.clear();
+    round_.reset();   // (a save after the load is also after the ask)
     out.push_back({0, proto::SaveReason::host_load});
     return out;
   }
+  // A round: its asks wait for the save asked for, until the time limit (then the save on disk, as before).
+  bool fresh = false;
+  if (round_) {
+    fresh = *newest > round_->since;
+    if (!fresh && now_us - round_->start_us < kFreshSaveUs) return out;
+    round_.reset();
+  }
   // Asks are answered at once with the newest save on disk, also while the send after a load waits.
-  for (const std::uint8_t p : asks_) out.push_back({p, proto::SaveReason::join});
+  for (const std::uint8_t p : asks_) {
+    out.push_back({p, proto::SaveReason::join, false, fresh || fresh_owed_.count(p) != 0});
+  }
   asks_.clear();
+  fresh_owed_.clear();
   return out;
 }
 
@@ -372,6 +386,28 @@ fs::path own_dir_of(const fs::path& coop_dir) {
   return p.parent_path() / name.substr(0, name.size() - kCoopSuffix.size());
 }
 
+bool copy_dir_whole(const fs::path& from, const fs::path& to, std::string* error) {
+  auto fail = [error](const std::string& why) {
+    if (error != nullptr) *error = why;
+    return false;
+  };
+  std::error_code ec;
+  if (fs::exists(to, ec)) return fail("already there");
+  if (!fs::is_directory(from, ec)) return fail("no folder to copy from");
+  fs::path part = to;
+  part += ".part";
+  fs::remove_all(part, ec);  // an earlier try's
+  if (ec) return fail("could not remove an earlier copy: " + ec.message());
+  fs::copy(from, part, fs::copy_options::recursive, ec);
+  if (!ec) fs::rename(part, to, ec);
+  if (ec) {
+    const std::string why = ec.message();
+    fs::remove_all(part, ec);
+    return fail(why);
+  }
+  return true;
+}
+
 WriteResult write_coop_save(const fs::path& coop_dir, const SaveSlot& slot, const fs::path& own_dir) {
   if (!is_coop_dir(coop_dir) || is_coop_dir(own_dir) || slot.files.empty()) return WriteResult::not_coop;
   std::error_code ec;
@@ -455,6 +491,10 @@ PendingStep pending_step(bool slot_in, bool title_up, bool in_game) {
   return slot_in && title_up && !in_game ? PendingStep::go : PendingStep::keep;
 }
 
+bool old_coop_first(bool pending, bool slot_in, bool title_up, bool in_game, bool on_pending_dir) {
+  return pending && !slot_in && title_up && !in_game && on_pending_dir;
+}
+
 bool decide_again(bool decided, bool over, bool in_game) {
   return decided && over && !in_game;
 }
@@ -462,8 +502,12 @@ bool decide_again(bool decided, bool over, bool in_game) {
 FolderChoice folder_choice(std::optional<bool> env, bool can_switch, bool connected, bool is_host, bool in_game) {
   if (!can_switch) return env && *env ? FolderChoice::coop : FolderChoice::own;
   if (!connected) return FolderChoice::wait;
-  if (is_host || in_game) return FolderChoice::own;
-  return FolderChoice::coop;
+  if (is_host) return FolderChoice::own;
+  return in_game ? FolderChoice::coop_later : FolderChoice::coop;
+}
+
+bool rejoined_in_game(bool decided, bool ended, bool connected, bool in_game) {
+  return decided && ended && connected && in_game;
 }
 
 }  // namespace coop::host::save

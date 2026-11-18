@@ -209,14 +209,17 @@ inline constexpr std::uint64_t kBancPathCapacity = 0x48;
 // as the map's peek reads.
 inline constexpr std::uint64_t kEventManagerPtr = 0x4e94840;
 inline constexpr std::uint64_t kEventRunning = 0x68;
-// Row 97: that word stays 0 in a Deku Scrub's talk and AttackedEvent (scrub-sale-a's runs). An
-// event binds every actor it uses through the actor's own event performer:
-// [[actor + kActorComponents] + 0x88] (or + 0x90, the slot 0xc70560 reads for the player), whose
-// +0x10 is the actor; +0x18 holds the event's link while it is bound, 0 otherwise (read in the
-// deku-sync-fix probe runs, as lichii/hook/coop_event_member.h).
-inline constexpr std::uint64_t kPerformerSlot = 0x88;
-inline constexpr std::uint64_t kPerformerSlotAlt = 0x90;
-inline constexpr std::uint64_t kPerformerActor = 0x10;
-inline constexpr std::uint64_t kPerformerLink = 0x18;
+// Row 97 / G1: that word stays 0 in a Deku Scrub's talk and AttackedEvent (scrub-sale-a's runs).
+// Whether our Link is in an event is the game's own member test (QueryEventMemberIsEventMemver
+// 0x29f3770, as lichii/hook/coop_event_member.h): M = [[actor + kActorComponents] + 0x88], its
+// record L = [M + 0x18] (0: in no event), four slots of 0x38 bytes from L + 0x10; a member when a
+// slot holds an event pointer (not 0) and bit 0 of its byte at +8. Read in the offline run
+// fable-g1-events: our Link is a member of every event of its own.
+inline constexpr std::uint64_t kEventMemberSlot = 0x88;
+inline constexpr std::uint64_t kMemberRecord = 0x18;
+inline constexpr std::uint64_t kRecordSlots = 0x10;
+inline constexpr std::uint64_t kMemberSlotSize = 0x38;
+inline constexpr std::uint64_t kMemberSlots = 4;
+inline constexpr std::uint64_t kSlotFlags = 0x8;
 
 }  // namespace coop::host::addr

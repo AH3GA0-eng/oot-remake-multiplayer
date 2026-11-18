@@ -9,7 +9,7 @@ Windows, a Unix socket on Linux, newline-delimited JSON. This module is our clie
   wait, hold, press, stick and rstick as bridge inputs let go by `release` when their time is up; `mark` logged and
   shot; `warp` as the bridge's teleport (retried until the game takes it, as the hook does); `goto` and `toward`
   steered from Link's position read through guest memory (`HOS_CONTROL_MEM=ro`). Steps that need the co-op module
-  inside the game (chat, give, wear, assign, place, kill, hurt, setflag, setenum, menu) are written, as the script has them, to
+  inside the game (chat, give, wear, assign, place, kill, hit, stun, hurt, setflag, setenum, menu) are written, as the script has them, to
   the game's LICHII_COOP_TEST_COMMANDS file: the module (lichii/hook/coop_testinput.cpp) plays them on its next
   check (4 a second) and empties the file, so the player knows they were taken. Without that file they are logged as
   skipped.
@@ -61,7 +61,7 @@ STICK_KEYS = {  # full stick directions: (stick, x, y)
     "RSTICK_UP": ("R", 0, 1), "RSTICK_DOWN": ("R", 0, -1), "RSTICK_LEFT": ("R", -1, 0), "RSTICK_RIGHT": ("R", 1, 0),
 }
 WEAR_SLOTS = ("weapon", "shield", "head", "armor", "boots", "hand")
-MODULE_ONLY = ("chat", "give", "wear", "assign", "place", "kill", "hurt", "setflag", "setenum", "menu")
+MODULE_ONLY = ("chat", "give", "wear", "assign", "place", "kill", "hit", "stun", "hurt", "setflag", "setenum", "menu")
 
 
 class ScriptError(Exception):
@@ -227,6 +227,14 @@ def parse(text):
             if len(w) != 2:
                 fail("want: %s %s" % (cmd.lower(), "ACTOR" if cmd == "KILL" else "ITEM"))
             s.kind, s.name = cmd.lower(), w[1]
+        elif cmd == "HIT":
+            if len(w) != 3 or not w[2].isdigit() or not 1 <= int(w[2]) <= 80:
+                fail("want: hit ACTOR N (1 to 80)")
+            s.kind, s.name, s.start = "hit", w[1], w[2]
+        elif cmd == "STUN":
+            if len(w) != 2:
+                fail("want: stun BOSS")
+            s.kind, s.name = "stun", w[1]
         elif cmd == "HURT":
             if len(w) != 2 or not w[1].isdigit() or not 1 <= int(w[1]) <= 80:
                 fail("want: hurt QUARTER_HEARTS (1 to 80)")
@@ -741,18 +749,66 @@ def read_text(path):
         return ""
 
 
-def wait_renderer(read_log, alive, timeout, clock=time.monotonic, sleep=time.sleep):
-    """Until read_log() has the renderer's 'precompile ... in N ms' line; the seconds waited. 0 = no wait."""
+# While it compiles, the game logs its progress about every 10 s ("vk: start-up: pipelines 6442 of 36753, 18% of all",
+# "vk: noted pipelines: 6651 of 32625 pipelines in 124 s"). How long the compile takes is not fixed: on Windows NVIDIA
+# the driver's shader cache (one GLCache folder for the user) serves only the first game that opens it, so every other
+# game compiles cold at every start (~440 s on Longshot rc.7, ~230 s on rc.4, longer with several compiling at once).
+# A fixed deadline is wrong for some of them, so the wait follows the progress: it fails only when the count stops
+# rising for RENDERER_STALL s, or at RENDERER_LIMIT s in all.
+RENDERER_PROGRESS = re.compile(r"vk: (start-up: pipelines|noted pipelines:) (\d+) of (\d+)")
+RENDERER_STALL = 180    # s without a new progress count (it comes every ~10 s while the compile moves)
+RENDERER_LIMIT = 3600   # s in all, progress or not (a new game folder's first start: ~18 min)
+
+
+def renderer_progress(text):
+    """(sum of the newest count of each progress kind, the newest progress line or '') of a game's log so far."""
+    last, line = {}, ""
+    for m in RENDERER_PROGRESS.finditer(text):
+        last[m.group(1)] = int(m.group(2))
+        line = m.group(0)
+    return sum(last.values()), line
+
+
+def wait_renderer(read_log, alive, timeout, stall=RENDERER_STALL, limit=RENDERER_LIMIT, clock=time.monotonic,
+                  sleep=time.sleep):
+    """Until read_log() has the renderer's ready line (RENDERER_READY); the seconds waited. 0 = no wait.
+    timeout: the wait with no compile progress logged at all (a build without progress lines waits this long);
+    while the progress count rises it waits on, until `stall` s pass without a rise, and never past `limit` s."""
     if timeout <= 0:
         return 0.0
     t0 = clock()
-    while not RENDERER_READY.search(read_log()):
+    done, rose, line = 0, None, ""
+    while True:
+        text = read_log()
+        if RENDERER_READY.search(text):
+            return clock() - t0
         if not alive():
             raise RuntimeError("the game closed before its renderer started")
-        if clock() - t0 > timeout:
-            raise TimeoutError("renderer not started in %d s (shaders still compiling?)" % timeout)
+        now = clock()
+        count, newest = renderer_progress(text)
+        if count > done:
+            done, rose, line = count, now, newest
+        deadline = t0 + timeout if rose is None else max(t0 + timeout, rose + stall)
+        if now - t0 > max(limit, timeout):
+            raise TimeoutError("renderer not started in %d s (still compiling: %s)" % (max(limit, timeout),
+                                                                                       line or "no progress line"))
+        if now > deadline:
+            if rose is None:
+                raise TimeoutError("renderer not started in %d s (no compile progress logged)" % timeout)
+            raise TimeoutError("renderer not started: no compile progress for %d s (last: %s, %.0f s in)"
+                               % (stall, line, now - t0))
         sleep(0.5)
-    return clock() - t0
+
+
+def add_renderer_options(p, wait=600):
+    """--renderer-wait/-stall/-limit (wait_renderer): hookshot.py run and hs_steps.py run."""
+    p.add_argument("--renderer-wait", type=int, default=wait,
+                   help="seconds each game may take to start its renderer with no compile progress logged "
+                        "(0: no wait)")
+    p.add_argument("--renderer-stall", type=int, default=RENDERER_STALL,
+                   help="while the compile logs progress: seconds without a rise before it fails")
+    p.add_argument("--renderer-limit", type=int, default=RENDERER_LIMIT,
+                   help="seconds in all for one game's renderer start, progress or not")
 
 
 SAVE_USER = "5a3c9e1f0b7d24680000000000000001"   # the user folder a Hookshot game reads its saves from
@@ -979,7 +1035,8 @@ def run(a):
         for x in tags:   # both games drawing before anything is pressed (a cold shader cache: minutes)
             go = os.path.join(out, "game-out-%s.txt" % x)
             log = (lambda: fresh_log(games[x], started[x])) if kits[x] else (lambda: read_text(go))
-            waited = wait_renderer(log, lambda: procs[x].poll() is None, a.renderer_wait)
+            waited = wait_renderer(log, lambda: procs[x].poll() is None, a.renderer_wait, a.renderer_stall,
+                                   a.renderer_limit)
             if a.renderer_wait > 0:
                 say("%s: renderer ready (%.0f s waited)" % (x, waited))
 
@@ -1136,8 +1193,7 @@ def main(argv=None):
     r.add_argument("--every", type=float, default=3.0)
     r.add_argument("--timeout", type=int, default=900, help="seconds for the boot and the load")
     r.add_argument("--scenario-timeout", type=int, default=600)
-    r.add_argument("--renderer-wait", type=int, default=600,
-                   help="seconds each game may take to start its renderer before the load (0: no wait)")
+    add_renderer_options(r)
     r.add_argument("--pipe", help="default coop-auto (a lane: its own)")
     add_test_delay_options(r)
     r.add_argument("--kit-a", help="start game A through this kit's own start (play.ps1 choose -Hookshot; its "

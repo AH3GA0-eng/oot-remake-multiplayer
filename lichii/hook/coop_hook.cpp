@@ -85,6 +85,7 @@
 #include "coop_pickups.h"
 #include "coop_fairy.h"
 #include "coop_difficulty.h"
+#include "coop_ngplus.h"
 #include "coop_drops.h"
 #include "coop_every.h"
 #include "coop_event_owner.h"  // G1: whose the running event is
@@ -352,16 +353,15 @@ void MendStory(EmulatorMemory& memory, MendClocks& clocks, bool idle) {
 
 // G1 (coop/host/event_owner.hpp): whose the running event is, logged on each change (with what
 // decided it). Once a frame, from the session's frame or the frame without one (only one runs).
-coop::host::EventWhose ClassifyEvent(bool running, bool link_bound, std::optional<std::string_view> anim) {
+coop::host::EventWhose ClassifyEvent(bool running, bool link_bound, const std::optional<std::string_view>& anim) {
     static std::uint64_t cursor = 0;
     static int said = -1;
     static int said_by = -1;
-    const std::uint64_t now_us = CoopEvery::NowUs();
     for (const auto& r : CoopLiveEvents::TheGameRequests().Since(cursor)) {
-        if (r.taken) CoopEventOwner::GameAsked(r.name, now_us);
+        if (r.taken) CoopEventOwner::GameAsked(r.name);
     }
     coop::host::EventOwnerTracker::By by{};
-    const auto whose = CoopEventOwner::Classify(running, link_bound, anim, now_us, &by);
+    const auto whose = CoopEventOwner::Classify(running, link_bound, anim, &by);
     const int now = running ? static_cast<int>(whose) : -1;
     if (now != said || (now >= 0 && static_cast<int>(by) != said_by)) {
         if (now >= 0) {
@@ -380,7 +380,7 @@ coop::host::EventWhose ClassifyEvent(bool running, bool link_bound, std::optiona
 void ApplyEventOwner(coop::host::PlayerReading& reading) {
     reading.event_whose = ClassifyEvent(
         reading.event_running.value_or(false), reading.link_bound,
-        reading.animation ? std::optional<std::string_view>(reading.animation->name) : std::nullopt);
+        coop::host::name_of(reading.animation));
 }
 
 class Coop {
@@ -502,10 +502,13 @@ public:
         });
         if (live_events_) {
             {
-                // G1: every event this requester asks for is another player's (a held live event, a
-                // shared scene joined): the hook's tracker marks the run it starts (coop_event_owner.h).
+                // G1: the events this requester asks for (a held live event, a shared scene joined)
+                // and the eye switches set for another game's event, for the log only. Whose a running
+                // event is comes from our Link's event membership (coop/host/event_owner.hpp).
                 std::lock_guard lock(live_mutex_);
-                const auto mark = [](const std::string& name) { CoopEventOwner::CoopAsked(name, CoopEvery::NowUs()); };
+                const auto mark = [](const std::string& name) {
+                    LOG_INFO(Core, "coop: event: our game was asked for another player's event {}", name);
+                };
                 live_requester_.OnTaken(mark);
                 eye_switch_.OnSet(mark);
             }
@@ -1328,8 +1331,7 @@ public:
         const bool event =
             reading && coop::host::local_event_hides(
                            reading->event_running.value_or(false), reading->event_whose,
-                           reading->animation ? std::optional<std::string_view>(reading->animation->name)
-                                              : std::nullopt);
+                           coop::host::name_of(reading->animation));
         view.event = event;  // (the map icons, CurrentMapView)
         if (report.connected) {
             view.others = session_->with_presence([&](coop::presence::Presence& p) {
@@ -1343,9 +1345,9 @@ public:
                 for (const auto& s : shown) {
                     const auto* player = p.player(s.number);
                     const std::optional<std::string_view> theirs =
-                        s.scene ? std::optional<std::string_view>(*s.scene) : std::nullopt;
+                        coop::host::view_of(s.scene);
                     const std::optional<std::string_view> ours =
-                        view.scene ? std::optional<std::string_view>(*view.scene) : std::nullopt;
+                        coop::host::view_of(view.scene);
                     if (coop::host::visibility(ours, event, theirs, player ? player->flags() : 0) ==
                         coop::host::Visibility::hide) {
                         view.hidden.push_back(s.number);
@@ -1446,6 +1448,14 @@ public:
         // Difficulty (docs/play-online.md "Difficulty"): the host's choice goes out.
         CoopDifficulty::Frame(report.connected ? session_.get() : nullptr);
         for (auto& line : CoopDifficulty::TakeLines()) {
+            chat_.Add(std::move(line), true);
+        }
+        // (Navi) New Game+ (coop_ngplus.h): Ganon's death unlocks it; with a level on, the kept hearts.
+        if (memory) {
+            CoopNgPlus::Frame(*memory, reading.has_value(), !report.connected || report.hosting,  // host or alone
+                              CoopSave::TitleUp());
+        }
+        for (auto& line : CoopNgPlus::TakeLines()) {
             chat_.Add(std::move(line), true);
         }
         // Mods (docs/mods.md "Mods in co-op"): our list, the host's shared settings, a warning when they differ.
@@ -2900,7 +2910,7 @@ void KeepMapsAlone(EmulatorMemory& memory, bool in_play, const std::optional<std
 #endif
     coop::host::GameFlagStore flags(memory);
     const coop::host::MapDropBecause because("the solo keeper (minimap-b)");
-    const auto restored = keeper.frame(flags, in_play, scene ? std::optional<std::string_view>(*scene) : std::nullopt);
+    const auto restored = keeper.frame(flags, in_play, coop::host::view_of(scene));
     if (keeper.take_save_load()) coop::host::map_drop_log().note("save load (no scene for a while: the title)");
     if (!restored.empty() && StartMapRefresh()) CoopMapRefresh::TheRefresher().Want(SteadyMs());
     for (const auto key : restored) {
@@ -2916,7 +2926,7 @@ void WatchMapDrops(EmulatorMemory& memory, bool in_play, const std::optional<std
                    const std::optional<std::array<float, 3>>& link) {
     coop::host::GameFlagStore flags(memory);
     for (const auto& line : coop::host::map_drop_log().frame(
-             flags, scene ? std::optional<std::string_view>(*scene) : std::nullopt, in_play, link)) {
+             flags, coop::host::view_of(scene), in_play, link)) {
         LOG_WARNING(Core, "{}", line);
     }
 }
@@ -2959,6 +2969,11 @@ void LocalFrameOff(Core::System& system, bool writes) {
     }
     if (writes) {
         CoopLocalGame::Frame(facts);
+        // (Navi) New Game+ alone (coop_ngplus.h): no chat box here, the log and the Settings page say it.
+        CoopNgPlus::Frame(memory, facts.position.has_value(), true, CoopSave::TitleUp());
+        for (const auto& line : CoopNgPlus::TakeLines()) {
+            LOG_INFO(Core, "coop: {}", line);
+        }
     }
     // G1: whose the running event is, every frame (the tracker sees each run start and end). The
     // animation and our Link's performer are read only while an event runs.
@@ -2981,10 +2996,10 @@ void LocalFrameOff(Core::System& system, bool writes) {
             bound = reader.read_link_bound().value_or(false);
         }
         solo_whose = ClassifyEvent(solo_running, bound,
-                                   solo_anim_name ? std::optional<std::string_view>(*solo_anim_name) : std::nullopt);
+                                   coop::host::view_of(solo_anim_name));
     }
     const std::optional<std::string_view> solo_anim =
-        solo_anim_name ? std::optional<std::string_view>(*solo_anim_name) : std::nullopt;
+        coop::host::view_of(solo_anim_name);
     {
         const auto scene = full ? full->scene : reader.read_scene();
         {   // Row 112: our Link for the Customize picture with no session, as a session's frame gives it.
@@ -3018,8 +3033,7 @@ void LocalFrameOff(Core::System& system, bool writes) {
     // The extra local players' Players are made (and deleted) by the puppet Director, as online (no remote players).
     const bool event =
         full && coop::host::local_event_hides(full->event_running.value_or(false), full->event_whose,
-                                              full->animation ? std::optional<std::string_view>(full->animation->name)
-                                                              : std::nullopt);
+                                              coop::host::name_of(full->animation));
     CoopPuppet::Publish(full ? base : 0, full ? full->scene : std::nullopt,
                         full ? std::optional(full->position) : std::nullopt, event, nullptr, 0);
 }

@@ -23,22 +23,25 @@ One line each for the callers:
 - Puppet (`coop_puppet.*`): `switch (coop::host::visibility(local.scene, local.event_running, presence.scene(n), presence.status(n)))`: `hide` despawns or hides the puppet, `hold` stops updating its transform and animation, `show` drives it as now.
 - Overlay markers (`coop_window.*`): `if (coop::host::visibility(local.scene, local.event_running, presence.scene(n), presence.status(n)) == coop::host::Visibility::hide) continue;` (draw a held marker with its last pose).
 
-## Whose event (G1: issues 251, 243, 200, 144, 86; not yet run in a game)
+## Whose event (G1: issues 251, 243, 200, 144, 86)
 
 Code: `coop/host/event_owner.hpp` (the rule, tested in `tests/host/event_owner_test.cpp`) and
-`lichii/hook/coop_event_owner.h` (the game's one tracker). "An event runs in our game" can be one of three things:
+`lichii/hook/coop_event_owner.h` (the game's one tracker). "An event runs in our game" can be one of three things, decided each frame from the game's own facts only (no clock, no event names, no distance):
 
 | Kind | What it is | How it is known |
 |---|---|---|
-| ours | our Link is in it: a talk, our cutscene, a shared scene that binds our Link | the default; our Link's own performer bound |
-| another player's | an event the co-op layer asked our game to play for another player (a live dungeon event, an eye switch's event, a shared scene joined) that does not bind our Link | it starts within 3 s of such an ask the game took (`Requester::OnTaken`, `Switcher::OnSet`) |
-| our free Ocarina | the game's event setting `Dm_SY_Ocarina` / `PlayOcarina_Base` (RSDB EventSetting) | Hookshot's request wrap names it; without the wrap our Link's Ocarina animation |
+| ours | our Link is in it: a talk, our cutscene, a shared scene that takes our Link | our Link is an event member by the game's own event member test (`QueryEventMemberIsEventMemver` 0x29f3770): the actor's EventMember `M = [[actor + 0x270] + 0x88]`, its record `L = [M + 0x18]` (0: in no event), four slots of 0x38 bytes from `L + 0x10`; a member of an event when a slot holds that event's pointer and bit 0 of the slot's byte at `+8` |
+| another player's | an event that runs while our Link is not a member of it: one the co-op layer asked our game to play for another player (a live dungeon event, an eye switch's event, a shared scene joined), or any other event that does not take our Link | an event runs and our Link is not a member |
+| our free Ocarina | the game's event setting `Dm_SY_Ocarina` / `PlayOcarina_Base` (RSDB EventSetting) | checked first: Hookshot's request wrap names it as the request that started the run (the take-out makes our Link a member too); without the wrap our Link's Ocarina animation |
 
 What each kind does at each site:
 - **Only our Link's own event**: the "in a cutscene" status sent to the others (their games hold our puppet), hiding the other players, the Deku Scrub talk, sale and Scrub Brothers' hit holds, holding shared changes near our Link, the chest get scene, and claiming actors from their owner (townspeople, actors whose own AI acts, actors the event binds).
 - **Any event in our game**: the actors it binds here act for it (no owner's motion on them, their shared changes wait), or the event waits on them forever (issue 251). Also the "game is busy" checks: no second event asked, no quest catch-up, no time nudge, no shared scene start, no teleport. A revive (DBNO) and PvP hits wait while the game's event holds our Link (PvP: our own event only; revive: ours or the Ocarina), not in another player's event.
 - So another player's event replayed here hides nobody and holds nothing near our Link, and it claims none of its actors: they stay with the player whose event it is, so two games never pull one NPC to and fro (issue 200).
-- The log says `coop: event: the running event is ours | another player's | our free Ocarina` on each change.
+- The log says `coop: event: the running event is ours | another player's | our free Ocarina (by our Link's event membership | by the game's request | by our Link's animation)` on each change.
+- **What the member test is, read in a game** (offline run `fable-g1-events`, 2026-11-17, Deku Tree, both games): a member slot's pointer is the running event itself. Our Link and every member of its event (Navi, Saria's voice, the event and system actors) held the same pointer with flag bit 0; the rest of the scene held it without that bit (areas, cameras, foliage `0x4`; Link's sword, shield and Ocarina `0x2`; butterflies `0x6`). An event nested in a running one (the revival fairy's in a death) uses the next slot. Records are per actor, so two actors are in the same event when a member slot of each holds the same pointer (`CoopEventMember::InSameEvent`).
+- **The ~1 s event after every scene load** is ours: our Link is a member of it (performer bits `0xf`). It hides the other players for about a second after a load; harmless.
+- Each frame is decided on its own: an event that takes our Link part-way (a shared scene joined) is ours from then on, and one that lets our Link go is no longer ours.
 
 ## Shared story cutscenes (not yet run in a game)
 
