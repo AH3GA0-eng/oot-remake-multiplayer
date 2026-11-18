@@ -1026,7 +1026,54 @@ TEST_CASE("hookshot: patch 0018's screens' tracker and menu state build on Linux
     CHECK(patch.find("+    hos_oot_menu_pause_focus(screen);") != std::string::npos);
     CHECK(patch.find("+void hos_oot_menu_pause_focus(uint64_t screen) { InterlockedExchange64(&pause_screen, (LONG64)screen); }") !=
           std::string::npos);
-    CHECK(patch.find("+    assert(pause_focus == 0x84000100);") != std::string::npos);
+    // no hunk on Longshot's tests/: the Linux kit patches the AppImage's source, which has none (CI linux-longshot,
+    // 'apply_patch: tests/test_hold_toggle.py: not found'); the test below holds every patch to that
+    CHECK(patch.find("diff --git a/tests/") == std::string::npos);
+}
+
+TEST_CASE("hookshot: every patch touches only what Longshot's Linux AppImage ships, so the Linux kit applies it") {
+    // tools/release/kit/linux-longshot/scripts/build.sh applies every hookshot/patches/*.patch to a copy of the
+    // AppImage's usr/share/longshot, which holds only what Longshot's scripts/linux/appimage.sh copies (v3.0.0-rc.7):
+    // no tests/, docs/, .forgejo/, most of third_party/. A hunk on anything else applies on Windows' full source and
+    // stops every Linux build. Keep this list to appimage.sh's when the pin moves.
+    const char* const shipped[] = {
+        "nx2/", "host/", "scripts/", "assets/", "builder/linux/", "gpu/vk/", "gpu/compat/", "gpu/third_party/",
+        "third_party/opus/", "third_party/kenney_input/", "third_party/kenney_input_keyboard/", "third_party/imgui/",
+        "third_party/zstd/", "third_party/fonts/", "third_party/fidelityfx/", "third_party/a64-kit/",
+    };
+    const auto ships = [&](const std::string& path) {
+        for (const char* dir : shipped) {
+            if (path.rfind(dir, 0) == 0) return true;
+        }
+        // gpu/render: only its headers, top level (cp -a gpu/render/*.h); third_party/zbic: its listed files
+        const std::string render = "gpu/render/";
+        if (path.rfind(render, 0) == 0 && path.find('/', render.size()) == std::string::npos &&
+            path.size() > 2 && path.compare(path.size() - 2, 2, ".h") == 0) {
+            return true;
+        }
+        for (const char* file : {"third_party/zbic/zstd.c", "third_party/zbic/zstd.h", "third_party/zbic/zstd_errors.h",
+                                 "LICENSE", "README.md", "tools.lock"}) {
+            if (path == file) return true;
+        }
+        return false;
+    };
+    std::size_t patches = 0, files = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(kRepo / "hookshot" / "patches")) {
+        if (entry.path().extension() != ".patch") continue;
+        ++patches;
+        const std::string patch = ReadFile(entry.path());
+        const std::string head = "diff --git a/";
+        for (auto at = patch.find(head); at != std::string::npos; at = patch.find(head, at + 1)) {
+            if (at != 0 && patch[at - 1] != '\n') continue;
+            const auto start = at + head.size();
+            const std::string path = patch.substr(start, patch.find(' ', start) - start);
+            ++files;
+            INFO(entry.path().filename().string() << ": " << path);
+            CHECK(ships(path));
+        }
+    }
+    CHECK(patches >= 24);
+    CHECK(files >= patches);
 }
 
 TEST_CASE("hookshot: co-op's log lines stay out of Longshot's crash report (patch 0027), its header hookshot/src's") {
