@@ -328,11 +328,23 @@ void MendStory(EmulatorMemory& memory, MendClocks& clocks, bool idle) {
     // Row 145: a quest step the game's own flows set back below what a played scene proves (King Zora back in
     // front of the fountain after the diving game or Ruto's Letter got or read). Only outside events, so the
     // event that moves the quest on sets its own step first; the game's Enum setter, after the same hold.
+    // One quest's rows are listed highest first: only the first one due raises (the Enum write may land a frame
+    // later, so a lower row must not write over it).
+    std::array<std::uint32_t, CoopStory::kStepFloors> raising{};
+    std::size_t raising_n = 0;
     for (std::size_t i = 0; i < CoopStory::kStepFloors; ++i) {
         const auto& floor = CoopStory::StepFloors()[i];
         auto& since = clocks.floors[i];
         const auto at = flags.get_enum(floor.quest);
-        const auto raise = idle ? CoopStory::StepFloorDue(floor, at, flags.get_bool(floor.proof)) : std::nullopt;
+        auto raise = idle ? CoopStory::StepFloorDue(floor, at, flags.get_bool(floor.proof)) : std::nullopt;
+        if (raise) {
+            const auto taken = raising.begin() + static_cast<std::ptrdiff_t>(raising_n);
+            if (std::find(raising.begin(), taken, floor.quest) != taken) {
+                raise.reset();
+            } else {
+                raising[raising_n++] = floor.quest;
+            }
+        }
         if (!raise) {
             since = 0;
         } else if (since == 0) {

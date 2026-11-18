@@ -8,6 +8,8 @@
 #include <utility>
 #include <vector>
 
+#include "coop/host/game_items.hpp"
+
 #ifdef LICHII_COOP
 #include "common/logging.h"
 #endif
@@ -469,14 +471,34 @@ std::span<const Mend, kMends> Mends() {
 namespace {
 
 // Row 145, read from the romfs (coop_story.h StepFloor): Ready to Step06 of
-// Get_StoneOfWater, as flag_hash of each step's name.
-constexpr std::array<std::uint32_t, 9> kZoraBack{0x17bfaa46u, 0xeb62add9u, 0x0e5afad8u, 0x6f917dfeu, 0x8b4b69e2u,
-                                                 0x27f660feu, 0x5cde171fu, 0xec4c4a24u, 0x21d6fa38u};
+// Get_StoneOfWater = the letter mends' list of steps King Zora waits at,
+// after NotReady (one list for both, game_items.hpp letters::kKingWaits).
+namespace letters = ::coop::host::letters;
+constexpr auto kZoraBack = std::span<const std::uint32_t>(letters::kKingWaits).subspan(1);
+constexpr std::array<std::uint32_t, 1> kWaterBack{0x21d6fa38u};  // Step06
 constexpr std::array<StepFloor, kStepFloors> kStepFloorList{{
-    {0x5bca02a6u,  // Step_Get_StoneOfWater
-     0xbf9dfc7eu,  // HavePlayedEvent.Dm_Zora_0010: King Zora read Ruto's Letter and stepped aside
-     0xee867c27u,  // Step07
+    {0x5bca02a6u,         // Step_Get_StoneOfWater
+     letters::kKingRead,  // HavePlayedEvent.Dm_Zora_0010: King Zora read Ruto's Letter and stepped aside
+     letters::kKingMoved[0],  // Step07
      kZoraBack, "King Zora was back in front of the fountain after he read Ruto's Letter"},
+    // SageOfWater: WaterTemple_Arrival writes Step06 only, so that is the one
+    // step raised from. Highest first.
+    {0x560a64afu,  // Step_SageOfWater
+     0x4a9f3392u,  // HavePlayedEvent.Demo_SageOfWater_BossDefeat (SageOfWater_BossDefeat sets Step08)
+     0xa594ed54u,  // Step08
+     kWaterBack, "the Water Temple door set SageOfWater back after Morpha was beaten"},
+    {0x560a64afu,
+     0x713abc8fu,  // HavePlayedEvent.Demo_SageOfWater_BossAppears (SageOfWater_BossAppears sets Step07_2)
+     0xb6355e0cu,  // Step07_2
+     kWaterBack, "the Water Temple door set SageOfWater back after Morpha's intro"},
+    {0x560a64afu,
+     0x8341428au,  // WaterTemple_DarkLink_Death (Room 22's logic sets Step07_1 at his death)
+     0x23c23c52u,  // Step07_1
+     kWaterBack, "the Water Temple door set SageOfWater back after Dark Link (Room 23 shut)"},
+    {0x560a64afu,
+     0xb8226750u,  // HavePlayedEvent.Demo_WaterTemple_MeetAgainRutoEvent (WaterTemple_RutoDemo sets Step07)
+     0xee867c27u,  // Step07
+     kWaterBack, "the Water Temple door set SageOfWater back after Ruto's scene in the temple"},
 }};
 
 } // namespace

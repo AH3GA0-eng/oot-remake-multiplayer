@@ -720,3 +720,30 @@ TEST_CASE("story: King Zora goes back aside when the game's own flow set his que
     CHECK_FALSE(StepFloorDue(zora, host::flag_hash("NotReady"), true).has_value());
     CHECK_FALSE(StepFloorDue(zora, 0x12345678u, true).has_value());
 }
+
+TEST_CASE("story: the Water Temple door never sets SageOfWater back below what was played (row 145 review)") {
+    using CoopStory::StepFloorDue;
+    const auto floors = CoopStory::StepFloors();
+    // Highest first, all from Step06 only (WaterTemple_Arrival writes Step06 and nothing else).
+    const std::vector<std::pair<const char*, const char*>> rows{
+        {"HavePlayedEvent.Demo_SageOfWater_BossDefeat", "Step08"},
+        {"HavePlayedEvent.Demo_SageOfWater_BossAppears", "Step07_2"},
+        {"WaterTemple_DarkLink_Death", "Step07_1"},
+        {"HavePlayedEvent.Demo_WaterTemple_MeetAgainRutoEvent", "Step07"},
+    };
+    REQUIRE(floors.size() == 1 + rows.size());
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        const auto& f = floors[i + 1];
+        CHECK(f.quest == host::flag_hash("Step_SageOfWater"));
+        CHECK(f.proof == host::flag_hash(rows[i].first));
+        CHECK(f.floor == host::flag_hash(rows[i].second));
+        REQUIRE(f.back.size() == 1);
+        CHECK(f.back[0] == host::flag_hash("Step06"));
+        // Re-entered after that scene: back up; before it, or past Step06, nothing.
+        CHECK(StepFloorDue(f, host::flag_hash("Step06"), true) == f.floor);
+        CHECK_FALSE(StepFloorDue(f, host::flag_hash("Step06"), false).has_value());
+        for (const char* s : {"Step05", "Step07", "Step07_1", "Step08", "Complete", "NotReady"}) {
+            CHECK_FALSE(StepFloorDue(f, host::flag_hash(s), true).has_value());
+        }
+    }
+}

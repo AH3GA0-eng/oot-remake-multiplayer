@@ -265,12 +265,42 @@ Plan Decide(const Want& want, const std::vector<Built>& built, const std::vector
             }
         }
     };
+    // Row 145: a seed is switched off only when the player asked for it (our switch turned off, or another seed of
+    // ours on), when our kit built it (a seed of ours left on, our switch off), or for a host's world (remembered and
+    // switched on again alone). A seed folder put in by hand (no kPresetFile) stays as the Mods tab has it.
+    const auto ours = [&](std::string_view name) {
+        return std::any_of(built.begin(), built.end(),
+                           [&](const Built& b) { return CoopMods::NameSame(b.name, name) && !b.preset.empty(); });
+    };
     if (!want.on) {
-        switch_off_all_but("");
-        if (!plan.off.empty()) {
-            plan.what = Plan::Do::use;
-            plan.why = "the randomizer is off: its seeds are switched off";
+        if (want.guest || want.turned_off) {
+            switch_off_all_but("");
+            if (want.guest) {
+                plan.remember = plan.off;
+                plan.why = "the host plays without the randomizer: your seeds are switched off for its world (they "
+                           "are switched on again when you play alone)";
+            } else {
+                plan.forget = !want.restore.empty();
+                plan.why = "the randomizer is off: its seeds are switched off";
+            }
+        } else {
+            for (const CoopMods::Row& r : rows) {
+                if (IsSeedFolder(r.name) && r.on && ours(r.name)) plan.off.push_back(r.name);
+            }
+            for (const std::string& name : want.restore) {
+                const CoopMods::Row* row = RowOf(rows, name);
+                if (row != nullptr && !row->on && IsSeedFolder(row->name) && !ours(row->name)) {
+                    plan.on.push_back(row->name);
+                }
+            }
+            plan.forget = !want.restore.empty();
+            if (!plan.off.empty()) plan.why = "the randomizer is off: its seeds are switched off";
+            if (!plan.on.empty()) {
+                plan.why += std::string(plan.why.empty() ? "" : "; ") +
+                            "back from the host's world: your seeds are switched on again";
+            }
         }
+        plan.what = plan.on.empty() && plan.off.empty() && !plan.forget ? Plan::Do::nothing : Plan::Do::use;
         return plan;
     }
     if (want.seed.empty()) {
@@ -309,8 +339,14 @@ Plan Decide(const Want& want, const std::vector<Built>& built, const std::vector
     if (row == nullptr || !row->on || rows.empty() || !CoopMods::NameSame(rows.front().name, plan.folder)) {
         plan.on.push_back(plan.folder);
     }
+    if (want.guest) {
+        plan.remember = plan.off;  // the host's seed in its world; ours come back on alone
+    } else {
+        plan.forget = !want.restore.empty();  // our switch picks the one seed now
+    }
     plan.what = plan.on.empty() && plan.off.empty() ? Plan::Do::nothing : Plan::Do::use;
-    plan.why = plan.what == Plan::Do::use ? "seed " + SeedWord(want.seed) + " (" + SettingsName(preset) + ") is switched on" : "";
+    if (plan.what == Plan::Do::nothing && plan.forget) plan.what = Plan::Do::use;
+    plan.why = !plan.on.empty() || !plan.off.empty() ? "seed " + SeedWord(want.seed) + " (" + SettingsName(preset) + ") is switched on" : "";
     return plan;
 }
 
@@ -1205,8 +1241,12 @@ void Rando::Wait() {
 
 Want Rando::Wanted(bool* seed_locked) const {
     Want want;
+    bool on_locked = false;  // the host's value (a guest): not the player's own switch
     for (const CoopMods::SettingRow& s : loader_.Settings(kFolder)) {
-        if (s.setting.key == "on") want.on = s.value == "1";
+        if (s.setting.key == "on") {
+            want.on = s.value == "1";
+            on_locked = s.locked;
+        }
         if (s.setting.key == "seed") {
             want.seed = s.value;
             if (seed_locked != nullptr) *seed_locked = s.locked;
@@ -1220,6 +1260,23 @@ Want Rando::Wanted(bool* seed_locked) const {
             if (std::string settings = SettingsString(s.value); !settings.empty()) want.preset = std::move(settings);
         }
     }
+    {
+        // Our own switch, not the host's: turned from on to off by the player in this run (row 145).
+        const std::lock_guard lock(own_mutex_);
+        if (!on_locked) {
+            if (own_on_ && *own_on_ != want.on) turned_off_ = !want.on;
+            own_on_ = want.on;
+        }
+        want.turned_off = turned_off_;
+    }
+    {
+        std::istringstream lines(ReadFileText(loader_.Root() / kFolder / kHostOffFile));
+        for (std::string line; std::getline(lines, line);) {
+            while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+            if (IsSeedFolder(line)) want.restore.push_back(line);
+        }
+    }
+    want.guest = loader_.HostValuesSet();
     // A guest plays the host's world: a host whose randomizer is off or missing sends no switch, so ours is off too
     // (our own value is kept for a game alone).
     if (want.on && loader_.HostValuesSet()) {
@@ -1237,6 +1294,17 @@ std::string Rando::CurrentTables() const {
 }
 
 void Rando::Switch(const Plan& plan) {
+    const fs::path host_off = loader_.Root() / kFolder / kHostOffFile;
+    if (!plan.remember.empty()) {
+        std::string text = ReadFileText(host_off);
+        for (const std::string& name : plan.remember) {
+            if (("\n" + text).find("\n" + name + "\n") == std::string::npos) text += name + "\n";
+        }
+        WriteText(host_off, text);
+    } else if (plan.forget) {
+        std::error_code ec;
+        fs::remove(host_off, ec);
+    }
     for (const std::string& name : plan.off) loader_.SetOn(name, false);
     for (const std::string& name : plan.on) {
         loader_.SetOn(name, true);
@@ -1245,7 +1313,10 @@ void Rando::Switch(const Plan& plan) {
     if (!plan.on.empty() || !plan.off.empty()) {
         Say(plan.why + ": start the game again to play it");
         // A seed switched on (or to the first row, where its size table wins) plays only after a restart.
-        if (!plan.on.empty()) SayRestart(ReadyLine(Wanted(nullptr).seed));
+        if (!plan.on.empty()) {
+            const Want want = Wanted(nullptr);
+            if (want.on) SayRestart(ReadyLine(want.seed));
+        }
     } else if (!plan.why.empty()) {
         Say(plan.why);
     }
