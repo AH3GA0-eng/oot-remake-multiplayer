@@ -130,3 +130,13 @@ TEST_CASE("command line: --pvp on or off, off by default") {
     CHECK(!error.empty());
   }
 }
+
+TEST_CASE("command line: --approve-joins, off by default (docs/protocol.md, Host approval)") {
+  std::string error;
+  CHECK_FALSE(parse_command_line({}, error)->approve_joins);
+  auto line = parse_command_line({"--approve-joins", "--port", "4000"}, error);
+  REQUIRE(line.has_value());
+  CHECK(line->approve_joins);
+  CHECK(line->port == 4000);
+  CHECK(std::string(usage()).find("--approve-joins") != std::string::npos);
+}
