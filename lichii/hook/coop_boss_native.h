@@ -178,7 +178,8 @@ public:
     void NoteOwnShotEnd(const coop::protocol::Vec3& at);
     // One of our shots ended within kShotNearBoss of `at` (a boss actor's
     // place, or one of its parts') in the last kShotEndKeepSteps.
-    bool OwnShotNear(const coop::protocol::Vec3& at) const; (the boss glue, every frame: the area rules'
+    bool OwnShotNear(const coop::protocol::Vec3& at) const;
+    // The boss's death has begun (the boss glue, every frame: the area rules'
     // fight is at its death or past it, ours or the owner's; player report
     // #105, a black screen after Gohma's death). Bodies named here are copies
     // no more: their own game runs every change of theirs (the death setting
