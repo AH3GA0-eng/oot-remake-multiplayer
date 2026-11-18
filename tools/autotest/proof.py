@@ -32,6 +32,7 @@ Distance: the region is cut into a grid (default 24x12 cells), each cell's mean 
 mean absolute cell difference. Coarse cells keep Navi's sparkle, dust and a frame of animation from swinging it.
 
     python -I tools/autotest/proof.py grade <run folder> <check> [<check>...] [--kit-root DIR]
+        (prints each check's state, then 'verdict PASS|FAIL|UNPROVEN'; exit 0 PASS, 3 FAIL, 1 UNPROVEN, 2 error)
     python -I tools/autotest/proof.py dist <png> <png> --region x,y,w,h
     python -I tools/autotest/proof.py ref add|list <name> [good|bad <png>]
 """
@@ -131,7 +132,8 @@ _cache = {}
 
 def grid(path, region, cells=GRID):
     """Mean luma of each cell of region (x, y, w, h; in a 1280x720 frame, scaled to the shot's size)."""
-    key = (os.path.abspath(path), tuple(region), tuple(cells))
+    st = os.stat(path)   # (a shot written again under the same name, e.g. a step run twice, is read again)
+    key = (os.path.abspath(path), st.st_mtime_ns, st.st_size, tuple(region), tuple(cells))
     if key in _cache:
         return _cache[key]
     w, h, ch, rows = read_png(path)
@@ -295,6 +297,33 @@ def grade(folder, check, kit_root=None):
         return "MISSING", "%s: %s" % (c["name"], e)
 
 
+def verdict(states):
+    """PASS when every check is OK, FAIL when a shot shows the wrong result (BAD), else UNPROVEN (unclear, no shot,
+    no references: not a pass)."""
+    if any(st == "BAD" for st, _ in states):
+        return "FAIL"
+    if states and all(st == "OK" for st, _ in states):
+        return "PASS"
+    return "UNPROVEN"
+
+
+def check_all(folder, names, kit_root=None, checks=None):
+    """(verdict, text) of the named checks on one run folder: the one place a see= list becomes a verdict
+    (groups.py's run lines, hs_steps.py's and run.ps1's expect/see steps)."""
+    if not names:
+        return "UNPROVEN", "no screenshot check"
+    try:
+        checks = checks if checks is not None else load_proofs()
+    except (OSError, ProofError) as e:
+        return "UNPROVEN", "proofs.txt: %s" % e
+    states = [grade(folder, checks[n], kit_root) if n in checks else ("MISSING", "%s: not in proofs.txt" % n)
+              for n in names]
+    return verdict(states), "; ".join("%s %s" % st for st in states)
+
+
+EXIT = {"PASS": 0, "UNPROVEN": 1, "FAIL": 3}
+
+
 # --- command line ---------------------------------------------------------------------------------------------------
 
 def find_kit_root():
@@ -352,14 +381,15 @@ def main(argv=None):
             print(out)
             return 0
         checks = load_proofs(a.proofs)
-        bad = 0
+        states = []
         for name in a.checks:
             if name not in checks:
                 raise ProofError("no check %r in %s" % (name, a.proofs))
-            state, text = grade(a.folder, checks[name], kit)
-            print("%s %s" % (state, text))
-            bad += state != "OK"
-        return 1 if bad else 0
+            states.append(grade(a.folder, checks[name], kit))
+            print("%s %s" % states[-1])
+        v = verdict(states)
+        print("verdict %s" % v)
+        return EXIT[v]
     except ProofError as e:
         print("proof.py: %s" % e)
         return 2

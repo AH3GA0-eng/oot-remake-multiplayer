@@ -316,5 +316,170 @@ class RepoGroupsTest(unittest.TestCase):
                         self.assertEqual(seen.setdefault(k, v), v, "%s: two group lines give different proofs" % (k,))
 
 
+class StepsProofTest(unittest.TestCase):
+    """Steps files (hs_steps.py; run.ps1's Run-Steps writes the same lines): an expect step counts puppets from the
+    log, so its counts PASS only with its own see= checks OK (review-proof-shots-a-2 item 1)."""
+
+    class Games:
+        """Both games running with one puppet and fairy each; a shot writes the frame `self.picture` gives."""
+
+        def __init__(self, out):
+            self.out, self.picture, self.shots = out, {"A": UP, "B": UP}, []
+
+        def log(self, x):
+            return "coop: objects: + CoopPuppet_Child 0x1\ncoop: objects: + Dm_Npc_Navi 0x2\n"
+
+        def alive(self, x):
+            return True
+
+        def shot(self, name):
+            self.shots.append(name)
+            for x in "AB":
+                save(os.path.join(self.out, "%s-%s.png" % (name, x)), frame(self.picture[x]))
+
+        def ended_by_itself(self):
+            return []
+
+    def setUp(self):
+        import hs_steps
+        self.hs = hs_steps
+        self.d = tempfile.mkdtemp()
+        self.out = os.path.join(self.d, "run")
+        os.makedirs(self.out)
+        self.kit = os.path.join(self.d, "kit")
+        save(os.path.join(self.kit, "proof-refs", "lifts", "good-01.png"), frame(UP, noise=3))
+        save(os.path.join(self.kit, "proof-refs", "lifts", "bad-01.png"), frame(DOWN, noise=3))
+        self.checks = proof.parse_proofs("up-A  s*-both-A  %s refs refs=lifts\nup-B  s*-both-B  %s refs refs=lifts\n"
+                                         "norefs-A  s*-both-A  %s refs\n" % (REGION, REGION, REGION))
+        self.g = self.Games(self.out)
+        t = [0.0]
+        self.r = hs_steps.Runner(self.g, self.out, say=lambda line: None, expect_wait=1, clock=lambda: t[0],
+                                 sleep=lambda s: t.__setitem__(0, t[0] + s), default_password="",
+                                 kit_root=self.kit, checks=self.checks)
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def counts(self):
+        with open(os.path.join(self.out, "counts.txt"), encoding="utf-8") as f:
+            return f.read().splitlines()
+
+    def test_expect_without_see_is_unproven(self):
+        fails = self.r.run(self.hs.parse_steps("expect both A=1 B=1\n"))
+        c = self.counts()
+        self.assertTrue(c[0].startswith("UNPROVEN both (want A=1 B=1, after 0 s): A: 1 puppet"), c[0])
+        self.assertIn("no see= check on shot s1-both", c[0])
+        self.assertEqual((fails, self.r.unproven), (0, 1))
+
+    def test_expect_with_see_ok_is_pass(self):
+        fails = self.r.run(self.hs.parse_steps("expect both A=1 B=1 see=up-A see=up-B\n"))
+        c = self.counts()
+        self.assertTrue(c[0].startswith("PASS both (want A=1 B=1, after 0 s)"), c[0])
+        self.assertIn("[seen: OK up-A", c[0])
+        self.assertEqual((fails, self.r.unproven), (0, 0))
+
+    def test_expect_with_a_wrong_shot_is_fail(self):
+        self.g.picture["B"] = DOWN
+        fails = self.r.run(self.hs.parse_steps("expect both A=1 B=1 see=up-A see=up-B\n"))
+        self.assertTrue(self.counts()[0].startswith("FAIL both (want A=1 B=1"), self.counts())
+        self.assertEqual(fails, 1)
+
+    def test_expect_with_an_unclear_or_unknown_check_is_unproven(self):
+        self.r.run(self.hs.parse_steps("expect both A=1 B=1 see=up-A see=norefs-A\nexpect both2 A=1 see=nope\n"))
+        c = self.counts()
+        self.assertTrue(c[0].startswith("UNPROVEN both"), c[0])
+        self.assertIn("MISSING norefs-A", c[0])
+        self.assertTrue(c[1].startswith("UNPROVEN both2") and "nope: not in proofs.txt" in c[1], c[1])
+
+    def test_counts_that_do_not_match_fail_whatever_the_shot(self):
+        fails = self.r.run(self.hs.parse_steps("expect both A=0 see=up-A\n"))
+        self.assertTrue(self.counts()[0].startswith("FAIL both (want A=0"), self.counts())
+        self.assertEqual(fails, 1)
+
+    def test_see_step(self):
+        self.r.run(self.hs.parse_steps("shot both\nsee up-A up-B\n"))
+        self.assertTrue(self.counts()[0].startswith("PASS see up-A up-B [seen: OK"), self.counts())
+        self.g.picture["A"] = DOWN
+        self.r.run(self.hs.parse_steps("shot both\nsee up-A\n"))
+        self.assertTrue(self.counts()[1].startswith("FAIL see up-A"), self.counts())
+
+    def test_parse(self):
+        s = self.hs.parse_steps("expect x A=1 see=c-A B=0 see=c-B\nsee a b\n")
+        self.assertEqual(s[0].args, ["x", {"A": 1, "B": 0}, ["c-A", "c-B"]])
+        self.assertEqual(s[1].args, ["a", "b"])
+        for bad in ("expect x see=c-A\n", "expect x A=1 look=c\n", "see\n", "see a/b\n"):
+            with self.assertRaises(self.hs.StepsError, msg=bad):
+                self.hs.parse_steps(bad)
+
+    def test_the_run_is_unproven_while_one_step_is(self):
+        # groups.judge: an UNPROVEN step keeps the run from PASS; neither logonly= nor the run's own see= stands in.
+        with open(os.path.join(self.out, "run.json"), "w") as f:
+            json.dump({"group": "g", "scenario": "stray", "exit": 0, "logonly": "joins"}, f)
+        self.r.run(self.hs.parse_steps("expect both A=1 B=1 see=up-A see=up-B\nexpect both2 A=1 B=1\n"))
+        self.assertEqual(g.judge(self.out, kit_root=self.kit, checks=self.checks)[0], "UNPROVEN")
+        with open(os.path.join(self.out, "run.json"), "w") as f:
+            json.dump({"group": "g", "scenario": "stray", "exit": 0, "see": ["up-A"]}, f)
+        v, ev = g.judge(self.out, kit_root=self.kit, checks=self.checks)
+        self.assertEqual(v, "UNPROVEN", ev)
+        self.assertIn("1 step(s) UNPROVEN", ev)
+        os.remove(os.path.join(self.out, "counts.txt"))
+        self.r.run(self.hs.parse_steps("expect both A=1 B=1 see=up-A see=up-B\n"))
+        self.assertEqual(g.judge(self.out, kit_root=self.kit, checks=self.checks)[0], "PASS")
+
+    def test_an_old_expect_pass_line_is_unproven(self):
+        # counts.txt of runs made before this (big-run-0115's stray): "PASS name (want ..., after N s)" from the
+        # log alone. --regrade must not take it as proven.
+        with open(os.path.join(self.out, "counts.txt"), "w") as f:
+            f.write("PASS b-left (want A=0, after 2 s): A: 0 puppet (), 0 fairy\nPASS keep-number-A (A: 0 lines match "
+                    "'x', at most 0)\n")
+        self.assertEqual(g.count_lines(open(os.path.join(self.out, "counts.txt")).read()),
+                         [("UNPROVEN", "PASS b-left (want A=0, after 2 s): A: 0 puppet (), 0 fairy"),
+                          ("PASS", "PASS keep-number-A (A: 0 lines match 'x', at most 0)")])
+        v, ev = g.judge(self.out, {"exit": 0, "logonly": "x"}, kit_root=self.kit, checks=self.checks)
+        self.assertEqual(v, "UNPROVEN", ev)
+
+    def test_check_all_and_cli_exit_codes(self):
+        self.g.shot("s1-both")
+        self.assertEqual(proof.check_all(self.out, ["up-A", "up-B"], self.kit, self.checks)[0], "PASS")
+        self.assertEqual(proof.check_all(self.out, [], self.kit, self.checks)[0], "UNPROVEN")
+        self.assertEqual(proof.check_all(self.out, ["up-A", "norefs-A"], self.kit, self.checks)[0], "UNPROVEN")
+        p = os.path.join(self.d, "proofs.txt")
+        with open(p, "w") as f:
+            f.write("up-A  s*-both-A  %s refs refs=lifts\nnorefs-A  s*-both-A  %s refs\n" % (REGION, REGION))
+        args = ["--kit-root", self.kit, "--proofs", p, "grade", self.out]
+        self.assertEqual(proof.main(args + ["up-A"]), 0)
+        self.assertEqual(proof.main(args + ["norefs-A"]), 1)
+        self.g.picture["A"] = DOWN
+        self.g.shot("s1-both")
+        self.assertEqual(proof.main(args + ["up-A", "norefs-A"]), 3)   # one wrong shot: FAIL wins
+
+
+class RepoStepsTest(unittest.TestCase):
+    """The real scenarios/*.steps.txt: every expect step proves its counts with a see= check per game it names."""
+
+    def test_every_expect_step_has_a_check_per_game(self):
+        import hs_steps
+        here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+        checks = proof.load_proofs()
+        sdir = os.path.join(here, "scenarios")
+        n = 0
+        for name in sorted(os.listdir(sdir)):
+            if not name.endswith(".steps.txt"):
+                continue
+            with open(os.path.join(sdir, name), encoding="utf-8-sig") as f:
+                for s in hs_steps.parse_steps(f.read()):
+                    if s.verb not in ("expect", "see"):
+                        continue
+                    see = s.args[2] if s.verb == "expect" else s.args
+                    for c in see:
+                        self.assertIn(c, checks, "%s line %d: see=%s is not in proofs.txt" % (name, s.n, c))
+                    if s.verb == "expect":
+                        n += 1
+                        games = {checks[c]["shot"][-1] for c in see}
+                        self.assertEqual(games, set(s.args[1]), "%s line %d: want a see= check of each game in %s"
+                                         % (name, s.n, s.line))
+        self.assertGreater(n, 50)
+
+
 if __name__ == "__main__":
     unittest.main()

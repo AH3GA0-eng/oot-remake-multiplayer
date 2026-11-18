@@ -235,10 +235,13 @@ class StepsGroupTest(unittest.TestCase):
         try:
             f = os.path.join(root, "g11", "stray", "t")
             write(os.path.join(f, "steps.txt"), "step 5: start A B\nsteps done: 0 FAIL\n")
-            write(os.path.join(f, "counts.txt"), "PASS both-loaded (want A=1 B=1, after 3 s)\nPASS b-left\n")
+            write(os.path.join(f, "counts.txt"), "PASS keep-number (A: 0 lines match 'x', at most 0)\nPASS b-left\n")
             write(os.path.join(f, "run.json"), json.dumps({"group": "g11", "scenario": "stray", "exit": 0,
                                                            "logonly": "joins and leaves"}))
             self.assertEqual(g.judge(f), ("PASS", "counts.txt: 2 PASS [log only: joins and leaves]"))
+            # an expect step's counts from the log alone (no '[seen:'): UNPROVEN, logonly= does not excuse it
+            write(os.path.join(f, "counts.txt"), "PASS both-loaded (want A=1 B=1, after 3 s)\nPASS b-left\n")
+            self.assertEqual(g.judge(f)[0], "UNPROVEN")
             write(os.path.join(f, "counts.txt"), "PASS both-loaded\nFAIL b-left (want A=0)\n")
             self.assertEqual(g.judge(f)[0], "FAIL")
         finally:
