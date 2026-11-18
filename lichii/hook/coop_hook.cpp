@@ -1067,6 +1067,14 @@ public:
         // review-p11-interactions: a gimmick or story event still waiting in
         // the requester is dropped when we left its scene, when it waited too
         // long (story cutscenes: kJoinUs) or when our game has it played.
+        // cutscene-bleed (#251): a start decided in a dungeon room waits (not asked) while our Link is clearly in
+        // another room (it waited behind the door we walked through) and is asked once our Link is back in it.
+        // #197: none is asked while our teleport is under way (Pause); they are kept for after the trip.
+        if (live_events_) {
+            const bool underway = CoopTeleport::Underway();  // its own event_mutex, taken before live_mutex_
+            std::lock_guard lock(live_mutex_);
+            live_requester_.Pause(underway);
+        }
         if (live_events_ && memory) {
             std::lock_guard lock(live_mutex_);
             live_requester_.Expire(view.scene.value_or(std::string()), CoopEvery::NowUs(),
@@ -1074,7 +1082,8 @@ public:
                                        return coop::host::GameFlags(*memory)
                                            .get_bool(coop::host::flag_hash("HavePlayedEvent." + n))
                                            .value_or(false);
-                                   });
+                                   },
+                                   [&](int room) { return OurLinkAwayFrom(view, room); });
         }
         if (live_events_ && eye_switch_on_) {  // deku-switches: a switch that found nothing goes the old way
             // deku-ladder: also dropped once our game has it played (our own asker ran it): the eye is never set again.
@@ -1089,7 +1098,7 @@ public:
             eye_switch_.Expire(view.scene.value_or(std::string()), played);
             for (auto& [event, scene] : eye_switch_.TakeFallbacks()) {
                 std::lock_guard lock(live_mutex_);
-                live_requester_.WantFromRoom(std::move(event), std::move(scene));
+                live_requester_.WantFromRoom(std::move(event), std::move(scene), OurDungeonRoom(view));
             }
         }
         // Issue 129: a held gimmick event is started here too when our Link is
@@ -2467,6 +2476,31 @@ private:
         return rooms;
     }
 
+    // cutscene-bleed (#251): our Link's dungeon room this frame (the same guess the decider and the joiner use), if
+    // in a dungeon and known.
+    static std::optional<int> OurDungeonRoom(const FrameView& view) {
+        if (!view.scene || !view.position || !CoopDungeon::IsDungeonScene(*view.scene)) {
+            return std::nullopt;
+        }
+        const std::array<float, 3> at{(*view.position)[0], (*view.position)[1], (*view.position)[2]};
+        if (const auto guess = DungeonRooms().Nearest(*view.scene, at)) {
+            return guess->room;
+        }
+        return std::nullopt;
+    }
+
+    // cutscene-bleed (#251, review-0116-c item 2): our Link is clearly in another dungeon room than `room`: the
+    // nearest room's placement is at least CoopRooms::kMargin nearer than `room`'s nearest one (the Tracker's slack:
+    // the raw nearest flickers in a doorway and through walls). Not known (no scene, position or table, or far from
+    // every placement): not away, the start is asked as before.
+    static bool OurLinkAwayFrom(const FrameView& view, int room) {
+        if (!view.scene || !view.position || !CoopDungeon::IsDungeonScene(*view.scene)) {
+            return false;
+        }
+        const std::array<float, 3> at{(*view.position)[0], (*view.position)[1], (*view.position)[2]};
+        return CoopRooms::ClearlyIn(DungeonRooms(), *view.scene, at, room) == CoopRooms::Where::other_room;
+    }
+
     // Shared story cutscenes (coop_shared_scenes.h): a story cutscene
     // our game starts goes to the others in our scene (DUNGEON_EVENT, as a
     // gimmick event's start); one another player started near us plays here
@@ -2582,7 +2616,9 @@ private:
         if (name) {
             std::lock_guard lock(live_mutex_);
             // Asked as the starter's game asked it: by the story name or setting it sent (report 110).
-            live_requester_.Want(*name, here.scene, now_us, CoopSharedScenes::kJoinUs);
+            // #251: with the room it was joined in (not asked while our Link is in another room).
+            live_requester_.Want(*name, here.scene, now_us, CoopSharedScenes::kJoinUs,
+                                 here.dungeon ? here.room : std::nullopt);
         }
     }
 
