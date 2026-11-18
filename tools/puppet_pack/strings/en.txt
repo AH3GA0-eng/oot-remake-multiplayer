@@ -1,0 +1,12 @@
+# Our own words for the game's menus, in English. The pack step adds them to the game's message
+# files with ui_pack.py (load_strings, add_labels); no text of the game is in here.
+#
+# [file] names a message file of the game's language archives (Mals/<language>.Product.110.sarc.zs).
+# Under it, one "label = text" per line, the label in the style of that file's own labels.
+# "\n" is a new line, "\\" a backslash. Lines starting with # are comments.
+#
+# Translations: fr.txt, de.txt, ... (or the game's code for one region: USfr.txt, CNzh.txt), with
+# the same files and labels. A label a translation leaves out keeps its English text from here.
+
+[LayoutMsg/MenuOverlay_00.msbt]
+CoopMenu = Multiplayer
