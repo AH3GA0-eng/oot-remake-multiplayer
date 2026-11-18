@@ -2301,11 +2301,13 @@ private:
         flag_traffic_sum_ = sum;
         LOG_INFO(Core, "coop: flags: traffic: {} changes sent, {} answers sent, {} entries came, {} written here "
                        "({} count deltas, {} load reverts, {} one-way put back, {} from a host reset), {} kept over "
-                       "our own, {} not shared, {} write failures, {} messages not for us, {} bad snapshots; "
+                       "our own, {} not shared, {} write failures ({} tries of held flags, not failures), "
+                       "{} messages not for us, {} bad snapshots; "
                        "{} s holding a join snapshot ({} dropped unfinished), {} s in load windows, {} changes "
                        "waiting for the host's answer",
                  s.changes_sent, s.answers_sent, s.entries_in, s.applied, s.deltas_added, s.load_reverts,
-                 s.one_way_restores, s.reset_applied, s.kept_local, s.not_shared, s.write_failures, s.ignored_messages,
+                 s.one_way_restores, s.reset_applied, s.kept_local, s.not_shared, s.write_failures, s.held_retries,
+                 s.ignored_messages,
                  s.bad_snapshots, s.holding_frames / 60, s.hold_timeouts, s.window_frames / 60, s.pending_now);
         // events-next-a-11: which flag the write failures are (a log showed ~60 a second after an event, no key).
         if (s.top_write_failure_count > 0) {

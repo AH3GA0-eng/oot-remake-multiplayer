@@ -1346,6 +1346,28 @@ TEST_CASE("flag watcher: the host's Try Again puts the group's values back at on
   CHECK(w.stats().host_resets == 0);
 }
 
+TEST_CASE("flag watcher: a held flag's retries are counted as held, not as write failures (events-next-a-12)") {
+  // The events-next-a-11 probe logged "top write failure: named 0xb3a4fe84[0]" ~60 times a second: a played-event
+  // flag HoldFlagStore held (by design) while our Link stayed in the dungeon, retried every frame. A hold is waiting,
+  // not a failure: write_failures stays for writes the game itself refused.
+  FakeStore game_store = game();
+  game_store.unwritable.insert(kChest);
+  bool hold = true;
+  HoldFlagStore store(game_store, [&hold](FlagKey key) { return hold && key == kDoor; });
+  FlagWatcher w(shared(), FlagRole::player);
+  w.frame(store);
+  CHECK(w.receive(state({entry(kDoor, 1), entry(kChest, 1)})));
+  for (int i = 0; i < 5; ++i) w.frame(store);
+  CHECK(game_store.get(kDoor) == 0);           // still held
+  CHECK(w.stats().held_retries >= 5);          // tried every frame, counted as held
+  CHECK(w.stats().write_failures >= 5);        // the chest the game refuses: a real failure
+  CHECK(w.stats().top_write_failure == kChest);  // the held door never names itself
+  CHECK(w.stats().top_write_failure_count == w.stats().write_failures);
+  hold = false;
+  w.frame(store);
+  CHECK(game_store.get(kDoor) == 1);  // written once the hold ends
+}
+
 TEST_CASE("flag watcher: the host's Try Again into a held flag writes the group's value once the hold ends") {
   // A held flag (issue 129, HoldFlagStore): kept in unwritten_ and written later, not dropped by the retry as if our
   // game had changed it (review of 159a4fd7).
