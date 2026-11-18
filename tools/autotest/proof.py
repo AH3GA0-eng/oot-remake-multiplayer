@@ -10,6 +10,7 @@ shows the result. groups.py's see=<check> names a check defined here, in tools/a
 
 shot: the run's <scenario>-<shot>.png (hookshot.py run saves every `mark NAME` of script X as
 <scenario>-X-NAME-A.png and -B.png: one shot of each game at the moment the script marks it), or end-A / end-B.
+A '*' matches anything: s*-b-rejoined-A for a steps file's shot (hs_steps.py: s<step>-<name>-A.png).
 
 Kinds:
 - refs: the region is compared with reference shots of the same scenario, script, mark and game, taken from earlier
@@ -222,7 +223,9 @@ def find_shot(folder, shot):
     exact = os.path.join(folder, shot + ".png")
     if os.path.isfile(exact):
         return exact
-    hits = sorted(glob.glob(os.path.join(glob.escape(folder), "*-%s.png" % glob.escape(shot))))
+    pat = shot if "*" in shot else glob.escape(shot)   # '*': a steps file's s<N>-<name>-A (N: its step number)
+    hits = sorted(set(glob.glob(os.path.join(glob.escape(folder), "*-%s.png" % pat))
+                      + glob.glob(os.path.join(glob.escape(folder), "%s.png" % pat))))
     return hits[0] if len(hits) == 1 else None
 
 
