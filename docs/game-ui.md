@@ -30,6 +30,8 @@ Each fact ends with its status:
   `host/hos_wide_ui.c`, `host/oot_text_size.c`, `nx2/oot_wide.py`), which calls or reads it.
 - **(notes)**: from the maintainer's notes: the maintainer's research notes and docs, mostly read from main's code and
   never run in a game; not checked again here.
+- **(inferred)**: follows from what the study tools read, but was not read itself; a run or more reading must settle
+  it.
 - **(run)**: co-op's module used it in a game run; the doc named with it says which run.
 
 ## Screens
@@ -45,8 +47,16 @@ Each fact ends with its status:
   are in the `Common` category. 31 rows are `Resident`, 6 `NoUnload`, 25 have no group. (checked)
 - Four rows have no `Class`: `AppLoadingMessage_00`, `MenuBG_00`, `SystemBG_00`, `TitleMenuBG_00`. They are
   backgrounds: a layout with no screen logic. A label or banner of ours could be such a row. (checked)
+- The row parser `f_805c2760` reads a row into a record: `+0x28` `DrawUnitId`, `+0x2c` `HeapInitialSize`, `+0x30`
+  `SortKey`, then bools `+0x34` `IsAllocTextureDataOnInitialize`, `+0x35` `IsCheckExclusiveInput`, `+0x36`
+  `IsEnableControl`, `+0x37` `IsHeapReverse`, `+0x38` `IsIgnorePick`, `+0x39` `IsLockRequestForceCancel`, `+0x3a`
+  `IsPauseLower`, `+0x3b` `IsPauseLowerInput`, `+0x3c` `IsPreventedInputByExcludingDown`, `+0x3d` `IsTouch`. The
+  game's own rows use none of `IsCheckExclusiveInput`, `IsIgnorePick`, `IsLockRequestForceCancel`,
+  `IsPauseLowerInput`, `IsPreventedInputByExcludingDown`, `IsTouch`; a row of ours may set them. (checked)
 - In memory the rows are `0x38`-byte entries of a table object: `+8` the count, `+0x10` the array, `+0x18` hash buckets,
-  `+0x24` the bucket count. An entry's `+0` is the row's `Name`, `+8` its `Class`. (checked)
+  `+0x24` the bucket count. An entry's `+0` is the row's `Name`, `+8` its `Class`. Table slots 12 and 28 read the ints
+  at `+0x28` and `+0x2c`, slots 13 and 29 the bytes at `+0x30` and `+0x31`, slots 14, 15 and 18 to 25 bits of the u16 at
+  `+0x32`. Which bit is `IsEnableControl`, and the code that packs a row into an entry, are not found. (checked)
 - The table's vtables are `0x84c945d8` and `0x84c94708`: 30 slots each, the same functions in slots 4 to 29, not
   named by the game. Slot 4 `f_80aaf200` makes a screen (below), slot 5 `f_83beb570` gives a row's `Name`, slot 6
   `f_83beb590` the count, slot 8 `f_83beb5a0` looks a hash up, slot 17 `f_80aaf320` gives a row's `Class`. (checked)
@@ -102,8 +112,13 @@ slot 28 `f_80997670`) opens a screen in its slot 39 `f_80c86420` (checked):
   hash of its name. Co-op can open any loaded screen the same way: hash the name, look it up, call slot 5. (checked;
   not run)
 - Two more lookups: `f_82919fb0(*(*0x84c9e098), hash)`, used with the two system window hashes above, and
-  `f_832e4ed0(mgr, key)`, used with `0xc5a49707` for the banner. (notes) `0xc5a49707` is not the MurmurHash3 of
-  `SimpleInfo_00` (checked), so the key `f_832e4ed0` takes is still to find.
+  `f_832e4ed0(mgr, hash)`. (notes) The notes give `f_832e4ed0` with `0xc5a49707` for the banner, but `0xc5a49707` is
+  the MurmurHash3 of `ShortCutBG_00`; `SimpleInfo_00`'s is `0x42a6f5fe`. (checked) So `f_832e4ed0` takes the same name
+  hash, and the banner's is `0x42a6f5fe`. (inferred)
+- Hashes of screens named in this page (checked): `PlusMenu_00` `0xc0a4dec4`, `MenuOverlay_00` `0x20d55c5a`,
+  `SystemOverlay_00` `0xaf02e7d3`, `MenuBG_00` `0xf5b7168b`, `MapMenu_00` `0xc3332ad4`, `ImportantMenu_00`
+  `0x7ecad8bd`, `ChallengeMenu_00` `0x3bc00454`, `SimpleInfo_00` `0x42a6f5fe`, `MessageInGame_00` `0xfdeb5cd7`,
+  `MessageDialog_00` `0xf91df64d`, `SystemWindow_00` `0x6d47deab`, `TitleSystemWindow_00` `0xe1932d84`.
 - Another way, from the notes: walk the manager's array (count `+8`, array `+0x10`) and match each screen's vtable.
   (notes)
 - The game opens screens from its Sequence graphs, not from C++: `OpenTitle.module.ainb` loads and opens `Title_00`,
@@ -122,23 +137,38 @@ slot 28 `f_80997670`) opens a screen in its slot 39 `f_80c86420` (checked):
 - Slot 6, `f_802f6990(screen, -1)`, the same function in every screen looked at. (checked) The message window closes
   itself this way when its timer runs out. (notes)
 - A system window is closed only by a Sequence that waits on it. (notes)
-- A screen's open state may be the bytes `+0x1a5` / `+0x1a6`: to check in a game. (notes)
+
+### A screen's state
+
+- `+0x170` the screen's index in the UI manager. `+0x1a4` a byte given at initialisation (slot 16 `f_80793b80` ->
+  `f_80793b90`, its argument w6). (checked)
+- `+0x1a5` the request: open (slot 5) raises it to the mode, close (slot 6) lowers it to the negative value. `+0x1a6`
+  the state: 2 is open, set by slot 72 `f_802eda10`; the update checks for 3; the destructor (`f_80aa2ad0`) takes 1 and
+  2 as open. `+0x1a7`, `+0x1a8`, `+0x1ae` are flags. (checked) What each state means is read from code, not seen in a
+  run. (inferred)
+- Open also copies the screen's `+0x1a4` into the UI manager's byte array at `mgr+0x20` (count `mgr+0x18`), at the
+  screen's index; the update writes `0xff` there on one path (state 3, no request pending). `mgr+0xd8`: two bytes the
+  update clears. (checked) Inferred: the array is the open screens and their input group, and `0xff` is a screen
+  closing.
 
 ### Shared slots
 
 Every screen vtable has 107 slots. Slots 5, 6, 17 and 40 hold the same function in every screen vtable looked at (ten
 classes for 5, 6 and 17: the title, the pause menu, the tab strip, the HUD, the balloons, the banner, the message
-window, the system window, the options and the save screen; seven of them for 40). The slots co-op uses:
+window, the system window, the options and the save screen; seven of them for 40). So do slots 16 and 72 in the three
+checked for them (the title, the tab strip and `UICommonScreen`). The slots co-op uses:
 
 | Slot | Function | What it does |
 |---|---|---|
 | 0, 1 | the class's | destructor, deleting destructor (checked) |
 | 5 | `f_804d6100` | open `(screen, mode)`; the open node passes 1, 2 or 3 (checked) |
 | 6 | `f_802f6990` | close `(screen, -1)` (checked) |
+| 16 | `f_80793b80` | initialisation: stores `+0x1a4` (checked) |
 | 17 | `f_802f1380` | update, each frame (below) (checked) |
 | 40 | `f_802f12b0` | a step delta from `*(screen+0x20)+0x68`; the message window counts its timer down by it (checked; the meaning: notes) |
 | 46 | the class's | on focus: a button or pane got the focus (checked for the title and the pause menu) |
 | 50 | the class's, base `f_8379bd50` | on decide; the base one does nothing (checked) |
+| 72 | `f_802eda10` | sets the state `+0x1a6` (checked) |
 | 93 | the class's | set-up, after the screen's layout is made (checked) |
 | 96 | the class's | a per-frame step; the title's "active" step (checked) |
 
@@ -181,19 +211,23 @@ All vtables (checked); a full list of the 58 is in the names file.
 | `UIBalloonMessageScreen` | `0x84c042e8` | the balloons over actors, `BalloonMessage_00` |
 | `UIMessageLogScreen01` | `0x84c09a10` | the dialogue log, `MessageLog_01` |
 | `UIDemoNicknameScreen` | `0x84c056b8` | the big name card, `DemoNickname_00` |
+| `MessageDialogScreen` | `0x84c091f8` | the message dialog, `MessageDialog_00` (factory `0x84c095d8`; not a `UI...` name, so not among the 58) |
 
 ## Layouts and panes
 
 - Layouts are in the romfs, `UI/Layout2Archive/*.blarc.zs` (SARC, zstd), their textures in `.bntx` files. The groups are
-  `Boot`, `Common`, `Title` and `ZeldaNotes`; `Common` holds 150 layouts. (notes)
+  `Boot`, `Common`, `Title` and `ZeldaNotes`; `Common` holds 157 layouts. (checked)
 - Every layout's canvas is 3840 x 2160. (code, `hos_wide_ui.c`) Places are from its middle, y up: the HUD's
   `P_MiniMapFrame_00` is at 1536, -690, right of and below the middle ([overlay.md](overlay.md#players-on-the-map)).
   (run)
 - A layout object: `+0xf8` its resource (the file's header: `+0x18` its name, `+0x20` its pane names), `+0x100` the pane
   array, `+0x13c` the pane count. A pane is `0xb0` bytes. (code, `hos_wide_ui.c`)
 - A pane: `+0x18` its layout, `+0x28` its global 3x4 matrix (by column; xx at `+0x28`, yy at `+0x38`, the translation
-  at `+0x4c`, `+0x50`), `+0x58` / `+0x5c` its width and height, `+0xa8` its flags. Kinds: 0 null, 4 scissor, 5 capture,
-  6 part, 7 host (holds other layouts). (code, `hos_wide_ui.c`)
+  at `+0x4c`, `+0x50`), `+0x58` / `+0x5c` its width and height, `+0xa8` its flags. (code, `hos_wide_ui.c`)
+- A pane's kind is bits 22 to 25 of `+0xa8` (in a `.buil` pane record, bits 7 to 10 of `+0x38`; the same numbers):
+  0 null (`N_`, `RootPane`, `B_`), 1 picture (`P_`, and the `W_` window frames), 2 text (`T_`), 3 alignment (`A_`),
+  4 scissor (`S_`), 5 capture (`C_`), 6 part (`Pa_`), 7 host (holds other layouts). (checked)
+- `f_8045b1f0(layout, i)` gives pane i (`layout+0x100 + i * 0xb0`). (checked)
 - A pane's `+0x78` is its alpha with its parents': 0 hidden, fading to 1 as the game shows it (seen in run
   hs-minimap-icons 20261114-105315). The matrix at `+0x28` is proven in run hs-minimap-icons 20261114-115734. Both in
   [overlay.md](overlay.md#players-on-the-map). (run)
@@ -205,7 +239,12 @@ All vtables (checked); a full list of the 58 is in the names file.
   [overlay.md](overlay.md))
 - More lookups by name: `f_8045e140(layout, name)` (the title counts `Pa_Button_%02d` with it until 0) (notes),
   `f_8045e1e0(layout, name)` (the map set-up) (notes), `f_8045c4a0(name, layout)` (the tab strip counts its parts with
-  it) (checked). Animations by name: `f_8045c7a0(layout, name)`. (notes)
+  it), `f_8045c3e0` (the pause menu's set-up finds its page parts with it) (checked). Animations by name:
+  `f_8045c7a0(layout, name)`. (notes)
+- A text pane also has a `@name` alias, and `f_8045b970` (set a pane's text, see [Text](#text)) matches the alias, or
+  the pane's name when the alias is a bare `@`. (checked) `MessageInGame_00` has no pane named `T_Message_00`: its text
+  pane is `T_MessageWhiteOut_00` with the alias `@T_Message_00`. So the text setter finds it by `T_Message_00`, but a
+  lookup by pane name such as `f_8078e2b0` needs `T_MessageWhiteOut_00`. (inferred for `f_8078e2b0`)
 - A pane's position: `f_8078fcb0(pane, 0, &x, &y)`. (code, `oot_menu.c`)
 
 ### Transforms, size, alpha
@@ -214,10 +253,13 @@ All vtables (checked); a full list of the 58 is in the names file.
   position, scale and rotation and its parent's matrix. `f_8154cab0` is an entry inside `f_8154caa0`, not a function
   start of its own. (code, `hos_wide_ui.c`, `oot_wide.py`)
 - `f_8154ac30` gives a pane's size as drawn (s0, s1). (code, `hos_wide_ui.c`)
-- `f_8154b220` scales a text pane (the title button's texts). (notes)
+- `f_8154b220` sets a pane's size (`+0x58` / `+0x5c`, at least 0) and marks it dirty (`f_8154b260`); the title uses it
+  on its button texts (notes). It does not scale text. (checked)
 - Moving and showing a pane, as the balloons do: `f_80229650(part+0x40)` gives a balloon's root pane; it is moved as
   `f_8022a3e0` does (x, y at `+0x6c`; `f_815457d0` and `f_8154d540` tell the layout) and shown with `f_8022aea0`. A
   part's in and out animations: `f_802f0f00`, `f_802f0fe0`. (notes, never run)
+- Animations: `f_802eda70(animation, 0, speed)` plays one, `f_802f0f00` plays it at once, `f_802f0fe0` stops it (the
+  tab strip uses all three); `f_802ee030` plays the pause menu's page transitions. (checked)
 
 ### Picture panes
 
@@ -229,6 +271,8 @@ All vtables (checked); a full list of the 58 is in the names file.
   (notes)
 - The map screen loads its `P_Replace*` pictures this way (`f_80b4a840`). A texture of ours made by the CPU has no known
   creator yet. (notes)
+- A picture pane's material object also has four float4 setters: `f_8151a210` (`+0x78`), `f_8151a270` (`+0x8c`),
+  `f_8151a2d0` (`+0xa0`), `f_8151a330` (`+0xb4`). (checked) They may be the vertex colours. (inferred)
 
 ### The layout files
 
@@ -243,6 +287,9 @@ records, and how new parts go after the string pool so nothing moves).
 - The focus: `f_8088ffc0(screen, button, flag)`, as the game's screens call it (`f_80795090`). It finds the button's
   entry and hands it to the focus manager (`*(screen+0x20)+0x60`, through its vtable's `+0x30`) when that manager takes
   the player's input. (code, `oot_menu.c`)
+- In detail: `*(screen+0x20)` is the UI manager (the same object as `**0x84c9e098`); `fm = *(mgr+0x60)`. The bit index
+  comes from slot 7 of the table at `mgr+0x48` (`f_80890240`, always 0), so the call needs bit 0 of `fm+0x22`. It then
+  finds the button's entry and calls slot 6 of `fm`'s vtable. What sets `fm+0x22` is not found. (checked)
 - A button is made by `f_80df5410(*(screen+0x38) the UI controller, pane)`. Bit `0x4` of `button+0x40` is "enabled"; the
   title sets it from `f_837930f0(controller)`. (notes)
 - A button's name: `*(button+0x18)` is its pane's name, `+0x20` its parent pane; `f_837a28f0` joins them into a path
@@ -257,7 +304,8 @@ records, and how new parts go after the string pool so nothing moves).
   screen with `f_81006110`. The screen's update `f_802f1380` drains it; `f_83399160` reads the UI controller's decided
   button (`f_83793090`; the button's state `+0x38` is 4 or 5). (notes; the slots checked)
 - A request: `+0x3c` its kind (2: stop an animation), `+0x28` an animation name or a pane path, `+0x30` a message ref,
-  `+0x38` a frame (float). One note puts the request list at `screen+0xb8`, another at `screen+0xe8`: to check. (notes)
+  `+0x38` a frame (float). (notes) `f_81006110` takes `screen+0xb8`, the requests' owner; the list's atomic head is at
+  `screen+0xe8`. (checked)
 - `f_83791db0(button, 0)` decides a button without input. (notes) The game calls it from four places, among them the
   step (slot 96) of the save screen (`f_834251f0`, at `0x83425280`) and of the system window (`f_834258b0`, at
   `0x83425930`). (checked)
@@ -277,7 +325,22 @@ records, and how new parts go after the string pool so nothing moves).
 
 - Co-op's side: Longshot hands the pad to the module first (patch 0004), and keys and characters through its key hooks;
   while co-op's menu is open the game gets no presses ([hookshot.md](hookshot.md)). (notes)
-- The game's side, how it picks the screen that reads the pad (its focus manager and the screens' order), is not mapped.
+- The pause menu reads its keys in its Sequence graph, not in the screen: the graph polls the controller user `UI`
+  (`SeqQueryControllerGetMask` `0x84be4560`, `SeqQueryControllerTrigMaskChecker` `0x84be4a80`). The screen only moves
+  its cursor and reports decided buttons, which the graph waits for (`SeqExecuteWaitScreenButtonInputIgnoreDecideAnim`
+  `0x84bcad08` on `PlusMenu_00`). (checked)
+- The graph turns a screen's buttons off while a sub-module runs: `SeqOneShotSetEnableScreenButtonHitTest`
+  (`0x84bdb248`, slot 39 `f_80dc4920`) posts a request on the screen. Other input nodes: `SeqOneShotSetMoveCursorControllerMask`
+  `0x84bdd8a0`, `SeqOneShotSetIsEnableMessageDialogCtrl` `0x84bdcb80`. (checked)
+- The focus gate (bit 0 of `fm+0x22`, [above](#buttons-and-focus)), the screen's state bytes and the UI manager's byte
+  array at `mgr+0x20` ([A screen's state](#a-screens-state)) and the row's `IsEnableControl` (`+0x36` of the row record)
+  are the pieces. (checked)
+- In the table, the menus (`PlusMenu_00`, `MapMenu_00`, `ImportantMenu_00`, `ChallengeMenu_00`) share one `SortKey`;
+  the tab strip's is higher, the system window's higher still (with `IsPauseLower`), and the message dialog's highest.
+  (checked) Inferred: input goes to the open screens with `IsEnableControl`, the front-most by `SortKey`.
+- Still open: what sets `fm+0x22`, and how the game picks the screen that reads the pad. A run would settle it: log
+  `fm+0x22`, `mgr+0x20[0..count]` and each open screen's `+0x1a4..+0x1a8` while walking, in the pause menu pressing L
+  and R, on the System page's Save (a system window), and in a message dialog.
 
 ## Text
 
@@ -294,6 +357,8 @@ records, and how new parts go after the string pool so nothing moves).
   `f_80459680(textbox, ptr, len, -1)` stores it at `+0xf0` and the length at `+0x124`. So the text must stay alive while
   it is shown: take it from the game's malloc, `f_814e6c90` (`main+0x14c6c90`). (notes, never run)
 - Pane name strings in main: `T_Name_00` `0x83d141c6`, `T_Message_00` `0x83d4fef3`, `T_Text_00` `0x83de2306`. (checked)
+  `f_8045b970` matches a text pane's `@` alias, so `T_Message_00` finds `MessageInGame_00`'s `T_MessageWhiteOut_00`
+  ([Finding a pane](#finding-a-pane)). (checked)
 - Tags in the text: byte `0x0E`, then u16 group, u16 type, u16 parameter size, the parameters. A colour is group 0 type 3
   with a u16 index; the game uses only 0 to 5 and `0xFFFF` (back to the default). A player's text must be cleaned of
   `0x0E` and control bytes before it is shown. (notes)
@@ -303,7 +368,46 @@ records, and how new parts go after the string pool so nothing moves).
 - Dialogue text panes (Longshot `oot_text_size.c`): a `LetterAnimControl` (panes with letter animation), its step
   `f_80b1e140`; the control's `+0x28` is the game's pane wrapper: `+8` the Layout2 text box pane, `+0x28` / `+0x38` the
   text's 2D scale. (code)
-- Still open: the text pane's own colour setter (16 player colours, the tag has 6), and one run of the string route.
+
+### Text colour
+
+- The text pane's own colour (16 player colours; the colour tag has only 6): `f_8152c740(textbox, const float
+  rgba[4])` writes colour 0 at `textbox+0x1d4..+0x1e0`, `f_8152c810(textbox, rgba)` colour 1 at `+0x1e4..+0x1f0`. Both
+  return at once when the colour is the same, and mark the pane dirty as the string setter does. Getters: `f_8152e200`,
+  `f_8152e220` (return s0 to s3). (checked)
+- The text box: `textbox = *(*(pane+8)+8)` for a pane of kind 2 (text); the pane from `f_8045b1f0(layout, i)` or by its
+  name. It is the same object the string setter writes (`f_80459520` -> `f_80459680`: `+0xf0` the pointer, `+0x124`
+  the length, `+0x180` dirty bits). (checked)
+- Only the layout's animation applier calls the two setters (`f_81555e40` -> `f_8152c740`, `f_81555f00` ->
+  `f_8152c810`, through the animation target switch `f_815509c0`). (checked)
+- Inferred: the two colours are the top and the bottom of the text's gradient, so set both for one colour; the values
+  are floats from 0 to 1. A run must check both.
+- Still open: one run of our own string and of the colour setters.
+
+## Frames for a text field
+
+The game has no text-entry widget: no pane in the `Common` layouts (157) is named for input, and the game has no
+keyboard of its own. These layouts of `Common` can frame one (pane names, kind 1 picture or 2 text; checked):
+
+- `PaCommonBtnThin_00` (27 panes), the best fit: frames `W_Base_03`, `W_BaseGlow_02`, `W_BaseFlame_02` / `_03`,
+  `W_Select_00`, the text `T_Btn_00` (under `N_Disable_00`), a disabled copy (under `N_Disable_01`, `T_Btn_01`), the hit
+  box `B_Hit_00`, the cursor (`N_Cursor_00`, `P_CursorGlowAttention_00`, `N_DecideGrow_00`, `P_CursorGlowDecide_00`,
+  `P_CursorEff_00`, `P_CursorLine_00`) and a badge (`N_New_00`, `T_New_00`). `SystemWindow_00`, `SystemSaveLoad_00`,
+  `GameOver_00`, `AmiiboWindow_00`, `EnemyInfo_00` and `PaSystemMenu_00` use it as their buttons. A button whose
+  `T_Btn_00` shows the typed text gets the game's focus and decide looks for free. (inferred)
+- `PaOptionBtn_00` (25): frames `W_Base_05`, `W_Base_03`, `W_Base_01`, `W_BaseGlow_01`, `W_BaseFlame_02`, a label
+  `T_Text_00` and a value `T_Text_01`, `P_CheckMark_00`, a cursor. A label and value row, for a line like "Room name";
+  `SystemOption_00` uses it as `Pa_AmiiboBtn_00`. Its siblings: `PaOptionBtnL_00`, `PaOptionBtnLevel_00`.
+- `PaMenuMessage_00` (4): `N_All_00`, `P_MessageBase_00`, `T_Message_00`: the simplest framed one-line box, with no
+  cursor. `ChallengeMenu_01`, `ImportantMenu_01` and `MapMenu_00` use it as `Pa_Message_00`.
+- `SystemWindow_00` (7): `N_In_00`, `T_Text_00`, `N_Button_00` and three `PaCommonBtnThin_00` buttons: a prompt around a
+  field.
+- `MessageDialog_00` (80; `MessageDialogScreen`, vtable `0x84c091f8`): frames `P_MessageBase_00..04`, `T_Message_00`, a
+  name plate and five choices. Too heavy for a field.
+- `PaCommonBtnThinAction_00` (17) is like `PaCommonBtnThin_00` with an icon, and no `Common` layout uses it.
+- Small name plates: `MessageInGame_00` (`P_NameBase_00`, `T_Name_00`), `DemoNickname_00` (`T_Name_00`,
+  `T_Nickname_00`), `PaShopBuyInfo_00` (`T_Name_00`).
+- No caret pane exists. A `|` in the text, or the button's `P_CursorLine_00`, could be one. (inferred)
 
 ## Sounds
 
@@ -314,6 +418,9 @@ records, and how new parts go after the string pool so nothing moves).
   (the title's active step). (notes; the slot checked)
 - A game button plays its own decide sound with its `Decide` animation, so a button of ours made from the game's button
   part gets it too. (notes)
+- The tab strip's sounds: the pause menu's graph plays `mc_TabToRight` or `mc_TabToLeft` on `MenuOverlay_00` with
+  `SeqOneShotStartSound` (vtable `0x84be15f8`), chosen by `SeqMenuTabChangeDirectionSelector` (`0x84bef960`, slot 39
+  `f_83322e90`: ToRight, ToLeft, PlusMinusChange or NoChange). (checked)
 - Still open: a cancel, close or error sound name.
 
 ## The pause menu
@@ -323,14 +430,66 @@ records, and how new parts go after the string pool so nothing moves).
 - `PlusMenu_00` (`UIPlusMenuScreen`, `Resident`, `IsEnableControl`; its layout in the `Common` archive) holds the four
   pages as parts `Pa_Collect_00`, `Pa_Equip_00`, `Pa_Item_00`, `Pa_System_00` under `N_MenuChange_01`, and the info and
   message boxes `T_Text_00`, `T_Text_01`. 40 panes. (checked)
-- Its set-up, slot 93 `f_80f99400`, binds the four pages by name in four blocks: `Pa_Item_00` (string `0x83cd6111`) at
-  `+0xf0`, `Pa_Equip_00` (`0x83d46f80`) at `+0x130`, `Pa_Collect_00` (`0x83d2da2e`) at `+0x170`, `Pa_System_00`
-  (`0x83d20bda`) at `+0x1b0`. `f_80f9b1d0` also reads `Pa_Collect_00`. (checked)
-- Its slot 46, `f_802ed660` (the word at `0x84c0bc18`), handles a pane getting the focus: it matches the pane's name
-  against `PaItemMenu_00`, `PaEquipmentMenu_00`, `PaCollectMenu_00`, `PaSystemMenu_00` and hands the pane to that page
-  (`f_802ebd20` on the Items page: the info panel). Longshot's `oot_menu.c` hooks it. (checked slot; code)
-- The pages in order: 0 Collection, 1 Equipment, 2 Items, 3 System; L and R step between them. (code, `oot_menu.c`)
-- So a fifth page needs code: a hook after slot 93 that binds a fifth part, and the L and R step that wraps at four.
+- Its set-up, slot 93 `f_80f99400`, binds the four pages by name in four blocks of its code (the names: `Pa_Item_00`
+  string `0x83cd6111`, `Pa_Equip_00` `0x83d46f80`, `Pa_Collect_00` `0x83d2da2e`, `Pa_System_00` `0x83d20bda`), finding
+  each part with `f_8045c3e0`. `f_80f9b1d0` also reads `Pa_Collect_00`. (checked)
+- The screen's fields from the set-up: the animations `+0x2b0` `CollectToEquip`, `+0x2b8` `EquipToItem`, `+0x2c0`
+  `ItemToSystem`, `+0x2c8` `SystemToItem`, `+0x2d0` `ItemToEquip`, `+0x2d8` `EquipToCollect`, `+0x2e0` `ActorFade`,
+  `+0x2e8` `IsDream`, `+0x2f0` `InAfter`, `+0x2f8` `IsAmiibo`, `+0x300` `ArrowState`; the page objects `+0x308` Items
+  (`0x98` bytes), `+0x310` Equipment (`0x68`), `+0x318` Collection (`0x78`), `+0x320` System (`0x60`); `+0x328` /
+  `+0x329` the `InAfter` state, `+0x32c` a direction, `+0x330` a button, `+0x338` / `+0x339` flags. (checked)
+- Its slots of its own: 46 `f_802ed660` (the word at `0x84c0bc18`) handles a pane getting the focus: it matches the
+  pane's name against `PaItemMenu_00`, `PaEquipmentMenu_00`, `PaCollectMenu_00`, `PaSystemMenu_00` and hands the pane
+  to that page (`f_802ebd20` on the Items page: the info panel); Longshot's `oot_menu.c` hooks it (checked slot; code).
+  50 `f_83416ee0` on decide; 96 `f_802f69b0` closes the three pages not shown (per-category tables `0x83f36c90`,
+  `0x83f36cc0`, `0x83f36cf0`; `ArrowState` frames from `0x83f36d20`); 104 `f_80e7f5f0` clears `+0x32c` and `+0x338`;
+  106 `f_80795ef0`, on a cursor move past the page's edge, keeps the button at `+0x330` and the direction at `+0x32c`.
+  (checked) Its slots 47, 51, 57, 58, 98, 100 and 102 are its own too; their roles are not read.
+
+### The page index and the menu manager
+
+- The page is not a field of `UIPlusMenuScreen`: it lives in the menu manager, `*0x84e9cfa8` (code reaches it through
+  the GOT entry `0x84c9e2a8`). Its fields: `+0x530` the current Plus-menu page, `+0x538` the requested one; `+0x52c` and
+  `+0x534` the same pair for the Minus menu; `+0x53c` 1 while a Minus category is current; `+0x588` flag bits; `+0x4e8`
+  and `+0x4f8` objects. (checked)
+- Its functions: `f_8342b720(mgr, category)` sets the current one, `f_8342b780(mgr, is_minus)` gets it,
+  `f_8342b7a0(mgr, category)` sets the requested one (categories 0, 3, 4, 5 go to `+0x538`, the others to `+0x534`:
+  table `0x83f37530`), `f_8342b7d0(mgr, is_minus)` gets it, `f_8342b7f0` tells whether a Minus category is current,
+  `f_8342b800(mgr, bit, on)` sets a flag. (checked)
+- The categories (names at `0x83f32720`): 0 `CollectMenu`, 1 `ChallengeLog`, 2 `MapMenu`, 3 `EquipmentMenu`,
+  4 `ItemMenu`, 5 `SystemMenu`, 6 `ImportantMenu`. The Plus menu's are {0, 3, 4, 5} (the mask `0x39` in many places),
+  the Minus menu's {1, 2, 6}. Each category's tab position is in the table `0x83f2e5ac` (7 ints). Longshot's page
+  numbers 0 to 3 (Collection, Equipment, Items, System) are categories 0, 3, 4, 5. (checked)
+
+### The page step
+
+- `SeqExecuteTransitionPlusMenu` (vtable `0x84bc8bb8`; its inputs `FromMenu` at node `+0x20` and `IsInputRight` at
+  `+0x28`) steps the page. Its Enter, slot 29 `f_832e5400`, checks for `PlusMenu_00`, then steps along 0, 3, 4, 5: right
+  from 0 to 3, 3 to 4, 4 to 5; left back. There is no wrap: left on Collection and right on System end the node with no
+  change. It writes the new page to `mgr+0x538` and calls `f_83417190(plus_screen, from, to)`, which plays the matching
+  transition animation (`f_802ee030`; for 3 to 4, `EquipToItem`). (checked)
+- Its Update, slot 30 `f_802ecc10`, waits until the six transition animations are idle (or past frame 12), then copies
+  `+0x538` to `+0x530` when it is a Plus page (and sets `*(mgr+0x4e8)+0x30c` to 3); any other value becomes the current
+  Minus category (`+0x52c`, with `+0x53c` = 1). (checked)
+- What triggers it is the graph `Sequence/PlusMenu.module.ainb`: it reads the keys of the controller user `UI`; B and
+  Plus close the menu, Minus goes to the Minus menu, L and ZL run the step with `IsInputRight` 0, R and ZR with 1;
+  `FromMenu` comes from `SeqQueryGetCurrentMinusMenuCategory`. Otherwise `SeqQueryGetButtonInputDirection` (vtable
+  `0x84be5648`, slot 39 `f_83311580`) reads the screen's `+0x32c`: 1 steps left, 2 right, when the cursor is pushed past
+  a page's edge. (checked)
+
+### A page of ours
+
+- A fifth page is expensive: the four pages are fixed in many places: the chain in `f_832e5400`; the `0x39` and `<= 5`
+  checks in `f_802ecc10`, `f_8342b720`, `f_8342b7a0`, `f_802f69b0` and in the nodes
+  `SeqOneShotSetCurrentMinusMenuCategory` (`0x84bda528`, slot 39 `f_83300b10`) and
+  `SeqQueryGetCurrentMinusMenuCategory` (`0x84be5cd0`, slot 39 `f_83312250`); the tables
+  `0x83f37530`, `0x83f36c90..0x83f36cf0` and `0x83f2e5ac`; only neighbour transition animations exist in `PlusMenu_00`;
+  the tab strip fills tabs 0 to 3 with categories 0, 3, 4, 5; the graph's selectors on the category have cases 0, 3, 4,
+  5 only. A new category 7 would be taken as a Minus category by `f_8342b7a0` and `f_8342b720`. (inferred, from those
+  checked places)
+- A sixth button on the System page is cheaper: `PaSystemMenu_00` has `Pa_Button_00..04`, each a `PaCommonBtnThin_00`,
+  and the graph's selectors on a button's name send an unknown name to their default branch. A co-op page could open
+  from that button, as a screen of our own. (inferred)
 
 ### The tab strip
 
@@ -341,7 +500,34 @@ records, and how new parts go after the string pool so nothing moves).
 - The tabs count themselves: the set-up, slot 93 `f_83405cc0`, formats `Pa_Category_%02d` (string `0x83cefc97`) for 0,
   1, 2, ..., finds each in its layout with `f_8045c4a0(name, *(screen+0x28))` and stops at the first one missing. The
   count goes to `screen+0x328` and sizes the arrays it then allocates. (checked)
-- So a `Pa_Category_04` part added to `MenuOverlay_00` at pack time gives a fifth tab with no code change. Not tried yet.
+- So a `Pa_Category_04` part added to `MenuOverlay_00` at pack time is counted and gets a tab object, but the game never
+  fills or highlights it (below): a fifth tab also needs a hook after `f_80a89220` that calls `f_80a8ab50` and
+  `f_802ecf60` on tab 4. (inferred) Not tried yet.
+- A tab object is `0x48` bytes, made in the set-up: `+0x18` / `+0x20` the part's layout, `+0x30` its animation `Type`,
+  `+0x38` `CurrentIn`, `+0x40` `CurrentOut` (the names through the GOT entry `0x84cacc00` -> `0x83f35220`). The tabs are
+  at `overlay+0x330`, their count at `+0x328`. A tab part's layout is `PaMenuCategory_00` (`N_All_00`, `N_BgIn_00`,
+  `N_Bg_00`, `P_MinusMenuBg_00`, `P_PlusMenuBg_00`, `N_MenuChangeTextIn_00`, `N_Text_00`, `T_Text_00`, `T_Text_01`).
+  (checked)
+
+### The tab highlight
+
+- The pause menu's graph runs `OpenAppMenuOverlay.module`, whose `SeqOneShotOpenAppMenuOverlay` (vtable `0x84bd46a8`;
+  slot 28 `f_80ad2660` binds `Preset`, `IsTitle`, `IsFromSystemChild`) opens the strip in slot 39 `f_80a88810`. For
+  presets 9, 12, 13, 14 it closes `MenuOverlay_00` and opens `SystemOverlay_00` (through `f_832f8820`, `f_83424890`);
+  otherwise it finds `MenuOverlay_00` and calls `f_80a88a40(overlay, preset, from_system_child)`, then closes
+  `SystemOverlay_00` with slot 6 (-4). (checked)
+- `f_80a88a40` keeps the preset at `+0x354` and the category at `+0x358` (the only writer of `+0x358`): preset 4 gives
+  3, 5 and 6 give 4, 7 gives 0, 8, 9 and 12 to 15 give 5, 0 and 1 give 1, 2, 3 and 16 to 19 give 2, 10 and 11 give 6.
+  The pause menu's graph uses presets 7 (Collection), 4 (Equipment), 5 (Items), 8 (System). Then it fills the control
+  guide (`f_80a897b0`: `Pa_Guide_%02d` counted by `f_80a88f60`, entries by `f_80a8acb0`) and the tabs (`f_80a89220`),
+  sets the sound-link properties 7 and 8 (`f_80bcd4f0`, table `0x83f3669c`) and opens the strip with slot 5. (checked)
+- `f_80a89220`: in the Plus menu tab i shows category [0, 3, 4, 5][i] through `f_80a8ab50(tab, category, enabled)`,
+  which sets the part's `T_Text_00` from `LayoutMsg/MenuOverlay_00` with the category's name as the label (the label
+  `Unopened`, string `0x83ce30d7`, when disabled); the tab of the category at `+0x358` is highlighted with
+  `f_802ecf60(tab, on, instant)`. In the Minus menu the tabs are [6, 1, 2] and tab 3 is hidden (`f_802edef0`). `+0x350`
+  is the mode (Plus or Minus); `+0x308` and `+0x310` the `MinusToPlus` and `PlusToMinus` animations. (checked)
+- `f_802ecf60`: on, it stops `CurrentOut` (`f_802f0fe0`) and plays `CurrentIn` (`f_802eda70(anim, 0, 1.0)`, or
+  `f_802f0f00` when instant); off, the reverse; nothing when the animation is already at its end. (checked)
 
 ### The Map page
 
@@ -355,10 +541,6 @@ records, and how new parts go after the string pool so nothing moves).
 - The map pictures' panes `N_PatternField_00` and `N_PatternDungeon_00`, the HUD's minimap panes, and which game menu
   is in front (Longshot's patch 0018, `hos_coop_menu_state`) are in [overlay.md](overlay.md#players-on-the-map), which
   says what ran. (notes)
-
-### Still open
-
-Where the L and R step wraps at four pages, and how the tab strip's highlight follows the page.
 
 ## Dialogs, message window, banner, balloons
 
@@ -389,7 +571,8 @@ Where the L and R step wraps at four pages, and how the tab strip's highlight fo
 
 ### The message window
 
-- `MessageInGame_00` (`UIMessageInGameScreen`, `0x84c09678`): `T_Name_00` the speaker, `T_Message_00` the text.
+- `MessageInGame_00` (`UIMessageInGameScreen`, `0x84c09678`): `T_Name_00` the speaker, `T_Message_00` the text (the
+  alias of the pane `T_MessageWhiteOut_00`). (checked)
 - The game's call: `f_833d25c0(mgr = **0x84c9e908, &file, &label, &speaker, s0 = time)`. It locks `mgr+0x6218`, gets
   the screen with `f_833d2690(*0x84ea4518)`, has `f_834091d0` put the label's text into `screen+0x2b0`, the speaker into
   `T_Name_00` and the time into `+0x408`, sets `+0x2d0` to 1 (`f_83409410`) and opens it with slot 5 `(screen, 1)`.
@@ -422,6 +605,8 @@ Where the L and R step wraps at four pages, and how the tab strip's highlight fo
   (notes)
 - `DemoNickname_00` is the big name card; `PickUpWin_00` a small notice. `PaActorName_00` is the pause menu's item info,
   not a label for the world. (notes)
+- `MessageDialog_00` (`MessageDialogScreen`, vtable `0x84c091f8`, factory `0x84c095d8`, name function `f_834090e0`) is
+  the message dialog with choices ([Frames for a text field](#frames-for-a-text-field)). (checked)
 
 ## The names file
 
@@ -434,7 +619,7 @@ per address, tab-separated, sorted by address, each address once:
 | `address` | `0x8` and 7 lowercase hex digits, inside main on 1.1.1 |
 | `name` | our name: `Class::Method` when a vtable or a name function gives the class, else a short description |
 | `kind` | `function` (in text), `vtable` (ro or data), `global` (ro, data or bss), `string` (ro) |
-| `status` | `checked`, `code`, `notes` or `run`, as in [Addresses and conventions](#addresses-and-conventions) |
+| `status` | `checked`, `code`, `notes` or `run`, as in [Addresses and conventions](#addresses-and-conventions); an inferred meaning is said in the note |
 | `note` | what it is, and its source |
 
 The file is beside the study tools so a change to it runs its test in CI (the Build workflow skips changes under
@@ -443,14 +628,17 @@ in its segment, names and notes not empty. Add a line for each function you map,
 
 ## What is open
 
-1. Which existing screen class is the best host for an interactive page of ours.
-2. The load, close and unload by name behind the screen nodes' own slots, and the key `f_832e4ed0` takes.
-3. Where the pause menu's L and R step wraps at four pages, and how the tab strip's highlight follows the page.
-4. The text pane's own colour setter, and one run of our own string in a pane.
+1. Which existing screen class is the best host for an interactive page of ours, opened from a sixth button on the
+   System page.
+2. The load, close and unload by name behind the screen nodes' own slots.
+3. A fifth tab and page in the pause menu: a hook after `f_80a89220` for the tab, and the many fixed places for the page
+   (see [A page of ours](#a-page-of-ours)).
+4. One run of our own string in a pane and of the text colour setters (whether the two colours are a gradient, and the
+   range of the values).
 5. A cancel, close or error sound name; hearing the sounds in a run.
-6. How the game picks the screen that reads the pad.
-7. A text field with the game's look (the game has no keyboard of its own): a frame or field pane to use, and a caret.
-8. Smaller ones: a screen's open state bytes (`+0x1a5` / `+0x1a6`), the request list's offset (`+0xb8` or `+0xe8`), the
-   message window timer's unit, the balloon part's fields, `MessageLog_01`'s entry list, the options list's builder,
-   the packed track target of the title's `BtnNum`, and for picture panes a CPU-written texture and a host pane's
-   draw order.
+6. How the game picks the screen that reads the pad: what sets `fm+0x22`, which bit of a table entry is
+   `IsEnableControl`, and the run described in [Who gets the pad](#who-gets-the-pad).
+7. A text field: building one from `PaCommonBtnThin_00` at pack time, and a caret.
+8. Smaller ones: the meaning of each screen state in a run, the message window timer's unit, the balloon part's fields,
+   `MessageLog_01`'s entry list, the options list's builder, the packed track target of the title's `BtnNum`, the
+   picture float4 setters, and for picture panes a CPU-written texture and a host pane's draw order.
