@@ -817,6 +817,43 @@ TEST_CASE("hookshot: the AI node starts (patch 0029) are one generic world event
     CHECK(patch.find("diff --git a/host/coop_world.c") == std::string::npos);
 }
 
+// Issue 264, piece 4 (the pause menu's Multiplayer tab): patch 0030 hands the module every menu screen's update and
+// asks it which page the mouse's tab strip counts; with five tabs the mouse's zones follow co-op's layout.
+TEST_CASE("hookshot: the game's menu screens reach the module, the mouse knows a fifth tab (patch 0030)") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0030-coop-pause-tab.patch");
+    REQUIRE_FALSE(patch.empty());
+    const std::string menu = PatchedCode(patch, "host/oot_menu.c");
+    REQUIRE_FALSE(menu.empty());
+    const auto in_menu = [&menu](const char* code) { return menu.find(Squashed(code)) != std::string::npos; };
+    // In the one tick of both platforms, after 0028's call, before the screen's own update.
+    const auto tick = menu.find(Squashed("void hos_oot_menu_tick(Ctx *c, uint64_t screen) { if (!screen) return; "
+                                         "hos_oot_autoload_screen(c, screen);"));
+    const auto ours = menu.find(Squashed("hos_coop_game_screen_now(c, screen);"));
+    CHECK(tick != std::string::npos);
+    CHECK((ours != std::string::npos && ours > tick && ours - tick < 300));
+    // The mouse: L and R past a fifth tab's number, five zones when the strip counts five, the module's page.
+    CHECK(in_menu("enum { TAB_L = 8, TAB_R = 9 };"));
+    CHECK(in_menu("return strip && peek(strip + 0x328, &n, sizeof n) && n == 5 ? 5 : 4;"));
+    CHECK(in_menu("return x < -696 ? 0 : x < -228 ? 1 : x < 240 ? 2 : x < 708 ? 3 : 4;"));
+    CHECK(in_menu("const int coop = hos_coop_game_pause_page_now(); return coop >= 0 ? coop : page_now;"));
+    CHECK(in_menu("const int cur = pause ? pause_page() : page;"));
+    // The bridge asks the module's optional exports; without them, or with co-op off, nothing changes.
+    const std::string bridge = PatchedCode(patch, "host/coop_bridge.c");
+    CHECK(bridge.find(Squashed("coop_game_screen = (void (*)(void *, uint64_t))(void *)GetProcAddress(m, "
+                               "\"hos_coop_game_screen\");")) != std::string::npos);
+    CHECK(bridge.find(Squashed("if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_game_screen) "
+                               "coop_game_screen(c, screen);")) != std::string::npos);
+    CHECK(bridge.find(Squashed("return __atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_pause_page ? "
+                               "coop_pause_page() : -1;")) != std::string::npos);
+    // Longshot's own call: no lift hook, no wrapped function, the API header as it was.
+    CHECK(patch.find("diff --git a/nx2/") == std::string::npos);
+    CHECK(patch.find("diff --git a/host/hos_coop_api.h") == std::string::npos);
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    CHECK(module.find("COOP_HOOKSHOT_EXPORT void hos_coop_game_screen(void* ctx, uint64_t screen) noexcept {") !=
+          std::string::npos);
+    CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_game_pause_page(void) noexcept {") != std::string::npos);
+}
+
 TEST_CASE("hookshot: the save-load wraps (patch 0024) are four rows in 0005's table, their header hookshot/src's") {
     const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0024-coop-save-load-wrap.patch");
     CHECK(NewFile(patch, "host/hos_coop_save_load.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_save_load.h"));
