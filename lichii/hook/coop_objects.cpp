@@ -2303,6 +2303,7 @@ private:
             boss_hit_ids_.clear();
             pvp_life_ = -1;
             pvp_watch_.Reset();
+            CoopProjectiles::TheOwnShots().Reset();
             extras_.Reset();  // difficulty: that run's extra enemies are gone with it
             horde_.Reset();
             {
@@ -3107,6 +3108,7 @@ private:
                     }
                 });
                 if (IsBoss(s.name)) {
+                    s.hit_ours.reset();  // issue 133: whose hit is for plain enemies (bosses: NewOwnHitAt, their sync)
                     s.slots = OtherSlots(r, a);  // issue 150
                     // Native boss sync (coop_boss_native.h): its BSA
                     // component, and our game's verbs for it when it is ours.
@@ -3264,6 +3266,9 @@ private:
     // game (DAMAGE's hit_at); the owner's game builds the rest of the hit itself (boss-intro).
     static constexpr float kHitNearBoss = 12.0f;
     static constexpr u64 kHitPlace = 0x27c;
+    // Issue 133 (whose hit): our game's own hit's attacker, the actor at the start of its Life component's hit record
+    // (+0x240): ours when our Link or one of our own projectiles made it (Seen::hit_ours).
+    static constexpr u64 kHitAttacker = kHitRecord;
     std::unordered_map<u64, u32> boss_hit_ids_;  // actor: the last hit id seen (every actor with a Life component)
     // Whose hits reached this actor since the last walk (Seen::own_hit, Seen::replay_hit): its Life component's last
     // hit id moved (hit ids only grow); to one we did not replay is our game's own hit. Returns its Life component
@@ -3300,6 +3305,8 @@ private:
             return std::nullopt;  // our replay of the owner's hit, not one of our game's
         }
         s.own_hit = true;
+        const u64 attacker = r.Get<u64>(*life + kHitAttacker).value_or(0);
+        s.hit_ours = CoopProjectiles::HitIsOurs(attacker, our_link_, CoopProjectiles::TheOwnShots(), CoopEvery::NowUs());
         return *life;
     }
     std::optional<coop::protocol::Vec3> NewOwnHitAt(Reader& r, u64 a, u64 life, const coop::protocol::Vec3& boss) {
