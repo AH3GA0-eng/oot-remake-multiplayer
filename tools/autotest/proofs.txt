@@ -1,0 +1,10 @@
+# Screenshot checks for groups.py see=<name> (tools/autotest/proof.py; docs/testing.md "Screenshot proof").
+# name  shot  region(x,y,w,h of 1280x720)  kind  [margin= max= min= from= refs= cells=WxH]
+# shot: <scenario>-<shot>.png in the run folder: <script>-<mark>-<game> (A-up1-B: script A's 'mark up1', game B's
+# picture). refs: <kit root>\proof-refs\<refs or name>\good-*.png / bad-*.png (local only: game screenshots never go
+# in the repo; add with proof.py ref add).
+
+# hs-deku-platforms (#176): at the A script's 'up1' both games play the event's camera on the lifts (the same view):
+# lifts up (cylinders) = good, down (flat discs in the floor) = bad. One reference set for both games.
+deku-lifts-A   A-up1-A  330,300,580,280  refs  refs=deku-lifts
+deku-lifts-B   A-up1-B  330,300,580,280  refs  refs=deku-lifts
