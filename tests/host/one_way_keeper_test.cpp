@@ -188,6 +188,44 @@ TEST_CASE("one-way keeper: a refused write is tried again, a write on its way is
   CHECK(k.stats().restores == 1);
 }
 
+TEST_CASE("one-way keeper: a map the game keeps taking back is left to it after kMaxPutBacks (row 140)") {
+  Store s = dungeon();
+  OneWayKeeper k = given_map(s);
+  for (int n = 0; n < OneWayKeeper::kMaxPutBacks; ++n) {
+    s.values[kDekuMap] = 0;
+    play(k, s, OneWayKeeper::kWriteWait + 1);
+    CHECK(s.values[kDekuMap] == 1);
+  }
+  CHECK(k.stats().restores == OneWayKeeper::kMaxPutBacks);
+  s.values[kDekuMap] = 0;  // and again, from the game's own copy
+  const int writes = s.writes;
+  play(k, s, 600);
+  CHECK(s.values[kDekuMap] == 0);
+  CHECK(s.writes == writes);
+  CHECK(k.stats().left == 1);
+  CHECK(k.take_left() == std::vector{kDekuMap});
+  CHECK(k.take_left().empty());
+  // The game gives it again (a new get): kept again, with a fresh count.
+  s.values[kDekuMap] = 1;
+  play(k, s);
+  s.values[kDekuMap] = 0;
+  play(k, s);
+  CHECK(s.values[kDekuMap] == 1);
+  CHECK(k.stats().restores == OneWayKeeper::kMaxPutBacks + 1);
+}
+
+TEST_CASE("one-way keeper: a write refused kMaxRefused times in a row is left, not tried every frame (row 140)") {
+  Store s = dungeon();
+  OneWayKeeper k = given_map(s);
+  s.refused.insert(kDekuMap);
+  s.values[kDekuMap] = 0;
+  play(k, s, OneWayKeeper::kMaxRefused + 5);
+  CHECK(k.stats().failures == static_cast<std::uint64_t>(OneWayKeeper::kMaxRefused));
+  CHECK(k.stats().left == 1);
+  play(k, s, 300);
+  CHECK(k.stats().failures == static_cast<std::uint64_t>(OneWayKeeper::kMaxRefused));
+}
+
 TEST_CASE("one-way keeper: with a clock the title screen is real time, not presented frames") {
   Store s = dungeon();
   OneWayKeeper k({kDekuMap});

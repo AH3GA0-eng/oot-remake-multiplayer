@@ -48,6 +48,11 @@ class OneWayKeeper {
   static constexpr int kTitleFrames = 90;
   // Ticks a written-back flag may still read 0 before it counts as dropped again.
   static constexpr int kWriteWait = 30;
+  // Row 140 (flag-oneway-c): written back at most this often per flag between save loads (and refused at most
+  // kMaxRefused times in a row): a flag the game keeps lowering from its own copy is then left to the game until it
+  // gives it again (0 -> 1), instead of being written back every kWriteWait ticks for the rest of the dungeon.
+  static constexpr int kMaxPutBacks = 2;
+  static constexpr int kMaxRefused = 60;
 
   // `keys`: the flags kept (default: one_way_item_flags()); a key that is
   // not a dungeon's map or compass is never kept.
@@ -74,7 +79,10 @@ class OneWayKeeper {
     std::uint64_t failures = 0;    // the write was refused (tried again next frame)
     std::uint64_t save_loads = 0;  // the baseline dropped for a save load
     std::uint64_t resets = 0;      // reset()
+    std::uint64_t left = 0;        // row 140: left to the game (kMaxPutBacks / kMaxRefused)
   };
+  // Row 140: the flags left to the game since the last call (for the log).
+  std::vector<FlagKey> take_left() { return std::exchange(left_, {}); }
   const Stats& stats() const { return stats_; }
 
  private:
@@ -86,6 +94,9 @@ class OneWayKeeper {
   std::map<FlagKey, bool> seen_;  // the value last seen in play
   std::set<FlagKey> given_;       // seen going 0 -> 1 in play: the game gave it
   std::map<FlagKey, int> wait_;   // written back: ticks left for the write to land
+  std::map<FlagKey, int> put_;    // row 140: written back since the save load (or the game's last give)
+  std::map<FlagKey, int> refused_;  // row 140: refused writes in a row
+  std::vector<FlagKey> left_;     // take_left
   GameTicks ticks_;
   int no_scene_ = 0;
   bool save_load_ = false;

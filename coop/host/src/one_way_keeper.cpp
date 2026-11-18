@@ -29,6 +29,8 @@ void OneWayKeeper::reset() {
   seen_.clear();
   given_.clear();
   wait_.clear();
+  put_.clear();
+  refused_.clear();
   ++stats_.resets;
 }
 
@@ -48,6 +50,8 @@ std::vector<FlagKey> OneWayKeeper::frame(FlagStore& store, bool in_play, const s
     seen_.clear();
     given_.clear();
     wait_.clear();
+    put_.clear();
+    refused_.clear();
     ++stats_.save_loads;
     save_load_seen_ = true;
   }
@@ -66,18 +70,34 @@ std::vector<FlagKey> OneWayKeeper::frame(FlagStore& store, bool in_play, const s
     if (first) continue;  // the baseline: what the save (or the session) left
     const bool was = std::exchange(it->second, one);
     if (one) {
-      if (!was) given_.insert(k.key);  // the game gave it while we watched
+      if (!was && !given_.contains(k.key)) {  // the game gave it while we watched
+        given_.insert(k.key);
+        put_.erase(k.key);  // a fresh count after it was left to the game (row 140)
+      }
       continue;
     }
     if (!was || !given_.contains(k.key) || scene != std::string_view(k.dungeon)) continue;
     // Given here, 0 now, in its dungeon, no save load between: the game
     // took it back.
+    if (put_[k.key] >= kMaxPutBacks) {
+      // Row 140: the game lowered it again after kMaxPutBacks of ours: its own value until it gives it again.
+      given_.erase(k.key);
+      put_.erase(k.key);
+      refused_.erase(k.key);
+      ++stats_.left;
+      left_.push_back(k.key);
+      it->second = false;
+      continue;
+    }
     if (store.write(protocol::FlagEntry(k.key, protocol::FlagKind::boolean, 1))) {
       ++stats_.restores;
+      ++put_[k.key];
+      refused_.erase(k.key);
       restored.push_back(k.key);
       wait_[k.key] = kWriteWait;
     } else {
       ++stats_.failures;
+      if (++refused_[k.key] >= kMaxRefused) put_[k.key] = kMaxPutBacks;  // left on the next frame (row 140)
     }
     it->second = true;  // still given: a refused write is tried again next frame
   }

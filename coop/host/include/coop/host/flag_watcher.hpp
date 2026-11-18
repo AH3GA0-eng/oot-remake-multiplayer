@@ -86,6 +86,13 @@ struct FlagStats {
   std::uint64_t hold_timeouts = 0;     // a snapshot whose last part never came (kHoldMaxFrames): dropped
   std::uint64_t pending_now = 0;       // player: own changes sent and not answered yet (now, not a count)
   std::uint64_t full_reads = 0;        // use_events: frames that read the whole list (a load window, the first)
+  // Row 140: a one-way value (a dungeon's floors, a map, a compass) the game lowered again right after our put-back:
+  // the game's own value from then on, until the next load window (kMaxQuickUndos).
+  std::uint64_t one_way_left = 0;
+  // Row 140: the key with the most failed writes this session, how often, and where (write_failed's site).
+  FlagKey top_failure{};
+  std::uint64_t top_failure_count = 0;
+  const char* top_failure_site = "";
 };
 
 class FlagWatcher {
@@ -170,6 +177,27 @@ class FlagWatcher {
     bool kept = false;
   };
   std::vector<OneWayRestore> take_one_way_restores() { return std::exchange(one_way_restored_, {}); }
+  // Row 140 (flag-oneway-c): the game itself writes some one-way values from its own copy (the HUD screen's floors,
+  // written back to EnteredFloorBit while Link is in the dungeon), so a put-back the game lowers again on the next
+  // read is a fight we never win (49,223 put-backs in one host's session). A drop within kUndoPasses diff passes of
+  // our last put-back counts as undone; after kMaxQuickUndos of those in a row the key is the game's own until the
+  // next load window (set_loading): not put back, not sent (the group keeps its value). One-off drops (issue 146)
+  // are still put back.
+  static constexpr std::uint64_t kUndoPasses = 2;
+  static constexpr int kMaxQuickUndos = 2;
+  std::vector<FlagKey> take_one_way_left() { return std::exchange(one_way_left_, {}); }
+  // Row 140: a key whose write failed kFailureSayAt times this session (once per key, for the log: key, site).
+  struct KeepsFailing {
+    FlagKey key;
+    const char* site = "";
+    std::uint64_t count = 0;
+  };
+  static constexpr std::uint64_t kFailureSayAt = 60;
+  static constexpr std::size_t kMaxFailureKeys = 256;  // keys counted one by one; the total counts all
+  std::vector<KeepsFailing> take_keeps_failing() { return std::exchange(keeps_failing_, {}); }
+  // Row 140: a max-rule rise past its cap whose put-back the game refused this often in a row is left (not sent,
+  // not fought every frame) until the value changes again.
+  static constexpr int kMaxCapTries = 60;
   static constexpr std::size_t kMaxWrittenForOthers = 1024;
 
   // The counts (small keys, ...) our game itself lowered since the last call,
@@ -449,6 +477,22 @@ class FlagWatcher {
   std::map<FlagKey, std::uint64_t> map_on_pass_;  // a one-way map Bool's 0 -> 1, by diff pass
   std::uint64_t diff_pass_ = 0;
   std::set<FlagKey> one_way_told_;           // keys take_one_way_restores gave once
+  struct PutBack {
+    std::uint64_t pass = 0;  // diff pass of our last put-back
+    int undone = 0;          // drops right after it, in a row
+  };
+  std::map<FlagKey, PutBack> put_back_;   // row 140: one-way put-backs
+  std::set<FlagKey> game_owned_;          // row 140: left to the game until the next load window
+  std::vector<FlagKey> one_way_left_;     // take_one_way_left
+  struct Failures {
+    std::uint64_t count = 0;
+    const char* site = "";
+  };
+  std::map<FlagKey, Failures> failures_;  // row 140: failed writes by key (kMaxFailureKeys)
+  std::vector<KeepsFailing> keeps_failing_;
+  std::map<FlagKey, int> cap_tries_;      // row 140: refused cap put-backs in a row
+  // Row 140: counts a failed write of `key` at `site` (stats, top key, keeps_failing_).
+  void write_failed(FlagKey key, const char* site);
   std::vector<FlagKey> own_count_drops_;     // take_own_count_drops
   struct Guard {
     std::int32_t held = 0;          // own gain not sent yet

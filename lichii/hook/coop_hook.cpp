@@ -293,14 +293,29 @@ struct RoomView {
 // flags first, and after the same 3 s hold.
 struct MendClocks {
     std::array<std::uint64_t, CoopStory::kMends> mends{};
+    // Row 140 (flag-oneway-c): each mend at most once per load, like the effects: one the game sets back after we
+    // mended it is left alone (said once), not fought every kHoldUs.
+    std::array<bool, CoopStory::kMends> mended{};
+    std::array<bool, CoopStory::kMends> set_back_said{};
     std::uint64_t effects = 0;
     CoopStory::EffectsGiven given;  // once per flag per load (review of owl-time)
     void NewLoad() {  // the title or a load: nothing to read yet
         mends = {};
+        mended = {};
+        set_back_said = {};
         effects = 0;
         given.NewLoad();
     }
 };
+// Row 140: a flag key for the log: a named flag's hash (and element, and name when known), or a 64-bit key.
+std::string FlagKeyText(const coop::host::FlagKey& key, const coop::host::ItemFlag* item) {
+    if (key.kind != coop::protocol::FlagKeyKind::named) return fmt::format("key64 {:#018x}", key.key);
+    std::string text = fmt::format("{:#010x}", key.hash);
+    if (key.index != 0) text += fmt::format("[{}]", key.index);
+    if (item != nullptr) text += fmt::format(" {}", item->name);
+    return text;
+}
+
 void MendStory(EmulatorMemory& memory, MendClocks& clocks, bool idle) {
     static constexpr std::uint64_t kHoldUs = 3'000'000;
     if (!CoopStory::On()) return;
@@ -315,10 +330,16 @@ void MendStory(EmulatorMemory& memory, MendClocks& clocks, bool idle) {
         auto& since = since_us[i];
         if (!mend.due(step, flags.get_bool(mend.flag), met)) {
             since = 0;
+        } else if (clocks.mended[i]) {
+            if (!std::exchange(clocks.set_back_said[i], true)) {
+                LOG_INFO(Core, "coop: story: {}: set back after we mended it: left alone until the next load (row 140)",
+                         mend.what);
+            }
         } else if (since == 0) {
             since = now_us;
         } else if (now_us - since >= kHoldUs && coop::host::GameFlags::set_bool(memory, mend.flag, mend.value)) {
             since = 0;
+            clocks.mended[i] = true;
             LOG_INFO(Core, "coop: story: {} (Meet_DekuTree {:#x}): set to {} (issue 84)", mend.what,
                      step.value_or(0), mend.value ? 1 : 0);
         }
@@ -1175,6 +1196,20 @@ public:
                      "coop: flags: {:#010x} (dungeon map, compass or floors) went back here: {:#x} -> {:#x}, put "
                      "back {:#x} ({} put back this session)",
                      k.key.hash, k.before, k.now, k.put, session_->one_way_restores());
+        }
+        for (const auto& k : session_->take_one_way_left()) {  // row 140 (flag-oneway-c)
+            const auto* item = coop::host::find_item(k.hash);
+            LOG_INFO(Core,
+                     "coop: flags: {} ({:#010x}): the game lowered it again right after our put-back ({} times): its "
+                     "own value until the next load, not put back or sent (row 140)",
+                     item != nullptr ? item->name : std::string_view("?"), k.hash,
+                     coop::host::FlagWatcher::kMaxQuickUndos);
+        }
+        for (const auto& f : session_->take_keeps_failing()) {  // row 140: the key of a write that keeps failing
+            const auto* item = f.key.kind == coop::protocol::FlagKeyKind::named ? coop::host::find_item(f.key.hash)
+                                                                                : nullptr;
+            LOG_WARNING(Core, "coop: flags: write of {} keeps failing: {} tries ({}) (row 140)",
+                        FlagKeyText(f.key, item), f.count, f.site);
         }
         for (const auto& g : session_->take_counts_guarded()) {  // issue 89 (docs/items.md)
             LOG_INFO(Core,
@@ -2255,10 +2290,17 @@ private:
                        "({} count deltas, {} load reverts, {} one-way put back, {} from a host reset), {} kept over "
                        "our own, {} not shared, {} write failures, {} messages not for us, {} bad snapshots; "
                        "{} s holding a join snapshot ({} dropped unfinished), {} s in load windows, {} changes "
-                       "waiting for the host's answer",
+                       "waiting for the host's answer; {} one-way left to the game; top write failure {} ({}, {})",
                  s.changes_sent, s.answers_sent, s.entries_in, s.applied, s.deltas_added, s.load_reverts,
                  s.one_way_restores, s.reset_applied, s.kept_local, s.not_shared, s.write_failures, s.ignored_messages,
-                 s.bad_snapshots, s.holding_frames / 60, s.hold_timeouts, s.window_frames / 60, s.pending_now);
+                 s.bad_snapshots, s.holding_frames / 60, s.hold_timeouts, s.window_frames / 60, s.pending_now,
+                 s.one_way_left,
+                 s.top_failure_count != 0 ? FlagKeyText(s.top_failure, s.top_failure.kind ==
+                                                                               coop::protocol::FlagKeyKind::named
+                                                                           ? coop::host::find_item(s.top_failure.hash)
+                                                                           : nullptr)
+                                          : std::string("none"),
+                 s.top_failure_count, s.top_failure_site);
     }
     CoopEvery::Every flag_traffic_log_{10 * CoopEvery::kSecondUs};
     std::uint64_t flag_traffic_sum_ = 0;
@@ -2917,6 +2959,12 @@ void KeepMapsAlone(EmulatorMemory& memory, bool in_play, const std::optional<std
         const auto* item = coop::host::find_item(key.hash);
         LOG_INFO(Core, "coop: items: {} went back to 0 with no session: written back (minimap-b guard; restores {})",
                  item != nullptr ? item->name : std::string_view("?"), keeper.stats().restores);
+    }
+    for (const auto key : keeper.take_left()) {  // row 140 (flag-oneway-c)
+        const auto* item = coop::host::find_item(key.hash);
+        LOG_INFO(Core, "coop: items: {} went back to 0 again after {} write-backs with no session: left to the game "
+                       "until it gives it again (row 140)",
+                 item != nullptr ? item->name : std::string_view("?"), coop::host::OneWayKeeper::kMaxPutBacks);
     }
 }
 

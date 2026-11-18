@@ -5,6 +5,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -1175,6 +1176,95 @@ TEST_CASE("flag watcher: a dungeon map or compass the game drops to 0 is put bac
   w.frame(store);
   CHECK(w.stats().one_way_restores == 2);
   CHECK(w.take_one_way_restores().empty());
+}
+
+TEST_CASE("flag watcher: a one-way value the game lowers again at once is left to the game, not fought (row 140)") {
+  constexpr FlagKey kDekuFloors{0x5c6c21c1u, 0};  // DungeonInfo.InsideTheDekuTree.EnteredFloorBit
+  FakeStore game_store = dungeon_game();
+  const auto floors = [&](std::uint32_t v) { game_store.values[kDekuFloors] = entry(kDekuFloors, v, proto::FlagKind::uint32); };
+  floors(0b01100);
+  ItemFlagStore store(game_store);
+  FlagWatcher w(SharedFlags({kDekuMap, kDekuFloors}), FlagRole::player);
+  w.frame(store);
+  // The game writes its own copy (a new floor, the group's floors gone) every frame, as in Revirie's host log.
+  floors(0b10000);
+  w.frame(store);
+  CHECK(game_store.get(kDekuFloors) == 0b11100u);  // a first drop is put back (issue 146)
+  floors(0b10000);
+  w.frame(store);
+  CHECK(game_store.get(kDekuFloors) == 0b11100u);  // undone once: put back once more
+  CHECK(w.stats().one_way_restores == 2);
+  CHECK(w.take_one_way_left().empty());
+  floors(0b10000);
+  const auto out = w.frame(store);  // undone twice in a row: the game's own now
+  CHECK(game_store.get(kDekuFloors) == 0b10000u);
+  CHECK(w.stats().one_way_left == 1);
+  CHECK(w.take_one_way_left() == std::vector{kDekuFloors});
+  // Its new floor still goes out, ORed with ours: the group never loses a floor.
+  CHECK(only<proto::FlagSet>(out) == std::vector{entry(kDekuFloors, 0b11100, proto::FlagKind::uint32)});
+  const int writes = game_store.writes;
+  for (int i = 0; i < 120; ++i) {
+    floors(i % 2 == 0 ? 0b11100 : 0b10000);  // a write of ours from elsewhere, and the game's at once
+    w.frame(store);
+  }
+  CHECK(game_store.writes == writes);  // no fight: two seconds, no put-back
+  CHECK(w.stats().one_way_restores == 2);
+  CHECK(w.take_one_way_left().empty());  // said once
+  // A load window (a room or scene load reads the game's copy in again): a later one-off drop is put back again.
+  w.set_loading(true);
+  w.frame(store);
+  w.set_loading(false);
+  for (int i = 0; i < FlagWatcher::kSettleFrames + 10; ++i) w.frame(store);  // past the settle
+  floors(0b10010);
+  w.frame(store);
+  floors(0b10000);
+  w.frame(store);
+  CHECK(game_store.get(kDekuFloors) == 0b10010u);
+  CHECK(w.stats().one_way_restores == 3);
+}
+
+TEST_CASE("flag watcher: one-off drops far apart are each put back (row 140 keeps issue 146)") {
+  FakeStore game_store = dungeon_game();
+  ItemFlagStore store(game_store);
+  FlagWatcher w(SharedFlags({kDekuMap}), FlagRole::player);
+  w.frame(store);
+  game_store.set(kDekuMap, 1);
+  w.frame(store);
+  for (int n = 0; n < 5; ++n) {
+    game_store.set(kDekuMap, 0);
+    w.frame(store);
+    CHECK(game_store.get(kDekuMap) == 1);
+    for (int i = 0; i < 3; ++i) w.frame(store);
+  }
+  CHECK(w.stats().one_way_restores == 5);
+  CHECK(w.stats().one_way_left == 0);
+}
+
+TEST_CASE("flag watcher: the key of a write that keeps failing is counted and said once (row 140)") {
+  FakeStore game_store = dungeon_game();
+  ItemFlagStore store(game_store);
+  FlagWatcher w(SharedFlags({kDekuMap}), FlagRole::player);
+  game_store.unwritable.insert(kDekuMap);
+  w.frame(store);
+  for (std::uint64_t n = 0; n < FlagWatcher::kFailureSayAt; ++n) {
+    game_store.set(kDekuMap, 1);
+    w.frame(store);
+    game_store.set(kDekuMap, 0);  // a one-way drop whose put-back the game refuses
+    w.frame(store);
+  }
+  CHECK(w.stats().write_failures == FlagWatcher::kFailureSayAt);
+  CHECK(w.stats().top_failure == kDekuMap);
+  CHECK(w.stats().top_failure_count == FlagWatcher::kFailureSayAt);
+  CHECK(std::string_view(w.stats().top_failure_site) == "one-way put-back");
+  const auto said = w.take_keeps_failing();
+  REQUIRE(said.size() == 1);
+  CHECK(said[0].key == kDekuMap);
+  CHECK(said[0].count == FlagWatcher::kFailureSayAt);
+  game_store.set(kDekuMap, 1);
+  w.frame(store);
+  game_store.set(kDekuMap, 0);
+  w.frame(store);
+  CHECK(w.take_keeps_failing().empty());  // once per key
 }
 
 TEST_CASE("flag watcher: the host's save load through the title with a scene read is a save load (forest-temple-a)") {
