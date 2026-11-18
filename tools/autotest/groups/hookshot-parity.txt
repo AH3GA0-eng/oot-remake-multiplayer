@@ -41,7 +41,7 @@ hs-hud  switches=LICHII_COOP_PUPPET=1,LICHII_COOP_HUD=0  label="HUD off (shots: 
 # The overlay and the Ocarina: chat lines and name tags, list and panel, own notes (#152).
 hs-panel  expect='A:coop: drawing over Hookshot.s picture'  expect='B:coop: drawing over Hookshot.s picture'  label="chat lines, name tags"
 hs-players  expect='A:coop: drawing over Hookshot.s picture'  label="player list, panel"
-hs-ocarina-show  expect="B:P1 hold -> show \(ocarina\)"  expect='A:P2 hide -> show'  label="#86 Ocarina: stays seen"
+hs-ocarina-show  expect="B:(?s)P1 ocarina to the hand \('DemoOcarina'\)(?:(?!P1 show -> hold).)*P1 ocarina back on the belt"  expect='A:(?s)ocarina probe: our Link plays the ocarina(?:(?!(?<!fairy )coop: puppet: P2 show -> hide).)*test mark playing3'  label="#86 Ocarina: stays seen"
 hs-seed  expect='A:spawn: CoopShot_Seed: copy [0-9]+ is actor'  label="#198 seed copy (pack made again)"
 hs-ocarina  expect='A:coop: ocarina note 4 \(Ocarina_D\) sent'  expect='A:coop: ocarina note 16 \(Ocarina_HighD\) sent'  expect="B:plays sound 'Ocarina_D'"  label="#152 own notes"
 
@@ -67,7 +67,7 @@ hs-skulltula-token  expect='A:Obj_Token_Gold broken here'  expect='B:a token tak
 
 [g6]
 # People and items (hs-scenarios-2): NPC animations (#200), Zelda's Letter at the gate (#171), fishing (#151).
-hs-npc-anim  expect='B:share owner 0xa902e1bb9d91c6c5 is player 2'  expect='A:(?s)test mark a-near.*npc-anim: our Link is in an event: \d+ NPCs near it claimed'  expect='A:(?s)test mark a-near.*npc-anim: \d+ of the \d+ claimed NPCs are ours now'  expect='A:(?s)test mark closed.*npc-anim: the event.s NPCs are free again'  expect="B:npc-anim: Npc_Hylia_Dampe_001 copied from P1 at \S+ \S+ \S+ plays 'Talk'"  label="#200 NPC animations"
+hs-npc-anim  expect='B:share owner 0xa902e1bb9d91c6c5 is player 2'  expect='A:(?s)test mark a-near.*npc-anim: our Link is in an event: \d+ actors it is with claimed'  expect='A:(?s)test mark a-near.*npc-anim: \d+ of the \d+ claimed actors are ours now'  expect='A:(?s)test mark a-near.*npc-anim: the event.s actors are free again'  expect="B:npc-anim: Npc_Hylia_Dampe_001 copied from P1 at \S+ \S+ \S+ plays 'Talk'"  label="#200 NPC animations"
 hs-npc-walk  expect="B:npc-anim: Npc_\S+ copied from P1 at \S+ \S+ \S+ plays '(Walk|Run)"  expect='B:npc-anim: in 5 s [1-9]\d* owner animations played'  label="#200 walking townspeople (by eye: legs move in the w1..w8 shots of B)"
 hs-kak-letter  expect='A:bool 0x19898d14.*0 -> 1'  expect='B:bool 0x19898d14.*0 -> 1'  label="#171 letter at the gate"
 hs-fishing  expect="B:held 'Weapon_FishingRod'"  expect='A:share fish lure \d+ fish, [1-9]\d* near our lure'  label="#151 fishing (inconclusive if A rents no rod)"
@@ -95,7 +95,7 @@ spawn-seed  label="#166 seed copy held"
 # World and enemies on Hookshot as on the emulator: chest notice, drops, signs, Peahat, Stalchildren, scrubs, Navi.
 chest-notice  label="#195 chest notice"
 drops  label="#101 #102 enemy drops"
-sign  label="#90 sign cut live"
+sign  expect='A:a4bc132d2b5d7eae Obj_GuidePost_A_02 cut here: \d+ words sent'  expect='B:a4bc132d2b5d7eae Obj_GuidePost_A_02 cut by another player: \d+ of \d+ words to write'  label="#90 sign cut live"
 peahat  label="#157 Peahat"
 stalchild  label="#124 Stalchildren (its own time switch: give it no switches=)"
 deku-scrubs  label="#149 Deku Scrub brothers"
