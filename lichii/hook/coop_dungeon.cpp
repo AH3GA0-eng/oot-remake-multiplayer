@@ -1011,9 +1011,19 @@ constexpr std::array kFlags = std::to_array<Flag>({
     // Foresttemple_) or puts it after Gimmick_ (the enemies-beaten shutters).
     // Left out: the Room7 area sensors (_InsideArea, _NearTheSwitch*: set true and
     // false from where a player or Ruto is), Room7_Switch2_OnlyLinkOrLuto (Ruto),
-    // two-way state (Jabu-Jabu's Room 14 water, the Water Temple torch shutters
-    // Gimmick_Ignition_Open_*: step switches and torches set them both ways) and
-    // the Spirit Temple stone tablets (what Link reads, not room state).
+    // two-way state a switch or torch HOLDS (the Water Temple torch shutters
+    // Gimmick_Ignition_Open_*, Jabu-Jabu's Room 17 stone switch: the game with
+    // nobody on its switch would write it back) and the Spirit Temple stone
+    // tablets (what Link reads, not room state).
+    // Jabu-Jabu's Room 14 water IS shared (fable-g3-objects, issue 249): the two
+    // flags are the saved state of placement groups (the scene's PlgGdTable: the
+    // water plane and the enemy air walls, each moved by its
+    // GroundControlActor_ResidentMoveTo when the flag changes), so the flag is
+    // the water's only input. Its room graph (Room_14_Prefab_90a1) sets them
+    // once per press, true or false, and only while our own switch is pressed
+    // AND the flag has the other value, so a game whose switch nobody stands on
+    // never writes them back. Not Gimmick_Insidejabujabu_Updown_MoveWaterSwitch:
+    // that one arms each game's own switch (set when it is let go).
     {0xdd4e1676, false, "Firetemple_SongOfTimeBlock_A_01_Disappearance"},
     {0x2312e749, false, "Foresttemple_SongOfTimeBlock_A_01_Disappearance"},
     {0xdba3c3ef, false, "Gimmick_DefeatEnemy_Open_DodongoCave_01"},
@@ -1027,6 +1037,8 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x936fce7b, false, "Gimmick_DefeatEnemy_Open_ForestTemple_03"},
     {0x54184cc6, false, "Gimmick_DefeatEnemy_Open_ForestTemple_05"},
     {0x77e573a4, false, "Gimmick_DeleteFire_FireTemple"},
+    {0xc517f1b5, false, "Gimmick_Insidejabujabu_Updown_MoveWater"},
+    {0x4358c335, false, "Gimmick_Insidejabujabu_down_MoveWater"},
     {0x482f8dd4, false, "Insidejabujabu_Gimmick_Room12_Treasure"},
     {0x90629ec0, false, "Insidejabujabu_Gimmick_Room7Event"},
     {0x2d748eb5, false, "Insidejabujabu_Room0_Cleared"},

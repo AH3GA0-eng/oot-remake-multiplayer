@@ -2028,7 +2028,7 @@ public:
             WriteLife(system.ApplicationMemory(), r, w);
         }
         if (switch_share_mode_ != 0) {
-            SwitchShare(r, *scene, server_now_us, send);
+            SwitchShare(system, r, *scene, server_now_us, send);
         }
         if (platforms_mode_ != 0) {
             Platforms(r, *scene, self, server_now_us, send);
@@ -2319,14 +2319,24 @@ private:
     // The shared actors of one whole walk, with life and place. False when
     // the list changed under us (try the next frame).
     // room-objects (coop_switch_share.h): our timed switches' presses out, the others' held on ours.
-    void SwitchShare(Reader& r, const std::string& scene, u64 server_now_us,
+    // g3-objects: a line with guard flags (a plug that also raises our event asker) is armed only once all of them
+    // are on in our game (its asker can no longer fire: the hold gives the result, no replay). A load guard is read
+    // here too; the Sharer keeps its value at the room's load (Seen::load_on).
+    void SwitchShare(Core::System& system, Reader& r, const std::string& scene, u64 server_now_us,
                      std::vector<coop::protocol::Message>& send) {
         std::vector<CoopSwitchShare::Seen> seen;
+        std::optional<CoopHook::EmulatorMemory> memory;
         for (const ShareSwitch& s : share_switches_) {
             for (const CoopRoomObjects::SwitchPlug* line : CoopRoomObjects::SwitchPlugsOf(scene, s.name, s.position)) {
                 CoopSwitchShare::Seen v;
                 v.line = line;
                 v.address = s.address;
+                for (const CoopRoomObjects::GuardFlag& guard : CoopRoomObjects::GuardFlags(*line)) {
+                    if (!memory) memory.emplace(system.ApplicationMemory(), main_);
+                    if (!coop::host::GameFlags(*memory).get_bool(coop::host::flag_hash(guard.flag)).value_or(false)) {
+                        (guard.at_load ? v.load_on : v.armed) = false;
+                    }
+                }
                 const std::uint32_t key = CoopSwitchShare::PlugKey(line->plug) ^ 7u;
                 if (const auto plugs = CoopLogicProbe::Read([&r](u64 a) { return r.Get<u64>(a); }, s.address)) {
                     for (const CoopLogicProbe::Plug& p : *plugs) {

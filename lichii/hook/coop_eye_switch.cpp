@@ -82,7 +82,9 @@ constexpr Switch kSwitches[] = {
     {"WaterTemple_Room06_Waterlevelrise_FocusOnGimmick", "WaterTemple", "Obj_SwitchHit_A_06", {-78.9f, 120.0f, -15.0f}, "OnState", {-71.8f, 121.2f, -15.1f}},
     {"WaterTemple_Waterlevelrise_FocusOnGimmick", "WaterTemple", "Obj_StepSwitch_A_01", {-27.0f, 100.0f, 20.1f}, "FirstOn", {-35.4f, 103.8f, 17.4f}},
 };
-// The guard flags (see the header), from the same run with --dungeon coop_dungeon.cpp: 43.
+// The guard flags (see the header), from the same run with --dungeon coop_dungeon.cpp: 43. A flag the room reads
+// only when it loads (a gate with UpdateOnce 1: Deku room D's RoomD_StepSwitch_On_01 deletes the compass asker only
+// at a load) is no guard: landing it live deletes nothing.
 constexpr Guard kGuards[] = {
     {"FireTemple_FireStair_First_WasOn", "FireTemple", "FireTemple_SwitchFireCamera_Room04"},  // deletes the asker
     {"FireTemple_FireStair_Second_WasOn", "FireTemple", "FireTemple_SwitchFireCamera_Room12"},  // deletes the asker
@@ -92,6 +94,7 @@ constexpr Guard kGuards[] = {
     {"ForestTemple_Room08_EyeSwitch_Clear", "ForestTemple", "ForestTemple_Room11_TBoxAppear"},  // deletes the asker
     {"ForestTemple_Room15_Cleard", "ForestTemple", "ForestTemple_Room22_ShutterOpen"},  // deletes the asker
     {"GerudoTrainingGround_Dungeon_Room00_EyeSwitch", "GerudoTrainingGround", "GerudoTrainingGround_00_FallTreasureBox"},  // deletes the asker
+    {"Gimmick_Insidejabujabu_Updown_MoveWater", "InsideJabuJabuBelly", "InsideJabuJabuBellyRoom14StepSwitch_Under"},  // the trigger reads it negated
     {"GerudoTrainingGround_Dungeon_Room03_StepSwitch", "GerudoTrainingGround", "GerudoTrainingGround_03_ShutterOpen"},  // the trigger reads it negated
     {"GerudoTrainingGround_Dungeon_Room04_StoneStatue", "GerudoTrainingGround", "GerudoTrainingGround_04_ActStoneGimmick"},  // the trigger reads it negated
     {"GerudoTrainingGround_Dungeon_Room05_StepSwitch", "GerudoTrainingGround", "GerudoTrainingGround_05_DisappearFire"},  // deletes the asker
@@ -111,7 +114,6 @@ constexpr Guard kGuards[] = {
     {"InsideJabuJabuBelly_Room14_PlayedSwitchEvent_Lower", "InsideJabuJabuBelly", "InsideJabuJabuBellyRoom14StepSwitch_Under"},  // deletes the asker
     {"InsideJabuJabuBelly_Room14_PlayedSwitchEvent_Upper", "InsideJabuJabuBelly", "InsideJabuJabuBellyRoom14StepSwitch"},  // deletes the asker
     {"InsideTheDekuTree_RoomC_Cleared", "InsideTheDekuTree", "InsideTheDekuTree_Gimmick_FallingLadder"},  // deletes the asker
-    {"InsideTheDekuTree_RoomD_StepSwitch_On_01", "InsideTheDekuTree", "InsideTheDekuTree_Gimmick_RoomD_PlatformUp"},  // deletes the asker
     {"InsideTheDekuTree_RoomF_Cleared", "InsideTheDekuTree", "InsideTheDekuTree_Gimmick_RoomF_EyeSwitch"},  // deletes the asker
     {"InsideTheDekuTree_RoomG_WaterLevel", "InsideTheDekuTree", "InsideTheDekuTree_Gimmick_RoomG_WaterLevelDrop"},  // deletes the asker
     {"Insidejabujabu_Gimmick_Room7Event", "InsideJabuJabuBelly", "InsideJabuJabuBellyRoom07StepSwitch"},  // deletes the asker + the trigger reads it negated
@@ -137,28 +139,30 @@ constexpr Guard kGuards[] = {
 //   SpiritTemple_Level_Room_19_SwitchOn_01: HoldPlayerrCheckEventQueryPlayerState.IsNotState
 //   SpiritTemple_Room19_SunSwitchShutterOpen: HoldPlayerrCheckEventQueryPlayerState.IsNotState
 //   DodongoCavern_Gimmick_EyeSwitch: DodongoCavern_NaviHelp_14_00 (the trigger reads it negated; not shared: each game's own)
-//   InsideJabuJabuBellyRoom14StepSwitch_Under: Gimmick_Insidejabujabu_Updown_MoveWater (the trigger reads it negated; not shared: each game's own)
 //   WaterTemple_Waterlevelrise_FocusOnGimmick: WaterTemple_Room03_FocusOnGimmick (the trigger reads it negated; not shared: each game's own)
 //   -> ForestTemple_Room17: the OR's shared flag (After_Appearance_TreasureChest) comes with the other player's chest
 //      event; its Stalfos are shared enemies. Spirit room 19: our Link's own state (IsNotState: not in a held state),
-//      true unless he is mid-action. The not-shared flags are each game's own room state (Jabu room 14's water up or
-//      down, Navi's hint, the Water Temple room-3 camera): the same in both games when both play the room the same
+//      true unless he is mid-action. The not-shared flags are each game's own room state (Navi's hint, the Water
+//      Temple room-3 camera): the same in both games when both play the room the same
 //      way; when not, the event waits for our own switch (the old way after 2 s). Spirit room 10's box IsStop
-//      (the extra actor input the tool prints) is the box at rest: true unless it is being pushed.
+//      (the extra actor input the tool prints) is the box at rest: true unless it is being pushed. Jabu room 14's
+//      MoveWaterSwitch (both lines) is the switches' own arming flag, each game's own on purpose (g3-objects).
 // deku-ladder (A #39): tools/puppet_pack/eye_switches.py --places coop_live_places.cpp --dungeon coop_dungeon.cpp
-// --classify, same romfs. Class B lines whose switch's ON input is unwired: we set it (see the header).
-constexpr Input kInputs[] = {
-    {"InsideJabuJabuBellyRoom14StepSwitch", "InsideJabuJabuBelly", "Obj_InsideJabu_Jabu_StepSwitch_A_04", {29.2f, 77.5f, -66.7f}, "FirstOn"},  // Obj_InsideJabu_Jabu_StepSwitch_A_04.BootUp; unshared flag Gimmick_Insidejabujabu_down_MoveWater
-    {"InsideJabuJabuBellyRoom14StepSwitch_Under", "InsideJabuJabuBelly", "Obj_InsideJabu_Jabu_StepSwitch_A_04", {28.9f, 74.5f, -58.5f}, "FirstOn"},  // Obj_InsideJabu_Jabu_StepSwitch_A_04.BootUp; unshared flag Gimmick_Insidejabujabu_Updown_MoveWater
-};
+// --classify, same romfs. Class B lines whose switch's ON input is unwired: we set it (see the header). None since
+// g3-objects: Jabu room 14's two lines were the only ones, and with the water flags shared (coop_dungeon.cpp) both
+// are class A (the upper switch's re-arm ORs `not Updown_MoveWater`, which its event clears); driving our asker
+// would now write those shared two-way flags a second time, late, and could flip the water back for everyone. The
+// tool refuses such a drive (classify: "our asker would write shared two-way ... again").
+constexpr std::array<Input, 0> kInputs{};
 // The tool's other lines (not driven; the old way + live flags), class and why:
 //   B (none) GerudoTrainingGround_06_DisappearFire (Obj_StepSwitch_A_02): Obj_GerudoTrainingGround_FireWall_A_01.StartBurnSign
 //     (the fire's burn sign is an AND pulse of our asker's EventBool and Room06_Fire; the step switch has only BootUp,
 //     unwired, and no ForceControl: no native input to set. Known gap: the fire stays until the room reloads.)
-//   A, 36 lines: Dm_FireTemple_0029, FireTemple_SwitchFireCamera_Room04/12, FocusOnGimmick_InsideJabuJabuBelly_02,
+//   A, 38 lines: Dm_FireTemple_0029, FireTemple_SwitchFireCamera_Room04/12, FocusOnGimmick_InsideJabuJabuBelly_02,
 //     FocusOnGimmick_JabujabuLift, ForestTemple_Room27_CandleLight, GerudoTrainingGround_05_DisappearFire,
 //     InsideGanonCastle_Dungeon_AppaerTreasureBox_08, _AppearExtendingPlatform_03, _EnemyAppear01/02/03,
 //     _ShutterOpen_06_01/08_01/17_01/17_02, InsideJabuJabuBellyRoom01StepSwitch, Room05Swich, Room07StepSwitch,
+//     Room14StepSwitch, Room14StepSwitch_Under,
 //     InsideJabuJabuBelly_FocusOnGimmick, InsideTheDekuTree_Gimmick_RoomD_PlatformUp, _RoomG_WaterLevelDrop,
 //     SpiritTemple_Level_Room_03_BoardNetFall, _Room_10_SwitchOn_01, _Room_19_SwitchOn_01 (both suns),
 //     _Room_19_wallmaster, _Room_32_SwitchOn_01, SpiritTemple_Room19_SunSwitchShutterOpen,
@@ -176,10 +180,17 @@ std::span<const Switch> Switches() { return kSwitches; }
 
 std::span<const Guard> Guards() { return kGuards; }
 
-std::span<const Input> Inputs() { return kInputs; }
+namespace {
+std::span<const Input> g_inputs = kInputs;  // the generated table; ScopedInputsForTest swaps it in tests only
+}  // namespace
+
+std::span<const Input> Inputs() { return g_inputs; }
+
+ScopedInputsForTest::ScopedInputsForTest(std::span<const Input> lines) : old_(g_inputs) { g_inputs = lines; }
+ScopedInputsForTest::~ScopedInputsForTest() { g_inputs = old_; }
 
 const Input* InputOf(const Switch& s) {
-    for (const auto& in : kInputs) {
+    for (const auto& in : g_inputs) {
         if (in.event == s.event && in.scene == s.scene && in.actor == s.actor && in.at == s.at) return &in;
     }
     return nullptr;
