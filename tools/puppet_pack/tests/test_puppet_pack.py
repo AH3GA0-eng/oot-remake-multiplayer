@@ -2238,15 +2238,30 @@ class FullBuildTest(unittest.TestCase):
                         skins=[("Bad", bad), ("Good", good)], test_skin="bad", look_slots=0)
 
     def test_reader_has_is_exact(self):
-        # A .nup's "does the game have this file": an exact name, never a glob pattern.
-        class Reader:
-            def listdir(self, d):
-                return {"Model": {"A[1].bfres.zs": ("f", 0), "Sub": ("d", 1)}}.get(d, {})
-        r = Reader()
+        # "Does the game have this file": an exact name, never a glob pattern, through the readers
+        # _main_build really gets (hud.DirReader, hud.NupReader: files(), no listdir).
+        from puppet_pack import hud
+        root = os.path.join(self.dir, "reader_romfs")
+        os.makedirs(os.path.join(root, "Model", "Sub"))
+        with open(os.path.join(root, "Model", "A[1].bfres.zs"), "wb") as f:
+            f.write(b"x")
+        r = hud.DirReader(root)
         self.assertTrue(build._reader_has(r, "Model/A[1].bfres.zs"))
         self.assertFalse(build._reader_has(r, "Model/A*.bfres.zs"))
         self.assertFalse(build._reader_has(r, "Model/Sub"))
         self.assertFalse(build._reader_has(r, "Nope/A.bfres.zs"))
+
+    def test_main_builds_a_skin(self):
+        # Review of #276: from the command line every --skin was "left out: AttributeError: 'DirReader'
+        # object has no attribute 'listdir'" (the tests called build.build directly). main, as players run it.
+        mod_src = self.make_model_mod()
+        mod = os.path.join(self.dir, "mod_main_skin")
+        self.assertEqual(build.main(["--romfs", self.romfs, "--mod-dir", mod, "--any-version",
+                                     "--skin", f"Mod={mod_src}"]), 0)
+        with open(os.path.join(mod, "coop_puppet.json"), encoding="utf-8") as f:
+            manifest = json.load(f)
+        self.assertEqual([s["id"] for s in manifest["skins"]], ["Mod"])
+        self.assertTrue(os.path.exists(os.path.join(mod, "romfs", "Pack", "Actor", "CoopPuppet_Adult_Skin_Mod.pack.zs")))
 
     def test_skin_table_and_files(self):
         from puppet_pack import skin
