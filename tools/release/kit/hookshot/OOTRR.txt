@@ -2,11 +2,11 @@
 # (github.com/REALAZK/ootrr; its source is that release's tag). The kit's game build downloads the file for its
 # system, checks its SHA-256 (the release's own SHA256SUMS.txt) and unpacks ootrr(.exe), LICENSE and NOTICE into
 # the game's tools\ootrr folder, where the co-op module finds it with no setting.
-# Move release= and the four lines below together, to a release (a prerelease only on the owner's word; v0.7.0 is a
+# Move release= and the four lines below together, to a release (a prerelease only on the owner's word; v0.7.1 is a
 # full release, named by the owner for 0.11.5; 0.11.4 had v0.6.2, 0.11.3 v0.6.1).
-release=v0.7.0
-url=https://github.com/REALAZK/ootrr/releases/download/v0.7.0
-windows=OOTRR-0.7.0-windows-x64.zip
-windows_sha256=10dde13e224d8b97e03b06a48f2debe0cb42b8c726cfb620ab51f5f06bdedcbd
-linux=OOTRR-0.7.0-linux-x86_64.tar.gz
-linux_sha256=8a48504a8663b99a684c721696af97223145ecf93b4e2dc65f050ba371261d5f
+release=v0.7.1
+url=https://github.com/REALAZK/ootrr/releases/download/v0.7.1
+windows=OOTRR-0.7.1-windows-x64.zip
+windows_sha256=4034458ec7bbd14bf0182360cfea15c7a62a87a212bbdcd987573fdf69fc1884
+linux=OOTRR-0.7.1-linux-x86_64.tar.gz
+linux_sha256=7c6f1dc30035c6f45796a526fa2edb06044313579053292eeb52ba19bd0b601a
