@@ -510,7 +510,7 @@ void Table::SetEvent(bool running) {
     }
 }
 
-void Table::NoteOwnHit(std::uint64_t actor) {
+void Table::NoteOwnHit(std::uint64_t actor, bool by_shot) {
     std::lock_guard lock(mutex_);
     Entry* e = FindActor(actor);
     if (e == nullptr || e->role != Role::copy || !e->wanted) {
@@ -518,9 +518,42 @@ void Table::NoteOwnHit(std::uint64_t actor) {
     }
     if (!OwnTime(*e)) {
         MakeLate(*e);
-        Note(e->name + ": our own hit: the copy runs its own reaction");
+        if (by_shot) {
+            ++counts_.copy_shot_hits;
+            Note(e->name + ": our own shot ended at it: the copy runs its own reaction");
+        } else {
+            Note(e->name + ": our own hit: the copy runs its own reaction");
+        }
     }
     e->react_until = std::max(e->react_until, steps_ + kReactSteps);
+}
+
+void Table::NoteOwnShotEnd(const coop::protocol::Vec3& at) {
+    if (!std::isfinite(at[0]) || !std::isfinite(at[1]) || !std::isfinite(at[2])) {
+        return;
+    }
+    std::lock_guard lock(mutex_);
+    shot_ends_.push_back({at, steps_});
+    while (shot_ends_.size() > kMaxShotEnds ||
+           (!shot_ends_.empty() && steps_ - shot_ends_.front().step > kShotEndKeepSteps)) {
+        shot_ends_.pop_front();
+    }
+}
+
+bool Table::OwnShotNear(const coop::protocol::Vec3& at) const {
+    std::lock_guard lock(mutex_);
+    for (const ShotEnd& end : shot_ends_) {
+        if (steps_ - end.step > kShotEndKeepSteps) {
+            continue;
+        }
+        const float dx = end.at[0] - at[0];
+        const float dy = end.at[1] - at[1];
+        const float dz = end.at[2] - at[2];
+        if (dx * dx + dy * dy + dz * dz <= kShotNearBoss * kShotNearBoss) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void Table::NoteOwnWake(std::uint64_t actor) {
@@ -954,6 +987,7 @@ void Table::Reset() {
         slot.store(0, std::memory_order_relaxed);
     }
     dying_.clear();
+    shot_ends_.clear();
     for (auto& slot : dying_life_) {
         slot.store(0, std::memory_order_relaxed);
     }

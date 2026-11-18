@@ -427,19 +427,19 @@ void LogBossNative() {
         c.brain_came == said.brain_came && c.brain_already == said.brain_already &&
         c.copy_own_run == said.copy_own_run && c.copy_own_late == said.copy_own_late &&
         c.copy_life_held == said.copy_life_held && c.copy_killed == said.copy_killed &&
-        c.copy_finished == said.copy_finished && c.plain_wakes == said.plain_wakes &&
-        c.plain_deaths == said.plain_deaths) {
+        c.copy_finished == said.copy_finished && c.copy_shot_hits == said.copy_shot_hits &&
+        c.plain_wakes == said.plain_wakes && c.plain_deaths == said.plain_deaths) {
         return;
     }
     said_ms = now;
     said = c;
     LOG_INFO(Core, "coop: bosses: ours sent {} brain + {} action verbs ({} by plug); copies: {} own skipped, {} brain + "
-                   "{} action verbs put in ({} waited for a node), {} own run in our event or after our hit ({} late), "
+                   "{} action verbs put in ({} waited for a node), {} own run in our event or after our hit ({} late, {} hits by our shots), "
                    "{} own minions not made, {} busy; {} own Life steps held at 1, {} let die after the owner's, {} ended in their death; "
                    "plain enemies: {} own other phases told, {} own wakes run, {} deaths begun; "
                    "owner's brain verbs given to copies {} ({} the copy was in already)",
              c.owner_brain, c.owner_action, c.plug_actions, c.copy_skipped, c.brain_applied, c.action_applied,
-             c.action_waiting, c.copy_own_run, c.copy_own_late, c.minions_stopped, c.busy, c.copy_life_held,
+             c.action_waiting, c.copy_own_run, c.copy_own_late, c.copy_shot_hits, c.minions_stopped, c.busy, c.copy_life_held,
              c.copy_killed, c.copy_finished, c.plain_wants, c.plain_wakes, c.plain_deaths, c.brain_came,
              c.brain_already);
 }

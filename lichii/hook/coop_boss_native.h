@@ -149,6 +149,7 @@ struct Counts {
     std::uint64_t copy_life_held = 0; // a copy's own Life step that would have killed it, held at 1
     std::uint64_t copy_killed = 0;    // a copy let die by its Life step after its owner's died
     std::uint64_t copy_finished = 0;  // a dying copy's Life step that its own rules left alive, ended (#105)
+    std::uint64_t copy_shot_hits = 0; // our own shot's end at a copy, its own reaction let run (NoteOwnShotEnd)
     std::uint64_t plain_wants = 0;    // a plain enemy copy's own brain asked another brain verb than its owner's
     std::uint64_t plain_wakes = 0;    // a plain enemy copy's own wake let run (NoteOwnWake)
     std::uint64_t plain_deaths = 0;   // a plain enemy copy whose death began here: its own runs
@@ -181,7 +182,21 @@ public:
     // Our game took a hit of its own on this boss (the Objects walk: its Life's
     // last hit id moved, not to one we replayed). A copy then runs its own
     // reaction for kReactSteps.
-    void NoteOwnHit(std::uint64_t actor);
+    // by_shot: NoteOwnShotEnd's reading (counted in Counts::copy_shot_hits).
+    void NoteOwnHit(std::uint64_t actor, bool by_shot = false);
+    // Issue 150 (boss-stun-c): our game's own shot ended where it hit or went
+    // off (coop_spawn's flights of ours: a seed, arrow, nut, bomb, bombchu, with
+    // the remove's place; any thread). A weak-point hit that takes no life (a
+    // seed or nut in Gohma's eye, a bomb in King Dodongo's mouth, a shot at
+    // Bongo Bongo's hand) never moves the Life's last hit id, so NoteOwnHit's
+    // reading never saw it, the copy's own stun was skipped as its own change
+    // and only the owner's game could stun the boss. The objects walk asks
+    // OwnShotNear for every boss it reads and calls NoteOwnHit on a copy the
+    // end lies at. Kept kShotEndKeepSteps.
+    void NoteOwnShotEnd(const coop::protocol::Vec3& at);
+    // One of our shots ended within kShotNearBoss of `at` (a boss actor's
+    // place, or one of its parts') in the last kShotEndKeepSteps.
+    bool OwnShotNear(const coop::protocol::Vec3& at) const;
     // A plain enemy copy wakes for our Link (the Sync's own wake, reports 109/111: a Deku Baba rising while its
     // owner's rests): its own brain runs for kWakeSteps, the change it asked a moment ago is made late (its
     // rise), then the owner's state again (by then the wake has handed it to us, or the owner's enemy acts).
@@ -270,6 +285,15 @@ public:
     // Steps a new mid-boss copy runs its own start (RunsOwnStart; about 3 s:
     // a Lizalfos's jump into the fight) before the owner's state.
     static constexpr std::uint64_t kStartSteps = 180;
+    // A shot's end counts for a boss actor this near (metres, the actor's
+    // place: Gohma's eye is about 3 m from it on the floor and on the
+    // ceiling, King Dodongo's mouth about 4 m). A wall hit this close only
+    // runs the copy's own AI for kReactSteps, then the owner's state again.
+    static constexpr float kShotNearBoss = 6.0f;
+    // Steps a shot's end is kept for the walks (about 0.3 s: the shot's
+    // remove and the objects walk are a few frames apart).
+    static constexpr std::uint64_t kShotEndKeepSteps = 20;
+    static constexpr std::size_t kMaxShotEnds = 16;
     // Steps a plain enemy copy runs its own wake (about 3 s, the Sync's kOwnWakeUs).
     static constexpr std::uint64_t kWakeSteps = 180;
     static constexpr std::size_t kMaxWants = 64;
@@ -339,6 +363,11 @@ private:
     bool Dying(std::string_view name) const;
     void Release(std::uint64_t component);  // its held_life_ slot: let die
     std::uint64_t steps_ = 0;      // Step calls (game frames)
+    struct ShotEnd {
+        coop::protocol::Vec3 at{};
+        std::uint64_t step = 0;
+    };
+    std::deque<ShotEnd> shot_ends_;  // NoteOwnShotEnd's, newest last
     // The copy whose call Step made last: the next Step looks from the one after it, so one copy with a change
     // every frame never keeps the others waiting (dozens of plain enemies share the one call a frame).
     std::uint64_t served_ = 0;
