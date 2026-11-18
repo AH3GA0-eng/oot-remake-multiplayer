@@ -438,3 +438,53 @@ TEST_CASE("host menu: Host on a custom port: a manual IP and port join gets in w
     join_menu.Leave();
     host_menu.Leave();
 }
+
+TEST_CASE("host menu: with approve_joins the host's game is asked about a new player, and its answer lets them in") {
+    EnetLife enet;
+    Game game;
+    CoopHostMenu::Menu menu(game.hooks());
+    HosCoopHostOptions o = host_options();
+    o.approve_joins = 1;
+    REQUIRE(menu.HostStart(&o) == 1);
+    REQUIRE(wait_for([&] { return status_of(menu).state == HOS_COOP_HOSTING && game.target().has_value(); }, 3000));
+    game.start_client();
+    // The host's own game is never asked about: it is the first in.
+    REQUIRE(wait_for([&] { return game.client->state() == coop::net::State::connected; }, 5000,
+                     [&] { game.client->service(1); }));
+
+    const Target t = *game.target();
+    coop::net::ClientConfig config;
+    config.host = t.server;
+    config.port = t.port;
+    config.hello.build_id = "host menu test";
+    config.hello.game_build_id = "e0f3ccfaf50065ae";
+    config.hello.game_version = "1.1.1";
+    config.hello.nickname = "Riley";
+    config.join_password = t.password;
+    coop::net::Client riley(std::move(config));
+    REQUIRE(riley.start());
+    std::optional<coop::protocol::JoinKnock> asked;
+    bool waiting = false;
+    REQUIRE(wait_for([&] { return asked.has_value() && waiting; }, 5000, [&] {
+        game.client->service(1);
+        riley.service(1);
+        while (auto e = game.client->next_event()) {
+            if (const auto* k = std::get_if<coop::protocol::JoinKnock>(&e->message)) asked = *k;
+        }
+        while (auto e = riley.next_event()) {
+            waiting = waiting || e->kind == coop::net::EventKind::waiting_for_host;
+        }
+    }));
+    CHECK(asked->nickname == "Riley");
+    CHECK(riley.state() == coop::net::State::handshaking);
+    CHECK(status_of(menu).players == 1);
+    REQUIRE(game.client->send(coop::protocol::JoinAllow{asked->knock, true, false}));
+    REQUIRE(wait_for([&] { return riley.state() == coop::net::State::connected && status_of(menu).players == 2; }, 5000,
+                     [&] {
+                         game.client->service(1);
+                         riley.service(1);
+                     }));
+    riley.stop();
+    game.client->stop();
+    menu.Leave();
+}
