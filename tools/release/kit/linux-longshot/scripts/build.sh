@@ -108,11 +108,13 @@ tools_env=$(env -u LONGSHOT_TOOLS "$PY" -I "$SRC/builder/linux/linux_tools.py" e
 eval "$tools_env"
 # Longshot's own variables for its build, and nothing of a launcher or test run: LONGSHOT_TOOLS
 # unset keeps the game in one folder (no bin/), LONGSHOT_VK_PREBUILT unset compiles the patched
-# renderer. Its lift key hashes every A64_/OOT_/RX_ variable: co-op's OOT_COOP_* ones go.
+# renderer, LONGSHOT_ROMFS_FROM unset (a launcher's, Longshot rc.6 #360: game files hard-linked from
+# another folder) unpacks the game files the kit names. Co-op's OOT_COOP_* ones go too (Longshot's lift
+# key hashed every A64_/OOT_/RX_ variable before rc.6, and they are no business of the build's).
 language=${OOT_COOP_LANGUAGE:-en-US}   # (read before the OOT_COOP_* variables go below)
 fetch_local=${OOT_COOP_FETCH_LOCAL-}   # (tests: a local OOTRR in step 5, after they go)
 offline=${OOT_COOP_OFFLINE-}           # (tests: 1 = no internet, for step 5)
-unset LONGSHOT_TOOLS LONGSHOT_VK_PREBUILT LONGSHOT_BUILDER_EXE LONGSHOT_NGX_SDK LONGSHOT_FFX_SDK
+unset LONGSHOT_TOOLS LONGSHOT_VK_PREBUILT LONGSHOT_BUILDER_EXE LONGSHOT_NGX_SDK LONGSHOT_FFX_SDK LONGSHOT_ROMFS_FROM
 while IFS='=' read -r v _; do [[ $v == OOT_COOP_* ]] && unset "$v"; done < <(env)
 export PYTHONIOENCODING=utf-8
 
@@ -261,7 +263,8 @@ if [[ -f $ootrr_pin ]]; then
                     for seed_dir in "$GAME"/mods/randomizer-*/; do
                         [[ -f ${seed_dir}coop-seed.txt ]] || continue
                         seed_name=$(basename "$seed_dir")
-                        rm -rf "$seed_dir" "$GAME/mods/oot-remake-randomizer/$seed_name.ootrr"
+                        rm -rf "$seed_dir" "$GAME/mods/oot-remake-randomizer/$seed_name.ootrr" \
+                            "$GAME/mods/oot-remake-randomizer/$seed_name.spoiler.txt"
                         say "  randomizer: seed $seed_name removed for OOTRR $o_rel: the game makes it again at its next start (another world: start a new save)"
                     done
                 fi
@@ -401,7 +404,11 @@ for seed_dir in "$GAME"/mods/randomizer-*/; do
         done < <(rando_tables)
         if "$GAME/tools/ootrr/ootrr" build "$control/$seed_name.ootrr" "$GAME/romfs" "$stage" "$seed_name" --host hookshot \
             >"$control/last-build.txt" 2>&1 && [[ -f $stage/$seed_name/coop-seed.txt ]]; then
-            [[ -f ${seed_dir}coop-rando.txt ]] && cp "${seed_dir}coop-rando.txt" "$stage/$seed_name/"
+            # the game's own files OOTRR's build does not write: the preset, and the spoiler log and settings
+            # string the players share (the same seed file: the same seed)
+            for keep in coop-rando.txt spoiler.txt settings.txt; do
+                [[ -f ${seed_dir}$keep ]] && cp "${seed_dir}$keep" "$stage/$seed_name/"
+            done
             rm -rf "$seed_dir" && mv "$stage/$seed_name" "$GAME/mods/$seed_name" && ok=1
         fi
     fi

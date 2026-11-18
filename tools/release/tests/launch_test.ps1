@@ -778,13 +778,15 @@ try {
     Write-File (Join-Path $ng 'mods\randomizer-AB-keysanity\coop-seed.txt') "AB`n"
     Write-File (Join-Path $ng 'mods\randomizer-half\romfs\x.bin') 'x'
     Write-File (Join-Path $ng 'mods\oot-remake-randomizer\randomizer-AB.ootrr') '{}'
+    Write-File (Join-Path $ng 'mods\oot-remake-randomizer\randomizer-AB.spoiler.txt') 'chests'
     Write-File (Join-Path $ng 'mods\oot-remake-randomizer\settings.txt') 'on=1'
     Write-File (Join-Path $ng 'mods\hd-textures\romfs\y.bin') 'y'
     $gone = @(Remove-KitRandoSeeds $ng 'v0.6.0')
     Check ($gone.Count -eq 2 -and ($gone -join ' ') -match 'randomizer-AB removed for OOTRR v0\.6\.0' -and
            -not (Test-Path -LiteralPath (Join-Path $ng 'mods\randomizer-AB')) -and
            -not (Test-Path -LiteralPath (Join-Path $ng 'mods\randomizer-AB-keysanity')) -and
-           -not (Test-Path -LiteralPath (Join-Path $ng 'mods\oot-remake-randomizer\randomizer-AB.ootrr'))) 'new OOTRR: built seeds and their seed files removed'
+           -not (Test-Path -LiteralPath (Join-Path $ng 'mods\oot-remake-randomizer\randomizer-AB.ootrr')) -and
+           -not (Test-Path -LiteralPath (Join-Path $ng 'mods\oot-remake-randomizer\randomizer-AB.spoiler.txt'))) 'new OOTRR: built seeds, their seed files and kept spoiler logs removed'
     Check ((Test-Path -LiteralPath (Join-Path $ng 'mods\randomizer-half\romfs\x.bin')) -and
            (Test-Path -LiteralPath (Join-Path $ng 'mods\oot-remake-randomizer\settings.txt')) -and
            (Test-Path -LiteralPath (Join-Path $ng 'mods\hd-textures\romfs\y.bin'))) 'new OOTRR: other mods, the control folder and an unbuilt folder stay'
@@ -803,6 +805,32 @@ try {
     $lines = @(Update-KitRandoSeeds $rg)
     Check (-not (Test-Path -LiteralPath (Join-Path $rg 'mods\randomizer-AB')) -and $lines.Count -eq 1 -and $lines[0] -match 'removed') 'rando seeds: no OOTRR to build it again -> the seed is removed, said once'
     Check (@(Get-KitStaleRandoSeeds $rg).Count -eq 0) 'rando seeds: nothing stale after'
+    # Built again with OOTRR (a fake: writes the seed as `ootrr build` does): the game's own files OOTRR does not
+    # write stay in the seed, so the players still find spoiler.txt and settings.txt (player report 0.11.3).
+    Write-File (Join-Path $rg "mods\randomizer-AB\$rst") 'seed'
+    Write-File (Join-Path $rg 'mods\randomizer-AB\coop-seed.txt') "AB`n"
+    Write-File (Join-Path $rg 'mods\randomizer-AB\coop-rando.txt') "default`n"
+    Write-File (Join-Path $rg 'mods\randomizer-AB\spoiler.txt') 'chests'
+    Write-File (Join-Path $rg 'mods\randomizer-AB\settings.txt') "OOTRR1-XZLA`n"
+    Write-File (Join-Path $rg 'mods\oot-remake-randomizer\randomizer-AB.ootrr') '{}'
+    Write-File (Join-Path $rg 'romfs\System\x.bin') 'x'
+    (Get-Item (Join-Path $rg "mods\randomizer-AB\$rst")).LastWriteTimeUtc = [datetime]::UtcNow.AddHours(-1)
+    $fake = Join-Path $hk 'fake-ootrr.ps1'
+    Write-File $fake @'
+# build <seed file> <romfs> <load dir> <name> --host hookshot
+$out = Join-Path $args[3] $args[4]
+New-Item -ItemType Directory -Force -Path (Join-Path $out 'romfs\System\Resource') | Out-Null
+Set-Content -LiteralPath (Join-Path $out 'romfs\System\Resource\T.rsizetable.zs') -Value 'new'
+Set-Content -LiteralPath (Join-Path $out 'coop-seed.txt') -Value 'AB'
+exit 0
+'@
+    $lines = @(Update-KitRandoSeeds $rg $fake)
+    $ab = Join-Path $rg 'mods\randomizer-AB'
+    Check ($lines.Count -eq 1 -and $lines[0] -match 'built again' -and
+           (Get-Content -Raw -LiteralPath (Join-Path $ab $rst)).Trim() -eq 'new') "rando seeds: built again with OOTRR [$($lines -join ' | ')]"
+    Check ((Get-Content -Raw -LiteralPath (Join-Path $ab 'spoiler.txt')) -eq 'chests' -and
+           (Get-Content -Raw -LiteralPath (Join-Path $ab 'settings.txt')).Trim() -eq 'OOTRR1-XZLA' -and
+           (Get-Content -Raw -LiteralPath (Join-Path $ab 'coop-rando.txt')).Trim() -eq 'default') 'rando seeds: built again, spoiler.txt, settings.txt and the preset kept'
     $env:OOT_COOP_OFFLINE = $offlineWas
     Check ((Test-KitPuppetPackStale (Join-Path $hk 'none\coop_puppet.json') (Join-Path $hk 'no-tool')) -and
         -not (Test-KitPuppetPackStale $pack (Join-Path $hk 'no-tool'))) 'pack stale: a missing pack yes, a current one no'
@@ -1024,7 +1052,7 @@ try {
 
     # Whole starts of a Hookshot-only kit, with a stub play.ps1.
     function New-StartKit([string]$Dir) {
-        foreach ($b in 'Start Squadala.bat', 'Start OoT Co-op.bat') { Copy-KitFile (Join-Path $kitSrc $b) (Join-Path $Dir $b) }
+        Copy-KitFile (Join-Path $kitSrc 'Start Squadala.bat') (Join-Path $Dir 'Start Squadala.bat')
         foreach ($f in 'start.ps1', 'start-checks.ps1', 'kit-paths.ps1', 'windows-checks.ps1') { Copy-KitFile (Join-Path $kitSrc "scripts\$f") (Join-Path $Dir "scripts\$f") }
         Write-File "$Dir\scripts\play.ps1" ("param([string]`$Mode, [switch]`$Hookshot, [switch]`$NoUpdate)`r`n" +
             "[System.IO.File]::WriteAllText((Join-Path (Split-Path -Parent `$PSScriptRoot) 'played.txt'), `"`$Mode `$Hookshot `$NoUpdate `$env:OOT_COOP_KIT`")`r`n" +
@@ -1056,14 +1084,6 @@ try {
     New-StartKit $k
     $r = Start-Kit $k
     Check ($r[0] -eq 0 -and (Read-File "$k\played.txt") -eq "choose True True $k") "start: a good kit hands over to play.ps1 choose -Hookshot with the kit named [$($r[1])] [$(Read-File "$k\played.txt")]"
-    # "Start OoT Co-op.bat", the start file's name up to v0.11.2 (shortcuts, older updaters): the same start.
-    Remove-Item -LiteralPath "$k\played.txt" -Force
-    $r = Start-Kit $k '' 'Start OoT Co-op.bat'
-    Check ($r[0] -eq 0 -and (Read-File "$k\played.txt") -eq "choose True True $k") "start: the old name Start OoT Co-op.bat starts the same [$($r[1])]"
-    Write-File "$k\scripts\play.ps1" "exit 5`r`n"
-    $r = Start-Kit $k '' 'Start OoT Co-op.bat'
-    Check ($r[0] -ne 0) "start: the old name passes a failed start on (exit $($r[0]))"
-    New-StartKit $k
     # (kit-friction review) a ' in the kit's path: the Windows checks get the folder from a variable, never in their code
     $ka = Join-Path $sk "kits\O'Brien's kit"
     New-StartKit $ka
@@ -1130,8 +1150,7 @@ try {
 # The one entry point: one command line (an update may replace it while it runs); the kit README is ten lines at most.
 $startLine = @(Get-Content (Join-Path $kitSrc 'Start Squadala.bat') | Where-Object { $_ -and $_ -notmatch '^(@echo off|rem )' })
 Check ($startLine.Count -eq 1 -and $startLine[0] -match 'scripts\\start\.ps1" %\*' -and $startLine[0] -match '& exit /b 0$') 'Start Squadala.bat: start.ps1, one line'
-$oldLine = @(Get-Content (Join-Path $kitSrc 'Start OoT Co-op.bat') | Where-Object { $_ -and $_ -notmatch '^(@echo off|rem )' })
-Check ($oldLine.Count -eq 1 -and $oldLine[0] -match 'call "%~dp0Start Squadala\.bat" %\* & exit /b\)') 'Start OoT Co-op.bat (the old name): one line that calls Start Squadala.bat'
+Check (-not (Test-Path -LiteralPath (Join-Path $kitSrc 'Start OoT Co-op.bat'))) 'one start file: no Start OoT Co-op.bat (its old name, up to v0.11.3) in the kit'
 Check (@(Get-Content (Join-Path $kitSrc 'README.txt')).Count -le 10) 'README.txt: ten lines at most'
 # --- hs-missing: Host-/Join-Hookshot.bat with no co-op Hookshot game say why in plain words and offer the build ---
 $hm = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-hs-missing-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))

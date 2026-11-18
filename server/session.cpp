@@ -447,7 +447,23 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
     send_to_others(id, kChannelSession, LobbyMutes{c.number, flags});
   }
   send_snapshot(id);
-  log("player " + std::to_string(c.number) + " joined: " + c.nickname);
+  // G2: the dungeon bosses the group beat this session (after the snapshot: the joiner's flags first).
+  for (const auto& [room, beaten] : boss_beaten_) {
+    send(id, kChannelSession, beaten);
+  }
+  log("player " + std::to_string(c.number) + " joined: " + c.nickname + " (client: " + client_label(hello.build_id) + ")");
+}
+
+// Crossplay (docs/crossplay.md): the client a player runs, as its HELLO names it (build_id: this kit's module, another
+// launcher's build of the same module, a test tool). Only for the log, so a desync between two clients can be told
+// apart; nothing is decided by it. Printable ASCII only, at most 48 characters (it comes from another player's game).
+std::string Session::client_label(const std::string& build_id) {
+  std::string out;
+  for (const char ch : build_id) {
+    if (out.size() >= 48) break;
+    if (ch >= 0x20 && ch <= 0x7e) out.push_back(ch);
+  }
+  return out.empty() ? std::string("unnamed") : out;
 }
 
 void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t channel,
@@ -564,12 +580,13 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     on_grass_cut(id, c, *cut, now_us);
     return;
   }
-  if (std::holds_alternative<DungeonEvent>(message)) {
-    // deku-dungeon-2: relayed to the others in the sender's scene, never kept.
+  if (std::holds_alternative<DungeonEvent>(message) || std::holds_alternative<SwitchState>(message)) {
+    // deku-dungeon-2, room-objects: relayed to the others in the sender's scene, never kept.
     set_sender(message, c.number);
-    const auto& e = std::get<DungeonEvent>(message);
-    if (e.scene != c.scene) return;  // late, from the scene it left
-    send_to_scene(e.scene, id, channel, message);
+    const std::string& scene = std::holds_alternative<DungeonEvent>(message) ? std::get<DungeonEvent>(message).scene
+                                                                             : std::get<SwitchState>(message).scene;
+    if (scene != c.scene) return;  // late, from the scene it left
+    send_to_scene(scene, id, channel, message);
     ++stats_.relayed;
     return;
   }
@@ -628,6 +645,19 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     on_status(c, st->flags, now_us);
   }
   if (sender_of(message)) set_sender(message, c.number);
+  // G2 (player report #241): a proven boss death, the same rule as the games' (CoopBossBeaten::ProvenDeath): a game
+  // took the boss's death event itself (BOSS_SCENE outro_start). Never BOSS_ROOM defeated, which a game also sends
+  // on a guess. Kept, by boss and scene, for players who join later (told after the flag snapshot as that player's
+  // outro_end, which a joiner's cutscene rules ignore); each game keeps only a boss's own dungeon scene.
+  if (const auto* death = std::get_if<BossScene>(&message);
+      death != nullptr && death->kind == BossSceneKind::outro_start) {
+    BossScene kept = *death;  // the sender's number is set above
+    kept.kind = BossSceneKind::outro_end;
+    if (boss_beaten_.size() < 64 && boss_beaten_.emplace(std::pair{death->boss, death->scene}, kept).second) {
+      log("boss " + std::to_string(death->boss) + " died in " + death->scene + " (player " + std::to_string(c.number) +
+          "'s game took its death): kept for players who join");
+    }
+  }
   if (std::holds_alternative<PlayerSample>(message) || std::holds_alternative<PlayerPose>(message)) {
     send_streamed(id, c, channel, message, now_us);
   } else {
@@ -928,6 +958,7 @@ void Session::on_host_reset() {
         " boss heart container claim(s) forgotten (those bosses fight again)");
   }
   boss_hearts_.clear();
+  boss_beaten_.clear();  // G2: as the claims, those bosses are alive again in the save
 }
 
 // A host's table, merged in part by part. A flag the server lacks is kept and
@@ -1343,16 +1374,43 @@ void Session::on_object_message(ConnectionId id, Connection& c, std::uint8_t cha
 // not move it.
 void Session::on_damage(ConnectionId id, Connection& c, Damage& d, std::uint64_t now_us) {
   auto it = objects_.find(d.id);
-  if (it == objects_.end() || !it->second.owner || *it->second.owner == id) {
+  if (it == objects_.end()) {
     ++stats_.damage_dropped;
     return;
   }
   Object& o = it->second;
   d.player_number = c.number;
+  if (!o.owner) {
+    // The owner hold has not chosen its owner yet: the hit was real in the
+    // hitter's game, so it waits for the owner (end_owner_hold).
+    if (o.held && d.amount > 0 && o.held_hits.size() < kHeldHitsMax) {
+      o.held_hits.emplace_back(id, d);
+      ++stats_.damage_held;
+    } else {
+      ++stats_.damage_dropped;
+    }
+    return;
+  }
+  if (*o.owner == id) {
+    // Sent while the hitter's was a copy (the epoch it knew is older), here
+    // after it became the owner: the life the hand-over gave it cannot have
+    // this hit in it. Back to its own game, which takes it off that life.
+    const auto behind = static_cast<std::uint16_t>(o.epoch - d.epoch);
+    if (behind != 0 && behind < 0x8000 && d.amount > 0) {
+      send(id, kChannelOwnership, d);
+      ++stats_.relayed;
+      ++stats_.damage_returned;
+      mark_fight(o, now_us);
+    } else {
+      ++stats_.damage_dropped;
+    }
+    return;
+  }
   send(*o.owner, kChannelOwnership, d);
   ++stats_.relayed;
   ++stats_.damage_relayed;
   mark_fight(o, now_us);
+  if (o.ask) o.ask->hits += d.amount;
   if (o.hit_at == 0 || now_us - o.hit_at > config_.hit_window_us) {
     o.hit_base.reset();
     if (o.last_state && o.last_state->life) o.hit_base = o.last_state->life->life;
@@ -1723,6 +1781,7 @@ void Session::finish_handover(const ObjectId& oid, Object& o, const ObjectState*
                               std::uint64_t now_us) {
   if (!o.ask || !o.owner) return;
   const ConnectionId to = o.ask->to;
+  const std::int64_t hits_after_ask = o.ask->hits;
   o.ask.reset();
   // The player it was for left, changed scene or unloaded it meanwhile: the
   // owner keeps it.
@@ -1739,11 +1798,20 @@ void Session::finish_handover(const ObjectId& oid, Object& o, const ObjectState*
       if (!s.animation) s.animation = old.animation;
       if (!s.life) s.life = old.life;
     }
+    // The answer's life is the owner's with every DAMAGE it had when it read
+    // the ask (its pending replays included). What was passed on after the
+    // ask it read later, and as a copy: taken off here, or the new owner
+    // would get that life back.
+    if (answer->life && s.life && hits_after_ask > 0) {
+      s.life->life = static_cast<std::int32_t>(
+          std::max<std::int64_t>(0, std::int64_t{s.life->life} - hits_after_ask));
+    }
     o.last_state = std::move(s);
   }
   // A hit passed on to the old owner just before: its answer may have been
-  // read before the game took the life off. The new owner must not get the
-  // life back.
+  // read before the game took the life off (an older game answers with the
+  // life as read; no answer at all leaves the last sample). The new owner
+  // must not get the life back.
   if (o.last_state && o.last_state->life && o.hit_base && o.hit_at != 0 &&
       now_us - o.hit_at <= config_.hit_window_us) {
     const std::int64_t cap = std::max<std::int64_t>(0, std::int64_t{*o.hit_base} - o.hit_sum);
@@ -2432,6 +2500,7 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
     world_.clear();
     dead_.clear();
     boss_hearts_.clear();  // as the flags: a new group (a new save) has its own containers
+    boss_beaten_.clear();
   } else if (host_ == id) {
     // The remaining player with the lowest number takes over. Everyone is
     // told on the progress channel, so the new host learns it hosts before
@@ -2524,6 +2593,13 @@ void Session::end_owner_hold(std::uint64_t now_us) {
     o.owner = best;
     ++stats_.owners_held;
     announce_owner(oid, o);
+    // The hits that waited for it. The owner's own are in its life already.
+    for (auto& [from, hit] : std::exchange(o.held_hits, {})) {
+      if (from == *best) continue;
+      send(*best, kChannelOwnership, hit);
+      ++stats_.relayed;
+      ++stats_.damage_relayed;
+    }
   }
   for (const ObjectId& oid : gone) {
     if (auto it = objects_.find(oid); it != objects_.end()) forget(it);

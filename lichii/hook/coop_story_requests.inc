@@ -56,17 +56,23 @@ constexpr StorySetting kStorySettings[] = {
 //   boss    Get_StoneOfWater_BossAppear (Get_StoneOfWater): a boss event: the boss scenes have it
 //   boss    Get_StoneOfWater_DestroyBoss (Get_StoneOfWater): a boss event: the boss scenes have it
 //   own     Get_StoneOfWater_JabuJabuEat (Get_StoneOfWater): changes the player's own things: runs Player_Event EventPlayerDrawnBottleFull (a bottle's contents)
-//   own     Get_StoneOfWater_ShowLetter (Get_StoneOfWater): changes the player's own things: runs <subflow> ShowItem:ShowItemSuccess_NoCamera_BottleItem (a bottle's contents)
+//   own     Get_StoneOfWater_ShowLetter (Get_StoneOfWater): changes the player's own things: runs PouchSystemActor EventTriggerRemoveFromSpecificBottle (a bottle's contents)
 //   own     Get_StoneOfWater_WaterfallSplit (Get_StoneOfWater): changes the player's own things: runs GameSystemActor EventWaitOcarinaInputForSequence (the player's ocarina)
 //   gimmick StoneOfWater_ElevatedFloor (Get_StoneOfWater): a dungeon live event
 //   never   StoneOfWater_ElevatedFloor_NaviTalk (Get_StoneOfWater): no story name in it: a room or object event
 // Story names that change the player's own things (neither sent nor joined), and why:
 constexpr StoryOwn kOwnStory[] = {
     {"Dm_DeathMtTrail_0050", "takes Item_EyeDrop from the pouch"},
+    {"Dm_FairyFountain_Courage", "runs PouchSystemActor EventTriggerIncreaseRupee (rupees)"},
+    {"Dm_FairyFountain_Din", "runs PouchSystemActor EventTriggerIncreaseRupee (rupees)"},
+    {"Dm_FairyFountain_Frore", "runs PouchSystemActor EventTriggerIncreaseRupee (rupees)"},
+    {"Dm_FairyFountain_Nayru", "runs PouchSystemActor EventTriggerIncreaseRupee (rupees)"},
+    {"Dm_FairyFountain_Power", "runs PouchSystemActor EventTriggerIncreaseRupee (rupees)"},
+    {"Dm_FairyFountain_Wisdom", "runs PouchSystemActor EventTriggerIncreaseRupee (rupees)"},
     {"Dm_HrlCastle_0020", "takes Item_AlarmCucco from the pouch"},
     {"Dm_Kokiri_0063", "runs Player_Event EventTriggerPlayerEquipDynamicEquipmentFromPouch (gear from the player's pouch)"},
     {"Dm_LonLon_0030", "runs PouchSystemActor EventTriggerIncreaseRupee (rupees)"},
-    {"Dm_LostWood_0015", "takes Item_PocketEgg from the pouch"},
+    {"Dm_LostWood_0015", "runs PouchSystemActor EventTriggerRemoveSwordBigGoronChallengeActor (Biggoron's sword trade challenge)"},
 };
 constexpr std::string_view kNoSetting[] = {
     "Dm_FinalBattle_0000",

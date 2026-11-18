@@ -82,6 +82,88 @@ constexpr Switch kSwitches[] = {
     {"WaterTemple_Room06_Waterlevelrise_FocusOnGimmick", "WaterTemple", "Obj_SwitchHit_A_06", {-78.9f, 120.0f, -15.0f}, "OnState", {-71.8f, 121.2f, -15.1f}},
     {"WaterTemple_Waterlevelrise_FocusOnGimmick", "WaterTemple", "Obj_StepSwitch_A_01", {-27.0f, 100.0f, 20.1f}, "FirstOn", {-35.4f, 103.8f, 17.4f}},
 };
+// The guard flags (see the header), from the same run with --dungeon coop_dungeon.cpp: 43.
+constexpr Guard kGuards[] = {
+    {"FireTemple_FireStair_First_WasOn", "FireTemple", "FireTemple_SwitchFireCamera_Room04"},  // deletes the asker
+    {"FireTemple_FireStair_Second_WasOn", "FireTemple", "FireTemple_SwitchFireCamera_Room12"},  // deletes the asker
+    {"FireTemple_Room14_HammmerStair_Complete", "FireTemple", "Dm_FireTemple_0029"},  // the trigger reads it negated
+    {"ForestTemple_Room02_GoldEyeSwitch_On", "ForestTemple", "ForestTemple_Room02_ShutterOpen"},  // deletes the asker
+    {"ForestTemple_Room07_Cleard", "ForestTemple", "ForestTemple_Room12_WaterLevelDrop"},  // deletes the asker
+    {"ForestTemple_Room08_EyeSwitch_Clear", "ForestTemple", "ForestTemple_Room11_TBoxAppear"},  // deletes the asker
+    {"ForestTemple_Room15_Cleard", "ForestTemple", "ForestTemple_Room22_ShutterOpen"},  // deletes the asker
+    {"GerudoTrainingGround_Dungeon_Room00_EyeSwitch", "GerudoTrainingGround", "GerudoTrainingGround_00_FallTreasureBox"},  // deletes the asker
+    {"GerudoTrainingGround_Dungeon_Room03_StepSwitch", "GerudoTrainingGround", "GerudoTrainingGround_03_ShutterOpen"},  // the trigger reads it negated
+    {"GerudoTrainingGround_Dungeon_Room04_StoneStatue", "GerudoTrainingGround", "GerudoTrainingGround_04_ActStoneGimmick"},  // the trigger reads it negated
+    {"GerudoTrainingGround_Dungeon_Room05_StepSwitch", "GerudoTrainingGround", "GerudoTrainingGround_05_DisappearFire"},  // deletes the asker
+    {"GerudoTrainingGround_Dungeon_Room06_Fire", "GerudoTrainingGround", "GerudoTrainingGround_06_DisappearFire"},  // the trigger reads it negated
+    {"GerudoTrainingGround_Room10_EyeSwitchTBox", "GerudoTrainingGround", "GerudoTrainingGround_10_FallTreasureBox"},  // deletes the asker
+    {"InsideGanonCastle_Dungeon_Room03_StepSwitch", "InsideGanonCastle", "InsideGanonCastle_Dungeon_AppearExtendingPlatform_03"},  // deletes the asker
+    {"InsideGanonCastle_Dungeon_Room06_HmmerSwitch", "InsideGanonCastle", "InsideGanonCastle_Dungeon_ShutterOpen_06_01"},  // deletes the asker
+    {"InsideGanonCastle_Dungeon_Room08_HummerSwitch", "InsideGanonCastle", "InsideGanonCastle_Dungeon_ShutterOpen_08_01"},  // deletes the asker
+    {"InsideGanonCastle_Dungeon_Room08_StepSwitch", "InsideGanonCastle", "InsideGanonCastle_Dungeon_AppaerTreasureBox_08"},  // deletes the asker
+    {"InsideGanonCastle_Dungeon_Room17_HitSwitch_Bombchu", "InsideGanonCastle", "InsideGanonCastle_Dungeon_ShutterOpen_17_01"},  // deletes the asker
+    {"InsideGanonCastle_Dungeon_Room17_SolarSwitch", "InsideGanonCastle", "InsideGanonCastle_Dungeon_ShutterOpen_17_02"},  // deletes the asker
+    {"InsideGanonCastle_Dungeon_Room17_SolarSwitch_Fake01", "InsideGanonCastle", "InsideGanonCastle_Dungeon_EnemyAppear01"},  // deletes the asker
+    {"InsideGanonCastle_Dungeon_Room17_SolarSwitch_Fake02", "InsideGanonCastle", "InsideGanonCastle_Dungeon_EnemyAppear02"},  // deletes the asker
+    {"InsideGanonCastle_Dungeon_Room17_SolarSwitch_Fake03", "InsideGanonCastle", "InsideGanonCastle_Dungeon_EnemyAppear03"},  // deletes the asker
+    {"InsideJabuJabuBelly_Gimmick_Onswitch_first", "InsideJabuJabuBelly", "InsideJabuJabuBellyRoom01StepSwitch"},  // the trigger reads it negated
+    {"InsideJabuJabuBelly_Room01_LiftMoveDown_GimmickClear", "InsideJabuJabuBelly", "FocusOnGimmick_JabujabuLift"},  // the trigger reads it negated
+    {"InsideJabuJabuBelly_Room14_PlayedSwitchEvent_Lower", "InsideJabuJabuBelly", "InsideJabuJabuBellyRoom14StepSwitch_Under"},  // deletes the asker
+    {"InsideJabuJabuBelly_Room14_PlayedSwitchEvent_Upper", "InsideJabuJabuBelly", "InsideJabuJabuBellyRoom14StepSwitch"},  // deletes the asker
+    {"InsideTheDekuTree_RoomC_Cleared", "InsideTheDekuTree", "InsideTheDekuTree_Gimmick_FallingLadder"},  // deletes the asker
+    {"InsideTheDekuTree_RoomD_StepSwitch_On_01", "InsideTheDekuTree", "InsideTheDekuTree_Gimmick_RoomD_PlatformUp"},  // deletes the asker
+    {"InsideTheDekuTree_RoomF_Cleared", "InsideTheDekuTree", "InsideTheDekuTree_Gimmick_RoomF_EyeSwitch"},  // deletes the asker
+    {"InsideTheDekuTree_RoomG_WaterLevel", "InsideTheDekuTree", "InsideTheDekuTree_Gimmick_RoomG_WaterLevelDrop"},  // deletes the asker
+    {"Insidejabujabu_Gimmick_Room7Event", "InsideJabuJabuBelly", "InsideJabuJabuBellyRoom07StepSwitch"},  // deletes the asker + the trigger reads it negated
+    {"Insidejabujabu_Room0_Cleared", "InsideJabuJabuBelly", "InsideJabuJabuBelly_FocusOnGimmick"},  // deletes the asker
+    {"Insidejabujabu_Room14_Cleared", "InsideJabuJabuBelly", "FocusOnGimmick_InsideJabuJabuBelly_02"},  // the trigger reads it negated
+    {"Insidejabujabu_Room5_Cleared", "InsideJabuJabuBelly", "InsideJabuJabuBellyRoom05Swich"},  // deletes the asker
+    {"SpiritTemple_Room03_BoardNet_On", "SpiritTemple", "SpiritTemple_Level_Room_03_BoardNetFall"},  // deletes the asker + the trigger reads it negated
+    {"SpiritTemple_Room07_TBox_On", "SpiritTemple", "SpritTemple_Room07_AppearTreasure"},  // deletes the asker
+    {"SpiritTemple_Room10_Unlocked", "SpiritTemple", "SpiritTemple_Level_Room_10_SwitchOn_01"},  // deletes the asker
+    {"SpiritTemple_Room19_LightSwitch_On_01", "SpiritTemple", "SpiritTemple_Level_Room_19_SwitchOn_01"},  // deletes the asker
+    {"SpiritTemple_Room19_LightSwitch_On_04", "SpiritTemple", "SpiritTemple_Level_Room_19_wallmaster"},  // deletes the asker
+    {"SpiritTemple_Room30_Floor_On", "SpiritTemple", "SpiritTemple_Level_Room_30_BoardNetFall"},  // deletes the asker
+    {"SpiritTemple_Room32_TBox_On", "SpiritTemple", "SpiritTemple_Level_Room_32_SwitchOn_01"},  // deletes the asker
+    {"WaterTemple_Room02_00", "WaterTemple", "WaterTemple_FocusonGimmick_02"},  // deletes the asker + the trigger reads it negated
+    {"WaterTemple_Waterlevelrise_Room06", "WaterTemple", "WaterTemple_Room06_Waterlevelrise_FocusOnGimmick"},  // the trigger reads it negated
+};
+// Not covered (the tool's list; each with why):
+//   ForestTemple_Room17_ShutterOpen: Enemy_Stalfos_Weak.Dead (in an OR)
+//   ForestTemple_Room17_ShutterOpen: ForestTemple_After_Appearance_TreasureChest.Bool (in an OR)
+//   InsideJabuJabuBellyRoom14StepSwitch: Gimmick_Insidejabujabu_Updown_MoveWater.Bool
+//   InsideJabuJabuBellyRoom14StepSwitch: Gimmick_Insidejabujabu_Updown_MoveWaterSwitch.Bool
+//   InsideJabuJabuBellyRoom14StepSwitch_Under: Gimmick_Insidejabujabu_Updown_MoveWaterSwitch.Bool
+//   SpiritTemple_Level_Room_19_SwitchOn_01: HoldPlayerrCheckEventQueryPlayerState.IsNotState
+//   SpiritTemple_Room19_SunSwitchShutterOpen: HoldPlayerrCheckEventQueryPlayerState.IsNotState
+//   DodongoCavern_Gimmick_EyeSwitch: DodongoCavern_NaviHelp_14_00 (the trigger reads it negated; not shared: each game's own)
+//   InsideJabuJabuBellyRoom14StepSwitch_Under: Gimmick_Insidejabujabu_Updown_MoveWater (the trigger reads it negated; not shared: each game's own)
+//   WaterTemple_Waterlevelrise_FocusOnGimmick: WaterTemple_Room03_FocusOnGimmick (the trigger reads it negated; not shared: each game's own)
+//   -> ForestTemple_Room17: the OR's shared flag (After_Appearance_TreasureChest) comes with the other player's chest
+//      event; its Stalfos are shared enemies. Spirit room 19: our Link's own state (IsNotState: not in a held state),
+//      true unless he is mid-action. The not-shared flags are each game's own room state (Jabu room 14's water up or
+//      down, Navi's hint, the Water Temple room-3 camera): the same in both games when both play the room the same
+//      way; when not, the event waits for our own switch (the old way after 2 s). Spirit room 10's box IsStop
+//      (the extra actor input the tool prints) is the box at rest: true unless it is being pushed.
+// deku-ladder (A #39): tools/puppet_pack/eye_switches.py --places coop_live_places.cpp --dungeon coop_dungeon.cpp
+// --classify, same romfs. Class B lines whose switch's ON input is unwired: we set it (see the header).
+constexpr Input kInputs[] = {
+    {"InsideJabuJabuBellyRoom14StepSwitch", "InsideJabuJabuBelly", "Obj_InsideJabu_Jabu_StepSwitch_A_04", {29.2f, 77.5f, -66.7f}, "FirstOn"},  // Obj_InsideJabu_Jabu_StepSwitch_A_04.BootUp; unshared flag Gimmick_Insidejabujabu_down_MoveWater
+    {"InsideJabuJabuBellyRoom14StepSwitch_Under", "InsideJabuJabuBelly", "Obj_InsideJabu_Jabu_StepSwitch_A_04", {28.9f, 74.5f, -58.5f}, "FirstOn"},  // Obj_InsideJabu_Jabu_StepSwitch_A_04.BootUp; unshared flag Gimmick_Insidejabujabu_Updown_MoveWater
+};
+// The tool's other lines (not driven; the old way + live flags), class and why:
+//   B (none) GerudoTrainingGround_06_DisappearFire (Obj_StepSwitch_A_02): Obj_GerudoTrainingGround_FireWall_A_01.StartBurnSign
+//     (the fire's burn sign is an AND pulse of our asker's EventBool and Room06_Fire; the step switch has only BootUp,
+//     unwired, and no ForceControl: no native input to set. Known gap: the fire stays until the room reloads.)
+//   A, 36 lines: Dm_FireTemple_0029, FireTemple_SwitchFireCamera_Room04/12, FocusOnGimmick_InsideJabuJabuBelly_02,
+//     FocusOnGimmick_JabujabuLift, ForestTemple_Room27_CandleLight, GerudoTrainingGround_05_DisappearFire,
+//     InsideGanonCastle_Dungeon_AppaerTreasureBox_08, _AppearExtendingPlatform_03, _EnemyAppear01/02/03,
+//     _ShutterOpen_06_01/08_01/17_01/17_02, InsideJabuJabuBellyRoom01StepSwitch, Room05Swich, Room07StepSwitch,
+//     InsideJabuJabuBelly_FocusOnGimmick, InsideTheDekuTree_Gimmick_RoomD_PlatformUp, _RoomG_WaterLevelDrop,
+//     SpiritTemple_Level_Room_03_BoardNetFall, _Room_10_SwitchOn_01, _Room_19_SwitchOn_01 (both suns),
+//     _Room_19_wallmaster, _Room_32_SwitchOn_01, SpiritTemple_Room19_SunSwitchShutterOpen,
+//     SpritTemple_Room07_AppearTreasure, _Room08_OpenShutter, _Room14_OpenShutter, _Room23_SunSwitch,
+//     _Room31_OpenShutter, WaterTemple_FocusonGimmick_02, WaterTemple_Room06_Waterlevelrise_FocusOnGimmick.
 // clang-format on
 
 float Dist2(const std::array<float, 3>& a, const std::array<float, 3>& b) {
@@ -91,6 +173,17 @@ float Dist2(const std::array<float, 3>& a, const std::array<float, 3>& b) {
 }  // namespace
 
 std::span<const Switch> Switches() { return kSwitches; }
+
+std::span<const Guard> Guards() { return kGuards; }
+
+std::span<const Input> Inputs() { return kInputs; }
+
+const Input* InputOf(const Switch& s) {
+    for (const auto& in : kInputs) {
+        if (in.event == s.event && in.scene == s.scene && in.actor == s.actor && in.at == s.at) return &in;
+    }
+    return nullptr;
+}
 
 const Switch* Find(std::string_view event, std::string_view scene) {
     for (const auto& s : kSwitches) {
@@ -103,7 +196,7 @@ std::vector<const Switch*> FindAll(std::string_view event, std::string_view scen
                                    const std::optional<std::array<float, 3>>& link) {
     std::vector<const Switch*> out;
     for (const auto& s : kSwitches) {
-        if (s.event == event && s.scene == scene) out.push_back(&s);
+        if (s.event == event && s.scene == scene && Latches(s)) out.push_back(&s);  // only lines we can drive
     }
     if (link) {
         std::stable_sort(out.begin(), out.end(), [&](const Switch* x, const Switch* y) {
@@ -114,6 +207,10 @@ std::vector<const Switch*> FindAll(std::string_view event, std::string_view scen
 }
 
 std::uint32_t PlugKey(std::string_view plug) { return coop::protocol::flag_hash(plug); }
+
+bool Latches(const Switch& s) {
+    return s.actor.starts_with("Obj_EyeSwitch") || s.plug == "FirstOn" || InputOf(s) != nullptr;
+}
 
 std::vector<std::uint64_t> FindActors(CoopPuppet::Guest& guest, std::uint64_t main,
                                       std::span<const std::string_view> names, const std::array<float, 3>& at,
@@ -138,7 +235,7 @@ std::vector<std::uint64_t> FindActors(CoopPuppet::Guest& guest, std::uint64_t ma
 }
 
 bool Switcher::Want(const std::string& event, const std::string& scene, std::optional<std::array<float, 3>> link) {
-    if (Find(event, scene) == nullptr) return false;
+    if (FindAll(event, scene).empty()) return false;  // not a switch event, or one whose plug its AI rewrites
     std::lock_guard lock(mutex_);
     if (failed_) return false;
     if (std::none_of(wanted_.begin(), wanted_.end(), [&](const Try& t) { return t.event == event; })) {
@@ -153,6 +250,21 @@ bool Switcher::Want(const std::string& event, const std::string& scene, std::opt
 
 void Switcher::Expire(const std::string& scene, const std::function<bool(const std::string&)>& played) {
     std::lock_guard lock(mutex_);
+    if (!scene.empty() && scene != scene_) {  // a new visit: every event may be tried again
+        scene_ = scene;
+        ended_.clear();
+        ran_.clear();
+        if (!restores_.empty()) notes_.push_back("eye switch: input stores not taken back (we left the scene: its switches are gone)");
+        restores_.clear();
+    }
+    for (auto it = ran_.begin(); it != ran_.end();) {  // our copy ran: its guards come once our game has it played
+        if (played && played(*it)) {
+            ended_.push_back(*it);
+            it = ran_.erase(it);
+        } else {
+            ++it;
+        }
+    }
     for (auto it = wanted_.begin(); it != wanted_.end();) {
         const bool busy = it == wanted_.begin() && next_ != Next::none;  // a call of ours is out: next Step ends it
         if (!busy && !scene.empty() && it->scene != scene) {
@@ -160,11 +272,34 @@ void Switcher::Expire(const std::string& scene, const std::function<bool(const s
             it = wanted_.erase(it);
         } else if (!busy && played && played(it->event)) {
             notes_.push_back("eye switch: " + it->event + " dropped (our game has it played)");
+            if (it->restore) restores_.push_back(*it->restore);
+            if (std::find(ended_.begin(), ended_.end(), it->event) == ended_.end()) ended_.push_back(it->event);
             it = wanted_.erase(it);
         } else {
             ++it;
         }
     }
+}
+
+bool Switcher::HoldsGuard(std::uint32_t hash, std::string_view scene) {
+    // 0: not held (its event has no line we drive: the flag comes as before)
+    static const std::vector<std::uint32_t> hashes = [] {
+        std::vector<std::uint32_t> out;
+        for (const Guard& g : kGuards) {
+            out.push_back(FindAll(g.event, g.scene).empty() ? 0u : coop::protocol::flag_hash(g.flag));
+        }
+        return out;
+    }();
+    std::lock_guard lock(mutex_);
+    if (failed_) return false;  // every event goes the old way: nothing waits
+    for (std::size_t i = 0; i < hashes.size(); ++i) {
+        const Guard& g = kGuards[i];
+        if (hashes[i] != 0 && hashes[i] == hash && g.scene == scene &&
+            std::find(ended_.begin(), ended_.end(), g.event) == ended_.end()) {
+            return true;
+        }
+    }
+    return false;
 }
 
 std::vector<std::string> Switcher::TakeNotes() {
@@ -189,16 +324,46 @@ bool Switcher::EventRunning(CoopPuppet::Guest& guest, std::uint64_t main) {
     return guest.Read(manager + le::kEventSession, &session, 8) && session != 0;
 }
 
-void Switcher::End(const std::string& why, bool fallback) {
+void Switcher::End(const std::string& why, bool fallback, bool ran) {
     const Try& t = wanted_.front();
     notes_.push_back("eye switch: " + t.event + ": " + why);
+    // Every end is final for this visit (the decider asks an event once a visit). Our copy did not run and will not
+    // (no asker, the old way): its guard flags come as before from now on. Our copy runs (an event started after our
+    // plug, or our own hit): its guards stay held until our game has the event played (Expire's played()), since
+    // most of them delete the asker and the other player's value would land in the middle of our event.
+    auto& list = ran ? ran_ : ended_;
+    if (std::find(list.begin(), list.end(), t.event) == list.end()) list.push_back(t.event);
     if (fallback) fallbacks_.emplace_back(t.event, t.scene);
+    if (t.restore) restores_.push_back(*t.restore);  // taken back on the next Step
     wanted_.pop_front();
+}
+
+void Switcher::RestoreInputs(CoopPuppet::Guest& guest, std::uint64_t main) {
+    for (const auto& r : restores_) {
+        // Only into the same plug of the same switch, still at its place (a reload makes new actors and blocks).
+        const std::string_view name[] = {r.name};
+        const auto here = find_(guest, main, name, r.at, kEyeAtM);
+        const auto plug = std::find(here.begin(), here.end(), r.actor) != here.end()
+                              ? CoopLogicSet::InputPlug(guest, r.actor, r.key)
+                              : std::nullopt;
+        char text[200];
+        if (plug && plug->value_word == r.value_word && CoopLogicSet::StoreInput(guest, *plug, r.old)) {
+            std::snprintf(text, sizeof text, "eye switch: our %.*s 0x%llx input taken back to %u",
+                          static_cast<int>(r.name.size()), r.name.data(), static_cast<unsigned long long>(r.actor),
+                          static_cast<unsigned>(r.old));
+        } else {
+            std::snprintf(text, sizeof text, "eye switch: our %.*s 0x%llx input not taken back (the switch or its plug is gone)",
+                          static_cast<int>(r.name.size()), r.name.data(), static_cast<unsigned long long>(r.actor));
+        }
+        notes_.emplace_back(text);
+    }
+    restores_.clear();
 }
 
 std::optional<CoopPuppet::Call> Switcher::Step(CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
                                                std::uint64_t main, std::uint64_t now_ms) {
     std::lock_guard lock(mutex_);
+    if (main != 0 && !restores_.empty()) RestoreInputs(guest, main);
     if (after_call) {
         const Next was = next_;
         next_ = Next::none;
@@ -229,7 +394,7 @@ std::optional<CoopPuppet::Call> Switcher::Frame(CoopPuppet::Guest& guest, std::u
     }
     const bool running = EventRunning(guest, main);
     if (t.set && running) {
-        End("an event started after our switch's plug (the room's asker asked it)", false);
+        End("an event started after our switch's plug (the room's asker asked it)", false, true);
         return std::nullopt;
     }
     if (now_ms > t.until_ms) {
@@ -250,49 +415,98 @@ std::optional<CoopPuppet::Call> Switcher::Frame(CoopPuppet::Guest& guest, std::u
     if (line == nullptr) {
         // No asker: the room is cleared here (its asker deleted itself) or not loaded; the old way would not ask either.
         End(t.set ? "our room's asker is gone after the plug (its event ran)" : "no room asker here: not started",
-            false);
+            false, t.set);
         return std::nullopt;
     }
     const std::string_view switch_name[] = {line->actor};
     const auto eyes = find_(guest, main, switch_name, line->at, kEyeAtM);
-    const std::uint32_t key = PlugKey(line->plug);
+    // An input line sets the switch's unwired ON input (InputOf); the others its output plug.
+    const Input* input = InputOf(*line);
+    const std::string_view plug_name = input ? input->input : line->plug;
+    const std::uint32_t key = PlugKey(plug_name);
     std::uint64_t target = 0;
+    std::optional<CoopLogicProbe::Plug> target_plug;
     bool any_plug = false;
     for (const std::uint64_t eye : eyes) {
-        const auto plug = CoopLogicSet::BoolPlug(guest, eye, key);
+        const auto plug = input ? CoopLogicSet::InputPlug(guest, eye, key) : CoopLogicSet::BoolPlug(guest, eye, key);
         if (!plug) continue;
         any_plug = true;
-        if (plug->value != std::uint8_t{1}) target = eye;  // 1: latched, or our own shot
+        if (input && !CoopLogicSet::CanSetInput(*plug)) {
+            char text[160];
+            std::snprintf(text, sizeof text, "our switch's %.*s input marks its changes (value word low bits %u): "
+                          "not set, asked the old way", static_cast<int>(plug_name.size()), plug_name.data(),
+                          static_cast<unsigned>(plug->value_word & 3));
+            End(text, true);
+            return std::nullopt;
+        }
+        if (plug->value != std::uint8_t{1}) {  // 1: latched, or our own shot
+            target = eye;
+            target_plug = plug;
+        }
         break;
     }
     if (target == 0) {
         if (any_plug && !t.set) {
-            End("our switch's " + std::string(line->plug) + " is 1 already (our own hit): nothing to do", false);
+            End("our switch's " + std::string(plug_name) + " is 1 already (our own hit): nothing to do", false, true);
         } else if (!t.told_waiting) {
             t.told_waiting = true;
             notes_.push_back("eye switch: " + t.event + ": waiting (" + std::to_string(eyes.size()) + " " +
-                             std::string(line->actor) + " at its place, " + std::string(line->plug) +
+                             std::string(line->actor) + " at its place, " + std::string(plug_name) +
                              (t.set ? " on" : " not a live plug yet") + ")");
         }
         return std::nullopt;
     }
-    if (!CoopLogicSet::WriteNode(guest, block_, main, target, key)) return std::nullopt;
+    if (input) {
+        // The set-bool's own store into the unwired input; it stays (no source rewrites it), so no call. First the
+        // address must be this plug's own on this instance (review Round 8): else the old way.
+        const auto mine = CoopLogicSet::AllPlugs(guest, target);
+        std::vector<std::uint64_t> others;
+        for (const std::uint64_t other : find_(guest, main, switch_name, line->at, kSameKindM)) {
+            if (other == target) continue;
+            if (const auto o = CoopLogicSet::InputPlug(guest, other, key)) others.push_back(o->value_word);
+        }
+        const char* why = mine ? CoopLogicSet::InputNotOwn(*target_plug, *mine, others, main) : "its logic is gone";
+        if (why != nullptr) {
+            char text[256];
+            std::snprintf(text, sizeof text, "our switch's %.*s input not set (value 0x%llx, plug 0x%llx: %s): "
+                          "asked the old way", static_cast<int>(plug_name.size()), plug_name.data(),
+                          static_cast<unsigned long long>(target_plug->value_word),
+                          static_cast<unsigned long long>(target_plug->node), why);
+            End(text, true);
+            return std::nullopt;
+        }
+        if (!CoopLogicSet::SetInput(guest, *target_plug)) return std::nullopt;
+        if (!t.restore) {
+            t.restore = Try::Restore{target, key, target_plug->value_word, target_plug->value.value_or(0), line->actor,
+                                     line->at};
+        }
+    } else if (!CoopLogicSet::WriteNode(guest, block_, main, target, key)) {
+        return std::nullopt;
+    }
     if (!t.set) {
         std::array<float, 3> p{};
         guest.Read(target + CoopPuppet::addr::kActorPosition, p.data(), sizeof p);
         const float d = std::sqrt(Dist2(p, line->asker_at));
         char text[256];
         std::snprintf(text, sizeof text,
-                      "eye switch: %s: our %.*s 0x%llx (%.1f m from the asker) %.*s set through the game's set-bool",
+                      "eye switch: %s: our %.*s 0x%llx (%.1f m from the asker) %.*s set %s",
                       t.event.c_str(), static_cast<int>(line->actor.size()), line->actor.data(),
-                      static_cast<unsigned long long>(target), static_cast<double>(d), static_cast<int>(line->plug.size()),
-                      line->plug.data());
+                      static_cast<unsigned long long>(target), static_cast<double>(d), static_cast<int>(plug_name.size()),
+                      plug_name.data(), input ? "(its unwired input, the set-bool's store)" : "through the game's set-bool");
         notes_.emplace_back(text);
+        if (input) {
+            std::snprintf(text, sizeof text, "eye switch: %s: input value at 0x%llx (plug 0x%llx), old byte %u",
+                          t.event.c_str(), static_cast<unsigned long long>(target_plug->value_word & ~std::uint64_t{3}),
+                          static_cast<unsigned long long>(target_plug->node),
+                          static_cast<unsigned>(target_plug->value.value_or(0)));
+            notes_.emplace_back(text);
+        }
     }
     t.set = true;
     if (on_set_) {
         on_set_(t.event);
     }
+    if (input) return std::nullopt;
     next_ = Next::execute;
     return CoopLogicSet::Execute(main, block_);
 }

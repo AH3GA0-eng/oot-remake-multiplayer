@@ -32,7 +32,7 @@ void OneWayKeeper::reset() {
   ++stats_.resets;
 }
 
-std::vector<FlagKey> OneWayKeeper::frame(FlagStore& store, bool in_play, std::optional<std::string_view> scene) {
+std::vector<FlagKey> OneWayKeeper::frame(FlagStore& store, bool in_play, const std::optional<std::string_view>& scene) {
   const unsigned step = ticks_.step();
   std::vector<FlagKey> restored;
   if (!in_play) {

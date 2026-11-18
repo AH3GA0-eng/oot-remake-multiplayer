@@ -1,4 +1,4 @@
-From 414ac292222ccd8e71fea76f71fdbd1198e12006 Mon Sep 17 00:00:00 2001
+From 0bd45b0669987236fa7cf6a8145a0d3ead7f7e94 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Thu, 12 Nov 2026 13:30:00 -0900
 Subject: [PATCH] Co-op actor events: creates, deletes and the Life step go to
@@ -20,14 +20,14 @@ without the patches numbered between them.
 The fourth is the game's shoot code (main+0xc16d24: SHOOT_FROM with
 the shooter's actor, before the create it makes).
 ---
- nx2/coop_actor_lift.py | 115 ++++++++++++++++++++++++++++++++++++++++++++++++++
+ nx2/coop_actor_lift.py | 115 +++++++++++++++++++++++++++++++++++++++++
  nx2/coop_hooks.py      |   2 +
  2 files changed, 117 insertions(+)
  create mode 100644 nx2/coop_actor_lift.py
 
 diff --git a/nx2/coop_actor_lift.py b/nx2/coop_actor_lift.py
 new file mode 100644
-index 00000000..7e67e394
+index 00000000..2629c2b7
 --- /dev/null
 +++ b/nx2/coop_actor_lift.py
 @@ -0,0 +1,115 @@
