@@ -285,6 +285,9 @@ TEST_CASE("shots: why an owner's projectile left the list") {
     CHECK(shots::GoneReason(*shots::Find("Shootable_DekuSeed"), 300'000, 20) == R::hit);
     CHECK(shots::GoneReason(*shots::Find("Weapon_Boomerang"), 2'000'000, 15) == R::gone);  // caught
     CHECK(shots::GoneReason(*shots::Find("Shootable_Hook"), 900'000, 10) == R::gone);
+    // #248: a nut bursts where it stops, slowed by its bounce or not: hit, so the copies burst too.
+    CHECK(shots::GoneReason(*shots::Find("Item_DekuNut"), 300'000, 0.5f) == R::hit);
+    CHECK(shots::GoneReason(*shots::Find("Item_DekuNut"), 300'000, 12) == R::hit);
 }
 
 TEST_CASE("shots: a bomb's moment on the server clock") {
@@ -525,6 +528,58 @@ TEST_CASE("shots: an arrow copy flies the owner's arc on the server clock") {
     CHECK(copies[0].act == Act::remove);
     CHECK(copies[0].position[0] == doctest::Approx(5.0f));
     CHECK(sync.Landed() == 1);  // counted once
+}
+
+TEST_CASE("shots: a nut copy bursts where the owner's nut burst (#248)") {
+    CoopSpawn::Sync sync;
+    sync.SetImpacts(false);
+    std::vector<proto::Message> send;
+    std::vector<Copy> copies;
+    const std::map<std::uint64_t, std::uint64_t> live;
+    std::uint64_t now = 10'000'000;
+    sync.Tick(kScene, 2, now, {}, live, send, copies);
+    proto::ObjectSpawn spawn;
+    spawn.id = {proto::ObjectKind::made, 1, 11};
+    spawn.actor = "Item_DekuNut";
+    spawn.state.time = {now, 0};
+    spawn.state.position = proto::Vec3{0.0f, 1.0f, 0.0f};
+    spawn.state.velocity = proto::Vec3{10.0f, 0.0f, 0.0f};
+    sync.Receive(Wire(spawn, 1));
+    now += 50 * kMs;
+    sync.Tick(kScene, 2, now, {}, live, send, copies);
+    REQUIRE(copies.size() == 1);
+    // The owner's nut burst after its bounce, slow: the sender's reason is hit now.
+    proto::ObjectRemove remove;
+    remove.id = spawn.id;
+    remove.reason = shots::GoneReason(*shots::Find("Item_DekuNut"), 300'000, 0.5f);
+    remove.position = {2.0f, 0.0f, 0.0f};
+    sync.Receive(Wire(remove, 1));
+    const std::uint64_t got = now + 33 * kMs;
+    copies.clear();
+    sync.Tick(kScene, 2, got, {}, live, send, copies);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].act == Act::show);  // not deleted at the remove (the old bug)
+    CHECK(copies[0].effect.empty());    // not at the spot yet (shown kBehindUs late)
+    // Shown reaching the spot: it plays the nut's own burst there, once.
+    copies.clear();
+    sync.Tick(kScene, 2, got + shots::Track::kBehindUs, {}, live, send, copies);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].act == Act::show);
+    CHECK(copies[0].position[0] == doctest::Approx(2.0f));
+    CHECK(copies[0].effect == "Chemical_Light");
+    CHECK(sync.HitEffects() == 1);
+    // Then gone, as on the owner's screen.
+    copies.clear();
+    sync.Tick(kScene, 2, got + shots::Track::kBehindUs + shots::LandHoldUs(shots::Kind::nut), {}, live, send,
+              copies);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].act == Act::remove);
+    CHECK(sync.HitEffects() == 1);  // counted once
+    CHECK(shots::HitEffect(shots::Kind::nut) == "Chemical_Light");
+    // Caught or reeled in, never burst: no end effect for the boomerang and the hook tips.
+    CHECK(shots::HitEffect(shots::Kind::boomerang).empty());
+    CHECK(shots::HitEffect(shots::Kind::hook).empty());
+    CHECK(shots::HitEffect(shots::Kind::hook_long).empty());
 }
 
 TEST_CASE("shots: a bounce is a turn of over 45 degrees at speed") {

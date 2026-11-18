@@ -902,7 +902,8 @@ void SetFlag(Core::System& system, const std::string& name, int value) {
 
 // setenum: this game's Enum flag (a name, or 0x and its hash) to the value of
 // that name, through the game's own queue (issue 193: a Threads of Time
-// quest's step). Test only.
+// quest's step). Test only. The value it had is logged too (as a hash), and
+// the value "?" only reads it (issue 91: which unnamed Enum holds a worn mask).
 void SetEnum(Core::System& system, const std::string& name, const std::string& value) {
     CoopHook::EmulatorMemory memory(system.ApplicationMemory(), g_state.main);
     std::uint32_t hash = 0;
@@ -912,9 +913,16 @@ void SetEnum(Core::System& system, const std::string& name, const std::string& v
     } else {
         hash = coop::host::flag_hash(name);
     }
-    const bool known = hash != 0 && coop::host::GameFlags(memory).get_enum(hash).has_value();
+    const auto was = hash != 0 ? coop::host::GameFlags(memory).get_enum(hash) : std::nullopt;
+    const bool known = was.has_value();
+    if (value == "?") {
+        LOG_INFO(Core, "coop: test setenum {} ?: {}", name,
+                 known ? fmt::format("{:#010x}", *was) : std::string("unknown"));
+        return;
+    }
     const bool ok = known && coop::host::GameFlags::set_enum(memory, hash, coop::host::flag_hash(value));
-    LOG_INFO(Core, "coop: test setenum {} {}: {}", name, value, ok ? "set" : known ? "NOT set" : "unknown");
+    LOG_INFO(Core, "coop: test setenum {} {}: {} (was {})", name, value, ok ? "set" : known ? "NOT set" : "unknown",
+             known ? fmt::format("{:#010x}", *was) : std::string("-"));
 }
 
 // give: bombs, bow and hookshot are the item flags of each; any other name is

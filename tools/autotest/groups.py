@@ -325,6 +325,13 @@ def read_text(path):
         return None
 
 
+def spans_lines(rx):
+    """True when an expect is about more than one line: DOTALL set inline ((?s), (?is), (?s:...)), a
+    newline named in the pattern, or the whole log's start/end (\\A, \\Z: "never in this game")."""
+    return (bool(re.search(r"\(\?[aiLmsux-]*s[aiLmsux-]*[):]", rx))
+            or any(t in rx for t in ("\\n", "\n", "\\A", "\\Z")))
+
+
 def judge(folder, meta=None, kit_root=None, checks=None):
     """(result, evidence) of one run folder: the log verdict (judge_logs), then the screenshot proof (prove)."""
     meta = meta or json.loads(read_text(os.path.join(folder, "run.json")) or "{}")
@@ -421,9 +428,27 @@ def judge_logs(folder, meta):
                 return "%s: '%s'" % (x, line.strip()[:80])
         return None
 
+    # Each side's game log first. hookshot.py writes the lines of the test commands it plays itself
+    # (`coop: test warp done`, ...) to its own log of that side (player-X.txt), not to the game's, so an
+    # expect of one of those could never match (hs-crawl, big-run-0114 wave3). The runner's log is
+    # searched only when the game log missed AND the expect is one line (not DOTALL): it also holds the
+    # bare `test mark` lines with none of the game's lines between them, so an ordered or "nothing
+    # between these marks" expect (hs-voice's `(?s)test mark away...test mark far-end`) would pass there.
+    games = logs   # (read above for the refused-server check)
+    runners = {x: read_text(os.path.join(folder, "player-%s.txt" % x)) or "" for x in "AB"}
     found, missing = [], []
     for side, rx in expects:
-        hit = first(side, rx)
+        hit = None
+        sources = [games] if spans_lines(rx) else [games, runners]
+        for src in sources:
+            for x in ([side] if side else ["A", "B"]):
+                m = re.search(rx, src[x], re.M)
+                if m:
+                    line = src[x][src[x].rfind("\n", 0, m.start()) + 1:].split("\n", 1)[0]
+                    hit = "%s: '%s'" % (x, line.strip()[:80])
+                    break
+            if hit:
+                break
         (found if hit else missing).append(hit or "%s'%s'" % (side + ":" if side else "", rx))
     # never=: a line that must not be there (a snap, a "do not hold"); found, it is the FAIL's reason.
     unwanted = [hit for hit in (first(side, rx) for side, rx in (tuple(e) for e in meta.get("never", []))) if hit]

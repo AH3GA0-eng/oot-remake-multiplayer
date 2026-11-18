@@ -46,6 +46,10 @@ struct Info {
     bool ballistic;  // flies free and falls: the copy is carried on along its arc
     bool fused;      // goes off by a timer: its copy can be blown up on time
     bool blasts;     // its end hurts what is around it
+    // Its end is its own burst where it stopped, at any speed (the Deku Nut:
+    // its AI emits Chemical_Light on the first contact and the nut goes), so
+    // that end is sent as hit and the copies land and burst there too.
+    bool bursts;
 };
 
 const Info* Find(std::string_view actor);

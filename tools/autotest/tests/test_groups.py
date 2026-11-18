@@ -346,6 +346,51 @@ class MergeTest(unittest.TestCase):
         self.assertIn("| FAIL | ", row)
         self.assertIn("SETUP (no co-op", row)
 
+    def test_an_expect_also_reads_the_runners_player_log(self):
+        # hs-crawl: the warp line is written by hookshot.py to player-A.txt, not to the game's log.
+        self.run_folder("g2", "hs-crawl", {"exit": 0, "logonly": "log reading test", "expects": [["A", "coop: test warp done"],
+                                                                 ["B", "P1 plays 'Move'"]]},
+                        {"hookshot_log-A.txt": "coop: connected\n",
+                         "player-A.txt": "[06:55:58] coop: test warp done (map KokiriForest_Child)\n",
+                         "hookshot_log-B.txt": "coop: puppet: P1 plays 'Move'\n"})
+        row = [line for line in g.merge([self.root]).splitlines() if line.startswith("| g2 hs-crawl")][0]
+        self.assertIn("| PASS |", row)
+        self.assertIn("test warp done", row)
+        self.run_folder("g2", "hs-other", {"exit": 0, "logonly": "log reading test", "expects": [["B", "coop: test warp done"]]},
+                        {"player-A.txt": "coop: test warp done\n"})
+        row = [line for line in g.merge([self.root]).splitlines() if line.startswith("| g2 hs-other")][0]
+        self.assertIn("| FAIL |", row)  # A's runner line is not B's
+
+    def test_an_expect_over_lines_reads_the_game_log_only(self):
+        # hs-voice "nobody heard while away": the game log has a heard line between the marks; the runner's
+        # player-B.txt has the bare marks with nothing between. Must FAIL, not pass on the runner's log.
+        away = r"(?s)test mark away(?:(?!voice: test: P\d+ heard).)*test mark far-end"
+        never = r"(?s)\A(?:(?!microphone opened).)*\Z"
+        runner = "coop: test mark away\ncoop: test mark far-end\n"
+        self.run_folder("g3", "hs-voice", {"exit": 0, "logonly": "log reading test", "expects": [["B", away]]},
+                        {"hookshot_log-B.txt": "coop: test mark away\ncoop: voice: test: P1 heard 3\n"
+                                               "coop: test mark far-end\n",
+                         "player-B.txt": runner})
+        self.run_folder("g3", "hs-mic", {"exit": 0, "logonly": "log reading test", "expects": [["B", never]]},
+                        {"hookshot_log-B.txt": "coop: microphone opened\n", "player-B.txt": runner})
+        self.run_folder("g3", "hs-quiet", {"exit": 0, "logonly": "log reading test", "expects": [["B", away]]},
+                        {"hookshot_log-B.txt": "coop: test mark away\ncoop: test mark far-end\n",
+                         "player-B.txt": runner})
+        rows = {line.split(" | ")[0][2:]: line for line in g.merge([self.root]).splitlines() if line.startswith("| g")}
+        self.assertIn("| FAIL |", rows["g3 hs-voice"])
+        self.assertIn("| FAIL |", rows["g3 hs-mic"])
+        self.assertIn("| PASS |", rows["g3 hs-quiet"])  # the game's own marks with nothing between still pass
+
+    def test_spans_lines(self):
+        self.assertTrue(g.spans_lines(r"(?s)a.*b"))
+        self.assertTrue(g.spans_lines(r"(?is)a.*b"))
+        self.assertTrue(g.spans_lines(r"a(?s:.*)b"))
+        self.assertTrue(g.spans_lines(r"\A(?:(?!x).)*\Z"))
+        self.assertTrue(g.spans_lines(r"a\nb"))
+        self.assertFalse(g.spans_lines("coop: test warp done"))
+        self.assertFalse(g.spans_lines(r"(?<!fairy )coop: puppet: P\d+ (?:their command|plays) '(?!Wait)"))
+        self.assertFalse(g.spans_lines(r"anim \S+ '[^']+' \(ours\)"))
+
     def test_folders_without_run_json_and_empty(self):
         self.run_folder("g1", "walk")   # a plain run.ps1 -Runtime hookshot folder
         self.assertIn("| walk | PLAYED |", g.merge([self.root]))
