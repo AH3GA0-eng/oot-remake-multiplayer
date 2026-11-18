@@ -308,7 +308,8 @@ std::optional<std::set<std::string>> ParseNames(std::string_view text) {
     return out;
 }
 
-void Requester::Want(std::string name, std::string scene, std::uint64_t at_us, std::uint64_t max_age_us) {
+void Requester::Want(std::string name, std::string scene, std::uint64_t at_us, std::uint64_t max_age_us,
+                     std::optional<int> room) {
     if (name.empty()) {
         notes_.push_back("live event with no name not asked");
         return;
@@ -320,13 +321,13 @@ void Requester::Want(std::string name, std::string scene, std::uint64_t at_us, s
     const bool waiting =
         std::any_of(wanted_.begin(), wanted_.end(), [&](const Wanted& w) { return w.name == name; });
     if (!waiting && name != current_) {
-        wanted_.push_back(Wanted{std::move(name), std::move(scene), at_us, max_age_us, {}, 0});
+        wanted_.push_back(Wanted{std::move(name), std::move(scene), at_us, max_age_us, {}, 0, false, room});
     }
 }
 
-void Requester::WantFromRoom(std::string name, std::string scene) {
+void Requester::WantFromRoom(std::string name, std::string scene, std::optional<int> room) {
     const std::string key = name;
-    Want(std::move(name), std::move(scene));  // no age limit: started when near, as before
+    Want(std::move(name), std::move(scene), 0, 0, room);  // no age limit: started when near, as before
     for (Wanted& w : wanted_) {
         if (w.name == key) {
             w.room_asker = true;
@@ -535,10 +536,13 @@ std::optional<CoopPuppet::Call> Requester::Step(CoopPuppet::Guest& guest, bool a
                       return CoopFairy::ActorNamed(guest, current_starter_, n);
                   }))) {
                 // Found when the event was picked, a frame ago: deleted since (its Logic_Delete, the room unloaded)?
-                // Never hand the game's link a freed actor.
-                notes_.push_back("live event " + current_ + ": our room's asker went away before the link; asked by "
-                                 "name alone");
-                current_starter_ = 0;
+                // Never hand the game's link a freed actor. cutscene-bleed (#251): and never ask it by name alone
+                // either (the rule of the no-asker case in the pick below): without its asker the event only plays
+                // its camera for a room that is gone, holds our game's event system and Link with it, and nothing
+                // in our room moves. Not asked; its played flag stays held until we leave or load.
+                notes_.push_back("live event " + current_ + ": our room's asker went away before the link: not asked "
+                                 "(by name alone it would only hold our game; it stays held until we leave or load)");
+                return FreeFirst(guest, main);  // the build made its members: free them
             }
             if (current_starter_ != 0) {
                 c.function = main + addr::kSetLink;

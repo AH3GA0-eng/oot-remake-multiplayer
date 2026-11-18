@@ -1017,7 +1017,7 @@ TEST_CASE("deku-sync-fix: our room's asker asks the event itself (its performer'
     CHECK(order == std::vector<std::uint64_t>{addr::kPerformerRequest});
 }
 
-TEST_CASE("live events: an asker deleted between the pick and the link is not handed to the game") {
+TEST_CASE("live events: an asker deleted between the pick and the link is not handed to the game, nor asked by name") {
     Mem m;
     m.Put64(kMain + addr::kManagerPtr, kHolder);
     m.Put64(kHolder, kManager);
@@ -1036,11 +1036,59 @@ TEST_CASE("live events: an asker deleted between the pick and the link is not ha
         }
         call = r.Step(m, true, x0, kMain);
     }
-    CHECK(order == std::vector<std::uint64_t>{addr::kMalloc, addr::kArgBuild, addr::kRequest, addr::kStringFree,
-                                              addr::kStringFree});
+    // cutscene-bleed (#251): not asked by name alone either (it would only hold our game): what was built is freed.
+    CHECK(order == std::vector<std::uint64_t>{addr::kMalloc, addr::kArgBuild, addr::kStringFree, addr::kStringFree});
     bool said = false;
-    for (const auto& n : r.TakeNotes()) said |= n.find("asker went away before the link") != std::string::npos;
+    for (const auto& n : r.TakeNotes()) {
+        said |= n.find("asker went away before the link: not asked") != std::string::npos;
+    }
     CHECK(said);
+}
+
+TEST_CASE("cutscene-bleed: a waiting start is dropped once our Link is in another room than the one it was decided in") {
+    CoopLiveEvents::Requester r;
+    const auto none = [](const std::string&) { return false; };
+    // A story cutscene joined in room 0 (the joiner's same-room check), a gimmick decided in room 0, one with no room.
+    r.Want("Dm_Story", "InsideTheDekuTree", 1'000'000, 3'000'000, 0);
+    r.WantFromRoom("InsideTheDekuTree_Gimmick_FallingLadder", "InsideTheDekuTree", 0);
+    r.Want("Boss_Intro", "InsideTheDekuTree", 1'000'000, 3'000'000);
+    REQUIRE(r.Waiting() == 3);
+    // Still in room 0, or our room not known (the door's event walks us through): kept.
+    r.Expire("InsideTheDekuTree", 1'500'000, none, 0);
+    r.Expire("InsideTheDekuTree", 1'500'000, none, std::nullopt);
+    CHECK(r.Waiting() == 3);
+    // Through the door into room 1 while they waited behind the door's event: both room-bound starts go.
+    r.Expire("InsideTheDekuTree", 1'600'000, none, 1);
+    CHECK(r.Waiting() == 1);
+    const auto notes = r.TakeNotes();
+    REQUIRE(notes.size() == 2);
+    CHECK(notes[0].find("Dm_Story dropped before it was asked (our Link left the room it was decided in)") !=
+          std::string::npos);
+    CHECK(notes[1].find("FallingLadder dropped") != std::string::npos);
+    // The boss intro (no room) is dropped by our teleport only.
+    r.DropAll("our teleport is under way");
+    CHECK(r.Waiting() == 0);
+    const auto more = r.TakeNotes();
+    REQUIRE(more.size() == 1);
+    CHECK(more[0].find("Boss_Intro dropped before it was asked (our teleport is under way)") != std::string::npos);
+}
+
+TEST_CASE("cutscene-bleed: a start that left its room is never asked of the game") {
+    Mem m;
+    m.Put64(kMain + addr::kManagerPtr, kHolder);
+    m.Put64(kHolder, kManager);
+    CoopLiveEvents::Requester r;
+    r.Want("Dm_Story", "InsideTheDekuTree", 1'000'000, 3'000'000, 0);
+    // Our Link went through the door into room 2 while it waited (the door's event ran): dropped, then nothing asked.
+    r.Expire("InsideTheDekuTree", 1'500'000, [](const std::string&) { return false; }, 2);
+    std::vector<std::uint64_t> order;
+    auto call = r.Step(m, false, 0, kMain);
+    while (call) {
+        order.push_back(call->function - kMain);
+        call = r.Step(m, true, Run(m, *call), kMain);
+    }
+    CHECK(std::find(order.begin(), order.end(), addr::kRequest) == order.end());
+    CHECK(r.Waiting() == 0);
 }
 
 TEST_CASE("intro-ocarina: while the game runs another event it asked for, a story name left in the session is not given") {

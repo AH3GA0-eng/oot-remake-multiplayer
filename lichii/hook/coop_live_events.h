@@ -231,7 +231,10 @@ class Requester {
 public:
     // `scene`: where it was decided (empty: any); `at_us` when; `max_age_us`
     // how long it may wait for a free moment (0: no limit). See Expire.
-    void Want(std::string name, std::string scene = {}, std::uint64_t at_us = 0, std::uint64_t max_age_us = 0);
+    // `room`: cutscene-bleed (#251) the dungeon room our Link was in when it was decided (the decider's and the joiner's
+    // "same room" check), if known; Expire drops it once our Link is known to be in another room (see Expire).
+    void Want(std::string name, std::string scene = {}, std::uint64_t at_us = 0, std::uint64_t max_age_us = 0,
+              std::optional<int> room = std::nullopt);
     // One argument of an event: a string (text) or a bool.
     struct Arg {
         std::string name;
@@ -251,19 +254,29 @@ public:
     // kAskerNearM of one of the event's places in `scene`, Places()) is linked as its starter, as the game's own
     // member request does (kSetLink). None found: not asked at all (dungeon-sync-b), and a note says so: a start
     // by name only plays the camera, and it can keep the event system busy when the room needs it.
-    void WantFromRoom(std::string name, std::string scene);
+    void WantFromRoom(std::string name, std::string scene, std::optional<int> room = std::nullopt);
     // review-p11-interactions: one requester takes gimmick and story events,
     // and an event waits while another runs. Once a frame, under the same
     // lock as Step: drops each name still waiting (not one being asked now)
     // that was decided in another scene than `scene` (empty: not known, kept),
     // that is older than its max age, or that `played(name)` says our game has
     // played already (HavePlayedEvent.<name>).
+    //
+    // cutscene-bleed (#251, #197): `here_room` is our Link's dungeon room now, if known. A wait decided in another
+    // room (Wanted::room) is dropped: every "may it start here" rule (the decider's room and near-place check, the
+    // joiner's same-room check, "no event runs") was checked when it was decided, but it is asked later, at the first
+    // frame no event runs. A door is an event: a start that waited behind the door we walked through was asked the
+    // moment the door's event ended, with our Link already in the next room, so the event played for a room that is
+    // not loaded here (its actors absent), never ended, and held our Link and our room (its enemies did not come out).
     template <typename Played>
-    void Expire(const std::string& scene, std::uint64_t now_us, Played&& played) {
+    void Expire(const std::string& scene, std::uint64_t now_us, Played&& played,
+                std::optional<int> here_room = std::nullopt) {
         for (auto it = wanted_.begin(); it != wanted_.end();) {
             const char* why = nullptr;
             if (!scene.empty() && !it->scene.empty() && it->scene != scene) {
                 why = "we left its scene";
+            } else if (it->room && here_room && *it->room != *here_room) {
+                why = "our Link left the room it was decided in";
             } else if (it->max_age_us != 0 && now_us >= it->at_us + it->max_age_us) {
                 why = "it waited too long behind another event";
             } else if (played(it->name)) {
@@ -281,6 +294,14 @@ public:
     // Drops the events still waiting (not the one being asked now: its
     // calls finish and free the block as usual).
     void Clear() { wanted_.clear(); }
+    // cutscene-bleed (#197): as Clear, with a note per dropped event saying `why` (a teleport under way: an event
+    // asked now would take the game's event system from the map change, or play in the scene we arrive in).
+    void DropAll(const char* why) {
+        for (const Wanted& w : wanted_) {
+            notes_.push_back("live event " + w.name + " dropped before it was asked (" + why + ")");
+        }
+        wanted_.clear();
+    }
     // CoopSvc::Caller's contract: asked once a frame with after_call false,
     // then again after each call it returned, with the call's x0.
     std::optional<CoopPuppet::Call> Step(CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
@@ -314,6 +335,7 @@ private:
         std::vector<Arg> args;
         std::uint64_t starter = 0;
         bool room_asker = false;  // WantFromRoom: the starter is found when it is asked
+        std::optional<int> room;  // cutscene-bleed: our Link's room when it was decided, if known
     };
     bool current_room_asker_ = false;  // current_starter_ is a room asker: checked again just before the link
     // WantFromRoom's asker for `name` in `scene`, read on the calc thread when the event is asked; 0 none.

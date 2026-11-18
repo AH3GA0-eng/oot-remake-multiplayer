@@ -1001,6 +1001,12 @@ public:
         // review-p11-interactions: a gimmick or story event still waiting in
         // the requester is dropped when we left its scene, when it waited too
         // long (story cutscenes: kJoinUs) or when our game has it played.
+        // cutscene-bleed (#251): Expire also drops a start once our Link left the dungeon room it was decided in
+        // (it waited behind the door we walked through). #197: none is asked while our teleport is under way.
+        if (live_events_ && CoopTeleport::Underway()) {
+            std::lock_guard lock(live_mutex_);
+            live_requester_.DropAll("our teleport is under way");
+        }
         if (live_events_ && memory) {
             std::lock_guard lock(live_mutex_);
             live_requester_.Expire(view.scene.value_or(std::string()), CoopEvery::NowUs(),
@@ -1008,7 +1014,8 @@ public:
                                        return coop::host::GameFlags(*memory)
                                            .get_bool(coop::host::flag_hash("HavePlayedEvent." + n))
                                            .value_or(false);
-                                   });
+                                   },
+                                   OurDungeonRoom(view));
         }
         if (live_events_ && eye_switch_on_) {  // deku-switches: a switch that found nothing goes the old way
             // deku-ladder: also dropped once our game has it played (our own asker ran it): the eye is never set again.
@@ -1023,7 +1030,7 @@ public:
             eye_switch_.Expire(view.scene.value_or(std::string()), played);
             for (auto& [event, scene] : eye_switch_.TakeFallbacks()) {
                 std::lock_guard lock(live_mutex_);
-                live_requester_.WantFromRoom(std::move(event), std::move(scene));
+                live_requester_.WantFromRoom(std::move(event), std::move(scene), OurDungeonRoom(view));
             }
         }
         // Issue 129: a held gimmick event is started here too when our Link is
@@ -1052,7 +1059,8 @@ public:
                 // asker's trigger), so our room's asker asks it itself (coop_eye_switch.h).
                 if (!eye_switch_on_ || !eye_switch_.Want(*name, hold_scene_, link)) {
                     std::lock_guard lock(live_mutex_);
-                    live_requester_.WantFromRoom(*name, hold_scene_);  // with our room's asker as its starter
+                    // with our room's asker as its starter; dropped if our Link leaves this room first (#251)
+                    live_requester_.WantFromRoom(*name, hold_scene_, OurDungeonRoom(view));
                 }
             }
         }
@@ -2363,6 +2371,19 @@ private:
         return rooms;
     }
 
+    // cutscene-bleed (#251): our Link's dungeon room this frame (the same guess the decider and the joiner use), if
+    // in a dungeon and known.
+    static std::optional<int> OurDungeonRoom(const FrameView& view) {
+        if (!view.scene || !view.position || !CoopDungeon::IsDungeonScene(*view.scene)) {
+            return std::nullopt;
+        }
+        const std::array<float, 3> at{(*view.position)[0], (*view.position)[1], (*view.position)[2]};
+        if (const auto guess = DungeonRooms().Nearest(*view.scene, at)) {
+            return guess->room;
+        }
+        return std::nullopt;
+    }
+
     // Shared story cutscenes (coop_shared_scenes.h): a story cutscene
     // our game starts goes to the others in our scene (DUNGEON_EVENT, as a
     // gimmick event's start); one another player started near us plays here
@@ -2478,7 +2499,9 @@ private:
         if (name) {
             std::lock_guard lock(live_mutex_);
             // Asked as the starter's game asked it: by the story name or setting it sent (report 110).
-            live_requester_.Want(*name, here.scene, now_us, CoopSharedScenes::kJoinUs);
+            // #251: with the room it was joined in (dropped if our Link leaves it before it is asked).
+            live_requester_.Want(*name, here.scene, now_us, CoopSharedScenes::kJoinUs,
+                                 here.dungeon ? here.room : std::nullopt);
         }
     }
 
