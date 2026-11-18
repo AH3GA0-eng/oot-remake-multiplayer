@@ -33,13 +33,27 @@
 //   Dodongo's Cavern's lifts are physics sliders; a rider or a slower frame
 //   makes a move longer, and the games' periods came out 21, 26, 29 and 54 s
 //   for one lift) never agree on a period, so the rule above never followed
-//   them. Each pause is lined up on its own then: a node seen starting
-//   kPauseStarts times is sent (looping or not; a switch's one move never is,
-//   and a start is sent at once), and while ours is in a pause that began
-//   within one pause length of the leader's same pause, it ends when the
-//   leader's does (never below zero), once both games have seen kAlignStarts
-//   starts with no loop agreed. Every pause puts the lift back in step,
-//   whatever its moves took.
+//   them. So:
+//   - One leader per key, for every game: the most starts (a tie: the lower
+//     number), counted over everything a game sends for that node. A game
+//     follows only it: pause by pause (AlignPause) when its wait is known and
+//     the leader sends its waits; else by the period rule when both loop with
+//     periods that agree (a leader on an older module sends no waits). Three
+//     or more games never split into two groups that follow different leaders.
+//   - Each wait on its own key: a pause starts at the lift's home wait (within
+//     kHomeM of its placement, CoopRoomObjects, the same in every game) or its
+//     far one, and the pauses are sent per wait (WaitKey). So one counter that
+//     times both waits is never lined up top on bottom. A lift with no
+//     placement known is never lined up pause by pause: the period rule only.
+//   - A node seen starting kPauseStarts times is sent (looping or not; a
+//     switch's one move never is). A start that goes into the message is sent
+//     at once, at most one message every kMinSendGapUs.
+//   - AlignPause: our pause of a wait ends when the leader's same wait does;
+//     with the wait's own period known, the gap is taken the short way round
+//     it, and a pause that has less left than the gap waits for the leader's
+//     next pause of that wait instead (once; never across the other wait).
+//   - A mover the room table marks driven (a switch, a sensor, a rider:
+//     Seen::driven) is never sent or written: its own logic moves it.
 //
 // No emulator code. Tested in tests/lichii/counters_test.cpp.
 #pragma once
@@ -171,7 +185,18 @@ struct Seen {
     std::string owner_name;
     float remaining = 0.0f;  // frames
     float duration = 0.0f;   // frames
+    // Which wait the platform is at (CoopRoomObjects's placement, the same in every game): 0 within kHomeM of
+    // it, 1 away; -1 when its placement is not known.
+    int wait = -1;
+    // Moved by its own logic (a switch, a sensor, a rider: CoopRoomObjects::Driven): never sent or written.
+    bool driven = false;
 };
+
+// Metres from its placement within which a platform is at its home wait.
+inline constexpr float kHomeM = 0.5f;
+
+// The key a node's pauses of one wait are sent under (`wait` 0 or 1).
+std::uint64_t WaitKey(std::uint64_t key, int wait);
 
 class CounterSync {
 public:
@@ -184,9 +209,7 @@ public:
     static constexpr std::size_t kMaxLooping = 64;              // per scene
     static constexpr int kLoopMisses = 3;
     static constexpr std::uint32_t kPauseStarts = 3;            // starts before a node's pauses are shared
-    // Starts before a pause is lined up on its own (both games): by then a real loop is known and the
-    // period rule takes it, so one counter timing both waits of a lift is never lined up top on bottom.
-    static constexpr std::uint32_t kAlignStarts = 6;
+    static constexpr std::uint64_t kMinSendGapUs = 250'000;     // a start sent at once: at most this often
 
     struct Write {
         std::uint64_t node = 0;
@@ -245,6 +268,10 @@ private:
         std::uint32_t starts = 0;
         std::uint64_t written_start_us = 0;   // the start we moved already
         bool started_now = false;             // a start this tick: sent at once
+        int wait = 0;                         // the wait of the last start (0 when not known)
+        bool wait_known = false;
+        std::array<std::uint64_t, 2> wait_start{};   // the last start of each wait
+        std::array<std::uint64_t, 2> wait_period{};  // between two starts of the same wait
         bool looping = false;
         bool logged = false;
     };
@@ -257,8 +284,14 @@ private:
 
     // A node whose pauses are shared: looping, or seen starting kPauseStarts times.
     static bool Shared(const Node& n);
-    // This pause alone, lined up on the leader's same pause (no period agreed): true when written.
-    bool AlignPause(Node& n, const Seen& s, std::uint8_t self, const std::map<std::uint8_t, Theirs>& theirs,
+    // The game every game follows for this node: the most starts it sent under any of the node's keys (a
+    // tie: the lower number), ourselves included.
+    std::uint8_t Leader(const Node& n, std::uint8_t self) const;
+    // This pause alone, lined up on the leader's same wait: true when written.
+    bool AlignPause(Node& n, const Seen& s, std::uint8_t leader, std::uint64_t server_us, bool probe_only,
+                    Out& out);
+    // A write of `target` frames left for this pause, with its note.
+    void WritePause(Node& n, const Seen& s, float target, float gap, std::uint8_t leader, const char* how,
                     bool probe_only, Out& out);
 
     std::string scene_;

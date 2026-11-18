@@ -584,37 +584,51 @@ TEST_CASE("counters: the Dodongo lift starts of the 2026-11-12 run loop, though 
     CHECK(std::fabs(a.NextStart(185.0) - b.NextStart(185.0)) < 0.3);
 }
 
+
 namespace {
 
-// Report 138: a lift whose moves do not take the same time each cycle (a physics slider: a rider, a slower
-// frame). Its pause is `pause` frames; each move takes the next of `moves` seconds.
-struct PhysicsLift {
+// Report 138: a lift that waits at home (its placement), moves up, waits at the far end, moves down: one
+// counter times both waits. Its moves do not take the same time each cycle (a physics slider: a rider, a
+// slower frame): each move takes the next of `moves` seconds. It says which wait it is at (Seen::wait, from
+// its placement, the same in every game).
+struct WaitLift {
     std::uint8_t self = 1;
-    float pause = 120.0f;  // 2 s
-    std::vector<double> moves{2.0};
+    float pause = 180.0f;  // 3 s
+    std::vector<double> moves{7.5};
     std::size_t move_index = 0;
-    float remaining = 120.0f;
+    int wait = 0;           // the wait it is at, or comes to next
+    float remaining = 180.0f;
     double move_left = 0.0;
+    bool driven = false;
     std::uint64_t node = 0x2140001000;
     std::uint64_t graph = 0x2140000f00;
     CounterSync sync;
     std::vector<proto::PlatformCounter> sent;
-    std::vector<std::uint64_t> pause_ends;  // server time of each pause's end
+    std::vector<std::string> notes;
+    std::vector<std::pair<std::uint64_t, int>> pause_ends;  // server time, wait
 
     void Step(double dt, std::uint64_t now_us) {
         if (remaining > 0.0f) {
             remaining -= static_cast<float>(dt * 60.0);
             if (remaining <= 0.0f) {
                 remaining = 0.0f;
-                pause_ends.push_back(now_us);
+                pause_ends.push_back({now_us, wait});
                 move_left = moves[move_index++ % moves.size()];
             }
             return;
         }
         move_left -= dt;
         if (move_left <= 0.0) {
-            remaining = pause;  // the next pause starts
+            wait = 1 - wait;
+            remaining = pause;  // the next wait's pause starts
         }
+    }
+    // Starts its loop `s` seconds in (its pauses and moves as they would have run).
+    void Advance(double s) {
+        for (double t = 0.0; t < s; t += 1.0 / 60.0) {
+            Step(1.0 / 60.0, 0);
+        }
+        pause_ends.clear();
     }
 
     void Tick(std::uint64_t time_us) {
@@ -625,6 +639,8 @@ struct PhysicsLift {
         s.remaining = remaining;
         s.duration = pause;
         s.key = KeyOf(kHash, pause, node, graph);
+        s.wait = wait;
+        s.driven = driven;
         CounterSync::Out out;
         sync.Tick("DodongoCavern", self, time_us, {s}, false, out);
         for (auto& m : out.send) {
@@ -633,16 +649,53 @@ struct PhysicsLift {
         for (const auto& w : out.writes) {
             remaining = w.remaining;
         }
+        notes.insert(notes.end(), out.notes.begin(), out.notes.end());
+    }
+    bool Said(const char* what) const {
+        return std::any_of(notes.begin(), notes.end(),
+                           [what](const std::string& n) { return n.find(what) != std::string::npos; });
     }
 };
 
-// Each of b's last pause ends against a's nearest: the largest gap, in seconds.
-double WorstEndGap(const PhysicsLift& a, const PhysicsLift& b, std::size_t last) {
+// Runs the lifts together for `seconds` at 60 frames a second, every message 80 ms late.
+void Run(const std::vector<WaitLift*>& lifts, std::uint64_t& time, double seconds) {
+    std::vector<std::pair<std::uint64_t, proto::PlatformCounter>> flight;
+    for (int i = 0; i < static_cast<int>(seconds * 60.0); ++i) {
+        time += 16'667;
+        for (WaitLift* l : lifts) {
+            l->Step(1.0 / 60.0, time);
+            l->Tick(time);
+            for (auto& m : l->sent) {
+                m.player_number = l->self;
+                flight.push_back({time + 80'000, m});
+            }
+            l->sent.clear();
+        }
+        for (auto it = flight.begin(); it != flight.end();) {
+            if (it->first <= time) {
+                for (WaitLift* l : lifts) {
+                    if (l->self != it->second.player_number) {
+                        l->sync.Receive(it->second);
+                    }
+                }
+                it = flight.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+}
+
+// Each of b's last `last` pause ends against a's nearest end of the same wait: the largest gap, in seconds.
+double WorstEndGap(const WaitLift& a, const WaitLift& b, std::size_t last) {
     double worst = 0.0;
-    for (std::size_t i = b.pause_ends.size() > last ? b.pause_ends.size() - last : 0; i < b.pause_ends.size(); ++i) {
+    const std::size_t from = b.pause_ends.size() > last ? b.pause_ends.size() - last : 0;
+    for (std::size_t i = from; i < b.pause_ends.size(); ++i) {
         double best = 1e9;
-        for (const std::uint64_t e : a.pause_ends) {
-            best = std::min(best, std::fabs(static_cast<double>(e) - static_cast<double>(b.pause_ends[i])) / 1e6);
+        for (const auto& [t, w] : a.pause_ends) {
+            if (w == b.pause_ends[i].second) {
+                best = std::min(best, std::fabs(static_cast<double>(t) - static_cast<double>(b.pause_ends[i].first)) / 1e6);
+            }
         }
         worst = std::max(worst, best);
     }
@@ -652,43 +705,108 @@ double WorstEndGap(const PhysicsLift& a, const PhysicsLift& b, std::size_t last)
 }  // namespace
 
 TEST_CASE("counters: a lift whose moves take different times each cycle ends each pause with the leader's (report 138)") {
-    PhysicsLift a;
-    PhysicsLift b;
+    WaitLift a;
+    WaitLift b;
     a.self = 1;
     b.self = 2;
-    b.moves = {2.0, 2.6, 2.3, 2.9};  // a rider, a slower frame: no two periods agree
-    b.remaining = 60.0f;              // 1 s out of step at the start
+    b.moves = {6.0, 9.4, 6.5, 10.1};  // a rider, a slower frame: periods 15 to 26 s, far outside kPeriodSlack
+    b.Advance(1.0);
     std::uint64_t time = 0;
-    std::vector<std::pair<std::uint64_t, proto::PlatformCounter>> to_a, to_b;
-    for (int i = 0; i < 60 * 120; ++i) {  // two minutes at 60 frames a second
+    Run({&a, &b}, time, 240.0);
+    REQUIRE(b.pause_ends.size() > 12);
+    CHECK(b.sync.Writes() > 0);           // the follower moved its pauses
+    CHECK(a.sync.Writes() == 0);          // the leader never does
+    CHECK(b.Said("(this pause, "));       // by its pauses, not the period rule
+    CHECK(WorstEndGap(a, b, 8) < 0.15);   // every recent pause ends with the leader's of the same wait
+}
+
+TEST_CASE("counters: a lift far out of step (beyond one pause) comes back in step") {
+    for (const double off : {5.0, 8.0, 12.0, 16.0}) {  // a 21 s cycle with 3 s pauses: most of it
+        CAPTURE(off);
+        WaitLift a;
+        WaitLift b;
+        a.self = 1;
+        b.self = 2;
+        b.moves = {7.5, 8.6};
+        b.Advance(off);
+        std::uint64_t time = 0;
+        Run({&a, &b}, time, 300.0);
+        CHECK(b.sync.Writes() > 0);
+        CHECK(WorstEndGap(a, b, 6) < 0.15);
+    }
+}
+
+TEST_CASE("counters: three games follow one leader, even when two of them agree on a period") {
+    WaitLift a;  // the host: here first, most starts, its moves change
+    WaitLift b;
+    WaitLift c;
+    a.self = 1;
+    b.self = 2;
+    c.self = 3;
+    a.moves = {7.5, 9.8};
+    b.moves = {7.5};  // b and c agree with each other, never with a
+    c.moves = {7.5};
+    std::uint64_t time = 0;
+    Run({&a}, time, 60.0);  // a alone first
+    b.Advance(4.0);
+    c.Advance(11.0);
+    Run({&a, &b, &c}, time, 300.0);
+    CHECK(a.sync.Writes() == 0);
+    CHECK(WorstEndGap(a, b, 6) < 0.15);
+    CHECK(WorstEndGap(a, c, 6) < 0.15);
+}
+
+TEST_CASE("counters: one counter timing both waits is never lined up top on bottom") {
+    WaitLift a;
+    WaitLift b;
+    a.self = 1;
+    b.self = 2;
+    b.moves = {7.5, 8.2};
+    b.Advance(10.5);  // half a cycle: b waits at the far end while a waits at home
+    std::uint64_t time = 0;
+    Run({&a, &b}, time, 300.0);
+    // Each of b's pauses ends with a's pause of the same wait (WorstEndGap matches waits): not the other one.
+    CHECK(WorstEndGap(a, b, 6) < 0.15);
+}
+
+TEST_CASE("counters: a mover its own logic drives (a switch, a sensor, a rider) is never sent or written") {
+    WaitLift a;
+    WaitLift b;
+    a.self = 1;
+    b.self = 2;
+    a.driven = true;
+    b.driven = true;
+    b.Advance(6.0);
+    std::uint64_t time = 0;
+    std::size_t sends = 0;
+    for (int i = 0; i < 60 * 120; ++i) {
         time += 16'667;
-        a.Step(1.0 / 60.0, time);
-        b.Step(1.0 / 60.0, time);
-        a.Tick(time);
-        b.Tick(time);
-        for (auto& m : a.sent) {
-            m.player_number = 1;
-            to_b.push_back({time + 80'000, m});
-        }
-        for (auto& m : b.sent) {
-            m.player_number = 2;
-            to_a.push_back({time + 80'000, m});
-        }
-        a.sent.clear();
-        b.sent.clear();
-        for (auto* q : {&to_a, &to_b}) {
-            for (auto it = q->begin(); it != q->end();) {
-                if (it->first <= time) {
-                    (q == &to_a ? a : b).sync.Receive(it->second);
-                    it = q->erase(it);
-                } else {
-                    ++it;
-                }
-            }
+        for (WaitLift* l : {&a, &b}) {
+            l->Step(1.0 / 60.0, time);
+            l->Tick(time);
+            sends += l->sent.size();
+            l->sent.clear();
         }
     }
-    REQUIRE(b.pause_ends.size() > 10);
-    CHECK(b.sync.Writes() > 0);           // the follower moved its pauses
-    CHECK(a.sync.Writes() == 0);          // the leader (more starts, a tie: the lower number) never does
-    CHECK(WorstEndGap(a, b, 8) < 0.15);   // and every recent pause ends with the leader's
+    CHECK(sends == 0);
+    CHECK(a.sync.Writes() + b.sync.Writes() == 0);
+}
+
+TEST_CASE("counters: a counter that restarts every few frames sends at most one message every 250 ms") {
+    WaitLift a;
+    a.self = 1;
+    a.pause = 6.0f;  // 0.1 s
+    a.remaining = 6.0f;
+    a.moves = {0.05};
+    std::uint64_t time = 0;
+    std::size_t sends = 0;
+    for (int i = 0; i < 60 * 10; ++i) {  // 10 s
+        time += 16'667;
+        a.Step(1.0 / 60.0, time);
+        a.Tick(time);
+        sends += a.sent.size();
+        a.sent.clear();
+    }
+    CHECK(sends > 0);
+    CHECK(sends <= 10 * 4 + 1);  // at most one every 250 ms (the 3 s ones fall within them)
 }

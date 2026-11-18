@@ -2736,6 +2736,20 @@ private:
             s.remaining = r.Get<float>(node + CoopCounters::kNodeRemaining).value_or(0.0f);
             s.duration = r.Get<float>(node + CoopCounters::kNodeDuration).value_or(0.0f);
             s.key = CoopCounters::KeyOf(s.owner_hash, s.duration, node, graph);
+            // Which wait it is at, and whether its own logic moves it (report 138's review): from its placement in
+            // the room table, the same in every game. No placement known: no wait (the period rule only).
+            std::array<float, 3> at{};
+            for (std::size_t i = 0; i < 3; ++i) {
+                at[i] = r.Get<float>(actor + kActorPosition + 4 * i).value_or(0.0f);
+            }
+            if (const CoopRoomObjects::Placement* p = CoopRoomObjects::Nearest(scene, s.owner_name, at)) {
+                float d2 = 0.0f;
+                for (std::size_t i = 0; i < 3; ++i) {
+                    d2 += (at[i] - p->place[i]) * (at[i] - p->place[i]);
+                }
+                s.wait = d2 <= CoopCounters::kHomeM * CoopCounters::kHomeM ? 0 : 1;
+                s.driven = !p->why.empty();
+            }
             seen.push_back(std::move(s));
         }
         // What the ring caught, every 10 s while a platform counter is near
