@@ -29,6 +29,17 @@
 //   starts (a tie: the higher player number) moves its frames left by the
 //   gap once, during that pause. Once in phase nothing is written. A pause
 //   menu or a hitch puts one out of phase; the next pause puts it back.
+// - Lifts whose moves do not take the same time in every game (report 138:
+//   Dodongo's Cavern's lifts are physics sliders; a rider or a slower frame
+//   makes a move longer, and the games' periods came out 21, 26, 29 and 54 s
+//   for one lift) never agree on a period, so the rule above never followed
+//   them. Each pause is lined up on its own then: a node seen starting
+//   kPauseStarts times is sent (looping or not; a switch's one move never is,
+//   and a start is sent at once), and while ours is in a pause that began
+//   within one pause length of the leader's same pause, it ends when the
+//   leader's does (never below zero), once both games have seen kAlignStarts
+//   starts with no loop agreed. Every pause puts the lift back in step,
+//   whatever its moves took.
 //
 // No emulator code. Tested in tests/lichii/counters_test.cpp.
 #pragma once
@@ -172,6 +183,10 @@ public:
     static constexpr std::uint64_t kMaxPeriodUs = 120'000'000;
     static constexpr std::size_t kMaxLooping = 64;              // per scene
     static constexpr int kLoopMisses = 3;
+    static constexpr std::uint32_t kPauseStarts = 3;            // starts before a node's pauses are shared
+    // Starts before a pause is lined up on its own (both games): by then a real loop is known and the
+    // period rule takes it, so one counter timing both waits of a lift is never lined up top on bottom.
+    static constexpr std::uint32_t kAlignStarts = 6;
 
     struct Write {
         std::uint64_t node = 0;
@@ -229,6 +244,7 @@ private:
         int misses = 0;                       // starts in a row that fit no loop
         std::uint32_t starts = 0;
         std::uint64_t written_start_us = 0;   // the start we moved already
+        bool started_now = false;             // a start this tick: sent at once
         bool looping = false;
         bool logged = false;
     };
@@ -238,6 +254,12 @@ private:
         std::uint32_t starts = 0;
         std::uint64_t got_us = 0;
     };
+
+    // A node whose pauses are shared: looping, or seen starting kPauseStarts times.
+    static bool Shared(const Node& n);
+    // This pause alone, lined up on the leader's same pause (no period agreed): true when written.
+    bool AlignPause(Node& n, const Seen& s, std::uint8_t self, const std::map<std::uint8_t, Theirs>& theirs,
+                    bool probe_only, Out& out);
 
     std::string scene_;
     std::map<std::uint64_t, Node> nodes_;                               // by node address

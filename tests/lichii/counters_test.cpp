@@ -583,3 +583,112 @@ TEST_CASE("counters: the Dodongo lift starts of the 2026-11-12 run loop, though 
     // In phase from then on: the next starts within 0.3 s of each other.
     CHECK(std::fabs(a.NextStart(185.0) - b.NextStart(185.0)) < 0.3);
 }
+
+namespace {
+
+// Report 138: a lift whose moves do not take the same time each cycle (a physics slider: a rider, a slower
+// frame). Its pause is `pause` frames; each move takes the next of `moves` seconds.
+struct PhysicsLift {
+    std::uint8_t self = 1;
+    float pause = 120.0f;  // 2 s
+    std::vector<double> moves{2.0};
+    std::size_t move_index = 0;
+    float remaining = 120.0f;
+    double move_left = 0.0;
+    std::uint64_t node = 0x2140001000;
+    std::uint64_t graph = 0x2140000f00;
+    CounterSync sync;
+    std::vector<proto::PlatformCounter> sent;
+    std::vector<std::uint64_t> pause_ends;  // server time of each pause's end
+
+    void Step(double dt, std::uint64_t now_us) {
+        if (remaining > 0.0f) {
+            remaining -= static_cast<float>(dt * 60.0);
+            if (remaining <= 0.0f) {
+                remaining = 0.0f;
+                pause_ends.push_back(now_us);
+                move_left = moves[move_index++ % moves.size()];
+            }
+            return;
+        }
+        move_left -= dt;
+        if (move_left <= 0.0) {
+            remaining = pause;  // the next pause starts
+        }
+    }
+
+    void Tick(std::uint64_t time_us) {
+        Seen s;
+        s.node = node;
+        s.owner_hash = kHash;
+        s.owner_name = "Obj_DodongoCave_MoveFloor_A_01";
+        s.remaining = remaining;
+        s.duration = pause;
+        s.key = KeyOf(kHash, pause, node, graph);
+        CounterSync::Out out;
+        sync.Tick("DodongoCavern", self, time_us, {s}, false, out);
+        for (auto& m : out.send) {
+            sent.push_back(std::get<proto::PlatformCounter>(m));
+        }
+        for (const auto& w : out.writes) {
+            remaining = w.remaining;
+        }
+    }
+};
+
+// Each of b's last pause ends against a's nearest: the largest gap, in seconds.
+double WorstEndGap(const PhysicsLift& a, const PhysicsLift& b, std::size_t last) {
+    double worst = 0.0;
+    for (std::size_t i = b.pause_ends.size() > last ? b.pause_ends.size() - last : 0; i < b.pause_ends.size(); ++i) {
+        double best = 1e9;
+        for (const std::uint64_t e : a.pause_ends) {
+            best = std::min(best, std::fabs(static_cast<double>(e) - static_cast<double>(b.pause_ends[i])) / 1e6);
+        }
+        worst = std::max(worst, best);
+    }
+    return worst;
+}
+
+}  // namespace
+
+TEST_CASE("counters: a lift whose moves take different times each cycle ends each pause with the leader's (report 138)") {
+    PhysicsLift a;
+    PhysicsLift b;
+    a.self = 1;
+    b.self = 2;
+    b.moves = {2.0, 2.6, 2.3, 2.9};  // a rider, a slower frame: no two periods agree
+    b.remaining = 60.0f;              // 1 s out of step at the start
+    std::uint64_t time = 0;
+    std::vector<std::pair<std::uint64_t, proto::PlatformCounter>> to_a, to_b;
+    for (int i = 0; i < 60 * 120; ++i) {  // two minutes at 60 frames a second
+        time += 16'667;
+        a.Step(1.0 / 60.0, time);
+        b.Step(1.0 / 60.0, time);
+        a.Tick(time);
+        b.Tick(time);
+        for (auto& m : a.sent) {
+            m.player_number = 1;
+            to_b.push_back({time + 80'000, m});
+        }
+        for (auto& m : b.sent) {
+            m.player_number = 2;
+            to_a.push_back({time + 80'000, m});
+        }
+        a.sent.clear();
+        b.sent.clear();
+        for (auto* q : {&to_a, &to_b}) {
+            for (auto it = q->begin(); it != q->end();) {
+                if (it->first <= time) {
+                    (q == &to_a ? a : b).sync.Receive(it->second);
+                    it = q->erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+    }
+    REQUIRE(b.pause_ends.size() > 10);
+    CHECK(b.sync.Writes() > 0);           // the follower moved its pauses
+    CHECK(a.sync.Writes() == 0);          // the leader (more starts, a tie: the lower number) never does
+    CHECK(WorstEndGap(a, b, 8) < 0.15);   // and every recent pause ends with the leader's
+}
