@@ -61,8 +61,9 @@ def _new_id(name):
     return ui_pack.part_id(name)
 
 
-FIFTH_GAP = 30.0   # the fifth tab this much closer to System than the game's step (430 for 460): R fits before the
-R_MOVE = 340.0     # rupee counter's icon, R moved this far right (990 -> 1330 in the game's layout)
+FIFTH_GAP = 50.0   # the fifth tab this much closer to System than the game's step (410 for 460), and R moved this far
+R_MOVE = 390.0     # right (990 -> 1380): R between the fifth tab's lit box and the rupee counter (seen in a run,
+                   # 2026-11-18: at 430 and 340 the lit box covered R)
 
 
 def _x(d, name):
