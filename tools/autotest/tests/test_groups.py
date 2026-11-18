@@ -319,6 +319,15 @@ class MergeTest(unittest.TestCase):
         self.assertIn("| PASS |", rows["g1 clean"])
         self.assertIn("missing B:'nope'; never= found B:", rows["g1 both"])
 
+    def test_a_refused_server_is_a_setup_fail(self):
+        log = ("[1.0] warning: coop: server refused: wrong protocol version: this game and the server are different "
+               "releases; run Update.bat in every kit, the host's too\n[2.0] coop: puppet: P1 spawned after 1 ms\n")
+        self.run_folder("g1", "refused", {"exit": 0, "expects": [["B", "spawned"]], "logonly": "x"},
+                        {"hookshot_log-A.txt": log, "hookshot_log-B.txt": log})
+        row = [line for line in g.merge([self.root]).splitlines() if line.startswith("| g1 refused")][0]
+        self.assertIn("| FAIL | ", row)
+        self.assertIn("SETUP (no co-op, the run proves nothing): A+B: 'coop: server refused: wrong protocol", row)
+
     def test_folders_without_run_json_and_empty(self):
         self.run_folder("g1", "walk")   # a plain run.ps1 -Runtime hookshot folder
         self.assertIn("| walk | PLAYED |", g.merge([self.root]))

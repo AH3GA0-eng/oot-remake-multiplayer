@@ -386,6 +386,13 @@ def judge_logs(folder, meta):
             return "FAIL", "steps.txt has no 'scenario played'"
         return "PLAYED", "no expect=; look at the shots"
     logs = {x: read_text(os.path.join(folder, "hookshot_log-%s.txt" % x)) or "" for x in "AB"}
+    # The server another release's (misc-fails-0115's first rerun: groups.py's default server, not the lane's): no
+    # co-op at all, so every co-op line is missing for that reason alone. Said as SETUP, the run proves nothing.
+    refused = [x for x in "AB" if "coop: server refused" in logs[x]]
+    if refused:
+        line = logs[refused[0]][logs[refused[0]].find("coop: server refused"):].split("\n", 1)[0]
+        return "FAIL", "SETUP (no co-op, the run proves nothing): %s: '%s'; pass --server the kit's own" % (
+            "+".join(refused), line.strip()[:110])
 
     def first(side, rx):
         for x in ([side] if side else ["A", "B"]):
