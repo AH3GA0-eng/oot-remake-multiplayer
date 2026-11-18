@@ -49,7 +49,7 @@ hs-epona  expect='B:coop: ride: we ride Animal_Epona_Adult'  expect='A:coop: rid
 color-field  label="#202 colours in the field (adult)"
 hearts  label="HUD hearts (puppet life)"
 ocarina-hand  label="#152 ocarina in hand"
-spawn-seed  label="#166 seed copy held"
+spawn-seed  expect='B:spawn: CoopShot(Fx)?_Seed: copy [0-9]+ is actor'  expect="B:copy held where the owner's shot hit"  label="#166 seed copy held"  see=spawn-seed-B
 
 [g3]
 # World and enemies on Hookshot as on the emulator: chest notice, drops, signs, Peahat, Stalchildren, scrubs, Navi.

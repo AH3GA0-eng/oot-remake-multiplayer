@@ -29,10 +29,10 @@
 
 [g1]
 # Puppet looks: the puppet shows (hs-puppets), tunics (#202), masks (#91), the HUD blocks under your hearts.
-hs-tunic  switches=LICHII_COOP_PUPPET=1,A:LICHII_COOP_COLOR=blue  expect='A:coop: your Link wears blue; green players get CoopPuppet_<Age>_Green'  label="#202 own colour"  see=hs-tunic-A  see=hs-tunic-B
+hs-tunic  switches=LICHII_COOP_PUPPET=1,A:LICHII_COOP_COLOR=blue  expect='A:coop: your Link wears blue( at the start)?; green players get CoopPuppet_<Age>_Green'  never="A:the puppet pack's tunic files are green, your colour is blue"  label="#202 own colour"  see=hs-tunic-A  see=hs-tunic-B
 hs-tunic  switches=LICHII_COOP_PUPPET=1,LICHII_COOP_TUNICS=0  expect='A:tunics off \(LICHII_COOP_TUNICS=0\)'  expect='B:tunics off \(LICHII_COOP_TUNICS=0\)'  label="#202 tunics off"  logonly="the switch is read; colours are in #202 own colour"
 hs-puppets  expect='B:P1: create CoopPuppet_(Child|Adult)\S* requested \(returned 0x1\)'  expect='B:P1 CoopPuppet_(Child|Adult)\S* spawned after'  expect='A:P2 CoopPuppet_(Child|Adult)\S* spawned after'  label="#202 puppet shows (fresh pack)"  see=hs-puppets-A  see=hs-puppets-B
-hs-spawn  expect='B:P1 (eased|drawn at once) from where it was made'  label="spawn pop (B: no 'P1 snap' before the first hold)"  see=hs-spawn-A  see=hs-spawn-B
+hs-spawn  expect='B:coop: puppet: P1 CoopPuppet_[A-Za-z_]+ spawned after'  never='B:coop: puppet: P1 snap '  label="spawn pop (B: no 'P1 snap' before the first hold)"  see=hs-spawn-A  see=hs-spawn-B
 hs-masks  expect="B:P1 wears head 'Armor_Child_Mask_Skull'"  expect='B:P1 takes off head'  label="#91 masks"  see=hs-masks-A  see=hs-masks-B
 hs-hud  expect='A:coop: drawing over Hookshot.s picture'  label="HUD blocks"  see=hs-hud-A  see=hs-hud-B
 hs-hud  switches=LICHII_COOP_PUPPET=1,LICHII_COOP_HUD=0  label="HUD off (shots: no block)"
@@ -42,7 +42,7 @@ hs-hud  switches=LICHII_COOP_PUPPET=1,LICHII_COOP_HUD=0  label="HUD off (shots: 
 hs-panel  expect='A:coop: drawing over Hookshot.s picture'  expect='B:coop: drawing over Hookshot.s picture'  label="chat lines, name tags"  see=hs-panel-A  see=hs-panel-B
 hs-players  expect='A:coop: drawing over Hookshot.s picture'  label="player list, panel"  see=hs-players-A  see=hs-players-B
 hs-ocarina-show  expect="B:P1 hold -> show \(ocarina\)"  expect='A:P2 hide -> show'  label="#86 Ocarina: stays seen"  see=hs-ocarina-show-A  see=hs-ocarina-show-B
-hs-seed  expect='A:spawn: CoopShot_Seed: copy [0-9]+ is actor'  label="#198 seed copy (pack made again)"  see=hs-seed-A  see=hs-seed-B
+hs-seed  expect='A:spawn: CoopShot(Fx)?_Seed: copy [0-9]+ is actor'  never='A:CoopShot(Fx)?_Seed: request dropped'  label="#198 seed copy (pack made again)"  see=hs-seed-A  see=hs-seed-B
 hs-ocarina  expect='A:coop: ocarina note 4 \(Ocarina_D\) sent'  expect='A:coop: ocarina note 16 \(Ocarina_HighD\) sent'  expect="B:plays sound 'Ocarina_D'"  label="#152 own notes"  logonly="sound: notes sent and played, not seen"
 
 [g3]
@@ -89,7 +89,7 @@ hs-epona  expect='B:coop: ride: we ride Animal_Epona_Adult'  expect='A:coop: rid
 color-field  label="#202 colours in the field (adult)"
 hearts  label="HUD hearts (puppet life)"
 ocarina-hand  label="#152 ocarina in hand"
-spawn-seed  label="#166 seed copy held"
+spawn-seed  expect='B:spawn: CoopShot(Fx)?_Seed: copy [0-9]+ is actor'  expect="B:copy held where the owner's shot hit"  label="#166 seed copy held"  see=spawn-seed-B
 
 [g9]
 # World and enemies on Hookshot as on the emulator: chest notice, drops, signs, Peahat, Stalchildren, scrubs, Navi.
@@ -105,7 +105,7 @@ navi-room  label="#145 Navi per room"
 # Teleport, PvP and the gate on Hookshot as on the emulator.
 teleport-other  expect='A:scene change taken'  label="#197 teleport between overworld scenes"  see=teleport-other-A  see=teleport-other-B
 kak-gate  expect='B:bool 0x19898d14.*0 -> 1'  label="#171 Kakariko gate (test switch)"  see=kak-gate-A  see=kak-gate-B
-pvp  expect='A:coop: pvp: our sword reached P2'  label="PvP hits"  see=pvp-A  see=pvp-B
+pvp  expect='A:coop: pvp: our sword reached P2'  expect='B:coop: pvp: hit from P1'  label="PvP hits"  see=pvp-A  see=pvp-B
 
 [g11]
 # Steps files on Hookshot (G7, tools/autotest/hs_steps.py through run.ps1 -Runtime hookshot): close, start, kill,
@@ -121,4 +121,4 @@ screens  label="screens: rejoin on other screens"  see=screens-A  see=screens-B
 [g12]
 # Moving platforms in step (platforms-b, #196 #194: one clock word per platform, PLATFORM_CLOCK). The Dodongo's Cavern
 # room 1 lifts; its own warp (noload). Shots s1..s4: the lift under A's Link at the same height in both games.
-hs-platforms-dodongo  expect='A:coop: platforms: .*: ours to send'  expect="B:coop: platforms: .*following player 1's clock"  label="#196 #194 moving platforms (Dodongo lifts)"  see=hs-platforms-dodongo-A  see=hs-platforms-dodongo-B
+hs-platforms-dodongo  expect='A:coop: platforms: [0-9a-f]+ Obj_DodongoCave_MoveFloor_A_01: pause counter [0-9a-f]+ loops every'  expect="B:coop: platforms: [0-9a-f]+ Obj_DodongoCave_MoveFloor_A_01: pause counter [0-9a-f]+ (loops every|[-0-9.]+ s off player 1's)"  never='do not hold'  label="#196 #194 moving platforms (Dodongo lifts)"  see=hs-platforms-dodongo-A  see=hs-platforms-dodongo-B

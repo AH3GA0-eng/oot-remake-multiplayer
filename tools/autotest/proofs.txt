@@ -132,9 +132,12 @@ hs-ocarina-show-B          A-playing2-B       160,80,960,520  refs
 # hs-panel: chat lines and name tags drawn in both games
 hs-panel-A                 A-a-chat-A         160,80,960,520  refs
 hs-panel-B                 A-a-chat-B         160,80,960,520  refs
-# hs-platforms-dodongo: the moving platforms at the same place in both games
-hs-platforms-dodongo-A     A-s2-A             160,80,960,520  refs
-hs-platforms-dodongo-B     A-s2-B             160,80,960,520  refs
+# hs-platforms-dodongo: A and B on the SAME lift facing the same way (misc-fails-0115), so at one mark both games show
+# that lift from beside it: the cave above the Links (top band, the puppets stay below it) must match. s3 and s4 come
+# after B's one-time counter fix (about 21 s after placed). A lift up in one game and down in the other moves the
+# camera about 3.5 m (a different band). max= is a first guess: check it on the first run's distances.
+hs-platforms-dodongo-A     A-s3-A             0,0,1280,300    same  max=12
+hs-platforms-dodongo-B     A-s4-B             0,0,1280,300    same  max=12
 # hs-players: the player list panel drawn
 hs-players-A               A-a-list-A         160,80,960,520  refs
 hs-players-B               A-a-list-B         160,80,960,520  refs
@@ -145,8 +148,11 @@ hs-pot-drops-B             A-pick2-B          160,80,960,520  refs
 hs-puppets-A               A-spawned-A        160,80,960,520  refs
 hs-puppets-B               A-spawned-B        160,80,960,520  refs
 # hs-seed: the seed copy flying in the other game
-hs-seed-A                  A-ready-A          160,80,960,520  refs
-hs-seed-B                  A-ready-B          160,80,960,520  refs
+# (misc-fails-0115: A-ready was before any shot; now in flight on A's screen, A placed off B's line)
+hs-seed-A                  B-fly1b-A          160,80,960,520  refs
+hs-seed-B                  B-aim3-B           160,80,960,520  refs
+# spawn-seed (#166): A's seed copy in A's puppet's sling / in flight on B's screen (B placed beside, spawn-seed.B.txt)
+spawn-seed-B               A-aim5-B           160,80,960,520  refs
 # hs-sign-late: the sign cut in the late loader's game too
 hs-sign-late-A             A-cut3-A           160,80,960,520  refs
 hs-sign-late-B             A-cut3-B           160,80,960,520  refs
@@ -154,8 +160,8 @@ hs-sign-late-B             A-cut3-B           160,80,960,520  refs
 hs-skulltula-token-A       A-taken-A          160,80,960,520  refs
 hs-skulltula-token-B       A-taken-B          160,80,960,520  refs
 # hs-spawn: the puppet appears where the player is, no pop from elsewhere
-hs-spawn-A                 A-kakariko-A       160,80,960,520  refs
-hs-spawn-B                 A-kakariko-B       160,80,960,520  refs
+hs-spawn-A                 A-reading-A        160,80,960,520  refs
+hs-spawn-B                 A-reading-B        160,80,960,520  refs
 # hs-teleport-room: A arrived by the other player
 hs-teleport-room-A         A-arrived-A        160,80,960,520  refs
 hs-teleport-room-B         A-arrived-B        160,80,960,520  refs

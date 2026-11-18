@@ -36,7 +36,7 @@
 # Teleport, PvP and the gate on Hookshot as on the emulator.
 teleport-other  expect='A:scene change taken'  label="#197 teleport between overworld scenes"  see=teleport-other-A  see=teleport-other-B
 kak-gate  expect='B:bool 0x19898d14.*0 -> 1'  label="#171 Kakariko gate (test switch)"  see=kak-gate-A  see=kak-gate-B
-pvp  expect='A:coop: pvp: our sword reached P2'  label="PvP hits"  see=pvp-A  see=pvp-B
+pvp  expect='A:coop: pvp: our sword reached P2'  expect='B:coop: pvp: hit from P1'  label="PvP hits"  see=pvp-A  see=pvp-B
 
 [g2]
 # Steps files on Hookshot (G7, tools/autotest/hs_steps.py through run.ps1 -Runtime hookshot): close, start, kill,
@@ -52,4 +52,4 @@ screens  label="screens: rejoin on other screens"  see=screens-A  see=screens-B
 [g3]
 # Moving platforms in step (platforms-b, #196 #194: one clock word per platform, PLATFORM_CLOCK). The Dodongo's Cavern
 # room 1 lifts; its own warp (noload). Shots s1..s4: the lift under A's Link at the same height in both games.
-hs-platforms-dodongo  expect='A:coop: platforms: .*: ours to send'  expect="B:coop: platforms: .*following player 1's clock"  label="#196 #194 moving platforms (Dodongo lifts)"  see=hs-platforms-dodongo-A  see=hs-platforms-dodongo-B
+hs-platforms-dodongo  expect='A:coop: platforms: [0-9a-f]+ Obj_DodongoCave_MoveFloor_A_01: pause counter [0-9a-f]+ loops every'  expect="B:coop: platforms: [0-9a-f]+ Obj_DodongoCave_MoveFloor_A_01: pause counter [0-9a-f]+ (loops every|[-0-9.]+ s off player 1's)"  never='do not hold'  label="#196 #194 moving platforms (Dodongo lifts)"  see=hs-platforms-dodongo-A  see=hs-platforms-dodongo-B

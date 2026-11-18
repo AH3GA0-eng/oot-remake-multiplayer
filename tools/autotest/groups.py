@@ -89,7 +89,7 @@ def parse_groups(text):
         except ValueError as e:
             raise Fail("line %d: %s" % (n, e))
         run = {"scenario": words[0], "switches": "", "expects": [], "timeout": None, "label": "", "password": "",
-               "see": [], "logonly": ""}
+               "see": [], "logonly": "", "never": []}
         if not re.match(r"^[A-Za-z0-9_.-]+$", run["scenario"]):
             raise Fail("line %d: bad scenario name %r" % (n, run["scenario"]))
         for w in words[1:]:
@@ -98,14 +98,15 @@ def parse_groups(text):
                 raise Fail("line %d: %r is not key=value" % (n, w))
             if k == "switches":
                 run["switches"] = v
-            elif k == "expect":
+            elif k in ("expect", "never"):
+                # never=: a line that must not be in that log (a snap, a "do not hold"): found, the run FAILs.
                 side = v[0] if v[:2] in ("A:", "B:") else ""
                 rx = v[2:] if side else v
                 try:
                     re.compile(rx)
                 except re.error as e:
-                    raise Fail("line %d: expect %r: %s" % (n, rx, e))
-                run["expects"].append((side, rx))
+                    raise Fail("line %d: %s %r: %s" % (n, k, rx, e))
+                run["expects" if k == "expect" else "never"].append((side, rx))
             elif k == "timeout":
                 if not v.isdigit():
                     raise Fail("line %d: timeout=%s" % (n, v))
@@ -275,7 +276,8 @@ def run_groups(planned, dry=False, say=print, runner=None):
             if folder:
                 with open(os.path.join(folder, "run.json"), "w", encoding="utf-8") as f:
                     json.dump({"group": s["name"], "scenario": r["scenario"], "label": r["label"],
-                               "expects": r["expects"], "see": r.get("see", []), "logonly": r.get("logonly", ""),
+                               "expects": r["expects"], "never": r.get("never", []),
+                               "see": r.get("see", []), "logonly": r.get("logonly", ""),
                                "exit": code, "port": s["port"]}, f, indent=1)
                 return folder, code
             note = "exit %d\n%s\n%s" % (code, p.stdout or "", p.stderr or "")
@@ -384,18 +386,24 @@ def judge_logs(folder, meta):
             return "FAIL", "steps.txt has no 'scenario played'"
         return "PLAYED", "no expect=; look at the shots"
     logs = {x: read_text(os.path.join(folder, "hookshot_log-%s.txt" % x)) or "" for x in "AB"}
-    found, missing = [], []
-    for side, rx in expects:
-        hit = None
+
+    def first(side, rx):
         for x in ([side] if side else ["A", "B"]):
             m = re.search(rx, logs[x], re.M)
             if m:
                 line = logs[x][logs[x].rfind("\n", 0, m.start()) + 1:].split("\n", 1)[0]
-                hit = "%s: '%s'" % (x, line.strip()[:80])
-                break
+                return "%s: '%s'" % (x, line.strip()[:80])
+        return None
+
+    found, missing = [], []
+    for side, rx in expects:
+        hit = first(side, rx)
         (found if hit else missing).append(hit or "%s'%s'" % (side + ":" if side else "", rx))
-    if missing:
-        return "FAIL", "missing " + ", ".join(missing)
+    # never=: a line that must not be there (a snap, a "do not hold"); found, it is the FAIL's reason.
+    unwanted = [hit for hit in (first(side, rx) for side, rx in (tuple(e) for e in meta.get("never", []))) if hit]
+    if missing or unwanted:
+        return "FAIL", "; ".join(([("missing " + ", ".join(missing))] if missing else []) +
+                                 ([("never= found " + ", ".join(unwanted))] if unwanted else []))
     return "PASS", "; ".join(found)
 
 
