@@ -216,6 +216,28 @@ class BuildTest(unittest.TestCase):
             en_page = msbt.read(sarc.read(written["Mals/EUfr.Product.110.sarc.zs"])[pm.PAGES_MSG])
             self.assertEqual(en_page.text("Pa_Coop_00-Pa_Button_04-T_Btn_00"), ["Leave"])   # English kept
 
+    def test_an_earlier_steps_labels_stay(self):
+        """The title rows' step wrote a language archive first: the tab's labels go into that one, not the game's."""
+        with tempfile.TemporaryDirectory() as root:
+            src, out = os.path.join(root, "romfs"), os.path.join(root, "out")
+            self.romfs(src)
+            rel = "Mals/USen.Product.110.sarc.zs"
+            game = sarc.read(open(os.path.join(src, *rel.split("/")), "rb").read())
+            earlier = dict(game)
+            earlier[pm.OVERLAY_MSG] = ui_pack.add_labels(game[pm.OVERLAY_MSG], {"TitleRow": "Host"})
+            os.makedirs(os.path.join(out, "Mals"))
+            with open(os.path.join(out, *rel.split("/")), "wb") as f:
+                f.write(sarc.write(earlier))
+            table = _Table({pm.COMMON_ARCHIVE[:-3]: 100000})
+            for lang in LANGS:
+                table.set("Mals/%s.Product.110.sarc" % lang, 2000)
+            written = {}
+            pm.build(src, out, _Plain(), table, lambda o, r, data: written.__setitem__(r, data),
+                     lambda d, raw, data: data, log=lambda s: None)
+            over = msbt.read(sarc.read(written[rel])[pm.OVERLAY_MSG])
+            self.assertEqual(over.text("TitleRow"), ["Host"])
+            self.assertEqual(over.text("Pa_Category_04-T_Text_00"), ["Multiplayer"])
+
     def test_nothing_written_when_one_language_fails(self):
         made, written, sizes, before, err = self.run_build(broken="JPja")
         self.assertIsNotNone(err)

@@ -227,8 +227,9 @@ function Invoke-PuppetPackStep([string]$exeDir) {
     if ($packFrom -and (Test-Path -LiteralPath $packFrom) -and (Test-Path -LiteralPath $packTool)) {
         Write-Host '  Making the puppet pack (how you see the other players; about a minute) ...'
         $ErrorActionPreference = 'Continue'
-        # (no --title-rows: the title stays the game's own; co-op is the pause menu's Multiplayer tab)
-        & $python -I -B $packTool --romfs $packFrom --mod-dir $mod 2>&1 | ForEach-Object { Write-Host "    $_" }
+        # (no --title-rows: the title stays the game's own; co-op is Longshot's menu's Multiplayer tab. --pause-tab: the
+        # game's own pause menu gets a Multiplayer tab and page too, which the co-op module shows: patch 0030, issue 264)
+        & $python -I -B $packTool --romfs $packFrom --mod-dir $mod --pause-tab 2>&1 | ForEach-Object { Write-Host "    $_" }
         $code = $LASTEXITCODE
         $made = $true
         $ErrorActionPreference = 'Stop'

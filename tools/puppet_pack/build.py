@@ -32,7 +32,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "puppet_pack"  # noqa: A001
 
-from . import ainb, byml, dumpcheck, dungeon_rooms, hud, look_items, look_live, map_captures, nup, rstb, sarc, title_menu, tunic, tunic_extra, zs  # noqa: E402
+from . import ainb, byml, dumpcheck, dungeon_rooms, hud, look_items, look_live, map_captures, nup, pause_menu, rstb, sarc, title_menu, tunic, tunic_extra, zs  # noqa: E402
 
 TITLE_ID = "0400486024DEC000"
 DEFAULT_MOD_NAME = "coop-puppet"
@@ -1086,7 +1086,7 @@ def write_blade_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows, copies,
 
 
 def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None,
-          tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False, title_rows=False,
+          tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False, title_rows=False, pause_tab=False,
           look_slots=look_items.SLOTS, perception=True, blade_copies=look_items.BLADE_COPIES):
     """`tunics`: the tunic colours to make puppets of (puppet_pack.tunic.COLORS; each is a model,
     a tile and an actor per age, CoopPuppet_<age>_<Colour>). `test_tunic`: give the plain puppets
@@ -1304,6 +1304,16 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
                                            lambda root, r, data: write(os.path.join(root, r), data), recompress, log)
         except (title_menu.TitleMenuError, OSError, ValueError, KeyError, IndexError, struct.error) as e:
             log(f"title menu: rows left out ({e}); the title keeps its own three, co-op uses the Minus prompt")
+    # The pause menu's Multiplayer tab and page (pause_menu.py, issue 264): Hookshot's game only (--pause-tab), with
+    # the co-op module that shows them (patch 0030); both stored hidden, so without the module the menu is the game's.
+    # After the title rows: it adds its labels to the language archives as they wrote them. All or nothing.
+    pause_files = []
+    if pause_tab:
+        try:
+            pause_files = pause_menu.build(romfs, out_romfs, dicts, table,
+                                           lambda root, r, data: write(os.path.join(root, r), data), recompress, log)
+        except (pause_menu.PauseMenuError, OSError, ValueError, KeyError, IndexError, struct.error) as e:
+            log(f"pause menu: the Multiplayer tab left out ({e}); the pause menu keeps its four")
 
     ai_new = byml.dumps(upsert_rows(ai, new_ai))
     gai_new = byml.dumps(upsert_rows(gai, new_gai))
@@ -1346,6 +1356,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "xlink": "player" if sound and not basic_xlink else "basic",
         "tables": [rel(romfs, p) for p in (ai_path, gai_path, rs_path)],
         "title_menu": title_files,
+        "pause_menu": pause_files,
         "source_sha256": {rel(romfs, p): hashlib.sha256(read(p)).hexdigest()
                           for p in (ai_path, gai_path, rs_path)},
     }
@@ -1424,6 +1435,8 @@ def main(argv=None):
                     help="test switch: the puppets get the shared ActorBasic XLink param (the older pack)")
     ap.add_argument("--title-rows", action="store_true",
                     help="Hookshot's game: Host, Join and Co-op Settings as rows of the title (title_menu.py)")
+    ap.add_argument("--pause-tab", action="store_true",
+                    help="Hookshot's game: the pause menu's Multiplayer tab and page (pause_menu.py; patch 0030's module)")
     ap.add_argument("--look-slots", type=int, default=look_items.SLOTS, metavar="N",
                     help="how many players' puppets wear gear colours of their own (look_items.py; 0 to 4, 0: none)")
     ap.add_argument("--blade-copies", type=int, default=look_items.BLADE_COPIES, metavar="N",
@@ -1483,7 +1496,7 @@ def _main_build(a, romfs, hud_reader=None):
         build(romfs, mod_dir, heaps=heaps, sound=not a.no_sound, player_footsteps=a.player_footsteps,
               sound_user=a.sound_user, tunics=tunics, test_tunic=a.test_tunic,
               stand_in_effects=a.seed_trail and not a.no_seed_trail, basic_xlink=a.basic_xlink,
-              title_rows=a.title_rows, look_slots=max(0, min(a.look_slots, look_items.MAX_SLOTS)),
+              title_rows=a.title_rows, pause_tab=a.pause_tab, look_slots=max(0, min(a.look_slots, look_items.MAX_SLOTS)),
               perception=not a.no_perception,
               blade_copies=max(0, min(a.blade_copies, look_items.BLADE_COPIES)))
     except BuildError as e:

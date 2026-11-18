@@ -127,12 +127,27 @@ class _Dir:
         return [p[n:].replace("\\", "/") for p in glob.glob(os.path.join(self.root, *pattern.split("/")))]
 
 
+class _Layered(_Dir):
+    """The mod's romfs over the game's: a file an earlier pack step wrote (title_menu.py's language archives) is read
+    as it wrote it, so its labels stay; the game's files otherwise."""
+    def __init__(self, top, root):
+        super().__init__(root)
+        self.top = top
+
+    def read(self, rel):
+        path = os.path.join(self.top, *rel.split("/"))
+        if os.path.isfile(path):
+            with open(path, "rb") as f:
+                return f.read()
+        return super().read(rel)
+
+
 def build(romfs, out_romfs, dicts, table, write, recompress, log=print, strings=ui_pack.STRINGS):
     """The Common archive and every language's messages from the romfs folder, into out_romfs
     (write(out_romfs, rel, bytes)); their size table entries grown (`table`: rstb.Rstb). Returns
     the files written. All or nothing, as title_menu.build: a failure raises before anything is
     written, so the pack never holds the tab without its page and texts."""
-    files, growth = make(_Dir(romfs), dicts, recompress, strings)
+    files, growth = make(_Layered(out_romfs, romfs), dicts, recompress, strings)
     for rel, _, required in growth:
         if required and table.get(_key(rel)) is None:
             raise PauseMenuError("the size table has no %s" % _key(rel))
