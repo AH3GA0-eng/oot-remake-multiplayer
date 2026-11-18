@@ -297,6 +297,21 @@ class MergeTest(unittest.TestCase):
             self.assertIn("| FAIL |", row)
         self.assertTrue(g.merge([self.root]).endswith("5 run(s): 5 FAIL -> FAIL"))
 
+    def test_an_expect_also_reads_the_runners_player_log(self):
+        # hs-crawl: the warp line is written by hookshot.py to player-A.txt, not to the game's log.
+        self.run_folder("g2", "hs-crawl", {"exit": 0, "expects": [["A", "coop: test warp done"],
+                                                                 ["B", "P1 plays 'Move'"]]},
+                        {"hookshot_log-A.txt": "coop: connected\n",
+                         "player-A.txt": "[06:55:58] coop: test warp done (map KokiriForest_Child)\n",
+                         "hookshot_log-B.txt": "coop: puppet: P1 plays 'Move'\n"})
+        row = [line for line in g.merge([self.root]).splitlines() if line.startswith("| g2 hs-crawl")][0]
+        self.assertIn("| PASS |", row)
+        self.assertIn("test warp done", row)
+        self.run_folder("g2", "hs-other", {"exit": 0, "expects": [["B", "coop: test warp done"]]},
+                        {"player-A.txt": "coop: test warp done\n"})
+        row = [line for line in g.merge([self.root]).splitlines() if line.startswith("| g2 hs-other")][0]
+        self.assertIn("| FAIL |", row)  # A's runner line is not B's
+
     def test_folders_without_run_json_and_empty(self):
         self.run_folder("g1", "walk")   # a plain run.ps1 -Runtime hookshot folder
         self.assertIn("| walk | PLAYED |", g.merge([self.root]))

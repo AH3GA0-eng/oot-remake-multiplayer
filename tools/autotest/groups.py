@@ -329,7 +329,11 @@ def judge(folder, meta=None):
         if "scenario played" not in played and os.path.isfile(os.path.join(folder, "steps.txt")):
             return "FAIL", "steps.txt has no 'scenario played'"
         return "PLAYED", "no expect=; look at the shots"
-    logs = {x: read_text(os.path.join(folder, "hookshot_log-%s.txt" % x)) or "" for x in "AB"}
+    # Each side's game log, then the runner's own log of that side (player-X.txt): hookshot.py writes
+    # the lines of the test commands it plays itself there (`coop: test warp done`, ...), not in the
+    # game's log, so an expect of one of those could never match (hs-crawl, big-run-0114 wave3).
+    logs = {x: "\n".join(read_text(os.path.join(folder, name % x)) or ""
+                         for name in ("hookshot_log-%s.txt", "player-%s.txt")) for x in "AB"}
     found, missing = [], []
     for side, rx in expects:
         hit = None
