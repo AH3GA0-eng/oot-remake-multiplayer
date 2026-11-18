@@ -7,7 +7,7 @@
 # the rock Obj_Goron_BrokenRock_A_01 751d254f812d5cfb (16.07 104.91 -1.58) on the flower side (away from
 # the drop), faces it, pulls a bomb (ZR), SETS IT DOWN (A, standing still) and backs off.
 # B watches from beside the start point (as goron-rock.B).
-# Run: toolsutotestun.ps1 -Runtime hookshot -Scenario hs-goron-rock   (emulator: -Scenario hs-goron-rock)
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-goron-rock   (emulator: -Scenario hs-goron-rock)
 # Check first: A's "mark at-rock (Link at x Y z)" with Y about 105 (not falling) and "test assign Bomb: set".
 # Pass:
 # - A: "objects: life Obj_Goron_BrokenRock_A_01 ... hash 0x751d254f812d5cfb: 6 -> 0" (or "share gone") after
