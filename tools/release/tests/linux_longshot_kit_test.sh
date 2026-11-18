@@ -467,19 +467,18 @@ check 'revert.sh: nothing kept (a partial backup does not count) -> says --versi
 rm -rf "$kit"/backup-*
 # (a v0.11.2 to v0.11.4 kit's MANIFEST.txt names MANIFEST.txt.tmp, its build's temp file, which never shipped: that kit
 # still counts as whole, so revert.sh finds it)
-mkdir -p "$kit/backup-v0.1.0-beta1"
-cp "$kit/start-squadala.sh" "$kit/backup-v0.1.0-beta1/"
-printf 'kit: oot-coop-v0.1.0-beta1-linux (release v0.1.0-beta1)
-' >"$kit/backup-v0.1.0-beta1/VERSION.txt"
-printf '# Files of x
-MANIFEST.txt
-MANIFEST.txt.tmp
-VERSION.txt
-start-squadala.sh
-' >"$kit/backup-v0.1.0-beta1/MANIFEST.txt"
-bash "$kit/revert.sh" --yes </dev/null >"$tmp/revert-legacy.txt" 2>&1
-check 'revert.sh: a kept kit whose MANIFEST.txt lists MANIFEST.txt.tmp (v0.11.2 to v0.11.4) is gone back to' bash -c 'grep -q beta1 "$1/VERSION.txt" && ! grep -q "keeps no older" "$2"' _ "$kit" "$tmp/revert-legacy.txt"
-rm -rf "$kit"/backup-* "$kit/previous"
+# (on a copy: the revert replaces the kit's files and must not touch the kit the later cases use)
+lk=$tmp/legacy-kit
+rm -rf "$lk"
+cp -a "$kit" "$lk"
+rm -rf "$lk"/backup-* "$lk/previous"
+mkdir -p "$lk/backup-v0.1.0-beta1"
+cp "$lk/start-squadala.sh" "$lk/backup-v0.1.0-beta1/"
+printf 'kit: oot-coop-v0.1.0-beta1-linux (release v0.1.0-beta1)\n' >"$lk/backup-v0.1.0-beta1/VERSION.txt"
+printf '# Files of x\nMANIFEST.txt\nMANIFEST.txt.tmp\nVERSION.txt\nstart-squadala.sh\n' >"$lk/backup-v0.1.0-beta1/MANIFEST.txt"
+bash "$lk/revert.sh" --yes </dev/null >"$tmp/revert-legacy.txt" 2>&1
+check 'revert.sh: a kept kit whose MANIFEST.txt lists MANIFEST.txt.tmp (v0.11.2 to v0.11.4) is gone back to' bash -c 'grep -q beta1 "$1/VERSION.txt" && ! grep -q "keeps no older" "$2"' _ "$lk" "$tmp/revert-legacy.txt"
+rm -rf "$lk"
 # A damaged or hand-edited VERSION.txt never names a folder: the update goes on, nothing outside previous/ is removed.
 printf 'beside the kit\n' >"$tmp/beside-the-kit.txt"
 for bad in .. ../..; do
