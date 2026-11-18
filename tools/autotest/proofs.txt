@@ -175,8 +175,8 @@ stray-B                    s*-b-rejoined-B    160,80,960,520  refs
 screens-A                  s*-a-back-in-A     160,80,960,520  refs
 screens-B                  s*-a-back-in-B     160,80,960,520  refs
 # threads-of-time: the Threads of Time menu open
-threads-of-time-A          A2-opened-A        160,80,960,520  refs
-threads-of-time-B          A2-opened-B        160,80,960,520  refs
+threads-of-time-A          *.A2-A-opened-A      160,80,960,520  refs
+threads-of-time-B          *.A2-A-opened-B      160,80,960,520  refs
 # world-reset: the same grass and objects in each game after B's load
 world-reset-A              s*-still-60s-A     160,80,960,520  refs
 world-reset-B              s*-still-60s-B     160,80,960,520  refs

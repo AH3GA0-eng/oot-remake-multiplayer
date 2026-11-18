@@ -286,5 +286,35 @@ class VerdictTest(unittest.TestCase):
         self.assertEqual(defs[("walk", "")], ((), "c"))
 
 
+class RepoGroupsTest(unittest.TestCase):
+    """The real tools/autotest/groups/*.txt and proofs.txt agree (owner rule: no PASS from log lines alone)."""
+
+    def setUp(self):
+        here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+        gdir = os.path.join(here, "groups")
+        self.files = sorted(os.path.join(gdir, x) for x in os.listdir(gdir) if x.endswith(".txt"))
+        self.checks = proof.load_proofs()
+
+    def test_every_log_graded_line_has_proof_or_logonly(self):
+        for path in self.files:
+            with open(path, encoding="utf-8-sig") as f:
+                for name, runs in g.parse_groups(f.read()):
+                    for r in runs:
+                        where = "%s [%s] %s %s" % (os.path.basename(path), name, r["scenario"], r["label"])
+                        if r["expects"]:
+                            self.assertTrue(r["see"] or r["logonly"], where + ": expect= without see= or logonly=")
+                        for c in r["see"]:
+                            self.assertIn(c, self.checks, where + ": see=%s is not in proofs.txt" % c)
+
+    def test_no_two_lines_disagree_on_proof(self):
+        seen = {}
+        for path in self.files:
+            with open(path, encoding="utf-8-sig") as f:
+                for _, runs in g.parse_groups(f.read()):
+                    for r in runs:
+                        k, v = (r["scenario"], r["label"]), (tuple(r["see"]), r["logonly"])
+                        self.assertEqual(seen.setdefault(k, v), v, "%s: two group lines give different proofs" % (k,))
+
+
 if __name__ == "__main__":
     unittest.main()
