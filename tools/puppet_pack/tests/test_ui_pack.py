@@ -320,6 +320,79 @@ class LayoutTest(unittest.TestCase):
         same, none = up.edit_entries(entries, "Missing_00.buil", edit)
         self.assertEqual((same, none), (entries, {}))
 
+    def test_copy_under_a_pane_that_reaches_the_last_pane(self):
+        d = make_layout()
+        off = up.frame_offset(d, "Pa_Tab_03", "RootPane")
+        self.assertEqual(off, (300.0, -30.0))                      # N_Tabs_00 (200, -20) + N_All_00 (100, -10)
+        n = up.clone_parts(d, [Copy("Pa_Tab_03", "Pa_Tab_04", (100.0 + off[0], off[1]), parent="RootPane")])
+        panes, parts = up.read_layout(n)
+        new = panes[-1].record
+        self.assertEqual(u32(n, new + 0x28), 0)                    # the root's child
+        self.assertEqual(u32(n, new + 0x34), 13)
+        self.assertEqual(struct.unpack_from("<ff", n, new + 0x1c), (1000.0, -90.0))   # one step on, root's frame
+        self.assertEqual(parts[-1].name, "Pa_Tab_04")
+        ends = [u32(n, p.record + 0x34) for p in panes]
+        self.assertEqual(ends[:12], [13] + MENU_ENDS[1:])
+        self.assert_rest_unchanged(d, n, bumped=(0,))
+        # the footer reaches the last pane too: a copy there keeps the order, and the footer reaches it
+        f = up.clone_parts(d, [Copy("Pa_Tab_03", "Pa_Tab_04", parent="N_Footer_00")])
+        fp = up.read_layout(f)[0]
+        self.assertEqual(u32(f, fp[-1].record + 0x28), 9)
+        self.assertEqual([u32(f, p.record + 0x34) for p in fp][:12], [13, 9, 7, 4, 5, 6, 7, 9, 9, 13, 11, 12])
+
+    def test_copy_under_a_pane_that_ends_early(self):
+        d = make_layout()
+        with self.assertRaises(UiPackError) as e:
+            up.clone_parts(d, [Copy("Pa_Tab_03", "Pa_Tab_04", parent="N_Gauge_00")])
+        self.assertIn("Copy.parent", str(e.exception))
+        n = up.clone_parts(d, [Copy("Pa_Tab_03", "Pa_Tab_04", parent="N_Gauge_00")], out_of_order=True)
+        self.assertEqual(u32(n, up.read_layout(n)[0][-1].record + 0x28), 7)
+        with self.assertRaises(UiPackError):
+            up.clone_parts(d, [Copy("Pa_Tab_03", "Pa_Tab_04", parent="N_Nothing_00")])
+
+    def test_a_copy_stored_hidden(self):
+        d = make_layout()
+        shown = up.clone_parts(d, [Copy("Pa_Guide_01", "Pa_Guide_02")])
+        hidden = up.clone_parts(d, [Copy("Pa_Guide_01", "Pa_Guide_02", hidden=True)])
+        word = lambda n: u32(n, up.read_layout(n)[0][-1].record + 0x38)
+        self.assertEqual(word(shown), PART_KIND)                    # (the source's: bit 0 set)
+        self.assertEqual(word(hidden), PART_KIND & ~1)              # only bit 0 cleared
+        self.assert_rest_unchanged(d, hidden, bumped=(0, 9))
+
+    def test_move_panes(self):
+        d = make_layout()
+        n = up.move_panes(d, {"Pa_Tab_00": (-50.0, 5.0), "N_Footer_00": (0.0, 10.0)})
+        self.assertEqual(len(n), len(d))
+        panes, _ = up.read_layout(n)
+        self.assertEqual(struct.unpack_from("<ff", n, panes[3].record + 0x1c), (250.0, -25.0))
+        self.assertEqual(struct.unpack_from("<ff", n, panes[9].record + 0x1c), (900.0, -80.0))
+        changed = [at for at in range(len(d)) if d[at] != n[at]]
+        moved = (panes[3].record + 0x1c, panes[3].record + 0x24, panes[9].record + 0x20, panes[9].record + 0x24)
+        self.assertTrue(all(moved[0] <= at < moved[1] or moved[2] <= at < moved[3] for at in changed))
+        self.assertEqual(up.move_panes(d, {}), d)
+        for bad in ({"Pa_Nothing_00": (1.0, 0.0)}, {"Pa_Tab_00": (1.0,)}, {"Pa_Tab_00": 5},
+                    {"Pa_Tab_00": (float("nan"), 0.0)}):
+            with self.subTest(moves=repr(bad)), self.assertRaises(UiPackError):
+                up.move_panes(d, bad)
+
+    def test_frame_offset(self):
+        d = make_layout()
+        self.assertEqual(up.frame_offset(d, "Pa_Tab_03", "N_Tabs_00"), (0.0, 0.0))     # its own parent
+        self.assertEqual(up.frame_offset(d, "Pa_Guide_01", "RootPane"), (900.0, -90.0))
+        for pane, ancestor in (("Pa_Tab_03", "N_Footer_00"), ("Pa_Tab_03", "Pa_Tab_03"), ("RootPane", "N_All_00"),
+                               ("Pa_Nothing_00", "RootPane"), ("Pa_Tab_03", "N_Nothing_00")):
+            with self.subTest(pane=pane, ancestor=ancestor), self.assertRaises(UiPackError):
+                up.frame_offset(d, pane, ancestor)
+        scaled = bytearray(d)
+        struct.pack_into("<f", scaled, up.read_layout(d)[0][2].record + 0x10, 2.0)   # N_Tabs_00 scaled
+        with self.assertRaises(UiPackError):
+            up.frame_offset(bytes(scaled), "Pa_Tab_03", "RootPane")
+        turned = bytearray(d)
+        struct.pack_into("<f", turned, up.read_layout(d)[0][1].record + 0x18, 0.5)   # N_All_00 turned
+        with self.assertRaises(UiPackError):
+            up.frame_offset(bytes(turned), "Pa_Tab_03", "RootPane")
+        self.assertEqual(up.frame_offset(bytes(turned), "Pa_Tab_03", "N_All_00"), (200.0, -20.0))
+
 
 # ---------------------------------------------------------------------------------------- MSBT
 
@@ -414,9 +487,18 @@ class LabelsTest(unittest.TestCase):
         r = msbt.read(up.add_labels(make_msbt(GAME, extra=[(b"ATR1", atr)]), {"CoopMenu": "Multiplayer"}))
         self.assertEqual(r.attributes, [b"\1\0\0\0", b"\2\0\0\0", b"\3\0\0\0", b"\0\0\0\0"])
 
+    def test_a_panes_own_label(self):
+        """A text pane's label is its path through the parts, joined by - (the game's own)."""
+        label = "Pa_Coop_00-Pa_Button_00-T_Btn_00"
+        r = msbt.read(up.add_labels(make_msbt(GAME + [("Pa_System_00-Pa_Button_00-T_Btn_00", "Save")]),
+                                    {label: "Session"}))
+        self.assertEqual(r.text(label), ["Session"])
+        self.assertEqual(r.text("Pa_System_00-Pa_Button_00-T_Btn_00"), ["Save"])
+        self.assertEqual(up.parse_strings("[F.msbt]\n%s = Session\n" % label), {"F.msbt": {label: "Session"}})
+
     def test_refusals(self):
         m = make_msbt(GAME)
-        for labels in ({"Coop Menu": "x"}, {"": "x"}, {"Coopé": "x"}, {"CoopMenu": ""},
+        for labels in ({"Coop Menu": "x"}, {"": "x"}, {"Coopé": "x"}, {"Coop/Menu": "x"}, {"CoopMenu": ""},
                        {"CoopMenu": "a\x0eb"}, {"CoopMenu": "a\tb"}, {"CoopMenu": 5}):
             with self.subTest(labels=repr(labels)), self.assertRaises(UiPackError):
                 up.add_labels(m, labels)
@@ -506,7 +588,7 @@ class StringsTest(unittest.TestCase):
                 self.assertTrue(up.load_strings(name))
         ours = up.load_strings("EUfr")["LayoutMsg/MenuOverlay_00.msbt"]
         r = msbt.read(up.add_labels(make_msbt(GAME), ours))
-        self.assertEqual(r.text("CoopMenu"), [ours["CoopMenu"]])
+        self.assertEqual(r.text("Pa_Category_04-T_Text_00"), [ours["Pa_Category_04-T_Text_00"]])
 
 
 if __name__ == "__main__":
