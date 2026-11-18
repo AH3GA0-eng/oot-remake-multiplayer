@@ -41,6 +41,8 @@ std::mutex g_mutex;  // everything below; the game's file service and the networ
 fs::path g_dir;      // the folder the game opened for its account save
 save::Planner g_planner;
 bool g_save_requests = false;   // SetSaveRequests: Hookshot asks our game for its own autosave (TakeSaveRequest)
+std::atomic<bool> g_save_request_due{false};   // set under g_mutex when an ask opens a round; TakeSaveRequest's
+                                               // lock-free check (the calc thread, every frame)
 // Player report 120: the slot our game plays (patch 0025's opens, patch 0024's load windows), sent to the guests.
 save::PlayedSlot g_played;
 std::atomic<SlotOpenedFn> g_slot_opened{nullptr};   // SetSlotOpens (Hookshot's patch 0025)
@@ -383,6 +385,9 @@ void SetSaveRequests(bool on) {
 }
 
 bool TakeSaveRequest() {
+    // The calc thread asks every frame: no lock unless a guest's ask opened a round (the host's game never waits on
+    // g_mutex while OnFrame packs a slot, except on the one frame that takes the request).
+    if (!g_save_request_due.exchange(false, std::memory_order_acq_rel)) return false;
     std::lock_guard lock(g_mutex);
     return g_in_game && g_planner.take_save_request();   // (back on the title: no file to save; the limit sends)
 }
@@ -634,6 +639,7 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
             const bool open = g_planner.round_open();
             if (g_planner.on_ask(ask->player_number, CoopEvery::NowUs(),
                                  fresh ? std::optional(fs::file_time_type::clock::now()) : std::nullopt)) {
+                if (fresh && !open) g_save_request_due.store(true, std::memory_order_release);   // (a new round)
                 LOG_INFO(Core, "coop: save: player {} asked for our save{}", ask->player_number,
                          !fresh ? "" : open ? " (it waits for the save already asked of our game)"
                                             : " (our game is asked for its own autosave first)");

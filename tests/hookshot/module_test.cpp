@@ -4,6 +4,7 @@
 #include <doctest/doctest.h>
 
 #include <array>
+#include <cctype>
 
 #include <cstdio>
 #include <filesystem>
@@ -977,29 +978,64 @@ TEST_CASE("hookshot: a guest's ask makes the host's game save first, with the ca
     CHECK(save.find("const bool fresh = g_save_requests && g_in_game && "
                     "!g_played.new_game(g_in_game, g_title_seen);") != std::string::npos);
     CHECK(save.find("return g_in_game && g_planner.take_save_request();") != std::string::npos);
+    // (the calc thread's every-frame look takes no lock: an atomic set when an ask opens a round)
+    const auto take = save.find("bool TakeSaveRequest() {");
+    REQUIRE(take != std::string::npos);
+    CHECK(save.find("if (!g_save_request_due.exchange(false, std::memory_order_acq_rel)) return false;", take) <
+          save.find("std::lock_guard lock(g_mutex);", take));
+    CHECK(save.find("if (fresh && !open) g_save_request_due.store(true, std::memory_order_release);") !=
+          std::string::npos);
     CHECK(save.find(": send.fresh ? save::newest_slot(g_dir)") != std::string::npos);
 }
 
-TEST_CASE("hookshot: the title's game addresses are main's offsets plus main's guest base 0x80020000") {
-    // The save list's addresses were once written as 0x80000000 + the offset (0x20000 short): docs/hookshot.md names
-    // the main offsets; each constant in coop_title.cpp must be 0x80020000 + one of them.
+TEST_CASE("hookshot: the title's and the Map page's main addresses are offsets, made guest ones only by MainBase()") {
+    // The save list's addresses were once written as 0x80000000 + the offset (0x20000 short of main's base). Now
+    // every main address in coop_title.cpp is a main offset (docs/hookshot.md names the save list's) used through
+    // Main() = CoopRuntime::MainBase() + offset, and no guest address is written in the file.
     const std::string title = ReadFile(kRepo / "hookshot" / "src" / "coop_title.cpp");
     const std::string docs = ReadFile(kRepo / "docs" / "hookshot.md");
+    CHECK(title.find("return CoopRuntime::MainBase() + offset;") != std::string::npos);
     const struct {
         const char* name;
         std::uint64_t main_offset;
-    } want[] = {{"kCaptionMgrGot", 0x4c81660}, {"kCaptionBusy", 0x33ad380}, {"kCaptionReset", 0xbafd40},
-                {"kCaptionReload", 0xf6da40}};
+        bool in_docs;
+    } want[] = {{"kCaptionMgrGot", 0x4c81660, true}, {"kCaptionBusy", 0x33ad380, true},
+                {"kCaptionReset", 0xbafd40, true},    {"kCaptionReload", 0xf6da40, true},
+                {"kTitleVtable", 0x4bf06e8, false},   {"kMsgRefInit", 0xa66f70, false},
+                {"kMsgRefSet", 0xa6afe0, false},      {"kPaneText", 0xa67d30, false}};
     for (const auto& w : want) {
         INFO(w.name);
         char doc_text[32];
         std::snprintf(doc_text, sizeof doc_text, "main+0x%llx", static_cast<unsigned long long>(w.main_offset));
         char code_text[96];
         std::snprintf(code_text, sizeof code_text, "constexpr std::uint64_t %s = 0x%llx;", w.name,
-                      static_cast<unsigned long long>(0x80020000ull + w.main_offset));
-        CHECK(docs.find(doc_text) != std::string::npos);
+                      static_cast<unsigned long long>(w.main_offset));
+        char use_text[64];
+        std::snprintf(use_text, sizeof use_text, "Main(%s)", w.name);
+        if (w.in_docs) CHECK(docs.find(doc_text) != std::string::npos);
         CHECK(title.find(code_text) != std::string::npos);
+        CHECK(title.find(use_text) != std::string::npos);
     }
+    // no guest address (0x8xxxxxxx) written as a constant in the file
+    std::size_t at = 0;
+    while ((at = title.find("constexpr std::uint64_t ", at)) != std::string::npos) {
+        const auto line_end = title.find('\n', at);
+        const std::string line = title.substr(at, line_end - at);
+        INFO(line);
+        const auto value = line.find("= 0x");
+        at = line_end;
+        if (value == std::string::npos) continue;   // (button bits: 1ull << n)
+        std::size_t digits = 0;
+        while (value + 4 + digits < line.size() &&
+               std::isxdigit(static_cast<unsigned char>(line[value + 4 + digits]))) {
+            ++digits;
+        }
+        CHECK(digits < 8);   // a main offset (main is under 0x5000000); a guest address has 8 digits
+    }
+    const std::string page_h = ReadFile(kRepo / "hookshot" / "src" / "coop_map_page.h");
+    const std::string page = ReadFile(kRepo / "hookshot" / "src" / "coop_map_page.cpp");
+    CHECK(page_h.find("inline constexpr std::uint64_t kFindPane = 0x76e2b0;") != std::string::npos);
+    CHECK(page.find("k.function = CoopRuntime::MainBase() + kFindPane;") != std::string::npos);
 }
 
 TEST_CASE("hookshot: patch 0018's screens' tracker and menu state build on Linux too, the mouse stays Windows'") {
@@ -1205,20 +1241,19 @@ TEST_CASE("hookshot: every switch of the save folder marks the game's save list 
     CHECK(first > helper);
     CHECK(save.find("g_list_stale = true;", helper) != std::string::npos);
     const std::string title = ReadFile(kRepo / "hookshot" / "src" / "coop_title.cpp");
-    // Main at 0x80020000: main+0xf6da40, +0x33ad380, +0xbafd40, +0x4c81660 (docs/hookshot.md "The save list").
-    CHECK(title.find("constexpr std::uint64_t kCaptionReload = 0x80f8da40;") != std::string::npos);
-    CHECK(title.find("constexpr std::uint64_t kCaptionBusy = 0x833cd380;") != std::string::npos);
-    CHECK(title.find("constexpr std::uint64_t kCaptionReset = 0x80bcfd40;") != std::string::npos);
+    CHECK(title.find("constexpr std::uint64_t kCaptionReload = 0xf6da40;") != std::string::npos);
+    CHECK(title.find("constexpr std::uint64_t kCaptionBusy = 0x33ad380;") != std::string::npos);
+    CHECK(title.find("constexpr std::uint64_t kCaptionReset = 0xbafd40;") != std::string::npos);
     // The game's order: its idle test, its reset, then its read (a read starts only from state 0).
-    const auto busy = title.find("GameCall(ctx, kCaptionBusy, mgr)");
-    const auto reset = title.find("GameCall(ctx, kCaptionReset, 0)");
-    const auto read = title.find("GameCall(ctx, kCaptionReload, mgr)");
+    const auto busy = title.find("GameCall(ctx, Main(kCaptionBusy), mgr)");
+    const auto reset = title.find("GameCall(ctx, Main(kCaptionReset), 0)");
+    const auto read = title.find("GameCall(ctx, Main(kCaptionReload), mgr)");
     REQUIRE(busy != std::string::npos);
     REQUIRE(reset != std::string::npos);
     REQUIRE(read != std::string::npos);
     CHECK(busy < reset);
     CHECK(reset < read);
-    CHECK(title.find("constexpr std::uint64_t kCaptionMgrGot = 0x84ca1660;") != std::string::npos);
+    CHECK(title.find("constexpr std::uint64_t kCaptionMgrGot = 0x4c81660;") != std::string::npos);
     CHECK(title.find("in.stale = CoopSave::TakeSaveListStale();") != std::string::npos);
     const auto step = title.find("if (event == HOS_COOP_TITLE_STEP) {");
     REQUIRE(step != std::string::npos);
