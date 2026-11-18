@@ -360,6 +360,11 @@ bool give_up_due(const GuestSession& s, std::uint64_t now_us);
 // emulator: its folder is fixed at the start), and while a transfer is still coming in.
 enum class ResyncCheck : std::uint8_t { go, not_guest, no_switch, coming };
 ResyncCheck resync_check(bool connected_guest, bool can_switch, bool coming);
+// Back on the title (the player's Quit, Game Over's Quit Game, any return), a guest who played a file in this session
+// asks for the host's save again by itself, as Resync from host: the next Load or Continue is the host's save, never
+// the file it played before (its own copy of the world). Once per return to the title, and only after a file was
+// played in this session (on joining the save is asked anyway). `on`: LICHII_COOP_TITLE_RESYNC is not 0.
+bool title_resync_due(bool title_came, bool connected_guest, bool played_in_session, bool on);
 
 // A guest's chat lines about the host's save (the owner's wording). The player loads the save themselves (nothing
 // presses the title's buttons); these lines say when:

@@ -52,6 +52,9 @@ unsigned g_slot_opens_seen = 0;
 bool g_title_seen = false;   // the title's menu was up in this run (PlayedSlot::new_game)
 bool g_resync = false;        // RequestResync: taken by the next OnFrame
 bool g_guest_live = false;    // a connected guest of this session (CanResync), set each OnFrame
+// A guest of this session played a file (NoteInGame): back on the title, the host's save is asked for again
+// (save::title_resync_due). Cleared when it is asked, and with each new session (SwitchFrame).
+bool g_guest_played = false;
 // This session's guest save state (save::GuestSession): fresh for each session (decide_again).
 save::GuestSession g_guest;
 std::deque<proto::SavePart> g_outbox;       // the host's parts, a frame each
@@ -149,6 +152,7 @@ void SwitchFrame(coop::net::Client& client) {
             g_lines = save::GuestNotices{};
             g_pending.clear();
             g_suspended = false;
+            g_guest_played = false;   // (the title's resync is this session's)
             LOG_INFO(Core, "coop: save: the session is over: the next one chooses the save folder again");
         }
         g_live = g_decided && !over;   // (decided below in this frame: on from the next one)
@@ -290,6 +294,7 @@ void SetSwitch(std::function<std::string()> root, std::function<bool(const std::
 void NoteInGame(bool in_game) {
     std::lock_guard lock(g_mutex);
     g_in_game = in_game;
+    if (in_game && g_guest_live) g_guest_played = true;   // (the title's resync, NoteTitle)
     Say(g_lines.on_in_game(in_game));
 }
 
@@ -340,6 +345,15 @@ void NoteTitle(bool title_up) {
     if (title_up && !g_title_up) {
         g_played.on_title();   // (a new pick follows: a file, or New Game)
         g_title_seen = true;
+        // A guest back on the title after playing: what it played is left for the host's save, asked for again now
+        // (Resync, by the next OnFrame), so the next load is the host's. The world, the objects and the boss copies
+        // are dropped at the title already (CoopObjects::Share); bosses beaten in the session stay beaten.
+        if (save::title_resync_due(true, g_guest_live, g_guest_played, EnvText("LICHII_COOP_TITLE_RESYNC") != "0")) {
+            g_guest_played = false;
+            g_resync = true;
+            LOG_INFO(Core, "coop: save: back on the title as a guest: asking for the host's save again, so the next "
+                           "load is the host's");
+        }
     }
     g_title_up = title_up;
 }

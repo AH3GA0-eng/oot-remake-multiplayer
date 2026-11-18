@@ -306,6 +306,10 @@ ResyncCheck resync_check(bool connected_guest, bool can_switch, bool coming) {
   return ResyncCheck::go;
 }
 
+bool title_resync_due(bool title_came, bool connected_guest, bool played_in_session, bool on) {
+  return title_came && connected_guest && played_in_session && on;
+}
+
 std::optional<fs::path> slot_to_send(const fs::path& game_dir, const std::optional<fs::path>& played,
                                      bool* played_used) {
   if (played_used) *played_used = false;

@@ -839,6 +839,14 @@ TEST_CASE("save transfer: a host load of a known slot goes to every guest at onc
   CHECK(p.due(t0).empty());
 }
 
+TEST_CASE("save transfer: a guest back on the title after playing asks for the host's save again, once") {
+  CHECK(save::title_resync_due(true, true, true, true));
+  CHECK_FALSE(save::title_resync_due(false, true, true, true));  // not a return to the title
+  CHECK_FALSE(save::title_resync_due(true, false, true, true));  // the host, or alone: its own saves
+  CHECK_FALSE(save::title_resync_due(true, true, false, true));  // nothing played since joining (asked on joining)
+  CHECK_FALSE(save::title_resync_due(true, true, true, false));  // LICHII_COOP_TITLE_RESYNC=0
+}
+
 TEST_CASE("save transfer: Resync from host goes only for a guest that can switch, and not twice at once") {
   using save::ResyncCheck;
   CHECK(save::resync_check(true, true, false) == ResyncCheck::go);
