@@ -88,6 +88,9 @@ struct Built {
 std::vector<Built> Scan(const std::filesystem::path& mods_root);
 
 struct Want {
+    Want() = default;
+    Want(bool on_, std::string seed_, std::string preset_)
+        : on(on_), seed(std::move(seed_)), preset(std::move(preset_)) {}
     bool on = false;
     std::string seed;    // empty: none yet
     std::string preset;  // a preset, or a settings string (IsSettingsString) in its place
