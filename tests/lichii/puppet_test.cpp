@@ -859,9 +859,10 @@ TEST_CASE("puppet gear: a mask is worn in state 1, other pieces in state 2") {
     CHECK(calls[1].x[1] == 8u);
     CHECK(calls[1].x[3] == 2u);
 }
-TEST_CASE("puppet gear: the Hookshot is left off the puppet, and its slot is not ours (issue 232)") {
+TEST_CASE("puppet gear: where null reads cannot give 0, the Hookshot is left off the puppet, and its slot is not ours (issue 232)") {
     Game g;
     Director d;
+    d.SetNullReadsZero(false);
     MakeLive(d, g);
     constexpr std::uint64_t kParts = 0x500000000;
     constexpr std::uint64_t kEu = kParts + 0x800;
@@ -918,6 +919,42 @@ TEST_CASE("puppet gear: the Hookshot is left off the puppet, and its slot is not
         }
     }
     CHECK_FALSE(equipped);
+}
+TEST_CASE("puppet gear: where null reads give 0, the Hookshot and the Longshot are worn like any held item (issue 232)") {
+    // The crash was the missing-Player read every held piece makes (guest
+    // 0x7d8); with the null page armed (or on the emulator) it reads 0, so
+    // the piece is worn, put away and drawn as the slingshot is.
+    for (const char* name : {"Weapon_Range_Hookshot", "Weapon_Range_Longshot"}) {
+        Game g;
+        Director d;
+        MakeLive(d, g);
+        constexpr std::uint64_t kParts = 0x500000000;
+        constexpr std::uint64_t kEu = kParts + 0x800;
+        g.guest.Map(kParts, 0x1000);
+        g.guest.Set(kActor + addr::kActorParts, kParts);
+        g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+        Target t = At(1, 4, 5, 6);
+        t.gear[CoopPuppet::kGearHeld] = name;
+        d.SetInput(Wants({t}));
+        auto calls = Frame(d, g, 20);
+        REQUIRE(calls.size() == 1);
+        CHECK(calls[0].function == kBase + addr::kEquip);
+        CHECK(calls[0].x[1] == 5u);
+        CHECK(d.LeftOff(name) == false);
+
+        // Switched to the slingshot: worn in its place, no remake.
+        t.gear[CoopPuppet::kGearHeld] = "Weapon_Range_SlingShot";
+        d.SetInput(Wants({t}));
+        calls = Frame(d, g, 1000);
+        REQUIRE(calls.size() == 1);
+        CHECK(calls[0].function == kBase + addr::kEquip);
+        CHECK(calls[0].x[1] == 5u);
+    }
+    Director off;
+    off.SetNullReadsZero(false);
+    CHECK(off.LeftOff("Weapon_Range_Hookshot"));
+    CHECK(off.LeftOff("Weapon_Range_Longshot"));
+    CHECK_FALSE(off.LeftOff("Weapon_Range_SlingShot"));
 }
 TEST_CASE("puppet gear: a mask taken off is taken off with the game's call, a held item is only put away") {
     Game g;

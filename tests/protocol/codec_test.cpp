@@ -342,6 +342,30 @@ TEST_CASE("unknown reasons and status bits are kept, not refused") {
   CHECK(std::get<PlayerStatus>(m).flags == 0xFF);
 }
 
+TEST_CASE("a client's name with a long version is cut to HELLO's limit, so the HELLO can always be sent") {
+  // (docs/crossplay.md) "coop hookshot " + a long `git describe` (a mirror tag, many commits, a long hash, dirty)
+  const std::string long_id =
+      "coop hookshot longshot-mirror-v3.0.0-rc.4-1234-gbd02dd49a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6-dirty";
+  REQUIRE(long_id.size() > kMaxBuildIdChars);
+  Hello hello{kProtocolVersion, long_id, "e0f3ccfaf50065ae", "1.1.1", "Link"};
+  CHECK(encode(Message{hello}) == std::nullopt);   // (the reason: unclamped, it could never be sent)
+
+  hello.build_id = clamp_build_id(long_id);
+  CHECK(hello.build_id.size() == kMaxBuildIdChars);
+  CHECK(long_id.rfind(hello.build_id, 0) == 0);   // (its start, unchanged)
+  CHECK(encode(Message{hello}) != std::nullopt);
+
+  CHECK(clamp_build_id("coop hookshot 0.11.3") == "coop hookshot 0.11.3");   // (short: as it is)
+  CHECK(clamp_build_id("").empty());
+
+  // A launcher's version in other scripts: cut at a character, never inside one, and still sendable
+  std::string wide = "coop ";
+  for (int i = 0; i < 70; ++i) wide += "\xC3\xA9";   // (é, two bytes each)
+  hello.build_id = clamp_build_id(wide);
+  CHECK(hello.build_id.size() == 5 + 2 * (kMaxBuildIdChars - 5));
+  CHECK(encode(Message{hello}) != std::nullopt);
+}
+
 TEST_CASE("the protocol version check") {
   Hello hello{kProtocolVersion, "recomp 0.1", "e0f3ccfaf50065ae", "1.1.1", "Link"};
   CHECK(check_hello(hello, "e0f3ccfaf50065ae") == std::nullopt);
@@ -2219,6 +2243,32 @@ TEST_CASE("dungeon event has its number, the session channel and checked strings
         Error::string_too_long);
   CHECK(encode(DungeonEvent{0, "InsideTheDekuTree", std::string(kMaxEventNameChars, 'a')}, out) ==
         Error::none);
+}
+
+TEST_CASE("switch state: type 356, the session channel, a round trip and checked fields (room-objects)") {
+  CHECK(static_cast<int>(MessageType::switch_state) == 356);
+  CHECK(channel_of(MessageType::switch_state) == kChannelSession);
+  CHECK(allowed_on_channel(MessageType::switch_state, kChannelSession));
+  CHECK_FALSE(allowed_on_channel(MessageType::switch_state, kChannelProgress));
+  CHECK(may_send(Sender::client, MessageType::switch_state));
+  CHECK(may_send(Sender::server, MessageType::switch_state));
+  const SwitchState s{3, "DodongoCavern", "Obj_StepSwitch_A_01", {17.2f, 112.3f, -23.0f}, 0x1234abcdu, true};
+  Message back;
+  REQUIRE(decode(must_encode(s), back) == Error::none);
+  CHECK(std::get<SwitchState>(back) == s);
+  Message n = s;
+  CHECK(set_sender(n, 5));
+  CHECK(sender_of(n) == 5);
+  Bytes out;
+  CHECK(encode(SwitchState{0, "", "A", {}, 1, true}, out) == Error::bad_value);               // no scene
+  CHECK(encode(SwitchState{0, "DodongoCavern", "", {}, 1, true}, out) == Error::bad_value);   // no name
+  CHECK(encode(SwitchState{0, "DodongoCavern", "A", {}, 0, true}, out) == Error::bad_value);  // no plug
+  CHECK(encode(SwitchState{0, "DodongoCavern", "A", {std::nanf(""), 0.0f, 0.0f}, 1, true}, out) == Error::bad_value);
+  CHECK(encode(SwitchState{0, "DodongoCavern", std::string(kMaxSwitchNameChars + 1, 'a'), {}, 1, true}, out) ==
+        Error::string_too_long);
+  Bytes b = must_encode(SwitchState{0, "D", "A", {}, 1, false});
+  b.back() = 2;  // on is 0 or 1
+  CHECK(decode(b, back) == Error::bad_value);
 }
 
 TEST_CASE("player ride: type 385, samples channel, horse and offset, both ways") {

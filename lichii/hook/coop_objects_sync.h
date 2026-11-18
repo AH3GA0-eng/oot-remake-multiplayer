@@ -84,6 +84,14 @@ struct Seen {
     // Where a boss copy's own new hit landed (its game's hit record, +0x27c; IsBoss only, never one we replayed,
     // checked near the boss): sent with our DAMAGE so the owner's replay lands there (boss-intro).
     std::optional<coop::protocol::Vec3> hit_at{};
+    // Since the last walk its Life component's last hit id (+0x1b18) moved: own_hit when it moved to an id we did
+    // not replay (our game's own hit: our Link's sword, arrow, bomb), replay_hit when our last replayed id was
+    // reached in that move. A fall while a replay waits is the replay landing only without own_hit (g2-bosses
+    // probe 20261117-114108: two of A's hits on Gohma's copy were booked as B's refused replay and never sent).
+    bool own_hit = false;
+    bool replay_hit = false;
+    // Its last hit id was read in this walk and in the one before (so "did not move" is known; PvP's FollowLife).
+    bool hit_id_read = false;
     // Its Life component (0: none read); a copy boss's is held at life 1 by its own Life step
     // (CoopBossNative::Table::HeldLifeStep) until its owner's dies.
     std::uint64_t life_component = 0;
@@ -264,6 +272,10 @@ void NoteBossLives(const std::vector<Seen>& walk, BossLives& last);
 void NoteBossRemoved(std::uint64_t address, BossLives& last);
 std::optional<bool> BossAliveKept(const std::vector<Seen>& walk, std::span<const std::string_view> bodies,
                                   const BossLives& last);
+// Whether that "dead" (BossAliveKept false) is a reading of its death: a body read at life 0, on this walk or as its
+// last reading this scene. False for a boss none of whose bodies was read here (a save that beat it, or the walk
+// never saw it): dead for the pull, never proof of a death (G2 review: a beaten set must never come from it).
+bool BossReadDead(const std::vector<Seen>& walk, std::span<const std::string_view> bodies, const BossLives& last);
 
 // boss-copy-b: whether a boss is still in its pre-battle phase in one walk,
 // from its body actors' own animation (AS slot 0): Gohma's `Sleep` and
@@ -540,6 +552,7 @@ public:
     static constexpr std::uint64_t kExtrapolateUs = 150'000;
     static constexpr std::uint64_t kPoseStaleUs = 2'500'000;  // no sample this long: let it be
     static constexpr std::uint64_t kHurtWaitUs = 400'000;     // then write life directly
+    static constexpr std::uint64_t kHandedUs = 2'000'000;     // a DAMAGE of ours that crossed a hand-over is back by then
     static constexpr std::uint64_t kHitPlaceKeepUs = 200'000;  // a hit's place waits this long for its life drop
     static constexpr std::size_t kKeepSamples = 16;
     static constexpr std::uint64_t kSceneStaleUs = 5'000'000;  // a player's scene, from its samples
@@ -560,6 +573,14 @@ public:
 
     // Hurt through the game's damage field (LifeWrite::hurt); off: write life.
     void SetHurt(bool on) { hurt_ = on; }
+    // Test only (coop_testinput's "stun NAME"): our copy of the boss of that name nearest `near` (another
+    // player owns it) tells its owner at the next Tick it is stunned here, as our game's own stun does (a
+    // DAMAGE of 0, issue 150's hand-over). False: no such copy (none, or ours).
+    bool TestStun(std::string_view name, const std::optional<coop::protocol::Vec3>& near, std::uint8_t self);
+    // Test only (coop_testinput's "hit NAME N", given straight to the Life step, so no hit id moves): the next fall
+    // of the object at `address` within kTestOwnHitUs is our game's own hit (Seen::own_hit), as a sword's would be.
+    void TestOwnHit(std::uint64_t address, std::uint64_t now_us);
+    static constexpr std::uint64_t kTestOwnHitUs = 1'000'000;
 
     // Hookshot with patch 0007 (coop_actor_events.h): the game's own Life
     // step says every hit it deals, so a hit of this game's on a copy is
@@ -863,6 +884,13 @@ public:
 
     // Present thread: not connected or the game went away. Forgets everything.
     void Reset();
+    // Present thread, just before the Reset of a session's end (we left, the server dropped, the host's game
+    // crashed): no owner judges our boss copies any more, and their own Life step lets them die again
+    // (CoopBossNative Publish({})). A copy held at life 1 by HeldLifeStep (or lower by its own hits the owner
+    // refused) would die of the next hit: each live boss copy takes its owner's last life from the owner's samples,
+    // through its own Life step (the hand-over's rule, TakeOwnerLife), so the fight goes on in our game where it
+    // was. No new network data. A copy whose owner said it died, or with no owner's life heard, is left alone.
+    void KeepBossLives(std::uint8_t self, std::vector<LifeWrite>& writes);
 
     // Network thread, on a reconnect: the server's epochs may start again
     // at 0, so the owners we know of placed objects are forgotten at the
@@ -902,6 +930,8 @@ public:
     bool OwnerSaysDead(std::uint64_t address) const;
     std::uint8_t OwnerOf(const coop::protocol::ObjectId& id) const;
     std::size_t HurtsTaken() const { return hurt_taken_; }
+    // Falls counted as our own hit while a replay waited (Seen::own_hit), not as the replay landing.
+    std::size_t OwnHitsKept() const { return own_hits_kept_; }
     std::size_t HurtsMissed() const { return hurt_missed_; }
     // Another player's hits our boss refused as a replay, given to its own Life step (boss-hits).
     std::size_t BossHitsStepped() const { return boss_hits_stepped_; }
@@ -952,11 +982,19 @@ private:
         std::uint32_t sequence = 0;
         // Copy side.
         std::int32_t hit_sum = 0;
+        std::uint64_t test_own_hit_until = 0;  // TestOwnHit
         std::optional<coop::protocol::Vec3> place_seen;  // a new hit's place, waiting for its life drop
         std::uint64_t place_seen_at = 0;
         std::optional<coop::protocol::Vec3> hit_place;  // where our own hit summed now landed (a boss; cleared with the sum)
         std::uint64_t hit_since = 0;
         std::uint64_t hit_at = 0;  // last DAMAGE sent
+        // A HANDOVER_STATE made it ours: until its owner news (any owner; cleared there) a fall here is our own
+        // enemy's, no DAMAGE. `handed_took`: its life became the old owner's there, so a DAMAGE of ours that
+        // crossed the hand-over (the server gives it back, player_number our own) is not in it yet; taken off
+        // until `returned_until` (kHandedUs), whoever owns it by then.
+        std::uint64_t handed_until = 0;
+        std::uint64_t returned_until = 0;
+        bool handed_took = false;
         std::uint64_t react_at = 0;  // our last hit on it, as seen in its life
         std::string react_over;      // the owner's animation at that moment
         std::deque<Received> received;  // the owner's samples, oldest first
@@ -1027,6 +1065,7 @@ private:
         int resent = 0;
         std::uint64_t dead_at = 0;
         bool owner_life_zero = false;  // its owner's samples said life 0 (OwnerSaysDead)
+        std::optional<std::int32_t> owner_life;  // its owner's last life, from the owner's samples (KeepBossLives)
         bool death_given = false;      // a dying copy boss's remaining life went to its own Life step (once)
         bool dead_now = false;  // a kill from before we came: deleted at once
         // enemy-sync-3 (issue 133): our enemy, killed by another game's hit
@@ -1059,6 +1098,10 @@ private:
     void Lower(Object& o, std::int32_t life, std::uint64_t now_us, std::vector<LifeWrite>& writes,
                std::uint8_t hitter,
                const std::optional<coop::protocol::Vec3>& hit_at = std::nullopt);
+
+    // A boss copy takes `owner_life` (its old owner's last life): raised (heal) or lowered (direct) through its
+    // own Life step, never a write. False when it is no boss, has no life read, or the lives agree.
+    bool TakeOwnerLife(Object& o, std::int32_t owner_life, std::vector<LifeWrite>& writes, std::string_view why);
 
     // enemy-sync-3 (issue 133): an enemy we own whose life was written to 0
     // (another game's hit our game did not take, or hurt off) may stand on
@@ -1292,6 +1335,7 @@ private:
     std::vector<std::string> dying_;  // SetDying
     unsigned dying_finished_ = 0;     // DyingFinished
     std::size_t hurt_taken_ = 0;   // hurts the game took as asked
+    std::size_t own_hits_kept_ = 0;  // OwnHitsKept
     std::size_t hurt_late_ = 0;    // late falls put back
     std::size_t hurt_missed_ = 0;  // hurts not taken after the wait (given to the Life step, or lost: never written)
     std::size_t boss_hits_stepped_ = 0;  // of those, another player's hits on our boss given to its Life step

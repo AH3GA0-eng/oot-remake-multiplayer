@@ -1138,7 +1138,7 @@ TEST_CASE("ocarina_bools_mend: a shared ocarina gets the Bools a real get sets (
 TEST_CASE("OcarinaEquip: the game equips a shared ocarina from its flags once (rows 93, 103)") {
   using coop::host::OcarinaEquip;
   namespace oc = coop::host::ocarina;
-  const auto settle = [](OcarinaEquip& e, std::optional<std::string_view> live, bool link, bool busy) {
+  const auto settle = [](OcarinaEquip& e, const std::optional<std::string_view>& live, bool link, bool busy) {
     for (int i = 0; i < OcarinaEquip::kSettleFrames; ++i) e.arm(live, link, busy);
   };
   OcarinaEquip e;

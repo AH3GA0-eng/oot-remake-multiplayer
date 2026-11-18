@@ -9,8 +9,8 @@ Layout (offsets are from the file's start; strings are a u16 length, the text an
             0x30 u16 actions, u16 queries
   event     0x30 bytes: 0x00 name, 0x08 u8 type (0 action, 1 switch, 2 fork, 3 join, 4 subflow)
             action  0x0A u16 next, 0x0C u16 actor, 0x0E u16 action
-            switch  0x0A u16 cases, 0x0C u16 actor, 0x0E u16 query, 0x18 cases (0x10 each: u32 value,
-                    u16 event)
+            switch  0x0A u16 cases, 0x0C u16 actor, 0x0E u16 query, 0x18 cases (8 bytes each: u32 value,
+                    u16 event; checked in Common_Camera_Pln and the bosses' death settings, G2)
             fork    0x0A u16 forks, 0x0C u16 join, 0x10 forks (u16 each)
             join    0x0A u16 next
             subflow 0x0A u16 next, 0x18 flowchart name ("" or none: this one), 0x20 entry point name
@@ -27,8 +27,11 @@ from collections import namedtuple
 
 NONE = 0xFFFF
 
-Event = namedtuple("Event", "type next actor action cases forks join flowchart entry params")
-Flowchart = namedtuple("Flowchart", "name actors events entries")  # actors: [(name, secondary, actions)]
+# A switch: `cases` its events, `values` their case values, `query` its query (an index in queries[actor]).
+Event = namedtuple("Event", "type next actor action cases forks join flowchart entry params query values",
+                   defaults=(NONE, ()))
+# actors: [(name, secondary, actions)]; queries: [[query names] per actor]
+Flowchart = namedtuple("Flowchart", "name actors events entries queries", defaults=((),))
 
 
 def parse(data):
@@ -77,22 +80,24 @@ def parse(data):
     if data[fc:fc + 4] != b"EVFL":
         raise ValueError("no EVFL flowchart")
     n_actors, _, _, n_events, n_entries = (u16(fc + 0x10 + 2 * i) for i in range(5))
-    actors = []
+    actors, queries = [], []
     for i in range(n_actors):
         a = u64(fc + 0x28) + 0x38 * i
         actions = [text(u64(u64(a + 0x18) + 8 * k)) for k in range(u16(a + 0x30))]
         actors.append((text(u64(a)), text(u64(a + 8)), actions))
+        queries.append([text(u64(u64(a + 0x20) + 8 * k)) for k in range(u16(a + 0x32))])
     events = []
     for i in range(n_events):
         e = u64(fc + 0x30) + 0x30 * i
         kind = data[e + 8]
-        nxt = actor = action = join = NONE
-        cases, forks, flowchart, entry = (), (), "", ""
+        nxt = actor = action = join = query = NONE
+        cases, values, forks, flowchart, entry = (), (), (), "", ""
         if kind == 0:
             nxt, actor, action = u16(e + 0xA), u16(e + 0xC), u16(e + 0xE)
         elif kind == 1:
-            actor = u16(e + 0xC)
-            cases = tuple(u16(u64(e + 0x18) + 0x10 * k + 4) for k in range(u16(e + 0xA)))
+            actor, query, table = u16(e + 0xC), u16(e + 0xE), u64(e + 0x18)
+            values = tuple(u32(table + 8 * k) for k in range(u16(e + 0xA)))
+            cases = tuple(u16(table + 8 * k + 4) for k in range(u16(e + 0xA)))
         elif kind == 2:
             join = u16(e + 0xC)
             forks = tuple(u16(u64(e + 0x10) + 2 * k) for k in range(u16(e + 0xA)))
@@ -101,20 +106,22 @@ def parse(data):
         elif kind == 4:
             nxt, flowchart, entry = u16(e + 0xA), text(u64(e + 0x18)), text(u64(e + 0x20))
         prm = params(u64(e + 0x10)) if kind in (0, 1, 4) else {}
-        events.append(Event(kind, nxt, actor, action, cases, forks, join, flowchart, entry, prm))
+        events.append(Event(kind, nxt, actor, action, cases, forks, join, flowchart, entry, prm, query, values))
     entries = {}
     for i, name in enumerate(names(u64(fc + 0x38), n_entries)):
         entries[name] = u16(u64(fc + 0x40) + 0x20 * i + 0x1C)
-    return Flowchart(text(u64(fc + 0x20)), actors, events, entries)
+    return Flowchart(text(u64(fc + 0x20)), actors, events, entries, queries)
 
 
-def actions_of(flows, flow, entry, load=None, transition=None):
+def actions_of(flows, flow, entry, load=None, transition=None, answer=None):
     """[(actor, action, params)] every action reachable from `entry` of `flow` (a subflow called is
     ("<subflow>", "flow:entry", params)), through switches, forks,
     subflows (also into other files) and, when `transition(event name)` gives the (flow, entry) an
     EventTransition's EventName plays, through those. `flows` is {name: Flowchart}; `load(name)` may add
     a missing one (None when there is none). An empty entry is the flow's default (EntryPoint0, else its
-    first). Unknown entries and files give nothing."""
+    first). Unknown entries and files give nothing. `answer(actor, query, params)` may give a switch's case
+    value, so only that case is followed (None: every case). The game's Bool queries answer 0 for true:
+    IsDreamWorld's case 0 in Get_StoneOfFire_DefeatBoss is the boss rush's banc change (G2, boss_beaten)."""
     out, seen = [], set()
     todo = [(flow, entry)]
     while todo:
@@ -147,7 +154,15 @@ def actions_of(flows, flow, entry, load=None, transition=None):
                         todo.append(transition(target))
                 stack.append(ev.next)
             elif ev.type == 1:
-                stack.extend(ev.cases)
+                value = None
+                known = ev.actor < len(chart.actors) and ev.actor < len(chart.queries) \
+                    and ev.query < len(chart.queries[ev.actor])
+                if answer is not None and known:
+                    value = answer(chart.actors[ev.actor][0], chart.queries[ev.actor][ev.query], ev.params)
+                if value is None or value not in ev.values:
+                    stack.extend(ev.cases)
+                else:
+                    stack.extend(c for c, v in zip(ev.cases, ev.values) if v == value)
             elif ev.type == 2:
                 stack.extend(ev.forks)
                 stack.append(ev.join)

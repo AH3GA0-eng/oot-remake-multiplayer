@@ -359,6 +359,9 @@ constexpr Entry kzh_Hans[] = {
     {"Host save loading, don't load a save.", "房主存档载入中，先别载入存档。"},
     {"Success, load any save.", "成功，载入任意存档。"},
     {"Success, load any save for changes to occur.", "成功，载入任意存档以生效。"},
+    {"You joined with a file loaded: the host's save is coming. To play from the host's progress, go back to the "
+     "title and load a save once the chat says Success.",
+     "你在已载入存档时加入：房主的存档正在传来。要从房主的进度游玩，请回到标题画面，等聊天栏显示“成功”后再载入存档。"},
     {"That save loaded before the host's save was in: go back to the title and load a save after Success.",
      "这个存档在房主存档送到前就载入了：回到标题画面，等「成功」后再载入存档。"},
     {"The host's save did not come: play on, or join again to get it.", "房主的存档没有送到：继续玩，或重新加入来获取。"},
@@ -1178,6 +1181,9 @@ constexpr Entry kzh_Hant[] = {
     {"Host save loading, don't load a save.", "房主存檔載入中，先別載入存檔。"},
     {"Success, load any save.", "成功，載入任意存檔。"},
     {"Success, load any save for changes to occur.", "成功，載入任意存檔以生效。"},
+    {"You joined with a file loaded: the host's save is coming. To play from the host's progress, go back to the "
+     "title and load a save once the chat says Success.",
+     "你在已載入存檔時加入：房主的存檔正在傳來。要從房主的進度遊玩，請回到標題畫面，等聊天欄顯示「成功」後再載入存檔。"},
     {"That save loaded before the host's save was in: go back to the title and load a save after Success.",
      "這個存檔在房主存檔送到前就載入了：回到標題畫面，等「成功」後再載入存檔。"},
     {"The host's save did not come: play on, or join again to get it.", "房主的存檔沒有送到：繼續玩，或重新加入來取得。"},

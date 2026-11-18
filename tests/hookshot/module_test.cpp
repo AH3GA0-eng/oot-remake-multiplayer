@@ -15,13 +15,16 @@
 
 #include "coop_boss_native.h"
 #include "coop_counters.h"
+#include "coop_world.h"
 #include "coop_hold.h"
 #include "coop_hookshot.h"
 #include "coop_null_page.h"
 #include "hos_coop_save_load.h"
+#include "hos_coop_crash.h"
 #include "hos_coop_sound.h"
 #include "hos_coop_world.h"
 #include "hos_coop_actors.h"
+#include "hos_coop_nodes.h"
 #include "hos_coop_bosses.h"
 #include "coop_svc.h"
 
@@ -195,6 +198,18 @@ TEST_CASE("hookshot: Link puppets follow the puppet guard in longshot.exe") {
     CHECK_FALSE(CoopHookshot::AllowLinkPuppets("0", true));
 }
 
+TEST_CASE("hookshot: no Link puppet where the null page could not be armed (player report 131)") {
+    // Armed (or Linux): made. Not armed: refused, every held piece and the puppet's own update read through null.
+    CHECK_FALSE(CoopHookshot::RefuseUnarmed("CoopPuppet_Child_Green", true, ""));
+    CHECK(CoopHookshot::RefuseUnarmed("CoopPuppet_Child_Green", false, ""));
+    CHECK(CoopHookshot::RefuseUnarmed("CoopPuppet_ChildQuiet_Red", false, "1"));
+    // HOS_COOP_NULL_READS=0 asks for the faults (a test): still made.
+    CHECK_FALSE(CoopHookshot::RefuseUnarmed("CoopPuppet_Adult", false, "0"));
+    // Not a Link puppet (the fairy, gear): never refused here.
+    CHECK_FALSE(CoopHookshot::RefuseUnarmed("Dm_Npc_Navi", false, ""));
+    CHECK_FALSE(CoopHookshot::RefuseUnarmed("Weapon_Range_SlingShot", false, ""));
+}
+
 TEST_CASE("hookshot: the module's null page covers the guest's first MB only (issue 150)") {
     using CoopNullPage::GuestOffset;
     CHECK(GuestOffset(0x1000000007d8ULL) == std::optional<std::uint64_t>(0x7d8));  // the perception crash's read
@@ -216,7 +231,7 @@ TEST_CASE("hookshot: perceived puppets only where null reads can give 0 (issue 1
 
 TEST_CASE("hookshot: the null page is armed before the first puppet create reaches the game (issue 150)") {
     const std::string src = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
-    const auto arm = src.find("ArmNullPage(actor);");
+    const auto arm = src.find("return !ArmNullPage(actor);");
     const auto call = src.find("g_api->call(ctx, &k, &x0)");
     REQUIRE(arm != std::string::npos);
     REQUIRE(call != std::string::npos);
@@ -340,8 +355,10 @@ TEST_CASE("hookshot: co-op draws over the picture through Hookshot's ImGui (chat
     CHECK(vk.find("\"hos_coop_draw_wanted\"") != std::string::npos);
     CHECK(vk.find("\"hos_coop_draw\"") != std::string::npos);
     CHECK(patch.find("+    if (coop) coop::draw(w, h);") != std::string::npos);
-    // Hookshot's build gives the ImGui headers only to the files it lists: vk_coop.cpp is one (else it does not compile).
-    CHECK(patch.find("+        imgui_users = (\"vk_imgui.cpp\", \"vk_menu.cpp\", \"vk_coop.cpp\")") != std::string::npos);
+    // Hookshot's build gives the ImGui headers only to the files it lists: vk_coop.cpp is one (else it does not compile),
+    // after Longshot's own (rc.6 lists its crash window, vk_crash_window.cpp, too).
+    CHECK(patch.find("+        imgui_users = (\"vk_imgui.cpp\", \"vk_menu.cpp\", \"vk_crash_window.cpp\", \"vk_coop.cpp\")") !=
+          std::string::npos);
     // The module has them.
     const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
     CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_draw_wanted(void)") != std::string::npos);
@@ -604,6 +621,135 @@ TEST_CASE("hookshot: a module tab may draw a picture beside its page (patch 0019
     CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_view(double eye[3], double target[3])") != std::string::npos);
 }
 
+namespace {
+
+// s without spaces, tabs and line ends.
+std::string Squashed(const std::string& s) {
+    std::string out;
+    for (const char c : s) {
+        if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
+            out += c;
+        }
+    }
+    return out;
+}
+
+// A patched file's code as the patch leaves it (its hunks' '+' and ' ' lines, without the diff's first column),
+// with every space, tab and line end taken out: a search matches the code, not the diff's layout, so a refreshed
+// patch (other context, a statement that moved from '+' to context) still matches while the code is the same.
+std::string PatchedCode(const std::string& patch, const std::string& path) {
+    std::string code;
+    auto at = patch.find("+++ b/" + path + "\n");
+    if (at == std::string::npos) {
+        return code;
+    }
+    at = patch.find('\n', at) + 1;
+    while (at < patch.size()) {
+        const auto end = patch.find('\n', at);
+        const std::string line = patch.substr(at, end == std::string::npos ? std::string::npos : end - at);
+        if (line.rfind("diff --git ", 0) == 0 || line == "-- ") {
+            break;   // (the next file, or the patch's end)
+        }
+        if (!line.empty() && (line[0] == '+' || line[0] == ' ')) {
+            code += line.substr(1);
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        at = end + 1;
+    }
+    return Squashed(code);
+}
+
+}  // namespace
+
+TEST_CASE("hookshot: the Discord status header in patch 0026 is hookshot/src's, and the module gives its line") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0026-coop-discord-status.patch");
+    REQUIRE_FALSE(patch.empty());
+    CHECK(NewFile(patch, "host/hos_discord_activity.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_discord_activity.h"));
+    const std::string rpc = PatchedCode(patch, "host/discord_rpc.c");
+    REQUIRE_FALSE(rpc.empty());
+    const auto has = [&rpc](const char* code) { return rpc.find(Squashed(code)) != std::string::npos; };
+    CHECK(has("hos_discord_activity(activity, cap, \"Longshot\", version, LONGSHOT_DISCORD_IMAGE_DEFAULT, &s->words,"));
+    CHECK(has("GetProcAddress(m, \"hos_coop_discord_state\")"));
+    CHECK(has("dlsym(m, \"hos_coop_discord_state\")"));
+    // Words or a frame that do not fit (hos_discord_activity / hos_discord_set_activity give 0 and "": the
+    // header's test) send no frame, and that is no broken connection.
+    CHECK(has("if (!hos_discord_set_activity(json, sizeof json, nonce + 1, process_id(), activity)) return -1; ++nonce;"
+              " if (!write_frame(p, OP_FRAME, json)) return 0;"));
+    CHECK(has("const int made = make_activity(activity, sizeof activity, &set, module_line, started);"));
+    CHECK(has("if (made && ipc != IPC_NONE && (now_ms() >= send_at || strcmp(activity, sent))) {"));
+    CHECK(has("const int r = send_activity(ipc, activity); if (r < 0) {"));
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_discord_state(char* out, size_t cap) noexcept") != std::string::npos);
+}
+
+// Player report 133: the title loaded the newest save by itself (no New Game), the pad unplugged. Longshot's Skip title
+// screen (host/oot_autoload.c, off by default; longshot_options.ini keeps it across kit updates) tapped A every 2 s from
+// 20 s after the start. Owner (2026-11-17): keep the row, no pressed buttons: patch 0028 makes its choices the game's own
+// way (Button::Decide on the focused button, at a menu screen's update), stops on any press of the player's and while
+// the co-op module holds it.
+TEST_CASE("hookshot: Skip title screen chooses the game's own way, presses nothing (patch 0028)") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0028-coop-skip-title-native.patch");
+    REQUIRE_FALSE(patch.empty());
+    CHECK_FALSE(std::filesystem::exists(kRepo / "hookshot" / "patches" / "0028-coop-title-no-autopress.patch"));
+    const std::string autoload = PatchedCode(patch, "host/oot_autoload.c");
+    REQUIRE_FALSE(autoload.empty());
+    const auto has = [&autoload](const char* code) { return autoload.find(Squashed(code)) != std::string::npos; };
+    // The taps are gone, the call and its declaration both.
+    CHECK(patch.find("\n-    hos_hid_tap(\"0:A/200\");\n") != std::string::npos);
+    CHECK(patch.find("\n-extern void hos_hid_tap(const char *presses);") != std::string::npos);
+    CHECK(autoload.find(Squashed("hos_hid_tap(")) == std::string::npos);
+    // The choice: the game's Button::Decide(button, 0) on the one focused button, steady first, its answer read.
+    CHECK(has("static const uint64_t kButtonDecide = 0x80020000ULL + 0x3771db0ULL;"));
+    CHECK(has("const A64Fn decide = a64_lookup(kButtonDecide);"));
+    CHECK(has("c->x[0] = button, c->x[1] = 0, c->x[30] = 0; decide(c); const int chosen = (int)(c->x[0] & 1); *c = saved;"));
+    CHECK(has("if (now - steady_ms < kSteadyMs) return;"));
+    CHECK(has("if (state && (state & 0xfe) != 4) { if (found) return 0; found = button; }"));
+    // Its stops: any press of the player's, the module's hold, the row off, Link running, the time and the count.
+    CHECK(has("if (__atomic_load_n(&hos_coop_pad, __ATOMIC_RELAXED) != 0) {"));
+    CHECK(has("if (hos_coop_title_hold_now()) {"));
+    CHECK(has("if (!rx_option(HOS_OPT_SKIP_TITLE, 0)) { stop(\"the row was turned off while waiting\");"));
+    CHECK(has("if (hos_oot_player_seen()) { stop(\"loaded, the player is running\");"));
+    // Only the known screens, in order (hos_skip_title.h, the same file as hookshot/src's: skip_title_test.cpp); after
+    // three choices nothing more is chosen.
+    CHECK(NewFile(patch, "host/hos_skip_title.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_skip_title.h"));
+    CHECK(has("#include \"hos_skip_title.h\""));
+    CHECK(has("if (choices >= HOS_SKIP_STEPS) return;"));
+    CHECK(has("const int next = hos_skip_title_next(choices, vtable, name, &why); if (next == HOS_SKIP_WAIT) return; "
+              "if (next == HOS_SKIP_STOP) {"));
+    CHECK(has("const uint64_t vtable = peek64(screen); char name[64]; button_name(button, name, sizeof name);"));
+    // (Armed only by the row, off by default: Longshot's own start test, unchanged, outside the patch's hunks.)
+    // The screen hook hands each menu screen to it, before the screen's own update. One tick for both platforms:
+    // patch 0018 builds it on Linux too (Linux's stub is gone), so 0028 adds no Linux-only tick.
+    const std::string menu = PatchedCode(patch, "host/oot_menu.c");
+    CHECK(menu.find(Squashed("void hos_oot_menu_tick(Ctx *c, uint64_t screen) { if (!screen) return; "
+                             "hos_oot_autoload_screen(c, screen);")) != std::string::npos);
+    CHECK(patch.find("+void hos_oot_menu_tick(") == std::string::npos);
+    // The bridge asks the module's optional export; no module or co-op off: 0 (solo skips the title).
+    const std::string bridge = PatchedCode(patch, "host/coop_bridge.c");
+    CHECK(bridge.find(Squashed("coop_title_hold = (int (*)(void))(void *)GetProcAddress(m, \"hos_coop_title_hold\");")) !=
+          std::string::npos);
+    CHECK(bridge.find(Squashed("return __atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_title_hold ? "
+                               "coop_title_hold() : 0;")) != std::string::npos);
+    // The row stays (no menu change) and the module gives the hold.
+    CHECK(patch.find("gpu/vk/vk_menu.cpp") == std::string::npos);
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_title_hold(void) noexcept {") != std::string::npos);
+    // No co-op patch adds a press of its own (hos_hid_tap is the host's press; the module's pad filter only takes
+    // bits away: coop_title.cpp OnPad, coop_dbno.cpp).
+    for (const auto& e : std::filesystem::directory_iterator(kRepo / "hookshot" / "patches")) {
+        const std::string text = ReadFile(e.path());
+        std::istringstream lines(text);
+        for (std::string line; std::getline(lines, line);) {
+            if (!line.empty() && line[0] == '+' && line.rfind("+++", 0) != 0) {
+                INFO(e.path().filename().string() << ": " << line);
+                CHECK(line.find("hos_hid_tap(") == std::string::npos);
+            }
+        }
+    }
+}
+
 TEST_CASE("hookshot: a module may have a texture drawn with other texels (patch 0020, hos_coop_texture.h)") {
     const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0020-coop-texture-override.patch");
     REQUIRE_FALSE(patch.empty());
@@ -617,15 +763,9 @@ TEST_CASE("hookshot: a module may have a texture drawn with other texels (patch 
     CHECK(patch.find("+        hos_coop_texture_made(o, o->gpu, o->L.size,") != std::string::npos);
     CHECK(patch.find("+    hos_coop_texture_gone(o);") != std::string::npos);
     CHECK(patch.find("+        x.overlay = (overlay_fn)look(\"hos_coop_texture_overlay\");") != std::string::npos);
-    // The WebGPU renderer's read (gpu/render, Windows only) is 0021, so the Linux kit can leave it out
-    // (make_kit_linux.sh's webgpu_only): 0020 changes no gpu/render file, 0021 nothing else.
+    // Longshot rc.5 has no WebGPU renderer (gpu/render keeps headers only): no patch reads through gpu/render.
     CHECK(patch.find("gpu/render/") == std::string::npos);
-    const std::string webgpu = ReadFile(kRepo / "hookshot" / "patches" / "0021-coop-texture-override-webgpu.patch");
-    REQUIRE_FALSE(webgpu.empty());
-    CHECK(webgpu.find("+        hos_coop_texture_overlay(va, scratch.data(), total);") != std::string::npos);
-    for (std::size_t at = webgpu.find("diff --git a/"); at != std::string::npos; at = webgpu.find("diff --git a/", at + 1)) {
-        CHECK(webgpu.compare(at, 24, "diff --git a/gpu/render/") == 0);
-    }
+    CHECK_FALSE(std::filesystem::exists(kRepo / "hookshot" / "patches" / "0021-coop-texture-override-webgpu.patch"));
     // Nothing of the game is written: no lift, no guest write (only the pages marked for the renderers).
     for (std::size_t at = patch.find("diff --git a/"); at != std::string::npos; at = patch.find("diff --git a/", at + 1)) {
         CHECK((patch.compare(at, 18, "diff --git a/host/") == 0 || patch.compare(at, 17, "diff --git a/gpu/") == 0));
@@ -651,6 +791,29 @@ TEST_CASE("hookshot: the sound wrap (patch 0014) is one row in 0005's table, its
     CHECK(HOS_COOP_WRAP_SOUND_EMIT < 64);
     const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
     CHECK(module.find("if (id == HOS_COOP_WRAP_SOUND_EMIT) {") != std::string::npos);
+}
+
+TEST_CASE("hookshot: the AI node starts (patch 0029) are one generic world event, their header hookshot/src's") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0029-coop-node-starts.patch");
+    CHECK(NewFile(patch, "host/hos_coop_nodes.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_nodes.h"));
+    const std::string lift = NewFile(patch, "nx2/coop_node_lift.py");
+    REQUIRE(!lift.empty());
+    // One event naming the node (x0) and its actor (x9, just read from [[[node + 8] + 8] + 0x1f0]).
+    char call[96];
+    std::snprintf(call, sizeof call, "hos_coop_world_event(%uu, c->x[0], c->x[9])", HOS_COOP_WORLD_NODE_START);
+    CHECK(lift.find(call) != std::string::npos);
+    CHECK(HOS_COOP_WORLD_NODE_START >= HOS_COOP_WORLD_NEXT_FIRST);
+    CHECK(HOS_COOP_WORLD_NODE_START <= HOS_COOP_WORLD_NEXT_LAST);
+    // The push node's start (the module's BlockNode::kStartFn), after the actor's load; words checked.
+    CHECK(lift.find("(\"push node\", 0x27517c0,") != std::string::npos);
+    CHECK(lift.find("(0x2751790, 0xd503237f)") != std::string::npos);
+    CHECK(lift.find("(0x27517c0, 0xf940f929)") != std::string::npos);  // ldr x9, [x9, #0x1f0]
+    CHECK(CoopWorld::BlockNode::kStartFn == 0x2751790);
+    CHECK(patch.find("+    coop_node_lift.install(lifter, img, build_id)") != std::string::npos);
+    // Generic: no block-only event or file in the hook layer, and patch 0005's files are left to it.
+    CHECK(patch.find("BLOCK") == std::string::npos);
+    CHECK(patch.find("diff --git a/host/hos_coop_world.h") == std::string::npos);
+    CHECK(patch.find("diff --git a/host/coop_world.c") == std::string::npos);
 }
 
 TEST_CASE("hookshot: the save-load wraps (patch 0024) are four rows in 0005's table, their header hookshot/src's") {
@@ -701,12 +864,25 @@ TEST_CASE("hookshot: on Linux the exe exports every function the module finds in
     // Patch 0020's texture exports: the module's live look finds two, the exe's own renderers the other two.
     collect(ReadFile(kRepo / "hookshot" / "src" / "coop_look_live.cpp"), "look(\"");
     collect(ReadFile(kRepo / "hookshot" / "patches" / "0020-coop-texture-override.patch"), "look(\"");
-    CHECK(names.size() >= 11);
+    // Patch 0018's exports (the menu state, the HUD refresh): every function it marks dllexport, which Linux builds too
+    const std::string map_state = ReadFile(kRepo / "hookshot" / "patches" / "0018-coop-map-state.patch");
+    const std::string exported = "\n+__declspec(dllexport) int ";
+    std::size_t map_exports = 0;
+    for (auto at = map_state.find(exported); at != std::string::npos; at = map_state.find(exported, at + 1)) {
+        const auto start = at + exported.size();
+        names.push_back(map_state.substr(start, map_state.find('(', start) - start));
+        ++map_exports;
+    }
+    CHECK(map_exports == 2);
+    CHECK(names.size() >= 13);
     const std::string patch = Patch();
     const auto start = patch.find("+++ b/nx2/build.py\n");
     REQUIRE(start != std::string::npos);
     const std::string build = patch.substr(start, patch.find("\ndiff --git", start) - start);
-    REQUIRE(build.find("+                           [\"-Wl,--gc-sections\", \"-Wl,--export-dynamic-symbol=hos_posix_*\"] + coop") !=
+    // (the exe's link: Longshot's run_link since rc.5, subprocess.run before; the line's indent follows the call)
+    const auto link = build.find("r = run_link([cc]");
+    REQUIRE(link != std::string::npos);
+    REQUIRE(build.find("[\"-Wl,--gc-sections\", \"-Wl,--export-dynamic-symbol=hos_posix_*\"] + coop", link) !=
             std::string::npos);
     for (const auto& name : names) {
         CAPTURE(name);
@@ -732,4 +908,319 @@ TEST_CASE("hookshot: typing in a co-op field keeps the keyboard from the menu (p
     for (std::size_t at = patch.find("diff --git a/"); at != std::string::npos; at = patch.find("diff --git a/", at + 1)) {
         CHECK(patch.compare(at, 20, "diff --git a/gpu/vk/") == 0);
     }
+}
+
+TEST_CASE("hookshot: a guest that joins with a file loaded asks for the host's save and touches no folder") {
+    // Player reports 107 and 120: one path with Resync from host (AskAtTitle), and nothing of the folder changes
+    // under the game being played (no re-mount, no slots taken out): the title's PendingFrame does both.
+    const std::string save = ReadFile(kRepo / "lichii" / "hook" / "coop_save.cpp");
+    const auto body = [&](const char* head) {
+        const auto at = save.find(head);
+        REQUIRE(at != std::string::npos);
+        const auto end = save.find("\n}\n", at);
+        REQUIRE(end != std::string::npos);
+        return save.substr(at, end - at);
+    };
+    const std::string in_game = body("void DecideInGame(coop::net::Client& client) {");
+    CHECK(in_game.find("AskAtTitle();") != std::string::npos);
+    CHECK(in_game.find("Remount") == std::string::npos);
+    CHECK(in_game.find("clear_coop_slots") == std::string::npos);
+    CHECK(in_game.find("TestOwnSave()") != std::string::npos);   // (the autotests' games keep their scenario's save)
+    CHECK(in_game.find("save::GuestNotices::kJoinedPlaying") != std::string::npos);
+    const std::string ask = body("void AskAtTitle() {");
+    CHECK(ask.find("Remount") == std::string::npos);
+    CHECK(ask.find("g_pending = save::coop_dir_of(own);") != std::string::npos);
+    CHECK(ask.find("save::GuestNotices{g_in_game}") != std::string::npos);
+    CHECK(body("void Resync(bool connected_guest) {").find("AskAtTitle();") != std::string::npos);
+    // Both choices reach it: the first one of a run, and a new session after one that ended during play.
+    const std::string frame = body("void SwitchFrame(coop::net::Client& client) {");
+    CHECK(frame.find("choice == save::FolderChoice::coop_later") != std::string::npos);
+    CHECK(frame.find("save::rejoined_in_game(g_decided, g_ended, connected, g_in_game)") != std::string::npos);
+    // On the title before the new save is in, a game still on an earlier host's co-op folder goes back to its own
+    // first, through the one switch path (never the older save offered).
+    const std::string pending = body("void PendingFrame() {");
+    const auto first = pending.find("save::old_coop_first(");
+    REQUIRE(first != std::string::npos);
+    CHECK(pending.find("RemountLocked(own)", first) < pending.find("save::clear_coop_slots(g_pending)", first));
+    CHECK(pending.find("g_remount(") == std::string::npos);
+}
+
+TEST_CASE("hookshot: a guest's ask makes the host's game save first, with the call its own event node makes") {
+    // Case 1 of the join's state (player reports 107, 129, 132): the host's file on disk is as old as its last door.
+    const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
+    const auto body = [&](const char* head) {
+        const auto at = module.find(head);
+        REQUIRE(at != std::string::npos);
+        const auto end = module.find("\n}\n", at);
+        REQUIRE(end != std::string::npos);
+        return module.substr(at, end - at);
+    };
+    // main offsets read from the binary: EventTriggerRequestAutoSave's body (main+0x31f2f50) calls
+    // main+0xba7880(system, 0xc) and then main+0xba7730(mgr, 5, 0); the system from the GOT at main+0x4c7e178.
+    CHECK(module.find("constexpr std::uint64_t kGameSystemGot = 0x4c7e178;") != std::string::npos);
+    CHECK(module.find("constexpr std::uint64_t kSystemComponent = 0xba7880;") != std::string::npos);
+    CHECK(module.find("constexpr std::uint64_t kAutoSaveMgrIndex = 0xc;") != std::string::npos);
+    CHECK(module.find("constexpr std::uint64_t kRequestAutoSave = 0xba7730;") != std::string::npos);
+    CHECK(module.find("constexpr std::uint64_t kAutoSaveKindEvent = 5;") != std::string::npos);
+    const std::string ask = body("void RequestHostAutoSave(void* ctx) {");
+    CHECK(ask.find("if (!CoopSave::TakeSaveRequest()) return;") != std::string::npos);   // only a guest's ask
+    CHECK(ask.find("base + kSystemComponent") != std::string::npos);
+    CHECK(ask.find("base + kRequestAutoSave") != std::string::npos);
+    CHECK(ask.find("g_api->write") == std::string::npos);   // the game's own call; nothing written by us
+    CHECK(ask.find("Write(") == std::string::npos);
+    // made on the calc thread's call site, after the module's own calls; the save module told at start
+    const auto calls = module.find("        RunCalls(ctx);\n        RequestHostAutoSave(ctx);");
+    CHECK(calls != std::string::npos);
+    CHECK(module.find("CoopSave::SetSaveRequests(true);") != std::string::npos);
+    // The host side asks only while it plays a file (not on the title, not in a new game never saved)
+    const std::string save = ReadFile(kRepo / "lichii" / "hook" / "coop_save.cpp");
+    CHECK(save.find("const bool fresh = g_save_requests && g_in_game && "
+                    "!g_played.new_game(g_in_game, g_title_seen);") != std::string::npos);
+    CHECK(save.find("return g_in_game && g_planner.take_save_request();") != std::string::npos);
+    CHECK(save.find(": send.fresh ? save::newest_slot(g_dir)") != std::string::npos);
+}
+
+TEST_CASE("hookshot: the title's game addresses are main's offsets plus main's guest base 0x80020000") {
+    // The save list's addresses were once written as 0x80000000 + the offset (0x20000 short): docs/hookshot.md names
+    // the main offsets; each constant in coop_title.cpp must be 0x80020000 + one of them.
+    const std::string title = ReadFile(kRepo / "hookshot" / "src" / "coop_title.cpp");
+    const std::string docs = ReadFile(kRepo / "docs" / "hookshot.md");
+    const struct {
+        const char* name;
+        std::uint64_t main_offset;
+    } want[] = {{"kCaptionMgrGot", 0x4c81660}, {"kCaptionBusy", 0x33ad380}, {"kCaptionReset", 0xbafd40},
+                {"kCaptionReload", 0xf6da40}};
+    for (const auto& w : want) {
+        INFO(w.name);
+        char doc_text[32];
+        std::snprintf(doc_text, sizeof doc_text, "main+0x%llx", static_cast<unsigned long long>(w.main_offset));
+        char code_text[96];
+        std::snprintf(code_text, sizeof code_text, "constexpr std::uint64_t %s = 0x%llx;", w.name,
+                      static_cast<unsigned long long>(0x80020000ull + w.main_offset));
+        CHECK(docs.find(doc_text) != std::string::npos);
+        CHECK(title.find(code_text) != std::string::npos);
+    }
+}
+
+TEST_CASE("hookshot: patch 0018's screens' tracker and menu state build on Linux too, the mouse stays Windows'") {
+    // Linux's oot_menu.c was a stub: no tracker, so hos_coop_menu_state said nothing there (no in_menu/paused for
+    // Linux players, issue 150). The file's one '#if defined(_WIN32)' is gone; each mouse block has its own guard.
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0018-coop-map-state.patch");
+    REQUIRE_FALSE(patch.empty());
+    CHECK(patch.find("\n-#if defined(_WIN32)\n+/* (oot-remake-multiplayer's patch 0018) The screens' tracker") != std::string::npos);
+    CHECK(patch.find("\n-void hos_oot_menu_tick(Ctx *c, uint64_t screen) { (void)c, (void)screen; }\n") != std::string::npos);
+    // the guards open and close in pairs (the file's last '#else' stays Linux's focus hook, which Longshot's
+    // tests/test_hold_toggle.py compiles alone)
+    std::size_t opened = 0, closed = 0;
+    for (auto at = patch.find("\n+#if defined(_WIN32)   /* (patch 0018: the mouse's"); at != std::string::npos;
+         at = patch.find("\n+#if defined(_WIN32)   /* (patch 0018: the mouse's", at + 1)) {
+        ++opened;
+    }
+    for (auto at = patch.find("\n+#endif   /* (patch 0018) */"); at != std::string::npos;
+         at = patch.find("\n+#endif   /* (patch 0018) */", at + 1)) {
+        ++closed;
+    }
+    CHECK(opened == 6);
+    CHECK(closed == opened);
+    // Linux's focus hook hands the tracker the pause menu's screen (its Map page is not the pause menu's frame)
+    CHECK(patch.find("+    hos_oot_menu_pause_focus(screen);") != std::string::npos);
+    CHECK(patch.find("+void hos_oot_menu_pause_focus(uint64_t screen) { InterlockedExchange64(&pause_screen, (LONG64)screen); }") !=
+          std::string::npos);
+    // no hunk on Longshot's tests/: the Linux kit patches the AppImage's source, which has none (CI linux-longshot,
+    // 'apply_patch: tests/test_hold_toggle.py: not found'); the test below holds every patch to that
+    CHECK(patch.find("diff --git a/tests/") == std::string::npos);
+}
+
+TEST_CASE("hookshot: every patch touches only what Longshot's Linux AppImage ships, so the Linux kit applies it") {
+    // tools/release/kit/linux-longshot/scripts/build.sh applies every hookshot/patches/*.patch to a copy of the
+    // AppImage's usr/share/longshot, which holds only what Longshot's scripts/linux/appimage.sh copies (v3.0.0-rc.7):
+    // no tests/, docs/, .forgejo/, most of third_party/. A hunk on anything else applies on Windows' full source and
+    // stops every Linux build. Keep this list to appimage.sh's when the pin moves.
+    const char* const shipped[] = {
+        "nx2/", "host/", "scripts/", "assets/", "builder/linux/", "gpu/vk/", "gpu/compat/", "gpu/third_party/",
+        "third_party/opus/", "third_party/kenney_input/", "third_party/kenney_input_keyboard/", "third_party/imgui/",
+        "third_party/zstd/", "third_party/fonts/", "third_party/fidelityfx/", "third_party/a64-kit/",
+    };
+    const auto ships = [&](const std::string& path) {
+        for (const char* dir : shipped) {
+            if (path.rfind(dir, 0) == 0) return true;
+        }
+        // gpu/render: only its headers, top level (cp -a gpu/render/*.h); third_party/zbic: its listed files
+        const std::string render = "gpu/render/";
+        if (path.rfind(render, 0) == 0 && path.find('/', render.size()) == std::string::npos &&
+            path.size() > 2 && path.compare(path.size() - 2, 2, ".h") == 0) {
+            return true;
+        }
+        for (const char* file : {"third_party/zbic/zstd.c", "third_party/zbic/zstd.h", "third_party/zbic/zstd_errors.h",
+                                 "LICENSE", "README.md", "tools.lock"}) {
+            if (path == file) return true;
+        }
+        return false;
+    };
+    std::size_t patches = 0, files = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(kRepo / "hookshot" / "patches")) {
+        if (entry.path().extension() != ".patch") continue;
+        ++patches;
+        const std::string patch = ReadFile(entry.path());
+        const std::string head = "diff --git a/";
+        for (auto at = patch.find(head); at != std::string::npos; at = patch.find(head, at + 1)) {
+            if (at != 0 && patch[at - 1] != '\n') continue;
+            const auto start = at + head.size();
+            const std::string path = patch.substr(start, patch.find(' ', start) - start);
+            ++files;
+            INFO(entry.path().filename().string() << ": " << path);
+            CHECK(ships(path));
+        }
+    }
+    CHECK(patches >= 24);
+    CHECK(files >= patches);
+}
+
+TEST_CASE("hookshot: co-op's log lines stay out of Longshot's crash report (patch 0027), its header hookshot/src's") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0027-coop-crash-report.patch");
+    CHECK(NewFile(patch, "host/hos_coop_crash.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_crash.h"));
+    // Both readers of the run log skip such a line: read_log (the saved and copied report) and crash_lines (what Send posts).
+    CHECK(patch.find("+        if (hos_coop_crash_private(line)) continue;   /* (patch 0027) */\n         char *clean = redacted(") !=
+          std::string::npos);
+    CHECK(patch.find("+        if (hos_coop_crash_private(line)) continue;   /* (patch 0027) */\n         if (!found && hos_crash_starts(") !=
+          std::string::npos);
+    // As hos_log writes them (host/hos_thread.c: "[hos <thread>] [<level>] "), the module's level word after.
+    CHECK(hos_coop_crash_private("[hos main] coop: on, server 192.0.2.7:27015, name 'Saria', join password none\n"));
+    CHECK(hos_coop_crash_private("[hos net] coop: player 2 'Mido' joined"));
+    CHECK(hos_coop_crash_private("[hos main] [warn] warning: coop: voice: microphone Headset is not connected"));
+    CHECK(hos_coop_crash_private("[hos main] error: coop: server refused"));
+    CHECK(hos_coop_crash_private("[hos audio] coop voice: on (the voices in the game's final mix)"));
+    CHECK(hos_coop_crash_private("coop: module loaded"));
+    // Longshot's own lines stay (the crash itself, the renderer, the maps).
+    CHECK_FALSE(hos_coop_crash_private("[hos main] CRASH: exception 0xc0000005 (read 0x8) at longshot.exe+0x1a2b3c"));
+    CHECK_FALSE(hos_coop_crash_private("[hos main] vk: status: 3.1 of 15.9 GB"));
+    CHECK_FALSE(hos_coop_crash_private("[hos main] hid: controller \"Pad\" is pad 1"));
+    CHECK_FALSE(hos_coop_crash_private("[hos main] map: coop:"));
+    CHECK_FALSE(hos_coop_crash_private("[hos main"));
+    CHECK_FALSE(hos_coop_crash_private(""));
+}
+
+TEST_CASE("hookshot: a co-op build sends nothing to Longshot and is never a Longshot release (patch 0027)") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0027-coop-crash-report.patch");
+    // No address is read, so neither Report automatically nor longshot_crash.ini's silent send is offered.
+    CHECK(patch.find("+    s->reports[0] = s->issue[0] = 0;\n }") != std::string::npos);
+    CHECK(patch.find("-    char *stamp = join(path, sizeof path, s->dir, \"longshot_version.txt\")") != std::string::npos);
+    // The release flag is always 0.
+    CHECK(patch.find("-    in.release = hos_crash_release(in.bare_version, source, stamp_source);\n+    in.release = 0;") !=
+          std::string::npos);
+    // No performance summary is measured or written.
+    CHECK(patch.find("bool perf_report_init() {\n     folder = game_dir_path();\n+") != std::string::npos);
+    CHECK(patch.find("+    if (true) return false;") != std::string::npos);
+    // Every address empty, so the build's stamp has none and a sender has nowhere to send.
+    for (const char* key : {"crash_reports", "crash_issue", "perf_reports"}) {
+        CHECK(patch.find(std::string("\n+") + key + " =\n") != std::string::npos);
+        CHECK(patch.find(std::string("\n-") + key + " = https://") != std::string::npos);
+    }
+    // Report manually opens co-op's page, not Longshot's issue form.
+    CHECK(patch.find("+#define HOS_CRASH_ISSUES HOS_COOP_CRASH_REPORT_PAGE") != std::string::npos);
+    CHECK(patch.find("+    snprintf(out->url, sizeof out->url, \"%s\", HOS_COOP_CRASH_REPORT_PAGE);") != std::string::npos);
+    CHECK(std::string(HOS_COOP_CRASH_REPORT_PAGE).rfind("https://github.com/daurosk/oot-remake-multiplayer/", 0) == 0);
+    CHECK(patch.find("+                           \"your browser (this is a co-op build: not Longshot's to fix). %s\",") !=
+          std::string::npos);
+}
+
+TEST_CASE("hookshot: no patch logs a microphone, pad, player or server name outside co-op's own lines") {
+    // A line our patches add to Longshot's log reaches its crash report unless it is co-op's ("coop..."; patch 0027).
+    // So a name a player chose or a device carries goes only into co-op's own lines (the device's own connect line is
+    // Longshot's). 0009: the co-op voice's source logs a fixed word; 0015: the pad's number without its name again.
+    static const char* const kNames[] = {"voice_name", "named ? name", "hos_sdl_pad_name", "nickname", "server", "src->want",
+                                         "sel_name", "dev_names"};
+    for (const auto& entry : std::filesystem::directory_iterator(kRepo / "hookshot" / "patches")) {
+        if (entry.path().extension() != ".patch") continue;
+        // (the whole call, from hos_log( to its ");", over every added line its arguments wrap to)
+        std::istringstream lines(ReadFile(entry.path()));
+        std::string call;
+        for (std::string line; std::getline(lines, line);) {
+            if (line.rfind("+", 0) != 0) {
+                call.clear();
+                continue;
+            }
+            if (call.empty()) {
+                const auto at = line.find("hos_log(");
+                if (at == std::string::npos) continue;
+                call = line.substr(at);
+            } else {
+                call += " " + line.substr(1);
+            }
+            if (call.find(");") == std::string::npos) continue;
+            const bool coop = call.rfind("hos_log(\"coop", 0) == 0;
+            for (const char* name : kNames) {
+                INFO(entry.path().filename().string() << ": " << call);
+                CHECK((coop || call.find(name) == std::string::npos));
+            }
+            call.clear();
+        }
+    }
+    const std::string voice = ReadFile(kRepo / "hookshot" / "patches" / "0009-coop-voice.patch");
+    CHECK(voice.find("+    return src->own ? \"the co-op voice's microphone\" : src->mode == 2 ? src->want : \"the default microphone\";") !=
+          std::string::npos);
+    CHECK(voice.find("+    hos_log(\"coop voice: microphone: %s\"") != std::string::npos);
+    // rc.6's fifth source (the microphone test's slot) is free for the co-op voice too.
+    CHECK(voice.find("+    while (named && i < MAX_STREAMS + 1 && sources[i].used) i++;") != std::string::npos);
+    const std::string pads = ReadFile(kRepo / "hookshot" / "patches" / "0015-coop-pad-select.patch");
+    CHECK(pads.find("+                    hos_log(\"hid: that controller is pad %d\", n);") != std::string::npos);
+}
+
+TEST_CASE("hookshot: the Insert menu files nothing with Longshot in a co-op build (patch 0027)") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0027-coop-crash-report.patch");
+    // Bug report: co-op's page, not Longshot's issue chooser or its game-problem form; co-op's lines out of the copied logs.
+    CHECK(patch.find("-constexpr const char* kIssues = \"https://git.magicbean.dev/") != std::string::npos);
+    CHECK(patch.find("-constexpr const char* kForm = \"https://git.magicbean.dev/") != std::string::npos);
+    CHECK(patch.find("+constexpr const char* kIssues = HOS_COOP_CRASH_REPORT_PAGE;") != std::string::npos);
+    CHECK(patch.find("+    link = kIssues, link_short = false;") != std::string::npos);
+    CHECK(patch.find("+        if (hos_coop_crash_private(line.c_str())) {") != std::string::npos);
+    CHECK(patch.find("+    return \"Saved in the game folder as \" + folder + \". To send it, open co-op's Reporting a problem page") !=
+          std::string::npos);
+    // Save my pipeline list (Longshot issue 14): never listed on the Debug tab, and its press does nothing.
+    CHECK(patch.find("&& !is_share_row(r))") != std::string::npos);
+    CHECK(patch.find("-        else if (press[7] && is_share_row(r)) share_pipeline_list(), press[7] = false, changed = true;\n"
+                     "+        else if (press[7] && is_share_row(r)) press[7] = false;") != std::string::npos);
+    // No patch adds a Longshot issue, form or telemetry address anywhere.
+    for (const auto& entry : std::filesystem::directory_iterator(kRepo / "hookshot" / "patches")) {
+        if (entry.path().extension() != ".patch") continue;
+        std::istringstream lines(ReadFile(entry.path()));
+        for (std::string line; std::getline(lines, line);) {
+            if (line.rfind("+", 0) != 0 || line.rfind("+++", 0) == 0) continue;
+            INFO(entry.path().filename().string() << ": " << line);
+            CHECK(line.find("git.magicbean.dev") == std::string::npos);
+            CHECK(line.find("data-services.magicbean.dev") == std::string::npos);
+        }
+    }
+}
+
+TEST_CASE("hookshot: every switch of the save folder marks the game's save list for a re-read (player report 124)") {
+    // One path: the only call of the exe's remount is in CoopSave's RemountLocked, which marks the list stale; the
+    // title's step has the game re-read it (its own SeqOneshotRequestLoadAndSerializeCaption body).
+    const std::string save = ReadFile(kRepo / "lichii" / "hook" / "coop_save.cpp");
+    const auto first = save.find("g_remount(");
+    REQUIRE(first != std::string::npos);
+    CHECK(save.find("g_remount(", first + 1) == std::string::npos);
+    const auto helper = save.find("bool RemountLocked(const fs::path& dir) {");
+    REQUIRE(helper != std::string::npos);
+    CHECK(first > helper);
+    CHECK(save.find("g_list_stale = true;", helper) != std::string::npos);
+    const std::string title = ReadFile(kRepo / "hookshot" / "src" / "coop_title.cpp");
+    // Main at 0x80020000: main+0xf6da40, +0x33ad380, +0xbafd40, +0x4c81660 (docs/hookshot.md "The save list").
+    CHECK(title.find("constexpr std::uint64_t kCaptionReload = 0x80f8da40;") != std::string::npos);
+    CHECK(title.find("constexpr std::uint64_t kCaptionBusy = 0x833cd380;") != std::string::npos);
+    CHECK(title.find("constexpr std::uint64_t kCaptionReset = 0x80bcfd40;") != std::string::npos);
+    // The game's order: its idle test, its reset, then its read (a read starts only from state 0).
+    const auto busy = title.find("GameCall(ctx, kCaptionBusy, mgr)");
+    const auto reset = title.find("GameCall(ctx, kCaptionReset, 0)");
+    const auto read = title.find("GameCall(ctx, kCaptionReload, mgr)");
+    REQUIRE(busy != std::string::npos);
+    REQUIRE(reset != std::string::npos);
+    REQUIRE(read != std::string::npos);
+    CHECK(busy < reset);
+    CHECK(reset < read);
+    CHECK(title.find("constexpr std::uint64_t kCaptionMgrGot = 0x84ca1660;") != std::string::npos);
+    CHECK(title.find("in.stale = CoopSave::TakeSaveListStale();") != std::string::npos);
+    const auto step = title.find("if (event == HOS_COOP_TITLE_STEP) {");
+    REQUIRE(step != std::string::npos);
+    CHECK(title.find("RefreshSaveList(ctx);", step) != std::string::npos);
 }
