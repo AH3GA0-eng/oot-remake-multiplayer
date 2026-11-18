@@ -3,9 +3,12 @@
 #include <doctest/doctest.h>
 
 #include <cstdint>
+#include <cstddef>
+#include <iterator>
 #include <optional>
 #include <string>
 
+#include "coop/protocol/codec.hpp"
 #include "coop/protocol/difficulty.hpp"
 #include "coop_ngplus.h"
 
@@ -43,6 +46,46 @@ TEST_CASE("ngplus: Ganon's death and a new file's opening are named events") {
   CHECK_FALSE(CoopNgPlus::IsGanonDeath("Dm_Kokiri_0000"));
   CHECK(CoopNgPlus::IsNewFileOpening("Dm_Kokiri_0000"));
   CHECK_FALSE(CoopNgPlus::IsNewFileOpening("Dm_Kokiri_0045"));  // leaving the house: a loaded save plays it too
+}
+
+TEST_CASE("ngplus: the opening's and Ganon's played flags are the game's HavePlayedEvent of their settings") {
+  // The game plays them from its own flows (OpeningEvent, Defeat_Ganon), never through the event request wrap.
+  const char* opening[] = {"Opening_LoadingKokiriForest", "Dm_Kokiri_0000", "Opening_Introduction", "Dm_Kokiri_0030"};
+  REQUIRE(std::size(opening) == std::size(CoopNgPlus::kOpeningPlayed));
+  for (std::size_t i = 0; i < std::size(opening); ++i) {
+    CHECK(CoopNgPlus::kOpeningPlayed[i] == proto::flag_hash(std::string("HavePlayedEvent.") + opening[i]));
+  }
+  const char* ganon[] = {"InsideGanonCastle_Dungeon_BossDie_2", "Dm_FinalBattle_BossOut"};
+  REQUIRE(std::size(ganon) == std::size(CoopNgPlus::kGanonPlayed));
+  for (std::size_t i = 0; i < std::size(ganon); ++i) {
+    CHECK(CoopNgPlus::kGanonPlayed[i] == proto::flag_hash(std::string("HavePlayedEvent.") + ganon[i]));
+    CHECK(CoopNgPlus::IsGanonDeath(ganon[i]));
+  }
+  CHECK(CoopNgPlus::IsNewFileOpening("Opening_LoadingKokiriForest"));
+  CHECK(CoopNgPlus::IsNewFileOpening("Opening_Introduction"));
+}
+
+TEST_CASE("ngplus: a played flag rises only from unplayed to played within one file") {
+  CoopNgPlus::Played p;
+  CHECK_FALSE(CoopNgPlus::Rose(p, true));   // first read already played: a loaded save, never a rise
+  CHECK_FALSE(CoopNgPlus::Rose(p, true));
+  CoopNgPlus::Reset(p);                     // the title or a save load
+  CHECK_FALSE(CoopNgPlus::Rose(p, false));  // a new file before its opening
+  CHECK_FALSE(CoopNgPlus::Rose(p, std::nullopt));  // unread: kept as it was
+  CHECK(CoopNgPlus::Rose(p, true));         // the opening played
+  CHECK_FALSE(CoopNgPlus::Rose(p, true));   // once
+  CoopNgPlus::Reset(p);
+  CHECK_FALSE(CoopNgPlus::Rose(p, std::nullopt));
+  CHECK_FALSE(CoopNgPlus::Rose(p, true));   // unread, then played: no rise seen
+}
+
+TEST_CASE("ngplus: the opening seen by its flag makes a new file only where the game's save loads are seen") {
+  CoopNgPlus::FileMark m;
+  m.native_loads = true;
+  m.opening = true;
+  CHECK(CoopNgPlus::NewFileNow(m));
+  m.native_loads = false;  // the emulator: a loaded save cannot be told from a new file
+  CHECK_FALSE(CoopNgPlus::NewFileNow(m));
 }
 
 namespace {
