@@ -81,7 +81,8 @@ bool IsNewFileOpening(std::string_view event) {
 }
 
 std::optional<std::int32_t> HeartsToGive(const Give& g) {
-    if (g.level == 0 || g.hearts <= 0 || !g.may_give || !g.new_file || !g.max_life || *g.max_life <= 0) {
+    if (g.level == 0 || g.hearts <= 0 || !g.may_give || !g.new_file || g.link_made || !g.max_life ||
+        *g.max_life <= 0) {
         return std::nullopt;
     }
     const std::int32_t to = std::min(g.hearts, kMostQuarters);

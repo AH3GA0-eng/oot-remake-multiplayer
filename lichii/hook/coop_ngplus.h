@@ -14,7 +14,11 @@
 // - With a level on: a NEW file (its opening, IsNewFileOpening) of the host
 //   or of a game alone gets the kept hearts, through the game's own MaxLife
 //   setter (never lowered; a loaded save and a guest's game get nothing of
-//   their own: a guest has the host's save), and the difficulty is
+//   their own: a guest has the host's save). Written while our Link is not
+//   made (a load between scenes): the game makes Link from PlayerStatus.MaxLife
+//   as it does for a loaded save, and while Link is there his Life component
+//   writes its own max back into the flag (docs/items.md), so a write then
+//   would not hold alone. The same one path alone and hosting. The difficulty is
 //   ngplus_difficulty (coop/protocol/difficulty.hpp) of what is in force:
 //   alone in CoopDifficulty::Now(), in a session by the host's server (the
 //   host's level counts for everyone; a guest's own level is not used there,
@@ -60,8 +64,10 @@ struct Give {
     std::optional<std::int32_t> max_life;  // the file's MaxLife now (nothing: unread)
     bool new_file = false;                 // the file began with the opening since the title
     bool may_give = false;                 // alone, or this game hosts (a guest plays the host's save)
+    bool link_made = false;                // our Link is in the scene (his Life component owns the max then)
 };
-// The MaxLife to set, or nothing (off, a loaded save, a guest, already that high: never lowered).
+// The MaxLife to set, or nothing (off, a loaded save, a guest, already that high: never lowered; our Link made:
+// waits for the next load, where the game makes him from the flag).
 std::optional<std::int32_t> HeartsToGive(const Give& g);
 
 // Any thread.
@@ -71,9 +77,10 @@ std::int32_t Hearts();
 // The Settings page's choice: kept within what is unlocked, saved. False when nothing changed.
 bool SetLevel(int level);
 
-// The hook's thread, each frame (alone and in a session): Ganon's death, and the hearts while a level is on.
-// `in_game`: our Link is in a loaded save. `may_give`: alone, or this game hosts the session.
-void Frame(CoopHook::EmulatorMemory& memory, bool in_game, bool may_give);
+// The hook's thread, each frame (alone and in a session, also during loads): Ganon's death, and the hearts while a
+// level is on. `in_game`: our Link is in the scene. `may_give`: alone, or this game hosts the session. `title`: the
+// title screen is up (CoopSave::TitleUp): the next file is another one.
+void Frame(CoopHook::EmulatorMemory& memory, bool in_game, bool may_give, bool title);
 
 // Chat lines ("New Game+ 1 unlocked ...").
 std::vector<std::string> TakeLines();

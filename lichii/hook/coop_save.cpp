@@ -496,11 +496,11 @@ std::string ApplySaveSetLocked() {
                  made ? std::string() : " (copy failed: " + why + ")");
         if (!made) return "The multiplayer saves could not be made (see the log).";
     }
-    if (!g_remount(want.string())) {
+    // (the one switch path: the title has the game re-read its save list, so the new set shows at once, report 124)
+    if (!RemountLocked(want)) {
         LOG_WARNING(Core, "coop: save: could not switch the saves to {}", want.string());
         return "The saves could not be switched (see the log).";
     }
-    NoteSaveDirLocked(want);
     LOG_INFO(Core, "coop: save: playing the {} saves: {}", g_mp_saves ? "multiplayer" : "solo", want.string());
     return g_mp_saves ? "Multiplayer saves: load a save to play them." : "Solo saves: load a save to play them.";
 }

@@ -87,6 +87,16 @@ TEST_CASE("ngplus: no hearts for a loaded save, a guest, with the level off or o
   CHECK_FALSE(CoopNgPlus::HeartsToGive(g));
 }
 
+TEST_CASE("ngplus: the hearts go in while our Link is not made (a load), alone and hosting alike") {
+  // With Link there his Life component writes its own max back into MaxLife (docs/items.md), so a write then would
+  // not hold alone; in a load the game makes Link from the flag, as for a loaded save.
+  Give g = NewFileAlone();
+  g.link_made = true;
+  CHECK_FALSE(CoopNgPlus::HeartsToGive(g));   // waits for the next load
+  g.link_made = false;
+  CHECK(CoopNgPlus::HeartsToGive(g) == 40);   // (may_give: alone or hosting, the same one path)
+}
+
 TEST_CASE("ngplus: each level grows enemy and boss life and damage, never the number of enemies") {
   CHECK(proto::ngplus_difficulty({100, 100, 100, 100, 100}, 0) == proto::DifficultyValues{100, 100, 100, 100, 100});
   CHECK(proto::ngplus_difficulty({100, 100, 100, 100, 100}, 2) == proto::DifficultyValues{200, 150, 100, 200, 150});

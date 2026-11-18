@@ -42,7 +42,11 @@ struct Glue {
     std::int32_t hearts_said = -1;
     bool test_done = false;
     bool new_file = false;    // this file began with the game's opening (IsNewFileOpening) since the title
+    bool gap_written = false; // the hearts were written in this load (no Link): once per load
+    std::int32_t wrote = -1;  // MaxLife written in the last load, to check once Link is made (-1: none)
+    bool held = false;        // the kept hearts hold in this file: nothing more read or written
     bool was_in_game = false;
+    std::uint64_t link_at_us = 0;  // when our Link was last made (the end of a load)
     std::vector<std::string> lines;
 };
 
@@ -144,7 +148,7 @@ bool SetLevel(int level) {
     return true;
 }
 
-void Frame(CoopHook::EmulatorMemory& memory, bool in_game, bool may_give) {
+void Frame(CoopHook::EmulatorMemory& memory, bool in_game, bool may_give, bool title) {
     Glue& g = Ready();
     const std::uint64_t now_us = CoopEvery::NowUs();
     bool beaten = false;
@@ -159,10 +163,12 @@ void Frame(CoopHook::EmulatorMemory& memory, bool in_game, bool may_give) {
         }
     }
     // Back on the title: the next file is another one (a loaded save starts after the opening, so it gets nothing).
-    if (g.was_in_game && !in_game) {
+    // Not on a load between scenes: the hearts go in there.
+    if (title) {
         g.new_file = false;
+        g.held = false;
+        g.wrote = -1;
     }
-    g.was_in_game = in_game;
     // Tests only (OOT_COOP_TEST=1, as the server's test switches): Ganon counted beaten once Link is in a save.
     if (!g.test_done && in_game) {
         g.test_done = true;
@@ -177,7 +183,6 @@ void Frame(CoopHook::EmulatorMemory& memory, bool in_game, bool may_give) {
     // The save's MaxLife, read only when it is needed (Ganon's death, or a level on and a new file): New Game+ off
     // reads nothing, so the game alone runs as without it.
     auto read_max = [&]() -> std::optional<proto::FlagEntry> {
-        if (!in_game) return std::nullopt;
         coop::host::GameFlagStore reader(memory);
         auto e = reader.read(max_key);
         return e && e->kind == proto::FlagKind::int32 ? e : std::nullopt;
@@ -196,42 +201,75 @@ void Frame(CoopHook::EmulatorMemory& memory, bool in_game, bool may_give) {
                               Hearts(g.saved.hearts) + ": Multiplayer, Settings, New Game+, then start a new file");
         }
     }
-    if (!in_game) {
-        return;
+    if (in_game) {
+        g.gap_written = false;   // (the next load is a new gap)
+        if (!g.was_in_game) {
+            g.link_at_us = now_us;   // our Link made (a load ended)
+        }
     }
-    static CoopEvery::Every every{1'000'000};
-    if (!every.Due(now_us)) {
-        return;
-    }
+    g.was_in_game = in_game;
     const std::uint32_t packed = g.packed.load();
     Give give;
     give.level = static_cast<std::uint8_t>(packed & 0xff);
     give.hearts = static_cast<std::int32_t>(packed >> 16);
     give.new_file = g.new_file;
     give.may_give = may_give;
-    if (give.level == 0 || give.hearts <= 0 || !give.new_file || !give.may_give) {
+    give.link_made = in_game;
+    if (give.level == 0 || give.hearts <= 0 || !give.new_file || !give.may_give || g.held) {
         return;   // (nothing to give: MaxLife is not read)
     }
+    if (in_game) {
+        // After a write in a load: our Link was made from the flag; a second later his Life component has written
+        // its max back into it (within a quarter second), so the flag says whether the hearts held. Read once per
+        // write.
+        if (g.wrote < 0 || now_us - g.link_at_us < 1'000'000) {
+            return;
+        }
+        const auto max_life = read_max();
+        if (!max_life) {
+            return;
+        }
+        const auto now = static_cast<std::int32_t>(max_life->value);
+        std::lock_guard lock(g.mutex);
+        if (now >= g.wrote) {
+            g.held = true;
+            LOG_INFO(Core, "coop: New Game+: our Link was made with MaxLife {}: the kept hearts hold", now);
+            if (g.lines.size() < 16) {
+                g.lines.push_back("New Game+: your " + Hearts(now) + " carried over");
+            }
+        } else {
+            LOG_INFO(Core, "coop: New Game+: the game kept MaxLife {} (not {}): written again at the next load", now,
+                     g.wrote);
+        }
+        g.wrote = -1;
+        return;
+    }
+    // A load between scenes (no Link): once per load. The game makes Link from PlayerStatus.MaxLife, as for a
+    // loaded save, so the hearts hold alone too (with Link there, his Life component writes its own max back).
+    if (g.gap_written) {
+        return;
+    }
+    g.gap_written = true;
     const auto max_life = read_max();
     give.max_life = max_life ? std::optional<std::int32_t>(static_cast<std::int32_t>(max_life->value)) : std::nullopt;
     const auto to = HeartsToGive(give);
     if (!to) {
+        if (give.max_life && *give.max_life >= std::min(give.hearts, kMostQuarters)) {
+            g.held = true;   // (already that high: nothing more for this file)
+        }
         return;
     }
     // The save's MaxLife through the game's own Int setter (GameFlags::use_calls: CoopFlagNative on the calc thread),
     // the path the boss's one heart container takes (coop_hook.cpp, CoopBoss::TakeMaxLifeWrite). In a session the
-    // object walk carries it into Link's own hearts as for any MaxLife a heart container raised (issue 88,
-    // docs/items.md); the max rule shares it, so it reaches the guests as the host's save does.
+    // max rule shares it, so it reaches the guests as the host's save does.
     coop::host::GameFlagStore store(memory);
     auto set = *max_life;
     set.value = static_cast<std::uint32_t>(*to);
     const bool ok = store.write(set);
-    LOG_INFO(Core, "coop: New Game+: MaxLife {} -> {} (a new file){}", *give.max_life, *to,
-             ok ? "" : ": the write failed");
-    std::lock_guard lock(g.mutex);
-    if (ok && g.hearts_said != *to && g.lines.size() < 16) {
-        g.hearts_said = *to;
-        g.lines.push_back("New Game+: your " + Hearts(*to) + " carried over");
+    LOG_INFO(Core, "coop: New Game+: MaxLife {} -> {} (a new file, in a load: our Link is made with it){}",
+             *give.max_life, *to, ok ? "" : ": the write failed");
+    if (ok) {
+        g.wrote = *to;
     }
 }
 
