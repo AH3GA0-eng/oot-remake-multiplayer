@@ -2035,11 +2035,41 @@ class FullBuildTest(unittest.TestCase):
             fx_mod, "romfs", "System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs"))))
         self.assertGreaterEqual(t.get(rel[:-3]) or 0, len(data))
 
-    def test_build_skin_gear_on_a_model_the_game_has(self):
-        """A mod that points an item at another model the game already has (a recolour mod: the Master
-        Sword on the dark sword's model) brings no model file of its own; the skin still gets a copy of
-        the item, and your own Link's pack of it, while the game's item stays the game's."""
+    def test_build_skin_effects_new_replaced_and_other_version(self):
+        """With --skin-effects: a replaced game effect file is taken once; a mod's new effect file is a
+        new file (taken once, not again as an effect: one entry in files, one size entry); a link table
+        made for another game version is skipped with a line, never taken as a new file."""
         mod_src = self.make_model_mod()
+        plain = zstandard.ZstdCompressor()
+        replaced = "Effect/Weapon_Sword_Master.Test.vsetb.byml.zs"
+        new = "Effect/Mod_Own_Glow.Test.vsetb.byml.zs"
+        table = "ELink2/elink2.Product.999.belnk.zs"
+        other = "ELink2/elink2.Product.998.belnk.zs"
+        self.write(replaced, plain.compress(b"VFXB game glow" + bytes(50)))
+        self.write(table, plain.compress(b"ELNK game table" + bytes(49)))
+        for rel, body in ((replaced, b"VFXB red"), (new, b"VFXB own"), (table, b"ELNK mod"), (other, b"ELNK old")):
+            path = os.path.join(mod_src, "romfs", *rel.split("/"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "wb") as f:
+                f.write(plain.compress(body + bytes(56)))
+        said = []
+        mod = os.path.join(self.dir, "mod_effects_kinds")
+        [entry] = build.build(self.romfs, mod, log=said.append, skins=[("Mod", mod_src)], look_slots=0,
+                              skin_effects=True)["skins"]
+        for rel in (replaced, new, table):
+            self.assertEqual(entry["files"].count(rel), 1, rel)
+            self.assertTrue(os.path.exists(os.path.join(mod, "romfs", *rel.split("/"))), rel)
+        self.assertNotIn(other, entry["files"])
+        self.assertFalse(os.path.exists(os.path.join(mod, "romfs", *other.split("/"))))
+        self.assertTrue(any(other in line and "left out" in line for line in said), said)
+        # Without the switch the new effect resource still comes (a new file), the game's copies do not.
+        [off] = build.build(self.romfs, os.path.join(self.dir, "mod_effects_off"), log=lambda _l: None,
+                            skins=[("Mod", mod_src)], look_slots=0)["skins"]
+        self.assertEqual([f for f in off["files"] if f.startswith(("Effect/", "ELink2/"))], [new])
+
+    def make_recolour_sword(self, mod_src, game_model=True):
+        """The game's Master Sword on its own model, the dark sword's model in the game (or not),
+        and the mod's sword pack naming the dark model with no model file of its own."""
         plain = zstandard.ZstdCompressor()
         sword, dark = "Weapon_Sword_Master", "Weapon_Sword_Master_Dark"
         info = "Component/ModelInfo/Master.engine__component__ModelInfo.bgyml"
@@ -2048,20 +2078,29 @@ class FullBuildTest(unittest.TestCase):
             return plain.compress(sarc.write({
                 f"Actor/{sword}.engine__actor__ActorParam.bgyml": byml.dumps({"Components": {"ModelInfoRef": "?" + info}}),
                 info: byml.dumps({"FmdbName": model, "ModelProjectName": model})}))
-        # The game: its sword on its own model, and the dark sword's model.
         self.write(f"Pack/Actor/{sword}.pack.zs", sword_pack(sword))
-        self.write(f"Model/{dark}.{dark}.bfres.zs", plain.compress(b"FRES game dark sword"))
+        if game_model:
+            self.write(f"Model/{dark}.{dark}.bfres.zs", plain.compress(b"FRES game dark sword"))
         d = zs.Dicts.from_romfs(self.romfs)
         ai = byml.loads(d.decompress(build.read(os.path.join(self.romfs, "RSDB/ActorInfo.Product.999.rstbl.byml.zs"))))
         ai.append({"__RowId": sword, "ActorName": sword, "FmdbName": sword, "ModelProjectName": sword})
         self.write("RSDB/ActorInfo.Product.999.rstbl.byml.zs", plain.compress(byml.dumps(ai)))
         self.write("RSDB/GameActorInfo.Product.999.rstbl.byml.zs",
                    plain.compress(byml.dumps([{"__RowId": r["__RowId"]} for r in ai])))
-        # The mod: the sword's pack names the dark sword's model; no model file comes with it.
         with open(os.path.join(mod_src, "romfs", "Pack", "Actor", f"{sword}.pack.zs"), "wb") as f:
             f.write(sword_pack(dark))
+        return sword, dark, info
+
+    def test_build_skin_gear_on_a_model_the_game_has(self):
+        """A mod that points an item at another model the game already has (a recolour mod: the Master
+        Sword on the dark sword's model) brings no model file of its own; the skin still gets a copy of
+        the item naming the game's model, the game's item stays the game's, and the wearer's own Link
+        is not given the mod's item pack (it would replace the game's item for every Link there)."""
+        mod_src = self.make_model_mod()
+        sword, dark, info = self.make_recolour_sword(mod_src)
         mod = os.path.join(self.dir, "mod_skin_gear")
         m = build.build(self.romfs, mod, log=lambda _l: None, skins=[("Mod", mod_src)], look_slots=0)
+        d = zs.Dicts.from_romfs(self.romfs)
         out = os.path.join(mod, "romfs")
         [entry] = m["skins"]
         self.assertEqual(entry["gear"], {"Armor_Adult_Goron": "Armor_Adult_Goron_Skin_Mod",
@@ -2071,12 +2110,31 @@ class FullBuildTest(unittest.TestCase):
                          {"FmdbName": dark, "ModelProjectName": dark})
         self.assertFalse(os.path.exists(os.path.join(out, f"Model/{dark}.{dark}.bfres.zs")))  # the game's model
         self.assertFalse(os.path.exists(os.path.join(out, f"Pack/Actor/{sword}.pack.zs")))   # the game's item stays
-        # Your own Link holds it too: the mod's pack of the item, beside the pack (not in romfs/).
-        self.assertEqual(entry["self_files"][f"Pack/Actor/{sword}.pack.zs"], f"coop_skin_self/Mod/{sword}.pack.zs")
-        own = sarc.read(d.decompress(build.read(os.path.join(mod, f"coop_skin_self/Mod/{sword}.pack.zs"))))
-        self.assertEqual(byml.loads(own[info]), {"FmdbName": dark, "ModelProjectName": dark})
+        self.assertEqual(list(entry["self_files"]), ["Pack/Actor/Player_Adult.pack.zs"])     # the player pack only
+        self.assertFalse(os.path.exists(os.path.join(mod, f"coop_skin_self/Mod/{sword}.pack.zs")))
         # A model neither the mod nor the game has: still no copy (the Kokiri sword of make_model_mod).
         self.assertNotIn("Weapon_Sword_Kokiri", entry["gear"])
+
+    def test_build_skin_gear_asks_the_game_not_the_folder(self):
+        """From a .nup the romfs folder holds only some of the game's files: the game is asked through
+        game_has and game_read (the reader), not the folder. And an item whose model is nowhere is
+        left out with a line."""
+        mod_src = self.make_model_mod()
+        sword, dark, _info = self.make_recolour_sword(mod_src, game_model=False)  # not in the folder
+        said = []
+        mod = os.path.join(self.dir, "mod_skin_reader")
+
+        def has(path):
+            return path == f"Model/{dark}.{dark}.bfres.zs" or os.path.isfile(os.path.join(self.romfs, path))
+        m = build.build(self.romfs, mod, log=said.append, skins=[("Mod", mod_src)], look_slots=0,
+                        game_has=has, game_read=lambda path: build.read(os.path.join(self.romfs, path)))
+        self.assertIn(sword, m["skins"][0]["gear"])
+        # The folder alone (no reader): the model is nowhere, so the sword is left out, said in the log.
+        said = []
+        m = build.build(self.romfs, os.path.join(self.dir, "mod_skin_folder"), log=said.append,
+                        skins=[("Mod", mod_src)], look_slots=0)
+        self.assertNotIn(sword, m["skins"][0]["gear"])
+        self.assertTrue(any(f"{sword} left out" in line and dark in line for line in said), said)
 
     def test_build_skin(self):
         from puppet_pack import skin
@@ -2148,9 +2206,7 @@ class FullBuildTest(unittest.TestCase):
         self.assertGreater(t.get("Model/Mod__Adult_01_Animation.Skeleton.bfres") or 0, 0)  # no mod entry: from the file
         self.assertGreater(t.get("Pack/Actor/CoopPuppet_Adult_Skin_Mod.pack") or 0, 0)
         # Your own Link in the skin: the mod's player pack beside the pack (not in romfs/), its AS on the copy.
-        # your own Link also wears the skin's gear (skin.self_gear)
-        self.assertEqual(entry["self_files"], {"Pack/Actor/Player_Adult.pack.zs": "coop_skin_self/Mod/Player_Adult.pack.zs",
-                                               "Pack/Actor/Armor_Adult_Goron.pack.zs": "coop_skin_self/Mod/Armor_Adult_Goron.pack.zs"})
+        self.assertEqual(entry["self_files"], {"Pack/Actor/Player_Adult.pack.zs": "coop_skin_self/Mod/Player_Adult.pack.zs"})
         self.assertFalse(os.path.exists(os.path.join(out, "Pack/Actor/Player_Adult.pack.zs")))
         own = sarc.read(d.decompress(build.read(os.path.join(mod, "coop_skin_self/Mod/Player_Adult.pack.zs"))))
         base = byml.loads(own["Actor/Player_Base.engine__actor__ActorParam.bgyml"])["Components"]
