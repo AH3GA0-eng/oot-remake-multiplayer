@@ -1772,7 +1772,10 @@ std::vector<coop::protocol::GrassCut> GrassSync::Look(const ReadWord& read, std:
                                                       const std::string& scene,
                                                       std::uint64_t now_ms) {
     std::vector<coop::protocol::GrassCut> out;
-    const auto s = main != 0 ? SceneOf(read, main) : std::nullopt;
+    std::optional<std::uint64_t> s;  // (made in place, not a conditional copy: gcc 13 -Werror=maybe-uninitialized)
+    if (main != 0) {
+        s = SceneOf(read, main);
+    }
     {
         std::lock_guard lock(mutex_);
         main_ = main;
