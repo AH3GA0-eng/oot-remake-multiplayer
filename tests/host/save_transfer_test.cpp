@@ -567,6 +567,7 @@ TEST_CASE("save transfer: a guest that joins with a file loaded asks and gets th
   // The line the guest reads when it joins says where the save is taken.
   CHECK(N::kJoinedPlaying.find("go back to the title") != std::string_view::npos);
   CHECK(N::kJoinedPlaying.find("Success") != std::string_view::npos);
+  CHECK(N::kTitleAsked.find("Success") != std::string_view::npos);  // the title's own ask (review of #278)
 }
 
 TEST_CASE("save transfer: a new session with a file still loaded chooses again without the title") {

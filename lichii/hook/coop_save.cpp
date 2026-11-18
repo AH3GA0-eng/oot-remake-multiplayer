@@ -297,10 +297,15 @@ void PendingFrame() {
                     g_dir.string());
         g_guest.ready = false;
         g_lines.on_failed();
+        g_use = false;   // keeps its own saves from now on: the title asks no more (review of #278)
         Say("The host's save came, but this game could not switch to it (see the log): play your own save.");
         return;
     }
     LOG_INFO(Core, "coop: save: now playing from the co-op save folder {}", to.string());
+    // The host's save just written covers this return to the title (a join with a file loaded writes it on the
+    // frame the title comes up): the title asks nothing more for it (review of #278).
+    g_title_ask = false;
+    g_guest_played = false;
     Say(g_lines.on_ready(g_in_game));
 }
 
@@ -861,7 +866,7 @@ void TitleResync(bool connected_guest) {
     AskAtTitle();   // asks at once (OnFrame), as on joining; written and switched to on the title's menu
     LOG_INFO(Core, "coop: save: back on the title as a guest: asking for the host's save again, so the next load is "
                    "the host's");
-    Say("The host's save is coming: load a save once the chat says Success.");
+    Say(std::string(save::GuestNotices::kTitleAsked));
 }
 
 void Resync(bool connected_guest) {

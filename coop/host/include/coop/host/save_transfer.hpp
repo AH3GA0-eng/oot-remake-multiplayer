@@ -461,6 +461,8 @@ class GuestNotices {
   static constexpr std::string_view kJoinedPlaying =
       "You joined with a file loaded: the host's save is coming. To play from the host's progress, go back to the "
       "title and load a save once the chat says Success.";
+  // A guest back on the title after playing in the session (save::title_resync_due): the host's save is asked for.
+  static constexpr std::string_view kTitleAsked = "The host's save is coming: load a save once the chat says Success.";
   // A part of transfer `transfer_id` (of `count` parts) came: kLoading when it is a new transfer of a save, else "".
   // A "no save" answer is one part (pack_no_save: a few bytes); a save slot is about 170 KB, many parts.
   std::string on_part(std::uint32_t transfer_id, std::size_t count);
