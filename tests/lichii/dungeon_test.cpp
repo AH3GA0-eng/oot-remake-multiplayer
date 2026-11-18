@@ -1,9 +1,11 @@
 // Tests for the shared dungeon flags (lichii/hook/coop_dungeon.cpp).
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <map>
 #include <set>
 #include <string>
+#include <string_view>
 
 #include "coop_dungeon.h"
 #include "coop_event_result.h"
@@ -22,6 +24,22 @@ TEST_CASE("dungeon: every flag's hash is the hash of its name, once") {
     }
     CHECK(CoopDungeon::Flags().size() > 700);
     CHECK(ints > 10);
+}
+
+TEST_CASE("dungeon: a mid-boss beaten is shared, its fight start is not (mid-boss end state)") {
+    const auto has = [](std::string_view name) {
+        const auto flags = CoopDungeon::Flags();
+        return std::any_of(flags.begin(), flags.end(), [&](const auto& f) { return f.name == name; });
+    };
+    CHECK(has("Get_StoneOfWater_BigOctoDefeat"));
+    CHECK(has("Enemy_MiddleBoss_IronKnuckle_Nabooru_BossDefeat"));
+    CHECK(has("BottomOfTheWell_Level_Room_06_Boss_Defeat"));  // Dead Hand, the rule they follow
+    CHECK(has("WaterTemple_DarkLink_Death"));
+    CHECK(has("ForestTemple_DefeatMeg"));
+    CHECK(has("FireTemple_Room24_FlareDancerisDead"));
+    CHECK(has("Gimmick_DefeatEnemy_Open_DodongoCave_02"));  // the second Lizalfos room
+    CHECK_FALSE(has("Get_StoneOfWater_BigOctoAppear"));
+    CHECK_FALSE(has("Enemy_MiddleBoss_IronKnuckle_Nabooru_BossAppear"));
 }
 
 TEST_CASE("dungeon: the Water Temple's water level and switches are in the list") {
@@ -48,11 +66,17 @@ TEST_CASE("dungeon: room state under another spelling or after Gimmick_ is share
                           "Gimmick_DefeatEnemy_Open_ForestTemple_05", "Gimmick_DeleteFire_FireTemple"}) {
         CHECK_MESSAGE(names.contains(n), n);
     }
-    // Where one player (or Ruto) stands, state set both ways, and what Link reads stay
-    // each player's own (review of da6a300).
+    // Jabu-Jabu's Room 14 water (issue 249): the two flags are the water's only input (its placement
+    // groups' saved state), set once per press and never written back by a game whose switch is free.
+    for (const char* n : {"Gimmick_Insidejabujabu_Updown_MoveWater", "Gimmick_Insidejabujabu_down_MoveWater"}) {
+        CHECK_MESSAGE(names.contains(n), n);
+        CHECK_FALSE_MESSAGE(CoopDungeon::HeldIn(host::flag_hash(n)).has_value(), n);  // live, not held
+    }
+    // Where one player (or Ruto) stands, state a switch or torch holds both ways, each game's own switch
+    // arming, and what Link reads stay each player's own (review of da6a300).
     for (const char* n : {"Insidejabujabu_Room7_Switch1_InsideArea", "Insidejabujabu_Room7_Switch2_OnlyLinkOrLuto",
                           "Insidejabujabu_Room7_NearTheSwitch", "Insidejabujabu_Room7_NearTheSwitch_Tentacle_Gate",
-                          "Gimmick_Insidejabujabu_Updown_MoveWater", "Gimmick_Insidejabujabu_down_MoveWater",
+                          "Gimmick_Insidejabujabu_Updown_MoveWaterSwitch", "InsidejaubjabuBelly_gimic_switchOn_Stone",
                           "Gimmick_Ignition_Open_WaterTemple_01", "Gimmick_Ignition_Open_WaterTemple_02",
                           "HavePlayedEvent.Obj_SpiritTemple_StoneTablet_A_01"}) {
         CHECK_FALSE_MESSAGE(names.contains(n), n);

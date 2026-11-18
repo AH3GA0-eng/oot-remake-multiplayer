@@ -42,6 +42,12 @@ using SlotOpenedFn = unsigned (*)(char* slot_dir, std::size_t cap, int* write);
 void SetSlotOpens(SlotOpenedFn opened);
 // Each frame, also without a session: takes the new opens and the load windows (cheap when there are none).
 void PollSlotOpens();
+// The host's save as it is NOW for a guest that asks (case 1 of the join's state): Hookshot says at start that it can
+// ask our game for its own autosave (SetSaveRequests(true)); then a guest's ask while our file is played waits for
+// that save (save::Planner's round), and Hookshot's game-thread step takes the request once (TakeSaveRequest) and
+// makes the game's call (the EventTriggerRequestAutoSave node's own). Unset (the emulator): the save on disk at once.
+void SetSaveRequests(bool on);
+bool TakeSaveRequest();
 // The Lobby tab's "Resync from host" (a guest; save::resync_check): taken at the next OnFrame, which asks the host
 // again; the chat says how it goes. CanResync: the row is shown (a connected guest on a switchable folder).
 void RequestResync();
@@ -82,6 +88,9 @@ void NoteGameOverSave();
 // Whether this Hookshot has all four wraps (its hello's bits); false on the emulator.
 void SetNativeSaveLoads(bool on);
 bool NativeSaveLoads();
+// How many save loads the game has started since boot (NoteGameSaveLoad(true): the title's Continue/Load, the System
+// menu's Load, Game Over's Try Again, the host's save), never reset: a reader keeps the last count it saw.
+std::uint64_t SaveLoadStarts();
 // The starts and loads since the last call (the session's flag watcher takes them).
 // Only fresh ones: a start older than kGameSaveLoadFreshMs (the game's own start loads a save before any session) or
 // a Game Over mark older than kGameOverFreshMs is dropped.
@@ -95,6 +104,15 @@ inline constexpr long long kGameOverFreshMs = 120'000;
 GameSaveLoads TakeGameSaveLoads();
 // True once after each save load (the solo map keeper drops its baseline; with or without a session).
 bool TakeKeeperSaveLoad();
+
+// (Navi) Solo or multiplayer saves: the Multiplayer tab's Settings page, "Saves". The multiplayer saves are their own
+// folder beside the solo ones (<account>-mp; a guest's copy of the host's save is then <account>-mp-coop), first made
+// as a copy of the solo saves. Switched on the title's menu with no file loaded and no session, and kept in
+// coop-saves.ini beside coop.ini for the next start (put in force on the first title). Hookshot only.
+// What it did, in plain words, for the menu's note.
+std::string ChooseSaveSet(bool multiplayer);
+// The saves chosen (as kept: in force from the title's menu on).
+bool MultiplayerSaves();
 
 // A guest's switch to the host's save that has not happened yet waits (the player picked a file on the title):
 // never while that file loads. Once Link is in the game the hold ends; the switch still waits (never under a game

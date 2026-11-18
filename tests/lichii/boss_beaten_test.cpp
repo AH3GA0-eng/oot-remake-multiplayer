@@ -53,14 +53,16 @@ bool HasBool(const BeatenSet& s, std::string_view name, bool value) {
 
 } // namespace
 
-TEST_CASE("boss beaten: the generated sets, one per dungeon boss room, hashes from their names") {
+TEST_CASE("boss beaten: the generated sets, one per boss (eight rooms, Ganondorf, Ganon), hashes from their names") {
     const auto sets = CoopBossBeaten::Sets();
-    REQUIRE(sets.size() == 8);
-    for (std::uint8_t room = 0; room < 8; ++room) {
+    REQUIRE(sets.size() == 10);
+    for (std::uint8_t room = 0; room < 10; ++room) {
         const BeatenSet* s = CoopBossBeaten::ForRoom(room);
         REQUIRE(s != nullptr);
         CAPTURE(s->boss);
-        REQUIRE(CoopBoss::RoomByIndex(room) != nullptr);
+        CHECK(std::string_view(s->boss) == CoopBossScenes::Bosses()[room].name);
+        CHECK((CoopBoss::RoomByIndex(room) != nullptr) == (room < 8));
+        REQUIRE(CoopBossBeaten::DeathScene(room).has_value());
         CHECK(s->step == coop::protocol::flag_hash(s->step_name));
         CHECK(!s->below.empty());
         CHECK(s->below.front() == coop::protocol::flag_hash("NotReady"));
@@ -75,7 +77,100 @@ TEST_CASE("boss beaten: the generated sets, one per dungeon boss room, hashes fr
             CHECK(std::find(ns.begin(), ns.end(), std::string_view(b.name)) == ns.end());
         }
     }
-    CHECK(CoopBossBeaten::ForRoom(8) == nullptr);
+    CHECK(CoopBossBeaten::ForRoom(10) == nullptr);
+    CHECK_FALSE(CoopBossBeaten::DeathScene(10).has_value());
+}
+
+namespace {
+
+const BeatenSet& Ganondorf() {
+    const BeatenSet* s = CoopBossBeaten::ForRoom(8);
+    REQUIRE(s != nullptr);
+    return *s;
+}
+
+const BeatenSet& Ganon() {
+    const BeatenSet* s = CoopBossBeaten::ForRoom(9);
+    REQUIRE(s != nullptr);
+    return *s;
+}
+
+} // namespace
+
+TEST_CASE("boss beaten: Ganondorf and Ganon move Defeat_Ganon, each game's own quest (not shared)") {
+    const BeatenSet& dorf = Ganondorf();
+    const BeatenSet& ganon = Ganon();
+    CHECK(std::string_view(dorf.quest_name) == "Defeat_Ganon");
+    CHECK(dorf.quest == ganon.quest);
+    CHECK(CoopQuests::Find(dorf.quest) == nullptr);  // coop_quests.cpp leaves the final battle out
+    CHECK(std::string_view(dorf.step_name) == "Step06");
+    CHECK(dorf.below.back() == coop::protocol::flag_hash("Step05"));
+    CHECK(std::string_view(ganon.step_name) == "Complete");
+    CHECK(ganon.below.back() == coop::protocol::flag_hash("Step09"));
+    // Ganondorf's step is below Ganon's: a save past Ganondorf is still given Ganon's.
+    CHECK(std::find(ganon.below.begin(), ganon.below.end(), dorf.step) != ganon.below.end());
+    CHECK(HasBool(dorf, "HavePlayedEvent.Dm_InsideGanonCastle_BossOut", true));
+    CHECK(HasBool(ganon, "FinalBattleField_DefeatGanonStart", true));
+    CHECK(HasBool(ganon, "HavePlayedEvent.Dm_FinalBattle_BossOut", true));
+}
+
+TEST_CASE("boss beaten: Ganondorf and Ganon are given outside the end sequence's scenes, the furthest step once") {
+    const BeatenSet& dorf = Ganondorf();
+    const BeatenSet& ganon = Ganon();
+    const std::uint32_t step05 = coop::protocol::flag_hash("Step05");
+    const auto quest_writes = [&](const std::vector<Write>& w) {
+        std::vector<std::uint32_t> v;
+        for (const Write& x : w) {
+            if (x.is_enum) {
+                CHECK(x.hash == dorf.quest);
+                v.push_back(x.value);
+            }
+        }
+        return v;
+    };
+    // Ganondorf alone: in his castle, the escape or Ganon's field nothing; at the next load elsewhere Step06.
+    for (const char* kept : {"InsideGanonCastle", "CrumblingGanonCastle", "FinalBattleField"}) {
+        CAPTURE(kept);
+        CHECK(CoopBossBeaten::KeptScene(8, kept));
+        CHECK(CoopBossBeaten::KeptScene(9, kept));
+        Flags f = Alive(dorf);
+        Apply a;
+        CHECK(a.Check(std::string(kept), true, std::vector<std::uint8_t>{8}, std::ref(f)).empty());
+    }
+    CHECK_FALSE(CoopBossBeaten::KeptScene(8, "GanonCastle"));  // the castle grounds: no fight there
+    CHECK_FALSE(CoopBossBeaten::KeptScene(0, "InsideGanonCastle"));
+    {
+        Flags f = Alive(dorf);
+        Apply a;
+        const auto w = a.Check(std::string("GanonCastle"), true, std::vector<std::uint8_t>{8}, std::ref(f));
+        CHECK(w.size() == dorf.bools.size() + 1);
+        CHECK((quest_writes(w) == std::vector<std::uint32_t>{dorf.step}));
+    }
+    // Both beaten (a joiner told both, in either order): one Defeat_Ganon write, Complete.
+    for (const std::vector<std::uint8_t>& beaten : {std::vector<std::uint8_t>{8, 9}, std::vector<std::uint8_t>{9, 8}}) {
+        Flags f = Alive(dorf);
+        for (const auto& b : ganon.bools) {
+            f.v[b.hash] = b.value ? 0 : 1;
+        }
+        f.v[dorf.quest] = step05;
+        Apply a;
+        const auto w = a.Check(std::string("HyruleField"), true, beaten, std::ref(f));
+        CHECK((quest_writes(w) == std::vector<std::uint32_t>{ganon.step}));
+        CHECK(w.size() == dorf.bools.size() + ganon.bools.size() + 1);
+    }
+    // Past Ganondorf already (Step06, Step07): only Ganon's step; a finished game (Complete): no step at all.
+    for (const char* at : {"Step06", "Step07"}) {
+        Flags f;
+        f.v[dorf.quest] = coop::protocol::flag_hash(at);
+        Apply a;
+        CHECK((quest_writes(a.Check(std::string("HyruleField"), true, std::vector<std::uint8_t>{8, 9}, std::ref(f))) ==
+               std::vector<std::uint32_t>{ganon.step}));
+    }
+    Flags done;
+    done.v[dorf.quest] = coop::protocol::flag_hash("Complete");
+    Apply a;
+    CHECK(quest_writes(a.Check(std::string("HyruleField"), true, std::vector<std::uint8_t>{8, 9}, std::ref(done)))
+              .empty());
 }
 
 TEST_CASE("boss beaten: Gohma's set is what a save that beat her holds (hs-gohma-death's save prep)") {
@@ -115,9 +210,10 @@ TEST_CASE("boss beaten: record") {
     CoopBossBeaten::Record r;
     CHECK(r.Add(0));
     CHECK(!r.Add(0));
-    CHECK(!r.Add(9));  // no dungeon room
+    CHECK(r.Add(9));    // Ganon: no dungeon room, a set of its own
+    CHECK(!r.Add(10));  // no boss
     CHECK(r.Add(3));
-    CHECK((r.Rooms() == std::vector<std::uint8_t>{0, 3}));
+    CHECK((r.Rooms() == std::vector<std::uint8_t>{0, 9, 3}));
     r.Clear();
     CHECK(r.Rooms().empty());
 }
@@ -227,7 +323,14 @@ TEST_CASE("boss beaten: only a proven death is one (a game took the boss's death
     CHECK_FALSE(CoopBossBeaten::ProvenDeath(scene(0, "GohmaStage", proto::BossSceneKind::outro_start)));  // boss rush
     CHECK_FALSE(CoopBossBeaten::ProvenDeath(scene(0, deku, proto::BossSceneKind::intro_start)));
     CHECK(CoopBossBeaten::ProvenDeath(scene(0, deku, proto::BossSceneKind::outro_end)) == std::uint8_t{0});
-    CHECK_FALSE(CoopBossBeaten::ProvenDeath(scene(8, "InsideGanonCastle", proto::BossSceneKind::outro_start)));
+    // Ganondorf in his castle, Ganon on his field; never their boss rush stages or another scene.
+    CHECK(CoopBossBeaten::ProvenDeath(scene(8, "InsideGanonCastle", proto::BossSceneKind::outro_start)) ==
+          std::uint8_t{8});
+    CHECK(CoopBossBeaten::ProvenDeath(scene(9, "FinalBattleField", proto::BossSceneKind::outro_end)) == std::uint8_t{9});
+    CHECK_FALSE(CoopBossBeaten::ProvenDeath(scene(8, "GanondorfStage", proto::BossSceneKind::outro_start)));
+    CHECK_FALSE(CoopBossBeaten::ProvenDeath(scene(9, "GanonStage", proto::BossSceneKind::outro_start)));
+    CHECK_FALSE(CoopBossBeaten::ProvenDeath(scene(9, "InsideGanonCastle", proto::BossSceneKind::outro_start)));
+    CHECK_FALSE(CoopBossBeaten::ProvenDeath(scene(10, "InsideGanonCastle", proto::BossSceneKind::outro_start)));
     // BOSS_ROOM defeated is maybe a guess (a long event, no reading): never one, from anyone.
     for (const std::uint8_t player : {std::uint8_t{0}, std::uint8_t{2}}) {
         CHECK_FALSE(

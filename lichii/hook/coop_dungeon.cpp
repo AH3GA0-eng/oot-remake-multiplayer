@@ -1013,9 +1013,19 @@ constexpr std::array kFlags = std::to_array<Flag>({
     // Foresttemple_) or puts it after Gimmick_ (the enemies-beaten shutters).
     // Left out: the Room7 area sensors (_InsideArea, _NearTheSwitch*: set true and
     // false from where a player or Ruto is), Room7_Switch2_OnlyLinkOrLuto (Ruto),
-    // two-way state (Jabu-Jabu's Room 14 water, the Water Temple torch shutters
-    // Gimmick_Ignition_Open_*: step switches and torches set them both ways) and
-    // the Spirit Temple stone tablets (what Link reads, not room state).
+    // two-way state a switch or torch HOLDS (the Water Temple torch shutters
+    // Gimmick_Ignition_Open_*, Jabu-Jabu's Room 17 stone switch: the game with
+    // nobody on its switch would write it back) and the Spirit Temple stone
+    // tablets (what Link reads, not room state).
+    // Jabu-Jabu's Room 14 water IS shared (fable-g3-objects, issue 249): the two
+    // flags are the saved state of placement groups (the scene's PlgGdTable: the
+    // water plane and the enemy air walls, each moved by its
+    // GroundControlActor_ResidentMoveTo when the flag changes), so the flag is
+    // the water's only input. Its room graph (Room_14_Prefab_90a1) sets them
+    // once per press, true or false, and only while our own switch is pressed
+    // AND the flag has the other value, so a game whose switch nobody stands on
+    // never writes them back. Not Gimmick_Insidejabujabu_Updown_MoveWaterSwitch:
+    // that one arms each game's own switch (set when it is let go).
     {0xdd4e1676, false, "Firetemple_SongOfTimeBlock_A_01_Disappearance"},
     {0x2312e749, false, "Foresttemple_SongOfTimeBlock_A_01_Disappearance"},
     {0xdba3c3ef, false, "Gimmick_DefeatEnemy_Open_DodongoCave_01"},
@@ -1029,6 +1039,8 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x936fce7b, false, "Gimmick_DefeatEnemy_Open_ForestTemple_03"},
     {0x54184cc6, false, "Gimmick_DefeatEnemy_Open_ForestTemple_05"},
     {0x77e573a4, false, "Gimmick_DeleteFire_FireTemple"},
+    {0xc517f1b5, false, "Gimmick_Insidejabujabu_Updown_MoveWater"},
+    {0x4358c335, false, "Gimmick_Insidejabujabu_down_MoveWater"},
     {0x482f8dd4, false, "Insidejabujabu_Gimmick_Room12_Treasure"},
     {0x90629ec0, false, "Insidejabujabu_Gimmick_Room7Event"},
     {0x2d748eb5, false, "Insidejabujabu_Room0_Cleared"},
@@ -1065,6 +1077,15 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xd6a8c454, false, "Npc_Goron_008_ShutterisOpen"},
     {0x1d5d75c3, false, "Npc_Goron_009_ShutterisOpen"},
     {0x6948b592, false, "Npc_Goron_010_ShutterisOpen"},
+    // Mid-bosses beaten (bosses-next-a-2, the mid-boss end state, #241's shape): saved records of a mid-boss's death
+    // named after the quest or the actor, so the prefix scan missed them. A game that was not there kept the mid-boss
+    // alive in its save while the room's other flags said it was beaten. As "the boss beaten stays shared" above
+    // (Dead Hand's BottomOfTheWell_Level_Room_06_Boss_Defeat). Big Octo's is set by its death in Jabu-Jabu Room 06
+    // and read by Rooms 03, 06 and 07; the Iron Knuckle's by its death setting SageOfSpirit_MiddleBossEnd (with
+    // SageOfSpirit Step08_01), read by Spirit Temple Room 33. Their _BossAppear / _BigOctoAppear (the fight started)
+    // stay each game's own, as the boss rooms' shut-in flags (issue 148).
+    {0x26c6448d, false, "Get_StoneOfWater_BigOctoDefeat"},
+    {0xe9547a14, false, "Enemy_MiddleBoss_IronKnuckle_Nabooru_BossDefeat"},
 });
 
 // Every placement in a dungeon's Banc files (Banc/<Dungeon>/*.bcett.byml)

@@ -9,7 +9,9 @@
 // (OnState, OffState) the room graph reads through its own timer (HoldGeneralTimerSwitch), delay or gates, with no
 // event and no saved flag. Dodongo's Cavern's moving ground and shortcut floor (Obj_StepSwitch_A_01 OnState through a
 // timer), its fire walls and shutters, the Forest Temple's lamp, air wall and torch, the GTG and Water Temple's
-// shutters and fountain: 12 plugs (CoopRoomObjects::SwitchPlugs, generated from the room graphs).
+// shutters and fountain: 12 plugs (CoopRoomObjects::SwitchPlugs, generated from the room graphs). g3-objects: 4 more
+// whose plug also raises an event asker (Jabu-Jabu room 1's shutters, the Deku Tree room D lifts, GTG room 5's chest,
+// Spirit room 19's mirror), held only once their guard flags are on in our game (Seen::armed): the result, no replay.
 //
 // One mechanism for all of them, the switch's own state: the game whose player pressed the switch sends SWITCH_STATE
 // on (the plug went 1 with no remote press held) and off (it went back to 0), again every kResendMs while on. A game
@@ -46,10 +48,18 @@ inline constexpr std::uint64_t kSetHoldMs = 400;      // the caller keeps settin
 std::uint32_t PlugKey(std::string_view plug);
 
 // One of our switches seen this walk, and its line's plug as our game has it now (nothing: not read).
+// `armed` (g3-objects): the line's live guard flags (CoopRoomObjects::SwitchPlug::guard) are all on in our game, so
+// our own event asker can no longer fire; a line with no guard is always armed. A line not armed is never held: another
+// player's press waits (its played flags come first, then the hold gives the result only, no replay of the event).
+// `load_on`: the line's LOAD guards ("load:<flag>", read by the room only when it loads) are all on in our game now
+// (none: true). The Sharer keeps the value of the switch's first sight after a room load: a load guard on only from a
+// mid-visit turn-on deleted nothing (our asker still exists, a hold would replay the event), so it never arms.
 struct Seen {
     const CoopRoomObjects::SwitchPlug* line = nullptr;
     std::uint64_t address = 0;
     std::optional<bool> on;
+    bool armed = true;
+    bool load_on = true;
 };
 
 // A plug to set this frame (another player's switch is on, ours is not).
@@ -87,6 +97,13 @@ private:
         bool held = false;
         bool told_held = false;
         bool told_sent = false;
+        bool told_waiting = false;  // another player's is on, ours not armed yet (its guard flags)
+        // Seen::load_on at the switch's first sight since its room loaded. Forgotten after a walk without the switch
+        // (its room unloaded or reloading) and replaced when the switch is another actor (a new load). Not by time:
+        // a pause menu stops the walks mid-visit, and a later sight there is no load.
+        std::optional<bool> load_on;
+        std::uint64_t load_address = 0;  // the switch actor of that sight
+        std::uint64_t seen_tick = 0;     // the last Tick that saw this line
         std::uint64_t held_since_ms = 0;  // for the log: how long we held it, how long our press lasted
         std::uint64_t pressed_since_ms = 0;
     };
@@ -94,6 +111,7 @@ private:
 
     std::mutex mutex_;
     std::string scene_;
+    std::uint64_t tick_ = 0;
     std::map<const CoopRoomObjects::SwitchPlug*, State> states_;
 };
 
