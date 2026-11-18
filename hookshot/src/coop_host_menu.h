@@ -21,7 +21,6 @@
 
 #include "hos_coop_host.h"
 #include "nat_codes.hpp"
-#include "relay_link.hpp"
 
 namespace CoopHostMenu {
 
@@ -86,9 +85,12 @@ private:
         coop::server::nat::Addr host;
     };
     // "<join code or room>@relay": the relay lets this PC's address in, then the game connects to the relay.
+    // The fields of relay_link.hpp's RelayJoin, which this header does not include: it brings ENet, and with it
+    // windows.h's min and max, into every file that includes this one (coop_hookshot.cpp).
     struct RelayJoinJob {
         std::string name, password;
-        coop::server::relay::RelayJoin join;
+        std::string code, room, relay_host;
+        std::uint16_t relay_port = 0;
     };
     bool Busy(const char* what);
     void StopThread();  // with calls_ held

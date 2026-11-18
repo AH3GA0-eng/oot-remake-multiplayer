@@ -18,6 +18,7 @@
 #include "nat_net.hpp"
 #include "options.hpp"
 #include "relay.hpp"
+#include "relay_link.hpp"
 #include "session.hpp"
 
 namespace CoopHostMenu {
@@ -351,7 +352,8 @@ int Menu::Join(const HosCoopJoinOptions* o) {
             Fail(std::string("the join password is ") + why, HOS_COOP_PROBLEM_BAD_PASSWORD);
             return 0;
         }
-        RelayJoinJob job{name, password, std::move(*relay_join)};
+        RelayJoinJob job{name, password, std::move(relay_join->code), std::move(relay_join->room),
+                         std::move(relay_join->relay_host), relay_join->relay_port};
         stop_ = false;
         thread_ = std::thread([this, job = std::move(job)]() mutable { RunRelayJoin(std::move(job)); });
         return 1;
@@ -472,8 +474,13 @@ void Menu::RunJoin(JoinJob job) {
     }
 }
 
-void Menu::RunRelayJoin(RelayJoinJob job) {
+void Menu::RunRelayJoin(RelayJoinJob job_in) {
     namespace relay = coop::server::relay;
+    struct {
+        std::string name, password;
+        relay::RelayJoin join;
+    } job{std::move(job_in.name), std::move(job_in.password),
+          relay::RelayJoin{std::move(job_in.code), std::move(job_in.room), std::move(job_in.relay_host), job_in.relay_port}};
     try {
         if (enet_initialize() != 0) {
             Fail("the network did not start (ENet)", HOS_COOP_PROBLEM_NETWORK);
