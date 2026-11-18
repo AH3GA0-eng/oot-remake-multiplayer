@@ -567,6 +567,7 @@ TEST_CASE("save transfer: a guest that joins with a file loaded asks and gets th
   // The line the guest reads when it joins says where the save is taken.
   CHECK(N::kJoinedPlaying.find("go back to the title") != std::string_view::npos);
   CHECK(N::kJoinedPlaying.find("Success") != std::string_view::npos);
+  CHECK(N::kTitleAsked.find("Success") != std::string_view::npos);  // the title's own ask (review of #278)
 }
 
 TEST_CASE("save transfer: a new session with a file still loaded chooses again without the title") {
@@ -887,6 +888,33 @@ TEST_CASE("save transfer: a host load of a known slot goes to every guest at onc
   p.on_host_load(t0 + std::chrono::seconds(30), false);
   CHECK(p.waiting());
   CHECK(p.due(t0).empty());
+}
+
+TEST_CASE("save transfer: a guest back on the title after playing asks for the host's save again, only then") {
+  const save::TitleResync go{.title_came = true, .connected_guest = true, .played_in_session = true, .on = true,
+                             .can_switch = true, .plays_hosts_save = true, .ask_waiting = false};
+  CHECK(save::title_resync_due(go));
+  auto t = go;
+  t.title_came = false;  // not a return to the title
+  CHECK_FALSE(save::title_resync_due(t));
+  t = go;
+  t.connected_guest = false;  // the host, a game alone, or a session that just ended
+  CHECK_FALSE(save::title_resync_due(t));
+  t = go;
+  t.played_in_session = false;  // nothing played since joining (asked on joining)
+  CHECK_FALSE(save::title_resync_due(t));
+  t = go;
+  t.on = false;  // LICHII_COOP_TITLE_RESYNC=0
+  CHECK_FALSE(save::title_resync_due(t));
+  t = go;
+  t.can_switch = false;  // the emulator's fixed folder: no line at every title
+  CHECK_FALSE(save::title_resync_due(t));
+  t = go;
+  t.plays_hosts_save = false;  // LICHII_COOP_TEST_OWN_SAVE=1, or a failed folder switch: keeps its own saves
+  CHECK_FALSE(save::title_resync_due(t));
+  t = go;
+  t.ask_waiting = true;  // joined with a file loaded (its ask waits for the title), or a save on its way
+  CHECK_FALSE(save::title_resync_due(t));
 }
 
 TEST_CASE("save transfer: Resync from host goes only for a guest that can switch, and not twice at once") {

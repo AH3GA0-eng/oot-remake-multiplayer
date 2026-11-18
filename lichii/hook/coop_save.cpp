@@ -56,6 +56,10 @@ unsigned g_slot_opens_seen = 0;
 bool g_title_seen = false;   // the title's menu was up in this run (PlayedSlot::new_game)
 bool g_resync = false;        // RequestResync: taken by the next OnFrame
 bool g_guest_live = false;    // a connected guest of this session (CanResync), set each OnFrame
+// The title's own ask (save::title_resync_due): a guest of this session played a file (NoteInGame), and the title has
+// come up since (NoteTitle); the next OnFrame decides, quietly (TitleResync). Both cleared with each new session.
+bool g_guest_played = false;
+bool g_title_ask = false;
 // This session's guest save state (save::GuestSession): fresh for each session (decide_again).
 save::GuestSession g_guest;
 std::deque<proto::SavePart> g_outbox;       // the host's parts, a frame each
@@ -196,6 +200,8 @@ void SwitchFrame(coop::net::Client& client) {
             g_pending.clear();
             g_suspended = false;
             g_ended = false;
+            g_guest_played = false;   // (the title's ask is this session's)
+            g_title_ask = false;
             LOG_INFO(Core, "coop: save: the session is over: the next one chooses the save folder again");
         } else if (g_decided && over) {
             g_ended = true;   // (a file is loaded: the choice is kept for the title, or for a rejoin below)
@@ -291,10 +297,15 @@ void PendingFrame() {
                     g_dir.string());
         g_guest.ready = false;
         g_lines.on_failed();
+        g_use = false;   // keeps its own saves from now on: the title asks no more (review of #278)
         Say("The host's save came, but this game could not switch to it (see the log): play your own save.");
         return;
     }
     LOG_INFO(Core, "coop: save: now playing from the co-op save folder {}", to.string());
+    // The host's save just written covers this return to the title (a join with a file loaded writes it on the
+    // frame the title comes up): the title asks nothing more for it (review of #278).
+    g_title_ask = false;
+    g_guest_played = false;
     Say(g_lines.on_ready(g_in_game));
 }
 
@@ -377,6 +388,7 @@ void SetSwitch(std::function<std::string()> root, std::function<bool(const std::
 void NoteInGame(bool in_game) {
     std::lock_guard lock(g_mutex);
     g_in_game = in_game;
+    if (in_game && g_guest_live) g_guest_played = true;   // (the title's ask, TitleResync)
     Say(g_lines.on_in_game(in_game));
 }
 
@@ -521,6 +533,7 @@ void NoteTitle(bool title_up) {
     if (title_up && !g_title_up) {
         g_played.on_title();   // (a new pick follows: a file, or New Game)
         g_title_seen = true;
+        if (std::exchange(g_guest_played, false)) g_title_ask = true;   // (decided by the next OnFrame: TitleResync)
     }
     g_title_up = title_up;
     if (title_up && !g_set_applied && !g_in_game && g_root) {   // (Navi) the kept choice, on the first title
@@ -826,13 +839,38 @@ namespace {
 // Under g_mutex, from OnFrame: the Lobby tab's Resync from host (save::resync_check). The guest's save session starts
 // again as on joining: the next OnFrame asks the host, the parts come, the slot waits for the title's menu
 // (PendingFrame) and is then written into the co-op folder and switched to. Its own saves are never touched.
-void Resync(bool connected_guest) {
+// Under g_mutex: the host's save is on its way (whole and waiting to be written, parts coming, or asked and not yet
+// answered).
+bool SaveComingLocked() {
     const auto& a = g_guest.assembler;
-    const bool coming = g_guest.unwritten.has_value() ||
-                        (a.received() != 0 && a.received() < a.count() &&
-                         CoopEvery::NowUs() - g_guest.last_part_us < CoopEvery::kSaveStuckUs) ||
-                        (g_guest.asked && !g_guest.ready && !g_guest.no_save && !g_guest.gave_up);
-    switch (save::resync_check(connected_guest, g_root && g_remount && !g_dir.empty(), coming)) {
+    return g_guest.unwritten.has_value() ||
+           (a.received() != 0 && a.received() < a.count() &&
+            CoopEvery::NowUs() - g_guest.last_part_us < CoopEvery::kSaveStuckUs) ||
+           (g_guest.asked && !g_guest.ready && !g_guest.no_save && !g_guest.gave_up);
+}
+
+// Under g_mutex, from OnFrame: a guest back on the title after playing a file asks for the host's save again, the
+// same ask as Resync from host (AskAtTitle), so the next load is the host's save. Quiet when it does not go (the
+// button explains itself; this was never pressed): an ask already waiting or a save coming, no folder switch, a
+// guest that keeps its own saves (g_use off: LICHII_COOP_TEST_OWN_SAVE, a failed switch), the session over.
+void TitleResync(bool connected_guest) {
+    save::TitleResync t;
+    t.title_came = true;
+    t.connected_guest = connected_guest;
+    t.played_in_session = true;
+    t.on = EnvText("LICHII_COOP_TITLE_RESYNC") != "0";
+    t.can_switch = g_root && g_remount && !g_dir.empty();
+    t.plays_hosts_save = g_use;
+    t.ask_waiting = !g_pending.empty() || SaveComingLocked();
+    if (!save::title_resync_due(t)) return;
+    AskAtTitle();   // asks at once (OnFrame), as on joining; written and switched to on the title's menu
+    LOG_INFO(Core, "coop: save: back on the title as a guest: asking for the host's save again, so the next load is "
+                   "the host's");
+    Say(std::string(save::GuestNotices::kTitleAsked));
+}
+
+void Resync(bool connected_guest) {
+    switch (save::resync_check(connected_guest, g_root && g_remount && !g_dir.empty(), SaveComingLocked())) {
     case save::ResyncCheck::not_guest:
         LOG_INFO(Core, "coop: save: resync from host: refused (not a guest in a session)");
         Say("Resync from host: only a guest in a session can ask for the host's save.");
@@ -863,6 +901,7 @@ void OnFrame(coop::net::Client& client, bool host_reset) {
     const bool connected = client.state() == coop::net::State::connected && client.host_number() != 0;
     g_guest_live = connected && !client.is_host() && g_live;
     if (std::exchange(g_resync, false)) Resync(g_guest_live);
+    if (std::exchange(g_title_ask, false)) TitleResync(g_guest_live);
     if (!connected) {
         g_outbox.clear();
         return;
