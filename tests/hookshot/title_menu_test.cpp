@@ -830,3 +830,16 @@ TEST_CASE("title menu: Skip title screen is free solo and held while co-op does 
     join.host_state = HOS_COOP_CONNECTED;
     CHECK(std::string(SkipTitleHold(join)) == "co-op is joining");
 }
+
+TEST_CASE("title menu: approve_joins (the host's) is read from coop-options.ini, off without a line, never rewritten") {
+    CHECK_FALSE(Options::Read("", "").approve_joins);
+    CHECK_FALSE(Options::Read("", "# approve_joins = on\r\n").approve_joins);
+    CHECK_FALSE(Options::Read("", "approve_joins = off\r\n").approve_joins);
+    CHECK(Options::Read("", "approve_joins = on\r\n").approve_joins);
+    // No row edits it: the line stays as the player wrote it.
+    const Options o = Options::Read("", "approve_joins = yes\r\n");
+    CHECK(o.approve_joins);
+    std::string coop, options = "approve_joins = yes\r\n";
+    o.Write(coop, options);
+    CHECK(IniGet(options, "approve_joins") == "yes");
+}

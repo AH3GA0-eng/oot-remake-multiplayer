@@ -337,6 +337,7 @@ void Host() {
     h.upnp = 1;             // the router forward (nothing to set up)
     h.invite = 1;
     h.pvp = o.pvp ? 1 : 0;
+    h.approve_joins = o.approve_joins ? 1 : 0;
     h.max_players = static_cast<std::uint8_t>(o.max_players);
     // coop-options.ini's relay lines, as Host.bat uses them (issue 261: a room name friends type in Join a game).
     h.relay_via = o.relay.empty() ? nullptr : o.relay.c_str();

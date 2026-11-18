@@ -214,6 +214,12 @@ Check (-not $a.Upnp -and -not $a.Invite -and $a.Stun -eq 'a.example:1') 'upnp = 
 [System.IO.File]::WriteAllText($opt, "relay = relay.example.net`r`n# relay_room = not-this`r`nrelay_room = forest-gang `r`n")
 $a = Read-KitServerAccess $opt
 Check ($a.Relay -eq 'relay.example.net' -and $a.RelayRoom -eq 'forest-gang') 'relay_room is read (a commented one is not)'
+Check (-not $a.ApproveJoins) 'approve_joins: off by default'
+[System.IO.File]::WriteAllText($opt, "approve_joins = on`r`n")
+$a = Read-KitServerAccess $opt
+Check ($a.ApproveJoins) 'approve_joins = on is read (issue 261)'
+$h = Get-ServerHostingArgs @{ Upnp = $false; Relay = ''; RelayKey = ''; ApproveJoins = $true } 'secret' ''
+Check (($h.Args -join ' ') -eq '--approve-joins' -and ($h.Notes -join ' ') -match '/allow or /deny') 'approve_joins: the server asks the host, and the window says how to answer'
 Remove-Item -Recurse -Force $optDir
 
 # Invite codes: the server's vectors (tests/server/nat_test.cpp) read back here.

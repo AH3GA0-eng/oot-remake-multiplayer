@@ -223,5 +223,10 @@ function Get-ServerHostingArgs($Access, [string]$Password, [string]$Allow) {
             }
         }
     }
+    if ($Access.ApproveJoins) {
+        $list += '--approve-joins'
+        $notes += 'approve_joins = on: each new player waits until you type /allow or /deny in your game''s chat'
+        $notes += '(60 seconds, then they are turned away). Add "always" to remember the answer until the server stops.'
+    }
     return @{ Args = $list; Notes = $notes }
 }

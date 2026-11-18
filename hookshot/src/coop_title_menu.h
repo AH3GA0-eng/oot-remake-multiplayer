@@ -71,6 +71,7 @@ struct Options {
     std::string chat_key = "T";    // LICHII_COOP_CHAT_KEY
     bool show_players = false;     // LICHII_COOP_SHOW_PLAYERS (the list always shown)
     bool pvp = false;              // pvp (the host's)
+    bool approve_joins = false;    // approve_joins (the host's: each new player waits for /allow or /deny); read only
     bool upnp = true;              // upnp (the host's router forward)
     std::string password;          // server_password ("": a new one each session)
     bool debug_panel = false;      // LICHII_COOP_DEBUG_PANEL

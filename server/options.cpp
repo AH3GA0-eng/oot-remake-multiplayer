@@ -136,6 +136,8 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
         return std::nullopt;
       }
       ++i;
+    } else if (arg == "--approve-joins") {
+      line.approve_joins = true;
     } else if (arg == "--password" || arg == "--password-env") {
       if (!has_value || args[i + 1].empty()) {
         error = arg + " needs a value";
@@ -228,7 +230,7 @@ const char* usage() {
          "                   [--game-build ID] [--max-players N] [--max-half-open N]\n"
          "                   [--pose-upload-kbps N] [--run-for-ms N]\n"
          "                   [--password TEXT | --password-env NAME] [--pvp on|off]\n"
-         "                   [--dbno on|off]\n"
+         "                   [--dbno on|off] [--approve-joins]\n"
          "  --port N         UDP port to listen on (default 27510, 0 for any)\n"
          "  --bind ADDRESS   listen only on this IPv4 address of this PC, for\n"
          "                   example its Hamachi or Radmin address (default: all)\n"
@@ -274,6 +276,9 @@ const char* usage() {
          "  --dbno on|off    down but not out: a player at no hearts crawls and\n"
          "                   can be revived (default: on); the host can change\n"
          "                   it in the game with /dbno\n"
+         "  --approve-joins  each new player waits until the host lets them in\n"
+         "                   (/allow or /deny in the game chat; no answer in\n"
+         "                   60 s: turned away). The first player in hosts\n"
          "  --test-delay-ms N --test-jitter-ms J  TESTS ONLY (needs OOT_COOP_TEST=1):\n"
          "                   hold every packet N/2 ms each way, +- up to J ms,\n"
          "                   in order (a bad connection for Longshot autotests)\n";

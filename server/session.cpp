@@ -189,6 +189,10 @@ void Session::received(ConnectionId id, std::uint8_t channel,
     }
     return;
   }
+  if (c.state == State::held) {
+    ++stats_.before_welcome;  // not a player until the host lets it in
+    return;
+  }
   if (std::holds_alternative<JoinProof>(message)) {
     ++stats_.stray_proof;  // a joined player's: never relayed
     return;
@@ -307,7 +311,7 @@ void Session::note_wrong_password(std::optional<std::uint32_t> address, std::uin
 }
 
 void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
-                    std::uint64_t now_us, const std::optional<PlayerKey>& player_key) {
+                    std::uint64_t now_us, const std::optional<PlayerKey>& player_key, bool approved) {
   std::string expected = config_.game_build_id;
   if (expected.empty()) {
     expected = player_count() == 0 ? hello.game_build_id : session_game_build_;
@@ -358,6 +362,20 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
   if (player_count() >= max_players()) {
     refuse(id, c, RefuseReason::server_full, now_us);
     return;
+  }
+  // Host approval (docs/protocol.md "Host approval"): the host is asked
+  // first. Never for the first player in (it hosts: there is nobody to ask),
+  // a rejoin that showed its token (preferred is set: that player was let in
+  // already), or a player key the host said to remember while no player in
+  // has that key too (a copied kit).
+  if (config_.approve_joins && !approved && preferred == 0 && host_) {
+    if (!player_key || key_in_use(player_key) ||
+        !remembered_ids_.contains(lobby_id(hello.nickname, player_key, std::nullopt, 0))) {
+      hold(id, c, hello, player_key, now_us);
+      return;
+    }
+    ++stats_.joins_remembered;
+    log(hello.nickname + " joins without asking the host: the host said to remember this player");
   }
   // A game coming back to a restarted server (protocol 10): its old number
   // when free, so the numbers (colours, objects' owners) do not swap with
@@ -452,6 +470,97 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
     send(id, kChannelSession, beaten);
   }
   log("player " + std::to_string(c.number) + " joined: " + c.nickname + " (client: " + client_label(hello.build_id) + ")");
+}
+
+bool Session::key_in_use(const std::optional<PlayerKey>& key) const {
+  return key && std::any_of(connections_.begin(), connections_.end(), [&](const auto& e) {
+           return e.second.state == State::joined && !e.second.parent && e.second.player_key == key;
+         });
+}
+
+std::uint16_t Session::knock_wait_s() const {
+  const std::uint64_t s = (config_.approve_wait_us + 999'999) / 1'000'000;
+  return static_cast<std::uint16_t>(std::clamp<std::uint64_t>(s, 1, kMaxKnockWaitSeconds));
+}
+
+// The joiner waits, not a player yet (nothing is relayed to it, and it is not
+// counted), with its connection already encrypted; the host is asked.
+void Session::hold(ConnectionId id, Connection& c, const Hello& hello,
+                   const std::optional<PlayerKey>& player_key, std::uint64_t now_us) {
+  const auto held = static_cast<std::size_t>(std::count_if(
+      connections_.begin(), connections_.end(), [](const auto& e) { return e.second.state == State::held; }));
+  if (config_.max_held_joins != 0 && held >= config_.max_held_joins) {
+    refuse(id, c, RefuseReason::server_full, now_us,
+           std::to_string(held) + " players wait for the host's answer already");
+    return;
+  }
+  c.state = State::held;
+  c.pending_hello = hello;
+  c.player_key = player_key;
+  c.knock = next_knock_++;
+  if (next_knock_ == 0) next_knock_ = 1;  // (0 is never a knock)
+  c.held_at = now_us;
+  const bool known = player_key && !key_in_use(player_key) &&
+                     allowed_ids_.contains(lobby_id(hello.nickname, player_key, std::nullopt, 0));
+  send(*host_, kChannelSession,
+       JoinKnock{c.knock, knock_wait_s(), known ? join_knock::known : std::uint8_t{0}, hello.nickname});
+  // The joiner learns it waits, and for how long (its game waits that long for WELCOME).
+  send(id, kChannelSession, JoinKnock{c.knock, knock_wait_s(), 0, hello.nickname});
+  ++stats_.joins_held;
+  log(hello.nickname + " asks to join: waiting for the host's answer (knock " + std::to_string(c.knock) +
+      (known ? ", let in before" : "") + ")");
+}
+
+void Session::on_join_allow(ConnectionId id, const JoinAllow& a, std::uint64_t now_us) {
+  if (!host_ || *host_ != id) {
+    ++stats_.join_answers_stray;  // only the host answers
+    return;
+  }
+  const auto it = std::find_if(connections_.begin(), connections_.end(), [&](const auto& e) {
+    return e.second.state == State::held && e.second.knock == a.knock;
+  });
+  if (it == connections_.end()) {
+    ++stats_.join_answers_stray;  // over already: the joiner left, or the time ran out
+    return;
+  }
+  const ConnectionId joiner = it->first;
+  Connection& c = it->second;
+  const Hello hello = *c.pending_hello;
+  c.pending_hello.reset();
+  const std::optional<PlayerKey> key = c.player_key;
+  // Only a key is remembered: a name is easy to take.
+  const std::string who = lobby_id(hello.nickname, key, std::nullopt, 0);
+  if (!a.allow) {
+    ++stats_.joins_denied;
+    // Turned away without asking until the session ends, as a ban (by name without a key).
+    if (a.remember) banned_ids_.insert(who);
+    refuse(joiner, c, RefuseReason::not_let_in, now_us,
+           "the host did not let " + hello.nickname + " in" + (a.remember ? " (and keeps them out)" : ""));
+    return;
+  }
+  ++stats_.joins_allowed;
+  if (key) {
+    allowed_ids_.insert(who);
+    if (a.remember) remembered_ids_.insert(who);
+  }
+  log("the host lets " + hello.nickname + " in" +
+      (a.remember && key ? " (and they join without asking from now on)" : ""));
+  c.state = State::awaiting_hello;  // admit() moves it on to joined or closing
+  admit(joiner, c, hello, now_us, key, /*approved=*/true);
+}
+
+// Tells the host a knock it was asked about is over (wait 0).
+void Session::knock_over(const Connection& c) {
+  if (!host_ || !c.pending_hello) return;
+  send(*host_, kChannelSession, JoinKnock{c.knock, 0, 0, c.pending_hello->nickname});
+}
+
+void Session::refuse_held(std::uint64_t now_us, const std::string& why) {
+  for (auto& [id, c] : connections_) {
+    if (c.state != State::held) continue;
+    ++stats_.joins_unanswered;
+    refuse(id, c, RefuseReason::not_let_in, now_us, why);
+  }
 }
 
 // Crossplay (docs/crossplay.md): the client a player runs, as its HELLO names it (build_id: this kit's module, another
@@ -592,6 +701,10 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
   }
   if (const auto* lobby = std::get_if<LobbyAction>(&message)) {
     on_lobby(id, *lobby, now_us);
+    return;
+  }
+  if (const auto* answer = std::get_if<JoinAllow>(&message)) {
+    on_join_allow(id, *answer, now_us);
     return;
   }
   // The Lobby: the host muted this player's chat or voice; nothing relayed.
@@ -2469,7 +2582,14 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
   const ConnectionId game = it->second.parent.value_or(id);
   Connection c = std::move(it->second);
   connections_.erase(it);
+  if (c.state == State::held) {
+    // Host approval: it stopped waiting; the host's question is over.
+    knock_over(c);
+    log(c.pending_hello->nickname + " stopped waiting for the host's answer (knock " + std::to_string(c.knock) + ")");
+    return;
+  }
   if (c.state != State::joined) return;
+  const bool was_host = host_ == id;
   // A local player's own game knows it left (it asked, or it left itself).
   send_to_others(game, kChannelSession, PlayerLeft{c.number, reason});
   // After PLAYER_LEFT, so the others learn the owner left before the new
@@ -2494,6 +2614,8 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
     lobby_mutes_.clear();
     banned_ids_.clear();
     banned_addresses_.clear();
+    allowed_ids_.clear();
+    remembered_ids_.clear();
     flags_.clear();
     objects_.clear();
     grass_.clear();
@@ -2516,6 +2638,8 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
     send_to_others(id, kChannelProgress, Host{number});
     log("player " + std::to_string(number) + " hosts now");
   }
+  // Host approval: the host who was asked left, so nobody answers them.
+  if (was_host) refuse_held(now_us, "the host left before answering");
   if (player_count() > 0) tell_difficulty_change(id);
 }
 
@@ -2532,10 +2656,13 @@ void Session::tick(std::uint64_t now_us) {
   }
   std::vector<ConnectionId> late_hello;  // not a player: dropped without PLAYER_LEFT
   std::vector<ConnectionId> silent;
+  std::vector<ConnectionId> unanswered;  // held, and the host did not answer in time
   for (auto& [id, c] : connections_) {
     if ((c.state == State::awaiting_hello || c.state == State::awaiting_proof) &&
         now_us - c.connected_at >= config_.hello_timeout_us) {
       late_hello.push_back(id);
+    } else if (c.state == State::held) {
+      if (now_us - c.held_at >= config_.approve_wait_us) unanswered.push_back(id);
     } else if (c.state == State::closing &&
                now_us - c.refused_at >= config_.refused_grace_us) {
       late_hello.push_back(id);  // refused, but the transport never closed it
@@ -2552,6 +2679,14 @@ void Session::tick(std::uint64_t now_us) {
   for (ConnectionId id : late_hello) {
     actions_.push_back(DisconnectAction{id});
     remove_player(id, LeaveReason::timed_out, now_us);
+  }
+  for (ConnectionId id : unanswered) {
+    Connection& c = connections_.at(id);
+    knock_over(c);
+    ++stats_.joins_unanswered;
+    refuse(id, c, RefuseReason::not_let_in, now_us,
+           "the host did not answer " + c.pending_hello->nickname + " in " +
+               std::to_string(config_.approve_wait_us / 1'000'000) + " s");
   }
   for (ConnectionId id : silent) {
     auto it = connections_.find(id);

@@ -174,6 +174,7 @@ int Menu::HostStart(const HosCoopHostOptions* o) {
     job.upnp = COOP_HAS(o, HosCoopHostOptions, upnp) && o->upnp != 0;
     job.invite = COOP_HAS(o, HosCoopHostOptions, invite) && o->invite != 0;
     job.pvp = COOP_HAS(o, HosCoopHostOptions, pvp) && o->pvp != 0;
+    job.approve_joins = COOP_HAS(o, HosCoopHostOptions, approve_joins) && o->approve_joins != 0;
     job.relay_via = Trim(COOP_HAS(o, HosCoopHostOptions, relay_via) ? Text(o->relay_via) : std::string());
     job.relay_key = COOP_HAS(o, HosCoopHostOptions, relay_key) ? Text(o->relay_key) : std::string();
     job.relay_room = Trim(COOP_HAS(o, HosCoopHostOptions, relay_room) ? Text(o->relay_room) : std::string());
@@ -221,6 +222,7 @@ void Menu::RunHost(HostJob job) {
         config.port_tries = kPortTries;
         config.session.join_password = job.password;
         config.session.pvp = job.pvp;
+        config.session.approve_joins = job.approve_joins;
         config.session.max_players = job.max_players;
         config.session.pose_upload_bytes_per_second = job.pose_upload_kbps * 125u;
         config.max_connections = static_cast<std::size_t>(job.max_players) + 4;

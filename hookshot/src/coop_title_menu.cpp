@@ -273,6 +273,7 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
     }
     o.show_players = On(IniGet(options_ini, "LICHII_COOP_SHOW_PLAYERS"));
     o.pvp = On(IniGet(options_ini, "pvp"));
+    o.approve_joins = On(IniGet(options_ini, "approve_joins"));
     o.upnp = !Off(IniGet(options_ini, "upnp"));
     if (const auto v = IniGet(options_ini, "server_password"); v && PasswordOk(*v)) {
         o.password = *v;
