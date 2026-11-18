@@ -293,10 +293,12 @@ struct RoomView {
 // flags first, and after the same 3 s hold.
 struct MendClocks {
     std::array<std::uint64_t, CoopStory::kMends> mends{};
+    std::array<std::uint64_t, CoopStory::kStepFloors> floors{};  // row 145
     std::uint64_t effects = 0;
     CoopStory::EffectsGiven given;  // once per flag per load (review of owl-time)
     void NewLoad() {  // the title or a load: nothing to read yet
         mends = {};
+        floors = {};
         effects = 0;
         given.NewLoad();
     }
@@ -321,6 +323,24 @@ void MendStory(EmulatorMemory& memory, MendClocks& clocks, bool idle) {
             since = 0;
             LOG_INFO(Core, "coop: story: {} (Meet_DekuTree {:#x}): set to {} (issue 84)", mend.what,
                      step.value_or(0), mend.value ? 1 : 0);
+        }
+    }
+    // Row 145: a quest step the game's own flows set back below what a played scene proves (King Zora back in
+    // front of the fountain after the diving game or Ruto's Letter got or read). Only outside events, so the
+    // event that moves the quest on sets its own step first; the game's Enum setter, after the same hold.
+    for (std::size_t i = 0; i < CoopStory::kStepFloors; ++i) {
+        const auto& floor = CoopStory::StepFloors()[i];
+        auto& since = clocks.floors[i];
+        const auto at = flags.get_enum(floor.quest);
+        const auto raise = idle ? CoopStory::StepFloorDue(floor, at, flags.get_bool(floor.proof)) : std::nullopt;
+        if (!raise) {
+            since = 0;
+        } else if (since == 0) {
+            since = now_us;
+        } else if (now_us - since >= kHoldUs && coop::host::GameFlags::set_enum(memory, floor.quest, *raise)) {
+            since = 0;
+            LOG_INFO(Core, "coop: story: quest {:#010x} {:#010x} -> {:#010x}: {} (row 145)", floor.quest,
+                     at.value_or(0), *raise, floor.what);
         }
     }
     std::array<const CoopStory::Effect*, CoopStory::kEffectsMax> due{};

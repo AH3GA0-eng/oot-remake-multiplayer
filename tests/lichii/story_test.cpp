@@ -682,3 +682,41 @@ TEST_CASE("story effects: a flag set by several events is due once per pass, wit
     REQUIRE(only_b.size() == 1);
     CHECK(only_b.front() == b);
 }
+
+TEST_CASE("story: King Zora's quest floor is the hash of its names (row 145)") {
+    const auto& zora = CoopStory::StepFloors()[0];
+    CHECK(zora.quest == host::flag_hash("Step_Get_StoneOfWater"));
+    CHECK(zora.proof == host::flag_hash("HavePlayedEvent.Dm_Zora_0010"));
+    CHECK(zora.floor == host::flag_hash("Step07"));
+    // Every step below Step07 but NotReady, in the quest's order (coop_quests.cpp Get_StoneOfWater).
+    const std::vector<std::string> back{"Ready", "Step01", "Step02", "Step03", "Step03_Impa",
+                                        "Step04", "Step05", "Step05_01", "Step06"};
+    REQUIRE(zora.back.size() == back.size());
+    for (std::size_t i = 0; i < back.size(); ++i) CHECK(zora.back[i] == host::flag_hash(back[i]));
+    // The same steps letters::kKingWaits names, after NotReady: one list for both.
+    for (std::size_t i = 0; i < back.size(); ++i) CHECK(zora.back[i] == host::letters::kKingWaits[i + 1]);
+    CHECK(zora.proof == host::letters::kKingRead);
+    CHECK(zora.floor == host::letters::kKingMoved[0]);
+}
+
+TEST_CASE("story: King Zora goes back aside when the game's own flow set his quest back (row 145)") {
+    using CoopStory::StepFloorDue;
+    const auto& zora = CoopStory::StepFloors()[0];
+    const auto step07 = host::flag_hash("Step07");
+    // The letter was read here (Dm_Zora_0010), then the diving game (Step05), Ruto's Letter got (Step05_01)
+    // or read (Step06), or Goto_ZoraDomain's arrival (Step03, Step03_Impa) moved the quest back.
+    for (const char* s : {"Step03", "Step03_Impa", "Step05", "Step05_01", "Step06", "Ready"}) {
+        CHECK(StepFloorDue(zora, host::flag_hash(s), true) == step07);
+    }
+    // At Step07 or past it (Jabu-Jabu, Complete): nothing to do.
+    for (const char* s : {"Step07", "Step09", "Step14", "Complete"}) {
+        CHECK_FALSE(StepFloorDue(zora, host::flag_hash(s), true).has_value());
+    }
+    // The letter not read anywhere yet: King Zora still waits for it.
+    CHECK_FALSE(StepFloorDue(zora, host::flag_hash("Step06"), false).has_value());
+    // Unread, a new save (NotReady) or a value not in the quest: left alone.
+    CHECK_FALSE(StepFloorDue(zora, host::flag_hash("Step06"), std::nullopt).has_value());
+    CHECK_FALSE(StepFloorDue(zora, std::nullopt, true).has_value());
+    CHECK_FALSE(StepFloorDue(zora, host::flag_hash("NotReady"), true).has_value());
+    CHECK_FALSE(StepFloorDue(zora, 0x12345678u, true).has_value());
+}

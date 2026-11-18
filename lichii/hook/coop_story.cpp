@@ -467,6 +467,32 @@ std::span<const Mend, kMends> Mends() {
 }
 
 namespace {
+
+// Row 145, read from the romfs (coop_story.h StepFloor): Ready to Step06 of
+// Get_StoneOfWater, as flag_hash of each step's name.
+constexpr std::array<std::uint32_t, 9> kZoraBack{0x17bfaa46u, 0xeb62add9u, 0x0e5afad8u, 0x6f917dfeu, 0x8b4b69e2u,
+                                                 0x27f660feu, 0x5cde171fu, 0xec4c4a24u, 0x21d6fa38u};
+constexpr std::array<StepFloor, kStepFloors> kStepFloorList{{
+    {0x5bca02a6u,  // Step_Get_StoneOfWater
+     0xbf9dfc7eu,  // HavePlayedEvent.Dm_Zora_0010: King Zora read Ruto's Letter and stepped aside
+     0xee867c27u,  // Step07
+     kZoraBack, "King Zora was back in front of the fountain after he read Ruto's Letter"},
+}};
+
+} // namespace
+
+std::span<const StepFloor, kStepFloors> StepFloors() {
+    return kStepFloorList;
+}
+
+std::optional<std::uint32_t> StepFloorDue(const StepFloor& floor, std::optional<std::uint32_t> step,
+                                          std::optional<bool> proof) {
+    if (proof != true || !step) return std::nullopt;
+    if (std::find(floor.back.begin(), floor.back.end(), *step) == floor.back.end()) return std::nullopt;
+    return floor.floor;
+}
+
+namespace {
 #include "coop_story_effects.inc"
 } // namespace
 
