@@ -422,6 +422,22 @@ bool give_up_due(const GuestSession& s, std::uint64_t now_us);
 // emulator: its folder is fixed at the start), and while a transfer is still coming in.
 enum class ResyncCheck : std::uint8_t { go, not_guest, no_switch, coming };
 ResyncCheck resync_check(bool connected_guest, bool can_switch, bool coming);
+// Back on the title (the player's Quit, Game Over's Quit Game, any return), a guest who played a file in this session
+// asks for the host's save again by itself, the same ask as Resync from host (AskAtTitle): the next Load or Continue is
+// the host's save, never the file it played before (its own copy of the world). Unlike the button it never explains
+// itself: when it does not go, nothing is said. It goes only when all hold:
+struct TitleResync {
+  bool title_came = false;         // the title's menu has just come up
+  bool connected_guest = false;    // a connected guest of a live session (CanResync)
+  bool played_in_session = false;  // a file was played in this session (on joining the save is asked anyway)
+  bool on = true;                  // LICHII_COOP_TITLE_RESYNC is not 0
+  bool can_switch = false;         // this game's save folder can switch (not the emulator's fixed one)
+  bool plays_hosts_save = false;   // the guest plays from the co-op folder (not LICHII_COOP_TEST_OWN_SAVE, not a
+                                   // failed folder switch): a guest that keeps its own saves keeps them
+  bool ask_waiting = false;        // an ask already waits for the title or a save is coming (a join with a file
+                                   // loaded, the button, a transfer under way)
+};
+bool title_resync_due(const TitleResync& t);
 
 // A guest's chat lines about the host's save (the owner's wording). The player loads the save themselves (nothing
 // presses the title's buttons); these lines say when:
@@ -445,6 +461,8 @@ class GuestNotices {
   static constexpr std::string_view kJoinedPlaying =
       "You joined with a file loaded: the host's save is coming. To play from the host's progress, go back to the "
       "title and load a save once the chat says Success.";
+  // A guest back on the title after playing in the session (save::title_resync_due): the host's save is asked for.
+  static constexpr std::string_view kTitleAsked = "The host's save is coming: load a save once the chat says Success.";
   // A part of transfer `transfer_id` (of `count` parts) came: kLoading when it is a new transfer of a save, else "".
   // A "no save" answer is one part (pack_no_save: a few bytes); a save slot is about 170 KB, many parts.
   std::string on_part(std::uint32_t transfer_id, std::size_t count);

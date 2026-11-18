@@ -92,6 +92,7 @@
 #include "coop_svc.h"
 #include "coop_time.h"
 #include "coop_pause.h"
+#include "coop_pause_tab.h"
 #include "coop_title.h"
 #include "coop_title_menu.h"
 #include "core/core.h"
@@ -1861,6 +1862,16 @@ COOP_HOOKSHOT_EXPORT void hos_coop_title(void* ctx, uint64_t screen, int event) 
     if (g_on) {
         CoopTitle::OnTitle(ctx, screen, event);
     }
+}
+// The pause menu's Multiplayer tab (coop_pause_tab.h, patch 0030): every menu screen's update, on the game's threads,
+// and the page the mouse's tab strip counts (-1: the game's).
+COOP_HOOKSHOT_EXPORT void hos_coop_game_screen(void* ctx, uint64_t screen) noexcept {
+    if (g_on) {
+        CoopPauseTab::OnScreen(ctx, screen);
+    }
+}
+COOP_HOOKSHOT_EXPORT int hos_coop_game_pause_page(void) noexcept {
+    return g_on ? CoopPauseTab::MousePage() : -1;
 }
 // The Multiplayer tab of Hookshot's menu (hos_coop_menu.h, patch 0012), from Hookshot's menu tick and present thread.
 COOP_HOOKSHOT_EXPORT int hos_coop_menu_tabs(void) {
