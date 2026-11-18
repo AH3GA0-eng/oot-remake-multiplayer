@@ -375,6 +375,15 @@ def judge_logs(folder, meta):
     code = meta.get("exit", 0)
     if code:
         return "FAIL", "run.ps1 exit %s" % code
+    logs = {x: read_text(os.path.join(folder, "hookshot_log-%s.txt" % x)) or "" for x in "AB"}
+    # The server another release's (misc-fails-0115's first rerun: groups.py's default server, not the lane's): no
+    # co-op at all, so every co-op line is missing for that reason alone. Said as SETUP, the run proves nothing:
+    # before a steps file's counts (PASS) and a run with no expect= (PLAYED) too, which would hide it.
+    refused = [x for x in "AB" if "coop: server refused" in logs[x]]
+    if refused:
+        line = logs[refused[0]][logs[refused[0]].find("coop: server refused"):].split("\n", 1)[0]
+        return "FAIL", "SETUP (no co-op, the run proves nothing): %s: '%s'; pass --server the kit's own" % (
+            "+".join(refused), line.strip()[:110])
     good = [line for line in (counts or "").splitlines() if line.startswith("PASS")]
     if good and not meta.get("expects"):
         # A steps file's run (hs_steps.py): its counts are the verdict, it plays no "scenario played" line.
@@ -385,14 +394,6 @@ def judge_logs(folder, meta):
         if "scenario played" not in played and os.path.isfile(os.path.join(folder, "steps.txt")):
             return "FAIL", "steps.txt has no 'scenario played'"
         return "PLAYED", "no expect=; look at the shots"
-    logs = {x: read_text(os.path.join(folder, "hookshot_log-%s.txt" % x)) or "" for x in "AB"}
-    # The server another release's (misc-fails-0115's first rerun: groups.py's default server, not the lane's): no
-    # co-op at all, so every co-op line is missing for that reason alone. Said as SETUP, the run proves nothing.
-    refused = [x for x in "AB" if "coop: server refused" in logs[x]]
-    if refused:
-        line = logs[refused[0]][logs[refused[0]].find("coop: server refused"):].split("\n", 1)[0]
-        return "FAIL", "SETUP (no co-op, the run proves nothing): %s: '%s'; pass --server the kit's own" % (
-            "+".join(refused), line.strip()[:110])
 
     def first(side, rx):
         for x in ([side] if side else ["A", "B"]):
