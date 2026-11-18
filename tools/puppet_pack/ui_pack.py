@@ -6,6 +6,8 @@ edits the files in memory and writes them into the mod's romfs. title_menu.py (t
 is built on it.
 
   clone_part, clone_parts   a copy of a part of a layout (Layout2 .buil in UI/Layout2Archive)
+  move_panes                panes of a layout moved (their translate), nothing else changed
+  frame_offset              where a pane's parent sits in an ancestor's frame (a copy's new place)
   edit_entries              every copy of a file in an archive (some hold a layout four times)
   add_labels                new labels and texts in a message file (MSBT, Mals/<language>...)
   load_strings              our own words: one file per language in strings/, English fallback
@@ -17,9 +19,11 @@ The Layout2 resource (BFFH "Nintendo.Ui.ResModels.LayoutResData"), as far as rea
   - the root follows "UIL" at the Default section's start (+8). It holds dictionaries of
     {keys* (names), values* (records), ids*, u32 count, u32 stride=8}: panes at +0x18, parts at
     +0xb8;
-  - a pane record is 0x44 bytes: +0x1c translate x and +0x20 translate y (f32, y up), +0x28 its
-    parent's index (-1 for the root), +0x34 the index past its subtree (panes are in pre-order),
-    +0x38 its kind, +0x42 u16 its index in its kind's table (a part's: in the part dictionary);
+  - a pane record is 0x44 bytes: +0x10 and +0x14 its scale (f32; 1.0 in most panes), +0x18 its
+    rotation (f32, radians), +0x1c translate x and +0x20 translate y (f32, y up), +0x28 its
+    parent's index (-1 for the root), +0x2c and +0x30 its size (f32), +0x34 the index past its
+    subtree (panes are in pre-order), +0x38 its kind, +0x42 u16 its index in its kind's table (a
+    part's: in the part dictionary);
   - a part record is 0x48 bytes: +0x00 the part layout's name, +0x08 and +0x18 two lists of
     overrides ({u64 offset, u32 count, u32 stride}; not copied here), +0x28 its parameters (a
     list of offsets of {name, f32 value, 4 zero bytes}), +0x38 the offset of its properties list
@@ -39,7 +43,10 @@ How a copy is added, so that nothing the layout already has moves:
     the copy too. When the parent's subtree ends before the last pane (MenuOverlay_00's tabs),
     the copy cannot sit inside it without moving indices: it is the parent's child by its parent
     index only. clone_parts refuses that unless out_of_order=True; whether the game draws such a
-    copy under its parent is to be checked in game.
+    copy under its parent is to be checked in game;
+  - or the copy goes under another pane (Copy.parent), one whose subtree reaches the last pane, so
+    the order holds: an ancestor of the source, for example. Its translate is then in that pane's
+    frame: frame_offset gives the move that keeps it where the source's frame would put it.
 """
 import hashlib
 import math
@@ -70,11 +77,13 @@ class Entry(NamedTuple):
 
 class Copy(NamedTuple):
     """One copy for clone_parts: the part copied, the copy's name, how far it moves (x, y in the
-    layout's units, y up) and new values for some of the part's parameters ({name: float})."""
+    layout's units, y up, added to the source's translate), new values for some of the part's
+    parameters ({name: float}) and the pane it goes under (None: the source's parent)."""
     source: str
     name: str
     move: tuple = (0.0, 0.0)
     params: Optional[dict] = None
+    parent: Optional[str] = None
 
 
 def _q(d, o):
@@ -205,6 +214,8 @@ def _clone(d, panes, parts, copies, new_id, out_of_order):
             raise UiPackError("%s has panes under it; only a part without child panes is copied" % c.source)
         if parent[si] == NO_PARENT:
             raise UiPackError("%s has no parent" % c.source)
+        if c.parent is not None and c.parent not in index:
+            raise UiPackError("the layout has no pane %s for %s to go under" % (c.parent, c.name))
         if not re.fullmatch(r"[\x21-\x7e]{1,255}", c.name):
             raise UiPackError("%r is not a name for a pane (printable ASCII, no spaces)" % c.name)
         if c.name in taken:
@@ -269,15 +280,18 @@ def _clone(d, panes, parts, copies, new_id, out_of_order):
                 r[at:at + 4] = _f32(struct.unpack_from("<f", r, at)[0] + by, "the position of %s" % c.name)
         struct.pack_into("<I", r, 0x34, k + 1)
         struct.pack_into("<H", r, 0x42, p0 + i)
-        up = parent[si]
+        up = parent[si] if c.parent is None else index[c.parent]
         if end[up] != k and not out_of_order:
-            raise UiPackError("the subtree of %s (the parent of %s) ends before the last pane: the copy would be "
-                              "its child by its parent index only (out_of_order=True)" % (panes[up].name, c.source))
+            raise UiPackError("the subtree of %s (where %s goes) ends before the last pane: the copy would be "
+                              "its child by its parent index only (out_of_order=True), or put it under a pane "
+                              "that reaches the last pane (Copy.parent)" % (panes[up].name, c.name))
+        struct.pack_into("<I", r, 0x28, up)
+        mine = up
         while up != NO_PARENT:
             if end[up] == k:
                 end[up] = k + 1   # the subtrees that reached the last pane reach the copy
             up = parent[up]
-        parent.append(parent[si])
+        parent.append(mine)
         end.append(k + 1)
         pane_recs.append(put(bytes(r)))
     for i, p in enumerate(panes):
@@ -320,6 +334,56 @@ def _clone(d, panes, parts, copies, new_id, out_of_order):
     return bytes(out)
 
 
+def move_panes(layout, moves):
+    """The layout (a .buil's bytes) with each pane named in `moves` ({name: (x, y)}) moved that far:
+    its translate (+0x1c, +0x20) and nothing else. Raises UiPackError for a name the layout has not
+    or a move that is not (x, y)."""
+    d = bytearray(layout)
+    panes, _ = read_layout(bytes(d))
+    by_name = {p.name: p for p in panes}
+    for name, move in moves.items():
+        if name not in by_name:
+            raise UiPackError("the layout has no pane %s to move" % name)
+        try:
+            ok = len(move) == 2
+        except TypeError:
+            ok = False
+        if not ok:
+            raise UiPackError("the move of %s is not (x, y)" % name)
+        rec = by_name[name].record
+        for at, by in ((0x1c, move[0]), (0x20, move[1])):
+            _f32(by, "the move of %s" % name)
+            if by:
+                d[rec + at:rec + at + 4] = _f32(struct.unpack_from("<f", d, rec + at)[0] + by, "the position of %s" % name)
+    return bytes(d)
+
+
+def frame_offset(layout, pane, ancestor):
+    """(x, y): where the frame of `pane`'s parent sits in the frame of `ancestor`, one of its
+    ancestors: the translates of the panes between them (the parent included, the ancestor not)
+    added up. So a copy of `pane` that goes under `ancestor` (Copy.parent) and moves by this much
+    sits where `pane` sits. Raises UiPackError when `ancestor` is not an ancestor of `pane`, or when a
+    pane between them is scaled or turned (its frame is not a plain move)."""
+    d = bytes(layout)
+    panes, _ = read_layout(d)
+    index = {p.name: i for i, p in enumerate(panes)}
+    for name in (pane, ancestor):
+        if name not in index:
+            raise UiPackError("the layout has no pane %s" % name)
+    x = y = 0.0
+    at = _u32(d, panes[index[pane]].record + 0x28)
+    while at != index[ancestor]:
+        if at == NO_PARENT or at >= len(panes):
+            raise UiPackError("%s is not an ancestor of %s" % (ancestor, pane))
+        rec = panes[at].record
+        sx, sy, turn, tx, ty = struct.unpack_from("<5f", d, rec + 0x10)
+        if (sx, sy, turn) != (1.0, 1.0, 0.0):
+            raise UiPackError("%s, between %s and %s, is scaled or turned" % (panes[at].name, pane, ancestor))
+        x, y = x + tx, y + ty
+        at = _u32(d, rec + 0x28)
+    return (x, y)
+
+
 def edit_entries(entries, name, edit):
     """An archive's entries ([(name, bytes)], from sarc.read_entries) with every copy of `name`
     replaced by edit(copy), and {old bytes: new bytes}. The engine's archives hold some files
@@ -340,7 +404,9 @@ def edit_entries(entries, name, edit):
 # back exactly as it was read, with only the new labels and texts added.
 
 _CODECS = {0: "utf-8", 1: "utf-16-le", 2: "utf-32-le"}
-_LABEL = re.compile(r"[A-Za-z0-9_]{1,255}")
+# Letters, digits, _ and -: a text pane's own label is its path through the parts, joined by -
+# (PlusMenu_00.msbt's Pa_System_00-Pa_Button_00-T_Btn_00), and the layout fills the pane from it.
+_LABEL = re.compile(r"[A-Za-z0-9_-]{1,255}")
 _GROWN = {"LBL1", "TXT2", "ATR1", "NLI1"}   # the sections written back right with more texts
 
 
@@ -455,7 +521,7 @@ def add_labels(data, labels, replace=False):
     texts = list(texts)
     for label, text in labels.items():
         if not isinstance(label, str) or not _LABEL.fullmatch(label):
-            raise UiPackError("%r is not a label (letters, digits and _)" % (label,))
+            raise UiPackError("%r is not a label (letters, digits, _ and -)" % (label,))
         _check_text(label, text)
         enc = (text + "\0").encode(codec)
         if label in have:
@@ -526,7 +592,7 @@ def parse_strings(text, source="strings"):
         label, _, value = line.partition("=")
         label = label.strip()
         if not _LABEL.fullmatch(label):
-            raise UiPackError("%s: %r is not a label (letters, digits and _)" % (where, label))
+            raise UiPackError("%s: %r is not a label (letters, digits, _ and -)" % (where, label))
         if label in current:
             raise UiPackError("%s: %s is in [%s] already" % (where, label, file))
         value = _unescape(value.strip(), where)
