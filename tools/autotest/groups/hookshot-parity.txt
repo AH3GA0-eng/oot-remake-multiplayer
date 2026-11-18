@@ -41,7 +41,7 @@ hs-hud  switches=LICHII_COOP_PUPPET=1,LICHII_COOP_HUD=0  label="HUD off (shots: 
 # The overlay and the Ocarina: chat lines and name tags, list and panel, own notes (#152).
 hs-panel  expect='A:coop: drawing over Hookshot.s picture'  expect='B:coop: drawing over Hookshot.s picture'  label="chat lines, name tags"
 hs-players  expect='A:coop: drawing over Hookshot.s picture'  label="player list, panel"
-hs-ocarina-show  expect="B:P1 hold -> show \(ocarina\)"  expect='A:P2 hide -> show'  label="#86 Ocarina: stays seen"
+hs-ocarina-show  expect="B:(?s)P1 ocarina to the hand \('DemoOcarina'\)(?:(?!P1 show -> hold).)*P1 ocarina back on the belt"  expect='A:(?s)ocarina probe: our Link plays the ocarina(?:(?!(?<!fairy )coop: puppet: P2 show -> hide).)*test mark playing3'  label="#86 Ocarina: stays seen"
 hs-seed  expect='A:spawn: CoopShot_Seed: copy [0-9]+ is actor'  label="#198 seed copy (pack made again)"
 hs-ocarina  expect='A:coop: ocarina note 4 \(Ocarina_D\) sent'  expect='A:coop: ocarina note 16 \(Ocarina_HighD\) sent'  expect="B:plays sound 'Ocarina_D'"  label="#152 own notes"
 
