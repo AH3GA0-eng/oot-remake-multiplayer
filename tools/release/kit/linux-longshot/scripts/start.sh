@@ -178,7 +178,7 @@ done < <(env)
 export LONGSHOT_NO_UPDATE_CHECK=1 OOT_COOP_KIT=$DATA
 # the window: title "Squadala!", its class (the menu entry's StartupWMClass) and our logo as the icon longshot.png (Longshot reads these)
 export HOS_WINDOW_TITLE='Squadala!' HOS_WM_CLASS=squadala
-[[ -f $DATA/squadala-icon.png ]] && cp -f -- "$DATA/squadala-icon.png" "$GAME/longshot.png" 2>/dev/null
+[[ -f $DATA/squadala-icon.png ]] && cp -f -- "$DATA/squadala-icon.png" "$GAME/longshot.png" 2>/dev/null || true
 cd "$GAME"
 if kit_tty; then
     exec ./longshot

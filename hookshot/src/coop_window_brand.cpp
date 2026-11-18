@@ -6,6 +6,7 @@
 #include <filesystem>
 
 #include "coop_png.h"
+#include "coop_runtime.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -99,20 +100,6 @@ BOOL CALLBACK Each(HWND h, LPARAM l) {
     return TRUE;
 }
 
-std::filesystem::path GameFolder() {
-    wchar_t exe[MAX_PATH] = {};
-    const DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
-    if (n == 0 || n >= MAX_PATH) {
-        return {};
-    }
-    const std::filesystem::path dir = std::filesystem::path(exe).parent_path();
-    // the exe may sit in a "bin" folder beside image.bin (Longshot's game_module_path)
-    if (dir.filename() == "bin" && std::filesystem::exists(dir.parent_path() / "image.bin")) {
-        return dir.parent_path();
-    }
-    return dir;
-}
-
 HICON g_icon = nullptr;
 bool g_icon_tried = false;
 HWND g_icon_window = nullptr;
@@ -133,23 +120,25 @@ void Tick() {
         return;
     }
     wchar_t cur[256] = {};
-    GetWindowTextW(f.hwnd, cur, 256);
+    InternalGetWindowText(f.hwnd, cur, 256);  // no WM_GETTEXT sent to the display thread
     std::string narrow;
     for (const wchar_t* p = cur; *p != 0; ++p) narrow.push_back(*p < 128 ? static_cast<char>(*p) : '?');
     if (TitleNeedsSetting(narrow)) {
-        SetWindowTextW(f.hwnd, L"Squadala!");
+        DWORD_PTR ignored = 0;
+        SendMessageTimeoutW(f.hwnd, WM_SETTEXT, 0, reinterpret_cast<LPARAM>(L"Squadala!"), SMTO_ABORTIFHUNG, 200, &ignored);
     }
     if (!g_icon_tried) {
         g_icon_tried = true;
-        const std::filesystem::path png = GameFolder() / kIconFile;
+        const std::filesystem::path png = CoopRuntime::GameDir() / kIconFile;
         if (const auto img = CoopPng::Load(png); img && img->width == img->height) {
             g_icon = MakeIcon(*img);
         }
     }
     if (g_icon != nullptr && g_icon_window != f.hwnd) {
         g_icon_window = f.hwnd;
-        SendMessageW(f.hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(g_icon));
-        SendMessageW(f.hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(g_icon));
+        DWORD_PTR ignored = 0;
+        SendMessageTimeoutW(f.hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(g_icon), SMTO_ABORTIFHUNG, 200, &ignored);
+        SendMessageTimeoutW(f.hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(g_icon), SMTO_ABORTIFHUNG, 200, &ignored);
     }
 }
 #else
