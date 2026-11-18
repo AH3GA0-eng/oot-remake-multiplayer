@@ -1174,7 +1174,7 @@ void LocalProbe();   // (below)
 void LocalLayer(void* ctx);   // (below)
 
 void Frame(void* ctx, int site) {
-    CoopWindowBrand::Tick();  // the window's title and icon, co-op on or idle (solo too)
+    CoopWindowBrand::Tick(CoopRuntime::GameDir());  // the window's title and icon, co-op on or idle (solo too)
     if (!g_on) {
         return;
     }

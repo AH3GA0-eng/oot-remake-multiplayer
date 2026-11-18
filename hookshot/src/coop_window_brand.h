@@ -8,6 +8,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -29,6 +30,7 @@ bool TitleNeedsSetting(const std::string& current);
 std::vector<std::uint8_t> RgbaToIconBgra(const std::uint8_t* rgba, int width, int height);
 
 // Once about a second from the every-frame hook; cheap when nothing is to be done. Does nothing off Windows.
-void Tick();
+// game_dir = the exe folder the bridge reports (CoopRuntime::GameDir()), where the icon png sits.
+void Tick(const std::filesystem::path& game_dir);
 
 }  // namespace CoopWindowBrand

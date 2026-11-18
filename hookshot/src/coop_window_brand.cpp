@@ -6,7 +6,6 @@
 #include <filesystem>
 
 #include "coop_png.h"
-#include "coop_runtime.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -106,7 +105,7 @@ HWND g_icon_window = nullptr;
 
 }  // namespace
 
-void Tick() {
+void Tick(const std::filesystem::path& game_dir) {
     using Clock = std::chrono::steady_clock;
     static Clock::time_point next{};
     const Clock::time_point now = Clock::now();
@@ -129,7 +128,7 @@ void Tick() {
     }
     if (!g_icon_tried) {
         g_icon_tried = true;
-        const std::filesystem::path png = CoopRuntime::GameDir() / kIconFile;
+        const std::filesystem::path png = game_dir / kIconFile;
         if (const auto img = CoopPng::Load(png); img && img->width == img->height) {
             g_icon = MakeIcon(*img);
         }
@@ -142,7 +141,7 @@ void Tick() {
     }
 }
 #else
-void Tick() {}
+void Tick(const std::filesystem::path&) {}
 #endif
 
 }  // namespace CoopWindowBrand
