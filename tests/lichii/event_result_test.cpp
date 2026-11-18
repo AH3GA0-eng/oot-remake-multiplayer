@@ -313,19 +313,24 @@ const std::vector<std::uint64_t> kFire15Slugs = {0x524d8f690c11944aULL, 0x795589
 
 TEST_CASE("event result: the trigger table covers silver rupees, kills and shared flags (both classes)") {
     std::set<std::uint64_t> tokens;
-    bool counter = false, flag = false, live_kill = false;
+    bool counter = false, flag = false, live_kill = false, jabu14 = false;
     for (const auto& t : CoopEventResult::Triggers()) {
         if (t.event == "GerudoTrainingGround_02_SilverToken_Unlock") {
             if (t.kind == CoopEventResult::Trigger::key) counter = counter || t.id == kGtg02Counter;
             if (t.kind == CoopEventResult::Trigger::token && t.group == kGtg02Counter) tokens.insert(t.id);
         }
         if (t.kind == CoopEventResult::Trigger::flag && t.name == "ForestTemple_DefeatAmy") flag = true;
+        // g3-objects shares Jabu room 14's water flags: the upper switch's trigger reads one, so it waits too
+        if (t.kind == CoopEventResult::Trigger::flag && t.name == "Gimmick_Insidejabujabu_Updown_MoveWater" &&
+            t.event == "InsideJabuJabuBellyRoom14StepSwitch")
+            jabu14 = true;
         // a class-live event's kills too (its played flag lands live, but our asker asks at the kill)
         if (t.kind == CoopEventResult::Trigger::kill && t.event == "GerudoTrainingGround_10_AppearTreasureBox") live_kill = true;
     }
     CHECK(counter);
     CHECK(tokens == std::set<std::uint64_t>(kGtg02Tokens.begin(), kGtg02Tokens.end()));
     CHECK(flag);
+    CHECK(jabu14);
     CHECK(live_kill);
     CHECK(CoopEventResult::IsLive("GerudoTrainingGround_10_AppearTreasureBox"));
     // the silver rupee line is class asker: its result is set, and its trigger is covered too
