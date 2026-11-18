@@ -34,6 +34,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "coop/host/bounded_queue.hpp"
@@ -232,7 +233,7 @@ public:
     // `scene`: where it was decided (empty: any); `at_us` when; `max_age_us`
     // how long it may wait for a free moment (0: no limit). See Expire.
     // `room`: cutscene-bleed (#251) the dungeon room our Link was in when it was decided (the decider's and the joiner's
-    // "same room" check), if known; Expire drops it once our Link is known to be in another room (see Expire).
+    // "same room" check), if known; it is not asked while our Link is clearly in another room (see Expire).
     void Want(std::string name, std::string scene = {}, std::uint64_t at_us = 0, std::uint64_t max_age_us = 0,
               std::optional<int> room = std::nullopt);
     // One argument of an event: a string (text) or a bool.
@@ -262,27 +263,40 @@ public:
     // that is older than its max age, or that `played(name)` says our game has
     // played already (HavePlayedEvent.<name>).
     //
-    // cutscene-bleed (#251, #197): `here_room` is our Link's dungeon room now, if known. A wait decided in another
-    // room (Wanted::room) is dropped: every "may it start here" rule (the decider's room and near-place check, the
-    // joiner's same-room check, "no event runs") was checked when it was decided, but it is asked later, at the first
-    // frame no event runs. A door is an event: a start that waited behind the door we walked through was asked the
-    // moment the door's event ended, with our Link already in the next room, so the event played for a room that is
-    // not loaded here (its actors absent), never ended, and held our Link and our room (its enemies did not come out).
+    // cutscene-bleed (#251, #197): every "may it start here" rule (the decider's room and near-place check, the
+    // joiner's same-room check, "no event runs") is checked when a start is decided, but it is asked later, at the
+    // first frame no event runs. A door is an event: a start that waited behind the door we walked through was asked
+    // the moment the door's event ended, with our Link already in the next room, so the event played for a room that
+    // is not loaded here (its actors absent), never ended, and held our Link and our room (its enemies did not come
+    // out). So a start decided in a room (Wanted::room) WAITS while `away(room)` says our Link is in another room, and
+    // is asked once our Link is back in it (review-0116-c item 1: dropping it lost it for the visit, as the decider
+    // and the joiner start each event once per visit). `away` keeps CoopRooms::kMargin slack (no flicker in a door).
+    // Scene, age and played rules are unchanged: a held start still goes when we leave the scene, when it gets too
+    // old (story joins: kJoinUs) or once our game has it played.
     template <typename Played>
-    void Expire(const std::string& scene, std::uint64_t now_us, Played&& played,
-                std::optional<int> here_room = std::nullopt) {
+    void Expire(const std::string& scene, std::uint64_t now_us, Played&& played) {
+        Expire(scene, now_us, std::forward<Played>(played), [](int) { return false; });
+    }
+    template <typename Played, typename Away>
+    void Expire(const std::string& scene, std::uint64_t now_us, Played&& played, Away&& away) {
         for (auto it = wanted_.begin(); it != wanted_.end();) {
             const char* why = nullptr;
             if (!scene.empty() && !it->scene.empty() && it->scene != scene) {
                 why = "we left its scene";
-            } else if (it->room && here_room && *it->room != *here_room) {
-                why = "our Link left the room it was decided in";
             } else if (it->max_age_us != 0 && now_us >= it->at_us + it->max_age_us) {
                 why = "it waited too long behind another event";
             } else if (played(it->name)) {
                 why = "our game has it played already";
             }
             if (why == nullptr) {
+                const bool held = it->room.has_value() && away(*it->room);
+                if (held != it->held) {
+                    notes_.push_back("live event " + it->name +
+                                     (held ? " waits: our Link is in another room than the one it was decided in "
+                                             "(asked once our Link is back there)"
+                                           : " may be asked again: our Link is back in the room it was decided in"));
+                    it->held = held;
+                }
                 ++it;
                 continue;
             }
@@ -294,13 +308,17 @@ public:
     // Drops the events still waiting (not the one being asked now: its
     // calls finish and free the block as usual).
     void Clear() { wanted_.clear(); }
-    // cutscene-bleed (#197): as Clear, with a note per dropped event saying `why` (a teleport under way: an event
-    // asked now would take the game's event system from the map change, or play in the scene we arrive in).
-    void DropAll(const char* why) {
-        for (const Wanted& w : wanted_) {
-            notes_.push_back("live event " + w.name + " dropped before it was asked (" + why + ")");
+    // cutscene-bleed (#197): while `on` (our /teleport trip under way: travelling, settling, asking again) no waiting
+    // start is asked (an event asked then would take the game's event system from the map change, or play in the
+    // scene we arrive in). They are kept: on arrival Expire drops those of the scene we left and holds those of
+    // another room; one of our room is asked as usual (review-0116-c item 1: a same-scene trip must not lose them for
+    // the visit). The one being asked now finishes its calls.
+    void Pause(bool on) {
+        if (on != paused_) {
+            notes_.push_back(on ? "live events paused: our teleport is under way"
+                                : "live events resume: teleport done");
+            paused_ = on;
         }
-        wanted_.clear();
     }
     // CoopSvc::Caller's contract: asked once a frame with after_call false,
     // then again after each call it returned, with the call's x0.
@@ -336,7 +354,9 @@ private:
         std::uint64_t starter = 0;
         bool room_asker = false;  // WantFromRoom: the starter is found when it is asked
         std::optional<int> room;  // cutscene-bleed: our Link's room when it was decided, if known
+        bool held = false;        // cutscene-bleed: our Link is in another room now (Expire): not asked yet
     };
+    bool paused_ = false;  // cutscene-bleed (#197): our teleport is under way (Pause)
     bool current_room_asker_ = false;  // current_starter_ is a room asker: checked again just before the link
     // WantFromRoom's asker for `name` in `scene`, read on the calc thread when the event is asked; 0 none.
     static std::uint64_t FindAsker(CoopPuppet::Guest& guest, std::uint64_t main, const std::string& name,

@@ -1045,50 +1045,107 @@ TEST_CASE("live events: an asker deleted between the pick and the link is not ha
     CHECK(said);
 }
 
-TEST_CASE("cutscene-bleed: a waiting start is dropped once our Link is in another room than the one it was decided in") {
+TEST_CASE("cutscene-bleed: a start decided in a room waits while our Link is in another room, then may be asked") {
     CoopLiveEvents::Requester r;
     const auto none = [](const std::string&) { return false; };
+    int here = 0;
+    const auto away = [&](int room) { return room != here; };
     // A story cutscene joined in room 0 (the joiner's same-room check), a gimmick decided in room 0, one with no room.
     r.Want("Dm_Story", "InsideTheDekuTree", 1'000'000, 3'000'000, 0);
     r.WantFromRoom("InsideTheDekuTree_Gimmick_FallingLadder", "InsideTheDekuTree", 0);
     r.Want("Boss_Intro", "InsideTheDekuTree", 1'000'000, 3'000'000);
     REQUIRE(r.Waiting() == 3);
-    // Still in room 0, or our room not known (the door's event walks us through): kept.
-    r.Expire("InsideTheDekuTree", 1'500'000, none, 0);
-    r.Expire("InsideTheDekuTree", 1'500'000, none, std::nullopt);
+    r.Expire("InsideTheDekuTree", 1'500'000, none, away);
+    CHECK(r.TakeNotes().empty());
+    // Through the door into room 1 while they waited behind the door's event: kept, but held (one note each).
+    here = 1;
+    r.Expire("InsideTheDekuTree", 1'600'000, none, away);
+    r.Expire("InsideTheDekuTree", 1'700'000, none, away);
     CHECK(r.Waiting() == 3);
-    // Through the door into room 1 while they waited behind the door's event: both room-bound starts go.
-    r.Expire("InsideTheDekuTree", 1'600'000, none, 1);
-    CHECK(r.Waiting() == 1);
-    const auto notes = r.TakeNotes();
+    auto notes = r.TakeNotes();
     REQUIRE(notes.size() == 2);
-    CHECK(notes[0].find("Dm_Story dropped before it was asked (our Link left the room it was decided in)") !=
-          std::string::npos);
-    CHECK(notes[1].find("FallingLadder dropped") != std::string::npos);
-    // The boss intro (no room) is dropped by our teleport only.
-    r.DropAll("our teleport is under way");
+    CHECK(notes[0].find("Dm_Story waits: our Link is in another room") != std::string::npos);
+    CHECK(notes[1].find("FallingLadder waits") != std::string::npos);
+    // Back in room 0: may be asked again.
+    here = 0;
+    r.Expire("InsideTheDekuTree", 1'800'000, none, away);
+    notes = r.TakeNotes();
+    REQUIRE(notes.size() == 2);
+    CHECK(notes[0].find("Dm_Story may be asked again") != std::string::npos);
+    // Age, scene and played rules still drop a held start: the story join gets too old in room 1.
+    here = 1;
+    r.Expire("InsideTheDekuTree", 4'500'000, none, away);
+    CHECK(r.Waiting() == 1);  // the gimmick (no age limit) waits on; Dm_Story and Boss_Intro too old
+    r.Expire("DekuTreeBoss", 4'600'000, none, away);
     CHECK(r.Waiting() == 0);
-    const auto more = r.TakeNotes();
-    REQUIRE(more.size() == 1);
-    CHECK(more[0].find("Boss_Intro dropped before it was asked (our teleport is under way)") != std::string::npos);
 }
 
-TEST_CASE("cutscene-bleed: a start that left its room is never asked of the game") {
-    Mem m;
-    m.Put64(kMain + addr::kManagerPtr, kHolder);
-    m.Put64(kHolder, kManager);
-    CoopLiveEvents::Requester r;
-    r.Want("Dm_Story", "InsideTheDekuTree", 1'000'000, 3'000'000, 0);
-    // Our Link went through the door into room 2 while it waited (the door's event ran): dropped, then nothing asked.
-    r.Expire("InsideTheDekuTree", 1'500'000, [](const std::string&) { return false; }, 2);
+namespace {
+// The calls one frame's Steps make (the caller's loop), as offsets from kMain.
+std::vector<std::uint64_t> OneFrame(Mem& m, CoopLiveEvents::Requester& r) {
     std::vector<std::uint64_t> order;
     auto call = r.Step(m, false, 0, kMain);
     while (call) {
         order.push_back(call->function - kMain);
         call = r.Step(m, true, Run(m, *call), kMain);
     }
-    CHECK(std::find(order.begin(), order.end(), addr::kRequest) == order.end());
+    return order;
+}
+bool Asked(const std::vector<std::uint64_t>& order) {
+    return std::count(order.begin(), order.end(), addr::kRequest) == 1;
+}
+}  // namespace
+
+TEST_CASE("cutscene-bleed: decided in room 1, Link in room 2: not asked, back in room 1: asked once") {
+    Mem m;
+    m.Put64(kMain + addr::kManagerPtr, kHolder);
+    m.Put64(kHolder, kManager);
+    CoopLiveEvents::Requester r;
+    const auto none = [](const std::string&) { return false; };
+    r.Want("Dm_Story", "InsideTheDekuTree", 1'000'000, 30'000'000, 1);
+    // Our Link went through the door into room 2 while it waited (the door's event ran): not asked, kept.
+    r.Expire("InsideTheDekuTree", 1'500'000, none, [](int room) { return room != 2; });
+    for (int frame = 0; frame < 3; ++frame) {
+        CHECK_FALSE(Asked(OneFrame(m, r)));
+    }
+    CHECK(r.Waiting() == 1);
+    // Back in room 1 (same visit): asked once, then gone.
+    r.Expire("InsideTheDekuTree", 2'000'000, none, [](int room) { return room != 1; });
+    CHECK(Asked(OneFrame(m, r)));
     CHECK(r.Waiting() == 0);
+    CHECK_FALSE(Asked(OneFrame(m, r)));
+}
+
+TEST_CASE("cutscene-bleed: nothing is asked while our teleport is under way, kept for after the trip (#197)") {
+    Mem m;
+    m.Put64(kMain + addr::kManagerPtr, kHolder);
+    m.Put64(kHolder, kManager);
+    CoopLiveEvents::Requester r;
+    r.Want("Boss_Intro", "InsideTheDekuTree", 1'000'000, 30'000'000);
+    r.Pause(true);
+    r.Pause(true);
+    CHECK_FALSE(Asked(OneFrame(m, r)));
+    CHECK(r.Waiting() == 1);
+    r.Pause(false);
+    const auto notes = r.TakeNotes();
+    REQUIRE(notes.size() == 2);
+    CHECK(notes[0].find("paused: our teleport is under way") != std::string::npos);
+    CHECK(notes[1].find("resume") != std::string::npos);
+    CHECK(Asked(OneFrame(m, r)));
+    CHECK(r.Waiting() == 0);
+}
+
+TEST_CASE("cutscene-bleed: a held start does not block one of our room behind it") {
+    Mem m;
+    m.Put64(kMain + addr::kManagerPtr, kHolder);
+    m.Put64(kHolder, kManager);
+    CoopLiveEvents::Requester r;
+    const auto none = [](const std::string&) { return false; };
+    r.Want("Dm_Other_Room", "InsideTheDekuTree", 1'000'000, 30'000'000, 1);
+    r.Want("Dm_Our_Room", "InsideTheDekuTree", 1'000'000, 30'000'000, 2);
+    r.Expire("InsideTheDekuTree", 1'500'000, none, [](int room) { return room != 2; });
+    CHECK(Asked(OneFrame(m, r)));
+    CHECK(r.Waiting() == 1);  // the held one is still there
 }
 
 TEST_CASE("intro-ocarina: while the game runs another event it asked for, a story name left in the session is not given") {
