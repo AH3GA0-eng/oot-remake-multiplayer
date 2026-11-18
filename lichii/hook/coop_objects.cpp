@@ -3116,6 +3116,10 @@ private:
                     s.bsa = CoopBossNative::TheTable().OwnerState(a);
                     if (own_hit_life) {
                         s.hit_at = NewOwnHitAt(r, a, *own_hit_life, s.position);
+                    } else if (CoopBossNative::TheTable().OwnShotNear(s.position)) {
+                        // Issue 150: our shot's weak-point hit that took no life (no hit id moved):
+                        // a copy runs its own reaction, the stun (the boss's own AI; NoteOwnShotEnd).
+                        CoopBossNative::TheTable().NoteOwnHit(a, true);
                     }
                 }
                 if (const auto value = life_value) {

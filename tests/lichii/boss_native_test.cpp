@@ -531,6 +531,67 @@ TEST_CASE("native boss: our own hit on a copy lets its own reaction run for a wh
     CHECK(t.OnBrainVerb(kBsa, 12, false, false));
 }
 
+TEST_CASE("native boss: our shot's end beside a copy (no hit id moved) runs its own stun, issue 150") {
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Gohma(Role::copy)});
+    t.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    FakeGuest g;
+    const std::int32_t at = 4;
+    g.Write(kBsa + addr::kBsaBrainVerb, &at, 4);
+    CHECK_FALSE(t.Step(g, false, 0, kMain));
+    const coop::protocol::Vec3 gohma{18.5f, 60.0f, 67.8f};
+    // Nothing shot yet, or a shot far off (a wall across the room): not near.
+    CHECK_FALSE(t.OwnShotNear(gohma));
+    t.NoteOwnShotEnd({18.5f, 60.0f, 67.8f + Table::kShotNearBoss + 1.0f});
+    CHECK_FALSE(t.OwnShotNear(gohma));
+    // A place the game cannot have (NaN) is not kept.
+    t.NoteOwnShotEnd({std::nanf(""), 60.0f, 67.8f});
+    CHECK_FALSE(t.OwnShotNear(gohma));
+    // The seed in her eye: the stun's action was asked in the frame of the hit and skipped (her copy).
+    CHECK(t.OnActionVerb(kBsa, GameRequest(30, kNode), true, false));
+    t.NoteOwnShotEnd({19.0f, 62.5f, 68.0f});
+    CHECK(t.OwnShotNear(gohma));
+    // The walk's reading: the copy runs its own reaction, the skipped stun made late.
+    t.NoteOwnHit(kActor, true);
+    CHECK(t.Totals().copy_shot_hits == 1);
+    CHECK(t.CopiesRunningOwn() == std::vector<std::uint64_t>{kActor});
+    auto c = t.Step(g, false, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kMalloc);
+    c = t.Step(g, true, kBlock, kMain);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kRequestActionVerb);
+    CHECK(g.Get<std::int32_t>(kBlock + addr::kReqVerb) == 30);
+    CHECK_FALSE(t.Step(g, true, 0, kMain));
+    // Its reaction runs; a second walk inside it counts no second shot hit.
+    CHECK_FALSE(t.OnBrainVerb(kBsa, 12, false, false));
+    t.NoteOwnHit(kActor, true);
+    CHECK(t.Totals().copy_shot_hits == 1);
+    // The end is kept a few frames only.
+    for (std::uint64_t i = 0; i <= Table::kShotEndKeepSteps; ++i) {
+        (void)t.Step(g, false, 0, kMain);
+    }
+    CHECK_FALSE(t.OwnShotNear(gohma));
+    // Forgotten with the rest.
+    t.NoteOwnShotEnd(gohma);
+    t.Reset();
+    CHECK_FALSE(t.OwnShotNear(gohma));
+}
+
+TEST_CASE("native boss: our shot's end beside a boss we own changes nothing (solo, owner)") {
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Gohma(Role::owner)});
+    t.NoteOwnShotEnd({18.5f, 60.0f, 67.8f});
+    CHECK(t.OwnShotNear({18.5f, 60.0f, 67.8f}));
+    t.NoteOwnHit(kActor, true);  // the walk calls it for every boss: an owner's is no copy
+    CHECK(t.Totals().copy_shot_hits == 0);
+    CHECK(t.CopiesRunningOwn().empty());
+    // Our own boss's changes are its own game's: never skipped.
+    CHECK_FALSE(t.OnBrainVerb(kBsa, 9, false, false));
+}
+
 TEST_CASE("native boss: the owner keeps none of its event's changes and sends its verb when it is over") {
     Table t;
     t.SetOn(true, true);
