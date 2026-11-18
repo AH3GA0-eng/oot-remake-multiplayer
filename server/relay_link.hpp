@@ -23,10 +23,16 @@ struct RelayLinkConfig {
   std::uint16_t relay_port = kDefaultRelayPort;
   std::uint16_t server_port = 0;  // this PC's coop_server
   std::string key;                // the relay's host key, if it wants one
+  // A room name to hold besides the join code (3 to 24 letters, digits, '-'
+  // and '_'); empty for a join code only.
+  std::string room;
   std::size_t max_flows = 32;
   std::function<void(const std::string&)> log;
   // Called when the relay gives a join code (again after a relay restart).
   std::function<void(const std::string& code)> on_code;
+  // Called when the relay says the room name is this host's (again after a
+  // relay restart).
+  std::function<void(const std::string& room)> on_room;
   // The session token; std::random_device when empty.
   std::function<std::uint64_t()> random;
 };
@@ -51,6 +57,8 @@ class RelayLink {
 
   // The join code while the relay has given one; empty before that.
   const std::string& code() const { return code_; }
+  // The room name while the relay holds it for this host; empty before that.
+  const std::string& room() const { return room_; }
   std::size_t flows() const { return flows_.size(); }
 
  private:
@@ -71,6 +79,7 @@ class RelayLink {
   ENetAddress server_{};
   std::uint64_t token_ = 0;
   std::string code_;
+  std::string room_;
   bool registered_ = false;
   bool refused_hard_ = false;
   std::uint64_t started_ms_ = 0;

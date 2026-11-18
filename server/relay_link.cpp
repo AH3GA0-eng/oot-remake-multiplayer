@@ -78,6 +78,14 @@ void RelayLink::say(const std::string& text) const {
 }
 
 bool RelayLink::start(std::string& error) {
+  if (!config_.room.empty()) {
+    const auto room = normalize_room(config_.room);
+    if (!room) {
+      error = "'" + config_.room + "' is not a room name: 3 to 24 letters, digits, - or _";
+      return false;
+    }
+    config_.room = *room;
+  }
   if (enet_address_set_host(&relay_, config_.relay_host.c_str()) != 0) {
     error = "cannot find the relay " + config_.relay_host + " (is the name right, and is this PC online?)";
     return false;
@@ -131,9 +139,14 @@ void RelayLink::close_flow(std::uint16_t flow, bool tell_relay) {
 void RelayLink::handle(const Message& m, std::uint64_t now) {
   switch (m.kind) {
     case Kind::kRegistered:
+    case Kind::kRegisteredName:
       if (m.token != token_) return;
       last_heard_ms_ = now;
       refused_hard_ = false;
+      if (m.kind == Kind::kRegisteredName && m.name != room_) {
+        room_ = m.name;
+        if (config_.on_room) config_.on_room(room_);
+      }
       if (!registered_ || m.code != code_) {
         registered_ = true;
         if (m.code != code_) {
@@ -155,6 +168,7 @@ void RelayLink::handle(const Message& m, std::uint64_t now) {
         }
         registered_ = false;
         code_.clear();
+        room_.clear();
         std::vector<std::uint16_t> ids;
         for (const auto& [id, flow] : flows_) ids.push_back(id);
         for (const std::uint16_t id : ids) close_flow(id, false);
@@ -251,16 +265,21 @@ void RelayLink::service() {
     if (last_register_ms_ == 0 || now - last_register_ms_ >= every) {
       last_register_ms_ = now;
       Message m;
-      m.kind = Kind::kRegister;
+      m.kind = config_.room.empty() ? Kind::kRegister : Kind::kRegisterName;
       m.token = token_;
       m.key = config_.key;
+      m.name = config_.room;
       send_relay(m);
     }
     if (!refused_hard_ && now - first_try_ms_ >= 10'000 &&
         (last_waiting_note_ms_ == 0 || now - last_waiting_note_ms_ >= 30'000)) {
       last_waiting_note_ms_ = now;
       say("no answer from the relay at " + config_.relay_host + ":" + std::to_string(config_.relay_port) +
-          " yet: is it running, and is its UDP port open to the internet? Still trying.");
+          " yet: is it running, and is its UDP port open to the internet?" +
+          (config_.room.empty() ? std::string()
+                                : std::string(" A relay from before room names does not answer a host with one "
+                                              "(update it, or host without a room name).")) +
+          " Still trying.");
     }
     return;
   }

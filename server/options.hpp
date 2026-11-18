@@ -40,6 +40,9 @@ struct CommandLine {
   bool relay = false;
   // --relay-via ADDRESS[:PORT]: host through that relay and get a join code.
   std::string relay_via;
+  // --relay-room NAME: with --relay-via, also hold this room name on the relay
+  // (players join with the name instead of the code).
+  std::string relay_room;
   // --relay-key / --relay-key-env: the relay's host key (on the relay: the one
   // hosts must give; with --relay-via: the one to give).
   std::string relay_key;
