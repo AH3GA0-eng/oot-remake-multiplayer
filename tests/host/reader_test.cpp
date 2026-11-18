@@ -731,30 +731,49 @@ TEST_CASE("host reader: what the player wears") {
   }
 }
 
-TEST_CASE("host reader: our Link bound into an event counts as in an event, word 0 or not (row 97)") {
-  // A Deku Scrub's talk and AttackedEvent leave the event manager's word 0; the event binds our
-  // Link through its own performer ([[actor + 0x270] + 0x88 or 0x90], +0x10 the actor, +0x18 the link).
+TEST_CASE("host reader: our Link an event member counts as in an event, word 0 or not (row 97, G1)") {
+  // The game's own member test: M = [[actor + 0x270] + 0x88], its record L = [M + 0x18], four slots
+  // of 0x38 bytes from L + 0x10, a member when a slot holds an event pointer and flag bit 0.
   FakeMemory m;
   const Layout l = make_game(m);
-  constexpr std::uint64_t kParts = 0x92000000, kPerformer = 0x92100000;
+  constexpr std::uint64_t kParts = 0x92000000, kMember = 0x92100000, kRecord = 0x92200000;
+  constexpr std::uint64_t kEvent = 0x106d85b750;  // as the offline run fable-g1-events read it
+  const auto slot = [&](std::uint64_t i) { return kRecord + addr::kRecordSlots + addr::kMemberSlotSize * i; };
   m.put_u64(l.actor1 + addr::kActorComponents, kParts);
-  m.put_u64(kParts + addr::kPerformerSlotAlt, kPerformer);  // the player's slot
-  m.put_u64(kPerformer + addr::kPerformerActor, l.actor1);
-  m.put_u64(kPerformer + addr::kPerformerLink, 0);
+  m.put_u64(kParts + addr::kEventMemberSlot, kMember);
+  m.put_u64(kMember + addr::kMemberRecord, 0);  // in no event
   {
     PlayerReader reader(m);
+    CHECK(reader.read_link_bound() == false);
     const auto r = reader.read();
     REQUIRE(r);
     CHECK(r->event_running == false);
     CHECK_FALSE(r->event_by_link);
+    CHECK_FALSE(r->link_bound);
   }
-  m.put_u64(kPerformer + addr::kPerformerLink, 0x106d7f9dd0);  // the scrub's talk binds it
+  m.put_u64(kMember + addr::kMemberRecord, kRecord);
+  for (std::uint64_t i = 0; i < addr::kMemberSlots; ++i) {
+    m.put_u64(slot(i), 0);
+    m.put_u8(slot(i) + addr::kSlotFlags, 0);
+  }
+  // Our Link holds the event's pointer without the member flag (as Link's sword does): not a member.
+  m.put_u64(slot(0), kEvent);
+  m.put_u8(slot(0) + addr::kSlotFlags, 0x2);
+  {
+    PlayerReader reader(m);
+    CHECK(reader.read_link_bound() == false);
+    CHECK(reader.read()->event_running == false);
+  }
+  // The flag in another slot (an event nested in a running one): a member.
+  m.put_u64(slot(1), kEvent + 0x1220);
+  m.put_u8(slot(1) + addr::kSlotFlags, 0x1);
   {
     PlayerReader reader(m);
     const auto r = reader.read();
     REQUIRE(r);
     CHECK(r->event_running == true);
     CHECK(r->event_by_link);
+    CHECK(r->link_bound);
     CHECK(reader.read_event_running() == true);
     CHECK(reader.read_event_word() == false);
   }
@@ -765,16 +784,28 @@ TEST_CASE("host reader: our Link bound into an event counts as in an event, word
     REQUIRE(r);
     CHECK(r->event_running == true);
     CHECK_FALSE(r->event_by_link);
+    CHECK(r->link_bound);
   }
-  // A performer that is not our Link's own (+0x10 another actor) is never read as ours.
+  // The word alone, our Link not a member: an event runs that does not take our Link.
+  m.put_u8(slot(1) + addr::kSlotFlags, 0);
+  {
+    PlayerReader reader(m);
+    const auto r = reader.read();
+    REQUIRE(r);
+    CHECK(r->event_running == true);
+    CHECK_FALSE(r->link_bound);
+  }
+  // A record that cannot be read: not known, never a member.
   m.put_u64(l.events + addr::kEventRunning, 0);
-  m.put_u64(kPerformer + addr::kPerformerActor, 0x12345678);
+  m.put_u64(kMember + addr::kMemberRecord, 0x93000000);
+  m.put_u64(kParts + addr::kEventMemberSlot, 0x94000000);  // M itself unreadable
   {
     PlayerReader reader(m);
     CHECK(reader.read_link_bound() == std::nullopt);
     const auto r = reader.read();
     REQUIRE(r);
     CHECK(r->event_running == false);
+    CHECK_FALSE(r->link_bound);
   }
 }
 

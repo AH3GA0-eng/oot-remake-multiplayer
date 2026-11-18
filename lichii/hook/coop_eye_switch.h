@@ -171,8 +171,8 @@ public:
     std::optional<CoopPuppet::Call> Step(CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
                                          std::uint64_t main, std::uint64_t now_ms);
     std::vector<std::string> TakeNotes();
-    // G1 (coop/host/event_owner.hpp): called with the event's name when our switch is set for
-    // another game's event (the room graph starts that event here next).
+    // G1: called with the event's name when our switch is set for another game's event (the
+    // room graph starts that event here next; the hook logs it).
     void OnSet(std::function<void(const std::string&)> set) { on_set_ = std::move(set); }
     // (event, scene) to ask the old way (Requester::WantFromRoom).
     std::vector<std::pair<std::string, std::string>> TakeFallbacks();

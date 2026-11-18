@@ -141,21 +141,26 @@ std::optional<bool> PlayerReader::read_event_word() {
   return *running != 0;
 }
 
+// The game's own QueryEventMemberIsEventMemver (0x29f3770) for our Link: its EventMember M, M's
+// record L (0: in no event), and a member when one of L's slots holds an event pointer with flag
+// bit 0. nullopt when M or L cannot be read; a slot that cannot be read counts as free.
 std::optional<bool> PlayerReader::read_link_bound() {
   const auto actor = find_player_actor();
   if (!actor) return std::nullopt;
   const auto parts = read_ptr(memory_, *actor + addr::kActorComponents);
   if (!parts) return std::nullopt;
-  for (const std::uint64_t slot : {addr::kPerformerSlot, addr::kPerformerSlotAlt}) {
-    const auto performer = read_ptr(memory_, *parts + slot);
-    if (!performer) continue;
-    const auto owner = read_u64(memory_, *performer + addr::kPerformerActor);
-    if (!owner || *owner != *actor) continue;  // not its own
-    const auto link = read_u64(memory_, *performer + addr::kPerformerLink);
-    if (!link) return std::nullopt;
-    return *link != 0;
+  const auto member = read_ptr(memory_, *parts + addr::kEventMemberSlot);
+  if (!member) return std::nullopt;
+  const auto record = read_u64(memory_, *member + addr::kMemberRecord);
+  if (!record) return std::nullopt;
+  if (*record == 0) return false;
+  for (std::uint64_t i = 0; i < addr::kMemberSlots; ++i) {
+    const std::uint64_t slot = *record + addr::kRecordSlots + addr::kMemberSlotSize * i;
+    const auto event = read_u64(memory_, slot);
+    const auto flags = read_u8(memory_, slot + addr::kSlotFlags);
+    if (event && *event != 0 && flags && (*flags & 1) != 0) return true;
   }
-  return std::nullopt;  // no performer of its own found
+  return false;
 }
 
 std::optional<std::int32_t> PlayerReader::read_life() {

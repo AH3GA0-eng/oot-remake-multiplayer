@@ -356,12 +356,11 @@ coop::host::EventWhose ClassifyEvent(bool running, bool link_bound, const std::o
     static std::uint64_t cursor = 0;
     static int said = -1;
     static int said_by = -1;
-    const std::uint64_t now_us = CoopEvery::NowUs();
     for (const auto& r : CoopLiveEvents::TheGameRequests().Since(cursor)) {
-        if (r.taken) CoopEventOwner::GameAsked(r.name, now_us);
+        if (r.taken) CoopEventOwner::GameAsked(r.name);
     }
     coop::host::EventOwnerTracker::By by{};
-    const auto whose = CoopEventOwner::Classify(running, link_bound, anim, now_us, &by);
+    const auto whose = CoopEventOwner::Classify(running, link_bound, anim, &by);
     const int now = running ? static_cast<int>(whose) : -1;
     if (now != said || (now >= 0 && static_cast<int>(by) != said_by)) {
         if (now >= 0) {
@@ -502,10 +501,13 @@ public:
         });
         if (live_events_) {
             {
-                // G1: every event this requester asks for is another player's (a held live event, a
-                // shared scene joined): the hook's tracker marks the run it starts (coop_event_owner.h).
+                // G1: the events this requester asks for (a held live event, a shared scene joined)
+                // and the eye switches set for another game's event, for the log only. Whose a running
+                // event is comes from our Link's event membership (coop/host/event_owner.hpp).
                 std::lock_guard lock(live_mutex_);
-                const auto mark = [](const std::string& name) { CoopEventOwner::CoopAsked(name, CoopEvery::NowUs()); };
+                const auto mark = [](const std::string& name) {
+                    LOG_INFO(Core, "coop: event: our game was asked for another player's event {}", name);
+                };
                 live_requester_.OnTaken(mark);
                 eye_switch_.OnSet(mark);
             }
