@@ -241,22 +241,6 @@ void FlagWatcher::set_role(FlagRole role) {
   }
 }
 
-void FlagWatcher::write_failed(FlagKey key, const char* site) {
-  ++stats_.write_failures;
-  auto it = failures_.find(key);
-  if (it == failures_.end()) {
-    if (failures_.size() >= kMaxFailureKeys) return;  // the total still counts it
-    it = failures_.emplace(key, Failures{}).first;
-  }
-  it->second.site = site;
-  if (++it->second.count == kFailureSayAt) keeps_failing_.push_back({key, site, it->second.count});
-  if (it->second.count > stats_.top_failure_count) {
-    stats_.top_failure = key;
-    stats_.top_failure_count = it->second.count;
-    stats_.top_failure_site = site;
-  }
-}
-
 void FlagWatcher::set_loading(bool loading) {
   link_loading_ = loading;
   if (native_forced_) return;  // a load node's load holds it (frame())
@@ -591,6 +575,26 @@ void FlagWatcher::apply_reset(FlagStore& store, const std::vector<FlagEntry>& fl
   }
 }
 
+void FlagWatcher::note_write_failure(FlagStore& store, const FlagKey& key, const char* site) {
+  if (store.holds(key)) {
+    ++stats_.held_retries;  // held on purpose: not a failure (see FlagStats::held_retries)
+    return;
+  }
+  ++stats_.write_failures;
+  auto it = write_failure_keys_.find(key);
+  if (it == write_failure_keys_.end()) {
+    if (write_failure_keys_.size() >= kWriteFailureKeys) return;
+    it = write_failure_keys_.emplace(key, 0).first;
+  }
+  // Row 140: a key failing kFailureSayAt times is said once (key, site), for the log.
+  if (++it->second == kFailureSayAt) keeps_failing_.push_back({key, site, it->second});
+  if (it->second > stats_.top_write_failure_count || stats_.top_write_failure == key) {
+    stats_.top_write_failure = key;
+    stats_.top_write_failure_count = it->second;
+    stats_.top_write_failure_site = site;
+  }
+}
+
 bool FlagWatcher::write_exact(FlagStore& store, const FlagEntry& entry) {
   const FlagKey key = key_of(entry);
   if (keeps_own(store, entry)) {
@@ -603,7 +607,7 @@ bool FlagWatcher::write_exact(FlagStore& store, const FlagEntry& entry) {
   const std::optional<FlagEntry> before =
       seen != last_.end() ? std::optional<FlagEntry>(seen->second) : std::nullopt;
   if (!store.write_exact(entry)) {
-    write_failed(key, "write_exact");
+    note_write_failure(store, key, "write_exact");
     unwritten_[key] = entry;
     if (!written_for_others_.empty() && written_for_others_.back() == key) {
       written_for_others_.pop_back();
@@ -770,7 +774,7 @@ void FlagWatcher::answer_set(FlagStore& store, const protocol::FlagSet& set, Tab
       // A count change (rupees, keys) refused for now: summed with any other
       // for the same count and added on a later frame (add()), which then
       // states the new total. No answer now: a FLAG_STATE carries no delta.
-      write_failed(key, "count change held");
+      note_write_failure(store, key, "answer_set count");
       if (!written_for_others_.empty() && written_for_others_.back() == key) {
         written_for_others_.pop_back();
       }
@@ -785,7 +789,7 @@ void FlagWatcher::answer_set(FlagStore& store, const protocol::FlagSet& set, Tab
     if (written) {
       ++stats_.applied;
     } else {
-      write_failed(key, "answered set");
+      note_write_failure(store, key, "answer_set");
       if (!written_for_others_.empty() && written_for_others_.back() == key) {
         written_for_others_.pop_back();
       }
@@ -862,7 +866,7 @@ bool FlagWatcher::write(FlagStore& store, const FlagEntry& entry) {
   to_write.value = as_bits(as_int(to_write.value) + held);
   note_for_others(store, to_write);
   if (!store.write(to_write)) {
-    write_failed(key, "group write");
+    note_write_failure(store, key, "write");
     unwritten_[key] = entry;
     if (!written_for_others_.empty() && written_for_others_.back() == key) {
       written_for_others_.pop_back();  // not written: tried again later
@@ -896,7 +900,7 @@ void FlagWatcher::add(FlagStore& store, const FlagEntry& delta) {
   // The count before, for the chat notices ("the group has N").
   std::optional<FlagEntry> was = store.read(key);
   if (!store.write(delta)) {
-    write_failed(key, "count delta");
+    note_write_failure(store, key, "add");
     // Tried again next frame, with any other change to the same count.
     auto [it, fresh] = unadded_.try_emplace(key, delta);
     if (!fresh) it->second.value = as_bits(as_int(it->second.value) + as_int(delta.value));
@@ -963,10 +967,16 @@ void FlagWatcher::put_owed(FlagStore& store) {
     now->key = key;
     FlagEntry back = owed;
     back.key = key;
-    if (back.kind == protocol::FlagKind::uint32) back.value |= now->value;  // the game's floors too
+    if (back.kind == protocol::FlagKind::uint32) {
+      back.value |= now->value;  // the game's floors too
+      // And the group's: every floor another player entered, also one that never reached our game's flag.
+      if (const auto group = group_.find(key); group != group_.end() && group->second.kind == back.kind) {
+        back.value |= group->second.value;
+      }
+    }
     if (back == *now) continue;  // the load read it in already
     if (!store.write(back)) {
-      write_failed(key, "one-way owed put-back");
+      note_write_failure(store, key, "one-way owed put-back");
       continue;
     }
     put_back_[key].pass = diff_pass_;  // lowered again at once: left again (kMaxQuickUndos), owed again
@@ -974,7 +984,7 @@ void FlagWatcher::put_owed(FlagStore& store) {
     ++stats_.one_way_restores;
     ++stats_.one_way_owed;
     ++stats_.applied;
-    hud_refresh_ = true;
+    if (is_hud_dungeon_item(key)) hud_refresh_ = true;
   }
 }
 
@@ -1108,7 +1118,8 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
       // floor new to us in the game's value still goes out, ORed with what we had (the bits rule never lowers).
       const auto leave = [&] {
         FlagEntry& owed = owed_.try_emplace(key, before).first->second;  // the group keeps it: owed after a load
-        if (bits_drop) owed.value |= now->value;
+        // Every floor since: the other player's that came after it was left (the game lowers them too) and ours.
+        if (bits_drop) owed.value |= before.value | now->value;
         if (!bits_drop || (now->value & ~before.value) == 0) return;
         FlagEntry both = *now;
         both.value = before.value | now->value;
@@ -1138,7 +1149,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
       if (bits_drop) back.value = before.value | now->value;
       if (store.write(back)) {
         put_back_[key].pass = diff_pass_;
-        hud_refresh_ = true;  // row 140: every put-back, so the HUD screen's copy takes it
+        if (is_hud_dungeon_item(key)) hud_refresh_ = true;  // row 140: every put-back, so the HUD copy takes it
         ++stats_.one_way_restores;
         ++stats_.applied;
         it->second = before;  // a new floor in `back` goes out next frame as a change
@@ -1149,7 +1160,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
         }
         continue;
       }
-      write_failed(key, "one-way put-back");
+      note_write_failure(store, key, "diff put back");
     }
     if (settling() && !store.is_count(key) && !restate_.contains(key) && !one_way_.contains(key)) {
       // A load putting back an older value than the group's: not sent, and
@@ -1175,7 +1186,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
         }
         // The game takes no write of it (a player's own item): it is not
         // the group's to put back.
-        write_failed(key, "load revert");
+        note_write_failure(store, key, "diff own item");
         group_.erase(group);
         group_before_.erase(key);
       }
@@ -1203,7 +1214,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
       }
       // Not put back now: still never sent. The value before stays the one
       // seen, so the next frame sees the rise again and tries again.
-      write_failed(key, "max cap put-back");
+      note_write_failure(store, key, "diff rise");
       if (++cap_tries_[key] >= kMaxCapTries) {
         // Row 140: refused every frame for a second: left (still never sent) until the value changes again.
         cap_tries_.erase(key);
@@ -1241,7 +1252,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
         it->second = back;
         continue;
       }
-      write_failed(key, "count guard");  // sent as any gain
+      note_write_failure(store, key, "diff gain");  // sent as any gain
     }
     if (const auto g = guards_.find(key); g != guards_.end() &&
                                           before.kind == protocol::FlagKind::int32 &&
@@ -1296,7 +1307,7 @@ void FlagWatcher::settle_guards(FlagStore& store, Table& changes) {
       now->key = key;
       now->value = as_bits(std::max<std::int64_t>(std::int64_t{as_int(now->value)} + by, 0));
       if (!store.write(*now)) {
-        write_failed(key, "own count shift");
+        note_write_failure(store, key, "settle_guards");
         return false;
       }
       last_[key] = *now;

@@ -24,6 +24,7 @@
 // inside frame(), on the game's thread. Not thread-safe: call both from one
 // thread, or lock around them.
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -60,6 +61,16 @@ struct FlagStats {
   std::uint64_t max_caps_kept = 0;     // a rise of our own past cap_max's cap: put back, not sent
   std::uint64_t read_failures = 0;
   std::uint64_t write_failures = 0;    // each failed try; it is tried again next frame
+  // A write the store refused because it holds that key for now (HoldFlagStore: a room gimmick flag held until
+  // our game played its event or we leave the dungeon). Waiting by design, so not a write failure: tried again
+  // every frame until the hold lets it, which counted ~60 failures a second (events-next-a-11 probe: named
+  // 0xb3a4fe84 = HavePlayedEvent.InsideTheDekuTree_Gimmick_FallingLadder, 5561 of 9235 in 90 s).
+  std::uint64_t held_retries = 0;
+  // The key with the most write failures so far, how many, and where (events-next-a-11: a log said ~60
+  // failures a second after an event without saying which flag). Count 0 = none yet.
+  FlagKey top_write_failure{};
+  std::uint64_t top_write_failure_count = 0;
+  const char* top_write_failure_site = "";
   std::uint64_t bad_snapshots = 0;     // parts out of order: the snapshot is dropped
   std::uint64_t ignored_messages = 0;  // not a flag message, or not for this role
   std::uint64_t load_reverts = 0;      // the game's load undid a group value: written back
@@ -91,10 +102,6 @@ struct FlagStats {
   std::uint64_t one_way_left = 0;
   // Row 140: of one_way_restores, the values left to the game put back once after a room or scene load (owed_).
   std::uint64_t one_way_owed = 0;
-  // Row 140: the key with the most failed writes this session, how often, and where (write_failed's site).
-  FlagKey top_failure{};
-  std::uint64_t top_failure_count = 0;
-  const char* top_failure_site = "";
 };
 
 class FlagWatcher {
@@ -195,14 +202,13 @@ class FlagWatcher {
   // when the next room or scene load window ends (not after a save load: another save's floors are not this one's),
   // with that refresh, so the other player's floors reach the copy after a room load at the latest.
   bool take_hud_refresh() { return std::exchange(hud_refresh_, false); }
-  // Row 140: a key whose write failed kFailureSayAt times this session (once per key, for the log: key, site).
+  // Row 140: a key whose write failed kFailureSayAt times this session (note_write_failure; once per key, for the log).
   struct KeepsFailing {
     FlagKey key;
     const char* site = "";
     std::uint64_t count = 0;
   };
   static constexpr std::uint64_t kFailureSayAt = 60;
-  static constexpr std::size_t kMaxFailureKeys = 256;  // keys counted one by one; the total counts all
   std::vector<KeepsFailing> take_keeps_failing() { return std::exchange(keeps_failing_, {}); }
   // Row 140: a max-rule rise past its cap whose put-back the game refused this often in a row is left (not sent,
   // not fought every frame) until the value changes again.
@@ -493,20 +499,13 @@ class FlagWatcher {
   std::map<FlagKey, PutBack> put_back_;   // row 140: one-way put-backs
   std::set<FlagKey> game_owned_;          // row 140: left to the game until the next load window
   std::vector<FlagKey> one_way_left_;     // take_one_way_left
-  std::map<FlagKey, FlagEntry> owed_;     // row 140: left to the game: the group's value, put back after a room load
+  std::map<FlagKey, protocol::FlagEntry> owed_;     // row 140: left to the game: the group's value, put back after a room load
   bool owed_due_ = false;                 // a room or scene load window ended (no save load): put owed_ back
   bool hud_refresh_ = false;              // take_hud_refresh
   // Row 140: puts owed_ back (ORed with the game's floors), each once, after a room or scene load window.
   void put_owed(FlagStore& store);
-  struct Failures {
-    std::uint64_t count = 0;
-    const char* site = "";
-  };
-  std::map<FlagKey, Failures> failures_;  // row 140: failed writes by key (kMaxFailureKeys)
-  std::vector<KeepsFailing> keeps_failing_;
+  std::vector<KeepsFailing> keeps_failing_;  // row 140: note_write_failure, kFailureSayAt
   std::map<FlagKey, int> cap_tries_;      // row 140: refused cap put-backs in a row
-  // Row 140: counts a failed write of `key` at `site` (stats, top key, keeps_failing_).
-  void write_failed(FlagKey key, const char* site);
   std::vector<FlagKey> own_count_drops_;     // take_own_count_drops
   struct Guard {
     std::int32_t held = 0;          // own gain not sent yet
@@ -596,6 +595,12 @@ class FlagWatcher {
   Table snapshot_;                        // parts so far
   std::vector<protocol::FlagState> held_states_;  // came while holding
   FlagStats stats_;
+  // write_failures per key, for FlagStats::top_write_failure; at most kWriteFailureKeys keys (a new key past
+  // that is counted in write_failures only).
+  static constexpr std::size_t kWriteFailureKeys = 256;
+  std::map<FlagKey, std::uint64_t> write_failure_keys_;
+  // A refused write: held_retries when the store holds the key, else a write failure named by key and site.
+  void note_write_failure(FlagStore& store, const FlagKey& key, const char* site);
   // use_events
   const std::vector<FlagKey>& diff_keys();
   bool events_ = false;

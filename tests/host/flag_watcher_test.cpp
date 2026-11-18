@@ -3,6 +3,7 @@
 #include <cstddef>
 
 #include <map>
+#include <string_view>
 #include <set>
 #include <string>
 #include <string_view>
@@ -150,6 +151,22 @@ TEST_CASE("flag watcher: a FLAG_STATE is written and not sent back") {
   CHECK(w.receive(*bytes));
   CHECK(w.frame(store).empty());
   CHECK(store.get(kDoor) == 0);
+}
+
+TEST_CASE("flag watcher: a refused write names its key in the stats (events-next-a-11)") {
+  FakeStore store = game();
+  store.unwritable.insert(kDoor);
+  FlagWatcher w(shared(), FlagRole::player);
+  w.frame(store);
+  CHECK(w.stats().top_write_failure_count == 0);
+  CHECK(w.receive(state({entry(kDoor, 1), entry(kChest, 1)})));
+  w.frame(store);
+  w.frame(store);  // tried again
+  CHECK(store.get(kChest) == 1);
+  CHECK(w.stats().write_failures >= 1);
+  CHECK(w.stats().top_write_failure == kDoor);
+  CHECK(w.stats().top_write_failure_count == w.stats().write_failures);
+  CHECK(std::string_view(w.stats().top_write_failure_site) == "write");
 }
 
 TEST_CASE("flag watcher: 64-bit keys go out, come in and fill a snapshot") {
@@ -1242,6 +1259,37 @@ TEST_CASE("flag watcher: a one-way value the game lowers again at once is left t
   CHECK(w.stats().one_way_restores == 5);
 }
 
+TEST_CASE("flag watcher: a floor another player enters after a key was left is owed too (row 140 review)") {
+  constexpr FlagKey kDekuFloors{0x5c6c21c1u, 0};
+  FakeStore game_store = dungeon_game();
+  const auto floors = [&](std::uint32_t v) { game_store.values[kDekuFloors] = entry(kDekuFloors, v, proto::FlagKind::uint32); };
+  floors(0b01100);
+  ItemFlagStore store(game_store);
+  FlagWatcher w(SharedFlags({kDekuMap, kDekuFloors}), FlagRole::player);
+  w.frame(store);
+  for (int n = 0; n < 3; ++n) {  // put back, undone, put back, undone: left
+    floors(0b10000);
+    w.frame(store);
+  }
+  CHECK(w.stats().one_way_left == 1);
+  // The other player enters floor 0b00010: the group's floors come and are written here...
+  CHECK(w.receive(state({entry(kDekuFloors, 0b11110, proto::FlagKind::uint32)})));
+  w.frame(store);
+  CHECK(game_store.get(kDekuFloors) == 0b11110u);
+  // ...and the game lowers them again from its HUD copy: left, not fought.
+  floors(0b10000);
+  w.frame(store);
+  CHECK(game_store.get(kDekuFloors) == 0b10000u);
+  // A room load: the put-back after it has that floor too.
+  w.set_loading(true);
+  w.frame(store);
+  w.set_loading(false);
+  for (int i = 0; i < FlagWatcher::kSettleFrames + 10; ++i) w.frame(store);
+  CHECK(w.stats().one_way_owed == 1);
+  CHECK(game_store.get(kDekuFloors) == 0b11110u);
+  CHECK(w.take_hud_refresh());
+}
+
 TEST_CASE("flag watcher: floors left to the game are not owed into another save after a save load (row 140)") {
   constexpr FlagKey kDekuFloors{0x5c6c21c1u, 0};
   FakeStore game_store = dungeon_game();
@@ -1299,9 +1347,9 @@ TEST_CASE("flag watcher: the key of a write that keeps failing is counted and sa
     w.frame(store);
   }
   CHECK(w.stats().write_failures == FlagWatcher::kFailureSayAt);
-  CHECK(w.stats().top_failure == kDekuMap);
-  CHECK(w.stats().top_failure_count == FlagWatcher::kFailureSayAt);
-  CHECK(std::string_view(w.stats().top_failure_site) == "one-way put-back");
+  CHECK(w.stats().top_write_failure == kDekuMap);
+  CHECK(w.stats().top_write_failure_count == FlagWatcher::kFailureSayAt);
+  CHECK(std::string_view(w.stats().top_write_failure_site) == "one-way put-back");
   const auto said = w.take_keeps_failing();
   REQUIRE(said.size() == 1);
   CHECK(said[0].key == kDekuMap);
@@ -1463,6 +1511,28 @@ TEST_CASE("flag watcher: the host's Try Again puts the group's values back at on
   for (const auto& m : decode(link_back(w, store))) CHECK_FALSE(std::holds_alternative<proto::FlagReset>(m));
   CHECK(store.get(kDoor) == 1);
   CHECK(w.stats().host_resets == 0);
+}
+
+TEST_CASE("flag watcher: a held flag's retries are counted as held, not as write failures (events-next-a-12)") {
+  // The events-next-a-11 probe logged "top write failure: named 0xb3a4fe84[0]" ~60 times a second: a played-event
+  // flag HoldFlagStore held (by design) while our Link stayed in the dungeon, retried every frame. A hold is waiting,
+  // not a failure: write_failures stays for writes the game itself refused.
+  FakeStore game_store = game();
+  game_store.unwritable.insert(kChest);
+  bool hold = true;
+  HoldFlagStore store(game_store, [&hold](FlagKey key) { return hold && key == kDoor; });
+  FlagWatcher w(shared(), FlagRole::player);
+  w.frame(store);
+  CHECK(w.receive(state({entry(kDoor, 1), entry(kChest, 1)})));
+  for (int i = 0; i < 5; ++i) w.frame(store);
+  CHECK(game_store.get(kDoor) == 0);           // still held
+  CHECK(w.stats().held_retries >= 5);          // tried every frame, counted as held
+  CHECK(w.stats().write_failures >= 5);        // the chest the game refuses: a real failure
+  CHECK(w.stats().top_write_failure == kChest);  // the held door never names itself
+  CHECK(w.stats().top_write_failure_count == w.stats().write_failures);
+  hold = false;
+  w.frame(store);
+  CHECK(game_store.get(kDoor) == 1);  // written once the hold ends
 }
 
 TEST_CASE("flag watcher: the host's Try Again into a held flag writes the group's value once the hold ends") {

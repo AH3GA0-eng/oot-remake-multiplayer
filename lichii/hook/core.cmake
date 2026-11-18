@@ -70,6 +70,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_room_objects.cpp"
     "${_coop_hook}/coop_switch_share.cpp"
     "${_coop_hook}/coop_eye_switch.cpp"
+    "${_coop_hook}/coop_event_result.cpp"
     "${_coop_hook}/coop_ocarina.cpp"
     "${_coop_hook}/coop_ocarina_sound.cpp"
     "${_coop_hook}/coop_look_share.cpp"
