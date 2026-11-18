@@ -64,6 +64,26 @@ constexpr BeatenBool kBools7[] = {
     {0xae65c8f6u, true, "HavePlayedEvent.Dm_SpiritTemple_BossIn"},
     {0x9c48fb26u, true, "HavePlayedEvent.Dm_SpiritTemple_BossOut"},
 };
+// Ganondorf: Defeat_Ganon below Step06: NotReady, Ready, Step01, Step02, Step03, Step04, Step05
+constexpr std::uint32_t kBelow8[] = {0x57b849f0u, 0x17bfaa46u, 0xeb62add9u, 0x0e5afad8u, 0x6f917dfeu, 0x27f660feu, 0x5cde171fu};
+constexpr BeatenBool kBools8[] = {
+    {0x8e62e29cu, true, "HavePlayedEvent.InsideGanonCastle_Dungeon_BossDie_1"},
+    {0x5db588a6u, true, "HavePlayedEvent.Dm_InsideGanonCastle_BossIn"},
+    {0x378b8b02u, true, "HavePlayedEvent.Dm_InsideGanonCastle_BossOut"},
+};
+// Ganon: Defeat_Ganon below Complete: NotReady, Ready, Step01, Step02, Step03, Step04, Step05, Step06, Step07, Step08, Step09
+constexpr std::uint32_t kBelow9[] = {0x57b849f0u, 0x17bfaa46u, 0xeb62add9u, 0x0e5afad8u, 0x6f917dfeu, 0x27f660feu, 0x5cde171fu, 0x21d6fa38u, 0xee867c27u, 0xa594ed54u, 0x5daeca58u};
+constexpr BeatenBool kBools9[] = {
+    {0x8b3406ccu, true, "FinalBattleField_DefeatGanonStart"},
+    {0xa5e7a3ddu, true, "HavePlayedEvent.InsideGanonCastle_Dungeon_BossDie_2"},
+    {0x2814399eu, true, "HavePlayedEvent.Dm_FinalBattle_BossIn"},
+    {0x44db9a38u, true, "HavePlayedEvent.Dm_FinalBattle_BossOut"},
+    {0x524e5ee6u, true, "HavePlayedEvent.Dm_SageRoom_0020"},
+    {0x0d8236c1u, true, "HavePlayedEvent.Dm_SageRoom_0025"},
+    {0x0e7a03bdu, true, "HavePlayedEvent.Dm_SageRoom_0027"},
+    {0xceb8b52eu, true, "HavePlayedEvent.Dm_Ending_0000"},
+    {0x37e2e1c9u, true, "HavePlayedEvent.Dm_StaffCredit_0000"},
+};
 constexpr BeatenSet kSets[] = {
     {0, "Queen Gohma", 0x7d776b61u, "Get_StoneOfForest", 0xd52b1014u, "GoToWarpPoint", kBelow0, kBools0},
     {1, "King Dodongo", 0x1002b466u, "Get_StoneOfFire", 0x3ecd8c01u, "EscapeDungeon", kBelow1, kBools1},
@@ -73,4 +93,6 @@ constexpr BeatenSet kSets[] = {
     {5, "Morpha", 0x560a64afu, "SageOfWater", 0xa594ed54u, "Step08", kBelow5, kBools5},
     {6, "Bongo Bongo", 0x7a91dbd5u, "SageOfShadow", 0xd52b1014u, "GoToWarpPoint", kBelow6, kBools6},
     {7, "Twinrova", 0x19189e9du, "SageOfSpirit", 0x0be69809u, "Step10", kBelow7, kBools7},
+    {8, "Ganondorf", 0x746f47c0u, "Defeat_Ganon", 0x21d6fa38u, "Step06", kBelow8, kBools8},
+    {9, "Ganon", 0x746f47c0u, "Defeat_Ganon", 0x4c0a63f4u, "Complete", kBelow9, kBools9},
 };

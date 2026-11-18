@@ -56,10 +56,34 @@ std::vector<Hold> Sharer::Tick(const std::string& scene, const std::vector<Seen>
         scene_ = scene;
     }
     std::vector<Hold> holds;
+    ++tick_;
     for (const Seen& v : seen) {
         if (v.line == nullptr || v.line->scene != scene) continue;
         State& s = states_[v.line];
-        const bool remote = RemoteOn(s, now_ms);
+        // A load guard (Seen::load_on) counts as it was at the room's load: the first sight of this switch actor, or
+        // the first after a walk without it (a room reload or a save load makes a new one, maybe at the same address).
+        if (!s.load_on || v.address != s.load_address) {
+            s.load_on = v.load_on;
+            s.load_address = v.address;
+            if (v.line->guard.find(CoopRoomObjects::kLoadGuard) != std::string_view::npos) {
+                notes.push_back("switch share: " + Describe(*v.line) +
+                                (v.load_on ? ": room loaded with its load guard on: our asker is gone"
+                                           : ": room loaded with its load guard off: our asker stays, not held this "
+                                             "visit"));
+            }
+        }
+        s.seen_tick = tick_;
+        const bool armed = v.armed && *s.load_on;
+        const bool remote_on = RemoteOn(s, now_ms);
+        // g3-objects: a plug that also raises our event asker is held only once that asker cannot fire (armed);
+        // until then another player's press is not ours to hold, and our own plug is still our own.
+        const bool remote = remote_on && armed;
+        if (remote_on && !armed && !s.told_waiting) {
+            s.told_waiting = true;
+            notes.push_back("switch share: " + Describe(*v.line) + ": another player's is on: waiting for " +
+                            std::string(v.line->guard) + " here (our asker would replay the event)");
+        }
+        if (armed || !remote_on) s.told_waiting = false;  // review-a38-3: a press that ends unarmed logs the next wait
         if (s.held && !remote) {
             s.held = false;
             s.told_held = false;
@@ -111,6 +135,9 @@ std::vector<Hold> Sharer::Tick(const std::string& scene, const std::vector<Seen>
                           static_cast<double>(now_ms - s.pressed_since_ms) / 1000.0);
             notes.push_back("switch share: " + Describe(*v.line) + text);
         }
+    }
+    for (auto& kv : states_) {
+        if (kv.second.seen_tick != tick_) kv.second.load_on.reset();  // this walk had no such switch: its room went
     }
     return holds;
 }

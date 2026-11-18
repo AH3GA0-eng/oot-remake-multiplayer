@@ -2747,6 +2747,99 @@ TEST_CASE("issue 150: a DAMAGE of 0 (a stun in the hitter's game) asks for the b
         std::vector<HandoverState>{{1, placed(7), 1, state_at(0, 12)}});
 }
 
+// Hand-over life (fable-g2-bosses, rows 104/118, issue 150): the life the new
+// owner gets has every hit in it, none twice.
+TEST_CASE("boss hand-over: a hit passed on after the ask is taken off the answer's life (H2)") {
+  for (const bool window : {true, false}) {
+    CAPTURE(window);
+    SessionConfig config = quiet_config();
+    if (!window) config.hit_window_us = 1;  // the old cap alone cannot hide it here
+    OwnerHarness h(config);
+    h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+    h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 20)}, kChannelObjectSamples);
+    h.stand(1, 4);
+    h.stand(2, 6);
+    h.clear();
+    h.receive(2, Damage{0, placed(7), 0, 0, 0, {}, {}}, kChannelOwnership);  // a stun: the ask goes out
+    REQUIRE(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+    h.receive(2, Damage{0, placed(7), 0, 3, 1, {}, {}}, kChannelOwnership);  // read by 1 after the ask
+    h.now += 10;
+    h.receive(1, HandoverState{0, placed(7), 0, state_at(0, 20)}, kChannelOwnership);
+    REQUIRE(h.session.object_owner(placed(7)) == owned(2, 1));
+    CHECK(messages_to<HandoverState>(h, 2) == std::vector<HandoverState>{{1, placed(7), 1, state_at(0, 17)}});
+  }
+}
+
+TEST_CASE("boss hand-over: a hit already in the answer's life is not taken off again") {
+  OwnerHarness h;
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 20)}, kChannelObjectSamples);
+  h.stand(1, 4);
+  h.stand(2, 6);
+  h.clear();
+  h.receive(2, Damage{0, placed(7), 0, 3, 1, {}, {}}, kChannelOwnership);  // before the ask
+  h.receive(2, Damage{0, placed(7), 0, 0, 0, {}, {}}, kChannelOwnership);  // the ask
+  REQUIRE(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+  h.receive(1, HandoverState{0, placed(7), 0, state_at(0, 17)}, kChannelOwnership);  // its pending hit in
+  CHECK(messages_to<HandoverState>(h, 2) == std::vector<HandoverState>{{1, placed(7), 1, state_at(0, 17)}});
+  // An older game answers with the life as read: the old cap still takes the hit off, once.
+  OwnerHarness old;
+  old.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  old.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 20)}, kChannelObjectSamples);
+  old.stand(1, 4);
+  old.stand(2, 6);
+  old.clear();
+  old.receive(2, Damage{0, placed(7), 0, 3, 1, {}, {}}, kChannelOwnership);
+  old.receive(2, Damage{0, placed(7), 0, 0, 0, {}, {}}, kChannelOwnership);
+  old.receive(1, HandoverState{0, placed(7), 0, state_at(0, 20)}, kChannelOwnership);
+  CHECK(messages_to<HandoverState>(old, 2) == std::vector<HandoverState>{{1, placed(7), 1, state_at(0, 17)}});
+}
+
+TEST_CASE("boss hand-over: the new owner's own DAMAGE from before it comes back to it (H4)") {
+  OwnerHarness h;
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h.stand(1, 4);
+  h.stand(2, 6);
+  h.receive(2, Damage{0, placed(7), 0, 0, 0, {}, {}}, kChannelOwnership);
+  h.receive(1, HandoverState{0, placed(7), 0, state_at(0, 12)}, kChannelOwnership);
+  REQUIRE(h.session.object_owner(placed(7)) == owned(2, 1));
+  h.clear();
+  const Damage crossed{0, placed(7), 0, 2, 1, {}, {}};  // sent by 2 at epoch 0, while its was a copy
+  h.receive(2, crossed, kChannelOwnership);
+  Damage back = crossed;
+  back.player_number = 2;
+  CHECK(messages_to<Damage>(h, 2) == std::vector<Damage>{back});
+  CHECK(messages_to<Damage>(h, 1).empty());
+  CHECK(h.session.stats().damage_returned == 1);
+  h.clear();
+  const auto dropped = h.session.stats().damage_dropped;
+  h.receive(2, Damage{0, placed(7), 1, 2, 1, {}, {}}, kChannelOwnership);  // the current epoch: its own
+  h.receive(2, Damage{0, placed(7), 0, 0, 0, {}, {}}, kChannelOwnership);  // a stun: nothing to take off
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().damage_returned == 1);
+  CHECK(h.session.stats().damage_dropped == dropped + 2);
+}
+
+TEST_CASE("DAMAGE in the owner hold waits for the owner (H5)") {
+  HoldHarness h;
+  h.receive(1, present_in("Graveyard", {placed(7)}), kChannelOwnership);
+  h.receive(2, present_in("Graveyard", {placed(7)}), kChannelOwnership);
+  h.receive(1, Damage{0, placed(7), 0, 1, 1, {}, {}}, kChannelOwnership);  // kept; 1 is chosen: in its life
+  for (int i = 0; i < 16; ++i) {
+    h.receive(2, Damage{0, placed(7), 0, 1, 1, {}, {}}, kChannelOwnership);  // the 16th is one too many
+  }
+  h.receive(2, Damage{0, placed(7), 0, 0, 0, {}, {}}, kChannelOwnership);  // nothing to keep
+  CHECK(messages_to<Damage>(h, 1).empty());
+  CHECK(h.session.stats().damage_held == 16);
+  CHECK(h.session.stats().damage_dropped == 2);
+  h.tick(2'000'000);
+  REQUIRE(h.session.object_owner(placed(7)) == owned(1, 0));
+  const auto hits = messages_to<Damage>(h, 1);
+  CHECK(hits.size() == 15);
+  for (const Damage& d : hits) CHECK(d.player_number == 2);
+  CHECK(messages_to<Damage>(h, 2).empty());
+}
+
 TEST_CASE("a hit by the player near it, its owner well away, takes it at once, the hit is kept") {
   OwnerHarness h;
   h.stand(1, 50);

@@ -157,10 +157,11 @@ TEST_CASE("eye switch: the table, its places and FirstOn's key") {
     CHECK(CoopEyeSwitch::FindAll("WaterTemple_EyeSwitch_Focus", "WaterTemple").empty());
     CHECK(CoopEyeSwitch::Find("ForestTemple_Room11_RoomSpin", "ForestTemple") == nullptr);
     // Driven only where our set stays (offline hs-step-probe): eye switches and FirstOn latches, 25 of the 64 lines,
-    // and (deku-ladder, A #39) the 2 class-B lines whose switch's ON input is unwired: 27.
+    // and the class-B lines whose switch's ON input is unwired: none since g3-objects (Jabu room 14 is class A once its
+    // water flags are shared; deku-ladder had 2): 25.
     int driven = 0;
     for (const auto& s : CoopEyeSwitch::Switches()) driven += CoopEyeSwitch::Latches(s) ? 1 : 0;
-    CHECK(driven == 27);
+    CHECK(driven == 25);
     CHECK(CoopEyeSwitch::FindAll("SpiritTemple_Level_Room_19_SwitchOn_01", "SpiritTemple").empty());  // sun: rewritten
     CHECK(CoopEyeSwitch::FindAll("InsideJabuJabuBellyRoom01StepSwitch", "InsideJabuJabuBelly").empty());  // step OnState
     CHECK(CoopEyeSwitch::FindAll("ForestTemple_Room02_ShutterOpen", "ForestTemple").size() == 1);  // step FirstOn
@@ -348,34 +349,51 @@ TEST_CASE("eye switch: a switch whose own AI rewrites the plug is not driven (st
     CHECK(s.Want(kLadder, kDeku));  // an eye: driven
 }
 
-TEST_CASE("eye switch: class B lines with an unwired ON input are driven through it (Jabu-Jabu room 14), not GTG room 6") {
-    // tools/puppet_pack/eye_switches.py --classify: 36 class A (shared flags), 3 class B; 2 of them set an input.
-    REQUIRE(CoopEyeSwitch::Inputs().size() == 2);
-    for (const auto& in : CoopEyeSwitch::Inputs()) {
-        CHECK(in.input == "FirstOn");
-        CHECK(in.scene == "InsideJabuJabuBelly");
-        // each names exactly one table line (its switch at its placement), whose plug is the output the graph reads
-        int lines = 0;
-        for (const auto& s : CoopEyeSwitch::Switches()) {
-            if (CoopEyeSwitch::InputOf(s) == &in) {
-                ++lines;
-                CHECK(s.plug == "OnState");
-                CHECK(CoopEyeSwitch::Latches(s));
-            }
-        }
-        CHECK(lines == 1);
-        CHECK(CoopEyeSwitch::FindAll(in.event, in.scene).size() == 1);
+// The upper Jabu-Jabu room 14 line as it was (deku-ladder, A #39): the input path's own tests use it.
+constexpr CoopEyeSwitch::Input kOldUpper[] = {
+    {"InsideJabuJabuBellyRoom14StepSwitch", "InsideJabuJabuBelly", "Obj_InsideJabu_Jabu_StepSwitch_A_04", {29.2f, 77.5f, -66.7f}, "FirstOn"},
+};
+
+TEST_CASE("eye switch: no input lines (Jabu-Jabu room 14 is class A once its water flags are shared), not GTG room 6") {
+    // tools/puppet_pack/eye_switches.py --classify (g3-objects): 38 class A, 1 class B (GTG room 6, no settable input).
+    // Jabu room 14's events write the shared two-way water flags: our asker run again would be a second, late writer.
+    CHECK(CoopEyeSwitch::Inputs().empty());
+    std::set<std::string_view> shared;
+    for (const auto& f : CoopDungeon::Flags()) shared.insert(f.name);
+    CHECK(shared.contains("Gimmick_Insidejabujabu_Updown_MoveWater"));
+    CHECK(shared.contains("Gimmick_Insidejabujabu_down_MoveWater"));
+    for (const char* event : {"InsideJabuJabuBellyRoom14StepSwitch", "InsideJabuJabuBellyRoom14StepSwitch_Under"}) {
+        const auto* line = CoopEyeSwitch::Find(event, "InsideJabuJabuBelly");
+        REQUIRE(line != nullptr);
+        CHECK(CoopEyeSwitch::InputOf(*line) == nullptr);
+        CHECK_FALSE(CoopEyeSwitch::Latches(*line));                                 // a step switch's OnState
+        CHECK(CoopEyeSwitch::FindAll(event, "InsideJabuJabuBelly").empty());       // the old way at once
     }
-    // The upper and lower switches are two lines of one switch kind, told apart by placement.
-    const auto* upper = CoopEyeSwitch::Find("InsideJabuJabuBellyRoom14StepSwitch", "InsideJabuJabuBelly");
-    REQUIRE(upper != nullptr);
-    CHECK(CoopEyeSwitch::InputOf(*upper) == &CoopEyeSwitch::Inputs()[0]);
-    // GTG room 6 (class B, no settable input) and every class A line: not driven, guards not held.
     CHECK(CoopEyeSwitch::FindAll("GerudoTrainingGround_06_DisappearFire", "GerudoTrainingGround").empty());
     CHECK(CoopEyeSwitch::FindAll("SpritTemple_Room08_OpenShutter", "SpiritTemple").empty());
     CoopEyeSwitch::Switcher s;
     s.Expire("InsideJabuJabuBelly");
-    // Jabu room 14's asker-delete flag waits while our copy is tried (as for every driven line).
+    // nothing of ours is tried, so the asker-delete flags come as they arrive
+    CHECK_FALSE(s.HoldsGuard(coop::protocol::flag_hash("InsideJabuJabuBelly_Room14_PlayedSwitchEvent_Upper"), "InsideJabuJabuBelly"));
+    CHECK_FALSE(s.HoldsGuard(coop::protocol::flag_hash("InsideJabuJabuBelly_Room14_PlayedSwitchEvent_Lower"), "InsideJabuJabuBelly"));
+}
+
+TEST_CASE("eye switch: an input line (a test line) names one table line and holds its asker-delete flag while tried") {
+    CoopEyeSwitch::ScopedInputsForTest lines(kOldUpper);
+    REQUIRE(CoopEyeSwitch::Inputs().size() == 1);
+    const auto& in = CoopEyeSwitch::Inputs()[0];
+    int found = 0;
+    for (const auto& s : CoopEyeSwitch::Switches()) {
+        if (CoopEyeSwitch::InputOf(s) == &in) {
+            ++found;
+            CHECK(s.plug == "OnState");
+            CHECK(CoopEyeSwitch::Latches(s));
+        }
+    }
+    CHECK(found == 1);  // the upper and lower switches are one kind, told apart by placement
+    CHECK(CoopEyeSwitch::FindAll(in.event, in.scene).size() == 1);
+    CoopEyeSwitch::Switcher s;
+    s.Expire("InsideJabuJabuBelly");
     CHECK(s.HoldsGuard(coop::protocol::flag_hash("InsideJabuJabuBelly_Room14_PlayedSwitchEvent_Upper"), "InsideJabuJabuBelly"));
     CHECK_FALSE(s.HoldsGuard(coop::protocol::flag_hash("Insidejabujabu_Room5_Cleared"), "InsideJabuJabuBelly"));
 }
@@ -384,6 +402,7 @@ TEST_CASE("eye switch: an input line stores 1 into the switch's unwired input (n
     const std::string jabu = "InsideJabuJabuBelly";
     const std::string upper = "InsideJabuJabuBellyRoom14StepSwitch";
     const auto first_on = CoopEyeSwitch::PlugKey("FirstOn") ^ 7u;
+    CoopEyeSwitch::ScopedInputsForTest lines(kOldUpper);  // no generated input lines since g3-objects
     SUBCASE("set, held, then the event") {
         FakeGuest g;
         World w;
@@ -542,7 +561,11 @@ TEST_CASE("eye switch: dropped once our game has the event played (our asker ran
 
 TEST_CASE("eye switch: guard flags (a negated trigger flag, an asker's delete flag) wait while the switch path works") {
     // deku-ladder round 3: generated with the table; only flags coop_dungeon.cpp shares, each for a table event.
-    CHECK(CoopEyeSwitch::Guards().size() == 43);
+    CHECK(CoopEyeSwitch::Guards().size() == 43);  // g3-objects: + Jabu room 14's Updown_MoveWater (now shared)
+    for (const auto& g : CoopEyeSwitch::Guards()) {
+        // read once at the room's load (UpdateOnce 1): it deletes the compass asker only at a load, never live
+        CHECK(g.flag != "InsideTheDekuTree_RoomD_StepSwitch_On_01");
+    }
     std::set<std::string_view> shared;
     for (const auto& f : CoopDungeon::Flags()) shared.insert(f.name);
     for (const auto& g : CoopEyeSwitch::Guards()) {

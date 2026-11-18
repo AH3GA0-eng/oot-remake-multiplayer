@@ -180,10 +180,12 @@ class ParseTest(unittest.TestCase):
             mark done
             wear boots HoverBoot
             setflag Rupee 50
+            hit Enemy_DungeonBoss_Gohma 2
+            stun Enemy_DungeonBoss_Gohma
         """)
         kinds = [s.kind for s in steps]
         self.assertEqual(kinds, ["timed", "timed", "timed", "timed", "timed", "timed", "timed", "timed", "goto",
-                                 "toward", "warp", "chat", "mark", "wear", "setflag"])
+                                 "toward", "warp", "chat", "mark", "wear", "setflag", "hit", "stun"])
         self.assertEqual(steps[0].ticks, 120)
         self.assertEqual((steps[1].buttons, steps[1].left, steps[1].ticks, steps[1].name), (["A"], (0, 1), 90, "mid"))
         self.assertEqual((steps[2].buttons, steps[2].ticks), (["ZR", "A"], 10))
@@ -196,6 +198,10 @@ class ParseTest(unittest.TestCase):
         self.assertEqual((steps[10].name, steps[10].start), ("KakarikoVillage_Child", "Kakariko_WellSide"))
         self.assertEqual(steps[11].name, "/teleport  Saria")
         self.assertEqual((steps[13].start, steps[13].name), ("boots", "HoverBoot"))
+        self.assertEqual((steps[15].name, steps[15].start), ("Enemy_DungeonBoss_Gohma", "2"))
+        self.assertEqual(steps[16].name, "Enemy_DungeonBoss_Gohma")
+        self.assertIn("hit", hs.MODULE_ONLY)   # module steps, as coop_testinput.cpp reads them
+        self.assertIn("stun", hs.MODULE_ONLY)
 
     def test_menu_step_goes_to_the_module(self):
         steps = hs.parse("menu Customize\nmenu close\n")
@@ -214,7 +220,11 @@ class ParseTest(unittest.TestCase):
                            ("wear cape X", "want: wear"), ("menu", "want: menu customize|close"),
                            ("menu map", "want: menu customize|close"), ("hurt", "want: hurt QUARTER_HEARTS"),
                            ("hurt 0", "want: hurt QUARTER_HEARTS"), ("hurt 81", "want: hurt QUARTER_HEARTS"),
-                           ("hurt 2x", "want: hurt QUARTER_HEARTS")):
+                           ("hurt 2x", "want: hurt QUARTER_HEARTS"), ("hit Enemy_DungeonBoss_Gohma", "want: hit ACTOR N"),
+                           ("hit Enemy_DungeonBoss_Gohma 0", "want: hit ACTOR N"),
+                           ("hit Enemy_DungeonBoss_Gohma 81", "want: hit ACTOR N"),
+                           ("hit Enemy_DungeonBoss_Gohma 2x", "want: hit ACTOR N"), ("stun", "want: stun BOSS"),
+                           ("stun A B", "want: stun BOSS")):
             with self.assertRaises(hs.ScriptError) as e:
                 hs.parse(text)
             self.assertIn(want, str(e.exception))
@@ -524,6 +534,74 @@ class RendererWaitTest(unittest.TestCase):
 
     def test_zero_is_no_wait(self):
         self.assertEqual(hs.wait_renderer(lambda: "", lambda: False, 0), 0.0)
+
+    @staticmethod
+    def compiling(c, t0, rate, stop_at=None, ready_at=None):
+        """A cold compile's log (Longshot rc.7): a progress pair every 10 s, `rate` pipelines per 10 s, stuck from
+        stop_at s, ready at ready_at s."""
+        def log():
+            t = c() - t0
+            text = "[hos host] vk: precompile: compute programs: those listed (2256 keys listed)\n"
+            for i in range(1, int(t // 10) + 1):
+                n = rate * min(i, (stop_at // 10) if stop_at is not None else i)
+                text += ("[hos host] vk: start-up: pipelines %d of 36753, 2%% of all\n"
+                         "[hos host] vk: noted pipelines: %d of 32625 pipelines in %d s, about 500 s left\n"
+                         % (n, n + 20, i * 10))
+            if ready_at is not None and t >= ready_at:
+                text += "[hos host] vk: start-up: the shaders took %d s\n" % ready_at
+            return text
+        return log
+
+    def test_a_cold_compile_longer_than_the_wait_passes_while_it_moves(self):
+        # big-run-0114: B always compiles cold (~440 s on rc.7), longer with several at once; the 600 s wait failed them
+        c = Clock()
+        waited = hs.wait_renderer(self.compiling(c, c(), 80, ready_at=900), lambda: True, 600, clock=c, sleep=c.sleep)
+        self.assertAlmostEqual(waited, 900, delta=1)
+
+    def test_a_stuck_compile_fails_after_the_stall(self):
+        c = Clock()
+        with self.assertRaises(TimeoutError) as e:
+            hs.wait_renderer(self.compiling(c, c(), 80, stop_at=700), lambda: True, 600, stall=180, clock=c,
+                             sleep=c.sleep)
+        self.assertIn("no compile progress for 180 s", str(e.exception))
+        self.assertIn("noted pipelines: 5620 of 32625", str(e.exception))   # the newest line, named
+        self.assertAlmostEqual(c() - 1000, 700 + 180, delta=2)
+
+    def test_a_stall_never_ends_the_wait_before_its_timeout(self):
+        c = Clock()
+        with self.assertRaises(TimeoutError):
+            hs.wait_renderer(self.compiling(c, c(), 80, stop_at=20), lambda: True, 600, stall=60, clock=c,
+                             sleep=c.sleep)
+        self.assertAlmostEqual(c() - 1000, 600, delta=2)
+
+    def test_the_limit_ends_even_a_moving_compile(self):
+        c = Clock()
+        with self.assertRaises(TimeoutError) as e:
+            hs.wait_renderer(self.compiling(c, c(), 5), lambda: True, 600, stall=180, limit=1500, clock=c,
+                             sleep=c.sleep)
+        self.assertIn("not started in 1500 s", str(e.exception))
+        self.assertAlmostEqual(c() - 1000, 1500, delta=2)
+
+    def test_no_progress_lines_wait_the_timeout_as_before(self):
+        c = Clock()
+        with self.assertRaises(TimeoutError) as e:
+            hs.wait_renderer(lambda: "booting\n", lambda: True, 600, clock=c, sleep=c.sleep)
+        self.assertIn("no compile progress logged", str(e.exception))
+        self.assertAlmostEqual(c() - 1000, 600, delta=2)
+
+    def test_progress_is_the_newest_count_of_each_kind(self):
+        text = ("vk: start-up: pipelines 743 of 36753, 2% of all\nvk: noted pipelines: 768 of 32625 pipelines in 13 s\n"
+                "vk: start-up: pipelines 894 of 36753, 2% of all\n")
+        self.assertEqual(hs.renderer_progress(text), (894 + 768, "vk: start-up: pipelines 894 of 36753"))
+        self.assertEqual(hs.renderer_progress("nothing"), (0, ""))
+
+    def test_run_options_have_the_progress_defaults(self):
+        import argparse
+        p = argparse.ArgumentParser()
+        hs.add_renderer_options(p)
+        a = p.parse_args([])
+        self.assertEqual((a.renderer_wait, a.renderer_stall, a.renderer_limit), (600, hs.RENDERER_STALL,
+                                                                                 hs.RENDERER_LIMIT))
 
 
 class SaveTest(unittest.TestCase):

@@ -96,7 +96,7 @@ std::uint64_t FindPane(void* ctx, const HosCoopApi* api, std::uint64_t layout, c
         return 0;
     }
     HosCoopCall k{};
-    k.function = kFindPane;
+    k.function = CoopRuntime::MainBase() + kFindPane;
     k.x[0] = layout;
     k.x[1] = at;
     std::uint64_t pane = 0;

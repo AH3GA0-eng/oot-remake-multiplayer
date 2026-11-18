@@ -447,5 +447,47 @@ class HookshotGamesTest(unittest.TestCase):
         self.assertEqual(env.get("OOT_COOP_TEST"), "1")
 
 
+class WaitJoinedTest(unittest.TestCase):
+    """A game joins only once its renderer is up (rc.7: 'welcomed' after 'the shaders took'), so wait_joined waits for the
+    renderer first (hookshot.wait_renderer: follows the compile's progress) and the join's timeout counts from there."""
+
+    def games(self, renderer=None):
+        calls = []
+        hk = type("hk", (), {})()
+        hk.RENDERER_STALL, hk.RENDERER_LIMIT = 180, 3600
+        hk.wait_renderer = lambda read, alive, *args: calls.append((read(), args)) or 450.0
+        g = hs.HookshotGames(hk, {"A": "a", "B": "b"}, "out", None, 27560, "p", [], 30,
+                             {"switches": [], "start": None, "timeout": None, "server": []}, say=lambda s: None)
+        g.renderer = renderer
+        g.log = lambda x: "coop: welcomed as player 2 on 127.0.0.1:27560\n"
+        g.alive = lambda x: True
+        return g, calls
+
+    def test_renderer_first_with_the_timeout_as_its_wait(self):
+        g, calls = self.games()
+        g.wait_joined("B")
+        self.assertEqual(calls, [("coop: welcomed as player 2 on 127.0.0.1:27560\n", (30, 180, 3600))])
+
+    def test_run_options_reach_the_renderer_wait(self):
+        g, calls = self.games(renderer=(900, 240, 2400))
+        g.wait_joined("B")
+        self.assertEqual(calls[0][1], (900, 240, 2400))
+
+    def test_join_timeout_counts_after_the_renderer(self):
+        g, calls = self.games()
+        g.log = lambda x: "vk: start-up: the shaders took 450 s\n"   # renderer up, never welcomed
+        t = [0.0]
+        real_mono, real_sleep = hs.time.monotonic, hs.time.sleep
+        hs.time.monotonic = lambda: t[0]
+        hs.time.sleep = lambda s: t.__setitem__(0, t[0] + s)
+        try:
+            with self.assertRaises(TimeoutError) as e:
+                g.wait_joined("B")
+        finally:
+            hs.time.monotonic, hs.time.sleep = real_mono, real_sleep
+        self.assertIn("in 30 s after its renderer started", str(e.exception))
+        self.assertEqual(len(calls), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

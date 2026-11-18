@@ -288,9 +288,8 @@ public:
     // Log lines since the last call.
     std::vector<std::string> TakeNotes();
     std::uint64_t Block() const { return block_; }
-    // G1 (coop/host/event_owner.hpp): called with the event's name on the calc thread when
-    // the game took one of our asks, so the hook knows the event that starts now is another
-    // player's (CoopEventOwner::CoopAsked). Not set: no mark (the teleport's own trip).
+    // G1: called with the event's name on the calc thread when the game took one of our asks
+    // (the hook logs it). Not set: no call (the teleport's own trip).
     void OnTaken(std::function<void(const std::string&)> taken) { on_taken_ = std::move(taken); }
 
 
