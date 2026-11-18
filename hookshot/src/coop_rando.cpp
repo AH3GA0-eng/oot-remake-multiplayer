@@ -346,7 +346,9 @@ Plan Decide(const Want& want, const std::vector<Built>& built, const std::vector
     }
     plan.what = plan.on.empty() && plan.off.empty() ? Plan::Do::nothing : Plan::Do::use;
     if (plan.what == Plan::Do::nothing && plan.forget) plan.what = Plan::Do::use;
-    plan.why = !plan.on.empty() || !plan.off.empty() ? "seed " + SeedWord(want.seed) + " (" + SettingsName(preset) + ") is switched on" : "";
+    plan.why = !plan.on.empty() || !plan.off.empty()
+                   ? "seed " + SeedWord(want.seed) + " (" + SettingsName(preset) + ") is switched on"
+                   : "";
     return plan;
 }
 
