@@ -1190,9 +1190,12 @@ TEST_CASE("flag watcher: a one-way value the game lowers again at once is left t
   floors(0b10000);
   w.frame(store);
   CHECK(game_store.get(kDekuFloors) == 0b11100u);  // a first drop is put back (issue 146)
+  CHECK(w.take_hud_refresh());                       // the HUD screen's copy asked to take it
+  CHECK_FALSE(w.take_hud_refresh());
   floors(0b10000);
   w.frame(store);
   CHECK(game_store.get(kDekuFloors) == 0b11100u);  // undone once: put back once more
+  CHECK(w.take_hud_refresh());                       // every put-back, not only the key's first (review)
   CHECK(w.stats().one_way_restores == 2);
   CHECK(w.take_one_way_left().empty());
   floors(0b10000);
@@ -1210,17 +1213,60 @@ TEST_CASE("flag watcher: a one-way value the game lowers again at once is left t
   CHECK(game_store.writes == writes);  // no fight: two seconds, no put-back
   CHECK(w.stats().one_way_restores == 2);
   CHECK(w.take_one_way_left().empty());  // said once
-  // A load window (a room or scene load reads the game's copy in again): a later one-off drop is put back again.
+  CHECK_FALSE(w.take_hud_refresh());
+  // A room load window (it reads the game's copy in again): when it ends, the group's floors are put back once,
+  // ORed with the game's, and the HUD refresh is asked, so the other player's floors reach the HUD screen's copy.
   w.set_loading(true);
+  w.frame(store);
+  floors(0b10010);  // the game's own write at the load: a new floor of ours
   w.frame(store);
   w.set_loading(false);
   for (int i = 0; i < FlagWatcher::kSettleFrames + 10; ++i) w.frame(store);  // past the settle
+  CHECK(game_store.get(kDekuFloors) == 0b11110u);
+  CHECK(w.stats().one_way_owed == 1);
+  CHECK(w.stats().one_way_restores == 3);
+  CHECK(w.take_hud_refresh());
+  for (int i = 0; i < 10; ++i) w.frame(store);
+  CHECK(w.stats().one_way_owed == 1);  // once per load
+  // The refresh took it: the game writes the merged copy back, no fight. If it still lowers it at once, it is
+  // left again after kMaxQuickUndos, and owed again for the next load.
   floors(0b10010);
   w.frame(store);
-  floors(0b10000);
+  CHECK(game_store.get(kDekuFloors) == 0b11110u);  // a later one-off drop: put back
+  floors(0b10010);
+  w.frame(store);
+  floors(0b10010);
   w.frame(store);
   CHECK(game_store.get(kDekuFloors) == 0b10010u);
-  CHECK(w.stats().one_way_restores == 3);
+  CHECK(w.stats().one_way_left == 2);
+  CHECK(w.stats().one_way_restores == 5);
+}
+
+TEST_CASE("flag watcher: floors left to the game are not owed into another save after a save load (row 140)") {
+  constexpr FlagKey kDekuFloors{0x5c6c21c1u, 0};
+  FakeStore game_store = dungeon_game();
+  const auto floors = [&](std::uint32_t v) { game_store.values[kDekuFloors] = entry(kDekuFloors, v, proto::FlagKind::uint32); };
+  floors(0b01100);
+  ItemFlagStore store(game_store);
+  FlagWatcher w(SharedFlags({kDekuMap, kDekuFloors}), FlagRole::player);
+  w.frame(store);
+  for (int n = 0; n < 3; ++n) {  // put back, undone, put back, undone: left
+    floors(0b10000);
+    w.frame(store);
+  }
+  CHECK(w.stats().one_way_left == 1);
+  // The title, another save (a save load window): nothing owed from the old one.
+  w.set_loading(true);
+  w.set_scene(false);
+  w.set_title(true);
+  w.frame(store);
+  floors(0b00001);
+  w.frame(store);
+  w.set_title(false);
+  w.set_scene(true);
+  w.set_loading(false);
+  for (int i = 0; i <= FlagWatcher::kSettleFrames + 10; ++i) w.frame(store);
+  CHECK(w.stats().one_way_owed == 0);
 }
 
 TEST_CASE("flag watcher: one-off drops far apart are each put back (row 140 keeps issue 146)") {

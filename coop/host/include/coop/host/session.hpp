@@ -205,6 +205,8 @@ class Session {
   std::vector<FlagKey> take_one_way_left() {
     return watcher_ ? watcher_->take_one_way_left() : std::vector<FlagKey>{};
   }
+  // Row 140: FlagWatcher::take_hud_refresh (false when flags are not shared).
+  bool take_one_way_hud_refresh() { return watcher_ && watcher_->take_hud_refresh(); }
   std::vector<FlagWatcher::KeepsFailing> take_keeps_failing() {
     return watcher_ ? watcher_->take_keeps_failing() : std::vector<FlagWatcher::KeepsFailing>{};
   }

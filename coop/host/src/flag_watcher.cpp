@@ -263,10 +263,6 @@ void FlagWatcher::set_loading(bool loading) {
   if (loading) {
     loading_ = true;
     settle_left_ = kSettleFrames;
-    // Row 140: a room or scene load reads the game's own copies in again (the HUD screen's floors): a value left
-    // to the game may take a put-back again.
-    game_owned_.clear();
-    put_back_.clear();
   } else {
     loading_ = false;
   }
@@ -284,6 +280,11 @@ void FlagWatcher::note_group(const FlagEntry& value, const FlagEntry* before) {
 
 void FlagWatcher::reset() {
   queue_.clear();
+  // Row 140: what was left to the game was the old session's group's.
+  game_owned_.clear();
+  put_back_.clear();
+  owed_.clear();
+  owed_due_ = false;
   // Another session, or the same server started again: what the group had
   // comes again with the next snapshot.
   group_.clear();
@@ -382,6 +383,10 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
   }
   if (settling() && !window_) {
     window_ = true;
+    // Row 140: a room or scene load (also the game's own load nodes) reads the game's own copies in again (the HUD
+    // screen's floors): a value left to the game may take a put-back again (owed_, when the window ends).
+    game_owned_.clear();
+    put_back_.clear();
     window_since_ = frames_;
     old_counted_ = false;
     window_retry_ = false;
@@ -391,6 +396,12 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
     no_scene_frames_ = 0;
   } else if (!settling() && window_) {
     window_ = false;
+    // Row 140: a save load (moved_) is another save: its floors are not owed the old one's.
+    if (moved_) {
+      owed_.clear();
+    } else {
+      owed_due_ = !owed_.empty();
+    }
     end_window(store, resets);
   }
   if (window_ && loading_ && !scene_readable_) no_scene_frames_ += static_cast<int>(step);
@@ -421,6 +432,8 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
       resend_pending_ = false;
     }
     diff(store, changes);
+    // Row 140: after this pass, so its own read of the key does not see a write still on its way (Hookshot's setter).
+    if (!loading_ && std::exchange(owed_due_, false)) put_owed(store);
   }
   if (!loading_ && settle_left_ > 0) settle_left_ -= (std::min)(settle_left_, static_cast<int>(step));
   restate_.clear();
@@ -942,6 +955,29 @@ const std::vector<FlagKey>& FlagWatcher::diff_keys() {
   return visit_;
 }
 
+void FlagWatcher::put_owed(FlagStore& store) {
+  const MapDropBecause because("the flag watcher: one-way value owed after a room load (row 140)");
+  for (const auto& [key, owed] : std::exchange(owed_, {})) {
+    std::optional<FlagEntry> now = store.read(key);
+    if (!now || now->kind != owed.kind) continue;
+    now->key = key;
+    FlagEntry back = owed;
+    back.key = key;
+    if (back.kind == protocol::FlagKind::uint32) back.value |= now->value;  // the game's floors too
+    if (back == *now) continue;  // the load read it in already
+    if (!store.write(back)) {
+      write_failed(key, "one-way owed put-back");
+      continue;
+    }
+    put_back_[key].pass = diff_pass_;  // lowered again at once: left again (kMaxQuickUndos), owed again
+    last_[key] = back;
+    ++stats_.one_way_restores;
+    ++stats_.one_way_owed;
+    ++stats_.applied;
+    hud_refresh_ = true;
+  }
+}
+
 void FlagWatcher::diff(FlagStore& store, Table& changes) {
   const std::vector<FlagKey>& keys = diff_keys();
   ++diff_pass_;
@@ -1071,6 +1107,8 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
       // Row 140: left to the game, nothing is put back and the drop is not sent (the group keeps its value). A
       // floor new to us in the game's value still goes out, ORed with what we had (the bits rule never lowers).
       const auto leave = [&] {
+        FlagEntry& owed = owed_.try_emplace(key, before).first->second;  // the group keeps it: owed after a load
+        if (bits_drop) owed.value |= now->value;
         if (!bits_drop || (now->value & ~before.value) == 0) return;
         FlagEntry both = *now;
         both.value = before.value | now->value;
@@ -1100,6 +1138,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
       if (bits_drop) back.value = before.value | now->value;
       if (store.write(back)) {
         put_back_[key].pass = diff_pass_;
+        hud_refresh_ = true;  // row 140: every put-back, so the HUD screen's copy takes it
         ++stats_.one_way_restores;
         ++stats_.applied;
         it->second = before;  // a new floor in `back` goes out next frame as a change

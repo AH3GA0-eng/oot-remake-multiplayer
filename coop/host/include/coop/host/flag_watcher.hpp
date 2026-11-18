@@ -89,6 +89,8 @@ struct FlagStats {
   // Row 140: a one-way value (a dungeon's floors, a map, a compass) the game lowered again right after our put-back:
   // the game's own value from then on, until the next load window (kMaxQuickUndos).
   std::uint64_t one_way_left = 0;
+  // Row 140: of one_way_restores, the values left to the game put back once after a room or scene load (owed_).
+  std::uint64_t one_way_owed = 0;
   // Row 140: the key with the most failed writes this session, how often, and where (write_failed's site).
   FlagKey top_failure{};
   std::uint64_t top_failure_count = 0;
@@ -186,6 +188,13 @@ class FlagWatcher {
   static constexpr std::uint64_t kUndoPasses = 2;
   static constexpr int kMaxQuickUndos = 2;
   std::vector<FlagKey> take_one_way_left() { return std::exchange(one_way_left_, {}); }
+  // Row 140 (review of flag-oneway-c): the game lowers these from the HUD screen's own copy, which reads the flag in
+  // only at its init and refresh, so a put-back must reach that copy or it is lowered again. True when a one-way
+  // dungeon value was put back since the last call (every put-back, not only a key's first): the hook asks the
+  // game's own HUD refresh on the same frame (CoopMapRefresh WantNow). A value left to the game is put back once more
+  // when the next room or scene load window ends (not after a save load: another save's floors are not this one's),
+  // with that refresh, so the other player's floors reach the copy after a room load at the latest.
+  bool take_hud_refresh() { return std::exchange(hud_refresh_, false); }
   // Row 140: a key whose write failed kFailureSayAt times this session (once per key, for the log: key, site).
   struct KeepsFailing {
     FlagKey key;
@@ -484,6 +493,11 @@ class FlagWatcher {
   std::map<FlagKey, PutBack> put_back_;   // row 140: one-way put-backs
   std::set<FlagKey> game_owned_;          // row 140: left to the game until the next load window
   std::vector<FlagKey> one_way_left_;     // take_one_way_left
+  std::map<FlagKey, FlagEntry> owed_;     // row 140: left to the game: the group's value, put back after a room load
+  bool owed_due_ = false;                 // a room or scene load window ended (no save load): put owed_ back
+  bool hud_refresh_ = false;              // take_hud_refresh
+  // Row 140: puts owed_ back (ORed with the game's floors), each once, after a room or scene load window.
+  void put_owed(FlagStore& store);
   struct Failures {
     std::uint64_t count = 0;
     const char* site = "";
