@@ -10,7 +10,9 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
+#include <string_view>
 
 #include <enet/enet.h>
 
@@ -40,6 +42,32 @@ struct RelayLinkConfig {
 // "relay.example.net:27530" or "1.2.3.4" (default port) as host and port;
 // false when it is not one.
 bool parse_relay_address(const std::string& text, std::string& host, std::uint16_t& port);
+
+// A join through a relay as a player types it: "ABCD-EFGH@relay[:port]" (a
+// join code) or "forest-gang@relay[:port]" (a room name, issue 261). A text
+// that can be both (8 code letters, with or without a dash: "lake-gang") has
+// both, and the code is tried first. The same rules as Join.bat's
+// relay-join.ps1.
+struct RelayJoin {
+  std::string code;  // kCodeLength letters, or empty
+  std::string room;  // as typed, or empty
+  std::string relay_host;
+  std::uint16_t relay_port = kDefaultRelayPort;
+};
+std::optional<RelayJoin> parse_relay_join(std::string_view text);
+
+// Asks the relay at `relay` (ENet's form) to let this PC's internet address in
+// for the host with that code or room: LOOKUP for the code, then LOOKUP_NAME
+// for the room when the code was unknown. Three tries a second apart for each,
+// from a socket of its own (the relay lets in the address, not the port).
+// Nothing when the relay never answered (not running, wrong address, or a
+// relay from before room names asked for a room). `stop` returning true ends
+// the wait early.
+std::optional<LookupResult> lookup_on_relay(const ENetAddress& relay, const RelayJoin& join,
+                                            const std::function<bool()>& stop = {});
+
+// What to tell the player for a lookup's result, in plain English.
+std::string lookup_text(std::optional<LookupResult> result, const RelayJoin& join);
 
 class RelayLink {
  public:

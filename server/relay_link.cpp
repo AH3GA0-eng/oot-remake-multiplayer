@@ -48,6 +48,116 @@ bool parse_relay_address(const std::string& text, std::string& host, std::uint16
   return true;
 }
 
+std::optional<RelayJoin> parse_relay_join(std::string_view text) {
+  while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) text.remove_prefix(1);
+  while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) text.remove_suffix(1);
+  const std::size_t at = text.find('@');
+  if (at == std::string_view::npos) return std::nullopt;
+  const std::string_view what = text.substr(0, at);
+  RelayJoin join;
+  if (!parse_relay_address(std::string(text.substr(at + 1)), join.relay_host, join.relay_port)) return std::nullopt;
+  if (auto code = normalize_code(what); code && what.find('_') == std::string_view::npos) join.code = *code;
+  if (auto room = normalize_room(what); room && *room == what) join.room = *room;
+  if (join.code.empty() && join.room.empty()) return std::nullopt;
+  return join;
+}
+
+namespace {
+
+// One lookup: three tries a second apart, from `s`. Nothing when no answer came.
+std::optional<LookupResult> ask_relay(ENetSocket s, const ENetAddress& relay, const Message& lookup,
+                                      const std::function<bool()>& stop) {
+  const std::vector<std::uint8_t> bytes = encode(lookup);
+  for (int attempt = 0; attempt < 3; ++attempt) {
+    if (stop && stop()) return std::nullopt;
+    ENetBuffer out;
+    out.data = const_cast<std::uint8_t*>(bytes.data());
+    out.dataLength = bytes.size();
+    enet_socket_send(s, &relay, &out, 1);
+    const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
+    while (std::chrono::steady_clock::now() < until) {
+      if (stop && stop()) return std::nullopt;
+      enet_uint32 wait = ENET_SOCKET_WAIT_RECEIVE;
+      if (enet_socket_wait(s, &wait, 100) != 0 || !(wait & ENET_SOCKET_WAIT_RECEIVE)) continue;
+      std::uint8_t data[64];
+      ENetAddress from{};
+      ENetBuffer in;
+      in.data = data;
+      in.dataLength = sizeof data;
+      const int got = enet_socket_receive(s, &from, &in, 1);
+      if (got <= 0 || from.host != relay.host || from.port != relay.port) continue;
+      const auto m = decode(std::span<const std::uint8_t>(data, static_cast<std::size_t>(got)));
+      if (m && m->kind == Kind::kFound) return static_cast<LookupResult>(m->status);
+    }
+  }
+  return std::nullopt;
+}
+
+}  // namespace
+
+std::optional<LookupResult> lookup_on_relay(const ENetAddress& relay, const RelayJoin& join,
+                                            const std::function<bool()>& stop) {
+  ENetSocket s = enet_socket_create(ENET_SOCKET_TYPE_DATAGRAM);
+  if (s == ENET_SOCKET_NULL) return std::nullopt;
+  ENetAddress any{};
+  any.host = ENET_HOST_ANY;
+  any.port = 0;
+  std::optional<LookupResult> result;
+  if (enet_socket_bind(s, &any) == 0) {
+    enet_socket_set_option(s, ENET_SOCKOPT_NONBLOCK, 1);
+    if (!join.code.empty()) {
+      Message m;
+      m.kind = Kind::kLookup;
+      m.code = join.code;
+      result = ask_relay(s, relay, m, stop);
+    }
+    if (!join.room.empty() && (join.code.empty() || result == LookupResult::kUnknown)) {
+      Message m;
+      m.kind = Kind::kLookupName;
+      m.name = join.room;
+      const auto by_room = ask_relay(s, relay, m, stop);
+      // An old relay does not answer the room: keep what the code got.
+      if (by_room || join.code.empty()) result = by_room;
+    }
+  }
+  enet_socket_destroy(s);
+  return result;
+}
+
+std::string lookup_text(std::optional<LookupResult> result, const RelayJoin& join) {
+  const std::string relay = join.relay_host + ":" + std::to_string(join.relay_port);
+  const bool room = join.code.empty();
+  if (!result) {
+    return "no answer from the relay " + relay + ": is the address right, and is the relay running?" +
+           (room ? std::string(" (a relay from before room names does not answer room names: ask the host "
+                               "for the join code)")
+                 : std::string());
+  }
+  switch (*result) {
+    case LookupResult::kOk:
+      if (!join.room.empty() && !join.code.empty()) return "the relay let this game in: connecting through it";
+      return room ? "room \"" + join.room + "\" found on the relay: connecting through it"
+                  : "the relay took the join code: connecting through it";
+    case LookupResult::kUnknown:
+      if (!join.room.empty() && !join.code.empty()) {
+        return "the relay knows no join code or room \"" + join.room +
+               "\" right now: check it with the host (a join code changes each time the host starts; a room is free "
+               "again 30 seconds after its host stops)";
+      }
+      if (!join.room.empty()) {
+        return "the relay has no room \"" + join.room +
+               "\" right now: check the name with the host (a room is free again 30 seconds after its host stops)";
+      }
+      return "the relay does not know this join code: it changes each time the host starts, and ends when the "
+             "host stops";
+    case LookupResult::kSlowDown:
+      return "the relay had too many wrong codes or room names from your address: wait 10 minutes";
+    case LookupResult::kFull:
+      return "that host already has the most players the relay lets in";
+  }
+  return "the relay refused";
+}
+
 RelayLink::RelayLink(RelayLinkConfig config) : config_(std::move(config)) {
   if (!config_.random) {
     auto device = std::make_shared<std::random_device>();

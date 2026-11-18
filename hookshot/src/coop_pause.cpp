@@ -144,6 +144,10 @@ std::vector<std::string> StatusLines(const HosCoopStatus& st, const CoopLobby::S
         return g_lan_lines;
     }
     std::vector<std::string> lines = CoopTitleMenu::PlainStatus(v);
+    if (v.host && v.state == HOS_COOP_HOSTING && st.relay_room[0] != '\0') {
+        lines.push_back(std::string("Room ") + st.relay_room +
+                        ": friends type it in Join a game (IP address), with your join password.");
+    }
     if (!g_answer_note.empty() && v.problem != HOS_COOP_PROBLEM_BAD_CODE) {
         lines.push_back(v.players > 1 ? "Connected!" : g_answer_note);
     }
@@ -334,6 +338,10 @@ void Host() {
     h.invite = 1;
     h.pvp = o.pvp ? 1 : 0;
     h.max_players = static_cast<std::uint8_t>(o.max_players);
+    // coop-options.ini's relay lines, as Host.bat uses them (issue 261: a room name friends type in Join a game).
+    h.relay_via = o.relay.empty() ? nullptr : o.relay.c_str();
+    h.relay_key = o.relay_key.empty() ? nullptr : o.relay_key.c_str();
+    h.relay_room = o.relay_room.empty() ? nullptr : o.relay_room.c_str();
     g_doing = "hosting";
     ++g_session;
     g_copied = false;
