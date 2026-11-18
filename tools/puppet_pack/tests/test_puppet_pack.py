@@ -2007,6 +2007,49 @@ class FullBuildTest(unittest.TestCase):
         self.write("System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs", plain.compress(game.dumps()))
         return root
 
+    def test_build_skin_gear_on_a_model_the_game_has(self):
+        """A mod that points an item at another model the game already has (a recolour mod: the Master
+        Sword on the dark sword's model) brings no model file of its own; the skin still gets a copy of
+        the item, and your own Link's pack of it, while the game's item stays the game's."""
+        mod_src = self.make_model_mod()
+        plain = zstandard.ZstdCompressor()
+        sword, dark = "Weapon_Sword_Master", "Weapon_Sword_Master_Dark"
+        info = "Component/ModelInfo/Master.engine__component__ModelInfo.bgyml"
+
+        def sword_pack(model):
+            return plain.compress(sarc.write({
+                f"Actor/{sword}.engine__actor__ActorParam.bgyml": byml.dumps({"Components": {"ModelInfoRef": "?" + info}}),
+                info: byml.dumps({"FmdbName": model, "ModelProjectName": model})}))
+        # The game: its sword on its own model, and the dark sword's model.
+        self.write(f"Pack/Actor/{sword}.pack.zs", sword_pack(sword))
+        self.write(f"Model/{dark}.{dark}.bfres.zs", plain.compress(b"FRES game dark sword"))
+        d = zs.Dicts.from_romfs(self.romfs)
+        ai = byml.loads(d.decompress(build.read(os.path.join(self.romfs, "RSDB/ActorInfo.Product.999.rstbl.byml.zs"))))
+        ai.append({"__RowId": sword, "ActorName": sword, "FmdbName": sword, "ModelProjectName": sword})
+        self.write("RSDB/ActorInfo.Product.999.rstbl.byml.zs", plain.compress(byml.dumps(ai)))
+        self.write("RSDB/GameActorInfo.Product.999.rstbl.byml.zs",
+                   plain.compress(byml.dumps([{"__RowId": r["__RowId"]} for r in ai])))
+        # The mod: the sword's pack names the dark sword's model; no model file comes with it.
+        with open(os.path.join(mod_src, "romfs", "Pack", "Actor", f"{sword}.pack.zs"), "wb") as f:
+            f.write(sword_pack(dark))
+        mod = os.path.join(self.dir, "mod_skin_gear")
+        m = build.build(self.romfs, mod, log=lambda _l: None, skins=[("Mod", mod_src)], look_slots=0)
+        out = os.path.join(mod, "romfs")
+        [entry] = m["skins"]
+        self.assertEqual(entry["gear"], {"Armor_Adult_Goron": "Armor_Adult_Goron_Skin_Mod",
+                                         sword: f"{sword}_Skin_Mod"})
+        g = sarc.read(d.decompress(build.read(os.path.join(out, f"Pack/Actor/{sword}_Skin_Mod.pack.zs"))))
+        self.assertEqual(byml.loads(g[f"Component/ModelInfo/{sword}_Skin_Mod.engine__component__ModelInfo.bgyml"]),
+                         {"FmdbName": dark, "ModelProjectName": dark})
+        self.assertFalse(os.path.exists(os.path.join(out, f"Model/{dark}.{dark}.bfres.zs")))  # the game's model
+        self.assertFalse(os.path.exists(os.path.join(out, f"Pack/Actor/{sword}.pack.zs")))   # the game's item stays
+        # Your own Link holds it too: the mod's pack of the item, beside the pack (not in romfs/).
+        self.assertEqual(entry["self_files"][f"Pack/Actor/{sword}.pack.zs"], f"coop_skin_self/Mod/{sword}.pack.zs")
+        own = sarc.read(d.decompress(build.read(os.path.join(mod, f"coop_skin_self/Mod/{sword}.pack.zs"))))
+        self.assertEqual(byml.loads(own[info]), {"FmdbName": dark, "ModelProjectName": dark})
+        # A model neither the mod nor the game has: still no copy (the Kokiri sword of make_model_mod).
+        self.assertNotIn("Weapon_Sword_Kokiri", entry["gear"])
+
     def test_build_skin(self):
         from puppet_pack import skin
         mod_src = self.make_model_mod()
@@ -2077,7 +2120,9 @@ class FullBuildTest(unittest.TestCase):
         self.assertGreater(t.get("Model/Mod__Adult_01_Animation.Skeleton.bfres") or 0, 0)  # no mod entry: from the file
         self.assertGreater(t.get("Pack/Actor/CoopPuppet_Adult_Skin_Mod.pack") or 0, 0)
         # Your own Link in the skin: the mod's player pack beside the pack (not in romfs/), its AS on the copy.
-        self.assertEqual(entry["self_files"], {"Pack/Actor/Player_Adult.pack.zs": "coop_skin_self/Mod/Player_Adult.pack.zs"})
+        # your own Link also wears the skin's gear (skin.self_gear)
+        self.assertEqual(entry["self_files"], {"Pack/Actor/Player_Adult.pack.zs": "coop_skin_self/Mod/Player_Adult.pack.zs",
+                                               "Pack/Actor/Armor_Adult_Goron.pack.zs": "coop_skin_self/Mod/Armor_Adult_Goron.pack.zs"})
         self.assertFalse(os.path.exists(os.path.join(out, "Pack/Actor/Player_Adult.pack.zs")))
         own = sarc.read(d.decompress(build.read(os.path.join(mod, "coop_skin_self/Mod/Player_Adult.pack.zs"))))
         base = byml.loads(own["Actor/Player_Base.engine__actor__ActorParam.bgyml"])["Components"]

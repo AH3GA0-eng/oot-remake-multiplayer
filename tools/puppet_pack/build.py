@@ -1157,7 +1157,7 @@ def write_skins(romfs, out_romfs, dicts, table, skins, ai_rows=None, new_ai=None
         # for the game's own files too. A file of other contents there keeps the first skin's copy.
         own = {skin.model_info(sk.members[v], flatten_actor_param(sk.members[v], f"Player_{v}"))[1]
                for v in variants}
-        own |= {g[3] for g in skin.gear_items(sk, dicts, read)}
+        own |= {g[3] for g in skin.gear_items(sk, dicts, read, romfs)}
         own.discard(None)
         renames = {}
         kept = []
@@ -1238,10 +1238,12 @@ def write_skins(romfs, out_romfs, dicts, table, skins, ai_rows=None, new_ai=None
                 if mod_size and mod_size > (t.get(path) or 0):
                     t.set(path, mod_size)
         gear = {}
-        for item, g_members, fmdb, project, info_src in skin.gear_items(sk, dicts, read):
+        worn = []  # the gear rows this skin has copies of: your own Link's too (skin.self_gear)
+        for item, g_members, fmdb, project, info_src in skin.gear_items(sk, dicts, read, romfs):
             if item not in ai_rows:
                 log(f"skin {skin_id}: {item} is no actor of this game, left out")
                 continue
+            worn.append((item, g_members, fmdb, project, info_src))
             actor = skin.gear_name(item, skin_id)
             project = renames.get(project, project)
             pack, ap, info = skin.gear_pack(skin.rename_projects(g_members, renames), item, skin_id, fmdb, project)
@@ -1261,6 +1263,17 @@ def write_skins(romfs, out_romfs, dicts, table, skins, ai_rows=None, new_ai=None
             items.append((dst, pack))
             files.append(dst)
             gear[item] = actor
+        if self_dir:
+            # Your own Link's gear in the skin (Dark Link's sword and shield): the mod's packs of those
+            # items, beside its Player_<age> packs, put over the game's only for the player who wears it.
+            for rel_, pack in skin.self_gear(sk, worn).items():
+                fname = f"{skin_id}/{os.path.basename(rel_)}"
+                w(os.path.join(self_dir, fname), dicts.compress(pack, PACK_DICT))
+                self_files[rel_] = f"{skin.SELF_DIR}/{fname}"
+                need = max(t.get(strip_zs(rel_)) or 0,
+                           (sk.table.get(strip_zs(rel_)) if sk.table is not None else None) or 0,
+                           ((len(pack) + 0x1F) & ~0x1F) + PACK_SIZE_MARGIN)
+                t.set(strip_zs(rel_), need)
         models = {v: skin.model_info(sk.members[v], flatten_actor_param(sk.members[v], f"Player_{v}"))[1]
                   for v in variants}
         entry = {"id": skin_id, "variants": variants, "models": models,

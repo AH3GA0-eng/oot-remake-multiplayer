@@ -274,9 +274,28 @@ def gear_name(item, skin_id):
     return f"{item}_Skin_{skin_id}"
 
 
-def gear_items(skin, dicts, read):
+def model_info_of(members, item):
+    """(FmdbName, ModelProjectName, ModelInfo member path) of an actor pack's ModelInfo, or None."""
+    from .build import actor_param_path, ref_to_member
+    try:
+        doc = byml.loads(members[actor_param_path(item)])
+    except Exception:  # noqa: BLE001 - not an actor pack we can read
+        return None
+    info_path = ref_to_member(doc.get("Components", {}).get("ModelInfoRef"))
+    if info_path not in members:
+        return None
+    info = byml.loads(members[info_path])
+    fmdb, project = info.get("FmdbName"), info.get("ModelProjectName")
+    if not isinstance(fmdb, str) or not isinstance(project, str):
+        return None
+    return fmdb, project, info_path
+
+
+def gear_items(skin, dicts, read, game_romfs=None):
     """[(item, members, FmdbName, ModelProjectName, ModelInfo member path)] for each gear item the
-    mod gives a model of its own."""
+    mod gives a model of its own: a model file the mod brings, or (with `game_romfs`) another
+    model the game already has, which the mod's pack names in place of the item's own (Dark Link's
+    sword and shield on Link's: Weapon_Sword_Master -> Weapon_Sword_Master_Dark)."""
     from .build import actor_param_path, ref_to_member
     out = []
     folder = os.path.join(skin.romfs, "Pack", "Actor")
@@ -299,7 +318,26 @@ def gear_items(skin, dicts, read):
             continue
         if f"Model/{project}.{fmdb}.bfres.zs" in have:
             out.append((item, members, fmdb, project, info_path))
+        elif game_romfs is not None:
+            # The game's own item names another model, and the game has the one the mod names.
+            model = os.path.join(game_romfs, "Model", f"{project}.{fmdb}.bfres.zs")
+            game_pack = os.path.join(game_romfs, "Pack", "Actor", name)
+            if not (os.path.isfile(model) and os.path.isfile(game_pack)):
+                continue
+            try:
+                game = model_info_of(sarc.read(dicts.decompress(read(game_pack))), item)
+            except Exception:  # noqa: BLE001 - the game's pack unreadable: not this skin's gear
+                continue
+            if game is not None and (game[0], game[1]) != (fmdb, project):
+                out.append((item, members, fmdb, project, info_path))
     return out
+
+
+def self_gear(skin, gear):
+    """Your own Link's gear in the skin: the mod's own packs of the items it gives a model
+    (`gear`: gear_items' rows), put over the game's only for the player who wears the skin, as its
+    Player_<age> pack (SELF_DIR). {pack path in romfs: pack bytes (unpacked)}."""
+    return {f"Pack/Actor/{item}.pack.zs": sarc.write(members) for item, members, _f, _p, _i in gear}
 
 
 def gear_pack(members, item, skin_id, fmdb, project):
