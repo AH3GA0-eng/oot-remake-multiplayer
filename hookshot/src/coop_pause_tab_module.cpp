@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // coop_pause_tab.h, the module's part: patch 0030's call for every menu
-// screen's update, the game's fields read, the probe's lines logged. Only in
-// hookshot_coop.dll (the tests drive Probe itself).
+// screen's update, the game's fields read, the game's own calls made on that
+// screen's thread (its panes shown or hidden, its tabs lit, texts from the
+// pack's labels), the pad filtered, the log. Only in hookshot_coop.dll (the
+// tests drive Page and Probe themselves).
 #include "coop_pause_tab.h"
 
+#include <atomic>
 #include <chrono>
+#include <cstring>
 #include <mutex>
+#include <string>
 
 #include "common/logging.h"
 #include "coop_runtime.h"
@@ -14,8 +19,15 @@ namespace CoopPauseTab {
 
 namespace {
 
-std::mutex g_mutex;   // the probe: the screens' updates run on several of the game's threads at once
+const HosCoopApi* g_api = nullptr;
+std::mutex g_mutex;   // everything below: screen updates on several of the game's threads, the pad on its own
 Probe g_probe;
+Page g_page;
+std::atomic<bool> g_shown{false};   // (the mouse asks often, from any thread)
+// Panes found, per screen object (0: not looked up yet or not there).
+std::uint64_t g_pages_screen = 0, g_system_pane = 0, g_coop_pane = 0;
+std::uint64_t g_strip_screen = 0, g_tab_pane = 0;
+bool g_pages_bad = false, g_strip_bad = false;   // a pane that is not a part: the page step stays off (logged once)
 
 template <class T>
 T Read(std::uint64_t a) {
@@ -29,45 +41,203 @@ std::uint64_t NowMs() {
                                           .count());
 }
 
+bool CanCall() {
+    return g_api != nullptr && g_api->call != nullptr && g_api->size >= offsetof(HosCoopApi, scratch) + sizeof(g_api->scratch) &&
+           g_api->scratch != nullptr;
+}
+
+bool Call(void* ctx, std::uint64_t offset, std::uint64_t a0, std::uint64_t a1 = 0, std::uint64_t a2 = 0,
+          std::uint64_t a3 = 0, std::uint64_t a4 = 0, std::uint64_t* x0 = nullptr) {
+    HosCoopCall k{};
+    k.function = CoopRuntime::MainBase() + offset;
+    k.x[0] = a0, k.x[1] = a1, k.x[2] = a2, k.x[3] = a3, k.x[4] = a4;
+    std::uint64_t r = 0;
+    const bool ok = g_api->call(ctx, &k, &r);
+    if (x0 != nullptr) *x0 = r;
+    return ok;
+}
+
+// (layout, "name") -> the pane, as coop_map_page.cpp finds the HUD's (one scratch block: it is the same place each call)
+std::uint64_t FindPane(void* ctx, std::uint64_t layout, const char* name) {
+    const std::uint64_t at = g_api->scratch(ctx, name, std::strlen(name) + 1);
+    std::uint64_t pane = 0;
+    return at != 0 && Call(ctx, kFindPane, layout, at, 0, 0, 0, &pane) ? pane : 0;
+}
+
+// A part's pane (kind 6 at +0xa8 bits 22..25, docs/game-ui.md): what the visibility call is made on.
+bool IsPart(std::uint64_t pane) {
+    return pane != 0 && ((Read<std::uint32_t>(pane + 0xa8) >> 22) & 0xf) == 6;
+}
+
+void SetVisible(void* ctx, std::uint64_t pane, bool on) {
+    Call(ctx, kSetVisible, pane, on ? 1 : 0);
+}
+
+// A text pane's text from a label of the pack's (LayoutMsg/<file>), the way the game sets its own (coop_title.cpp's
+// SetRowTexts): [0x00] the message ref, [0x20] &file, [0x28] &label, [0x30] file, [0x50] label, [0x90] the pane's path.
+bool SetText(void* ctx, std::uint64_t layout, const std::string& path, const std::string& file, const std::string& label) {
+    if (file.size() >= 0x20 || label.size() >= 0x40 || path.size() >= 0x40) return false;
+    std::uint8_t b[0xd0] = {};
+    const std::uint64_t base = g_api->scratch(ctx, b, sizeof b);
+    if (base == 0) return false;
+    const std::uint64_t at_file = base + 0x30, at_label = base + 0x50, at_path = base + 0x90;
+    std::memcpy(b + 0x20, &at_file, 8);
+    std::memcpy(b + 0x28, &at_label, 8);
+    std::memcpy(b + 0x30, file.c_str(), file.size() + 1);
+    std::memcpy(b + 0x50, label.c_str(), label.size() + 1);
+    std::memcpy(b + 0x90, path.c_str(), path.size() + 1);
+    if (g_api->scratch(ctx, b, sizeof b) != base) return false;
+    return Call(ctx, kMsgRefInit, base) && Call(ctx, kMsgRefSet, base, base + 0x20, base + 0x28, 1) &&
+           Call(ctx, kPaneText, layout, at_path, base, 1, 0);
+}
+
+// The pages: our page over System's, or System's alone. The rows' texts once per screen object.
+void ApplyPages(void* ctx, std::uint64_t screen, const Page::Do& d) {
+    const std::uint64_t layout = Read<std::uint64_t>(screen + kScreenLayout);
+    if (layout == 0) return;
+    if (screen != g_pages_screen) {
+        g_pages_screen = screen, g_pages_bad = false;
+        g_system_pane = FindPane(ctx, layout, "Pa_System_00");
+        g_coop_pane = FindPane(ctx, layout, "Pa_Coop_00");
+        const bool ok = IsPart(g_system_pane) && IsPart(g_coop_pane);
+        g_pages_bad = !ok;
+        LOG_INFO(Core, "coop: pause tab: the pages' panes: Pa_System_00 {:#x}, Pa_Coop_00 {:#x}{}", g_system_pane,
+                 g_coop_pane, ok ? "" : " (not both parts: the Multiplayer page stays off; is the pack's layout in?)");
+    }
+    if (g_pages_bad) return;
+    if (d.set_page) {
+        SetVisible(ctx, g_coop_pane, d.page_shown);
+        SetVisible(ctx, g_system_pane, !d.page_shown);
+    }
+    if (d.set_texts) {
+        int set = 0;
+        for (int i = 0; i < kRows; ++i) {
+            char path[64], label[64];
+            std::snprintf(path, sizeof path, "Pa_Coop_00/Pa_Button_%02d/T_Btn_00", i);
+            std::snprintf(label, sizeof label, "Pa_Coop_00-Pa_Button_%02d-T_Btn_00", i);
+            set += SetText(ctx, layout, path, "LayoutMsg/PlusMenu_00", label) ? 1 : 0;
+        }
+        const std::uint64_t controller = FindPane(ctx, layout, "Pa_Coop_00/Pa_SystemController_00");
+        if (IsPart(controller)) SetVisible(ctx, controller, false);   // (the System page's controller picture: not ours)
+        LOG_INFO(Core, "coop: pause tab: the page's rows: {} of {} texts set; its controller picture {}", set, kRows,
+                 IsPart(controller) ? "hidden" : "not found by path (left as the layout has it)");
+    }
+}
+
+// The strip: the fifth tab shown in the Plus menu (filled as a Plus tab, our word), lit while our page shows, and
+// System's tab lit only when System is the page shown.
+void ApplyStrip(void* ctx, const Facts& f, const Page::Do& d) {
+    const std::uint64_t layout = Read<std::uint64_t>(f.screen + kScreenLayout);
+    const std::uint64_t tabs = Read<std::uint64_t>(f.screen + kStripTabArray);
+    if (layout == 0 || tabs == 0) return;
+    if (f.screen != g_strip_screen) {
+        g_strip_screen = f.screen;
+        g_tab_pane = FindPane(ctx, layout, "Pa_Category_04");
+        g_strip_bad = !IsPart(g_tab_pane);
+        LOG_INFO(Core, "coop: pause tab: the strip's fifth tab: Pa_Category_04 {:#x}{}", g_tab_pane,
+                 g_strip_bad ? " (not a part: left alone)" : "");
+    }
+    if (g_strip_bad) return;
+    SetVisible(ctx, g_tab_pane, d.tab_shown);
+    if (!d.tab_shown) return;
+    const std::uint64_t tab3 = Read<std::uint64_t>(tabs + 8 * 3), tab4 = Read<std::uint64_t>(tabs + 8 * 4);
+    if (tab3 == 0 || tab4 == 0) return;
+    if (d.fill_tab) {
+        Call(ctx, kTabFill, tab4, kSystemPage, 1);   // (a Plus tab's look, as the game fills its four)
+        SetText(ctx, layout, "Pa_Category_04/T_Text_00", "LayoutMsg/MenuOverlay_00", "Pa_Category_04-T_Text_00");
+    }
+    Call(ctx, kTabLight, tab3, f.lit == kSystemPage && !d.tab_lit ? 1 : 0, 0);
+    Call(ctx, kTabLight, tab4, d.tab_lit ? 1 : 0, 0);
+}
+
 }  // namespace
 
+void Init(const HosCoopApi* api) {
+    g_api = api;
+}
+
 void OnScreen(void* ctx, std::uint64_t screen) noexcept {
-    (void)ctx;   // (the page step's game calls will use it)
     try {
-        if (screen == 0) {
-            return;
-        }
+        if (screen == 0) return;
         const std::uint64_t base = CoopRuntime::MainBase();
         const std::uint64_t vtable = Read<std::uint64_t>(screen);
-        if (vtable < base) {
-            return;
-        }
+        if (vtable < base) return;
         Facts f;
         f.kind = KindOf(vtable - base);
-        if (f.kind == Kind::kOther) {
-            return;   // (most updates: the HUD's and the other screens', once a frame each)
-        }
+        if (f.kind == Kind::kOther) return;   // (most updates: the HUD's and the other screens', once a frame each)
         f.screen = screen;
         f.state = Read<std::uint8_t>(screen + kScreenState);
         if (f.kind == Kind::kStrip) {
             f.tabs = static_cast<int>(Read<std::uint32_t>(screen + kStripTabs));
-            f.mode = Read<std::uint8_t>(screen + kStripMode);
+            f.mode = Read<std::int32_t>(screen + kStripMode);
             f.lit = Read<std::int32_t>(screen + kStripLit);
-        } else if (const std::uint64_t manager = Read<std::uint64_t>(base + kMenuManager); manager != 0) {
-            f.page = Read<std::int32_t>(manager + kManagerPage);
-            f.asked = Read<std::int32_t>(manager + kManagerAsked);
+        } else if (f.kind == Kind::kPages) {
+            if (const std::uint64_t manager = Read<std::uint64_t>(base + kMenuManager); manager != 0) {
+                f.page = Read<std::int32_t>(manager + kManagerPage);
+                f.asked = Read<std::int32_t>(manager + kManagerAsked);
+            }
         }
         std::vector<std::string> lines;
+        Page::Do d;
+        std::string why;
+        bool was = false, now_shown = false;
         {
             std::lock_guard lock(g_mutex);
             lines = g_probe.Seen(f, NowMs());
+            was = g_page.Shown();
+            d = g_page.OnScreen(f, NowMs());
+            now_shown = g_page.Shown();
+            why = g_page.TakeWhy();
+            g_shown = now_shown;
+            if (d.any() && ctx != nullptr && CanCall()) {
+                if (f.kind == Kind::kPages) ApplyPages(ctx, screen, d);
+                if (f.kind == Kind::kStrip) ApplyStrip(ctx, f, d);
+            }
         }
-        for (const std::string& line : lines) {
-            LOG_INFO(Core, "{}", line);
-        }
+        for (const std::string& line : lines) LOG_INFO(Core, "{}", line);
+        if (was && !now_shown) LOG_INFO(Core, "coop: pause tab: System back ({})", why);
     } catch (...) {
-        // (a log line lost is all: the game's update goes on)
+        // (a log line or a look lost is all: the game's update goes on)
     }
+}
+
+std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
+    try {
+        std::uint64_t in = buttons;
+        if (stick != nullptr) {   // (the left stick as up and down for our rows; nn::hid: y up)
+            if (stick[1] > 20000) in |= kPadStickUp;
+            if (stick[1] < -20000) in |= kPadStickDown;
+        }
+        std::uint64_t out = 0;
+        bool was = false, shown = false;
+        int chosen = -1, cursor = 0;
+        std::string why;
+        {
+            std::lock_guard lock(g_mutex);
+            was = g_page.Shown();
+            out = g_page.OnPad(in, NowMs());
+            shown = g_page.Shown();
+            chosen = g_page.TakeChosen();
+            cursor = g_page.Cursor();
+            why = g_page.TakeWhy();
+            g_shown = shown;
+        }
+        if (shown && stick != nullptr) {
+            for (int i = 0; i < 4; ++i) stick[i] = 0;   // (the System page's cursor does not move under ours)
+        }
+        if (!was && shown) LOG_INFO(Core, "coop: pause tab: our page shown (R on System)");
+        if (was && !shown) LOG_INFO(Core, "coop: pause tab: System back ({})", why);
+        if (chosen >= 0) LOG_INFO(Core, "coop: pause tab: row {} chosen (the rows' actions come next)", chosen);
+        (void)cursor;
+        // (the stick's up and down bits we added are not the game's: only what it sent, filtered)
+        return out & (buttons | ~(kPadStickUp | kPadStickDown));
+    } catch (...) {
+        return buttons;
+    }
+}
+
+int MousePage() noexcept {
+    return g_shown.load() ? 4 : -1;
 }
 
 }  // namespace CoopPauseTab

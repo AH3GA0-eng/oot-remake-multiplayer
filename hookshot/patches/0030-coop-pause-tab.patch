@@ -1,4 +1,4 @@
-From ab306b32f9c03bae765cdc0f7860cd63b450d9b6 Mon Sep 17 00:00:00 2001
+From eee408b89efe45d40e89d3860a969c59983cb4f7 Mon Sep 17 00:00:00 2001
 From: DrHammer79 <351314278+DrHammer79@users.noreply.github.com>
 Date: Tue, 17 Nov 2026 19:36:30 -0600
 Subject: [PATCH] Co-op pause menu tab: each menu screen's update to the
@@ -19,20 +19,22 @@ strip (Windows) counts the overlay's tabs (+0x328, its Pa_Category_%02d
 parts): with five, its zones follow co-op's layout (the four and L 230
 to the left, R 230 to the right, the fifth 460 after the fourth), and
 the page it steps from is the module's (hos_coop_game_pause_page: 4
-while its page shows, else -1), so a click on the fifth tab is R from
-System and a click elsewhere from it L first; those taps reach the
-module's pad filter as the player's do. L and R move past a fifth tab's
+while its page shows, -1 when not, -2 without a module page), so a click
+on the fifth tab is R from System and a click elsewhere from it L first;
+those taps reach the module's pad filter as the player's do. Without a
+module page (-2) the fifth tab is no tab to step to: the pack stores it
+hidden and a click there is nothing. L and R move past a fifth tab's
 number (8, 9). No new lift hook, no wrapped function, no nx2 change.
 Without the exports (an older module) nothing changes.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- host/coop_bridge.c | 15 +++++++++++++++
- host/oot_menu.c    | 38 ++++++++++++++++++++++++++++++++------
- 2 files changed, 47 insertions(+), 6 deletions(-)
+ host/coop_bridge.c | 16 ++++++++++++++++
+ host/oot_menu.c    | 41 +++++++++++++++++++++++++++++++++++------
+ 2 files changed, 51 insertions(+), 6 deletions(-)
 
 diff --git a/host/coop_bridge.c b/host/coop_bridge.c
-index 957c34e..42586c9 100644
+index 957c34e..889a071 100644
 --- a/host/coop_bridge.c
 +++ b/host/coop_bridge.c
 @@ -86,6 +86,11 @@ static hos_coop_pad_fn coop_pad;       /* (optional: the title menu, nn_hid.c an
@@ -40,8 +42,8 @@ index 957c34e..42586c9 100644
  static hos_coop_view_fn coop_view;     /* (optional, patch 0019: the camera, hos_main.c hos_oot_free_view) */
  static int (*coop_title_hold)(void);   /* (optional, patch 0028: Skip title screen waits, host/oot_autoload.c) */
 +/* (optional, patch 0030: the module's pause-menu tab, host/oot_menu.c) every menu screen's update, with a ctx call() may
-+   use (the game's threads, several at once); the page the module shows over the pause menu's (4: its tab) or -1 (any
-+   thread, often) */
++   use (the game's threads, several at once); the page the module shows over the pause menu's (4: its tab), -1 (it has
++   the page, not shown) or -2 (no page of its own) (any thread, often) */
 +static void (*coop_game_screen)(void *ctx, uint64_t screen);
 +static int (*coop_pause_page)(void);
  /* Bytes for the next call's pointers: in the game's stack between the call's stack words (bridge_call's sp + 32) and the
@@ -56,7 +58,7 @@ index 957c34e..42586c9 100644
      if (!start || !coop_frame || !coop_hold || !coop_stop) {
          hos_log("coop: %s lacks an export: co-op off", path);
          __atomic_store_n(&state, 3, __ATOMIC_RELEASE);
-@@ -214,6 +221,14 @@ uint64_t hos_coop_pad_filter(uint64_t buttons, int32_t stick[4]) {
+@@ -214,6 +221,15 @@ uint64_t hos_coop_pad_filter(uint64_t buttons, int32_t stick[4]) {
  int hos_coop_title_hold_now(void) {
      return __atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_title_hold ? coop_title_hold() : 0;
  }
@@ -64,15 +66,16 @@ index 957c34e..42586c9 100644
 +void hos_coop_game_screen_now(Ctx *c, uint64_t screen) {
 +    if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_game_screen) coop_game_screen(c, screen);
 +}
-+/* (patch 0030) host/oot_menu.c's mouse: the page the module shows in the pause menu (4: its tab), or -1 */
++/* (patch 0030) host/oot_menu.c's mouse: the page the module shows in the pause menu (4: its tab), -1 (none shown), or
++   -2: no module page (no module, co-op off, or a module without the export) */
 +int hos_coop_game_pause_page_now(void) {
-+    return __atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_pause_page ? coop_pause_page() : -1;
++    return __atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_pause_page ? coop_pause_page() : -2;
 +}
  /* nx2/coop_title_hooks.py: the game's title screen (HOS_COOP_TITLE_*) */
  void hos_coop_title(Ctx *c, uint64_t screen, int event) {
      if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_title) coop_title(c, screen, event);
 diff --git a/host/oot_menu.c b/host/oot_menu.c
-index 80e3338..c40643a 100644
+index 80e3338..9c5a879 100644
 --- a/host/oot_menu.c
 +++ b/host/oot_menu.c
 @@ -14,6 +14,10 @@
@@ -86,7 +89,7 @@ index 80e3338..c40643a 100644
  #ifndef LONGSHOT_ENV_H   /* (env_on: the switches' one rule) */
  #include "../gpu/vk/compat/longshot_env.h"
  #endif
-@@ -336,15 +340,36 @@ static void hit_test(uint64_t screen, Hit *h) {
+@@ -336,15 +340,39 @@ static void hit_test(uint64_t screen, Hit *h) {
  
  /* The tab bar across the top (no buttons of the screen's list: the pages' names and the L and R signs), in the layout's
     units, measured from the menu as shown (the Items page): the names centred at about -696, -228, 240, 708 (468 apart),
@@ -95,7 +98,9 @@ index 80e3338..c40643a 100644
 +   L at -1002 and R at 1014; the boxes meet halfway between.
 +   (oot-remake-multiplayer's patch 0030) With co-op's fifth tab the strip has five (the overlay's count, +0x328: its
 +   Pa_Category_%02d parts): co-op's layout moves the four and L 230 to the left, R 230 to the right, and puts the fifth
-+   460 after the fourth, so the same measures, moved: names at about -930, -462, 6, 474, 942, L -1235, R 1247 */
++   460 after the fourth, so the same measures, moved: names at about -930, -462, 6, 474, 942, L -1235, R 1247. The
++   fifth is a tab to step to only while the module has its page (hos_coop_game_pause_page: -1 or 4; -2 none): without
++   it the tab stays hidden, and a click there is nothing */
 +enum { TAB_L = 8, TAB_R = 9 };   /* (patch 0030: past a fifth tab's 4) */
 +static int strip_tabs(void) {
 +    uint32_t n = 0;
@@ -106,7 +111,8 @@ index 80e3338..c40643a 100644
      if (y < 900 || y > 1080) return -1;
 +    if (strip_tabs() == 5) {   /* (patch 0030) */
 +        if (x >= -1340 && x < -1164) return TAB_L;
-+        if (x >= -1164 && x < 1176) return x < -696 ? 0 : x < -228 ? 1 : x < 240 ? 2 : x < 708 ? 3 : 4;
++        if (x >= -1164 && x < 1176)
++            return x < -696 ? 0 : x < -228 ? 1 : x < 240 ? 2 : x < 708 ? 3 : hos_coop_game_pause_page_now() >= -1 ? 4 : -1;
 +        if (x >= 1176 && x <= 1350) return TAB_R;
 +        return -1;
 +    }
@@ -125,7 +131,7 @@ index 80e3338..c40643a 100644
  
  static void focus_entry(int i, uint64_t entry, uint64_t button, void *arg);   /* (below: a focused button shown) */
  
-@@ -574,17 +599,17 @@ static void mouse_tick_locked(Ctx *c, uint64_t screen) {
+@@ -574,17 +602,17 @@ static void mouse_tick_locked(Ctx *c, uint64_t screen) {
      }
      /* a click on the tabs: L or R pressed as many times as the pages between (one at a time, as the pages slide) */
      if (pause && (pressed & HOS_MOUSE_LEFT) && !hit.hit) {
@@ -147,7 +153,7 @@ index 80e3338..c40643a 100644
          if (cur != last_cur) last_cur = cur, arrive_ns = now;
          if (tab_goal >= 0 && (cur < 0 || now - goal_ns > 4000000000LL)) tab_goal = -1;
          if (tab_goal >= 0) {
-@@ -792,6 +817,7 @@ static Seen *screen_seen(uint64_t screen, int64_t now) {
+@@ -792,6 +820,7 @@ static Seen *screen_seen(uint64_t screen, int64_t now) {
  void hos_oot_menu_tick(Ctx *c, uint64_t screen) {
      if (!screen) return;
      hos_oot_autoload_screen(c, screen);   /* (patch 0028: Skip title screen's choice, before the screen's own update) */

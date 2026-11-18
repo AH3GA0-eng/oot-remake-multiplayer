@@ -1162,6 +1162,7 @@ bool Start(const HosCoopApi* api) {
     g_on = true;
     CoopModsRuntime::Start();  // the mods folder and the code mods (docs/mods.md)
     CoopTitle::Init(api);
+    CoopPauseTab::Init(api);   // the pause menu's Multiplayer tab (patch 0030)
     CoopPause::Init(server);
     CoopTestInput::SetMenuOpener(CoopPause::TestMenu);   // (the autotest's menu step; only a commands file asks it)
     CoopLook::StartModule();  // the look chosen in the pause menu (coop_look.h)
@@ -1862,14 +1863,14 @@ COOP_HOOKSHOT_EXPORT void hos_coop_title(void* ctx, uint64_t screen, int event) 
     }
 }
 // The pause menu's Multiplayer tab (coop_pause_tab.h, patch 0030): every menu screen's update, on the game's threads,
-// and the page the mouse's tab strip counts (-1: the game's).
+// and the page the mouse's tab strip counts (4 while our page shows, else -1).
 COOP_HOOKSHOT_EXPORT void hos_coop_game_screen(void* ctx, uint64_t screen) noexcept {
     if (g_on) {
         CoopPauseTab::OnScreen(ctx, screen);
     }
 }
 COOP_HOOKSHOT_EXPORT int hos_coop_game_pause_page(void) noexcept {
-    return g_on ? CoopPauseTab::MousePage() : -1;
+    return g_on ? CoopPauseTab::MousePage() : -2;   // (-2: no page of ours: the mouse keeps the fifth tab out)
 }
 // The Multiplayer tab of Hookshot's menu (hos_coop_menu.h, patch 0012), from Hookshot's menu tick and present thread.
 COOP_HOOKSHOT_EXPORT int hos_coop_menu_tabs(void) {
@@ -1915,6 +1916,7 @@ COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) {
         return buttons;
     }
     buttons = CoopTitle::OnPad(buttons, stick);
+    buttons = CoopPauseTab::OnPad(buttons, stick);   // (its page takes the pad while it shows)
     // Down but not out (coop_dbno_game.h): a downed Link crawls and uses nothing; beside one, A revives.
     CoopDbno::Pad pad{buttons, {stick[0], stick[1], stick[2], stick[3]}};
     pad = CoopDbno::OnPad(pad);

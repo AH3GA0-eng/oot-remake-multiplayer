@@ -73,6 +73,10 @@ class TabTest(unittest.TestCase):
         rec = parts[-1].record
         self.assertEqual(ui_pack._cstr(n, struct.unpack_from("<Q", n, rec)[0]), "PaMenuCategory_00")
         self.assertEqual(panes[-1].id, pm._new_id("Pa_Category_04"))
+        # stored hidden: only the co-op module shows it (bit 0 of the kind word; the source's has it)
+        kind = lambda n, i: struct.unpack_from("<I", n, ui_pack.read_layout(n)[0][i].record + 0x38)[0]
+        self.assertEqual(kind(n, -1), kind(d, 7) & ~1)
+        self.assertTrue(kind(d, 7) & 1)
 
     def test_refusals(self):
         with self.assertRaises(pm.PauseMenuError):
@@ -102,6 +106,8 @@ class PageTest(unittest.TestCase):
         self.assertEqual(pane(n, "Pa_Coop_00"), (0.0, -70.0 - 30.0, "N_InOut_00", len(PAGES) + 1))
         self.assertEqual(pane(n, "Pa_System_00"), pane(d, "Pa_System_00"))
         self.assertEqual(ui_pack._cstr(n, struct.unpack_from("<Q", n, parts[-1].record)[0]), "PaSystemMenu_00")
+        word = struct.unpack_from("<I", n, panes[-1].record + 0x38)[0]
+        self.assertEqual(word & 1, 0)   # stored hidden: the module shows it over System's
         # N_InOut_00 and its ancestors reach the copy; P_Black_00, the last pane before, as it was
         self.assertEqual([pane(n, p)[3] for p in ("RootPane", "N_All_00", "N_InOut_00", "P_Black_00")],
                          [len(PAGES) + 1] * 3 + [len(PAGES)])

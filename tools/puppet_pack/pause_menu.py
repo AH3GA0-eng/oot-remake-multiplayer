@@ -14,6 +14,9 @@ Writes into the puppet mod's romfs:
       game's own Pa_System_00-Pa_Button_00-T_Btn_00)
 and grows those files' entries in the resource size table.
 
+Both copies are stored hidden (ui_pack's Copy.hidden): without the co-op module the pause menu looks
+as it always did, and only the module shows them.
+
 What the game does with them (read from the game's code, not seen in a game yet):
   - the tab strip's set-up counts its Pa_Category_%02d parts and makes a tab for each, so it
     makes the fifth itself; it fills and lights only the four it knows (System and before);
@@ -86,7 +89,7 @@ def add_tab(d):
     if step <= 0 or any(abs(_x(d, TAB % (i + 1)) - _x(d, TAB % i) - step) > 0.5 for i in range(GAME_TABS - 1)):
         raise PauseMenuError("the game's tabs are not evenly spaced from left to right")
     off = ui_pack.frame_offset(d, last, TAB_ROOT)
-    d = ui_pack.clone_parts(d, [ui_pack.Copy(last, NEW_TAB, (step + off[0], off[1]), parent=TAB_ROOT)], new_id=_new_id)
+    d = ui_pack.clone_parts(d, [ui_pack.Copy(last, NEW_TAB, (step + off[0], off[1]), parent=TAB_ROOT, hidden=True)], new_id=_new_id)
     half = step / 2.0
     moves = {TAB % i: (-half, 0.0) for i in range(GAME_TABS + 1)}
     moves[L_LABEL] = (-half, 0.0)
@@ -106,7 +109,7 @@ def add_page(d):
         raise PauseMenuError("the layout has %s already" % NEW_PAGE)
     off = ui_pack.frame_offset(d, SYSTEM_PAGE, PAGE_PARENT)
     move = (-_x(d, SYSTEM_PAGE), off[1])   # x: the page's place on the strip taken off (the strip itself sits at 0)
-    return ui_pack.clone_parts(d, [ui_pack.Copy(SYSTEM_PAGE, NEW_PAGE, move, parent=PAGE_PARENT)], new_id=_new_id)
+    return ui_pack.clone_parts(d, [ui_pack.Copy(SYSTEM_PAGE, NEW_PAGE, move, parent=PAGE_PARENT, hidden=True)], new_id=_new_id)
 
 
 # ---------------------------------------------------------------------------------------- build

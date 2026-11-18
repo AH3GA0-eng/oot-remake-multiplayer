@@ -22,8 +22,9 @@ The Layout2 resource (BFFH "Nintendo.Ui.ResModels.LayoutResData"), as far as rea
   - a pane record is 0x44 bytes: +0x10 and +0x14 its scale (f32; 1.0 in most panes), +0x18 its
     rotation (f32, radians), +0x1c translate x and +0x20 translate y (f32, y up), +0x28 its
     parent's index (-1 for the root), +0x2c and +0x30 its size (f32), +0x34 the index past its
-    subtree (panes are in pre-order), +0x38 its kind, +0x42 u16 its index in its kind's table (a
-    part's: in the part dictionary);
+    subtree (panes are in pre-order), +0x38 its kind word (bits 7 to 10 the kind; bit 0 shown at
+    start, clear on the game's panes that start hidden: cursor glows, check marks, unused guides),
+    +0x42 u16 its index in its kind's table (a part's: in the part dictionary);
   - a part record is 0x48 bytes: +0x00 the part layout's name, +0x08 and +0x18 two lists of
     overrides ({u64 offset, u32 count, u32 stride}; not copied here), +0x28 its parameters (a
     list of offsets of {name, f32 value, 4 zero bytes}), +0x38 the offset of its properties list
@@ -78,12 +79,15 @@ class Entry(NamedTuple):
 class Copy(NamedTuple):
     """One copy for clone_parts: the part copied, the copy's name, how far it moves (x, y in the
     layout's units, y up, added to the source's translate), new values for some of the part's
-    parameters ({name: float}) and the pane it goes under (None: the source's parent)."""
+    parameters ({name: float}), the pane it goes under (None: the source's parent), and whether it is
+    stored hidden (bit 0 of its kind word cleared, as on the game's own panes that start hidden: a
+    co-op module shows it)."""
     source: str
     name: str
     move: tuple = (0.0, 0.0)
     params: Optional[dict] = None
     parent: Optional[str] = None
+    hidden: bool = False
 
 
 def _q(d, o):
@@ -280,6 +284,8 @@ def _clone(d, panes, parts, copies, new_id, out_of_order):
                 r[at:at + 4] = _f32(struct.unpack_from("<f", r, at)[0] + by, "the position of %s" % c.name)
         struct.pack_into("<I", r, 0x34, k + 1)
         struct.pack_into("<H", r, 0x42, p0 + i)
+        if c.hidden:
+            struct.pack_into("<I", r, 0x38, struct.unpack_from("<I", r, 0x38)[0] & ~1)   # (bit 0: shown at start)
         up = parent[si] if c.parent is None else index[c.parent]
         if end[up] != k and not out_of_order:
             raise UiPackError("the subtree of %s (where %s goes) ends before the last pane: the copy would be "
