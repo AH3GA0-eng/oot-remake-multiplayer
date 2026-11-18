@@ -130,6 +130,10 @@ jobs:
         run: python tools/puppet_pack/tests/test_puppet_pack.py -v
       - name: Title menu rows tests
         run: python tools/puppet_pack/tests/test_title_menu.py -v
+      - name: UI pack library tests (parts, labels, strings files)
+        run: python tools/puppet_pack/tests/test_ui_pack.py -v
+      - name: Pause menu Multiplayer tab and page tests
+        run: python tools/puppet_pack/tests/test_pause_menu.py -v
       - name: Difficulty designed enemies tests
         run: python tools/puppet_pack/tests/test_designed_enemies.py -v
       - name: Difficulty extra enemy spots tests
@@ -166,6 +170,8 @@ jobs:
         run: python tools/tests/test_check_content.py -v
       - name: Study tools tests (main reader, vtables, callers)
         run: python tools/game_scan/tests/test_game_scan.py -v
+      - name: Game names file tests
+        run: python tools/game_scan/tests/test_game_names.py -v
       - name: MSBT reader tests
         run: python tools/puppet_pack/tests/test_msbt.py -v
       # The kit's patch applier for Hookshot (hookshot-kit); skipped until that branch is merged.

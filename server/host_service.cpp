@@ -114,6 +114,7 @@ bool HostService::start(std::string& error) {
       std::to_string(coop::protocol::kDatagramBytes) + " bytes)");
   say("players must give the join password to join; the traffic is encrypted");
   if (config_.session.pvp) say("PvP is on: players can hurt each other");
+  if (config_.session.approve_joins) say("each new player waits until the host lets them in (/allow or /deny)");
   if (!config_.session.allowed.empty()) {
     say("only the " + std::to_string(config_.session.allowed.size()) +
         " address range(s) given with --allow may connect");
@@ -161,8 +162,14 @@ bool HostService::start(std::string& error) {
     } else {
       c.server_port = server_->port();
       c.key = config_.relay_key;
+      c.room = config_.relay_room;
       c.log = [this](const std::string& text) { say("relay: " + text); };
       const std::string relay_text = config_.relay_via;
+      c.on_room = [this, relay_text](const std::string& room) {
+        say("relay: room \"" + room + "\" is yours. Friends join with " + room + "@" + relay_text);
+        std::lock_guard lock(status_mutex_);
+        status_.relay_room = room + "@" + relay_text;
+      };
       c.on_code = [this, relay_text](const std::string& code) {
         const std::string shown = relay::show_code(code);
         say("relay: join code " + shown + ". Give your friends " + shown + "@" + relay_text +
@@ -177,7 +184,8 @@ bool HostService::start(std::string& error) {
         set_message("relay: " + why, HostProblem::kRelay);
         link_.reset();
       } else {
-        say("relay: asking " + config_.relay_via + " for a join code");
+        say("relay: asking " + config_.relay_via + " for a join code" +
+            (config_.relay_room.empty() ? std::string() : " and room \"" + config_.relay_room + "\""));
       }
     }
   }
@@ -325,6 +333,11 @@ void HostService::stop() {
   say("flags relayed " + count(stats.flag_relayed) + ", refused " + count(stats.flag_refused) + ", clashes " +
       count(stats.flag_clashes) + "; join relayed " + count(stats.join_relayed) + ", not there " +
       count(stats.join_not_there) + ", dropped " + count(stats.join_dropped));
+  if (config_.session.approve_joins) {
+    say("host approval: asked " + count(stats.joins_held) + ", let in " + count(stats.joins_allowed) +
+        ", turned away " + count(stats.joins_denied) + ", no answer " + count(stats.joins_unanswered) +
+        ", in without asking " + count(stats.joins_remembered));
+  }
   std::lock_guard lock(status_mutex_);
   status_.state = HostState::kStopped;
   status_.players = 0;

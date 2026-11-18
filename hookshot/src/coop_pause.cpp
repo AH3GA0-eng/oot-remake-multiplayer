@@ -144,6 +144,10 @@ std::vector<std::string> StatusLines(const HosCoopStatus& st, const CoopLobby::S
         return g_lan_lines;
     }
     std::vector<std::string> lines = CoopTitleMenu::PlainStatus(v);
+    if (v.host && v.state == HOS_COOP_HOSTING && st.relay_room[0] != '\0') {
+        lines.push_back(std::string("Room ") + st.relay_room +
+                        ": friends type it in Join a game (IP address), with your join password.");
+    }
     if (!g_answer_note.empty() && v.problem != HOS_COOP_PROBLEM_BAD_CODE) {
         lines.push_back(v.players > 1 ? "Connected!" : g_answer_note);
     }
@@ -333,7 +337,12 @@ void Host() {
     h.upnp = 1;             // the router forward (nothing to set up)
     h.invite = 1;
     h.pvp = o.pvp ? 1 : 0;
+    h.approve_joins = o.approve_joins ? 1 : 0;
     h.max_players = static_cast<std::uint8_t>(o.max_players);
+    // coop-options.ini's relay lines, as Host.bat uses them (issue 261: a room name friends type in Join a game).
+    h.relay_via = o.relay.empty() ? nullptr : o.relay.c_str();
+    h.relay_key = o.relay_key.empty() ? nullptr : o.relay_key.c_str();
+    h.relay_room = o.relay_room.empty() ? nullptr : o.relay_room.c_str();
     g_doing = "hosting";
     ++g_session;
     g_copied = false;
@@ -827,9 +836,21 @@ bool Picture(int tab, HosCoopMenuPicture* out) {
     return !shapes.empty();
 }
 
+// The Mods tab's paste: the clipboard (PasteThen: on Linux it may come a few frames later, then on Tick) goes to
+// the field that asked, if the player is still on it (Tab::Paste drops it otherwise). Under g_mutex, as the
+// Multiplayer tab's own paste is; the tab's own lock is taken inside, never the other way round.
+static void ModsPaste(bool into_typing) {
+    std::lock_guard lock(g_mutex);
+    PasteThen([into_typing](std::optional<std::string> clip) { CoopModsTab::Paste(clip, into_typing); });
+}
+
 bool Input(int tab, int event, int arg, int arg2) {
     if (tab == kModsTab) {
-        return CoopModsTab::MenuInput(event, arg, arg2);
+        const bool taken = CoopModsTab::MenuInput(event, arg, arg2);
+        if (CoopModsTab::TakePasteRequest()) {   // a text row's Paste (pad: Left / Right; mouse: its sides)
+            ModsPaste(false);
+        }
+        return taken;
     }
     if (tab == kLobbyTab) {
         return CoopLobbyTab::MenuInput(event, arg, arg2);
@@ -890,6 +911,15 @@ static std::pair<bool, bool> Modifiers() {
 }
 
 bool Key(std::uint32_t vk, bool repeat) {
+    if (CoopModsTab::KeysTaken()) {   // Ctrl+V / Shift+Insert into the Mods tab's text field, as on the Join page
+        const auto [ctrl_down, shift_down] = Modifiers();
+        if ((vk == 'V' && ctrl_down) || (vk == 0x2D && shift_down && !ctrl_down)) {
+            if (!repeat) {
+                ModsPaste(true);
+            }
+            return true;
+        }
+    }
     if (CoopModsTab::Key(vk, repeat)) {  // the Mods tab's text field, while it is typed into
         return true;
     }
