@@ -239,9 +239,19 @@ constexpr bool GearIsCarried(std::size_t i) {
 // 'Weapon_Range_Hookshot' (returned 0x1)`, with every other piece of the same
 // player worn fine, and the player never fired it: the piece is stepped by the
 // game and cannot follow the puppet, parked or not. The Longshot is the same
-// actor family. Such a piece stays off the puppet: only its own player's Link
-// shows it. LICHII_COOP_PUPPET_HOOKSHOT=1 wears it again (a test). By name and
-// not by slot: it is the piece the game steps, whichever slot sends it.
+// actor family. By name and not by slot: it is the piece the game steps,
+// whichever slot sends it.
+//
+// Root cause (held-piece, 2026-11-16): the read is the one every held piece
+// makes (f_7102dcee60 after a held-item change, the wearer's Player
+// component at component table +0x358, which a puppet has not). In the
+// 0.11.1 to 0.11.3 packs a puppet carries the perception's Physics in its
+// component slot 10, so patch 0002's guard (armed by a Link with no slot 10)
+// never armed the null page and the read faulted. The module now arms that
+// page itself before its first puppet (hookshot/src/coop_null_page.h), and
+// the emulator reads 0 there anyway. So such a piece is left off a puppet
+// only where null reads cannot give 0 (Director::SetNullReadsZero(false));
+// LICHII_COOP_PUPPET_HOOKSHOT=0 leaves it off, =1 wears it, everywhere.
 constexpr bool GearIsUnsafe(std::string_view name) {
     return name.find("Hookshot") != std::string_view::npos ||
            name.find("Longshot") != std::string_view::npos;
@@ -374,6 +384,14 @@ public:
     // alpha of the game's hit-flash colour, coop_colors.h); 0, the default,
     // writes no colour (the fairies' director).
     void SetTint(float strength) { tint_ = strength; }
+    // Whether the game's reads through a puppet's missing components give 0
+    // here (the emulator; Hookshot once its null page is armed). Without that
+    // a GearIsUnsafe piece stays off the puppet (issue 232). Default: yes.
+    // (Atomic: Hookshot's create hook may turn it off on another thread.)
+    void SetNullReadsZero(bool on) { null_reads_zero_.store(on); }
+    // A piece Equip leaves off the puppet: nothing is made for it, and the
+    // piece its slot may still hold is neither put away nor re-worn.
+    bool LeftOff(const std::string& name) const;
     // Tunic puppets (CoopPuppet_<Age>_<Colour>) found not to work: the mod is
     // a pack from before the colours (two create timeouts of that actor while
     // no tunic puppet has spawned yet), or one spawned without a Player_ model
@@ -628,6 +646,7 @@ private:
     bool pose_copy_ = false;
     bool matrix_call_ = false;
     float tint_ = 0.0f;
+    std::atomic<bool> null_reads_zero_{true};
     mutable std::mutex tunic_mutex_;
     std::set<std::string> tunic_failed_;           // guarded by tunic_mutex_
     std::map<std::string, int> tunic_timeouts_;    // by actor name
@@ -711,6 +730,18 @@ struct PlannerSettings {
     // (PackLookItems). None: every puppet wears the game's items.
     std::vector<std::string> look_items;
     std::size_t look_copies = 0;
+    // Wearer copies (coop_puppet.json "blade_items", look_items.is_wearer_item):
+    // the items the pack has one copy of per player number (every player item
+    // with the game's weapon component: swords, hammer, Deku Stick, bottles,
+    // fishing rod), and how many numbers. That component writes the model's
+    // shader values from the wearer every frame (a sword's blade), into the
+    // model resource every actor of one name shares, so a puppet in the
+    // game's own sword showed its blade only while our own sword was out. A
+    // puppet with no ready Look copy wears `<item>_Blade<its number>`
+    // (DressInBlades): a resource of its own, on every runtime, for every
+    // player number. LICHII_COOP_BLADE_COPIES=0: none.
+    std::vector<std::string> blade_items;
+    std::size_t blade_copies = 0;
     // Scenes with stealth guards (coop_puppet.json "quiet_scenes",
     // tools/puppet_pack/build.py guard_scenes): there each puppet is its
     // quiet copy (QuietActor), which no perception sees, so a guard of this
@@ -721,6 +752,9 @@ struct PlannerSettings {
     // page cannot be armed, hookshot/src/coop_null_page.h), so no puppet
     // carries the perception's Physics.
     bool quiet_everywhere = false;
+    // Reads through a puppet's missing components give 0 (the emulator, or
+    // Hookshot's null page armable): Director::SetNullReadsZero.
+    bool null_reads_zero = true;
 };
 
 // The puppet pack's item copies (coop_puppet.json "look_items",
@@ -730,7 +764,8 @@ struct LookItems {
     std::vector<std::string> actors;
     std::size_t copies = 0;
 };
-LookItems PackLookItems(std::string_view manifest);
+// `key`: "look_items", or "blade_items" (the same shape, "copies" per player number).
+LookItems PackLookItems(std::string_view manifest, std::string_view key = "look_items");
 
 // The pack's "quiet_scenes" (a list of scene names; none for a pack made
 // before them, or without perception).
@@ -746,6 +781,11 @@ std::string QuietActor(std::string_view actor);
 std::string LookItemName(std::string_view item, std::size_t copy);
 // Every piece of `gear` the pack has a copy of becomes that copy.
 void DressInLook(Gear& gear, std::size_t copy, const std::vector<std::string>& items);
+// A blade copy: "Weapon_Sword_Kokiri", 5 -> "Weapon_Sword_Kokiri_Blade5".
+std::string BladeItemName(std::string_view item, std::size_t number);
+// Every piece of `gear` that is still one of `items` (a Look copy is left
+// as it is) becomes player `number`'s blade copy, if the pack has that many.
+void DressInBlades(Gear& gear, std::size_t number, const std::vector<std::string>& items, std::size_t copies);
 
 // A puppet pack's coop_puppet.json lists both green puppets
 // (CoopPuppet_Child_Green, CoopPuppet_Adult_Green): only then may

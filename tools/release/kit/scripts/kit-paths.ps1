@@ -1052,6 +1052,7 @@ function Remove-KitRandoSeeds([string]$ExeDir, [string]$Release) {
         if (-not (Test-Path -LiteralPath (Join-Path $d.FullName 'coop-seed.txt'))) { continue }
         Remove-Item -LiteralPath $d.FullName -Recurse -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath (Join-Path $control "$($d.Name).ootrr") -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path $control "$($d.Name).spoiler.txt") -Force -ErrorAction SilentlyContinue
         if (Test-Path -LiteralPath $d.FullName) { $lines += "randomizer: seed $($d.Name) could not be removed for OOTRR $Release" }
         else { $lines += "randomizer: seed $($d.Name) removed for OOTRR $Release`: the game makes it again at its next start (another world: start a new save)" }
     }
@@ -1080,11 +1081,12 @@ function Get-KitStaleRandoSeeds([string]$ExeDir) {
 # the seed file the game kept (mods\oot-remake-randomizer\<seed folder>.ootrr): host and guest seeds alike. A seed
 # that cannot be built again is removed (the game builds it at its next start and asks for a restart), never left to
 # abort the game. The lines to show.
-function Update-KitRandoSeeds([string]$ExeDir) {
+function Update-KitRandoSeeds([string]$ExeDir, [string]$Ootrr = '') {
     $lines = @()
     $mods = Join-Path $ExeDir 'mods'
     $control = Join-Path $mods 'oot-remake-randomizer'
-    $ootrr = Join-Path $ExeDir 'tools\ootrr\ootrr.exe'
+    # (-Ootrr: another OOTRR program, for the kit tests; the game's own by default)
+    $ootrr = if ($Ootrr) { $Ootrr } else { Join-Path $ExeDir 'tools\ootrr\ootrr.exe' }
     $romfs = @((Join-Path $ExeDir 'romfs'), (Join-Path (Split-Path -Parent $ExeDir) 'romfs')) | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'System') } | Select-Object -First 1
     foreach ($name in @(Get-KitStaleRandoSeeds $ExeDir)) {
         $seedDir = Join-Path $mods $name
@@ -1107,8 +1109,12 @@ function Update-KitRandoSeeds([string]$ExeDir) {
             $ErrorActionPreference = 'Stop'
             $built = Join-Path $stage $name
             if ($code -eq 0 -and (Test-Path -LiteralPath (Join-Path $built 'coop-seed.txt'))) {
-                $preset = Join-Path $seedDir 'coop-rando.txt'
-                if (Test-Path -LiteralPath $preset) { Copy-Item -LiteralPath $preset -Destination (Join-Path $built 'coop-rando.txt') }
+                # The game's own files in the seed, which OOTRR's build does not write: the preset, and the spoiler
+                # log and settings string the players share (the same seed file, so the same seed).
+                foreach ($keep in @('coop-rando.txt', 'spoiler.txt', 'settings.txt')) {
+                    $from = Join-Path $seedDir $keep
+                    if (Test-Path -LiteralPath $from) { Copy-Item -LiteralPath $from -Destination (Join-Path $built $keep) }
+                }
                 Remove-Item -LiteralPath $seedDir -Recurse -Force
                 Move-Item -LiteralPath $built -Destination $seedDir
                 $ok = $true
@@ -1474,7 +1480,7 @@ function Get-KitDownloadFailText([string]$File, [string]$Why, [string]$TestUrl, 
         'or a firewall. Test: open this in your browser:'
         "  $TestUrl"
         'If the browser downloads it but this script cannot, the antivirus or a proxy blocks PowerShell. Start again: what was'
-        'downloaded is kept. Still stuck: scripts\collect-logs.cmd, and send its zip.'
+        'downloaded is kept. Still stuck: scripts\collect-logs.cmd, and attach its zip to /bugreport on the Discord.'
     ) -join "`n"
 }
 
@@ -1495,6 +1501,22 @@ function Invoke-KitSizeTableMerge([string]$Kit, [string]$ExeDir) {
     $before = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try { $out = @(& $python @pyArgs 2>&1 | ForEach-Object { "$_" }) } catch { $out = @("Size tables: not merged ($($_.Exception.Message)).") }
+    $ErrorActionPreference = $before
+    return $out
+}
+
+# The Discord status (docs/setup.md, "Discord"): Squadala!'s Discord application and this kit's release in the game's
+# longshot_options.ini (discord_app_id=, discord_details=, discord_state=), scripts\discord_status.py. A line the player
+# changed stays theirs; the Insert menu's "Discord status" row turns it off. Never stops the start. The lines it says.
+function Invoke-KitDiscordStatus([string]$Kit, [string]$ExeDir) {
+    $python = Join-Path $Kit 'hookshot\tools\python\python.exe'
+    $tool = Join-Path $Kit 'scripts\discord_status.py'
+    if (-not (Test-Path -LiteralPath $tool) -or -not (Test-Path -LiteralPath $python)) { return @() }
+    $before = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out = @(& $python -I -B $tool --options (Join-Path $ExeDir 'longshot_options.ini') --version-file (Join-Path $Kit 'VERSION.txt') 2>&1 | ForEach-Object { "$_" })
+    } catch { $out = @("Discord status: not set ($($_.Exception.Message)).") }
     $ErrorActionPreference = $before
     return $out
 }

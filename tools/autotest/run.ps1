@@ -34,6 +34,12 @@ param(
     [string[]]$Switches = @("LICHII_COOP_PUPPET=1", "LICHII_COOP_OBJECTS=1", "LICHII_COOP_SPAWN=1", "LICHII_COOP_DEBUG_OBJECTS=1"),
     # Seconds to wait for each phase (boot and join, load, scenario).
     [int]$Timeout = 180,
+    # Longshot (-Runtime hookshot): each game's renderer start (hookshot.py wait_renderer). -RendererWait: seconds with
+    # no compile progress logged; while the game logs progress it waits on until -RendererStall seconds pass without a
+    # rise, never past -RendererLimit seconds. 0 = the harness default (a cold driver shader cache: minutes).
+    [int]$RendererWait = 0,
+    [int]$RendererStall = 0,
+    [int]$RendererLimit = 0,
     # Steps files: how long an `expect` line waits for the counts (seconds).
     [int]$ExpectWait = 30,
     # Skip load.txt (the games are expected to be in the world already: never, unless testing).
@@ -238,6 +244,9 @@ if ($Runtime -eq 'hookshot') {
         $a += @('--test-delay-ms', "$([int]$Lag)", '--test-jitter-ms', "$([int]$Jitter)")
     }
     if ($Pipe -ne 'coop-auto') { $a += @('--pipe', $Pipe) }
+    if ($RendererWait -gt 0) { $a += @('--renderer-wait', "$RendererWait") }
+    if ($RendererStall -gt 0) { $a += @('--renderer-stall', "$RendererStall") }
+    if ($RendererLimit -gt 0) { $a += @('--renderer-limit', "$RendererLimit") }
     if ($Kit.Count) { $a += @('--kit-a', (Resolve $Kit[0]), '--kit-b', (Resolve $Kit[1])) }
     foreach ($e in @($Switches | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().Trim('"', "'") } | Where-Object { $_ })) {
         $a += @('--env', $e)

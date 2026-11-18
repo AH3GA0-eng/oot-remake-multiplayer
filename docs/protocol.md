@@ -438,6 +438,25 @@ Type 39 is kept for drops and not used. A `DROP_SPAWN` told again may come from 
 
 Protocol 10, type 355 (355 to 359 kept; branch `deku-dungeon-2`, issues 176 and 196). When a game starts one of the room gimmick events whose played flag the others hold ([dungeon.md](dungeon.md), "Live events"), it sends the event's name at once. The others in that scene start the same event as soon as their Link is near its place, instead of waiting for the played flag, which comes only at the end of the sender's event. On channel 0, reliable; the server writes the sender's number, relays it to the others in the sender's scene and keeps nothing (a game that comes later gets the played flag). A version 9 server refuses it as unknown. Story cutscenes use the same message (branch `shared-cutscenes`): the name is one of the story cutscenes in `coop_shared_scenes.cpp`, and the others in the room play it at once ([scenes.md](scenes.md), "Shared story cutscenes"); a game without that branch ignores such a name.
 
+### Switch states (`SWITCH_STATE`)
+
+Protocol 12, type 356 (in the gimmick range 355 to 359; branch `room-objects`). It carries one room switch's output plug (`OnState`, `OffState`, ...) going on or off by its own player's press. These are the timed step, eye and hit switches that a room object reads through its own timer, delay or gates, with no event and no saved flag. The 12 lines are generated from the room graphs ([objects.md](objects.md), "Timed switches").
+
+Fields:
+- `u8` player (0 from a game; the server writes the sender).
+- The scene.
+- The switch's actor name (1 to 64 characters).
+- Its placement (3 x `f32`, the romfs's, finite).
+- `u32` plug: Murmur3 of the plug's name, not 0.
+- `u8` on (0 or 1).
+
+How it is sent and used:
+- The presser's game sends on when the plug goes 1, then again every 2 s while it stays 1, and off when it goes back to 0.
+- A game in the same scene holds the same plug on its own switch through the game's set-bool while the sender's is on, so its own logic runs. It lets go on off, or when 5 s pass without a resend.
+- A plug that is 1 while (or within 1 s after) a game holds it for another player is not sent back.
+- Nothing is sent with no other player in the scene.
+- Session channel, reliable, from either side. The server relays it to the sender's scene only and never keeps it, as `DUNGEON_EVENT`.
+
 ### Moving platforms (`PLATFORM_CLOCK`)
 
 Protocol 10, type 400 (400 to 404 kept; branch `platforms-b`, issues 196 and 194). The game moves its lifts, moving floors and turning floors by delta time, so one word of each platform's driver (an elapsed time, a phase, an angle) decides where it is. The game that owns a platform sends that word about once a second, and at once when it jumped (it looped, or a switch started it), with the server time it read it at (the clock of [Keep-alive and clock](#keep-alive-and-clock)). Every other game in the scene puts value + rate x (its server time now - the sent server time) into its own word, looped by the cycle when one was seen, only when its own is more than 0.1 s of the clock off, and at most every 0.5 s. Latency and the games' own clocks drop out: both sides use the server's time. Which word it is, and its rate, the sender finds in its running game ([objects.md](objects.md), "Moving platforms"); the key says where it is, the same in every game of one build.
@@ -463,7 +482,7 @@ The server relays a frame only to the players in the speaker's scene whose Link 
 
 ### Boss rooms (`BOSS_ROOM`)
 
-Where a player stands with a dungeon's boss ([dungeons-boss.md](dungeons-boss.md)). On channel 0; the server relays it to everyone else with the sender's number in the player field and keeps nothing.
+Where a player stands with a dungeon's boss ([dungeons-boss.md](dungeons-boss.md)). On channel 0; the server relays it to everyone else with the sender's number in the player field. State 5 says only that the sender's fight is over: a game also sends it on a guess (a long event, the boss not read), so nothing keeps it as a death. The server keeps nothing of it; G2's record of a boss death is `BOSS_SCENE` outro_start (below).
 
 | Type | Name | Channel | Sent by | Body |
 |---|---|---|---|---|
@@ -480,7 +499,7 @@ A boss's intro and death play for everyone in the boss's area, and its one heart
 | 520 | `BOSS_SCENE` | 0 | both | `u8` player field, scene (string, 1 to 64: the sender's), `u8` boss (0 to 15, the index in `coop_boss_scenes.cpp`'s table), `u8` kind (1 intro started, 2 the starter's intro ended, 3 death started, 4 death ended; others refused), 3 x `f32` the sender's Link (finite) |
 | 521 | `BOSS_HEART` | 0 | both | `u8` player field (a claim: the claimer; the server's answer: the winner), `u8` boss (0 to 15), `u8` given (0 a claim, from a game; 1 the server's answer; others refused), `u32` maximum life in quarter hearts (1 to 80) |
 
-- `BOSS_SCENE` is relayed to everyone else with the sender's number, never kept. Each game decides whether it is in the area (and plays the event too) or only shows a chat line.
+- `BOSS_SCENE` is relayed to everyone else with the sender's number. The server keeps only each death started (kind 3), by boss and scene, and tells a player who joins each one as kind 4 (death ended) from the same player, after the flag snapshot: a game's cutscene rules ignore the end of a death they never saw, and its G2 record takes it as the boss beaten ([dungeons-boss.md](dungeons-boss.md#beaten-by-the-group-g2-player-report-241)); forgotten when the host loads a save and when the session empties. Each game decides whether it is in the area (and plays the event too) or only shows a chat line.
 - **One heart container per boss.** A game sends a claim when its maximum life rose in a beaten boss's area. The server keeps the first claim of each boss while anyone is in (forgotten when the session empties, as the flags): it answers it with given 1 to everyone, the claimer too; a later claim of that boss (the other side of a race, a game that comes back) is answered to its sender alone with the same winner and value; a given 1 from a game is dropped (`boss_hearts_given`, `boss_hearts_late`, `boss_hearts_refused`). Every game raises its maximum to the answer's value and never lowers it for that, so two answers never give two hearts, and a winner who leaves right after its claim takes nothing from the others (the answer went out at once). A second pickup (the container still on that screen) never reaches the others: while in a beaten boss's area a game's own `MaxLife` may not rise past one container on its maximum when the boss died (or the answer), and the flag watcher puts such a rise back unsent (`FlagWatcher::cap_max`). A claim over 80 is not sent.
 
 ### PvP (protocol 10, `PVP_MODE`, `PVP_HIT`, `PVP_HURT`)
@@ -497,19 +516,21 @@ Players hurting each other ([play-online.md](play-online.md), "PvP"; `lichii/hoo
 - **Hits go to their victim only, and only while PvP is on.** The server passes a `PVP_HIT` to the victim alone, with the attacker's number written in, and drops it while PvP is off (counted in `pvp_hits_dropped`), so a game with PvP off never gets one, whatever an attacker's game believes.
 - **The victim decides.** Its game takes the hit (or not, by the rules in play-online.md) and sends `PVP_HURT`, which the server relays to everyone else. A `PVP_HURT` naming its own sender as the attacker is dropped.
 
-### Down but not out (protocol 11, `DBNO_MODE`, `DBNO_STATE`, `DBNO_REVIVE`)
+### Down but not out (protocol 11, `DBNO_MODE`, `DBNO_STATE`, `DBNO_REVIVE`, `DBNO_THREAT`)
 
 A player at no hearts is downed instead of dead and a teammate can revive them ([play-online.md](play-online.md), "Down but not out"; `lichii/hook/coop_dbno.h` has the rules, `coop_dbno_game.h` the games' side). On unless the server or the host turns it off. Types 470 to 479 are kept for it.
 
 | Type | Name | Channel | Sent by | Body |
 |---|---|---|---|---|
 | 470 | `DBNO_MODE` | 0 | both | `u8` set by (0 the server's start, 1 to 16 the host who changed it), `u8` mode (0 off, 1 on; others refused), `u8` bleed-out seconds (10 to 240), `u8` revive hold in tenths of a second (5 to 100), `u8` life a revived player gets, quarter hearts (1 to 80); outside refused. No player field |
-| 471 | `DBNO_STATE` | 0 | both | `u8` player field, `u8` state (0 up, 1 downed, 2 out; others refused), `u16` bleed-out left in tenths (0 to 2400), `u8` reviver (0 nobody, 1 to 16, not the player), `u8` revive progress (0 to 255). Not downed: left, reviver and progress are 0; no reviver: progress 0 (else refused) |
+| 471 | `DBNO_STATE` | 0 | both | `u8` player field, `u8` state (0 up, 1 downed, 2 out, 3 spectating; others refused), `u16` bleed-out left in tenths (0 to 2400), `u8` reviver (0 nobody, 1 to 16, not the player), `u8` revive progress (0 to 255). Not downed: left, reviver and progress are 0; no reviver: progress 0 (else refused) |
 | 472 | `DBNO_REVIVE` | 2 | both | `u8` player field (the reviver), `u8` target (1 to 16, not the reviver), `u8` holding (0 let go, 1 held; others refused) |
+| 473 | `DBNO_THREAT` | 0 | both | `u8` player field, `u8` near (0 no enemy near the sender's Link, 1 one is; others refused) |
 
 - **The session's value is the server's**, as `PVP_MODE`: `coop_server --dbno on|off` (on by default) sets it, the server sends `DBNO_MODE` to each player at join (on or off), and only the host may change it (`/dbno` in the chat, or the Host settings page through `CoopDbno::Change`); anyone else is answered alone with the value as it is (`dbno_mode_refused`). An empty session goes back to the start value. A game starts each connection with the mode off, so with a server that does not know it, death is the game's own.
 - **Each game decides its own state** and sends `DBNO_STATE` when it changes, every 0.5 s while downed (0.1 s while the ring fills), and again when someone joins or it reconnects. The server relays it to everyone else and keeps the state: a player who is not up owns no enemy and is given none (the enemy goes to the nearest player still up, whose game's AI then chases that player's Link).
 - **A revive goes to its downed player only.** The reviver's game sends `DBNO_REVIVE` every 0.2 s while A is held beside them, and once with holding 0 when it lets go; the server passes it to the target alone while the mode is on (`dbno_revives_relayed`; to nobody, to itself or with the mode off: dropped, `dbno_revives_dropped`). The downed game counts the hold (a hold counts 0.7 s past its last message) and says who revives and how far in its `DBNO_STATE`, so both see the same ring.
+- **Spectating and the respawn (0.11.4, row 113).** A downed player not revived in time sends state 3 (spectating) instead of out: the camera follows a player who is up until no enemy is near the players up (the one watched and everyone up in its scene), then the game comes back up beside the one watched. Each game that is up sends `DBNO_THREAT` (an enemy of its own game, alive, within 15 m level and 8 m height of its Link) when it changes and every 2 s; one older than 6 s counts as unknown, which never holds a respawn back. The server relays it to everyone else and keeps nothing; a spectating player is unfit to own enemies, as a downed one. Out (2) now means only that nobody was left up: every game then runs its own death and Game Over at once.
 
 ### Difficulty (protocol 11, `DIFFICULTY`)
 
@@ -621,13 +642,15 @@ usual `PLAYER_JOINED`, samples and `PLAYER_LEFT`. Types 460 to 469 are kept; 465
 - Version 10 also (branch `encrypt-always-b`, 2026-11-12): every session has a join password and is encrypted; the plain path is gone both ways (a server refuses a `HELLO` without a key share and every `HELLO` when it has no password, and `coop_server` does not start without one; a game refuses a `WELCOME` without keys). No new type, no format change.
 - Version 10 is this release's protocol: everything above marked version 10 ships in it. `main` before this release had an unreleased draft of version 10 (without keep-number, encrypt-always and the platform types); a build of that draft and one of this release both say 10 but do not work together (the draft's `HELLO` has no previous number and may have no key share, and its server lets a game in without a password). The draft was never released, so no player has it. These were briefly numbered 11 on the integration branch.
 - Version 11 (branch `native-host-b`, 2026-11-12): up to 16 players. Player numbers are 1 to 16 (`kMaxPlayers`), `WELCOME` lists up to 15 others, 12 more slot colours; a version 10 game refuses a `WELCOME` with 5 or more players, so the version goes up. The server takes `--max-players` (1 to 16, default 4 until the games' side takes 16) and sends `PLAYER_SAMPLE` and `PLAYER_POSE` by where the players are ("Who gets which stream"). No new type.
-- Protocol 11 also (branch `dbno`): `DBNO_MODE` (470), `DBNO_STATE` (471), `DBNO_REVIVE` (472); 470 to 479 kept. No bump of its own: a build without them never downs anyone (it gets no `DBNO_MODE`, so it plays with the game's own death), and a server without them does not relay them.
+- Protocol 11 also (branch `dbno`): `DBNO_MODE` (470), `DBNO_STATE` (471), `DBNO_REVIVE` (472); 470 to 479 kept. Branch `down-spectate` (0.11.4) added `DBNO_THREAT` (473) and state 3 (spectating) with no bump: a 0.11.3 game refuses state 3 (it keeps the player as downed) and ignores 473, so a mixed session only loses the spectate notices. No bump of its own: a build without them never downs anyone (it gets no `DBNO_MODE`, so it plays with the game's own death), and a server without them does not relay them.
 - Version 11 also (branch `difficulty`): `DIFFICULTY` (480; 480 to 489 kept), sent by the server to every player at join. No earlier layout changed and no bump of its own: it ships with the first version 11 release. A version 11 build without it ignores the type and plays the game as it is. Before any release, branch `extra-enemies` added `u16` boss life and `u16` boss damage to the end of 480 (5 values): no bump, as 480 had never shipped (v0.10.1 has no 480); unreleased builds from before that refuse each other's 480.
 - Protocol 11 also (branch `boss-cutscenes`): `BOSS_SCENE` (520), `BOSS_HEART` (521); 520 to 524 kept. No bump of its own: a build without them plays each boss's cutscenes alone (as before) and a server without them does not relay them.
 - Version 11 also (branch `look-live`): types 430 to 434 are kept for a look of several parts (shield, sword, boots, gauntlets). A colour changed in the pause menu needs none: it goes out in `PLAYER_EQUIP` `color` as at the start (docs/puppet.md, "Changing your colour in the game").
 - Version 11 also (branch `customizer-full`): `PLAYER_LOOK` (430), each part's colour from the Link customizer ([Looks](#looks-player_look)). No earlier layout changed and no bump of its own. A build without it ignores the type (that player's parts stay the game's own on its screen).
 - Version 11 also (branch `ocarina-sound-b`): `LINK_SOUND` (500); 500 to 509 kept for Link's sounds. A build without it ignores the type (no sounds from that player).
 - **Protocol 12** (0.11, branch `boss-intro`): `DAMAGE` may end in the hit's place (3 x `f32`). A protocol 11 reader refuses that as trailing bytes, so the version goes up once for 0.11: a 0.10.x game or server is refused at `HELLO` with reason 1 and the server's note says which side runs Update.bat. Every other protocol 11 message is unchanged.
+
+- Protocol 12 also (branch `room-objects`): `SWITCH_STATE` (356). No bump of its own. A build without it ignores the type, and its timed switches stay its own player's. A server without it does not relay it.
 
 ## Who gets which stream
 

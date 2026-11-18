@@ -47,6 +47,7 @@
 #include <vector>
 
 #include "coop/protocol/messages.hpp"
+#include "coop_caller_orders.h"
 #include "coop_puppet.h"
 
 namespace CoopBossNative {
@@ -192,6 +193,12 @@ public:
     // (the owner's comes as a copy; CoopObjects::MinionMaker). Never blocks.
     bool CopyMakes(std::string_view maker);
 
+    // The copies that run their own changes now (our event and kAfterEventSteps after it, kReactSteps after our
+    // hit, a new mid-boss's kStartSteps, its death: OwnTime), by actor. Row 130: the objects layer puts none of
+    // their owner's place, animation or frame on them meanwhile (CoopObjects), so their own game's event or
+    // reaction runs to its end. Empty while the native sync is off (the old path: the owner's motion alone).
+    std::vector<std::uint64_t> CopiesRunningOwn() const;
+
     // The owner's state to send for one of our bosses; nothing before its
     // first change was seen.
     std::optional<BossBsa> OwnerState(std::uint64_t actor) const;
@@ -213,7 +220,7 @@ public:
     // Everything forgotten, the block too (tests; co-op off).
     void Reset();
 
-    static constexpr int kCallerOrder = 45;  // after the drops (40), before the boss rooms (50)
+    static constexpr int kCallerOrder = CoopCallerOrders::kBossTable;  // after the drops (40), before the boss rooms (50)
     // Steps a copy's brain verb may differ from the owner's (nothing queued)
     // before it is put back (about a second at the game's 60 frames).
     static constexpr int kDriftSteps = 60;

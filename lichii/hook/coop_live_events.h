@@ -100,6 +100,12 @@ struct Place {
     std::string_view event;
     std::string_view scene;
     float x, y, z;
+    // deku-ladder: the room the place is in (its asker's room graph: the room most of the graph's placements carry;
+    // tools/puppet_pack/place_rooms.py), or -1 when not known (then guessed from the nearest placement, as a
+    // player's room is). The guess put 46 of the 204 places in another room (an asker high on a wall is nearer
+    // another room's placements: Jabu-Jabu's room-1 switch asker guessed in room 5, it is in room 17), and the
+    // decider then waited forever for our Link to be in that room.
+    int room = -1;
 };
 std::span<const Place> Places();
 
@@ -115,6 +121,7 @@ inline constexpr float kNearM = 18.0f;
 // keeps it (one flag), but the decider never starts such an event here: which room's eye or door played it is not
 // known, and starting it near ours plays the other room's camera or door in the wrong room. Each room's own state
 // has its own flags (WaterTemple_Room00_ShootSwitchOnce, WaterTemple_Room21_OpenShutterBySwitch), shared as usual.
+// With both places' rooms known (Place::room) their rooms decide instead; the distance is for a place of room -1.
 inline constexpr float kOneRoomM = 20.0f;  // same-room pairs: 13.8 m (GTG room 10), 11.2 m (Spirit room 19)
 bool SpansRooms(std::string_view event, std::string_view scene);
 

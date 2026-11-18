@@ -41,6 +41,7 @@
 #include "coop_chatbox.h"
 #include "coop_draw.h"
 #include "coop/host/map_drop_log.hpp"
+#include "coop/host/save_transfer.hpp"
 #include "coop_flag_native.h"
 #include "coop_flags.h"
 #include "coop_game_build.h"
@@ -48,6 +49,7 @@
 #include "coop_save.h"
 #include "coop_hold.h"
 #include "coop_counters.h"
+#include "coop_world.h"
 #include "coop_difficulty.h"
 #include "coop_actor_events.h"
 #include "coop_boss_native.h"
@@ -59,6 +61,7 @@
 #include "coop_rando.h"
 #include "coop_hook.h"
 #include "coop_lobby_game.h"
+#include "coop_lobby_tab.h"
 #include "coop_voice.h"
 #include "coop_hud.h"
 #include "coop_hud_dim.h"
@@ -89,11 +92,13 @@
 #include "coop_time.h"
 #include "coop_pause.h"
 #include "coop_title.h"
+#include "coop_title_menu.h"
 #include "core/core.h"
 #include "coop_host_menu.h"
 #include "coop_null_page.h"
 #include "hos_coop_api.h"
 #include "hos_coop_actors.h"
+#include "hos_coop_nodes.h"
 #include "hos_coop_bosses.h"
 #include "hos_coop_pads.h"
 #include "hos_coop_save_load.h"
@@ -196,10 +201,28 @@ bool PuppetGuardInExe() {
 }
 
 // Before the game makes our first puppet: its null reads give 0 (issue 150, coop_null_page.h). Once.
-void ArmNullPage(const std::string& actor) {
-    if (actor.rfind("CoopPuppet_", 0) == 0) {
-        CoopNullPage::Arm(Env("HOS_COOP_NULL_READS"));
+// Where that failed after all, the puppets' director learns it before the puppet exists (GearIsUnsafe,
+// issue 232), and the create is refused unless HOS_COOP_NULL_READS=0 asked for the faults
+// (coop_hookshot.h RefuseUnarmed: every held piece and the puppet itself read through null). True: make it.
+bool ArmNullPage(const std::string& actor) {
+    if (actor.rfind("CoopPuppet_", 0) != 0) {
+        return true;
     }
+    const std::string env = Env("HOS_COOP_NULL_READS");
+    const bool armed = CoopNullPage::Arm(env);
+    if (!armed) {
+        CoopPuppet::TheDirector().SetNullReadsZero(false);
+    }
+    if (!CoopHookshot::RefuseUnarmed(actor, armed, env)) {
+        return true;
+    }
+    static std::atomic<bool> said{false};
+    if (!said.exchange(true)) {
+        LOG_WARNING(Core, "coop: {} not made: null-pointer reads cannot give 0 in this longshot.exe (see the null "
+                          "page line above); other players show as their fairy",
+                    actor);
+    }
+    return false;
 }
 
 // Whether a perceived puppet is safe here (coop_null_page.h Armable); if not, quiet puppets everywhere.
@@ -236,8 +259,7 @@ bool Refused(const CoopPuppet::Call& c) {
         }
     }
     if (!CoopHookshot::RefuseCreate(actor, allow)) {
-        ArmNullPage(actor);
-        return false;
+        return !ArmNullPage(actor);
     }
     static bool said = false;
     if (!said) {
@@ -415,6 +437,59 @@ void RunCalls(void* ctx) {
         }
         return std::optional<std::uint64_t>(x0);
     });
+}
+
+// Case 1 of a join's state (player reports 107, 129, 132): a guest asked for our save while our file is played, and
+// the file on disk is only as new as our last door. Our game is asked for its own autosave with the call its
+// EventTriggerRequestAutoSave node makes at the end of an event (the node's body, main+0x31f2f50): the AutoSaveMgr is
+// the game system's component 0xc (main+0xba7880(system, 0xc), 0 when there is none), then
+// main+0xba7730(mgr, 5, 0). That call runs the game's own gate first (main+0xba72d0: refused while the game's
+// autosave is off, in its cooldown after a save, or in a player state it does not save in) and otherwise only marks
+// the request in the manager's state; the manager saves at its own next step, into the slot it always uses. We write
+// nothing in the game; the send waits for a save written after the ask (save::Planner's round), at most
+// save::Planner::kFreshSaveUs, then our last save on disk goes as before.
+constexpr std::uint64_t kGameSystemGot = 0x4c7e178;    // main+: GOT -> the global that holds the game system
+constexpr std::uint64_t kSystemComponent = 0xba7880;   // main+: (system, index) -> the component, or 0
+constexpr std::uint64_t kAutoSaveMgrIndex = 0xc;       // the AutoSaveMgr's index (the node's own)
+constexpr std::uint64_t kRequestAutoSave = 0xba7730;   // main+: (mgr, kind, 0): the gate, then the request mark
+constexpr std::uint64_t kAutoSaveKindEvent = 5;        // EventTriggerRequestAutoSave's kind
+constexpr std::uint64_t kAutoSaveMgrState = 0x130;     // mgr: -> the state the request marks (0 before it is made)
+
+void RequestHostAutoSave(void* ctx) {
+    if (!CoopSave::TakeSaveRequest()) return;
+    const std::uint64_t base = CoopRuntime::MainBase();
+    const auto read64 = [](std::uint64_t at) {
+        std::uint64_t v = 0;
+        return g_api->read(at, &v, sizeof v) != 0 ? v : 0;
+    };
+    const std::uint64_t got = read64(base + kGameSystemGot);
+    const std::uint64_t system = got != 0 ? read64(got) : 0;
+    if (system == 0) {
+        LOG_WARNING(Core, "coop: save: our game has no game system yet: the guests get our last save on disk");
+        return;
+    }
+    HosCoopCall k{};
+    k.function = base + kSystemComponent;
+    k.x[0] = system;
+    k.x[1] = kAutoSaveMgrIndex;
+    std::uint64_t mgr = 0;
+    if (!g_api->call(ctx, &k, &mgr) || mgr == 0 || read64(mgr + kAutoSaveMgrState) == 0) {
+        LOG_WARNING(Core, "coop: save: our game's autosave manager is not there: the guests get our last save on disk");
+        return;
+    }
+    k = HosCoopCall{};
+    k.function = base + kRequestAutoSave;
+    k.x[0] = mgr;
+    k.x[1] = kAutoSaveKindEvent;
+    k.x[2] = 0;
+    std::uint64_t x0 = 0;
+    if (!g_api->call(ctx, &k, &x0)) {
+        LOG_WARNING(Core, "coop: no game function at {:#x}: the guests get our last save on disk", k.function);
+        return;
+    }
+    LOG_INFO(Core, "coop: save: asked our game for its own autosave (an event's end request): the guests' send waits "
+                   "for that save, at most {} s",
+             coop::host::save::Planner::kFreshSaveUs / 1'000'000);
 }
 
 }  // namespace
@@ -1134,6 +1209,7 @@ void Frame(void* ctx, int site) {
             if (CoopMapRefresh::TheRefresher().Due(now_ms)) CoopMapPage::AskHudRefresh();
         }
         RunCalls(ctx);
+        RequestHostAutoSave(ctx);   // (only when a guest's ask opened a round: CoopSave::TakeSaveRequest)
         LogBossNative();
         CoopMapPage::Frame(ctx, g_api);   // the Map page's panes, found once while the game plays
         if (const auto menu = CoopMapPage::MenuState()) {  // minimap-b: the drop log's menu state (patch 0018)
@@ -1193,6 +1269,15 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
         static std::atomic<bool> said{false};
         if (!said.exchange(true)) {
             LOG_INFO(Core, "coop: world hooks: first pause counter start from hookshot.exe (node {:#x})", a);
+        }
+        return 1;
+    }
+    case HOS_COOP_WORLD_NODE_START: {  // (patch 0029, hos_coop_nodes.h: coop_world.h's NodeStarts; the Objects walk
+                                       // looks a pushed block's node up there, FindBlockNode)
+        CoopWorld::TheNodeStarts().Push(a, b);
+        static std::atomic<bool> said{false};
+        if (!said.exchange(true)) {
+            LOG_INFO(Core, "coop: world hooks: first AI node start from hookshot.exe (node {:#x}, actor {:#x})", a, b);
         }
         return 1;
     }
@@ -1667,6 +1752,7 @@ COOP_HOOKSHOT_EXPORT int hos_coop_start(const HosCoopApi* api) {
     if (!CoopHookshot::Start(api)) return 0;
     UseSaveSwitch();
     UseSlotOpens();
+    CoopSave::SetSaveRequests(true);   // (RequestHostAutoSave, on the calc thread's call site)
     CoopHookshot::UseLocalPads();
     return 1;
 }
@@ -1716,6 +1802,53 @@ COOP_HOOKSHOT_EXPORT int hos_coop_char(uint32_t ch) {
 COOP_HOOKSHOT_EXPORT int hos_coop_keys_taken(void) {
     return CoopHookshot::KeysTaken() ? 1 : 0;
 }
+// The Discord status's second line (Longshot patch 0026, host/discord_rpc.c, every 5 s on its own thread):
+// "Co-op: N players" in a session, "Solo" with co-op idle. 1 = written (cut to cap, always ended); 0 = none
+// (nothing thrown crosses into Longshot's C: a failed copy of the session is no line, Longshot's own stays).
+COOP_HOOKSHOT_EXPORT int hos_coop_discord_state(char* out, size_t cap) noexcept {
+    if (out == nullptr || cap == 0) {
+        return 0;
+    }
+    out[0] = '\0';
+    try {
+        const CoopLobby::Seen seen = CoopLobby::Now();
+        const std::string line = CoopLobbyTab::DiscordState(seen.connected, seen.players.size());
+        const size_t n = line.size() < cap - 1 ? line.size() : cap - 1;
+        std::memcpy(out, line.data(), n);
+        out[n] = '\0';
+        return 1;
+    } catch (...) {
+        return 0;
+    }
+}
+// Longshot patch 0028 (player report 133), host/oot_autoload.c: its Skip title screen asks before it chooses one of the
+// title's buttons itself (the game's own Button::Decide, no pressed buttons), from its game thread at a menu screen's
+// update. 1 = not now: co-op is hosting, joining or in a session, or the host's save is on its way (the choice is the
+// player's then; CoopTitleMenu::SkipTitleHold). 0 with co-op off: solo play skips the title as Longshot does. Nothing
+// thrown crosses into Longshot's C; a failure holds.
+COOP_HOOKSHOT_EXPORT int hos_coop_title_hold(void) noexcept {
+    if (!g_on) {
+        return 0;
+    }
+    try {
+        CoopTitleMenu::SkipTitleInput in;
+        HosCoopStatus st{};
+        st.size = sizeof st;
+        CoopHookshot::HostMenu().Status(&st);
+        in.host_state = st.state;
+        in.session_live = CoopSave::SessionLive();
+        in.save_coming = CoopSave::HostSaveComing();
+        in.save_wait = CoopTitle::SaveWaitWaiting();
+        const char* why = CoopTitleMenu::SkipTitleHold(in);
+        static std::atomic<const char*> said{nullptr};
+        if (why != nullptr && said.exchange(why) != why) {
+            LOG_INFO(Core, "coop: title: Skip title screen waits: {}", why);
+        }
+        return why != nullptr ? 1 : 0;
+    } catch (...) {
+        return 1;
+    }
+}
 // The mouse (hos_coop_api.h): the cheats panel's clicks.
 COOP_HOOKSHOT_EXPORT int hos_coop_mouse(float fx, float fy, int event) {
     return CoopHookshot::Mouse(fx, fy, event) ? 1 : 0;
@@ -1749,7 +1882,22 @@ COOP_HOOKSHOT_EXPORT int hos_coop_menu_picture(int tab, HosCoopMenuPicture* out)
 }
 // The gameplay camera (hos_coop_view.h, patch 0019): around your own Link while the Customize page shows him.
 COOP_HOOKSHOT_EXPORT int hos_coop_view(double eye[3], double target[3]) {
-    return g_on && CoopLookView::Camera(eye, target) ? 1 : 0;
+    if (!g_on || eye == nullptr || target == nullptr) {
+        return 0;
+    }
+    if (CoopLookView::Camera(eye, target)) {
+        return 1;
+    }
+    // Down but not out, spectating (coop_dbno_game.h): the game's own camera, as it follows our Link, moved
+    // onto the player we watch, so it follows them the same way (the right stick still turns it).
+    if (const auto off = CoopDbno::SpectateOffset()) {
+        for (int i = 0; i < 3; ++i) {
+            eye[i] += (*off)[i];
+            target[i] += (*off)[i];
+        }
+        return 1;
+    }
+    return 0;
 }
 COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) {
     if (!g_on || stick == nullptr) {

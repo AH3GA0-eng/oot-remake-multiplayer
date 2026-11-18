@@ -297,6 +297,23 @@ class DryRunTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("14 steps (password start try)", out.getvalue())
 
+    def test_check_reads_a_file_with_a_bom(self):
+        # A steps file written by Windows PowerShell 5.1 (Out-File -Encoding utf8: BOM + CRLF) reads the same.
+        with open(os.path.join(SCENARIOS, "join-password.steps.txt"), encoding="utf-8") as f:
+            text = f.read()
+        d = tempfile.mkdtemp()
+        try:
+            path = os.path.join(d, "bom.steps.txt")
+            with open(path, "wb") as f:
+                f.write(b"\xef\xbb\xbf" + text.replace("\n", "\r\n").encode("utf-8"))
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = hs.main(["check", path])
+            self.assertEqual(code, 0)
+            self.assertIn("14 steps (password start try)", out.getvalue())
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
 
 class HookshotGamesTest(unittest.TestCase):
     """The real backend's files: a stand-in game (a copy of cmd.exe (or this Python), which ends at once on an empty stdin), a fake
@@ -428,6 +445,48 @@ class HookshotGamesTest(unittest.TestCase):
         args, env = started[0]
         self.assertEqual(args[-4:], ["--test-delay-ms", "250", "--test-jitter-ms", "60"])
         self.assertEqual(env.get("OOT_COOP_TEST"), "1")
+
+
+class WaitJoinedTest(unittest.TestCase):
+    """A game joins only once its renderer is up (rc.7: 'welcomed' after 'the shaders took'), so wait_joined waits for the
+    renderer first (hookshot.wait_renderer: follows the compile's progress) and the join's timeout counts from there."""
+
+    def games(self, renderer=None):
+        calls = []
+        hk = type("hk", (), {})()
+        hk.RENDERER_STALL, hk.RENDERER_LIMIT = 180, 3600
+        hk.wait_renderer = lambda read, alive, *args: calls.append((read(), args)) or 450.0
+        g = hs.HookshotGames(hk, {"A": "a", "B": "b"}, "out", None, 27560, "p", [], 30,
+                             {"switches": [], "start": None, "timeout": None, "server": []}, say=lambda s: None)
+        g.renderer = renderer
+        g.log = lambda x: "coop: welcomed as player 2 on 127.0.0.1:27560\n"
+        g.alive = lambda x: True
+        return g, calls
+
+    def test_renderer_first_with_the_timeout_as_its_wait(self):
+        g, calls = self.games()
+        g.wait_joined("B")
+        self.assertEqual(calls, [("coop: welcomed as player 2 on 127.0.0.1:27560\n", (30, 180, 3600))])
+
+    def test_run_options_reach_the_renderer_wait(self):
+        g, calls = self.games(renderer=(900, 240, 2400))
+        g.wait_joined("B")
+        self.assertEqual(calls[0][1], (900, 240, 2400))
+
+    def test_join_timeout_counts_after_the_renderer(self):
+        g, calls = self.games()
+        g.log = lambda x: "vk: start-up: the shaders took 450 s\n"   # renderer up, never welcomed
+        t = [0.0]
+        real_mono, real_sleep = hs.time.monotonic, hs.time.sleep
+        hs.time.monotonic = lambda: t[0]
+        hs.time.sleep = lambda s: t.__setitem__(0, t[0] + s)
+        try:
+            with self.assertRaises(TimeoutError) as e:
+                g.wait_joined("B")
+        finally:
+            hs.time.monotonic, hs.time.sleep = real_mono, real_sleep
+        self.assertIn("in 30 s after its renderer started", str(e.exception))
+        self.assertEqual(len(calls), 1)
 
 
 if __name__ == "__main__":

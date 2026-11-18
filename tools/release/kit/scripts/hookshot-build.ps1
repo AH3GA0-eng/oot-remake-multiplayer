@@ -51,6 +51,7 @@ param(
     [string]$Tools = '',
     [string]$Work = '',
     [string]$DlssSdk = '',
+    [string]$RomfsFrom = '',   # (tools/hookshot/hs.py: another game folder of the same .nup, its game files hard-linked)
     [switch]$Rebuild,
     [switch]$CheckOnly,
     [switch]$PackOnly,
@@ -91,7 +92,7 @@ trap {
     } elseif ($m -match '(?i)application control|blocked by|virus|potentially unwanted') {
         Write-Host '  Windows or the antivirus blocked a program of the build: Windows Security > Protection history says which; allow it, or add this kit''s folder under Exclusions. Smart App Control (Windows 11) blocks it whatever Defender''s settings (SETUP.md, "If something goes wrong").' -ForegroundColor Yellow
     }
-    Write-Host '  Start again once that is done; what was downloaded is kept. Still stuck: scripts\collect-logs.cmd, and send its zip.'
+    Write-Host '  Start again once that is done; what was downloaded is kept. Still stuck: scripts\collect-logs.cmd, and attach its zip to /bugreport on the Discord.'
     exit 1
 }
 function Step([string]$Text) { Write-Host ''; Write-Host "== $Text" -ForegroundColor Cyan }
@@ -630,9 +631,10 @@ function Invoke-MakeGame([string[]]$MoreArgs, [string]$Log = '') {
     $env:PYTHONIOENCODING = 'utf-8'
     $env:RX_CPM = Join-Path $tools 'cpm'
     $env:LONGSHOT_MINGW = Join-Path $tools 'llvm-mingw'
+    foreach ($v in 'LONGSHOT_NGX_SDK', 'LONGSHOT_FFX_SDK', 'LONGSHOT_MSVC', 'EMSDK', 'LONGSHOT_BUILDER_EXE', 'LONGSHOT_TOOLS',
+             'LONGSHOT_ROMFS_FROM') {   # (a launcher's: game files hard-linked from another folder, Longshot rc.6 #360)
     # (LONGSHOT_NGX_SDK too: Longshot Builder's Runner.cs removes it as well, a folder set on the PC is not one the
     # player asked for. Without the opt-in the back end is built with vk_dlss.cpp's stubs, as before DLSS.)
-    foreach ($v in 'LONGSHOT_NGX_SDK', 'LONGSHOT_FFX_SDK', 'LONGSHOT_MSVC', 'EMSDK', 'LONGSHOT_BUILDER_EXE', 'LONGSHOT_TOOLS') {
         Remove-Item "Env:\$v" -ErrorAction SilentlyContinue
     }
     # (NVIDIA DLSS: make_game.py fetches NVIDIA's SDK into this folder (--fetch-ngx-sdk) and builds the renderer with it)
@@ -643,8 +645,9 @@ function Invoke-MakeGame([string[]]$MoreArgs, [string]$Log = '') {
     # (the release the menu names, top left: the source archive has no git history and no VERSION file, so
     # without this the builder's nx2\version.py says "unknown")
     if ($pin.tag) { $env:LONGSHOT_VERSION = $pin.tag }
-    # (Longshot's lift key hashes every A64_/OOT_/RX_ variable it is started with: co-op's own OOT_COOP_* ones
-    # (the test cache, the test password) would make a new key, and a whole new translation, for nothing)
+    # (co-op's own OOT_COOP_* ones (the test cache, the test password) are no business of the build's: before rc.6
+    # Longshot's lift key hashed every A64_/OOT_/RX_ variable, a whole new translation for nothing; rc.6's (#22) keys
+    # only the A64_*, SUYU_RECOMP_* and RX_TARGET ones)
     Get-ChildItem Env: | Where-Object { $_.Name -like 'OOT_COOP_*' } | ForEach-Object { Remove-Item "Env:\$($_.Name)" }
     $logArgs = if ($Log) { @('--log', $Log) } else { @() }
     Push-Location $tools
@@ -706,6 +709,15 @@ if ($gameReady -and -not $Rebuild -and -not $CheckOnly) {
         & robocopy $ngxFrom $ngxSdk /E /R:1 /W:1 /NFL /NDL /NJH /NJS /NP /XF *.part | Out-Null
         if ($LASTEXITCODE -ge 8) { Write-Host "  (not copied, robocopy $($LASTEXITCODE): the build downloads it)" }
         $global:LASTEXITCODE = 0
+    }
+    # (-RomfsFrom: another game folder unpacked from the same .nup. Longshot's --romfs-from (since rc.6, #360) hard-links its
+    # game files instead of writing the .nup's ~26 GB again; Longshot itself checks the folder's .nup stamp and the drive,
+    # and reads the .nup when it can't. Only with a .nup, and only a Longshot that has the option)
+    $makeGame = Join-Path $tools 'nx2\make_game.py'
+    if ($RomfsFrom -and $gameArgs[0] -eq '--nup' -and (Test-Path -LiteralPath $RomfsFrom -PathType Container) -and
+        (Test-Path -LiteralPath $makeGame) -and (Select-String -LiteralPath $makeGame -SimpleMatch '"--romfs-from"' -Quiet)) {
+        $buildArgs += @('--romfs-from', $RomfsFrom)
+        Write-Host "  the game files from $RomfsFrom (hard links where the drive allows)"
     }
     New-Item -ItemType Directory -Force -Path $Out | Out-Null
     # (your own Longshot of the same release: its compiled objects, keyed by source, flags and headers and never by folder,
@@ -832,12 +844,10 @@ if ($lsImage) {
     foreach ($l in (Copy-KitLongshotSaves $lsImage $ourImage)) { Write-Host "  $l" }
 }
 
-# A desktop shortcut to the kit's launcher ("Start Squadala.bat"; "Start OoT Co-op.bat" up to v0.11.2,
-# Play-OoT-Coop.bat in an older emulator kit), once, for the kit's own game (not for a game hs.py builds elsewhere).
-# "Play Squadala" (its name up to v0.11.2, "Play OoT Co-op", counts as there: start.ps1 renames it).
+# A desktop shortcut to the kit's one start file, "Start Squadala.bat", once, for the kit's own game (not for a game
+# hs.py builds elsewhere). "Play Squadala" (its name up to v0.11.2, "Play OoT Co-op", counts as there: start.ps1
+# renames it; update.ps1 Update-KitStartLinks points every older shortcut at "Start Squadala.bat").
 $launcher = Join-Path $kit 'Start Squadala.bat'
-if (-not (Test-Path -LiteralPath $launcher)) { $launcher = Join-Path $kit 'Start OoT Co-op.bat' }
-if (-not (Test-Path -LiteralPath $launcher)) { $launcher = Join-Path $kit 'Play-OoT-Coop.bat' }
 if (-not $PSBoundParameters.ContainsKey('Out') -and -not $Tools -and (Test-Path -LiteralPath $launcher) -and
     -not $env:OOT_COOP_NO_SHORTCUT) {
     try {

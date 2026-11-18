@@ -4,7 +4,8 @@ file(GLOB_RECURSE coop_test_sources CONFIGURE_DEPENDS
      "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/*.hpp"
      "${CMAKE_CURRENT_SOURCE_DIR}/*.h")
 foreach(source IN LISTS coop_test_sources)
-  file(STRINGS "${source}" bad_names REGEX "(TEST_CASE|SUBCASE|SCENARIO|TEST_CASE_FIXTURE)[(]\"[^\"]*;[^\"]*\"")
+  # (TEST_CASE_FIXTURE's name is its second argument; tools/check_content.py refuses the same names at commit time.)
+  file(STRINGS "${source}" bad_names REGEX "((TEST_CASE|SUBCASE|SCENARIO|TEST_CASE_TEMPLATE)[(]|TEST_CASE_FIXTURE[(][^,]*,[ ]*)\"[^\"]*;[^\"]*\"")
   if(bad_names)
     message(FATAL_ERROR "A test name in ${source} has a ';' (ctest would run nothing for it): ${bad_names}")
   endif()
@@ -98,6 +99,7 @@ add_executable(coop_tests
   lichii/game_build_test.cpp
   lichii/game_scan_test.cpp
   lichii/boss_test.cpp
+  lichii/boss_beaten_test.cpp
   lichii/boss_native_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_boss_native.cpp
   lichii/boss_scenes_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_boss_scenes.cpp
   lichii/teleport_test.cpp
@@ -112,6 +114,7 @@ add_executable(coop_tests
   lichii/cheat_items_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_cheat_items.cpp
   # These hook files have no emulator code, so they are tested on their own.
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_boss.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_boss_beaten.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_callers.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_camera.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_drops.cpp
@@ -138,6 +141,9 @@ add_executable(coop_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_world.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_logic_probe.cpp
   lichii/lift_ride_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_lift_ride.cpp
+  lichii/room_objects_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_room_objects.cpp
+  lichii/switch_share_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_switch_share.cpp
+  lichii/caller_orders_test.cpp
   lichii/eye_switch_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_eye_switch.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_ocarina.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_ocarina_sound.cpp
@@ -164,6 +170,8 @@ target_sources(coop_tests PRIVATE hookshot/module_test.cpp hookshot/draw_test.cp
   ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_draw.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_dbno_draw.cpp
   hookshot/hud_dim_test.cpp
+  hookshot/discord_activity_test.cpp
+  hookshot/skip_title_test.cpp
   hookshot/chatbox_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_chatbox.cpp
   hookshot/cheats_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_cheats_panel.cpp
   hookshot/png_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_png.cpp

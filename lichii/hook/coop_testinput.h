@@ -43,6 +43,21 @@
 //                          damage (as a real kill, so it drops what it
 //                          drops); needs LICHII_COOP_OBJECTS on; logs
 //                          "coop: test kill NAME ...: hit" or "none here"
+//   hit Enemy_DungeonBoss_Gohma 2  test only: as kill, but a hit of N (1 to
+//                          80) of its life through the game's own Life step
+//                          (never past its stops); a copy's fall goes to the
+//                          owner as DAMAGE as any hit of ours; logs
+//                          "coop: test hit NAME N ...: hit" or "none here"
+//   stun Enemy_DungeonBoss_Gohma  test only: our COPY of the nearest boss of
+//                          that name tells its owner it is stunned here (a
+//                          DAMAGE of 0, issue 150's hand-over), as our game's
+//                          own stun would; its stun animation is not played;
+//                          logs "coop: test stun NAME: said" or "not a copy"
+//   hurt 4                 test only: our own Link takes a hit of that many
+//                          quarter hearts (1 to 80) through the game's own hit
+//                          on him (CoopObjects::HurtOurLink, PvP's path: he
+//                          flinches; a lethal one runs the game's death);
+//                          logs "coop: test hurt N: asked" (or "no Link")
 //   give bombs             test only: gives an item through coop_cheats
 //                          (needs LICHII_COOP_CHEATS=1): bombs, bow, hookshot,
 //                          or any item flag name coop_cheats knows
@@ -117,6 +132,9 @@ enum class Kind {
     chat,    // test only: a chat line or command, as typed in the chat box (/teleport B)
     place,   // test only: Link put at x, y, z in this scene
     kill,    // test only: the nearest actor of that name hit by our Link for all its life
+    hurt,    // test only: our own Link hit for N quarter hearts (the game's own hit)
+    hit,     // test only: the nearest actor of that name hit by our Link for N of its life (its Life step)
+    stun,    // test only: our copy of the nearest boss of that name says its owner a stun (DAMAGE 0)
     setflag, // test only: an Int or Bool flag of this game set to a value (issue 130: shop-buy)
     setenum, // test only: an Enum flag (name or 0x hash) set to a value's name (issue 193: quests)
     sync,    // sync NAME N: wait here, buttons let go, until N games reached NAME

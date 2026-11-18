@@ -75,7 +75,7 @@ inline bool event_blocks_revive(bool event_running, EventWhose whose) {
 
 // local_event_hides with the owner: only our own event hides the others (not another player's
 // replayed here, not the Ocarina by its event or by our Link's animation).
-inline bool local_event_hides(bool event_running, EventWhose whose, std::optional<std::string_view> own_anim) {
+inline bool local_event_hides(bool event_running, EventWhose whose, const std::optional<std::string_view>& own_anim) {
   return our_link_in_event(event_running, whose) && local_event_hides(true, own_anim);
 }
 
@@ -154,7 +154,7 @@ class EventOwnerTracker {
   }
 
   EventWhose Frame(bool running, bool link_bound, std::uint64_t now_us,
-                   std::optional<std::string_view> own_anim = std::nullopt) {
+                   const std::optional<std::string_view>& own_anim = std::nullopt) {
     if (!running) {
       running_ = false;
       replay_ = false;

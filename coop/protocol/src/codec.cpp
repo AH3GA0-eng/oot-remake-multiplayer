@@ -1996,6 +1996,41 @@ Error decode_body(Reader& r, DungeonEvent& m) {
   return check_dungeon_event(m);
 }
 
+// SWITCH_STATE: u8 player, scene, name, 3 x f32 place, u32 plug, u8 on.
+Error check_switch_state(const SwitchState& m) {
+  if (!valid_player_or_self(m.player_number) || m.scene.empty() || m.name.empty() || m.plug == 0 ||
+      !all_finite(m.place)) {
+    return Error::bad_value;
+  }
+  COOP_TRY(check_string(m.scene, kMaxSceneChars));
+  return check_string(m.name, kMaxSwitchNameChars);
+}
+
+Error encode_body(const SwitchState& m, Writer& w) {
+  COOP_TRY(check_switch_state(m));
+  w.u8(m.player_number);
+  w.str(m.scene);
+  w.str(m.name);
+  for (const float f : m.place) w.f32(f);
+  w.u32(m.plug);
+  w.u8(m.on ? 1 : 0);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, SwitchState& m) {
+  m = SwitchState{};
+  COOP_READ(r.u8(m.player_number));
+  COOP_TRY(r.str(m.scene, kMaxSceneChars));
+  COOP_TRY(r.str(m.name, kMaxSwitchNameChars));
+  for (float& f : m.place) COOP_READ(r.f32(f));
+  COOP_READ(r.u32(m.plug));
+  std::uint8_t on = 0;
+  COOP_READ(r.u8(on));
+  if (on > 1) return Error::bad_value;
+  m.on = on == 1;
+  return check_switch_state(m);
+}
+
 // PLATFORM_CLOCK: u8 player, scene, u64 server time, u8 count, then count x
 // (u64 hash, u64 key, f32 value, f32 rate, f32 cycle).
 Error check_platform_tick(const PlatformTick& t) {
@@ -2728,11 +2763,11 @@ Error decode_body(Reader& r, DbnoMode& m) {
   return check_dbno_mode(m);
 }
 
-// DBNO_STATE: u8 player, u8 state (0 up, 1 downed, 2 out), u16 bleed-out
+// DBNO_STATE: u8 player, u8 state (0 up, 1 downed, 2 out, 3 spectating), u16 bleed-out
 // tenths left, u8 reviver (0 nobody; not the player), u8 progress. Only a
 // downed player has time left, and only one with a reviver has progress.
 Error check_dbno_status(const DbnoStatus& m) {
-  if (!valid_player_or_self(m.player_number) || m.state > DbnoState::out ||
+  if (!valid_player_or_self(m.player_number) || m.state > DbnoState::spectating ||
       m.left_tenths > kDbnoMaxLeftTenths || m.reviver > kMaxPlayers) {
     return Error::bad_value;
   }
@@ -2760,7 +2795,7 @@ Error decode_body(Reader& r, DbnoStatus& m) {
   COOP_READ(r.u16(m.left_tenths));
   COOP_READ(r.u8(m.reviver));
   COOP_READ(r.u8(m.progress));
-  if (state > static_cast<std::uint8_t>(DbnoState::out)) return Error::bad_value;
+  if (state > static_cast<std::uint8_t>(DbnoState::spectating)) return Error::bad_value;
   m.state = static_cast<DbnoState>(state);
   return check_dbno_status(m);
 }
@@ -2788,6 +2823,24 @@ Error decode_body(Reader& r, DbnoRevive& m) {
     return Error::bad_value;
   }
   m.holding = holding == 1;
+  return Error::none;
+}
+
+// DBNO_THREAT: u8 player, u8 near (0 none, 1 an enemy near; others refused).
+Error encode_body(const DbnoThreat& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  w.u8(m.player_number);
+  w.u8(m.enemy_near ? 1 : 0);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, DbnoThreat& m) {
+  m = DbnoThreat{};
+  std::uint8_t value = 0;
+  COOP_READ(r.u8(m.player_number));
+  COOP_READ(r.u8(value));
+  if (!valid_player_or_self(m.player_number) || value > 1) return Error::bad_value;
+  m.enemy_near = value == 1;
   return Error::none;
 }
 
@@ -2924,6 +2977,7 @@ MessageType type_of(const Message& message) {
       MessageType::platform_clock,
       MessageType::platform_counter,
       MessageType::dbno_mode,   MessageType::dbno_state, MessageType::dbno_revive,
+      MessageType::dbno_threat,
       MessageType::difficulty,
       MessageType::voice_frame,
       MessageType::mod_list,      MessageType::mod_settings,
@@ -2936,6 +2990,7 @@ MessageType type_of(const Message& message) {
       MessageType::link_sound,
       MessageType::boss_scene,  MessageType::boss_heart,
       MessageType::player_look,
+      MessageType::switch_state,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -3011,6 +3066,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::world_hit:
     case MessageType::boss_room:
     case MessageType::sign_cut:
+    case MessageType::switch_state:
     case MessageType::dungeon_event:
     case MessageType::save_ask:
     case MessageType::save_part:
@@ -3024,6 +3080,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::ocarina_note:
     case MessageType::dbno_mode:
     case MessageType::dbno_state:
+    case MessageType::dbno_threat:
     case MessageType::local_join:
     case MessageType::local_joined:
     case MessageType::local_leave:
@@ -3136,6 +3193,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::drop_ask:
     case MessageType::boss_room:
     case MessageType::sign_cut:
+    case MessageType::switch_state:
     case MessageType::dungeon_event:
     case MessageType::save_ask:
     case MessageType::save_part:
@@ -3149,6 +3207,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::dbno_mode:
     case MessageType::dbno_state:
     case MessageType::dbno_revive:
+    case MessageType::dbno_threat:
     case MessageType::player_look:
     case MessageType::link_sound:
     case MessageType::boss_scene:
@@ -3185,12 +3244,13 @@ auto* player_field(M& message) {
                       std::is_same_v<T, SignCut> || std::is_same_v<T, SaveAsk> ||
                       std::is_same_v<T, SavePart> || std::is_same_v<T, PlayerLife> ||
                       std::is_same_v<T, PvpHit> || std::is_same_v<T, PvpHurt> ||
-                      std::is_same_v<T, DungeonEvent> ||
+                      std::is_same_v<T, DungeonEvent> || std::is_same_v<T, SwitchState> ||
                       std::is_same_v<T, PlayerRide> ||
                       std::is_same_v<T, OcarinaNote> ||
                       std::is_same_v<T, PlatformClock> ||
                       std::is_same_v<T, PlatformCounter> ||
                       std::is_same_v<T, DbnoStatus> || std::is_same_v<T, DbnoRevive> ||
+                      std::is_same_v<T, DbnoThreat> ||
                       std::is_same_v<T, VoiceFrame> ||
                       std::is_same_v<T, ModList> || std::is_same_v<T, ModSettings> ||
                       std::is_same_v<T, LinkSound> ||
@@ -3299,6 +3359,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::dbno_mode: return decode_as<DbnoMode>(body, out);
     case MessageType::dbno_state: return decode_as<DbnoStatus>(body, out);
     case MessageType::dbno_revive: return decode_as<DbnoRevive>(body, out);
+    case MessageType::dbno_threat: return decode_as<DbnoThreat>(body, out);
     case MessageType::flag_snapshot: return decode_as<FlagSnapshot>(body, out);
     case MessageType::host: return decode_as<Host>(body, out);
     case MessageType::object_present: return decode_as<ObjectPresent>(body, out);
@@ -3321,6 +3382,7 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::world_hit: return decode_as<WorldHit>(body, out);
     case MessageType::sign_cut: return decode_as<SignCut>(body, out);
     case MessageType::dungeon_event: return decode_as<DungeonEvent>(body, out);
+    case MessageType::switch_state: return decode_as<SwitchState>(body, out);
     case MessageType::platform_clock: return decode_as<PlatformClock>(body, out);
     case MessageType::platform_counter: return decode_as<PlatformCounter>(body, out);
     case MessageType::voice_frame: return decode_as<VoiceFrame>(body, out);
