@@ -269,6 +269,8 @@ TEST_CASE("host menu: Join with a room name through a relay: the relay lets this
     lc.relay_port = relay_port;
     lc.server_port = 1;  // no game server here: only the room is held
     lc.room = "forest-gang";
+    std::atomic<bool> room_held{false};  // (set on the serving thread: link.room() is that thread's to read)
+    lc.on_room = [&room_held](const std::string&) { room_held = true; };
     relay::RelayLink link(lc);
     std::string why;
     REQUIRE(link.start(why));
@@ -279,7 +281,7 @@ TEST_CASE("host menu: Join with a room name through a relay: the relay lets this
             link.service();
         }
     });
-    REQUIRE(wait_for([&] { return !link.room().empty(); }, 3000));
+    REQUIRE(wait_for([&] { return room_held.load(); }, 3000));
 
     Game game;
     CoopHostMenu::Menu menu(game.hooks());
