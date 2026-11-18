@@ -250,7 +250,17 @@ bool Refused(const CoopPuppet::Call& c) {
     if (actor.rfind("Coop", 0) == 0) {
         if (const CoopRando::Rando* r = CoopModsRuntime::Rando(); r != nullptr && r->HoldPack()) {
             static bool held_said = false;
-            if (!held_said) {
+            static bool rows_said = false;
+            if (r->RowsMissing()) {
+                // (player report 144/145: the game would refuse it for ever, the body never shown)
+                if (!rows_said) {
+                    rows_said = true;
+                    LOG_WARNING(Core, "coop: {} not made: the game's actor table comes from a mod without the "
+                                      "puppet pack's rows, so the game would refuse it (see the randomizer line at the "
+                                      "start, coop-rows.txt); other players show as their fairy",
+                                actor);
+                }
+            } else if (!held_said) {
                 held_said = true;
                 LOG_WARNING(Core, "coop: {} not made: the randomizer seed's size table is being checked or was made "
                                   "again (restart the game); other players show as their fairy until then",
