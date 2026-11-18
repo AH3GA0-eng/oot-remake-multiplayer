@@ -305,6 +305,13 @@ def read_text(path):
         return None
 
 
+def spans_lines(rx):
+    """True when an expect is about more than one line: DOTALL set inline ((?s), (?is), (?s:...)), a
+    newline named in the pattern, or the whole log's start/end (\\A, \\Z: "never in this game")."""
+    return (bool(re.search(r"\(\?[aiLmsux-]*s[aiLmsux-]*[):]", rx))
+            or any(t in rx for t in ("\\n", "\n", "\\A", "\\Z")))
+
+
 def judge(folder, meta=None):
     """(result, evidence) of one run folder."""
     meta = meta or json.loads(read_text(os.path.join(folder, "run.json")) or "{}")
@@ -329,19 +336,26 @@ def judge(folder, meta=None):
         if "scenario played" not in played and os.path.isfile(os.path.join(folder, "steps.txt")):
             return "FAIL", "steps.txt has no 'scenario played'"
         return "PLAYED", "no expect=; look at the shots"
-    # Each side's game log, then the runner's own log of that side (player-X.txt): hookshot.py writes
-    # the lines of the test commands it plays itself there (`coop: test warp done`, ...), not in the
-    # game's log, so an expect of one of those could never match (hs-crawl, big-run-0114 wave3).
-    logs = {x: "\n".join(read_text(os.path.join(folder, name % x)) or ""
-                         for name in ("hookshot_log-%s.txt", "player-%s.txt")) for x in "AB"}
+    # Each side's game log first. hookshot.py writes the lines of the test commands it plays itself
+    # (`coop: test warp done`, ...) to its own log of that side (player-X.txt), not to the game's, so an
+    # expect of one of those could never match (hs-crawl, big-run-0114 wave3). The runner's log is
+    # searched only when the game log missed AND the expect is one line (not DOTALL): it also holds the
+    # bare `test mark` lines with none of the game's lines between them, so an ordered or "nothing
+    # between these marks" expect (hs-voice's `(?s)test mark away...test mark far-end`) would pass there.
+    games = {x: read_text(os.path.join(folder, "hookshot_log-%s.txt" % x)) or "" for x in "AB"}
+    runners = {x: read_text(os.path.join(folder, "player-%s.txt" % x)) or "" for x in "AB"}
     found, missing = [], []
     for side, rx in expects:
         hit = None
-        for x in ([side] if side else ["A", "B"]):
-            m = re.search(rx, logs[x], re.M)
-            if m:
-                line = logs[x][logs[x].rfind("\n", 0, m.start()) + 1:].split("\n", 1)[0]
-                hit = "%s: '%s'" % (x, line.strip()[:80])
+        sources = [games] if spans_lines(rx) else [games, runners]
+        for logs in sources:
+            for x in ([side] if side else ["A", "B"]):
+                m = re.search(rx, logs[x], re.M)
+                if m:
+                    line = logs[x][logs[x].rfind("\n", 0, m.start()) + 1:].split("\n", 1)[0]
+                    hit = "%s: '%s'" % (x, line.strip()[:80])
+                    break
+            if hit:
                 break
         (found if hit else missing).append(hit or "%s'%s'" % (side + ":" if side else "", rx))
     if missing:
