@@ -973,6 +973,9 @@ CoopDraw::Scene DrawScene() {
         b.dim = dim_hold.Dim(row.number, row.state == "connected", dim_now);
         s.hud.push_back(std::move(b));
     }
+    if (!s.hud.empty()) {   // row 141: the blocks go below the game's own HUD as it is laid out now
+        s.game_hud_bottom = CoopMapPage::GameHudBottom();
+    }
     if (list) {
         if (game) {
             for (auto& row : rows) {
