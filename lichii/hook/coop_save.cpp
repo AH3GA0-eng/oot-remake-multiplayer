@@ -289,7 +289,7 @@ void PendingFrame() {
     if (!RemountLocked(to)) {
         LOG_WARNING(Core, "coop: save: could not switch the save folder to {}: this game keeps {}", to.string(),
                     g_dir.string());
-        g_guest.ready = false;
+        save::note_write_failed(g_guest);
         g_lines.on_failed();
         Say("The host's save came, but this game could not switch to it (see the log): play your own save.");
         return;
@@ -335,10 +335,12 @@ save::WriteResult WriteSlotTo(const fs::path& dir, const save::SaveSlot& slot, b
         break;
     case save::WriteResult::not_coop:
         LOG_WARNING(Core, "coop: save: refused to write the host's save into {}", dir.string());
+        save::note_write_failed(g_guest);
         g_lines.on_failed();
         break;
     case save::WriteResult::failed:
         LOG_ERROR(Core, "coop: save: could not write the host's save into {}", dir.string());
+        save::note_write_failed(g_guest);
         g_lines.on_failed();
         Say("The host's save could not be written (see the log): play your own save.");
         break;
@@ -806,6 +808,7 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
     const auto slot = save::unpack(packed);
     if (!slot) {
         LOG_WARNING(Core, "coop: save: the host's save (transfer {}) is not a save slot", part->transfer_id);
+        save::note_write_failed(g_guest);   // nothing is on its way now (else Resync says "already on its way")
         g_lines.on_failed();
         Say("The host's save could not be read (see the log): play your own save, or join again.");
         return;
@@ -827,11 +830,7 @@ namespace {
 // again as on joining: the next OnFrame asks the host, the parts come, the slot waits for the title's menu
 // (PendingFrame) and is then written into the co-op folder and switched to. Its own saves are never touched.
 void Resync(bool connected_guest) {
-    const auto& a = g_guest.assembler;
-    const bool coming = g_guest.unwritten.has_value() ||
-                        (a.received() != 0 && a.received() < a.count() &&
-                         CoopEvery::NowUs() - g_guest.last_part_us < CoopEvery::kSaveStuckUs) ||
-                        (g_guest.asked && !g_guest.ready && !g_guest.no_save && !g_guest.gave_up);
+    const bool coming = save::save_coming(g_guest, CoopEvery::NowUs(), CoopEvery::kSaveStuckUs);
     switch (save::resync_check(connected_guest, g_root && g_remount && !g_dir.empty(), coming)) {
     case save::ResyncCheck::not_guest:
         LOG_INFO(Core, "coop: save: resync from host: refused (not a guest in a session)");
