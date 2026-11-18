@@ -29,15 +29,23 @@ press ZL 10
 mark b-view
 wait 1500                # A's ladder flags come at about 360 frames in
 mark b-ladder
-place -17.5 120.2 -2.0   # the compass room's plate floor (3F), 3 m off the plate (hs-deku-platforms' A spot)
+# events-next-a-11 (test honesty): every watcher spot is >= 5 m off the room's plate and B is put back before the
+# shot, so B's own press can never be what moved the room (at 2.9 m hs-deku-platforms' A slid onto the plate).
+place -17.5 120.2 0.5    # the compass room's plate floor (3F), 5.4 m off the plate (hs-deku-platforms' A spot)
 wait 240
 toward -22.6 -3.8 10     # face the lifts' asker
-wait 1500                # A's flag comes at about 600 frames after the place
+wait 750                 # A's flag comes at about 600 frames after the place
+place -17.5 120.2 0.5
+toward -22.6 -3.8 10
+wait 750
 mark b-lifts
-place -13.0 81.0 -9.0    # the web room, 2.8 m west of the plate (hs-deku-torch puts B over it at -10.2): not on it
+place -14.5 79.6 -6.5    # the web room, hs-deku-torch's A spot (~5 m off the plate at -10.2): not on it
 wait 240
 toward -10.0 -9.5 10     # face the torch and the web
-wait 1500
+wait 750
+place -14.5 79.6 -6.5
+toward -10.0 -9.5 10
+wait 750
 mark b-web
 wait 300
 mark b-end
