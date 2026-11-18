@@ -137,6 +137,13 @@ const std::vector<Command>& Commands() {
          "voice or chat for only that (/mute 2 voice). Anyone else: you stop hearing and seeing them yourself, and "
          "nobody is told."},
         {"/unmute <player>", "Undoes /mute (add voice or chat for only that)."},
+        // Host approval (docs/play-online.md "Lobby"): with approve_joins = on, each new player waits for these.
+        {"/allow, /allow <player>",
+         "The host only, when a player asks to join (approve_joins = on in coop-options.ini): lets them in (the one "
+         "who asked first, or by name). Add always to let them in without asking until you stop hosting."},
+        {"/deny, /deny <player>",
+         "The host only: turns away the player who asks to join. Add always to keep them out until you stop "
+         "hosting."},
     };
     return list;
 }

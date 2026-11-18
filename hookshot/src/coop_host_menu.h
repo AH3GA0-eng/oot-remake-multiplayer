@@ -76,9 +76,9 @@ public:
 
 private:
     struct HostJob {
-        std::string name, password, relay_via, relay_key;
+        std::string name, password, relay_via, relay_key, relay_room;
         std::uint16_t port = 0;
-        bool upnp = false, invite = false, pvp = false;
+        bool upnp = false, invite = false, pvp = false, approve_joins = false;
         std::uint8_t max_players = 0;  // HostMaxPlayers'
         std::uint32_t pose_upload_kbps = 0;
     };
@@ -86,12 +86,21 @@ private:
         std::string name, password;
         coop::server::nat::Addr host;
     };
+    // "<join code or room>@relay": the relay lets this PC's address in, then the game connects to the relay.
+    // The fields of relay_link.hpp's RelayJoin, which this header does not include: it brings ENet, and with it
+    // windows.h's min and max, into every file that includes this one (coop_hookshot.cpp).
+    struct RelayJoinJob {
+        std::string name, password;
+        std::string code, room, relay_host;
+        std::uint16_t relay_port = 0;
+    };
     bool Busy(const char* what);
     void StopThread();  // with calls_ held
     void Fail(const std::string& why, int problem);
     void Say(const std::string& text) const;
     void RunHost(HostJob job);
     void RunJoin(JoinJob job);
+    void RunRelayJoin(RelayJoinJob job);
     std::vector<coop::server::nat::Addr> StunServers() const;
     std::string NameOr(const char* given) const;
 
