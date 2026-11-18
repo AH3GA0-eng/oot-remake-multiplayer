@@ -182,7 +182,7 @@ TEST_CASE("mods tab: typing stops at the setting's max_length and a long value s
     CHECK(shown.rfind("...", 0) == 0);
     CHECK(shown.size() == 40 + 1);                       // 40 characters and the cursor
     CHECK(shown.back() == '_');
-    CHECK(v.help.find("64 bytes") != std::string::npos);
+    CHECK(v.hint.find("64 bytes") != std::string::npos);
 }
 
 TEST_CASE("mods tab: Paste into a text row (the pad's way) and Ctrl+V while typing") {

@@ -688,9 +688,9 @@ CoopPauseMenu::View Tab::view() const {
         if (typing_) {
             v.rows[selected_].value = TailShown(typed_) + "_";   // (the end: where the next character goes)
             v.typing = true;
-            v.help = "Type or Ctrl+V, then Enter. Esc: as it was. " + std::to_string(CharStarts(typed_).size()) +
-                     " characters (" + std::to_string(typed_.size()) + " of " + std::to_string(MaxLength(l.name)) +
-                     " bytes).";
+            v.help = "Type or Ctrl+V, then Enter. Esc: as it was.";   // (a line of the translation table: keep it whole)
+            v.hint = std::to_string(CharStarts(typed_).size()) + " characters (" + std::to_string(typed_.size()) +
+                     " of " + std::to_string(MaxLength(l.name)) + " bytes)";
         }
     }
     if (!note_.empty()) {
