@@ -330,6 +330,20 @@ game could never finish: a black screen, no fade back, no warp.
   in a one-player game. Log: `the game's Life step asks the module before its life stops`, and the actors'
   10 s line counts `owners' deaths past a copy's own life stops N`. A game built before this hook keeps the stops:
   there a copy held by one still takes the death flow alone (below).
+- **The revive (big-run-0115, boss-fails-0115).** The stops were not the only hold. In big-run-0115 every test kill
+  went `21 -> 1`, also in the game that owned Gohma (hs-boss-fix-gohma-rev B: owner, `life stops 1` counted, `0 own
+  Life steps held at 1`, life still 1). Read from the game's code: when the step takes life to 0 (main+0x49dd14
+  `b.le` to main+0x49ed04) it asks a revive check, main+0x49d6b0 on `Life+0x18c0`: flags on the boss's BSA, then the
+  actor's own callback (`[Life+0x18c0+0x240]`, its vtable +0x30), and adds what that answers back onto life. Gohma's
+  answers 1 outside her chance time, so a death there ends at 1, as a one-player hit does. Past the stops is not past
+  this. So the 11-15 copy held at 1 after its owner's death was most likely this too, and every boss with such a
+  callback can do it (the copy's own state is not its owner's). Fixed beside the stops: patch 0007's sixth hook
+  (`HOS_COOP_WORLD_LIFE_REVIVE`, after `add x0, x19, x8` at main+0x49ed0c, words checked) asks the module before the
+  check; its 1 (only for the component whose stops LIFE_STOPS passed in that same step: an owner's death on its copy,
+  or the test script's kill on our own) sets x0 = 0 and goes on at main+0x49dd18, where the step goes when the check
+  answers 0. Every other death (a real hit outside chance time, anything our game judges) keeps its revive. Log: `the game's
+  Life step asks the module before its revive`, and the 10 s line's `past its revive N`. Needs a game build with the
+  new patch 0007; not proven in game yet.
 - **The owner's death finishes the copy (review-boss-0114, every boss).** Nothing used to give a released copy its
   death: the owner's killing hit reaches it as a replay before the outro_start, its game refuses it, and after the
   400 ms wait a boss copy is never written (bosses are never resent either). So a released copy stayed alive unless

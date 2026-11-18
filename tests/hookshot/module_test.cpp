@@ -526,6 +526,18 @@ TEST_CASE("hookshot: the actor events (patch 0007) use the world hook with the m
     CHECK(lift.find("(0x49dcb4, 0xb940726a)") != std::string::npos);  // ldr w10, [x19, #0x70]: the stops' count
     CHECK(lift.find("(0x49dcc0, 0x35006eaa)") != std::string::npos);  // cbnz w10, main+0x49ea94
     CHECK(HOS_COOP_WORLD_LIFE_STOPS <= HOS_COOP_WORLD_ACTOR_LAST);
+    // The revive: the same step at life 0, before its revive check; the module's 1 skips it (x0 = 0, on where the
+    // step goes when the check answers 0: main+0x49dd18, a label of the same function).
+    std::snprintf(call, sizeof call,
+                  "hos_coop_world_event(%uu, c->x[19], (uint64_t)(uintptr_t)&coop_dead); "
+                  "if (coop_dead) { c->x[0] = 0; goto L_804bdd18; }",
+                  HOS_COOP_WORLD_LIFE_REVIVE);
+    CHECK(lift.find(call) != std::string::npos);
+    CHECK(lift.find("(\"life revive\", 0x49ed0c,") != std::string::npos);
+    CHECK(lift.find("(0x49ed10, 0x97fffa68)") != std::string::npos);  // bl main+0x49d6b0: the revive check
+    CHECK(lift.find("(0x49ed18, 0x54ff800b)") != std::string::npos);  // b.lt main+0x49dd18: the goto's target
+    CHECK(HOS_COOP_WORLD_LIFE_REVIVE <= HOS_COOP_WORLD_ACTOR_LAST);
+    CHECK(HOS_COOP_WORLD_LIFE_REVIVE != HOS_COOP_WORLD_LIFE_STOPS);
     CHECK(patch.find("+    coop_actor_lift.install(lifter, img, build_id)") != std::string::npos);
     // New numbers follow the world hook's own (0 hello, 1 counter start).
     CHECK(HOS_COOP_WORLD_CREATE_REQUEST > HOS_COOP_WORLD_COUNTER_START);

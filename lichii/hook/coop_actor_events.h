@@ -270,6 +270,17 @@ inline std::atomic<std::uint64_t>& StopsPassed() {
     static std::atomic<std::uint64_t> passed{0};
     return passed;
 }
+// Set once the step's revive check has called the module (LIFE_REVIVE, the
+// hook is in this Hookshot build).
+inline std::atomic<bool>& LifeReviveSeen() {
+    static std::atomic<bool> seen{false};
+    return seen;
+}
+// Deaths whose step skipped the actor's own revive (for the log).
+inline std::atomic<std::uint64_t>& RevivesSkipped() {
+    static std::atomic<std::uint64_t> skipped{0};
+    return skipped;
+}
 
 // One Life step through the module: the damage the game dealt this frame
 // (pushed as a Damage event when not 0) and the sum the step then takes.

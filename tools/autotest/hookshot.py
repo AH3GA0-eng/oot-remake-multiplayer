@@ -438,6 +438,7 @@ class Player:
         self.commands = commands      # the game's LICHII_COOP_TEST_COMMANDS file, or None: module steps skipped
         self.take_for = take_for      # seconds the module has to take them (it checks 4 times a second)
         self.sent = 0
+        self.send_lock = threading.Lock()   # the commands file: the script's batches and a warp's hand-over
         self.log = log
         self.shot = shot              # shot(name): shots at a mark
         self.connect = connect        # a second connection (the warp's own), or None: warps share this one
@@ -582,10 +583,25 @@ class Player:
             self._release()
         return self.clock()
 
-    # warps: the bridge's teleport, asked again until the game takes it (it refuses during a load or an event)
+    # warps: the bridge's teleport, asked again until the game takes it (it refuses during a load or an event).
+    # The bridge knows only its own list of maps (Longshot host/hos_main.c: the fields, villages and dungeon
+    # entrances), each at the map's own start. A map it does not know (not_found: the boss rush's <Boss>Stage
+    # scenes in Banc/DreamWorld, big-run-0114-3 and big-run-0115: all ten native bosses never got there) goes to
+    # the module's own warp instead (lichii/hook/coop_testinput.cpp Warp: the scene and the start written into
+    # the game's next-scene request, asked again every 0.5 s for 90 s until Link is there; it logs "coop: test
+    # warp done after N s" itself). The script's line goes as written, so its start is used there.
     def warp(self, s):
-        if s.start:
-            self.log("coop: test warp %s: start %s not used on hookshot (the map's own)" % (s.name, s.start))
+        said_start = [False]
+
+        def by_module(why):
+            if not self.commands:
+                self.log("coop: test warp %s gave up: the bridge has no such map (%s) and there is no module "
+                         "commands file for the module's own warp" % (s.name, why))
+                return
+            taken = self._send([s.text])
+            self.log("coop: test warp %s: not one of the bridge's maps (%s): %s the module's own warp (scene %s, "
+                     "start %s; its log says 'test warp done')" % (s.name, why, "asked through" if taken else
+                                                                   "NOT taken by", s.name, s.start or "-"))
 
         def ask():
             b = self.connect() if self.connect else self.b
@@ -600,10 +616,17 @@ class Player:
                         if e.code == "bad_request":
                             self.log("coop: test warp %s failed: %s" % (s.name, e))
                             return
+                        if e.code == "not_found":   # (not a map of the bridge's list: never will be)
+                            by_module(e.code)
+                            return
                         self.sleep(0.5)
                         continue
                     if r.get("sent"):
                         to = r.get("map") or s.name
+                        if s.start and not said_start[0]:
+                            said_start[0] = True
+                            self.log("coop: test warp %s: start %s not used on hookshot (the map's own)"
+                                     % (s.name, s.start))
                         self.log("coop: test warp %s: sent (map %s%s)" % (
                             s.name, to, ", not accepted" if r.get("accepted") is False else ""))
                         # "sent" is not "moved": a teleport asked while the arrival event of the save's load still
@@ -660,6 +683,10 @@ class Player:
 
     def _send(self, lines):
         """Writes lines to the module's commands file; True once the module took them (emptied the file)."""
+        with self.send_lock:   # (a warp's thread hands its line over too)
+            return self._send_locked(lines)
+
+    def _send_locked(self, lines):
         deadline = self.clock() + self.take_for
         while self._waiting() and self.clock() < deadline:   # the last batch not taken yet
             self.sleep(0.05)

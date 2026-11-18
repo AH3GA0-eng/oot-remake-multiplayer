@@ -37,8 +37,9 @@ class Clock:
 
 
 class FakeGame:
-    def __init__(self, clock=None, mem=True, camera=0.0, refuse_teleports=0, drop_teleports=0):
+    def __init__(self, clock=None, mem=True, camera=0.0, refuse_teleports=0, drop_teleports=0, maps=None):
         self.clock = clock or Clock()
+        self.maps = maps         # the bridge's own list of maps (None: any); another is not_found
         self.mem = mem
         self.camera = camera
         self.refuse = refuse_teleports
@@ -101,6 +102,8 @@ class FakeGame:
                     return dict(base, data=data[:size].hex())
                 return dict(base, ok=False, error="out_of_range", message="")
             if cmd == "teleport":
+                if self.maps is not None and req["to"] not in self.maps:
+                    return dict(base, ok=False, error="not_found", message="to: a destination's index or map")
                 if self.refuse > 0:
                     self.refuse -= 1
                     return dict(base, ok=False, error="refused", message="a map loading")
@@ -409,6 +412,43 @@ class PlayerTest(unittest.TestCase):
         game, log, _, _, _ = play("warp KakarikoVillage_Child\nwait 6", FakeGame(drop_teleports=99))
         self.assertTrue(any("gave up" in line for line in log.lines))
         self.assertFalse(any(line.startswith("coop: test warp done") for line in log.lines))
+
+    def test_warp_to_a_map_the_bridge_lacks_goes_to_the_module(self):
+        """big-run-0115: `warp BarinadeStage BarinadeStage` (the boss rush) is not in the bridge's list (not_found):
+        the line goes to the module's own warp, as written (its start too), and the bridge is not asked again."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "commands-A.txt")
+            open(path, "w").close()
+            game = FakeGame(maps={"InsideTheDekuTree"})
+            taken = []
+            sleep = game.clock.sleep
+
+            def module_sleep(sec):
+                sleep(sec)
+                if os.path.getsize(path):
+                    with open(path, encoding="utf-8") as f:
+                        taken.append(f.read())
+                    open(path, "w").close()
+            game.clock.sleep = module_sleep
+            game, log, _, _, _ = play("warp BarinadeStage BarinadeStage\nwait 6", game, commands=path)
+            self.assertEqual(len(game.cmds("teleport")), 1)
+            self.assertEqual([t.splitlines()[1:] for t in taken], [["warp BarinadeStage BarinadeStage"]])
+            self.assertTrue(any("not one of the bridge's maps (not_found): asked through the module's own warp"
+                                in line and "start BarinadeStage" in line for line in log.lines))
+            self.assertFalse(any("not used on hookshot" in line for line in log.lines))
+            self.assertFalse(any("gave up after" in line for line in log.lines))
+
+    def test_warp_to_a_map_the_bridge_lacks_without_the_module(self):
+        game, log, _, _, _ = play("warp GohmaStage GohmaStage\nwait 6", FakeGame(maps={"InsideTheDekuTree"}))
+        self.assertEqual(len(game.cmds("teleport")), 1)
+        self.assertTrue(any("gave up: the bridge has no such map" in line for line in log.lines))
+
+    def test_warp_to_a_bridge_map_still_uses_the_bridge(self):
+        game, log, _, _, _ = play("warp InsideTheDekuTree Entrance\nwait 6", FakeGame(maps={"InsideTheDekuTree"}))
+        self.assertEqual(game.map, "InsideTheDekuTree")
+        self.assertIn("coop: test warp done (map InsideTheDekuTree)", log.lines)
+        self.assertEqual(sum("start Entrance not used" in line for line in log.lines), 1)
 
     def test_module_steps_are_skipped_without_the_file(self):
         game, log, _, _, _ = play("give bombs\nchat /teleport B\nplace 1 2 3\nmark m")
