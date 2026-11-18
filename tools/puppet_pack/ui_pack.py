@@ -78,12 +78,15 @@ class Entry(NamedTuple):
 class Copy(NamedTuple):
     """One copy for clone_parts: the part copied, the copy's name, how far it moves (x, y in the
     layout's units, y up, added to the source's translate), new values for some of the part's
-    parameters ({name: float}) and the pane it goes under (None: the source's parent)."""
+    parameters ({name: float}), the pane it goes under (None: the source's parent), and whether it is
+    stored hidden (bit 0 of its kind word cleared, as on the game's own panes that start hidden: a
+    co-op module shows it, and a game without that module looks as it always did)."""
     source: str
     name: str
     move: tuple = (0.0, 0.0)
     params: Optional[dict] = None
     parent: Optional[str] = None
+    hidden: bool = False
 
 
 def _q(d, o):
@@ -360,6 +363,8 @@ def _clone(d, panes, parts, copies, new_id, out_of_order):
                 r[at:at + 4] = _f32(struct.unpack_from("<f", r, at)[0] + by, "the position of %s" % c.name)
         struct.pack_into("<I", r, 0x34, k + 1)
         struct.pack_into("<H", r, 0x42, p0 + i)
+        if c.hidden:
+            struct.pack_into("<I", r, 0x38, struct.unpack_from("<I", r, 0x38)[0] & ~1)   # (bit 0: shown at start)
         up = parent[si] if c.parent is None else index[c.parent]
         if end[up] != k and not out_of_order:
             raise UiPackError("the subtree of %s (where %s goes) ends before the last pane: the copy would be "
@@ -462,6 +467,53 @@ def frame_offset(layout, pane, ancestor):
         x, y = x + tx, y + ty
         at = _u32(d, rec + 0x28)
     return (x, y)
+
+
+class PackRun:
+    """One pack run's view of the game's files, shared by every UI builder (title_menu.py, pause_menu.py): a file a
+    builder made in this run is what the next one reads, so two builders that edit one archive (each language's
+    messages) keep each other's work; and a file's size-table entry grows once, against the game's original: its
+    size before the run, plus how much the file grew from the original, plus 0x1000.
+
+    read(rel) and glob(pattern) are a builder's reader. A builder checks its growth (check) before it writes
+    anything, then records its files and growth (commit). growth: [(rel, plain length read, plain length made,
+    required)]; required: the table must have the entry (an archive), else it is grown when there."""
+
+    def __init__(self, romfs, table):
+        self.romfs = romfs
+        self.table = table
+        self.made = {}    # rel -> the compressed file a builder made in this run
+        self._base = {}   # table key -> (its size before the run, the original's plain length)
+
+    def read(self, rel):
+        if rel in self.made:
+            return self.made[rel]
+        with open(os.path.join(self.romfs, *rel.split("/")), "rb") as f:
+            return f.read()
+
+    def glob(self, pattern):
+        import glob as _glob
+        n = len(self.romfs.rstrip("/\\")) + 1
+        return sorted(p[n:].replace("\\", "/") for p in _glob.glob(os.path.join(self.romfs, *pattern.split("/"))))
+
+    @staticmethod
+    def key(rel):
+        return rel[:-3] if rel.endswith(".zs") else rel
+
+    def check(self, growth):
+        for rel, _old, _new, required in growth:
+            if required and self.table.get(self.key(rel)) is None:
+                raise UiPackError("the size table has no %s" % self.key(rel))
+
+    def commit(self, files, growth):
+        for rel, _old, _new, required in growth:
+            key = self.key(rel)
+            size = self.table.get(key)
+            if size is None and key not in self._base:
+                continue
+            base, original = self._base.setdefault(key, (size, _old))
+            self.table.set(key, base + max(0, _new - original) + 0x1000)
+        self.made.update(files)
 
 
 def edit_entries(entries, name, edit):

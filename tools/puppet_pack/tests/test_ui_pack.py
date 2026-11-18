@@ -350,6 +350,15 @@ class LayoutTest(unittest.TestCase):
         with self.assertRaises(UiPackError):
             up.clone_parts(d, [Copy("Pa_Tab_03", "Pa_Tab_04", parent="N_Nothing_00")])
 
+    def test_a_copy_stored_hidden(self):
+        d = make_layout()
+        shown = up.clone_parts(d, [Copy("Pa_Guide_01", "Pa_Guide_02")])
+        hidden = up.clone_parts(d, [Copy("Pa_Guide_01", "Pa_Guide_02", hidden=True)])
+        word = lambda n: u32(n, up.read_layout(n)[0][-1].record + 0x38)
+        self.assertEqual(word(shown), PART_KIND)                    # (the source's: bit 0 set)
+        self.assertEqual(word(hidden), PART_KIND & ~1)              # only bit 0 cleared
+        self.assert_rest_unchanged(d, hidden, bumped=(0, 9))
+
     def test_move_panes(self):
         d = make_layout()
         n = up.move_panes(d, {"Pa_Tab_00": (-50.0, 5.0), "N_Footer_00": (0.0, 10.0)})

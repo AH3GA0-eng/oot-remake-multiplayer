@@ -14,6 +14,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from puppet_pack import msbt, sarc, ui_pack, pause_menu as pm  # noqa: E402
 from test_ui_pack import make_layout, make_msbt  # noqa: E402
+from test_title_menu import make_layout as title_layout  # noqa: E402
+from puppet_pack import title_menu  # noqa: E402
 
 # Shaped as the game's tab strip: four tabs under their own pane, inside the header; the L and R
 # labels after them; a footer last. make_layout places pane i at (100 i, -10 i), so the tabs are
@@ -72,6 +74,10 @@ class TabTest(unittest.TestCase):
         rec = parts[-1].record
         self.assertEqual(ui_pack._cstr(n, struct.unpack_from("<Q", n, rec)[0]), "PaMenuCategory_00")
         self.assertEqual(panes[-1].id, ui_pack.part_id("Pa_Category_04"))   # (the game's id: CityHash64 of the name)
+        # stored hidden: only the co-op module shows it (bit 0 of the kind word; the source's has it)
+        kind = lambda n, i: struct.unpack_from("<I", n, ui_pack.read_layout(n)[0][i].record + 0x38)[0]
+        self.assertEqual(kind(n, -1), kind(d, 7) & ~1)
+        self.assertTrue(kind(d, 7) & 1)
 
     def test_refusals(self):
         with self.assertRaises(pm.PauseMenuError):
@@ -101,6 +107,7 @@ class PageTest(unittest.TestCase):
         self.assertEqual(pane(n, "Pa_Coop_00"), (0.0, -70.0 - 30.0, "N_InOut_00", len(PAGES) + 1))
         self.assertEqual(pane(n, "Pa_System_00"), pane(d, "Pa_System_00"))
         self.assertEqual(ui_pack._cstr(n, struct.unpack_from("<Q", n, parts[-1].record)[0]), "PaSystemMenu_00")
+        self.assertEqual(struct.unpack_from("<I", n, panes[-1].record + 0x38)[0] & 1, 0)   # stored hidden
         # N_InOut_00 and its ancestors reach the copy; P_Black_00, the last pane before, as it was
         self.assertEqual([pane(n, p)[3] for p in ("RootPane", "N_All_00", "N_InOut_00", "P_Black_00")],
                          [len(PAGES) + 1] * 3 + [len(PAGES)])
@@ -208,6 +215,48 @@ class BuildTest(unittest.TestCase):
             self.assertEqual(fr.text("Pa_Category_04-T_Text_00"), ["Multijoueur"])
             en_page = msbt.read(sarc.read(written["Mals/EUfr.Product.110.sarc.zs"])[pm.PAGES_MSG])
             self.assertEqual(en_page.text("Pa_Coop_00-Pa_Button_04-T_Btn_00"), ["Leave"])   # English kept
+
+    def test_the_title_rows_then_the_tab_keep_both_label_sets_and_grow_once(self):
+        """title_menu.build then pause_menu.build on one made-up romfs with one ui_pack.PackRun (as build.py
+        runs them): each language archive has both steps' labels, and its size-table entry grew once from the
+        game's original (its size before, plus the file's growth over both steps, plus 0x1000)."""
+        with tempfile.TemporaryDirectory() as root:
+            src = os.path.join(root, "romfs")
+            files = {pm.COMMON_ARCHIVE: sarc.write([(pm.OVERLAY_LAYOUT, overlay()), (pm.PAGES_LAYOUT, pages())],
+                                                   data_align=16),
+                     title_menu.TITLE_ARCHIVE: sarc.write([(title_menu.TITLE_LAYOUT, title_layout())], data_align=16)}
+            for lang in LANGS:
+                files["Mals/%s.Product.110.sarc.zs" % lang] = sarc.write(
+                    {pm.OVERLAY_MSG: make_msbt([("SystemMenu", "System")]),
+                     pm.PAGES_MSG: make_msbt([("Pa_System_00-Pa_Button_00-T_Btn_00", "Save")]),
+                     title_menu.MSG_FILE: make_msbt([("0000", "New Game")])})
+            for rel, data in files.items():
+                path = os.path.join(src, *rel.split("/"))
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "wb") as f:
+                    f.write(data)
+            table = _Table({pm.COMMON_ARCHIVE[:-3]: 100000, title_menu.TITLE_ARCHIVE[:-3]: 50000})
+            for lang in LANGS:
+                table.set("Mals/%s.Product.110.sarc" % lang, 2000)
+            before = dict(table.sizes)
+            written = {}
+            run = ui_pack.PackRun(src, table)
+            same = lambda d, raw, data: data
+            title_menu.build(src, "out", _Plain(), table, lambda o, r, data: written.__setitem__(r, data), same,
+                             log=lambda s: None, run=run)
+            pm.build(src, "out", _Plain(), table, lambda o, r, data: written.__setitem__(r, data), same,
+                     log=lambda s: None, run=run)
+            for lang in LANGS:
+                rel = "Mals/%s.Product.110.sarc.zs" % lang
+                msgs = sarc.read(written[rel])
+                self.assertEqual(msbt.read(msgs[title_menu.MSG_FILE]).text("0100"), ["Host"])   # the title's rows
+                self.assertEqual(msbt.read(msgs[pm.OVERLAY_MSG]).text("Pa_Category_04-T_Text_00"), ["Multiplayer"])
+                self.assertEqual(msbt.read(msgs[pm.PAGES_MSG]).text("Pa_Coop_00-Pa_Button_04-T_Btn_00"), ["Leave"])
+                grown = len(written[rel]) - len(files[rel])
+                self.assertEqual(table.sizes[rel[:-3]], before[rel[:-3]] + grown + 0x1000)   # once, from the original
+            self.assertEqual(table.sizes[pm.COMMON_ARCHIVE[:-3]],
+                             before[pm.COMMON_ARCHIVE[:-3]] + len(written[pm.COMMON_ARCHIVE]) - len(files[pm.COMMON_ARCHIVE])
+                             + 0x1000)
 
     def test_nothing_written_when_one_language_fails(self):
         made, written, sizes, before, err = self.run_build(broken="JPja")
