@@ -268,6 +268,7 @@ void FlagWatcher::reset() {
   // comes again with the next snapshot.
   group_.clear();
   group_before_.clear();
+  group_known_ = false;
   holding_ = false;
   snapshot_.clear();
   held_states_.clear();
@@ -373,6 +374,8 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
     window_ = false;
     end_window(store, resets);
   }
+  // Out of every load window with Link: what last_ holds from here is a save's (world-fails-0115).
+  if (!window_ && !settling()) played_ = true;
   if (window_ && loading_ && !scene_readable_) no_scene_frames_ += static_cast<int>(step);
   if (window_) stats_.window_frames += step;
   if (window_ && title_seen_) window_title_ = true;
@@ -414,9 +417,14 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
     answers.merge(changes);
     push_list<protocol::FlagState>(out, answers, stats_.entries_unsent);
     out.insert(out.end(), resets.begin(), resets.end());
-    if (snapshot_requested_) {
+    if (snapshot_requested_ && window_) {
+      // The title screen, a save loading or a door: no save's table to send yet (request_snapshot). end_window
+      // sends it after a save load, the next frame out of the window otherwise.
+      if (!std::exchange(table_waiting_, true)) ++stats_.table_waits;
+    } else if (snapshot_requested_) {
       send_snapshot(store, out);
       snapshot_requested_ = false;
+      table_waiting_ = false;
     }
   }
   return out;
@@ -550,6 +558,7 @@ void FlagWatcher::take_origin(const FlagKey& key) {
 }
 
 void FlagWatcher::apply_reset(FlagStore& store, const std::vector<FlagEntry>& flags) {
+  if (!flags.empty()) group_known_ = true;
   for (const auto& entry : flags) {
     const FlagKey key = key_of(entry);
     if (!shared_.contains(key) || is_delta(entry)) continue;  // no one-way rule here
@@ -609,6 +618,16 @@ void FlagWatcher::see_save_load() {
 
 void FlagWatcher::end_window(FlagStore& store, std::vector<Outgoing>& out) {
   if (!moved_) return;  // a door: the next diff sends what changed, as always
+  if (role_ == FlagRole::host && !window_retry_ && snapshot_requested_) {
+    send_table_reset(store, out);
+    return;
+  }
+  // Player: no group value known and our game never played since this watcher started: last_ is what the title
+  // screen read (the game's defaults), not the group's. Putting it back lowered our save to the defaults (quests
+  // to 'Ready', the compass gone), and the host's load raised them again, a 'New Event' notice for each
+  // (world-fails-0115). Our save's own values are kept, nothing sent; the host's save load brings the group's.
+  const bool own_save = role_ == FlagRole::player && !played_ && !group_known_;
+  int kept = 0;
   Table changed;
   for (const FlagKey key : shared_.keys()) {
     std::optional<FlagEntry> now = store.read(key);
@@ -631,6 +650,9 @@ void FlagWatcher::end_window(FlagStore& store, std::vector<Outgoing>& out) {
       changed[key] = *now;  // the save's value goes to everyone
       last_[key] = *now;
       if (!store.is_count(key)) note_group(*now, nullptr);
+    } else if (own_save) {
+      it->second = *now;  // ours now: not sent, not put back
+      ++kept;
     } else if (keeps_own(store, it->second)) {
       continue;  // our value stays; last_ still holds the group's, so the next diff sends ours
     } else if (store.write_load_back(it->second)) {
@@ -644,10 +666,49 @@ void FlagWatcher::end_window(FlagStore& store, std::vector<Outgoing>& out) {
     map_drop_log().note("our save load: FLAG_RESET sent, " + std::to_string(changed.size()) + " flags");
     push_list<protocol::FlagReset>(out, changed, stats_.entries_unsent);
   }
+  if (kept > 0) {
+    ++stats_.own_save_kept;
+    map_drop_log().note("our save load before the group's values came: our save's own values kept, " +
+                        std::to_string(kept) + " flags");
+  }
+}
+
+void FlagWatcher::send_table_reset(FlagStore& store, std::vector<Outgoing>& out) {
+  // The host's first save load after a table was asked for (request_snapshot): the whole table, not only what the
+  // load changed from the title's defaults, so a guest whose own save loaded first takes the host's save exactly.
+  Table table;
+  for (const FlagKey key : shared_.keys()) {
+    std::optional<FlagEntry> now = store.read(key);
+    if (!now) {
+      ++stats_.read_failures;
+      continue;
+    }
+    now->key = key;
+    if (one_way_.contains(key)) continue;  // a room's own switch state: never reset for the group (as below)
+    // A pickup at 0 is never sent (takes(): a join snapshot does not take it either).
+    if (pickups_.contains(key) && now->value == 0) continue;
+    if (const auto g = guards_.find(key); g != guards_.end() && g->second.held != 0 &&
+        now->kind == protocol::FlagKind::int32) {
+      now->value = as_bits(as_int(now->value) - g->second.held);  // as send_snapshot
+    }
+    last_[key] = *now;
+    if (!store.is_count(key)) note_group(*now, nullptr);
+    table[key] = *now;
+  }
+  snapshot_requested_ = false;
+  table_waiting_ = false;
+  ++stats_.table_resets;
+  ++stats_.host_resets;
+  reset_seen_ = true;
+  map_drop_log().note("our save load: the whole table sent as FLAG_RESET (asked for before the save was in), " +
+                      std::to_string(table.size()) + " flags");
+  push_list<protocol::FlagReset>(out, table, stats_.entries_unsent);
 }
 
 void FlagWatcher::apply_snapshot(FlagStore& store) {
   holding_ = false;
+  // An empty table: the host has none yet (its save not loaded, request_snapshot); nothing of the group known.
+  if (!snapshot_.empty()) group_known_ = true;
   map_drop_log().note("join snapshot applied, " + std::to_string(snapshot_.size()) + " flags");
   const MapDropBecause because("the flag watcher: the join snapshot");
   for (const auto& [key, entry] : snapshot_) {
