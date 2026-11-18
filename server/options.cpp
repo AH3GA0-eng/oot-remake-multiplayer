@@ -1,5 +1,7 @@
 #include "options.hpp"
 
+#include "relay_wire.hpp"
+
 #include <algorithm>
 #include <charconv>
 #include <string_view>
@@ -177,6 +179,15 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
         return std::nullopt;
       }
       line.relay_via = args[++i];
+    } else if (arg == "--relay-room") {
+      std::optional<std::string> room;
+      if (has_value) room = relay::normalize_room(args[i + 1]);
+      if (!room) {
+        error = "--relay-room needs a room name: 3 to 24 letters, digits, - or _, for example forest-gang";
+        return std::nullopt;
+      }
+      line.relay_room = *room;
+      ++i;
     } else if (arg == "--relay-key" || arg == "--relay-key-env") {
       if (!has_value || args[i + 1].empty() || args[i + 1].size() > 64) {
         error = arg + " needs a value of at most 64 characters";
@@ -187,6 +198,10 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
       error = "unknown argument: " + arg;
       return std::nullopt;
     }
+  }
+  if (!line.relay_room.empty() && line.relay_via.empty()) {
+    error = "--relay-room is a name on a relay: it needs --relay-via";
+    return std::nullopt;
   }
   if (line.relay && (line.upnp || !line.relay_via.empty())) {
     error = "--relay runs a relay; it cannot also use --upnp or --relay-via";
@@ -239,6 +254,9 @@ const char* usage() {
          "                   server runs\n"
          "  --relay-via ADDRESS[:PORT]  host through a relay (default port 27530)\n"
          "                   and print a join code for the players\n"
+         "  --relay-room NAME  with --relay-via, also hold this room name on the\n"
+         "                   relay (3 to 24 letters, digits, - or _): players join\n"
+         "                   with the name instead of the code\n"
          "  --relay          run as a relay for hosts that use --relay-via\n"
          "                   (UDP port 27530 unless --port), not a game server\n"
          "  --relay-key TEXT | --relay-key-env NAME  the relay's host key: on the\n"

@@ -42,6 +42,18 @@ TEST_CASE("command line: defaults, flags and mistakes") {
   }
 }
 
+TEST_CASE("command line: --relay-room needs --relay-via and a room name (issue 261)") {
+  std::string error;
+  auto named = parse_command_line({"--relay-via", "relay.example.net", "--relay-room", " Forest-Gang "}, error);
+  REQUIRE(named.has_value());
+  CHECK(named->relay_room == "Forest-Gang");  // spaces at the ends dropped, case kept
+  CHECK(!parse_command_line({"--relay-room", "forest-gang"}, error).has_value());
+  CHECK(error.find("--relay-via") != std::string::npos);
+  CHECK(!parse_command_line({"--relay-via", "relay.example.net", "--relay-room", "ab"}, error).has_value());
+  CHECK(!parse_command_line({"--relay-via", "relay.example.net", "--relay-room", "forest gang"}, error).has_value());
+  CHECK(!parse_command_line({"--relay-via", "relay.example.net", "--relay-room"}, error).has_value());
+}
+
 TEST_CASE("command line: --bind and --allow") {
   std::string error;
   auto none = parse_command_line({}, error);

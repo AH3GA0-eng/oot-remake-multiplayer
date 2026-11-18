@@ -161,8 +161,14 @@ bool HostService::start(std::string& error) {
     } else {
       c.server_port = server_->port();
       c.key = config_.relay_key;
+      c.room = config_.relay_room;
       c.log = [this](const std::string& text) { say("relay: " + text); };
       const std::string relay_text = config_.relay_via;
+      c.on_room = [this, relay_text](const std::string& room) {
+        say("relay: room \"" + room + "\" is yours. Friends join with " + room + "@" + relay_text);
+        std::lock_guard lock(status_mutex_);
+        status_.relay_room = room + "@" + relay_text;
+      };
       c.on_code = [this, relay_text](const std::string& code) {
         const std::string shown = relay::show_code(code);
         say("relay: join code " + shown + ". Give your friends " + shown + "@" + relay_text +
@@ -177,7 +183,8 @@ bool HostService::start(std::string& error) {
         set_message("relay: " + why, HostProblem::kRelay);
         link_.reset();
       } else {
-        say("relay: asking " + config_.relay_via + " for a join code");
+        say("relay: asking " + config_.relay_via + " for a join code" +
+            (config_.relay_room.empty() ? std::string() : " and room \"" + config_.relay_room + "\""));
       }
     }
   }
