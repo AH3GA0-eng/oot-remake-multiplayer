@@ -75,7 +75,7 @@ inline std::optional<double> HudBottom(const std::vector<HudPiece>& pieces) {
         if (!std::isfinite(bottom)) {
             continue;
         }
-        lowest = lowest ? std::max(*lowest, bottom) : bottom;
+        lowest = lowest ? (std::max)(*lowest, bottom) : bottom;
     }
     return lowest;
 }
@@ -113,7 +113,7 @@ inline double BlocksTop(double w, double h, std::optional<double> hud_bottom = s
     if (w <= 0 || h <= 0) {
         return 0.0;
     }
-    const double pic_h = std::min(h, w * 9.0 / 16.0);
+    const double pic_h = (std::min)(h, w * 9.0 / 16.0);   // ((std::min): windows.h's macro)
     return (h - pic_h) / 2.0 + TopFraction(hud_bottom) * pic_h;
 }
 
