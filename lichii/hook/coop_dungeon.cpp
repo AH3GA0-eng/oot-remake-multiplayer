@@ -1063,6 +1063,15 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0xd6a8c454, false, "Npc_Goron_008_ShutterisOpen"},
     {0x1d5d75c3, false, "Npc_Goron_009_ShutterisOpen"},
     {0x6948b592, false, "Npc_Goron_010_ShutterisOpen"},
+    // Mid-bosses beaten (bosses-next-a-2, the mid-boss end state, #241's shape): saved records of a mid-boss's death
+    // named after the quest or the actor, so the prefix scan missed them. A game that was not there kept the mid-boss
+    // alive in its save while the room's other flags said it was beaten. As "the boss beaten stays shared" above
+    // (Dead Hand's BottomOfTheWell_Level_Room_06_Boss_Defeat). Big Octo's is set by its death in Jabu-Jabu Room 06
+    // and read by Rooms 03, 06 and 07; the Iron Knuckle's by its death setting SageOfSpirit_MiddleBossEnd (with
+    // SageOfSpirit Step08_01), read by Spirit Temple Room 33. Their _BossAppear / _BigOctoAppear (the fight started)
+    // stay each game's own, as the boss rooms' shut-in flags (issue 148).
+    {0x26c6448d, false, "Get_StoneOfWater_BigOctoDefeat"},
+    {0xe9547a14, false, "Enemy_MiddleBoss_IronKnuckle_Nabooru_BossDefeat"},
 });
 
 // Every placement in a dungeon's Banc files (Banc/<Dungeon>/*.bcett.byml)

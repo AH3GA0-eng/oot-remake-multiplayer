@@ -221,7 +221,7 @@ class OcarinaEquip {
   // for kSettleFrames frames in a row (a queued String64 already reads so before the game's applier wrote it),
   // with Link's actor known and nothing running (`busy`: an event, a menu, the pause or a load).
   static constexpr int kSettleFrames = 30;
-  void arm(std::optional<std::string_view> live, bool link_known, bool busy);
+  void arm(const std::optional<std::string_view>& live, bool link_known, bool busy);
   // The calc thread: the next slot to ask, or nothing. `after_call` false starts a frame. After the last slot the
   // want is spent (a note says so).
   std::optional<std::uint32_t> step(bool after_call);

@@ -42,6 +42,12 @@ using SlotOpenedFn = unsigned (*)(char* slot_dir, std::size_t cap, int* write);
 void SetSlotOpens(SlotOpenedFn opened);
 // Each frame, also without a session: takes the new opens and the load windows (cheap when there are none).
 void PollSlotOpens();
+// The host's save as it is NOW for a guest that asks (case 1 of the join's state): Hookshot says at start that it can
+// ask our game for its own autosave (SetSaveRequests(true)); then a guest's ask while our file is played waits for
+// that save (save::Planner's round), and Hookshot's game-thread step takes the request once (TakeSaveRequest) and
+// makes the game's call (the EventTriggerRequestAutoSave node's own). Unset (the emulator): the save on disk at once.
+void SetSaveRequests(bool on);
+bool TakeSaveRequest();
 // The Lobby tab's "Resync from host" (a guest; save::resync_check): taken at the next OnFrame, which asks the host
 // again; the chat says how it goes. CanResync: the row is shown (a connected guest on a switchable folder).
 void RequestResync();

@@ -38,7 +38,7 @@ struct BeatenBool {
 };
 
 struct BeatenSet {
-    std::uint8_t room;  // CoopBoss::Rooms() index (BOSS_ROOM's room)
+    std::uint8_t room;  // BOSS_SCENE's boss index: CoopBoss::Rooms() index (BOSS_ROOM's room) for 0 to 7; 8 Ganondorf, 9 Ganon
     const char* boss;
     std::uint32_t quest;  // the dungeon quest's Enum (GameDataList)
     const char* quest_name;
@@ -48,15 +48,25 @@ struct BeatenSet {
     std::span<const BeatenBool> bools;
 };
 
-// The eight dungeon bosses' sets (Ganondorf and Ganon have no room), by room.
+// The ten bosses' sets, by boss index: the eight dungeon bosses (their room) and, with no room in CoopBoss::Rooms(),
+// Ganondorf (8: Defeat_Ganon to Step06) and Ganon (9: to Complete). Defeat_Ganon is each game's own (coop_quests.cpp),
+// so a player who was not in the final fights got none of it before.
 std::span<const BeatenSet> Sets();
 const BeatenSet* ForRoom(std::uint8_t room);
+
+// The scene the boss dies in (BOSS_SCENE's scene of its proven death): a room's dungeon scene for 0 to 7,
+// InsideGanonCastle for Ganondorf, FinalBattleField for Ganon. Nothing for another index.
+std::optional<std::string_view> DeathScene(std::uint8_t room);
+// Whether `scene` is one the boss's set is never given in: its dungeon scene for 0 to 7 (its room's logic is loaded,
+// maybe a fight); for Ganondorf and Ganon the whole end sequence, InsideGanonCastle, CrumblingGanonCastle (the
+// escape, which reads Defeat_Ganon's step live) and FinalBattleField.
+bool KeptScene(std::uint8_t room, std::string_view scene);
 
 // The room whose boss `m` proves dead, or nothing. The same rule as the server's (server/session.cpp):
 // a BOSS_SCENE outro_start or outro_end: a game took the boss's death event itself (its own death setting or
 // Dm_<Dungeon>_BossOut, by name; a copy's game only once its owner died) and, for outro_end, that game's death event
-// ended (only the game that started it sends it). In that boss's own dungeon scene (not the boss rush). Its boss index
-// 0 to 7 is the room (coop_boss_scenes.cpp kBosses). The server keeps the outro_starts and tells a joiner each as an
+// ended (only the game that started it sends it). In that boss's DeathScene (not the boss rush, GanondorfStage or
+// GanonStage). Its boss index 0 to 7 is the room (coop_boss_scenes.cpp kBosses), 8 and 9 are Ganondorf and Ganon. The server keeps the outro_starts and tells a joiner each as an
 // outro_end from the same player (its cutscene rules do nothing with an end of a death they never saw).
 // BOSS_ROOM defeated is never one: it only says that player's fight is over (maybe a guess: a long event, no
 // reading). Our own game's proof is also Sync's beaten_here (the walk read the boss gone).

@@ -1053,8 +1053,8 @@ void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
         if (o.follow_from && Finite(o.position) &&
             Distance(*o.follow_from, o.position) > kBlockStartM) {
             // Issue 147: our block's own memory still says it rests at
-            // follow_from; the glue rewrites that (RestWords), and its base
-            // anchor, found there, is put where it rests now.
+            // follow_from (its push node: the glue runs the node's own start
+            // again, FindBlockNode), and its base anchor is put where it rests now.
             Out::BlockFix fix;
             fix.address = o.address;
             fix.hash = o.hash;
@@ -1772,7 +1772,10 @@ std::vector<coop::protocol::GrassCut> GrassSync::Look(const ReadWord& read, std:
                                                       const std::string& scene,
                                                       std::uint64_t now_ms) {
     std::vector<coop::protocol::GrassCut> out;
-    const auto s = main != 0 ? SceneOf(read, main) : std::nullopt;
+    std::optional<std::uint64_t> s;  // (made in place, not a conditional copy: gcc 13 -Werror=maybe-uninitialized)
+    if (main != 0) {
+        s = SceneOf(read, main);
+    }
     {
         std::lock_guard lock(mutex_);
         main_ = main;
@@ -2515,137 +2518,23 @@ std::vector<std::string> GimmickProbe::Look(const SignProbe::ReadWord& read,
     return lines;
 }
 
-RestScan RestWords(const std::function<std::optional<std::uint64_t>(std::uint64_t)>& read,
-                   std::uint64_t actor, const proto::Vec3& from, const proto::Vec3& to) {
-    RestScan out;
-    if (!Finite(from) || !Finite(to) || Distance(from, to) < WorldSync::kBlockStartM ||
-        std::max({std::fabs(from[0]), std::fabs(from[1]), std::fabs(from[2])}) < 1.0f) {
-        return out;
-    }
-    struct Region {
-        std::uint64_t base = 0;
-        std::size_t bytes = 0;
-        std::string name;
-    };
-    std::vector<Region> regions{{actor, 0x600, "actor"}};
-    std::set<std::uint64_t> taken{actor};
-    char text[48];
-    if (const auto table = read(actor + SignProbe::kActorTable); table && HeapPointer(*table)) {
-        for (std::uint64_t at = 0; at < SignProbe::kTableWords * 8; at += 8) {
-            const auto c = read(*table + at);
-            if (c && HeapPointer(*c) && taken.insert(*c).second) {
-                std::snprintf(text, sizeof text, "c+%#llx", static_cast<unsigned long long>(at));
-                regions.push_back({*c, SignProbe::kComponentWords * 8, text});
-            }
-        }
-        if (const auto physics = read(*table + 0x50); physics && HeapPointer(*physics)) {
-            if (const auto root = read(*physics + 0x20); root && HeapPointer(*root) &&
-                                                         taken.insert(*root).second) {
-                regions.push_back({*root, 0x400, "physics root"});
-            }
-        }
-    }
-    const auto matches = [&](const std::optional<float>& v, int axis) {
-        return v && std::isfinite(*v) && *v != 0.0f && std::fabs(*v - from[axis]) <= kRestMatchM;
-    };
-    const auto bits = [](float f) {
-        std::uint32_t b = 0;
-        std::memcpy(&b, &f, 4);
-        return b;
-    };
-    std::size_t triplets = 0;
-    for (const Region& region : regions) {
-        std::vector<std::optional<float>> f(region.bytes / 4);
-        for (std::size_t w = 0; w < region.bytes / 8; ++w) {
-            if (const auto v = read(region.base + 8 * w)) {
-                float lo = 0.0f, hi = 0.0f;
-                const auto lo_bits = static_cast<std::uint32_t>(*v);
-                const auto hi_bits = static_cast<std::uint32_t>(*v >> 32);
-                std::memcpy(&lo, &lo_bits, 4);
-                std::memcpy(&hi, &hi_bits, 4);
-                f[2 * w] = lo;
-                f[2 * w + 1] = hi;
-            }
-        }
-        std::set<std::size_t> used;
-        for (std::size_t i = 0; i < f.size(); ++i) {
-            const std::uint64_t offset = 4 * i;
-            if (region.name == "actor" && offset >= 0x31c && offset < 0x34c) {
-                continue;  // its own place and turn: the setter wrote them
-            }
-            for (const std::size_t stride : {std::size_t{1}, std::size_t{4}}) {
-                if (i + 2 * stride >= f.size() || used.contains(i) || used.contains(i + stride) ||
-                    used.contains(i + 2 * stride) || !matches(f[i], 0) || !matches(f[i + stride], 1) ||
-                    !matches(f[i + 2 * stride], 2)) {
-                    continue;
-                }
-                for (int axis = 0; axis < 3; ++axis) {
-                    const std::size_t k = i + axis * stride;
-                    used.insert(k);
-                    out.writes.push_back({region.base + 4 * k, bits(to[axis])});
-                }
-                std::snprintf(text, sizeof text, "+%#llx", static_cast<unsigned long long>(offset));
-                out.where.push_back(region.name + text + (stride == 4 ? " (matrix)" : ""));
-                ++triplets;
-                break;
-            }
-        }
-    }
-    if (triplets > kMaxRestTriplets) {
-        out.too_many = true;
-        out.writes.clear();
-    }
-    return out;
-}
-
 std::optional<std::uint64_t> FindBlockNode(
     const std::function<std::optional<std::uint64_t>(std::uint64_t)>& read, std::uint64_t actor,
-    std::uint64_t main) {
+    std::uint64_t main, const NodeStarts& starts) {
     using namespace BlockNode;
     if (!HeapPointer(actor) || main == 0) {
         return std::nullopt;
     }
-    const auto is_node = [&](std::uint64_t p) {
-        const auto v1 = read(p);
-        if (!v1 || *v1 != main + kVtable) return false;
-        const auto v2 = read(p + 0x20);
-        if (!v2 || *v2 != main + kVtable2) return false;
-        const auto a = read(p + kOwner);
-        if (!a || !HeapPointer(*a)) return false;
+    for (const std::uint64_t node : starts.NewestFor(actor)) {
+        if (!HeapPointer(node)) continue;
+        const auto vtable = read(node);
+        if (!vtable || !IsNodeVtable(*vtable, main)) continue;
+        const auto a = read(node + kOwner);
+        if (!a || !HeapPointer(*a)) continue;
         const auto b = read(*a + 8);
-        if (!b || !HeapPointer(*b)) return false;
+        if (!b || !HeapPointer(*b)) continue;
         const auto owner = read(*b + kOwnerActor);
-        return owner && *owner == actor;
-    };
-    // Breadth first from the actor's components, so the nearest match wins.
-    std::vector<std::uint64_t> level;
-    std::set<std::uint64_t> seen{actor};
-    if (const auto table = read(actor + SignProbe::kActorTable); table && HeapPointer(*table)) {
-        for (std::uint64_t at = 0; at < SignProbe::kTableWords * 8; at += 8) {
-            const auto c = read(*table + at);
-            if (c && HeapPointer(*c) && seen.insert(*c).second) {
-                if (is_node(*c)) return *c;
-                level.push_back(*c);
-            }
-        }
-    }
-    std::size_t looks = 0;
-    for (int depth = 0; depth < kNodeDepth && !level.empty(); ++depth) {
-        std::vector<std::uint64_t> next;
-        for (const std::uint64_t object : level) {
-            if (++looks > kNodeLooks) {
-                return std::nullopt;
-            }
-            for (std::uint64_t at = 0; at < kNodeBytes; at += 8) {
-                const auto p = read(object + at);
-                if (!p || !HeapPointer(*p) || !seen.insert(*p).second) {
-                    continue;
-                }
-                if (is_node(*p)) return *p;
-                next.push_back(*p);
-            }
-        }
-        level = std::move(next);
+        if (owner && *owner == actor) return node;
     }
     return std::nullopt;
 }

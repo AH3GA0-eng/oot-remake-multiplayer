@@ -1,4 +1,4 @@
-From 57d60574c531147b2a93c46779347ba0253087c8 Mon Sep 17 00:00:00 2001
+From 7a7f6e32210846c445748b9a3d19ac5c6810f1d5 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Fri, 13 Nov 2026 16:01:26 -0900
 Subject: [PATCH] Co-op map state: the game's menu state for the players on the
@@ -27,11 +27,11 @@ too (host/posix's windows.h): Linux knows the menu in front, the Map
 page and the HUD screen, and runs the HUD refresh, as Windows does. Only
 the mouse's parts stay Windows'. Linux's focus hook hands the tracker the
 pause menu's screen (hos_oot_menu_pause_focus), as Windows' focus_locked
-keeps it; tests/test_hold_toggle.py checks that.
+keeps it. (No hunk on tests/: the Linux kit patches the AppImage's
+source, which has no tests/ folder; our module_test checks the hook.)
 ---
- host/oot_menu.c           | 94 +++++++++++++++++++++++++++++++++++++--
- tests/test_hold_toggle.py |  5 ++-
- 2 files changed, 94 insertions(+), 5 deletions(-)
+ host/oot_menu.c | 94 ++++++++++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 90 insertions(+), 4 deletions(-)
 
 diff --git a/host/oot_menu.c b/host/oot_menu.c
 index 7c38611b..a3981a2c 100644
@@ -245,22 +245,3 @@ index 7c38611b..a3981a2c 100644
  }
 -void hos_oot_menu_tick(Ctx *c, uint64_t screen) { (void)c, (void)screen; }
  #endif
-diff --git a/tests/test_hold_toggle.py b/tests/test_hold_toggle.py
-index a84b944c..97f6a434 100644
---- a/tests/test_hold_toggle.py
-+++ b/tests/test_hold_toggle.py
-@@ -21,10 +21,13 @@ def main():
- typedef struct { int unused; } Ctx;
- static int clears;
- void hos_input_clear_toggles(void) { clears++; }
-+static uint64_t pause_focus;   /* (oot-remake-multiplayer's patch 0018: the screens' tracker keeps the pause menu) */
-+void hos_oot_menu_pause_focus(uint64_t screen) { pause_focus = screen; }
- // LINUX_MENU
- int main(void) {
--    hos_oot_menu_focus(0, 0, 0, 0);
-+    hos_oot_menu_focus(0, 0x84000100, 0, 0);
-     assert(clears == 1); /* the real Linux pause focus hook drops the latch */
-+    assert(pause_focus == 0x84000100); /* (patch 0018) and hands the tracker the pause menu's screen */
-     HoldToggle s = {0};
-     const uint64_t r = 1 << 7, zl = 1 << 8;
-     assert(hold_toggle_apply(&s, r, r, 0) == r);

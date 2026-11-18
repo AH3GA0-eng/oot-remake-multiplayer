@@ -31,6 +31,34 @@ const BeatenSet* ForRoom(std::uint8_t room) {
     return nullptr;
 }
 
+std::optional<std::string_view> DeathScene(std::uint8_t room) {
+    if (ForRoom(room) == nullptr) {
+        return std::nullopt;
+    }
+    if (const CoopBoss::Room* where = CoopBoss::RoomByIndex(room)) {
+        return std::string_view(where->scene);
+    }
+    switch (room) {
+    case 8:
+        return std::string_view("InsideGanonCastle");  // Ganondorf's room (Room_26, Create_Ganondorf)
+    case 9:
+        return std::string_view("FinalBattleField");  // Ganon (FinalBattleField_* logic, Banc GanonCastle/)
+    default:
+        return std::nullopt;
+    }
+}
+
+bool KeptScene(std::uint8_t room, std::string_view scene) {
+    const std::optional<std::string_view> death = DeathScene(room);
+    if (!death) {
+        return true;  // no set: never given anywhere
+    }
+    if (room == 8 || room == 9) {
+        return scene == "InsideGanonCastle" || scene == "CrumblingGanonCastle" || scene == "FinalBattleField";
+    }
+    return scene == *death;
+}
+
 bool Record::Add(std::uint8_t room) {
     if (ForRoom(room) == nullptr) {
         return false;
@@ -56,8 +84,8 @@ std::vector<std::uint8_t> Record::Rooms() const {
 std::optional<std::uint8_t> ProvenDeath(const coop::protocol::Message& m) {
     namespace proto = coop::protocol;
     const auto in_its_dungeon = [](std::uint8_t room, const std::string& scene) -> std::optional<std::uint8_t> {
-        const CoopBoss::Room* where = CoopBoss::RoomByIndex(room);
-        if (ForRoom(room) == nullptr || where == nullptr || where->scene != scene) {
+        const std::optional<std::string_view> where = DeathScene(room);
+        if (!where || *where != scene) {
             return std::nullopt;
         }
         return room;
@@ -98,8 +126,7 @@ std::vector<Write> Apply::Check(const std::optional<std::string>& scene, bool pl
             continue;  // the record was cleared since (the host loaded a save): that boss fights again
         }
         const BeatenSet* set = ForRoom(room);
-        const CoopBoss::Room* where = CoopBoss::RoomByIndex(room);
-        if (set == nullptr || where == nullptr || Has(checked_, room) || where->scene == *scene) {
+        if (set == nullptr || Has(checked_, room) || KeptScene(room, *scene)) {
             continue;  // in the boss's own scene: its room's logic is loaded (maybe a fight); the next scene gives it
         }
         checked_.push_back(room);
@@ -111,7 +138,15 @@ std::vector<Write> Apply::Check(const std::optional<std::string>& scene, bool pl
         }
         const std::optional<std::uint32_t> step = read(set->quest);
         if (step && std::find(set->below.begin(), set->below.end(), *step) != set->below.end()) {
-            out.push_back(Write{room, set->quest, true, set->step, set->quest_name});
+            // Two sets of one quest (Ganondorf's Step06, Ganon's Complete), both read before either is written: one
+            // write, the furthest step (the one the other's step is below), whatever order the record holds them in.
+            const auto same = std::find_if(out.begin(), out.end(),
+                                           [&](const Write& w) { return w.is_enum && w.hash == set->quest; });
+            if (same == out.end()) {
+                out.push_back(Write{room, set->quest, true, set->step, set->quest_name});
+            } else if (std::find(set->below.begin(), set->below.end(), same->value) != set->below.end()) {
+                *same = Write{room, set->quest, true, set->step, set->quest_name};
+            }
         }
     }
     return out;

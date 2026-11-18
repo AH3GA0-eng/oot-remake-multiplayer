@@ -41,6 +41,7 @@
 #include "coop_chatbox.h"
 #include "coop_draw.h"
 #include "coop/host/map_drop_log.hpp"
+#include "coop/host/save_transfer.hpp"
 #include "coop_flag_native.h"
 #include "coop_flags.h"
 #include "coop_game_build.h"
@@ -48,6 +49,7 @@
 #include "coop_save.h"
 #include "coop_hold.h"
 #include "coop_counters.h"
+#include "coop_world.h"
 #include "coop_difficulty.h"
 #include "coop_actor_events.h"
 #include "coop_boss_native.h"
@@ -96,6 +98,7 @@
 #include "coop_null_page.h"
 #include "hos_coop_api.h"
 #include "hos_coop_actors.h"
+#include "hos_coop_nodes.h"
 #include "hos_coop_bosses.h"
 #include "hos_coop_pads.h"
 #include "hos_coop_save_load.h"
@@ -434,6 +437,59 @@ void RunCalls(void* ctx) {
         }
         return std::optional<std::uint64_t>(x0);
     });
+}
+
+// Case 1 of a join's state (player reports 107, 129, 132): a guest asked for our save while our file is played, and
+// the file on disk is only as new as our last door. Our game is asked for its own autosave with the call its
+// EventTriggerRequestAutoSave node makes at the end of an event (the node's body, main+0x31f2f50): the AutoSaveMgr is
+// the game system's component 0xc (main+0xba7880(system, 0xc), 0 when there is none), then
+// main+0xba7730(mgr, 5, 0). That call runs the game's own gate first (main+0xba72d0: refused while the game's
+// autosave is off, in its cooldown after a save, or in a player state it does not save in) and otherwise only marks
+// the request in the manager's state; the manager saves at its own next step, into the slot it always uses. We write
+// nothing in the game; the send waits for a save written after the ask (save::Planner's round), at most
+// save::Planner::kFreshSaveUs, then our last save on disk goes as before.
+constexpr std::uint64_t kGameSystemGot = 0x4c7e178;    // main+: GOT -> the global that holds the game system
+constexpr std::uint64_t kSystemComponent = 0xba7880;   // main+: (system, index) -> the component, or 0
+constexpr std::uint64_t kAutoSaveMgrIndex = 0xc;       // the AutoSaveMgr's index (the node's own)
+constexpr std::uint64_t kRequestAutoSave = 0xba7730;   // main+: (mgr, kind, 0): the gate, then the request mark
+constexpr std::uint64_t kAutoSaveKindEvent = 5;        // EventTriggerRequestAutoSave's kind
+constexpr std::uint64_t kAutoSaveMgrState = 0x130;     // mgr: -> the state the request marks (0 before it is made)
+
+void RequestHostAutoSave(void* ctx) {
+    if (!CoopSave::TakeSaveRequest()) return;
+    const std::uint64_t base = CoopRuntime::MainBase();
+    const auto read64 = [](std::uint64_t at) {
+        std::uint64_t v = 0;
+        return g_api->read(at, &v, sizeof v) != 0 ? v : 0;
+    };
+    const std::uint64_t got = read64(base + kGameSystemGot);
+    const std::uint64_t system = got != 0 ? read64(got) : 0;
+    if (system == 0) {
+        LOG_WARNING(Core, "coop: save: our game has no game system yet: the guests get our last save on disk");
+        return;
+    }
+    HosCoopCall k{};
+    k.function = base + kSystemComponent;
+    k.x[0] = system;
+    k.x[1] = kAutoSaveMgrIndex;
+    std::uint64_t mgr = 0;
+    if (!g_api->call(ctx, &k, &mgr) || mgr == 0 || read64(mgr + kAutoSaveMgrState) == 0) {
+        LOG_WARNING(Core, "coop: save: our game's autosave manager is not there: the guests get our last save on disk");
+        return;
+    }
+    k = HosCoopCall{};
+    k.function = base + kRequestAutoSave;
+    k.x[0] = mgr;
+    k.x[1] = kAutoSaveKindEvent;
+    k.x[2] = 0;
+    std::uint64_t x0 = 0;
+    if (!g_api->call(ctx, &k, &x0)) {
+        LOG_WARNING(Core, "coop: no game function at {:#x}: the guests get our last save on disk", k.function);
+        return;
+    }
+    LOG_INFO(Core, "coop: save: asked our game for its own autosave (an event's end request): the guests' send waits "
+                   "for that save, at most {} s",
+             coop::host::save::Planner::kFreshSaveUs / 1'000'000);
 }
 
 }  // namespace
@@ -1153,6 +1209,7 @@ void Frame(void* ctx, int site) {
             if (CoopMapRefresh::TheRefresher().Due(now_ms)) CoopMapPage::AskHudRefresh();
         }
         RunCalls(ctx);
+        RequestHostAutoSave(ctx);   // (only when a guest's ask opened a round: CoopSave::TakeSaveRequest)
         LogBossNative();
         CoopMapPage::Frame(ctx, g_api);   // the Map page's panes, found once while the game plays
         if (const auto menu = CoopMapPage::MenuState()) {  // minimap-b: the drop log's menu state (patch 0018)
@@ -1212,6 +1269,15 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
         static std::atomic<bool> said{false};
         if (!said.exchange(true)) {
             LOG_INFO(Core, "coop: world hooks: first pause counter start from hookshot.exe (node {:#x})", a);
+        }
+        return 1;
+    }
+    case HOS_COOP_WORLD_NODE_START: {  // (patch 0029, hos_coop_nodes.h: coop_world.h's NodeStarts; the Objects walk
+                                       // looks a pushed block's node up there, FindBlockNode)
+        CoopWorld::TheNodeStarts().Push(a, b);
+        static std::atomic<bool> said{false};
+        if (!said.exchange(true)) {
+            LOG_INFO(Core, "coop: world hooks: first AI node start from hookshot.exe (node {:#x}, actor {:#x})", a, b);
         }
         return 1;
     }
@@ -1686,6 +1752,7 @@ COOP_HOOKSHOT_EXPORT int hos_coop_start(const HosCoopApi* api) {
     if (!CoopHookshot::Start(api)) return 0;
     UseSaveSwitch();
     UseSlotOpens();
+    CoopSave::SetSaveRequests(true);   // (RequestHostAutoSave, on the calc thread's call site)
     CoopHookshot::UseLocalPads();
     return 1;
 }
