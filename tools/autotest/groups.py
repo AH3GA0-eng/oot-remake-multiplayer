@@ -331,7 +331,33 @@ def judge(folder, meta=None, kit_root=None, checks=None):
     result, evidence = judge_logs(folder, meta)
     if result != "PASS":
         return result, evidence
-    return prove(folder, meta, evidence, kit_root, checks)
+    result, evidence = prove(folder, meta, evidence, kit_root, checks)
+    open_steps = [line for state, line in count_lines(read_text(os.path.join(folder, "counts.txt"))) if state == "UNPROVEN"]
+    if result == "PASS" and open_steps:
+        # A steps file's expect step (puppets/fairies counted from the log) is proven only by its own see= checks
+        # (hs_steps.py / run.ps1 grade them at the step): the run's see= or logonly= does not stand in for it.
+        return "UNPROVEN", evidence + " [counts.txt: %d step(s) UNPROVEN, first: %s]" % (len(open_steps),
+                                                                                        open_steps[0][:140])
+    return result, evidence
+
+
+# A steps file's expect line, as hs_steps.py and run.ps1 write it: "<state> NAME (want A=1 B=0, after 3 s): ...".
+EXPECT_LINE = re.compile(r"^\S+ \S+ \(want [AB]=\d+(?: [AB]=\d+)*, after \d+ s\)")
+
+
+def count_lines(text):
+    """[(state, line)] of counts.txt: PASS, FAIL or UNPROVEN. An expect step's PASS without '[seen:' (written before
+    the expect see= checks, or by an older harness) counted puppets from the log alone: UNPROVEN."""
+    out = []
+    for line in (text or "").splitlines():
+        line = line.strip()
+        state = line.split(" ", 1)[0]
+        if state not in ("PASS", "FAIL", "UNPROVEN"):
+            continue
+        if state == "PASS" and EXPECT_LINE.match(line) and "[seen:" not in line:
+            state = "UNPROVEN"
+        out.append((state, line))
+    return out
 
 
 def prove(folder, meta, evidence, kit_root=None, checks=None):
@@ -344,20 +370,10 @@ def prove(folder, meta, evidence, kit_root=None, checks=None):
         return "UNPROVEN", evidence + " [no screenshot check (see=): log lines alone prove no visible result]"
     sys.path.insert(0, HERE)
     import proof
-    try:
-        checks = checks if checks is not None else proof.load_proofs()
-    except (OSError, proof.ProofError) as e:
-        return "UNPROVEN", evidence + " [proofs.txt: %s]" % e
-    states = []
-    for name in see:
-        if name not in checks:
-            states.append(("MISSING", "%s: not in proofs.txt" % name))
-        else:
-            states.append(proof.grade(folder, checks[name], kit_root))
-    text = "; ".join("%s %s" % st for st in states)
-    if any(st == "BAD" for st, _ in states):
+    v, text = proof.check_all(folder, see, kit_root, checks)
+    if v == "FAIL":
         return "FAIL", "shot shows the wrong result: " + text + " (logs: " + evidence[:120] + ")"
-    if all(st == "OK" for st, _ in states):
+    if v == "PASS":
         return "PASS", evidence + " [seen: " + text + "]"
     return "UNPROVEN", evidence + " [screenshot check not passed: " + text + "]"
 
@@ -375,10 +391,12 @@ def judge_logs(folder, meta):
     code = meta.get("exit", 0)
     if code:
         return "FAIL", "run.ps1 exit %s" % code
-    good = [line for line in (counts or "").splitlines() if line.startswith("PASS")]
-    if good and not meta.get("expects"):
-        # A steps file's run (hs_steps.py): its counts are the verdict, it plays no "scenario played" line.
-        return "PASS", "counts.txt: %d PASS" % len(good)
+    steps = count_lines(counts)
+    if steps and not meta.get("expects"):
+        # A steps file's run (hs_steps.py): its counts are the verdict, it plays no "scenario played" line. Its
+        # UNPROVEN steps (judge) keep it from PASS.
+        n = sum(1 for state, _ in steps if state == "PASS")
+        return "PASS", "counts.txt: %d PASS" % n + ("" if n == len(steps) else ", %d UNPROVEN" % (len(steps) - n))
     expects = [tuple(e) for e in meta.get("expects", [])]
     if not expects:
         played = read_text(os.path.join(folder, "steps.txt")) or ""

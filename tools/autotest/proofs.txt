@@ -192,3 +192,144 @@ world-reset-B              s*-still-60s-B     160,80,960,520  refs
 # 18 m away facing A, shows A's puppet and the same Stalchild (refs from the first run of the new spots)
 stalchild-A                A-fight3-A         160,80,960,520  refs
 stalchild-B                A-fight3-B         160,80,960,520  refs
+
+# --- expect steps of the steps files (proof-shots-a-3, 2026-11-18): each step counts puppets and fairies from
+# the log; its shot s<step>-<name>-<game> must show the same: N=1 the other player's puppet Link (and its fairy)
+# in view, N=0 none. Stub region (the play area); references from the reference-capture run. ---
+# crawl.steps.txt
+crawl-end-A                              s*-end-A                       160,80,960,520  refs
+crawl-end-B                              s*-end-B                       160,80,960,520  refs
+# cutscene.steps.txt
+cutscene-both-in-A                       s*-both-in-A                   160,80,960,520  refs
+cutscene-both-in-B                       s*-both-in-B                   160,80,960,520  refs
+cutscene-after-A                         s*-after-A                     160,80,960,520  refs
+cutscene-after-B                         s*-after-B                     160,80,960,520  refs
+# ocarina.steps.txt
+ocarina-both-in-A                        s*-both-in-A                   160,80,960,520  refs
+ocarina-both-in-B                        s*-both-in-B                   160,80,960,520  refs
+ocarina-after-A                          s*-after-A                     160,80,960,520  refs
+ocarina-after-B                          s*-after-B                     160,80,960,520  refs
+# screens.steps.txt
+screens-b-on-title-A                     s*-b-on-title-A                160,80,960,520  refs
+screens-b-on-title-B                     s*-b-on-title-B                160,80,960,520  refs
+screens-both-in-A                        s*-both-in-A                   160,80,960,520  refs
+screens-both-in-B                        s*-both-in-B                   160,80,960,520  refs
+screens-b-paused-back-A                  s*-b-paused-back-A             160,80,960,520  refs
+screens-b-paused-back-B                  s*-b-paused-back-B             160,80,960,520  refs
+screens-a-paused-back-A                  s*-a-paused-back-A             160,80,960,520  refs
+screens-a-paused-back-B                  s*-a-paused-back-B             160,80,960,520  refs
+screens-a-on-title-A                     s*-a-on-title-A                160,80,960,520  refs
+screens-a-on-title-B                     s*-a-on-title-B                160,80,960,520  refs
+screens-a-back-in-A                      s*-a-back-in-A                 160,80,960,520  refs
+screens-a-back-in-B                      s*-a-back-in-B                 160,80,960,520  refs
+# stray-diag-nocallers.steps.txt
+stray-diag-nocallers-both-loaded-A       s*-both-loaded-A               160,80,960,520  refs
+stray-diag-nocallers-both-loaded-B       s*-both-loaded-B               160,80,960,520  refs
+stray-diag-nocallers-server-down-1-A     s*-server-down-1-A             160,80,960,520  refs
+stray-diag-nocallers-server-down-1-B     s*-server-down-1-B             160,80,960,520  refs
+stray-diag-nocallers-server-back-1-A     s*-server-back-1-A             160,80,960,520  refs
+stray-diag-nocallers-server-back-1-B     s*-server-back-1-B             160,80,960,520  refs
+stray-diag-nocallers-server-down-2-A     s*-server-down-2-A             160,80,960,520  refs
+stray-diag-nocallers-server-down-2-B     s*-server-down-2-B             160,80,960,520  refs
+stray-diag-nocallers-server-back-2-A     s*-server-back-2-A             160,80,960,520  refs
+stray-diag-nocallers-server-back-2-B     s*-server-back-2-B             160,80,960,520  refs
+stray-diag-nocallers-server-down-3-A     s*-server-down-3-A             160,80,960,520  refs
+stray-diag-nocallers-server-down-3-B     s*-server-down-3-B             160,80,960,520  refs
+stray-diag-nocallers-server-back-3-A     s*-server-back-3-A             160,80,960,520  refs
+stray-diag-nocallers-server-back-3-B     s*-server-back-3-B             160,80,960,520  refs
+# stray-diag-nohit.steps.txt
+stray-diag-nohit-both-loaded-A           s*-both-loaded-A               160,80,960,520  refs
+stray-diag-nohit-both-loaded-B           s*-both-loaded-B               160,80,960,520  refs
+stray-diag-nohit-server-down-1-A         s*-server-down-1-A             160,80,960,520  refs
+stray-diag-nohit-server-down-1-B         s*-server-down-1-B             160,80,960,520  refs
+stray-diag-nohit-server-back-1-A         s*-server-back-1-A             160,80,960,520  refs
+stray-diag-nohit-server-back-1-B         s*-server-back-1-B             160,80,960,520  refs
+stray-diag-nohit-server-down-2-A         s*-server-down-2-A             160,80,960,520  refs
+stray-diag-nohit-server-down-2-B         s*-server-down-2-B             160,80,960,520  refs
+stray-diag-nohit-server-back-2-A         s*-server-back-2-A             160,80,960,520  refs
+stray-diag-nohit-server-back-2-B         s*-server-back-2-B             160,80,960,520  refs
+stray-diag-nohit-server-down-3-A         s*-server-down-3-A             160,80,960,520  refs
+stray-diag-nohit-server-down-3-B         s*-server-down-3-B             160,80,960,520  refs
+stray-diag-nohit-server-back-3-A         s*-server-back-3-A             160,80,960,520  refs
+stray-diag-nohit-server-back-3-B         s*-server-back-3-B             160,80,960,520  refs
+# stray-diag-noobj.steps.txt
+stray-diag-noobj-both-loaded-A           s*-both-loaded-A               160,80,960,520  refs
+stray-diag-noobj-both-loaded-B           s*-both-loaded-B               160,80,960,520  refs
+stray-diag-noobj-server-down-1-A         s*-server-down-1-A             160,80,960,520  refs
+stray-diag-noobj-server-down-1-B         s*-server-down-1-B             160,80,960,520  refs
+stray-diag-noobj-server-back-1-A         s*-server-back-1-A             160,80,960,520  refs
+stray-diag-noobj-server-back-1-B         s*-server-back-1-B             160,80,960,520  refs
+stray-diag-noobj-server-down-2-A         s*-server-down-2-A             160,80,960,520  refs
+stray-diag-noobj-server-down-2-B         s*-server-down-2-B             160,80,960,520  refs
+stray-diag-noobj-server-back-2-A         s*-server-back-2-A             160,80,960,520  refs
+stray-diag-noobj-server-back-2-B         s*-server-back-2-B             160,80,960,520  refs
+stray-diag-noobj-server-down-3-A         s*-server-down-3-A             160,80,960,520  refs
+stray-diag-noobj-server-down-3-B         s*-server-down-3-B             160,80,960,520  refs
+stray-diag-noobj-server-back-3-A         s*-server-back-3-A             160,80,960,520  refs
+stray-diag-noobj-server-back-3-B         s*-server-back-3-B             160,80,960,520  refs
+# stray-diag-nopose.steps.txt
+stray-diag-nopose-both-loaded-A          s*-both-loaded-A               160,80,960,520  refs
+stray-diag-nopose-both-loaded-B          s*-both-loaded-B               160,80,960,520  refs
+stray-diag-nopose-server-down-1-A        s*-server-down-1-A             160,80,960,520  refs
+stray-diag-nopose-server-down-1-B        s*-server-down-1-B             160,80,960,520  refs
+stray-diag-nopose-server-back-1-A        s*-server-back-1-A             160,80,960,520  refs
+stray-diag-nopose-server-back-1-B        s*-server-back-1-B             160,80,960,520  refs
+stray-diag-nopose-server-down-2-A        s*-server-down-2-A             160,80,960,520  refs
+stray-diag-nopose-server-down-2-B        s*-server-down-2-B             160,80,960,520  refs
+stray-diag-nopose-server-back-2-A        s*-server-back-2-A             160,80,960,520  refs
+stray-diag-nopose-server-back-2-B        s*-server-back-2-B             160,80,960,520  refs
+stray-diag-nopose-server-down-3-A        s*-server-down-3-A             160,80,960,520  refs
+stray-diag-nopose-server-down-3-B        s*-server-down-3-B             160,80,960,520  refs
+stray-diag-nopose-server-back-3-A        s*-server-back-3-A             160,80,960,520  refs
+stray-diag-nopose-server-back-3-B        s*-server-back-3-B             160,80,960,520  refs
+# stray-diag-nowake.steps.txt
+stray-diag-nowake-both-loaded-A          s*-both-loaded-A               160,80,960,520  refs
+stray-diag-nowake-both-loaded-B          s*-both-loaded-B               160,80,960,520  refs
+stray-diag-nowake-server-down-1-A        s*-server-down-1-A             160,80,960,520  refs
+stray-diag-nowake-server-down-1-B        s*-server-down-1-B             160,80,960,520  refs
+stray-diag-nowake-server-back-1-A        s*-server-back-1-A             160,80,960,520  refs
+stray-diag-nowake-server-back-1-B        s*-server-back-1-B             160,80,960,520  refs
+stray-diag-nowake-server-down-2-A        s*-server-down-2-A             160,80,960,520  refs
+stray-diag-nowake-server-down-2-B        s*-server-down-2-B             160,80,960,520  refs
+stray-diag-nowake-server-back-2-A        s*-server-back-2-A             160,80,960,520  refs
+stray-diag-nowake-server-back-2-B        s*-server-back-2-B             160,80,960,520  refs
+stray-diag-nowake-server-down-3-A        s*-server-down-3-A             160,80,960,520  refs
+stray-diag-nowake-server-down-3-B        s*-server-down-3-B             160,80,960,520  refs
+stray-diag-nowake-server-back-3-A        s*-server-back-3-A             160,80,960,520  refs
+stray-diag-nowake-server-back-3-B        s*-server-back-3-B             160,80,960,520  refs
+# stray.steps.txt
+stray-both-loaded-A                      s*-both-loaded-A               160,80,960,520  refs
+stray-both-loaded-B                      s*-both-loaded-B               160,80,960,520  refs
+stray-a-in-kakariko-A                    s*-a-in-kakariko-A             160,80,960,520  refs
+stray-a-in-kakariko-B                    s*-a-in-kakariko-B             160,80,960,520  refs
+stray-a-back-A                           s*-a-back-A                    160,80,960,520  refs
+stray-a-back-B                           s*-a-back-B                    160,80,960,520  refs
+stray-b-left-A                           s*-b-left-A                    160,80,960,520  refs
+stray-b-rejoined-A                       s*-b-rejoined-A                160,80,960,520  refs
+stray-b-rejoined-B                       s*-b-rejoined-B                160,80,960,520  refs
+stray-b-crashed-A                        s*-b-crashed-A                 160,80,960,520  refs
+stray-b-back-A                           s*-b-back-A                    160,80,960,520  refs
+stray-b-back-B                           s*-b-back-B                    160,80,960,520  refs
+stray-server-down-A                      s*-server-down-A               160,80,960,520  refs
+stray-server-down-B                      s*-server-down-B               160,80,960,520  refs
+stray-server-back-A                      s*-server-back-A               160,80,960,520  refs
+stray-server-back-B                      s*-server-back-B               160,80,960,520  refs
+stray-b-adult-A                          s*-b-adult-A                   160,80,960,520  refs
+stray-b-adult-B                          s*-b-adult-B                   160,80,960,520  refs
+# teleport-free.steps.txt
+teleport-free-loaded-A                   s*-loaded-A                    160,80,960,520  refs
+teleport-free-loaded-B                   s*-loaded-B                    160,80,960,520  refs
+teleport-free-together-A                 s*-together-A                  160,80,960,520  refs
+teleport-free-together-B                 s*-together-B                  160,80,960,520  refs
+# teleport.steps.txt
+teleport-loaded-A                        s*-loaded-A                    160,80,960,520  refs
+teleport-loaded-B                        s*-loaded-B                    160,80,960,520  refs
+teleport-same-scene-A                    s*-same-scene-A                160,80,960,520  refs
+teleport-same-scene-B                    s*-same-scene-B                160,80,960,520  refs
+teleport-together-A                      s*-together-A                  160,80,960,520  refs
+teleport-together-B                      s*-together-B                  160,80,960,520  refs
+# teleport2.steps.txt
+teleport2-loaded-A                       s*-loaded-A                    160,80,960,520  refs
+teleport2-loaded-B                       s*-loaded-B                    160,80,960,520  refs
+teleport2-together-A                     s*-together-A                  160,80,960,520  refs
+teleport2-together-B                     s*-together-B                  160,80,960,520  refs
