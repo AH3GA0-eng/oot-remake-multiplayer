@@ -33,18 +33,22 @@ mark b-ladder
 # shot, so B's own press can never be what moved the room (at 2.9 m hs-deku-platforms' A slid onto the plate).
 place -17.5 120.2 0.5    # the compass room's plate floor (3F), 5.4 m off the plate (hs-deku-platforms' A spot)
 wait 240
-toward -22.6 -3.8 10     # face the lifts' asker
+toward -29.9 3.2 10      # face the lifts themselves (hs-deku-platforms.A's view; the asker spot showed a door)
+press ZL 10              # camera behind Link (without it b-lifts showed the room's east door, events-next-a-12 probe)
 wait 750                 # A's flag comes at about 600 frames after the place
 place -17.5 120.2 0.5
-toward -22.6 -3.8 10
+toward -29.9 3.2 10
+press ZL 10
 wait 750
 mark b-lifts
 place -14.5 79.6 -6.5    # the web room, hs-deku-torch's A spot (~5 m off the plate at -10.2): not on it
 wait 240
 toward -10.0 -9.5 10     # face the torch and the web
+press ZL 10
 wait 750
 place -14.5 79.6 -6.5
 toward -10.0 -9.5 10
+press ZL 10
 wait 750
 mark b-web
 wait 300
