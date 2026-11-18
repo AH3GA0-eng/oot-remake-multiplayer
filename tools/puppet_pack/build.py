@@ -32,7 +32,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "puppet_pack"  # noqa: A001
 
-from . import ainb, byml, dumpcheck, dungeon_rooms, hud, look_items, look_live, map_captures, nup, pause_menu, rstb, sarc, title_menu, tunic, tunic_extra, zs  # noqa: E402
+from . import ainb, byml, dumpcheck, dungeon_rooms, hud, look_items, look_live, map_captures, nup, pause_menu, rstb, sarc, title_menu, tunic, tunic_extra, ui_pack, zs  # noqa: E402
 
 TITLE_ID = "0400486024DEC000"
 DEFAULT_MOD_NAME = "coop-puppet"
@@ -1318,22 +1318,27 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
     # the puppets do not need them.
     # Only for Hookshot's game (--title-rows): the emulator has no title menu, its rows would do nothing.
     # All or nothing (title_menu.build writes only when every file was made).
+    # One view of the game's files for every UI builder (ui_pack.PackRun): what one made is what the next reads (the
+    # language archives get both steps' labels), and each size-table entry grows once from the game's original.
+    ui_run = ui_pack.PackRun(romfs, table)
     title_files = []
     if title_rows:
         try:
             title_files = title_menu.build(romfs, out_romfs, dicts, table,
-                                           lambda root, r, data: write(os.path.join(root, r), data), recompress, log)
+                                           lambda root, r, data: write(os.path.join(root, r), data), recompress, log,
+                                           run=ui_run)
         except (title_menu.TitleMenuError, OSError, ValueError, KeyError, IndexError, struct.error) as e:
             log(f"title menu: rows left out ({e}); the title keeps its own three, co-op uses the Minus prompt")
     # The pause menu's Multiplayer tab and page (pause_menu.py, issue 264): Hookshot's game only (--pause-tab), with
     # the co-op module that shows them (patch 0030); both stored hidden, so without the module the menu is the game's.
-    # After the title rows: it adds its labels to the language archives as they wrote them. All or nothing.
+    # After the title rows, through the same view (ui_run): its labels join theirs in each language archive. All or
+    # nothing.
     pause_files = []
     if pause_tab:
         try:
             pause_files = pause_menu.build(romfs, out_romfs, dicts, table,
                                            lambda root, r, data: write(os.path.join(root, r), data), recompress, log,
-                                           earlier=title_files)
+                                           run=ui_run)
         except (pause_menu.PauseMenuError, OSError, ValueError, KeyError, IndexError, struct.error) as e:
             log(f"pause menu: the Multiplayer tab left out ({e}); the pause menu keeps its four")
 
