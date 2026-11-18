@@ -22,6 +22,7 @@
 #include "coop_every.h"
 #include "coop_flags.h"
 #include "coop_live_events.h"
+#include "coop_save.h"
 
 namespace CoopNgPlus {
 namespace {
@@ -45,6 +46,7 @@ struct Glue {
     bool gap_written = false; // the hearts were written in this load (no Link): once per load
     std::int32_t wrote = -1;  // MaxLife written in the last load, to check once Link is made (-1: none)
     bool held = false;        // the kept hearts hold in this file: nothing more read or written
+    std::uint64_t loads_seen = 0;  // CoopSave::SaveLoadStarts at the last frame
     bool was_in_game = false;
     std::uint64_t link_at_us = 0;  // when our Link was last made (the end of a load)
     std::vector<std::string> lines;
@@ -152,23 +154,31 @@ void Frame(CoopHook::EmulatorMemory& memory, bool in_game, bool may_give, bool t
     Glue& g = Ready();
     const std::uint64_t now_us = CoopEvery::NowUs();
     bool beaten = false;
+    FileMark mark;
     for (const auto& r : CoopLiveEvents::TheGameRequests().Since(g.cursor)) {
         if (r.taken && IsGanonDeath(r.name)) {
             beaten = true;
             LOG_INFO(Core, "coop: New Game+: Ganon's death seen ({})", r.name);
         }
-        if (r.taken && IsNewFileOpening(r.name) && !g.new_file) {
-            g.new_file = true;
-            LOG_INFO(Core, "coop: New Game+: a new file ({}): the kept hearts may go into it", r.name);
-        }
+        mark.opening = mark.opening || (r.taken && IsNewFileOpening(r.name));
     }
-    // Back on the title: the next file is another one (a loaded save starts after the opening, so it gets nothing).
-    // Not on a load between scenes: the hearts go in there.
-    if (title) {
-        g.new_file = false;
+    // Which file this is: the title or any save load the game starts ends a new file (a loaded save gets nothing,
+    // however it was loaded); New Game's opening begins one. Not a load between scenes: the hearts go in there.
+    const std::uint64_t loads = CoopSave::SaveLoadStarts();
+    mark.was = g.new_file;
+    mark.native_loads = CoopSave::NativeSaveLoads();
+    mark.title = title;
+    mark.load_started = loads != g.loads_seen;
+    g.loads_seen = loads;
+    const bool new_file = NewFileNow(mark);
+    if (new_file != g.new_file) {
+        if (new_file && !g.new_file) {
+            LOG_INFO(Core, "coop: New Game+: a new file (its opening): the kept hearts may go into it");
+        }
         g.held = false;
         g.wrote = -1;
     }
+    g.new_file = new_file;
     // Tests only (OOT_COOP_TEST=1, as the server's test switches): Ganon counted beaten once Link is in a save.
     if (!g.test_done && in_game) {
         g.test_done = true;

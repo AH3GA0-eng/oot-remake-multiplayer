@@ -105,3 +105,30 @@ TEST_CASE("ngplus: each level grows enemy and boss life and damage, never the nu
         proto::ngplus_difficulty({100, 100, 100, 100, 100}, proto::kMaxNgPlus));
   CHECK(proto::valid_difficulty(proto::ngplus_difficulty({300, 200, 200, 400, 160}, proto::kMaxNgPlus)));
 }
+
+TEST_CASE("ngplus: a new file ends with the title or any save load the game starts, not with a load between scenes") {
+  using CoopNgPlus::FileMark;
+  using CoopNgPlus::NewFileNow;
+  FileMark m;
+  m.native_loads = true;
+  m.opening = true;  // New Game: its opening
+  CHECK(NewFileNow(m));
+  m = FileMark{};
+  m.native_loads = true;
+  m.was = true;      // a load between scenes: no save load, no title
+  CHECK(NewFileNow(m));
+  m.load_started = true;  // the System menu's Load of an old save, Game Over's Try Again, the host's save
+  CHECK_FALSE(NewFileNow(m));
+  m.load_started = false;
+  m.title = true;  // back on the title
+  CHECK_FALSE(NewFileNow(m));
+  m = FileMark{};
+  m.native_loads = true;
+  m.load_started = true;  // New Game's own load and its opening seen in one frame: a new file
+  m.opening = true;
+  CHECK(NewFileNow(m));
+  m = FileMark{};
+  m.was = true;
+  m.opening = true;  // the emulator: save loads are not seen, a loaded save cannot be told apart: nothing given
+  CHECK_FALSE(NewFileNow(m));
+}

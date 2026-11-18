@@ -413,6 +413,7 @@ bool SessionLive() {
 
 namespace {
 std::atomic<unsigned> g_load_starts{0};
+std::atomic<std::uint64_t> g_load_starts_ever{0};   // (SaveLoadStarts: never taken back)
 std::atomic<long long> g_load_start_ms{0};
 std::atomic<unsigned> g_loads{0};
 std::atomic<long long> g_game_over_ms{0};  // NoteGameOverSave; 0: none, or the title came since
@@ -631,6 +632,7 @@ void NoteGameSaveLoad(bool start) {
     const long long now = NowMs();
     if (start) {
         g_load_starts.fetch_add(1, std::memory_order_relaxed);
+        g_load_starts_ever.fetch_add(1, std::memory_order_relaxed);
         g_load_start_ms.store(now, std::memory_order_relaxed);
         return;
     }
@@ -650,6 +652,10 @@ void SetNativeSaveLoads(bool on) {
 
 bool NativeSaveLoads() {
     return g_native_loads.load(std::memory_order_relaxed);
+}
+
+std::uint64_t SaveLoadStarts() {
+    return g_load_starts_ever.load(std::memory_order_relaxed);
 }
 
 GameSaveLoads TakeGameSaveLoads() {

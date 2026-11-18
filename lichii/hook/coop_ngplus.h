@@ -66,6 +66,18 @@ struct Give {
     bool may_give = false;                 // alone, or this game hosts (a guest plays the host's save)
     bool link_made = false;                // our Link is in the scene (his Life component owns the max then)
 };
+// Whether the file played is still a new one (its hearts may be given), from what this frame saw.
+struct FileMark {
+    bool was = false;           // a new file until now
+    bool native_loads = false;  // the game's save loads are seen (CoopSave::NativeSaveLoads; false on the emulator)
+    bool title = false;         // the title is up
+    bool load_started = false;  // the game started a save load since the last frame (any load: title, System
+                                // menu, Game Over's Try Again, the host's save)
+    bool opening = false;       // a new file's opening (IsNewFileOpening) was taken since the last frame
+};
+// The title or a save load ends it; the opening (which comes after New Game's own load) begins it. Without the save
+// loads seen (the emulator) a loaded save cannot be told from a new file, so nothing is given there.
+bool NewFileNow(const FileMark& m);
 // The MaxLife to set, or nothing (off, a loaded save, a guest, already that high: never lowered; our Link made:
 // waits for the next load, where the game makes him from the flag).
 std::optional<std::int32_t> HeartsToGive(const Give& g);

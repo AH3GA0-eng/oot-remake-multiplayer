@@ -88,6 +88,9 @@ void NoteGameOverSave();
 // Whether this Hookshot has all four wraps (its hello's bits); false on the emulator.
 void SetNativeSaveLoads(bool on);
 bool NativeSaveLoads();
+// How many save loads the game has started since boot (NoteGameSaveLoad(true): the title's Continue/Load, the System
+// menu's Load, Game Over's Try Again, the host's save), never reset: a reader keeps the last count it saw.
+std::uint64_t SaveLoadStarts();
 // The starts and loads since the last call (the session's flag watcher takes them).
 // Only fresh ones: a start older than kGameSaveLoadFreshMs (the game's own start loads a save before any session) or
 // a Game Over mark older than kGameOverFreshMs is dropped.

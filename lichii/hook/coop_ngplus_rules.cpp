@@ -80,6 +80,17 @@ bool IsNewFileOpening(std::string_view event) {
     return event == "Dm_Kokiri_0000";
 }
 
+bool NewFileNow(const FileMark& m) {
+    if (!m.native_loads) {
+        return false;
+    }
+    bool now = m.was && !m.title && !m.load_started;
+    if (m.opening) {
+        now = true;   // (its load came first: a load and the opening in one frame are a new file)
+    }
+    return now;
+}
+
 std::optional<std::int32_t> HeartsToGive(const Give& g) {
     if (g.level == 0 || g.hearts <= 0 || !g.may_give || !g.new_file || g.link_made || !g.max_life ||
         *g.max_life <= 0) {
