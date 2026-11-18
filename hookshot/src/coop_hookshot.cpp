@@ -82,6 +82,7 @@
 #include "coop_local_probe.h"
 #include "coop_player_input.h"
 #include "coop_png.h"
+#include "coop_window_brand.h"
 #include "coop_puppet.h"
 #include "coop_puppet_config.h"
 #include "coop_pack_notice.h"
@@ -1200,6 +1201,7 @@ void LocalProbe();   // (below)
 void LocalLayer(void* ctx);   // (below)
 
 void Frame(void* ctx, int site) {
+    CoopWindowBrand::Tick(CoopRuntime::GameDir());  // the window's title and icon, co-op on or idle (solo too)
     if (!g_on) {
         return;
     }
