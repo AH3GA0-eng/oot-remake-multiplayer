@@ -2070,7 +2070,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             owner->second.player != 0 && o.dead_at == 0 && !o.dead_said && !(o.life && *o.life <= 0) &&
             !(o.animation && IsDeathAnimation(o.animation->name)) && !IsHatchingEgg(o.name) &&
             !bound_.contains(o.address)) {
-            away_.push_back({o.id, o.address, now_us + kAwayKeepUs, o.name, o.position});
+            away_.push_back({o.id, o.address, now_us + kAwayKeepUs, o.name, o.position, now_us});
             it = objects_.erase(it);
             continue;
         }
@@ -2524,9 +2524,16 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
 
     // churn-b: an away object that came back goes on with its owner; one
     // still off the walk after kAwayKeepUs is gone (left), its owner forgotten.
-    std::erase_if(away_, [this, now_us](const Away& a) {
+    std::erase_if(away_, [this, now_us](Away& a) {
         if (std::any_of(objects_.begin(), objects_.end(), [&a](const auto& e) { return e.second.id == a.id; })) {
             return true;
+        }
+        if (now_us - a.since < kAwayEventMaxUs) {  // an event's performer off the list (row 138(3))
+            if (in_event_) {
+                a.until = std::max(a.until, now_us + kAwayKeepUs);
+            } else if (event_end_ > a.since) {
+                a.until = std::max(a.until, event_end_ + kAwayKeepUs);
+            }
         }
         if (now_us < a.until) {
             return false;

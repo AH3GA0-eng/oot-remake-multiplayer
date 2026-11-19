@@ -1143,6 +1143,44 @@ TEST_CASE("objects: a copy whose owner's game deleted it (gone) is deleted here,
     CHECK(mine.Removes().empty());
 }
 
+// enemy-left-0116, row 138(3): an event's performers (DC's Lizalfos jumping
+// in) are off the list longer than kAwayKeepUs; they stay ours meanwhile.
+TEST_CASE("objects: delete events: an actor off the walk while an event plays stays away until after it") {
+    const std::string liz = "Enemy_MiddleBoss_Lizalfos";
+    Sync sync;
+    sync.SetDeleteEvents(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 6, 0.0f, liz)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 1);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 6, 0.0f, liz)});
+    sync.SetEvent(true, 20 * kMs);
+    Tick(sync, 40 * kMs, {});
+    Tick(sync, 80 * kMs, {});
+    REQUIRE(sync.AwayCount() == 1);
+    Tick(sync, 5'000 * kMs, {});  // past kAwayKeepUs, the event still plays
+    CHECK(sync.AwayCount() == 1);
+    sync.SetEvent(false, 6'000 * kMs);
+    Tick(sync, 6'000 * kMs + Sync::kAwayKeepUs - kMs, {});
+    CHECK(sync.AwayCount() == 1);  // kAwayKeepUs from the event's end
+    Tick(sync, 9'000 * kMs, {Enemy(0x100, 0x11, 6, 0.0f, liz)});
+    CHECK(sync.AwayCount() == 0);
+    CHECK(*sync.IdOf(0x100) == id);
+    CHECK(sync.OwnerAt(0x100) == 1);  // still ours: never handed on
+
+    // An event that never ends: off the walk kAwayEventMaxUs at most.
+    Sync stuck;
+    stuck.SetDeleteEvents(true);
+    Tick(stuck, 0, {Enemy(0x100, 0x11, 6, 0.0f, liz)});
+    Own(stuck, *stuck.IdOf(0x100), 1);
+    Tick(stuck, 10 * kMs, {Enemy(0x100, 0x11, 6, 0.0f, liz)});
+    stuck.SetEvent(true, 20 * kMs);
+    Tick(stuck, 40 * kMs, {});
+    Tick(stuck, 80 * kMs, {});
+    REQUIRE(stuck.AwayCount() == 1);
+    Tick(stuck, 40 * kMs + Sync::kAwayEventMaxUs + Sync::kAwayKeepUs, {});
+    CHECK(stuck.AwayCount() == 0);
+}
+
 TEST_CASE("objects: without delete events (the emulator) two missed walks still end an owned actor") {
     Sync sync;
     Tick(sync, 0, {Enemy(0x100, 0x11, 2)});

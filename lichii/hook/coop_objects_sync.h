@@ -700,6 +700,14 @@ public:
     // ends it. Without delete events (the emulator) two missed walks still end it.
     void SetDeleteEvents(bool on) { delete_events_ = on; }
     static constexpr std::uint64_t kAwayKeepUs = 2'000'000;
+    // enemy-left-0116 (row 138(3), Revirie's log at DC's second Lizalfos
+    // pair): an event playing here takes its performers off the list for
+    // longer (the Lizalfos' jump-in during FocusOnEnemy_02 went > 2 s, so
+    // ours were let go, handed to player 2, and our game then made copies of
+    // "player 2's encounter" beside its own). While an event plays here the
+    // time does not run out (kAwayKeepUs again from its end), up to
+    // kAwayEventMaxUs off the walk.
+    static constexpr std::uint64_t kAwayEventMaxUs = 30'000'000;
     std::size_t AwayCount() const { return away_.size(); }
 
     // Projectiles (coop_projectiles.h): true for a life drop at a place and
@@ -765,6 +773,9 @@ public:
     void SetEvent(bool in_event, std::uint64_t now_us = 0, bool ours = true) {
         if (in_event && !in_event_) {
             event_since_ = now_us;
+        }
+        if (!in_event && in_event_) {
+            event_end_ = now_us;  // (Away: kAwayKeepUs from here)
         }
         in_event_ = in_event;
         event_ours_ = in_event && ours;
@@ -1271,6 +1282,7 @@ private:
         std::uint64_t until = 0;
         std::string name;
         coop::protocol::Vec3 position{};  // where it was last seen (Left)
+        std::uint64_t since = 0;          // when it left (kAwayEventMaxUs)
     };
     std::vector<Away> away_;
     bool delete_events_ = false;
@@ -1296,6 +1308,7 @@ private:
     std::uint64_t scene_since_ = 0;  // server time of the scene's first walk
     std::optional<coop::protocol::Vec3> player_;
     bool in_event_ = false;  // issue 200: SetEvent
+    std::uint64_t event_end_ = 0;  // when the last event here ended (SetEvent)
     bool event_ours_ = false;  // G1: our Link is in it (SetEvent's ours)
     // Row 97: why `o` is our running event's partner now (none: it is not):
     // it is an event member in our Link's event (member); it has no event member component and its
