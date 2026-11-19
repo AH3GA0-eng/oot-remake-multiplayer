@@ -47,6 +47,7 @@ class FakeGame:
         self.map = "KokiriForest_Child"
         self.got = []            # (time, request)
         self.held = []           # inputs not let go: requests
+        self.held_by = {}        # id(request) -> the connection that sent it (a release lets go of its own only)
         self.pos = [0.0, 0.0, 0.0]
         self.moved_at = None
         self.state = "menu"
@@ -70,7 +71,7 @@ class FakeGame:
                 self.pos[2] -= math.sin(a) * m
         self.moved_at = now
 
-    def answer(self, req):
+    def answer(self, req, conn=None):
         cmd = req.get("cmd")
         base = {"id": req.get("id"), "ok": True, "frame": 100}
         with self.lock:
@@ -84,9 +85,12 @@ class FakeGame:
                     if self.presses_to_play <= 0:
                         self.state = "play"
                 self.held.append(req)
+                self.held_by[id(req)] = conn
                 return dict(base, queued=1, frames=req.get("frames", 8))
             if cmd == "release":
-                n, self.held = len(self.held), []
+                # Longshot docs/control.md: the caller's inputs are let go; another connected client's stay.
+                kept = [r for r in self.held if self.held_by.get(id(r)) is not conn]
+                n, self.held = len(self.held) - len(kept), kept
                 return dict(base, released=n, all=False)
             if cmd == "status":
                 return dict(base, state=self.state, map="KokiriForest_Child" if self.state == "play" else None,
@@ -133,7 +137,7 @@ class FakeGame:
             buf += chunk
             while b"\n" in buf:
                 line, buf = buf.split(b"\n", 1)
-                reply = self.answer(json.loads(line))
+                reply = self.answer(json.loads(line), sock)
                 sock.sendall((json.dumps(reply) + "\n").encode())
 
     def connect(self):
@@ -393,6 +397,43 @@ class PlayerTest(unittest.TestCase):
         play("toward 0 -100 180", game)
         sticks = {(r["x"], r["y"]) for r in game.cmds("stick")}
         self.assertEqual(sticks, {(0.0, 1.0)})
+
+    def test_toward_with_keys_holds_them_for_the_whole_step(self):
+        # #147 (deku-block-147-probe): `toward X Z TICKS A` is a grab held while Link pushes or pulls. The stick is
+        # let go and sent again every steer_every; the keys go once on a connection of their own, so that release
+        # never lets go of the grab. Before, A was dropped and pressed again 4 times a second: B's pull never
+        # happened (Link let go of the block and walked 3 m back).
+        game = FakeGame()
+        a_held_at = []
+        answer = game.answer
+
+        def watch(req, conn=None):
+            reply = answer(req, conn)
+            if req.get("cmd") == "release":
+                a_held_at.append(any("A" in r.get("buttons", []) for r in game.held))
+            return reply
+
+        game.answer = watch
+        play("toward 0 100 120 A", game)
+        presses = game.cmds("press")
+        self.assertEqual([r["buttons"] for r in presses], [["A"]])          # pressed once
+        self.assertGreaterEqual(presses[0]["frames"], 120)                   # for the whole step
+        self.assertTrue(all(not r.get("buttons") for r in game.cmds("stick")))  # the sticks carry no keys
+        self.assertGreater(len(a_held_at), 3)
+        self.assertTrue(all(a_held_at[:-1]), a_held_at)   # A still down at every stick release in the step
+        self.assertEqual(game.held, [])                   # and let go at its end
+        self.assertGreater(game.pos[2], 2.5)              # Link moved the whole step (a pull toward +z)
+
+    def test_toward_without_a_second_connection_keeps_keys_on_the_stick(self):
+        game = FakeGame()
+        log = hs.Log()
+        b = game.connect()
+        p = hs.Player(b, log, clock=game.clock, sleep=game.clock.sleep)
+        p.play(hs.parse("toward 0 -100 30 A"))
+        game.close()
+        self.assertEqual(game.cmds("press"), [])
+        self.assertTrue(all(r["buttons"] == ["A"] for r in game.cmds("stick")))
+        self.assertEqual(game.held, [])
 
     def test_a_stopped_goto_still_steps_aside(self):
         game = FakeGame()

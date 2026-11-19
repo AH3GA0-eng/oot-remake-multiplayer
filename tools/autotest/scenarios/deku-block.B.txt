@@ -32,7 +32,7 @@ mark b-pull
 toward -51.06 40.0 150 A # PUSH it on, A held (grab and push)
 wait 120
 mark b-push1
-toward -51.06 40.0 150   # and once more, walking into it
+toward -51.06 40.0 150 A # and once more (a walk into it without A only shows "Grab": no push)
 wait 120
 mark b-push2
 wait 1200

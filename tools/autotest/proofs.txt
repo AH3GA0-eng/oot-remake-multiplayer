@@ -74,9 +74,10 @@ hs-gohma-death-B           A-a-d3-B           160,80,960,520  refs
 # hs-gohma-door: both Links past the boss door, the door shut, Gohma in the room
 hs-gohma-door-A            B-b-in-A           160,80,960,520  refs
 hs-gohma-door-B            B-b-in-B           160,80,960,520  refs
-# hs-chest-other: the map chest open in both games after B opened it
+# hs-chest-other: the map chest open in both games after B opened it (room-actor-replay-0116: B's own 'opened' view,
+# A's 'a-look' now faces the chest; good = lid open, bad = closed lid or no chest at all, the #195 vanish)
 hs-chest-other-A           A-a-look-A         160,80,960,520  refs
-hs-chest-other-B           A-a-look-B         160,80,960,520  refs
+hs-chest-other-B           B-opened-B         160,80,960,520  refs
 # hs-crawl: the puppet crawls (low, in the hole) in the other game
 hs-crawl-A                 A-through-A        160,80,960,520  refs
 hs-crawl-B                 A-through-B        160,80,960,520  refs
@@ -110,12 +111,20 @@ hs-hud-B                   A-a-hud-B          160,80,960,520  refs
 # hs-jabu-water: Jabu's room 14 water level the same in both games
 hs-jabu-water-A            A-water-A          160,80,960,520  refs
 hs-jabu-water-B            A-water-B          160,80,960,520  refs
-# hs-kak-letter: the Kakariko gate open in both games
+# hs-kak-letter: the Kakariko gate open in both games (room-actor-replay-0116: B's own 'open' mark faces the gate;
+# A-open-B was B 65 m away in bigrun-0115). Good = shutter up, bad = shutter down (B's b-before view).
 hs-kak-letter-A            A-open-A           160,80,960,520  refs
-hs-kak-letter-B            A-open-B           160,80,960,520  refs
-# kak-gate: the Kakariko gate open in both games
+hs-kak-letter-B            B-open-B           160,80,960,520  refs
+hs-kak-letter-B-moved      B-open-B           160,80,960,520  change  from=B-b-before-B  min=8
+# kak-gate: the Kakariko gate open in both games (as hs-kak-letter)
 kak-gate-A                 A-open-A           160,80,960,520  refs
-kak-gate-B                 A-open-B           160,80,960,520  refs
+kak-gate-B                 B-open-B           160,80,960,520  refs
+kak-gate-B-moved           B-open-B           160,80,960,520  change  from=B-b-before-B  min=8
+# hs-deku-bridge (#177, room-actor-replay-0116): A watches B break the slingshot room's bridge. Good = pieces falling
+# or breaking (a-w2..a-w4); bad = the whole bridge then nothing (vanish). Bad refs: none yet (the first run makes them).
+hs-deku-bridge-A           A-a-w3-A           160,80,960,520  refs
+hs-deku-bridge-B           B-b-fall1-B        160,80,960,520  refs
+hs-deku-bridge-gone-A      A-a-late-A         160,80,960,520  change  from=A-a-before-A  min=8
 # hs-ladder: the ladder down in both games
 hs-ladder-A                A-ladder-A         160,80,960,520  refs
 hs-ladder-B                A-ladder-B         160,80,960,520  refs

@@ -35,7 +35,7 @@
 [g1]
 # Teleport, PvP and the gate on Hookshot as on the emulator.
 teleport-other  expect='A:scene change taken'  label="#197 teleport between overworld scenes"  see=teleport-other-A  see=teleport-other-B
-kak-gate  expect='B:bool 0x19898d14.*0 -> 1'  label="#171 Kakariko gate (test switch)"  see=kak-gate-A  see=kak-gate-B
+kak-gate  expect='B:bool 0x19898d14.*0 -> 1'  expect='B:(story: quest .*0x4011c4aa -> 0x4d329ec9|quests: Get_StoneOfFire KakarikoVillageNpc -> KakarikoVillageLetter)'  label="#171 Kakariko gate (test switch)"  see=kak-gate-A  see=kak-gate-B  see=kak-gate-B-moved
 pvp  expect='A:coop: pvp: our sword reached P2'  expect='B:coop: pvp: hit from P1'  label="PvP hits"  see=pvp-A  see=pvp-B
 
 [g2]
