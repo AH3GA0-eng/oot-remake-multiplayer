@@ -2526,6 +2526,9 @@ constexpr SplitShape kSplitShapes[] = {
     {{"teleport: ", " is coming to you", ""}, 0, 2, "teleport: {} is coming to you"},
     {{"teleport: asking ", " where they are", ""}, 0, 2, "teleport: asking {} where they are"},
     {{"teleport: next to ", ""}, 0, 2, "teleport: next to {}"},
+    // the group's sync lines (coop/host/src/notify.cpp): its counts ("2 items, 1 songs") each in the table's words
+    {{"Synced with the group: ", ""}, 0, 2, "Synced with the group: {}"},
+    {{"...and ", " more from the group", ""}, 0, 2, "...and {} more from the group"},
     // the lobby's and the mods' notes
     {{"", ": not connected", ""}, 0, 2, "{}: not connected"},
     {{"", ": only the host can do that", ""}, 0, 2, "{}: only the host can do that"},

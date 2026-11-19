@@ -257,6 +257,18 @@ TEST_CASE("coop i18n: the pickup notices' place and item, one set of brackets") 
           "Saria 拿到了银鳞 —— 你也得到了一个！");
 }
 
+TEST_CASE("coop i18n: the group's sync lines, with their counts") {
+    const CoopI18n::Lang* hans = ByCode("zh-Hans");
+    const CoopI18n::Lang* hant = ByCode("zh-Hant");
+    // coop/host/src/notify.cpp: "Synced with the group: " + its counts, and the line for the notices held back.
+    CHECK(CoopI18n::Tr(hans, "Synced with the group: 2 items, 1 songs") == "已与队伍同步：2 件道具，1 首歌曲");
+    CHECK(CoopI18n::Tr(hant, "Synced with the group: 3 items") == "已與隊伍同步：3 件道具");
+    CHECK(CoopI18n::Tr(hans, "...and 4 more from the group") == "……还有 4 条队伍的消息");
+    CHECK(CoopI18n::Tr(hant, "...and 4 more from the group") == "……還有 4 條隊伍的消息");
+    // English stays as the host wrote it.
+    CHECK(CoopI18n::Tr(nullptr, "Synced with the group: 2 items") == "Synced with the group: 2 items");
+}
+
 TEST_CASE("coop i18n: a language code picks its table") {
     // Longshot's menu codes (MenuLanguageCode) and language.txt's,
     // any case, and the first part of a longer one ("zh-Hans-CN").
