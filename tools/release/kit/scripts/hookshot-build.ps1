@@ -227,15 +227,10 @@ function Invoke-PuppetPackStep([string]$exeDir) {
     if ($packFrom -and (Test-Path -LiteralPath $packFrom) -and (Test-Path -LiteralPath $packTool)) {
         Write-Host '  Making the puppet pack (how you see the other players; about a minute) ...'
         $ErrorActionPreference = 'Continue'
-        # No --title-rows / --pause-tab (0.11.5 hotfix): a pack made with them crashes the game at boot (0xc0000005 in
-        # sead::MainThread right after 'prompts: switch icons'); the title's Host/Join rows and the pause menu's
-        # Multiplayer tab come back in 0.11.6. The module keeps both off when their panes are missing. A pack an earlier
-        # 0.11.5 kit made with them goes first (build.py writes over its folder but never clears it). As the Linux kit.
-        $oldJson = Join-Path $mod 'coop_puppet.json'
-        if ((Test-Path -LiteralPath $oldJson) -and ([System.IO.File]::ReadAllText($oldJson) -match '"title_rows": true')) {
-            Remove-Item -LiteralPath $mod -Recurse -Force
-        }
-        & $python -I -B $packTool --romfs $packFrom --mod-dir $mod 2>&1 | ForEach-Object { Write-Host "    $_" }
+        # The kit's pack command (kit-paths.ps1 Get-KitPackArgs: with the title's rows and the pause menu's tab), the
+        # same one the test kits run. As the Linux kit's build.sh.
+        $packArgs = Get-KitPackArgs $packTool $packFrom $mod
+        & $python @packArgs 2>&1 | ForEach-Object { Write-Host "    $_" }
         $code = $LASTEXITCODE
         $made = $true
         $ErrorActionPreference = 'Stop'
