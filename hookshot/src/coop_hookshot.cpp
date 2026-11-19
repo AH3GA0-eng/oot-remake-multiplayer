@@ -1367,9 +1367,16 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
         e.from = std::exchange(t_create_from, 0);
         const std::uint64_t arg = std::exchange(t_create_arg, 0);
         std::uint64_t text = 0;  // (x1: its first 8 bytes point at the name; on the caller's stack: read now)
-        char name[32] = {};
+        // The ring keeps 31 bytes of the name; the stop rules below need it whole
+        // (boss-larva-0116: Enemy_DungeonBoss_Dodongo_SpawnBabyDodongo is 42, so a
+        // copy King Dodongo's own spawner was never stopped). The rest is read
+        // apart, so a name near the end of its memory still gives its first 31.
+        char name[64] = {};
         if (a != 0 && CoopRuntime::Read(a, &text, sizeof text) && text != 0 &&
-            CoopRuntime::Read(text, name, sizeof name - 1)) {
+            CoopRuntime::Read(text, name, 31)) {
+            if (std::memchr(name, 0, 31) == nullptr && !CoopRuntime::Read(text + 31, name + 31, sizeof name - 32)) {
+                name[31] = 0;
+            }
             e.SetName(name);
         }
         float place[3] = {};
