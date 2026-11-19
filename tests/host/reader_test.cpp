@@ -643,6 +643,7 @@ TEST_CASE("host reader: what the player wears") {
       CHECK(reader.read_equipment()->hand == "Armor_Child_Gauntlet_Goron");
     }
     SUBCASE("row 148: a young Link whose flag still names the Golden Gauntlets") {
+      m.put_u8(l.game_ui + addr::kGameUiIsChild, 1);
       put_strings(m, {{addr::kEquipHandArmor, "Armor_Adult_Gauntlet_Gold"}});
       put_links(m);
       SUBCASE("wears the bracelet the game draws, not the adult's gauntlets") {
@@ -652,10 +653,17 @@ TEST_CASE("host reader: what the player wears") {
       SUBCASE("with no hand piece in any link wears none") {
         CHECK(reader.read_equipment()->hand == "");
       }
-      SUBCASE("with a link unreadable the flag stands, as the game data says") {
+      SUBCASE("with a link unreadable (a load) not known: the flag is never sent") {
         m.erase(kUser + 0x20 + 0x18 * (8 + 3) + 0x10, 4);
-        CHECK(reader.read_equipment()->hand == "Armor_Adult_Gauntlet_Gold");
+        CHECK_FALSE(reader.read_equipment()->hand);
       }
+    }
+    SUBCASE("an adult's named hand flag stands, as before row 148") {
+      put_strings(m, {{addr::kEquipHandArmor, "Armor_Adult_Gauntlet_Silver"}});
+      put_links(m);
+      CHECK(reader.read_equipment()->hand == "Armor_Adult_Gauntlet_Silver");
+      wear("Armor_Child_Gauntlet_Goron");
+      CHECK(reader.read_equipment()->hand == "Armor_Adult_Gauntlet_Silver");
     }
     SUBCASE("another piece in that link is not a bracelet") {
       put_strings(m, {{addr::kEquipHandArmor, ""}});
@@ -719,7 +727,8 @@ TEST_CASE("host reader: what the player wears") {
       CHECK(e->boots == "Armor_Adult_HoverBoot");
       CHECK(e->hand == "Armor_Adult_Gauntlet_Gold");
     }
-    SUBCASE("the link decides over the flag") {
+    SUBCASE("a child: the link decides over the flag") {
+      m.put_u8(l.game_ui + addr::kGameUiIsChild, 1);
       put_strings(m, {{addr::kEquipHeadArmor, "Armor_Child_Mask_Keaton"},
                       {addr::kEquipArmor, "Armor_Adult_Goron"},
                       {addr::kEquipHandArmor, "Armor_Adult_Gauntlet_Gold"}});
@@ -732,6 +741,7 @@ TEST_CASE("host reader: what the player wears") {
       CHECK(e->hand == "Armor_Adult_Gauntlet_Silver");
     }
     SUBCASE("row 148, every such piece: a young Link's adult flags that no link holds are not worn") {
+      m.put_u8(l.game_ui + addr::kGameUiIsChild, 1);
       put_strings(m, {{addr::kEquipArmor, "Armor_Adult_Zora"},
                       {addr::kEquipBoot, "Armor_Adult_HeavyBoot"},
                       {addr::kEquipHandArmor, "Armor_Adult_Gauntlet_Silver"},
@@ -742,7 +752,20 @@ TEST_CASE("host reader: what the player wears") {
       CHECK(e->hand == "");
       CHECK(e->head == "");  // a mask by its flag alone: the game draws none (wear-masks)
     }
-    SUBCASE("a flag naming a piece the links never hold stands") {
+    SUBCASE("an adult's named flags stand with no link piece (rule before row 148)") {
+      put_strings(m, {{addr::kEquipArmor, "Armor_Adult_Zora"},
+                      {addr::kEquipBoot, "Armor_Adult_HeavyBoot"},
+                      {addr::kEquipHandArmor, "Armor_Adult_Gauntlet_Silver"},
+                      {addr::kEquipHeadArmor, "Armor_Child_Mask_Keaton"}});
+      wear(0, "Armor_Child_Mask_Skull");
+      const auto e = reader.read_equipment();
+      CHECK(e->armor == "Armor_Adult_Zora");
+      CHECK(e->boots == "Armor_Adult_HeavyBoot");
+      CHECK(e->hand == "Armor_Adult_Gauntlet_Silver");
+      CHECK(e->head == "Armor_Child_Mask_Keaton");
+    }
+    SUBCASE("a flag naming a piece the links never hold stands, for a child too") {
+      m.put_u8(l.game_ui + addr::kGameUiIsChild, 1);
       put_strings(m, {{addr::kEquipArmor, "Armor_Adult_Normal"},
                       {addr::kEquipHeadArmor, "Armor_GlassTruth"}});
       const auto e = reader.read_equipment();

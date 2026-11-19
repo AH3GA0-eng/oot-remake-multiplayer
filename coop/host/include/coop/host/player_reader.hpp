@@ -115,7 +115,8 @@ class PlayerReader {
   // bracelet) are sent as the links hold them, not as the PlayerStatus.Equip*
   // flags name them (issue 91, row 148): a flag outlives an age change, so a
   // child whose flag still names the adult's Golden Gauntlets wears none.
-  void wear_from_links(protocol::Equipment& e);
+  // For an adult (`child` false) a flag with a name stands, as before.
+  void wear_from_links(protocol::Equipment& e, bool child);
   // The piece behind the link at EquipmentUser + `link_offset`.
   std::optional<std::string> read_link_name(std::uint64_t link_offset);
   GameMemory& memory_;

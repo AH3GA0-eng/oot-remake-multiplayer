@@ -249,7 +249,7 @@ std::optional<protocol::Equipment> PlayerReader::read_equipment() {
   e.boots = flags.get_string64(addr::kEquipBoot);
   e.head = flags.get_string64(addr::kEquipHeadArmor);
   e.hand = flags.get_string64(addr::kEquipHandArmor);
-  wear_from_links(e);
+  wear_from_links(e, read_age() == protocol::Age::child);
   e.ocarina = flags.get_string64(addr::kEquipOcarina);
   e.arrow = flags.get_string64(addr::kEquipArrow);
   e.drawn = read_drawn();
@@ -349,12 +349,19 @@ std::optional<std::string> PlayerReader::read_armor_link_name(std::uint32_t link
 // 0.11.4 log). The adult's gauntlets are a piece in a link too: the game's
 // take-off for an empty hand flag empties armor link 3 (0x10aceb0, docs/
 // puppet.md).
-// So for each kind the game draws as a piece (below), the link decides, by
-// name (the links' index per kind is not proven): a piece of that kind in a
-// link is sent; a flag naming a piece of that kind that no link holds, with
-// every link read, is not worn (""). A flag naming anything else stands
-// (Armor_Adult_Normal is no piece in a child's links, so it is never judged
-// here), and with a link unreadable a flag stands as the game data says.
+// Seen in the game (hs-gear-adult run 20261118-161054, a child with the Golden
+// Gauntlets, Goron Tunic and Hover Boots flags made again by a warp): the
+// game drew none of them, only the bracelet, and its links held only that.
+// So for a CHILD each kind the game draws as a piece (below) is decided by
+// the links, by name (the links' index per kind is not proven): a piece of
+// that kind in a link is sent; a flag naming a piece of that kind that no
+// link holds is not worn ("") with every link read, and not known (the
+// others keep what they had) while a link is unreadable, as during a load,
+// so the flag is never sent for a moment. A flag naming anything else stands
+// (Armor_Adult_Normal is no piece in a child's links).
+// An ADULT keeps the rule before row 148 (its gear on a puppet is not yet
+// checked against the links in a game): a flag with a name stands, an empty
+// or unknown flag is filled from a link piece of its kind.
 // An empty hand flag with a link unreadable is not known (not a bracelet
 // taken off), as before.
 namespace {
@@ -372,7 +379,7 @@ bool drawn_hand(std::string_view n) {
 }
 }  // namespace
 
-void PlayerReader::wear_from_links(protocol::Equipment& e) {
+void PlayerReader::wear_from_links(protocol::Equipment& e, bool child) {
   std::array<std::optional<std::string>, addr::kArmorLinkCount> links;
   bool every_link_read = true;
   for (std::uint32_t i = 0; i < addr::kArmorLinkCount; ++i) {
@@ -380,13 +387,20 @@ void PlayerReader::wear_from_links(protocol::Equipment& e) {
     if (!links[i]) every_link_read = false;
   }
   const auto decide = [&](std::optional<std::string>& field, bool (*of_kind)(std::string_view)) {
+    if (!child && field && !field->empty()) return;
     for (const auto& name : links) {
       if (name && !name->empty() && of_kind(*name)) {
         field = name;
         return;
       }
     }
-    if (every_link_read && field && of_kind(*field)) field = std::string{};
+    if (child && field && of_kind(*field)) {
+      if (every_link_read) {
+        field = std::string{};
+      } else {
+        field.reset();
+      }
+    }
   };
   decide(e.head, drawn_head);
   decide(e.armor, drawn_armor);
