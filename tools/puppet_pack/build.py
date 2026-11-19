@@ -1269,7 +1269,7 @@ class _StagedTable:
 
 
 def write_skins(romfs, out_romfs, dicts, table, skins, ai_rows=None, new_ai=None, new_gai=None, log=print,
-                self_dir=None, game_has=None):
+                self_dir=None, game_has=None, game_read=None):
     """Reads each character model mod (skin.load) and writes its own new files, its AS root copy and
     its copies of the gear it changes (skin.gear_items, `<item>_Skin_<id>`, rows into `new_ai` and
     `new_gai`) into the pack, with their size-table entries. `skins`: [(id, mod folder)]. With
@@ -1278,7 +1278,8 @@ def write_skins(romfs, out_romfs, dicts, table, skins, ai_rows=None, new_ai=None
     when you wear that skin. Returns [(skin.Skin, {variant: AS root copy or None}, manifest entry)].
     A skin that cannot be built (a broken mod, a file another skin has with other contents) is left out
     with a line in the log; the others and the rest of the pack are built. `game_has(path)`: whether the
-    game's romfs has that file (default: a file under `romfs`)."""
+    game's romfs has that file (default: a file under `romfs`); `game_read(path)`: its bytes (default: read
+    under `romfs`). A .nup build gives both through its reader: `romfs` there holds only some files."""
     ai_rows = ai_rows or {}
     new_ai = new_ai if new_ai is not None else []
     new_gai = new_gai if new_gai is not None else []
@@ -1292,6 +1293,8 @@ def write_skins(romfs, out_romfs, dicts, table, skins, ai_rows=None, new_ai=None
     written = {}  # path -> (skin id, sha256): files the skins wrote, shared when the same
     if game_has is None:
         game_has = lambda path: os.path.isfile(os.path.join(romfs, path))  # noqa: E731
+    if game_read is None:
+        game_read = lambda path: read(os.path.join(romfs, path))  # noqa: E731
     game_tables = glob.glob(os.path.join(romfs, "System", "Resource", "ResourceSizeTable.Product.*.rsizetable.zs"))
     game_table = ("System/Resource/" + os.path.basename(game_tables[0])) if len(game_tables) == 1 else None
 
@@ -1310,7 +1313,7 @@ def write_skins(romfs, out_romfs, dicts, table, skins, ai_rows=None, new_ai=None
         # for the game's own files too. A file of other contents there keeps the first skin's copy.
         own = {skin.model_info(sk.members[v], flatten_actor_param(sk.members[v], f"Player_{v}"))[1]
                for v in variants}
-        own |= {g[3] for g in skin.gear_items(sk, dicts, read)}
+        own |= {g[3] for g in skin.gear_items(sk, dicts, read, game_has, game_read)}
         own.discard(None)
         renames = {}
         kept = []
@@ -1391,7 +1394,7 @@ def write_skins(romfs, out_romfs, dicts, table, skins, ai_rows=None, new_ai=None
                 if mod_size and mod_size > (t.get(path) or 0):
                     t.set(path, mod_size)
         gear = {}
-        for item, g_members, fmdb, project, info_src in skin.gear_items(sk, dicts, read):
+        for item, g_members, fmdb, project, info_src in skin.gear_items(sk, dicts, read, game_has, game_read, log):
             if item not in ai_rows:
                 log(f"skin {skin_id}: {item} is no actor of this game, left out")
                 continue
@@ -1473,7 +1476,7 @@ def skin_row(row, sk, variant):
 def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None,
           tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False, title_rows=False, pause_tab=False,
           look_slots=look_items.SLOTS, perception=True, blade_copies=look_items.BLADE_COPIES,
-          skins=(), test_skin=None, game_has=None, body=False, liftable=False):
+          skins=(), test_skin=None, game_has=None, game_read=None, body=False, liftable=False):
     """`tunics`: the tunic colours to make puppets of (puppet_pack.tunic.COLORS; each is a model,
     a tile and an actor per age, CoopPuppet_<age>_<Colour>). `test_tunic`: give the plain puppets
     that colour too (a test of the colours with a hook that knows none).
@@ -1571,7 +1574,8 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         new_ai += rows
         new_gai += grows
     skin_list = write_skins(romfs, out_romfs, dicts, table, skins, ai_rows, new_ai, new_gai, log,
-                            self_dir=os.path.join(mod_dir, skin.SELF_DIR), game_has=game_has) if skins else []
+                            self_dir=os.path.join(mod_dir, skin.SELF_DIR), game_has=game_has,
+                            game_read=game_read) if skins else []
     by_id = {sk.id.lower(): (sk, refs) for sk, refs, _ in skin_list}
     if test_skin and test_skin.lower() not in by_id:
         if any(sid.lower() == test_skin.lower() for sid, _ in skins):
@@ -1980,6 +1984,7 @@ def _main_build(a, romfs, hud_reader=None):
               perception=not a.no_perception,
               blade_copies=max(0, min(a.blade_copies, look_items.BLADE_COPIES)), skins=skins, test_skin=a.test_skin,
               game_has=(lambda path: _reader_has(hud_reader, path)) if hud_reader is not None else None,
+              game_read=hud_reader.read if hud_reader is not None else None,
               body=a.puppet_body, liftable=a.puppet_liftable)
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)

@@ -2162,6 +2162,75 @@ class FullBuildTest(unittest.TestCase):
         self.write("System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs", plain.compress(game.dumps()))
         return root
 
+    def make_recolour_sword(self, mod_src, game_model=True):
+        """The game's Master Sword on its own model, the dark sword's model in the game (or not),
+        and the mod's sword pack naming the dark model with no model file of its own."""
+        plain = zstandard.ZstdCompressor()
+        sword, dark = "Weapon_Sword_Master", "Weapon_Sword_Master_Dark"
+        info = "Component/ModelInfo/Master.engine__component__ModelInfo.bgyml"
+
+        def sword_pack(model):
+            return plain.compress(sarc.write({
+                f"Actor/{sword}.engine__actor__ActorParam.bgyml": byml.dumps({"Components": {"ModelInfoRef": "?" + info}}),
+                info: byml.dumps({"FmdbName": model, "ModelProjectName": model})}))
+        self.write(f"Pack/Actor/{sword}.pack.zs", sword_pack(sword))
+        if game_model:
+            self.write(f"Model/{dark}.{dark}.bfres.zs", plain.compress(b"FRES game dark sword"))
+        d = zs.Dicts.from_romfs(self.romfs)
+        ai = byml.loads(d.decompress(build.read(os.path.join(self.romfs, "RSDB/ActorInfo.Product.999.rstbl.byml.zs"))))
+        ai.append({"__RowId": sword, "ActorName": sword, "FmdbName": sword, "ModelProjectName": sword})
+        self.write("RSDB/ActorInfo.Product.999.rstbl.byml.zs", plain.compress(byml.dumps(ai)))
+        self.write("RSDB/GameActorInfo.Product.999.rstbl.byml.zs",
+                   plain.compress(byml.dumps([{"__RowId": r["__RowId"]} for r in ai])))
+        with open(os.path.join(mod_src, "romfs", "Pack", "Actor", f"{sword}.pack.zs"), "wb") as f:
+            f.write(sword_pack(dark))
+        return sword, dark, info
+
+    def test_build_skin_gear_on_a_model_the_game_has(self):
+        """A mod that points an item at another model the game already has (a recolour mod: the Master
+        Sword on the dark sword's model) brings no model file of its own; the skin still gets a copy of
+        the item naming the game's model, the game's item stays the game's, and the wearer's own Link
+        is not given the mod's item pack (it would replace the game's item for every Link there)."""
+        mod_src = self.make_model_mod()
+        sword, dark, info = self.make_recolour_sword(mod_src)
+        mod = os.path.join(self.dir, "mod_skin_gear")
+        m = build.build(self.romfs, mod, log=lambda _l: None, skins=[("Mod", mod_src)], look_slots=0)
+        d = zs.Dicts.from_romfs(self.romfs)
+        out = os.path.join(mod, "romfs")
+        [entry] = m["skins"]
+        self.assertEqual(entry["gear"], {"Armor_Adult_Goron": "Armor_Adult_Goron_Skin_Mod",
+                                         sword: f"{sword}_Skin_Mod"})
+        g = sarc.read(d.decompress(build.read(os.path.join(out, f"Pack/Actor/{sword}_Skin_Mod.pack.zs"))))
+        self.assertEqual(byml.loads(g[f"Component/ModelInfo/{sword}_Skin_Mod.engine__component__ModelInfo.bgyml"]),
+                         {"FmdbName": dark, "ModelProjectName": dark})
+        self.assertFalse(os.path.exists(os.path.join(out, f"Model/{dark}.{dark}.bfres.zs")))  # the game's model
+        self.assertFalse(os.path.exists(os.path.join(out, f"Pack/Actor/{sword}.pack.zs")))   # the game's item stays
+        self.assertEqual(list(entry["self_files"]), ["Pack/Actor/Player_Adult.pack.zs"])     # the player pack only
+        self.assertFalse(os.path.exists(os.path.join(mod, f"coop_skin_self/Mod/{sword}.pack.zs")))
+        # A model neither the mod nor the game has: still no copy (the Kokiri sword of make_model_mod).
+        self.assertNotIn("Weapon_Sword_Kokiri", entry["gear"])
+
+    def test_build_skin_gear_asks_the_game_not_the_folder(self):
+        """From a .nup the romfs folder holds only some of the game's files: the game is asked through
+        game_has and game_read (the reader), not the folder. And an item whose model is nowhere is
+        left out with a line."""
+        mod_src = self.make_model_mod()
+        sword, dark, _info = self.make_recolour_sword(mod_src, game_model=False)  # not in the folder
+        said = []
+        mod = os.path.join(self.dir, "mod_skin_reader")
+
+        def has(path):
+            return path == f"Model/{dark}.{dark}.bfres.zs" or os.path.isfile(os.path.join(self.romfs, path))
+        m = build.build(self.romfs, mod, log=said.append, skins=[("Mod", mod_src)], look_slots=0,
+                        game_has=has, game_read=lambda path: build.read(os.path.join(self.romfs, path)))
+        self.assertIn(sword, m["skins"][0]["gear"])
+        # The folder alone (no reader): the model is nowhere, so the sword is left out, said in the log.
+        said = []
+        m = build.build(self.romfs, os.path.join(self.dir, "mod_skin_folder"), log=said.append,
+                        skins=[("Mod", mod_src)], look_slots=0)
+        self.assertNotIn(sword, m["skins"][0]["gear"])
+        self.assertTrue(any(f"{sword} left out" in line and dark in line for line in said), said)
+
     def test_build_skin(self):
         from puppet_pack import skin
         mod_src = self.make_model_mod()
@@ -2342,6 +2411,18 @@ class FullBuildTest(unittest.TestCase):
             self.assertFalse(build._reader_has(r, "Model/A*.bfres.zs"), r)
             self.assertFalse(build._reader_has(r, "Model/Sub"), r)
             self.assertFalse(build._reader_has(r, "Nope/A.bfres.zs"), r)
+
+    def test_main_builds_a_skin(self):
+        # Review of #276: from the command line every --skin was "left out: AttributeError: 'DirReader'
+        # object has no attribute 'listdir'" (the tests called build.build directly). main, as players run it.
+        mod_src = self.make_model_mod()
+        mod = os.path.join(self.dir, "mod_main_skin")
+        self.assertEqual(build.main(["--romfs", self.romfs, "--mod-dir", mod, "--any-version",
+                                     "--skin", f"Mod={mod_src}"]), 0)
+        with open(os.path.join(mod, "coop_puppet.json"), encoding="utf-8") as f:
+            manifest = json.load(f)
+        self.assertEqual([s["id"] for s in manifest["skins"]], ["Mod"])
+        self.assertTrue(os.path.exists(os.path.join(mod, "romfs", "Pack", "Actor", "CoopPuppet_Adult_Skin_Mod.pack.zs")))
 
     def test_skin_table_and_files(self):
         from puppet_pack import skin
