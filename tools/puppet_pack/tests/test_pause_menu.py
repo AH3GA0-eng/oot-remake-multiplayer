@@ -198,6 +198,11 @@ class BuildTest(unittest.TestCase):
             label = "Pa_Coop_00-Pa_Button_%02d-T_Btn_00" % i
             self.assertEqual(page.text(label), [ours[pm.PAGES_MSG][label]])
         self.assertEqual(page.text("Pa_System_00-Pa_Button_00-T_Btn_00"), ["Save"])
+        # The module's live row texts (coop_pause_tab_module.cpp, kLiveSlots / kLivePlaceholder): Coop_Live_00..07,
+        # each exactly 64 dots, in the built message file (the module refuses any other text or length).
+        for i in range(8):
+            label = "Coop_Live_%02d" % i
+            self.assertEqual(page.text(label), ["." * 64], label)
         self.assertTrue(all(sizes[k] > before[k] for k in before if k not in (pm.OVERLAY_LAYOUT, pm.PAGES_LAYOUT)))
         self.assertTrue(sizes[pm.OVERLAY_LAYOUT] > before[pm.OVERLAY_LAYOUT])
 

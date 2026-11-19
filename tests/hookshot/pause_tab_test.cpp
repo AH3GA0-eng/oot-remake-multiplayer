@@ -45,6 +45,13 @@ bool Has(const std::vector<std::string>& lines, const std::string& part) {
     return false;
 }
 
+// A page whose panes and game calls were found (the module's SetUsable), as in a game with the pack and module.
+Page UsablePage() {
+    Page p;
+    p.SetUsable(true);
+    return p;
+}
+
 // The menu open on System, the strip with the pack's five tabs, at `now`.
 void OnSystem(Page& p, std::uint64_t now, int tabs = 5) {
     p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage), now);
@@ -77,7 +84,7 @@ TEST_CASE("pause tab: the screens are known by their class's vtable") {
 }
 
 TEST_CASE("pause tab: R on System shows the page and lights the fifth tab, L gives System back") {
-    Page p;
+    Page p = UsablePage();
     std::uint64_t now = 1000;
     // First updates: our page hidden (System shown), the fifth tab shown, System's lit.
     auto d = p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage), now);
@@ -122,7 +129,7 @@ TEST_CASE("pause tab: R on System shows the page and lights the fifth tab, L giv
 }
 
 TEST_CASE("pause tab: under the page the game gets only B, + and -, and up and down for its cursor, A is ours") {
-    Page p;
+    Page p = UsablePage();
     std::uint64_t now = 1000;
     OnSystem(p, now);
     REQUIRE(p.OnPad(kPadR, now) == 0);
@@ -151,42 +158,42 @@ TEST_CASE("pause tab: under the page the game gets only B, + and -, and up and d
 TEST_CASE("pause tab: the page does not show off System, mid-step, in the Minus menu, without the pack or under a window") {
     std::uint64_t now = 1000;
     SUBCASE("on Items") {
-        Page p;
+        Page p = UsablePage();
         p.OnScreen(Pages(0xa000, 4, 4), now);
         p.OnScreen(Strip(0x9000, 5, 4), now);
         CHECK(p.OnPad(kPadR, now) == kPadR);   // (the game's: Items to System)
         CHECK_FALSE(p.Shown());
     }
     SUBCASE("mid-step to System") {
-        Page p;
+        Page p = UsablePage();
         p.OnScreen(Pages(0xa000, 4, kSystemPage), now);
         p.OnScreen(Strip(0x9000, 5, kSystemPage), now);
         CHECK(p.OnPad(kPadR, now) == kPadR);
         CHECK_FALSE(p.Shown());
     }
     SUBCASE("the Minus menu") {
-        Page p;
+        Page p = UsablePage();
         p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage), now);
         p.OnScreen(Strip(0x9000, 5, 2, 0), now);
         CHECK(p.OnPad(kPadR, now) == kPadR);
         CHECK_FALSE(p.Shown());
     }
     SUBCASE("four tabs: the pack's layouts are not there") {
-        Page p;
+        Page p = UsablePage();
         OnSystem(p, now, 4);
         CHECK(p.OnPad(kPadR, now) == kPadR);
         CHECK_FALSE(p.Shown());
         CHECK_FALSE(p.OnScreen(Strip(0x9000, 4, kSystemPage), now).set_tabs);   // (no fifth tab to touch)
     }
     SUBCASE("the menu still opening") {
-        Page p;
+        Page p = UsablePage();
         p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 1), now);
         p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 1), now);
         CHECK(p.OnPad(kPadR, now) == kPadR);
         CHECK_FALSE(p.Shown());
     }
     SUBCASE("a window over the System page (Save, Options, a question)") {
-        Page p;
+        Page p = UsablePage();
         OnSystem(p, now);
         p.OnScreen(Blocker(2), now);
         CHECK(p.OnPad(kPadR, now + 10) == kPadR);
@@ -199,7 +206,7 @@ TEST_CASE("pause tab: the page does not show off System, mid-step, in the Minus 
         CHECK(p.Shown());
     }
     SUBCASE("the screens' updates stopped") {
-        Page p;
+        Page p = UsablePage();
         OnSystem(p, now);
         CHECK(p.OnPad(kPadR, now + 1000) == kPadR);
         CHECK_FALSE(p.Shown());
@@ -216,7 +223,7 @@ TEST_CASE("pause tab: closing, the Minus menu, a window or Game Over give System
         REQUIRE(p.Shown());
     };
     SUBCASE("B closes the menu") {
-        Page p;
+        Page p = UsablePage();
         shown(p);
         CHECK(p.OnPad(kPadB, now + 3) == kPadB);
         const auto d = p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 3), now + 20);
@@ -226,14 +233,14 @@ TEST_CASE("pause tab: closing, the Minus menu, a window or Game Over give System
         CHECK(p.TakeWhy() == "the menu is closing");
     }
     SUBCASE("the Minus menu") {
-        Page p;
+        Page p = UsablePage();
         shown(p);
         p.OnScreen(Strip(0x9000, 5, 2, 0), now + 20);
         CHECK_FALSE(p.Shown());
         CHECK(p.TakeWhy() == "the Minus menu");
     }
     SUBCASE("Game Over or a window") {
-        Page p;
+        Page p = UsablePage();
         shown(p);
         p.OnPad(kPadA, now + 3);   // (A held as the page goes)
         p.OnScreen(Blocker(1), now + 20);
@@ -244,7 +251,7 @@ TEST_CASE("pause tab: closing, the Minus menu, a window or Game Over give System
         CHECK(p.OnPad(kPadA, now + 23) == kPadA);     // a new press is the game's
     }
     SUBCASE("a new pages screen object (a load) starts over: our page hidden") {
-        Page p;
+        Page p = UsablePage();
         shown(p);
         const auto d = p.OnScreen(Pages(0xa100, kSystemPage, kSystemPage, 0), now + 20);
         CHECK_FALSE(p.Shown());
@@ -394,4 +401,96 @@ TEST_CASE("pause tab: the rows say what co-op is doing, in at most a row's width
     for (const SessionView& v : {idle, host, guest, joining}) {
         for (const std::string& r : RowTexts(v)) CHECK(r.size() <= kRowChars);
     }
+}
+
+TEST_CASE("pause tab: a page whose panes or game calls are missing never shows, and the mouse keeps tab 5 out") {
+    // (an old or mismatched pack, a module without the scratch API: the page would be undrawn, so System's A and
+    // its focused button must stay System's; Act would otherwise run row 0 Host or row 4 Leave on System's buttons)
+    std::uint64_t now = 1000;
+    Page p;   // (not usable until the module says so)
+    CHECK(p.MousePage() == -2);
+    OnSystem(p, now);
+    CHECK(p.OnPad(kPadR, now) == kPadR);   // (the game's R: nothing of ours)
+    CHECK_FALSE(p.Shown());
+    p.OnPad(0, now + 1);
+    CHECK(p.OnPad(kPadA, now + 2) == kPadA);   // (System's A)
+    CHECK_FALSE(p.TakeDecide());
+    p.OnPad(0, now + 3);
+    // Usable: tab 5 counts for the mouse, R shows the page.
+    p.SetUsable(true);
+    CHECK(p.MousePage() == -1);
+    OnSystem(p, now + 4);
+    CHECK(p.OnPad(kPadR, now + 4) == 0);
+    CHECK(p.Shown());
+    CHECK(p.MousePage() == 4);
+    // Its panes lost while it shows (a new screen whose look-up failed): System back at once, A not ours.
+    p.OnPad(0, now + 5);
+    p.SetUsable(false);
+    CHECK_FALSE(p.Shown());
+    CHECK(p.TakeWhy() == "its panes or the game's calls are not there");
+    CHECK(p.MousePage() == -2);
+    CHECK(p.OnPad(kPadA, now + 6) == kPadA);
+    CHECK_FALSE(p.TakeDecide());
+}
+
+TEST_CASE("pause tab: a screen reopened at the same address, or with a new layout, is a new screen") {
+    std::uint64_t now = 1000;
+    Page p = UsablePage();
+    const std::uint64_t g1 = p.Track(Pages(0xa000, kSystemPage, kSystemPage, 1));
+    CHECK(g1 != 0);
+    CHECK(p.Track(Pages(0xa000, kSystemPage, kSystemPage, 1)) == g1);   // (still opening)
+    CHECK(p.Track(Pages(0xa000, kSystemPage, kSystemPage, 2)) == g1);   // (open)
+    auto d = p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage), now);
+    CHECK(d.set_texts);   // (once per opening: its first open update)
+    CHECK_FALSE(p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage), now + 1).set_texts);
+    // Closed and opened again at the same address: its texts and the page's state are set again.
+    p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 3), now + 10);
+    p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 0), now + 20);
+    const std::uint64_t g2 = p.Track(Pages(0xa000, kSystemPage, kSystemPage, 1));
+    CHECK(g2 != g1);
+    d = p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 2), now + 30);
+    CHECK(d.set_texts);
+    CHECK(d.set_page);
+    // A new layout at the same address: a new screen too.
+    Facts f = Pages(0xa000, kSystemPage, kSystemPage, 2);
+    f.layout = 0x7000;
+    CHECK(p.Track(f) != g2);
+    CHECK(p.OnScreen(f, now + 40).set_texts);
+    // The strip the same way: its fifth tab set again.
+    const std::uint64_t s1 = p.Track(Strip(0x9000, 5, kSystemPage, kPlusMode, 1));
+    CHECK(s1 != 0);
+    CHECK(p.OnScreen(Strip(0x9000, 5, kSystemPage), now + 50).set_tabs);
+    CHECK_FALSE(p.OnScreen(Strip(0x9000, 5, kSystemPage), now + 51).set_tabs);
+    p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 0), now + 60);
+    CHECK(p.Track(Strip(0x9000, 5, kSystemPage, kPlusMode, 1)) != s1);
+    CHECK(p.OnScreen(Strip(0x9000, 5, kSystemPage), now + 70).set_tabs);
+}
+
+TEST_CASE("pause tab: co-op that came with the game's start, and a failed Host, open co-op's main page") {
+    // (the launcher rule, as co-op's menu: Host.bat / Join.bat / coop.ini co-op is not started or stopped here)
+    Session launcher;
+    launcher.by_launcher = launcher.in_one = true;
+    CHECK(ActionFor(kRowSession, launcher) == RowAction::kOpenMain);
+    CHECK(ActionFor(kRowLeave, launcher) == RowAction::kOpenMain);   // (never two A's to a teardown)
+    launcher.in_one = false;   // (not connected yet: still not Host)
+    CHECK(ActionFor(kRowSession, launcher) == RowAction::kOpenMain);
+    CHECK(ActionFor(kRowLeave, launcher) == RowAction::kOpenMain);
+    SessionView lv;
+    lv.s = launcher;
+    CHECK(RowTexts(lv)[kRowLeave] == "Leave: start the game again");
+    // A Host (or Join) that failed: the row says so, and A opens the main page with the session's lines.
+    Session failed;
+    failed.failed = true;
+    CHECK(ActionFor(kRowSession, failed) == RowAction::kOpenMain);
+    SessionView fv;
+    fv.s = failed;
+    CHECK(RowTexts(fv)[kRowSession] == "Co-op failed: A says why");
+    CHECK(RowTexts(fv)[kRowSession].size() <= kRowChars);
+}
+
+TEST_CASE("pause tab: the Leave row's second A is waited for only while the cursor stays on it") {
+    CHECK(KeepConfirm(true, kRowLeave));
+    CHECK_FALSE(KeepConfirm(true, kRowLetIn));
+    CHECK_FALSE(KeepConfirm(true, -1));
+    CHECK_FALSE(KeepConfirm(false, kRowLeave));   // (System back: no second A waited for)
 }

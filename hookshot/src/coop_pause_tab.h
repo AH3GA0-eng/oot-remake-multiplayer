@@ -92,6 +92,7 @@ Kind KindOf(std::uint64_t vtable_offset);
 struct Facts {
     Kind kind = Kind::kOther;
     std::uint64_t screen = 0;
+    std::uint64_t layout = 0;          // the screen's layout (+0x28): a new one is a new screen, as a new address is
     int state = 0;
     int tabs = 0, mode = 0, lit = 0;   // the strip's
     int page = -1, asked = -1;         // the pages' (the menu manager's)
@@ -114,6 +115,17 @@ public:
     // Player 1's pad before the game gets it: the buttons the game gets.
     std::uint64_t OnPad(std::uint64_t buttons, std::uint64_t now_ms);
 
+    // Which opening of a pages or strip screen this update is (OnScreen calls it too): a new number (never 0) for a new
+    // screen object, a new layout, or the screen opening again (its state 1 after another); the same while it stays.
+    // What was looked up or set in the game for an earlier number is stale (a menu reopened at the same address).
+    std::uint64_t Track(const Facts& f);
+    // Whether the page can be used at all (the module: both screens' panes found as parts, and the game's calls there).
+    // Not usable: the page never shows (R and A stay System's) and the mouse keeps the fifth tab out.
+    void SetUsable(bool usable);
+    bool Usable() const { return usable_; }
+    // hos_coop_game_pause_page: 4 while our page shows, -1 while it can show, -2 while it cannot be used.
+    int MousePage() const { return !usable_ ? -2 : shown_ ? 4 : -1; }
+
     bool Shown() const { return shown_; }
     // A pressed on our page since the last call (the row is the System page's focused button).
     bool TakeDecide();
@@ -131,8 +143,14 @@ private:
     std::uint64_t swallow_ = 0;   // buttons the module took, kept from the game until let go
     bool decide_ = false;
     std::string why_;
-    // What is set in the game, per screen object (-1: not yet).
-    std::uint64_t page_screen_ = 0, strip_screen_ = 0;
+    bool usable_ = false;
+    // What is set in the game, per opening of a screen object (Track; -1: not yet).
+    struct Seen {
+        std::uint64_t screen = 0, layout = 0, gen = 0;
+        int state = -1;
+    };
+    Seen pages_seen_, strip_seen_;
+    std::uint64_t next_gen_ = 0;
     int page_set_ = -1;
     bool texts_set_ = false;
     int tab_key_ = -1;
@@ -149,7 +167,8 @@ enum class RowAction {
     kCopyCode,    // the room name (or join code) to the clipboard, then the main page, which shows it
     kOpenLobby,   // co-op's menu, its Lobby tab: the players, the host's controls
     kAllow,       // the Lobby's /allow: the oldest player who asks to join is let in (its line says who, or nobody)
-    kHost,        // host at once, with the kit's settings (its room name, relay, port, approval)
+    kHost,        // host at once, with the kit's settings (its room name, relay, port, approval); refused or failed:
+                  // co-op's main page, which says why
     kConfirmLeave,   // Leave or Stop hosting: the row asks for a second A first (kConfirmMs), then co-op stops
     kPasteAnswer,    // the host: a friend's answer code from the clipboard (co-op's menu's Paste answer), its main page
     kCopyAnswer,     // a guest the host could not reach: its answer code to the clipboard (Copy answer), the main page
@@ -163,8 +182,13 @@ struct Session {
     bool invite = false;    // hosting with an invite code (no relay room): a friend may send back an answer code
     bool asking = false;    // hosting, and somebody asks to join
     bool wait_host = false; // joining, and the host must take this game's answer code first
+    bool by_launcher = false;   // co-op came with the game's start (Host.bat, Join.bat, coop.ini): not started or
+                                // stopped here; Session and Leave open co-op's main page, whose help says why
+    bool failed = false;    // the last Host or Join did not work (co-op's main page says why)
 };
 RowAction ActionFor(int row, const Session& s);
+// The Leave row's second A is still waited for: our page shows and the game's cursor is on the Leave row.
+inline bool KeepConfirm(bool shown, int focused_row) { return shown && focused_row == kRowLeave; }
 
 // What the rows say, in the game's own text panes (the module writes them through the pack's placeholder messages,
 // Coop_Live_NN, in LayoutMsg/PlusMenu_00): the session's state on the rows themselves.
@@ -203,7 +227,7 @@ void Init(const HosCoopApi* api);
 void OnScreen(void* ctx, std::uint64_t screen) noexcept;
 // hos_coop_pad, after the title's: the buttons the game gets (the sticks zeroed while our page shows).
 std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept;
-// hos_coop_game_pause_page: 4 while our page shows, else -1.
+// hos_coop_game_pause_page: Page::MousePage (4 shown, -1 can show, -2 cannot be used).
 int MousePage() noexcept;
 
 }  // namespace CoopPauseTab

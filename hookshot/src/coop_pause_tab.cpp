@@ -45,7 +45,7 @@ Kind KindOf(std::uint64_t vtable_offset) {
 // --- Page ---
 
 bool Page::CanShow(std::uint64_t now_ms) const {
-    return pages_.screen != 0 && strip_.screen != 0 && now_ms - pages_ms_ < kStaleMs && now_ms - strip_ms_ < kStaleMs &&
+    return usable_ && pages_.screen != 0 && strip_.screen != 0 && now_ms - pages_ms_ < kStaleMs && now_ms - strip_ms_ < kStaleMs &&
            pages_.state == 2 && pages_.page == kSystemPage && pages_.asked == kSystemPage && strip_.state == 2 &&
            strip_.mode == kPlusMode && strip_.tabs == 5 && now_ms >= blocked_until_ms_;
 }
@@ -61,8 +61,30 @@ void Page::Hide(const char* why) {
     swallow_ |= pad_last_ & ~kPadPassed;
 }
 
+std::uint64_t Page::Track(const Facts& f) {
+    if (f.kind != Kind::kPages && f.kind != Kind::kStrip) return 0;
+    Seen& s = f.kind == Kind::kPages ? pages_seen_ : strip_seen_;
+    const bool reopened = f.state == 1 && s.state != 1;
+    if (s.gen == 0 || f.screen != s.screen || f.layout != s.layout || reopened) {
+        s.screen = f.screen, s.layout = f.layout, s.gen = ++next_gen_;
+        if (f.kind == Kind::kPages) {
+            page_set_ = -1, texts_set_ = false;
+        } else {
+            tab_key_ = -1;
+        }
+    }
+    s.state = f.state;
+    return s.gen;
+}
+
+void Page::SetUsable(bool usable) {
+    usable_ = usable;
+    if (!usable_) Hide("its panes or the game's calls are not there");
+}
+
 Page::Do Page::OnScreen(const Facts& f, std::uint64_t now_ms) {
     Do d;
+    Track(f);
     switch (f.kind) {
     case Kind::kBlocker:
         if (f.state >= 1 && f.state <= 3) {
@@ -71,9 +93,6 @@ Page::Do Page::OnScreen(const Facts& f, std::uint64_t now_ms) {
         }
         return d;
     case Kind::kPages: {
-        if (f.screen != page_screen_) {
-            page_screen_ = f.screen, page_set_ = -1, texts_set_ = false;
-        }
         pages_ = f, pages_ms_ = now_ms;
         if (shown_ && !CanShow(now_ms)) {
             Hide(f.state != 2 ? "the menu is closing" : "the menu left the System page");
@@ -88,9 +107,6 @@ Page::Do Page::OnScreen(const Facts& f, std::uint64_t now_ms) {
         return d;
     }
     case Kind::kStrip: {
-        if (f.screen != strip_screen_) {
-            strip_screen_ = f.screen, tab_key_ = -1;
-        }
         strip_ = f, strip_ms_ = now_ms;
         if (shown_ && !CanShow(now_ms)) {
             Hide(f.mode != kPlusMode ? "the Minus menu" : "the tab strip is closing");
@@ -152,7 +168,7 @@ std::string Page::TakeWhy() {
 RowAction ActionFor(int row, const Session& s) {
     switch (row) {
     case kRowSession:
-        return s.in_one ? RowAction::kOpenMain : RowAction::kHost;
+        return s.in_one || s.by_launcher || s.failed ? RowAction::kOpenMain : RowAction::kHost;
     case kRowJoinCode:
         if (s.wait_host) return RowAction::kCopyAnswer;
         if (s.hosting) return s.code ? RowAction::kCopyCode : RowAction::kOpenMain;   // (the code still coming: shown there)
@@ -163,6 +179,7 @@ RowAction ActionFor(int row, const Session& s) {
         if (!s.hosting) return RowAction::kOpenLobby;
         return s.invite && !s.asking ? RowAction::kPasteAnswer : RowAction::kAllow;   // (a knock first: /allow)
     case kRowLeave:
+        if (s.by_launcher) return RowAction::kOpenMain;   // (not stopped here: the main page says to start the game again)
         return s.in_one ? RowAction::kConfirmLeave : RowAction::kNone;   // (a second A leaves: never one stray press)
     default:
         return RowAction::kNone;
@@ -183,7 +200,9 @@ std::string Fit(std::string t) {
 
 std::vector<std::string> RowTexts(const SessionView& v) {
     std::vector<std::string> rows(kRows);
-    if (v.connecting) {
+    if (v.s.failed && !v.s.in_one) {
+        rows[kRowSession] = "Co-op failed: A says why";
+    } else if (v.connecting) {
         rows[kRowSession] = "Connecting...";
     } else if (v.s.hosting) {
         rows[kRowSession] = "Hosting";
@@ -211,7 +230,9 @@ std::vector<std::string> RowTexts(const SessionView& v) {
     } else {
         rows[kRowLetIn] = "Let in " + v.asking.front() + " (+" + std::to_string(v.asking.size() - 1) + ")";
     }
-    if (v.confirm_leave) {
+    if (v.s.by_launcher) {
+        rows[kRowLeave] = "Leave: start the game again";
+    } else if (v.confirm_leave) {
         rows[kRowLeave] = v.s.hosting ? "A again: stop hosting" : "A again: leave";
     } else {
         rows[kRowLeave] = !v.s.in_one ? "Leave (not in a session)" : v.s.hosting ? "Stop hosting" : "Leave";

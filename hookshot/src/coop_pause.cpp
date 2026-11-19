@@ -317,14 +317,16 @@ bool Busy() {
 
 void Save();
 
-void Host() {
+// False when it did not start: refused (co-op is on already; the menu's note says so) or the host could not start
+// (the session's lines say why).
+bool Host() {
     if (g_doing == "hosting" && !g_coop_on) {
         Save();
         CoopHookshot::HostMenu().Leave();
         g_doing.clear();
     } else if (Busy()) {
         g_menu.SetNote({"Co-op is on already in this game: stop it first, or start the game again."});
-        return;
+        return false;
     }
     CoopHookshot::HostMenu().Leave();   // (a failed start: clear it)
     const CoopTitleMenu::Options o = g_menu.options();
@@ -351,10 +353,11 @@ void Host() {
     g_answer_note.clear();
     if (!CoopHookshot::HostMenu().HostStart(&h)) {
         RefreshSession(true);
-        return;
+        return false;
     }
     LOG_INFO(Core, "coop: multiplayer tab: host: started (up to {} players, port {})", o.max_players, o.host_port);
     RefreshSession(true);
+    return true;
 }
 
 void Join(const std::string& text) {
@@ -1005,29 +1008,69 @@ void Open(CoopPauseMenu::Page page) {
     LOG_INFO(Core, "coop: multiplayer tab: opened on a page (the title's rows, or the pause menu's Multiplayer page)");
 }
 
+namespace {
+
+// The pause menu's Multiplayer page's actions go through the menu's own requests (Act), with the menu's rules: co-op
+// that came with the game's start (Host.bat, Join.bat, coop.ini) is not started or stopped here, and what was refused
+// or went wrong is said on the menu's main page (its note, or the session's lines), never into a hidden menu.
+// Under g_mutex.
+void ShowNote() {
+    g_wanted = kMultiplayerTab;
+    LOG_INFO(Core, "coop: multiplayer tab: opened on its main page for what the pause menu's Multiplayer page asked");
+}
+
+// The menu on its main page, the settings as the files have them now (Host reads them from the menu), no note.
+void FreshMain() {
+    g_menu.Show(ReadOptions());
+    g_menu.Open(CoopPauseMenu::Page::kMain);
+    RefreshSession(true);
+}
+
+}  // namespace
+
+bool ByLauncher() {
+    std::lock_guard lock(g_mutex);
+    return g_coop_on;
+}
+
 void HostNow() {
     std::lock_guard lock(g_mutex);
-    g_menu.Show(ReadOptions());   // (the settings as the files have them now: Host reads them from the menu)
+    FreshMain();
     LOG_INFO(Core, "coop: multiplayer tab: host from the pause menu's Multiplayer page");
-    Host();
+    if (g_coop_on) {   // (the main page's Host row says why: kByLauncher)
+        LOG_INFO(Core, "coop: multiplayer tab: not hosting: co-op came with the game's start");
+        ShowNote();
+        return;
+    }
+    if (!Host()) {
+        ShowNote();
+    }
 }
 
 void LeaveNow() {
     std::lock_guard lock(g_mutex);
-    Leave();
+    if (g_coop_on) {   // (as the menu: no Leave row for it; its main page says to start the game again)
+        FreshMain();
+        LOG_INFO(Core, "coop: multiplayer tab: not leaving: co-op came with the game's start");
+        ShowNote();
+        return;
+    }
+    Act(Request{Request::Kind::kLeave, {}});
 }
 
 void PasteAnswerNow() {
-    Open(CoopPauseMenu::Page::kMain);   // (first: opening clears the page's note)
     std::lock_guard lock(g_mutex);
+    FreshMain();   // (first: opening clears the page's note)
     LOG_INFO(Core, "coop: multiplayer tab: paste answer from the pause menu's Multiplayer page");
-    PasteAnswer();
+    Act(Request{Request::Kind::kPasteAnswer, {}});
+    ShowNote();
 }
 
 void CopyAnswerNow() {
-    Open(CoopPauseMenu::Page::kMain);
     std::lock_guard lock(g_mutex);
-    Copy(Status().answer, "answer code");
+    FreshMain();
+    Act(Request{Request::Kind::kCopyAnswer, {}});
+    ShowNote();
 }
 
 void OpenLobby() {
@@ -1041,9 +1084,10 @@ void CopyJoinCode() {
     CoopHookshot::HostMenu().Status(&st);
     // (a relay room's name first: friends type it; then the relay's join code, then the invite code)
     const std::string text = st.relay_room[0] != 0 ? st.relay_room : st.relay_code[0] != 0 ? st.relay_code : st.invite;
-    Open(CoopPauseMenu::Page::kMain);   // (first: opening clears the page's note)
     std::lock_guard lock(g_mutex);
-    Copy(text, "room name or join code");
+    FreshMain();   // (first: opening clears the page's note)
+    Copy(text, "room name or join code");   // (kCopyInvite's Copy, with the relay's room name first)
+    ShowNote();
 }
 
 bool TestMenu(const std::string& page) {
