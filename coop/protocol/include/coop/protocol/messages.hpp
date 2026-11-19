@@ -212,6 +212,10 @@ enum class EquipComponent : std::uint16_t {
   // The player's colour (coop-options.ini `color`): 3 bytes, red, green,
   // blue. Others tint that player's puppet with it (docs/puppet.md, "Colour").
   color = 16,
+  // Bit i set: the piece in equipment slot i burns (a lit Deku stick), as
+  // the owner's game shows it. Others play the piece's own flame effect on
+  // their puppet's piece, as a picture only (docs/puppet.md, "A lit Deku stick").
+  lit = 17,
 };
 
 // Longest equipped actor name: the game keeps each in a String64 flag.
@@ -705,6 +709,9 @@ struct Equipment {
   // The player's colour, 0xRRGGBB. Unset: the player chose none (a receiver
   // uses its slot's colour, coop::protocol::slot_color).
   std::optional<std::uint32_t> color;
+  // Bit i set: the piece in slot i burns (its ELink user plays Chemical_Fire,
+  // the flame the game's chemistry starts on a lit Deku stick). 0 when none.
+  std::optional<std::uint8_t> lit;
   bool operator==(const Equipment&) const = default;
 };
 
@@ -732,6 +739,7 @@ inline Equipment merge_equipment(const Equipment& before, const Equipment& now) 
   keep(e.tool, before.tool);
   keep(e.sub_tool, before.sub_tool);
   keep(e.color, before.color);
+  keep(e.lit, before.lit);
   return e;
 }
 

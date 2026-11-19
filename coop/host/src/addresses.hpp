@@ -188,6 +188,25 @@ inline constexpr std::uint32_t kArmorLinkBracelet = 9;
 // there, in state 6 while it is put away.
 // [objects] An actor's name: a char* at +0x260 (docs/objects.md).
 inline constexpr std::uint64_t kActorName = 0x260;
+// [dump] Issue 248, a lit Deku stick. A piece's effects (ELink) user: its
+// XLink component [[actor + 0x270] + 0x68], the ELink user at +0x70 (as the
+// AI node OneShotXLinkSearchAndEmit, main+0x295b740, and OneShotXLinkFadeByKey,
+// main+0x295af30, find it). What the user plays now is a list: head at
+// user + 0x28, first link at +0x30, the event at link - s32 [user + 0x3c],
+// the key of the call it plays at [[event + 0x30]], the next link at
+// [link + 8] (the walk of 0x37416c0, the find FadeByKey runs before its kill).
+// A burning stick plays `Chemical_Fire` (Item_DekuStick's ELink user, read
+// from the romfs's ELink2 file: Chemical_FireStart, Chemical_Fire with the
+// flame, heat haze and smoke, Sheathed_Extinguish, Death_Burned).
+inline constexpr std::uint64_t kComponentsXLink = 0x68;
+inline constexpr std::uint64_t kXLinkEffectUser = 0x70;
+inline constexpr std::uint64_t kUserEvents = 0x28;
+inline constexpr std::uint64_t kUserFirstLink = 0x30;
+inline constexpr std::uint64_t kUserLinkOffset = 0x3c;  // s32
+inline constexpr std::uint64_t kLinkNext = 0x08;
+inline constexpr std::uint64_t kEventCall = 0x30;       // -> {char* key, ...}
+inline constexpr std::uint32_t kMaxUserEvents = 64;     // a walk gives up after so many
+inline constexpr char kBurnKey[] = "Chemical_Fire";
 inline constexpr std::uint32_t kActorStateGoneFirst = 7;
 inline constexpr std::uint32_t kActorStateGoneLast = 11;
 

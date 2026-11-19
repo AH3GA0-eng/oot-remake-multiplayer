@@ -984,6 +984,19 @@ TEST_CASE("player equip: unknown components are skipped, bad ones refused") {
   CHECK(decode(Bytes{17, 0, 8, 0, 0, 16, 0, 3, 0, 0xFF, 0x80, 0x01}, back) == Error::none);
   CHECK(std::get<PlayerEquip>(back).equipment.color == 0xFF8001u);
   CHECK_FALSE(std::get<PlayerEquip>(back).equipment.drawn);
+  // Lit (17, issue 248): one byte of slot bits, like drawn.
+  CHECK(decode(Bytes{17, 0, 6, 0, 0, 17, 0, 1, 0, 0x01}, back) == Error::none);
+  CHECK(std::get<PlayerEquip>(back).equipment.lit == 1);
+  CHECK_FALSE(std::get<PlayerEquip>(back).equipment.drawn);
+  CHECK(decode_bytes(Bytes{17, 0, 7, 0, 0, 17, 0, 2, 0, 1, 1}) == Error::bad_length);
+  CHECK(decode_bytes(Bytes{17, 0, 11, 0, 0, 17, 0, 1, 0, 1, 17, 0, 1, 0, 1}) ==
+        Error::duplicate_component);
+  PlayerEquip lit;
+  lit.equipment.drawn = 1;
+  lit.equipment.lit = 1;
+  CHECK(must_encode(lit) == Bytes{17, 0, 11, 0, 0, 9, 0, 1, 0, 1, 17, 0, 1, 0, 1});
+  REQUIRE(decode(must_encode(lit), back) == Error::none);
+  CHECK(std::get<PlayerEquip>(back) == lit);
   // The same component twice.
   CHECK(decode_bytes(Bytes{17, 0, 11, 0, 0, 9, 0, 1, 0, 1, 9, 0, 1, 0, 1}) ==
         Error::duplicate_component);
@@ -1035,6 +1048,11 @@ TEST_CASE("merge_equipment keeps what a message leaves out") {
   CHECK(merge_equipment(before, now).color == 0x3070FFu);
   now.color = 0xFF0000u;
   CHECK(merge_equipment(before, now).color == 0xFF0000u);
+  // Lit is kept the same way (a message without it: an older sender).
+  before.lit = 1;
+  CHECK(merge_equipment(before, now).lit == 1);
+  now.lit = 0;
+  CHECK(merge_equipment(before, now).lit == 0);
 }
 
 TEST_CASE("slot_color gives each player number its own colour") {

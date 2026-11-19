@@ -2,21 +2,26 @@
 # See hs-shots.A.txt for the run line and the pass checks. Places as hs-seed: B (shooter) at z 11,
 # A 4 m behind at z 7, both facing +z. Marks come every 6 ticks after a throw or shot: the copy
 # lives only as long as the owner's (a hookshot tip about 0.65 s in held-adult on Longshot).
+# held-pieces-0116 r2 (proof-0116 placement notes): B faces away with a short goto (toward 10 never turned
+# Link), and walks toward A for the Ocarina and the held items (A sees the front); sticks by setflag.
+# Ocarina (#152): B faces A, takes it out and plays one note, then puts it away (628 ticks)
+# Slingshot aimed and a Deku Stick out, still facing A (340 ticks)
+# adult segment: both games at once
 mark start
 give PouchData.Item_Boomerang.StockNum
 give hookshot
 give PouchData.Item_Ocarina_Fairy.StockNum
-give PouchData.Item_DekuStick.StockNum
+setflag PouchData.Item_DekuStick.StockNum 10   # 'give' has no stick (unknown item flag); hash 0xb9494411
+setflag IsGet.Item_DekuStick 1
 wait 900
 place -35.7 98.3 11.0
 wait 30
-toward -35.7 40 10
+goto -35.7 13.0 1.5 120   # a short walk turns B away from A (+z)
 press ZL 10
 wait 60
 assign Boomerang
 wait 30
 mark ready
-# child segment: 1384 ticks from here (A waits the same): boomerang 416 + Ocarina 628 + slingshot/stick 340
 hold ZR 10
 mark boom1-thrown
 wait 6
@@ -55,8 +60,8 @@ mark boom2-g
 wait 6
 mark boom2-h
 wait 120
-# Ocarina (#152): B faces A, takes it out and plays one note, then puts it away (628 ticks)
-toward -35.7 0 10
+goto -35.7 7.0 3.6 150    # B walks toward A until 3.6 m off: B faces A (front view)
+press ZL 10
 wait 30
 press DLEFT 12
 wait 240
@@ -69,7 +74,6 @@ wait 120
 press B 12
 wait 120
 mark oca-away
-# Slingshot aimed and a Deku Stick out, still facing A (340 ticks)
 assign SlingShot
 wait 30
 hold ZR 90 aim
@@ -82,18 +86,18 @@ wait 60
 mark stick-held
 wait 60
 wait 60
-# adult segment: both games at once
 setflag Sequence_IsChildhood 0
 warp Graveyard_Adult
 wait 900
 mark adult-arrived
 place -35.7 98.3 11.0
 wait 30
-toward -35.7 40 10
+goto -35.7 13.0 1.5 120   # a short walk turns B away from A (+z)
 press ZL 10
 wait 60
 assign Hookshot
 wait 30
+wait 300                  # A arrives later (it warps after B) and turns to B first
 mark ready-adult
 hold ZR 30
 mark hook1-aim
