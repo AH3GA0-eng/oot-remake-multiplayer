@@ -1206,7 +1206,7 @@ TEST_CASE("pause tab: a relay room's cell shows its room and its host's name, cu
         CHECK(c.find(": ") != std::string::npos);
         for (std::size_t i = 0; i + 1 < c.size(); ++i) {   // (no UTF-8 letter cut in half: no lead byte before ASCII)
             const auto a = static_cast<unsigned char>(c[i]), b = static_cast<unsigned char>(c[i + 1]);
-            CHECK_FALSE((a & 0xe0) == 0xc0 && (b & 0xc0) != 0x80);
+            CHECK_FALSE(((a & 0xe0) == 0xc0 && (b & 0xc0) != 0x80));
         }
     }
     CHECK(RoomCell("forest-gang-and-friends", "Saria", " (2/4)") == "forest-g...: Saria (2/4)");
