@@ -94,7 +94,15 @@ static_assert(kMuteVoice == CoopLobby::kVoice && kMuteChat == CoopLobby::kChat);
 // Panes found, per opening of a screen (Page::Track's number; a menu reopened at the same address is looked up again,
 // so no pane of a freed layout is used). *_ok: both looked up for that opening and parts; the page is usable only then.
 std::uint64_t g_pages_gen = 0, g_pages_screen = 0, g_system_pane = 0, g_coop_pane = 0;
+std::uint64_t g_settings_pane = 0;   // the Settings page (Pa_Settings_00; 0 with an older pack)
 std::uint64_t g_strip_gen = 0, g_tab_pane = 0;
+// The sixth tab (Pa_Category_05, Settings) and its word, and what the six-tab strip moves: the game's four tabs'
+// parent (N_MenuChange_00: no animation track names it, so it keeps a place written to it), L and R, with their own
+// places in the layout to go back to (the Minus menu has its own tabs on the same strip). 0: none (an older pack).
+std::uint64_t g_tab6_pane = 0, g_tab6_word = 0, g_tabs_parent = 0, g_label_l = 0, g_label_r = 0;
+float g_tabs_parent_x = 0, g_label_l_x = 0, g_label_r_x = 0;
+bool g_tab6_shown = false;
+float g_alpha6_set = -1, g_word6_set = -1;
 bool g_pages_looked = false, g_pages_ok = false, g_strip_looked = false, g_strip_ok = false;
 std::uint64_t g_pages_layout = 0;  // the layout the pages' panes were looked up in (the early page switch checks it)
 std::uint64_t g_fourth_pane = 0;   // the game's fourth tab (Pa_Category_03), which ours follows in the strip's animation
@@ -550,6 +558,8 @@ void LookPages(void* ctx, bool calls, const Facts& f, std::uint64_t gen) {
     g_system_pane = FindOwnPane(ctx, f.layout, "Pa_System_00");
     g_coop_pane = FindOwnPane(ctx, f.layout, "Pa_Coop_00");
     g_pages_ok = IsPart(g_system_pane) && IsPart(g_coop_pane);
+    g_settings_pane = FindOwnPane(ctx, f.layout, "Pa_Settings_00");
+    if (!IsPart(g_settings_pane)) g_settings_pane = 0;
     g_pages_layout = f.layout;
     LOG_INFO(Core, "coop: pause tab: the pages' panes: Pa_System_00 {:#x}, Pa_Coop_00 {:#x}{}", g_system_pane,
              g_coop_pane, g_pages_ok ? "" : " (not both parts: the Multiplayer page stays off; is the pack's layout in?)");
@@ -571,6 +581,8 @@ void LookStrip(void* ctx, bool calls, const Facts& f, std::uint64_t gen) {
         g_strip_gen = gen, g_strip_looked = false, g_strip_ok = false, g_tab_pane = 0;
         g_fourth_pane = 0, g_fourth_word = 0, g_tab_word = 0, g_tab_shown = false, g_follow_had = false;
         g_alpha_set = g_word_set = -1;
+        g_tab6_pane = g_tab6_word = g_tabs_parent = g_label_l = g_label_r = 0, g_tab6_shown = false;
+        g_alpha6_set = g_word6_set = -1;
     }
     if (g_strip_looked || !calls || f.layout == 0) return;
     g_strip_looked = true;
@@ -583,9 +595,21 @@ void LookStrip(void* ctx, bool calls, const Facts& f, std::uint64_t gen) {
         Call(ctx, kPaneTable, f.layout + 0x40, 0, 0, 0, 0, &table);
         g_fourth_word = PaneIn(ctx, PartLayout(table, "Pa_Category_03"), "N_MenuChangeTextIn_00");
         g_tab_word = PaneIn(ctx, PartLayout(table, "Pa_Category_04"), "N_MenuChangeTextIn_00");
+        // (the sixth tab, and the panes the six-tab strip moves, with their places to go back to)
+        if (const std::uint64_t six = FindOwnPane(ctx, f.layout, "Pa_Category_05"); IsPart(six)) {
+            g_tab6_pane = six;
+            g_tab6_word = PaneIn(ctx, PartLayout(table, "Pa_Category_05"), "N_MenuChangeTextIn_00");
+            g_tabs_parent = FindOwnPane(ctx, f.layout, "N_MenuChange_00");
+            g_label_l = FindOwnPane(ctx, f.layout, "T_BtnL_00");
+            g_label_r = FindOwnPane(ctx, f.layout, "T_BtnR_00");
+            g_tabs_parent_x = Read<float>(g_tabs_parent + 0x6c);
+            g_label_l_x = Read<float>(g_label_l + 0x6c), g_label_r_x = Read<float>(g_label_r + 0x6c);
+        }
     }
-    LOG_INFO(Core, "coop: pause tab: the strip's fifth tab: Pa_Category_04 {:#x}{}", g_tab_pane,
-             g_strip_ok ? "" : " (not a part: left alone, the Multiplayer page stays off)");
+    LOG_INFO(Core, "coop: pause tab: the strip's fifth tab: Pa_Category_04 {:#x}{}; the sixth: Pa_Category_05 {:#x} "
+                   "(the game's tabs' parent {:#x} at x {:.0f}, L {:#x} at {:.0f}, R {:#x} at {:.0f})",
+             g_tab_pane, g_strip_ok ? "" : " (not a part: left alone, the Multiplayer page stays off)", g_tab6_pane,
+             g_tabs_parent, g_tabs_parent_x, g_label_l, g_label_l_x, g_label_r, g_label_r_x);
 }
 
 // The pages: our page over System's, or System's alone. The rows' texts once per opening.
@@ -594,9 +618,17 @@ void LookStrip(void* ctx, bool calls, const Facts& f, std::uint64_t gen) {
 struct Slide {
     int dir = 0;                  // 0: none
     std::uint64_t start_ms = 0, gen = 0;
-    float ours_x = 0, system_x = 0;   // their own places (+0x6c), as they were when it began
+    // The two pages (the one to the right: the later tab; the one to the left), their own places (+0x6c) as they were
+    // when it began, and which one stays shown at its end.
+    std::uint64_t right = 0, left = 0, stays = 0;
+    float right_x = 0, left_x = 0;
 };
 Slide g_slide;
+
+// A page of Page::Do's numbering: 0 System's, 1 the Multiplayer page, 2 the Settings page (0 when the pack has none).
+std::uint64_t PageOf(int page) {
+    return page == 0 ? g_system_pane : page == 1 ? g_coop_pane : g_settings_pane;
+}
 
 void PlacePane(void* ctx, std::uint64_t pane, float x) {
     if (Read<float>(pane + 0x6c) == x) return;
@@ -607,8 +639,8 @@ void PlacePane(void* ctx, std::uint64_t pane, float x) {
 void EndSlide(void* ctx) {
     if (g_slide.dir == 0) return;
     if (g_slide.gen == g_pages_gen) {   // (a new opening has its own panes, at their places)
-        PlacePane(ctx, g_coop_pane, g_slide.ours_x);
-        PlacePane(ctx, g_system_pane, g_slide.system_x);
+        PlacePane(ctx, g_slide.right, g_slide.right_x);
+        PlacePane(ctx, g_slide.left, g_slide.left_x);
     }
     g_slide.dir = 0;
 }
@@ -621,14 +653,14 @@ void StepSlide(void* ctx, std::uint64_t now_ms) {
         return;
     }
     const float p = SlideProgress(now_ms - g_slide.start_ms);
-    const auto [ours, system] = SlideOffsets(g_slide.dir, p);
-    PlacePane(ctx, g_coop_pane, g_slide.ours_x + ours);
-    PlacePane(ctx, g_system_pane, g_slide.system_x + system);
+    const auto [right, left] = SlideOffsets(g_slide.dir, p);
+    PlacePane(ctx, g_slide.right, g_slide.right_x + right);
+    PlacePane(ctx, g_slide.left, g_slide.left_x + left);
     if (p >= 1.0f) {
-        const bool shown = g_slide.dir > 0;
+        const Slide was = g_slide;
         EndSlide(ctx);
-        SetVisible(ctx, g_coop_pane, shown);
-        SetVisible(ctx, g_system_pane, !shown);
+        SetVisible(ctx, was.right, was.stays == was.right);
+        SetVisible(ctx, was.left, was.stays == was.left);
     }
 }
 
@@ -637,17 +669,22 @@ void ApplyPages(void* ctx, const Facts& f, const Page::Do& d) {
     if (layout == 0 || !g_pages_ok) return;
     if (d.set_page) {
         EndSlide(ctx);   // (one going on: both back at their places first)
-        if (d.slide != 0) {
+        const std::uint64_t from = PageOf(d.page_from), to = PageOf(d.page_to);
+        if (d.slide != 0 && from != 0 && to != 0 && from != to) {
             g_slide.dir = d.slide, g_slide.start_ms = NowMs(), g_slide.gen = g_pages_gen;
-            g_slide.ours_x = Read<float>(g_coop_pane + 0x6c), g_slide.system_x = Read<float>(g_system_pane + 0x6c);
-            SetVisible(ctx, g_coop_pane, true);
-            SetVisible(ctx, g_system_pane, true);
+            g_slide.right = d.page_to > d.page_from ? to : from, g_slide.left = d.page_to > d.page_from ? from : to;
+            g_slide.stays = to;
+            g_slide.right_x = Read<float>(g_slide.right + 0x6c), g_slide.left_x = Read<float>(g_slide.left + 0x6c);
+            for (const std::uint64_t pane : {g_system_pane, g_coop_pane, g_settings_pane}) {
+                if (pane != 0) SetVisible(ctx, pane, pane == from || pane == to);
+            }
             StepSlide(ctx, g_slide.start_ms);
-            LOG_INFO(Core, "coop: pause tab: the pages slide {} (our page's place x {:.0f}, System's {:.0f})",
-                     d.slide > 0 ? "to ours" : "back to System", g_slide.ours_x, g_slide.system_x);
+            LOG_INFO(Core, "coop: pause tab: the pages slide from page {} to page {} (places x {:.0f} and {:.0f})",
+                     d.page_from, d.page_to, g_slide.left_x, g_slide.right_x);
         } else {
-            SetVisible(ctx, g_coop_pane, d.page_shown);
-            SetVisible(ctx, g_system_pane, !d.page_shown);
+            for (const std::uint64_t pane : {g_system_pane, g_coop_pane, g_settings_pane}) {
+                if (pane != 0) SetVisible(ctx, pane, pane == (to != 0 ? to : g_system_pane));
+            }
         }
     }
     if (d.set_texts) {
@@ -655,11 +692,35 @@ void ApplyPages(void* ctx, const Facts& f, const Page::Do& d) {
         // Inside our copy: its controller picture (System's, not ours) hidden.
         std::uint64_t table = 0;
         Call(ctx, kPaneTable, layout + 0x40, 0, 0, 0, 0, &table);
-        const std::uint64_t ours = PartLayout(table, "Pa_Coop_00");
-        const std::uint64_t controller = PaneIn(ctx, ours, "Pa_SystemController_00");
-        if (IsPart(controller)) SetVisible(ctx, controller, false);
-        LOG_INFO(Core, "coop: pause tab: the page's controller picture {}", IsPart(controller) ? "hidden" : "not found");
+        for (const char* page : {"Pa_Coop_00", "Pa_Settings_00"}) {
+            const std::uint64_t ours = PartLayout(table, page);
+            if (ours == 0) continue;
+            const std::uint64_t controller = PaneIn(ctx, ours, "Pa_SystemController_00");
+            if (IsPart(controller)) SetVisible(ctx, controller, false);
+            LOG_INFO(Core, "coop: pause tab: {}'s controller picture {}", page, IsPart(controller) ? "hidden" : "not found");
+        }
     }
+}
+
+// The six-tab strip (the pack's sixth tab, in the Plus menu): the game's four tabs' parent moved left by kSixShift (its
+// own place: no animation track names it, so the strip's animations still move the tabs in it), our two tabs placed
+// kSixGap after the fourth (its place on the screen: they sit under RootPane), L and R moved out to the row's ends.
+// Elsewhere (the Minus menu, the strip closed, an older pack) all of them at their own places. Measured from the
+// layout (2026-11-19, docs/game-ui.md): the game's tabs 460 apart from x -690, the hearts end near -1218 with ten,
+// the rupee counter starts near 1460.
+constexpr float kSixShift = -320.0f, kSixGap = 400.0f, kSixLabelL = -270.0f, kSixLabelR = 40.0f;
+void PlaceSix(void* ctx, bool six) {
+    if (g_tabs_parent == 0) return;
+    PlacePane(ctx, g_tabs_parent, g_tabs_parent_x + (six ? kSixShift : 0.0f));
+    if (g_label_l != 0) PlacePane(ctx, g_label_l, g_label_l_x + (six ? kSixLabelL : 0.0f));
+    if (g_label_r != 0) PlacePane(ctx, g_label_r, g_label_r_x + (six ? kSixLabelR : 0.0f));
+}
+void FollowFourthX(void* ctx) {
+    if (g_fourth_pane == 0 || g_tab6_pane == 0) return;
+    const float x = Read<float>(g_fourth_pane + kPaneScreenX);   // (its place on the screen)
+    if (!std::isfinite(x)) return;
+    PlacePane(ctx, g_tab_pane, x + kSixGap);
+    PlacePane(ctx, g_tab6_pane, x + 2 * kSixGap);
 }
 
 // The strip: the fifth tab shown in the Plus menu (filled as a Plus tab, our word), lit while our page shows, and
@@ -671,6 +732,12 @@ void ApplyStrip(void* ctx, const Facts& f, const Page::Do& d) {
     SetVisible(ctx, g_tab_pane, d.tab_shown);
     if (!d.tab_shown) g_follow_had = false, g_alpha_set = g_word_set = -1;
     g_tab_shown = d.tab_shown;
+    if (g_tab6_pane != 0) {   // (the sixth tab, and the six-tab places: also when the tabs go, as in the Minus menu)
+        SetVisible(ctx, g_tab6_pane, d.tab6_shown);
+        if (!d.tab6_shown) g_alpha6_set = g_word6_set = -1;
+        g_tab6_shown = d.tab6_shown;
+        PlaceSix(ctx, d.tab6_shown);
+    }
     if (!d.tab_shown) return;
     const std::uint64_t tab3 = Read<std::uint64_t>(tabs + 8 * 3), tab4 = Read<std::uint64_t>(tabs + 8 * 4);
     if (tab3 == 0 || tab4 == 0) return;
@@ -689,8 +756,19 @@ void ApplyStrip(void* ctx, const Facts& f, const Page::Do& d) {
         LOG_INFO(Core, "coop: pause tab: the fifth tab filled (its word {}, {})", text ? "set" : "not set",
                  text_in != 0 ? "faded in" : "its text pane not found");
     }
-    Call(ctx, kTabLight, tab3, f.lit == kSystemPage && !d.tab_lit ? 1 : 0, 0);
+    // The sixth tab (Settings), the same way as the fifth.
+    const std::uint64_t tab5 = f.tabs >= 6 ? Read<std::uint64_t>(tabs + 8 * 5) : 0;
+    if (d.fill_tab6 && tab5 != 0 && g_tab6_pane != 0) {
+        Call(ctx, kTabFill, tab5, kSystemPage, 1);
+        const bool text = SetText(ctx, layout, "Pa_Category_05/T_Text_00", "LayoutMsg/MenuOverlay_00",
+                                  "Pa_Category_05-T_Text_00");
+        Call(ctx, kTabOpen, tab5, 0);
+        if (g_tab6_word != 0) CallAlpha(ctx, g_tab6_word, 1.0f);
+        LOG_INFO(Core, "coop: pause tab: the sixth tab filled (its word {})", text ? "set" : "not set");
+    }
+    Call(ctx, kTabLight, tab3, f.lit == kSystemPage && !d.tab_lit && !d.tab6_lit ? 1 : 0, 0);
     Call(ctx, kTabLight, tab4, d.tab_lit ? 1 : 0, 0);
+    if (tab5 != 0 && g_tab6_pane != 0) Call(ctx, kTabLight, tab5, d.tab6_lit ? 1 : 0, 0);
 }
 
 // Our tab through the strip's opening and closing, as the game's four: the strip's animation moves and fades the
@@ -716,10 +794,23 @@ void FollowFourth(void* ctx) {
         CoopRuntime::Write(g_tab_pane + kPaneOwnY, &want_y, sizeof want_y);
         Call(ctx, kPaneMoved, g_tab_pane);
     }
+    if (g_tab6_shown && g_tab6_pane != 0 && Read<float>(g_tab6_pane + kPaneOwnY) != want_y) {
+        CoopRuntime::Write(g_tab6_pane + kPaneOwnY, &want_y, sizeof want_y);
+        Call(ctx, kPaneMoved, g_tab6_pane);
+    }
+    if (g_tab6_shown) FollowFourthX(ctx);   // (six tabs: ours after the fourth wherever the shift put it)
     // (the alphas only when they change, as the height: the strip settled, nothing is called)
     if (const float a = std::clamp(want_alpha, 0.0f, 1.0f); a != g_alpha_set) {
         CallAlpha(ctx, g_tab_pane, a);
         g_alpha_set = a;
+    }
+    if (const float a = std::clamp(want_alpha, 0.0f, 1.0f); g_tab6_shown && a != g_alpha6_set) {
+        CallAlpha(ctx, g_tab6_pane, a);
+        g_alpha6_set = a;
+    }
+    if (const float w = std::clamp(want_word, 0.0f, 1.0f); g_tab6_shown && g_tab6_word != 0 && w != g_word6_set) {
+        CallAlpha(ctx, g_tab6_word + kTextAlphaBlock, w);
+        g_word6_set = w;
     }
     // (and its word fades in with the fourth's: the strip's "text in" animation names only the game's four words)
     if (g_fourth_word != 0 && g_tab_word != 0) {
