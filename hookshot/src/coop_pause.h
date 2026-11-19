@@ -58,12 +58,16 @@ void Open(CoopPauseMenu::Page page);
 // note says what was copied (Join code).
 void OpenLobby();
 void CopyJoinCode();
-// The page's own actions: hosting at once with the kit's settings (its room name, relay, port, approval), as the
-// menu's Host does; and leaving (or stopping hosting), as its Leave does.
+// The page's own actions, through the menu's requests and its rules: hosting at once with the kit's settings (its
+// room name, relay, port, approval), as the menu's Host does; and leaving (or stopping hosting), as its Leave does.
+// Co-op that came with the game's start (ByLauncher) is neither started nor stopped: the menu opens on its main page,
+// which says why. A Host refused or failed opens it too (its note, or the session's lines say why).
 void HostNow();
 void LeaveNow();
+// Co-op came with the game's start (Host.bat, Join.bat, coop.ini): the page's rows open the menu instead.
+bool ByLauncher();
 // The host's Paste answer (a friend's answer code from the clipboard) and a waiting guest's Copy answer, as the
-// menu's rows do them; the menu opened on its main page first, whose note says what became of it.
+// menu's rows do them; the menu opened on its main page, whose note says what became of it.
 void PasteAnswerNow();
 void CopyAnswerNow();
 

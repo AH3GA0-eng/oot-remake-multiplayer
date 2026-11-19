@@ -28,13 +28,14 @@ const HosCoopApi* g_api = nullptr;
 std::mutex g_mutex;   // everything below: screen updates on several of the game's threads, the pad on its own
 Probe g_probe;
 Page g_page;
-std::atomic<bool> g_shown{false};   // (the mouse asks often, from any thread)
+std::atomic<int> g_mouse{-2};       // Page::MousePage, for the mouse (it asks often, from any thread)
 // The Leave row's second A: until when it is waited for (0: not). Any thread.
 std::atomic<std::uint64_t> g_confirm_until{0};
-// Panes found, per screen object (0: not looked up yet or not there).
-std::uint64_t g_pages_screen = 0, g_system_pane = 0, g_coop_pane = 0;
-std::uint64_t g_strip_screen = 0, g_tab_pane = 0;
-bool g_pages_bad = false, g_strip_bad = false;   // a pane that is not a part: the page step stays off (logged once)
+// Panes found, per opening of a screen (Page::Track's number; a menu reopened at the same address is looked up again,
+// so no pane of a freed layout is used). *_ok: both looked up for that opening and parts; the page is usable only then.
+std::uint64_t g_pages_gen = 0, g_pages_screen = 0, g_system_pane = 0, g_coop_pane = 0;
+std::uint64_t g_strip_gen = 0, g_tab_pane = 0;
+bool g_pages_looked = false, g_pages_ok = false, g_strip_looked = false, g_strip_ok = false;
 
 template <class T>
 T Read(std::uint64_t a) {
@@ -143,6 +144,7 @@ bool SetText(void* ctx, std::uint64_t layout, const std::string& path, const std
 constexpr int kLiveSlots = 8;
 constexpr std::uint32_t kLivePlaceholder = 64;   // the placeholder's bytes (strings/en.txt)
 struct LiveSlot {
+    std::uint64_t gen = 0;      // the pages' opening it was looked up for (Page::Track): looked up again for each
     std::uint64_t text = 0;     // the placeholder's text in the loaded message file (0: not looked up)
     std::uint32_t extra = 0;    // what the game's length counts beyond the text (its 0 at the end: 1, else 0)
     std::uint64_t attrs = 0;    // the reference's third word, kept
@@ -151,13 +153,16 @@ struct LiveSlot {
 };
 std::mutex g_live_mutex;        // the slots (the pages' updates come on several threads)
 LiveSlot g_live[kLiveSlots];
-std::uint64_t g_live_screen = 0, g_live_ms = 0;
+std::uint64_t g_live_gen = 0, g_live_ms = 0;
 
-// The slot's placeholder, looked up once (the reference the game makes for it).
-bool LiveLookup(void* ctx, int slot) {
+// The slot's placeholder, looked up again for each opening of the pages (the reference the game makes for it now): a
+// message file loaded again (another language, the archive reloaded) is found where it is now, never written through
+// an old address. Ours when its length is the placeholder's and its text is the placeholder's dots, or our own words at
+// the address we wrote before (the same file still loaded).
+bool LiveLookup(void* ctx, int slot, std::uint64_t gen) {
     LiveSlot& l = g_live[slot];
-    if (l.text != 0) return true;
     if (l.bad) return false;
+    if (l.gen == gen && l.text != 0) return true;
     char label[16];
     std::snprintf(label, sizeof label, "Coop_Live_%02d", slot);
     const std::string file = "LayoutMsg/PlusMenu_00";
@@ -175,26 +180,34 @@ bool LiveLookup(void* ctx, int slot) {
     const std::uint32_t length = Read<std::uint32_t>(base + 8);
     char head[8] = {};
     CoopRuntime::Read(text, head, sizeof head);
-    if (text == 0 || std::memcmp(head, "........", 8) != 0 || length < kLivePlaceholder ||
-        length > kLivePlaceholder + 1) {
-        l.bad = true;
+    const bool dots = std::memcmp(head, "........", 8) == 0;
+    if (text == 0 || (!dots && text != l.text) || length < kLivePlaceholder || length > kLivePlaceholder + 1) {
+        const bool before = l.text != 0;
+        l.text = 0, l.gen = 0;
+        l.bad = !before;   // (never ours: an old pack; ours before: only this opening goes without, looked up again next)
         LOG_INFO(Core, "coop: pause tab: live text: {} is not the pack's placeholder (text {:#x}, length {}): the rows "
-                       "keep their own words (build the puppet pack again)", label, text, length);
+                       "keep their own words{}", label, text, length, before ? " this time" : " (build the puppet pack again)");
         return false;
     }
+    const bool moved = l.text != 0 && l.text != text;
+    const bool first = l.text == 0;
+    l.gen = gen;
     l.text = text;
     l.extra = length - kLivePlaceholder;
     l.attrs = Read<std::uint64_t>(base + 0x10);
-    LOG_INFO(Core, "coop: pause tab: live text: {} at {:#x}, the game counts {} byte(s) more than its text", label, text,
-             l.extra);
+    if (first || moved) {
+        LOG_INFO(Core, "coop: pause tab: live text: {} at {:#x}, the game counts {} byte(s) more than its text{}", label,
+                 text, l.extra, moved ? " (the message file moved: found again)" : "");
+    }
     return true;
 }
 
 // `utf8` (at most kLivePlaceholder - 1 bytes) in the pane at `path`, through slot `slot`. True when shown.
-bool LiveText(void* ctx, std::uint64_t layout, const std::string& path, int slot, const std::string& utf8) {
+bool LiveText(void* ctx, std::uint64_t layout, std::uint64_t gen, const std::string& path, int slot,
+              const std::string& utf8) {
     LiveSlot& l = g_live[slot];
     if (l.shown == utf8) return true;
-    if (path.size() >= 0x40 || utf8.size() >= kLivePlaceholder || !LiveLookup(ctx, slot)) return false;
+    if (path.size() >= 0x40 || utf8.size() >= kLivePlaceholder || !LiveLookup(ctx, slot, gen)) return false;
     std::string bytes = utf8;
     bytes.push_back('\0');
     if (!CoopRuntime::Write(l.text, bytes.data(), bytes.size())) return false;
@@ -218,6 +231,8 @@ SessionView ViewNow() {
     st.size = sizeof st;
     CoopHookshot::HostMenu().Status(&st);
     SessionView v;
+    v.s.by_launcher = CoopPause::ByLauncher();
+    v.s.failed = st.state == HOS_COOP_FAILED;
     v.s.hosting = st.state == HOS_COOP_HOSTING;
     v.s.in_one = (st.state != HOS_COOP_IDLE && st.state != HOS_COOP_FAILED) || CoopSave::SessionLive();
     v.connecting = st.state == HOS_COOP_STARTING || st.state == HOS_COOP_JOINING || st.state == HOS_COOP_WAIT_HOST;
@@ -235,41 +250,64 @@ SessionView ViewNow() {
     return v;
 }
 
-// The rows' live texts while our page shows: at most every 250 ms, a pane only when its words changed.
-void LiveRows(void* ctx, std::uint64_t screen, const SessionView& v) {
+// The rows' live texts while our page shows: at most every 250 ms (asked before co-op's status and the Lobby are read,
+// so they are not copied every frame), at once for a new opening of the pages; a pane only when its words changed.
+bool LiveDue(std::uint64_t gen) {
     std::lock_guard lock(g_live_mutex);
     const std::uint64_t now = NowMs();
-    if (screen != g_live_screen) {
-        g_live_screen = screen;
-        for (LiveSlot& l : g_live) l.shown.clear();   // (a new pages screen: its panes show the pack's words again)
+    if (gen != g_live_gen) {
+        g_live_gen = gen;
+        for (LiveSlot& l : g_live) l.shown.clear();   // (a new opening: its panes show the pack's words again)
     } else if (now - g_live_ms < 250) {
-        return;
+        return false;
     }
     g_live_ms = now;
-    const std::uint64_t layout = Read<std::uint64_t>(screen + kScreenLayout);
-    if (layout == 0) return;
+    return true;
+}
+
+void LiveRows(void* ctx, std::uint64_t layout, std::uint64_t gen, const SessionView& v) {
+    std::lock_guard lock(g_live_mutex);
+    if (layout == 0 || gen != g_live_gen) return;   // (another opening came meanwhile: its own turn sets them)
     const std::vector<std::string> rows = RowTexts(v);
     for (int i = 0; i < kRows && i < kLiveSlots; ++i) {
         char path[64];
         std::snprintf(path, sizeof path, "Pa_Coop_00/Pa_Button_%02d/T_Btn_00", i);
-        LiveText(ctx, layout, path, i, rows[static_cast<std::size_t>(i)]);
+        LiveText(ctx, layout, gen, path, i, rows[static_cast<std::size_t>(i)]);
     }
 }
 
-// The pages: our page over System's, or System's alone. The rows' texts once per screen object.
-void ApplyPages(void* ctx, std::uint64_t screen, const Page::Do& d) {
-    const std::uint64_t layout = Read<std::uint64_t>(screen + kScreenLayout);
-    if (layout == 0) return;
-    if (screen != g_pages_screen) {
-        g_pages_screen = screen, g_pages_bad = false;
-        g_system_pane = FindOwnPane(ctx, layout, "Pa_System_00");
-        g_coop_pane = FindOwnPane(ctx, layout, "Pa_Coop_00");
-        const bool ok = IsPart(g_system_pane) && IsPart(g_coop_pane);
-        g_pages_bad = !ok;
-        LOG_INFO(Core, "coop: pause tab: the pages' panes: Pa_System_00 {:#x}, Pa_Coop_00 {:#x}{}", g_system_pane,
-                 g_coop_pane, ok ? "" : " (not both parts: the Multiplayer page stays off; is the pack's layout in?)");
+// The pages' panes, looked up once per opening (`calls`: ctx may call(); else looked up at a later update).
+void LookPages(void* ctx, bool calls, const Facts& f, std::uint64_t gen) {
+    if (gen != g_pages_gen) {
+        g_pages_gen = gen, g_pages_screen = f.screen, g_pages_looked = false, g_pages_ok = false;
+        g_system_pane = 0, g_coop_pane = 0;
     }
-    if (g_pages_bad) return;
+    if (g_pages_looked || !calls || f.layout == 0) return;
+    g_pages_looked = true;
+    g_system_pane = FindOwnPane(ctx, f.layout, "Pa_System_00");
+    g_coop_pane = FindOwnPane(ctx, f.layout, "Pa_Coop_00");
+    g_pages_ok = IsPart(g_system_pane) && IsPart(g_coop_pane);
+    LOG_INFO(Core, "coop: pause tab: the pages' panes: Pa_System_00 {:#x}, Pa_Coop_00 {:#x}{}", g_system_pane,
+             g_coop_pane, g_pages_ok ? "" : " (not both parts: the Multiplayer page stays off; is the pack's layout in?)");
+}
+
+// The strip's fifth tab, the same way.
+void LookStrip(void* ctx, bool calls, const Facts& f, std::uint64_t gen) {
+    if (gen != g_strip_gen) {
+        g_strip_gen = gen, g_strip_looked = false, g_strip_ok = false, g_tab_pane = 0;
+    }
+    if (g_strip_looked || !calls || f.layout == 0) return;
+    g_strip_looked = true;
+    g_tab_pane = FindOwnPane(ctx, f.layout, "Pa_Category_04");
+    g_strip_ok = IsPart(g_tab_pane);
+    LOG_INFO(Core, "coop: pause tab: the strip's fifth tab: Pa_Category_04 {:#x}{}", g_tab_pane,
+             g_strip_ok ? "" : " (not a part: left alone, the Multiplayer page stays off)");
+}
+
+// The pages: our page over System's, or System's alone. The rows' texts once per opening.
+void ApplyPages(void* ctx, const Facts& f, const Page::Do& d) {
+    const std::uint64_t layout = f.layout;
+    if (layout == 0 || !g_pages_ok) return;
     if (d.set_page) {
         SetVisible(ctx, g_coop_pane, d.page_shown);
         SetVisible(ctx, g_system_pane, !d.page_shown);
@@ -296,17 +334,9 @@ void ApplyPages(void* ctx, std::uint64_t screen, const Page::Do& d) {
 // The strip: the fifth tab shown in the Plus menu (filled as a Plus tab, our word), lit while our page shows, and
 // System's tab lit only when System is the page shown.
 void ApplyStrip(void* ctx, const Facts& f, const Page::Do& d) {
-    const std::uint64_t layout = Read<std::uint64_t>(f.screen + kScreenLayout);
+    const std::uint64_t layout = f.layout;
     const std::uint64_t tabs = Read<std::uint64_t>(f.screen + kStripTabArray);
-    if (layout == 0 || tabs == 0) return;
-    if (f.screen != g_strip_screen) {
-        g_strip_screen = f.screen;
-        g_tab_pane = FindOwnPane(ctx, layout, "Pa_Category_04");
-        g_strip_bad = !IsPart(g_tab_pane);
-        LOG_INFO(Core, "coop: pause tab: the strip's fifth tab: Pa_Category_04 {:#x}{}", g_tab_pane,
-                 g_strip_bad ? " (not a part: left alone)" : "");
-    }
-    if (g_strip_bad) return;
+    if (layout == 0 || tabs == 0 || !g_strip_ok) return;
     SetVisible(ctx, g_tab_pane, d.tab_shown);
     if (!d.tab_shown) return;
     const std::uint64_t tab3 = Read<std::uint64_t>(tabs + 8 * 3), tab4 = Read<std::uint64_t>(tabs + 8 * 4);
@@ -349,6 +379,8 @@ Session SessionNow() {
     st.size = sizeof st;
     CoopHookshot::HostMenu().Status(&st);
     Session s;
+    s.by_launcher = CoopPause::ByLauncher();
+    s.failed = st.state == HOS_COOP_FAILED;
     s.hosting = st.state == HOS_COOP_HOSTING;
     s.in_one = (st.state != HOS_COOP_IDLE && st.state != HOS_COOP_FAILED) || CoopSave::SessionLive();
     s.code = s.hosting && (st.relay_room[0] != 0 || st.relay_code[0] != 0 || st.invite[0] != 0);
@@ -400,6 +432,7 @@ void OnScreen(void* ctx, std::uint64_t screen) noexcept {
         if (f.kind == Kind::kOther) return;   // (most updates: the HUD's and the other screens', once a frame each)
         f.screen = screen;
         f.state = Read<std::uint8_t>(screen + kScreenState);
+        if (f.kind != Kind::kBlocker) f.layout = Read<std::uint64_t>(screen + kScreenLayout);
         if (f.kind == Kind::kStrip) {
             f.tabs = static_cast<int>(Read<std::uint32_t>(screen + kStripTabs));
             f.mode = Read<std::int32_t>(screen + kStripMode);
@@ -415,25 +448,34 @@ void OnScreen(void* ctx, std::uint64_t screen) noexcept {
         std::string why;
         bool was = false, now_shown = false;
         int focused = -1;
+        std::uint64_t gen = 0;
+        const bool calls = ctx != nullptr && CanCall();
         {
             std::lock_guard lock(g_mutex);
             lines = g_probe.Seen(f, NowMs());
             was = g_page.Shown();
+            // This opening's panes first, so the page is usable only with the panes of the screens updating now (an
+            // undrawn page never takes System's R or A, and the mouse keeps the fifth tab out: MousePage -2).
+            gen = g_page.Track(f);
+            if (f.kind == Kind::kPages) LookPages(ctx, calls, f, gen);
+            if (f.kind == Kind::kStrip) LookStrip(ctx, calls, f, gen);
+            if (f.kind != Kind::kBlocker) g_page.SetUsable(CanCall() && g_pages_ok && g_strip_ok);
             d = g_page.OnScreen(f, NowMs());
             now_shown = g_page.Shown();
             why = g_page.TakeWhy();
-            g_shown = now_shown;
+            g_mouse = g_page.MousePage();
             if (f.kind == Kind::kPages && now_shown) focused = FocusedRow();
-            if (d.any() && ctx != nullptr && CanCall()) {
-                if (f.kind == Kind::kPages) ApplyPages(ctx, screen, d);
+            if (d.any() && calls) {
+                if (f.kind == Kind::kPages) ApplyPages(ctx, f, d);
                 if (f.kind == Kind::kStrip) ApplyStrip(ctx, f, d);
             }
         }
         for (const std::string& line : lines) LOG_INFO(Core, "{}", line);
         if (was && !now_shown) LOG_INFO(Core, "coop: pause tab: System back ({})", why);
-        if (f.kind == Kind::kPages && now_shown && f.state == 2 && ctx != nullptr && CanCall()) {
-            if (focused != kRowLeave) g_confirm_until = 0;   // (the cursor left the Leave row: no second A waited for)
-            LiveRows(ctx, screen, ViewNow());   // (after our lock: the status and the Lobby take their own)
+        if (f.kind == Kind::kPages && now_shown && f.state == 2 && calls) {
+            if (!KeepConfirm(true, focused)) g_confirm_until = 0;   // (the cursor left the Leave row)
+            // (after our lock: the status and the Lobby take their own; read only when the rows are due)
+            if (LiveDue(gen)) LiveRows(ctx, f.layout, gen, ViewNow());
         }
         if (!now_shown) g_confirm_until = 0;
     } catch (...) {
@@ -461,7 +503,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             decide = g_page.TakeDecide();
             row = decide ? FocusedRow() : -1;   // (under the lock: the pages screen is the screens' updates')
             why = g_page.TakeWhy();
-            g_shown = shown;
+            g_mouse = g_page.MousePage();
         }
         if (shown && stick != nullptr) {
             stick[0] = 0, stick[2] = 0, stick[3] = 0;   // (only the left stick's up and down: the game's cursor over our rows)
@@ -477,7 +519,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
 }
 
 int MousePage() noexcept {
-    return g_shown.load() ? 4 : -1;
+    return g_mouse.load();
 }
 
 }  // namespace CoopPauseTab
