@@ -147,9 +147,18 @@ TEST_CASE("pause tab: Host hosts in one press, then the page shows the code, the
     CHECK(m.view().rows[0].value == "Hosting");
     CHECK(m.view().rows[1].fixed);
     m.Press(Input::kDown);
-    m.Press(Input::kDecide);   // a fixed row says why, and does nothing
+    const std::string hover = m.view().help;   // what selecting the dim row shows already
+    m.Press(Input::kDecide);   // a fixed row says why, and does nothing else
     CHECK(m.page() == Page::kMain);
+    CHECK_FALSE(m.TakeRequest().has_value());
     CHECK(m.view().help.find("stop yours first") != std::string::npos);
+    CHECK(m.view().help.rfind("Not now.", 0) == 0);   // the press is seen: the help changes
+    CHECK(m.view().help != hover);
+    m.Press(Input::kUp);
+    m.Press(Input::kDown);
+    m.Click(1, 0);   // a click on it: the same answer
+    CHECK(m.page() == Page::kMain);
+    CHECK(m.view().help.rfind("Not now.", 0) == 0);
 }
 
 TEST_CASE("pause tab: the host's player count goes round 2 to 16 and is saved") {
@@ -323,17 +332,42 @@ TEST_CASE("pause tab: co-op that came with the game's start is shown, not starte
     m.Show(CoopTitleMenu::Options{});
     Session s;
     s.by_launcher = true;
+    s.state = State::kJoined;   // (the harness's and Join.bat's: connected from the start)
     m.SetSession(s);
-    CHECK(m.view().rows[0].fixed);
-    CHECK(m.view().rows[1].fixed);
+    // Host and Join are not dim: a press opens their page, which says what is on (the owner, 2026-11-19: "Clicking
+    // on Host Game or Join Game doesn't do anything" with co-op from the game's start)
+    CHECK_FALSE(m.view().rows[0].fixed);
+    CHECK_FALSE(m.view().rows[1].fixed);
+    CHECK(m.view().rows[0].value == "Co-op is on");
+    CHECK(m.view().rows[1].value == "Co-op is on");
     CHECK(m.view().gold == "Co-op is on");
+    CHECK(m.view().help.find("Host.bat") != std::string::npos);
     s.players = 3;
     m.SetSession(s);
     CHECK(m.view().gold == "Co-op is on: 3 players");
     m.Press(Input::kDecide);
-    CHECK(m.page() == Page::kMain);
-    CHECK_FALSE(m.TakeRequest().has_value());
+    CHECK(m.page() == Page::kHost);
+    CHECK_FALSE(m.TakeRequest().has_value());   // nothing is started
+    const std::vector<std::string> launcher{"Co-op is on: 3 players",
+                                            "Co-op started with the game: Host.bat, Join.bat or coop.ini.",
+                                            "Who is in the game: the Lobby tab.",
+                                            "To host or join another game, start the game again."};
+    CHECK(Names(m) == launcher);
+    CHECK(m.view().selected == -1);   // notes only: nothing to press
     CHECK(m.view().help.find("Host.bat") != std::string::npos);
+    m.Press(Input::kDecide);
+    m.Click(0, 0);
+    CHECK(m.page() == Page::kHost);
+    CHECK_FALSE(m.TakeRequest().has_value());
+    m.Press(Input::kBack);
+    CHECK(m.page() == Page::kMain);
+    CHECK(Selected(m) == "Host a game");
+    m.Press(Input::kDown);
+    m.Click(1, 0);   // a click opens Join's page the same way
+    CHECK(m.page() == Page::kJoin);
+    CHECK(Names(m) == launcher);
+    CHECK_FALSE(m.TakeRequest().has_value());
+    m.Press(Input::kBack);
     SelectRow(m, "Settings");   // the settings still open
     m.Press(Input::kDecide);
     CHECK(m.page() == Page::kSettings);

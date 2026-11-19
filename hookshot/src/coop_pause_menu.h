@@ -191,6 +191,7 @@ private:
     };
     struct Line;   // a row, what it does and its help
     std::vector<Line> Lines() const;
+    void LauncherLines(std::vector<Line>& out) const;
     bool Selectable(const Line& line) const;
     void Go(Page page, Act select = Act::kNone);
     void Clamp();

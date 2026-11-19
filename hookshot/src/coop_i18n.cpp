@@ -172,6 +172,10 @@ constexpr Entry kzh_Hans[] = {
     {"Co-op started with the game (Host.bat, Join.bat or coop.ini). To host or join another game, quit and start the "
      "game again.",
      "本局联机是随游戏启动的（Host.bat、Join.bat 或 coop.ini）。要另开或加入其他房间，请退出游戏重开。"},
+    {"Not now.", "现在不行。"},
+    {"Co-op started with the game: Host.bat, Join.bat or coop.ini.", "联机随游戏启动：Host.bat、Join.bat 或 coop.ini。"},
+    {"Who is in the game: the Lobby tab.", "房间里有谁：看大厅页。"},
+    {"To host or join another game, start the game again.", "要另开或加入其他房间，请重开游戏。"},
 
     // ---- Notes from the tab's own actions -------------------------------
     {"Co-op is on already in this game: stop it first, or start the game again.",
@@ -1001,6 +1005,10 @@ constexpr Entry kzh_Hant[] = {
     {"Co-op started with the game (Host.bat, Join.bat or coop.ini). To host or join another game, quit and start the "
      "game again.",
      "本局連線是隨遊戲啟動的（Host.bat、Join.bat 或 coop.ini）。要另開或加入其他房間，請退出遊戲重開。"},
+    {"Not now.", "現在不行。"},
+    {"Co-op started with the game: Host.bat, Join.bat or coop.ini.", "連線隨遊戲啟動：Host.bat、Join.bat 或 coop.ini。"},
+    {"Who is in the game: the Lobby tab.", "房間裡有誰：看大廳頁。"},
+    {"To host or join another game, start the game again.", "要另開或加入其他房間，請重開遊戲。"},
 
     {"Co-op is on already in this game: stop it first, or start the game again.",
      "本局連線已經在跑了：先停止，或者重開遊戲。"},
