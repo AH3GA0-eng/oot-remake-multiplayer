@@ -736,6 +736,24 @@ TEST_CASE("counters: a lift far out of step (beyond one pause) comes back in ste
     }
 }
 
+TEST_CASE("counters: a leader whose lift stops starting does not hold the others (PR 279 review M1)") {
+    // The leader's lift stands still (a pause menu, it left the room) while its game keeps resending its old starts:
+    // a follower is held at most until the leader's next start was due, and the leader goes stale after two of its
+    // periods. Before: every follower's lift was held a flat 60 s at each wait.
+    WaitLift a;
+    WaitLift b;
+    a.self = 1;
+    b.self = 2;
+    b.Advance(5.0);
+    std::uint64_t time = 0;
+    Run({&a, &b}, time, 120.0);
+    REQUIRE(b.sync.Writes() > 0);  // b followed a
+    a.remaining = 1.0e9f;          // a's lift stops in a pause; a still sends
+    b.pause_ends.clear();
+    Run({&a, &b}, time, 150.0);
+    CHECK(b.pause_ends.size() >= 8);  // b's lift keeps its own pace (a 21 s cycle, two waits)
+}
+
 TEST_CASE("counters: three games follow one leader, even when two of them agree on a period") {
     WaitLift a;  // the host: here first, most starts, its moves change
     WaitLift b;

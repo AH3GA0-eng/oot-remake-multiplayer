@@ -291,8 +291,14 @@ private:
     // A node whose pauses are shared: looping, or seen starting kPauseStarts times.
     static bool Shared(const Node& n);
     // The game every game follows pause by pause: the lowest number of the games that send this node's
-    // waits, ourselves included (the same in every game).
-    std::uint8_t Leader(const Node& n, std::uint8_t self) const;
+    // waits, ourselves included (the same in every game). PR 279 review M1: a game whose newest start of this
+    // node's waits is older than kLeaderStalePeriods of its period (its lift stopped starting: a pause menu, it
+    // left) is no leader, although it keeps resending that old start.
+    std::uint8_t Leader(const Node& n, std::uint8_t self, std::uint64_t server_us) const;
+    static constexpr std::uint64_t kLeaderStalePeriods = 2;
+    // PR 279 review M1: a pause held for the leader's start waits at most until that start is due: the leader's
+    // last start of this wait + kHoldDuePeriods of its period + the pause (and never past kMaxHoldUs).
+    static constexpr double kHoldDuePeriods = 1.25;
     // This pause alone, lined up on the leader's same wait: true when written.
     bool AlignPause(Node& n, const Seen& s, std::uint8_t leader, std::uint64_t server_us, bool probe_only,
                     Out& out);

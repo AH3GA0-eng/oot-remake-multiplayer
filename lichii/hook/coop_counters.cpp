@@ -243,7 +243,7 @@ void CounterSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_
         // Pause by pause, when our wait is known and a leader sends its waits: the lowest number, the same in
         // every game (review: counts compared at different times could leave every game thinking it leads).
         if (n.wait_known) {
-            const std::uint8_t leader = Leader(n, self);
+            const std::uint8_t leader = Leader(n, self, server_us);
             if (leader != 0) {
                 if (leader != self) {
                     AlignPause(n, s, leader, server_us, probe_only, out);
@@ -351,15 +351,29 @@ bool CounterSync::Shared(const Node& n) {
     return n.looping || n.starts >= kPauseStarts;
 }
 
-std::uint8_t CounterSync::Leader(const Node& n, std::uint8_t self) const {
-    std::uint8_t lowest = 0;
+std::uint8_t CounterSync::Leader(const Node& n, std::uint8_t self, std::uint64_t server_us) const {
+    // Each other game's newest start over both waits, and the longest period it gave.
+    std::map<std::uint8_t, std::pair<std::uint64_t, std::uint64_t>> newest;  // player -> (start, period)
     for (const std::uint64_t key : {WaitKey(n.key, 0), WaitKey(n.key, 1)}) {
         if (const auto tk = theirs_.find(key); tk != theirs_.end()) {
             for (const auto& [player, th] : tk->second) {
-                if (player != self && th.start_us != 0 && (lowest == 0 || player < lowest)) {
-                    lowest = player;
+                if (player == self || th.start_us == 0) {
+                    continue;
                 }
+                auto& [start, period] = newest[player];
+                start = std::max(start, th.start_us);
+                period = std::max<std::uint64_t>(period, th.period_us);
             }
+        }
+    }
+    std::uint8_t lowest = 0;
+    for (const auto& [player, sp] : newest) {
+        const auto [start, period] = sp;
+        if (period != 0 && server_us > start + kLeaderStalePeriods * period) {
+            continue;  // M1: its lift stopped starting; its resent start leads nobody
+        }
+        if (lowest == 0 || player < lowest) {
+            lowest = player;
         }
     }
     if (lowest == 0) {
@@ -395,9 +409,15 @@ bool CounterSync::AlignPause(Node& n, const Seen& s, std::uint8_t leader, std::u
         return true;
     }
     // Not come yet: we began first, or the leader is more than a pause ahead (its next start of this wait is
-    // most of a period away). Held from running out until it comes, at most kMaxHoldUs.
-    if (server_us > n.start_us + kMaxHoldUs) {
-        n.aligned_start_us = n.start_us;  // given up: it runs out as the game has it
+    // most of a period away). Held from running out until it comes: only when the leader gave this wait's period,
+    // and only until its next start is due (review M1: a flat 60 s held every follower's lift at each wait when
+    // the leader stopped, or never sent this wait), never past kMaxHoldUs.
+    std::uint64_t due_us = 0;
+    if (th != nullptr && th->start_us != 0 && th->period_us != 0) {
+        due_us = th->start_us + static_cast<std::uint64_t>(kHoldDuePeriods * th->period_us) + pause_us;
+    }
+    if (due_us == 0 || server_us > due_us || server_us > n.start_us + kMaxHoldUs) {
+        n.aligned_start_us = n.start_us;  // not held / given up: it runs out as the game has it
         return false;
     }
     if (n.held_start_us != n.start_us) {
