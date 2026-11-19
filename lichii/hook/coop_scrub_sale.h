@@ -34,8 +34,8 @@
 // in our game (coop_hook's HoldFlagStore) while that flag's scrub may be in an
 // event of ours, so the event never loses its scrub (issue 144's softlock,
 // the same graph rule):
-// - the scrub's own event performer is bound into a running event (Busy, from
-//   the objects walk: CoopEventMember::InEvent, event-copy's check), at any
+// - the scrub is an event member in our Link's event (Busy, from the objects
+//   walk: CoopEventMember::InSameEvent, the game's own member test), at any
 //   distance. The heart-piece and Jabu sellers' AttackedEventName starts their
 //   talk when a deflected nut hits them, from up to the scrub's reach, and
 //   event_running has not been seen during a scrub's event;
@@ -142,14 +142,14 @@ inline int IndexOf(std::uint32_t hash) {
 
 // Written by the objects walk, read by the flag hold (another thread): the
 // last time each sale flag's scrub was seen bound into an event of ours
-// (CoopEventMember::InEvent) or within kNearM of our Link.
+// (CoopEventMember::InSameEvent) or within kNearM of our Link.
 class Busy {
 public:
     static constexpr std::uint64_t kFreshUs = 1'500'000;  // a walk is ~4 a second; it may stop
 
     // One scrub of the walk: its placement hash, its distance to our Link
-    // (not finite: not known) and whether its own performer is bound into a
-    // running event (nullopt: not read).
+    // (not finite: not known) and whether it is an event member in our Link's
+    // event (nullopt: not read).
     void See(std::uint64_t placement, float distance_m, std::uint64_t now_us, std::optional<bool> in_event) {
         const Seller* s = FindSeller(placement);
         if (s == nullptr) return;

@@ -456,6 +456,16 @@ void put_user(FakeMemory& m, const Layout& l) {
   }
 }
 
+// The 13 armor links after the 8 hand slots, each read and empty, as the
+// game has them: without this a test's other links are not readable.
+void put_links(FakeMemory& m) {
+  for (std::uint32_t a = 0; a < addr::kArmorLinkCount; ++a) {
+    const std::uint32_t link = 8 + a;
+    m.put_u64(kUser + 0x20 + 0x18 * link + 8, kEquipHolders + 0x100 * link);
+    m.put_u32(kUser + 0x20 + 0x18 * link + 0x10, 0xffffffffu);
+  }
+}
+
 void put_equipped(FakeMemory& m, std::uint32_t slot, std::uint32_t id, std::uint32_t state,
                   std::uint8_t bits) {
   const std::uint64_t holder = kEquipHolders + 0x100 * slot;
@@ -615,31 +625,169 @@ TEST_CASE("host reader: what the player wears") {
       put_strings(m, {{addr::kEquipHandArmor, ""}, {addr::kEquipWeapon, "Weapon_Sword_Kokiri"}});
       CHECK_FALSE(reader.read_equipment()->hand);
     }
-    SUBCASE("an empty flag and an empty link: no hand piece") {
+    SUBCASE("an empty flag with every link read but one is not known either") {
       put_strings(m, {{addr::kEquipHandArmor, ""}});
-      m.put_u32(kUser + 0x20 + 0x18 * link + 0x10, 0xffffffffu);
+      put_links(m);
+      m.erase(kUser + 0x20 + 0x18 * (8 + 3) + 0x10, 4);
+      CHECK_FALSE(reader.read_equipment()->hand);
+    }
+    SUBCASE("an empty flag and empty links: no hand piece") {
+      put_strings(m, {{addr::kEquipHandArmor, ""}});
+      put_links(m);
       CHECK(reader.read_equipment()->hand == "");
     }
     SUBCASE("the bracelet, while EquipHandArmor is empty") {
       put_strings(m, {{addr::kEquipHandArmor, ""}});
+      put_links(m);
       wear("Armor_Child_Gauntlet_Goron");
       CHECK(reader.read_equipment()->hand == "Armor_Child_Gauntlet_Goron");
     }
-    SUBCASE("the adult's gauntlets flag stands") {
+    SUBCASE("row 148: a young Link whose flag still names the Golden Gauntlets") {
+      m.put_u8(l.game_ui + addr::kGameUiIsChild, 1);
+      put_strings(m, {{addr::kEquipHandArmor, "Armor_Adult_Gauntlet_Gold"}});
+      put_links(m);
+      SUBCASE("wears the bracelet the game draws, not the adult's gauntlets") {
+        wear("Armor_Child_Gauntlet_Goron");
+        CHECK(reader.read_equipment()->hand == "Armor_Child_Gauntlet_Goron");
+      }
+      SUBCASE("with no hand piece in any link wears none") {
+        CHECK(reader.read_equipment()->hand == "");
+      }
+      SUBCASE("with a link unreadable (a load) not known: the flag is never sent") {
+        m.erase(kUser + 0x20 + 0x18 * (8 + 3) + 0x10, 4);
+        CHECK_FALSE(reader.read_equipment()->hand);
+      }
+    }
+    SUBCASE("an adult's named hand flag stands, as before row 148") {
       put_strings(m, {{addr::kEquipHandArmor, "Armor_Adult_Gauntlet_Silver"}});
+      put_links(m);
+      CHECK(reader.read_equipment()->hand == "Armor_Adult_Gauntlet_Silver");
       wear("Armor_Child_Gauntlet_Goron");
       CHECK(reader.read_equipment()->hand == "Armor_Adult_Gauntlet_Silver");
     }
     SUBCASE("another piece in that link is not a bracelet") {
       put_strings(m, {{addr::kEquipHandArmor, ""}});
+      put_links(m);
       wear("Item_Ocarina_Fairy");
       CHECK(reader.read_equipment()->hand == "");
     }
     SUBCASE("the bracelet gone") {
       put_strings(m, {{addr::kEquipHandArmor, ""}});
+      put_links(m);
       wear("Armor_Child_Gauntlet_Goron");
       m.put_u32(kEquipActors + 0x1000 * link + 0x2c, 8);
       CHECK(reader.read_equipment()->hand == "");
+    }
+  }
+  SUBCASE("a mask, tunic, boots or gauntlets are read from the armor links (issue 91, row 148)") {
+    put_user(m, l);
+    put_links(m);
+    // Armor link a is link 8 + a of the same array (8 hand slots first).
+    const auto wear = [&](std::uint32_t a, const std::string& name) {
+      const std::uint32_t link = 8 + a;
+      put_equipped(m, link, 80 + a, 4, 0x0);
+      const std::uint64_t piece = kEquipActors + 0x1000 * link;
+      const std::uint64_t text = piece + 0x800;
+      m.put_u64(piece + 0x260, text);
+      const std::string room(80, char{0});
+      m.put(text, room.data(), room.size());
+      m.put(text, name.c_str(), name.size() + 1);
+    };
+    SUBCASE("a mask from ZR while EquipHeadArmor is empty") {
+      put_strings(m, {{addr::kEquipHeadArmor, ""}});
+      wear(0, "Armor_Child_Mask_Skull");
+      CHECK(reader.read_equipment()->head == "Armor_Child_Mask_Skull");
+    }
+    SUBCASE("by name, in whichever link the game put it") {
+      put_strings(m, {{addr::kEquipHeadArmor, ""}, {addr::kEquipBoot, ""}});
+      wear(4, "Armor_Child_Mask_Bunny");
+      wear(2, "Armor_Adult_HoverBoot");
+      const auto e = reader.read_equipment();
+      CHECK(e->head == "Armor_Child_Mask_Bunny");
+      CHECK(e->boots == "Armor_Adult_HoverBoot");
+    }
+    SUBCASE("an unknown flag is filled too") {
+      put_strings(m, {{addr::kEquipWeapon, "Weapon_Sword_Kokiri"}});
+      wear(2, "Armor_Adult_HeavyBoot");
+      wear(1, "Armor_Adult_Zora");
+      const auto e = reader.read_equipment();
+      CHECK(e->boots == "Armor_Adult_HeavyBoot");
+      CHECK(e->armor == "Armor_Adult_Zora");
+      CHECK_FALSE(e->head);  // no mask worn and its flag unknown: still unknown
+    }
+    SUBCASE("the adult wearing what the flags name: sent as worn") {
+      put_strings(m, {{addr::kEquipArmor, "Armor_Adult_Goron"},
+                      {addr::kEquipBoot, "Armor_Adult_HoverBoot"},
+                      {addr::kEquipHandArmor, "Armor_Adult_Gauntlet_Gold"}});
+      wear(1, "Armor_Adult_Goron");
+      wear(2, "Armor_Adult_HoverBoot");
+      wear(3, "Armor_Adult_Gauntlet_Gold");
+      const auto e = reader.read_equipment();
+      CHECK(e->armor == "Armor_Adult_Goron");
+      CHECK(e->boots == "Armor_Adult_HoverBoot");
+      CHECK(e->hand == "Armor_Adult_Gauntlet_Gold");
+    }
+    SUBCASE("a child: the link decides over the flag") {
+      m.put_u8(l.game_ui + addr::kGameUiIsChild, 1);
+      put_strings(m, {{addr::kEquipHeadArmor, "Armor_Child_Mask_Keaton"},
+                      {addr::kEquipArmor, "Armor_Adult_Goron"},
+                      {addr::kEquipHandArmor, "Armor_Adult_Gauntlet_Gold"}});
+      wear(0, "Armor_Child_Mask_Skull");
+      wear(1, "Armor_Adult_Zora");
+      wear(3, "Armor_Adult_Gauntlet_Silver");
+      const auto e = reader.read_equipment();
+      CHECK(e->head == "Armor_Child_Mask_Skull");
+      CHECK(e->armor == "Armor_Adult_Zora");
+      CHECK(e->hand == "Armor_Adult_Gauntlet_Silver");
+    }
+    SUBCASE("row 148, every such piece: a young Link's adult flags that no link holds are not worn") {
+      m.put_u8(l.game_ui + addr::kGameUiIsChild, 1);
+      put_strings(m, {{addr::kEquipArmor, "Armor_Adult_Zora"},
+                      {addr::kEquipBoot, "Armor_Adult_HeavyBoot"},
+                      {addr::kEquipHandArmor, "Armor_Adult_Gauntlet_Silver"},
+                      {addr::kEquipHeadArmor, "Armor_Child_Mask_Keaton"}});
+      const auto e = reader.read_equipment();
+      CHECK(e->armor == "");
+      CHECK(e->boots == "");
+      CHECK(e->hand == "");
+      CHECK(e->head == "");  // a mask by its flag alone: the game draws none (wear-masks)
+    }
+    SUBCASE("an adult's named flags stand with no link piece (rule before row 148)") {
+      put_strings(m, {{addr::kEquipArmor, "Armor_Adult_Zora"},
+                      {addr::kEquipBoot, "Armor_Adult_HeavyBoot"},
+                      {addr::kEquipHandArmor, "Armor_Adult_Gauntlet_Silver"},
+                      {addr::kEquipHeadArmor, "Armor_Child_Mask_Keaton"}});
+      wear(0, "Armor_Child_Mask_Skull");
+      const auto e = reader.read_equipment();
+      CHECK(e->armor == "Armor_Adult_Zora");
+      CHECK(e->boots == "Armor_Adult_HeavyBoot");
+      CHECK(e->hand == "Armor_Adult_Gauntlet_Silver");
+      CHECK(e->head == "Armor_Child_Mask_Keaton");
+    }
+    SUBCASE("a flag naming a piece the links never hold stands, for a child too") {
+      m.put_u8(l.game_ui + addr::kGameUiIsChild, 1);
+      put_strings(m, {{addr::kEquipArmor, "Armor_Adult_Normal"},
+                      {addr::kEquipHeadArmor, "Armor_GlassTruth"}});
+      const auto e = reader.read_equipment();
+      CHECK(e->armor == "Armor_Adult_Normal");
+      CHECK(e->head == "Armor_GlassTruth");
+    }
+    SUBCASE("other pieces in the links are not a mask, tunic or boots") {
+      put_strings(m, {{addr::kEquipHeadArmor, ""}, {addr::kEquipBoot, ""}, {addr::kEquipArmor, ""}});
+      wear(0, "Item_Ocarina_Fairy");
+      wear(9, "Armor_Child_Gauntlet_Goron");
+      const auto e = reader.read_equipment();
+      CHECK(e->head == "");
+      CHECK(e->boots == "");
+      CHECK(e->armor == "");
+      CHECK(e->hand == "Armor_Child_Gauntlet_Goron");
+    }
+    SUBCASE("the mask taken off again (ZR): its link empties, head is empty") {
+      put_strings(m, {{addr::kEquipHeadArmor, ""}});
+      wear(0, "Armor_Child_Mask_Skull");
+      CHECK(reader.read_equipment()->head == "Armor_Child_Mask_Skull");
+      m.put_u32(kEquipActors + 0x1000 * 8 + 0x2c, 8);  // the piece gone
+      CHECK(reader.read_equipment()->head == "");
     }
   }
   SUBCASE("a request lasts a moment: the last one stands") {
@@ -731,30 +879,49 @@ TEST_CASE("host reader: what the player wears") {
   }
 }
 
-TEST_CASE("host reader: our Link bound into an event counts as in an event, word 0 or not (row 97)") {
-  // A Deku Scrub's talk and AttackedEvent leave the event manager's word 0; the event binds our
-  // Link through its own performer ([[actor + 0x270] + 0x88 or 0x90], +0x10 the actor, +0x18 the link).
+TEST_CASE("host reader: our Link an event member counts as in an event, word 0 or not (row 97, G1)") {
+  // The game's own member test: M = [[actor + 0x270] + 0x88], its record L = [M + 0x18], four slots
+  // of 0x38 bytes from L + 0x10, a member when a slot holds an event pointer and flag bit 0.
   FakeMemory m;
   const Layout l = make_game(m);
-  constexpr std::uint64_t kParts = 0x92000000, kPerformer = 0x92100000;
+  constexpr std::uint64_t kParts = 0x92000000, kMember = 0x92100000, kRecord = 0x92200000;
+  constexpr std::uint64_t kEvent = 0x106d85b750;  // as the offline run fable-g1-events read it
+  const auto slot = [&](std::uint64_t i) { return kRecord + addr::kRecordSlots + addr::kMemberSlotSize * i; };
   m.put_u64(l.actor1 + addr::kActorComponents, kParts);
-  m.put_u64(kParts + addr::kPerformerSlotAlt, kPerformer);  // the player's slot
-  m.put_u64(kPerformer + addr::kPerformerActor, l.actor1);
-  m.put_u64(kPerformer + addr::kPerformerLink, 0);
+  m.put_u64(kParts + addr::kEventMemberSlot, kMember);
+  m.put_u64(kMember + addr::kMemberRecord, 0);  // in no event
   {
     PlayerReader reader(m);
+    CHECK(reader.read_link_bound() == false);
     const auto r = reader.read();
     REQUIRE(r);
     CHECK(r->event_running == false);
     CHECK_FALSE(r->event_by_link);
+    CHECK_FALSE(r->link_bound);
   }
-  m.put_u64(kPerformer + addr::kPerformerLink, 0x106d7f9dd0);  // the scrub's talk binds it
+  m.put_u64(kMember + addr::kMemberRecord, kRecord);
+  for (std::uint64_t i = 0; i < addr::kMemberSlots; ++i) {
+    m.put_u64(slot(i), 0);
+    m.put_u8(slot(i) + addr::kSlotFlags, 0);
+  }
+  // Our Link holds the event's pointer without the member flag (as Link's sword does): not a member.
+  m.put_u64(slot(0), kEvent);
+  m.put_u8(slot(0) + addr::kSlotFlags, 0x2);
+  {
+    PlayerReader reader(m);
+    CHECK(reader.read_link_bound() == false);
+    CHECK(reader.read()->event_running == false);
+  }
+  // The flag in another slot (an event nested in a running one): a member.
+  m.put_u64(slot(1), kEvent + 0x1220);
+  m.put_u8(slot(1) + addr::kSlotFlags, 0x1);
   {
     PlayerReader reader(m);
     const auto r = reader.read();
     REQUIRE(r);
     CHECK(r->event_running == true);
     CHECK(r->event_by_link);
+    CHECK(r->link_bound);
     CHECK(reader.read_event_running() == true);
     CHECK(reader.read_event_word() == false);
   }
@@ -765,16 +932,28 @@ TEST_CASE("host reader: our Link bound into an event counts as in an event, word
     REQUIRE(r);
     CHECK(r->event_running == true);
     CHECK_FALSE(r->event_by_link);
+    CHECK(r->link_bound);
   }
-  // A performer that is not our Link's own (+0x10 another actor) is never read as ours.
+  // The word alone, our Link not a member: an event runs that does not take our Link.
+  m.put_u8(slot(1) + addr::kSlotFlags, 0);
+  {
+    PlayerReader reader(m);
+    const auto r = reader.read();
+    REQUIRE(r);
+    CHECK(r->event_running == true);
+    CHECK_FALSE(r->link_bound);
+  }
+  // A record that cannot be read: not known, never a member.
   m.put_u64(l.events + addr::kEventRunning, 0);
-  m.put_u64(kPerformer + addr::kPerformerActor, 0x12345678);
+  m.put_u64(kMember + addr::kMemberRecord, 0x93000000);
+  m.put_u64(kParts + addr::kEventMemberSlot, 0x94000000);  // M itself unreadable
   {
     PlayerReader reader(m);
     CHECK(reader.read_link_bound() == std::nullopt);
     const auto r = reader.read();
     REQUIRE(r);
     CHECK(r->event_running == false);
+    CHECK_FALSE(r->link_bound);
   }
 }
 

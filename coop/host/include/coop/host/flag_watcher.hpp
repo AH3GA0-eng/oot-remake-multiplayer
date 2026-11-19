@@ -24,6 +24,7 @@
 // inside frame(), on the game's thread. Not thread-safe: call both from one
 // thread, or lock around them.
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -58,8 +59,20 @@ struct FlagStats {
   std::uint64_t pickup_resets = 0;     // a pickup's 0, ours or incoming: not passed on
   std::uint64_t max_drops_kept = 0;    // a max-rule value our game lowered: ours, not sent
   std::uint64_t max_caps_kept = 0;     // a rise of our own past cap_max's cap: put back, not sent
+  std::uint64_t reset_holds_kept = 0;  // rows 136/137: the game's write-back of a value the host's save lowered
   std::uint64_t read_failures = 0;
   std::uint64_t write_failures = 0;    // each failed try; it is tried again next frame
+  // A write the store refused because it holds that key for now (HoldFlagStore: a room gimmick flag held until
+  // our game played its event or we leave the dungeon) or has no room for it in the game's queue now (busy, issue
+  // 175). Waiting by design, so not a write failure: tried again
+  // every frame until the hold lets it, which counted ~60 failures a second (events-next-a-11 probe: named
+  // 0xb3a4fe84 = HavePlayedEvent.InsideTheDekuTree_Gimmick_FallingLadder, 5561 of 9235 in 90 s).
+  std::uint64_t held_retries = 0;
+  // The key with the most write failures so far, how many, and where (events-next-a-11: a log said ~60
+  // failures a second after an event without saying which flag). Count 0 = none yet.
+  FlagKey top_write_failure{};
+  std::uint64_t top_write_failure_count = 0;
+  const char* top_write_failure_site = "";
   std::uint64_t bad_snapshots = 0;     // parts out of order: the snapshot is dropped
   std::uint64_t ignored_messages = 0;  // not a flag message, or not for this role
   std::uint64_t load_reverts = 0;      // the game's load undid a group value: written back
@@ -86,6 +99,15 @@ struct FlagStats {
   std::uint64_t hold_timeouts = 0;     // a snapshot whose last part never came (kHoldMaxFrames): dropped
   std::uint64_t pending_now = 0;       // player: own changes sent and not answered yet (now, not a count)
   std::uint64_t full_reads = 0;        // use_events: frames that read the whole list (a load window, the first)
+  // Row 140: a one-way value (a dungeon's floors, a map, a compass) the game lowered again right after our put-back:
+  // the game's own value from then on, until the next load window (kMaxQuickUndos).
+  std::uint64_t one_way_left = 0;
+  // Row 140: of one_way_restores, the values left to the game put back once after a room or scene load (owed_).
+  std::uint64_t one_way_owed = 0;
+  // New Event spam (world-fails-0115): the table is the host's save's, never its title screen's defaults.
+  std::uint64_t table_waits = 0;       // host: a table asked for inside a load window (the title): sent when it ends
+  std::uint64_t table_resets = 0;      // host: of those, sent as the whole table in FLAG_RESET after its save load
+  std::uint64_t own_save_kept = 0;     // player: a save load with no group values known yet: our save's values kept
 };
 
 class FlagWatcher {
@@ -101,7 +123,15 @@ class FlagWatcher {
   bool receive(std::span<const std::uint8_t> bytes);
 
   // Host: send the whole table as FLAG_SNAPSHOT at the next frame (starting
-  // a session, taking over as host).
+  // a session, taking over as host). Only the game's own save is a table:
+  // inside a load window (the title screen, file select, a save loading, a
+  // door) the request waits until the window ends. When a save load ended
+  // it, the whole table goes out as FLAG_RESET, so every player takes the
+  // host's save exactly; else (a door) as FLAG_SNAPSHOT. A table sent from
+  // the title held the game's defaults (quests at 'Ready', no compass): a
+  // guest whose save loaded first had them written back over its own, and
+  // the host's load raised them again, each quest step showing the game's
+  // 'New Event' notice (world-fails-0115).
   void request_snapshot() { snapshot_requested_ = true; }
 
   // One emulated frame: writes what came in, then compares the shared flags
@@ -170,6 +200,33 @@ class FlagWatcher {
     bool kept = false;
   };
   std::vector<OneWayRestore> take_one_way_restores() { return std::exchange(one_way_restored_, {}); }
+  // Row 140 (flag-oneway-c): the game itself writes some one-way values from its own copy (the HUD screen's floors,
+  // written back to EnteredFloorBit while Link is in the dungeon), so a put-back the game lowers again on the next
+  // read is a fight we never win (49,223 put-backs in one host's session). A drop within kUndoPasses diff passes of
+  // our last put-back counts as undone; after kMaxQuickUndos of those in a row the key is the game's own until the
+  // next load window (set_loading): not put back, not sent (the group keeps its value). One-off drops (issue 146)
+  // are still put back.
+  static constexpr std::uint64_t kUndoPasses = 2;
+  static constexpr int kMaxQuickUndos = 2;
+  std::vector<FlagKey> take_one_way_left() { return std::exchange(one_way_left_, {}); }
+  // Row 140 (review of flag-oneway-c): the game lowers these from the HUD screen's own copy, which reads the flag in
+  // only at its init and refresh, so a put-back must reach that copy or it is lowered again. True when a one-way
+  // dungeon value was put back since the last call (every put-back, not only a key's first): the hook asks the
+  // game's own HUD refresh on the same frame (CoopMapRefresh WantNow). A value left to the game is put back once more
+  // when the next room or scene load window ends (not after a save load: another save's floors are not this one's),
+  // with that refresh, so the other player's floors reach the copy after a room load at the latest.
+  bool take_hud_refresh() { return std::exchange(hud_refresh_, false); }
+  // Row 140: a key whose write failed kFailureSayAt times this session (note_write_failure; once per key, for the log).
+  struct KeepsFailing {
+    FlagKey key;
+    const char* site = "";
+    std::uint64_t count = 0;
+  };
+  static constexpr std::uint64_t kFailureSayAt = 60;
+  std::vector<KeepsFailing> take_keeps_failing() { return std::exchange(keeps_failing_, {}); }
+  // Row 140: a max-rule rise past its cap whose put-back the game refused this often in a row is left (not sent,
+  // not fought every frame) until the value changes again.
+  static constexpr int kMaxCapTries = 60;
   static constexpr std::size_t kMaxWrittenForOthers = 1024;
 
   // The counts (small keys, ...) our game itself lowered since the last call,
@@ -233,6 +290,26 @@ class FlagWatcher {
   // cap per key; a new call replaces it.
   void cap_max(FlagKey key, std::int32_t cap) { max_caps_[key] = cap; }
   void clear_max_cap(FlagKey key) { max_caps_.erase(key); }
+
+  // Rows 136/137 (boss-away-0115): the host's save load (FLAG_RESET) lowered a
+  // max-rule int in our game (PlayerStatus.MaxLife after a boss's heart
+  // container, a magic meter, a bag...). Some of them the game keeps a live
+  // copy of and writes back (Link's Life component writes its own max into
+  // MaxLife while he is in the scene): that rise is the replaced save's, not
+  // progress. While the hold lasts, a rise of our game's value up to what it
+  // had before the reset is put back to the reset value and never sent (else
+  // the max rule raised the whole group again while the container's own
+  // Heart_Container_Obtained went back to 0: the container repeats). A rise
+  // past that is real progress: sent, the hold ends. The hold ends once the
+  // value has stayed at the reset value for kResetQuietFrames (the game took
+  // it), or when a load window ends (the game makes Link from the flags), or
+  // when the session ends. The reset value while a hold lasts, else nothing
+  // (the object walk lowers Link's own max to it).
+  std::optional<std::int32_t> reset_lowered(FlagKey key) const {
+    const auto it = reset_holds_.find(key);
+    return it == reset_holds_.end() ? std::nullopt : std::optional<std::int32_t>(it->second.low);
+  }
+  static constexpr int kResetQuietFrames = 60;
   static constexpr std::uint64_t kDoubledGainFrames = 5 * 60;
   static constexpr std::int32_t kMaxDoubledGains = 4;
 
@@ -427,6 +504,8 @@ class FlagWatcher {
   void add(FlagStore& store, const protocol::FlagEntry& delta);
   void diff(FlagStore& store, Table& changes);
   void send_snapshot(FlagStore& store, std::vector<Outgoing>& out);
+  // Host: the whole table as FLAG_RESET at the end of a save load a table was asked for in (request_snapshot).
+  void send_table_reset(FlagStore& store, std::vector<Outgoing>& out);
 
   // True when the entry is for a shared flag and may be applied: a pickup's
   // 0 is not, and an unknown 64-bit key set to 1 is learned first.
@@ -449,6 +528,20 @@ class FlagWatcher {
   std::map<FlagKey, std::uint64_t> map_on_pass_;  // a one-way map Bool's 0 -> 1, by diff pass
   std::uint64_t diff_pass_ = 0;
   std::set<FlagKey> one_way_told_;           // keys take_one_way_restores gave once
+  struct PutBack {
+    std::uint64_t pass = 0;  // diff pass of our last put-back
+    int undone = 0;          // drops right after it, in a row
+  };
+  std::map<FlagKey, PutBack> put_back_;   // row 140: one-way put-backs
+  std::set<FlagKey> game_owned_;          // row 140: left to the game until the next load window
+  std::vector<FlagKey> one_way_left_;     // take_one_way_left
+  std::map<FlagKey, protocol::FlagEntry> owed_;     // row 140: left to the game: the group's value, put back after a room load
+  bool owed_due_ = false;                 // a room or scene load window ended (no save load): put owed_ back
+  bool hud_refresh_ = false;              // take_hud_refresh
+  // Row 140: puts owed_ back (ORed with the game's floors), each once, after a room or scene load window.
+  void put_owed(FlagStore& store);
+  std::vector<KeepsFailing> keeps_failing_;  // row 140: note_write_failure, kFailureSayAt
+  std::map<FlagKey, int> cap_tries_;      // row 140: refused cap put-backs in a row
   std::vector<FlagKey> own_count_drops_;     // take_own_count_drops
   struct Guard {
     std::int32_t held = 0;          // own gain not sent yet
@@ -472,6 +565,18 @@ class FlagWatcher {
   // dropped); the rest of `entry`'s value.
   std::int32_t unraced(const protocol::FlagEntry& entry);
   std::map<FlagKey, std::int32_t> max_caps_;  // cap_max
+  struct ResetHold {
+    std::int32_t low = 0;    // the host's save's value (FLAG_RESET)
+    std::int32_t high = 0;   // our game's value before it
+    int quiet = 0;           // frames the game has kept `low`
+    int tries = 0;           // put-backs the game refused or undid
+    std::uint64_t put_at = 0;  // the frame of the last put-back
+  };
+  std::map<FlagKey, ResetHold> reset_holds_;  // reset_lowered
+  // Rows 136/137: a rise of a held key (diff); true when handled (not sent).
+  bool hold_reset(FlagStore& store, FlagKey key, const protocol::FlagEntry& before, const protocol::FlagEntry& now,
+                  protocol::FlagEntry& seen);
+  void age_reset_holds(FlagStore& store, std::uint32_t step);
   std::map<FlagKey, FlagKey> guard_source_;  // a source: its count
   Table added_;                              // count deltas add() put in this frame
   std::vector<CountGuarded> counts_guarded_;  // take_counts_guarded
@@ -526,6 +631,12 @@ class FlagWatcher {
   bool window_title_ = false;   // the title was up in this load window
   bool check_offline_ = false;  // reset(): a connection's first frame with Link looks at title_seen_
   bool reset_seen_ = false;  // take_reset
+  // Player: what last_ holds is worth putting back after our save load: our game played (Link, no load window)
+  // since this watcher started, or the group's values came (a snapshot or a reset with flags). Neither: last_ is
+  // what our title screen read (the game's defaults), and our save's own values are kept (world-fails-0115).
+  bool played_ = false;
+  bool group_known_ = false;
+  bool table_waiting_ = false;  // host: request_snapshot is waiting for a load window to end (counted once)
   std::set<FlagKey> restate_;  // host: counts a delta was added to this frame
   bool resend_pending_ = false;
   bool snapshot_requested_ = false;
@@ -538,6 +649,13 @@ class FlagWatcher {
   Table snapshot_;                        // parts so far
   std::vector<protocol::FlagState> held_states_;  // came while holding
   FlagStats stats_;
+  // write_failures per key, for FlagStats::top_write_failure; at most kWriteFailureKeys keys (a new key past
+  // that is counted in write_failures only).
+  static constexpr std::size_t kWriteFailureKeys = 256;
+  std::map<FlagKey, std::uint64_t> write_failure_keys_;
+  // A refused write: held_retries when the store holds the key (and the hold refuses this write: hold_applies) or
+  // is busy, else a write failure named by key and site.
+  void note_write_failure(FlagStore& store, const FlagKey& key, const char* site, bool hold_applies = true);
   // use_events
   const std::vector<FlagKey>& diff_keys();
   bool events_ = false;

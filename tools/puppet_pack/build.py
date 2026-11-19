@@ -14,6 +14,10 @@ from it, issue 145).
 
 The puppets keep Link's sound components (docs/puppet.md, Sound); --no-sound leaves them out.
 
+--skin ID=FOLDER (any number) also makes a puppet per age from a character model mod
+(CoopPuppet_<age>_Skin_<ID>, skin.py); --test-skin ID gives every puppet that model (a test with
+a hook that knows no skins).
+
 Everything is made from the files in --romfs; nothing from the game is in this tool.
 The input is never changed, and the tables are always rebuilt from the game's own
 copies, so running the tool again gives the same result.
@@ -32,7 +36,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "puppet_pack"  # noqa: A001
 
-from . import ainb, byml, dumpcheck, dungeon_rooms, hud, look_items, look_live, map_captures, nup, rstb, sarc, title_menu, tunic, tunic_extra, zs  # noqa: E402
+from . import ainb, byml, dumpcheck, dungeon_rooms, hud, look_items, look_live, map_captures, nup, pause_menu, rstb, sarc, skin, title_menu, tunic, tunic_extra, ui_pack, zs  # noqa: E402
 
 TITLE_ID = "0400486024DEC000"
 DEFAULT_MOD_NAME = "coop-puppet"
@@ -503,6 +507,93 @@ def add_perception(doc, player_components, members, actor, files, perception):
     return path, data, src
 
 
+# Native puppets phase 1 (docs/native-puppets.md, `--puppet-body`, off by default): the puppet gets a body
+# of its own, cut from the player's own ControllerSet ($parent chain merged): Link's shapes, matter bodies,
+# contact collections and character controller, plus his cloth (hs-puppets-alt-b's `cloth` mode ran without
+# the slot-10 crash). Left out: the sensors (Tgt/Atk/Chemical: nothing hits or is hit by the copy yet),
+# ragdoll, rigid body entities (ride, elastic hands, reflect shield, liftable sweep), controller entities,
+# IK and looking. Its character controller is the player's with DefaultMoveState Free, the value the game's
+# placed NPCs use (Phive/CharacterControllerParam/Npc_Kokiri_MC_ThroughGround), so the body does not fall
+# between the hook's places (the held bomb's fall, reports/held-bomb.md). Not run in a game yet.
+BODY_KEYS = ("InitializerName", "ShapeNamePathAry", "MatterRigidBodyNamePathAry", "CColEntityNamePathAry")
+CLOTH_KEYS = ("Cloth", "ClothAdvandecOption", "ClothList", "ClothReaction")
+BODY_MOVE_STATE = "Free"
+PHYSICS_DIR = "Component/Physics/"
+PHYSICS_SUFFIX = ".engine__component__PhysicsParam.bgyml"
+CONTROLLER_SET_DIR = "Phive/ControllerSetParam/"
+CONTROLLER_SET_SUFFIX = ".phive__ControllerSetParam.bgyml"
+CHARACTER_DIR = "Phive/CharacterControllerParam/"
+CHARACTER_SUFFIX = ".phive__CharacterControllerParam.bgyml"
+
+
+def _merged_chain(members, path):
+    """A member with its in-pack `$parent` chain merged (child wins)."""
+    chain, seen = [], set()
+    while path and path in members and path not in seen:
+        seen.add(path)
+        doc = byml.loads(members[path])
+        if not isinstance(doc, dict):
+            break
+        chain.append(doc)
+        path = ref_to_member(doc.get("$parent"))
+    out = {}
+    for doc in reversed(chain):
+        out.update({k: v for k, v in doc.items() if k != "$parent"})
+    return out
+
+
+def _work_ref(member):
+    """`Phive/X.phive__Y.bgyml` -> `Work/Phive/X.phive__Y.gyml` (how params name each other)."""
+    return "Work/" + member[:-len(".bgyml")] + ".gyml"
+
+
+def body_paths(actor):
+    """The puppet's own (PhysicsParam, ControllerSetParam, CharacterControllerParam) member paths."""
+    return (f"{PHYSICS_DIR}{actor}{PHYSICS_SUFFIX}", f"{CONTROLLER_SET_DIR}{actor}{CONTROLLER_SET_SUFFIX}",
+            f"{CHARACTER_DIR}{actor}{CHARACTER_SUFFIX}")
+
+
+def puppet_body(members, player_components, actor):
+    """The puppet's body files (`--puppet-body`): {member path: (bytes, the player's member it is cut from)}."""
+    src = ref_to_member(player_components.get("PhysicsRef"))
+    if not src or src not in members:
+        raise BuildError("the player's ActorParam has no PhysicsRef in the pack")
+    cs_src = ref_to_member(_merged_chain(members, src).get("ControllerSetPath"))
+    if not cs_src or cs_src not in members:
+        raise BuildError(f"the player's physics param {src} has no ControllerSet in the pack")
+    cs = _merged_chain(members, cs_src)
+    missing = [k for k in BODY_KEYS if k not in cs]
+    if missing:
+        raise BuildError(f"the player's ControllerSet {cs_src} has no {', '.join(missing)}")
+    cct_src = ref_to_member(cs.get("PathCharacterController"))
+    if not cct_src or cct_src not in members:
+        raise BuildError(f"the player's ControllerSet {cs_src} has no character controller in the pack")
+    cct = _merged_chain(members, cct_src)
+    cct["DefaultMoveState"] = BODY_MOVE_STATE
+    phys_path, cs_path, cct_path = body_paths(actor)
+    own_cs = {k: cs[k] for k in BODY_KEYS + CLOTH_KEYS if k in cs}
+    # Only the contact collection the character controller names (Contact_0_cct); not the ragdoll's.
+    user = cct.get("UserContactCollectionName")
+    own_cs["CColEntityNamePathAry"] = [e for e in cs["CColEntityNamePathAry"]
+                                       if isinstance(e, dict) and e.get("Name") == user]
+    if not own_cs["CColEntityNamePathAry"]:
+        raise BuildError(f"the player's ControllerSet {cs_src} has no contact collection {user!r}")
+    own_cs["PathCharacterController"] = _work_ref(cct_path)
+    return {phys_path: (byml.dumps({"ControllerSetPath": _work_ref(cs_path)}), src),
+            cs_path: (byml.dumps(own_cs), cs_src),
+            cct_path: (byml.dumps(cct), cct_src)}
+
+
+def add_body(doc, player_components, members, actor, files):
+    """Gives the puppet's ActorParam `doc` its body (puppet_body), with every member the body names."""
+    own = puppet_body(members, player_components, actor)
+    for path, (data, _) in own.items():
+        files[path] = data
+        files.update(collect_members(members, byml.loads(data)))
+    doc["Components"]["PhysicsRef"] = "?" + body_paths(actor)[0]
+    return own
+
+
 def tunic_model_info(actor, variant, project):
     """(member path, bytes) of a colour puppet's ModelInfo: the player's model under its own
     project name, `Model/<project>.Player_<variant>.bfres` (puppet_pack.tunic)."""
@@ -511,11 +602,13 @@ def tunic_model_info(actor, variant, project):
 
 
 def build_pack(members, variant, sound=True, player_footsteps=False, sound_user=None, actor=None,
-               project=None, basic_xlink=False, perception=None):
+               project=None, basic_xlink=False, perception=None, as_ref=None, body=False):
     """Returns (pack bytes, actor param bytes, member list, equipment keys) for one variant.
     `actor`: the pack's actor (default CoopPuppet_<variant>); `project`: a model project of its own
     (a tunic colour), else the player's. `perception`: perception_members() to make the puppet a
-    target of the game's perception (PERCEPTION_SOURCE), or None."""
+    target of the game's perception (PERCEPTION_SOURCE), or None. `as_ref`: an AS root of its own
+    (a skin's copy, skin.as_path), else the player's. `body`: the puppet's own body (`--puppet-body`,
+    puppet_body)."""
     player = f"Player_{variant}"
     actor = actor or puppet_name(variant)
     player_components = flatten_actor_param(members, player)
@@ -523,10 +616,14 @@ def build_pack(members, variant, sound=True, player_footsteps=False, sound_user=
     files = collect_members(members, doc)
     if perception:
         add_perception(doc, player_components, members, actor, files, perception)
+    if body:
+        add_body(doc, player_components, members, actor, files)
     if project:
         path, data = tunic_model_info(actor, variant, project)
         files[path] = data
         doc["Components"]["ModelInfoRef"] = "?" + path
+    if as_ref:
+        doc["Components"]["ASRef"] = "?" + as_ref
     keys = equipment_keys(files, doc)
     fs = puppet_footstep(doc, actor) if sound and not player_footsteps else None
     if fs:
@@ -694,6 +791,27 @@ def nup_scene_files(n):
     for pattern in map_captures.FILES:  # the map pictures' places, for coop_maps.txt
         out += n.glob(pattern)[:1]
     return out
+
+
+def nup_menu_files(n):
+    """RomFS paths of what the menus' steps edit (title_menu.py's title rows, pause_menu.py's Multiplayer tab), in an
+    open Nup: their UI archives and every language's message archive. A .nup build extracts only what is named, and
+    these are not the pack's own sources: without them both steps were left out ("No such file")."""
+    out = []
+    for pattern in (title_menu.TITLE_ARCHIVE, pause_menu.COMMON_ARCHIVE):
+        out += n.glob(pattern)[:1]
+    newest = {}   # (a .nup has the base game's and the update's: the game reads the newest, Product.110 over 100)
+    for rel in n.glob(pause_menu.MALS_GLOB):
+        lang = rel.split("/")[-1].split(".")[0]
+        if lang not in newest or _product(rel) > _product(newest[lang]):
+            newest[lang] = rel
+    return out + [newest[lang] for lang in sorted(newest)]
+
+
+def _product(rel):
+    """The number after .Product. in a RomFS name (100, 110 ...), 0 when there is none."""
+    part = rel.split(".Product.")[-1].split(".")[0] if ".Product." in rel else ""
+    return int(part) if part.isdigit() else 0
 
 
 def nup_look_files(n, dicts):
@@ -1085,9 +1203,235 @@ def write_blade_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows, copies,
     return ({"copies": copies, "actors": made, "files": files} if made else None), new_ai, new_gai
 
 
+class _StagedTable:
+    """A size table's changes held back (write_skins: a skin's entries go in only when it is built whole)."""
+
+    def __init__(self, table):
+        self.table = table
+        self.changes = {}  # path -> (how, size)
+
+    def get(self, path):
+        if path in self.changes:
+            return self.changes[path][1]
+        return self.table.get(path)
+
+    def add_new(self, path, size):
+        self.changes[path] = ("add_new", size)
+
+    def set(self, path, size):
+        self.changes[path] = ("set", size)
+
+    def commit(self):
+        for path, (how, size) in self.changes.items():
+            getattr(self.table, how)(path, size)
+
+
+def write_skins(romfs, out_romfs, dicts, table, skins, ai_rows=None, new_ai=None, new_gai=None, log=print,
+                self_dir=None, game_has=None):
+    """Reads each character model mod (skin.load) and writes its own new files, its AS root copy and
+    its copies of the gear it changes (skin.gear_items, `<item>_Skin_<id>`, rows into `new_ai` and
+    `new_gai`) into the pack, with their size-table entries. `skins`: [(id, mod folder)]. With
+    `self_dir`, also your own Link's player packs per age (skin.self_pack) into `self_dir/<id>/`,
+    listed in the entry's `self_files` ({romfs path: file beside the pack}) for the kit to put in place
+    when you wear that skin. Returns [(skin.Skin, {variant: AS root copy or None}, manifest entry)].
+    A skin that cannot be built (a broken mod, a file another skin has with other contents) is left out
+    with a line in the log; the others and the rest of the pack are built. `game_has(path)`: whether the
+    game's romfs has that file (default: a file under `romfs`)."""
+    ai_rows = ai_rows or {}
+    new_ai = new_ai if new_ai is not None else []
+    new_gai = new_gai if new_gai is not None else []
+    game_members = {}
+    for v in VARIANTS:
+        p = os.path.join(romfs, "Pack", "Actor", f"Player_{v}.pack.zs")
+        if os.path.isfile(p):
+            game_members[v] = sarc.read(dicts.decompress(read(p)))
+    out = []
+    seen = set()
+    written = {}  # path -> (skin id, sha256): files the skins wrote, shared when the same
+    if game_has is None:
+        game_has = lambda path: os.path.isfile(os.path.join(romfs, path))  # noqa: E731
+    game_tables = glob.glob(os.path.join(romfs, "System", "Resource", "ResourceSizeTable.Product.*.rsizetable.zs"))
+    game_table = ("System/Resource/" + os.path.basename(game_tables[0])) if len(game_tables) == 1 else None
+
+    def one(skin_id, mod_dir, w, t, ai, gai, mine):
+        """One skin, into w (writes), t (size table), ai/gai (rows) and mine (its files): kept only when
+        it is whole, so a broken mod costs only its own skin."""
+        sk = skin.load(skin_id, mod_dir, dicts, read, game_table)
+        variants = skin.check_changes_model(sk, game_members, flatten_actor_param)
+        items = []  # (path, bytes) for the skin's hash
+        files = []
+        taken = skin.new_files(sk, t, written, game_has)
+        # A model project another skin has with other contents (an outfit variant of the same mod) is
+        # moved to a name of its own, <project>_<id>, with every ModelProjectName naming it (skin.py).
+        # Only the skin's own model projects (its player models and its gear's) are renamed: a project
+        # such as the game's Player_Adult, under which a mod adds a file, is named everywhere in its packs
+        # for the game's own files too. A file of other contents there keeps the first skin's copy.
+        own = {skin.model_info(sk.members[v], flatten_actor_param(sk.members[v], f"Player_{v}"))[1]
+               for v in variants}
+        own |= {g[3] for g in skin.gear_items(sk, dicts, read)}
+        own.discard(None)
+        renames = {}
+        kept = []
+        for f in taken:
+            proj = skin.project_of(f)
+            if proj and proj not in renames and f in written and \
+                    written[f][1] != hashlib.sha256(read(os.path.join(sk.romfs, f))).hexdigest():
+                if proj in own:
+                    renames[proj] = skin.unique_project(proj, skin_id)
+                else:
+                    kept.append(f)
+        if kept:
+            log(f"skin {skin_id}: " + ", ".join(kept) + " differ from another skin's; that skin's copy is used "
+                "(not this skin's model)")
+            taken = [f for f in taken if f not in kept]
+        if renames:
+            for v in list(sk.members):
+                sk.members[v] = skin.rename_projects(sk.members[v], renames)
+            log(f"skin {skin_id}: model project " + ", ".join(f"{a} -> {b}" for a, b in renames.items())
+                + " (another skin has it with other files)")
+        sk.renames = renames
+        for src in taken:
+            f = skin.renamed_path(src, renames)
+            raw = read(os.path.join(sk.romfs, src))
+            digest = hashlib.sha256(raw).hexdigest()
+            if f in written:
+                other, other_digest = written[f]
+                if other_digest != digest:
+                    # Two versions of one mod (an outfit variant) name their models the same: only one
+                    # of them can be in the pack until skins get files of their own names.
+                    raise BuildError(f"{f} is also in skin {other} with other contents "
+                                     f"(two versions of one mod, or two mods with a file of one name); only one of them can be in the pack")
+                items.append((f, raw))
+                files.append(f)
+                continue  # the same file: shared
+            mine[f] = (skin_id, digest)
+            w(os.path.join(out_romfs, f), raw)
+            size = sk.table.get(strip_zs(src)) if sk.table is not None else None
+            if size is None:
+                data = dicts.decompress(raw) if f.endswith(".zs") else raw
+                size = len(data) + PACK_SIZE_MARGIN
+            t.add_new(strip_zs(f), size)
+            items.append((f, raw))
+            files.append(f)
+        as_refs = {}
+        for v in variants:
+            items.append((f"Pack/Actor/Player_{v}.pack", sarc.write(sk.members[v])))
+            src = f"AS/Player_{v}.root.asb.zs"
+            if os.path.isfile(os.path.join(sk.romfs, src)):
+                raw = read(os.path.join(sk.romfs, src))
+                dst = skin.as_path(skin_id, v)
+                w(os.path.join(out_romfs, dst + ".zs"), raw)
+                game_size = t.get(strip_zs(src))
+                mod_size = sk.table.get(strip_zs(src)) if sk.table is not None else None
+                size = max(game_size or 0, mod_size or 0) or len(dicts.decompress(raw)) + PACK_SIZE_MARGIN
+                t.add_new(dst, size)
+                items.append((dst, raw))
+                files.append(dst + ".zs")
+                as_refs[v] = dst
+            else:
+                as_refs[v] = None  # the mod keeps the game's AS: so does its puppet
+        self_files = {}
+        for v in variants if self_dir else ():
+            # Your own Link: the mod's player pack with its ASRef on the skin's own AS copy, so the puppets
+            # keep the game's AS root. Put over Pack/Actor/Player_<age> only for the player who wears it.
+            pack = skin.self_pack(sk.members[v], v, as_refs[v])
+            rel_ = f"Pack/Actor/Player_{v}.pack.zs"
+            fname = f"{skin_id}/Player_{v}.pack.zs"
+            w(os.path.join(self_dir, fname), dicts.compress(pack, PACK_DICT))
+            self_files[rel_] = f"{skin.SELF_DIR}/{fname}"
+            # Its entry holds the bigger of the game's pack and this one (a bigger entry is fine for the game's).
+            need = max(t.get(strip_zs(rel_)) or 0,
+                       (sk.table.get(strip_zs(rel_)) if sk.table is not None else None) or 0,
+                       ((len(pack) + 0x1F) & ~0x1F) + PACK_SIZE_MARGIN)
+            t.set(strip_zs(rel_), need)
+            for path, _ in actor_param_chain(sk.members[v], f"Player_{v}"):
+                mod_size = sk.table.get(path) if sk.table is not None else None
+                if mod_size and mod_size > (t.get(path) or 0):
+                    t.set(path, mod_size)
+        gear = {}
+        for item, g_members, fmdb, project, info_src in skin.gear_items(sk, dicts, read):
+            if item not in ai_rows:
+                log(f"skin {skin_id}: {item} is no actor of this game, left out")
+                continue
+            actor = skin.gear_name(item, skin_id)
+            project = renames.get(project, project)
+            pack, ap, info = skin.gear_pack(skin.rename_projects(g_members, renames), item, skin_id, fmdb, project)
+            dst = f"Pack/Actor/{actor}.pack.zs"
+            w(os.path.join(out_romfs, dst), dicts.compress(pack, PACK_DICT))
+            t.add_new(strip_zs(dst), ((len(pack) + 0x1F) & ~0x1F) + PACK_SIZE_MARGIN)
+            ap_size = max(t.get(actor_param_path(item)) or 0,
+                          (sk.table.get(actor_param_path(item)) if sk.table is not None else None) or 0)
+            t.add_new(actor_param_path(actor), max(ap_size, len(ap) + PACK_SIZE_MARGIN))
+            t.add_new(f"Component/ModelInfo/{actor}.engine__component__ModelInfo.bgyml",
+                          max(t.get(info_src) or 0, len(info) + PACK_SIZE_MARGIN))
+            row = dict(ai_rows[item], __RowId=actor, ModelProjectName=project, FmdbName=fmdb)
+            if "ActorName" in row:
+                row["ActorName"] = actor
+            ai.append(row)
+            gai.append({"__RowId": actor})
+            items.append((dst, pack))
+            files.append(dst)
+            gear[item] = actor
+        models = {v: skin.model_info(sk.members[v], flatten_actor_param(sk.members[v], f"Player_{v}"))[1]
+                  for v in variants}
+        entry = {"id": skin_id, "variants": variants, "models": models,
+                 "actors": {v: skin.actor_name(v, skin_id) for v in variants},
+                 "as": as_refs, "gear": gear, "self_files": self_files, "files": files,
+                 "sha256": skin.content_hash(items), "renamed": renames,
+                 "table": sk.table is not None}
+        skipped = [v for v in sk.variants if v not in variants]
+        log(f"skin {skin_id}: {', '.join(variants)} ({', '.join(models[v] for v in variants)}), "
+            f"{len(files)} files" + (f", gear {', '.join(gear)}" if gear else "")
+            + (f"; {', '.join(skipped)} unchanged, left out" if skipped else ""))
+        return sk, as_refs, entry
+
+    for skin_id, mod_dir in skins:
+        if skin_id.lower() in seen:
+            log(f"skin {skin_id}: left out: the id is given twice")
+            continue
+        seen.add(skin_id.lower())
+        writes, ai, gai, mine = [], [], [], {}
+        t = _StagedTable(table)
+        try:
+            sk, as_refs, entry = one(skin_id, mod_dir, lambda path, data: writes.append((path, data)), t, ai, gai,
+                                     mine)
+        except Exception as e:  # noqa: BLE001 - any broken mod: its skin is left out, the pack is built
+            reason = str(e) if isinstance(e, (skin.SkinError, BuildError)) else f"{type(e).__name__}: {e}"
+            log(f"skin {skin_id}: left out: {reason}")
+            continue
+        for path, data in writes:
+            write(path, data)
+        t.commit()
+        new_ai.extend(ai)
+        new_gai.extend(gai)
+        written.update(mine)
+        out.append((sk, as_refs, entry))
+    return out
+
+
+def skin_row(row, sk, variant):
+    """A skin puppet's ActorInfo row: the puppet's, with the mod's model and its animation projects
+    added (the retargeted ones the mod's AnimationParam lists)."""
+    comps = flatten_actor_param(sk.members[variant], f"Player_{variant}")
+    fmdb, project = skin.model_info(sk.members[variant], comps)
+    if project:
+        row["ModelProjectName"] = project
+    if fmdb:
+        row["FmdbName"] = fmdb
+    anims = list(row.get("AnimationResources") or [])
+    have = {a.get("ModelProjectName") for a in anims if isinstance(a, dict)}
+    for name in skin.animation_projects(sk.members[variant], comps):
+        if name not in have:
+            anims.append({"ModelProjectName": name})
+    if anims:
+        row["AnimationResources"] = anims
+    return row
+
+
 def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None,
-          tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False, title_rows=False,
-          look_slots=look_items.SLOTS, perception=True, blade_copies=look_items.BLADE_COPIES):
+          tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False, title_rows=False, pause_tab=False,
+          look_slots=look_items.SLOTS, perception=True, blade_copies=look_items.BLADE_COPIES,
+          skins=(), test_skin=None, game_has=None, body=False):
     """`tunics`: the tunic colours to make puppets of (puppet_pack.tunic.COLORS; each is a model,
     a tile and an actor per age, CoopPuppet_<age>_<Colour>). `test_tunic`: give the plain puppets
     that colour too (a test of the colours with a hook that knows none).
@@ -1098,7 +1442,11 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
     instead of the player's (test switch, the pack before puppet-looks). `look_slots`: how many
     players' puppets can wear gear colours of their own (puppet_pack.look_items; 0: none).
     `perception`: True makes the puppets a target of the game's perception (PERCEPTION_SOURCE), each with a
-    quiet copy (quiet_name) for the scenes with stealth guards (guard_scenes); on by default (PERCEPTION_SOURCE)."""
+    quiet copy (quiet_name) for the scenes with stealth guards (guard_scenes); on by default (PERCEPTION_SOURCE).
+    `skins`: [(id, mod folder)] character model mods to make puppets of (skin.py; each a puppet per
+    age it changes, CoopPuppet_<age>_Skin_<id>). `test_skin`: one of those ids; every other puppet
+    (plain and colours) wears that model too, a test with a hook that knows no skins.
+    `body`: every puppet gets a body of its own (`--puppet-body`, puppet_body; off by default)."""
     heaps = heaps or {}
     if not os.path.isfile(os.path.join(romfs, "Pack", "ZsDic.pack.zs")):
         raise BuildError(f"{romfs} does not look like the game's romfs (no Pack/ZsDic.pack.zs)")
@@ -1171,20 +1519,40 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
                                                      blade_copies, log)
         new_ai += rows
         new_gai += grows
+    skin_list = write_skins(romfs, out_romfs, dicts, table, skins, ai_rows, new_ai, new_gai, log,
+                            self_dir=os.path.join(mod_dir, skin.SELF_DIR), game_has=game_has) if skins else []
+    by_id = {sk.id.lower(): (sk, refs) for sk, refs, _ in skin_list}
+    if test_skin and test_skin.lower() not in by_id:
+        if any(sid.lower() == test_skin.lower() for sid, _ in skins):
+            raise BuildError(f"--test-skin {test_skin}: that skin was left out (see its line above)")
+        raise BuildError(f"--test-skin {test_skin}: no --skin with that id")
+    worn = by_id.get(test_skin.lower()) if test_skin else None
     jobs = [(v, None) for v in VARIANTS] + [(v, c) for v in VARIANTS for c in tunics]
-    jobs = [(v, c, False) for v, c in jobs] + ([(v, c, True) for v, c in jobs] if seen_by else [])
-    for v, color, quiet in jobs:
+    jobs = [(v, c, False, None) for v, c in jobs] + ([(v, c, True, None) for v, c in jobs] if seen_by else [])
+    # Each skin's puppet per age, with its quiet copy for the guard scenes when puppets are seen.
+    jobs += [(v, None, q, (sk, refs)) for sk, refs, _ in skin_list for v in refs
+             for q in ((False, True) if seen_by else (False,))]
+    for v, color, quiet, own_skin in jobs:
         player = f"Player_{v}"
-        actor = tunic.actor_name(v, color) if color else puppet_name(v)
+        # A skin job, or (--test-skin) any puppet of an age the tested skin changes.
+        wears = own_skin or (worn if worn and v in worn[1] else None)
+        if own_skin:
+            actor = skin.actor_name(v, own_skin[0].id)
+        else:
+            actor = tunic.actor_name(v, color) if color else puppet_name(v)
         actor = quiet_name(actor) if quiet else actor
-        shade = color or test_tunic
+        shade = None if wears else color or test_tunic
         project = tunic.project_name(v, shade) if shade else None
-        src = os.path.join(romfs, "Pack", "Actor", f"{player}.pack.zs")
-        if not os.path.isfile(src):
-            raise BuildError(f"missing {rel(romfs, src)}")
-        members = sarc.read(dicts.decompress(read(src)))
+        if wears:
+            members = wears[0].members[v]
+        else:
+            src = os.path.join(romfs, "Pack", "Actor", f"{player}.pack.zs")
+            if not os.path.isfile(src):
+                raise BuildError(f"missing {rel(romfs, src)}")
+            members = sarc.read(dicts.decompress(read(src)))
         pack, ap, names, keys = build_pack(members, v, sound, player_footsteps, sound_user, actor, project,
-                                           basic_xlink=basic_xlink, perception=None if quiet else seen_by)
+                                           basic_xlink=basic_xlink, perception=None if quiet else seen_by,
+                                           as_ref=wears[1][v] if wears else None, body=body)
         dst_rel = f"Pack/Actor/{actor}.pack.zs"
         write(os.path.join(out_romfs, dst_rel), dicts.compress(pack, PACK_DICT))
         if player not in ai_rows:
@@ -1192,6 +1560,8 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         new_ai.append(info_row(ai_rows[player], actor, heaps.get(actor), sound, sound_user))
         if project:
             new_ai[-1]["ModelProjectName"] = project
+        if wears:
+            skin_row(new_ai[-1], wears[0], v)
         new_gai.append({"__RowId": actor})
 
         pack_size = ((len(pack) + 0x1F) & ~0x1F) + PACK_SIZE_MARGIN
@@ -1199,6 +1569,9 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         chain_ap = 0
         for path, _ in actor_param_chain(members, player):
             size = table.get(path)
+            if wears and wears[0].table is not None:
+                # A mod's own file in the chain can be bigger than the game's (its table says so).
+                size = max(size or 0, wears[0].table.get(path) or 0) or None
             if size is None:
                 raise BuildError(f"the size table has no {path}")
             chain_ap += size
@@ -1229,9 +1602,18 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
             em_size = max((table.get(src) or 0) + max(0, len(data) - len(members[src])), len(data) + PACK_SIZE_MARGIN)
             table.add_new(path, em_size)
             emitter = {"param": path, "size": em_size}
-        made.append({"actor": actor, "from": player, "perception": emitter, "quiet": quiet, "tunic": shade, "model": project, "pack": dst_rel, "pack_bytes": len(pack),
+        body_files = None
+        if body:
+            body_files = {}
+            for path, (data, src) in puppet_body(members, flatten_actor_param(members, player), actor).items():
+                # Sized as the player's file it is cut from, or its own bytes and the margin when longer.
+                size = max(table.get(src) or 0, len(data) + PACK_SIZE_MARGIN)
+                table.add_new(path, size)
+                body_files[path] = size
+        made.append({"actor": actor, "from": player, "perception": emitter, "quiet": quiet, "tunic": shade, "model": project,
+                     "skin": wears[0].id if wears else None, "pack": dst_rel, "pack_bytes": len(pack),
                      "instance_heap": _num(new_ai[-1].get("InstanceHeapSize", 0)), "param_size": ap_size,
-                     "members": names, "equipment_keys": keys, "footstep": footstep})
+                     "members": names, "equipment_keys": keys, "footstep": footstep, "body": body_files})
         log(f"{actor}: {len(names)} files, {len(pack)} bytes, {len(keys)} equipment keys -> {dst_rel}")
 
     src = os.path.join(romfs, "Pack", "Actor", f"{IMPACT_SOURCE}.pack.zs")
@@ -1297,13 +1679,29 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
     # the puppets do not need them.
     # Only for Hookshot's game (--title-rows): the emulator has no title menu, its rows would do nothing.
     # All or nothing (title_menu.build writes only when every file was made).
+    # One view of the game's files for every UI builder (ui_pack.PackRun): what one made is what the next reads (the
+    # language archives get both steps' labels), and each size-table entry grows once from the game's original.
+    ui_run = ui_pack.PackRun(romfs, table)
     title_files = []
     if title_rows:
         try:
             title_files = title_menu.build(romfs, out_romfs, dicts, table,
-                                           lambda root, r, data: write(os.path.join(root, r), data), recompress, log)
+                                           lambda root, r, data: write(os.path.join(root, r), data), recompress, log,
+                                           run=ui_run)
         except (title_menu.TitleMenuError, OSError, ValueError, KeyError, IndexError, struct.error) as e:
             log(f"title menu: rows left out ({e}); the title keeps its own three, co-op uses the Minus prompt")
+    # The pause menu's Multiplayer tab and page (pause_menu.py, issue 264): Hookshot's game only (--pause-tab), with
+    # the co-op module that shows them (patch 0030); both stored hidden, so without the module the menu is the game's.
+    # After the title rows, through the same view (ui_run): its labels join theirs in each language archive. All or
+    # nothing.
+    pause_files = []
+    if pause_tab:
+        try:
+            pause_files = pause_menu.build(romfs, out_romfs, dicts, table,
+                                           lambda root, r, data: write(os.path.join(root, r), data), recompress, log,
+                                           run=ui_run)
+        except (pause_menu.PauseMenuError, OSError, ValueError, KeyError, IndexError, struct.error) as e:
+            log(f"pause menu: the Multiplayer tab left out ({e}); the pause menu keeps its four")
 
     ai_new = byml.dumps(upsert_rows(ai, new_ai))
     gai_new = byml.dumps(upsert_rows(gai, new_gai))
@@ -1329,6 +1727,8 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "shots": shots,
         "impacts": impacts,
         "tunics": tunic_files,
+        "skins": [entry for _, _, entry in skin_list],
+        "test_skin": worn[0].id if worn else None,
         "self_tiles": self_tiles,
         "self_dark_tiles": self_dark_tiles,
         "self_files": self_files,
@@ -1340,12 +1740,15 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "sound": sound,
         "footsteps": "player" if player_footsteps or not sound else "puppet",
         "perception": bool(seen_by),
+        "body": bool(body),
         "quiet_scenes": quiet_scenes,
         "guards": guards,
         "sound_user": sound_user if sound and sound_user else None,
         "xlink": "player" if sound and not basic_xlink else "basic",
         "tables": [rel(romfs, p) for p in (ai_path, gai_path, rs_path)],
+        "title_rows": bool(title_rows),  # asked for (--title-rows); title_menu: what was made
         "title_menu": title_files,
+        "pause_menu": pause_files,
         "source_sha256": {rel(romfs, p): hashlib.sha256(read(p)).hexdigest()
                           for p in (ai_path, gai_path, rs_path)},
     }
@@ -1405,6 +1808,9 @@ def main(argv=None):
                          "quiet copies for the stealth guards' scenes (issue 150); kept so older commands still work")
     ap.add_argument("--no-perception", action="store_true",
                     help="puppets no perception sees (enemies go only for each game's own Link; the pack before issue 150)")
+    ap.add_argument("--puppet-body", action="store_true",
+                    help="native puppets phase 1 test (docs/native-puppets.md): every puppet gets a body of its own "
+                         "(Link's shapes and character controller, no sensors), off by default")
     ap.add_argument("--no-sound", action="store_true",
                     help="build the puppets without Link's sounds (the pack before issue 131)")
     ap.add_argument("--seed-trail", action="store_true",
@@ -1424,6 +1830,13 @@ def main(argv=None):
                     help="test switch: the puppets get the shared ActorBasic XLink param (the older pack)")
     ap.add_argument("--title-rows", action="store_true",
                     help="Hookshot's game: Host, Join and Co-op Settings as rows of the title (title_menu.py)")
+    ap.add_argument("--pause-tab", action="store_true",
+                    help="Hookshot's game: the pause menu's Multiplayer tab and page (pause_menu.py; patch 0030's module)")
+    ap.add_argument("--skin", action="append", default=[], metavar="ID=FOLDER",
+                    help="a character model mod (its folder, holding romfs) to make puppets of, "
+                         "CoopPuppet_<age>_Skin_<ID> (skin.py); may be given more than once")
+    ap.add_argument("--test-skin", metavar="ID",
+                    help="test switch: every puppet wears the --skin of this id (a hook that knows no skins)")
     ap.add_argument("--look-slots", type=int, default=look_items.SLOTS, metavar="N",
                     help="how many players' puppets wear gear colours of their own (look_items.py; 0 to 4, 0: none)")
     ap.add_argument("--blade-copies", type=int, default=look_items.BLADE_COPIES, metavar="N",
@@ -1447,7 +1860,8 @@ def main(argv=None):
         tmp = tempfile.mkdtemp(prefix="coop-puppet-")
         try:
             with nup.Nup(a.romfs) as n:
-                for rel in list(dumpcheck.nup_files(n).values()) + nup_scene_files(n):
+                menus = nup_menu_files(n) if (a.title_rows or a.pause_tab) else []
+                for rel in list(dumpcheck.nup_files(n).values()) + nup_scene_files(n) + menus:
                     nup.write_under(tmp, rel, n.read(rel))
                 # The gear colours' sources (with the dictionaries just taken out, to read the items' packs).
                 for rel in nup_look_files(n, zs.Dicts.from_romfs(tmp)):
@@ -1461,6 +1875,12 @@ def main(argv=None):
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
     return _main_build(a, a.romfs, hud.DirReader(a.romfs))
+
+
+def _reader_has(reader, path):
+    """Whether a hud reader's RomFS has exactly this file (no pattern: a name with `[` or `*` is a name)."""
+    d, _, name = path.rpartition("/")
+    return name in reader.files(d)
 
 
 def _main_build(a, romfs, hud_reader=None):
@@ -1478,14 +1898,23 @@ def _main_build(a, romfs, hud_reader=None):
             print(f"error: --heap {h}: want CoopPuppet_Child=BYTES or CoopPuppet_Adult=BYTES", file=sys.stderr)
             return 2
         heaps[name] = int(size)
+    skins = []
+    for sk in a.skin:
+        sid, sep, folder = sk.partition("=")
+        if not sep or not sid or not folder:
+            print(f"error: --skin {sk}: want ID=FOLDER", file=sys.stderr)
+            return 2
+        skins.append((sid, folder))
     try:
         tunics = [] if a.tunics.strip().lower() == "none" else [c.strip() for c in a.tunics.split(",") if c.strip()]
         build(romfs, mod_dir, heaps=heaps, sound=not a.no_sound, player_footsteps=a.player_footsteps,
               sound_user=a.sound_user, tunics=tunics, test_tunic=a.test_tunic,
               stand_in_effects=a.seed_trail and not a.no_seed_trail, basic_xlink=a.basic_xlink,
-              title_rows=a.title_rows, look_slots=max(0, min(a.look_slots, look_items.MAX_SLOTS)),
+              title_rows=a.title_rows, pause_tab=a.pause_tab, look_slots=max(0, min(a.look_slots, look_items.MAX_SLOTS)),
               perception=not a.no_perception,
-              blade_copies=max(0, min(a.blade_copies, look_items.BLADE_COPIES)))
+              blade_copies=max(0, min(a.blade_copies, look_items.BLADE_COPIES)), skins=skins, test_skin=a.test_skin,
+              game_has=(lambda path: _reader_has(hud_reader, path)) if hud_reader is not None else None,
+              body=a.puppet_body)
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

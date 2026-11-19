@@ -57,6 +57,7 @@ add_executable(coop_tests
   lichii/map_refresh_test.cpp
   lichii/rooms_test.cpp
   lichii/objects_test.cpp
+  lichii/bomb_share_test.cpp
   lichii/show_delay_test.cpp
   lichii/npc_anim_test.cpp
   lichii/spawn_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_spawn.cpp
@@ -70,6 +71,7 @@ add_executable(coop_tests
   lichii/follow_test.cpp
   lichii/scrub_talk_test.cpp
   lichii/scrub_sale_test.cpp
+  lichii/shop_sale_test.cpp
   lichii/chests_test.cpp
   lichii/colors_test.cpp
   lichii/dungeon_test.cpp
@@ -107,6 +109,7 @@ add_executable(coop_tests
   lichii/dbno_test.cpp
   lichii/dbno_body_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_dbno_body.cpp
   lichii/difficulty_test.cpp
+  lichii/ngplus_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_ngplus_rules.cpp
   lichii/live_events_test.cpp
   lichii/logic_probe_test.cpp
   lichii/shared_scenes_test.cpp
@@ -145,6 +148,7 @@ add_executable(coop_tests
   lichii/switch_share_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_switch_share.cpp
   lichii/caller_orders_test.cpp
   lichii/eye_switch_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_eye_switch.cpp
+  lichii/event_result_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_event_result.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_ocarina.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_ocarina_sound.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_look_share.cpp
@@ -175,6 +179,7 @@ target_sources(coop_tests PRIVATE hookshot/module_test.cpp hookshot/draw_test.cp
   hookshot/chatbox_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_chatbox.cpp
   hookshot/cheats_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_cheats_panel.cpp
   hookshot/png_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_png.cpp
+  hookshot/window_brand_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_window_brand.cpp
   hookshot/title_menu_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_title_menu.cpp
   hookshot/pause_menu_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_pause_menu.cpp
   hookshot/host_menu_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_host_menu.cpp
@@ -182,6 +187,7 @@ target_sources(coop_tests PRIVATE hookshot/module_test.cpp hookshot/draw_test.cp
   hookshot/mods_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_mod_json.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_mod_library.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_mods.cpp
   hookshot/mod_plugins_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_mod_plugins.cpp
+  hookshot/mod_screens_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_mod_screens.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_mod_guard.cpp
   hookshot/rando_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_rando.cpp
   hookshot/mods_tab_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_mods_tab.cpp
@@ -193,6 +199,8 @@ target_sources(coop_tests PRIVATE hookshot/module_test.cpp hookshot/draw_test.cp
   ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_look_tunic.cpp
   hookshot/texture_override_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_texture.c
   hookshot/lobby_tab_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_lobby_tab.cpp
+  hookshot/pause_tab_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_pause_tab.cpp
+  hookshot/pad_order_test.cpp
   hookshot/i18n_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_i18n.cpp)
 target_include_directories(coop_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src)
 if(NOT WIN32)   # the module's Linux clipboard (wl-copy, xclip, xsel), tried with stand-in tools

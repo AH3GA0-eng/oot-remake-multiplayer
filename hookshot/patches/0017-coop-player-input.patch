@@ -1,4 +1,4 @@
-From e9a4c6e158144f99bc4cb891c01d861b87defaa6 Mon Sep 17 00:00:00 2001
+From b27681113b7c895f8483770d006b81c84bf1b609 Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 15:11:06 -0900
 Subject: [PATCH] Co-op player input: the Player's pad reads are wrapped for

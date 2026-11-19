@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 // G1 (coop/host/event_owner.hpp): the one EventOwnerTracker of this game. The
-// co-op layer's own requests for another player's event mark it (CoopAsked: the
-// live-event Requester's taken asks, an eye switch set for another game) from
-// the game's calc thread; the hook's frame feeds the game's own taken requests
-// (GameAsked, Hookshot's wrap) and classifies each reading (Apply). One lock,
-// held only for those few lines.
+// hook's frame feeds the game's own taken requests (GameAsked, Hookshot's wrap)
+// and classifies each reading (Apply) from our Link's event membership. One
+// lock, held only for those few lines.
 #pragma once
 
 #include <cstdint>
@@ -30,42 +28,35 @@ inline Box& The() {
     return box;
 }
 
-inline void CoopAsked(std::string_view name, std::uint64_t now_us) {
+inline void GameAsked(std::string_view name) {
     Box& b = The();
     std::lock_guard lock(b.mutex);
-    b.tracker.CoopAsked(name, now_us);
+    b.tracker.GameAsked(name);
 }
 
-inline void GameAsked(std::string_view name, std::uint64_t now_us) {
+// Our scene this frame, before Classify (a request still waiting for its run is dropped on a change).
+inline void Scene(std::string_view scene) {
     Box& b = The();
     std::lock_guard lock(b.mutex);
-    b.tracker.GameAsked(name, now_us);
-}
-
-// The running event's own name-like strings (CoopEventMember::ReadRunning, read when it began).
-inline void RunNames(const std::vector<std::string>& names, std::uint64_t now_us) {
-    Box& b = The();
-    std::lock_guard lock(b.mutex);
-    b.tracker.RunNames(names, now_us);
+    b.tracker.Scene(scene);
 }
 
 // This frame's kind from the raw facts (the frame without a session reads no full reading).
 inline coop::host::EventWhose Classify(bool running, bool link_bound, const std::optional<std::string_view>& anim,
-                                       std::uint64_t now_us, coop::host::EventOwnerTracker::By* by = nullptr) {
+                                       coop::host::EventOwnerTracker::By* by = nullptr) {
     Box& b = The();
     std::lock_guard lock(b.mutex);
-    const auto whose = b.tracker.Frame(running, link_bound, now_us, anim);
+    const auto whose = b.tracker.Frame(running, link_bound, anim);
     if (by) *by = b.tracker.Decided();
     return whose;
 }
 
 // Sets reading.event_whose for this frame's reading. Returns it.
-inline coop::host::EventWhose Apply(coop::host::PlayerReading& reading, std::uint64_t now_us) {
+inline coop::host::EventWhose Apply(coop::host::PlayerReading& reading) {
     Box& b = The();
     std::lock_guard lock(b.mutex);
     reading.event_whose = b.tracker.Frame(
-        reading.event_running.value_or(false), reading.link_bound, now_us,
-        coop::host::name_of(reading.animation));
+        reading.event_running.value_or(false), reading.link_bound, coop::host::name_of(reading.animation));
     return reading.event_whose;
 }
 

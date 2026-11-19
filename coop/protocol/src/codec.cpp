@@ -671,6 +671,7 @@ Error check_object_state(const ObjectState& s) {
       }
     }
   }
+  if (s.hit && s.hit->seq == 0) return Error::bad_value;  // (seqs count from 1)
   if (s.bsa) {
     const auto finite = [](const BossAction& a) {
       for (const auto& p : a.places) {
@@ -776,6 +777,12 @@ void write_object_state(const ObjectState& s, Writer& w) {
     });
   }
   if (s.bsa) component(ObjectComponent::bsa, [&] { write_bsa(*s.bsa, w); });
+  if (s.hit) {
+    component(ObjectComponent::hit, [&] {
+      w.u32(s.hit->seq);
+      for (std::uint32_t word : s.hit->record) w.u32(word);
+    });
+  }
 }
 
 bool has_duplicate_id(const std::vector<ObjectPresence>& objects) {
@@ -944,6 +951,9 @@ Error encode_body(const Damage& m, Writer& w) {
   for (float f : m.position) w.f32(f);
   if (m.hit_at) {
     for (float f : *m.hit_at) w.f32(f);
+  }
+  if (m.hit_record) {
+    for (std::uint32_t word : *m.hit_record) w.u32(word);
   }
   return Error::none;
 }
@@ -1480,6 +1490,13 @@ Error decode_component(ObjectComponent id, Reader& c, ObjectState& s, bool& know
       }
       return Error::none;
     }
+    case ObjectComponent::hit: {
+      ObjectHit& h = s.hit.emplace();
+      COOP_READ(c.u32(h.seq));
+      if (h.seq == 0) return Error::bad_value;
+      for (std::uint32_t& word : h.record) COOP_READ(c.u32(word));
+      return Error::none;
+    }
     case ObjectComponent::bsa: {
       BossBsa& b = s.bsa.emplace();
       std::uint32_t verb = 0;
@@ -1662,7 +1679,13 @@ Error decode_body(Reader& r, Damage& m) {
   if (m.amount < 0) return Error::bad_value;
   COOP_READ(r.u8(m.cause));
   COOP_TRY(read_floats(r, m.position));
-  if (r.left() == 12) COOP_TRY(read_floats(r, m.hit_at.emplace()));
+  // The tail tells by its length what follows: 12 the hit place, 152 the hit record (protocol 14), 164 both.
+  constexpr std::size_t kRecordBytes = kHitRecordWords * 4;
+  const std::size_t tail = r.left();
+  if (tail == 12 || tail == 12 + kRecordBytes) COOP_TRY(read_floats(r, m.hit_at.emplace()));
+  if (tail == kRecordBytes || tail == 12 + kRecordBytes) {
+    for (std::uint32_t& word : m.hit_record.emplace()) COOP_READ(r.u32(word));
+  }
   return Error::none;
 }
 
@@ -2617,6 +2640,101 @@ Error decode_body(Reader& r, LobbyResult& m) {
   return Error::none;
 }
 
+// JOIN_KNOCK: u32 knock (not 0), u16 wait (0 to kMaxKnockWaitSeconds), u8 flags
+// (unknown bits kept), nickname (1 to kMaxNicknameChars).
+Error encode_body(const JoinKnock& m, Writer& w) {
+  if (m.knock == 0 || m.wait_s > kMaxKnockWaitSeconds || m.nickname.empty()) return Error::bad_value;
+  COOP_TRY(check_string(m.nickname, kMaxNicknameChars));
+  w.u32(m.knock);
+  w.u16(m.wait_s);
+  w.u8(m.flags);
+  w.str(m.nickname);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, JoinKnock& m) {
+  m = JoinKnock{};
+  COOP_READ(r.u32(m.knock));
+  COOP_READ(r.u16(m.wait_s));
+  COOP_READ(r.u8(m.flags));
+  COOP_TRY(r.str(m.nickname, kMaxNicknameChars));
+  if (m.knock == 0 || m.wait_s > kMaxKnockWaitSeconds || m.nickname.empty()) return Error::bad_value;
+  return Error::none;
+}
+
+// JOIN_ALLOW: u32 knock (not 0), u8 allow (0 or 1), u8 remember (0 or 1).
+Error encode_body(const JoinAllow& m, Writer& w) {
+  if (m.knock == 0) return Error::bad_value;
+  w.u32(m.knock);
+  w.u8(m.allow ? 1 : 0);
+  w.u8(m.remember ? 1 : 0);
+  return Error::none;
+}
+
+Error encode_body(const BombTake& m, Writer& w) {
+  COOP_TRY(check_object_id(m.id));
+  if (m.id.kind != ObjectKind::made) return Error::bad_value;
+  write_object_id(m.id, w);
+  w.u16(m.epoch);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, BombTake& m) {
+  m = BombTake{};
+  COOP_TRY(read_object_id(r, m.id));
+  if (m.id.kind != ObjectKind::made) return Error::bad_value;
+  COOP_READ(r.u16(m.epoch));
+  return Error::none;
+}
+
+Error encode_body(const BombShare& m, Writer& w) {
+  w.u8(m.on ? 1 : 0);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, BombShare& m) {
+  m = BombShare{};
+  std::uint8_t on = 0;
+  COOP_READ(r.u8(on));
+  if (on > 1) return Error::bad_value;
+  m.on = on != 0;
+  return Error::none;
+}
+
+Error encode_body(const BombAnswer& m, Writer& w) {
+  COOP_TRY(check_object_id(m.id));
+  const auto refusal = static_cast<std::uint8_t>(m.refusal);
+  if (refusal == 0 || refusal > kBombRefusalMax) return Error::bad_value;
+  write_object_id(m.id, w);
+  w.u16(m.epoch);
+  w.u8(refusal);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, BombAnswer& m) {
+  m = BombAnswer{};
+  COOP_TRY(read_object_id(r, m.id));
+  COOP_READ(r.u16(m.epoch));
+  std::uint8_t refusal = 0;
+  COOP_READ(r.u8(refusal));
+  if (refusal == 0 || refusal > kBombRefusalMax) return Error::bad_value;
+  m.refusal = static_cast<BombRefusal>(refusal);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, JoinAllow& m) {
+  m = JoinAllow{};
+  std::uint8_t allow = 0;
+  std::uint8_t remember = 0;
+  COOP_READ(r.u32(m.knock));
+  COOP_READ(r.u8(allow));
+  COOP_READ(r.u8(remember));
+  if (m.knock == 0 || allow > 1 || remember > 1) return Error::bad_value;
+  m.allow = allow == 1;
+  m.remember = remember == 1;
+  return Error::none;
+}
+
 // DIFFICULTY: u8 set by (0 nobody, else a player), u8 automatic (0 or 1),
 // u8 preset, u16 life, u16 damage, u16 count (percent, within the sliders),
 // u16 boss life (25 to 1600), u16 boss damage (25 to 400).
@@ -2991,6 +3109,8 @@ MessageType type_of(const Message& message) {
       MessageType::boss_scene,  MessageType::boss_heart,
       MessageType::player_look,
       MessageType::switch_state,
+      MessageType::join_knock,  MessageType::join_allow,
+      MessageType::bomb_take,   MessageType::bomb_answer, MessageType::bomb_share,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -3035,6 +3155,9 @@ std::uint8_t channel_of(MessageType type) {
     case MessageType::pvp_hit:
     case MessageType::pvp_hurt:
     case MessageType::dbno_revive:
+    case MessageType::bomb_take:
+    case MessageType::bomb_answer:
+    case MessageType::bomb_share:
       return kChannelOwnership;
     default:
       return kChannelSession;
@@ -3089,6 +3212,8 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::link_sound:
     case MessageType::boss_scene:
     case MessageType::boss_heart:
+    case MessageType::join_knock:
+    case MessageType::join_allow:
       return channel == kChannelSession;
     case MessageType::flag_set:
     case MessageType::flag_state:
@@ -3124,6 +3249,9 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::pvp_hit:
     case MessageType::pvp_hurt:
     case MessageType::dbno_revive:
+    case MessageType::bomb_take:
+    case MessageType::bomb_answer:
+    case MessageType::bomb_share:
       return channel == kChannelOwnership;
     case MessageType::test_payload:
       return channel == kChannelSession || channel == kChannelPlayerSamples;
@@ -3143,6 +3271,9 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::local_leave:
     case MessageType::local_sample:
     case MessageType::local_message:
+    case MessageType::join_allow:
+    case MessageType::bomb_take:
+    case MessageType::bomb_share:
       return from == Sender::client;
     case MessageType::welcome:
     case MessageType::refused:
@@ -3157,6 +3288,8 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::lobby_mutes:
     case MessageType::lobby_result:
     case MessageType::local_joined:
+    case MessageType::join_knock:
+    case MessageType::bomb_answer:
       return from == Sender::server;
     case MessageType::ping:
     case MessageType::pong:
@@ -3391,6 +3524,11 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::lobby_action: return decode_as<LobbyAction>(body, out);
     case MessageType::lobby_mutes: return decode_as<LobbyMutes>(body, out);
     case MessageType::lobby_result: return decode_as<LobbyResult>(body, out);
+    case MessageType::join_knock: return decode_as<JoinKnock>(body, out);
+    case MessageType::join_allow: return decode_as<JoinAllow>(body, out);
+    case MessageType::bomb_take: return decode_as<BombTake>(body, out);
+    case MessageType::bomb_answer: return decode_as<BombAnswer>(body, out);
+    case MessageType::bomb_share: return decode_as<BombShare>(body, out);
     case MessageType::local_join: return decode_as<LocalJoin>(body, out);
     case MessageType::local_joined: return decode_as<LocalJoined>(body, out);
     case MessageType::local_leave: return decode_as<LocalLeave>(body, out);

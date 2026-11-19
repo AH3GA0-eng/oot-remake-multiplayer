@@ -7,6 +7,8 @@
 #include <utility>
 #include <vector>
 
+#include "coop_event_result.h"  // row 98(2): which held gimmick events are class live
+
 #ifdef LICHII_COOP
 #include "common/logging.h"
 #endif
@@ -1011,9 +1013,19 @@ constexpr std::array kFlags = std::to_array<Flag>({
     // Foresttemple_) or puts it after Gimmick_ (the enemies-beaten shutters).
     // Left out: the Room7 area sensors (_InsideArea, _NearTheSwitch*: set true and
     // false from where a player or Ruto is), Room7_Switch2_OnlyLinkOrLuto (Ruto),
-    // two-way state (Jabu-Jabu's Room 14 water, the Water Temple torch shutters
-    // Gimmick_Ignition_Open_*: step switches and torches set them both ways) and
-    // the Spirit Temple stone tablets (what Link reads, not room state).
+    // two-way state a switch or torch HOLDS (the Water Temple torch shutters
+    // Gimmick_Ignition_Open_*, Jabu-Jabu's Room 17 stone switch: the game with
+    // nobody on its switch would write it back) and the Spirit Temple stone
+    // tablets (what Link reads, not room state).
+    // Jabu-Jabu's Room 14 water IS shared (fable-g3-objects, issue 249): the two
+    // flags are the saved state of placement groups (the scene's PlgGdTable: the
+    // water plane and the enemy air walls, each moved by its
+    // GroundControlActor_ResidentMoveTo when the flag changes), so the flag is
+    // the water's only input. Its room graph (Room_14_Prefab_90a1) sets them
+    // once per press, true or false, and only while our own switch is pressed
+    // AND the flag has the other value, so a game whose switch nobody stands on
+    // never writes them back. Not Gimmick_Insidejabujabu_Updown_MoveWaterSwitch:
+    // that one arms each game's own switch (set when it is let go).
     {0xdd4e1676, false, "Firetemple_SongOfTimeBlock_A_01_Disappearance"},
     {0x2312e749, false, "Foresttemple_SongOfTimeBlock_A_01_Disappearance"},
     {0xdba3c3ef, false, "Gimmick_DefeatEnemy_Open_DodongoCave_01"},
@@ -1027,6 +1039,8 @@ constexpr std::array kFlags = std::to_array<Flag>({
     {0x936fce7b, false, "Gimmick_DefeatEnemy_Open_ForestTemple_03"},
     {0x54184cc6, false, "Gimmick_DefeatEnemy_Open_ForestTemple_05"},
     {0x77e573a4, false, "Gimmick_DeleteFire_FireTemple"},
+    {0xc517f1b5, false, "Gimmick_Insidejabujabu_Updown_MoveWater"},
+    {0x4358c335, false, "Gimmick_Insidejabujabu_down_MoveWater"},
     {0x482f8dd4, false, "Insidejabujabu_Gimmick_Room12_Treasure"},
     {0x90629ec0, false, "Insidejabujabu_Gimmick_Room7Event"},
     {0x2d748eb5, false, "Insidejabujabu_Room0_Cleared"},
@@ -1715,21 +1729,11 @@ constexpr std::string_view kCorridor[] = {
     "ForestTemple_SageOfForest_TwistedCorridor_A_02", "ForestTemple_SageOfForest_TwistedCorridor_A_03",
     "ForestTemple_SageOfForest_TwistedCorridor_A_04"};
 
-// Gimmick events whose result already came live in the other game in a player test
-// (players, Deku Tree): the basement water dropping and its button pressed,
-// the torch room's torches. Their room flags carry the result; the played
-// event is left live too, so nothing changes for them.
-constexpr std::string_view kLiveOnTest6[] = {
-    "InsideTheDekuTree_Gimmick_RoomG_WaterLevelDrop", "InsideTheDekuTree_Gimmick_RoomH_CandleStick"};
-
-// deku-switches-b (0.10.1 playtest): room flags that delete the asker of a held gimmick event, so they wait with
-// that event. The slingshot room's graph (Logic/InsideTheDekuTree_Level_Room_C_Prefab_efa7) deletes
-// EventRequestActor_d457 when RoomC_Cleared is set (Logic_Delete <- HoldGameDataGetBoolSimple), and the presser's
-// game sets it at its event's end. Taken live, it deleted our asker before our own event ran, so the ladder (IsOn <-
-// that asker's EventBool) never fell and our eye switch asked nothing. Held, our asker is there for the event (or
-// for our own eye shot), and the event's end sets the flag here too.
-constexpr std::pair<std::string_view, std::string_view> kHeldWithEvent[] = {
-    {"InsideTheDekuTree_RoomC_Cleared", "InsideTheDekuTree"}};
+// Gimmick events whose room results all come live by shared flags (row 98(2): class live, generated from the room
+// graphs in coop_event_result.cpp; it replaces the hand-made list of player test 6, the Deku basement water and the
+// torch room, both class live there) are not held: their flags carry the result. A flag that deletes the asker of a
+// class-asker event (the Deku slingshot room's RoomC_Cleared, once held here by hand) is a generated result guard now
+// (CoopEventResult::HoldFor): it waits only until our result is set, instead of until we leave the dungeon.
 
 std::string_view SceneOfEvent(std::string_view event) {
     // The game's own spellings, and the scene names that are not prefixes.
@@ -1772,16 +1776,11 @@ std::optional<std::string_view> HeldIn(std::uint32_t hash) {
         constexpr std::string_view kPlayed = "HavePlayedEvent.";
         if (name.starts_with(kPlayed)) {
             const std::string_view event = name.substr(kPlayed.size());
-            for (const std::string_view live : kLiveOnTest6) {
-                if (event == live) return std::nullopt;
-            }
+            if (CoopEventResult::IsLive(event)) return std::nullopt;
             return SceneOfEvent(event);
         }
         for (const std::string_view c : kCorridor) {
             if (name == c) return std::string_view("ForestTemple");
-        }
-        for (const auto& [flag, scene] : kHeldWithEvent) {
-            if (name == flag) return scene;
         }
         return std::nullopt;
     }

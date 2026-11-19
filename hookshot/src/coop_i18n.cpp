@@ -175,6 +175,10 @@ constexpr Entry kzh_Hans[] = {
     {"Co-op started with the game (Host.bat, Join.bat or coop.ini). To host or join another game, quit and start the "
      "game again.",
      "本局联机是随游戏启动的（Host.bat、Join.bat 或 coop.ini）。要另开或加入其他房间，请退出游戏重开。"},
+    {"Not now.", "现在不行。"},
+    {"Co-op started with the game: Host.bat, Join.bat or coop.ini.", "联机随游戏启动：Host.bat、Join.bat 或 coop.ini。"},
+    {"Who is in the game: the Lobby tab.", "房间里有谁：看大厅页。"},
+    {"To host or join another game, start the game again.", "要另开或加入其他房间，请重开游戏。"},
 
     // ---- Notes from the tab's own actions -------------------------------
     {"Co-op is on already in this game: stop it first, or start the game again.",
@@ -445,7 +449,7 @@ constexpr Entry kzh_Hans[] = {
     {"(empty)", "（空）"},
     {"In this co-op game the host sets this.", "联机时由房主设置。"},
     {"Counts after a restart.", "重启后生效。"},
-    {"Type, then Enter. Esc: as it was.", "输入后按 Enter。Esc：保持原样。"},
+    {"Type or Ctrl+V, then Enter. Esc: as it was.", "输入或按 Ctrl+V，然后按 Enter。Esc：保持原样。"},
     {"Restart the game to use the changes.", "重启游戏以应用改动。"},
     {"Switch", "切换"},
     {"Co-op: waiting for the host's list of mods.", "联机：正在等待房主的模组列表。"},
@@ -1009,6 +1013,10 @@ constexpr Entry kzh_Hant[] = {
     {"Co-op started with the game (Host.bat, Join.bat or coop.ini). To host or join another game, quit and start the "
      "game again.",
      "本局連線是隨遊戲啟動的（Host.bat、Join.bat 或 coop.ini）。要另開或加入其他房間，請退出遊戲重開。"},
+    {"Not now.", "現在不行。"},
+    {"Co-op started with the game: Host.bat, Join.bat or coop.ini.", "連線隨遊戲啟動：Host.bat、Join.bat 或 coop.ini。"},
+    {"Who is in the game: the Lobby tab.", "房間裡有誰：看大廳頁。"},
+    {"To host or join another game, start the game again.", "要另開或加入其他房間，請重開遊戲。"},
 
     {"Co-op is on already in this game: stop it first, or start the game again.",
      "本局連線已經在跑了：先停止，或者重開遊戲。"},
@@ -1267,7 +1275,7 @@ constexpr Entry kzh_Hant[] = {
     {"(empty)", "（空）"},
     {"In this co-op game the host sets this.", "連線時由房主設定。"},
     {"Counts after a restart.", "重新啟動後生效。"},
-    {"Type, then Enter. Esc: as it was.", "輸入後按 Enter。Esc：保持原樣。"},
+    {"Type or Ctrl+V, then Enter. Esc: as it was.", "輸入或按 Ctrl+V，然後按 Enter。Esc：保持原樣。"},
     {"Restart the game to use the changes.", "重新啟動遊戲以套用變更。"},
     {"Switch", "切換"},
     {"Co-op: waiting for the host's list of mods.", "連線：正在等待房主的模組清單。"},

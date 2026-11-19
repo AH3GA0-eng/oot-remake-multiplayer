@@ -438,6 +438,7 @@ class Player:
         self.commands = commands      # the game's LICHII_COOP_TEST_COMMANDS file, or None: module steps skipped
         self.take_for = take_for      # seconds the module has to take them (it checks 4 times a second)
         self.sent = 0
+        self.send_lock = threading.Lock()   # the commands file: the script's batches and a warp's hand-over
         self.log = log
         self.shot = shot              # shot(name): shots at a mark
         self.connect = connect        # a second connection (the warp's own), or None: warps share this one
@@ -532,60 +533,93 @@ class Player:
 
     def steer(self, s, t0):
         """goto (until within s.radius or s.ticks) or toward (for s.ticks). The stick is camera-relative: the camera
-        model (an angle) is learnt from how Link moves for a push; a push that gets nowhere for a second steps aside."""
+        model (an angle) is learnt from how Link moves for a push; a goto that gets nowhere for a second steps aside
+        (a toward never does: it pushes straight on, into a block, a grave or a crawl hole)."""
         end = t0 + s.ticks / TICKS
         if self.link_pos() is None and self.mem_ok is False:
             self.log("coop: test %s skipped (no position on hookshot without guest memory)" % s.kind)
             return t0
+        # The step's keys (toward X Z TICKS A: a grab) are held for the whole step on a connection of their own:
+        # the stick below is let go and sent again every steer_every, and a release lets go of every input of
+        # its connection (Longshot docs/control.md "release": another client's inputs stay). With the keys on
+        # the stick's connection the grab was dropped and pressed again 4 times a second, so a pull never
+        # happened (deku-block-147-probe, #147: B's Link let go and walked 3 m back from the block).
+        keys = self.connect() if s.buttons and self.connect else None
+        stick_keys = None if keys else s.buttons
+        if keys:
+            keys.request("press", buttons=s.buttons, frames=max(1, min(216000, int(s.ticks * 4) + 60)), wait=False)
         last_pos, last_push, stuck_since, detour_until, detour = None, None, None, 0.0, 1
         held = False
-        while True:
-            now = self.clock()
-            if now >= end:
-                if s.kind == "goto":
-                    self.log("coop: test goto timed out")
-                break
-            pos = self.link_pos()
-            if pos is None:
-                self._until(now + self.steer_every)
-                continue
-            dx, dz = s.x - pos[0], s.z - pos[2]
-            dist = math.hypot(dx, dz)
-            if s.kind == "goto" and dist <= s.radius:
-                self.log("coop: test goto reached %.1f %.1f" % (pos[0], pos[2]))
-                break
-            if last_pos is not None and last_push is not None:
-                mx, mz = pos[0] - last_pos[0], pos[2] - last_pos[2]
-                moved = math.hypot(mx, mz)
-                if moved > 0.05:
-                    # world (x, -z) is the stick's frame turned by self.angle (stick up = away from the camera)
-                    seen = _wrap(math.atan2(-mz, mx) - math.atan2(last_push[1], last_push[0]))
-                    self.angle = seen if not self.learned else _wrap(self.angle + 0.5 * _wrap(seen - self.angle))
-                    self.learned = True
-                    stuck_since = None
-                elif stuck_since is None:
-                    stuck_since = now
-                elif now - stuck_since >= 1.0 and now >= detour_until:
-                    detour_until, detour, stuck_since = now + 0.5, -detour, None
-            want = math.atan2(-dz, dx) - self.angle
-            if now < detour_until:
-                want += detour * math.pi / 2
-            mag = 1.0 if s.kind == "toward" else max(0.45, min(1.0, dist / 3.0))
-            push = (round(math.cos(want) * mag, 3), round(math.sin(want) * mag, 3))
+        try:
+            while True:
+                now = self.clock()
+                if now >= end:
+                    if s.kind == "goto":
+                        self.log("coop: test goto timed out")
+                    break
+                pos = self.link_pos()
+                if pos is None:
+                    self._until(now + self.steer_every)
+                    continue
+                dx, dz = s.x - pos[0], s.z - pos[2]
+                dist = math.hypot(dx, dz)
+                if s.kind == "goto" and dist <= s.radius:
+                    self.log("coop: test goto reached %.1f %.1f" % (pos[0], pos[2]))
+                    break
+                if last_pos is not None and last_push is not None:
+                    mx, mz = pos[0] - last_pos[0], pos[2] - last_pos[2]
+                    moved = math.hypot(mx, mz)
+                    if moved > 0.05:
+                        # world (x, -z) is the stick's frame turned by self.angle (stick up = away from the camera)
+                        seen = _wrap(math.atan2(-mz, mx) - math.atan2(last_push[1], last_push[0]))
+                        self.angle = seen if not self.learned else _wrap(self.angle + 0.5 * _wrap(seen - self.angle))
+                        self.learned = True
+                        stuck_since = None
+                    elif stuck_since is None:
+                        stuck_since = now
+                    elif s.kind == "goto" and now - stuck_since >= 1.0 and now >= detour_until:
+                        # Only goto walks round what stops it. A toward that stops is pushing (a block, a grave,
+                        # into a crawl hole): the game needs the stick held straight on, and a step aside slid
+                        # Link off the Deku block's face (big-run-0115 deku-block, #147: the block never moved).
+                        detour_until, detour, stuck_since = now + 0.5, -detour, None
+                want = math.atan2(-dz, dx) - self.angle
+                if now < detour_until:
+                    want += detour * math.pi / 2
+                mag = 1.0 if s.kind == "toward" else max(0.45, min(1.0, dist / 3.0))
+                push = (round(math.cos(want) * mag, 3), round(math.sin(want) * mag, 3))
+                if held:
+                    self._release()
+                self._hold(stick_keys, push, None, self.steer_every * TICKS * 2)
+                held = True
+                last_pos, last_push = pos, push
+                self._until(min(end, now + self.steer_every))
+        finally:
             if held:
                 self._release()
-            self._hold(s.buttons, push, None, self.steer_every * TICKS * 2)
-            held = True
-            last_pos, last_push = pos, push
-            self._until(min(end, now + self.steer_every))
-        if held:
-            self._release()
+            if keys:
+                keys.request("release")
+                keys.close()
         return self.clock()
 
-    # warps: the bridge's teleport, asked again until the game takes it (it refuses during a load or an event)
+    # warps: the bridge's teleport, asked again until the game takes it (it refuses during a load or an event).
+    # The bridge knows only its own list of maps (Longshot host/hos_main.c: the fields, villages and dungeon
+    # entrances), each at the map's own start. A map it does not know (not_found: the boss rush's <Boss>Stage
+    # scenes in Banc/DreamWorld, big-run-0114-3 and big-run-0115: all ten native bosses never got there) goes to
+    # the module's own warp instead (lichii/hook/coop_testinput.cpp Warp: the scene and the start written into
+    # the game's next-scene request, asked again every 0.5 s for 90 s until Link is there; it logs "coop: test
+    # warp done after N s" itself). The script's line goes as written, so its start is used there.
     def warp(self, s):
-        if s.start:
-            self.log("coop: test warp %s: start %s not used on hookshot (the map's own)" % (s.name, s.start))
+        said_start = [False]
+
+        def by_module(why):
+            if not self.commands:
+                self.log("coop: test warp %s gave up: the bridge has no such map (%s) and there is no module "
+                         "commands file for the module's own warp" % (s.name, why))
+                return
+            taken = self._send([s.text])
+            self.log("coop: test warp %s: not one of the bridge's maps (%s): %s the module's own warp (scene %s, "
+                     "start %s; its log says 'test warp done')" % (s.name, why, "asked through" if taken else
+                                                                   "NOT taken by", s.name, s.start or "-"))
 
         def ask():
             b = self.connect() if self.connect else self.b
@@ -600,10 +634,17 @@ class Player:
                         if e.code == "bad_request":
                             self.log("coop: test warp %s failed: %s" % (s.name, e))
                             return
+                        if e.code == "not_found":   # (not a map of the bridge's list: never will be)
+                            by_module(e.code)
+                            return
                         self.sleep(0.5)
                         continue
                     if r.get("sent"):
                         to = r.get("map") or s.name
+                        if s.start and not said_start[0]:
+                            said_start[0] = True
+                            self.log("coop: test warp %s: start %s not used on hookshot (the map's own)"
+                                     % (s.name, s.start))
                         self.log("coop: test warp %s: sent (map %s%s)" % (
                             s.name, to, ", not accepted" if r.get("accepted") is False else ""))
                         # "sent" is not "moved": a teleport asked while the arrival event of the save's load still
@@ -660,6 +701,10 @@ class Player:
 
     def _send(self, lines):
         """Writes lines to the module's commands file; True once the module took them (emptied the file)."""
+        with self.send_lock:   # (a warp's thread hands its line over too)
+            return self._send_locked(lines)
+
+    def _send_locked(self, lines):
         deadline = self.clock() + self.take_for
         while self._waiting() and self.clock() < deadline:   # the last batch not taken yet
             self.sleep(0.05)
@@ -1134,16 +1179,39 @@ def run(a):
         for x in tags:
             # Hookshot writes longshot_log.txt only when its stderr goes nowhere; here stderr is game-out-<x>.txt, so
             # that is the log (an old longshot_log.txt in the folder is from another run). The game's file otherwise.
-            go = os.path.join(out, "game-out-%s.txt" % x)
-            lp = go if os.path.isfile(go) and os.path.getsize(go) > 0 else find_log(games[x])
-            if lp:
-                shutil.copy2(lp, os.path.join(out, "hookshot_log-%s.txt" % x))
+            copy_log(out, x, games[x], say)
     if failed:
         with open(os.path.join(out, "FAILED.txt"), "w", encoding="utf-8") as f:
             f.write(failed + "\n")
         return 1
     return 0
 
+
+
+def copy_log(out, x, game, say, tries=5, sleep=time.sleep):
+    """hookshot_log-<x>.txt from game-out-<x>.txt (or the game's own log). A copy that fails (a file still held for a
+    moment after the game closed) is tried again, then said in steps.txt: it never ends the run. Before, it raised
+    out of run()'s finally, after "scenario played": testkit-0116-3's smoke had hs-players and hs-puppets "run.ps1
+    exit 1" with no hookshot_log-B.txt, every expect= line in the game-out logs and no FAILED.txt."""
+    go = os.path.join(out, "game-out-%s.txt" % x)
+    last = None
+    for i in range(tries):
+        try:
+            lp = go if os.path.isfile(go) and os.path.getsize(go) > 0 else find_log(game)
+            if not lp:
+                return False
+            shutil.copy2(lp, os.path.join(out, "hookshot_log-%s.txt" % x))
+            return True
+        except OSError as e:
+            last = e
+            if i + 1 < tries:
+                sleep(1.0)
+    try:
+        say("%s: game log not copied to hookshot_log-%s.txt after %d tries (%s: %s); grade from game-out-%s.txt"
+            % (x, x, tries, last.__class__.__name__, last, x))
+    except Exception:
+        pass
+    return False
 
 
 def test_delay_args(delay_ms, jitter_ms):
