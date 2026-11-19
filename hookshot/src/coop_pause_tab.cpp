@@ -379,18 +379,18 @@ std::string Page::TakeWhy() {
 
 // --- the rows ---
 
+int RowOfButton(const std::string& name) {
+    if (name.size() != 12 || name.compare(0, 11, "Pa_Button_0") != 0) return -1;
+    const int row = name[11] - '0';
+    return row >= 0 && row < kRows ? row : -1;
+}
+
 float Ahead(float prev, float now, float limit) {
     const float step = now - prev, next = now + step;
     if ((step > 0 && now <= limit && next > limit) || (step < 0 && now >= limit && next < limit)) {
         return limit;
     }
     return next;
-}
-
-int RowOfButton(const std::string& name) {
-    if (name.size() != 12 || name.compare(0, 11, "Pa_Button_0") != 0) return -1;
-    const int row = name[11] - '0';
-    return row >= 0 && row < kRows ? row : -1;
 }
 
 RowAction ActionFor(int row, const Session& s) {
