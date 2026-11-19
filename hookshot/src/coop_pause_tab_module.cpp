@@ -1188,6 +1188,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                 } else {
                     row = clicked >= 0 ? clicked : FocusedRow();   // (under the lock: the pages screen is the updates')
                     if (clicked == MouseRows::kOffRows) decide = false;   // (a click off our rows: no row's A)
+                    if (clicked >= 0 && cell >= 0) g_cell = -1, g_live_poke = true;   // (a row clicked: the rows' pad)
                 }
             }
             if (g_page.TakeBack()) {
