@@ -265,7 +265,7 @@ TEST_CASE("quest: SageOfWater's and SageOfSpirit's Enums and steps are the game'
     for (std::size_t i = 0; i < s.steps.size(); ++i) CHECK_MESSAGE(s.steps[i] == Hash(spirit[i]), spirit[i]);
     CHECK(s.steps[s.floor] == Hash("Step07"));
     CHECK(s.steps[s.live_floor] == Hash("Step08_01"));
-    REQUIRE(s.rules.size() == 1);
+    REQUIRE(s.rules.size() == 2);  // the Iron Knuckle, and the carpenters (row 150)
     CHECK(s.rules[0].flag == Hash("Enemy_MiddleBoss_IronKnuckle_Nabooru_BossDefeat"));
     CHECK(s.rules[0].step == Hash("Step08_01"));
 }
@@ -611,7 +611,8 @@ TEST_CASE("quest: Get_StoneOfFire, DoorOfTime and the mid-boss quests go to the 
     }
     for (const auto& q : CoopQuest::Quests()) {
         const auto w = CoopQuest::LiveWant(q, g.value);
-        const bool live = q.hash == f.hash || q.hash == d.hash || q.hash == water.hash || q.hash == spirit.hash;
+        const bool live = q.hash == f.hash || q.hash == d.hash || q.hash == water.hash || q.hash == spirit.hash ||
+                          q.hash == Q("Get_Epona").hash;  // row 150
         CHECK_MESSAGE(w.has_value() == live, q.name);
         if (w) {
             CHECK(w->challenge == Hash(q.name));
@@ -725,4 +726,76 @@ TEST_CASE("quest: LiveDescribe says what the manager read gave (issue 58 log)") 
         return none.Read(a, out, n);
     };
     CHECK(CoopQuest::LiveDescribe(nothing, kMain, Hash("Get_StoneOfFire")) == "manager pointer unread");
+}
+
+TEST_CASE("quest: row 150: Epona's Song learnt in another game moves our Get_Epona to AfterGetEponaSong") {
+    const auto& e = Q("Get_Epona");
+    CHECK(e.hash == Hash("Step_Get_Epona"));
+    CHECK(e.live == Hash("Get_Epona"));
+    const char* steps[] = {"NotReady",          "Ready",          "GuideToLonLonRanch", "GuideToLonLonRanchAdult",
+                           "ReadyForGetEponaSong", "AfterGetEponaSong", "ReadyForGambleRace", "AfterTalkMalon",
+                           "GambleRacePlaying",  "AfterWonGambleRace", "Complete"};
+    REQUIRE(e.steps.size() == std::size(steps));
+    for (std::size_t i = 0; i < e.steps.size(); ++i) CHECK(e.steps[i] == Hash(steps[i]));
+    CHECK(e.steps[e.live_floor] == Hash("AfterGetEponaSong"));
+    // The player report (ChestWP, row 150): the song's scene played in the friend's game is shared, our child
+    // Malon skips the lesson, and our quest stays before the song: adult Malon and Ingo never offer the race.
+    for (const char* behind : {"Ready", "GuideToLonLonRanch", "GuideToLonLonRanchAdult", "ReadyForGetEponaSong"}) {
+        Game b;
+        b.enums[e.hash] = Hash(behind);
+        b.Frame();
+        CHECK_MESSAGE(b.enums[e.hash] == Hash(behind), behind);  // no proof yet: left alone
+        b.Played("Dm_MelodyGet_Epona");
+        b.Frame();
+        CHECK_MESSAGE(b.enums[e.hash] == Hash("AfterGetEponaSong"), behind);
+    }
+    // Never lowered, never from NotReady (a new save's opening), an unknown value left alone.
+    for (const char* ahead : {"AfterGetEponaSong", "ReadyForGambleRace", "AfterTalkMalon", "GambleRacePlaying",
+                              "AfterWonGambleRace", "Complete", "NotReady"}) {
+        Game b;
+        b.enums[e.hash] = Hash(ahead);
+        b.Played("Dm_MelodyGet_Epona");
+        b.Frame();
+        CHECK_MESSAGE(b.enums[e.hash] == Hash(ahead), ahead);
+    }
+    Game odd;
+    odd.enums[e.hash] = 0xdeadbeefu;
+    odd.Played("Dm_MelodyGet_Epona");
+    odd.Frame();
+    CHECK(odd.enums[e.hash] == 0xdeadbeefu);
+    // Its live step: the manager from AfterGetEponaSong on, never the race's held step.
+    CHECK(CoopQuest::HeldStep(Hash("Get_Epona"), Hash("GambleRacePlaying")));
+    Game live;
+    live.enums[e.hash] = Hash("ReadyForGetEponaSong");
+    CHECK_FALSE(CoopQuest::LiveWant(e, live.value).has_value());
+    live.enums[e.hash] = Hash("AfterGetEponaSong");
+    REQUIRE(CoopQuest::LiveWant(e, live.value).has_value());
+    CHECK(CoopQuest::LiveWant(e, live.value)->step == Hash("AfterGetEponaSong"));
+}
+
+TEST_CASE("quest: row 150: the carpenters freed in another game move our SageOfSpirit to Step02, under its floor") {
+    const auto& s = Q("SageOfSpirit");
+    CHECK(s.steps[3] == Hash("Step02"));
+    for (const char* behind : {"Ready", "Step01"}) {
+        Game b;
+        b.enums[s.hash] = Hash(behind);
+        b.Frame();
+        CHECK_MESSAGE(b.enums[s.hash] == Hash(behind), behind);
+        b.Played("Meet_FourCarpenter_ClearEvent");
+        b.Frame();
+        CHECK_MESSAGE(b.enums[s.hash] == Hash("Step02"), behind);  // the Colossus arrival takes it to Step03
+    }
+    for (const char* ahead : {"NotReady", "Step02", "Step03", "Step05", "Step07", "Complete"}) {
+        Game b;
+        b.enums[s.hash] = Hash(ahead);
+        b.Played("Meet_FourCarpenter_ClearEvent");
+        b.Frame();
+        CHECK_MESSAGE(b.enums[s.hash] == Hash(ahead), ahead);
+    }
+    // The Iron Knuckle's rule keeps its own Step07 floor: from Step02 it does nothing.
+    Game knuckle;
+    knuckle.enums[s.hash] = Hash("Step02");
+    knuckle.bools[Hash("Enemy_MiddleBoss_IronKnuckle_Nabooru_BossDefeat")] = true;
+    knuckle.Frame();
+    CHECK(knuckle.enums[s.hash] == Hash("Step02"));
 }

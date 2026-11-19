@@ -105,6 +105,17 @@ class StoryRequestsTest(unittest.TestCase):
         self.assertIn("shop", sr.touches_own([("Npc_EventStarter", "EventTriggerGetItemAtShop", {})]))
         self.assertIn("chest", sr.touches_own([("EventSystemActor", "EventTransition",
                                                 {"EventName": "Dm_SY_Treasurebox"})]))
+        # Row 150: a step of a quest whose steps are each player's own (Get_Epona: Dm_LonLon_0040, Ingo beaten);
+        # a step of a quest co-op shares or catches up is not.
+        self.assertIn("Get_Epona to AfterWonGambleRace", sr.touches_own([(
+            "ChallengeSystemActor", "EventExecuteProgressChallengeStep",
+            {"ChallengeName": "Get_Epona", "StepName": "AfterWonGambleRace"})]))
+        self.assertIn("Get_Epona", sr.touches_own([(
+            "ChallengeSystemActor", "EventExecuteRollbackChallengeStep",
+            {"ChallengeName": "Get_Epona", "ChallengeStep": "Ready"})]))
+        self.assertEqual(sr.touches_own([(
+            "ChallengeSystemActor", "EventExecuteProgressChallengeStep",
+            {"ChallengeName": "Goto_HyruleCastle", "StepName": "Step04"})]), "")
         # Not own: a +1 of an item co-op shares, a tier, a get window, a shown item, the empty bottle every get
         # passes, rupee UI, hearts, a song subflow by name, a flag.
         self.assertEqual(sr.touches_own([

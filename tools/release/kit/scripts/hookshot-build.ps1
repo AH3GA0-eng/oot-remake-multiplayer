@@ -11,6 +11,13 @@
 #   Build-Hookshot-Coop.bat -Jobs <n>               at most n compilers at once
 #   Build-Hookshot-Coop.bat -CheckOnly              get the tools and check your game files; build nothing
 #   Build-Hookshot-Coop.bat -PackOnly               only make the puppet pack again (make-puppet-pack.cmd)
+#   Build-Hookshot-Coop.bat -Dlss                   with NVIDIA DLSS ("NVIDIA DLSS.bat"): asks you to accept NVIDIA's
+#                                                   license once, then every build of this kit fetches NVIDIA's DLSS
+#                                                   SDK and builds with it (hookshot\dlss.txt remembers the choice)
+#   Build-Hookshot-Coop.bat -NoDlss                 without DLSS again (the game is built again without it)
+#   Build-Hookshot-Coop.bat -DlssSdk <folder>       as -Dlss, starting from NVIDIA's SDK in that folder (one the Longshot
+#                                                   Builder or Launcher fetched is found by itself): only what differs is
+#                                                   downloaded
 #   (for tools\hookshot\hs.py) -Tools <folder> -Work <folder>: Hookshot's tools and source, and its work folder,
 #   somewhere else than this kit's hookshot\ (one of each per pin, shared by every kit: hs-build-speed)
 #
@@ -43,10 +50,17 @@ param(
     [ValidateRange(0, 256)][int]$Jobs = 0,
     [string]$Tools = '',
     [string]$Work = '',
+    [string]$DlssSdk = '',
     [string]$RomfsFrom = '',   # (tools/hookshot/hs.py: another game folder of the same .nup, its game files hard-linked)
     [switch]$Rebuild,
     [switch]$CheckOnly,
     [switch]$PackOnly,
+    [switch]$Dlss,
+    [switch]$NoDlss,
+    # (Update.bat, after an update or when the kit is already the newest: the game's co-op parts the kit pins (module,
+    # puppet pack, the randomizer OOTRR, stale seeds) put in now when only they are missing or stale; a game build is
+    # left to the next start, which asks first)
+    [switch]$Repair,
     # A Longshot game folder of the player's own (kit-friction): its saves and, through its builder, Longshot's downloads
     # (and compiled objects, same release only) are copied from it. 'none': do not ask. Asked once before a first build.
     [string]$Longshot = ''
@@ -60,6 +74,19 @@ $hs = Join-Path $kit 'hookshot'
 . (Join-Path $PSScriptRoot 'coop-ini.ps1')
 . (Join-Path $PSScriptRoot 'console-mode.ps1')   # (Read-KitPath: the questions for a path, pasted, dragged or typed)
 Set-KitTls   # (kit-mirror: Tls12 added to what Windows enables, and Tls13 where .NET has it; was Tls12 alone)
+if ($Repair) {
+    # Velvet (2026-11-19): Update.bat updated the kit, but the game's tools\ootrr stayed broken until a start the player
+    # never watched. Now Update.bat repairs the game's co-op parts itself (the module step below, seconds) while the game
+    # is closed; what needs a game build stays with the next start ("Start Squadala.bat"), which asks first.
+    $need = Get-KitHookshotNeed $kit
+    if ($need -eq 'offline') { Write-Host 'The game''s randomizer (OOTRR) is set up at the next start with internet.'; exit 0 }
+    if ($need -ne 'module') {
+        if ($need) { Write-Host "The game: $(Get-KitHookshotNeedText $need (Get-KitHookshotGame $kit) $true)" -ForegroundColor Yellow; Write-Host '  ("Start Squadala.bat" does it at the next start.)' }
+        else { Write-Host 'The game: its co-op parts and the randomizer (OOTRR) are the ones this version pins.' }
+        exit 0
+    }
+    Write-Host "The game: $(Get-KitHookshotNeedText $need)"
+}
 
 function Fail([string]$Text) { Write-Host ''; Write-Host "Longshot build: $Text" -ForegroundColor Red; exit 1 }
 # (kit-friction) Anything this script did not expect: the step it was at, in plain words, and for "access denied" or a
@@ -125,6 +152,31 @@ $toolsPin = Read-KeyFile (Join-Path $hs 'TOOLS.txt')
 foreach ($k in 'repo', 'commit') { if (-not $pin[$k]) { Fail "hookshot\PIN has no $k=." } }
 foreach ($k in 'release', 'lock_sha256', 'source_commit', 'source_sha256') { if (-not $toolsPin[$k]) { Fail "hookshot\TOOLS.txt has no $k=." } }
 if ($pin.commit -notmatch '^[0-9a-f]{40}$') { Fail "hookshot\PIN: commit=$($pin.commit) is not a full commit id." }
+
+# NVIDIA's DLSS SDK already on this PC (#229), for a kit that opted in to DLSS (-Dlss, hookshot\dlss.txt below): its
+# files are copied into the build's own SDK folder first, so make_game.py's --fetch-ngx-sdk, which checks every file's
+# SHA-256 against its pin, downloads only what differs (nothing, offline too, when it is the same SDK version).
+# -DlssSdk names one (and asks for DLSS); otherwise the folders a Longshot Builder or the Longshot Launcher fetches
+# into. Never a LONGSHOT_NGX_SDK set on the PC: the build clears that one (Invoke-MakeGame), as Longshot's Builder does.
+# Never DLSS without the opt-in: a PC with an SDK but no dlss.txt builds as before.
+function Find-NgxSdk([string]$Wanted) {
+    $lib = 'nvsdk_ngx_s.lib'
+    $tries = if ($Wanted) { @($Wanted) } elseif ($env:LOCALAPPDATA) {
+        @('LongshotBuilder', 'LongshotLauncher', 'HookshotBuilder') | ForEach-Object { Join-Path $env:LOCALAPPDATA "$_\ngx-sdk" }
+    } else { @() }
+    foreach ($t in $tries) {
+        if (-not $t -or -not (Test-Path -LiteralPath $t -PathType Container)) { continue }
+        if (Test-Path -LiteralPath (Join-Path $t "lib\$lib")) { return (Resolve-Path -LiteralPath $t).Path }
+    }
+    return ''
+}
+if ($DlssSdk) {
+    if (-not (Find-NgxSdk $DlssSdk)) {
+        Fail "No NVIDIA DLSS SDK at ${DlssSdk}: it needs lib\nvsdk_ngx_s.lib. Longshot Builder's NVIDIA DLSS tick or the Longshot Launcher fetches one."
+    }
+    if ($NoDlss) { Fail '-DlssSdk and -NoDlss together: choose one.' }
+    $Dlss = $true
+}
 # (Longshot lives on Team MagicBean's Forgejo; its release files and source archive come from there)
 if ($pin.repo -notmatch '^(https://git\.magicbean\.dev)/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(\.git)?$') { Fail "hookshot\PIN: repo=$($pin.repo) is not a git.magicbean.dev repository." }
 $repoUrl = "$($Matches[1])/$($Matches[2])"
@@ -227,15 +279,10 @@ function Invoke-PuppetPackStep([string]$exeDir) {
     if ($packFrom -and (Test-Path -LiteralPath $packFrom) -and (Test-Path -LiteralPath $packTool)) {
         Write-Host '  Making the puppet pack (how you see the other players; about a minute) ...'
         $ErrorActionPreference = 'Continue'
-        # No --title-rows / --pause-tab (0.11.5 hotfix): a pack made with them crashes the game at boot (0xc0000005 in
-        # sead::MainThread right after 'prompts: switch icons'); the title's Host/Join rows and the pause menu's
-        # Multiplayer tab come back in 0.11.6. The module keeps both off when their panes are missing. A pack an earlier
-        # 0.11.5 kit made with them goes first (build.py writes over its folder but never clears it). As the Linux kit.
-        $oldJson = Join-Path $mod 'coop_puppet.json'
-        if ((Test-Path -LiteralPath $oldJson) -and ([System.IO.File]::ReadAllText($oldJson) -match '"title_rows": true')) {
-            Remove-Item -LiteralPath $mod -Recurse -Force
-        }
-        & $python -I -B $packTool --romfs $packFrom --mod-dir $mod 2>&1 | ForEach-Object { Write-Host "    $_" }
+        # The kit's pack command (kit-paths.ps1 Get-KitPackArgs: with the title's rows and the pause menu's tab), the
+        # same one the test kits run. As the Linux kit's build.sh.
+        $packArgs = Get-KitPackArgs $packTool $packFrom $mod
+        & $python @packArgs 2>&1 | ForEach-Object { Write-Host "    $_" }
         $code = $LASTEXITCODE
         $made = $true
         $ErrorActionPreference = 'Stop'
@@ -407,6 +454,27 @@ function Find-HookshotExe([string]$Folder) {
     }
     return $null
 }
+# NVIDIA DLSS (#234): Longshot has it only in a game built with NVIDIA's DLSS SDK, which nobody may pass on: each
+# build downloads it for itself, once NVIDIA's license is accepted. -Dlss asks once and hookshot\dlss.txt keeps the
+# answer, so the builds after an update keep DLSS; -NoDlss takes it back. Not in coop-built-from.txt: that stamp is
+# the release, pin and patches the other kits, the game cache and Get-KitHookshotNeed compare.
+# A game with DLSS has its runtime in <game>\ngx (make_game.py's place_ngx_runtime; gone again without the SDK):
+# Test-KitHookshotDlss. Decided here, before the copies below, so they take only a game with DLSS as chosen.
+$dlssNote = Join-Path $hs 'dlss.txt'
+if ($NoDlss) {
+    Remove-Item -LiteralPath $dlssNote -Force -ErrorAction SilentlyContinue
+} elseif ($Dlss -and -not (Test-Path -LiteralPath $dlssNote)) {
+    Write-Host ''
+    Write-Host 'NVIDIA DLSS (NVIDIA RTX graphics cards): the build downloads NVIDIA''s DLSS SDK, under NVIDIA''s own license:' -ForegroundColor Yellow
+    Write-Host "  $(Get-KitNgxLicenseUrl $tools) (the build prints NVIDIA's notice too)."
+    Write-Host '  The game folder then holds NVIDIA''s files: never share it, and never post builds made with them.'
+    $answer = "$(Read-Host '  Accept NVIDIA''s license and build with DLSS? (y/n)')".Trim()
+    if ($answer -notmatch '^(?i)(y|yes|j|ja)$') { Fail 'NVIDIA''s license not accepted: nothing changed (the game stays as it is, without DLSS).' }
+    [System.IO.File]::WriteAllText($dlssNote, "nvidia-license=accepted`n")
+}
+$wantDlss = -not $NoDlss -and (Test-Path -LiteralPath $dlssNote)
+$ngxSdk = Join-Path $work 'ngx-sdk'
+
 # A second kit on this PC (unzipped twice, or a Windows copy of a kit): another kit's game made from the same
 # release, pin and patches is copied into this kit's own hookshot\game (a minute or two) instead of built again
 # (10 to 45 minutes). A copy, never the other kit's folder itself: two kits never start one game. Its coop.ini,
@@ -421,7 +489,7 @@ if (-not $Rebuild -and -not $CheckOnly -and $Out -ieq $defaultOut -and -not (Fin
     }
     $list = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'OoT-Coop\kits.txt' } else { '' }
     if ($list -and (Test-Path -LiteralPath $list)) { $others += @(Get-Content -LiteralPath $list | Where-Object { $_ }) }
-    $from = Find-KitHookshotGameToCopy $kit $stamp $others
+    $from = Find-KitHookshotGameToCopy $kit $stamp $others -Dlss $wantDlss
     if ($from) {
         Step "The game: copying the one another kit on this PC built ($from), instead of building it again"
         Write-Host '  The copy starts with that kit''s saves (as they are now); from then on each kit has its own.'
@@ -446,7 +514,7 @@ $oldStamp = Join-Path $Out 'coop-built-from.txt'
 if (-not $Rebuild -and -not $CheckOnly -and (Find-HookshotExe $Out) -and (Test-Path -LiteralPath $oldStamp)) {
     $base = { param($s) (@("$s" -replace "`r", '' -split "`n") | Where-Object { $_ -match '^(release|commit)=' }) -join "`n" }
     if ((& $base ([System.IO.File]::ReadAllText($oldStamp))) -ne (& $base $stamp)) {
-        $from = Find-KitHookshotCachedGame $stamp
+        $from = Find-KitHookshotCachedGame $stamp -Dlss $wantDlss
         # (the same layout only: longshot.exe at the top, or in bin\ in both)
         $flat = { param($g) (Split-Path -Parent (Find-HookshotExe $g)).TrimEnd('\') -ieq ([System.IO.Path]::GetFullPath($g)).TrimEnd('\') }
         if ($from -and (& $flat $from) -ne (& $flat $Out)) { $from = '' }
@@ -460,6 +528,8 @@ if (-not $Rebuild -and -not $CheckOnly -and (Find-HookshotExe $Out) -and (Test-P
             if ($LASTEXITCODE -ge 8 -or -not (Find-HookshotExe $Out)) {
                 Write-Host "  Copying failed (robocopy $LASTEXITCODE): the game is built again instead." -ForegroundColor Yellow
             } else {
+                # (a copy without DLSS over a game that had it: NVIDIA's runtimes go too, as make_game.py's place_ngx_runtime does)
+                if (-not $wantDlss) { Remove-Item -LiteralPath (Join-Path $Out 'ngx') -Recurse -Force -ErrorAction SilentlyContinue }
                 Copy-Item -LiteralPath (Join-Path $from 'coop-built-from.txt') -Destination $oldStamp -Force
                 Write-Host "  Copied into $Out; your saves and settings there are as they were."
             }
@@ -476,6 +546,15 @@ $gameRejected = Join-Path $hs 'game-rejected.txt'
 function Save-KitGameRejected([string]$What, [string]$Why) {
     try { [System.IO.File]::WriteAllText($gameRejected, "$What`r`nWhy: $Why`r`n") } catch { }
 }
+
+# (the DLSS choice was made above, before the copies: here a game that does not have it as chosen is built again)
+$gameDlss = Test-KitHookshotDlss $Out
+if ($gameReady -and ($wantDlss -ne $gameDlss) -and ($wantDlss -or $NoDlss)) {
+    Write-Host $(if ($wantDlss) { 'NVIDIA DLSS: the game has no DLSS yet, so it is built again with it (much shorter than the first build).' }
+        else { 'NVIDIA DLSS off: the game is built again without it.' })
+    $gameReady = $false
+}
+
 if (-not $Game -and (-not $gameReady -or $Rebuild -or $CheckOnly)) {
     # As make-puppet-pack.cmd: the .nup in a folder of the emulator's game list.
     $check = Join-Path $kit 'tools\puppet_pack\dumpcheck.py'
@@ -573,8 +652,12 @@ function Invoke-MakeGame([string[]]$MoreArgs, [string]$Log = '') {
     $env:LONGSHOT_MINGW = Join-Path $tools 'llvm-mingw'
     foreach ($v in 'LONGSHOT_NGX_SDK', 'LONGSHOT_FFX_SDK', 'LONGSHOT_MSVC', 'EMSDK', 'LONGSHOT_BUILDER_EXE', 'LONGSHOT_TOOLS',
              'LONGSHOT_ROMFS_FROM') {   # (a launcher's: game files hard-linked from another folder, Longshot rc.6 #360)
+    # (LONGSHOT_NGX_SDK too: Longshot Builder's Runner.cs removes it as well, a folder set on the PC is not one the
+    # player asked for. Without the opt-in the back end is built with vk_dlss.cpp's stubs, as before DLSS.)
         Remove-Item "Env:\$v" -ErrorAction SilentlyContinue
     }
+    # (NVIDIA DLSS: make_game.py fetches NVIDIA's SDK into this folder (--fetch-ngx-sdk) and builds the renderer with it)
+    if ($wantDlss) { $env:LONGSHOT_NGX_SDK = $ngxSdk }
     # (a shared work folder keeps all its build files, the translated C too: the next build of this pin
     # skips the translation unless a lift file changed. A kit's own folder keeps Longshot's default.)
     if ($sharedWork) { $env:LONGSHOT_KEEP_BUILD_FILES = '1' }
@@ -634,6 +717,18 @@ if ($gameReady -and -not $Rebuild -and -not $CheckOnly) {
     $buildLog = Join-Path $hs 'build.log'
     $buildArgs = $gameArgs + @('--out', $Out, '--work', $work, '--language', $Language)
     if ($Jobs) { $buildArgs += @('--jobs', "$Jobs") }
+    # (only what is missing is downloaded; the license was accepted above, hookshot\dlss.txt)
+    if ($wantDlss) { $buildArgs += @('--fetch-ngx-sdk', '--accept-nvidia-license') }
+    # (#229: an SDK the Longshot Builder or Launcher already fetched on this PC, or -DlssSdk, seeds the build's own SDK
+    # folder; the fetch then keeps each file whose SHA-256 is the pinned one and downloads only the rest. Copied, never
+    # used in place: the fetch would otherwise write into the Builder's folder)
+    $ngxFrom = if ($wantDlss) { Find-NgxSdk $DlssSdk } else { '' }
+    if ($ngxFrom -and ([System.IO.Path]::GetFullPath($ngxFrom).TrimEnd('\') -ine [System.IO.Path]::GetFullPath($ngxSdk).TrimEnd('\'))) {
+        Write-Host "  NVIDIA DLSS: starting from the SDK already on this PC ($ngxFrom); only files that differ are downloaded."
+        & robocopy $ngxFrom $ngxSdk /E /R:1 /W:1 /NFL /NDL /NJH /NJS /NP /XF *.part | Out-Null
+        if ($LASTEXITCODE -ge 8) { Write-Host "  (not copied, robocopy $($LASTEXITCODE): the build downloads it)" }
+        $global:LASTEXITCODE = 0
+    }
     # (-RomfsFrom: another game folder unpacked from the same .nup. Longshot's --romfs-from (since rc.6, #360) hard-links its
     # game files instead of writing the .nup's ~26 GB again; Longshot itself checks the folder's .nup stamp and the drive,
     # and reads the .nup when it can't. Only with a .nup, and only a Longshot that has the option)
@@ -660,7 +755,11 @@ if ($gameReady -and -not $Rebuild -and -not $CheckOnly) {
         }
     }
     $code = Invoke-MakeGame $buildArgs $buildLog
-    if ($code -ne 0) { Fail "The build stopped (exit $code). Its log: $buildLog" }
+    if ($code -ne 0) {
+        # (make_game.py's own words for a failed SDK download are the Builder's, "untick NVIDIA DLSS": the kit's way is -NoDlss)
+        $noDlssHint = if ($wantDlss) { ' This build was with NVIDIA DLSS: if NVIDIA''s SDK could not be downloaded (offline?), "NVIDIA DLSS.bat" -NoDlss builds the game without it.' } else { '' }
+        Fail "The build stopped (exit $code). Its log: $buildLog$noDlssHint"
+    }
     $exe = Find-HookshotExe $Out
     if (-not $exe) { Fail "The build finished but there is no longshot.exe in $Out. Its log: $buildLog" }
     [System.IO.File]::WriteAllText($gameStamp, $stamp)
@@ -708,51 +807,13 @@ if (-not (Test-Path -LiteralPath $options)) {
     if (Test-Path -LiteralPath $kitOptions) { Copy-Item -LiteralPath $kitOptions -Destination $options }
 }
 
-# The randomizer, OOTRR (hookshot\OOTRR.txt: its release and SHA-256), into <exe dir>\tools\ootrr where the co-op
-# module finds it with no setting; it reads the game's own files beside it (<exe dir>\romfs) and never changes them.
-# A failed download only warns: co-op plays without it, and the next run of this script tries again.
-$ootrrPin = Join-Path $hs 'OOTRR.txt'
-if (Test-Path -LiteralPath $ootrrPin) {
-    $op = Read-KeyFile $ootrrPin
-    $ootrrDir = Join-Path $exeDir 'tools\ootrr'
-    $ootrrStamp = Join-Path $ootrrDir 'coop-ootrr.txt'
-    $ootrrWant = "$($op.release) $($op.windows_sha256)"
-    $ootrrHave = if (Test-Path -LiteralPath $ootrrStamp) { (Get-Content -LiteralPath $ootrrStamp -TotalCount 1).Trim() } else { '' }
-    if ($ootrrHave -eq $ootrrWant -and (Test-Path -LiteralPath (Join-Path $ootrrDir 'ootrr.exe'))) {
-        Write-Host "  randomizer: OOTRR $($op.release) -> $ootrrDir (there already)"
-    } elseif (-not ($op.url -and $op.windows -match '^[A-Za-z0-9._-]+$' -and $op.windows_sha256 -match '^[0-9a-f]{64}$')) {
-        Write-Host '  hookshot\OOTRR.txt is incomplete: the randomizer is left out.' -ForegroundColor Yellow
-    } else {
-        New-Item -ItemType Directory -Force -Path $downloads | Out-Null
-        $ootrrZip = Join-Path $downloads $op.windows
-        $why = ''
-        if (-not ((Test-Path -LiteralPath $ootrrZip) -and (Get-Sha256 $ootrrZip) -eq $op.windows_sha256)) {
-            if (($env:OOT_COOP_OFFLINE -eq '1' -or $op.url -match '^https?://') -and (Test-KitOffline)) {
-                # (no internet: no download try, which would only wait for its timeout)
-                $why = 'this PC has no internet now'
-            } else {
-                # (kit-mirror: retries and curl.exe too; optional, so two tries, not four)
-                $why = Get-KitDownload @("$($op.url)/$($op.windows)") $ootrrZip $op.windows_sha256 @() 2
-                if ($why) { $why = "the download failed ($why)" }
-            }
-        }
-        if (-not $why) {
-            if (Test-Path -LiteralPath $ootrrDir) { Remove-Item -LiteralPath $ootrrDir -Recurse -Force }
-            New-Item -ItemType Directory -Force -Path $ootrrDir | Out-Null
-            # (the zip holds one folder, OOTRR-<version>-windows-x64\: ootrr.exe, LICENSE, NOTICE, README.md)
-            & "$env:SystemRoot\System32\tar.exe" -x -f $ootrrZip -C $ootrrDir --strip-components=1
-            if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $ootrrDir 'ootrr.exe'))) { $why = "unpacking $($op.windows) failed" }
-            else { [System.IO.File]::WriteAllText($ootrrStamp, "$ootrrWant`n") }
-        }
-        if ($why) { Write-Host "  The randomizer (OOTRR $($op.release)) was not set up: $why. Co-op works without it; run Build-Hookshot-Coop.bat again to retry." -ForegroundColor Yellow }
-        else {
-            Write-Host "  randomizer: OOTRR $($op.release) -> $ootrrDir"
-            # (another release than the one before: its seeds are other worlds, Remove-KitRandoSeeds)
-            if ($ootrrHave -and ($ootrrHave -split ' ')[0] -ne $op.release) {
-                foreach ($l in @(Remove-KitRandoSeeds $exeDir $op.release)) { Write-Host "  $l" }
-            }
-        }
-    }
+# (kit-paths.ps1 Install-KitOotrr: downloaded, unpacked beside the old one, tried, then swapped; a failure keeps what was
+# there and says why in the game too, tools\ootrr-setup.txt. The old way deleted tools\ootrr first: player report 2026-11-19)
+$ootrr = Install-KitOotrr $kit $exeDir $downloads
+foreach ($l in $ootrr.Lines) { Write-Host "  $l" -ForegroundColor $(if ($ootrr.Ok -or $ootrr.Why -eq 'offline') { 'Gray' } else { 'Yellow' }) }
+# (another release than the one before: its seeds are other worlds, Remove-KitRandoSeeds)
+if ($ootrr.Ok -and $ootrr.Had -and $ootrr.Had -ne $ootrr.Release) {
+    foreach ($l in @(Remove-KitRandoSeeds $exeDir $ootrr.Release)) { Write-Host "  $l" }
 }
 
 # The puppet pack (Invoke-PuppetPackStep above), from the same game files.

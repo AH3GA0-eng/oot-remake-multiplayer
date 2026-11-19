@@ -604,3 +604,60 @@ TEST_CASE("boss beaten: solo, co-op idle and the host's own load write nothing")
         CHECK(a.Check(deku, true, {}, std::ref(f), kAway).empty());
     }
 }
+
+TEST_CASE("boss beaten: in the boss's area, given once no death of ours can run there (row 136)") {
+    // A game that came into the area after the death (walked in during the others' cutscene, fell into the room
+    // later, joined there, Game Over / a load into the room) or whose ask was refused (the death flow alone): D9
+    // runs nothing more, so the room's logic gets the flags its warp and container read, as the death setting
+    // writes them in that room.
+    for (std::uint8_t room = 0; room < 8; ++room) {
+        CAPTURE(room);
+        const BeatenSet* s = CoopBossBeaten::ForRoom(room);
+        REQUIRE(s != nullptr);
+        const std::string scene(CoopBoss::RoomByIndex(room)->scene);
+        Flags f = Alive(*s);
+        const std::vector<std::uint8_t> beaten{room};
+        bool runs = true;
+        const std::function<bool(std::uint8_t)> death = [&](std::uint8_t r) { return r == room && runs; };
+        Apply a;
+        CHECK(a.Check(scene, true, beaten, std::ref(f), kNear, death).empty());  // our death may run: D9
+        runs = false;
+        const std::vector<Write> w = a.Check(scene, true, beaten, std::ref(f), kNear, death);
+        CHECK(w.size() == s->bools.size() + 1);
+        CHECK(std::all_of(w.begin(), w.end(), [&](const Write& x) { return x.room == room && !x.revert; }));
+        CHECK(a.Check(scene, true, beaten, std::ref(f), kNear, death).empty());  // once per scene load
+        // Our own death ran there (its setting wrote the set): nothing left to give.
+        Flags played = f;
+        for (const auto& b : s->bools) {
+            played.v[b.hash] = b.value ? 1 : 0;
+        }
+        played.v[s->quest] = s->step;
+        Apply c;
+        CHECK(c.Check(scene, true, beaten, std::ref(played), kNear, death).empty());
+    }
+}
+
+TEST_CASE("boss beaten: with no death_here the area still waits, a reset's put-back still waits in the area") {
+    const BeatenSet& s = Gohma();
+    const std::string deku(CoopBoss::RoomByIndex(0)->scene);
+    const std::function<bool(std::uint8_t)> none = [](std::uint8_t) { return false; };
+    Flags f = Alive(s);
+    Apply a;
+    CHECK(a.Check(deku, true, std::vector<std::uint8_t>{0}, std::ref(f), kNear).empty());
+    // Row 138 (4): the host's older save takes the warp away; never under our feet in the boss's area.
+    Flags beatenFlags = BeatenThenReset(s, s.below.back());
+    Apply r;
+    r.HostReset(true);
+    CHECK(r.Check(deku, true, {}, std::ref(beatenFlags), kNear, none).empty());
+    CHECK_FALSE(r.Check(deku, true, {}, std::ref(beatenFlags), kAway, none).empty());
+}
+
+TEST_CASE("boss beaten: solo and co-op idle stay unchanged in the boss's room (row 136)") {
+    const BeatenSet& s = Gohma();
+    const std::string deku(CoopBoss::RoomByIndex(0)->scene);
+    const std::function<bool(std::uint8_t)> none = [](std::uint8_t) { return false; };
+    Flags f = Alive(s);
+    Apply a;
+    CHECK(a.Check(deku, true, {}, std::ref(f), kNear, none).empty());  // empty record: nothing
+    CHECK(a.Check(deku, true, {}, std::ref(f), kAway, none).empty());
+}

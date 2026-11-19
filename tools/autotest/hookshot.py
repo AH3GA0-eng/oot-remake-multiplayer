@@ -61,7 +61,7 @@ STICK_KEYS = {  # full stick directions: (stick, x, y)
     "RSTICK_UP": ("R", 0, 1), "RSTICK_DOWN": ("R", 0, -1), "RSTICK_LEFT": ("R", -1, 0), "RSTICK_RIGHT": ("R", 1, 0),
 }
 WEAR_SLOTS = ("weapon", "shield", "head", "armor", "boots", "hand")
-MODULE_ONLY = ("chat", "give", "wear", "assign", "place", "kill", "hit", "stun", "hurt", "setflag", "setenum", "menu")
+MODULE_ONLY = ("chat", "give", "wear", "dress", "assign", "place", "kill", "hit", "stun", "hurt", "setflag", "setenum", "menu")
 
 
 class ScriptError(Exception):
@@ -214,10 +214,15 @@ def parse(text):
             s.kind, s.name = "warp", w[1]
             s.start = w[2] if len(w) == 3 else ""
         elif cmd == "PLACE":
-            if len(w) != 4 or any(_number(v) is None for v in w[1:]):
-                fail("want: place X Y Z")
-            s.kind = "place"
-            s.x, s.y, s.z = (_number(v) for v in w[1:])
+            # #196: "place PLATFORM UP": UP metres over the live place of that moving platform (the module's
+            # TestPlatformPlace), for a rider on a floor that waves.
+            if len(w) == 3 and _number(w[1]) is None and _number(w[2]) is not None:
+                s.kind, s.name, s.y = "place", w[1], _number(w[2])
+            elif len(w) != 4 or any(_number(v) is None for v in w[1:]):
+                fail("want: place X Y Z, or place PLATFORM UP")
+            else:
+                s.kind = "place"
+                s.x, s.y, s.z = (_number(v) for v in w[1:])
         elif cmd == "CHAT":
             if len(w) < 2:
                 fail("want: chat TEXT")
@@ -251,6 +256,10 @@ def parse(text):
             if len(w) != 3 or w[1].lower() not in WEAR_SLOTS:
                 fail("want: wear weapon|shield|head|armor|boots|hand NAME")
             s.kind, s.start, s.name = "wear", w[1], w[2]
+        elif cmd == "DRESS":
+            if len(w) != 2 or w[1].lower() not in WEAR_SLOTS + ("all",):
+                fail("want: dress weapon|shield|head|armor|boots|hand|all")
+            s.kind, s.name = "dress", w[1].lower()
         elif cmd == "ASSIGN":
             if len(w) != 2:
                 fail("want: assign ITEM")
@@ -1179,16 +1188,39 @@ def run(a):
         for x in tags:
             # Hookshot writes longshot_log.txt only when its stderr goes nowhere; here stderr is game-out-<x>.txt, so
             # that is the log (an old longshot_log.txt in the folder is from another run). The game's file otherwise.
-            go = os.path.join(out, "game-out-%s.txt" % x)
-            lp = go if os.path.isfile(go) and os.path.getsize(go) > 0 else find_log(games[x])
-            if lp:
-                shutil.copy2(lp, os.path.join(out, "hookshot_log-%s.txt" % x))
+            copy_log(out, x, games[x], say)
     if failed:
         with open(os.path.join(out, "FAILED.txt"), "w", encoding="utf-8") as f:
             f.write(failed + "\n")
         return 1
     return 0
 
+
+
+def copy_log(out, x, game, say, tries=5, sleep=time.sleep):
+    """hookshot_log-<x>.txt from game-out-<x>.txt (or the game's own log). A copy that fails (a file still held for a
+    moment after the game closed) is tried again, then said in steps.txt: it never ends the run. Before, it raised
+    out of run()'s finally, after "scenario played": testkit-0116-3's smoke had hs-players and hs-puppets "run.ps1
+    exit 1" with no hookshot_log-B.txt, every expect= line in the game-out logs and no FAILED.txt."""
+    go = os.path.join(out, "game-out-%s.txt" % x)
+    last = None
+    for i in range(tries):
+        try:
+            lp = go if os.path.isfile(go) and os.path.getsize(go) > 0 else find_log(game)
+            if not lp:
+                return False
+            shutil.copy2(lp, os.path.join(out, "hookshot_log-%s.txt" % x))
+            return True
+        except OSError as e:
+            last = e
+            if i + 1 < tries:
+                sleep(1.0)
+    try:
+        say("%s: game log not copied to hookshot_log-%s.txt after %d tries (%s: %s); grade from game-out-%s.txt"
+            % (x, x, tries, last.__class__.__name__, last, x))
+    except Exception:
+        pass
+    return False
 
 
 def test_delay_args(delay_ms, jitter_ms):

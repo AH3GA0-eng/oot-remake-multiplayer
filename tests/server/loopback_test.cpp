@@ -39,6 +39,7 @@ constexpr const char* kTestPassword = "test-pass";
 ServerOptions server_options() {
   ServerOptions options;
   options.port = 0;  // any free port
+  options.bind = 0x7F000001u;  // 127.0.0.1 only: a test listens on no other address
   options.session.join_password = kTestPassword;
   return options;
 }

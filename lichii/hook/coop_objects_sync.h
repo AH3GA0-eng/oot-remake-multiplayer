@@ -103,6 +103,9 @@ struct Seen {
     // Row 97 (coop_event_member.h): whether it is an event member in our Link's event
     // (InSameEvent, the game's own test); nullopt when it has no event member component.
     std::optional<bool> event_member;
+    // Row 138(8) (coop_sensor_claim.h): whether our Link is in its area by its own logic input (the game's own
+    // sensor of our Link: Jabu-Jabu's IsInOpenMouthArea ...); nullopt when it has none of them.
+    std::optional<bool> sensor_in_area;
 };
 
 // An animation a copy should play (the owner's AS slot 0 command). The
@@ -431,9 +434,28 @@ struct GroupPart {
 };
 // The rule for a part, or null when `name` is no part.
 const GroupPart* PartOf(std::string_view name);
-// A boss or mini-boss on its own (Enemy_DungeonBoss_*, Enemy_MiddleBoss_*,
-// and the roots of boss groups); never a picture book _Dictionary actor.
+// A real boss or mini-boss: its root actor (Enemy_DungeonBoss_*, Enemy_MiddleBoss_*, and the roots of boss
+// groups); never a picture book _Dictionary actor, and never one of a boss's parts (IsBossPart) unless it is
+// itself a group's root (Twinrova: Kotake's and Koume's root when no battle manager is loaded). Row 149: the
+// old name test took every Enemy_DungeonBoss_* name for a boss of its own, so King Dodongo's roll centre
+// (Enemy_DungeonBoss_Dodongo_Attention_RollingCenter, made anew for each roll) sent its own boss group lock
+// when it was not linked to King Dodongo, and the native boss sync took its owner, not King Dodongo's: in the
+// boss owner's game the roll centre could be another player's copy.
 bool IsBoss(std::string_view name);
+// A part of a boss (PartRules' boss parts: the Attention actors, King Dodongo's roll centre, Barinade's arms
+// and jellyfish, Morpha's tentacle, Bongo Bongo's hands, Gohma's eggs, Twinrova's witches, ...) that is no
+// group's root. It follows its root: the native boss sync gives it its root's owner from the first frame
+// (BossPartRoot), the server's group link its root's owner and fight.
+bool IsBossPart(std::string_view name);
+// A boss or one of its parts named as one (what IsBoss was before row 149): the rules every boss actor shares
+// (its life, its hits, its slots and animations, its own native boss sync entry).
+bool IsBossOrPart(std::string_view name);
+// Row 149: the root a boss part follows in a walk (PartOf's roots in order, the nearest in reach; on a tie the
+// the first in the walk), as GroupsOf picks it; nothing for no boss part or no root in the walk. `names` and `places`
+// are the walk's, one per actor.
+std::optional<std::size_t> BossPartRoot(std::string_view part, const coop::protocol::Vec3& at,
+                                        const std::vector<std::string_view>& names,
+                                        const std::vector<coop::protocol::Vec3>& places);
 // A plain enemy whose copy takes its owner's brain and action verbs as a boss's does (CoopBossNative,
 // Boss::plain; fable-g4-enemies): every Enemy_ that is no boss, except the ones each game runs of its own
 // (IsOwnPuzzle: the scrub puzzles and shops), an enemy's shot (CoopEnemyShots: made by the shooter's game) and
@@ -651,8 +673,31 @@ public:
     // It is gone at the first walk that misses it, not the second: off the
     // list is no "lifted or changing hands" then. Kept kDeletedKeepUs (a
     // dying actor stays listed a while; the address may be used again later).
-    void GameDeleted(std::uint64_t address, std::uint64_t now_us);
+    // `by_coop`: asked inside one of the module's own calls (a copy, a remove; CoopActorEvents::kOwn).
+    void GameDeleted(std::uint64_t address, std::uint64_t now_us, bool by_coop = false);
     static constexpr std::uint64_t kDeletedKeepUs = 10'000'000;
+    // enemy-left-0116 (row 138(6)): an enemy of ours (placed, not a boss or
+    // its part, not an egg) that the game itself deleted while no death was
+    // read (life 0 or a death animation: a fall into lava or a pit, a burn,
+    // its own time running out) is gone from our game for good. Before, only
+    // a read death was told: the others' copies lived on and the server handed
+    // the enemy to one of them. Now it stays listed (as an egg does) and after
+    // kLeftWaitUs an OBJECT_REMOVE `gone` goes out, so the server keeps it
+    // nobody's and the copies end too (deleted, no kill counted: a Dead flag
+    // the game set comes through the flag sync). Not when the game deleted
+    // kDeleteBurst or more actors within kDeleteBurstUs of it: that is the
+    // scene going (a load, a warp, the title), not the enemy. Not when the
+    // delete may come from our own Link leaving it (review CHANGES r1): its
+    // kind's delete input reads our Link (coop_area_deleted.inc, generated
+    // from the romfs: Water Temple's Shell Blades and blue Tektites), or our
+    // Link was over kLeftNearM from it (an AI's own "far from Link" despawn
+    // the logic graphs do not show). Then the copy another player fights lives
+    // on and the server hands it over, as before.
+    static constexpr float kLeftNearM = 20.0f;
+    static constexpr std::uint64_t kLeftWaitUs = 1'000'000;  // (the whole kDeleteBurstUs after it seen)
+    static constexpr std::size_t kDeleteBurst = 12;
+    static constexpr std::uint64_t kDeleteBurstUs = 1'000'000;
+    std::size_t LeftCount() const { return left_.size(); }
     // churn-b: the game's delete requests reach us (Hookshot, patch 0007).
     // Then a placed object that leaves the walk alive with no delete request
     // is not gone: the game takes live actors off its list for a moment and
@@ -665,6 +710,14 @@ public:
     // ends it. Without delete events (the emulator) two missed walks still end it.
     void SetDeleteEvents(bool on) { delete_events_ = on; }
     static constexpr std::uint64_t kAwayKeepUs = 2'000'000;
+    // enemy-left-0116 (row 138(3), Revirie's log at DC's second Lizalfos
+    // pair): an event playing here takes its performers off the list for
+    // longer (the Lizalfos' jump-in during FocusOnEnemy_02 went > 2 s, so
+    // ours were let go, handed to player 2, and our game then made copies of
+    // "player 2's encounter" beside its own). While an event plays here the
+    // time does not run out (kAwayKeepUs again from its end), up to
+    // kAwayEventMaxUs off the walk.
+    static constexpr std::uint64_t kAwayEventMaxUs = 30'000'000;
     std::size_t AwayCount() const { return away_.size(); }
 
     // Projectiles (coop_projectiles.h): true for a life drop at a place and
@@ -731,13 +784,39 @@ public:
         if (in_event && !in_event_) {
             event_since_ = now_us;
         }
+        if (!in_event && in_event_) {
+            event_end_ = now_us;  // (Away: kAwayKeepUs from here)
+        }
         in_event_ = in_event;
         event_ours_ = in_event && ours;
     }
     // A copy our event claimed (within kEventKeepUs of the last Tick that
     // flagged it): the owner's routine is not put on it while the hand-over
-    // runs, as the 8 m event rule (coop_guard.h) does nearer.
+    // runs, as the 8 m event rule (coop_guard.h) does nearer. Row 138(8):
+    // also a copy our Link is in the area of (AreaClaim).
     bool EventPartner(std::uint64_t address, std::uint64_t now_us) const;
+    // S2 (event-owner-0116, issue 144): a copy whose owner's own event binds it
+    // (object_state::in_event in the owner's samples, within kEventKeepUs) and that has a game
+    // logic of its own (an Enemy_: room B's and room F's Deku Scrubs; the Scrub Brothers and
+    // the Business Scrubs are each game's own already, IsOwnPuzzle). Our copy
+    // keeps that logic (EventPartner: the owner's motion, animation and remove are not put on
+    // it) and is not claimed away from the owner (no wake on it); the event's result reaches us
+    // by its flags (coop_scrub_talk.h, coop_scrub_sale.h), as in the owner's game. Before, the
+    // owner's talk motion was put on our copy every frame: our own beaten scrub never hopped
+    // or talked, and a talk of ours on it waited forever. Townspeople still play the owner's
+    // cutscene motion (issue 200); bosses and fish keep their own rules.
+    bool OwnerEventHolds(std::uint64_t address, std::uint64_t now_us) const;
+    // Row 138(8) (coop_sensor_claim.h): a shared actor whose own sensor input
+    // says our Link is in its area (Seen::sensor_in_area; Jabu-Jabu's mouth)
+    // is claimed like an event's partner, without an event: flagged targeting
+    // (the server hands a copy to us after its chase hold; ours it holds as a
+    // fight, so with two players in the area the owner keeps it), and the
+    // owner's place, animation and remove are not put on our copy. The claim
+    // drops kSensorKeepUs after the input reads 0 (our Link left).
+    bool AreaClaim(std::uint64_t address, std::uint64_t now_us) const;
+    // How many actors our Link's area claims now (for the log).
+    std::size_t AreaClaims(std::uint64_t now_us) const;
+    static constexpr std::uint64_t kSensorKeepUs = 1'000'000;
     // Who owns the object at `address` (0: not known, or not on our list).
     std::uint8_t OwnerAt(std::uint64_t address) const;
     // How many actors our event flags now (for the log).
@@ -1106,12 +1185,17 @@ private:
         bool play_frame = false;                // PlaysByFrame
         CoopNpcAnim::Loop frame_loop;           // its owner's animation loop, from the samples (play_frame)
         std::uint64_t event_until = 0;          // flagged by our event until then
+        std::uint64_t own_event_until = 0;      // ... by our own Link's event (S2: sent as object_state::in_event)
+        std::uint64_t owner_event_until = 0;    // a copy: its owner's samples say its owner's event binds it (S2)
         PartnerWhy event_why = PartnerWhy::none; // ... and why (row 97)
         std::optional<bool> event_member;       // Seen::event_member, the last walk (row 97)
+        std::optional<bool> sensor_in_area;     // Seen::sensor_in_area, the last walk (row 138(8))
+        std::uint64_t sensor_until = 0;         // claimed by our Link in its area until then (row 138(8))
         std::uint64_t own_ai_at = 0;            // its own AI's play put back last (NoteTakeover, any kind)
         coop::protocol::Vec3 first_position{};  // where it was first seen
         int missed = 0;                         // walks in a row without it
         std::uint64_t deleted_until = 0;        // GameDeleted: gone at the first miss until then
+        bool game_deleted = false;              // ... and the game's own request, not one of ours (Left)
         // Chasing our Link (NoteDrift): the run of steps towards it.
         std::uint64_t chase_first = 0;
         std::uint64_t chase_last = 0;
@@ -1192,6 +1276,13 @@ private:
                std::vector<coop::protocol::Message>& send);
     // gohma-sync: an egg of ours still on the walk, marked hatched, near `at`.
     Object* HatchedSibling(std::uint8_t self, const coop::protocol::Vec3& at);
+    // boss-larva-0116: an egg id whose hatch this game shares when it owns it
+    // (placed, or made: a boss laid it); its owner is checked by the caller.
+    static bool HatchIsOurs(const coop::protocol::ObjectId& id);
+    // boss-larva-0116: a made egg we own left the walk alive: its remove
+    // (unless already sent), then eggs_ or its matched sibling freed.
+    void EndMadeEgg(std::uint8_t self, const Object& o, std::uint16_t epoch, std::uint64_t now_us,
+                    std::vector<coop::protocol::Message>& send, bool remove);
     // boss-sync-2 (issue 178): a fresh hatchling next to a copy of another
     // game's egg (still on the walk, or gone alive at most kHatchWindowUs
     // before, copy_eggs_): our game hatched it through its own AI.
@@ -1226,6 +1317,9 @@ private:
         std::uint16_t epoch = 0;
         coop::protocol::Vec3 position{};
         std::uint64_t at = 0;
+        // boss-larva-0116: an egg our boss laid (made): its OBJECT_REMOVE went
+        // as it left, so no second one and no listing.
+        bool removed = false;
     };
     std::vector<Egg> eggs_;
     // churn-b: placed objects off the walk without a delete request (SetDeleteEvents).
@@ -1234,9 +1328,25 @@ private:
         std::uint64_t address = 0;
         std::uint64_t until = 0;
         std::string name;
+        coop::protocol::Vec3 position{};  // where it was last seen (Left)
+        std::uint64_t since = 0;          // when it left (kAwayEventMaxUs)
     };
     std::vector<Away> away_;
     bool delete_events_ = false;
+    // enemy-left-0116: enemies of ours the game deleted with no death read,
+    // listed until their OBJECT_REMOVE `gone` goes out (kLeftWaitUs).
+    struct Left {
+        coop::protocol::ObjectId id;
+        std::uint64_t address = 0;
+        std::uint64_t deleted_at = 0;
+        coop::protocol::Vec3 position{};
+        std::string name;
+    };
+    std::vector<Left> left_;
+    std::vector<std::uint64_t> game_deletes_;  // when the game's own delete requests came (kDeleteBurstUs)
+    // An enemy of ours that the game's own delete request ends for good (Left).
+    bool LeavesForGood(std::uint8_t self, const coop::protocol::ObjectId& id, std::string_view name,
+                       std::uint64_t address, const coop::protocol::Vec3& position) const;
     // boss-sync-2: copies of other games' eggs that left our walk alive (our
     // game hatched them), for CopyHatch.
     std::vector<Egg> copy_eggs_;
@@ -1245,12 +1355,14 @@ private:
     std::uint64_t scene_since_ = 0;  // server time of the scene's first walk
     std::optional<coop::protocol::Vec3> player_;
     bool in_event_ = false;  // issue 200: SetEvent
+    std::uint64_t event_end_ = 0;  // when the last event here ended (SetEvent)
     bool event_ours_ = false;  // G1: our Link is in it (SetEvent's ours)
     // Row 97: why `o` is our running event's partner now (none: it is not):
     // it is an event member in our Link's event (member); it has no event member component and its
     // own AI asked for another animation since the event began, within
     // kEventNpcM (own_ai); a townsperson within kEventNpcM (issue 200).
     PartnerWhy EventPartnerWhy(const Object& o) const;
+    static bool OwnerEventKeeps(const Object& o, std::uint64_t now_us);  // S2: OwnerEventHolds
     std::uint64_t event_since_ = 0;  // row 97: when our event began (SetEvent)
     std::vector<coop::protocol::Vec3> lures_;  // our own cast lures (SetLures)
     std::vector<coop::protocol::FishLureEntry> fish_sent_;  // the last FISH_LURE

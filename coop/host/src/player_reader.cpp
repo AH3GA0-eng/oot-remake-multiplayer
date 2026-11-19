@@ -8,6 +8,7 @@
 
 #include "addresses.hpp"
 #include "coop/host/game_flags.hpp"
+#include "coop/protocol/codec.hpp"
 
 namespace coop::host {
 namespace {
@@ -250,6 +251,16 @@ std::optional<protocol::Equipment> PlayerReader::read_equipment() {
   e.head = flags.get_string64(addr::kEquipHeadArmor);
   e.hand = flags.get_string64(addr::kEquipHandArmor);
   wear_from_links(e, read_age() == protocol::Age::child);
+  // The shield the game holds (hand slot 4) over the EquipShield flag, as the
+  // director takes slot 0's sword over EquipWeapon: at an age change the
+  // flag can still name the other age's shield for a sample (Mirror on a
+  // child, Deku on an adult) while the slot holds the one the game draws.
+  // An empty or unreadable slot (no shield yet, a load) leaves the flag.
+  if (const auto held_shield = read_slot_name(addr::kEquipSlotShield);
+      held_shield && held_shield->starts_with("Weapon_Shield_")) {
+    e.shield = held_shield;
+  }
+  drop_lost(e);
   e.ocarina = flags.get_string64(addr::kEquipOcarina);
   e.arrow = flags.get_string64(addr::kEquipArrow);
   e.drawn = read_drawn();
@@ -259,6 +270,7 @@ std::optional<protocol::Equipment> PlayerReader::read_equipment() {
   e.third_weapon = read_slot_name(addr::kEquipSlotThirdWeapon);
   e.tool = read_slot_name(addr::kEquipSlotTool);
   e.sub_tool = read_slot_name(addr::kEquipSlotSubTool);
+  if (e.drawn) e.lit = read_lit(*e.drawn);
   if (e == protocol::Equipment{}) return std::nullopt;
   return e;
 }
@@ -326,6 +338,62 @@ std::optional<std::uint8_t> PlayerReader::read_drawn() {
   return drawn;
 }
 
+// Issue 248: the owner's game burns the stick (its chemistry); others are sent
+// only that it burns, and show the stick's own flame (docs/puppet.md).
+std::uint8_t PlayerReader::read_lit(std::uint8_t drawn) {
+  if (drawn == 0) return 0;
+  const auto actor = find_player_actor();
+  if (!actor) return 0;
+  const auto components = read_ptr(memory_, *actor + addr::kActorComponents);
+  if (!components) return 0;
+  const auto user = read_ptr(memory_, *components + addr::kComponentsEquipmentUser);
+  if (!user) return 0;
+  std::uint8_t lit = 0;
+  for (std::uint32_t i = 0; i < addr::kEquipSlotCount; ++i) {
+    if ((drawn & (1u << i)) == 0) continue;
+    const std::uint64_t slot = *user + addr::kEquipSlots + addr::kEquipSlotStride * i;
+    const auto id = read_u32(memory_, slot + addr::kEquipSlotId);
+    if (!id || *id == addr::kEmptyId) continue;
+    const auto holder = read_ptr(memory_, slot + addr::kEquipSlotHolder);
+    if (!holder) continue;
+    const auto holder_id = read_u32(memory_, *holder + addr::kHolderId);
+    if (!holder_id || *holder_id != *id) continue;
+    const auto piece = read_ptr(memory_, *holder + addr::kHolderActor);
+    if (piece && plays_effect(*piece, addr::kBurnKey)) lit = static_cast<std::uint8_t>(lit | (1u << i));
+  }
+  return lit;
+}
+
+bool PlayerReader::plays_effect(std::uint64_t actor, std::string_view key) {
+  const auto components = read_ptr(memory_, actor + addr::kActorComponents);
+  if (!components) return false;
+  const auto xlink = read_ptr(memory_, *components + addr::kComponentsXLink);
+  if (!xlink) return false;
+  const auto user = read_ptr(memory_, *xlink + addr::kXLinkEffectUser);
+  if (!user) return false;
+  const auto offset = read_u32(memory_, *user + addr::kUserLinkOffset);
+  auto link = read_ptr(memory_, *user + addr::kUserFirstLink);
+  // (as CoopPuppetSound's walk: a link offset past 0x400 is not a user's)
+  if (!offset || *offset > 0x400 || !link) return false;
+  const std::uint64_t head = *user + addr::kUserEvents;
+  const auto back = static_cast<std::int64_t>(static_cast<std::int32_t>(*offset));
+  for (std::uint32_t n = 0; link && *link != head && n < addr::kMaxUserEvents; ++n) {
+    const std::uint64_t event = *link - static_cast<std::uint64_t>(back);
+    if (const auto call = read_ptr(memory_, event + addr::kEventCall)) {
+      if (const auto text = read_ptr(memory_, *call)) {
+        std::array<std::uint8_t, 32> bytes{};
+        const auto want = std::span(bytes).first(std::min(key.size() + 1, bytes.size()));
+        if (key.size() < bytes.size() && memory_.read(*text, want) &&
+            std::equal(key.begin(), key.end(), bytes.begin()) && bytes[key.size()] == 0) {
+          return true;
+        }
+      }
+    }
+    link = read_ptr(memory_, *link + addr::kLinkNext);
+  }
+  return false;
+}
+
 std::optional<std::string> PlayerReader::read_slot_name(std::uint32_t slot_index) {
   if (slot_index >= addr::kEquipSlotCount) return std::nullopt;
   return read_link_name(addr::kEquipSlots + addr::kEquipSlotStride * slot_index);
@@ -361,10 +429,16 @@ std::optional<std::string> PlayerReader::read_armor_link_name(std::uint32_t link
 // (Armor_Adult_Normal is no piece in a child's links).
 // An ADULT keeps the rule before row 148 (its gear on a puppet is not yet
 // checked against the links in a game): a flag with a name stands, an empty
-// or unknown flag is filled from a link piece of its kind.
+// or unknown flag is filled from a link piece of its kind. The one exception
+// (puppet-gear-148, the other direction): a flag naming a CHILD's piece
+// (Armor_Child_*: the bracelet, a mask) is decided by the links at any age,
+// so an adult whose hand or head flag outlived the age change the other way
+// is not sent the child's piece; those pieces are proven link pieces (the
+// bracelet in link 9, a ZR mask in its link), so a worn one is never lost.
 // An empty hand flag with a link unreadable is not known (not a bracelet
 // taken off), as before.
 namespace {
+constexpr std::string_view kChildPiecePrefix = "Armor_Child_";
 bool drawn_head(std::string_view n) {
   return n.starts_with("Armor_") && n.find("_Mask_") != std::string_view::npos;
 }
@@ -379,6 +453,28 @@ bool drawn_hand(std::string_view n) {
 }
 }  // namespace
 
+// A piece the player no longer has (puppet-gear-148, review-0116-j): a shield
+// burnt or eaten by a Like Like, a tunic a Like Like took. Its hand slot or
+// armor link empties, but the Equip* flag can still name it, and an adult's
+// named flag (or an empty shield slot) leaves the flag. The game's own count,
+// PouchData.<piece>.StockNum (the max-drop the flag watcher already keeps for
+// a lost shield, docs/items.md issue 130), is 0 then: such a piece is not
+// worn. A count not read (no such flag, the manager not up) leaves the name.
+void PlayerReader::drop_lost(protocol::Equipment& e) {
+  GameFlags flags(memory_);
+  const auto check = [&](std::optional<std::string>& field, bool (*of_kind)(std::string_view)) {
+    if (!field || field->empty() || !of_kind(*field)) return;
+    const std::string stock = "PouchData." + *field + ".StockNum";
+    if (const auto n = flags.get_int(protocol::flag_hash(stock)); n && *n <= 0) {
+      field = std::string{};
+    }
+  };
+  check(e.shield, [](std::string_view n) { return n.starts_with("Weapon_Shield_"); });
+  check(e.armor, drawn_armor);
+  check(e.boots, drawn_boots);
+  check(e.hand, drawn_hand);
+}
+
 void PlayerReader::wear_from_links(protocol::Equipment& e, bool child) {
   std::array<std::optional<std::string>, addr::kArmorLinkCount> links;
   bool every_link_read = true;
@@ -387,14 +483,19 @@ void PlayerReader::wear_from_links(protocol::Equipment& e, bool child) {
     if (!links[i]) every_link_read = false;
   }
   const auto decide = [&](std::optional<std::string>& field, bool (*of_kind)(std::string_view)) {
-    if (!child && field && !field->empty()) return;
+    // A child's piece (Armor_Child_*: the bracelet, the masks) is decided by
+    // the links at any age: an adult (or an age not read) whose flag still
+    // names one wears it only if a link holds it, as a child's adult flags.
+    const bool links_decide =
+        child || (field && field->starts_with(kChildPiecePrefix) && of_kind(*field));
+    if (!links_decide && field && !field->empty()) return;
     for (const auto& name : links) {
       if (name && !name->empty() && of_kind(*name)) {
         field = name;
         return;
       }
     }
-    if (child && field && of_kind(*field)) {
+    if (links_decide && field && of_kind(*field)) {
       if (every_link_read) {
         field = std::string{};
       } else {

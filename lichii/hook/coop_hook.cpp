@@ -62,6 +62,8 @@
 #include "coop_boss_scenes.h"
 #include "coop_teleport_game.h"
 #include "coop_pvp_game.h"
+#include "coop_lift_player_game.h"
+#include "coop_pvp_native_game.h"
 #include "coop_lobby_game.h"
 #include "coop_dbno_game.h"
 #include "coop_mod_share.h"
@@ -569,6 +571,27 @@ public:
             c.x[1] = *slot;
             return c;
         });
+        // Test only (`dress`, tools/autotest): the game's own equip from the PlayerStatus.Equip* flags for our Link,
+        // as the pause menu's equip and a save load make it, so a `wear` shows on our own Link too. Nothing is asked
+        // unless a scenario's step queued a kind (CoopTestInput::DressAsk); a player's game never does.
+        CoopSvc::AddCaller(CoopCallerOrders::kTestDress, [this](CoopPuppet::Guest& guest, bool, std::uint64_t,
+                                      std::uint64_t) -> std::optional<CoopPuppet::Call> {
+            namespace oc = coop::host::ocarina;
+            const auto actor = CoopObjects::OurLinkActor();
+            std::uint64_t holder = 0, equipment = 0;
+            if (!actor || base_ == 0 || !guest.Read(*actor + oc::kActorEquipment, &holder, sizeof holder) ||
+                holder == 0 || !guest.Read(holder + oc::kHolderEquipment, &equipment, sizeof equipment) ||
+                equipment == 0) {
+                return std::nullopt;  // (the asks wait for a Link)
+            }
+            const auto kind = CoopTestInput::DressNext();
+            if (!kind) return std::nullopt;
+            CoopPuppet::Call c;
+            c.function = base_ + oc::kEquipFromGameData;
+            c.x[0] = equipment;
+            c.x[1] = *kind;
+            return c;
+        });
         if (live_events_) {
             {
                 // G1: the events this requester asks for (a held live event, a shared scene joined)
@@ -684,6 +707,8 @@ public:
         CoopBoss::OnEvent(event);  // docs/dungeons-boss.md
         CoopTeleport::OnEvent(event, client);  // /teleport (docs/setup.md "Chat commands")
         CoopPvp::OnEvent(event, client);  // PvP (docs/play-online.md "PvP")
+        CoopLiftPlayerGame::OnEvent(event, client);  // native puppets phase 3 (LICHII_COOP_LIFT_PLAYER=1)
+        CoopPvpNativeGame::OnEvent(event, client);  // native puppets phase 4 (LICHII_COOP_PVP_NATIVE=1)
         CoopDbno::OnEvent(event, client);  // down but not out (docs/play-online.md)
         CoopDifficulty::OnEvent(event, client);  // docs/play-online.md "Difficulty"
         CoopModShare::OnEvent(event, client);  // mods (docs/mods.md "Mods in co-op")
@@ -839,7 +864,9 @@ public:
                 [&memory](std::uint32_t hash) { return coop::host::GameFlags(*memory).get_enum(hash); },
                 [&memory](std::uint32_t hash, std::uint32_t value) {
                     return coop::host::GameFlags::set_enum(*memory, hash, value);
-                });
+                },
+                // row 150: Get_Epona's end waits only while a race against Ingo runs here
+                [&memory](std::uint32_t hash) { return coop::host::GameFlags(*memory).get_bool(hash); });
             // Released only after a real load (0.5 s without Link), not on one
             // frame the reader missed; the scene as last read. Timed, not
             // counted in presents: high refresh (Ctrl+U) presents up to 2.75
@@ -1399,7 +1426,8 @@ public:
             // G2 (#241): a boss the group beat while our game did not see it die gets its beaten set, one way, at the
             // next load of a scene other than the boss's, never mid-scene (coop_boss_beaten.h). Solo or co-op idle: the
             // record is empty.
-            // In the boss's own dungeon scene: live, once our Link is out of the boss's area (rows 136/137).
+            // In the boss's own dungeon scene: live, once our Link is out of the boss's area (rows 136/137), or in it
+            // once no death of ours can run there (row 136: came in after the death, joined, a refused ask).
             const CoopBossBeaten::Record& record = CoopBossBeaten::TheRecord();
             const std::vector<std::uint8_t> beaten = record.Rooms();
             const auto near_boss = [&](std::uint8_t room) {
@@ -1415,7 +1443,10 @@ public:
                          const auto v = game_store->read(coop::protocol::FlagKey{hash, 0});
                          return v ? std::optional<std::uint32_t>(v->value) : std::nullopt;
                      },
-                     near_boss)) {
+                     near_boss, [&](std::uint8_t room) {
+                         // an event runs (or is unread): it may be the death; else what the Director knows
+                         return !reading || reading->event_running.value_or(true) || CoopBoss::DeathMayRun(room);
+                     })) {
                 const bool ok = game_store->write(coop::protocol::FlagEntry{
                     coop::protocol::FlagKey{w.hash, 0},
                     w.is_enum ? coop::protocol::FlagKind::uint32 : coop::protocol::FlagKind::boolean, w.value});
@@ -1606,6 +1637,14 @@ public:
         for (auto& line : CoopPvp::TakeLines()) {
             chat_.Add(std::move(line), true);
         }
+        // Native puppets phase 3, lifting another player (docs/native-puppets.md): off unless
+        // LICHII_COOP_LIFT_PLAYER=1 (then nothing runs here).
+        CoopLiftPlayerGame::Frame(view.scene, reading, report.connected ? session_.get() : nullptr,
+                                  report.server_now_us);
+        // Native puppets phase 4, PvP on real bodies (docs/native-puppets.md section 5): off unless
+        // LICHII_COOP_PVP_NATIVE=1 (then nothing runs here).
+        CoopPvpNativeGame::Frame(view.scene, reading, report.connected ? session_.get() : nullptr,
+                                 report.server_now_us);
         // Down but not out (docs/play-online.md), after the walk read our
         // Link's life and after PvP's hurts.
         CoopDbno::Frame(view.scene, reading, report.connected ? session_.get() : nullptr,
@@ -2003,6 +2042,8 @@ private:
             reading->equipment->drawn =
                 CoopPuppetOwn::TheDrawn().Apply(*reading->equipment->drawn, CoopPuppetOwn::NowMs());
         }
+        // Native puppets phase 3: lifted, our Link's copies play the carried pose (off: unchanged).
+        CoopLiftPlayerGame::CarriedPose(reading);
         if (reading) {
             view.position = reading->position;
             view.scene = reading->scene;

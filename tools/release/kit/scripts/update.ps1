@@ -1259,10 +1259,47 @@ function Disable-KitQuickEdit {
     } catch { return $false }
 }
 
+# Update.bat's last step, after an update and also when the kit is the newest already: the game's co-op parts this kit
+# pins (the module, the puppet pack, the randomizer OOTRR in the game's tools\ootrr, seeds to build again) are put in now,
+# by the kit's OWN scripts\hookshot-build.ps1 -Repair (the version just installed, not this updater's), while the game is
+# closed. Before, only the next "Start Squadala.bat" did it, and a failure there was one line in a window that closes:
+# Velvet's kit (2026-11-19) played on with no OOTRR, the randomizer broken, after an Update.bat that "worked".
+# A kit with no Longshot game or no hookshot-build.ps1 has nothing to repair. Returns the repair's exit code (0: fine or
+# nothing to do); never throws.
+function Invoke-KitGameRepair([string]$KitDir) {
+    try {
+        $build = Join-Path $KitDir 'scripts\hookshot-build.ps1'
+        if (-not (Test-Path -LiteralPath (Join-Path $KitDir 'hookshot\PIN')) -or -not (Test-Path -LiteralPath $build)) { return 0 }
+        if (-not (Select-String -LiteralPath $build -SimpleMatch '[switch]$Repair' -Quiet)) { return 0 }   # (an older kit's script)
+        if (@(Get-KitRunning $KitDir).Count) {
+            Write-Host 'The game is running from this kit: close it, then run Update.bat again so it can check the game''s co-op parts and the randomizer.'
+            return 0
+        }
+        Write-Host ''
+        Write-Host 'Checking the game''s co-op parts and the randomizer...'
+        $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+        # (Start-Process in this window: its questions (the pack's game file) reach the player, and its lines never
+        # become this function's return value as `& powershell` output would)
+        $p = Start-Process -FilePath $ps -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', """$build""", '-Repair') -NoNewWindow -Wait -PassThru
+        $code = $p.ExitCode
+        if ($code -ne 0) { Write-Host 'The game could not be repaired now (above: why). "Start Squadala.bat" tries again at its next start.' }
+        return $code
+    } catch {
+        Write-Host "The game's co-op parts were not checked: $($_.Exception.Message)"
+        return 1
+    }
+}
+
 if (-not $NoRun) {
     if (-not ($Check -or $Status -or $Tidy)) { [void](Disable-KitQuickEdit) }
     try {
-        exit (Invoke-KitUpdate)
+        $code = Invoke-KitUpdate
+        # (not for play.ps1's -Launch, whose new play.ps1 does the same step next, nor going back: the older kit's start does)
+        if ($code -eq 0 -and -not ($Check -or $Status -or $Tidy -or $Launch -or $Revert)) {
+            $kitDir = if ($Kit) { $Kit } else { Split-Path -Parent $PSScriptRoot }
+            if (Test-Path -LiteralPath $kitDir) { [void](Invoke-KitGameRepair ([System.IO.Path]::GetFullPath($kitDir))) }
+        }
+        exit $code
     } catch {
         if ($Check -or $Status -or $Tidy) { exit 0 }
         Write-Host "$(if ($Revert) { 'Going back failed' } else { 'Update failed' }): $(Get-KitErrorText $_)"

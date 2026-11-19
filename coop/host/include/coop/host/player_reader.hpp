@@ -104,6 +104,11 @@ class PlayerReader {
  private:
   std::optional<std::uint64_t> game_ui();
   std::optional<std::uint8_t> read_drawn();
+  // Bit i set: the piece in drawn slot i burns (its ELink user plays
+  // Chemical_Fire; issue 248). Only the bits of `drawn` are looked at.
+  std::uint8_t read_lit(std::uint8_t drawn);
+  // Whether the actor's ELink user plays a call with this key now.
+  bool plays_effect(std::uint64_t actor, std::string_view key);
   // The actor name of the piece in an equipment slot (3: slingshot, bow);
   // "" when the slot is empty or its piece is gone. Nothing when the slot
   // or the name could not be read.
@@ -117,6 +122,9 @@ class PlayerReader {
   // child whose flag still names the adult's Golden Gauntlets wears none.
   // For an adult (`child` false) a flag with a name stands, as before.
   void wear_from_links(protocol::Equipment& e, bool child);
+  // A shield, tunic, boots or gauntlets the player no longer has (the game's
+  // PouchData.<piece>.StockNum is 0: burnt, eaten by a Like Like) is not worn.
+  void drop_lost(protocol::Equipment& e);
   // The piece behind the link at EquipmentUser + `link_offset`.
   std::optional<std::string> read_link_name(std::uint64_t link_offset);
   GameMemory& memory_;

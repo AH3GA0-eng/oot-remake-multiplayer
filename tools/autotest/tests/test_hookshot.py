@@ -7,9 +7,11 @@ import glob
 import json
 import math
 import os
+import shutil
 import socket
 import struct
 import sys
+import tempfile
 import threading
 import unittest
 
@@ -171,6 +173,51 @@ def play(text, game=None, **kw):
     return game, log, shots, p, end
 
 
+class CopyLogTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        with open(os.path.join(self.tmp, "game-out-B.txt"), "w", encoding="utf-8") as f:
+            f.write("coop: connected\n")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_a_held_file_is_tried_again(self):
+        real, calls = shutil.copy2, []
+
+        def flaky(src, dst):
+            calls.append(src)
+            if len(calls) == 1:
+                raise PermissionError(32, "used by another process")
+            return real(src, dst)
+
+        said = []
+        shutil.copy2 = flaky
+        try:
+            self.assertTrue(hs.copy_log(self.tmp, "B", self.tmp, said.append, sleep=lambda s: None))
+        finally:
+            shutil.copy2 = real
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(said, [])
+        self.assertTrue(os.path.isfile(os.path.join(self.tmp, "hookshot_log-B.txt")))
+
+    def test_a_copy_that_keeps_failing_is_said_and_does_not_raise(self):
+        # testkit-0116-3 smoke: a failed copy raised out of run()'s finally after "scenario played" (exit 1).
+        real = shutil.copy2
+
+        def broken(src, dst):
+            raise PermissionError(32, "used by another process")
+
+        said = []
+        shutil.copy2 = broken
+        try:
+            self.assertFalse(hs.copy_log(self.tmp, "B", self.tmp, said.append, tries=3, sleep=lambda s: None))
+        finally:
+            shutil.copy2 = real
+        self.assertEqual(len(said), 1)
+        self.assertIn("B: game log not copied to hookshot_log-B.txt after 3 tries (PermissionError", said[0])
+
+
 class ParseTest(unittest.TestCase):
     def test_verbs(self):
         steps = hs.parse("""# comment
@@ -186,13 +233,14 @@ class ParseTest(unittest.TestCase):
             chat /teleport  Saria
             mark done
             wear boots HoverBoot
+            dress all
             setflag Rupee 50
             hit Enemy_DungeonBoss_Gohma 2
             stun Enemy_DungeonBoss_Gohma
         """)
         kinds = [s.kind for s in steps]
         self.assertEqual(kinds, ["timed", "timed", "timed", "timed", "timed", "timed", "timed", "timed", "goto",
-                                 "toward", "warp", "chat", "mark", "wear", "setflag", "hit", "stun"])
+                                 "toward", "warp", "chat", "mark", "wear", "dress", "setflag", "hit", "stun"])
         self.assertEqual(steps[0].ticks, 120)
         self.assertEqual((steps[1].buttons, steps[1].left, steps[1].ticks, steps[1].name), (["A"], (0, 1), 90, "mid"))
         self.assertEqual((steps[2].buttons, steps[2].ticks), (["ZR", "A"], 10))
@@ -205,8 +253,9 @@ class ParseTest(unittest.TestCase):
         self.assertEqual((steps[10].name, steps[10].start), ("KakarikoVillage_Child", "Kakariko_WellSide"))
         self.assertEqual(steps[11].name, "/teleport  Saria")
         self.assertEqual((steps[13].start, steps[13].name), ("boots", "HoverBoot"))
-        self.assertEqual((steps[15].name, steps[15].start), ("Enemy_DungeonBoss_Gohma", "2"))
-        self.assertEqual(steps[16].name, "Enemy_DungeonBoss_Gohma")
+        self.assertEqual((steps[16].name, steps[16].start), ("Enemy_DungeonBoss_Gohma", "2"))
+        self.assertEqual((steps[14].kind, steps[14].name), ("dress", "all"))
+        self.assertEqual(steps[17].name, "Enemy_DungeonBoss_Gohma")
         self.assertIn("hit", hs.MODULE_ONLY)   # module steps, as coop_testinput.cpp reads them
         self.assertIn("stun", hs.MODULE_ONLY)
 
@@ -214,6 +263,15 @@ class ParseTest(unittest.TestCase):
         steps = hs.parse("menu Customize\nmenu close\n")
         self.assertEqual([(s.kind, s.name) for s in steps], [("menu", "customize"), ("menu", "close")])
         self.assertIn("menu", hs.MODULE_ONLY)
+
+    def test_place_on_a_platform_goes_to_the_module(self):  # #196: a rider on a floor that waves
+        s = hs.parse("place Obj_Deku_MoveFloor_A_01 0.3\n")[0]
+        self.assertEqual((s.kind, s.name, s.y), ("place", "Obj_Deku_MoveFloor_A_01", 0.3))
+        self.assertEqual(s.text.strip(), "place Obj_Deku_MoveFloor_A_01 0.3")
+        for bad in ("place Obj_Deku_MoveFloor_A_01", "place Obj_Deku_MoveFloor_A_01 up", "place 1 2"):
+            with self.assertRaises(hs.ScriptError) as e:
+                hs.parse(bad)
+            self.assertIn("want: place X Y Z, or place PLATFORM UP", str(e.exception))
 
     def test_key_names(self):
         s = hs.parse("hold DUP+LCLICK+RCLICK+MINUS+RSTICK_LEFT 5")[0]
@@ -224,7 +282,7 @@ class ParseTest(unittest.TestCase):
         for text, want in (("wait", "line 1: want: wait TICKS"), ("\n\nhold Q 3", "line 3: unknown key Q"),
                            ("stick 2 0 5", "line 1: want: STICK"), ("goto 1 2 0.1", "radius at least 0.2"),
                            ("jump", "unknown command jump"), ("# only", "no steps"),
-                           ("wear cape X", "want: wear"), ("menu", "want: menu customize|close"),
+                           ("wear cape X", "want: wear"), ("dress hat", "want: dress"), ("menu", "want: menu customize|close"),
                            ("menu map", "want: menu customize|close"), ("hurt", "want: hurt QUARTER_HEARTS"),
                            ("hurt 0", "want: hurt QUARTER_HEARTS"), ("hurt 81", "want: hurt QUARTER_HEARTS"),
                            ("hurt 2x", "want: hurt QUARTER_HEARTS"), ("hit Enemy_DungeonBoss_Gohma", "want: hit ACTOR N"),

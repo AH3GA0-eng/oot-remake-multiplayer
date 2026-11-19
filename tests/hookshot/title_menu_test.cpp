@@ -804,6 +804,36 @@ TEST_CASE("title menu: the save list waits for the title and the manager, retrie
     CHECK(r.Step(in) == R::Action::ask);     // the later switch: asked again
 }
 
+TEST_CASE("title menu: after a re-read the open title gets OpenTitle's buttons for the list (report 124)") {
+    // OpenTitle.module (read from the game): with a save BtnNum stops at frame 3, Continue (0001), New Game (0000),
+    // Options (0002) on Pa_Button_00..02, sound arrangement 1; without one frame 2, New Game and Options, type 0.
+    const TitleArrangement with = ArrangementFor(true);
+    CHECK(with.btn_num_frame == 3.0f);
+    CHECK(with.sound_type == 1);
+    REQUIRE(with.count == 3);
+    const char* panes[] = {"Pa_Button_00/T_Btn_00", "Pa_Button_01/T_Btn_00", "Pa_Button_02/T_Btn_00"};
+    const char* labels_with[] = {"0001", "0000", "0002"};
+    for (std::size_t i = 0; i < with.count; ++i) {
+        INFO("button " << i);
+        CHECK(std::string(with.texts[i].pane) == panes[i]);
+        CHECK(std::string(with.texts[i].label) == labels_with[i]);
+    }
+    const TitleArrangement without = ArrangementFor(false);
+    CHECK(without.btn_num_frame == 2.0f);
+    CHECK(without.sound_type == 0);
+    REQUIRE(without.count == 2);
+    const char* labels_without[] = {"0000", "0002"};
+    for (std::size_t i = 0; i < without.count; ++i) {
+        INFO("button " << i);
+        CHECK(std::string(without.texts[i].pane) == panes[i]);
+        CHECK(std::string(without.texts[i].label) == labels_without[i]);
+    }
+    CHECK(without.texts[2].pane == nullptr);   // (the third button is hidden by the frame: no text set)
+    // The frame is the number of buttons shown, as the game's BtnNum animation counts them.
+    CHECK(static_cast<std::size_t>(with.btn_num_frame) == with.count);
+    CHECK(static_cast<std::size_t>(without.btn_num_frame) == without.count);
+}
+
 TEST_CASE("title menu: Skip title screen is free solo and held while co-op does anything (patch 0028, report 133)") {
     SkipTitleInput in;   // solo, co-op idle: Longshot's Skip title screen may choose
     CHECK(SkipTitleHold(in) == nullptr);
@@ -842,4 +872,33 @@ TEST_CASE("title menu: approve_joins (the host's) is read from coop-options.ini,
     std::string coop, options = "approve_joins = yes\r\n";
     o.Write(coop, options);
     CHECK(IniGet(options, "approve_joins") == "yes");
+}
+
+TEST_CASE("title menu: auto_rejoin is off unless coop-options.ini turns it on, and the page's row writes it") {
+    CHECK_FALSE(Options::Read("", "").auto_rejoin);
+    CHECK(Options::Read("", "auto_rejoin = on\r\n").auto_rejoin);
+    Options o = Options::Read("", "");
+    o.auto_rejoin = true;
+    std::string coop, options;
+    o.Write(coop, options);
+    CHECK(options.find("auto_rejoin = on") != std::string::npos);
+    CHECK(Options::Read(coop, options).auto_rejoin);
+    o.auto_rejoin = false;
+    o.Write(coop, options);
+    CHECK_FALSE(Options::Read(coop, options).auto_rejoin);
+}
+
+TEST_CASE("title menu: list_room is off unless coop-options.ini turns it on, and it is written back") {
+    using CoopTitleMenu::Options;
+    CHECK_FALSE(Options::Read("", "").list_room);
+    Options o = Options::Read("", "list_room = on\r\n");
+    CHECK(o.list_room);
+    std::string coop, options = "relay = relay.example:27600\r\n";
+    o.list_room = true;
+    o.Write(coop, options);
+    CHECK(Options::Read(coop, options).list_room);
+    o.list_room = false;
+    o.Write(coop, options);
+    CHECK_FALSE(Options::Read(coop, options).list_room);
+    CHECK(options.find("relay = relay.example:27600") != std::string::npos);   // (the other lines kept)
 }

@@ -903,7 +903,34 @@ try {
     # 8. The game: same pin and patches, other patches, another commit.
     Check ((Get-KitGameChange $rk $rk) -eq 'same') 'game change: the same kit -> same'
     Check ((Get-KitGameChange "$rv\src-v0.11.1\oot-coop-v0.11.1" "$rv\src-v0.11.2\oot-coop-v0.11.2") -eq 'patches') 'game change: other patches -> patches'
-    Check ((Get-KitGameChange "$rv\src-v0.11.1\oot-coop-v0.11.1" "$rv\src-v0.10.1\oot-coop-v0.10.1") -eq 'pin') 'game change: another Longshot commit -> pin'
+    Check ((Get-KitGameChange "$rv\src-v0.11.1\oot-coop-v0.11.1" "$rv\src-v0.10.1\oot-coop-v0.10.1") -eq 'pin') 'game change: another Longshot commit-> pin'
+
+    # 9. Update.bat repairs the game's co-op parts (player report 2026-11-19, Velvet: Update.bat "worked", the game's
+    # tools\ootrr stayed broken, the randomizer did not work): after an update and when the kit is the newest already,
+    # it runs the kit's OWN scripts\hookshot-build.ps1 -Repair (a stub here records the call).
+    $gk = Join-Path $tmp 'repair-kit'
+    New-HsKit $gk 'v0.11.2' $c1 'patch 0.11.2'
+    $stub = "param([switch]`$Repair)`r`n[System.IO.File]::WriteAllText((Join-Path (Split-Path -Parent `$PSScriptRoot) 'repaired.txt'), ""repair=`$Repair"")`r`nWrite-Host 'repair stub ran'`r`nexit `$(if (Test-Path (Join-Path (Split-Path -Parent `$PSScriptRoot) 'fail.txt')) { 2 } else { 0 })`r`n"
+    Write-File "$gk\scripts\hookshot-build.ps1" $stub
+    Check ((Invoke-KitGameRepair $gk) -eq 0 -and (Read-File "$gk\repaired.txt") -eq 'repair=True') 'repair: the kit''s own hookshot-build.ps1 -Repair runs'
+    Write-File "$gk\fail.txt" 'x'
+    Check ((Invoke-KitGameRepair $gk) -eq 2) 'repair: its failure is passed on (and said), never thrown'
+    Remove-Item -LiteralPath "$gk\fail.txt", "$gk\repaired.txt"
+    Write-File "$gk\scripts\hookshot-build.ps1" "param([switch]`$PackOnly)`r`n[System.IO.File]::WriteAllText((Join-Path (Split-Path -Parent `$PSScriptRoot) 'repaired.txt'), 'old')`r`n"
+    Check ((Invoke-KitGameRepair $gk) -eq 0 -and -not (Test-Path "$gk\repaired.txt")) 'repair: an older kit''s hookshot-build.ps1 (no -Repair) is not run'
+    $ek = Join-Path $tmp 'repair-emu'
+    New-Item -ItemType Directory -Force -Path "$ek\emulator" | Out-Null
+    Check ((Invoke-KitGameRepair $ek) -eq 0) 'repair: a kit with no Longshot game has nothing to repair'
+    # Whole Update.bat runs: the kit is the newest already -> still repaired; -Check, -Status and -Launch never repair.
+    Write-File "$gk\scripts\hookshot-build.ps1" $stub
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $gk -Yes -Api $l2 2>&1
+    Check ($LASTEXITCODE -eq 0 -and ($out -join ' ') -match 'newest version' -and ($out -join ' ') -match 'repair stub ran' -and
+           (Read-File "$gk\repaired.txt") -eq 'repair=True') "repair: Update.bat on the newest kit still repairs the game [$(($out | Select-Object -Last 3) -join ' / ')]"
+    Remove-Item -LiteralPath "$gk\repaired.txt"
+    foreach ($flag in '-Check', '-Status') {
+        $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $updater -Kit $gk $flag -Api $l2 2>&1
+        Check (-not (Test-Path "$gk\repaired.txt")) "repair: $flag does not repair"
+    }
 } finally {
     Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 }

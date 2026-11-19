@@ -567,6 +567,10 @@ std::vector<std::string> TakeWantedEvents() {
     return std::exchange(TheGlue().wanted, {});
 }
 
+bool DeathMayRun(std::uint8_t boss) {
+    return TheGlue().scenes.DeathMayRun(boss);
+}
+
 std::vector<std::string> TakeLines() {
     return std::exchange(TheGlue().lines, {});
 }

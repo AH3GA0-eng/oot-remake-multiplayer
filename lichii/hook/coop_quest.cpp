@@ -52,6 +52,9 @@ constexpr std::uint32_t kGateOpen = 0x19898d14u;     // Npc_Hylia_Soldier_003_Ga
 // Shared mid-boss death records (coop_dungeon.cpp kFlags).
 constexpr std::uint32_t kDarkLinkDeath = 0x8341428au;  // WaterTemple_DarkLink_Death
 constexpr std::uint32_t kIronKnuckleDefeat = 0xe9547a14u;  // Enemy_MiddleBoss_IronKnuckle_Nabooru_BossDefeat
+// Row 150 (played scenes another game may have played for us; shared, coop_story.cpp):
+constexpr std::uint32_t kEponaSongLearnt = 0xdb8433f7u;   // HavePlayedEvent.Dm_MelodyGet_Epona
+constexpr std::uint32_t kCarpentersFreed = 0x754f6228u;   // HavePlayedEvent.Meet_FourCarpenter_ClearEvent
 
 // Get_StoneOfFire's steps (RSDB Challenge, in order).
 constexpr std::uint32_t kKakarikoVillageNpc = 0x4011c4aau;
@@ -84,6 +87,9 @@ constexpr std::uint32_t kSageOfWater = 0x560a64afu;       // Enum Step_SageOfWat
 constexpr std::uint32_t kSageOfWaterName = 0x5cdfdebau;   // the challenge: SageOfWater
 constexpr std::uint32_t kSageOfSpirit = 0x19189e9du;      // Enum Step_SageOfSpirit
 constexpr std::uint32_t kSageOfSpiritName = 0x6371358du;  // the challenge: SageOfSpirit
+constexpr std::uint32_t kGetEpona = 0x92431c55u;          // Enum Step_Get_Epona
+constexpr std::uint32_t kGetEponaName = 0xe873ce22u;      // the challenge: Get_Epona
+constexpr std::uint32_t kAfterGetEponaSong = 0xcfbd3bf2u;
 
 constexpr std::array kGotoSteps{kNotReady, kReady,     kStep01,    kStep02, kStep02_01,
                                 kStep03,   kStep03_01, kStep03_02, kStep04, kComplete};
@@ -119,6 +125,18 @@ constexpr std::array kSpiritSteps{kNotReady,  kReady,     kStep01,    kStep02,  
                                   kStep04,    kStep05,    kStep05_01, kStep05_02,    kStep05_03,
                                   kStep06,    kStep07,    kStep07_pre00, kStep07_00, kStep08,
                                   kStep08_01, kStep09,    kStep09_01, kStep10,       kComplete};
+// Get_Epona's steps (GameDataList; CoopQuests shares only the last, Complete).
+constexpr std::array<std::uint32_t, 11> kEponaSteps{
+    kNotReady,  kReady,
+    0x43b92c8fu,          // GuideToLonLonRanch
+    0xd512c4e6u,          // GuideToLonLonRanchAdult
+    0x87c38b24u,          // ReadyForGetEponaSong
+    kAfterGetEponaSong,   // AfterGetEponaSong (index 5)
+    0x4a78580eu,          // ReadyForGambleRace
+    0x9c643d4au,          // AfterTalkMalon
+    0x085d18f0u,          // GambleRacePlaying
+    0xdac3768fu,          // AfterWonGambleRace
+    kComplete};
 
 // Goto_HyruleCastle: the owl at the field entrance (event flow
 // Goto_HyruleCastle_Kaepora_00) gives Step02; Talon woken (Dm_HrlCastle_0020)
@@ -185,6 +203,21 @@ constexpr std::array kWaterRules{
 };
 constexpr std::array kSpiritRules{
     Rule{kIronKnuckleDefeat, kStep08_01, "the Iron Knuckle (Nabooru) beaten (SageOfSpirit_MiddleBossEnd)"},
+    // Row 150: the four carpenters' rescue (SageOfSpirit's Meet_FourCarpenter_ClearEvent, a shared played
+    // flag) is the only setter of Step02, and the Desert Colossus arrival (Dm_SY_BancChangeArrive, entry
+    // FromWasteland_ArriveColossus) moves the quest to Step03 only from exactly Step02: a game whose
+    // carpenters another player freed skipped the event, stayed at Step01 or Ready, and never got Step03
+    // (Nabooru's quest). From Ready (index 1), far under the quest's Step07 floor.
+    Rule{kCarpentersFreed, kStep02, "the four carpenters freed (Meet_FourCarpenter_ClearEvent)", 0, 0, 1},
+};
+// Get_Epona (row 150): co-op shares Epona's Song (an item) and its scene's played flag
+// (HavePlayedEvent.Dm_MelodyGet_Epona), and child Malon's talk (Npc_Hylia_Malon_Child) skips the song
+// lesson once that flag is 1. The lesson's own flow is the only setter of AfterGetEponaSong, and both
+// adult Malon (Get_Epona_IsAfter_ReadyForGetEponaSong_Exp: AfterTalkMalon) and Ingo (the race, from
+// ReadyForGambleRace) wait for it, so a game whose song another player learnt never got a race: no Epona
+// for that player, for good. The quest's later steps stay each game's own (CoopQuests: only its end).
+constexpr std::array kEponaRules{
+    Rule{kEponaSongLearnt, kAfterGetEponaSong, "Epona's Song learnt from Malon (Dm_MelodyGet_Epona)"},
 };
 
 constexpr std::array kQuests{
@@ -210,6 +243,9 @@ constexpr std::array kQuests{
     // Step07..Step08 is raised from any of them. The manager from Step08_01
     // (index 15) on.
     Quest{kSageOfSpirit, "SageOfSpirit", kSpiritSteps, kSpiritRules, 11, 0, 0, kSageOfSpiritName, 15},
+    // From Ready (index 1: the quest manager's own, never NotReady). The manager from AfterGetEponaSong
+    // (index 5) on, so adult Malon's and Ingo's schedules see the step (not into the held GambleRacePlaying).
+    Quest{kGetEpona, "Get_Epona", kEponaSteps, kEponaRules, 1, 0, 0, kGetEponaName, 5},
 };
 
 // The steps the manager is never moved into (RSDB Challenge: IsBossBattle or
@@ -432,7 +468,11 @@ std::optional<std::uint32_t> CatchUp(const Quest& quest, const ReadBool& flag,
     const auto now = value(quest.hash);
     if (!now) return std::nullopt;
     const auto rank = Rank(quest, *now);
-    if (!rank || *rank < quest.floor) return std::nullopt;
+    if (!rank) return std::nullopt;
+    const auto from = [&](const Rule& r) { return r.from == kQuestFloor ? quest.floor : r.from; };
+    if (std::none_of(quest.rules.begin(), quest.rules.end(), [&](const Rule& r) { return *rank >= from(r); })) {
+        return std::nullopt;  // under every rule's floor: our own story, left alone
+    }
     if (quest.needs_quest != 0) {
         const Quest* other = nullptr;
         for (const auto& q : kQuests) {
@@ -446,6 +486,7 @@ std::optional<std::uint32_t> CatchUp(const Quest& quest, const ReadBool& flag,
     std::optional<std::size_t> best;
     for (const auto& r : quest.rules) {
         if (r.flag == 0 && r.done_a == 0 && r.done_b == 0) continue;
+        if (*rank < from(r)) continue;
         if (r.flag != 0 && flag(r.flag) != true) continue;
         if (r.done_a != 0 && value(r.done_a) != kComplete) continue;
         if (r.done_b != 0 && value(r.done_b) != kComplete) continue;

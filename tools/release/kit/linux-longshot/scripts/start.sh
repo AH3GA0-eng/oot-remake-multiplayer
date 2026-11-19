@@ -7,6 +7,8 @@
 #
 #   bash start-squadala.sh                     all of the above
 #   bash start-squadala.sh --game FILE.nup     the game file, no question (also --exefs, --rebuild, --jobs N)
+#   bash start-squadala.sh --dlss              NVIDIA DLSS: asks for NVIDIA's license once, builds the game with it
+#                                              (--no-dlss: without it again)
 #   bash start-squadala.sh --no-update         no update check this time
 #   bash start-squadala.sh --logs              collect the logs for a bug report, start nothing
 #   bash start-squadala.sh --pack              make the puppet pack again (how you see the others), start nothing
@@ -22,8 +24,8 @@ while (($#)); do
         --logs) exec bash "$KIT/scripts/collect-logs.sh" ;;
         --pack) pack_only=1 ;;
         --game | --exefs | --jobs) build_args+=("$1" "${2-}"); shift ;;
-        --rebuild | --check-only) build_args+=("$1") ;;
-        -h | --help) sed -n '2,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --rebuild | --check-only | --dlss | --no-dlss) build_args+=("$1") ;;
+        -h | --help) sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) fail "Unknown option: $1 (bash start-squadala.sh --help lists them)" ;;
     esac
     shift
@@ -176,8 +178,16 @@ while IFS='=' read -r v _; do
     case $v in LONGSHOT_* | PYTHON* | APPDIR | APPIMAGE | ARGV0 | OWD | LD_LIBRARY_PATH) unset "$v" ;; esac
 done < <(env)
 export LONGSHOT_NO_UPDATE_CHECK=1 OOT_COOP_KIT=$DATA
-# the window: title "Squadala!", its class (the menu entry's StartupWMClass) and our logo as the icon longshot.png (Longshot reads these)
-export HOS_WINDOW_TITLE='Squadala!' HOS_WM_CLASS=squadala
+# the window: title "Squadala! v<release>" (VERSION.txt's release, as the Windows module's
+# coop_window_brand.cpp; letters, digits and . - + _ only, else "Squadala!" alone), its class (the menu
+# entry's StartupWMClass) and our logo as the icon longshot.png (Longshot reads these)
+title='Squadala!'
+release=$(kit_version)
+if [[ -n $release && ${#release} -le 32 && $release =~ ^[A-Za-z0-9.+_-]+$ ]]; then
+    [[ $release == [0-9]* ]] && release="v$release"
+    title="Squadala! $release"
+fi
+export HOS_WINDOW_TITLE=$title HOS_WM_CLASS=squadala
 [[ -f $DATA/squadala-icon.png ]] && cp -f -- "$DATA/squadala-icon.png" "$GAME/longshot.png" 2>/dev/null || true
 cd "$GAME"
 if kit_tty; then

@@ -57,7 +57,7 @@ a = sys.argv[1:]
 env = "LONGSHOT_TOOLS=%s VK_PREBUILT=%s EMSDK=%s OOT=%s" % (os.environ.get("LONGSHOT_TOOLS", "-"), os.environ.get("LONGSHOT_VK_PREBUILT", "-"),
                                                        os.environ.get("EMSDK", "-"), ",".join(k for k in os.environ if k.startswith("OOT_COOP")) or "-")
 with open(os.environ["FAKE_LOG"], "a") as f:
-    f.write("make_game %s | %s | patched=%s\n" % (" ".join(a), env, os.path.exists("host/coop_test.c")))
+    f.write("make_game %s | %s | patched=%s ngx=%s\n" % (" ".join(a), env, os.path.exists("host/coop_test.c"), os.environ.get("LONGSHOT_NGX_SDK", "-")))
 game = a[a.index("--nup") + 1] if "--nup" in a else ""
 if "--check" in a:
     print("@@stage check Checking")
@@ -69,6 +69,13 @@ for n in ("longshot", "image.bin", "longshot_vk.so"):
     with open(os.path.join(out, n), "w") as f:
         f.write("#!/bin/sh\necho started \"$OOT_COOP_KIT\" \"$LONGSHOT_NO_UPDATE_CHECK\" \"$(pwd)\" >> \"$FAKE_LOG\"\n" if n == "longshot" else n)
 os.chmod(os.path.join(out, "longshot"), 0o755)
+# (as place_ngx_runtime: DLSS's runtime in <out>/ngx with the SDK, gone again without it)
+ngx = os.path.join(out, "ngx", "libnvidia-ngx-dlss.so.310.1.0")
+if os.environ.get("LONGSHOT_NGX_SDK") and "--fetch-ngx-sdk" in a and "--accept-nvidia-license" in a:
+    os.makedirs(os.path.dirname(ngx), exist_ok=True)
+    open(ngx, "w").close()
+elif os.path.exists(ngx):
+    os.remove(ngx)
 print("@@stage build Building")
 print("built")
 EOF
@@ -149,12 +156,35 @@ check 'build: stages shown, @@ lines for the launcher left out' bash -c 'grep -q
 check 'build: the module is put beside the game' [ "$(cat "$D/game/hookshot_coop.so" 2>/dev/null)" = module ]
 check 'build: coop.ini beside the game, empty server and name left as comments, port 27510' \
     bash -c 'grep -q "^# server =$" "$1" && grep -q "^# name =$" "$1" && grep -q "^port = 27510$" "$1"' _ "$D/game/coop.ini"
-check 'build: the puppet pack goes in data/game/mods/contents/<title>/coop-puppet' bash -c '[ -f "$1/game/mods/contents/0400486024DEC000/coop-puppet/coop_puppet.json" ] && grep -q "puppet_pack --romfs .*nup --mod-dir " "$2" && ! grep -Eq -- "--title-rows|--pause-tab" "$2"' _ "$D" "$log"
+check 'build: the puppet pack goes in data/game/mods/contents/<title>/coop-puppet, with the title rows and the pause tab (--title-rows --pause-tab)' bash -c '[ -f "$1/game/mods/contents/0400486024DEC000/coop-puppet/coop_puppet.json" ] && grep -q "puppet_pack --romfs .*nup --mod-dir " "$2" && grep -q -- "--mod-dir .* --title-rows --pause-tab" "$2"' _ "$D" "$log"
 check 'build: the game file is remembered' has "$D/game-files.txt" "Downloads/OoT [04004860224DEC000].nup"
 
 : >"$log"
 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build2.txt" 2>&1; export CODE=$?
 check 'build: a second start builds nothing' bash -c '[ $CODE -eq 0 ] && grep -q "built already" "$1" && ! grep -q "^make_game" "$2" && grep -q "puppet pack: built already" "$1"' _ "$tmp/build2.txt" "$log"
+
+# NVIDIA DLSS (#234): --dlss asks for NVIDIA's license once (a terminal only), data/dlss.txt keeps the answer, the game is
+# built again with the SDK; --no-dlss takes it back. The game's stamp stays the release, pin and patches.
+: >"$log"
+bash "$kit/scripts/build.sh" --dlss </dev/null >"$tmp/dlss1.txt" 2>&1; export CODE=$?
+check 'dlss: --dlss without a terminal asks nothing, builds nothing, says how' \
+    bash -c '[ $CODE -ne 0 ] && grep -q "from a terminal" "$1" && [ ! -f "$2/dlss.txt" ] && ! grep -q "^make_game" "$3"' _ "$tmp/dlss1.txt" "$D" "$log"
+stamp_before=$(cat "$D/game/coop-built-from.txt")
+printf 'nvidia-license=accepted\n' >"$D/dlss.txt"
+bash "$kit/scripts/build.sh" </dev/null >"$tmp/dlss2.txt" 2>&1; export CODE=$?
+check 'dlss: license accepted (data/dlss.txt): the game is built again with the SDK in data/work/ngx-sdk' \
+    bash -c '[ $CODE -eq 0 ] && grep "^make_game" "$1" | grep -v -- --check | grep -q -- "--fetch-ngx-sdk --accept-nvidia-license .*ngx=$2/work/ngx-sdk" && compgen -G "$2/game/ngx/libnvidia-ngx-dlss.so.*" >/dev/null' _ "$log" "$D"
+check 'dlss: the game stamp is still the release, pin and patches' [ "$(cat "$D/game/coop-built-from.txt")" = "$stamp_before" ]
+: >"$log"
+bash "$kit/scripts/build.sh" </dev/null >"$tmp/dlss3.txt" 2>&1; export CODE=$?
+check 'dlss: the next start builds nothing' bash -c '[ $CODE -eq 0 ] && grep -q "built already" "$1" && ! grep -q "^make_game" "$2"' _ "$tmp/dlss3.txt" "$log"
+: >"$log"
+bash "$kit/scripts/build.sh" --no-dlss </dev/null >"$tmp/dlss4.txt" 2>&1; export CODE=$?
+check 'dlss: --no-dlss forgets the license, builds again without the SDK, NVIDIA'"'"'s runtime gone' \
+    bash -c '[ $CODE -eq 0 ] && [ ! -f "$2/dlss.txt" ] && grep "^make_game" "$1" | grep -v -- --check | grep -q "ngx=-$" && ! grep -q -- --fetch-ngx-sdk "$1" && ! compgen -G "$2/game/ngx/libnvidia-ngx-dlss.so.*" >/dev/null' _ "$log" "$D"
+: >"$log"
+bash "$kit/scripts/build.sh" </dev/null >"$tmp/dlss5.txt" 2>&1; export CODE=$?
+check 'dlss: off, the next start builds nothing' bash -c '[ $CODE -eq 0 ] && grep -q "built already" "$1" && ! grep -q "^make_game" "$2"' _ "$tmp/dlss5.txt" "$log"
 
 # pack-retry: the pack is made again on a start whenever it is missing, incomplete or from another tool, and the
 # game file is looked for when it moved; a pack tool error is said and the start goes on.
@@ -231,6 +261,24 @@ check 'build: another OOTRR release removes the built seeds (the game makes them
 mkdir -p "$D/game/mods/randomizer-GH" && echo GH >"$D/game/mods/randomizer-GH/coop-seed.txt"
 OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-o7.txt" 2>&1
 check 'build: the same OOTRR release again keeps the seeds' bash -c '[ -f "$1/game/mods/randomizer-GH/coop-seed.txt" ] && ! grep -q "removed for OOTRR" "$2"' _ "$D" "$tmp/build-o7.txt"
+check 'build: a set-up OOTRR says ok in data/game/tools/ootrr-setup.txt' grep -qx 'ok v0.6.0' "$D/game/tools/ootrr-setup.txt"
+# A new OOTRR release that does not run here (player report 2026-11-19: the old way deleted tools/ootrr first, so any
+# failure after it left the game with none): unpacked beside the old one and tried; the old OOTRR, its stamp and the
+# seeds stay, nothing half-made is left, and ootrr-setup.txt says why (the game's chat shows it).
+mkdir -p "$tmp/ootrr-bad/ootrr-0.7.0-linux-x86_64"
+printf '#!/bin/sh\nexit 3\n' >"$tmp/ootrr-bad/ootrr-0.7.0-linux-x86_64/ootrr"
+tar -czf "$D/builder/OOTRR-bad-linux.tar.gz" -C "$tmp/ootrr-bad" ootrr-0.7.0-linux-x86_64
+b_sha=$(sha256sum "$D/builder/OOTRR-bad-linux.tar.gz" | cut -d' ' -f1)
+printf 'release=v0.7.0\nurl=https://example.invalid/ootrr\nlinux=OOTRR-bad-linux.tar.gz\nlinux_sha256=%s\n' "$b_sha" >"$kit/data/longshot/OOTRR.txt"
+OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-o8.txt" 2>&1; export CODE=$?
+check 'build: an OOTRR that does not run keeps the old one and its seeds, says why, leaves nothing half-made' \
+    bash -c '[ $CODE -eq 0 ] && grep -q "did not run here" "$1" && [ -x "$2/game/tools/ootrr/ootrr" ] && grep -q "^v0.6.0 " "$2/game/tools/ootrr/coop-ootrr.txt" && [ -f "$2/game/mods/randomizer-GH/coop-seed.txt" ] && [ ! -e "$2/game/tools/ootrr.new" ] && [ ! -e "$2/game/tools/ootrr.old" ] && grep -q "^failed v0.7.0: ootrr did not run here" "$2/game/tools/ootrr-setup.txt"' _ "$tmp/build-o8.txt" "$D"
+# A swap stopped between its two moves (tools/ootrr.old, no tools/ootrr): the old folder goes back first.
+mv "$D/game/tools/ootrr" "$D/game/tools/ootrr.old"
+OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-o9.txt" 2>&1
+check 'build: a stopped OOTRR swap is put back' bash -c '[ -x "$1/game/tools/ootrr/ootrr" ] && [ ! -e "$1/game/tools/ootrr.old" ]' _ "$D"
+rm -f "$D/builder/OOTRR-bad-linux.tar.gz"
+printf 'release=v0.6.0\nurl=https://example.invalid/ootrr\nlinux=OOTRR-test-linux.tar.gz\nlinux_sha256=%s\n' "$o_sha" >"$kit/data/longshot/OOTRR.txt"
 rm -rf "$D/game/mods/randomizer-GH" "$D/game/mods/randomizer-half" "$D/game/mods/hd"
 rm -rf "$D/game/tools/ootrr" "$D/builder/OOTRR-test-linux.tar.gz"
 OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-o5.txt" 2>&1; export CODE=$?

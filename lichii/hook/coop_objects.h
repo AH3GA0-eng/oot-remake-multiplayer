@@ -70,6 +70,22 @@ std::optional<std::uint64_t> OurLinkActor();
 // the write only).
 void HurtOurLink(std::int32_t quarters, const std::array<float, 3>& at,
                  const std::array<float, 3>& from);
+// The kind words of a PvP strike (coop::protocol::kPvpKindWords; checked in coop_objects.cpp).
+inline constexpr std::size_t kPvpKindWords = 11;
+// Native puppets phase 4, path B (coop_pvp_native_game.cpp): as HurtOurLink, with the strike's kind words in
+// the game's hit (its reaction and effects), and NEVER the life write: a hit the game does not take within 0.4 s
+// stays not taken (docs/native-puppets.md 5.5). `quarters` 0: a no-life kind, the game's hit only. Any thread.
+void HurtOurLinkNative(std::int32_t quarters, const std::array<float, 3>& at, const std::array<float, 3>& from,
+                       const std::array<std::uint32_t, kPvpKindWords>& kind);
+// Phase 4, every other screen (PVP_RESULT): the landed kind replayed on our `_Pvp` copy `actor` of the victim
+// (CoopPuppet::Director::LivePvpActor), as protocol 14 replays a hit on an enemy copy: its invincible Life shows
+// flash, sparks and sound, nothing is taken. Any thread.
+void ReplayOnCopy(std::uint64_t actor, std::int32_t amount, const std::array<float, 3>& at,
+                  const std::array<std::uint32_t, kPvpKindWords>& kind);
+// Native puppets phase 3 (coop_lift_player.h; LICHII_COOP_LIFT_PLAYER=1): another player's Link holds ours.
+// Our Link is put at `at` by the next walk, the way copies are moved: its place written, then the game's own
+// physics-aware setter (kSetMatrix, vtable slot 0x218) on it. A place older than 200 ms is not used. Any thread.
+void PlaceOurLink(const std::array<float, 3>& at);
 
 // Emulator thread, each frame (G1, coop/host/event_owner.hpp): whether an event
 // runs in our game (`in_event`: the actors it binds here act for it and their
@@ -130,6 +146,9 @@ void ForgetKeptBreaks();
 // name to our Link takes a hit of its whole life from our Link in the next
 // walk of LICHII_COOP_OBJECTS (logs "coop: test kill ..."). Any thread.
 void QueueTestKill(std::string name);
+// Test only ("place PLATFORM UP", #196): the place of the moving platform (a PlatformSync driver) of that name
+// nearest our Link at the last walk; nothing when none is here.
+std::optional<std::array<float, 3>> TestPlatformPlace(const std::string& name);
 // Test only ("hit NAME N"): as QueueTestKill, a hit of `amount` through the game's own Life step.
 void QueueTestHit(std::string name, std::int32_t amount);
 // Test only ("stun NAME"): our copy of the nearest boss of that name says its owner a stun (Sync::TestStun).

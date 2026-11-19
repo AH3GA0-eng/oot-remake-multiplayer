@@ -984,6 +984,19 @@ TEST_CASE("player equip: unknown components are skipped, bad ones refused") {
   CHECK(decode(Bytes{17, 0, 8, 0, 0, 16, 0, 3, 0, 0xFF, 0x80, 0x01}, back) == Error::none);
   CHECK(std::get<PlayerEquip>(back).equipment.color == 0xFF8001u);
   CHECK_FALSE(std::get<PlayerEquip>(back).equipment.drawn);
+  // Lit (17, issue 248): one byte of slot bits, like drawn.
+  CHECK(decode(Bytes{17, 0, 6, 0, 0, 17, 0, 1, 0, 0x01}, back) == Error::none);
+  CHECK(std::get<PlayerEquip>(back).equipment.lit == 1);
+  CHECK_FALSE(std::get<PlayerEquip>(back).equipment.drawn);
+  CHECK(decode_bytes(Bytes{17, 0, 7, 0, 0, 17, 0, 2, 0, 1, 1}) == Error::bad_length);
+  CHECK(decode_bytes(Bytes{17, 0, 11, 0, 0, 17, 0, 1, 0, 1, 17, 0, 1, 0, 1}) ==
+        Error::duplicate_component);
+  PlayerEquip lit;
+  lit.equipment.drawn = 1;
+  lit.equipment.lit = 1;
+  CHECK(must_encode(lit) == Bytes{17, 0, 11, 0, 0, 9, 0, 1, 0, 1, 17, 0, 1, 0, 1});
+  REQUIRE(decode(must_encode(lit), back) == Error::none);
+  CHECK(std::get<PlayerEquip>(back) == lit);
   // The same component twice.
   CHECK(decode_bytes(Bytes{17, 0, 11, 0, 0, 9, 0, 1, 0, 1, 9, 0, 1, 0, 1}) ==
         Error::duplicate_component);
@@ -1035,6 +1048,11 @@ TEST_CASE("merge_equipment keeps what a message leaves out") {
   CHECK(merge_equipment(before, now).color == 0x3070FFu);
   now.color = 0xFF0000u;
   CHECK(merge_equipment(before, now).color == 0xFF0000u);
+  // Lit is kept the same way (a message without it: an older sender).
+  before.lit = 1;
+  CHECK(merge_equipment(before, now).lit == 1);
+  now.lit = 0;
+  CHECK(merge_equipment(before, now).lit == 0);
 }
 
 TEST_CASE("slot_color gives each player number its own colour") {
@@ -1093,7 +1111,7 @@ TEST_CASE("damage carries where the hit landed, optional (protocol 12)") {
 
 TEST_CASE("damage carries the hit record, optional, alone or after the hit place (protocol 14)") {
   // Every hit shows on every screen: the owner's game takes the hit that happened (bomb, arrow, fire ...).
-  CHECK(kProtocolVersion == 14);
+  CHECK(kProtocolVersion >= 14);  // 15: the platform node keys (0.11.6)
   Damage d{0, test::kPlacedId, 1, 2, 1, {1.0f, 2.0f, 3.0f}, {}};
   const Bytes plain = must_encode(d);
   HitRecord rec{};
@@ -2471,6 +2489,13 @@ TEST_CASE("platform clock: type 400, object samples channel, checked keys and fl
   CHECK(bad([](PlatformClock& c) { c.ticks[0].key = (std::uint64_t{5} << 32) | 0x200; })); // past the component
   CHECK(bad([](PlatformClock& c) { c.ticks[0].key = 0x600; }));                             // past the actor
   CHECK(bad([](PlatformClock& c) { c.ticks[0].key = (kPlatformAsFrameRegion << 32) | 4; }));
+  // #196: a GroundControl node's words, kPlatformNodeFrom .. kPlatformNodeTo only.
+  CHECK_FALSE(bad([](PlatformClock& c) { c.ticks[0].key = (kPlatformWaveNodeRegion << 32) | 0xf8; }));
+  CHECK_FALSE(bad([](PlatformClock& c) { c.ticks[0].key = (kPlatformRotateNodeRegion << 32) | 0xd4; }));
+  CHECK(bad([](PlatformClock& c) { c.ticks[0].key = (kPlatformWaveNodeRegion << 32) | 0xbc; }));
+  CHECK(bad([](PlatformClock& c) { c.ticks[0].key = (kPlatformWaveNodeRegion << 32) | 0x140; }));
+  CHECK(bad([](PlatformClock& c) { c.ticks[0].key = (kPlatformRotateNodeRegion << 32) | 0xd6; }));
+  CHECK(bad([](PlatformClock& c) { c.ticks[0].key = (std::uint64_t{0xfffc} << 32) | 0xd4; }));
   CHECK(bad([](PlatformClock& c) { c.ticks[0].rate = 0.0f; }));
   CHECK(bad([](PlatformClock& c) { c.ticks[0].rate = kMaxPlatformRate * 2; }));
   CHECK(bad([](PlatformClock& c) { c.ticks[0].value = std::numeric_limits<float>::quiet_NaN(); }));
@@ -2710,4 +2735,183 @@ TEST_CASE("bad boss cutscene messages are refused") {
   b = must_encode(BossHeart{0, 0, false, 16});
   b[kHeaderSize + 3] = 81;  // max life (u32 little end first byte)
   CHECK(decode(b, back) == Error::bad_value);
+}
+
+TEST_CASE("bomb hand-over messages round-trip and refuse bad values") {
+  const ObjectId bomb{ObjectKind::made, 2, 99};
+  const Message take = BombTake{bomb, 3};
+  CHECK(check_received(take, Sender::client, kChannelOwnership) == Error::none);
+  CHECK(check_received(take, Sender::server, kChannelOwnership) == Error::wrong_sender);
+  Bytes b = must_encode(take);
+  CHECK(b.size() == kHeaderSize + 12);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<BombTake>(back) == std::get<BombTake>(take));
+
+  const Message answer = BombAnswer{bomb, 4, BombRefusal::busy};
+  CHECK(check_received(answer, Sender::server, kChannelOwnership) == Error::none);
+  CHECK(check_received(answer, Sender::client, kChannelOwnership) == Error::wrong_sender);
+  b = must_encode(answer);
+  CHECK(b.size() == kHeaderSize + 13);
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<BombAnswer>(back) == std::get<BombAnswer>(answer));
+  b[kHeaderSize + 12] = 0;  // no such refusal
+  CHECK(decode(b, back) == Error::bad_value);
+  b[kHeaderSize + 12] = kBombRefusalMax + 1;
+  CHECK(decode(b, back) == Error::bad_value);
+
+  const Message share = BombShare{true};
+  CHECK(check_received(share, Sender::client, kChannelOwnership) == Error::none);
+  CHECK(check_received(share, Sender::client, kChannelSession) != Error::none);
+  b = must_encode(share);
+  CHECK(b.size() == kHeaderSize + 1);
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<BombShare>(back).on);
+  b[kHeaderSize] = 2;
+  CHECK(decode(b, back) == Error::bad_value);
+
+  // Only a made object can be taken.
+  Bytes out;
+  CHECK(encode(BombTake{ObjectId{ObjectKind::placed, 0, 5}, 0}, out) == Error::bad_value);
+}
+
+TEST_CASE("player lift messages: types 535 to 538, round-trip and refuse bad values") {
+  const Message ask = LiftAsk{0, 2};
+  CHECK(check_received(ask, Sender::client, kChannelOwnership) == Error::none);
+  CHECK(check_received(ask, Sender::client, kChannelSession) == Error::wrong_channel);
+  CHECK(check_received(LiftAsk{1, 2}, Sender::server, kChannelOwnership) == Error::none);
+  Bytes b = must_encode(ask);
+  CHECK(b.size() == kHeaderSize + 2);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<LiftAsk>(back) == std::get<LiftAsk>(ask));
+  b[kHeaderSize + 1] = 0;  // nobody lifted
+  CHECK(decode(b, back) == Error::bad_value);
+
+  const Message answer = LiftAnswer{0, 1, LiftRefusal::event};
+  CHECK(check_received(answer, Sender::client, kChannelOwnership) == Error::none);
+  b = must_encode(answer);
+  CHECK(b.size() == kHeaderSize + 3);
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<LiftAnswer>(back) == std::get<LiftAnswer>(answer));
+  b[kHeaderSize + 2] = kLiftRefusalMax + 1;
+  CHECK(decode(b, back) == Error::bad_value);
+
+  const Message place = LiftPlace{0, 3, LiftPhase::flying, {1.5f, 2.0f, -3.0f}};
+  CHECK(check_received(place, Sender::client, kChannelPlayerSamples) == Error::none);
+  CHECK(check_received(place, Sender::client, kChannelOwnership) == Error::wrong_channel);
+  b = must_encode(place);
+  CHECK(b.size() == kHeaderSize + 15);
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<LiftPlace>(back) == std::get<LiftPlace>(place));
+  b[kHeaderSize + 2] = 0;  // no such phase
+  CHECK(decode(b, back) == Error::bad_value);
+  b[kHeaderSize + 2] = kLiftPhaseMax + 1;
+  CHECK(decode(b, back) == Error::bad_value);
+
+  const Message share = LiftShare{true};
+  CHECK(check_received(share, Sender::client, kChannelOwnership) == Error::none);
+  CHECK(check_received(share, Sender::server, kChannelOwnership) == Error::wrong_sender);
+  b = must_encode(share);
+  CHECK(b.size() == kHeaderSize + 1);
+  b[kHeaderSize] = 2;
+  CHECK(decode(b, back) == Error::bad_value);
+
+  // Nobody lifts, answers or places itself.
+  Bytes out;
+  CHECK(encode(LiftAsk{2, 2}, out) == Error::bad_value);
+  CHECK(encode(LiftAnswer{1, 1, LiftRefusal::none}, out) == Error::bad_value);
+  CHECK(encode(LiftPlace{0, 1, LiftPhase::held, {std::numeric_limits<float>::quiet_NaN(), 0, 0}}, out) == Error::bad_value);
+  Message self = LiftAsk{0, 2};
+  CHECK_FALSE(set_sender(self, 2));
+  CHECK(set_sender(self, 1));
+  CHECK(sender_of(self) == std::optional<std::uint8_t>(1));
+}
+
+TEST_CASE("pvp on real bodies: types 540 to 542, round-trip and refuse bad values") {
+  PvpStrike strike;
+  strike.victim = 2;
+  strike.seq = 7;
+  strike.seen_us = 123456789012ull;
+  for (std::size_t i = 0; i < kPvpKindWords; ++i) strike.kind[i] = 0x1000u + static_cast<std::uint32_t>(i);
+  strike.amount = 4;
+  strike.source = PvpSource::shot;
+  strike.object = ObjectId{ObjectKind::made, 1, 42};  // made by player 1, the attacker once relayed
+  strike.at = {1.0f, 2.0f, 3.0f};
+  strike.copy_at = {1.5f, 2.0f, 3.0f};
+  strike.from = {-1.0f, 0.0f, 4.0f};
+  const Message m = strike;
+  CHECK(check_received(m, Sender::client, kChannelOwnership) == Error::none);
+  CHECK(check_received(m, Sender::client, kChannelSession) == Error::wrong_channel);
+  Bytes b = must_encode(m);
+  CHECK(b.size() == kHeaderSize + 109);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<PvpStrike>(back) == strike);
+  Bytes bad = b;
+  bad[kHeaderSize + 62] = 0;  // no such source
+  CHECK(decode(bad, back) == Error::bad_value);
+  bad = b;
+  bad[kHeaderSize + 62] = kPvpSourceMax + 1;
+  CHECK(decode(bad, back) == Error::bad_value);
+  bad = b;
+  bad[kHeaderSize + 58] = 81;  // amount over 80 (little end first)
+  CHECK(decode(bad, back) == Error::bad_value);
+  bad = b;
+  bad[kHeaderSize + 63] = 0;  // a shot naming a placed object
+  CHECK(decode(bad, back) == Error::bad_value);
+  bad = b;
+  bad[kHeaderSize + 1] = 0;  // nobody struck
+  CHECK(decode(bad, back) == Error::bad_value);
+
+  PvpResult result;
+  result.attacker = 1;
+  result.seq = 7;
+  result.outcome = PvpOutcome::guarded;
+  result.life = 12;
+  result.kind = strike.kind;
+  result.at = strike.at;
+  const Message r = result;
+  CHECK(check_received(r, Sender::client, kChannelOwnership) == Error::none);
+  CHECK(check_received(PvpResult{3, 1, 7, PvpOutcome::taken, 2, 10, {}, {}}, Sender::server, kChannelOwnership) ==
+        Error::none);
+  b = must_encode(r);
+  CHECK(b.size() == kHeaderSize + 71);
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<PvpResult>(back) == result);
+  bad = b;
+  bad[kHeaderSize + 6] = kPvpOutcomeMax + 1;
+  CHECK(decode(bad, back) == Error::bad_value);
+
+  const Message native = PvpNative{0, true};
+  CHECK(check_received(native, Sender::client, kChannelOwnership) == Error::none);
+  CHECK(check_received(PvpNative{2, true}, Sender::server, kChannelOwnership) == Error::none);
+  CHECK(check_received(PvpNative{2, true}, Sender::client, kChannelOwnership) == Error::wrong_sender);
+  b = must_encode(native);
+  CHECK(b.size() == kHeaderSize + 2);
+  b[kHeaderSize + 1] = 2;
+  CHECK(decode(b, back) == Error::bad_value);
+
+  // Nobody strikes itself or answers itself; places must be finite.
+  Bytes out;
+  PvpStrike self_strike = strike;
+  self_strike.player_number = 2;
+  CHECK(encode(self_strike, out) == Error::bad_value);
+  PvpStrike nan = strike;
+  nan.copy_at[1] = std::numeric_limits<float>::quiet_NaN();
+  CHECK(encode(nan, out) == Error::bad_value);
+  CHECK(encode(PvpResult{1, 1, 0, PvpOutcome::taken, 0, 0, {}, {}}, out) == Error::bad_value);
+  CHECK(encode(PvpResult{0, 1, 0, PvpOutcome::taken, 0, 81, {}, {}}, out) == Error::bad_value);
+  PvpStrike sword = strike;
+  sword.source = PvpSource::sword;
+  CHECK(encode(sword, out) == Error::bad_value);  // a sword names no object
+  sword.object = ObjectId{};
+  CHECK(encode(sword, out) == Error::none);
+  Message relayed = strike;
+  CHECK_FALSE(set_sender(relayed, 2));
+  CHECK(set_sender(relayed, 1));
+  CHECK(sender_of(relayed) == std::optional<std::uint8_t>(1));
+  Message answered = result;
+  CHECK_FALSE(set_sender(answered, 1));
+  CHECK(set_sender(answered, 2));
 }

@@ -390,7 +390,7 @@ TEST_CASE("quests: Get_Epona shares its end only") {
     CHECK(fresh.store.write_exact(entry("Complete")));
     CHECK(fresh.at(kEpona, "Complete"));
 
-    // A player in the race, or riding out after it, finishes it themselves.
+    // A player in the race, or riding out after it, finishes it themselves (no race flag read: held).
     for (const char* step : {"GambleRacePlaying", "AfterWonGambleRace"}) {
         Game racing;
         racing.step(kEpona, step);
@@ -497,9 +497,10 @@ TEST_CASE("quests live: a step past Ready goes to the manager, with the quest's 
     CHECK(forest->steps.back() == host::flag_hash("Complete"));
     CHECK(WantOf(wants, "SageOfFire") != nullptr);
     CHECK(WantOf(wants, "Goto_HyruleCastle") != nullptr);
-    CHECK(WantOf(wants, "Get_Epona") != nullptr);  // its end is shared
-    // Get_StoneOfFire is CoopQuest's own (live since issue 171): not twice.
+    // Get_StoneOfFire is CoopQuest's own (live since issue 171), and so is Get_Epona (row 150: from
+    // AfterGetEponaSong, its end included): not twice.
     CHECK(WantOf(wants, "Get_StoneOfFire") == nullptr);
+    CHECK(WantOf(wants, "Get_Epona") == nullptr);
     for (const auto& w : wants) {
         CHECK(w.challenge == host::flag_hash(w.name.c_str()));
     }
@@ -520,12 +521,26 @@ TEST_CASE("quests live: Ready, NotReady, an unknown or unread step and a step un
     CHECK(WantOf(CoopQuests::LiveWants(Reader(at)), "Goto_HyruleCastle") != nullptr);
 }
 
-TEST_CASE("quests live: Get_Epona only at Complete (its other steps are each player's own)") {
+TEST_CASE("quests live: Get_Epona reaches the manager once, through CoopQuest (row 150)") {
+    // Its end (shared here) and the song's step (CoopQuest's rule) both go through CoopQuest::LiveWant, from
+    // AfterGetEponaSong on; CoopQuests::LiveWants leaves the quest to it, so nothing is asked twice.
+    const CoopQuest::Quest* epona = nullptr;
+    for (const auto& q : CoopQuest::Quests()) {
+        if (q.hash == kEpona) epona = &q;
+    }
+    REQUIRE(epona != nullptr);
     std::map<std::uint32_t, std::uint32_t> at;
-    at[kEpona] = host::flag_hash("AfterGetEponaSong");
-    CHECK(WantOf(CoopQuests::LiveWants(Reader(at)), "Get_Epona") == nullptr);
+    for (const char* step : {"ReadyForGetEponaSong", "AfterGetEponaSong", "Complete"}) {
+        at[kEpona] = host::flag_hash(step);
+        CHECK(WantOf(CoopQuests::LiveWants(Reader(at)), "Get_Epona") == nullptr);
+    }
+    at[kEpona] = host::flag_hash("ReadyForGetEponaSong");
+    CHECK_FALSE(CoopQuest::LiveWant(*epona, Reader(at)).has_value());
     at[kEpona] = host::flag_hash("Complete");
-    CHECK(WantOf(CoopQuests::LiveWants(Reader(at)), "Get_Epona") != nullptr);
+    const auto w = CoopQuest::LiveWant(*epona, Reader(at));
+    REQUIRE(w.has_value());
+    CHECK(w->challenge == host::flag_hash("Get_Epona"));
+    CHECK(w->step == host::flag_hash("Complete"));
 }
 
 TEST_CASE("quests live: a mid step goes as it is (Meet_GreatFairy GoToFountain)") {
@@ -535,4 +550,75 @@ TEST_CASE("quests live: a mid step goes as it is (Meet_GreatFairy GoToFountain)"
     REQUIRE(wants.size() == 1);
     CHECK(wants[0].name == "Meet_GreatFairy");
     CHECK(wants[0].step == host::flag_hash("GoToFountain"));
+}
+
+namespace {
+
+constexpr std::uint32_t kRaceRunning = 0xa253721cu;  // LonLonRanch_PlayingGambleRace
+
+// Game, with the game's race flag (LonLonRanch_PlayingGambleRace) read through the store, as the hook does.
+struct RanchGame : Game {
+    std::map<std::uint32_t, bool> bools;
+    CoopQuests::Store ranch{
+        inner,
+        [this](std::uint32_t hash) -> std::optional<std::uint32_t> {
+            const auto it = enums.find(hash);
+            if (it == enums.end()) return std::nullopt;
+            return it->second;
+        },
+        [this](std::uint32_t hash, std::uint32_t value) {
+            if (!enums.contains(hash)) return false;
+            enums[hash] = value;
+            ++enum_writes;
+            return true;
+        },
+        [this](std::uint32_t hash) -> std::optional<bool> {
+            const auto it = bools.find(hash);
+            if (it == bools.end()) return std::nullopt;
+            return it->second;
+        }};
+};
+
+} // namespace
+
+TEST_CASE("quests: row 150: Get_Epona's end waits only while a race against Ingo runs in our game") {
+    CHECK(host::flag_hash("LonLonRanch_PlayingGambleRace") == kRaceRunning);
+    const auto key = Key(kEpona);
+    const proto::FlagEntry complete{key, proto::FlagKind::int32,
+                                    static_cast<std::uint32_t>(RankOf(kEpona, "Complete"))};
+    for (const char* step : {"GambleRacePlaying", "AfterWonGambleRace"}) {
+        // The race runs (the game's own flow set the flag at its start): held, tried again.
+        RanchGame racing;
+        racing.step(kEpona, step);
+        racing.bools[kRaceRunning] = true;
+        CHECK(racing.ranch.busy(key));
+        CHECK_FALSE(racing.ranch.write(complete));
+        CHECK(racing.at(kEpona, step));
+        // The flag unread (GameData not up yet): held as well.
+        RanchGame unread;
+        unread.step(kEpona, step);
+        CHECK(unread.ranch.busy(key));
+        CHECK_FALSE(unread.ranch.write(complete));
+        // The player report's save: Dm_LonLon_0040 (another player's win) played here left the quest at
+        // AfterWonGambleRace with no race and no horse. No race runs: the group's end is taken.
+        RanchGame stuck;
+        stuck.step(kEpona, step);
+        stuck.bools[kRaceRunning] = false;
+        CHECK_FALSE(stuck.ranch.busy(key));
+        CHECK(stuck.ranch.write(complete));
+        CHECK(stuck.at(kEpona, "Complete"));
+        // The host's save load (Resync from host) gives the same.
+        RanchGame resynced;
+        resynced.step(kEpona, step);
+        resynced.bools[kRaceRunning] = false;
+        CHECK(resynced.ranch.write_exact(complete));
+        CHECK(resynced.at(kEpona, "Complete"));
+    }
+    // Earlier steps never depended on the race flag.
+    RanchGame before;
+    before.step(kEpona, "AfterTalkMalon");
+    before.bools[kRaceRunning] = true;
+    CHECK_FALSE(before.ranch.busy(key));
+    CHECK(before.ranch.write(complete));
+    CHECK(before.at(kEpona, "Complete"));
 }

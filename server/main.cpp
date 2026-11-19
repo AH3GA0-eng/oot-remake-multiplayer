@@ -24,6 +24,7 @@
 #endif
 
 #include "coop/protocol/messages.hpp"
+#include "console_out.hpp"
 #include "enet_server.hpp"
 #include "host_service.hpp"
 #include "join_helper.hpp"
@@ -56,10 +57,17 @@ BOOL WINAPI on_console_event(DWORD event) {
 }
 #endif
 
-void say(const std::string& text) {
-  std::printf("coop_server: %s\n", text.c_str());
-  std::fflush(stdout);
+// #239: the service loop never waits for the console (console_out.hpp): a selection in the server's window
+// (QuickEdit, Edit > Mark), the Pause key or a paused pipe used to stop the whole server.
+coop::server::ConsoleOut& console() {
+  static coop::server::ConsoleOut out([](const std::string& line) {
+    std::printf("%s\n", line.c_str());
+    std::fflush(stdout);
+  });
+  return out;
 }
+
+void say(const std::string& text) { console().push("coop_server: " + text); }
 
 // The STUN servers from the command line, or the free public ones.
 std::vector<coop::server::nat::Addr> stun_servers(const coop::server::CommandLine& line) {
@@ -316,6 +324,7 @@ int main(int argc, char** argv) {
     config.relay_via = line->relay_via;
     config.relay_key = line->relay_key;
     config.relay_room = line->relay_room;
+    config.relay_list = line->relay_list;
     config.log = say;
     HostService host(config);
     std::string why;

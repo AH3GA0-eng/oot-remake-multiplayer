@@ -8,6 +8,7 @@
 // menu, where all of it began.
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -72,6 +73,8 @@ struct Options {
     bool show_players = false;     // LICHII_COOP_SHOW_PLAYERS (the list always shown)
     bool pvp = false;              // pvp (the host's)
     bool approve_joins = false;    // approve_joins (the host's: each new player waits for /allow or /deny); read only
+    bool auto_rejoin = false;      // auto_rejoin (join the last friend's game again by itself: coop_auto_rejoin.h)
+    bool list_room = false;        // list_room (hosting with a relay room: the room on the relay's public list)
     bool upnp = true;              // upnp (the host's router forward)
     std::string password;          // server_password ("": a new one each session)
     bool debug_panel = false;      // LICHII_COOP_DEBUG_PANEL
@@ -339,6 +342,27 @@ private:
     Wait wait_ = Wait::none;
     std::uint64_t asked_ms_ = 0;
 };
+
+// Player report 124, its second half: the re-read list is not what the open title shows. The title's buttons are
+// arranged once, by the game's Sequence graph OpenTitle.module when the title opens: from SeqQueryIsExistSave's
+// IsExist (the caption manager's +0x8e) it stops the Title_00 layout's `BtnNum` animation at frame 3 (three buttons:
+// Continue, New Game, Options) or 2 (two: New Game, Options), sets the buttons' texts from LayoutMsg/Title_00 and the
+// title's sound-link arrangement (SeqOneShotSetSLinkPropertyTitleBtnArrangementType: 1 with a save, 0 without).
+// TitleArrangement is that branch's values as the graph has them (read from the game's OpenTitle.module.ainb: nodes
+// 6-8 and 20 without a save, 11-14 and 21 with one). After a re-read (SaveListRefresh's done) the title's step makes
+// the same calls the graph's nodes end in, so the open title shows the list the game has now. What a press does is the
+// game's NormalTitle.module, which asks SeqQueryIsExistSave again at the press: it already follows the new list.
+struct TitleButtonText {
+    const char* pane = nullptr;    // the button's text pane in Title_00
+    const char* label = nullptr;   // its message in LayoutMsg/Title_00 (0000 New Game, 0001 Continue, 0002 Options)
+};
+struct TitleArrangement {
+    float btn_num_frame = 0;                 // the frame BtnNum stops at: the buttons shown
+    std::int32_t sound_type = 0;             // the title's sound-link property (its arrangement type)
+    std::array<TitleButtonText, 3> texts{};  // the first `count` are set
+    std::size_t count = 0;
+};
+TitleArrangement ArrangementFor(bool any_save);
 
 // ---------------------------------------------------------------------------
 // Player report 133: Longshot's Skip title screen (its Insert menu row, off by default) starts a launch with the newest

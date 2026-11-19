@@ -274,6 +274,8 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
     o.show_players = On(IniGet(options_ini, "LICHII_COOP_SHOW_PLAYERS"));
     o.pvp = On(IniGet(options_ini, "pvp"));
     o.approve_joins = On(IniGet(options_ini, "approve_joins"));
+    o.auto_rejoin = On(IniGet(options_ini, "auto_rejoin"));
+    o.list_room = On(IniGet(options_ini, "list_room"));
     o.upnp = !Off(IniGet(options_ini, "upnp"));
     if (const auto v = IniGet(options_ini, "server_password"); v && PasswordOk(*v)) {
         o.password = *v;
@@ -335,6 +337,8 @@ void Options::Write(std::string& coop_ini, std::string& options_ini) const {
     o = chat_key == "T" ? IniUnset(o, "LICHII_COOP_CHAT_KEY") : IniSet(o, "LICHII_COOP_CHAT_KEY", chat_key, false);
     o = show_players ? IniSet(o, "LICHII_COOP_SHOW_PLAYERS", "1", false) : IniUnset(o, "LICHII_COOP_SHOW_PLAYERS");
     o = IniSet(o, "pvp", pvp ? "on" : "off", true);
+    o = auto_rejoin ? IniSet(o, "auto_rejoin", "on", true) : IniUnset(o, "auto_rejoin");
+    o = list_room ? IniSet(o, "list_room", "on", true) : IniUnset(o, "list_room");
     o = upnp ? IniUnset(o, "upnp") : IniSet(o, "upnp", "no", true);
     o = password.empty() ? IniUnset(o, "server_password") : IniSet(o, "server_password", password, true);
     o = debug_panel ? IniSet(o, "LICHII_COOP_DEBUG_PANEL", "1", false) : IniUnset(o, "LICHII_COOP_DEBUG_PANEL");
@@ -880,6 +884,23 @@ SaveListRefresh::Action SaveListRefresh::Step(const Input& in) {
     asked_ = true;
     asked_ms_ = in.now_ms;
     return Action::ask;
+}
+
+TitleArrangement ArrangementFor(bool any_save) {
+    TitleArrangement a;
+    if (any_save) {
+        a.btn_num_frame = 3;
+        a.sound_type = 1;
+        a.texts = {{{"Pa_Button_00/T_Btn_00", "0001"}, {"Pa_Button_01/T_Btn_00", "0000"},
+                    {"Pa_Button_02/T_Btn_00", "0002"}}};
+        a.count = 3;
+    } else {
+        a.btn_num_frame = 2;
+        a.sound_type = 0;
+        a.texts = {{{"Pa_Button_00/T_Btn_00", "0000"}, {"Pa_Button_01/T_Btn_00", "0002"}, {}}};
+        a.count = 2;
+    }
+    return a;
 }
 
 const char* SkipTitleHold(const SkipTitleInput& in) {
