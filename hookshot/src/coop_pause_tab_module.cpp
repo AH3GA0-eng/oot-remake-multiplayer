@@ -29,6 +29,7 @@
 #include "coop_room_list.h"
 #include "coop_runtime.h"
 #include "coop_lobby_game.h"
+#include "coop_longshot_settings.h"
 #include "coop_lobby.h"
 #include "coop_save.h"
 #include "coop_window_brand.h"
@@ -535,6 +536,129 @@ void LiveCells(void* ctx, std::uint64_t layout, std::uint64_t gen, const Session
     }
 }
 
+// --- The Settings page (the sixth tab: Longshot's options; coop_pause_tab.h "The Settings page") ---
+// The category is the row the game's cursor is on while the rows have the pad; the list's page and its row picked
+// (-1: the rows have the pad). Any thread.
+std::atomic<int> g_set_category{0}, g_set_page{0}, g_set_row{-1};
+std::atomic<int> g_set_count{0};   // the category's settings (the list's length)
+// Longshot's settings as last read (every 2 s while the page shows, and after a change). g_set_mutex.
+std::mutex g_set_mutex;
+std::vector<SettingRow> g_set_all;
+std::uint64_t g_set_read_ms = 0;
+
+std::vector<SettingRow> SettingsNow(std::uint64_t now_ms, bool fresh = false) {
+    std::lock_guard lock(g_set_mutex);
+    if (fresh || g_set_read_ms == 0 || now_ms - g_set_read_ms > 2000) {
+        g_set_all.clear();
+        for (const CoopLongshotSettings::Setting& x : CoopLongshotSettings::All()) {
+            g_set_all.push_back(SettingRow{x.key, x.name, x.text, x.tab, x.value, x.lo, x.hi, x.step, x.restart, x.fixed});
+        }
+        g_set_read_ms = now_ms;
+    }
+    return g_set_all;
+}
+
+// A setting of the category's list set as a press asks (dir: -1 Left, +1 Right, 0 A). After the lock, as Act.
+void ChangeSetting(int index, int dir) {
+    const std::vector<SettingRow> rows = SettingsOf(SettingsNow(NowMs()), g_set_category.load());
+    if (index < 0 || index >= static_cast<int>(rows.size())) return;
+    const SettingRow& r = rows[static_cast<std::size_t>(index)];
+    const int want = SettingNext(r, dir);
+    if (want == r.value) return;
+    const auto after = CoopLongshotSettings::Set(r.key, want);
+    LOG_INFO(Core, "coop: pause tab: settings: {} from {} to {}{}{}", r.key, r.text, after ? after->text : std::string("?"),
+             after ? "" : " (Longshot did not take it)", after && after->restart ? " (after a restart)" : "");
+    SettingsNow(NowMs(), true);
+    g_live_poke = true;
+}
+
+// The Settings page's words: its rows (the categories) and the list (a page of the category's settings), its picked
+// row bright and the others dimmed while the list has the pad, a fixed one dimmed always, the rows dimmed then too.
+// Live texts 22..26 (the rows) and 27..40 (the list: a name and a value each). g_live_mutex.
+std::uint64_t g_set_gen = 0;
+std::array<std::uint64_t, kListRows> g_set_list{};
+std::array<std::uint64_t, kRows> g_set_rows{};
+std::array<int, kListRows> g_set_vis{};
+std::array<float, kListRows> g_set_alpha{};
+std::array<float, kRows> g_set_rows_alpha{};
+
+void LiveSettings(void* ctx, std::uint64_t layout, std::uint64_t gen) {
+    if (g_settings_pane == 0) return;
+    if (g_set_gen != gen) {
+        g_set_gen = gen;
+        std::uint64_t table = 0;
+        Call(ctx, kPaneTable, layout + 0x40, 0, 0, 0, 0, &table);
+        const std::uint64_t page = PartLayout(table, "Pa_Settings_00");
+        for (int i = 0; i < kListRows; ++i) {
+            char name[16];
+            std::snprintf(name, sizeof name, "Pa_List_%02d", i);
+            const std::uint64_t pane = PaneIn(ctx, page, name);
+            g_set_list[static_cast<std::size_t>(i)] = IsPart(pane) ? pane : 0;
+            g_set_vis[static_cast<std::size_t>(i)] = -1, g_set_alpha[static_cast<std::size_t>(i)] = -1;
+            if (const std::uint64_t mark = PaneIn(ctx, PartLayout(page, name), "P_CheckMark_00"); mark != 0) {
+                SetVisible(ctx, mark, false);   // (an Options row's check mark: never ours)
+            }
+        }
+        for (int r = 0; r < kRows; ++r) {
+            char name[16];
+            std::snprintf(name, sizeof name, "Pa_Button_%02d", r);
+            const std::uint64_t pane = PaneIn(ctx, page, name);
+            g_set_rows[static_cast<std::size_t>(r)] = IsPart(pane) ? pane : 0;
+            g_set_rows_alpha[static_cast<std::size_t>(r)] = -1;
+        }
+    }
+    for (int r = 0; r < kRows; ++r) {
+        char path[64];
+        std::snprintf(path, sizeof path, "Pa_Settings_00/Pa_Button_%02d/T_Btn_00", r);
+        LiveText(ctx, layout, gen, path, 22 + r, kSettingTabs[static_cast<std::size_t>(r)]);
+    }
+    const std::vector<SettingRow> rows = SettingsOf(SettingsNow(NowMs()), g_set_category.load());
+    g_set_count = static_cast<int>(rows.size());
+    const int page = g_set_page.load(), picked = g_set_row.load();
+    const std::vector<ListLine> lines = SettingLines(rows, page);
+    for (int i = 0; i < kListRows; ++i) {
+        const std::size_t k = static_cast<std::size_t>(i);
+        const std::uint64_t pane = g_set_list[k];
+        if (pane == 0) continue;
+        const bool on = !lines[k].name.empty();
+        if (on) {
+            char path[64];
+            std::snprintf(path, sizeof path, "Pa_Settings_00/Pa_List_%02d/T_Option_00", i);
+            LiveText(ctx, layout, gen, path, 27 + 2 * i, lines[k].name);
+            std::snprintf(path, sizeof path, "Pa_Settings_00/Pa_List_%02d/T_Text_00", i);
+            LiveText(ctx, layout, gen, path, 28 + 2 * i, lines[k].value.empty() ? std::string(" ") : lines[k].value);
+        }
+        if (g_set_vis[k] != (on ? 1 : 0)) SetVisible(ctx, pane, on), g_set_vis[k] = on ? 1 : 0;
+        const std::size_t at = static_cast<std::size_t>(((page % SettingPages(static_cast<int>(rows.size())) +
+                                                          SettingPages(static_cast<int>(rows.size()))) %
+                                                         SettingPages(static_cast<int>(rows.size()))) * kListRows + i);
+        const bool fixed = at < rows.size() && rows[at].fixed;
+        const float alpha = fixed ? 0.4f : picked < 0 || picked == i ? 1.0f : 0.5f;
+        if (on && g_set_alpha[k] != alpha) CallAlpha(ctx, pane, alpha), g_set_alpha[k] = alpha;
+    }
+    for (int r = 0; r < kRows; ++r) {
+        const std::size_t k = static_cast<std::size_t>(r);
+        const float alpha = picked >= 0 ? 0.45f : 1.0f;
+        if (g_set_rows[k] != 0 && g_set_rows_alpha[k] != alpha) CallAlpha(ctx, g_set_rows[k], alpha), g_set_rows_alpha[k] = alpha;
+    }
+}
+
+// The settings list's rows where the game puts them now (as ReadCellBoxes: an Options row's bar, 1880 wide), and the
+// x of a row's two arrows from its centre (PaOptionBtnLevel_00: its value at +500, the arrows 360 either side of it).
+constexpr float kArrowLeftX = 140.0f, kArrowRightX = 860.0f, kArrowReach = 90.0f;
+std::array<RowBox, kListRows> ReadSettingBoxes() {
+    std::array<RowBox, kListRows> boxes{};
+    for (int i = 0; i < kListRows; ++i) {
+        const std::uint64_t pane = g_set_list[static_cast<std::size_t>(i)];
+        float m[12] = {};
+        if (pane == 0 || !CoopRuntime::Read(pane + 0x28, m, sizeof m) || !(m[0] > 1e-3f) || !(m[4] > 1e-3f)) continue;
+        if ((Read<std::uint32_t>(pane + 0xa8) & 1u) == 0) continue;
+        boxes[static_cast<std::size_t>(i)] = RowBox{true, m[9] - 940.0f * m[0], m[10] - 70.0f * m[4],
+                                                    m[9] + 940.0f * m[0], m[10] + 70.0f * m[4]};
+    }
+    return boxes;
+}
+
 void LiveRows(void* ctx, std::uint64_t layout, std::uint64_t gen, const SessionView& v) {
     std::lock_guard lock(g_live_mutex);
     if (layout == 0 || gen != g_live_gen) return;   // (another opening came meanwhile: its own turn sets them)
@@ -545,6 +669,7 @@ void LiveRows(void* ctx, std::uint64_t layout, std::uint64_t gen, const SessionV
         LiveText(ctx, layout, gen, path, i, rows[static_cast<std::size_t>(i)]);
     }
     LiveCells(ctx, layout, gen, v);
+    if (g_page.SettingsUsable()) LiveSettings(ctx, layout, gen);
 }
 
 // The pages' panes, looked up once per opening (`calls`: ctx may call(); else looked up at a later update).
@@ -1215,6 +1340,10 @@ void OnScreen(void* ctx, std::uint64_t screen) noexcept {
             if (f.kind == Kind::kPages) LookPages(ctx, calls, f, gen);
             if (f.kind == Kind::kStrip) LookStrip(ctx, calls, f, gen);
             if (f.kind != Kind::kBlocker) g_page.SetUsable(CanCall() && g_pages_ok && g_strip_ok);
+            if (f.kind != Kind::kBlocker) {   // (the Settings page: its page, the sixth tab and Longshot's settings)
+                g_page.SetSettingsUsable(g_page.Usable() && g_settings_pane != 0 && g_tab6_pane != 0 &&
+                                         CoopLongshotSettings::Available());
+            }
             d = g_page.OnScreen(f, NowMs());
             now_shown = g_page.Shown();
             why = g_page.TakeWhy();
@@ -1276,7 +1405,8 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
         std::uint64_t out = 0;
         bool was = false, shown = false;
         bool decide = false;
-        int row = -1, pick_cell = -1;
+        int row = -1, pick_cell = -1, set_change = -1, set_dir = 0;
+        bool settings_shown = false;
         std::string why;
         {
             std::lock_guard lock(g_mutex);
@@ -1309,7 +1439,8 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             // The game browser's cells (View::kLan): Right goes into them, the arrows move among them (none reaches the
             // game's cursor), Left from the left column or B gives the pad back to the rows; the mouse picks one by
             // moving onto it, and a click on one is its A (Longshot presses nothing there: the cells are no buttons).
-            const bool browse = shown && !typing && ViewShown() == View::kLan;
+            const bool settings = shown && !typing && g_page.Which() == 1;
+            const bool browse = shown && !typing && !settings && ViewShown() == View::kLan;
             const std::uint64_t bdown = in & ~g_browse_last;
             g_browse_last = in;
             int cell = browse ? g_cell.load() : -1;
@@ -1343,6 +1474,59 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                 if (cell >= 0) out &= ~(kPadUp | kPadDown | kPadStickUp | kPadStickDown);   // (the rows' cursor stays)
             }
             if (cell != g_cell.load()) g_cell = cell, g_live_poke = true;
+            // The Settings page: the rows choose the category; Right or A goes into its list; up and down move in it,
+            // Left and Right change the value, A the next one, B back to the rows. The mouse picks a row and a click
+            // on an arrow changes it (elsewhere on the row: A).
+            int set_row = settings ? g_set_row.load() : -1;
+            if (settings) {
+                const bool right = (bdown & (kPadRight | kPadStickRight)) != 0, left = (bdown & (kPadLeft | kPadStickLeft)) != 0;
+                const bool up = (bdown & (kPadUp | kPadStickUp)) != 0, down = (bdown & (kPadDown | kPadStickDown)) != 0;
+                const int count = g_set_count.load();
+                if (set_row < 0) {
+                    if (const int r = FocusedRow(); r >= 0 && r != g_set_category.load()) {
+                        g_set_category = r, g_set_page = 0, g_live_poke = true;   // (the category under the cursor)
+                    }
+                    if ((right || decide) && count > 0) {
+                        set_row = 0, g_set_page = 0, decide = false;
+                        g_page.Sound("button_on");
+                    }
+                } else {
+                    if (up || down) {
+                        int page = g_set_page.load(), r = set_row;
+                        SettingMove(count, down ? 1 : -1, &page, &r);
+                        if (page != g_set_page.load() || r != set_row) g_page.Sound("button_on");
+                        g_set_page = page, set_row = r;
+                    }
+                    if (left || right) set_change = g_set_page.load() * kListRows + set_row, set_dir = left ? -1 : 1;
+                    if (decide) set_change = g_set_page.load() * kListRows + set_row, set_dir = 0, decide = false;
+                }
+                float x = 0, y = 0;
+                bool held = false;
+                if (ReadCursor(&x, &y, &held)) {
+                    const auto boxes = ReadSettingBoxes();
+                    int hover = -1;
+                    for (int i = 0; i < kListRows; ++i) {
+                        const RowBox& b = boxes[static_cast<std::size_t>(i)];
+                        if (b.shown && x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1) hover = i;
+                    }
+                    const bool moved = std::abs(x - g_cells_mouse_x) > 2 || std::abs(y - g_cells_mouse_y) > 2;
+                    g_cells_mouse_x = x, g_cells_mouse_y = y;
+                    if (moved && hover >= 0 && hover != set_row) set_row = hover, g_page.Sound("button_on");
+                    if (held && !g_cells_held) g_cells_press = hover;
+                    if (!held && g_cells_held && hover >= 0 && hover == g_cells_press) {
+                        const RowBox& b = boxes[static_cast<std::size_t>(hover)];
+                        const float cx = (b.x0 + b.x1) / 2, scale = (b.x1 - b.x0) / 1880.0f;
+                        const float to_left = std::abs(x - (cx + kArrowLeftX * scale)), to_right = std::abs(x - (cx + kArrowRightX * scale));
+                        set_row = hover;
+                        set_change = g_set_page.load() * kListRows + hover;
+                        set_dir = to_left < kArrowReach * scale ? -1 : to_right < kArrowReach * scale ? 1 : 0;
+                    }
+                    g_cells_held = held;
+                }
+                if (set_row >= 0) out &= ~(kPadUp | kPadDown | kPadStickUp | kPadStickDown);   // (the rows' cursor stays)
+                g_page.SetSubView(set_row >= 0);   // (B: back to the rows)
+            }
+            if (set_row != g_set_row.load()) g_set_row = set_row, g_live_poke = true;
             if (decide) {
                 const int clicked = g_mouse_rows.TakeClicked(NowMs());
                 if (clicked < 0 && cell >= 0) {
@@ -1352,26 +1536,30 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                     row = clicked >= 0 ? clicked : FocusedRow();   // (under the lock: the pages screen is the updates')
                 }
             }
-            if (g_page.TakeBack()) {
+            if (settings && g_page.TakeBack()) {
+                g_set_row = -1, g_live_poke = true;   // (B in the settings list: the rows have the pad again)
+            } else if (g_page.TakeBack()) {
                 if (cell >= 0) {
                     g_cell = -1, g_live_poke = true;   // (B in the cells: the rows have the pad again)
                 } else {
                     SetView(BackOf(ViewShown()));   // (B in a view: where its Back goes)
                 }
             }
-            if (!shown) SetView(View::kMain);
-            g_page.SetSubView(ViewShown() != View::kMain);
+            if (!shown) SetView(View::kMain), g_set_row = -1;
+            if (!settings) g_page.SetSubView(ViewShown() != View::kMain);
             why = g_page.TakeWhy();
             g_mouse = g_page.MousePage();
+            settings_shown = shown && g_page.Which() == 1;
         }
         if (shown && stick != nullptr) {
             stick[0] = 0, stick[2] = 0, stick[3] = 0;   // (only the left stick's up and down: the game's cursor over our rows)
-            if (typing || g_cell.load() >= 0) stick[1] = 0;   // (a field typed into, or the cells: the rows' cursor stays)
+            if (typing || g_cell.load() >= 0 || (g_page.Which() == 1 && g_set_row.load() >= 0)) stick[1] = 0;
         }
         if (!was && shown) LOG_INFO(Core, "coop: pause tab: our page shown (R on System)");
         if (was && !shown) LOG_INFO(Core, "coop: pause tab: System back ({})", why);
-        if (decide) Act(row);
+        if (decide && !settings_shown) Act(row);
         if (pick_cell >= 0) ActCell(pick_cell);
+        if (set_change >= 0) ChangeSetting(set_change, set_dir);
         // (the stick's up and down bits we added are not the game's: only what it sent, filtered)
         return out & (buttons | ~(kPadStickUp | kPadStickDown | kPadStickLeft | kPadStickRight));
     } catch (...) {
