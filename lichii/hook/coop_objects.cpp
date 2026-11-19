@@ -112,6 +112,7 @@
 #include "coop_room_objects.h"
 #include "coop_switch_share.h"
 #include "coop_logic_probe.h"
+#include "coop_sensor_claim.h"
 #include "coop_platforms.h"
 #include "coop_counters.h"
 #include "coop_scrub_talk.h"
@@ -2475,6 +2476,7 @@ private:
             actors_.clear();
             first_ = true;
             names_.clear();
+            no_area_.clear();
             TheMover().ForgetReplayed();
             sync_.Reset();
             world_.Reset();
@@ -3421,6 +3423,21 @@ private:
                 if (TheLocalEvent().load()) {
                     s.event_member = member_of(a, s.name);
                 }
+                // Row 138(8) (coop_sensor_claim.h): whether our Link is in its area by its own sensor input
+                // (Jabu-Jabu's mouth). Read only; a placement whose live logic has none of the inputs is
+                // not read again.
+                if (CoopSensorClaim::Kind(s.name)) {
+                    const auto none = no_area_.find(a);
+                    if (none == no_area_.end() || none->second != s.hash) {
+                        if (const auto plugs = CoopLogicProbe::Read([&r](u64 x) { return r.Get<u64>(x); }, a)) {
+                            s.sensor_in_area = CoopSensorClaim::InArea(*plugs);
+                            if (!s.sensor_in_area) {
+                                if (no_area_.size() >= kNoAreaMax) no_area_.clear();
+                                no_area_.insert_or_assign(a, s.hash);
+                            }
+                        }
+                    }
+                }
                 out.push_back(std::move(s));
             }
             names.emplace(a, std::move(known));
@@ -4264,6 +4281,13 @@ private:
         }
         npc_ours_ = ours;
         npc_claimed_ = claimed;
+        // Row 138(8): the area claims (coop_sensor_claim.h), on each change of how many.
+        const std::size_t area = sync_.AreaClaims(now_us);
+        if (area != area_claimed_) {
+            LOG_INFO(Core, "coop: area claim: our Link is in the area of {} shared actors (their own sensor input)",
+                     area);
+            area_claimed_ = area;
+        }
         static const bool debug_npc = EnvFlag("LICHII_COOP_DEBUG_NPC");  // opt-in debug lines
         const bool every = debug_npc && now_us - npc_log_at_ >= 1'000'000;
         if (every) {
@@ -4757,6 +4781,10 @@ private:
     std::size_t refused_logged_ = 0;
     std::uint8_t decider_logged_ = 0;
     std::unordered_map<u64, std::pair<std::string, u64>> names_;  // name, hash by actor
+    // Row 138(8): townspeople and animals (by actor, its placement hash) whose live logic has no area input.
+    std::unordered_map<u64, u64> no_area_;
+    static constexpr std::size_t kNoAreaMax = 4096;
+    std::size_t area_claimed_ = 0;  // row 138(8): the log's last count of area claims
     std::unordered_map<u64, u64> life_components_;  // the actor by its Life component (shared actors with a life)
     // Difficulty: this scene visit's extra enemies (where from the game's placement data).
     CoopDifficulty::Extras extras_{CoopDifficulty::AreaOf, SpecialForExtras};

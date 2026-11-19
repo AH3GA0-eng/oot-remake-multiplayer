@@ -103,6 +103,9 @@ struct Seen {
     // Row 97 (coop_event_member.h): whether it is an event member in our Link's event
     // (InSameEvent, the game's own test); nullopt when it has no event member component.
     std::optional<bool> event_member;
+    // Row 138(8) (coop_sensor_claim.h): whether our Link is in its area by its own logic input (the game's own
+    // sensor of our Link: Jabu-Jabu's IsInOpenMouthArea ...); nullopt when it has none of them.
+    std::optional<bool> sensor_in_area;
 };
 
 // An animation a copy should play (the owner's AS slot 0 command). The
@@ -789,8 +792,20 @@ public:
     }
     // A copy our event claimed (within kEventKeepUs of the last Tick that
     // flagged it): the owner's routine is not put on it while the hand-over
-    // runs, as the 8 m event rule (coop_guard.h) does nearer.
+    // runs, as the 8 m event rule (coop_guard.h) does nearer. Row 138(8):
+    // also a copy our Link is in the area of (AreaClaim).
     bool EventPartner(std::uint64_t address, std::uint64_t now_us) const;
+    // Row 138(8) (coop_sensor_claim.h): a shared actor whose own sensor input
+    // says our Link is in its area (Seen::sensor_in_area; Jabu-Jabu's mouth)
+    // is claimed like an event's partner, without an event: flagged targeting
+    // (the server hands a copy to us after its chase hold; ours it holds as a
+    // fight, so with two players in the area the owner keeps it), and the
+    // owner's place, animation and remove are not put on our copy. The claim
+    // drops kSensorKeepUs after the input reads 0 (our Link left).
+    bool AreaClaim(std::uint64_t address, std::uint64_t now_us) const;
+    // How many actors our Link's area claims now (for the log).
+    std::size_t AreaClaims(std::uint64_t now_us) const;
+    static constexpr std::uint64_t kSensorKeepUs = 1'000'000;
     // Who owns the object at `address` (0: not known, or not on our list).
     std::uint8_t OwnerAt(std::uint64_t address) const;
     // How many actors our event flags now (for the log).
@@ -1161,6 +1176,8 @@ private:
         std::uint64_t event_until = 0;          // flagged by our event until then
         PartnerWhy event_why = PartnerWhy::none; // ... and why (row 97)
         std::optional<bool> event_member;       // Seen::event_member, the last walk (row 97)
+        std::optional<bool> sensor_in_area;     // Seen::sensor_in_area, the last walk (row 138(8))
+        std::uint64_t sensor_until = 0;         // claimed by our Link in its area until then (row 138(8))
         std::uint64_t own_ai_at = 0;            // its own AI's play put back last (NoteTakeover, any kind)
         coop::protocol::Vec3 first_position{};  // where it was first seen
         int missed = 0;                         // walks in a row without it
