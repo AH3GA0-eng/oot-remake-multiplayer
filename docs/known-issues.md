@@ -43,7 +43,7 @@ This is an early test release. Everything under "Works" was seen in our two-game
 
 ## Known issues
 
-- **Linux: away/paused state, Map page and HUD refresh** ([#150](https://github.com/daurosk/oot-remake-multiplayer/issues/150)): fixed in 0.11.5 (untested on Linux).
+- **Linux: away/paused state, Map page and HUD refresh** ([#150](https://github.com/daurosk/oot-remake-multiplayer/issues/150)): fixed in the code, not yet checked on Linux.
 - **The title shows Continue only after a restart** after a new save (tracker row 124); start the game again.
 - **Masks are not drawn on other players** ([#91](https://github.com/daurosk/oot-remake-multiplayer/issues/91)): the mask shows in the HUD slot but not on their Link.
 - **An invisible Lizalfos**: in Dodongo's Cavern one Lizalfos can be invisible on one player's screen. It is there and fights. Not fixed yet ([#238](https://github.com/daurosk/oot-remake-multiplayer/issues/238)).
@@ -65,7 +65,7 @@ This is an early test release. Everything under "Works" was seen in our two-game
 
 ## Not yet checked in a game, or only partly
 
-**Everything new in 0.11.5 is untested in a game:** the Multiplayer pause tab and the title's Host and Join rows ([PR #281](https://github.com/daurosk/oot-remake-multiplayer/pull/281)); mod API v2 ([PR #282](https://github.com/daurosk/oot-remake-multiplayer/pull/282)); lifts and platforms that wait for a rider ([PR #279](https://github.com/daurosk/oot-remake-multiplayer/pull/279)); every remote hit replayed with its own hit kind; the Discord presence always Squadala!; beaten bosses for a player who was away ([#136](https://github.com/daurosk/oot-remake-multiplayer/issues/136), [#137](https://github.com/daurosk/oot-remake-multiplayer/issues/137), [#138](https://github.com/daurosk/oot-remake-multiplayer/issues/138)); the other age's gear ([#148](https://github.com/daurosk/oot-remake-multiplayer/issues/148)); King Zora and the boss route; the randomizer's one-time shop and fairy gifts each once.
+**Everything new in 0.11.5 is untested in a game:** the Multiplayer pause tab ([PR #281](https://github.com/daurosk/oot-remake-multiplayer/pull/281)); the title's Host and Join rows with their reasons; mod API v2 ([PR #282](https://github.com/daurosk/oot-remake-multiplayer/pull/282)); lifts and platforms that wait for a rider ([PR #279](https://github.com/daurosk/oot-remake-multiplayer/pull/279)); every remote hit replayed with its own hit kind; the Discord presence always Squadala!; beaten bosses for a player who was away ([#136](https://github.com/daurosk/oot-remake-multiplayer/issues/136), [#137](https://github.com/daurosk/oot-remake-multiplayer/issues/137), [#138](https://github.com/daurosk/oot-remake-multiplayer/issues/138)); the other age's gear ([#148](https://github.com/daurosk/oot-remake-multiplayer/issues/148)); King Zora and the boss route; the randomizer's one-time shop and fairy gifts each once.
 
 These are fixed or built in, but no two-game test has reached them yet, or reached only part of them. Please tell us whether they work for you.
 
