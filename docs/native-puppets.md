@@ -147,6 +147,32 @@ The plan (phase 2):
 - A bomb that is stashed is gone for everyone (the owner deletes; `WORLD_BREAK`-like gone with
   no explosion), and only the stashing game's count changes.
 
+### Phase 2 status (native-puppets-b, branch `native-puppets-bomb`)
+
+- **Built and host-tested:** the protocol ([protocol.md](protocol.md), "Bomb hand-over": `BOMB_TAKE` 530,
+  `BOMB_ANSWER` 531, `BOMB_SHARE` 532, no protocol bump) and the server's rules (first lift wins, an
+  unanswered ask keeps the bomb with its owner, the old owner's late explosion refused, a stash is a
+  picked-up remove, a bomb whose owner leaves goes on with a sharing game and its fuse). The game-side
+  rules as pure code, `lichii/hook/coop_bomb_share.h` (lift detection from the copy's own `Lifted`,
+  one ask per lift, the fuse moment from the handed state, the owner's answer only when its Link does
+  not hold the bomb, the stash from the pouch's "Bomb" count rising by one, the own-bomb registry).
+- **Wired (native-puppets-b-2), host-tested, not yet run in the game:** `LICHII_COOP_BOMB_SHARE=1` turns it
+  on in the spawn sync (`Sync::SetBombShare`; off by default, and off nothing is sent or taken in).
+  Lifting a copy sends `BOMB_TAKE` and stops the director placing and animating it; the hand-over moves the
+  copy's actor into our own bombs (the director lets go of it, `Act::release`), samples it at the new epoch
+  with the fuse handed over, and at its end sets its life to 0 once (the game's own explosion, the way a
+  copy is blown). A refused or unanswered lift gives the copy back and is not asked again until our Link
+  lets go. Asked for one of ours: answered with its state unless our Link holds it. Handed on: our actor
+  is deleted without an explosion (checked by vtable) and the new owner's copy shown. A taken unlit bomb
+  gone as `PouchData.Item_Bomb.StockNum` rose by one is removed as picked up. The objects sync leaves a
+  `HANDOVER_ASK` for one of these bombs to the spawn sync. A bomb handed to us because its owner left is
+  adopted too (made as the game's own bomb first if it was shown held). Only `Item_Bomb` changes hands:
+  bombchus, pots, rocks and other liftables are not shared this way (`CoopBombShare::IsBomb`).
+- **The game facts this leans on (phase 0 probe):** that a lifted copy plays `Lifted` on its own AS slot 0
+  (the copy is the game's real `Item_Bomb`, with its `LiftableRef`); that the director must stop placing it
+  while our Link holds it; whether the game can stash a held unlit bomb at all (if not, the stash path is
+  the pick-up of a bomb put down: the same remove, the same count rise).
+
 ## 4. Lifting another player
 
 Needs, on the copy, what a Cucco has: a `LiftableRef` (phase 3; the Cucco's param, own file in the

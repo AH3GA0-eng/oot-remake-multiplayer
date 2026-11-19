@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_objects_sync.h"
+#include "coop_bomb_share.h"
 #include "coop_enemy_shots.h"
 #include "coop_guard.h"
 #include "coop_world.h"
@@ -3231,6 +3232,9 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                             "life written to 0");
             }
         } else if (const auto* ask = std::get_if<proto::HandoverAsk>(&m)) {
+            if (find(ask->id) == nullptr && CoopBombShare::TheOwnBombs().Has(ask->id)) {
+                continue;  // native puppets phase 2: the spawn sync answers for its bomb (with the fuse)
+            }
             proto::HandoverState state;
             state.id = ask->id;
             state.epoch = ask->epoch;
