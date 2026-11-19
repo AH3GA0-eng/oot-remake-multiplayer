@@ -23,6 +23,13 @@ CopyView Lifted(std::uint8_t number = 2) {
     return Copy(number, {0.5f, 0.0f, 0.0f}, Vec3{0.3f, 0.9f, 0.0f});
 }
 
+// A lifter whose own Link plays a lift.
+Lifter Lifting() {
+    Lifter l;
+    l.SetOurLinkLifts(true);
+    return l;
+}
+
 Local Here(std::uint8_t self = 2) {
     Local l;
     l.self = self;
@@ -33,7 +40,7 @@ Local Here(std::uint8_t self = 2) {
 }  // namespace
 
 TEST_CASE("lift player: a copy the game raises beside our Link is asked for once, after two frames") {
-    Lifter lifter;
+    Lifter lifter = Lifting();
     std::uint64_t now = 1'000'000;
     // Standing beside it, drawn where the samples say: nothing.
     CHECK_FALSE(lifter.Frame(kLink, {Copy(2, {0.5f, 0, 0}, Vec3{0.5f, 0, 0})}, now).ask);
@@ -51,7 +58,7 @@ TEST_CASE("lift player: a copy the game raises beside our Link is asked for once
 }
 
 TEST_CASE("lift player: a raised copy out of our reach, or standing on it, is not a lift") {
-    Lifter lifter;
+    Lifter lifter = Lifting();
     std::uint64_t now = 0;
     // Raised but 5 m away (another thing moved it): no.
     for (int i = 0; i < 5; ++i) {
@@ -65,7 +72,7 @@ TEST_CASE("lift player: a raised copy out of our reach, or standing on it, is no
 }
 
 TEST_CASE("lift player: taken, carried, thrown, flying until at rest, then one landed place") {
-    Lifter lifter;
+    Lifter lifter = Lifting();
     std::uint64_t now = 0;
     lifter.Frame(kLink, {Lifted()}, now += kFrame);
     REQUIRE(lifter.Frame(kLink, {Lifted()}, now += kFrame).ask);
@@ -105,7 +112,7 @@ TEST_CASE("lift player: taken, carried, thrown, flying until at rest, then one l
 }
 
 TEST_CASE("lift player: set down (lower than carried) is a flight too, and a flight ends by kFlightMaxUs") {
-    Lifter lifter;
+    Lifter lifter = Lifting();
     std::uint64_t now = 0;
     lifter.Frame(kLink, {Lifted()}, now += kFrame);
     lifter.Frame(kLink, {Lifted()}, now += kFrame);
@@ -126,7 +133,7 @@ TEST_CASE("lift player: set down (lower than carried) is a flight too, and a fli
 }
 
 TEST_CASE("lift player: refused or unanswered, the copy is let go and not asked again until it is down") {
-    Lifter lifter;
+    Lifter lifter = Lifting();
     std::uint64_t now = 0;
     lifter.Frame(kLink, {Lifted()}, now += kFrame);
     lifter.Frame(kLink, {Lifted()}, now += kFrame);
@@ -151,7 +158,7 @@ TEST_CASE("lift player: refused or unanswered, the copy is let go and not asked 
 }
 
 TEST_CASE("lift player: freed by the lifted game, or the copy gone, ends the carry") {
-    Lifter lifter;
+    Lifter lifter = Lifting();
     std::uint64_t now = 0;
     lifter.Frame(kLink, {Lifted()}, now += kFrame);
     lifter.Frame(kLink, {Lifted()}, now += kFrame);
@@ -220,7 +227,7 @@ TEST_CASE("lift player: the lifted game decides (event, down, busy, far, lifting
 TEST_CASE("lift player: lifted, our Link follows the lifter's places with input off, then lands its own") {
     Victim v;
     std::uint64_t now = 0;
-    REQUIRE(v.Ask(proto::LiftAsk{1, 2}, Here(), std::nullopt, now).refusal == proto::LiftRefusal::none);
+    REQUIRE(v.Ask(proto::LiftAsk{1, 2}, Here(), Vec3{10.5f, 0.0f, 10.0f}, now).refusal == proto::LiftRefusal::none);
     // Before the first place: input off, nowhere to put it yet.
     auto s = v.Frame(Here(), now += kFrame);
     CHECK(s.input_off);
@@ -249,7 +256,7 @@ TEST_CASE("lift player: lifted, our Link follows the lifter's places with input 
 
 TEST_CASE("lift player: the lifted game frees itself (event, death, no places, held too long)") {
     const auto lifted = [](Victim& v, std::uint64_t now) {
-        REQUIRE(v.Ask(proto::LiftAsk{1, 2}, Here(), std::nullopt, now).refusal == proto::LiftRefusal::none);
+        REQUIRE(v.Ask(proto::LiftAsk{1, 2}, Here(), Vec3{10.5f, 0.0f, 10.0f}, now).refusal == proto::LiftRefusal::none);
         v.Place(proto::LiftPlace{1, 2, proto::LiftPhase::held, {1, 2, 3}}, now);
     };
     {
@@ -289,4 +296,50 @@ TEST_CASE("lift player: the lifted game frees itself (event, death, no places, h
         CHECK(freed);
         CHECK(now >= kMaxHeldUs);  // wriggled free
     }
+}
+
+TEST_CASE("lift player: a copy raised while our own Link does not lift (a platform, a step) is never asked for") {
+    Lifter lifter;  // our Link's animation not read: no lift
+    std::uint64_t now = 0;
+    for (int i = 0; i < 5; ++i) {
+        const auto out = lifter.Frame(kLink, {Lifted()}, now += kFrame);
+        CHECK_FALSE(out.ask);
+        // The probe line once per rise, not every frame.
+        CHECK(out.rose_alone == (i == 0 ? 2 : 0));
+    }
+    lifter.SetOurLinkLifts(false);
+    for (int i = 0; i < 5; ++i) {
+        CHECK_FALSE(lifter.Frame(kLink, {Lifted()}, now += kFrame).ask);
+    }
+    CHECK(lifter.Held() == 0);
+    // Down again, then our Link's own lift raises it: asked.
+    CHECK(lifter.Frame(kLink, {Copy(2, {0.5f, 0, 0}, Vec3{0.5f, 0, 0})}, now += kFrame).rose_alone == 0);
+    lifter.SetOurLinkLifts(true);
+    CHECK_FALSE(lifter.Frame(kLink, {Lifted()}, now += kFrame).ask);
+    CHECK(lifter.Frame(kLink, {Lifted()}, now += kFrame).ask);
+}
+
+TEST_CASE("lift player: our Link's own lift is read from its animation name") {
+    CHECK_FALSE(OurLinkLifts(std::nullopt));
+    CHECK_FALSE(OurLinkLifts(std::string_view("Wait")));
+    CHECK_FALSE(OurLinkLifts(std::string_view("Run")));
+    CHECK_FALSE(OurLinkLifts(std::string_view("")));
+    CHECK(OurLinkLifts(std::string_view("Lift_Start")));
+    CHECK(OurLinkLifts(std::string_view("WaitLIFT")));
+    CHECK(OurLinkLifts(std::string_view("CarryRun")));
+}
+
+TEST_CASE("lift player: an ask from a lifter whose place we do not know is refused") {
+    Victim v;
+    CHECK(v.Ask(proto::LiftAsk{1, 2}, Here(), std::nullopt, 0).refusal == proto::LiftRefusal::too_far);
+    CHECK(v.By() == 0);
+    CHECK_FALSE(v.Frame(Here(), kFrame).input_off);
+}
+
+TEST_CASE("lift player: input off holds only while the lift's frame renews it") {
+    CHECK_FALSE(InputOffFresh(0, 1'000'000));
+    CHECK(InputOffFresh(1'000'000, 1'000'000));
+    CHECK(InputOffFresh(1'000'000, 1'000'000 + kInputOffStaleUs));
+    CHECK_FALSE(InputOffFresh(1'000'000, 1'000'001 + kInputOffStaleUs));
+    CHECK(InputOffFresh(2'000'000, 1'000'000));  // a stamp from a later read: still fresh
 }

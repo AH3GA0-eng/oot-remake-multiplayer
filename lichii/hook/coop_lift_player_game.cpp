@@ -16,6 +16,7 @@
 #include <cstring>
 #include <deque>
 #include <mutex>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -70,7 +71,9 @@ struct Glue {
     std::deque<proto::LiftAnswer> answers;
     std::deque<proto::LiftPlace> places;
     bool share_now = true;                  // a new connection: say LIFT_SHARE at once
-    std::atomic<bool> input_off{false};
+    // Our Link's input is off while this stamp (SteadyUs, 0 none) is fresh (InputOffFresh): the frame renews it
+    // each frame while lifted, so a frame that stops being called gives the input back by itself.
+    std::atomic<std::uint64_t> input_off_us{0};
     Lifter lifter;                          // present thread
     Victim victim;                          // present thread
     std::uint64_t share_at_us = 0;          // present thread
@@ -93,7 +96,7 @@ bool On() {
 }
 
 bool OurInputOff() {
-    return On() && TheGlue().input_off.load(std::memory_order_relaxed);
+    return On() && InputOffFresh(TheGlue().input_off_us.load(std::memory_order_relaxed), SteadyUs());
 }
 
 void OnEvent(const coop::net::Event& event, coop::net::Client& /*client*/) {
@@ -148,7 +151,7 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
         g.lifter.Reset();
         g.victim.Reset();
         CoopPuppet::SetGameHolds(0);
-        g.input_off.store(false);
+        g.input_off_us.store(0);
         return;
     }
     const std::uint64_t now_us = SteadyUs();
@@ -185,7 +188,15 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
         }
         const Vec3 our_link = reading ? Vec3{reading->position[0], reading->position[1], reading->position[2]}
                                       : Vec3{};
+        const std::optional<std::string_view> our_animation =
+            reading && reading->animation ? std::optional<std::string_view>(reading->animation->name) : std::nullopt;
+        g.lifter.SetOurLinkLifts(OurLinkLifts(our_animation));
         const auto out = g.lifter.Frame(our_link, copies, now_us);
+        if (out.rose_alone != 0) {
+            // The probe for the lift animation's names (docs/native-puppets.md): what our Link played then.
+            LOG_INFO(Core, "coop: lift: P{}'s copy rose but our Link's animation '{}' is no lift: not asked",
+                     out.rose_alone, our_animation ? std::string(*our_animation) : std::string("(not read)"));
+        }
         if (out.ask) {
             LOG_INFO(Core, "coop: lift: our Link lifted P{}'s copy: asking", out.ask->lifted);
             send.emplace_back(*out.ask);
@@ -224,7 +235,7 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
         for (const auto& a : asks) {
             std::optional<Vec3> lifter_at;
             for (const auto& r : remotes) {
-                if (r.number == a.player_number && r.scene == scene) {
+                if (scene && r.number == a.player_number && r.scene == scene) {
                     lifter_at = Vec3{r.position[0], r.position[1], r.position[2]};
                 }
             }
@@ -241,7 +252,8 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
     if (step.put) {
         CoopObjects::PlaceOurLink(*step.put);
     }
-    if (g.input_off.exchange(step.input_off) != step.input_off) {
+    const bool was_off = g.input_off_us.exchange(step.input_off ? now_us : 0) != 0;
+    if (was_off != step.input_off) {
         LOG_INFO(Core, "coop: lift: our Link's input {} (held by P{})", step.input_off ? "off" : "back", by);
     }
     if (step.freed) {

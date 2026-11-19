@@ -95,11 +95,28 @@ inline float FuseLeft(std::uint64_t blow_at, std::uint64_t now_us) {
     return blow_at > now_us ? static_cast<float>(blow_at - now_us) / 1'000'000.0f : 0.0f;
 }
 
+// The copy is within this of our own Link when our Link lifts it (it is in
+// our Link's reach, or the director still drew it at the owner's place beside
+// us for a frame).
+inline constexpr float kTakeReachM = 2.5f;
+
 // Whether a copy's own animation says our Link lifted it: Lifted on our copy
 // while the owner's last sample did not say held (the owner lifting its own
 // bomb plays Lifted on every copy through the director).
 inline bool LiftedHere(std::optional<bool> held_by_animation, bool owner_holds) {
     return held_by_animation.value_or(false) && !owner_holds;
+}
+
+// Our own Link's side of a take: its place is known and the lifted copy is
+// within kTakeReachM of it. Our Link's place not read (a load, not yet
+// sampled) is no take: a copy something else set Lifted never asks.
+inline bool NearOurLink(const std::optional<proto::Vec3>& link, const proto::Vec3& copy) {
+    if (!link) {
+        return false;
+    }
+    const float dx = (*link)[0] - copy[0], dy = (*link)[1] - copy[1], dz = (*link)[2] - copy[2];
+    const float d2 = dx * dx + dy * dy + dz * dz;
+    return d2 == d2 && d2 <= kTakeReachM * kTakeReachM;  // NaN: no
 }
 
 // One lift asked for at a time per bomb.

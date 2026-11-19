@@ -699,7 +699,7 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
   }
   if (std::holds_alternative<LiftAsk>(message) || std::holds_alternative<LiftAnswer>(message) ||
       std::holds_alternative<LiftPlace>(message)) {
-    on_lift(id, c, message);
+    on_lift(id, c, message, now_us);
     return;
   }
   if (auto* cut = std::get_if<GrassCut>(&message)) {
@@ -918,8 +918,11 @@ void Session::on_pvp_hit(ConnectionId id, Connection& c, Message& message) {
 // (the server keeps no lift state: a lift ends in the games, by LIFT_PLACE
 // landed, LIFT_ANSWER freed, or the lifted game's own wait running out). A
 // LIFT_ASK to a game that does not share is answered here, so the lifter's
-// game lets go at once.
-void Session::on_lift(ConnectionId id, Connection& c, Message& message) {
+// game lets go at once; so is one whose lifter's place is not known (no
+// scene or no fresh PLAYER_SAMPLE position) or not in the lifted player's
+// scene (too_far): a stray ask never takes a player's input away.
+void Session::on_lift(ConnectionId id, Connection& c, Message& message,
+                      std::uint64_t now_us) {
   std::uint8_t to_number = 0;
   if (const auto* a = std::get_if<LiftAsk>(&message)) {
     to_number = a->lifted;
@@ -945,6 +948,15 @@ void Session::on_lift(ConnectionId id, Connection& c, Message& message) {
       return;
     }
     ++stats_.lifts_dropped;
+    return;
+  }
+  if (std::holds_alternative<LiftAsk>(message) && !place_known_in(c, it->second.scene, now_us)) {
+    LiftAnswer no;
+    no.player_number = to_number;
+    no.lifter = c.number;
+    no.refusal = LiftRefusal::too_far;
+    send(id, kChannelOwnership, no);
+    ++stats_.lifts_unplaced;
     return;
   }
   send(*target, channel_of(message), message);
@@ -1867,6 +1879,12 @@ bool Session::has_loaded(ConnectionId id, const Object& o) const {
          it->second.scene == o.scene && o.present.count(id) != 0;
 }
 
+bool Session::place_known_in(const Connection& c, const std::string& scene,
+                             std::uint64_t now_us) const {
+  if (c.scene.empty() || c.scene != scene || !c.position) return false;
+  return !(now_us > c.position_at && now_us - c.position_at > config_.position_stale_us);
+}
+
 std::optional<double> Session::distance_to(const Connection& c, const Object& o,
                                            std::uint64_t now_us) const {
   if (!c.position || !o.last_state || !o.last_state->position) return std::nullopt;
@@ -2089,8 +2107,10 @@ void Session::on_bomb_take(ConnectionId id, Connection& c, const BombTake& m,
     return;
   }
   Object& o = it->second;
+  // The taker's own place must be known in the bomb's scene (a stray take
+  // from a game with no scene or no fresh position never moves a bomb).
   if (!o.made || !o.projectile || o.removed || !o.owner || *o.owner == id ||
-      o.scene != c.scene || !is_shared_bomb(o.actor)) {
+      !place_known_in(c, o.scene, now_us) || !is_shared_bomb(o.actor)) {
     refuse_bomb(id, m.id, &o, BombRefusal::not_a_bomb);
     return;
   }

@@ -8,10 +8,13 @@
 //   LiftableRef (the Cucco's, the game's living liftable), so our Link's own lifter picks it up, carries it on
 //   its hand bone and throws or sets it down with the game's own throw (PlayerLifterParam LiftThrowParams).
 // - The lifter's game sees the lift on the copy: the game raised it kRiseM over the place the director drew
-//   it, within kReachM of our Link, kRiseFrames frames running. It sends LIFT_ASK and stops placing the copy
+//   it, within kReachM of our Link, kRiseFrames frames running, while our own Link's main animation slot plays a
+//   lift (OurLinkLifts: a copy raised by anything else, a rising platform under a --puppet-body copy, a step, our
+//   Link pushing under it, is not our lift; our Link's animation not read is no lift either). It sends LIFT_ASK and stops placing the copy
 //   (the director leaves it to the game: CoopPuppet::SetGameHolds) while it waits for the answer.
 // - The lifted player's game decides (Victim::Ask): no while its Link is in an event, a load or a menu, dead,
-//   already lifted, lifting someone itself, or not near the lifter.
+//   already lifted, lifting someone itself, or not near the lifter (the lifter's place not known, or in another
+//   scene, is "not near": a stray ask never takes a player's input away).
 // - Taken: the lifter's game sends the copy's place as the game has it, each frame (LIFT_PLACE held); when the
 //   copy leaves our Link's hands (thrown or set down: it is kReleaseM further out or lower than it was carried)
 //   the places go on as flying until the copy is at rest (kRestFrames still frames, or kFlightMaxUs), then one
@@ -22,11 +25,13 @@
 //   the places stop for kPlaceWaitUs (the lifter left or lost the copy), or after kMaxHeldUs (it wriggles free).
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <string_view>
 #include <vector>
 
 #include "coop/protocol/messages.hpp"
@@ -47,6 +52,36 @@ inline constexpr std::uint64_t kFlightMaxUs = 2'000'000;   // a flight ends by t
 inline constexpr std::uint64_t kPlaceWaitUs = 1'000'000;   // lifted, no place this long: free
 inline constexpr std::uint64_t kMaxHeldUs = 15'000'000;    // lifted this long: wriggles free
 inline constexpr float kFarM = 3.0f;       // the lifter's Link must be this near ours
+// The input-off answer holds only while the lift's frame keeps renewing it: a stamp older than this is "on"
+// (the hook's frame stopped being called while lifted: our Link's input comes back by itself).
+inline constexpr std::uint64_t kInputOffStaleUs = 500'000;
+
+// Whether our Link's own main animation (AS slot 0, PlayerReading::animation) is a lift or a carry: the
+// lifter's own state, so only our Link's own lift can start an ask. Unset (not read): no. The game's exact
+// command names are UNKNOWN (docs/native-puppets.md, phase 3 probes): every name with "lift" or "carry" in it,
+// any case; the glue logs the name it saw whenever a copy rose without it, so the proof run settles the list.
+inline bool OurLinkLifts(const std::optional<std::string_view>& animation) {
+    if (!animation) return false;
+    auto has = [&](std::string_view word) {
+        const std::string_view n = *animation;
+        for (std::size_t i = 0; i + word.size() <= n.size(); ++i) {
+            bool same = true;
+            for (std::size_t k = 0; k < word.size() && same; ++k) {
+                char c = n[i + k];
+                if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+                same = c == word[k];
+            }
+            if (same) return true;
+        }
+        return false;
+    };
+    return has("lift") || has("carry");
+}
+
+// The input-off answer at `now_us` for the stamp the lift's frame left (0: off).
+inline bool InputOffFresh(std::uint64_t stamp_us, std::uint64_t now_us) {
+    return stamp_us != 0 && (now_us < stamp_us || now_us - stamp_us <= kInputOffStaleUs);
+}
 
 inline float Distance(const Vec3& a, const Vec3& b) {
     const float dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
@@ -71,7 +106,12 @@ public:
     struct Out {
         std::optional<proto::LiftAsk> ask;
         std::optional<proto::LiftPlace> place;
+        // A copy rose as a lift would but our Link's own animation said no lift: not asked (the probe logs it).
+        std::uint8_t rose_alone = 0;
     };
+
+    // Our Link's own lift state this frame (OurLinkLifts), set before Frame. Not set: no lift.
+    void SetOurLinkLifts(bool lifts) { our_lifts_ = lifts; }
 
     Out Frame(const Vec3& our_link, const std::vector<CopyView>& copies, std::uint64_t now_us) {
         Out out;
@@ -151,7 +191,13 @@ private:
         for (const auto& c : copies) {
             int& n = rising_[c.number];
             const bool rose = c.game && (*c.game)[1] - c.drawn[1] >= kRiseM && Distance(*c.game, our_link) <= kReachM;
-            n = rose ? n + 1 : 0;
+            if (rose && !our_lifts_) {
+                // Raised, but not by our Link's own lift (a platform, a step, a push): never an ask.
+                if (n >= 0 && c.number != 0) out.rose_alone = c.number;
+                n = -1;  // logged once per rise
+                continue;
+            }
+            n = rose ? std::max(n, 0) + 1 : 0;
             if (n >= kRiseFrames && !Blocked(c.number) && c.number != 0) {
                 state_ = State::asking;
                 who_ = c.number;
@@ -212,6 +258,7 @@ private:
     std::map<std::uint8_t, int> rising_;
     std::vector<std::uint8_t> blocked_;
     std::optional<proto::LiftRefusal> last_refusal_;
+    bool our_lifts_ = false;
 };
 
 // Our own game, as the lifted side sees it.
@@ -232,7 +279,8 @@ public:
         std::optional<proto::LiftAnswer> freed;    // the lift ended here: tell the lifter
     };
 
-    // A LIFT_ASK; `lifter_at` is the lifter's Link as presence has it (unset: not known).
+    // A LIFT_ASK; `lifter_at` is the lifter's Link as presence has it in our scene (unset: not known, or
+    // another scene: refused too_far).
     proto::LiftAnswer Ask(const proto::LiftAsk& m, const Local& local, const std::optional<Vec3>& lifter_at,
                           std::uint64_t now_us) {
         proto::LiftAnswer a{proto::kPlayerSelf, m.player_number, proto::LiftRefusal::none};
@@ -246,7 +294,7 @@ public:
             a.refusal = proto::LiftRefusal::down;
         } else if (local.event || !local.our_link) {
             a.refusal = proto::LiftRefusal::event;
-        } else if (lifter_at && Distance(*lifter_at, *local.our_link) > kFarM) {
+        } else if (!lifter_at || Distance(*lifter_at, *local.our_link) > kFarM) {
             a.refusal = proto::LiftRefusal::too_far;
         }
         if (a.refusal == proto::LiftRefusal::none) {

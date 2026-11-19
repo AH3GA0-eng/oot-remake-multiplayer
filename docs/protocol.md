@@ -139,6 +139,7 @@ A player takes another player's bomb ([native-puppets.md](native-puppets.md), "L
 
 The server's rules (server/session.cpp `on_bomb_take`, `bomb_heir`):
 
+- A `BOMB_TAKE` from a player whose place is not known in the bomb's scene (no scene, another scene, or no PLAYER_SAMPLE position in the last 5 s) is refused `not_a_bomb`: a stray take never moves a bomb.
 - The first `BOMB_TAKE` for a bomb gets the usual `HANDOVER_ASK` to its owner (only an owner that said `BOMB_SHARE` on); any other while that ask is in flight is refused busy (two lifts at once: one wins).
 - The owner's `HANDOVER_STATE` moves it as any hand-over does: epoch + 1, `HANDOVER_STATE` (with the `fuse` left) to the taker, `OBJECT_OWNER` to the scene. A state with no `fuse` keeps the last relayed one. The old owner's later samples and its `OBJECT_REMOVE` with the old epoch are refused, so only the new owner's explosion reaches the games, once each.
 - No answer (the owner's Link holds it): unlike an enemy, a bomb is not moved; the asker gets `BOMB_ANSWER` kept.
@@ -156,7 +157,7 @@ One player lifts, carries, throws or sets down another ([native-puppets.md](nati
 | 537 | `LIFT_PLACE` | both | player samples | `u8` player (the lifter), `u8` lifted, `u8` phase (1 held, 2 flying: thrown or set down and not at rest yet, 3 landed: at rest, the lift's last place; others refused), 3 x `f32` the place (finite). Each frame of a taken lift, to the lifted player only |
 | 538 | `LIFT_SHARE` | client | ownership | `u8` on (0 or 1; others refused). Its game takes part in player lifts; sent after joining and every 5 s |
 
-The server's rules (server/session.cpp `on_lift`): each of the three goes only to the player it names, with the sender's number written in, and only when both games said `LIFT_SHARE` on; a `LIFT_ASK` to a game that does not share is answered by the server itself (`LIFT_ANSWER` 4, with the asked player in the player field). A message naming its own sender, or a player who is not there, is dropped. A lift ends in the games: the lifter's landed `LIFT_PLACE`, the lifted game's `LIFT_ANSWER` freed, or the lifted game's own wait (no place for 1 s) when the lifter leaves.
+The server's rules (server/session.cpp `on_lift`): each of the three goes only to the player it names, with the sender's number written in, and only when both games said `LIFT_SHARE` on; a `LIFT_ASK` to a game that does not share is answered by the server itself (`LIFT_ANSWER` 4, with the asked player in the player field), and so is one whose lifter's place is not known in the lifted player's scene (no scene, another scene, or no PLAYER_SAMPLE position in the last 5 s: `LIFT_ANSWER` 6 too far). The lifted game refuses too far as well when it has no place for the lifter in its own scene. A message naming its own sender, or a player who is not there, is dropped. A lift ends in the games: the lifter's landed `LIFT_PLACE`, the lifted game's `LIFT_ANSWER` freed, or the lifted game's own wait (no place for 1 s) when the lifter leaves.
 
 ## Keep-alive and clock
 

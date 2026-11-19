@@ -5990,12 +5990,13 @@ ObjectState lit_bomb_at(float x, float fuse_left) {
   return s;
 }
 
-// Players 1 to 3 in the Graveyard, all sharing bombs; player 1's bomb lies
-// there, lit with 3 s left.
+// Players 1 to 3 in the Graveyard (their Links' places known), all sharing
+// bombs; player 1's bomb lies there, lit with 3 s left.
 struct BombHarness : ObjectHarness {
   BombHarness() {
     for (ConnectionId id = 1; id <= 3; ++id) {
       receive(id, present_in("Graveyard", {}), kChannelOwnership);
+      receive(id, sample_at("Graveyard", Vec3{4, 0, 0}), kChannelPlayerSamples);
       receive(id, BombShare{true}, kChannelOwnership);
     }
     receive(1, ObjectSpawn{0, kBomb, "Item_Bomb", object_spawn::projectile, lit_bomb_at(4, 3.0f)},
@@ -6141,6 +6142,27 @@ TEST_CASE("bomb take: refused for what is not another player's bomb here, or an 
   CHECK(messages_to<BombAnswer>(h, 3)[0].refusal == BombRefusal::not_a_bomb);
 }
 
+TEST_CASE("bomb take: refused while the taker's own place is not known there") {
+  ObjectHarness h;
+  for (ConnectionId id = 1; id <= 2; ++id) {
+    h.receive(id, present_in("Graveyard", {}), kChannelOwnership);
+    h.receive(id, BombShare{true}, kChannelOwnership);
+  }
+  h.receive(1, ObjectSpawn{0, kBomb, "Item_Bomb", object_spawn::projectile, lit_bomb_at(4, 3.0f)},
+            kChannelOwnership);
+  h.clear();
+  // The scene, but no PLAYER_SAMPLE position yet: no ask to the owner.
+  h.receive(2, BombTake{kBomb, 0}, kChannelOwnership);
+  REQUIRE(messages_to<BombAnswer>(h, 2).size() == 1);
+  CHECK(messages_to<BombAnswer>(h, 2)[0].refusal == BombRefusal::not_a_bomb);
+  CHECK(messages_to<HandoverAsk>(h, 1).empty());
+  // Its position known (a fresh PLAYER_SAMPLE there): the owner is asked.
+  h.receive(2, sample_at("Graveyard", Vec3{4, 0, 0}), kChannelPlayerSamples);
+  h.clear();
+  h.receive(2, BombTake{kBomb, 0}, kChannelOwnership);
+  CHECK(messages_to<HandoverAsk>(h, 1).size() == 1);
+}
+
 TEST_CASE("bomb take: the owner leaves mid-fuse: a sharing game goes on with the fuse, so it still goes off once") {
   BombHarness h;
   // Player 2 took it; then player 2 leaves while it burns.
@@ -6200,6 +6222,10 @@ TEST_CASE("player lift: passed to the one player named, only between sharing gam
   // Both share: the ask goes to the lifted only, with the lifter written in.
   h.clear();
   h.receive(2, LiftShare{true}, kChannelOwnership);
+  for (ConnectionId id = 1; id <= 3; ++id) {
+    h.receive(id, sample_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  }
+  h.clear();
   h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
   CHECK(h.to(3).empty());
   CHECK(only_message_to<LiftAsk>(h, 2) == LiftAsk{1, 2});
@@ -6221,4 +6247,38 @@ TEST_CASE("player lift: passed to the one player named, only between sharing gam
   h.receive(2, LiftShare{false}, kChannelOwnership);
   h.receive(1, LiftPlace{0, 2, LiftPhase::landed, {1, 2, 3}}, kChannelPlayerSamples);
   CHECK(h.to(2).empty());
+}
+
+TEST_CASE("player lift: an ask whose lifter's place is not known, or not in the lifted's scene, is refused") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.receive(1, LiftShare{true}, kChannelOwnership);
+  h.receive(2, LiftShare{true}, kChannelOwnership);
+  h.clear();
+  // No samples at all: answered too_far, nothing reaches the lifted.
+  h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
+  CHECK(h.to(2).empty());
+  CHECK(only_message_to<LiftAnswer>(h, 1) == LiftAnswer{2, 1, LiftRefusal::too_far});
+  CHECK(h.session.stats().lifts_unplaced == 1);
+  // Another scene than the lifted's.
+  h.receive(1, sample_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.receive(2, sample_at("Kakariko", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
+  CHECK(h.to(2).empty());
+  CHECK(only_message_to<LiftAnswer>(h, 1) == LiftAnswer{2, 1, LiftRefusal::too_far});
+  // The same scene, but the lifter's position stale.
+  h.receive(2, sample_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.now += 6'000'000;
+  h.receive(2, sample_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
+  CHECK(h.to(2).empty());
+  // Fresh and together: passed on.
+  h.receive(1, sample_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
+  CHECK(only_message_to<LiftAsk>(h, 2) == LiftAsk{1, 2});
+  CHECK(h.session.stats().lifts_unplaced == 3);
 }

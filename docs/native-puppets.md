@@ -214,7 +214,10 @@ returns before anything when not connected).
 - **Rules** (`lichii/hook/coop_lift_player.h`, tests `tests/lichii/lift_player_test.cpp`):
   - Lifter: the copy is lifted when the game put it at least 0.3 m higher than the director drew it, within
     1.6 m of our Link, two frames running (the director reads the copy's place before each of its writes:
-    `CoopPuppet::WatchGamePlaces`). It sends `LIFT_ASK` and the director stops placing, turning and setting that
+    `CoopPuppet::WatchGamePlaces`), and only while our own Link's main animation slot plays a lift or a carry
+    (`OurLinkLifts`: a name with "lift" or "carry"; not read is no lift). So a copy raised by anything else (a
+    rising platform under a `--puppet-body` copy, a step, our Link pushing under it) never asks; the log says
+    "copy rose but our Link's animation '...' is no lift" once per such rise (the probe for UNKNOWN 6). It sends `LIFT_ASK` and the director stops placing, turning and setting that
     copy (`CoopPuppet::SetGameHolds`), so the game's own carry has it. No answer in 1.5 s, or a no: the director
     places it again and it is not asked again until the game lets it down. Taken: `LIFT_PLACE held` each frame
     with the copy's place as the game has it; when it is 0.6 m further out or lower than it was carried
@@ -222,10 +225,14 @@ returns before anything when not connected).
     `landed`, and the director places it from the samples again.
   - Lifted (decides): no while our Link is in an event (G1, our own), a load or a menu (`event`), dead or at
     life 0 (`down`), already lifted by another or lifting someone (`busy`), or the lifter's Link more than 3 m
-    away (`too far`). Taken: each place is given to our real Link by the object walk the way copies are moved
+    away, not known, or in another scene (`too far`; the server also answers `too far` itself when the lifter
+    has no scene or no fresh sample position, or is not in the lifted player's scene, so a stray ask never takes
+    a player's input away). Taken: each place is given to our real Link by the object walk the way copies are moved
     (place written, then the game's physics-aware setter main+0x4c6580 on it: `CoopObjects::PlaceOurLink`), and
     our Link's own input check (main+0x3025850, Hookshot wrap 18) answers "input off" for our Link only (the
-    reading actor checked), as for an extra local player without a controller. The lifted game frees itself
+    reading actor checked), as for an extra local player without a controller. The "off" is a time stamp each
+    lift frame renews: older than 0.5 s it reads "on" again (`InputOffFresh`), so input can never stay off if
+    the lift's frame stops being called. The lifted game frees itself
     (`LIFT_ANSWER freed`) on an event or death, when the places stop for 1 s (the lifter left), or after 15 s
     (it wriggles free; the game's own escape timer is UNKNOWN). The camera stays on our Link (nothing changes it).
 - **The game's functions used:** the lifter's own lift, carry and throw (`PlayerLifterParam` `LiftThrowParams` on
@@ -248,6 +255,14 @@ Phase 3 UNKNOWNs (settled by the proof job in reports/native-puppets-c.md, scree
 5. How the game lets a refused lift go (the lifter keeps carrying a copy the director now places): the next
    fix would be the lifter's own put-down action verb (the request-action-verb path main+0xc08f0, verb
    UNKNOWN).
+6. Our Link's own animation names while it lifts and carries (AS slot 0). The gate takes any name with "lift"
+   or "carry"; if the proof log shows "copy rose but our Link's animation 'X' is no lift" during a real lift,
+   add X's family to `OurLinkLifts` (or read the lifter's `ActorHolderRef` instead, offsets UNKNOWN).
+
+The same "ask without our own state" and "unknown place" rules hold for the phase 2 bomb take: our game sends
+`BOMB_TAKE` only when the copy's own animation says Lifted AND our Link's place is read and within 2.5 m of the
+copy (`CoopBombShare::NearOurLink`); the server refuses a `BOMB_TAKE` (`not_a_bomb`) when the taker has no scene,
+another scene than the bomb's, or no fresh sample position.
 
 ### Other liftable and shared things (named here, later phases)
 
