@@ -1091,6 +1091,49 @@ TEST_CASE("damage carries where the hit landed, optional (protocol 12)") {
   CHECK(encode(d, out) == Error::bad_value);
 }
 
+TEST_CASE("damage carries the hit record, optional, alone or after the hit place (protocol 14)") {
+  // Every hit shows on every screen: the owner's game takes the hit that happened (bomb, arrow, fire ...).
+  CHECK(kProtocolVersion == 14);
+  Damage d{0, test::kPlacedId, 1, 2, 1, {1.0f, 2.0f, 3.0f}, {}};
+  const Bytes plain = must_encode(d);
+  HitRecord rec{};
+  for (std::size_t i = 0; i < rec.size(); ++i) rec[i] = 0x01000000u * static_cast<std::uint32_t>(i) + 7;
+  d.hit_record = rec;
+  const Bytes alone = must_encode(d);
+  CHECK(alone.size() == plain.size() + kHitRecordWords * 4);
+  Message back;
+  REQUIRE(decode(alone, back) == Error::none);
+  CHECK(std::get<Damage>(back) == d);
+  CHECK_FALSE(std::get<Damage>(back).hit_at);
+  d.hit_at = Vec3{18.5f, 61.0f, 67.8f};
+  const Bytes both = must_encode(d);
+  CHECK(both.size() == plain.size() + 12 + kHitRecordWords * 4);
+  REQUIRE(decode(both, back) == Error::none);
+  CHECK(std::get<Damage>(back) == d);
+  Bytes cut = both;  // any other tail: refused
+  cut.resize(cut.size() - 4);
+  fix_length(cut);
+  CHECK(decode_bytes(cut) == Error::trailing_bytes);
+}
+
+TEST_CASE("object samples carry the owner's newest hit, component 21 (protocol 14)") {
+  ObjectSample s{0, test::kPlacedId, 3, {}};
+  s.state.time = {100, 1};
+  s.state.life = ObjectLife{4, 8};
+  ObjectHit hit;
+  hit.seq = 5;
+  hit.record[4] = 0x00060001;
+  hit.record[37] = 0xffffffffu;
+  s.state.hit = hit;
+  const Bytes b = must_encode(s);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<ObjectSample>(back) == s);
+  Bytes out;
+  s.state.hit->seq = 0;  // seqs count from 1
+  CHECK(encode(s, out) == Error::bad_value);
+}
+
 TEST_CASE("object id layout on the wire") {
   const Bytes b = must_encode(ObjectOwner{test::kMadeId, 2, 0x0102, 0x0a0b0c0d});
   REQUIRE(b.size() == kHeaderSize + 10 + 1 + 2 + 4);
@@ -2180,6 +2223,75 @@ TEST_CASE("bad lobby messages are refused") {
   b[kHeaderSize] = 2;
   b[kHeaderSize + 1] = 0;  // nobody
   CHECK(decode(b, m) == Error::bad_value);
+}
+
+TEST_CASE("host approval messages have their numbers, channel, senders and layout (protocol 13)") {
+  CHECK(kProtocolVersion >= 13);
+  CHECK(static_cast<std::uint16_t>(MessageType::join_knock) == 525);
+  CHECK(static_cast<std::uint16_t>(MessageType::join_allow) == 526);
+  CHECK(static_cast<std::uint8_t>(RefuseReason::not_let_in) == 9);
+  for (const auto t : {MessageType::join_knock, MessageType::join_allow}) {
+    CHECK(channel_of(t) == kChannelSession);
+    CHECK_FALSE(allowed_on_channel(t, kChannelProgress));
+  }
+  CHECK(may_send(Sender::server, MessageType::join_knock));
+  CHECK_FALSE(may_send(Sender::client, MessageType::join_knock));
+  CHECK(may_send(Sender::client, MessageType::join_allow));
+  CHECK_FALSE(may_send(Sender::server, MessageType::join_allow));
+
+  // JOIN_KNOCK: u32 knock, u16 wait, u8 flags, nickname.
+  const Message knock = JoinKnock{0x01020304, 60, join_knock::known, "Riley"};
+  CHECK_FALSE(sender_of(knock));  // no player field
+  CHECK(check_received(knock, Sender::server, kChannelSession) == Error::none);
+  Bytes b = must_encode(knock);
+  REQUIRE(b.size() == kHeaderSize + 4 + 2 + 1 + 2 + 5);
+  CHECK(b[kHeaderSize] == 0x04);  // little-endian
+  CHECK(b[kHeaderSize + 4] == 60);
+  CHECK(b[kHeaderSize + 6] == join_knock::known);
+  b[kHeaderSize + 6] = 0x81;  // a newer server's bits: kept
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<JoinKnock>(back).flags == 0x81);
+
+  // JOIN_ALLOW: u32 knock, u8 allow, u8 remember.
+  const Message allow = JoinAllow{9, true, false};
+  CHECK_FALSE(sender_of(allow));
+  CHECK(check_received(allow, Sender::client, kChannelSession) == Error::none);
+  b = must_encode(allow);
+  REQUIRE(b.size() == kHeaderSize + 6);
+  CHECK(b[kHeaderSize] == 9);
+  CHECK(b[kHeaderSize + 4] == 1);
+  CHECK(b[kHeaderSize + 5] == 0);
+}
+
+TEST_CASE("bad host approval messages are refused") {
+  Bytes out;
+  CHECK(encode(JoinKnock{0, 60, 0, "Riley"}, out) == Error::bad_value);  // knock 0
+  CHECK(encode(JoinKnock{1, kMaxKnockWaitSeconds + 1, 0, "Riley"}, out) == Error::bad_value);
+  CHECK(encode(JoinKnock{1, 60, 0, ""}, out) == Error::bad_value);
+  CHECK(encode(JoinKnock{1, 60, 0, "a name far over sixteen"}, out) == Error::string_too_long);
+  CHECK(encode(JoinAllow{0, true, false}, out) == Error::bad_value);
+  CHECK(out.empty());
+  Message m;
+  Bytes b = must_encode(JoinKnock{1, 60, 0, "Riley"});
+  set_u16(b, kHeaderSize + 4, kMaxKnockWaitSeconds + 1);
+  CHECK(decode(b, m) == Error::bad_value);
+  b = must_encode(JoinKnock{1, 60, 0, "Riley"});
+  b[kHeaderSize] = 0;  // knock 0
+  CHECK(decode(b, m) == Error::bad_value);
+  b = must_encode(JoinAllow{3, false, false});
+  b[kHeaderSize + 4] = 2;  // neither yes nor no
+  CHECK(decode(b, m) == Error::bad_value);
+  b = must_encode(JoinAllow{3, false, false});
+  b[kHeaderSize + 5] = 2;
+  CHECK(decode(b, m) == Error::bad_value);
+  b = must_encode(JoinAllow{3, false, false});
+  b.push_back(0);
+  set_u16(b, 2, static_cast<std::uint16_t>(b.size() - kHeaderSize));
+  CHECK(decode(b, m) == Error::trailing_bytes);
+  // The server may not send JOIN_ALLOW, nor a client JOIN_KNOCK.
+  CHECK(check_received(JoinAllow{3, true, false}, Sender::server, kChannelSession) == Error::wrong_sender);
+  CHECK(check_received(JoinKnock{3, 60, 0, "Riley"}, Sender::client, kChannelSession) == Error::wrong_sender);
 }
 
 TEST_CASE("fish lure has its number, channel and layout, only a client sends it (issue 151)") {

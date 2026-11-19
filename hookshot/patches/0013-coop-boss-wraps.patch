@@ -1,4 +1,4 @@
-From 1b662b9dbeac626d2da7d22cd2c800933d6d9235 Mon Sep 17 00:00:00 2001
+From cd2df048c8ecfa2b86e2908a27dbd0e0a8fd599d Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Fri, 13 Nov 2026 00:40:00 -0900
 Subject: [PATCH] Co-op boss wraps: a BSA component's brain and action verbs to

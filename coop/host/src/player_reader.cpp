@@ -141,21 +141,26 @@ std::optional<bool> PlayerReader::read_event_word() {
   return *running != 0;
 }
 
+// The game's own QueryEventMemberIsEventMemver (0x29f3770) for our Link: its EventMember M, M's
+// record L (0: in no event), and a member when one of L's slots holds an event pointer with flag
+// bit 0. nullopt when M or L cannot be read; a slot that cannot be read counts as free.
 std::optional<bool> PlayerReader::read_link_bound() {
   const auto actor = find_player_actor();
   if (!actor) return std::nullopt;
   const auto parts = read_ptr(memory_, *actor + addr::kActorComponents);
   if (!parts) return std::nullopt;
-  for (const std::uint64_t slot : {addr::kPerformerSlot, addr::kPerformerSlotAlt}) {
-    const auto performer = read_ptr(memory_, *parts + slot);
-    if (!performer) continue;
-    const auto owner = read_u64(memory_, *performer + addr::kPerformerActor);
-    if (!owner || *owner != *actor) continue;  // not its own
-    const auto link = read_u64(memory_, *performer + addr::kPerformerLink);
-    if (!link) return std::nullopt;
-    return *link != 0;
+  const auto member = read_ptr(memory_, *parts + addr::kEventMemberSlot);
+  if (!member) return std::nullopt;
+  const auto record = read_u64(memory_, *member + addr::kMemberRecord);
+  if (!record) return std::nullopt;
+  if (*record == 0) return false;
+  for (std::uint64_t i = 0; i < addr::kMemberSlots; ++i) {
+    const std::uint64_t slot = *record + addr::kRecordSlots + addr::kMemberSlotSize * i;
+    const auto event = read_u64(memory_, slot);
+    const auto flags = read_u8(memory_, slot + addr::kSlotFlags);
+    if (event && *event != 0 && flags && (*flags & 1) != 0) return true;
   }
-  return std::nullopt;  // no performer of its own found
+  return false;
 }
 
 std::optional<std::int32_t> PlayerReader::read_life() {
@@ -244,18 +249,7 @@ std::optional<protocol::Equipment> PlayerReader::read_equipment() {
   e.boots = flags.get_string64(addr::kEquipBoot);
   e.head = flags.get_string64(addr::kEquipHeadArmor);
   e.hand = flags.get_string64(addr::kEquipHandArmor);
-  // The child's Goron's Bracelet is no EquipHandArmor: the game wears it
-  // as an accessory (addresses.hpp, kArmorLinkBracelet). Sent as `hand`;
-  // the puppet wears a bracelet with the same accessory kind. An empty flag
-  // with that link unreadable is not known (not a bracelet taken off).
-  if (!e.hand || e.hand->empty()) {
-    const auto bracelet = read_armor_link_name(addr::kArmorLinkBracelet);
-    if (!bracelet) {
-      e.hand.reset();
-    } else if (bracelet->starts_with(protocol::kChildBraceletPrefix)) {
-      e.hand = bracelet;
-    }
-  }
+  wear_from_links(e, read_age() == protocol::Age::child);
   e.ocarina = flags.get_string64(addr::kEquipOcarina);
   e.arrow = flags.get_string64(addr::kEquipArrow);
   e.drawn = read_drawn();
@@ -340,6 +334,79 @@ std::optional<std::string> PlayerReader::read_slot_name(std::uint32_t slot_index
 std::optional<std::string> PlayerReader::read_armor_link_name(std::uint32_t link_index) {
   if (link_index >= addr::kArmorLinkCount) return std::nullopt;
   return read_link_name(addr::kArmorLinks + addr::kEquipSlotStride * link_index);
+}
+
+// Issue 91 and row 148, one cause: the PlayerStatus.Equip* flags are what the
+// pause menu chose, and they outlive an age change; the EquipmentUser's armor
+// links hold what the game really draws on Link. Seen: the child's Goron's
+// Bracelet (kind 14) is in a link with EquipHandArmor "" (held-ocarina-b,
+// 2026-11-14); masks and the Hover/Iron Boots are ZR items
+// (PlayerStatus.AssignableItem), put on by the game's own use call, and
+// through the menu's GameData path (state 2) the game drew no mask even on its
+// own Link (wear-masks 20261110-155536); a young Link whose EquipHandArmor
+// still named the adult's Armor_Adult_Gauntlet_Gold was sent with it, and the
+// other games' child puppet wore Golden Gauntlets (row 148, bladeedge02's
+// 0.11.4 log). The adult's gauntlets are a piece in a link too: the game's
+// take-off for an empty hand flag empties armor link 3 (0x10aceb0, docs/
+// puppet.md).
+// Seen in the game (hs-gear-adult run 20261118-161054, a child with the Golden
+// Gauntlets, Goron Tunic and Hover Boots flags made again by a warp): the
+// game drew none of them, only the bracelet, and its links held only that.
+// So for a CHILD each kind the game draws as a piece (below) is decided by
+// the links, by name (the links' index per kind is not proven): a piece of
+// that kind in a link is sent; a flag naming a piece of that kind that no
+// link holds is not worn ("") with every link read, and not known (the
+// others keep what they had) while a link is unreadable, as during a load,
+// so the flag is never sent for a moment. A flag naming anything else stands
+// (Armor_Adult_Normal is no piece in a child's links).
+// An ADULT keeps the rule before row 148 (its gear on a puppet is not yet
+// checked against the links in a game): a flag with a name stands, an empty
+// or unknown flag is filled from a link piece of its kind.
+// An empty hand flag with a link unreadable is not known (not a bracelet
+// taken off), as before.
+namespace {
+bool drawn_head(std::string_view n) {
+  return n.starts_with("Armor_") && n.find("_Mask_") != std::string_view::npos;
+}
+bool drawn_armor(std::string_view n) {
+  return n == "Armor_Adult_Goron" || n == "Armor_Adult_Zora";
+}
+bool drawn_boots(std::string_view n) {
+  return n == "Armor_Adult_HoverBoot" || n == "Armor_Adult_HeavyBoot";
+}
+bool drawn_hand(std::string_view n) {
+  return n.starts_with("Armor_Adult_Gauntlet_") || n.starts_with(protocol::kChildBraceletPrefix);
+}
+}  // namespace
+
+void PlayerReader::wear_from_links(protocol::Equipment& e, bool child) {
+  std::array<std::optional<std::string>, addr::kArmorLinkCount> links;
+  bool every_link_read = true;
+  for (std::uint32_t i = 0; i < addr::kArmorLinkCount; ++i) {
+    links[i] = read_armor_link_name(i);
+    if (!links[i]) every_link_read = false;
+  }
+  const auto decide = [&](std::optional<std::string>& field, bool (*of_kind)(std::string_view)) {
+    if (!child && field && !field->empty()) return;
+    for (const auto& name : links) {
+      if (name && !name->empty() && of_kind(*name)) {
+        field = name;
+        return;
+      }
+    }
+    if (child && field && of_kind(*field)) {
+      if (every_link_read) {
+        field = std::string{};
+      } else {
+        field.reset();
+      }
+    }
+  };
+  decide(e.head, drawn_head);
+  decide(e.armor, drawn_armor);
+  decide(e.boots, drawn_boots);
+  decide(e.hand, drawn_hand);
+  if (e.hand && e.hand->empty() && !every_link_read) e.hand.reset();
 }
 
 std::optional<std::string> PlayerReader::read_link_name(std::uint64_t link_offset) {

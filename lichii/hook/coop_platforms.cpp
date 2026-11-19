@@ -357,31 +357,21 @@ void PlatformSync::Receive(const coop::protocol::PlatformClock& message) {
 }
 
 std::uint8_t PlatformSync::OwnerOf(std::uint64_t hash, std::uint8_t self, std::uint64_t server_us) const {
-    // The one that has sent the longest without a break keeps it (a game
-    // that comes later follows); two that began together: the lower number.
-    std::uint8_t owner = 0;
-    std::uint64_t owner_since = 0;
-    const auto consider = [&](std::uint8_t player, std::uint64_t since) {
-        constexpr std::uint64_t kTogetherUs = 200'000;
-        const bool earlier = since + kTogetherUs < owner_since;
-        const bool together = !earlier && since <= owner_since + kTogetherUs;
-        if (owner == 0 || earlier || (together && player < owner)) {
-            owner = player;
-            owner_since = since;
-        }
-    };
-    if (const auto it = states_.find(hash); it != states_.end() && it->second.since_us != 0 &&
-                                            server_us <= it->second.last_send_us + kOwnerQuietUs) {
-        consider(self, it->second.since_us);
-    }
+    // The lowest number of the games that send this driver's clock, ourselves included: the same in every game
+    // (as CoopCounters' pause leader, PR 279). The earlier rule (the longest sender keeps it, the lower number only
+    // when two began together) let two games each count themselves the owner when their runs were seen at
+    // different times; in the Deku Tree water room (bigrun-0115) each game gave up following the other and then
+    // sent its own clock, so the other followed it in turn. A game that sends nothing (no clock found, gone quiet
+    // for kOwnerQuietUs) is no candidate, so a lower number with no clock never stops the others.
+    std::uint8_t owner = self;
     if (const auto it = heard_.find(hash); it != heard_.end()) {
         for (const auto& [player, h] : it->second) {
-            if (player != self && server_us <= h.got_us + kOwnerQuietUs) {
-                consider(player, h.since_us);
+            if (player != 0 && player != self && server_us <= h.got_us + kOwnerQuietUs && player < owner) {
+                owner = player;
             }
         }
     }
-    return owner == 0 ? self : owner;
+    return owner;
 }
 
 void PlatformSync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t steady_us,

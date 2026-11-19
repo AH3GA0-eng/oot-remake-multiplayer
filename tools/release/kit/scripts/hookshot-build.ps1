@@ -227,8 +227,10 @@ function Invoke-PuppetPackStep([string]$exeDir) {
     if ($packFrom -and (Test-Path -LiteralPath $packFrom) -and (Test-Path -LiteralPath $packTool)) {
         Write-Host '  Making the puppet pack (how you see the other players; about a minute) ...'
         $ErrorActionPreference = 'Continue'
-        # (no --title-rows: the title stays the game's own; co-op is the pause menu's Multiplayer tab)
-        & $python -I -B $packTool --romfs $packFrom --mod-dir $mod 2>&1 | ForEach-Object { Write-Host "    $_" }
+        # --title-rows: Host, Join and Co-op Settings as the title's own rows (title_menu.py; the owner, 2026-11-19).
+        # --pause-tab: the game's own pause menu gets a Multiplayer tab and page, which the co-op module shows (patch
+        # 0030, issue 264). Both as the Linux kit's build.sh.
+        & $python -I -B $packTool --romfs $packFrom --mod-dir $mod --title-rows --pause-tab 2>&1 | ForEach-Object { Write-Host "    $_" }
         $code = $LASTEXITCODE
         $made = $true
         $ErrorActionPreference = 'Stop'
@@ -678,6 +680,9 @@ Copy-Item -LiteralPath $module -Destination $exeDir -Force
 Get-ChildItem -LiteralPath $hs -Filter '*.dll' -File | Where-Object { $_.Name -ne 'hookshot_coop.dll' } |
     Where-Object { -not (Test-Path -LiteralPath (Join-Path $exeDir $_.Name)) } | Copy-Item -Destination $exeDir
 Write-Host "  hookshot_coop.dll -> $exeDir"
+# the window's icon: the module (hookshot/src/coop_window_brand.cpp) sets it, with the title "Squadala!", from this png beside the exe
+$brandIcon = Join-Path $PSScriptRoot 'squadala-icon.png'
+if (Test-Path -LiteralPath $brandIcon) { Copy-Item -LiteralPath $brandIcon -Destination $exeDir -Force }
 
 # coop.ini beside longshot.exe (the module reads it there): the player's own server and name from
 # this kit's emulator when the game has none yet.

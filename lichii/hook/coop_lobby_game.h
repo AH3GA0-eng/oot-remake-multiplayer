@@ -25,13 +25,17 @@ struct Event;
 
 namespace CoopLobby {
 
-// Any thread (the chat box): true when `text` is /kick, /ban, /mute or
-// /unmute, which is then done here and not sent as chat. The host's goes to
-// the server; anyone else's /mute and /unmute are their own mutes, and their
-// /kick and /ban are refused with a line. Takes the session's network lock.
+// Any thread (the chat box): true when `text` is /kick, /ban, /mute,
+// /unmute, /allow or /deny, which is then done here and not sent as chat. The
+// host's goes to the server; anyone else's /mute and /unmute are their own
+// mutes, and their other commands are refused with a line. /allow and /deny
+// answer a player who asks to join (JOIN_ALLOW; docs/protocol.md "Host
+// approval"). Takes the session's network lock.
 bool OnChat(std::string_view text, coop::host::Session& session);
 
 // Network thread, from the session's on_event (the network lock is held).
+// Host approval: a JOIN_KNOCK to the host and our own join waiting for the
+// host (waiting_for_host) become chat lines.
 void OnEvent(const coop::net::Event& event, coop::net::Client& client);
 
 // Present thread, once per frame (`session` null when not connected): sends
@@ -77,6 +81,8 @@ struct Seen {
     std::vector<PlayerSeen> players;     // by number
 };
 Seen Now();
+// Who asks to join this host now (the JOIN_KNOCKs not answered yet), oldest first, by nickname. Any thread.
+std::vector<std::string> Asking();
 // Co-op was left (CoopHook::End sends no last event): nothing is seen any more.
 void Forget();
 

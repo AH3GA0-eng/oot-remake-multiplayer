@@ -111,6 +111,9 @@ Row Note(std::string text) {
     return r;
 }
 
+// The first words when a dim row is pressed, before why (its help).
+const char* const kNotNow = "Not now.";
+
 const char* const kByLauncher =
     "Co-op started with the game (Host.bat, Join.bat or coop.ini). To host or join another game, quit and start the "
     "game again.";
@@ -137,6 +140,13 @@ const std::vector<Command>& Commands() {
          "voice or chat for only that (/mute 2 voice). Anyone else: you stop hearing and seeing them yourself, and "
          "nobody is told."},
         {"/unmute <player>", "Undoes /mute (add voice or chat for only that)."},
+        // Host approval (docs/play-online.md "Lobby"): with approve_joins = on, each new player waits for these.
+        {"/allow, /allow <player>",
+         "The host only, when a player asks to join (approve_joins = on in coop-options.ini): lets them in (the one "
+         "who asked first, or by name). Add always to let them in without asking until you stop hosting."},
+        {"/deny, /deny <player>",
+         "The host only: turns away the player who asks to join. Add always to keep them out until you stop "
+         "hosting."},
     };
     return list;
 }
@@ -209,16 +219,20 @@ std::vector<Menu::Line> Menu::Lines() const {
     std::vector<Line> out;
     switch (page_) {
     case Page::kMain:
-        out.push_back({Action("Host a game", host ? (session_.state == State::kHosting ? "Hosting" : "Starting...") : "",
-                              session_.by_launcher || guest),
+        // Co-op that came with the game's start: both rows still open their page, which says so (a press must never
+        // do nothing; the owner, 2026-11-19).
+        out.push_back({Action("Host a game", session_.by_launcher ? "Co-op is on"
+                                             : host ? (session_.state == State::kHosting ? "Hosting" : "Starting...") : "",
+                              guest),
                        Act::kOpenHost,
                        session_.by_launcher ? kByLauncher
                        : guest ? "You are in a friend's game. To host your own, leave it first: Join a game, then Leave the game."
                        : host ? "Your game: the code for your friends, who joined, and Stop hosting."
                               : "Starts a game on this PC and makes a code. Send the code to your friends; they choose Join a "
                                 "game and paste it. They play on your save."});
-        out.push_back({Action("Join a game", guest ? (session_.state == State::kJoined ? "Joined" : "Joining...") : "",
-                              session_.by_launcher || host),
+        out.push_back({Action("Join a game", session_.by_launcher ? "Co-op is on"
+                                             : guest ? (session_.state == State::kJoined ? "Joined" : "Joining...") : "",
+                              host),
                        Act::kOpenJoin,
                        session_.by_launcher ? kByLauncher
                        : host ? "You are hosting. To join a friend's game, stop yours first: Host a game, then Stop hosting."
@@ -237,7 +251,9 @@ std::vector<Menu::Line> Menu::Lines() const {
     case Page::kHost: {
         const bool typing_port = typing_ && typing_act_ == Act::kHostPort;
         const std::string port_value = typing_port ? port_text_ + "_" : std::to_string(options_.host_port);
-        if (host) {
+        if (session_.by_launcher) {
+            LauncherLines(out);
+        } else if (host) {
             out.push_back({Action("Copy the code again", "Copy", session_.code.empty()), Act::kCopyInvite,
                            "Puts your code on the clipboard again. Share it in DMs only: it contains your internet address."});
             out.push_back({Action("Paste friend's answer (or Ctrl+V)", "Paste"), Act::kPasteAnswer,
@@ -262,7 +278,9 @@ std::vector<Menu::Line> Menu::Lines() const {
         break;
     }
     case Page::kJoin:
-        if (guest) {
+        if (session_.by_launcher) {
+            LauncherLines(out);
+        } else if (guest) {
             if (session_.state == State::kWaitHost) {
                 out.push_back({Action("Copy your answer code", "Copy", session_.code.empty()), Act::kCopyAnswer,
                                "Your friend's router blocks the way in: send them this answer code (it is copied "
@@ -397,11 +415,40 @@ std::vector<Menu::Line> Menu::Lines() const {
                        "dungeon maps (not the world map). Off: neither shows them."});
         out.push_back({Toggle("Names on map", options_.map_names), Act::kMapNames,
                        "Each player's name beside their arrow on the maps. Off: the arrows only."});
+        {   // (Navi) New Game+ (coop_ngplus.h)
+            const std::string hearts = std::to_string(ngplus_hearts_ / 4) + (ngplus_hearts_ % 4 ? "+" : "");
+            out.push_back({Choice("New Game+", ngplus_unlocked_ == 0 ? std::string("Locked: beat Ganon")
+                                               : ngplus_level_ == 0  ? std::string("Off")
+                                                                     : "NG+ " + std::to_string(ngplus_level_)),
+                           Act::kNgPlus,
+                           ngplus_unlocked_ == 0
+                               ? "Beat Ganon to unlock it: then play again with the hearts you had and tougher enemies."
+                               : "Start a new file with this on: you keep your " + hearts +
+                                     " hearts, and enemies and bosses get 50% more life and 25% more damage for each "
+                                     "level (up to NG+ " + std::to_string(ngplus_unlocked_) +
+                                     " now). In a game you host your level counts for everyone. Off: the game as it is."});
+        }
+        out.push_back({Choice("Saves", mp_saves_ ? "Multiplayer" : "Solo"), Act::kSaveSet,   // (Navi)
+                       "Solo: your own saves. Multiplayer: a separate set of saves for playing together (made from "
+                       "your solo saves the first time), so co-op progress never mixes with your own. When you join "
+                       "a friend from the title screen you play the host's save, copied beside your multiplayer saves; "
+                       "your saves are not touched. Switched on the title screen with no file loaded."});
         break;
     case Page::kCustomize:   // (its own rows: coop_look_menu.h)
         break;
     }
     return out;
+}
+
+// The Host and Join pages of co-op that came with the game's start (Host.bat, Join.bat, coop.ini): nothing to
+// start or stop here, so they say what is on and where the players are (the page's help: kByLauncher).
+void Menu::LauncherLines(std::vector<Line>& out) const {
+    out.push_back({Note(session_.players > 1 ? "Co-op is on: " + std::to_string(session_.players) + " players"
+                                             : std::string("Co-op is on")),
+                   Act::kNone, {}});
+    out.push_back({Note("Co-op started with the game: Host.bat, Join.bat or coop.ini."), Act::kNone, {}});
+    out.push_back({Note("Who is in the game: the Lobby tab."), Act::kNone, {}});
+    out.push_back({Note("To host or join another game, start the game again."), Act::kNone, {}});
 }
 
 bool Menu::Selectable(const Line& line) const {
@@ -832,7 +879,9 @@ bool Menu::Press(Input input) {
         return true;
     case Input::kLeft:
     case Input::kRight:
-        if (line != nullptr && !line->row.fixed && line->row.kind != RowKind::kAction) {
+        if (line != nullptr && line->row.fixed && line->row.kind != RowKind::kAction) {
+            note_ = {kNotNow, line->help};
+        } else if (line != nullptr && line->row.kind != RowKind::kAction) {
             Change(line->act, input == Input::kLeft ? -1 : 1);
         }
         return true;
@@ -841,7 +890,7 @@ bool Menu::Press(Input input) {
             return true;
         }
         if (line->row.fixed) {
-            note_ = {line->help};   // (why not, said again where the eye is)
+            note_ = {kNotNow, line->help};   // (the help alone is what selecting it showed: the press would look dead)
             return true;
         }
         Decide(line->act);
@@ -1000,6 +1049,8 @@ void Menu::Decide(Act act) {
     case Act::kChatKey:
     case Act::kController:
     case Act::kKeyboard:
+    case Act::kNgPlus:
+    case Act::kSaveSet:
         Change(act, 1);
         break;
     case Act::kVoice:
@@ -1071,6 +1122,17 @@ void Menu::Change(Act act, int step) {
         options_.map_names = step > 0 ? true : step < 0 ? false : !options_.map_names;
         request_ = Request{Request::Kind::kSave, {}};
         break;
+    case Act::kSaveSet:   // (Navi) two choices: either arrow flips it
+        mp_saves_ = !mp_saves_;
+        request_ = Request{Request::Kind::kSaveSet, mp_saves_ ? "multiplayer" : "solo"};
+        break;
+    case Act::kNgPlus:   // (Navi) Off, NG+ 1 ... the highest unlocked, round
+        if (ngplus_unlocked_ > 0) {
+            const int span = ngplus_unlocked_ + 1;
+            ngplus_level_ = (std::clamp(ngplus_level_, 0, ngplus_unlocked_) + (step < 0 ? span - 1 : 1)) % span;
+            request_ = Request{Request::Kind::kNgPlus, std::to_string(ngplus_level_)};
+        }
+        break;
     default:
         break;
     }
@@ -1106,9 +1168,9 @@ void Menu::Click(std::size_t row, int side) {
     }
     selected_ = row;
     const Line& line = lines[row];
-    if (line.row.kind == RowKind::kAction) {
-        Press(Input::kDecide);
-    } else if (side != 0 && !line.row.fixed) {
+    if (line.row.kind == RowKind::kAction || line.row.fixed) {
+        Press(Input::kDecide);   // (a dim row: Press says why)
+    } else if (side != 0) {
         note_.clear();
         confirm_leave_ = false;
         Change(line.act, side);
@@ -1307,6 +1369,8 @@ View Menu::view() const {
         v.help = JoinedTr(session_.lines);
     } else if (line != nullptr) {
         v.help = line->help;
+    } else if (session_.by_launcher && (page_ == Page::kHost || page_ == Page::kJoin)) {
+        v.help = kByLauncher;   // (LauncherLines' page has no row to select)
     }
     if (mine && (host_page || join_page)) {
         v.hint = session_.code;
@@ -1350,6 +1414,16 @@ View Menu::view() const {
 
 void Menu::SetLook(const CoopLook::Look& look) {
     look_ = look;
+}
+
+void Menu::SetSaveSet(bool multiplayer) {
+    mp_saves_ = multiplayer;
+}
+
+void Menu::SetNgPlus(int level, int unlocked, int hearts) {
+    ngplus_level_ = level;
+    ngplus_unlocked_ = unlocked;
+    ngplus_hearts_ = hearts;
 }
 
 std::vector<CoopLookMenu::Shape> Menu::Picture() const {
