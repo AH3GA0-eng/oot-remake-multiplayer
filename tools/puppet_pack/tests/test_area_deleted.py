@@ -22,6 +22,9 @@ class AreaDeletedTest(unittest.TestCase):
         self.assertEqual(ad.classify(["HoldWmGetTimeDiv", "OperateORFixInputTrueWithReset.module"]), "shared")
         self.assertEqual(ad.classify(["HoldChallengeCurrentStepCheckOrder", "Common_FrameTimer.module"]), "shared")
         self.assertEqual(ad.classify([]), "shared")
+        # A stop at another placement is listed, not a node: the boat Stalfos stay shared.
+        self.assertEqual(ad.classify(["stop:Obj_ShadowTemple_PaddleShip_A_01", "Common_FrameTimer.module"]), "shared")
+        self.assertEqual(ad.classify(["stop:Obj_Area_A_01"]), "shared")
 
     def test_inputs_and_enemies(self):
         self.assertTrue(ad.DELETE_INPUT.search("Logic_Delete"))

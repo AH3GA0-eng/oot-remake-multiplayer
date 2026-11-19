@@ -13,7 +13,9 @@ an area check). Every other delete input reads what is the same in every game: a
 (shared by the flag sync), the time of day, a challenge step, a timer.
 
 The classes (--list): `link` (excluded: listed in the .inc) and `shared` (flag / time / step /
-timer: gone is told). The kinds are listed by name, for every scene: one placement gated on our
+timer: gone is told). A trace stops at another placement's output (its own logic is not this
+input's); --list names each such stop (`stop:<Gyaml>`), so a delete gated on an Area actor or a
+ride (the Shadow Temple boat's Stalfos <- Obj_ShadowTemple_PaddleShip_A_01) is seen, not hidden. The kinds are listed by name, for every scene: one placement gated on our
 Link is enough to keep the kind out everywhere.
 """
 import argparse
@@ -39,9 +41,12 @@ def is_enemy(gyaml):
     return gyaml.startswith("Enemy_") and "Dictionary" not in gyaml
 
 
+STOP = "stop:"
+
+
 def classify(node_types):
-    """`link` when any node feeding the input senses our own Link, else `shared`."""
-    return "link" if any(OUR_LINK.search(t) for t in node_types) else "shared"
+    """`link` when any node feeding the input senses our own Link, else `shared` (stops are not nodes)."""
+    return "link" if any(OUR_LINK.search(t) for t in node_types if not t.startswith(STOP)) else "shared"
 
 
 def delete_inputs(romfs):
@@ -87,7 +92,7 @@ def delete_inputs(romfs):
                     n = nodes[src]
                     inst = n["imm"].get("InstanceName")
                     if inst and (mpre, inst) in by_id:
-                        return []  # another placement's output: not this input's own logic
+                        return [STOP + str(by_id[(mpre, inst)].get("Gyaml"))]  # another placement's output
                     out = [n["type"]]
                     for _, a, b in n["in"]["bool"]:
                         if a != -1:
@@ -121,7 +126,9 @@ def main(argv=None):
     kinds = {enemy for (_, enemy, _), types in found.items() if classify(types) == "link"}
     if args.list:
         for (scene, enemy, name), types in sorted(found.items()):
-            print(f"{classify(types):6} | {scene} | {enemy}.{name} | {sorted(set(types))}")
+            nodes = sorted(t for t in set(types) if not t.startswith(STOP))
+            stops = sorted(t for t in set(types) if t.startswith(STOP))
+            print(f"{classify(types):6} | {scene} | {enemy}.{name} | {nodes}" + (f" | {stops}" if stops else ""))
     if args.out:
         with open(args.out, "w", encoding="utf-8", newline="\n") as f:
             f.write(render(kinds))
