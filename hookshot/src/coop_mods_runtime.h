@@ -42,7 +42,7 @@ void SetGame(const HosCoopApi* api, std::function<const char*()> coop_busy);
 // Patch 0030's call for every menu screen's update (the game's thread; ctx may call()). Nothing is read when no mod
 // asked for screens.
 void Screen(void* ctx, std::uint64_t screen);
-// hos_coop_pad: player 1's buttons as the game would get them (the mods' screens see them), then the buttons the
+// hos_coop_pad: player 1's buttons as our pause page passed them on (the mods' screens see them), then the buttons the
 // mods hold from the game now (COOP_MOD_HOLD_ALL: the sticks too), 0 none.
 void NotePad(std::uint64_t buttons);
 std::uint64_t HeldButtons();

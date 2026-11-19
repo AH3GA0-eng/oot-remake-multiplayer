@@ -59,6 +59,7 @@
 #include "coop_enemy_shots.h"
 #include "coop_mod_api.h"
 #include "coop_mods_runtime.h"
+#include "coop_pad_order.h"
 #include "coop_rando.h"
 #include "coop_hook.h"
 #include "coop_lobby_game.h"
@@ -1927,7 +1928,11 @@ COOP_HOOKSHOT_EXPORT void hos_coop_game_screen(void* ctx, uint64_t screen) noexc
     if (g_on) {
         CoopPauseTab::OnScreen(ctx, screen);
         try {
-            CoopModsRuntime::Screen(ctx, screen);
+            // (not while our Multiplayer page is in front: the screen behind it is not the player's, and a mod's
+            // choose_focused would press the game's button under our page)
+            if (CoopPauseTab::MousePage() != 4) {
+                CoopModsRuntime::Screen(ctx, screen);
+            }
         } catch (...) {
             // (the mods' screens skip this update: the game's own goes on)
         }
@@ -1975,27 +1980,36 @@ COOP_HOOKSHOT_EXPORT int hos_coop_view(double eye[3], double target[3]) {
     }
     return 0;
 }
-COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) {
+static_assert(CoopPadOrder::kHoldAll == COOP_MOD_HOLD_ALL);
+COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) noexcept {
     if (!g_on || stick == nullptr) {
         return buttons;
     }
-    CoopModsRuntime::NotePad(buttons);   // (the code mods' screens see the player's buttons before any hold)
-    if (const std::uint64_t held = CoopModsRuntime::HeldButtons(); held != 0) {   // (coop_mod_api.h hold_input)
-        if (held == COOP_MOD_HOLD_ALL) {   // (a mod's own screen is in front: nothing reaches the game)
-            stick[0] = stick[1] = stick[2] = stick[3] = 0;
-            return 0;
+    // The order (coop_pad_order.h): our pause page first (it takes the pad while it shows), then the code mods see what
+    // it passed on and their holds come off (coop_mod_api.h hold_input), then the title's watch and down but not out on
+    // what the game gets. Nothing thrown leaves this C export: the game then gets the pad as it came.
+    const uint64_t came = buttons;
+    int32_t was[4] = {stick[0], stick[1], stick[2], stick[3]};
+    try {
+        return CoopPadOrder::Run(
+            buttons, stick, [](uint64_t b, int32_t* s) { return CoopPauseTab::OnPad(b, s); },
+            [](uint64_t b) { CoopModsRuntime::NotePad(b); }, [] { return CoopModsRuntime::HeldButtons(); },
+            [](uint64_t b, int32_t* s) { return CoopTitle::OnPad(b, s); },
+            [](uint64_t b, int32_t* s) {
+                // Down but not out (coop_dbno_game.h): a downed Link crawls and uses nothing; beside one, A revives.
+                CoopDbno::Pad pad{b, {s[0], s[1], s[2], s[3]}};
+                pad = CoopDbno::OnPad(pad);
+                for (int i = 0; i < 4; ++i) {
+                    s[i] = pad.stick[i];
+                }
+                return pad.buttons;
+            });
+    } catch (...) {
+        for (int i = 0; i < 4; ++i) {
+            stick[i] = was[i];
         }
-        buttons &= ~held;
+        return came;
     }
-    buttons = CoopTitle::OnPad(buttons, stick);
-    buttons = CoopPauseTab::OnPad(buttons, stick);   // (its page takes the pad while it shows)
-    // Down but not out (coop_dbno_game.h): a downed Link crawls and uses nothing; beside one, A revives.
-    CoopDbno::Pad pad{buttons, {stick[0], stick[1], stick[2], stick[3]}};
-    pad = CoopDbno::OnPad(pad);
-    for (int i = 0; i < 4; ++i) {
-        stick[i] = pad.stick[i];
-    }
-    return pad.buttons;
 }
 COOP_HOOKSHOT_EXPORT int hos_coop_draw_wanted(void) {
     return g_on && (CoopDraw::Wanted(CoopHookshot::DrawScene()) || CoopModsRuntime::OverlayWanted()) ? 1 : 0;
