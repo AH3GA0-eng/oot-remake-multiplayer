@@ -129,7 +129,7 @@ int g_focus_logged = -2;
 std::atomic<bool> g_menu{false};   // this title has the menu's labels (the marker found at its set-up)
 bool g_sub = false;                // the Multiplayer submenu shows
 bool g_any_save = true;            // the look's save list: a save or not (the caption manager's)
-bool g_one_start = false;          // one Start row for Continue and New Game (a code mod asked for the menu screens)
+bool g_one_start = false;          // one Start row for Continue and New Game (a file select mod runs)
 std::uint64_t g_apply_until = 0, g_apply_next = 0;   // the look set again until then (kApplyForMs)
 int g_focus_to = -1;               // a button to give the focus at the next step
 int g_decide = -1;                 // a game button to decide at the next step
@@ -409,11 +409,11 @@ void StepMenu(void* ctx, std::uint64_t screen) {
     bool apply = false, any_save = true, sub = false;
     int focus = -1, decide = -1;
     const char* sound = nullptr;
-    bool one_start = CoopModsRuntime::ScreensWanted();   // (before g_mutex: the mods' calls take it, coop_busy)
+    bool one_start = CoopModsRuntime::FileSelectRuns();   // (before g_mutex: the mods' calls take it, coop_busy)
     {
         std::lock_guard lock(g_mutex);
         if (one_start != g_one_start) {
-            g_one_start = one_start;   // (a code mod with the menu screens started or stopped under the open title)
+            g_one_start = one_start;   // (a file select mod started or stopped under the open title)
             g_apply_until = now + kApplyForMs, g_apply_next = 0;
         }
         if (const std::uint64_t mgr = CaptionMgr(); mgr != 0) {
@@ -441,7 +441,7 @@ void StepMenu(void* ctx, std::uint64_t screen) {
         static std::string logged;
         const std::string line = fmt::format("{} rows{}{}, {} of {} texts{}", sub ? "Multiplayer's" : "the title's",
                                              any_save ? "" : " (no save yet)",
-                                             !sub && one_start ? " (one Start: a mod has the menu screens)" : "",
+                                             !sub && one_start ? " (one Start: a file select mod runs)" : "",
                                              texts, look.count,
                                              why != nullptr ? fmt::format("; {}", why) : std::string());
         if (line != logged) {
@@ -646,7 +646,7 @@ void OnTitle(void* ctx, std::uint64_t screen, int event) {
             g_rows = true;
             std::lock_guard lock(g_mutex);
             g_sub = false, g_swallow = 0, g_focus_to = -1, g_decide = -1, g_sound = nullptr;
-            g_one_start = CoopModsRuntime::ScreensWanted();
+            g_one_start = CoopModsRuntime::FileSelectRuns();
             g_apply_until = NowMs() + kApplyForMs, g_apply_next = 0;
             LOG_INFO(Core, "coop: title: the title's own menu: {}, Multiplayer, Options ({} buttons)",
                      g_one_start ? "Start" : "Continue, New Game", count);
