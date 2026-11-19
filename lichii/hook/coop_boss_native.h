@@ -106,6 +106,13 @@ bool RunsOwnStart(std::string_view name);
 // Whether a plain enemy's death runs here now: its life is 0 in our game, or its owner's died.
 bool PlainDeath(std::optional<std::int32_t> life, bool owner_dead);
 
+// Row 138 (2)(7), #238: whether our game's own hit on a copy took life (its life read before the hit, in the walk
+// before, and after it). Such a hit is the owner's to judge: its DAMAGE goes to the owner, the server keeps the boss
+// with its owner (only a hit that takes no life, a stun, hands it over), and the owner's game's reaction comes back
+// as its verbs. So the copy's own brain stays skipped (Table::NoteOwnDamage). A life not read either time: unknown,
+// false (the copy runs its own reaction as before).
+bool OwnHitTookLife(std::optional<std::int32_t> before, std::optional<std::int32_t> after);
+
 // One boss the Objects step saw in its walk.
 struct Boss {
     std::uint64_t actor = 0;
@@ -150,6 +157,7 @@ struct Counts {
     std::uint64_t copy_killed = 0;    // a copy let die by its Life step after its owner's died
     std::uint64_t copy_finished = 0;  // a dying copy's Life step that its own rules left alive, ended (#105)
     std::uint64_t copy_shot_hits = 0; // our own shot's end at a copy, its own reaction let run (NoteOwnShotEnd)
+    std::uint64_t copy_hits_to_owner = 0; // our own hit on a copy that took life: the owner reacts (NoteOwnDamage)
     std::uint64_t plain_wants = 0;    // a plain enemy copy's own brain asked another brain verb than its owner's
     std::uint64_t plain_wakes = 0;    // a plain enemy copy's own wake let run (NoteOwnWake)
     std::uint64_t plain_deaths = 0;   // a plain enemy copy whose death began here: its own runs
@@ -179,11 +187,19 @@ public:
     // reader's event flag). Copies then run their own changes; the owner keeps
     // none of its event's.
     void SetEvent(bool running);
-    // Our game took a hit of its own on this boss (the Objects walk: its Life's
-    // last hit id moved, not to one we replayed). A copy then runs its own
-    // reaction for kReactSteps.
+    // Our game took a hit of its own on this boss that took no life (the Objects walk: its Life's last hit id
+    // moved, not to one we replayed, and OwnHitTookLife is false; or our shot ended at it). A copy then runs its
+    // own reaction for kReactSteps: the stun, chance time and weak-point reactions are its own AI's, and the
+    // stun's DAMAGE of 0 hands the boss to us meanwhile.
     // by_shot: NoteOwnShotEnd's reading (counted in Counts::copy_shot_hits).
     void NoteOwnHit(std::uint64_t actor, bool by_shot = false);
+    // Our game's own hit on this copy took life (OwnHitTookLife). Row 138 (2)(7), #238: it ran the copy's own
+    // brain for kReactSteps too, every hit again, so with 3 or 4 players hitting a Lizalfos or King Dodongo each
+    // hitter's copy ran its own AI against its own Link for much of the fight (one 0.11.4 host log: 11,230 own
+    // changes run), its jump slash went another way per game, then it snapped back to the owner's state (King
+    // Dodongo twitching, frozen in his roll). Now nothing of its own runs: the owner judges the hit (its DAMAGE)
+    // and its reaction comes as verbs. An own time already running (a stun of ours) is left as it is. Counted.
+    void NoteOwnDamage(std::uint64_t actor);
     // Issue 150 (boss-stun-c): our game's own shot ended where it hit or went
     // off (coop_spawn's flights of ours: a seed, arrow, nut, bomb, bombchu, with
     // the remove's place; any thread). A weak-point hit that takes no life (a

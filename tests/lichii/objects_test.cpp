@@ -5945,3 +5945,83 @@ TEST_CASE("objects: the test stun makes our boss copy say a stun to its owner, n
     CHECK(damage[0].amount == 0);
     CHECK(damage[0].epoch == 1);
 }
+
+TEST_CASE("objects: the real hit goes everywhere: copy's DAMAGE, the owner's replay, its samples, a third copy (protocol 14)") {
+    // Every hit shows on every screen: each game's enemy takes the hit that happened (its weapon, element,
+    // place) through its own damage step, not a stand-in sword hit it may refuse (King Dodongo, Gohma's eye).
+    proto::HitRecord rec{};
+    rec[4] = 0x00090003;  // a bomb's attack kind, say
+    rec[15] = 0x3f800000;
+    const std::string kName = "Enemy_Bokoblin";
+    const auto E = [](std::uint64_t a, std::uint64_t h, std::int32_t life, float x, const std::string& name) {
+        Seen s = Enemy(a, h, life, x, name);
+        s.life = proto::ObjectLife{life, 8};
+        return s;
+    };
+    // The hitter: its copy's own hit (a moved hit id, own_hit) with its record goes with the DAMAGE.
+    Sync copy;
+    Tick(copy, 0, {E(0x100, 0x11, 6, 0.0f, kName)});
+    const proto::ObjectId id = *copy.IdOf(0x100);
+    Own(copy, id, 2, 1);
+    Tick(copy, 10 * kMs, {E(0x100, 0x11, 6, 0.0f, kName)});
+    Seen hit = E(0x100, 0x11, 4, 0.0f, kName);
+    hit.own_hit = true;
+    hit.hit_record = rec;
+    Tick(copy, 20 * kMs, {hit});
+    auto damage = All<proto::Damage>(Tick(copy, 130 * kMs, {E(0x100, 0x11, 4, 0.0f, kName)}));
+    REQUIRE(damage.size() == 1);
+    CHECK(damage[0].amount == 2);
+    CHECK(damage[0].hit_record == std::optional<proto::HitRecord>(rec));
+    // (the next DAMAGE without a new own hit has none)
+    Tick(copy, 140 * kMs, {E(0x100, 0x11, 3, 0.0f, kName)});
+    damage = All<proto::Damage>(Tick(copy, 260 * kMs, {E(0x100, 0x11, 3, 0.0f, kName)}));
+    REQUIRE(damage.size() == 1);
+    CHECK_FALSE(damage[0].hit_record);
+
+    // The owner: the DAMAGE's record goes into its replay; the hit its game then took goes in its samples.
+    Sync owner;
+    owner.SetHurt(true);
+    Tick(owner, 0, {E(0x200, 0x11, 6, 0.0f, kName)});
+    const proto::ObjectId oid = *owner.IdOf(0x200);
+    Own(owner, oid, 1);
+    proto::Damage d{};
+    d.player_number = 2;
+    d.id = oid;
+    d.amount = 2;
+    d.hit_record = rec;
+    owner.Receive(d);
+    auto step = Tick(owner, 10 * kMs, {E(0x200, 0x11, 6, 0.0f, kName)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].hurt == 2);
+    CHECK(step.writes[0].record == std::optional<proto::HitRecord>(rec));
+    Seen took = E(0x200, 0x11, 4, 0.0f, kName);
+    took.replay_hit = true;
+    took.hit_record = rec;
+    auto samples = All<proto::ObjectSample>(Tick(owner, 20 * kMs, {took}));
+    REQUIRE_FALSE(samples.empty());
+    REQUIRE(samples.back().state.hit);
+    CHECK(samples.back().state.hit->seq == 1);
+    CHECK(samples.back().state.hit->record == rec);
+    // Past kHitShowUs its samples carry it no more.
+    samples = All<proto::ObjectSample>(Tick(owner, 20 * kMs + Sync::kHitShowUs, {E(0x200, 0x11, 3, 0.0f, kName)}));
+    REQUIRE_FALSE(samples.empty());
+    CHECK_FALSE(samples.back().state.hit);
+
+    // A third game's copy: the owner's sample with a fall and a new hit seq replays that hit, once.
+    Sync third;
+    third.SetHurt(true);
+    Tick(third, 0, {E(0x300, 0x11, 6, 0.0f, kName)});
+    const proto::ObjectId tid = *third.IdOf(0x300);
+    Own(third, tid, 2, 3);
+    Tick(third, 10 * kMs, {E(0x300, 0x11, 6, 0.0f, kName)});
+    proto::ObjectSample s{2, tid, 3, {}};
+    s.state.time = {15 * kMs, 1};
+    s.state.position = proto::Vec3{0.0f, 0.0f, 0.0f};
+    s.state.life = proto::ObjectLife{4, 8};
+    s.state.hit = proto::ObjectHit{1, rec};
+    third.Receive(s);
+    step = Tick(third, 20 * kMs, {E(0x300, 0x11, 6, 0.0f, kName)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].hurt == 2);
+    CHECK(step.writes[0].record == std::optional<proto::HitRecord>(rec));
+}

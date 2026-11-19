@@ -671,6 +671,7 @@ Error check_object_state(const ObjectState& s) {
       }
     }
   }
+  if (s.hit && s.hit->seq == 0) return Error::bad_value;  // (seqs count from 1)
   if (s.bsa) {
     const auto finite = [](const BossAction& a) {
       for (const auto& p : a.places) {
@@ -776,6 +777,12 @@ void write_object_state(const ObjectState& s, Writer& w) {
     });
   }
   if (s.bsa) component(ObjectComponent::bsa, [&] { write_bsa(*s.bsa, w); });
+  if (s.hit) {
+    component(ObjectComponent::hit, [&] {
+      w.u32(s.hit->seq);
+      for (std::uint32_t word : s.hit->record) w.u32(word);
+    });
+  }
 }
 
 bool has_duplicate_id(const std::vector<ObjectPresence>& objects) {
@@ -944,6 +951,9 @@ Error encode_body(const Damage& m, Writer& w) {
   for (float f : m.position) w.f32(f);
   if (m.hit_at) {
     for (float f : *m.hit_at) w.f32(f);
+  }
+  if (m.hit_record) {
+    for (std::uint32_t word : *m.hit_record) w.u32(word);
   }
   return Error::none;
 }
@@ -1480,6 +1490,13 @@ Error decode_component(ObjectComponent id, Reader& c, ObjectState& s, bool& know
       }
       return Error::none;
     }
+    case ObjectComponent::hit: {
+      ObjectHit& h = s.hit.emplace();
+      COOP_READ(c.u32(h.seq));
+      if (h.seq == 0) return Error::bad_value;
+      for (std::uint32_t& word : h.record) COOP_READ(c.u32(word));
+      return Error::none;
+    }
     case ObjectComponent::bsa: {
       BossBsa& b = s.bsa.emplace();
       std::uint32_t verb = 0;
@@ -1662,7 +1679,13 @@ Error decode_body(Reader& r, Damage& m) {
   if (m.amount < 0) return Error::bad_value;
   COOP_READ(r.u8(m.cause));
   COOP_TRY(read_floats(r, m.position));
-  if (r.left() == 12) COOP_TRY(read_floats(r, m.hit_at.emplace()));
+  // The tail tells by its length what follows: 12 the hit place, 152 the hit record (protocol 14), 164 both.
+  constexpr std::size_t kRecordBytes = kHitRecordWords * 4;
+  const std::size_t tail = r.left();
+  if (tail == 12 || tail == 12 + kRecordBytes) COOP_TRY(read_floats(r, m.hit_at.emplace()));
+  if (tail == kRecordBytes || tail == 12 + kRecordBytes) {
+    for (std::uint32_t& word : m.hit_record.emplace()) COOP_READ(r.u32(word));
+  }
   return Error::none;
 }
 

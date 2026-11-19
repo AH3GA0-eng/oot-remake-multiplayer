@@ -398,6 +398,10 @@ bool RunsOwnStart(std::string_view name) {
     return name.starts_with("Enemy_MiddleBoss_");
 }
 
+bool OwnHitTookLife(std::optional<std::int32_t> before, std::optional<std::int32_t> after) {
+    return before && after && *after < *before;
+}
+
 bool PlainDeath(std::optional<std::int32_t> life, bool owner_dead) {
     return owner_dead || (life && *life <= 0);
 }
@@ -526,6 +530,17 @@ void Table::NoteOwnHit(std::uint64_t actor, bool by_shot) {
         }
     }
     e->react_until = std::max(e->react_until, steps_ + kReactSteps);
+}
+
+void Table::NoteOwnDamage(std::uint64_t actor) {
+    std::lock_guard lock(mutex_);
+    Entry* e = FindActor(actor);
+    if (e == nullptr || e->role != Role::copy || !e->wanted) {
+        return;
+    }
+    if (counts_.copy_hits_to_owner++ == 0) {
+        Note(e->name + ": our own hit took life: its owner's game reacts (the copy keeps the owner's verbs)");
+    }
 }
 
 void Table::NoteOwnShotEnd(const coop::protocol::Vec3& at) {

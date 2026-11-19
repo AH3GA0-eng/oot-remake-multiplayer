@@ -25,7 +25,9 @@ namespace coop::protocol {
 // (JOIN_CHALLENGE, JOIN_PROOF, REFUSED bad_password).
 // 12: DAMAGE's hit place (boss-intro, 0.11); 13: the host's approval of
 // joiners (JOIN_KNOCK, JOIN_ALLOW, REFUSED not_let_in; issue 261).
-inline constexpr std::uint16_t kProtocolVersion = 13;
+// 14: the hit that happened (HitRecord) in DAMAGE and in the owner's samples (component 21), so every
+// game's enemy takes the real hit through its own damage step (0.11.5, every hit shows on every screen).
+inline constexpr std::uint16_t kProtocolVersion = 14;
 inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr std::uint8_t kMaxPlayers = 16;  // protocol 11; 4 before
 
@@ -783,6 +785,7 @@ enum class ObjectComponent : std::uint16_t {
   state = 18,
   slots = 19,  // protocol 10, issue 150: a boss's other AS slots (below)
   bsa = 20,    // native boss sync: a boss's brain and action verbs (BossBsa below)
+  hit = 21,    // protocol 14: the hit the owner's game took (ObjectHit below)
 };
 
 struct ObjectLife {
@@ -852,6 +855,22 @@ struct BossBsa {
   bool operator==(const BossBsa&) const = default;
 };
 
+// Protocol 14 (every hit shows on every screen): the incoming hit an enemy's Life component took, as the
+// game's own damage step read it (Life +0x240..+0x2d8, 38 words: attacker, hit id, present, attack kind and
+// its parameters, the hit's place at +0x27c, the attacker's place at +0x2a0). The sender zeroes the attacker
+// pointer (words 0 and 1); the receiver puts its own attacker, a fresh hit id and its present flag in, so its
+// game judges the same hit (weapon, element, place) through its own damage step. Passed on unread otherwise.
+inline constexpr std::size_t kHitRecordWords = 38;
+using HitRecord = std::array<std::uint32_t, kHitRecordWords>;
+
+// Component 21: the newest hit the owner's game took on this object, sent in its samples for a short
+// while after (they may be lost); seq is the owner's own hit count for it, from 1, so each is replayed once.
+struct ObjectHit {
+  std::uint32_t seq = 0;
+  HitRecord record{};
+  bool operator==(const ObjectHit&) const = default;
+};
+
 // The components of OBJECT_SAMPLE, OBJECT_SPAWN and HANDOVER_STATE. time is
 // always sent; the others when the sender has them. Floats must be finite.
 struct ObjectState {
@@ -865,6 +884,7 @@ struct ObjectState {
   std::optional<std::uint8_t> state;  // object_state bits
   std::optional<std::vector<SlotAnimation>> slots;  // issue 150: bosses only
   std::optional<BossBsa> bsa;                       // native boss sync: bosses only
+  std::optional<ObjectHit> hit;                     // protocol 14: the owner's newest hit taken
   bool operator==(const ObjectState&) const = default;
 };
 
@@ -996,6 +1016,10 @@ struct Damage {
   // point is a headshot check against her Eyelid_Down bone, so the owner's replay lands there, not at her feet.
   // Optional, after position on the wire (protocol 12).
   std::optional<Vec3> hit_at{};
+  // Protocol 14: the hit as the hitter's game took it on its copy (its newest in this DAMAGE), so the owner's
+  // game takes the same hit (bomb, arrow, fire, hammer ...) instead of a stand-in sword hit. Optional, after
+  // hit_at (or after position when there is no hit_at) on the wire.
+  std::optional<HitRecord> hit_record{};
   bool operator==(const Damage&) const = default;
 };
 
