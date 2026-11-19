@@ -521,6 +521,20 @@ CLOTH_KEYS = ("Cloth", "ClothAdvandecOption", "ClothList", "ClothReaction")
 BODY_MOVE_STATE = "Free"
 PHYSICS_DIR = "Component/Physics/"
 PHYSICS_SUFFIX = ".engine__component__PhysicsParam.bgyml"
+# The body's character controller runs the game's default component preset, as the placed NPCs' do
+# (Npc_Kokiri_MC_ThroughGround names no PresetTypeName). The player's names the "Player" preset
+# (Bootup pack, Phive/Config/PhiveConfig.byml, CharacterComponentPresetCollection), whose external
+# components PlayerClimb, PlayerClimbLadder and PlayerRagdoll are built for the player's own body. The
+# body has no ragdoll, so PlayerRagdoll's setup (vtable 0x84bbb9f8, CharacterExternalPlayerRagdoll, slot 5 at
+# 0x80a19ac0) read the actor's ragdoll as null and wrote through it: crash 0xc0000005 at guest 0x70 on
+# ModuleSystemWorker right after `create CoopPuppet_Child_Black` (crash-0116-b). So PresetTypeName goes, and
+# of the player's UpdateComponentParam and MoveStateParam only the entries the default preset has stay
+# (its UpdateComponents and MoveStateComponents, from the same file): InteractWithRagdoll (also a ragdoll
+# user), PlayerOnGround and the other Player-only entries go.
+BODY_DROP_KEYS = ("PresetTypeName",)
+BODY_UPDATE_COMPONENTS = ("FrameSetup", "MoveStateUpdate", "Rotate", "JumpExtension", "FloatWater",
+                          "AccumulateImpulse", "FollowSurfaceExtension", "FollowRagdoll", "ApplyVelocity")
+BODY_MOVE_STATES = ("InAir", "OnGround", "Free")
 CONTROLLER_SET_DIR = "Phive/ControllerSetParam/"
 CONTROLLER_SET_SUFFIX = ".phive__ControllerSetParam.bgyml"
 CHARACTER_DIR = "Phive/CharacterControllerParam/"
@@ -576,6 +590,23 @@ def body_paths(actor):
             f"{CHARACTER_DIR}{actor}{CHARACTER_SUFFIX}")
 
 
+def body_character_controller(cct):
+    """The body's character controller from the player's merged one `cct`: in Free (BODY_MOVE_STATE), on the
+    game's default component preset (no PresetTypeName), with only the update and move-state params that
+    preset has (BODY_UPDATE_COMPONENTS, BODY_MOVE_STATES). An emptied map is left out."""
+    out = {k: v for k, v in cct.items() if k not in BODY_DROP_KEYS}
+    for key, keep in (("UpdateComponentParam", BODY_UPDATE_COMPONENTS), ("MoveStateParam", BODY_MOVE_STATES)):
+        if key not in out:
+            continue
+        kept = {k: v for k, v in (out[key] or {}).items() if k in keep} if isinstance(out[key], dict) else {}
+        if kept:
+            out[key] = kept
+        else:
+            del out[key]
+    out["DefaultMoveState"] = BODY_MOVE_STATE
+    return out
+
+
 def pvp_sensors(cs, cs_src):
     """The player's `Tgt` sensor only, from its merged ControllerSet `cs` (`--puppet-pvp`, docs/native-puppets.md
     5.1): {ControllerSet key: the entries PVP_SENSORS names}. The `Atk` receipt, `ForArea`, the attack and
@@ -606,8 +637,7 @@ def puppet_body(members, player_components, actor, sensors=False):
     cct_src = ref_to_member(cs.get("PathCharacterController"))
     if not cct_src or cct_src not in members:
         raise BuildError(f"the player's ControllerSet {cs_src} has no character controller in the pack")
-    cct = _merged_chain(members, cct_src)
-    cct["DefaultMoveState"] = BODY_MOVE_STATE
+    cct = body_character_controller(_merged_chain(members, cct_src))
     phys_path, cs_path, cct_path = body_paths(actor)
     own_cs = {k: cs[k] for k in BODY_KEYS + CLOTH_KEYS if k in cs}
     # Only the contact collection the character controller names (Contact_0_cct); not the ragdoll's.
