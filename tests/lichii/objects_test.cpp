@@ -5348,20 +5348,25 @@ TEST_CASE("objects: our event's actor is flagged in_event in its samples (S2, is
     Tick(sync, 0, {scrub});
     Own(sync, *sync.IdOf(0x100), 1);
     Tick(sync, 20 * kMs, {scrub});  // the OBJECT_OWNER applied
-    auto bit = [&](std::uint64_t t, float x) {
-        scrub.position[0] = x;  // a move, so a sample goes out
+    // The samples of [from, from + 600 ms), ticking every 66 ms with a move each time: the last one's bit.
+    float x = 3.0f;
+    auto bit = [&](std::uint64_t from) {
         std::optional<bool> in_event;
-        for (const auto& s : All<proto::ObjectSample>(Tick(sync, t * kMs, {scrub}))) {
-            in_event = s.state.state && (*s.state.state & proto::object_state::in_event) != 0;
+        for (std::uint64_t t = from; t < from + 600; t += 66) {
+            x += 0.1f;
+            scrub.position[0] = x;  // a move, so samples go out
+            for (const auto& s : All<proto::ObjectSample>(Tick(sync, t * kMs, {scrub}))) {
+                in_event = s.state.state && (*s.state.state & proto::object_state::in_event) != 0;
+            }
         }
         return in_event;
     };
-    CHECK(bit(50, 3.1f) == std::optional<bool>(false));  // no event
-    sync.SetEvent(true, 100 * kMs, true);
+    CHECK(bit(50) == std::optional<bool>(false));  // no event
+    sync.SetEvent(true, 700 * kMs, true);
     scrub.event_member = true;
-    CHECK(bit(120, 3.2f) == std::optional<bool>(true));  // our Link's event binds it
-    sync.SetEvent(true, 200 * kMs, false);  // another player's event replayed here: not ours to tell
-    CHECK(bit(200 + Sync::kEventKeepUs / kMs, 3.3f) == std::optional<bool>(false));
+    CHECK(bit(700) == std::optional<bool>(true));  // our Link's event binds it
+    sync.SetEvent(true, 1300 * kMs, false);  // another player's event replayed here: not ours to tell
+    CHECK(bit(1300 + Sync::kEventKeepUs / kMs) == std::optional<bool>(false));
 }
 
 TEST_CASE("objects: a copy its owner's event binds keeps its own logic, unclaimed (S2, issue 144)") {
