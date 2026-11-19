@@ -395,6 +395,21 @@ TEST_CASE("testinput: chat sends the rest of the line, spaces kept") {
     CHECK(requests[1].name == "hello");
 }
 
+TEST_CASE("testinput: place PLATFORM UP hands the hook the platform's name and the height over it (#196)") {
+    std::string error;
+    CHECK_FALSE(Parse("place Obj_Deku_MoveFloor_A_01\n", error));
+    CHECK_FALSE(Parse("place Obj_Deku_MoveFloor_A_01 up\n", error));
+    Runner r(Must("place Obj_Deku_MoveFloor_A_01 0.3\nmark on\n"));
+    std::vector<std::string> log;
+    r.Advance(0.0, std::nullopt, log);
+    const auto requests = r.TakeRequests();
+    REQUIRE(requests.size() == 1);
+    CHECK(requests[0].kind == Kind::place);
+    CHECK(requests[0].name == "Obj_Deku_MoveFloor_A_01");  // the name's case kept
+    CHECK(requests[0].at[1] == doctest::Approx(0.3f));
+    CHECK(r.Done());
+}
+
 TEST_CASE("testinput: place hands the hook a world point, then the script goes on (world-objects)") {
     std::string error;
     CHECK_FALSE(Parse("place 1 2\n", error));

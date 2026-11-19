@@ -25,6 +25,7 @@ from test_self_tunic import *  # noqa: E402,F401,F403
 from test_merge_tables import *  # noqa: E402,F401,F403
 from test_eye_switches import *  # noqa: E402,F401,F403
 from test_room_graph import *  # noqa: E402,F401,F403
+from test_look_metal import *  # noqa: E402,F401,F403
 
 try:
     import zstandard
@@ -1071,13 +1072,14 @@ class TunicExtraTest(unittest.TestCase):
         self.assertIsNone(look_live.gear(lambda name: None, said.append))
 
     def test_gear_names_match_the_module(self):
-        """The module's table (hookshot/src/coop_look_parts.cpp) names the same textures."""
+        """The module's table (hookshot/src/coop_look_parts.cpp) names the same colour textures; the
+        metalness ones after them come with metal.bin (look_metal)."""
         import re
-        from puppet_pack import look_live
+        from puppet_pack import look_live, look_metal
         src = os.path.join(os.path.dirname(__file__), "..", "..", "..", "hookshot", "src", "coop_look_parts.cpp")
         with open(src, encoding="utf-8") as f:
             names = re.findall(r'\{"(Mt_[A-Za-z0-9_.]+)", Format::', f.read())
-        self.assertEqual(tuple(names), look_live.GEAR)
+        self.assertEqual(tuple(names) + look_metal.TEXTURES, look_live.GEAR)
 
     def test_body_boots(self):
         """Each tunic colour's body model names boots of its own, as the module names and marks them

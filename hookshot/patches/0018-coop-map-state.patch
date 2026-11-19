@@ -1,4 +1,4 @@
-From a87a045aa98d9869ff18dde599bcc7d6bfc9eacf Mon Sep 17 00:00:00 2001
+From fb9381e21133b280a64acb884d75bcea856928d9 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Fri, 13 Nov 2026 16:01:26 -0900
 Subject: [PATCH] Co-op map state: the game's menu state for the players on the
@@ -42,7 +42,7 @@ source, which has no tests/ folder; our module_test checks the hook.)
  1 file changed, 109 insertions(+), 4 deletions(-)
 
 diff --git a/host/oot_menu.c b/host/oot_menu.c
-index b1979e29..5708918b 100644
+index b1979e2..5708918 100644
 --- a/host/oot_menu.c
 +++ b/host/oot_menu.c
 @@ -16,13 +16,18 @@

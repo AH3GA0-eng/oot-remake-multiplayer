@@ -86,6 +86,7 @@ struct Game {
     std::uint64_t create_result = 1;  // what the game's create returns
     bool queue_anyway = false;        // a request in the handle even so
     std::uint64_t unequip_result = 1; // what the game's armor take-off returns
+    std::uint64_t equip_result = 0;   // what the game's equip call returns (1: worn)
     std::array<std::uint64_t, 8> slot_state{};  // what the game's state read (kEquipState) returns per slot
     std::vector<Call> state_checks;            // those reads, in order
     Game() {
@@ -146,6 +147,8 @@ std::vector<Call> Frame(Director& d, Game& g, std::uint64_t now_ms) {
             }
         } else if (call->function == kBase + addr::kRequestDelete) {
             result = 1;
+        } else if (call->function == kBase + addr::kEquip) {
+            result = g.equip_result;
         } else if (call->function == kBase + addr::kUnequipArmor) {
             result = g.unequip_result;
         } else if (call->function == kBase + addr::kTakeCreated) {
@@ -1006,6 +1009,66 @@ TEST_CASE("puppet gear: a mask taken off is taken off with the game's call, a he
     REQUIRE(calls.size() == 1);
     CHECK(calls[0].function == kBase + addr::kEquip);
     CHECK(calls[0].x[1] == 7u);
+}
+
+TEST_CASE("puppet gear: a mask worn is shown with the game's own call, the hair put back when it comes off (#91)") {
+    Game g;
+    g.equip_result = 1;
+    Director d;
+    MakeLive(d, g);
+    constexpr std::uint64_t kParts = 0x500000000;
+    constexpr std::uint64_t kEu = kParts + 0x800;
+    g.guest.Map(kParts, 0x1000);
+    g.guest.Set(kActor + addr::kActorParts, kParts);
+    g.guest.Set(kParts + addr::kPartsEquipmentUser, kEu);
+    Target t = At(1, 4, 5, 6);
+    t.gear[CoopPuppet::kGearHead] = "Armor_Child_Mask_Skull";
+    d.SetInput(Wants({t}));
+    auto calls = Frame(d, g, 20);
+    REQUIRE(calls.size() == 2);
+    CHECK(calls[0].function == kBase + addr::kEquip);
+    // 0x33abfa0(owner) reads the EquipmentUser at owner + 0x470: a cell of the block
+    CHECK(calls[1].function == kBase + addr::kShowHeadArmor);
+    CHECK(calls[1].x[0] + addr::kShowHeadArmorEu == kHeap + block::kHeadOwnerEu);
+    CHECK(g.guest.Get<std::uint64_t>(kHeap + block::kHeadOwnerEu) == kEu);
+    CHECK(Frame(d, g, 100).empty());   // once
+
+    // Another mask: worn and shown again.
+    t.gear[CoopPuppet::kGearHead] = "Armor_Child_Mask_Bunny";
+    d.SetInput(Wants({t}));
+    calls = Frame(d, g, 200);
+    REQUIRE(calls.size() == 2);
+    CHECK(calls[0].function == kBase + addr::kEquip);
+    CHECK(calls[1].function == kBase + addr::kShowHeadArmor);
+
+    // Taken off: the game's take-off, then the hair as without a mask, once.
+    t.gear[CoopPuppet::kGearHead] = "";
+    d.SetInput(Wants({t}));
+    CHECK(Frame(d, g, 300).empty());
+    calls = Frame(d, g, 300 + Director::kTakeOffMs);
+    REQUIRE(calls.size() == 2);
+    CHECK(calls[0].function == kBase + addr::kUnequipArmor);
+    CHECK(calls[1].function == kBase + addr::kHeadArmorHairBack);
+    CHECK(calls[1].x[0] == kEu);
+    CHECK(Frame(d, g, 400 + Director::kTakeOffMs).empty());
+
+    // A piece the equip call did not wear is not shown.
+    g.equip_result = 0;
+    t.gear[CoopPuppet::kGearHead] = "Armor_Child_Mask_Keaton";
+    d.SetInput(Wants({t}));
+    calls = Frame(d, g, 9000);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kEquip);
+}
+
+TEST_CASE("puppet gear: the head show call's addresses are the game's (#91)") {
+    // 0x33abfa0: eu = [x0 + 0x470]; byte eu + 0x13c4 = (byte & ~3) | 2; 0x4b84b0(eu).
+    CHECK(addr::kShowHeadArmor == 0x33abfa0u);
+    CHECK(addr::kShowHeadArmorEu == 0x470u);
+    CHECK(addr::kHeadArmorHairBack == 0x4b8240u);
+    // the armor links' shown bytes follow the 8 hand slots' bytes
+    CHECK(addr::kArmorShownBytes == addr::kEquipSlotBits + 8);
+    CHECK(CoopPuppet::kGearKinds[CoopPuppet::kGearHead] == addr::kArmorKindFirst);
 }
 
 TEST_CASE("puppet gear: tunic, boots and gauntlets come off by their armor index") {

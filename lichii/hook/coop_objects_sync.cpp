@@ -970,6 +970,8 @@ void Sync::Reset() {
     eggs_.clear();
     copy_eggs_.clear();
     away_.clear();
+    left_.clear();
+    game_deletes_.clear();
     bound_.clear();
     refused_.clear();
     decider_ = 0;
@@ -1158,13 +1160,48 @@ void Sync::GameHit(std::uint64_t address, std::int32_t amount) {
     }
 }
 
-void Sync::GameDeleted(std::uint64_t address, std::uint64_t now_us) {
+void Sync::GameDeleted(std::uint64_t address, std::uint64_t now_us, bool by_coop) {
     const auto it = objects_.find(address);
     if (it != objects_.end()) {
         it->second.deleted_until = now_us + kDeletedKeepUs;
+        it->second.game_deleted = !by_coop;
     }
-    // Asked while off the walk: gone now, not away.
+    if (!by_coop) {
+        std::erase_if(game_deletes_, [now_us](std::uint64_t at) { return at + 2 * kDeleteBurstUs < now_us; });
+        game_deletes_.push_back(now_us);
+    }
+    // Asked while off the walk: gone now, not away. Not told as gone (Left):
+    // an actor off the list is not run by its game (no fall, no burn), and
+    // its address may be another actor's by now (review r1).
     std::erase_if(away_, [address](const Away& a) { return a.address == address; });
+}
+
+namespace {
+// enemy-left-0116: kinds whose delete input reads our own Link (generated, tools/puppet_pack/area_deleted.py).
+constexpr std::string_view kAreaDeleted[] = {
+#include "coop_area_deleted.inc"
+};
+} // namespace
+
+bool Sync::LeavesForGood(std::uint8_t self, const proto::ObjectId& id, std::string_view name,
+                         std::uint64_t address, const proto::Vec3& position) const {
+    if (self == 0 || id.kind != proto::ObjectKind::placed || !name.starts_with("Enemy_") || IsBossOrPart(name) ||
+        IsHatchingEgg(name) || bound_.contains(address)) {
+        return false;
+    }
+    for (const std::string_view kind : kAreaDeleted) {
+        if (kind == name) {
+            return false;  // deleted when our Link leaves its area: only in our game
+        }
+    }
+    if (!player_ || Distance(position, *player_) > kLeftNearM) {
+        return false;  // our Link far off (or not known): maybe its AI's own despawn for our Link
+    }
+    if (const GroupPart* part = PartOf(name); part != nullptr && part->boss) {
+        return false;
+    }
+    const auto owner = owners_.find(id);
+    return owner != owners_.end() && owner->second.player == self;
 }
 
 void Sync::Stepped(std::uint64_t address, std::int32_t amount, std::uint64_t now_us) {
@@ -1253,7 +1290,19 @@ void Sync::ChaseStep(Object& o, std::uint64_t now_us) {
 
 bool Sync::EventPartner(std::uint64_t address, std::uint64_t now_us) const {
     const auto it = objects_.find(address);
-    return it != objects_.end() && it->second.event_until > now_us;
+    // Row 138(8): an actor our Link is in the area of (sensor_until) waits the same way.
+    return it != objects_.end() && (it->second.event_until > now_us || it->second.sensor_until > now_us);
+}
+
+bool Sync::AreaClaim(std::uint64_t address, std::uint64_t now_us) const {
+    const auto it = objects_.find(address);
+    return it != objects_.end() && it->second.sensor_until > now_us;
+}
+
+std::size_t Sync::AreaClaims(std::uint64_t now_us) const {
+    return static_cast<std::size_t>(std::count_if(objects_.begin(), objects_.end(), [now_us](const auto& e) {
+        return e.second.sensor_until > now_us;
+    }));
 }
 
 std::uint8_t Sync::OwnerAt(std::uint64_t address) const {
@@ -1807,6 +1856,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.slots = s.slots;
         o.bsa = s.bsa;
         o.event_member = s.event_member;  // row 97
+        o.sensor_in_area = s.sensor_in_area;  // row 138(8)
         if (s.hit_at) {
             // (its life drop may be read a walk later than the hit id: kept kHitPlaceKeepUs for it)
             o.place_seen = s.hit_at;
@@ -2041,7 +2091,17 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             owner->second.player != 0 && o.dead_at == 0 && !o.dead_said && !(o.life && *o.life <= 0) &&
             !(o.animation && IsDeathAnimation(o.animation->name)) && !IsHatchingEgg(o.name) &&
             !bound_.contains(o.address)) {
-            away_.push_back({o.id, o.address, now_us + kAwayKeepUs, o.name});
+            away_.push_back({o.id, o.address, now_us + kAwayKeepUs, o.name, o.position, now_us});
+            it = objects_.erase(it);
+            continue;
+        }
+        // enemy-left-0116: ours, deleted by the game itself with no death read
+        // (a read one goes through Flush as dead): gone for good, told after
+        // kLeftWaitUs (Left), listed till then.
+        if (deleted && it->second.game_deleted && o.dead_at == 0 && !o.dead_said && !o.fish &&
+            !(o.life && *o.life <= 0) && !(o.animation && IsDeathAnimation(o.animation->name)) &&
+            LeavesForGood(self, o.id, o.name, o.address, o.position)) {
+            left_.push_back({o.id, o.address, now_us, o.position, o.name});
             it = objects_.erase(it);
             continue;
         }
@@ -2162,6 +2222,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.guard = IsGuard(s->name);
         o.npc = s->name.starts_with("Npc_");
         o.event_member = s->event_member;  // row 97
+        o.sensor_in_area = s->sensor_in_area;  // row 138(8)
         o.play_frame = PlaysByFrame(s->name);
         o.first_position = s->position;
         if (s->animation) {
@@ -2485,9 +2546,16 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
 
     // churn-b: an away object that came back goes on with its owner; one
     // still off the walk after kAwayKeepUs is gone (left), its owner forgotten.
-    std::erase_if(away_, [this, now_us](const Away& a) {
+    std::erase_if(away_, [this, now_us](Away& a) {
         if (std::any_of(objects_.begin(), objects_.end(), [&a](const auto& e) { return e.second.id == a.id; })) {
             return true;
+        }
+        if (now_us - a.since < kAwayEventMaxUs) {  // an event's performer off the list (row 138(3))
+            if (in_event_) {
+                a.until = std::max(a.until, now_us + kAwayKeepUs);
+            } else if (event_end_ > a.since) {
+                a.until = std::max(a.until, event_end_ + kAwayKeepUs);
+            }
         }
         if (now_us < a.until) {
             return false;
@@ -2495,6 +2563,37 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         owners_.erase(a.id);
         notes_.emplace_back("gone " + a.name + ": off our walk " + std::to_string(kAwayKeepUs / 1'000'000) +
                             " s with no delete request: left");
+        return true;
+    });
+    // enemy-left-0116: enemies of ours our game deleted itself with no death
+    // read. Back on the walk (the address reused by the same id): goes on.
+    // After kLeftWaitUs: gone for everyone, unless the scene's own deletes
+    // came with it (kDeleteBurst) or it is no longer ours.
+    std::erase_if(left_, [&](const Left& l) {
+        if (std::any_of(objects_.begin(), objects_.end(), [&l](const auto& e) { return e.second.id == l.id; })) {
+            return true;
+        }
+        if (now_us < l.deleted_at + kLeftWaitUs) {
+            return false;
+        }
+        const auto burst = static_cast<std::size_t>(std::count_if(
+            game_deletes_.begin(), game_deletes_.end(), [&l](std::uint64_t at) {
+                return at + kDeleteBurstUs >= l.deleted_at && at <= l.deleted_at + kDeleteBurstUs;
+            }));
+        const auto owner = owners_.find(l.id);
+        if (burst < kDeleteBurst && owner != owners_.end() && owner->second.player == self) {
+            proto::ObjectRemove r;
+            r.id = l.id;
+            r.epoch = owner->second.epoch;
+            r.reason = proto::RemoveReason::gone;
+            r.position = l.position;
+            send.emplace_back(r);
+            notes_.emplace_back("gone " + l.name + ": our game deleted it with no death read: gone for the others too");
+        } else if (burst >= kDeleteBurst) {
+            notes_.emplace_back("gone " + l.name + ": deleted with " + std::to_string(burst) +
+                                " others (the scene going): left");
+        }
+        owners_.erase(l.id);
         return true;
     });
 
@@ -2612,6 +2711,15 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 }
             }
         }
+        // Row 138(8) (coop_sensor_claim.h): our Link is in its area by its own sensor input, so our
+        // game's AI is the one that acts right (Jabu-Jabu's mouth opens for the Link at it). Claimed
+        // as an event claims its partners: flagged targeting (the server hands a copy to us, and
+        // holds ours as a fight while we stay), and the owner's motion is not put on our copy
+        // meanwhile (EventPartner). kSensorKeepUs after our Link leaves, the claim drops.
+        if (o.sensor_in_area.value_or(false) && now_seen.contains(address) && !IsBossOrPart(o.name) && !o.fish) {
+            o.sensor_until = now_us + kSensorKeepUs;
+            o.chase_until = std::max(o.chase_until, o.sensor_until);
+        }
         if (o.chase_until > now_us && !o.fish) {
             flags |= proto::object_presence::targeting;
         }
@@ -2626,6 +2734,14 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             const auto last = std::find_if(present_sent_.begin(), present_sent_.end(),
                                            [&a](const auto& p) { return p.id == a.id; });
             present.push_back({a.id, last != present_sent_.end() ? last->flags : proto::object_presence::awake});
+        }
+    }
+    // enemy-left-0116: an enemy of ours our game deleted stays on the list
+    // until its OBJECT_REMOVE, so the server takes it (it hands an unlisted
+    // object over at once).
+    for (const Left& l : left_) {
+        if (std::none_of(present.begin(), present.end(), [&l](const auto& p) { return p.id == l.id; })) {
+            present.push_back({l.id, proto::object_presence::awake});
         }
     }
     // gohma-larva: an egg of ours that just left the walk alive stays on the
@@ -3016,6 +3132,22 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                     o->hit_record.reset();
                     o->place_seen.reset();
                     notes_.emplace_back("hatched in its owner's game: " + o->name);
+                    if (had != owners_.end()) {
+                        owners_.erase(had);
+                    }
+                } else if (o != nullptr && o->reacts && o->dead_at == 0 && !IsHatchingEgg(o->name) &&
+                           !IsBossOrPart(o->name) && !(had != owners_.end() && had->second.player == self)) {
+                    // enemy-left-0116: its owner's game deleted it with no
+                    // death (Left). Ours goes too, through the game's own
+                    // delete request (Removes), with no kill counted.
+                    o->dead_now = true;
+                    o->dead_at = now_us;
+                    o->hit_sum = 0;
+                    o->hit_place.reset();
+                    o->hit_record.reset();
+                    o->place_seen.reset();
+                    notes_.emplace_back("gone in its owner's game (deleted there, no death): ours goes too: " +
+                                        o->name);
                     if (had != owners_.end()) {
                         owners_.erase(had);
                     }
