@@ -135,6 +135,7 @@ public:
     static constexpr float kMaxRate = 2000.0f;
     static constexpr float kRateSlack = 0.08f;      // the steps' rates agree this well (of the rate)
     static constexpr float kMaxValue = 1.0e6f;
+    static constexpr float kWaveResetSlack = 0.1f;  // a wave phase that steps back to under this was set to its start
     static constexpr int kKeepAfter = 3;            // agreeing checks before a word is the clock
     static constexpr int kDropAfter = 6;            // failed checks in a row before it is let go
     static constexpr int kMaxStalled = 40;          // looks standing still (a pause: 10 s) before it is let go

@@ -560,6 +560,22 @@ TEST_CASE("platforms: a wave word that swings back is no clock (#196, the WaveLo
     CHECK(std::string(dropped[0].why).find("went back") != std::string::npos);
 }
 
+TEST_CASE("platforms: a wave phase set back to its start mid-loop is a jump, not a swing (#196 review)") {
+    // A switch or a reload can set a wave's phase to 0 again from the middle of its loop: no offset, still the clock.
+    ClockFinder f;
+    std::vector<float> v;
+    float x = 2.0f;
+    for (int i = 0; i < 8; ++i, x += 1.177f * 0.25f) {
+        v.push_back(x);
+    }
+    for (x = 0.0f; v.size() < 16; x += 1.177f * 0.25f) {
+        v.push_back(x);
+    }
+    const auto dropped = LookAtWave(f, kTwoPi / 1.177f, v);
+    CHECK(dropped.empty());
+    CHECK(f.Found());
+}
+
 TEST_CASE("platforms: a real wave phase that loops 2 pi -> 0 stays the clock (#196 guard)") {
     ClockFinder f;
     std::vector<float> v;
@@ -582,6 +598,7 @@ TEST_CASE("platforms: a follower whose own word stands outside the owner's loop 
     Game b;
     a.self = 1;
     b.self = 2;
+    a.clock_key = b.clock_key = Key(kRegionWaveNode, 0xf8);  // a wave phase by the node's layout
     a.cycle = b.cycle = 6.2831853f;
     a.clock = 4.5f;    // loops within 2 s, so the owner's ticks carry the loop 2 pi
     b.clock = -26.4f;  // the floor's word in the other game: never in the loop
@@ -618,6 +635,24 @@ TEST_CASE("platforms: a follower whose own word stands outside the owner's loop 
     CHECK(seen);
     CHECK(writes_when_seen == 0);
     CHECK(b.sync.Writes() == 0);  // never written
+}
+
+TEST_CASE("platforms: a non-wave frame clock a step past the owner's estimated loop keeps following (#196 review)") {
+    // A frame lift's loop is only an estimate from the one jump the owner saw; the follower's own clock can stand a
+    // little past it near the top. Not a wave phase by any layout, so the follower never gives up over it.
+    Game a;
+    Game b;
+    a.self = 1;
+    b.self = 2;
+    a.cycle = 10.0f;
+    b.cycle = 10.3f;  // B's top lies a step past A's
+    b.clock = 3.0f;
+    std::uint64_t time = 0;
+    Play(a, b, time, 40000);
+    CHECK(b.sync.Writes() > 0);
+    for (const auto& n : b.notes) {
+        CHECK(n.find("is no clock here") == std::string::npos);
+    }
 }
 
 TEST_CASE("platforms: a word that steps but not at 2 pi over the word before it is no wave phase") {

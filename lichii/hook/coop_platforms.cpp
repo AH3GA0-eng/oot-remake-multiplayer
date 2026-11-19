@@ -339,11 +339,14 @@ void ClockFinder::Add(std::uint64_t now_us, const Floats& floats) {
         const bool backwards = cand.rate > 0 ? v2 < v1 : v2 > v1;
         const bool stalled = std::fabs(r2) < kMinRate;
         // #196: a wave phase goes back only by looping (from near 2 pi to near 0); any other step back is an offset
-        // that swings (sin of the phase), not the phase.
+        // that swings (sin of the phase), not the phase. A step back to its start (a switch or a reload setting the
+        // phase to 0 again, review-platform-phase-r1) is a jump, not a swing.
+        const bool to_start = cand.rate > 0 ? v2 < kWaveResetSlack : v2 > cand.cycle - kWaveResetSlack;
         if (cand.wave && !stalled &&
             (!InLoop(v2, cand.cycle) ||
-             (backwards && !(cand.rate > 0 ? v1 > 0.5f * cand.cycle && v2 < 0.5f * cand.cycle
-                                           : v1 < 0.5f * cand.cycle && v2 > 0.5f * cand.cycle)))) {
+             (backwards && !to_start &&
+              !(cand.rate > 0 ? v1 > 0.5f * cand.cycle && v2 < 0.5f * cand.cycle
+                              : v1 < 0.5f * cand.cycle && v2 > 0.5f * cand.cycle)))) {
             ban(key, v2, "went back other than by looping: a wave's offset, not its phase");
             continue;
         }
@@ -667,9 +670,12 @@ void PlatformSync::Tick(const std::string& scene, std::uint8_t self, std::uint64
         if (mine == floats.end() || !std::isfinite(mine->second)) {
             continue;
         }
-        // #196: our own copy of that word is no clock here (our finder dropped it, or it stands outside the loop the
-        // owner's clock has): a word the game works out again every frame. Writing it only fights the game.
-        if (s.finder.Banned(h.tick.key) || !ClockFinder::InLoop(mine->second, h.tick.cycle)) {
+        // #196: our own copy of that word is no clock here (our finder dropped it, or it is a wave phase by the
+        // game's layout and stands outside [0, 2 pi)): a word the game works out again every frame. Writing it only
+        // fights the game. Only a wave's loop is known from the code; any other clock's cycle is an estimate from
+        // the one jump the owner saw (a frame lift's top can lie a step past it), so it is not judged by it.
+        const bool wave = WavePhaseCycle(floats, h.tick.key, h.tick.rate).has_value();
+        if (s.finder.Banned(h.tick.key) || (wave && !ClockFinder::InLoop(mine->second, kTwoPi))) {
             s.gave_up = true;
             char text[240];
             std::snprintf(text, sizeof text,
