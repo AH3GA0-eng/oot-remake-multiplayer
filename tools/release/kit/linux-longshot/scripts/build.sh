@@ -356,13 +356,19 @@ if [[ ! -e ${pack_from:-} ]] && ! [[ -f $mod/coop_puppet.json && $(cat "$mod/.co
         fi
     fi
 fi
+# No --title-rows / --pause-tab (0.11.5 hotfix): a pack made with them crashes the game at boot (0xc0000005 in
+# sead::MainThread right after 'prompts: switch icons'); the title's Host/Join rows and the pause menu's Multiplayer
+# tab come back in 0.11.6. A pack an earlier 0.11.5 kit made with them goes first (build.py never clears its folder).
+if [[ -f $mod/coop_puppet.json ]] && grep -q '"title_rows": true' "$mod/coop_puppet.json"; then
+    rm -rf -- "$mod"
+fi
 gap=$(pack_gap)
 if [[ -f $mod/coop_puppet.json && $(cat "$mod/.coop-stamp" 2>/dev/null) == "$pack_stamp" && -z $gap ]]; then
     say '  puppet pack: built already'
 elif [[ -n $pack_from && -e $pack_from ]]; then
     [[ -n $gap && -f $mod/coop_puppet.json ]] && say "  puppet pack: incomplete ($gap is missing): made again"
     say '  Making the puppet pack (how you see the other players; about a minute) ...'
-    if "$PY" -I -B "$DATA/tools/puppet_pack/build.py" --romfs "$pack_from" --mod-dir "$mod" --title-rows --pause-tab 2>&1 | sed 's/^/    /'; then
+    if "$PY" -I -B "$DATA/tools/puppet_pack/build.py" --romfs "$pack_from" --mod-dir "$mod" 2>&1 | sed 's/^/    /'; then
         printf '%s' "$pack_stamp" >"$mod/.coop-stamp"
         rm -f "$pack_asked"
     else
