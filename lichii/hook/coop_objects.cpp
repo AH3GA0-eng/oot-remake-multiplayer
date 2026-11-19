@@ -2782,6 +2782,7 @@ private:
                 box.asked = false;
                 box.allocating = false;
                 counter_nodes_.clear();
+                counter_places_.clear();  // PR 279 review M2: a placement is kept only while its node is
                 counter_others_.Clear();
                 ring_count_seen_ = 0;
 #ifdef COOP_HOOKSHOT
@@ -2864,6 +2865,7 @@ private:
             const u64 actor = actor_of(node, &graph);
             const auto known = actor ? names_.find(actor) : names_.end();
             if (known == names_.end()) {
+                counter_places_.erase(node);  // review M2: a reused address must not keep another lift's placement
                 it = counter_nodes_.erase(it);  // gone, reused, or its actor left the walk
                 continue;
             }
@@ -2871,6 +2873,7 @@ private:
                 // An enemy's, an NPC's, Link's: not read again while it is
                 // that actor's (CoopCounters::OtherNodes).
                 counter_others_.Add(node, actor);
+                counter_places_.erase(node);
                 it = counter_nodes_.erase(it);
                 continue;
             }
