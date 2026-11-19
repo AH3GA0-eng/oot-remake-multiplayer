@@ -125,9 +125,7 @@ TEST_CASE("hookshot: patch 0032 hands the module the Insert menu's settings, the
     CHECK(p.find("+    api.setting = bridge_setting, api.setting_set = bridge_setting_set;") != std::string::npos);
     CHECK(p.find("+    if (!out || !rx_control_setting(index, &s)) return 0;") != std::string::npos);
     // (the control bridge's own answer: 1 set, 0 no such row, -1 fixed, -2 unreachable; never a -1 or -2 as set)
-    CHECK(p.find("+    const int r = rx_control_setting_set(key, value, &s);
-+    if (r && out) setting_copy(out, &s);
-"
+    CHECK(p.find("+    const int r = rx_control_setting_set(key, value, &s);\n+    if (r && out) setting_copy(out, &s);\n"
                  "+    return r;") != std::string::npos);
     CHECK(p.find("+_Static_assert(sizeof(HosCoopSetting) == sizeof(HosControlSetting)") != std::string::npos);
     // (only the bridge and the API header: no lift hook, nothing of Longshot's own changed)
