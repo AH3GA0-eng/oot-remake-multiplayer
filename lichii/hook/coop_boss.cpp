@@ -214,6 +214,7 @@ void Sync::Reset() {
     phase_ = Phase::none;
     entered_at_ = sent_at_ = intro_at_ = skip_at_ = skip_since_ = 0;
     committed_ = false;
+    own_intro_played_ = false;
     intro_told_ = false;
     skip_asked_ = false;
     event_ = false;
@@ -422,6 +423,7 @@ Actions Sync::Step(const Local& local, std::uint64_t now_us) {
         intro_at_ = 0;
         skip_asked_ = false;
         committed_ = false;
+        own_intro_played_ = false;
         intro_told_ = false;
         phase_ = Phase::none;
         if (here_ != nullptr) {
@@ -509,6 +511,7 @@ Actions Sync::Step(const Local& local, std::uint64_t now_us) {
                 if (committed_) {
                     Say(out, *here_, proto::BossState::intro_end);
                 }
+                own_intro_played_ = own_intro_played_ || !skip_asked_;
                 out.log.push_back(skip_asked_ ? "intro ended (skipped to follow the others)" : "intro ended");
                 Commit(out, local.shut_in.has_value() ? "shut in" : "the intro is over");
             }

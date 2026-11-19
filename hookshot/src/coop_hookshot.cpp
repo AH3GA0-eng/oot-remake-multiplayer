@@ -1260,6 +1260,8 @@ thread_local std::uint64_t t_shooter = 0;
 constexpr std::uint64_t kShootCreateReturn = 0xc17300;  // (after the bl at main+0xc172fc)
 // (LIFE_STEP's verdict for its component until that step's LIFE_STOPS: past its own life stops)
 thread_local std::uint64_t t_life_pass = 0;
+// (LIFE_STOPS passed for this component: that step's death keeps no revive, LIFE_REVIVE)
+thread_local std::uint64_t t_life_dead = 0;
 
 // The world hooks (patch 0005): the game's C hands its world events here instead of into caves and guest rings.
 int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
@@ -1394,6 +1396,7 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
                                                                                                          : 0;
             });
         t_life_pass = 0;
+        t_life_dead = 0;
         bool judged = false;
         *sum = CoopActorEvents::Step(CoopActorEvents::TheRing(), CoopActorEvents::TheLifeTable(), a, own, &judged);
         const auto life_now = [a]() -> std::optional<std::int32_t> {
@@ -1440,7 +1443,23 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
         }
         if (pass != nullptr && a != 0 && std::exchange(t_life_pass, 0) == a) {
             *pass = 1;
+            t_life_dead = a;  // (its death, if the step reaches 0, keeps no revive either)
             CoopActorEvents::StopsPassed().fetch_add(1, std::memory_order_relaxed);
+        }
+        return 1;
+    }
+    case HOS_COOP_WORLD_LIFE_REVIVE: {  // (b: our C's uint32, in hookshot.exe's memory)
+        // The same step at life 0, before the revive check (main+0x49d6b0): the actor's own callback gives life back
+        // (Gohma: 1 outside her chance time), so a death past the stops still ended at 1 (big-run-0115: every test
+        // kill and the owner's death on a copy 21 -> 1). A death whose stops we passed keeps no revive.
+        auto* dead = reinterpret_cast<std::uint32_t*>(static_cast<std::uintptr_t>(b));
+        if (!CoopActorEvents::LifeReviveSeen().exchange(true, std::memory_order_relaxed)) {
+            LOG_INFO(Core, "coop: actors: the game's Life step asks the module before its revive (patch 0007): an "
+                           "owner's death and a test kill stay deaths");
+        }
+        if (dead != nullptr && a != 0 && std::exchange(t_life_dead, 0) == a) {
+            *dead = 1;
+            CoopActorEvents::RevivesSkipped().fetch_add(1, std::memory_order_relaxed);
         }
         return 1;
     }

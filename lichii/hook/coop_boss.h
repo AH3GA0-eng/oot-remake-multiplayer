@@ -217,6 +217,10 @@ public:
     // For the debug overlay and tests.
     enum class Phase : std::uint8_t { none, waiting, intro, fight, outro, done };
     Phase phase() const { return phase_; }
+    // Our game played this room's intro itself this visit (it ended, not skipped to follow the others): ready to own
+    // the boss though the game has not set the intro's HavePlayedEvent flag (Gohma's is not set by then;
+    // big-run-0115 hs-boss-fix-gohma: the intro's owner read unready, and the server gave her to the other game).
+    bool OwnIntroPlayed() const { return own_intro_played_; }
 
 private:
     struct Remote {
@@ -266,6 +270,7 @@ private:
     std::uint64_t skip_since_ = 0;
     bool event_ = false;  // last Tick's event
     bool committed_ = false;  // we are past the door: shut in, or our intro is over (issue 148)
+    bool own_intro_played_ = false;  // our intro ended here this visit, not skipped (OwnIntroPlayed)
     // Our intro was told to the area rules (Actions::intro_here): only once past the door (issue 148).
     bool intro_told_ = false;
     std::uint64_t last_now_ = 0;  // the clock never goes back (server time can)

@@ -291,6 +291,31 @@ TEST_CASE("boss: a player who comes back to the dungeon during the fight is pull
     CHECK(s.Tick(At("ForestTemple", kForestEntrance), 4 * kS).pull);
 }
 
+TEST_CASE("boss: our own intro played here makes us ready to own, a skipped one does not (boss-fails-0115)") {
+    // big-run-0115 hs-boss-fix-gohma: the game that played Gohma's intro read unready (the game had not set the
+    // intro's HavePlayedEvent flag), so the server handed her to the other game before any stun.
+    Sync s;
+    s.Tick(At("ForestTemple", Forest().arrive), 1 * kS);
+    CHECK_FALSE(s.OwnIntroPlayed());
+    s.Tick(At("ForestTemple", Forest().arrive, true), 2 * kS);
+    CHECK_FALSE(s.OwnIntroPlayed());  // (still running)
+    s.Tick(At("ForestTemple", Forest().arrive, false), 20 * kS);
+    REQUIRE(s.phase() == Sync::Phase::fight);
+    CHECK(s.OwnIntroPlayed());
+    // Leaving the room forgets it.
+    s.Tick(At("ForestTemple", kForestEntrance), 30 * kS);
+    CHECK_FALSE(s.OwnIntroPlayed());
+
+    Sync t;  // another player's intro is over: ours is skipped to follow, which is no intro played here
+    t.Tick(At("ForestTemple", Forest().arrive, false, 2), 1 * kS);
+    t.Tick(At("ForestTemple", Forest().arrive, true, 2), 2 * kS);
+    t.Receive(From(1, Forest(), proto::BossState::intro_end));
+    CHECK(t.Tick(At("ForestTemple", Forest().arrive, true, 2), 4 * kS).skip_intro);
+    t.Tick(At("ForestTemple", Forest().arrive, false, 2), 12 * kS);
+    REQUIRE(t.phase() == Sync::Phase::fight);
+    CHECK_FALSE(t.OwnIntroPlayed());
+}
+
 TEST_CASE("boss: our intro is skipped once another player's intro is over") {
     Sync s;
     s.Tick(At("ForestTemple", Forest().arrive, false, 2), 1 * kS);

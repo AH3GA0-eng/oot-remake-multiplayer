@@ -56,7 +56,7 @@ hs-ladder  expect='A:test setflag HavePlayedEvent\.InsideTheDekuTree_Gimmick_Fal
 [g4]
 # The boss: the Gohma fight started, then one owner (#150 #178).
 hs-gohma  expect="A:anim Enemy_DungeonBoss_Gohma \S+ '(?!Pre_Battle)[^']+' \(ours\)"  expect='B:share damage'  label="#150 #178 Gohma fight"  see=hs-gohma-A  see=hs-gohma-B
-hs-gohma-door  expect='A:\+ Enemy_DungeonBoss_Gohma'  expect='B:\+ Enemy_DungeonBoss_Gohma'  expect='A:past the door \(shut in\)'  expect='B:moving in \(try 1\)'  label="#178 #148 Gohma door (baseline step)"  see=hs-gohma-door-A  see=hs-gohma-door-B
+hs-gohma-door  expect='A:\+ Enemy_DungeonBoss_Gohma'  expect='B:\+ Enemy_DungeonBoss_Gohma'  expect='A:past the door \(shut in\)'  expect='B:moving in to the room.s start \(try 1\)'  expect='B:boss: moved Link to (?!-14\.0 )'  label="#178 #148 Gohma door (baseline step)"  see=hs-gohma-door-A  see=hs-gohma-door-B
 
 [g5]
 # World objects (hs-scenarios-2): pot drops (#101 #102), a late loader's cut sign (#90), the Goron rock (#84), the token (#89).
