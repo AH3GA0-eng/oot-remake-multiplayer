@@ -53,6 +53,7 @@ std::atomic<bool> g_stop_hashing{false};
 // (mod API v2) The module's table and co-op's own busy answer (SetGame).
 const HosCoopApi* g_api = nullptr;
 std::function<const char*()> g_coop_busy;
+std::atomic<std::uint64_t> g_pad{0};   // (mod API v2) player 1's buttons before the holds (NotePad)
 
 std::uint64_t SteadyMs() {
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -402,11 +403,16 @@ void Screen(void* ctx, std::uint64_t screen) {
     u.kind = CoopModScreens::KindOf(vtable - base);
     u.focused = CoopModScreens::ButtonName(ReadGame, CoopModScreens::FocusedButton(ReadGame, screen));
     u.save_list_ready = CoopTitle::SaveListReady();
+    u.buttons = g_pad.load();
     g_host->Screen(u);
 }
 
-bool InputHeld() {
-    return g_running && g_host->InputHeld();
+void NotePad(std::uint64_t buttons) {
+    g_pad = buttons;
+}
+
+std::uint64_t HeldButtons() {
+    return g_running ? g_host->HeldButtons() : 0;
 }
 
 }  // namespace CoopModsRuntime
