@@ -1,4 +1,4 @@
-From 5d6d3f1d20af85b4402ba0ea88fdbd3ad8fca2cc Mon Sep 17 00:00:00 2001
+From d2964f2bdefcf7c8aeaf566c1b97813352114fa9 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Fri, 13 Nov 2026 02:56:35 -0900
 Subject: [PATCH] Co-op pad select: this game's controller and keyboard, for
@@ -23,7 +23,7 @@ the exe: hos_coop_input_select and hos_coop_input_pad_name.
  3 files changed, 114 insertions(+), 3 deletions(-)
 
 diff --git a/host/display.c b/host/display.c
-index 2f2528c3..6bb4007c 100644
+index 2f2528c..6bb4007 100644
 --- a/host/display.c
 +++ b/host/display.c
 @@ -42,6 +42,7 @@ static int renderer;   /* the renderer presents into the window */
@@ -53,7 +53,7 @@ index 2f2528c3..6bb4007c 100644
      case WM_KEYDOWN: {
          extern int hos_coop_key(unsigned key, int repeat);   /* (oot-remake-multiplayer: the chat box's keys first) */
 diff --git a/host/nn_hid.c b/host/nn_hid.c
-index 893b188e..426082d3 100644
+index 893b188..426082d 100644
 --- a/host/nn_hid.c
 +++ b/host/nn_hid.c
 @@ -786,6 +786,8 @@ static void pads_read(uint64_t *buttons, int32_t stick[4]) {
@@ -112,7 +112,7 @@ index 893b188e..426082d3 100644
      for (int i = 0; i < HOS_SW_N; i++)
          if (bound_down(i, 0)) *buttons |= 1ULL << i, player_used();
 diff --git a/host/pad_sdl.c b/host/pad_sdl.c
-index a8b4dd42..4af4ad2f 100644
+index a8b4dd4..4af4ad2 100644
 --- a/host/pad_sdl.c
 +++ b/host/pad_sdl.c
 @@ -192,6 +192,31 @@ static int hd_poll(int i, const uint8_t side[3][4], long long now) {

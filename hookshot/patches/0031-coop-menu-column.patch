@@ -1,4 +1,4 @@
-From 8f2774d05858174b83a2aa75e026cc2477a88e4c Mon Sep 17 00:00:00 2001
+From d5d4010f53ffc08d090b513ee10771c2c1f683d1 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Wed, 18 Nov 2026 21:05:51 -0900
 Subject: [PATCH] Co-op menu tabs: an opaque column, and the page arrow after a
@@ -16,10 +16,10 @@ stand (Off, Hosting, the player's name) and still open a page.
  1 file changed, 7 insertions(+)
 
 diff --git a/gpu/vk/vk_menu.cpp b/gpu/vk/vk_menu.cpp
-index ee56d309..66853acf 100644
+index 5f84d73..737f025 100644
 --- a/gpu/vk/vk_menu.cpp
 +++ b/gpu/vk/vk_menu.cpp
-@@ -4159,6 +4159,10 @@ void draw_coop_page(ui::Ctx& c, float hh) {
+@@ -4186,6 +4186,10 @@ void draw_coop_page(ui::Ctx& c, float hh) {
      float cx0, cx1, hx0, hx1;
      bool narrow;
      columns(c, &cx0, &cx1, &hx0, &hx1, &narrow);
@@ -30,7 +30,7 @@ index ee56d309..66853acf 100644
      column(c, cx0, cx1, hh);
      HosCoopMenuPage p{};
      if (!coop::menu_page(coop_tab, &p)) p = HosCoopMenuPage{}, p.selected = -1;
-@@ -4246,6 +4250,9 @@ void draw_coop_page(ui::Ctx& c, float hh) {
+@@ -4273,6 +4277,9 @@ void draw_coop_page(ui::Ctx& c, float hh) {
              ui::triangle(c, ImVec2(vb.x - 15 * s, (va.y + vb.y) * 0.5f), 10 * s, 1, selected && !fixed ? ui::kGoldInk : ui::kInk);
          } else {
              choice_cell(c, va, vb, value, selected, false, false, fixed);

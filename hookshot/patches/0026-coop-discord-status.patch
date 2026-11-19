@@ -1,4 +1,4 @@
-From 285590d60172479fd6e0d2613785e9e6a644820a Mon Sep 17 00:00:00 2001
+From f5780211ab37c9fc15c452d23f086f32f0813947 Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Mon, 16 Nov 2026 12:42:25 -0900
 Subject: [PATCH] Co-op Discord status: always Squadala!'s, the module's line
@@ -34,7 +34,7 @@ status when the pipe closes.
  create mode 100644 host/hos_discord_activity.h
 
 diff --git a/host/discord_rpc.c b/host/discord_rpc.c
-index 68372a5a..94b1eeb5 100644
+index 68372a5..94b1eeb 100644
 --- a/host/discord_rpc.c
 +++ b/host/discord_rpc.c
 @@ -17,9 +17,21 @@
@@ -186,7 +186,7 @@ index 68372a5a..94b1eeb5 100644
              if (strcmp(now_json, sent) && now_ms() >= sent_at + 15000) send_at = 0;
 diff --git a/host/hos_discord_activity.h b/host/hos_discord_activity.h
 new file mode 100644
-index 00000000..5b363d6b
+index 0000000..5b363d6
 --- /dev/null
 +++ b/host/hos_discord_activity.h
 @@ -0,0 +1,137 @@
