@@ -1179,16 +1179,39 @@ def run(a):
         for x in tags:
             # Hookshot writes longshot_log.txt only when its stderr goes nowhere; here stderr is game-out-<x>.txt, so
             # that is the log (an old longshot_log.txt in the folder is from another run). The game's file otherwise.
-            go = os.path.join(out, "game-out-%s.txt" % x)
-            lp = go if os.path.isfile(go) and os.path.getsize(go) > 0 else find_log(games[x])
-            if lp:
-                shutil.copy2(lp, os.path.join(out, "hookshot_log-%s.txt" % x))
+            copy_log(out, x, games[x], say)
     if failed:
         with open(os.path.join(out, "FAILED.txt"), "w", encoding="utf-8") as f:
             f.write(failed + "\n")
         return 1
     return 0
 
+
+
+def copy_log(out, x, game, say, tries=5, sleep=time.sleep):
+    """hookshot_log-<x>.txt from game-out-<x>.txt (or the game's own log). A copy that fails (a file still held for a
+    moment after the game closed) is tried again, then said in steps.txt: it never ends the run. Before, it raised
+    out of run()'s finally, after "scenario played": testkit-0116-3's smoke had hs-players and hs-puppets "run.ps1
+    exit 1" with no hookshot_log-B.txt, every expect= line in the game-out logs and no FAILED.txt."""
+    go = os.path.join(out, "game-out-%s.txt" % x)
+    last = None
+    for i in range(tries):
+        try:
+            lp = go if os.path.isfile(go) and os.path.getsize(go) > 0 else find_log(game)
+            if not lp:
+                return False
+            shutil.copy2(lp, os.path.join(out, "hookshot_log-%s.txt" % x))
+            return True
+        except OSError as e:
+            last = e
+            if i + 1 < tries:
+                sleep(1.0)
+    try:
+        say("%s: game log not copied to hookshot_log-%s.txt after %d tries (%s: %s); grade from game-out-%s.txt"
+            % (x, x, tries, last.__class__.__name__, last, x))
+    except Exception:
+        pass
+    return False
 
 
 def test_delay_args(delay_ms, jitter_ms):
