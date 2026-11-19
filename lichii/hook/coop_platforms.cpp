@@ -106,58 +106,87 @@ std::uint64_t RegionOf(const ReadWord& read, std::uint64_t node, std::uint64_t a
     return 0;
 }
 
-std::optional<Hit> Find(const ReadWord& read, std::uint64_t actor, std::uint64_t main, std::size_t* looked) {
-    struct Object {
-        std::uint64_t address = 0;
-        std::size_t depth = 0;
-        std::size_t parent = 0;      // index in `objects`
-        std::uint64_t via = 0;       // the word's offset in the parent
+Search::Search(std::uint64_t actor, std::uint64_t main) : actor_(actor), main_(main) {
+    objects_.push_back({actor, 0, 0, 0});
+    seen_.insert(actor);
+}
+
+std::string Search::PathOf(std::size_t i) const {
+    std::vector<std::uint64_t> vias;
+    for (; i != 0; i = objects_[i].parent) {
+        vias.push_back(objects_[i].via);
+    }
+    std::string text = "actor";
+    for (auto v = vias.rbegin(); v != vias.rend(); ++v) {
+        char part[24];
+        std::snprintf(part, sizeof part, "%s+0x%llx", v == vias.rbegin() ? "" : " > ",
+                      static_cast<unsigned long long>(*v));
+        text += part;
+    }
+    return text;
+}
+
+std::optional<Hit> Search::Step(const ReadWord& read, std::size_t budget) {
+    std::size_t used = 0;
+    const ReadWord counted = [&read, &used, this](std::uint64_t a) {
+        ++used;
+        ++reads_;
+        return read(a);
     };
-    std::vector<Object> objects{{actor, 0, 0, 0}};
-    std::set<std::uint64_t> seen{actor};
-    const auto path_of = [&objects](std::size_t i) {
-        std::vector<std::uint64_t> vias;
-        for (; i != 0; i = objects[i].parent) {
-            vias.push_back(objects[i].via);
-        }
-        std::string text = "actor";
-        for (auto v = vias.rbegin(); v != vias.rend(); ++v) {
-            char part[24];
-            std::snprintf(part, sizeof part, "%s+0x%llx", v == vias.rbegin() ? "" : " > ",
-                          static_cast<unsigned long long>(*v));
-            text += part;
-        }
-        return text;
+    const auto next = [this] {
+        ++i_;
+        j_ = 0;
+        checked_ = false;
     };
-    std::size_t i = 0;
-    for (; i < objects.size() && i < kMaxObjects; ++i) {
-        const Object o = objects[i];
-        if (i != 0) {
-            if (const std::uint64_t region = RegionOf(read, o.address, actor, main); region != 0) {
-                if (looked != nullptr) {
-                    *looked = i + 1;
+    while (!done_ && used < budget) {
+        if (i_ >= objects_.size() || i_ >= kMaxObjects) {
+            done_ = true;
+            looked_ = i_;
+            break;
+        }
+        const Object o = objects_[i_];
+        if (!checked_) {
+            checked_ = true;
+            if (i_ != 0) {
+                if (const std::uint64_t region = RegionOf(counted, o.address, actor_, main_); region != 0) {
+                    done_ = true;
+                    looked_ = i_ + 1;
+                    hit_ = Hit{o.address, region, PathOf(i_)};
+                    break;
                 }
-                return Hit{o.address, region, path_of(i)};
             }
+            if (o.depth >= kMaxDepth) {
+                next();
+            }
+            continue;  // the budget is looked at again before the object's words
         }
-        if (o.depth >= kMaxDepth) {
+        if (j_ >= (i_ == 0 ? kActorWords : kObjectWords)) {
+            next();
             continue;
         }
-        const std::size_t words = i == 0 ? kActorWords : kObjectWords;
-        for (std::size_t j = 0; j < words; ++j) {
-            const auto w = read(o.address + 8 * j);
-            if (!w) {
-                break;  // the object's end (unmapped)
-            }
-            if (LooksLikePointer(*w) && seen.insert(*w).second) {
-                objects.push_back({*w, o.depth + 1, i, 8 * j});
-            }
+        const auto w = counted(o.address + 8 * j_);
+        if (!w) {
+            next();  // the object's end (unmapped)
+            continue;
         }
+        if (LooksLikePointer(*w) && seen_.insert(*w).second) {
+            objects_.push_back({*w, o.depth + 1, i_, 8 * j_});
+        }
+        ++j_;
     }
+    if (!done_) {
+        looked_ = i_;
+    }
+    return hit_;
+}
+
+std::optional<Hit> Find(const ReadWord& read, std::uint64_t actor, std::uint64_t main, std::size_t* looked) {
+    Search search(actor, main);
+    auto hit = search.Step(read, static_cast<std::size_t>(-1));
     if (looked != nullptr) {
-        *looked = i;
+        *looked = search.Looked();
     }
-    return std::nullopt;
+    return hit;
 }
 
 std::map<std::uint64_t, std::uint64_t> Words(const ReadWord& read, const Hit& hit) {

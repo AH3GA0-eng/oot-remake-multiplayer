@@ -2283,10 +2283,12 @@ public:
     CoopPlatforms::PlatformSync platforms_;
     std::vector<CoopPlatforms::PlatformSync::Driver> platform_drivers_;
     // #196: each wave/rotate GroundControl actor's node (coop_platforms.h, GroundNode), by actor address. Checked on
-    // every read (RegionOf), looked for again when it fails; not found: tried again kGroundNodeRetryUs later, at most
-    // kGroundNodeTries times while the actor is here.
+    // every read (RegionOf, two words), looked for again when it fails; a search runs kReadsPerStep words a walk
+    // (GroundNode::Search) until done; not found: tried again kGroundNodeRetryUs later, at most kGroundNodeTries times
+    // while the actor is here.
     struct GroundNodeLook {
         std::optional<CoopPlatforms::GroundNode::Hit> hit;
+        std::optional<CoopPlatforms::GroundNode::Search> search;  // the search going on, if any
         int tries = 0;
         u64 next_try_us = 0;
     };
@@ -3051,24 +3053,32 @@ private:
             return &*look.hit;
         }
         look.hit.reset();
-        const u64 now = CoopEvery::NowUs();
-        if (look.tries >= kGroundNodeTries || now < look.next_try_us) {
-            return nullptr;
+        if (!look.search) {
+            const u64 now = CoopEvery::NowUs();
+            if (look.tries >= kGroundNodeTries || now < look.next_try_us) {
+                return nullptr;
+            }
+            ++look.tries;
+            look.next_try_us = now + kGroundNodeRetryUs;
+            look.search.emplace(d.address, main_);
         }
-        ++look.tries;
-        look.next_try_us = now + kGroundNodeRetryUs;
-        std::size_t looked = 0;
-        look.hit = CoopPlatforms::GroundNode::Find(read, d.address, main_, &looked);
+        // B #29 N1: a part of the search each walk, never the whole of it in one frame.
+        look.hit = look.search->Step(read, CoopPlatforms::GroundNode::kReadsPerStep);
         if (look.hit) {
             look.tries = 0;
-            LOG_INFO(Core, "coop: platforms: {:016x} {}: its {} node at {:#x} ({}, {} objects looked at)",
+            LOG_INFO(Core, "coop: platforms: {:016x} {}: its {} node at {:#x} ({}, {} objects / {} words looked at)",
                      d.hash, d.name, look.hit->region == CoopPlatforms::kRegionWaveNode ? "wave" : "rotate",
-                     look.hit->node, look.hit->path, looked);
+                     look.hit->node, look.hit->path, look.search->Looked(), look.search->Reads());
+            look.search.reset();
             return &*look.hit;
         }
-        if (look.tries == kGroundNodeTries) {
-            LOG_INFO(Core, "coop: platforms: {:016x} {}: no GroundControl node found ({} tries, {} objects the last)",
-                     d.hash, d.name, look.tries, looked);
+        if (look.search->Done()) {
+            if (look.tries == kGroundNodeTries) {
+                LOG_INFO(Core,
+                         "coop: platforms: {:016x} {}: no GroundControl node found ({} tries, {} objects the last)",
+                         d.hash, d.name, look.tries, look.search->Looked());
+            }
+            look.search.reset();
         }
         return nullptr;
     }

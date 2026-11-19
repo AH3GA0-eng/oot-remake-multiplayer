@@ -117,7 +117,43 @@ struct Hit {
 using ReadWord = std::function<std::optional<std::uint64_t>(std::uint64_t)>;
 // The node's region when `node` is a live GroundControl node of `actor`, else 0.
 std::uint64_t RegionOf(const ReadWord& read, std::uint64_t node, std::uint64_t actor, std::uint64_t main);
-// Finds `actor`'s node; `looked` gets the number of objects read. Reads only.
+// The search spread over frames (B #29 N1): a whole search reads up to kMaxObjects x kObjectWords words (about
+// 262k), too many for one frame of the present thread. Step() goes on where the last call stopped and reads at most
+// `budget` words (+1: a node check reads two), so the walk calls it with kReadsPerStep each time until it is Done().
+// Reads only; the words read are the same as one whole search's. The walk reads a driver once a look (kLookEveryUs,
+// 250 ms) and already reads a few thousand words of it then (SignProbe); 8192 more is of that order, and a whole
+// search takes at most 32 looks (8 s) instead of one 262k-word frame.
+inline constexpr std::size_t kReadsPerStep = 8192;
+class Search {
+public:
+    Search(std::uint64_t actor, std::uint64_t main);
+    // The node once found (then on every later call too), else nothing yet.
+    std::optional<Hit> Step(const ReadWord& read, std::size_t budget);
+    bool Done() const { return done_; }       // found, or nothing left to look at
+    std::size_t Looked() const { return looked_; }  // objects looked at so far
+    std::size_t Reads() const { return reads_; }    // words read so far
+
+private:
+    struct Object {
+        std::uint64_t address = 0;
+        std::size_t depth = 0;
+        std::size_t parent = 0;  // index in objects_
+        std::uint64_t via = 0;   // the word's offset in the parent
+    };
+    std::string PathOf(std::size_t i) const;
+    std::uint64_t actor_ = 0;
+    std::uint64_t main_ = 0;
+    std::vector<Object> objects_;
+    std::set<std::uint64_t> seen_;
+    std::size_t i_ = 0;        // the object being read
+    std::size_t j_ = 0;        // its next word
+    bool checked_ = false;     // objects_[i_] was checked for the node
+    bool done_ = false;
+    std::size_t looked_ = 0;
+    std::size_t reads_ = 0;
+    std::optional<Hit> hit_;
+};
+// Finds `actor`'s node in one go (tests, tools); `looked` gets the number of objects read. Reads only.
 std::optional<Hit> Find(const ReadWord& read, std::uint64_t actor, std::uint64_t main, std::size_t* looked = nullptr);
 // The node's words for SignProbe-style keys: Key(region, offset) for offset kFrom .. kTo, 8 bytes each.
 std::map<std::uint64_t, std::uint64_t> Words(const ReadWord& read, const Hit& hit);

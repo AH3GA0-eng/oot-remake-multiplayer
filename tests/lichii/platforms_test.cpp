@@ -945,6 +945,68 @@ TEST_CASE("platforms: the WaveLoop's node is found from its actor, not a node of
     CHECK(words.at(Key(kRegionWaveNode, 0xf8)) == Bits(1.25f, 0.0f));
 }
 
+TEST_CASE("platforms: the node search is spread over looks, at most kReadsPerStep words each (B #29 N1)") {
+    // A wide heap: the actor points to 150 objects, each to 60 more (over kMaxObjects in all), the node far in.
+    Memory m;
+    std::uint64_t next = 0x0000021000100000ull;
+    std::uint64_t node = 0;
+    for (std::uint64_t i = 0; i < 150; ++i) {
+        const std::uint64_t a = next;
+        next += 0x1000;
+        m.words[kActor + 8 * i] = a;
+        for (std::uint64_t k = 0; k < 60; ++k) {
+            m.words[a + 8 * k] = next;
+            if (i == 60 && k == 30) {
+                node = next;
+            }
+            next += 0x1000;
+        }
+    }
+    m.words[node] = kMain + GroundNode::kWaveVtable;
+    m.words[node + 8] = kActor;
+    std::size_t reads = 0;
+    const GroundNode::ReadWord read = [&m, &reads](std::uint64_t a) {
+        ++reads;
+        return m(a);
+    };
+    const auto whole = GroundNode::Find(read, kActor, kMain);
+    REQUIRE(whole);
+    const std::size_t whole_reads = reads;
+    CHECK(whole_reads > 4 * GroundNode::kReadsPerStep);  // too much for one frame: the case N1 is about
+
+    GroundNode::Search search(kActor, kMain);
+    std::optional<GroundNode::Hit> hit;
+    int steps = 0;
+    while (!search.Done() && steps < 1000) {
+        reads = 0;
+        hit = search.Step(read, GroundNode::kReadsPerStep);
+        CHECK(reads <= GroundNode::kReadsPerStep + 1);
+        ++steps;
+    }
+    REQUIRE(hit);
+    CHECK(hit->node == whole->node);
+    CHECK(hit->path == whole->path);
+    CHECK(search.Reads() == whole_reads);  // the same words as one whole search, no more
+    CHECK(steps > 1);
+    // Done: later steps read nothing and keep the hit.
+    reads = 0;
+    CHECK(search.Step(read, GroundNode::kReadsPerStep)->node == node);
+    CHECK(reads == 0);
+
+    // Nothing to find: it ends (Done, no hit) within kMaxObjects objects, each step bounded the same.
+    m.words[node] = 0;
+    GroundNode::Search none(kActor, kMain);
+    steps = 0;
+    while (!none.Done() && steps < 1000) {
+        reads = 0;
+        CHECK_FALSE(none.Step(read, GroundNode::kReadsPerStep));
+        CHECK(reads <= GroundNode::kReadsPerStep + 1);
+        ++steps;
+    }
+    CHECK(none.Done());
+    CHECK(none.Looked() <= GroundNode::kMaxObjects);
+}
+
 TEST_CASE("platforms: the node search goes kMaxDepth objects deep, no further (#196)") {
     Memory m;
     std::uint64_t at = kActor;

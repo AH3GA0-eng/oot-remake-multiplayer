@@ -1093,7 +1093,7 @@ TEST_CASE("damage carries where the hit landed, optional (protocol 12)") {
 
 TEST_CASE("damage carries the hit record, optional, alone or after the hit place (protocol 14)") {
   // Every hit shows on every screen: the owner's game takes the hit that happened (bomb, arrow, fire ...).
-  CHECK(kProtocolVersion == 14);
+  CHECK(kProtocolVersion >= 14);  // 15: the platform node keys (0.11.6)
   Damage d{0, test::kPlacedId, 1, 2, 1, {1.0f, 2.0f, 3.0f}, {}};
   const Bytes plain = must_encode(d);
   HitRecord rec{};

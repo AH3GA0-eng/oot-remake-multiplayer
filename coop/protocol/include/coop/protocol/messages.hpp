@@ -27,7 +27,9 @@ namespace coop::protocol {
 // joiners (JOIN_KNOCK, JOIN_ALLOW, REFUSED not_let_in; issue 261).
 // 14: the hit that happened (HitRecord) in DAMAGE and in the owner's samples (component 21), so every
 // game's enemy takes the real hit through its own damage step (0.11.5, every hit shows on every screen).
-inline constexpr std::uint16_t kProtocolVersion = 14;
+// 15: PLATFORM_CLOCK keys in a mover's GroundControl node (regions 0xfffe / 0xfffd, #196, 0.11.6): a protocol 14
+// reader refuses them as bad_value and drops the whole message, so a 0.11.5 game must be refused at HELLO.
+inline constexpr std::uint16_t kProtocolVersion = 15;
 inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr std::uint8_t kMaxPlayers = 16;  // protocol 11; 4 before
 
