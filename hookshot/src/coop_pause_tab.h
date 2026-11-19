@@ -126,6 +126,11 @@ public:
     // hos_coop_game_pause_page: 4 while our page shows, -1 while it can show, -2 while it cannot be used.
     int MousePage() const { return !usable_ ? -2 : shown_ ? 4 : -1; }
 
+    // One of the rows' own views shows (Players, Let in, Join: View): B is ours then and goes back to the five rows
+    // (TakeBack), instead of closing the menu. Off whenever the page goes.
+    void SetSubView(bool on) { sub_ = on && shown_; }
+    bool TakeBack();
+
     bool Shown() const { return shown_; }
     // A pressed on our page since the last call (the row is the System page's focused button).
     bool TakeDecide();
@@ -144,6 +149,7 @@ private:
     bool decide_ = false;
     std::string why_;
     bool usable_ = false;
+    bool sub_ = false, back_ = false;
     // What is set in the game, per opening of a screen object (Track; -1: not yet).
     struct Seen {
         std::uint64_t screen = 0, layout = 0, gen = 0;
@@ -156,9 +162,11 @@ private:
     int tab_key_ = -1;
 };
 
-// The rows (Pa_Button_00..04): Session, Join code, Players, Let in, Leave. Each A leads to co-op's own parts, until
-// the rows have native pages of their own: co-op's menu (Hookshot's menu, its Multiplayer tab, over the game's pause
-// menu) at a page, its Lobby tab, the clipboard, or the Lobby's /allow.
+// The rows (Pa_Button_00..04): Session, Join code, Players, Let in, Leave. Each A acts on the page itself (hosting,
+// a copy, the second A of Leave), or shows one of the rows' own views on the same five rows (View: Players, Let in,
+// Join), or, for what only co-op's menu has (typing a code, the Lobby's per-player controls, why something failed),
+// opens co-op's menu (Hookshot's menu, its Multiplayer tab, over the game's pause menu) at a page or its Lobby tab.
+enum class View { kMain, kPlayers, kLetIn, kJoin };
 enum Row { kRowSession = 0, kRowJoinCode = 1, kRowPlayers = 2, kRowLetIn = 3, kRowLeave = 4 };
 enum class RowAction {
     kNone,
@@ -172,6 +180,14 @@ enum class RowAction {
     kConfirmLeave,   // Leave or Stop hosting: the row asks for a second A first (kConfirmMs), then co-op stops
     kPasteAnswer,    // the host: a friend's answer code from the clipboard (co-op's menu's Paste answer), its main page
     kCopyAnswer,     // a guest the host could not reach: its answer code to the clipboard (Copy answer), the main page
+    // The views (View) and what their rows do:
+    kViewPlayers,    // the Players view: who is in the session, one a row
+    kViewLetIn,      // the host's Let in view: the oldest who asks, Let in or Refuse
+    kViewJoin,       // the Join view: a code from the clipboard, the last game again, or typing one in co-op's menu
+    kBack,           // back to the five rows (B does the same)
+    kDeny,           // the Lobby's /deny: the oldest player who asks is refused
+    kJoinPaste,      // join with the code (or address line) on the clipboard, as co-op's menu's Join page
+    kRejoin,         // join the last game again (its code kept in coop.ini), as the Join page's "Join <host> again"
 };
 inline constexpr std::uint64_t kConfirmMs = 3000;
 // What co-op is doing, as the rows need it.
@@ -185,8 +201,11 @@ struct Session {
     bool by_launcher = false;   // co-op came with the game's start (Host.bat, Join.bat, coop.ini): not started or
                                 // stopped here; Session and Leave open co-op's main page, whose help says why
     bool failed = false;    // the last Host or Join did not work (co-op's main page says why)
+    bool rejoin = false;    // a last game's code is kept (coop.ini last_invite): the Join view's "Join <host> again"
 };
 RowAction ActionFor(int row, const Session& s);
+// A row of a view (kMain: ActionFor).
+RowAction ActionFor(View view, int row, const Session& s);
 // The Leave row's second A is still waited for: our page shows and the game's cursor is on the Leave row.
 inline bool KeepConfirm(bool shown, int focused_row) { return shown && focused_row == kRowLeave; }
 
@@ -199,9 +218,13 @@ struct SessionView {
     int players = 0;             // in the session, us included (0: not in one)
     std::vector<std::string> asking;   // hosting: who asks to join, oldest first
     bool confirm_leave = false;  // the Leave row waits for its second A
+    std::vector<std::string> names;   // the Players view: who is in the session, by number ("(you)", "(host)" added)
+    std::string rejoin_host;          // the Join view: the last game's host ("" its name is not known)
 };
 inline constexpr std::size_t kRowChars = 40;   // the most a row's text holds (the System page's button width)
 std::vector<std::string> RowTexts(const SessionView& v);
+// A view's rows (kMain: RowTexts). A row with nothing on it says " " (a pane's text is never empty).
+std::vector<std::string> RowTexts(View view, const SessionView& v);
 const char* ActionWords(RowAction a);   // for the log
 
 // The log lines a run needs (the first step's probe, kept): a screen object's first update, its updates over its
@@ -219,6 +242,20 @@ private:
         bool counted = false;
     };
     Last pages_, strip_;
+};
+
+// One screen update of ours on this thread (OnScreen): the game calls it makes (under the module's locks) may run a
+// screen update again on the same thread, which is skipped (Nested), never a second lock of a mutex this thread holds.
+class ScreenGuard {
+public:
+    ScreenGuard();
+    ~ScreenGuard();
+    ScreenGuard(const ScreenGuard&) = delete;
+    ScreenGuard& operator=(const ScreenGuard&) = delete;
+    bool Nested() const { return nested_; }
+
+private:
+    bool nested_;
 };
 
 // The module's part (coop_pause_tab_module.cpp).

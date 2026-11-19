@@ -29,6 +29,11 @@ std::mutex g_mutex;   // everything below: screen updates on several of the game
 Probe g_probe;
 Page g_page;
 std::atomic<int> g_mouse{-2};       // Page::MousePage, for the mouse (it asks often, from any thread)
+std::atomic<int> g_view{static_cast<int>(View::kMain)};   // the rows' view (View); kMain whenever the page goes
+
+View ViewShown() {
+    return static_cast<View>(g_view.load());
+}
 // The Leave row's second A: until when it is waited for (0: not). Any thread.
 std::atomic<std::uint64_t> g_confirm_until{0};
 // Panes found, per opening of a screen (Page::Track's number; a menu reopened at the same address is looked up again,
@@ -226,7 +231,7 @@ bool LiveText(void* ctx, std::uint64_t layout, std::uint64_t gen, const std::str
 }
 
 // What the rows say now (co-op's host status and the Lobby's room). No lock of ours held: they take their own.
-SessionView ViewNow() {
+SessionView ViewNow(View view) {
     HosCoopStatus st{};
     st.size = sizeof st;
     CoopHookshot::HostMenu().Status(&st);
@@ -245,6 +250,12 @@ SessionView ViewNow() {
     v.confirm_leave = NowMs() < g_confirm_until.load();
     const CoopLobby::Seen seen = CoopLobby::Now();
     v.players = seen.connected ? static_cast<int>(seen.players.size()) : 0;
+    if (view == View::kPlayers && seen.connected) {
+        for (const CoopLobby::PlayerSeen& p : seen.players) {
+            v.names.push_back(p.name + (p.self ? " (you)" : p.host ? " (host)" : ""));
+        }
+    }
+    if (view == View::kJoin) v.s.rejoin = CoopPause::Rejoin(&v.rejoin_host);
     if (v.s.hosting) v.asking = CoopLobby::Asking();
     v.s.asking = !v.asking.empty();
     return v;
@@ -268,7 +279,7 @@ bool LiveDue(std::uint64_t gen) {
 void LiveRows(void* ctx, std::uint64_t layout, std::uint64_t gen, const SessionView& v) {
     std::lock_guard lock(g_live_mutex);
     if (layout == 0 || gen != g_live_gen) return;   // (another opening came meanwhile: its own turn sets them)
-    const std::vector<std::string> rows = RowTexts(v);
+    const std::vector<std::string> rows = RowTexts(ViewShown(), v);
     for (int i = 0; i < kRows && i < kLiveSlots; ++i) {
         char path[64];
         std::snprintf(path, sizeof path, "Pa_Coop_00/Pa_Button_%02d/T_Btn_00", i);
@@ -387,14 +398,27 @@ Session SessionNow() {
     s.invite = s.hosting && st.relay_room[0] == 0 && st.relay_code[0] == 0 && st.invite[0] != 0;
     s.asking = s.hosting && !CoopLobby::Asking().empty();
     s.wait_host = st.state == HOS_COOP_WAIT_HOST;
+    s.rejoin = CoopPause::Rejoin(nullptr);
     return s;
+}
+
+void SetView(View v) {
+    g_view = static_cast<int>(v);
 }
 
 // A row's action (after the lock: co-op's menu and the chat take their own).
 void Act(int row) {
-    const RowAction a = ActionFor(row, SessionNow());
-    LOG_INFO(Core, "coop: pause tab: row {} chosen: {}", row, ActionWords(a));
+    const View view = ViewShown();
+    const RowAction a = ActionFor(view, row, SessionNow());
+    LOG_INFO(Core, "coop: pause tab: row {} chosen (view {}): {}", row, static_cast<int>(view), ActionWords(a));
     switch (a) {
+    case RowAction::kViewPlayers: SetView(View::kPlayers); break;
+    case RowAction::kViewLetIn: SetView(View::kLetIn); break;
+    case RowAction::kViewJoin: SetView(View::kJoin); break;
+    case RowAction::kBack: SetView(View::kMain); break;
+    case RowAction::kDeny: CoopHook::SendChat("/deny"); break;   // (its answer shows in the chat)
+    case RowAction::kJoinPaste: CoopPause::JoinPasteNow(); break;
+    case RowAction::kRejoin: CoopPause::RejoinNow(); break;
     case RowAction::kHost: CoopPause::HostNow(); break;
     case RowAction::kConfirmLeave:
         if (NowMs() < g_confirm_until.exchange(0)) {
@@ -424,6 +448,8 @@ void Init(const HosCoopApi* api) {
 void OnScreen(void* ctx, std::uint64_t screen) noexcept {
     try {
         if (screen == 0) return;
+        const ScreenGuard guard;   // (a screen update run again by one of our game calls, on this thread: skipped)
+        if (guard.Nested()) return;
         const std::uint64_t base = CoopRuntime::MainBase();
         const std::uint64_t vtable = Read<std::uint64_t>(screen);
         if (vtable < base) return;
@@ -457,6 +483,8 @@ void OnScreen(void* ctx, std::uint64_t screen) noexcept {
             // This opening's panes first, so the page is usable only with the panes of the screens updating now (an
             // undrawn page never takes System's R or A, and the mouse keeps the fifth tab out: MousePage -2).
             gen = g_page.Track(f);
+            if (!g_page.Shown()) SetView(View::kMain);
+            g_page.SetSubView(ViewShown() != View::kMain);
             if (f.kind == Kind::kPages) LookPages(ctx, calls, f, gen);
             if (f.kind == Kind::kStrip) LookStrip(ctx, calls, f, gen);
             if (f.kind != Kind::kBlocker) g_page.SetUsable(CanCall() && g_pages_ok && g_strip_ok);
@@ -475,7 +503,7 @@ void OnScreen(void* ctx, std::uint64_t screen) noexcept {
         if (f.kind == Kind::kPages && now_shown && f.state == 2 && calls) {
             if (!KeepConfirm(true, focused)) g_confirm_until = 0;   // (the cursor left the Leave row)
             // (after our lock: the status and the Lobby take their own; read only when the rows are due)
-            if (LiveDue(gen)) LiveRows(ctx, f.layout, gen, ViewNow());
+            if (LiveDue(gen)) LiveRows(ctx, f.layout, gen, ViewNow(ViewShown()));
         }
         if (!now_shown) g_confirm_until = 0;
     } catch (...) {
@@ -502,6 +530,8 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             shown = g_page.Shown();
             decide = g_page.TakeDecide();
             row = decide ? FocusedRow() : -1;   // (under the lock: the pages screen is the screens' updates')
+            if (g_page.TakeBack() || !shown) SetView(View::kMain);   // (B in a view: the five rows again)
+            g_page.SetSubView(ViewShown() != View::kMain);
             why = g_page.TakeWhy();
             g_mouse = g_page.MousePage();
         }

@@ -4,6 +4,7 @@
 #include <doctest/doctest.h>
 
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "coop_pause_tab.h"
@@ -298,7 +299,7 @@ TEST_CASE("pause tab: each row leads to co-op's own part, by what co-op is doing
 
     for (const Session& s : {idle, joined, hosting_no_code, hosting}) {
         CHECK(ActionFor(kRowSession, s) == (s.in_one ? RowAction::kOpenMain : RowAction::kHost));
-        CHECK(ActionFor(kRowPlayers, s) == RowAction::kOpenLobby);
+        CHECK(ActionFor(kRowPlayers, s) == RowAction::kViewPlayers);
         CHECK(ActionFor(kRowLeave, s) == (s.in_one ? RowAction::kConfirmLeave : RowAction::kNone));
         CHECK(ActionFor(-1, s) == RowAction::kNone);              // (no row under the cursor)
         CHECK(ActionFor(kRows, s) == RowAction::kNone);
@@ -308,10 +309,10 @@ TEST_CASE("pause tab: each row leads to co-op's own part, by what co-op is doing
     CHECK(ActionFor(kRowJoinCode, hosting) == RowAction::kCopyCode);
     CHECK(ActionFor(kRowJoinCode, hosting_no_code) == RowAction::kOpenMain);
     CHECK(ActionFor(kRowJoinCode, joined) == RowAction::kOpenMain);
-    CHECK(ActionFor(kRowJoinCode, idle) == RowAction::kOpenJoin);
-    // Let in: the host's /allow; anyone else the Lobby tab (who is in, who asks).
-    CHECK(ActionFor(kRowLetIn, hosting) == RowAction::kAllow);
-    CHECK(ActionFor(kRowLetIn, hosting_no_code) == RowAction::kAllow);
+    CHECK(ActionFor(kRowJoinCode, idle) == RowAction::kViewJoin);
+    // Let in: the host's Let in view; anyone else the Lobby tab (who is in, who asks).
+    CHECK(ActionFor(kRowLetIn, hosting) == RowAction::kViewLetIn);
+    CHECK(ActionFor(kRowLetIn, hosting_no_code) == RowAction::kViewLetIn);
     CHECK(ActionFor(kRowLetIn, joined) == RowAction::kOpenLobby);
     CHECK(ActionFor(kRowLetIn, idle) == RowAction::kOpenLobby);
     // Each has words for the log.
@@ -329,11 +330,11 @@ TEST_CASE("pause tab: the invite code's two rows: the host's Paste answer, a wai
     CHECK(ActionFor(kRowLetIn, host) == RowAction::kPasteAnswer);
     CHECK(ActionFor(kRowJoinCode, host) == RowAction::kCopyCode);
     host.asking = true;
-    CHECK(ActionFor(kRowLetIn, host) == RowAction::kAllow);
-    // A relay room has no answer codes: Let in is /allow.
+    CHECK(ActionFor(kRowLetIn, host) == RowAction::kViewLetIn);
+    // A relay room has no answer codes: Let in is its view (Let in or Refuse who asks).
     Session relay;
     relay.hosting = relay.in_one = relay.code = true;
-    CHECK(ActionFor(kRowLetIn, relay) == RowAction::kAllow);
+    CHECK(ActionFor(kRowLetIn, relay) == RowAction::kViewLetIn);
     // A guest the host could not reach: Join code copies this game's answer code (co-op's menu's Copy answer).
     Session waiting;
     waiting.in_one = waiting.wait_host = true;
@@ -493,4 +494,117 @@ TEST_CASE("pause tab: the Leave row's second A is waited for only while the curs
     CHECK_FALSE(KeepConfirm(true, kRowLetIn));
     CHECK_FALSE(KeepConfirm(true, -1));
     CHECK_FALSE(KeepConfirm(false, kRowLeave));   // (System back: no second A waited for)
+}
+
+TEST_CASE("pause tab: the rows' own views: Players, Let in and Join on the same five rows, Back last") {
+    Session idle;
+    Session host;
+    host.hosting = host.in_one = host.code = true;
+    // Players: who is in, one a row; only Back acts.
+    SessionView pv;
+    pv.s.in_one = true;
+    pv.names = {"dauro (you)", "Saria (host)"};
+    CHECK(RowTexts(View::kPlayers, pv) == std::vector<std::string>{"dauro (you)", "Saria (host)", " ", " ", "Back"});
+    pv.names = {"a", "b", "c", "d", "e", "f"};
+    CHECK(RowTexts(View::kPlayers, pv)[3] == "+3 more (Lobby tab)");
+    SessionView none;
+    CHECK(RowTexts(View::kPlayers, none)[0] == "Not in a session");
+    for (int r = 0; r < kRows - 1; ++r) CHECK(ActionFor(View::kPlayers, r, host) == RowAction::kNone);
+    CHECK(ActionFor(View::kPlayers, kRows - 1, host) == RowAction::kBack);
+    // Let in: the oldest who asks, Let in (/allow) or Refuse (/deny); nobody: nothing to press.
+    CHECK(ActionFor(View::kLetIn, 0, host) == RowAction::kNone);
+    host.asking = true;
+    CHECK(ActionFor(View::kLetIn, 0, host) == RowAction::kAllow);
+    CHECK(ActionFor(View::kLetIn, 1, host) == RowAction::kDeny);
+    CHECK(ActionFor(View::kLetIn, 2, host) == RowAction::kNone);
+    CHECK(ActionFor(View::kLetIn, kRows - 1, host) == RowAction::kBack);
+    SessionView lv;
+    lv.s = host;
+    CHECK(RowTexts(View::kLetIn, lv)[0] == "Nobody asks to join");
+    lv.asking = {"Mido", "Darunia"};
+    CHECK(RowTexts(View::kLetIn, lv) == std::vector<std::string>{"Let in Mido", "Refuse Mido", "+1 more ask", " ", "Back"});
+    // Join: the clipboard's code, the last game again, typing in co-op's menu; never from inside a session.
+    CHECK(ActionFor(View::kJoin, 0, idle) == RowAction::kJoinPaste);
+    CHECK(ActionFor(View::kJoin, 1, idle) == RowAction::kNone);   // (no last game kept)
+    Session again = idle;
+    again.rejoin = true;
+    CHECK(ActionFor(View::kJoin, 1, again) == RowAction::kRejoin);
+    CHECK(ActionFor(View::kJoin, 2, idle) == RowAction::kOpenJoin);
+    CHECK(ActionFor(View::kJoin, kRows - 1, idle) == RowAction::kBack);
+    Session in_one;
+    in_one.in_one = in_one.rejoin = true;
+    CHECK(ActionFor(View::kJoin, 0, in_one) == RowAction::kNone);
+    CHECK(ActionFor(View::kJoin, 1, in_one) == RowAction::kNone);
+    Session launcher;
+    launcher.by_launcher = launcher.rejoin = true;
+    CHECK(ActionFor(View::kJoin, 0, launcher) == RowAction::kNone);
+    SessionView jv;
+    jv.s = again;
+    jv.rejoin_host = "Saria";
+    CHECK(RowTexts(View::kJoin, jv) ==
+          std::vector<std::string>{"Paste code and join", "Join Saria again", "Type a code (co-op's menu)", " ", "Back"});
+    // The main view is the five rows; out of range is nothing.
+    CHECK(ActionFor(View::kMain, kRowPlayers, idle) == ActionFor(kRowPlayers, idle));
+    CHECK(RowTexts(View::kMain, none) == RowTexts(none));
+    CHECK(ActionFor(View::kJoin, -1, idle) == RowAction::kNone);
+    CHECK(ActionFor(View::kLetIn, kRows, host) == RowAction::kNone);
+    for (View w : {View::kPlayers, View::kLetIn, View::kJoin}) {
+        for (const std::string& r : RowTexts(w, lv)) CHECK((!r.empty() && r.size() <= kRowChars));
+    }
+    for (RowAction a : {RowAction::kViewPlayers, RowAction::kViewLetIn, RowAction::kViewJoin, RowAction::kBack,
+                        RowAction::kDeny, RowAction::kJoinPaste, RowAction::kRejoin}) {
+        CHECK(std::string(ActionWords(a)).size() > 3);
+    }
+}
+
+TEST_CASE("pause tab: in a view, B goes back to the five rows instead of closing the menu") {
+    std::uint64_t now = 1000;
+    Page p = UsablePage();
+    OnSystem(p, now);
+    REQUIRE(p.OnPad(kPadR, now) == 0);
+    p.OnPad(0, now + 1);
+    CHECK(p.OnPad(kPadB, now + 2) == kPadB);   // (the five rows: B is the game's, it closes the menu)
+    CHECK_FALSE(p.TakeBack());
+    p.OnPad(0, now + 3);
+    p.SetSubView(true);
+    CHECK(p.OnPad(kPadB, now + 4) == 0);   // (a view: ours)
+    CHECK(p.TakeBack());
+    CHECK_FALSE(p.TakeBack());
+    CHECK(p.OnPad(kPadB, now + 5) == 0);   // (held: still ours)
+    p.SetSubView(false);
+    CHECK(p.OnPad(kPadB, now + 6) == 0);   // (still held from the view: not a fresh B for the game)
+    p.OnPad(0, now + 7);
+    CHECK(p.OnPad(kPadB, now + 8) == kPadB);
+    // The page going ends the view.
+    p.OnPad(0, now + 9);
+    p.SetSubView(true);
+    CHECK(p.OnPad(kPadL, now + 10) == 0);
+    CHECK_FALSE(p.Shown());
+    p.OnPad(0, now + 11);
+    CHECK(p.OnPad(kPadB, now + 12) == kPadB);
+    CHECK_FALSE(p.TakeBack());
+    p.SetSubView(true);   // (not shown: no view)
+    CHECK(p.OnPad(kPadB, now + 13) == kPadB);
+}
+
+TEST_CASE("pause tab: a screen update nested on the same thread is told so, other threads are not") {
+    {
+        const ScreenGuard outer;
+        CHECK_FALSE(outer.Nested());
+        {
+            const ScreenGuard inner;   // (a game call of ours ran a screen update again)
+            CHECK(inner.Nested());
+        }
+        const ScreenGuard again;
+        CHECK(again.Nested());   // (the inner one ending leaves the outer one in place)
+        bool other = true;
+        std::thread t([&] {
+            const ScreenGuard g;
+            other = g.Nested();
+        });
+        t.join();
+        CHECK_FALSE(other);
+    }
+    const ScreenGuard after;
+    CHECK_FALSE(after.Nested());
 }

@@ -360,10 +360,12 @@ bool Host() {
     return true;
 }
 
-void Join(const std::string& text) {
+// False when it did not start: refused (co-op on already, the code not readable; the menu's note says why) or the
+// join could not start (the session's lines say why).
+bool Join(const std::string& text) {
     if (Busy()) {
         g_menu.SetNote({"Co-op is on already in this game: stop it first, or start the game again."});
-        return;
+        return false;
     }
     namespace nat = coop::server::nat;
     CoopTitleMenu::CodeResult code;
@@ -379,7 +381,7 @@ void Join(const std::string& text) {
     const auto target = CoopTitleMenu::ReadJoin(text, code);
     if (const auto* err = std::get_if<std::string>(&target)) {
         g_menu.SetNote({*err});
-        return;
+        return false;
     }
     CoopHookshot::HostMenu().Leave();
     const CoopTitleMenu::Options o = g_menu.options();
@@ -402,10 +404,11 @@ void Join(const std::string& text) {
     g_answer_copy_tried = false;
     if (!CoopHookshot::HostMenu().Join(&j)) {
         RefreshSession(true);
-        return;
+        return false;
     }
     LOG_INFO(Core, "coop: multiplayer tab: join: {}", invite ? std::string("an invite code") : "the address " + where);
     RefreshSession(true);
+    return true;
 }
 
 void Leave() {
@@ -1056,6 +1059,50 @@ void LeaveNow() {
         return;
     }
     Act(Request{Request::Kind::kLeave, {}});
+}
+
+void JoinPasteNow() {
+    std::lock_guard lock(g_mutex);
+    FreshMain();
+    LOG_INFO(Core, "coop: multiplayer tab: join with the clipboard's code from the pause menu's Multiplayer page");
+    if (g_coop_on) {
+        ShowNote();
+        return;
+    }
+    const std::uint64_t session = g_session;
+    // (on Linux the text may come a moment later, under g_mutex: a Host or Join started meanwhile wins)
+    PasteThen([session](std::optional<std::string> clip) {
+        if (session != g_session) return;
+        std::string line = CoopTitleMenu::OneLine(clip.value_or(std::string()));
+        const auto first = line.find_first_not_of(' ');
+        line = first == std::string::npos ? std::string() : line.substr(first, line.find_last_not_of(' ') - first + 1);
+        if (line.empty()) {
+            g_menu.SetNote({clip ? "Copy your friend's code first, then choose Paste code and join." : kClipboardUnread});
+            ShowNote();
+            return;
+        }
+        if (!Join(line)) ShowNote();
+    });
+}
+
+bool Rejoin(std::string* host) {
+    const std::string coop = ReadText(CoopIni());
+    const auto code = CoopTitleMenu::IniGet(coop, "last_invite");
+    if (host != nullptr) *host = CoopTitleMenu::IniGet(coop, "last_host").value_or("");
+    return code && !code->empty();
+}
+
+void RejoinNow() {
+    std::lock_guard lock(g_mutex);
+    FreshMain();
+    LOG_INFO(Core, "coop: multiplayer tab: the last game again from the pause menu's Multiplayer page");
+    const auto code = CoopTitleMenu::IniGet(ReadText(CoopIni()), "last_invite");
+    if (g_coop_on || !code || code->empty()) {
+        if (!g_coop_on) g_menu.SetNote({"No last game to join again: paste your friend's code."});
+        ShowNote();
+        return;
+    }
+    if (!Join(*code)) ShowNote();
 }
 
 void PasteAnswerNow() {
