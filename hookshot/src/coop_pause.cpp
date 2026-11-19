@@ -1002,7 +1002,35 @@ void Open(CoopPauseMenu::Page page) {
     }
     Settle();
     g_wanted = kMultiplayerTab;
-    LOG_INFO(Core, "coop: multiplayer tab: opened from the title");
+    LOG_INFO(Core, "coop: multiplayer tab: opened on a page (the title's rows, or the pause menu's Multiplayer page)");
+}
+
+void HostNow() {
+    std::lock_guard lock(g_mutex);
+    g_menu.Show(ReadOptions());   // (the settings as the files have them now: Host reads them from the menu)
+    LOG_INFO(Core, "coop: multiplayer tab: host from the pause menu's Multiplayer page");
+    Host();
+}
+
+void LeaveNow() {
+    std::lock_guard lock(g_mutex);
+    Leave();
+}
+
+void OpenLobby() {
+    g_wanted = kLobbyTab;
+    LOG_INFO(Core, "coop: multiplayer tab: the Lobby tab opened (the pause menu's Multiplayer page)");
+}
+
+void CopyJoinCode() {
+    HosCoopStatus st{};
+    st.size = sizeof st;
+    CoopHookshot::HostMenu().Status(&st);
+    // (a relay room's name first: friends type it; then the relay's join code, then the invite code)
+    const std::string text = st.relay_room[0] != 0 ? st.relay_room : st.relay_code[0] != 0 ? st.relay_code : st.invite;
+    Open(CoopPauseMenu::Page::kMain);   // (first: opening clears the page's note)
+    std::lock_guard lock(g_mutex);
+    Copy(text, "room name or join code");
 }
 
 bool TestMenu(const std::string& page) {

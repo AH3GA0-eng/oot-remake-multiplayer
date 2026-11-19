@@ -36,7 +36,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "puppet_pack"  # noqa: A001
 
-from . import ainb, byml, dumpcheck, dungeon_rooms, hud, look_items, look_live, map_captures, nup, rstb, sarc, skin, title_menu, tunic, tunic_extra, ui_pack, zs  # noqa: E402
+from . import ainb, byml, dumpcheck, dungeon_rooms, hud, look_items, look_live, map_captures, nup, pause_menu, rstb, sarc, skin, title_menu, tunic, tunic_extra, ui_pack, zs  # noqa: E402
 
 TITLE_ID = "0400486024DEC000"
 DEFAULT_MOD_NAME = "coop-puppet"
@@ -703,6 +703,27 @@ def nup_scene_files(n):
     return out
 
 
+def nup_menu_files(n):
+    """RomFS paths of what the menus' steps edit (title_menu.py's title rows, pause_menu.py's Multiplayer tab), in an
+    open Nup: their UI archives and every language's message archive. A .nup build extracts only what is named, and
+    these are not the pack's own sources: without them both steps were left out ("No such file")."""
+    out = []
+    for pattern in (title_menu.TITLE_ARCHIVE, pause_menu.COMMON_ARCHIVE):
+        out += n.glob(pattern)[:1]
+    newest = {}   # (a .nup has the base game's and the update's: the game reads the newest, Product.110 over 100)
+    for rel in n.glob(pause_menu.MALS_GLOB):
+        lang = rel.split("/")[-1].split(".")[0]
+        if lang not in newest or _product(rel) > _product(newest[lang]):
+            newest[lang] = rel
+    return out + [newest[lang] for lang in sorted(newest)]
+
+
+def _product(rel):
+    """The number after .Product. in a RomFS name (100, 110 ...), 0 when there is none."""
+    part = rel.split(".Product.")[-1].split(".")[0] if ".Product." in rel else ""
+    return int(part) if part.isdigit() else 0
+
+
 def nup_look_files(n, dicts):
     """RomFS paths of the gear colours' sources in an open Nup: each gear texture (look_live.GEAR,
     for coop_look/gear.bin: your own sword, shields, gauntlets, boots) and each coloured item's
@@ -1318,7 +1339,7 @@ def skin_row(row, sk, variant):
 
 
 def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None,
-          tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False, title_rows=False,
+          tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False, title_rows=False, pause_tab=False,
           look_slots=look_items.SLOTS, perception=True, blade_copies=look_items.BLADE_COPIES,
           skins=(), test_skin=None, game_has=None):
     """`tunics`: the tunic colours to make puppets of (puppet_pack.tunic.COLORS; each is a model,
@@ -1570,6 +1591,18 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
                                            run=ui_run)
         except (title_menu.TitleMenuError, OSError, ValueError, KeyError, IndexError, struct.error) as e:
             log(f"title menu: rows left out ({e}); the title keeps its own three, co-op uses the Minus prompt")
+    # The pause menu's Multiplayer tab and page (pause_menu.py, issue 264): Hookshot's game only (--pause-tab), with
+    # the co-op module that shows them (patch 0030); both stored hidden, so without the module the menu is the game's.
+    # After the title rows, through the same view (ui_run): its labels join theirs in each language archive. All or
+    # nothing.
+    pause_files = []
+    if pause_tab:
+        try:
+            pause_files = pause_menu.build(romfs, out_romfs, dicts, table,
+                                           lambda root, r, data: write(os.path.join(root, r), data), recompress, log,
+                                           run=ui_run)
+        except (pause_menu.PauseMenuError, OSError, ValueError, KeyError, IndexError, struct.error) as e:
+            log(f"pause menu: the Multiplayer tab left out ({e}); the pause menu keeps its four")
 
     ai_new = byml.dumps(upsert_rows(ai, new_ai))
     gai_new = byml.dumps(upsert_rows(gai, new_gai))
@@ -1614,6 +1647,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "xlink": "player" if sound and not basic_xlink else "basic",
         "tables": [rel(romfs, p) for p in (ai_path, gai_path, rs_path)],
         "title_menu": title_files,
+        "pause_menu": pause_files,
         "source_sha256": {rel(romfs, p): hashlib.sha256(read(p)).hexdigest()
                           for p in (ai_path, gai_path, rs_path)},
     }
@@ -1692,6 +1726,8 @@ def main(argv=None):
                     help="test switch: the puppets get the shared ActorBasic XLink param (the older pack)")
     ap.add_argument("--title-rows", action="store_true",
                     help="Hookshot's game: Host, Join and Co-op Settings as rows of the title (title_menu.py)")
+    ap.add_argument("--pause-tab", action="store_true",
+                    help="Hookshot's game: the pause menu's Multiplayer tab and page (pause_menu.py; patch 0030's module)")
     ap.add_argument("--skin", action="append", default=[], metavar="ID=FOLDER",
                     help="a character model mod (its folder, holding romfs) to make puppets of, "
                          "CoopPuppet_<age>_Skin_<ID> (skin.py); may be given more than once")
@@ -1720,7 +1756,8 @@ def main(argv=None):
         tmp = tempfile.mkdtemp(prefix="coop-puppet-")
         try:
             with nup.Nup(a.romfs) as n:
-                for rel in list(dumpcheck.nup_files(n).values()) + nup_scene_files(n):
+                menus = nup_menu_files(n) if (a.title_rows or a.pause_tab) else []
+                for rel in list(dumpcheck.nup_files(n).values()) + nup_scene_files(n) + menus:
                     nup.write_under(tmp, rel, n.read(rel))
                 # The gear colours' sources (with the dictionaries just taken out, to read the items' packs).
                 for rel in nup_look_files(n, zs.Dicts.from_romfs(tmp)):
@@ -1769,7 +1806,7 @@ def _main_build(a, romfs, hud_reader=None):
         build(romfs, mod_dir, heaps=heaps, sound=not a.no_sound, player_footsteps=a.player_footsteps,
               sound_user=a.sound_user, tunics=tunics, test_tunic=a.test_tunic,
               stand_in_effects=a.seed_trail and not a.no_seed_trail, basic_xlink=a.basic_xlink,
-              title_rows=a.title_rows, look_slots=max(0, min(a.look_slots, look_items.MAX_SLOTS)),
+              title_rows=a.title_rows, pause_tab=a.pause_tab, look_slots=max(0, min(a.look_slots, look_items.MAX_SLOTS)),
               perception=not a.no_perception,
               blade_copies=max(0, min(a.blade_copies, look_items.BLADE_COPIES)), skins=skins, test_skin=a.test_skin,
               game_has=(lambda path: _reader_has(hud_reader, path)) if hud_reader is not None else None)
