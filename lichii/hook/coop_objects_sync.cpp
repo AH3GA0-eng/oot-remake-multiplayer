@@ -1253,7 +1253,19 @@ void Sync::ChaseStep(Object& o, std::uint64_t now_us) {
 
 bool Sync::EventPartner(std::uint64_t address, std::uint64_t now_us) const {
     const auto it = objects_.find(address);
-    return it != objects_.end() && it->second.event_until > now_us;
+    // Row 138(8): an actor our Link is in the area of (sensor_until) waits the same way.
+    return it != objects_.end() && (it->second.event_until > now_us || it->second.sensor_until > now_us);
+}
+
+bool Sync::AreaClaim(std::uint64_t address, std::uint64_t now_us) const {
+    const auto it = objects_.find(address);
+    return it != objects_.end() && it->second.sensor_until > now_us;
+}
+
+std::size_t Sync::AreaClaims(std::uint64_t now_us) const {
+    return static_cast<std::size_t>(std::count_if(objects_.begin(), objects_.end(), [now_us](const auto& e) {
+        return e.second.sensor_until > now_us;
+    }));
 }
 
 std::uint8_t Sync::OwnerAt(std::uint64_t address) const {
@@ -1807,6 +1819,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.slots = s.slots;
         o.bsa = s.bsa;
         o.event_member = s.event_member;  // row 97
+        o.sensor_in_area = s.sensor_in_area;  // row 138(8)
         if (s.hit_at) {
             // (its life drop may be read a walk later than the hit id: kept kHitPlaceKeepUs for it)
             o.place_seen = s.hit_at;
@@ -2162,6 +2175,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.guard = IsGuard(s->name);
         o.npc = s->name.starts_with("Npc_");
         o.event_member = s->event_member;  // row 97
+        o.sensor_in_area = s->sensor_in_area;  // row 138(8)
         o.play_frame = PlaysByFrame(s->name);
         o.first_position = s->position;
         if (s->animation) {
@@ -2611,6 +2625,15 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                     o.chase_until = std::max(o.chase_until, o.event_until);
                 }
             }
+        }
+        // Row 138(8) (coop_sensor_claim.h): our Link is in its area by its own sensor input, so our
+        // game's AI is the one that acts right (Jabu-Jabu's mouth opens for the Link at it). Claimed
+        // as an event claims its partners: flagged targeting (the server hands a copy to us, and
+        // holds ours as a fight while we stay), and the owner's motion is not put on our copy
+        // meanwhile (EventPartner). kSensorKeepUs after our Link leaves, the claim drops.
+        if (o.sensor_in_area.value_or(false) && now_seen.contains(address) && !IsBossOrPart(o.name) && !o.fish) {
+            o.sensor_until = now_us + kSensorKeepUs;
+            o.chase_until = std::max(o.chase_until, o.sensor_until);
         }
         if (o.chase_until > now_us && !o.fish) {
             flags |= proto::object_presence::targeting;

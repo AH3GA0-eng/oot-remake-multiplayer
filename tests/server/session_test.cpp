@@ -2918,6 +2918,26 @@ TEST_CASE("issue 101: a copy that chases its player gives that player the enemy,
   CHECK(messages_to<HandoverAsk>(h, 2).empty());
 }
 
+TEST_CASE("row 138(8): an area claim by two players stays with the owner, and when it leaves the one still in the area gets it") {
+  // Jabu-Jabu's mouth (coop_sensor_claim.h): each game flags him targeting while its own Link is in his area.
+  OwnerHarness h;
+  h.stand(1, 3);  // the owner, 1, at the mouth
+  h.stand(2, 4);  // and 2 at it too: no distance rule moves it
+  h.run(4 * kSecond);
+  h.receive(1, chasing_in("Field", {placed(7)}), kChannelOwnership);
+  const auto claimed = h.now;  // the owner's last claim: its fight lock runs from here
+  h.receive(2, chasing_in("Field", {placed(7)}), kChannelOwnership);
+  h.run(4 * kSecond);
+  CHECK(h.asks() == 0);  // the owner's own claim is a fight: it keeps him
+  // 1 leaves the area (present, no claim). 2 gets him once 1's fight lock has run out, not before.
+  h.receive(1, present_in("Field", {placed(7)}), kChannelOwnership);
+  h.run(quiet_config().fight_lock_us - (h.now - claimed) - kSecond);
+  CHECK(h.asks() == 0);
+  h.run(2 * kSecond);
+  REQUIRE(messages_to<HandoverAsk>(h, 1).size() == 1);
+  CHECK(messages_to<HandoverAsk>(h, 1)[0] == HandoverAsk{placed(7), 0, 2});
+}
+
 TEST_CASE("report 37: an enemy is not handed back to the player who just gave it up for handover_back_us") {
   OwnerHarness h;
   h.stand(1, 34);
