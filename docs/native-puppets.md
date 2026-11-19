@@ -1,7 +1,7 @@
 # Native puppets: other players as real game bodies
 
 Status: design and plan (native-puppets-a, 2026-11-19), plus the test switches `--puppet-body` (phase 1),
-`LICHII_COOP_BOMB_SHARE` (phase 2) and `--puppet-liftable` + `LICHII_COOP_LIFT_PLAYER` (phase 3), each below, and the phase 4 design (section 5). Nothing here is in a release. Today's puppet ([puppet.md](puppet.md)) and the real-Player test
+`LICHII_COOP_BOMB_SHARE` (phase 2) and `--puppet-liftable` + `LICHII_COOP_LIFT_PLAYER` (phase 3), each below, and phase 4, PvP on real bodies, `--puppet-pvp` + `LICHII_COOP_PVP_NATIVE` (section 5: the pack, the server and the glue are built; its path B, the victim's own game working out the damage, is not live yet, so today's PvP stays). Nothing here is in a release. Today's puppet ([puppet.md](puppet.md)) and the real-Player test
 ([native-player.md](native-player.md)) stay as they are until each phase below is proven in two games.
 
 ## The goal
