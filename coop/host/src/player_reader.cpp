@@ -250,6 +250,15 @@ std::optional<protocol::Equipment> PlayerReader::read_equipment() {
   e.head = flags.get_string64(addr::kEquipHeadArmor);
   e.hand = flags.get_string64(addr::kEquipHandArmor);
   wear_from_links(e, read_age() == protocol::Age::child);
+  // The shield the game holds (hand slot 4) over the EquipShield flag, as the
+  // director takes slot 0's sword over EquipWeapon: at an age change the
+  // flag can still name the other age's shield for a sample (Mirror on a
+  // child, Deku on an adult) while the slot holds the one the game draws.
+  // An empty or unreadable slot (no shield yet, a load) leaves the flag.
+  if (const auto held_shield = read_slot_name(addr::kEquipSlotShield);
+      held_shield && held_shield->starts_with("Weapon_Shield_")) {
+    e.shield = held_shield;
+  }
   e.ocarina = flags.get_string64(addr::kEquipOcarina);
   e.arrow = flags.get_string64(addr::kEquipArrow);
   e.drawn = read_drawn();
@@ -361,10 +370,16 @@ std::optional<std::string> PlayerReader::read_armor_link_name(std::uint32_t link
 // (Armor_Adult_Normal is no piece in a child's links).
 // An ADULT keeps the rule before row 148 (its gear on a puppet is not yet
 // checked against the links in a game): a flag with a name stands, an empty
-// or unknown flag is filled from a link piece of its kind.
+// or unknown flag is filled from a link piece of its kind. The one exception
+// (puppet-gear-148, the other direction): a flag naming a CHILD's piece
+// (Armor_Child_*: the bracelet, a mask) is decided by the links at any age,
+// so an adult whose hand or head flag outlived the age change the other way
+// is not sent the child's piece; those pieces are proven link pieces (the
+// bracelet in link 9, a ZR mask in its link), so a worn one is never lost.
 // An empty hand flag with a link unreadable is not known (not a bracelet
 // taken off), as before.
 namespace {
+constexpr std::string_view kChildPiecePrefix = "Armor_Child_";
 bool drawn_head(std::string_view n) {
   return n.starts_with("Armor_") && n.find("_Mask_") != std::string_view::npos;
 }
@@ -387,14 +402,19 @@ void PlayerReader::wear_from_links(protocol::Equipment& e, bool child) {
     if (!links[i]) every_link_read = false;
   }
   const auto decide = [&](std::optional<std::string>& field, bool (*of_kind)(std::string_view)) {
-    if (!child && field && !field->empty()) return;
+    // A child's piece (Armor_Child_*: the bracelet, the masks) is decided by
+    // the links at any age: an adult (or an age not read) whose flag still
+    // names one wears it only if a link holds it, as a child's adult flags.
+    const bool links_decide =
+        child || (field && field->starts_with(kChildPiecePrefix) && of_kind(*field));
+    if (!links_decide && field && !field->empty()) return;
     for (const auto& name : links) {
       if (name && !name->empty() && of_kind(*name)) {
         field = name;
         return;
       }
     }
-    if (child && field && of_kind(*field)) {
+    if (links_decide && field && of_kind(*field)) {
       if (every_link_read) {
         field = std::string{};
       } else {
