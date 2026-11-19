@@ -2263,6 +2263,8 @@ public:
     std::vector<coop::protocol::PlatformCounter> counters_in_;  // under platforms_mutex_
     CoopCounters::CounterSync counters_;
     std::set<u64> counter_nodes_;  // the platform nodes the ring named, while their actor is here
+    // Each counter node's placement in the room table, found once a scene (Counters).
+    std::unordered_map<u64, const CoopRoomObjects::Placement*> counter_places_;
     CoopCounters::OtherNodes counter_others_;  // nodes of other actors (not Obj_), not read every look
     std::string counter_scene_;
     u32 ring_count_seen_ = 0;      // the ring's count at the last look
@@ -2761,8 +2763,6 @@ private:
         return last != 0xffffffffu && static_cast<s32>(last - ours) >= 0;
     }
     std::string life_scene_;
-    // Each counter node's placement in the room table, found once a scene (Counters).
-    std::unordered_map<u64, const CoopRoomObjects::Placement*> counter_places_;
     bool life_table_full_said_ = false;
     static constexpr std::size_t kStepHitsKept = 4096;
     static constexpr u64 kGivenWaitUs = 250'000;
