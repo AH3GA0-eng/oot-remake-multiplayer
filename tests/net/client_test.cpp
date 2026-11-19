@@ -708,6 +708,12 @@ TEST_CASE("client: an unknown refusal reason is kept") {
   CHECK(refuse_reason_text(refused.refuse_reason) == "unknown reason");
 }
 
+TEST_CASE("client: a version refusal tells the player to update every kit (0.11.5 vs 0.11.6)") {
+  const std::string_view text = refuse_reason_text(proto::RefuseReason::wrong_protocol_version);
+  CHECK(text.starts_with("wrong protocol version"));
+  CHECK(text.find("Update.bat") != std::string_view::npos);
+}
+
 TEST_CASE("client: kicked or banned by the host after WELCOME, it stops and does not join again") {
   for (const auto reason : {proto::RefuseReason::kicked, proto::RefuseReason::banned}) {
     CAPTURE(static_cast<int>(reason));

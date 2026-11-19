@@ -36,7 +36,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "puppet_pack"  # noqa: A001
 
-from . import ainb, asb_carry, byml, dumpcheck, dungeon_rooms, hud, look_items, look_live, map_captures, nup, pause_menu, rstb, sarc, skin, title_menu, tunic, tunic_extra, ui_pack, zs  # noqa: E402
+from . import ainb, asb_carry, byml, dumpcheck, dungeon_rooms, hud, look_items, look_live, look_metal, map_captures, nup, pause_menu, rstb, sarc, skin, title_menu, tunic, tunic_extra, ui_pack, zs  # noqa: E402
 
 TITLE_ID = "0400486024DEC000"
 DEFAULT_MOD_NAME = "coop-puppet"
@@ -1622,6 +1622,11 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
             write(os.path.join(mod_dir, look_live.DIR, look_live.GEAR_FILE), gear_blob)
             look_files["gear"] = f"{look_live.DIR}/{look_live.GEAR_FILE}"
             log(f"look: {look_live.DIR}/{look_live.GEAR_FILE} ({len(gear_blob) >> 10} KB of gear textures)")
+            # Which metalness blocks lie under which metal part (#202, look_metal).
+            metal_blob = look_metal.metal(read_tex, log)
+            if metal_blob is not None:
+                write(os.path.join(mod_dir, look_live.DIR, look_metal.FILE), metal_blob)
+                look_files["metal"] = f"{look_live.DIR}/{look_metal.FILE}"
     look_item_files = None
     look_slots = max(0, min(look_slots, look_items.MAX_SLOTS))
     if tunics and look_slots > 0:
