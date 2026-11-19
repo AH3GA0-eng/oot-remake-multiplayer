@@ -6131,20 +6131,21 @@ Seen Jabu(std::optional<bool> in_area, float x = 5.0f) {
     return s;
 }
 
-// Ticks every 66 ms from `from` to `to` (ms) with Jabu's input as given; the last presence flags.
+// Ticks every 66 ms from `from` to `to` (ms) with Jabu's input as given; the presence flags last sent for him
+// (OBJECT_PRESENT goes on a change or every kPresentEveryUs, so they carry over from an earlier run).
+std::map<const Sync*, std::uint8_t> jabu_flags;
 std::optional<std::uint8_t> RunJabu(Sync& sync, std::uint64_t from, std::uint64_t to, std::optional<bool> in_area,
                                     std::optional<std::uint8_t> owner_samples = std::nullopt) {
-    std::optional<std::uint8_t> flags;
-    const proto::ObjectId id = *sync.IdOf(0x100);
     for (std::uint64_t t = from; t <= to; t += 66) {
         if (owner_samples) {
-            sync.Receive(OwnerSample(id, *owner_samples, t * kMs, 5.0f, 100, "Wait"));
+            sync.Receive(OwnerSample(*sync.IdOf(0x100), *owner_samples, t * kMs, 5.0f, 100, "Wait"));
         }
         for (const auto& p : All<proto::ObjectPresent>(Tick(sync, t * kMs, {Jabu(in_area)}))) {
-            flags = p.objects[0].flags;
+            jabu_flags[&sync] = p.objects[0].flags;
         }
     }
-    return flags;
+    const auto it = jabu_flags.find(&sync);
+    return it == jabu_flags.end() ? std::nullopt : std::optional<std::uint8_t>(it->second);
 }
 
 }  // namespace
@@ -6171,7 +6172,8 @@ TEST_CASE("sensor claim: Jabu's area inputs read 1 mean our Link is in his area 
 TEST_CASE("sensor claim: our Link at another player's Jabu claims him, and his owner's mouth waits (row 138(8))") {
     Sync sync;
     sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
-    Tick(sync, 0, {Jabu(false)});
+    jabu_flags.erase(&sync);
+    RunJabu(sync, 0, 0, false);
     const proto::ObjectId id = *sync.IdOf(0x100);
     Own(sync, id, 2);  // P2's Link is away from the mouth: its Jabu keeps it shut
 
@@ -6211,7 +6213,8 @@ TEST_CASE("sensor claim: no claim without the input, for a walk that missed him,
         // A townsperson with none of the inputs (nullopt) is never claimed by area.
         Sync sync;
         sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
-        Tick(sync, 0, {Jabu(std::nullopt)});
+        jabu_flags.erase(&sync);
+        RunJabu(sync, 0, 0, std::nullopt);
         Own(sync, *sync.IdOf(0x100), 2);
         const auto flags = RunJabu(sync, 10, 1500, std::nullopt, 2);
         REQUIRE(flags);
@@ -6222,7 +6225,8 @@ TEST_CASE("sensor claim: no claim without the input, for a walk that missed him,
         // The input read 1 once, then the walks stop seeing him: no claim from the stale read.
         Sync sync;
         sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
-        Tick(sync, 0, {Jabu(true)});
+        jabu_flags.erase(&sync);
+        RunJabu(sync, 0, 0, true);
         Own(sync, *sync.IdOf(0x100), 2);
         Tick(sync, 10 * kMs, {Jabu(true)});
         CHECK(sync.AreaClaim(0x100, 10 * kMs));
