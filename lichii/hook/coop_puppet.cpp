@@ -278,7 +278,10 @@ void Director::PoseFrame(Guest& guest, std::uint64_t now_ms) {
     }
     std::vector<std::pair<std::uint8_t, std::uint64_t>> puppets;
     for (const auto& slot : slots_) {
-        if (slot.phase == Phase::live && slot.actor != 0 && !slot.native) {
+        // A Character Select character's puppet takes no pose: copied onto one, the sender's pose left it
+        // stiff (seen 2026-11-18: Sheik stiff with the copy, moving with the animation commands), so it plays
+        // the player's animation commands on its own model, as a puppet without a pose does.
+        if (slot.phase == Phase::live && slot.actor != 0 && !slot.native && !IsCharacterActor(slot.actor_name)) {
             puppets.emplace_back(slot.number, slot.actor);
         }
     }
@@ -937,7 +940,7 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
                 return c;
             }
         }
-        if (pose_copy_ && CoopPose::Drives(slot.number, now_ms) &&
+        if (pose_copy_ && !IsCharacterActor(slot.actor_name) && CoopPose::Drives(slot.number, now_ms) &&
             CoopPose::Writes(slot.number, now_ms)) {
             // The pose copy moves it. puppet-anim (#36/#41): what the slot last played is
             // forgotten, so when the copy stops (poses stop, or come for another skeleton)
@@ -2218,7 +2221,7 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         Target t;
         t.number = r.number;
         t.color = r.color ? r.color : coop::protocol::slot_color(r.number);
-        t.actor = ActorFor(r.adult, t.color);
+        t.actor = ActorFor(r.adult, t.color, r.character);
         if (r.number >= 1 && r.number < 32 && (PvpCopies() & (1u << r.number)) != 0) {
             t.actor = CoopPvpNative::PvpActor(t.actor);  // PvP on real bodies (phase 4)
         }
@@ -2394,6 +2397,51 @@ LookItems PackLookItems(std::string_view manifest, std::string_view key) {
     return out;
 }
 
+std::string CharacterActor(bool adult, std::uint16_t character) {
+    if (character < kFirstCharacter || character - kFirstCharacter > 999) {
+        return {};
+    }
+    const unsigned file = static_cast<unsigned>(character - kFirstCharacter);
+    std::string name = adult ? "CoopPuppet_Adult_C" : "CoopPuppet_Child_C";
+    name += static_cast<char>('0' + file / 100);
+    name += static_cast<char>('0' + file / 10 % 10);
+    name += static_cast<char>('0' + file % 10);
+    return name;
+}
+
+bool IsCharacterActor(std::string_view actor) {
+    for (const std::string_view head : {std::string_view("CoopPuppet_Child"), std::string_view("CoopPuppet_Adult")}) {
+        if (actor.substr(0, head.size()) != head) {
+            continue;
+        }
+        std::string_view rest = actor.substr(head.size());
+        if (rest.substr(0, 5) == "Quiet") {
+            rest.remove_prefix(5);
+        }
+        return rest.size() == 5 && rest[0] == '_' && rest[1] == 'C' && rest[2] >= '0' && rest[2] <= '9' &&
+               rest[3] >= '0' && rest[3] <= '9' && rest[4] >= '0' && rest[4] <= '9';
+    }
+    return false;
+}
+
+std::vector<std::string> PackCharacterActors(std::string_view manifest) {
+    std::vector<std::string> out;
+    constexpr std::string_view kHead = "\"CoopPuppet_";
+    for (std::size_t at = manifest.find(kHead); at != std::string_view::npos; at = manifest.find(kHead, at + 1)) {
+        const std::size_t end = manifest.find('"', at + 1);
+        if (end == std::string_view::npos) {
+            break;
+        }
+        const std::string_view name = manifest.substr(at + 1, end - at - 1);
+        if (IsCharacterActor(name)) {
+            out.emplace_back(name);
+        }
+    }
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
 bool PackHasGreenPuppets(std::string_view manifest) {
     return manifest.find("\"CoopPuppet_Child_Green\"") != std::string_view::npos &&
            manifest.find("\"CoopPuppet_Adult_Green\"") != std::string_view::npos;
@@ -2404,7 +2452,7 @@ bool PackHasTunicPuppets(std::string_view manifest) {
            manifest.find("\"CoopPuppet_Adult_") != std::string_view::npos;
 }
 
-std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color) const {
+std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color, std::uint16_t character) const {
     if (!settings_.actor.empty()) {
         return settings_.actor;
     }
@@ -2421,6 +2469,15 @@ std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color) co
     const auto works = [this](const std::string& name) {
         return std::find(failed_tunics_.begin(), failed_tunics_.end(), name) == failed_tunics_.end();
     };
+    // The character they picked in the Character Select mod, when this pack has its puppet (and it did not
+    // fail, as a colour's): before the colours, since the character's own model has its own clothes.
+    if (const std::string picked = CharacterActor(adult, character); !picked.empty()) {
+        std::string name = named(picked);
+        if (std::binary_search(settings_.character_actors.begin(), settings_.character_actors.end(), name) &&
+            works(name)) {
+            return name;
+        }
+    }
     if (settings_.tunics && color) {
         const std::string_view tunic = CoopColors::TunicOf(*color);
         if (!tunic.empty()) {
@@ -2694,6 +2751,7 @@ std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_n
                 r.sounds = std::exchange(g_sounds[r.number], {});
             }
             r.look_copy = CoopLookShare::CopyOf(r.number);
+            r.character = CoopLookShare::CharacterOf(r.number);
         }
     }
     return remotes;

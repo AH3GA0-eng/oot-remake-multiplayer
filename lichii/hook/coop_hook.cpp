@@ -1575,6 +1575,17 @@ public:
                                     ? std::optional<std::string>(reading->animation->name)
                                     : std::nullopt,
                                 report.connected ? session_.get() : nullptr);
+        // The character picked in the Character Select mod, when that mod is installed (coop_look_share.h): its
+        // saved Int, read twice a second while a game runs. No such flag (no mod): Link.
+        static std::uint32_t character_tick = 0;
+        if (view.game && character_tick++ % 30 == 0) {
+            static const std::uint32_t picked_hash = coop::host::flag_hash("CharacterMenu_SelectedCharacter");
+            EmulatorMemory flag_memory(system.ApplicationMemory(), base_);
+            const auto picked = coop::host::GameFlags(flag_memory).get_int(picked_hash);
+            CoopLookShare::SetCharacter(picked && *picked > 0 && *picked <= CoopLookShare::kCharacterMax
+                                            ? static_cast<std::uint16_t>(*picked)
+                                            : std::uint16_t{0});
+        }
         // Our look of several parts, chosen in the Multiplayer tab (coop_look_share.h).
         CoopLookShare::Frame(report.connected ? session_.get() : nullptr);
         // The sounds the game starts on our own Link, for the other games (coop_link_sound.h).

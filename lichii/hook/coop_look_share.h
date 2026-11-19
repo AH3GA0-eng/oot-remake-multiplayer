@@ -49,6 +49,15 @@ inline constexpr std::size_t kCopiesPerSlot = 2;
 inline constexpr std::uint64_t kCopyDwellMs = 5000;
 // True when the look colours a part other than the tunic (part 0).
 bool HasGear(const Parts& parts);
+// Character Select (github.com/snaildev99/OoT-Character-Select): the character a player picked in that mod
+// goes out with the look, as one more part. Its part number is one the colours do not use; its "colour" is
+// kCharacterMark | the stored character number (the mod's saved Int CharacterMenu_SelectedCharacter: 0 is
+// Link). A build that does not know the part passes it over, as any part it does not know, and the server
+// relays it as it is. On arrival it is taken out of the parts (CharacterOf has it), so nothing that paints a
+// look sees it.
+inline constexpr std::uint8_t kCharacterPart = 63;
+inline constexpr std::uint32_t kCharacterMark = 0x010000;
+inline constexpr std::uint16_t kCharacterMax = 0x0FFF;
 
 // The rules, with no network: what to send and when, what the others wear.
 // Not thread-safe (the functions below guard it).
@@ -56,6 +65,10 @@ class Share {
 public:
     // Our look changed: it goes out at the next chance.
     void Set(Parts parts);
+    // Our picked character (0: Link, or no Character Select mod): when it changed, the look goes out again.
+    void SetCharacter(std::uint16_t number);
+    // Player `number`'s picked character: 0 until one is heard, and for Link.
+    std::uint16_t CharacterOf(std::uint8_t number) const;
     // An event of the session: a join or a (re)connect sends ours again; a
     // PLAYER_LOOK is kept; a player who left is forgotten. True when this
     // changed what a player wears (for the log and the puppets).
@@ -97,7 +110,10 @@ private:
 
     std::optional<Parts> ours_;
     bool due_ = false;
+    std::uint16_t character_ = 0;
+    bool character_said_ = false;   // a character went out once: a look goes out without colours too
     std::map<std::uint8_t, Parts> theirs_;
+    std::map<std::uint8_t, std::uint16_t> their_character_;
     bool slots_on_ = false;
     std::array<std::uint8_t, kSlots> slots_{};   // the player in each slot, 0 for none
     struct Ready {
@@ -113,6 +129,8 @@ private:
 // The hook's one Share. Set: any thread. OnEvent: the network thread, with
 // its client (sends at once). Frame: the game's thread, each frame. Of: any.
 void Set(Parts parts);
+void SetCharacter(std::uint16_t number);
+std::uint16_t CharacterOf(std::uint8_t number);
 void OnEvent(const coop::net::Event& event, coop::net::Client& client);
 void Frame(coop::host::Session* session);
 std::optional<Parts> Of(std::uint8_t number);
