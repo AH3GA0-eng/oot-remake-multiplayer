@@ -302,8 +302,12 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 if (r.address != s.address) {
                     continue;
                 }
+                // ... and only beside our own Link, its place known (a Lifted
+                // copy away from our Link, or with our Link not read, is not
+                // our lift).
                 const bool lifted =
-                    CoopBombShare::LiftedHere(CoopProjectiles::HeldByAnimation(s.animation->name), r.held);
+                    CoopBombShare::LiftedHere(CoopProjectiles::HeldByAnimation(s.animation->name), r.held) &&
+                    CoopBombShare::NearOurLink(link_, s.position);
                 if (!lifted) {
                     r.refused = false;
                 } else if (!r.removed && !r.taking && !r.refused && !r.adopt) {

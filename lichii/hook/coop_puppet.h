@@ -311,6 +311,16 @@ struct Anim {
     float rate = 1.0f;
 };
 
+// Whether a sample's frame follows its player's animation, given the sample before it (same slot). A playing pose
+// (rate above 0) whose frame stands still from one sample to the next (same command, the same frame) is sent at a
+// fixed frame: the sender does not follow the frame (the carried pose of a lifted player, coop_lift_player.h
+// CarriedAnimation, sends frame 0 at rate 1). The copy then plays on at the rate, and its frame is not set back to
+// the sample's (which would snap the loop back to frame 0 on every sample). A real player's playing animation
+// moves on between samples, so its frame is followed as before; a new command or the first sample is followed.
+inline bool FrameFollowed(const std::string& before_name, float before_frame, const Anim& now) {
+    return !(now.rate > 0.0f && !before_name.empty() && now.name == before_name && now.frame == before_frame);
+}
+
 // coop/host/scene.hpp's Visibility, for a puppet that exists.
 enum class Show { show, hold, hide };
 
@@ -518,6 +528,8 @@ private:
         CoopOcarina::HandBind ocarina_hand;  // issue 152: Ocarina in hand while it plays
         std::string their_anim;              // their last AS command (debug log)
         std::uint32_t anim_serial = 0;
+        std::string sample_name;     // the last sample's command and frame (FrameFollowed)
+        float sample_frame = 0.0f;
         std::uint64_t anim_buffer = 0;  // which name buffer is next
         std::optional<float> frame_to_set;  // after a play
         std::optional<float> held_frame;    // while held
@@ -695,6 +707,8 @@ struct Remote {
     float fade = 1.0f;
     std::uint8_t status = 0;  // PLAYER_STATUS flags
     bool adult = false;
+    // Presence says child (native puppets phase 3: only a young Link is liftable). Age not known: false.
+    bool young = false;
     std::optional<Anim> anim;
     std::uint32_t anim_serial = 0;
     Gear gear;  // as Target::gear
@@ -838,6 +852,23 @@ private:
 // Configure once, before the game starts (CoopSvc does it).
 void Configure(PlannerSettings settings, bool verbose, Director::Log log);
 Director& TheDirector();
+
+// Native puppets phase 3 (coop_lift_player.h): lifting another player. All of it does nothing until
+// WatchGamePlaces(true) (the switch LICHII_COOP_LIFT_PLAYER=1).
+// - WatchGamePlaces: the director keeps, for each copy it draws, where it drew it last and where the game had it
+//   when the director came back to it (read before its write).
+// - SetGameHolds: the copy of player `number` is left to the game (our Link lifted it): the director neither
+//   places, turns nor moves it with the setter while set, and keeps reading where the game has it. 0: none.
+// - GamePlaces: what WatchGamePlaces kept, for the copies drawn in the last 250 ms. Any thread.
+struct GamePlace {
+    std::uint8_t number = 0;
+    Vec3 drawn{};
+    std::optional<Vec3> game;
+};
+void WatchGamePlaces(bool on);
+void SetGameHolds(std::uint8_t number);
+std::uint8_t GameHolds();
+std::vector<GamePlace> GamePlaces();
 // Any thread: TheDirector's LiveMask(), 0 while the puppets are off.
 std::uint32_t LivePuppets();
 

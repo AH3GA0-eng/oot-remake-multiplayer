@@ -62,6 +62,7 @@
 #include "coop_boss_scenes.h"
 #include "coop_teleport_game.h"
 #include "coop_pvp_game.h"
+#include "coop_lift_player_game.h"
 #include "coop_lobby_game.h"
 #include "coop_dbno_game.h"
 #include "coop_mod_share.h"
@@ -684,6 +685,7 @@ public:
         CoopBoss::OnEvent(event);  // docs/dungeons-boss.md
         CoopTeleport::OnEvent(event, client);  // /teleport (docs/setup.md "Chat commands")
         CoopPvp::OnEvent(event, client);  // PvP (docs/play-online.md "PvP")
+        CoopLiftPlayerGame::OnEvent(event, client);  // native puppets phase 3 (LICHII_COOP_LIFT_PLAYER=1)
         CoopDbno::OnEvent(event, client);  // down but not out (docs/play-online.md)
         CoopDifficulty::OnEvent(event, client);  // docs/play-online.md "Difficulty"
         CoopModShare::OnEvent(event, client);  // mods (docs/mods.md "Mods in co-op")
@@ -1606,6 +1608,10 @@ public:
         for (auto& line : CoopPvp::TakeLines()) {
             chat_.Add(std::move(line), true);
         }
+        // Native puppets phase 3, lifting another player (docs/native-puppets.md): off unless
+        // LICHII_COOP_LIFT_PLAYER=1 (then nothing runs here).
+        CoopLiftPlayerGame::Frame(view.scene, reading, report.connected ? session_.get() : nullptr,
+                                  report.server_now_us);
         // Down but not out (docs/play-online.md), after the walk read our
         // Link's life and after PvP's hurts.
         CoopDbno::Frame(view.scene, reading, report.connected ? session_.get() : nullptr,
@@ -2003,6 +2009,8 @@ private:
             reading->equipment->drawn =
                 CoopPuppetOwn::TheDrawn().Apply(*reading->equipment->drawn, CoopPuppetOwn::NowMs());
         }
+        // Native puppets phase 3: lifted, our Link's copies play the carried pose (off: unchanged).
+        CoopLiftPlayerGame::CarriedPose(reading);
         if (reading) {
             view.position = reading->position;
             view.scene = reading->scene;

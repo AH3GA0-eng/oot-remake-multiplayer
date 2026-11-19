@@ -110,8 +110,8 @@ People who contributed code:
 
 - bmitch87 (Linux Longshot: GCC module build and clean-PC kit test, PR #221; IP address and Port rows for joining and hosting, PR #230).
 - SrAjoloteuwu (bosses: Gohma's long intro is not her death, PR #210; no teleport to the other age's Link, PR #211; boss ready guard, PR #209).
-- cirnoice9 (Chinese text for the Multiplayer tab, PR #224; the whole co-op interface in Chinese, PR #231; the Hookshot crash fix, PR #233; Gold Skulltula tokens taken once for everyone, PR #257).
-- StarAppeal (Linux Longshot: the game's functions the co-op module finds by name, PR #228).
+- cirnoice9 (Chinese text for the Multiplayer tab, PR #224; the whole co-op interface in Chinese, PR #231; the chat's notices in Chinese and long notices that wrap, PRs #231 and #256; the Hookshot crash fix, PR #233; Gold Skulltula tokens taken once for everyone, PR #257; NVIDIA DLSS from an SDK already on the PC, PR #229).
+- StarAppeal (Linux Longshot: the game's functions the co-op module finds by name, PR #228; NVIDIA DLSS for the Longshot kits, PR #235).
 - TheProjectNavi (problem reports, PR #259; crossplay: each game names its build to the server, PR #260; lifts and platforms wait for a player riding them, PR #279).
 - DrHammer79 (the Multiplayer tab as a pause-menu page, PR #281; mod API v2, PR #282).
 

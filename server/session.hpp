@@ -446,6 +446,11 @@ struct Stats {
   std::uint64_t bomb_takes = 0;           // BOMB_TAKE asked of the owner
   std::uint64_t bomb_refused = 0;         // BOMB_TAKE answered with BOMB_ANSWER
   std::uint64_t bomb_handed_on = 0;       // a bomb whose owner left went on
+  std::uint64_t lifts_relayed = 0;        // LIFT_ASK / LIFT_ANSWER / LIFT_PLACE passed to the player named
+  std::uint64_t lifts_dropped = 0;        // to nobody, to the sender, or from a game not sharing
+  std::uint64_t lifts_not_sharing = 0;    // LIFT_ASK answered not_sharing by the server
+  std::uint64_t lifts_unplaced = 0;       // LIFT_ASK answered too_far: the lifter's place not known there
+  std::uint64_t lifts_not_young = 0;      // LIFT_ASK answered not_young / LIFT_PLACE dropped: not a child Link
   std::uint64_t handover_chased = 0;      // asked because a copy chased its player
   std::uint64_t handover_back_held = 0;    // not handed back so soon (handover_back_us)
   std::uint64_t fish_to_lure = 0;         // a fish asked over to the nearest lure (issue 151)
@@ -588,9 +593,15 @@ class Session {
     // Where its Link is, from PLAYER_SAMPLE; forgotten at a scene change.
     std::optional<protocol::Vec3> position;
     std::uint64_t position_at = 0;
+    // Its Link's age, from the last PLAYER_SAMPLE that had one (kept over scene changes); unset: not known.
+    // Only a child is ever lifted (on_lift).
+    std::optional<protocol::Age> age;
     // BOMB_SHARE (native puppets phase 2): its game takes part in the bomb
     // hand-over. Off until it says so.
     bool bomb_share = false;
+    // LIFT_SHARE (native puppets phase 3): its game takes part in player
+    // lifts. Off until it says so.
+    bool lift_share = false;
     // As a receiver: how many samples and poses of each sender it was due
     // (interest counts every n-th), and its share of the pose upload cap.
     std::array<std::uint32_t, protocol::kMaxPlayers + 1> samples_due{};
@@ -824,6 +835,10 @@ class Session {
   // hand-over").
   void on_bomb_take(ConnectionId id, Connection& c, const protocol::BombTake& m,
                     std::uint64_t now_us);
+  // Native puppets phase 3 (docs/protocol.md "Player lift"): LIFT_ASK,
+  // LIFT_ANSWER and LIFT_PLACE to the one player each names.
+  void on_lift(ConnectionId id, Connection& c, protocol::Message& message,
+               std::uint64_t now_us);
   void refuse_bomb(ConnectionId to, const protocol::ObjectId& oid, const Object* o,
                    protocol::BombRefusal why);
   // A made bomb whose owner lets go of it (left, changed scene): the
@@ -848,6 +863,10 @@ class Session {
   // not known or the player's is stale.
   std::optional<double> distance_to(const Connection& c, const Object& o,
                                     std::uint64_t now_us) const;
+  // The player's Link is known in `scene` (non-empty): its scene is that
+  // one and its PLAYER_SAMPLE position is fresh.
+  bool place_known_in(const Connection& c, const std::string& scene,
+                      std::uint64_t now_us) const;
   bool unfit_owner(const Connection& c, std::uint64_t now_us) const;
   void mark_fight(Object& o, std::uint64_t now_us);
   bool in_fight(const Object& o, std::uint64_t now_us) const;

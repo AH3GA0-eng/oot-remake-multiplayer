@@ -166,6 +166,10 @@ enum class MessageType : std::uint16_t {
   bomb_take = 530,  // 530 to 534: a bomb changes hands (docs/protocol.md, "Bomb hand-over")
   bomb_answer = 531,
   bomb_share = 532,
+  lift_ask = 535,  // 535 to 539: one player lifts another (docs/protocol.md, "Player lift")
+  lift_answer = 536,
+  lift_place = 537,
+  lift_share = 538,
 };
 
 // PLAYER_SAMPLE component ids.
@@ -1828,6 +1832,70 @@ struct BombAnswer {
   bool operator==(const BombAnswer&) const = default;
 };
 
+// Native puppets phase 3 (docs/native-puppets.md, "Lifting another player";
+// docs/protocol.md, "Player lift"). The lifted player's game decides; the
+// server only passes each message to the one player it names, and only
+// between games that sent LIFT_SHARE.
+//
+// LIFT_ASK: our Link lifted `lifted`'s copy (the game's own lift). To the
+// lifted player only; it answers with LIFT_ANSWER.
+struct LiftAsk {
+  std::uint8_t player_number = kPlayerSelf;  // the lifter
+  std::uint8_t lifted = 0;                   // 1 to 4, not the lifter
+  bool operator==(const LiftAsk&) const = default;
+};
+
+// Why a lift was refused or ended (LIFT_ANSWER).
+enum class LiftRefusal : std::uint8_t {
+  none = 0,         // taken: the lifter's game drives our place from now on
+  busy = 1,         // already lifted, or lifting someone ourselves
+  event = 2,        // our Link is in an event (a talk, a cutscene), a load or a menu
+  down = 3,         // dead, or down but not out
+  not_sharing = 4,  // (the server) the lifted game did not say LIFT_SHARE
+  freed = 5,        // (after a yes) the lifted game took its place back
+  too_far = 6,      // the lifter's Link is not near ours
+  // Owner rule: only a young (child) Link can be lifted. Our Link is adult (or its age not known); after a yes,
+  // our Link grew up while lifted (freed the same way). The server says it too, from the last PLAYER_SAMPLE age.
+  not_young = 7,
+};
+inline constexpr std::uint8_t kLiftRefusalMax = 7;
+
+// LIFT_ANSWER: the lifted game's word on a LIFT_ASK (refusal none = yes), or
+// `freed` when a lift it took ends on its side. To the lifter only.
+// `player_number` is the lifted player (the server writes it, or names the
+// asked player in its own not_sharing answer).
+struct LiftAnswer {
+  std::uint8_t player_number = kPlayerSelf;  // the lifted
+  std::uint8_t lifter = 0;                   // 1 to 4, not the lifted
+  LiftRefusal refusal = LiftRefusal::none;
+  bool operator==(const LiftAnswer&) const = default;
+};
+
+// Where the lifter's game has the lifted player (LIFT_PLACE's phase).
+enum class LiftPhase : std::uint8_t {
+  held = 1,    // in the lifter's hands
+  flying = 2,  // thrown (or set down), not at rest yet
+  landed = 3,  // at rest: the lifted game owns its place again (a lift's last place)
+};
+inline constexpr std::uint8_t kLiftPhaseMax = 3;
+
+// LIFT_PLACE: the lifted player's place as the lifter's game shows it, each
+// frame of a taken lift; to the lifted player only.
+struct LiftPlace {
+  std::uint8_t player_number = kPlayerSelf;  // the lifter
+  std::uint8_t lifted = 0;                   // 1 to 4, not the lifter
+  LiftPhase phase = LiftPhase::held;
+  Vec3 position{};
+  bool operator==(const LiftPlace&) const = default;
+};
+
+// LIFT_SHARE (client only): our game takes part in player lifts (its switch
+// is on). Sent after WELCOME and every few seconds, as BOMB_SHARE.
+struct LiftShare {
+  bool on = true;
+  bool operator==(const LiftShare&) const = default;
+};
+
 // Split screen (docs/protocol.md, "Local players"): the extra players of one
 // game, seats 1 to kMaxLocalSeats (seat 0 is the connection's own player).
 inline constexpr std::uint8_t kMaxLocalSeats = 3;
@@ -1887,7 +1955,8 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              ModList, ModSettings, LobbyAction, LobbyMutes, LobbyResult,
                              LocalJoin, LocalJoined, LocalLeave, LocalSample, LocalMessage, LinkSound,
                              BossScene, BossHeart, PlayerLook, SwitchState, JoinKnock, JoinAllow,
-                             BombTake, BombAnswer, BombShare>;
+                             BombTake, BombAnswer, BombShare, LiftAsk, LiftAnswer, LiftPlace,
+                             LiftShare>;
 
 MessageType type_of(const Message& message);
 
