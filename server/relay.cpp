@@ -394,9 +394,11 @@ std::vector<Outgoing> Relay::tick(std::uint64_t now_ms) {
     }
     it = next;
   }
-  for (auto* table : {&lookups_, &registers_}) {
+  // (the room list's asks have a window of their own: a forged sender's addresses must not pile up either)
+  for (auto [table, window] : {std::pair{&lookups_, config_.window_ms}, std::pair{&registers_, config_.window_ms},
+                               std::pair{&lists_, config_.list_window_ms}}) {
     for (auto t = table->begin(); t != table->end();) {
-      if (now_ms - t->second.window_start >= config_.window_ms) {
+      if (now_ms - t->second.window_start >= window) {
         t = table->erase(t);
       } else {
         ++t;
