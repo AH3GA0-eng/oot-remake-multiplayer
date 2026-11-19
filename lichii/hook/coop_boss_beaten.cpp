@@ -103,9 +103,18 @@ Record& TheRecord() {
     return record;
 }
 
+bool InDungeon(std::uint8_t room, std::string_view scene) {
+    if (CoopBoss::RoomByIndex(room) == nullptr) {
+        return false;
+    }
+    const std::optional<std::string_view> death = DeathScene(room);
+    return death && *death == scene;
+}
+
 std::vector<Write> Apply::Check(const std::optional<std::string>& scene, bool place_known,
                                 std::span<const std::uint8_t> beaten,
-                                const std::function<std::optional<std::uint32_t>(std::uint32_t)>& read) {
+                                const std::function<std::optional<std::uint32_t>(std::uint32_t)>& read,
+                                const std::function<bool(std::uint8_t)>& near) {
     if (!scene) {
         scene_.reset();  // loading: the scene after it (the same one too) checks again
         loaded_.clear();
@@ -120,14 +129,29 @@ std::vector<Write> Apply::Check(const std::optional<std::string>& scene, bool pl
     if (!place_known) {
         return {};
     }
+    // Elsewhere: the rooms the record held when this scene loaded. In a dungeon boss's own scene: live, the record
+    // as it is now (rows 136/137).
+    std::vector<std::uint8_t> due = loaded_;
+    for (const std::uint8_t room : beaten) {
+        if (InDungeon(room, *scene) && !Has(due, room)) {
+            due.push_back(room);
+        }
+    }
     std::vector<Write> out;
-    for (const std::uint8_t room : loaded_) {
+    for (const std::uint8_t room : due) {
         if (!Has(beaten, room)) {
             continue;  // the record was cleared since (the host loaded a save): that boss fights again
         }
         const BeatenSet* set = ForRoom(room);
-        if (set == nullptr || Has(checked_, room) || KeptScene(room, *scene)) {
-            continue;  // in the boss's own scene: its room's logic is loaded (maybe a fight); the next scene gives it
+        if (set == nullptr || Has(checked_, room)) {
+            continue;
+        }
+        if (InDungeon(room, *scene)) {
+            if (near(room)) {
+                continue;  // in (or before) the boss room: D9, its own death runs there; given once we are out of it
+            }
+        } else if (KeptScene(room, *scene)) {
+            continue;  // Ganondorf's and Ganon's end sequence: the next scene gives it
         }
         checked_.push_back(room);
         for (const BeatenBool& b : set->bools) {

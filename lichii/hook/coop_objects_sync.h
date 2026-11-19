@@ -491,6 +491,16 @@ LifeRouted RouteLife(const LifeAsk& a);
 // ours (at most 20 hearts), else nothing. Never lowers it.
 inline constexpr std::int32_t kMostLifeQuarters = 20 * 4;
 std::optional<std::int32_t> RaisedMaxLife(std::int32_t link_max, std::int32_t flag);
+// Rows 136/137: the host loaded an older save and its FLAG_RESET lowered MaxLife while our Link stood in a scene
+// (FlagWatcher::reset_lowered). The component keeps the replaced save's max and writes it back, which the max rule
+// would send to the whole group. The max (and life, held to it) to write into the component: `lower_to` when it is
+// below ours and a real maximum (at least one heart), else nothing. Only while that hold lasts; never otherwise.
+struct LoweredLife {
+    std::int32_t max = 0;
+    std::optional<std::int32_t> life;  // only when ours is above the new max
+};
+std::optional<LoweredLife> LoweredMaxLife(std::int32_t link_max, std::int32_t link_life,
+                                          std::optional<std::int32_t> lower_to);
 
 // One shared actor of a walk, for GroupsOf.
 struct GroupInput {

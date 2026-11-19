@@ -1370,13 +1370,23 @@ public:
             // G2 (#241): a boss the group beat while our game did not see it die gets its beaten set, one way, at the
             // next load of a scene other than the boss's, never mid-scene (coop_boss_beaten.h). Solo or co-op idle: the
             // record is empty.
+            // In the boss's own dungeon scene: live, once our Link is out of the boss's area (rows 136/137).
             const CoopBossBeaten::Record& record = CoopBossBeaten::TheRecord();
             const std::vector<std::uint8_t> beaten = record.Rooms();
+            const auto near_boss = [&](std::uint8_t room) {
+                const auto bosses = CoopBossScenes::Bosses();
+                if (!at || !view.scene || room >= bosses.size()) {
+                    return true;  // not known: wait
+                }
+                return CoopBossScenes::InArea(bosses[room], *view.scene, std::nullopt, *view.scene, *at);
+            };
             for (const CoopBossBeaten::Write& w : boss_beaten_.Check(
-                     view.scene, at.has_value(), beaten, [&](std::uint32_t hash) {
+                     view.scene, at.has_value(), beaten,
+                     [&](std::uint32_t hash) {
                          const auto v = game_store->read(coop::protocol::FlagKey{hash, 0});
                          return v ? std::optional<std::uint32_t>(v->value) : std::nullopt;
-                     })) {
+                     },
+                     near_boss)) {
                 const bool ok = game_store->write(coop::protocol::FlagEntry{
                     coop::protocol::FlagKey{w.hash, 0},
                     w.is_enum ? coop::protocol::FlagKind::uint32 : coop::protocol::FlagKind::boolean, w.value});
@@ -1422,6 +1432,9 @@ public:
             if (session_) {
                 session_->cap_max(coop::protocol::FlagKey{0xfbe01da1u, 0}, CoopBoss::MaxLifeCap());
             }
+            // Rows 136/137: the host's older save lowered MaxLife: our Link's own max follows (coop_objects.h).
+            CoopObjects::SetMaxLifeLowerTo(session_ ? session_->reset_lowered(coop::protocol::FlagKey{0xfbe01da1u, 0})
+                                                    : std::nullopt);
             if (const auto to = CoopBoss::TakeMaxLifeWrite(); to && known) {
                 auto set = *max_life;
                 set.value = static_cast<std::uint32_t>(*to);

@@ -3175,3 +3175,78 @@ TEST_CASE("dungeon items: a guest held by an unfinished join snapshot sends its 
     CHECK(t.guest.stats().hold_timeouts == 1);
   }
 }
+
+TEST_CASE("flag watcher: the host's older save lowers MaxLife, our game's write-back of the old hearts is not sent (rows 136/137)") {
+  // Navi's #137: the heart container taken (16), the host loads a save from before the boss (12). Our Link's Life
+  // component kept 16 and wrote it back; the max rule sent it and the host's game rose to 16 again, while the
+  // container's own Heart_Container_Obtained went back to 0: take it again, repeat to the most hearts.
+  constexpr FlagKey kMaxLife{0xfbe01da1u, 0};  // PlayerStatus.MaxLife, max
+  constexpr FlagKey kMagic{0x12d63a97u, 0};    // PlayerStatus.MPMax, max: the same rule for every max-rule int
+  FakeStore game_store;
+  game_store.values[kMaxLife] = entry(kMaxLife, 16, proto::FlagKind::int32);
+  game_store.values[kMagic] = entry(kMagic, 96, proto::FlagKind::int32);
+  ItemFlagStore store(game_store);
+  REQUIRE(store.is_max(kMaxLife));
+  REQUIRE(store.is_max(kMagic));
+  FlagWatcher w(SharedFlags({kMaxLife, kMagic}), FlagRole::player);
+  for (int i = 0; i <= FlagWatcher::kSettleFrames; ++i) w.frame(store);
+  CHECK_FALSE(w.reset_lowered(kMaxLife));  // co-op idle and plain play: no hold
+  CHECK(w.receive(proto::Message{proto::FlagReset{
+      1, {entry(kMaxLife, 12, proto::FlagKind::int32), entry(kMagic, 48, proto::FlagKind::int32)}}}));
+  CHECK(w.frame(store).empty());
+  CHECK(game_store.get(kMaxLife) == 12u);
+  CHECK(w.reset_lowered(kMaxLife) == 12);
+  CHECK(w.reset_lowered(kMagic) == 48);
+  // The game writes its own old values back: put back to the host's save's, never sent.
+  for (int round = 0; round < 5; ++round) {
+    game_store.values[kMaxLife] = entry(kMaxLife, 16, proto::FlagKind::int32);
+    game_store.values[kMagic] = entry(kMagic, 96, proto::FlagKind::int32);
+    CHECK(w.frame(store).empty());
+    CHECK(game_store.get(kMaxLife) == 12u);
+    CHECK(game_store.get(kMagic) == 48u);
+  }
+  CHECK(w.stats().reset_holds_kept == 10);
+  // The object walk lowered Link's own max: the game keeps 12. Once it has kept it a while the hold ends...
+  for (int i = 0; i <= FlagWatcher::kResetQuietFrames; ++i) CHECK(w.frame(store).empty());
+  CHECK_FALSE(w.reset_lowered(kMaxLife));
+  CHECK_FALSE(w.reset_lowered(kMagic));
+  // ...and the refight's container (12 -> 16, no higher than before the load) is real progress again.
+  game_store.values[kMaxLife] = entry(kMaxLife, 16, proto::FlagKind::int32);
+  CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(kMaxLife, 16, proto::FlagKind::int32)});
+}
+
+TEST_CASE("flag watcher: a reset hold lets a rise past the old value through, ends at a load, a higher reset holds nothing") {
+  constexpr FlagKey kMaxLife{0xfbe01da1u, 0};
+  FakeStore game_store;
+  game_store.values[kMaxLife] = entry(kMaxLife, 16, proto::FlagKind::int32);
+  ItemFlagStore store(game_store);
+  FlagWatcher w(SharedFlags({kMaxLife}), FlagRole::player);
+  for (int i = 0; i <= FlagWatcher::kSettleFrames; ++i) w.frame(store);
+  CHECK(w.receive(proto::Message{proto::FlagReset{1, {entry(kMaxLife, 12, proto::FlagKind::int32)}}}));
+  w.frame(store);
+  REQUIRE(w.reset_lowered(kMaxLife) == 12);
+  // Past what our game had: a new container, sent; the hold is over.
+  game_store.values[kMaxLife] = entry(kMaxLife, 20, proto::FlagKind::int32);
+  CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(kMaxLife, 20, proto::FlagKind::int32)});
+  CHECK_FALSE(w.reset_lowered(kMaxLife));
+  // A load window (a door, a save load: the game makes Link from the flags) ends a hold too.
+  CHECK(w.receive(proto::Message{proto::FlagReset{1, {entry(kMaxLife, 12, proto::FlagKind::int32)}}}));
+  w.frame(store);
+  REQUIRE(w.reset_lowered(kMaxLife) == 12);
+  w.set_loading(true);
+  w.frame(store);
+  w.set_loading(false);
+  for (int i = 0; i <= FlagWatcher::kSettleFrames + 1; ++i) w.frame(store);
+  CHECK_FALSE(w.reset_lowered(kMaxLife));
+  // A host's save with more hearts than ours: no hold (nothing of ours to keep out).
+  CHECK(w.receive(proto::Message{proto::FlagReset{1, {entry(kMaxLife, 24, proto::FlagKind::int32)}}}));
+  w.frame(store);
+  CHECK(game_store.get(kMaxLife) == 24u);
+  CHECK_FALSE(w.reset_lowered(kMaxLife));
+  // The session ends: no hold carries into the next.
+  CHECK(w.receive(proto::Message{proto::FlagReset{1, {entry(kMaxLife, 12, proto::FlagKind::int32)}}}));
+  w.frame(store);
+  REQUIRE(w.reset_lowered(kMaxLife) == 12);
+  w.reset();
+  CHECK_FALSE(w.reset_lowered(kMaxLife));
+}

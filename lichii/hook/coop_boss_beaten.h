@@ -61,6 +61,9 @@ std::optional<std::string_view> DeathScene(std::uint8_t room);
 // maybe a fight); for Ganondorf and Ganon the whole end sequence, InsideGanonCastle, CrumblingGanonCastle (the
 // escape, which reads Defeat_Ganon's step live) and FinalBattleField.
 bool KeptScene(std::uint8_t room, std::string_view scene);
+// Whether `scene` is dungeon boss `room`'s own dungeon scene (0 to 7 only; Ganondorf and Ganon have no room): where
+// Apply gives the set live, outside the boss's area (rows 136/137).
+bool InDungeon(std::uint8_t room, std::string_view scene);
 
 // The room whose boss `m` proves dead, or nothing. The same rule as the server's (server/session.cpp):
 // a BOSS_SCENE outro_start or outro_end: a game took the boss's death event itself (its own death setting or
@@ -106,9 +109,20 @@ public:
     // DeathMountainTrail_Child_Prefab_6f34, SageOfForest_IsBefore_Step08 by Kokiri Forest's Level_All_01 and
     // Level_Area_01), and in the game alone those never change while such a scene is loaded: a kill is always in
     // another scene. `read(hash)` is the flag's value now (nothing: unread, left alone). Returns what to write.
+    //
+    // Rows 136/137 (boss-away-0115): in a dungeon boss's own scene (0 to 7) the set is given LIVE, as soon as the
+    // record has it and our Link is not in that boss's area (`near(room)`: the room and the room before its door,
+    // CoopBossScenes::InArea). Read from the romfs: the boss room's logic holds its flags live and acts on them
+    // (Gohma's Logic/InsideTheDekuTree_Level_Room_L_Common_865f: Create_WarpPrefab <- Gohma_DefeatBoss, Delete_Gohma <-
+    // Get_StoneOfForest_IsAfter_DefeatBoss_Exp, the container while the shared InsideTheDekuTree_Heart_Container_Obtained
+    // is 0), as it does when the game's own death setting writes them in that scene. Waiting for another scene's
+    // load left a player who was in the dungeon at the kill with the shared quest past DefeatBoss (the boss deleted)
+    // and no Gohma_DefeatBoss (no warp): a boss room with no boss, no warp and no way out, and a reload into the
+    // dungeon never gave it (#136). In the area D9 runs the boss's own death there.
     std::vector<Write> Check(const std::optional<std::string>& scene, bool place_known,
                              std::span<const std::uint8_t> beaten,
-                             const std::function<std::optional<std::uint32_t>(std::uint32_t)>& read);
+                             const std::function<std::optional<std::uint32_t>(std::uint32_t)>& read,
+                             const std::function<bool(std::uint8_t)>& near);
     void Reset();
 
 private:

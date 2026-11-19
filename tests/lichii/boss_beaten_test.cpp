@@ -2,6 +2,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -45,6 +46,16 @@ const BeatenSet& Gohma() {
     REQUIRE(s != nullptr);
     return *s;
 }
+
+// Our Link in the boss's area (the room and the room before its door), or not.
+bool InTheArea(std::uint8_t) {
+    return true;
+}
+bool OutOfTheArea(std::uint8_t) {
+    return false;
+}
+const std::function<bool(std::uint8_t)> kNear = InTheArea;
+const std::function<bool(std::uint8_t)> kAway = OutOfTheArea;
 
 bool HasBool(const BeatenSet& s, std::string_view name, bool value) {
     return std::any_of(s.bools.begin(), s.bools.end(),
@@ -135,14 +146,14 @@ TEST_CASE("boss beaten: Ganondorf and Ganon are given outside the end sequence's
         CHECK(CoopBossBeaten::KeptScene(9, kept));
         Flags f = Alive(dorf);
         Apply a;
-        CHECK(a.Check(std::string(kept), true, std::vector<std::uint8_t>{8}, std::ref(f)).empty());
+        CHECK(a.Check(std::string(kept), true, std::vector<std::uint8_t>{8}, std::ref(f), kAway).empty());
     }
     CHECK_FALSE(CoopBossBeaten::KeptScene(8, "GanonCastle"));  // the castle grounds: no fight there
     CHECK_FALSE(CoopBossBeaten::KeptScene(0, "InsideGanonCastle"));
     {
         Flags f = Alive(dorf);
         Apply a;
-        const auto w = a.Check(std::string("GanonCastle"), true, std::vector<std::uint8_t>{8}, std::ref(f));
+        const auto w = a.Check(std::string("GanonCastle"), true, std::vector<std::uint8_t>{8}, std::ref(f), kAway);
         CHECK(w.size() == dorf.bools.size() + 1);
         CHECK((quest_writes(w) == std::vector<std::uint32_t>{dorf.step}));
     }
@@ -154,7 +165,7 @@ TEST_CASE("boss beaten: Ganondorf and Ganon are given outside the end sequence's
         }
         f.v[dorf.quest] = step05;
         Apply a;
-        const auto w = a.Check(std::string("HyruleField"), true, beaten, std::ref(f));
+        const auto w = a.Check(std::string("HyruleField"), true, beaten, std::ref(f), kAway);
         CHECK((quest_writes(w) == std::vector<std::uint32_t>{ganon.step}));
         CHECK(w.size() == dorf.bools.size() + ganon.bools.size() + 1);
     }
@@ -163,13 +174,13 @@ TEST_CASE("boss beaten: Ganondorf and Ganon are given outside the end sequence's
         Flags f;
         f.v[dorf.quest] = coop::protocol::flag_hash(at);
         Apply a;
-        CHECK((quest_writes(a.Check(std::string("HyruleField"), true, std::vector<std::uint8_t>{8, 9}, std::ref(f))) ==
+        CHECK((quest_writes(a.Check(std::string("HyruleField"), true, std::vector<std::uint8_t>{8, 9}, std::ref(f), kAway)) ==
                std::vector<std::uint32_t>{ganon.step}));
     }
     Flags done;
     done.v[dorf.quest] = coop::protocol::flag_hash("Complete");
     Apply a;
-    CHECK(quest_writes(a.Check(std::string("HyruleField"), true, std::vector<std::uint8_t>{8, 9}, std::ref(done)))
+    CHECK(quest_writes(a.Check(std::string("HyruleField"), true, std::vector<std::uint8_t>{8, 9}, std::ref(done), kAway))
               .empty());
 }
 
@@ -218,19 +229,19 @@ TEST_CASE("boss beaten: record") {
     CHECK(r.Rooms().empty());
 }
 
-TEST_CASE("boss beaten: given one way, once per scene load, never in the boss's own scene") {
+TEST_CASE("boss beaten: given one way, once per scene load, never in the boss's area") {
     const BeatenSet& s = Gohma();
     const std::vector<std::uint8_t> beaten{0};
     Flags f = Alive(s);
     Apply a;
     const std::string deku(CoopBoss::RoomByIndex(0)->scene);
 
-    // In the Deku Tree (the boss room or anywhere in it): its room's logic is loaded, nothing given.
-    CHECK(a.Check(deku, true, beaten, std::ref(f)).empty());
+    // In the boss's area of the Deku Tree: D9, its own death runs there; nothing given.
+    CHECK(a.Check(deku, true, beaten, std::ref(f), kNear).empty());
     // Loading, then a field: nothing before Link's place reads.
-    CHECK(a.Check(std::nullopt, false, beaten, std::ref(f)).empty());
-    CHECK(a.Check(std::string("KokiriForest"), false, beaten, std::ref(f)).empty());
-    std::vector<Write> w = a.Check(std::string("KokiriForest"), true, beaten, std::ref(f));
+    CHECK(a.Check(std::nullopt, false, beaten, std::ref(f), kAway).empty());
+    CHECK(a.Check(std::string("KokiriForest"), false, beaten, std::ref(f), kAway).empty());
+    std::vector<Write> w = a.Check(std::string("KokiriForest"), true, beaten, std::ref(f), kAway);
     REQUIRE(w.size() == s.bools.size() + 1);
     for (const auto& b : s.bools) {
         CHECK(std::any_of(w.begin(), w.end(), [&](const Write& x) {
@@ -241,17 +252,17 @@ TEST_CASE("boss beaten: given one way, once per scene load, never in the boss's 
     CHECK(w.back().hash == s.quest);
     CHECK(w.back().value == s.step);
     // Once per scene load.
-    CHECK(a.Check(std::string("KokiriForest"), true, beaten, std::ref(f)).empty());
+    CHECK(a.Check(std::string("KokiriForest"), true, beaten, std::ref(f), kAway).empty());
     // The writes took: the next scene load finds nothing to give.
     for (const Write& x : w) {
         f.v[x.hash] = x.value;
     }
-    CHECK(a.Check(std::nullopt, false, beaten, std::ref(f)).empty());
-    CHECK(a.Check(std::string("KokiriForest"), true, beaten, std::ref(f)).empty());
+    CHECK(a.Check(std::nullopt, false, beaten, std::ref(f), kAway).empty());
+    CHECK(a.Check(std::string("KokiriForest"), true, beaten, std::ref(f), kAway).empty());
     // A reload of an older save of ours (the boss alive in it again): the next scene load gives it again (#241).
     f = Alive(s);
-    CHECK(a.Check(std::nullopt, false, beaten, std::ref(f)).empty());
-    CHECK(a.Check(std::string("HyruleField"), true, beaten, std::ref(f)).size() == s.bools.size() + 1);
+    CHECK(a.Check(std::nullopt, false, beaten, std::ref(f), kAway).empty());
+    CHECK(a.Check(std::string("HyruleField"), true, beaten, std::ref(f), kAway).size() == s.bools.size() + 1);
 }
 
 TEST_CASE("boss beaten: a finished dungeon is never stepped back, unread flags are left alone") {
@@ -261,7 +272,7 @@ TEST_CASE("boss beaten: a finished dungeon is never stepped back, unread flags a
     f.v[s.quest] = coop::protocol::flag_hash("Complete");
     f.v.erase(s.bools.front().hash);
     Apply a;
-    const std::vector<Write> w = a.Check(std::string("KokiriForest"), true, beaten, std::ref(f));
+    const std::vector<Write> w = a.Check(std::string("KokiriForest"), true, beaten, std::ref(f), kAway);
     CHECK(w.size() == s.bools.size() - 1);
     CHECK(std::none_of(w.begin(), w.end(), [](const Write& x) { return x.is_enum; }));
     CHECK(std::none_of(w.begin(), w.end(), [&](const Write& x) { return x.hash == s.bools.front().hash; }));
@@ -273,20 +284,20 @@ TEST_CASE("boss beaten: a boss beaten while we stand in a scene is given at its 
     const BeatenSet& s = Gohma();
     Flags f = Alive(s);
     Apply a;
-    CHECK(a.Check(std::string("KokiriForest"), true, {}, std::ref(f)).empty());  // co-op idle or nothing beaten
+    CHECK(a.Check(std::string("KokiriForest"), true, {}, std::ref(f), kAway).empty());  // co-op idle or nothing beaten
     const std::vector<std::uint8_t> beaten{0};
     // The guests beat Gohma while we stand in Kokiri Forest: nothing written in this scene, however long we stay.
-    CHECK(a.Check(std::string("KokiriForest"), true, beaten, std::ref(f)).empty());
-    CHECK(a.Check(std::string("KokiriForest"), true, beaten, std::ref(f)).empty());
+    CHECK(a.Check(std::string("KokiriForest"), true, beaten, std::ref(f), kAway).empty());
+    CHECK(a.Check(std::string("KokiriForest"), true, beaten, std::ref(f), kAway).empty());
     // The next load (the same scene again too): given then, once.
-    CHECK(a.Check(std::nullopt, false, beaten, std::ref(f)).empty());
-    CHECK(a.Check(std::string("KokiriForest"), true, beaten, std::ref(f)).size() == s.bools.size() + 1);
-    CHECK(a.Check(std::string("KokiriForest"), true, beaten, std::ref(f)).empty());
+    CHECK(a.Check(std::nullopt, false, beaten, std::ref(f), kAway).empty());
+    CHECK(a.Check(std::string("KokiriForest"), true, beaten, std::ref(f), kAway).size() == s.bools.size() + 1);
+    CHECK(a.Check(std::string("KokiriForest"), true, beaten, std::ref(f), kAway).empty());
     // A scene reached without a loading frame between (a new scene name): that is a load too.
     Apply b;
-    CHECK(b.Check(std::string("KokiriForest"), true, {}, std::ref(f)).empty());
-    CHECK(b.Check(std::string("KokiriForest"), true, beaten, std::ref(f)).empty());
-    CHECK(b.Check(std::string("LostWoods"), true, beaten, std::ref(f)).size() == s.bools.size() + 1);
+    CHECK(b.Check(std::string("KokiriForest"), true, {}, std::ref(f), kAway).empty());
+    CHECK(b.Check(std::string("KokiriForest"), true, beaten, std::ref(f), kAway).empty());
+    CHECK(b.Check(std::string("LostWoods"), true, beaten, std::ref(f), kAway).size() == s.bools.size() + 1);
 }
 
 TEST_CASE("boss beaten: every boss's set waits for the next load when beaten mid-scene") {
@@ -297,10 +308,10 @@ TEST_CASE("boss beaten: every boss's set waits for the next load when beaten mid
         Flags f = Alive(set);
         Apply a;
         const std::vector<std::uint8_t> beaten{set.room};
-        CHECK(a.Check(std::string("HyruleField"), true, {}, std::ref(f)).empty());
-        CHECK(a.Check(std::string("HyruleField"), true, beaten, std::ref(f)).empty());
-        CHECK(a.Check(std::nullopt, false, beaten, std::ref(f)).empty());
-        CHECK_FALSE(a.Check(std::string("HyruleField"), true, beaten, std::ref(f)).empty());
+        CHECK(a.Check(std::string("HyruleField"), true, {}, std::ref(f), kAway).empty());
+        CHECK(a.Check(std::string("HyruleField"), true, beaten, std::ref(f), kAway).empty());
+        CHECK(a.Check(std::nullopt, false, beaten, std::ref(f), kAway).empty());
+        CHECK_FALSE(a.Check(std::string("HyruleField"), true, beaten, std::ref(f), kAway).empty());
     }
 }
 
@@ -309,8 +320,8 @@ TEST_CASE("boss beaten: a record cleared mid-scene (the host loaded a save) give
     Flags f = Alive(s);
     Apply a;
     const std::vector<std::uint8_t> beaten{0};
-    CHECK(a.Check(std::string("KokiriForest"), false, beaten, std::ref(f)).empty());  // loaded with it, place unread
-    CHECK(a.Check(std::string("KokiriForest"), true, {}, std::ref(f)).empty());       // cleared before it was given
+    CHECK(a.Check(std::string("KokiriForest"), false, beaten, std::ref(f), kAway).empty());  // loaded with it, place unread
+    CHECK(a.Check(std::string("KokiriForest"), true, {}, std::ref(f), kAway).empty());       // cleared before it was given
 }
 
 TEST_CASE("boss beaten: only a proven death is one (a game took the boss's death event itself)") {
@@ -343,4 +354,80 @@ TEST_CASE("boss beaten: BOSS_SCENE's boss index is the room for the eight dungeo
     for (std::uint8_t i = 0; i < 8; ++i) {
         CHECK(bosses[i].room == static_cast<int>(i));
     }
+}
+
+TEST_CASE("boss beaten: in the boss's own dungeon, out of its area, given live (rows 136/137)") {
+    // Every dungeon boss (child and adult): a player elsewhere in the dungeon when the others win. The room's logic
+    // reads the set live (Gohma: Create_WarpPrefab <- Gohma_DefeatBoss), so it is given at once, not at another
+    // scene's load: else that player's boss room has the boss deleted by the shared quest and no warp.
+    for (const BeatenSet& set : CoopBossBeaten::Sets()) {
+        const CoopBoss::Room* room = CoopBoss::RoomByIndex(set.room);
+        if (room == nullptr) {
+            continue;  // Ganondorf and Ganon: no room, their end sequence's scenes wait (next case)
+        }
+        CAPTURE(set.boss);
+        const std::string dungeon(room->scene);
+        CHECK(CoopBossBeaten::InDungeon(set.room, dungeon));
+        CHECK_FALSE(CoopBossBeaten::InDungeon(set.room, "HyruleField"));
+        Flags f = Alive(set);
+        Apply a;
+        // The scene loaded before the death: nothing yet.
+        CHECK(a.Check(dungeon, true, {}, std::ref(f), kAway).empty());
+        // The death is recorded while we stand elsewhere in the dungeon: given now, mid-scene.
+        const std::vector<std::uint8_t> beaten{set.room};
+        const std::vector<Write> w = a.Check(dungeon, true, beaten, std::ref(f), kAway);
+        CHECK(w.size() == set.bools.size() + 1);
+        // Once.
+        CHECK(a.Check(dungeon, true, beaten, std::ref(f), kAway).empty());
+    }
+}
+
+TEST_CASE("boss beaten: in the boss's area it waits (D9) and is given once we are out of it") {
+    const BeatenSet& s = Gohma();
+    const std::string deku(CoopBoss::RoomByIndex(0)->scene);
+    Flags f = Alive(s);
+    Apply a;
+    const std::vector<std::uint8_t> beaten{0};
+    bool near = true;
+    const std::function<bool(std::uint8_t)> where = [&](std::uint8_t room) { return room == 0 && near; };
+    CHECK(a.Check(deku, true, beaten, std::ref(f), where).empty());
+    CHECK(a.Check(deku, true, beaten, std::ref(f), where).empty());
+    // Our game's own death played (D9): nothing left to give when we walk out.
+    Flags played = f;
+    for (const auto& b : s.bools) {
+        played.v[b.hash] = b.value ? 1 : 0;
+    }
+    played.v[s.quest] = s.step;
+    near = false;
+    CHECK(a.Check(deku, true, beaten, std::ref(played), where).empty());
+    // Not played (we came in after it, or its event was refused): given out of the area.
+    Apply b;
+    near = true;
+    CHECK(b.Check(deku, true, beaten, std::ref(f), where).empty());
+    near = false;
+    CHECK(b.Check(deku, true, beaten, std::ref(f), where).size() == s.bools.size() + 1);
+}
+
+TEST_CASE("boss beaten: another boss's dungeon or a field still waits for the next load") {
+    // Gohma beaten while we stand in Dodongo's Cavern: Kokiri Forest's readers are not loaded, but the rule for
+    // scenes that are not the boss's own stays (47b2bd06): the next load.
+    const BeatenSet& s = Gohma();
+    Flags f = Alive(s);
+    Apply a;
+    const std::string dodongo(CoopBoss::RoomByIndex(1)->scene);
+    REQUIRE(dodongo != std::string(CoopBoss::RoomByIndex(0)->scene));
+    const std::vector<std::uint8_t> beaten{0};
+    CHECK(a.Check(dodongo, true, {}, std::ref(f), kAway).empty());
+    CHECK(a.Check(dodongo, true, beaten, std::ref(f), kAway).empty());
+    CHECK(a.Check(std::nullopt, false, beaten, std::ref(f), kAway).empty());
+    CHECK(a.Check(dodongo, true, beaten, std::ref(f), kAway).size() == s.bools.size() + 1);
+}
+
+TEST_CASE("boss beaten: a record cleared in the dungeon (the host loaded a save) gives nothing live") {
+    const BeatenSet& s = Gohma();
+    Flags f = Alive(s);
+    Apply a;
+    const std::string deku(CoopBoss::RoomByIndex(0)->scene);
+    CHECK(a.Check(deku, true, {}, std::ref(f), kAway).empty());  // co-op idle or solo: the record is empty
+    CHECK(a.Check(deku, true, {}, std::ref(f), kAway).empty());
 }

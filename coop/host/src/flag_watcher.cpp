@@ -264,6 +264,7 @@ void FlagWatcher::note_group(const FlagEntry& value, const FlagEntry* before) {
 
 void FlagWatcher::reset() {
   queue_.clear();
+  reset_holds_.clear();  // rows 136/137: the old session's host's save
   // Row 140: what was left to the game was the old session's group's.
   game_owned_.clear();
   put_back_.clear();
@@ -381,6 +382,8 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
     no_scene_frames_ = 0;
   } else if (!settling() && window_) {
     window_ = false;
+    // Rows 136/137: the game made Link (and its other live copies) again from the flags in this window.
+    reset_holds_.clear();
     // Row 140: a save load (moved_) is another save: its floors are not owed the old one's.
     if (moved_) {
       owed_.clear();
@@ -419,6 +422,7 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
       resend_pending_ = false;
     }
     diff(store, changes);
+    age_reset_holds(store, static_cast<std::uint32_t>(step));
     // Row 140: after this pass, so its own read of the key does not see a write still on its way (Hookshot's setter).
     if (!loading_ && std::exchange(owed_due_, false)) put_owed(store);
   }
@@ -580,7 +584,19 @@ void FlagWatcher::apply_reset(FlagStore& store, const std::vector<FlagEntry>& fl
     const FlagKey key = key_of(entry);
     if (!shared_.contains(key) || is_delta(entry)) continue;  // no one-way rule here
     pending_.erase(key);  // the host's save wins over a change of ours
-    if (write_exact(store, entry)) ++stats_.reset_applied;
+    // Rows 136/137: what our game had before, for a max-rule int the save lowers (ResetHold).
+    const std::optional<FlagEntry> had = entry.kind == protocol::FlagKind::int32 && store.is_max(key)
+                                             ? store.read(key)
+                                             : std::nullopt;
+    if (write_exact(store, entry)) {
+      ++stats_.reset_applied;
+      if (had && had->kind == protocol::FlagKind::int32 && as_int(had->value) > as_int(entry.value)) {
+        reset_holds_[key] = ResetHold{static_cast<std::int32_t>(as_int(entry.value)),
+                                      static_cast<std::int32_t>(as_int(had->value))};
+      } else if (had) {
+        reset_holds_.erase(key);
+      }
+    }
   }
 }
 
@@ -1260,6 +1276,9 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
       ++stats_.pickup_resets;  // the game reset it (a scene change): ours only
       continue;
     }
+    if (!restate_.contains(key) && hold_reset(store, key, before, *now, it->second)) {
+      continue;  // rows 136/137: the replaced save's value, written back by the game itself
+    }
     if (const auto cap = max_caps_.find(key);
         cap != max_caps_.end() && !restate_.contains(key) && before.kind == protocol::FlagKind::int32 &&
         now->kind == protocol::FlagKind::int32 && as_int(now->value) > as_int(before.value) &&
@@ -1360,6 +1379,60 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
     if (role_ == FlagRole::player) pending_[key] = *now;
   }
   settle_guards(store, changes);
+}
+
+bool FlagWatcher::hold_reset(FlagStore& store, FlagKey key, const FlagEntry& before, const FlagEntry& now,
+                             FlagEntry& seen) {
+  const auto h = reset_holds_.find(key);
+  if (h == reset_holds_.end() || now.kind != protocol::FlagKind::int32 || before.kind != protocol::FlagKind::int32 ||
+      as_int(now.value) <= as_int(before.value)) {
+    return false;
+  }
+  if (as_int(now.value) > h->second.high) {
+    reset_holds_.erase(h);  // past what our game had: real progress, sent as any rise
+    return false;
+  }
+  h->second.quiet = 0;
+  h->second.put_at = frames_;
+  pending_.erase(key);
+  ++stats_.reset_holds_kept;
+  if (h->second.tries >= kMaxCapTries) {
+    seen = now;  // row 140: the game refused it a second long: left to it, still never sent
+    return true;
+  }
+  FlagEntry back = now;
+  back.key = key;
+  back.value = as_bits(h->second.low);
+  if (store.write_exact(back)) {  // exact: the max rule would keep the higher
+    ++stats_.applied;
+    ++h->second.tries;  // undone again by the game: kMaxCapTries in all, then left to it (still never sent)
+    seen = back;
+    return true;
+  }
+  note_write_failure(store, key, "reset hold");
+  ++h->second.tries;
+  seen = now;
+  return true;
+}
+
+void FlagWatcher::age_reset_holds(FlagStore& store, std::uint32_t step) {
+  for (auto it = reset_holds_.begin(); it != reset_holds_.end();) {
+    const std::optional<FlagEntry> now = store.read(it->first);
+    if (it->second.put_at == frames_) {
+      ++it;  // put back in this pass: the game has not had a frame to keep or undo it
+      continue;
+    }
+    if (now && now->kind == protocol::FlagKind::int32 && as_int(now->value) == it->second.low) {
+      it->second.quiet += static_cast<int>(step);
+      if (it->second.quiet >= kResetQuietFrames) {
+        it = reset_holds_.erase(it);  // the game keeps the host's save's value: a rise from here is progress
+        continue;
+      }
+    } else {
+      it->second.quiet = 0;
+    }
+    ++it;
+  }
 }
 
 void FlagWatcher::settle_guards(FlagStore& store, Table& changes) {

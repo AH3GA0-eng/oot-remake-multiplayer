@@ -90,6 +90,25 @@ TEST_CASE("objects: a MaxLife raised by another player raises our Link's max lif
     CHECK_FALSE(RaisedMaxLife(-1, 20).has_value());
 }
 
+TEST_CASE("objects: the host's older save lowers our Link's max life only while its reset hold lasts (rows 136/137)") {
+    using CoopObjects::LoweredMaxLife;
+    // 16 -> 12 (a container taken, then the host loaded a save from before the boss): life held to the new max.
+    const auto a = LoweredMaxLife(16, 16, 12);
+    REQUIRE(a.has_value());
+    CHECK(a->max == 12);
+    CHECK(a->life == 12);
+    const auto b = LoweredMaxLife(16, 8, 12);  // hurt: life stays
+    REQUIRE(b.has_value());
+    CHECK(b->max == 12);
+    CHECK_FALSE(b->life.has_value());
+    CHECK_FALSE(LoweredMaxLife(16, 16, std::nullopt).has_value());  // no hold: never lowered (co-op idle, solo)
+    CHECK_FALSE(LoweredMaxLife(12, 12, 12).has_value());            // already there
+    CHECK_FALSE(LoweredMaxLife(12, 12, 16).has_value());            // never raised here (RaisedMaxLife does)
+    CHECK_FALSE(LoweredMaxLife(16, 16, 0).has_value());             // not a real maximum
+    CHECK_FALSE(LoweredMaxLife(16, 16, 3).has_value());
+    CHECK_FALSE(LoweredMaxLife(0, 0, 12).has_value());              // our Link's life not read yet
+}
+
 TEST_CASE("objects: a scene's own enemy gets the same id on both games") {
     const auto a = CoopObjects::SceneSpawnId(kScene, "Enemy_Stalchild", 0);
     CHECK(a == CoopObjects::SceneSpawnId(kScene, "Enemy_Stalchild", 0));
