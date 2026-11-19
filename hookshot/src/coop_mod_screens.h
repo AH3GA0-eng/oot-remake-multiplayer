@@ -32,7 +32,10 @@ inline constexpr std::uint64_t kButtonState = 56;
 // order of the title's buttons array (CoopTitle's +0x2d0).
 inline constexpr std::uint64_t kNameText = 0x18;
 inline constexpr std::size_t kNameMax = 63;
-inline constexpr int kMaxButtons = 64;
+// The most buttons a screen's list is walked for (a list that never comes back to its head stops there). The pause
+// menu's pages screen holds every page's buttons, well over 64 (seen in a run, 2026-11-19: System's five come after the
+// Collection's and Equipment's), so the walk goes far enough for them.
+inline constexpr int kMaxButtons = 256;
 
 // Reads n bytes at a guest address; false when not mapped.
 using Reader = std::function<bool(std::uint64_t address, void* out, std::size_t n)>;
