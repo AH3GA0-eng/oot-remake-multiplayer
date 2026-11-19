@@ -941,7 +941,7 @@ TEST_CASE("hookshot: on Linux the exe exports every function the module finds in
     REQUIRE(start != std::string::npos);
     const std::string build = patch.substr(start, patch.find("\ndiff --git", start) - start);
     // (the exe's link: Longshot's run_link since rc.5, subprocess.run before; the line's indent follows the call)
-    const auto link = build.find("r = run_link([cc]");
+    const auto link = build.find("r = run_link([");
     REQUIRE(link != std::string::npos);
     REQUIRE(build.find("[\"-Wl,--gc-sections\", \"-Wl,--export-dynamic-symbol=hos_posix_*\"] + coop", link) !=
             std::string::npos);
