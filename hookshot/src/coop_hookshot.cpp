@@ -57,6 +57,7 @@
 #include "coop_dbno_body.h"
 #include "coop_dbno_game.h"
 #include "coop_enemy_shots.h"
+#include "coop_mod_api.h"
 #include "coop_mods_runtime.h"
 #include "coop_rando.h"
 #include "coop_hook.h"
