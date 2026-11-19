@@ -137,6 +137,41 @@ struct Mend {
 inline constexpr std::size_t kMends = 2;
 std::span<const Mend, kMends> Mends();
 
+// Row 145: a quest step the game's own flows set back below a step that a
+// played story scene proves. Get_StoneOfWater (romfs Event/EventFlow/
+// Get_StoneOfWater.bfevfl): StoneOfWater_ClearDivingGame sets Step05,
+// StoneOfWater_GetRutoletter Step05_01 and StoneOfWater_UseRutoletter Step06,
+// each only checking Get_StoneOfWater_IsAfter_Step03_Exp, never a later step;
+// Dm_SY_BancChangeArrive's Goto_ZoraDomain sets Step03 or Step03_Impa with no
+// check of the quest at all. King Zora stands aside from Step07 on (the
+// scene Dm_Zora_0010, StoneOfWater_ShowLetter), so the diving game, a letter
+// got or read, or that arrival after he moved put him back in front of the
+// fountain with the letter already spent. Solo too; co-op makes it likelier
+// (a shared Step07 in a game that never did the diving game or still holds
+// a letter). Raised back to the floor through the game's Enum setter, after
+// a hold and only outside events; never from NotReady or an unknown value.
+// The same shape, SageOfWater (review of row 145): the Lake Hylia door into
+// the Water Temple (HyruleField banc, NextEventName
+// SageOfWater_Arrival_WaterTemple = Dm_SY_BancChangeArrive:WaterTemple_Arrival)
+// plays at EVERY entry and sets Step06 whenever SageOfWater_IsAfter_Step04_Exp
+// holds, with no upper check: re-entering after Ruto's scene (Step07), Dark
+// Link (Step07_1, which Room 23 on the way to Morpha reads), Morpha's intro
+// (Step07_2) or his death (Step08) set the quest back to Step06. Each of those
+// has its own played flag; the highest one proven wins (rows of one quest are
+// listed highest first, and MendStory raises only the first row due).
+struct StepFloor {
+    std::uint32_t quest;  // the quest's Enum, Step_<quest>
+    std::uint32_t proof;  // a played-scene Bool only the floor step's own flow sets
+    std::uint32_t floor;  // the step that scene proves
+    std::span<const std::uint32_t> back;  // the lower steps the game's flows set with no check against it
+    const char* what;     // for the log
+};
+inline constexpr std::size_t kStepFloors = 5;
+std::span<const StepFloor, kStepFloors> StepFloors();
+// The floor to write, or nothing: the proof is 1 and our step is one of `back`.
+std::optional<std::uint32_t> StepFloorDue(const StepFloor& floor, std::optional<std::uint32_t> step,
+                                          std::optional<bool> proof);
+
 // Row 129 (GitHub #173): a story event whose played flag is shared never
 // runs in a game behind the group (the game counts it as played), so what
 // its own flow sets there never happens. The owl in Hyrule Field is the only

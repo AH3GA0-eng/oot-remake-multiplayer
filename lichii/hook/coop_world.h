@@ -10,7 +10,9 @@
 
 #pragma once
 
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <deque>
@@ -123,11 +125,12 @@ bool IsShifter(std::string_view name);
 // A keyed piece taken by another game's key whose fall or break should
 // show here before it is removed: falling floors and web parts.
 bool IsFallTaken(std::string_view name);
-// deku-dungeon-2 (issue 196): a floor the room moves by its actor place (the
-// Deku Tree basement's Obj_Deku_MoveFloor_*): the game that shows it moved
-// from where it started sends it (from up to kShifterReachM), and the others
-// hold it at that place until it is back home.
-bool IsGimmickMover(std::string_view name);
+// Not a world object (fable-g3-objects, issue 196): the Deku Tree basement's
+// Obj_Deku_MoveFloor_*. _A_01 is in one placement group with its
+// GroundControlActor_WaveLoop (a 4 m, 18 s wave), which moves it in every game;
+// _A_02 has no group and never moves. Its place used to be sent and held here
+// ("gimmick mover") while the follower's own wave moved it too: two masters.
+// Only the wave's phase differs between games (coop_platforms.h).
 // A shifter held for good at a place another game gave (its AI would put it
 // back); the rest settle as blocks do.
 bool HoldsPlace(std::string_view name);
@@ -318,42 +321,28 @@ private:
     int lines_ = 0;
 };
 // Issue 147: a block another game pushed is warped to its new rest place
-// here, but the block's own memory still holds where it rested before (its
-// base or target), so our player's next push snaps it back there. RestWords
-// looks through the block's memory for that old place, as three floats in a
-// row or as the translation of a 3x4 matrix (a float every 16 bytes), and
-// gives the writes that put the new place there instead:
-// - the actor (+0..+0x600, not its own place +0x31c..+0x34b, which the
-//   setter already wrote),
-// - the first 0x200 bytes of each component its table (+0x270) points to,
-// - the physics root ([[table + 0x50] + 0x20], first 0x400 bytes; docs/world.md).
-// Only for a real move (5 cm or more) from a place that is not near the
-// origin (zeros would match), each axis within 2 cm, never a match that is
-// exactly 0.0 on an axis, and at most kMaxRestTriplets places: more is taken
-// as a wrong match and nothing is written. The sizes searched are not known
-// object sizes, so the glue writes them only with LICHII_COOP_BLOCK_REST=1
-// (the integrator's test); by default it logs where they would go.
+// here, but its push node still holds where it rested before, so our
+// player's next push snaps it back there (below). NodeRestWords tells
+// whether the node holds the old place (each axis within kRestMatchM).
+// (Patch 0029: the earlier search of the actor, its components and its
+// physics root for the old place, RestWords and LICHII_COOP_BLOCK_REST, is
+// gone: the place is in the node, docs/world.md.)
 struct RestWrite {
     std::uint64_t address = 0;
     std::uint32_t value = 0;  // f32 bits
 };
 struct RestScan {
-    std::vector<RestWrite> writes;
-    std::vector<std::string> where;  // per place found: actor+0x.., c+0x50+0x.., physics root+0x.. (matrix)
-    bool too_many = false;
-    bool busy = false;  // NodeRestWords: only one of the push node's places is the old one
+    std::vector<RestWrite> writes;  // non-empty: the node holds the old place (never written)
+    std::vector<std::string> where;  // node+0xfc, node+0x108
+    bool busy = false;  // only one of the push node's places is the old one
 };
-inline constexpr std::size_t kMaxRestTriplets = 12;
 inline constexpr float kRestMatchM = 0.02f;
-RestScan RestWords(const std::function<std::optional<std::uint64_t>(std::uint64_t)>& read,
-                   std::uint64_t actor, const coop::protocol::Vec3& from,
-                   const coop::protocol::Vec3& to);
 
 // Issue 147, world-objects-2: the push block's own AI node, the AINB node
 // ExecuteMovableBoxControl (main of build e0f3ccfaf50065ae, read from the
 // code; docs/world.md "The block's push node"):
-//   [node] = main + kVtable, [node + 0x20] = main + kVtable2 (its constructor
-//   0xe5a870 and destructor 0x275ac10 store both);
+//   [node] = main + kVtable (its constructor 0xe5a870 stores it; the two
+//   classes built on it have their own, kVtables);
 //   its actor = [[[node + 8] + 8] + 0x1f0] (enter 0x2751790 reads the
 //   actor's place +0x31c through that chain);
 //   +0x40 the grid base (from the link MovableBox_BasePosAnchor, else the
@@ -363,10 +352,14 @@ RestScan RestWords(const std::function<std::optional<std::uint64_t>(std::uint64_
 //   the next step's target is figured from them (0xd6ef80, PushPerBlock).
 // A follower's block is warped by the setter, but its node keeps +0xfc and
 // +0x108 at the old rest place, so its player's next push starts there and
-// the block and its pusher snap back. FindBlockNode finds the node by
-// following heap pointers from the actor's components (at most kNodeDepth
-// steps, kNodeLooks objects, each object's first kNodeBytes), and takes it
-// only when both vtables and the actor chain match. NodeRestWords then tells
+// the block and its pusher snap back. The game names the node itself: patch
+// 0029's world event HOS_COOP_WORLD_NODE_START (hookshot/src/hos_coop_nodes.h)
+// gives each started node with its actor, kept in TheNodeStarts(), and
+// FindBlockNode takes this actor's newest one there, only when its vtable is
+// one of kVtables and its owner chain still ends at this actor (no heap
+// search: the old breadth-first walk from the actor's components spent its
+// 2048-object cap before it reached the node, so it never found one, and
+// it knew one node class of the three). NodeRestWords then tells
 // (non-empty `writes`, never written: deku-visuals-b) whether +0xfc and
 // +0x108 both still hold the old place (each axis within kRestMatchM); only
 // one of them: the node is mid-push here and `busy` is set. When both do,
@@ -374,8 +367,17 @@ RestScan RestWords(const std::function<std::optional<std::uint64_t>(std::uint64_
 // it runs only when the node is entered, not at each push (checked on
 // Longshot v3.0.0-rc.3, docs/world.md).
 namespace BlockNode {
+// The node classes whose Enter (vtable slot 29) runs kStartFn: ExecuteMovableBoxControl
+// (its Enter is kStartFn itself) and the two built on it whose Enter calls it first
+// (main+0x26db2a0, main+0x2872580). Read from main of build e0f3ccfaf50065ae.
 inline constexpr std::uint64_t kVtable = 0x49ae6f8;
-inline constexpr std::uint64_t kVtable2 = 0x49ae8b8;
+inline constexpr std::array<std::uint64_t, 3> kVtables{kVtable, 0x499dfd0, 0x49dd0f0};
+inline bool IsNodeVtable(std::uint64_t vtable, std::uint64_t main) {
+    for (const std::uint64_t v : kVtables) {
+        if (main != 0 && vtable == main + v) return true;
+    }
+    return false;
+}
 inline constexpr std::uint64_t kOwner = 0x8;          // [node + 8] -> [+8] -> [+0x1f0] = actor
 inline constexpr std::uint64_t kOwnerActor = 0x1f0;
 inline constexpr std::uint64_t kBase = 0x40;
@@ -384,18 +386,79 @@ inline constexpr std::uint64_t kTarget = 0xfc;
 inline constexpr std::uint64_t kStart = 0x108;
 // deku-visuals-b: the node's own start, (node, enter args): it sets +0x40,
 // +0x4c and the push's start and target from the block's place and links.
-// Its two callers are the node classes' enter methods (main+0x26db2a0,
-// main+0x2872580, through their vtables), so the game runs it when the
-// node is entered, not at each push (read from Longshot v3.0.0-rc.3's
-// lifted f_82771790, main at 0x80020000 there).
+// It is reached only through the three classes' Enter (kVtables), so the
+// game runs it when the node is entered, not at each push (read from
+// Longshot v3.0.0-rc.3's lifted f_82771790, main at 0x80020000 there).
 inline constexpr std::uint64_t kStartFn = 0x2751790;
-inline constexpr int kNodeDepth = 3;
-inline constexpr std::size_t kNodeLooks = 2048;
-inline constexpr std::size_t kNodeBytes = 0x200;
 } // namespace BlockNode
+
+// Patch 0029 (hos_coop_nodes.h): HOS_COOP_WORLD_NODE_START's started nodes,
+// on whichever game thread ran the start, in our own memory: the count goes
+// up, then the pair goes at count % kSlots. No lock (the game thread never
+// waits): a torn pair (one slot's node with another's actor) fails the
+// owner-chain check of whoever uses it, as the pause counters' ring.
+// Generic: any hooked node start comes here; NewestFor gives an actor's
+// nodes newest first.
+class NodeStarts {
+public:
+    static constexpr std::size_t kSlots = 256;
+    void Push(std::uint64_t node, std::uint64_t actor) noexcept {
+        if (node == 0 || actor == 0) {
+            return;
+        }
+        const std::uint32_t n = count_.fetch_add(1, std::memory_order_acq_rel);
+        Slot& s = slots_[n % kSlots];
+        s.node.store(node, std::memory_order_release);
+        s.actor.store(actor, std::memory_order_release);
+    }
+    // `actor`'s started nodes, newest first, each once.
+    std::vector<std::uint64_t> NewestFor(std::uint64_t actor) const {
+        std::vector<std::uint64_t> out;
+        if (actor == 0) {
+            return out;
+        }
+        const std::uint32_t count = count_.load(std::memory_order_acquire);
+        const std::size_t n = std::min<std::size_t>(count, kSlots);
+        for (std::size_t i = 0; i < n; ++i) {
+            const Slot& s = slots_[(count - 1 - i) % kSlots];
+            if (s.actor.load(std::memory_order_acquire) != actor) {
+                continue;
+            }
+            const std::uint64_t node = s.node.load(std::memory_order_acquire);
+            if (node != 0 && std::find(out.begin(), out.end(), node) == out.end()) {
+                out.push_back(node);
+            }
+        }
+        return out;
+    }
+    std::uint32_t Count() const noexcept { return count_.load(std::memory_order_acquire); }
+    void Clear() noexcept {  // (a new game boot: the old nodes are another heap's)
+        for (auto& s : slots_) {
+            s.node.store(0, std::memory_order_relaxed);
+            s.actor.store(0, std::memory_order_relaxed);
+        }
+    }
+
+private:
+    struct Slot {
+        std::atomic<std::uint64_t> node{0};
+        std::atomic<std::uint64_t> actor{0};
+    };
+    std::atomic<std::uint32_t> count_{0};
+    std::array<Slot, kSlots> slots_{};
+};
+inline NodeStarts& TheNodeStarts() {
+    static NodeStarts starts;
+    return starts;
+}
+
+// The push node of `actor` among `starts`' nodes for it (newest first): its
+// vtable one of BlockNode::kVtables and [[[node + 8] + 8] + 0x1f0] == actor.
+// Reads only; nothing when the start was never seen (no patch 0029, or the
+// node has not been entered since the boot).
 std::optional<std::uint64_t> FindBlockNode(
     const std::function<std::optional<std::uint64_t>(std::uint64_t)>& read, std::uint64_t actor,
-    std::uint64_t main);
+    std::uint64_t main, const NodeStarts& starts);
 RestScan NodeRestWords(const std::function<std::optional<std::uint64_t>(std::uint64_t)>& read,
                        std::uint64_t node, const coop::protocol::Vec3& from,
                        const coop::protocol::Vec3& to);
@@ -448,7 +511,6 @@ public:
     static constexpr float kMoverReachM = 15.0f; // only an object this near our Link is ours to move
     static constexpr float kShifterReachM = 40.0f; // a shifter (moved by its AI when hit): a room across
     static constexpr float kBlockStartM = 0.05f; // moved this far from where it rested: being moved
-    static constexpr float kMoverAwayM = 0.5f;   // a gimmick mover this far from its start: moved (not bobbing)
     static constexpr float kLooseStartM = 0.15f; // the same for pots and rocks (they settle a little)
     static constexpr std::uint64_t kMoveEveryUs = 50'000;
     static constexpr std::uint64_t kRestUs = 400'000;        // still this long: at rest
@@ -545,6 +607,12 @@ public:
     // the lock stays, and our player opens it with a lent key (Lend).
     // LICHII_COOP_LOCK_DELETE=1 deletes, and then no key is ever lent.
     void SetDeleteLocks(bool on) { delete_locks_ = on; }
+    // Row 98(2) trigger guards (coop_event_result.h, Trigger::follow): the placement hashes whose following waits
+    // (CoopEventResult::FollowKeepers: a world object that would raise our own asker's trigger, for an event our game
+    // has not played). Another game's moves, rest place and break (a hammer switch's press, a pillar's fall) of a
+    // keeper are not made here; they land once it is no keeper. Our own push or hit of it goes out as usual. Present
+    // thread, before Tick.
+    void SetTriggerKeepers(std::set<std::uint64_t> hashes) { trigger_keepers_ = std::move(hashes); }
     // Present thread: the host loaded a save (host-save's FLAG_RESET): kept
     // breaks (locks) are forgotten, so our locks come back with their rooms.
     void ForgetKept();
@@ -679,7 +747,6 @@ private:
         bool following = false;            // another game's moves are placed
         bool stirred = false;              // moved since the walk before
         bool roller = false;               // IsRoller: rolls on its own
-        bool mover = false;                // IsGimmickMover (home: first_position)
         std::uint32_t place_seen = 0;      // the rest place we last took (Remote::place_serial)
         std::optional<coop::protocol::Vec3> follow_from;  // where it rested before another game moved it
         std::uint64_t settle_us = 0;       // when we took it
@@ -699,6 +766,10 @@ private:
     };
 
     void Drain(std::uint64_t now_us);
+    // Whether another game's state of `o` waits (SetTriggerKeepers); `what` names it for the log, once per keeper.
+    bool KeepsForTrigger(const Object& o, const char* what, Out& out);
+    std::set<std::uint64_t> trigger_keepers_;
+    std::set<std::uint64_t> trigger_said_;  // keepers logged
     // A lying small key we took that has not gone out as our break yet.
     std::optional<std::string> TookKey(std::uint64_t hash) const;  // its count
     // A token's id (TokenId) from where it is, or 0: not known.

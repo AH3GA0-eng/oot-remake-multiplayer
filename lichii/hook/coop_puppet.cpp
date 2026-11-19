@@ -554,7 +554,9 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
         if (slot.refused < kRefusedFast) {
             slot.retry_ms = now_ms + kRefusedRetryMs;
             if (slot.refused == 1) {
-                Say(who + ": create refused; trying again each second");
+                Say(who + ": create refused (most often the game does not know " + slot.actor_name +
+                    ": no row in the actor table it reads, e.g. a mod with its own RSDB/ActorInfo, or an older "
+                    "puppet pack); trying again each second");
             }
         } else {
             slot.retry_ms = now_ms + kRefusedSlowMs;
@@ -2026,9 +2028,9 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
             continue;
         }
         const std::optional<std::string_view> theirs =
-            r.scene ? std::optional<std::string_view>(*r.scene) : std::nullopt;
+            coop::host::view_of(r.scene);
         const std::optional<std::string_view> anim =
-            r.anim ? std::optional<std::string_view>(r.anim->name) : std::nullopt;
+            coop::host::name_of(r.anim);
         Show show = Show::show;
         const char* why = "";
         switch (coop::host::visibility(in.scene, local_event, theirs, r.status, anim)) {

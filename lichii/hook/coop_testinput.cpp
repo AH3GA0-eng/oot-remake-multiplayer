@@ -320,6 +320,22 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             }
             step.kind = Kind::kill;
             step.mark = std::string(w[1]);
+        } else if (cmd == "HIT") {
+            int amount = 0;
+            const std::string_view n = w.size() == 3 ? std::string_view(w[2]) : std::string_view();
+            const auto r = std::from_chars(n.data(), n.data() + n.size(), amount);
+            if (w.size() != 3 || r.ec != std::errc{} || r.ptr != n.data() + n.size() || amount < 1 || amount > 80) {
+                return fail("want: hit ACTOR N (1 to 80)");
+            }
+            step.kind = Kind::hit;
+            step.mark = std::string(w[1]);
+            step.start = std::to_string(amount);
+        } else if (cmd == "STUN") {
+            if (w.size() != 2) {
+                return fail("want: stun BOSS");
+            }
+            step.kind = Kind::stun;
+            step.mark = std::string(w[1]);
         } else if (cmd == "HURT") {
             int quarters = 0;
             const std::string_view n = w.size() == 2 ? std::string_view(w[1]) : std::string_view();
@@ -487,6 +503,7 @@ void Runner::Advance(double now_s, std::optional<std::array<float, 2>> player,
         }
         if (s.kind == Kind::warp || s.kind == Kind::give || s.kind == Kind::wear ||
             s.kind == Kind::assign || s.kind == Kind::chat || s.kind == Kind::kill || s.kind == Kind::hurt ||
+            s.kind == Kind::hit || s.kind == Kind::stun ||
             s.kind == Kind::setflag || s.kind == Kind::setenum || s.kind == Kind::menu) {
             requests_.push_back(Request{s.kind, s.mark, s.start});
             ++index_;
@@ -859,6 +876,16 @@ void Assign(Core::System& system, const std::string& item) {
 // in this game (FlagWatcher max_drops_kept). Test only.
 void SetFlag(Core::System& system, const std::string& name, int value) {
     CoopHook::EmulatorMemory memory(system.ApplicationMemory(), g_state.main);
+    // setflag key64:0xKEY 1: a placement's saved key (a silver rupee token, a counter), as the game's own taking
+    // of it writes it (row 98(2) probe hs-event-result).
+    if (name.starts_with("key64:0x") || name.starts_with("key64:0X")) {
+        std::uint64_t key = 0;
+        const char* end = name.data() + name.size();
+        const bool parsed = std::from_chars(name.data() + 8, end, key, 16).ptr == end && key != 0;
+        const bool ok = parsed && coop::host::GameFlags::set_key64(memory, key, value != 0);
+        LOG_INFO(Core, "coop: test setflag {} (key64) {}: {}", name, value, ok ? "set" : "NOT set");
+        return;
+    }
     const std::uint32_t hash = coop::host::flag_hash(name);
     coop::host::GameFlags flags(memory);
     bool ok = false;
@@ -875,7 +902,8 @@ void SetFlag(Core::System& system, const std::string& name, int value) {
 
 // setenum: this game's Enum flag (a name, or 0x and its hash) to the value of
 // that name, through the game's own queue (issue 193: a Threads of Time
-// quest's step). Test only.
+// quest's step). Test only. The value it had is logged too (as a hash), and
+// the value "?" only reads it (issue 91: which unnamed Enum holds a worn mask).
 void SetEnum(Core::System& system, const std::string& name, const std::string& value) {
     CoopHook::EmulatorMemory memory(system.ApplicationMemory(), g_state.main);
     std::uint32_t hash = 0;
@@ -885,9 +913,16 @@ void SetEnum(Core::System& system, const std::string& name, const std::string& v
     } else {
         hash = coop::host::flag_hash(name);
     }
-    const bool known = hash != 0 && coop::host::GameFlags(memory).get_enum(hash).has_value();
+    const auto was = hash != 0 ? coop::host::GameFlags(memory).get_enum(hash) : std::nullopt;
+    const bool known = was.has_value();
+    if (value == "?") {
+        LOG_INFO(Core, "coop: test setenum {} ?: {}", name,
+                 known ? fmt::format("{:#010x}", *was) : std::string("unknown"));
+        return;
+    }
     const bool ok = known && coop::host::GameFlags::set_enum(memory, hash, coop::host::flag_hash(value));
-    LOG_INFO(Core, "coop: test setenum {} {}: {}", name, value, ok ? "set" : known ? "NOT set" : "unknown");
+    LOG_INFO(Core, "coop: test setenum {} {}: {} (was {})", name, value, ok ? "set" : known ? "NOT set" : "unknown",
+             known ? fmt::format("{:#010x}", *was) : std::string("-"));
 }
 
 // give: bombs, bow and hookshot are the item flags of each; any other name is
@@ -1101,6 +1136,10 @@ void OnFrame(Core::System& system) {
                      request.at[2], ok ? "done" : "failed");
         } else if (request.kind == Kind::kill) {
             CoopObjects::QueueTestKill(request.name);  // logged where it is done
+        } else if (request.kind == Kind::hit) {
+            CoopObjects::QueueTestHit(request.name, std::stoi(request.start));  // logged where it is done
+        } else if (request.kind == Kind::stun) {
+            CoopObjects::QueueTestStun(request.name);  // logged where it is done
         } else if (request.kind == Kind::hurt) {
             if (g_state.link) {
                 const std::array<float, 3> at = *g_state.link;

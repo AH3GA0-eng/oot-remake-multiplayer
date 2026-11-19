@@ -1,4 +1,4 @@
-From f947336e419e6360ff9d165fea9bb07e23487ecd Mon Sep 17 00:00:00 2001
+From f26e0ec19db08f11a790f259926b647f815b7788 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Mon, 16 Nov 2026 17:21:30 -0900
 Subject: [PATCH] Co-op and Longshot's crash reports: nothing sent, co-op's
@@ -33,10 +33,10 @@ tags and the module's level word).
  create mode 100644 host/hos_coop_crash.h
 
 diff --git a/gpu/vk/perf_report.cpp b/gpu/vk/perf_report.cpp
-index 702eb86b..8d276b9f 100644
+index d3d15d57..7240458c 100644
 --- a/gpu/vk/perf_report.cpp
 +++ b/gpu/vk/perf_report.cpp
-@@ -236,6 +236,9 @@ void at_exit() {
+@@ -386,6 +386,9 @@ void at_exit() {
  
  bool perf_report_init() {
      folder = game_dir_path();
@@ -44,21 +44,21 @@ index 702eb86b..8d276b9f 100644
 +    // ticked or not: nothing for a launcher to send
 +    if (true) return false;
      if (!ticked(folder)) return false;
-     {   // (a summary cut short by an exit before: its .tmp, never sent and never counted)
-         std::error_code ec;
+     {   // (what the launcher configured: the relay's address, the source fingerprint and the copies setting)
+         std::ifstream stamp_file(folder / "longshot_version.txt");
 diff --git a/gpu/vk/vk_bug_report.cpp b/gpu/vk/vk_bug_report.cpp
-index d21bccb4..f26e6ae2 100644
+index 5c9fbc75..fd866d55 100644
 --- a/gpu/vk/vk_bug_report.cpp
 +++ b/gpu/vk/vk_bug_report.cpp
-@@ -1,6 +1,7 @@
- // The Insert menu's Bug report: what is read and how it is written (vk_bug_report.h). No Vulkan and no menu here:
+@@ -2,6 +2,7 @@
  // tests/test_bug_report.py compiles this file alone.
  #include "vk_bug_report.h"
+ #include "compat/longshot_redact.h"
 +#include "../../host/hos_coop_crash.h"   // (oot-remake-multiplayer's patch 0027: co-op's page, co-op's lines)
  
  #include <algorithm>
  #include <atomic>
-@@ -42,8 +43,9 @@ namespace {
+@@ -43,8 +44,9 @@ namespace {
  // (a log is copied whole up to 10 MB, well within what the issue tracker takes; a longer one keeps its first MB, where the start, the
  // device and the options are, and its last 9 MB, where the problem usually is: an hour of play logs about 10 MB)
  constexpr uint64_t kLogCap = 10ull << 20, kLogHead = 1ull << 20;
@@ -70,7 +70,7 @@ index d21bccb4..f26e6ae2 100644
  // (the link's longest: a player who is not signed in is sent to the sign-in page, and the address waits for them in a cookie,
  // about 4 KB at most; GitHub's sign-in page, where the form lived first, failed from links of 3500 characters of escaped text
  // on. 2000 passes both, and every browser and chat program takes it)
-@@ -198,6 +200,11 @@ LogFacts copy_log(const std::string& from, const std::string& to, const Inputs&
+@@ -194,6 +196,11 @@ LogFacts copy_log(const std::string& from, const std::string& to, const Inputs&
      uint64_t read = 0, start = 0;   // (bytes read; where the line being gathered starts in the log)
      bool said_gap = false;
      const auto put = [&] {   // (a whole line, its '\n' kept, or the last part of the log)
@@ -82,7 +82,7 @@ index d21bccb4..f26e6ae2 100644
          const std::string clean = redact(line, in.home, in.user, in.windows);
          take_facts(clean, f);
          if (start < gap_from || start >= gap_to) {
-@@ -534,7 +541,7 @@ std::string write(const Inputs& in) {
+@@ -510,7 +517,7 @@ std::string write(const Inputs& in) {
      // rows that depend on this PC and the switches' names: never a switch's value, which only report.txt has. When they do not
      // fit, the options, those rows and how many switches there are; then the options and how many of each; else only the counts)
      // (Forgejo fills a form's field from the query's field:<its id>: routers/web/repo/issue.go, setTemplateIfExists)
@@ -91,7 +91,7 @@ index d21bccb4..f26e6ae2 100644
                         (now.map.empty() ? "" : "&field:where=" + url_part(now.map)) + "&field:gpu=" + url_part(gpu) +
                         "&field:system=" + url_part(in.system);
      const auto count = [](const std::string& s) { return std::to_string(std::count(s.begin(), s.end(), '\n')); };
-@@ -556,12 +563,14 @@ std::string write(const Inputs& in) {
+@@ -532,12 +539,14 @@ std::string write(const Inputs& in) {
          }
          link_short = true;
      }
@@ -109,7 +109,7 @@ index d21bccb4..f26e6ae2 100644
      text += "### Longshot version\n\n" + in.version + "\n\n";
      text += "### Where in the game\n\n" + where + "\n\n";
      text += "### Graphics card and driver version\n\n" + gpu + "\n\n";
-@@ -572,7 +581,7 @@ std::string write(const Inputs& in) {
+@@ -548,7 +557,7 @@ std::string write(const Inputs& in) {
              (picture ? "picture.png: the game's picture when the report was made, without the menu.\n\n"
                       : "No picture: the game showed no new frame while the report was made, or its picture could not be written.\n\n");
      text += "### What this folder holds\n\n" + files + ". Nothing else from this PC: no saves, no game files, not the options file "
@@ -119,10 +119,10 @@ index d21bccb4..f26e6ae2 100644
                                                                : " (the changes from the defaults in short: not all of them fit in a link)") : "") +
              ":\n" + link + "\n";
 diff --git a/gpu/vk/vk_menu.cpp b/gpu/vk/vk_menu.cpp
-index 81858b22..87aba47e 100644
+index f463b0de..ee56d309 100644
 --- a/gpu/vk/vk_menu.cpp
 +++ b/gpu/vk/vk_menu.cpp
-@@ -3651,7 +3651,8 @@ int debug_rows(int* out, int* dev, int* dev_head) {
+@@ -3850,7 +3850,8 @@ int debug_rows(int* out, int* dev, int* dev_head) {
      for (int k = 0; k < count; ++k) {
          const Row& r = rows[tab_row_to_global(TAB_DEBUG, k)];
          if (r.heading) *dev_head = k;
@@ -132,7 +132,7 @@ index 81858b22..87aba47e 100644
      }
      return n;
  }
-@@ -3863,9 +3864,10 @@ const char* bug_report_cell() {
+@@ -4062,9 +4063,10 @@ const char* bug_report_cell() {
  /// Under its help once saved: where the report is and what to do with it (the game opens nothing: no browser or file manager is
  /// sure to be there, as on a Steam Deck in Game Mode)
  std::string bug_report_saved_text(const std::string& folder) {
@@ -146,10 +146,10 @@ index 81858b22..87aba47e 100644
  }
  /// Under its help once pressed: how the report goes
  const char* bug_report_hint() {
-@@ -6737,7 +6739,7 @@ void menu_tick() {
+@@ -6975,7 +6977,7 @@ void menu_tick() {
+             if (host && host->nfc_scan) host->nfc_scan(1);
+             press[7] = false, changed = true;
          }
-         else if (press[7] && is_motion_row(r)) cur_tab = TAB_MOTION, tab_selected[TAB_MOTION] = 0, press[7] = false, changed = true;
-         else if (press[7] && is_fps_dev_row(r)) cur_tab = TAB_FPS_DEV, tab_selected[TAB_FPS_DEV] = 0, press[7] = false, changed = true;
 -        else if (press[7] && is_share_row(r)) share_pipeline_list(), press[7] = false, changed = true;
 +        else if (press[7] && is_share_row(r)) press[7] = false;   // (patch 0027: never listed, and never runs in a co-op build)
          else if (press[7] && is_laptop_row(r)) weak_laptop_apply(), press[7] = false, changed = true;
@@ -206,10 +206,10 @@ index 00000000..45b12ec9
 +}
 +#endif
 diff --git a/host/hos_crash_dialog.c b/host/hos_crash_dialog.c
-index 4edd1a15..b68ee79f 100644
+index 941060a6..26462f15 100644
 --- a/host/hos_crash_dialog.c
 +++ b/host/hos_crash_dialog.c
-@@ -301,6 +301,7 @@ static void read_log(RunLog *r, const Who *who) {
+@@ -302,6 +302,7 @@ static void read_log(RunLog *r, const Who *who) {
      for (uint64_t taken = 0; taken < (256ull << 20) && fgets(line, sizeof line, f);) {
          const size_t n = strlen(line);
          taken += n;
@@ -217,7 +217,7 @@ index 4edd1a15..b68ee79f 100644
          char *clean = redacted(who, line, n);
          if (!clean) continue;
          hos_crash_log_line(&r->facts, clean);
-@@ -1071,7 +1072,8 @@ static void report_facts(const Shown *s, Report *out) {
+@@ -1072,7 +1073,8 @@ static void report_facts(const Shown *s, Report *out) {
          stamp_source[strcspn(stamp_source, " \t")] = 0;
          free(stamp);
      }
@@ -227,7 +227,7 @@ index 4edd1a15..b68ee79f 100644
      count_settings(&in);
      *out = in;
  }
-@@ -1105,6 +1107,7 @@ static int make_report(const Shown *s, Made *out) {
+@@ -1106,6 +1108,7 @@ static int make_report(const Shown *s, Made *out) {
      snprintf(where, sizeof where, "%s", f->place[0] ? f->place : s->log->found ? HOS_CRASH_TITLE_AND_INTRO : "");
      hos_crash_issue_url(out->url, sizeof out->url, title, in.version, f->gpu[0] ? in.gpu : "", system, what, track, where,
                          in.changed_list);
@@ -235,7 +235,7 @@ index 4edd1a15..b68ee79f 100644
      {   /* (one separator between names: the game folder ends with one; a share's leading two kept) */
          const char *from = saved ? path : "";
          size_t o = 0;
-@@ -1163,12 +1166,9 @@ static int sent_already(const Shown *s) {
+@@ -1164,12 +1167,9 @@ static int sent_already(const Shown *s) {
      return t != NULL;
  }
  static void find_addresses(Shown *s) {
@@ -251,7 +251,7 @@ index 4edd1a15..b68ee79f 100644
  }
  /* A line of the report, cleaned (hos_crash_clean), as a JSON string after sep */
  static void put_field(Buf *b, const char *sep, const char *key, const char *value, size_t limit, const Shown *s,
-@@ -1246,6 +1246,7 @@ static int crash_lines(const Shown *s, Lines *tail, Lines *crash) {
+@@ -1254,6 +1254,7 @@ static int crash_lines(const Shown *s, Lines *tail, Lines *crash) {
      for (uint64_t taken = 0; taken < (256ull << 20) && fgets(line, sizeof line, f);) {
          taken += strlen(line);
          line[strcspn(line, "\r\n")] = 0;
@@ -260,10 +260,10 @@ index 4edd1a15..b68ee79f 100644
          if (!found) {   /* (the lines before it: the last 150, a ring) */
              if (ring.n < HOS_CRASH_TAIL_LINES) lines_add(&ring, line);
 diff --git a/host/hos_crash_dialog.h b/host/hos_crash_dialog.h
-index 7c08a0c1..ea13e90c 100644
+index 10f2abb2..3b825eb9 100644
 --- a/host/hos_crash_dialog.h
 +++ b/host/hos_crash_dialog.h
-@@ -24,7 +24,8 @@
+@@ -25,7 +25,8 @@
  /* (the game-problem form, as the Insert menu's Bug report links it: gpu/vk/vk_bug_report.cpp kForm. Forgejo fills a form's field
     from the query's field:<its id>, and the title from title=) */
  #define HOS_CRASH_ISSUE_FORM "https://git.magicbean.dev/MagicBeanDev/Longshot/issues/new?template=.forgejo/ISSUE_TEMPLATE/1-game-problem.yml"
@@ -273,7 +273,7 @@ index 7c08a0c1..ea13e90c 100644
  enum { HOS_CRASH_LINK_MAX = 2000, HOS_CRASH_LOG_LINES = 200 };
  
  /* ---- the helper's command line ---- */
-@@ -488,8 +489,8 @@ static inline size_t hos_crash_message(char *out, size_t cap, int verdict, int s
+@@ -489,8 +490,8 @@ static inline size_t hos_crash_message(char *out, size_t cap, int verdict, int s
      const int n = snprintf(out, cap,
                             "%s.\n\nWhat went wrong: %s\n\n%s"
                             "Report manually copies a report to your clipboard (the error, your PC's hardware and the end of the log, "
@@ -284,7 +284,7 @@ index 7c08a0c1..ea13e90c 100644
                             headline, hos_crash_cause_text(cause),
                             send ? "Report automatically shows you what would go to the Longshot team, and sends it only when you "
                                    "press Send.\n\n" : "",
-@@ -647,11 +648,11 @@ static inline size_t hos_crash_ready_text(char *out, size_t cap, int copied, int
+@@ -605,11 +606,11 @@ static inline size_t hos_crash_ready_text(char *out, size_t cap, int copied, int
          copied ? "The report is on your clipboard. "
          : saved ? "The report could not be put on the clipboard. Click Open the report, select all of it and copy it. "
                  : "The report could not be put on the clipboard, nor saved. ",

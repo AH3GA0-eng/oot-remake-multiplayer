@@ -10,8 +10,9 @@ The set is what the boss's death setting writes in the dungeon (not the boss rus
   - each saved Bool its flow sets (EventTriggerSetGameDataBool), with the value it sets;
   - HavePlayedEvent of the setting itself, of every event it plays (EventTransition: Dm_<Dungeon>_BossOut) and of
     the boss's intro (Dm_<Dungeon>_BossIn, played before any death);
-  - the dungeon quest's step it moves to (EventExecuteProgressChallengeStep): the step right after the quest's last boss
-    step (RSDB Challenge `IsBossBattle`; the earlier ones are mid-bosses: Big Octo, the Forest Temple's),
+  - the dungeon quest's step it moves to (EventExecuteProgressChallengeStep): the step right after one of the quest's
+    boss steps (RSDB Challenge `IsBossBattle`: a dungeon boss's is its quest's last, the earlier ones are mid-bosses:
+    Big Octo, the Forest Temple's; Defeat_Ganon has Ganondorf's Step05 and Ganon's Step08/Step09),
     raised to only from a step before it (never from Complete: a save that
     finished the dungeon is never stepped back, docs/dungeons-boss.md "boss_ours").
 Left out: flags that are not saved, and the fight's own state that co-op never shares and the stale-flag mend clears
@@ -36,7 +37,7 @@ if __package__ in (None, ""):
 
 from . import byml, evfl, zs  # noqa: E402
 
-# CoopBossScenes kBosses 0 to 7 (lichii/hook/coop_boss_scenes.cpp): the room index, the boss, its death setting
+# CoopBossScenes kBosses 0 to 9 (lichii/hook/coop_boss_scenes.cpp): the boss index (the room for 0 to 7), the boss, its death setting
 # (outro_asks[0]), its intro event and its death event. tests/test_boss_beaten.py checks this against that file.
 BOSSES = [
     (0, "Queen Gohma", "InsideTheDekuTree_BossDie", "Dm_Deku_BossIn", "Dm_Deku_BossOut"),
@@ -48,6 +49,13 @@ BOSSES = [
     (5, "Morpha", "Demo_SageOfWater_BossDefeat", "Dm_WaterTemple_BossIn", "Dm_WaterTemple_BossOut"),
     (6, "Bongo Bongo", "ShadowTemple_BossWin", "Dm_ShadowTemple_BossIn", "Dm_ShadowTemple_BossOut"),
     (7, "Twinrova", "SageOfSpirit_BossEnd", "Dm_SpiritTemple_BossIn", "Dm_SpiritTemple_BossOut"),
+    # 8 and 9: no room in CoopBoss::Rooms() (coop_boss_scenes.cpp has -1); the index is BOSS_SCENE's boss. Defeat_Ganon is
+    # each game's own (coop_quests.cpp): Ganondorf's death moves it to Step06 (after Step05, a boss step), Ganon's to
+    # Complete (after Step09). EscapeFromCrumblingGanonCastle between them is read only in CrumblingGanonCastle's own
+    # logic (Logic/CrumblingGanonCastle_*), which a game given Step06 or Complete never needs: not in either set.
+    (8, "Ganondorf", "InsideGanonCastle_Dungeon_BossDie_1", "Dm_InsideGanonCastle_BossIn",
+     "Dm_InsideGanonCastle_BossOut"),
+    (9, "Ganon", "InsideGanonCastle_Dungeon_BossDie_2", "Dm_FinalBattle_BossIn", "Dm_FinalBattle_BossOut"),
 ]
 
 # CoopDungeon::NotShared() (lichii/hook/coop_dungeon.cpp); the test checks the two lists match.
@@ -102,7 +110,7 @@ def normal_world(_actor, query, params):
 
 def beaten_set(boss, actions, game_bools, quests):
     """One boss's set from its death setting's walked actions. `game_bools`: {hash: ResetTypeValue} of the
-    GameDataList Bools; `quests`: {quest name: (enum hash, [NotReady, steps..., Complete], boss step index)}."""
+    GameDataList Bools; `quests`: {quest name: (enum hash, [NotReady, steps..., Complete], [boss step indexes])}."""
     room, name, death, boss_in, boss_out = boss
     bools = {}  # name -> value, the last write wins
 
@@ -130,10 +138,11 @@ def beaten_set(boss, actions, game_bools, quests):
     if step is None:
         raise ValueError(f"{name}: its death setting {death} moves no quest")
     quest, step_name = step
-    enum, steps, boss_at = quests[quest]
+    enum, steps, boss_steps = quests[quest]
     at = steps.index(step_name)
-    if at != boss_at + 1:
-        raise ValueError(f"{name}: {quest} step {step_name} is not the one after its boss step {steps[boss_at]}")
+    if at - 1 not in boss_steps:
+        raise ValueError(f"{name}: {quest} step {step_name} is not the one after a boss step "
+                         f"({', '.join(steps[i] for i in boss_steps)})")
     return {
         "room": room, "boss": name, "quest": quest, "quest_hash": enum, "step": step_name,
         "below": steps[:at], "bools": list(bools.items()),
@@ -156,8 +165,8 @@ def read_romfs(romfs):
         steps = ["NotReady"] + [s["Name"] for s in row["Steps"]] + ["Complete"]
         bosses = [i + 1 for i, s in enumerate(row["Steps"]) if s.get("IsBossBattle")]
         enums = [e for e in data["Enum"] if list(e.get("RawValues", [])) == steps]
-        if bosses and len(enums) == 1:  # the last boss step: the earlier ones are mid-bosses (Big Octo)
-            quests[qname] = (_num(enums[0]["Hash"]), steps, bosses[-1])
+        if bosses and len(enums) == 1:
+            quests[qname] = (_num(enums[0]["Hash"]), steps, bosses)
     flows = {}
 
     def load(fname):

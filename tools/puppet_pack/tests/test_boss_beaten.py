@@ -22,7 +22,7 @@ def read(name):
 
 GOHMA = bb.BOSSES[0]
 STEPS = ["NotReady", "Ready", "GoInside", "MeetBoss", "GoToBossRoom", "DefeatBoss", "GoToWarpPoint", "Complete"]
-QUESTS = {"Get_StoneOfForest": (0x7d776b61, STEPS, 5)}
+QUESTS = {"Get_StoneOfForest": (0x7d776b61, STEPS, [5])}
 
 
 def saved(*names, reset=bb.SAVED):
@@ -76,6 +76,25 @@ class BeatenSet(unittest.TestCase):
         with self.assertRaises(ValueError):
             bb.beaten_set(GOHMA, acts, self.flags(), QUESTS)
 
+    def test_a_step_after_an_earlier_boss_step(self):
+        # Defeat_Ganon: Ganondorf's death moves it to Step06 (after the boss step Step05), Ganon's to Complete (after
+        # Step09); Step07 follows no boss step.
+        steps = ["NotReady", "Ready", "Step01", "Step02", "Step03", "Step04", "Step05", "Step06", "Step07", "Step08",
+                 "Step09", "Complete"]
+        quests = {"Defeat_Ganon": (0x1234, steps, [6, 9, 10])}
+        boss = (8, "Ganondorf", "Die_1", "Dm_In", "Dm_Out")
+
+        def death(step):
+            return [act("EventTransition", EventName="Dm_Out"),
+                    act("EventExecuteProgressChallengeStep", ChallengeName="Defeat_Ganon", StepName=step)]
+
+        flags = saved("HavePlayedEvent.Die_1", "HavePlayedEvent.Dm_In", "HavePlayedEvent.Dm_Out")
+        s = bb.beaten_set(boss, death("Step06"), flags, quests)
+        self.assertEqual((s["step"], s["below"]), ("Step06", steps[:7]))
+        self.assertEqual(bb.beaten_set(boss, death("Complete"), flags, quests)["below"], steps[:11])
+        with self.assertRaises(ValueError):
+            bb.beaten_set(boss, death("Step07"), flags, quests)
+
     def test_normal_world_answers(self):
         self.assertEqual(bb.normal_world("GameSystemActor", "EventQueryIsDreamWorld", {}), 1)
         self.assertEqual(bb.normal_world("GameDataActor", "EventQueryIsGameDataBool",
@@ -113,7 +132,8 @@ class AgainstTheCode(unittest.TestCase):
         for room, name, death, boss_in, boss_out in bb.BOSSES:
             m = re.search(r'\{"' + re.escape(name) + r'", "(\w+)", "(\w+)", (-?\d+), \{[^}]*\},\s*\{"(\w+)"', text)
             self.assertIsNotNone(m, name)
-            self.assertEqual(m.groups(), (boss_in, boss_out, str(room), death), name)
+            self.assertEqual(m.groups(), (boss_in, boss_out, str(room if room < 8 else -1), death), name)
+        self.assertEqual([b[0] for b in bb.BOSSES], list(range(10)))  # BOSS_SCENE's boss index, kBosses' order
 
     def test_not_shared_matches_coop_dungeon(self):
         text = read("coop_dungeon.cpp")
@@ -129,7 +149,7 @@ class AgainstTheCode(unittest.TestCase):
             self.assertEqual(int(h, 16), bb.murmur3(name), name)
         sets = re.findall(r"\{(\d), \"[^\"]+\", 0x[0-9a-f]{8}u, \"\w+\", 0x([0-9a-f]{8})u, \"(\w+)\", kBelow\1, "
                           r"kBools\1\}", text)
-        self.assertEqual([int(r) for r, _, _ in sets], list(range(8)))
+        self.assertEqual([int(r) for r, _, _ in sets], list(range(10)))
         for _, h, step in sets:
             self.assertEqual(int(h, 16), bb.murmur3(step), step)
 
