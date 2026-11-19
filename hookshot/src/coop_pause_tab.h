@@ -20,8 +20,10 @@
 // makes the game's calls and logs.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "hos_coop_api.h"
@@ -199,6 +201,7 @@ public:
     // a row): the game does not start them, the module took the press. nullptr when none.
     const char* TakeStripSound();
     const char* TakePagesSound();
+    void Sound(const char* name) { pages_sound_ = name; }   // a menu sound for the module's own move (the cells)
 
     // The Join view's two fields (the room name, the join password) and which one is typed into (-1: none). While one
     // is, the pad's buttons are all the page's (none reach System) and the keyboard's keys are the field's (Key, Char).
@@ -302,6 +305,13 @@ enum class RowAction {
     kAutoRejoin,     // auto-rejoin on or off (coop_auto_rejoin.h; saved at once)
     kShowPassword,   // the host's Session view: its join password shown on the row, or hidden again (only on A:
                      // friends who found the game on this network type it)
+    // The game browser (View::kLan): the games in the cells on the right, the list chosen on the rows.
+    kBrowseLan,      // the cells list the games on this network
+    kBrowseOnline,   // the cells list the relay's public rooms (coop_room_list.h)
+    kBrowsePage,     // the cells' next page
+    kBrowseRefresh,  // the list asked again (this network's games forgotten; the relay asked at once)
+    kListRoom,       // this game's room on the relay's public list when it hosts, on or off (coop-options.ini
+                     // list_room; saved at once)
 };
 inline constexpr std::uint64_t kConfirmMs = 3000;
 // proto::lobby_mute's bits (CoopLobby's kVoice, kChat; the module checks they match).
@@ -324,6 +334,10 @@ struct Session {
     int lan_listed = 0;         // the games on this network the view lists
     int lan_page = 0;           // its page (PlayerIndex)
     std::uint32_t lan_joinable = 0;   // bit i: the list's game i can be joined (same version, room for one)
+    bool online = false;        // the game browser lists the relay's public rooms (else the games on this network)
+    int online_listed = 0;      // the rooms it lists
+    int cell_page = 0;          // the browser's page of cells (kCells a page)
+    bool list_room = false;     // hosting lists this game's room on the relay's public list
     bool lan_password = false;  // a game's view: its join password is typed (every session has one)
     bool has_password = false;  // hosting, and the session's join password is known (the status)
     bool password_shown = false;   // the host's Session view shows it now (its rows' A hides it again)
@@ -346,6 +360,62 @@ RowAction ActionFor(View view, int row, const Session& s);
 inline bool KeepConfirm(bool shown, int focused_row, int confirm_row) {
     return shown && focused_row >= 0 && focused_row == confirm_row;
 }
+
+// --- The mouse over our rows ---
+// Longshot's mouse focuses the button under the cursor with the game's focus setter, then presses A. While our page
+// shows, that setter leaves System's buttons as they are (seen in a run, 2026-11-19: "the focus to Pa_Button_04 (1)",
+// then "row 3 chosen"): a click on Back chose the row the cursor was on. The pad's up and down do move the cursor, so
+// the page follows the mouse itself: the module reads the cursor and the rows' boxes each pad read, MouseRows steps
+// the game's cursor to the row under the mouse with the pad's up and down, and an A just after a click on a row is
+// that row's.
+
+// A row's box in the layout's units (CoopModScreens::HitBox); shown false when it is not on the screen.
+struct RowBox {
+    bool shown = false;
+    float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+};
+using RowBoxes = std::array<RowBox, kRows>;
+
+// A client pixel in the layout's units: the game's 3840 x 2160 picture fit in a w x h client area about its centre,
+// y up (as Longshot's mouse takes it).
+std::pair<float, float> LayoutPoint(int px, int py, int w, int h);
+
+// The row whose box holds (x, y), -1 for none. Boxes one above the other meet halfway across a gap under 240 units, and
+// the column's ends grow by as much (no dead line between two rows, as Longshot's mouse takes the game's lists).
+int RowAt(const RowBoxes& boxes, float x, float y);
+
+class MouseRows {
+public:
+    static constexpr std::uint64_t kClickMs = 400;     // an A this long after a click on a row is that row's
+    static constexpr int kOffRows = -2;                // Clicked: a press on the page off our rows (its A chooses none)
+    static constexpr std::uint64_t kStepWaitMs = 250;  // a step not seen as the cursor's move: the next after this
+    static constexpr std::uint64_t kGiveUpMs = 2000;   // the cursor not there by then: let be
+
+    struct In {
+        std::uint64_t now_ms = 0;
+        bool inside = false;   // the cursor over the game's client area, the game's window in front
+        float x = 0, y = 0;    // where (LayoutPoint)
+        bool left = false;     // the left button held
+        bool pad = false;      // the player's own up or down this read (the mouse's steps stop)
+        int focused = -1;      // the game's cursor's row (-1 not known)
+        RowBoxes boxes{};
+    };
+
+    // The pad bits to add for the game this read: a step (up or down, one read held, one let go) toward the row the
+    // mouse moved onto or clicked.
+    std::uint64_t Step(const In& in);
+    // The row clicked (pressed on) in the last kClickMs, kOffRows for a press on the page off every row (Longshot's A
+    // for a button that is none of ours), -1 none; Take forgets it (one A each click).
+    int Clicked(std::uint64_t now_ms) const;
+    int TakeClicked(std::uint64_t now_ms);
+    void Reset();
+
+private:
+    bool seen_ = false, left_ = false, held_ = false;
+    float x_ = 0, y_ = 0;
+    int target_ = -1, clicked_ = -1, step_from_ = -1;
+    std::uint64_t since_ = 0, clicked_ms_ = 0, step_ms_ = 0;
+};
 
 // One update ahead of `now`, from its step since `prev`, and not past `limit` when it heads for it. The module reads
 // the fourth tab's place and fades before the strip's own update, so they are one update old: ours takes them one
@@ -376,6 +446,9 @@ struct SessionView {
     std::string room_field, password_field;
     bool room_ready = false, relay_set = false;
     std::vector<std::string> lan_rows;    // the games on this network, as their rows say them (CoopLan::RowText)
+    std::vector<std::string> online_rows; // the relay's public rooms, as their cells say them (CoopRoomList::CellText)
+    std::string online_state;             // the browser's online list when it has no rooms: why ("" asking)
+    int cell = -1;                        // the browser's cell picked with the pad or the mouse (-1: the rows')
     std::string lan_game;                 // a game's view: the game picked, as its row said it
     std::string turned_away;              // a guest the host's game turned away (kicked, banned, full: the Lobby's
                                           // refusal, its short reason), "" not; Leave, then join again
@@ -391,6 +464,31 @@ inline constexpr std::size_t kRowChars = 24;
 std::vector<std::string> RowTexts(const SessionView& v);
 // A view's rows (kMain: RowTexts). A row with nothing on it says " " (a pane's text is never empty).
 std::vector<std::string> RowTexts(View view, const SessionView& v);
+
+// --- The game browser (View::kLan): the games in cells on the right of the page ---
+// The page's right half held System's controller picture (hidden on ours): the pack puts kCells copies of the page's
+// button there, Pa_Game_00..07 (tools/puppet_pack/pause_menu.py), two columns of four lined up with the rows, stored
+// hidden. The rows choose the list (this network's games, or the relay's public rooms) and its page; the cells show
+// a page of it. Right (or the mouse) goes into the cells, Left from the left column or B back to the rows; A on a cell
+// opens that game's view (a game on this network: its password, then Join; a room: the Join view with its name).
+inline constexpr int kCells = 8, kCellColumns = 2;
+// The cells' texts for this page ("" a cell not shown). With nothing listed, the first says why.
+std::vector<std::string> CellTexts(const SessionView& v);
+// A relay room's cell: "kokiri: Saria (2/4)", the room and the host's name it was listed under (both public: anyone
+// who asks the relay reads them, so the cell shows them too), then `tail` (" (2/4)", " (full)", " (other version)").
+// Within kRowChars: the longer of the two names is cut first ("..."), never the tail.
+std::string RoomCell(const std::string& room, const std::string& host, const std::string& tail);
+// The games the browser lists now (the chosen list's), and its pages.
+int BrowseListed(const Session& s);
+int CellPages(int listed);
+// The list's index of a cell on the browser's page, -1 none.
+int CellIndex(const Session& s, int cell);
+// A cell moved by (dx, dy) (columns, rows) among `shown` cells: the cell it reaches, kRowsCell when Left leaves the left
+// column (back to the rows), or the same cell at an edge.
+inline constexpr int kRowsCell = -1;
+int CellMove(int cell, int dx, int dy, int shown);
+// The cell whose box holds (x, y) (the layout's units, LayoutPoint), -1 none.
+int CellAt(const std::array<RowBox, kCells>& boxes, float x, float y);
 const char* ActionWords(RowAction a);   // for the log
 
 // The log lines a run needs (the first step's probe, kept): a screen object's first update, its updates over its
