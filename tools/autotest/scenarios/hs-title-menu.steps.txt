@@ -4,9 +4,10 @@
 # "title_rows": true). Both games start as the harness starts them (co-op on from the start) and stay at the title.
 # Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-title-menu
 # Shots (s<step>-<name>-A/-B.png) and checks (proofs.txt, title-*):
-#   top       the title, the cursor on Continue: seven rows in the game's own look (Continue, New Game, Options,
-#             the game's fourth, then Host, Join, Co-op Settings)
+#   top       the title, the cursor on Continue: the game's own rows then ours, in the game's own look (Longshot
+#             v3.0.0: Continue, New Game, Options, Host, Join, Co-op Settings; no focusable button 3)
 #   on-host   the game's own highlight on Host (the list changed from top)
+#   on-join   the highlight one row lower, on Join (Join reachable; then back up to Host for the press)
 #   pressed   Hookshot's menu on the Multiplayer tab's Host page over the title (co-op came with the start: the page
 #             says "Co-op is on" and how it started; a press never does nothing)
 #   closed    the title again, the menu gone
@@ -30,6 +31,7 @@ lines focus-A A min=1 coop: title: the title's focus is on button 4$
 lines focus-B B min=1 coop: title: the title's focus is on button 4$
 play A hs-title-menu.join.txt B hs-title-menu.join.txt
 shot on-join
+see title-on-join-A title-on-join-B
 lines join-A A min=1 coop: title: the title's focus is on button 5$
 lines join-B B min=1 coop: title: the title's focus is on button 5$
 play A hs-title-menu.up.txt B hs-title-menu.up.txt
