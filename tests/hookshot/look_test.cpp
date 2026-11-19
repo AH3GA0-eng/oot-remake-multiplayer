@@ -812,7 +812,7 @@ std::vector<std::uint8_t> MetalFile(const std::vector<MetalEntry>& entries) {
     put(static_cast<std::uint32_t>(entries.size()));
     for (const MetalEntry& e : entries) {
         std::string n = e.name;
-        n.resize(64, ' ');
+        n.resize(64, '\0');
         out.insert(out.end(), n.begin(), n.end());
         put(e.part);
         put(static_cast<std::uint32_t>(e.offsets.size()));
