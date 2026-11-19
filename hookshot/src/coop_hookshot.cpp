@@ -1989,8 +1989,7 @@ COOP_HOOKSHOT_EXPORT int hos_coop_game_pause_page(void) noexcept {
 // The pause menu's tab under the mouse (patch 0032, host/oot_menu.c tab_at), at (x, y) in the layout's units: 0 to 5,
 // 8 L, 9 R, -1 none; -2 leaves it to Longshot's own table (five tabs).
 COOP_HOOKSHOT_EXPORT int hos_coop_game_pause_tab_at(float x, float y) noexcept {
-    (void)x, (void)y;
-    return -2;
+    return g_on ? CoopPauseTab::TabAt(x, y) : -2;   // (-2: not known, Longshot's own table)
 }
 // The Multiplayer tab of Hookshot's menu (hos_coop_menu.h, patch 0012), from Hookshot's menu tick and present thread.
 COOP_HOOKSHOT_EXPORT int hos_coop_menu_tabs(void) {
