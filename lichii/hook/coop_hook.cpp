@@ -63,6 +63,7 @@
 #include "coop_teleport_game.h"
 #include "coop_pvp_game.h"
 #include "coop_lift_player_game.h"
+#include "coop_pvp_native_game.h"
 #include "coop_lobby_game.h"
 #include "coop_dbno_game.h"
 #include "coop_mod_share.h"
@@ -686,6 +687,7 @@ public:
         CoopTeleport::OnEvent(event, client);  // /teleport (docs/setup.md "Chat commands")
         CoopPvp::OnEvent(event, client);  // PvP (docs/play-online.md "PvP")
         CoopLiftPlayerGame::OnEvent(event, client);  // native puppets phase 3 (LICHII_COOP_LIFT_PLAYER=1)
+        CoopPvpNativeGame::OnEvent(event, client);  // native puppets phase 4 (LICHII_COOP_PVP_NATIVE=1)
         CoopDbno::OnEvent(event, client);  // down but not out (docs/play-online.md)
         CoopDifficulty::OnEvent(event, client);  // docs/play-online.md "Difficulty"
         CoopModShare::OnEvent(event, client);  // mods (docs/mods.md "Mods in co-op")
@@ -1612,6 +1614,10 @@ public:
         // LICHII_COOP_LIFT_PLAYER=1 (then nothing runs here).
         CoopLiftPlayerGame::Frame(view.scene, reading, report.connected ? session_.get() : nullptr,
                                   report.server_now_us);
+        // Native puppets phase 4, PvP on real bodies (docs/native-puppets.md section 5): off unless
+        // LICHII_COOP_PVP_NATIVE=1 (then nothing runs here).
+        CoopPvpNativeGame::Frame(view.scene, reading, report.connected ? session_.get() : nullptr,
+                                 report.server_now_us);
         // Down but not out (docs/play-online.md), after the walk read our
         // Link's life and after PvP's hurts.
         CoopDbno::Frame(view.scene, reading, report.connected ? session_.get() : nullptr,

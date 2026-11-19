@@ -294,3 +294,21 @@ TEST_CASE("pvp native: life never goes under zero on path B") {
     CHECK(d->take == 3);
     CHECK(d->result.life == 0);
 }
+
+TEST_CASE("pvp native: the _Pvp actor name, and a manifest that has them") {
+    CHECK(PvpActor("CoopPuppet_Child") == "CoopPuppet_Child_Pvp");
+    CHECK(PvpActor("CoopPuppet_AdultQuiet_Red") == "CoopPuppet_AdultQuiet_Red_Pvp");
+    CHECK(PvpActor("CoopPuppet_Child_Pvp") == "CoopPuppet_Child_Pvp");
+    CHECK(PvpActor("Player_Child") == "Player_Child");  // a real Player: no copy of ours
+    CHECK(IsPvpActor("CoopPuppet_Child_Pvp"));
+    CHECK_FALSE(IsPvpActor("CoopPuppet_Child"));
+    CHECK(OnlyPvpDiffers("CoopPuppet_Child", "CoopPuppet_Child_Pvp"));
+    CHECK(OnlyPvpDiffers("CoopPuppet_Child_Pvp", "CoopPuppet_Child"));
+    CHECK_FALSE(OnlyPvpDiffers("CoopPuppet_Child", "CoopPuppet_Adult_Pvp"));
+    CHECK_FALSE(OnlyPvpDiffers("CoopPuppet_Child", "CoopPuppet_Child"));
+    CHECK(PackHasPvp(R"({"actors": [{"actor": "A", "pvp": {"x": 1}}], "pvp": true})"));
+    CHECK(PackHasPvp(R"({"pvp" : true})"));
+    CHECK_FALSE(PackHasPvp(R"({"actors": [{"actor": "A", "pvp": {"x": 1}}]})"));
+    CHECK_FALSE(PackHasPvp(R"({"liftable": true})"));
+    CHECK_FALSE(PackHasPvp(""));
+}

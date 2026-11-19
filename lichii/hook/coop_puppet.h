@@ -855,6 +855,11 @@ void WatchGamePlaces(bool on);
 void SetGameHolds(std::uint8_t number);
 std::uint8_t GameHolds();
 std::vector<GamePlace> GamePlaces();
+// Native puppets phase 4 (coop_pvp_native.h, docs/native-puppets.md 5.0): bit n set = player n's copy is the
+// `_Pvp` actor (CoopPvpNative::PvpActor). Set each frame by coop_pvp_native_game.cpp; 0 (the default, and with
+// LICHII_COOP_PVP_NATIVE off) keeps every copy plain. Any thread.
+void SetPvpCopies(std::uint32_t mask);
+std::uint32_t PvpCopies();
 // Any thread: TheDirector's LiveMask(), 0 while the puppets are off.
 std::uint32_t LivePuppets();
 

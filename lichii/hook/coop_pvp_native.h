@@ -25,6 +25,8 @@
 #include <deque>
 #include <map>
 #include <optional>
+#include <string>
+#include <string_view>
 
 #include "coop/protocol/messages.hpp"
 #include "coop_pvp.h"
@@ -57,6 +59,35 @@ inline CopyActor WantedCopy(const CopyMode& m) {
 // director asks again every frame, so the change lands the frame it ends.
 inline bool RemakeNow(CopyActor have, CopyActor want, bool lifted_or_holding) {
     return have != want && !lifted_or_holding;
+}
+
+// The _Pvp copy's actor beside a puppet's (tools/puppet_pack/build.py pvp_name). Only the pack's own
+// puppets have one: any other actor (a test actor, a real Player) is left as it is.
+inline constexpr std::string_view kPvpSuffix = "_Pvp";
+
+inline bool IsPvpActor(std::string_view actor) {
+    return actor.size() > kPvpSuffix.size() && actor.substr(actor.size() - kPvpSuffix.size()) == kPvpSuffix;
+}
+
+inline std::string PvpActor(std::string_view actor) {
+    if (actor.substr(0, 11) != "CoopPuppet_" || IsPvpActor(actor)) return std::string(actor);
+    return std::string(actor) + std::string(kPvpSuffix);
+}
+
+// Whether `a` and `b` are one puppet, one of them its _Pvp copy (a mode change, not a new look).
+inline bool OnlyPvpDiffers(std::string_view a, std::string_view b) {
+    return a != b && (PvpActor(a) == b || PvpActor(b) == a);
+}
+
+// The pack's manifest says "pvp": true (build.py --puppet-pvp). Each actor's own "pvp" entry is an object,
+// never true, so every "pvp" key is looked at.
+inline bool PackHasPvp(std::string_view manifest) {
+    constexpr std::string_view key = "\"pvp\"";
+    for (auto at = manifest.find(key); at != std::string_view::npos; at = manifest.find(key, at + 1)) {
+        const auto v = manifest.find_first_not_of(" \t\r\n:", at + key.size());
+        if (v != std::string_view::npos && manifest.substr(v, 4) == "true") return true;
+    }
+    return false;
 }
 
 // Our game makes PVP_NATIVE 1 only with the glue on and a pvp pack.

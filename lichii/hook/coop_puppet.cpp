@@ -6,6 +6,8 @@
 #include "coop_local_game.h"
 #include "coop_look_share.h"
 #include "coop_pose.h"
+#include "coop_lift_player.h"
+#include "coop_pvp_native.h"
 #include "coop_puppet_own.h"
 #include "coop_show_delay.h"
 
@@ -724,6 +726,23 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
     pending_ = Pending::none;
 }
 
+// Phase 4: player `number`'s copy is lifted by our Link (GameHolds), or its player lifts or carries something
+// (a bomb, a pot, another player: its main animation has "lift" or "carry", as phase 3 reads our own): its
+// actor is not re-made for a PvP mode change now.
+static bool CopyBusy(std::uint8_t number, const Target& t) {
+    if (GameHolds() == number) return true;
+    return t.anim && CoopLiftPlayer::OurLinkLifts(std::string_view(t.anim->name));
+}
+
+// The live copy keeps its actor: the wanted one differs only by the _Pvp copy and the copy is busy.
+template <class Slot>
+static bool PvpHold(const Slot& slot, const Target* t, const std::string& scene) {
+    return t != nullptr && scene == slot.scene && !slot.remake &&
+           CoopPvpNative::OnlyPvpDiffers(t->actor, slot.actor_name) &&
+           !CoopPvpNative::RemakeNow(CoopPvpNative::CopyActor::plain, CoopPvpNative::CopyActor::pvp,
+                                     CopyBusy(slot.number, *t));
+}
+
 std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_ms) {
     const Target* t = Wanted(slot.number);
     if (t == nullptr) {
@@ -800,8 +819,10 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
                 return std::nullopt;  // maybe a hiccup: keep it a moment
             }
         }
-        if (t == nullptr || t->actor != slot.actor_name || input_.scene != slot.scene ||
-            slot.remake) {
+        // Phase 4: a copy lifted by our Link or holding something keeps its plain or _Pvp actor until that
+        // ends; the re-make would drop what it carries (CoopPvpNative::RemakeNow).
+        if (!PvpHold(slot, t, input_.scene) && (t == nullptr || t->actor != slot.actor_name ||
+                                                 input_.scene != slot.scene || slot.remake)) {
             slot.missing_ms = 0;
             Call c;
             c.function = input_.main_base + addr::kRequestDelete;
@@ -2105,6 +2126,9 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         t.number = r.number;
         t.color = r.color ? r.color : coop::protocol::slot_color(r.number);
         t.actor = ActorFor(r.adult, t.color);
+        if (r.number >= 1 && r.number < 32 && (PvpCopies() & (1u << r.number)) != 0) {
+            t.actor = CoopPvpNative::PvpActor(t.actor);  // PvP on real bodies (phase 4)
+        }
         t.position = r.position;
         t.velocity = r.velocity;
         if (r.rotation) {
@@ -2487,6 +2511,18 @@ void SetGameHolds(std::uint8_t number) {
 
 std::uint8_t GameHolds() {
     return g_game_holds.load();
+}
+
+namespace {
+std::atomic<std::uint32_t> g_pvp_copies{0};
+}  // namespace
+
+void SetPvpCopies(std::uint32_t mask) {
+    g_pvp_copies.store(mask, std::memory_order_relaxed);
+}
+
+std::uint32_t PvpCopies() {
+    return g_pvp_copies.load(std::memory_order_relaxed);
 }
 
 std::vector<GamePlace> GamePlaces() {

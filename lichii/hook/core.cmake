@@ -16,6 +16,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_dbno_body.cpp"
     "${_coop_hook}/coop_pvp_game.cpp"
     "${_coop_hook}/coop_lift_player_game.cpp"
+    "${_coop_hook}/coop_pvp_native_game.cpp"
     "${_coop_hook}/coop_lobby.cpp"
     "${_coop_hook}/coop_lobby_game.cpp"
     "${_coop_hook}/coop_mod_share.cpp"

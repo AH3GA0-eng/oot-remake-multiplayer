@@ -545,6 +545,22 @@ relayed.
    when U2 is read; third-game replay on results.
 Every game address U2/U3/U5 need is read before its glue lands; until then the glue logs and does nothing.
 
+**Built (step 2, native-puppets-pvp, host tests only, not run in a game):**
+- 1 done: codec 540 to 542; server `on_pvp_strike` / `on_pvp_result` (PvP on, both native, one scene, fresh place,
+  own object, 10 a second, a result once for a strike in flight, an attacker that leaves takes its strikes with it).
+- 2 done: `lichii/hook/coop_pvp_native.h` (tests/lichii/pvp_native_test.cpp): rings, the 5.6 checks, `SeqGate`
+  (forgets an attacker that leaves or joins again: review LOW 1), path B's amount and mercy, `StrikeSource`,
+  `WantedCopy`, and `RemakeNow`: a copy lifted by our Link or whose player lifts or carries something keeps its
+  plain or `_Pvp` actor until that ends (review LOW 2; read from `GameHolds()` and the copy's animation, no lift
+  file touched).
+- 3 done: `--puppet-pvp` (tools/puppet_pack/build.py `add_pvp`, `pvp_sensors`, `attention_clients`; checked on the
+  game's romfs: `Tgt` / `Body_Tgt` only; the plain puppets byte for byte as before).
+- 4 part: `coop_pvp_native_game.cpp` says `PVP_NATIVE` (glue on and a pvp pack, every 5 s), keeps the other games'
+  `PVP_NATIVE`, and sets the director's `_Pvp` mask (`CoopPuppet::SetPvpCopies`) by `WantedCopy`. Incoming strikes
+  and results are logged only. Left: read the copy's hit record and send strikes (the director's live actor per
+  player, the protocol 14 reader, `seen_us` from the drawn sample), path B on our Link (`DecidePathB` + today's
+  hit replay, the guard from our main AS name), the third-game replay on results, the runtime toggles (U3).
+
 ## 6. Risks
 
 - **The game's physics fights the sync.** A character body under gravity falls between the hook's places
