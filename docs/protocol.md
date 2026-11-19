@@ -145,6 +145,19 @@ The server's rules (server/session.cpp `on_bomb_take`, `bomb_heir`):
 - A stash is the new owner's `OBJECT_REMOVE` with reason 4 picked up: relayed, forgotten, no explosion anywhere.
 - A made `Item_Bomb` whose owner leaves or changes scene goes on with the sharing player in its scene with the lowest number (`HANDOVER_STATE` with the last state, its fuse left), instead of being removed as gone. With no sharing player it is removed as before.
 
+### Player lift (native puppets phase 3, `LIFT_ASK`, `LIFT_ANSWER`, `LIFT_PLACE`, `LIFT_SHARE`)
+
+One player lifts, carries, throws or sets down another ([native-puppets.md](native-puppets.md), "Lifting another player"). Only games with `LICHII_COOP_LIFT_PLAYER=1` send these (off by default). No protocol bump: a server that does not know these types drops them, and the lifter's game lets go when no answer comes. The lifted player's game decides; the server keeps no lift state.
+
+| Type | Name | Sender | Channel | Body |
+|---|---|---|---|---|
+| 535 | `LIFT_ASK` | both | ownership | `u8` player (the lifter; 0 from a client), `u8` lifted (1 to 4, not the lifter). Our Link lifted that player's copy (the game's own lift). To the lifted player only |
+| 536 | `LIFT_ANSWER` | both | ownership | `u8` player (the lifted), `u8` lifter (1 to 4, not the player), `u8` refusal: 0 none (taken), 1 busy (lifted already, or lifting someone), 2 event (a talk, a cutscene, a load, a menu), 3 down (dead, or down but not out), 4 not sharing (from the server: the lifted game did not say `LIFT_SHARE`), 5 freed (a taken lift ended in the lifted game), 6 too far (the lifter's Link is not within 3 m of ours). Others refused. To the lifter only |
+| 537 | `LIFT_PLACE` | both | player samples | `u8` player (the lifter), `u8` lifted, `u8` phase (1 held, 2 flying: thrown or set down and not at rest yet, 3 landed: at rest, the lift's last place; others refused), 3 x `f32` the place (finite). Each frame of a taken lift, to the lifted player only |
+| 538 | `LIFT_SHARE` | client | ownership | `u8` on (0 or 1; others refused). Its game takes part in player lifts; sent after joining and every 5 s |
+
+The server's rules (server/session.cpp `on_lift`): each of the three goes only to the player it names, with the sender's number written in, and only when both games said `LIFT_SHARE` on; a `LIFT_ASK` to a game that does not share is answered by the server itself (`LIFT_ANSWER` 4, with the asked player in the player field). A message naming its own sender, or a player who is not there, is dropped. A lift ends in the games: the lifter's landed `LIFT_PLACE`, the lifted game's `LIFT_ANSWER` freed, or the lifted game's own wait (no place for 1 s) when the lifter leaves.
+
 ## Keep-alive and clock
 
 - `PING` every 250 ms from each side with the sender time; `PONG` echoes it with the receiver time. This gives the round trip and the clock offset.

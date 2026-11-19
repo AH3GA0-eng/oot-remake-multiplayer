@@ -6180,3 +6180,45 @@ TEST_CASE("bomb take: with nobody sharing, an owner who leaves takes its bomb aw
   CHECK(h.session.object_count() == 0);
   CHECK(h.session.stats().bomb_handed_on == 0);
 }
+
+TEST_CASE("player lift: passed to the one player named, only between sharing games") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.clear();
+  // Nobody shares yet: the lifter's own ask is dropped.
+  h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().lifts_dropped == 1);
+  // The lifter shares, the lifted does not: the server answers not_sharing.
+  h.receive(1, LiftShare{true}, kChannelOwnership);
+  h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
+  CHECK(h.to(2).empty());
+  CHECK(only_message_to<LiftAnswer>(h, 1) == LiftAnswer{2, 1, LiftRefusal::not_sharing});
+  CHECK(h.session.stats().lifts_not_sharing == 1);
+  // Both share: the ask goes to the lifted only, with the lifter written in.
+  h.clear();
+  h.receive(2, LiftShare{true}, kChannelOwnership);
+  h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
+  CHECK(h.to(3).empty());
+  CHECK(only_message_to<LiftAsk>(h, 2) == LiftAsk{1, 2});
+  // The answer to the lifter only, and the places to the lifted only.
+  h.clear();
+  h.receive(2, LiftAnswer{0, 1, LiftRefusal::none}, kChannelOwnership);
+  CHECK(only_message_to<LiftAnswer>(h, 1) == LiftAnswer{2, 1, LiftRefusal::none});
+  CHECK(h.to(3).empty());
+  h.clear();
+  h.receive(1, LiftPlace{0, 2, LiftPhase::held, {1, 2, 3}}, kChannelPlayerSamples);
+  CHECK(only_message_to<LiftPlace>(h, 2) == LiftPlace{1, 2, LiftPhase::held, {1, 2, 3}});
+  CHECK(h.to(3).empty());
+  CHECK(h.session.stats().lifts_relayed == 3);
+  // To a player who is not there, or to itself: dropped.
+  h.clear();
+  h.receive(1, LiftAsk{0, 4}, kChannelOwnership);
+  CHECK(h.sent.empty());
+  // A game that stops sharing gets nothing more.
+  h.receive(2, LiftShare{false}, kChannelOwnership);
+  h.receive(1, LiftPlace{0, 2, LiftPhase::landed, {1, 2, 3}}, kChannelPlayerSamples);
+  CHECK(h.to(2).empty());
+}

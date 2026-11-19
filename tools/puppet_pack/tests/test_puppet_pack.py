@@ -301,6 +301,19 @@ def fake_player_pack(variant):
     return files
 
 
+def fake_cucco_pack():
+    """Animal_Cucco's ActorParam and its LiftableParam with an in-pack $parent (the values as the romfs has them)."""
+    lift = "Component/Liftable/Animal_Cucco.game__component__LiftableParam.bgyml"
+    base = "Component/Liftable/LiftableBase.game__component__LiftableParam.bgyml"
+    return {
+        build.actor_param_path("Animal_Cucco"): byml.dumps(
+            {"Components": {"LiftableRef": "?" + lift, "ASRef": "?AS/Animal_Cucco.bgyml"}}),
+        lift: byml.dumps({"$parent": "Work/" + base[:-len(".bgyml")] + ".gyml", "LiftGrade": byml.UInt(3069107721),
+                          "LiftableType": byml.UInt(1577663790), "WeightForCalcThrowPower": 28.0}),
+        base: byml.dumps({"LiftGrade": 1, "KeepSensorHitToParent": True}),
+    }
+
+
 def fake_perception_pack():
     """InterestSpotActor's physics as the game has it: a ProjectBase physics param with an empty controller set."""
     return {
@@ -515,6 +528,26 @@ class BuildPackTest(unittest.TestCase):
         _, ap, names, _ = build.build_pack(members, "Child")
         self.assertNotIn("PhysicsRef", byml.loads(ap)["Components"])
         self.assertFalse([n for n in names if n.startswith("Phive/")])
+
+    def test_pack_liftable(self):
+        # Native puppets phase 3 (--puppet-liftable): the Cucco's LiftableRef, $parent merged, as the puppet's own.
+        lift = build.liftable_param(fake_cucco_pack())
+        self.assertEqual(lift[0], "Component/Liftable/Animal_Cucco.game__component__LiftableParam.bgyml")
+        self.assertEqual(lift[1], {"LiftGrade": byml.UInt(3069107721), "LiftableType": byml.UInt(1577663790),
+                                   "WeightForCalcThrowPower": 28.0, "KeepSensorHitToParent": True})
+        members = fake_player_pack("Child")
+        pack, ap, names, _ = build.build_pack(members, "Child", liftable=lift)
+        own = "Component/Liftable/CoopPuppet_Child.game__component__LiftableParam.bgyml"
+        self.assertEqual(build.liftable_path("CoopPuppet_Child", lift[0]), own)
+        self.assertEqual(byml.loads(ap)["Components"]["LiftableRef"], "?" + own)
+        self.assertEqual(byml.loads(sarc.read(pack)[own]), lift[1])
+        self.assertNotIn(lift[0], names)  # never the Cucco's own file
+        # Off (the default): the pack as before.
+        self.assertEqual(build.build_pack(members, "Child"), build.build_pack(members, "Child", liftable=None))
+        self.assertNotIn("LiftableRef", byml.loads(build.build_pack(members, "Child")[1])["Components"])
+        # A Cucco pack without the param: none.
+        self.assertIsNone(build.liftable_param({build.actor_param_path("Animal_Cucco"): byml.dumps({"Components": {}})}))
+        self.assertIsNone(build.liftable_param({}))
 
     def test_puppet_body_checks(self):
         pc = {"PhysicsRef": "?Component/Physics/P.engine__component__PhysicsParam.bgyml"}

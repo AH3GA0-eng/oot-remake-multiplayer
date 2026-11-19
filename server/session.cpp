@@ -693,6 +693,15 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     on_bomb_take(id, c, *take, now_us);
     return;
   }
+  if (const auto* share = std::get_if<LiftShare>(&message)) {
+    c.lift_share = share->on;
+    return;
+  }
+  if (std::holds_alternative<LiftAsk>(message) || std::holds_alternative<LiftAnswer>(message) ||
+      std::holds_alternative<LiftPlace>(message)) {
+    on_lift(id, c, message);
+    return;
+  }
   if (auto* cut = std::get_if<GrassCut>(&message)) {
     on_grass_cut(id, c, *cut, now_us);
     return;
@@ -901,6 +910,45 @@ void Session::on_pvp_hit(ConnectionId id, Connection& c, Message& message) {
   }
   send(*target, kChannelOwnership, message);
   ++stats_.pvp_hits_relayed;
+  ++stats_.relayed;
+}
+
+// Native puppets phase 3: a lift goes to the one player it names, and only
+// between two games that said LIFT_SHARE; the lifted player's game decides
+// (the server keeps no lift state: a lift ends in the games, by LIFT_PLACE
+// landed, LIFT_ANSWER freed, or the lifted game's own wait running out). A
+// LIFT_ASK to a game that does not share is answered here, so the lifter's
+// game lets go at once.
+void Session::on_lift(ConnectionId id, Connection& c, Message& message) {
+  std::uint8_t to_number = 0;
+  if (const auto* a = std::get_if<LiftAsk>(&message)) {
+    to_number = a->lifted;
+  } else if (const auto* b = std::get_if<LiftAnswer>(&message)) {
+    to_number = b->lifter;
+  } else if (const auto* p = std::get_if<LiftPlace>(&message)) {
+    to_number = p->lifted;
+  }
+  const auto target = connection_of(to_number);
+  if (!c.lift_share || !target || *target == id || !set_sender(message, c.number)) {
+    ++stats_.lifts_dropped;
+    return;
+  }
+  const auto it = connections_.find(*target);
+  if (it == connections_.end() || !it->second.lift_share) {
+    if (std::holds_alternative<LiftAsk>(message)) {
+      LiftAnswer no;
+      no.player_number = to_number;
+      no.lifter = c.number;
+      no.refusal = LiftRefusal::not_sharing;
+      send(id, kChannelOwnership, no);
+      ++stats_.lifts_not_sharing;
+      return;
+    }
+    ++stats_.lifts_dropped;
+    return;
+  }
+  send(*target, channel_of(message), message);
+  ++stats_.lifts_relayed;
   ++stats_.relayed;
 }
 

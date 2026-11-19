@@ -429,6 +429,9 @@ struct Stats {
   std::uint64_t bomb_takes = 0;           // BOMB_TAKE asked of the owner
   std::uint64_t bomb_refused = 0;         // BOMB_TAKE answered with BOMB_ANSWER
   std::uint64_t bomb_handed_on = 0;       // a bomb whose owner left went on
+  std::uint64_t lifts_relayed = 0;        // LIFT_ASK / LIFT_ANSWER / LIFT_PLACE passed to the player named
+  std::uint64_t lifts_dropped = 0;        // to nobody, to the sender, or from a game not sharing
+  std::uint64_t lifts_not_sharing = 0;    // LIFT_ASK answered not_sharing by the server
   std::uint64_t handover_chased = 0;      // asked because a copy chased its player
   std::uint64_t handover_back_held = 0;    // not handed back so soon (handover_back_us)
   std::uint64_t fish_to_lure = 0;         // a fish asked over to the nearest lure (issue 151)
@@ -574,6 +577,9 @@ class Session {
     // BOMB_SHARE (native puppets phase 2): its game takes part in the bomb
     // hand-over. Off until it says so.
     bool bomb_share = false;
+    // LIFT_SHARE (native puppets phase 3): its game takes part in player
+    // lifts. Off until it says so.
+    bool lift_share = false;
     // As a receiver: how many samples and poses of each sender it was due
     // (interest counts every n-th), and its share of the pose upload cap.
     std::array<std::uint32_t, protocol::kMaxPlayers + 1> samples_due{};
@@ -798,6 +804,9 @@ class Session {
   // hand-over").
   void on_bomb_take(ConnectionId id, Connection& c, const protocol::BombTake& m,
                     std::uint64_t now_us);
+  // Native puppets phase 3 (docs/protocol.md "Player lift"): LIFT_ASK,
+  // LIFT_ANSWER and LIFT_PLACE to the one player each names.
+  void on_lift(ConnectionId id, Connection& c, protocol::Message& message);
   void refuse_bomb(ConnectionId to, const protocol::ObjectId& oid, const Object* o,
                    protocol::BombRefusal why);
   // A made bomb whose owner lets go of it (left, changed scene): the

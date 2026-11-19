@@ -1,7 +1,7 @@
 # Native puppets: other players as real game bodies
 
-Status: design and plan (native-puppets-a, 2026-11-19), plus the first test switch (`--puppet-body`,
-below). Nothing here is in a release. Today's puppet ([puppet.md](puppet.md)) and the real-Player test
+Status: design and plan (native-puppets-a, 2026-11-19), plus the test switches `--puppet-body` (phase 1),
+`LICHII_COOP_BOMB_SHARE` (phase 2) and `--puppet-liftable` + `LICHII_COOP_LIFT_PLAYER` (phase 3), each below. Nothing here is in a release. Today's puppet ([puppet.md](puppet.md)) and the real-Player test
 ([native-player.md](native-player.md)) stay as they are until each phase below is proven in two games.
 
 ## The goal
@@ -196,6 +196,72 @@ puppet pack, Link-sized offsets), and on the owner game a "lifted" state for its
 - Ownership of the lifted Link never moves; only "who drives the place" does, for the lift time. This
   is the same split as a boss carried by its root.
 
+### Phase 3 status (native-puppets-c, branch `native-puppets-lift`)
+
+Built and host-tested, **not run in a game**. Two switches, both off by default; with either off nothing below
+runs, nothing is sent, and the solo and idle game are as before (no session: no copy exists, and the glue
+returns before anything when not connected).
+
+- **Pack:** `tools/puppet_pack/build.py --puppet-liftable` gives every puppet a `LiftableRef` of its own, the
+  Cucco's (`Animal_Cucco`'s `LiftableParam`, its in-pack `$parent` chain merged; own file
+  `Component/Liftable/<puppet>.game__component__LiftableParam.bgyml`, sized in the size table as the Cucco's
+  file). Off: the pack is byte for byte as before (test `test_pack_liftable`), the manifest has no `liftable`.
+- **Protocol:** `LIFT_ASK` 535, `LIFT_ANSWER` 536, `LIFT_PLACE` 537, `LIFT_SHARE` 538 ([protocol.md](protocol.md),
+  "Player lift"). The plan's `LIFT_THROW(velocity)` is not needed: the throw is the lifter's game's own (its
+  lifter throws the copy), and the places go on as `flying` until the copy is at rest, then one `landed` place.
+  So the lifted game never needs a velocity setter (the UNKNOWN above): its Link follows the thrown copy's path
+  and is let go at the copy's resting place, where its own character controller takes over.
+- **Rules** (`lichii/hook/coop_lift_player.h`, tests `tests/lichii/lift_player_test.cpp`):
+  - Lifter: the copy is lifted when the game put it at least 0.3 m higher than the director drew it, within
+    1.6 m of our Link, two frames running (the director reads the copy's place before each of its writes:
+    `CoopPuppet::WatchGamePlaces`). It sends `LIFT_ASK` and the director stops placing, turning and setting that
+    copy (`CoopPuppet::SetGameHolds`), so the game's own carry has it. No answer in 1.5 s, or a no: the director
+    places it again and it is not asked again until the game lets it down. Taken: `LIFT_PLACE held` each frame
+    with the copy's place as the game has it; when it is 0.6 m further out or lower than it was carried
+    (thrown or set down) the places are `flying` until 8 frames with under 2 cm of movement (or 2 s), then
+    `landed`, and the director places it from the samples again.
+  - Lifted (decides): no while our Link is in an event (G1, our own), a load or a menu (`event`), dead or at
+    life 0 (`down`), already lifted by another or lifting someone (`busy`), or the lifter's Link more than 3 m
+    away (`too far`). Taken: each place is given to our real Link by the object walk the way copies are moved
+    (place written, then the game's physics-aware setter main+0x4c6580 on it: `CoopObjects::PlaceOurLink`), and
+    our Link's own input check (main+0x3025850, Hookshot wrap 18) answers "input off" for our Link only (the
+    reading actor checked), as for an extra local player without a controller. The lifted game frees itself
+    (`LIFT_ANSWER freed`) on an event or death, when the places stop for 1 s (the lifter left), or after 15 s
+    (it wriggles free; the game's own escape timer is UNKNOWN). The camera stays on our Link (nothing changes it).
+- **The game's functions used:** the lifter's own lift, carry and throw (`PlayerLifterParam` `LiftThrowParams` on
+  the copy's `LiftableRef`); the physics-aware setter `ExecuteActorForceSetMtx` (vtable slot 0x218,
+  main+0x4c6580) on our Link; the player's input-off check main+0x3025850 (wrap 18). No memory poke of the
+  player's state; the only writes are the place before the setter, as for every copy.
+
+Phase 3 UNKNOWNs (settled by the proof job in reports/native-puppets-c.md, screenshots on both games):
+
+1. Whether the child and adult lifters lift a copy with the Cucco's `LiftGrade` 3069107721 at all (the copy
+   has no Cucco AI; `IsResetBehaviorModeOnThrown` and `KeepSensorHitToParent` may need it). Without
+   `--puppet-body` the copy has no body to grab: the proof runs with both switches.
+2. That the game's carry moves the copy's own place (+0x31c) so the read-back shows the rise (else the lift
+   is not seen: then read the lifter's held actor instead, `ActorHolderRef`, UNKNOWN offsets).
+3. That the game's throw moves a copy whose character controller is in `Free` (phase 1's body); if it does
+   not fly, the copy rests at once and the lifted Link is let go at the lifter's hands (it then falls by its
+   own controller): a set-down, not a throw.
+4. That our Link placed through the setter each frame is not pulled back by its own controller between the
+   walk's places (the held-bomb fall, reports/held-bomb.md); and that "input off" stops its own moves.
+5. How the game lets a refused lift go (the lifter keeps carrying a copy the director now places): the next
+   fix would be the lifter's own put-down action verb (the request-action-verb path main+0xc08f0, verb
+   UNKNOWN).
+
+### Other liftable and shared things (named here, later phases)
+
+- **Bomb flowers** (`Obj_BombFlower_*`, [sync-coverage.md](sync-coverage.md) P2): an unshared world object today
+  (each player picks their own fruit; one picked and thrown in one game is not seen in the other). Not a made `Item_Bomb`,
+  so phase 2's hand-over does not cover it. Later phase: share the plant's pick (a world object with an owner,
+  as grass cuts and world breaks) and the picked bomb as phase 2's bomb.
+- **Pots and rocks** (scene objects Link lifts and throws): their break is shared today ([world.md](world.md)); who
+  carries one is not. Later phase, after phase 3 is proven: the lifted pot or rock as a shared object with an
+  owner (phase 2's rules: one owner, the place sampled while carried, the break once at the owner's word).
+- **Cuccos:** living AI actors; today each game runs its own. Later phase, with the pots: the Cucco as an
+  enemy-like shared object (owner runs its AI, others copy), then lifting it is phase 2's take.
+- Bombchus are not liftable (nothing to do).
+
 ## 5. PvP on real bodies
 
 Today (reports/pvp.md, coop_pvp.*): the attacker's game finds a swing near the other Link (grass
@@ -253,7 +319,7 @@ Sizes: S = under a day of one worker, M = 1 to 3 days, L = more. Every proof is 
 | 0 | Facts | S | One module-only research run: lift grades, the Free body test, stash path, throw velocity setter (the UNKNOWNs above) | Logs + screenshots of each probe; no product change |
 | 1 | Body | S-M | Pack switch `--puppet-body` (built, below): the copy gets Link's own shapes and character body in Free move state, plus his cloth; no sensors, no ragdoll | A walks into B's copy: A stops (screenshot both); A jumps on the copy: A stands on it (A's y = copy's top, screenshot); B walks away: the copy's place read back = samples (no jitter lines). Same with an adult copy. Solo and idle unchanged (pack built without the switch is byte for byte today's) |
 | 2 | Bomb hand-over | M | Bomb as a shared object (owner, epoch, fuse left, held by); lift of a copy asks for it; stash through the pouch path | A puts down a lit bomb, B lifts it: one explosion in both games at B's hands (screenshots both, the same frame window); A puts down an unlit bomb, B lifts and stashes: B's count +1, A's unchanged, the bomb gone in both |
-| 3 | Lift a player | M-L | `LiftableRef` on the copy (Cucco's model); `LIFT_ASK` / `LIFT_PLACE` / `LIFT_THROW` messages; the lifted game places its real Link | A lifts B's copy: B's own screen shows B in A's hands (screenshot), A walks, B follows; A throws: B lands where A's screen shows (within 1 m), both screenshots; B in a talk: the lift is refused |
+| 3 | Lift a player | M-L | `LiftableRef` on the copy (Cucco's model); `LIFT_ASK` / `LIFT_ANSWER` / `LIFT_PLACE` messages (the throw is `LIFT_PLACE flying`); the lifted game places its real Link (built, not run: "Phase 3 status") | A lifts B's copy: B's own screen shows B in A's hands (screenshot), A walks, B follows; A throws: B lands where A's screen shows (within 1 m), both screenshots; B in a talk: the lift is refused |
 | 4 | PvP sensors | M | Copy gets `Tgt`/`Atk` sensors + `SensorHitRef` (no Life); received hits read and sent as `PVP_HIT`; victim rewind check; enemy hits on copies dropped | PvP on: A's sword on B's copy indoors (no grass) -> B flinches and loses hearts (screenshot B), A's screen shows B's knockback; B shields: no damage; PvP off: nothing; an enemy hitting B's copy in A's game: no damage to B |
 | 5 | Option A track | L | native-player steps 2-5 (input wraps, correction) as a separate switch | As native-player.md |
 
