@@ -1007,6 +1007,11 @@ CoopDraw::Scene DrawScene() {
 }
 
 bool TypeKey(std::uint32_t vk, bool repeat) {
+    // The pause menu's Multiplayer page's field, while it is typed into: every key is its own, the ones it does not
+    // use too (a letter comes again as its character, TypeChar), so none opens the chat box or the cheats panel.
+    if (CoopPauseTab::Key(vk, repeat) || CoopPauseTab::KeysTaken()) {
+        return true;
+    }
     if (CoopPause::Key(vk, repeat)) {   // the Multiplayer tab's field, while it is typed into
         return true;
     }
@@ -1041,6 +1046,10 @@ bool TypeKey(std::uint32_t vk, bool repeat) {
 }
 
 bool TypeChar(std::uint32_t byte) {
+    if (CoopPauseTab::KeysTaken()) {   // the pause menu's Multiplayer page's field (ASCII only: a room name, a password)
+        CoopPauseTab::Char(byte < 0x80 ? byte : 0);
+        return true;
+    }
     if (!g_on) {
         return false;
     }
@@ -1097,7 +1106,7 @@ void SetChatKey(const std::string& key) {
 }
 
 bool KeysTaken() {
-    if (CoopPause::KeysTaken()) {
+    if (CoopPauseTab::KeysTaken() || CoopPause::KeysTaken()) {
         return true;
     }
     if (!g_on) {
