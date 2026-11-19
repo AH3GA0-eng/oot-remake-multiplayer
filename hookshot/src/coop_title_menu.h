@@ -291,6 +291,57 @@ private:
     bool live_seen_ = false;             // the session was seen on since Start (a join still connecting is not off)
 };
 
+// The player's own A on the title, seen on player 1's buttons BEFORE a code mod's hold takes them
+// (CoopTitle::NotePlayerPad, coop_pad_order.h step 2). Save Profiles' file select holds that A, so the title's watch on
+// the game's buttons (step 3) never sees it: this one does, for both things the A means.
+// - picks_file: the player picks their own file (or a new game, or the title's options) on a title button that is not
+//   a co-op row: a guest's pending switch to the host's save is dropped (CoopSave::CancelPendingSwitch), else the
+//   switch could change the save folder under the load a mod's Continue starts.
+// - the window: an A on the title's first button (Continue, or Start in the title's own menu) makes a code mod's
+//   button choice the player's for kWindowMs (a file picked with the mouse brings no A after the first), co-op busy or
+//   not (coop_hookshot.cpp, TitleHoldWhy). It ends once Link is in the game (the load came, or a later return to the
+//   title is a new choice) and on Clear: a join begun after the A (StartSaveWait), or the host's save offered again
+//   because the player backed out of their pick (SaveWait's rearm).
+class PlayerChoice {
+public:
+    static constexpr std::uint64_t kA = 1ull << 0;          // (nn::hid::NpadButton A)
+    static constexpr std::uint64_t kWindowMs = 120000;      // naming a file in a mod's file select takes a while
+    struct Pad {
+        std::uint64_t buttons = 0;   // player 1's, before the mods' holds
+        bool title_up = false;
+        int focused = -1;            // the title's focused button (-1: none)
+        bool on_coop_row = false;    // a row the module answers (Host, Join, Co-op Settings, Multiplayer, Back, ...)
+        bool in_game = false;        // Link is in the game
+    };
+    struct Seen {
+        bool picks_file = false;     // drop the pending switch
+        bool window_opened = false;  // a new window (for the log)
+    };
+    Seen Step(std::uint64_t now_ms, const Pad& in) {
+        const std::uint64_t down = in.buttons & ~last_;
+        last_ = in.buttons;
+        if (in.in_game) {
+            at_ms_ = 0;
+        }
+        Seen s;
+        if ((down & kA) == 0) {
+            return s;
+        }
+        s.picks_file = SaveWait::PlayerPicksFile(in.title_up, in.focused, in.on_coop_row);
+        if (s.picks_file && in.focused == 0) {
+            s.window_opened = !Lately(now_ms);
+            at_ms_ = now_ms + 1;   // (+1: 0 is "none")
+        }
+        return s;
+    }
+    bool Lately(std::uint64_t now_ms) const { return at_ms_ != 0 && now_ms + 1 - at_ms_ < kWindowMs; }
+    void Clear() { at_ms_ = 0; }
+
+private:
+    std::uint64_t last_ = 0;    // the buttons last seen (A edges only)
+    std::uint64_t at_ms_ = 0;   // the A that opened the window, + 1 (0: none)
+};
+
 // ---------------------------------------------------------------------------
 // Text, for the menu's fields (coop_pause_menu.h).
 
