@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "coop/protocol/codec.hpp"
+#include "coop_bomb_share.h"
 #include "coop_hold.h"
 #include "coop_objects_sync.h"
 
@@ -6026,4 +6027,19 @@ TEST_CASE("objects: the real hit goes everywhere: copy's DAMAGE, the owner's rep
     REQUIRE(step.writes.size() == 1);
     CHECK(step.writes[0].hurt == 2);
     CHECK(step.writes[0].record == std::optional<proto::HitRecord>(rec));
+}
+
+// Native puppets phase 2 (coop_bomb_share.h): a HANDOVER_ASK for one of the
+// spawn sync's own bombs is answered there (with its fuse), not here with the
+// time only. Any other unknown id is answered as before.
+TEST_CASE("objects: a HANDOVER_ASK for one of the spawn sync's bombs is left to it (native puppets phase 2)") {
+    Sync sync;
+    Tick(sync, 0, {});
+    const proto::ObjectId bomb{proto::ObjectKind::made, 1, 99};
+    sync.Receive(proto::HandoverAsk{bomb, 0, 2});
+    CHECK(All<proto::HandoverState>(Tick(sync, 100 * kMs, {})).size() == 1);
+    CoopBombShare::TheOwnBombs().Note(bomb, true);
+    sync.Receive(proto::HandoverAsk{bomb, 0, 2});
+    CHECK(All<proto::HandoverState>(Tick(sync, 200 * kMs, {})).empty());
+    CoopBombShare::TheOwnBombs().Clear();
 }

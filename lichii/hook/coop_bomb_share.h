@@ -2,10 +2,10 @@
 //
 // Native puppets phase 2: a bomb changes hands (docs/native-puppets.md, "Lift
 // a bomb, and stash it"; docs/protocol.md, "Bomb hand-over"). The rules the
-// spawn sync (coop_spawn.h) is to follow when LICHII_COOP_BOMB_SHARE=1 (not
-// wired yet, docs/native-puppets.md "Phase 2 status"); off by
-// default, and with no session nothing here runs. No emulator code: tested in
-// tests/lichii/bomb_share_test.cpp.
+// spawn sync (coop_spawn.h) follows when LICHII_COOP_BOMB_SHARE=1
+// (docs/native-puppets.md "Phase 2 status"); off by default, and with no
+// session nothing here runs. No emulator code: tested in
+// tests/lichii/bomb_share_test.cpp, the wiring in spawn_test.cpp.
 //
 // - Our Link lifts the copy of another player's bomb (the game's own lift on
 //   the real Item_Bomb copy: its animation says Lifted while its owner's does
