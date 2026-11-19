@@ -17,6 +17,7 @@
 #   keep B's log and both shots (the research question).
 #! noload
 #! start coop: test warp done
+# Placement as hs-shots r2: 'toward' never turned Link in 20261119-092844, so short goto walks turn both.
 #! switches LICHII_COOP_PUPPET=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_PUPPET=1
 #! timeout 420
 mark start
@@ -36,7 +37,7 @@ wait 240
 place -14.5 79.6 -6.5
 wait 240
 mark placed
-toward -12.9 -10.5 6
+goto -12.9 -10.5 3 120   # a short walk toward the torch: A and its camera face torch and B
 press ZL 10
 wait 300
 mark ready

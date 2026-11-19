@@ -29,26 +29,29 @@
 # Fail: a copy logged but never on A's screen (the stand-in draws nothing: check the pack), or no copy.
 # If adult B's place is off the map after the warp (Graveyard_Adult's floor not at y 98), drop the
 # two place lines of the adult segment and look at the arrival shots.
-#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_PUPPET=1
+# held-pieces-0116 r2 (proof-0116 placement notes, run 20261119-092844): 'toward ... 10' never turned
+#   either Link (positions unchanged), so A's camera looked past B. Now A walks toward B's spot (goto) and
+#   recenters (ZL); B walks away from A for throws/shots and toward A for the Ocarina and held items;
+#   A's child wait covers B's segment, A's adult part lasts past B's shots; sticks by setflag; ocarina probe on.
+#! switches LICHII_COOP_PUPPET=1,LICHII_COOP_CHEATS=1,LICHII_COOP_DEBUG_PUPPET=1,LICHII_COOP_OCARINA_PROBE=1
+# B's child segment
 mark start
 wait 900
 place -35.7 98.3 7.0
 wait 30
-toward -35.7 40 10
+goto -35.7 11.0 3 120     # walk toward B's spot: A (and its camera) face B
 press ZL 10
 wait 60
-wait 30
 mark ready
-# B's child segment
-wait 1384               # B's child segment: boomerang 416 + Ocarina 628 + slingshot/stick 340
+wait 1710                 # B's child segment (<= ~1560 from its ready) and a margin: A warps after B
 setflag Sequence_IsChildhood 0
 warp Graveyard_Adult
-wait 900
+wait 600
 place -35.7 98.3 7.0
 wait 30
-toward -35.7 40 10
+goto -35.7 11.0 3 120
 press ZL 10
 wait 60
-wait 30
-wait 600
+mark ready-adult-a
+wait 2400                 # stays to the end of B's hookshot segment
 mark end
