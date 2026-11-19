@@ -411,7 +411,8 @@ std::vector<std::string> RowTexts(const SessionView& v) {
     } else if (v.confirm_leave) {
         rows[kRowLeave] = v.s.hosting ? "A again: stop hosting" : "A again: leave";
     } else {
-        rows[kRowLeave] = !v.s.in_one ? "Leave (not in a session)" : v.s.hosting ? "Stop hosting" : "Leave";
+        rows[kRowLeave] = !v.s.in_one ? (v.version.empty() ? "Leave (not in a session)" : v.version)   // (no action)
+                          : v.s.hosting ? "Stop hosting" : "Leave";
     }
     for (std::string& r : rows) r = Fit(std::move(r));
     return rows;
@@ -510,6 +511,12 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
         const std::size_t last = rows[3].empty() ? 4 : 3;
         const std::vector<std::string> why = Wrap(v.why, last - first);
         for (std::size_t i = 0; i < why.size(); ++i) rows[first + i] = why[i];
+        for (std::size_t i = 3; i >= first && !v.version.empty(); --i) {   // the release, on the lowest free row
+            if (rows[i].empty()) {
+                rows[i] = v.version;
+                break;
+            }
+        }
         break;
     }
     }

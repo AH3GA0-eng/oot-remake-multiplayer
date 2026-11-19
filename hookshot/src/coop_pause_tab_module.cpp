@@ -24,6 +24,7 @@
 #include "coop_lobby_game.h"
 #include "coop_lobby.h"
 #include "coop_save.h"
+#include "coop_window_brand.h"
 
 namespace CoopPauseTab {
 
@@ -300,6 +301,9 @@ SessionView ViewNow(View view) {
     v.s.can_resync = !v.s.hosting && CoopSave::CanResync();
     v.why = std::string(st.message, strnlen(st.message, sizeof st.message));
     v.note = CoopPause::PageNote();
+    if (const std::string& title = CoopWindowBrand::TitleOf(CoopRuntime::GameDir()); title != CoopWindowBrand::kTitle) {
+        v.version = title;   // the kit's release (0.11.6), as the title bar
+    }
     v.confirm_leave = Confirming(View::kMain, kRowLeave);
     v.confirm_kick = Confirming(View::kPlayerHost, 2);
     v.confirm_ban = Confirming(View::kPlayerHost, 3);

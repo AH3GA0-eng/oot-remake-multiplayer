@@ -176,8 +176,16 @@ while IFS='=' read -r v _; do
     case $v in LONGSHOT_* | PYTHON* | APPDIR | APPIMAGE | ARGV0 | OWD | LD_LIBRARY_PATH) unset "$v" ;; esac
 done < <(env)
 export LONGSHOT_NO_UPDATE_CHECK=1 OOT_COOP_KIT=$DATA
-# the window: title "Squadala!", its class (the menu entry's StartupWMClass) and our logo as the icon longshot.png (Longshot reads these)
-export HOS_WINDOW_TITLE='Squadala!' HOS_WM_CLASS=squadala
+# the window: title "Squadala! v<release>" (VERSION.txt's release, as the Windows module's
+# coop_window_brand.cpp; letters, digits and . - + _ only, else "Squadala!" alone), its class (the menu
+# entry's StartupWMClass) and our logo as the icon longshot.png (Longshot reads these)
+title='Squadala!'
+release=$(kit_version)
+if [[ -n $release && ${#release} -le 32 && $release =~ ^[A-Za-z0-9.+_-]+$ ]]; then
+    [[ $release == [0-9]* ]] && release="v$release"
+    title="Squadala! $release"
+fi
+export HOS_WINDOW_TITLE=$title HOS_WM_CLASS=squadala
 [[ -f $DATA/squadala-icon.png ]] && cp -f -- "$DATA/squadala-icon.png" "$GAME/longshot.png" 2>/dev/null || true
 cd "$GAME"
 if kit_tty; then
