@@ -4,13 +4,13 @@
 # Pass, by the shots of BOTH games (screenshot proof; the lines below only say what the module did):
 #   system         the System page, five tabs in the strip: Collection, Equipment, Items, System, Multiplayer (dim)
 #   page           the Multiplayer page over System: five rows in the System page's own buttons ("In a session",
-#                  "Room", "Players: 2", "Let in", "Leave"), the fifth tab lit, System's not; no controller picture
+#                  "Session details", "Players: 2", "Let in: the host does" or "Resync from host", "Leave"), the fifth tab lit, System's not; no controller picture
 #   page-down      the game's cursor frame one row lower, on our rows
 #   system-back    System's page and its tab lit again, its own buttons
 #   closed / idle-walking   the menu closed, the game plays (Link walks in A's)
 # A only, the co-op idle path (after Leave twice):
 #   leave-row      the cursor on "Leave"; leave-confirm: "A again: leave"
-#   idle-page      "Host a game", "Join a game", "Players", "Let in", "Leave (not in a session)"
+#   idle-page      "Host a game", "Join a game", "Players", "Let in: when you host", "Leave (not in a session)"
 #   idle-system    System back; the game's own tabs work as ever
 #! switches LICHII_COOP_PUPPET=1
 #! timeout 420
