@@ -1,4 +1,4 @@
-From d861c70a36f615379dc5400b2a157632059aac85 Mon Sep 17 00:00:00 2001
+From a40763256982c3df9a5bec62f1f158183f574424 Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Tue, 17 Nov 2026 11:48:13 -0900
 Subject: [PATCH] Co-op AI node starts: the started node and its actor, to the
@@ -133,5 +133,5 @@ index 00000000..bb086a00
 +        n += 1
 +    return n
 -- 
-2.56.0.windows.4
+
 

@@ -33,12 +33,13 @@ struct PlayerReading {
   std::optional<protocol::Age> age;
   std::optional<std::string> scene;     // for example "spot00"
   // An event has control of our Link (a cutscene, a talk): the event manager's running word,
-  // or our Link's own event performer bound into an event (row 97: a Deku Scrub's talk and
+  // or our Link an event member by the game's own test (row 97: a Deku Scrub's talk and
   // AttackedEvent leave the word 0). Every "our Link is in an event" rule reads this.
   std::optional<bool> event_running;
-  // event_running is true only because our Link's performer is bound (the word is 0): for the log.
+  // event_running is true only because our Link is an event member (the word is 0): for the log.
   bool event_by_link = false;
-  // Our Link's own event performer is bound into an event (with the word or without).
+  // Our Link is an event member, the game's own QueryEventMemberIsEventMemver (with the word or
+  // without): G1's "ours" (coop/host/event_owner.hpp).
   bool link_bound = false;
   // G1 (event_owner.hpp): whose the running event is. The reader cannot know (it reads one game
   // frame); the hook's EventOwnerTracker sets it. `ours` by default: what event_running meant before.
@@ -84,7 +85,7 @@ class PlayerReader {
   std::optional<std::string> read_scene();
   std::optional<bool> read_event_running();  // the word or our Link bound, as PlayerReading
   std::optional<bool> read_event_word();     // the event manager's running word alone
-  std::optional<bool> read_link_bound();     // our Link's own performer holds an event link
+  std::optional<bool> read_link_bound();     // our Link is an event member (the game's own test)
   // The player actor's life, in quarter hearts, from its own Life component (addresses.hpp kComponentLife). Nothing
   // when a step of the walk fails, or the value is below 0 or above protocol::kMaxLifeQuarters.
   std::optional<std::int32_t> read_life();
@@ -109,6 +110,13 @@ class PlayerReader {
   std::optional<std::string> read_slot_name(std::uint32_t slot_index);
   // The same for one of the EquipmentUser's armor links (after the slots).
   std::optional<std::string> read_armor_link_name(std::uint32_t link_index);
+  // The pieces the game draws as an actor in its armor links (masks, the
+  // Goron/Zora Tunics, the Hover/Iron Boots, the gauntlets and the child's
+  // bracelet) are sent as the links hold them, not as the PlayerStatus.Equip*
+  // flags name them (issue 91, row 148): a flag outlives an age change, so a
+  // child whose flag still names the adult's Golden Gauntlets wears none.
+  // For an adult (`child` false) a flag with a name stands, as before.
+  void wear_from_links(protocol::Equipment& e, bool child);
   // The piece behind the link at EquipmentUser + `link_offset`.
   std::optional<std::string> read_link_name(std::uint64_t link_offset);
   GameMemory& memory_;

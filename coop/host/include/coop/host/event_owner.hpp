@@ -4,12 +4,14 @@
 // because "an event runs". Before, all of them read one bit, "an event runs in
 // our game" (PlayerReading::event_running), and so treated three different
 // events the same:
-//   ours    - an event our own Link is in: a talk, a cutscene our game started,
-//             a shared story scene that binds our Link.
-//   others  - another player's event that our co-op layer asked our game to
-//             play (a live dungeon event, an eye switch's event, a shared
-//             scene joined), and that does not bind our Link: our Link is not
-//             in it.
+//   ours    - an event our own Link is a member of (the game's own member
+//             test): a talk, a cutscene our game started, a shared story
+//             scene that takes our Link.
+//   others  - an event our Link is not a member of (the game's own member
+//             test): another player's event that our co-op layer asked our
+//             game to play (a live dungeon event, an eye switch's event, a
+//             shared scene joined), or any other event that does not take our
+//             Link.
 //   ocarina - our Link playing the Ocarina freely (the game's event setting
 //             Dm_SY_Ocarina / PlayOcarina_Base, read from RSDB EventSetting):
 //             an event in the game's terms, but nothing is staged and our Link
@@ -79,132 +81,96 @@ inline bool local_event_hides(bool event_running, EventWhose whose, const std::o
   return our_link_in_event(event_running, whose) && local_event_hides(true, own_anim);
 }
 
-// Once a frame (the hook's present thread): which kind the running event is.
-// - CoopAsked: our co-op layer asked the game for another player's event and the
-//   manager took it. An event that starts within kReplayUs after it (with no
-//   request of the game's own in between) is that replay: `others`, unless our
-//   Link's own performer is bound into it (then the event holds our Link: ours).
+// Once a frame (the hook's present thread): which kind the running event is. From the game's own
+// facts only: no clock, no event names, no distance.
+// - Frame: `running` is PlayerReading::event_running (the event word, or our Link an event member),
+//   `link_member` our Link is an event member by the game's own test (PlayerReading::link_bound:
+//   QueryEventMemberIsEventMemver, a member slot with its flag bit; read in the offline run
+//   fable-g1-events, where our Link was a member in every event of its own: the ~1 s event after a
+//   scene load, a death with the revival fairy, the Ocarina take-out), `own_anim` our Link's main
+//   AS command (the Ocarina's animation counts as the Ocarina where the wrap gives no name: the
+//   emulator).
+//   - our free Ocarina: the game's own request for it was the last one the manager took in this run
+//     (GameAsked), or our Link plays the Ocarina's animation. Checked first: the take-out makes our
+//     Link an event member too, but nothing is staged and our Link stands in the open.
+//   - ours: our Link is an event member.
+//   - another player's: an event runs and our Link is not a member of it. Our game plays it (a
+//     replay the co-op layer asked for, a shared scene joined), or it is an event of the world
+//     that does not take our Link: either way it does not hold our Link.
+//   Each frame is classified on its own, so an event that takes our Link part-way is ours from
+//   then on, and one that lets it go is not.
 // - GameAsked: the game's own request the manager took (Hookshot's request wrap,
-//   CoopLiveEvents::GameRequests). The free Ocarina's setting makes the run
-//   `ocarina` until another request is taken in it (a song's reaction, a warp).
-//   Our own replay seen again through the wrap (the same name) changes nothing.
-// - Frame: `running` is PlayerReading::event_running, `link_bound` our Link's
-//   own performer bound, `own_anim` our Link's main AS command (the Ocarina's
-//   animation counts as the Ocarina where the wrap gives no name: the emulator).
-//   A run is classified when it starts and stays so until it ends, except:
-// - RunNames: the running event's own name-like strings, as the game keeps them
-//   (CoopEventMember::ReadRunning, both platforms, read once the run started). The
-//   name of our last co-op ask among them makes the run a replay whatever the time
-//   since the ask; the free Ocarina's setting among them makes it the Ocarina. A name is
-//   only ever positive proof: other names change nothing (that ReadRunning holds the asked
-//   setting is not seen in a game yet), so the 3 s window still decides then (By() says
-//   which sign decided; the LANE1 log shows whether the names hold it).
+//   CoopLiveEvents::GameRequests). The free Ocarina's setting makes the run `ocarina` until another
+//   request is taken in it (a song's reaction, a warp). A request taken before the run starts is
+//   the one that starts it (the wrap sees only taken requests). A request is used by the next
+//   Frame (the hook feeds the frame's requests first): by the run of that frame, or kept only until
+//   the next run starts when no event runs; never by a later run.
 // Pure: tested in tests/host/event_owner_test.cpp.
 class EventOwnerTracker {
  public:
-  static constexpr std::uint64_t kReplayUs = 3'000'000;
-  // How long a co-op ask may still be matched by the event's name (a slow start).
-  static constexpr std::uint64_t kNameMatchUs = 60'000'000;
-  enum class By : std::uint8_t { none, time, name, request };
+  enum class By : std::uint8_t { none, member, request, animation };
 
-  void CoopAsked(std::string_view name, std::uint64_t now_us) {
-    coop_name_ = std::string(name);
-    coop_us_ = now_us;
-    coop_set_ = true;
+  // Kept for the next Frame only, which applies it to the frame's run (review of c431aafc: a request
+  // applied in a run used to stay pending and decide the run after it, even minutes later).
+  void GameAsked(std::string_view name) {
+    asked_ocarina_ = free_ocarina_event(name);
+    asked_ = true;
   }
 
-  void RunNames(const std::vector<std::string>& names, std::uint64_t now_us) {
-    if (!running_ || names.empty()) return;
-    const auto has = [&names](std::string_view n) {
-      for (const std::string& x : names) {
-        if (x == n) return true;
-      }
-      return false;
-    };
-    if (!run_coop_name_.empty() && now_us - run_coop_us_ <= kNameMatchUs && has(run_coop_name_)) {
-      replay_ = true;
-      ocarina_ = false;
-      by_ = By::name;
-      return;
-    }
-    for (const std::string& x : names) {
-      if (free_ocarina_event(x)) {
-        ocarina_ = true;
-        replay_ = false;
-        by_ = By::name;
-        return;
-      }
-    }
+  // Our scene this frame (before Frame). A request still waiting for its run when the scene changes is
+  // dropped: a load ends every event the manager held, so no run after it was started by that request
+  // (review of e3542a8a: a taken request whose run never read as running stayed pending until any later
+  // run, even minutes later, and could mark it our free Ocarina). A fact, not a clock.
+  void Scene(std::string_view scene) {
+    if (!scene_.empty() && scene != scene_) asked_ = false;
+    scene_ = std::string(scene);
   }
 
-  void GameAsked(std::string_view name, std::uint64_t now_us) {
-    if (coop_set_ && name == coop_name_) {  // our replay, seen by the wrap
-      coop_by_request_ = true;
-      return;
-    }
-    coop_set_ = false;                            // the game's own request after ours: the next run is ours
-    game_ocarina_ = free_ocarina_event(name);
-    game_us_ = now_us;
-    game_set_ = true;
-    if (running_) {
-      ocarina_ = game_ocarina_;  // a song's reaction ends the free play; a new free play starts one
-      replay_ = false;
-      by_ = By::request;
-    }
-  }
-
-  EventWhose Frame(bool running, bool link_bound, std::uint64_t now_us,
-                   const std::optional<std::string_view>& own_anim = std::nullopt) {
+  EventWhose Frame(bool running, bool link_member, const std::optional<std::string_view>& own_anim = std::nullopt) {
     if (!running) {
       running_ = false;
-      replay_ = false;
       ocarina_ = false;
-      if (coop_set_ && now_us - coop_us_ > kReplayUs) coop_set_ = false;
-      if (game_set_ && now_us - game_us_ > kReplayUs) game_set_ = false;
+      by_ = By::none;
       return EventWhose::ours;
     }
-    if (!running_) {  // the run starts
+    if (!running_) {  // the run starts: the request taken for it, if the wrap saw one
       running_ = true;
-      replay_ = coop_set_ && now_us - coop_us_ <= kReplayUs;
-      ocarina_ = !replay_ && game_set_ && game_ocarina_ && now_us - game_us_ <= kReplayUs;
-      by_ = replay_ ? (coop_by_request_ ? By::request : By::time) : ocarina_ ? By::request : By::none;
-      run_coop_name_ = coop_name_;  // kept for RunNames whatever the window said
-      run_coop_us_ = coop_us_;
-      coop_set_ = false;
-      coop_by_request_ = false;
-      game_set_ = false;
+      ocarina_ = asked_ && asked_ocarina_;
+    } else if (asked_) {  // taken in the run: a song's reaction ends the free play; a new free play starts one
+      ocarina_ = asked_ocarina_;
     }
-    if (ocarina_ || activity_of(own_anim) == Activity::ocarina) return EventWhose::ocarina;
-    if (replay_ && !link_bound) return EventWhose::others;
-    return EventWhose::ours;
+    asked_ = false;  // a request is used by the run of the frame it was taken in, or the run it starts
+    if (ocarina_) {
+      by_ = By::request;
+      return EventWhose::ocarina;
+    }
+    if (activity_of(own_anim) == Activity::ocarina) {
+      by_ = By::animation;
+      return EventWhose::ocarina;
+    }
+    by_ = By::member;
+    return link_member ? EventWhose::ours : EventWhose::others;
   }
 
-  bool Replay() const { return running_ && replay_; }
-  // What decided the running event's kind: time (the window alone), name (RunNames), request (the wrap).
+  // What decided the running event's kind: our Link's membership, the game's request or our Link's
+  // animation (both the free Ocarina).
   By Decided() const { return by_; }
 
  private:
-  std::string coop_name_;
-  std::uint64_t coop_us_ = 0;
-  bool coop_set_ = false;
-  bool game_ocarina_ = false;
-  std::uint64_t game_us_ = 0;
-  bool game_set_ = false;
+  std::string scene_;
+  bool asked_ = false;
+  bool asked_ocarina_ = false;
   bool running_ = false;
-  bool replay_ = false;
   bool ocarina_ = false;
-  bool coop_by_request_ = false;
-  std::string run_coop_name_;
-  std::uint64_t run_coop_us_ = 0;
   By by_ = By::none;
 };
 
 inline const char* by_name(EventOwnerTracker::By b) {
   switch (b) {
-    case EventOwnerTracker::By::none: return "no co-op ask";
-    case EventOwnerTracker::By::time: return "by time alone";
-    case EventOwnerTracker::By::name: return "by the event's name";
+    case EventOwnerTracker::By::none: return "no event";
+    case EventOwnerTracker::By::member: return "by our Link's event membership";
     case EventOwnerTracker::By::request: return "by the game's request";
+    case EventOwnerTracker::By::animation: return "by our Link's animation";
   }
   return "?";
 }

@@ -1,4 +1,4 @@
-From d4e11a0d0562cff395dced1d2018bf2801ff7c20 Mon Sep 17 00:00:00 2001
+From 6bd9b8d43aa1039df8e352d926f64068ef2ec342 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Thu, 12 Nov 2026 13:00:23 -0900
 Subject: [PATCH] Co-op world hooks: game events and wrapped game functions to
@@ -183,15 +183,15 @@ index 00000000..486456f0
 +
 +#endif
 diff --git a/nx2/chunks.py b/nx2/chunks.py
-index ba70e01a..fabd00ac 100644
+index 37f207cc..830d29ba 100644
 --- a/nx2/chunks.py
 +++ b/nx2/chunks.py
 @@ -205,7 +205,8 @@ def parallel_emit(emit, order, texts, counters, jobs, run=2000):
  
  # What the emit reads of the lifter besides the bodies of the functions it emits (a64_lift.Lifter.emit_function and the
  # methods it calls): sent once to each new process
--EMIT_TABLES = ("entries", "plt", "jt", "devirt", "after", "no_local", "setjmp_owner", "comments", "names")
-+EMIT_TABLES = ("entries", "plt", "jt", "devirt", "after", "no_local", "setjmp_owner", "comments", "names",
+-EMIT_TABLES = ("entries", "plt", "jt", "devirt", "after", "no_local", "setjmp_owner", "comments", "names", "entry_hooks")
++EMIT_TABLES = ("entries", "plt", "jt", "devirt", "after", "no_local", "setjmp_owner", "comments", "names", "entry_hooks",
 +               "wraps")   # (oot-remake-multiplayer's patch 0005)
  _view = None   # (a new process's view: a lifter with the tables only, and its counters)
  

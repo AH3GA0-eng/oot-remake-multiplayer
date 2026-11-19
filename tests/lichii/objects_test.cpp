@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "coop/protocol/codec.hpp"
+#include "coop_bomb_share.h"
 #include "coop_hold.h"
 #include "coop_objects_sync.h"
 
@@ -88,6 +89,25 @@ TEST_CASE("objects: a MaxLife raised by another player raises our Link's max lif
     CHECK_FALSE(RaisedMaxLife(16, -1).has_value());  // the flag not readable
     CHECK_FALSE(RaisedMaxLife(0, 20).has_value());   // our Link's life not read yet
     CHECK_FALSE(RaisedMaxLife(-1, 20).has_value());
+}
+
+TEST_CASE("objects: the host's older save lowers our Link's max life only while its reset hold lasts (rows 136/137)") {
+    using CoopObjects::LoweredMaxLife;
+    // 16 -> 12 (a container taken, then the host loaded a save from before the boss): life held to the new max.
+    const auto a = LoweredMaxLife(16, 16, 12);
+    REQUIRE(a.has_value());
+    CHECK(a->max == 12);
+    CHECK(a->life == 12);
+    const auto b = LoweredMaxLife(16, 8, 12);  // hurt: life stays
+    REQUIRE(b.has_value());
+    CHECK(b->max == 12);
+    CHECK_FALSE(b->life.has_value());
+    CHECK_FALSE(LoweredMaxLife(16, 16, std::nullopt).has_value());  // no hold: never lowered (co-op idle, solo)
+    CHECK_FALSE(LoweredMaxLife(12, 12, 12).has_value());            // already there
+    CHECK_FALSE(LoweredMaxLife(12, 12, 16).has_value());            // never raised here (RaisedMaxLife does)
+    CHECK_FALSE(LoweredMaxLife(16, 16, 0).has_value());             // not a real maximum
+    CHECK_FALSE(LoweredMaxLife(16, 16, 3).has_value());
+    CHECK_FALSE(LoweredMaxLife(0, 0, 12).has_value());              // our Link's life not read yet
 }
 
 TEST_CASE("objects: a scene's own enemy gets the same id on both games") {
@@ -656,6 +676,38 @@ TEST_CASE("objects: animals and townspeople are shared too (hits on a cucco)") {
     CHECK_FALSE(CoopObjects::IsShared("Npc_Navi"));
     CHECK_FALSE(CoopObjects::IsShared("Npc_Equipment_002"));
     CHECK_FALSE(CoopObjects::IsShared("Npc_Invisible_Hylia_Dampe_001"));
+}
+
+TEST_CASE("objects: the enemies' brain path is opt-in: unset, empty or 0 is off (g4-enemies)") {
+    // The first g4-enemies probe ran the path in its switch-off runs too: the switch read as on-unless-0.
+    CHECK_FALSE(CoopObjects::EnemyBrainSwitch(""));
+    CHECK_FALSE(CoopObjects::EnemyBrainSwitch("0"));
+    CHECK(CoopObjects::EnemyBrainSwitch("1"));
+}
+
+TEST_CASE("objects: the enemies' brain path takes plain enemies only (fable-g4-enemies)") {
+    CHECK(CoopObjects::OnBrainPath("Enemy_Dekubaba"));
+    CHECK(CoopObjects::OnBrainPath("Enemy_Skulltula"));
+    CHECK(CoopObjects::OnBrainPath("Enemy_Scrub_Deku"));
+    // Bosses have their own entry; own puzzles, the picture book and everything that is no Enemy_ stay out.
+    CHECK_FALSE(CoopObjects::OnBrainPath("Enemy_DungeonBoss_Gohma"));
+    CHECK_FALSE(CoopObjects::OnBrainPath("Enemy_MiddleBoss_GerudoThief"));
+    CHECK_FALSE(CoopObjects::OnBrainPath("Enemy_Scrub_Deku_Brothers"));
+    CHECK_FALSE(CoopObjects::OnBrainPath("Enemy_Dekubaba_Dictionary"));
+    CHECK_FALSE(CoopObjects::OnBrainPath("Enemy_MoblinClub_ShockWave"));  // an enemy's shot
+    CHECK_FALSE(CoopObjects::OnBrainPath("Npc_Zora_Ruto_Child_001"));
+}
+
+TEST_CASE("objects: townspeople and every enemy copy are followed each game frame (jitter-b, issue 239)") {
+    CHECK(CoopObjects::FollowedEachFrame("Npc_Zora_Ruto_Child_001"));
+    CHECK(CoopObjects::FollowedEachFrame("Enemy_Dekubaba"));
+    CHECK(CoopObjects::FollowedEachFrame("Enemy_Peahat"));
+    CHECK(CoopObjects::FollowedEachFrame("Enemy_MiddleBoss_GerudoThief"));
+    CHECK(CoopObjects::FollowedEachFrame("Enemy_DungeonBoss_Gohma"));
+    CHECK(CoopObjects::FollowedEachFrame("Enemy_DungeonBoss_BongoBongo_LeftHand"));  // a part with its root
+    CHECK_FALSE(CoopObjects::FollowedEachFrame("Enemy_Dekubaba_Dictionary"));
+    CHECK_FALSE(CoopObjects::FollowedEachFrame("Obj_Kibako"));
+    CHECK_FALSE(CoopObjects::FollowedEachFrame(""));
 }
 
 TEST_CASE("objects: order-puzzle scrubs are each game's own (issue 149)") {
@@ -3517,6 +3569,40 @@ TEST_CASE("objects: a copy whose wake the Mover put back once is flagged targeti
     CHECK_FALSE((flags && (*flags & kTargeting) != 0));
 }
 
+TEST_CASE("objects: a plain copy whose own brain wants another phase near our Link is flagged targeting (issue 101)") {
+    // The enemies' brain path: the copy's own brain is skipped and it plays the owner's phase, so its animation
+    // never differs and it is never pulled towards our Link; the brain's own ask (TakeOwnWants) is what shows it.
+    auto run = [](float x, std::uint64_t from, std::uint64_t until, std::uint8_t owner = 2, bool wake = true) {
+        Sync sync;
+        sync.SetWake(wake);
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        Tick(sync, 0, {Acting(0x100, 0x11, 2, x, "Wait")});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, owner);
+        std::optional<std::uint8_t> flags;
+        for (std::uint64_t t = 10; t < 1500; t += 66) {
+            if (t >= from && t < until) {
+                sync.NoteOwnBrainWant(0x100, t * kMs);
+            }
+            sync.Receive(OwnerSample(id, owner, t * kMs, x, 2, "Wait"));
+            for (const auto& p : All<proto::ObjectPresent>(Tick(sync, t * kMs, {Acting(0x100, 0x11, 2, x, "Wait")}))) {
+                flags = p.objects[0].flags;
+            }
+        }
+        return flags && (*flags & kTargeting) != 0;
+    };
+    CHECK(run(5.0f, 100, 1500));             // wants to act on our Link for over a second: the server gets the chase
+    CHECK_FALSE(run(5.0f, 0, 0));            // its brain wants the owner's phase: nothing
+    CHECK_FALSE(run(15.0f, 100, 1500));      // over kWakeM from our Link
+    CHECK_FALSE(run(5.0f, 100, 1500, 2, false));  // LICHII_COOP_OBJECTS_WAKE=0
+    CHECK_FALSE(run(5.0f, 1200, 1500));      // under a second: not yet
+    CHECK_FALSE(run(5.0f, 100, 1500, 1));    // ours: not a copy (its own brain runs anyway)
+    // An unknown actor: nothing (no crash, no entry).
+    Sync sync;
+    sync.NoteOwnBrainWant(0x999, 10 * kMs);
+    CHECK_FALSE(sync.IdOf(0x999));
+}
+
 TEST_CASE("objects: a copy's own wake for our Link runs, the owner's rest is not put back (report 109)") {
     // Player report 109: a Deku Baba copy rose for our Link ("GetUp"); the
     // owner's buried "Wait" was put back over it, so it came out late and
@@ -5859,4 +5945,169 @@ TEST_CASE("objects: the test stun makes our boss copy say a stun to its owner, n
     REQUIRE(damage.size() == 1);
     CHECK(damage[0].amount == 0);
     CHECK(damage[0].epoch == 1);
+}
+
+TEST_CASE("objects: the real hit goes everywhere: copy's DAMAGE, the owner's replay, its samples, a third copy (protocol 14)") {
+    // Every hit shows on every screen: each game's enemy takes the hit that happened (its weapon, element,
+    // place) through its own damage step, not a stand-in sword hit it may refuse (King Dodongo, Gohma's eye).
+    proto::HitRecord rec{};
+    rec[4] = 0x00090003;  // a bomb's attack kind, say
+    rec[15] = 0x3f800000;
+    const std::string kName = "Enemy_Bokoblin";
+    const auto E = [](std::uint64_t a, std::uint64_t h, std::int32_t life, float x, const std::string& name) {
+        Seen s = Enemy(a, h, life, x, name);
+        s.life = proto::ObjectLife{life, 8};
+        return s;
+    };
+    // The hitter: its copy's own hit (a moved hit id, own_hit) with its record goes with the DAMAGE.
+    Sync copy;
+    Tick(copy, 0, {E(0x100, 0x11, 6, 0.0f, kName)});
+    const proto::ObjectId id = *copy.IdOf(0x100);
+    Own(copy, id, 2, 1);
+    Tick(copy, 10 * kMs, {E(0x100, 0x11, 6, 0.0f, kName)});
+    Seen hit = E(0x100, 0x11, 4, 0.0f, kName);
+    hit.own_hit = true;
+    hit.hit_record = rec;
+    Tick(copy, 20 * kMs, {hit});
+    auto damage = All<proto::Damage>(Tick(copy, 130 * kMs, {E(0x100, 0x11, 4, 0.0f, kName)}));
+    REQUIRE(damage.size() == 1);
+    CHECK(damage[0].amount == 2);
+    CHECK(damage[0].hit_record == std::optional<proto::HitRecord>(rec));
+    // (the next DAMAGE without a new own hit has none)
+    Tick(copy, 140 * kMs, {E(0x100, 0x11, 3, 0.0f, kName)});
+    damage = All<proto::Damage>(Tick(copy, 260 * kMs, {E(0x100, 0x11, 3, 0.0f, kName)}));
+    REQUIRE(damage.size() == 1);
+    CHECK_FALSE(damage[0].hit_record);
+
+    // The owner: the DAMAGE's record goes into its replay; the hit its game then took goes in its samples.
+    Sync owner;
+    owner.SetHurt(true);
+    Tick(owner, 0, {E(0x200, 0x11, 6, 0.0f, kName)});
+    const proto::ObjectId oid = *owner.IdOf(0x200);
+    Own(owner, oid, 1);
+    proto::Damage d{};
+    d.player_number = 2;
+    d.id = oid;
+    d.amount = 2;
+    d.hit_record = rec;
+    owner.Receive(d);
+    auto step = Tick(owner, 10 * kMs, {E(0x200, 0x11, 6, 0.0f, kName)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].hurt == 2);
+    CHECK(step.writes[0].record == std::optional<proto::HitRecord>(rec));
+    Seen took = E(0x200, 0x11, 4, 0.0f, kName);
+    took.replay_hit = true;
+    took.hit_record = rec;
+    // (its next sample is due kSampleEveryUs after the one at 10 ms)
+    const std::uint64_t took_at = 10 * kMs + Sync::kSampleEveryUs;
+    auto samples = All<proto::ObjectSample>(Tick(owner, took_at, {took}));
+    REQUIRE_FALSE(samples.empty());
+    REQUIRE(samples.back().state.hit);
+    CHECK(samples.back().state.hit->seq == 1);
+    CHECK(samples.back().state.hit->record == rec);
+    // Past kHitShowUs its samples carry it no more.
+    samples = All<proto::ObjectSample>(Tick(owner, took_at + Sync::kHitShowUs, {E(0x200, 0x11, 3, 0.0f, kName)}));
+    REQUIRE_FALSE(samples.empty());
+    CHECK_FALSE(samples.back().state.hit);
+
+    // A third game's copy: the owner's sample with a fall and a new hit seq replays that hit, once.
+    Sync third;
+    third.SetHurt(true);
+    Tick(third, 0, {E(0x300, 0x11, 6, 0.0f, kName)});
+    const proto::ObjectId tid = *third.IdOf(0x300);
+    Own(third, tid, 2, 3);
+    Tick(third, 10 * kMs, {E(0x300, 0x11, 6, 0.0f, kName)});
+    proto::ObjectSample s{2, tid, 3, {}};
+    s.state.time = {15 * kMs, 1};
+    s.state.position = proto::Vec3{0.0f, 0.0f, 0.0f};
+    s.state.life = proto::ObjectLife{4, 8};
+    s.state.hit = proto::ObjectHit{1, rec};
+    third.Receive(s);
+    step = Tick(third, 20 * kMs, {E(0x300, 0x11, 6, 0.0f, kName)});
+    REQUIRE(step.writes.size() == 1);
+    CHECK(step.writes[0].hurt == 2);
+    CHECK(step.writes[0].record == std::optional<proto::HitRecord>(rec));
+}
+
+// Native puppets phase 2 (coop_bomb_share.h): a HANDOVER_ASK for one of the
+// spawn sync's own bombs is answered there (with its fuse), not here with the
+// time only. Any other unknown id is answered as before.
+TEST_CASE("objects: a HANDOVER_ASK for one of the spawn sync's bombs is left to it (native puppets phase 2)") {
+    Sync sync;
+    Tick(sync, 0, {});
+    const proto::ObjectId bomb{proto::ObjectKind::made, 1, 99};
+    sync.Receive(proto::HandoverAsk{bomb, 0, 2});
+    CHECK(All<proto::HandoverState>(Tick(sync, 100 * kMs, {})).size() == 1);
+    CoopBombShare::TheOwnBombs().Note(bomb, true);
+    sync.Receive(proto::HandoverAsk{bomb, 0, 2});
+    CHECK(All<proto::HandoverState>(Tick(sync, 200 * kMs, {})).empty());
+    CoopBombShare::TheOwnBombs().Clear();
+}
+
+TEST_CASE("objects: row 149: IsBoss is the real bosses only, their parts are IsBossPart and follow their root") {
+    using CoopObjects::BossPartRoot;
+    using CoopObjects::IsBoss;
+    using CoopObjects::IsBossOrPart;
+    using CoopObjects::IsBossPart;
+    // The roots of every boss fight stay bosses.
+    for (const char* root : {"Enemy_DungeonBoss_Gohma", "Enemy_DungeonBoss_Dodongo", "Enemy_DungeonBoss_Barinade",
+                             "Enemy_DungeonBoss_PhantomGanon", "Enemy_DungeonBoss_Volvagia", "Enemy_DungeonBoss_Morpha",
+                             "Enemy_DungeonBoss_BongoBongo", "Enemy_DungeonBoss_Twinrova",
+                             "Enemy_KotakeKoumeBattleManager", "Enemy_DungeonBoss_Ganondorf", "Enemy_DungeonBoss_Ganon",
+                             "Enemy_MiddleBoss_DarkLink", "Enemy_MiddleBoss_BigOcto", "Enemy_DeadHand"}) {
+        CAPTURE(root);
+        CHECK(IsBoss(root));
+        CHECK(IsBossOrPart(root));
+        CHECK_FALSE(IsBossPart(root));
+    }
+    // Their parts are no bosses of their own (King Dodongo's roll centre had its own owner and boss lock).
+    for (const char* part : {"Enemy_DungeonBoss_Dodongo_Attention_RollingCenter", "Enemy_DungeonBoss_Dodongo_Attention",
+                             "Enemy_DungeonBoss_Dodongo_SpawnBabyDodongo", "Enemy_DungeonBoss_Gohma_Egg",
+                             "Enemy_DungeonBoss_Barinade_Arm", "Enemy_DungeonBoss_Barinade_Jellyfish",
+                             "Enemy_DungeonBoss_Morpha_Attention_Spin", "Enemy_DungeonBoss_Morpha_Tentacle",
+                             "Enemy_DungeonBoss_BongoBongo_LeftHand", "Enemy_DungeonBoss_BongoBongo_RightHand",
+                             "Enemy_DungeonBoss_Kotake", "Enemy_DungeonBoss_Koume", "Enemy_DungeonBoss_Ganon_Crystal",
+                             "Enemy_MiddleBoss_BigOcto_Attention"}) {
+        CAPTURE(part);
+        CHECK_FALSE(IsBoss(part));
+        CHECK(IsBossPart(part));
+        CHECK(IsBossOrPart(part));  // (the rules every boss actor shares: life, hits, slots)
+    }
+    // A part not named as a boss (Gohma's larva, a baby Dodongo) is a part, not IsBossOrPart; plain enemies neither.
+    CHECK(IsBossPart("Enemy_Gohma_Larva"));
+    CHECK_FALSE(IsBossOrPart("Enemy_Gohma_Larva"));
+    CHECK_FALSE(IsBossPart("Enemy_Dodongo_Attention"));  // (a plain enemy's part)
+    CHECK_FALSE(IsBossPart("Enemy_Dodongo"));
+    CHECK_FALSE(IsBossPart("Enemy_DungeonBoss_Dodongo_Attention_RollingCenter_Dictionary"));
+
+    // Its root in a walk: by name, the nearest in reach, else the next root name (Twinrova's witches).
+    using coop::protocol::Vec3;
+    const std::vector<std::string_view> names{"Enemy_Dodongo", "Enemy_DungeonBoss_Dodongo",
+                                              "Enemy_DungeonBoss_Dodongo_Attention_RollingCenter"};
+    const std::vector<Vec3> places{Vec3{1, 0, 0}, Vec3{50, 0, 0}, Vec3{0, 0, 0}};
+    CHECK(BossPartRoot("Enemy_DungeonBoss_Dodongo_Attention_RollingCenter", places[2], names, places) == 1u);
+    CHECK_FALSE(BossPartRoot("Enemy_DungeonBoss_Dodongo", places[1], names, places));  // a root follows none
+    CHECK_FALSE(BossPartRoot("Enemy_Dodongo_Attention", places[0], names, places));  // no boss part
+    CHECK_FALSE(BossPartRoot("Enemy_DungeonBoss_BongoBongo_LeftHand", places[0], names, places));  // no root here
+    const std::vector<std::string_view> witches{"Enemy_DungeonBoss_Twinrova", "Enemy_DungeonBoss_Kotake"};
+    const std::vector<Vec3> at{Vec3{0, 0, 0}, Vec3{5, 0, 0}};
+    CHECK(BossPartRoot("Enemy_DungeonBoss_Kotake", at[1], witches, at) == 0u);
+    // Out of reach (a larva far from Gohma): none.
+    const std::vector<std::string_view> gohma{"Enemy_DungeonBoss_Gohma", "Enemy_Gohma_Larva"};
+    const std::vector<Vec3> far{Vec3{0, 0, 0}, Vec3{500, 0, 0}};
+    CHECK_FALSE(BossPartRoot("Enemy_Gohma_Larva", far[1], gohma, far));
+}
+
+TEST_CASE("objects: row 149: a boss part never linked sends no boss lock of its own, a root still does") {
+    using CoopObjects::GroupInput;
+    using CoopObjects::GroupsOf;
+    const proto::ObjectId centre{proto::ObjectKind::placed, 0, 8};
+    const proto::ObjectId twinrova{proto::ObjectKind::placed, 0, 9};
+    // King Dodongo not in this walk: his roll centre sends nothing (no group lock of its own).
+    const std::vector<GroupInput> walk{{centre, "Enemy_DungeonBoss_Dodongo_Attention_RollingCenter", {0, 0, 0}},
+                                       {twinrova, "Enemy_DungeonBoss_Twinrova", {0, 0, 0}}};
+    const auto groups = GroupsOf(walk);
+    REQUIRE(groups.size() == 1);
+    CHECK(groups[0].member == twinrova);  // Twinrova, a part with no battle manager here, keeps its own boss lock
+    CHECK(groups[0].flags == proto::object_group::boss);
 }

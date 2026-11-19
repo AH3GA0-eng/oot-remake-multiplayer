@@ -1,4 +1,4 @@
-From cc2b27646f3836665a31770088a3524c7d837e52 Mon Sep 17 00:00:00 2001
+From c87328ae852080839e5150486c887aaa25aeacfa Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Fri, 13 Nov 2026 20:38:47 -0900
 Subject: [PATCH] Co-op texture overrides: a module may have a texture drawn
@@ -27,10 +27,10 @@ The Link customizer paints Link's gear with it.
  create mode 100644 host/hos_coop_texture.h
 
 diff --git a/gpu/vk/vk_texture.cpp b/gpu/vk/vk_texture.cpp
-index 18a08420..6db5422a 100644
+index 3d87a4ed..c98e9c67 100644
 --- a/gpu/vk/vk_texture.cpp
 +++ b/gpu/vk/vk_texture.cpp
-@@ -1044,8 +1044,40 @@ LevelGeo level_geo(const Texture& tex, uint32_t level) {   // (level: the image'
+@@ -1060,8 +1060,40 @@ LevelGeo level_geo(const Texture& tex, uint32_t level) {   // (level: the image'
      return g;
  }
  
@@ -72,7 +72,7 @@ index 18a08420..6db5422a 100644
      uint64_t avail = 0;
      const uint8_t* p = host->gpu_ptr(gpu, &avail);
      // (below 1 TB the GPU address is the guest's: the storage as it was at the submit being replayed, where the game has
-@@ -1073,6 +1105,15 @@ const uint8_t* guest_bytes(uint64_t gpu, uint64_t n, std::vector<uint8_t>& scrat
+@@ -1089,6 +1121,15 @@ const uint8_t* guest_bytes(uint64_t gpu, uint64_t n, std::vector<uint8_t>& scrat
      }
      return scratch.data();
  }
@@ -88,7 +88,7 @@ index 18a08420..6db5422a 100644
  
  void widen_rows(uint8_t* dst, const uint8_t* src, size_t texels, int from, int to) {
      const int comp = from / 3;
-@@ -1792,12 +1833,15 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
+@@ -1819,12 +1860,15 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
      up_route = UP_CPU;
      if (tex.bc) return false;   // (no CPU path into BC3)
      // (the GPU's unswizzle reads guest memory as it is: not where the capture kept the storage as it was at its submit)
@@ -106,7 +106,7 @@ index 18a08420..6db5422a 100644
      const int src_bpb = tex.bpb;
      const int out_bpb = tex.astc ? 4 : widen_from ? (widen_from == 3 ? 4 : widen_from == 6 ? 8 : 16) : src_bpb;
      const uint32_t copy_layers = tex.type == VK_IMAGE_TYPE_3D ? 1 : tex.layers;
-@@ -1872,7 +1916,7 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
+@@ -1904,7 +1948,7 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
                                                    ? std::clamp(std::thread::hardware_concurrency() / 2, 1u, 8u) : 1u;
                      uint64_t avail = 0;
                      const uint8_t* direct = host->gpu_ptr(tex.gpu + from, &avail);
@@ -115,7 +115,7 @@ index 18a08420..6db5422a 100644
                      const uint8_t* src = nullptr;
                      if (gather_parts) {
                      } else if (from < total && total - from >= need) {
-@@ -1880,6 +1924,8 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
+@@ -1912,6 +1956,8 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
                      } else {
                          scratch.assign(need, 0);
                          if (from < total) host->gpu_read(tex.gpu + from, scratch.data(), total - from);
@@ -376,10 +376,10 @@ index 00000000..d3be7a17
 +
 +#endif
 diff --git a/host/nvn_native.c b/host/nvn_native.c
-index ca144ae7..051e30cc 100644
+index 596c8eec..3937bbd8 100644
 --- a/host/nvn_native.c
 +++ b/host/nvn_native.c
-@@ -732,6 +732,8 @@ NV(nvnTextureInitialize) {
+@@ -759,6 +759,8 @@ NV(nvnTextureInitialize) {
      const nvn_tex_builder *b = CTB(P(1));
      nvn_tex *o = TX(P(0));
      if (o->magic == NVN_MAGIC('T', 'E', 'X', 0) && o->serial) {   /* initialised again without Finalize */
@@ -388,7 +388,7 @@ index ca144ae7..051e30cc 100644
          live_del(o);
          rx_nvn_texture_released(o);
      }
-@@ -750,6 +752,11 @@ NV(nvnTextureInitialize) {
+@@ -777,6 +779,11 @@ NV(nvnTextureInitialize) {
      o->serial = new_serial();
      live_put(o);
      rx_nvn_texture_created(o);
@@ -400,7 +400,7 @@ index ca144ae7..051e30cc 100644
      {   /* RX_NVN_WATCH_TEX=<w>x<h> (debugging): who writes the storage of textures that size (a page watch, with call
             stacks: hos_watch_guest_writes), for writes the dirty tracking misses */
          static int on = -1;
-@@ -765,6 +772,8 @@ NV(nvnTextureInitialize) {
+@@ -792,6 +799,8 @@ NV(nvnTextureInitialize) {
  }
  NV(nvnTextureFinalize) {
      nvn_tex *o = TX(P(0));

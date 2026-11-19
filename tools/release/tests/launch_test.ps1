@@ -1384,7 +1384,7 @@ if ($pyHome -and (Test-Path -LiteralPath (Join-Path $pyHome 'python.exe'))) {
         New-Item -ItemType Directory -Force -Path "$k\hookshot\tools" | Out-Null
         New-Item -ItemType Junction -Path "$k\hookshot\tools\python" -Value $pyHome | Out-Null
         # stand-ins: the pack tool writes a manifest (or fails, PACK_FAIL), dumpcheck takes a file that says GAME
-        Write-File "$k\tools\puppet_pack\build.py" "import os, sys`nif os.environ.get('PACK_FAIL'): print('BuildError: Tex/x.bntx.zs: broken'); sys.exit(1)`nd = sys.argv[sys.argv.index('--mod-dir') + 1]`nos.makedirs(d, exist_ok=True)`nopen(os.path.join(d, 'coop_puppet.json'), 'w').write('{}')`nopen(os.path.join(d, 'from.txt'), 'w').write(sys.argv[sys.argv.index('--romfs') + 1])`n"
+        Write-File "$k\tools\puppet_pack\build.py" "import os, sys`nif os.environ.get('PACK_FAIL'): print('BuildError: Tex/x.bntx.zs: broken'); sys.exit(1)`nd = sys.argv[sys.argv.index('--mod-dir') + 1]`nos.makedirs(d, exist_ok=True)`nopen(os.path.join(d, 'coop_puppet.json'), 'w').write('{}')`nopen(os.path.join(d, 'from.txt'), 'w').write(sys.argv[sys.argv.index('--romfs') + 1])`nopen(os.path.join(d, 'args.txt'), 'w').write(' '.join(sys.argv[1:]))`n"
         Write-File "$k\tools\puppet_pack\dumpcheck.py" "import sys`np = sys.argv[sys.argv.index('--romfs') + 1]`nsys.exit(0 if open(p, 'rb').read(5) == b'GAME' else 1)   # (5 bytes: a real .nup in Downloads is not read through)`n"
         $run = {
             $ErrorActionPreference = 'Continue'
@@ -1400,6 +1400,8 @@ if ($pyHome -and (Test-Path -LiteralPath (Join-Path $pyHome 'python.exe'))) {
         $r = & $run
         $man = "$k\hookshot\game\mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json"
         Check ($r[0] -eq 0 -and $r[1] -match 'Found your game file: .*OoT\.nup' -and $r[1] -match 'Making the puppet pack' -and (Test-Path -LiteralPath $man) -and (Read-File (Join-Path (Split-Path -Parent $man) 'from.txt')) -eq "$pk\OoT.nup") "pack only: the .nup moved beside the kit: found, the pack made [$($r[0]) $($r[1])]"
+        $packArgs = Read-File (Join-Path (Split-Path -Parent $man) 'args.txt')
+        Check ($packArgs -match '--title-rows' -and $packArgs -match '--pause-tab') "pack: the kit's pack command (Get-KitPackArgs) has --title-rows and --pause-tab [$packArgs]"
         Check ((Read-File "$k\hookshot\game-files.txt").Trim() -eq "$pk\OoT.nup") 'pack only: the new place is remembered'
         $env:PACK_FAIL = '1'
         try { $r = & $run } finally { Remove-Item env:PACK_FAIL }

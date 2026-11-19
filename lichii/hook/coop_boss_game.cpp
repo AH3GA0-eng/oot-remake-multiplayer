@@ -280,8 +280,12 @@ struct Glue {
                 // game's boss there (the eye shut, no fight).
                 CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main);
                 coop::host::GameFlags flags(memory);
-                const auto intro = flags.get_bool(
-                    coop::host::flag_hash("HavePlayedEvent." + std::string(room->intro)));
+                auto intro = flags.get_bool(coop::host::flag_hash("HavePlayedEvent." + std::string(room->intro)));
+                // Our own intro ended here (not skipped): played, though the game sets that flag later or never
+                // (Gohma's), else the intro's own owner reads unready and the server hands her away.
+                if (sync.OwnIntroPlayed()) {
+                    intro = true;
+                }
                 // boss-copy-b: also ready once our boss left its pre-battle
                 // phase here (a late joiner's copy following the fight).
                 const bool ready =
@@ -307,7 +311,15 @@ struct Glue {
         }
         local.self = session->with_client([](coop::net::Client& c) { return c.player_number(); });
         Actions act = sync.Tick(local, now_us);
+        // With the area's rules on (Scenes below returns true then) the older dungeon-wide pull is dropped, so its
+        // "moving in (try N)" / "could not move into" lines would tell of a move that never happens (big-run-0115
+        // hs-gohma-native: B at the dungeon's entrance, outside the boss's area, logged 5 tries and stayed put).
+        const bool area_rules = scenes_on && CoopLiveEvents::TheGameRequests().Live();
         for (const auto& line : act.log) {
+            if (area_rules && (line.rfind("another player is in the boss room of ", 0) == 0 ||
+                               line.rfind("could not move into the boss room of ", 0) == 0)) {
+                continue;
+            }
             LOG_INFO(Core, "coop: boss: {}", line);
         }
         {
