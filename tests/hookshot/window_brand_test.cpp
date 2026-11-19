@@ -3,16 +3,62 @@
 #include <doctest/doctest.h>
 
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <string>
 
 #include "coop_window_brand.h"
 
 TEST_CASE("window brand: the title is Squadala!") {
     CHECK(std::string(CoopWindowBrand::kTitle) == "Squadala!");
-    CHECK_FALSE(CoopWindowBrand::TitleNeedsSetting("Squadala!"));
-    CHECK(CoopWindowBrand::TitleNeedsSetting("Longshot"));
-    CHECK(CoopWindowBrand::TitleNeedsSetting("The Legend of Zelda: Ocarina of Time (Longshot)"));
-    CHECK(CoopWindowBrand::TitleNeedsSetting(""));
+    CHECK_FALSE(CoopWindowBrand::TitleNeedsSetting("Squadala!", "Squadala!"));
+    CHECK(CoopWindowBrand::TitleNeedsSetting("Longshot", "Squadala!"));
+    CHECK(CoopWindowBrand::TitleNeedsSetting("The Legend of Zelda: Ocarina of Time (Longshot)", "Squadala!"));
+    CHECK(CoopWindowBrand::TitleNeedsSetting("", "Squadala!"));
+    CHECK(CoopWindowBrand::TitleNeedsSetting("Squadala!", "Squadala! v0.11.6"));   // the release added once read
+    CHECK_FALSE(CoopWindowBrand::TitleNeedsSetting("Squadala! v0.11.6", "Squadala! v0.11.6"));
+}
+
+TEST_CASE("window brand: the title shows the kit's release (0.11.6)") {
+    using CoopWindowBrand::ReleaseOf;
+    using CoopWindowBrand::TitleFor;
+    // make_kit_hookshot.ps1's first line
+    CHECK(ReleaseOf("kit: Squadala-v0.11.6-windows (release v0.11.6)") == "v0.11.6");
+    CHECK(ReleaseOf("kit: Squadala-v0.11.6-rc1 (release v0.11.6-rc.1)") == "v0.11.6-rc.1");
+    CHECK(ReleaseOf("kit: auto-A") == "");                       // a kit made without -Release
+    CHECK(ReleaseOf("kit: x (release )") == "");
+    CHECK(ReleaseOf("kit: x (release ../../evil)") == "");       // never a path or anything odd on the title
+    CHECK(ReleaseOf("kit: x (release v1 <b>)") == "");
+    CHECK(ReleaseOf("kit: x (release " + std::string(40, '1') + ")") == "");
+    CHECK(TitleFor("v0.11.6") == "Squadala! v0.11.6");
+    CHECK(TitleFor("0.11.6") == "Squadala! v0.11.6");
+    CHECK(TitleFor("") == "Squadala!");
+}
+
+TEST_CASE("window brand: the kit's VERSION.txt is found above the game's folder") {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / "coop-window-brand-test";
+    fs::remove_all(root);
+    const fs::path game = root / "kit" / "hookshot" / "game";
+    fs::create_directories(game);
+    CHECK(CoopWindowBrand::KitRelease(game) == "");                // a developer's build: no kit around it
+    {
+        std::ofstream(root / "kit" / "VERSION.txt", std::ios::binary)
+            << "kit: Squadala-v0.11.6-windows (release v0.11.6)\r\nkind: hookshot\r\n";
+    }
+    CHECK(CoopWindowBrand::KitRelease(game) == "v0.11.6");
+    {
+        std::ofstream(game / "VERSION.txt", std::ios::binary) << "not a kit's file\n";   // skipped, the kit's found
+    }
+    CHECK(CoopWindowBrand::KitRelease(game) == "v0.11.6");
+    // Linux: <kit>/data/game/ (start.sh), the kit's VERSION.txt two up
+    const fs::path linux_game = root / "lin" / "data" / "game";
+    fs::create_directories(linux_game);
+    {
+        std::ofstream(root / "lin" / "VERSION.txt", std::ios::binary) << "kit: Squadala-v0.11.6-linux (release v0.11.6)\n";
+    }
+    CHECK(CoopWindowBrand::KitRelease(linux_game) == "v0.11.6");
+    fs::remove_all(root);
 }
 
 TEST_CASE("window brand: only the game's window class is renamed") {

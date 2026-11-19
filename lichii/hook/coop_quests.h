@@ -103,9 +103,12 @@ class Store final : public coop::host::FlagStore {
  public:
     using GetEnum = std::function<std::optional<std::uint32_t>(std::uint32_t hash)>;
     using SetEnum = std::function<bool(std::uint32_t hash, std::uint32_t value)>;
+    using GetBool = std::function<std::optional<bool>(std::uint32_t hash)>;
 
-    Store(coop::host::FlagStore& inner, GetEnum get, SetEnum set)
-        : inner_(inner), get_(std::move(get)), set_(std::move(set)) {}
+    // `get_bool` reads a saved Bool (row 150: LonLonRanch_PlayingGambleRace, the game's own "a race
+    // against Ingo runs"); none: every Get_Epona race step counts as a race running.
+    Store(coop::host::FlagStore& inner, GetEnum get, SetEnum set, GetBool get_bool = nullptr)
+        : inner_(inner), get_(std::move(get)), set_(std::move(set)), get_bool_(std::move(get_bool)) {}
 
     std::optional<coop::protocol::FlagEntry> read(coop::host::FlagKey key) override;
     bool write(const coop::protocol::FlagEntry& entry) override;
@@ -116,7 +119,10 @@ class Store final : public coop::host::FlagStore {
     bool is_one_way(coop::host::FlagKey key) override { return inner_.is_one_way(key); }
     bool holds(coop::host::FlagKey key) override { return inner_.holds(key); }
     // A complete_only quest our game is finishing itself counts as busy, so
-    // the end waits (FlagWatcher unwritten_) instead of being dropped.
+    // the end waits (FlagWatcher unwritten_) instead of being dropped. Row 150:
+    // only while its race runs in our game (Racing); a game left at a race
+    // step with no race (AfterWonGambleRace from a scene another player's win
+    // played here, or an ocarina warp out of the ranch) takes the group's end.
     bool busy(coop::host::FlagKey key) override;
 
     // Steps moved since the last call (for the log).
@@ -126,10 +132,12 @@ class Store final : public coop::host::FlagStore {
 
  private:
     bool put(const Quest& quest, const coop::protocol::FlagEntry& entry, bool exact);
+    bool racing(const Quest& quest, std::optional<std::int32_t> now) const;
 
     coop::host::FlagStore& inner_;
     GetEnum get_;
     SetEnum set_;
+    GetBool get_bool_;
     std::vector<Raised> raised_;
     std::uint64_t refused_ = 0;
 };

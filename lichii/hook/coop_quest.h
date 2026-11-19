@@ -27,6 +27,9 @@
 
 namespace CoopQuest {
 
+// Rule::from's default: the rule applies from the quest's own floor.
+inline constexpr std::size_t kQuestFloor = static_cast<std::size_t>(-1);
+
 // A shared story flag (a saved Bool) that, once 1, means the quest is at least
 // at `step`. `flag` 0: no flag; then the quests in `done` decide alone.
 struct Rule {
@@ -38,6 +41,11 @@ struct Rule {
     // DoorOfTime_CheckStoneNum reads Get_StoneOfFire / Get_StoneOfWater.
     std::uint32_t done_a = 0;
     std::uint32_t done_b = 0;
+    // The lowest step (index into the quest's steps) our own value must have
+    // for this rule; kQuestFloor: the quest's floor. Row 150: a step a shared
+    // played scene proves far below the quest's floor (SageOfSpirit Step02,
+    // the carpenters freed, under its Step07 floor).
+    std::size_t from = kQuestFloor;
 };
 
 // One quest: its Enum (hash from GameDataList, matched by its value list), its

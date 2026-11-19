@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_window_brand.h"
 
+#include <cctype>
 #include <chrono>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <mutex>
 
 #include "coop_png.h"
 
@@ -17,8 +20,50 @@ bool IsGameWindowClass(const std::string& cls) {
     return cls == "Longshot" || cls == "Hookshot";
 }
 
-bool TitleNeedsSetting(const std::string& current) {
-    return current != kTitle;
+bool TitleNeedsSetting(const std::string& current, const std::string& want) {
+    return current != want;
+}
+
+std::string ReleaseOf(const std::string& version_first_line) {
+    static constexpr const char* kOpen = "(release ";
+    const std::size_t at = version_first_line.rfind(kOpen);
+    if (at == std::string::npos) return {};
+    const std::size_t from = at + std::strlen(kOpen);
+    const std::size_t end = version_first_line.find(')', from);
+    if (end == std::string::npos || end == from || end - from > 32) return {};
+    std::string tag = version_first_line.substr(from, end - from);
+    for (const char c : tag) {
+        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '.' && c != '-' && c != '+' && c != '_') return {};
+    }
+    return tag;
+}
+
+std::string TitleFor(const std::string& release) {
+    if (release.empty()) return kTitle;
+    const bool digit = std::isdigit(static_cast<unsigned char>(release.front())) != 0;
+    return std::string(kTitle) + (digit ? " v" : " ") + release;
+}
+
+std::string KitRelease(const std::filesystem::path& game_dir) {
+    std::filesystem::path d = game_dir;
+    for (int i = 0; i < 5 && !d.empty(); ++i) {
+        std::ifstream in(d / "VERSION.txt", std::ios::binary);
+        std::string first;
+        if (in && std::getline(in, first)) {
+            if (!first.empty() && first.back() == '\r') first.pop_back();
+            if (first.rfind("kit: ", 0) == 0) return ReleaseOf(first);
+        }
+        if (d.parent_path() == d) break;
+        d = d.parent_path();
+    }
+    return {};
+}
+
+const std::string& TitleOf(const std::filesystem::path& game_dir) {
+    static std::once_flag once;
+    static std::string title;
+    std::call_once(once, [&] { title = TitleFor(KitRelease(game_dir)); });
+    return title;
 }
 
 std::vector<std::uint8_t> RgbaToIconBgra(const std::uint8_t* rgba, int width, int height) {
@@ -122,9 +167,11 @@ void Tick(const std::filesystem::path& game_dir) {
     InternalGetWindowText(f.hwnd, cur, 256);  // no WM_GETTEXT sent to the display thread
     std::string narrow;
     for (const wchar_t* p = cur; *p != 0; ++p) narrow.push_back(*p < 128 ? static_cast<char>(*p) : '?');
-    if (TitleNeedsSetting(narrow)) {
+    const std::string& want = TitleOf(game_dir);   // ASCII only (ReleaseOf)
+    if (TitleNeedsSetting(narrow, want)) {
+        const std::wstring wide(want.begin(), want.end());
         DWORD_PTR ignored = 0;
-        SendMessageTimeoutW(f.hwnd, WM_SETTEXT, 0, reinterpret_cast<LPARAM>(L"Squadala!"), SMTO_ABORTIFHUNG, 200, &ignored);
+        SendMessageTimeoutW(f.hwnd, WM_SETTEXT, 0, reinterpret_cast<LPARAM>(wide.c_str()), SMTO_ABORTIFHUNG, 200, &ignored);
     }
     if (!g_icon_tried) {
         g_icon_tried = true;
