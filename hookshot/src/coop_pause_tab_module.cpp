@@ -326,6 +326,10 @@ SessionView ViewNow(View view) {
     if (!v.s.hosting && !seen.refused.empty()) {   // (turned away: co-op's menu says "Press Leave, then join again")
         v.turned_away = CoopTitleMenu::ShortReason(seen.refused);
         v.banned = seen.banned;
+    } else if (CoopTitleMenu::ShownState(st.state, v.s.hosting, seen.connected) == HOS_COOP_JOINING) {
+        // (told to connect, not yet taken in: still joining, as co-op's menu and the Lobby tab say; a host's approval
+        // can take a while. A run showed "In a session" while the host had not let this game in yet)
+        v.connecting = true;
     }
     v.players = seen.connected ? static_cast<int>(seen.players.size()) : 0;
     v.s.listed = v.players;
