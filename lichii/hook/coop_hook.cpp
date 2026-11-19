@@ -2382,12 +2382,14 @@ private:
                        "our own, {} not shared, {} write failures ({} tries of held flags, not failures), "
                        "{} messages not for us, {} bad snapshots; "
                        "{} s holding a join snapshot ({} dropped unfinished), {} s in load windows, {} changes "
-                       "waiting for the host's answer; {} one-way left to the game",
+                       "waiting for the host's answer; {} one-way left to the game; host table asked for while loading "
+                       "{} (sent whole at the save load {}); our own save kept before the group's values came {}",
                  s.changes_sent, s.answers_sent, s.entries_in, s.applied, s.deltas_added, s.load_reverts,
                  s.one_way_restores, s.reset_applied, s.kept_local, s.not_shared, s.write_failures, s.held_retries,
                  s.ignored_messages,
                  s.bad_snapshots, s.holding_frames / 60, s.hold_timeouts, s.window_frames / 60, s.pending_now,
-                 s.one_way_left);  // row 140
+                 s.one_way_left,  // row 140
+                 s.table_waits, s.table_resets, s.own_save_kept);  // New Event spam (world-fails-0115)
         // events-next-a-11: which flag the write failures are (a log showed ~60 a second after an event, no key).
         if (s.top_write_failure_count > 0) {
             const coop::protocol::FlagKey& k = s.top_write_failure;

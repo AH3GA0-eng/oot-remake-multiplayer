@@ -103,6 +103,10 @@ struct FlagStats {
   std::uint64_t one_way_left = 0;
   // Row 140: of one_way_restores, the values left to the game put back once after a room or scene load (owed_).
   std::uint64_t one_way_owed = 0;
+  // New Event spam (world-fails-0115): the table is the host's save's, never its title screen's defaults.
+  std::uint64_t table_waits = 0;       // host: a table asked for inside a load window (the title): sent when it ends
+  std::uint64_t table_resets = 0;      // host: of those, sent as the whole table in FLAG_RESET after its save load
+  std::uint64_t own_save_kept = 0;     // player: a save load with no group values known yet: our save's values kept
 };
 
 class FlagWatcher {
@@ -118,7 +122,15 @@ class FlagWatcher {
   bool receive(std::span<const std::uint8_t> bytes);
 
   // Host: send the whole table as FLAG_SNAPSHOT at the next frame (starting
-  // a session, taking over as host).
+  // a session, taking over as host). Only the game's own save is a table:
+  // inside a load window (the title screen, file select, a save loading, a
+  // door) the request waits until the window ends. When a save load ended
+  // it, the whole table goes out as FLAG_RESET, so every player takes the
+  // host's save exactly; else (a door) as FLAG_SNAPSHOT. A table sent from
+  // the title held the game's defaults (quests at 'Ready', no compass): a
+  // guest whose save loaded first had them written back over its own, and
+  // the host's load raised them again, each quest step showing the game's
+  // 'New Event' notice (world-fails-0115).
   void request_snapshot() { snapshot_requested_ = true; }
 
   // One emulated frame: writes what came in, then compares the shared flags
@@ -471,6 +483,8 @@ class FlagWatcher {
   void add(FlagStore& store, const protocol::FlagEntry& delta);
   void diff(FlagStore& store, Table& changes);
   void send_snapshot(FlagStore& store, std::vector<Outgoing>& out);
+  // Host: the whole table as FLAG_RESET at the end of a save load a table was asked for in (request_snapshot).
+  void send_table_reset(FlagStore& store, std::vector<Outgoing>& out);
 
   // True when the entry is for a shared flag and may be applied: a pickup's
   // 0 is not, and an unknown 64-bit key set to 1 is learned first.
@@ -584,6 +598,12 @@ class FlagWatcher {
   bool window_title_ = false;   // the title was up in this load window
   bool check_offline_ = false;  // reset(): a connection's first frame with Link looks at title_seen_
   bool reset_seen_ = false;  // take_reset
+  // Player: what last_ holds is worth putting back after our save load: our game played (Link, no load window)
+  // since this watcher started, or the group's values came (a snapshot or a reset with flags). Neither: last_ is
+  // what our title screen read (the game's defaults), and our save's own values are kept (world-fails-0115).
+  bool played_ = false;
+  bool group_known_ = false;
+  bool table_waiting_ = false;  // host: request_snapshot is waiting for a load window to end (counted once)
   std::set<FlagKey> restate_;  // host: counts a delta was added to this frame
   bool resend_pending_ = false;
   bool snapshot_requested_ = false;

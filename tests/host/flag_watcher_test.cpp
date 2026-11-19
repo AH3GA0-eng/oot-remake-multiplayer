@@ -603,8 +603,9 @@ TEST_CASE("flag watcher: a guest's save load takes the group's values and sends 
   FlagWatcher w(shared(), FlagRole::player);
   w.set_loading(true);  // the title screen: no Link yet
   w.frame(store);
-  // The group's switch and key come in before the save loads.
-  CHECK(w.receive(state({entry(kDoor, 1), entry(kKey0, 1)})));
+  // The group's table comes in before the save loads (a snapshot: the host's save; world-fails-0115: with no
+  // group value known, a guest's save keeps its own).
+  CHECK(w.receive(proto::FlagSnapshot{0, 1, {entry(kDoor, 1), entry(kKey0, 1), entry(kChest, 0), entry(kKey1, 0)}}));
   CHECK(w.frame(store).empty());
   CHECK(store.get(kDoor) == 1);
 
@@ -733,6 +734,154 @@ TEST_CASE("flag watcher: the host's load through the title is a save load, also 
   CHECK(w.stats().title_loads == 1);
   CHECK(w.take_save_load().has_value());
   CHECK(store.get(kDoor) == 1);
+}
+
+// world-fails-0115, the 'New Event' spam: a host on the title screen sent its table, the game's defaults (quests at
+// 'Ready', no compass). A guest whose own save loaded first had them written back over its save, and the host's
+// load raised them again, each quest step a 'New Event' notice.
+TEST_CASE("flag watcher, host: a table asked for on the title waits for the save, then goes whole as FLAG_RESET") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::host);
+  w.set_loading(true);
+  w.set_scene(false);
+  w.set_title(true);
+  w.request_snapshot();  // the session starts on the title
+  for (int i = 0; i < FlagWatcher::kTitleFrames + 2; ++i) CHECK(w.frame(store).empty());
+  CHECK(w.stats().table_waits == 1);
+  // The host's save: the chest and a key; the door stays 0, as on the title, and still goes out.
+  store.set(kChest, 1);
+  store.set(kKey0, 1);
+  CHECK(w.frame(store).empty());
+  const auto sent = decode(link_back(w, store));
+  REQUIRE(sent.size() == 1);
+  const auto* reset = std::get_if<proto::FlagReset>(&sent[0]);
+  REQUIRE(reset);
+  std::vector<proto::FlagEntry> flags = reset->flags;
+  std::sort(flags.begin(), flags.end(), [](const auto& a, const auto& b) { return key_of(a) < key_of(b); });
+  CHECK(flags == std::vector{entry(kChest, 1), entry(kDoor, 0), entry(kKey0, 1), entry(kKey1, 0)});
+  CHECK(w.stats().table_resets == 1);
+  CHECK(w.stats().host_resets == 1);
+  CHECK(w.take_reset());
+  // Asked once, sent once: no FLAG_SNAPSHOT after it; play goes on as FLAG_STATE.
+  CHECK(w.frame(store).empty());
+  store.set(kKey1, 1);
+  CHECK(only<proto::FlagState>(w.frame(store)) == std::vector{entry(kKey1, 1)});
+}
+
+TEST_CASE("flag watcher, host: a table asked for in a door's load window goes as FLAG_SNAPSHOT when it ends") {
+  FakeStore store = game();
+  store.set(kChest, 1);
+  FlagWatcher w(shared(), FlagRole::host);
+  w.frame(store);  // in play
+  w.set_loading(true);  // a door: a scene stays loaded, nothing goes back
+  w.request_snapshot();
+  CHECK(w.frame(store).empty());
+  w.set_loading(false);
+  std::vector<Outgoing> sent;
+  for (int i = 0; i <= FlagWatcher::kSettleFrames + 1; ++i) {
+    for (auto& o : w.frame(store)) sent.push_back(std::move(o));
+  }
+  const auto messages = decode(sent);
+  REQUIRE(messages.size() == 1);
+  const auto* part = std::get_if<proto::FlagSnapshot>(&messages[0]);
+  REQUIRE(part);
+  CHECK(part->flags.size() == 4);
+  CHECK(w.stats().table_waits == 1);
+  CHECK(w.stats().table_resets == 0);
+  CHECK(w.stats().host_resets == 0);
+}
+
+TEST_CASE("flag watcher, host: a table asked for in play goes at once (reconnect, host change)") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::host);
+  w.frame(store);
+  w.request_snapshot();
+  const auto messages = decode(w.frame(store));
+  REQUIRE(messages.size() == 1);
+  CHECK(std::holds_alternative<proto::FlagSnapshot>(messages[0]));
+  CHECK(w.stats().table_waits == 0);
+}
+
+TEST_CASE("flag watcher: a guest's save loaded before the host's table keeps its own values, sends nothing") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::player);
+  // The host is on the title too: the server's table is empty.
+  at_title_with_group(w, store, {});
+  for (int i = 0; i < FlagWatcher::kTitleFrames; ++i) CHECK(w.frame(store).empty());
+  // The guest's own save: further on than the title's defaults.
+  store.set(kChest, 1);
+  store.set(kDoor, 1);
+  CHECK(w.frame(store).empty());
+  CHECK(link_back(w, store).empty());
+  CHECK(store.get(kChest) == 1);  // not lowered to the title's 0
+  CHECK(store.get(kDoor) == 1);
+  CHECK(w.stats().load_reverts == 0);
+  CHECK(w.stats().own_save_kept == 1);
+  // The host's save load: its whole table as FLAG_RESET, written exactly. The same value: no change (no notice);
+  // a lower one: the host's save is the truth.
+  CHECK(w.receive(proto::FlagReset{1, {entry(kChest, 1), entry(kDoor, 0), entry(kKey0, 1), entry(kKey1, 0)}}));
+  CHECK(w.frame(store).empty());
+  CHECK(store.get(kChest) == 1);
+  CHECK(store.get(kDoor) == 0);
+  CHECK(store.get(kKey0) == 1);
+  const auto received = w.take_received();
+  CHECK(std::none_of(received.begin(), received.end(), [](const auto& r) { return key_of(r.after) == kChest; }));
+  // Its own play goes out as always.
+  store.set(kKey1, 1);
+  CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{entry(kKey1, 1)});
+}
+
+TEST_CASE("flag watcher: a guest that played puts the group's values back at its next save load (#96 kept)") {
+  FakeStore store = game();
+  FlagWatcher w(shared(), FlagRole::player);
+  w.frame(store);  // connected in play: the group's values and ours are the same
+  CHECK(w.frame(store).empty());
+  // To the title and another save, ahead of the group: still put back, as before.
+  w.set_loading(true);
+  w.set_scene(false);
+  w.set_title(true);
+  for (int i = 0; i < FlagWatcher::kTitleFrames + 2; ++i) w.frame(store);
+  store.set(kChest, 1);
+  CHECK(w.frame(store).empty());
+  CHECK(link_back(w, store).empty());
+  CHECK(store.get(kChest) == 0);
+  CHECK(w.stats().own_save_kept == 0);
+}
+
+TEST_CASE("flag watcher: host and guest both start on the title, the guest's save first: nothing lowered") {
+  // The run of world-fails-0115 end to end: no table from the title, the guest keeps its save, the host's table
+  // after its load changes only what differs.
+  constexpr FlagKey kQuest{0x5000u, 0};  // a quest's step (an Enum): 0 'Ready' on the title, 5 'Complete'
+  const auto quest = [=](std::uint32_t v) { return entry(kQuest, v, proto::FlagKind::uint32); };
+  const SharedFlags list({kChest, kQuest});
+  FakeStore host_game;
+  host_game.set(kChest, 0);
+  host_game.values[kQuest] = quest(0);
+  FakeStore guest_game = host_game;
+  FlagWatcher host(list, FlagRole::host);
+  FlagWatcher guest(list, FlagRole::player);
+  host.set_loading(true);
+  host.set_scene(false);
+  host.set_title(true);
+  host.request_snapshot();
+  for (int i = 0; i < FlagWatcher::kTitleFrames + 2; ++i) CHECK(host.frame(host_game).empty());
+  at_title_with_group(guest, guest_game, {});  // the server's table: empty
+  for (int i = 0; i < FlagWatcher::kTitleFrames; ++i) guest.frame(guest_game);
+  guest_game.set(kChest, 1);
+  guest_game.values[kQuest] = quest(5);
+  guest.frame(guest_game);
+  CHECK(link_back(guest, guest_game).empty());
+  CHECK(guest_game.values[kQuest] == quest(5));
+  // The host loads the same progress.
+  host_game.set(kChest, 1);
+  host_game.values[kQuest] = quest(5);
+  host.frame(host_game);
+  for (const auto& m : decode(link_back(host, host_game))) CHECK(guest.receive(m));
+  guest.frame(guest_game);
+  CHECK(guest_game.values[kQuest] == quest(5));
+  CHECK(guest_game.get(kChest) == 1);
+  const auto received = guest.take_received();
+  CHECK(std::none_of(received.begin(), received.end(), [](const auto& r) { return r.before != r.after; }));
 }
 
 TEST_CASE("flag watcher: with no title (the emulator) a guest's forward-only load is still sent (#96)") {
