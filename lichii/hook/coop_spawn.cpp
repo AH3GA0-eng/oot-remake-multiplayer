@@ -178,6 +178,7 @@ void Sync::Apply(std::uint64_t now_us) {
             r.rotation = s->state.rotation;
             r.blow_at = CoopProjectiles::BlowAt(s->state.time.server_time_us, s->state.fuse);
             r.got_us = now_us;
+            r.player = s->id.maker;
             // Issue 169: pulled out of the bag, so held from its first sample.
             r.held = Explodes(s->actor) && s->state.state &&
                      (*s->state.state & proto::object_state::held) != 0;
@@ -194,6 +195,9 @@ void Sync::Apply(std::uint64_t now_us) {
             }
             Remote& r = it->second;
             r.epoch = p->epoch;  // phase 2: what a BOMB_TAKE names
+            if (p->player_number != proto::kPlayerSelf) {
+                r.player = p->player_number;  // #239: its sender's show delay
+            }
             if (p->state.rotation) {
                 r.rotation = p->state.rotation;
             }
@@ -587,17 +591,20 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         Copy c;
         c.key = r.key;
         c.actor = r.actor;
+        // #239: as late as its sender's puppet (that player's show delay; 100 ms on a LAN, as before).
+        const std::uint64_t behind = std::max(CoopProjectiles::Track::kBehindUs, CoopShowDelay::Us(r.player));
+        const std::uint64_t held_behind = std::max(CoopProjectiles::kHeldBehindUs, CoopShowDelay::Us(r.player));
         if ((r.held || r.explode_once_made) && !r.held_path.Empty()) {
             // Issue 169: in the puppet's hands, shown as late as the puppet
             // (and blown up there when it went off in them).
-            c.position = r.held_path.At(now_us - std::min(now_us, CoopProjectiles::kHeldBehindUs));
+            c.position = r.held_path.At(now_us - std::min(now_us, held_behind));
         } else if (explode) {
             // Goes off where the owner's did, at the owner's moment.
             c.position = r.track.At(now_us, info != nullptr && info->ballistic);
         } else {
             // Smooth shots: the owner's path as late as the puppet, between
             // its samples, so the copy flies in even steps.
-            c.position = r.track.Shown(now_us, info != nullptr && info->ballistic);
+            c.position = r.track.Shown(now_us, info != nullptr && info->ballistic, behind);
         }
         if (r.rotation) {
             c.rotation = CoopPuppet::QuatToMatrix(*r.rotation);
@@ -607,7 +614,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         if (r.animation) {
             proto::Animation a = *r.animation;
             const std::int64_t age = std::int64_t(now_us) - std::int64_t(r.animation_at) -
-                                     (r.held ? std::int64_t(CoopProjectiles::kHeldBehindUs) : 0);
+                                     (r.held ? std::int64_t(held_behind) : 0);
             a.frame = CoopObjects::FrameAfter(a.frame, a.rate, age);
             c.animation = std::move(a);
         }
@@ -626,16 +633,14 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         // the owner removed (hit or gone) is kept that much longer: it
         // reaches the hit spot (or the hand) first, then gets its full hold.
         const bool hit = r.removed && *r.removed == proto::RemoveReason::hit && info != nullptr;
-        const std::uint64_t hold =
-            CoopProjectiles::Track::kBehindUs + (hit ? CoopProjectiles::LandHoldUs(info->kind) : 0);
+        const std::uint64_t hold = behind + (hit ? CoopProjectiles::LandHoldUs(info->kind) : 0);
         const bool landing = r.removed && !explode && now_us - r.got_us < hold;
         if (hit && landing && !r.landed) {
             r.landed = true;
             ++landed_;
         }
         if (hit && landing && r.effect.empty() && hit_effects_ == HitEffectMode::copy &&
-            now_us >= r.got_us + CoopProjectiles::Track::kBehindUs &&
-            !CoopProjectiles::HitEffect(info->kind).empty()) {
+            now_us >= r.got_us + behind && !CoopProjectiles::HitEffect(info->kind).empty()) {
             // Issue 166: the copy reaches the spot now (it is shown kBehindUs
             // late): it plays the shootable's own hit effect there, through
             // the game's own emit (the director; once for a copy).
@@ -651,7 +656,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             // reaching it (kBehindUs late); then it goes.
             r.effect_asked = true;
             ++hit_effects_asked_;
-            const std::uint64_t at_us = r.got_us + CoopProjectiles::Track::kBehindUs;
+            const std::uint64_t at_us = r.got_us + behind;
             carriers_.push_back({next_key_++, r.actor, r.Position(), std::string(CoopProjectiles::HitEffect(info->kind)),
                                  at_us, at_us + CoopProjectiles::kImpactLifeUs, 0});
             if (carriers_.size() > CoopProjectiles::kMaxImpacts) {  // (never the shot copies' slots)
@@ -660,8 +665,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                                                                                 CoopProjectiles::kMaxImpacts));
             }
         }
-        if (hit && landing && !r.impacted && impacts_on_ &&
-            now_us >= r.got_us + CoopProjectiles::Track::kBehindUs) {
+        if (hit && landing && !r.impacted && impacts_on_ && now_us >= r.got_us + behind) {
             // The earlier way (LICHII_COOP_SHOT_IMPACTS=1): impact actors of
             // ours made there. The game never made one (issue 198).
             r.impacted = true;
