@@ -2848,11 +2848,12 @@ private:
             actor_events_said_us_ = server_now_us;
             const std::uint64_t passed = CoopActorEvents::StopsPassed().load(std::memory_order_relaxed);
             const std::uint64_t kept = CoopActorEvents::RevivesSkipped().load(std::memory_order_relaxed);
+            const std::uint64_t again = CoopActorEvents::RevivesKeptSkipped().load(std::memory_order_relaxed);
             LOG_INFO(Core, "coop: actors: in 10 s the game asked {} creates ({} copies' shots refused), {} deletes, "
                            "{} hits (life {}), {} lost; owners' deaths past a copy's own life stops {}, past its "
-                           "revive {}",
+                           "revive {} (later steps kept dead {})",
                      actor_creates_, actor_stops_, actor_deletes_, actor_hits_, actor_hit_sum_, actor_events_lost_,
-                     passed, kept);
+                     passed, kept, again);
             actor_creates_ = actor_deletes_ = actor_hits_ = actor_events_lost_ = actor_stops_ = 0;
             actor_hit_sum_ = 0;
         }
