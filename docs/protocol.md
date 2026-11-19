@@ -659,6 +659,26 @@ usual `PLAYER_JOINED`, samples and `PLAYER_LEFT`. Types 460 to 469 are kept; 465
 - After a reconnect the game asks again for every seat in play; until a seat has a number its
   player plays on this PC only.
 
+## Games on this network (outside the session)
+
+Not an ENet message: a plain UDP datagram, so a game can be found before it is joined. A game that hosts (the pause menu's Multiplayer page or co-op's menu) sends it every 2 seconds (`CoopLan::kEveryMs`) to port 27508 (`CoopLan::kPort`) of each local network's broadcast address, 255.255.255.255 and 127.0.0.1. A game looking for one (the page's "Games on this network") listens on that port while the view shows (`SO_REUSEADDR`: every game window on a PC hears it) and lists what it heard in the last 7 seconds (`CoopLan::kGoneMs`).
+
+```
+SQUADALA LAN 1
+name=<the host's name, at most 32 bytes, no control characters>
+port=<its game port, 1 to 65535>
+players=<in the game now, the host included>
+max=<the most it takes>
+room=<its relay room name, when it has one>
+protocol=<its protocol version>
+id=<16 lowercase hex digits the game picks at random once per run>
+```
+
+- At most 512 bytes, ASCII lines (the name and room UTF-8), `key=value` after the first line. `port` and `protocol` are required; a key a reader does not know is skipped, so later lines can be added without a new first line. A different first line is another format.
+- A host's PC often has several networks (Wi-Fi or Ethernet, a VPN, a virtual switch), and a reader on the same PC or network hears the game from each of them. The reader keeps one row per `id`, at the address it first heard (a network address takes the place of 127.0.0.1). A datagram without a valid `id` gets a row per address and port.
+- It never carries the join password: a guest joins at the sender's address and that port with the password typed on the page's Join view, as with the host's same-network line.
+- A reader treats a game with another `protocol` as not joinable ("other version"), and one with `players >= max` as full. The code: `hookshot/src/coop_lan.{h,cpp}` (the datagram and the list), `coop_lan_net.{h,cpp}` (the sockets); tests: `tests/hookshot/lan_test.cpp`.
+
 ## Later stages (outline only)
 
 - **Stage 3:** `PLAYER_STATUS` decides whether puppets show during cutscenes. `JOIN_PARTNER` (above) asks for a warp to another player's scene.

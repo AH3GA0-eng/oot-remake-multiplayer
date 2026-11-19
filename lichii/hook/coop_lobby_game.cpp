@@ -28,6 +28,7 @@ struct Glue {
     std::deque<proto::LobbyAction> asked;                       // the tab -> Frame
     std::vector<std::string> lines;                             // -> the chat box
     Knocks knocks;                                              // who asks to join (we host)
+    std::uint32_t refusals = 0;                                 // Seen::refusals (never reset)
 
     void Line(std::string text) {
         if (lines.size() < 32) {
@@ -200,6 +201,9 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
                              ? std::string(coop::net::refuse_text(event))
                              : std::string();
         g.seen.banned = event.kind == EventKind::refused && event.refuse_reason == proto::RefuseReason::banned;
+        if (event.kind == EventKind::refused && StopsRejoin(event.refuse_reason)) {
+            ++g.refusals;   // (kept across the disconnect that clears `refused`: Seen::refusals)
+        }
         if (!g.seen.refused.empty()) {
             g.Line("refused: " + g.seen.refused);   // the full reason in the chat (the tabs show its first part)
         }
@@ -345,7 +349,9 @@ bool OwnVoiceMuted() {
 Seen Now() {
     Glue& g = TheGlue();
     std::lock_guard lock(g.mutex);
-    return g.seen;
+    Seen s = g.seen;
+    s.refusals = g.refusals;
+    return s;
 }
 
 std::vector<std::string> Asking() {
