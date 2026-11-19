@@ -996,6 +996,13 @@ std::vector<std::string> Probe::Seen(const Facts& f, std::uint64_t now_ms) {
 }
 
 namespace {
+// At most `n` bytes, cut before a UTF-8 sequence's start, with "..." when cut (the list's columns are wider than a row).
+std::string FitTo(std::string t, std::size_t n) {
+    if (t.size() <= n) return t;
+    std::size_t k = n - 3;
+    while (k > 0 && (static_cast<unsigned char>(t[k]) & 0xc0) == 0x80) --k;
+    return t.substr(0, k) + "...";
+}
 
 // `s` in at most `n` bytes: cut before a UTF-8 letter's start, "..." when cut and there is room for it.
 std::string Cut(const std::string& s, std::size_t n) {
@@ -1005,7 +1012,6 @@ std::string Cut(const std::string& s, std::size_t n) {
     while (k > 0 && (static_cast<unsigned char>(s[k]) & 0xc0) == 0x80) --k;
     return s.substr(0, k) + (dots ? "..." : "");
 }
-
 }  // namespace
 
 std::string RoomCell(const std::string& room, const std::string& host, const std::string& tail) {
@@ -1019,22 +1025,40 @@ std::string RoomCell(const std::string& room, const std::string& host, const std
     return Cut(room, r) + sep + Cut(host, h) + tail;
 }
 
-std::vector<std::string> CellTexts(const SessionView& v) {
-    std::vector<std::string> cells(kCells);
-    if (v.s.in_one || v.s.by_launcher) return cells;
-    const std::vector<std::string>& list = v.s.online ? v.online_rows : v.lan_rows;
+std::string ListValue(int players, int max, bool same_version) {
+    if (!same_version) return "Other version";
+    if (max > 0 && players >= max) return "Full";
+    return max > 0 ? std::to_string(players) + "/" + std::to_string(max) : std::to_string(players);
+}
+
+std::string ListName(const std::string& shown, const std::string& room) {
+    // (room names are the same name in any case on the relay: room_key)
+    const auto lower = [](char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c; };
+    const bool same = shown.size() == room.size() &&
+                      std::equal(shown.begin(), shown.end(), room.begin(),
+                                 [&](char a, char b) { return lower(a) == lower(b); });
+    if (shown.empty()) return room;
+    return same ? shown : shown + " (" + room + ")";
+}
+
+std::vector<ListLine> ListLines(const SessionView& v) {
+    std::vector<ListLine> lines(kListRows);
+    if (v.s.in_one || v.s.by_launcher) return lines;
+    lines[0] = ListLine{"Game", "Players"};
+    const std::vector<ListLine>& list = v.s.online ? v.online_list : v.lan_list;
     if (list.empty()) {
-        cells[0] = v.s.online ? (v.online_state.empty() ? std::string("Asking the relay...") : v.online_state)
-                              : std::string("Looking for games...");
-        cells[0] = Fit(cells[0]);
-        return cells;
+        lines[1].name = FitTo(v.s.online ? (v.online_state.empty() ? std::string("Asking the relay...") : v.online_state)
+                                         : std::string("Looking for games..."),
+                              kListNameChars);
+        return lines;
     }
     for (int c = 0; c < kCells; ++c) {
         if (const int i = CellIndex(v.s, c); i >= 0 && static_cast<std::size_t>(i) < list.size()) {
-            cells[static_cast<std::size_t>(c)] = Fit(list[static_cast<std::size_t>(i)]);
+            const ListLine& l = list[static_cast<std::size_t>(i)];
+            lines[static_cast<std::size_t>(c) + 1] = ListLine{FitTo(l.name, kListNameChars), FitTo(l.value, kListValueChars)};
         }
     }
-    return cells;
+    return lines;
 }
 
 }  // namespace CoopPauseTab
