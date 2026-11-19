@@ -1066,3 +1066,12 @@ TEST_CASE("pause tab: a long name is cut on the Settings row so the page arrow k
     m.Show(o);
     CHECK(m.view().rows[3].value == "AVeryLong...");
 }
+
+TEST_CASE("pause tab: the Settings row's name is cut on a character, not in the middle of one") {
+    Menu m;
+    CoopTitleMenu::Options o;
+    o.name = "Ab\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9";   // 2 + 8 two-byte letters: byte 9 is mid-letter
+    m.Show(o);
+    const std::string v = m.view().rows[3].value;
+    CHECK(v == "Ab\xC3\xA9\xC3\xA9\xC3\xA9...");   // (byte 9 is inside the fourth letter: the cut steps back to its start)
+}

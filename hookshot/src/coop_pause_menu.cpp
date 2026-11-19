@@ -249,7 +249,7 @@ std::vector<Menu::Line> Menu::Lines() const {
                                : "Joins a friend's game with the code they sent you. You play on their save; your own saves "
                                  "are not touched."});
         out.push_back({PageRow("Local co-op", "2 players"), Act::kOpenLocal, "Two players on this PC."});
-        out.push_back({PageRow("Settings", options_.name.size() > 12 ? options_.name.substr(0, 9) + "..." : options_.name), Act::kOpenSettings,
+        out.push_back({PageRow("Settings", options_.name.size() > 12 ? options_.name.substr(0, Utf8Start(options_.name, 9)) + "..." : options_.name), Act::kOpenSettings,
                        "Your name, Link's look, how many players can join your game, voice chat, the chat key, "
                        "which controller this game reads, and players on the map."});
         out.push_back({PageRow("Customize Link", "Colours"), Act::kOpenCustomize,
@@ -1241,7 +1241,7 @@ bool Menu::Paste(std::string_view text) {
                 UpdateJoinFromIpPort();
             }
         } else {
-            join_ip_ = line.substr(0, kMaxIpBytes);
+            join_ip_ = line.substr(0, Utf8Start(line, std::min(line.size(), kMaxIpBytes)));
             EndTyping(true);
         }
         if (note_.empty() && !Trim(join_).empty()) {
@@ -1266,7 +1266,7 @@ bool Menu::Paste(std::string_view text) {
         }
         const Act was = typing_act_;
         typing_fresh_ = false;
-        port_text_ = line.substr(0, kMaxPortBytes);
+        port_text_ = line.substr(0, Utf8Start(line, std::min(line.size(), kMaxPortBytes)));
         EndTyping(true);
         if (note_.empty() && was == Act::kJoinPort && !Trim(join_).empty()) {
             Go(Page::kJoin, Act::kJoinNow);
