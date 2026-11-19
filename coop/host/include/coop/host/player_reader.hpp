@@ -117,6 +117,9 @@ class PlayerReader {
   // child whose flag still names the adult's Golden Gauntlets wears none.
   // For an adult (`child` false) a flag with a name stands, as before.
   void wear_from_links(protocol::Equipment& e, bool child);
+  // A shield, tunic, boots or gauntlets the player no longer has (the game's
+  // PouchData.<piece>.StockNum is 0: burnt, eaten by a Like Like) is not worn.
+  void drop_lost(protocol::Equipment& e);
   // The piece behind the link at EquipmentUser + `link_offset`.
   std::optional<std::string> read_link_name(std::uint64_t link_offset);
   GameMemory& memory_;

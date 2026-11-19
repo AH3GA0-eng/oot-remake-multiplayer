@@ -8,6 +8,7 @@
 
 #include "addresses.hpp"
 #include "coop/host/game_flags.hpp"
+#include "coop/protocol/codec.hpp"
 
 namespace coop::host {
 namespace {
@@ -259,6 +260,7 @@ std::optional<protocol::Equipment> PlayerReader::read_equipment() {
       held_shield && held_shield->starts_with("Weapon_Shield_")) {
     e.shield = held_shield;
   }
+  drop_lost(e);
   e.ocarina = flags.get_string64(addr::kEquipOcarina);
   e.arrow = flags.get_string64(addr::kEquipArrow);
   e.drawn = read_drawn();
@@ -393,6 +395,28 @@ bool drawn_hand(std::string_view n) {
   return n.starts_with("Armor_Adult_Gauntlet_") || n.starts_with(protocol::kChildBraceletPrefix);
 }
 }  // namespace
+
+// A piece the player no longer has (puppet-gear-148, review-0116-j): a shield
+// burnt or eaten by a Like Like, a tunic a Like Like took. Its hand slot or
+// armor link empties, but the Equip* flag can still name it, and an adult's
+// named flag (or an empty shield slot) leaves the flag. The game's own count,
+// PouchData.<piece>.StockNum (the max-drop the flag watcher already keeps for
+// a lost shield, docs/items.md issue 130), is 0 then: such a piece is not
+// worn. A count not read (no such flag, the manager not up) leaves the name.
+void PlayerReader::drop_lost(protocol::Equipment& e) {
+  GameFlags flags(memory_);
+  const auto check = [&](std::optional<std::string>& field, bool (*of_kind)(std::string_view)) {
+    if (!field || field->empty() || !of_kind(*field)) return;
+    const std::string stock = "PouchData." + *field + ".StockNum";
+    if (const auto n = flags.get_int(protocol::flag_hash(stock)); n && *n <= 0) {
+      field = std::string{};
+    }
+  };
+  check(e.shield, [](std::string_view n) { return n.starts_with("Weapon_Shield_"); });
+  check(e.armor, drawn_armor);
+  check(e.boots, drawn_boots);
+  check(e.hand, drawn_hand);
+}
 
 void PlayerReader::wear_from_links(protocol::Equipment& e, bool child) {
   std::array<std::optional<std::string>, addr::kArmorLinkCount> links;
