@@ -594,6 +594,46 @@ def add_body(doc, player_components, members, actor, files):
     return own
 
 
+# Native puppets phase 3 (docs/native-puppets.md "Lifting another player", `--puppet-liftable`, off by default):
+# the puppet gets a LiftableRef of its own, the Cucco's (LIFTABLE_SOURCE: the game's living actor that Link
+# lifts, carries and throws), its `$parent` chain merged as far as the Cucco's pack holds it. Link's own lifter
+# then lifts the copy as a Cucco; the hook (coop_lift_player.h, LICHII_COOP_LIFT_PLAYER=1) sees that and asks
+# the lifted player's game. Not run in a game yet: whether the child and adult lifters take the Cucco's
+# LiftGrade on a copy, and what IsResetBehaviorModeOnThrown / KeepSensorHitToParent do on an actor without
+# the Cucco's AI, are phase 3's UNKNOWNs.
+LIFTABLE_SOURCE = "Animal_Cucco"
+
+
+def liftable_param(source_members):
+    """The Cucco's LiftableRef param: (its member path, the param with its in-pack `$parent` chain merged),
+    or None when LIFTABLE_SOURCE's pack has none."""
+    try:
+        comps = flatten_actor_param(source_members, LIFTABLE_SOURCE)
+    except BuildError:
+        return None
+    src = ref_to_member(comps.get("LiftableRef"))
+    if not src or src not in source_members:
+        return None
+    return src, _merged_chain(source_members, src)
+
+
+def liftable_path(actor, src):
+    """The puppet's own liftable param, beside the Cucco's: `<dir>/<actor>.<the Cucco's file kind>`."""
+    head, _, base = src.rpartition("/")
+    return f"{head}/{actor}.{base.split('.', 1)[1]}"
+
+
+def add_liftable(doc, actor, files, liftable):
+    """Gives the puppet's ActorParam `doc` a LiftableRef of its own (`liftable`: liftable_param()).
+    Returns (member path, bytes, the Cucco's member it is cut from)."""
+    src, param = liftable
+    path = liftable_path(actor, src)
+    data = byml.dumps(param)
+    files[path] = data
+    doc["Components"]["LiftableRef"] = "?" + path
+    return path, data, src
+
+
 def tunic_model_info(actor, variant, project):
     """(member path, bytes) of a colour puppet's ModelInfo: the player's model under its own
     project name, `Model/<project>.Player_<variant>.bfres` (puppet_pack.tunic)."""
@@ -602,13 +642,13 @@ def tunic_model_info(actor, variant, project):
 
 
 def build_pack(members, variant, sound=True, player_footsteps=False, sound_user=None, actor=None,
-               project=None, basic_xlink=False, perception=None, as_ref=None, body=False):
+               project=None, basic_xlink=False, perception=None, as_ref=None, body=False, liftable=None):
     """Returns (pack bytes, actor param bytes, member list, equipment keys) for one variant.
     `actor`: the pack's actor (default CoopPuppet_<variant>); `project`: a model project of its own
     (a tunic colour), else the player's. `perception`: perception_members() to make the puppet a
     target of the game's perception (PERCEPTION_SOURCE), or None. `as_ref`: an AS root of its own
     (a skin's copy, skin.as_path), else the player's. `body`: the puppet's own body (`--puppet-body`,
-    puppet_body)."""
+    puppet_body). `liftable`: liftable_param() to make the puppet liftable (`--puppet-liftable`), or None."""
     player = f"Player_{variant}"
     actor = actor or puppet_name(variant)
     player_components = flatten_actor_param(members, player)
@@ -618,6 +658,8 @@ def build_pack(members, variant, sound=True, player_footsteps=False, sound_user=
         add_perception(doc, player_components, members, actor, files, perception)
     if body:
         add_body(doc, player_components, members, actor, files)
+    if liftable:
+        add_liftable(doc, actor, files, liftable)
     if project:
         path, data = tunic_model_info(actor, variant, project)
         files[path] = data
@@ -1431,7 +1473,7 @@ def skin_row(row, sk, variant):
 def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None,
           tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False, title_rows=False, pause_tab=False,
           look_slots=look_items.SLOTS, perception=True, blade_copies=look_items.BLADE_COPIES,
-          skins=(), test_skin=None, game_has=None, body=False):
+          skins=(), test_skin=None, game_has=None, body=False, liftable=False):
     """`tunics`: the tunic colours to make puppets of (puppet_pack.tunic.COLORS; each is a model,
     a tile and an actor per age, CoopPuppet_<age>_<Colour>). `test_tunic`: give the plain puppets
     that colour too (a test of the colours with a hook that knows none).
@@ -1446,7 +1488,8 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
     `skins`: [(id, mod folder)] character model mods to make puppets of (skin.py; each a puppet per
     age it changes, CoopPuppet_<age>_Skin_<id>). `test_skin`: one of those ids; every other puppet
     (plain and colours) wears that model too, a test with a hook that knows no skins.
-    `body`: every puppet gets a body of its own (`--puppet-body`, puppet_body; off by default)."""
+    `body`: every puppet gets a body of its own (`--puppet-body`, puppet_body; off by default).
+    `liftable`: every puppet gets the Cucco's LiftableRef (`--puppet-liftable`, liftable_param; off by default)."""
     heaps = heaps or {}
     if not os.path.isfile(os.path.join(romfs, "Pack", "ZsDic.pack.zs")):
         raise BuildError(f"{romfs} does not look like the game's romfs (no Pack/ZsDic.pack.zs)")
@@ -1470,6 +1513,14 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
     made = []
     new_ai, new_gai = [], []
     seen_by = None
+    lift_param = None
+    if liftable:
+        src = os.path.join(romfs, "Pack", "Actor", f"{LIFTABLE_SOURCE}.pack.zs")
+        if not os.path.isfile(src):
+            raise BuildError(f"--puppet-liftable: missing {rel(romfs, src)}")
+        lift_param = liftable_param(sarc.read(dicts.decompress(read(src))))
+        if lift_param is None:
+            raise BuildError(f"--puppet-liftable: {LIFTABLE_SOURCE} has no LiftableRef in its pack")
     if perception:
         src = os.path.join(romfs, "Pack", "Actor", f"{PERCEPTION_SOURCE}.pack.zs")
         seen_by = perception_members(sarc.read(dicts.decompress(read(src)))) if os.path.isfile(src) else None
@@ -1552,7 +1603,8 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
             members = sarc.read(dicts.decompress(read(src)))
         pack, ap, names, keys = build_pack(members, v, sound, player_footsteps, sound_user, actor, project,
                                            basic_xlink=basic_xlink, perception=None if quiet else seen_by,
-                                           as_ref=wears[1][v] if wears else None, body=body)
+                                           as_ref=wears[1][v] if wears else None, body=body,
+                                           liftable=lift_param)
         dst_rel = f"Pack/Actor/{actor}.pack.zs"
         write(os.path.join(out_romfs, dst_rel), dicts.compress(pack, PACK_DICT))
         if player not in ai_rows:
@@ -1610,10 +1662,19 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
                 size = max(table.get(src) or 0, len(data) + PACK_SIZE_MARGIN)
                 table.add_new(path, size)
                 body_files[path] = size
+        lift_file = None
+        if lift_param:
+            path = liftable_path(actor, lift_param[0])
+            # Sized as the Cucco's file it is cut from, or its own bytes and the margin when longer.
+            size = max(table.get(lift_param[0]) or 0, len(byml.dumps(lift_param[1])) + PACK_SIZE_MARGIN)
+            table.add_new(path, size)
+            lift_file = {"param": path, "size": size}
         made.append({"actor": actor, "from": player, "perception": emitter, "quiet": quiet, "tunic": shade, "model": project,
                      "skin": wears[0].id if wears else None, "pack": dst_rel, "pack_bytes": len(pack),
                      "instance_heap": _num(new_ai[-1].get("InstanceHeapSize", 0)), "param_size": ap_size,
                      "members": names, "equipment_keys": keys, "footstep": footstep, "body": body_files})
+        if lift_file:
+            made[-1]["liftable"] = lift_file  # (off: the manifest as before)
         log(f"{actor}: {len(names)} files, {len(pack)} bytes, {len(keys)} equipment keys -> {dst_rel}")
 
     src = os.path.join(romfs, "Pack", "Actor", f"{IMPACT_SOURCE}.pack.zs")
@@ -1752,6 +1813,8 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "source_sha256": {rel(romfs, p): hashlib.sha256(read(p)).hexdigest()
                           for p in (ai_path, gai_path, rs_path)},
     }
+    if lift_param:
+        manifest["liftable"] = True  # --puppet-liftable (off: the manifest as before)
     scenes, rooms, points = dungeon_rooms.write_table(romfs, os.path.join(mod_dir, "coop_rooms.txt"), dicts)
     log(f"coop_rooms.txt: {points} placements in {rooms} rooms of {scenes} dungeons")
     manifest["rooms"] = {"scenes": scenes, "rooms": rooms, "placements": points}
@@ -1811,6 +1874,9 @@ def main(argv=None):
     ap.add_argument("--puppet-body", action="store_true",
                     help="native puppets phase 1 test (docs/native-puppets.md): every puppet gets a body of its own "
                          "(Link's shapes and character controller, no sensors), off by default")
+    ap.add_argument("--puppet-liftable", action="store_true",
+                    help="native puppets phase 3 test (docs/native-puppets.md): every puppet gets the Cucco's "
+                         "LiftableRef, so Link can lift it (with LICHII_COOP_LIFT_PLAYER=1), off by default")
     ap.add_argument("--no-sound", action="store_true",
                     help="build the puppets without Link's sounds (the pack before issue 131)")
     ap.add_argument("--seed-trail", action="store_true",
@@ -1914,7 +1980,7 @@ def _main_build(a, romfs, hud_reader=None):
               perception=not a.no_perception,
               blade_copies=max(0, min(a.blade_copies, look_items.BLADE_COPIES)), skins=skins, test_skin=a.test_skin,
               game_has=(lambda path: _reader_has(hud_reader, path)) if hud_reader is not None else None,
-              body=a.puppet_body)
+              body=a.puppet_body, liftable=a.puppet_liftable)
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

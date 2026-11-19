@@ -4,6 +4,8 @@
 // docs/native-puppets.md "Lift a bomb, and stash it").
 #include <doctest/doctest.h>
 
+#include <limits>
+
 #include "coop_bomb_share.h"
 
 namespace proto = coop::protocol;
@@ -125,4 +127,12 @@ TEST_CASE("bomb share: BOMB_SHARE goes out at once and then every few seconds") 
     CHECK(a.Due(1'000'000 + kAnnounceEveryUs));
     a.Reset();
     CHECK(a.Due(1'000'001 + kAnnounceEveryUs));
+}
+
+TEST_CASE("bomb share: a take needs our own Link's place, and the copy beside it") {
+    CHECK_FALSE(CoopBombShare::NearOurLink(std::nullopt, proto::Vec3{0, 1, 0}));
+    CHECK(CoopBombShare::NearOurLink(proto::Vec3{0, 0, 0}, proto::Vec3{0.3f, 1.3f, 0}));
+    CHECK_FALSE(CoopBombShare::NearOurLink(proto::Vec3{0, 0, 0}, proto::Vec3{4, 1, 0}));
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    CHECK_FALSE(CoopBombShare::NearOurLink(proto::Vec3{0, 0, 0}, proto::Vec3{nan, 0, 0}));
 }

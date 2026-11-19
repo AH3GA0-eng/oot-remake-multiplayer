@@ -70,6 +70,10 @@ std::optional<std::uint64_t> OurLinkActor();
 // the write only).
 void HurtOurLink(std::int32_t quarters, const std::array<float, 3>& at,
                  const std::array<float, 3>& from);
+// Native puppets phase 3 (coop_lift_player.h; LICHII_COOP_LIFT_PLAYER=1): another player's Link holds ours.
+// Our Link is put at `at` by the next walk, the way copies are moved: its place written, then the game's own
+// physics-aware setter (kSetMatrix, vtable slot 0x218) on it. A place older than 200 ms is not used. Any thread.
+void PlaceOurLink(const std::array<float, 3>& at);
 
 // Emulator thread, each frame (G1, coop/host/event_owner.hpp): whether an event
 // runs in our game (`in_event`: the actors it binds here act for it and their

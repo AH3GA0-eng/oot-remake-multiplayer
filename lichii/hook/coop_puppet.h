@@ -838,6 +838,23 @@ private:
 // Configure once, before the game starts (CoopSvc does it).
 void Configure(PlannerSettings settings, bool verbose, Director::Log log);
 Director& TheDirector();
+
+// Native puppets phase 3 (coop_lift_player.h): lifting another player. All of it does nothing until
+// WatchGamePlaces(true) (the switch LICHII_COOP_LIFT_PLAYER=1).
+// - WatchGamePlaces: the director keeps, for each copy it draws, where it drew it last and where the game had it
+//   when the director came back to it (read before its write).
+// - SetGameHolds: the copy of player `number` is left to the game (our Link lifted it): the director neither
+//   places, turns nor moves it with the setter while set, and keeps reading where the game has it. 0: none.
+// - GamePlaces: what WatchGamePlaces kept, for the copies drawn in the last 250 ms. Any thread.
+struct GamePlace {
+    std::uint8_t number = 0;
+    Vec3 drawn{};
+    std::optional<Vec3> game;
+};
+void WatchGamePlaces(bool on);
+void SetGameHolds(std::uint8_t number);
+std::uint8_t GameHolds();
+std::vector<GamePlace> GamePlaces();
 // Any thread: TheDirector's LiveMask(), 0 while the puppets are off.
 std::uint32_t LivePuppets();
 

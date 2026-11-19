@@ -25,6 +25,20 @@
 #include "coop/presence/presence.hpp"
 
 namespace CoopPuppet {
+
+namespace {
+// Native puppets phase 3 (coop_lift_player.h, WatchGamePlaces): off unless the lift switch is on.
+std::atomic<bool> g_watch_places{false};
+std::atomic<std::uint8_t> g_game_holds{0};
+struct KeptPlace {
+    Vec3 drawn{};
+    bool drawn_known = false;
+    std::optional<Vec3> game;
+    std::uint64_t at_ms = 0;
+};
+std::mutex g_places_mutex;
+std::map<std::uint8_t, KeptPlace> g_places;
+} // namespace
 namespace {
 
 // The puppet plays the other player's Ocarina notes (issue 152) on the game's own
@@ -839,7 +853,9 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
         if (auto c = Hold(slot, *t, guest, now_ms)) {
             return c;
         }
-        if (matrix_call_ && t->show != Show::hold) {
+        if (matrix_call_ && t->show != Show::hold &&
+            !(g_watch_places.load(std::memory_order_relaxed) && slot.number != 0 &&
+              g_game_holds.load(std::memory_order_relaxed) == slot.number)) {
             if (auto c = Move(slot, guest)) {
                 return c;
             }
@@ -1684,6 +1700,29 @@ void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint6
     const bool held = target.show == Show::hold;
     Vec3 at{};
     std::optional<Vec3> read;
+    if (g_watch_places.load(std::memory_order_relaxed) && slot.number != 0) {
+        // Native puppets phase 3: where the game had the copy before this write; left to the game while our
+        // Link holds it (SetGameHolds): no place, turn or setter call of ours then.
+        Vec3 game{};
+        std::optional<Vec3> game_read;
+        if (!slot.meter_skip && ReadValue(guest, slot.actor + addr::kActorPosition, game)) {
+            game_read = game;
+        }
+        const bool left = g_game_holds.load(std::memory_order_relaxed) == slot.number;
+        {
+            std::lock_guard lock(g_places_mutex);
+            KeptPlace& k = g_places[slot.number];
+            k.game = game_read;
+            k.at_ms = now_ms;
+        }
+        if (left) {
+            slot.meter.Reset();
+            slot.follow.Reset();
+            slot.raw_follow.Reset();
+            slot.turner.Reset();
+            return;
+        }
+    }
     if (slot.meter_skip) {
         slot.meter_skip = false;  // still the parked spot: start again from the next frame
         slot.meter.Reset();
@@ -1767,6 +1806,12 @@ void Director::DrawAt(Slot& slot, Guest& guest, const Target& target, std::uint6
         Say(who + buf);
     }
     Pose(slot, guest, drawn, &rotation, now_ms);
+    if (g_watch_places.load(std::memory_order_relaxed) && slot.number != 0) {
+        std::lock_guard lock(g_places_mutex);
+        KeptPlace& k = g_places[slot.number];
+        k.drawn = drawn;
+        k.drawn_known = true;
+    }
 }
 
 // The puppet's pose: +0x31c/+0x328 and the engine's pending transform
@@ -2425,6 +2470,40 @@ void Configure(PlannerSettings settings, bool verbose, Director::Log log) {
 Director& TheDirector() {
     Configure({}, false, {});
     return *g_director;
+}
+
+void WatchGamePlaces(bool on) {
+    g_watch_places.store(on);
+    if (!on) {
+        g_game_holds.store(0);
+        std::lock_guard lock(g_places_mutex);
+        g_places.clear();
+    }
+}
+
+void SetGameHolds(std::uint8_t number) {
+    g_game_holds.store(g_watch_places.load() ? number : 0);
+}
+
+std::uint8_t GameHolds() {
+    return g_game_holds.load();
+}
+
+std::vector<GamePlace> GamePlaces() {
+    std::vector<GamePlace> out;
+    if (!g_watch_places.load()) {
+        return out;
+    }
+    const std::uint64_t now = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                              std::chrono::steady_clock::now().time_since_epoch())
+                                                              .count());
+    std::lock_guard lock(g_places_mutex);
+    for (const auto& [number, k] : g_places) {
+        if (k.drawn_known && now - k.at_ms <= 250) {
+            out.push_back(GamePlace{number, k.drawn, k.game});
+        }
+    }
+    return out;
 }
 
 std::uint32_t LivePuppets() {
