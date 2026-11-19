@@ -69,6 +69,17 @@ constexpr std::uint64_t kCaptionState = 0x8c;         // u8: 0 cleared, 1-3 read
 constexpr std::uint64_t kCaptionLatest = 0x88;        // s32: the latest slot, -1 none
 constexpr std::uint64_t kCaptionAnySave = 0x8e;       // u8: a save exists (Continue)
 constexpr std::uint64_t kCaptionAnyMq = 0x8f;         // u8: a Master Quest save exists
+// The title's buttons as OpenTitle.module arranges them (CoopTitleMenu::ArrangementFor), through the functions its
+// nodes end in (read from main): SeqOneShotRequestStopAnimationScreen queues a request on the screen's +0xb8, which the
+// game carries out with the layout at that object's +0x28 (main+0xbad070: the animation found by name, then stopped at
+// the frame if the frame is not past its last); SeqOneShotSetSLinkPropertyTitleBtnArrangementType calls the title's
+// own setter. The texts go the way SetRowTexts sets the rows' (kPaneText), as SeqOneShotSetMessageScreen's do.
+constexpr std::uint64_t kTitleAnimLayout = 0xe0;      // the layout the screen's requests use (+0xb8, then +0x28)
+constexpr std::uint64_t kAnimFind = 0x43d870;         // main+: (layout, name) -> its animation by name, 0 none
+constexpr std::uint64_t kAnimPlayer = 0x20;           // an animation's player
+constexpr std::uint64_t kAnimLastFrame = 0x2d1340;    // main+: (player) -> s32: its last frame
+constexpr std::uint64_t kAnimStopAt = 0x2d2d90;       // main+: (animation, s0 frame): stopped at that frame
+constexpr std::uint64_t kTitleSoundType = 0x3407000;  // main+: (UITitleScreen, type): its sound-link arrangement
 // The title's own co-op rows (tools/puppet_pack/title_menu.py adds them to Title_00 and their
 // texts to LayoutMsg/Title_00): Pa_Button_04 Host, _05 Join, _06 Co-op Settings. Each opens
 // Hookshot's menu on the Multiplayer tab at that page (coop_pause.h).
@@ -188,55 +199,58 @@ std::int32_t ButtonCount(std::uint64_t screen) {
     return count;
 }
 
-// The rows' texts, from the game's message files (LayoutMsg/Title_00: labels 0100..0102), set the way
-// the game sets its own buttons' (kPaneText). Each needs the strings and the message ref in the game's
-// memory: one scratch block (patch 0004) for a row's calls. True when all three were set.
+// A button's text from the game's message files (LayoutMsg/Title_00), set the way the game sets its own buttons'
+// (kPaneText; SeqOneShotSetMessageScreen's way). It needs the strings and the message ref in the game's memory: one
+// scratch block (patch 0004) for its calls.
+bool SetPaneText(void* ctx, std::uint64_t layout, const std::string& pane, const std::string& label) {
+    // [0x00] the ref, [0x20] &path, [0x28] &label, [0x30] path, [0x50] label, [0x60] pane
+    std::array<std::uint8_t, 0x90> b{};
+    const std::uint64_t base = g_api->scratch(ctx, b.data(), b.size());   // (where it goes: the same each time)
+    if (base == 0) {
+        return false;
+    }
+    const std::string path = "LayoutMsg/Title_00";
+    const std::uint64_t at_path = base + 0x30, at_label = base + 0x50, at_pane = base + 0x60;
+    std::memcpy(b.data() + 0x20, &at_path, 8);
+    std::memcpy(b.data() + 0x28, &at_label, 8);
+    std::memcpy(b.data() + 0x30, path.c_str(), path.size() + 1);
+    std::memcpy(b.data() + 0x50, label.c_str(), label.size() + 1);
+    std::memcpy(b.data() + 0x60, pane.c_str(), pane.size() + 1);
+    if (g_api->scratch(ctx, b.data(), b.size()) != base) {
+        return false;
+    }
+    std::uint64_t x0 = 0;
+    HosCoopCall k{};
+    k.function = Main(kMsgRefInit);
+    k.x[0] = base;
+    if (!g_api->call(ctx, &k, &x0)) {
+        return false;
+    }
+    k = HosCoopCall{};
+    k.function = Main(kMsgRefSet);
+    k.x[0] = base, k.x[1] = base + 0x20, k.x[2] = base + 0x28, k.x[3] = 1;
+    if (!g_api->call(ctx, &k, &x0)) {
+        return false;
+    }
+    k = HosCoopCall{};
+    k.function = Main(kPaneText);
+    k.x[0] = layout, k.x[1] = at_pane, k.x[2] = base, k.x[3] = 1, k.x[4] = 0;
+    return g_api->call(ctx, &k, &x0);
+}
+
+// The rows' texts (labels 0100..0102). True when all three were set.
 bool SetRowTexts(void* ctx, std::uint64_t screen) {
     const std::uint64_t layout = Read64(screen + kTitleLayout);
     if (ctx == nullptr || layout == 0 || !HasScratch()) {
         return false;
     }
-    int set = 0;
     for (std::size_t i = 0; i < kRowLabels.size(); ++i) {
-        // [0x00] the ref, [0x20] &path, [0x28] &label, [0x30] path, [0x50] label, [0x60] pane
-        std::array<std::uint8_t, 0x90> b{};
-        const std::uint64_t base = g_api->scratch(ctx, b.data(), b.size());   // (where it goes: the same each time)
-        if (base == 0) {
-            return false;
-        }
-        const std::string path = "LayoutMsg/Title_00", label = kRowLabels[i];
         const std::string pane = fmt::format("Pa_Button_{:02d}/T_Btn_00", kFirstRow + static_cast<int>(i));
-        const std::uint64_t at_path = base + 0x30, at_label = base + 0x50, at_pane = base + 0x60;
-        std::memcpy(b.data() + 0x20, &at_path, 8);
-        std::memcpy(b.data() + 0x28, &at_label, 8);
-        std::memcpy(b.data() + 0x30, path.c_str(), path.size() + 1);
-        std::memcpy(b.data() + 0x50, label.c_str(), label.size() + 1);
-        std::memcpy(b.data() + 0x60, pane.c_str(), pane.size() + 1);
-        if (g_api->scratch(ctx, b.data(), b.size()) != base) {
+        if (!SetPaneText(ctx, layout, pane, kRowLabels[i])) {
             return false;
         }
-        std::uint64_t x0 = 0;
-        HosCoopCall k{};
-        k.function = Main(kMsgRefInit);
-        k.x[0] = base;
-        if (!g_api->call(ctx, &k, &x0)) {
-            return false;
-        }
-        k = HosCoopCall{};
-        k.function = Main(kMsgRefSet);
-        k.x[0] = base, k.x[1] = base + 0x20, k.x[2] = base + 0x28, k.x[3] = 1;
-        if (!g_api->call(ctx, &k, &x0)) {
-            return false;
-        }
-        k = HosCoopCall{};
-        k.function = Main(kPaneText);
-        k.x[0] = layout, k.x[1] = at_pane, k.x[2] = base, k.x[3] = 1, k.x[4] = 0;
-        if (!g_api->call(ctx, &k, &x0)) {
-            return false;
-        }
-        ++set;
     }
-    return set == static_cast<int>(kRowLabels.size());
+    return true;
 }
 
 
@@ -264,6 +278,54 @@ std::optional<std::uint64_t> GameCall(void* ctx, std::uint64_t function, std::ui
     std::uint64_t x0 = 0;
     if (!g_api->call(ctx, &k, &x0)) return std::nullopt;
     return x0;
+}
+
+// After the game's re-read (SaveListRefresh's done, so only after a switch of the save folder): the open title gets
+// the buttons its own OpenTitle.module gives that list (CoopTitleMenu::ArrangementFor), through the same functions.
+// nullptr when done, else why not (nothing is changed then: the title keeps its buttons until it opens again, as
+// before). The module writes nothing of the title or the list itself.
+const char* ArrangeTitle(void* ctx, std::uint64_t mgr) {
+    const std::uint64_t screen = g_screen.load();
+    if (!HasScratch()) return "this Hookshot has no patch 0004 scratch";
+    if (screen == 0 || Read64(screen) != Main(kTitleVtable)) return "no title screen";
+    const std::uint64_t layout = Read64(screen + kTitleLayout);
+    if (const std::uint64_t used = Read64(screen + kTitleAnimLayout); layout == 0 || used != layout) {
+        LOG_INFO(Core, "coop: title: save list: the title's layout {:#x}, its requests' {:#x}", layout, used);
+        return "the title's layout is not the one its requests use";   // (not the screen read from main)
+    }
+    std::uint8_t any = 0;
+    if (!CoopRuntime::Read(mgr + kCaptionAnySave, &any, 1)) return "the list could not be read";
+    const CoopTitleMenu::TitleArrangement a = CoopTitleMenu::ArrangementFor(any != 0);
+    static constexpr char kBtnNum[] = "BtnNum";
+    const std::uint64_t name = g_api->scratch(ctx, kBtnNum, sizeof kBtnNum);
+    if (name == 0) return "no scratch";
+    HosCoopCall k{};
+    k.function = Main(kAnimFind);
+    k.x[0] = layout, k.x[1] = name;
+    std::uint64_t anim = 0;
+    if (!g_api->call(ctx, &k, &anim) || anim == 0) return "the title has no BtnNum animation";
+    const std::uint64_t player = Read64(anim + kAnimPlayer);
+    if (player == 0) return "BtnNum has no player";
+    const auto last = GameCall(ctx, Main(kAnimLastFrame), player);
+    if (!last) return "BtnNum's last frame could not be asked";
+    if (a.btn_num_frame > static_cast<float>(static_cast<std::int32_t>(*last))) {
+        return "BtnNum ends before the frame";   // (the game's own request skips it then too)
+    }
+    k = HosCoopCall{};
+    k.function = Main(kAnimStopAt);
+    k.x[0] = anim;
+    k.s0 = a.btn_num_frame;
+    std::uint64_t x0 = 0;
+    if (!g_api->call(ctx, &k, &x0)) return "BtnNum could not be stopped at the frame";
+    // Then the texts, as the graph's branch does after its stop.
+    for (std::size_t i = 0; i < a.count; ++i) {
+        if (!SetPaneText(ctx, layout, a.texts[i].pane, a.texts[i].label)) return "a button's text could not be set";
+    }
+    k = HosCoopCall{};
+    k.function = Main(kTitleSoundType);
+    k.x[0] = screen, k.x[1] = static_cast<std::uint32_t>(a.sound_type);
+    if (!g_api->call(ctx, &k, &x0)) return "the title's sound arrangement could not be set";
+    return nullptr;
 }
 
 // From the title's step (its ctx may call()): after a switch of the save folder (CoopSave::TakeSaveListStale) the game
@@ -327,6 +389,15 @@ void RefreshSaveList(void* ctx) {
     case R::Action::done:
         g_list_open = false;
         LOG_INFO(Core, "coop: title: save list: read again by the game: {}", CaptionLine(mgr));
+        if (const char* why = ArrangeTitle(ctx, mgr)) {
+            LOG_WARNING(Core, "coop: title: save list: the open title keeps its buttons ({}): the new list shows when "
+                              "the title opens again", why);
+        } else {
+            std::uint8_t any = 0;
+            CoopRuntime::Read(mgr + kCaptionAnySave, &any, 1);
+            LOG_INFO(Core, "coop: title: save list: the open title's buttons arranged as its OpenTitle does for this "
+                           "list: {}", any != 0 ? "Continue, New Game, Options" : "New Game, Options");
+        }
         return;
     case R::Action::gave_up:
         g_list_open = false;
