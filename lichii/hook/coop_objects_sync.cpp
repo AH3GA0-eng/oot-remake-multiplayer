@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_objects_sync.h"
+#include "coop_sensor_claim.h"
 #include "coop_bomb_share.h"
 #include "coop_enemy_shots.h"
 #include "coop_guard.h"
@@ -2631,7 +2632,15 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         // as an event claims its partners: flagged targeting (the server hands a copy to us, and
         // holds ours as a fight while we stay), and the owner's motion is not put on our copy
         // meanwhile (EventPartner). kSensorKeepUs after our Link leaves, the claim drops.
-        if (o.sensor_in_area.value_or(false) && now_seen.contains(address) && !IsBossOrPart(o.name) && !o.fish) {
+        // The carry claim: our Link holds it (our copy's own AS plays the game's `Lifted`, a Cucco), and
+        // its owner's does not (the owner's own carry plays `Lifted` on every copy: that one stays theirs,
+        // as CoopBombShare::LiftedHere).
+        const bool owner_lifts = !o.received.empty() && o.received.back().animation &&
+                                 CoopSensorClaim::Carried(AnimationBase(o.received.back().animation->name));
+        const bool carried =
+            o.animation && CoopSensorClaim::Carried(AnimationBase(o.animation->name)) && !owner_lifts;
+        if ((o.sensor_in_area.value_or(false) || carried) && now_seen.contains(address) && !IsBossOrPart(o.name) &&
+            !o.fish) {
             o.sensor_until = now_us + kSensorKeepUs;
             o.chase_until = std::max(o.chase_until, o.sensor_until);
         }

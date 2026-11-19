@@ -6236,3 +6236,31 @@ TEST_CASE("sensor claim: no claim without the input, for a walk that missed him,
         CHECK_FALSE(sync.AreaClaim(0x100, (76 + Sync::kSensorKeepUs / 1000 + 200) * kMs));
     }
 }
+
+TEST_CASE("carry claim: a Cucco our Link lifts is claimed, one its owner carries is not (row 138(8))") {
+    CHECK(CoopSensorClaim::Carried("Lifted"));
+    CHECK_FALSE(CoopSensorClaim::Carried("Wait"));
+    // A Cucco owned by P2. `ours` is our copy's own AS command, `theirs` the owner's in its samples.
+    auto run = [](const std::string& ours, const std::string& theirs) {
+        Sync sync;
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        Tick(sync, 0, {Acting(0x200, 0x22, 1, 1.0f, "Wait", "Animal_Cucco")});
+        const proto::ObjectId id = *sync.IdOf(0x200);
+        Own(sync, id, 2);
+        std::optional<std::uint8_t> flags;
+        for (std::uint64_t t = 10; t <= 1000; t += 66) {
+            sync.Receive(OwnerSample(id, 2, t * kMs, 1.0f, 1, theirs));
+            for (const auto& p : All<proto::ObjectPresent>(
+                     Tick(sync, t * kMs, {Acting(0x200, 0x22, 1, 1.0f, ours, "Animal_Cucco")}))) {
+                flags = p.objects[0].flags;
+            }
+        }
+        const bool claimed = sync.AreaClaim(0x200, 1000 * kMs);
+        CHECK(claimed == sync.EventPartner(0x200, 1000 * kMs));
+        CHECK(claimed == (flags && (*flags & kTargeting) != 0));
+        return claimed;
+    };
+    CHECK(run("Lifted", "Wait"));         // our Link carries it: ours, the owner's motion waits
+    CHECK_FALSE(run("Lifted", "Lifted"));  // the owner carries it: its Lifted on our copy, it stays theirs
+    CHECK_FALSE(run("Wait", "Wait"));      // nobody carries it
+}
