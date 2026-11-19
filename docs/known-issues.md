@@ -1,8 +1,8 @@
-# Known issues in the newest release (0.11.4)
+# Known issues in the newest release (0.11.5)
 
 This is an early test release. Everything under "Works" was seen in our two-game tests: two copies of the game on one PC talking through the server, driven by the [autotest](../tools/autotest) scripts or played by hand, with the logs and screenshots of both games read afterwards. Testers play the releases on separate PCs, over a LAN and the internet. Please report what you see ([setup.md, Reporting a problem](setup.md#reporting-a-problem)); every open problem is on the [issues page](https://github.com/daurosk/oot-remake-multiplayer/issues).
 
-**Every player needs the same release.** 0.11.0 to 0.11.4 are protocol 12: a game and a server (or another game) of different protocol versions refuse each other, so a 0.10.1 game cannot join a 0.11 game. A 0.11.3 player can still join a 0.11.4 game, but most fixes work only when every player has 0.11.4: update together. A 0.10.1 or newer kit offers the update when you start it. A kit from before 0.10.1 cannot: download `Update.bat` from the release page into the kit folder and double-click it. `Revert.bat` goes back to the version you had before.
+**Every player needs the same release.** 0.11.0 to 0.11.4 are protocol 12 and 0.11.5 is protocol 14: a game and a server (or another game) of different protocol versions refuse each other, so a 0.11.4 or older game cannot join a 0.11.5 game: update together. A 0.10.1 or newer kit offers the update when you start it. A kit from before 0.10.1 cannot: download `Update.bat` from the release page into the kit folder and double-click it. `Revert.bat` goes back to the version you had before.
 
 **The game runs on Longshot v3.0.0-rc.8** (Team MagicBean's recompilation; its changes are being merged into [Hookshot](https://git.notrexed.dev/Hookshot/Hookshot)). There is no emulator in this release: emulator players keep the last emulator release (the early test release of 2026-11-12 on the [releases page](https://github.com/daurosk/oot-remake-multiplayer/releases)), which cannot join a Longshot game. The first start builds the game from your own copy (10 to 45 minutes); later updates put the new co-op into it in a few minutes, or build it again when Longshot or our game patches move (0.11.5 builds it again, once, for Longshot v3.0.0-rc.8). If Longshot's server cannot be reached, the build takes the same files from our [mirror](https://github.com/daurosk/oot-remake-multiplayer/releases/tag/longshot-mirror-v3.0.0-rc.8), each checked by its SHA-256.
 
@@ -43,12 +43,14 @@ This is an early test release. Everything under "Works" was seen in our two-game
 
 ## Known issues
 
-- **Linux: away/paused state, Map page and HUD refresh** ([#150](https://github.com/daurosk/oot-remake-multiplayer/issues/150)): on Linux the game does not tell the co-op when you are in a menu or paused, the Map page does not open and the HUD is not refreshed. The fix is ready for the next release.
+- **Linux: away/paused state, Map page and HUD refresh** ([#150](https://github.com/daurosk/oot-remake-multiplayer/issues/150)): fixed in 0.11.5 (untested on Linux).
+- **The title shows Continue only after a restart** after a new save (tracker row 124); start the game again.
+- **Masks are not drawn on other players** ([#91](https://github.com/daurosk/oot-remake-multiplayer/issues/91)): the mask shows in the HUD slot but not on their Link.
 - **An invisible Lizalfos**: in Dodongo's Cavern one Lizalfos can be invisible on one player's screen. It is there and fights. Not fixed yet ([#238](https://github.com/daurosk/oot-remake-multiplayer/issues/238)).
 - **Host crash under heavy memory use**: a host crashed twice in Zora's Domain while the PC was nearly out of memory. Not fixed yet; `collect-logs` records memory use, so if it happens to you, attach its zip to `/bugreport` on the Discord ([#242](https://github.com/daurosk/oot-remake-multiplayer/issues/242)).
 - **The graphics driver can reset**: rarely, an NVIDIA driver resets and the game closes with `VK_ERROR_DEVICE_LOST`. It is not caused by co-op (it happens in the game's own drawing); start the game again and rejoin.
 - **The last of the three Deku Scrub brothers waits for the talk** (the Deku Tree, room K): while one player talks to the brother they knocked back, that brother belongs to the talk in the talker's game, and the other players' copy of it waits until the talk ends. This is how the game's talk works, not a freeze; it moves again when the talk is over ([#243](https://github.com/daurosk/oot-remake-multiplayer/issues/243)).
-- **Deku Tree's moving floor** (the water room): the water-level switch is shared, but the floor still moves on its own in each game ([#196](https://github.com/daurosk/oot-remake-multiplayer/issues/196)).
+- **Deku Tree's moving floor** (the water room; floating floors drift): the water-level switch is shared, but the floor still moves on its own in each game ([#196](https://github.com/daurosk/oot-remake-multiplayer/issues/196)).
 - **A locked dungeon door another player opened** should open for you too. If it stays shut, type `/teleport <their name>` in the chat (inside a dungeon it takes you to them in any room), or step a few metres back from the door and come again ([#237](https://github.com/daurosk/oot-remake-multiplayer/issues/237)).
 - **`/teleport` into a dungeon**: you are moved next to the other player only when they are in the room you arrive in; otherwise you stay at the entrance; type `/teleport` again there, or walk. If you are frozen, close the game, start it again and walk through the loading zones instead ([#197](https://github.com/daurosk/oot-remake-multiplayer/issues/197)).
 - **Customize Link, partly**: the Hylian Shield's frame takes its colour, but the game's metal shading draws it much darker than the colour you pick. Tell us if a part of your gear stays in the game's colours ([#202](https://github.com/daurosk/oot-remake-multiplayer/issues/202)).
@@ -62,6 +64,8 @@ This is an early test release. Everything under "Works" was seen in our two-game
 - **Microsoft Defender** may warn about the zip or `Update.bat` ("Trojan:Script/Wacatac"): a false alarm on our scripts, which we report to Microsoft.
 
 ## Not yet checked in a game, or only partly
+
+**Everything new in 0.11.5 is untested in a game:** the Multiplayer pause tab and the title's Host and Join rows ([PR #281](https://github.com/daurosk/oot-remake-multiplayer/pull/281)); mod API v2 ([PR #282](https://github.com/daurosk/oot-remake-multiplayer/pull/282)); lifts and platforms that wait for a rider ([PR #279](https://github.com/daurosk/oot-remake-multiplayer/pull/279)); every remote hit replayed with its own hit kind; the Discord presence always Squadala!; beaten bosses for a player who was away ([#136](https://github.com/daurosk/oot-remake-multiplayer/issues/136), [#137](https://github.com/daurosk/oot-remake-multiplayer/issues/137), [#138](https://github.com/daurosk/oot-remake-multiplayer/issues/138)); the other age's gear ([#148](https://github.com/daurosk/oot-remake-multiplayer/issues/148)); King Zora and the boss route; the randomizer's one-time shop and fairy gifts each once.
 
 These are fixed or built in, but no two-game test has reached them yet, or reached only part of them. Please tell us whether they work for you.
 
