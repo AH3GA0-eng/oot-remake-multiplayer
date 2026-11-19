@@ -5339,14 +5339,15 @@ TEST_CASE("objects: another player's event here keeps its bound actors acting, c
     CHECK(run(true, std::nullopt, 200).targeting);  // in our Link's event it is, as before
 }
 
-TEST_CASE("objects: our event's actor is flagged in_event in its samples (S2, issues 144, 243)") {
+TEST_CASE("objects: our event's actor is flagged in_event in its samples (S2, issue 144)") {
     // The owner's side: an actor our Link's event binds (a scrub we talk to) carries
     // object_state::in_event in its samples, so every copy keeps its own logic meanwhile.
     Sync sync;
     sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
-    Seen scrub = Acting(0x100, 0x11, 100, 3.0f, "Wait", "Enemy_Scrub_Deku_Brothers");
+    Seen scrub = Acting(0x100, 0x11, 100, 3.0f, "Wait", "Enemy_Scrub_Deku");
     Tick(sync, 0, {scrub});
     Own(sync, *sync.IdOf(0x100), 1);
+    Tick(sync, 20 * kMs, {scrub});  // the OBJECT_OWNER applied
     auto bit = [&](std::uint64_t t, float x) {
         scrub.position[0] = x;  // a move, so a sample goes out
         std::optional<bool> in_event;
@@ -5363,7 +5364,7 @@ TEST_CASE("objects: our event's actor is flagged in_event in its samples (S2, is
     CHECK(bit(200 + Sync::kEventKeepUs / kMs, 3.3f) == std::optional<bool>(false));
 }
 
-TEST_CASE("objects: a copy its owner's event binds keeps its own logic, unclaimed (S2, issues 144, 243, 253)") {
+TEST_CASE("objects: a copy its owner's event binds keeps its own logic, unclaimed (S2, issue 144)") {
     // The follower's side: P2 talks to its scrub (its samples say in_event). Our copy is not
     // given P2's motion (EventPartner), and our Link near it with its own AI acting does not
     // claim it away from P2 (no targeting). A townsperson still plays P2's cutscene (issue 200).
@@ -5397,15 +5398,15 @@ TEST_CASE("objects: a copy its owner's event binds keeps its own logic, unclaime
         return Out{sync.OwnerEventHolds(0x100, at), sync.EventPartner(0x100, at),
                    flags && (*flags & kTargeting) != 0};
     };
-    const Out scrub = run("Enemy_Scrub_Deku_Brothers", true);
+    const Out scrub = run("Enemy_Scrub_Deku", true);
     CHECK(scrub.holds);
     CHECK(scrub.partner);           // the owner's talk motion is not put on our copy
     CHECK_FALSE(scrub.targeting);   // and it stays the talker's
-    CHECK(run("Enemy_Scrub_Business", true).holds);  // a seller (row 100)
-    CHECK_FALSE(run("Enemy_Scrub_Deku_Brothers", false).holds);   // no event of the owner's: as before
+    CHECK(run("Enemy_Octorok", true).holds);  // any enemy its owner's event binds
+    CHECK_FALSE(run("Enemy_Scrub_Deku", false).holds);   // no event of the owner's: as before
     CHECK_FALSE(run("Npc_Kokiri_Saria", true).holds);             // a townsperson follows the owner's cutscene
     CHECK_FALSE(run("Enemy_DungeonBoss_Gohma", true).holds);             // a boss keeps its own rules
-    const Out after = run("Enemy_Scrub_Deku_Brothers", true, 700 + Sync::kEventKeepUs / kMs + 100);
+    const Out after = run("Enemy_Scrub_Deku", true, 700 + Sync::kEventKeepUs / kMs + 100);
     CHECK_FALSE(after.holds);       // kEventKeepUs after the owner's last in_event sample
     CHECK_FALSE(after.partner);
 }

@@ -795,9 +795,10 @@ public:
     // runs, as the 8 m event rule (coop_guard.h) does nearer. Row 138(8):
     // also a copy our Link is in the area of (AreaClaim).
     bool EventPartner(std::uint64_t address, std::uint64_t now_us) const;
-    // S2 (event-owner-0116, issues 144, 243, 253): a copy whose owner's own event binds it
+    // S2 (event-owner-0116, issue 144): a copy whose owner's own event binds it
     // (object_state::in_event in the owner's samples, within kEventKeepUs) and that has a game
-    // logic of its own (an Enemy_: a Deku Scrub, a Scrub Brother, a Business Scrub). Our copy
+    // logic of its own (an Enemy_: room B's and room F's Deku Scrubs; the Scrub Brothers and
+    // the Business Scrubs are each game's own already, IsOwnPuzzle). Our copy
     // keeps that logic (EventPartner: the owner's motion, animation and remove are not put on
     // it) and is not claimed away from the owner (no wake on it); the event's result reaches us
     // by its flags (coop_scrub_talk.h, coop_scrub_sale.h), as in the owner's game. Before, the

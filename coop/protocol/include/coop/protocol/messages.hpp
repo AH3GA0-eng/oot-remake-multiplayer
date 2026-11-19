@@ -812,7 +812,7 @@ inline constexpr std::uint8_t held = 1u << 1;
 inline constexpr std::uint8_t asleep = 1u << 2;
 // S2 (event-owner-0116): its owner's own Link's event binds it (a talk, a
 // cutscene the owner's game plays with it). A copy of an actor with its own
-// game logic (an Enemy_: a scrub, a seller) then keeps that logic; only the
+// game logic (an Enemy_: a Deku Scrub) then keeps that logic; only the
 // event's result reaches it (its flags). An older build ignores the bit.
 inline constexpr std::uint8_t in_event = 1u << 3;
 }  // namespace object_state
