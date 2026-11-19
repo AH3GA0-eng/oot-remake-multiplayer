@@ -1,4 +1,4 @@
-From ba91589529630cea59d40464f82bca6b1aec44ea Mon Sep 17 00:00:00 2001
+From 057065431c52345058e9b89204202e8b5d8ef330 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Thu, 12 Nov 2026 13:32:10 -0900
 Subject: [PATCH] Co-op voice: the module's voices in the game's final mix
@@ -220,10 +220,10 @@ index 00000000..6873d47c
 +
 +#endif
 diff --git a/host/nn_audio.c b/host/nn_audio.c
-index be572f4c..3829ad3e 100644
+index fddf22a3..819452ff 100644
 --- a/host/nn_audio.c
 +++ b/host/nn_audio.c
-@@ -621,6 +621,18 @@ static void render_frame(int16_t *pcm, int channels) {   /* 240 frames of the de
+@@ -628,6 +628,18 @@ static void render_frame(int16_t *pcm, int channels) {   /* 240 frames of the de
      float out[6][FRAME];
      memset(out, 0, sizeof out);
      if (sink_mix >= 0 && mixes[sink_mix].used) {

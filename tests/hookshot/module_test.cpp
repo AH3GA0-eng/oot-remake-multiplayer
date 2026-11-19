@@ -682,16 +682,25 @@ TEST_CASE("hookshot: the Discord status header in patch 0026 is hookshot/src's, 
     const std::string rpc = PatchedCode(patch, "host/discord_rpc.c");
     REQUIRE_FALSE(rpc.empty());
     const auto has = [&rpc](const char* code) { return rpc.find(Squashed(code)) != std::string::npos; };
-    CHECK(has("hos_discord_activity(activity, cap, \"Longshot\", version, LONGSHOT_DISCORD_IMAGE_DEFAULT, &s->words,"));
     CHECK(has("GetProcAddress(m, \"hos_coop_discord_state\")"));
     CHECK(has("dlsym(m, \"hos_coop_discord_state\")"));
-    // Words or a frame that do not fit (hos_discord_activity / hos_discord_set_activity give 0 and "": the
-    // header's test) send no frame, and that is no broken connection.
-    CHECK(has("if (!hos_discord_set_activity(json, sizeof json, nonce + 1, process_id(), activity)) return -1; ++nonce;"
-              " if (!write_frame(p, OP_FRAME, json)) return 0;"));
-    CHECK(has("const int made = make_activity(activity, sizeof activity, &set, module_line, started);"));
-    CHECK(has("if (made && ipc != IPC_NONE && (now_ms() >= send_at || strcmp(activity, sent))) {"));
-    CHECK(has("const int r = send_activity(ipc, activity); if (r < 0) {"));
+    // Owner's rule: a co-op build's Discord status is always Squadala!'s. Longshot v3.0.0-rc.8 writes its own from a
+    // template (host/discord_activity.c); 0026 sends the header's frame in every state instead (title, play, pause,
+    // idle), with no art (the Squadala! application's icon), and always on the Squadala! application.
+    CHECK(has("if (1) { /* (patch 0026: always Squadala!'s frame, no art (the application's icon); Longshot's template below is"
+              " never used) */ HosDiscordWords w = words; snprintf(w.image, sizeof w.image, \"none\");"));
+    CHECK(has("if (!hos_discord_activity(activity, sizeof activity, COOP_DISCORD_NAME, \"\", \"none\", &w, module_line, started) ||"));
+    CHECK(has("hos_discord_set_activity(json, cap, nonce, process_id(), activity); } return; }"));
+    CHECK(has("snprintf(out, cap, \"%s\", COOP_DISCORD_APP_ID); /* (patch 0026: always the Squadala! application) */ }"));
+    CHECK(has("discord_settings_line(&settings, line); read_words_line(line);"));
+    CHECK(has("if (!module_state(module_line, sizeof module_line)) *module_line = 0;"));
+    {   // the application's id: the kit's (tools/release/kit/scripts/discord_status.py APP_ID, its one place)
+        const std::string kit = ReadFile(kRepo / "tools" / "release" / "kit" / "scripts" / "discord_status.py");
+        const auto at = kit.find("\nAPP_ID = \"");
+        REQUIRE(at != std::string::npos);
+        const std::string id = kit.substr(at + 11, kit.find('"', at + 11) - (at + 11));
+        CHECK(has(("#define COOP_DISCORD_APP_ID \"" + id + "\"").c_str()));
+    }
     const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
     CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_discord_state(char* out, size_t cap) noexcept") != std::string::npos);
 }
@@ -1117,11 +1126,11 @@ TEST_CASE("hookshot: patch 0018's screens' tracker and menu state build on Linux
 
 TEST_CASE("hookshot: every patch touches only what Longshot's Linux AppImage ships, so the Linux kit applies it") {
     // tools/release/kit/linux-longshot/scripts/build.sh applies every hookshot/patches/*.patch to a copy of the
-    // AppImage's usr/share/longshot, which holds only what Longshot's scripts/linux/appimage.sh copies (v3.0.0-rc.7):
+    // AppImage's usr/share/longshot, which holds only what Longshot's scripts/linux/appimage.sh copies (v3.0.0-rc.8):
     // no tests/, docs/, .forgejo/, most of third_party/. A hunk on anything else applies on Windows' full source and
     // stops every Linux build. Keep this list to appimage.sh's when the pin moves: the list is for kShippedFor, and
     // the test fails on any other tag in hookshot/LINUX.txt until the list is re-checked and kShippedFor moved.
-    const std::string kShippedFor = "v3.0.0-rc.7";
+    const std::string kShippedFor = "v3.0.0-rc.8";
     const std::string linux_pin = ReadFile(kRepo / "hookshot" / "LINUX.txt");
     const auto tag_at = linux_pin.find("\ntag=");
     REQUIRE(tag_at != std::string::npos);
