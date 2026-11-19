@@ -6,6 +6,7 @@
 # Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-teleport-room.
 # Pass, A's log: "scene change taken", "teleport: move to -33.2 ...: asked", "boss: moved Link to
 # -33.2 ...", 'mark arrived' with Link at x about -33 (not 0.2: the entrance), no "not moved",
+# "test goto reached" for both gotos (hookshot: the driver logs it; the emulator module logs "test steer at"),
 # no "goto timed out". Chat line: "teleport: next to B".
 # Shots arrived / walked: A on 2F (map 2F) beside B's puppet, not black, A free to walk.
 #! noload
