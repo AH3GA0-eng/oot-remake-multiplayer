@@ -107,6 +107,11 @@ bool IsLyingKey(std::string_view name);
 bool IsGoldToken(std::string_view name);
 // True for the placement hash of a Gold Skulltula (gold_skulltula_keys).
 bool IsGoldSkulltulaKey(std::uint64_t hash);
+// The Gold Skulltula placement a taken key names: the placement for its own key
+// and for its second key (key + 2: a token pickup sets both, docs/items.md), 0
+// for any other key (skulltula-0118: a take that reached us as key + 2 only
+// took nothing).
+std::uint64_t GoldPlacementOfKey(std::uint64_t key);
 // The placement a token's id came from (TokenId the other way): 0 when `id`
 // is no Gold Skulltula's.
 std::uint64_t PlacementOfTokenId(std::uint64_t id);

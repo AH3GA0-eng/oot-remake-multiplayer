@@ -2524,6 +2524,82 @@ TEST_CASE("objects: a Gold Skulltula shaken out of a tree is announced and copie
     CHECK(c.Creates().empty());
 }
 
+TEST_CASE("objects: skulltula-0118, a taken Gold Skulltula leaves no copy and is dead for everyone") {
+    constexpr std::uint64_t kHash = 0x32f42f523be6425ULL;  // the Graveyard's
+    const proto::ObjectId id{proto::ObjectKind::placed, 0, kHash};
+    proto::ObjectSpawn relayed;
+    relayed.player_number = 1;
+    relayed.id = id;
+    relayed.actor = "Enemy_Skulltula_Gold";
+    relayed.state.position = proto::Vec3{9.0f, 0.0f, 0.0f};
+
+    // B made a copy from A's announcement; then A took the token. Only the
+    // second key (key + 2) reached B: the copy goes all the same, and the
+    // Skulltula's own hash is taken with it.
+    Sync b;
+    Tick(b, 0, {}, 2);
+    b.Receive(relayed);
+    Tick(b, 100 * kMs, {}, 2);
+    auto creates = b.Creates();
+    REQUIRE(creates.size() == 1);
+    b.Bind({{creates[0].key, 0x900}});
+    Tick(b, 200 * kMs, {Enemy(0x900, ~0ULL, 1, 9.0f, "Enemy_Skulltula_Gold")}, 2);
+    REQUIRE(b.IdOf(0x900));
+    b.Take(kHash + 2);
+    Tick(b, 300 * kMs, {Enemy(0x900, ~0ULL, 1, 9.0f, "Enemy_Skulltula_Gold")}, 2);
+    CHECK(b.IsGoldTaken(kHash));
+    CHECK(b.Taken(kHash));
+    REQUIRE(b.Creates().size() == 1);
+    CHECK(b.Creates()[0].removed);
+    CHECK(b.Creates()[0].remakes == 0);
+
+    // The server names it again (a reload, a late entry): no new copy.
+    Tick(b, 400 * kMs, {}, 2);
+    b.Receive(relayed);
+    Tick(b, 500 * kMs, {}, 2);
+    for (const auto& c : b.Creates()) {
+        CHECK(c.removed);
+    }
+
+    // A game that took it before the announcement came (the scene's keys, or a
+    // take while no walk ran): no copy at all.
+    Sync c;
+    c.Take(kHash);
+    Tick(c, 0, {}, 3);
+    c.Receive(relayed);
+    Tick(c, 100 * kMs, {}, 3);
+    CHECK(c.Creates().empty());
+
+    // The owner's own one, alive, goes with the take (hidden here): dead for
+    // everyone, so the server stops naming it to later games.
+    Sync a;
+    Tick(a, 0, {Enemy(0x100, kHash, 1, 9.0f, "Enemy_Skulltula_Gold")}, 1);
+    Own(a, id, 1);
+    Tick(a, 100 * kMs, {Enemy(0x100, kHash, 1, 9.0f, "Enemy_Skulltula_Gold")}, 1);
+    a.Take(kHash);
+    std::vector<proto::ObjectRemove> removes;
+    for (std::uint64_t t = 200; t <= 800; t += 100) {
+        for (const auto& r : All<proto::ObjectRemove>(
+                 Tick(a, t * kMs, {Enemy(0x100, kHash, 1, 9.0f, "Enemy_Skulltula_Gold")}, 1))) {
+            removes.push_back(r);
+        }
+    }
+    REQUIRE(removes.size() == 1);
+    CHECK(removes[0].id == id);
+    CHECK(removes[0].reason == proto::RemoveReason::dead);
+
+    // Any other enemy that leaves alive says nothing (unchanged).
+    Sync d;
+    Tick(d, 0, {Enemy(0x100, 0x1111, 1, 9.0f, "Enemy_Skulltula_Gold")}, 1);
+    Own(d, {proto::ObjectKind::placed, 0, 0x1111}, 1);
+    Tick(d, 100 * kMs, {Enemy(0x100, 0x1111, 1, 9.0f, "Enemy_Skulltula_Gold")}, 1);
+    std::size_t other = 0;
+    for (std::uint64_t t = 200; t <= 600; t += 100) {
+        other += All<proto::ObjectRemove>(Tick(d, t * kMs, {}, 1)).size();
+    }
+    CHECK(other == 0);
+}
+
 TEST_CASE("objects: report 99, which placed enemies a game's own logic makes later (late encounters)") {
     // The Gerudo Fortress jail guards (CarpenterSet logic) and mini-boss or
     // ambush enemies of the same kind.

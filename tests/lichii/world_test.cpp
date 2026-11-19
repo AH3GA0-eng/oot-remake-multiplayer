@@ -2438,6 +2438,14 @@ TEST_CASE("world: a token's count is given back once, and its placement key is t
     // from the game that took the token, through the flag list.
     CHECK(CoopWorld::IsGoldSkulltulaKey(kGoldHash));
     CHECK_FALSE(CoopWorld::IsGoldSkulltulaKey(0x1234567890abcdefull));
+    // skulltula-0118: either of a placement's two keys names it (a token pickup
+    // sets key and key + 2); nothing else does.
+    CHECK(CoopWorld::GoldPlacementOfKey(kGoldHash) == kGoldHash);
+    CHECK(CoopWorld::GoldPlacementOfKey(kGoldHash + 2) == kGoldHash);
+    CHECK(CoopWorld::GoldPlacementOfKey(kGoldHash + 1) == 0);
+    CHECK(CoopWorld::GoldPlacementOfKey(0) == 0);
+    CHECK(CoopWorld::GoldPlacementOfKey(1) == 0);
+    CHECK(CoopWorld::GoldPlacementOfKey(0x1234567890abcdefull) == 0);
 }
 
 TEST_CASE("world: a pillar that does not fall on life 0 is written 10 times, then one line, then left (breakables)") {

@@ -1395,8 +1395,9 @@ public:
                     // made and taken in one run, so it never went through our
                     // walk, and no break was ever sent for it (ROGX kept it and
                     // the count went 41 -> 42).
-                    if (CoopWorld::IsGoldSkulltulaKey(k.key)) {
-                        CoopWorld::QueueTakenPlacement(k.key);
+                    // Either of its two keys (skulltula-0118: key + 2 alone named none).
+                    if (const std::uint64_t placement = CoopWorld::GoldPlacementOfKey(k.key); placement != 0) {
+                        CoopWorld::QueueTakenPlacement(placement);
                     }
                 } else if (const auto chest = CoopChests::KeyOfOpened(k.hash)) {
                     keys.push_back(*chest);  // a chest's opened flag: that chest (issue 87)
