@@ -2537,6 +2537,7 @@ std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_n
                     r.scene = player->scene();
                     r.status = player->flags();
                     r.adult = player->age() == coop::protocol::Age::adult;
+                    r.young = player->age() == coop::protocol::Age::child;
                 }
                 remotes.push_back(std::move(r));
             }

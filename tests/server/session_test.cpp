@@ -6203,6 +6203,13 @@ TEST_CASE("bomb take: with nobody sharing, an owner who leaves takes its bomb aw
   CHECK(h.session.stats().bomb_handed_on == 0);
 }
 
+// A young (child) Link's sample: only a child is ever lifted (owner rule, Session::on_lift).
+PlayerSample young_at(const std::string& scene, Vec3 position, Age age = Age::child) {
+  PlayerSample s = sample_at(scene, position);
+  s.age = age;
+  return s;
+}
+
 TEST_CASE("player lift: passed to the one player named, only between sharing games") {
   Harness h;
   h.join(1, "Link");
@@ -6223,7 +6230,7 @@ TEST_CASE("player lift: passed to the one player named, only between sharing gam
   h.clear();
   h.receive(2, LiftShare{true}, kChannelOwnership);
   for (ConnectionId id = 1; id <= 3; ++id) {
-    h.receive(id, sample_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+    h.receive(id, young_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
   }
   h.clear();
   h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
@@ -6262,23 +6269,80 @@ TEST_CASE("player lift: an ask whose lifter's place is not known, or not in the 
   CHECK(only_message_to<LiftAnswer>(h, 1) == LiftAnswer{2, 1, LiftRefusal::too_far});
   CHECK(h.session.stats().lifts_unplaced == 1);
   // Another scene than the lifted's.
-  h.receive(1, sample_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
-  h.receive(2, sample_at("Kakariko", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.receive(1, young_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.receive(2, young_at("Kakariko", Vec3{1, 0, 0}), kChannelPlayerSamples);
   h.clear();
   h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
   CHECK(h.to(2).empty());
   CHECK(only_message_to<LiftAnswer>(h, 1) == LiftAnswer{2, 1, LiftRefusal::too_far});
   // The same scene, but the lifter's position stale.
-  h.receive(2, sample_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.receive(2, young_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
   h.now += 6'000'000;
-  h.receive(2, sample_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.receive(2, young_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
   h.clear();
   h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
   CHECK(h.to(2).empty());
   // Fresh and together: passed on.
-  h.receive(1, sample_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.receive(1, young_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
   h.clear();
   h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
   CHECK(only_message_to<LiftAsk>(h, 2) == LiftAsk{1, 2});
   CHECK(h.session.stats().lifts_unplaced == 3);
+}
+
+TEST_CASE("player lift: only a young Link is asked: an adult or an unknown age is refused not_young") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.receive(1, LiftShare{true}, kChannelOwnership);
+  h.receive(2, LiftShare{true}, kChannelOwnership);
+  // Placed together, but the lifted player's samples carry no age: refused, nothing reaches it.
+  h.receive(1, young_at("Graveyard", Vec3{1, 0, 0}, Age::adult), kChannelPlayerSamples);
+  h.receive(2, sample_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
+  CHECK(h.to(2).empty());
+  CHECK(only_message_to<LiftAnswer>(h, 1) == LiftAnswer{2, 1, LiftRefusal::not_young});
+  // Adult: refused the same way.
+  h.receive(2, young_at("Graveyard", Vec3{1, 0, 0}, Age::adult), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
+  CHECK(h.to(2).empty());
+  CHECK(only_message_to<LiftAnswer>(h, 1) == LiftAnswer{2, 1, LiftRefusal::not_young});
+  CHECK(h.session.stats().lifts_not_young == 2);
+  // Young (the lifter is adult: its age is never a reason): passed on.
+  h.receive(2, young_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
+  CHECK(only_message_to<LiftAsk>(h, 2) == LiftAsk{1, 2});
+  // A later sample without an age keeps the last one (child).
+  h.receive(2, sample_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
+  CHECK(only_message_to<LiftAsk>(h, 2) == LiftAsk{1, 2});
+}
+
+TEST_CASE("player lift: grown up while carried, the lifter's places stop at the server, its answers still go") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.receive(1, LiftShare{true}, kChannelOwnership);
+  h.receive(2, LiftShare{true}, kChannelOwnership);
+  h.receive(1, young_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.receive(2, young_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
+  h.receive(2, LiftAnswer{0, 1, LiftRefusal::none}, kChannelOwnership);
+  h.clear();
+  h.receive(1, LiftPlace{0, 2, LiftPhase::held, {1, 2, 3}}, kChannelPlayerSamples);
+  CHECK(only_message_to<LiftPlace>(h, 2) == LiftPlace{1, 2, LiftPhase::held, {1, 2, 3}});
+  // The lifted player is adult now (the Master Sword): no place (flying or landed) reaches it.
+  h.receive(2, young_at("Graveyard", Vec3{1, 0, 0}, Age::adult), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, LiftPlace{0, 2, LiftPhase::flying, {1, 2, 3}}, kChannelPlayerSamples);
+  h.receive(1, LiftPlace{0, 2, LiftPhase::landed, {1, 2, 3}}, kChannelPlayerSamples);
+  CHECK(messages_to<LiftPlace>(h, 2).empty());
+  CHECK(messages_to<LiftAnswer>(h, 1).empty());  // a place gets no answer from the server
+  // Its own freed answer still reaches the lifter.
+  h.receive(2, LiftAnswer{0, 1, LiftRefusal::not_young}, kChannelOwnership);
+  CHECK(only_message_to<LiftAnswer>(h, 1) == LiftAnswer{2, 1, LiftRefusal::not_young});
 }

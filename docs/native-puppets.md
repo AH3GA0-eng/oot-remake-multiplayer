@@ -9,7 +9,8 @@ Status: design and plan (native-puppets-a, 2026-11-19), plus the test switches `
 The other players stop being picture-only puppets and become things the game itself handles:
 
 1. **Bodies.** You bump into another player, can stand on them, push them, and they block a doorway.
-2. **Lift and throw a player**, the way Link lifts a pot, a bomb or a Cucco.
+2. **Lift and throw a young player**, the way Link lifts and carries Ruto in Jabu-Jabu (owner rule: only a
+   young Link can be lifted; any Link may lift him).
 3. **Take another player's bomb.** Pick up the bomb they put down (or catch it), and the bomb changes
    hands the way enemies and bosses do today: one fuse and one explosion in every game. An unlit bomb
    you hold can go back into your own bomb count, through the game's own count.
@@ -93,7 +94,7 @@ and add, one at a time, the pieces each feature needs, each taken from the game'
 
 - a body: `PhysicsRef` with a character body and no gravity (phase 1);
 - hit and guard shapes: the `Tgt`/`Atk` sensors + `SensorHitRef` (phase 4);
-- liftable: a `LiftableRef` of its own (the Cucco's as the model) (phase 3).
+- liftable: a `LiftableRef` of its own, Ruto's, on the child copies only (phase 3).
 
 - For: each piece small and testable alone; the owner game keeps sole authority (the copy never decides
   anything by itself); no player code runs on the copy, so nothing touches this game's save or camera.
@@ -175,8 +176,15 @@ The plan (phase 2):
 
 ## 4. Lifting another player
 
-Needs, on the copy, what a Cucco has: a `LiftableRef` (phase 3; the Cucco's param, own file in the
-puppet pack, Link-sized offsets), and on the owner game a "lifted" state for its real Link.
+**Owner rule (2026-11-19, absolute): only a YOUNG Link can be lifted, carried the way Link carries Ruto.**
+"You should only be able to grab a young link, like how you grab ruto. You can basically give link the same
+animation." An adult Link is never liftable (no lift reaction in the game, no `LIFT_ASK`, no message); a young
+Link may be lifted by a young or an adult Link (the lifter's age is never a reason to refuse; the game's own
+lift rules decide). The carry is Ruto's: the copy's `LiftableRef` is Ruto's own `LiftableParam`, so the
+lifter's game plays Link's Ruto set of lift, carry, put-down and throw.
+
+Needs, on the child copy, what Jabu-Jabu's Ruto (`Npc_Zora_Ruto_Child_001`) has: a `LiftableRef` (phase 3;
+her param, own file in the puppet pack), and on the owner game a "lifted" state for its real Link.
 
 - **Who decides.** The lifted player's game (owner of that Link). The lifter's game sees the game's own
   lift start on the copy and sends `LIFT_ASK(lifted, lifter)`; the owner game accepts unless its Link is
@@ -202,10 +210,48 @@ Built and host-tested, **not run in a game**. Two switches, both off by default;
 runs, nothing is sent, and the solo and idle game are as before (no session: no copy exists, and the glue
 returns before anything when not connected).
 
-- **Pack:** `tools/puppet_pack/build.py --puppet-liftable` gives every puppet a `LiftableRef` of its own, the
-  Cucco's (`Animal_Cucco`'s `LiftableParam`, its in-pack `$parent` chain merged; own file
-  `Component/Liftable/<puppet>.game__component__LiftableParam.bgyml`, sized in the size table as the Cucco's
-  file). Off: the pack is byte for byte as before (test `test_pack_liftable`), the manifest has no `liftable`.
+- **Pack:** `tools/puppet_pack/build.py --puppet-liftable` gives every **child** puppet (`CoopPuppet_Child*`,
+  `LIFTABLE_VARIANTS`) a `LiftableRef` of its own, Ruto's (native-puppets-d; before it the Cucco's):
+  `Npc_Zora_Ruto_Child_001`'s `Component/LiftableParam/NpcZoraRutoChild.game__component__LiftableParam.bgyml`
+  (`LiftGrade` 3069107721 as the Cucco's, `LiftableType` 3056776872, `LiftPosOffset`/`PutPosOffset`
+  (0, -0.0022, 0.0501), `WeightForCalcThrowPower` 19, `SpecialDeal` [213340665], `IgnoreLifterOnThrownFrame` 8),
+  its in-pack `$parent` chain merged (the game's file has none); own file
+  `Component/LiftableParam/<puppet>.game__component__LiftableParam.bgyml`, sized in the size table as hers.
+  Adult puppets get none: the game itself can never lift an adult copy. Off: the pack is byte for byte as
+  before (test `test_pack_liftable`, which also checks the adult pack is the same on and off).
+- **Ruto's carry (owner rule).** The lifter's game picks Link's animations by the liftable's type, and Link's AS
+  (Player_Child and Player_Adult, both) has a Ruto set beside the Cucco's: `Lift_Ready_Ruto`, `Lift_Up_Ruto`
+  (and `_High`), `Pose_Ruto` / `Pose_Ruto_Run` / `Pose_Ruto_Caution` (the carry), `Lift_Put_Ruto` /
+  `Lift_Put_Stand_Ruto` (and `_High`), `Lift_Throw_Ruto`, `Damage_Though_Ruto*`. With Ruto's `LiftableType` on
+  the copy the game plays those, with its own carry limits (walk, no roll or attack while carrying, put down or
+  throw), as with Ruto. `OurLinkLifts` takes `Pose_Ruto` as a carry too.
+- **The carried Link's pose.** Ruto's own carried pose is her AS command `Act_LiftRest` (with `_St`, `_Wait`,
+  `_Ed`, `_LookAround`, `_Detect`) in `AS/Npc_Zora_ZU_Ruto_Child.root.asb` and her clips in
+  `Npc_Zora_ZU_Ruto_Child_Animation.anim.bfres`. Link's AS has no such command (Player_Child's AS lists every
+  command: no `LiftRest`, `Lifted`, `Carried` or sitting command; `Horse_Wait` has no clip in the child's
+  animation files), so it cannot be asked of a Link actor: a command the actor's AS does not have does not play.
+  Their skeletons share the main bone names (`Arm_1/2_L/R`, `Leg_1/2_L/R`, `Spine_1/2`), so a later step could
+  give the copies' own AS (as the skins' AS copies, skin.py) an `Act_LiftRest` node on Ruto's clip: a pack
+  change to prove in game first (UNKNOWN 7). Until then the carried Link plays the closest pose the game itself
+  has for a young Link held off the ground: Link's own `Eaten` (clips `Eaten_F` / `Eaten_B` in
+  Player_Child_01_Animation; the Like Like's hold, `Player.action.reactionrestraintrideonenemy`). While lifted,
+  the lifted game sends `Eaten` as its Link's animation (`CoopLiftPlayerGame::CarriedPose` in the hook's read,
+  `CoopLiftPlayer::CarriedAnimation`), so every copy of it, on the lifter's screen and every other, plays it
+  through the game's own AS. The lifted player's own Link plays what its own controller plays then (UNKNOWN 7).
+- **Young only, on every side** (native-puppets-d, tests in lift_player_test.cpp and session_test.cpp):
+  - Lifter: a copy counts only while its player's presence says child (`CopyView::young` from
+    `CoopPuppet::Remote::young`, read every frame: the age can change, as at the Master Sword); an adult or an
+    unknown age never asks and logs nothing. Asking or carrying when the copy stops being young: the lift ends
+    (a `landed` place where it last was) and the director places the copy again.
+  - Server: `on_lift` refuses a `LIFT_ASK` (`LIFT_ANSWER` 7 `not_young`, stat `lifts_not_young`) when the lifted
+    player's last PLAYER_SAMPLE age is adult or not known (kept over scene changes, unset on a rejoin), and drops
+    every `LIFT_PLACE` to such a player. Answers always go.
+  - Lifted game: refuses `not_young` when its own Link is not child at answer time (the age read then, so an age
+    change while the ask was on its way is caught); lifted, it frees itself (`LIFT_ANSWER not_young`) the frame
+    its Link is not child: input back, no more places, its Link falls by its own character controller (the
+    game's own drop).
+  - Re-lift after landing, a throw (flying places), a scene change (an event or load frees it) and a rejoin (no
+    age until a sample) all go through the same gates.
 - **Protocol:** `LIFT_ASK` 535, `LIFT_ANSWER` 536, `LIFT_PLACE` 537, `LIFT_SHARE` 538 ([protocol.md](protocol.md),
   "Player lift"). The plan's `LIFT_THROW(velocity)` is not needed: the throw is the lifter's game's own (its
   lifter throws the copy), and the places go on as `flying` until the copy is at rest, then one `landed` place.
@@ -242,8 +288,9 @@ returns before anything when not connected).
 
 Phase 3 UNKNOWNs (settled by the proof job in reports/native-puppets-c.md, screenshots on both games):
 
-1. Whether the child and adult lifters lift a copy with the Cucco's `LiftGrade` 3069107721 at all (the copy
-   has no Cucco AI; `IsResetBehaviorModeOnThrown` and `KeepSensorHitToParent` may need it). Without
+1. Whether the child and adult lifters lift a child copy with Ruto's `LiftableParam` at all (the copy has no
+   Ruto AI; `SpecialDeal` 213340665, `IsResetBehaviorModeOnThrown` and `KeepSensorHitToParent` may need it), and
+   that they play the Ruto set (`Lift_Up_Ruto`, `Pose_Ruto`) on it. Without
    `--puppet-body` the copy has no body to grab: the proof runs with both switches.
 2. That the game's carry moves the copy's own place (+0x31c) so the read-back shows the rise (else the lift
    is not seen: then read the lifter's held actor instead, `ActorHolderRef`, UNKNOWN offsets).
@@ -258,6 +305,22 @@ Phase 3 UNKNOWNs (settled by the proof job in reports/native-puppets-c.md, scree
 6. Our Link's own animation names while it lifts and carries (AS slot 0). The gate takes any name with "lift"
    or "carry"; if the proof log shows "copy rose but our Link's animation 'X' is no lift" during a real lift,
    add X's family to `OurLinkLifts` (or read the lifter's `ActorHolderRef` instead, offsets UNKNOWN).
+7. The carried pose: that `Eaten` plays on a child copy outside a Like Like (screenshot on the lifter's game);
+   what the lifted player's own Link plays on its own screen while placed with input off; and whether an
+   `Act_LiftRest` node on Ruto's clip in the copies' own AS plays on Link's skeleton (the owner's "same
+   animation"; a pack change, its own probe).
+8. That an adult copy really has no lift reaction (no `LiftableRef`: the lifter's button does nothing at it).
+
+Proof job checks for the owner rule (add to the job in reports/native-puppets-c.md; screenshots of both games):
+- A (adult, then young) lifts young B: both screens show B in A's hands with A in Ruto's carry pose
+  (`Pose_Ruto`); A walks with B, puts B down, and throws B as Ruto is thrown. A's log has the Ruto lift names.
+- A tries to lift adult B: nothing happens on either screen (no lift, no message); A's log has no
+  `coop: lift:` line for B; the server's `lifts_not_young` stays 0 (the ask is never sent).
+- B ages while carried: in the game the age changes only in the Temple of Time's Master Sword event, which
+  frees B first (the event gate). So A carries B into the Temple of Time and B takes or puts back the sword:
+  B's log `freed itself from P1`, input back, B falls and lands by its own (screenshot B); A's log `landed`,
+  A's carry ends; afterwards (B adult) A's lift at B does nothing. The `not_young` free itself is proven by
+  the host tests (no game path changes the age outside that event).
 
 The same "ask without our own state" and "unknown place" rules hold for the phase 2 bomb take: our game sends
 `BOMB_TAKE` only when the copy's own animation says Lifted AND our Link's place is read and within 2.5 m of the
@@ -334,7 +397,7 @@ Sizes: S = under a day of one worker, M = 1 to 3 days, L = more. Every proof is 
 | 0 | Facts | S | One module-only research run: lift grades, the Free body test, stash path, throw velocity setter (the UNKNOWNs above) | Logs + screenshots of each probe; no product change |
 | 1 | Body | S-M | Pack switch `--puppet-body` (built, below): the copy gets Link's own shapes and character body in Free move state, plus his cloth; no sensors, no ragdoll | A walks into B's copy: A stops (screenshot both); A jumps on the copy: A stands on it (A's y = copy's top, screenshot); B walks away: the copy's place read back = samples (no jitter lines). Same with an adult copy. Solo and idle unchanged (pack built without the switch is byte for byte today's) |
 | 2 | Bomb hand-over | M | Bomb as a shared object (owner, epoch, fuse left, held by); lift of a copy asks for it; stash through the pouch path | A puts down a lit bomb, B lifts it: one explosion in both games at B's hands (screenshots both, the same frame window); A puts down an unlit bomb, B lifts and stashes: B's count +1, A's unchanged, the bomb gone in both |
-| 3 | Lift a player | M-L | `LiftableRef` on the copy (Cucco's model); `LIFT_ASK` / `LIFT_ANSWER` / `LIFT_PLACE` messages (the throw is `LIFT_PLACE flying`); the lifted game places its real Link (built, not run: "Phase 3 status") | A lifts B's copy: B's own screen shows B in A's hands (screenshot), A walks, B follows; A throws: B lands where A's screen shows (within 1 m), both screenshots; B in a talk: the lift is refused |
+| 3 | Lift a young player (owner rule: young only, Ruto's carry) | M-L | Ruto's `LiftableRef` on the child copies only; `LIFT_ASK` / `LIFT_ANSWER` / `LIFT_PLACE` messages (the throw is `LIFT_PLACE flying`); young-only gates on the lifter, the server (`not_young`) and the lifted game; the lifted game places its real Link, its copies play the carried pose (built, not run: "Phase 3 status") | A lifts young B: both screens show B in A's hands with A in Ruto's carry (screenshot both), A walks, B follows; A throws: B lands where A's screen shows (within 1 m), both screenshots; A tries adult B: nothing happens, no message; B ages mid-carry: safe drop; B in a talk: the lift is refused |
 | 4 | PvP sensors | M | Copy gets `Tgt`/`Atk` sensors + `SensorHitRef` (no Life); received hits read and sent as `PVP_HIT`; victim rewind check; enemy hits on copies dropped | PvP on: A's sword on B's copy indoors (no grass) -> B flinches and loses hearts (screenshot B), A's screen shows B's knockback; B shields: no damage; PvP off: nothing; an enemy hitting B's copy in A's game: no damage to B |
 | 5 | Option A track | L | native-player steps 2-5 (input wraps, correction) as a separate switch | As native-player.md |
 

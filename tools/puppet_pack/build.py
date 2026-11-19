@@ -594,18 +594,23 @@ def add_body(doc, player_components, members, actor, files):
     return own
 
 
-# Native puppets phase 3 (docs/native-puppets.md "Lifting another player", `--puppet-liftable`, off by default):
-# the puppet gets a LiftableRef of its own, the Cucco's (LIFTABLE_SOURCE: the game's living actor that Link
-# lifts, carries and throws), its `$parent` chain merged as far as the Cucco's pack holds it. Link's own lifter
-# then lifts the copy as a Cucco; the hook (coop_lift_player.h, LICHII_COOP_LIFT_PLAYER=1) sees that and asks
-# the lifted player's game. Not run in a game yet: whether the child and adult lifters take the Cucco's
-# LiftGrade on a copy, and what IsResetBehaviorModeOnThrown / KeepSensorHitToParent do on an actor without
-# the Cucco's AI, are phase 3's UNKNOWNs.
-LIFTABLE_SOURCE = "Animal_Cucco"
+# Native puppets phase 3 (docs/native-puppets.md "Lifting another player", `--puppet-liftable`, off by default).
+# Owner rule (2026-11-19): only a YOUNG Link can be lifted, and he is carried as Link carries Ruto in Jabu-Jabu.
+# So only the child puppets (CoopPuppet_Child*, LIFTABLE_VARIANTS) get a LiftableRef, and it is Ruto's own
+# (LIFTABLE_SOURCE, Npc_Zora_Ruto_Child_001: Component/LiftableParam/NpcZoraRutoChild; her LiftableType, lift
+# and put offsets, weight 19 and SpecialDeal), its `$parent` chain merged as far as her pack holds it. Link's own
+# lifter then lifts the copy as it lifts Ruto: the game picks Link's Ruto set by the LiftableType (Player_Child
+# and Player_Adult AS: Lift_Ready_Ruto, Lift_Up_Ruto, Pose_Ruto / _Run / _Caution, Lift_Put_Ruto,
+# Lift_Throw_Ruto). An adult puppet has no LiftableRef at all: the game itself can never lift it. The hook
+# (coop_lift_player.h, LICHII_COOP_LIFT_PLAYER=1) sees the lift and asks the lifted player's game. Not run in a
+# game yet: whether a lifter takes Ruto's LiftGrade on a copy without her AI, and what SpecialDeal,
+# IsResetBehaviorModeOnThrown and KeepSensorHitToParent do there, are phase 3's UNKNOWNs.
+LIFTABLE_SOURCE = "Npc_Zora_Ruto_Child_001"
+LIFTABLE_VARIANTS = ("Child",)
 
 
 def liftable_param(source_members):
-    """The Cucco's LiftableRef param: (its member path, the param with its in-pack `$parent` chain merged),
+    """Ruto's LiftableRef param: (its member path, the param with its in-pack `$parent` chain merged),
     or None when LIFTABLE_SOURCE's pack has none."""
     try:
         comps = flatten_actor_param(source_members, LIFTABLE_SOURCE)
@@ -618,14 +623,14 @@ def liftable_param(source_members):
 
 
 def liftable_path(actor, src):
-    """The puppet's own liftable param, beside the Cucco's: `<dir>/<actor>.<the Cucco's file kind>`."""
+    """The puppet's own liftable param, beside Ruto's: `<dir>/<actor>.<her file kind>`."""
     head, _, base = src.rpartition("/")
     return f"{head}/{actor}.{base.split('.', 1)[1]}"
 
 
 def add_liftable(doc, actor, files, liftable):
     """Gives the puppet's ActorParam `doc` a LiftableRef of its own (`liftable`: liftable_param()).
-    Returns (member path, bytes, the Cucco's member it is cut from)."""
+    Returns (member path, bytes, Ruto's member it is cut from)."""
     src, param = liftable
     path = liftable_path(actor, src)
     data = byml.dumps(param)
@@ -648,7 +653,8 @@ def build_pack(members, variant, sound=True, player_footsteps=False, sound_user=
     (a tunic colour), else the player's. `perception`: perception_members() to make the puppet a
     target of the game's perception (PERCEPTION_SOURCE), or None. `as_ref`: an AS root of its own
     (a skin's copy, skin.as_path), else the player's. `body`: the puppet's own body (`--puppet-body`,
-    puppet_body). `liftable`: liftable_param() to make the puppet liftable (`--puppet-liftable`), or None."""
+    puppet_body). `liftable`: liftable_param() to make the puppet liftable (`--puppet-liftable`), or None;
+    only a young variant (LIFTABLE_VARIANTS) takes it: an adult puppet is never liftable."""
     player = f"Player_{variant}"
     actor = actor or puppet_name(variant)
     player_components = flatten_actor_param(members, player)
@@ -658,7 +664,7 @@ def build_pack(members, variant, sound=True, player_footsteps=False, sound_user=
         add_perception(doc, player_components, members, actor, files, perception)
     if body:
         add_body(doc, player_components, members, actor, files)
-    if liftable:
+    if liftable and variant in LIFTABLE_VARIANTS:
         add_liftable(doc, actor, files, liftable)
     if project:
         path, data = tunic_model_info(actor, variant, project)
@@ -1489,7 +1495,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
     age it changes, CoopPuppet_<age>_Skin_<id>). `test_skin`: one of those ids; every other puppet
     (plain and colours) wears that model too, a test with a hook that knows no skins.
     `body`: every puppet gets a body of its own (`--puppet-body`, puppet_body; off by default).
-    `liftable`: every puppet gets the Cucco's LiftableRef (`--puppet-liftable`, liftable_param; off by default)."""
+    `liftable`: every young (child) puppet gets Ruto's LiftableRef (`--puppet-liftable`, liftable_param; off by default)."""
     heaps = heaps or {}
     if not os.path.isfile(os.path.join(romfs, "Pack", "ZsDic.pack.zs")):
         raise BuildError(f"{romfs} does not look like the game's romfs (no Pack/ZsDic.pack.zs)")
@@ -1663,9 +1669,9 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
                 table.add_new(path, size)
                 body_files[path] = size
         lift_file = None
-        if lift_param:
+        if lift_param and v in LIFTABLE_VARIANTS:
             path = liftable_path(actor, lift_param[0])
-            # Sized as the Cucco's file it is cut from, or its own bytes and the margin when longer.
+            # Sized as Ruto's file it is cut from, or its own bytes and the margin when longer.
             size = max(table.get(lift_param[0]) or 0, len(byml.dumps(lift_param[1])) + PACK_SIZE_MARGIN)
             table.add_new(path, size)
             lift_file = {"param": path, "size": size}
@@ -1875,8 +1881,9 @@ def main(argv=None):
                     help="native puppets phase 1 test (docs/native-puppets.md): every puppet gets a body of its own "
                          "(Link's shapes and character controller, no sensors), off by default")
     ap.add_argument("--puppet-liftable", action="store_true",
-                    help="native puppets phase 3 test (docs/native-puppets.md): every puppet gets the Cucco's "
-                         "LiftableRef, so Link can lift it (with LICHII_COOP_LIFT_PLAYER=1), off by default")
+                    help="native puppets phase 3 test (docs/native-puppets.md): every young (child) puppet gets Ruto's "
+                         "LiftableRef, so Link can lift and carry it as Ruto (with LICHII_COOP_LIFT_PLAYER=1); "
+                         "adult puppets never; off by default")
     ap.add_argument("--no-sound", action="store_true",
                     help="build the puppets without Link's sounds (the pack before issue 131)")
     ap.add_argument("--seed-trail", action="store_true",

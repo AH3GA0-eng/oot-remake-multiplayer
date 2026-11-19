@@ -2009,6 +2009,8 @@ private:
             reading->equipment->drawn =
                 CoopPuppetOwn::TheDrawn().Apply(*reading->equipment->drawn, CoopPuppetOwn::NowMs());
         }
+        // Native puppets phase 3: lifted, our Link's copies play the carried pose (off: unchanged).
+        CoopLiftPlayerGame::CarriedPose(reading);
         if (reading) {
             view.position = reading->position;
             view.scene = reading->scene;

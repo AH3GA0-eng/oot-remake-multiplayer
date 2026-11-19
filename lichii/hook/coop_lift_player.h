@@ -4,9 +4,21 @@
 // "Lifting another player"; docs/protocol.md, "Player lift"). The rules only, without any game or network
 // code (tests/lichii/lift_player_test.cpp); coop_lift_player_game.cpp is the glue.
 //
-// - The lift itself is the game's own: the copy (CoopPuppet_*) built with the pack switch --puppet-liftable has a
-//   LiftableRef (the Cucco's, the game's living liftable), so our Link's own lifter picks it up, carries it on
-//   its hand bone and throws or sets it down with the game's own throw (PlayerLifterParam LiftThrowParams).
+// - Owner rule (2026-11-19): only a YOUNG (child) Link can be lifted, carried as Link carries Ruto in Jabu-Jabu;
+//   any lifter age may lift him (the game's own lift rules decide; no lifter-age code here). Gated on every side:
+//   the pack gives only the child copies (CoopPuppet_Child*) a LiftableRef, the Lifter asks only for a copy whose
+//   player presence says child (CopyView::young, re-checked every frame), the server refuses an ask to a player
+//   whose last sample is not child (not_young), and the lifted game refuses (Local::young) and, lifted, frees
+//   itself the moment its Link is not child any more (not_young): its Link is its own again and falls by its own
+//   character controller, the game's own drop.
+// - The lift itself is the game's own: the child copy built with the pack switch --puppet-liftable has a
+//   LiftableRef, Ruto's (Npc_Zora_Ruto_Child_001's LiftableParam: her LiftableType, offsets and weight), so our
+//   Link's own lifter picks it up, carries it and throws or sets it down with the game's Ruto set (Player AS:
+//   Lift_Ready_Ruto, Lift_Up_Ruto, Pose_Ruto / _Run / _Caution, Lift_Put_Ruto, Lift_Throw_Ruto).
+// - The carried Link's pose: Ruto's own carried pose (her AS command Act_LiftRest) is in her AS and her animation
+//   file only, not in Link's AS, so it cannot be asked of a Link actor. While lifted, the lifted game sends the
+//   game's own pose for a young Link held by something (kCarriedPose, Link's AS command for a Like Like's hold) as
+//   its Link's animation, so every copy of it plays that (CarriedAnimation).
 // - The lifter's game sees the lift on the copy: the game raised it kRiseM over the place the director drew
 //   it, within kReachM of our Link, kRiseFrames frames running, while our own Link's main animation slot plays a
 //   lift (OurLinkLifts: a copy raised by anything else, a rising platform under a --puppet-body copy, a step, our
@@ -31,6 +43,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -75,7 +88,15 @@ inline bool OurLinkLifts(const std::optional<std::string_view>& animation) {
         }
         return false;
     };
-    return has("lift") || has("carry");
+    return has("lift") || has("carry") || has("pose_ruto");  // Pose_Ruto: Link's own carry of Ruto
+}
+
+// The carried Link's pose on every copy (see the top): Link's own AS command for being held (Player_Child AS
+// "Eaten", clips Eaten_F / Eaten_B in Player_Child_01_Animation), a still frame. UNKNOWN in game: that it plays
+// on a copy outside the Like Like's hold (docs/native-puppets.md, phase 3 probes).
+inline constexpr std::string_view kCarriedPose = "Eaten";
+inline proto::Animation CarriedAnimation() {
+    return proto::Animation{std::string(kCarriedPose), 0.0f, 0.0f};
 }
 
 // The input-off answer at `now_us` for the stamp the lift's frame left (0: off).
@@ -97,6 +118,7 @@ struct CopyView {
     std::uint8_t number = 0;
     Vec3 drawn{};
     std::optional<Vec3> game{};
+    bool young = false;  // its player's presence says child now; not known: no (only a young Link is lifted)
 };
 
 // The lifter's side: at most one lift at a time.
@@ -124,13 +146,14 @@ public:
             Watch(our_link, copies, now_us, out);
             break;
         case State::asking:
-            if (now_us - since_us_ >= kAnswerWaitUs || mine == nullptr) {
-                Drop();  // no answer, or the copy is gone: the director places it again
+            if (now_us - since_us_ >= kAnswerWaitUs || mine == nullptr || !mine->young) {
+                Drop();  // no answer, the copy is gone, or it is not young now: the director places it again
             }
             break;
         case State::holding:
         case State::flying:
-            if (mine == nullptr || !mine->game) {
+            if (mine == nullptr || !mine->game || !mine->young) {
+                // Not young any more (grown up while carried; the lifted game frees itself too): let go there.
                 // The copy is gone (they left, a load): the last place we had ends the lift.
                 if (last_) out.place = Place(proto::LiftPhase::landed, *last_);
                 Drop();
@@ -190,6 +213,10 @@ private:
     void Watch(const Vec3& our_link, const std::vector<CopyView>& copies, std::uint64_t now_us, Out& out) {
         for (const auto& c : copies) {
             int& n = rising_[c.number];
+            if (!c.young) {
+                n = 0;  // an adult (or age not known) is never lifted: no ask, no probe line
+                continue;
+            }
             const bool rose = c.game && (*c.game)[1] - c.drawn[1] >= kRiseM && Distance(*c.game, our_link) <= kReachM;
             if (rose && !our_lifts_) {
                 // Raised, but not by our Link's own lift (a platform, a step, a push): never an ask.
@@ -267,6 +294,7 @@ struct Local {
     bool event = false;     // our Link in an event, a load or a menu (PLAYER_STATUS away bits but dead)
     bool down = false;      // dead, life 0, or down but not out
     bool lifting = false;   // our Link holds another player's copy (Lifter::Held)
+    bool young = false;     // our Link is child now (PlayerReading::age); not read: no
     std::optional<Vec3> our_link;
 };
 
@@ -286,6 +314,8 @@ public:
         proto::LiftAnswer a{proto::kPlayerSelf, m.player_number, proto::LiftRefusal::none};
         if (m.lifted != local.self || m.player_number == local.self || m.player_number == 0) {
             a.refusal = proto::LiftRefusal::busy;  // not for us (the server names us; kept for safety)
+        } else if (!local.young) {
+            a.refusal = proto::LiftRefusal::not_young;  // only a young Link is lifted (owner rule)
         } else if (by_ != 0 && by_ != m.player_number) {
             a.refusal = proto::LiftRefusal::busy;
         } else if (local.lifting) {
@@ -324,7 +354,9 @@ public:
             return s;
         }
         proto::LiftRefusal why = proto::LiftRefusal::none;
-        if (local.down || local.event || !local.our_link) {
+        if (!local.young) {
+            why = proto::LiftRefusal::not_young;  // grown up while lifted: free, our Link falls by its own
+        } else if (local.down || local.event || !local.our_link) {
             why = proto::LiftRefusal::freed;
         } else if (now_us - place_us_ >= kPlaceWaitUs || now_us - since_us_ >= kMaxHeldUs) {
             why = proto::LiftRefusal::freed;
@@ -340,6 +372,8 @@ public:
     }
 
     std::uint8_t By() const { return by_; }
+    // Lifted now (asked yes, not ended): our Link's samples carry CarriedAnimation.
+    bool Carried() const { return by_ != 0; }
     void Reset() { *this = Victim{}; }
 
 private:

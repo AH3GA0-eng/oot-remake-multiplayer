@@ -695,6 +695,8 @@ struct Remote {
     float fade = 1.0f;
     std::uint8_t status = 0;  // PLAYER_STATUS flags
     bool adult = false;
+    // Presence says child (native puppets phase 3: only a young Link is liftable). Age not known: false.
+    bool young = false;
     std::optional<Anim> anim;
     std::uint32_t anim_serial = 0;
     Gear gear;  // as Target::gear

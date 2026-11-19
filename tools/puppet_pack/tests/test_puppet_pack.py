@@ -301,15 +301,16 @@ def fake_player_pack(variant):
     return files
 
 
-def fake_cucco_pack():
-    """Animal_Cucco's ActorParam and its LiftableParam with an in-pack $parent (the values as the romfs has them)."""
-    lift = "Component/Liftable/Animal_Cucco.game__component__LiftableParam.bgyml"
-    base = "Component/Liftable/LiftableBase.game__component__LiftableParam.bgyml"
+def fake_ruto_pack():
+    """Npc_Zora_Ruto_Child_001's ActorParam and her LiftableParam with an in-pack $parent (her values as the romfs
+    has them; the game's file has no $parent, the test's base checks the merge)."""
+    lift = "Component/LiftableParam/NpcZoraRutoChild.game__component__LiftableParam.bgyml"
+    base = "Component/LiftableParam/LiftableBase.game__component__LiftableParam.bgyml"
     return {
-        build.actor_param_path("Animal_Cucco"): byml.dumps(
-            {"Components": {"LiftableRef": "?" + lift, "ASRef": "?AS/Animal_Cucco.bgyml"}}),
+        build.actor_param_path("Npc_Zora_Ruto_Child_001"): byml.dumps(
+            {"Components": {"LiftableRef": "?" + lift, "ASRef": "?AS/Npc_Zora_ZU_Ruto_Child.bgyml"}}),
         lift: byml.dumps({"$parent": "Work/" + base[:-len(".bgyml")] + ".gyml", "LiftGrade": byml.UInt(3069107721),
-                          "LiftableType": byml.UInt(1577663790), "WeightForCalcThrowPower": 28.0}),
+                          "LiftableType": byml.UInt(3056776872), "WeightForCalcThrowPower": 19.0}),
         base: byml.dumps({"LiftGrade": 1, "KeepSensorHitToParent": True}),
     }
 
@@ -530,23 +531,31 @@ class BuildPackTest(unittest.TestCase):
         self.assertFalse([n for n in names if n.startswith("Phive/")])
 
     def test_pack_liftable(self):
-        # Native puppets phase 3 (--puppet-liftable): the Cucco's LiftableRef, $parent merged, as the puppet's own.
-        lift = build.liftable_param(fake_cucco_pack())
-        self.assertEqual(lift[0], "Component/Liftable/Animal_Cucco.game__component__LiftableParam.bgyml")
-        self.assertEqual(lift[1], {"LiftGrade": byml.UInt(3069107721), "LiftableType": byml.UInt(1577663790),
-                                   "WeightForCalcThrowPower": 28.0, "KeepSensorHitToParent": True})
+        # Native puppets phase 3 (--puppet-liftable), owner rule: only a young Link is liftable, carried as Ruto.
+        # Ruto's LiftableRef, $parent merged, as the child puppet's own; the adult puppet gets none.
+        self.assertEqual(build.LIFTABLE_SOURCE, "Npc_Zora_Ruto_Child_001")
+        self.assertEqual(build.LIFTABLE_VARIANTS, ("Child",))
+        lift = build.liftable_param(fake_ruto_pack())
+        self.assertEqual(lift[0], "Component/LiftableParam/NpcZoraRutoChild.game__component__LiftableParam.bgyml")
+        self.assertEqual(lift[1], {"LiftGrade": byml.UInt(3069107721), "LiftableType": byml.UInt(3056776872),
+                                   "WeightForCalcThrowPower": 19.0, "KeepSensorHitToParent": True})
         members = fake_player_pack("Child")
         pack, ap, names, _ = build.build_pack(members, "Child", liftable=lift)
-        own = "Component/Liftable/CoopPuppet_Child.game__component__LiftableParam.bgyml"
+        own = "Component/LiftableParam/CoopPuppet_Child.game__component__LiftableParam.bgyml"
         self.assertEqual(build.liftable_path("CoopPuppet_Child", lift[0]), own)
         self.assertEqual(byml.loads(ap)["Components"]["LiftableRef"], "?" + own)
         self.assertEqual(byml.loads(sarc.read(pack)[own]), lift[1])
-        self.assertNotIn(lift[0], names)  # never the Cucco's own file
+        self.assertNotIn(lift[0], names)  # never Ruto's own file
         # Off (the default): the pack as before.
         self.assertEqual(build.build_pack(members, "Child"), build.build_pack(members, "Child", liftable=None))
         self.assertNotIn("LiftableRef", byml.loads(build.build_pack(members, "Child")[1])["Components"])
-        # A Cucco pack without the param: none.
-        self.assertIsNone(build.liftable_param({build.actor_param_path("Animal_Cucco"): byml.dumps({"Components": {}})}))
+        # An adult puppet is never liftable: on or off, its pack is the same, with no LiftableRef.
+        adult = fake_player_pack("Adult")
+        self.assertEqual(build.build_pack(adult, "Adult", liftable=lift), build.build_pack(adult, "Adult"))
+        self.assertNotIn("LiftableRef", byml.loads(build.build_pack(adult, "Adult", liftable=lift)[1])["Components"])
+        # A source pack without the param: none.
+        self.assertIsNone(build.liftable_param(
+            {build.actor_param_path("Npc_Zora_Ruto_Child_001"): byml.dumps({"Components": {}})}))
         self.assertIsNone(build.liftable_param({}))
 
     def test_puppet_body_checks(self):

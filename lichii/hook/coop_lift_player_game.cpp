@@ -52,6 +52,7 @@ const char* RefusalText(proto::LiftRefusal r) {
     case proto::LiftRefusal::not_sharing: return "their game does not share lifts";
     case proto::LiftRefusal::freed: return "freed";
     case proto::LiftRefusal::too_far: return "too far";
+    case proto::LiftRefusal::not_young: return "not a young Link";
     }
     return "?";
 }
@@ -74,6 +75,8 @@ struct Glue {
     // Our Link's input is off while this stamp (SteadyUs, 0 none) is fresh (InputOffFresh): the frame renews it
     // each frame while lifted, so a frame that stops being called gives the input back by itself.
     std::atomic<std::uint64_t> input_off_us{0};
+    // Our Link is lifted (Victim::Carried): Read() gives its samples the carried pose (CarriedPose).
+    std::atomic<bool> carried{false};
     Lifter lifter;                          // present thread
     Victim victim;                          // present thread
     std::uint64_t share_at_us = 0;          // present thread
@@ -93,6 +96,12 @@ bool On() {
         return v != nullptr && std::strcmp(v, "1") == 0;
     }();
     return on;
+}
+
+void CarriedPose(std::optional<coop::host::PlayerReading>& reading) {
+    if (On() && reading && TheGlue().carried.load(std::memory_order_relaxed)) {
+        reading->animation = CarriedAnimation();
+    }
 }
 
 bool OurInputOff() {
@@ -152,6 +161,7 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
         g.victim.Reset();
         CoopPuppet::SetGameHolds(0);
         g.input_off_us.store(0);
+        g.carried.store(false);
         return;
     }
     const std::uint64_t now_us = SteadyUs();
@@ -179,11 +189,26 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
             LOG_INFO(Core, "coop: lift: P{} answered our lift: {}", a.player_number, RefusalText(a.refusal));
         }
     }
+    // Each remote player's presence (age, scene, place): only a young Link's copy is liftable, re-read every frame
+    // (the age can change, as at the Master Sword).
+    std::vector<CoopPuppet::Remote> remotes;
+    bool have_remotes = false;
+    auto Remotes = [&]() -> const std::vector<CoopPuppet::Remote>& {
+        if (!have_remotes) {
+            remotes = CoopPuppet::Collect(session, server_now_us);
+            have_remotes = true;
+        }
+        return remotes;
+    };
     {
         std::vector<CopyView> copies;
         if (reading && scene) {
             for (const auto& p : CoopPuppet::GamePlaces()) {
-                copies.push_back(CopyView{p.number, p.drawn, p.game});
+                bool young = false;
+                for (const auto& r : Remotes()) {
+                    if (r.number == p.number) young = r.young;
+                }
+                copies.push_back(CopyView{p.number, p.drawn, p.game, young});
             }
         }
         const Vec3 our_link = reading ? Vec3{reading->position[0], reading->position[1], reading->position[2]}
@@ -227,14 +252,14 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
     const auto life = CoopObjects::OurLinkLife();
     local.down = (status & proto::status::dead) != 0 || (life && *life <= 0);
     local.lifting = g.lifter.Held() != 0;
+    local.young = reading && reading->age == proto::Age::child;
     if (reading) {
         local.our_link = Vec3{reading->position[0], reading->position[1], reading->position[2]};
     }
     if (!asks.empty()) {
-        const auto remotes = CoopPuppet::Collect(session, server_now_us);
         for (const auto& a : asks) {
             std::optional<Vec3> lifter_at;
-            for (const auto& r : remotes) {
+            for (const auto& r : Remotes()) {
                 if (scene && r.number == a.player_number && r.scene == scene) {
                     lifter_at = Vec3{r.position[0], r.position[1], r.position[2]};
                 }
@@ -256,8 +281,10 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
     if (was_off != step.input_off) {
         LOG_INFO(Core, "coop: lift: our Link's input {} (held by P{})", step.input_off ? "off" : "back", by);
     }
+    g.carried.store(g.victim.Carried());
     if (step.freed) {
-        LOG_INFO(Core, "coop: lift: our Link freed itself from P{}", step.freed->lifter);
+        LOG_INFO(Core, "coop: lift: our Link freed itself from P{}{}", step.freed->lifter,
+                 step.freed->refusal == proto::LiftRefusal::not_young ? " (not a young Link now)" : "");
         send.emplace_back(*step.freed);
     }
 
