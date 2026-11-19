@@ -97,6 +97,7 @@ struct Write {
     bool is_enum;
     std::uint32_t value;
     const char* name;
+    bool revert = false;  // #138 (4): a Bool put back to its alive value after the host's older save (HostReset)
 };
 
 class Apply {
@@ -123,9 +124,24 @@ public:
                              std::span<const std::uint8_t> beaten,
                              const std::function<std::optional<std::uint32_t>(std::uint32_t)>& read,
                              const std::function<bool(std::uint8_t)>& near);
+    // Row 138 (4): the host loaded a save. The beaten set's Bools are each game's own, so its FLAG_RESET never sets
+    // them back, while a boss's quest that is shared (`quests_shared`: CoopQuests, Get_StoneOfForest,
+    // Get_StoneOfFire, Get_StoneOfWater, SageOfForest, SageOfFire) is written to the host's step. A guest that held
+    // the boss beaten (its own kill, D9 or this class's set) then had Gohma deleted by nothing and the blue warp
+    // up, or the warp AND Gohma: the room's logic reads both live. So for each such boss, at the next Check where
+    // the set would be given (out of its area in its own dungeon, anywhere else at once) and the quest now reads a
+    // step in `below` (the boss alive in the host's save) and the record does not have it again: each Bool the death
+    // raises (true) and the game holds goes back to false, and a `<quest>_IsBefore_<Step>` Bool the death clears goes
+    // back to true when the quest is before that step. Left alone: the boss's intro (`..._BossIn`: a save from after
+    // the intro has it), Bools the death clears with no rule for their value before (King Dodongo's BossAppear).
+    // Quests each game keeps (SageOfWater, SageOfShadow, SageOfSpirit, Defeat_Ganon) are not reset by the host: the
+    // guest's boss stays as its own save has it, quest and Bools together (no mixed room). On the host its own save
+    // holds the alive values: nothing to write.
+    void HostReset(bool quests_shared);
     void Reset();
 
 private:
+    std::vector<std::uint8_t> reverts_;  // HostReset's rooms not yet checked
     std::optional<std::string> scene_;
     std::vector<std::uint8_t> loaded_;   // the record's rooms when this scene was first seen: the only ones given here
     std::vector<std::uint8_t> checked_;  // rooms done since this scene load

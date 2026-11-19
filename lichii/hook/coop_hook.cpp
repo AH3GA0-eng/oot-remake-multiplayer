@@ -1251,6 +1251,7 @@ public:
             LOG_INFO(Core, "coop: flags: the host loaded a save: the group follows it");
             CoopObjects::ForgetKeptBreaks();  // locked doors' kept breaks (docs/dungeon.md)
             CoopBoss::ForgetFights();         // bosses beaten after that save fight again (player report #52)
+            boss_beaten_.HostReset(CoopQuests::On());  // row 138 (4): a boss alive in that save, its own Bools back
             lent_keys_.forget();              // the host's save has its own key counts
         }
         // Issue 167: the host's save for the guests (coop_save.h): a guest asks
@@ -1391,6 +1392,11 @@ public:
                     coop::protocol::FlagKey{w.hash, 0},
                     w.is_enum ? coop::protocol::FlagKind::uint32 : coop::protocol::FlagKind::boolean, w.value});
                 const CoopBossBeaten::BeatenSet* set = CoopBossBeaten::ForRoom(w.room);
+                if (w.revert) {
+                    LOG_INFO(Core, "coop: boss: {} is alive in the host's save: {} = {} {}", set->boss, w.name,
+                             w.value, ok ? "(written)" : "(could not write)");
+                    continue;
+                }
                 LOG_INFO(Core, "coop: boss: {} was beaten by the group, not in this game: {} {} {}", set->boss, w.name,
                          w.is_enum ? std::string("-> ") + set->step_name : std::string("= ") + std::to_string(w.value),
                          ok ? "(written)" : "(could not write)");

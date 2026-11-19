@@ -431,3 +431,170 @@ TEST_CASE("boss beaten: a record cleared in the dungeon (the host loaded a save)
     CHECK(a.Check(deku, true, {}, std::ref(f), kAway).empty());  // co-op idle or solo: the record is empty
     CHECK(a.Check(deku, true, {}, std::ref(f), kAway).empty());
 }
+
+namespace {
+
+// A game that held the boss beaten (its own kill, D9 or the group's set) whose shared quest the host's older save
+// just set back to `step`.
+Flags BeatenThenReset(const BeatenSet& s, std::uint32_t step) {
+    Flags f;
+    for (const auto& b : s.bools) {
+        f.v[b.hash] = b.value ? 1 : 0;
+    }
+    f.v[s.quest] = step;
+    return f;
+}
+
+bool Shared(const BeatenSet& s) {
+    return CoopQuests::Find(s.quest) != nullptr;
+}
+
+} // namespace
+
+TEST_CASE("boss beaten: the host's older save, a boss alive in it: the Bools its death raised go back (row 138)") {
+    int shared = 0;
+    for (const BeatenSet& set : CoopBossBeaten::Sets()) {
+        CAPTURE(set.boss);
+        const CoopBoss::Room* room = CoopBoss::RoomByIndex(set.room);
+        if (!Shared(set) || room == nullptr) {
+            continue;
+        }
+        ++shared;
+        const std::string dungeon(room->scene);
+        Flags f = BeatenThenReset(set, set.below.back());
+        Apply a;
+        a.HostReset(true);
+        const std::vector<Write> w = a.Check(dungeon, true, {}, std::ref(f), kAway);
+        for (const auto& b : set.bools) {
+            const std::string_view name(b.name);
+            const auto it = std::find_if(w.begin(), w.end(), [&](const Write& x) { return x.hash == b.hash; });
+            CAPTURE(name);
+            if (b.value && name.ends_with("_BossIn")) {
+                CHECK(it == w.end());  // the intro: a save from after it has it
+            } else if (b.value) {
+                REQUIRE(it != w.end());
+                CHECK(it->revert);
+                CHECK_FALSE(it->is_enum);
+                CHECK(it->value == 0);
+            }
+        }
+        CHECK(std::none_of(w.begin(), w.end(), [](const Write& x) { return x.is_enum || !x.revert; }));
+        // Once.
+        CHECK(a.Check(dungeon, true, {}, std::ref(f), kAway).empty());
+    }
+    CHECK(shared == 5);  // Gohma, King Dodongo, Barinade, Phantom Ganon, Volvagia
+}
+
+TEST_CASE("boss beaten: after the host's reset Gohma's warp goes, her intro stays") {
+    const BeatenSet& s = Gohma();
+    Flags f = BeatenThenReset(s, s.below.back());
+    Apply a;
+    a.HostReset(true);
+    const std::vector<Write> w = a.Check(std::string("KokiriForest"), true, {}, std::ref(f), kAway);
+    std::vector<std::string_view> names;
+    for (const Write& x : w) {
+        names.emplace_back(x.name);
+    }
+    std::sort(names.begin(), names.end());
+    CHECK(names == std::vector<std::string_view>{"Gohma_DefeatBoss", "HavePlayedEvent.Dm_Deku_BossOut",
+                                                 "HavePlayedEvent.InsideTheDekuTree_BossDie"});
+}
+
+TEST_CASE("boss beaten: a reset's put-back waits in the boss's area, then is given out of it") {
+    const BeatenSet& s = Gohma();
+    const std::string deku(CoopBoss::RoomByIndex(0)->scene);
+    Flags f = BeatenThenReset(s, s.below.back());
+    Apply a;
+    a.HostReset(true);
+    bool near = true;
+    const std::function<bool(std::uint8_t)> where = [&](std::uint8_t room) { return room == 0 && near; };
+    CHECK(a.Check(deku, true, {}, std::ref(f), where).empty());
+    CHECK(a.Check(std::nullopt, false, {}, std::ref(f), where).empty());  // a load keeps it waiting
+    CHECK(a.Check(deku, false, {}, std::ref(f), where).empty());          // Link's place not read yet
+    CHECK(a.Check(deku, true, {}, std::ref(f), where).empty());
+    near = false;
+    CHECK(a.Check(deku, true, {}, std::ref(f), where).size() == 3);
+}
+
+TEST_CASE("boss beaten: SageOfForest_IsBefore_Step08 follows the quest the host's save set") {
+    const BeatenSet* s = CoopBossBeaten::ForRoom(3);
+    REQUIRE(s != nullptr);
+    REQUIRE(HasBool(*s, "SageOfForest_IsBefore_Step08", false));
+    const std::uint32_t is_before = coop::protocol::flag_hash("SageOfForest_IsBefore_Step08");
+    const std::string forest(CoopBoss::RoomByIndex(3)->scene);
+    {  // the host's save at Step07: before Step08, so true
+        Flags f = BeatenThenReset(*s, coop::protocol::flag_hash("Step07"));
+        Apply a;
+        a.HostReset(true);
+        const std::vector<Write> w = a.Check(forest, true, {}, std::ref(f), kAway);
+        const auto it = std::find_if(w.begin(), w.end(), [&](const Write& x) { return x.hash == is_before; });
+        REQUIRE(it != w.end());
+        CHECK(it->value == 1);
+    }
+    {  // at Step08 (the fight): not before it, stays false
+        Flags f = BeatenThenReset(*s, coop::protocol::flag_hash("Step08"));
+        Apply a;
+        a.HostReset(true);
+        const std::vector<Write> w = a.Check(forest, true, {}, std::ref(f), kAway);
+        CHECK(std::none_of(w.begin(), w.end(), [&](const Write& x) { return x.hash == is_before; }));
+        CHECK_FALSE(w.empty());  // the death's own Bools still go back
+    }
+}
+
+TEST_CASE("boss beaten: a reset leaves a boss beaten in the host's save, a boss beaten again, unshared quests") {
+    const BeatenSet& s = Gohma();
+    const std::string deku(CoopBoss::RoomByIndex(0)->scene);
+    {  // the host's save beat her too: the quest past DefeatBoss
+        Flags f = BeatenThenReset(s, s.step);
+        Apply a;
+        a.HostReset(true);
+        CHECK(a.Check(deku, true, {}, std::ref(f), kAway).empty());
+    }
+    {  // beaten again after the reset (in the record): nothing put back
+        Flags f = BeatenThenReset(s, s.below.back());
+        Apply a;
+        a.HostReset(true);
+        const std::vector<std::uint8_t> beaten{0};
+        CHECK(a.Check(deku, true, beaten, std::ref(f), kAway).empty());
+    }
+    {  // LICHII_COOP_QUESTS=0: no quest follows the host
+        Flags f = BeatenThenReset(s, s.below.back());
+        Apply a;
+        a.HostReset(false);
+        CHECK(a.Check(deku, true, {}, std::ref(f), kAway).empty());
+    }
+    // Each game's own quests (SageOfWater, SageOfShadow, SageOfSpirit, Defeat_Ganon): the host does not reset them.
+    for (const BeatenSet& set : CoopBossBeaten::Sets()) {
+        if (Shared(set)) {
+            continue;
+        }
+        CAPTURE(set.boss);
+        Flags f = BeatenThenReset(set, set.below.back());
+        Apply a;
+        a.HostReset(true);
+        CHECK(a.Check(std::string("HyruleField"), true, {}, std::ref(f), kAway).empty());
+    }
+}
+
+TEST_CASE("boss beaten: solo, co-op idle and the host's own load write nothing") {
+    const BeatenSet& s = Gohma();
+    const std::string deku(CoopBoss::RoomByIndex(0)->scene);
+    {  // no host reset ever (solo / co-op idle): a beaten save stays beaten
+        Flags f = BeatenThenReset(s, s.below.back());
+        Apply a;
+        CHECK(a.Check(deku, true, {}, std::ref(f), kAway).empty());
+    }
+    {  // the host's own save load: its game already holds the alive values
+        Flags f = Alive(s);
+        Apply a;
+        a.HostReset(true);
+        CHECK(a.Check(deku, true, {}, std::ref(f), kAway).empty());
+    }
+    {  // Reset (out of the session) drops a waiting put-back
+        Flags f = BeatenThenReset(s, s.below.back());
+        Apply a;
+        a.HostReset(true);
+        a.Reset();
+        CHECK(a.Check(deku, true, {}, std::ref(f), kAway).empty());
+    }
+}
