@@ -1,4 +1,4 @@
-From c87328ae852080839e5150486c887aaa25aeacfa Mon Sep 17 00:00:00 2001
+From 8a060817231272b5ce3ebfaa56f3d6ea9a169d92 Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Fri, 13 Nov 2026 20:38:47 -0900
 Subject: [PATCH] Co-op texture overrides: a module may have a texture drawn
@@ -27,7 +27,7 @@ The Link customizer paints Link's gear with it.
  create mode 100644 host/hos_coop_texture.h
 
 diff --git a/gpu/vk/vk_texture.cpp b/gpu/vk/vk_texture.cpp
-index 3d87a4ed..c98e9c67 100644
+index 3d87a4e..c98e9c6 100644
 --- a/gpu/vk/vk_texture.cpp
 +++ b/gpu/vk/vk_texture.cpp
 @@ -1060,8 +1060,40 @@ LevelGeo level_geo(const Texture& tex, uint32_t level) {   // (level: the image'
@@ -126,7 +126,7 @@ index 3d87a4ed..c98e9c67 100644
                      const auto u0 = std::chrono::steady_clock::now();
 diff --git a/host/coop_texture.c b/host/coop_texture.c
 new file mode 100644
-index 00000000..118294a5
+index 0000000..118294a
 --- /dev/null
 +++ b/host/coop_texture.c
 @@ -0,0 +1,196 @@
@@ -328,7 +328,7 @@ index 00000000..118294a5
 +}
 diff --git a/host/hos_coop_texture.h b/host/hos_coop_texture.h
 new file mode 100644
-index 00000000..d3be7a17
+index 0000000..d3be7a1
 --- /dev/null
 +++ b/host/hos_coop_texture.h
 @@ -0,0 +1,43 @@
@@ -376,7 +376,7 @@ index 00000000..d3be7a17
 +
 +#endif
 diff --git a/host/nvn_native.c b/host/nvn_native.c
-index 596c8eec..3937bbd8 100644
+index 596c8ee..3937bbd 100644
 --- a/host/nvn_native.c
 +++ b/host/nvn_native.c
 @@ -759,6 +759,8 @@ NV(nvnTextureInitialize) {

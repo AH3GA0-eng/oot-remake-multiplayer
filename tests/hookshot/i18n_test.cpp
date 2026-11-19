@@ -147,6 +147,56 @@ TEST_CASE("coop i18n: the chat's join and leave notices around a name") {
     CHECK(CoopI18n::Tr(hans, "connection lost, reconnecting") == "连接断了，正在重连");
 }
 
+TEST_CASE("coop i18n: the most specific shape wins over a short end") {
+    const CoopI18n::Lang* hans = ByCode("zh-Hans");
+    const CoopI18n::Lang* hant = ByCode("zh-Hant");
+    // coop_teleport.cpp's "teleport: stopped: <name> left" also ends in " left": the shape
+    // with more fixed text is the line ("{} left" made it "teleport: stopped: Saria 离开了").
+    CHECK(CoopI18n::Tr(hans, "teleport: stopped: Saria left") == "传送：已停下：Saria 离开了");
+    CHECK(CoopI18n::Tr(hant, "teleport: stopped: Saria left") == "傳送：已停下：Saria 離開了");
+    CHECK(CoopI18n::Tr(hans, "Saria left") == "Saria 离开了");
+    CHECK(CoopI18n::Tr(hans, "teleport: stopped: the connection was lost") == "传送：已停下：连接断了");
+    // The ages are words of the table: 少年/成年 Link, as the game's own Chinese names them.
+    CHECK(CoopI18n::Tr(hans, "teleport: Saria is child Link and you are adult: no teleport to another age's Link") ==
+          "传送：Saria 是少年林克，你是成年：不能传送到另一个时代的林克那里");
+    CHECK(CoopI18n::Tr(nullptr, "teleport: stopped: Saria left") == "teleport: stopped: Saria left");
+}
+
+TEST_CASE("coop i18n: a pickup notice, clause by clause (coop/host/src/notify.cpp's lines)") {
+    const CoopI18n::Lang* hans = ByCode("zh-Hans");
+    const CoopI18n::Lang* hant = ByCode("zh-Hant");
+    // The map, the compass and the Boss Key are their own clauses, not "got the " and an item
+    // called "map (Deku Tree"; the key holds the brackets, so there is one of each.
+    CHECK(CoopI18n::Tr(hans, "Saria got the map (Deku Tree)") == "Saria 拿到了地图（德库大树）");
+    CHECK(CoopI18n::Tr(hant, "Saria got the map (Deku Tree)") == "Saria 拿到了地圖（德庫大樹）");
+    CHECK(CoopI18n::Tr(hans, "Saria got the compass (Deku Tree)") == "Saria 拿到了指南针（德库大树）");
+    CHECK(CoopI18n::Tr(hant, "Saria got the compass (Deku Tree)") == "Saria 拿到了指南針（德庫大樹）");
+    CHECK(CoopI18n::Tr(hans, "Saria got the Boss Key (Deku Tree)") == "Saria 拿到了 Boss 钥匙（德库大树）");
+    CHECK(CoopI18n::Tr(hant, "Saria got the Boss Key (Deku Tree)") == "Saria 拿到了 Boss 鑰匙（德庫大樹）");
+    CHECK(CoopI18n::Tr(hans, "Saria got a Gold Skulltula token (12)") == "Saria 得到一枚金色骷髅蜘蛛徽章（12）");
+    CHECK(CoopI18n::Tr(hant, "Saria got a Gold Skulltula token (12)") == "Saria 得到一枚金色骷髏蜘蛛徽章（12）");
+    // The Heart Container's whole line (it stayed English); "Player 3" is notify.cpp's stand-in.
+    CHECK(CoopI18n::Tr(hans, "Player 3 got a Heart Container - your max health went up") ==
+          "玩家 3 得到一颗心之容器 —— 最大生命值提升了");
+    CHECK(CoopI18n::Tr(hant, "Saria got a Heart Container - your max health went up") ==
+          "Saria 得到一顆心之容器 —— 最大生命值提升了");
+    // An item, a group of items, a song, a Small Key with the group's count.
+    CHECK(CoopI18n::Tr(hans, "Saria got the Fairy Slingshot - you got one too!") == "Saria 拿到了妖精弹弓 —— 你也得到了一个！");
+    CHECK(CoopI18n::Tr(hans, "Saria got the Bombs, the Deku Nuts - you got them too!") ==
+          "Saria 拿到了炸弹、德库坚果 —— 你也得到了！");
+    CHECK(CoopI18n::Tr(hant, "Someone learned Zelda's Lullaby") == "某人 學會了薩爾達的搖籃曲");
+    CHECK(CoopI18n::Tr(hans, "Saria found a Small Key (Forest Temple) - the group has 2") ==
+          "Saria 找到一把小钥匙（森之神殿）—— 队伍现在有 2 把");
+    // Several pickups of one kind: each clause, then the last one's end.
+    CHECK(CoopI18n::Tr(hans, "Saria got the map (Deku Tree), got the compass (Deku Tree)") ==
+          "Saria 拿到了地图（德库大树），拿到了指南针（德库大树）");
+    CHECK(CoopI18n::Tr(hant, "Saria found a Small Key (Forest Temple), found a Small Key (Forest Temple) - the group has 3") ==
+          "Saria 找到一把小鑰匙（森之神殿），找到一把小鑰匙（森之神殿）—— 隊伍現在有 3 把");
+    // English stays as notify.cpp wrote it; a line that is no pickup is left alone.
+    CHECK(CoopI18n::Tr(nullptr, "Saria got the map (Deku Tree)") == "Saria got the map (Deku Tree)");
+    CHECK(CoopI18n::Tr(hans, "Saria got lost") == "Saria got lost");
+}
+
 TEST_CASE("coop i18n: the difficulty line fits the chat's room") {
     const CoopI18n::Lang* hans = ByCode("zh-Hans");
     const char* en =
@@ -205,6 +255,18 @@ TEST_CASE("coop i18n: the pickup notices' place and item, one set of brackets") 
     // The plain item line still reads as it did.
     CHECK(CoopI18n::Tr(hans, "Saria got the Silver Scale - you got one too!") ==
           "Saria 拿到了银鳞 —— 你也得到了一个！");
+}
+
+TEST_CASE("coop i18n: the group's sync lines, with their counts") {
+    const CoopI18n::Lang* hans = ByCode("zh-Hans");
+    const CoopI18n::Lang* hant = ByCode("zh-Hant");
+    // coop/host/src/notify.cpp: "Synced with the group: " + its counts, and the line for the notices held back.
+    CHECK(CoopI18n::Tr(hans, "Synced with the group: 2 items, 1 songs") == "已与队伍同步：2 件道具，1 首歌曲");
+    CHECK(CoopI18n::Tr(hant, "Synced with the group: 3 items") == "已與隊伍同步：3 件道具");
+    CHECK(CoopI18n::Tr(hans, "...and 4 more from the group") == "……还有 4 条队伍的消息");
+    CHECK(CoopI18n::Tr(hant, "...and 4 more from the group") == "……還有 4 條隊伍的消息");
+    // English stays as the host wrote it.
+    CHECK(CoopI18n::Tr(nullptr, "Synced with the group: 2 items") == "Synced with the group: 2 items");
 }
 
 TEST_CASE("coop i18n: a language code picks its table") {

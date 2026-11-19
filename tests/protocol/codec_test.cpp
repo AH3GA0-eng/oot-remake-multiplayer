@@ -1093,7 +1093,7 @@ TEST_CASE("damage carries where the hit landed, optional (protocol 12)") {
 
 TEST_CASE("damage carries the hit record, optional, alone or after the hit place (protocol 14)") {
   // Every hit shows on every screen: the owner's game takes the hit that happened (bomb, arrow, fire ...).
-  CHECK(kProtocolVersion == 14);
+  CHECK(kProtocolVersion >= 14);  // 15: the platform node keys (0.11.6)
   Damage d{0, test::kPlacedId, 1, 2, 1, {1.0f, 2.0f, 3.0f}, {}};
   const Bytes plain = must_encode(d);
   HitRecord rec{};
@@ -2471,6 +2471,13 @@ TEST_CASE("platform clock: type 400, object samples channel, checked keys and fl
   CHECK(bad([](PlatformClock& c) { c.ticks[0].key = (std::uint64_t{5} << 32) | 0x200; })); // past the component
   CHECK(bad([](PlatformClock& c) { c.ticks[0].key = 0x600; }));                             // past the actor
   CHECK(bad([](PlatformClock& c) { c.ticks[0].key = (kPlatformAsFrameRegion << 32) | 4; }));
+  // #196: a GroundControl node's words, kPlatformNodeFrom .. kPlatformNodeTo only.
+  CHECK_FALSE(bad([](PlatformClock& c) { c.ticks[0].key = (kPlatformWaveNodeRegion << 32) | 0xf8; }));
+  CHECK_FALSE(bad([](PlatformClock& c) { c.ticks[0].key = (kPlatformRotateNodeRegion << 32) | 0xd4; }));
+  CHECK(bad([](PlatformClock& c) { c.ticks[0].key = (kPlatformWaveNodeRegion << 32) | 0xbc; }));
+  CHECK(bad([](PlatformClock& c) { c.ticks[0].key = (kPlatformWaveNodeRegion << 32) | 0x140; }));
+  CHECK(bad([](PlatformClock& c) { c.ticks[0].key = (kPlatformRotateNodeRegion << 32) | 0xd6; }));
+  CHECK(bad([](PlatformClock& c) { c.ticks[0].key = (std::uint64_t{0xfffc} << 32) | 0xd4; }));
   CHECK(bad([](PlatformClock& c) { c.ticks[0].rate = 0.0f; }));
   CHECK(bad([](PlatformClock& c) { c.ticks[0].rate = kMaxPlatformRate * 2; }));
   CHECK(bad([](PlatformClock& c) { c.ticks[0].value = std::numeric_limits<float>::quiet_NaN(); }));
@@ -2748,4 +2755,57 @@ TEST_CASE("bomb hand-over messages round-trip and refuse bad values") {
   // Only a made object can be taken.
   Bytes out;
   CHECK(encode(BombTake{ObjectId{ObjectKind::placed, 0, 5}, 0}, out) == Error::bad_value);
+}
+
+TEST_CASE("player lift messages: types 535 to 538, round-trip and refuse bad values") {
+  const Message ask = LiftAsk{0, 2};
+  CHECK(check_received(ask, Sender::client, kChannelOwnership) == Error::none);
+  CHECK(check_received(ask, Sender::client, kChannelSession) == Error::wrong_channel);
+  CHECK(check_received(LiftAsk{1, 2}, Sender::server, kChannelOwnership) == Error::none);
+  Bytes b = must_encode(ask);
+  CHECK(b.size() == kHeaderSize + 2);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<LiftAsk>(back) == std::get<LiftAsk>(ask));
+  b[kHeaderSize + 1] = 0;  // nobody lifted
+  CHECK(decode(b, back) == Error::bad_value);
+
+  const Message answer = LiftAnswer{0, 1, LiftRefusal::event};
+  CHECK(check_received(answer, Sender::client, kChannelOwnership) == Error::none);
+  b = must_encode(answer);
+  CHECK(b.size() == kHeaderSize + 3);
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<LiftAnswer>(back) == std::get<LiftAnswer>(answer));
+  b[kHeaderSize + 2] = kLiftRefusalMax + 1;
+  CHECK(decode(b, back) == Error::bad_value);
+
+  const Message place = LiftPlace{0, 3, LiftPhase::flying, {1.5f, 2.0f, -3.0f}};
+  CHECK(check_received(place, Sender::client, kChannelPlayerSamples) == Error::none);
+  CHECK(check_received(place, Sender::client, kChannelOwnership) == Error::wrong_channel);
+  b = must_encode(place);
+  CHECK(b.size() == kHeaderSize + 15);
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<LiftPlace>(back) == std::get<LiftPlace>(place));
+  b[kHeaderSize + 2] = 0;  // no such phase
+  CHECK(decode(b, back) == Error::bad_value);
+  b[kHeaderSize + 2] = kLiftPhaseMax + 1;
+  CHECK(decode(b, back) == Error::bad_value);
+
+  const Message share = LiftShare{true};
+  CHECK(check_received(share, Sender::client, kChannelOwnership) == Error::none);
+  CHECK(check_received(share, Sender::server, kChannelOwnership) == Error::wrong_sender);
+  b = must_encode(share);
+  CHECK(b.size() == kHeaderSize + 1);
+  b[kHeaderSize] = 2;
+  CHECK(decode(b, back) == Error::bad_value);
+
+  // Nobody lifts, answers or places itself.
+  Bytes out;
+  CHECK(encode(LiftAsk{2, 2}, out) == Error::bad_value);
+  CHECK(encode(LiftAnswer{1, 1, LiftRefusal::none}, out) == Error::bad_value);
+  CHECK(encode(LiftPlace{0, 1, LiftPhase::held, {std::numeric_limits<float>::quiet_NaN(), 0, 0}}, out) == Error::bad_value);
+  Message self = LiftAsk{0, 2};
+  CHECK_FALSE(set_sender(self, 2));
+  CHECK(set_sender(self, 1));
+  CHECK(sender_of(self) == std::optional<std::uint8_t>(1));
 }

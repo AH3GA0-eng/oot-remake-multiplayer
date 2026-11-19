@@ -545,6 +545,9 @@ void Session::on_join_allow(ConnectionId id, const JoinAllow& a, std::uint64_t n
   }
   log("the host lets " + hello.nickname + " in" +
       (a.remember && key ? " (and they join without asking from now on)" : ""));
+  // Its wait was not silence: a held joiner is told to wait, nobody pings it, and it says nothing until WELCOME. Heard
+  // now, so the silence timeout counts from its admission (a run: let in 46 s after its knock, it timed out at once).
+  c.last_heard = now_us;
   c.state = State::awaiting_hello;  // admit() moves it on to joined or closing
   admit(joiner, c, hello, now_us, key, /*approved=*/true);
 }
@@ -693,6 +696,15 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     on_bomb_take(id, c, *take, now_us);
     return;
   }
+  if (const auto* share = std::get_if<LiftShare>(&message)) {
+    c.lift_share = share->on;
+    return;
+  }
+  if (std::holds_alternative<LiftAsk>(message) || std::holds_alternative<LiftAnswer>(message) ||
+      std::holds_alternative<LiftPlace>(message)) {
+    on_lift(id, c, message, now_us);
+    return;
+  }
   if (auto* cut = std::get_if<GrassCut>(&message)) {
     on_grass_cut(id, c, *cut, now_us);
     return;
@@ -762,6 +774,7 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
       c.position = *sample->position;
       c.position_at = now_us;
     }
+    if (sample->age) c.age = *sample->age;
   } else if (const auto* st = std::get_if<PlayerStatus>(&message)) {
     on_status(c, st->flags, now_us);
   }
@@ -901,6 +914,70 @@ void Session::on_pvp_hit(ConnectionId id, Connection& c, Message& message) {
   }
   send(*target, kChannelOwnership, message);
   ++stats_.pvp_hits_relayed;
+  ++stats_.relayed;
+}
+
+// Native puppets phase 3: a lift goes to the one player it names, and only
+// between two games that said LIFT_SHARE; the lifted player's game decides
+// (the server keeps no lift state: a lift ends in the games, by LIFT_PLACE
+// landed, LIFT_ANSWER freed, or the lifted game's own wait running out). A
+// LIFT_ASK to a game that does not share is answered here, so the lifter's
+// game lets go at once; so is one whose lifter's place is not known (no
+// scene or no fresh PLAYER_SAMPLE position) or not in the lifted player's
+// scene (too_far): a stray ask never takes a player's input away.
+void Session::on_lift(ConnectionId id, Connection& c, Message& message,
+                      std::uint64_t now_us) {
+  std::uint8_t to_number = 0;
+  if (const auto* a = std::get_if<LiftAsk>(&message)) {
+    to_number = a->lifted;
+  } else if (const auto* b = std::get_if<LiftAnswer>(&message)) {
+    to_number = b->lifter;
+  } else if (const auto* p = std::get_if<LiftPlace>(&message)) {
+    to_number = p->lifted;
+  }
+  const auto target = connection_of(to_number);
+  if (!c.lift_share || !target || *target == id || !set_sender(message, c.number)) {
+    ++stats_.lifts_dropped;
+    return;
+  }
+  const auto it = connections_.find(*target);
+  if (it == connections_.end() || !it->second.lift_share) {
+    if (std::holds_alternative<LiftAsk>(message)) {
+      LiftAnswer no;
+      no.player_number = to_number;
+      no.lifter = c.number;
+      no.refusal = LiftRefusal::not_sharing;
+      send(id, kChannelOwnership, no);
+      ++stats_.lifts_not_sharing;
+      return;
+    }
+    ++stats_.lifts_dropped;
+    return;
+  }
+  if (std::holds_alternative<LiftAsk>(message) && !place_known_in(c, it->second.scene, now_us)) {
+    LiftAnswer no;
+    no.player_number = to_number;
+    no.lifter = c.number;
+    no.refusal = LiftRefusal::too_far;
+    send(id, kChannelOwnership, no);
+    ++stats_.lifts_unplaced;
+    return;
+  }
+  // Owner rule: only a young (child) Link is lifted, whatever the lifter's age. A lifted player whose last
+  // sample says adult, or no age yet, is never asked (not_young), and gets no place: its game freed itself.
+  if (it->second.age != Age::child && !std::holds_alternative<LiftAnswer>(message)) {
+    if (std::holds_alternative<LiftAsk>(message)) {
+      LiftAnswer no;
+      no.player_number = to_number;
+      no.lifter = c.number;
+      no.refusal = LiftRefusal::not_young;
+      send(id, kChannelOwnership, no);
+    }
+    ++stats_.lifts_not_young;
+    return;
+  }
+  send(*target, channel_of(message), message);
+  ++stats_.lifts_relayed;
   ++stats_.relayed;
 }
 
@@ -1835,6 +1912,12 @@ bool Session::has_loaded(ConnectionId id, const Object& o) const {
          it->second.scene == o.scene && o.present.count(id) != 0;
 }
 
+bool Session::place_known_in(const Connection& c, const std::string& scene,
+                             std::uint64_t now_us) const {
+  if (c.scene.empty() || c.scene != scene || !c.position) return false;
+  return !(now_us > c.position_at && now_us - c.position_at > config_.position_stale_us);
+}
+
 std::optional<double> Session::distance_to(const Connection& c, const Object& o,
                                            std::uint64_t now_us) const {
   if (!c.position || !o.last_state || !o.last_state->position) return std::nullopt;
@@ -2084,8 +2167,10 @@ void Session::on_bomb_take(ConnectionId id, Connection& c, const BombTake& m,
     return;
   }
   Object& o = it->second;
+  // The taker's own place must be known in the bomb's scene (a stray take
+  // from a game with no scene or no fresh position never moves a bomb).
   if (!o.made || !o.projectile || o.removed || !o.owner || *o.owner == id ||
-      o.scene != c.scene || !is_shared_bomb(o.actor)) {
+      !place_known_in(c, o.scene, now_us) || !is_shared_bomb(o.actor)) {
     refuse_bomb(id, m.id, &o, BombRefusal::not_a_bomb);
     return;
   }

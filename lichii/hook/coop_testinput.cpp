@@ -293,8 +293,12 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             }
         } else if (cmd == "PLACE") {
             step.kind = Kind::place;
-            if (w.size() != 4 || !Number(w[1], step.x) || !Number(w[2], step.y) || !Number(w[3], step.z)) {
-                return fail("want: place X Y Z");
+            // #196: "place PLATFORM UP": UP metres over the live place of the moving platform of that name nearest
+            // our Link (CoopObjects::TestPlatformPlace), for a rider on a floor that waves.
+            if (w.size() == 3 && !Number(w[1], step.x) && Number(w[2], step.y)) {
+                step.mark = std::string(w[1]);
+            } else if (w.size() != 4 || !Number(w[1], step.x) || !Number(w[2], step.y) || !Number(w[3], step.z)) {
+                return fail("want: place X Y Z, or place PLATFORM UP");
             }
         } else if (cmd == "CHAT") {
             if (w.size() < 2) {
@@ -510,7 +514,7 @@ void Runner::Advance(double now_s, std::optional<std::array<float, 2>> player,
             continue;
         }
         if (s.kind == Kind::place) {
-            requests_.push_back(Request{s.kind, {}, {}, {s.x, s.y, s.z}});
+            requests_.push_back(Request{s.kind, s.mark, {}, {s.x, s.y, s.z}});
             ++index_;
             continue;
         }
@@ -1129,6 +1133,16 @@ void OnFrame(Core::System& system) {
             SetFlag(system, request.name, std::stoi(request.start));
         } else if (request.kind == Kind::setenum) {
             SetEnum(system, request.name, request.start);
+        } else if (request.kind == Kind::place && !request.name.empty()) {
+            const auto on = CoopObjects::TestPlatformPlace(request.name);
+            const bool ok = on && CoopBoss::MoveLink(system, g_state.main,
+                                                     CoopBoss::Vec{(*on)[0], (*on)[1] + request.at[1], (*on)[2]});
+            if (on) {
+                LOG_INFO(Core, "coop: test place on {} at {:.2f} {:.2f} {:.2f} + {:.2f}: {}", request.name, (*on)[0],
+                         (*on)[1], (*on)[2], request.at[1], ok ? "done" : "failed");
+            } else {
+                LOG_INFO(Core, "coop: test place on {}: failed (no such moving platform here)", request.name);
+            }
         } else if (request.kind == Kind::place) {
             const bool ok = CoopBoss::MoveLink(system, g_state.main,
                                                CoopBoss::Vec{request.at[0], request.at[1], request.at[2]});

@@ -2063,6 +2063,8 @@ Error check_platform_tick(const PlatformTick& t) {
   if (offset % 4 != 0) return Error::bad_value;
   if (region == kPlatformAsFrameRegion) {
     if (offset != 0) return Error::bad_value;
+  } else if (region == kPlatformWaveNodeRegion || region == kPlatformRotateNodeRegion) {
+    if (offset < kPlatformNodeFrom || offset >= kPlatformNodeTo) return Error::bad_value;
   } else if (region == 0) {
     if (offset >= kPlatformActorBytes) return Error::bad_value;
   } else if (region < 2 || region - 2 >= kPlatformComponents || offset >= kPlatformComponentBytes) {
@@ -2701,6 +2703,97 @@ Error decode_body(Reader& r, BombShare& m) {
   return Error::none;
 }
 
+// LIFT_ASK: u8 player, u8 lifted (1 to 4, not the player).
+Error encode_body(const LiftAsk& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number) || !valid_player(m.lifted) || m.lifted == m.player_number) {
+    return Error::bad_value;
+  }
+  w.u8(m.player_number);
+  w.u8(m.lifted);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, LiftAsk& m) {
+  m = LiftAsk{};
+  COOP_READ(r.u8(m.player_number));
+  COOP_READ(r.u8(m.lifted));
+  if (!valid_player_or_self(m.player_number) || !valid_player(m.lifted) || m.lifted == m.player_number) {
+    return Error::bad_value;
+  }
+  return Error::none;
+}
+
+// LIFT_ANSWER: u8 player, u8 lifter (1 to 4, not the player), u8 refusal (0 to 6).
+Error encode_body(const LiftAnswer& m, Writer& w) {
+  const auto refusal = static_cast<std::uint8_t>(m.refusal);
+  if (!valid_player_or_self(m.player_number) || !valid_player(m.lifter) || m.lifter == m.player_number ||
+      refusal > kLiftRefusalMax) {
+    return Error::bad_value;
+  }
+  w.u8(m.player_number);
+  w.u8(m.lifter);
+  w.u8(refusal);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, LiftAnswer& m) {
+  m = LiftAnswer{};
+  std::uint8_t refusal = 0;
+  COOP_READ(r.u8(m.player_number));
+  COOP_READ(r.u8(m.lifter));
+  COOP_READ(r.u8(refusal));
+  if (!valid_player_or_self(m.player_number) || !valid_player(m.lifter) || m.lifter == m.player_number ||
+      refusal > kLiftRefusalMax) {
+    return Error::bad_value;
+  }
+  m.refusal = static_cast<LiftRefusal>(refusal);
+  return Error::none;
+}
+
+// LIFT_PLACE: u8 player, u8 lifted (1 to 4, not the player), u8 phase (1 to 3), 3 x f32 place.
+Error encode_body(const LiftPlace& m, Writer& w) {
+  const auto phase = static_cast<std::uint8_t>(m.phase);
+  if (!valid_player_or_self(m.player_number) || !valid_player(m.lifted) || m.lifted == m.player_number ||
+      phase == 0 || phase > kLiftPhaseMax || !all_finite(m.position)) {
+    return Error::bad_value;
+  }
+  w.u8(m.player_number);
+  w.u8(m.lifted);
+  w.u8(phase);
+  for (float f : m.position) w.f32(f);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, LiftPlace& m) {
+  m = LiftPlace{};
+  std::uint8_t phase = 0;
+  COOP_READ(r.u8(m.player_number));
+  COOP_READ(r.u8(m.lifted));
+  COOP_READ(r.u8(phase));
+  for (float& f : m.position) COOP_READ(r.f32(f));
+  if (!valid_player_or_self(m.player_number) || !valid_player(m.lifted) || m.lifted == m.player_number ||
+      phase == 0 || phase > kLiftPhaseMax || !all_finite(m.position)) {
+    return Error::bad_value;
+  }
+  m.phase = static_cast<LiftPhase>(phase);
+  return Error::none;
+}
+
+// LIFT_SHARE: u8 on (0 or 1).
+Error encode_body(const LiftShare& m, Writer& w) {
+  w.u8(m.on ? 1 : 0);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, LiftShare& m) {
+  m = LiftShare{};
+  std::uint8_t on = 0;
+  COOP_READ(r.u8(on));
+  if (on > 1) return Error::bad_value;
+  m.on = on != 0;
+  return Error::none;
+}
+
 Error encode_body(const BombAnswer& m, Writer& w) {
   COOP_TRY(check_object_id(m.id));
   const auto refusal = static_cast<std::uint8_t>(m.refusal);
@@ -3111,6 +3204,8 @@ MessageType type_of(const Message& message) {
       MessageType::switch_state,
       MessageType::join_knock,  MessageType::join_allow,
       MessageType::bomb_take,   MessageType::bomb_answer, MessageType::bomb_share,
+      MessageType::lift_ask,    MessageType::lift_answer, MessageType::lift_place,
+      MessageType::lift_share,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -3125,6 +3220,7 @@ std::uint8_t channel_of(MessageType type) {
     case MessageType::player_ride:
     case MessageType::test_payload:
     case MessageType::local_sample:
+    case MessageType::lift_place:
       return kChannelPlayerSamples;
     case MessageType::flag_set:
     case MessageType::flag_state:
@@ -3158,6 +3254,9 @@ std::uint8_t channel_of(MessageType type) {
     case MessageType::bomb_take:
     case MessageType::bomb_answer:
     case MessageType::bomb_share:
+    case MessageType::lift_ask:
+    case MessageType::lift_answer:
+    case MessageType::lift_share:
       return kChannelOwnership;
     default:
       return kChannelSession;
@@ -3226,6 +3325,7 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::player_pose:
     case MessageType::player_ride:
     case MessageType::local_sample:
+    case MessageType::lift_place:
       return channel == kChannelPlayerSamples;
     case MessageType::object_sample:
     case MessageType::world_move:
@@ -3252,6 +3352,9 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::bomb_take:
     case MessageType::bomb_answer:
     case MessageType::bomb_share:
+    case MessageType::lift_ask:
+    case MessageType::lift_answer:
+    case MessageType::lift_share:
       return channel == kChannelOwnership;
     case MessageType::test_payload:
       return channel == kChannelSession || channel == kChannelPlayerSamples;
@@ -3274,6 +3377,7 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::join_allow:
     case MessageType::bomb_take:
     case MessageType::bomb_share:
+    case MessageType::lift_share:
       return from == Sender::client;
     case MessageType::welcome:
     case MessageType::refused:
@@ -3345,6 +3449,9 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::link_sound:
     case MessageType::boss_scene:
     case MessageType::boss_heart:
+    case MessageType::lift_ask:
+    case MessageType::lift_answer:
+    case MessageType::lift_place:
       return true;
   }
   return false;
@@ -3388,7 +3495,8 @@ auto* player_field(M& message) {
                       std::is_same_v<T, ModList> || std::is_same_v<T, ModSettings> ||
                       std::is_same_v<T, LinkSound> ||
                       std::is_same_v<T, BossScene> || std::is_same_v<T, BossHeart> ||
-                      std::is_same_v<T, PlayerLook>) {
+                      std::is_same_v<T, PlayerLook> || std::is_same_v<T, LiftAsk> ||
+                      std::is_same_v<T, LiftAnswer> || std::is_same_v<T, LiftPlace>) {
           field = &m.player_number;
         }
       },
@@ -3426,6 +3534,10 @@ bool set_sender(Message& message, std::uint8_t player) {
   if (const auto* h = std::get_if<PvpHurt>(&message); h && h->attacker == player) return false;
   // Nor revive itself (down but not out).
   if (const auto* d = std::get_if<DbnoRevive>(&message); d && d->target == player) return false;
+  // Nor lift itself (native puppets phase 3).
+  if (const auto* l = std::get_if<LiftAsk>(&message); l && l->lifted == player) return false;
+  if (const auto* l = std::get_if<LiftAnswer>(&message); l && l->lifter == player) return false;
+  if (const auto* l = std::get_if<LiftPlace>(&message); l && l->lifted == player) return false;
   if (const auto* d = std::get_if<DbnoStatus>(&message); d && d->reviver == player) return false;
   *field = player;
   return true;
@@ -3529,6 +3641,10 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::bomb_take: return decode_as<BombTake>(body, out);
     case MessageType::bomb_answer: return decode_as<BombAnswer>(body, out);
     case MessageType::bomb_share: return decode_as<BombShare>(body, out);
+    case MessageType::lift_ask: return decode_as<LiftAsk>(body, out);
+    case MessageType::lift_answer: return decode_as<LiftAnswer>(body, out);
+    case MessageType::lift_place: return decode_as<LiftPlace>(body, out);
+    case MessageType::lift_share: return decode_as<LiftShare>(body, out);
     case MessageType::local_join: return decode_as<LocalJoin>(body, out);
     case MessageType::local_joined: return decode_as<LocalJoined>(body, out);
     case MessageType::local_leave: return decode_as<LocalLeave>(body, out);

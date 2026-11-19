@@ -27,7 +27,9 @@ namespace coop::protocol {
 // joiners (JOIN_KNOCK, JOIN_ALLOW, REFUSED not_let_in; issue 261).
 // 14: the hit that happened (HitRecord) in DAMAGE and in the owner's samples (component 21), so every
 // game's enemy takes the real hit through its own damage step (0.11.5, every hit shows on every screen).
-inline constexpr std::uint16_t kProtocolVersion = 14;
+// 15: PLATFORM_CLOCK keys in a mover's GroundControl node (regions 0xfffe / 0xfffd, #196, 0.11.6): a protocol 14
+// reader refuses them as bad_value and drops the whole message, so a 0.11.5 game must be refused at HELLO.
+inline constexpr std::uint16_t kProtocolVersion = 15;
 inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr std::uint8_t kMaxPlayers = 16;  // protocol 11; 4 before
 
@@ -166,6 +168,10 @@ enum class MessageType : std::uint16_t {
   bomb_take = 530,  // 530 to 534: a bomb changes hands (docs/protocol.md, "Bomb hand-over")
   bomb_answer = 531,
   bomb_share = 532,
+  lift_ask = 535,  // 535 to 539: one player lifts another (docs/protocol.md, "Player lift")
+  lift_answer = 536,
+  lift_place = 537,
+  lift_share = 538,
 };
 
 // PLAYER_SAMPLE component ids.
@@ -1452,6 +1458,12 @@ inline constexpr std::size_t kMaxEventNameChars = 96;
 // sender's scene, never kept.
 inline constexpr std::size_t kMaxPlatformTicks = 16;
 inline constexpr std::uint64_t kPlatformAsFrameRegion = 0xffff;  // key region: the AS slot 0 frame
+// #196: key regions of a mover's GroundControl node (lichii/hook/coop_platforms.h, GroundNode): the wave
+// controller's and the rotate controller's, offset kPlatformNodeFrom .. kPlatformNodeTo in the node.
+inline constexpr std::uint64_t kPlatformWaveNodeRegion = 0xfffe;
+inline constexpr std::uint64_t kPlatformRotateNodeRegion = 0xfffd;
+inline constexpr std::uint64_t kPlatformNodeFrom = 0xc0;
+inline constexpr std::uint64_t kPlatformNodeTo = 0x140;
 inline constexpr std::uint64_t kPlatformActorBytes = 0x600;
 inline constexpr std::uint64_t kPlatformComponentBytes = 0x200;
 inline constexpr std::uint64_t kPlatformComponents = 0x300 / 8;  // table entries
@@ -1462,7 +1474,8 @@ struct PlatformTick {
   std::uint64_t hash = 0;  // the driver's placement hash
   // Where the word is: region << 32 | byte offset (a multiple of 4).
   // Region 0 the actor (offset under 0x600), 2 + n the component in table
-  // entry n (under 0x200), kPlatformAsFrameRegion the AS slot 0 frame (offset 0).
+  // entry n (under 0x200), kPlatformAsFrameRegion the AS slot 0 frame (offset 0), kPlatformWaveNodeRegion /
+  // kPlatformRotateNodeRegion a word of the mover's GroundControl node (kPlatformNodeFrom .. kPlatformNodeTo).
   std::uint64_t key = 0;
   float value = 0.0f;
   float rate = 0.0f;   // per second, not 0
@@ -1828,6 +1841,70 @@ struct BombAnswer {
   bool operator==(const BombAnswer&) const = default;
 };
 
+// Native puppets phase 3 (docs/native-puppets.md, "Lifting another player";
+// docs/protocol.md, "Player lift"). The lifted player's game decides; the
+// server only passes each message to the one player it names, and only
+// between games that sent LIFT_SHARE.
+//
+// LIFT_ASK: our Link lifted `lifted`'s copy (the game's own lift). To the
+// lifted player only; it answers with LIFT_ANSWER.
+struct LiftAsk {
+  std::uint8_t player_number = kPlayerSelf;  // the lifter
+  std::uint8_t lifted = 0;                   // 1 to 4, not the lifter
+  bool operator==(const LiftAsk&) const = default;
+};
+
+// Why a lift was refused or ended (LIFT_ANSWER).
+enum class LiftRefusal : std::uint8_t {
+  none = 0,         // taken: the lifter's game drives our place from now on
+  busy = 1,         // already lifted, or lifting someone ourselves
+  event = 2,        // our Link is in an event (a talk, a cutscene), a load or a menu
+  down = 3,         // dead, or down but not out
+  not_sharing = 4,  // (the server) the lifted game did not say LIFT_SHARE
+  freed = 5,        // (after a yes) the lifted game took its place back
+  too_far = 6,      // the lifter's Link is not near ours
+  // Owner rule: only a young (child) Link can be lifted. Our Link is adult (or its age not known); after a yes,
+  // our Link grew up while lifted (freed the same way). The server says it too, from the last PLAYER_SAMPLE age.
+  not_young = 7,
+};
+inline constexpr std::uint8_t kLiftRefusalMax = 7;
+
+// LIFT_ANSWER: the lifted game's word on a LIFT_ASK (refusal none = yes), or
+// `freed` when a lift it took ends on its side. To the lifter only.
+// `player_number` is the lifted player (the server writes it, or names the
+// asked player in its own not_sharing answer).
+struct LiftAnswer {
+  std::uint8_t player_number = kPlayerSelf;  // the lifted
+  std::uint8_t lifter = 0;                   // 1 to 4, not the lifted
+  LiftRefusal refusal = LiftRefusal::none;
+  bool operator==(const LiftAnswer&) const = default;
+};
+
+// Where the lifter's game has the lifted player (LIFT_PLACE's phase).
+enum class LiftPhase : std::uint8_t {
+  held = 1,    // in the lifter's hands
+  flying = 2,  // thrown (or set down), not at rest yet
+  landed = 3,  // at rest: the lifted game owns its place again (a lift's last place)
+};
+inline constexpr std::uint8_t kLiftPhaseMax = 3;
+
+// LIFT_PLACE: the lifted player's place as the lifter's game shows it, each
+// frame of a taken lift; to the lifted player only.
+struct LiftPlace {
+  std::uint8_t player_number = kPlayerSelf;  // the lifter
+  std::uint8_t lifted = 0;                   // 1 to 4, not the lifter
+  LiftPhase phase = LiftPhase::held;
+  Vec3 position{};
+  bool operator==(const LiftPlace&) const = default;
+};
+
+// LIFT_SHARE (client only): our game takes part in player lifts (its switch
+// is on). Sent after WELCOME and every few seconds, as BOMB_SHARE.
+struct LiftShare {
+  bool on = true;
+  bool operator==(const LiftShare&) const = default;
+};
+
 // Split screen (docs/protocol.md, "Local players"): the extra players of one
 // game, seats 1 to kMaxLocalSeats (seat 0 is the connection's own player).
 inline constexpr std::uint8_t kMaxLocalSeats = 3;
@@ -1887,7 +1964,8 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              ModList, ModSettings, LobbyAction, LobbyMutes, LobbyResult,
                              LocalJoin, LocalJoined, LocalLeave, LocalSample, LocalMessage, LinkSound,
                              BossScene, BossHeart, PlayerLook, SwitchState, JoinKnock, JoinAllow,
-                             BombTake, BombAnswer, BombShare>;
+                             BombTake, BombAnswer, BombShare, LiftAsk, LiftAnswer, LiftPlace,
+                             LiftShare>;
 
 MessageType type_of(const Message& message);
 

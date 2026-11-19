@@ -29,7 +29,7 @@ VARIANTS = ("Child", "Adult")
 ID_RE = re.compile(r"^[A-Za-z0-9]{1,20}$")
 # Top folders of a mod that never go into a skin: actor packs (the player's are read, not copied;
 # others replace the game's actors), tables, text, sound, scenes and events, and code.
-SKIP_TOP = {"Pack", "System", "RSDB", "Mals", "Sound", "SLink2", "Event", "Banc", "UI", "Font",
+SKIP_TOP = {"Pack", "System", "RSDB", "Mals", "Sound", "SLink2", "ELink2", "Event", "Banc", "UI", "Font",
             "Layout", "Shader", "exefs"}
 CODE_DIRS = ("exefs", "cheats")
 MARGIN = 0x1000
@@ -186,6 +186,25 @@ def new_files(skin, game_table, ours=(), game_has=None):
     return out
 
 
+EFFECT_TOPS = ("Effect", "ELink2")
+
+
+def effect_files(skin, game_has):
+    """The mod's copies of the game's own effect files (EFFECT_TOPS), such as a recoloured sword glow:
+    (taken, skipped). The game finds effects by its own names, so a skin takes them only on request
+    (build --skin-effects) and as they are, and only a path the game has, exactly (`game_has(path)`):
+    the link table of another version (another Product number in its name) is skipped. A mod's new
+    effect resource is no copy of the game's: new_files takes it, once (ELink2 is in SKIP_TOP)."""
+    taken, skipped = [], []
+    for f in skin.files:
+        top = f.split("/", 1)[0]
+        if top in EFFECT_TOPS and game_has(f):
+            taken.append(f)
+        elif top == "ELink2":
+            skipped.append(f)
+    return taken, skipped
+
+
 def entry_size(skin, path, data_len, game_table=None):
     """Size-table entry for a file of the skin: the mod's own entry, else the game's for the same
     path, else the file's (unpacked) length plus a margin."""
@@ -274,9 +293,30 @@ def gear_name(item, skin_id):
     return f"{item}_Skin_{skin_id}"
 
 
-def gear_items(skin, dicts, read):
+def model_info_of(members, item):
+    """(FmdbName, ModelProjectName, ModelInfo member path) of an actor pack's ModelInfo, or None."""
+    from .build import actor_param_path, ref_to_member
+    try:
+        doc = byml.loads(members[actor_param_path(item)])
+    except Exception:  # noqa: BLE001 - not an actor pack we can read
+        return None
+    info_path = ref_to_member(doc.get("Components", {}).get("ModelInfoRef"))
+    if info_path not in members:
+        return None
+    info = byml.loads(members[info_path])
+    fmdb, project = info.get("FmdbName"), info.get("ModelProjectName")
+    if not isinstance(fmdb, str) or not isinstance(project, str):
+        return None
+    return fmdb, project, info_path
+
+
+def gear_items(skin, dicts, read, game_has=None, game_read=None, log=None):
     """[(item, members, FmdbName, ModelProjectName, ModelInfo member path)] for each gear item the
-    mod gives a model of its own."""
+    mod gives a model of its own: a model file the mod brings, or another model the game already
+    has, which the mod's pack names in place of the item's own (a recolour mod: Dark Link & Demise
+    Glow points Weapon_Sword_Master at Weapon_Sword_Master_Dark). The game is asked through
+    `game_has(path)` and `game_read(path)` (romfs paths: a folder or a .nup's reader); without them
+    only the mod's own model files count. `log`: told each item left out for want of its model."""
     from .build import actor_param_path, ref_to_member
     out = []
     folder = os.path.join(skin.romfs, "Pack", "Actor")
@@ -297,8 +337,23 @@ def gear_items(skin, dicts, read):
         fmdb, project = info.get("FmdbName"), info.get("ModelProjectName")
         if not isinstance(fmdb, str) or not isinstance(project, str):
             continue
-        if f"Model/{project}.{fmdb}.bfres.zs" in have:
+        model = f"Model/{project}.{fmdb}.bfres.zs"
+        if model in have:
             out.append((item, members, fmdb, project, info_path))
+            continue
+        game_pack = f"Pack/Actor/{name}"
+        if game_has is None or game_read is None or not game_has(game_pack):
+            continue   # (not the game's item: nothing to compare with)
+        try:
+            game = model_info_of(sarc.read(dicts.decompress(game_read(game_pack))), item)
+        except Exception:  # noqa: BLE001 - the game's pack unreadable: not this skin's gear
+            continue
+        if game is None or (game[0], game[1]) == (fmdb, project):
+            continue   # (the game's own model: the item unchanged)
+        if game_has(model):
+            out.append((item, members, fmdb, project, info_path))
+        elif log is not None:
+            log(f"skin {skin.id}: {item} left out: its model {project}.{fmdb} is neither in the mod nor the game")
     return out
 
 

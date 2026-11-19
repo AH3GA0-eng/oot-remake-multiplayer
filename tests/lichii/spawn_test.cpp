@@ -1765,6 +1765,8 @@ struct BombRun {
     std::uint64_t now = 5'000'000;
     std::uint8_t self = 2;
 
+    BombRun() { sync.SetLink(proto::Vec3{10.0f, 0.0f, 2.0f}); }  // beside BombAt's copies
+
     void Tick(std::vector<Seen> seen = {}) {
         send.clear();
         copies.clear();
@@ -2085,4 +2087,23 @@ TEST_CASE("bomb share: a bomb handed on when its owner left is adopted, as the g
     CHECK(run.sync.Mine() == 1);
     CHECK(Of<proto::BombTake>(run.send).empty());
     CoopBombShare::TheOwnBombs().Clear();
+}
+
+TEST_CASE("bomb share: a Lifted copy away from our Link, or with our Link not read, asks for nothing") {
+    BombRun run;
+    run.sync.SetBombShare(true);
+    run.Tick();
+    TheirBomb(run);
+    // Our Link's place not read (a load): no take.
+    run.sync.SetLink(std::nullopt);
+    run.Tick({BombAt(0x9000, "Lifted")});
+    CHECK(Of<proto::BombTake>(run.send).empty());
+    // Read, but far from the copy: no take.
+    run.sync.SetLink(proto::Vec3{40.0f, 0.0f, 2.0f});
+    run.Tick({BombAt(0x9000, "Lifted")});
+    CHECK(Of<proto::BombTake>(run.send).empty());
+    // Beside it: one take.
+    run.sync.SetLink(proto::Vec3{10.0f, 0.0f, 2.0f});
+    run.Tick({BombAt(0x9000, "Lifted")});
+    CHECK(Of<proto::BombTake>(run.send).size() == 1);
 }

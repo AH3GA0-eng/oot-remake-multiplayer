@@ -70,6 +70,10 @@ std::optional<std::uint64_t> OurLinkActor();
 // the write only).
 void HurtOurLink(std::int32_t quarters, const std::array<float, 3>& at,
                  const std::array<float, 3>& from);
+// Native puppets phase 3 (coop_lift_player.h; LICHII_COOP_LIFT_PLAYER=1): another player's Link holds ours.
+// Our Link is put at `at` by the next walk, the way copies are moved: its place written, then the game's own
+// physics-aware setter (kSetMatrix, vtable slot 0x218) on it. A place older than 200 ms is not used. Any thread.
+void PlaceOurLink(const std::array<float, 3>& at);
 
 // Emulator thread, each frame (G1, coop/host/event_owner.hpp): whether an event
 // runs in our game (`in_event`: the actors it binds here act for it and their
@@ -130,6 +134,9 @@ void ForgetKeptBreaks();
 // name to our Link takes a hit of its whole life from our Link in the next
 // walk of LICHII_COOP_OBJECTS (logs "coop: test kill ..."). Any thread.
 void QueueTestKill(std::string name);
+// Test only ("place PLATFORM UP", #196): the place of the moving platform (a PlatformSync driver) of that name
+// nearest our Link at the last walk; nothing when none is here.
+std::optional<std::array<float, 3>> TestPlatformPlace(const std::string& name);
 // Test only ("hit NAME N"): as QueueTestKill, a hit of `amount` through the game's own Life step.
 void QueueTestHit(std::string name, std::int32_t amount);
 // Test only ("stun NAME"): our copy of the nearest boss of that name says its owner a stun (Sync::TestStun).
