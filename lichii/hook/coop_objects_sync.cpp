@@ -1755,6 +1755,19 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             o.place_seen = s.hit_at;
             o.place_seen_at = now_us;
         }
+        if (s.hit_record) {
+            // Protocol 14 (every hit shows on every screen): the hit its damage step took. Our own on a copy goes
+            // with our DAMAGE (as its place, kept kHitPlaceKeepUs for its drop); any our own enemy took (our hit,
+            // a replay of a copy's) goes in its samples, so every copy's game takes that same hit.
+            const auto own = owners_.find(o.id);
+            if (own != owners_.end() && own->second.player != 0 && own->second.player == self) {
+                o.hit_out = proto::ObjectHit{++o.hit_seq, *s.hit_record};
+                o.hit_show_until = now_us + kHitShowUs;
+            } else if (s.own_hit) {
+                o.record_seen = s.hit_record;
+                o.record_seen_at = now_us;
+            }
+        }
         // A breakable's life can no longer be read once it has died (a crate
         // at 0 for one frame, then its life object is gone): read that as 0.
         std::optional<proto::ObjectLife> life = s.life;
@@ -1897,17 +1910,23 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 const bool ours = owner != owners_.end() && owner->second.player == self;
                 if (ours) {
                     o.place_seen.reset();  // our own boss's hit: nothing to send
+                    o.record_seen.reset();
                 }
                 if (drop > 0 && !ours) {
                     if (o.hit_sum == 0) {
                         o.hit_since = now_us;
                         o.hit_place.reset();
+                        o.hit_record.reset();
                     }
                     o.hit_sum += drop;
                     if (o.place_seen && now_us - o.place_seen_at <= kHitPlaceKeepUs) {
                         o.hit_place = o.place_seen;  // our own hit on our copy (a boss): where it landed
                     }
                     o.place_seen.reset();
+                    if (o.record_seen && now_us - o.record_seen_at <= kHitPlaceKeepUs) {
+                        o.hit_record = o.record_seen;  // protocol 14: the newest of our hits summed now
+                    }
+                    o.record_seen.reset();
                     if (life->life <= 0 && o.killed_at == 0) {
                         o.killed_at = now_us;  // our hit took it: a resend may follow
                         o.resent = 0;
@@ -2333,11 +2352,13 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 d.cause = static_cast<std::uint8_t>(proto::DamageCause::unknown);
                 d.position = o.position;
                 d.hit_at = std::exchange(o.hit_place, std::nullopt);
+                d.hit_record = std::exchange(o.hit_record, std::nullopt);
                 send.emplace_back(d);
                 o.hit_at = now_us;
             }
             o.hit_sum = 0;
             o.hit_place.reset();
+            o.hit_record.reset();
         }
         // Issue 150: our boss copy's own stun, as a DAMAGE of 0.
         if (o.stun_due) {
@@ -2387,6 +2408,9 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 sample.id = o.id;
                 sample.epoch = owner->second.epoch;
                 sample.state = StateOf(o, now_us);
+                if (o.hit_out && now_us < o.hit_show_until) {
+                    sample.state.hit = o.hit_out;  // protocol 14: the hit our game took, for every copy
+                }
                 send.emplace_back(sample);
                 o.sent_at = now_us;
                 o.sent_once = true;
@@ -2727,6 +2751,9 @@ void Sync::Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& g
                 sample.id = o.id;
                 sample.epoch = owner->second.epoch;
                 sample.state = StateOf(o, now_us);
+                if (o.hit_out && now_us < o.hit_show_until) {
+                    sample.state.hit = o.hit_out;  // protocol 14: its killing hit, for every copy
+                }
                 send.emplace_back(sample);
             }
             // An enemy of ours that died here: dead for everyone (issue 133).
@@ -2761,6 +2788,7 @@ void Sync::Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& g
             }
             d.position = o.position;
             d.hit_at = std::exchange(o.hit_place, std::nullopt);
+            d.hit_record = std::exchange(o.hit_record, std::nullopt);
             send.emplace_back(d);
         }
     }
@@ -2928,6 +2956,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                     o->dead_at = now_us;
                     o->hit_sum = 0;
                     o->hit_place.reset();
+                    o->hit_record.reset();
                     o->place_seen.reset();
                     notes_.emplace_back("hatched in its owner's game: " + o->name);
                     if (had != owners_.end()) {
@@ -2962,6 +2991,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                                                              : "dead in its owner's game: " + o->name);
                     o->hit_sum = 0;
                     o->hit_place.reset();
+                    o->hit_record.reset();
                     o->place_seen.reset();
                 }
                 // Nobody's now: no samples, poses or plays for it.
@@ -3005,6 +3035,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 // get its state at once.
                 o->hit_sum = 0;
                 o->hit_place.reset();
+                o->hit_record.reset();
                 o->place_seen.reset();
                 o->hit_at = 0;
                 o->react_at = 0;
@@ -3068,9 +3099,16 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             const std::int32_t have = o->hurt_until != 0 ? o->hurt_target : *o->life;
             const bool holding =
                 o->hit_sum > 0 || now_us - o->hit_at < AnswerHoldUs(kHitHoldUs, sample->player_number);
+            // Protocol 14: the hit the owner's game took, once per seq (its samples carry it a while).
+            std::optional<proto::HitRecord> record;
+            if (sample->state.hit && sample->state.hit->seq != o->hit_seq_in) {
+                o->hit_seq_in = sample->state.hit->seq;
+                record = sample->state.hit->record;
+            }
             if (life < have) {
-                // Who hit it is not sent: its owner is the best guess.
-                Lower(*o, life, now_us, writes, sample->player_number);
+                // Who hit it is not sent: its owner is the best guess. The hit is the owner's game's own (record);
+                // without one (no new seq: an older game, or a fall with no hit) the stand-in sword hit.
+                Lower(*o, life, now_us, writes, sample->player_number, std::nullopt, record);
                 o->fight_until = now_us + kFightUs;
             } else if (life > have && !holding && have <= 0 && o->killed_at != 0 &&
                        now_us - o->killed_at < kKilledKeepUs && o->dead_at == 0 &&
@@ -3086,6 +3124,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 ++o->resent;
                 o->hit_sum = life;
                 o->hit_place.reset();
+                o->hit_record.reset();
                 o->place_seen.reset();
                 o->hit_since = now_us > kDamageSumUs ? now_us - kDamageSumUs : 0;
                 notes_.emplace_back("killed here, owner still shows life: hit sent again: " +
@@ -3170,7 +3209,8 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             o->damage_debit += amount;
             o->debit_until = now_us + kBlastCreditUs;
             const std::int32_t have = o->hurt_until != 0 ? o->hurt_target : *o->life;
-            Lower(*o, std::max(0, have - amount), now_us, writes, damage->player_number, damage->hit_at);
+            Lower(*o, std::max(0, have - amount), now_us, writes, damage->player_number, damage->hit_at,
+                  damage->hit_record);
             o->fight_until = now_us + kFightUs;
             if (!hurt_ && have - amount <= 0) {
                 // Hurt off: the life was written, not given as a hit.
@@ -3212,6 +3252,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 }
                 o->hit_sum = 0;
                 o->hit_place.reset();
+                o->hit_record.reset();
                 o->handed_took = takes;
                 o->handed_until = now_us + kHandedUs;
                 o->returned_until = now_us + kHandedUs;
@@ -3337,6 +3378,7 @@ void Sync::KeepBossLives(std::uint8_t self, std::vector<LifeWrite>& writes) {
             life = std::max(0, life - o.hit_sum);
             o.hit_sum = 0;
             o.hit_place.reset();
+            o.hit_record.reset();
         }
         if (life > 0) {
             TakeOwnerLife(o, life, writes, "the session ended: our copy");
@@ -3377,7 +3419,7 @@ void Sync::DeadByWrite(Object& o, std::uint16_t epoch, std::uint64_t now_us,
 
 void Sync::Lower(Object& o, std::int32_t life, std::uint64_t now_us,
                  std::vector<LifeWrite>& writes, std::uint8_t hitter,
-                 const std::optional<proto::Vec3>& hit_at) {
+                 const std::optional<proto::Vec3>& hit_at, const std::optional<proto::HitRecord>& record) {
     if (!o.life) {
         return;
     }
@@ -3396,6 +3438,7 @@ void Sync::Lower(Object& o, std::int32_t life, std::uint64_t now_us,
     // count it as our hit. o.life stays as read until then.
     LifeWrite w{o.address, life, from - life, std::nullopt};
     w.hit_at = hit_at;
+    w.record = record;
     {
         std::lock_guard lock(inbox_mutex_);
         const auto place = places_.find(hitter);

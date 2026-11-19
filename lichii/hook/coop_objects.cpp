@@ -334,6 +334,7 @@ constexpr u64 kActorComponents = 0x270;
 constexpr u64 kComponentBsa = 0xb0;
 constexpr u64 kBsaFlags = 0xc4;
 constexpr u64 kComponentLife = 0x2b8;
+static_assert(sizeof(CoopHitReplay::Record) == sizeof(coop::protocol::HitRecord));
 static_assert(kComponentLife == CoopHitReplay::kComponentLife && kActorComponents == CoopHitReplay::kActorComponents &&
               kHitRecord == CoopHitReplay::kHitRecord && kHitHeader == CoopHitReplay::kHitHeader &&
               kHitAmount == CoopHitReplay::kHitAmount && kLastHitId == CoopHitReplay::kLastHitId);
@@ -748,8 +749,9 @@ public:
                     // Difficulty: the player who dealt it had it scaled; the Life step takes it as it is.
                     CoopDifficulty::TheKinds().Pass(w.life, w.amount, CoopDifficulty::SteadyMs());
                     ++replayed_;
-                    LOG_INFO(Core, "coop: objects: copy {:#x} replays a hit of {} (id {:#x}{})", w.actor, w.amount,
-                             w.id, w.exact ? ", where it landed in the hitter's game" : "");
+                    LOG_INFO(Core, "coop: objects: copy {:#x} replays a hit of {} (id {:#x}{}{})", w.actor, w.amount,
+                             w.id, w.exact ? ", where it landed in the hitter's game" : "",
+                             w.real ? ", the hit the other game took" : ", the stand-in sword hit");
                 }
             }
             if (holding_) {
@@ -3487,6 +3489,9 @@ private:
         const u32 ours = TheMover().ReplayedId(*life);
         // (our replay inside the move: before < ours <= now, in the ids' own wrap-around order)
         s.replay_hit = ours != 0xffffffffu && static_cast<s32>(ours - before) > 0 && static_cast<s32>(*id - ours) >= 0;
+        // Protocol 14 (every hit shows on every screen): the hit its damage step took, as it took it (our own on
+        // a copy goes with our DAMAGE; any on our own enemy, replays too, goes in its samples for the copies).
+        s.hit_record = ReadHitRecord(r, *life);
         if (*id == ours) {
             return std::nullopt;  // our replay of the owner's hit, not one of our game's
         }
@@ -3494,6 +3499,16 @@ private:
         const u64 attacker = r.Get<u64>(*life + kHitAttacker).value_or(0);
         s.hit_ours = CoopProjectiles::HitIsOurs(attacker, our_link_, CoopProjectiles::TheOwnShots(), CoopEvery::NowUs());
         return *life;
+    }
+    // The incoming hit record its Life component holds (+0x240, 38 words), with the attacker pointer and the
+    // present flag cleared: those are this game's own, the receiver puts its own in (CoopHitReplay::Write).
+    static std::optional<coop::protocol::HitRecord> ReadHitRecord(Reader& r, u64 life) {
+        auto rec = r.Get<coop::protocol::HitRecord>(life + kHitRecord);
+        if (rec) {
+            (*rec)[0] = (*rec)[1] = 0;
+            (*rec)[3] = 0;
+        }
+        return rec;
     }
     std::optional<coop::protocol::Vec3> NewOwnHitAt(Reader& r, u64 a, u64 life, const coop::protocol::Vec3& boss,
                                                     bool took_life) {
@@ -3871,6 +3886,7 @@ private:
                 h.at = {(*w.hit_at)[0], (*w.hit_at)[1], (*w.hit_at)[2]};
                 h.exact = true;
             }
+            h.record = w.record;  // protocol 14: the hit that happened there (kHitTemplate when not sent)
             h.from = r.Get<std::array<float, 3>>(player + kActorPosition).value_or(h.at);
             if (w.from) {
                 // The player who hit, so the enemy is knocked away from them.

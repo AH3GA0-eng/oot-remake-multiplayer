@@ -90,6 +90,8 @@ struct Seen {
     // probe 20261117-114108: two of A's hits on Gohma's copy were booked as B's refused replay and never sent).
     bool own_hit = false;
     bool replay_hit = false;
+    // Protocol 14: with a moved hit id, the hit record its damage step took (CoopObjects' ReadHitRecord).
+    std::optional<coop::protocol::HitRecord> hit_record{};
     // Its last hit id was read in this walk and in the one before (so "did not move" is known; PvP's FollowLife).
     bool hit_id_read = false;
     // Issue 133 (whose hit): a new hit in its game's own hit record (not our replay of the owner's), and whether
@@ -188,6 +190,9 @@ struct LifeWrite {
     std::optional<coop::protocol::Vec3> from;
     // With a hurt: where the hitter's hit landed (DAMAGE's hit_at): the replay lands there (Gohma's eye).
     std::optional<coop::protocol::Vec3> hit_at{};
+    // With a hurt (protocol 14): the hit that happened (DAMAGE's hit_record, or the owner's sample hit): the
+    // replay gives the game that hit (its weapon, element, place) instead of the stand-in sword hit.
+    std::optional<coop::protocol::HitRecord> record{};
     // Past the hit replay (a hit record the game's damage rules judge): the amount goes straight into the game's
     // Life step (Hookshot, patch 0007), so the game still runs its own death. For the test kill: a boss takes no
     // plain hit outside its weak point (Gohma on the ceiling). Never written directly: not taken, nothing happens.
@@ -577,6 +582,8 @@ public:
     static constexpr std::uint64_t kExtrapolateUs = 150'000;
     static constexpr std::uint64_t kPoseStaleUs = 2'500'000;  // no sample this long: let it be
     static constexpr std::uint64_t kHurtWaitUs = 400'000;     // then write life directly
+    // Protocol 14: how long the owner's samples carry its newest hit (a few samples: one may be lost).
+    static constexpr std::uint64_t kHitShowUs = 500'000;
     static constexpr std::uint64_t kHandedUs = 2'000'000;     // a DAMAGE of ours that crossed a hand-over is back by then
     static constexpr std::uint64_t kHitPlaceKeepUs = 200'000;  // a hit's place waits this long for its life drop
     // Issue 133: our newest hit (its game's hit record) waits this long for its life drop (a walk or two), so a
@@ -1020,14 +1027,23 @@ private:
         std::string sent_slots;  // issue 150: the slot names last sent
         std::optional<std::uint32_t> sent_bsa_seq;  // native boss sync: the boss verbs' seq last sent
         std::uint32_t sequence = 0;
+        // Protocol 14: the newest hit our game took on our own enemy (Seen::hit_record), in its samples until
+        // hit_show_until (kHitShowUs; samples may be lost), seq counting from 1 (ObjectHit).
+        std::optional<coop::protocol::ObjectHit> hit_out;
+        std::uint64_t hit_show_until = 0;
+        std::uint32_t hit_seq = 0;
         // Copy side.
         std::int32_t hit_sum = 0;
         std::uint64_t test_own_hit_until = 0;  // TestOwnHit
         std::optional<coop::protocol::Vec3> place_seen;  // a new hit's place, waiting for its life drop
         std::uint64_t place_seen_at = 0;
+        std::optional<coop::protocol::HitRecord> record_seen;  // protocol 14: a new own hit's record, waiting for its drop
+        std::uint64_t record_seen_at = 0;
         std::uint64_t ours_hit_at = 0;   // issue 133: our Link's or projectile's newest hit on it (Seen::hit_ours)
         std::uint64_t own_death_at = 0;  // issue 133: its own death animation last read here (LifelessKillHere)
         std::optional<coop::protocol::Vec3> hit_place;  // where our own hit summed now landed (a boss; cleared with the sum)
+        std::optional<coop::protocol::HitRecord> hit_record;  // protocol 14: our newest own hit summed now (cleared with it)
+        std::uint32_t hit_seq_in = 0;  // protocol 14: the owner's newest sample hit seq replayed here
         std::uint64_t hit_since = 0;
         std::uint64_t hit_at = 0;  // last DAMAGE sent
         // A HANDOVER_STATE made it ours: until its owner news (any owner; cleared there) a fall here is our own
@@ -1140,7 +1156,8 @@ private:
     std::int32_t StepHits(Object& o, std::int32_t fell, std::int32_t life, std::uint64_t now_us);
     void Lower(Object& o, std::int32_t life, std::uint64_t now_us, std::vector<LifeWrite>& writes,
                std::uint8_t hitter,
-               const std::optional<coop::protocol::Vec3>& hit_at = std::nullopt);
+               const std::optional<coop::protocol::Vec3>& hit_at = std::nullopt,
+               const std::optional<coop::protocol::HitRecord>& record = std::nullopt);
 
     // A boss copy takes `owner_life` (its old owner's last life): raised (heal) or lowered (direct) through its
     // own Life step, never a write. False when it is no boss, has no life read, or the lives agree.

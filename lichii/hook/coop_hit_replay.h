@@ -10,6 +10,7 @@
 // ids each have their own mutex, taken only around their own containers, and never while writing the guest.
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <functional>
@@ -47,6 +48,29 @@ inline constexpr std::array<std::uint32_t, 0x98 / 4> kHitTemplate{
     0x03010102, 0x00030000,                          // +0x2d0
 };
 
+using Record = std::array<std::uint32_t, 0x98 / 4>;  // the incoming hit, +0x240..+0x2d8 (protocol 14's HitRecord)
+
+// Indexes into a Record.
+inline constexpr std::size_t kRecPresent = 3;
+inline constexpr std::size_t kRecKind = 0x250 / 4 - kHitRecord / 4;   // attack kind, two words (the header's too)
+inline constexpr std::size_t kRecPlace = 0x27c / 4 - kHitRecord / 4;  // the hit's place, 3 floats
+inline constexpr std::size_t kRecFrom = 0x2a0 / 4 - kHitRecord / 4;   // the attacker's place, 3 floats
+inline constexpr std::size_t kRecIdAgain = 0x2c4 / 4 - kHitRecord / 4;
+
+// Whether a received record's places are finite (else the stand-in hit is used).
+inline bool UsableRecord(const Record& rec) {
+    for (const std::size_t first : {kRecPlace, kRecFrom}) {
+        for (std::size_t i = 0; i < 3; ++i) {
+            float f = 0.0f;
+            std::memcpy(&f, &rec[first + i], 4);
+            if (!std::isfinite(f) || std::fabs(f) > 1e6f) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 struct Hit {
     std::uint64_t actor = 0;      // the copy
     std::uint64_t attacker = 0;   // our player
@@ -55,6 +79,10 @@ struct Hit {
     std::array<float, 3> from{};  // the hitter's place (ours when not known)
     std::uint64_t asked_ms = 0;   // set by Add
     bool exact = false;           // `at` is where the hit landed, not the actor's foot
+    // Protocol 14 (every hit shows on every screen): the hit that happened in the other game (its weapon, its
+    // element, where it landed, where the hitter stood), given to this game's damage step instead of kHitTemplate.
+    // Its places are kept unless `exact` names the hit place; attacker, id and present are ours.
+    std::optional<Record> record;
 };
 
 // One hit written: for the caller's log and the difficulty's pass.
@@ -64,6 +92,7 @@ struct Written {
     std::int32_t amount = 0;
     std::uint32_t id = 0;
     bool exact = false;
+    bool real = false;  // the other game's own hit record (protocol 14), not the stand-in
 };
 
 class Replayer {
@@ -130,15 +159,21 @@ private:
         std::uint32_t last = 0;
         guest.Read(life + kLastHitId, &last, 4);
         const std::uint32_t id = (last == 0xffffffffu ? 0x1000u : last + 2u) & 0x7fffffffu;
-        std::array<std::uint32_t, kHitTemplate.size()> rec = kHitTemplate;
+        const bool real = h.record && UsableRecord(*h.record);
+        Record rec = real ? *h.record : kHitTemplate;
         std::memcpy(&rec[0], &h.attacker, 8);
         rec[2] = id;
-        rec[0x2c4 / 4 - kHitRecord / 4] = id;
-        const std::array<float, 3> at{h.at[0], h.at[1] + (h.exact ? 0.0f : 1.0f), h.at[2]};
-        std::memcpy(&rec[0x27c / 4 - kHitRecord / 4], at.data(), 12);
-        std::memcpy(&rec[0x2a0 / 4 - kHitRecord / 4], h.from.data(), 12);
-        rec[3] = 0;  // present last, below
-        const std::array<std::uint32_t, 4> header{0x00060001, 0x40040000, id, 2};
+        rec[kRecIdAgain] = id;
+        if (!real || h.exact) {
+            const std::array<float, 3> at{h.at[0], h.at[1] + (h.exact ? 0.0f : 1.0f), h.at[2]};
+            std::memcpy(&rec[kRecPlace], at.data(), 12);
+        }
+        if (!real) {
+            std::memcpy(&rec[kRecFrom], h.from.data(), 12);
+        }
+        rec[kRecPresent] = 0;  // present last, below
+        // The attack header names the same attack kind as the record (the template's: a sword).
+        const std::array<std::uint32_t, 4> header{rec[kRecKind], rec[kRecKind + 1], id, 2};
         const std::array<std::int32_t, 2> amount{4, h.amount};
         {
             std::lock_guard lock(ids_mutex_);
@@ -149,7 +184,7 @@ private:
         guest.Write(life + kHitRecord, rec.data(), sizeof(rec));
         const std::uint32_t present = 1;
         guest.Write(life + kHitRecord + 0xc, &present, 4);
-        return Written{h.actor, life, h.amount, id, h.exact};
+        return Written{h.actor, life, h.amount, id, h.exact, real};
     }
 
     std::mutex hits_mutex_;
