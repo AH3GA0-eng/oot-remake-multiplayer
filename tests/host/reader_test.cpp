@@ -604,6 +604,30 @@ TEST_CASE("host reader: what the player wears") {
     CHECK(e->sub_tool == "");
     CHECK(e->held == "");
   }
+  SUBCASE("puppet-gear-148: the shield the game holds (slot 4) over the EquipShield flag") {
+    put_user(m, l);
+    put_strings(m, {{addr::kEquipShield, "Weapon_Shield_Mirror"}});
+    const auto name_in = [&](std::uint32_t slot, const std::string& name) {
+      put_equipped(m, slot, 60 + slot, 4, 0x0);
+      const std::uint64_t piece = kEquipActors + 0x1000 * slot;
+      const std::uint64_t text = piece + 0x800;
+      m.put_u64(piece + 0x260, text);
+      const std::string room(80, char{0});
+      m.put(text, room.data(), room.size());
+      m.put(text, name.c_str(), name.size() + 1);
+    };
+    SUBCASE("an empty slot leaves the flag") {
+      CHECK(reader.read_equipment()->shield == "Weapon_Shield_Mirror");
+    }
+    SUBCASE("a child at the age change: the Deku Shield it holds, not the adult's Mirror Shield") {
+      name_in(4, "Weapon_Shield_Deku");
+      CHECK(reader.read_equipment()->shield == "Weapon_Shield_Deku");
+    }
+    SUBCASE("something else in the slot is no shield: the flag stands") {
+      name_in(4, "Item_Ocarina_Fairy");
+      CHECK(reader.read_equipment()->shield == "Weapon_Shield_Mirror");
+    }
+  }
   SUBCASE("the child's Goron's Bracelet is sent as hand, from its accessory link") {
     put_user(m, l);
     // Armor link 9 is the 18th link of the same array (8 hand slots first).
@@ -762,7 +786,29 @@ TEST_CASE("host reader: what the player wears") {
       CHECK(e->armor == "Armor_Adult_Zora");
       CHECK(e->boots == "Armor_Adult_HeavyBoot");
       CHECK(e->hand == "Armor_Adult_Gauntlet_Silver");
-      CHECK(e->head == "Armor_Child_Mask_Keaton");
+      // A child's piece is the links' at any age (puppet-gear-148): the mask
+      // the link holds, not the flag's.
+      CHECK(e->head == "Armor_Child_Mask_Skull");
+    }
+    SUBCASE("puppet-gear-148, the other way: an adult's child flags that no link holds are not worn") {
+      put_strings(m, {{addr::kEquipHeadArmor, "Armor_Child_Mask_Keaton"},
+                      {addr::kEquipHandArmor, "Armor_Child_Gauntlet_Goron"},
+                      {addr::kEquipArmor, "Armor_Adult_Goron"}});
+      const auto e = reader.read_equipment();
+      CHECK(e->head == "");
+      CHECK(e->hand == "");
+      CHECK(e->armor == "Armor_Adult_Goron");  // an adult's own piece: the flag stands
+      SUBCASE("with a link unreadable (a load) not known") {
+        m.erase(kUser + 0x20 + 0x18 * (8 + 3) + 0x10, 4);
+        const auto during = reader.read_equipment();
+        CHECK_FALSE(during->head);
+        CHECK_FALSE(during->hand);
+      }
+    }
+    SUBCASE("an adult wearing a child's piece the link holds keeps it") {
+      put_strings(m, {{addr::kEquipHandArmor, "Armor_Child_Gauntlet_Goron"}});
+      wear(9, "Armor_Child_Gauntlet_Goron");
+      CHECK(reader.read_equipment()->hand == "Armor_Child_Gauntlet_Goron");
     }
     SUBCASE("a flag naming a piece the links never hold stands, for a child too") {
       m.put_u8(l.game_ui + addr::kGameUiIsChild, 1);
