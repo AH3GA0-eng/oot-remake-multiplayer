@@ -57,6 +57,10 @@ param(
     [switch]$PackOnly,
     [switch]$Dlss,
     [switch]$NoDlss,
+    # (Update.bat, after an update or when the kit is already the newest: the game's co-op parts the kit pins (module,
+    # puppet pack, the randomizer OOTRR, stale seeds) put in now when only they are missing or stale; a game build is
+    # left to the next start, which asks first)
+    [switch]$Repair,
     # A Longshot game folder of the player's own (kit-friction): its saves and, through its builder, Longshot's downloads
     # (and compiled objects, same release only) are copied from it. 'none': do not ask. Asked once before a first build.
     [string]$Longshot = ''
@@ -70,6 +74,19 @@ $hs = Join-Path $kit 'hookshot'
 . (Join-Path $PSScriptRoot 'coop-ini.ps1')
 . (Join-Path $PSScriptRoot 'console-mode.ps1')   # (Read-KitPath: the questions for a path, pasted, dragged or typed)
 Set-KitTls   # (kit-mirror: Tls12 added to what Windows enables, and Tls13 where .NET has it; was Tls12 alone)
+if ($Repair) {
+    # Velvet (2026-11-19): Update.bat updated the kit, but the game's tools\ootrr stayed broken until a start the player
+    # never watched. Now Update.bat repairs the game's co-op parts itself (the module step below, seconds) while the game
+    # is closed; what needs a game build stays with the next start ("Start Squadala.bat"), which asks first.
+    $need = Get-KitHookshotNeed $kit
+    if ($need -eq 'offline') { Write-Host 'The game''s randomizer (OOTRR) is set up at the next start with internet.'; exit 0 }
+    if ($need -ne 'module') {
+        if ($need) { Write-Host "The game: $(Get-KitHookshotNeedText $need (Get-KitHookshotGame $kit) $true)" -ForegroundColor Yellow; Write-Host '  ("Start Squadala.bat" does it at the next start.)' }
+        else { Write-Host 'The game: its co-op parts and the randomizer (OOTRR) are the ones this version pins.' }
+        exit 0
+    }
+    Write-Host "The game: $(Get-KitHookshotNeedText $need)"
+}
 
 function Fail([string]$Text) { Write-Host ''; Write-Host "Longshot build: $Text" -ForegroundColor Red; exit 1 }
 # (kit-friction) Anything this script did not expect: the step it was at, in plain words, and for "access denied" or a
@@ -790,51 +807,13 @@ if (-not (Test-Path -LiteralPath $options)) {
     if (Test-Path -LiteralPath $kitOptions) { Copy-Item -LiteralPath $kitOptions -Destination $options }
 }
 
-# The randomizer, OOTRR (hookshot\OOTRR.txt: its release and SHA-256), into <exe dir>\tools\ootrr where the co-op
-# module finds it with no setting; it reads the game's own files beside it (<exe dir>\romfs) and never changes them.
-# A failed download only warns: co-op plays without it, and the next run of this script tries again.
-$ootrrPin = Join-Path $hs 'OOTRR.txt'
-if (Test-Path -LiteralPath $ootrrPin) {
-    $op = Read-KeyFile $ootrrPin
-    $ootrrDir = Join-Path $exeDir 'tools\ootrr'
-    $ootrrStamp = Join-Path $ootrrDir 'coop-ootrr.txt'
-    $ootrrWant = "$($op.release) $($op.windows_sha256)"
-    $ootrrHave = if (Test-Path -LiteralPath $ootrrStamp) { (Get-Content -LiteralPath $ootrrStamp -TotalCount 1).Trim() } else { '' }
-    if ($ootrrHave -eq $ootrrWant -and (Test-Path -LiteralPath (Join-Path $ootrrDir 'ootrr.exe'))) {
-        Write-Host "  randomizer: OOTRR $($op.release) -> $ootrrDir (there already)"
-    } elseif (-not ($op.url -and $op.windows -match '^[A-Za-z0-9._-]+$' -and $op.windows_sha256 -match '^[0-9a-f]{64}$')) {
-        Write-Host '  hookshot\OOTRR.txt is incomplete: the randomizer is left out.' -ForegroundColor Yellow
-    } else {
-        New-Item -ItemType Directory -Force -Path $downloads | Out-Null
-        $ootrrZip = Join-Path $downloads $op.windows
-        $why = ''
-        if (-not ((Test-Path -LiteralPath $ootrrZip) -and (Get-Sha256 $ootrrZip) -eq $op.windows_sha256)) {
-            if (($env:OOT_COOP_OFFLINE -eq '1' -or $op.url -match '^https?://') -and (Test-KitOffline)) {
-                # (no internet: no download try, which would only wait for its timeout)
-                $why = 'this PC has no internet now'
-            } else {
-                # (kit-mirror: retries and curl.exe too; optional, so two tries, not four)
-                $why = Get-KitDownload @("$($op.url)/$($op.windows)") $ootrrZip $op.windows_sha256 @() 2
-                if ($why) { $why = "the download failed ($why)" }
-            }
-        }
-        if (-not $why) {
-            if (Test-Path -LiteralPath $ootrrDir) { Remove-Item -LiteralPath $ootrrDir -Recurse -Force }
-            New-Item -ItemType Directory -Force -Path $ootrrDir | Out-Null
-            # (the zip holds one folder, OOTRR-<version>-windows-x64\: ootrr.exe, LICENSE, NOTICE, README.md)
-            & "$env:SystemRoot\System32\tar.exe" -x -f $ootrrZip -C $ootrrDir --strip-components=1
-            if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $ootrrDir 'ootrr.exe'))) { $why = "unpacking $($op.windows) failed" }
-            else { [System.IO.File]::WriteAllText($ootrrStamp, "$ootrrWant`n") }
-        }
-        if ($why) { Write-Host "  The randomizer (OOTRR $($op.release)) was not set up: $why. Co-op works without it; run Build-Hookshot-Coop.bat again to retry." -ForegroundColor Yellow }
-        else {
-            Write-Host "  randomizer: OOTRR $($op.release) -> $ootrrDir"
-            # (another release than the one before: its seeds are other worlds, Remove-KitRandoSeeds)
-            if ($ootrrHave -and ($ootrrHave -split ' ')[0] -ne $op.release) {
-                foreach ($l in @(Remove-KitRandoSeeds $exeDir $op.release)) { Write-Host "  $l" }
-            }
-        }
-    }
+# (kit-paths.ps1 Install-KitOotrr: downloaded, unpacked beside the old one, tried, then swapped; a failure keeps what was
+# there and says why in the game too, tools\ootrr-setup.txt. The old way deleted tools\ootrr first: player report 2026-11-19)
+$ootrr = Install-KitOotrr $kit $exeDir $downloads
+foreach ($l in $ootrr.Lines) { Write-Host "  $l" -ForegroundColor $(if ($ootrr.Ok -or $ootrr.Why -eq 'offline') { 'Gray' } else { 'Yellow' }) }
+# (another release than the one before: its seeds are other worlds, Remove-KitRandoSeeds)
+if ($ootrr.Ok -and $ootrr.Had -and $ootrr.Had -ne $ootrr.Release) {
+    foreach ($l in @(Remove-KitRandoSeeds $exeDir $ootrr.Release)) { Write-Host "  $l" }
 }
 
 # The puppet pack (Invoke-PuppetPackStep above), from the same game files.
