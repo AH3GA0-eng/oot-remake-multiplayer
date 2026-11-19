@@ -1017,6 +1017,19 @@ void LeaveNow() {
     Leave();
 }
 
+void PasteAnswerNow() {
+    Open(CoopPauseMenu::Page::kMain);   // (first: opening clears the page's note)
+    std::lock_guard lock(g_mutex);
+    LOG_INFO(Core, "coop: multiplayer tab: paste answer from the pause menu's Multiplayer page");
+    PasteAnswer();
+}
+
+void CopyAnswerNow() {
+    Open(CoopPauseMenu::Page::kMain);
+    std::lock_guard lock(g_mutex);
+    Copy(Status().answer, "answer code");
+}
+
 void OpenLobby() {
     g_wanted = kLobbyTab;
     LOG_INFO(Core, "coop: multiplayer tab: the Lobby tab opened (the pause menu's Multiplayer page)");

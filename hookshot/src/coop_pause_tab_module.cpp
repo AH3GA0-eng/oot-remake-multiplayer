@@ -225,10 +225,13 @@ SessionView ViewNow() {
     if (const auto at = room.find('@'); at != std::string::npos) room.resize(at);   // (the name friends type first)
     v.room = room;
     v.s.code = v.s.hosting && (!room.empty() || st.invite[0] != 0);
+    v.s.invite = v.s.hosting && room.empty() && st.invite[0] != 0;
+    v.s.wait_host = st.state == HOS_COOP_WAIT_HOST;
     v.confirm_leave = NowMs() < g_confirm_until.load();
     const CoopLobby::Seen seen = CoopLobby::Now();
     v.players = seen.connected ? static_cast<int>(seen.players.size()) : 0;
     if (v.s.hosting) v.asking = CoopLobby::Asking();
+    v.s.asking = !v.asking.empty();
     return v;
 }
 
@@ -349,6 +352,9 @@ Session SessionNow() {
     s.hosting = st.state == HOS_COOP_HOSTING;
     s.in_one = (st.state != HOS_COOP_IDLE && st.state != HOS_COOP_FAILED) || CoopSave::SessionLive();
     s.code = s.hosting && (st.relay_room[0] != 0 || st.relay_code[0] != 0 || st.invite[0] != 0);
+    s.invite = s.hosting && st.relay_room[0] == 0 && st.relay_code[0] == 0 && st.invite[0] != 0;
+    s.asking = s.hosting && !CoopLobby::Asking().empty();
+    s.wait_host = st.state == HOS_COOP_WAIT_HOST;
     return s;
 }
 
@@ -371,6 +377,8 @@ void Act(int row) {
     case RowAction::kCopyCode: CoopPause::CopyJoinCode(); break;
     case RowAction::kOpenLobby: CoopPause::OpenLobby(); break;
     case RowAction::kAllow: CoopHook::SendChat("/allow"); break;   // (its answer, or "nobody asks", shows in the chat)
+    case RowAction::kPasteAnswer: CoopPause::PasteAnswerNow(); break;
+    case RowAction::kCopyAnswer: CoopPause::CopyAnswerNow(); break;
     case RowAction::kNone: break;
     }
 }

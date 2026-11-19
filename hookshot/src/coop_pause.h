@@ -62,6 +62,10 @@ void CopyJoinCode();
 // menu's Host does; and leaving (or stopping hosting), as its Leave does.
 void HostNow();
 void LeaveNow();
+// The host's Paste answer (a friend's answer code from the clipboard) and a waiting guest's Copy answer, as the
+// menu's rows do them; the menu opened on its main page first, whose note says what became of it.
+void PasteAnswerNow();
+void CopyAnswerNow();
 
 // The autotest's `menu customize|close` step (LICHII_COOP_TEST_COMMANDS only, coop_testinput.h): the menu opened
 // on the Customize page, or closed. Never asked in a player's game (no commands file there).

@@ -154,12 +154,14 @@ RowAction ActionFor(int row, const Session& s) {
     case kRowSession:
         return s.in_one ? RowAction::kOpenMain : RowAction::kHost;
     case kRowJoinCode:
+        if (s.wait_host) return RowAction::kCopyAnswer;
         if (s.hosting) return s.code ? RowAction::kCopyCode : RowAction::kOpenMain;   // (the code still coming: shown there)
         return s.in_one ? RowAction::kOpenMain : RowAction::kOpenJoin;
     case kRowPlayers:
         return RowAction::kOpenLobby;
     case kRowLetIn:
-        return s.hosting ? RowAction::kAllow : RowAction::kOpenLobby;
+        if (!s.hosting) return RowAction::kOpenLobby;
+        return s.invite && !s.asking ? RowAction::kPasteAnswer : RowAction::kAllow;   // (a knock first: /allow)
     case kRowLeave:
         return s.in_one ? RowAction::kConfirmLeave : RowAction::kNone;   // (a second A leaves: never one stray press)
     default:
@@ -190,8 +192,10 @@ std::vector<std::string> RowTexts(const SessionView& v) {
     } else {
         rows[kRowSession] = "Host a game";
     }
-    if (v.s.hosting) {
-        rows[kRowJoinCode] = v.room.empty() ? "Room: coming..." : "Room: " + v.room;
+    if (v.s.wait_host) {
+        rows[kRowJoinCode] = "Copy answer code";
+    } else if (v.s.hosting) {
+        rows[kRowJoinCode] = !v.room.empty() ? "Room: " + v.room : v.s.code ? "Copy invite code" : "Room: coming...";
     } else {
         rows[kRowJoinCode] = v.s.in_one ? "Room" : "Join a game";
     }
@@ -201,7 +205,7 @@ std::vector<std::string> RowTexts(const SessionView& v) {
     if (!v.s.hosting) {
         rows[kRowLetIn] = "Let in";
     } else if (v.asking.empty()) {
-        rows[kRowLetIn] = "Let in: nobody asks";
+        rows[kRowLetIn] = v.s.invite ? "Paste answer code" : "Let in: nobody asks";
     } else if (v.asking.size() == 1) {
         rows[kRowLetIn] = "Let in " + v.asking.front();
     } else {
@@ -225,6 +229,8 @@ const char* ActionWords(RowAction a) {
     case RowAction::kAllow: return "the oldest player who asks to join let in (/allow)";
     case RowAction::kHost: return "host now, with the kit's settings";
     case RowAction::kConfirmLeave: return "leave (or stop hosting) after a second A";
+    case RowAction::kPasteAnswer: return "a friend's answer code from the clipboard (Paste answer), then co-op's main page";
+    case RowAction::kCopyAnswer: return "this game's answer code to the clipboard (Copy answer), then co-op's main page";
     case RowAction::kNone: break;
     }
     return "nothing";

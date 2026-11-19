@@ -314,6 +314,44 @@ TEST_CASE("pause tab: each row leads to co-op's own part, by what co-op is doing
     }
 }
 
+TEST_CASE("pause tab: the invite code's two rows: the host's Paste answer, a waiting guest's Copy answer") {
+    // A host with an invite code (no relay room): a friend whose direct join failed sends back an answer code, which
+    // Let in pastes (co-op's menu's Paste answer) while nobody asks; somebody asking still comes first (/allow).
+    Session host;
+    host.hosting = host.in_one = host.code = host.invite = true;
+    CHECK(ActionFor(kRowLetIn, host) == RowAction::kPasteAnswer);
+    CHECK(ActionFor(kRowJoinCode, host) == RowAction::kCopyCode);
+    host.asking = true;
+    CHECK(ActionFor(kRowLetIn, host) == RowAction::kAllow);
+    // A relay room has no answer codes: Let in is /allow.
+    Session relay;
+    relay.hosting = relay.in_one = relay.code = true;
+    CHECK(ActionFor(kRowLetIn, relay) == RowAction::kAllow);
+    // A guest the host could not reach: Join code copies this game's answer code (co-op's menu's Copy answer).
+    Session waiting;
+    waiting.in_one = waiting.wait_host = true;
+    CHECK(ActionFor(kRowJoinCode, waiting) == RowAction::kCopyAnswer);
+    CHECK(ActionFor(kRowLeave, waiting) == RowAction::kConfirmLeave);
+    for (RowAction a : {RowAction::kPasteAnswer, RowAction::kCopyAnswer}) {
+        CHECK(std::string(ActionWords(a)).size() > 3);
+    }
+
+    SessionView v;
+    v.s = Session{};
+    v.s.hosting = v.s.in_one = v.s.code = v.s.invite = true;
+    v.players = 1;
+    CHECK(RowTexts(v) ==
+          std::vector<std::string>{"Hosting", "Copy invite code", "Players: just you", "Paste answer code", "Stop hosting"});
+    v.asking = {"Saria"};
+    v.s.asking = true;
+    CHECK(RowTexts(v)[kRowLetIn] == "Let in Saria");
+    SessionView w;
+    w.s.in_one = w.s.wait_host = true;
+    w.connecting = true;
+    CHECK(RowTexts(w)[kRowSession] == "Connecting...");
+    CHECK(RowTexts(w)[kRowJoinCode] == "Copy answer code");
+}
+
 TEST_CASE("pause tab: the rows say what co-op is doing, in at most a row's width") {
     SessionView idle;
     CHECK(RowTexts(idle) ==

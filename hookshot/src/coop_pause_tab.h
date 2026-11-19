@@ -151,6 +151,8 @@ enum class RowAction {
     kAllow,       // the Lobby's /allow: the oldest player who asks to join is let in (its line says who, or nobody)
     kHost,        // host at once, with the kit's settings (its room name, relay, port, approval)
     kConfirmLeave,   // Leave or Stop hosting: the row asks for a second A first (kConfirmMs), then co-op stops
+    kPasteAnswer,    // the host: a friend's answer code from the clipboard (co-op's menu's Paste answer), its main page
+    kCopyAnswer,     // a guest the host could not reach: its answer code to the clipboard (Copy answer), the main page
 };
 inline constexpr std::uint64_t kConfirmMs = 3000;
 // What co-op is doing, as the rows need it.
@@ -158,6 +160,9 @@ struct Session {
     bool hosting = false;   // this game hosts (its server listens)
     bool in_one = false;    // in a session, hosted or joined (or starting one)
     bool code = false;      // hosting, and a room name or a join code is there to give
+    bool invite = false;    // hosting with an invite code (no relay room): a friend may send back an answer code
+    bool asking = false;    // hosting, and somebody asks to join
+    bool wait_host = false; // joining, and the host must take this game's answer code first
 };
 RowAction ActionFor(int row, const Session& s);
 
