@@ -187,7 +187,23 @@ void Page::SetUsable(bool usable) {
     if (!usable_) Hide("its panes or the game's calls are not there");
 }
 
+// The whole game stalled: no pad call and no screen update came for a while (a run: a game frozen for 40 s;
+// a shader build or a save can take a few hundred ms). The screens are as fresh as they were before it, so their
+// times move on by the gap; the first call after it would otherwise find them stale and give System back with
+// the menu still open. That first call may be the pad's or any screen's update (the stall can end between the pad
+// poll and the UI's updates of a frame), so both note it here first. Screens that stop while the other calls go on
+// are still stale after kStaleMs.
+void Page::AfterStall(std::uint64_t now_ms) {
+    if (call_ms_ != 0 && now_ms > call_ms_ + kStaleMs) {
+        const std::uint64_t gap = now_ms - call_ms_;
+        if (pages_ms_ != 0) pages_ms_ = std::min(now_ms, pages_ms_ + gap);
+        if (strip_ms_ != 0) strip_ms_ = std::min(now_ms, strip_ms_ + gap);
+    }
+    if (now_ms > call_ms_) call_ms_ = now_ms;
+}
+
 Page::Do Page::OnScreen(const Facts& f, std::uint64_t now_ms) {
+    AfterStall(now_ms);
     Do d;
     Track(f);
     switch (f.kind) {
@@ -245,6 +261,7 @@ Page::Do Page::OnScreen(const Facts& f, std::uint64_t now_ms) {
 }
 
 std::uint64_t Page::OnPad(std::uint64_t buttons, std::uint64_t now_ms) {
+    AfterStall(now_ms);
     const std::uint64_t down = buttons & ~pad_last_;
     pad_last_ = buttons;
     swallow_ &= buttons;   // (let go: the game gets it again)
