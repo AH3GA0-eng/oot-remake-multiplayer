@@ -53,8 +53,10 @@ bool Page::CanShow(std::uint64_t now_ms) const {
 // opening again shows our page from its first update, and a run showed the pages open, state 2, while the strip still
 // opens, state 1.)
 bool Page::CanStay(std::uint64_t now_ms) const {
+    // (the pages at 0 while the strip opens: the menu's first frames, System's page already drawn; a run, 2026-11-19)
+    const bool pages_open = pages_.state == 1 || pages_.state == 2 || (pages_.state == 0 && strip_.state == 1);
     return pages_.screen != 0 && strip_.screen != 0 && now_ms - pages_ms_ < kStaleMs && now_ms - strip_ms_ < kStaleMs &&
-           (pages_.state == 1 || pages_.state == 2) && pages_.page == kSystemPage && pages_.asked == kSystemPage &&
+           pages_open && pages_.page == kSystemPage && pages_.asked == kSystemPage &&
            (strip_.state == 1 || strip_.state == 2) && strip_.mode == kPlusMode && strip_.tabs == 5 &&
            now_ms >= blocked_until_ms_;
 }

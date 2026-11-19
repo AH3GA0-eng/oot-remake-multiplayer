@@ -149,6 +149,28 @@ TEST_CASE("pause tab: the menu closed on our page opens on it again, not after L
     CHECK_FALSE(p.Shown());
 }
 
+TEST_CASE("pause tab: back at the menu's first frame, the pages still at 0 while the strip opens") {
+    Page p;
+    OnSystem(p, 1000);
+    p.OnPad(kPadR, 1000);
+    p.OnPad(0, 1016);
+    p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 3), 1032);
+    p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 3), 1032);
+    p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 0), 1300);
+    p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 0), 1300);
+    CHECK_FALSE(p.Shown());   // (closed: nothing)
+    // As a run had it: the strip opens first, the pages still at 0 (System's page already drawn). The closed pages'
+    // last update is old by then: the page comes back at their first update of the opening, in the same frame.
+    p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 1), 4000);
+    const auto d = p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 0), 4000);
+    CHECK(p.Shown());
+    CHECK(d.set_page);
+    CHECK(d.page_shown);
+    p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 2), 4016);
+    p.OnPad(0, 4016);
+    CHECK(p.Shown());
+}
+
 TEST_CASE("pause tab: a menu that opens on another page forgets ours") {
     Page p;
     OnSystem(p, 1000);
