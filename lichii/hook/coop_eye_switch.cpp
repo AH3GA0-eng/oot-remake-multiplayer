@@ -296,16 +296,22 @@ void Switcher::Expire(const std::string& scene, const std::function<bool(const s
 }
 
 bool Switcher::HoldsGuard(std::uint32_t hash, std::string_view scene) {
-    // 0: not held (its event has no line we drive: the flag comes as before)
-    static const std::vector<std::uint32_t> hashes = [] {
-        std::vector<std::uint32_t> out;
-        for (const Guard& g : kGuards) {
-            out.push_back(FindAll(g.event, g.scene).empty() ? 0u : coop::protocol::flag_hash(g.flag));
-        }
-        return out;
-    }();
     std::lock_guard lock(mutex_);
     if (failed_) return false;  // every event goes the old way: nothing waits
+    // 0: not held (its event has no line we drive: the flag comes as before). Which events have a line depends on
+    // the input lines, so the hashes follow them: a function-local static froze the first call's lines (the full
+    // host test run, eye_switch_test:397: a test with no input lines ran first, the input-line test then saw 0).
+    const std::span<const Input> inputs = Inputs();
+    if (guard_hashes_.size() != std::size(kGuards) || guard_inputs_ != inputs.data() ||
+        guard_inputs_size_ != inputs.size()) {
+        guard_hashes_.clear();
+        for (const Guard& g : kGuards) {
+            guard_hashes_.push_back(FindAll(g.event, g.scene).empty() ? 0u : coop::protocol::flag_hash(g.flag));
+        }
+        guard_inputs_ = inputs.data();
+        guard_inputs_size_ = inputs.size();
+    }
+    const std::vector<std::uint32_t>& hashes = guard_hashes_;
     for (std::size_t i = 0; i < hashes.size(); ++i) {
         const Guard& g = kGuards[i];
         if (hashes[i] != 0 && hashes[i] == hash && g.scene == scene &&
