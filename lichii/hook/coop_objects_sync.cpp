@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_objects_sync.h"
+#include "coop_bomb_share.h"
 #include "coop_enemy_shots.h"
 #include "coop_guard.h"
 #include "coop_world.h"
@@ -415,8 +416,20 @@ std::optional<std::int32_t> RaisedMaxLife(std::int32_t link_max, std::int32_t fl
     return flag;
 }
 
+std::optional<LoweredLife> LoweredMaxLife(std::int32_t link_max, std::int32_t link_life,
+                                          std::optional<std::int32_t> lower_to) {
+    if (!lower_to || link_max <= 0 || *lower_to < 4 || *lower_to >= link_max || *lower_to > kMostLifeQuarters) {
+        return std::nullopt;
+    }
+    LoweredLife out{*lower_to, std::nullopt};
+    if (link_life > *lower_to) {
+        out.life = *lower_to;
+    }
+    return out;
+}
+
 bool NativeOnlyName(std::string_view name) {
-    return name.empty() || name == "?" || name.starts_with("Enemy_") || IsBoss(name);
+    return name.empty() || name == "?" || name.starts_with("Enemy_") || IsBossOrPart(name);
 }
 
 LifeRouted RouteLife(const LifeAsk& a) {
@@ -447,10 +460,24 @@ LifeRouted RouteLife(const LifeAsk& a) {
 }
 
 bool PlaysByFrame(std::string_view name) {
-    return name.starts_with("Npc_") || (name.starts_with("Enemy_") && !IsBoss(name));
+    return name.starts_with("Npc_") || (name.starts_with("Enemy_") && !IsBossOrPart(name));
 }
 
-bool IsBoss(std::string_view name) {
+bool FollowedEachFrame(std::string_view name) {
+    return name.starts_with("Npc_") ||
+           (name.starts_with("Enemy_") && name.find("_Dictionary") == std::string_view::npos);
+}
+
+bool OnBrainPath(std::string_view name) {
+    return name.starts_with("Enemy_") && name.find("_Dictionary") == std::string_view::npos && !IsBossOrPart(name) &&
+           !IsOwnPuzzle(name) && !CoopEnemyShots::IsEnemyShot(name);
+}
+
+bool EnemyBrainSwitch(std::string_view value) {
+    return !value.empty() && value != "0";
+}
+
+bool IsBossOrPart(std::string_view name) {
     if (name.find("_Dictionary") != std::string_view::npos) return false;
     if (name.starts_with("Enemy_DungeonBoss_") || name.starts_with("Enemy_MiddleBoss_")) {
         return true;
@@ -459,6 +486,50 @@ bool IsBoss(std::string_view name) {
         if (rule.part.boss && rule.part.roots.front() == name) return true;
     }
     return false;
+}
+
+namespace {
+bool IsGroupRoot(std::string_view name) {
+    for (const PartRule& rule : PartRules()) {
+        if (std::find(rule.part.roots.begin(), rule.part.roots.end(), name) != rule.part.roots.end()) return true;
+    }
+    return false;
+}
+}  // namespace
+
+bool IsBossPart(std::string_view name) {
+    const GroupPart* part = PartOf(name);
+    return part != nullptr && part->boss && !IsGroupRoot(name);
+}
+
+bool IsBoss(std::string_view name) {
+    return IsBossOrPart(name) && !IsBossPart(name);
+}
+
+std::optional<std::size_t> BossPartRoot(std::string_view part, const proto::Vec3& at,
+                                        const std::vector<std::string_view>& names,
+                                        const std::vector<proto::Vec3>& places) {
+    if (!IsBossPart(part) || names.size() != places.size()) return std::nullopt;
+    const GroupPart* rule = PartOf(part);
+    for (const std::string_view root : rule->roots) {
+        std::optional<std::size_t> best;
+        float best_d2 = 0.0f;
+        for (std::size_t i = 0; i < names.size(); ++i) {
+            if (names[i] != root) continue;
+            float d2 = 0.0f;
+            for (std::size_t k = 0; k < 3; ++k) {
+                const float d = places[i][k] - at[k];
+                d2 += d * d;
+            }
+            if (!std::isfinite(d2) || (rule->reach > 0.0f && d2 > rule->reach * rule->reach)) continue;
+            if (!best || d2 < best_d2) {
+                best = i;
+                best_d2 = d2;
+            }
+        }
+        if (best) return best;
+    }
+    return std::nullopt;
 }
 
 std::vector<proto::ObjectGroupEntry> GroupsOf(
@@ -476,7 +547,7 @@ std::vector<proto::ObjectGroupEntry> GroupsOf(
     for (const GroupInput& m : walk) {
         const GroupPart* part = PartOf(m.name);
         if (part == nullptr) {
-            if (IsBoss(m.name)) out.push_back({m.id, m.id, proto::object_group::boss});
+            if (IsBossOrPart(m.name)) out.push_back({m.id, m.id, proto::object_group::boss});
             continue;
         }
         const GroupInput* root = nullptr;
@@ -506,7 +577,7 @@ std::vector<proto::ObjectGroupEntry> GroupsOf(
             }
         }
         if (root != nullptr) {
-            out.push_back({m.id, root->id, part->boss || IsBoss(m.name)
+            out.push_back({m.id, root->id, part->boss || IsBossOrPart(m.name)
                                                ? proto::object_group::boss
                                                : std::uint8_t{0}});
         } else if (linked.contains(m.id) || IsBoss(m.name)) {
@@ -586,6 +657,20 @@ bool IsDeathAnimation(std::string_view name) {
         }
     }
     return false;
+}
+
+bool LifelessKillHere(std::string_view name, bool reacts, bool life_read, bool own_death_recent,
+                      std::string_view owner_animation, bool owner_said_dead) {
+    if (!reacts || life_read || !own_death_recent || owner_said_dead) {
+        return false;  // (a life that can be read sends its fall as hits; an owner's death is not ours)
+    }
+    if (IsBossOrPart(name)) {
+        return false;
+    }
+    if (const GroupPart* part = PartOf(name); part != nullptr && part->boss) {
+        return false;
+    }
+    return !IsDeathAnimation(owner_animation);
 }
 
 bool IsHideAnimation(std::string_view name) {
@@ -1195,7 +1280,7 @@ Sync::PartnerWhy Sync::EventPartnerWhy(const Object& o) const {
     // A boss runs its own changes in our event already (CoopBossNative::SetEvent; row 130: its owner's
     // motion waits meanwhile, CopiesRunningOwn) and keeps its fight's owner; a fish keeps the lure rules
     // (issue 151).
-    if (IsBoss(o.name) || o.fish) {
+    if (IsBossOrPart(o.name) || o.fish) {
         return PartnerWhy::none;
     }
     if (o.event_member.value_or(false)) {
@@ -1235,7 +1320,7 @@ std::vector<Sync::Partner> Sync::EventPartnerList(std::uint64_t now_us) const {
 
 void Sync::OwnWake(Object& o, bool taken_away, std::uint64_t now_us) {
     const auto& wanted = o.received.empty() ? std::nullopt : o.received.back().animation;
-    if (!o.reacts || o.npc || IsBoss(o.name) || !wanted || wanted->name.empty() ||
+    if (!o.reacts || o.npc || IsBossOrPart(o.name) || !wanted || wanted->name.empty() ||
         IsDeathAnimation(wanted->name) || IsHideAnimation(wanted->name) ||
         (o.own_wake_at != 0 && now_us < o.own_wake_at + kOwnWakeAgainUs)) {
         return;
@@ -1252,6 +1337,9 @@ void Sync::OwnWake(Object& o, bool taken_away, std::uint64_t now_us) {
     o.own_wake_at = now_us;
     o.own_wake_over = wanted->name;
     o.own_wake_given = false;
+    if (own_wake_starts_.size() < 64) {
+        own_wake_starts_.push_back(o.address);
+    }
     notes_.emplace_back(o.name + ": its own wake for our Link runs; the owner's '" + wanted->name +
                         "' is not put back over it (report 109)");
     // The walk sees the owner's animation again: the Mover put the copy's
@@ -1291,6 +1379,16 @@ void Sync::NoteTakeover(std::uint64_t address, std::uint64_t now_us, std::string
         own_wakes_.emplace_back(address, std::string(name));
         o.own_wake_given = true;
     }
+}
+
+void Sync::NoteOwnBrainWant(std::uint64_t address, std::uint64_t now_us) {
+    const auto it = objects_.find(address);
+    if (it == objects_.end() || !it->second.reacts) {
+        return;  // (the brain path is the enemies')
+    }
+    Object& o = it->second;
+    o.own_ai_at = now_us;  // row 97: its own AI acts (read while our event runs)
+    o.brain_want_at = now_us;
 }
 
 std::optional<float> Sync::LureDistance(const proto::Vec3& at) const {
@@ -1684,7 +1782,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         // boss is not in (a seed in Gohma's eye takes no life). Its stun is
         // kept on screen like a hit reaction, and a DAMAGE of 0 asks the
         // server to hand the boss to us, whose boss is the stunned one.
-        if (s.animation && IsStunAnimation(s.animation->name) && IsBoss(s.name) &&
+        if (s.animation && IsStunAnimation(s.animation->name) && IsBossOrPart(s.name) &&
             !(o.animation && IsStunAnimation(o.animation->name))) {
             const auto owner = owners_.find(o.id);
             const std::string owners = !o.received.empty() && o.received.back().animation
@@ -1700,6 +1798,12 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             }
         }
         o.animation = s.animation;
+        if (s.animation && IsDeathAnimation(s.animation->name)) {
+            o.own_death_at = now_us;  // issue 133: its own death here (LifelessKillHere)
+        }
+        if (s.hit_ours && *s.hit_ours) {
+            o.ours_hit_at = now_us;  // issue 133: its newest hit was ours (its game's own hit record)
+        }
         o.slots = s.slots;
         o.bsa = s.bsa;
         o.event_member = s.event_member;  // row 97
@@ -1707,6 +1811,19 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             // (its life drop may be read a walk later than the hit id: kept kHitPlaceKeepUs for it)
             o.place_seen = s.hit_at;
             o.place_seen_at = now_us;
+        }
+        if (s.hit_record) {
+            // Protocol 14 (every hit shows on every screen): the hit its damage step took. Our own on a copy goes
+            // with our DAMAGE (as its place, kept kHitPlaceKeepUs for its drop); any our own enemy took (our hit,
+            // a replay of a copy's) goes in its samples, so every copy's game takes that same hit.
+            const auto own = owners_.find(o.id);
+            if (own != owners_.end() && own->second.player != 0 && own->second.player == self) {
+                o.hit_out = proto::ObjectHit{++o.hit_seq, *s.hit_record};
+                o.hit_show_until = now_us + kHitShowUs;
+            } else if (s.own_hit) {
+                o.record_seen = s.hit_record;
+                o.record_seen_at = now_us;
+            }
         }
         // A breakable's life can no longer be read once it has died (a crate
         // at 0 for one frame, then its life object is gone): read that as 0.
@@ -1731,8 +1848,51 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                     // hit too), so it is not written back up over it.
                     o.hurt_target = std::max(0, o.hurt_target - *stepped);
                 }
+                // Our game's own hit since the last walk (its Life component's last hit id moved to one we did
+                // not replay; or the test's stand-in for it): a fall then is ours, not a replay landing late. A boss
+                // copy's game refuses the owner's replayed hit (Gohma) and the next sample asks for it again, so
+                // its replay waits all fight long: every hit of ours fell into the branches below and was never
+                // sent (probe boss-handover 20261117-114108: 2 of A's 3 hits on Gohma's copy lost). Enemies (and
+                // mid-bosses) lost a hit the same way inside kHurtWaitUs and kHurtLateUs.
+                const bool own_hit = s.own_hit || (o.test_own_hit_until != 0 && now_us < o.test_own_hit_until);
+                if (drop > 0 && own_hit && (o.hurt_left > 0 || (o.late_left > 0 && now_us < o.late_until))) {
+                    // Our replay landing in the same walk (its id reached too, not refused) takes its part first:
+                    // while it waits (hurt_left), or taken late after its wait (late_left), as the late branch
+                    // below books it (put back unless the actor reacts, never sent as ours).
+                    std::int32_t replay = 0;
+                    if (s.replay_hit && o.hurt_left > 0) {
+                        replay = std::min(drop, o.hurt_left);
+                        o.hurt_left -= replay;
+                        if (o.hurt_left == 0) {
+                            o.hurt_until = std::min(o.hurt_until, now_us);  // checked below
+                        }
+                    } else if (s.replay_hit && o.late_left > 0 && now_us < o.late_until) {
+                        replay = std::min(drop, o.late_left);
+                        o.late_left -= replay;
+                        if (!o.reacts) {
+                            life->life += replay;
+                            writes.push_back({o.address, life->life, 0, {}});
+                        }
+                        ++hurt_late_;
+                    }
+                    drop -= replay;
+                    // With step events (patch 0007) this rest waits for its step (`loose`, below), and the step
+                    // lowers hurt_target when it comes (top of this block): not lowered here too, or one hit took it
+                    // down twice.
+                    if (o.hurt_until != 0 && !stepped) {
+                        // The owner takes our hit too: the life to reach is that much lower (as with a stepped
+                        // hit above), so neither the replay's wait nor its end writes it back up over our hit.
+                        o.hurt_target = std::max(0, o.hurt_target - drop);
+                    }
+                    o.test_own_hit_until = 0;
+                    ++own_hits_kept_;
+                    notes_.emplace_back("our own hit while a replay waited: " + std::to_string(drop) +
+                                        " counted as ours (not the replay): " + o.name);
+                }
                 if (drop == 0) {
                     // (all of it the game's own hits)
+                } else if (own_hit) {
+                    // (counted above: falls through to the hit below)
                 } else if (o.hurt_left > 0) {
                     // Our own hurt landing (or the game taking more for it):
                     // not a hit of ours.
@@ -1768,7 +1928,13 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                     drop = *stepped;
                 }
                 const auto owner = owners_.find(o.id);
-                if (drop > 0 && blast_near_ && owner != owners_.end() &&
+                // Whose hit (issue 133): on a copy, a drop whose newest hit record names our Link or one of our
+                // own projectiles is our hit, even beside a copy's blast (else it was never sent: a lost kill).
+                // The owner's own enemy keeps the blast credit below (the thrower's DAMAGE comes for it).
+                const bool our_hit = owner != owners_.end() && owner->second.player != 0 &&
+                                     owner->second.player != self && o.ours_hit_at != 0 &&
+                                     now_us >= o.ours_hit_at && now_us - o.ours_hit_at <= kOurHitKeepUs;
+                if (drop > 0 && !our_hit && blast_near_ && owner != owners_.end() &&
                     owner->second.player != 0 && blast_near_(s.position, now_us)) {
                     // A projectile copy went off here: the owner's own bomb
                     // makes this hit in its game.
@@ -1801,17 +1967,23 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 const bool ours = owner != owners_.end() && owner->second.player == self;
                 if (ours) {
                     o.place_seen.reset();  // our own boss's hit: nothing to send
+                    o.record_seen.reset();
                 }
                 if (drop > 0 && !ours) {
                     if (o.hit_sum == 0) {
                         o.hit_since = now_us;
                         o.hit_place.reset();
+                        o.hit_record.reset();
                     }
                     o.hit_sum += drop;
                     if (o.place_seen && now_us - o.place_seen_at <= kHitPlaceKeepUs) {
                         o.hit_place = o.place_seen;  // our own hit on our copy (a boss): where it landed
                     }
                     o.place_seen.reset();
+                    if (o.record_seen && now_us - o.record_seen_at <= kHitPlaceKeepUs) {
+                        o.hit_record = o.record_seen;  // protocol 14: the newest of our hits summed now
+                    }
+                    o.record_seen.reset();
                     if (life->life <= 0 && o.killed_at == 0) {
                         o.killed_at = now_us;  // our hit took it: a resend may follow
                         o.resent = 0;
@@ -2138,7 +2310,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     // life goes to its own Life step once (direct, never a write), which CoopBossNative lets end it
     // (review-boss-0114, at every boss; Gohma's own clamp may still hold her at 1).
     for (auto& [address, o] : objects_) {
-        if (o.death_given || o.hurt_until != 0 || !o.life || *o.life <= 0 || !IsBoss(o.name) ||
+        if (o.death_given || o.hurt_until != 0 || !o.life || *o.life <= 0 || !IsBossOrPart(o.name) ||
             !(o.dead_at != 0 || o.owner_life_zero) ||
             std::find(dying_.begin(), dying_.end(), o.name) == dying_.end()) {
             continue;
@@ -2165,7 +2337,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             const auto boss_owner = owners_.find(o.id);
             const bool boss_ours = boss_owner != owners_.end() && boss_owner->second.player == self;
             const bool dying = std::find(dying_.begin(), dying_.end(), o.name) != dying_.end();
-            if (o.life && *o.life > o.hurt_target && IsBoss(o.name) && boss_ours) {
+            if (o.life && *o.life > o.hurt_target && IsBossOrPart(o.name) && boss_ours) {
                 // Our boss refused another player's replayed hit (boss-hits, tracker 104, issue 150): the
                 // replay is a template sword hit, and Gohma's damage rules judge it as no eye hit, so only her
                 // owner could ever hurt her (a player's owner log: 23 DAMAGE in, no replay taken). The hitter's
@@ -2180,7 +2352,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 notes_.emplace_back("a hit our boss's game did not take as a replay: " +
                                     std::to_string(*o.life - o.hurt_target) +
                                     " given to its own Life step (the hitter's game judged it): " + o.name);
-            } else if (o.life && *o.life > o.hurt_target && IsBoss(o.name) && dying) {
+            } else if (o.life && *o.life > o.hurt_target && IsBossOrPart(o.name) && dying) {
                 // A boss copy whose death has begun (player report #105): its game refused the owner's killing
                 // hit (Gohma's damage rules outside her eye) and stood on in her death setting, the host's screen
                 // black for good. The rest goes into its own Life step (never a write), which CoopBossNative
@@ -2193,7 +2365,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 notes_.emplace_back("a hit the dying boss's game did not take: " +
                                     std::to_string(*o.life - o.hurt_target) +
                                     " given to its own Life step (its death has begun): " + o.name);
-            } else if (o.life && *o.life != o.hurt_target && IsBoss(o.name)) {
+            } else if (o.life && *o.life != o.hurt_target && IsBossOrPart(o.name)) {
                 // A boss copy is never written (boss-intro, the native rule): its game refused the owner's hit
                 // (Gohma holds her life at 1 outside her weak point), so its life stays what its own game says.
                 ++hurt_missed_;
@@ -2228,7 +2400,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         // Our hits on a copy, summed over 100 ms, go to the owner.
         if (o.hit_sum > 0 && now_us - o.hit_since >= kDamageSumUs &&
             (known || now_us - o.hit_since >= kHitKeepUs)) {
-            if (known && owner->second.player != self) {
+            // (not between a HANDOVER_STATE and its owner news: it is ours already, the fall is in its life)
+            if (known && owner->second.player != self && now_us >= o.handed_until) {
                 proto::Damage d;
                 d.id = o.id;
                 d.epoch = owner->second.epoch;
@@ -2236,11 +2409,13 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 d.cause = static_cast<std::uint8_t>(proto::DamageCause::unknown);
                 d.position = o.position;
                 d.hit_at = std::exchange(o.hit_place, std::nullopt);
+                d.hit_record = std::exchange(o.hit_record, std::nullopt);
                 send.emplace_back(d);
                 o.hit_at = now_us;
             }
             o.hit_sum = 0;
             o.hit_place.reset();
+            o.hit_record.reset();
         }
         // Issue 150: our boss copy's own stun, as a DAMAGE of 0.
         if (o.stun_due) {
@@ -2290,6 +2465,9 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 sample.id = o.id;
                 sample.epoch = owner->second.epoch;
                 sample.state = StateOf(o, now_us);
+                if (o.hit_out && now_us < o.hit_show_until) {
+                    sample.state.hit = o.hit_out;  // protocol 14: the hit our game took, for every copy
+                }
                 send.emplace_back(sample);
                 o.sent_at = now_us;
                 o.sent_once = true;
@@ -2390,7 +2568,10 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 // Or the Mover had to put the owner's one back lately (issue 157).
                 const bool put_back = o.took_over_at != 0 && now_us >= o.took_over_at &&
                                       now_us - o.took_over_at <= kWakeLatchUs;
-                if (differs || put_back) {
+                // Or, on the enemies' brain path, its own brain asked for another phase (issue 101).
+                const bool brain_wants = o.brain_want_at != 0 && now_us >= o.brain_want_at &&
+                                         now_us - o.brain_want_at <= kWakeLatchUs;
+                if (differs || put_back || brain_wants) {
                     ChaseStep(o, now_us);
                     OwnWake(o, put_back && !differs, now_us);
                 }
@@ -2588,6 +2769,15 @@ void Sync::Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& g
             const float from_link = std::sqrt(dx * dx + dy * dy + dz * dz);
             broken_here = from_link <= (moved ? kBreakNearM : kBreakReachM);
         }
+        // Issue 133: a copy whose life cannot be read that died here (its own death animation as it left).
+        const bool own_death_recent =
+            o.own_death_at != 0 && now_us >= o.own_death_at && now_us - o.own_death_at <= kOwnDeathKeepUs;
+        const std::string_view owner_animation = !o.received.empty() && o.received.back().animation
+                                                     ? std::string_view(o.received.back().animation->name)
+                                                     : std::string_view{};
+        const bool died_here = owner->second.player != self &&
+                               LifelessKillHere(o.name, o.reacts, o.life.has_value(), own_death_recent, owner_animation,
+                                                o.dead_at != 0 || o.owner_life_zero || o.dead_now);
         {
             float near = -1.0f;
             if (player_) {
@@ -2618,6 +2808,9 @@ void Sync::Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& g
                 sample.id = o.id;
                 sample.epoch = owner->second.epoch;
                 sample.state = StateOf(o, now_us);
+                if (o.hit_out && now_us < o.hit_show_until) {
+                    sample.state.hit = o.hit_out;  // protocol 14: its killing hit, for every copy
+                }
                 send.emplace_back(sample);
             }
             // An enemy of ours that died here: dead for everyone (issue 133).
@@ -2641,14 +2834,18 @@ void Sync::Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& g
                 send.emplace_back(r);
                 notes_.emplace_back("dead, said to the others: " + o.name);
             }
-        } else if (o.hit_sum > 0 || broken_here) {
+        } else if (o.hit_sum > 0 || broken_here || died_here) {
             proto::Damage d;
             d.id = o.id;
             d.epoch = owner->second.epoch;
-            d.amount = broken_here ? std::max(o.life.value_or(1), o.hit_sum) : o.hit_sum;
-            d.cause = static_cast<std::uint8_t>(proto::DamageCause::unknown);
+            d.amount = broken_here ? std::max(o.life.value_or(1), o.hit_sum) : std::max(o.hit_sum, died_here ? 1 : 0);
+            d.cause = static_cast<std::uint8_t>(died_here ? proto::DamageCause::killed : proto::DamageCause::unknown);
+            if (died_here) {
+                notes_.emplace_back("its copy died here (no life to read): the kill goes to its owner: " + o.name);
+            }
             d.position = o.position;
             d.hit_at = std::exchange(o.hit_place, std::nullopt);
+            d.hit_record = std::exchange(o.hit_record, std::nullopt);
             send.emplace_back(d);
         }
     }
@@ -2816,6 +3013,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                     o->dead_at = now_us;
                     o->hit_sum = 0;
                     o->hit_place.reset();
+                    o->hit_record.reset();
                     o->place_seen.reset();
                     notes_.emplace_back("hatched in its owner's game: " + o->name);
                     if (had != owners_.end()) {
@@ -2850,6 +3048,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                                                              : "dead in its owner's game: " + o->name);
                     o->hit_sum = 0;
                     o->hit_place.reset();
+                    o->hit_record.reset();
                     o->place_seen.reset();
                 }
                 // Nobody's now: no samples, poses or plays for it.
@@ -2873,6 +3072,11 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 continue;  // an older change, late
             }
             owners_[owner->id] = {owner->owner, owner->epoch};
+            if (Object* h = find(owner->id); h != nullptr) {
+                // The news a HANDOVER_STATE waited for (or a later one): our hits on it count again from here,
+                // to whoever owns it now (a stun hands it on within the old 2 s, and every hit there was lost).
+                h->handed_until = 0;
+            }
             Object* o = owner->owner != before ? find(owner->id) : nullptr;
             if (o == nullptr) {
                 continue;
@@ -2888,6 +3092,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 // get its state at once.
                 o->hit_sum = 0;
                 o->hit_place.reset();
+                o->hit_record.reset();
                 o->place_seen.reset();
                 o->hit_at = 0;
                 o->react_at = 0;
@@ -2951,13 +3156,20 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             const std::int32_t have = o->hurt_until != 0 ? o->hurt_target : *o->life;
             const bool holding =
                 o->hit_sum > 0 || now_us - o->hit_at < AnswerHoldUs(kHitHoldUs, sample->player_number);
+            // Protocol 14: the hit the owner's game took, once per seq (its samples carry it a while).
+            std::optional<proto::HitRecord> record;
+            if (sample->state.hit && sample->state.hit->seq != o->hit_seq_in) {
+                o->hit_seq_in = sample->state.hit->seq;
+                record = sample->state.hit->record;
+            }
             if (life < have) {
-                // Who hit it is not sent: its owner is the best guess.
-                Lower(*o, life, now_us, writes, sample->player_number);
+                // Who hit it is not sent: its owner is the best guess. The hit is the owner's game's own (record);
+                // without one (no new seq: an older game, or a fall with no hit) the stand-in sword hit.
+                Lower(*o, life, now_us, writes, sample->player_number, std::nullopt, record);
                 o->fight_until = now_us + kFightUs;
             } else if (life > have && !holding && have <= 0 && o->killed_at != 0 &&
                        now_us - o->killed_at < kKilledKeepUs && o->dead_at == 0 &&
-                       o->resent < kResendMax && !IsBoss(o->name)) {
+                       o->resent < kResendMax && !IsBossOrPart(o->name)) {
                 // (never a boss: its DAMAGE resent would be the copy's whole life in one hit, the owner's
                 // weak point bypassed (seed N2BTEYKM: Barinade's instant death). A boss copy is held at
                 // life 1 by its own Life step and dies with its owner's: CoopBossNative HeldLifeStep.)
@@ -2969,6 +3181,7 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 ++o->resent;
                 o->hit_sum = life;
                 o->hit_place.reset();
+                o->hit_record.reset();
                 o->place_seen.reset();
                 o->hit_since = now_us > kDamageSumUs ? now_us - kDamageSumUs : 0;
                 notes_.emplace_back("killed here, owner still shows life: hit sent again: " +
@@ -2989,11 +3202,53 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
         } else if (const auto* damage = std::get_if<proto::Damage>(&m)) {
             // The server sends DAMAGE only to the owner: that is us.
             Object* o = find(damage->id);
-            if (o == nullptr || !o->life || damage->amount <= 0) {
+            if (o == nullptr || damage->amount <= 0) {
+                continue;
+            }
+            if (!o->life) {
+                // Issue 133: an enemy of ours whose life cannot be read, killed in the hitter's game (its copy
+                // died there). No life to take it off: dead for everyone, as a kill our game took (said, and
+                // deleted by its game's own delete request after kDeadGraceUs if still here).
+                if (damage->cause == static_cast<std::uint8_t>(proto::DamageCause::killed) &&
+                    damage->player_number != self) {
+                    const auto own = owners_.find(o->id);
+                    DeadByWrite(*o, own != owners_.end() ? own->second.epoch : 0, now_us, send,
+                                "its copy's death in the hitter's game (no life to read)");
+                }
                 continue;
             }
             if (damage->player_number == self) {
-                continue;  // our own hit, sent before it became ours: already in its life
+                // Our own hit, sent while ours was a copy and passed back by the server: it crossed the
+                // hand-over, so the old owner's life we took there has no such hit in it. Where we kept our own
+                // life (an enemy that had less than its old owner's) it is in it already.
+                if (!o->handed_took || now_us >= o->returned_until || *o->life <= 0) {
+                    continue;
+                }
+                const std::int32_t from = *o->life;
+                const std::int32_t to = std::max(0, from - damage->amount);
+                if (IsBossOrPart(o->name)) {
+                    // Our game judged this hit on its copy already: into its own Life step, never a write
+                    // (to 0 too: the step keeps the game's stops and runs its own death, given once).
+                    if (to <= 0 && o->death_given) {
+                        continue;
+                    }
+                    LifeWrite lower{o->address, to, from - to, std::nullopt};
+                    lower.direct = true;
+                    writes.push_back(lower);
+                    o->death_given = o->death_given || to <= 0;
+                    o->life = to;  // a second returned hit in this pass counts from here
+                    if (o->hurt_until != 0) {
+                        o->hurt_target = std::max(0, o->hurt_target - (from - to));
+                    }
+                } else {
+                    write(*o, to);
+                    if (to <= 0) {
+                        DeadByWrite(*o, damage->epoch, now_us, send, "our hit that crossed the hand-over");
+                    }
+                }
+                notes_.emplace_back("our own hit crossed the hand-over (" + std::to_string(damage->amount) +
+                                    "): taken off the life its old owner gave: " + o->name);
+                continue;
             }
             std::int32_t amount = damage->amount;
             if (o->blast_credit > 0 && now_us < o->blast_until) {
@@ -3011,7 +3266,8 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             o->damage_debit += amount;
             o->debit_until = now_us + kBlastCreditUs;
             const std::int32_t have = o->hurt_until != 0 ? o->hurt_target : *o->life;
-            Lower(*o, std::max(0, have - amount), now_us, writes, damage->player_number, damage->hit_at);
+            Lower(*o, std::max(0, have - amount), now_us, writes, damage->player_number, damage->hit_at,
+                  damage->hit_record);
             o->fight_until = now_us + kFightUs;
             if (!hurt_ && have - amount <= 0) {
                 // Hurt off: the life was written, not given as a hit.
@@ -3020,29 +3276,73 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                             "life written to 0");
             }
         } else if (const auto* ask = std::get_if<proto::HandoverAsk>(&m)) {
+            if (find(ask->id) == nullptr && CoopBombShare::TheOwnBombs().Has(ask->id)) {
+                continue;  // native puppets phase 2: the spawn sync answers for its bomb (with the fuse)
+            }
             proto::HandoverState state;
             state.id = ask->id;
             state.epoch = ask->epoch;
             if (Object* o = find(ask->id)) {
                 state.state = StateOf(*o, now_us);
+                // The life it hands over has every DAMAGE we were given in it, taken by our game yet or not
+                // (a replay waits up to kHurtWaitUs; Gohma's game never takes one): the new owner's game gets
+                // no later chance at them (we are a copy by then), and the server takes off what it passes on
+                // after this ask. A life as read gave the boss those hits back at every hand-over.
+                if (state.state.life && o->hurt_until != 0 && o->hurt_target < state.state.life->life) {
+                    state.state.life->life = std::max(0, o->hurt_target);
+                }
             } else {
                 state.state.time = {now_us, 0};
             }
             send.emplace_back(std::move(state));
         } else if (const auto* handed = std::get_if<proto::HandoverState>(&m)) {
             Object* o = find(handed->id);
+            // The old owner's life never has our own hits of the last kDamageSumUs in it (summed here, not sent
+            // yet): they come off it, or the hand-over gives that life back. A boss always takes its old owner's
+            // life; an enemy only where that is the lower one (its own life has our hits in it otherwise).
+            std::int32_t theirs = 0;
+            if (o != nullptr && handed->state.life && o->life) {
+                theirs = handed->state.life->life;
+                const bool takes = IsBossOrPart(o->name) || theirs < *o->life;
+                if (takes && theirs > 0 && o->hit_sum > 0) {
+                    notes_.emplace_back("ours now with a hit of ours not sent yet (" + std::to_string(o->hit_sum) +
+                                        "): taken off its old owner's life " + std::to_string(theirs) + ": " +
+                                        o->name);
+                    theirs = std::max(0, theirs - o->hit_sum);
+                }
+                o->hit_sum = 0;
+                o->hit_place.reset();
+                o->hit_record.reset();
+                o->handed_took = takes;
+                o->handed_until = now_us + kHandedUs;
+                o->returned_until = now_us + kHandedUs;
+            }
             // The lower life of the two, so an enemy never heals across a
             // hand-over. Its place stays our own enemy's. A boss is the
             // exception: one boss death for everyone holds a copy at 1 (and
             // its own hits lowered it where the owner refused them), so it
             // takes the old owner's life, raised through its own Life step.
-            if (o != nullptr && handed->state.life && handed->state.life->life > 0 &&
-                TakeOwnerLife(*o, handed->state.life->life, writes, "ours now")) {
+            if (o != nullptr && handed->state.life && o->life && theirs > 0 &&
+                TakeOwnerLife(*o, theirs, writes, "ours now")) {
                 // (a boss: one boss death for everyone held its copy at 1, or its own hits lowered it)
-            } else if (o != nullptr && handed->state.life && o->life &&
-                handed->state.life->life < *o->life) {
-                write(*o, handed->state.life->life);
-                if (handed->state.life->life <= 0) {
+            } else if (o != nullptr && handed->state.life && o->life && IsBossOrPart(o->name) && theirs <= 0 &&
+                       theirs < *o->life) {
+                // A boss down to 0 (dead in the old owner's game, or our own unsent hit ends it): never written,
+                // and only the owner's life 0 is a death. Its own Life step keeps the game's stops and runs its
+                // own death here, given once (as a dying copy's in Tick).
+                if (!o->death_given) {
+                    LifeWrite lower{o->address, theirs, *o->life - theirs, std::nullopt};
+                    lower.direct = true;
+                    writes.push_back(lower);
+                    o->death_given = true;
+                }
+                notes_.emplace_back("ours now at life 0 (" + std::to_string(*o->life) + " > " +
+                                    std::to_string(theirs) + "): lowered through its own Life step: " + o->name);
+                o->hurt_left = 0;
+                o->hurt_until = 0;
+            } else if (o != nullptr && handed->state.life && o->life && theirs < *o->life) {
+                write(*o, theirs);
+                if (theirs <= 0) {
                     // Killed in the old owner's game as it came to us.
                     DeadByWrite(*o, handed->epoch, now_us, send, "dead in the hand-over");
                 }
@@ -3051,8 +3351,43 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
     }
 }
 
+void Sync::TestOwnHit(std::uint64_t address, std::uint64_t now_us) {
+    const auto it = objects_.find(address);
+    if (it != objects_.end()) {
+        it->second.test_own_hit_until = now_us + kTestOwnHitUs;
+    }
+}
+
+bool Sync::TestStun(std::string_view name, const std::optional<proto::Vec3>& near, std::uint8_t self) {
+    Object* best = nullptr;
+    float best_d2 = 0.0f;
+    for (auto& [address, o] : objects_) {
+        const auto own = owners_.find(o.id);
+        if (o.name != name || !IsBossOrPart(o.name) || own == owners_.end() || own->second.player == 0 ||
+            own->second.player == self) {
+            continue;
+        }
+        float d2 = 0.0f;
+        if (near) {
+            for (std::size_t i = 0; i < 3; ++i) {
+                const float d = o.position[i] - (*near)[i];
+                d2 += d * d;
+            }
+        }
+        if (best == nullptr || d2 < best_d2) {
+            best = &o;
+            best_d2 = d2;
+        }
+    }
+    if (best == nullptr) {
+        return false;
+    }
+    best->stun_due = true;
+    return true;
+}
+
 bool Sync::TakeOwnerLife(Object& o, std::int32_t owner_life, std::vector<LifeWrite>& writes, std::string_view why) {
-    if (!IsBoss(o.name) || !o.life || owner_life <= 0 || owner_life == *o.life) {
+    if (!IsBossOrPart(o.name) || !o.life || owner_life <= 0 || owner_life == *o.life) {
         return false;
     }
     if (owner_life > *o.life) {
@@ -3088,10 +3423,39 @@ void Sync::KeepBossLives(std::uint8_t self, std::vector<LifeWrite>& writes) {
         if (own == owners_.end() || own->second.player == self || own->second.player == 0) {
             continue;  // ours (our game judged it all along) or no owner known
         }
-        if (o.dead_at != 0 || o.owner_life_zero || !o.owner_life) {
-            continue;  // its owner said it died (it dies here too), or no life of the owner's heard
+        if (o.dead_at != 0 || o.owner_life_zero || !o.owner_life || o.death_given) {
+            continue;  // its owner said it died (it dies here too), its death was given here, or no owner's life heard
         }
-        TakeOwnerLife(o, *o.owner_life, writes, "the session ended: our copy");
+        // Our own hits of the last kDamageSumUs (summed, never sent now) are not in the owner's life: they come
+        // off it, as at a hand-over (H3), or the session's end gives that life back.
+        if (!IsBossOrPart(o.name)) {
+            continue;  // an enemy copy is never healed (the native rule)
+        }
+        std::int32_t life = *o.owner_life;
+        if (o.hit_sum > 0) {
+            notes_.emplace_back("the session ended with a hit of ours not sent yet (" + std::to_string(o.hit_sum) +
+                                "): taken off its owner's life " + std::to_string(life) + ": " + o.name);
+            life = std::max(0, life - o.hit_sum);
+            o.hit_sum = 0;
+            o.hit_place.reset();
+            o.hit_record.reset();
+        }
+        if (life > 0) {
+            TakeOwnerLife(o, life, writes, "the session ended: our copy");
+            continue;
+        }
+        // Our unsent hit ends it: the boss is ours alone now, so this is its death, never a write. Its own Life
+        // step takes the rest and runs its own death, given once (as the hand-over's boss at 0).
+        if (o.life && *o.life > 0 && !o.death_given) {
+            LifeWrite lower{o.address, 0, *o.life, std::nullopt};
+            lower.direct = true;
+            writes.push_back(lower);
+            o.death_given = true;
+            notes_.emplace_back("the session ended: our copy at life 0 (" + std::to_string(*o.life) +
+                                " > 0): lowered through its own Life step: " + o.name);
+            o.hurt_left = 0;
+            o.hurt_until = 0;
+        }
     }
 }
 
@@ -3115,7 +3479,7 @@ void Sync::DeadByWrite(Object& o, std::uint16_t epoch, std::uint64_t now_us,
 
 void Sync::Lower(Object& o, std::int32_t life, std::uint64_t now_us,
                  std::vector<LifeWrite>& writes, std::uint8_t hitter,
-                 const std::optional<proto::Vec3>& hit_at) {
+                 const std::optional<proto::Vec3>& hit_at, const std::optional<proto::HitRecord>& record) {
     if (!o.life) {
         return;
     }
@@ -3134,6 +3498,7 @@ void Sync::Lower(Object& o, std::int32_t life, std::uint64_t now_us,
     // count it as our hit. o.life stays as read until then.
     LifeWrite w{o.address, life, from - life, std::nullopt};
     w.hit_at = hit_at;
+    w.record = record;
     {
         std::lock_guard lock(inbox_mutex_);
         const auto place = places_.find(hitter);
@@ -3304,7 +3669,7 @@ void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
         // Issue 35 (4): the owner's hide is not ours to play (IsHideAnimation).
         // The copy shows its own animation until its own game kills it
         // (OBJECT_REMOVE dead, the Life step) or deletes it kDeadGraceUs later.
-        if (o.reacts && !IsBoss(o.name) && IsHideAnimation(wanted->name)) {
+        if (o.reacts && !IsBossOrPart(o.name) && IsHideAnimation(wanted->name)) {
             continue;
         }
         // Just hit here: the copy's own game shows the hit. The owner's

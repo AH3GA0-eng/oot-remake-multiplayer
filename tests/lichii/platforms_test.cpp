@@ -324,7 +324,7 @@ TEST_CASE("platforms: a late tick older than one we have is not used") {
     CHECK(b.sync.OwnerOf(kHash, 2, time + 10'000'000) == 1);
 }
 
-TEST_CASE("platforms: when the owner goes quiet the next game takes over, and a later lower number follows") {
+TEST_CASE("platforms: when the owner goes quiet the next game takes over, and a lower number that comes back leads") {
     Game a;
     Game b;
     a.self = 1;
@@ -341,14 +341,16 @@ TEST_CASE("platforms: when the owner goes quiet the next game takes over, and a 
     CHECK(b.sync.OwnerOf(kHash, 2, time + 10'000'000) == 2);
     CHECK_FALSE(b.sent.empty());
     b.sent.clear();
-    // A comes back with its clock far off: B has sent the longest, A follows B.
+    // A comes back with its clock far off: the lowest number leads in every game (as PR 279's pause leader),
+    // so B follows A and A writes nothing.
     Game a2;
     a2.self = 1;
     a2.clock = 50.0f;
     Play(a2, b, time, 4000);
-    CHECK(a2.sync.OwnerOf(kHash, 1, time + 10'000'000) == 2);
+    CHECK(a2.sync.OwnerOf(kHash, 1, time + 10'000'000) == 1);
+    CHECK(b.sync.OwnerOf(kHash, 2, time + 10'000'000) == 1);
     CHECK(std::fabs(a2.clock - b.clock) < PlatformSync::kDriftS + 0.06f);
-    CHECK(b.sync.Writes() == 0);
+    CHECK(a2.sync.Writes() == 0);
 }
 
 TEST_CASE("platforms: two that begin together: the lower number keeps it") {

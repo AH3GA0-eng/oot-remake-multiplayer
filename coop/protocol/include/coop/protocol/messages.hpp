@@ -23,7 +23,11 @@ namespace coop::protocol {
 // 2: OBJECT_SPAWN of a placed id; 3: TIME_OF_DAY; 4: the messages
 // (types 28 to 39) and the server sending HANDOVER_ASK; 9: the join password
 // (JOIN_CHALLENGE, JOIN_PROOF, REFUSED bad_password).
-inline constexpr std::uint16_t kProtocolVersion = 12;  // 12: DAMAGE's hit place (boss-intro, 0.11)
+// 12: DAMAGE's hit place (boss-intro, 0.11); 13: the host's approval of
+// joiners (JOIN_KNOCK, JOIN_ALLOW, REFUSED not_let_in; issue 261).
+// 14: the hit that happened (HitRecord) in DAMAGE and in the owner's samples (component 21), so every
+// game's enemy takes the real hit through its own damage step (0.11.5, every hit shows on every screen).
+inline constexpr std::uint16_t kProtocolVersion = 14;
 inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr std::uint8_t kMaxPlayers = 16;  // protocol 11; 4 before
 
@@ -157,6 +161,11 @@ enum class MessageType : std::uint16_t {
   link_sound = 500,  // 500 to 509: the other Links' sounds (docs/protocol.md, "Link sounds")
   boss_scene = 520,  // 520 to 524: boss intro and death cutscenes (docs/protocol.md, "Boss cutscenes")
   boss_heart = 521,
+  join_knock = 525,  // 525 to 529: the host lets joiners in (docs/protocol.md, "Host approval")
+  join_allow = 526,
+  bomb_take = 530,  // 530 to 534: a bomb changes hands (docs/protocol.md, "Bomb hand-over")
+  bomb_answer = 531,
+  bomb_share = 532,
 };
 
 // PLAYER_SAMPLE component ids.
@@ -256,6 +265,9 @@ enum class RefuseReason : std::uint8_t {
   // The host banned this player for the rest of the session: as kicked, and
   // a HELLO with that name or from that address is refused with this.
   banned = 8,
+  // Protocol 13, host approval (docs/protocol.md "Host approval"): the host
+  // did not let this player in (it said no, did not answer in time, or left).
+  not_let_in = 9,
   // Never sent: the game's own refusal of a server that did not encrypt
   // although the game has a join password (docs/protocol.md "Encrypted
   // traffic"), so nobody on the path can stand in for a no-password server.
@@ -776,6 +788,7 @@ enum class ObjectComponent : std::uint16_t {
   state = 18,
   slots = 19,  // protocol 10, issue 150: a boss's other AS slots (below)
   bsa = 20,    // native boss sync: a boss's brain and action verbs (BossBsa below)
+  hit = 21,    // protocol 14: the hit the owner's game took (ObjectHit below)
 };
 
 struct ObjectLife {
@@ -845,6 +858,22 @@ struct BossBsa {
   bool operator==(const BossBsa&) const = default;
 };
 
+// Protocol 14 (every hit shows on every screen): the incoming hit an enemy's Life component took, as the
+// game's own damage step read it (Life +0x240..+0x2d8, 38 words: attacker, hit id, present, attack kind and
+// its parameters, the hit's place at +0x27c, the attacker's place at +0x2a0). The sender zeroes the attacker
+// pointer (words 0 and 1); the receiver puts its own attacker, a fresh hit id and its present flag in, so its
+// game judges the same hit (weapon, element, place) through its own damage step. Passed on unread otherwise.
+inline constexpr std::size_t kHitRecordWords = 38;
+using HitRecord = std::array<std::uint32_t, kHitRecordWords>;
+
+// Component 21: the newest hit the owner's game took on this object, sent in its samples for a short
+// while after (they may be lost); seq is the owner's own hit count for it, from 1, so each is replayed once.
+struct ObjectHit {
+  std::uint32_t seq = 0;
+  HitRecord record{};
+  bool operator==(const ObjectHit&) const = default;
+};
+
 // The components of OBJECT_SAMPLE, OBJECT_SPAWN and HANDOVER_STATE. time is
 // always sent; the others when the sender has them. Floats must be finite.
 struct ObjectState {
@@ -858,6 +887,7 @@ struct ObjectState {
   std::optional<std::uint8_t> state;  // object_state bits
   std::optional<std::vector<SlotAnimation>> slots;  // issue 150: bosses only
   std::optional<BossBsa> bsa;                       // native boss sync: bosses only
+  std::optional<ObjectHit> hit;                     // protocol 14: the owner's newest hit taken
   bool operator==(const ObjectState&) const = default;
 };
 
@@ -972,6 +1002,9 @@ enum class DamageCause : std::uint8_t {
   hookshot = 10,
   hammer = 11,
   magic = 12,
+  // The hitter's copy of an enemy whose life cannot be read died in its game (its own death
+  // animation as it left): no life drop to send, so the kill itself goes (amount 1).
+  killed = 13,
 };
 
 // DAMAGE: life lost on a copy, for the owner to take off. Amount 0 or more.
@@ -986,6 +1019,10 @@ struct Damage {
   // point is a headshot check against her Eyelid_Down bone, so the owner's replay lands there, not at her feet.
   // Optional, after position on the wire (protocol 12).
   std::optional<Vec3> hit_at{};
+  // Protocol 14: the hit as the hitter's game took it on its copy (its newest in this DAMAGE), so the owner's
+  // game takes the same hit (bomb, arrow, fire, hammer ...) instead of a stand-in sword hit. Optional, after
+  // hit_at (or after position when there is no hit_at) on the wire.
+  std::optional<HitRecord> hit_record{};
   bool operator==(const Damage&) const = default;
 };
 
@@ -1719,6 +1756,78 @@ struct LobbyResult {
   bool operator==(const LobbyResult&) const = default;
 };
 
+// Host approval (protocol 13, docs/protocol.md "Host approval"): with the
+// host's setting on, the server holds a joiner who gave the right join
+// password until the host lets it in or says no, or its time runs out (60 s
+// by default). A JOIN_KNOCK's wait is at most this.
+inline constexpr std::uint16_t kMaxKnockWaitSeconds = 600;
+
+// JOIN_KNOCK flag bits. Unknown bits are kept.
+namespace join_knock {
+// The host let this player key in before in this session.
+inline constexpr std::uint8_t known = 1u << 0;
+}  // namespace join_knock
+
+// JOIN_KNOCK, server only. To the host: `nickname` asks to join; answer with
+// JOIN_ALLOW and `knock` within `wait_s` seconds. To the held joiner itself
+// (before WELCOME, its own name): its join waits for the host for up to
+// `wait_s` seconds. `wait_s` 0, to the host only: that knock is over (the
+// joiner left, or the time ran out).
+struct JoinKnock {
+  std::uint32_t knock = 1;          // not 0
+  std::uint16_t wait_s = 60;        // 0 to kMaxKnockWaitSeconds
+  std::uint8_t flags = 0;           // join_knock bits
+  std::string nickname;             // 1 to kMaxNicknameChars, as HELLO's
+  bool operator==(const JoinKnock&) const = default;
+};
+
+// JOIN_ALLOW, the host to the server: its answer to the knock `knock`.
+// remember: allowed, that player key gets in without asking from now on;
+// not allowed, it is turned away without asking (as a ban). Both until the
+// session ends.
+struct JoinAllow {
+  std::uint32_t knock = 1;  // not 0
+  bool allow = false;
+  bool remember = false;
+  bool operator==(const JoinAllow&) const = default;
+};
+
+// Native puppets phase 2 (docs/native-puppets.md, "Lift a bomb, and stash
+// it"; docs/protocol.md, "Bomb hand-over"). BOMB_TAKE (client only): our Link
+// lifted the copy of another player's made bomb; give it to us. The server
+// asks its owner (HANDOVER_ASK); a yes reaches us as HANDOVER_STATE (the fuse
+// left in it), a no as BOMB_ANSWER.
+struct BombTake {
+  ObjectId id;
+  std::uint16_t epoch = 0;  // the owner's epoch as we last had it
+  bool operator==(const BombTake&) const = default;
+};
+
+// BOMB_ANSWER (server only): why a BOMB_TAKE was refused. Sent only to the
+// asker.
+enum class BombRefusal : std::uint8_t {
+  busy = 1,        // another player's take (or a hand-over) is in flight
+  not_a_bomb = 2,  // unknown, not a made Item_Bomb, another scene, or ours already
+  stale = 3,       // the epoch is not the owner's now
+  kept = 4,        // the owner did not answer (its game keeps the bomb)
+};
+inline constexpr std::uint8_t kBombRefusalMax = 4;
+// BOMB_SHARE (client only): our game takes part in the bomb hand-over (its
+// switch is on). Sent after WELCOME and every few seconds; the server asks an
+// owner for its bomb, and hands on a bomb whose owner left, only with games
+// that said so.
+struct BombShare {
+  bool on = true;
+  bool operator==(const BombShare&) const = default;
+};
+
+struct BombAnswer {
+  ObjectId id;
+  std::uint16_t epoch = 0;  // the owner's epoch now
+  BombRefusal refusal = BombRefusal::busy;
+  bool operator==(const BombAnswer&) const = default;
+};
+
 // Split screen (docs/protocol.md, "Local players"): the extra players of one
 // game, seats 1 to kMaxLocalSeats (seat 0 is the connection's own player).
 inline constexpr std::uint8_t kMaxLocalSeats = 3;
@@ -1777,7 +1886,8 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              DbnoMode, DbnoStatus, DbnoRevive, DbnoThreat, Difficulty, VoiceFrame,
                              ModList, ModSettings, LobbyAction, LobbyMutes, LobbyResult,
                              LocalJoin, LocalJoined, LocalLeave, LocalSample, LocalMessage, LinkSound,
-                             BossScene, BossHeart, PlayerLook, SwitchState>;
+                             BossScene, BossHeart, PlayerLook, SwitchState, JoinKnock, JoinAllow,
+                             BombTake, BombAnswer, BombShare>;
 
 MessageType type_of(const Message& message);
 

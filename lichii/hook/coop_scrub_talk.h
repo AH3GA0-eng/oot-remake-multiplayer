@@ -97,12 +97,12 @@ private:
 // deleted it) the flag lands, and the room graph deletes the scrub as in the
 // first game. A scrub we have not beaten yet waits the same way: we may beat
 // it and talk to it ourselves; our own talk sets the same flag.
-// The root guard (review of scrub-sale): a scrub whose own event performer is
-// bound into a running event (CoopEventMember::InEvent, event-copy's check)
+// The root guard (review of scrub-sale): a scrub that is an event member in
+// our Link's event (CoopEventMember::InSameEvent, the game's own member test)
 // holds its flags at any distance. A Deku Scrub's talk starts when a nut it
 // spat is deflected back into it (Talk_Deku_0N_Attacked), so Link can stand
 // far from it, and event_running has not been seen during a scrub's event:
-// the objects walk reads the performer for these scrubs whatever
+// the objects walk reads the event member for these scrubs whatever
 // event_running says.
 //
 // Read from the romfs (Banc/InsideTheDekuTree/InsideTheDekuTree_Static,
@@ -167,7 +167,7 @@ public:
     static constexpr std::uint64_t kFreshUs = 1'500'000;  // a walk is ~4 a second; it may stop
 
     // One scrub of the walk: its placement hash, its distance to our Link and
-    // whether its own performer is bound into a running event (nullopt: not read).
+    // whether it is an event member in our Link's event (nullopt: not read).
     void See(std::uint64_t hash, float distance_m, std::uint64_t now_us,
              std::optional<bool> in_event = std::nullopt) {
         const NearScrub* s = FindNearScrub(hash);

@@ -41,19 +41,61 @@ const Placement* Nearest(std::string_view scene, std::string_view name, const st
 // Driven by its own logic (its placement's `why` is not empty): never written from outside.
 bool Driven(std::string_view scene, std::string_view name, const std::array<float, 3>& at);
 
-// Its logic type has the bool output RideOnPlayer (the generated list): CoopLiftRide drives it.
+// Its logic type has the bool output RideOnPlayer (the generated list): CoopLiftRide drives it. Taken by the logic,
+// whatever the name: the Fire Temple's RiseFloor_A_02 and Ganon's Castle's ElevatedFloor_A_01 run the Forest
+// Temple elevator's logic and are no CoopPlatforms::IsDriver name.
 bool RiderName(std::string_view name);
+
+// A placement group with a saved flag (fable-g3-objects, issue 249): actors that share a Phive.Placement.GroupGUID
+// with a GroundControlActor_ResidentMoveTo. The controller has no input in the room graph; it moves the whole
+// group (a water plane, a cage, a hanging floor, enemy air walls) when the flag the scene's PlgGdTable gives the
+// group changes. So the flag is the group's only input: co-op shares the flag (coop_dungeon.cpp) and never writes
+// a member's place. A test holds every dungeon group's flag to the shared list or to the list of flags left out
+// on purpose (docs/dungeon.md, "Movers with a group flag").
+struct GroupFlag {
+    std::string_view scene;
+    std::string_view flag;
+    bool is_int;
+    std::array<float, 3> place;  // the group's controller
+    std::string_view moves;      // the other members' names
+};
+std::span<const GroupFlag> GroupFlags();
 
 // The switch output plugs a room object reads (through gates, timers, delays and module inputs) that no CoopEyeSwitch
 // line covers: the timed switches. SWITCH_STATE carries their presses (coop_switch_share.h). Generated with
 // room_objects.py --eye-switches coop_eye_switch.cpp (its third table).
+//
+// g3-objects (A #44): some of these plugs also raise an event asker (a CoopEyeSwitch line whose plug the switch's AI
+// rewrites, so CoopEyeSwitch does not drive it). Holding such a plug in a follower would start the follower's own
+// copy of the gimmick event (owner 07:40 UTC 2026-11-17: result only, no replay). So such a line names its `guard`:
+// the shared flags ('+'-joined) that stop every asker it raises (a flag that deletes the asker, or one its trigger
+// reads negated). It is held only while all of them are on in our game: our asker can no longer fire, and the hold
+// runs the room objects only (Jabu-Jabu room 1's shutters, the Deku Tree room D lifts, GTG room 5's chest, Spirit
+// room 19's mirror). A plug whose asker no shared flag stops is not in the table (its result reaches the follower's
+// switch through a shared flag on its own ON input: coop_room_objects.cpp lists them).
+// A guard written "load:<flag>" is a flag the room reads only when it loads (a gate with UpdateOnce 1): on at the
+// load, it stopped our asker for this visit; landing live (the other player's press) stops nothing, our asker still
+// exists. Such a guard counts only when it was on at our room's load (CoopSwitchShare::Sharer latches it at the
+// switch's first sight): the Deku Tree room D lifts, whose compass asker RoomD_StepSwitch_On_01 deletes only at a load
+// (Room_D_Prefab_b6c3). Mid-visit the follower's lifts depend on our asker's EventBool: row 98(2) sets it
+// (coop_event_result.h), but the asker's own AI writes it 0 every tick until its trigger rises, so whether the room
+// sees it is not proven (deku-platforms-b21: in big-run-0115 only the camera played in the follower's game).
 struct SwitchPlug {
     std::string_view scene;
     std::string_view name;
     std::array<float, 3> place;
     std::string_view plug;
+    std::string_view guard = {};  // "" no asker; else the flags that must all be on in our game before a hold
 };
 std::span<const SwitchPlug> SwitchPlugs();
+inline constexpr std::string_view kLoadGuard = "load:";
+struct GuardFlag {
+    std::string_view flag;
+    bool at_load = false;  // written "load:<flag>": read by the room only when it loads
+    bool operator==(const GuardFlag&) const = default;
+};
+// A line's guard flags, split ("" none), the "load:" mark taken off into at_load.
+std::vector<GuardFlag> GuardFlags(const SwitchPlug& line);
 // The lines of a live switch `name` at `at` in `scene` (its placement within kSwitchMatchM).
 inline constexpr float kSwitchMatchM = 1.5f;
 std::vector<const SwitchPlug*> SwitchPlugsOf(std::string_view scene, std::string_view name,

@@ -25,6 +25,21 @@ constexpr std::uint32_t kStep04 = 0x27f660feu;
 constexpr std::uint32_t kStep05 = 0x5cde171fu;
 constexpr std::uint32_t kStep06 = 0x21d6fa38u;
 constexpr std::uint32_t kComplete = 0x4c0a63f4u;
+constexpr std::uint32_t kStep00 = 0x98635badu;
+constexpr std::uint32_t kStep05_01 = 0xec4c4a24u;
+constexpr std::uint32_t kStep05_02 = 0x1281a968u;
+constexpr std::uint32_t kStep05_03 = 0x4236a72eu;
+constexpr std::uint32_t kStep07 = 0xee867c27u;
+constexpr std::uint32_t kStep07_pre00 = 0x3ef71c9du;
+constexpr std::uint32_t kStep07_00 = 0xfb707ef9u;
+constexpr std::uint32_t kStep07_1 = 0x23c23c52u;
+constexpr std::uint32_t kStep07_1_Safety = 0x144bdea0u;
+constexpr std::uint32_t kStep07_2 = 0xb6355e0cu;
+constexpr std::uint32_t kStep08 = 0xa594ed54u;
+constexpr std::uint32_t kStep08_01 = 0xd677164bu;
+constexpr std::uint32_t kStep09 = 0x5daeca58u;
+constexpr std::uint32_t kStep09_01 = 0xd2f8add5u;
+constexpr std::uint32_t kStep10 = 0x0be69809u;
 
 // Shared story flags (coop_story.cpp).
 constexpr std::uint32_t kOwlToCastle = 0x98bf10c1u;  // HavePlayedEvent.HyruleField_Goto_HyruleCastle_Kaepora
@@ -33,6 +48,10 @@ constexpr std::uint32_t kTalonWoke = 0xb9d7d709u;    // HavePlayedEvent.Dm_HrlCa
 constexpr std::uint32_t kImpaCame = 0x8e15ffd6u;     // HavePlayedEvent.Dm_HrlCastle_0060
 
 constexpr std::uint32_t kGateOpen = 0x19898d14u;     // Npc_Hylia_Soldier_003_GateOpen
+
+// Shared mid-boss death records (coop_dungeon.cpp kFlags).
+constexpr std::uint32_t kDarkLinkDeath = 0x8341428au;  // WaterTemple_DarkLink_Death
+constexpr std::uint32_t kIronKnuckleDefeat = 0xe9547a14u;  // Enemy_MiddleBoss_IronKnuckle_Nabooru_BossDefeat
 
 // Get_StoneOfFire's steps (RSDB Challenge, in order).
 constexpr std::uint32_t kKakarikoVillageNpc = 0x4011c4aau;
@@ -61,6 +80,10 @@ constexpr std::uint32_t kStoneOfFire = 0x1002b466u;
 constexpr std::uint32_t kStoneOfFireName = 0xe4c584e6u;  // the challenge: Get_StoneOfFire
 constexpr std::uint32_t kStoneOfWater = 0x5bca02a6u;      // Enum Step_Get_StoneOfWater
 constexpr std::uint32_t kDoorOfTimeName = 0xe8dafe6cu;    // the challenge: DoorOfTime
+constexpr std::uint32_t kSageOfWater = 0x560a64afu;       // Enum Step_SageOfWater
+constexpr std::uint32_t kSageOfWaterName = 0x5cdfdebau;   // the challenge: SageOfWater
+constexpr std::uint32_t kSageOfSpirit = 0x19189e9du;      // Enum Step_SageOfSpirit
+constexpr std::uint32_t kSageOfSpiritName = 0x6371358du;  // the challenge: SageOfSpirit
 
 constexpr std::array kGotoSteps{kNotReady, kReady,     kStep01,    kStep02, kStep02_01,
                                 kStep03,   kStep03_01, kStep03_02, kStep04, kComplete};
@@ -87,6 +110,15 @@ constexpr std::array kFireSteps{kNotReady,
                                 kBossBattle,
                                 kEscapeDungeon,
                                 kComplete};
+// The Enums' RawValues are the RSDB Challenge rows' steps in this order.
+constexpr std::array kWaterSteps{kNotReady, kReady,    kStep00,   kStep01,          kStep03,
+                                 kStep04,   kStep05,   kStep06,   kStep07,          kStep07_00,
+                                 kStep07_1, kStep07_1_Safety,     kStep07_2,        kStep08,
+                                 kComplete};
+constexpr std::array kSpiritSteps{kNotReady,  kReady,     kStep01,    kStep02,       kStep03,
+                                  kStep04,    kStep05,    kStep05_01, kStep05_02,    kStep05_03,
+                                  kStep06,    kStep07,    kStep07_pre00, kStep07_00, kStep08,
+                                  kStep08_01, kStep09,    kStep09_01, kStep10,       kComplete};
 
 // Goto_HyruleCastle: the owl at the field entrance (event flow
 // Goto_HyruleCastle_Kaepora_00) gives Step02; Talon woken (Dm_HrlCastle_0020)
@@ -131,6 +163,30 @@ constexpr std::array kFireRules{
     Rule{kGateOpen, kKakarikoVillageLetter, "Zelda's Letter shown at the Kakariko gate"},
 };
 
+// Mid-bosses (the #241 shape, for a quest step): a mid-boss's death moves an
+// unshared quest (coop_quests.cpp keeps SageOfWater and SageOfSpirit each
+// game's own) in the dying game only, while its death record is shared. Dark
+// Link: Water Temple Room 22's logic (Logic/WaterTemple_Level_Room_22_Prefab_84cd)
+// sets SageOfWater Step07_00 as the fight starts and Step07_1 at his death,
+// and Room 23 (the way to Morpha) reads SageOfWater_IsAfter_Step07_1_Exp. The
+// Iron Knuckle (Nabooru): its death setting SageOfSpirit_MiddleBossEnd sets
+// SageOfSpirit Step08_01; Room 33 reads SageOfSpirit_IsAfter_Step08_Exp and
+// Room 34 (the way to Twinrova) moves on from Step08_01. A game that was not
+// in the fight finds the room cleared (the shared record) and never plays the
+// death, so its quest stayed one step short of the boss. Every other mid-boss
+// death or room that sets a quest step sets a shared one (Big Octo's room:
+// Get_StoneOfWater), which the max rule already carries. Checked in every
+// event flow (EventExecuteProgressChallengeStep) and room logic
+// (TriggerChallengeSetStep): the unshared quests' other steps come from
+// talks, arrivals, items (the Lens of Truth's room in the Bottom of the Well)
+// and the dungeon bosses, whose steps are in their beaten sets (coop_boss_beaten).
+constexpr std::array kWaterRules{
+    Rule{kDarkLinkDeath, kStep07_1, "Dark Link beaten (Water Temple Room 22)"},
+};
+constexpr std::array kSpiritRules{
+    Rule{kIronKnuckleDefeat, kStep08_01, "the Iron Knuckle (Nabooru) beaten (SageOfSpirit_MiddleBossEnd)"},
+};
+
 constexpr std::array kQuests{
     // Goto_HyruleCastle only after our own Deku Tree (Step01 comes from the
     // escape from the dungeon): never for a game still before it.
@@ -142,11 +198,23 @@ constexpr std::array kQuests{
           kDoorOfTimeName, 4},
     // From KakarikoVillageNpc (index 2) on: set by our own Impa.
     Quest{kStoneOfFire, "Get_StoneOfFire", kFireSteps, kFireRules, 2, 0, 0, kStoneOfFireName, 2},
+    // From Step07 (index 8, the game's own Ruto scene in the temple,
+    // WaterTemple_RutoDemo): a game that has not got that far keeps its own
+    // story and is raised once it gets there. The manager from Step07_1
+    // (index 10) on: Room 23's logic reads it.
+    Quest{kSageOfWater, "SageOfWater", kWaterSteps, kWaterRules, 8, 0, 0, kSageOfWaterName, 10},
+    // From Step07 (index 11, Nabooru taken away: the Iron Knuckle is her). The
+    // adult's arrival (Dm_SY_BancChangeArrive FromColossus_ArriveSpiritTemple)
+    // sets Step07_00 only from Step07 or Step07_pre00 (its flow asks the step
+    // first), so a game raised to Step08_01 stays there; a game still at
+    // Step07..Step08 is raised from any of them. The manager from Step08_01
+    // (index 15) on.
+    Quest{kSageOfSpirit, "SageOfSpirit", kSpiritSteps, kSpiritRules, 11, 0, 0, kSageOfSpiritName, 15},
 };
 
 // The steps the manager is never moved into (RSDB Challenge: IsBossBattle or
 // IsMiniGame), as {challenge, step}: Murmur3 of the challenge's and step's names.
-constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 19> kHeld{{
+constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 27> kHeld{{
     {0xe8dafe6cu, kStep04},      // DoorOfTime Step04
     {0xe873ce22u, 0x085d18f0u},  // Get_Epona GambleRacePlaying
     {kStoneOfFireName, kBossBattle},  // Get_StoneOfFire BossBattle
@@ -166,6 +234,14 @@ constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 19> kHeld{{
     {0x5a2be4b5u, 0x5daeca58u},  // SageOfForest Step09
     {0x7caec227u, 0x50d665b4u},  // SubEvent_GetStormSong BeforeBossRoom
     {0x7caec227u, 0x9bddd011u},  // SubEvent_GetStormSong step04
+    {kSageOfWaterName, kStep07_00},  // Dark Link's fight: his own death moves it on
+    {kSageOfWaterName, kStep07_1_Safety},
+    {kSageOfWaterName, kStep07_2},  // Morpha
+    {kSageOfWaterName, kStep08},
+    {kSageOfSpiritName, kStep08},  // the Iron Knuckle's fight
+    {kSageOfSpiritName, kStep09},
+    {kSageOfSpiritName, kStep09_01},  // Twinrova
+    {kSageOfSpiritName, kStep10},
 }};
 
 // ChallengeMgr's layout (coop_quest.h).

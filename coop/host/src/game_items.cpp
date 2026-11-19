@@ -780,7 +780,7 @@ void OcarinaEquip::want_locked(std::string_view name) {
   next_ = 0;
 }
 
-void OcarinaEquip::arm(std::optional<std::string_view> live, bool link_known, bool busy) {
+void OcarinaEquip::arm(const std::optional<std::string_view>& live, bool link_known, bool busy) {
   std::lock_guard lock(mutex_);
   const bool reads = wanted_ && live && *live == *wanted_;
   seen_ = reads ? std::min(seen_ + 1, kSettleFrames) : 0;

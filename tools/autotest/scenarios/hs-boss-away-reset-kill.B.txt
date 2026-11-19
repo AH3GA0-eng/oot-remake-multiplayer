@@ -1,0 +1,28 @@
+# hs-boss-away-reset, B part 1 (see hs-boss-away-reset.steps.txt): B kills Gohma alone and walks to the centre.
+warp InsideTheDekuTree Entrance
+wait 2400
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_ShutIn 0
+setflag HavePlayedEvent.Dm_Deku_BossIn 0
+setflag HavePlayedEvent.Dm_Deku_BossOut 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossArea_Warp 0
+setflag InsideTheDekuTree_BossArea_ShutIn 0
+setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
+setflag Gohma_IsLightingForBattle 0
+setflag Gohma_DefeatBoss 0
+wait 120
+place -12.0 48.5 66.5
+wait 600
+goto -4.0 67.5 1.0 600
+goto 6.7 67.6 1.5 600
+mark b-in
+wait 2400
+mark b-fight
+kill Enemy_DungeonBoss_Gohma
+wait 120
+mark b-kill
+wait 2400               # her death and its event
+goto 7.5 67.2 1.5 900   # the room's centre, where the heart container falls
+wait 600
+goto 9.0 67.2 1.5 300
+wait 900
+mark b-pickup

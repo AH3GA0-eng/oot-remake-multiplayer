@@ -93,7 +93,7 @@ struct World {
             }
             if (at == fail_at) return 3;
             // generate <preset or string> <seed> <out.ootrr> [--spoiler <file>]: the seed file (JSON, its "settings"
-            // the OOTRR1- string) and, when asked, the spoiler log, as OOTRR 0.6.1 and 0.6.2 write them.
+            // the OOTRR1- string) and, when asked, the spoiler log, as OOTRR 0.6.1, 0.6.2 and 0.7.0 to 0.7.3 write them.
             if (args.size() >= 4 && args[0] == "generate") {
                 const std::string s = args[1].rfind("OOTRR", 0) == 0 ? args[1] : "OOTRR1-P" + args[1];
                 Put(CoopMods::FromUtf8(args[3]), "{\n  \"format\": \"ootrr-seed\",\n  \"seed\": \"" + args[2] +
@@ -437,6 +437,7 @@ TEST_CASE("rando: off by default - a fresh mods folder builds nothing and switch
 TEST_CASE("rando: off by default - a seed left from an older kit is switched off") {
     World w;
     Put(w.mods / "randomizer-OLD1" / kSeedFile, "OLD1\n");
+    Put(w.mods / "randomizer-OLD1" / kPresetFile, "default\n");  // our kit built it
     Put(w.mods / "randomizer-OLD1" / "romfs" / "System" / "a.bin", "seeded");
     CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
     loader.Start();
@@ -446,6 +447,117 @@ TEST_CASE("rando: off by default - a seed left from an older kit is switched off
     rando.Wait();
     CHECK_FALSE(On(loader, "randomizer-OLD1"));
     CHECK(w.runs.empty());
+}
+
+TEST_CASE("rando: row 145 - a seed put in by hand is never switched off behind the player") {
+    // OOTRR's own output (a seed from OOTRR's page or another tool) has its coop-seed.txt but not our
+    // coop-rando.txt: not ours.
+    World w;
+    Put(w.mods / "randomizer-insanity" / kSeedFile, "INSANE\n");
+    Put(w.mods / "randomizer-insanity" / "romfs" / "System" / "a.bin", "seeded");
+    {
+        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+        loader.Start();
+        REQUIRE(On(loader, "randomizer-insanity"));
+        Rando rando(loader, w.Hooks());
+        rando.Start();
+        rando.Wait();
+        CHECK(On(loader, "randomizer-insanity"));  // our switch is 0, the player never turned it off
+        CHECK(w.runs.empty());
+        // The player turns our switch on and off again: that is asking for every seed off.
+        w.Settings(loader);
+        REQUIRE(loader.Set(kFolder, "seed", "MINE2"));
+        REQUIRE(loader.Set(kFolder, "on", "1"));
+        rando.Wait();
+        CHECK(On(loader, "randomizer-MINE2"));
+        CHECK_FALSE(On(loader, "randomizer-insanity"));  // one seed plays: the one our switch picks
+        REQUIRE(loader.Set(kFolder, "on", "0"));
+        rando.Wait();
+        CHECK_FALSE(On(loader, "randomizer-MINE2"));
+    }
+    {   // The next start, our switch still 0: the player switches the hand seed on in the Mods tab; it stays on.
+        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+        loader.Start();
+        REQUIRE(loader.SetOn("randomizer-insanity", true));
+        Rando rando(loader, w.Hooks());
+        rando.Start();
+        rando.Wait();
+        CHECK(On(loader, "randomizer-insanity"));
+        CHECK_FALSE(On(loader, "randomizer-MINE2"));
+    }
+}
+
+TEST_CASE("rando: row 145 - Decide switches a seed off only when asked, and a host's world gives it back") {
+    const std::vector<Built> built{{"randomizer-AB12", "AB12", "default", ""}, {"randomizer-hand", "HAND", "", ""}};
+    const std::vector<CoopMods::Row> both_on{RowNamed("randomizer-AB12", true), RowNamed("randomizer-hand", true)};
+    {   // our switch off, not just turned off: only our kit's seed
+        const Plan p = Decide({false, "AB12", ""}, built, both_on);
+        CHECK(p.off == std::vector<std::string>{"randomizer-AB12"});
+        CHECK(p.remember.empty());
+        CHECK_FALSE(p.forget);
+    }
+    {   // turned off by the player now: every seed
+        Want want{false, "AB12", ""};
+        want.turned_off = true;
+        const Plan p = Decide(want, built, both_on);
+        CHECK(p.off == std::vector<std::string>{"randomizer-AB12", "randomizer-hand"});
+        CHECK(p.remember.empty());
+    }
+    {   // a guest of a host without the randomizer: every seed off for its world, remembered
+        Want want{false, "AB12", ""};
+        want.guest = true;
+        const Plan p = Decide(want, built, both_on);
+        CHECK(p.what == Plan::Do::use);
+        CHECK(p.off == std::vector<std::string>{"randomizer-AB12", "randomizer-hand"});
+        CHECK(p.remember == p.off);
+    }
+    {   // a guest of a host with its own seed (built here): the others off, remembered
+        Want want{true, "AB12", "default"};
+        want.guest = true;
+        const Plan p = Decide(want, built, both_on);
+        CHECK(p.off == std::vector<std::string>{"randomizer-hand"});
+        CHECK(p.remember == p.off);
+    }
+    {   // alone again, our switch off: the seed put in by hand comes back on, ours stays off
+        Want want{false, "AB12", ""};
+        want.restore = {"randomizer-AB12", "randomizer-hand"};
+        const Plan p = Decide(want, built, {RowNamed("randomizer-AB12", false), RowNamed("randomizer-hand", false)});
+        CHECK(p.what == Plan::Do::use);
+        CHECK(p.on == std::vector<std::string>{"randomizer-hand"});
+        CHECK(p.off.empty());
+        CHECK(p.forget);
+    }
+    {   // alone again, our switch on: our seed is the one, the list is done with
+        Want want{true, "AB12", "default"};
+        want.restore = {"randomizer-hand"};
+        const Plan p = Decide(want, built, {RowNamed("randomizer-AB12", true), RowNamed("randomizer-hand", false)});
+        CHECK(p.what == Plan::Do::use);
+        CHECK(p.on.empty());
+        CHECK(p.off.empty());
+        CHECK(p.forget);
+    }
+}
+
+TEST_CASE("rando: row 145 - a guest's own seed put in by hand is back on after the host's world") {
+    World w;
+    Put(w.mods / "randomizer-hand" / kSeedFile, "HAND\n");
+    Put(w.mods / "randomizer-hand" / "romfs" / "System" / "a.bin", "seeded");
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    loader.Start();
+    Rando rando(loader, w.Hooks());
+    rando.Start();
+    rando.Wait();
+    REQUIRE(On(loader, "randomizer-hand"));
+    loader.SetHostValues(std::vector<CoopMods::SharedValue>{});  // a host without the randomizer
+    rando.Recheck();
+    rando.Wait();
+    CHECK_FALSE(On(loader, "randomizer-hand"));
+    CHECK(fs::is_regular_file(w.mods / kFolder / kHostOffFile));
+    loader.SetHostValues(std::nullopt);  // alone again
+    rando.Recheck();
+    rando.Wait();
+    CHECK(On(loader, "randomizer-hand"));
+    CHECK_FALSE(fs::exists(w.mods / kFolder / kHostOffFile));
 }
 
 TEST_CASE("rando: switching it on or off says to restart, in the chat and in the tab") {
@@ -1488,8 +1600,20 @@ TEST_CASE("rando: a control mod written before the Settings string gets it at th
     CHECK(has);
 }
 
+TEST_CASE("rando: a seed file that places shop items (coop_shop_sale.h)") {
+    // OOTRR 0.7.3 settings/seed.rs shops_json: an object keyed by location, written only when a slot is placed.
+    CHECK(SeedShops("{\n  \"format\": \"ootrr-seed\",\n  \"settings\": \"OOTRR1-AB\",\n  \"placements\": {},\n"
+                    "  \"shops\": {\n    \"KF Shop Item 1\": {\"item\": \"Boomerang\", \"price\": 20}\n  }\n}\n"));
+    CHECK(SeedShops("{\"shops\" :\r\n\t{ \"Market Bazaar Item 1\": {\"item\": \"Bombs (10)\", \"price\": 15, \"deal\": true}}}"));
+    CHECK_FALSE(SeedShops("{\"seed\": \"abc\", \"placements\": {}}"));
+    CHECK_FALSE(SeedShops("{\"shops\": {}}"));
+    CHECK_FALSE(SeedShops("{\"shops\": \"none\"}"));
+    CHECK_FALSE(SeedShops("{\"hint\": \"shops\"}"));
+    CHECK_FALSE(SeedShops(""));
+}
+
 TEST_CASE("rando: the settings string of a seed file") {
-    // As OOTRR 0.6.1 writes it (generate default abc); 0.6.2 writes the same layout (its settings/seed.rs is unchanged).
+    // As OOTRR 0.6.1 writes it (generate default abc); 0.6.2 and 0.7.0 to 0.7.3 write the same layout (settings/seed.rs is unchanged).
     CHECK(SeedSettings("{\n  \"format\": \"ootrr-seed\",\n  \"version\": 1,\n  \"generator\": \"ootrr-core 0.6.1\",\n"
                        "  \"seed\": \"abc\",\n  \"settings\": \"OOTRR1-EYAQCTABAFQACAMOJY\",\n  \"placements\": {}\n}\n") ==
           "OOTRR1-EYAQCTABAFQACAMOJY");
@@ -1591,4 +1715,94 @@ TEST_CASE("rando: a settings string seed's settings.txt is that string, and an O
         rando.Wait();
         CHECK(w.runs.size() == 2);  // settings.txt is there: nothing made again
     }
+}
+
+namespace {
+const fs::path kActors = fs::path("romfs") / "RSDB" / "ActorInfo.Product.111.rstbl.byml.zs";
+
+void MarkRows(const fs::path& mods, const std::string& mod) {
+    Put(mods / mod / kRowsFile, "coop-rows 1\r\ntable " + kActors.filename().string() + " " +
+                                    Fnv64Hex(Get(mods / mod / kActors)) + " " +
+                                    Fnv64Hex(Get(mods / kPackFolder / kActors)) + "\r\n");
+}
+}  // namespace
+
+TEST_CASE("rando: a mod whose actor table wins without the pack's rows is found (player report 144/145)") {
+    World w;
+    Put(w.mods / kPackFolder / kActors, "game rows + CoopPuppet rows");
+    Put(w.mods / "randomizer-S1" / kActors, "game rows, the seed's changes");
+    Put(w.mods / "aaa-textures" / kActors, "early");
+    CHECK(PackActorTables(w.mods) == std::vector<std::string>{kActors.filename().string()});
+    using Order = std::vector<std::string>;
+    const std::string pack = "contents\\0400486024DEC000\\coop-puppet";
+    // Our seeds count too: OOTRR builds their actor tables from the game's, not the pack's.
+    const Order seed_last{pack, "randomizer-S1"};
+    const auto missing = OutsideActorRows(w.mods, {}, &seed_last);
+    REQUIRE(missing);
+    CHECK(missing->first == "randomizer-S1");
+    CHECK(missing->second == kActors.filename().string());
+    const Order pack_last{"randomizer-S1", pack};
+    CHECK_FALSE(OutsideActorRows(w.mods, {}, &pack_last));
+    const Order only_pack{pack};
+    CHECK_FALSE(OutsideActorRows(w.mods, {}, &only_pack));
+    // Hookshot's own order (no list): by name, the last wins; under the pack the pack's wins.
+    CHECK(OutsideActorRows(w.mods, {Indexed("randomizer-S1")}, nullptr));
+    CHECK_FALSE(OutsideActorRows(w.mods, {Indexed("aaa-textures")}, nullptr));
+    // The kit's start merged the rows in: trusted while both files are still those bytes.
+    MarkRows(w.mods, "randomizer-S1");
+    CHECK(RowsMergedByKit(w.mods, "randomizer-S1", kActors.filename().string()));
+    CHECK_FALSE(OutsideActorRows(w.mods, {}, &seed_last));
+    Put(w.mods / kPackFolder / kActors, "the pack made again");
+    CHECK_FALSE(RowsMergedByKit(w.mods, "randomizer-S1", kActors.filename().string()));
+    CHECK(OutsideActorRows(w.mods, {}, &seed_last));
+    MarkRows(w.mods, "randomizer-S1");
+    Put(w.mods / "randomizer-S1" / kActors, "a new seed put in");
+    CHECK(OutsideActorRows(w.mods, {}, &seed_last));
+    // No pack table of that kind: nothing to carry.
+    fs::remove(w.mods / kPackFolder / kActors);
+    CHECK_FALSE(OutsideActorRows(w.mods, {}, &seed_last));
+}
+
+TEST_CASE("rando: a run whose actor table lacks the pack's rows holds the pack and says why in the chat") {
+    World w;
+    Put(w.mods / kPackFolder / kActors, "game rows + CoopPuppet rows");
+    Put(w.mods / "randomizer-S1" / kActors, "game rows, the seed's changes");
+    PlaysSeed(w, "randomizer-S1", 7);
+    {
+        CoopMods::Loader loader(w.mods, {nullptr, 7, nullptr});
+        loader.Start();
+        Rando rando(loader, w.Hooks());
+        rando.Start();
+        rando.Wait();
+        CHECK(rando.RowsMissing());
+        CHECK(rando.HoldPack());  // (the others show as fairies, not as nothing)
+        const std::string line = ChatSafe(RowsLine("randomizer-S1", kActors.filename().string()), 300);
+        CHECK(line.find("\"randomizer-S1\" has its own ActorInfo table") != std::string::npos);
+        CHECK(Count(rando.TakeLines(), line) == 1);
+        CHECK(RowsLine(std::string(80, 'x'), "ActorInfo.Product.111.rstbl.byml.zs").size() <= 300);
+    }
+    MarkRows(w.mods, "randomizer-S1");
+    {
+        CoopMods::Loader loader(w.mods, {nullptr, 7, nullptr});
+        loader.Start();
+        Rando rando(loader, w.Hooks());
+        rando.Start();
+        rando.Wait();
+        CHECK_FALSE(rando.RowsMissing());
+    }
+}
+
+TEST_CASE("rando: a refreshed seed gets its own actor tables back and loses the kit mark") {
+    World w;
+    const fs::path seed = w.mods / "randomizer-S1";
+    Put(seed / kActors, "merged by the kit");
+    Put(seed / "_coop-rows" / kActors.filename(), "the seed own");
+    Put(seed / "_coop-rows" / (kActors.filename().string() + ".txt"), "coop-rows 1");
+    Put(seed / kRowsFile, "coop-rows 1");
+    CHECK(PutBackKeptRows(seed) == 1);
+    CHECK(Get(seed / kActors) == "the seed own");
+    CHECK_FALSE(fs::exists(seed / kRowsFile));
+    CHECK_FALSE(fs::exists(seed / "_coop-rows"));
+    CHECK(PutBackKeptRows(seed) == 0);  // (nothing kept: nothing to do)
+    CHECK(Get(seed / kActors) == "the seed own");
 }

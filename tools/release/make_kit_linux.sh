@@ -73,6 +73,7 @@ text "$repo/tools/release/kit/scripts/apply_patch.py" "$kit/scripts/apply_patch.
 text "$repo/tools/release/kit/scripts/discord_status.py" "$kit/scripts/discord_status.py"
 text "$repo/tools/release/kit/coop.ini.template" "$kit/scripts/coop.ini.template"
 text "$repo/tools/release/kit/coop-options.ini" "$kit/data/coop-options.ini"
+cp -- "$repo/tools/release/kit/assets/squadala-icon.png" "$kit/data/squadala-icon.png"   # (the window and menu icon, start.sh)
 chmod 755 "$kit/start-squadala.sh" "$kit/revert.sh" "$kit"/scripts/*.sh
 install -m 755 "$server" "$kit/data/server/coop_server"
 install -m 644 "$module" "$kit/data/longshot/hookshot_coop.so"
@@ -92,10 +93,26 @@ done
 pack=$repo/tools/puppet_pack
 files=(ainb.py build.py __init__.py byml.py dumpcheck.py dungeon_rooms.py hud.py nup.py rstb.py sarc.py texture.py
     title_menu.py tunic.py tunic_extra.py zs.py self_tunic.py merge_tables.py)   # (self_tunic.py, merge_tables.py: start.sh)
-while IFS= read -r m; do files+=("$m.py"); done < <(sed -n 's/#.*//; s/^[[:space:]]*from \. import //p' "$pack/build.py" | tr ',' '\n' | tr -d ' ' | grep .)
-for f in $(printf '%s\n' "${files[@]}" | sort -u); do
+# Followed through every module they import, and theirs (title_menu.py -> ui_pack.py -> msbt.py): one missing from
+# the kit stops build.py at its first import, and the pack is never made on the players' PCs.
+imports_of() {   # the modules a file imports from its own package, one per line
+    sed -n 's/#.*//; s/^[[:space:]]*from \.\([A-Za-z0-9_][A-Za-z0-9_]*\) import .*/\1/p; s/^[[:space:]]*from \. import //p' "$1" \
+        | tr ',' '\n' | awk '{print $1}' | grep -v '^$' || true
+}
+declare -A seen=()
+queue=("${files[@]}")
+while ((${#queue[@]})); do
+    f=${queue[0]}; queue=("${queue[@]:1}")
+    [[ -n ${seen[$f]:-} ]] && continue
+    seen[$f]=1
     [[ -f $pack/$f ]] || die "tools/puppet_pack/$f (needed by build.py) is not in the repo"
+    while IFS= read -r m; do queue+=("$m.py"); done < <(imports_of "$pack/$f")
+done
+for f in $(printf '%s\n' "${!seen[@]}" | sort); do
     text "$pack/$f" "$kit/data/tools/puppet_pack/$f"
+done
+for s in "$pack"/strings/*.txt; do   # ui_pack.py's words for the game's menus, read where the module is
+    text "$s" "$kit/data/tools/puppet_pack/strings/$(basename "$s")"
 done
 text "$repo/docs/setup-linux.md" "$kit/data/docs/SETUP-LINUX.md"
 text "$repo/docs/known-issues.md" "$kit/data/docs/KNOWN-ISSUES.md"
@@ -144,9 +161,11 @@ if [[ -n $home && $home != / ]] && grep -rlF -- "$home/" "$kit" >/dev/null 2>&1;
 fi
 
 # MANIFEST.txt: the kit's own files (the player's coop-options.ini is in it: the updater merges it).
-(cd "$kit" && { echo MANIFEST.txt; find . -type f ! -name MANIFEST.txt | sed 's|^\./||'; } | LC_ALL=C sort) >"$kit/MANIFEST.txt.tmp"
-{ echo "# Files of $name, for scripts/update.sh. Do not edit."; cat "$kit/MANIFEST.txt.tmp"; } >"$kit/MANIFEST.txt"
-rm -f "$kit/MANIFEST.txt.tmp"
+# The temp file lives OUTSIDE the kit: inside it, it listed itself (v0.11.2 to v0.11.4 kits name MANIFEST.txt.tmp).
+mtmp=$(mktemp) || die 'mktemp failed'
+(cd "$kit" && { echo MANIFEST.txt; find . -type f ! -name MANIFEST.txt | sed 's|^\./||'; } | LC_ALL=C sort) >"$mtmp"
+{ echo "# Files of $name, for scripts/update.sh. Do not edit."; cat "$mtmp"; } >"$kit/MANIFEST.txt"
+rm -f "$mtmp"
 
 if ((zip)); then
     command -v zip >/dev/null || die 'zip is not installed (sudo apt install zip)'

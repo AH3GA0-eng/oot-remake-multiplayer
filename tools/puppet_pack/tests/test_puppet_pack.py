@@ -24,6 +24,7 @@ from test_hud import *  # noqa: E402,F401,F403
 from test_self_tunic import *  # noqa: E402,F401,F403
 from test_merge_tables import *  # noqa: E402,F401,F403
 from test_eye_switches import *  # noqa: E402,F401,F403
+from test_room_graph import *  # noqa: E402,F401,F403
 
 try:
     import zstandard
@@ -78,6 +79,47 @@ def murmur3(text, seed=0):
     h ^= h >> 13
     h = (h * 0xC2B2AE35) & m
     return h ^ (h >> 16)
+
+def with_body(members):
+    """fake_player_pack's members with a player body shaped like the game's (docs/native-puppets.md): a
+    physics param, a ControllerSet with a $parent, a character controller, shapes, a ragdoll, sensors."""
+    ph, cs, cc = "Component/Physics/", "Phive/ControllerSetParam/", "Phive/CharacterControllerParam/"
+    out = dict(members)
+    out[ph + "P.engine__component__PhysicsParam.bgyml"] = byml.dumps(
+        {"ControllerSetPath": "Work/Phive/ControllerSetParam/PC.phive__ControllerSetParam.gyml"})
+    out[cs + "PBase.phive__ControllerSetParam.bgyml"] = byml.dumps({
+        "InitializerName": "Character",
+        "ShapeNamePathAry": [{"FilePath": "Work/Phive/ShapeParam/P.phive__ShapeParam.gyml", "Name": "Player_cct"}],
+        "MatterRigidBodyNamePathAry": [{"FilePath": "Work/Phive/CharacterMatterRigidBodyParam/P.phive__"
+                                        "CharacterMatterRigidBodyParam.gyml", "Name": "MainMatterRigidBody"}],
+        "CColEntityNamePathAry": [{"FilePath": "Work/Phive/ContactCollectionEntityParam/Block.phive__"
+                                   "ContactCollectionEntityParam.gyml", "Name": "Contact_0_cct"},
+                                  {"FilePath": "Work/Phive/ContactCollectionEntityParam/Ragdoll.phive__"
+                                   "ContactCollectionEntityParam.gyml", "Name": "RagdollBody"}],
+        "ControllerSensorNamePathAry": [{"FilePath": "Work/Phive/RigidBodyControllerSensorParam/Tgt.phive__"
+                                         "RigidBodyControllerSensorParam.gyml", "Name": "Tgt"}],
+        "RagdollStructure": [{"FilePath": "Work/Phive/Ragdoll/Structure/P.phive__RagdollStructureParam.gyml",
+                              "Name": "Default"}],
+        "PathCharacterController": "Work/Phive/CharacterControllerParam/PBase.phive__CharacterControllerParam.gyml",
+        "Cloth": [{"FilePath": "", "Name": "Default"}],
+    })
+    out[cs + "PC.phive__ControllerSetParam.bgyml"] = byml.dumps({
+        "$parent": "Work/Phive/ControllerSetParam/PBase.phive__ControllerSetParam.gyml",
+        "PathCharacterController": "Work/Phive/CharacterControllerParam/PC.phive__CharacterControllerParam.gyml"})
+    out[cc + "PBase.phive__CharacterControllerParam.bgyml"] = byml.dumps(
+        {"GravityScale": 1.0, "UserContactCollectionName": "Contact_0_cct"})
+    out[cc + "PC.phive__CharacterControllerParam.bgyml"] = byml.dumps(
+        {"$parent": "Work/Phive/CharacterControllerParam/PBase.phive__CharacterControllerParam.gyml",
+         "UpdateComponentParam": {"Rotate": 1}})
+    for path in ("Phive/ShapeParam/P.phive__ShapeParam.bgyml",
+                 "Phive/CharacterMatterRigidBodyParam/P.phive__CharacterMatterRigidBodyParam.bgyml",
+                 "Phive/ContactCollectionEntityParam/Block.phive__ContactCollectionEntityParam.bgyml",
+                 "Phive/ContactCollectionEntityParam/Ragdoll.phive__ContactCollectionEntityParam.bgyml",
+                 "Phive/RigidBodyControllerSensorParam/Tgt.phive__RigidBodyControllerSensorParam.bgyml",
+                 "Phive/Ragdoll/Structure/P.phive__RagdollStructureParam.bgyml"):
+        out[path] = byml.dumps({"X": 1})
+    return out
+
 
 class BymlTest(unittest.TestCase):
     def test_round_trip_keeps_types(self):
@@ -428,6 +470,68 @@ class BuildPackTest(unittest.TestCase):
         # Never the player's own physics or emitter.
         self.assertNotIn("Component/Physics/P.engine__component__PhysicsParam.bgyml", names)
         self.assertNotIn("Component/PerceptionEmitterParam/Player.game__component__PerceptionEmitterParam.bgyml", names)
+
+    def test_pack_body(self):
+        # Native puppets phase 1 (--puppet-body): Link's own body, character controller in Free, no sensors.
+        members = with_body(fake_player_pack("Child"))
+        pack, ap, names, _ = build.build_pack(members, "Child", body=True)
+        out = sarc.read(pack)
+        phys, cs_path, cct_path = build.body_paths("CoopPuppet_Child")
+        self.assertEqual(byml.loads(ap)["Components"]["PhysicsRef"], "?" + phys)
+        self.assertEqual(byml.loads(out[phys]),
+                         {"ControllerSetPath": "Work/Phive/ControllerSetParam/CoopPuppet_Child.phive__ControllerSetParam.gyml"})
+        cs = byml.loads(out[cs_path])
+        self.assertNotIn("$parent", cs)
+        self.assertEqual(sorted(cs), sorted(build.BODY_KEYS + ("Cloth", "PathCharacterController")))
+        self.assertEqual([e["Name"] for e in cs["CColEntityNamePathAry"]], ["Contact_0_cct"])
+        self.assertEqual(cs["PathCharacterController"],
+                         "Work/Phive/CharacterControllerParam/CoopPuppet_Child.phive__CharacterControllerParam.gyml")
+        cct = byml.loads(out[cct_path])  # the player's, $parent merged, child wins, in Free
+        self.assertEqual(cct, {"GravityScale": 1.0, "UserContactCollectionName": "Contact_0_cct",
+                               "UpdateComponentParam": {"Rotate": 1}, "DefaultMoveState": "Free"})
+        for p in ("Phive/ShapeParam/P.phive__ShapeParam.bgyml",
+                  "Phive/CharacterMatterRigidBodyParam/P.phive__CharacterMatterRigidBodyParam.bgyml",
+                  "Phive/ContactCollectionEntityParam/Block.phive__ContactCollectionEntityParam.bgyml"):
+            self.assertIn(p, names)
+        # Never the sensors, the ragdoll or the player's own physics files.
+        for p in ("Phive/RigidBodyControllerSensorParam/Tgt.phive__RigidBodyControllerSensorParam.bgyml",
+                  "Phive/Ragdoll/Structure/P.phive__RagdollStructureParam.bgyml",
+                  "Phive/ContactCollectionEntityParam/Ragdoll.phive__ContactCollectionEntityParam.bgyml",
+                  "Component/Physics/P.engine__component__PhysicsParam.bgyml",
+                  "Phive/ControllerSetParam/PC.phive__ControllerSetParam.bgyml"):
+            self.assertNotIn(p, names)
+
+    def test_pack_body_wins_over_perception(self):
+        members = with_body(fake_player_pack("Child"))
+        seen_by = build.perception_members(fake_perception_pack())
+        _, ap, _, _ = build.build_pack(members, "Child", perception=seen_by, body=True)
+        comps = byml.loads(ap)["Components"]
+        self.assertEqual(comps["PhysicsRef"], "?" + build.body_paths("CoopPuppet_Child")[0])
+        self.assertIn("PerceptionEmitterRef", comps)
+
+    def test_pack_body_off_by_default(self):
+        members = with_body(fake_player_pack("Child"))
+        self.assertEqual(build.build_pack(members, "Child"), build.build_pack(members, "Child", body=False))
+        _, ap, names, _ = build.build_pack(members, "Child")
+        self.assertNotIn("PhysicsRef", byml.loads(ap)["Components"])
+        self.assertFalse([n for n in names if n.startswith("Phive/")])
+
+    def test_puppet_body_checks(self):
+        pc = {"PhysicsRef": "?Component/Physics/P.engine__component__PhysicsParam.bgyml"}
+        with self.assertRaises(build.BuildError):  # the made-up pack's physics has no ControllerSet
+            build.puppet_body(fake_player_pack("Child"), pc, "CoopPuppet_Child")
+        with self.assertRaises(build.BuildError):
+            build.puppet_body(with_body(fake_player_pack("Child")), {}, "CoopPuppet_Child")
+        members = with_body(fake_player_pack("Child"))
+        cc = "Phive/CharacterControllerParam/PBase.phive__CharacterControllerParam.bgyml"
+        members[cc] = byml.dumps({"UserContactCollectionName": "Nothing"})
+        with self.assertRaises(build.BuildError):
+            build.puppet_body(members, pc, "CoopPuppet_Child")
+        members = with_body(fake_player_pack("Child"))
+        del members["Phive/CharacterControllerParam/PBase.phive__CharacterControllerParam.bgyml"]
+        del members["Phive/CharacterControllerParam/PC.phive__CharacterControllerParam.bgyml"]
+        with self.assertRaises(build.BuildError):
+            build.puppet_body(members, pc, "CoopPuppet_Child")
 
     def test_pack_no_perception(self):
         _, ap, _, _ = build.build_pack(fake_player_pack("Child"), "Child")
@@ -1622,6 +1726,24 @@ class FullBuildTest(unittest.TestCase):
         self.assertEqual(m["quiet_scenes"], [])
         self.assertFalse([a for a in m["actors"] if a["quiet"] or a["perception"]])
 
+    def test_build_body(self):
+        # --puppet-body: every puppet (and its quiet copy) has its body files, each with a size-table entry.
+        zsdic = sarc.read(zstandard.ZstdDecompressor().decompressobj().decompress(self.dicts_raw))
+        pack_dict = zstandard.ZstdCompressionDict(zsdic["pack.zsdic"])
+        for v in ("Child", "Adult"):
+            self.write(f"Pack/Actor/Player_{v}.pack.zs", zstandard.ZstdCompressor(dict_data=pack_dict).compress(
+                sarc.write(with_body(fake_player_pack(v)))))
+        self.add_perception_and_guards()
+        m = build.build(self.romfs, os.path.join(self.dir, "mod_body"), log=lambda *_: None, look_slots=0, body=True)
+        self.assertTrue(m["body"])
+        self.assertTrue(m["actors"])
+        for a in m["actors"]:
+            self.assertEqual(sorted(a["body"]), sorted(build.body_paths(a["actor"])), a["actor"])
+            self.assertTrue(all(size >= build.PACK_SIZE_MARGIN for size in a["body"].values()))
+        d = build.build(self.romfs, os.path.join(self.dir, "mod_nobody"), log=lambda *_: None, look_slots=0)
+        self.assertFalse(d["body"])
+        self.assertFalse([a for a in d["actors"] if a["body"]])
+
     def test_quiet_name(self):
         self.assertEqual(build.quiet_name("CoopPuppet_Child"), "CoopPuppet_ChildQuiet")
         self.assertEqual(build.quiet_name("CoopPuppet_Adult_Green"), "CoopPuppet_AdultQuiet_Green")
@@ -2238,18 +2360,24 @@ class FullBuildTest(unittest.TestCase):
                         skins=[("Bad", bad), ("Good", good)], test_skin="bad", look_slots=0)
 
     def test_reader_has_is_exact(self):
-        # "Does the game have this file": an exact name, never a glob pattern, through the readers
-        # _main_build really gets (hud.DirReader, hud.NupReader: files(), no listdir).
+        # "Does the game have this file": an exact name, never a glob pattern. Through the real readers the
+        # build is given (a stand-in reader once hid that the .nup one has no listdir, and every skin was left out).
         from puppet_pack import hud
+
+        class Nup:
+            def listdir(self, d):
+                if d not in ("Model",):
+                    raise KeyError(d)
+                return {"A[1].bfres.zs": ("f", 0), "Sub": ("d", 1)}
         root = os.path.join(self.dir, "reader_romfs")
         os.makedirs(os.path.join(root, "Model", "Sub"))
         with open(os.path.join(root, "Model", "A[1].bfres.zs"), "wb") as f:
             f.write(b"x")
-        r = hud.DirReader(root)
-        self.assertTrue(build._reader_has(r, "Model/A[1].bfres.zs"))
-        self.assertFalse(build._reader_has(r, "Model/A*.bfres.zs"))
-        self.assertFalse(build._reader_has(r, "Model/Sub"))
-        self.assertFalse(build._reader_has(r, "Nope/A.bfres.zs"))
+        for r in (hud.NupReader(Nup()), hud.DirReader(root)):
+            self.assertTrue(build._reader_has(r, "Model/A[1].bfres.zs"), r)
+            self.assertFalse(build._reader_has(r, "Model/A*.bfres.zs"), r)
+            self.assertFalse(build._reader_has(r, "Model/Sub"), r)
+            self.assertFalse(build._reader_has(r, "Nope/A.bfres.zs"), r)
 
     def test_main_builds_a_skin(self):
         # Review of #276: from the command line every --skin was "left out: AttributeError: 'DirReader'

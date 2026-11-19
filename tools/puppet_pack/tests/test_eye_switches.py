@@ -80,6 +80,71 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(self.classify(wire(on=[("BootUp", [("flag", "Room_Done", False)])], results=[reads_switch]))[0], "A")
         self.assertEqual(self.classify(wire(on=[("BootUp", [])], results=[reads_switch]))[0], "B")
 
+    def test_a_shared_flag_the_asker_drives_the_same_way_covers(self):
+        # g3-objects, Jabu room 14 upper: the switch re-arms from `asker OR not Updown`, and the event clears Updown
+        rearm = ("actor", "Obj_Switch", ("BootUp", (("EventRequestActor", False, True), ("Room_Done", True, True))))
+        self.assertEqual(self.classify(wire(results=[rearm, ("flag", "Room_Done", "clear")]))[0], "A")
+        # ... the event sets it instead (the OR's negated term goes false): not covered
+        self.assertEqual(self.classify(wire(results=[rearm, ("flag", "Room_Done", "set")]))[0], "B")
+        # ... an unshared flag driven the same way does not cover either
+        own = ("actor", "Obj_Switch", ("BootUp", (("EventRequestActor", False, True), ("Room_Own", True, True))))
+        self.assertEqual(self.classify(wire(results=[own, ("flag", "Room_Own", "clear")]))[0], "B")
+
+    def test_no_drive_of_an_asker_that_writes_a_shared_two_way_flag(self):
+        # g3-objects: our asker run late would write the flag again and could undo the other player's newer write
+        miss = [("flag", "Gimmick_Water", "set"), ("flag", "Room_Done", "clear")]
+        on = [("BootUp", []), ("FirstOn", [])]
+        self.assertEqual(eye_switches.classify(LINE, wire(on=on, results=miss), SHARED)[:2], ("B", "input FirstOn"))
+        cls, fix, why = eye_switches.classify(LINE, wire(on=on, results=miss), SHARED, {"Room_Done"})
+        self.assertEqual((cls, fix), ("B", "none"))
+        self.assertIn("two-way Room_Done", why)
+        # a two-way flag that is not shared is each game's own: our asker may still run
+        self.assertEqual(eye_switches.classify(LINE, wire(on=on, results=miss), SHARED, {"Gimmick_Water"})[:2],
+                         ("B", "input FirstOn"))
+
+    def test_two_way_flags(self):
+        wiring = {1: wire(results=[("flag", "W", "set"), ("flag", "X", "set")]),
+                  2: wire(results=[("flag", "W", "clear"), ("actor", "X", ("BootUp", ()))])}
+        self.assertEqual(eye_switches.two_way_flags(wiring), {"W"})
+
+    def test_asker_guards(self):
+        # g3-objects: the saved flags that stop ONE asker: (kind, what, plug, negated, under an OR)
+        sw = ("actor", {"Gyaml": "Obj_StepSwitch_A_01"}, "OnState", False, False)
+        # negated outside an OR, and a delete flag; a positive trigger flag and HavePlayedEvent.* are not guards
+        trig = [sw, ("flag", "Done", "Bool", True, False), ("flag", "Lit", "Bool", False, False)]
+        dele = [("flag", "Gone", "Bool", False, False), ("flag", "HavePlayedEvent.Ev", "Bool", False, False)]
+        self.assertEqual(eye_switches.asker_guards(trig, dele), ["Done", "Gone"])
+        # Jabu-Jabu room 1: the negated flag is the trigger's one leaf under an OR (the OR's other inputs unwired)
+        self.assertEqual(eye_switches.asker_guards([sw, ("flag", "First", "Bool", True, True)], []), ["First"])
+        # two leaves under ORs: which OR holds which is unknown, none counts (no hold)
+        self.assertEqual(eye_switches.asker_guards(
+            [sw, ("flag", "A", "Bool", True, True), ("flag", "B", "Bool", False, True)], []), [])
+        # a negated delete flag deletes nothing once on
+        self.assertEqual(eye_switches.asker_guards([sw], [("flag", "Gone", "Bool", True, False)]), [])
+        # g1-events 9fce0c8f: under an OR AND an AND (2) the negated flag is not alone: no guard
+        self.assertEqual(eye_switches.asker_guards([sw, ("flag", "First", "Bool", True, 2)], []), [])
+
+    def test_asker_guards_read_once_at_load_are_load_guards(self):
+        # objects-next-a-6: a flag behind a gate with UpdateOnce 1 ("flag-once") stops the asker only if it was on at
+        # the room's load: a LOAD guard, marked "load:" (the Deku Tree room D compass asker, RoomD_StepSwitch_On_01)
+        sw = ("actor", {"Gyaml": "Obj_StepSwitch_A_02"}, "OnState", False, False)
+        dele = [("flag-once", "RoomD_On", "Bool", False, False)]
+        self.assertEqual(eye_switches.asker_guards([sw], dele), ["load:RoomD_On"])
+        self.assertEqual(eye_switches.load_guard("load:RoomD_On"), ("RoomD_On", True))
+        self.assertEqual(eye_switches.load_guard("RoomD_On"), ("RoomD_On", False))
+        # a negated trigger flag read once: the same (the trigger is false for the visit only if it was on at load)
+        self.assertEqual(eye_switches.asker_guards([sw, ("flag-once", "Done", "Bool", True, False)], []),
+                         ["load:Done"])
+        # negated once at load deletes nothing; HavePlayedEvent.* stays out as for a live flag
+        self.assertEqual(eye_switches.asker_guards([sw], [("flag-once", "Gone", "Bool", True, False),
+                                                          ("flag-once", "HavePlayedEvent.Ev", "Bool", False, False)]), [])
+        # the same flag read live too: the live read stops the asker at any time, so it is a live guard only
+        self.assertEqual(eye_switches.asker_guards([sw], dele + [("flag", "RoomD_On", "Bool", False, False)]),
+                         ["RoomD_On"])
+        # a live and a load guard of different flags: both, each marked
+        self.assertEqual(eye_switches.asker_guards([sw, ("flag", "Done", "Bool", True, False)], dele),
+                         ["Done", "load:RoomD_On"])
+
 
 if __name__ == "__main__":
     unittest.main()

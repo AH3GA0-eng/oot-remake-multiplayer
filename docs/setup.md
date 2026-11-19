@@ -101,7 +101,7 @@ The kit never plays a Longshot you built with Longshot's own builder, and moving
 
 Before the first build the kit asks once: **"Built Longshot yourself? ... Drag your Longshot game folder ... into this window"** (the folder with `longshot.exe`; just Enter, or 60 seconds, for no). The answer is kept in `hookshot\longshot-folder.txt`: to be asked again, delete that file before the game is built (once it is built, copy saves by hand, below). It then:
 - copies the tool downloads your Longshot's setup already has, when they are the very same files (by SHA-256): less to download;
-- copies its compiled files too when it is the same release (v3.0.0-rc.7), so that what co-op does not change is not compiled again (the game is still translated again, with co-op in it);
+- copies its compiled files too when it is the same release (v3.0.0-rc.8), so that what co-op does not change is not compiled again (the game is still translated again, with co-op in it);
 - copies your saves into the co-op game after the build (below).
 
 Nothing is ever changed in your Longshot's folders. Without a folder, the kit still reuses the downloads in Longshot Builder's home (`%LOCALAPPDATA%\LongshotBuilder`) when it finds one.
@@ -125,7 +125,7 @@ The Multiplayer tab's **Customize Link** page colours your tunic and each part o
 With Discord open on the same PC, your Discord profile shows **Playing Squadala!** with the Squadala! logo (the Korok with the propeller leaf and four fairies), the release (*Squadala! 0.11.4*), *Solo* or *Co-op: 3 players*, and how long you have played. Only that goes to Discord: no names, no addresses, no invite code. It works the same on Windows and Linux, hosting, joining or playing alone.
 
 - **Turn it off:** in the game press **Insert** (or F1), and set the **Discord status** row to off. It stays off.
-- **Your own words or application:** the kit writes four lines into `longshot_options.ini` next to the game before each start: `discord_app_id=`, `discord_image=none` (no picture is sent, so Discord shows the application's icon, the logo), `discord_details=` and `discord_state=`. Change one and the kit leaves it alone from then on; `discord_image=` may instead name an art asset of your own application, and `discord_large_text=` its hover text. Without these lines the game shows Longshot's own status, as before ([hookshot/README.md, patch 0026](../hookshot/README.md)). The *Solo* / *Co-op* line comes from the co-op module and wins over `discord_state=`.
+- **Always Squadala!:** the status is always Squadala!'s, at the title, in play, paused or idle: the Squadala! application's name and icon, its release on the first line and *Solo* / *Co-op* on the second. Longshot's own status (since Longshot v3.0.0-rc.8 the place Link is, his age and hearts, and its `discord_text=`, `discord_image=` and `discord_image_text=` lines) is never shown in a co-op game, and another `discord_app_id=` is not taken. The kit writes `discord_app_id=`, `discord_image=none`, `discord_details=` and `discord_state=` into `longshot_options.ini` next to the game before each start; you may change the words of `discord_details=` (the first line), and the kit leaves a line you changed alone from then on. The *Solo* / *Co-op* line comes from the co-op module and wins over `discord_state=` ([hookshot/README.md, patch 0026](../hookshot/README.md)).
 
 ## In the game, saves, the emulator kit
 

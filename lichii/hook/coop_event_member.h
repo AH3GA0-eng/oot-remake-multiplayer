@@ -1,20 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// Row 97 (event-copy): which actors our running event is with. An event's
-// flow binds each actor it uses (the one whose talk or entrance it is, the
-// ones it moves or waits on) through that actor's event performer, the same
-// performer an actor's own request goes through (coop_live_events.h,
-// kPerformerRequest): [[actor + 0x270] + 0x88] (or + 0x90, the slot the
-// player's is read from), whose +0x10 points back at the actor.
-//
-// Read in the deku-sync-fix probe runs (groups-20261114-074019 and -083814,
-// reports/deku-sync-fix-b.md): at the event's start the asker's performer
-// gets the event's link at +0x18 (0 -> a heap pointer), 1 at +0x20 and the
-// state 3 (busy) at +0x28, in both games, and all three go back to 0 when the
-// event ends. So an actor whose own performer holds an event link is a member
-// of a running event: in our game that is our event, whatever kind it is (a
-// scrub's talk or entrance, a shop, a townsperson's talk, a story event, a
-// mini-game) and however far from our Link the actor stands.
+// Row 97 / G1 (event ownership): which actors are in the same event as our
+// Link, read with the game's own event member test (ReadMember, InSameEvent
+// below): no distance, no clock, no event names.
 //
 // No emulator code: coop_objects.cpp reads it in its walk, tests in
 // tests/lichii/event_member_test.cpp.
@@ -23,6 +11,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <functional>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <vector>
@@ -30,34 +19,9 @@
 namespace CoopEventMember {
 
 inline constexpr std::uint64_t kActorParts = 0x270;      // the actor's component table
-inline constexpr std::uint64_t kPerformerSlot = 0x88;    // as CoopLiveEvents::addr::kPerformerSlot
-inline constexpr std::uint64_t kPerformerSlotAlt = 0x90; // as CoopLiveEvents::addr::kPerformerSlotAlt
-inline constexpr std::uint64_t kPerformerActor = 0x10;   // back at the actor: the performer is its own
-inline constexpr std::uint64_t kPerformerLink = 0x18;    // the event it is bound into; 0 when none
 
 // One 8-byte word of guest memory; nullopt when it cannot be read.
 using ReadWord = std::function<std::optional<std::uint64_t>(std::uint64_t address)>;
-
-// The actor's own performer (its +0x10 is the actor); 0 when it has none we know.
-inline std::uint64_t PerformerOf(const ReadWord& read, std::uint64_t actor) {
-    if (actor == 0) {
-        return 0;
-    }
-    const auto parts = read(actor + kActorParts);
-    if (!parts || *parts == 0) {
-        return 0;
-    }
-    for (const std::uint64_t slot : {kPerformerSlot, kPerformerSlotAlt}) {
-        const auto performer = read(*parts + slot);
-        if (!performer || *performer == 0) {
-            continue;
-        }
-        if (const auto owner = read(*performer + kPerformerActor); owner && *owner == actor) {
-            return *performer;
-        }
-    }
-    return 0;
-}
 
 // For the log (row 97: the stuck event had no name in the log). Our running
 // event as the event manager has it (docs player-state-map, "The event
@@ -148,64 +112,204 @@ inline Running ReadRunning(const ReadWord& read, std::uint64_t main) {
     return out;
 }
 
-// Row 97 reviews (A #36): "bound" means bound into OUR Link's event, read the game's way.
-// - The performer sits at fixed slots of the component table: the generic actor request
-//   (0xbd1670) reads [[actor + 0x270] + 0x88], the player's (0xc70560) [[actor + 0x270] + 0x90]
-//   (read in main, build e0f3ccfaf50065ae). PerformerOf reads exactly those two, with +0x10 = actor.
-// - Its +0x18 is set at an event's start and cleared at its end (the probe runs). Two actors are
-//   in the same event when those links are equal: an actor is in OUR event when its link is not 0
-//   and equals our own Link's (OurLinkOf). No event-shape guess, and no reliance on the event
-//   manager's running word, which stays 0 in a Deku Scrub's talk.
-// In the scrub runs an Animal_Butterfly read as bound (an event of its own: another link, so not
-// ours now) and our Deku Scrubs never did. ScanLinked is a diagnostic for the latter only (never
-// used for a claim or a hold): which of the first kMaxSlots component slots hold a component of
-// the actor's own whose +0x18 equals our Link's link.
-inline constexpr std::uint64_t kMaxSlots = 0x40;
+// G1 (event ownership): the game's own membership test, read in main (build e0f3ccfaf50065ae).
+// The component at [[actor + 0x270] + 0x88] is the game's EventMember M (older notes called it
+// the performer); the one at + 0x90 is a separate EventPerformer P. The game's AI queries:
+// - QueryEventMemberIsEventMemver (0x29f3770, and the same test inlined in the actors' own code,
+//   for example 0x4b7690): L = [M + 0x18], false when 0. L holds kMemberSlots slots of
+//   kMemberSlotSize bytes from L + 0x10; the actor is an event member when any slot has a pointer
+//   at +0 that is not 0 AND bit 0 of the byte at +8.
+// - QueryEventMemberIsEventMemberSomeReason (0x29f3580): any slot pointer that is not 0.
+// - QueryEventMemberGetEventRequestState (0x29f3410): u32 [M + 0x28] (0 none, 1 asked, 3 busy).
+// - QueryEventMemberIsEventPerformer (0x29f3980): bit 0 of u16 [P + 0x8c].
+// So [M + 0x18] is the member's own record (one per actor while it is in events, one slot per
+// live event), not "the event": two actors never share it at the same time.
+// What a slot's pointer is, read in the offline run fable-g1-events (2026-11-17, Deku Tree, both
+// games, offline/fable-g1-events.members.txt): the running event itself. In every event of the run
+// (the ~1 s event after each scene load, A's death with the revival fairy and the event nested in
+// it, the Ocarina take-out) our Link's slot pointer equalled the event manager's running event,
+// and every other member (Navi, Saria's voice, the event/system actors) held that same pointer in
+// its own slot. Flag bit 0 marks the members; the rest of the scene holds the pointer without it
+// (scene areas, cameras, foliage 0x4; Link's sword, shield and Ocarina 0x2; butterflies 0x6), so
+// "some reason" alone is not membership. Two actors are in the same event when a member slot of
+// each holds the same pointer (InSameEvent).
+inline constexpr std::uint64_t kMemberSlot = 0x88;          // M: the game's EventMember
+inline constexpr std::uint64_t kEventPerformerSlot = 0x90;  // P: the game's EventPerformer
+inline constexpr std::uint64_t kMemberRecord = 0x18;        // M: its record L; 0 when it has none
+inline constexpr std::uint64_t kMemberState = 0x28;         // M: u32 request state
+inline constexpr std::uint64_t kRecordSlots = 0x10;         // L: the first slot
+inline constexpr std::uint64_t kMemberSlotSize = 0x38;
+inline constexpr std::size_t kMemberSlots = 4;
+inline constexpr std::uint64_t kSlotFlags = 0x8;            // slot: u8, bit 0 = a member of that event
+inline constexpr std::uint64_t kPerformerBits = 0x8c;       // P: u16, bit 0 = an event performer now
+// For the log only: the event base class keeps its live events in a ring of four here.
+inline constexpr std::uint64_t kEventRing = 0x4e93080;
+inline constexpr std::size_t kEventRingSize = 4;
 
-// The link at the actor's own performer; nullopt when it has no performer at the fixed slots.
-inline std::optional<std::uint64_t> LinkOf(const ReadWord& read, std::uint64_t actor) {
-    const std::uint64_t performer = PerformerOf(read, actor);
-    if (performer == 0) {
-        return std::nullopt;
+struct MemberSlotRead {
+    std::uint64_t pointer = 0;  // 0: the slot is free
+    std::uint8_t flags = 0;
+    bool Member() const { return pointer != 0 && (flags & 1) != 0; }
+};
+
+struct MemberRead {
+    std::uint64_t member = 0;  // M; 0: the actor has none (or it could not be read)
+    std::uint64_t record = 0;  // L; 0: in no event
+    std::uint32_t state = 0;
+    MemberSlotRead slots[kMemberSlots]{};
+    // The game's IsEventMemver.
+    bool Member() const {
+        return std::any_of(std::begin(slots), std::end(slots), [](const MemberSlotRead& s) { return s.Member(); });
     }
-    return read(performer + kPerformerLink);
-}
-
-// Our own Link's event link: 0 when it is in no event (or none could be read).
-inline std::uint64_t OurLinkOf(const ReadWord& read, std::uint64_t our_link_actor) {
-    return our_link_actor != 0 ? LinkOf(read, our_link_actor).value_or(0) : 0;
-}
-
-// Whether the actor is in our Link's event. nullopt: it has no performer at the fixed slots.
-inline std::optional<bool> InOurEvent(const ReadWord& read, std::uint64_t actor, std::uint64_t our_event_link) {
-    const auto link = LinkOf(read, actor);
-    if (!link) {
-        return std::nullopt;
+    // The game's IsEventMemberSomeReason.
+    bool SomeReason() const {
+        return std::any_of(std::begin(slots), std::end(slots), [](const MemberSlotRead& s) { return s.pointer != 0; });
     }
-    return our_event_link != 0 && *link == our_event_link;
-}
+};
 
-// Diagnostic only: the component slots (byte offsets) whose component is the actor's own and
-// whose +0x18 equals our Link's event link.
-inline std::vector<std::uint64_t> ScanLinked(const ReadWord& read, std::uint64_t actor, std::uint64_t our_event_link) {
-    std::vector<std::uint64_t> out;
-    if (actor == 0 || our_event_link == 0) {
+// The actor's EventMember, read the game's way (no back-pointer test: the game makes none).
+// A slot that cannot be read counts as free, so a bad pointer never makes a member.
+inline MemberRead ReadMember(const ReadWord& read, std::uint64_t actor) {
+    MemberRead out;
+    if (actor == 0) {
         return out;
     }
     const auto parts = read(actor + kActorParts);
-    if (!parts || *parts == 0) {
+    const auto member = parts && *parts ? read(*parts + kMemberSlot) : std::nullopt;
+    if (!member || *member == 0) {
         return out;
     }
-    for (std::uint64_t slot = 0; slot < kMaxSlots * 8; slot += 8) {
-        const auto c = read(*parts + slot);
-        if (!c || *c == 0) {
+    out.member = *member;
+    if (const auto state = read(*member + kMemberState)) {
+        out.state = static_cast<std::uint32_t>(*state);
+    }
+    const auto record = read(*member + kMemberRecord);
+    if (!record || *record == 0) {
+        return out;
+    }
+    out.record = *record;
+    for (std::size_t i = 0; i < kMemberSlots; ++i) {
+        const std::uint64_t at = *record + kRecordSlots + kMemberSlotSize * i;
+        const auto pointer = read(at);
+        const auto flags = read(at + kSlotFlags);
+        if (!pointer || !flags) {
             continue;
         }
-        const auto owner = read(*c + kPerformerActor);
-        const auto link = read(*c + kPerformerLink);
-        if (owner && *owner == actor && link && *link == our_event_link) {
-            out.push_back(slot);
+        out.slots[i].pointer = *pointer;
+        out.slots[i].flags = static_cast<std::uint8_t>(*flags & 0xff);
+    }
+    return out;
+}
+
+// The game's IsEventMemver for one actor.
+inline bool IsMember(const ReadWord& read, std::uint64_t actor) {
+    return ReadMember(read, actor).Member();
+}
+
+// Whether two members are in the same event: a member slot (pointer AND flag bit 0) of each holds
+// the same event pointer, in any of the four slots (an event nested in another uses the next one).
+inline bool SameEvent(const MemberRead& a, const MemberRead& b) {
+    for (const MemberSlotRead& x : a.slots) {
+        if (!x.Member()) {
+            continue;
         }
+        for (const MemberSlotRead& y : b.slots) {
+            if (y.Member() && y.pointer == x.pointer) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Whether the actor is in our Link's event (link: our Link's ReadMember). nullopt: the actor has
+// no EventMember at all (nothing to ask). Anything unreadable, or our Link in no event, is false:
+// no claim.
+inline std::optional<bool> InSameEvent(const ReadWord& read, std::uint64_t actor, const MemberRead& link) {
+    const MemberRead m = ReadMember(read, actor);
+    if (m.member == 0) {
+        return std::nullopt;
+    }
+    return SameEvent(m, link);
+}
+
+// The actor's EventPerformer bits (u16 [P + 0x8c]; bit 0 = the game's IsEventPerformer);
+// nullopt when the actor has no component there or it cannot be read. The game checks P's
+// class first; we do not, so this is for the log, never for a decision.
+inline std::optional<std::uint16_t> PerformerBits(const ReadWord& read, std::uint64_t actor) {
+    if (actor == 0) {
+        return std::nullopt;
+    }
+    const auto parts = read(actor + kActorParts);
+    const auto performer = parts && *parts ? read(*parts + kEventPerformerSlot) : std::nullopt;
+    if (!performer || *performer == 0) {
+        return std::nullopt;
+    }
+    const auto word = read(*performer + kPerformerBits - 4);  // the aligned word that holds +0x8c
+    if (!word) {
+        return std::nullopt;
+    }
+    return static_cast<std::uint16_t>((*word >> 32) & 0xffff);
+}
+
+inline std::string Hex(std::uint64_t v) {
+    static const char* const digits = "0123456789abcdef";
+    std::string out;
+    do {
+        out.insert(out.begin(), digits[v & 0xf]);
+        v >>= 4;
+    } while (v != 0);
+    return "0x" + out;
+}
+
+// For the log, one line that changes exactly when the actor's membership changes: its state,
+// L and each used slot as "index:pointer/flags"; "no member" when the actor has no M.
+inline std::string MemberText(const MemberRead& m) {
+    if (m.member == 0) {
+        return "no member";
+    }
+    std::string out = "state " + std::to_string(m.state) + " record " + Hex(m.record) + " slots";
+    bool any = false;
+    for (std::size_t i = 0; i < kMemberSlots; ++i) {
+        if (m.slots[i].pointer == 0) {
+            continue;
+        }
+        any = true;
+        out += " " + std::to_string(i) + ":" + Hex(m.slots[i].pointer) + "/" + Hex(m.slots[i].flags);
+    }
+    return any ? out : out + " none";
+}
+
+// For the log, once per change (never read for a decision): the seven words of each used slot
+// and the first four words its pointer leads to, so one run shows whether a slot's pointer is
+// the event itself, or leads to it, and what else a slot keeps.
+inline std::string MemberDump(const ReadWord& read, const MemberRead& m) {
+    std::string out;
+    for (std::size_t i = 0; i < kMemberSlots; ++i) {
+        if (m.record == 0 || m.slots[i].pointer == 0) {
+            continue;
+        }
+        const std::uint64_t at = m.record + kRecordSlots + kMemberSlotSize * i;
+        out += (out.empty() ? "slot " : "; slot ") + std::to_string(i) + ":";
+        for (std::uint64_t w = 0; w < kMemberSlotSize; w += 8) {
+            const auto v = read(at + w);
+            out += " " + (v ? Hex(*v) : std::string("?"));
+        }
+        out += " ->";
+        for (std::uint64_t w = 0; w < 0x20; w += 8) {
+            const auto v = read(m.slots[i].pointer + w);
+            out += " " + (v ? Hex(*v) : std::string("?"));
+        }
+    }
+    return out.empty() ? std::string("no slot used") : out;
+}
+
+// For the log: the event base class's ring of live events.
+inline std::string EventRingText(const ReadWord& read, std::uint64_t main) {
+    std::string out;
+    for (std::size_t i = 0; i < kEventRingSize; ++i) {
+        const auto v = read(main + kEventRing + 8 * i);
+        out += (out.empty() ? "" : " ") + (v ? Hex(*v) : std::string("?"));
     }
     return out;
 }
