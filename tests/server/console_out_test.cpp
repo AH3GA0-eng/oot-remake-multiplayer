@@ -57,7 +57,7 @@ TEST_CASE("console out: lines reach the sink in order") {
   CHECK(got.back() == "line 99");
 }
 
-TEST_CASE("console out: a stalled console never blocks push; past the bound lines are dropped and counted") {
+TEST_CASE("console out: a stalled console never blocks push, and lines past the bound are dropped and counted") {
   StalledConsole console;
   ConsoleOut out([&](const std::string& line) { console.write(line); }, 4);
   CHECK(out.push("first"));  // the writer takes it and blocks in the console
