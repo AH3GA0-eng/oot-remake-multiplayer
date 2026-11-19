@@ -546,6 +546,38 @@ TEST_CASE("host reader: what the player wears") {
     CHECK(e.ocarina == "Item_Ocarina_Time");
     CHECK_FALSE(e.arrow);
     CHECK(e.drawn == 0x01);
+    CHECK(e.lit == 0x00);  // the sword plays no Chemical_Fire
+  }
+  SUBCASE("a lit Deku stick in hand (issue 248): its ELink user plays Chemical_Fire") {
+    put_user(m, l);
+    put_equipped(m, 0, 40, 4, 0x2);  // the stick, drawn
+    const std::uint64_t stick = kEquipActors;
+    const std::uint64_t table = 0x7100000, xlink = 0x7110000, user = 0x7120000;
+    const std::uint64_t event = 0x7130000, call = 0x7140000, key = 0x7150000;
+    const std::uint32_t back = 0x10;  // the link's place in its event
+    m.put_u64(stick + 0x270, table);
+    m.put_u64(table + 0x68, xlink);
+    m.put_u64(xlink + 0x70, user);
+    m.put_u32(user + 0x3c, back);
+    m.put_u64(event + back + 8, user + 0x28);  // the only event: its next link is the head
+    m.put_u64(event + 0x30, call);
+    m.put_u64(call, key);
+    SUBCASE("burning") {
+      m.put_u64(user + 0x30, event + back);
+      m.put(key, "Chemical_Fire", 14);
+      CHECK(reader.read_equipment()->lit == 0x01);
+      m.put_u8(kUser + 0x13bc, 0x4);  // put away: not looked at
+      CHECK(reader.read_equipment()->lit == 0x00);
+    }
+    SUBCASE("another effect only (the ignite flash) is not lit") {
+      m.put_u64(user + 0x30, event + back);
+      m.put(key, "Chemical_FireStart", 19);
+      CHECK(reader.read_equipment()->lit == 0x00);
+    }
+    SUBCASE("nothing playing") {
+      m.put_u64(user + 0x30, user + 0x28);
+      CHECK(reader.read_equipment()->lit == 0x00);
+    }
   }
   SUBCASE("bad strings are dropped") {
     put_strings(m, {{addr::kEquipWeapon, "Weapon_Sword_Kokiri"}, {addr::kEquipShield, "x"}});

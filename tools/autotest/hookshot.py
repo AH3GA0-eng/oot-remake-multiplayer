@@ -61,7 +61,7 @@ STICK_KEYS = {  # full stick directions: (stick, x, y)
     "RSTICK_UP": ("R", 0, 1), "RSTICK_DOWN": ("R", 0, -1), "RSTICK_LEFT": ("R", -1, 0), "RSTICK_RIGHT": ("R", 1, 0),
 }
 WEAR_SLOTS = ("weapon", "shield", "head", "armor", "boots", "hand")
-MODULE_ONLY = ("chat", "give", "wear", "assign", "place", "kill", "hit", "stun", "hurt", "setflag", "setenum", "menu")
+MODULE_ONLY = ("chat", "give", "wear", "dress", "assign", "place", "kill", "hit", "stun", "hurt", "setflag", "setenum", "menu")
 
 
 class ScriptError(Exception):
@@ -256,6 +256,10 @@ def parse(text):
             if len(w) != 3 or w[1].lower() not in WEAR_SLOTS:
                 fail("want: wear weapon|shield|head|armor|boots|hand NAME")
             s.kind, s.start, s.name = "wear", w[1], w[2]
+        elif cmd == "DRESS":
+            if len(w) != 2 or w[1].lower() not in WEAR_SLOTS + ("all",):
+                fail("want: dress weapon|shield|head|armor|boots|hand|all")
+            s.kind, s.name = "dress", w[1].lower()
         elif cmd == "ASSIGN":
             if len(w) != 2:
                 fail("want: assign ITEM")

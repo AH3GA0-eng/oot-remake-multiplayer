@@ -32,6 +32,7 @@
 #include "coop_follow.h"
 #include "coop_snap.h"
 #include "coop_link_sound.h"
+#include "coop_puppet_flame.h"
 #include "coop_puppet_sound.h"
 
 namespace coop::protocol {
@@ -281,7 +282,7 @@ inline constexpr std::array<int, kGearCount> kGearSlots{0, 4, -1, -1, -1, 3, -1,
 
 // A puppet's memory block, from the game's malloc, kept for the whole run.
 namespace block {
-inline constexpr std::uint64_t kSize = 0x740;  // to 0x738: coop_link_sound.h's handles
+inline constexpr std::uint64_t kSize = 0x780;  // to 0x778: coop_puppet_flame.h's key and handle
 inline constexpr std::uint64_t kCreateArg = 0x000;  // 0x100 bytes
 inline constexpr std::uint64_t kName = 0x100;       // {char*, u32 capacity}
 inline constexpr std::uint64_t kHandles = 0x110;    // kHandleCount slots of 8 bytes
@@ -367,6 +368,9 @@ struct Target {
     // PLAYER_EQUIP's drawn bits: bit i set when the player's equipment slot i
     // is in hand (sword out, shield on the arm). Unset: not known.
     std::optional<std::uint8_t> drawn;
+    // PLAYER_EQUIP's lit bits (issue 248): bit i set when the piece in their
+    // slot i burns. Unset: not known (an older build), as 0.
+    std::optional<std::uint8_t> lit;
     // The player's colour, 0xRRGGBB (coop_colors.h): the puppet is tinted
     // with it while live. Unset: no tint.
     std::optional<std::uint32_t> color;
@@ -616,6 +620,7 @@ private:
         std::uint64_t moved_frame = 0;      // the cave frame of the last matrix call
         CoopPuppetSound::State sound;       // the player's Ocarina on it (issue 152)
         CoopLinkSound::Player link_sound;   // the player's own sounds on it (issues 131, 152)
+        CoopPuppetFlame::State flame;       // their lit Deku stick's flame on it (issue 248)
         // Actors made for this player that are not `taken` any more (kStrayDeleteMs):
         // deleted until gone, so there is never a second puppet of one player.
         struct Stray {
@@ -629,7 +634,7 @@ private:
     };
     enum class Pending {
         none, malloc, create, take, drop, remove, play, frame, sync, equip, unequip, hold,
-        hold_check, move, sound, link_sound, stray, own_state, head_show, head_hair
+        hold_check, move, sound, link_sound, stray, own_state, head_show, head_hair, flame
     };
     // sword-3: once a frame, the game's state of one of the local Link's own
     // slots (CoopPuppetOwn::kSlots, in turn), for the sender (coop_puppet_own.h).
@@ -745,6 +750,7 @@ struct Remote {
     std::uint32_t anim_serial = 0;
     Gear gear;  // as Target::gear
     std::optional<std::uint8_t> drawn;               // as Target::drawn
+    std::optional<std::uint8_t> lit;                 // as Target::lit
     // PLAYER_EQUIP's colour; unset: the player chose none, and Plan gives the
     // player's slot colour (coop::protocol::slot_color).
     std::optional<std::uint32_t> color;

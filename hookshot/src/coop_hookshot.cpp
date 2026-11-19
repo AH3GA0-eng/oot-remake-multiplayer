@@ -1367,9 +1367,16 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
         e.from = std::exchange(t_create_from, 0);
         const std::uint64_t arg = std::exchange(t_create_arg, 0);
         std::uint64_t text = 0;  // (x1: its first 8 bytes point at the name; on the caller's stack: read now)
-        char name[32] = {};
+        // The ring keeps 31 bytes of the name; the stop rules below need it whole
+        // (boss-larva-0116: Enemy_DungeonBoss_Dodongo_SpawnBabyDodongo is 42, so a
+        // copy King Dodongo's own spawner was never stopped). The rest is read
+        // apart, so a name near the end of its memory still gives its first 31.
+        char name[64] = {};
         if (a != 0 && CoopRuntime::Read(a, &text, sizeof text) && text != 0 &&
-            CoopRuntime::Read(text, name, sizeof name - 1)) {
+            CoopRuntime::Read(text, name, 31)) {
+            if (std::memchr(name, 0, 31) == nullptr && !CoopRuntime::Read(text + 31, name + 31, sizeof name - 32)) {
+                name[31] = 0;
+            }
             e.SetName(name);
         }
         float place[3] = {};
@@ -1440,6 +1447,12 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
             }
             return std::nullopt;
         };
+        // A death kept past its revive ends when the component lives again (a heal, a new actor at that address).
+        if (CoopActorEvents::KeptDeaths& kept = CoopActorEvents::TheKeptDeaths(); kept.Kept(a)) {
+            if (const auto life = life_now(); life && *life > 0) {
+                kept.Alive(a);
+            }
+        }
         // One boss death for everyone (coop_boss_native.h HeldLifeStep): a copy boss's own Life step
         // keeps it at life 1 until its owner's has died; then this same step lets it die.
         bool finishing = false;
@@ -1489,9 +1502,12 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
             LOG_INFO(Core, "coop: actors: the game's Life step asks the module before its revive (patch 0007): an "
                            "owner's death and a test kill stay deaths");
         }
-        if (dead != nullptr && a != 0 && std::exchange(t_life_dead, 0) == a) {
+        // The check runs on every step that ends at 0, so a death kept once stays kept (KeptDeaths, boss-die-0116).
+        const bool passed = a != 0 && std::exchange(t_life_dead, 0) == a;
+        if (dead != nullptr && CoopActorEvents::SkipRevive(CoopActorEvents::TheKeptDeaths(), a, passed)) {
             *dead = 1;
-            CoopActorEvents::RevivesSkipped().fetch_add(1, std::memory_order_relaxed);
+            (passed ? CoopActorEvents::RevivesSkipped() : CoopActorEvents::RevivesKeptSkipped())
+                .fetch_add(1, std::memory_order_relaxed);
         }
         return 1;
     }

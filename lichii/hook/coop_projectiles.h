@@ -91,9 +91,12 @@ public:
     // frame. Carried on as At() only when the samples are later than that.
     // Before, a copy was carried on from the latest sample by its velocity
     // (measured between two walks, so noisy) and snapped at each sample.
+    // #239: `behind_us` is the shooter's own show delay (CoopShowDelay::Us, from its puppet's samples' ages, never
+    // under kBehindUs), so over a slow line the copy stays in its samples like the puppet that shot it (at a
+    // fixed 100 ms it ran past the newest sample at 150-350 ms ping: carried on, held, then jumped).
     static constexpr std::uint64_t kBehindUs = 100'000;
     static constexpr std::size_t kKeep = 16;
-    Vec3 Shown(std::uint64_t now_us, bool ballistic) const;
+    Vec3 Shown(std::uint64_t now_us, bool ballistic, std::uint64_t behind_us = kBehindUs) const;
     // Held still at `at` (the owner's remove): no more carrying on. A shown
     // copy goes on to `at` (taken as kStopAfterUs after the last sample, a
     // walk later) and stays there.

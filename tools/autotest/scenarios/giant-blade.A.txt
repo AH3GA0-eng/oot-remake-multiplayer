@@ -19,9 +19,10 @@ press A
 wait 2400
 mark field
 wait 600
-place 199.43 163.4 309.87
+# Field spot 5 m off the Kokiri Forest exit (the old 199.43 was ON the exit: a map change to KokiriForest_Adult).
+place 194.43 163.4 309.87
 wait 30
-toward 196.93 309.87 10
+toward 191.93 309.87 10
 wear weapon Weapon_Sword_Giant
 wait 120
 press Y

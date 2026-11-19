@@ -311,6 +311,34 @@ TEST_CASE("testinput: wear names a gear slot and a piece") {
     CHECK(requests[0].name == "Armor_Child_Mask_Keaton");
 }
 
+TEST_CASE("testinput: dress asks the game's equip for a slot, or all of them") {
+    std::string error;
+    CHECK_FALSE(Parse("dress\n", error));
+    CHECK_FALSE(Parse("dress hat\n", error));
+    CHECK_FALSE(Parse("dress head extra\n", error));
+    CHECK(DressKind("weapon") == std::optional<std::uint32_t>(0));
+    CHECK(DressKind("Head") == std::optional<std::uint32_t>(7));
+    CHECK(DressKind("armor") == std::optional<std::uint32_t>(8));
+    CHECK(DressKind("boots") == std::optional<std::uint32_t>(9));
+    CHECK(DressKind("hand") == std::optional<std::uint32_t>(10));
+    CHECK(DressKind("shield") == std::optional<std::uint32_t>(6));
+    CHECK_FALSE(DressKind("all"));
+    Runner r(Must("dress HEAD\ndress all\n"));
+    std::vector<std::string> log;
+    r.Advance(0.0, std::nullopt, log);
+    const auto requests = r.TakeRequests();
+    REQUIRE(requests.size() == 2);
+    CHECK(requests[0].kind == Kind::dress);
+    CHECK(requests[0].start == "head");
+    CHECK(requests[1].start == "all");
+    CHECK_FALSE(DressNext());
+    DressAsk(7);
+    DressAsk(8);
+    CHECK(DressNext() == std::optional<std::uint32_t>(7));
+    CHECK(DressNext() == std::optional<std::uint32_t>(8));
+    CHECK_FALSE(DressNext());
+}
+
 TEST_CASE("testinput: a hold's mark is said halfway, with the keys still down") {
     std::string error;
     CHECK_FALSE(Parse("hold ZR 60 aim extra\n", error));

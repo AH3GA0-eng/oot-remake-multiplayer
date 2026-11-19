@@ -33,7 +33,6 @@
 #include "coop_save.h"
 #include "coop_window_brand.h"
 #include "coop_title_menu.h"
-#include "coop_window_brand.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -1111,6 +1110,8 @@ void OnScreen(void* ctx, std::uint64_t screen) noexcept {
         // (the games on this network heard while their view shows; the listener closes a while after)
         if (f.kind == Kind::kPages) {
             CoopLanNet::Look(now_shown && ViewShown() == View::kLan, NowMs());
+            // (the relay's list left, the page gone or the Local tab: its asks stop; ViewNow asks while it shows)
+            if (!(now_shown && ViewShown() == View::kLan && g_online.load())) CoopRoomList::Look(false, NowMs(), {});
         }
         if (early_live && calls && LiveDue(g_pages_gen)) LiveRows(ctx, g_pages_layout, g_pages_gen, ViewNow(ViewShown()));
         if (!now_shown) g_confirm_until = 0;
@@ -1206,6 +1207,8 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                     decide = false;
                 } else {
                     row = clicked >= 0 ? clicked : FocusedRow();   // (under the lock: the pages screen is the updates')
+                    if (clicked == MouseRows::kOffRows) decide = false;   // (a click off our rows: no row's A)
+                    if (clicked >= 0 && cell >= 0) g_cell = -1, g_live_poke = true;   // (a row clicked: the rows' pad)
                 }
             }
             if (g_page.TakeBack()) {

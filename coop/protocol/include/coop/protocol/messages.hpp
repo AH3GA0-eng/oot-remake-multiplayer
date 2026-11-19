@@ -212,6 +212,10 @@ enum class EquipComponent : std::uint16_t {
   // The player's colour (coop-options.ini `color`): 3 bytes, red, green,
   // blue. Others tint that player's puppet with it (docs/puppet.md, "Colour").
   color = 16,
+  // Bit i set: the piece in equipment slot i burns (a lit Deku stick), as
+  // the owner's game shows it. Others play the piece's own flame effect on
+  // their puppet's piece, as a picture only (docs/puppet.md, "A lit Deku stick").
+  lit = 17,
 };
 
 // Longest equipped actor name: the game keeps each in a String64 flag.
@@ -705,6 +709,9 @@ struct Equipment {
   // The player's colour, 0xRRGGBB. Unset: the player chose none (a receiver
   // uses its slot's colour, coop::protocol::slot_color).
   std::optional<std::uint32_t> color;
+  // Bit i set: the piece in slot i burns (its ELink user plays Chemical_Fire,
+  // the flame the game's chemistry starts on a lit Deku stick). 0 when none.
+  std::optional<std::uint8_t> lit;
   bool operator==(const Equipment&) const = default;
 };
 
@@ -732,6 +739,7 @@ inline Equipment merge_equipment(const Equipment& before, const Equipment& now) 
   keep(e.tool, before.tool);
   keep(e.sub_tool, before.sub_tool);
   keep(e.color, before.color);
+  keep(e.lit, before.lit);
   return e;
 }
 
@@ -810,6 +818,11 @@ namespace object_state {
 inline constexpr std::uint8_t in_fight = 1u << 0;
 inline constexpr std::uint8_t held = 1u << 1;
 inline constexpr std::uint8_t asleep = 1u << 2;
+// S2 (event-owner-0116): its owner's own Link's event binds it (a talk, a
+// cutscene the owner's game plays with it). A copy of an actor with its own
+// game logic (an Enemy_: a Deku Scrub) then keeps that logic; only the
+// event's result reaches it (its flags). An older build ignores the bit.
+inline constexpr std::uint8_t in_event = 1u << 3;
 }  // namespace object_state
 
 // Issue 150 (protocol 10): one more AS slot of the owner's actor than slot 0
