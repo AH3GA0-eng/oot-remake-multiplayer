@@ -275,6 +275,68 @@ def quiet_name(actor):
     raise BuildError(f"{actor} is no puppet")
 
 
+# --- Character Select (github.com/snaildev99/OoT-Character-Select): a puppet per character ---------------
+# That mod lets a player be one of over a hundred characters; each is a player model under a file name
+# of its own, Model/Player_<variant>_C<file>.Player_<variant>.bfres (file = the stored character number
+# less 2). A puppet that shows such a player is the plain puppet with that model project, exactly as a
+# tunic colour's puppet is: nothing of the mod's is copied, the game loads the mod's own file. Its
+# characters.json (beside its romfs folder) lists the files it has and the heap sizes its models need.
+CHARACTERS_FILE = "characters.json"
+CHARACTERS_MOD = "OoT Character Select"
+CHARACTERS_FORMAT = 1
+CHARACTER_HEAPS = ("InstanceHeapSize", "PreActorRenderInfoHeapSize")
+
+
+def character_actor(variant, file):
+    """Still a tunic actor to the hook (CoopPuppet_<variant>_<something>), so its checks apply."""
+    return f"CoopPuppet_{variant}_C{file:03d}"
+
+
+def character_project(variant, file):
+    return f"Player_{variant}_C{file:03d}"
+
+
+def find_characters(mod_dir, log=print):
+    """The Character Select mod among the mods the pack is made into: {"mod": its folder, "files":
+    {file number: [variants it has a model for]}, "heaps": {variant: {field: bytes}}, "numbers": {file:
+    stored number}}, or None. Looked for beside the pack (an emulator's load/<title id>) and in the mods
+    folder of a `contents/<title id>/<pack>` layout. A list that cannot be read is said and left out."""
+    here = os.path.abspath(mod_dir)
+    roots = [os.path.dirname(here)]
+    if os.path.basename(os.path.dirname(os.path.dirname(here))).lower() == "contents":
+        roots.append(os.path.dirname(os.path.dirname(os.path.dirname(here))))
+    for root in roots:
+        try:
+            names = sorted(os.listdir(root))
+        except OSError:
+            continue
+        for name in names:
+            path = os.path.join(root, name, CHARACTERS_FILE)
+            if name.startswith(("-", "_", ".")) or not os.path.isfile(path):
+                continue
+            try:
+                with open(path, encoding="utf-8") as f:
+                    doc = json.load(f)
+                if doc.get("mod") != CHARACTERS_MOD or doc.get("format") != CHARACTERS_FORMAT:
+                    continue
+                files, numbers = {}, {}
+                for row in doc["characters"]:
+                    if "file" not in row:
+                        continue
+                    n = int(row["file"])
+                    have = [v for v in VARIANTS if os.path.isfile(os.path.join(
+                        root, name, "romfs", "Model", f"{character_project(v, n)}.Player_{v}.bfres.zs"))]
+                    if have:
+                        files[n], numbers[n] = have, int(row["number"])
+                heaps = {v: {k: int(doc["actor_heaps"][v][k]) for k in CHARACTER_HEAPS} for v in VARIANTS}
+            except (OSError, ValueError, KeyError, TypeError) as e:
+                log(f"characters: {path} could not be read ({e}): no character puppets")
+                continue
+            if files:
+                return {"mod": name, "files": files, "heaps": heaps, "numbers": numbers}
+    return None
+
+
 def guard_scenes(romfs, dicts):
     """{scene: [guard actor, ...]}: the scenes (Banc/<area>/<scene>_Static/_Dynamic) that place a stealth
     guard, an actor whose ActorParam takes GUARD_AFFILIATION. Only Npc_ actors are opened (every guard
@@ -1671,8 +1733,9 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
           tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False, title_rows=False, pause_tab=False,
           look_slots=look_items.SLOTS, perception=True, blade_copies=look_items.BLADE_COPIES,
           skins=(), test_skin=None, game_has=None, game_read=None, skin_effects=False, body=False, liftable=False,
-          pvp=False):
-    """`tunics`: the tunic colours to make puppets of (puppet_pack.tunic.COLORS; each is a model,
+          pvp=False, characters=None):
+    """`characters`: find_characters()'s answer, for a puppet per character of the Character Select mod
+    (character_actor; each with its quiet copy, as the colours). `tunics`: the tunic colours to make puppets of (puppet_pack.tunic.COLORS; each is a model,
     a tile and an actor per age, CoopPuppet_<age>_<Colour>). `test_tunic`: give the plain puppets
     that colour too (a test of the colours with a hook that knows none).
     `heaps`: {actor name: InstanceHeapSize} set outright, for tests of the heap (issue 111).
@@ -1817,22 +1880,29 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
     # Each skin's puppet per age, with its quiet copy for the guard scenes when puppets are seen.
     jobs += [(v, None, q, (sk, refs)) for sk, refs, _ in skin_list for v in refs
              for q in ((False, True) if seen_by else (False,))]
+    # Each character of the Character Select mod per age it has, with its quiet copy as the skins'.
+    jobs = [(*j, None) for j in jobs]
+    if characters:
+        jobs += [(v, None, q, None, n) for n in sorted(characters["files"]) for v in VARIANTS
+                 if v in characters["files"][n] for q in ((False, True) if seen_by else (False,))]
     # Each puppet's `_Pvp` copy right after it (--puppet-pvp; off: the jobs as before).
     jobs = [(*j, False) for j in jobs]
     if clients:
-        jobs = [j for job in jobs for j in (job, (*job[:4], True))]
-    for v, color, quiet, own_skin, pvp_copy in jobs:
+        jobs = [j for job in jobs for j in (job, (*job[:5], True))]
+    for v, color, quiet, own_skin, char, pvp_copy in jobs:
         player = f"Player_{v}"
         # A skin job, or (--test-skin) any puppet of an age the tested skin changes.
-        wears = own_skin or (worn if worn and v in worn[1] else None)
+        wears = own_skin or (worn if worn and v in worn[1] and char is None else None)
         if own_skin:
             actor = skin.actor_name(v, own_skin[0].id)
+        elif char is not None:
+            actor = character_actor(v, char)
         else:
             actor = tunic.actor_name(v, color) if color else puppet_name(v)
         actor = quiet_name(actor) if quiet else actor
         actor = pvp_name(actor) if pvp_copy else actor
-        shade = None if wears else color or test_tunic
-        project = tunic.project_name(v, shade) if shade else None
+        shade = None if wears or char is not None else color or test_tunic
+        project = character_project(v, char) if char is not None else (tunic.project_name(v, shade) if shade else None)
         if wears:
             members = wears[0].members[v]
         else:
@@ -1854,6 +1924,11 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
             new_ai[-1]["ModelProjectName"] = project
         if wears:
             skin_row(new_ai[-1], wears[0], v)
+        if char is not None:
+            for key, size in characters["heaps"][v].items():
+                old = new_ai[-1].get(key)
+                size = max(int(size), int(_num(old or 0)))
+                new_ai[-1][key] = type(old)(size) if isinstance(old, byml._Num) else size
         new_gai.append({"__RowId": actor})
 
         pack_size = ((len(pack) + 0x1F) & ~0x1F) + PACK_SIZE_MARGIN
@@ -1916,7 +1991,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
                 # Sized as the player's AnimationParam it is cut from, plus the margin.
                 table.add_new(carry_anim, max(table.get(src) or 0, len(members.get(src, b""))) + PACK_SIZE_MARGIN)
                 lift_file["carry"] = {"as": asb_carry.CARRY_AS, "animation": carry_anim}
-        made.append({"actor": actor, "from": player, "perception": emitter, "quiet": quiet, "tunic": shade, "model": project,
+        made.append({"actor": actor, "from": player, "perception": emitter, "quiet": quiet, "tunic": shade, "character": char, "model": project,
                      "skin": wears[0].id if wears else None, "pack": dst_rel, "pack_bytes": len(pack),
                      "instance_heap": _num(new_ai[-1].get("InstanceHeapSize", 0)), "param_size": ap_size,
                      "members": names, "equipment_keys": keys, "footstep": footstep, "body": body_files})
@@ -1932,7 +2007,11 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
                 table.add_new(path, size)
                 pvp_files[path] = size
             made[-1]["pvp"] = pvp_files  # (off: the manifest as before)
-        log(f"{actor}: {len(names)} files, {len(pack)} bytes, {len(keys)} equipment keys -> {dst_rel}")
+        if char is None:
+            log(f"{actor}: {len(names)} files, {len(pack)} bytes, {len(keys)} equipment keys -> {dst_rel}")
+    if characters:
+        log(f"characters: {sum(1 for m in made if m['character'] is not None)} puppets for {len(characters['files'])} "
+            f"characters of the mod {characters['mod']} (CoopPuppet_<age>_C<file>, the mod's own model files)")
 
     src = os.path.join(romfs, "Pack", "Actor", f"{IMPACT_SOURCE}.pack.zs")
     template = None
@@ -2054,6 +2133,8 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "look_items": look_item_files,
         "blade_items": blade_files,
         "tunics_off": tunics_off,
+        "characters": ({"mod": characters["mod"], "numbers": {str(n): characters["numbers"][n] for n in sorted(characters["files"])},
+                        "variants": {str(n): characters["files"][n] for n in sorted(characters["files"])}} if characters else None),
         "test_tunic": test_tunic,
         "sound": sound,
         "footsteps": "player" if player_footsteps or not sound else "puppet",
@@ -2176,6 +2257,8 @@ def main(argv=None):
     ap.add_argument("--blade-copies", type=int, default=look_items.BLADE_COPIES, metavar="N",
                     help="copies of each sword per player number, so every puppet's blade is its own "
                          "(look_items.is_wearer_item; 0: none, puppets wear the game's items)")
+    ap.add_argument("--no-characters", action="store_true",
+                    help="no puppets for the characters of an installed Character Select mod (find_characters)")
     a = ap.parse_args(argv)
     from_nup = os.path.isfile(a.romfs) and nup.is_nup(a.romfs)
     if from_nup:
@@ -2250,7 +2333,8 @@ def _main_build(a, romfs, hud_reader=None):
               skin_effects=a.skin_effects,
               game_has=(lambda path: _reader_has(hud_reader, path)) if hud_reader is not None else None,
               game_read=hud_reader.read if hud_reader is not None else None,
-              body=a.puppet_body, liftable=a.puppet_liftable, pvp=a.puppet_pvp)
+              body=a.puppet_body, liftable=a.puppet_liftable, pvp=a.puppet_pvp,
+              characters=None if a.no_characters else find_characters(mod_dir))
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
