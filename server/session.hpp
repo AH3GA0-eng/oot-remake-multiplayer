@@ -426,6 +426,9 @@ struct Stats {
   std::uint64_t object_table_full = 0;  // objects turned away: max_objects
   std::uint64_t handover_asked = 0;       // HANDOVER_ASK sent to an owner
   std::uint64_t handover_unanswered = 0;  // moved with the last relayed sample
+  std::uint64_t bomb_takes = 0;           // BOMB_TAKE asked of the owner
+  std::uint64_t bomb_refused = 0;         // BOMB_TAKE answered with BOMB_ANSWER
+  std::uint64_t bomb_handed_on = 0;       // a bomb whose owner left went on
   std::uint64_t handover_chased = 0;      // asked because a copy chased its player
   std::uint64_t handover_back_held = 0;    // not handed back so soon (handover_back_us)
   std::uint64_t fish_to_lure = 0;         // a fish asked over to the nearest lure (issue 151)
@@ -568,6 +571,9 @@ class Session {
     // Where its Link is, from PLAYER_SAMPLE; forgotten at a scene change.
     std::optional<protocol::Vec3> position;
     std::uint64_t position_at = 0;
+    // BOMB_SHARE (native puppets phase 2): its game takes part in the bomb
+    // hand-over. Off until it says so.
+    bool bomb_share = false;
     // As a receiver: how many samples and poses of each sender it was due
     // (interest counts every n-th), and its share of the pose upload cap.
     std::array<std::uint32_t, protocol::kMaxPlayers + 1> samples_due{};
@@ -643,6 +649,9 @@ class Session {
       // keeps the order, so the owner's answer was read before any of it:
       // finish_handover takes exactly this much off the answer's life.
       std::int64_t hits = 0;
+      // A BOMB_TAKE (native puppets phase 2): no answer means the owner's
+      // game keeps the bomb (BOMB_ANSWER kept), not a move.
+      bool bomb = false;
     };
     std::optional<Ask> ask;
     // DAMAGE that came while the owner hold had not chosen its owner yet
@@ -785,6 +794,15 @@ class Session {
   // The owner answered (or never did: answer null) and the object moves.
   void finish_handover(const protocol::ObjectId& oid, Object& o,
                        const protocol::ObjectState* answer, std::uint64_t now_us);
+  // Native puppets phase 2 (docs/native-puppets.md, docs/protocol.md "Bomb
+  // hand-over").
+  void on_bomb_take(ConnectionId id, Connection& c, const protocol::BombTake& m,
+                    std::uint64_t now_us);
+  void refuse_bomb(ConnectionId to, const protocol::ObjectId& oid, const Object* o,
+                   protocol::BombRefusal why);
+  // A made bomb whose owner lets go of it (left, changed scene): the
+  // sharing game in its scene that goes on with it, if any.
+  std::optional<ConnectionId> bomb_heir(const Object& o, ConnectionId except) const;
   // Gives the object to `next` (or nobody) with epoch + 1: HANDOVER_STATE to
   // the new owner, then OBJECT_OWNER to the scene.
   void change_owner(const protocol::ObjectId& oid, Object& o, std::optional<ConnectionId> next,

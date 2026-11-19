@@ -5975,3 +5975,208 @@ TEST_CASE("approval: a rejoin that shows its token takes its place without askin
   CHECK(all_to<JoinKnock>(h, 1).empty());
   CHECK(h.session.player_count() == 2);
 }
+
+// Native puppets phase 2: a bomb changes hands (docs/native-puppets.md "Lift a
+// bomb, and stash it", docs/protocol.md "Bomb hand-over").
+namespace {
+
+const ObjectId kBomb{ObjectKind::made, 1, 77};
+
+ObjectState lit_bomb_at(float x, float fuse_left) {
+  ObjectState s;
+  s.time.server_time_us = 5;
+  s.position = Vec3{x, 0, 0};
+  s.fuse = fuse_left;
+  return s;
+}
+
+// Players 1 to 3 in the Graveyard, all sharing bombs; player 1's bomb lies
+// there, lit with 3 s left.
+struct BombHarness : ObjectHarness {
+  BombHarness() {
+    for (ConnectionId id = 1; id <= 3; ++id) {
+      receive(id, present_in("Graveyard", {}), kChannelOwnership);
+      receive(id, BombShare{true}, kChannelOwnership);
+    }
+    receive(1, ObjectSpawn{0, kBomb, "Item_Bomb", object_spawn::projectile, lit_bomb_at(4, 3.0f)},
+            kChannelOwnership);
+    clear();
+  }
+};
+
+}  // namespace
+
+TEST_CASE("bomb take: two lifts at once, the first gets it with the fuse left, the second is refused") {
+  BombHarness h;
+  h.receive(2, BombTake{kBomb, 0}, kChannelOwnership);
+  h.receive(3, BombTake{kBomb, 0}, kChannelOwnership);
+  // Only the owner is asked, for player 2.
+  const auto asks = messages_to<HandoverAsk>(h, 1);
+  REQUIRE(asks.size() == 1);
+  CHECK(asks[0] == HandoverAsk{kBomb, 0, 2});
+  const auto refused = messages_to<BombAnswer>(h, 3);
+  REQUIRE(refused.size() == 1);
+  CHECK(refused[0] == BombAnswer{kBomb, 0, BombRefusal::busy});
+  CHECK(messages_to<BombAnswer>(h, 2).empty());
+  CHECK(h.session.stats().bomb_takes == 1);
+
+  // The owner answers with its fuse now: player 2 gets it, epoch 1.
+  h.clear();
+  h.receive(1, HandoverState{0, kBomb, 0, lit_bomb_at(4.5f, 2.25f)}, kChannelOwnership);
+  CHECK(h.session.object_owner(kBomb) == owned(2, 1));
+  const auto handed = messages_to<HandoverState>(h, 2);
+  REQUIRE(handed.size() == 1);
+  CHECK(handed[0].epoch == 1);
+  CHECK(handed[0].player_number == 1);
+  REQUIRE(handed[0].state.fuse);
+  CHECK(*handed[0].state.fuse == doctest::Approx(2.25f));
+  // Everyone in the scene hears the new owner (the old owner's bomb is a copy now).
+  for (ConnectionId id = 1; id <= 3; ++id) {
+    const auto owners = messages_to<ObjectOwner>(h, id);
+    REQUIRE(owners.size() == 1);
+    CHECK(owners[0].owner == 2);
+    CHECK(owners[0].epoch == 1);
+  }
+  // Player 3 tries again with the old epoch: stale.
+  h.clear();
+  h.receive(3, BombTake{kBomb, 0}, kChannelOwnership);
+  const auto stale = messages_to<BombAnswer>(h, 3);
+  REQUIRE(stale.size() == 1);
+  CHECK(stale[0].refusal == BombRefusal::stale);
+}
+
+TEST_CASE("bomb take: one explosion: the old owner's late explode is refused, the new owner's reaches every game once") {
+  BombHarness h;
+  h.receive(2, BombTake{kBomb, 0}, kChannelOwnership);
+  h.receive(1, HandoverState{0, kBomb, 0, lit_bomb_at(4, 1.0f)}, kChannelOwnership);
+  h.clear();
+  // The old owner's game: its own bomb's AI went off before it heard (epoch 0).
+  h.receive(1, ObjectRemove{0, kBomb, 0, RemoveReason::exploded, {4, 0, 0}}, kChannelOwnership);
+  CHECK(h.sent.empty());
+  // Its old samples are refused too.
+  h.receive(1, ObjectSample{0, kBomb, 0, lit_bomb_at(4, 0.5f)}, kChannelObjectSamples);
+  CHECK(h.sent.empty());
+  // The new owner's explosion, at its hands.
+  h.receive(2, ObjectRemove{0, kBomb, 1, RemoveReason::exploded, {9, 1, 0}}, kChannelOwnership);
+  for (ConnectionId id : {ConnectionId{1}, ConnectionId{3}}) {
+    const auto removes = messages_to<ObjectRemove>(h, id);
+    REQUIRE(removes.size() == 1);
+    CHECK(removes[0] == ObjectRemove{2, kBomb, 1, RemoveReason::exploded, {9, 1, 0}});
+  }
+  CHECK(messages_to<ObjectRemove>(h, 2).empty());
+  CHECK(h.session.object_count() == 0);
+  // Nothing more can explode it.
+  h.clear();
+  h.receive(2, ObjectRemove{0, kBomb, 1, RemoveReason::exploded, {9, 1, 0}}, kChannelOwnership);
+  CHECK(h.sent.empty());
+}
+
+TEST_CASE("bomb take: a stash is the new owner's picked-up remove: gone in every game, no explosion") {
+  BombHarness h;
+  h.receive(2, BombTake{kBomb, 0}, kChannelOwnership);
+  ObjectState unlit;
+  unlit.time.server_time_us = 5;
+  unlit.position = Vec3{4, 0, 0};
+  h.receive(1, HandoverState{0, kBomb, 0, unlit}, kChannelOwnership);
+  REQUIRE(h.session.object_owner(kBomb) == owned(2, 1));
+  h.clear();
+  h.receive(2, ObjectRemove{0, kBomb, 1, RemoveReason::picked_up, {4, 1, 0}}, kChannelOwnership);
+  for (ConnectionId id : {ConnectionId{1}, ConnectionId{3}}) {
+    const auto removes = messages_to<ObjectRemove>(h, id);
+    REQUIRE(removes.size() == 1);
+    CHECK(removes[0].reason == RemoveReason::picked_up);
+  }
+  CHECK(h.session.object_count() == 0);
+}
+
+TEST_CASE("bomb take: an owner that does not answer keeps its bomb, and the asker is told") {
+  BombHarness h;
+  h.receive(2, BombTake{kBomb, 0}, kChannelOwnership);
+  h.clear();
+  h.now += 600'000;  // past handover_answer_us
+  h.session.tick(h.now);
+  h.collect();
+  CHECK(h.session.object_owner(kBomb) == owned(1, 0));
+  const auto refused = messages_to<BombAnswer>(h, 2);
+  REQUIRE(refused.size() == 1);
+  CHECK(refused[0] == BombAnswer{kBomb, 0, BombRefusal::kept});
+  CHECK(messages_to<HandoverState>(h, 2).empty());
+  // The next lift may ask again.
+  h.clear();
+  h.receive(3, BombTake{kBomb, 0}, kChannelOwnership);
+  CHECK(messages_to<HandoverAsk>(h, 1).size() == 1);
+}
+
+TEST_CASE("bomb take: refused for what is not another player's bomb here, or an owner that does not share") {
+  BombHarness h;
+  // Its own bomb.
+  h.receive(1, BombTake{kBomb, 0}, kChannelOwnership);
+  REQUIRE(messages_to<BombAnswer>(h, 1).size() == 1);
+  CHECK(messages_to<BombAnswer>(h, 1)[0].refusal == BombRefusal::not_a_bomb);
+  // Unknown, and a made arrow.
+  const ObjectId arrow{ObjectKind::made, 1, 78};
+  h.receive(1, ObjectSpawn{0, arrow, "NormalArrow", object_spawn::projectile, state_at(1, 1)},
+            kChannelOwnership);
+  h.clear();
+  h.receive(2, BombTake{ObjectId{ObjectKind::made, 3, 9}, 0}, kChannelOwnership);
+  h.receive(2, BombTake{arrow, 0}, kChannelOwnership);
+  const auto refused = messages_to<BombAnswer>(h, 2);
+  REQUIRE(refused.size() == 2);
+  CHECK(refused[0].refusal == BombRefusal::not_a_bomb);
+  CHECK(refused[1].refusal == BombRefusal::not_a_bomb);
+  CHECK(messages_to<HandoverAsk>(h, 1).empty());
+  // An owner whose game has the hand-over off keeps it at once.
+  h.clear();
+  h.receive(1, BombShare{false}, kChannelOwnership);
+  h.receive(2, BombTake{kBomb, 0}, kChannelOwnership);
+  REQUIRE(messages_to<BombAnswer>(h, 2).size() == 1);
+  CHECK(messages_to<BombAnswer>(h, 2)[0].refusal == BombRefusal::kept);
+  CHECK(messages_to<HandoverAsk>(h, 1).empty());
+  // Another scene.
+  h.receive(1, BombShare{true}, kChannelOwnership);
+  h.receive(3, present_in("Kakariko", {}), kChannelOwnership);
+  h.clear();
+  h.receive(3, BombTake{kBomb, 0}, kChannelOwnership);
+  REQUIRE(messages_to<BombAnswer>(h, 3).size() == 1);
+  CHECK(messages_to<BombAnswer>(h, 3)[0].refusal == BombRefusal::not_a_bomb);
+}
+
+TEST_CASE("bomb take: the owner leaves mid-fuse: a sharing game goes on with the fuse, so it still goes off once") {
+  BombHarness h;
+  // Player 2 took it; then player 2 leaves while it burns.
+  h.receive(2, BombTake{kBomb, 0}, kChannelOwnership);
+  h.receive(1, HandoverState{0, kBomb, 0, lit_bomb_at(4, 2.0f)}, kChannelOwnership);
+  h.receive(2, ObjectSample{0, kBomb, 1, lit_bomb_at(6, 1.5f)}, kChannelObjectSamples);
+  h.clear();
+  h.session.disconnected(2, h.now);
+  h.collect();
+  // The lowest sharing player left in the scene (1) gets it with the fuse left.
+  CHECK(h.session.object_owner(kBomb) == owned(1, 2));
+  const auto handed = messages_to<HandoverState>(h, 1);
+  REQUIRE(handed.size() == 1);
+  REQUIRE(handed[0].state.fuse);
+  CHECK(*handed[0].state.fuse == doctest::Approx(1.5f));
+  CHECK(messages_to<ObjectRemove>(h, 1).empty());
+  CHECK(messages_to<ObjectRemove>(h, 3).empty());
+  CHECK(h.session.stats().bomb_handed_on == 1);
+  // Its explosion reaches player 3 once.
+  h.clear();
+  h.receive(1, ObjectRemove{0, kBomb, 2, RemoveReason::exploded, {6, 0, 0}}, kChannelOwnership);
+  CHECK(messages_to<ObjectRemove>(h, 3).size() == 1);
+}
+
+TEST_CASE("bomb take: with nobody sharing, an owner who leaves takes its bomb away as before") {
+  ObjectHarness h;
+  h.receive(1, present_in("Graveyard", {}), kChannelOwnership);
+  h.receive(2, present_in("Graveyard", {}), kChannelOwnership);
+  h.receive(1, ObjectSpawn{0, kBomb, "Item_Bomb", object_spawn::projectile, lit_bomb_at(4, 3.0f)},
+            kChannelOwnership);
+  h.clear();
+  h.session.disconnected(1, h.now);
+  h.collect();
+  const auto removes = messages_to<ObjectRemove>(h, 2);
+  REQUIRE(removes.size() == 1);
+  CHECK(removes[0].reason == RemoveReason::gone);
+  CHECK(h.session.object_count() == 0);
+  CHECK(h.session.stats().bomb_handed_on == 0);
+}

@@ -685,6 +685,14 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     on_fish_lure(c, *lure, now_us);
     return;
   }
+  if (const auto* share = std::get_if<BombShare>(&message)) {
+    c.bomb_share = share->on;
+    return;
+  }
+  if (const auto* take = std::get_if<BombTake>(&message)) {
+    on_bomb_take(id, c, *take, now_us);
+    return;
+  }
   if (auto* cut = std::get_if<GrassCut>(&message)) {
     on_grass_cut(id, c, *cut, now_us);
     return;
@@ -1771,6 +1779,11 @@ void Session::drop_presence(ConnectionId id, std::uint8_t number, const ObjectId
     // an enemy nobody else has, is gone on every screen.
     std::optional<ConnectionId> next;
     if (!o.projectile) next = next_owner(o, id, now_us);
+    // Native puppets phase 2: a bomb goes on with a sharing game in its
+    // scene, which keeps its fuse (HANDOVER_STATE), so a lit one still goes
+    // off once everywhere and an unlit one can still be lifted and stashed.
+    if (o.projectile) next = bomb_heir(o, id);
+    if (next && o.projectile) ++stats_.bomb_handed_on;
     if (next) {
       change_owner(oid, o, next, number, now_us);
       return;
@@ -1923,10 +1936,26 @@ void Session::finish_handover(const ObjectId& oid, Object& o, const ObjectState*
   if (!o.ask || !o.owner) return;
   const ConnectionId to = o.ask->to;
   const std::int64_t hits_after_ask = o.ask->hits;
+  const bool bomb = o.ask->bomb;
   o.ask.reset();
   // The player it was for left, changed scene or unloaded it meanwhile: the
-  // owner keeps it.
-  if (!has_loaded(to, o)) return;
+  // owner keeps it. A bomb is a projectile, listed by nobody: its asker only
+  // has to be in its scene still.
+  if (bomb) {
+    auto tc = connections_.find(to);
+    if (tc == connections_.end() || tc->second.state != State::joined ||
+        tc->second.scene != o.scene) {
+      return;
+    }
+    // No answer: the owner's game keeps it (its Link holds it, or it has no
+    // bomb hand-over). The asker drops its lift.
+    if (!answer) {
+      refuse_bomb(to, oid, &o, BombRefusal::kept);
+      return;
+    }
+  } else if (!has_loaded(to, o)) {
+    return;
+  }
   if (answer) {
     // What the answer lacks (an owner that no longer has the actor sends
     // only the time) stays as last relayed.
@@ -1938,6 +1967,7 @@ void Session::finish_handover(const ObjectId& oid, Object& o, const ObjectState*
       if (!s.rotation) s.rotation = old.rotation;
       if (!s.animation) s.animation = old.animation;
       if (!s.life) s.life = old.life;
+      if (!s.fuse) s.fuse = old.fuse;  // a bomb's (BOMB_TAKE); enemies have none
     }
     // The answer's life is the owner's with every DAMAGE it had when it read
     // the ask (its pending replays included). What was passed on after the
@@ -1985,6 +2015,67 @@ void Session::change_owner(const ObjectId& oid, Object& o, std::optional<Connect
     send(*next, kChannelOwnership, HandoverState{old_owner, oid, o.epoch, *o.last_state});
   }
   announce_owner(oid, o);
+}
+
+// Native puppets phase 2 (docs/native-puppets.md "Lift a bomb, and stash it",
+// docs/protocol.md "Bomb hand-over"). A game whose Link lifted the copy of
+// another player's bomb asks for it. The first asker gets the HANDOVER_ASK to
+// the owner; anyone else while it is in flight is refused (busy). A stash is
+// the new owner's OBJECT_REMOVE with reason picked up: nothing here.
+namespace {
+bool is_shared_bomb(const std::string& actor) { return actor == "Item_Bomb"; }
+}  // namespace
+
+void Session::refuse_bomb(ConnectionId to, const ObjectId& oid, const Object* o,
+                          BombRefusal why) {
+  ++stats_.bomb_refused;
+  send(to, kChannelOwnership, BombAnswer{oid, o ? o->epoch : std::uint16_t{0}, why});
+}
+
+void Session::on_bomb_take(ConnectionId id, Connection& c, const BombTake& m,
+                           std::uint64_t now_us) {
+  c.bomb_share = true;  // asking is taking part
+  auto it = objects_.find(m.id);
+  if (it == objects_.end()) {
+    refuse_bomb(id, m.id, nullptr, BombRefusal::not_a_bomb);
+    return;
+  }
+  Object& o = it->second;
+  if (!o.made || !o.projectile || o.removed || !o.owner || *o.owner == id ||
+      o.scene != c.scene || !is_shared_bomb(o.actor)) {
+    refuse_bomb(id, m.id, &o, BombRefusal::not_a_bomb);
+    return;
+  }
+  if (o.epoch != m.epoch) {
+    refuse_bomb(id, m.id, &o, BombRefusal::stale);
+    return;
+  }
+  if (o.ask) {
+    refuse_bomb(id, m.id, &o, BombRefusal::busy);
+    return;
+  }
+  auto oc = connections_.find(*o.owner);
+  if (oc == connections_.end() || !oc->second.bomb_share) {
+    refuse_bomb(id, m.id, &o, BombRefusal::kept);
+    return;
+  }
+  ++stats_.bomb_takes;
+  ask_handover(m.id, o, id, now_us);
+  if (o.ask) o.ask->bomb = true;
+}
+
+std::optional<ConnectionId> Session::bomb_heir(const Object& o, ConnectionId except) const {
+  if (!is_shared_bomb(o.actor)) return std::nullopt;
+  std::optional<ConnectionId> best;
+  std::uint8_t best_number = 0;
+  for (const auto& [cid, p] : connections_) {
+    if (cid == except || p.state != State::joined || p.scene != o.scene || !p.bomb_share) continue;
+    if (!best || p.number < best_number) {
+      best = cid;
+      best_number = p.number;
+    }
+  }
+  return best;
 }
 
 // Fishing (issue 151, docs/objects.md "Fish and lures"). Each game says how

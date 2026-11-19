@@ -147,6 +147,22 @@ The plan (phase 2):
 - A bomb that is stashed is gone for everyone (the owner deletes; `WORLD_BREAK`-like gone with
   no explosion), and only the stashing game's count changes.
 
+### Phase 2 status (native-puppets-b, branch `native-puppets-bomb`)
+
+- **Built and host-tested:** the protocol ([protocol.md](protocol.md), "Bomb hand-over": `BOMB_TAKE` 530,
+  `BOMB_ANSWER` 531, `BOMB_SHARE` 532, no protocol bump) and the server's rules (first lift wins, an
+  unanswered ask keeps the bomb with its owner, the old owner's late explosion refused, a stash is a
+  picked-up remove, a bomb whose owner leaves goes on with a sharing game and its fuse). The game-side
+  rules as pure code, `lichii/hook/coop_bomb_share.h` (lift detection from the copy's own `Lifted`,
+  one ask per lift, the fuse moment from the handed state, the owner's answer only when its Link does
+  not hold the bomb, the stash from the pouch's "Bomb" count rising by one, the own-bomb registry).
+- **Not yet wired:** the spawn sync (`coop_spawn.cpp`) does not call these rules yet, so a game sends none
+  of the new messages; `LICHII_COOP_BOMB_SHARE` is not read yet. Nothing changes in solo, idle or co-op.
+- **The game facts this leans on (phase 0 probe):** that a lifted copy plays `Lifted` on its own AS slot 0
+  (the copy is the game's real `Item_Bomb`, with its `LiftableRef`); that the director must stop placing it
+  while our Link holds it; whether the game can stash a held unlit bomb at all (if not, the stash path is
+  the pick-up of a bomb put down: the same remove, the same count rise).
+
 ## 4. Lifting another player
 
 Needs, on the copy, what a Cucco has: a `LiftableRef` (phase 3; the Cucco's param, own file in the
