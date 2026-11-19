@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <mutex>
 #include <utility>
 #include <string>
@@ -317,7 +318,15 @@ SessionView ViewNow(View view) {
         v.own_mutes = p->own_mutes;
         v.host_mutes = p->host_mutes;
     }
-    if (view == View::kJoin) v.s.rejoin = CoopPause::Rejoin(&v.rejoin_host);
+    if (view == View::kJoin) {
+        v.s.rejoin = CoopPause::Rejoin(&v.rejoin_host);
+        v.relay_set = CoopPause::RelaySet();   // (co-op's own lock: before ours, never inside it)
+        std::lock_guard lock(g_mutex);   // (the fields are the page's; no other lock of ours is held here)
+        v.typing = g_page.Typing();
+        v.room_field = g_page.Field(0).Shown(v.typing == 0, kRowChars - 6);       // ("Room: ")
+        v.password_field = g_page.Field(1).Shown(v.typing == 1, kRowChars - 10);  // ("Password: ")
+        v.room_ready = v.s.room_ready = g_page.Field(0).Ready();
+    }
     if (v.s.hosting) v.asking = CoopLobby::Asking();
     v.s.asking = !v.asking.empty();
     return v;
@@ -325,13 +334,15 @@ SessionView ViewNow(View view) {
 
 // The rows' live texts while our page shows: at most every 250 ms (asked before co-op's status and the Lobby are read,
 // so they are not copied every frame), at once for a new opening of the pages; a pane only when its words changed.
+std::atomic<bool> g_live_poke{false};   // a field changed: the rows are due at their next update
+
 bool LiveDue(std::uint64_t gen) {
     std::lock_guard lock(g_live_mutex);
     const std::uint64_t now = NowMs();
     if (gen != g_live_gen) {
         g_live_gen = gen;
         for (LiveSlot& l : g_live) l.shown.clear();   // (a new opening: its panes show the pack's words again)
-    } else if (now - g_live_ms < 250) {
+    } else if (now - g_live_ms < 250 && !g_live_poke.exchange(false)) {
         return false;
     }
     g_live_ms = now;
@@ -560,6 +571,22 @@ void Act(int row) {
     case RowAction::kResync: CoopSave::RequestResync(); break;   // (the chat says how it goes)
     case RowAction::kDeny: CoopHook::SendChat("/deny"); break;   // (its answer shows in the chat)
     case RowAction::kJoinPaste: CoopPause::JoinPasteNow(); break;
+    case RowAction::kTypeRoom:
+    case RowAction::kTypePassword: {
+        std::lock_guard lock(g_mutex);
+        g_page.StartTyping(a == RowAction::kTypePassword ? 1 : 0);
+        g_live_poke = true;
+        break;
+    }
+    case RowAction::kJoinRoom: {
+        std::string room, password;
+        {
+            std::lock_guard lock(g_mutex);
+            room = g_page.Field(0).text(), password = g_page.Field(1).text();
+        }
+        CoopPause::JoinRoomNow(room, password);   // (a refused or failed join: co-op's menu says why)
+        break;
+    }
     case RowAction::kRejoin: CoopPause::RejoinNow(); break;
     case RowAction::kHost: CoopPause::HostNow(); break;
     case RowAction::kConfirmLeave:
@@ -677,7 +704,10 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
         if (stick != nullptr) {   // (the left stick as up and down for our rows; nn::hid: y up)
             if (stick[1] > 20000) in |= kPadStickUp;
             if (stick[1] < -20000) in |= kPadStickDown;
+            if (stick[0] > 20000) in |= kPadStickRight;
+            if (stick[0] < -20000) in |= kPadStickLeft;
         }
+        bool typing = false;
         std::uint64_t out = 0;
         bool was = false, shown = false;
         bool decide = false;
@@ -686,7 +716,16 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
         {
             std::lock_guard lock(g_mutex);
             was = g_page.Shown();
+            const int typing_was = g_page.Typing();
+            const std::uint64_t field_was = std::hash<std::string>{}(g_page.Field(0).text() + '\n' +
+                                                                     g_page.Field(1).text()) ^ g_page.Field(0).cursor() ^
+                                            (g_page.Field(1).cursor() << 8);
             out = g_page.OnPad(in, NowMs());
+            typing = g_page.Typing() >= 0;
+            const std::uint64_t field_now = std::hash<std::string>{}(g_page.Field(0).text() + '\n' +
+                                                                     g_page.Field(1).text()) ^ g_page.Field(0).cursor() ^
+                                            (g_page.Field(1).cursor() << 8);
+            if (typing_was != g_page.Typing() || field_was != field_now) g_live_poke = true;
             shown = g_page.Shown();
             decide = g_page.TakeDecide();
             row = decide ? FocusedRow() : -1;   // (under the lock: the pages screen is the screens' updates')
@@ -698,12 +737,13 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
         }
         if (shown && stick != nullptr) {
             stick[0] = 0, stick[2] = 0, stick[3] = 0;   // (only the left stick's up and down: the game's cursor over our rows)
+            if (typing) stick[1] = 0;                   // (a field typed into: the cursor stays on its row)
         }
         if (!was && shown) LOG_INFO(Core, "coop: pause tab: our page shown (R on System)");
         if (was && !shown) LOG_INFO(Core, "coop: pause tab: System back ({})", why);
         if (decide) Act(row);
         // (the stick's up and down bits we added are not the game's: only what it sent, filtered)
-        return out & (buttons | ~(kPadStickUp | kPadStickDown));
+        return out & (buttons | ~(kPadStickUp | kPadStickDown | kPadStickLeft | kPadStickRight));
     } catch (...) {
         return buttons;
     }
@@ -711,6 +751,37 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
 
 int MousePage() noexcept {
     return g_mouse.load();
+}
+
+bool Key(std::uint32_t vk, bool repeat) noexcept {
+    try {
+        std::lock_guard lock(g_mutex);
+        const bool taken = g_page.Key(vk, repeat);
+        if (taken) g_live_poke = true;
+        return taken;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool Char(std::uint32_t cp) noexcept {
+    try {
+        std::lock_guard lock(g_mutex);
+        const bool taken = g_page.Char(cp);
+        if (taken) g_live_poke = true;
+        return taken;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool KeysTaken() noexcept {
+    try {
+        std::lock_guard lock(g_mutex);
+        return g_page.Typing() >= 0;
+    } catch (...) {
+        return false;
+    }
 }
 
 }  // namespace CoopPauseTab
