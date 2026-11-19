@@ -545,6 +545,9 @@ void Session::on_join_allow(ConnectionId id, const JoinAllow& a, std::uint64_t n
   }
   log("the host lets " + hello.nickname + " in" +
       (a.remember && key ? " (and they join without asking from now on)" : ""));
+  // Its wait was not silence: a held joiner is told to wait, nobody pings it, and it says nothing until WELCOME. Heard
+  // now, so the silence timeout counts from its admission (a run: let in 46 s after its knock, it timed out at once).
+  c.last_heard = now_us;
   c.state = State::awaiting_hello;  // admit() moves it on to joined or closing
   admit(joiner, c, hello, now_us, key, /*approved=*/true);
 }

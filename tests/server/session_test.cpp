@@ -5796,6 +5796,32 @@ TEST_CASE("approval: the host says no: the joiner is told and closed, nobody els
   knock(h, 3, "Riley", 2);
 }
 
+TEST_CASE("approval: a joiner let in after a long wait is not timed out at once (it says nothing while it waits)") {
+  // (a run: let in 46 s after its knock, it was "timed out: nothing heard for 46795 ms" at the next tick)
+  SessionConfig config = approving();
+  config.silence_timeout_us = 10'000'000;
+  Harness h(config);
+  h.join(1, "Link");
+  const JoinKnock k = knock(h, 2, "Riley", 2);
+  for (int i = 0; i < 6; ++i) {  // 30 s of waiting: the host is heard, the joiner is quiet (nobody pings it)
+    h.now += 5'000'000;
+    h.receive(1, Pong{h.now, h.now}, kChannelSession);
+    h.session.tick(h.now);
+    h.collect();
+  }
+  REQUIRE_FALSE(was_dropped(h, 2));
+  h.clear();
+  h.receive(1, JoinAllow{k.knock, true, false}, kChannelSession);
+  REQUIRE(all_to<Welcome>(h, 2).size() == 1);
+  h.now += 1'000'000;
+  h.receive(1, Pong{h.now, h.now}, kChannelSession);
+  h.session.tick(h.now);
+  h.collect();
+  CHECK_FALSE(was_dropped(h, 2));
+  CHECK(h.session.player_count() == 2);
+  CHECK(all_to<PlayerLeft>(h, 1).empty());
+}
+
 TEST_CASE("approval: no answer within the time turns the joiner away, and the host's question ends") {
   Harness h(approving());
   h.join(1, "Link");
