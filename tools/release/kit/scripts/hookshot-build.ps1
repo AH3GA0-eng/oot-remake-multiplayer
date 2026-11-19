@@ -227,8 +227,9 @@ function Invoke-PuppetPackStep([string]$exeDir) {
     if ($packFrom -and (Test-Path -LiteralPath $packFrom) -and (Test-Path -LiteralPath $packTool)) {
         Write-Host '  Making the puppet pack (how you see the other players; about a minute) ...'
         $ErrorActionPreference = 'Continue'
-        # (no --title-rows: the title stays the game's own; co-op is the pause menu's Multiplayer tab)
-        & $python -I -B $packTool --romfs $packFrom --mod-dir $mod 2>&1 | ForEach-Object { Write-Host "    $_" }
+        # --title-rows: Host, Join and Co-op Settings as the title's own rows (title_menu.py; the owner, 2026-11-19),
+        # as the Linux kit's build.sh
+        & $python -I -B $packTool --romfs $packFrom --mod-dir $mod --title-rows 2>&1 | ForEach-Object { Write-Host "    $_" }
         $code = $LASTEXITCODE
         $made = $true
         $ErrorActionPreference = 'Stop'
