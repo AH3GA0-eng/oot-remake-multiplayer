@@ -227,10 +227,15 @@ function Invoke-PuppetPackStep([string]$exeDir) {
     if ($packFrom -and (Test-Path -LiteralPath $packFrom) -and (Test-Path -LiteralPath $packTool)) {
         Write-Host '  Making the puppet pack (how you see the other players; about a minute) ...'
         $ErrorActionPreference = 'Continue'
-        # --title-rows: Host, Join and Co-op Settings as the title's own rows (title_menu.py; the owner, 2026-11-19).
-        # --pause-tab: the game's own pause menu gets a Multiplayer tab and page, which the co-op module shows (patch
-        # 0030, issue 264). Both as the Linux kit's build.sh.
-        & $python -I -B $packTool --romfs $packFrom --mod-dir $mod --title-rows --pause-tab 2>&1 | ForEach-Object { Write-Host "    $_" }
+        # No --title-rows / --pause-tab (0.11.5 hotfix): a pack made with them crashes the game at boot (0xc0000005 in
+        # sead::MainThread right after 'prompts: switch icons'); the title's Host/Join rows and the pause menu's
+        # Multiplayer tab come back in 0.11.6. The module keeps both off when their panes are missing. A pack an earlier
+        # 0.11.5 kit made with them goes first (build.py writes over its folder but never clears it). As the Linux kit.
+        $oldJson = Join-Path $mod 'coop_puppet.json'
+        if ((Test-Path -LiteralPath $oldJson) -and ([System.IO.File]::ReadAllText($oldJson) -match '"title_rows": true')) {
+            Remove-Item -LiteralPath $mod -Recurse -Force
+        }
+        & $python -I -B $packTool --romfs $packFrom --mod-dir $mod 2>&1 | ForEach-Object { Write-Host "    $_" }
         $code = $LASTEXITCODE
         $made = $true
         $ErrorActionPreference = 'Stop'
