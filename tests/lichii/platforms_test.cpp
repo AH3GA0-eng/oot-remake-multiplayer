@@ -528,7 +528,7 @@ std::vector<ClockFinder::Dropped> LookAtWave(ClockFinder& f, float cycle_s, cons
 }
 }  // namespace
 
-TEST_CASE("platforms: a wave word outside [0, 2 pi) is no clock (#196, the water room floor at -26.4)") {
+TEST_CASE("platforms: a wave word outside 0 to 2 pi is no clock (#196, the water room floor at -26.4)") {
     // bigrun-0115 / room-actor-replay-0116-2: Obj_Deku_MoveFloor_A_01's c+0x60+0x1d8 matched the cycle test (1.177 a
     // second) at -26.403 .. -27.098; the game worked it out again every frame, so no write ever held.
     ClockFinder f;
@@ -1048,7 +1048,7 @@ TEST_CASE("platforms: a node's wave phase is the clock by its layout, whatever u
     CHECK(Where(phase_key) == "wave-node+0xf8");
 }
 
-TEST_CASE("platforms: a node phase worked out again outside [0, 2 pi) is still dropped (#196 guard)") {
+TEST_CASE("platforms: a node phase worked out again outside 0 to 2 pi is still dropped (#196 guard)") {
     ClockFinder f;
     const std::uint64_t phase_key = Key(kRegionWaveNode, 0xf8);
     for (int i = 0; i < 8; ++i) {
