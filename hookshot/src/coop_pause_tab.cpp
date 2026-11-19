@@ -109,8 +109,10 @@ bool TextField::Type(std::uint32_t cp) {
 
 std::string TextField::Shown(bool typing, std::size_t room) const {
     std::string shown;
+    std::size_t mark = std::string::npos;   // where the cursor's bracket went (a password may hold '[' itself)
     for (std::size_t i = 0; i <= text_.size(); ++i) {
         const bool here = typing && i == cursor_;
+        if (here) mark = shown.size();
         if (i == text_.size()) {
             if (here) shown += "[ ]";
             break;
@@ -120,7 +122,7 @@ std::string TextField::Shown(bool typing, std::size_t room) const {
     }
     if (shown.size() <= room) return shown;
     // (too long: the part around the cursor, so its letter stays in view)
-    const std::size_t mark = typing ? shown.find('[') : shown.size();
+    if (mark == std::string::npos) mark = shown.size();
     std::size_t from = mark > room / 2 ? mark - room / 2 : 0;
     if (from + room > shown.size()) from = shown.size() - room;
     return shown.substr(from, room);
