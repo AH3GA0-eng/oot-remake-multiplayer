@@ -201,7 +201,7 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
                              ? std::string(coop::net::refuse_text(event))
                              : std::string();
         g.seen.banned = event.kind == EventKind::refused && event.refuse_reason == proto::RefuseReason::banned;
-        if (event.kind == EventKind::refused) {
+        if (event.kind == EventKind::refused && StopsRejoin(event.refuse_reason)) {
             ++g.refusals;   // (kept across the disconnect that clears `refused`: Seen::refusals)
         }
         if (!g.seen.refused.empty()) {

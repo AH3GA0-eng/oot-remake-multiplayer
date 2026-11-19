@@ -3,6 +3,7 @@
 #include <doctest/doctest.h>
 
 #include "coop_auto_rejoin.h"
+#include "coop_lobby_game.h"
 
 using namespace CoopAutoRejoin;
 
@@ -183,4 +184,15 @@ TEST_CASE("auto-rejoin: after a refusal, the player's own Join brings the drop's
     CHECK_FALSE(p.Tick(in, t += 1000));    // (in again)
     CHECK_FALSE(p.Tick(f, t += 100));      // (a real drop now)
     CHECK(p.Retrying());
+}
+
+TEST_CASE("auto-rejoin: only the host's choice and hopeless refusals stop it, a full server or a name taken retries") {
+    using R = coop::protocol::RefuseReason;
+    for (const R r : {R::kicked, R::banned, R::not_let_in, R::bad_password, R::wrong_protocol_version,
+                      R::wrong_game_build}) {
+        CHECK(CoopLobby::StopsRejoin(r));
+    }
+    for (const R r : {R::server_full, R::name_taken}) {
+        CHECK_FALSE(CoopLobby::StopsRejoin(r));
+    }
 }
