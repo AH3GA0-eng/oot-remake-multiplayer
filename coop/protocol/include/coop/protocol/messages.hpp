@@ -27,7 +27,9 @@ namespace coop::protocol {
 // joiners (JOIN_KNOCK, JOIN_ALLOW, REFUSED not_let_in; issue 261).
 // 14: the hit that happened (HitRecord) in DAMAGE and in the owner's samples (component 21), so every
 // game's enemy takes the real hit through its own damage step (0.11.5, every hit shows on every screen).
-inline constexpr std::uint16_t kProtocolVersion = 14;
+// 15: PLATFORM_CLOCK keys in a mover's GroundControl node (regions 0xfffe / 0xfffd, #196, 0.11.6): a protocol 14
+// reader refuses them as bad_value and drops the whole message, so a 0.11.5 game must be refused at HELLO.
+inline constexpr std::uint16_t kProtocolVersion = 15;
 inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr std::uint8_t kMaxPlayers = 16;  // protocol 11; 4 before
 
@@ -1459,6 +1461,12 @@ inline constexpr std::size_t kMaxEventNameChars = 96;
 // sender's scene, never kept.
 inline constexpr std::size_t kMaxPlatformTicks = 16;
 inline constexpr std::uint64_t kPlatformAsFrameRegion = 0xffff;  // key region: the AS slot 0 frame
+// #196: key regions of a mover's GroundControl node (lichii/hook/coop_platforms.h, GroundNode): the wave
+// controller's and the rotate controller's, offset kPlatformNodeFrom .. kPlatformNodeTo in the node.
+inline constexpr std::uint64_t kPlatformWaveNodeRegion = 0xfffe;
+inline constexpr std::uint64_t kPlatformRotateNodeRegion = 0xfffd;
+inline constexpr std::uint64_t kPlatformNodeFrom = 0xc0;
+inline constexpr std::uint64_t kPlatformNodeTo = 0x140;
 inline constexpr std::uint64_t kPlatformActorBytes = 0x600;
 inline constexpr std::uint64_t kPlatformComponentBytes = 0x200;
 inline constexpr std::uint64_t kPlatformComponents = 0x300 / 8;  // table entries
@@ -1469,7 +1477,8 @@ struct PlatformTick {
   std::uint64_t hash = 0;  // the driver's placement hash
   // Where the word is: region << 32 | byte offset (a multiple of 4).
   // Region 0 the actor (offset under 0x600), 2 + n the component in table
-  // entry n (under 0x200), kPlatformAsFrameRegion the AS slot 0 frame (offset 0).
+  // entry n (under 0x200), kPlatformAsFrameRegion the AS slot 0 frame (offset 0), kPlatformWaveNodeRegion /
+  // kPlatformRotateNodeRegion a word of the mover's GroundControl node (kPlatformNodeFrom .. kPlatformNodeTo).
   std::uint64_t key = 0;
   float value = 0.0f;
   float rate = 0.0f;   // per second, not 0
@@ -1857,8 +1866,11 @@ enum class LiftRefusal : std::uint8_t {
   not_sharing = 4,  // (the server) the lifted game did not say LIFT_SHARE
   freed = 5,        // (after a yes) the lifted game took its place back
   too_far = 6,      // the lifter's Link is not near ours
+  // Owner rule: only a young (child) Link can be lifted. Our Link is adult (or its age not known); after a yes,
+  // our Link grew up while lifted (freed the same way). The server says it too, from the last PLAYER_SAMPLE age.
+  not_young = 7,
 };
-inline constexpr std::uint8_t kLiftRefusalMax = 6;
+inline constexpr std::uint8_t kLiftRefusalMax = 7;
 
 // LIFT_ANSWER: the lifted game's word on a LIFT_ASK (refusal none = yes), or
 // `freed` when a lift it took ends on its side. To the lifter only.

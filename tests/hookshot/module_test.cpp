@@ -684,7 +684,7 @@ TEST_CASE("hookshot: the Discord status header in patch 0026 is hookshot/src's, 
     const auto has = [&rpc](const char* code) { return rpc.find(Squashed(code)) != std::string::npos; };
     CHECK(has("GetProcAddress(m, \"hos_coop_discord_state\")"));
     CHECK(has("dlsym(m, \"hos_coop_discord_state\")"));
-    // Owner's rule: a co-op build's Discord status is always Squadala!'s. Longshot v3.0.0-rc.8 writes its own from a
+    // Owner's rule: a co-op build's Discord status is always Squadala!'s. Longshot v3.0.0 (as rc.8) writes its own from a
     // template (host/discord_activity.c); 0026 sends the header's frame in every state instead (title, play, pause,
     // idle), with no art (the Squadala! application's icon), and always on the Squadala! application.
     CHECK(has("if (1) { /* (patch 0026: always Squadala!'s frame, no art (the application's icon); Longshot's template below is"
@@ -1129,11 +1129,11 @@ TEST_CASE("hookshot: patch 0018's screens' tracker and menu state build on Linux
 
 TEST_CASE("hookshot: every patch touches only what Longshot's Linux AppImage ships, so the Linux kit applies it") {
     // tools/release/kit/linux-longshot/scripts/build.sh applies every hookshot/patches/*.patch to a copy of the
-    // AppImage's usr/share/longshot, which holds only what Longshot's scripts/linux/appimage.sh copies (v3.0.0-rc.8):
+    // AppImage's usr/share/longshot, which holds only what Longshot's scripts/linux/appimage.sh copies (v3.0.0):
     // no tests/, docs/, .forgejo/, most of third_party/. A hunk on anything else applies on Windows' full source and
     // stops every Linux build. Keep this list to appimage.sh's when the pin moves: the list is for kShippedFor, and
     // the test fails on any other tag in hookshot/LINUX.txt until the list is re-checked and kShippedFor moved.
-    const std::string kShippedFor = "v3.0.0-rc.8";
+    const std::string kShippedFor = "v3.0.0";
     const std::string linux_pin = ReadFile(kRepo / "hookshot" / "LINUX.txt");
     const auto tag_at = linux_pin.find("\ntag=");
     REQUIRE(tag_at != std::string::npos);
@@ -1370,4 +1370,16 @@ TEST_CASE("hookshot: every switch of the save folder marks the game's save list 
     const auto step = title.find("if (event == HOS_COOP_TITLE_STEP) {");
     REQUIRE(step != std::string::npos);
     CHECK(title.find("RefreshSaveList(ctx);", step) != std::string::npos);
+}
+
+// Owner photo 2026-11-19 (patch 0031): the module tab's column is opaque (the game's own pause page showed through
+// under a short page) and an action row with a value and `right` set draws the page arrow after the value.
+TEST_CASE("hookshot: the module tab's column is opaque and a valued page row has its arrow (patch 0031)") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0031-coop-menu-column.patch");
+    REQUIRE_FALSE(patch.empty());
+    const std::string menu = PatchedCode(patch, "gpu/vk/vk_menu.cpp");
+    REQUIRE_FALSE(menu.empty());
+    const auto in_menu = [&menu](const char* code) { return menu.find(Squashed(code)) != std::string::npos; };
+    CHECK(in_menu("c.d->AddRectFilled(ImVec2(cx0, hh), ImVec2(cx1, c.h), ui::rgba(34, 26, 17));"));
+    CHECK(in_menu("if (r.right) ui::triangle(c, ImVec2(vb.x - 15 * s, (va.y + vb.y) * 0.5f), 10 * s, 1,"));
 }

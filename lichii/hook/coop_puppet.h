@@ -131,6 +131,23 @@ inline constexpr std::uint64_t kEquipState = 0xce7ab0;
 // kind 7 (head) index 0, 8 (upper) 1, 9 (lower) 2, 10 (hand) 3. It returns
 // 0 when there was a piece it could not take off.
 inline constexpr std::uint64_t kUnequipArmor = 0x10aceb0;
+// A worn head piece shown (#91). The EquipmentUser has one byte per armor
+// link at +0x13c4 (link 0 the head; the hand slots' bytes are just before it,
+// +0x13bc + slot), whose low two bits say whether the piece is drawn: 2
+// shown, 1 not. The equip call and the GameData path leave it alone, so a
+// mask worn so was made but never drawn, on the player's own Link too
+// (wear-masks, 20261110-155536 and probe2 of 11-18). The game sets it where
+// a mask is really put on: its ZR use (0x4b7b20: 2 and 0x4b84b0 to wear, 1
+// and 0x4b8240 to take off) and the pause menu's equipment (0xa7aa60), which
+// calls 0x33abfa0(owner): eu = [owner + 0x470]; byte = (byte & ~3) | 2; then
+// 0x4b84b0(eu), which moves the hair texture for the mask (MaskParam's UV,
+// material Mt_Hairs). The director calls it with `owner` = a cell of the
+// puppet's block holding its EquipmentUser, minus 0x470.
+// 0x4b8240(eu) puts the hair back (the game's take-off).
+inline constexpr std::uint64_t kShowHeadArmor = 0x33abfa0;
+inline constexpr std::uint64_t kShowHeadArmorEu = 0x470;   // [owner + this] = EquipmentUser
+inline constexpr std::uint64_t kHeadArmorHairBack = 0x4b8240;
+inline constexpr std::uint64_t kArmorShownBytes = 0x13c4;  // + armor link: low bits 2 shown, 1 not
 inline constexpr std::uint32_t kArmorKindFirst = 7;   // ArmorHead
 inline constexpr std::uint32_t kArmorKindLast = 10;   // ArmorHand
 inline constexpr std::uint64_t kArmorLinks = 0xe0;    // kArmorLinkCount links of kEquipSlotStride
@@ -191,6 +208,7 @@ inline constexpr std::uint64_t kSetMatrix = 0x4c6580;
 // Worn swapped, the puppet's Ocarina sat in the holder's slot, and players
 // saw it vanish (or something else in the hand) while it played.
 inline constexpr std::size_t kGearCount = 13;
+inline constexpr std::size_t kGearHead = 2;  // the mask
 inline constexpr std::size_t kGearHeld = 5;  // index of the held item
 inline constexpr std::size_t kGearHand = 6;  // the gauntlets
 inline constexpr std::size_t kGearSubWeapon = 7;
@@ -282,6 +300,9 @@ inline constexpr std::uint64_t kAnimCapacity = 0x50;  // 64 characters and the 0
 inline constexpr std::uint64_t kGearText = 0x300;
 inline constexpr std::uint64_t kGearCapacity = 0x40;
 inline constexpr std::uint64_t kGearPtr = 0x640;  // kGearCount x 8 bytes (to 0x6a8)
+// The EquipmentUser, for the head show call (addr::kShowHeadArmor reads it at
+// owner + 0x470: the call is given this cell's address minus 0x470).
+inline constexpr std::uint64_t kHeadOwnerEu = 0x6a8;  // 8 bytes (then coop_puppet_sound.h's)
 }  // namespace block
 
 // Guest memory, as the director sees it. Failures are quiet.
@@ -310,6 +331,16 @@ struct Anim {
     float frame = 0.0f;
     float rate = 1.0f;
 };
+
+// Whether a sample's frame follows its player's animation, given the sample before it (same slot). A playing pose
+// (rate above 0) whose frame stands still from one sample to the next (same command, the same frame) is sent at a
+// fixed frame: the sender does not follow the frame (the carried pose of a lifted player, coop_lift_player.h
+// CarriedAnimation, sends frame 0 at rate 1). The copy then plays on at the rate, and its frame is not set back to
+// the sample's (which would snap the loop back to frame 0 on every sample). A real player's playing animation
+// moves on between samples, so its frame is followed as before; a new command or the first sample is followed.
+inline bool FrameFollowed(const std::string& before_name, float before_frame, const Anim& now) {
+    return !(now.rate > 0.0f && !before_name.empty() && now.name == before_name && now.frame == before_frame);
+}
 
 // coop/host/scene.hpp's Visibility, for a puppet that exists.
 enum class Show { show, hold, hide };
@@ -523,6 +554,8 @@ private:
         CoopOcarina::HandBind ocarina_hand;  // issue 152: Ocarina in hand while it plays
         std::string their_anim;              // their last AS command (debug log)
         std::uint32_t anim_serial = 0;
+        std::string sample_name;     // the last sample's command and frame (FrameFollowed)
+        float sample_frame = 0.0f;
         std::uint64_t anim_buffer = 0;  // which name buffer is next
         std::optional<float> frame_to_set;  // after a play
         std::optional<float> held_frame;    // while held
@@ -575,6 +608,11 @@ private:
         bool remake = false;
         std::array<std::uint64_t, kGearCount> off_since_ms{};  // its player's slot empty since (0: not)
         std::array<bool, kGearCount> unequip_refused{};        // the take-off call returned 0
+        // The head piece worn and not yet shown (addr::kShowHeadArmor, #91),
+        // and the hair to put back after a head piece was taken off.
+        bool head_show = false;
+        bool head_shown = false;        // the show call was made for the head piece worn
+        bool head_hair_back = false;
         std::uint64_t moved_frame = 0;      // the cave frame of the last matrix call
         CoopPuppetSound::State sound;       // the player's Ocarina on it (issue 152)
         CoopLinkSound::Player link_sound;   // the player's own sounds on it (issues 131, 152)
@@ -591,7 +629,7 @@ private:
     };
     enum class Pending {
         none, malloc, create, take, drop, remove, play, frame, sync, equip, unequip, hold,
-        hold_check, move, sound, link_sound, stray, own_state
+        hold_check, move, sound, link_sound, stray, own_state, head_show, head_hair
     };
     // sword-3: once a frame, the game's state of one of the local Link's own
     // slots (CoopPuppetOwn::kSlots, in turn), for the sender (coop_puppet_own.h).
@@ -701,6 +739,8 @@ struct Remote {
     float fade = 1.0f;
     std::uint8_t status = 0;  // PLAYER_STATUS flags
     bool adult = false;
+    // Presence says child (native puppets phase 3: only a young Link is liftable). Age not known: false.
+    bool young = false;
     std::optional<Anim> anim;
     std::uint32_t anim_serial = 0;
     Gear gear;  // as Target::gear

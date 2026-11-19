@@ -545,6 +545,9 @@ void Session::on_join_allow(ConnectionId id, const JoinAllow& a, std::uint64_t n
   }
   log("the host lets " + hello.nickname + " in" +
       (a.remember && key ? " (and they join without asking from now on)" : ""));
+  // Its wait was not silence: a held joiner is told to wait, nobody pings it, and it says nothing until WELCOME. Heard
+  // now, so the silence timeout counts from its admission (a run: let in 46 s after its knock, it timed out at once).
+  c.last_heard = now_us;
   c.state = State::awaiting_hello;  // admit() moves it on to joined or closing
   admit(joiner, c, hello, now_us, key, /*approved=*/true);
 }
@@ -678,7 +681,7 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     return;
   }
   if (const auto* group = std::get_if<ObjectGroup>(&message)) {
-    on_object_group(id, c, *group);
+    on_object_group(id, c, *group, now_us);
     return;
   }
   if (const auto* lure = std::get_if<FishLure>(&message)) {
@@ -786,6 +789,7 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
       c.position = *sample->position;
       c.position_at = now_us;
     }
+    if (sample->age) c.age = *sample->age;
   } else if (const auto* st = std::get_if<PlayerStatus>(&message)) {
     on_status(c, st->flags, now_us);
   }
@@ -972,6 +976,19 @@ void Session::on_lift(ConnectionId id, Connection& c, Message& message,
     no.refusal = LiftRefusal::too_far;
     send(id, kChannelOwnership, no);
     ++stats_.lifts_unplaced;
+    return;
+  }
+  // Owner rule: only a young (child) Link is lifted, whatever the lifter's age. A lifted player whose last
+  // sample says adult, or no age yet, is never asked (not_young), and gets no place: its game freed itself.
+  if (it->second.age != Age::child && !std::holds_alternative<LiftAnswer>(message)) {
+    if (std::holds_alternative<LiftAsk>(message)) {
+      LiftAnswer no;
+      no.player_number = to_number;
+      no.lifter = c.number;
+      no.refusal = LiftRefusal::not_young;
+      send(id, kChannelOwnership, no);
+    }
+    ++stats_.lifts_not_young;
     return;
   }
   send(*target, channel_of(message), message);
@@ -1457,6 +1474,7 @@ void Session::on_object_present(ConnectionId id, Connection& c, const ObjectPres
       Object& o = objects_[oid];
       o.scene = p.scene;
       o.serial = next_serial_++;
+      o.first_at = stamp(now_us);
       o.present.insert(id);
       c.present.insert(oid);
       if (holding) {
@@ -1540,6 +1558,7 @@ void Session::on_object_message(ConnectionId id, Connection& c, std::uint8_t cha
     Object& o = objects_[oid];
     o.scene = c.scene;
     o.serial = next_serial_++;
+    o.first_at = stamp(now_us);
     o.owner = id;
     o.made = true;
     o.projectile = (spawn->flags & object_spawn::projectile) != 0;
@@ -1558,6 +1577,7 @@ void Session::on_object_message(ConnectionId id, Connection& c, std::uint8_t cha
                               sample->state.life->life != o.last_state->life->life;
     const bool says_fight =
         sample->state.state && (*sample->state.state & object_state::in_fight) != 0;
+    note_hold(o, sample->state, now_us);
     if (life_changed || says_fight) mark_fight(o, now_us);
     // The owner's own hit: its life fell with no DAMAGE from another player
     // just before (issue 150, boss_owner_hit_hold_us).
@@ -1850,7 +1870,8 @@ bool Session::dead_for(ConnectionId id, Connection& c, const std::string& scene,
 
 // Not relayed. A member follows its root's owner (run_ownership), shares its
 // fight and is never moved alone.
-void Session::on_object_group(ConnectionId id, Connection& c, const ObjectGroup& g) {
+void Session::on_object_group(ConnectionId id, Connection& c, const ObjectGroup& g,
+                              std::uint64_t now_us) {
   for (const ObjectGroupEntry& e : g.entries) {
     auto m = objects_.find(e.member);
     auto r = objects_.find(e.root);
@@ -1889,6 +1910,18 @@ void Session::on_object_group(ConnectionId id, Connection& c, const ObjectGroup&
       root.members.insert(e.member);
       root.fight_until = std::max(root.fight_until, member.fight_until);
       if (group_of(root) != root_before) announce_owner(top, root);
+      // Row 149: a member first listed a moment ago (a boss part each game
+      // makes as its boss moves) takes its root's owner now, with no ask:
+      // its root's owner runs it from its first frame (CoopObjects'
+      // BossPartRoot), and that game has its own of it.
+      if (config_.part_fresh_us != 0 && member.first_at != 0 && now_us - member.first_at <= config_.part_fresh_us &&
+          root.owner && member.owner && *member.owner != *root.owner && !member.ask && !member.removed &&
+          !member.projectile && has_loaded(*root.owner, member)) {
+        std::uint8_t old_owner = 0;
+        if (auto it = connections_.find(*member.owner); it != connections_.end()) old_owner = it->second.number;
+        ++stats_.parts_to_root;
+        change_owner(e.member, member, root.owner, old_owner, now_us);
+      }
     }
     if (group_of(member) != before) announce_owner(e.member, member);
   }
@@ -2048,11 +2081,38 @@ bool Session::hands_back_soon(const Object& o, ConnectionId to, std::uint64_t no
   return soon;
 }
 
+void Session::note_hold(Object& o, const ObjectState& sample, std::uint64_t now_us) {
+  if (!o.boss || o.root || config_.boss_stall_us == 0) return;
+  // What the sample lacks is as last relayed.
+  const ObjectState* last = o.last_state ? &*o.last_state : nullptr;
+  const auto& animation = sample.animation ? sample.animation : last ? last->animation : std::nullopt;
+  const auto& life = sample.life ? sample.life : last ? last->life : std::nullopt;
+  const auto& bsa = sample.bsa ? sample.bsa : last ? last->bsa : std::nullopt;
+  std::string key = animation ? animation->name : std::string{};
+  key += '|';
+  if (bsa && bsa->action) key += std::to_string(bsa->action->verb);
+  key += '|';
+  if (life) key += std::to_string(life->life);
+  if (key != o.hold_key || !animation || !life) {
+    o.hold_key = std::move(key);
+    o.hold_since = now_us;
+    o.stalled = false;  // a new move (or a hit that took life): its fight counts again
+    return;
+  }
+  if (o.stalled || now_us - o.hold_since < config_.boss_stall_us) return;
+  o.stalled = true;
+  o.fight_until = 0;
+  o.owner_hit_at = 0;
+  o.candidate.reset();
+  ++stats_.boss_stalled;
+}
+
 void Session::mark_fight(Object& o, std::uint64_t now_us) {
   Object* target = &o;
   if (o.root) {
     if (auto r = objects_.find(*o.root); r != objects_.end()) target = &r->second;
   }
+  if (target->stalled) return;  // row 149: stuck in one move, its fight lock stays free until the move changes
   const bool boss = o.boss || target->boss;
   const std::uint64_t until =
       now_us + (boss ? config_.boss_fight_lock_us : config_.fight_lock_us);

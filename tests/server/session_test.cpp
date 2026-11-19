@@ -280,6 +280,23 @@ TEST_CASE("a wrong protocol version is refused, even when the rest cannot be rea
   CHECK(h.session.player_count() == 0);
 }
 
+TEST_CASE("a 0.11.5 game (protocol 14) is refused by a 0.11.6 server at HELLO (#196 node keys)") {
+  // 0.11.6's PLATFORM_CLOCK may carry GroundControl node keys, which a protocol 14 reader refuses as bad_value: the
+  // two releases may not play together, so the version went up and the HELLO is refused with the update note.
+  static_assert(kProtocolVersion >= 15);
+  Harness h;
+  h.connect(1);
+  h.clear();
+  Hello hello = hello_from("Link");
+  hello.protocol_version = 14;
+  h.receive(1, hello, kChannelSession);
+  const auto refused = only_message_to<Refused>(h, 1);
+  REQUIRE(refused.has_value());
+  CHECK(refused->reason == RefuseReason::wrong_protocol_version);
+  CHECK_FALSE(only_message_to<Welcome>(h, 1).has_value());
+  CHECK(h.session.player_count() == 0);
+}
+
 TEST_CASE("the server's log says which side of a version refusal is older") {
   std::vector<std::string> lines;
   SessionConfig config;
@@ -2916,6 +2933,26 @@ TEST_CASE("issue 101: a copy that chases its player gives that player the enemy,
   h.clear();
   h.run(10 * kSecond);
   CHECK(messages_to<HandoverAsk>(h, 2).empty());
+}
+
+TEST_CASE("row 138(8): an area claim by two players stays with the owner, and when it leaves the one still in the area gets it") {
+  // Jabu-Jabu's mouth (coop_sensor_claim.h): each game flags him targeting while its own Link is in his area.
+  OwnerHarness h;
+  h.stand(1, 3);  // the owner, 1, at the mouth
+  h.stand(2, 4);  // and 2 at it too: no distance rule moves it
+  h.run(4 * kSecond);
+  h.receive(1, chasing_in("Field", {placed(7)}), kChannelOwnership);
+  const auto claimed = h.now;  // the owner's last claim: its fight lock runs from here
+  h.receive(2, chasing_in("Field", {placed(7)}), kChannelOwnership);
+  h.run(4 * kSecond);
+  CHECK(h.asks() == 0);  // the owner's own claim is a fight: it keeps him
+  // 1 leaves the area (present, no claim). 2 gets him once 1's fight lock has run out, not before.
+  h.receive(1, present_in("Field", {placed(7)}), kChannelOwnership);
+  h.run(quiet_config().fight_lock_us - (h.now - claimed) - kSecond);
+  CHECK(h.asks() == 0);
+  h.run(2 * kSecond);
+  REQUIRE(messages_to<HandoverAsk>(h, 1).size() == 1);
+  CHECK(messages_to<HandoverAsk>(h, 1)[0] == HandoverAsk{placed(7), 0, 2});
 }
 
 TEST_CASE("report 37: an enemy is not handed back to the player who just gave it up for handover_back_us") {
@@ -5796,6 +5833,32 @@ TEST_CASE("approval: the host says no: the joiner is told and closed, nobody els
   knock(h, 3, "Riley", 2);
 }
 
+TEST_CASE("approval: a joiner let in after a long wait is not timed out at once (it says nothing while it waits)") {
+  // (a run: let in 46 s after its knock, it was "timed out: nothing heard for 46795 ms" at the next tick)
+  SessionConfig config = approving();
+  config.silence_timeout_us = 10'000'000;
+  Harness h(config);
+  h.join(1, "Link");
+  const JoinKnock k = knock(h, 2, "Riley", 2);
+  for (int i = 0; i < 6; ++i) {  // 30 s of waiting: the host is heard, the joiner is quiet (nobody pings it)
+    h.now += 5'000'000;
+    h.receive(1, Pong{h.now, h.now}, kChannelSession);
+    h.session.tick(h.now);
+    h.collect();
+  }
+  REQUIRE_FALSE(was_dropped(h, 2));
+  h.clear();
+  h.receive(1, JoinAllow{k.knock, true, false}, kChannelSession);
+  REQUIRE(all_to<Welcome>(h, 2).size() == 1);
+  h.now += 1'000'000;
+  h.receive(1, Pong{h.now, h.now}, kChannelSession);
+  h.session.tick(h.now);
+  h.collect();
+  CHECK_FALSE(was_dropped(h, 2));
+  CHECK(h.session.player_count() == 2);
+  CHECK(all_to<PlayerLeft>(h, 1).empty());
+}
+
 TEST_CASE("approval: no answer within the time turns the joiner away, and the host's question ends") {
   Harness h(approving());
   h.join(1, "Link");
@@ -6203,6 +6266,139 @@ TEST_CASE("bomb take: with nobody sharing, an owner who leaves takes its bomb aw
   CHECK(h.session.stats().bomb_handed_on == 0);
 }
 
+namespace {
+ObjectState held_move(const std::string& animation, std::int32_t life) {
+  ObjectState s = state_at(0, life);
+  s.animation = Animation{animation, 1.0f, 1.0f};
+  s.state = object_state::in_fight;
+  return s;
+}
+}  // namespace
+
+TEST_CASE("row 149: a boss stuck in one move frees its fight lock, a new move or a hit locks it again") {
+  SessionConfig config = quiet_config();
+  config.boss_near_hold_us = 0;
+  OwnerHarness h(config);
+  h.receive(1, present_in("Field", {placed(7)}), kChannelOwnership);
+  h.receive(2, present_in("Field", {placed(7)}), kChannelOwnership);
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  const auto sample_for = [&](std::uint64_t us, const std::string& animation, std::int32_t life) {
+    for (std::uint64_t t = 0; t < us; t += kSecond) {
+      h.receive(1, ObjectSample{0, placed(7), 0, held_move(animation, life)}, kChannelObjectSamples);
+      h.run(kSecond);
+    }
+  };
+  // King Dodongo's roll, held: its samples say "in fight" every time, its life stays.
+  sample_for(config.boss_stall_us - 2 * kSecond, "Rolling_Loop", 24);
+  CHECK(h.session.object_in_fight(placed(7), h.now));
+  CHECK(h.session.stats().boss_stalled == 0);
+  sample_for(4 * kSecond, "Rolling_Loop", 24);
+  CHECK(h.session.stats().boss_stalled == 1);
+  CHECK_FALSE(h.session.object_in_fight(placed(7), h.now));  // its own samples no longer renew it
+  // A new move: its fight counts again.
+  sample_for(2 * kSecond, "Rolling_End", 24);
+  CHECK(h.session.object_in_fight(placed(7), h.now));
+  // Held again, then a hit that takes life: the same.
+  sample_for(config.boss_stall_us + 2 * kSecond, "Wait", 24);
+  CHECK(h.session.stats().boss_stalled == 2);
+  CHECK_FALSE(h.session.object_in_fight(placed(7), h.now));
+  sample_for(kSecond, "Wait", 20);
+  CHECK(h.session.object_in_fight(placed(7), h.now));
+}
+
+TEST_CASE("row 149: a stuck boss's freed fight lets a copy's chase hand it over") {
+  SessionConfig config = quiet_config();
+  config.boss_near_hold_us = 0;
+  OwnerHarness h(config);
+  h.receive(1, present_in("Field", {placed(7)}), kChannelOwnership);
+  h.receive(2, present_in("Field", {placed(7)}), kChannelOwnership);
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h.stand(1, 34);
+  h.stand(2, 60);
+  ObjectPresent chase = present_in("Field", {placed(7)});
+  chase.objects[0].flags = object_presence::targeting;
+  h.receive(2, chase, kChannelOwnership);
+  // In its fight the chase moves nothing.
+  for (std::uint64_t t = 0; t < config.boss_stall_us - 2 * kSecond; t += kSecond) {
+    h.receive(1, ObjectSample{0, placed(7), 0, held_move("Rolling_Loop", 24)}, kChannelObjectSamples);
+    h.run(kSecond);
+  }
+  CHECK(h.asks() == 0);
+  // Stuck: the fight is freed and the chase hands it to the chasing game.
+  for (int i = 0; i < 6 && h.asks() == 0; ++i) {
+    h.receive(1, ObjectSample{0, placed(7), 0, held_move("Rolling_Loop", 24)}, kChannelObjectSamples);
+    h.run(kSecond);
+  }
+  CHECK(h.session.stats().boss_stalled == 1);
+  CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+}
+
+TEST_CASE("row 149: a boss stuck in one move with no animation or life in its samples is never judged") {
+  SessionConfig config = quiet_config();
+  config.boss_near_hold_us = 0;
+  OwnerHarness h(config);
+  h.receive(1, present_in("Field", {placed(7)}), kChannelOwnership);
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  for (std::uint64_t t = 0; t < 2 * config.boss_stall_us; t += kSecond) {
+    ObjectState s = state_at(0, 24);
+    s.state = object_state::in_fight;
+    h.receive(1, ObjectSample{0, placed(7), 0, s}, kChannelObjectSamples);
+    h.run(kSecond);
+  }
+  CHECK(h.session.stats().boss_stalled == 0);
+  CHECK(h.session.object_in_fight(placed(7), h.now));
+}
+
+TEST_CASE("row 149: a boss part first listed by another game takes its root's owner at the link, no ask") {
+  OwnerHarness h;
+  // King Dodongo (7) is player 1's; his roll centre (8), made anew in every game, was listed by player 2 first.
+  h.receive(1, present_in("Field", {placed(7)}), kChannelOwnership);
+  h.receive(2, present_in("Field", {placed(7), placed(8)}), kChannelOwnership);
+  h.receive(1, present_in("Field", {placed(7), placed(8)}), kChannelOwnership);
+  CHECK(h.session.object_owner(placed(8)) == owned(2, 0));
+  h.clear();
+  h.receive(1, ObjectGroup{0, {{placed(8), placed(7), object_group::boss}}}, kChannelOwnership);
+  CHECK(h.session.object_owner(placed(8)) == owned(1, 1));
+  CHECK(h.session.stats().parts_to_root == 1);
+  CHECK(messages_to<HandoverAsk>(h, 2).empty());
+  // Player 2's game learns it is a copy now.
+  const auto told = messages_to<ObjectOwner>(h, 2);
+  REQUIRE_FALSE(told.empty());
+  CHECK(told.back().id == placed(8));
+  CHECK(told.back().owner == 1);
+}
+
+TEST_CASE("row 149: an older part, or one whose root's owner does not have it, goes by the hand-over ask as before") {
+  {
+    OwnerHarness h;
+    h.receive(1, present_in("Field", {placed(7)}), kChannelOwnership);
+    h.receive(2, present_in("Field", {placed(7), placed(8)}), kChannelOwnership);
+    h.receive(1, present_in("Field", {placed(7), placed(8)}), kChannelOwnership);
+    h.run(SessionConfig{}.part_fresh_us + kSecond);
+    h.clear();
+    h.receive(1, ObjectGroup{0, {{placed(8), placed(7), object_group::boss}}}, kChannelOwnership);
+    CHECK(h.session.stats().parts_to_root == 0);
+    h.run(250'000);
+    CHECK(messages_to<HandoverAsk>(h, 2) == std::vector<HandoverAsk>{{placed(8), 0, 1}});
+  }
+  {
+    // The root's owner has not listed the part: nothing to give it.
+    OwnerHarness h;
+    h.receive(1, present_in("Field", {placed(7)}), kChannelOwnership);
+    h.receive(2, present_in("Field", {placed(7), placed(8)}), kChannelOwnership);
+    h.receive(2, ObjectGroup{0, {{placed(8), placed(7), object_group::boss}}}, kChannelOwnership);
+    CHECK(h.session.stats().parts_to_root == 0);
+    CHECK(h.session.object_owner(placed(8)) == owned(2, 0));
+  }
+}
+
+// A young (child) Link's sample: only a child is ever lifted (owner rule, Session::on_lift).
+PlayerSample young_at(const std::string& scene, Vec3 position, Age age = Age::child) {
+  PlayerSample s = sample_at(scene, position);
+  s.age = age;
+  return s;
+}
+
 TEST_CASE("player lift: passed to the one player named, only between sharing games") {
   Harness h;
   h.join(1, "Link");
@@ -6223,7 +6419,7 @@ TEST_CASE("player lift: passed to the one player named, only between sharing gam
   h.clear();
   h.receive(2, LiftShare{true}, kChannelOwnership);
   for (ConnectionId id = 1; id <= 3; ++id) {
-    h.receive(id, sample_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+    h.receive(id, young_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
   }
   h.clear();
   h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
@@ -6262,21 +6458,21 @@ TEST_CASE("player lift: an ask whose lifter's place is not known, or not in the 
   CHECK(only_message_to<LiftAnswer>(h, 1) == LiftAnswer{2, 1, LiftRefusal::too_far});
   CHECK(h.session.stats().lifts_unplaced == 1);
   // Another scene than the lifted's.
-  h.receive(1, sample_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
-  h.receive(2, sample_at("Kakariko", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.receive(1, young_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.receive(2, young_at("Kakariko", Vec3{1, 0, 0}), kChannelPlayerSamples);
   h.clear();
   h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
   CHECK(h.to(2).empty());
   CHECK(only_message_to<LiftAnswer>(h, 1) == LiftAnswer{2, 1, LiftRefusal::too_far});
   // The same scene, but the lifter's position stale.
-  h.receive(2, sample_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.receive(2, young_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
   h.now += 6'000'000;
-  h.receive(2, sample_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.receive(2, young_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
   h.clear();
   h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
   CHECK(h.to(2).empty());
   // Fresh and together: passed on.
-  h.receive(1, sample_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.receive(1, young_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
   h.clear();
   h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
   CHECK(only_message_to<LiftAsk>(h, 2) == LiftAsk{1, 2});
@@ -6459,4 +6655,61 @@ TEST_CASE("pvp native: an attacker who leaves takes its strikes in flight with i
   h.receive(2, result_for(1, 1), kChannelOwnership);
   CHECK(messages_of<PvpResult>(h, 3).empty());
   CHECK(h.session.stats().pvp_results_dropped == 1);
+}
+
+TEST_CASE("player lift: only a young Link is asked: an adult or an unknown age is refused not_young") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.receive(1, LiftShare{true}, kChannelOwnership);
+  h.receive(2, LiftShare{true}, kChannelOwnership);
+  // Placed together, but the lifted player's samples carry no age: refused, nothing reaches it.
+  h.receive(1, young_at("Graveyard", Vec3{1, 0, 0}, Age::adult), kChannelPlayerSamples);
+  h.receive(2, sample_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
+  CHECK(h.to(2).empty());
+  CHECK(only_message_to<LiftAnswer>(h, 1) == LiftAnswer{2, 1, LiftRefusal::not_young});
+  // Adult: refused the same way.
+  h.receive(2, young_at("Graveyard", Vec3{1, 0, 0}, Age::adult), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
+  CHECK(h.to(2).empty());
+  CHECK(only_message_to<LiftAnswer>(h, 1) == LiftAnswer{2, 1, LiftRefusal::not_young});
+  CHECK(h.session.stats().lifts_not_young == 2);
+  // Young (the lifter is adult: its age is never a reason): passed on.
+  h.receive(2, young_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
+  CHECK(only_message_to<LiftAsk>(h, 2) == LiftAsk{1, 2});
+  // A later sample without an age keeps the last one (child).
+  h.receive(2, sample_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
+  CHECK(only_message_to<LiftAsk>(h, 2) == LiftAsk{1, 2});
+}
+
+TEST_CASE("player lift: grown up while carried, the lifter's places stop at the server, its answers still go") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.receive(1, LiftShare{true}, kChannelOwnership);
+  h.receive(2, LiftShare{true}, kChannelOwnership);
+  h.receive(1, young_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.receive(2, young_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
+  h.receive(2, LiftAnswer{0, 1, LiftRefusal::none}, kChannelOwnership);
+  h.clear();
+  h.receive(1, LiftPlace{0, 2, LiftPhase::held, {1, 2, 3}}, kChannelPlayerSamples);
+  CHECK(only_message_to<LiftPlace>(h, 2) == LiftPlace{1, 2, LiftPhase::held, {1, 2, 3}});
+  // The lifted player is adult now (the Master Sword): no place (flying or landed) reaches it.
+  h.receive(2, young_at("Graveyard", Vec3{1, 0, 0}, Age::adult), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, LiftPlace{0, 2, LiftPhase::flying, {1, 2, 3}}, kChannelPlayerSamples);
+  h.receive(1, LiftPlace{0, 2, LiftPhase::landed, {1, 2, 3}}, kChannelPlayerSamples);
+  CHECK(messages_to<LiftPlace>(h, 2).empty());
+  CHECK(messages_to<LiftAnswer>(h, 1).empty());  // a place gets no answer from the server
+  // Its own freed answer still reaches the lifter.
+  h.receive(2, LiftAnswer{0, 1, LiftRefusal::not_young}, kChannelOwnership);
+  CHECK(only_message_to<LiftAnswer>(h, 1) == LiftAnswer{2, 1, LiftRefusal::not_young});
 }

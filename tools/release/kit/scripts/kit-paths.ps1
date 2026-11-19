@@ -770,9 +770,11 @@ function Test-KitOtherKitGame([string]$Kit, [string]$Game) {
 
 # A built game another kit on this PC has, made from the same release, pin and patches as $Kit wants
 # ($Stamp: Get-KitHookshotStamp), so a second kit (unzipped twice or copied) copies it instead of a 10 to 45
-# minute build. $Others: the other kit folders (kits.txt and the kit game-folder.txt names). Returns the game
-# folder, or ''.
-function Find-KitHookshotGameToCopy([string]$Kit, [string]$Stamp, [string[]]$Others) {
+# minute build. $Others: the other kit folders (kits.txt and the kit game-folder.txt names). $Dlss: this kit's NVIDIA
+# DLSS choice (hookshot\dlss.txt); only a game with DLSS as chosen is taken (Test-KitHookshotDlss), so a kit never
+# gets NVIDIA's files without its own opt-in, nor a game without them that it would build again at once. Returns the
+# game folder, or ''.
+function Find-KitHookshotGameToCopy([string]$Kit, [string]$Stamp, [string[]]$Others, [bool]$Dlss = $false) {
     if (-not $Stamp) { return '' }
     $mine = [System.IO.Path]::GetFullPath($Kit).TrimEnd('\')
     foreach ($o in @($Others | Where-Object { $_ } | Sort-Object -Unique)) {
@@ -781,6 +783,7 @@ function Find-KitHookshotGameToCopy([string]$Kit, [string]$Stamp, [string[]]$Oth
         $g = Join-Path $of 'hookshot\game'
         if (-not (Get-KitHookshotExe $g)) { continue }
         $s = Join-Path $g 'coop-built-from.txt'
+        if ((Test-KitHookshotDlss $g) -ne $Dlss) { continue }
         if ((Test-Path -LiteralPath $s) -and [System.IO.File]::ReadAllText($s) -eq $Stamp) { return $g }
     }
     return ''
@@ -788,8 +791,8 @@ function Find-KitHookshotGameToCopy([string]$Kit, [string]$Stamp, [string[]]$Oth
 
 # A built game in the co-op game cache on this PC made from $Stamp (Get-KitHookshotStamp): <cache>\<key>\game, where
 # <cache> is OOT_COOP_HS_CACHE or %LOCALAPPDATA%\oot-coop\hs-cache (tools/hookshot/hs.py fills it; it keeps the last 3
-# builds). Its game folders hold nothing of a player's. Returns the game folder, or ''.
-function Find-KitHookshotCachedGame([string]$Stamp, [string]$Root = '') {
+# builds). Its game folders hold nothing of a player's. $Dlss: as Find-KitHookshotGameToCopy's. Returns the game folder, or ''.
+function Find-KitHookshotCachedGame([string]$Stamp, [string]$Root = '', [bool]$Dlss = $false) {
     if (-not $Stamp) { return '' }
     if (-not $Root) {
         $Root = if ($env:OOT_COOP_HS_CACHE) { $env:OOT_COOP_HS_CACHE } elseif ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'oot-coop\hs-cache' } else { '' }
@@ -802,9 +805,27 @@ function Find-KitHookshotCachedGame([string]$Stamp, [string]$Root = '') {
         $s = Join-Path $d.FullName 'stamp.txt'
         $g = Join-Path $d.FullName 'game'
         if (-not (Test-Path -LiteralPath $s -PathType Leaf) -or -not (Get-KitHookshotExe $g)) { continue }
+        if ((Test-KitHookshotDlss $g) -ne $Dlss) { continue }
         if ((& $norm ([System.IO.File]::ReadAllText($s))) -eq $want) { return $g }
     }
     return ''
+}
+
+# A game folder built with NVIDIA DLSS (#234): make_game.py's place_ngx_runtime puts DLSS's runtime in its ngx folder
+# when the build had NVIDIA's SDK, and removes it when a build had none.
+function Test-KitHookshotDlss([string]$Game) {
+    return [bool]($Game -and (Test-Path -LiteralPath (Join-Path $Game 'ngx\nvngx_dlss.dll')))
+}
+
+# NVIDIA's DLSS license, as the pinned Longshot's own tools\scripts\ngx_sdk.py names it (LICENSE_URL at its COMMIT), so a
+# pin that moves NVIDIA's commit moves the link too. Without those tools: the license in NVIDIA's repository.
+function Get-KitNgxLicenseUrl([string]$Tools) {
+    $py = if ($Tools) { Join-Path $Tools 'scripts\ngx_sdk.py' } else { '' }
+    if ($py -and (Test-Path -LiteralPath $py)) {
+        $m = Select-String -LiteralPath $py -Pattern '^COMMIT\s*=\s*"([0-9a-f]{40})"' | Select-Object -First 1
+        if ($m) { return "https://github.com/NVIDIA/DLSS/blob/$($m.Matches[0].Groups[1].Value)/LICENSE.txt" }
+    }
+    return 'https://github.com/NVIDIA/DLSS/blob/main/LICENSE.txt'
 }
 
 # longshot.exe of a game folder (a builder's game folder has it in bin\), or $null.
@@ -1464,6 +1485,17 @@ function Get-KitDownloadFailText([string]$File, [string]$Why, [string]$TestUrl, 
         'If the browser downloads it but this script cannot, the antivirus or a proxy blocks PowerShell. Start again: what was'
         'downloaded is kept. Still stuck: scripts\collect-logs.cmd, and attach its zip to /bugreport on the Discord.'
     ) -join "`n"
+}
+
+# The kit's puppet pack command, one place for every caller (hookshot-build.ps1's pack step, make-puppet-pack.cmd, the
+# test kits' jobs): python's arguments for tools\puppet_pack\build.py from the game file $From into the pack folder $Mod.
+# --title-rows / --pause-tab: the title's Host, Join and Co-op Settings rows and the pause menu's Multiplayer tab. They
+# make the pack replace three files the game reads at boot (each language's Mals archive, the Title and Common layout
+# archives), larger than the game's, with their sizes in the pack's size table; merge_tables.py (every start) takes
+# them out of play when the size table the game reads cannot hold them (another mod's table wins), as that crashed the
+# game at boot in 0.11.5's test (the old pack left in mods\contents as coop-puppet.old-b26; its table won).
+function Get-KitPackArgs([string]$Tool, [string]$From, [string]$Mod) {
+    return @('-I', '-B', $Tool, '--romfs', $From, '--mod-dir', $Mod, '--title-rows', '--pause-tab')
 }
 
 # #48: Longshot serves ONE resource size table, the winning mod's. A seed made on OOTRR's website (its folder put into

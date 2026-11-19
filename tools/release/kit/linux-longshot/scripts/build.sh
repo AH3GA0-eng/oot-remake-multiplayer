@@ -9,6 +9,9 @@
 #   bash scripts/build.sh --rebuild             build again even when nothing changed
 #   bash scripts/build.sh --check-only          get the tools and check your game files; build nothing
 #   bash scripts/build.sh --jobs N              at most N compilers at once
+#   bash scripts/build.sh --dlss                with NVIDIA DLSS: asks you to accept NVIDIA's license once, then every
+#                                               build fetches NVIDIA's DLSS SDK and builds with it (data/dlss.txt)
+#   bash scripts/build.sh --no-dlss             without DLSS again (the game is built again without it)
 #   bash scripts/build.sh --renderer-only DIR   (CI, no game) steps 1 to 3, then compile Longshot's patched
 #                                               Linux renderer and our host files into DIR
 #
@@ -28,13 +31,15 @@
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-game='' exefs='' rebuild=0 check_only=0 jobs='' renderer_out=''
+game='' exefs='' rebuild=0 check_only=0 jobs='' renderer_out='' dlss=0 no_dlss=0
 while (($#)); do
     case $1 in
         --game) game=$2; shift ;;
         --exefs) exefs=$2; shift ;;
         --rebuild) rebuild=1 ;;
         --check-only) check_only=1 ;;
+        --dlss) dlss=1 ;;
+        --no-dlss) no_dlss=1 ;;
         --jobs) jobs=$2; shift ;;
         --renderer-only) renderer_out=$2; shift ;;
         *) fail "build.sh: unknown option $1" ;;
@@ -145,6 +150,35 @@ make_game() {
 game_stamp=$GAME/coop-built-from.txt
 ready=0
 [[ -n $(kit_game_exe) && $(cat "$game_stamp" 2>/dev/null) == "$src_stamp" ]] && ready=1
+
+# NVIDIA DLSS (#234), as hookshot-build.ps1: only in a game built with NVIDIA's DLSS SDK, which nobody may pass on, so
+# each build downloads it once NVIDIA's license is accepted. --dlss asks once and data/dlss.txt keeps the answer (the
+# builds after an update keep DLSS); --no-dlss takes it back. Not in coop-built-from.txt (release, pin and patches).
+# A game with DLSS has its runtime in data/game/ngx (make_game.py's place_ngx_runtime; gone again without the SDK).
+dlss_note=$DATA/dlss.txt
+if ((no_dlss)); then
+    rm -f "$dlss_note"
+elif ((dlss)) && [[ ! -f $dlss_note ]]; then
+    kit_tty || fail 'NVIDIA DLSS needs NVIDIA'"'"'s license accepted: run bash scripts/build.sh --dlss from a terminal.'
+    say ''
+    warn "NVIDIA DLSS (NVIDIA RTX graphics cards): the build downloads NVIDIA's DLSS SDK, under NVIDIA's own license:"
+    # (the link as the pinned Longshot's scripts/ngx_sdk.py names it, so a pin that moves NVIDIA's commit moves it too)
+    ngx_commit=$(sed -n 's/^COMMIT *= *"\([0-9a-f]\{40\}\)".*/\1/p' "$SRC/scripts/ngx_sdk.py" 2>/dev/null | head -n 1 || true)
+    say "  https://github.com/NVIDIA/DLSS/blob/${ngx_commit:-main}/LICENSE.txt (the build prints NVIDIA's notice too)."
+    say "  The game folder then holds NVIDIA's files: never share it, and never post builds made with them."
+    read -r -p "  Accept NVIDIA's license and build with DLSS? (y/n) " answer || answer=''
+    [[ ${answer,,} =~ ^(y|yes|j|ja)$ ]] || fail "NVIDIA's license not accepted: nothing changed (the game stays as it is, without DLSS)."
+    printf 'nvidia-license=accepted\n' >"$dlss_note"
+fi
+want_dlss=0
+((!no_dlss)) && [[ -f $dlss_note ]] && want_dlss=1
+game_dlss=0
+compgen -G "$GAME/ngx/libnvidia-ngx-dlss.so.*" >/dev/null && game_dlss=1
+if ((ready && want_dlss != game_dlss && (want_dlss || no_dlss))); then
+    if ((want_dlss)); then say 'NVIDIA DLSS: the game has no DLSS yet, so it is built again with it (much shorter than the first build).'
+    else say 'NVIDIA DLSS off: the game is built again without it.'; fi
+    ready=0
+fi
 remembered=$DATA/game-files.txt
 
 if [[ -z $game ]] && ((!ready || rebuild || check_only)); then
@@ -213,8 +247,15 @@ else
     step 'Building the game (15 to 60 minutes, once; the PC stays usable)'
     build_args=("${game_args[@]}" --out "$GAME" --work "$WORK" --language "$language" --log "$LOGS/build.log")
     [[ -n $jobs ]] && build_args+=(--jobs "$jobs")
+    # (NVIDIA DLSS: make_game.py fetches NVIDIA's SDK into data/work/ngx-sdk, only what is missing, and builds the
+    # renderer with it; the license was accepted above, data/dlss.txt)
+    ((want_dlss)) && build_args+=(--fetch-ngx-sdk --accept-nvidia-license)
     mkdir -p "$GAME"
-    make_game "${build_args[@]}" || fail "The build stopped. Its log: $LOGS/build.log"
+    ((want_dlss)) && export LONGSHOT_NGX_SDK=$WORK/ngx-sdk
+    # (make_game.py's own words for a failed SDK download are the Builder's, "untick NVIDIA DLSS": the kit's way is --no-dlss)
+    no_dlss_hint=''
+    ((want_dlss)) && no_dlss_hint=" This build was with NVIDIA DLSS: if NVIDIA's SDK could not be downloaded (offline?), bash start-squadala.sh --no-dlss builds the game without it."
+    make_game "${build_args[@]}" || fail "The build stopped. Its log: $LOGS/build.log$no_dlss_hint"
     [[ -n $(kit_game_exe) ]] || fail "The build finished but there is no game in $GAME. Its log: $LOGS/build.log"
     printf '%s' "$src_stamp" >"$game_stamp"
 fi
@@ -292,7 +333,7 @@ pack_from=$game
 mod=$GAME/mods/contents/0400486024DEC000/coop-puppet
 # (the pack tool's own files too: a pack made by another version of the tool is made again, as the
 # Windows kit's Test-KitPuppetPackStale does; the look files and the copies' marks change with it)
-pack_stamp="$src_stamp tool:$(cd "$DATA/tools/puppet_pack" && LC_ALL=C sha256sum -- *.py | sha256sum | cut -d' ' -f1)"
+pack_stamp="$src_stamp menus:1 tool:$(cd "$DATA/tools/puppet_pack" && LC_ALL=C sha256sum -- *.py | sha256sum | cut -d' ' -f1)"
 # A file the pack's manifest names that is gone (a pack tool stopped half way, a hand-copied pack): the look files
 # (coop_look/gear.bin, a colour's .bin) and each tunic's files, as the Windows kit's Get-KitPuppetPackGaps (pack-retry).
 pack_gap() {
@@ -356,6 +397,10 @@ if [[ ! -e ${pack_from:-} ]] && ! [[ -f $mod/coop_puppet.json && $(cat "$mod/.co
         fi
     fi
 fi
+# The pack with the title's Host/Join/Co-op Settings rows and the pause menu's Multiplayer tab (--title-rows
+# --pause-tab, as the Windows kit's Get-KitPackArgs). They make the pack replace files the game reads at boot (each
+# language's Mals archive, the Title and Common layout archives) with larger ones; start.sh's merge_tables.py takes
+# them out of play when the size table the game reads cannot hold them (another mod's table wins).
 gap=$(pack_gap)
 if [[ -f $mod/coop_puppet.json && $(cat "$mod/.coop-stamp" 2>/dev/null) == "$pack_stamp" && -z $gap ]]; then
     say '  puppet pack: built already'

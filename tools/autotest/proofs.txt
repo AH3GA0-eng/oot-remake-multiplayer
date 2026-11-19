@@ -87,6 +87,12 @@ hs-deku-torch-away-B       A-web-B            160,80,960,520  refs
 # hs-deku-water-floor: the water low and the floors moved alike in both games
 hs-deku-water-floor-A      A-moved-A          160,80,960,520  refs
 hs-deku-water-floor-B      A-moved-B          160,80,960,520  refs
+# #196 itself (review-room-actor-replay-r1): the floor B rides at the same place of its wave in both games. B's 'ride2'
+# and 'ride3' views (B on the floor) against references cut from runs where both games' floors are known: good = the
+# floor where A's game has it at that moment, bad = elsewhere (coop-kit\ls\shots-lane1\hs-deku-water-floor\20261118-135608
+# is a bad run: the floors ran free). Until refs exist these are UNPROVEN, never PASS.
+hs-deku-water-floor-ride-A  A-ride2-A         160,80,960,520  refs  refs=deku-water-floor-ride
+hs-deku-water-floor-ride-B  A-ride2-B         160,80,960,520  refs  refs=deku-water-floor-ride
 # hs-door: the puppet hidden during its door cutscene, then shown again
 hs-door-A                  A-a-watch-A        160,80,960,520  refs
 hs-door-B                  A-a-watch-B        160,80,960,520  refs
@@ -357,3 +363,9 @@ title-pressed-A   s*-pressed-A   0,0,1280,720     change  from=s*-on-host-A  min
 title-pressed-B   s*-pressed-B   0,0,1280,720     change  from=s*-on-host-B  min=8
 title-closed-A    s*-closed-A    0,0,1280,720     change  from=s*-pressed-A  min=8
 title-closed-B    s*-closed-B    0,0,1280,720     change  from=s*-pressed-B  min=8
+# hs-teleport-direct (teleport-direct-0116): A arrived at the Deku Tree entrance by the map change event, not black
+# (same view as hs-teleport-room's arrival: its references)
+hs-teleport-direct-A       A-arrived-A        160,80,960,520  refs  refs=hs-teleport-room-A
+hs-teleport-direct-B       A-arrived-B        160,80,960,520  refs  refs=hs-teleport-room-B
+# hs-teleport-direct-kak: A in Kakariko next to B, not black (stub, UNPROVEN until refs are captured from that run)
+hs-teleport-direct-kak-A   A-end-A            160,80,960,520  refs

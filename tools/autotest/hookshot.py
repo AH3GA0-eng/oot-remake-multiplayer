@@ -214,10 +214,15 @@ def parse(text):
             s.kind, s.name = "warp", w[1]
             s.start = w[2] if len(w) == 3 else ""
         elif cmd == "PLACE":
-            if len(w) != 4 or any(_number(v) is None for v in w[1:]):
-                fail("want: place X Y Z")
-            s.kind = "place"
-            s.x, s.y, s.z = (_number(v) for v in w[1:])
+            # #196: "place PLATFORM UP": UP metres over the live place of that moving platform (the module's
+            # TestPlatformPlace), for a rider on a floor that waves.
+            if len(w) == 3 and _number(w[1]) is None and _number(w[2]) is not None:
+                s.kind, s.name, s.y = "place", w[1], _number(w[2])
+            elif len(w) != 4 or any(_number(v) is None for v in w[1:]):
+                fail("want: place X Y Z, or place PLATFORM UP")
+            else:
+                s.kind = "place"
+                s.x, s.y, s.z = (_number(v) for v in w[1:])
         elif cmd == "CHAT":
             if len(w) < 2:
                 fail("want: chat TEXT")

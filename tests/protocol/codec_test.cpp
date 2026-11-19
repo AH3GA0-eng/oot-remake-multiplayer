@@ -1093,7 +1093,7 @@ TEST_CASE("damage carries where the hit landed, optional (protocol 12)") {
 
 TEST_CASE("damage carries the hit record, optional, alone or after the hit place (protocol 14)") {
   // Every hit shows on every screen: the owner's game takes the hit that happened (bomb, arrow, fire ...).
-  CHECK(kProtocolVersion == 14);
+  CHECK(kProtocolVersion >= 14);  // 15: the platform node keys (0.11.6)
   Damage d{0, test::kPlacedId, 1, 2, 1, {1.0f, 2.0f, 3.0f}, {}};
   const Bytes plain = must_encode(d);
   HitRecord rec{};
@@ -2471,6 +2471,13 @@ TEST_CASE("platform clock: type 400, object samples channel, checked keys and fl
   CHECK(bad([](PlatformClock& c) { c.ticks[0].key = (std::uint64_t{5} << 32) | 0x200; })); // past the component
   CHECK(bad([](PlatformClock& c) { c.ticks[0].key = 0x600; }));                             // past the actor
   CHECK(bad([](PlatformClock& c) { c.ticks[0].key = (kPlatformAsFrameRegion << 32) | 4; }));
+  // #196: a GroundControl node's words, kPlatformNodeFrom .. kPlatformNodeTo only.
+  CHECK_FALSE(bad([](PlatformClock& c) { c.ticks[0].key = (kPlatformWaveNodeRegion << 32) | 0xf8; }));
+  CHECK_FALSE(bad([](PlatformClock& c) { c.ticks[0].key = (kPlatformRotateNodeRegion << 32) | 0xd4; }));
+  CHECK(bad([](PlatformClock& c) { c.ticks[0].key = (kPlatformWaveNodeRegion << 32) | 0xbc; }));
+  CHECK(bad([](PlatformClock& c) { c.ticks[0].key = (kPlatformWaveNodeRegion << 32) | 0x140; }));
+  CHECK(bad([](PlatformClock& c) { c.ticks[0].key = (kPlatformRotateNodeRegion << 32) | 0xd6; }));
+  CHECK(bad([](PlatformClock& c) { c.ticks[0].key = (std::uint64_t{0xfffc} << 32) | 0xd4; }));
   CHECK(bad([](PlatformClock& c) { c.ticks[0].rate = 0.0f; }));
   CHECK(bad([](PlatformClock& c) { c.ticks[0].rate = kMaxPlatformRate * 2; }));
   CHECK(bad([](PlatformClock& c) { c.ticks[0].value = std::numeric_limits<float>::quiet_NaN(); }));
