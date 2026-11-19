@@ -9,7 +9,7 @@
 # the null page before its first puppet), so B's puppet holds it while the tip flies (held-pieces-0116).
 # Ocarina (#152, held-pieces-0116): after the boomerang B turns to face A and takes the Ocarina out
 # (D-pad Left) and plays a note; A sees the puppet's front.
-# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-shots   (~5 min of game, ~9 min in all)
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 1 -Scenario hs-shots   (~5.5 min of game, ~10 min in all)
 # Pass, A's log: "got Weapon_Boomerang ... from P2", "CoopShot_Boomerang: create copy N",
 #   "CoopShot_Boomerang: copy N is actor", later "copy N deleted"; the same for Shootable_Hook /
 #   CoopShot_Hook; no "request dropped" for either, no "CRASH:" in either log.
@@ -21,6 +21,11 @@
 #   hook2-aim show it in the puppet's right hand; no "CRASH:" in A's log after it (the #232/#233 crash).
 #   Ocarina: A's log "P2 ocarina to the hand"; shots oca-out / oca-note show the Ocarina in the puppet's
 #   hands, right side up (mouthpiece at the mouth, as B's own Link in B's oca-out shot); oca-away: gone.
+#   Grade oca-* ONLY if B's log has "ocarina probe: our Link plays the ocarina" after oca-out: a StockNum
+#   give once left D-pad Left empty (hs-ocarina-given); without that line oca-* is UNPROVEN, not FAIL.
+#   Slingshot / Deku Stick (review N1): B, still facing A, aims the slingshot (mark aim, ZR held) and
+#   takes a Deku Stick out (stick-held): A's shots show each in the puppet's hand, the right way round.
+#   Sticks are per player: if B's log refuses the give, stick-held is UNPROVEN.
 # Fail: a copy logged but never on A's screen (the stand-in draws nothing: check the pack), or no copy.
 # If adult B's place is off the map after the warp (Graveyard_Adult's floor not at y 98), drop the
 # two place lines of the adult segment and look at the arrival shots.
@@ -35,7 +40,7 @@ wait 60
 wait 30
 mark ready
 # B's child segment
-wait 1044               # B's child segment: boomerang 416 + Ocarina 628
+wait 1384               # B's child segment: boomerang 416 + Ocarina 628 + slingshot/stick 340
 setflag Sequence_IsChildhood 0
 warp Graveyard_Adult
 wait 900

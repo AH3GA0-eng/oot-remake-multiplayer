@@ -6,6 +6,7 @@ mark start
 give PouchData.Item_Boomerang.StockNum
 give hookshot
 give PouchData.Item_Ocarina_Fairy.StockNum
+give PouchData.Item_DekuStick.StockNum
 wait 900
 place -35.7 98.3 11.0
 wait 30
@@ -15,7 +16,7 @@ wait 60
 assign Boomerang
 wait 30
 mark ready
-# child segment: 1044 ticks from here (A waits the same): boomerang 416 + Ocarina 628
+# child segment: 1384 ticks from here (A waits the same): boomerang 416 + Ocarina 628 + slingshot/stick 340
 hold ZR 10
 mark boom1-thrown
 wait 6
@@ -68,6 +69,18 @@ wait 120
 press B 12
 wait 120
 mark oca-away
+# Slingshot aimed and a Deku Stick out, still facing A (340 ticks)
+assign SlingShot
+wait 30
+hold ZR 90 aim
+wait 60
+mark sling-after
+assign DekuStick
+wait 30
+press ZR 10
+wait 60
+mark stick-held
+wait 60
 wait 60
 # adult segment: both games at once
 setflag Sequence_IsChildhood 0
