@@ -678,6 +678,8 @@ void Act(int row) {
         {
             std::lock_guard lock(g_mutex);
             pick = g_lan_pick, password = g_page.Field(1).text();
+            g_page.Field(1).Clear();   // (not kept once used, as after a room's join)
+            g_live_poke = true;
         }
         if (!pick.address.empty()) CoopPause::JoinLanNow(pick.address, pick.port, password);
         break;
