@@ -136,8 +136,8 @@ struct Boss {
     bool own_death = false;
     // Row 149 (the stall check, Table::kStallSteps): what our walk read of it now, its AS slot 0 animation and its
     // life (nothing: not read).
-    std::string animation;
-    std::optional<std::int32_t> life;
+    std::string animation = {};
+    std::optional<std::int32_t> life = std::nullopt;
 };
 
 struct Counts {
