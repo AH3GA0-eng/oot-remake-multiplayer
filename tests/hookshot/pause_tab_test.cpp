@@ -1122,6 +1122,8 @@ TEST_CASE("pause tab: the kit's release shows on the page, solo and in a session
     CHECK(with_resync[2] == "Squadala! v0.11.6");
     SessionView dev;                                  // a developer's build (no kit): as before
     CHECK(RowTexts(dev)[kRowLeave] == "Leave (not in a session)");
+}
+
 TEST_CASE("pause tab: the games on this network: one a row, A joins one that can be joined, more than four turn pages") {
     Session s;
     CHECK(ActionFor(View::kLan, 0, s) == RowAction::kNone);   // (none heard yet)
