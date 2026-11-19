@@ -129,6 +129,7 @@ enum class Kind {
     give,    // test only: an item
     wear,    // test only: a PlayerStatus.Equip* flag (what the puppets in other games wear)
     assign,  // test only: the item on ZR (PlayerStatus.AssignableItem.Child and .Adult)
+    dress,   // test only: the game's own equip call for a slot, from the PlayerStatus.Equip* flags (re-dresses OUR Link)
     chat,    // test only: a chat line or command, as typed in the chat box (/teleport B)
     place,   // test only: Link put at x, y, z in this scene
     kill,    // test only: the nearest actor of that name hit by our Link for all its life
@@ -168,6 +169,16 @@ std::optional<Script> Parse(std::string_view text, std::string& error);
 // wear SLOT: the PlayerStatus flag name for weapon, shield, head, armor or
 // boots (any case), e.g. "EquipHeadArmor"; nothing for another word.
 std::optional<std::string> WearFlag(std::string_view slot);
+
+// dress SLOT: the equip kind the game's own GameData equip call (main + 0x2df6c80, the call a save load and the
+// pause menu's equip make) takes for weapon, shield, head, armor, boots or hand (any case); nothing for another
+// word. The parser expands "all" to the six.
+std::optional<std::uint32_t> DressKind(std::string_view slot);
+
+// The kinds a `dress` step asked for that the game has not been asked yet. The svc caller (coop_hook.cpp,
+// CoopCallerOrders::kTestDress) takes one per call, on the game's calc thread. Thread-safe.
+void DressAsk(std::uint32_t kind);
+std::optional<std::uint32_t> DressNext();
 
 // assign ITEM: true for a value of the item button enum
 // (PlayerStatus.AssignableItem.Child / .Adult in GameDataList: Empty,

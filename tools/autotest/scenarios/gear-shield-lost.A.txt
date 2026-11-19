@@ -1,6 +1,6 @@
 # gear-shield-lost (proof-0116, row 148 scenario 6, puppet-gear-148 e1e257dc): STAND-IN for a burnt / Like Like-eaten shield:
 # child A sets PouchData.Weapon_Shield_Deku.StockNum to 0 (the count the game empties and the fix reads), then 1 again.
-# PASS (shots both): lost / lost2 B's puppet of A has NO shield; back / back2 B's puppet holds the Deku Shield again.
+# PASS (shots both): deku-on A wears the Deku Shield and so does B's puppet of A; lost / lost2 B's puppet of A has NO shield; back / back2 B's puppet holds the Deku Shield again.
 # NOT covered: the game's own burn / Like Like path (UNPROVEN unless a real run shows it).
 #! noload
 #! start coop: test warp done
@@ -25,6 +25,13 @@ stick 0.7 0 30
 stick 0 -0.4 12
 wait 60
 mark before
+# The kit saves wear the Hylian shield, so the Deku count changes nothing visible: put the Deku Shield on first, through
+# the flag and the game's own equip call (`dress`), and wait for the puppet to hold it.
+wear shield Weapon_Shield_Deku
+wait 30
+dress shield
+wait 300
+mark deku-on
 setflag PouchData.Weapon_Shield_Deku.StockNum 0
 wait 300
 mark lost

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_world.h"
+#include "coop_show_delay.h"
 
 #include <algorithm>
 #include <array>
@@ -915,7 +916,9 @@ void WorldSync::MakeBreak(Object& o, Break& b, std::uint64_t now_us, Out& out) {
 }
 
 std::optional<WorldSync::Sample> WorldSync::PoseAt(const Remote& r, std::uint64_t now_us) const {
-    const std::uint64_t t = now_us > kBehindUs ? now_us - kBehindUs : 0;
+    // #239: as late as the mover's puppet (its player's show delay; 100 ms on a LAN, as before).
+    const std::uint64_t behind = std::max(kBehindUs, CoopShowDelay::Us(r.player));
+    const std::uint64_t t = now_us > behind ? now_us - behind : 0;
     if (r.samples.empty() || (r.place && t >= r.samples.back().time_us)) {
         return r.place ? r.place : std::nullopt;
     }

@@ -571,6 +571,27 @@ public:
             c.x[1] = *slot;
             return c;
         });
+        // Test only (`dress`, tools/autotest): the game's own equip from the PlayerStatus.Equip* flags for our Link,
+        // as the pause menu's equip and a save load make it, so a `wear` shows on our own Link too. Nothing is asked
+        // unless a scenario's step queued a kind (CoopTestInput::DressAsk); a player's game never does.
+        CoopSvc::AddCaller(CoopCallerOrders::kTestDress, [this](CoopPuppet::Guest& guest, bool, std::uint64_t,
+                                      std::uint64_t) -> std::optional<CoopPuppet::Call> {
+            namespace oc = coop::host::ocarina;
+            const auto actor = CoopObjects::OurLinkActor();
+            std::uint64_t holder = 0, equipment = 0;
+            if (!actor || base_ == 0 || !guest.Read(*actor + oc::kActorEquipment, &holder, sizeof holder) ||
+                holder == 0 || !guest.Read(holder + oc::kHolderEquipment, &equipment, sizeof equipment) ||
+                equipment == 0) {
+                return std::nullopt;  // (the asks wait for a Link)
+            }
+            const auto kind = CoopTestInput::DressNext();
+            if (!kind) return std::nullopt;
+            CoopPuppet::Call c;
+            c.function = base_ + oc::kEquipFromGameData;
+            c.x[0] = equipment;
+            c.x[1] = *kind;
+            return c;
+        });
         if (live_events_) {
             {
                 // G1: the events this requester asks for (a held live event, a shared scene joined)

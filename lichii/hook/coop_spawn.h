@@ -307,6 +307,9 @@ private:
         CoopProjectiles::Track track;  // the owner's samples on the server clock
         std::optional<coop::protocol::Quat> rotation;
         std::uint64_t got_us = 0;     // our time of the latest message
+        // #239: who sends its samples (the maker, then whoever its samples come from: a bomb handed over), whose
+        // show delay it is drawn with (CoopShowDelay::Us: as late as that player's puppet).
+        std::uint8_t player = 0;
         std::optional<coop::protocol::RemoveReason> removed;
         std::uint64_t address = 0;    // once the director made it
         // A bomb: when the owner's fuse runs out (server clock). Blown then
