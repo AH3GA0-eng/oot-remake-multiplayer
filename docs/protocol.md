@@ -171,10 +171,11 @@ The attacker's game finds a hit on another player's copy with the game's own col
 | 541 | `PVP_RESULT` | both | ownership | `u8` player field (the victim), `u8` attacker (1 to 16, not the victim), `u32` seq (the strike's), `u8` result (0 taken, 1 guarded, 2 guard broken, 3 invincible, 4 late, 5 out of reach, 6 kept off; others refused), `s32` amount taken (0 to 80, the victim game's own), `s32` life left (0 to 80), 11 x `u32` kind words, 3 x `f32` hit place (finite). To every game in the victim's scene |
 | 542 | `PVP_NATIVE` | both | ownership | `u8` player field, `u8` on (0 or 1; others refused). Its game runs PvP on real bodies; sent after joining and every 5 s, relayed to all |
 
-The server's rules (planned, server/session.cpp `on_pvp_strike`; not built yet): a strike is dropped while PvP is
+The server's rules (server/session.cpp `on_pvp_strike`, `on_pvp_result`): a strike is dropped while PvP is
 off, to or from a game not `PVP_NATIVE`, between two scenes, from a player with no fresh place (5 s), whose object
-is not its own, or past 10 a second from one attacker; else relayed to the victim only. A result is relayed only
-from the victim a strike in flight named (by seq), to its scene. A native attacker sends the old `PVP_HIT` (242) to
+is not its own, or past 10 a second from one attacker; else relayed to the victim only. A result is relayed once, only
+from the victim a strike in flight named (by attacker and seq, for 3 s), to its scene; an attacker that leaves
+takes its strikes in flight with it, so a player who comes back with its number starts its seq again. A native attacker sends the old `PVP_HIT` (242) to
 a victim that is not native.
 
 ## Keep-alive and clock

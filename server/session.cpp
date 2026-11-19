@@ -702,6 +702,21 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     on_lift(id, c, message, now_us);
     return;
   }
+  if (const auto* native = std::get_if<PvpNative>(&message)) {
+    c.pvp_native = native->on;
+    set_sender(message, c.number);
+    send_to_others(id, kChannelOwnership, message);
+    ++stats_.relayed;
+    return;
+  }
+  if (std::holds_alternative<PvpStrike>(message)) {
+    on_pvp_strike(id, c, message, now_us);
+    return;
+  }
+  if (std::holds_alternative<PvpResult>(message)) {
+    on_pvp_result(id, c, message, now_us);
+    return;
+  }
   if (auto* cut = std::get_if<GrassCut>(&message)) {
     on_grass_cut(id, c, *cut, now_us);
     return;
@@ -961,6 +976,71 @@ void Session::on_lift(ConnectionId id, Connection& c, Message& message,
   }
   send(*target, channel_of(message), message);
   ++stats_.lifts_relayed;
+  ++stats_.relayed;
+}
+
+namespace {
+// PvP on real bodies: at most this many strikes a second from one attacker
+// (docs/native-puppets.md 5.6), and a strike waits this long for its result.
+constexpr std::size_t kPvpStrikesPerSecond = 10;
+constexpr std::uint64_t kPvpSecondUs = 1'000'000;
+constexpr std::uint64_t kPvpPendingUs = 3'000'000;
+constexpr std::size_t kMaxPvpPending = 64;
+}  // namespace
+
+// A strike goes to its victim only, while PvP is on, between two PVP_NATIVE
+// games in one scene, from an attacker whose place is fresh there and whose
+// shot or blast is its own. The victim's game decides; the server only keeps
+// what is in flight, so a result answers one real strike once.
+void Session::on_pvp_strike(ConnectionId id, Connection& c, Message& message,
+                            std::uint64_t now_us) {
+  const auto target = connection_of(std::get<PvpStrike>(message).victim);
+  const auto it = target ? connections_.find(*target) : connections_.end();
+  if (!pvp_ || !c.pvp_native || it == connections_.end() || *target == id ||
+      !it->second.pvp_native || it->second.scene.empty() ||
+      !place_known_in(c, it->second.scene, now_us) || !set_sender(message, c.number)) {
+    ++stats_.pvp_strikes_dropped;
+    return;
+  }
+  const auto& m = std::get<PvpStrike>(message);
+  const bool thrown = m.source == PvpSource::shot || m.source == PvpSource::blast;
+  if (thrown && m.object.maker != c.number) {
+    ++stats_.pvp_strikes_dropped;
+    return;
+  }
+  auto& times = c.pvp_strike_times;
+  while (!times.empty() && now_us - times.front() >= kPvpSecondUs) times.pop_front();
+  if (times.size() >= kPvpStrikesPerSecond) {
+    ++stats_.pvp_strikes_flood;
+    return;
+  }
+  times.push_back(now_us);
+  auto& pending = it->second.pvp_pending;
+  while (!pending.empty() &&
+         (now_us - pending.front().at_us >= kPvpPendingUs || pending.size() >= kMaxPvpPending)) {
+    pending.pop_front();
+  }
+  pending.push_back({c.number, m.seq, now_us});
+  send(*target, kChannelOwnership, message);
+  ++stats_.pvp_strikes_relayed;
+  ++stats_.relayed;
+}
+
+// Only the victim a strike in flight named answers it, once, to its scene.
+void Session::on_pvp_result(ConnectionId id, Connection& c, Message& message,
+                            std::uint64_t now_us) {
+  const auto& m = std::get<PvpResult>(message);
+  auto& pending = c.pvp_pending;
+  const auto match = std::find_if(pending.begin(), pending.end(), [&](const Connection::PvpPending& p) {
+    return p.attacker == m.attacker && p.seq == m.seq && now_us - p.at_us < kPvpPendingUs;
+  });
+  if (match == pending.end() || c.scene.empty() || !set_sender(message, c.number)) {
+    ++stats_.pvp_results_dropped;
+    return;
+  }
+  pending.erase(match);
+  send_to_scene(c.scene, id, kChannelOwnership, message);
+  ++stats_.pvp_results_relayed;
   ++stats_.relayed;
 }
 
@@ -2784,6 +2864,14 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
   // After PLAYER_LEFT, so the others learn the owner left before the new
   // owner is announced; the leaver is out of connections_ by now.
   drop_all_objects(id, c.number, c.present, now_us);
+  // Its strikes in flight are nobody's now: a player who comes back with
+  // its number starts its seq again.
+  for (auto& [other_id, other] : connections_) {
+    auto& pending = other.pvp_pending;
+    pending.erase(std::remove_if(pending.begin(), pending.end(),
+                                 [&](const Connection::PvpPending& p) { return p.attacker == c.number; }),
+                  pending.end());
+  }
   forget_empty_grass(c.scene);
   forget_empty_world(c.scene);
   forget_empty_dead(c.scene);

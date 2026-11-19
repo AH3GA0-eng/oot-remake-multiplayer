@@ -433,6 +433,11 @@ struct Stats {
   std::uint64_t lifts_dropped = 0;        // to nobody, to the sender, or from a game not sharing
   std::uint64_t lifts_not_sharing = 0;    // LIFT_ASK answered not_sharing by the server
   std::uint64_t lifts_unplaced = 0;       // LIFT_ASK answered too_far: the lifter's place not known there
+  std::uint64_t pvp_strikes_relayed = 0;  // PVP_STRIKE passed on to its victim
+  std::uint64_t pvp_strikes_dropped = 0;  // PvP off, not native, other scene, no fresh place, not its object
+  std::uint64_t pvp_strikes_flood = 0;    // past kPvpStrikesPerSecond from one attacker
+  std::uint64_t pvp_results_relayed = 0;  // PVP_RESULT passed on to the victim's scene
+  std::uint64_t pvp_results_dropped = 0;  // no strike in flight with that attacker and seq
   std::uint64_t handover_chased = 0;      // asked because a copy chased its player
   std::uint64_t handover_back_held = 0;    // not handed back so soon (handover_back_us)
   std::uint64_t fish_to_lure = 0;         // a fish asked over to the nearest lure (issue 151)
@@ -581,6 +586,19 @@ class Session {
     // LIFT_SHARE (native puppets phase 3): its game takes part in player
     // lifts. Off until it says so.
     bool lift_share = false;
+    // PVP_NATIVE (native puppets phase 4): its game runs PvP on real
+    // bodies. Off until it says so.
+    bool pvp_native = false;
+    // As an attacker: when its last PVP_STRIKEs came (the last second).
+    std::deque<std::uint64_t> pvp_strike_times;
+    // As a victim: strikes relayed to it and not answered yet. A PVP_RESULT
+    // is relayed only for one of these, once.
+    struct PvpPending {
+      std::uint8_t attacker = 0;
+      std::uint32_t seq = 0;
+      std::uint64_t at_us = 0;
+    };
+    std::deque<PvpPending> pvp_pending;
     // As a receiver: how many samples and poses of each sender it was due
     // (interest counts every n-th), and its share of the pose upload cap.
     std::array<std::uint32_t, protocol::kMaxPlayers + 1> samples_due{};
@@ -809,6 +827,12 @@ class Session {
   // LIFT_ANSWER and LIFT_PLACE to the one player each names.
   void on_lift(ConnectionId id, Connection& c, protocol::Message& message,
                std::uint64_t now_us);
+  // Native puppets phase 4 (docs/protocol.md "PvP on real bodies"):
+  // PVP_STRIKE to its victim, PVP_RESULT to the victim's scene.
+  void on_pvp_strike(ConnectionId id, Connection& c, protocol::Message& message,
+                     std::uint64_t now_us);
+  void on_pvp_result(ConnectionId id, Connection& c, protocol::Message& message,
+                     std::uint64_t now_us);
   void refuse_bomb(ConnectionId to, const protocol::ObjectId& oid, const Object* o,
                    protocol::BombRefusal why);
   // A made bomb whose owner lets go of it (left, changed scene): the

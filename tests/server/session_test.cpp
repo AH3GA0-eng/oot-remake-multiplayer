@@ -6282,3 +6282,181 @@ TEST_CASE("player lift: an ask whose lifter's place is not known, or not in the 
   CHECK(only_message_to<LiftAsk>(h, 2) == LiftAsk{1, 2});
   CHECK(h.session.stats().lifts_unplaced == 3);
 }
+
+namespace {
+// PvP on real bodies: a sword strike of `seq` on `victim`.
+PvpStrike strike_on(std::uint8_t victim, std::uint32_t seq) {
+  PvpStrike s;
+  s.victim = victim;
+  s.seq = seq;
+  s.seen_us = 1;
+  s.amount = 8;
+  s.at = {1, 2, 3};
+  s.copy_at = {1, 0, 3};
+  s.from = {0, 0, 2};
+  return s;
+}
+
+PvpResult result_for(std::uint8_t attacker, std::uint32_t seq) {
+  PvpResult r;
+  r.attacker = attacker;
+  r.seq = seq;
+  r.amount = 8;
+  r.life = 40;
+  return r;
+}
+
+// Three players in the Graveyard with fresh places; 1 and 2 PVP_NATIVE.
+void pvp_three(Harness& h, bool pvp_on) {
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  for (ConnectionId id = 1; id <= 3; ++id) {
+    h.receive(id, sample_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  }
+  h.receive(1, PvpNative{0, true}, kChannelOwnership);
+  h.receive(2, PvpNative{0, true}, kChannelOwnership);
+  if (pvp_on) h.receive(1, PvpMode{0, true}, kChannelSession);
+  h.clear();
+}
+}  // namespace
+
+TEST_CASE("pvp native: PVP_NATIVE is relayed to everyone with its sender") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.clear();
+  h.receive(2, PvpNative{0, true}, kChannelOwnership);
+  CHECK(only_message_to<PvpNative>(h, 1) == PvpNative{2, true});
+  CHECK(only_message_to<PvpNative>(h, 3) == PvpNative{2, true});
+  CHECK(h.to(2).empty());
+}
+
+TEST_CASE("pvp native: a strike goes to its victim only, and only while PvP is on between native games") {
+  Harness h;
+  pvp_three(h, false);
+  // PvP off (the default): dropped.
+  h.receive(1, strike_on(2, 1), kChannelOwnership);
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().pvp_strikes_dropped == 1);
+  h.receive(1, PvpMode{0, true}, kChannelSession);
+  h.clear();
+  // On: to the victim only, with the attacker's number.
+  h.receive(1, strike_on(2, 2), kChannelOwnership);
+  PvpStrike want = strike_on(2, 2);
+  want.player_number = 1;
+  CHECK(only_message_to<PvpStrike>(h, 2) == want);
+  CHECK(h.to(1).empty());
+  CHECK(h.to(3).empty());
+  CHECK(h.session.stats().pvp_strikes_relayed == 1);
+  // To a game that is not native, from one that is not, to itself, to nobody.
+  h.clear();
+  h.receive(1, strike_on(3, 3), kChannelOwnership);
+  h.receive(3, strike_on(1, 1), kChannelOwnership);
+  h.receive(1, strike_on(1, 4), kChannelOwnership);
+  h.receive(1, strike_on(9, 5), kChannelOwnership);
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().pvp_strikes_dropped == 5);
+  // A game that stops being native gets none.
+  h.receive(2, PvpNative{0, false}, kChannelOwnership);
+  h.clear();
+  h.receive(1, strike_on(2, 6), kChannelOwnership);
+  CHECK(h.to(2).empty());
+}
+
+TEST_CASE("pvp native: a strike between two scenes, or with a stale place, is dropped") {
+  Harness h;
+  pvp_three(h, true);
+  h.receive(2, sample_at("Kakariko", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, strike_on(2, 1), kChannelOwnership);
+  CHECK(h.to(2).empty());
+  h.receive(2, sample_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.now += 6'000'000;
+  h.receive(2, sample_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, strike_on(2, 2), kChannelOwnership);
+  CHECK(h.to(2).empty());
+  CHECK(h.session.stats().pvp_strikes_dropped == 2);
+  h.receive(1, sample_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, strike_on(2, 3), kChannelOwnership);
+  CHECK(messages_to<PvpStrike>(h, 2).size() == 1);
+}
+
+TEST_CASE("pvp native: a shot or blast must be the attacker's own made object") {
+  Harness h;
+  pvp_three(h, true);
+  PvpStrike s = strike_on(2, 1);
+  s.source = PvpSource::shot;
+  s.object = ObjectId{ObjectKind::made, 3, 7};  // player 3's arrow
+  h.receive(1, s, kChannelOwnership);
+  CHECK(h.to(2).empty());
+  CHECK(h.session.stats().pvp_strikes_dropped == 1);
+  s.object.maker = 1;
+  h.receive(1, s, kChannelOwnership);
+  CHECK(messages_to<PvpStrike>(h, 2).size() == 1);
+}
+
+TEST_CASE("pvp native: more than 10 strikes a second from one attacker are dropped") {
+  Harness h;
+  pvp_three(h, true);
+  for (std::uint32_t seq = 1; seq <= 14; ++seq) {
+    h.receive(1, strike_on(2, seq), kChannelOwnership);
+    h.now += 10'000;
+  }
+  CHECK(messages_to<PvpStrike>(h, 2).size() == 10);
+  CHECK(h.session.stats().pvp_strikes_flood == 4);
+  // A second later: room again.
+  h.now += 1'000'000;
+  h.receive(1, sample_at("Graveyard", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, strike_on(2, 15), kChannelOwnership);
+  CHECK(messages_to<PvpStrike>(h, 2).size() == 1);
+}
+
+TEST_CASE("pvp native: a result is relayed once, from the victim of a strike in flight, to its scene") {
+  Harness h;
+  pvp_three(h, true);
+  // No strike in flight: dropped.
+  h.receive(2, result_for(1, 1), kChannelOwnership);
+  CHECK(h.sent.empty());
+  h.receive(1, strike_on(2, 1), kChannelOwnership);
+  h.clear();
+  // Not from the victim, or the wrong seq or attacker: dropped.
+  h.receive(3, result_for(1, 1), kChannelOwnership);
+  h.receive(2, result_for(1, 2), kChannelOwnership);
+  h.receive(2, result_for(3, 1), kChannelOwnership);
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().pvp_results_dropped == 4);
+  // The victim's answer: to everyone else in its scene.
+  h.receive(2, result_for(1, 1), kChannelOwnership);
+  PvpResult want = result_for(1, 1);
+  want.player_number = 2;
+  CHECK(only_message_to<PvpResult>(h, 1) == want);
+  CHECK(only_message_to<PvpResult>(h, 3) == want);
+  CHECK(h.to(2).empty());
+  CHECK(h.session.stats().pvp_results_relayed == 1);
+  // Once only.
+  h.clear();
+  h.receive(2, result_for(1, 1), kChannelOwnership);
+  CHECK(h.sent.empty());
+  // Too late: the strike is no longer in flight.
+  h.receive(1, strike_on(2, 2), kChannelOwnership);
+  h.now += 4'000'000;
+  h.clear();
+  h.receive(2, result_for(1, 2), kChannelOwnership);
+  CHECK(h.sent.empty());
+}
+
+TEST_CASE("pvp native: an attacker who leaves takes its strikes in flight with it") {
+  Harness h;
+  pvp_three(h, true);
+  h.receive(1, strike_on(2, 1), kChannelOwnership);
+  h.session.disconnected(1, h.now);
+  h.clear();
+  h.receive(2, result_for(1, 1), kChannelOwnership);
+  CHECK(messages_of<PvpResult>(h, 3).empty());
+  CHECK(h.session.stats().pvp_results_dropped == 1);
+}
