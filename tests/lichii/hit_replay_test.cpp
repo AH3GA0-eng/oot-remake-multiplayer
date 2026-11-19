@@ -2,7 +2,6 @@
 #include <doctest/doctest.h>
 
 #include <cstring>
-#include <limits>
 #include <map>
 #include <mutex>
 #include <vector>
@@ -107,27 +106,22 @@ TEST_CASE("hit replay: a late hit or a gone actor is dropped, nothing written") 
     CHECK(r.Waiting() == CoopHitReplay::Replayer::kQueued);
 }
 
-TEST_CASE("hit replay (protocol 14): the other game's own hit record is given, with our attacker, id and present") {
-    // Every hit shows on every screen: a bomb's (or arrow's, hammer's ...) record reaches the damage step as it
-    // happened, so an enemy that refuses a plain sword hit (King Dodongo unstunned, Gohma's eye) takes it.
+TEST_CASE("hit replay (protocol 14): only the other game's hit kind is taken, on the stand-in hit (crash guard)") {
+    // Every hit shows on every screen: a bomb's (or arrow's, hammer's ...) kind reaches the damage step, so an
+    // enemy that refuses a plain sword hit (King Dodongo unstunned, Gohma's eye) takes it. Nothing else of the
+    // other process's record is written (review-pr-d): its pointers and links would crash our game.
     CoopHitReplay::Replayer r;
     FakeGuest g = WithCopy();
     CoopHitReplay::Record rec{};
-    rec[0] = 0xdeadbeef;  // (a pointer of the other game's: replaced)
-    rec[1] = 0x1;
-    rec[2] = 0x77;        // its hit id: replaced
+    for (auto& w : rec) w = 0x71234560;  // pointer-looking words everywhere
     rec[CoopHitReplay::kRecKind] = 0x00090003;  // another attack kind than the sword's
     rec[CoopHitReplay::kRecKind + 1] = 0x10020000;
-    rec[10] = 0xabcd;     // a parameter: kept as it is
-    const float place[3] = {1.0f, 2.0f, 3.0f};
-    const float from[3] = {4.0f, 5.0f, 6.0f};
-    std::memcpy(&rec[CoopHitReplay::kRecPlace], place, 12);
-    std::memcpy(&rec[CoopHitReplay::kRecFrom], from, 12);
+    rec[10] = 0xabcd;  // a hit-kind parameter: taken
     CoopHitReplay::Hit h;
     h.actor = kActor;
     h.attacker = 0x5000;
     h.amount = 8;
-    h.at = {9.0f, 9.0f, 9.0f};  // the copy's foot: the record's own place wins (not exact)
+    h.at = {9.0f, 9.0f, 9.0f};
     h.from = {7.0f, 7.0f, 7.0f};
     h.record = rec;
     r.Add(h, 1000);
@@ -141,24 +135,22 @@ TEST_CASE("hit replay (protocol 14): the other game's own hit record is given, w
     CHECK(g.Get<std::uint32_t>(kLife + 0x2c4) == 0x22);
     CHECK(g.Get<std::uint32_t>(kLife + 0x250) == 0x00090003);
     CHECK(g.Get<std::uint32_t>(at + 40) == 0xabcd);
-    CHECK(g.Get<float>(kLife + 0x27c + 4) == doctest::Approx(2.0f));
-    CHECK(g.Get<float>(kLife + 0x2a0 + 8) == doctest::Approx(6.0f));
-    // The attack header names the record's kind, our id, as the stand-in's does.
+    // Our places, not the record's.
+    CHECK(g.Get<float>(kLife + 0x27c + 4) == doctest::Approx(10.0f));
+    CHECK(g.Get<float>(kLife + 0x2a0 + 8) == doctest::Approx(7.0f));
+    // Every word outside the hit kind is ours or the stand-in's, never the other game's.
+    for (std::size_t i = 0; i < rec.size(); ++i) {
+        if (i >= CoopHitReplay::kRecKind && i < CoopHitReplay::kRecKindEnd) continue;
+        CHECK(g.Get<std::uint32_t>(at + 4 * i) != 0x71234560u);
+    }
+    // The attack header names the record's kind, our id.
     CHECK(g.Get<std::uint32_t>(kLife + CoopHitReplay::kHitHeader) == 0x00090003);
     CHECK(g.Get<std::uint32_t>(kLife + CoopHitReplay::kHitHeader + 4) == 0x10020000);
     CHECK(g.Get<std::uint32_t>(kLife + CoopHitReplay::kHitHeader + 8) == 0x22);
     CHECK(g.Get<std::int32_t>(kLife + CoopHitReplay::kHitAmount + 4) == 8);
-
-    // An exact hit place (DAMAGE's hit_at) still names where it landed.
-    h.exact = true;
-    h.at = {11.0f, 12.0f, 13.0f};
-    r.Add(h, 2000);
-    REQUIRE(r.Run(g, 2010, [](std::uint64_t) { return true; }).size() == 1);
-    CHECK(g.Get<float>(kLife + 0x27c + 4) == doctest::Approx(12.0f));
-    CHECK(g.Get<float>(kLife + 0x2a0 + 8) == doctest::Approx(6.0f));
 }
 
-TEST_CASE("hit replay (protocol 14): no record, or one with a place not finite: the stand-in sword hit") {
+TEST_CASE("hit replay (protocol 14): no record: the stand-in sword hit, as before") {
     CoopHitReplay::Replayer r;
     FakeGuest g = WithCopy();
     CoopHitReplay::Hit h;
@@ -166,20 +158,10 @@ TEST_CASE("hit replay (protocol 14): no record, or one with a place not finite: 
     h.amount = 1;
     h.at = {1.0f, 2.0f, 3.0f};
     r.Add(h, 1000);
-    auto written = r.Run(g, 1010, [](std::uint64_t) { return true; });
+    const auto written = r.Run(g, 1010, [](std::uint64_t) { return true; });
     REQUIRE(written.size() == 1);
     CHECK_FALSE(written[0].real);
     CHECK(g.Get<std::uint32_t>(kLife + 0x250) == CoopHitReplay::kHitTemplate[CoopHitReplay::kRecKind]);
     CHECK(g.Get<std::uint32_t>(kLife + CoopHitReplay::kHitHeader) == 0x00060001);
     CHECK(g.Get<float>(kLife + 0x27c + 4) == doctest::Approx(3.0f));  // the foot + 1
-    CoopHitReplay::Record bad = CoopHitReplay::kHitTemplate;
-    const float nan = std::numeric_limits<float>::quiet_NaN();
-    std::memcpy(&bad[CoopHitReplay::kRecFrom + 1], &nan, 4);
-    bad[CoopHitReplay::kRecKind] = 0x00090003;
-    h.record = bad;
-    r.Add(h, 2000);
-    written = r.Run(g, 2010, [](std::uint64_t) { return true; });
-    REQUIRE(written.size() == 1);
-    CHECK_FALSE(written[0].real);
-    CHECK(g.Get<std::uint32_t>(kLife + 0x250) == 0x00060001);
 }

@@ -10,7 +10,6 @@
 // ids each have their own mutex, taken only around their own containers, and never while writing the guest.
 
 #include <array>
-#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <functional>
@@ -56,19 +55,18 @@ inline constexpr std::size_t kRecKind = 0x250 / 4 - kHitRecord / 4;   // attack 
 inline constexpr std::size_t kRecPlace = 0x27c / 4 - kHitRecord / 4;  // the hit's place, 3 floats
 inline constexpr std::size_t kRecFrom = 0x2a0 / 4 - kHitRecord / 4;   // the attacker's place, 3 floats
 inline constexpr std::size_t kRecIdAgain = 0x2c4 / 4 - kHitRecord / 4;
+// The words taken from another game's record (review-pr-d crash guard): only its hit kind, +0x250 up to the
+// hit's place (+0x27c): attack kind and its parameters, plain values. Every other word (pointers, list
+// links, ids of the other process) stays kHitTemplate's; attacker, id, present and places are ours.
+inline constexpr std::size_t kRecKindEnd = kRecPlace;
 
-// Whether a received record's places are finite (else the stand-in hit is used).
-inline bool UsableRecord(const Record& rec) {
-    for (const std::size_t first : {kRecPlace, kRecFrom}) {
-        for (std::size_t i = 0; i < 3; ++i) {
-            float f = 0.0f;
-            std::memcpy(&f, &rec[first + i], 4);
-            if (!std::isfinite(f) || std::fabs(f) > 1e6f) {
-                return false;
-            }
-        }
+// kHitTemplate with another game's hit kind in it (words kRecKind up to kRecKindEnd), nothing else of it.
+inline Record WithHitKind(const Record& other) {
+    Record rec = kHitTemplate;
+    for (std::size_t i = kRecKind; i < kRecKindEnd; ++i) {
+        rec[i] = other[i];
     }
-    return true;
+    return rec;
 }
 
 struct Hit {
@@ -79,9 +77,8 @@ struct Hit {
     std::array<float, 3> from{};  // the hitter's place (ours when not known)
     std::uint64_t asked_ms = 0;   // set by Add
     bool exact = false;           // `at` is where the hit landed, not the actor's foot
-    // Protocol 14 (every hit shows on every screen): the hit that happened in the other game (its weapon, its
-    // element, where it landed, where the hitter stood), given to this game's damage step instead of kHitTemplate.
-    // Its places are kept unless `exact` names the hit place; attacker, id and present are ours.
+    // Protocol 14 (every hit shows on every screen): the hit that happened in the other game. Only its hit kind
+    // (weapon, element: WithHitKind) goes into this game's damage step; the rest is kHitTemplate's and ours.
     std::optional<Record> record;
 };
 
@@ -159,18 +156,14 @@ private:
         std::uint32_t last = 0;
         guest.Read(life + kLastHitId, &last, 4);
         const std::uint32_t id = (last == 0xffffffffu ? 0x1000u : last + 2u) & 0x7fffffffu;
-        const bool real = h.record && UsableRecord(*h.record);
-        Record rec = real ? *h.record : kHitTemplate;
+        const bool real = h.record.has_value();
+        Record rec = real ? WithHitKind(*h.record) : kHitTemplate;
         std::memcpy(&rec[0], &h.attacker, 8);
         rec[2] = id;
         rec[kRecIdAgain] = id;
-        if (!real || h.exact) {
-            const std::array<float, 3> at{h.at[0], h.at[1] + (h.exact ? 0.0f : 1.0f), h.at[2]};
-            std::memcpy(&rec[kRecPlace], at.data(), 12);
-        }
-        if (!real) {
-            std::memcpy(&rec[kRecFrom], h.from.data(), 12);
-        }
+        const std::array<float, 3> at{h.at[0], h.at[1] + (h.exact ? 0.0f : 1.0f), h.at[2]};
+        std::memcpy(&rec[kRecPlace], at.data(), 12);
+        std::memcpy(&rec[kRecFrom], h.from.data(), 12);
         rec[kRecPresent] = 0;  // present last, below
         // The attack header names the same attack kind as the record (the template's: a sword).
         const std::array<std::uint32_t, 4> header{rec[kRecKind], rec[kRecKind + 1], id, 2};
