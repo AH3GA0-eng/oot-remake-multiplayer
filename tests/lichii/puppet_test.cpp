@@ -2744,3 +2744,18 @@ TEST_CASE("own drawn: the director asks the game's state of the local Link's swo
     CHECK(g.state_checks[2].x[1] == 0);
     own.Clear();
 }
+
+TEST_CASE("puppet: a playing pose sent at a still frame plays on, not set back each sample (carried pose)") {
+    using CoopPuppet::Anim;
+    using CoopPuppet::FrameFollowed;
+    // The first sample of a command, or a new command: followed (set once).
+    CHECK(FrameFollowed("", 0.0f, Anim{"Eaten", 0.0f, 1.0f}));
+    CHECK(FrameFollowed("Wait", 0.0f, Anim{"Eaten", 0.0f, 1.0f}));
+    // The same command at the same frame while playing (the lift's carried pose: frame 0, rate 1): not followed,
+    // so the copy loops on instead of snapping back to frame 0 on every sample.
+    CHECK_FALSE(FrameFollowed("Eaten", 0.0f, Anim{"Eaten", 0.0f, 1.0f}));
+    // A real player's animation moves on between samples: followed as before.
+    CHECK(FrameFollowed("Run", 10.0f, Anim{"Run", 11.5f, 1.0f}));
+    // A held pose (rate 0) at a still frame: followed (the copy is kept on that frame).
+    CHECK(FrameFollowed("Pose", 4.0f, Anim{"Pose", 4.0f, 0.0f}));
+}

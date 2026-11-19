@@ -16,7 +16,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from puppet_pack import build, byml, dumpcheck, dungeon_rooms, map_captures, nup, place_rooms, rstb, sarc, zs  # noqa: E402
+from puppet_pack import asb_carry, build, byml, dumpcheck, dungeon_rooms, map_captures, nup, place_rooms, rstb, sarc, zs  # noqa: E402
 
 # The co-op HUD's tests run with these (CI runs this file).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -219,6 +219,26 @@ class RstbTest(unittest.TestCase):
             rstb.Rstb.loads(data[:-1])
 
 
+def fake_asb(strings=("Root", "Eaten", "Eaten_F", "Eaten_B", "Wait"), refs=("Eaten_F", "Eaten_B"), version=0x41B):
+    """An AS root shaped as the game's (asb_carry): header, a body whose u32 fields name pool strings (each of
+    `refs` once, plus a command name), then the string pool as the last section (offset word 14, size word 23)."""
+    pool = b""
+    offs = {}
+    for name in strings:
+        offs[name] = len(pool)
+        pool += name.encode() + b"\0"
+    body = bytearray(0x40)
+    struct.pack_into("<I", body, 0x00, offs["Eaten"])
+    for i, r in enumerate(refs):
+        struct.pack_into("<I", body, 0x10 + 4 * i, offs[r])
+    head = bytearray(0x80)
+    head[:4] = b"ASB "
+    struct.pack_into("<I", head, 4, version)
+    struct.pack_into("<I", head, asb_carry.POOL_AT, 0x80 + len(body))
+    struct.pack_into("<I", head, asb_carry.POOL_SIZE_AT, len(pool))
+    return bytes(head + body + pool)
+
+
 def fake_player_pack(variant):
     """A made-up player pack shaped like the game's: a child ActorParam with a $parent."""
     base = {
@@ -301,15 +321,16 @@ def fake_player_pack(variant):
     return files
 
 
-def fake_cucco_pack():
-    """Animal_Cucco's ActorParam and its LiftableParam with an in-pack $parent (the values as the romfs has them)."""
-    lift = "Component/Liftable/Animal_Cucco.game__component__LiftableParam.bgyml"
-    base = "Component/Liftable/LiftableBase.game__component__LiftableParam.bgyml"
+def fake_ruto_pack():
+    """Npc_Zora_Ruto_Child_001's ActorParam and her LiftableParam with an in-pack $parent (her values as the romfs
+    has them; the game's file has no $parent, the test's base checks the merge)."""
+    lift = "Component/LiftableParam/NpcZoraRutoChild.game__component__LiftableParam.bgyml"
+    base = "Component/LiftableParam/LiftableBase.game__component__LiftableParam.bgyml"
     return {
-        build.actor_param_path("Animal_Cucco"): byml.dumps(
-            {"Components": {"LiftableRef": "?" + lift, "ASRef": "?AS/Animal_Cucco.bgyml"}}),
+        build.actor_param_path("Npc_Zora_Ruto_Child_001"): byml.dumps(
+            {"Components": {"LiftableRef": "?" + lift, "ASRef": "?AS/Npc_Zora_ZU_Ruto_Child.bgyml"}}),
         lift: byml.dumps({"$parent": "Work/" + base[:-len(".bgyml")] + ".gyml", "LiftGrade": byml.UInt(3069107721),
-                          "LiftableType": byml.UInt(1577663790), "WeightForCalcThrowPower": 28.0}),
+                          "LiftableType": byml.UInt(3056776872), "WeightForCalcThrowPower": 19.0}),
         base: byml.dumps({"LiftGrade": 1, "KeepSensorHitToParent": True}),
     }
 
@@ -530,24 +551,88 @@ class BuildPackTest(unittest.TestCase):
         self.assertFalse([n for n in names if n.startswith("Phive/")])
 
     def test_pack_liftable(self):
-        # Native puppets phase 3 (--puppet-liftable): the Cucco's LiftableRef, $parent merged, as the puppet's own.
-        lift = build.liftable_param(fake_cucco_pack())
-        self.assertEqual(lift[0], "Component/Liftable/Animal_Cucco.game__component__LiftableParam.bgyml")
-        self.assertEqual(lift[1], {"LiftGrade": byml.UInt(3069107721), "LiftableType": byml.UInt(1577663790),
-                                   "WeightForCalcThrowPower": 28.0, "KeepSensorHitToParent": True})
+        # Native puppets phase 3 (--puppet-liftable), owner rule: only a young Link is liftable, carried as Ruto.
+        # Ruto's LiftableRef, $parent merged, as the child puppet's own; the adult puppet gets none.
+        self.assertEqual(build.LIFTABLE_SOURCE, "Npc_Zora_Ruto_Child_001")
+        self.assertEqual(build.LIFTABLE_VARIANTS, ("Child",))
+        lift = build.liftable_param(fake_ruto_pack())
+        self.assertEqual(lift[0], "Component/LiftableParam/NpcZoraRutoChild.game__component__LiftableParam.bgyml")
+        self.assertEqual(lift[1], {"LiftGrade": byml.UInt(3069107721), "LiftableType": byml.UInt(3056776872),
+                                   "WeightForCalcThrowPower": 19.0, "KeepSensorHitToParent": True})
         members = fake_player_pack("Child")
         pack, ap, names, _ = build.build_pack(members, "Child", liftable=lift)
-        own = "Component/Liftable/CoopPuppet_Child.game__component__LiftableParam.bgyml"
+        own = "Component/LiftableParam/CoopPuppet_Child.game__component__LiftableParam.bgyml"
         self.assertEqual(build.liftable_path("CoopPuppet_Child", lift[0]), own)
         self.assertEqual(byml.loads(ap)["Components"]["LiftableRef"], "?" + own)
         self.assertEqual(byml.loads(sarc.read(pack)[own]), lift[1])
-        self.assertNotIn(lift[0], names)  # never the Cucco's own file
+        self.assertNotIn(lift[0], names)  # never Ruto's own file
         # Off (the default): the pack as before.
         self.assertEqual(build.build_pack(members, "Child"), build.build_pack(members, "Child", liftable=None))
         self.assertNotIn("LiftableRef", byml.loads(build.build_pack(members, "Child")[1])["Components"])
-        # A Cucco pack without the param: none.
-        self.assertIsNone(build.liftable_param({build.actor_param_path("Animal_Cucco"): byml.dumps({"Components": {}})}))
+        # An adult puppet is never liftable: on or off, its pack is the same, with no LiftableRef.
+        adult = fake_player_pack("Adult")
+        self.assertEqual(build.build_pack(adult, "Adult", liftable=lift), build.build_pack(adult, "Adult"))
+        self.assertNotIn("LiftableRef", byml.loads(build.build_pack(adult, "Adult", liftable=lift)[1])["Components"])
+        # A source pack without the param: none.
+        self.assertIsNone(build.liftable_param(
+            {build.actor_param_path("Npc_Zora_Ruto_Child_001"): byml.dumps({"Components": {}})}))
         self.assertIsNone(build.liftable_param({}))
+
+    def test_carry_as(self):
+        # Ruto's carried pose on the young copies: the copy's own AS root names Ruto's clip for Eaten's two clips.
+        raw = fake_asb()
+        out = asb_carry.carry_as(raw)
+        self.assertIsNotNone(out)
+        changed = [i for i in range(len(raw)) if raw[i] != out[i]]
+        allowed = set(range(asb_carry.POOL_SIZE_AT, asb_carry.POOL_SIZE_AT + 4)) | set(range(0x90, 0x98))
+        self.assertTrue(set(changed) <= allowed)  # only the pool size and the two clip fields; nothing moves
+        new = asb_carry.string_offset(out, "Act_LiftRest_Wait")
+        self.assertEqual(new, struct.unpack_from("<I", raw, asb_carry.POOL_SIZE_AT)[0])  # at the old pool's end
+        self.assertEqual(struct.unpack_from("<I", out, asb_carry.POOL_SIZE_AT)[0], len(out) - 0x80 - 0x40)
+        self.assertEqual(struct.unpack_from("<II", out, 0x80 + 0x10), (new, new))
+        # The command name and every other string are where they were.
+        self.assertEqual(asb_carry.string_offset(out, "Eaten"), asb_carry.string_offset(raw, "Eaten"))
+        self.assertEqual(struct.unpack_from("<I", out, 0x80)[0], asb_carry.string_offset(raw, "Eaten"))
+        # Anything not as expected: None (the copy keeps the game's Eaten).
+        self.assertIsNone(asb_carry.carry_as(fake_asb(version=0x417)))
+        self.assertIsNone(asb_carry.carry_as(raw + b"\0"))  # the pool is not the last section
+        self.assertIsNone(asb_carry.carry_as(fake_asb(strings=("Root", "Eaten", "Eaten_F", "Wait"), refs=("Eaten_F",))))
+        self.assertIsNone(asb_carry.carry_as(fake_asb(refs=("Eaten_F", "Eaten_B", "Eaten_F"))))  # named twice
+        self.assertIsNone(asb_carry.carry_as(b"not an AS"))
+        # "Eaten_F" inside "XEaten_F" is no match: whole strings only.
+        self.assertIsNone(asb_carry.string_offset(fake_asb(strings=("Root", "Eaten", "XEaten_F", "Eaten_B", "Eaten_F")),
+                                                  "Eaten_Q"))
+        # Ruto's clip already in the pool: reused, nothing appended.
+        have = fake_asb(strings=("Root", "Eaten", "Eaten_F", "Eaten_B", "Act_LiftRest_Wait"))
+        self.assertEqual(len(asb_carry.carry_as(have)), len(have))
+
+    def test_pack_liftable_carry(self):
+        # With the carry AS made, the young puppet's ASRef is the carry root and its AnimationParam adds Ruto's
+        # animations, retargeted (as the game's own child Epona); adult and skin puppets keep theirs.
+        lift = build.liftable_param(fake_ruto_pack())
+        members = fake_player_pack("Child")
+        pack, ap, names, _ = build.build_pack(members, "Child", liftable=lift, carry=True)
+        comps = byml.loads(ap)["Components"]
+        self.assertEqual(comps["ASRef"], "?" + asb_carry.CARRY_AS)
+        own = asb_carry.carry_animation_path("CoopPuppet_Child")
+        self.assertEqual(comps["AnimationRef"], "?" + own)
+        anim = byml.loads(sarc.read(pack)[own])
+        self.assertIn({"IsRetarget": True, "ModelProjectName": asb_carry.RUTO_ANIMATION}, anim["AnimationResources"])
+        self.assertEqual(anim["A"], [])  # the player's own fields kept
+        # The player's own AnimationParam file is not changed.
+        src = "Component/AnimationParam/P.engine__component__AnimationParam.bgyml"
+        self.assertEqual(byml.loads(sarc.read(pack)[src]), {"A": []})
+        # No carry (the AS could not be made): as before, Link's own Eaten.
+        _, plain_ap, _, _ = build.build_pack(members, "Child", liftable=lift)
+        self.assertNotEqual(byml.loads(plain_ap)["Components"]["ASRef"], "?" + asb_carry.CARRY_AS)
+        # A skin's own AS wins (its clips are retargeted on its own skeleton): no carry there.
+        _, skin_ap, _, _ = build.build_pack(members, "Child", liftable=lift, carry=True, as_ref="AS/CoopSkin_X_Child.root.asb")
+        self.assertEqual(byml.loads(skin_ap)["Components"]["ASRef"], "?AS/CoopSkin_X_Child.root.asb")
+        # Adult: never.
+        adult = fake_player_pack("Adult")
+        self.assertEqual(build.build_pack(adult, "Adult", liftable=lift, carry=True), build.build_pack(adult, "Adult"))
+        # Carry without liftable does nothing.
+        self.assertEqual(build.build_pack(members, "Child", carry=True), build.build_pack(members, "Child"))
 
     def test_puppet_body_checks(self):
         pc = {"PhysicsRef": "?Component/Physics/P.engine__component__PhysicsParam.bgyml"}

@@ -1639,6 +1639,13 @@ std::optional<Call> Director::Animate(Slot& slot, const Target& target, Guest& g
     }
     if (target.anim_serial != slot.anim_serial) {
         slot.anim_serial = target.anim_serial;
+        // A still frame on a playing pose is not followed (FrameFollowed): the copy plays on, no snap back.
+        const bool followed = FrameFollowed(slot.sample_name, slot.sample_frame, anim);
+        slot.sample_name = anim.name;
+        slot.sample_frame = anim.frame;
+        if (!followed) {
+            return std::nullopt;
+        }
         const auto now = Frame(guest, controller);
         if (std::isfinite(anim.frame) &&
             (!now || std::fabs(*now - anim.frame) > kFrameSlack)) {
@@ -2537,6 +2544,7 @@ std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_n
                     r.scene = player->scene();
                     r.status = player->flags();
                     r.adult = player->age() == coop::protocol::Age::adult;
+                    r.young = player->age() == coop::protocol::Age::child;
                 }
                 remotes.push_back(std::move(r));
             }

@@ -35,4 +35,8 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
 // "off" (the game's check main+0x3025850, wrap 18).
 bool OurInputOff();
 
+// Read()'s step (coop_hook.cpp): while our Link is lifted, its reading's animation is the carried pose
+// (CoopLiftPlayer::CarriedAnimation), so every copy of it plays that. Off, or not lifted: unchanged.
+void CarriedPose(std::optional<coop::host::PlayerReading>& reading);
+
 } // namespace CoopLiftPlayerGame

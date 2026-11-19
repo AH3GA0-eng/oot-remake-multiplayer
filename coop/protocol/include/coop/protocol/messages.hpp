@@ -1854,8 +1854,11 @@ enum class LiftRefusal : std::uint8_t {
   not_sharing = 4,  // (the server) the lifted game did not say LIFT_SHARE
   freed = 5,        // (after a yes) the lifted game took its place back
   too_far = 6,      // the lifter's Link is not near ours
+  // Owner rule: only a young (child) Link can be lifted. Our Link is adult (or its age not known); after a yes,
+  // our Link grew up while lifted (freed the same way). The server says it too, from the last PLAYER_SAMPLE age.
+  not_young = 7,
 };
-inline constexpr std::uint8_t kLiftRefusalMax = 6;
+inline constexpr std::uint8_t kLiftRefusalMax = 7;
 
 // LIFT_ANSWER: the lifted game's word on a LIFT_ASK (refusal none = yes), or
 // `freed` when a lift it took ends on its side. To the lifter only.

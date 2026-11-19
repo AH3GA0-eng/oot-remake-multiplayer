@@ -771,6 +771,7 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
       c.position = *sample->position;
       c.position_at = now_us;
     }
+    if (sample->age) c.age = *sample->age;
   } else if (const auto* st = std::get_if<PlayerStatus>(&message)) {
     on_status(c, st->flags, now_us);
   }
@@ -957,6 +958,19 @@ void Session::on_lift(ConnectionId id, Connection& c, Message& message,
     no.refusal = LiftRefusal::too_far;
     send(id, kChannelOwnership, no);
     ++stats_.lifts_unplaced;
+    return;
+  }
+  // Owner rule: only a young (child) Link is lifted, whatever the lifter's age. A lifted player whose last
+  // sample says adult, or no age yet, is never asked (not_young), and gets no place: its game freed itself.
+  if (it->second.age != Age::child && !std::holds_alternative<LiftAnswer>(message)) {
+    if (std::holds_alternative<LiftAsk>(message)) {
+      LiftAnswer no;
+      no.player_number = to_number;
+      no.lifter = c.number;
+      no.refusal = LiftRefusal::not_young;
+      send(id, kChannelOwnership, no);
+    }
+    ++stats_.lifts_not_young;
     return;
   }
   send(*target, channel_of(message), message);

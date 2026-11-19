@@ -450,6 +450,7 @@ struct Stats {
   std::uint64_t lifts_dropped = 0;        // to nobody, to the sender, or from a game not sharing
   std::uint64_t lifts_not_sharing = 0;    // LIFT_ASK answered not_sharing by the server
   std::uint64_t lifts_unplaced = 0;       // LIFT_ASK answered too_far: the lifter's place not known there
+  std::uint64_t lifts_not_young = 0;      // LIFT_ASK answered not_young / LIFT_PLACE dropped: not a child Link
   std::uint64_t handover_chased = 0;      // asked because a copy chased its player
   std::uint64_t handover_back_held = 0;    // not handed back so soon (handover_back_us)
   std::uint64_t fish_to_lure = 0;         // a fish asked over to the nearest lure (issue 151)
@@ -592,6 +593,9 @@ class Session {
     // Where its Link is, from PLAYER_SAMPLE; forgotten at a scene change.
     std::optional<protocol::Vec3> position;
     std::uint64_t position_at = 0;
+    // Its Link's age, from the last PLAYER_SAMPLE that had one (kept over scene changes); unset: not known.
+    // Only a child is ever lifted (on_lift).
+    std::optional<protocol::Age> age;
     // BOMB_SHARE (native puppets phase 2): its game takes part in the bomb
     // hand-over. Off until it says so.
     bool bomb_share = false;
