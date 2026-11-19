@@ -225,19 +225,39 @@ returns before anything when not connected).
   `Lift_Put_Stand_Ruto` (and `_High`), `Lift_Throw_Ruto`, `Damage_Though_Ruto*`. With Ruto's `LiftableType` on
   the copy the game plays those, with its own carry limits (walk, no roll or attack while carrying, put down or
   throw), as with Ruto. `OurLinkLifts` takes `Pose_Ruto` as a carry too.
-- **The carried Link's pose.** Ruto's own carried pose is her AS command `Act_LiftRest` (with `_St`, `_Wait`,
-  `_Ed`, `_LookAround`, `_Detect`) in `AS/Npc_Zora_ZU_Ruto_Child.root.asb` and her clips in
-  `Npc_Zora_ZU_Ruto_Child_Animation.anim.bfres`. Link's AS has no such command (Player_Child's AS lists every
-  command: no `LiftRest`, `Lifted`, `Carried` or sitting command; `Horse_Wait` has no clip in the child's
-  animation files), so it cannot be asked of a Link actor: a command the actor's AS does not have does not play.
-  Their skeletons share the main bone names (`Arm_1/2_L/R`, `Leg_1/2_L/R`, `Spine_1/2`), so a later step could
-  give the copies' own AS (as the skins' AS copies, skin.py) an `Act_LiftRest` node on Ruto's clip: a pack
-  change to prove in game first (UNKNOWN 7). Until then the carried Link plays the closest pose the game itself
-  has for a young Link held off the ground: Link's own `Eaten` (clips `Eaten_F` / `Eaten_B` in
-  Player_Child_01_Animation; the Like Like's hold, `Player.action.reactionrestraintrideonenemy`). While lifted,
-  the lifted game sends `Eaten` as its Link's animation (`CoopLiftPlayerGame::CarriedPose` in the hook's read,
-  `CoopLiftPlayer::CarriedAnimation`), so every copy of it, on the lifter's screen and every other, plays it
-  through the game's own AS. The lifted player's own Link plays what its own controller plays then (UNKNOWN 7).
+- **The carried Link's pose: Ruto's own animation (native-puppets-d follow-up).** Ruto's carried pose is her
+  AS command `Act_LiftRest` (`_St`, `_Wait`, `_Ed`, `_LookAround`, `_Detect`) in `AS/Npc_Zora_ZU_Ruto_Child.root.asb`,
+  its loop the clip `Act_LiftRest_Wait` in `Npc_Zora_ZU_Ruto_Child_Animation.anim.bfres`. Link's AS has no such
+  command, so the young copies get their own (`tools/puppet_pack/asb_carry.py`, with `--puppet-liftable`):
+  - `AS/CoopPuppet_Carry_Child.root.asb`: a copy of `AS/Player_Child.root.asb` (from the user's romfs) in which
+    the two clips of Link's `Eaten` command (`Eaten_F`, `Eaten_B`) name `Act_LiftRest_Wait` instead. The AS
+    binary as far as this needs it (version 0x41b, read from the game's files): the string pool is the file's
+    last section (offset header word 14, size word 23); a node's clip name is a u32 pool offset, and each of the
+    two clip names is named by exactly one node field. The new name goes at the pool's end (no offset moves; 7
+    bytes change and 18 are added on the game's file) and the two fields point at it. The child copies'
+    `ASRef` names it (a skin keeps its own AS); the game's own Link, the adult copies and every other actor
+    keep the game's file.
+  - The copy's own AnimationParam (`Component/AnimationParam/<puppet>.engine__component__AnimationParam.bgyml`):
+    the player's resource list plus `{"IsRetarget": true, "ModelProjectName": "Npc_Zora_ZU_Ruto_Child_Animation"}`,
+    the way the game's own child Epona (`Animal_Horse_Child`) plays the adult Epona's clips. Link's and Ruto's
+    skeletons name their main bones alike (`Arm_1/2_L/R`, `Leg_1/2_L/R`, `Spine_1/2`).
+  - While lifted, the lifted game sends `Eaten` as its Link's animation (`CoopLiftPlayerGame::CarriedPose` in the
+    hook's read, `CoopLiftPlayer::CarriedAnimation`), so every copy of it, on the lifter's screen and every
+    other, plays `Eaten`, which on a young copy is Ruto's carry loop. Fallback: if the AS cannot be made (another
+    AS version, a clip name missing or named twice) the build says so and the copies keep the game's AS, so
+    `Eaten` plays Link's own Like Like hold (`Eaten_F`/`_B`), the closest pose Link himself has. One side effect:
+    a young player really held by a Like Like also shows Ruto's pose on the copies (their copy's `Eaten`).
+  - **The carried player's own screen: the exact limit.** Our own Link is the game's real `Player_Child`, on
+    the game's own AS (changing that file would change solo play, which must stay untouched), and its pose is
+    picked each frame by its own action AI (`Player.action.*`): no action of the player is "carried" (the
+    nearest, `Player.action.reactionrestraintrideonenemy`, plays `Eaten` = the Like Like's hold). So on our own
+    screen, while placed with input off, our Link plays what its own AI picks (likely its fall or float), not
+    Ruto's pose. The probe (UNKNOWN 7): the lifted game logs `coop: lift: carried: our own Link plays '<X>'` once
+    per change. If X is a fall or float, the native next step is asking our Link's action verb for
+    `RestraintRideOnEnemy` through the game's own request-action-verb path (main+0xc08f0, as the downed crawl
+    asks `Crawl`), which plays `Eaten`, and giving our own Link the carry AS only while that verb runs (a new
+    probe: whether an actor's AS can be switched at run time); until that is proven, our own screen keeps the
+    game's own pose.
 - **Young only, on every side** (native-puppets-d, tests in lift_player_test.cpp and session_test.cpp):
   - Lifter: a copy counts only while its player's presence says child (`CopyView::young` from
     `CoopPuppet::Remote::young`, read every frame: the age can change, as at the Master Sword); an adult or an
@@ -305,15 +325,20 @@ Phase 3 UNKNOWNs (settled by the proof job in reports/native-puppets-c.md, scree
 6. Our Link's own animation names while it lifts and carries (AS slot 0). The gate takes any name with "lift"
    or "carry"; if the proof log shows "copy rose but our Link's animation 'X' is no lift" during a real lift,
    add X's family to `OurLinkLifts` (or read the lifter's `ActorHolderRef` instead, offsets UNKNOWN).
-7. The carried pose: that `Eaten` plays on a child copy outside a Like Like (screenshot on the lifter's game);
-   what the lifted player's own Link plays on its own screen while placed with input off; and whether an
-   `Act_LiftRest` node on Ruto's clip in the copies' own AS plays on Link's skeleton (the owner's "same
-   animation"; a pack change, its own probe).
+7. The carried pose: (a) that a young copy built with the carry AS plays Ruto's `Act_LiftRest_Wait` on Link's
+   skeleton for `Eaten` (retargeted by bone name; the copy's heap holds the extra animation project), screenshot
+   on the lifter's game; (b) a build log line `AS/CoopPuppet_Carry_Child.root.asb: ... Ruto's Act_LiftRest_Wait`
+   (else the fallback note); (c) what our own Link plays on its own screen while carried: the log line
+   `carried: our own Link plays '<X>'`, and a screenshot of the lifted player's own screen.
 8. That an adult copy really has no lift reaction (no `LiftableRef`: the lifter's button does nothing at it).
 
 Proof job checks for the owner rule (add to the job in reports/native-puppets-c.md; screenshots of both games):
 - A (adult, then young) lifts young B: both screens show B in A's hands with A in Ruto's carry pose
   (`Pose_Ruto`); A walks with B, puts B down, and throws B as Ruto is thrown. A's log has the Ruto lift names.
+- Carried pose: see= A.png: B's copy in A's hands in Ruto's carried pose (sitting up, as Ruto sits on Link's
+  hands), not Link's Like Like hold; see= B.png: B's own screen (what B's Link plays: B's log line
+  `carried: our own Link plays '...'` names it). Both packs built with `--puppet-liftable`; the build log has the
+  carry AS line.
 - A tries to lift adult B: nothing happens on either screen (no lift, no message); A's log has no
   `coop: lift:` line for B; the server's `lifts_not_young` stays 0 (the ask is never sent).
 - B ages while carried: in the game the age changes only in the Temple of Time's Master Sword event, which

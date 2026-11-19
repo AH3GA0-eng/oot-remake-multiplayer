@@ -99,9 +99,22 @@ bool On() {
 }
 
 void CarriedPose(std::optional<coop::host::PlayerReading>& reading) {
-    if (On() && reading && TheGlue().carried.load(std::memory_order_relaxed)) {
-        reading->animation = CarriedAnimation();
+    if (!On() || !reading) {
+        return;
     }
+    // The probe for our own screen (docs/native-puppets.md, UNKNOWN 7): what our own Link plays while carried,
+    // logged once per change (its own action AI picks it; the copies play the carried pose).
+    static std::string own_logged;
+    if (!TheGlue().carried.load(std::memory_order_relaxed)) {
+        own_logged.clear();
+        return;
+    }
+    const std::string own = reading->animation ? reading->animation->name : std::string("(not read)");
+    if (own != own_logged) {
+        LOG_INFO(Core, "coop: lift: carried: our own Link plays '{}' (its copies play '{}')", own, kCarriedPose);
+        own_logged = own;
+    }
+    reading->animation = CarriedAnimation();
 }
 
 bool OurInputOff() {

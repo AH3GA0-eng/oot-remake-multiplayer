@@ -15,10 +15,12 @@
 //   LiftableRef, Ruto's (Npc_Zora_Ruto_Child_001's LiftableParam: her LiftableType, offsets and weight), so our
 //   Link's own lifter picks it up, carries it and throws or sets it down with the game's Ruto set (Player AS:
 //   Lift_Ready_Ruto, Lift_Up_Ruto, Pose_Ruto / _Run / _Caution, Lift_Put_Ruto, Lift_Throw_Ruto).
-// - The carried Link's pose: Ruto's own carried pose (her AS command Act_LiftRest) is in her AS and her animation
-//   file only, not in Link's AS, so it cannot be asked of a Link actor. While lifted, the lifted game sends the
-//   game's own pose for a young Link held by something (kCarriedPose, Link's AS command for a Like Like's hold) as
-//   its Link's animation, so every copy of it plays that (CarriedAnimation).
+// - The carried Link's pose: Ruto's own carried pose (her clip Act_LiftRest_Wait). While lifted, the lifted game
+//   sends kCarriedPose ("Eaten") as its Link's animation (CarriedAnimation), so every copy of it plays that
+//   command. On a young copy built with --puppet-liftable, "Eaten" plays Ruto's clip retargeted on Link's skeleton
+//   (the copy's own AS root, tools/puppet_pack/asb_carry.py); where that AS could not be made, the copy plays
+//   Link's own Eaten (a Like Like's hold), the fallback. Our own Link on our own screen plays what its own
+//   action AI picks (the game's AS, unchanged: solo play is untouched); CarriedPose logs it (UNKNOWN 7).
 // - The lifter's game sees the lift on the copy: the game raised it kRiseM over the place the director drew
 //   it, within kReachM of our Link, kRiseFrames frames running, while our own Link's main animation slot plays a
 //   lift (OurLinkLifts: a copy raised by anything else, a rising platform under a --puppet-body copy, a step, our
@@ -91,9 +93,9 @@ inline bool OurLinkLifts(const std::optional<std::string_view>& animation) {
     return has("lift") || has("carry") || has("pose_ruto");  // Pose_Ruto: Link's own carry of Ruto
 }
 
-// The carried Link's pose on every copy (see the top): Link's own AS command for being held (Player_Child AS
-// "Eaten", clips Eaten_F / Eaten_B in Player_Child_01_Animation), a still frame. UNKNOWN in game: that it plays
-// on a copy outside the Like Like's hold (docs/native-puppets.md, phase 3 probes).
+// The carried Link's pose on every copy (see the top): the AS command "Eaten", a still frame. On a young copy's own
+// carry AS its clips are Ruto's Act_LiftRest_Wait; else Link's own Eaten_F / Eaten_B (Player_Child_01_Animation).
+// UNKNOWN in game: that it plays so (docs/native-puppets.md, phase 3 probes, UNKNOWN 7).
 inline constexpr std::string_view kCarriedPose = "Eaten";
 inline proto::Animation CarriedAnimation() {
     return proto::Animation{std::string(kCarriedPose), 0.0f, 0.0f};
