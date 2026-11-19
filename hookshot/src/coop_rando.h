@@ -124,6 +124,9 @@ std::vector<std::string> GenerateArgs(const std::string& preset, const std::stri
                                       const std::filesystem::path& spoiler = {});
 // The settings string a seed file (.ootrr, JSON) was made with: its "settings" (IsSettingsString), empty when none.
 std::string SeedSettings(std::string_view seed_file_text);
+// Whether a seed file (.ootrr, JSON) places shop items (shopsanity: a top-level "shops" object with an entry). Such a seed
+// sells its one-time shelves once (lichii/hook/coop_shop_sale.h: co-op shares their sold counters).
+bool SeedShops(std::string_view seed_file_text);
 std::vector<std::string> BuildArgs(const std::filesystem::path& seed_file, const std::filesystem::path& game_folder,
                                    const std::filesystem::path& mods_root, const std::string& folder);
 // The game uses one resource size table, the one of the mod that wins (the seed), so the seed's must hold every
@@ -317,6 +320,8 @@ public:
     // when it was made again (RefreshLine) or could not be. The other players show as their fairies meanwhile.
     // Also kept for the whole run when another mod's size table wins (OutsideSizeTable).
     // Also when a pack actor table wins without the pack's rows (OutsideActorRows, RowsMissing).
+    // This run plays one of our seeds whose seed file places shop items (SeedShops; set at Start).
+    bool SeedHasShops() const { return seed_shops_.load(); }
     bool HoldPack() const { return hold_pack_.load() || outside_.load() || rows_out_.load(); }
     // A mod's RSDB table wins without the pack's rows this run (OutsideActorRows): the game would refuse the puppets.
     bool RowsMissing() const { return rows_out_.load(); }
@@ -362,6 +367,7 @@ private:
     std::string tell_;                // a line for the others not sent yet (mutex_): never a path
     std::string tell_seed_;           // the host's seed it is about (mutex_)
     std::atomic<bool> hold_pack_{false};  // HoldPack
+    std::atomic<bool> seed_shops_{false};  // SeedHasShops
     std::atomic<bool> outside_{false};    // another mod's size table wins this run (HoldPack)
     std::string outside_mod_;         // that mod (mutex_): empty when none
     std::atomic<bool> rows_out_{false};  // a pack actor table wins without the pack's rows (RowsMissing)

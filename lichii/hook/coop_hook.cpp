@@ -114,6 +114,7 @@
 #include "coop_settings.h"
 #include "coop_spawn.h"
 #include "coop_scrub_sale.h"
+#include "coop_shop_sale.h"
 #include "coop_scrub_talk.h"
 #include "coop_sites.h"
 #include "coop_svc.h"
@@ -487,6 +488,17 @@ public:
             const std::size_t added = CoopScrubSale::Merge(session.shared);
             LOG_INFO(Core, "coop: scrubs: sharing {} one-time sale flags (off with LICHII_COOP_SCRUB_SALE=0)", added);
         }
+        // docs/items.md "One-time sales": a randomizer seed with shops sells each one-time shelf once for the group.
+        shop_sale_ = shop_sale_on_ && CoopShopSale::SeedHasShops();
+        if (flag_error.empty() && shop_sale_on_) {  // the randomizer's Great Fairy gifts: given once for the group
+            const std::size_t added = CoopShopSale::MergeGifts(session.shared);
+            LOG_INFO(Core, "coop: fairies: sharing {} randomizer Great Fairy gift flags", added);
+        }
+        if (flag_error.empty() && shop_sale_) {
+            const std::size_t added = CoopShopSale::Merge(session.shared);
+            LOG_INFO(Core, "coop: shops: the seed has shops: sharing {} shop sold counters by the highest value "
+                           "(off with LICHII_COOP_SHOP_SALE=0)", added);
+        }
         if (!flag_error.empty()) {
             LOG_ERROR(Core, "coop: {}; flags are not shared", flag_error);
         }
@@ -632,6 +644,11 @@ public:
         }
         if (sharing_ && scrub_sale_on_) {  // a Business Scrub's one-time sale: bought once for everyone
             for (const auto& f : CoopScrubSale::kSaleFlags) {
+                session_->share_pickup_named(coop::protocol::FlagKey(f.hash, std::uint16_t{0}));
+            }
+        }
+        if (sharing_ && shop_sale_on_) {  // a Great Fairy's shuffled gift (coop_shop_sale.h): given once for everyone
+            for (const auto& f : CoopShopSale::kFairyGifts) {
                 session_->share_pickup_named(coop::protocol::FlagKey(f.hash, std::uint16_t{0}));
             }
         }
@@ -800,6 +817,8 @@ public:
         std::optional<coop::host::HoldFlagStore> hold;
         // Issue 193: the Threads of Time quests, ordered (coop_quests.h).
         std::optional<CoopQuests::Store> quests;
+        // The randomizer's one-time shelves (coop_shop_sale.h): their sold counters by the highest value.
+        std::optional<CoopShopSale::Store> shop_view;
         // dungeon-sync-b (#75): small keys lent at a lock another player opened
         // stay in our game; the watcher sees the counts without them.
         std::optional<coop::host::LentKeyStore> lent_view;
@@ -875,6 +894,8 @@ public:
             }
             const std::string sale_scene = reading && reading->scene ? *reading->scene : std::string();
             const bool sale_on = scrub_sale_on_;
+            const bool shop_on = shop_sale_;
+            const bool gift_on = shop_sale_on_;
             // Row 98(2): this frame's result hold (coop_event_result.h): a new scene is a new visit; the flags of an
             // event whose result we set here land; a result guard (ours, and the eye switch path's guards, which used
             // to wait for its replay) of a class-asker event not set here and not played waits.
@@ -900,7 +921,8 @@ public:
                              hold_scene_, waits.first, waits.second);
                 }
             }
-            hold.emplace(*quests, [link, scene, talk, near, sale_here, sale_scene, sale_on,
+            shop_view.emplace(*quests);
+            hold.emplace(*shop_view, [link, scene, talk, near, sale_here, sale_scene, sale_on, shop_on, gift_on,
                                    result_hold](coop::protocol::FlagKey key) {
                 if (key.kind == coop::protocol::FlagKeyKind::key64) {
                     // Row 98(2) trigger guards: a shared key that would raise our asker's trigger (a silver rupee
@@ -912,6 +934,12 @@ public:
                 }
                 if (talk.Holds(key.hash) || CoopScrubTalk::NearHolds(near, key.hash)) {
                     return true;
+                }
+                if (shop_on && CoopShopSale::Waits(key.hash, sale_here.in_event)) {
+                    return true;  // a shelf another player sold out waits while our shop talk runs
+                }
+                if (gift_on && CoopShopSale::GiftWaits(key.hash, sale_here.in_event)) {
+                    return true;  // a Great Fairy's gift another player got waits while our event runs
                 }
                 if (sale_on) {
                     CoopScrubSale::Here here = sale_here;
@@ -2414,6 +2442,8 @@ private:
     // =near: only the near guard (CoopScrubTalk::Near), no event hold: a test proves it alone.
     bool scrub_near_only_ = EnvString("LICHII_COOP_SCRUB_TALK_HOLD") == "near";
     bool scrub_sale_on_ = EnvString("LICHII_COOP_SCRUB_SALE") != "0";  // =0: one-time sales each game's own
+    bool shop_sale_on_ = EnvString("LICHII_COOP_SHOP_SALE") != "0";  // =0: the randomizer's one-time shelves each game's own
+    bool shop_sale_ = false;  // this session shares the shop sold counters (a seed with shops)
     bool live_events_ = false;     // LICHII_COOP_LIVE_EVENTS=1 (issue 129)
     // deku-switches (#176 #129): an eye-switch room event starts by our eye's FirstOn (coop_eye_switch.h).
     // Off unless LICHII_COOP_EYE_SWITCH=1 until the probe run (hs-eye-probe).
