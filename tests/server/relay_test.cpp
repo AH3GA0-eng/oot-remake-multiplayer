@@ -563,11 +563,12 @@ TEST_CASE("relay loopback: a guest joins the host's server through the relay wit
   EnetLife enet;
   ServerOptions options;
   options.port = 0;
+  options.bind = 0x7F000001u;  // (127.0.0.1 only)
   options.session.join_password = "relay-pass";  // every session has one
   EnetServer server(options);
   REQUIRE(server.start());
 
-  RelayServer relay_server(0, std::nullopt, RelayConfig{});
+  RelayServer relay_server(0, 0x7F000001u, RelayConfig{});  // (127.0.0.1 only)
   REQUIRE(relay_server.start());
   const std::uint16_t relay_port = relay_server.port();
   REQUIRE(relay_port != 0);
@@ -653,7 +654,7 @@ TEST_CASE("relay loopback: a guest joins the host's server through the relay wit
 
 TEST_CASE("relay loopback: a host's link holds a room name and a second host cannot take it (issue 261)") {
   EnetLife enet;
-  RelayServer relay_server(0, std::nullopt, RelayConfig{});
+  RelayServer relay_server(0, 0x7F000001u, RelayConfig{});  // (127.0.0.1 only)
   REQUIRE(relay_server.start());
   const std::uint16_t relay_port = relay_server.port();
   REQUIRE(relay_port != 0);
@@ -745,10 +746,11 @@ TEST_CASE("relay loopback: a game without the code never reaches the host") {
   EnetLife enet;
   ServerOptions options;
   options.port = 0;
+  options.bind = 0x7F000001u;  // (127.0.0.1 only)
   options.session.join_password = "relay-pass";
   EnetServer server(options);
   REQUIRE(server.start());
-  RelayServer relay_server(0, std::nullopt, RelayConfig{});
+  RelayServer relay_server(0, 0x7F000001u, RelayConfig{});  // (127.0.0.1 only)
   REQUIRE(relay_server.start());
   RelayLinkConfig link_config;
   link_config.relay_host = "127.0.0.1";
@@ -990,7 +992,7 @@ TEST_CASE("relay: the list comes in pages under a datagram, at most 50 rooms, an
 
 TEST_CASE("relay loopback: a host's link lists its room, the game's list_rooms_on_relay reads it, a link without listing is not on it") {
   EnetLife enet;
-  RelayServer relay_server(0, std::nullopt, RelayConfig{});
+  RelayServer relay_server(0, 0x7F000001u, RelayConfig{});  // (127.0.0.1 only)
   REQUIRE(relay_server.start());
   const std::uint16_t relay_port = relay_server.port();
 
