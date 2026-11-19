@@ -1,0 +1,31 @@
+# hs-pause-tab (Hookshot only; issue 264, PR #281 + pause-tab-finish): the game's own pause menu's fifth tab,
+# Multiplayer, and its page, in both games. Needs the game built with patch 0030 (#281's) and the puppet pack made
+# with --pause-tab (the kits pass it; the pack log says "pause menu: the Multiplayer tab and page").
+# Pass, by the shots of BOTH games (screenshot proof; the lines below only say what the module did):
+#   system         the System page, five tabs in the strip: Collection, Equipment, Items, System, Multiplayer (dim)
+#   page           the Multiplayer page over System: five rows in the System page's own buttons ("In a session",
+#                  "Room", "Players: 2", "Let in", "Leave"), the fifth tab lit, System's not; no controller picture
+#   page-down      the game's cursor frame one row lower, on our rows
+#   system-back    System's page and its tab lit again, its own buttons
+#   closed / idle-walking   the menu closed, the game plays (Link walks in A's)
+# A only, the co-op idle path (after Leave twice):
+#   leave-row      the cursor on "Leave"; leave-confirm: "A again: leave"
+#   idle-page      "Host a game", "Join a game", "Players", "Let in", "Leave (not in a session)"
+#   idle-system    System back; the game's own tabs work as ever
+#! switches LICHII_COOP_PUPPET=1
+#! timeout 420
+start A B
+load A B
+sleep 10
+play A hs-pause-tab.A.txt B hs-pause-tab.B.txt
+lines page-shown-A A min=2 coop: pause tab: our page shown \(R on System\)
+lines page-shown-B B min=1 coop: pause tab: our page shown \(R on System\)
+lines system-back-A A min=2 coop: pause tab: System back
+lines system-back-B B min=1 coop: pause tab: System back
+lines texts-A A min=1 coop: pause tab: the page's rows: 5 of 5 texts set
+lines texts-B B min=1 coop: pause tab: the page's rows: 5 of 5 texts set
+lines tab-word-A A min=1 coop: pause tab: the fifth tab filled \(its word set
+lines tab-word-B B min=1 coop: pause tab: the fifth tab filled \(its word set
+lines leave-A A min=1 coop: pause tab: the second A: co-op stops
+lines no-bad-panes A max=0 not both parts: the Multiplayer page stays off
+shot end

@@ -1,0 +1,25 @@
+# hs-pause-tab, B (part of hs-pause-tab.steps.txt): the pause menu's Multiplayer tab and page in a joined game.
+# PLUS opens the menu; R four times reaches System (no wrap: it stops there); R once more shows our page.
+press PLUS
+wait 240
+press R
+wait 90
+press R
+wait 90
+press R
+wait 90
+press R
+wait 120
+mark system
+press R
+wait 120
+mark page
+press DDOWN
+wait 60
+mark page-down
+press L
+wait 120
+mark system-back
+press PLUS
+wait 150
+mark closed

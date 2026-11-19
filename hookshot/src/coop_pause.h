@@ -53,6 +53,31 @@ bool KeysTaken();
 // title): Host hosts at once, Join pastes a code already copied.
 void Open(CoopPauseMenu::Page page);
 
+// The pause menu's Multiplayer page (coop_pause_tab.h), its rows: the menu opened on the Lobby tab (Players, and Let in
+// for a guest); and the host's room name (else its join code) to the clipboard, the menu opened on the main page, whose
+// note says what was copied (Join code).
+void OpenLobby();
+void CopyJoinCode();
+// The page's own actions, through the menu's requests and its rules: hosting at once with the kit's settings (its
+// room name, relay, port, approval), as the menu's Host does; and leaving (or stopping hosting), as its Leave does.
+// Co-op that came with the game's start (ByLauncher) is neither started nor stopped: the menu opens on its main page,
+// which says why. A Host refused or failed opens it too (its note, or the session's lines say why).
+void HostNow();
+void LeaveNow();
+// Co-op came with the game's start (Host.bat, Join.bat, coop.ini): the page's rows open the menu instead.
+bool ByLauncher();
+// The Multiplayer page's Join view: joining with the code (or address line) on the clipboard, as the Join page's
+// paste then Join; and the last game again ("Join <host> again", its code kept in coop.ini). Refused (co-op on, the
+// code not readable) or failed: the menu opens on its main page or Join page, whose note says why.
+void JoinPasteNow();
+void RejoinNow();
+// A last game's code is kept (coop.ini last_invite); its host's name into `host` (may be null; "" when not known).
+bool Rejoin(std::string* host);
+// The host's Paste answer (a friend's answer code from the clipboard) and a waiting guest's Copy answer, as the
+// menu's rows do them; the menu opened on its main page, whose note says what became of it.
+void PasteAnswerNow();
+void CopyAnswerNow();
+
 // The autotest's `menu customize|close` step (LICHII_COOP_TEST_COMMANDS only, coop_testinput.h): the menu opened
 // on the Customize page, or closed. Never asked in a player's game (no commands file there).
 bool TestMenu(const std::string& page);

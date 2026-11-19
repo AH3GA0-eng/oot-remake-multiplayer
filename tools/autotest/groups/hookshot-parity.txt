@@ -69,7 +69,7 @@ hs-skulltula-token  expect='A:Obj_Token_Gold broken here'  expect='B:a token tak
 # People and items (hs-scenarios-2): NPC animations (#200), Zelda's Letter at the gate (#171), fishing (#151).
 hs-npc-anim  expect='B:share owner 0xa902e1bb9d91c6c5 is player 2'  expect='A:(?s)test mark a-near.*npc-anim: our Link is in an event: \d+ actors it is with claimed'  expect='A:(?s)test mark a-near.*npc-anim: \d+ of the \d+ claimed actors are ours now'  expect='A:(?s)test mark a-near.*npc-anim: the event.s actors are free again'  expect="B:npc-anim: Npc_Hylia_Dampe_001 copied from P1 at \S+ \S+ \S+ plays 'Talk'"  label="#200 NPC animations"  see=hs-npc-anim-A  see=hs-npc-anim-B
 hs-npc-walk  expect="B:npc-anim: Npc_\S+ copied from P1 at \S+ \S+ \S+ plays '(Walk|Run)"  expect='B:npc-anim: in 5 s [1-9]\d* owner animations played'  label="#200 walking townspeople (by eye: legs move in the w1..w8 shots of B)"  see=hs-npc-walk-A  see=hs-npc-walk-B
-hs-kak-letter  expect='A:bool 0x19898d14.*0 -> 1'  expect='B:bool 0x19898d14.*0 -> 1'  label="#171 letter at the gate"  see=hs-kak-letter-A  see=hs-kak-letter-B
+hs-kak-letter  expect='A:bool 0x19898d14.*0 -> 1'  expect='B:bool 0x19898d14.*0 -> 1'  expect='B:(story: quest .*0x4011c4aa -> 0x4d329ec9|quests: Get_StoneOfFire KakarikoVillageNpc -> KakarikoVillageLetter)'  label="#171 letter at the gate"  see=hs-kak-letter-A  see=hs-kak-letter-B  see=hs-kak-letter-B-moved
 hs-fishing  expect="B:held 'Weapon_FishingRod'"  expect='A:share fish lure \d+ fish, [1-9]\d* near our lure'  label="#151 fishing (inconclusive if A rents no rod)"  see=hs-fishing-A  see=hs-fishing-B
 
 [g7]
@@ -78,6 +78,7 @@ hs-deku-platforms  expect='B:our game started the event InsideTheDekuTree_Gimmic
 hs-deku-torch  expect='B:our game started the event InsideTheDekuTree_Gimmick_CandleAndSpiderWeb: sent to the others'  expect='A:player 2 started the event InsideTheDekuTree_Gimmick_CandleAndSpiderWeb in this scene'  expect='A:result: InsideTheDekuTree_Gimmick_CandleAndSpiderWeb: our asker'  label="#176 #177 torch and web"  see=deku-torch-A  see=deku-web-A
 hs-deku-water-floor  expect='A:RoomG_WaterLevel.*0 -> 1'  expect='B:bool 0x8d2b85ef \(entry \d+\) 0 -> 1'  label="#196 water floor"  see=hs-deku-water-floor-A  see=hs-deku-water-floor-B
 hs-chest-other  expect='B:0x89787395.*0 -> 1'  expect='A:opened in another game, shows open here'  label="#195 map chest"  see=hs-chest-other-A  see=hs-chest-other-B
+hs-deku-bridge  expect='B:FallingFloor_A_0[12] moved here: sending'  expect='A:FallingFloor_A_0[12] moved by another player'  label="#177 slingshot room bridge falls, not vanishes"  see=hs-deku-bridge-A  see=hs-deku-bridge-B  see=hs-deku-bridge-gone-A
 hs-ocarina-given  expect='B:ocarina bool 0x[0-9a-f]+ 0 -> 1 for the held ocarina'  expect='B:ocarina probe: our Link plays the ocarina'  label="#190 Ocarina given back"  see=hs-ocarina-given-A  see=hs-ocarina-given-B
 
 [g8]
@@ -104,7 +105,7 @@ navi-room  label="#145 Navi per room"
 [g10]
 # Teleport, PvP and the gate on Hookshot as on the emulator.
 teleport-other  expect='A:scene change taken'  label="#197 teleport between overworld scenes"  see=teleport-other-A  see=teleport-other-B
-kak-gate  expect='B:bool 0x19898d14.*0 -> 1'  label="#171 Kakariko gate (test switch)"  see=kak-gate-A  see=kak-gate-B
+kak-gate  expect='B:bool 0x19898d14.*0 -> 1'  expect='B:(story: quest .*0x4011c4aa -> 0x4d329ec9|quests: Get_StoneOfFire KakarikoVillageNpc -> KakarikoVillageLetter)'  label="#171 Kakariko gate (test switch)"  see=kak-gate-A  see=kak-gate-B  see=kak-gate-B-moved
 pvp  expect='A:coop: pvp: our sword reached P2'  expect='B:coop: pvp: hit from P1'  label="PvP hits"  see=pvp-A  see=pvp-B
 
 [g11]

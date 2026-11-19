@@ -198,6 +198,11 @@ class BuildTest(unittest.TestCase):
             label = "Pa_Coop_00-Pa_Button_%02d-T_Btn_00" % i
             self.assertEqual(page.text(label), [ours[pm.PAGES_MSG][label]])
         self.assertEqual(page.text("Pa_System_00-Pa_Button_00-T_Btn_00"), ["Save"])
+        # The module's live row texts (coop_pause_tab_module.cpp, kLiveSlots / kLivePlaceholder): Coop_Live_00..07,
+        # each exactly 64 dots, in the built message file (the module refuses any other text or length).
+        for i in range(8):
+            label = "Coop_Live_%02d" % i
+            self.assertEqual(page.text(label), ["." * 64], label)
         self.assertTrue(all(sizes[k] > before[k] for k in before if k not in (pm.OVERLAY_LAYOUT, pm.PAGES_LAYOUT)))
         self.assertTrue(sizes[pm.OVERLAY_LAYOUT] > before[pm.OVERLAY_LAYOUT])
 
@@ -258,11 +263,51 @@ class BuildTest(unittest.TestCase):
                              before[pm.COMMON_ARCHIVE[:-3]] + len(written[pm.COMMON_ARCHIVE]) - len(files[pm.COMMON_ARCHIVE])
                              + 0x1000)
 
+    def test_the_last_runs_files_are_not_read(self):
+        """The mod's folder holds the last run's files: this step starts from the game's again (a second run made the
+        tab twice: "the layout has Pa_Category_04 already")."""
+        with tempfile.TemporaryDirectory() as root:
+            src, out = os.path.join(root, "romfs"), os.path.join(root, "out")
+            self.romfs(src)
+            table = _Table({pm.COMMON_ARCHIVE[:-3]: 100000})
+            for lang in LANGS:
+                table.set("Mals/%s.Product.110.sarc" % lang, 2000)
+
+            def write(o, r, data):
+                path = os.path.join(o, *r.split("/"))
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "wb") as f:
+                    f.write(data)
+
+            for _ in range(2):
+                made = pm.build(src, out, _Plain(), table, write, lambda d, raw, data: data, log=lambda s: None)
+                self.assertIn(pm.COMMON_ARCHIVE, made)
+
     def test_nothing_written_when_one_language_fails(self):
         made, written, sizes, before, err = self.run_build(broken="JPja")
         self.assertIsNotNone(err)
         self.assertEqual(written, {})
         self.assertEqual(sizes, before)
+
+
+class NupFilesTest(unittest.TestCase):
+    def test_the_menus_files_newest_language_archives(self):
+        """A .nup build extracts the menus' archives too, and each language's newest message archive only."""
+        import fnmatch
+        from puppet_pack import build
+
+        class FakeNup:
+            files = ["UI/Layout2Archive/Title.Product.100.Nin_Ounce_NVN2.blarc.zs", pm.COMMON_ARCHIVE,
+                     "Mals/USen.Product.100.sarc.zs", "Mals/USen.Product.110.sarc.zs", "Mals/EUfr.Product.110.sarc.zs",
+                     "Mals/JPja.Product.100.sarc.zs", "Pack/ZsDic.pack.zs"]
+
+            def glob(self, pattern):
+                d, _, name = pattern.rpartition("/")
+                return sorted(f for f in self.files if f.rpartition("/")[0] == d and fnmatch.fnmatchcase(f.rpartition("/")[2], name))
+
+        self.assertEqual(build.nup_menu_files(FakeNup()), [
+            "UI/Layout2Archive/Title.Product.100.Nin_Ounce_NVN2.blarc.zs", pm.COMMON_ARCHIVE,
+            "Mals/EUfr.Product.110.sarc.zs", "Mals/JPja.Product.100.sarc.zs", "Mals/USen.Product.110.sarc.zs"])
 
 
 if __name__ == "__main__":
