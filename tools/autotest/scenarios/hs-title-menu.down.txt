@@ -1,0 +1,9 @@
+# hs-title-menu (see hs-title-menu.steps.txt), both games: from Continue down to the fifth row (Host).
+press DDOWN
+wait 30
+press DDOWN
+wait 30
+press DDOWN
+wait 30
+press DDOWN
+wait 60

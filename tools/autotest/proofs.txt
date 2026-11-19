@@ -338,3 +338,13 @@ teleport2-loaded-A                       s*-loaded-A                    160,80,9
 teleport2-loaded-B                       s*-loaded-B                    160,80,960,520  refs
 teleport2-together-A                     s*-together-A                  160,80,960,520  refs
 teleport2-together-B                     s*-together-B                  160,80,960,520  refs
+
+# hs-title-menu (owner 2026-11-19: the title's Host, Join and Co-op Settings rows on): the highlight moved down the
+# list to Host (the list's lower half against 'top'), Hookshot's menu over the title after A on Host, and the title
+# again after the menu closed. Thresholds are a first guess until the first run (proof.py dist) and refs.
+title-on-host-A   s*-on-host-A   320,330,640,390  change  from=s*-top-A      min=4
+title-on-host-B   s*-on-host-B   320,330,640,390  change  from=s*-top-B      min=4
+title-pressed-A   s*-pressed-A   0,0,1280,720     change  from=s*-on-host-A  min=8
+title-pressed-B   s*-pressed-B   0,0,1280,720     change  from=s*-on-host-B  min=8
+title-closed-A    s*-closed-A    0,0,1280,720     change  from=s*-pressed-A  min=8
+title-closed-B    s*-closed-B    0,0,1280,720     change  from=s*-pressed-B  min=8
