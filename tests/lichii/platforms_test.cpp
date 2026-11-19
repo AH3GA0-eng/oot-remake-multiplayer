@@ -496,6 +496,116 @@ TEST_CASE("platforms: a wave mover's phase is taken before seconds and frames, w
     CHECK(found->cycle == doctest::Approx(kTwoPi));
 }
 
+namespace {
+// #196 (room-actor-replay-0116 run): one look every 250 ms at a wave block whose cycle word is `cycle_s` and whose
+// "phase" word takes `values` in turn.
+std::vector<ClockFinder::Dropped> LookAtWave(ClockFinder& f, float cycle_s, const std::vector<float>& values) {
+    const std::uint64_t cycle_key = Key(3, 0x1a8);
+    const std::uint64_t phase_key = Key(3, 0x1a8 + kWavePhaseFromCycle);
+    std::vector<ClockFinder::Dropped> dropped;
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        f.Add(1'000'000 + i * 250'000, Floats{{cycle_key, cycle_s}, {phase_key, values[i]}});
+        for (const auto& d : f.TakeDropped()) {
+            CHECK(d.key == phase_key);
+            dropped.push_back(d);
+        }
+    }
+    return dropped;
+}
+}  // namespace
+
+TEST_CASE("platforms: a wave word outside [0, 2 pi) is no clock (#196, the water room floor at -26.4)") {
+    // bigrun-0115 / room-actor-replay-0116-2: Obj_Deku_MoveFloor_A_01's c+0x60+0x1d8 matched the cycle test (1.177 a
+    // second) at -26.403 .. -27.098; the game worked it out again every frame, so no write ever held.
+    ClockFinder f;
+    std::vector<float> v;
+    for (int i = 0; i < 12; ++i) {
+        v.push_back(-26.403f + 1.177f * 0.25f * static_cast<float>(i));
+    }
+    const auto dropped = LookAtWave(f, kTwoPi / 1.177f, v);
+    CHECK_FALSE(f.Found());
+    REQUIRE(dropped.size() == 1);
+    CHECK(std::string(dropped[0].why).find("outside [0, 2 pi)") != std::string::npos);
+}
+
+TEST_CASE("platforms: a wave word that swings back is no clock (#196, the WaveLoop's actor+0x3a8)") {
+    // The same run: GroundControlActor_WaveLoop actor+0x3a8 rose at +0.137 a second as the owner's, and fell
+    // 0.461 -> -0.032 in the other game: a wave's offset (it swings), not its phase.
+    ClockFinder f;
+    std::vector<float> v;
+    float x = 0.30f;
+    for (int i = 0; i < 6; ++i, x += 0.137f * 0.25f) {
+        v.push_back(x);
+    }
+    for (int i = 0; i < 6; ++i, x -= 0.137f * 0.25f) {
+        v.push_back(x);
+    }
+    const auto dropped = LookAtWave(f, kTwoPi / 0.137f, v);
+    CHECK_FALSE(f.Found());
+    REQUIRE(dropped.size() == 1);
+    CHECK(std::string(dropped[0].why).find("went back") != std::string::npos);
+}
+
+TEST_CASE("platforms: a real wave phase that loops 2 pi -> 0 stays the clock (#196 guard)") {
+    ClockFinder f;
+    std::vector<float> v;
+    float x = kTwoPi - 1.0f;
+    for (int i = 0; i < 16; ++i) {
+        v.push_back(x);
+        x += 1.177f * 0.25f;
+        if (x >= kTwoPi) {
+            x -= kTwoPi;
+        }
+    }
+    const auto dropped = LookAtWave(f, kTwoPi / 1.177f, v);
+    CHECK(dropped.empty());
+    REQUIRE(f.Found());
+    CHECK(f.Found()->cycle == doctest::Approx(kTwoPi));
+}
+
+TEST_CASE("platforms: a follower whose own word stands outside the owner's loop does not write it (#196)") {
+    Game a;
+    Game b;
+    a.self = 1;
+    b.self = 2;
+    a.cycle = b.cycle = 6.2831853f;
+    a.clock = 4.5f;    // loops within 2 s, so the owner's ticks carry the loop 2 pi
+    b.clock = -26.4f;  // the floor's word in the other game: never in the loop
+    std::uint64_t time = 0;
+    std::size_t writes_when_seen = 0;
+    bool seen = false;
+    for (int i = 0; i < 400; ++i) {
+        time += 50 * kMs;
+        a.Step(0.05f);
+        b.Step(0.05f);
+        if (b.clock > -20.0f) {
+            b.clock = -26.4f;  // the game works it out again
+        }
+        a.Tick(time);
+        b.Tick(time);
+        for (auto& m : a.sent) {
+            auto pc = std::get<proto::PlatformClock>(m);
+            pc.player_number = 1;
+            if (i > 60) {  // B comes into the room after 3 s
+                b.sync.Receive(pc);
+            }
+        }
+        a.sent.clear();
+        b.sent.clear();
+        if (!seen) {
+            for (const auto& n : b.notes) {
+                if (n.find("is no clock here") != std::string::npos) {
+                    seen = true;
+                    writes_when_seen = b.sync.Writes();
+                }
+            }
+        }
+    }
+    CHECK(seen);
+    CHECK(writes_when_seen == 0);
+    CHECK(b.sync.Writes() == 0);  // never written
+}
+
 TEST_CASE("platforms: a word that steps but not at 2 pi over the word before it is no wave phase") {
     const Floats look{{Key(3, 0x10), 18.0f}, {Key(3, 0x40), 1.0f}, {Key(3, 0x20), 1.0f}};
     CHECK(WavePhaseCycle(look, Key(3, 0x40), kTwoPi / 18.0f).has_value());

@@ -158,7 +158,18 @@ void ClockFinder::Add(std::uint64_t now_us, const Floats& floats) {
     const float dt1 = static_cast<float>(b.at_us - a.at_us) / 1e6f;
     const float dt2 = static_cast<float>(c.at_us - b.at_us) / 1e6f;
     std::map<std::uint64_t, Candidate> next;
+    const auto ban = [&](std::uint64_t key, float value, const char* why) {
+        if (banned_.insert(key).second) {
+            dropped_.push_back({key, value, why});
+        }
+        if (chosen_ && *chosen_ == key) {
+            chosen_.reset();
+        }
+    };
     for (const auto& [key, v2] : c.floats) {
+        if (banned_.count(key) != 0) {
+            continue;
+        }
         const auto i0 = a.floats.find(key);
         const auto i1 = b.floats.find(key);
         if (i0 == a.floats.end() || i1 == b.floats.end()) {
@@ -180,6 +191,10 @@ void ClockFinder::Add(std::uint64_t now_us, const Floats& floats) {
         Candidate cand = known ? it->second : Candidate{};
         const bool agree = in_range(r1) && in_range(r2) && (r1 > 0) == (r2 > 0) &&
                            std::fabs(r1 - r2) <= kRateSlack * std::max(std::fabs(r1), std::fabs(r2));
+        if (agree && cand.wave && r2 < 0.0f) {
+            ban(key, v2, "went back other than by looping: a wave's offset, not its phase");
+            continue;
+        }
         if (agree) {
             cand.rate = r2;
             cand.good = std::min(cand.good + 1, 1000);
@@ -187,6 +202,10 @@ void ClockFinder::Add(std::uint64_t now_us, const Floats& floats) {
             cand.stalled = 0;
             cand.top = std::max(cand.top, std::max(v1, v2));
             if (const auto loop = WavePhaseCycle(c.floats, key, r2)) {
+                if (!InLoop(v0, *loop) || !InLoop(v1, *loop) || !InLoop(v2, *loop)) {
+                    ban(key, v2, "outside [0, 2 pi): worked out from another word, not the wave's phase");
+                    continue;
+                }
                 cand.wave = true;
                 cand.cycle = *loop;  // known from the game's code: no loop needs to be seen first
             }
@@ -203,6 +222,13 @@ void ClockFinder::Add(std::uint64_t now_us, const Floats& floats) {
         // jump to send; the finder lets go of it if it lasts.
         const bool backwards = cand.rate > 0 ? v2 < v1 : v2 > v1;
         const bool stalled = std::fabs(r2) < kMinRate;
+        // #196: a wave phase goes back only by looping (from near 2 pi to near 0); any other step back is an offset
+        // that swings (sin of the phase), not the phase.
+        if (cand.wave && !stalled &&
+            (!InLoop(v2, cand.cycle) || (backwards && !(v1 > 0.5f * cand.cycle && v2 < 0.5f * cand.cycle)))) {
+            ban(key, v2, "went back other than by looping: a wave's offset, not its phase");
+            continue;
+        }
         if (stalled) {
             // Held as it is (not a bad step) while the game stands still,
             // but not Found(): nothing frozen is sent.
@@ -312,6 +338,12 @@ void ClockFinder::Reset() {
     candidates_.clear();
     chosen_.reset();
     jumped_ = false;
+    banned_.clear();
+    dropped_.clear();
+}
+
+bool ClockFinder::InLoop(float value, float cycle) {
+    return cycle <= 0.0f || (value >= -0.01f && value < cycle + 0.01f);
 }
 
 float Advance(float value, float rate, float cycle, std::uint64_t sent_us, std::uint64_t now_us) {
@@ -451,6 +483,13 @@ void PlatformSync::Tick(const std::string& scene, std::uint8_t self, std::uint64
         s.last_look_us = steady_us;
         const Floats floats = FloatsOf(words);
         s.finder.Add(steady_us, floats);
+        for (const auto& drop : s.finder.TakeDropped()) {
+            char text[240];
+            std::snprintf(text, sizeof text, "%016llx %s: %s (%.3f) is no clock: %s",
+                          static_cast<unsigned long long>(d->hash), d->name.c_str(), Where(drop.key).c_str(),
+                          static_cast<double>(drop.value), drop.why);
+            out.notes.emplace_back(text);
+        }
         const std::uint8_t owner = OwnerOf(d->hash, self, server_us);
         if (owner == self) {
             auto clock = s.finder.Found();
@@ -518,6 +557,19 @@ void PlatformSync::Tick(const std::string& scene, std::uint8_t self, std::uint64
         const Heard& h = hp->second;
         const auto mine = floats.find(h.tick.key);
         if (mine == floats.end() || !std::isfinite(mine->second)) {
+            continue;
+        }
+        // #196: our own copy of that word is no clock here (our finder dropped it, or it stands outside the loop the
+        // owner's clock has): a word the game works out again every frame. Writing it only fights the game.
+        if (s.finder.Banned(h.tick.key) || !ClockFinder::InLoop(mine->second, h.tick.cycle)) {
+            s.gave_up = true;
+            char text[240];
+            std::snprintf(text, sizeof text,
+                          "%016llx %s: our %s (%.3f) is no clock here (outside the owner's loop %.3f or dropped): "
+                          "not followed",
+                          static_cast<unsigned long long>(d->hash), d->name.c_str(), Where(h.tick.key).c_str(),
+                          static_cast<double>(mine->second), static_cast<double>(h.tick.cycle));
+            out.notes.emplace_back(text);
             continue;
         }
         // Our word stands still after it was seen moving: our game is paused (#35). No write (it could not

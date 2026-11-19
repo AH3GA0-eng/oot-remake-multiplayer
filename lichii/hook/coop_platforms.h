@@ -28,6 +28,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <utility>
 #include <set>
 #include <string>
 #include <string_view>
@@ -102,6 +103,20 @@ public:
     std::optional<Clock> Found() const;
     // The clock jumped in the last look (looped or a switch reset it).
     bool Jumped() const { return jumped_; }
+    // #196 (room-actor-replay-0116 run, review-room-actor-replay-r1): words dropped for good as no wave phase, with why,
+    // since the last call (for the log). A wave mover's phase is wrapped into [0, 2 pi) by the game's own setup
+    // (kWavePhaseFromCycle) and only goes on: a word that matched the cycle test but stood outside [0, 2 pi) (the Deku
+    // Tree water room's floor c+0x60+0x1d8 at -26.4, worked out again every frame) or went back other than by looping
+    // (its WaveLoop actor+0x3a8: 0.461 -> -0.032, a wave's offset, not its phase) is no clock: never chosen again.
+    struct Dropped {
+        std::uint64_t key = 0;
+        float value = 0.0f;
+        const char* why = "";
+    };
+    std::vector<Dropped> TakeDropped() { return std::exchange(dropped_, {}); }
+    bool Banned(std::uint64_t key) const { return banned_.count(key) != 0; }
+    // A looped clock's value is one the game can hold: inside [0, cycle) (a little slack for float steps).
+    static bool InLoop(float value, float cycle);
     // The kept clock's word while it stands still (the game paused or
     // hitched; Found() is empty then), else nothing.
     std::optional<std::uint64_t> StalledKey() const;
@@ -130,6 +145,8 @@ private:
     std::map<std::uint64_t, Candidate> candidates_;
     std::optional<std::uint64_t> chosen_;
     bool jumped_ = false;
+    std::set<std::uint64_t> banned_;   // #196: never a clock (see Dropped)
+    std::vector<Dropped> dropped_;
 };
 
 // The value a clock sent at `sent_us` has at `now_us` (both server time):

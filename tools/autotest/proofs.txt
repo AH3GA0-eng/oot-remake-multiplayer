@@ -86,6 +86,12 @@ hs-deku-torch-away-B       A-web-B            160,80,960,520  refs
 # hs-deku-water-floor: the water low and the floors moved alike in both games
 hs-deku-water-floor-A      A-moved-A          160,80,960,520  refs
 hs-deku-water-floor-B      A-moved-B          160,80,960,520  refs
+# #196 itself (review-room-actor-replay-r1): the floor B rides at the same place of its wave in both games. B's 'ride2'
+# and 'ride3' views (B on the floor) against references cut from runs where both games' floors are known: good = the
+# floor where A's game has it at that moment, bad = elsewhere (coop-kit\ls\shots-lane1\hs-deku-water-floor\20261118-135608
+# is a bad run: the floors ran free). Until refs exist these are UNPROVEN, never PASS.
+hs-deku-water-floor-ride-A  A-ride2-A         160,80,960,520  refs  refs=deku-water-floor-ride
+hs-deku-water-floor-ride-B  A-ride2-B         160,80,960,520  refs  refs=deku-water-floor-ride
 # hs-door: the puppet hidden during its door cutscene, then shown again
 hs-door-A                  A-a-watch-A        160,80,960,520  refs
 hs-door-B                  A-a-watch-B        160,80,960,520  refs
