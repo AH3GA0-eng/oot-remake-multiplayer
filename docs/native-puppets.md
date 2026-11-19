@@ -243,7 +243,8 @@ returns before anything when not connected).
     skeletons name their main bones alike (`Arm_1/2_L/R`, `Leg_1/2_L/R`, `Spine_1/2`).
   - While lifted, the lifted game sends `Eaten` as its Link's animation (`CoopLiftPlayerGame::CarriedPose` in the
     hook's read, `CoopLiftPlayer::CarriedAnimation`), so every copy of it, on the lifter's screen and every
-    other, plays `Eaten`, which on a young copy is Ruto's carry loop. Fallback: if the AS cannot be made (another
+    other, plays `Eaten` from frame 0 at rate 1 (looped, not held on one frame), which on a young copy is
+    Ruto's carry loop. Fallback: if the AS cannot be made (another
     AS version, a clip name missing or named twice) the build says so and the copies keep the game's AS, so
     `Eaten` plays Link's own Like Like hold (`Eaten_F`/`_B`), the closest pose Link himself has. One side effect:
     a young player really held by a Like Like also shows Ruto's pose on the copies (their copy's `Eaten`).
@@ -328,7 +329,9 @@ Phase 3 UNKNOWNs (settled by the proof job in reports/native-puppets-c.md, scree
 7. The carried pose: (a) that a young copy built with the carry AS plays Ruto's `Act_LiftRest_Wait` on Link's
    skeleton for `Eaten` (retargeted by bone name; the copy's heap holds the extra animation project), screenshot
    on the lifter's game; (b) a build log line `AS/CoopPuppet_Carry_Child.root.asb: ... Ruto's Act_LiftRest_Wait`
-   (else the fallback note); (c) what our own Link plays on its own screen while carried: the log line
+   (else the fallback note). The fallback is chosen at pack build time only: if the game fails to retarget
+   Ruto's clip at run time (a bad pose, a T-pose, nothing played), no switch turns the carry AS off by itself;
+   the cure is a pack built without it (the whole lift is off by default, `--puppet-liftable`). (c) what our own Link plays on its own screen while carried: the log line
    `carried: our own Link plays '<X>'`, and a screenshot of the lifted player's own screen.
 8. That an adult copy really has no lift reaction (no `LiftableRef`: the lifter's button does nothing at it).
 

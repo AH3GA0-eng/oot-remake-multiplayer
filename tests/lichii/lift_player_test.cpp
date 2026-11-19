@@ -463,5 +463,6 @@ TEST_CASE("lift player: carried as Ruto: Link's own Ruto carry counts as a lift,
     CHECK_FALSE(OurLinkLifts(std::string_view("Pose_Bow")));
     const auto pose = CarriedAnimation();
     CHECK(pose.name == "Eaten");
-    CHECK(pose.rate == 0.0f);
+    CHECK(pose.frame == 0.0f);
+    CHECK(pose.rate == 1.0f);  // the copy loops Ruto's Act_LiftRest_Wait, not frame 0 held
 }

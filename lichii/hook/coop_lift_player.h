@@ -93,12 +93,14 @@ inline bool OurLinkLifts(const std::optional<std::string_view>& animation) {
     return has("lift") || has("carry") || has("pose_ruto");  // Pose_Ruto: Link's own carry of Ruto
 }
 
-// The carried Link's pose on every copy (see the top): the AS command "Eaten", a still frame. On a young copy's own
-// carry AS its clips are Ruto's Act_LiftRest_Wait; else Link's own Eaten_F / Eaten_B (Player_Child_01_Animation).
+// The carried Link's pose on every copy (see the top): the AS command "Eaten" from frame 0 at rate 1 (the director
+// sets the frame once and plays on at the rate, so the loop runs, not frame 0 held). On a young copy's own carry
+// AS its clips are Ruto's Act_LiftRest_Wait; else Link's own Eaten_F / Eaten_B (Player_Child_01_Animation).
 // UNKNOWN in game: that it plays so (docs/native-puppets.md, phase 3 probes, UNKNOWN 7).
 inline constexpr std::string_view kCarriedPose = "Eaten";
+inline constexpr float kCarriedRate = 1.0f;  // played on (looped)
 inline proto::Animation CarriedAnimation() {
-    return proto::Animation{std::string(kCarriedPose), 0.0f, 0.0f};
+    return proto::Animation{std::string(kCarriedPose), 0.0f, kCarriedRate};
 }
 
 // The input-off answer at `now_us` for the stamp the lift's frame left (0: off).
