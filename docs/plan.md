@@ -5,8 +5,8 @@ Two stages: co-op on the Lichii emulator first, then the same co-op in a native 
 ## Where it stands
 
 - **Stage 1 (emulator)**: steps 0 to 6 below were built and shipped in the early test releases, the last emulator release being the one of 2026-11-12 (see the [README](../README.md) and [known-issues.md](known-issues.md) for what works). Sharing is being widened area by area: [sync-coverage.md](sync-coverage.md).
-- **Stage 2 (PC port)**: co-op on [Longshot](https://git.magicbean.dev/MagicBeanDev/Longshot) (the PC port of the same game build, whose changes are being merged into Hookshot) is where the releases are: since 0.10.1 they run only on it, with the same protocol and server ([hookshot.md](hookshot.md)). The newest release is in the [README](../README.md). Native puppets (the other players as real game bodies) are designed in [native-puppets.md](native-puppets.md) and built behind switches, off by default. For 1.0 the co-op is meant to ship as an add-on mod for a recomp.
-- Wire protocol: version 14 ([protocol.md](protocol.md), "Versioning").
+- **Stage 2 (PC port)**: co-op on [Longshot](https://git.magicbean.dev/MagicBeanDev/Longshot) (the PC port of the same game build) is where the releases are: since 0.10.1 they run only on it, with the same protocol and server ([hookshot.md](hookshot.md)). The newest release is in the [README](../README.md). Native puppets (the other players as real game bodies) are designed in [native-puppets.md](native-puppets.md) and built behind switches, off by default. For 1.0 the co-op is meant to ship as an add-on mod for a recomp.
+- Wire protocol: version 15 ([protocol.md](protocol.md), "Versioning").
 
 ## Why the emulator first
 
