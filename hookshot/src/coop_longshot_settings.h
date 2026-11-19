@@ -32,8 +32,12 @@ std::optional<Setting> At(int index);
 // Every row, in the menu's order (at most kMaxRows).
 inline constexpr int kMaxRows = 512;
 std::vector<Setting> All();
-// That key set to `value`: the row as it is after, nothing when it was not set (no such key, or without them).
-std::optional<Setting> Set(const std::string& key, int value);
+// The game's answers to a set (HosCoopApi::setting_set).
+inline constexpr int kSet = 1, kNoSuchRow = 0, kFixed = -1, kUnreachable = -2;
+// That key set to `value`: the row as it is after, nothing when it was not set: no such key (or without them), nothing
+// to choose on this PC (kFixed), or no step of a list row reaches the value (kUnreachable, left as it was). *code, when
+// given, gets the game's answer (kNoSuchRow without them).
+std::optional<Setting> Set(const std::string& key, int value, int* code = nullptr);
 
 // One row of the game's table as the module keeps it (a text field without its 0 at the end is cut at its size).
 Setting FromGame(const HosCoopSetting& s);

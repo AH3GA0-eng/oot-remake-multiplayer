@@ -53,10 +53,13 @@ std::vector<Setting> All() {
     return out;
 }
 
-std::optional<Setting> Set(const std::string& key, int value) {
+std::optional<Setting> Set(const std::string& key, int value, int* code) {
+    if (code != nullptr) *code = kNoSuchRow;
     if (key.empty() || !Available()) return std::nullopt;
     HosCoopSetting s{};
-    if (!g_api.load()->setting_set(key.c_str(), value, &s)) return std::nullopt;
+    const int r = g_api.load()->setting_set(key.c_str(), value, &s);
+    if (code != nullptr) *code = r;
+    if (r != kSet) return std::nullopt;   // (-1 fixed, -2 unreachable: the game left it as it was)
     return FromGame(s);
 }
 

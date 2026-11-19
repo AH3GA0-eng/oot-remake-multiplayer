@@ -18,10 +18,10 @@ through an optional export, hos_coop_game_pause_tab_at (the tab where the
 module places its tabs, or -2 to leave it to the old table). Without the
 export, or with -2, the mouse does as before.
 ---
- host/coop_bridge.c  | 34 ++++++++++++++++++++++++++++++++++
- host/hos_coop_api.h | 16 ++++++++++++++++
+ host/coop_bridge.c  | 41 +++++++++++++++++++++++++++++++++++++++++
+ host/hos_coop_api.h | 17 +++++++++++++++++
  host/oot_menu.c     |  8 ++++++--
- 3 files changed, 56 insertions(+), 2 deletions(-)
+ 3 files changed, 64 insertions(+), 2 deletions(-)
 
 diff --git a/host/coop_bridge.c b/host/coop_bridge.c
 index 889a0716..c657836d 100644
@@ -43,13 +43,17 @@ index 889a0716..c657836d 100644
  /* Bytes for the next call's pointers: in the game's stack between the call's stack words (bridge_call's sp + 32) and the
     hook's own sp, which the called function does not touch (it only writes below its sp): [sp - 0x1c0, sp - 0xc0). x8,
     where a function puts a result it returns in memory, is [sp - 0xb0, sp - 0x30) (bridge_call). */
-@@ -107,6 +109,30 @@ static uint64_t bridge_pad_buttons(void) { return __atomic_load_n(&hos_coop_pad,
+@@ -107,6 +109,37 @@ static uint64_t bridge_pad_buttons(void) { return __atomic_load_n(&hos_coop_pad,
  /* (a key held now, by virtual-key code: Windows' own, or the SDL window's keys on Linux, host/posix/display_sdl.c) */
  static int bridge_key_down(uint32_t vk) { return vk < 256 && (GetAsyncKeyState((int)vk) & 0x8000) != 0; }
  
 +/* The Insert menu's settings for the module (rx_backend.c, the control bridge's own two), field by field */
 +int rx_control_setting(int index, HosControlSetting *out);
 +int rx_control_setting_set(const char *key, int value, HosControlSetting *out);
++/* (the module's copy of the row, hos_coop_api.h, is kept by hand: the same fields in the same places) */
++_Static_assert(sizeof(HosCoopSetting) == sizeof(HosControlSetting), "HosCoopSetting is HosControlSetting's fields");
++_Static_assert(offsetof(HosCoopSetting, value) == offsetof(HosControlSetting, value), "HosCoopSetting.value");
++_Static_assert(offsetof(HosCoopSetting, fixed) == offsetof(HosControlSetting, fixed), "HosCoopSetting.fixed");
 +static void setting_copy(HosCoopSetting *to, const HosControlSetting *from) {
 +    memcpy(to->key, from->key, sizeof to->key), memcpy(to->name, from->name, sizeof to->name);
 +    memcpy(to->text, from->text, sizeof to->text), memcpy(to->tab, from->tab, sizeof to->tab);
@@ -66,9 +70,12 @@ index 889a0716..c657836d 100644
 +static int bridge_setting_set(const char *key, int value, HosCoopSetting *out) {
 +    HosControlSetting s;
 +    memset(&s, 0, sizeof s);
-+    if (!key || !rx_control_setting_set(key, value, &s)) return 0;
-+    if (out) setting_copy(out, &s);
-+    return 1;
++    if (!key) return 0;
++    /* 1 set, 0 no such row, -1 nothing to choose on this PC, -2 no step reaches value (left as it was): the control
++       bridge's own answer, *out the row as it is after it (host/control.h) */
++    const int r = rx_control_setting_set(key, value, &s);
++    if (r && out) setting_copy(out, &s);
++    return r;
 +}
 +
  static void at_exit(void) {
@@ -123,15 +130,16 @@ index bc47834c..380e9553 100644
  typedef struct HosCoopApi {
      uint32_t version;             /* HOS_COOP_API_VERSION */
      uint32_t size;                /* sizeof(HosCoopApi) */
-@@ -56,6 +65,13 @@ typedef struct HosCoopApi {
+@@ -56,6 +65,14 @@ typedef struct HosCoopApi {
         0 when they do not fit. Only with the ctx of a hook that may call(), for the next call made with it. With it,
         call() also points x8 (where a function puts a result it returns in memory) at 128 free bytes of that stack. */
      uint64_t (*scratch)(void *ctx, const void *data, size_t n);
 +    /* Added with the pause menu's Settings tab (check size covers it): the Insert menu's settings, as the control
 +       bridge has them (host/control.h HosControlSetting, rx_backend.c rx_control_setting). setting: the index-th row,
 +       to list them (0 past the last). setting_set: that key to `value`, as the menu's Left and Right do (clamped to
-+       its range, the Quality preset to Custom, a restart noted, the options file saved); 1 when set, *out its row
-+       after. Any thread. */
++       its range, the Quality preset to Custom, a restart noted, the options file saved): 1 set, 0 no such row (or no
++       key), -1 nothing to choose on this PC, -2 no step of a list row reaches value (left as it was); *out its row
++       after when not 0. Any thread. */
 +    int (*setting)(int index, HosCoopSetting *out);
 +    int (*setting_set)(const char *key, int value, HosCoopSetting *out);
  } HosCoopApi;

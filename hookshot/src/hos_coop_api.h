@@ -68,8 +68,9 @@ typedef struct HosCoopApi {
     /* Added with the pause menu's Settings tab (check size covers it): the Insert menu's settings, as the control
        bridge has them (host/control.h HosControlSetting, rx_backend.c rx_control_setting). setting: the index-th row,
        to list them (0 past the last). setting_set: that key to `value`, as the menu's Left and Right do (clamped to
-       its range, the Quality preset to Custom, a restart noted, the options file saved); 1 when set, *out its row
-       after. Any thread. */
+       its range, the Quality preset to Custom, a restart noted, the options file saved): 1 set, 0 no such row (or no
+       key), -1 nothing to choose on this PC, -2 no step of a list row reaches value (left as it was); *out its row
+       after when not 0. Any thread. */
     int (*setting)(int index, HosCoopSetting *out);
     int (*setting_set)(const char *key, int value, HosCoopSetting *out);
 } HosCoopApi;
