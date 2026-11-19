@@ -158,6 +158,8 @@ add_executable(coop_tests
   lichii/voice_test.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_puppet_sound.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_link_sound.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_puppet_flame.cpp
+  lichii/puppet_flame_test.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_pickups.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_testinput.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_teleport.cpp

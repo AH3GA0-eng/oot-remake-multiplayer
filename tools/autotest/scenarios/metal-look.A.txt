@@ -19,9 +19,9 @@ press A
 wait 2400
 mark field
 wait 600
-place 199.43 163.4 309.87
+place 194.43 163.4 309.87      # 5 m off the Kokiri Forest exit (harness-0116, as giant-blade)
 wait 30
-toward 196.93 309.87 10
+toward 191.93 309.87 10
 wait 60
 mark a-back
 press Y

@@ -32,10 +32,11 @@ setflag InsideTheDekuTree_BossArea_ShutIn 0
 setflag InsideTheDekuTree_BossArea_ChangeENVForBoss 0
 setflag Gohma_IsLightingForBattle 0
 setflag Gohma_DefeatBoss 0
+setflag HavePlayedEvent.InsideTheDekuTree_BossDie 0   # else the game drops her death event as played (hs-gohma-death)
 wait 120
 wait 300
 mark a-away             # A in Kokiri Forest, outside the dungeon
-wait 3420               # B's walk, intro, fight and kill
+wait 6120               # B's walk, intro, her trigger (b-trigger, +45 s), fight and kill
 mark a-kill
 wait 3000               # B's death event and B takes the container
 mark a-before

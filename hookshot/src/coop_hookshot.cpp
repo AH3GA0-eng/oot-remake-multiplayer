@@ -1220,7 +1220,22 @@ bool Start(const HosCoopApi* api) {
     CoopHook::Start();
     g_on = true;
     CoopModsRuntime::Start();  // the mods folder and the code mods (docs/mods.md)
-    CoopModsRuntime::SetGame(api, TitleHoldWhy);   // (mod API v2: the menu screens' calls)
+    // (mod API v2: the menu screens' calls) A code mod's button choice waits while co-op is busy at the title, unless
+    // the player pressed A on the title's first button just before: then it is theirs (Save Profiles' file select
+    // takes that A and presses Continue for the file picked; refused, the player was left at the title).
+    CoopModsRuntime::SetGame(api, [] {
+        const char* why = TitleHoldWhy();
+        if (why != nullptr && CoopTitle::PlayerChoseLately()) {
+            static std::atomic<const char*> said{nullptr};
+            if (said.exchange(why) != why) {
+                LOG_INFO(Core, "coop: mods: a mod's button choice goes through while {}: the player pressed A on the "
+                               "title's first button just before",
+                         why);
+            }
+            return static_cast<const char*>(nullptr);
+        }
+        return why;
+    });
     CoopTitle::Init(api);
     CoopPauseTab::Init(api);   // the pause menu's Multiplayer tab (patch 0030)
     CoopPause::Init(server);
@@ -1367,9 +1382,16 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
         e.from = std::exchange(t_create_from, 0);
         const std::uint64_t arg = std::exchange(t_create_arg, 0);
         std::uint64_t text = 0;  // (x1: its first 8 bytes point at the name; on the caller's stack: read now)
-        char name[32] = {};
+        // The ring keeps 31 bytes of the name; the stop rules below need it whole
+        // (boss-larva-0116: Enemy_DungeonBoss_Dodongo_SpawnBabyDodongo is 42, so a
+        // copy King Dodongo's own spawner was never stopped). The rest is read
+        // apart, so a name near the end of its memory still gives its first 31.
+        char name[64] = {};
         if (a != 0 && CoopRuntime::Read(a, &text, sizeof text) && text != 0 &&
-            CoopRuntime::Read(text, name, sizeof name - 1)) {
+            CoopRuntime::Read(text, name, 31)) {
+            if (std::memchr(name, 0, 31) == nullptr && !CoopRuntime::Read(text + 31, name + 31, sizeof name - 32)) {
+                name[31] = 0;
+            }
             e.SetName(name);
         }
         float place[3] = {};
@@ -1440,6 +1462,12 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
             }
             return std::nullopt;
         };
+        // A death kept past its revive ends when the component lives again (a heal, a new actor at that address).
+        if (CoopActorEvents::KeptDeaths& kept = CoopActorEvents::TheKeptDeaths(); kept.Kept(a)) {
+            if (const auto life = life_now(); life && *life > 0) {
+                kept.Alive(a);
+            }
+        }
         // One boss death for everyone (coop_boss_native.h HeldLifeStep): a copy boss's own Life step
         // keeps it at life 1 until its owner's has died; then this same step lets it die.
         bool finishing = false;
@@ -1489,9 +1517,12 @@ int World(std::uint32_t event, std::uint64_t a, std::uint64_t b) {
             LOG_INFO(Core, "coop: actors: the game's Life step asks the module before its revive (patch 0007): an "
                            "owner's death and a test kill stay deaths");
         }
-        if (dead != nullptr && a != 0 && std::exchange(t_life_dead, 0) == a) {
+        // The check runs on every step that ends at 0, so a death kept once stays kept (KeptDeaths, boss-die-0116).
+        const bool passed = a != 0 && std::exchange(t_life_dead, 0) == a;
+        if (dead != nullptr && CoopActorEvents::SkipRevive(CoopActorEvents::TheKeptDeaths(), a, passed)) {
             *dead = 1;
-            CoopActorEvents::RevivesSkipped().fetch_add(1, std::memory_order_relaxed);
+            (passed ? CoopActorEvents::RevivesSkipped() : CoopActorEvents::RevivesKeptSkipped())
+                .fetch_add(1, std::memory_order_relaxed);
         }
         return 1;
     }
@@ -2027,7 +2058,11 @@ COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) n
     try {
         return CoopPadOrder::Run(
             buttons, stick, [](uint64_t b, int32_t* s) { return CoopPauseTab::OnPad(b, s); },
-            [](uint64_t b) { CoopModsRuntime::NotePad(b); }, [] { return CoopModsRuntime::HeldButtons(); },
+            [](uint64_t b) {
+                CoopTitle::NotePlayerPad(b);   // (the player's own A on the title, before a mod's hold takes it)
+                CoopModsRuntime::NotePad(b);
+            },
+            [] { return CoopModsRuntime::HeldButtons(); },
             [](uint64_t b, int32_t* s) { return CoopTitle::OnPad(b, s); },
             [](uint64_t b, int32_t* s) {
                 // Down but not out (coop_dbno_game.h): a downed Link crawls and uses nothing; beside one, A revives.

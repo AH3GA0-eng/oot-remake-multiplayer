@@ -988,3 +988,109 @@ TEST_CASE("title menu: an A on the game's own rows and Options is the player's, 
         }
     }
 }
+
+TEST_CASE("title menu: list_room is off unless coop-options.ini turns it on, and it is written back") {
+    using CoopTitleMenu::Options;
+    CHECK_FALSE(Options::Read("", "").list_room);
+    Options o = Options::Read("", "list_room = on\r\n");
+    CHECK(o.list_room);
+    std::string coop, options = "relay = relay.example:27600\r\n";
+    o.list_room = true;
+    o.Write(coop, options);
+    CHECK(Options::Read(coop, options).list_room);
+    o.list_room = false;
+    o.Write(coop, options);
+    CHECK_FALSE(Options::Read(coop, options).list_room);
+    CHECK(options.find("relay = relay.example:27600") != std::string::npos);   // (the other lines kept)
+}
+
+namespace {
+PlayerChoice::Pad TitlePad(std::uint64_t buttons, int focused, bool coop_row = false) {
+    PlayerChoice::Pad p;
+    p.buttons = buttons;
+    p.title_up = true;
+    p.focused = focused;
+    p.on_coop_row = coop_row;
+    return p;
+}
+constexpr std::uint64_t kPadA = PlayerChoice::kA;
+}  // namespace
+
+TEST_CASE("title menu: the player's own A drops the pending switch, on the A's edge only") {
+    // (seen before a code mod's hold: Save Profiles' file select takes this A, so it is the only place it shows)
+    PlayerChoice c;
+    CHECK(c.Step(1000, TitlePad(kPadA, 0)).picks_file);
+    CHECK_FALSE(c.Step(1016, TitlePad(kPadA, 0)).picks_file);   // held: no new edge
+    CHECK_FALSE(c.Step(1032, TitlePad(0, 0)).picks_file);
+    CHECK(c.Step(1048, TitlePad(kPadA, 2)).picks_file);         // Options or New Game: the player's own too
+    c.Step(1064, TitlePad(0, 0));
+    CHECK_FALSE(c.Step(1080, TitlePad(kPadA, 4, true)).picks_file);   // Host / Join / Settings: our menu
+    c.Step(1096, TitlePad(0, 0));
+    CHECK_FALSE(c.Step(1112, TitlePad(kPadA, -1)).picks_file);  // no button focused
+    c.Step(1128, TitlePad(0, 0));
+    PlayerChoice::Pad off = TitlePad(kPadA, 0);
+    off.title_up = false;
+    CHECK_FALSE(c.Step(1144, off).picks_file);                  // not the title
+    c.Step(1160, TitlePad(0, 0));
+    CHECK_FALSE(c.Step(1176, TitlePad(1ull << 1, 0)).picks_file);   // B is not a choice
+}
+
+TEST_CASE("title menu: the player's choice window: only the first button, kWindowMs, renewed by a later A") {
+    PlayerChoice c;
+    CHECK_FALSE(c.Lately(500));
+    c.Step(1000, TitlePad(kPadA, 2));   // Options: drops the switch but is no choice of a file to load
+    CHECK_FALSE(c.Lately(1001));
+    c.Step(1016, TitlePad(0, 2));
+    c.Step(1032, TitlePad(kPadA, 4, true));   // a co-op row in the first place (the title's own menu: Host)
+    CHECK_FALSE(c.Lately(1033));
+    c.Step(1048, TitlePad(0, 0));
+    const auto seen = c.Step(2000, TitlePad(kPadA, 0));
+    CHECK(seen.window_opened);
+    CHECK(c.Lately(2000));
+    CHECK(c.Lately(2000 + PlayerChoice::kWindowMs - 1));
+    CHECK_FALSE(c.Lately(2000 + PlayerChoice::kWindowMs));
+    c.Step(3000, TitlePad(0, 0));
+    CHECK_FALSE(c.Step(4000, TitlePad(kPadA, 0)).window_opened);   // (inside the window: renewed, not new)
+    CHECK(c.Lately(4000 + PlayerChoice::kWindowMs - 1));
+    PlayerChoice z;
+    z.Step(0, TitlePad(kPadA, 0));   // a clock at 0 still counts
+    CHECK(z.Lately(0));
+}
+
+TEST_CASE("title menu: the player's choice window ends in the game, on a join and on Clear") {
+    PlayerChoice c;
+    c.Step(1000, TitlePad(kPadA, 0));
+    PlayerChoice::Pad away = TitlePad(kPadA, 0);   // (Save Profiles' file select over the title, A still held)
+    away.title_up = false;
+    c.Step(1100, away);
+    CHECK(c.Lately(1100));   // the title out of sight alone does not end it
+    PlayerChoice::Pad in_game = TitlePad(0, -1);
+    in_game.title_up = false;
+    in_game.in_game = true;
+    c.Step(5000, in_game);   // the load came: a return to the title later is a new choice
+    CHECK_FALSE(c.Lately(5001));
+    c.Step(9000, TitlePad(kPadA, 0));
+    CHECK(c.Lately(9001));
+    c.Clear();               // a join begun after the A, or the host's save offered again (backed out of the pick)
+    CHECK_FALSE(c.Lately(9002));
+}
+
+TEST_CASE("title menu: an A on Host in the Multiplayer submenu (the game's Continue place) opens no choice window") {
+    // (CoopTitle::OnCoopRow: in the title's own menu, a row that is not the player's own is a co-op row)
+    using CoopTitleMenu::MenuFor;
+    using CoopTitleMenu::PlayersOwn;
+    for (const bool one : {true, false}) {
+        PlayerChoice c;
+        const auto sub = MenuFor(true, true, one);
+        const auto seen = c.Step(1000, TitlePad(kPadA, 0, !PlayersOwn(&sub.rows[0])));
+        CHECK_FALSE(seen.picks_file);
+        CHECK_FALSE(c.Lately(1001));
+        c.Step(1016, TitlePad(0, 0));
+        const auto top = MenuFor(true, false, one);
+        CHECK(c.Step(1032, TitlePad(kPadA, 0, !PlayersOwn(&top.rows[0]))).window_opened);   // Continue / Start
+        c.Clear();
+        c.Step(1048, TitlePad(0, 1));
+        const int multiplayer = CoopTitleMenu::RowOf(top, CoopTitleMenu::TitleDo::kMultiplayer);
+        CHECK_FALSE(c.Step(1064, TitlePad(kPadA, multiplayer, true)).picks_file);
+    }
+}

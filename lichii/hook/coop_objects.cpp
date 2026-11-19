@@ -1581,6 +1581,7 @@ public:
             // them fill up over a long session). Nothing given there is owed.
             life_scene_ = *scene;
             CoopActorEvents::TheLifeTable().Clear();
+            CoopActorEvents::TheKeptDeaths().Clear();  // (deaths kept past their revive: the scene before's)
             CoopDifficulty::TheKinds().Clear();  // difficulty: the kinds of the scene before
             life_given_.clear();
             step_hits_.clear();
@@ -1987,6 +1988,17 @@ public:
             }
             for (const auto& line : out.notes) {
                 LOG_INFO(Core, "coop: {}", line);
+            }
+            // Issue 243: the solve flags at the hit, through the game's own flag store (the flag sync then
+            // shares them as when the talk set them; the room graph deletes the brothers, as in solo).
+            if (!out.solve.empty()) {
+                CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main_);
+                for (const std::uint32_t hash : out.solve) {
+                    const bool was = coop::host::GameFlags(memory).get_bool(hash).value_or(false);
+                    const bool set = was || coop::host::GameFlags::set_bool(memory, hash, true);
+                    LOG_INFO(Core, "coop: scrubs: solve flag {:#010x} {}", hash,
+                             was ? "already set" : set ? "set" : "NOT set (the store refused)");
+                }
             }
         }
         // Field grass (docs/world.md): our new cuts go out, the others' are
@@ -2587,6 +2599,9 @@ private:
             names_.clear();
             no_area_.clear();
             TheMover().ForgetReplayed();
+#ifdef COOP_HOOKSHOT
+            CoopActorEvents::TheKeptDeaths().Clear();
+#endif
             sync_.Reset();
             world_.Reset();
             ForgetGold();  // issue 89: a new game process, its own keys
@@ -2848,11 +2863,12 @@ private:
             actor_events_said_us_ = server_now_us;
             const std::uint64_t passed = CoopActorEvents::StopsPassed().load(std::memory_order_relaxed);
             const std::uint64_t kept = CoopActorEvents::RevivesSkipped().load(std::memory_order_relaxed);
+            const std::uint64_t again = CoopActorEvents::RevivesKeptSkipped().load(std::memory_order_relaxed);
             LOG_INFO(Core, "coop: actors: in 10 s the game asked {} creates ({} copies' shots refused), {} deletes, "
                            "{} hits (life {}), {} lost; owners' deaths past a copy's own life stops {}, past its "
-                           "revive {}",
+                           "revive {} (later steps kept dead {})",
                      actor_creates_, actor_stops_, actor_deletes_, actor_hits_, actor_hit_sum_, actor_events_lost_,
-                     passed, kept);
+                     passed, kept, again);
             actor_creates_ = actor_deletes_ = actor_hits_ = actor_events_lost_ = actor_stops_ = 0;
             actor_hit_sum_ = 0;
         }

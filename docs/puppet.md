@@ -286,6 +286,17 @@ The mask pack (`Armor_Mask_Base`) differs from a tunic's: `SameBoneModelBind` `A
 
 The adult scenarios (`held-adult`, `wear-adult`) now play in Kakariko by day with both players adult (as `adult-day`). In the dark adult Graveyard the shots showed nothing. `hold ZR 90 item1` takes its mark halfway through the hold, while the aimed item is still in the hand.
 
+### A lit Deku stick (issue 248)
+
+In the owner's game a Deku stick burns through the game's chemistry: its chemical body (`Weapon_Chemical_Wood`, material `weapon_wood`) catches fire at a torch, lights what it touches, burns out after `FixedBurningDuration` (1440 frames) and breaks. That stays the owner's game's. A puppet's stick with a burning chemical body would be a second fire in the follower's world: torches, webs and grass would be lit twice. (B #35 decision (a), 2026-11-19: visual only on the follower.)
+
+So only the picture is sent. Read from the game:
+- The stick's ELink user `Item_DekuStick` (romfs `ELink2/elink2.Product.110.belnk`) has `Chemical_FireStart` (the flash as it catches), `Chemical_Fire` (a container: the flame, heat emission, heat haze, smoke, embers while falling or swinging), `Chemical_Steam`, `Sheathed_Extinguish`, `Death_Burned`. The chemistry plays `Chemical_Fire` on the user while the stick burns.
+- Sender (`PlayerReader::read_lit`): for each drawn slot, the piece's ELink user (`[[actor + 0x270] + 0x68] + 0x70`) is walked as the game's own find walks it (0x37416c0: list head user + 0x28, first link +0x30, event = link - s32 [user + 0x3c], key at [[event + 0x30]], next [link + 8]). A `Chemical_Fire` there sets the slot's bit in `PLAYER_EQUIP` `lit` (protocol.md, component 17). It goes out as any equipment change does.
+- Receiver (`coop_puppet_flame.cpp`, a step after Hold): when a slot is lit and drawn and the puppet holds a piece there, the puppet's own piece gets the game's search and emit (0x43db00, 0x440630, as OneShotXLinkSearchAndEmit) of `Chemical_FireStart`, then `Chemical_Fire`. When the bit clears, the piece is put away or the puppet hidden, it is put out with the game's find by key and kill (0x37416c0, 0x7cc120): the run of `OneShotXLinkFadeByKey` (main+0x295af30) with its kill switch set. A piece made again (an age change, the gear re-worn) took its effect with it, and the new one is lit again while theirs burns. No chemical body is touched on the follower; nothing there burns.
+- Burnt out: the owner's stick breaks, so the slot empties and the puppet's piece goes. Put away: `Sheathed_Extinguish` runs in the owner's game, their bit clears, the puppet's flame is killed.
+- Not proven in a game yet: that the chemistry's flame shows as a `Chemical_Fire` event in the user's list (the research run: a stick lit at a torch, shots on both games), and how the follower's copy looks beside the owner's.
+
 ### Not done (equipment)
 
 0. Which hand slot each tool uses is still not seen in a game (see "The other hand slots"): the scenarios `held-tools` and `held-adult` show it.

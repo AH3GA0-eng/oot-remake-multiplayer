@@ -755,6 +755,94 @@ TEST_CASE("native boss: a new mid-boss copy runs its own start, then takes the o
     CHECK(t.OnBrainVerb(kBsa, 61, false, false));
 }
 
+TEST_CASE("native boss: a mid-boss of ours handed over during its start runs its start on (#238)") {
+    // Revirie's 0.11.0 log: our two Lizalfos were handed to player 1 while their appear still played; the copy
+    // took the owner's verbs at once, stayed at 'Appear' (moved 0.00) and was unseen on our screen.
+    CHECK(PlaysOwnStart("Appear"));
+    CHECK_FALSE(PlaysOwnStart("Wait"));
+    CHECK_FALSE(PlaysOwnStart(""));
+    auto liz = [](Role role, std::uint8_t owner, std::string anim) {
+        return Boss{kActor, kBsa, role, "Enemy_MiddleBoss_Lizalfos", owner, 0, false, false, false, std::move(anim)};
+    };
+    FakeGuest g;
+    const std::int32_t at = 60;
+    g.Write(kBsa + addr::kBsaBrainVerb, &at, 4);
+    SUBCASE("handed over just after it was made: its start runs on") {
+        Table t;
+        t.SetOn(true, true);
+        t.Publish({liz(Role::owner, 3, "Wait")});
+        for (int i = 0; i < 20; ++i) {
+            CHECK_FALSE(t.Step(g, false, 0, kMain));
+        }
+        t.Publish({liz(Role::copy, 1, "Wait")});
+        t.Receive(kActor, BossBsa{3, 62, std::nullopt, {}});
+        CHECK_FALSE(t.OnBrainVerb(kBsa, 61, false, false));  // its own appear runs
+        for (std::uint64_t i = 0; i + 1 < Table::kStartSteps; ++i) {
+            CHECK_FALSE(t.Step(g, false, 0, kMain));
+        }
+        auto c = t.Step(g, false, 0, kMain);
+        REQUIRE(c);
+        CHECK(c->x[1] == 62);  // then the owner's state
+        const auto notes = t.TakeNotes();
+        CHECK(std::any_of(notes.begin(), notes.end(),
+                          [](const std::string& n) { return n.find("during its own start") != std::string::npos; }));
+    }
+    SUBCASE("handed over long after, its appear still playing: its start runs on") {
+        Table t;
+        t.SetOn(true, true);
+        t.Publish({liz(Role::owner, 3, "Wait")});
+        for (std::uint64_t i = 0; i < Table::kStartSteps + 10; ++i) {
+            CHECK_FALSE(t.Step(g, false, 0, kMain));
+        }
+        t.Publish({liz(Role::copy, 1, "Appear")});
+        t.Receive(kActor, BossBsa{3, 62, std::nullopt, {}});
+        CHECK_FALSE(t.OnBrainVerb(kBsa, 61, false, false));
+    }
+    SUBCASE("handed over long after, in the fight: the owner's verbs at once (as before)") {
+        Table t;
+        t.SetOn(true, true);
+        t.Publish({liz(Role::owner, 3, "Wait")});
+        for (std::uint64_t i = 0; i < Table::kStartSteps + 10; ++i) {
+            CHECK_FALSE(t.Step(g, false, 0, kMain));
+        }
+        t.Publish({liz(Role::copy, 1, "Walk")});
+        t.Receive(kActor, BossBsa{3, 62, std::nullopt, {}});
+        CHECK(t.OnBrainVerb(kBsa, 61, false, false));
+    }
+    SUBCASE("a new copy whose appear outlasts its start time: runs on, up to kStartMaxSteps") {
+        Table t;
+        t.SetOn(true, true);
+        t.Publish({liz(Role::copy, 1, "Appear")});
+        t.Receive(kActor, BossBsa{3, 62, std::nullopt, {}});
+        std::uint64_t own = 0;
+        for (std::uint64_t i = 0; i < Table::kStartMaxSteps + 50; ++i) {
+            t.Publish({liz(Role::copy, 1, "Appear")});
+            if (t.Step(g, false, 0, kMain)) {
+                break;  // the owner's state is put in: its own time is over
+            }
+            ++own;
+        }
+        CHECK(own >= Table::kStartSteps);
+        CHECK(own + 1 >= Table::kStartMaxSteps);
+        CHECK(own < Table::kStartMaxSteps + 2);
+    }
+    SUBCASE("a new copy whose appear ended: the owner's state after kStartSteps (as before)") {
+        Table t;
+        t.SetOn(true, true);
+        t.Publish({liz(Role::copy, 1, "Appear")});
+        t.Receive(kActor, BossBsa{3, 62, std::nullopt, {}});
+        std::uint64_t own = 0;
+        for (std::uint64_t i = 0; i < Table::kStartMaxSteps; ++i) {
+            t.Publish({liz(Role::copy, 1, "Walk")});
+            if (t.Step(g, false, 0, kMain)) {
+                break;
+            }
+            ++own;
+        }
+        CHECK(own + 1 == Table::kStartSteps);
+    }
+}
+
 // Player report #105: a black screen after Gohma's death in the host's game. The death setting our game is asked
 // (InsideTheDekuTree_BossDie) runs her own death in our copy; past the event the copy rules skipped its own
 // changes again and its Life step held her at 1, so the death never finished (no fade back, no warp).
@@ -1314,6 +1402,77 @@ TEST_CASE("native boss: row 149: a hit, an idle boss, our event, no life read or
             t.Publish({Dodongo(Role::owner, "Rolling_Loop", 24)});
             CHECK_FALSE(t.Step(g, false, 0, kMain));
         }
+    }
+}
+
+TEST_CASE("boss-die-0116: the stall check judges only fight moves: never a death, life 0 or a cutscene") {
+    using CoopBossNative::StallJudged;
+    // Row 149's moves (King Dodongo's roll, Gohma's ceiling walk, a Barinade spin): judged.
+    for (const char* move : {"Rolling_Loop", "Rolling_Start", "CeilingMove", "Climb_All", "Down_Loop", "Spin_Loop",
+                             "Attack", "Wait", "AttackEnd_Hit", "Pre_Battle_Ceiling_Wait"}) {
+        CAPTURE(std::string(move));
+        CHECK(StallJudged(move, 24));
+    }
+    // Deaths (an own death move before the Director's outro, at any life the revive left) and cuts: never.
+    for (const char* not_a_move : {"Die", "Die_Start", "Dead", "Dead_Fall", "Damage_Death", "Death2",
+                                   "C01-Enemy_DungeonBoss_Gohma-A-0", "C03_00-Enemy_DungeonBoss_Gohma-A-0",
+                                   "AS-C02_00-Enemy_DungeonBoss_Gohma-A-0",
+                                   "AS-C10-Dm_FireTemple_BossIn_Enemy_DungeonBoss_Volvagia-A-0",
+                                   "Dm_Deku_BossOut_Gohma"}) {
+        CAPTURE(std::string(not_a_move));
+        CHECK_FALSE(StallJudged(not_a_move, 1));
+        CHECK_FALSE(StallJudged(not_a_move, 24));
+    }
+    // Life 0 whatever plays (a Bongo Bongo hand down), and nothing read.
+    CHECK_FALSE(StallJudged("Wait", 0));
+    CHECK_FALSE(StallJudged("Wait", -2));
+    CHECK_FALSE(StallJudged("Wait", std::nullopt));
+    CHECK_FALSE(StallJudged("", 24));
+    // Words only as words: a move with them inside another word stays a move.
+    CHECK(StallJudged("Diet_Wait", 24));
+    CHECK(StallJudged("Undead_Walk", 24));
+    CHECK(StallJudged("Cry", 24));
+}
+
+TEST_CASE("boss-die-0116: every boss and part held in its death or a cut never chooses again, a live stuck move does") {
+    FakeGuest g;
+    const std::int32_t brain = 8;
+    g.Write(kBsa + addr::kBsaBrainVerb, &brain, 4);
+    // Steps of our own boss `name` in one held animation at one life, its AI asking each frame.
+    const auto hold = [&](Table& t, std::string_view name, std::string_view animation, std::int32_t life,
+                          std::uint64_t steps) {
+        std::optional<CoopPuppet::Call> call;
+        for (std::uint64_t i = 0; i < steps && !call; ++i) {
+            CHECK_FALSE(t.OnActionVerb(kBsa, GameRequest(141, kNode), false, false));
+            Boss b{kActor, kBsa, Role::owner, std::string(name), 2};
+            b.animation = std::string(animation);
+            b.life = life;
+            t.Publish({b});
+            call = t.Step(g, false, 0, kMain);
+        }
+        return call;
+    };
+    for (const char* name : {"Enemy_DungeonBoss_Gohma", "Enemy_DungeonBoss_Dodongo", "Enemy_DungeonBoss_Barinade",
+                             "Enemy_DungeonBoss_PhantomGanon", "Enemy_DungeonBoss_Volvagia", "Enemy_DungeonBoss_Morpha",
+                             "Enemy_DungeonBoss_BongoBongo", "Enemy_DungeonBoss_BongoBongo_LeftHand",
+                             "Enemy_DungeonBoss_BongoBongo_RightHand", "Enemy_DungeonBoss_Kotake",
+                             "Enemy_DungeonBoss_Koume", "Enemy_DungeonBoss_Twinrova", "Enemy_DungeonBoss_Ganon",
+                             "Enemy_DungeonBoss_Ganon_SecondHalfBattle"}) {
+        CAPTURE(std::string(name));
+        Table t;
+        t.SetOn(true, true);
+        CHECK_FALSE(t.OnBrainVerb(kBsa, brain, false, false));
+        // Its death move held at the life the revive left (Gohma's test kill, LANE2 06:47 UTC), at life 0, a cut.
+        CHECK_FALSE(hold(t, name, "Die", 1, Table::kStallSteps * 2));
+        CHECK_FALSE(hold(t, name, "Dead_Loop", 0, Table::kStallSteps * 2));
+        CHECK_FALSE(hold(t, name, "Wait", 0, Table::kStallSteps * 2));
+        CHECK_FALSE(hold(t, name, "C01-Enemy_DungeonBoss_Gohma-A-0", 20, Table::kStallSteps * 2));
+        CHECK(t.Totals().owner_stalls == 0);
+        // The skip hides no live stuck move: the same boss then stuck in a fight move chooses again.
+        const auto c = hold(t, name, "Rolling_Loop", 20, Table::kStallSteps + 4);
+        REQUIRE(c);
+        CHECK(c->x[1] == 8);
+        CHECK(t.Totals().owner_stalls == 1);
     }
 }
 
