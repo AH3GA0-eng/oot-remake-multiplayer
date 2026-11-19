@@ -787,7 +787,7 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
         rows[2] = pages > 1 ? "Next page (" + std::to_string((v.s.cell_page % pages + pages) % pages + 1) + "/" +
                                   std::to_string(pages) + ")"
                             : std::string("Refresh list");
-        rows[3] = v.s.list_room ? "List me (my name): On" : "List me (my name): Off";   // (the list shows the name)
+        rows[3] = v.s.list_room ? "List my room: On" : "List my room: Off";
         break;
     }
     case View::kLanGame:
