@@ -311,6 +311,16 @@ struct Anim {
     float rate = 1.0f;
 };
 
+// Whether a sample's frame follows its player's animation, given the sample before it (same slot). A playing pose
+// (rate above 0) whose frame stands still from one sample to the next (same command, the same frame) is sent at a
+// fixed frame: the sender does not follow the frame (the carried pose of a lifted player, coop_lift_player.h
+// CarriedAnimation, sends frame 0 at rate 1). The copy then plays on at the rate, and its frame is not set back to
+// the sample's (which would snap the loop back to frame 0 on every sample). A real player's playing animation
+// moves on between samples, so its frame is followed as before; a new command or the first sample is followed.
+inline bool FrameFollowed(const std::string& before_name, float before_frame, const Anim& now) {
+    return !(now.rate > 0.0f && !before_name.empty() && now.name == before_name && now.frame == before_frame);
+}
+
 // coop/host/scene.hpp's Visibility, for a puppet that exists.
 enum class Show { show, hold, hide };
 
@@ -518,6 +528,8 @@ private:
         CoopOcarina::HandBind ocarina_hand;  // issue 152: Ocarina in hand while it plays
         std::string their_anim;              // their last AS command (debug log)
         std::uint32_t anim_serial = 0;
+        std::string sample_name;     // the last sample's command and frame (FrameFollowed)
+        float sample_frame = 0.0f;
         std::uint64_t anim_buffer = 0;  // which name buffer is next
         std::optional<float> frame_to_set;  // after a play
         std::optional<float> held_frame;    // while held
