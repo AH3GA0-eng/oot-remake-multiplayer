@@ -313,6 +313,8 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
             slot.sound.pending = CoopPuppetSound::State::Step::none;
         } else if (pending_ == Pending::link_sound) {
             CoopLinkSound::Dropped(slot.link_sound);
+        } else if (pending_ == Pending::flame) {
+            CoopPuppetFlame::Dropped(slot.flame);
         }
         pending_ = Pending::none;
     }
@@ -742,6 +744,9 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
     case Pending::sound:
         CoopPuppetSound::Finish(slot.sound, result, who, [this](const std::string& line) { Say(line); });
         break;
+    case Pending::flame:
+        CoopPuppetFlame::Finish(slot.flame, result, who, [this](const std::string& line) { Say(line); });
+        break;
     case Pending::link_sound:
         CoopLinkSound::Finish(slot.link_sound, result, guest, slot.block, who,
                               [this](const std::string& line) { Say(line); }, anim_);
@@ -914,6 +919,17 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
         if (auto c = Hold(slot, *t, guest, now_ms)) {
             return c;
         }
+        // Issue 248: their lit stick's flame, the game's own effect on the puppet's piece
+        // (a picture only; coop_puppet_flame.h). Only for a player who sent lit bits.
+        if (t->lit || slot.flame.on || slot.flame.next != CoopPuppetFlame::State::Step::none) {
+            if (auto c = CoopPuppetFlame::Next(slot.flame, t->lit.value_or(0), t->drawn.value_or(0),
+                                               t->show != Show::hide, guest, input_.main_base, slot.actor,
+                                               slot.block, "P" + std::to_string(slot.number),
+                                               [this](const std::string& line) { Say(line); })) {
+                pending_ = Pending::flame;
+                return c;
+            }
+        }
         if (matrix_call_ && t->show != Show::hold &&
             !(g_watch_places.load(std::memory_order_relaxed) && slot.number != 0 &&
               g_game_holds.load(std::memory_order_relaxed) == slot.number)) {
@@ -1030,6 +1046,7 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     slot.head_show = false;
     slot.head_shown = false;
     slot.head_hair_back = false;
+    CoopPuppetFlame::Forget(slot.flame);  // its pieces go with the old actor
     pending_ = Pending::create;
     return c;
 }
@@ -2221,6 +2238,7 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         }
         DressInBlades(t.gear, r.number, settings_.blade_items, settings_.blade_copies);
         t.drawn = r.drawn;
+        t.lit = r.lit;
         t.ocarina = r.ocarina;
         if (show != Show::hide && CoopLinkSound::InHearing(position, r.position)) {
             t.sounds = r.sounds;  // too far, or out of sight: not heard
@@ -2450,6 +2468,7 @@ std::array<CoopFollow::Delayed<Received>, kNumbers> g_anims;  // by player numbe
 std::array<std::uint32_t, kNumbers> g_anim_serials{};         // the same; guarded
 std::array<Gear, kNumbers> g_gear;                         // the same; guarded
 std::array<std::optional<std::uint8_t>, kNumbers> g_drawn;  // the same; guarded
+std::array<std::optional<std::uint8_t>, kNumbers> g_lit;    // the same; guarded (issue 248)
 std::array<std::optional<std::uint32_t>, kNumbers> g_color; // the same; guarded
 std::optional<std::uint32_t> g_own_color;                    // ours; guarded
 std::array<CoopPuppetSound::Wanted, kNumbers> g_ocarina;  // the same; guarded (issue 152)
@@ -2487,6 +2506,7 @@ void OnEvent(const coop::net::Event& event) {
         g_anims = {};
         g_gear = {};
         g_drawn = {};
+        g_lit = {};
         g_color = {};
         g_ocarina = {};
         g_sounds = {};
@@ -2495,6 +2515,7 @@ void OnEvent(const coop::net::Event& event) {
         g_anims[event.player].Clear();
         g_gear[event.player] = {};
         g_drawn[event.player].reset();
+        g_lit[event.player].reset();
         g_color[event.player].reset();
         g_ocarina[event.player] = {};
         g_sounds[event.player].clear();
@@ -2510,6 +2531,7 @@ void OnEvent(const coop::net::Event& event) {
         std::lock_guard lock(g_anim_mutex);
         g_gear[event.player] = GearOf(e);
         g_drawn[event.player] = e.drawn;
+        g_lit[event.player] = e.lit;
         g_color[event.player] = e.color;
     } else if (const auto* note = std::get_if<coop::protocol::OcarinaNote>(&event.message);
                event.kind == EventKind::message && note != nullptr) {
@@ -2665,6 +2687,7 @@ std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_n
             if (r.number < g_gear.size()) {
                 r.gear = g_gear[r.number];
                 r.drawn = g_drawn[r.number];
+                r.lit = g_lit[r.number];
                 r.color = g_color[r.number];
                 r.ocarina = g_ocarina[r.number];
                 r.sounds = std::exchange(g_sounds[r.number], {});
