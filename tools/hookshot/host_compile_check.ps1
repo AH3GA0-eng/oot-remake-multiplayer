@@ -14,7 +14,8 @@
 #    hookshot\patches\*.patch applied with the kit's own apply_patch.py.
 # 3. tools\hookshot\host_compile_check.py with Longshot's Python: nx2/build.py --standalone --dry-run gives the compiles,
 #    and the ones our patches concern are compiled with -fsyntax-only. Also every .py a patch changes (py_compile).
-# Exit status 0 only when every file compiled.
+# 4. tools\hookshot\sdl_audio_once_test.py: patch 0033's microphones run against a stand-in SDL3.dll (tracker row 156).
+# Exit status 0 only when every file compiled and that run passed.
 param(
     [string]$Cache = '',
     [string]$Work = ''
@@ -106,4 +107,9 @@ $env:LONGSHOT_MINGW = Join-Path $src $parts['llvm-mingw'].Folder
 $env:OOT_WORK = Join-Path $Work 'work'
 New-Item -ItemType Directory -Force -Path $env:OOT_WORK | Out-Null
 & $python -I -B (Join-Path $PSScriptRoot 'host_compile_check.py') $src $patchDir
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+# --- 4: patch 0033 run (tracker row 156): host/hos_sdl.c built against a stand-in SDL3.dll and 1000 rounds of
+# microphone lists, opens and reads, with SDL's audio started once and the open stream valid all along; without 0033
+# (reversed) the same rounds must restart SDL's audio and use a freed stream, as the players' games did
+& $python -I -B (Join-Path $PSScriptRoot 'sdl_audio_once_test.py') $src $patchDir $env:LONGSHOT_MINGW
 exit $LASTEXITCODE
