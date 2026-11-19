@@ -134,6 +134,9 @@ void ForgetKeptBreaks();
 // name to our Link takes a hit of its whole life from our Link in the next
 // walk of LICHII_COOP_OBJECTS (logs "coop: test kill ..."). Any thread.
 void QueueTestKill(std::string name);
+// Test only ("place PLATFORM UP", #196): the place of the moving platform (a PlatformSync driver) of that name
+// nearest our Link at the last walk; nothing when none is here.
+std::optional<std::array<float, 3>> TestPlatformPlace(const std::string& name);
 // Test only ("hit NAME N"): as QueueTestKill, a hit of `amount` through the game's own Life step.
 void QueueTestHit(std::string name, std::int32_t amount);
 // Test only ("stun NAME"): our copy of the nearest boss of that name says its owner a stun (Sync::TestStun).
