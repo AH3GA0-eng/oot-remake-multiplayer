@@ -568,6 +568,24 @@ Actions Director::Tick(const Local& local, const std::vector<Request>& ours, std
     return out;
 }
 
+bool Director::DeathMayRun(std::uint8_t boss) const {
+    if (boss >= fights_.size()) {
+        return false;
+    }
+    if (event_ || (playing_ && playing_->boss == boss && playing_->kind == Kind::outro)) {
+        return true;
+    }
+    const Fight& f = fights_[boss];
+    if (f.wait_copy_since != 0 || (f.asked_at != 0 && last_now_ - f.asked_at <= kJoinUs)) {
+        return true;
+    }
+    std::lock_guard lock(inbox_mutex_);
+    return std::any_of(inbox_.begin(), inbox_.end(), [&](const proto::Message& m) {
+        const auto* s = std::get_if<proto::BossScene>(&m);
+        return s != nullptr && s->boss == boss && s->kind == proto::BossSceneKind::outro_start;
+    });
+}
+
 std::atomic<std::uint16_t>& RefusedDeaths() {
     static std::atomic<std::uint16_t> mask{0};
     return mask;

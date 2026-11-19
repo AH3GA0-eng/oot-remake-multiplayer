@@ -120,10 +120,21 @@ public:
     // load left a player who was in the dungeon at the kill with the shared quest past DefeatBoss (the boss deleted)
     // and no Gohma_DefeatBoss (no warp): a boss room with no boss, no warp and no way out, and a reload into the
     // dungeon never gave it (#136). In the area D9 runs the boss's own death there.
+    //
+    // Row 136 (boss-warp-136): in the area the set waits only while our game's own death of that boss may still run
+    // (`death_here(room)`: D9 asked it, it plays, it waits for our copy to read dead, an outro_start not yet taken,
+    // or any event runs; CoopBoss::DeathMayRun). D9 asks the death only of a game in the area when the death
+    // starts, so a game that came into the area after it (walked in during the others' death cutscene, fell into
+    // Gohma's room later, joined the session there, Game Over / a load into the room) or whose ask was refused (the
+    // death flow alone: no quest step, no warp) had nothing to run it and waited for a walk out of a room whose only
+    // way out is the warp. Read from the romfs (as above), the room's logic makes the warp and the container from
+    // the flags live, as when the boss's own death setting writes them in that room: once no death of ours can run,
+    // the set is given there too. With no `death_here` (empty) the area always waits (the older rule).
     std::vector<Write> Check(const std::optional<std::string>& scene, bool place_known,
                              std::span<const std::uint8_t> beaten,
                              const std::function<std::optional<std::uint32_t>(std::uint32_t)>& read,
-                             const std::function<bool(std::uint8_t)>& near);
+                             const std::function<bool(std::uint8_t)>& near,
+                             const std::function<bool(std::uint8_t)>& death_here = {});
     // Row 138 (4): the host loaded a save. The beaten set's Bools are each game's own, so its FLAG_RESET never sets
     // them back, while a boss's quest that is shared (`quests_shared`: CoopQuests, Get_StoneOfForest,
     // Get_StoneOfFire, Get_StoneOfWater, SageOfForest, SageOfFire) is written to the host's step. A guest that held
