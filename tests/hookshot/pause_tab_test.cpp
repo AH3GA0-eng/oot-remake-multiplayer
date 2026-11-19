@@ -342,6 +342,9 @@ TEST_CASE("pause tab: the page does not show off System, mid-step, in the Minus 
     SUBCASE("the screens' updates stopped") {
         Page p = UsablePage();
         OnSystem(p, now);
+        // (the pad is polled every frame while the game runs; with no call at all it would be a stall of the whole
+        // game, which keeps the screens fresh: AfterStall)
+        for (std::uint64_t t = now + 16; t < now + 1000; t += 16) p.OnPad(0, t);
         CHECK(p.OnPad(kPadR, now + 1000) == kPadR);
         CHECK_FALSE(p.Shown());
     }
@@ -956,4 +959,35 @@ TEST_CASE("pause tab: a stall of the whole game keeps the page, screens that sto
     std::uint64_t t = now + 32;
     for (; t < now + 32 + 400; t += 16) p.OnPad(0, t);
     CHECK_FALSE(p.Shown());
+}
+
+TEST_CASE("pause tab: after a stall, the first call may be a screen's update: the strip's or the pages' first") {
+    for (int first = 0; first < 2; ++first) {
+        INFO("first after the stall: " << (first == 0 ? "the strip" : "the pages"));
+        Page p = UsablePage();
+        std::uint64_t now = 1000;
+        OnSystem(p, now);
+        p.OnPad(0, now);
+        CHECK(p.OnPad(kPadR, now + 16) == 0);
+        CHECK(p.Shown());
+        OnSystem(p, now + 32);
+        p.OnPad(0, now + 32);
+        now += 32 + 40000;   // (40 s with no call at all)
+        if (first == 0) {
+            p.OnScreen(Strip(0x9000, 5, kSystemPage), now);
+            CHECK(p.Shown());
+            p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage), now);
+        } else {
+            p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage), now);
+            CHECK(p.Shown());
+            p.OnScreen(Strip(0x9000, 5, kSystemPage), now);
+        }
+        CHECK(p.Shown());
+        p.OnPad(0, now + 1);
+        CHECK(p.Shown());
+        // (and screens that stop while the other calls go on are still stale)
+        std::uint64_t t = now + 16;
+        for (; t < now + 16 + 400; t += 16) p.OnPad(0, t);   // (the pad's calls go on: the game runs)
+        CHECK_FALSE(p.Shown());
+    }
 }

@@ -166,6 +166,7 @@ public:
 private:
     bool CanShow(std::uint64_t now_ms) const;
     bool CanStay(std::uint64_t now_ms) const;
+    void AfterStall(std::uint64_t now_ms);   // the screens' times moved on by a whole-game stall's gap
     void ShowAgain(std::uint64_t now_ms);
     // keep: the menu closed with our page shown, so the next opening on System shows it again (as the game opens on
     // the page it closed on).
@@ -176,7 +177,8 @@ private:
     bool shown_ = false;
     bool again_ = false;          // shown again at the menu's next opening (it closed with our page shown)
     std::uint64_t pad_last_ = 0;
-    std::uint64_t pad_ms_ = 0;   // the pad's last call: one later than kStaleMs is the whole game stalled (OnPad)
+    std::uint64_t call_ms_ = 0;  // the last call of any kind (pad or screen): one later than kStaleMs is the whole
+                                 // game stalled (AfterStall)
     std::uint64_t swallow_ = 0;   // buttons the module took, kept from the game until let go
     bool decide_ = false;
     const char* strip_sound_ = nullptr;
