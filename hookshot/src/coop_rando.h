@@ -43,6 +43,9 @@ inline constexpr const char* kSeedPrefix = "randomizer-";          // + the seed
 inline constexpr const char* kSeedFile = "coop-seed.txt";          // OOTRR writes it into a Hookshot mod
 inline constexpr const char* kPresetFile = "coop-rando.txt";       // we write the preset it was built with
 inline constexpr const char* kLogFile = "last-build.txt";          // in kFolder: OOTRR's output
+// In kFolder: the seed folders a host's world switched off in this guest's game, one per line, switched on again
+// when it plays alone (Decide: Want::restore, Plan::remember / forget).
+inline constexpr const char* kHostOffFile = "host-switched-off.txt";
 inline constexpr const char* kTablesFile = "coop-tables.txt";      // in a seed: the size tables it was built beside
 // In a seed, for the players to share (player report: no spoiler log to post): OOTRR's own spoiler log (`generate
 // --spoiler`, kept as <seed folder>.spoiler.txt beside the seed file in kFolder) and the seed's OOTRR1- settings string
@@ -85,9 +88,16 @@ struct Built {
 std::vector<Built> Scan(const std::filesystem::path& mods_root);
 
 struct Want {
+    Want() = default;
+    Want(bool on_, std::string seed_, std::string preset_)
+        : on(on_), seed(std::move(seed_)), preset(std::move(preset_)) {}
     bool on = false;
     std::string seed;    // empty: none yet
     std::string preset;  // a preset, or a settings string (IsSettingsString) in its place
+    // Row 145: a seed folder is only switched off behind the player's back when the player asked for it.
+    bool guest = false;       // the host's values decide `on` (a guest in the host's world)
+    bool turned_off = false;  // the player turned our switch from on to off in this run
+    std::vector<std::string> restore;  // kHostOffFile: what a host's world switched off here
 };
 
 struct Plan {
@@ -99,6 +109,8 @@ struct Plan {
     std::vector<std::string> off;       // folders the list turns off (every other seed; all when the randomizer is off)
     std::string why;                    // one plain line for the log and the tab
     bool for_tables = true;             // refresh: for the size tables (false: only for spoiler.txt / settings.txt)
+    std::vector<std::string> remember;  // a guest: `off` goes into kHostOffFile, to come back on alone
+    bool forget = false;                // kHostOffFile is done with (removed)
 };
 // What the game must do for `want`, given the seeds built and which mods are on now (Loader rows). `tables`: the
 // TablesStamp of the other mods' size tables now; a built seed with another one is refreshed (none: not compared).
@@ -340,6 +352,9 @@ private:
     std::string status_;
     bool on_now_ = false;      // the switch as the game started (mutex_)
     bool on_said_ = false;     // the switch as last said (mutex_)
+    mutable std::mutex own_mutex_;              // own_on_ / turned_off_ (Wanted runs on the worker too)
+    mutable std::optional<bool> own_on_;        // our own switch as last read (not the host's)
+    mutable bool turned_off_ = false;           // the player turned it from on to off in this run
     std::vector<std::string> lines_;  // mutex_
     std::string probed_key_;               // the OOTRR the presets were tried for in this run (mutex_)
     std::map<std::string, bool> probed_;  // what that found (mutex_)

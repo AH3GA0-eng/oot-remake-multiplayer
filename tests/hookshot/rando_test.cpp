@@ -437,6 +437,7 @@ TEST_CASE("rando: off by default - a fresh mods folder builds nothing and switch
 TEST_CASE("rando: off by default - a seed left from an older kit is switched off") {
     World w;
     Put(w.mods / "randomizer-OLD1" / kSeedFile, "OLD1\n");
+    Put(w.mods / "randomizer-OLD1" / kPresetFile, "default\n");  // our kit built it
     Put(w.mods / "randomizer-OLD1" / "romfs" / "System" / "a.bin", "seeded");
     CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
     loader.Start();
@@ -446,6 +447,117 @@ TEST_CASE("rando: off by default - a seed left from an older kit is switched off
     rando.Wait();
     CHECK_FALSE(On(loader, "randomizer-OLD1"));
     CHECK(w.runs.empty());
+}
+
+TEST_CASE("rando: row 145 - a seed put in by hand is never switched off behind the player") {
+    // OOTRR's own output (a seed from OOTRR's page or another tool) has its coop-seed.txt but not our
+    // coop-rando.txt: not ours.
+    World w;
+    Put(w.mods / "randomizer-insanity" / kSeedFile, "INSANE\n");
+    Put(w.mods / "randomizer-insanity" / "romfs" / "System" / "a.bin", "seeded");
+    {
+        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+        loader.Start();
+        REQUIRE(On(loader, "randomizer-insanity"));
+        Rando rando(loader, w.Hooks());
+        rando.Start();
+        rando.Wait();
+        CHECK(On(loader, "randomizer-insanity"));  // our switch is 0, the player never turned it off
+        CHECK(w.runs.empty());
+        // The player turns our switch on and off again: that is asking for every seed off.
+        w.Settings(loader);
+        REQUIRE(loader.Set(kFolder, "seed", "MINE2"));
+        REQUIRE(loader.Set(kFolder, "on", "1"));
+        rando.Wait();
+        CHECK(On(loader, "randomizer-MINE2"));
+        CHECK_FALSE(On(loader, "randomizer-insanity"));  // one seed plays: the one our switch picks
+        REQUIRE(loader.Set(kFolder, "on", "0"));
+        rando.Wait();
+        CHECK_FALSE(On(loader, "randomizer-MINE2"));
+    }
+    {   // The next start, our switch still 0: the player switches the hand seed on in the Mods tab; it stays on.
+        CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+        loader.Start();
+        REQUIRE(loader.SetOn("randomizer-insanity", true));
+        Rando rando(loader, w.Hooks());
+        rando.Start();
+        rando.Wait();
+        CHECK(On(loader, "randomizer-insanity"));
+        CHECK_FALSE(On(loader, "randomizer-MINE2"));
+    }
+}
+
+TEST_CASE("rando: row 145 - Decide switches a seed off only when asked, and a host's world gives it back") {
+    const std::vector<Built> built{{"randomizer-AB12", "AB12", "default", ""}, {"randomizer-hand", "HAND", "", ""}};
+    const std::vector<CoopMods::Row> both_on{RowNamed("randomizer-AB12", true), RowNamed("randomizer-hand", true)};
+    {   // our switch off, not just turned off: only our kit's seed
+        const Plan p = Decide({false, "AB12", ""}, built, both_on);
+        CHECK(p.off == std::vector<std::string>{"randomizer-AB12"});
+        CHECK(p.remember.empty());
+        CHECK_FALSE(p.forget);
+    }
+    {   // turned off by the player now: every seed
+        Want want{false, "AB12", ""};
+        want.turned_off = true;
+        const Plan p = Decide(want, built, both_on);
+        CHECK(p.off == std::vector<std::string>{"randomizer-AB12", "randomizer-hand"});
+        CHECK(p.remember.empty());
+    }
+    {   // a guest of a host without the randomizer: every seed off for its world, remembered
+        Want want{false, "AB12", ""};
+        want.guest = true;
+        const Plan p = Decide(want, built, both_on);
+        CHECK(p.what == Plan::Do::use);
+        CHECK(p.off == std::vector<std::string>{"randomizer-AB12", "randomizer-hand"});
+        CHECK(p.remember == p.off);
+    }
+    {   // a guest of a host with its own seed (built here): the others off, remembered
+        Want want{true, "AB12", "default"};
+        want.guest = true;
+        const Plan p = Decide(want, built, both_on);
+        CHECK(p.off == std::vector<std::string>{"randomizer-hand"});
+        CHECK(p.remember == p.off);
+    }
+    {   // alone again, our switch off: the seed put in by hand comes back on, ours stays off
+        Want want{false, "AB12", ""};
+        want.restore = {"randomizer-AB12", "randomizer-hand"};
+        const Plan p = Decide(want, built, {RowNamed("randomizer-AB12", false), RowNamed("randomizer-hand", false)});
+        CHECK(p.what == Plan::Do::use);
+        CHECK(p.on == std::vector<std::string>{"randomizer-hand"});
+        CHECK(p.off.empty());
+        CHECK(p.forget);
+    }
+    {   // alone again, our switch on: our seed is the one, the list is done with
+        Want want{true, "AB12", "default"};
+        want.restore = {"randomizer-hand"};
+        const Plan p = Decide(want, built, {RowNamed("randomizer-AB12", true), RowNamed("randomizer-hand", false)});
+        CHECK(p.what == Plan::Do::use);
+        CHECK(p.on.empty());
+        CHECK(p.off.empty());
+        CHECK(p.forget);
+    }
+}
+
+TEST_CASE("rando: row 145 - a guest's own seed put in by hand is back on after the host's world") {
+    World w;
+    Put(w.mods / "randomizer-hand" / kSeedFile, "HAND\n");
+    Put(w.mods / "randomizer-hand" / "romfs" / "System" / "a.bin", "seeded");
+    CoopMods::Loader loader(w.mods, {nullptr, 1, nullptr});
+    loader.Start();
+    Rando rando(loader, w.Hooks());
+    rando.Start();
+    rando.Wait();
+    REQUIRE(On(loader, "randomizer-hand"));
+    loader.SetHostValues(std::vector<CoopMods::SharedValue>{});  // a host without the randomizer
+    rando.Recheck();
+    rando.Wait();
+    CHECK_FALSE(On(loader, "randomizer-hand"));
+    CHECK(fs::is_regular_file(w.mods / kFolder / kHostOffFile));
+    loader.SetHostValues(std::nullopt);  // alone again
+    rando.Recheck();
+    rando.Wait();
+    CHECK(On(loader, "randomizer-hand"));
+    CHECK_FALSE(fs::exists(w.mods / kFolder / kHostOffFile));
 }
 
 TEST_CASE("rando: switching it on or off says to restart, in the chat and in the tab") {
