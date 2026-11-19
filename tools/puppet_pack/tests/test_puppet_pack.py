@@ -815,6 +815,38 @@ class BuildPackTest(unittest.TestCase):
         with self.assertRaises(build.BuildError):
             build.puppet_body(members, pc, "CoopPuppet_Child")
 
+    def test_merged_files_get_the_whole_chains_entry(self):
+        # crash-0116-a: the game parses a param in a heap of its size-table entry, sized for that one file. A file
+        # we merge from a `$parent` chain gets the sum of the chain's entries (with the top file's alone the child
+        # body's character controller, Player_Child's merged with Player's, crashed GeneralFormatAsync_).
+        members = with_body(fake_player_pack("Child"))
+        cs, cc = "Phive/ControllerSetParam/", "Phive/CharacterControllerParam/"
+        pc_cs, base_cs = cs + "PC.phive__ControllerSetParam.bgyml", cs + "PBase.phive__ControllerSetParam.bgyml"
+        pc_cc, base_cc = cc + "PC.phive__CharacterControllerParam.bgyml", cc + "PBase.phive__CharacterControllerParam.bgyml"
+        self.assertEqual(build.chain_paths(members, pc_cs), [pc_cs, base_cs])
+        self.assertEqual(build.chain_paths(members, base_cs), [base_cs])
+        self.assertEqual(build.chain_paths(members, "Not/In.pack.bgyml"), ["Not/In.pack.bgyml"])
+        # The game's entries of the cut-down real files (romfs 1.0.x): Player_Child 6,536 + Player 9,504.
+        t = rstb.Rstb(by_name={pc_cc: 6536, base_cc: 9504, pc_cs: 27008, base_cs: 34160})
+        self.assertEqual(build.chain_entry(t, build.chain_paths(members, pc_cc), b"x" * 1184), 6536 + 9504)
+        self.assertEqual(build.chain_entry(t, build.chain_paths(members, pc_cs), b"x" * 5764), 27008 + 34160)
+        # A file without entries, or longer than its chain's room, gets its own bytes and the margin.
+        self.assertEqual(build.chain_entry(t, ["Not/In.pack.bgyml"], b"x" * 10), 10 + build.PACK_SIZE_MARGIN)
+        self.assertEqual(build.chain_entry(rstb.Rstb(by_name={base_cs: 5}), [base_cs], b"x" * 10),
+                         10 + build.PACK_SIZE_MARGIN)
+        # Every body file of the puppet merges the chain chain_paths names (its source in puppet_body).
+        pc = {"PhysicsRef": "?Component/Physics/P.engine__component__PhysicsParam.bgyml"}
+        srcs = {path: src for path, (_, src) in build.puppet_body(members, pc, "CoopPuppet_Child").items()}
+        self.assertEqual(srcs[build.body_paths("CoopPuppet_Child")[1]], pc_cs)
+        self.assertEqual(srcs[build.body_paths("CoopPuppet_Child")[2]], pc_cc)
+        # Ruto's liftable param and EnemyCommon's LockOn client merge an in-pack $parent too.
+        ruto = fake_ruto_pack()
+        lift = build.liftable_param(ruto)[0]
+        self.assertEqual(len(build.chain_paths(ruto, lift)), 2)
+        amos = fake_attention_pack()
+        self.assertEqual(len(build.chain_paths(amos, build._client_src("LockOn"))), 2)
+        self.assertEqual(len(build.chain_paths(amos, build._client_src("AutoAim"))), 1)
+
     def test_pack_no_perception(self):
         _, ap, _, _ = build.build_pack(fake_player_pack("Child"), "Child")
         comps = byml.loads(ap)["Components"]
@@ -1687,6 +1719,9 @@ class FullBuildTest(unittest.TestCase):
         self.assertEqual(got["SubModels"][0]["FmdbName"], "Weapon_Sword_BrokenBiggoron")
         self.assertEqual(got["SubModels"][1]["ModelProjectName"], "Other")   # not the item's project: kept
         self.assertEqual(sarc.read(pack)[look_items.model_info_path(f"{item}_Look2")], info)
+        # Its size-table entry is made from both files (crash-0116-a: build.chain_entry).
+        self.assertEqual(look_items.model_info_chain(members, item),
+                         [mi.format(item + "_With_SubModel"), mi.format(item)])
         self.assertIn(item, look_items.ITEMS)
         self.assertIn("Weapon_Sword_BrokenGiant", look_items.ITEMS)
         # A $parent that is not in the pack, or that loops, is said, not guessed.
