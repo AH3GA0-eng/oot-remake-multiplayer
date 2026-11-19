@@ -282,7 +282,8 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
         }
         const auto strike = CoopPvpNative::MakeStrike(hit, self, g.seq + 1, v.at_us, v.position);
         if (!strike) {
-            if ((++g.not_ours & (g.not_ours - 1)) == 0) {
+            const auto n = ++g.not_ours;
+            if ((n & (n - 1)) == 0) {
                 LOG_INFO(Core, "coop: pvp native: a hit on P{}'s copy is not ours ({} so far): not sent", hit.victim,
                          g.not_ours);
             }
