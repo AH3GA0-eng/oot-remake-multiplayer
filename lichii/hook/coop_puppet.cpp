@@ -2527,7 +2527,8 @@ void OnEvent(const coop::net::Event& event) {
                          e.held.value_or("?") + "', slots 0 '" + e.weapon_slot.value_or("?") +
                          "' 1 '" + e.sub_weapon.value_or("?") + "' 2 '" +
                          e.third_weapon.value_or("?") + "' 5 '" + e.tool.value_or("?") + "' 6 '" +
-                         e.sub_tool.value_or("?") + "', hand '" + e.hand.value_or("?") + "'");
+                         e.sub_tool.value_or("?") + "', hand '" + e.hand.value_or("?") + "'" +
+                         (e.lit ? ", lit " + std::to_string(*e.lit) : std::string()));
         std::lock_guard lock(g_anim_mutex);
         g_gear[event.player] = GearOf(e);
         g_drawn[event.player] = e.drawn;

@@ -1,0 +1,42 @@
+# hs-stick-fire, B: a Deku Stick lit at room E's torch (see hs-stick-fire.A.txt), facing A after.
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 480
+place -12.9 79.6 -9.6    # 0.9 m south of the torch
+wait 120
+toward -12.9 -10.5 6
+press ZL 10
+wait 60
+assign DekuStick
+wait 30
+press ZR 10
+wait 90
+mark stick-out
+press B 10
+wait 40
+press B 10
+wait 40
+press B 10
+wait 40
+mark lit
+toward -14.5 -6.5 6     # face A
+press ZL 10
+wait 140
+mark burning
+wait 150
+mark burning2
+wait 1500
+mark burnt
+wait 300
+mark late
