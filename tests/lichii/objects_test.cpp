@@ -5997,13 +5997,15 @@ TEST_CASE("objects: the real hit goes everywhere: copy's DAMAGE, the owner's rep
     Seen took = E(0x200, 0x11, 4, 0.0f, kName);
     took.replay_hit = true;
     took.hit_record = rec;
-    auto samples = All<proto::ObjectSample>(Tick(owner, 20 * kMs, {took}));
+    // (its next sample is due kSampleEveryUs after the one at 10 ms)
+    const std::uint64_t took_at = 10 * kMs + Sync::kSampleEveryUs;
+    auto samples = All<proto::ObjectSample>(Tick(owner, took_at, {took}));
     REQUIRE_FALSE(samples.empty());
     REQUIRE(samples.back().state.hit);
     CHECK(samples.back().state.hit->seq == 1);
     CHECK(samples.back().state.hit->record == rec);
     // Past kHitShowUs its samples carry it no more.
-    samples = All<proto::ObjectSample>(Tick(owner, 20 * kMs + Sync::kHitShowUs, {E(0x200, 0x11, 3, 0.0f, kName)}));
+    samples = All<proto::ObjectSample>(Tick(owner, took_at + Sync::kHitShowUs, {E(0x200, 0x11, 3, 0.0f, kName)}));
     REQUIRE_FALSE(samples.empty());
     CHECK_FALSE(samples.back().state.hit);
 
