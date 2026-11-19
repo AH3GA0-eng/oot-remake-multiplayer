@@ -208,16 +208,25 @@ bool LiveText(void* ctx, std::uint64_t layout, const std::string& path, int slot
     std::string bytes = utf8;
     bytes.push_back('\0');
     if (!CoopRuntime::Write(l.text, bytes.data(), bytes.size())) return false;
-    std::uint8_t b[0x60] = {};
+    // The reference as the game makes it for the placeholder's label (every field it sets, as SetText's), then its
+    // length ours: [0x00] the reference, [0x20] &file, [0x28] &label, [0x30] file, [0x50] label, [0x90] the pane's path.
+    char label[16];
+    std::snprintf(label, sizeof label, "Coop_Live_%02d", slot);
+    const std::string file = "LayoutMsg/PlusMenu_00";
+    std::uint8_t b[0xd0] = {};
     const std::uint64_t base = g_api->scratch(ctx, b, sizeof b);
     if (base == 0) return false;
-    const std::uint32_t length = static_cast<std::uint32_t>(utf8.size()) + l.extra;
-    std::memcpy(b + 0x00, &l.text, 8);
-    std::memcpy(b + 0x08, &length, 4);
-    std::memcpy(b + 0x10, &l.attrs, 8);
-    std::memcpy(b + 0x20, path.c_str(), path.size() + 1);
+    const std::uint64_t at_file = base + 0x30, at_label = base + 0x50, at_path = base + 0x90;
+    std::memcpy(b + 0x20, &at_file, 8);
+    std::memcpy(b + 0x28, &at_label, 8);
+    std::memcpy(b + 0x30, file.c_str(), file.size() + 1);
+    std::memcpy(b + 0x50, label, std::strlen(label) + 1);
+    std::memcpy(b + 0x90, path.c_str(), path.size() + 1);
     if (g_api->scratch(ctx, b, sizeof b) != base) return false;
-    if (!Call(ctx, kPaneText, layout, base + 0x20, base, 1, 0)) return false;
+    if (!Call(ctx, kMsgRefInit, base) || !Call(ctx, kMsgRefSet, base, base + 0x20, base + 0x28, 1)) return false;
+    const std::uint32_t length = static_cast<std::uint32_t>(utf8.size()) + l.extra;
+    if (Read<std::uint64_t>(base) != l.text || !CoopRuntime::Write(base + 8, &length, sizeof length)) return false;
+    if (!Call(ctx, kPaneText, layout, at_path, base, 1, 0)) return false;
     l.shown = utf8;
     return true;
 }
@@ -462,6 +471,7 @@ void OnScreen(void* ctx, std::uint64_t screen) noexcept {
         Page::Do d;
         std::string why;
         bool was = false, now_shown = false;
+        bool early_live = false;   // our page back at the strip's update: its rows' words set there too
         int focused = -1;
         {
             std::lock_guard lock(g_mutex);
@@ -476,6 +486,7 @@ void OnScreen(void* ctx, std::uint64_t screen) noexcept {
                 if (f.kind == Kind::kPages) ApplyPages(ctx, screen, d);
                 if (f.kind == Kind::kStrip) ApplyStrip(ctx, f, d);
                 if (f.kind == Kind::kStrip && d.set_page && g_pages_screen != 0) {
+                    early_live = d.page_shown;
                     Page::Do page_only;
                     page_only.set_page = true, page_only.page_shown = d.page_shown;
                     ApplyPages(ctx, g_pages_screen, page_only);   // (the pages' own update comes a frame later)
@@ -493,10 +504,16 @@ void OnScreen(void* ctx, std::uint64_t screen) noexcept {
         }
         for (const std::string& line : lines) LOG_INFO(Core, "{}", line);
         if (was && !now_shown) LOG_INFO(Core, "coop: pause tab: System back ({})", why);
-        if (f.kind == Kind::kPages && now_shown && f.state == 2 && ctx != nullptr && CanCall()) {
+        // (the menu closing: its layout shows the pack's words again at the next opening, so ours are set again then)
+        if (f.kind == Kind::kPages && f.state == 3) {
+            std::lock_guard lock(g_live_mutex);
+            g_live_screen = 0;
+        }
+        if (f.kind == Kind::kPages && now_shown && f.state <= 2 && ctx != nullptr && CanCall()) {
             if (focused != kRowLeave) g_confirm_until = 0;   // (the cursor left the Leave row: no second A waited for)
             LiveRows(ctx, screen, ViewNow());   // (after our lock: the status and the Lobby take their own)
         }
+        if (early_live && ctx != nullptr && CanCall()) LiveRows(ctx, g_pages_screen, ViewNow());
         if (!now_shown) g_confirm_until = 0;
     } catch (...) {
         // (a log line or a look lost is all: the game's update goes on)
