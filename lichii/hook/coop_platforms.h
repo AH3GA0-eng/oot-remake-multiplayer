@@ -72,8 +72,59 @@ Floats FloatsOf(const std::map<std::uint64_t, std::uint64_t>& words);
 // its loop 2 pi.
 inline constexpr std::uint64_t kWavePhaseFromCycle = 48;  // phase (+56) - cycle (+8)
 inline constexpr float kTwoPi = 6.28318531f;
-// The cycle (2 pi) when `key` in `floats` steps at `rate` as a wave phase, else nothing.
+// The cycle (2 pi) when `key` in `floats` steps at `rate` as a wave phase, else nothing. A key in a GroundControl
+// node region (below) is one by the node's layout alone (NodePhaseCycle).
 std::optional<float> WavePhaseCycle(const Floats& floats, std::uint64_t key, float rate);
+
+// #196 (room-actor-replay-0116-2, read from the recompiled main of build e0f3ccfaf50065ae): the wave block is not in
+// the actor or its components. It is in the mover's GroundControl node, an object of its own: [node] = main +
+// kWaveVtable, [node + 8] = the actor (the node's per-frame step main+0x2fff930 reads [[node + 8] + 0x270] + 0x118,
+// the actor's logic), the block at node + 0xc0 (its destructor main+0x3000e10 stores the block's own vtable there).
+// main+0x2fff730 sets the block up (main+0x11d07b0); each frame main+0x2fff930 calls the block's step main+0x386c160,
+// which adds frame time x 2 pi / cycle to each phase and wraps it into [0, 2 pi): linear x, y, z at node + 0xf8,
+// 0xfc, 0x100 (cycle 48 bytes before), angular x, y, z at node + 0x104, 0x108, 0x10c (cycle 36 bytes before). The
+// floor the controller moves (Obj_Deku_MoveFloor_A_01) is put at its start + radius x sin(phase) through
+// main+0x3c42460: every word of the floor is worked out from this phase, which is why none of them held a write.
+// GroundControlActor_Rotate's node is the same kind (vtable kRotateVtable, setup main+0x2ffea40 -> main+0x11d0d80,
+// step main+0x2ffed30 -> main+0x386bb00): its angle at node + 0xd4 goes on by its speed (node + 0xd0, eased to the
+// set speed at node + 0xc8) a second, wrapped into [0, 2 pi). Region kRegionWaveNode / kRegionRotateNode keys a word
+// by its offset in the node (kNodeFrom .. kNodeTo).
+inline constexpr std::uint64_t kRegionWaveNode = coop::protocol::kPlatformWaveNodeRegion;
+inline constexpr std::uint64_t kRegionRotateNode = coop::protocol::kPlatformRotateNodeRegion;
+namespace GroundNode {
+inline constexpr std::uint64_t kWaveVtable = 0x4b6ad78;
+inline constexpr std::uint64_t kRotateVtable = 0x4b6acd8;
+inline constexpr std::uint64_t kActor = 0x8;
+inline constexpr std::uint64_t kFrom = coop::protocol::kPlatformNodeFrom;  // 0xc0, the block
+inline constexpr std::uint64_t kTo = coop::protocol::kPlatformNodeTo;      // 0x140
+inline constexpr std::uint64_t kWavePhaseFirst = 0xf8;
+inline constexpr std::uint64_t kWavePhaseLast = 0x10c;
+inline constexpr std::uint64_t kWaveAngularFirst = 0x104;
+inline constexpr std::uint64_t kRotateAngle = 0xd4;
+inline constexpr std::uint64_t kRotateSpeed = 0xd0;
+// The search from the actor (no hook names this node): every pointer word of the actor, its component table, its
+// components and what they point to, breadth first, kMaxDepth objects deep, at most kMaxObjects objects of
+// kObjectWords words. An object whose first word is one of the two vtables and whose [+8] is the actor is the node.
+inline constexpr std::size_t kMaxDepth = 4;
+inline constexpr std::size_t kMaxObjects = 4096;
+inline constexpr std::size_t kObjectWords = 0x200 / 8;
+inline constexpr std::size_t kActorWords = 0x600 / 8;
+struct Hit {
+    std::uint64_t node = 0;
+    std::uint64_t region = 0;  // kRegionWaveNode or kRegionRotateNode
+    std::string path;          // how it was reached, for the log ("actor+0x270 > +0x118 > ...")
+};
+using ReadWord = std::function<std::optional<std::uint64_t>(std::uint64_t)>;
+// The node's region when `node` is a live GroundControl node of `actor`, else 0.
+std::uint64_t RegionOf(const ReadWord& read, std::uint64_t node, std::uint64_t actor, std::uint64_t main);
+// Finds `actor`'s node; `looked` gets the number of objects read. Reads only.
+std::optional<Hit> Find(const ReadWord& read, std::uint64_t actor, std::uint64_t main, std::size_t* looked = nullptr);
+// The node's words for SignProbe-style keys: Key(region, offset) for offset kFrom .. kTo, 8 bytes each.
+std::map<std::uint64_t, std::uint64_t> Words(const ReadWord& read, const Hit& hit);
+}  // namespace GroundNode
+// The loop (2 pi) of a node word that is a phase or angle by the node's layout, else nothing: a wave phase whose
+// cycle word is over 0, the rotate angle while its speed is not 0.
+std::optional<float> NodePhaseCycle(const Floats& floats, std::uint64_t key);
 
 // Finds the clock word of one driver from looks at it.
 class ClockFinder {

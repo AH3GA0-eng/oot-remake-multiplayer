@@ -1425,6 +1425,12 @@ inline constexpr std::size_t kMaxEventNameChars = 96;
 // sender's scene, never kept.
 inline constexpr std::size_t kMaxPlatformTicks = 16;
 inline constexpr std::uint64_t kPlatformAsFrameRegion = 0xffff;  // key region: the AS slot 0 frame
+// #196: key regions of a mover's GroundControl node (lichii/hook/coop_platforms.h, GroundNode): the wave
+// controller's and the rotate controller's, offset kPlatformNodeFrom .. kPlatformNodeTo in the node.
+inline constexpr std::uint64_t kPlatformWaveNodeRegion = 0xfffe;
+inline constexpr std::uint64_t kPlatformRotateNodeRegion = 0xfffd;
+inline constexpr std::uint64_t kPlatformNodeFrom = 0xc0;
+inline constexpr std::uint64_t kPlatformNodeTo = 0x140;
 inline constexpr std::uint64_t kPlatformActorBytes = 0x600;
 inline constexpr std::uint64_t kPlatformComponentBytes = 0x200;
 inline constexpr std::uint64_t kPlatformComponents = 0x300 / 8;  // table entries
@@ -1435,7 +1441,8 @@ struct PlatformTick {
   std::uint64_t hash = 0;  // the driver's placement hash
   // Where the word is: region << 32 | byte offset (a multiple of 4).
   // Region 0 the actor (offset under 0x600), 2 + n the component in table
-  // entry n (under 0x200), kPlatformAsFrameRegion the AS slot 0 frame (offset 0).
+  // entry n (under 0x200), kPlatformAsFrameRegion the AS slot 0 frame (offset 0), kPlatformWaveNodeRegion /
+  // kPlatformRotateNodeRegion a word of the mover's GroundControl node (kPlatformNodeFrom .. kPlatformNodeTo).
   std::uint64_t key = 0;
   float value = 0.0f;
   float rate = 0.0f;   // per second, not 0

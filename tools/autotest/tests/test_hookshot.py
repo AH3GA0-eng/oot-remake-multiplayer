@@ -215,6 +215,15 @@ class ParseTest(unittest.TestCase):
         self.assertEqual([(s.kind, s.name) for s in steps], [("menu", "customize"), ("menu", "close")])
         self.assertIn("menu", hs.MODULE_ONLY)
 
+    def test_place_on_a_platform_goes_to_the_module(self):  # #196: a rider on a floor that waves
+        s = hs.parse("place Obj_Deku_MoveFloor_A_01 0.3\n")[0]
+        self.assertEqual((s.kind, s.name, s.y), ("place", "Obj_Deku_MoveFloor_A_01", 0.3))
+        self.assertEqual(s.text.strip(), "place Obj_Deku_MoveFloor_A_01 0.3")
+        for bad in ("place Obj_Deku_MoveFloor_A_01", "place Obj_Deku_MoveFloor_A_01 up", "place 1 2"):
+            with self.assertRaises(hs.ScriptError) as e:
+                hs.parse(bad)
+            self.assertIn("want: place X Y Z, or place PLATFORM UP", str(e.exception))
+
     def test_key_names(self):
         s = hs.parse("hold DUP+LCLICK+RCLICK+MINUS+RSTICK_LEFT 5")[0]
         self.assertEqual(s.buttons, ["UP", "LS", "RS", "MINUS"])

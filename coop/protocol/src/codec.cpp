@@ -2040,6 +2040,8 @@ Error check_platform_tick(const PlatformTick& t) {
   if (offset % 4 != 0) return Error::bad_value;
   if (region == kPlatformAsFrameRegion) {
     if (offset != 0) return Error::bad_value;
+  } else if (region == kPlatformWaveNodeRegion || region == kPlatformRotateNodeRegion) {
+    if (offset < kPlatformNodeFrom || offset >= kPlatformNodeTo) return Error::bad_value;
   } else if (region == 0) {
     if (offset >= kPlatformActorBytes) return Error::bad_value;
   } else if (region < 2 || region - 2 >= kPlatformComponents || offset >= kPlatformComponentBytes) {

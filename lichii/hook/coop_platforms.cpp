@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <set>
 #include <utility>
 
 namespace CoopPlatforms {
@@ -46,6 +47,9 @@ bool ClockLike(float rate) {
 }  // namespace
 
 std::optional<float> WavePhaseCycle(const Floats& floats, std::uint64_t key, float rate) {
+    if (const std::uint64_t region = key >> 32; region == kRegionWaveNode || region == kRegionRotateNode) {
+        return NodePhaseCycle(floats, key);  // known from the node's code, whatever the frame time's unit
+    }
     if ((key & 0xffffffffULL) < kWavePhaseFromCycle) {
         return std::nullopt;  // no cycle word before it in the same region
     }
@@ -59,6 +63,114 @@ std::optional<float> WavePhaseCycle(const Floats& floats, std::uint64_t key, flo
     }
     return kTwoPi;
 }
+
+std::optional<float> NodePhaseCycle(const Floats& floats, std::uint64_t key) {
+    const std::uint64_t region = key >> 32;
+    const std::uint64_t offset = key & 0xffffffffu;
+    const auto word = [&floats, region](std::uint64_t at) -> std::optional<float> {
+        const auto i = floats.find(Key(region, at));
+        if (i == floats.end() || !std::isfinite(i->second)) {
+            return std::nullopt;
+        }
+        return i->second;
+    };
+    if (region == kRegionWaveNode && offset >= GroundNode::kWavePhaseFirst && offset <= GroundNode::kWavePhaseLast) {
+        const std::uint64_t cycle_at = offset - (offset < GroundNode::kWaveAngularFirst ? 48 : 36);
+        const auto cycle = word(cycle_at);
+        return cycle && *cycle > 0.0f ? std::optional<float>(kTwoPi) : std::nullopt;
+    }
+    if (region == kRegionRotateNode && offset == GroundNode::kRotateAngle) {
+        const auto speed = word(GroundNode::kRotateSpeed);
+        return speed && *speed != 0.0f ? std::optional<float>(kTwoPi) : std::nullopt;
+    }
+    return std::nullopt;
+}
+
+namespace GroundNode {
+
+std::uint64_t RegionOf(const ReadWord& read, std::uint64_t node, std::uint64_t actor, std::uint64_t main) {
+    if (node == 0 || actor == 0 || main == 0) {
+        return 0;
+    }
+    const auto vtable = read(node);
+    const auto owner = read(node + kActor);
+    if (!vtable || !owner || *owner != actor) {
+        return 0;
+    }
+    if (*vtable == main + kWaveVtable) {
+        return kRegionWaveNode;
+    }
+    if (*vtable == main + kRotateVtable) {
+        return kRegionRotateNode;
+    }
+    return 0;
+}
+
+std::optional<Hit> Find(const ReadWord& read, std::uint64_t actor, std::uint64_t main, std::size_t* looked) {
+    struct Object {
+        std::uint64_t address = 0;
+        std::size_t depth = 0;
+        std::size_t parent = 0;      // index in `objects`
+        std::uint64_t via = 0;       // the word's offset in the parent
+    };
+    std::vector<Object> objects{{actor, 0, 0, 0}};
+    std::set<std::uint64_t> seen{actor};
+    const auto path_of = [&objects](std::size_t i) {
+        std::vector<std::uint64_t> vias;
+        for (; i != 0; i = objects[i].parent) {
+            vias.push_back(objects[i].via);
+        }
+        std::string text = "actor";
+        for (auto v = vias.rbegin(); v != vias.rend(); ++v) {
+            char part[24];
+            std::snprintf(part, sizeof part, "%s+0x%llx", v == vias.rbegin() ? "" : " > ",
+                          static_cast<unsigned long long>(*v));
+            text += part;
+        }
+        return text;
+    };
+    std::size_t i = 0;
+    for (; i < objects.size() && i < kMaxObjects; ++i) {
+        const Object o = objects[i];
+        if (i != 0) {
+            if (const std::uint64_t region = RegionOf(read, o.address, actor, main); region != 0) {
+                if (looked != nullptr) {
+                    *looked = i + 1;
+                }
+                return Hit{o.address, region, path_of(i)};
+            }
+        }
+        if (o.depth >= kMaxDepth) {
+            continue;
+        }
+        const std::size_t words = i == 0 ? kActorWords : kObjectWords;
+        for (std::size_t j = 0; j < words; ++j) {
+            const auto w = read(o.address + 8 * j);
+            if (!w) {
+                break;  // the object's end (unmapped)
+            }
+            if (LooksLikePointer(*w) && seen.insert(*w).second) {
+                objects.push_back({*w, o.depth + 1, i, 8 * j});
+            }
+        }
+    }
+    if (looked != nullptr) {
+        *looked = i;
+    }
+    return std::nullopt;
+}
+
+std::map<std::uint64_t, std::uint64_t> Words(const ReadWord& read, const Hit& hit) {
+    std::map<std::uint64_t, std::uint64_t> out;
+    for (std::uint64_t at = kFrom; at < kTo; at += 8) {
+        if (const auto w = read(hit.node + at)) {
+            out[Key(hit.region, at)] = *w;
+        }
+    }
+    return out;
+}
+
+}  // namespace GroundNode
 
 bool IsDriver(std::string_view name) {
     if (name.starts_with("GroundControlActor_") || name.starts_with("GrouondControlActor_")) {
@@ -105,6 +217,10 @@ std::string Where(std::uint64_t key) {
     char text[48];
     if (region == kRegionAsFrame) {
         std::snprintf(text, sizeof text, "as-frame");
+    } else if (region == kRegionWaveNode) {
+        std::snprintf(text, sizeof text, "wave-node+0x%llx", offset);
+    } else if (region == kRegionRotateNode) {
+        std::snprintf(text, sizeof text, "rotate-node+0x%llx", offset);
     } else if (region == kRegionActor) {
         std::snprintf(text, sizeof text, "actor+0x%llx", offset);
     } else {
@@ -191,7 +307,7 @@ void ClockFinder::Add(std::uint64_t now_us, const Floats& floats) {
         Candidate cand = known ? it->second : Candidate{};
         const bool agree = in_range(r1) && in_range(r2) && (r1 > 0) == (r2 > 0) &&
                            std::fabs(r1 - r2) <= kRateSlack * std::max(std::fabs(r1), std::fabs(r2));
-        if (agree && cand.wave && r2 < 0.0f) {
+        if (agree && cand.wave && r2 < 0.0f && (key >> 32) != kRegionRotateNode) {
             ban(key, v2, "went back other than by looping: a wave's offset, not its phase");
             continue;
         }
@@ -225,7 +341,9 @@ void ClockFinder::Add(std::uint64_t now_us, const Floats& floats) {
         // #196: a wave phase goes back only by looping (from near 2 pi to near 0); any other step back is an offset
         // that swings (sin of the phase), not the phase.
         if (cand.wave && !stalled &&
-            (!InLoop(v2, cand.cycle) || (backwards && !(v1 > 0.5f * cand.cycle && v2 < 0.5f * cand.cycle)))) {
+            (!InLoop(v2, cand.cycle) ||
+             (backwards && !(cand.rate > 0 ? v1 > 0.5f * cand.cycle && v2 < 0.5f * cand.cycle
+                                           : v1 < 0.5f * cand.cycle && v2 > 0.5f * cand.cycle)))) {
             ban(key, v2, "went back other than by looping: a wave's offset, not its phase");
             continue;
         }

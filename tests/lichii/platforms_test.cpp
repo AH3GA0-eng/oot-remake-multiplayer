@@ -48,6 +48,8 @@ struct Game {
     proto::Vec3 driver_at{1.0f, 0.0f, 0.0f};
     std::optional<bool> ride_plug;
     proto::Vec3 link{0.0f, 0.0f, 0.0f};
+    // #196: where the clock is (the AS frame by default; a GroundControl node's phase for the wave tests).
+    std::uint64_t clock_key = kClockKey;
 
     void Step(float dt) {
         if (paused) {
@@ -61,6 +63,16 @@ struct Game {
     }
 
     std::map<std::uint64_t, std::uint64_t> Words() const {
+        if (clock_key >> 32 == kRegionWaveNode) {
+            // The node's block: its vtable, the linear cycle 18 s on x (0xc8), the phases (0xf8: x, y).
+            return {
+                {Key(kRegionWaveNode, 0xc0), 0x0000007104b6ca28ull},
+                {Key(kRegionWaveNode, 0xc8), Bits(18.0f, 0.0f)},
+                {Key(kRegionWaveNode, 0xd0), Bits(0.0f, 4.0f)},
+                {clock_key, Bits(clock, 0.0f)},
+                {Key(4, 0x38), Bits(uneven, 7.0f)},
+            };
+        }
         return {
             {kClockKey, Bits(clock, 0.0f)},
             {Key(4, 0x38), Bits(uneven, 7.0f)},
@@ -78,7 +90,7 @@ struct Game {
             sent.push_back(std::move(m));
         }
         for (const auto& w : out.writes) {
-            CHECK(w.key == kClockKey);
+            CHECK(w.key == clock_key);
             CHECK(w.hash == kHash);
             clock = w.value;
         }
@@ -833,4 +845,157 @@ TEST_CASE("platforms: an object its own logic drives is neither sent nor written
     CHECK(wave.sent > 0);
     CHECK(wave.writes > 0);
     CHECK_FALSE(wave.told);
+}
+
+// ---- #196: the GroundControl node (coop_platforms.h, GroundNode) ----
+
+namespace {
+constexpr std::uint64_t kMain = 0x0000007100000000ull;
+constexpr std::uint64_t kActor = 0x0000021000001000ull;
+
+// Guest memory for the node search: listed words, 0 elsewhere in the heap, nothing outside it.
+struct Memory {
+    std::map<std::uint64_t, std::uint64_t> words;
+    std::optional<std::uint64_t> operator()(std::uint64_t a) const {
+        const auto i = words.find(a);
+        if (i == words.end()) {
+            return a >= 0x0000021000000000ull && a < 0x0000021100000000ull ? std::optional<std::uint64_t>(0)
+                                                                            : std::nullopt;
+        }
+        return i->second;
+    }
+};
+}  // namespace
+
+TEST_CASE("platforms: the WaveLoop's node is found from its actor, not a node of another actor (#196)") {
+    Memory m;
+    const std::uint64_t table = 0x0000021000010000ull;
+    const std::uint64_t logic = 0x0000021000020000ull;
+    const std::uint64_t node = 0x0000021000030000ull;
+    const std::uint64_t other = 0x0000021000040000ull;
+    m.words[kActor + 0x270] = table;
+    m.words[table + 0x118] = logic;
+    m.words[logic + 0x10] = other;  // another actor's wave node, met first
+    m.words[logic + 0x40] = node;
+    m.words[other] = kMain + GroundNode::kWaveVtable;
+    m.words[other + 8] = 0x0000021000005000ull;
+    m.words[node] = kMain + GroundNode::kWaveVtable;
+    m.words[node + 8] = kActor;
+    const GroundNode::ReadWord read = [&m](std::uint64_t a) { return m(a); };
+    std::size_t looked = 0;
+    const auto hit = GroundNode::Find(read, kActor, kMain, &looked);
+    REQUIRE(hit);
+    CHECK(hit->node == node);
+    CHECK(hit->region == kRegionWaveNode);
+    CHECK(hit->path == "actor+0x270 > +0x118 > +0x40");
+    CHECK(looked > 0);
+    CHECK(GroundNode::RegionOf(read, node, kActor, kMain) == kRegionWaveNode);
+    CHECK(GroundNode::RegionOf(read, other, kActor, kMain) == 0);
+    // A rotate node the same way; nothing for an actor with neither.
+    m.words[node] = kMain + GroundNode::kRotateVtable;
+    const auto rotate = GroundNode::Find(read, kActor, kMain);
+    REQUIRE(rotate);
+    CHECK(rotate->region == kRegionRotateNode);
+    m.words[node] = 0;
+    CHECK_FALSE(GroundNode::Find(read, kActor, kMain));
+    // The words handed to the finder: the node's block, keyed by the offset in the node.
+    m.words[node] = kMain + GroundNode::kWaveVtable;
+    m.words[node + 0xf8] = Bits(1.25f, 0.0f);
+    const auto again = GroundNode::Find(read, kActor, kMain);
+    REQUIRE(again);
+    const auto words = GroundNode::Words(read, *again);
+    CHECK(words.size() == (GroundNode::kTo - GroundNode::kFrom) / 8);
+    CHECK(words.at(Key(kRegionWaveNode, 0xf8)) == Bits(1.25f, 0.0f));
+}
+
+TEST_CASE("platforms: the node search goes kMaxDepth objects deep, no further (#196)") {
+    Memory m;
+    std::uint64_t at = kActor;
+    for (int i = 0; i < 8; ++i) {
+        const std::uint64_t next = 0x0000021000100000ull + static_cast<std::uint64_t>(i) * 0x1000;
+        m.words[at] = next;
+        at = next;
+    }
+    m.words[at] = kMain + GroundNode::kWaveVtable;  // 8 objects down: past the search
+    m.words[at + 8] = kActor;
+    const GroundNode::ReadWord read = [&m](std::uint64_t a) { return m(a); };
+    std::size_t looked = 0;
+    CHECK_FALSE(GroundNode::Find(read, kActor, kMain, &looked));
+    CHECK(looked == GroundNode::kMaxDepth + 1);
+}
+
+TEST_CASE("platforms: a node's wave phase is the clock by its layout, whatever unit the frame time is in (#196)") {
+    // The node steps phase += frame time x 2 pi / cycle. A rate that is not 2 pi / the cycle a second (frame time
+    // in another unit) would fail the component words' rate test; the node's layout says what the word is.
+    ClockFinder f;
+    const std::uint64_t phase_key = Key(kRegionWaveNode, 0xf8);
+    float phase = 0.5f;
+    const float rate = 1.5f * kTwoPi / 18.0f;
+    for (int i = 0; i < 12; ++i) {
+        f.Add(1'000'000 + static_cast<std::uint64_t>(i) * 250'000,
+              Floats{{Key(kRegionWaveNode, 0xc8), 18.0f}, {Key(kRegionWaveNode, 0xd4), 4.0f}, {phase_key, phase}});
+        phase = std::fmod(phase + rate * 0.25f, kTwoPi);
+    }
+    CHECK(f.TakeDropped().empty());
+    REQUIRE(f.Found());
+    CHECK(f.Found()->key == phase_key);
+    CHECK(f.Found()->cycle == doctest::Approx(kTwoPi));
+    CHECK(ClockFinder::Trusted(phase_key, true));
+    // The angular phases' cycles are 36 bytes before them; a phase whose cycle is 0 (no wave on that axis) is none.
+    const Floats look{{Key(kRegionWaveNode, 0xe0), 9.0f}, {Key(kRegionWaveNode, 0xcc), 0.0f}};
+    CHECK(NodePhaseCycle(look, Key(kRegionWaveNode, 0x104)).has_value());
+    CHECK_FALSE(NodePhaseCycle(look, Key(kRegionWaveNode, 0xfc)).has_value());
+    CHECK_FALSE(NodePhaseCycle(look, Key(kRegionWaveNode, 0xc8)).has_value());  // a cycle is no phase
+    CHECK(Where(phase_key) == "wave-node+0xf8");
+}
+
+TEST_CASE("platforms: a node phase worked out again outside [0, 2 pi) is still dropped (#196 guard)") {
+    ClockFinder f;
+    const std::uint64_t phase_key = Key(kRegionWaveNode, 0xf8);
+    for (int i = 0; i < 8; ++i) {
+        f.Add(1'000'000 + static_cast<std::uint64_t>(i) * 250'000,
+              Floats{{Key(kRegionWaveNode, 0xc8), 18.0f},
+                     {phase_key, -26.4f + 0.349f * 0.25f * static_cast<float>(i)}});
+    }
+    CHECK_FALSE(f.Found());
+    CHECK(f.Banned(phase_key));
+}
+
+TEST_CASE("platforms: a rotate node's angle turning backwards stays the clock across its loop (#196)") {
+    ClockFinder f;
+    const std::uint64_t angle_key = Key(kRegionRotateNode, GroundNode::kRotateAngle);
+    float angle = 0.4f;
+    const float speed = -0.8f;
+    for (int i = 0; i < 16; ++i) {
+        f.Add(1'000'000 + static_cast<std::uint64_t>(i) * 250'000,
+              Floats{{Key(kRegionRotateNode, GroundNode::kRotateSpeed), speed}, {angle_key, angle}});
+        CHECK(f.TakeDropped().empty());
+        angle += speed * 0.25f;
+        if (angle < 0.0f) {
+            angle += kTwoPi;
+        }
+    }
+    REQUIRE(f.Found());
+    CHECK(f.Found()->key == angle_key);
+    CHECK(f.Found()->rate == doctest::Approx(speed).epsilon(0.02));
+    CHECK(Where(angle_key) == "rotate-node+0xd4");
+    // Standing still (speed 0): no clock to share.
+    CHECK_FALSE(NodePhaseCycle(Floats{{Key(kRegionRotateNode, GroundNode::kRotateSpeed), 0.0f}}, angle_key));
+}
+
+TEST_CASE("platforms: the other game follows the owner's wave-node phase into the node's own word (#196)") {
+    Game a;
+    Game b;
+    a.self = 1;
+    b.self = 2;
+    a.clock_key = b.clock_key = Key(kRegionWaveNode, 0xf8);
+    a.rate = b.rate = kTwoPi / 18.0f;
+    a.cycle = b.cycle = kTwoPi;
+    a.clock = 1.0f;
+    b.clock = 4.0f;  // B loaded the room later: its floor is 3 rad (8.6 s) on
+    std::uint64_t time = 0;
+    Play(a, b, time, 8000);
+    CHECK(b.sync.Writes() > 0);  // each write's key is checked in Game::Tick
+    CHECK(a.sync.Writes() == 0);
+    CHECK(DriftSeconds(b.clock, a.clock, a.rate, kTwoPi) < PlatformSync::kDriftS + 0.05f);
 }
