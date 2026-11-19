@@ -301,6 +301,68 @@ def fake_player_pack(variant):
     return files
 
 
+PVP_REFS = {
+    "SensorHitRef": "?Component/SensorHitParam/Player.game__component__SensorHitParam.bgyml",
+    "LifeRef": "?Component/LifeParam/Player.game__component__LifeParam.bgyml",
+    "ReactionRef": "?Component/Reaction/Player.engine__component__ReactionParam.bgyml",
+    "TargetRef": "?Component/TargetParam/Player.game__component__TargetParam.bgyml",
+}
+PVP_ATTACK = "GameBalance/AttackParam/Player.game__gamebalance__AttackParam.bgyml"
+PVP_DAMAGE = "GameParameter/DamageParameters/Player.game__DamageParameters.bgyml"
+
+
+def with_pvp(members, variant="Child"):
+    """with_body's members with what `--puppet-pvp` cuts, shaped like the game's (docs/native-puppets.md 5.1):
+    the player's sensors (Tgt, Atk, ForArea and their bodies), SensorHit/Life/Reaction/Target params and
+    AttackParam rows."""
+    out = with_body(members)
+    cs = "Phive/ControllerSetParam/PBase.phive__ControllerSetParam.bgyml"
+    doc = byml.loads(out[cs])
+    rc = "Work/Phive/ContactCollectionSensorParam/"
+    rb = "Work/Phive/RigidBodySensorParam/"
+    doc["CColSensorNamePathAry"] = [
+        {"FilePath": rc + "PlayerReceipt.phive__ContactCollectionSensorParam.gyml", "Name": "Tgt"},
+        {"FilePath": rc + "PlayerAttackReceipt.phive__ContactCollectionSensorParam.gyml", "Name": "Atk"},
+        {"FilePath": rc + "PlayerReceipt.phive__ContactCollectionSensorParam.gyml", "Name": "ForArea"}]
+    doc["RigidBodySensorNamePathAry"] = [
+        {"FilePath": rb + "Player_Tgt_Body.phive__RigidBodySensorParam.gyml", "Name": "Body_Tgt"},
+        {"FilePath": rb + "Player_Atk_AtkPlayerBody.phive__RigidBodySensorParam.gyml", "Name": "Body"}]
+    doc["ControllerSensorNamePathAry"].append(
+        {"FilePath": "Work/Phive/RigidBodyControllerSensorParam/Atk.phive__RigidBodyControllerSensorParam.gyml",
+         "Name": "Atk"})
+    doc["AliasSensorList"] = [{"AliasSensor": "Tgt", "ControllerName": "Tgt", "RigidBodyName": "Body_Tgt"}]
+    out[cs] = byml.dumps(doc)
+    for path in ("Phive/ContactCollectionSensorParam/PlayerReceipt.phive__ContactCollectionSensorParam.bgyml",
+                 "Phive/ContactCollectionSensorParam/PlayerAttackReceipt.phive__ContactCollectionSensorParam.bgyml",
+                 "Phive/RigidBodySensorParam/Player_Tgt_Body.phive__RigidBodySensorParam.bgyml",
+                 "Phive/RigidBodySensorParam/Player_Atk_AtkPlayerBody.phive__RigidBodySensorParam.bgyml",
+                 "Phive/RigidBodyControllerSensorParam/Atk.phive__RigidBodyControllerSensorParam.bgyml",
+                 PVP_ATTACK, PVP_DAMAGE):
+        out[path] = byml.dumps({"X": 1})
+    ap = f"Actor/Player_{variant}.engine__actor__ActorParam.bgyml"
+    actor = byml.loads(out[ap])
+    actor["Components"].update(PVP_REFS)
+    out[ap] = byml.dumps(actor)
+    out[PVP_REFS["SensorHitRef"][1:]] = byml.dumps({"TgHitInfoBufferSize": 8, "IsThroughSameAffiliation": False})
+    out[PVP_REFS["LifeRef"][1:]] = byml.dumps({"DamageParam": "Work/" + PVP_DAMAGE[:-len(".bgyml")] + ".gyml"})
+    out[PVP_REFS["ReactionRef"][1:]] = byml.dumps({"R": 1})
+    out[PVP_REFS["TargetRef"][1:]] = byml.dumps({"T": 1})
+    return out
+
+
+def fake_attention_pack():
+    """ATTENTION_SOURCE's pack: EnemyCommon's LockOn and AutoAim client params, LockOn with an in-pack $parent."""
+    d, x = "Attention/ClientParam/", ".game__attention__ClientParam.bgyml"
+    return {
+        f"{d}EnemyCommon_LockOn{x}": byml.dumps({"$parent": f"Work/{d}Base.game__attention__ClientParam.gyml",
+                                                 "AttentionType": byml.UInt(3016662870), "ClientName": "LockOn"}),
+        f"{d}Base{x}": byml.dumps({"PriorityType": 1, "ClientName": "Base"}),
+        f"{d}EnemyCommon_AutoAim{x}": byml.dumps({"ClientName": "AutoAim"}),
+        "Component/AttentionSenderParam/EnemyCommon.game__component__AttentionSenderParam.bgyml": byml.dumps(
+            {"ClientList": [f"Work/{d}EnemyCommon_LockOn.game__attention__ClientParam.gyml"]}),
+    }
+
+
 def fake_cucco_pack():
     """Animal_Cucco's ActorParam and its LiftableParam with an in-pack $parent (the values as the romfs has them)."""
     lift = "Component/Liftable/Animal_Cucco.game__component__LiftableParam.bgyml"
@@ -548,6 +610,67 @@ class BuildPackTest(unittest.TestCase):
         # A Cucco pack without the param: none.
         self.assertIsNone(build.liftable_param({build.actor_param_path("Animal_Cucco"): byml.dumps({"Components": {}})}))
         self.assertIsNone(build.liftable_param({}))
+
+    def test_pack_pvp(self):
+        # Native puppets phase 4 (--puppet-pvp): the _Pvp copy's pieces, cut from the player's and EnemyCommon's.
+        clients = build.attention_clients(fake_attention_pack())
+        self.assertEqual(clients["LockOn"], {"PriorityType": 1, "ClientName": "LockOn",
+                                             "AttentionType": byml.UInt(3016662870)})
+        members = with_pvp(fake_player_pack("Child"))
+        actor = build.pvp_name("CoopPuppet_Child")
+        self.assertEqual(actor, "CoopPuppet_Child_Pvp")
+        pack, ap, names, _ = build.build_pack(members, "Child", actor=actor, pvp=clients)
+        out = sarc.read(pack)
+        comps = byml.loads(ap)["Components"]
+        for k, ref in PVP_REFS.items():
+            self.assertEqual(comps[k], ref)
+            self.assertIn(ref[1:], names)
+        self.assertIn(PVP_DAMAGE, names)  # what the Life param names comes along
+        self.assertIn(PVP_ATTACK, names)  # option i: the player's AttackParam rows
+        sender, client_paths = build.attention_paths(actor)
+        self.assertEqual(comps["AttentionSenderRef"], "?" + sender)
+        self.assertEqual(byml.loads(out[sender]), {"ClientList": [
+            "Work/Attention/ClientParam/CoopPuppet_Child_Pvp_LockOn.game__attention__ClientParam.gyml",
+            "Work/Attention/ClientParam/CoopPuppet_Child_Pvp_AutoAim.game__attention__ClientParam.gyml"]})
+        self.assertEqual(byml.loads(out[client_paths["LockOn"]]), clients["LockOn"])
+        self.assertNotIn("Attention/ClientParam/EnemyCommon_LockOn.game__attention__ClientParam.bgyml", names)
+        # Its body: the Tgt sensor only, never the Atk receipt, ForArea or the attack body.
+        cs = byml.loads(out[build.body_paths(actor)[1]])
+        self.assertEqual([e["Name"] for e in cs["CColSensorNamePathAry"]], ["Tgt"])
+        self.assertEqual([e["Name"] for e in cs["ControllerSensorNamePathAry"]], ["Tgt"])
+        self.assertEqual([e["Name"] for e in cs["RigidBodySensorNamePathAry"]], ["Body_Tgt"])
+        self.assertEqual([e["AliasSensor"] for e in cs["AliasSensorList"]], ["Tgt"])
+        self.assertIn("Phive/RigidBodySensorParam/Player_Tgt_Body.phive__RigidBodySensorParam.bgyml", names)
+        for p in ("Phive/ContactCollectionSensorParam/PlayerAttackReceipt.phive__ContactCollectionSensorParam.bgyml",
+                  "Phive/RigidBodySensorParam/Player_Atk_AtkPlayerBody.phive__RigidBodySensorParam.bgyml",
+                  "Phive/RigidBodyControllerSensorParam/Atk.phive__RigidBodyControllerSensorParam.bgyml"):
+            self.assertNotIn(p, names)
+        # Never on the copy (5.1).
+        for k in ("PlayerRef", "ActorNameRef", "PlayerCameraTargetRef", "DeathRef", "ConditionRef", "ChemicalRef"):
+            self.assertNotIn(k, comps)
+
+    def test_pack_pvp_off_is_byte_for_byte(self):
+        members = with_pvp(fake_player_pack("Child"))
+        plain = build.build_pack(members, "Child")
+        self.assertEqual(plain, build.build_pack(members, "Child", pvp=None))
+        comps = byml.loads(plain[1])["Components"]
+        for k in tuple(PVP_REFS) + ("AttentionSenderRef", "PhysicsRef"):
+            self.assertNotIn(k, comps)
+        self.assertFalse([n for n in plain[2] if n.startswith(("Phive/", "GameBalance/", "Attention/"))])
+        # --puppet-body alone: still no sensor.
+        _, _, names, _ = build.build_pack(members, "Child", body=True)
+        self.assertFalse([n for n in names if "Sensor" in n])
+
+    def test_pack_pvp_checks(self):
+        clients = build.attention_clients(fake_attention_pack())
+        self.assertIsNone(build.attention_clients({}))
+        no_life = with_pvp(fake_player_pack("Child"))
+        del no_life[PVP_REFS["LifeRef"][1:]]
+        with self.assertRaises(build.BuildError):
+            build.build_pack(no_life, "Child", actor="CoopPuppet_Child_Pvp", pvp=clients)
+        no_tgt = with_body(fake_player_pack("Child"))  # a ControllerSet with no Tgt receipt
+        with self.assertRaises(build.BuildError):
+            build.build_pack(no_tgt, "Child", actor="CoopPuppet_Child_Pvp", pvp=clients)
 
     def test_puppet_body_checks(self):
         pc = {"PhysicsRef": "?Component/Physics/P.engine__component__PhysicsParam.bgyml"}
@@ -1776,6 +1899,41 @@ class FullBuildTest(unittest.TestCase):
         d = build.build(self.romfs, os.path.join(self.dir, "mod_nobody"), log=lambda *_: None, look_slots=0)
         self.assertFalse(d["body"])
         self.assertFalse([a for a in d["actors"] if a["body"]])
+
+    def test_build_pvp(self):
+        # --puppet-pvp: every puppet (and its quiet copy) has a _Pvp twin, each of its files in the size table.
+        zsdic = sarc.read(zstandard.ZstdDecompressor().decompressobj().decompress(self.dicts_raw))
+        z = zstandard.ZstdCompressor(dict_data=zstandard.ZstdCompressionDict(zsdic["pack.zsdic"]))
+        for v in ("Child", "Adult"):
+            self.write(f"Pack/Actor/Player_{v}.pack.zs", z.compress(sarc.write(with_pvp(fake_player_pack(v), v))))
+        self.add_perception_and_guards()
+        with self.assertRaises(build.BuildError):  # no ATTENTION_SOURCE pack
+            build.build(self.romfs, os.path.join(self.dir, "mod_nopvp_src"), log=lambda *_: None, look_slots=0,
+                        pvp=True)
+        self.write(f"Pack/Actor/{build.ATTENTION_SOURCE}.pack.zs", z.compress(sarc.write(fake_attention_pack())))
+        m = build.build(self.romfs, os.path.join(self.dir, "mod_pvp"), log=lambda *_: None, look_slots=0, pvp=True)
+        self.assertTrue(m["pvp"])
+        names = [a["actor"] for a in m["actors"]]
+        plain = [n for n in names if not n.endswith(build.PVP_SUFFIX)]
+        self.assertTrue(plain)
+        self.assertEqual(sorted(build.pvp_name(n) for n in plain), sorted(set(names) - set(plain)))
+        for a in m["actors"]:
+            if a["actor"].endswith(build.PVP_SUFFIX):
+                sender, clients = build.attention_paths(a["actor"])
+                self.assertEqual(sorted(a["pvp"]), sorted([sender, *clients.values()]), a["actor"])
+                self.assertTrue(all(size >= build.PACK_SIZE_MARGIN for size in a["pvp"].values()))
+                self.assertEqual(sorted(a["body"]), sorted(build.body_paths(a["actor"])))
+            else:
+                self.assertNotIn("pvp", a)
+                self.assertIsNone(a["body"])  # the plain puppet has no body without --puppet-body
+        off = build.build(self.romfs, os.path.join(self.dir, "mod_pvp_off"), log=lambda *_: None, look_slots=0)
+        self.assertNotIn("pvp", off)
+        self.assertEqual([a["actor"] for a in off["actors"]], plain)
+        on_plain = {a["actor"]: a for a in m["actors"] if a["actor"] in plain}
+        for a in off["actors"]:  # the plain puppets as before
+            self.assertEqual(a["pack_bytes"], on_plain[a["actor"]]["pack_bytes"], a["actor"])
+            self.assertEqual(build.read(os.path.join(self.dir, "mod_pvp_off", "romfs", a["pack"])),
+                             build.read(os.path.join(self.dir, "mod_pvp", "romfs", a["pack"])), a["actor"])
 
     def test_quiet_name(self):
         self.assertEqual(build.quiet_name("CoopPuppet_Child"), "CoopPuppet_ChildQuiet")

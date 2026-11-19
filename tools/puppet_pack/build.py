@@ -553,8 +553,23 @@ def body_paths(actor):
             f"{CHARACTER_DIR}{actor}{CHARACTER_SUFFIX}")
 
 
-def puppet_body(members, player_components, actor):
-    """The puppet's body files (`--puppet-body`): {member path: (bytes, the player's member it is cut from)}."""
+def pvp_sensors(cs, cs_src):
+    """The player's `Tgt` sensor only, from its merged ControllerSet `cs` (`--puppet-pvp`, docs/native-puppets.md
+    5.1): {ControllerSet key: the entries PVP_SENSORS names}. The `Atk` receipt, `ForArea`, the attack and
+    chemical bodies are left out."""
+    out = {}
+    for key, names in PVP_SENSORS.items():
+        field = "AliasSensor" if key == "AliasSensorList" else "Name"
+        keep = [e for e in cs.get(key) or () if isinstance(e, dict) and e.get(field) in names]
+        if not keep:
+            raise BuildError(f"the player's ControllerSet {cs_src} has no {'/'.join(names)} in {key}")
+        out[key] = keep
+    return out
+
+
+def puppet_body(members, player_components, actor, sensors=False):
+    """The puppet's body files (`--puppet-body`): {member path: (bytes, the player's member it is cut from)}.
+    `sensors`: the `_Pvp` copy's body, with the player's `Tgt` sensor (pvp_sensors)."""
     src = ref_to_member(player_components.get("PhysicsRef"))
     if not src or src not in members:
         raise BuildError("the player's ActorParam has no PhysicsRef in the pack")
@@ -579,14 +594,16 @@ def puppet_body(members, player_components, actor):
     if not own_cs["CColEntityNamePathAry"]:
         raise BuildError(f"the player's ControllerSet {cs_src} has no contact collection {user!r}")
     own_cs["PathCharacterController"] = _work_ref(cct_path)
+    if sensors:
+        own_cs.update(pvp_sensors(cs, cs_src))
     return {phys_path: (byml.dumps({"ControllerSetPath": _work_ref(cs_path)}), src),
             cs_path: (byml.dumps(own_cs), cs_src),
             cct_path: (byml.dumps(cct), cct_src)}
 
 
-def add_body(doc, player_components, members, actor, files):
+def add_body(doc, player_components, members, actor, files, sensors=False):
     """Gives the puppet's ActorParam `doc` its body (puppet_body), with every member the body names."""
-    own = puppet_body(members, player_components, actor)
+    own = puppet_body(members, player_components, actor, sensors)
     for path, (data, _) in own.items():
         files[path] = data
         files.update(collect_members(members, byml.loads(data)))
@@ -634,6 +651,77 @@ def add_liftable(doc, actor, files, liftable):
     return path, data, src
 
 
+# Native puppets phase 4 (docs/native-puppets.md section 5, `--puppet-pvp`, off by default; implies
+# `--puppet-body`): beside each puppet a second actor, `<puppet>_Pvp`, that the hook makes only while PvP is on
+# between two games that run PvP on real bodies (LICHII_COOP_PVP_NATIVE=1). It has the player's own SensorHit,
+# Life, Reaction and Target params; its body has the player's `Tgt` sensor only; it carries the player's
+# AttackParam rows (5.3 A, option i); and it has an attention sender of its own whose LockOn and AutoAim clients
+# are cut from EnemyCommon's (ATTENTION_SOURCE's pack), so Z-targeting and aim assist find it as they find an
+# enemy. The plain puppet stays byte for byte as before. Not run in a game yet (UNKNOWNs U1-U7, docs 5.8).
+PVP_SUFFIX = "_Pvp"
+PVP_COMPONENTS = ("SensorHitRef", "LifeRef", "ReactionRef", "TargetRef")
+PVP_SENSORS = {"CColSensorNamePathAry": ("Tgt",), "ControllerSensorNamePathAry": ("Tgt",),
+               "RigidBodySensorNamePathAry": ("Body_Tgt",), "AliasSensorList": ("Tgt",)}
+ATTENTION_SOURCE = "Enemy_Amos"
+ATTENTION_CLIENTS = ("LockOn", "AutoAim")
+ATTENTION_CLIENT_DIR = "Attention/ClientParam/"
+ATTENTION_CLIENT_SUFFIX = ".game__attention__ClientParam.bgyml"
+ATTENTION_SENDER_DIR = "Component/AttentionSenderParam/"
+ATTENTION_SENDER_SUFFIX = ".game__component__AttentionSenderParam.bgyml"
+ATTACK_PARAM_DIR = "GameBalance/AttackParam/"
+ATTACK_PARAM_SUFFIX = ".game__gamebalance__AttackParam.bgyml"
+
+
+def pvp_name(actor):
+    return actor + PVP_SUFFIX
+
+
+def _client_src(client):
+    return f"{ATTENTION_CLIENT_DIR}EnemyCommon_{client}{ATTENTION_CLIENT_SUFFIX}"
+
+
+def attention_clients(source_members):
+    """EnemyCommon's LockOn and AutoAim client params, each with its in-pack `$parent` chain merged:
+    {client: param}, or None when ATTENTION_SOURCE's pack lacks one."""
+    if any(_client_src(c) not in source_members for c in ATTENTION_CLIENTS):
+        return None
+    return {c: _merged_chain(source_members, _client_src(c)) for c in ATTENTION_CLIENTS}
+
+
+def attention_paths(actor):
+    """The `_Pvp` copy's (sender param, {client: client param}) member paths."""
+    return (f"{ATTENTION_SENDER_DIR}{actor}{ATTENTION_SENDER_SUFFIX}",
+            {c: f"{ATTENTION_CLIENT_DIR}{actor}_{c}{ATTENTION_CLIENT_SUFFIX}" for c in ATTENTION_CLIENTS})
+
+
+def puppet_pvp(members, player_components, actor, clients):
+    """The `_Pvp` copy's own files besides its body: {member path: (bytes, the member it is cut from)}."""
+    missing = [k for k in PVP_COMPONENTS if ref_to_member(player_components.get(k)) not in members]
+    if missing:
+        raise BuildError(f"the player's ActorParam has no {', '.join(missing)} in the pack")
+    sender, client_paths = attention_paths(actor)
+    own = {path: (byml.dumps(clients[c]), _client_src(c)) for c, path in client_paths.items()}
+    own[sender] = (byml.dumps({"ClientList": [_work_ref(client_paths[c]) for c in ATTENTION_CLIENTS]}),
+                   f"{ATTENTION_SENDER_DIR}EnemyCommon{ATTENTION_SENDER_SUFFIX}")
+    return own
+
+
+def add_pvp(doc, player_components, members, actor, files, clients):
+    """Gives the `_Pvp` copy's ActorParam `doc` the player's PVP_COMPONENTS, the player's AttackParam rows and
+    an attention sender of its own (puppet_pvp). Returns puppet_pvp's files."""
+    for k in PVP_COMPONENTS:
+        doc["Components"][k] = player_components[k]
+        files.update(collect_members(members, {k: player_components[k]}))
+    for path in sorted(members):
+        if path.startswith(ATTACK_PARAM_DIR) and path.endswith(ATTACK_PARAM_SUFFIX):
+            files[path] = members[path]
+    own = puppet_pvp(members, player_components, actor, clients)
+    for path, (data, _) in own.items():
+        files[path] = data
+    doc["Components"]["AttentionSenderRef"] = "?" + attention_paths(actor)[0]
+    return own
+
+
 def tunic_model_info(actor, variant, project):
     """(member path, bytes) of a colour puppet's ModelInfo: the player's model under its own
     project name, `Model/<project>.Player_<variant>.bfres` (puppet_pack.tunic)."""
@@ -642,13 +730,16 @@ def tunic_model_info(actor, variant, project):
 
 
 def build_pack(members, variant, sound=True, player_footsteps=False, sound_user=None, actor=None,
-               project=None, basic_xlink=False, perception=None, as_ref=None, body=False, liftable=None):
+               project=None, basic_xlink=False, perception=None, as_ref=None, body=False, liftable=None,
+               pvp=None):
     """Returns (pack bytes, actor param bytes, member list, equipment keys) for one variant.
     `actor`: the pack's actor (default CoopPuppet_<variant>); `project`: a model project of its own
     (a tunic colour), else the player's. `perception`: perception_members() to make the puppet a
     target of the game's perception (PERCEPTION_SOURCE), or None. `as_ref`: an AS root of its own
     (a skin's copy, skin.as_path), else the player's. `body`: the puppet's own body (`--puppet-body`,
-    puppet_body). `liftable`: liftable_param() to make the puppet liftable (`--puppet-liftable`), or None."""
+    puppet_body). `liftable`: liftable_param() to make the puppet liftable (`--puppet-liftable`), or None.
+    `pvp`: attention_clients() to make this actor a `_Pvp` copy (`--puppet-pvp`: a body with the `Tgt` sensor,
+    add_pvp), or None."""
     player = f"Player_{variant}"
     actor = actor or puppet_name(variant)
     player_components = flatten_actor_param(members, player)
@@ -656,8 +747,10 @@ def build_pack(members, variant, sound=True, player_footsteps=False, sound_user=
     files = collect_members(members, doc)
     if perception:
         add_perception(doc, player_components, members, actor, files, perception)
-    if body:
-        add_body(doc, player_components, members, actor, files)
+    if body or pvp:
+        add_body(doc, player_components, members, actor, files, sensors=bool(pvp))
+    if pvp:
+        add_pvp(doc, player_components, members, actor, files, pvp)
     if liftable:
         add_liftable(doc, actor, files, liftable)
     if project:
@@ -1473,7 +1566,7 @@ def skin_row(row, sk, variant):
 def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None,
           tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False, title_rows=False, pause_tab=False,
           look_slots=look_items.SLOTS, perception=True, blade_copies=look_items.BLADE_COPIES,
-          skins=(), test_skin=None, game_has=None, body=False, liftable=False):
+          skins=(), test_skin=None, game_has=None, body=False, liftable=False, pvp=False):
     """`tunics`: the tunic colours to make puppets of (puppet_pack.tunic.COLORS; each is a model,
     a tile and an actor per age, CoopPuppet_<age>_<Colour>). `test_tunic`: give the plain puppets
     that colour too (a test of the colours with a hook that knows none).
@@ -1489,7 +1582,9 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
     age it changes, CoopPuppet_<age>_Skin_<id>). `test_skin`: one of those ids; every other puppet
     (plain and colours) wears that model too, a test with a hook that knows no skins.
     `body`: every puppet gets a body of its own (`--puppet-body`, puppet_body; off by default).
-    `liftable`: every puppet gets the Cucco's LiftableRef (`--puppet-liftable`, liftable_param; off by default)."""
+    `liftable`: every puppet gets the Cucco's LiftableRef (`--puppet-liftable`, liftable_param; off by default).
+    `pvp`: every puppet gets a `_Pvp` copy beside it (`--puppet-pvp`, add_pvp; off by default); the manifest
+    then says "pvp": true."""
     heaps = heaps or {}
     if not os.path.isfile(os.path.join(romfs, "Pack", "ZsDic.pack.zs")):
         raise BuildError(f"{romfs} does not look like the game's romfs (no Pack/ZsDic.pack.zs)")
@@ -1521,6 +1616,14 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         lift_param = liftable_param(sarc.read(dicts.decompress(read(src))))
         if lift_param is None:
             raise BuildError(f"--puppet-liftable: {LIFTABLE_SOURCE} has no LiftableRef in its pack")
+    clients = None
+    if pvp:
+        src = os.path.join(romfs, "Pack", "Actor", f"{ATTENTION_SOURCE}.pack.zs")
+        if not os.path.isfile(src):
+            raise BuildError(f"--puppet-pvp: missing {rel(romfs, src)}")
+        clients = attention_clients(sarc.read(dicts.decompress(read(src))))
+        if clients is None:
+            raise BuildError(f"--puppet-pvp: {ATTENTION_SOURCE} has no EnemyCommon LockOn/AutoAim clients")
     if perception:
         src = os.path.join(romfs, "Pack", "Actor", f"{PERCEPTION_SOURCE}.pack.zs")
         seen_by = perception_members(sarc.read(dicts.decompress(read(src)))) if os.path.isfile(src) else None
@@ -1583,7 +1686,11 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
     # Each skin's puppet per age, with its quiet copy for the guard scenes when puppets are seen.
     jobs += [(v, None, q, (sk, refs)) for sk, refs, _ in skin_list for v in refs
              for q in ((False, True) if seen_by else (False,))]
-    for v, color, quiet, own_skin in jobs:
+    # Each puppet's `_Pvp` copy right after it (--puppet-pvp; off: the jobs as before).
+    jobs = [(*j, False) for j in jobs]
+    if clients:
+        jobs = [j for job in jobs for j in (job, (*job[:4], True))]
+    for v, color, quiet, own_skin, pvp_copy in jobs:
         player = f"Player_{v}"
         # A skin job, or (--test-skin) any puppet of an age the tested skin changes.
         wears = own_skin or (worn if worn and v in worn[1] else None)
@@ -1592,6 +1699,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         else:
             actor = tunic.actor_name(v, color) if color else puppet_name(v)
         actor = quiet_name(actor) if quiet else actor
+        actor = pvp_name(actor) if pvp_copy else actor
         shade = None if wears else color or test_tunic
         project = tunic.project_name(v, shade) if shade else None
         if wears:
@@ -1604,7 +1712,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         pack, ap, names, keys = build_pack(members, v, sound, player_footsteps, sound_user, actor, project,
                                            basic_xlink=basic_xlink, perception=None if quiet else seen_by,
                                            as_ref=wears[1][v] if wears else None, body=body,
-                                           liftable=lift_param)
+                                           liftable=lift_param, pvp=clients if pvp_copy else None)
         dst_rel = f"Pack/Actor/{actor}.pack.zs"
         write(os.path.join(out_romfs, dst_rel), dicts.compress(pack, PACK_DICT))
         if player not in ai_rows:
@@ -1655,9 +1763,10 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
             table.add_new(path, em_size)
             emitter = {"param": path, "size": em_size}
         body_files = None
-        if body:
+        if body or pvp_copy:
             body_files = {}
-            for path, (data, src) in puppet_body(members, flatten_actor_param(members, player), actor).items():
+            for path, (data, src) in puppet_body(members, flatten_actor_param(members, player), actor,
+                                                 sensors=pvp_copy).items():
                 # Sized as the player's file it is cut from, or its own bytes and the margin when longer.
                 size = max(table.get(src) or 0, len(data) + PACK_SIZE_MARGIN)
                 table.add_new(path, size)
@@ -1675,6 +1784,15 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
                      "members": names, "equipment_keys": keys, "footstep": footstep, "body": body_files})
         if lift_file:
             made[-1]["liftable"] = lift_file  # (off: the manifest as before)
+        if pvp_copy:
+            pvp_files = {}
+            for path, (data, src) in puppet_pvp(members, flatten_actor_param(members, player), actor,
+                                                clients).items():
+                # Sized as the file it is cut from, or its own bytes and the margin when longer.
+                size = max(table.get(src) or 0, len(data) + PACK_SIZE_MARGIN)
+                table.add_new(path, size)
+                pvp_files[path] = size
+            made[-1]["pvp"] = pvp_files  # (off: the manifest as before)
         log(f"{actor}: {len(names)} files, {len(pack)} bytes, {len(keys)} equipment keys -> {dst_rel}")
 
     src = os.path.join(romfs, "Pack", "Actor", f"{IMPACT_SOURCE}.pack.zs")
@@ -1815,6 +1933,8 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
     }
     if lift_param:
         manifest["liftable"] = True  # --puppet-liftable (off: the manifest as before)
+    if clients:
+        manifest["pvp"] = True  # --puppet-pvp (off: the manifest as before)
     scenes, rooms, points = dungeon_rooms.write_table(romfs, os.path.join(mod_dir, "coop_rooms.txt"), dicts)
     log(f"coop_rooms.txt: {points} placements in {rooms} rooms of {scenes} dungeons")
     manifest["rooms"] = {"scenes": scenes, "rooms": rooms, "placements": points}
@@ -1877,6 +1997,10 @@ def main(argv=None):
     ap.add_argument("--puppet-liftable", action="store_true",
                     help="native puppets phase 3 test (docs/native-puppets.md): every puppet gets the Cucco's "
                          "LiftableRef, so Link can lift it (with LICHII_COOP_LIFT_PLAYER=1), off by default")
+    ap.add_argument("--puppet-pvp", action="store_true",
+                    help="native puppets phase 4 test (docs/native-puppets.md section 5): every puppet gets a _Pvp "
+                         "copy (a body with Link's Tgt sensor, his SensorHit/Life/Reaction/Target params, a LockOn "
+                         "and AutoAim attention sender), used with LICHII_COOP_PVP_NATIVE=1; off by default")
     ap.add_argument("--no-sound", action="store_true",
                     help="build the puppets without Link's sounds (the pack before issue 131)")
     ap.add_argument("--seed-trail", action="store_true",
@@ -1980,7 +2104,7 @@ def _main_build(a, romfs, hud_reader=None):
               perception=not a.no_perception,
               blade_copies=max(0, min(a.blade_copies, look_items.BLADE_COPIES)), skins=skins, test_skin=a.test_skin,
               game_has=(lambda path: _reader_has(hud_reader, path)) if hud_reader is not None else None,
-              body=a.puppet_body, liftable=a.puppet_liftable)
+              body=a.puppet_body, liftable=a.puppet_liftable, pvp=a.puppet_pvp)
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
