@@ -1,9 +1,7 @@
-# hs-pause-tab, A (part of hs-pause-tab.steps.txt): as B's, then Leave twice on our page (A is the harness's guest:
+# hs-pause-tab, A (harness-0116: 3 R before the system mark, no host-controls row, one B fewer) (part of hs-pause-tab.steps.txt): as B's, then Leave twice on our page (A is the harness's guest:
 # leaving makes its co-op idle, the solo path), the idle page (Host a game, Join a game), System back, and play.
 press PLUS
 wait 240
-press R
-wait 90
 press R
 wait 90
 press R
@@ -51,22 +49,13 @@ wait 30
 press A
 wait 60
 mark a-player
-press DDOWN
-wait 30
-press DDOWN
-wait 30
-press A
-wait 60
-mark a-host-controls
+# (Host controls: the hosting game's script; A is the launcher session's guest, row 3 is blank here.)
 press B
 wait 60
 mark a-player-back
 press B
 wait 60
 mark a-players-back
-press B
-wait 60
-mark a-main-back
 press L
 wait 120
 press R

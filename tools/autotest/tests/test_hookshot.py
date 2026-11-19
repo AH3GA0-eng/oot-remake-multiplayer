@@ -233,13 +233,14 @@ class ParseTest(unittest.TestCase):
             chat /teleport  Saria
             mark done
             wear boots HoverBoot
+            dress all
             setflag Rupee 50
             hit Enemy_DungeonBoss_Gohma 2
             stun Enemy_DungeonBoss_Gohma
         """)
         kinds = [s.kind for s in steps]
         self.assertEqual(kinds, ["timed", "timed", "timed", "timed", "timed", "timed", "timed", "timed", "goto",
-                                 "toward", "warp", "chat", "mark", "wear", "setflag", "hit", "stun"])
+                                 "toward", "warp", "chat", "mark", "wear", "dress", "setflag", "hit", "stun"])
         self.assertEqual(steps[0].ticks, 120)
         self.assertEqual((steps[1].buttons, steps[1].left, steps[1].ticks, steps[1].name), (["A"], (0, 1), 90, "mid"))
         self.assertEqual((steps[2].buttons, steps[2].ticks), (["ZR", "A"], 10))
@@ -252,8 +253,9 @@ class ParseTest(unittest.TestCase):
         self.assertEqual((steps[10].name, steps[10].start), ("KakarikoVillage_Child", "Kakariko_WellSide"))
         self.assertEqual(steps[11].name, "/teleport  Saria")
         self.assertEqual((steps[13].start, steps[13].name), ("boots", "HoverBoot"))
-        self.assertEqual((steps[15].name, steps[15].start), ("Enemy_DungeonBoss_Gohma", "2"))
-        self.assertEqual(steps[16].name, "Enemy_DungeonBoss_Gohma")
+        self.assertEqual((steps[16].name, steps[16].start), ("Enemy_DungeonBoss_Gohma", "2"))
+        self.assertEqual((steps[14].kind, steps[14].name), ("dress", "all"))
+        self.assertEqual(steps[17].name, "Enemy_DungeonBoss_Gohma")
         self.assertIn("hit", hs.MODULE_ONLY)   # module steps, as coop_testinput.cpp reads them
         self.assertIn("stun", hs.MODULE_ONLY)
 
@@ -280,7 +282,7 @@ class ParseTest(unittest.TestCase):
         for text, want in (("wait", "line 1: want: wait TICKS"), ("\n\nhold Q 3", "line 3: unknown key Q"),
                            ("stick 2 0 5", "line 1: want: STICK"), ("goto 1 2 0.1", "radius at least 0.2"),
                            ("jump", "unknown command jump"), ("# only", "no steps"),
-                           ("wear cape X", "want: wear"), ("menu", "want: menu customize|close"),
+                           ("wear cape X", "want: wear"), ("dress hat", "want: dress"), ("menu", "want: menu customize|close"),
                            ("menu map", "want: menu customize|close"), ("hurt", "want: hurt QUARTER_HEARTS"),
                            ("hurt 0", "want: hurt QUARTER_HEARTS"), ("hurt 81", "want: hurt QUARTER_HEARTS"),
                            ("hurt 2x", "want: hurt QUARTER_HEARTS"), ("hit Enemy_DungeonBoss_Gohma", "want: hit ACTOR N"),

@@ -8,6 +8,8 @@
 #include <charconv>
 #include <cmath>
 #include <cstdlib>
+#include <deque>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -168,6 +170,40 @@ std::optional<std::string> WearFlag(std::string_view slot) {
     if (low == "boots") return "EquipBoot";
     if (low == "hand") return "EquipHandArmor";
     return std::nullopt;
+}
+
+// dress: the slot kinds of the game's GameData equip call 0x2df6c80, as the puppet director's kGearKinds
+// (coop_puppet.h) names them: sword 0, shield 6, head 7, tunic 8, boots 9, hand 10.
+std::optional<std::uint32_t> DressKind(std::string_view slot) {
+    std::string low(slot);
+    for (auto& ch : low) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    if (low == "weapon") return 0;
+    if (low == "shield") return 6;
+    if (low == "head") return 7;
+    if (low == "armor") return 8;
+    if (low == "boots") return 9;
+    if (low == "hand") return 10;
+    return std::nullopt;
+}
+
+namespace {
+std::mutex g_dress_mutex;
+std::deque<std::uint32_t> g_dress;
+}  // namespace
+
+void DressAsk(std::uint32_t kind) {
+    std::lock_guard lock(g_dress_mutex);
+    g_dress.push_back(kind);
+}
+
+std::optional<std::uint32_t> DressNext() {
+    std::lock_guard lock(g_dress_mutex);
+    if (g_dress.empty()) return std::nullopt;
+    const std::uint32_t kind = g_dress.front();
+    g_dress.pop_front();
+    return kind;
 }
 
 // assign: the values of PlayerStatus.AssignableItem.Child / .Adult (Enum,
@@ -385,6 +421,17 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             step.kind = Kind::wear;
             step.start = std::string(w[1]);
             step.mark = std::string(w[2]);
+        } else if (cmd == "DRESS") {
+            std::string low;
+            if (w.size() == 2) {
+                low = std::string(w[1]);
+                for (auto& ch : low) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            }
+            if (w.size() != 2 || (low != "all" && !DressKind(w[1]))) {
+                return fail("want: dress weapon|shield|head|armor|boots|hand|all");
+            }
+            step.kind = Kind::dress;
+            step.start = low;
         } else if (cmd == "ASSIGN") {
             if (w.size() != 2 || !AssignableItem(w[1])) {
                 return fail("want: assign ITEM (Bow, Hookshot, Hammer, SlingShot, Bomb, ...: "
@@ -506,7 +553,7 @@ void Runner::Advance(double now_s, std::optional<std::array<float, 2>> player,
             return;
         }
         if (s.kind == Kind::warp || s.kind == Kind::give || s.kind == Kind::wear ||
-            s.kind == Kind::assign || s.kind == Kind::chat || s.kind == Kind::kill || s.kind == Kind::hurt ||
+            s.kind == Kind::assign || s.kind == Kind::dress || s.kind == Kind::chat || s.kind == Kind::kill || s.kind == Kind::hurt ||
             s.kind == Kind::hit || s.kind == Kind::stun ||
             s.kind == Kind::setflag || s.kind == Kind::setenum || s.kind == Kind::menu) {
             requests_.push_back(Request{s.kind, s.mark, s.start});
@@ -1129,6 +1176,18 @@ void OnFrame(Core::System& system) {
             Wear(system, request.start, request.name);
         } else if (request.kind == Kind::assign) {
             Assign(system, request.name);
+        } else if (request.kind == Kind::dress) {
+            // The game's own equip call, from the flags `wear` wrote (docs/items.md, "The game's own equip"):
+            // the svc caller makes it on the calc thread (CoopCallerOrders::kTestDress).
+            const char* const slots[] = {"weapon", "shield", "head", "armor", "boots", "hand"};
+            int asked = 0;
+            for (const char* slot : slots) {
+                if (request.start == "all" || request.start == slot) {
+                    DressAsk(*DressKind(slot));
+                    ++asked;
+                }
+            }
+            LOG_INFO(Core, "coop: test dress {}: {} asked", request.start, asked);
         } else if (request.kind == Kind::setflag) {
             SetFlag(system, request.name, std::stoi(request.start));
         } else if (request.kind == Kind::setenum) {
