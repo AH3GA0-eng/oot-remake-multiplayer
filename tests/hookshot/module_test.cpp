@@ -1062,7 +1062,9 @@ TEST_CASE("hookshot: the title's and the Map page's main addresses are offsets, 
     } want[] = {{"kCaptionMgrGot", 0x4c81660, true}, {"kCaptionBusy", 0x33ad380, true},
                 {"kCaptionReset", 0xbafd40, true},    {"kCaptionReload", 0xf6da40, true},
                 {"kTitleVtable", 0x4bf06e8, false},   {"kMsgRefInit", 0xa66f70, false},
-                {"kMsgRefSet", 0xa6afe0, false},      {"kPaneText", 0xa67d30, false}};
+                {"kMsgRefSet", 0xa6afe0, false},      {"kPaneText", 0xa67d30, false},
+                {"kAnimFind", 0x43d870, true},        {"kAnimLastFrame", 0x2d1340, true},
+                {"kAnimStopAt", 0x2d2d90, true},      {"kTitleSoundType", 0x3407000, true}};
     for (const auto& w : want) {
         INFO(w.name);
         char doc_text[32];
@@ -1370,6 +1372,31 @@ TEST_CASE("hookshot: every switch of the save folder marks the game's save list 
     const auto step = title.find("if (event == HOS_COOP_TITLE_STEP) {");
     REQUIRE(step != std::string::npos);
     CHECK(title.find("RefreshSaveList(ctx);", step) != std::string::npos);
+    // The open title is arranged again only once the game has read the list again (the done case, so only after a
+    // switch of the save folder: solo with co-op idle never switches), and a failure changes nothing.
+    const auto done = title.find("case R::Action::done:");
+    const auto gave_up = title.find("case R::Action::gave_up:");
+    const auto arrange = title.find("ArrangeTitle(ctx, mgr)");
+    REQUIRE(done != std::string::npos);
+    REQUIRE(gave_up != std::string::npos);
+    REQUIRE(arrange != std::string::npos);
+    CHECK(done < arrange);
+    CHECK(arrange < gave_up);
+    CHECK(title.find("ArrangeTitle(ctx, mgr)", arrange + 1) == std::string::npos);   // called nowhere else
+    // The game's own request path's layout, checked against the title's before any call; the frame is stopped only
+    // if BtnNum reaches it, as the game's own request does.
+    const auto guard = title.find("Read64(screen + kTitleAnimLayout); layout == 0 || used != layout");
+    const auto find = title.find("k.function = Main(kAnimFind);");
+    const auto last = title.find("GameCall(ctx, Main(kAnimLastFrame), player)");
+    const auto stop = title.find("k.function = Main(kAnimStopAt);");
+    REQUIRE(guard != std::string::npos);
+    REQUIRE(find != std::string::npos);
+    REQUIRE(last != std::string::npos);
+    REQUIRE(stop != std::string::npos);
+    CHECK(guard < find);
+    CHECK(find < last);
+    CHECK(last < stop);
+    CHECK(title.find("constexpr std::uint64_t kTitleAnimLayout = 0xe0;") != std::string::npos);
 }
 
 // Owner photo 2026-11-19 (patch 0031): the module tab's column is opaque (the game's own pause page showed through
