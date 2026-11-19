@@ -1467,6 +1467,7 @@ public:
             life_given_.clear();
             step_hits_.clear();
             boss_hit_ids_.clear();  // (actors of the scene before; an address reused here starts fresh)
+            hit_lives_.clear();
             pvp_life_ = -1;  // (our Link of the scene before)
             pvp_watch_.Reset();
             TheMover().ForgetReplayed();  // its Life components may sit where the old ones were
@@ -2441,6 +2442,7 @@ private:
             block_retry_.clear();
             ForgetBosses();
             boss_hit_ids_.clear();
+            hit_lives_.clear();
             pvp_life_ = -1;
             pvp_watch_.Reset();
             CoopProjectiles::TheOwnShots().Reset();
@@ -3249,6 +3251,20 @@ private:
                         max_read = r.Get<s32>(life_value->second + 8);
                     }
                 });
+                // Row 138 (2)(7): whether our own hit took life (its life the walk before, and now).
+                bool own_hit_took_life = false;
+                {
+                    const auto last = hit_lives_.find(a);
+                    own_hit_took_life = own_hit_life.has_value() &&
+                                        CoopBossNative::OwnHitTookLife(
+                                            last != hit_lives_.end() ? std::optional<s32>(last->second) : std::nullopt,
+                                            life_read);
+                    if (life_read) {
+                        hit_lives_[a] = *life_read;
+                    } else if (last != hit_lives_.end()) {
+                        hit_lives_.erase(last);
+                    }
+                }
                 // One model for every enemy (fable-g4-enemies), off by default until its game run:
                 // LICHII_COOP_ENEMY_BRAIN=1 puts every plain Enemy_ on the bosses' native path (the owner's brain
                 // and action verbs through the game's own two functions, the copy's own brain's changes skipped),
@@ -3268,8 +3284,8 @@ private:
                     if (s.bsa_component != 0) {
                         s.bsa = CoopBossNative::TheTable().OwnerState(a);
                         if (own_hit_life) {
-                            (void)NewOwnHitAt(r, a, *own_hit_life, s.position);
-                        }  // our own hit: its own reaction runs (NoteOwnHit)
+                            (void)NewOwnHitAt(r, a, *own_hit_life, s.position, own_hit_took_life);
+                        }  // our own hit: its own reaction runs (NoteOwnHit) unless it took life (NoteOwnDamage)
                     }
                 }
                 if (IsBoss(s.name)) {
@@ -3282,7 +3298,7 @@ private:
                     }
                     s.bsa = CoopBossNative::TheTable().OwnerState(a);
                     if (own_hit_life) {
-                        s.hit_at = NewOwnHitAt(r, a, *own_hit_life, s.position);
+                        s.hit_at = NewOwnHitAt(r, a, *own_hit_life, s.position, own_hit_took_life);
                     } else if (CoopBossNative::TheTable().OwnShotNear(s.position)) {
                         // Issue 150: our shot's weak-point hit that took no life (no hit id moved):
                         // a copy runs its own reaction, the stun (the boss's own AI; NoteOwnShotEnd).
@@ -3439,6 +3455,7 @@ private:
     // (+0x240): ours when our Link or one of our own projectiles made it (Seen::hit_ours).
     static constexpr u64 kHitAttacker = kHitRecord;
     std::unordered_map<u64, u32> boss_hit_ids_;  // actor: the last hit id seen (every actor with a Life component)
+    std::unordered_map<u64, s32> hit_lives_;     // actor: its life the walk before (OwnHitTookLife), same actors
     // Whose hits reached this actor since the last walk (Seen::own_hit, Seen::replay_hit): its Life component's last
     // hit id moved (hit ids only grow); to one we did not replay is our game's own hit. Returns its Life component
     // when our game's own hit came (for a boss's hit place).
@@ -3478,9 +3495,15 @@ private:
         s.hit_ours = CoopProjectiles::HitIsOurs(attacker, our_link_, CoopProjectiles::TheOwnShots(), CoopEvery::NowUs());
         return *life;
     }
-    std::optional<coop::protocol::Vec3> NewOwnHitAt(Reader& r, u64 a, u64 life, const coop::protocol::Vec3& boss) {
-        // Our game's own hit: a copy boss runs its own reaction (the stun; boss-fix).
-        CoopBossNative::TheTable().NoteOwnHit(a);
+    std::optional<coop::protocol::Vec3> NewOwnHitAt(Reader& r, u64 a, u64 life, const coop::protocol::Vec3& boss,
+                                                    bool took_life) {
+        // Our game's own hit. One that took no life: a copy boss runs its own reaction (the stun; boss-fix). One
+        // that took life is the owner's to judge (its DAMAGE), whose reaction comes as its verbs (row 138 (2)(7)).
+        if (took_life) {
+            CoopBossNative::TheTable().NoteOwnDamage(a);
+        } else {
+            CoopBossNative::TheTable().NoteOwnHit(a);
+        }
         const auto at = r.Get<std::array<float, 3>>(life + kHitPlace);
         if (!at) {
             return std::nullopt;

@@ -531,6 +531,55 @@ TEST_CASE("native boss: our own hit on a copy lets its own reaction run for a wh
     CHECK(t.OnBrainVerb(kBsa, 12, false, false));
 }
 
+TEST_CASE("native boss: whether our own hit took life (row 138)") {
+    using CoopBossNative::OwnHitTookLife;
+    CHECK(OwnHitTookLife(20, 18));
+    CHECK_FALSE(OwnHitTookLife(20, 20));        // a stun, a guard, a weak-point hit: no life taken
+    CHECK_FALSE(OwnHitTookLife(18, 20));        // raised meanwhile (its owner's life)
+    CHECK_FALSE(OwnHitTookLife(std::nullopt, 18));  // not read the walk before: unknown, its own reaction as before
+    CHECK_FALSE(OwnHitTookLife(20, std::nullopt));
+}
+
+TEST_CASE("native boss: our own hit that took life leaves the reaction to the owner (row 138 (2)(7), #238)") {
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Gohma(Role::copy)});
+    t.Receive(kActor, BossBsa{3, 4, std::nullopt, {}});
+    FakeGuest g;
+    const std::int32_t at = 4;
+    g.Write(kBsa + addr::kBsaBrainVerb, &at, 4);
+    CHECK_FALSE(t.Step(g, false, 0, kMain));
+    // Its own flinch was asked in the frame of the hit: skipped, and it stays skipped (nothing made late).
+    CHECK(t.OnActionVerb(kBsa, GameRequest(30, kNode), true, false));
+    t.NoteOwnDamage(kActor);
+    CHECK(t.Totals().copy_hits_to_owner == 1);
+    CHECK(t.CopiesRunningOwn().empty());  // the objects layer keeps putting the owner's place on it
+    CHECK_FALSE(t.Step(g, false, 0, kMain));
+    // What its own brain asks next is still skipped: one brain, the owner's, whoever hits.
+    CHECK(t.OnBrainVerb(kBsa, 12, false, false));
+    CHECK(t.OnActionVerb(kBsa, GameRequest(31, kNode), true, false));
+    CHECK(t.Totals().copy_own_run == 0);
+    CHECK(t.Totals().copy_own_late == 0);
+    // A hit that took no life (a stun) still runs its own reaction, as before.
+    t.NoteOwnHit(kActor);
+    CHECK(t.CopiesRunningOwn() == std::vector<std::uint64_t>{kActor});
+    // And a hit that took life inside that own time leaves it running (our stun goes on).
+    t.NoteOwnDamage(kActor);
+    CHECK(t.Totals().copy_hits_to_owner == 2);
+    CHECK(t.CopiesRunningOwn() == std::vector<std::uint64_t>{kActor});
+}
+
+TEST_CASE("native boss: our own hit that took life on a boss we own changes nothing (solo, owner)") {
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Gohma(Role::owner)});
+    t.NoteOwnDamage(kActor);
+    t.NoteOwnDamage(kActor + 8);  // an actor it does not know
+    CHECK(t.Totals().copy_hits_to_owner == 0);
+    CHECK(t.CopiesRunningOwn().empty());
+    CHECK_FALSE(t.OnBrainVerb(kBsa, 12, false, false));  // an owner's own brain always runs
+}
+
 TEST_CASE("native boss: our shot's end beside a copy (no hit id moved) runs its own stun, issue 150") {
     Table t;
     t.SetOn(true, true);
