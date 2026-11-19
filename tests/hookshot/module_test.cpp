@@ -1410,3 +1410,41 @@ TEST_CASE("hookshot: the module tab's column is opaque and a valued page row has
     CHECK(in_menu("c.d->AddRectFilled(ImVec2(cx0, hh), ImVec2(cx1, c.h), ui::rgba(34, 26, 17));"));
     CHECK(in_menu("if (r.right) ui::triangle(c, ImVec2(vb.x - 15 * s, (va.y + vb.y) * 0.5f), 10 * s, 1,"));
 }
+
+// Row 156 (three crashes, 0xc0000005 in SDL_GetAudioStreamAvailable on the thread reading the co-op voice's microphone):
+// Longshot's rec_ready (host/hos_sdl.c) called SDL_InitSubSystem(SDL_INIT_AUDIO) for every microphone list and open and
+// never quit it. SDL3 counts those calls in 8 bits: the 256th wrapped the count to 0 and the next call restarted SDL's
+// audio, destroying every SDL_AudioStream (the open microphones' too), which nn_audio_in.c then read freed. Patch 0033
+// starts SDL's audio once, under a lock of its own; a failed start (SDL leaves it uncounted) is tried again.
+TEST_CASE("hookshot: SDL's audio is started once for the microphones, not at every list and open (patch 0033)") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0033-coop-sdl-audio-once.patch");
+    REQUIRE_FALSE(patch.empty());
+    const std::string sdl = PatchedCode(patch, "host/hos_sdl.c");
+    REQUIRE_FALSE(sdl.empty());
+    const auto has = [&sdl](const char* code) { return sdl.find(Squashed(code)) != std::string::npos; };
+    // The old line, which counted one more start at every call, is gone.
+    CHECK(patch.find("\n-    return rec.ok && hos_sdl_init(HOS_SDL_AUDIO);\n") != std::string::npos);
+    CHECK_FALSE(has("return rec.ok && hos_sdl_init(HOS_SDL_AUDIO);"));
+    // Once, remembered, and under the lock (the lists come from the menu's and the module's threads).
+    CHECK(has("int audio_on;"));
+    CHECK(has("static SRWLOCK rec_lock = SRWLOCK_INIT;"));
+    const auto lock = sdl.find(Squashed("AcquireSRWLockExclusive(&rec_lock); if (!rec.tried) {"));
+    const auto start = sdl.find(Squashed("if (rec.ok && !rec.audio_on) rec.audio_on = hos_sdl_init(HOS_SDL_AUDIO);"));
+    const auto unlock = sdl.find(Squashed("const int ready = rec.ok && rec.audio_on; ReleaseSRWLockExclusive(&rec_lock); return ready;"));
+    REQUIRE(lock != std::string::npos);
+    REQUIRE(start != std::string::npos);
+    REQUIRE(unlock != std::string::npos);
+    CHECK(lock < start);
+    CHECK(start < unlock);
+    // No other patch starts SDL's audio from the host's code: one counted start for the microphones.
+    for (const auto& entry : std::filesystem::directory_iterator(kRepo / "hookshot" / "patches")) {
+        const std::string text = ReadFile(entry.path());
+        for (auto at = text.find("\n+"); at != std::string::npos; at = text.find("\n+", at + 1)) {
+            const std::string line = text.substr(at + 1, text.find('\n', at + 1) - at - 1);
+            if (line.find("hos_sdl_init(HOS_SDL_AUDIO)") != std::string::npos) {
+                CHECK(entry.path().filename().string() == "0033-coop-sdl-audio-once.patch");
+                CHECK(line.find("!rec.audio_on") != std::string::npos);
+            }
+        }
+    }
+}
