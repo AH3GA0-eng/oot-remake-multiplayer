@@ -2792,6 +2792,124 @@ Error decode_body(Reader& r, LiftShare& m) {
   return Error::none;
 }
 
+// PVP_STRIKE: u8 player, u8 victim (1 to 16, not the player), u32 seq, u64
+// seen_us, 11 x u32 kind, s32 amount (0 to 80), u8 source (1 to 4), object
+// id (10 bytes), 3 x 3 x f32 at, copy_at, from (finite).
+// A shot or blast names the attacker's own made object; the others name none.
+bool strike_object_ok(const PvpStrike& m) {
+  const bool thrown = m.source == PvpSource::shot || m.source == PvpSource::blast;
+  if (!thrown) return m.object == ObjectId{};
+  return m.object.kind == ObjectKind::made && check_object_id(m.object) == Error::none &&
+         (m.player_number == kPlayerSelf || m.object.maker == m.player_number);
+}
+
+bool valid_strike(const PvpStrike& m) {
+  const auto source = static_cast<std::uint8_t>(m.source);
+  return valid_player_or_self(m.player_number) && valid_player(m.victim) && m.victim != m.player_number &&
+         m.amount >= 0 && m.amount <= kMaxPvpLife && source >= 1 && source <= kPvpSourceMax &&
+         all_finite(m.at) && all_finite(m.copy_at) && all_finite(m.from) && strike_object_ok(m);
+}
+
+Error encode_body(const PvpStrike& m, Writer& w) {
+  if (!valid_strike(m)) return Error::bad_value;
+  w.u8(m.player_number);
+  w.u8(m.victim);
+  w.u32(m.seq);
+  w.u64(m.seen_us);
+  for (std::uint32_t k : m.kind) w.u32(k);
+  w.u32(static_cast<std::uint32_t>(m.amount));
+  w.u8(static_cast<std::uint8_t>(m.source));
+  write_object_id(m.object, w);
+  for (float f : m.at) w.f32(f);
+  for (float f : m.copy_at) w.f32(f);
+  for (float f : m.from) w.f32(f);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, PvpStrike& m) {
+  m = PvpStrike{};
+  std::uint32_t amount = 0;
+  std::uint8_t source = 0;
+  COOP_READ(r.u8(m.player_number));
+  COOP_READ(r.u8(m.victim));
+  COOP_READ(r.u32(m.seq));
+  COOP_READ(r.u64(m.seen_us));
+  for (std::uint32_t& k : m.kind) COOP_READ(r.u32(k));
+  COOP_READ(r.u32(amount));
+  COOP_READ(r.u8(source));
+  if (const Error e = read_object_id(r, m.object); e != Error::none) return e;
+  for (float& f : m.at) COOP_READ(r.f32(f));
+  for (float& f : m.copy_at) COOP_READ(r.f32(f));
+  for (float& f : m.from) COOP_READ(r.f32(f));
+  if (amount > static_cast<std::uint32_t>(kMaxPvpLife)) return Error::bad_value;
+  m.amount = static_cast<std::int32_t>(amount);
+  m.source = static_cast<PvpSource>(source);
+  return valid_strike(m) ? Error::none : Error::bad_value;
+}
+
+// PVP_RESULT: u8 player, u8 attacker (1 to 16, not the player), u32 seq, u8
+// outcome (0 to 6), s32 amount (0 to 80), s32 life (0 to 80), 11 x u32 kind,
+// 3 x f32 at (finite).
+bool valid_result(const PvpResult& m) {
+  return valid_player_or_self(m.player_number) && valid_player(m.attacker) && m.attacker != m.player_number &&
+         static_cast<std::uint8_t>(m.outcome) <= kPvpOutcomeMax && m.amount >= 0 && m.amount <= kMaxPvpLife &&
+         m.life >= 0 && m.life <= kMaxPvpLife && all_finite(m.at);
+}
+
+Error encode_body(const PvpResult& m, Writer& w) {
+  if (!valid_result(m)) return Error::bad_value;
+  w.u8(m.player_number);
+  w.u8(m.attacker);
+  w.u32(m.seq);
+  w.u8(static_cast<std::uint8_t>(m.outcome));
+  w.u32(static_cast<std::uint32_t>(m.amount));
+  w.u32(static_cast<std::uint32_t>(m.life));
+  for (std::uint32_t k : m.kind) w.u32(k);
+  for (float f : m.at) w.f32(f);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, PvpResult& m) {
+  m = PvpResult{};
+  std::uint8_t outcome = 0;
+  std::uint32_t amount = 0;
+  std::uint32_t life = 0;
+  COOP_READ(r.u8(m.player_number));
+  COOP_READ(r.u8(m.attacker));
+  COOP_READ(r.u32(m.seq));
+  COOP_READ(r.u8(outcome));
+  COOP_READ(r.u32(amount));
+  COOP_READ(r.u32(life));
+  for (std::uint32_t& k : m.kind) COOP_READ(r.u32(k));
+  for (float& f : m.at) COOP_READ(r.f32(f));
+  if (outcome > kPvpOutcomeMax || amount > static_cast<std::uint32_t>(kMaxPvpLife) ||
+      life > static_cast<std::uint32_t>(kMaxPvpLife)) {
+    return Error::bad_value;
+  }
+  m.outcome = static_cast<PvpOutcome>(outcome);
+  m.amount = static_cast<std::int32_t>(amount);
+  m.life = static_cast<std::int32_t>(life);
+  return valid_result(m) ? Error::none : Error::bad_value;
+}
+
+// PVP_NATIVE: u8 player, u8 on (0 or 1).
+Error encode_body(const PvpNative& m, Writer& w) {
+  if (!valid_player_or_self(m.player_number)) return Error::bad_value;
+  w.u8(m.player_number);
+  w.u8(m.on ? 1 : 0);
+  return Error::none;
+}
+
+Error decode_body(Reader& r, PvpNative& m) {
+  m = PvpNative{};
+  std::uint8_t on = 0;
+  COOP_READ(r.u8(m.player_number));
+  COOP_READ(r.u8(on));
+  if (!valid_player_or_self(m.player_number) || on > 1) return Error::bad_value;
+  m.on = on != 0;
+  return Error::none;
+}
+
 Error encode_body(const BombAnswer& m, Writer& w) {
   COOP_TRY(check_object_id(m.id));
   const auto refusal = static_cast<std::uint8_t>(m.refusal);
@@ -3204,6 +3322,7 @@ MessageType type_of(const Message& message) {
       MessageType::bomb_take,   MessageType::bomb_answer, MessageType::bomb_share,
       MessageType::lift_ask,    MessageType::lift_answer, MessageType::lift_place,
       MessageType::lift_share,
+      MessageType::pvp_strike,  MessageType::pvp_result,  MessageType::pvp_native,
   };
   static_assert(std::size(kTypes) == std::variant_size_v<Message>);
   return kTypes[message.index()];
@@ -3255,6 +3374,9 @@ std::uint8_t channel_of(MessageType type) {
     case MessageType::lift_ask:
     case MessageType::lift_answer:
     case MessageType::lift_share:
+    case MessageType::pvp_strike:
+    case MessageType::pvp_result:
+    case MessageType::pvp_native:
       return kChannelOwnership;
     default:
       return kChannelSession;
@@ -3353,6 +3475,9 @@ bool allowed_on_channel(MessageType type, std::uint8_t channel) {
     case MessageType::lift_ask:
     case MessageType::lift_answer:
     case MessageType::lift_share:
+    case MessageType::pvp_strike:
+    case MessageType::pvp_result:
+    case MessageType::pvp_native:
       return channel == kChannelOwnership;
     case MessageType::test_payload:
       return channel == kChannelSession || channel == kChannelPlayerSamples;
@@ -3450,6 +3575,9 @@ bool may_send(Sender from, MessageType type) {
     case MessageType::lift_ask:
     case MessageType::lift_answer:
     case MessageType::lift_place:
+    case MessageType::pvp_strike:
+    case MessageType::pvp_result:
+    case MessageType::pvp_native:
       return true;
   }
   return false;
@@ -3494,7 +3622,9 @@ auto* player_field(M& message) {
                       std::is_same_v<T, LinkSound> ||
                       std::is_same_v<T, BossScene> || std::is_same_v<T, BossHeart> ||
                       std::is_same_v<T, PlayerLook> || std::is_same_v<T, LiftAsk> ||
-                      std::is_same_v<T, LiftAnswer> || std::is_same_v<T, LiftPlace>) {
+                      std::is_same_v<T, LiftAnswer> || std::is_same_v<T, LiftPlace> ||
+                      std::is_same_v<T, PvpStrike> || std::is_same_v<T, PvpResult> ||
+                      std::is_same_v<T, PvpNative>) {
           field = &m.player_number;
         }
       },
@@ -3537,6 +3667,9 @@ bool set_sender(Message& message, std::uint8_t player) {
   if (const auto* l = std::get_if<LiftAnswer>(&message); l && l->lifter == player) return false;
   if (const auto* l = std::get_if<LiftPlace>(&message); l && l->lifted == player) return false;
   if (const auto* d = std::get_if<DbnoStatus>(&message); d && d->reviver == player) return false;
+  // Nor strike itself (PvP on real bodies).
+  if (const auto* s = std::get_if<PvpStrike>(&message); s && s->victim == player) return false;
+  if (const auto* s = std::get_if<PvpResult>(&message); s && s->attacker == player) return false;
   *field = player;
   return true;
 }
@@ -3643,6 +3776,9 @@ Error decode(std::span<const std::uint8_t> bytes, Message& out) {
     case MessageType::lift_answer: return decode_as<LiftAnswer>(body, out);
     case MessageType::lift_place: return decode_as<LiftPlace>(body, out);
     case MessageType::lift_share: return decode_as<LiftShare>(body, out);
+    case MessageType::pvp_strike: return decode_as<PvpStrike>(body, out);
+    case MessageType::pvp_result: return decode_as<PvpResult>(body, out);
+    case MessageType::pvp_native: return decode_as<PvpNative>(body, out);
     case MessageType::local_join: return decode_as<LocalJoin>(body, out);
     case MessageType::local_joined: return decode_as<LocalJoined>(body, out);
     case MessageType::local_leave: return decode_as<LocalLeave>(body, out);

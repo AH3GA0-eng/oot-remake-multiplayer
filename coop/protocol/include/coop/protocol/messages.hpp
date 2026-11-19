@@ -170,6 +170,9 @@ enum class MessageType : std::uint16_t {
   lift_answer = 536,
   lift_place = 537,
   lift_share = 538,
+  pvp_strike = 540,  // 540 to 544: PvP on real bodies (docs/protocol.md, "PvP on real bodies")
+  pvp_result = 541,
+  pvp_native = 542,
 };
 
 // PLAYER_SAMPLE component ids.
@@ -1893,6 +1896,78 @@ struct LiftShare {
   bool operator==(const LiftShare&) const = default;
 };
 
+// PvP on real bodies (native puppets phase 4; docs/native-puppets.md section 5,
+// docs/protocol.md "PvP on real bodies"). Sent only by games with
+// LICHII_COOP_PVP_NATIVE=1 (off by default). The victim's game decides.
+//
+// The words of a hit's kind as the game keeps them in its incoming hit record
+// (Life +0x250 up to +0x27c, CoopHitReplay::kRecKind..kRecKindEnd): plain
+// values, never pointers.
+inline constexpr std::size_t kPvpKindWords = 11;
+using PvpKind = std::array<std::uint32_t, kPvpKindWords>;
+
+// What dealt a strike (PVP_STRIKE's source).
+enum class PvpSource : std::uint8_t {
+  sword = 1,  // a sword, a stick, the hammer, the body
+  shot = 2,   // an arrow, a seed, the hookshot, the boomerang, a nut
+  blast = 3,  // a bomb's or bombchu's blast, Din's Fire
+  other = 4,
+};
+inline constexpr std::uint8_t kPvpSourceMax = 4;
+
+// PVP_STRIKE: the sender's game took a hit of its own Link (or of a shot or
+// blast it made) on `victim`'s copy, by the game's own collision. To the
+// victim only, and only while PvP is on between two PVP_NATIVE games.
+struct PvpStrike {
+  std::uint8_t player_number = kPlayerSelf;  // the attacker
+  std::uint8_t victim = 0;                   // 1 to 16, not the attacker
+  std::uint32_t seq = 0;                     // the attacker's own count
+  std::uint64_t seen_us = 0;                 // server time of the victim's sample the copy showed
+  PvpKind kind{};
+  std::int32_t amount = 0;                   // quarter hearts the attacker's game counted (compared, never used)
+  PvpSource source = PvpSource::sword;
+  ObjectId object{};  // a shot or blast: the attacker's made object; else all zero
+  Vec3 at{};      // where the hit landed
+  Vec3 copy_at{}; // where the attacker's game showed the victim
+  Vec3 from{};    // where the attacker stood
+  bool operator==(const PvpStrike&) const = default;
+};
+
+// The victim's word on a strike (PVP_RESULT's result).
+enum class PvpOutcome : std::uint8_t {
+  taken = 0,
+  guarded = 1,
+  guard_broken = 2,
+  invincible = 3,     // the game's invincible frames refused it
+  late = 4,           // seen_us too old
+  out_of_reach = 5,   // not where the victim was at seen_us
+  kept_off = 6,       // an event, a menu, a load, another scene, down or dead
+};
+inline constexpr std::uint8_t kPvpOutcomeMax = 6;
+
+// PVP_RESULT: the victim's game's word on one strike. To every game in the
+// victim's scene: the attacker plays a guard's recoil, the others replay the
+// kind on their copy of the victim.
+struct PvpResult {
+  std::uint8_t player_number = kPlayerSelf;  // the victim
+  std::uint8_t attacker = 0;                 // 1 to 16, not the victim
+  std::uint32_t seq = 0;                     // the strike's
+  PvpOutcome outcome = PvpOutcome::taken;
+  std::int32_t amount = 0;                   // taken, 0 to kMaxPvpLife
+  std::int32_t life = 0;                     // left, 0 to kMaxPvpLife
+  PvpKind kind{};
+  Vec3 at{};
+  bool operator==(const PvpResult&) const = default;
+};
+
+// PVP_NATIVE: the sender's game runs PvP on real bodies. Sent after WELCOME
+// and every few seconds; relayed to everyone.
+struct PvpNative {
+  std::uint8_t player_number = kPlayerSelf;
+  bool on = true;
+  bool operator==(const PvpNative&) const = default;
+};
+
 // Split screen (docs/protocol.md, "Local players"): the extra players of one
 // game, seats 1 to kMaxLocalSeats (seat 0 is the connection's own player).
 inline constexpr std::uint8_t kMaxLocalSeats = 3;
@@ -1953,7 +2028,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              LocalJoin, LocalJoined, LocalLeave, LocalSample, LocalMessage, LinkSound,
                              BossScene, BossHeart, PlayerLook, SwitchState, JoinKnock, JoinAllow,
                              BombTake, BombAnswer, BombShare, LiftAsk, LiftAnswer, LiftPlace,
-                             LiftShare>;
+                             LiftShare, PvpStrike, PvpResult, PvpNative>;
 
 MessageType type_of(const Message& message);
 
