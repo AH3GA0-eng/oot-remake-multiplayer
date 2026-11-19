@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_boss_native.h"
+#include "coop/protocol/animation_words.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -153,6 +154,13 @@ void Table::Publish(const std::vector<Boss>& bosses) {
                 // skipped request answered as taken): its AI may wait for a move its body never ran and never ask
                 // the held one's end. Its brain verb is set again once (Step): it chooses from what its body does.
                 // A copy in its own time (its stun of our hit, our event, its start) ran its own AI: left as it is.
+                if (e.role == Role::owner && b.role == Role::copy && RunsOwnStart(b.name) &&
+                    (steps_ < e.seen_since + kStartSteps || PlaysOwnStart(b.animation))) {
+                    // #238: ours was handed over during its own start: the start runs on here, then the owner's
+                    // state (taking its verbs now skipped the appear and left it unseen).
+                    e.react_until = std::max(e.react_until, steps_ + kStartSteps);
+                    Note(b.name + ": made a copy during its own start (appear): it runs on, then the owner's state");
+                }
                 if (e.role == Role::copy && b.role == Role::owner && e.wanted && !b.plain && !OwnTime(e)) {
                     e.rechoose = true;
                     Note(b.name + ": its AI did not run its body as a copy: it chooses again");
@@ -186,6 +194,7 @@ void Table::Publish(const std::vector<Boss>& bosses) {
             }
         } else {
             e.actor = b.actor;
+            e.seen_since = steps_;
             Note(b.name + ": native boss sync on (BSA " + Hex(b.bsa) + ", " +
                  (b.role == Role::owner ? "ours" : "a copy") + ")");
             if (b.role == Role::copy && RunsOwnStart(b.name)) {
@@ -197,6 +206,14 @@ void Table::Publish(const std::vector<Boss>& bosses) {
                 e.react_until = steps_ + kStartSteps;
                 Note(b.name + ": a new copy: its own start (appear) runs first, then the owner's state");
             }
+        }
+        if (b.role == Role::copy && RunsOwnStart(b.name) && PlaysOwnStart(b.animation) && !e.dying &&
+            steps_ < e.seen_since + kStartMaxSteps && e.react_until <= steps_ + kLookBackSteps) {
+            // #238: its start animation still plays as its own time ends: the appear finishes first (bounded).
+            if (e.react_until <= steps_) {
+                Note(b.name + ": its start (appear) still plays: its own start runs on");
+            }
+            e.react_until = std::min(e.seen_since + kStartMaxSteps, steps_ + kStartSteps);
         }
         e.role = b.role;
         e.name = b.name;
@@ -265,8 +282,8 @@ void Table::Hold(Entry& e, const Boss& b) {
         e.hold_life = b.life;
         e.hold_rechoices = 0;
     }
-    if (!same || event_ || e.dying || b.animation.empty() || !b.life) {
-        // A new move, or none to judge (our event's, its death's, nothing read): counted from now.
+    if (!same || event_ || e.dying || !StallJudged(b.animation, b.life)) {
+        // A new move, or none to judge (our event's, its death's, a cutscene's, nothing read): counted from now.
         e.hold_since = steps_;
         e.hold_asks = 0;
         return;
@@ -454,12 +471,25 @@ bool RunsOwnStart(std::string_view name) {
     return name.starts_with("Enemy_MiddleBoss_");
 }
 
+bool PlaysOwnStart(std::string_view animation) {
+    return animation.starts_with("Appear");
+}
+
 bool OwnHitTookLife(std::optional<std::int32_t> before, std::optional<std::int32_t> after) {
     return before && after && *after < *before;
 }
 
 bool PlainDeath(std::optional<std::int32_t> life, bool owner_dead) {
     return owner_dead || (life && *life <= 0);
+}
+
+bool StallJudged(std::string_view animation, std::optional<std::int32_t> life) {
+    // Its death (an own death move before the Director's outro: the death event refused, late, or waiting; life 0
+    // whatever plays, as a Bongo Bongo hand down until it grows back) and a cutscene's animation (an event of
+    // another game's, or one ours plays before SetEvent sees it) are never a held move: re-choosing there would
+    // break the death or the cut (boss-die-0116).
+    namespace anim = coop::protocol::anim;
+    return !animation.empty() && life && *life > 0 && !anim::IsDeath(animation) && !anim::IsEvent(animation);
 }
 
 bool Table::OwnTime(const Entry& e) const {

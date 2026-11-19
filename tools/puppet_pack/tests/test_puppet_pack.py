@@ -598,6 +598,44 @@ class BuildPackTest(unittest.TestCase):
                   "Phive/ControllerSetParam/PC.phive__ControllerSetParam.bgyml"):
             self.assertNotIn(p, names)
 
+    def test_body_character_controller_default_preset(self):
+        # crash-0116-b: the player's "Player" preset builds PlayerRagdoll, which needs the ragdoll the body
+        # leaves out (null write at guest 0x70). The body's controller runs the default preset, as NPCs do.
+        player = {"PresetTypeName": "Player", "GravityScale": 1.0, "DefaultMoveState": "OnGround",
+                  "MoveStateParam": {"PlayerOnGround": {"$type": "phive__CharacterMoveStateOnGroundParam"}},
+                  "UpdateComponentParam": {"InteractWithRagdoll": {"Settings": {}}, "Rotate": {"A": 1},
+                                           "BounceSuppressor": {}, "FloatWaterExtension": {},
+                                           "ForceFieldExtension": {}, "GroundEdgeUnstucker": {}}}
+        self.assertEqual(build.body_character_controller(player),
+                         {"GravityScale": 1.0, "DefaultMoveState": "Free", "UpdateComponentParam": {"Rotate": {"A": 1}}})
+        self.assertEqual(player["PresetTypeName"], "Player")  # the source is not changed
+        # Player_Child's own: only InteractWithRagdoll and PlayerOnGround, so both maps go.
+        child = {"PresetTypeName": "Player", "UpdateComponentParam": {"InteractWithRagdoll": {}},
+                 "MoveStateParam": {"PlayerOnGround": {}}, "UserContactCollectionName": "Contact_0_cct"}
+        self.assertEqual(build.body_character_controller(child),
+                         {"UserContactCollectionName": "Contact_0_cct", "DefaultMoveState": "Free"})
+        # An NPC-like controller keeps what the default preset has.
+        npc = {"MoveStateParam": {"OnGround": {"X": 1}}, "UpdateComponentParam": {"FloatWater": {}, "Rotate": {}}}
+        self.assertEqual(build.body_character_controller(npc), dict(npc, DefaultMoveState="Free"))
+        for name in ("PlayerRagdoll", "InteractWithRagdoll", "PlayerOnGround"):
+            self.assertNotIn(name, build.BODY_UPDATE_COMPONENTS + build.BODY_MOVE_STATES)
+
+    def test_pack_body_player_preset_dropped(self):
+        # Every body (child and adult; the _Pvp copy's goes through the same puppet_body) drops the Player preset.
+        for variant in ("Child", "Adult"):
+            members = with_body(fake_player_pack(variant))
+            cct_paths = [p for p in members if p.startswith(build.CHARACTER_DIR)]
+            for p in cct_paths:
+                doc = byml.loads(members[p])
+                doc["PresetTypeName"] = "Player"
+                doc["UpdateComponentParam"] = dict(doc.get("UpdateComponentParam") or {}, InteractWithRagdoll={})
+                members[p] = byml.dumps(doc)
+            pack, _, _, _ = build.build_pack(members, variant, body=True)
+            cct = byml.loads(sarc.read(pack)[build.body_paths("CoopPuppet_" + variant)[2]])
+            self.assertNotIn("PresetTypeName", cct)
+            self.assertNotIn("InteractWithRagdoll", cct.get("UpdateComponentParam") or {})
+            self.assertEqual(cct["DefaultMoveState"], "Free")
+
     def test_pack_body_wins_over_perception(self):
         members = with_body(fake_player_pack("Child"))
         seen_by = build.perception_members(fake_perception_pack())

@@ -1263,6 +1263,13 @@ private:
                std::vector<coop::protocol::Message>& send);
     // gohma-sync: an egg of ours still on the walk, marked hatched, near `at`.
     Object* HatchedSibling(std::uint8_t self, const coop::protocol::Vec3& at);
+    // boss-larva-0116: an egg id whose hatch this game shares when it owns it
+    // (placed, or made: a boss laid it); its owner is checked by the caller.
+    static bool HatchIsOurs(const coop::protocol::ObjectId& id);
+    // boss-larva-0116: a made egg we own left the walk alive: its remove
+    // (unless already sent), then eggs_ or its matched sibling freed.
+    void EndMadeEgg(std::uint8_t self, const Object& o, std::uint16_t epoch, std::uint64_t now_us,
+                    std::vector<coop::protocol::Message>& send, bool remove);
     // boss-sync-2 (issue 178): a fresh hatchling next to a copy of another
     // game's egg (still on the walk, or gone alive at most kHatchWindowUs
     // before, copy_eggs_): our game hatched it through its own AI.
@@ -1297,6 +1304,9 @@ private:
         std::uint16_t epoch = 0;
         coop::protocol::Vec3 position{};
         std::uint64_t at = 0;
+        // boss-larva-0116: an egg our boss laid (made): its OBJECT_REMOVE went
+        // as it left, so no second one and no listing.
+        bool removed = false;
     };
     std::vector<Egg> eggs_;
     // churn-b: placed objects off the walk without a delete request (SetDeleteEvents).

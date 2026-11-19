@@ -141,11 +141,11 @@ bool Track::Add(const Point& p) {
     return true;
 }
 
-Vec3 Track::Shown(std::uint64_t now_us, bool ballistic) const {
+Vec3 Track::Shown(std::uint64_t now_us, bool ballistic, std::uint64_t behind_us) const {
     if (!last_) {
         return {};
     }
-    const std::uint64_t t = now_us - std::min(now_us, kBehindUs);
+    const std::uint64_t t = now_us - std::min(now_us, behind_us);
     if (points_.empty() || t <= points_.front().time_us) {
         return points_.empty() ? last_->position : points_.front().position;
     }

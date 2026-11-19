@@ -20,7 +20,9 @@ stick 0 0.3 8           # turn to face up the path
 press ZL                # camera behind B
 wait 60
 mark ready
-wait 1080
+wait 700
+mark b-deku             # A has put the Deku Shield on (A: deku-on)
+wait 710
 mark b-flags            # after A's gold-flag and adult-flags marks
 wait 1500
 mark b-rewarp           # A back after its warp
