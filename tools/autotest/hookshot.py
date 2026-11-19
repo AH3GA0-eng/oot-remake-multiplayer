@@ -539,52 +539,66 @@ class Player:
         if self.link_pos() is None and self.mem_ok is False:
             self.log("coop: test %s skipped (no position on hookshot without guest memory)" % s.kind)
             return t0
+        # The step's keys (toward X Z TICKS A: a grab) are held for the whole step on a connection of their own:
+        # the stick below is let go and sent again every steer_every, and a release lets go of every input of
+        # its connection (Longshot docs/control.md "release": another client's inputs stay). With the keys on
+        # the stick's connection the grab was dropped and pressed again 4 times a second, so a pull never
+        # happened (deku-block-147-probe, #147: B's Link let go and walked 3 m back from the block).
+        keys = self.connect() if s.buttons and self.connect else None
+        stick_keys = None if keys else s.buttons
+        if keys:
+            keys.request("press", buttons=s.buttons, frames=max(1, min(216000, int(s.ticks * 4) + 60)), wait=False)
         last_pos, last_push, stuck_since, detour_until, detour = None, None, None, 0.0, 1
         held = False
-        while True:
-            now = self.clock()
-            if now >= end:
-                if s.kind == "goto":
-                    self.log("coop: test goto timed out")
-                break
-            pos = self.link_pos()
-            if pos is None:
-                self._until(now + self.steer_every)
-                continue
-            dx, dz = s.x - pos[0], s.z - pos[2]
-            dist = math.hypot(dx, dz)
-            if s.kind == "goto" and dist <= s.radius:
-                self.log("coop: test goto reached %.1f %.1f" % (pos[0], pos[2]))
-                break
-            if last_pos is not None and last_push is not None:
-                mx, mz = pos[0] - last_pos[0], pos[2] - last_pos[2]
-                moved = math.hypot(mx, mz)
-                if moved > 0.05:
-                    # world (x, -z) is the stick's frame turned by self.angle (stick up = away from the camera)
-                    seen = _wrap(math.atan2(-mz, mx) - math.atan2(last_push[1], last_push[0]))
-                    self.angle = seen if not self.learned else _wrap(self.angle + 0.5 * _wrap(seen - self.angle))
-                    self.learned = True
-                    stuck_since = None
-                elif stuck_since is None:
-                    stuck_since = now
-                elif s.kind == "goto" and now - stuck_since >= 1.0 and now >= detour_until:
-                    # Only goto walks round what stops it. A toward that stops is pushing (a block, a grave,
-                    # into a crawl hole): the game needs the stick held straight on, and a step aside slid
-                    # Link off the Deku block's face (big-run-0115 deku-block, #147: the block never moved).
-                    detour_until, detour, stuck_since = now + 0.5, -detour, None
-            want = math.atan2(-dz, dx) - self.angle
-            if now < detour_until:
-                want += detour * math.pi / 2
-            mag = 1.0 if s.kind == "toward" else max(0.45, min(1.0, dist / 3.0))
-            push = (round(math.cos(want) * mag, 3), round(math.sin(want) * mag, 3))
+        try:
+            while True:
+                now = self.clock()
+                if now >= end:
+                    if s.kind == "goto":
+                        self.log("coop: test goto timed out")
+                    break
+                pos = self.link_pos()
+                if pos is None:
+                    self._until(now + self.steer_every)
+                    continue
+                dx, dz = s.x - pos[0], s.z - pos[2]
+                dist = math.hypot(dx, dz)
+                if s.kind == "goto" and dist <= s.radius:
+                    self.log("coop: test goto reached %.1f %.1f" % (pos[0], pos[2]))
+                    break
+                if last_pos is not None and last_push is not None:
+                    mx, mz = pos[0] - last_pos[0], pos[2] - last_pos[2]
+                    moved = math.hypot(mx, mz)
+                    if moved > 0.05:
+                        # world (x, -z) is the stick's frame turned by self.angle (stick up = away from the camera)
+                        seen = _wrap(math.atan2(-mz, mx) - math.atan2(last_push[1], last_push[0]))
+                        self.angle = seen if not self.learned else _wrap(self.angle + 0.5 * _wrap(seen - self.angle))
+                        self.learned = True
+                        stuck_since = None
+                    elif stuck_since is None:
+                        stuck_since = now
+                    elif s.kind == "goto" and now - stuck_since >= 1.0 and now >= detour_until:
+                        # Only goto walks round what stops it. A toward that stops is pushing (a block, a grave,
+                        # into a crawl hole): the game needs the stick held straight on, and a step aside slid
+                        # Link off the Deku block's face (big-run-0115 deku-block, #147: the block never moved).
+                        detour_until, detour, stuck_since = now + 0.5, -detour, None
+                want = math.atan2(-dz, dx) - self.angle
+                if now < detour_until:
+                    want += detour * math.pi / 2
+                mag = 1.0 if s.kind == "toward" else max(0.45, min(1.0, dist / 3.0))
+                push = (round(math.cos(want) * mag, 3), round(math.sin(want) * mag, 3))
+                if held:
+                    self._release()
+                self._hold(stick_keys, push, None, self.steer_every * TICKS * 2)
+                held = True
+                last_pos, last_push = pos, push
+                self._until(min(end, now + self.steer_every))
+        finally:
             if held:
                 self._release()
-            self._hold(s.buttons, push, None, self.steer_every * TICKS * 2)
-            held = True
-            last_pos, last_push = pos, push
-            self._until(min(end, now + self.steer_every))
-        if held:
-            self._release()
+            if keys:
+                keys.request("release")
+                keys.close()
         return self.clock()
 
     # warps: the bridge's teleport, asked again until the game takes it (it refuses during a load or an event).
