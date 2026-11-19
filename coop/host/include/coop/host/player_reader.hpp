@@ -110,11 +110,12 @@ class PlayerReader {
   std::optional<std::string> read_slot_name(std::uint32_t slot_index);
   // The same for one of the EquipmentUser's armor links (after the slots).
   std::optional<std::string> read_armor_link_name(std::uint32_t link_index);
-  // Fills an empty or unknown armor flag (`head`, `armor`, `boots`) from the
-  // piece the game really wears in its armor links (issue 91): masks and the
-  // Hover/Iron Boots are ZR items, worn by the game's own use call, the way
-  // the child's bracelet is worn without EquipHandArmor.
-  void fill_worn_armor(protocol::Equipment& e);
+  // The pieces the game draws as an actor in its armor links (masks, the
+  // Goron/Zora Tunics, the Hover/Iron Boots, the gauntlets and the child's
+  // bracelet) are sent as the links hold them, not as the PlayerStatus.Equip*
+  // flags name them (issue 91, row 148): a flag outlives an age change, so a
+  // child whose flag still names the adult's Golden Gauntlets wears none.
+  void wear_from_links(protocol::Equipment& e);
   // The piece behind the link at EquipmentUser + `link_offset`.
   std::optional<std::string> read_link_name(std::uint64_t link_offset);
   GameMemory& memory_;
