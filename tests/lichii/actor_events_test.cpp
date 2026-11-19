@@ -197,13 +197,27 @@ TEST_CASE("boss-die-0116: a death kept past its revive stays kept on the steps a
     kept.Alive(kGohma);
     CHECK_FALSE(kept.Kept(kGohma));
     CHECK_FALSE(SkipRevive(kept, kGohma, false));
-    // A full table keeps the oldest marks and drops the newest (never another component's).
-    for (std::uint64_t i = 1; i <= KeptDeaths::kSlots + 2; ++i) {
+    // Review C1: more deaths than slots (dead copies are deleted, never read alive): the newest are kept, the 17th
+    // death still skips its revive, the oldest gave up its slot.
+    for (std::uint64_t i = 1; i <= KeptDeaths::kSlots + 1; ++i) {
+        CHECK(SkipRevive(kept, i * 0x1000, true));
+    }
+    CHECK(SkipRevive(kept, (KeptDeaths::kSlots + 1) * 0x1000, false));
+    CHECK(SkipRevive(kept, 2 * 0x1000, false));
+    CHECK_FALSE(kept.Kept(0x1000));
+    // Many more (a long session): always the newest kSlots.
+    for (std::uint64_t i = 100; i < 100 + 5 * KeptDeaths::kSlots; ++i) {
         kept.Keep(i * 0x1000);
     }
-    CHECK(kept.Kept(0x1000));
-    CHECK(kept.Kept(KeptDeaths::kSlots * 0x1000));
-    CHECK_FALSE(kept.Kept((KeptDeaths::kSlots + 1) * 0x1000));
+    for (std::uint64_t i = 100 + 4 * KeptDeaths::kSlots; i < 100 + 5 * KeptDeaths::kSlots; ++i) {
+        CHECK(kept.Kept(i * 0x1000));
+    }
+    CHECK_FALSE(kept.Kept((100 + 4 * KeptDeaths::kSlots - 1) * 0x1000));
+    // A scene load: none kept.
+    kept.Clear();
+    CHECK_FALSE(kept.Kept((100 + 5 * KeptDeaths::kSlots - 1) * 0x1000));
+    CHECK(SkipRevive(kept, 0x7000, true));  // and it keeps again after
+    CHECK(kept.Kept(0x7000));
     // Kept twice: one slot (freed once by Alive).
     KeptDeaths twice;
     twice.Keep(kGohma);

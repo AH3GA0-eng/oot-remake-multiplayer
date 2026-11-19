@@ -293,7 +293,9 @@ inline std::atomic<std::uint64_t>& RevivesKeptSkipped() {
 // 1 by its next frame's step (Gohma's callback answers 1 outside her chance time): the skip held one frame. The
 // components whose death we kept past their revive are kept here; their later steps at 0 skip it too, until a step
 // reads that component alive again (a heal, or a new actor's Life component at the same address: every actor starts
-// with a life above 0). Any thread (the steps run on the game's workers); a full table keeps the oldest marks.
+// with a life above 0). Any thread (the steps run on the game's workers). The newest kSlots deaths are kept (a ring: a
+// new one takes the oldest's slot; a dead copy is deleted and never read alive, so its slot is never freed that way),
+// and the table is cleared at a scene load and a new game process (no Life component of the scene before is left).
 class KeptDeaths {
 public:
     static constexpr std::size_t kSlots = 16;
@@ -301,12 +303,7 @@ public:
         if (component == 0 || Kept(component)) {
             return;
         }
-        for (auto& slot : slots_) {
-            std::uint64_t empty = 0;
-            if (slot.compare_exchange_strong(empty, component, std::memory_order_acq_rel)) {
-                return;
-            }
-        }
+        slots_[next_.fetch_add(1, std::memory_order_relaxed) % kSlots].store(component, std::memory_order_release);
     }
     bool Kept(std::uint64_t component) const noexcept {
         if (component == 0) {
@@ -330,8 +327,16 @@ public:
         }
     }
 
+    // A scene load or a new game process: none of the components kept is there any more.
+    void Clear() noexcept {
+        for (auto& slot : slots_) {
+            slot.store(0, std::memory_order_release);
+        }
+    }
+
 private:
     std::array<std::atomic<std::uint64_t>, kSlots> slots_{};
+    std::atomic<std::size_t> next_{0};  // the slot the next kept death takes (the oldest)
 };
 inline KeptDeaths& TheKeptDeaths() {
     static KeptDeaths kept;
