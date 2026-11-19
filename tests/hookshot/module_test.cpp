@@ -682,16 +682,18 @@ TEST_CASE("hookshot: the Discord status header in patch 0026 is hookshot/src's, 
     const std::string rpc = PatchedCode(patch, "host/discord_rpc.c");
     REQUIRE_FALSE(rpc.empty());
     const auto has = [&rpc](const char* code) { return rpc.find(Squashed(code)) != std::string::npos; };
-    CHECK(has("hos_discord_activity(activity, cap, \"Longshot\", version, LONGSHOT_DISCORD_IMAGE_DEFAULT, &s->words,"));
+    CHECK(has("hos_discord_activity(activity, sizeof activity, \"Longshot\", release, COOP_DISCORD_IMAGE_DEFAULT, &words,"
+              " module_line,"));
     CHECK(has("GetProcAddress(m, \"hos_coop_discord_state\")"));
     CHECK(has("dlsym(m, \"hos_coop_discord_state\")"));
+    // Longshot v3.0.0-rc.8 writes its own status from a template (host/discord_activity.c). The header's frame is used
+    // only with one of 0026's keys or the module's line; with none, Longshot's own frame, untouched.
+    CHECK(has("if (*words.image || *words.details || *words.state || *words.large_text || *module_line) {"));
+    CHECK(has("discord_settings_line(&settings, line); read_words_line(line);"));
+    CHECK(has("if (!module_state(module_line, sizeof module_line)) *module_line = 0;"));
     // Words or a frame that do not fit (hos_discord_activity / hos_discord_set_activity give 0 and "": the
-    // header's test) send no frame, and that is no broken connection.
-    CHECK(has("if (!hos_discord_set_activity(json, sizeof json, nonce + 1, process_id(), activity)) return -1; ++nonce;"
-              " if (!write_frame(p, OP_FRAME, json)) return 0;"));
-    CHECK(has("const int made = make_activity(activity, sizeof activity, &set, module_line, started);"));
-    CHECK(has("if (made && ipc != IPC_NONE && (now_ms() >= send_at || strcmp(activity, sent))) {"));
-    CHECK(has("const int r = send_activity(ipc, activity); if (r < 0) {"));
+    // header's test) fall back to Longshot's own frame: something is always sent, and that is no broken connection.
+    CHECK(has("hos_discord_set_activity(json, cap, nonce, process_id(), activity)) return;"));
     const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
     CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_discord_state(char* out, size_t cap) noexcept") != std::string::npos);
 }
@@ -1117,11 +1119,11 @@ TEST_CASE("hookshot: patch 0018's screens' tracker and menu state build on Linux
 
 TEST_CASE("hookshot: every patch touches only what Longshot's Linux AppImage ships, so the Linux kit applies it") {
     // tools/release/kit/linux-longshot/scripts/build.sh applies every hookshot/patches/*.patch to a copy of the
-    // AppImage's usr/share/longshot, which holds only what Longshot's scripts/linux/appimage.sh copies (v3.0.0-rc.7):
+    // AppImage's usr/share/longshot, which holds only what Longshot's scripts/linux/appimage.sh copies (v3.0.0-rc.8):
     // no tests/, docs/, .forgejo/, most of third_party/. A hunk on anything else applies on Windows' full source and
     // stops every Linux build. Keep this list to appimage.sh's when the pin moves: the list is for kShippedFor, and
     // the test fails on any other tag in hookshot/LINUX.txt until the list is re-checked and kShippedFor moved.
-    const std::string kShippedFor = "v3.0.0-rc.7";
+    const std::string kShippedFor = "v3.0.0-rc.8";
     const std::string linux_pin = ReadFile(kRepo / "hookshot" / "LINUX.txt");
     const auto tag_at = linux_pin.find("\ntag=");
     REQUIRE(tag_at != std::string::npos);

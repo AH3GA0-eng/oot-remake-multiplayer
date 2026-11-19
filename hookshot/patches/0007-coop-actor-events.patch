@@ -1,4 +1,4 @@
-From 0bd45b0669987236fa7cf6a8145a0d3ead7f7e94 Mon Sep 17 00:00:00 2001
+From e7fa9348e19b27ba098cc3846bad5ca23c089a14 Mon Sep 17 00:00:00 2001
 From: coop-fetch <coop-fetch@localhost>
 Date: Thu, 12 Nov 2026 13:30:00 -0900
 Subject: [PATCH] Co-op actor events: creates, deletes and the Life step go to
