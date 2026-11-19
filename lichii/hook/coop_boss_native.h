@@ -26,7 +26,9 @@
 // are its own AI's reaction), the copy's own changes run and the owner's
 // wait. Its own changes skipped just before (the event or the hit is seen up
 // to a few frames late) are made then, late. A new mid-boss copy also runs
-// its own start (its appear, issue 62) for kStartSteps. Afterwards the copy starts again
+// its own start (its appear, issue 62) for kStartSteps, and so does one of ours
+// handed to another game during its start, and any whose start animation still
+// plays (#238), up to kStartMaxSteps. Afterwards the copy starts again
 // from the owner's state. The owner keeps nothing of its own events (their
 // verbs belong to its cutscene, not the fight) and sends its brain verb as a
 // change once the event is over.
@@ -102,6 +104,9 @@ enum class Role : std::uint8_t { owner, copy };
 // by its own AI with no intro event to run it (a dungeon boss's intro is an
 // event: SetEvent covers it).
 bool RunsOwnStart(std::string_view name);
+// #238: whether a mid-boss's AS slot 0 animation is its start (the Lizalfos's 'Appear': it jumps into the fight
+// and shows only once its own appear has played).
+bool PlaysOwnStart(std::string_view animation);
 
 // Whether a plain enemy's death runs here now: its life is 0 in our game, or its owner's died.
 bool PlainDeath(std::optional<std::int32_t> life, bool owner_dead);
@@ -313,6 +318,13 @@ public:
     // Steps a new mid-boss copy runs its own start (RunsOwnStart; about 3 s:
     // a Lizalfos's jump into the fight) before the owner's state.
     static constexpr std::uint64_t kStartSteps = 180;
+    // #238 (Revirie's 0.11.0 log, Dodongo's Cavern 2F): our two Lizalfos were made ours during player 1's
+    // FocusOnEnemy_02 and handed to player 1 while their appear still played; as copies they took the owner's
+    // verbs at once, the appear never finished ('Appear', moved 0.00) and one stayed unseen on our screen while it
+    // fought. A mid-boss of ours made a copy within kStartSteps of its first sighting, or while its start
+    // animation plays (PlaysOwnStart), runs its own start on for kStartSteps; a copy whose start animation still
+    // plays when that time ends keeps it, up to kStartMaxSteps from its first sighting (about 10 s).
+    static constexpr std::uint64_t kStartMaxSteps = 600;
     // A shot's end counts for a boss actor this near (metres, the actor's
     // place: Gohma's eye is about 3 m from it on the floor and on the
     // ceiling, King Dodongo's mouth about 4 m). A wall hit this close only
@@ -373,6 +385,7 @@ private:
         // that call is made (Step's after_call); a call not made asks it again. A queue cleared meanwhile: none.
         enum class Asking : std::uint8_t { none, due, late } asking = Asking::none;
         std::uint64_t react_until = 0;  // (also a new mid-boss copy's start, kStartSteps)
+        std::uint64_t seen_since = 0;   // the step it was first seen in our walk (its start's: #238)
         bool held = false;
         // Owner: our event ended: send our brain verb as a change.
         bool record_after_event = false;

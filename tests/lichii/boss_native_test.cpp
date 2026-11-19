@@ -755,6 +755,94 @@ TEST_CASE("native boss: a new mid-boss copy runs its own start, then takes the o
     CHECK(t.OnBrainVerb(kBsa, 61, false, false));
 }
 
+TEST_CASE("native boss: a mid-boss of ours handed over during its start runs its start on (#238)") {
+    // Revirie's 0.11.0 log: our two Lizalfos were handed to player 1 while their appear still played; the copy
+    // took the owner's verbs at once, stayed at 'Appear' (moved 0.00) and was unseen on our screen.
+    CHECK(PlaysOwnStart("Appear"));
+    CHECK_FALSE(PlaysOwnStart("Wait"));
+    CHECK_FALSE(PlaysOwnStart(""));
+    auto liz = [](Role role, std::uint8_t owner, std::string anim) {
+        return Boss{kActor, kBsa, role, "Enemy_MiddleBoss_Lizalfos", owner, 0, false, false, false, std::move(anim)};
+    };
+    FakeGuest g;
+    const std::int32_t at = 60;
+    g.Write(kBsa + addr::kBsaBrainVerb, &at, 4);
+    SUBCASE("handed over just after it was made: its start runs on") {
+        Table t;
+        t.SetOn(true, true);
+        t.Publish({liz(Role::owner, 3, "Wait")});
+        for (int i = 0; i < 20; ++i) {
+            CHECK_FALSE(t.Step(g, false, 0, kMain));
+        }
+        t.Publish({liz(Role::copy, 1, "Wait")});
+        t.Receive(kActor, BossBsa{3, 62, std::nullopt, {}});
+        CHECK_FALSE(t.OnBrainVerb(kBsa, 61, false, false));  // its own appear runs
+        for (std::uint64_t i = 0; i + 1 < Table::kStartSteps; ++i) {
+            CHECK_FALSE(t.Step(g, false, 0, kMain));
+        }
+        auto c = t.Step(g, false, 0, kMain);
+        REQUIRE(c);
+        CHECK(c->x[1] == 62);  // then the owner's state
+        const auto notes = t.TakeNotes();
+        CHECK(std::any_of(notes.begin(), notes.end(),
+                          [](const std::string& n) { return n.find("during its own start") != std::string::npos; }));
+    }
+    SUBCASE("handed over long after, its appear still playing: its start runs on") {
+        Table t;
+        t.SetOn(true, true);
+        t.Publish({liz(Role::owner, 3, "Wait")});
+        for (std::uint64_t i = 0; i < Table::kStartSteps + 10; ++i) {
+            CHECK_FALSE(t.Step(g, false, 0, kMain));
+        }
+        t.Publish({liz(Role::copy, 1, "Appear")});
+        t.Receive(kActor, BossBsa{3, 62, std::nullopt, {}});
+        CHECK_FALSE(t.OnBrainVerb(kBsa, 61, false, false));
+    }
+    SUBCASE("handed over long after, in the fight: the owner's verbs at once (as before)") {
+        Table t;
+        t.SetOn(true, true);
+        t.Publish({liz(Role::owner, 3, "Wait")});
+        for (std::uint64_t i = 0; i < Table::kStartSteps + 10; ++i) {
+            CHECK_FALSE(t.Step(g, false, 0, kMain));
+        }
+        t.Publish({liz(Role::copy, 1, "Walk")});
+        t.Receive(kActor, BossBsa{3, 62, std::nullopt, {}});
+        CHECK(t.OnBrainVerb(kBsa, 61, false, false));
+    }
+    SUBCASE("a new copy whose appear outlasts its start time: runs on, up to kStartMaxSteps") {
+        Table t;
+        t.SetOn(true, true);
+        t.Publish({liz(Role::copy, 1, "Appear")});
+        t.Receive(kActor, BossBsa{3, 62, std::nullopt, {}});
+        std::uint64_t own = 0;
+        for (std::uint64_t i = 0; i < Table::kStartMaxSteps + 50; ++i) {
+            t.Publish({liz(Role::copy, 1, "Appear")});
+            if (t.Step(g, false, 0, kMain)) {
+                break;  // the owner's state is put in: its own time is over
+            }
+            ++own;
+        }
+        CHECK(own >= Table::kStartSteps);
+        CHECK(own + 1 >= Table::kStartMaxSteps);
+        CHECK(own < Table::kStartMaxSteps + 2);
+    }
+    SUBCASE("a new copy whose appear ended: the owner's state after kStartSteps (as before)") {
+        Table t;
+        t.SetOn(true, true);
+        t.Publish({liz(Role::copy, 1, "Appear")});
+        t.Receive(kActor, BossBsa{3, 62, std::nullopt, {}});
+        std::uint64_t own = 0;
+        for (std::uint64_t i = 0; i < Table::kStartMaxSteps; ++i) {
+            t.Publish({liz(Role::copy, 1, "Walk")});
+            if (t.Step(g, false, 0, kMain)) {
+                break;
+            }
+            ++own;
+        }
+        CHECK(own + 1 == Table::kStartSteps);
+    }
+}
+
 // Player report #105: a black screen after Gohma's death in the host's game. The death setting our game is asked
 // (InsideTheDekuTree_BossDie) runs her own death in our copy; past the event the copy rules skipped its own
 // changes again and its Life step held her at 1, so the death never finished (no fade back, no warp).
