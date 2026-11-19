@@ -174,6 +174,23 @@ class RunTest(unittest.TestCase):
         self.assertIsNone(res[0][2])
         self.assertTrue(os.path.isfile(os.path.join(self.tmp, "R", "g1", "walk-no-folder.txt")))
 
+    def test_a_run_keeps_run_ps1s_output_in_its_folder(self):
+        # testkit-0116-3 smoke: two runs "run.ps1 exit 1" after "scenario played", no FAILED.txt; hookshot.py's
+        # traceback went to stderr, which was dropped once the folder was found.
+        planned = g.plan(g.parse_groups("[g1]\nwalk\n"), self.tmp, os.path.join(self.tmp, "R"), "S.exe")
+
+        def runner(cmd):
+            folder = os.path.join(cmd[cmd.index("-Shots") + 1], "walk", "t")
+            write(os.path.join(folder, "steps.txt"), "scenario played\n")
+            return types.SimpleNamespace(returncode=1, stdout="hookshot: ...\n%s\n" % folder,
+                                         stderr="Traceback (most recent call last):\nPermissionError: x\n")
+
+        res = g.run_groups(planned, say=lambda *_: None, runner=runner)
+        with open(os.path.join(res[0][2], "run-out.txt"), encoding="utf-8") as f:
+            kept = f.read()
+        self.assertTrue(kept.startswith("exit 1\n"))
+        self.assertIn("PermissionError: x", kept)
+
     def test_runs_without_folder_or_that_raise_are_fail_rows(self):
         # Review must-fix 3: a run that left no run folder, or broke inside the group thread, is FAIL in the table.
         root = os.path.join(self.tmp, "R")
@@ -289,6 +306,15 @@ class MergeTest(unittest.TestCase):
         self.assertTrue(any(line.startswith("| g1 walk | PLAYED |") for line in lines))
         self.assertTrue(any(line.startswith("| g2 chest | PASS |") and "got item 42" in line for line in lines))
         self.assertEqual(lines[-1], "3 run(s): 2 PASS, 1 PLAYED -> PASS")
+
+    def test_an_expect_reads_game_out_when_the_log_copy_is_missing(self):
+        # hookshot_log-X.txt is only a copy of game-out-X.txt (hookshot.py copy_log): a copy that failed leaves the
+        # original, which is graded (testkit-0116-3 smoke: B's copy missing, B's lines all in game-out-B.txt).
+        self.run_folder("g1", "players", {"exit": 0, "expects": [["A", "coop: connected"], ["B", "coop: connected"]]},
+                        {"hookshot_log-A.txt": "coop: connected\n", "game-out-B.txt": "[hos host] coop: connected\n"})
+        table = g.merge([self.root], rel_to=self.root)
+        self.assertIn("B: '[hos host] coop: connected'", table)   # found, not a missing B line
+        self.assertNotIn("| FAIL |", table)
 
     def test_failures(self):
         self.run_folder("g1", "failed", {"exit": 1}, {"FAILED.txt": "play: A timeout at line 12\n"})

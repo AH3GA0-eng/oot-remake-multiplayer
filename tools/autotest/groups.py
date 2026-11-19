@@ -274,6 +274,13 @@ def run_groups(planned, dry=False, say=print, runner=None):
             lines = [line.strip() for line in (p.stdout or "").splitlines() if line.strip()]
             folder = next((line for line in reversed(lines) if os.path.isdir(line)), None)
             if folder:
+                # run.ps1's own output (hookshot.py's traceback goes to stderr): kept, so a "run.ps1 exit N" with
+                # no FAILED.txt says why (testkit-0116-3 smoke: two runs exit 1 after "scenario played", cause lost).
+                try:
+                    with open(os.path.join(folder, "run-out.txt"), "w", encoding="utf-8") as f:
+                        f.write("exit %d\n--- stdout\n%s\n--- stderr\n%s" % (code, p.stdout or "", p.stderr or ""))
+                except OSError:
+                    pass
                 with open(os.path.join(folder, "run.json"), "w", encoding="utf-8") as f:
                     json.dump({"group": s["name"], "scenario": r["scenario"], "label": r["label"],
                                "expects": r["expects"], "never": r.get("never", []),
@@ -398,7 +405,9 @@ def judge_logs(folder, meta):
     code = meta.get("exit", 0)
     if code:
         return "FAIL", "run.ps1 exit %s" % code
-    logs = {x: read_text(os.path.join(folder, "hookshot_log-%s.txt" % x)) or "" for x in "AB"}
+    # hookshot_log-X.txt is a copy of game-out-X.txt (hookshot.py copy_log): a copy that failed leaves the original.
+    logs = {x: read_text(os.path.join(folder, "hookshot_log-%s.txt" % x)) or
+            read_text(os.path.join(folder, "game-out-%s.txt" % x)) or "" for x in "AB"}
     # The server another release's (misc-fails-0115's first rerun: groups.py's default server, not the lane's): no
     # co-op at all, so every co-op line is missing for that reason alone. Said as SETUP, the run proves nothing:
     # before a steps file's counts (PASS) and a run with no expect= (PLAYED) too, which would hide it.
