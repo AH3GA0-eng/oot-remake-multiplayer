@@ -19,6 +19,7 @@
 #include "coop_mod_plugins.h"
 #include "coop_mod_share.h"
 #include "coop_rando.h"
+#include "coop_shop_sale.h"
 #include "coop_runtime.h"
 
 #ifdef _WIN32
@@ -226,6 +227,7 @@ void Start() {
     };
     g_rando = std::make_unique<CoopRando::Rando>(*g_loader, std::move(rando));
     g_rando->Start();  // before the list for co-op is made: it may switch seeds
+    CoopShopSale::SetSeedHasShops(g_rando->SeedHasShops());  // docs/items.md "One-time sales": read at Host/Join
     StartSharing();
     if (Env("HOS_COOP_MODS_CODE") == "0") {
         CoopRuntime::Log("coop: mods: code mods not loaded (HOS_COOP_MODS_CODE=0)");

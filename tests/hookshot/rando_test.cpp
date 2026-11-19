@@ -1600,6 +1600,18 @@ TEST_CASE("rando: a control mod written before the Settings string gets it at th
     CHECK(has);
 }
 
+TEST_CASE("rando: a seed file that places shop items (coop_shop_sale.h)") {
+    // OOTRR 0.7.3 settings/seed.rs shops_json: an object keyed by location, written only when a slot is placed.
+    CHECK(SeedShops("{\n  \"format\": \"ootrr-seed\",\n  \"settings\": \"OOTRR1-AB\",\n  \"placements\": {},\n"
+                    "  \"shops\": {\n    \"KF Shop Item 1\": {\"item\": \"Boomerang\", \"price\": 20}\n  }\n}\n"));
+    CHECK(SeedShops("{\"shops\" :\r\n\t{ \"Market Bazaar Item 1\": {\"item\": \"Bombs (10)\", \"price\": 15, \"deal\": true}}}"));
+    CHECK_FALSE(SeedShops("{\"seed\": \"abc\", \"placements\": {}}"));
+    CHECK_FALSE(SeedShops("{\"shops\": {}}"));
+    CHECK_FALSE(SeedShops("{\"shops\": \"none\"}"));
+    CHECK_FALSE(SeedShops("{\"hint\": \"shops\"}"));
+    CHECK_FALSE(SeedShops(""));
+}
+
 TEST_CASE("rando: the settings string of a seed file") {
     // As OOTRR 0.6.1 writes it (generate default abc); 0.6.2 and 0.7.0 to 0.7.3 write the same layout (settings/seed.rs is unchanged).
     CHECK(SeedSettings("{\n  \"format\": \"ootrr-seed\",\n  \"version\": 1,\n  \"generator\": \"ootrr-core 0.6.1\",\n"

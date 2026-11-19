@@ -376,6 +376,20 @@ std::string SeedSettings(std::string_view text) {
     return SettingsString(text.substr(at + 1, end - at - 1));
 }
 
+bool SeedShops(std::string_view text) {
+    // {"format": "ootrr-seed", ..., "shops": {"KF Shop Item 1": {...}, ...}, ...} (OOTRR settings/seed.rs shops_json,
+    // written only when a slot is placed). The first "shops" key followed by ':' and an object.
+    for (auto key = text.find("\"shops\""); key != std::string_view::npos; key = text.find("\"shops\"", key + 7)) {
+        auto at = text.find_first_not_of(" \t\r\n", key + 7);
+        if (at == std::string_view::npos || text[at] != ':') continue;
+        at = text.find_first_not_of(" \t\r\n", at + 1);
+        if (at == std::string_view::npos || text[at] != '{') return false;
+        at = text.find_first_not_of(" \t\r\n", at + 1);
+        return at != std::string_view::npos && text[at] == '"';
+    }
+    return false;
+}
+
 std::vector<std::string> BuildArgs(const fs::path& seed_file, const fs::path& game_folder, const fs::path& mods_root,
                                    const std::string& folder) {
     return {"build", CoopMods::ToUtf8(seed_file), CoopMods::ToUtf8(game_folder), CoopMods::ToUtf8(mods_root), folder,
@@ -1034,6 +1048,11 @@ void Rando::Start() {
                 on_now = true;
                 playing = r.name;
             }
+        }
+        // Its seed file places shop items: co-op shares the one-time shelves' sold counters (coop_shop_sale.h).
+        seed_shops_ = on_now && SeedShops(ReadFileText(folder / CoopMods::FromUtf8(playing + ".ootrr")));
+        if (seed_shops_ && hooks_.log) {
+            hooks_.log("randomizer: " + playing + " places shop items: each one-time shelf sells once for the group");
         }
         // The seed this run plays, built beside other size tables than now: no pack actor until it is checked.
         if (on_now) {

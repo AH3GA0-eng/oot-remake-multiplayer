@@ -70,6 +70,7 @@ add_executable(coop_tests
   lichii/follow_test.cpp
   lichii/scrub_talk_test.cpp
   lichii/scrub_sale_test.cpp
+  lichii/shop_sale_test.cpp
   lichii/chests_test.cpp
   lichii/colors_test.cpp
   lichii/dungeon_test.cpp
