@@ -35,10 +35,12 @@ lines page-shown-A A min=2 coop: pause tab: our page shown \(R on System\)
 lines page-shown-B B min=1 coop: pause tab: our page shown \(R on System\)
 lines system-back-A A min=2 coop: pause tab: System back
 lines system-back-B B min=1 coop: pause tab: System back
-lines texts-A A min=1 coop: pause tab: the page's rows: 5 of 5 texts set
-lines texts-B B min=1 coop: pause tab: the page's rows: 5 of 5 texts set
+lines texts-A A min=5 coop: pause tab: live text: Coop_Live_0[0-4] at
+lines texts-B B min=5 coop: pause tab: live text: Coop_Live_0[0-4] at
 lines tab-word-A A min=1 coop: pause tab: the fifth tab filled \(its word set
 lines tab-word-B B min=1 coop: pause tab: the fifth tab filled \(its word set
-lines leave-A A min=1 coop: pause tab: the second A: co-op stops
+# proof-0116: A is the guest of a launcher session: Leave reads 'Leave: restart the game' and does not stop co-op (ae3dfe05),
+# so the idle half needs a session started from the menu; not checked here.
+lines no-stop-A A max=0 coop: pause tab: the second A: co-op stops
 lines no-bad-panes A max=0 not both parts: the Multiplayer page stays off
 shot end

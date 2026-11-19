@@ -28,6 +28,11 @@ shot on-host
 see title-on-host-A title-on-host-B
 lines focus-A A min=1 coop: title: the title's focus is on button 4$
 lines focus-B B min=1 coop: title: the title's focus is on button 4$
+play A hs-title-menu.join.txt B hs-title-menu.join.txt
+shot on-join
+lines join-A A min=1 coop: title: the title's focus is on button 5$
+lines join-B B min=1 coop: title: the title's focus is on button 5$
+play A hs-title-menu.up.txt B hs-title-menu.up.txt
 play A hs-title-menu.press.txt B hs-title-menu.press.txt
 shot pressed
 see title-pressed-A title-pressed-B
