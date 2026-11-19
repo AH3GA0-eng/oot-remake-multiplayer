@@ -823,10 +823,10 @@ std::vector<std::uint8_t> MetalFile(const std::vector<MetalEntry>& entries) {
     return out;
 }
 const char* const kHylianMetal = "Mt_Weapon_Shield_Hylian_Mtl";
-// Four BC4 blocks, every one metal (ends 200 and 120).
+// Eight BC4 blocks (a look file's texture holds 64 bytes or more), every one metal (ends 200 and 120).
 std::vector<std::uint8_t> MetalTexels() {
     std::vector<std::uint8_t> t;
-    for (int b = 0; b < 4; ++b) {
+    for (int b = 0; b < 8; ++b) {
         const std::uint8_t block[8] = {200, 120, 0x49, 0x92, 0x24, 0x49, 0x92, 0x24};
         t.insert(t.end(), block, block + 8);
     }
@@ -859,13 +859,13 @@ TEST_CASE("look parts: metal.bin is read whole or not at all") {
 
 TEST_CASE("look parts: a painted metal part loses its metal, the other blocks and an unpainted part keep it (#202)") {
     const CoopLookParts::Metal metal = *CoopLookParts::ParseMetal(
-        MetalFile({{kHylianMetal, 3, {0, 16, 40}}, {kHylianMetal, 4, {8}}, {"Other_Mtl", 3, {24}}}));
+        MetalFile({{kHylianMetal, 3, {0, 16, 64}}, {kHylianMetal, 4, {8}}, {"Other_Mtl", 3, {24}}}));
     Look look;
     std::vector<std::uint8_t> t = MetalTexels();
     // nothing painted: the game's own metal
     CHECK(CoopLookParts::PaintMetal(metal, kHylianMetal, t, look) == 0);
     CHECK(t == MetalTexels());
-    // the frame painted: its blocks 0 and 2 are 0 (block 40 is past the texels: left alone)
+    // the frame painted: its blocks 0 and 2 are 0 (offset 64 is past the texels: left alone)
     look[Part::hylian_frame] = 0xE0C030u;
     CHECK(CoopLookParts::PaintMetal(metal, kHylianMetal, t, look) == 2);
     CHECK(std::all_of(t.begin(), t.begin() + 8, [](std::uint8_t b) { return b == 0; }));
