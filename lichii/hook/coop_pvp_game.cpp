@@ -23,6 +23,7 @@
 #include "coop_objects.h"
 #include "coop_puppet.h"
 #include "coop_pvp.h"
+#include "coop_pvp_native_game.h"
 
 namespace CoopPvp {
 namespace {
@@ -257,6 +258,11 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
             local.status |= proto::status::loading;  // no Link to read: a load
         }
         for (const auto& h : hits) {
+            if (CoopPvpNativeGame::TakesStrikesFrom(h.player_number)) {
+                // PvP on real bodies judges this player's hits (PVP_STRIKE): this one would count twice.
+                LOG_INFO(Core, "coop: pvp: hit from P{} dropped: its strikes are judged natively", h.player_number);
+                continue;
+            }
             Hitter who;
             for (const auto& t : targets) {
                 if (t.number == h.player_number) {

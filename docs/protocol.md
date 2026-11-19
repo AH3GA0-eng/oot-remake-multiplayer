@@ -159,6 +159,25 @@ One player lifts, carries, throws or sets down another ([native-puppets.md](nati
 
 The server's rules (server/session.cpp `on_lift`): each of the three goes only to the player it names, with the sender's number written in, and only when both games said `LIFT_SHARE` on; a `LIFT_ASK` to a game that does not share is answered by the server itself (`LIFT_ANSWER` 4, with the asked player in the player field), and so is one whose lifter's place is not known in the lifted player's scene (no scene, another scene, or no PLAYER_SAMPLE position in the last 5 s: `LIFT_ANSWER` 6 too far), and so is one to a player whose last PLAYER_SAMPLE age is adult or not known (`LIFT_ANSWER` 7 not young; a `LIFT_PLACE` to such a player is dropped). The lifter's age is never checked. The lifted game refuses too far as well when it has no place for the lifter in its own scene. A message naming its own sender, or a player who is not there, is dropped. A lift ends in the games: the lifter's landed `LIFT_PLACE`, the lifted game's `LIFT_ANSWER` freed, or the lifted game's own wait (no place for 1 s) when the lifter leaves.
 
+### PvP on real bodies (native puppets phase 4, `PVP_STRIKE`, `PVP_RESULT`, `PVP_NATIVE`)
+
+The attacker's game finds a hit on another player's copy with the game's own collision; the victim's game decides
+([native-puppets.md](native-puppets.md), section 5). Only games with `LICHII_COOP_PVP_NATIVE=1` and a pack with
+`_Pvp` copies send these (off by default). No protocol bump: older games ignore them. 543 and 544 are kept.
+
+| Type | Name | Sender | Channel | Body |
+|---|---|---|---|---|
+| 540 | `PVP_STRIKE` | both | ownership | `u8` player field (the attacker), `u8` victim (1 to 16, not the attacker), `u32` seq, `u64` seen_us (server time of the victim's sample the copy showed), 11 x `u32` the hit's kind words (Life record +0x250 up to +0x27c), `s32` amount (0 to 80, the attacker game's: compared, never used), `u8` source (1 sword or body, 2 shot, 3 blast, 4 other; others refused), object id (10 bytes: a made object of the attacker for a shot or blast, all zero for the others; others refused), 3 x `f32` hit place, 3 x `f32` the copy's place, 3 x `f32` the attacker's place (all finite). To the victim only |
+| 541 | `PVP_RESULT` | both | ownership | `u8` player field (the victim), `u8` attacker (1 to 16, not the victim), `u32` seq (the strike's), `u8` result (0 taken, 1 guarded, 2 guard broken, 3 invincible, 4 late, 5 out of reach, 6 kept off; others refused), `s32` amount taken (0 to 80, the victim game's own), `s32` life left (0 to 80), 11 x `u32` kind words, 3 x `f32` hit place (finite). To every game in the victim's scene |
+| 542 | `PVP_NATIVE` | both | ownership | `u8` player field, `u8` on (0 or 1; others refused). Its game runs PvP on real bodies; sent after joining and every 5 s, relayed to all |
+
+The server's rules (server/session.cpp `on_pvp_strike`, `on_pvp_result`): a strike is dropped while PvP is
+off, to or from a game not `PVP_NATIVE`, between two scenes, from a player with no fresh place (5 s), whose object
+is not its own, or past 10 a second from one attacker; else relayed to the victim only. A result is relayed once, only
+from the victim a strike in flight named (by attacker and seq, for 3 s), to its scene; an attacker that leaves
+takes its strikes in flight with it, so a player who comes back with its number starts its seq again. A native attacker sends the old `PVP_HIT` (242) to
+a victim that is not native.
+
 ## Keep-alive and clock
 
 - `PING` every 250 ms from each side with the sender time; `PONG` echoes it with the receiver time. This gives the round trip and the clock offset.

@@ -93,6 +93,8 @@ CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool(
 
 #include "common/fs/path_util.h"
 #include "common/logging.h"
+#include "coop_pvp_native.h"
+#include "coop_pvp_native_game.h"
 
 namespace CoopPuppetConfig {
 namespace {
@@ -197,7 +199,18 @@ CoopPuppet::LookItems PackLook() {
 
 bool HasPack() { return !PackManifests().empty(); }
 
+// A manifest of a pack built with --puppet-pvp (native puppets phase 4).
+bool PackPvp() {
+    for (const auto& text : PackManifests()) {
+        if (CoopPvpNative::PackHasPvp(text)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void Configure(bool perceived_safe) {
+    CoopPvpNativeGame::SetPackPvp(PackPvp());
     std::vector<std::string> lines;
     auto settings = Settings(Env, PackGreenPuppets, &lines, PackTunicPuppets, PackLook);
     settings.null_reads_zero = perceived_safe;
