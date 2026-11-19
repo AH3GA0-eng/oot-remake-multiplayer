@@ -811,8 +811,12 @@ try {
         Write-File (Join-Path $ik 'hookshot\OOTRR.txt') "# pin`nrelease=$Release`nurl=https://example.invalid/ootrr`nwindows=$Name`nwindows_sha256=$sha`n"
         return $sha
     }
-    # (a program that starts and ends at once stands in for ootrr.exe: Windows' own where.exe)
-    $goodSha = & $New_OotrrZip 'OOTRR-good.zip' 'v0.5.0' "$env:SystemRoot\System32\where.exe" ''
+    # (stand-ins for ootrr.exe, compiled here: 'shuffle 1 1' ends with 0 as OOTRR's does; the bad one starts and fails)
+    $fakeGood = Join-Path $ik 'fake-good.exe'; $fakeBad = Join-Path $ik 'fake-bad.exe'
+    New-Item -ItemType Directory -Force -Path $ik | Out-Null
+    Add-Type -OutputType ConsoleApplication -OutputAssembly $fakeGood -TypeDefinition 'public static class P { public static int Main(string[] a) { return (a.Length == 3 && a[0] == "shuffle") ? 0 : 2; } }'
+    Add-Type -OutputType ConsoleApplication -OutputAssembly $fakeBad -TypeDefinition 'public static class Q { public static int Main(string[] a) { return 3; } }'
+    $goodSha = & $New_OotrrZip 'OOTRR-good.zip' 'v0.5.0' $fakeGood ''
     $r = Install-KitOotrr $ik $ig
     Check ($r.Ok -and -not $r.Why -and (Test-Path -LiteralPath (Join-Path $ig 'tools\ootrr\ootrr.exe')) -and
            (Get-Content -LiteralPath (Join-Path $ig 'tools\ootrr\coop-ootrr.txt') -TotalCount 1).Trim() -eq "v0.5.0 $goodSha" -and
@@ -831,7 +835,13 @@ try {
     Check (Test-KitOotrrStale $ik $ig) 'OOTRR install: after a failure the kit still counts it stale (the next start and Update.bat try again)'
     Check ((Test-KitOotrrRuns (Join-Path $ik 'nothing.exe')) -match 'not there') 'OOTRR runs: a missing program says so'
     # The game (or its ootrr.exe) holds the folder: the swap fails and the old folder is put back.
-    $goodSha = & $New_OotrrZip 'OOTRR-good7.zip' 'v0.7.0' "$env:SystemRoot\System32\where.exe" ''
+    # review-0116-j N1: a program that starts but fails its test (exit 3) is not swapped in either.
+    [void](& $New_OotrrZip 'OOTRR-fails.zip' 'v0.6.5' $fakeBad '')
+    $r = Install-KitOotrr $ik $ig
+    Check (-not $r.Ok -and $r.Why -match 'failed a 1-second test \(exit 3\)' -and
+           (Get-Content -LiteralPath (Join-Path $ig 'tools\ootrr\coop-ootrr.txt') -TotalCount 1).Trim() -eq "v0.5.0 $goodSha" -and
+           -not (Test-Path -LiteralPath (Join-Path $ig 'tools\ootrr.new'))) "OOTRR install: a program that exits with an error keeps the old OOTRR [$($r.Lines -join ' | ')]"
+    $goodSha = & $New_OotrrZip 'OOTRR-good7.zip' 'v0.7.0' $fakeGood ''
     $hold = [System.IO.File]::Open((Join-Path $ig 'tools\ootrr\LICENSE'), 'Open', 'Read', 'None')
     try { $r = Install-KitOotrr $ik $ig } finally { $hold.Close() }
     Check (-not $r.Ok -and $r.Why -match 'could not be put in place' -and (Test-Path -LiteralPath (Join-Path $ig 'tools\ootrr\ootrr.exe')) -and
@@ -1520,7 +1530,7 @@ try {
     Check ($r[0] -eq 0 -and $r[1] -match 'Smart App Control blocked hookshot\\game\\bin\\hookshot_coop\.dll of this kit\.' -and (Read-File "$wkit\logs\windows-checks.txt") -match 'blocked by code integrity: hookshot\\game\\bin\\hookshot_coop\.dll') "windows checks: the file Smart App Control blocked is named, from the Code Integrity log [$($r[1])]"
     # Defender took a file of the kit's game (Velvet 2026-11-19: tools\ootrr\ootrr.exe gone on every start): named
     # kit-relative in the log and said, with how to allow it; another folder's detection is not this kit's.
-    $r = Invoke-Wc $wkit -Vars @{ OOT_COOP_WC_MP = "file:_$wkit\hookshot\game\tools\ootrr\ootrr.exe|file:_C:\Elsewhere\x.exe" }
+    $r = Invoke-Wc $wkit -Vars @{ OOT_COOP_WC_MP = "file:_\\?\$wkit\hookshot\game\tools\ootrr\ootrr.exe|file:_C:\Elsewhere\x.exe" }   # (\\?\: review-0116-j N2)
     Check ($r[0] -eq 0 -and $r[1] -match 'Microsoft Defender took hookshot\\game\\tools\\ootrr\\ootrr\.exe of this kit' -and $r[1] -match 'Protection history' -and
            (Read-File "$wkit\logs\windows-checks.txt") -match 'defender detections in the kit: hookshot\\game\\tools\\ootrr\\ootrr\.exe' -and
            (Read-File "$wkit\logs\windows-checks.txt") -notmatch 'Elsewhere') "windows checks: a Defender detection in the kit is named and said [$($r[1])]"

@@ -75,8 +75,9 @@ function Get-WcDefenderTaken([string]$Kit) {
     $root = $Kit.TrimEnd('\').ToLower() + '\'
     $found = @()
     foreach ($r in $res) {
-        # ("file:_E:\kit\hookshot\game\tools\ootrr\ootrr.exe", "containerfile:_...")
-        $path = "$r" -replace '^[a-z]+:_', ''
+        # ("file:_E:\kit\hookshot\game\tools\ootrr\ootrr.exe", "containerfile:_...", and with a long-path prefix
+        # "file:_\\?\E:\kit\..." (review-0116-j N2))
+        $path = ("$r" -replace '^[a-z]+:_', '') -replace '^\\\\\?\\', ''
         if (-not $path.ToLower().StartsWith($root)) { continue }
         $name = $path.Substring($root.Length)
         if ($found -notcontains $name) { $found += $name }
