@@ -1008,10 +1008,20 @@ std::string ListValue(int players, int max, bool same_version) {
     return max > 0 ? std::to_string(players) + "/" + std::to_string(max) : std::to_string(players);
 }
 
+std::string ListName(const std::string& shown, const std::string& room) {
+    // (room names are the same name in any case on the relay: room_key)
+    const auto lower = [](char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c; };
+    const bool same = shown.size() == room.size() &&
+                      std::equal(shown.begin(), shown.end(), room.begin(),
+                                 [&](char a, char b) { return lower(a) == lower(b); });
+    if (shown.empty()) return room;
+    return same ? shown : shown + " (" + room + ")";
+}
+
 std::vector<ListLine> ListLines(const SessionView& v) {
     std::vector<ListLine> lines(kListRows);
     if (v.s.in_one || v.s.by_launcher) return lines;
-    lines[0] = v.s.online ? ListLine{"Room (host)", "Players"} : ListLine{"Game", "Players"};
+    lines[0] = ListLine{"Game", "Players"};
     const std::vector<ListLine>& list = v.s.online ? v.online_list : v.lan_list;
     if (list.empty()) {
         lines[1].name = FitTo(v.s.online ? (v.online_state.empty() ? std::string("Asking the relay...") : v.online_state)
