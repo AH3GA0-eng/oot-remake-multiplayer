@@ -839,7 +839,9 @@ public:
                 [&memory](std::uint32_t hash) { return coop::host::GameFlags(*memory).get_enum(hash); },
                 [&memory](std::uint32_t hash, std::uint32_t value) {
                     return coop::host::GameFlags::set_enum(*memory, hash, value);
-                });
+                },
+                // row 150: Get_Epona's end waits only while a race against Ingo runs here
+                [&memory](std::uint32_t hash) { return coop::host::GameFlags(*memory).get_bool(hash); });
             // Released only after a real load (0.5 s without Link), not on one
             // frame the reader missed; the scene as last read. Timed, not
             // counted in presents: high refresh (Ctrl+U) presents up to 2.75
