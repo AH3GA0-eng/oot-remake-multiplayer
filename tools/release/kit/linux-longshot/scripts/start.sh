@@ -7,6 +7,8 @@
 #
 #   bash start-squadala.sh                     all of the above
 #   bash start-squadala.sh --game FILE.nup     the game file, no question (also --exefs, --rebuild, --jobs N)
+#   bash start-squadala.sh --dlss              NVIDIA DLSS: asks for NVIDIA's license once, builds the game with it
+#                                              (--no-dlss: without it again)
 #   bash start-squadala.sh --no-update         no update check this time
 #   bash start-squadala.sh --logs              collect the logs for a bug report, start nothing
 #   bash start-squadala.sh --pack              make the puppet pack again (how you see the others), start nothing
@@ -22,8 +24,8 @@ while (($#)); do
         --logs) exec bash "$KIT/scripts/collect-logs.sh" ;;
         --pack) pack_only=1 ;;
         --game | --exefs | --jobs) build_args+=("$1" "${2-}"); shift ;;
-        --rebuild | --check-only) build_args+=("$1") ;;
-        -h | --help) sed -n '2,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --rebuild | --check-only | --dlss | --no-dlss) build_args+=("$1") ;;
+        -h | --help) sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) fail "Unknown option: $1 (bash start-squadala.sh --help lists them)" ;;
     esac
     shift
