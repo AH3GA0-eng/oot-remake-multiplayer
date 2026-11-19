@@ -111,6 +111,9 @@ Row Note(std::string text) {
     return r;
 }
 
+// The first words when a dim row is pressed, before why (its help).
+const char* const kNotNow = "Not now.";
+
 const char* const kByLauncher =
     "Co-op started with the game (Host.bat, Join.bat or coop.ini). To host or join another game, quit and start the "
     "game again.";
@@ -216,16 +219,20 @@ std::vector<Menu::Line> Menu::Lines() const {
     std::vector<Line> out;
     switch (page_) {
     case Page::kMain:
-        out.push_back({Action("Host a game", host ? (session_.state == State::kHosting ? "Hosting" : "Starting...") : "",
-                              session_.by_launcher || guest),
+        // Co-op that came with the game's start: both rows still open their page, which says so (a press must never
+        // do nothing; the owner, 2026-11-19).
+        out.push_back({Action("Host a game", session_.by_launcher ? "Co-op is on"
+                                             : host ? (session_.state == State::kHosting ? "Hosting" : "Starting...") : "",
+                              guest),
                        Act::kOpenHost,
                        session_.by_launcher ? kByLauncher
                        : guest ? "You are in a friend's game. To host your own, leave it first: Join a game, then Leave the game."
                        : host ? "Your game: the code for your friends, who joined, and Stop hosting."
                               : "Starts a game on this PC and makes a code. Send the code to your friends; they choose Join a "
                                 "game and paste it. They play on your save."});
-        out.push_back({Action("Join a game", guest ? (session_.state == State::kJoined ? "Joined" : "Joining...") : "",
-                              session_.by_launcher || host),
+        out.push_back({Action("Join a game", session_.by_launcher ? "Co-op is on"
+                                             : guest ? (session_.state == State::kJoined ? "Joined" : "Joining...") : "",
+                              host),
                        Act::kOpenJoin,
                        session_.by_launcher ? kByLauncher
                        : host ? "You are hosting. To join a friend's game, stop yours first: Host a game, then Stop hosting."
@@ -244,7 +251,9 @@ std::vector<Menu::Line> Menu::Lines() const {
     case Page::kHost: {
         const bool typing_port = typing_ && typing_act_ == Act::kHostPort;
         const std::string port_value = typing_port ? port_text_ + "_" : std::to_string(options_.host_port);
-        if (host) {
+        if (session_.by_launcher) {
+            LauncherLines(out);
+        } else if (host) {
             out.push_back({Action("Copy the code again", "Copy", session_.code.empty()), Act::kCopyInvite,
                            "Puts your code on the clipboard again. Share it in DMs only: it contains your internet address."});
             out.push_back({Action("Paste friend's answer (or Ctrl+V)", "Paste"), Act::kPasteAnswer,
@@ -269,7 +278,9 @@ std::vector<Menu::Line> Menu::Lines() const {
         break;
     }
     case Page::kJoin:
-        if (guest) {
+        if (session_.by_launcher) {
+            LauncherLines(out);
+        } else if (guest) {
             if (session_.state == State::kWaitHost) {
                 out.push_back({Action("Copy your answer code", "Copy", session_.code.empty()), Act::kCopyAnswer,
                                "Your friend's router blocks the way in: send them this answer code (it is copied "
@@ -427,6 +438,17 @@ std::vector<Menu::Line> Menu::Lines() const {
         break;
     }
     return out;
+}
+
+// The Host and Join pages of co-op that came with the game's start (Host.bat, Join.bat, coop.ini): nothing to
+// start or stop here, so they say what is on and where the players are (the page's help: kByLauncher).
+void Menu::LauncherLines(std::vector<Line>& out) const {
+    out.push_back({Note(session_.players > 1 ? "Co-op is on: " + std::to_string(session_.players) + " players"
+                                             : std::string("Co-op is on")),
+                   Act::kNone, {}});
+    out.push_back({Note("Co-op started with the game: Host.bat, Join.bat or coop.ini."), Act::kNone, {}});
+    out.push_back({Note("Who is in the game: the Lobby tab."), Act::kNone, {}});
+    out.push_back({Note("To host or join another game, start the game again."), Act::kNone, {}});
 }
 
 bool Menu::Selectable(const Line& line) const {
@@ -857,7 +879,9 @@ bool Menu::Press(Input input) {
         return true;
     case Input::kLeft:
     case Input::kRight:
-        if (line != nullptr && !line->row.fixed && line->row.kind != RowKind::kAction) {
+        if (line != nullptr && line->row.fixed && line->row.kind != RowKind::kAction) {
+            note_ = {kNotNow, line->help};
+        } else if (line != nullptr && line->row.kind != RowKind::kAction) {
             Change(line->act, input == Input::kLeft ? -1 : 1);
         }
         return true;
@@ -866,7 +890,7 @@ bool Menu::Press(Input input) {
             return true;
         }
         if (line->row.fixed) {
-            note_ = {line->help};   // (why not, said again where the eye is)
+            note_ = {kNotNow, line->help};   // (the help alone is what selecting it showed: the press would look dead)
             return true;
         }
         Decide(line->act);
@@ -1144,9 +1168,9 @@ void Menu::Click(std::size_t row, int side) {
     }
     selected_ = row;
     const Line& line = lines[row];
-    if (line.row.kind == RowKind::kAction) {
-        Press(Input::kDecide);
-    } else if (side != 0 && !line.row.fixed) {
+    if (line.row.kind == RowKind::kAction || line.row.fixed) {
+        Press(Input::kDecide);   // (a dim row: Press says why)
+    } else if (side != 0) {
         note_.clear();
         confirm_leave_ = false;
         Change(line.act, side);
@@ -1345,6 +1369,8 @@ View Menu::view() const {
         v.help = JoinedTr(session_.lines);
     } else if (line != nullptr) {
         v.help = line->help;
+    } else if (session_.by_launcher && (page_ == Page::kHost || page_ == Page::kJoin)) {
+        v.help = kByLauncher;   // (LauncherLines' page has no row to select)
     }
     if (mine && (host_page || join_page)) {
         v.hint = session_.code;
