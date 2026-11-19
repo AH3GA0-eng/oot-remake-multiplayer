@@ -86,6 +86,14 @@ inline constexpr std::uint64_t kScreenSound = 0x43e400;    // (tab, 0): the tab'
 inline constexpr std::uint64_t kMsgRefInit = 0xa66f70; // (ref): {0, 0, -1}, 24 bytes (coop_title.cpp's)
 inline constexpr std::uint64_t kMsgRefSet = 0xa6afe0;  // (ref, &"LayoutMsg/...", &"label", 1)
 inline constexpr std::uint64_t kPaneText = 0xa67d30;   // (layout, "part/T_Text_00", ref, 1, 0)
+// (path "Part/Part/Pane", layout, &layout out) -> the pane's name in the last part's layout (written to out): the game's
+// path lookup, the one kPaneText starts with (main+0x8045c4a0, read from main 2026-11-19).
+inline constexpr std::uint64_t kPathFind = 0x43c4a0;
+// (text pane, &{text, length, attributes}, 0): the pane's text, as kPaneText sets each pane it matches
+// (main+0x80459520): the text and length to its text box's set-string, which keeps them (a pointer and a length, not a
+// copy: seen in a run, 2026-11-19); the attributes kept at +0x10.
+inline constexpr std::uint64_t kPaneSetMsg = 0x439520;
+inline constexpr std::uint32_t kTextPaneKind = 2;   // a pane's kind (+0xa8 bits 22..25): a text box
 
 // Switch pad bits (nn::hid::NpadButton), as hos_coop_pad gets them.
 inline constexpr std::uint64_t kPadA = 1ull << 0, kPadB = 1ull << 1, kPadL = 1ull << 6, kPadR = 1ull << 7,

@@ -157,11 +157,16 @@ bool SetText(void* ctx, std::uint64_t layout, const std::string& path, const std
 }
 
 // --- Live text: our own words in the game's text panes ---
-// A message reference is {text, its length in bytes, the message's attributes} (main+0xa6afe0 fills it; for a missing
-// label it points at "LabelNotFound", 13). This game's message files are UTF-8. The pack adds placeholder messages
-// (strings/en.txt: Coop_Live_00..07, 64 dots each) to LayoutMsg/PlusMenu_00: the module looks one up once, writes its
-// own words into that text (the language archive stays loaded, so the text pane may read it later) and hands the
-// game's pane-text call (kPaneText) a reference with the new length.
+// The rows' text panes are tagged "=T_Btn_00" (seen in a run, 2026-11-19, on both System's buttons and ours), and the
+// game's pane-text call (kPaneText -> main+0x8045b970) sets only "@"-tagged ones: it reaches the tab's word, never a
+// row (0 panes set, its own count). So the module does what that call does for each pane it sets: the pane by the
+// game's path lookup (kPathFind: the last part's layout and the name) and its name there (kPaneByName), then the
+// pane's set-message call (kPaneSetMsg) with a reference {text, length in bytes, the message's attributes}, the
+// attributes the pane's own (+0x10, where the call keeps them).
+// The text box keeps that text where it is (a pointer and a length, not a copy: a run with every row's text in the
+// same scratch memory showed every row the last one's words, cut to its own length), so each row's text lives in a
+// message of the pack's (strings/en.txt: Coop_Live_00..07, 64 dots each, in LayoutMsg/PlusMenu_00): the module looks
+// it up for each opening of the pages and writes its words there.
 constexpr int kLiveSlots = 8;
 constexpr std::uint32_t kLivePlaceholder = 64;   // the placeholder's bytes (strings/en.txt)
 struct LiveSlot {
@@ -223,34 +228,36 @@ bool LiveLookup(void* ctx, int slot, std::uint64_t gen) {
     return true;
 }
 
-// `utf8` (at most kLivePlaceholder - 1 bytes) in the pane at `path`, through slot `slot`. True when shown.
+// `utf8` (at most kLivePlaceholder - 1 bytes) in the text pane at `path` ("Part/Part/Pane"), through slot `slot`.
+// True when shown.
 bool LiveText(void* ctx, std::uint64_t layout, std::uint64_t gen, const std::string& path, int slot,
               const std::string& utf8) {
     LiveSlot& l = g_live[slot];
     if (l.shown == utf8) return true;
     if (path.size() >= 0x40 || utf8.size() >= kLivePlaceholder || !LiveLookup(ctx, slot, gen)) return false;
+    // [0x00] the path lookup's layout, [0x10] the path, [0x60] the reference.
+    std::uint8_t b[0x80] = {};
+    std::memcpy(b + 0x10, path.c_str(), path.size() + 1);
+    const std::uint64_t base = g_api->scratch(ctx, b, sizeof b);
+    if (base == 0) return false;
+    std::uint64_t name = 0;
+    if (!Call(ctx, kPathFind, base + 0x10, layout, base, 0, 0, &name) || name == 0) return false;
+    const std::uint64_t part = Read<std::uint64_t>(base);
+    std::uint64_t table = 0, pane = 0;
+    if (part == 0 || !Call(ctx, kPaneTable, part + 0x40, 0, 0, 0, 0, &table) || table == 0) return false;
+    if (!Call(ctx, kPaneByName, table, name, 0, 0, 0, &pane) || pane == 0) return false;
+    if (((Read<std::uint32_t>(pane + 0xa8) >> 22) & 0xf) != kTextPaneKind) return false;   // (not a text pane)
     std::string bytes = utf8;
     bytes.push_back('\0');
     if (!CoopRuntime::Write(l.text, bytes.data(), bytes.size())) return false;
-    // The reference as the game makes it for the placeholder's label (every field it sets, as SetText's), then its
-    // length ours: [0x00] the reference, [0x20] &file, [0x28] &label, [0x30] file, [0x50] label, [0x90] the pane's path.
-    char label[16];
-    std::snprintf(label, sizeof label, "Coop_Live_%02d", slot);
-    const std::string file = "LayoutMsg/PlusMenu_00";
-    std::uint8_t b[0xd0] = {};
-    const std::uint64_t base = g_api->scratch(ctx, b, sizeof b);
-    if (base == 0) return false;
-    const std::uint64_t at_file = base + 0x30, at_label = base + 0x50, at_path = base + 0x90;
-    std::memcpy(b + 0x20, &at_file, 8);
-    std::memcpy(b + 0x28, &at_label, 8);
-    std::memcpy(b + 0x30, file.c_str(), file.size() + 1);
-    std::memcpy(b + 0x50, label, std::strlen(label) + 1);
-    std::memcpy(b + 0x90, path.c_str(), path.size() + 1);
-    if (g_api->scratch(ctx, b, sizeof b) != base) return false;
-    if (!Call(ctx, kMsgRefInit, base) || !Call(ctx, kMsgRefSet, base, base + 0x20, base + 0x28, 1)) return false;
+    const std::uint64_t attrs = Read<std::uint64_t>(pane + 0x10);
     const std::uint32_t length = static_cast<std::uint32_t>(utf8.size()) + l.extra;
-    if (Read<std::uint64_t>(base) != l.text || !CoopRuntime::Write(base + 8, &length, sizeof length)) return false;
-    if (!Call(ctx, kPaneText, layout, at_path, base, 1, 0)) return false;
+    std::uint8_t ref[0x18] = {};
+    std::memcpy(ref + 0x00, &l.text, 8);
+    std::memcpy(ref + 0x08, &length, 4);
+    std::memcpy(ref + 0x10, &attrs, 8);
+    if (!CoopRuntime::Write(base + 0x60, ref, sizeof ref)) return false;
+    if (!Call(ctx, kPaneSetMsg, pane, base + 0x60, 0)) return false;
     l.shown = utf8;
     return true;
 }
