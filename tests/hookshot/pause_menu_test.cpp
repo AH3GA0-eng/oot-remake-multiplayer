@@ -1043,3 +1043,26 @@ TEST_CASE("pause tab: q and e type into the code and the password, the page stay
     p.Press(Input::kDecide);
     CHECK(p.join_text() == "10.0.0.2:28000 qEeQue");
 }
+
+// Owner photo 2026-11-19: the Multiplayer tab's value column was empty. Every page row says where it stands and
+// carries the page arrow (right), so the cell is never blank.
+TEST_CASE("pause tab: every first-page row has a value and the page arrow") {
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    const View v = m.view();
+    REQUIRE(v.rows.size() == 6);
+    for (const Row& r : v.rows) {
+        CHECK_FALSE(r.value.empty());
+        CHECK(r.right);
+    }
+    CHECK(v.rows[0].value == "Off");
+    CHECK(v.rows[1].value == "Off");
+}
+
+TEST_CASE("pause tab: a long name is cut on the Settings row so the page arrow keeps its room") {
+    Menu m;
+    CoopTitleMenu::Options o;
+    o.name = "AVeryLongPlayerName";
+    m.Show(o);
+    CHECK(m.view().rows[3].value == "AVeryLong...");
+}
