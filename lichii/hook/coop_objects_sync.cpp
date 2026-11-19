@@ -1170,24 +1170,32 @@ void Sync::GameDeleted(std::uint64_t address, std::uint64_t now_us, bool by_coop
         std::erase_if(game_deletes_, [now_us](std::uint64_t at) { return at + 2 * kDeleteBurstUs < now_us; });
         game_deletes_.push_back(now_us);
     }
-    // Asked while off the walk: gone now, not away. An enemy of ours the game
-    // itself ended there is told to the others (enemy-left-0116, Left).
-    std::erase_if(away_, [&](const Away& a) {
-        if (a.address != address) {
-            return false;
-        }
-        if (!by_coop && LeavesForGood(self_, a.id, a.name, a.address)) {
-            left_.push_back({a.id, a.address, now_us, a.position, a.name});
-        }
-        return true;
-    });
+    // Asked while off the walk: gone now, not away. Not told as gone (Left):
+    // an actor off the list is not run by its game (no fall, no burn), and
+    // its address may be another actor's by now (review r1).
+    std::erase_if(away_, [address](const Away& a) { return a.address == address; });
 }
 
+namespace {
+// enemy-left-0116: kinds whose delete input reads our own Link (generated, tools/puppet_pack/area_deleted.py).
+constexpr std::string_view kAreaDeleted[] = {
+#include "coop_area_deleted.inc"
+};
+} // namespace
+
 bool Sync::LeavesForGood(std::uint8_t self, const proto::ObjectId& id, std::string_view name,
-                         std::uint64_t address) const {
+                         std::uint64_t address, const proto::Vec3& position) const {
     if (self == 0 || id.kind != proto::ObjectKind::placed || !name.starts_with("Enemy_") || IsBossOrPart(name) ||
         IsHatchingEgg(name) || bound_.contains(address)) {
         return false;
+    }
+    for (const std::string_view kind : kAreaDeleted) {
+        if (kind == name) {
+            return false;  // deleted when our Link leaves its area: only in our game
+        }
+    }
+    if (!player_ || Distance(position, *player_) > kLeftNearM) {
+        return false;  // our Link far off (or not known): maybe its AI's own despawn for our Link
     }
     if (const GroupPart* part = PartOf(name); part != nullptr && part->boss) {
         return false;
@@ -2079,7 +2087,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         // kLeftWaitUs (Left), listed till then.
         if (deleted && it->second.game_deleted && o.dead_at == 0 && !o.dead_said && !o.fish &&
             !(o.life && *o.life <= 0) && !(o.animation && IsDeathAnimation(o.animation->name)) &&
-            LeavesForGood(self, o.id, o.name, o.address)) {
+            LeavesForGood(self, o.id, o.name, o.address, o.position)) {
             left_.push_back({o.id, o.address, now_us, o.position, o.name});
             it = objects_.erase(it);
             continue;

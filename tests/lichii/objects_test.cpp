@@ -1028,6 +1028,7 @@ TEST_CASE("objects: delete events: a deleted, dead or unowned actor is gone, not
 TEST_CASE("objects: delete events: an enemy of ours the game deleted with no death read is gone for the others") {
     Sync sync;
     sync.SetDeleteEvents(true);
+    sync.SetPlayer(proto::Vec3{3.0f, 0.0f, 0.0f});  // our Link beside it (kLeftNearM)
     Tick(sync, 0, {Enemy(0x100, 0x11, 2, 0.0f, "Enemy_Keese")});
     const proto::ObjectId id = *sync.IdOf(0x100);
     Own(sync, id, 1, 3);
@@ -1053,21 +1054,29 @@ TEST_CASE("objects: delete events: an enemy of ours the game deleted with no dea
 }
 
 TEST_CASE("objects: delete events: only the game's own delete of our own enemy, not the scene going, is told") {
-    // Our own remove (by_coop), a copy of another player's, a death read, a boss.
+    // Our own remove (by_coop), a copy of another player's, a death read, a boss,
+    // a kind the game deletes when our Link leaves its area (coop_area_deleted.inc:
+    // Water Temple's Shell Blade), one our Link is far from (an AI's own despawn).
     Sync sync;
     sync.SetDeleteEvents(true);
-    const std::vector<Seen> four{Enemy(0x100, 0x11, 2), Enemy(0x200, 0x22, 2, 5.0f), Enemy(0x300, 0x33, 0, 9.0f),
-                                 Enemy(0x400, 0x44, 9, 2.0f, "Enemy_DungeonBoss_Goma")};
-    Tick(sync, 0, four);
+    sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+    const std::vector<Seen> all{Enemy(0x100, 0x11, 2),
+                                Enemy(0x200, 0x22, 2, 5.0f),
+                                Enemy(0x300, 0x33, 0, 9.0f),
+                                Enemy(0x400, 0x44, 9, 2.0f, "Enemy_DungeonBoss_Goma"),
+                                Enemy(0x500, 0x55, 2, 4.0f, "Enemy_ShellBlade"),
+                                Enemy(0x600, 0x66, 2, Sync::kLeftNearM + 1.0f)};
+    Tick(sync, 0, all);
     Own(sync, *sync.IdOf(0x100), 1);
     Own(sync, *sync.IdOf(0x200), 2);
-    Own(sync, *sync.IdOf(0x300), 1);
-    Own(sync, *sync.IdOf(0x400), 1);
-    Tick(sync, 10 * kMs, four);
+    for (const std::uint64_t a : {0x300, 0x400, 0x500, 0x600}) {
+        Own(sync, *sync.IdOf(a), 1);
+    }
+    Tick(sync, 10 * kMs, all);
     sync.GameDeleted(0x100, 20 * kMs, true);
-    sync.GameDeleted(0x200, 20 * kMs);
-    sync.GameDeleted(0x300, 20 * kMs);
-    sync.GameDeleted(0x400, 20 * kMs);
+    for (const std::uint64_t a : {0x200, 0x300, 0x400, 0x500, 0x600}) {
+        sync.GameDeleted(a, 20 * kMs);
+    }
     std::vector<proto::ObjectRemove> removes;
     for (const std::uint64_t t : {40, 80, 1100, 1200}) {
         for (const auto& r : All<proto::ObjectRemove>(Tick(sync, t * kMs, {}))) {
@@ -1081,6 +1090,7 @@ TEST_CASE("objects: delete events: only the game's own delete of our own enemy, 
     // The scene going: the game deletes everything at once. Nothing is told.
     Sync scene;
     scene.SetDeleteEvents(true);
+    scene.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
     std::vector<Seen> many;
     for (std::uint64_t i = 0; i < Sync::kDeleteBurst; ++i) {
         many.push_back(Enemy(0x1000 + i * 0x10, 0x100 + i, 2, static_cast<float>(i)));
@@ -1100,9 +1110,12 @@ TEST_CASE("objects: delete events: only the game's own delete of our own enemy, 
     CHECK(scene.LeftCount() == 0);
 }
 
-TEST_CASE("objects: delete events: an enemy of ours deleted while away is gone for the others") {
+// Review r1: an actor off the list is not run by its game, and its address may
+// be another actor's by then: a delete request for it is no "gone" to tell.
+TEST_CASE("objects: delete events: a delete request for an address that is away tells nothing") {
     Sync sync;
     sync.SetDeleteEvents(true);
+    sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
     Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
     const proto::ObjectId id = *sync.IdOf(0x100);
     Own(sync, id, 1);
@@ -1110,12 +1123,10 @@ TEST_CASE("objects: delete events: an enemy of ours deleted while away is gone f
     Tick(sync, 40 * kMs, {});
     Tick(sync, 80 * kMs, {});
     REQUIRE(sync.AwayCount() == 1);
-    sync.GameDeleted(0x100, 100 * kMs);
+    sync.GameDeleted(0x100, 100 * kMs);  // (the address reused by another actor, deleted)
     CHECK(sync.AwayCount() == 0);
-    CHECK(sync.LeftCount() == 1);
-    const auto removes = All<proto::ObjectRemove>(Tick(sync, 100 * kMs + Sync::kLeftWaitUs, {}));
-    REQUIRE(removes.size() == 1);
-    CHECK(removes[0].reason == proto::RemoveReason::gone);
+    CHECK(sync.LeftCount() == 0);
+    CHECK(All<proto::ObjectRemove>(Tick(sync, 100 * kMs + Sync::kLeftWaitUs, {})).empty());
 }
 
 TEST_CASE("objects: a copy whose owner's game deleted it (gone) is deleted here, with no kill") {

@@ -683,7 +683,14 @@ public:
     // nobody's and the copies end too (deleted, no kill counted: a Dead flag
     // the game set comes through the flag sync). Not when the game deleted
     // kDeleteBurst or more actors within kDeleteBurstUs of it: that is the
-    // scene going (a load, a warp, the title), not the enemy.
+    // scene going (a load, a warp, the title), not the enemy. Not when the
+    // delete may come from our own Link leaving it (review CHANGES r1): its
+    // kind's delete input reads our Link (coop_area_deleted.inc, generated
+    // from the romfs: Water Temple's Shell Blades and blue Tektites), or our
+    // Link was over kLeftNearM from it (an AI's own "far from Link" despawn
+    // the logic graphs do not show). Then the copy another player fights lives
+    // on and the server hands it over, as before.
+    static constexpr float kLeftNearM = 20.0f;
     static constexpr std::uint64_t kLeftWaitUs = 1'000'000;  // (the whole kDeleteBurstUs after it seen)
     static constexpr std::size_t kDeleteBurst = 12;
     static constexpr std::uint64_t kDeleteBurstUs = 1'000'000;
@@ -1299,7 +1306,7 @@ private:
     std::vector<std::uint64_t> game_deletes_;  // when the game's own delete requests came (kDeleteBurstUs)
     // An enemy of ours that the game's own delete request ends for good (Left).
     bool LeavesForGood(std::uint8_t self, const coop::protocol::ObjectId& id, std::string_view name,
-                       std::uint64_t address) const;
+                       std::uint64_t address, const coop::protocol::Vec3& position) const;
     // boss-sync-2: copies of other games' eggs that left our walk alive (our
     // game hatched them), for CopyHatch.
     std::vector<Egg> copy_eggs_;
