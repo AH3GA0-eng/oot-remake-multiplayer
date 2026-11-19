@@ -792,3 +792,13 @@ TEST_CASE("pause tab: the Players view's pages and a player's view, with the hos
         CHECK(std::string(ActionWords(a)).size() > 3);
     }
 }
+
+TEST_CASE("pause tab: the focused row is the System button's number under it, by its name") {
+    CHECK(RowOfButton("Pa_Button_00") == 0);
+    CHECK(RowOfButton("Pa_Button_04") == 4);
+    CHECK(RowOfButton("Pa_Button_05") == -1);   // (five rows)
+    CHECK(RowOfButton("Pa_Button_0") == -1);
+    CHECK(RowOfButton("Pa_Button_010") == -1);
+    CHECK(RowOfButton("N_SlideList_00") == -1);
+    CHECK(RowOfButton("") == -1);
+}
