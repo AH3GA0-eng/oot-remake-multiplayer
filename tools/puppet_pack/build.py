@@ -1269,13 +1269,14 @@ class _StagedTable:
 
 
 def write_skins(romfs, out_romfs, dicts, table, skins, ai_rows=None, new_ai=None, new_gai=None, log=print,
-                self_dir=None, game_has=None, game_read=None):
+                self_dir=None, game_has=None, game_read=None, effects=False):
     """Reads each character model mod (skin.load) and writes its own new files, its AS root copy and
     its copies of the gear it changes (skin.gear_items, `<item>_Skin_<id>`, rows into `new_ai` and
     `new_gai`) into the pack, with their size-table entries. `skins`: [(id, mod folder)]. With
     `self_dir`, also your own Link's player packs per age (skin.self_pack) into `self_dir/<id>/`,
     listed in the entry's `self_files` ({romfs path: file beside the pack}) for the kit to put in place
-    when you wear that skin. Returns [(skin.Skin, {variant: AS root copy or None}, manifest entry)].
+    when you wear that skin. With `effects`, also each mod's own copies of the game's effect files
+    (skin.effect_files) as they are. Returns [(skin.Skin, {variant: AS root copy or None}, manifest entry)].
     A skin that cannot be built (a broken mod, a file another skin has with other contents) is left out
     with a line in the log; the others and the rest of the pack are built. `game_has(path)`: whether the
     game's romfs has that file (default: a file under `romfs`); `game_read(path)`: its bytes (default: read
@@ -1358,6 +1359,29 @@ def write_skins(romfs, out_romfs, dicts, table, skins, ai_rows=None, new_ai=None
             t.add_new(strip_zs(f), size)
             items.append((f, raw))
             files.append(f)
+        # --skin-effects: the mod's own copies of the game's effect files (Effect/, ELink2/), such as a recoloured
+        # sword glow. The game finds effects by its own names, so these go in as they are: every sword with that
+        # effect shows it in this game, not only the skin's. Only a path the game has, exactly (another version's
+        # link table is skipped, with a line); a mod's new effect resource is new_files' (once). Each skin's own
+        # copy counts in its hash, whichever skin's copy the pack holds.
+        fx, fx_skipped = skin.effect_files(sk, game_has) if effects else ((), ())
+        for f in fx_skipped:
+            log(f"skin {skin_id}: {f} left out: the game has no such effect file (another version?)")
+        for f in fx:
+            raw = read(os.path.join(sk.romfs, f))
+            digest = hashlib.sha256(raw).hexdigest()
+            items.append((f, raw))   # (the skin's own copy in its hash, whatever another skin brings)
+            files.append(f)
+            if f in written:
+                if written[f][1] != digest:
+                    log(f"skin {skin_id}: {f} differs from skin {written[f][0]}'s; that skin's is used")
+                continue
+            mine[f] = (skin_id, digest)
+            w(os.path.join(out_romfs, f), raw)
+            data = dicts.decompress(raw) if f.endswith(".zs") else raw
+            t.set(strip_zs(f), max(t.get(strip_zs(f)) or 0,
+                                   (sk.table.get(strip_zs(f)) if sk.table is not None else None) or 0,
+                                   (len(data) + 0x1F) & ~0x1F))
         as_refs = {}
         for v in variants:
             items.append((f"Pack/Actor/Player_{v}.pack", sarc.write(sk.members[v])))
@@ -1476,7 +1500,7 @@ def skin_row(row, sk, variant):
 def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=False, sound_user=None,
           tunics=(), test_tunic=None, stand_in_effects=False, basic_xlink=False, title_rows=False, pause_tab=False,
           look_slots=look_items.SLOTS, perception=True, blade_copies=look_items.BLADE_COPIES,
-          skins=(), test_skin=None, game_has=None, game_read=None, body=False, liftable=False):
+          skins=(), test_skin=None, game_has=None, game_read=None, skin_effects=False, body=False, liftable=False):
     """`tunics`: the tunic colours to make puppets of (puppet_pack.tunic.COLORS; each is a model,
     a tile and an actor per age, CoopPuppet_<age>_<Colour>). `test_tunic`: give the plain puppets
     that colour too (a test of the colours with a hook that knows none).
@@ -1490,7 +1514,9 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
     quiet copy (quiet_name) for the scenes with stealth guards (guard_scenes); on by default (PERCEPTION_SOURCE).
     `skins`: [(id, mod folder)] character model mods to make puppets of (skin.py; each a puppet per
     age it changes, CoopPuppet_<age>_Skin_<id>). `test_skin`: one of those ids; every other puppet
-    (plain and colours) wears that model too, a test with a hook that knows no skins.
+    (plain and colours) wears that model too, a test with a hook that knows no skins. `skin_effects`: the
+    skins' own copies of the game's effect files go into the pack too (skin.effect_files; every sword with
+    that effect shows it, for everyone whose pack has the skin).
     `body`: every puppet gets a body of its own (`--puppet-body`, puppet_body; off by default).
     `liftable`: every puppet gets the Cucco's LiftableRef (`--puppet-liftable`, liftable_param; off by default)."""
     heaps = heaps or {}
@@ -1575,7 +1601,7 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         new_gai += grows
     skin_list = write_skins(romfs, out_romfs, dicts, table, skins, ai_rows, new_ai, new_gai, log,
                             self_dir=os.path.join(mod_dir, skin.SELF_DIR), game_has=game_has,
-                            game_read=game_read) if skins else []
+                            game_read=game_read, effects=skin_effects) if skins else []
     by_id = {sk.id.lower(): (sk, refs) for sk, refs, _ in skin_list}
     if test_skin and test_skin.lower() not in by_id:
         if any(sid.lower() == test_skin.lower() for sid, _ in skins):
@@ -1905,6 +1931,10 @@ def main(argv=None):
     ap.add_argument("--skin", action="append", default=[], metavar="ID=FOLDER",
                     help="a character model mod (its folder, holding romfs) to make puppets of, "
                          "CoopPuppet_<age>_Skin_<ID> (skin.py); may be given more than once")
+    ap.add_argument("--skin-effects", action="store_true",
+                    help="the --skin mods' own copies of the game's effect files (Effect/, ELink2/: a recoloured "
+                         "sword glow) go into the pack as they are. This changes every Master Sword in your game "
+                         "(and every sword with that effect), worn or not, solo too")
     ap.add_argument("--test-skin", metavar="ID",
                     help="test switch: every puppet wears the --skin of this id (a hook that knows no skins)")
     ap.add_argument("--look-slots", type=int, default=look_items.SLOTS, metavar="N",
@@ -1983,6 +2013,7 @@ def _main_build(a, romfs, hud_reader=None):
               title_rows=a.title_rows, pause_tab=a.pause_tab, look_slots=max(0, min(a.look_slots, look_items.MAX_SLOTS)),
               perception=not a.no_perception,
               blade_copies=max(0, min(a.blade_copies, look_items.BLADE_COPIES)), skins=skins, test_skin=a.test_skin,
+              skin_effects=a.skin_effects,
               game_has=(lambda path: _reader_has(hud_reader, path)) if hud_reader is not None else None,
               game_read=hud_reader.read if hud_reader is not None else None,
               body=a.puppet_body, liftable=a.puppet_liftable)

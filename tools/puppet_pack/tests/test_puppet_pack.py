@@ -2162,6 +2162,66 @@ class FullBuildTest(unittest.TestCase):
         self.write("System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs", plain.compress(game.dumps()))
         return root
 
+    def test_build_skin_effects_only_on_request(self):
+        """A mod's own copy of a game effect (a recoloured sword glow) reaches every sword with that
+        effect, so a skin takes it only with skin_effects (--skin-effects), as it is, with a size entry and
+        in the skin's hash."""
+        mod_src = self.make_model_mod()
+        plain = zstandard.ZstdCompressor()
+        rel = "Effect/Weapon_Sword_Master.Test.vsetb.byml.zs"
+        data = b"VFXB red glow" + bytes(51)
+        self.write(rel, plain.compress(b"VFXB game glow" + bytes(50)))
+        path = os.path.join(mod_src, "romfs", *rel.split("/"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(plain.compress(data))
+        d = zs.Dicts.from_romfs(self.romfs)
+        plain_mod = os.path.join(self.dir, "mod_no_effects")
+        [off] = build.build(self.romfs, plain_mod, log=lambda _l: None, skins=[("Mod", mod_src)], look_slots=0)["skins"]
+        self.assertNotIn(rel, off["files"])
+        self.assertFalse(os.path.exists(os.path.join(plain_mod, "romfs", *rel.split("/"))))
+        fx_mod = os.path.join(self.dir, "mod_effects")
+        [on] = build.build(self.romfs, fx_mod, log=lambda _l: None, skins=[("Mod", mod_src)], look_slots=0,
+                           skin_effects=True)["skins"]
+        self.assertIn(rel, on["files"])
+        self.assertEqual(d.decompress(build.read(os.path.join(fx_mod, "romfs", *rel.split("/")))), data)
+        self.assertNotEqual(on["sha256"], off["sha256"])
+        t = rstb.Rstb.loads(d.decompress(build.read(os.path.join(
+            fx_mod, "romfs", "System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs"))))
+        self.assertGreaterEqual(t.get(rel[:-3]) or 0, len(data))
+
+    def test_build_skin_effects_new_replaced_and_other_version(self):
+        """With --skin-effects: a replaced game effect file is taken once; a mod's new effect file is a
+        new file (taken once, not again as an effect: one entry in files, one size entry); a link table
+        made for another game version is skipped with a line, never taken as a new file."""
+        mod_src = self.make_model_mod()
+        plain = zstandard.ZstdCompressor()
+        replaced = "Effect/Weapon_Sword_Master.Test.vsetb.byml.zs"
+        new = "Effect/Mod_Own_Glow.Test.vsetb.byml.zs"
+        table = "ELink2/elink2.Product.999.belnk.zs"
+        other = "ELink2/elink2.Product.998.belnk.zs"
+        self.write(replaced, plain.compress(b"VFXB game glow" + bytes(50)))
+        self.write(table, plain.compress(b"ELNK game table" + bytes(49)))
+        for rel, body in ((replaced, b"VFXB red"), (new, b"VFXB own"), (table, b"ELNK mod"), (other, b"ELNK old")):
+            path = os.path.join(mod_src, "romfs", *rel.split("/"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "wb") as f:
+                f.write(plain.compress(body + bytes(56)))
+        said = []
+        mod = os.path.join(self.dir, "mod_effects_kinds")
+        [entry] = build.build(self.romfs, mod, log=said.append, skins=[("Mod", mod_src)], look_slots=0,
+                              skin_effects=True)["skins"]
+        for rel in (replaced, new, table):
+            self.assertEqual(entry["files"].count(rel), 1, rel)
+            self.assertTrue(os.path.exists(os.path.join(mod, "romfs", *rel.split("/"))), rel)
+        self.assertNotIn(other, entry["files"])
+        self.assertFalse(os.path.exists(os.path.join(mod, "romfs", *other.split("/"))))
+        self.assertTrue(any(other in line and "left out" in line for line in said), said)
+        # Without the switch the new effect resource still comes (a new file), the game's copies do not.
+        [off] = build.build(self.romfs, os.path.join(self.dir, "mod_effects_off"), log=lambda _l: None,
+                            skins=[("Mod", mod_src)], look_slots=0)["skins"]
+        self.assertEqual([f for f in off["files"] if f.startswith(("Effect/", "ELink2/"))], [new])
+
     def make_recolour_sword(self, mod_src, game_model=True):
         """The game's Master Sword on its own model, the dark sword's model in the game (or not),
         and the mod's sword pack naming the dark model with no model file of its own."""

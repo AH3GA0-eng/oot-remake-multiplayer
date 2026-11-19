@@ -29,7 +29,7 @@ VARIANTS = ("Child", "Adult")
 ID_RE = re.compile(r"^[A-Za-z0-9]{1,20}$")
 # Top folders of a mod that never go into a skin: actor packs (the player's are read, not copied;
 # others replace the game's actors), tables, text, sound, scenes and events, and code.
-SKIP_TOP = {"Pack", "System", "RSDB", "Mals", "Sound", "SLink2", "Event", "Banc", "UI", "Font",
+SKIP_TOP = {"Pack", "System", "RSDB", "Mals", "Sound", "SLink2", "ELink2", "Event", "Banc", "UI", "Font",
             "Layout", "Shader", "exefs"}
 CODE_DIRS = ("exefs", "cheats")
 MARGIN = 0x1000
@@ -184,6 +184,25 @@ def new_files(skin, game_table, ours=(), game_has=None):
             continue
         out.append(f)
     return out
+
+
+EFFECT_TOPS = ("Effect", "ELink2")
+
+
+def effect_files(skin, game_has):
+    """The mod's copies of the game's own effect files (EFFECT_TOPS), such as a recoloured sword glow:
+    (taken, skipped). The game finds effects by its own names, so a skin takes them only on request
+    (build --skin-effects) and as they are, and only a path the game has, exactly (`game_has(path)`):
+    the link table of another version (another Product number in its name) is skipped. A mod's new
+    effect resource is no copy of the game's: new_files takes it, once (ELink2 is in SKIP_TOP)."""
+    taken, skipped = [], []
+    for f in skin.files:
+        top = f.split("/", 1)[0]
+        if top in EFFECT_TOPS and game_has(f):
+            taken.append(f)
+        elif top == "ELink2":
+            skipped.append(f)
+    return taken, skipped
 
 
 def entry_size(skin, path, data_len, game_table=None):
