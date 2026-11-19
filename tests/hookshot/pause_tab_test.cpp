@@ -81,7 +81,138 @@ TEST_CASE("pause tab: the screens are known by their class's vtable") {
     CHECK(0x80020000 + kPaneTable == 0x8045c040);
     CHECK(0x80020000 + kPaneAlpha == 0x802f8ac0);
     CHECK(0x80020000 + kTabOpen == 0x80228350);
+    CHECK(0x80020000 + kPaneMoved == 0x8154af50);
+    CHECK(0x80020000 + kScreenSound == 0x8045e400);
     CHECK(0x80020000 + kPaneByName == 0x8045e300);
+}
+
+TEST_CASE("pause tab: the fourth tab's place and fades taken one update ahead, not past where they head") {
+    CHECK(Ahead(1023.83f, 1020.12f, 1000.0f) == doctest::Approx(1016.41f));   // (the strip's drop, a run's numbers)
+    CHECK(Ahead(1000.48f, 1000.34f, 1000.0f) == doctest::Approx(1000.20f));
+    CHECK(Ahead(1000.19f, 1000.0f, 1000.0f) == 1000.0f);                      // (at rest: stays)
+    CHECK(Ahead(1001.0f, 1000.2f, 1000.0f) == 1000.0f);                       // (not past its rest)
+    CHECK(Ahead(0.5f, 0.844f, 1.0f) == 1.0f);                                 // (a fade in: not past 1)
+    CHECK(Ahead(0.156f, 0.5f, 1.0f) == doctest::Approx(0.844f));
+    CHECK(Ahead(0.8f, 0.5f, 0.0f) == doctest::Approx(0.2f));                  // (a fade out)
+    CHECK(Ahead(0.4f, 0.1f, 0.0f) == 0.0f);
+    CHECK(Ahead(1.0f, 1.0f, 1.0f) == 1.0f);
+}
+
+TEST_CASE("pause tab: the fifth tab comes in with the strip's opening, filled once per opening") {
+    Page p = UsablePage();
+    auto d = p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 0), 1000);   // (closed)
+    CHECK_FALSE(d.tab_shown);
+    CHECK_FALSE(d.fill_tab);
+    d = p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 1), 1016);   // (opening: with the game's four)
+    CHECK(d.set_tabs);
+    CHECK(d.tab_shown);
+    CHECK(d.fill_tab);
+    d = p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 2), 1300);   // (open: not filled again)
+    CHECK(d.set_tabs);
+    CHECK(d.tab_shown);
+    CHECK_FALSE(d.fill_tab);
+    d = p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 3), 2000);   // (closing: fading out with the four)
+    CHECK(d.tab_shown);
+    CHECK_FALSE(d.fill_tab);
+    d = p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 0), 2300);   // (closed: hidden)
+    CHECK_FALSE(d.tab_shown);
+    d = p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 1), 3000);   // (the next opening: filled again)
+    CHECK(d.fill_tab);
+}
+
+TEST_CASE("pause tab: the presses the module takes have the game's own sounds") {
+    Page p = UsablePage();
+    OnSystem(p, 1000);
+    CHECK(p.TakeStripSound() == nullptr);
+    p.OnPad(kPadR, 1000);
+    CHECK(std::string(p.TakeStripSound()) == "mc_TabToRight");
+    CHECK(p.TakeStripSound() == nullptr);   // (once)
+    p.OnPad(0, 1016);
+    p.OnPad(kPadA, 1032);
+    CHECK(std::string(p.TakePagesSound()) == "button_decide");
+    p.OnPad(0, 1048);
+    p.OnPad(kPadL, 1064);
+    CHECK(std::string(p.TakeStripSound()) == "mc_TabToLeft");
+    p.OnPad(0, 1080);
+    p.OnPad(kPadL, 1096);   // (L on System: the game's own, no sound of ours)
+    CHECK(p.TakeStripSound() == nullptr);
+}
+
+TEST_CASE("pause tab: the menu closed on our page opens on it again, not after L") {
+    Page p = UsablePage();
+    std::uint64_t now = 1000;
+    OnSystem(p, now);
+    CHECK(p.OnPad(kPadR, now) == 0);
+    CHECK(p.Shown());
+    p.OnPad(0, now + 16);
+    // The menu closes (B or +): our page goes with it.
+    p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 3), now + 32);
+    CHECK_FALSE(p.Shown());
+    p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 3), now + 32);
+    p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 0), now + 300);
+    p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 0), now + 300);
+    CHECK_FALSE(p.Shown());
+    // The next opening, on System as the game keeps it: our page from its first opening update (the strip's).
+    auto d = p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 1), now + 5000);
+    CHECK(p.Shown());
+    CHECK(d.set_page);
+    CHECK(d.page_shown);
+    p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 1), now + 5000);   // (a new opening of the pages: set again, the same)
+    // (as a run had it: the pages open while the strip still opens; the page stays, the pad's update too)
+    p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 2), now + 5100);
+    p.OnPad(0, now + 5100);
+    p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 1), now + 5100);
+    CHECK(p.Shown());
+    // L, then the menu closed and opened again: System's.
+    p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 2), now + 5300);
+    p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 2), now + 5300);
+    p.OnPad(kPadL, now + 5400);
+    CHECK_FALSE(p.Shown());
+    p.OnPad(0, now + 5416);
+    p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 3), now + 5500);
+    p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 0), now + 5800);
+    p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 1), now + 9000);
+    p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 1), now + 9000);
+    CHECK_FALSE(p.Shown());
+}
+
+TEST_CASE("pause tab: back at the menu's first frame, the pages still at 0 while the strip opens") {
+    Page p = UsablePage();
+    OnSystem(p, 1000);
+    p.OnPad(kPadR, 1000);
+    p.OnPad(0, 1016);
+    p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 3), 1032);
+    p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 3), 1032);
+    p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 0), 1300);
+    p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 0), 1300);
+    CHECK_FALSE(p.Shown());   // (closed: nothing)
+    // As a run had it: the strip's first update of the opening comes first, the pages' last update still the closed
+    // one (old). The page is back there, set through the strip's update, its tab lit from the start.
+    const auto d = p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 1), 4000);
+    CHECK(p.Shown());
+    CHECK(d.set_page);
+    CHECK(d.page_shown);
+    CHECK(d.tab_lit);
+    CHECK(p.OnPad(0, 4008) == 0);   // (the pad between them: it stays)
+    CHECK(p.Shown());
+    CHECK_FALSE(p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 0), 4018).set_page);   // (set already)
+    p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 2), 4016);
+    p.OnPad(0, 4016);
+    CHECK(p.Shown());
+}
+
+TEST_CASE("pause tab: a menu that opens on another page forgets ours") {
+    Page p = UsablePage();
+    OnSystem(p, 1000);
+    p.OnPad(kPadR, 1000);
+    p.OnPad(0, 1016);
+    p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 3), 1032);
+    CHECK_FALSE(p.Shown());
+    p.OnScreen(Pages(0xa000, 1, 1, 2), 3000);   // (open on another page)
+    p.OnScreen(Strip(0x9000, 5, 1, kPlusMode, 2), 3000);
+    p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 2), 3100);   // (then stepped to System)
+    p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 2), 3100);
+    CHECK_FALSE(p.Shown());
 }
 
 TEST_CASE("pause tab: R on System shows the page and lights the fifth tab, L gives System back") {
