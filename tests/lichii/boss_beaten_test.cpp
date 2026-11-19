@@ -550,12 +550,18 @@ TEST_CASE("boss beaten: a reset leaves a boss beaten in the host's save, a boss 
         a.HostReset(true);
         CHECK(a.Check(deku, true, {}, std::ref(f), kAway).empty());
     }
-    {  // beaten again after the reset (in the record): nothing put back
+    {  // beaten again after the reset (in the record): nothing put back; the group's set (G2) raises the quest the
+       // reset set back, its Bools already beaten
         Flags f = BeatenThenReset(s, s.below.back());
         Apply a;
         a.HostReset(true);
         const std::vector<std::uint8_t> beaten{0};
-        CHECK(a.Check(deku, true, beaten, std::ref(f), kAway).empty());
+        const std::vector<Write> w = a.Check(deku, true, beaten, std::ref(f), kAway);
+        REQUIRE(w.size() == 1);
+        CHECK(w[0].is_enum);
+        CHECK(w[0].hash == s.quest);
+        CHECK(w[0].value == s.step);
+        CHECK_FALSE(w[0].revert);
     }
     {  // LICHII_COOP_QUESTS=0: no quest follows the host
         Flags f = BeatenThenReset(s, s.below.back());
