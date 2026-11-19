@@ -890,9 +890,11 @@ TEST_CASE("title menu: auto_rejoin is off unless coop-options.ini turns it on, a
 
 TEST_CASE("title menu: Start, Multiplayer, Options on the game's three, Multiplayer shows Host, Join, Co-op Settings, Back") {
     using CoopTitleMenu::MenuFor;
+    using CoopTitleMenu::RowOf;
     using CoopTitleMenu::TitleDo;
-    // With a save the game's three are Continue, New Game, Options: Start is Continue's own press, Options its own.
-    auto l = MenuFor(true, false);
+    // With a save screen mod (one Start) and a save the game's three are Continue, New Game, Options: Start is
+    // Continue's own press, Options its own.
+    auto l = MenuFor(true, false, true);
     CHECK(l.btn_num_frame == 3);
     CHECK(l.count == 3);
     CHECK(std::string(l.rows[0].label) == "0103");
@@ -902,30 +904,86 @@ TEST_CASE("title menu: Start, Multiplayer, Options on the game's three, Multipla
     CHECK(l.focus == -1);
     // Without one the game shows New Game and Options: Start is New Game's press, and the third row decides the
     // game's second button (Options) in its place.
-    l = MenuFor(false, false);
+    l = MenuFor(false, false, true);
     CHECK(l.btn_num_frame == 3);
+    CHECK(std::string(l.rows[0].label) == "0103");
     CHECK(l.rows[0].action == TitleDo::kGame);
     CHECK(l.rows[2].action == TitleDo::kDecide);
     CHECK(l.rows[2].decide == 1);
     // The submenu: the game's fourth slot shown, all four the module's, the cursor on Host.
     for (const bool any : {true, false}) {
-        l = MenuFor(any, true);
-        CHECK(l.btn_num_frame == 4);
-        CHECK(l.count == 4);
-        CHECK(l.focus == 0);
-        CHECK(l.rows[0].action == TitleDo::kHost);
-        CHECK(l.rows[1].action == TitleDo::kJoin);
-        CHECK(l.rows[2].action == TitleDo::kSettings);
-        CHECK(l.rows[3].action == TitleDo::kBack);
+        for (const bool one : {true, false}) {
+            l = MenuFor(any, true, one);
+            CHECK(l.btn_num_frame == 4);
+            CHECK(l.count == 4);
+            CHECK(l.focus == 0);
+            CHECK(l.rows[0].action == TitleDo::kHost);
+            CHECK(l.rows[1].action == TitleDo::kJoin);
+            CHECK(l.rows[2].action == TitleDo::kSettings);
+            CHECK(l.rows[3].action == TitleDo::kBack);
+        }
     }
-    // Every label a row uses is one of the pack's.
+    // Every label a row uses is one of the pack's, or the game's own Continue (0001) and New Game (0000).
     for (const bool any : {true, false}) {
         for (const bool sub : {true, false}) {
-            const auto look = MenuFor(any, sub);
-            for (std::size_t i = 0; i < look.count; ++i) {
-                bool known = false;
-                for (const auto& [label, text] : CoopTitleMenu::kMenuLabels) known = known || std::string(label) == look.rows[i].label;
-                CHECK(known);
+            for (const bool one : {true, false}) {
+                const auto look = MenuFor(any, sub, one);
+                for (std::size_t i = 0; i < look.count; ++i) {
+                    bool known = std::string(look.rows[i].label) == "0000" || std::string(look.rows[i].label) == "0001";
+                    for (const auto& [label, text] : CoopTitleMenu::kMenuLabels) known = known || std::string(label) == look.rows[i].label;
+                    CHECK(known);
+                }
+                CHECK((sub ? RowOf(look, TitleDo::kBack) : RowOf(look, TitleDo::kMultiplayer)) >= 0);
+            }
+        }
+    }
+}
+
+TEST_CASE("title menu: without a save screen mod, New Game stays reachable (playing alone)") {
+    using CoopTitleMenu::MenuFor;
+    using CoopTitleMenu::RowOf;
+    using CoopTitleMenu::TitleDo;
+    // A save: Continue and New Game each the game's own press (its buttons 0 and 1), Multiplayer on its third
+    // (Options: the module's row, the A kept), Options in the fourth slot deciding the game's third button.
+    auto l = MenuFor(true, false, false);
+    CHECK(l.btn_num_frame == 4);
+    REQUIRE(l.count == 4);
+    CHECK(std::string(l.rows[0].label) == "0001");
+    CHECK(l.rows[0].action == TitleDo::kGame);
+    CHECK(std::string(l.rows[1].label) == "0000");
+    CHECK(l.rows[1].action == TitleDo::kGame);
+    CHECK(l.rows[2].action == TitleDo::kMultiplayer);
+    CHECK(std::string(l.rows[3].label) == "0105");
+    CHECK(l.rows[3].action == TitleDo::kDecide);
+    CHECK(l.rows[3].decide == 2);
+    CHECK(RowOf(l, TitleDo::kMultiplayer) == 2);   // (Back and B put the cursor there)
+    // No save: New Game (the game's first), Multiplayer, Options deciding the game's second.
+    l = MenuFor(false, false, false);
+    CHECK(l.btn_num_frame == 3);
+    REQUIRE(l.count == 3);
+    CHECK(std::string(l.rows[0].label) == "0000");
+    CHECK(l.rows[0].action == TitleDo::kGame);
+    CHECK(l.rows[1].action == TitleDo::kMultiplayer);
+    CHECK(l.rows[2].action == TitleDo::kDecide);
+    CHECK(l.rows[2].decide == 1);
+    CHECK(RowOf(l, TitleDo::kMultiplayer) == 1);
+    CHECK(RowOf(l, TitleDo::kHost) == -1);
+}
+
+TEST_CASE("title menu: an A on the game's own rows and Options is the player's, the module's rows are not") {
+    using CoopTitleMenu::MenuFor;
+    using CoopTitleMenu::PlayersOwn;
+    using CoopTitleMenu::TitleDo;
+    CHECK_FALSE(PlayersOwn(nullptr));
+    for (const bool any : {true, false}) {
+        for (const bool one : {true, false}) {
+            const auto top = MenuFor(any, false, one);
+            for (std::size_t i = 0; i < top.count; ++i) {
+                CHECK(PlayersOwn(&top.rows[i]) == (top.rows[i].action != TitleDo::kMultiplayer));
+            }
+            const auto sub = MenuFor(any, true, one);
+            for (std::size_t i = 0; i < sub.count; ++i) {
+                CHECK_FALSE(PlayersOwn(&sub.rows[i]));   // (Host in the first place too: not the game's Continue)
             }
         }
     }

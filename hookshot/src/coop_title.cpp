@@ -18,6 +18,8 @@
 #include "common/logging.h"
 #include "coop_hook.h"
 #include "coop_i18n.h"
+#include "coop_mod_screens.h"
+#include "coop_mods_runtime.h"
 #include "coop_pause.h"
 #include "coop_pause_files.h"
 #include "coop_runtime.h"
@@ -96,8 +98,8 @@ constexpr std::array<CoopPauseMenu::Page, 3> kRowPages{CoopPauseMenu::Page::kHos
 constexpr std::uint64_t kPaneTable = 0x43c040;
 constexpr std::uint64_t kPaneByName = 0x43e300;
 constexpr std::uint64_t kSetFocus = 0x86ffc0;
-constexpr std::uint64_t kButtonDecide = 0x3771db0;
-constexpr std::uint64_t kScreenSound = 0x43e400;
+using CoopModScreens::kButtonDecide;
+using CoopModScreens::kScreenSound;
 constexpr std::uint64_t kApplyForMs = 1500;   // the look set again each 250 ms this long after it changes (the game's
                                               // OpenTitle sets its own texts after the set-up)
 
@@ -126,6 +128,7 @@ int g_focus_logged = -2;
 std::atomic<bool> g_menu{false};   // this title has the menu's labels (the marker found at its set-up)
 bool g_sub = false;                // the Multiplayer submenu shows
 bool g_any_save = true;            // the look's save list: a save or not (the caption manager's)
+bool g_one_start = false;          // one Start row for Continue and New Game (a code mod asked for the menu screens)
 std::uint64_t g_apply_until = 0, g_apply_next = 0;   // the look set again until then (kApplyForMs)
 int g_focus_to = -1;               // a button to give the focus at the next step
 int g_decide = -1;                 // a game button to decide at the next step
@@ -405,8 +408,13 @@ void StepMenu(void* ctx, std::uint64_t screen) {
     bool apply = false, any_save = true, sub = false;
     int focus = -1, decide = -1;
     const char* sound = nullptr;
+    bool one_start = CoopModsRuntime::ScreensWanted();   // (before g_mutex: the mods' calls take it, coop_busy)
     {
         std::lock_guard lock(g_mutex);
+        if (one_start != g_one_start) {
+            g_one_start = one_start;   // (a code mod with the menu screens started or stopped under the open title)
+            g_apply_until = now + kApplyForMs, g_apply_next = 0;
+        }
         if (const std::uint64_t mgr = CaptionMgr(); mgr != 0) {
             std::uint8_t any = 1;
             CoopRuntime::Read(mgr + kCaptionAnySave, &any, 1);
@@ -421,7 +429,7 @@ void StepMenu(void* ctx, std::uint64_t screen) {
         std::swap(decide, g_decide);
         std::swap(sound, g_sound);
     }
-    const CoopTitleMenu::TitleMenuLook look = CoopTitleMenu::MenuFor(any_save, sub);
+    const CoopTitleMenu::TitleMenuLook look = CoopTitleMenu::MenuFor(any_save, sub, one_start);
     const std::uint64_t layout = Read64(screen + kTitleLayout);
     if (apply && layout != 0) {
         const char* why = StopBtnNum(ctx, layout, look.btn_num_frame);
@@ -430,8 +438,10 @@ void StepMenu(void* ctx, std::uint64_t screen) {
             texts += SetPaneText(ctx, layout, fmt::format("Pa_Button_{:02d}/T_Btn_00", i), look.rows[i].label) ? 1 : 0;
         }
         static std::string logged;
-        const std::string line = fmt::format("{} rows{}, {} of {} texts{}", sub ? "Multiplayer's" : "the title's",
-                                             any_save ? "" : " (no save yet)", texts, look.count,
+        const std::string line = fmt::format("{} rows{}{}, {} of {} texts{}", sub ? "Multiplayer's" : "the title's",
+                                             any_save ? "" : " (no save yet)",
+                                             !sub && one_start ? " (one Start: a mod has the menu screens)" : "",
+                                             texts, look.count,
                                              why != nullptr ? fmt::format("; {}", why) : std::string());
         if (line != logged) {
             logged = line;
@@ -635,8 +645,10 @@ void OnTitle(void* ctx, std::uint64_t screen, int event) {
             g_rows = true;
             std::lock_guard lock(g_mutex);
             g_sub = false, g_swallow = 0, g_focus_to = -1, g_decide = -1, g_sound = nullptr;
+            g_one_start = CoopModsRuntime::ScreensWanted();
             g_apply_until = NowMs() + kApplyForMs, g_apply_next = 0;
-            LOG_INFO(Core, "coop: title: the title's own menu: Start, Multiplayer, Options ({} buttons)", count);
+            LOG_INFO(Core, "coop: title: the title's own menu: {}, Multiplayer, Options ({} buttons)",
+                     g_one_start ? "Start" : "Continue, New Game", count);
         } else if (count >= kFirstRow + static_cast<std::int32_t>(kRowLabels.size())) {
             const bool ok = SetRowTexts(ctx, screen);
             g_rows = ok;
@@ -699,7 +711,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
         g_pad_last = buttons;
         g_swallow &= buttons;   // (let go: the game gets it again)
         const bool menu = g_menu.load();
-        const CoopTitleMenu::TitleMenuLook look = CoopTitleMenu::MenuFor(g_any_save, g_sub);
+        const CoopTitleMenu::TitleMenuLook look = CoopTitleMenu::MenuFor(g_any_save, g_sub, g_one_start);
         const CoopTitleMenu::TitleMenuRow* menu_row =
             menu && focused >= 0 && static_cast<std::size_t>(focused) < look.count ? &look.rows[static_cast<std::size_t>(focused)]
                                                                                  : nullptr;
@@ -707,8 +719,9 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
             // The player's own A on the title (not on our co-op rows): they pick their own file or a new game while
             // the host's save is still coming (or late). No switch after this: it would change the save folder
             // under the load.
-            const bool our_row = menu ? (menu_row == nullptr || menu_row->action != CoopTitleMenu::TitleDo::kGame ||
-                                         focused != 0)
+            // (the title's own menu: the game's own presses and Options decided in its place are the player's; the
+            // module's rows, Multiplayer, Host, Join, Co-op Settings and Back, are not)
+            const bool our_row = menu ? !CoopTitleMenu::PlayersOwn(menu_row)
                                       : g_rows && focused >= kFirstRow &&
                                             focused < kFirstRow + static_cast<int>(kRowLabels.size());
             if (CoopTitleMenu::SaveWait::PlayerPicksFile(true, focused, our_row)) {
@@ -719,9 +732,14 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
                 }
             }
         }
-        if (!HasScratch() || !title || g_wait.active()) {
+        if (!HasScratch() || !title) {
             return buttons & ~g_swallow;
         }
+        // The host's save on its way (Join at the title): the co-op rows wait. The title's own menu still keeps the
+        // A of every row the module answers from the game, or its NormalTitle would start Continue or New Game for
+        // Multiplayer, Host or Join with the switch still pending (a mouse click is the same A: Longshot taps it on
+        // the button under the cursor once the focus is there).
+        const bool rows_wait = g_wait.active();
         if (menu) {
             // The title's own menu: the rows the module answers keep their A from the game (its NormalTitle would
             // start Continue, New Game or Options for them); the step makes the sound, the focus and the look.
@@ -730,24 +748,38 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
                 g_sub = sub, g_focus_to = focus, g_sound = "button_decide";
                 g_apply_until = NowMs() + kApplyForMs, g_apply_next = 0;
             };
+            const auto back = [&] {   // (the title's rows again, the cursor on Multiplayer)
+                change(false, CoopTitleMenu::RowOf(CoopTitleMenu::MenuFor(g_any_save, false, g_one_start),
+                                                   TitleDo::kMultiplayer));
+            };
+            const auto page = [&](CoopPauseMenu::Page p) {
+                if (rows_wait) {
+                    LOG_INFO(Core, "coop: title: menu: the row waits (the host's save is on its way)");
+                    return;
+                }
+                open = p, g_sound = "button_decide";
+            };
             if ((down & kA) != 0 && menu_row != nullptr && menu_row->action != TitleDo::kGame) {
                 g_swallow |= kA;
                 LOG_INFO(Core, "coop: title: menu: row {} pressed ({})", focused, menu_row->label);
                 switch (menu_row->action) {
                 case TitleDo::kGame: break;
-                case TitleDo::kDecide: g_decide = menu_row->decide; break;
-                case TitleDo::kMultiplayer: change(true, CoopTitleMenu::MenuFor(g_any_save, true).focus); break;
-                case TitleDo::kBack: change(false, 1); break;
-                case TitleDo::kHost: open = CoopPauseMenu::Page::kHost, g_sound = "button_decide"; break;
-                case TitleDo::kJoin: open = CoopPauseMenu::Page::kJoin, g_sound = "button_decide"; break;
-                case TitleDo::kSettings: open = CoopPauseMenu::Page::kSettings, g_sound = "button_decide"; break;
+                case TitleDo::kDecide: g_decide = menu_row->decide; break;   // (Options: the player's own)
+                case TitleDo::kMultiplayer: change(true, CoopTitleMenu::MenuFor(g_any_save, true, g_one_start).focus); break;
+                case TitleDo::kBack: back(); break;
+                case TitleDo::kHost: page(CoopPauseMenu::Page::kHost); break;
+                case TitleDo::kJoin: page(CoopPauseMenu::Page::kJoin); break;
+                case TitleDo::kSettings: page(CoopPauseMenu::Page::kSettings); break;
                 }
             } else if ((down & kB) != 0 && g_sub) {
                 g_swallow |= kB;   // (B in the submenu: the three rows again)
-                change(false, 1);
+                back();
                 LOG_INFO(Core, "coop: title: menu: B: the title's rows again");
             }
             if (!open) return buttons & ~g_swallow;
+        }
+        if (rows_wait) {
+            return buttons & ~g_swallow;   // (the older title's co-op rows wait)
         }
         const int f = (down & kA) != 0 && !menu ? FocusedIndex(g_screen.load()) : -1;
         if (menu) {

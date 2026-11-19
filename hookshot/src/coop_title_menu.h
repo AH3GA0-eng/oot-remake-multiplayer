@@ -366,9 +366,12 @@ TitleArrangement ArrangementFor(bool any_save);
 
 // The title's own menu (a pack whose Title_00 has the hidden marker pane kMenuMarker, tools/puppet_pack/title_menu.py):
 // three rows on the game's own buttons, Start, Multiplayer and Options; Multiplayer turns them into Host, Join, Co-op
-// Settings and Back, the game's hidden fourth slot shown (BtnNum's frame 4). With the save-screen mod's file select,
-// Continue and New Game led to the same place, so one Start row stands for both: the game's first button, Continue
-// with a save, New Game without. Options is the game's own (its third button with a save; without one the game's
+// Settings and Back, the game's hidden fourth slot shown (BtnNum's frame 4). With a save-screen mod's file select,
+// Continue and New Game led to the same place, so one Start row stands for both (one_start): the game's first button,
+// Continue with a save, New Game without. Without such a mod (one_start false: no code mod asked for the menu screens,
+// CoopModsRuntime::ScreensWanted) and with a save the rows are Continue, New Game, Multiplayer and Options, the fourth
+// slot shown for Options (the game's third button decided in its place), so New Game stays reachable; without a save
+// New Game, Multiplayer, Options. Options is the game's own (its third button with a save; without one the game's
 // second is Options, decided by the module when the third row is chosen). The other rows are the module's: it takes
 // their A (the game never sees it) and plays the decide sound itself.
 inline constexpr const char* kMenuMarker = "Pa_CoopMenu_00";
@@ -392,9 +395,17 @@ struct TitleMenuLook {
     std::size_t count = 0;
     int focus = -1;            // where the cursor goes when this look comes in (-1: where it is)
 };
-TitleMenuLook MenuFor(bool any_save, bool multiplayer);
+TitleMenuLook MenuFor(bool any_save, bool multiplayer, bool one_start);
+// Whether an A on that row is the player's own choice on the title (the game's press, or Options decided in its
+// place): it drops a guest's pending switch to the host's save. The module's rows (Multiplayer, Host, Join, Co-op
+// Settings, Back) and no row are not.
+inline bool PlayersOwn(const TitleMenuRow* row) {
+    return row != nullptr && (row->action == TitleDo::kGame || row->action == TitleDo::kDecide);
+}
+// The first row of `look` that does `action` (-1: none).
+int RowOf(const TitleMenuLook& look, TitleDo action);
 // The pack's labels: 0100 Host, 0101 Join, 0102 Co-op Settings (the older packs' rows too), 0103 Start,
-// 0104 Multiplayer, 0105 Options, 0106 Back.
+// 0104 Multiplayer, 0105 Options, 0106 Back. (Continue and New Game rows use the game's own 0001 and 0000.)
 inline constexpr std::array<std::pair<const char*, const char*>, 7> kMenuLabels{{{"0100", "Host"},
                                                                                {"0101", "Join"},
                                                                                {"0102", "Co-op Settings"},
