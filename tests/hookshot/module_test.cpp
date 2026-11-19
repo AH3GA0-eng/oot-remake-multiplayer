@@ -682,18 +682,25 @@ TEST_CASE("hookshot: the Discord status header in patch 0026 is hookshot/src's, 
     const std::string rpc = PatchedCode(patch, "host/discord_rpc.c");
     REQUIRE_FALSE(rpc.empty());
     const auto has = [&rpc](const char* code) { return rpc.find(Squashed(code)) != std::string::npos; };
-    CHECK(has("hos_discord_activity(activity, sizeof activity, \"Longshot\", release, COOP_DISCORD_IMAGE_DEFAULT, &words,"
-              " module_line,"));
     CHECK(has("GetProcAddress(m, \"hos_coop_discord_state\")"));
     CHECK(has("dlsym(m, \"hos_coop_discord_state\")"));
-    // Longshot v3.0.0-rc.8 writes its own status from a template (host/discord_activity.c). The header's frame is used
-    // only with one of 0026's keys or the module's line; with none, Longshot's own frame, untouched.
-    CHECK(has("if (*words.image || *words.details || *words.state || *words.large_text || *module_line) {"));
+    // Owner's rule: a co-op build's Discord status is always Squadala!'s. Longshot v3.0.0-rc.8 writes its own from a
+    // template (host/discord_activity.c); 0026 sends the header's frame in every state instead (title, play, pause,
+    // idle), with no art (the Squadala! application's icon), and always on the Squadala! application.
+    CHECK(has("if (1) { /* (patch 0026: always Squadala!'s frame, no art (the application's icon); Longshot's template below is"
+              " never used) */ HosDiscordWords w = words; snprintf(w.image, sizeof w.image, \"none\");"));
+    CHECK(has("if (!hos_discord_activity(activity, sizeof activity, COOP_DISCORD_NAME, \"\", \"none\", &w, module_line, started) ||"));
+    CHECK(has("hos_discord_set_activity(json, cap, nonce, process_id(), activity); } return; }"));
+    CHECK(has("snprintf(out, cap, \"%s\", COOP_DISCORD_APP_ID); /* (patch 0026: always the Squadala! application) */ }"));
     CHECK(has("discord_settings_line(&settings, line); read_words_line(line);"));
     CHECK(has("if (!module_state(module_line, sizeof module_line)) *module_line = 0;"));
-    // Words or a frame that do not fit (hos_discord_activity / hos_discord_set_activity give 0 and "": the
-    // header's test) fall back to Longshot's own frame: something is always sent, and that is no broken connection.
-    CHECK(has("hos_discord_set_activity(json, cap, nonce, process_id(), activity)) return;"));
+    {   // the application's id: the kit's (tools/release/kit/scripts/discord_status.py APP_ID, its one place)
+        const std::string kit = ReadFile(kRepo / "tools" / "release" / "kit" / "scripts" / "discord_status.py");
+        const auto at = kit.find("\nAPP_ID = \"");
+        REQUIRE(at != std::string::npos);
+        const std::string id = kit.substr(at + 11, kit.find('"', at + 11) - (at + 11));
+        CHECK(has(("#define COOP_DISCORD_APP_ID \"" + id + "\"").c_str()));
+    }
     const std::string module = ReadFile(kRepo / "hookshot" / "src" / "coop_hookshot.cpp");
     CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_discord_state(char* out, size_t cap) noexcept") != std::string::npos);
 }
