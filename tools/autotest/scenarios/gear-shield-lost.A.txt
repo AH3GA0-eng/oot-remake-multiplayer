@@ -1,0 +1,48 @@
+# gear-shield-lost (proof-0116, row 148 scenario 6, puppet-gear-148 e1e257dc): STAND-IN for a burnt / Like Like-eaten shield:
+# child A sets PouchData.Weapon_Shield_Deku.StockNum to 0 (the count the game empties and the fix reads), then 1 again.
+# PASS (shots both): lost / lost2 B's puppet of A has NO shield; back / back2 B's puppet holds the Deku Shield again.
+# NOT covered: the game's own burn / Like Like path (UNPROVEN unless a real run shows it).
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_ANIM=1
+#! timeout 480
+mark start
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 600
+stick 0 0.6 100
+stick 0.7 0 30
+stick 0 -0.4 12
+wait 60
+mark before
+setflag PouchData.Weapon_Shield_Deku.StockNum 0
+wait 300
+mark lost
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 1500
+stick 0 0.6 100
+stick 0.7 0 30
+stick 0 -0.4 12
+wait 120
+mark lost2
+setflag PouchData.Weapon_Shield_Deku.StockNum 1
+wait 300
+mark back
+warp KakarikoVillage_Child Kakariko_WellSide
+wait 1500
+stick 0 0.6 100
+stick 0.7 0 30
+stick 0 -0.4 12
+wait 120
+mark back2
+mark end

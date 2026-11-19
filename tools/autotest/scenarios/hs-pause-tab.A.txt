@@ -82,42 +82,18 @@ wait 30
 press DDOWN
 wait 60
 mark leave-row
+# proof-0116: A is a launcher session's guest, so this row reads 'Leave: restart the game' and pressing it twice does
+# not stop co-op (ae3dfe05). The idle half (Host a game / Join a game ...) needs a session started from the menu.
 press A
 wait 40
 mark leave-confirm
 press A
 wait 240
-mark idle-page
-# The idle views: Join (paste only) and Players.
-press DUP
-wait 30
-press DUP
-wait 30
-press DUP
-wait 30
-press DUP
-wait 30
-press DUP
-wait 30
-press DDOWN
-wait 30
-press A
-wait 60
-mark idle-join
-press B
-wait 60
-press DDOWN
-wait 30
-press A
-wait 60
-mark idle-players
-press B
-wait 60
-mark idle-back
+mark leave-after
 press L
 wait 120
-mark idle-system
+mark leave-system
 press PLUS
 wait 150
 stick 0 0.6 60
-mark idle-walking
+mark walking

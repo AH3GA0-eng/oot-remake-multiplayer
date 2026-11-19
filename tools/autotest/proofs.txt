@@ -359,6 +359,9 @@ teleport2-together-B                     s*-together-B                  160,80,9
 # again after the menu closed. Thresholds are a first guess until the first run (proof.py dist) and refs.
 title-on-host-A   s*-on-host-A   320,330,640,390  change  from=s*-top-A      min=4
 title-on-host-B   s*-on-host-B   320,330,640,390  change  from=s*-top-B      min=4
+# the highlight one row lower, Host to Join (v3.0.0 title: Host ~y606, Join ~y646, 1280x720 shot; proof-0116 s27-on-host-A)
+title-on-join-A   s*-on-join-A   480,590,320,80   change  from=s*-on-host-A  min=4
+title-on-join-B   s*-on-join-B   480,590,320,80   change  from=s*-on-host-B  min=4
 title-pressed-A   s*-pressed-A   0,0,1280,720     change  from=s*-on-host-A  min=8
 title-pressed-B   s*-pressed-B   0,0,1280,720     change  from=s*-on-host-B  min=8
 title-closed-A    s*-closed-A    0,0,1280,720     change  from=s*-pressed-A  min=8
