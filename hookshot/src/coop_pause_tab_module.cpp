@@ -33,7 +33,6 @@
 #include "coop_save.h"
 #include "coop_window_brand.h"
 #include "coop_title_menu.h"
-#include "coop_window_brand.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -1188,6 +1187,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                     decide = false;
                 } else {
                     row = clicked >= 0 ? clicked : FocusedRow();   // (under the lock: the pages screen is the updates')
+                    if (clicked == MouseRows::kOffRows) decide = false;   // (a click off our rows: no row's A)
                 }
             }
             if (g_page.TakeBack()) {

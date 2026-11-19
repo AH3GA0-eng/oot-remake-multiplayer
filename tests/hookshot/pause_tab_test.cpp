@@ -1409,25 +1409,50 @@ TEST_CASE("pause tab: the mouse moved onto a row steps the game's cursor there w
     CHECK(m.Step(At(t += 16, -1100, -900, 2)) == kPadDown);
 }
 
-TEST_CASE("pause tab: a click on a row is that row's A, though the game's cursor is still on another (Back on a view)") {
+TEST_CASE("pause tab: a click on a row is that row's A from its press, though the game's cursor is still on another") {
     MouseRows m;
     std::uint64_t t = 1000;
     // The cursor on row 3, the mouse already over Back (moved there earlier, the steps not taken yet).
     m.Step(At(t, -1100, -900, 3));
-    m.Step(At(t += 16, -1100, -900, 3, true));
-    m.Step(At(t += 100, -1100, -900, 3, true));
-    m.Step(At(t += 16, -1100, -900, 3, false));   // (let go: a click on Back)
+    m.Step(At(t += 16, -1100, -900, 3, true));   // (pressed: Longshot's A comes 50 ms on, the button still down)
     CHECK(m.Clicked(t + 50) == kRows - 1);
-    CHECK(m.TakeClicked(t + 60) == kRows - 1);
-    CHECK(m.Clicked(t + 70) == -1);   // (one A a click)
-    // Pressed on one row and let go on another: no click of ours (the focused row's A, as before).
+    CHECK(m.TakeClicked(t + 50) == kRows - 1);
+    CHECK(m.Clicked(t + 60) == -1);   // (one A a click)
+    m.Step(At(t += 100, -1100, -900, 3, true));
+    m.Step(At(t += 16, -1100, -900, 3, false));   // (let go: no second click)
+    CHECK(m.Clicked(t) == -1);
+    // Pressed on one row and let go on another: the row it was pressed on (where Longshot's A was for).
     m.Step(At(t += 500, -1100, 600, 0, true));
     m.Step(At(t += 100, -1100, -900, 0, false));
-    CHECK(m.Clicked(t) == -1);
+    CHECK(m.Clicked(t) == 0);
+    m.TakeClicked(t);
     // A click long ago is not the next A's.
     m.Step(At(t += 500, -1100, 600, 0, true));
     m.Step(At(t += 100, -1100, 600, 0, false));
     CHECK(m.Clicked(t + MouseRows::kClickMs + 1) == -1);
+}
+
+TEST_CASE("pause tab: a press on the page off our rows: its A chooses no row, and with no boxes read the old A stays") {
+    MouseRows m;
+    std::uint64_t t = 1000;
+    m.Step(At(t, 0, 600, 2));
+    m.Step(At(t += 16, 0, 600, 2, true));   // (off the column)
+    CHECK(m.TakeClicked(t + 50) == MouseRows::kOffRows);
+    m.Step(At(t += 16, 0, 600, 2, false));
+    // No row's box could be read (the page sliding): a press is nothing of ours, so the A is the focused row's.
+    MouseRows::In none = At(t += 500, -1100, 600, 2, false);
+    none.boxes = RowBoxes{};
+    m.Step(none);
+    none.now_ms = t += 16, none.left = true;
+    m.Step(none);
+    CHECK(m.Clicked(t + 50) == -1);
+    // Pressed outside the window: nothing.
+    MouseRows::In out;
+    out.now_ms = t += 500, out.focused = 2, out.boxes = FiveRows();
+    m.Step(out);
+    out.now_ms = t += 16, out.left = true;
+    m.Step(out);
+    CHECK(m.Clicked(t + 50) == -1);
 }
 
 TEST_CASE("pause tab: the mouse's steps stop for the player's own, the cursor out of the window, and after 2 s") {

@@ -387,6 +387,7 @@ int RowAt(const RowBoxes& boxes, float x, float y);
 class MouseRows {
 public:
     static constexpr std::uint64_t kClickMs = 400;     // an A this long after a click on a row is that row's
+    static constexpr int kOffRows = -2;                // Clicked: a press on the page off our rows (its A chooses none)
     static constexpr std::uint64_t kStepWaitMs = 250;  // a step not seen as the cursor's move: the next after this
     static constexpr std::uint64_t kGiveUpMs = 2000;   // the cursor not there by then: let be
 
@@ -403,7 +404,8 @@ public:
     // The pad bits to add for the game this read: a step (up or down, one read held, one let go) toward the row the
     // mouse moved onto or clicked.
     std::uint64_t Step(const In& in);
-    // The row clicked in the last kClickMs (-1 none); Take forgets it (one A each click).
+    // The row clicked (pressed on) in the last kClickMs, kOffRows for a press on the page off every row (Longshot's A
+    // for a button that is none of ours), -1 none; Take forgets it (one A each click).
     int Clicked(std::uint64_t now_ms) const;
     int TakeClicked(std::uint64_t now_ms);
     void Reset();
@@ -411,7 +413,7 @@ public:
 private:
     bool seen_ = false, left_ = false, held_ = false;
     float x_ = 0, y_ = 0;
-    int target_ = -1, press_ = -1, clicked_ = -1, step_from_ = -1;
+    int target_ = -1, clicked_ = -1, step_from_ = -1;
     std::uint64_t since_ = 0, clicked_ms_ = 0, step_ms_ = 0;
 };
 
