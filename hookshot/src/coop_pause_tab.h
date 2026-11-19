@@ -474,6 +474,10 @@ std::vector<std::string> RowTexts(View view, const SessionView& v);
 inline constexpr int kCells = 8, kCellColumns = 2;
 // The cells' texts for this page ("" a cell not shown). With nothing listed, the first says why.
 std::vector<std::string> CellTexts(const SessionView& v);
+// A relay room's cell: "kokiri: Saria (2/4)", the room and the host's name it was listed under (both public: anyone
+// who asks the relay reads them, so the cell shows them too), then `tail` (" (2/4)", " (full)", " (other version)").
+// Within kRowChars: the longer of the two names is cut first ("..."), never the tail.
+std::string RoomCell(const std::string& room, const std::string& host, const std::string& tail);
 // The games the browser lists now (the chosen list's), and its pages.
 int BrowseListed(const Session& s);
 int CellPages(int listed);

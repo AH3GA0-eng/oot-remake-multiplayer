@@ -763,7 +763,7 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
         rows[2] = pages > 1 ? "Next page (" + std::to_string((v.s.cell_page % pages + pages) % pages + 1) + "/" +
                                   std::to_string(pages) + ")"
                             : std::string("Refresh list");
-        rows[3] = v.s.list_room ? "List my room: On" : "List my room: Off";
+        rows[3] = v.s.list_room ? "List me (my name): On" : "List me (my name): Off";   // (the list shows the name)
         break;
     }
     case View::kLanGame:
@@ -993,6 +993,30 @@ std::vector<std::string> Probe::Seen(const Facts& f, std::uint64_t now_ms) {
                       " updates in its first " + std::to_string(now_ms - last.first_ms) + " ms");
     }
     return out;
+}
+
+namespace {
+
+// `s` in at most `n` bytes: cut before a UTF-8 letter's start, "..." when cut and there is room for it.
+std::string Cut(const std::string& s, std::size_t n) {
+    if (s.size() <= n) return s;
+    const bool dots = n > 3;
+    std::size_t k = dots ? n - 3 : n;
+    while (k > 0 && (static_cast<unsigned char>(s[k]) & 0xc0) == 0x80) --k;
+    return s.substr(0, k) + (dots ? "..." : "");
+}
+
+}  // namespace
+
+std::string RoomCell(const std::string& room, const std::string& host, const std::string& tail) {
+    const std::string sep = ": ";
+    if (room.size() + sep.size() + host.size() + tail.size() <= kRowChars) return room + sep + host + tail;
+    if (tail.size() + sep.size() + 2 > kRowChars) return Fit(room + sep + host + tail);
+    const std::size_t room_for = kRowChars - tail.size() - sep.size();   // (both names)
+    std::size_t h = std::min(host.size(), std::max(room_for / 2, room_for > room.size() ? room_for - room.size() : 0));
+    std::size_t r = room_for - h;
+    if (r > room.size()) h += r - room.size(), r = room.size();
+    return Cut(room, r) + sep + Cut(host, h) + tail;
 }
 
 std::vector<std::string> CellTexts(const SessionView& v) {

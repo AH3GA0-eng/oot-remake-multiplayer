@@ -1152,7 +1152,7 @@ TEST_CASE("pause tab: the game browser: the rows choose the list and its page, t
     CHECK(rows[0] == "Local games (0)");   // (the list the cells show: the module dims the other's row)
     CHECK(rows[1] == "Online games");      // (not asked yet)
     CHECK(rows[2] == "Refresh list");      // (one page: no empty row)
-    CHECK(rows[3] == "List my room: Off");
+    CHECK(rows[3] == "List me (my name): Off");
     CHECK(rows[kRows - 1] == "Back");
     auto cells = CellTexts(v);
     REQUIRE(cells.size() == static_cast<std::size_t>(kCells));
@@ -1177,7 +1177,7 @@ TEST_CASE("pause tab: the game browser: the rows choose the list and its page, t
     rows = RowTexts(View::kLan, v);
     CHECK(rows[1] == "Online games (10)");
     CHECK(rows[2] == "Next page (1/2)");
-    CHECK(rows[3] == "List my room: On");
+    CHECK(rows[3] == "List me (my name): On");
     v.s.cell_page = 1;   // (the second page: the 9th and 10th rooms)
     cells = CellTexts(v);
     CHECK(cells[0] == "kokiri (1/4)");
@@ -1189,6 +1189,27 @@ TEST_CASE("pause tab: the game browser: the rows choose the list and its page, t
         for (const std::string& r : RowTexts(w, v)) CHECK(r.size() <= kRowChars);
     }
     for (const std::string& c : CellTexts(v)) CHECK(c.size() <= kRowChars);
+}
+
+TEST_CASE("pause tab: a relay room's cell shows its room and its host's name, cut to fit, the count kept") {
+    CHECK(RoomCell("kokiri", "Saria", " (2/4)") == "kokiri: Saria (2/4)");
+    for (const auto& [room, host, tail] :
+         {std::tuple<std::string, std::string, std::string>{"forest-gang-and-friends", "Saria", " (2/4)"},
+          {"kokiri", "A very long player name here", " (1/16)"},
+          {"forest-gang-and-friends", "A very long player name here", " (other version)"},
+          {"abc", "Ã©Ã©Ã©Ã©Ã©Ã©Ã©Ã©Ã©Ã©", " (1/4)"}}) {
+        const std::string c = RoomCell(room, host, tail);
+        CHECK(c.size() <= kRowChars);
+        CHECK(c.size() >= tail.size());
+        CHECK(c.compare(c.size() - tail.size(), tail.size(), tail) == 0);   // (the count is never cut)
+        CHECK(c.find(host.substr(0, 1)) != std::string::npos);              // (the host's name starts there)
+        CHECK(c.find(": ") != std::string::npos);
+        for (std::size_t i = 0; i + 1 < c.size(); ++i) {   // (no UTF-8 letter cut in half: no lead byte before ASCII)
+            const auto a = static_cast<unsigned char>(c[i]), b = static_cast<unsigned char>(c[i + 1]);
+            CHECK_FALSE((a & 0xe0) == 0xc0 && (b & 0xc0) != 0x80);
+        }
+    }
+    CHECK(RoomCell("forest-gang-and-friends", "Saria", " (2/4)") == "forest-g...: Saria (2/4)");
 }
 
 TEST_CASE("pause tab: the browser's cells: two columns, the arrows among them, Left from the left column to the rows") {
