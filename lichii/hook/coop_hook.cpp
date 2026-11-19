@@ -1405,7 +1405,8 @@ public:
             // G2 (#241): a boss the group beat while our game did not see it die gets its beaten set, one way, at the
             // next load of a scene other than the boss's, never mid-scene (coop_boss_beaten.h). Solo or co-op idle: the
             // record is empty.
-            // In the boss's own dungeon scene: live, once our Link is out of the boss's area (rows 136/137).
+            // In the boss's own dungeon scene: live, once our Link is out of the boss's area (rows 136/137), or in it
+            // once no death of ours can run there (row 136: came in after the death, joined, a refused ask).
             const CoopBossBeaten::Record& record = CoopBossBeaten::TheRecord();
             const std::vector<std::uint8_t> beaten = record.Rooms();
             const auto near_boss = [&](std::uint8_t room) {
@@ -1421,7 +1422,10 @@ public:
                          const auto v = game_store->read(coop::protocol::FlagKey{hash, 0});
                          return v ? std::optional<std::uint32_t>(v->value) : std::nullopt;
                      },
-                     near_boss)) {
+                     near_boss, [&](std::uint8_t room) {
+                         // an event runs (or is unread): it may be the death; else what the Director knows
+                         return !reading || reading->event_running.value_or(true) || CoopBoss::DeathMayRun(room);
+                     })) {
                 const bool ok = game_store->write(coop::protocol::FlagEntry{
                     coop::protocol::FlagKey{w.hash, 0},
                     w.is_enum ? coop::protocol::FlagKind::uint32 : coop::protocol::FlagKind::boolean, w.value});
