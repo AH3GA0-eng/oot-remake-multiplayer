@@ -446,8 +446,8 @@ std::uint64_t HeldButtons() {
     return g_running ? g_host->HeldButtons() : 0;
 }
 
-bool ScreensWanted() {
-    return g_running && g_host->WantsScreens();
+bool FileSelectRuns() {
+    return g_running && g_host->FileSelectRuns();
 }
 
 }  // namespace CoopModsRuntime

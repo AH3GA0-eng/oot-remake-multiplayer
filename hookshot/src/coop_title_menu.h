@@ -421,8 +421,8 @@ TitleArrangement ArrangementFor(bool any_save);
 // three rows on the game's own buttons, Start, Multiplayer and Options; Multiplayer turns them into Host, Join, Co-op
 // Settings and Back, the game's hidden fourth slot shown (BtnNum's frame 4). With a save-screen mod's file select,
 // Continue and New Game led to the same place, so one Start row stands for both (one_start): the game's first button,
-// Continue with a save, New Game without. Without such a mod (one_start false: no code mod asked for the menu screens,
-// CoopModsRuntime::ScreensWanted) and with a save the rows are Continue, New Game, Multiplayer and Options, the fourth
+// Continue with a save, New Game without. Without such a mod (one_start false: no running code mod whose mod.json says
+// "file_select": true, CoopModsRuntime::FileSelectRuns; another menu-screen mod does not count) and with a save the rows are Continue, New Game, Multiplayer and Options, the fourth
 // slot shown for Options (the game's third button decided in its place), so New Game stays reachable; without a save
 // New Game, Multiplayer, Options. Options is the game's own (its third button with a save; without one the game's
 // second is Options, decided by the module when the third row is chosen). The other rows are the module's: it takes
