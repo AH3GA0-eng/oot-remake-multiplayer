@@ -262,7 +262,7 @@ private:
 void Init(const HosCoopApi* api);
 // hos_coop_game_screen: every menu screen's update, on the game's threads; ctx may call() (patch 0030).
 void OnScreen(void* ctx, std::uint64_t screen) noexcept;
-// hos_coop_pad, after the title's: the buttons the game gets (the sticks zeroed while our page shows).
+// hos_coop_pad, first (coop_pad_order.h): what the game and the mods get (sticks zeroed while our page shows).
 std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept;
 // hos_coop_game_pause_page: Page::MousePage (4 shown, -1 can show, -2 cannot be used).
 int MousePage() noexcept;

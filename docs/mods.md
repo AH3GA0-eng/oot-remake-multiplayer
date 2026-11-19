@@ -155,9 +155,24 @@ COOP_MOD_EXPORT int coop_mod_start(const CoopModApi *a) {
 }
 ```
 
-The table (version 1): `log`, `main_base`, `read`, `write` (guest addresses; offsets in our docs are from `main_base`), `setting`, `on_frame`, `on_overlay` (rectangles and text over the picture), `on_key` (key downs on Hookshot), `on_setting`, `hook` and `has_hook` (game functions of the runtime's hook list, before and after, with the registers), `restart_needed`. Register only inside `coop_mod_start`. Keep each callback short; never wait on the game. Calls that take `self` want the table you were given. A later version only adds entries at the end: check `api->version`.
+The table (version 1, and version 2 below): `log`, `main_base`, `read`, `write` (guest addresses; offsets in our docs are from `main_base`), `setting`, `on_frame`, `on_overlay` (rectangles and text over the picture), `on_key` (key downs on Hookshot), `on_setting`, `hook` and `has_hook` (game functions of the runtime's hook list, before and after, with the registers), `restart_needed`. Register only inside `coop_mod_start`. Keep each callback short; never wait on the game. Calls that take `self` want the table you were given. A later version only adds entries at the end: check `api->version`.
 
 Mods are loaded first row first and started at the first frame. `coop_mod_stop` (optional) runs at exit.
+
+### Menu screens (version 2)
+
+Version 2 adds the game's menu screens. A mod written for it says `"api": 2` in `mod.json`; a mod for version 1 loads and runs as before, and when no mod asks for screens the module reads none.
+
+- `on_screen(api, fn, user)`: `fn(user, screen)` at every menu screen's update, on the game's thread that updates it, before the screen's own update (the HUD is a menu screen too). `screen->kind` is `COOP_MOD_SCREEN_TITLE`, `_LOAD_LIST` (the list of saves the title's Continue and the System page's Load open), `_LOAD_QUESTION` (its question after a save is picked) or `_OTHER`. `screen->focused` is the focused button's name in the screen's layout (`Pa_Button_00` is the title's Continue), `""` when none. `screen->save_list_ready` is 1 when the game's save list is read. `screen->buttons` is player 1's buttons as the game would get them before any hold (a pad, the keyboard's bindings and a click alike).
+- Inside that call, and only there, for the screen it hands over:
+  - `choose_focused(api)` chooses the focused button the game's own way, as the player's A (its sound, what it opens). 0 when nothing is focused, the button cannot be chosen yet (try at a later update) or co-op is busy: hosting, joining, in a session or the host's save on its way (on every screen, not only the title).
+  - `reload_save_list(api)` has the game read its save list again from the save folder, after the mod changed the files in it. The game reads it at the title's next update; `save_list_ready` is 0 until then. It answers 0 when the title is not up (the game reads its list only there), so on the pause menu's System > Load ask again once the title shows.
+  - `hold_input(api, buttons)`: the game does not get those buttons from player 1 (`COOP_MOD_HOLD_ALL`: all of them and the sticks, for the mod's own screen in front; a few, such as A on a focused button, to take that choice: the mod sees the press in `screen->buttons` and acts itself; 0 gives everything back). Each call ties the hold to the screen it is made on. It ends by itself when that screen has not updated for half a second (it closed; the HUD and other screens do not keep it) or updates as another kind of screen, and when the mod is switched off. To keep a hold on the next screen, call `hold_input` again there.
+  - Called anywhere else they do nothing and answer 0, with one line in the log.
+- A hold covers player 1's pad, the keyboard's bindings and a click (it comes as a press), not the mouse's hover over the game's buttons.
+- While co-op's own Multiplayer page shows on the pause menu, the mods get no screen updates: the screen behind it is not the player's, and the page takes the pad first. A hold made before ends half a second after the page shows.
+
+The mod never sees an address: the module finds the game's functions itself (the button's decide, the save list's read, the screens' classes). The same entries are meant to carry over to the add-on interface of co-op 1.0, where only the runtime under them changes. On Hookshot the screens come through patch 0030's menu screen hook; no other game patch is needed.
 
 A whole sample is in `hookshot/samples/hello-mod` (`mod.json` + `hello_mod.c`; the tests build it as `hello_mod.dll`): copy both files into `mods\hello-mod`, start the game, and F7 shows its message in the corner.
 

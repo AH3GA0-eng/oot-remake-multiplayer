@@ -57,7 +57,9 @@
 #include "coop_dbno_body.h"
 #include "coop_dbno_game.h"
 #include "coop_enemy_shots.h"
+#include "coop_mod_api.h"
 #include "coop_mods_runtime.h"
+#include "coop_pad_order.h"
 #include "coop_rando.h"
 #include "coop_hook.h"
 #include "coop_lobby_game.h"
@@ -1134,6 +1136,21 @@ void UseInputSelect() {
     LOG_INFO(Core, "coop: controller {}, keyboard {}", CoopInput::PadValue(s.pad), CoopInput::KeyboardValue(s.keyboard));
 }
 
+// Why nothing may choose the title's buttons for the player now (nullptr: free): co-op is hosting, joining, in a
+// session or the host's save is on its way. Skip title screen's hold (hos_coop_title_hold) and the code mods' choice
+// (mod API v2) ask it.
+const char* TitleHoldWhy() {
+    CoopTitleMenu::SkipTitleInput in;
+    HosCoopStatus st{};
+    st.size = sizeof st;
+    HostMenu().Status(&st);
+    in.host_state = st.state;
+    in.session_live = CoopSave::SessionLive();
+    in.save_coming = CoopSave::HostSaveComing();
+    in.save_wait = CoopTitle::SaveWaitWaiting();
+    return CoopTitleMenu::SkipTitleHold(in);
+}
+
 bool Start(const HosCoopApi* api) {
     if (api == nullptr || api->version != HOS_COOP_API_VERSION || api->size < kFirstApiSize) {
         return false;
@@ -1190,6 +1207,7 @@ bool Start(const HosCoopApi* api) {
     CoopHook::Start();
     g_on = true;
     CoopModsRuntime::Start();  // the mods folder and the code mods (docs/mods.md)
+    CoopModsRuntime::SetGame(api, TitleHoldWhy);   // (mod API v2: the menu screens' calls)
     CoopTitle::Init(api);
     CoopPauseTab::Init(api);   // the pause menu's Multiplayer tab (patch 0030)
     CoopPause::Init(server);
@@ -1882,15 +1900,7 @@ COOP_HOOKSHOT_EXPORT int hos_coop_title_hold(void) noexcept {
         return 0;
     }
     try {
-        CoopTitleMenu::SkipTitleInput in;
-        HosCoopStatus st{};
-        st.size = sizeof st;
-        CoopHookshot::HostMenu().Status(&st);
-        in.host_state = st.state;
-        in.session_live = CoopSave::SessionLive();
-        in.save_coming = CoopSave::HostSaveComing();
-        in.save_wait = CoopTitle::SaveWaitWaiting();
-        const char* why = CoopTitleMenu::SkipTitleHold(in);
+        const char* why = CoopHookshot::TitleHoldWhy();
         static std::atomic<const char*> said{nullptr};
         if (why != nullptr && said.exchange(why) != why) {
             LOG_INFO(Core, "coop: title: Skip title screen waits: {}", why);
@@ -1913,9 +1923,19 @@ COOP_HOOKSHOT_EXPORT void hos_coop_title(void* ctx, uint64_t screen, int event) 
 }
 // The pause menu's Multiplayer tab (coop_pause_tab.h, patch 0030): every menu screen's update, on the game's threads,
 // and the page the mouse's tab strip counts (4 while our page shows, else -1).
+// The code mods' menu screens (coop_mod_api.h version 2) from the same call: read only when a mod asked for them.
 COOP_HOOKSHOT_EXPORT void hos_coop_game_screen(void* ctx, uint64_t screen) noexcept {
     if (g_on) {
         CoopPauseTab::OnScreen(ctx, screen);
+        try {
+            // (not while our Multiplayer page is in front: the screen behind it is not the player's, and a mod's
+            // choose_focused would press the game's button under our page)
+            if (CoopPauseTab::MousePage() != 4) {
+                CoopModsRuntime::Screen(ctx, screen);
+            }
+        } catch (...) {
+            // (the mods' screens skip this update: the game's own goes on)
+        }
     }
 }
 COOP_HOOKSHOT_EXPORT int hos_coop_game_pause_page(void) noexcept {
@@ -1960,19 +1980,36 @@ COOP_HOOKSHOT_EXPORT int hos_coop_view(double eye[3], double target[3]) {
     }
     return 0;
 }
-COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) {
+static_assert(CoopPadOrder::kHoldAll == COOP_MOD_HOLD_ALL);
+COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) noexcept {
     if (!g_on || stick == nullptr) {
         return buttons;
     }
-    buttons = CoopTitle::OnPad(buttons, stick);
-    buttons = CoopPauseTab::OnPad(buttons, stick);   // (its page takes the pad while it shows)
-    // Down but not out (coop_dbno_game.h): a downed Link crawls and uses nothing; beside one, A revives.
-    CoopDbno::Pad pad{buttons, {stick[0], stick[1], stick[2], stick[3]}};
-    pad = CoopDbno::OnPad(pad);
-    for (int i = 0; i < 4; ++i) {
-        stick[i] = pad.stick[i];
+    // The order (coop_pad_order.h): our pause page first (it takes the pad while it shows), then the code mods see what
+    // it passed on and their holds come off (coop_mod_api.h hold_input), then the title's watch and down but not out on
+    // what the game gets. Nothing thrown leaves this C export: the game then gets the pad as it came.
+    const uint64_t came = buttons;
+    int32_t was[4] = {stick[0], stick[1], stick[2], stick[3]};
+    try {
+        return CoopPadOrder::Run(
+            buttons, stick, [](uint64_t b, int32_t* s) { return CoopPauseTab::OnPad(b, s); },
+            [](uint64_t b) { CoopModsRuntime::NotePad(b); }, [] { return CoopModsRuntime::HeldButtons(); },
+            [](uint64_t b, int32_t* s) { return CoopTitle::OnPad(b, s); },
+            [](uint64_t b, int32_t* s) {
+                // Down but not out (coop_dbno_game.h): a downed Link crawls and uses nothing; beside one, A revives.
+                CoopDbno::Pad pad{b, {s[0], s[1], s[2], s[3]}};
+                pad = CoopDbno::OnPad(pad);
+                for (int i = 0; i < 4; ++i) {
+                    s[i] = pad.stick[i];
+                }
+                return pad.buttons;
+            });
+    } catch (...) {
+        for (int i = 0; i < 4; ++i) {
+            stick[i] = was[i];
+        }
+        return came;
     }
-    return pad.buttons;
 }
 COOP_HOOKSHOT_EXPORT int hos_coop_draw_wanted(void) {
     return g_on && (CoopDraw::Wanted(CoopHookshot::DrawScene()) || CoopModsRuntime::OverlayWanted()) ? 1 : 0;
