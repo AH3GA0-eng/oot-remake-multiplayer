@@ -398,6 +398,20 @@ TEST_CASE("eye switch: an input line (a test line) names one table line and hold
     CHECK_FALSE(s.HoldsGuard(coop::protocol::flag_hash("Insidejabujabu_Room5_Cleared"), "InsideJabuJabuBelly"));
 }
 
+TEST_CASE("eye switch: the held guards follow the input lines (no cache of the first call's lines)") {
+    // The full host run (2436/2437, eye_switch_test:397): HoldsGuard's hashes were a function-local static built on
+    // its first call, so a test with no input lines that ran first left the later input-line test with "not held".
+    const auto upper = coop::protocol::flag_hash("InsideJabuJabuBelly_Room14_PlayedSwitchEvent_Upper");
+    CoopEyeSwitch::Switcher s;
+    s.Expire("InsideJabuJabuBelly");
+    CHECK_FALSE(s.HoldsGuard(upper, "InsideJabuJabuBelly"));  // no input lines: the flag comes as it arrives
+    {
+        CoopEyeSwitch::ScopedInputsForTest lines(kOldUpper);
+        CHECK(s.HoldsGuard(upper, "InsideJabuJabuBelly"));    // the same Switcher, now with the line: held
+    }
+    CHECK_FALSE(s.HoldsGuard(upper, "InsideJabuJabuBelly"));  // the lines back: not held again
+}
+
 TEST_CASE("eye switch: an input line stores 1 into the switch's unwired input (no call) until the asker's event runs") {
     const std::string jabu = "InsideJabuJabuBelly";
     const std::string upper = "InsideJabuJabuBellyRoom14StepSwitch";

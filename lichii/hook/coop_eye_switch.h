@@ -218,6 +218,11 @@ private:
     std::vector<std::string> ended_;  // events of this visit whose guards come as before (not run here, or played)
     std::vector<std::string> ran_;    // events of this visit our copy ran: guards held until our game has them played
     std::vector<Try::Restore> restores_;  // ended input stores, taken back on the next Step (calc thread)
+    // HoldsGuard's flag hash per kGuards line (0: its event has no line we drive), built from the input lines it
+    // was made with: built again when they change (a test's ScopedInputsForTest), never left stale.
+    std::vector<std::uint32_t> guard_hashes_;
+    const Input* guard_inputs_ = nullptr;
+    std::size_t guard_inputs_size_ = 0;
 };
 
 }  // namespace CoopEyeSwitch
