@@ -3,7 +3,7 @@
 # teleport-197: the map change lands A at the Entrance start; once A has settled the trip asks B
 # again and moves A next to B, into that other room (moving Link loads his room; B's own 'place'
 # below does the same move right after B's load). Until teleport-197 that move was refused.
-# Run: toolsutotestun.ps1 -Runtime hookshot -Scenario hs-teleport-room.
+# Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario hs-teleport-room.
 # Pass, A's log: "scene change taken", "teleport: move to -33.2 ...: asked", "boss: moved Link to
 # -33.2 ...", 'mark arrived' with Link at x about -33 (not 0.2: the entrance), no "not moved",
 # no "goto timed out". Chat line: "teleport: next to B".
