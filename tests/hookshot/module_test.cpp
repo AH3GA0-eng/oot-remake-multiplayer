@@ -684,7 +684,7 @@ TEST_CASE("hookshot: the Discord status header in patch 0026 is hookshot/src's, 
     const auto has = [&rpc](const char* code) { return rpc.find(Squashed(code)) != std::string::npos; };
     CHECK(has("GetProcAddress(m, \"hos_coop_discord_state\")"));
     CHECK(has("dlsym(m, \"hos_coop_discord_state\")"));
-    // Owner's rule: a co-op build's Discord status is always Squadala!'s. Longshot v3.0.0-rc.8 writes its own from a
+    // Owner's rule: a co-op build's Discord status is always Squadala!'s. Longshot v3.0.0 (as rc.8) writes its own from a
     // template (host/discord_activity.c); 0026 sends the header's frame in every state instead (title, play, pause,
     // idle), with no art (the Squadala! application's icon), and always on the Squadala! application.
     CHECK(has("if (1) { /* (patch 0026: always Squadala!'s frame, no art (the application's icon); Longshot's template below is"
@@ -1129,11 +1129,11 @@ TEST_CASE("hookshot: patch 0018's screens' tracker and menu state build on Linux
 
 TEST_CASE("hookshot: every patch touches only what Longshot's Linux AppImage ships, so the Linux kit applies it") {
     // tools/release/kit/linux-longshot/scripts/build.sh applies every hookshot/patches/*.patch to a copy of the
-    // AppImage's usr/share/longshot, which holds only what Longshot's scripts/linux/appimage.sh copies (v3.0.0-rc.8):
+    // AppImage's usr/share/longshot, which holds only what Longshot's scripts/linux/appimage.sh copies (v3.0.0):
     // no tests/, docs/, .forgejo/, most of third_party/. A hunk on anything else applies on Windows' full source and
     // stops every Linux build. Keep this list to appimage.sh's when the pin moves: the list is for kShippedFor, and
     // the test fails on any other tag in hookshot/LINUX.txt until the list is re-checked and kShippedFor moved.
-    const std::string kShippedFor = "v3.0.0-rc.8";
+    const std::string kShippedFor = "v3.0.0";
     const std::string linux_pin = ReadFile(kRepo / "hookshot" / "LINUX.txt");
     const auto tag_at = linux_pin.find("\ntag=");
     REQUIRE(tag_at != std::string::npos);

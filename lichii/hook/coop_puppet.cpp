@@ -39,7 +39,19 @@ struct KeptPlace {
 std::mutex g_places_mutex;
 std::map<std::uint8_t, KeptPlace> g_places;
 } // namespace
+// The head show call's cell (#91) between the gear pointers and the Ocarina notes' cells.
+static_assert(block::kHeadOwnerEu >= block::kGearPtr + 8 * kGearCount);
+static_assert(block::kHeadOwnerEu + 8 <= CoopPuppetSound::block::kHandle);
 namespace {
+// The head show call (#91, addr::kShowHeadArmor). LICHII_COOP_MASK_SHOW=0
+// leaves it out (a mask is then worn and not drawn, as before 0.11.6).
+bool ShowHeadArmor() {
+    static const bool on = [] {
+        const char* v = std::getenv("LICHII_COOP_MASK_SHOW");
+        return v == nullptr || std::string_view(v) != "0";
+    }();
+    return on;
+}
 
 // The puppet plays the other player's Ocarina notes (issue 152) on the game's own
 // "Ocarina" SLink user, the one the game emits its own notes on (coop_puppet_sound.h,
@@ -641,6 +653,10 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
         }
         Say(who + " wears " + kGearNames[slot.equip_index] + " '" + slot.equip_name +
             "' (returned " + Hex(result & 0xff) + ")");
+        if (slot.equip_index == kGearHead) {
+            slot.head_show = (result & 0xff) != 0 && ShowHeadArmor();   // then shown (#91)
+            slot.head_hair_back = false;   // (the show call moves the hair for the new piece)
+        }
         break;
     case Pending::unequip: {
         const std::size_t i = slot.equip_index;
@@ -649,6 +665,11 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
                 Hex(result & 0xff) + ")");
             slot.worn[i].clear();
             slot.off_since_ms[i] = 0;
+            if (i == kGearHead) {
+                slot.head_show = false;
+                slot.head_hair_back = slot.head_shown;   // the hair as without a mask (#91)
+                slot.head_shown = false;
+            }
         } else {
             // Refused: the next Equip makes the puppet again without it.
             Say(who + " takes off " + kGearNames[i] + " '" + slot.worn[i] +
@@ -716,6 +737,17 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
     case Pending::link_sound:
         CoopLinkSound::Finish(slot.link_sound, result, guest, slot.block, who,
                               [this](const std::string& line) { Say(line); }, anim_);
+        break;
+    case Pending::head_show:
+        slot.head_show = false;
+        slot.head_shown = true;
+        Say(who + " shows head '" + slot.worn[kGearHead] + "' (the game's own show call, " +
+            Hex(addr::kShowHeadArmor) + ")");
+        break;
+    case Pending::head_hair:
+        slot.head_hair_back = false;
+        Say(who + ": hair put back after the head piece (the game's own take-off, " +
+            Hex(addr::kHeadArmorHairBack) + ")");
         break;
     case Pending::own_state:  // taken above
     case Pending::none:
@@ -966,6 +998,9 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     slot.remake = false;
     slot.off_since_ms = {};
     slot.unequip_refused = {};
+    slot.head_show = false;
+    slot.head_shown = false;
+    slot.head_hair_back = false;
     pending_ = Pending::create;
     return c;
 }
@@ -1147,6 +1182,32 @@ std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& gue
     }
     if (target.show == Show::show && now_ms >= slot.rewear_ms) {
         LeftBehind(slot, guest, now_ms);
+    }
+    // A head piece worn is shown, a head piece taken off gives the hair back,
+    // with the game's own calls (#91, addr::kShowHeadArmor).
+    if (slot.head_show && slot.worn[kGearHead].empty()) {
+        slot.head_show = false;
+    }
+    if (slot.head_show || slot.head_hair_back) {
+        std::uint64_t parts = 0;
+        std::uint64_t eu = 0;
+        if (ReadValue(guest, slot.actor + addr::kActorParts, parts) && parts != 0 &&
+            ReadValue(guest, parts + addr::kPartsEquipmentUser, eu) && eu != 0) {
+            Call c;
+            if (slot.head_show) {
+                if (!WriteValue(guest, slot.block + block::kHeadOwnerEu, eu)) {
+                    return std::nullopt;
+                }
+                c.function = input_.main_base + addr::kShowHeadArmor;
+                c.x[0] = slot.block + block::kHeadOwnerEu - addr::kShowHeadArmorEu;
+                pending_ = Pending::head_show;
+            } else {
+                c.function = input_.main_base + addr::kHeadArmorHairBack;
+                c.x[0] = eu;
+                pending_ = Pending::head_hair;
+            }
+            return c;
+        }
     }
     for (std::size_t i = 0; i < target.gear.size(); ++i) {
         const auto& want = target.gear[i];

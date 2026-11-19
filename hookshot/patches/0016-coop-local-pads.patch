@@ -1,4 +1,4 @@
-From 62f07276f6573a722423904955d13609eadd5006 Mon Sep 17 00:00:00 2001
+From 3101cc3a814082a0948c0eb482bce278efb857a9 Mon Sep 17 00:00:00 2001
 From: daurosk <354202035+daurosk@users.noreply.github.com>
 Date: Fri, 13 Nov 2026 12:26:46 -0900
 Subject: [PATCH] Co-op local pads: split-screen players get Npads 2 to 4
@@ -10,7 +10,7 @@ oot-remake-multiplayer's patch 0016 (host only, no lift), on top of patch 0015. 
  2 files changed, 182 insertions(+), 13 deletions(-)
 
 diff --git a/host/nn_hid.c b/host/nn_hid.c
-index 426082d3..8df69747 100644
+index 426082d..8df6974 100644
 --- a/host/nn_hid.c
 +++ b/host/nn_hid.c
 @@ -712,6 +712,23 @@ static uint64_t bound_pad_buttons(uint64_t raw) {
@@ -155,7 +155,7 @@ index 426082d3..8df69747 100644
 +}
 +HOS_COOP_HID_EXPORT int hos_coop_pad_take(int n, uint32_t serial, int npad) { return hos_sdl_pad_take(n, serial, npad); }
 diff --git a/host/pad_sdl.c b/host/pad_sdl.c
-index 4af4ad2f..0e92b059 100644
+index 4af4ad2..0e92b05 100644
 --- a/host/pad_sdl.c
 +++ b/host/pad_sdl.c
 @@ -66,6 +66,22 @@ static uint64_t state_buttons;

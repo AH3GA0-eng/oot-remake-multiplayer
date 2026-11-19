@@ -280,6 +280,23 @@ TEST_CASE("a wrong protocol version is refused, even when the rest cannot be rea
   CHECK(h.session.player_count() == 0);
 }
 
+TEST_CASE("a 0.11.5 game (protocol 14) is refused by a 0.11.6 server at HELLO (#196 node keys)") {
+  // 0.11.6's PLATFORM_CLOCK may carry GroundControl node keys, which a protocol 14 reader refuses as bad_value: the
+  // two releases may not play together, so the version went up and the HELLO is refused with the update note.
+  static_assert(kProtocolVersion >= 15);
+  Harness h;
+  h.connect(1);
+  h.clear();
+  Hello hello = hello_from("Link");
+  hello.protocol_version = 14;
+  h.receive(1, hello, kChannelSession);
+  const auto refused = only_message_to<Refused>(h, 1);
+  REQUIRE(refused.has_value());
+  CHECK(refused->reason == RefuseReason::wrong_protocol_version);
+  CHECK_FALSE(only_message_to<Welcome>(h, 1).has_value());
+  CHECK(h.session.player_count() == 0);
+}
+
 TEST_CASE("the server's log says which side of a version refusal is older") {
   std::vector<std::string> lines;
   SessionConfig config;
@@ -2916,6 +2933,26 @@ TEST_CASE("issue 101: a copy that chases its player gives that player the enemy,
   h.clear();
   h.run(10 * kSecond);
   CHECK(messages_to<HandoverAsk>(h, 2).empty());
+}
+
+TEST_CASE("row 138(8): an area claim by two players stays with the owner, and when it leaves the one still in the area gets it") {
+  // Jabu-Jabu's mouth (coop_sensor_claim.h): each game flags him targeting while its own Link is in his area.
+  OwnerHarness h;
+  h.stand(1, 3);  // the owner, 1, at the mouth
+  h.stand(2, 4);  // and 2 at it too: no distance rule moves it
+  h.run(4 * kSecond);
+  h.receive(1, chasing_in("Field", {placed(7)}), kChannelOwnership);
+  const auto claimed = h.now;  // the owner's last claim: its fight lock runs from here
+  h.receive(2, chasing_in("Field", {placed(7)}), kChannelOwnership);
+  h.run(4 * kSecond);
+  CHECK(h.asks() == 0);  // the owner's own claim is a fight: it keeps him
+  // 1 leaves the area (present, no claim). 2 gets him once 1's fight lock has run out, not before.
+  h.receive(1, present_in("Field", {placed(7)}), kChannelOwnership);
+  h.run(quiet_config().fight_lock_us - (h.now - claimed) - kSecond);
+  CHECK(h.asks() == 0);
+  h.run(2 * kSecond);
+  REQUIRE(messages_to<HandoverAsk>(h, 1).size() == 1);
+  CHECK(messages_to<HandoverAsk>(h, 1)[0] == HandoverAsk{placed(7), 0, 2});
 }
 
 TEST_CASE("report 37: an enemy is not handed back to the player who just gave it up for handover_back_us") {
@@ -5794,6 +5831,32 @@ TEST_CASE("approval: the host says no: the joiner is told and closed, nobody els
   h.session.disconnected(2, h.now);
   h.collect();
   knock(h, 3, "Riley", 2);
+}
+
+TEST_CASE("approval: a joiner let in after a long wait is not timed out at once (it says nothing while it waits)") {
+  // (a run: let in 46 s after its knock, it was "timed out: nothing heard for 46795 ms" at the next tick)
+  SessionConfig config = approving();
+  config.silence_timeout_us = 10'000'000;
+  Harness h(config);
+  h.join(1, "Link");
+  const JoinKnock k = knock(h, 2, "Riley", 2);
+  for (int i = 0; i < 6; ++i) {  // 30 s of waiting: the host is heard, the joiner is quiet (nobody pings it)
+    h.now += 5'000'000;
+    h.receive(1, Pong{h.now, h.now}, kChannelSession);
+    h.session.tick(h.now);
+    h.collect();
+  }
+  REQUIRE_FALSE(was_dropped(h, 2));
+  h.clear();
+  h.receive(1, JoinAllow{k.knock, true, false}, kChannelSession);
+  REQUIRE(all_to<Welcome>(h, 2).size() == 1);
+  h.now += 1'000'000;
+  h.receive(1, Pong{h.now, h.now}, kChannelSession);
+  h.session.tick(h.now);
+  h.collect();
+  CHECK_FALSE(was_dropped(h, 2));
+  CHECK(h.session.player_count() == 2);
+  CHECK(all_to<PlayerLeft>(h, 1).empty());
 }
 
 TEST_CASE("approval: no answer within the time turns the joiner away, and the host's question ends") {
