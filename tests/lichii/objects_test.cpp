@@ -1042,7 +1042,9 @@ TEST_CASE("objects: delete events: an enemy of ours the game deleted with no dea
     for (const auto& p : All<proto::ObjectPresent>(step)) {
         CHECK(std::any_of(p.objects.begin(), p.objects.end(), [&id](const auto& o) { return o.id == id; }));
     }
-    step = Tick(sync, 20 * kMs + Sync::kLeftWaitUs, {});
+    step = Tick(sync, 40 * kMs + Sync::kLeftWaitUs - kMs, {});
+    CHECK(All<proto::ObjectRemove>(step).empty());
+    step = Tick(sync, 40 * kMs + Sync::kLeftWaitUs, {});  // (from the walk that missed it)
     const auto removes = All<proto::ObjectRemove>(step);
     REQUIRE(removes.size() == 1);
     CHECK(removes[0].id == id);
@@ -1105,7 +1107,7 @@ TEST_CASE("objects: delete events: only the game's own delete of our own enemy, 
     }
     Tick(scene, 40 * kMs, {});
     CHECK(scene.LeftCount() == Sync::kDeleteBurst);
-    const Step later = Tick(scene, 20 * kMs + Sync::kLeftWaitUs, {});
+    const Step later = Tick(scene, 40 * kMs + Sync::kLeftWaitUs, {});
     CHECK(All<proto::ObjectRemove>(later).empty());
     CHECK(scene.LeftCount() == 0);
 }
@@ -3587,8 +3589,8 @@ TEST_CASE("objects: a copy its owner said dead loses its life, and is deleted 3 
     Tick(sync, 0, {Enemy(0x100, 0x11, 2)}, 2);
     const proto::ObjectId id = *sync.IdOf(0x100);
     Own(sync, id, 1);
-    // A remove that is not a death changes nothing here.
-    sync.Receive(Dead(id, 1, proto::RemoveReason::gone));
+    // A remove that is not a death (nor a gone: enemy-left-0116) changes nothing here.
+    sync.Receive(Dead(id, 1, proto::RemoveReason::picked_up));
     CHECK(Tick(sync, 500 * kMs, {Enemy(0x100, 0x11, 2)}, 2).writes.empty());
     CHECK(sync.OwnerOf(id) == 1);
 
@@ -5030,9 +5032,10 @@ TEST_CASE("objects: a copy's egg goes and the owner's larva is made here (gohma-
     Own(b, baba, 1);
     const std::vector<Seen> both = {Enemy(0x100, 0, 1, 0.0f, kEgg), Enemy(0x110, 0, 1, 8.0f, "Enemy_Dekubaba")};
 
-    // An older epoch and a gone for a plain enemy change nothing.
+    // An older epoch changes nothing; nor does a plain enemy's remove that is no death
+    // or gone (a gone ends it since enemy-left-0116: its own test).
     b.Receive(proto::ObjectRemove{1, egg, 0, proto::RemoveReason::gone, {}});
-    b.Receive(proto::ObjectRemove{1, baba, 0, proto::RemoveReason::gone, {}});
+    b.Receive(proto::ObjectRemove{1, baba, 0, proto::RemoveReason::picked_up, {}});
     Tick(b, 100 * kMs, both, 2, kDeku);
     CHECK(b.Removes().empty());
 
