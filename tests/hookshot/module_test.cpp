@@ -854,7 +854,9 @@ TEST_CASE("hookshot: the game's menu screens reach the module, the mouse knows a
     // The mouse: L and R past a fifth tab's number, five zones when the strip counts five, the module's page.
     CHECK(in_menu("enum { TAB_L = 8, TAB_R = 9 };"));
     CHECK(in_menu("return strip && peek(strip + 0x328, &n, sizeof n) && n == 5 ? 5 : 4;"));
-    CHECK(in_menu("return x < -696 ? 0 : x < -228 ? 1 : x < 240 ? 2 : x < 708 ? 3 : 4;"));
+    // (the fifth zone is a tab to step to only while the module has its page: -1 or 4; -2 without one)
+    CHECK(in_menu("return x < -462 ? 0 : x < 6 ? 1 : x < 474 ? 2 : x < 916 ? 3 : hos_coop_game_pause_page_now() >= -1 "
+                  "? 4 : -1;"));
     CHECK(in_menu("const int coop = hos_coop_game_pause_page_now(); return coop >= 0 ? coop : page_now;"));
     CHECK(in_menu("const int cur = pause ? pause_page() : page;"));
     // The bridge asks the module's optional exports; without them, or with co-op off, nothing changes.
@@ -864,7 +866,7 @@ TEST_CASE("hookshot: the game's menu screens reach the module, the mouse knows a
     CHECK(bridge.find(Squashed("if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_game_screen) "
                                "coop_game_screen(c, screen);")) != std::string::npos);
     CHECK(bridge.find(Squashed("return __atomic_load_n(&state, __ATOMIC_ACQUIRE) == 2 && coop_pause_page ? "
-                               "coop_pause_page() : -1;")) != std::string::npos);
+                               "coop_pause_page() : -2;")) != std::string::npos);
     // Longshot's own call: no lift hook, no wrapped function, the API header as it was.
     CHECK(patch.find("diff --git a/nx2/") == std::string::npos);
     CHECK(patch.find("diff --git a/host/hos_coop_api.h") == std::string::npos);
@@ -872,6 +874,7 @@ TEST_CASE("hookshot: the game's menu screens reach the module, the mouse knows a
     CHECK(module.find("COOP_HOOKSHOT_EXPORT void hos_coop_game_screen(void* ctx, uint64_t screen) noexcept {") !=
           std::string::npos);
     CHECK(module.find("COOP_HOOKSHOT_EXPORT int hos_coop_game_pause_page(void) noexcept {") != std::string::npos);
+    CHECK(module.find("return g_on ? CoopPauseTab::MousePage() : -2;") != std::string::npos);   // (off: no page)
 }
 
 TEST_CASE("hookshot: the save-load wraps (patch 0024) are four rows in 0005's table, their header hookshot/src's") {
@@ -938,7 +941,7 @@ TEST_CASE("hookshot: on Linux the exe exports every function the module finds in
     REQUIRE(start != std::string::npos);
     const std::string build = patch.substr(start, patch.find("\ndiff --git", start) - start);
     // (the exe's link: Longshot's run_link since rc.5, subprocess.run before; the line's indent follows the call)
-    const auto link = build.find("r = run_link([cc]");
+    const auto link = build.find("r = run_link([");
     REQUIRE(link != std::string::npos);
     REQUIRE(build.find("[\"-Wl,--gc-sections\", \"-Wl,--export-dynamic-symbol=hos_posix_*\"] + coop", link) !=
             std::string::npos);
