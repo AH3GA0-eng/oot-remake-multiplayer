@@ -8,7 +8,11 @@ bool Planner::Tick(const Facts& f, std::uint64_t now_ms) {
         first_ms_ = now_ms == 0 ? 1 : now_ms;
     }
     // The player's own Host, Join or Leave: nothing planned stays (and the start's join is not made after it).
-    if (f.player_left || f.player_acted) {
+    // So too when the session turned this game away (the host's Kick or ban): joining again by itself would undo the
+    // host's choice; the player's own Join is the next one.
+    if (f.turned_away) turned_away_ = true;    // (kept until the player's own Host or Join: the next drop is not one)
+    if (f.player_acted) turned_away_ = false;
+    if (f.player_left || f.player_acted || f.turned_away) {
         start_done_ = true;
         was_in_ = false;
         tries_ = 0, next_ms_ = 0;
@@ -22,7 +26,7 @@ bool Planner::Tick(const Facts& f, std::uint64_t now_ms) {
     const bool wanted = f.enabled && f.code && !f.launcher;
     if (was_in_ && f.idle) {   // (out again, and not by the player's Leave: the connection dropped)
         was_in_ = false;
-        if (wanted && !f.player_left) {
+        if (wanted && !f.player_left && !turned_away_) {
             tries_ = 0;
             next_ms_ = now_ms + kFirstRetryMs;
         }

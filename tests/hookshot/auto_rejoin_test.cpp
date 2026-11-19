@@ -129,3 +129,58 @@ TEST_CASE("auto-rejoin: turned on before the start's moment, the start's join is
     CHECK_FALSE(p.Tick(f, 2000));
     CHECK(p.Tick(f, 1000 + kStartDelayMs));
 }
+
+TEST_CASE("auto-rejoin: the host's Kick or ban is not a drop: no join by itself until the player joins") {
+    Planner p;
+    Facts f = IdleOn();
+    std::uint64_t t = 1000;
+    CHECK_FALSE(p.Tick(f, t));
+    CHECK(p.Tick(f, t += kStartDelayMs));   // (the start's join)
+    Facts in = f;
+    in.idle = false, in.guest_in = true;
+    CHECK_FALSE(p.Tick(in, t += 1000));     // (in the friend's game)
+    Facts away = in;
+    away.turned_away = true;                // (the host's Kick: refused, still "connected" a moment)
+    CHECK_FALSE(p.Tick(away, t += 100));
+    away.guest_in = false, away.turned_away = false;
+    CHECK_FALSE(p.Tick(away, t += 100));
+    for (std::uint64_t end = t + 120000; t < end; t += 500) CHECK_FALSE(p.Tick(f, t));   // (idle: no try at all)
+    CHECK_FALSE(p.Retrying());
+}
+
+TEST_CASE("auto-rejoin: a refusal while idle after the drop also stops the tries planned") {
+    Planner p;
+    Facts f = IdleOn();
+    std::uint64_t t = 1000;
+    CHECK_FALSE(p.Tick(f, t));
+    CHECK(p.Tick(f, t += kStartDelayMs));
+    Facts in = f;
+    in.idle = false, in.guest_in = true;
+    CHECK_FALSE(p.Tick(in, t += 1000));
+    CHECK_FALSE(p.Tick(f, t += 100));       // (the drop: a try is planned)
+    CHECK(p.Retrying());
+    Facts away = f;
+    away.turned_away = true;                // (the refusal's event came after the disconnect)
+    CHECK_FALSE(p.Tick(away, t += 100));
+    CHECK_FALSE(p.Retrying());
+    for (std::uint64_t end = t + 120000; t < end; t += 500) CHECK_FALSE(p.Tick(f, t));
+}
+
+TEST_CASE("auto-rejoin: after a refusal, the player's own Join brings the drop's tries back") {
+    Planner p;
+    Facts f = IdleOn();
+    std::uint64_t t = 1000;
+    CHECK_FALSE(p.Tick(f, t));
+    CHECK(p.Tick(f, t += kStartDelayMs));
+    Facts in = f;
+    in.idle = false, in.guest_in = true;
+    in.turned_away = true;
+    CHECK_FALSE(p.Tick(in, t += 100));     // (kicked)
+    Facts acted = f;
+    acted.player_acted = true;             // (the player's own Join)
+    CHECK_FALSE(p.Tick(acted, t += 1000));
+    in.turned_away = false;
+    CHECK_FALSE(p.Tick(in, t += 1000));    // (in again)
+    CHECK_FALSE(p.Tick(f, t += 100));      // (a real drop now)
+    CHECK(p.Retrying());
+}

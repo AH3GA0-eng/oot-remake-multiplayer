@@ -358,6 +358,12 @@ void Follow(const HosCoopStatus& st) {
     f.guest_in = g_doing == "joined" && st.state == HOS_COOP_CONNECTED;
     f.player_left = std::exchange(g_player_left, false);
     f.player_acted = std::exchange(g_player_acted, false);
+    {   // (a refusal counted since the last update: CoopLobby's count only grows, so none is missed)
+        static std::uint32_t refusals_seen = 0;
+        const std::uint32_t refusals = CoopLobby::Now().refusals;
+        f.turned_away = refusals != refusals_seen;
+        refusals_seen = refusals;
+    }
     if (g_rejoin.Tick(f, now)) {
         const auto code = CoopTitleMenu::IniGet(ReadText(CoopIni()), "last_invite");
         LOG_INFO(Core, "coop: multiplayer tab: auto-rejoin: the last game again ({})", g_rejoin.Why());

@@ -76,6 +76,10 @@ struct Seen {
     bool connected = false;              // the session took this game in (WELCOME came)
     std::string refused;                 // why the session turned this game away, in full ("" it did not)
     bool banned = false;                 // that reason is the host's ban (joining again cannot work)
+    // How many times the session turned this game away since co-op started (a kick, a ban, a full server ...). It
+    // only grows (Forget keeps it), so a caller that looks less often than events come still sees each refusal:
+    // `refused` is cleared again by the disconnect that follows a kick.
+    std::uint32_t refusals = 0;
     std::uint8_t self = 0;
     std::uint8_t host = 0;
     std::vector<PlayerSeen> players;     // by number

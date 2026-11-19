@@ -25,6 +25,8 @@ struct Facts {
     bool guest_in = false;      // this game is in a friend's game now (joined, connected)
     bool player_left = false;   // the player stopped co-op (Leave) since the last update
     bool player_acted = false;  // the player hosted or joined since the last update
+    bool turned_away = false;   // the session turned this game away since the last update (the host's Kick or ban,
+                                // a full server, a wrong password): the host's choice, not a drop to undo
 };
 
 class Planner {
@@ -41,6 +43,7 @@ private:
     bool was_in_ = false;       // this game was in a friend's game: a drop is noticed when it is idle again
     int tries_ = 0;
     std::uint64_t next_ms_ = 0; // the next try after a drop (0: none planned)
+    bool turned_away_ = false;  // the session turned this game away; until the player's own Host or Join
     std::string why_;
 };
 
