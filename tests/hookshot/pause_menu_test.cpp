@@ -1058,3 +1058,11 @@ TEST_CASE("pause tab: every first-page row has a value and the page arrow") {
     CHECK(v.rows[0].value == "Off");
     CHECK(v.rows[1].value == "Off");
 }
+
+TEST_CASE("pause tab: a long name is cut on the Settings row so the page arrow keeps its room") {
+    Menu m;
+    CoopTitleMenu::Options o;
+    o.name = "AVeryLongPlayerName";
+    m.Show(o);
+    CHECK(m.view().rows[3].value == "AVeryLong...");
+}

@@ -249,7 +249,7 @@ std::vector<Menu::Line> Menu::Lines() const {
                                : "Joins a friend's game with the code they sent you. You play on their save; your own saves "
                                  "are not touched."});
         out.push_back({PageRow("Local co-op", "2 players"), Act::kOpenLocal, "Two players on this PC."});
-        out.push_back({PageRow("Settings", options_.name), Act::kOpenSettings,
+        out.push_back({PageRow("Settings", options_.name.size() > 12 ? options_.name.substr(0, 9) + "..." : options_.name), Act::kOpenSettings,
                        "Your name, Link's look, how many players can join your game, voice chat, the chat key, "
                        "which controller this game reads, and players on the map."});
         out.push_back({PageRow("Customize Link", "Colours"), Act::kOpenCustomize,
