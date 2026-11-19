@@ -17,9 +17,11 @@
 
 #include "coop_hook.h"
 #include "coop_mod_plugins.h"
+#include "coop_mod_screens.h"
 #include "coop_mod_share.h"
 #include "coop_rando.h"
 #include "coop_runtime.h"
+#include "coop_title.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -48,6 +50,67 @@ std::mutex g_mine_mutex;
 std::optional<coop::protocol::ModList> g_mine;
 std::thread g_hasher;
 std::atomic<bool> g_stop_hashing{false};
+// (mod API v2) The module's table and co-op's own busy answer (SetGame).
+const HosCoopApi* g_api = nullptr;
+std::function<const char*()> g_coop_busy;
+std::atomic<std::uint64_t> g_pad{0};   // (mod API v2) player 1's buttons before the holds (NotePad)
+
+std::uint64_t SteadyMs() {
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                          std::chrono::steady_clock::now().time_since_epoch())
+                                          .count());
+}
+
+bool ReadGame(std::uint64_t a, void* out, std::size_t n) {
+    return CoopRuntime::Read(a, out, n);
+}
+
+// (mod API v2) choose_focused: Button::Decide on the screen's focused button, on the screen's own update (ctx), as
+// patch 0028 chooses. Not while co-op is busy at the title (a mod's Continue would load a save under the host's).
+bool ChooseFocused(void* ctx, std::uint64_t screen) {
+    if (const char* why = g_coop_busy ? g_coop_busy() : nullptr; why != nullptr) {
+        static std::atomic<const char*> said{nullptr};
+        if (said.exchange(why) != why) {
+            CoopRuntime::Log(std::string("coop: mods: a mod's button choice is refused while co-op is busy: ") + why);
+        }
+        return false;
+    }
+    // Why a choice did not happen, once per reason (a mod tries again at the next update).
+    static std::atomic<int> said{-1};
+    const auto no = [](int why, const char* line) {
+        if (said.exchange(why) != why) {
+            CoopRuntime::Log(std::string("coop: mods: a mod's button choice did not happen: ") + line);
+        }
+        return false;
+    };
+    if (g_api == nullptr || g_api->call == nullptr || ctx == nullptr) {
+        return no(0, "this run has no game calls on the screens' update");
+    }
+    const std::uint64_t button = CoopModScreens::FocusedButton(ReadGame, screen);
+    if (button == 0) {
+        return no(1, "no focused button now");
+    }
+    HosCoopCall k{};
+    k.function = CoopRuntime::MainBase() + CoopModScreens::kButtonDecide;
+    k.x[0] = button;
+    k.x[1] = 0;
+    std::uint64_t x0 = 0;
+    if (g_api->call(ctx, &k, &x0) == 0) {
+        return no(2, "the game's Button::Decide could not be called");
+    }
+    if ((x0 & 1) == 0) {
+        // (Button::Decide says no when the button's flags (+0x40) lack 0x14, as on the title while it fades in, or when
+        // another button of its control is being chosen. Seen in a game: the title's Continue has 0x3b while it opens
+        // and 0x3f once it takes input.)
+        std::uint32_t flags = 0;
+        ReadGame(button + 0x40, &flags, sizeof flags);
+        return (flags & 0x14) != 0x14
+                   ? no(3, "the button cannot be chosen yet (its screen is still opening): asked again at a later update")
+                   : no(4, "another button of its screen is being chosen: asked again at a later update");
+    }
+    said = -1;
+    return true;
+}
 
 std::string Env(const char* name) {
     const char* v = std::getenv(name);
@@ -241,6 +304,12 @@ void Start() {
     game.write = [](std::uint64_t a, const void* in, std::size_t n) { return CoopRuntime::Write(a, in, n); };
     game.has_hook = [](std::uint32_t id) { return id < 64 && (g_hooks.load() >> id & 1) != 0; };
     game.runtime = "hookshot";
+    game.choose_focused = ChooseFocused;
+    game.reload_save_list = [] {
+        CoopTitle::AskSaveListRead();
+        return true;
+    };
+    game.now_ms = SteadyMs;
     g_host = std::make_unique<CoopModPlugins::Host>(*g_loader, CoopModPlugins::SystemLibrary(), std::move(game));
     g_pending = true;  // started at the first frame: the exe has told its hooks by then
 }
@@ -312,6 +381,38 @@ int Hook(std::uint32_t id, int phase, std::uint64_t* x) {
 
 bool Hooked(std::uint32_t id) {
     return g_running && g_host->Hooks(id);
+}
+
+void SetGame(const HosCoopApi* api, std::function<const char*()> coop_busy) {
+    g_api = api;
+    g_coop_busy = std::move(coop_busy);
+}
+
+void Screen(void* ctx, std::uint64_t screen) {
+    if (!g_running || screen == 0 || !g_host->WantsScreens()) {
+        return;
+    }
+    const std::uint64_t base = CoopRuntime::MainBase();
+    std::uint64_t vtable = 0;
+    if (!CoopRuntime::Read(screen, &vtable, sizeof vtable) || vtable < base) {
+        return;
+    }
+    CoopModPlugins::ScreenUpdate u;
+    u.ctx = ctx;
+    u.screen = screen;
+    u.kind = CoopModScreens::KindOf(vtable - base);
+    u.focused = CoopModScreens::ButtonName(ReadGame, CoopModScreens::FocusedButton(ReadGame, screen));
+    u.save_list_ready = CoopTitle::SaveListReady();
+    u.buttons = g_pad.load();
+    g_host->Screen(u);
+}
+
+void NotePad(std::uint64_t buttons) {
+    g_pad = buttons;
+}
+
+std::uint64_t HeldButtons() {
+    return g_running ? g_host->HeldButtons() : 0;
 }
 
 }  // namespace CoopModsRuntime
