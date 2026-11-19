@@ -2668,7 +2668,8 @@ private:
                 break;
             case CoopActorEvents::Kind::Delete: {
                 ++actor_deletes_;
-                sync_.GameDeleted(e.a, server_now_us);  // (gone at the first walk without it)
+                // (gone at the first walk without it; the game's own, not ours: an enemy of ours ended, Left)
+                sync_.GameDeleted(e.a, server_now_us, (e.flags & CoopActorEvents::kOwn) != 0);
                 NoteBossDeleted(e.a);  // (a boss body off the walk: removed, not away)
                 const auto known = names_.find(e.a);
                 if (actor_event_lines_ < 40 && known != names_.end()) {

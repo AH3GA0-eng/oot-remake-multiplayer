@@ -670,8 +670,24 @@ public:
     // It is gone at the first walk that misses it, not the second: off the
     // list is no "lifted or changing hands" then. Kept kDeletedKeepUs (a
     // dying actor stays listed a while; the address may be used again later).
-    void GameDeleted(std::uint64_t address, std::uint64_t now_us);
+    // `by_coop`: asked inside one of the module's own calls (a copy, a remove; CoopActorEvents::kOwn).
+    void GameDeleted(std::uint64_t address, std::uint64_t now_us, bool by_coop = false);
     static constexpr std::uint64_t kDeletedKeepUs = 10'000'000;
+    // enemy-left-0116 (row 138(6)): an enemy of ours (placed, not a boss or
+    // its part, not an egg) that the game itself deleted while no death was
+    // read (life 0 or a death animation: a fall into lava or a pit, a burn,
+    // its own time running out) is gone from our game for good. Before, only
+    // a read death was told: the others' copies lived on and the server handed
+    // the enemy to one of them. Now it stays listed (as an egg does) and after
+    // kLeftWaitUs an OBJECT_REMOVE `gone` goes out, so the server keeps it
+    // nobody's and the copies end too (deleted, no kill counted: a Dead flag
+    // the game set comes through the flag sync). Not when the game deleted
+    // kDeleteBurst or more actors within kDeleteBurstUs of it: that is the
+    // scene going (a load, a warp, the title), not the enemy.
+    static constexpr std::uint64_t kLeftWaitUs = 1'000'000;  // (the whole kDeleteBurstUs after it seen)
+    static constexpr std::size_t kDeleteBurst = 12;
+    static constexpr std::uint64_t kDeleteBurstUs = 1'000'000;
+    std::size_t LeftCount() const { return left_.size(); }
     // churn-b: the game's delete requests reach us (Hookshot, patch 0007).
     // Then a placed object that leaves the walk alive with no delete request
     // is not gone: the game takes live actors off its list for a moment and
@@ -1131,6 +1147,7 @@ private:
         coop::protocol::Vec3 first_position{};  // where it was first seen
         int missed = 0;                         // walks in a row without it
         std::uint64_t deleted_until = 0;        // GameDeleted: gone at the first miss until then
+        bool game_deleted = false;              // ... and the game's own request, not one of ours (Left)
         // Chasing our Link (NoteDrift): the run of steps towards it.
         std::uint64_t chase_first = 0;
         std::uint64_t chase_last = 0;
@@ -1253,9 +1270,24 @@ private:
         std::uint64_t address = 0;
         std::uint64_t until = 0;
         std::string name;
+        coop::protocol::Vec3 position{};  // where it was last seen (Left)
     };
     std::vector<Away> away_;
     bool delete_events_ = false;
+    // enemy-left-0116: enemies of ours the game deleted with no death read,
+    // listed until their OBJECT_REMOVE `gone` goes out (kLeftWaitUs).
+    struct Left {
+        coop::protocol::ObjectId id;
+        std::uint64_t address = 0;
+        std::uint64_t deleted_at = 0;
+        coop::protocol::Vec3 position{};
+        std::string name;
+    };
+    std::vector<Left> left_;
+    std::vector<std::uint64_t> game_deletes_;  // when the game's own delete requests came (kDeleteBurstUs)
+    // An enemy of ours that the game's own delete request ends for good (Left).
+    bool LeavesForGood(std::uint8_t self, const coop::protocol::ObjectId& id, std::string_view name,
+                       std::uint64_t address) const;
     // boss-sync-2: copies of other games' eggs that left our walk alive (our
     // game hatched them), for CopyHatch.
     std::vector<Egg> copy_eggs_;

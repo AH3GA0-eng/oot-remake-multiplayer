@@ -1022,6 +1022,127 @@ TEST_CASE("objects: delete events: a deleted, dead or unowned actor is gone, not
     CHECK(sync.AwayCount() == 0);
 }
 
+// enemy-left-0116 (row 138(6)): an enemy of ours our game itself deleted
+// with no death read (a fall into lava, a burn, its own time out) is gone for
+// the others too: listed until then, an OBJECT_REMOVE gone after kLeftWaitUs.
+TEST_CASE("objects: delete events: an enemy of ours the game deleted with no death read is gone for the others") {
+    Sync sync;
+    sync.SetDeleteEvents(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2, 0.0f, "Enemy_Keese")});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 1, 3);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2, 0.0f, "Enemy_Keese")});
+    sync.GameDeleted(0x100, 20 * kMs);
+    Step step = Tick(sync, 40 * kMs, {});
+    CHECK_FALSE(sync.IdOf(0x100));
+    CHECK(sync.AwayCount() == 0);
+    CHECK(sync.LeftCount() == 1);
+    CHECK(All<proto::ObjectRemove>(step).empty());  // not yet: kLeftWaitUs
+    for (const auto& p : All<proto::ObjectPresent>(step)) {
+        CHECK(std::any_of(p.objects.begin(), p.objects.end(), [&id](const auto& o) { return o.id == id; }));
+    }
+    step = Tick(sync, 20 * kMs + Sync::kLeftWaitUs, {});
+    const auto removes = All<proto::ObjectRemove>(step);
+    REQUIRE(removes.size() == 1);
+    CHECK(removes[0].id == id);
+    CHECK(removes[0].epoch == 3);
+    CHECK(removes[0].reason == proto::RemoveReason::gone);  // no kill: a Dead flag comes through the flags
+    CHECK(sync.LeftCount() == 0);
+    CHECK_FALSE(All<proto::ObjectPresent>(step).empty());  // the list changed: no longer listed
+    CHECK_FALSE(Listed(step, id));
+}
+
+TEST_CASE("objects: delete events: only the game's own delete of our own enemy, not the scene going, is told") {
+    // Our own remove (by_coop), a copy of another player's, a death read, a boss.
+    Sync sync;
+    sync.SetDeleteEvents(true);
+    const std::vector<Seen> four{Enemy(0x100, 0x11, 2), Enemy(0x200, 0x22, 2, 5.0f), Enemy(0x300, 0x33, 0, 9.0f),
+                                 Enemy(0x400, 0x44, 9, 2.0f, "Enemy_DungeonBoss_Goma")};
+    Tick(sync, 0, four);
+    Own(sync, *sync.IdOf(0x100), 1);
+    Own(sync, *sync.IdOf(0x200), 2);
+    Own(sync, *sync.IdOf(0x300), 1);
+    Own(sync, *sync.IdOf(0x400), 1);
+    Tick(sync, 10 * kMs, four);
+    sync.GameDeleted(0x100, 20 * kMs, true);
+    sync.GameDeleted(0x200, 20 * kMs);
+    sync.GameDeleted(0x300, 20 * kMs);
+    sync.GameDeleted(0x400, 20 * kMs);
+    std::vector<proto::ObjectRemove> removes;
+    for (const std::uint64_t t : {40, 80, 1100, 1200}) {
+        for (const auto& r : All<proto::ObjectRemove>(Tick(sync, t * kMs, {}))) {
+            removes.push_back(r);
+        }
+    }
+    CHECK(sync.LeftCount() == 0);
+    REQUIRE(removes.size() == 1);  // the read death alone, as before
+    CHECK(removes[0].reason == proto::RemoveReason::dead);
+
+    // The scene going: the game deletes everything at once. Nothing is told.
+    Sync scene;
+    scene.SetDeleteEvents(true);
+    std::vector<Seen> many;
+    for (std::uint64_t i = 0; i < Sync::kDeleteBurst; ++i) {
+        many.push_back(Enemy(0x1000 + i * 0x10, 0x100 + i, 2, static_cast<float>(i)));
+    }
+    Tick(scene, 0, many);
+    for (const Seen& s : many) {
+        Own(scene, *scene.IdOf(s.address), 1);
+    }
+    Tick(scene, 10 * kMs, many);
+    for (const Seen& s : many) {
+        scene.GameDeleted(s.address, 20 * kMs);
+    }
+    Tick(scene, 40 * kMs, {});
+    CHECK(scene.LeftCount() == Sync::kDeleteBurst);
+    const Step later = Tick(scene, 20 * kMs + Sync::kLeftWaitUs, {});
+    CHECK(All<proto::ObjectRemove>(later).empty());
+    CHECK(scene.LeftCount() == 0);
+}
+
+TEST_CASE("objects: delete events: an enemy of ours deleted while away is gone for the others") {
+    Sync sync;
+    sync.SetDeleteEvents(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 1);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    Tick(sync, 40 * kMs, {});
+    Tick(sync, 80 * kMs, {});
+    REQUIRE(sync.AwayCount() == 1);
+    sync.GameDeleted(0x100, 100 * kMs);
+    CHECK(sync.AwayCount() == 0);
+    CHECK(sync.LeftCount() == 1);
+    const auto removes = All<proto::ObjectRemove>(Tick(sync, 100 * kMs + Sync::kLeftWaitUs, {}));
+    REQUIRE(removes.size() == 1);
+    CHECK(removes[0].reason == proto::RemoveReason::gone);
+}
+
+TEST_CASE("objects: a copy whose owner's game deleted it (gone) is deleted here, with no kill") {
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2, 0.0f, "Enemy_Keese")}, 2);
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 1, 1);
+    Tick(sync, 10 * kMs, {Enemy(0x100, 0x11, 2, 0.0f, "Enemy_Keese")}, 2);
+    CHECK(sync.Removes().empty());
+    // An older owner's gone is refused.
+    sync.Receive(proto::ObjectRemove{1, id, 0, proto::RemoveReason::gone, {}});
+    Step step = Tick(sync, 20 * kMs, {Enemy(0x100, 0x11, 2, 0.0f, "Enemy_Keese")}, 2);
+    CHECK(sync.Removes().empty());
+    sync.Receive(proto::ObjectRemove{1, id, 1, proto::RemoveReason::gone, {}});
+    step = Tick(sync, 30 * kMs, {Enemy(0x100, 0x11, 2, 0.0f, "Enemy_Keese")}, 2);
+    CHECK(sync.Removes() == std::vector<std::uint64_t>{0x100});
+    CHECK(step.writes.empty());  // no life 0 written: not a kill
+    CHECK(All<proto::Damage>(step).empty());
+    // Our own enemy is never ended by someone else's gone.
+    Sync mine;
+    Tick(mine, 0, {Enemy(0x100, 0x11, 2)});
+    Own(mine, *mine.IdOf(0x100), 1);
+    mine.Receive(proto::ObjectRemove{2, *mine.IdOf(0x100), 0, proto::RemoveReason::gone, {}});
+    Tick(mine, 10 * kMs, {Enemy(0x100, 0x11, 2)});
+    CHECK(mine.Removes().empty());
+}
+
 TEST_CASE("objects: without delete events (the emulator) two missed walks still end an owned actor") {
     Sync sync;
     Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
