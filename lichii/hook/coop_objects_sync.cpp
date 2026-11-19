@@ -616,6 +616,15 @@ std::string_view MinionMaker(std::string_view name) {
     // tentacle) are each game's own and follow their root (PartRules).
     if (name == "Enemy_DungeonBoss_Dodongo_SpawnBabyDodongo") return "Enemy_DungeonBoss_Dodongo";
     if (name == "Enemy_Shabom_BigOctoChild") return "Enemy_MiddleBoss_BigOcto";
+    // boss-larva-0116 (issue 178): the eggs Gohma lays in the fight (her pack
+    // names Enemy_DungeonBoss_Gohma_Egg) and the babies King Dodongo's spawner
+    // makes (its pack names Enemy_BabyDodongo). Each game's copy boss laid its
+    // own, so one game had an egg the others never had, and their ids (the Nth
+    // one in the scene) named different eggs. A placed one (a placement hash:
+    // Dodongo's Cavern's own babies) keeps its hash; with no boss near,
+    // MinionOwner is 0 and nothing changes.
+    if (name == "Enemy_DungeonBoss_Gohma_Egg") return "Enemy_DungeonBoss_Gohma";
+    if (name == "Enemy_BabyDodongo") return "Enemy_DungeonBoss_Dodongo";
     return {};
 }
 
@@ -840,23 +849,26 @@ bool Sync::Hatch(std::uint8_t self, const Seen& s,
     // An egg that already left our walk alive: it hatched into this one.
     for (auto it = eggs_.begin(); it != eggs_.end(); ++it) {
         if (Distance(it->position, s.position) <= kHatchReachM) {
-            proto::ObjectRemove r;
-            r.id = it->id;
-            r.epoch = it->epoch;
-            r.reason = proto::RemoveReason::gone;
-            r.position = it->position;
-            send.emplace_back(r);
+            if (!it->removed) {  // (our boss's egg: its OBJECT_REMOVE went as it left)
+                proto::ObjectRemove r;
+                r.id = it->id;
+                r.epoch = it->epoch;
+                r.reason = proto::RemoveReason::gone;
+                r.position = it->position;
+                send.emplace_back(r);
+            }
             eggs_.erase(it);
             ++hatched_count_;
             notes_.emplace_back("hatched here: " + s.name);
             return true;
         }
     }
-    // An egg of ours still on the walk (it goes a walk or two later).
+    // An egg of ours still on the walk (it goes a walk or two later): placed,
+    // or laid by our boss (boss-larva-0116: made here, a minion).
     Object* best = nullptr;
     float best_d = kHatchReachM;
     for (auto& [address, e] : objects_) {
-        if (!IsHatchingEgg(e.name) || e.hatched || e.id.kind != proto::ObjectKind::placed) {
+        if (!IsHatchingEgg(e.name) || e.hatched || !HatchIsOurs(e.id)) {
             continue;
         }
         const auto owner = owners_.find(e.id);
@@ -878,13 +890,46 @@ bool Sync::Hatch(std::uint8_t self, const Seen& s,
     return true;
 }
 
+// An egg whose hatch this game shares when it owns it (the caller checks the
+// owner): placed, or made (boss-larva-0116: a boss laid it; laid here, or
+// handed to us with the boss's group).
+bool Sync::HatchIsOurs(const proto::ObjectId& id) {
+    return id.kind == proto::ObjectKind::placed || id.kind == proto::ObjectKind::made;
+}
+
+// boss-larva-0116: a made egg of ours (laid by our boss, or handed to us with
+// its group) left our walk alive. Its OBJECT_REMOVE goes now (a made id needs
+// no listing wait); its hatchling may still come (eggs_, no second remove),
+// unless the larva came first and was matched to a sibling still here: this
+// one hatched, and the sibling is free again (as for placed eggs).
+void Sync::EndMadeEgg(std::uint8_t self, const Object& o, std::uint16_t epoch, std::uint64_t now_us,
+                      std::vector<proto::Message>& send, bool remove) {
+    if (remove) {
+        proto::ObjectRemove r;
+        r.id = o.id;
+        r.epoch = epoch;
+        r.reason = proto::RemoveReason::gone;
+        r.position = o.position;
+        send.emplace_back(r);
+    }
+    if (o.hatched) {
+        return;
+    }
+    if (Object* sibling = HatchedSibling(self, o.position); sibling != nullptr) {
+        sibling->hatched = false;
+        notes_.emplace_back("hatched here (its sibling egg was matched first): " + o.name);
+    } else {
+        eggs_.push_back({o.id, epoch, o.position, now_us, true});
+    }
+}
+
 // An egg of ours still on the walk, marked hatched, within two hatch reaches
 // of `at` (a larva's egg is at most kHatchReachM from it either way).
 Sync::Object* Sync::HatchedSibling(std::uint8_t self, const proto::Vec3& at) {
     Object* best = nullptr;
     float best_d = 2.0f * kHatchReachM;
     for (auto& [address, e] : objects_) {
-        if (!IsHatchingEgg(e.name) || !e.hatched || e.id.kind != proto::ObjectKind::placed) {
+        if (!IsHatchingEgg(e.name) || !e.hatched || !HatchIsOurs(e.id)) {
             continue;
         }
         const auto owner = owners_.find(e.id);
@@ -2103,8 +2148,19 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             r.reason = o.life && *o.life <= 0 ? proto::RemoveReason::dead : proto::RemoveReason::gone;
             r.position = o.position;
             send.emplace_back(r);
+            if (IsHatchingEgg(o.name) && r.reason == proto::RemoveReason::gone &&
+                !(o.animation && IsDeathAnimation(o.animation->name))) {
+                EndMadeEgg(self, o, owner->second.epoch, now_us, send, false);  // (its remove just went)
+            }
             owners_.erase(owner);
         } else {
+            // boss-larva-0116: another game laid it, its group's owner handed
+            // it to us with the boss: ours to end as its owner.
+            if (IsHatchingEgg(o.name) && o.id.kind == proto::ObjectKind::made && owner != owners_.end() &&
+                owner->second.player == self && !(o.life && *o.life <= 0) &&
+                !(o.animation && IsDeathAnimation(o.animation->name))) {
+                EndMadeEgg(self, o, owner->second.epoch, now_us, send, true);
+            }
             // gohma-larva: an egg we own left alive. Hatched (a hatchling
             // already came out of it): the others end their copy now. Else
             // its hatchling may still come (eggs_).
@@ -2149,8 +2205,12 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             // director makes it again, and the new one gets the create wait.
             for (auto& [key, d] : decided_) {
                 if (d.address == o.address && d.id == o.id && !d.removed) {
+                    // boss-larva-0116: a copy egg that left alive hatched here
+                    // (our game's own AI). Made again, it would stand as an egg
+                    // on our screen while the other games have its larva; the
+                    // owner's hatchling comes as its OBJECT_SPAWN.
                     d.dead = d.dead || (o.life && *o.life <= 0) ||
-                             (o.animation && IsDeathAnimation(o.animation->name));
+                             (o.animation && IsDeathAnimation(o.animation->name)) || IsHatchingEgg(o.name);
                     d.address = 0;
                     d.got_us = now_us;
                 }
@@ -2746,7 +2806,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     // list while its hatchling may still come, so the server keeps it ours
     // and takes its OBJECT_REMOVE (it hands an unlisted object over at once).
     for (const Egg& e : eggs_) {
-        if (std::none_of(present.begin(), present.end(), [&e](const auto& p) { return p.id == e.id; })) {
+        if (!e.removed && std::none_of(present.begin(), present.end(), [&e](const auto& p) { return p.id == e.id; })) {
             present.push_back({e.id, proto::object_presence::awake});  // unchanged from its last listing
         }
     }
@@ -3115,6 +3175,25 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             // Its life goes to 0 through the game (it plays its own death);
             // still here kDeadGraceUs later, it is deleted.
             const auto had = owners_.find(remove->id);
+            // boss-larva-0116: an egg our boss laid, handed with its group to
+            // another game, hatched there. A copy the director made goes with
+            // its decided entry (above); our own one goes here, the same way.
+            if (remove->reason == proto::RemoveReason::gone && remove->id.kind == proto::ObjectKind::made &&
+                remove->id.maker == self && !(had != owners_.end() && had->second.player == self)) {
+                Object* o = find(remove->id);
+                if (o != nullptr && IsHatchingEgg(o->name) && o->dead_at == 0 && !bound_.contains(o->address)) {
+                    o->dead_now = true;
+                    o->dead_at = now_us;
+                    o->hit_sum = 0;
+                    o->hit_place.reset();
+                    o->hit_record.reset();
+                    o->place_seen.reset();
+                    notes_.emplace_back("hatched in its owner's game: " + o->name);
+                    if (had != owners_.end()) {
+                        owners_.erase(had);
+                    }
+                }
+            }
             // gohma-larva: an egg that hatched in its owner's game. Ours is
             // held there and cannot hatch: it goes, and the hatchling comes
             // as the owner's OBJECT_SPAWN.
