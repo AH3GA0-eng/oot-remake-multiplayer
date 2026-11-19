@@ -261,6 +261,24 @@ check 'build: another OOTRR release removes the built seeds (the game makes them
 mkdir -p "$D/game/mods/randomizer-GH" && echo GH >"$D/game/mods/randomizer-GH/coop-seed.txt"
 OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-o7.txt" 2>&1
 check 'build: the same OOTRR release again keeps the seeds' bash -c '[ -f "$1/game/mods/randomizer-GH/coop-seed.txt" ] && ! grep -q "removed for OOTRR" "$2"' _ "$D" "$tmp/build-o7.txt"
+check 'build: a set-up OOTRR says ok in data/game/tools/ootrr-setup.txt' grep -qx 'ok v0.6.0' "$D/game/tools/ootrr-setup.txt"
+# A new OOTRR release that does not run here (player report 2026-11-19: the old way deleted tools/ootrr first, so any
+# failure after it left the game with none): unpacked beside the old one and tried; the old OOTRR, its stamp and the
+# seeds stay, nothing half-made is left, and ootrr-setup.txt says why (the game's chat shows it).
+mkdir -p "$tmp/ootrr-bad/ootrr-0.7.0-linux-x86_64"
+printf '#!/bin/sh\nexit 3\n' >"$tmp/ootrr-bad/ootrr-0.7.0-linux-x86_64/ootrr"
+tar -czf "$D/builder/OOTRR-bad-linux.tar.gz" -C "$tmp/ootrr-bad" ootrr-0.7.0-linux-x86_64
+b_sha=$(sha256sum "$D/builder/OOTRR-bad-linux.tar.gz" | cut -d' ' -f1)
+printf 'release=v0.7.0\nurl=https://example.invalid/ootrr\nlinux=OOTRR-bad-linux.tar.gz\nlinux_sha256=%s\n' "$b_sha" >"$kit/data/longshot/OOTRR.txt"
+OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-o8.txt" 2>&1; export CODE=$?
+check 'build: an OOTRR that does not run keeps the old one and its seeds, says why, leaves nothing half-made' \
+    bash -c '[ $CODE -eq 0 ] && grep -q "did not run here" "$1" && [ -x "$2/game/tools/ootrr/ootrr" ] && grep -q "^v0.6.0 " "$2/game/tools/ootrr/coop-ootrr.txt" && [ -f "$2/game/mods/randomizer-GH/coop-seed.txt" ] && [ ! -e "$2/game/tools/ootrr.new" ] && [ ! -e "$2/game/tools/ootrr.old" ] && grep -q "^failed v0.7.0: ootrr did not run here" "$2/game/tools/ootrr-setup.txt"' _ "$tmp/build-o8.txt" "$D"
+# A swap stopped between its two moves (tools/ootrr.old, no tools/ootrr): the old folder goes back first.
+mv "$D/game/tools/ootrr" "$D/game/tools/ootrr.old"
+OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-o9.txt" 2>&1
+check 'build: a stopped OOTRR swap is put back' bash -c '[ -x "$1/game/tools/ootrr/ootrr" ] && [ ! -e "$1/game/tools/ootrr.old" ]' _ "$D"
+rm -f "$D/builder/OOTRR-bad-linux.tar.gz"
+printf 'release=v0.6.0\nurl=https://example.invalid/ootrr\nlinux=OOTRR-test-linux.tar.gz\nlinux_sha256=%s\n' "$o_sha" >"$kit/data/longshot/OOTRR.txt"
 rm -rf "$D/game/mods/randomizer-GH" "$D/game/mods/randomizer-half" "$D/game/mods/hd"
 rm -rf "$D/game/tools/ootrr" "$D/builder/OOTRR-test-linux.tar.gz"
 OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-o5.txt" 2>&1; export CODE=$?

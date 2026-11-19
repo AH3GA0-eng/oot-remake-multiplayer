@@ -1017,6 +1017,139 @@ function Test-KitOotrrStale([string]$Kit, [string]$ExeDir) {
     return $have -ne "$($keys.release) $($keys.windows_sha256)"
 }
 
+# Where the last OOTRR setup said how it went, beside the game's tools\ootrr: 'ok <release>' or 'failed <release>: <why>'
+# (one line). The co-op module shows the failure in the game's chat when it finds no ootrr.exe (coop_rando.cpp
+# OotrrMissingText), and collect-logs.cmd sends it, so a player who never saw the start window's line still learns why.
+$KitOotrrStatusFile = 'tools\ootrr-setup.txt'
+
+function Write-KitOotrrStatus([string]$ExeDir, [string]$Text) {
+    try {
+        New-Item -ItemType Directory -Force -Path (Join-Path $ExeDir 'tools') | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $ExeDir $KitOotrrStatusFile), "$Text`r`n")
+    } catch { }
+}
+
+# '' when ootrr.exe starts and ends by itself (its 'shuffle 1 1' prints one number in well under a second and touches
+# no file); else why not. An antivirus that blocks or quarantines the program makes the start fail (or the file
+# vanish a moment after it was written), which an existence check alone never sees: Velvet's 0.11.5 kit (2026-11-19)
+# had a tools\ootrr without ootrr.exe on every start. -Wait: how long to look again for an antivirus's late removal.
+function Test-KitOotrrRuns([string]$Exe, [int]$WaitMs = 1500) {
+    if (-not (Test-Path -LiteralPath $Exe)) { return 'ootrr.exe is not there after unpacking' }
+    try {
+        $p = Start-Process -FilePath $Exe -ArgumentList 'shuffle', '1', '1' -WindowStyle Hidden -PassThru -ErrorAction Stop
+        $null = $p.Handle   # (Windows PowerShell 5.1: without the handle taken now, ExitCode reads empty after the wait)
+        if (-not $p.WaitForExit(30000)) { try { $p.Kill() } catch { }; return 'ootrr.exe did not finish a 1-second test in 30 s' }
+        # (review-0116-j N1: a program that starts but fails, e.g. a damaged or half-written exe, is not swapped in either)
+        if ($p.ExitCode -ne 0) { return "ootrr.exe failed a 1-second test (exit $($p.ExitCode))" }
+    } catch {
+        return "Windows did not let ootrr.exe run ($($_.Exception.Message.Trim()))"
+    }
+    if ($WaitMs -gt 0) { Start-Sleep -Milliseconds $WaitMs }
+    if (-not (Test-Path -LiteralPath $Exe)) { return 'ootrr.exe was removed right after it was unpacked (an antivirus took it)' }
+    return ''
+}
+
+# The randomizer the kit pins (hookshot\OOTRR.txt) into <ExeDir>\tools\ootrr, all or nothing: the zip is downloaded
+# (or taken from $Downloads when its SHA-256 is the pinned one), unpacked into tools\ootrr.new, tried
+# (Test-KitOotrrRuns), and only then swapped for the old folder. A failure at any step leaves the OOTRR that was
+# there as it was (the old way deleted tools\ootrr first, so any later failure left the game with none, every start)
+# and writes why into tools\ootrr-setup.txt. A folder a stopped swap left (tools\ootrr.old, no tools\ootrr) is put
+# back first. Never touches saves, seeds or other mods. Returns @{ Ok; Why; Release; Had; Lines }:
+#   Ok  $true when the pinned OOTRR is in place (already, or now); Why '' or why not ('offline': no internet, no try)
+#   Had the release that was there before ('' for none); Lines what to show.
+function Install-KitOotrr([string]$Kit, [string]$ExeDir, [string]$Downloads = '') {
+    $r = @{ Ok = $false; Why = ''; Release = ''; Had = ''; Lines = @() }
+    $pin = Join-Path $Kit 'hookshot\OOTRR.txt'
+    if (-not (Test-Path -LiteralPath $pin)) { $r.Ok = $true; return $r }   # (a kit without OOTRR brings none)
+    $op = @{}
+    foreach ($line in @(Get-Content -LiteralPath $pin -ErrorAction SilentlyContinue)) {
+        if ($line -match '^\s*([A-Za-z0-9_]+)\s*=\s*(.+?)\s*$') { $op[$Matches[1]] = $Matches[2] }
+    }
+    $r.Release = "$($op.release)"
+    if (-not ($op.release -and $op.url -and $op.windows -match '^[A-Za-z0-9._-]+$' -and $op.windows_sha256 -match '^[0-9a-fA-F]{64}$')) {
+        $r.Why = 'hookshot\OOTRR.txt is incomplete'
+        $r.Lines += 'hookshot\OOTRR.txt is incomplete: the randomizer is left out.'
+        return $r
+    }
+    $sha = $op.windows_sha256.ToLowerInvariant()
+    $want = "$($op.release) $sha"
+    $tools = Join-Path $ExeDir 'tools'
+    $dir = Join-Path $tools 'ootrr'
+    $new = Join-Path $tools 'ootrr.new'
+    $old = Join-Path $tools 'ootrr.old'
+    $stamp = Join-Path $dir 'coop-ootrr.txt'
+    # (a swap stopped between its two moves: the old folder goes back first)
+    if (-not (Test-Path -LiteralPath $dir) -and (Test-Path -LiteralPath (Join-Path $old 'ootrr.exe'))) {
+        try { [System.IO.Directory]::Move($old, $dir) } catch { }
+    }
+    $have = if (Test-Path -LiteralPath $stamp) { "$(Get-Content -LiteralPath $stamp -TotalCount 1)".Trim() } else { '' }
+    $r.Had = if ($have) { ($have -split ' ')[0] } else { '' }
+    if ($have -eq $want -and (Test-Path -LiteralPath (Join-Path $dir 'ootrr.exe'))) {
+        $r.Ok = $true
+        $r.Lines += "randomizer: OOTRR $($op.release) -> $dir (there already)"
+        Write-KitOotrrStatus $ExeDir "ok $($op.release)"
+        return $r
+    }
+    if (-not $Downloads) { $Downloads = Join-Path $Kit 'hookshot\downloads' }
+    $zip = Join-Path $Downloads $op.windows
+    $why = ''
+    try {
+        New-Item -ItemType Directory -Force -Path $Downloads | Out-Null
+        if (-not ((Test-Path -LiteralPath $zip) -and (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant() -eq $sha)) {
+            if (($env:OOT_COOP_OFFLINE -eq '1' -or $op.url -match '^https?://') -and (Test-KitOffline)) {
+                $why = 'offline'
+            } else {
+                # (kit-mirror: retries and curl.exe too; optional, so two tries, not four)
+                $why = Get-KitDownload @("$($op.url)/$($op.windows)") $zip $sha @() 2
+                if ($why) { $why = "the download failed ($why)" }
+            }
+        }
+        if (-not $why) {
+            if (Test-Path -LiteralPath $new) { Remove-Item -LiteralPath $new -Recurse -Force -ErrorAction Stop }
+            New-Item -ItemType Directory -Force -Path $new | Out-Null
+            # (the zip holds one folder, OOTRR-<version>-windows-x64\: ootrr.exe, LICENSE, NOTICE, README.md)
+            & "$env:SystemRoot\System32\tar.exe" -x -f $zip -C $new --strip-components=1 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) { $why = "unpacking $($op.windows) failed (tar $LASTEXITCODE)" }
+            else { $why = Test-KitOotrrRuns (Join-Path $new 'ootrr.exe') }
+        }
+        if (-not $why) {
+            [System.IO.File]::WriteAllText((Join-Path $new 'coop-ootrr.txt'), "$want`n")
+            if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction Stop }
+            # (Directory.Move: one rename or nothing. Move-Item falls back to moving file by file when one file is held,
+            # and a failure half way splits the folder in two: seen in the kit test with the old LICENSE held open)
+            if (Test-Path -LiteralPath $dir) { [System.IO.Directory]::Move($dir, $old) }
+            try { [System.IO.Directory]::Move($new, $dir) }
+            catch {
+                if ((Test-Path -LiteralPath $old) -and -not (Test-Path -LiteralPath $dir)) { try { [System.IO.Directory]::Move($old, $dir) } catch { } }
+                throw
+            }
+            Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    } catch {
+        # (a file held open: the game or its ootrr.exe still running from this folder)
+        $msg = if ($_.Exception.InnerException) { $_.Exception.InnerException.Message } else { $_.Exception.Message }
+        $why = "it could not be put in place ($("$msg".Trim())): close the game and start again"
+    }
+    if (Test-Path -LiteralPath $new) { Remove-Item -LiteralPath $new -Recurse -Force -ErrorAction SilentlyContinue }
+    $r.Why = $why
+    $kept = if (Test-Path -LiteralPath (Join-Path $dir 'ootrr.exe')) { " The OOTRR that was there ($(if ($r.Had) { $r.Had } else { 'unknown release' })) is kept." } else { '' }
+    if ($why -eq 'offline') {
+        $r.Lines += "offline: the randomizer (OOTRR $($op.release)) is set up at the next start with internet.$kept"
+        Write-KitOotrrStatus $ExeDir "failed $($op.release): this PC had no internet at the last start"
+    } elseif ($why) {
+        $r.Lines += "The randomizer (OOTRR $($op.release)) was not set up: $why.$kept Co-op and the game work without it; start again (or run Update.bat) to retry."
+        if ($why -match 'antivirus|did not let') {
+            $r.Lines += "  Windows Security: Virus & threat protection > Protection history: restore/allow ootrr.exe, or add $tools as an exclusion; then start again."
+        }
+        Write-KitOotrrStatus $ExeDir "failed $($op.release): $why"
+    } else {
+        $r.Ok = $true
+        $r.Lines += "randomizer: OOTRR $($op.release) -> $dir"
+        Write-KitOotrrStatus $ExeDir "ok $($op.release)"
+    }
+    return $r
+}
+
 # The resource size tables (romfs\System\Resource\*.rsizetable.zs) of the mods the game loads besides the randomizer's
 # seeds: every folder under mods\ (any depth: the puppet pack is in mods\contents\<title>\coop-puppet) but seeds
 # (randomizer-*), the randomizer's control folder and folders whose name starts with '-' or '_' (Longshot skips them).

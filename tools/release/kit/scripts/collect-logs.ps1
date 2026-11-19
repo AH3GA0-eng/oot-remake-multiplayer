@@ -85,7 +85,9 @@ if ($hsExe) {
         $gameLogs += $logs.Count
         $picked += $logs | ForEach-Object { @($_.File.FullName, $(if ($_.Sub) { "$to\$($_.Sub)\$($_.File.Name)" } else { "$to\$($_.File.Name)" })) }
         # (last-build.txt: OOTRR's output when a randomizer seed failed; masked like every text file)
-        foreach ($f in 'coop.ini', 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json', 'mods\oot-remake-randomizer\last-build.txt') {
+        # (tools\ootrr-setup.txt: how the kit's last OOTRR setup went; tools\ootrr\coop-ootrr.txt: the OOTRR in place)
+        foreach ($f in 'coop.ini', 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json', 'mods\oot-remake-randomizer\last-build.txt',
+                'tools\ootrr-setup.txt', 'tools\ootrr\coop-ootrr.txt') {
             $p = Join-Path $hsDir $f
             if (Test-Path -LiteralPath $p) { $picked += @($p, "$to\$(Split-Path -Leaf $p)") }
         }
