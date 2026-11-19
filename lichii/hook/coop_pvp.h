@@ -154,6 +154,7 @@ struct PendingGive {
     std::int32_t expect = 0;  // the life after it
     std::uint64_t asked_ms = 0;
     bool replayed = false;
+    bool write = true;  // false (phase 4 path B): never the life write, only the game's own hit
 };
 
 // Our Link's life between two reads, against the PvP hurts waiting on it. `expect` is a life, so every change that

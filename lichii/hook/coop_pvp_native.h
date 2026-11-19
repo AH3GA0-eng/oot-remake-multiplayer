@@ -369,4 +369,172 @@ inline std::optional<PathBDecision> DecidePathB(const proto::PvpStrike& s, bool 
     return d;
 }
 
+// --- Glue part 2: the pieces the hook's glue runs each frame ---
+
+// The weapon ids path B's tables use, from the weapon PLAYER_EQUIP names (the puppet's gear "weapon" slot, its
+// actor name: "Weapon_Sword_Kokiri", "..._Alb", "..._Look", "..._Blade5" all one weapon). 0: not known.
+enum WeaponId : std::uint32_t {
+    kWeaponNone = 0,
+    kWeaponKokiri = 1,
+    kWeaponMaster = 2,
+    kWeaponBiggoron = 3,
+    kWeaponGiant = 4,
+    kWeaponBroken = 5,  // the Broken Giant's Knife / Broken Biggoron: no BaseAttack read yet
+    kWeaponHammer = 6,
+    kWeaponStick = 7,
+};
+
+inline bool Has(std::string_view text, std::string_view word) { return text.find(word) != std::string_view::npos; }
+
+inline std::uint32_t WeaponOf(std::string_view weapon) {
+    if (weapon.substr(0, 7) != "Weapon_") return kWeaponNone;
+    if (Has(weapon, "Broken")) return kWeaponBroken;  // before Biggoron and Giant: "BrokenBiggoron", "BrokenGiant"
+    if (Has(weapon, "Kokiri")) return kWeaponKokiri;
+    if (Has(weapon, "Master")) return kWeaponMaster;
+    if (Has(weapon, "Biggoron")) return kWeaponBiggoron;
+    if (Has(weapon, "Giant")) return kWeaponGiant;
+    if (Has(weapon, "Hammer")) return kWeaponHammer;
+    if (Has(weapon, "Stick")) return kWeaponStick;
+    return kWeaponNone;
+}
+
+// Path B's first tables (5.4): the weapons' BaseAttack as docs 5.4 lists them from WeaponParam (Kokiri Sword 1,
+// Master Sword 2, Biggoron / Giant's Knife 4, Megaton Hammer 3, Deku Stick 2). The kinds' multipliers are NOT
+// filled: their keys (the record's kind words) are read by U2/U7, so until then every strike is answered
+// `kept off` and takes nothing (PathBAmount); the broken knife has no BaseAttack read and is kept off too.
+inline Tables FirstTables() {
+    Tables t;
+    t.base_attack = {{kWeaponKokiri, 1}, {kWeaponMaster, 2}, {kWeaponBiggoron, 4},
+                     {kWeaponGiant, 4},  {kWeaponHammer, 3}, {kWeaponStick, 2}};
+    return t;
+}
+
+// Path B can take life only once its tables name a kind: until then the old PVP_HIT (242) path stays the one
+// that hurts, also between two native games (no PvP lost while U2/U7 are open); from then on the victim drops
+// 242 from a native attacker, so a hit never counts twice (proof 9).
+inline bool PathBLive(const Tables& t) { return !t.multiplier.empty() && !t.base_attack.empty(); }
+
+// Our Link guards toward the attacker (path B, 5.3): his main AS names a guard one (any case: "guard"; U5 reads
+// the game's names, the glue logs each one once) and the attacker stands within kGuardHalfDeg of his facing.
+// The game's GuardableAngleMaxDeg is 120 (DamageParameters/Player); it is taken as the whole cone (60 each side)
+// until U5's run shows otherwise.
+inline constexpr float kGuardHalfDeg = 60.0f;
+
+inline bool GuardAnim(std::string_view name) {
+    constexpr std::string_view word = "guard";
+    for (std::size_t i = 0; i + word.size() <= name.size(); ++i) {
+        bool same = true;
+        for (std::size_t k = 0; k < word.size() && same; ++k) {
+            char c = name[i + k];
+            if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+            same = c == word[k];
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+// Link's facing on the ground: his rotation (x, y, z, w) turning +z (the game's forward), y dropped.
+inline std::optional<std::array<float, 2>> FacingXZ(const proto::Quat& q) {
+    const float x = q[0], y = q[1], z = q[2], w = q[3];
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) || !std::isfinite(w)) return std::nullopt;
+    // The rotation's third column: q (0, 0, 1) q*.
+    const float fx = 2.0f * (x * z + w * y);
+    const float fz = 1.0f - 2.0f * (x * x + y * y);
+    const float len = std::sqrt(fx * fx + fz * fz);
+    if (!(len > 1e-4f)) return std::nullopt;
+    return std::array<float, 2>{fx / len, fz / len};
+}
+
+inline bool FacesToward(const proto::Quat& rotation, const Vec3& self, const Vec3& other) {
+    const auto f = FacingXZ(rotation);
+    const float dx = other[0] - self[0], dz = other[2] - self[2];
+    const float len = std::sqrt(dx * dx + dz * dz);
+    if (!f || !(len > 1e-4f)) return false;
+    const float cos = ((*f)[0] * dx + (*f)[1] * dz) / len;
+    return cos >= std::cos(kGuardHalfDeg * 3.14159265f / 180.0f);
+}
+
+inline bool Guarding(const std::optional<std::string_view>& main_anim, const std::optional<proto::Quat>& rotation,
+                     const Vec3& self, const Vec3& attacker) {
+    return main_anim && rotation && GuardAnim(*main_anim) && FacesToward(*rotation, self, attacker);
+}
+
+// The attacker's side: a _Pvp copy's Life component took a new hit (its last hit id, +0x1b18, moved to one that
+// is not our own third-game replay). One watch per player number; a new actor (a re-make, a new scene) starts
+// again without a strike.
+class CopyHitWatch {
+public:
+    // True when `id` is a new hit of our game's own on player `number`'s copy `actor`.
+    bool Moved(std::uint8_t number, std::uint64_t actor, std::uint32_t id, std::uint32_t replayed) {
+        auto [it, fresh] = last_.try_emplace(number, Last{actor, id});
+        if (fresh || it->second.actor != actor) {
+            it->second = Last{actor, id};
+            return false;
+        }
+        if (it->second.id == id) return false;
+        it->second.id = id;
+        return id != replayed;
+    }
+    void Forget(std::uint8_t number) { last_.erase(number); }
+    void Reset() { last_.clear(); }
+
+private:
+    struct Last {
+        std::uint64_t actor = 0;
+        std::uint32_t id = 0;
+    };
+    std::map<std::uint8_t, Last> last_;
+};
+
+// One new hit on a copy as the walk read it (the record words as CoopHitReplay::Record lays them out).
+struct CopyHit {
+    std::uint8_t victim = 0;
+    RecordFrom from;
+    proto::PvpKind kind{};
+    std::int32_t amount = 0;  // Life +0x228: what our game counted (compared on the victim, never used)
+    Vec3 at{};                // the record's hit place
+    Vec3 attacker_at{};       // the record's attacker place (our Link)
+    bool own_shot = false;    // a shot or blast of ours whose made object the walk cannot name yet (logged)
+};
+
+// The strike for one copy hit, or nothing when the record is not ours (5.4: an enemy's, another player's shot) or
+// is a shot or blast whose made object our spawn sync did not name (the victim could not check it).
+// `seen_us`/`copy_at`: the victim's sample our copy showed this frame (presence's shown pose).
+inline std::optional<proto::PvpStrike> MakeStrike(const CopyHit& hit, std::uint8_t self, std::uint32_t seq,
+                                                   std::uint64_t seen_us, const Vec3& copy_at) {
+    const auto source = StrikeSource(hit.from, self);
+    if (!source || hit.victim == 0 || hit.victim == self || hit.victim > proto::kMaxPlayers || seen_us == 0) {
+        return std::nullopt;
+    }
+    if (!Finite(hit.at) || !Finite(hit.attacker_at) || !Finite(copy_at)) return std::nullopt;
+    proto::PvpStrike s;
+    s.player_number = self;
+    s.victim = hit.victim;
+    s.seq = seq;
+    s.seen_us = seen_us;
+    s.kind = hit.kind;
+    s.amount = std::clamp<std::int32_t>(hit.amount, 0, proto::kMaxPvpLife);
+    s.source = *source;
+    if (*source != proto::PvpSource::sword && hit.from.made) s.object = *hit.from.made;
+    s.at = hit.at;
+    s.copy_at = copy_at;
+    s.from = hit.attacker_at;
+    return s;
+}
+
+// What a game that is not the victim does with a PVP_RESULT (5.4): the attacker plays the guard's recoil when
+// guarded (U6: its own game may already have clanged), everyone else replays a landed kind on its copy of the
+// victim (flash, sparks, sound; the copy's Life is invincible); nothing for the other outcomes.
+enum class ResultPlay : std::uint8_t { none, replay_on_copy, attacker_recoil };
+
+inline ResultPlay PlayResult(const proto::PvpResult& r, std::uint8_t self) {
+    if (self == 0 || r.player_number == self || r.player_number == 0) return ResultPlay::none;
+    const bool landed = r.outcome == proto::PvpOutcome::taken || r.outcome == proto::PvpOutcome::guard_broken;
+    if (r.attacker == self) {
+        return r.outcome == proto::PvpOutcome::guarded ? ResultPlay::attacker_recoil : ResultPlay::none;
+    }
+    return landed ? ResultPlay::replay_on_copy : ResultPlay::none;
+}
+
 }  // namespace CoopPvpNative

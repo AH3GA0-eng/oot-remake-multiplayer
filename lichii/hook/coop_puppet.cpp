@@ -338,8 +338,10 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
         }
     }
     std::uint32_t live = 0;  // LiveMask(): rebuilt each frame
+    std::array<std::uint64_t, coop::protocol::kMaxPlayers + 1> pvp_actors{};  // LivePvpActor(): the same
     if (input_.main_base == 0) {
         live_mask_.store(0, std::memory_order_relaxed);
+        for (auto& a : live_pvp_actor_) a.store(0, std::memory_order_relaxed);
         return;
     }
     for (auto& slot : slots_) {
@@ -453,6 +455,9 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                 if (t->show != Show::hide && slot.number < 32) {
                     live |= 1u << slot.number;
                 }
+                if (slot.number < pvp_actors.size() && CoopPvpNative::IsPvpActor(slot.actor_name)) {
+                    pvp_actors[slot.number] = slot.actor;  // phase 4: LivePvpActor (shown or held, any show)
+                }
                 // Issue 194 (coop_snap.h): a held puppet (their cutscene) follows their
                 // place with its frame frozen, so it is not left behind and does not jump
                 // when the cutscene ends; any jump is eased, a snap is logged.
@@ -510,6 +515,7 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
         }
     }
     live_mask_.store(live, std::memory_order_relaxed);
+    for (std::size_t n = 0; n < pvp_actors.size(); ++n) live_pvp_actor_[n].store(pvp_actors[n], std::memory_order_relaxed);
     Status(guest, now_ms);
 }
 

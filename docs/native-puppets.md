@@ -523,6 +523,8 @@ Both kits: pack `--puppet-body --puppet-pvp`, `LICHII_COOP_PVP_NATIVE=1`, `/pvp 
 13. Regression, PvP off, both kits with the new pack: co-op walk, nothing locks on, nothing clangs, phases 2 and 3
     (bomb take, lift) still work [shot A+B]; and a third game C watching A hit B with PvP on sees the hit effect
     on B's copy [shot C].
+14. (Review LOW 2) A lifts a bomb while B Z-targets A's `_Pvp` copy; the host turns PvP off: [shot B] shows
+    whether the reticle stays until A throws; after the throw the copy is plain and the lock is gone [shot B].
 
 Host tests in step 2 (no run): forged strikes refused (attacker far from its ring place, hit place off the victim's
 ring, a `seen_us` in the future or too old, a repeated seq, a shot naming no object); path B's amount is the
@@ -555,11 +557,40 @@ Every game address U2/U3/U5 need is read before its glue lands; until then the g
   file touched).
 - 3 done: `--puppet-pvp` (tools/puppet_pack/build.py `add_pvp`, `pvp_sensors`, `attention_clients`; checked on the
   game's romfs: `Tgt` / `Body_Tgt` only; the plain puppets byte for byte as before).
-- 4 part: `coop_pvp_native_game.cpp` says `PVP_NATIVE` (glue on and a pvp pack, every 5 s), keeps the other games'
-  `PVP_NATIVE`, and sets the director's `_Pvp` mask (`CoopPuppet::SetPvpCopies`) by `WantedCopy`. Incoming strikes
-  and results are logged only. Left: read the copy's hit record and send strikes (the director's live actor per
-  player, the protocol 14 reader, `seen_us` from the drawn sample), path B on our Link (`DecidePathB` + today's
-  hit replay, the guard from our main AS name), the third-game replay on results, the runtime toggles (U3).
+- 4 done (glue part 1 + 2; nothing of it runs without `LICHII_COOP_PVP_NATIVE=1`):
+  - `PVP_NATIVE` (glue on and a pvp pack, every 5 s), the other games' `PVP_NATIVE`, the director's `_Pvp` mask
+    (`CoopPuppet::SetPvpCopies`) by `WantedCopy`; a lifted or carrying copy keeps its actor until that ends.
+  - **Attacker.** The director publishes each live `_Pvp` copy's actor (`Director::LivePvpActor`). The object
+    walk (coop_objects.cpp `ReadPvpCopies`, beside `GivePvp`) reads its Life component's last hit id (+0x1b18);
+    one that moved, on the same actor, not to our own third-game replay (`CopyHitWatch`), hands the record (kind
+    words +0x250..+0x27c, hit place, attacker place, +0x228 amount) to the glue. `MakeStrike` sends it only when
+    its attacker is our Link (`StrikeSource`), with `seen_us` / `copy_at` = presence's shown pose of the victim
+    this frame (its sample's server time). An enemy's hit is not sent (counted). **Our shots and blasts are not
+    sent yet**: the walk cannot name the shot's made object (CoopSpawn keeps it by address, not shared), and a
+    strike without one is refused by the victim anyway; today's PvP gives shots meanwhile.
+  - **Victim, path B.** Our own ring (each frame, server time) and a ring per player (each new shown sample);
+    `DecidePathB` with the attacker's weapon from `PLAYER_EQUIP` (`WeaponOf`), guarding = our main AS has "guard"
+    (each name logged once, U5) and the attacker within 60 degrees of our facing (`GuardableAngleMaxDeg 120` taken
+    as the whole cone until U5); `FirstTables`: the BaseAttack values of 5.4. A taken strike goes to
+    `CoopObjects::HurtOurLinkNative`: the game's own hit replay on our Link with the strike's kind words, **never
+    the life write** (a hit the game does not take in 0.4 s stays untaken; with `LICHII_COOP_PVP_REPLAY=0` none
+    is given). A no-life kind (amount 0) is the game's hit only. `PVP_RESULT` is sent, and `PVP_HURT` for the chat
+    line when life was taken.
+  - **The kinds' multipliers are NOT filled** (their keys are the U2/U7 read), so every strike is answered `kept
+    off` and takes nothing until then (`PathBLive` false). So that PvP between two native games still works,
+    today's `PVP_HIT` keeps hurting until path B is live; from then on the victim drops 242 from a player whose
+    strikes it judges (`TakesStrikesFrom`, proof 9: never twice).
+  - **Every other game.** A `PVP_RESULT` taken or guard broken that is not about us is replayed on our `_Pvp`
+    copy of the victim (`CoopObjects::ReplayOnCopy`, the protocol 14 replay: flash, sparks, sound on its invincible
+    Life). The attacker logs a `guarded` result (U6: the clang is its own game's on the copy's shield, if any).
+  - Review LOW 1: the seq gate forgets a player on `PLAYER_LEFT` and `PLAYER_JOINED`; a new connection resets the
+    gate, the rings, the mercy and our own strike count.
+  - Review LOW 2: a copy held while carrying when PvP is turned off keeps its `_Pvp` actor (and so its lock-on)
+    until the carry ends. No strike comes of it (the walk reads copies only while the mask has PvP on, and the
+    server drops strikes with PvP off). Turning its attention off at once waits for U3's toggle; proof 14 checks
+    the gap.
+  - Left: U3's runtime toggles; path A (U2); shots and blasts (the made object's id from CoopSpawn); the kinds'
+    table (U2/U7); WeaponParam.Range (the 1.3 m floor until then).
 
 ## 6. Risks
 
