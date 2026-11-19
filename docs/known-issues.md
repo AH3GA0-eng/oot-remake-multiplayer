@@ -46,6 +46,7 @@ This is an early test release. Everything under "Works" was seen in our two-game
 - **Linux: away/paused state, Map page and HUD refresh** ([#150](https://github.com/daurosk/oot-remake-multiplayer/issues/150)): fixed in the code, not yet checked on Linux.
 - **The title shows Continue only after a restart** after a new save (tracker row 124); start the game again.
 - **Masks are not drawn on other players** ([#91](https://github.com/daurosk/oot-remake-multiplayer/issues/91)): the mask shows in the HUD slot but not on their Link.
+- **A boss can get stuck in one move and can't be beaten**: seen with King Dodongo rolling in the middle of the arena (#149 in the player reports; the same in 0.11.4). Being fixed for 0.11.6.
 - **An invisible Lizalfos**: in Dodongo's Cavern one Lizalfos can be invisible on one player's screen. It is there and fights. Not fixed yet ([#238](https://github.com/daurosk/oot-remake-multiplayer/issues/238)).
 - **Host crash under heavy memory use**: a host crashed twice in Zora's Domain while the PC was nearly out of memory. Not fixed yet; `collect-logs` records memory use, so if it happens to you, attach its zip to `/bugreport` on the Discord ([#242](https://github.com/daurosk/oot-remake-multiplayer/issues/242)).
 - **The graphics driver can reset**: rarely, an NVIDIA driver resets and the game closes with `VK_ERROR_DEVICE_LOST`. It is not caused by co-op (it happens in the game's own drawing); start the game again and rejoin.
