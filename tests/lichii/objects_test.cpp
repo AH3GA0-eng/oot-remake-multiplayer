@@ -5339,6 +5339,77 @@ TEST_CASE("objects: another player's event here keeps its bound actors acting, c
     CHECK(run(true, std::nullopt, 200).targeting);  // in our Link's event it is, as before
 }
 
+TEST_CASE("objects: our event's actor is flagged in_event in its samples (S2, issues 144, 243)") {
+    // The owner's side: an actor our Link's event binds (a scrub we talk to) carries
+    // object_state::in_event in its samples, so every copy keeps its own logic meanwhile.
+    Sync sync;
+    sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+    Seen scrub = Acting(0x100, 0x11, 100, 3.0f, "Wait", "Enemy_Scrub_Deku_Brothers");
+    Tick(sync, 0, {scrub});
+    Own(sync, *sync.IdOf(0x100), 1);
+    auto bit = [&](std::uint64_t t, float x) {
+        scrub.position[0] = x;  // a move, so a sample goes out
+        std::optional<bool> in_event;
+        for (const auto& s : All<proto::ObjectSample>(Tick(sync, t * kMs, {scrub}))) {
+            in_event = s.state.state && (*s.state.state & proto::object_state::in_event) != 0;
+        }
+        return in_event;
+    };
+    CHECK(bit(50, 3.1f) == std::optional<bool>(false));  // no event
+    sync.SetEvent(true, 100 * kMs, true);
+    scrub.event_member = true;
+    CHECK(bit(120, 3.2f) == std::optional<bool>(true));  // our Link's event binds it
+    sync.SetEvent(true, 200 * kMs, false);  // another player's event replayed here: not ours to tell
+    CHECK(bit(200 + Sync::kEventKeepUs / kMs, 3.3f) == std::optional<bool>(false));
+}
+
+TEST_CASE("objects: a copy its owner's event binds keeps its own logic, unclaimed (S2, issues 144, 243, 253)") {
+    // The follower's side: P2 talks to its scrub (its samples say in_event). Our copy is not
+    // given P2's motion (EventPartner), and our Link near it with its own AI acting does not
+    // claim it away from P2 (no targeting). A townsperson still plays P2's cutscene (issue 200).
+    struct Out {
+        bool holds = false;
+        bool partner = false;
+        bool targeting = false;
+    };
+    auto run = [&](const std::string& name, bool owner_event, std::uint64_t until_ms = 700) {
+        Sync sync;
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        const Seen copy = Acting(0x100, 0x11, 100, 2.0f, "Hop", name);
+        Tick(sync, 0, {copy});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, 2);
+        std::optional<std::uint8_t> flags;
+        for (std::uint64_t t = 10; t < until_ms; t += 66) {
+            if (t < 700) {
+                proto::ObjectSample s = OwnerSample(id, 2, t * kMs, 2.0f, 100, "Talk");
+                if (owner_event) {
+                    s.state.state = proto::object_state::in_event;
+                }
+                sync.Receive(s);
+            }
+            sync.NoteTakeover(0x100, t * kMs, "Hop");  // our copy's own AI wants its own play
+            for (const auto& p : All<proto::ObjectPresent>(Tick(sync, t * kMs, {copy}))) {
+                flags = p.objects[0].flags;
+            }
+        }
+        const std::uint64_t at = (until_ms - 1) * kMs;
+        return Out{sync.OwnerEventHolds(0x100, at), sync.EventPartner(0x100, at),
+                   flags && (*flags & kTargeting) != 0};
+    };
+    const Out scrub = run("Enemy_Scrub_Deku_Brothers", true);
+    CHECK(scrub.holds);
+    CHECK(scrub.partner);           // the owner's talk motion is not put on our copy
+    CHECK_FALSE(scrub.targeting);   // and it stays the talker's
+    CHECK(run("Enemy_Scrub_Business", true).holds);  // a seller (row 100)
+    CHECK_FALSE(run("Enemy_Scrub_Deku_Brothers", false).holds);   // no event of the owner's: as before
+    CHECK_FALSE(run("Npc_Kokiri_Saria", true).holds);             // a townsperson follows the owner's cutscene
+    CHECK_FALSE(run("Enemy_DungeonBoss_Gohma", true).holds);             // a boss keeps its own rules
+    const Out after = run("Enemy_Scrub_Deku_Brothers", true, 700 + Sync::kEventKeepUs / kMs + 100);
+    CHECK_FALSE(after.holds);       // kEventKeepUs after the owner's last in_event sample
+    CHECK_FALSE(after.partner);
+}
+
 TEST_CASE("objects: a boss or a fish our event binds stays unclaimed (row 97)") {
     // A boss runs its own changes in our event through CoopBossNative::SetEvent and keeps its
     // fight's owner; a fish keeps the lure rules (issue 151). Neither is an event partner, even

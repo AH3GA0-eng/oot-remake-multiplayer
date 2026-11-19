@@ -1265,6 +1265,9 @@ proto::ObjectState Sync::StateOf(Object& o, std::uint64_t now_us) {
     if (o.life) {
         state.life = proto::ObjectLife{*o.life, o.max};
     }
+    if (o.own_event_until > now_us) {
+        state.state = proto::object_state::in_event;  // S2: our Link's event binds it
+    }
     return state;
 }
 
@@ -1281,7 +1284,17 @@ void Sync::ChaseStep(Object& o, std::uint64_t now_us) {
 bool Sync::EventPartner(std::uint64_t address, std::uint64_t now_us) const {
     const auto it = objects_.find(address);
     // Row 138(8): an actor our Link is in the area of (sensor_until) waits the same way.
-    return it != objects_.end() && (it->second.event_until > now_us || it->second.sensor_until > now_us);
+    return it != objects_.end() && (it->second.event_until > now_us || it->second.sensor_until > now_us ||
+                                    OwnerEventKeeps(it->second, now_us));
+}
+
+bool Sync::OwnerEventHolds(std::uint64_t address, std::uint64_t now_us) const {
+    const auto it = objects_.find(address);
+    return it != objects_.end() && OwnerEventKeeps(it->second, now_us);
+}
+
+bool Sync::OwnerEventKeeps(const Object& o, std::uint64_t now_us) {
+    return o.owner_event_until > now_us && o.reacts && !o.npc && !o.fish && !IsBossOrPart(o.name);
 }
 
 bool Sync::AreaClaim(std::uint64_t address, std::uint64_t now_us) const {
@@ -2643,6 +2656,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                     ChaseStep(o, now_us);
                 }
             } else if (wake_ && owner != owners_.end() && owner->second.player != 0 &&
+                       !OwnerEventKeeps(o, now_us) &&  // S2: our copy's own logic runs; the owner keeps it
                        now_seen.contains(address) && Distance(o.position, *player_) <= wake_m &&
                        !o.received.empty() && now_us >= o.received.back().time &&
                        now_us - o.received.back().time <= kPoseStaleUs &&
@@ -2698,6 +2712,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 o.event_why = why;
                 if (event_ours_) {
                     o.chase_until = std::max(o.chase_until, o.event_until);
+                    o.own_event_until = o.event_until;  // S2: told to the copies (object_state::in_event)
                 }
             }
         }
@@ -3250,6 +3265,9 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             }
             if (own != owners_.end() && sample->epoch < own->second.epoch) {
                 continue;  // from an owner before the last change
+            }
+            if (sample->state.state && (*sample->state.state & proto::object_state::in_event) != 0) {
+                o->owner_event_until = now_us + kEventKeepUs;  // S2: its owner's event binds it
             }
             if (sample->state.bsa) {
                 o->bsa_in = sample->state.bsa;  // native boss sync: the owner's boss verbs
