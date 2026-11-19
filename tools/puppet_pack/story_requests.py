@@ -109,6 +109,14 @@ OWN_ACTIONS = {
     "EventTriggertExchangeEnemyMuseumPouchAndStateForContinuous": "the pouch swapped (the enemy museum)",
     "EventTriggertRestorePouchFromEnemyMuseum": "the pouch swapped back (the enemy museum)",
 }
+# Quests whose steps are each player's own, with why: a scene that moves one would move the joining game's quest
+# for a race or trade it never played (row 150, the Epona quest: Dm_LonLon_0040, Ingo beaten, sets Get_Epona to
+# AfterWonGambleRace; a friend who joined it in the ranch was left one step short of the end for good, and co-op's
+# end-only sharing of Get_Epona counts that step as "riding out", so the group's Complete never came either).
+OWN_QUESTS = {
+    "Get_Epona": "the race against Ingo: co-op shares only the quest's end, lichii/hook/coop_quests.cpp",
+}
+CHALLENGE_STEP_ACTIONS = ("EventExecuteProgressChallengeStep", "EventExecuteRollbackChallengeStep")
 OCARINA_INPUT = ("EventWaitOcarinaInput", "EventPlayerPlayOcarinaFree")  # waits for the player to play
 CONSUMABLES = ("Item_Arrow", "Item_Bomb", "Item_DekuNut", "Item_DekuStick", "Item_Bullet", "Item_MagicBean",
                "Item_Rupee", "Obj_Rupee")  # their counts are per player (not a bag/quiver tier)
@@ -134,6 +142,10 @@ def touches_own(actions):
                 return f"adds {item}, a consumable"
         elif action in OWN_ACTIONS:
             return f"runs {actor} {action} ({OWN_ACTIONS[action]})"
+        elif action in CHALLENGE_STEP_ACTIONS and params.get("ChallengeName") in OWN_QUESTS:
+            quest = params["ChallengeName"]
+            step = params.get("StepName") or params.get("ChallengeStep") or "?"
+            return f"moves {quest} to {step} ({OWN_QUESTS[quest]})"
         elif any(w in action for w in RUPEE_ACTIONS):
             return f"runs {actor} {action} (rupees)"
         elif "Bottle" in action and action != "EventTriggerPushToEmptyBottle" and actor != "UISystemActor":

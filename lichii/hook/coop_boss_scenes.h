@@ -178,6 +178,11 @@ public:
     enum class Phase : std::uint8_t { none, intro, fight, outro, done };
     Phase phase(std::uint8_t boss) const { return boss < fights_.size() ? fights_[boss].phase : Phase::none; }
     std::uint8_t starter(std::uint8_t boss) const { return boss < fights_.size() ? fights_[boss].starter : 0; }
+    // Row 136: whether our game's own death of `boss` may still run here: an outro_start of it not yet taken (the
+    // next Tick joins it), our ask of it within kJoinUs, its event playing, the wait for our copy to read dead, or
+    // any event running in our game (last Tick). Otherwise nothing of ours will run it: CoopBossBeaten::Apply gives
+    // the boss's beaten set in its area then. Present thread (the inbox under its lock).
+    bool DeathMayRun(std::uint8_t boss) const;
 
 private:
     struct Fight {
@@ -225,7 +230,7 @@ private:
     std::optional<std::int32_t> max_life_;  // last tick's
     std::uint64_t last_now_ = 0;
 
-    std::mutex inbox_mutex_;
+    mutable std::mutex inbox_mutex_;
     std::vector<coop::protocol::Message> inbox_;
 };
 

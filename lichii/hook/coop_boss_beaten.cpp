@@ -152,7 +152,8 @@ bool InDungeon(std::uint8_t room, std::string_view scene) {
 std::vector<Write> Apply::Check(const std::optional<std::string>& scene, bool place_known,
                                 std::span<const std::uint8_t> beaten,
                                 const std::function<std::optional<std::uint32_t>(std::uint32_t)>& read,
-                                const std::function<bool(std::uint8_t)>& near) {
+                                const std::function<bool(std::uint8_t)>& near,
+                                const std::function<bool(std::uint8_t)>& death_here) {
     if (!scene) {
         scene_.reset();  // loading: the scene after it (the same one too) checks again
         loaded_.clear();
@@ -214,8 +215,8 @@ std::vector<Write> Apply::Check(const std::optional<std::string>& scene, bool pl
             continue;
         }
         if (InDungeon(room, *scene)) {
-            if (near(room)) {
-                continue;  // in (or before) the boss room: D9, its own death runs there; given once we are out of it
+            if (near(room) && (!death_here || death_here(room))) {
+                continue;  // in (or before) the boss room while our own death of it may run (D9): after it
             }
         } else if (KeptScene(room, *scene)) {
             continue;  // Ganondorf's and Ganon's end sequence: the next scene gives it

@@ -714,3 +714,66 @@ TEST_CASE("boss scenes: a follower's own BossAppear plays out when the starter's
     CHECK_FALSE(b.Tick(At(kInRoom, 1, true), {}, 5'000'000).skip);
     CHECK(b.phase(kGohma) == Phase::fight);
 }
+
+TEST_CASE("boss scenes: DeathMayRun says while our own death of a boss may still run here (row 136)") {
+    const proto::BossScene death = Scene(1, kGohma, proto::BossSceneKind::outro_start, kInRoom);
+    const auto copy = [](Local l) {
+        l.boss_ours = false;
+        l.boss_alive = false;
+        return l;
+    };
+    SUBCASE("nothing heard, nothing asked: nothing of ours runs it") {
+        Director b;
+        CHECK_FALSE(b.DeathMayRun(kGohma));
+        b.Tick(At(kInRoom, 2), {}, 1'000'000);
+        CHECK_FALSE(b.DeathMayRun(kGohma));
+        CHECK_FALSE(b.DeathMayRun(200));
+    }
+    SUBCASE("an outro_start not yet taken, asked, playing, over") {
+        Director b;
+        b.Receive(death);
+        CHECK(b.DeathMayRun(kGohma));  // the next Tick joins it
+        CHECK_FALSE(b.DeathMayRun(1));  // another boss
+        CHECK(b.Tick(copy(At(kInRoom, 2)), {}, 1'000'000).play);
+        CHECK(b.DeathMayRun(kGohma));  // asked, not taken yet
+        b.Tick(copy(At(kInRoom, 2, true)), Took("InsideTheDekuTree_BossDie"), 1'100'000);
+        CHECK(b.DeathMayRun(kGohma));  // it plays
+        b.Tick(copy(At(kInRoom, 2)), {}, 9'000'000);
+        CHECK(b.phase(kGohma) == Phase::done);
+        CHECK_FALSE(b.DeathMayRun(kGohma));  // over: its beaten set may be given here
+    }
+    SUBCASE("asked but never taken: nothing runs once kJoinUs is past") {
+        Director b;
+        b.Receive(death);
+        CHECK(b.Tick(copy(At(kInRoom, 2)), {}, 1'000'000).play);
+        b.Tick(copy(At(kInRoom, 2)), {}, 1'000'000 + Director::kJoinUs / 2);
+        CHECK(b.DeathMayRun(kGohma));
+        b.Tick(copy(At(kInRoom, 2)), {}, 1'000'000 + Director::kJoinUs + 1);
+        CHECK_FALSE(b.DeathMayRun(kGohma));
+    }
+    SUBCASE("our copy still lives: the setting waits for it") {
+        Director b;
+        b.Receive(death);
+        Local alive = At(kInRoom, 2);
+        alive.boss_ours = false;
+        alive.boss_alive = true;
+        CHECK_FALSE(b.Tick(alive, {}, 1'000'000).play);
+        CHECK(b.DeathMayRun(kGohma));
+    }
+    SUBCASE("came into the area after the death (walked in during it, fell in later): nothing asked, nothing runs") {
+        Director b;
+        b.Receive(death);
+        CHECK_FALSE(b.Tick(At(kFar, 2), {}, 1'000'000).play);  // elsewhere in the dungeon at the death: a chat line
+        CHECK(b.phase(kGohma) == Phase::outro);
+        CHECK_FALSE(b.DeathMayRun(kGohma));
+        CHECK_FALSE(b.Tick(At(kInRoom, 2), {}, 2'000'000).play);  // in the room during the others' death
+        CHECK_FALSE(b.DeathMayRun(kGohma));
+    }
+    SUBCASE("any event of our game: it may be the death (seen with no name)") {
+        Director b;
+        b.Tick(At(kInRoom, 2, true), {}, 1'000'000);
+        CHECK(b.DeathMayRun(kGohma));
+        b.Tick(At(kInRoom, 2), {}, 2'000'000);
+        CHECK_FALSE(b.DeathMayRun(kGohma));
+    }
+}

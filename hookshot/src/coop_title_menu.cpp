@@ -884,6 +884,23 @@ SaveListRefresh::Action SaveListRefresh::Step(const Input& in) {
     return Action::ask;
 }
 
+TitleArrangement ArrangementFor(bool any_save) {
+    TitleArrangement a;
+    if (any_save) {
+        a.btn_num_frame = 3;
+        a.sound_type = 1;
+        a.texts = {{{"Pa_Button_00/T_Btn_00", "0001"}, {"Pa_Button_01/T_Btn_00", "0000"},
+                    {"Pa_Button_02/T_Btn_00", "0002"}}};
+        a.count = 3;
+    } else {
+        a.btn_num_frame = 2;
+        a.sound_type = 0;
+        a.texts = {{{"Pa_Button_00/T_Btn_00", "0000"}, {"Pa_Button_01/T_Btn_00", "0002"}, {}}};
+        a.count = 2;
+    }
+    return a;
+}
+
 const char* SkipTitleHold(const SkipTitleInput& in) {
     if (in.session_live) {
         return "a co-op session is live";

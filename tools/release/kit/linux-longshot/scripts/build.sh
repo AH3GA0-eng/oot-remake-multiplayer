@@ -291,33 +291,58 @@ if [[ -f $ootrr_pin ]]; then
             OOT_COOP_FETCH_LOCAL=$fetch_local fetch_verified "$o_tgz" "$o_sha" "$o_url/$o_file" || o_why="the download failed ($KIT_FETCH_WHY)"
         fi
         o_had=$(cat "$o_dir/coop-ootrr.txt" 2>/dev/null || true)
+        o_new=$GAME/tools/ootrr.new o_old=$GAME/tools/ootrr.old
+        # (a swap stopped between its two moves: the old folder goes back first)
+        [[ ! -d $o_dir && -f $o_old/ootrr ]] && mv "$o_old" "$o_dir"
         if [[ -z $o_why ]]; then
-            rm -rf "$o_dir" && mkdir -p "$o_dir"
+            # All or nothing (Windows: kit-paths.ps1 Install-KitOotrr): unpacked beside the old one, tried, then swapped,
+            # so a failure keeps the OOTRR that was there; the old way deleted it first (player report 2026-11-19).
+            rm -rf "$o_new" && mkdir -p "$o_new"
             # (one folder, ootrr-<version>-linux-x86_64/: ootrr, LICENSE, NOTICE, README.md, install.sh, ootrr.desktop)
-            if tar -xzf "$o_tgz" -C "$o_dir" --strip-components=1 && [[ -f $o_dir/ootrr ]]; then
-                chmod +x "$o_dir/ootrr"
-                printf '%s\n' "$o_want" >"$o_dir/coop-ootrr.txt"
-                # Another release than the one before: its seeds are other worlds and the old seed files do not build
-                # with it, so every built seed goes and the game makes it again at its next start
-                # (kit-paths.ps1 Remove-KitRandoSeeds on Windows).
-                if [[ -n $o_had && ${o_had%% *} != "$o_rel" ]]; then
-                    for seed_dir in "$GAME"/mods/randomizer-*/; do
-                        [[ -f ${seed_dir}coop-seed.txt ]] || continue
-                        seed_name=$(basename "$seed_dir")
-                        rm -rf "$seed_dir" "$GAME/mods/oot-remake-randomizer/$seed_name.ootrr" \
-                            "$GAME/mods/oot-remake-randomizer/$seed_name.spoiler.txt"
-                        say "  randomizer: seed $seed_name removed for OOTRR $o_rel: the game makes it again at its next start (another world: start a new save)"
-                    done
-                fi
-            else
+            if ! tar -xzf "$o_tgz" -C "$o_new" --strip-components=1 || [[ ! -f $o_new/ootrr ]]; then
                 o_why="unpacking $o_file failed"
+            else
+                chmod +x "$o_new/ootrr"
+                # ('shuffle 1 1' prints one number at once and touches no file: the program runs on this system)
+                if ! timeout 30 "$o_new/ootrr" shuffle 1 1 >/dev/null 2>&1; then
+                    o_why="ootrr did not run here (a 1-second test failed)"
+                else
+                    printf '%s\n' "$o_want" >"$o_new/coop-ootrr.txt"
+                    rm -rf "$o_old"
+                    if { [[ ! -e $o_dir ]] || mv "$o_dir" "$o_old"; } && mv "$o_new" "$o_dir"; then
+                        rm -rf "$o_old"
+                    else
+                        [[ ! -e $o_dir && -d $o_old ]] && mv "$o_old" "$o_dir"
+                        o_why="it could not be put in place: close the game and start again"
+                    fi
+                fi
+            fi
+            rm -rf "$o_new"
+        fi
+        if [[ -z $o_why ]]; then
+            # Another release than the one before: its seeds are other worlds and the old seed files do not build
+            # with it, so every built seed goes and the game makes it again at its next start
+            # (kit-paths.ps1 Remove-KitRandoSeeds on Windows).
+            if [[ -n $o_had && ${o_had%% *} != "$o_rel" ]]; then
+                for seed_dir in "$GAME"/mods/randomizer-*/; do
+                    [[ -f ${seed_dir}coop-seed.txt ]] || continue
+                    seed_name=$(basename "$seed_dir")
+                    rm -rf "$seed_dir" "$GAME/mods/oot-remake-randomizer/$seed_name.ootrr" \
+                        "$GAME/mods/oot-remake-randomizer/$seed_name.spoiler.txt"
+                    say "  randomizer: seed $seed_name removed for OOTRR $o_rel: the game makes it again at its next start (another world: start a new save)"
+                done
             fi
         fi
+        # (how it went, for the game's chat and collect-logs: data/game/tools/ootrr-setup.txt, as on Windows)
+        mkdir -p "$GAME/tools"
         if [[ $o_why == offline ]]; then
+            printf 'failed %s: this PC had no internet at the last start\n' "$o_rel" >"$GAME/tools/ootrr-setup.txt"
             say "  offline: using the tools already here (the randomizer, OOTRR $o_rel, is set up at the next start with internet)"
         elif [[ -n $o_why ]]; then
+            printf 'failed %s: %s\n' "$o_rel" "$o_why" >"$GAME/tools/ootrr-setup.txt"
             warn "the randomizer (OOTRR $o_rel) was not set up: $o_why. Co-op works without it; start again to retry."
         else
+            printf 'ok %s\n' "$o_rel" >"$GAME/tools/ootrr-setup.txt"
             say "  randomizer: OOTRR $o_rel -> $o_dir"
         fi
     fi

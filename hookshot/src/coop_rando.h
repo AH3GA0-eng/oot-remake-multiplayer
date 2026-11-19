@@ -218,6 +218,13 @@ const char* OotrrName();
 std::optional<std::filesystem::path> FindOotrr(const std::string& setting, const std::filesystem::path& game_dir,
                                                const std::filesystem::path& mods_root);
 std::optional<std::filesystem::path> FindGameFolder(const std::string& setting, const std::filesystem::path& game_dir);
+// The kit's last OOTRR setup result, beside the game: <game>\tools\ootrr-setup.txt ("ok <release>" or
+// "failed <release>: <why>", kit-paths.ps1 Install-KitOotrr / build.sh).
+inline constexpr const char* kOotrrStatusFile = "ootrr-setup.txt";
+// What the tab and the chat say when the kit's OOTRR is not beside the game: why the kit's last setup failed when it
+// wrote that down (a player who never saw the start window's line, Velvet 2026-11-19), and what to do: close the game,
+// run Update.bat (it repairs the game's co-op parts), or start the kit.
+std::string OotrrMissingText(const std::filesystem::path& game_dir);
 
 // What to do about a failed `ootrr build`, from its output: game files of another version than 1.1.1 (OOTRR says
 // "the game folder has no ...") say so plainly; anything else is empty (the caller gives the exit code).

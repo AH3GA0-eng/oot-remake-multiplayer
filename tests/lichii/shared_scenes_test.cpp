@@ -367,6 +367,7 @@ TEST_CASE("no story cutscene shared in 0.11.3 stops being shared unless the game
         "Dm_HrlCastle_0020",     // takes the Cucco (Talon)
         "Dm_Kokiri_0063",        // equips the Kokiri Sword from the pouch
         "Dm_LonLon_0030",        // rupees
+        "Dm_LonLon_0040",        // Ingo beaten: moves the player's own Get_Epona to AfterWonGambleRace (row 150)
         "Dm_LostWood_0015",      // Biggoron's sword trade challenge removed (not the Pocket Egg: the old
                                  // reader's misread case reached an egg taken that its real cases never do)
         // the Great Fairies' paid heal (Dm_FairyFountain_Din:Pay, 500 rupees)

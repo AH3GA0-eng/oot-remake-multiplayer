@@ -370,5 +370,9 @@ std::optional<std::int32_t> MaxLifeCap();
 std::vector<std::string> TakeWantedEvents();
 // - lines for the chat box ("<name> entered the boss room of ...").
 std::vector<std::string> TakeLines();
+// - row 136: whether our game's own death of boss `boss` (BOSS_SCENE's index) may still run here
+//   (CoopBossScenes::Director::DeathMayRun; with the boss cutscenes off, LICHII_COOP_BOSS_SCENES=0 or no request
+//   wrap, the Director never asks one: false; the hook also waits while our game runs any event).
+bool DeathMayRun(std::uint8_t boss);
 
 } // namespace CoopBoss

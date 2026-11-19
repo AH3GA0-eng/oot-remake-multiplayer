@@ -458,6 +458,26 @@ void put_user(FakeMemory& m, const Layout& l) {
 
 // The 13 armor links after the 8 hand slots, each read and empty, as the
 // game has them: without this a test's other links are not readable.
+// Int flags of the GameData manager (its Int table, as GameFlags reads it).
+constexpr std::uint64_t kIntEntries = 0x90400000, kIntSlots = 0x90500000;
+constexpr std::uint32_t kIntCap = 17;
+void put_ints(FakeMemory& m, const std::vector<std::pair<std::string, std::int32_t>>& flags) {
+  m.put_u64(FakeMemory::kBase + 0x4e842a8, kGameData);
+  m.put_u32(kGameData + 0xd0, static_cast<std::uint32_t>(flags.size()));
+  m.put_u64(kGameData + 0xd8, kIntEntries);
+  m.put_u64(kGameData + 0xe0, kIntSlots);
+  m.put_u32(kGameData + 0xec, kIntCap);
+  for (std::uint32_t i = 0; i < kIntCap; ++i) m.put_u64(kIntSlots + 8 * i, 0);
+  for (std::uint32_t i = 0; i < flags.size(); ++i) {
+    const std::uint32_t hash = proto::flag_hash(flags[i].first);
+    std::uint32_t s = hash % kIntCap;
+    while (*read_u32(m, kIntSlots + 8 * s) != 0) s = (s + 1) % kIntCap;
+    m.put_u32(kIntSlots + 8 * s, hash);
+    m.put_u32(kIntSlots + 8 * s + 4, i);
+    m.put_u32(kIntEntries + 0x28ull * i + 0x1c, static_cast<std::uint32_t>(flags[i].second));
+  }
+}
+
 void put_links(FakeMemory& m) {
   for (std::uint32_t a = 0; a < addr::kArmorLinkCount; ++a) {
     const std::uint32_t link = 8 + a;
@@ -603,6 +623,59 @@ TEST_CASE("host reader: what the player wears") {
     CHECK(e->third_weapon == "");
     CHECK(e->sub_tool == "");
     CHECK(e->held == "");
+  }
+  SUBCASE("puppet-gear-148: the shield the game holds (slot 4) over the EquipShield flag") {
+    put_user(m, l);
+    put_strings(m, {{addr::kEquipShield, "Weapon_Shield_Mirror"}});
+    const auto name_in = [&](std::uint32_t slot, const std::string& name) {
+      put_equipped(m, slot, 60 + slot, 4, 0x0);
+      const std::uint64_t piece = kEquipActors + 0x1000 * slot;
+      const std::uint64_t text = piece + 0x800;
+      m.put_u64(piece + 0x260, text);
+      const std::string room(80, char{0});
+      m.put(text, room.data(), room.size());
+      m.put(text, name.c_str(), name.size() + 1);
+    };
+    SUBCASE("an empty slot leaves the flag") {
+      CHECK(reader.read_equipment()->shield == "Weapon_Shield_Mirror");
+    }
+    SUBCASE("a child at the age change: the Deku Shield it holds, not the adult's Mirror Shield") {
+      name_in(4, "Weapon_Shield_Deku");
+      CHECK(reader.read_equipment()->shield == "Weapon_Shield_Deku");
+    }
+    SUBCASE("something else in the slot is no shield: the flag stands") {
+      name_in(4, "Item_Ocarina_Fairy");
+      CHECK(reader.read_equipment()->shield == "Weapon_Shield_Mirror");
+    }
+  }
+  SUBCASE("puppet-gear-148: a shield or tunic the player lost (StockNum 0) is not worn") {
+    put_user(m, l);
+    put_links(m);
+    put_strings(m, {{addr::kEquipShield, "Weapon_Shield_Hylian"},
+                    {addr::kEquipArmor, "Armor_Adult_Goron"},
+                    {addr::kEquipBoot, "Armor_Adult_HoverBoot"}});
+    CHECK(proto::flag_hash("PouchData.Weapon_Shield_Deku.StockNum") == 0x7ca64f23u);
+    SUBCASE("burnt or eaten: the count is 0") {
+      put_ints(m, {{"PouchData.Weapon_Shield_Hylian.StockNum", 0},
+                   {"PouchData.Armor_Adult_Goron.StockNum", 0},
+                   {"PouchData.Armor_Adult_HoverBoot.StockNum", 1}});
+      const auto e = reader.read_equipment();
+      CHECK(e->shield == "");
+      CHECK(e->armor == "");
+      CHECK(e->boots == "Armor_Adult_HoverBoot");
+    }
+    SUBCASE("still owned: the flags stand") {
+      put_ints(m, {{"PouchData.Weapon_Shield_Hylian.StockNum", 1},
+                   {"PouchData.Armor_Adult_Goron.StockNum", 1}});
+      const auto e = reader.read_equipment();
+      CHECK(e->shield == "Weapon_Shield_Hylian");
+      CHECK(e->armor == "Armor_Adult_Goron");
+    }
+    SUBCASE("a count not read leaves the name") {
+      const auto e = reader.read_equipment();
+      CHECK(e->shield == "Weapon_Shield_Hylian");
+      CHECK(e->armor == "Armor_Adult_Goron");
+    }
   }
   SUBCASE("the child's Goron's Bracelet is sent as hand, from its accessory link") {
     put_user(m, l);
@@ -762,7 +835,29 @@ TEST_CASE("host reader: what the player wears") {
       CHECK(e->armor == "Armor_Adult_Zora");
       CHECK(e->boots == "Armor_Adult_HeavyBoot");
       CHECK(e->hand == "Armor_Adult_Gauntlet_Silver");
-      CHECK(e->head == "Armor_Child_Mask_Keaton");
+      // A child's piece is the links' at any age (puppet-gear-148): the mask
+      // the link holds, not the flag's.
+      CHECK(e->head == "Armor_Child_Mask_Skull");
+    }
+    SUBCASE("puppet-gear-148, the other way: an adult's child flags that no link holds are not worn") {
+      put_strings(m, {{addr::kEquipHeadArmor, "Armor_Child_Mask_Keaton"},
+                      {addr::kEquipHandArmor, "Armor_Child_Gauntlet_Goron"},
+                      {addr::kEquipArmor, "Armor_Adult_Goron"}});
+      const auto e = reader.read_equipment();
+      CHECK(e->head == "");
+      CHECK(e->hand == "");
+      CHECK(e->armor == "Armor_Adult_Goron");  // an adult's own piece: the flag stands
+      SUBCASE("with a link unreadable (a load) not known") {
+        m.erase(kUser + 0x20 + 0x18 * (8 + 3) + 0x10, 4);
+        const auto during = reader.read_equipment();
+        CHECK_FALSE(during->head);
+        CHECK_FALSE(during->hand);
+      }
+    }
+    SUBCASE("an adult wearing a child's piece the link holds keeps it") {
+      put_strings(m, {{addr::kEquipHandArmor, "Armor_Child_Gauntlet_Goron"}});
+      wear(9, "Armor_Child_Gauntlet_Goron");
+      CHECK(reader.read_equipment()->hand == "Armor_Child_Gauntlet_Goron");
     }
     SUBCASE("a flag naming a piece the links never hold stands, for a child too") {
       m.put_u8(l.game_ui + addr::kGameUiIsChild, 1);

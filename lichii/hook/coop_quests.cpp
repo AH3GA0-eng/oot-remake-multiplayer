@@ -57,7 +57,9 @@ namespace {
 // lost), but once one player has won Epona every game's quest is Complete,
 // so every adult can call and ride their own Epona (each game has its own
 // horse: docs/puppet.md, "Riding"). A game in the race itself
-// (GambleRacePlaying, AfterWonGambleRace) is left to finish it.
+// (GambleRacePlaying, AfterWonGambleRace while LonLonRanch_PlayingGambleRace
+// is 1) is left to finish it; row 150: at those steps with no race running it
+// takes the end too.
 //
 // Also writing quest Enums: CoopQuest (coop_quest.cpp, time-story, issue 173)
 // raises DoorOfTime from our Goto_HyruleCastle; both only raise.
@@ -234,13 +236,23 @@ std::optional<coop::protocol::FlagEntry> Store::read(coop::host::FlagKey key) {
 
 namespace {
 
-// A complete_only quest our game is finishing itself (its last two steps
-// before the end: GambleRacePlaying, AfterWonGambleRace for Get_Epona).
-bool Racing(const Quest& quest, std::optional<std::int32_t> now) {
-    return quest.complete_only && now && *now != Last(quest) && *now >= Last(quest) - 2;
-}
+// LonLonRanch_PlayingGambleRace (GameDataList Bool): Get_Epona's own flow sets it as a race against Ingo
+// starts (Sub_Get_Epona_GambleRace_Start, Sub_Get_Epona_RambleRace_Ready) and clears it as each race ends
+// (Sub_Get_Epona_RambleRace_Clean, Sub_Get_Epona_GambleRace_End).
+constexpr std::uint32_t kRaceRunning = 0xa253721cu;
 
 } // namespace
+
+// A complete_only quest our game is finishing itself: at one of its last two steps before the end
+// (GambleRacePlaying, AfterWonGambleRace for Get_Epona) while its race runs in our game. Row 150: those
+// steps alone held the group's end for good: Dm_LonLon_0040 (Ingo beaten) joined in another player's
+// ranch left that game at AfterWonGambleRace with no race and no horse, so Complete never came. Unread
+// counts as running (held, tried again).
+bool Store::racing(const Quest& quest, std::optional<std::int32_t> now) const {
+    if (!quest.complete_only || !now || *now == Last(quest) || *now < Last(quest) - 2) return false;
+    if (!get_bool_) return true;
+    return get_bool_(kRaceRunning).value_or(true);
+}
 
 bool Store::put(const Quest& quest, const coop::protocol::FlagEntry& entry, bool exact) {
     if (entry.kind != coop::protocol::FlagKind::int32) {
@@ -259,7 +271,7 @@ bool Store::put(const Quest& quest, const coop::protocol::FlagEntry& entry, bool
         if (want != Last(quest)) {
             return true;  // only the end is shared: a save load or a lower value leaves ours
         }
-        if (Racing(quest, now)) {
+        if (racing(quest, now)) {
             // In the race, or riding out after winning it: left to finish, and
             // held (busy) so it is tried again: a lost race goes back below.
             return false;
@@ -313,7 +325,7 @@ bool Store::busy(coop::host::FlagKey key) {
     const Quest* quest = Plain(key) ? Find(key.hash) : nullptr;
     if (quest != nullptr && quest->complete_only) {
         const auto value = get_(quest->hash);
-        if (Racing(*quest, value ? Rank(*quest, *value) : std::nullopt)) return true;
+        if (racing(*quest, value ? Rank(*quest, *value) : std::nullopt)) return true;
     }
     return inner_.busy(key);
 }

@@ -791,6 +791,75 @@ try {
            (Test-Path -LiteralPath (Join-Path $ng 'mods\oot-remake-randomizer\settings.txt')) -and
            (Test-Path -LiteralPath (Join-Path $ng 'mods\hd-textures\romfs\y.bin'))) 'new OOTRR: other mods, the control folder and an unbuilt folder stay'
     Check (@(Remove-KitRandoSeeds (Join-Path $hk 'no-such-game') 'v0.6.0').Count -eq 0) 'new OOTRR: no mods folder -> nothing'
+    # Install-KitOotrr (player report 2026-11-19, Velvet: no tools\ootrr\ootrr.exe on every start after Update.bat, the
+    # randomizer broken; the old step deleted tools\ootrr before unpacking, so any failure after that left none).
+    # All or nothing: unpacked into tools\ootrr.new, tried (Test-KitOotrrRuns), then swapped; a failure keeps the OOTRR
+    # that was there and writes why into tools\ootrr-setup.txt, which the game's chat shows (coop_rando OotrrMissingText).
+    $ik = Join-Path $hk 'ootrr-install'
+    $ig = Join-Path $ik 'game'
+    $iDl = Join-Path $ik 'hookshot\downloads'
+    $New_OotrrZip = {
+        param([string]$Name, [string]$Release, [string]$ExeFrom, [string]$ExeText)
+        $src = Join-Path $ik "src-$Release"
+        $top = Join-Path $src "OOTRR-$Release-windows-x64"
+        New-Item -ItemType Directory -Force -Path $top, $iDl | Out-Null
+        if ($ExeFrom) { Copy-Item -LiteralPath $ExeFrom -Destination (Join-Path $top 'ootrr.exe') } else { Write-File (Join-Path $top 'ootrr.exe') $ExeText }
+        Write-File (Join-Path $top 'LICENSE') 'GPL'
+        $zip = Join-Path $iDl $Name
+        & "$env:SystemRoot\System32\tar.exe" -a -c -f $zip -C $src "OOTRR-$Release-windows-x64"
+        $sha = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+        Write-File (Join-Path $ik 'hookshot\OOTRR.txt') "# pin`nrelease=$Release`nurl=https://example.invalid/ootrr`nwindows=$Name`nwindows_sha256=$sha`n"
+        return $sha
+    }
+    # (stand-ins for ootrr.exe, compiled here: 'shuffle 1 1' ends with 0 as OOTRR's does; the bad one starts and fails)
+    $fakeGood = Join-Path $ik 'fake-good.exe'; $fakeBad = Join-Path $ik 'fake-bad.exe'
+    New-Item -ItemType Directory -Force -Path $ik | Out-Null
+    Add-Type -OutputType ConsoleApplication -OutputAssembly $fakeGood -TypeDefinition 'public static class P { public static int Main(string[] a) { return (a.Length == 3 && a[0] == "shuffle") ? 0 : 2; } }'
+    Add-Type -OutputType ConsoleApplication -OutputAssembly $fakeBad -TypeDefinition 'public static class Q { public static int Main(string[] a) { return 3; } }'
+    $goodSha = & $New_OotrrZip 'OOTRR-good.zip' 'v0.5.0' $fakeGood ''
+    $r = Install-KitOotrr $ik $ig
+    Check ($r.Ok -and -not $r.Why -and (Test-Path -LiteralPath (Join-Path $ig 'tools\ootrr\ootrr.exe')) -and
+           (Get-Content -LiteralPath (Join-Path $ig 'tools\ootrr\coop-ootrr.txt') -TotalCount 1).Trim() -eq "v0.5.0 $goodSha" -and
+           (Get-Content -LiteralPath (Join-Path $ig 'tools\ootrr-setup.txt') -TotalCount 1).Trim() -eq 'ok v0.5.0' -and
+           -not (Test-Path -LiteralPath (Join-Path $ig 'tools\ootrr.new')) -and -not (Test-Path -LiteralPath (Join-Path $ig 'tools\ootrr.old'))) "OOTRR install: unpacked, tried, in place, stamped, ok in ootrr-setup.txt [$($r.Lines -join ' | ')]"
+    $r = Install-KitOotrr $ik $ig
+    Check ($r.Ok -and ($r.Lines -join ' ') -match 'there already') 'OOTRR install: the pinned one there already -> nothing done'
+    # A release whose ootrr.exe Windows will not start (an antivirus's block looks the same): the old one stays.
+    [void](& $New_OotrrZip 'OOTRR-bad.zip' 'v0.6.0' '' 'not a program')
+    $r = Install-KitOotrr $ik $ig
+    Check (-not $r.Ok -and $r.Why -match 'did not let ootrr.exe run' -and $r.Had -eq 'v0.5.0' -and
+           (Get-Content -LiteralPath (Join-Path $ig 'tools\ootrr\coop-ootrr.txt') -TotalCount 1).Trim() -eq "v0.5.0 $goodSha" -and
+           (Get-Content -LiteralPath (Join-Path $ig 'tools\ootrr-setup.txt') -TotalCount 1) -match '^failed v0\.6\.0: Windows did not let ootrr\.exe run' -and
+           ($r.Lines -join ' ') -match 'is kept' -and ($r.Lines -join ' ') -match 'Protection history' -and
+           -not (Test-Path -LiteralPath (Join-Path $ig 'tools\ootrr.new'))) "OOTRR install: a program that does not run keeps the old OOTRR and says why [$($r.Lines -join ' | ')]"
+    Check (Test-KitOotrrStale $ik $ig) 'OOTRR install: after a failure the kit still counts it stale (the next start and Update.bat try again)'
+    Check ((Test-KitOotrrRuns (Join-Path $ik 'nothing.exe')) -match 'not there') 'OOTRR runs: a missing program says so'
+    # The game (or its ootrr.exe) holds the folder: the swap fails and the old folder is put back.
+    # review-0116-j N1: a program that starts but fails its test (exit 3) is not swapped in either.
+    [void](& $New_OotrrZip 'OOTRR-fails.zip' 'v0.6.5' $fakeBad '')
+    $r = Install-KitOotrr $ik $ig
+    Check (-not $r.Ok -and $r.Why -match 'failed a 1-second test \(exit 3\)' -and
+           (Get-Content -LiteralPath (Join-Path $ig 'tools\ootrr\coop-ootrr.txt') -TotalCount 1).Trim() -eq "v0.5.0 $goodSha" -and
+           -not (Test-Path -LiteralPath (Join-Path $ig 'tools\ootrr.new'))) "OOTRR install: a program that exits with an error keeps the old OOTRR [$($r.Lines -join ' | ')]"
+    $goodSha = & $New_OotrrZip 'OOTRR-good7.zip' 'v0.7.0' $fakeGood ''
+    $hold = [System.IO.File]::Open((Join-Path $ig 'tools\ootrr\LICENSE'), 'Open', 'Read', 'None')
+    try { $r = Install-KitOotrr $ik $ig } finally { $hold.Close() }
+    Check (-not $r.Ok -and $r.Why -match 'could not be put in place' -and (Test-Path -LiteralPath (Join-Path $ig 'tools\ootrr\ootrr.exe')) -and
+           (Get-Content -LiteralPath (Join-Path $ig 'tools\ootrr\coop-ootrr.txt') -TotalCount 1) -match '^v0\.5\.0 ') "OOTRR install: a held folder keeps the old OOTRR in place [$($r.Lines -join ' | ')]"
+    # A swap stopped between its two moves (power cut): tools\ootrr.old and no tools\ootrr -> put back, then updated.
+    Move-Item -LiteralPath (Join-Path $ig 'tools\ootrr') -Destination (Join-Path $ig 'tools\ootrr.old')
+    $r = Install-KitOotrr $ik $ig
+    Check ($r.Ok -and $r.Had -eq 'v0.5.0' -and (Get-Content -LiteralPath (Join-Path $ig 'tools\ootrr\coop-ootrr.txt') -TotalCount 1).Trim() -eq "v0.7.0 $goodSha" -and
+           -not (Test-Path -LiteralPath (Join-Path $ig 'tools\ootrr.old'))) "OOTRR install: a stopped swap is put back first, then the new release goes in [$($r.Lines -join ' | ')]"
+    # Offline with no zip here: no try, the old one kept, said.
+    $offWas = $env:OOT_COOP_OFFLINE; $env:OOT_COOP_OFFLINE = '1'
+    Write-File (Join-Path $ik 'hookshot\OOTRR.txt') "# pin`nrelease=v0.8.0`nurl=https://example.invalid/ootrr`nwindows=OOTRR-none.zip`nwindows_sha256=$('0' * 64)`n"
+    $r = Install-KitOotrr $ik $ig
+    $env:OOT_COOP_OFFLINE = $offWas
+    Check (-not $r.Ok -and $r.Why -eq 'offline' -and (Test-Path -LiteralPath (Join-Path $ig 'tools\ootrr\ootrr.exe')) -and
+           (Get-Content -LiteralPath (Join-Path $ig 'tools\ootrr-setup.txt') -TotalCount 1) -match '^failed v0\.8\.0: this PC had no internet') 'OOTRR install: offline -> no try, the old one kept, said'
+    Check ((Install-KitOotrr (Join-Path $ik 'no-kit') $ig).Ok) 'OOTRR install: a kit without OOTRR.txt brings none (fine)'
+    Remove-Item -LiteralPath $ik -Recurse -Force -ErrorAction SilentlyContinue
     # A randomizer seed built before the puppet pack was made again: its size table lacks the pack's entries and the
     # game aborts while it loads (lane1, 2026-11-14), so it is built again, or removed when it cannot be.
     $rg = Join-Path $hk 'rando-game'
@@ -1418,7 +1487,7 @@ if ($pyHome -and (Test-Path -LiteralPath (Join-Path $pyHome 'python.exe'))) {
 # powershell -Command), with stand-ins for Smart App Control, the language mode, the policy, the Code Integrity log and
 # controlled folder access. And a Longshot of the player's own: its saves, its downloads, its version.
 $wk = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-wc-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
-$wcVars = 'OOT_COOP_WC_SAC', 'OOT_COOP_WC_MODE', 'OOT_COOP_WC_POLICY', 'OOT_COOP_WC_CI', 'OOT_COOP_WC_CFA', 'OOT_COOP_WC_WRITE'
+$wcVars = 'OOT_COOP_WC_SAC', 'OOT_COOP_WC_MODE', 'OOT_COOP_WC_POLICY', 'OOT_COOP_WC_CI', 'OOT_COOP_WC_MP', 'OOT_COOP_WC_CFA', 'OOT_COOP_WC_WRITE'
 function Invoke-Wc([string]$Kit, [hashtable]$Vars = @{}, [switch]$Constrained) {
     foreach ($v in $wcVars) { Remove-Item "env:$v" -ErrorAction SilentlyContinue }
     foreach ($n in $Vars.Keys) { Set-Item "env:$n" $Vars[$n] }
@@ -1459,6 +1528,12 @@ try {
     $dev = $wkit.Substring(2)
     $r = Invoke-Wc $wkit -Vars @{ OOT_COOP_WC_SAC = 'on'; OOT_COOP_WC_CI = "Code Integrity determined that a process (\Device\HarddiskVolume3$dev\hookshot\game\bin\longshot.exe) attempted to load \Device\HarddiskVolume3$dev\hookshot\game\bin\hookshot_coop.dll that did not meet the requirements.|Another (\Device\HarddiskVolume3\Windows\x.dll)" }
     Check ($r[0] -eq 0 -and $r[1] -match 'Smart App Control blocked hookshot\\game\\bin\\hookshot_coop\.dll of this kit\.' -and (Read-File "$wkit\logs\windows-checks.txt") -match 'blocked by code integrity: hookshot\\game\\bin\\hookshot_coop\.dll') "windows checks: the file Smart App Control blocked is named, from the Code Integrity log [$($r[1])]"
+    # Defender took a file of the kit's game (Velvet 2026-11-19: tools\ootrr\ootrr.exe gone on every start): named
+    # kit-relative in the log and said, with how to allow it; another folder's detection is not this kit's.
+    $r = Invoke-Wc $wkit -Vars @{ OOT_COOP_WC_MP = "file:_\\?\$wkit\hookshot\game\tools\ootrr\ootrr.exe|file:_C:\Elsewhere\x.exe" }   # (\\?\: review-0116-j N2)
+    Check ($r[0] -eq 0 -and $r[1] -match 'Microsoft Defender took hookshot\\game\\tools\\ootrr\\ootrr\.exe of this kit' -and $r[1] -match 'Protection history' -and
+           (Read-File "$wkit\logs\windows-checks.txt") -match 'defender detections in the kit: hookshot\\game\\tools\\ootrr\\ootrr\.exe' -and
+           (Read-File "$wkit\logs\windows-checks.txt") -notmatch 'Elsewhere') "windows checks: a Defender detection in the kit is named and said [$($r[1])]"
     $r = Invoke-Wc $wkit -Vars @{ OOT_COOP_WC_SAC = 'on' }
     Check ($r[0] -eq 0 -and $r[1] -match 'Smart App Control is on\. It may block') "windows checks: Smart App Control on, nothing blocked yet: said, goes on [$($r[1])]"
     $r = Invoke-Wc $wkit -Vars @{ OOT_COOP_WC_WRITE = 'Access to the path is denied.'; OOT_COOP_WC_CFA = '1' }

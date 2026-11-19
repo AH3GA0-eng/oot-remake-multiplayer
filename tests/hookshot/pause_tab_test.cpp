@@ -1104,6 +1104,26 @@ TEST_CASE("pause tab: the focused row is the System button's number under it, by
     CHECK(RowOfButton("") == -1);
 }
 
+TEST_CASE("pause tab: the kit's release shows on the page, solo and in a session (0.11.6)") {
+    SessionView solo;
+    solo.version = "Squadala! v0.11.6";
+    const auto rows = RowTexts(solo);
+    CHECK(rows[kRowLeave] == "Squadala! v0.11.6");   // co-op idle: the Leave row has nothing to do, it says the release
+    CHECK(ActionFor(kRowLeave, solo.s) == RowAction::kNone);
+    SessionView guest = solo;
+    guest.s.in_one = true;
+    guest.players = 2;
+    CHECK(RowTexts(guest)[kRowLeave] == "Leave");    // in a session the row leaves, as before
+    const auto details = RowTexts(View::kSession, guest);
+    CHECK(details[3] == "Squadala! v0.11.6");        // the Session view's free row
+    guest.s.can_resync = true;
+    const auto with_resync = RowTexts(View::kSession, guest);
+    CHECK(with_resync[3] == "Resync from host");
+    CHECK(with_resync[2] == "Squadala! v0.11.6");
+    SessionView dev;                                  // a developer's build (no kit): as before
+    CHECK(RowTexts(dev)[kRowLeave] == "Leave (not in a session)");
+}
+
 TEST_CASE("pause tab: the games on this network: one a row, A joins one that can be joined, more than four turn pages") {
     Session s;
     CHECK(ActionFor(View::kLan, 0, s) == RowAction::kNone);   // (none heard yet)

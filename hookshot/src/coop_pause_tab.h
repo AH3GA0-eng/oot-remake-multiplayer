@@ -367,6 +367,9 @@ struct SessionView {
     std::string host_name;            // a guest: the host's name ("" not known)
     std::string why;                  // co-op's last problem or hint (its status message), "" none
     std::string player_name;          // a player's view: who
+    // 0.11.6 (owner OK, 2026-11-19): this kit's release, "Squadala! v0.11.6" (CoopWindowBrand::TitleOf), "" none
+    // (a developer's build). On the Leave row when in no session (solo too) and on a free row of the Session view.
+    std::string version;
     std::uint8_t own_mutes = 0, host_mutes = 0;   // a player's view: kMuteVoice / kMuteChat bits
     bool confirm_kick = false, confirm_ban = false;   // the host's Kick or Ban waits for its second A
     // The Join view's fields: their rows' words (TextField::Shown) and whether a relay is set to join a room through.

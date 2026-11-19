@@ -468,6 +468,11 @@ public:
     // shown or held (not parked for a hide), as of the last calc frame. The
     // fairies follow it, so a Navi never shows without her puppet (issue 145).
     std::uint32_t LiveMask() const { return live_mask_.load(std::memory_order_relaxed); }
+    // Any thread (native puppets phase 4, coop_pvp_native.h): player `number`'s copy actor while it is a live,
+    // present `_Pvp` actor in this scene, as of the last calc frame; 0 otherwise (a plain copy, none, a load).
+    std::uint64_t LivePvpActor(std::uint8_t number) const {
+        return number < live_pvp_actor_.size() ? live_pvp_actor_[number].load(std::memory_order_relaxed) : 0;
+    }
     static_assert(coop::protocol::kMaxPlayers < 32, "LiveMask has one bit per player number");
     std::uint64_t Frames() const { return frames_; }
     void Note(const std::string& text) const { Say(text); }  // any thread
@@ -714,6 +719,7 @@ private:
     std::size_t first_slot_ = 0;  // where this frame's Step starts (round robin)
     std::uint64_t frames_ = 0;
     std::atomic<std::uint32_t> live_mask_{0};  // LiveMask(); written by the calc thread
+    std::array<std::atomic<std::uint64_t>, coop::protocol::kMaxPlayers + 1> live_pvp_actor_{};  // LivePvpActor()
     std::uint64_t frames_at_status_ = 0;
     std::uint64_t status_ms_ = 0;
     std::string scene_;               // input_.scene as last seen
@@ -895,6 +901,11 @@ void WatchGamePlaces(bool on);
 void SetGameHolds(std::uint8_t number);
 std::uint8_t GameHolds();
 std::vector<GamePlace> GamePlaces();
+// Native puppets phase 4 (coop_pvp_native.h, docs/native-puppets.md 5.0): bit n set = player n's copy is the
+// `_Pvp` actor (CoopPvpNative::PvpActor). Set each frame by coop_pvp_native_game.cpp; 0 (the default, and with
+// LICHII_COOP_PVP_NATIVE off) keeps every copy plain. Any thread.
+void SetPvpCopies(std::uint32_t mask);
+std::uint32_t PvpCopies();
 // Any thread: TheDirector's LiveMask(), 0 while the puppets are off.
 std::uint32_t LivePuppets();
 

@@ -689,6 +689,26 @@ TEST_CASE("rando: the kit's own OOTRR and game files are found with no setting")
     CHECK(On(loader, "randomizer-KIT1"));
 }
 
+TEST_CASE("rando: a missing OOTRR names the kit's last setup failure and Update.bat") {
+    World w;
+    // No status file (a kit before 0.11.6, or never set up): the plain text, pointing at Update.bat.
+    std::string text = OotrrMissingText(w.base);
+    CHECK(text.find("is not in tools/ootrr") != std::string::npos);
+    CHECK(text.find("Update.bat") != std::string::npos);
+    // The kit wrote why its last setup failed (Velvet 2026-11-19: an antivirus took ootrr.exe): said in the tab.
+    Put(w.base / "tools" / kOotrrStatusFile, "failed v0.7.3: ootrr.exe was removed right after it was unpacked (an antivirus took it)\r\n");
+    text = OotrrMissingText(w.base);
+    CHECK(text.find("the kit's last setup failed v0.7.3: ootrr.exe was removed") != std::string::npos);
+    CHECK(text.find("\r") == std::string::npos);
+    CHECK(text.find("Update.bat") != std::string::npos);
+    // "ok": the setup worked and the program went later: the plain text again.
+    Put(w.base / "tools" / kOotrrStatusFile, "ok v0.7.3\n");
+    CHECK(OotrrMissingText(w.base).find("is not in tools/ootrr") != std::string::npos);
+    // A long or damaged file is cut.
+    Put(w.base / "tools" / kOotrrStatusFile, "failed " + std::string(5000, 'x'));
+    CHECK(OotrrMissingText(w.base).size() < 600);
+}
+
 TEST_CASE("rando: without the kit's OOTRR or game files it says what to do") {
     if (std::getenv("OOT_ROMFS") != nullptr) return;
     World w;
@@ -699,7 +719,7 @@ TEST_CASE("rando: without the kit's OOTRR or game files it says what to do") {
     rando.Start();
     REQUIRE(loader.Set(kFolder, "on", "1"));
     rando.Wait();
-    CHECK(rando.Status().find("start the game from the kit again") != std::string::npos);
+    CHECK(rando.Status().find("run Update.bat") != std::string::npos);
     Put(w.base / "tools" / "ootrr" / OotrrName(), "MZ");
     REQUIRE(loader.Set(kFolder, "seed", "NOGAME"));
     rando.Wait();

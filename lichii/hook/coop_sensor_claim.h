@@ -36,7 +36,7 @@
 
 namespace CoopSensorClaim {
 
-// The input plugs, by name, whose 1 means "our Link is in this actor's area and it acts on him".
+// The input plugs, by name, whose 1 means "our Link is in this actor's area and it acts on that Link".
 inline constexpr std::array<std::string_view, 6> kInputs{
     "IsInOpenMouthArea",      // Npc_JabuJabu (ZoraFountain): the mouth opens for the Link at it
     "IsInKeepOpenMouthArea",  // Npc_JabuJabu: ... and stays open while that Link is in it
@@ -72,5 +72,17 @@ inline std::optional<bool> InArea(const std::vector<CoopLogicProbe::Plug>& plugs
     }
     return in;
 }
+
+// The carry claim (row 138(8) follow-up, the Cucco). A shared actor our Link lifts follows our Link's hands in
+// our game only: its AS plays the game's `Lifted` command there (the copy's own AS slot 0). The owner's place and
+// animation are put over a copy (Sync::Poses, the Mover), so a Cucco another player owns is pulled out of our hands. Of every AS in the
+// romfs, `cmd_Lifted` exists only in Animal_Cucco, Animal_SuperCucco and Animal_FlockCucco. The NPCs'
+// `Act_LiftRest` is their common set's, and only Ruto (each game's own, IsOwnPuzzle) is carried. Pots and rocks
+// in Link's hands have their own path (WORLD_MOVE, docs/world.md), and bombs theirs (BOMB_TAKE). While our copy
+// plays `Lifted`, the sync claims it as it claims an area (Sync::AreaClaim): the claim keeps the owner's motion off
+// our copy, so `Lifted` holds while our Link carries it. The server hands the copy over, and our game then runs the
+// throw.
+inline constexpr std::string_view kLifted = "Lifted";
+inline bool Carried(std::string_view own_animation) { return own_animation == kLifted; }
 
 }  // namespace CoopSensorClaim

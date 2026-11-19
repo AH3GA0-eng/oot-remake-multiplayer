@@ -152,12 +152,31 @@ One player lifts, carries, throws or sets down another ([native-puppets.md](nati
 
 | Type | Name | Sender | Channel | Body |
 |---|---|---|---|---|
-| 535 | `LIFT_ASK` | both | ownership | `u8` player (the lifter; 0 from a client), `u8` lifted (1 to 4, not the lifter). Our Link lifted that player's copy (the game's own lift). To the lifted player only |
-| 536 | `LIFT_ANSWER` | both | ownership | `u8` player (the lifted), `u8` lifter (1 to 4, not the player), `u8` refusal: 0 none (taken), 1 busy (lifted already, or lifting someone), 2 event (a talk, a cutscene, a load, a menu), 3 down (dead, or down but not out), 4 not sharing (from the server: the lifted game did not say `LIFT_SHARE`), 5 freed (a taken lift ended in the lifted game), 6 too far (the lifter's Link is not within 3 m of ours), 7 not young (only a young Link is lifted: our Link is adult or its age not known; or, after a yes, it grew up while lifted). Others refused. To the lifter only |
+| 535 | `LIFT_ASK` | both | ownership | `u8` player (the lifter; 0 from a client), `u8` lifted (1 to 16, not the lifter). Our Link lifted that player's copy (the game's own lift). To the lifted player only |
+| 536 | `LIFT_ANSWER` | both | ownership | `u8` player (the lifted), `u8` lifter (1 to 16, not the player), `u8` refusal: 0 none (taken), 1 busy (lifted already, or lifting someone), 2 event (a talk, a cutscene, a load, a menu), 3 down (dead, or down but not out), 4 not sharing (from the server: the lifted game did not say `LIFT_SHARE`), 5 freed (a taken lift ended in the lifted game), 6 too far (the lifter's Link is not within 3 m of ours), 7 not young (only a young Link is lifted: our Link is adult or its age not known; or, after a yes, it grew up while lifted). Others refused. To the lifter only |
 | 537 | `LIFT_PLACE` | both | player samples | `u8` player (the lifter), `u8` lifted, `u8` phase (1 held, 2 flying: thrown or set down and not at rest yet, 3 landed: at rest, the lift's last place; others refused), 3 x `f32` the place (finite). Each frame of a taken lift, to the lifted player only |
 | 538 | `LIFT_SHARE` | client | ownership | `u8` on (0 or 1; others refused). Its game takes part in player lifts; sent after joining and every 5 s |
 
 The server's rules (server/session.cpp `on_lift`): each of the three goes only to the player it names, with the sender's number written in, and only when both games said `LIFT_SHARE` on; a `LIFT_ASK` to a game that does not share is answered by the server itself (`LIFT_ANSWER` 4, with the asked player in the player field), and so is one whose lifter's place is not known in the lifted player's scene (no scene, another scene, or no PLAYER_SAMPLE position in the last 5 s: `LIFT_ANSWER` 6 too far), and so is one to a player whose last PLAYER_SAMPLE age is adult or not known (`LIFT_ANSWER` 7 not young; a `LIFT_PLACE` to such a player is dropped). The lifter's age is never checked. The lifted game refuses too far as well when it has no place for the lifter in its own scene. A message naming its own sender, or a player who is not there, is dropped. A lift ends in the games: the lifter's landed `LIFT_PLACE`, the lifted game's `LIFT_ANSWER` freed, or the lifted game's own wait (no place for 1 s) when the lifter leaves.
+
+### PvP on real bodies (native puppets phase 4, `PVP_STRIKE`, `PVP_RESULT`, `PVP_NATIVE`)
+
+The attacker's game finds a hit on another player's copy with the game's own collision; the victim's game decides
+([native-puppets.md](native-puppets.md), section 5). Only games with `LICHII_COOP_PVP_NATIVE=1` and a pack with
+`_Pvp` copies send these (off by default). No protocol bump: older games ignore them. 543 and 544 are kept.
+
+| Type | Name | Sender | Channel | Body |
+|---|---|---|---|---|
+| 540 | `PVP_STRIKE` | both | ownership | `u8` player field (the attacker), `u8` victim (1 to 16, not the attacker), `u32` seq, `u64` seen_us (server time of the victim's sample the copy showed), 11 x `u32` the hit's kind words (Life record +0x250 up to +0x27c), `s32` amount (0 to 80, the attacker game's: compared, never used), `u8` source (1 sword or body, 2 shot, 3 blast, 4 other; others refused), object id (10 bytes: a made object of the attacker for a shot or blast, all zero for the others; others refused), 3 x `f32` hit place, 3 x `f32` the copy's place, 3 x `f32` the attacker's place (all finite). To the victim only |
+| 541 | `PVP_RESULT` | both | ownership | `u8` player field (the victim), `u8` attacker (1 to 16, not the victim), `u32` seq (the strike's), `u8` result (0 taken, 1 guarded, 2 guard broken, 3 invincible, 4 late, 5 out of reach, 6 kept off; others refused), `s32` amount taken (0 to 80, the victim game's own), `s32` life left (0 to 80), 11 x `u32` kind words, 3 x `f32` hit place (finite). To every game in the victim's scene |
+| 542 | `PVP_NATIVE` | both | ownership | `u8` player field, `u8` on (0 or 1; others refused). Its game runs PvP on real bodies; sent after joining and every 5 s, relayed to all |
+
+The server's rules (server/session.cpp `on_pvp_strike`, `on_pvp_result`): a strike is dropped while PvP is
+off, to or from a game not `PVP_NATIVE`, between two scenes, from a player with no fresh place (5 s), whose object
+is not its own, or past 10 a second from one attacker; else relayed to the victim only. A result is relayed once, only
+from the victim a strike in flight named (by attacker and seq, for 3 s), to its scene; an attacker that leaves
+takes its strikes in flight with it, so a player who comes back with its number starts its seq again. A native attacker sends the old `PVP_HIT` (242) to
+a victim that is not native.
 
 ## Keep-alive and clock
 

@@ -714,6 +714,23 @@ std::optional<fs::path> FindOotrr(const std::string& setting, const fs::path& ga
     return std::nullopt;
 }
 
+std::string OotrrMissingText(const fs::path& game_dir) {
+    std::string why;
+    {
+        std::ifstream in(game_dir / "tools" / kOotrrStatusFile, std::ios::binary);
+        std::getline(in, why);
+    }
+    while (!why.empty() && (why.back() == '\r' || why.back() == '\n' || why.back() == ' ')) why.pop_back();
+    const std::string fix = "close the game and run Update.bat in the kit folder (it sets the randomizer up again), "
+                            "or start the game with \"Start Squadala.bat\"";
+    if (why.rfind("failed ", 0) == 0) {
+        // (the kit's own words, e.g. "failed v0.7.3: ootrr.exe was removed right after it was unpacked (an antivirus
+        // took it)"; cut so a damaged file cannot flood the tab)
+        return "OOTRR (the randomizer the kit brings) is missing: the kit's last setup " + why.substr(0, 300) + ". " + fix;
+    }
+    return "OOTRR (the randomizer the kit brings) is not in tools/ootrr beside the game: " + fix;
+}
+
 std::optional<fs::path> FindGameFolder(const std::string& setting, const fs::path& game_dir) {
     const auto game_files = [](const fs::path& p) {
         std::error_code ec;
@@ -1526,8 +1543,7 @@ void Rando::Build(const Plan& plan, const Want& want) {
     const auto ootrr = FindOotrr(ootrr_setting, hooks_.game_dir, root);
     if (!ootrr) {
         return fail(ootrr_setting.empty()
-                        ? std::string("OOTRR (the randomizer the kit brings) is not in tools/ootrr beside the game: "
-                                      "start the game from the kit again (its setup downloads it)")
+                        ? OotrrMissingText(hooks_.game_dir)
                         : "OOTRR not found at \"" + ootrr_setting + "\" (the OOTRR program setting): empty it to use "
                                                                     "the kit's own",
                     "OOTRR not found");

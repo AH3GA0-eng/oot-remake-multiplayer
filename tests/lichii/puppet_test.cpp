@@ -13,6 +13,7 @@
 
 #include "coop/host/player_reader.hpp"
 #include "coop_fairy.h"
+#include "coop_lift_player.h"
 #include "coop_puppet.h"
 #include "coop_puppet_own.h"
 #include "coop_sites.h"
@@ -2806,6 +2807,68 @@ TEST_CASE("own drawn: the director asks the game's state of the local Link's swo
     REQUIRE(g.state_checks.size() == 3);
     CHECK(g.state_checks[2].x[1] == 0);
     own.Clear();
+}
+
+TEST_CASE("puppet: a player the PvP mask names gets the _Pvp copy, the others the plain one") {
+    CoopPuppet::PlannerSettings s;
+    CoopPuppet::Planner p(s);
+    std::vector<CoopPuppet::Remote> remotes(2);
+    remotes[0].number = 2;
+    remotes[0].scene = "Kokiri";
+    remotes[1].number = 3;
+    remotes[1].scene = "Kokiri";
+    // Off (the default): every copy plain.
+    auto in = p.Plan(kBase, std::string("Kokiri"), CoopPuppet::Vec3{0, 0, 0}, false, remotes, 1000);
+    REQUIRE(in.targets.size() == 2);
+    const std::string two = in.targets[0].actor, three = in.targets[1].actor;
+    CHECK(two == "CoopPuppet_Child_Red");
+    CHECK(three.find("_Pvp") == std::string::npos);
+    CoopPuppet::SetPvpCopies(1u << 3);
+    in = p.Plan(kBase, std::string("Kokiri"), CoopPuppet::Vec3{0, 0, 0}, false, remotes, 2000);
+    CoopPuppet::SetPvpCopies(0);
+    REQUIRE(in.targets.size() == 2);
+    CHECK(in.targets[0].actor == two);
+    CHECK(in.targets[1].actor == three + "_Pvp");
+}
+
+TEST_CASE("puppet: a PvP mode change re-makes the copy, but not while our Link holds it or it holds something") {
+    Game g;
+    Director d;
+    d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Child")}));
+    auto calls = Frame(d, g, 0);
+    REQUIRE(calls.size() == 2);
+    g.Spawn(calls[1].x[3]);
+    Frame(d, g, 10);
+    Frame(d, g, 15);
+    REQUIRE(d.Slots()[0].phase == Phase::live);
+
+    // Lifted by our Link (phase 3): no delete while it lasts.
+    CoopPuppet::WatchGamePlaces(true);
+    CoopPuppet::SetGameHolds(1);
+    d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Child_Pvp")}));
+    for (const auto& c : Frame(d, g, 20)) CHECK(c.function != kBase + addr::kRequestDelete);
+    CHECK(d.Slots()[0].actor_name == "CoopPuppet_Child");
+    CoopPuppet::SetGameHolds(0);
+    CoopPuppet::WatchGamePlaces(false);
+
+    // Its player holds something (its animation): kept too.
+    Target held = At(1, 0, 0, 0, "CoopPuppet_Child_Pvp");
+    held.anim = CoopPuppet::Anim{"Carry_Wait", 0.0f, 1.0f};
+    d.SetInput(Wants({held}));
+    for (const auto& c : Frame(d, g, 30)) CHECK(c.function != kBase + addr::kRequestDelete);
+
+    // Its player is carried by another (lift-young: the carried pose on every copy): kept too.
+    Target carried = At(1, 0, 0, 0, "CoopPuppet_Child_Pvp");
+    carried.anim = CoopPuppet::Anim{std::string(CoopLiftPlayer::kCarriedPose), 0.0f, 1.0f};
+    d.SetInput(Wants({carried}));
+    for (const auto& c : Frame(d, g, 35)) CHECK(c.function != kBase + addr::kRequestDelete);
+    CHECK(d.Slots()[0].actor_name == "CoopPuppet_Child");
+
+    // Free again: the _Pvp copy at once.
+    d.SetInput(Wants({At(1, 0, 0, 0, "CoopPuppet_Child_Pvp")}));
+    calls = Frame(d, g, 40);
+    REQUIRE(calls.size() == 1);
+    CHECK(calls[0].function == kBase + addr::kRequestDelete);
 }
 
 TEST_CASE("puppet: a playing pose sent at a still frame plays on, not set back each sample (carried pose)") {

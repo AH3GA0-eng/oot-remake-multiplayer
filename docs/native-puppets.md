@@ -1,7 +1,7 @@
 # Native puppets: other players as real game bodies
 
 Status: design and plan (native-puppets-a, 2026-11-19), plus the test switches `--puppet-body` (phase 1),
-`LICHII_COOP_BOMB_SHARE` (phase 2) and `--puppet-liftable` + `LICHII_COOP_LIFT_PLAYER` (phase 3), each below. Nothing here is in a release. Today's puppet ([puppet.md](puppet.md)) and the real-Player test
+`LICHII_COOP_BOMB_SHARE` (phase 2) and `--puppet-liftable` + `LICHII_COOP_LIFT_PLAYER` (phase 3), each below, and the phase 4 design (section 5). Nothing here is in a release. Today's puppet ([puppet.md](puppet.md)) and the real-Player test
 ([native-player.md](native-player.md)) stay as they are until each phase below is proven in two games.
 
 ## The goal
@@ -371,27 +371,329 @@ another scene than the bomb's, or no fresh sample position.
 ## 5. PvP on real bodies
 
 Today (reports/pvp.md, coop_pvp.*): the attacker's game finds a swing near the other Link (grass
-blade points, 1.3 m) and sends `PVP_HIT` (242); the victim decides (guards, 0.8 s mercy) and replays the
-hit on its own Link (`HurtOurLink`, the hit replay), then `PVP_HURT` (243) to all.
+blade points, 1.3 m) and sends `PVP_HIT` (242); the victim decides (kept off in events, 0.8 s mercy) and
+replays a stand-in sword hit on its own Link (`HurtOurLink`, the hit replay), with a written life after
+0.4 s if the game did not take it, then `PVP_HURT` (243) to all. Indoors (no grass) a sword hits nothing,
+the damage is a fixed half heart, nobody can lock on, and a shield blocks nothing.
 
-With sensors on the copy (phase 4) the **attacker's game detects the hit with the game's own
-collision**: its sword's `Atk` shape touches the copy's `Tgt` shape and the copy's `SensorHitRef`
-receives it (the game's hit info buffer, `TgHitInfoBufferSize 8`). The copy has no Life, so nothing
-happens locally except the report: the module reads the received hit (attack kind, place, attacker) and
-sends `PVP_HIT` with it. Shields: the copy carries the owner's guard state (pose sync already sends the
-shield-up pose); the guard check stays the victim's.
+Phase 4 (design native-puppets-e, 2026-11-19; owner: "you should be able to target them, get your attacks
+blocked, have real hit effects when hitting them, etc etc."): with PvP on, another player's copy is an
+opponent the **game's own systems** handle. The attacker's game finds the hit with its own collision; the
+**victim's game decides** with its real Link (guard, facing, invincible frames, life, death); every other
+screen shows it. No number here is ours where the game has one.
 
-- **Who decides a hit: the victim, with a rewind check.** The attacker sends the hit with its game time
-  and the copy's place it saw. The victim game checks it against where its Link was at that time
-  (rewind by the copy's delay: today's puppet is shown ~100 ms behind, coop_follow.h) within a margin,
-  then applies it through the game's hit path, which plays knockback, guard and sound natively. Why the
-  victim: it alone knows its Link's guard, invincibility frames, roll, and life; and the attacker's
-  advantage (what you saw is what you hit) is kept by the rewind window.
-- **Lag compensation.** A hit is accepted if the copy's place at the attacker's time is within
-  `max(0.5 m, speed x one-way delay)` of the victim's own recorded place at that time (the victim keeps
-  a 1 s ring of its own places). Older than 250 ms: dropped (as `kHitLateMs` 200 for enemy hits).
-- **Knockback.** Played by the victim's real Link (`ReactionRef`), then shown to others by pose sync.
-  No game moves another game's Link.
+### 5.0 Switches, and what PvP off means
+
+- Session value: `PVP_MODE` (241, host only, off at every start), as today.
+- Pack `--puppet-pvp` (implies `--puppet-body`): the copy gets the pieces in 5.1. Without it the pack is byte for
+  byte as before (the pack test checks it).
+- Glue `LICHII_COOP_PVP_NATIVE=1` (off by default) in the module; the game says so with `PVP_NATIVE` (542).
+  Off: today's PvP (242/243) is untouched.
+- **PvP off: the copy has no sensors at all** (review r1, B). The pack makes two actors per puppet: today's
+  `CoopPuppet_*` (unchanged, no sensor, no Life, no attention sender) and `CoopPuppet_*_Pvp` (the pieces in 5.1).
+  The director makes the plain one while PvP is off and the `_Pvp` one only while it is on and both games are
+  `PVP_NATIVE`; a mode change re-makes the copies (as a look change does today). So with PvP off nothing can lock
+  on to a copy or hit it because nothing is there to hit, not because a toggle worked. The runtime toggles in
+  5.1 only cover the moments between a mode change and the re-make (and a downed player).
+- **With lift (phase 3) in the same pack** (merge of integrate-0116, 2026-11-19): both switches together give
+  each young puppet AND its `_Pvp` twin Ruto's `LiftableRef` and the carried pose (`asb_carry`), so a young
+  player stays liftable with PvP on; the adult puppet and its `_Pvp` twin get the PvP pieces only and are never
+  liftable (byte for byte the PvP-only adult copy). Tests: `test_pack_carry_and_pvp_together`,
+  `test_build_liftable_and_pvp_together` (tools/puppet_pack/tests/test_puppet_pack.py).
+- Glue on but the pack has no `_Pvp` actors (manifest without `"pvp": true`, an old pack): the game says
+  `PVP_NATIVE 0` and keeps today's 242/243. A native victim that gets an old `PVP_HIT` (242) from a non-native
+  attacker takes it by today's path, unchanged.
+- Solo and co-op idle have no copy at all, so nothing changes.
+
+### 5.1 The copy's pieces (`--puppet-pvp`, all cut from the player's own files)
+
+| Piece | From (romfs) | Why |
+|---|---|---|
+| `SensorHitRef` | `SensorHitParam/Player` (`TgHitInfoBufferSize 8`, `IsThroughSameAffiliation false`: a Player-affiliation sword hits a Player-affiliation body) | the game records hits on the copy |
+| Sensor `Tgt` (`PlayerReceipt`) with its shapes | `Phive/ControllerSetParam/Player` `CColSensorNamePathAry` (`Atk` receipt and `ForArea` left out) | the attacker's sword, shot or blast touches the copy. The `Atk` receipt (`PlayerAttackReceipt`, sword meets sword) is left out until a later phase syncs clashes: a clash would give the attacker the game's recoil while the victim knows nothing |
+| `GameBalance/AttackParam/Player(_Child)` | the player's own rows | only so a hit info whose attacker is this copy resolves in the victim's game (5.3 A, option i, if U2 picks it); the copy has no active `Atk` shape, so it never hits anything by itself |
+| `LifeRef` + `ReactionRef` | `LifeParam/Player` (DamageParameters/Player: `GuardableAngleMaxDeg 120`, every `DamageRates` 1.0), `Reaction/Player` | the attacker's game runs its own hit step on the copy (hit-stop, flash, sparks, the Reaction's `Hit` sound) and writes the incoming hit record (Life +0x240) that is read and sent |
+| `AttentionSenderRef` | a new param whose `ClientList` is the copy's own `LockOn` and `AutoAim` clients, cut from `Attention/ClientParam/EnemyCommon_LockOn` / `_AutoAim` (`ClientName` LockOn / AutoAim; `AttentionType` 3016662870 = murmur3 "LockOn"; `CheckAffiliation Player`: who may lock on) | Z-targeting and item aim assist find the copy as they find an enemy |
+| `TargetRef` | `TargetParam/Player` | the target slot the attention and the camera look at |
+
+Never on the copy (alt-b's rule): `PlayerRef`, `ActorNameRef Player`, `PlayerCameraTargetRef`, `DeathRef`,
+`ConditionRef`, `ChemicalRef`, any active `Atk` shape (the copy runs no attack of its own: its sword never hits
+anything in our game; its owner's hits come from its owner's game as messages).
+
+**Only our own attacks reach the copy** (review M3: an enemy's slash must not flash a copy whose owner took
+nothing). The copy's `SensorHitParam` keeps the player's, with `DamageWhiteList` set to the Player affiliation if
+U1 shows that list filters by the attacker's affiliation; else its `Tgt` sensor gets a contact layer that enemy
+`Atk` shapes do not hit (U1 reads which layer the player's own `Atk` and the enemies' use). Until one of them is
+shown, an enemy's hit on a `_Pvp` copy is a known false flash, written in the proof list, and never sent.
+
+The copy's Life is **invincible from its creation**, through the game's own call: `OneShotLifeSetInvincible`'s
+IsNoReaction **0** on-function, main+0xb34800 (Life, 1, &our key 0xC0DB0D02; the reacting list Life +0x1c28), the
+sibling of the main+0x8d75e0 no-reaction call down-crawl uses (coop_dbno_body.h read both; r2 named 0x8d75e0 here,
+which is the no-reaction list: corrected in glue part 2 r2). Built: coop_objects.cpp `PvpShieldCaller` (caller
+order 67), once per live `_Pvp` actor and Life component (`CopyShield`, 3 tries, logged), so nothing falls on a copy
+in any game; the third games' replay passes amount 0 too. UNKNOWN U1: the reaction still shows.
+
+Runtime on/off per copy (at its creation and on every `PVP_MODE` change): attention sender valid = PvP on
+(`OneShotAttentionSenderChangeValid`'s run), sensors hit = PvP on (`OneShotChangeForceNoHitModeRigidBody`'s run).
+Both are AI nodes of the game's own; their runs are found as down-crawl found OneShotLifeSetInvincible's (the
+node's vtable, its setup registering the argument names). UNKNOWN U3, which also checks whether the no-hit mode
+reaches the copy's equipment actors (its shield and sword have their own `Tgt` sensors, 5.3): if not, the
+director toggles them too. A downed or dead player's copy is made invalid and no-hit too (nobody locks on to a
+downed player).
+
+### 5.2 Point 1: targeting
+
+The game's lock-on is our Link's `AttentionReceiverRef` (`AttentionReceiverParam/Player`: `HasLockOnState`,
+`IsCheckScreen`) choosing among attention senders. With the copy's `LockOn` client valid, Z picks the copy as it
+picks an enemy, and the game's own reticle (`Cursor_LockOn`), lock-on camera and strafing
+(`ExecutePlayerLockOnMove` / `ExecutePlayerLockOnWait`) follow; the `AutoAim` client gives the bow, slingshot,
+hookshot and boomerang their aim assist. Nothing of ours draws or moves. PvP off: the client is invalid, so a copy
+is never a target (today). Left out: Navi's enemy hint (`NaviAttentionParam`, which names an enemy's hint event).
+UNKNOWN U4.
+
+### 5.3 Point 2: blocking (decided on the victim's game)
+
+**Victim.** The hit goes into the victim's real Link the way the game delivers any hit, so the game's own guard
+check runs with Link's real guard state, facing and shield: the angle (`GuardableAngleMaxDeg 120`), the shield
+(`ShieldParam`: `BadConditionAttackGuard` per damage type, e.g. the Deku Shield and fire) and the weapon's
+`GuardBreakPower` (WeaponParam: Kokiri Sword 2, Master Sword 40, Biggoron/Giant's 10, Deku Stick 10). Guarded:
+Link plays the game's own guard push (`reactionguard`, `reactioncrouchguard`; `reactionguardbreak` /
+`reactionguardfaile` when it fails), no life falls. Two ways in, A preferred:
+- **A. The sensor path.** Put the hit into Link's `SensorHit` Tg hit info (the buffer the game fills from its
+  collision, 8 entries) before the game's step that turns hit infos into guard, damage, reaction and invincible
+  frames. Everything after that is the game's. UNKNOWN U2.
+  **The attacker in the hit info (review H1).** A hit info points at its attacking side (actor, sensor, and
+  through them the attack's AttackParam row, the weapon's `BaseAttack`, hit-stop and knockback). In the victim's
+  game the attacker is its copy of the striker, which runs no attack. U2 reads (a) which hit-info words are
+  pointers and to what, (b) what the consumer reads through each, and probes with a hit info whose attacker is
+  **B's copy of A** carrying a Kokiri Sword slash's kind words. Then one of two, written down with U2's reason:
+  (i) the `_Pvp` copy carries the player's AttackParam rows (5.1) and its real weapon actor from
+  `EquipmentUserRef`, its `Atk` shapes no-hit, so every pointer is the game's own and resolves; or (ii) the hit
+  info points at our own player's rows for the strike's kind (attack row by kind, the weapon by the copy's
+  equipped weapon), the copy only as the place. (i) is preferred: nothing is built by us.
+  **A copy that is gone** (scene change, despawn, re-made by a mode change) between the strike and the step: the
+  strike is answered `kept off`. The hit info is put in on the game thread right before the consumer runs in the
+  same step (as the Mover's hit replay is), and only while the copy's actor is the one the director holds, so it
+  never points at a freed actor.
+- **B. The life path (fallback, only if U2 finds no safe way in).** Today's hit replay into Life +0x240 (it
+  already plays knockback and takes the life), behind a guard check made only of the game's own data: Link
+  guarding = his main AS / verb is a guard one (U5), the attacker within 120 degrees of his facing, the shield not
+  failing for that kind; guarded: the game's guard reaction verb (ExecuteBSASetActionVerb) and the shield's guard
+  effect through the game's own XLink emit (docs/spawns.md, main+0x295b740's way). The reviewer checks that B is
+  used only with U2's reason written down.
+
+**Attacker.** Its sword must clang on the shield on its own screen, at once. The copy wears the real shield actor
+(`EquipmentUserRef`), and `Weapon_Shield_*` has its own `Tgt` sensor (`WeaponShieldMetal`:
+`WeaponShieldTgtMetal`). If the attacker's game judges a hit on that shield of a copy in the guard pose as
+guarded, the game itself plays the clang, sparks and the attacker's recoil (`reactionattackcollide`,
+`guardjustrepelled` on the attacker's real Link). UNKNOWN U6. If not, the attacker's Link plays them when the
+victim's `PVP_RESULT guarded` comes (one round trip late), as in B.
+Either way **the victim's result decides the damage**; a clang on one screen with a hit on the other is logged
+(`pvp: strike N: attacker saw a guard, victim took it`) and counted in the proof. The same holds both ways: our
+hit on a guarding copy, and the copy's owner's hit on our guarding Link.
+
+### 5.4 Point 3: real hit effects, damage from the game
+
+- **Attacker's screen.** The copy's own Life step (5.1): hit-stop, flash, sparks, sound, at the contact.
+  Knockback and the hurt pose come from the victim by pose sync.
+- **Victim's screen.** Link takes the hit by path A (or B): knockback, hurt reaction, hearts, the game's sound and
+  effects, all native.
+- **Every other screen.** `PVP_RESULT` (541) goes to every game in the scene with the hit's kind words. Each one
+  replays that kind into its own copy of the victim (invincible Life: flash, sparks and sound, nothing taken), as
+  protocol 14 does for enemy copies (objects.md, "The real hit"); pose sync shows the knockback.
+- **Damage.** Never ours. The attacker's game computed the hit on the copy (the record's amount +0x224 and kind
+  words +0x250..+0x27c, `ReadHitRecord`) from the weapon's `BaseAttack` (WeaponParam: Kokiri Sword 1, Master
+  Sword 2, Biggoron/Giant's Knife 4, Megaton Hammer 3, Deku Stick 2), the attack's row in
+  `GameBalance/AttackParam/Player(_Child)` (`DamageIntensity` Weak / Strong: spin and jump attacks are Strong,
+  `DamageType`, `DamageMultiplier`, `HitStopType`, `KnockbackIntensity`) and the target's `DamageRates`. Path A:
+  the victim's game counts it again from the hit info, and its own number is what Link loses. Path B (review M2):
+  **the victim works the amount out itself** from the strike's kind words with its own copy of the same tables:
+  the striker's equipped weapon as the victim's game knows it (`PLAYER_EQUIP`, the copy's `EquipmentUserRef`
+  weapon) and its `BaseAttack`, the AttackParam row the kind names (intensity, multiplier) and Link's
+  `DamageRates`. The attacker's amount is only compared: a difference is logged
+  (`pvp: strike N: attacker said A, our game counts B`), never used. A kind the tables do not name is answered
+  `kept off`. Path B is used only until U2 settles path A.
+- **Items.** Arrows (their elements in `DamageElements`: fire, ice, light), seeds, bombs and bombchus (their
+  blast's own Atk), nuts, the hookshot, the boomerang, Din's Fire: their own shapes touch the copy's `Tgt` in the
+  attacker's game and are read the same way. A no-life hit (a nut's, boomerang's or hookshot's stun) has amount 0
+  and is sent too: the victim's game does what the game does with that kind on Link. UNKNOWN U7. The hookshot never
+  pulls a player (the game pulls only actors made for it; a copy is not one).
+- **Which hits are sent.** Only a record whose attacker is our Link, or a shot or blast our game made (CoopSpawn's
+  own list). An enemy's hit on a copy is never sent, and is kept off the copy's `Tgt` (5.1, U1): the owner
+  game's enemies decide (section 6, "Enemies").
+
+### 5.5 Point 4: the rest
+
+- **Invincible frames: the game's own.** After a hit, Link's Life is invincible for the game's time
+  (`OneShotLifeReserveInvincibility`); a hit landing then is refused by the game itself and answered
+  `invincible`. Path A uses no time of ours. Path B (review L2): the Life +0x240 replay may not reserve them, so
+  path B keeps today's 0.8 s `kMercyUs` until U7 shows the replay sets the game's invincibility (Life's
+  invincible list or `OneShotLifeReserveInvincibility`'s timer moving after a replayed hit). The written-life
+  fallback is never used on either path.
+- **Death: no PvP path of its own.** The hit goes through Link's own Life, so a PvP kill is whatever an enemy's kill
+  is in that session: the co-op downed path when it is on (coop_dbno: the game's Crawl verb 234, the downed
+  invincibility main+0x8d75e0, revive by a teammate; it already counts an up rival as a threat with PvP on), else
+  the game's own death and Game Over. Why: one rule for every death, both built on the game's own verbs, and the
+  downed path is what the session already chose; a separate "PvP death" would be ours. A downed or dead player
+  refuses every strike (`kept off`), and its copy is no-hit and invalid.
+- **Shield break and burn: the game's** (path A: `GuardBreakPower` against the shield, `BadConditionAttackGuard`;
+  path B keeps only what U2 and U5 read).
+- **No friendly fire when PvP is off**: sensors no-hit and attention invalid in every game (5.1), and the server
+  drops every `PVP_STRIKE` while off (as it drops 242 today).
+
+### 5.6 Who decides, lag and cheating
+
+- The victim decides. A strike names `seen_us`: the server-clock time of the victim's own sample the copy showed
+  when it was hit (the director knows which sample it drew; samples carry server-clock times, protocol.md). No
+  clock of the attacker's is trusted.
+- **Time.** Taken only if `0 <= now - seen_us <= 350 ms` (the copy's ~100 ms display delay + 250 ms, as
+  `kHitLateMs` 200 for enemy hits plus the delay). A `seen_us` after now is `late` too (never wrapped as u64).
+- **The victim's place.** The victim keeps a 1 s ring of its own places (each frame). The hit's place must be
+  within 0.5 m (sample interpolation and jitter) plus the body (1.0 m level, -0.4 to 2.2 m high: today's body
+  numbers) of the ring's place at `seen_us` (review L1: no `speed x elapsed` term, which would widen it for a
+  rolling victim, just when lag hurts the victim). Else `out of reach`.
+- **The attacker's place (review M1).** The victim also keeps a 1 s ring of its own copy of each player (the
+  samples it received). The strike's `from` must be within 0.5 m of that ring's place of the attacker at
+  `seen_us` (+-100 ms), and by source:
+  - sword or body: the victim's ring place of the attacker within the weapon's reach of the hit place, the reach
+    from the game's data (`WeaponParam.Range` of the weapon the attacker has equipped as `PLAYER_EQUIP` says: the
+    Deku Stick's 1.8 m, ...; a weapon without one: today's 1.3 m) + 0.5 m; never less than 1.3 m;
+  - shot or blast: the strike names the shot's or blast's object id; that object must be one the victim's game has
+    (spawn sync: a made object of the attacker), and its last place within 1.5 m (shot) or 3 m (blast, today's bomb
+    reach) of the hit place.
+  Else `out of reach`.
+- **Replays and floods.** A strike's `seq` must be newer than the last one taken from that attacker; an old or
+  repeated one is dropped (no result). The server lets through at most 10 strikes a second per attacker (the
+  game's quickest: a spin's several hits in one swing) and drops the rest (`stats.pvp_strikes_flood`).
+- Kept off as today: an event, a menu, a load, pause, another scene, life not read, downed or dead, the attacker in
+  one of those, or the victim's copy of the attacker not known.
+- So what the attacker saw is what it hit (within the ring), a laggy attacker cannot hit someone who got away, and
+  a game that makes strikes up can neither hit from across the room nor choose the damage.
+
+### 5.7 Protocol (types 540 to 544, claimed in COORD-LOG, 543 and 544 kept; no bump: off by default, older games ignore them)
+
+| Type | Name | Sender | Channel | Body |
+|---|---|---|---|---|
+| 540 | `PVP_STRIKE` | both | ownership | `u8` player field (the attacker), `u8` victim (1 to 16, not the attacker), `u32` seq, `u64` seen_us, 11 x `u32` the hit's kind words (record +0x250 up to +0x27c), `s32` amount (0 to 80, the attacker game's: compared, never used), `u8` source (1 sword or body, 2 shot, 3 blast, 4 other; others refused), object id (10 bytes: a made object for a shot or blast, all zero for the others; others refused), 3 x `f32` hit place, 3 x `f32` the copy's place, 3 x `f32` the attacker's place (all finite). To the victim only |
+| 541 | `PVP_RESULT` | both | ownership | `u8` player field (the victim), `u8` attacker (1 to 16, not the victim), `u32` seq, `u8` result (0 taken, 1 guarded, 2 guard broken, 3 invincible, 4 late, 5 out of reach, 6 kept off; others refused), `s32` amount taken (0 to 80, the victim game's own), `s32` life left (0 to 80), 11 x `u32` kind words, 3 x `f32` hit place (finite). To every game in the victim's scene |
+| 542 | `PVP_NATIVE` | both | ownership | `u8` player field, `u8` on (0 or 1; others refused). Its game runs this path (switch on and the pack has `_Pvp` copies); sent after joining and every 5 s, relayed to all |
+
+Server (`on_pvp_strike`): drops a strike while PvP is off, to or from a game not `PVP_NATIVE`, between two scenes,
+from a player with no fresh place (5 s, `place_known_in`, as lifts), or past 10 a second from one attacker; relays it
+to the victim only. A result is relayed only from the victim a strike in flight named (by seq), to its scene. A
+native attacker sends the old `PVP_HIT` (242) to a victim that is not native, so mixed sessions keep today's PvP.
+The victim still sends `PVP_HURT` (243) for the chat line.
+
+### 5.8 UNKNOWNs and the probe that settles each (one module-only research run, offline job)
+
+| # | Unknown | Probe |
+|---|---|---|
+| U1 | An invincible Life (IsNoReaction 0) on the copy still writes the incoming record (+0x240, last hit id +0x1b18) and plays flash, sparks, sound and hit-stop. And (review M3) what an **enemy's** hit on the copy does, and whether `SensorHitParam.DamageWhiteList` (or the `Tgt` contact layer) keeps enemy hits off it | A's sword on B's copy indoors, then a Deku Baba's bite on B's copy in A's game; log the copy's last hit id and record each frame; screenshot A at each contact; read the layers the player's and the enemies' `Atk` use |
+| U2 | Path A's way in: the function that drains `SensorHit`'s Tg hit info into guard, damage and reaction, and whether a hit info can be added before it. (Review H1) which hit-info words are pointers and to what, and what the consumer reads through each | Read main from the `TgHitInfoBufferSize` reader's xrefs to the consumer and its reads; then one run adding a hit info whose attacker is **B's copy of A** (Kokiri Sword slash kind words) to B's Link's buffer, shield up and down; then option (i) or (ii) of 5.3 written down |
+| U3 | The runs of `OneShotAttentionSenderChangeValid` and `OneShotChangeForceNoHitModeRigidBody`, and (review M4) whether no-hit reaches the copy's shield and sword actors; whether **today's** plain copy's shield already clangs (its equipment `Tgt`) | Read main (node vtables, setup names), then toggle them on a copy in the run; A slashes the plain copy's shield with PvP off, screenshot A |
+| U4 | A copy with `AttentionSenderRef` + `TargetRef` and no AI is chosen by Z and by AutoAim; the lock lets go with no crash when the copy goes (scene change, PvP-off re-make, downed) | Run: Z at B's copy, screenshot the reticle and the strafe; aim the bow, slingshot, hookshot and boomerang at it; then turn PvP off, and down B, while A holds Z |
+| U5 | Path B only: the guard verb values and the guard AS names | Every scheduler module's selector cases (as down-crawl's verb list) |
+| U6 | A hit on a copy's real shield actor in the guard pose is judged guarded by the attacker's game (clang, recoil) | Run: B holds the shield up toward A; A slashes; screenshot A |
+| U7 | What the game does with player-only kinds on Link (sword, nut, boomerang, hookshot, arrows, Din's Fire), and whether path B's replay sets the game's invincibility | One strike of each kind in the research run; screenshot B; log life, the reaction AS name and Link's invincible state per kind |
+
+### 5.9 Proof scenarios (offline 2-game job, screenshots of both games, no PASS from logs)
+
+Both kits: pack `--puppet-body --puppet-pvp`, `LICHII_COOP_PVP_NATIVE=1`, `/pvp on`, indoors (no grass). Every
+[shot] is a screenshot of the game named; scenarios 2 to 5 run both ways (A on B, then B on A).
+1. A Z-targets B's copy: [shot A] reticle on B, A strafes around B; bow, slingshot, hookshot, boomerang aim at B.
+2. A's Kokiri Sword on B: [shot A] at contact (flash, sparks); five slashes, the copy still reacts to the fifth
+   [shot A] (its Life invincible: A's log has `the game's invincibility on`); [shot B] B knocked back, hearts lost as B's game
+   counts them; [shot A] B's knockback by pose sync. Then B on A the same.
+3. B shields facing A, A slashes: [shot A] clang and recoil, [shot B] guard push, no hearts lost. B faces away: hit.
+4. Two slashes inside B's invincible frames: the second answered `invincible`, one fall only [shot B].
+5. Spin and jump attack, a Deku Stick, an arrow, a fire arrow, a bomb, a nut, the hookshot: each [shot A+B], life
+   and result logged per kind.
+6. Guard break and burn: the Master Sword on a guarding Deku Shield; a fire arrow on a guarding Deku Shield
+   [shot A+B], as the game does it.
+7. Lag: the lane's added delay (or a relay hop) on; B rolls away right after A's swing: `out of reach`, no hit
+   [shot B]; with more than 250 ms one way: `late` [shot B].
+8. PvP turned off mid-fight while A holds Z on B: the lock lets go, the copy is re-made plain, the next slash
+   passes through [shot A+B]; nothing clangs on B's shield.
+9. No double damage: B swings at A's real Link; A loses exactly what A's own result says, once [shot A].
+10. B brought to 0: [shot B] B downed (or Game Over with downed off); A cannot lock on to downed B [shot A].
+11. Mixed: an enemy and PvP together; the enemy hits B's copy in A's game: B's life unchanged [shot B], and the
+    false-flash state of 5.1 noted [shot A].
+12. Mixed session: a native game and a game without the switch: today's PvP (242/243) both ways [shot A+B].
+13. Regression, PvP off, both kits with the new pack: co-op walk, nothing locks on, nothing clangs, phases 2 and 3
+    (bomb take, lift) still work [shot A+B]; and a third game C watching A hit B with PvP on sees the hit effect
+    on B's copy [shot C].
+14. (Review LOW 2) A lifts a bomb while B Z-targets A's `_Pvp` copy; the host turns PvP off: [shot B] shows
+    whether the reticle stays until A throws; after the throw the copy is plain and the lock is gone [shot B].
+
+Host tests in step 2 (no run): forged strikes refused (attacker far from its ring place, hit place off the victim's
+ring, a `seen_us` in the future or too old, a repeated seq, a shot naming no object); path B's amount is the
+victim's own, never the attacker's 80; the server's 10 a second limit; PvP off or a non-native game: no strike
+relayed.
+
+### 5.10 Build order (step 2, behind the switches, host tests)
+
+1. Protocol 540 to 542 (codec, tests), server `on_pvp_strike` (mode, native, scene, fresh place, 10 a second)
+   + result relay by seq + `PVP_NATIVE` (tests).
+2. Pure rules `coop_pvp_native.h`: the victim's two rings (its own places, its copies' places) and the checks of
+   5.6 (time, the victim's place, the attacker's place and reach by source, the object of a shot or blast, seq),
+   path B's amount from the victim's own tables (weapon `BaseAttack`, kind row, `DamageRates`) and its mercy,
+   which records are ours to send, which copy actor (plain or `_Pvp`) the mode asks for (tests, forged strikes
+   among them).
+3. Pack `--puppet-pvp`: the `_Pvp` actor per puppet (pack test: components present; byte for byte without it).
+4. Glue: the director makes plain or `_Pvp` copies by the mode; read the copy's record (the protocol 14 reader),
+   send strikes; victim path B first (today's replay behind the guard check, which reads the guard from our Link's
+   main AS name, any case containing "guard", as phase 3 reads "lift", and logs each name once for U5), path A
+   when U2 is read; third-game replay on results.
+Every game address U2/U3/U5 need is read before its glue lands; until then the glue logs and does nothing.
+
+**Built (step 2, native-puppets-pvp, host tests only, not run in a game):**
+- 1 done: codec 540 to 542; server `on_pvp_strike` / `on_pvp_result` (PvP on, both native, one scene, fresh place,
+  own object, 10 a second, a result once for a strike in flight, an attacker that leaves takes its strikes with it).
+- 2 done: `lichii/hook/coop_pvp_native.h` (tests/lichii/pvp_native_test.cpp): rings, the 5.6 checks, `SeqGate`
+  (forgets an attacker that leaves or joins again: review LOW 1), path B's amount and mercy, `StrikeSource`,
+  `WantedCopy`, and `RemakeNow`: a copy lifted by our Link or whose player lifts or carries something keeps its
+  plain or `_Pvp` actor until that ends (review LOW 2; read from `GameHolds()` and the copy's animation, no lift
+  file touched). A copy in the lift's carried pose (`CoopLiftPlayer::kCarriedPose`: its player is carried by
+  someone) counts as busy too (`CopyBusy`, tests/lichii/puppet_test.cpp).
+- 3 done: `--puppet-pvp` (tools/puppet_pack/build.py `add_pvp`, `pvp_sensors`, `attention_clients`; checked on the
+  game's romfs: `Tgt` / `Body_Tgt` only; the plain puppets byte for byte as before).
+- 4 done (glue part 1 + 2; nothing of it runs without `LICHII_COOP_PVP_NATIVE=1`):
+  - `PVP_NATIVE` (glue on and a pvp pack, every 5 s), the other games' `PVP_NATIVE`, the director's `_Pvp` mask
+    (`CoopPuppet::SetPvpCopies`) by `WantedCopy`; a lifted or carrying copy keeps its actor until that ends.
+  - **Attacker.** The director publishes each live `_Pvp` copy's actor (`Director::LivePvpActor`). The object
+    walk (coop_objects.cpp `ReadPvpCopies`, beside `GivePvp`) reads its Life component's last hit id (+0x1b18);
+    one that moved, on the same actor, not to our own third-game replay (`CopyHitWatch`), hands the record (kind
+    words +0x250..+0x27c, hit place, attacker place, +0x228 amount) to the glue. `MakeStrike` sends it only when
+    its attacker is our Link (`StrikeSource`), with `seen_us` / `copy_at` = presence's shown pose of the victim
+    this frame (its sample's server time). An enemy's hit is not sent (counted). **Our shots and blasts are not
+    sent yet**: the walk cannot name the shot's made object (CoopSpawn keeps it by address, not shared), and a
+    strike without one is refused by the victim anyway; today's PvP gives shots meanwhile.
+  - **Victim, path B.** Our own ring (each frame, server time) and a ring per player (each new shown sample);
+    `DecidePathB` with the attacker's weapon from `PLAYER_EQUIP` (`WeaponOf`), guarding = our main AS has "guard"
+    (each name logged once, U5) and the attacker within 60 degrees of our facing (`GuardableAngleMaxDeg 120` taken
+    as the whole cone until U5); `FirstTables`: the BaseAttack values of 5.4. A taken strike goes to
+    `CoopObjects::HurtOurLinkNative`: the game's own hit replay on our Link with the strike's kind words, **never
+    the life write** (a hit the game does not take in 0.4 s stays untaken; with `LICHII_COOP_PVP_REPLAY=0` none
+    is given). A no-life kind (amount 0) is the game's hit only. `PVP_RESULT` is sent, and `PVP_HURT` for the chat
+    line when life was taken.
+  - **The kinds' multipliers are NOT filled** (their keys are the U2/U7 read), so every strike is answered `kept
+    off` and takes nothing until then (`PathBLive` false). So that PvP between two native games still works,
+    today's `PVP_HIT` keeps hurting until path B is live; from then on the victim drops 242 from a player whose
+    strikes it judges (`TakesStrikesFrom`, proof 9: never twice).
+  - **Every other game.** A `PVP_RESULT` taken or guard broken that is not about us is replayed on our `_Pvp`
+    copy of the victim (`CoopObjects::ReplayOnCopy`, the protocol 14 replay: flash, sparks, sound on its invincible
+    Life). The attacker logs a `guarded` result (U6: the clang is its own game's on the copy's shield, if any).
+  - Review M1 (r2): every live `_Pvp` copy's Life is made invincible once through the game's own call (5.1);
+    paths that reach a copy's Life checked: our own hits and enemies' (invincible), the third-game replay (amount 0,
+    invincible), the life writes in coop_objects.cpp (only shared objects and our own Link, never a puppet).
+  - Review LOW 1: the seq gate forgets a player on `PLAYER_LEFT` and `PLAYER_JOINED`; a new connection resets the
+    gate, the rings, the mercy and our own strike count.
+  - Review LOW 2: a copy held while carrying when PvP is turned off keeps its `_Pvp` actor (and so its lock-on)
+    until the carry ends. No strike comes of it (the walk reads copies only while the mask has PvP on, and the
+    server drops strikes with PvP off). Turning its attention off at once waits for U3's toggle; proof 14 checks
+    the gap.
+  - Left: U3's runtime toggles; path A (U2); shots and blasts (the made object's id from CoopSpawn); the kinds'
+    table (U2/U7); WeaponParam.Range (the 1.3 m floor until then).
 
 ## 6. Risks
 
@@ -426,7 +728,7 @@ Sizes: S = under a day of one worker, M = 1 to 3 days, L = more. Every proof is 
 | 1 | Body | S-M | Pack switch `--puppet-body` (built, below): the copy gets Link's own shapes and character body in Free move state, plus his cloth; no sensors, no ragdoll | A walks into B's copy: A stops (screenshot both); A jumps on the copy: A stands on it (A's y = copy's top, screenshot); B walks away: the copy's place read back = samples (no jitter lines). Same with an adult copy. Solo and idle unchanged (pack built without the switch is byte for byte today's) |
 | 2 | Bomb hand-over | M | Bomb as a shared object (owner, epoch, fuse left, held by); lift of a copy asks for it; stash through the pouch path | A puts down a lit bomb, B lifts it: one explosion in both games at B's hands (screenshots both, the same frame window); A puts down an unlit bomb, B lifts and stashes: B's count +1, A's unchanged, the bomb gone in both |
 | 3 | Lift a young player (owner rule: young only, Ruto's carry) | M-L | Ruto's `LiftableRef` on the child copies only; `LIFT_ASK` / `LIFT_ANSWER` / `LIFT_PLACE` messages (the throw is `LIFT_PLACE flying`); young-only gates on the lifter, the server (`not_young`) and the lifted game; the lifted game places its real Link, its copies play the carried pose (built, not run: "Phase 3 status") | A lifts young B: both screens show B in A's hands with A in Ruto's carry (screenshot both), A walks, B follows; A throws: B lands where A's screen shows (within 1 m), both screenshots; A tries adult B: nothing happens, no message; B ages mid-carry: safe drop; B in a talk: the lift is refused |
-| 4 | PvP sensors | M | Copy gets `Tgt`/`Atk` sensors + `SensorHitRef` (no Life); received hits read and sent as `PVP_HIT`; victim rewind check; enemy hits on copies dropped | PvP on: A's sword on B's copy indoors (no grass) -> B flinches and loses hearts (screenshot B), A's screen shows B's knockback; B shields: no damage; PvP off: nothing; an enemy hitting B's copy in A's game: no damage to B |
+| 4 | PvP on real bodies | M-L | Section 5 (design native-puppets-e): copy gets `Tgt`/`Atk` receipt sensors, `SensorHitRef`, an invincible `LifeRef` + `ReactionRef`, `AttentionSenderRef` (LockOn, AutoAim); the copy's hit record is sent as `PVP_STRIKE`; the victim's game decides (sensor path A or life path B, rewind check), `PVP_RESULT` to the scene; enemy hits on copies dropped | Section 5.9 (eight scenarios: lock-on, sword hit, guard, invincible frames, every weapon and item, downed, enemy and PvP off, a third game) |
 | 5 | Option A track | L | native-player steps 2-5 (input wraps, correction) as a separate switch | As native-player.md |
 
 Each phase is behind a switch, default off, and does not change the solo or idle game (no session: no copy
