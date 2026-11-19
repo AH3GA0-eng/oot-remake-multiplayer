@@ -331,9 +331,11 @@ U1 shows that list filters by the attacker's affiliation; else its `Tgt` sensor 
 shown, an enemy's hit on a `_Pvp` copy is a known false flash, written in the proof list, and never sent.
 
 The copy's Life is **invincible from its creation**, through the game's own call: `OneShotLifeSetInvincible`'s
-on-function main+0x8d75e0 (Life, IsNoReaction **0**, &our key), the call down-crawl uses (reports/down-crawl-a.md
-round 3). Nothing ever falls on a copy, and the game still plays the hit reaction (IsNoReaction 0 keeps it off the
-no-reaction list Life +0x1c60). UNKNOWN U1.
+IsNoReaction **0** on-function, main+0xb34800 (Life, 1, &our key 0xC0DB0D02; the reacting list Life +0x1c28), the
+sibling of the main+0x8d75e0 no-reaction call down-crawl uses (coop_dbno_body.h read both; r2 named 0x8d75e0 here,
+which is the no-reaction list: corrected in glue part 2 r2). Built: coop_objects.cpp `PvpShieldCaller` (caller
+order 67), once per live `_Pvp` actor and Life component (`CopyShield`, 3 tries, logged), so nothing falls on a copy
+in any game; the third games' replay passes amount 0 too. UNKNOWN U1: the reaction still shows.
 
 Runtime on/off per copy (at its creation and on every `PVP_MODE` change): attention sender valid = PvP on
 (`OneShotAttentionSenderChangeValid`'s run), sensors hit = PvP on (`OneShotChangeForceNoHitModeRigidBody`'s run).
@@ -503,7 +505,8 @@ The victim still sends `PVP_HURT` (243) for the chat line.
 Both kits: pack `--puppet-body --puppet-pvp`, `LICHII_COOP_PVP_NATIVE=1`, `/pvp on`, indoors (no grass). Every
 [shot] is a screenshot of the game named; scenarios 2 to 5 run both ways (A on B, then B on A).
 1. A Z-targets B's copy: [shot A] reticle on B, A strafes around B; bow, slingshot, hookshot, boomerang aim at B.
-2. A's Kokiri Sword on B: [shot A] at contact (flash, sparks); [shot B] B knocked back, hearts lost as B's game
+2. A's Kokiri Sword on B: [shot A] at contact (flash, sparks); five slashes, the copy still reacts to the fifth
+   [shot A] (its Life invincible: A's log has `the game's invincibility on`); [shot B] B knocked back, hearts lost as B's game
    counts them; [shot A] B's knockback by pose sync. Then B on A the same.
 3. B shields facing A, A slashes: [shot A] clang and recoil, [shot B] guard push, no hearts lost. B faces away: hit.
 4. Two slashes inside B's invincible frames: the second answered `invincible`, one fall only [shot B].
@@ -583,6 +586,9 @@ Every game address U2/U3/U5 need is read before its glue lands; until then the g
   - **Every other game.** A `PVP_RESULT` taken or guard broken that is not about us is replayed on our `_Pvp`
     copy of the victim (`CoopObjects::ReplayOnCopy`, the protocol 14 replay: flash, sparks, sound on its invincible
     Life). The attacker logs a `guarded` result (U6: the clang is its own game's on the copy's shield, if any).
+  - Review M1 (r2): every live `_Pvp` copy's Life is made invincible once through the game's own call (5.1);
+    paths that reach a copy's Life checked: our own hits and enemies' (invincible), the third-game replay (amount 0,
+    invincible), the life writes in coop_objects.cpp (only shared objects and our own Link, never a puppet).
   - Review LOW 1: the seq gate forgets a player on `PLAYER_LEFT` and `PLAYER_JOINED`; a new connection resets the
     gate, the rings, the mercy and our own strike count.
   - Review LOW 2: a copy held while carrying when PvP is turned off keeps its `_Pvp` actor (and so its lock-on)

@@ -289,8 +289,10 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
             continue;
         }
         g.seq = strike->seq;
-        LOG_INFO(Core, "coop: pvp native: strike {} on P{} (source {}, our game counted {}) seen at {}", strike->seq,
-                 strike->victim, static_cast<int>(strike->source), strike->amount, strike->seen_us);
+        LOG_INFO(Core, "coop: pvp native: strike {} on P{} (source {}, our game counted {}) seen at {}; U7: our main AS "
+                       "{}, weapon {}", strike->seq, strike->victim, static_cast<int>(strike->source), strike->amount,
+                 strike->seen_us, reading && reading->animation ? reading->animation->name : std::string("?"),
+                 weapon_of(self));
         send.emplace_back(*strike);
     }
 

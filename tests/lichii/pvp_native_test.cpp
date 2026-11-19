@@ -468,3 +468,37 @@ TEST_CASE("pvp native: what a game that is not the victim does with a result") {
         CHECK(PlayResult(r, 1) == ResultPlay::none);
     }
 }
+
+TEST_CASE("pvp native: each live _Pvp copy's Life is made invincible once (review M1)") {
+    CopyShield s;
+    using C = CopyShield::Copy;
+    const C a{0x100, 0x1100};
+    const C b{0x200, 0x1200};
+    CHECK_FALSE(s.Next({}));
+    REQUIRE(s.Next({a, b}));
+    CHECK(*s.Next({a, b}) == a);  // the first not yet shielded
+    s.Called(a, true);
+    CHECK(s.Shielded(a));
+    CHECK(*s.Next({a, b}) == b);  // a is not asked again
+    s.Called(b, true);
+    CHECK_FALSE(s.Next({a, b}));  // all shielded: no call
+    // a goes (a re-make, a load): forgotten with its component; a new copy at the same Life is shielded again.
+    CHECK_FALSE(s.Next({b}));
+    CHECK_FALSE(s.Shielded(a));
+    const C a2{0x300, 0x1100};
+    CHECK(*s.Next({a2, b}) == a2);
+    // A call that fails is tried kCopyShieldTries times, then given up (logged by the caller).
+    for (unsigned i = 0; i < kCopyShieldTries; ++i) {
+        REQUIRE(s.Next({a2, b}));
+        s.Called(a2, false);
+    }
+    CHECK(s.GivenUp(a2));
+    CHECK_FALSE(s.Next({a2, b}));
+    // Zero actors or Life components are never asked.
+    CHECK_FALSE(s.Next({C{0, 0x1}, C{0x1, 0}, b}));
+    s.Reset();
+    CHECK(*s.Next({b}) == b);
+    // The key and the function: ours, not the downed Link's, on the reacting list (IsNoReaction 0).
+    CHECK(kCopyShieldKey != 0xC0DB0D01u);
+    CHECK(kInvincibleReacting == 0xb34800);
+}

@@ -193,6 +193,7 @@ CoopWorld::GrassSync& TheGrass() {
 constexpr int kScrubsCallerOrder = CoopCallerOrders::kScrubs;
 constexpr int kLiftRideCallerOrder = CoopCallerOrders::kLiftRide;  // jabu-lifts (#65): after the boss table (45), before the boss rooms (50)
 constexpr int kSwitchShareCallerOrder = CoopCallerOrders::kSwitchShare;  // room-objects: another player's timed switch held on ours
+constexpr int kPvpShieldCallerOrder = CoopCallerOrders::kPvpShield;  // phase 4: the _Pvp copies' Life invincible
 constexpr int kDbnoBodyCallerOrder = CoopCallerOrders::kDbnoBody;  // down but not out: our downed Link's crawl, shield, unseen (coop_dbno_body.h)
 
 std::string EnvText(const char* name);  // below EnvOn  // after the live events (60) and the teleport's (61)
@@ -1394,6 +1395,86 @@ std::atomic<u64>& TheLinkActorAt() {
     static std::atomic<u64> ms{0};
     return ms;
 }
+// Native puppets phase 4 (docs/native-puppets.md 5.1; review M1 of glue part 2): each live _Pvp copy's Life is
+// made invincible once, through the game's own call (CoopPvpNative::kInvincibleReacting with our key), so no hit
+// in any game (our own, an enemy's, a third game's replay) ever takes the copy's hearts. The calc thread, at the
+// svc cave, after the down-crawl's caller; one call a frame.
+class PvpShieldCaller {
+public:
+    std::optional<CoopPuppet::Call> Next(CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
+                                         std::uint64_t main_base) {
+        if (after_call) {
+            const Pending was = std::exchange(pending_, Pending::none);
+            if (was == Pending::malloc) {
+                block_ = result;
+            } else if (was == Pending::shield) {
+                shield_.Called(asked_, true);
+                LOG_INFO(Core, "coop: pvp native: P{}'s _Pvp copy {:#x}: the game's invincibility on (Life {:#x})",
+                         asked_number_, asked_.first, asked_.second);
+                return std::nullopt;  // one a frame
+            }
+        }
+        if (main_base == 0 || pending_ != Pending::none || !CoopPvpNativeGame::On()) {
+            return std::nullopt;
+        }
+        std::vector<CoopPvpNative::CopyShield::Copy> live;
+        std::vector<std::uint8_t> numbers;
+        for (std::uint8_t n = 1; n <= coop::protocol::kMaxPlayers; ++n) {
+            const u64 actor = CoopPuppet::TheDirector().LivePvpActor(n);
+            u64 table = 0;
+            u64 life = 0;
+            if (actor == 0 || !guest.Read(actor + kActorComponents, &table, 8) || table == 0 ||
+                !guest.Read(table + kComponentLife, &life, 8) || life == 0) {
+                continue;
+            }
+            live.emplace_back(actor, life);
+            numbers.push_back(n);
+        }
+        const auto next = shield_.Next(live);
+        if (!next) {
+            return std::nullopt;
+        }
+        CoopPuppet::Call c;
+        if (block_ == 0) {
+            if (after_call && result == 0) {
+                return std::nullopt;  // the game had no memory: next frame
+            }
+            c.function = main_base + CoopBossNative::addr::kMalloc;
+            c.x[0] = 16;
+            pending_ = Pending::malloc;
+            return c;
+        }
+        const std::uint32_t key = CoopPvpNative::kCopyShieldKey;
+        if (!guest.Write(block_, &key, sizeof key)) {
+            shield_.Called(*next, false);
+            if (shield_.GivenUp(*next)) {
+                LOG_INFO(Core, "coop: pvp native: _Pvp copy {:#x}: could not make it invincible: given up", next->first);
+            }
+            return std::nullopt;
+        }
+        asked_ = *next;
+        asked_number_ = numbers[static_cast<std::size_t>(std::find(live.begin(), live.end(), *next) - live.begin())];
+        c.function = main_base + CoopPvpNative::kInvincibleReacting;
+        c.x[0] = next->second;  // the Life component
+        c.x[1] = 1;             // add our key
+        c.x[2] = block_;        // -> the key
+        pending_ = Pending::shield;
+        return c;
+    }
+
+private:
+    enum class Pending : std::uint8_t { none, malloc, shield };
+    Pending pending_ = Pending::none;
+    u64 block_ = 0;
+    CoopPvpNative::CopyShield shield_;
+    CoopPvpNative::CopyShield::Copy asked_{};
+    std::uint8_t asked_number_ = 0;
+};
+PvpShieldCaller& ThePvpShield() {
+    static PvpShieldCaller caller;
+    return caller;
+}
+
 struct PvpAsk {
     s32 take = 0;
     std::array<float, 3> at{};
@@ -3625,6 +3706,14 @@ private:
             pvp_copy_watch_.Reset();
             return;
         }
+        static const bool shield_caller = [] {
+            CoopSvc::AddCaller(kPvpShieldCallerOrder, [](CoopPuppet::Guest& guest, bool after_call,
+                                                         std::uint64_t result, std::uint64_t /*now_ms*/) {
+                return ThePvpShield().Next(guest, after_call, result, TheBossMain().load());
+            });
+            return true;
+        }();
+        (void)shield_caller;
         for (std::uint8_t n = 1; n <= coop::protocol::kMaxPlayers; ++n) {
             const u64 actor = CoopPuppet::TheDirector().LivePvpActor(n);
             if (actor == 0) {
@@ -3654,6 +3743,16 @@ private:
             std::memcpy(hit.at.data(), &(*rec)[CoopHitReplay::kRecPlace], 12);
             std::memcpy(hit.attacker_at.data(), &(*rec)[CoopHitReplay::kRecFrom], 12);
             hit.amount = r.Get<s32>(*life + kLifeHurt).value_or(0);
+            // U2/U7 probe (docs 5.8): the whole record, to find the AttackParam row (its AttackType hash) or the
+            // kind words' meaning per attack. Our own hits only (an enemy's is not logged).
+            if (hit.from.our_link || hit.own_shot) {
+                std::string words;
+                for (const u32 w : *rec) {
+                    words += fmt::format("{:08x} ", w);
+                }
+                LOG_INFO(Core, "coop: pvp native: U2 record of our hit on P{}'s copy (id {:#x}, +0x228 {}): {}", n, *id,
+                         hit.amount, words);
+            }
             CoopPvpNativeGame::NoteCopyHit(hit);
         }
     }
@@ -4984,7 +5083,8 @@ void ReplayOnCopy(std::uint64_t actor, std::int32_t amount, const std::array<flo
     Mover::Hit hit;
     hit.actor = actor;
     hit.attacker = *link;  // the attacker's Link is another game's; ours stands in (as protocol 14)
-    hit.amount = std::max(amount, 0);
+    (void)amount;
+    hit.amount = 0;  // the effect only: a copy never takes life in any game (review M1; its Life is invincible too)
     hit.at = at;
     hit.from = at;
     hit.exact = true;

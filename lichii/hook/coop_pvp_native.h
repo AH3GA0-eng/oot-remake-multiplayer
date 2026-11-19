@@ -25,6 +25,9 @@
 #include <deque>
 #include <map>
 #include <optional>
+#include <set>
+#include <utility>
+#include <vector>
 #include <string>
 #include <string_view>
 
@@ -485,6 +488,61 @@ private:
         std::uint32_t id = 0;
     };
     std::map<std::uint8_t, Last> last_;
+};
+
+// --- The copy's Life is invincible from its creation (5.1; review M1 of glue part 2) ---
+
+// The game's own named invincibility, as the AI node OneShotLifeSetInvincible gives it (coop_dbno_body.h read it:
+// IsNoReaction picks the list and so the function). IsNoReaction 0, the list a hit still REACTS on (flash,
+// sparks, sound, hit-stop) while nothing is taken: main+0xb34800 (Life+0x1c28), (x0 the Life component, w1 1 adds
+// the key, x2 -> the u32 key). Design r2 named main+0x8d75e0 for it, which is the no-reaction list
+// (IsNoReaction 1, the downed Link's): not this one. Whether the reaction shows is U1.
+inline constexpr std::uint64_t kInvincibleReacting = 0xb34800;  // main+
+inline constexpr std::uint32_t kCopyShieldKey = 0xC0DB0D02u;   // ours (no game name hashes to it); dbno uses ...01
+inline constexpr unsigned kCopyShieldTries = 3;               // calls per copy before it is given up (logged)
+
+// Which live _Pvp copies' Life components still need our key: each (actor, Life) once. A copy that goes (a
+// re-make, a load, PvP off) is forgotten with its component; a new one at the same address is shielded again.
+class CopyShield {
+public:
+    using Copy = std::pair<std::uint64_t, std::uint64_t>;  // (actor, its Life component)
+    // The live copies this frame; the next one to shield, if any.
+    std::optional<Copy> Next(const std::vector<Copy>& live) {
+        for (auto it = done_.begin(); it != done_.end();) {
+            it = std::find(live.begin(), live.end(), *it) == live.end() ? done_.erase(it) : std::next(it);
+        }
+        for (auto it = tries_.begin(); it != tries_.end();) {
+            it = std::find(live.begin(), live.end(), it->first) == live.end() ? tries_.erase(it) : std::next(it);
+        }
+        for (const Copy& c : live) {
+            if (c.first == 0 || c.second == 0 || done_.count(c) != 0) continue;
+            if (tries_[c] >= kCopyShieldTries) continue;  // given up: the glue logged it
+            return c;
+        }
+        return std::nullopt;
+    }
+    // A call was made for `c` (true: the game returned; false: no block, or the call failed).
+    void Called(const Copy& c, bool ok) {
+        if (ok) {
+            done_.insert(c);
+            tries_.erase(c);
+        } else {
+            ++tries_[c];
+        }
+    }
+    bool Shielded(const Copy& c) const { return done_.count(c) != 0; }
+    bool GivenUp(const Copy& c) const {
+        const auto it = tries_.find(c);
+        return it != tries_.end() && it->second >= kCopyShieldTries;
+    }
+    void Reset() {
+        done_.clear();
+        tries_.clear();
+    }
+
+private:
+    std::set<Copy> done_;
+    std::map<Copy, unsigned> tries_;
 };
 
 // One new hit on a copy as the walk read it (the record words as CoopHitReplay::Record lays them out).
