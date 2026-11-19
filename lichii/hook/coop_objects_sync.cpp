@@ -415,6 +415,18 @@ std::optional<std::int32_t> RaisedMaxLife(std::int32_t link_max, std::int32_t fl
     return flag;
 }
 
+std::optional<LoweredLife> LoweredMaxLife(std::int32_t link_max, std::int32_t link_life,
+                                          std::optional<std::int32_t> lower_to) {
+    if (!lower_to || link_max <= 0 || *lower_to < 4 || *lower_to >= link_max || *lower_to > kMostLifeQuarters) {
+        return std::nullopt;
+    }
+    LoweredLife out{*lower_to, std::nullopt};
+    if (link_life > *lower_to) {
+        out.life = *lower_to;
+    }
+    return out;
+}
+
 bool NativeOnlyName(std::string_view name) {
     return name.empty() || name == "?" || name.starts_with("Enemy_") || IsBoss(name);
 }

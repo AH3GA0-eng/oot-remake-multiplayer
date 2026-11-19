@@ -250,6 +250,10 @@ class Session {
     }
     return true;
   }
+  // Emulator thread only: FlagWatcher::reset_lowered (rows 136/137).
+  std::optional<std::int32_t> reset_lowered(FlagKey key) const {
+    return watcher_ ? watcher_->reset_lowered(key) : std::nullopt;
+  }
   // Emulator thread only: FlagWatcher::take_counts_guarded.
   std::vector<FlagWatcher::CountGuarded> take_counts_guarded() {
     return watcher_ ? watcher_->take_counts_guarded() : std::vector<FlagWatcher::CountGuarded>{};

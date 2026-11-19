@@ -59,6 +59,7 @@ struct FlagStats {
   std::uint64_t pickup_resets = 0;     // a pickup's 0, ours or incoming: not passed on
   std::uint64_t max_drops_kept = 0;    // a max-rule value our game lowered: ours, not sent
   std::uint64_t max_caps_kept = 0;     // a rise of our own past cap_max's cap: put back, not sent
+  std::uint64_t reset_holds_kept = 0;  // rows 136/137: the game's write-back of a value the host's save lowered
   std::uint64_t read_failures = 0;
   std::uint64_t write_failures = 0;    // each failed try; it is tried again next frame
   // A write the store refused because it holds that key for now (HoldFlagStore: a room gimmick flag held until
@@ -289,6 +290,26 @@ class FlagWatcher {
   // cap per key; a new call replaces it.
   void cap_max(FlagKey key, std::int32_t cap) { max_caps_[key] = cap; }
   void clear_max_cap(FlagKey key) { max_caps_.erase(key); }
+
+  // Rows 136/137 (boss-away-0115): the host's save load (FLAG_RESET) lowered a
+  // max-rule int in our game (PlayerStatus.MaxLife after a boss's heart
+  // container, a magic meter, a bag...). Some of them the game keeps a live
+  // copy of and writes back (Link's Life component writes its own max into
+  // MaxLife while he is in the scene): that rise is the replaced save's, not
+  // progress. While the hold lasts, a rise of our game's value up to what it
+  // had before the reset is put back to the reset value and never sent (else
+  // the max rule raised the whole group again while the container's own
+  // Heart_Container_Obtained went back to 0: the container repeats). A rise
+  // past that is real progress: sent, the hold ends. The hold ends once the
+  // value has stayed at the reset value for kResetQuietFrames (the game took
+  // it), or when a load window ends (the game makes Link from the flags), or
+  // when the session ends. The reset value while a hold lasts, else nothing
+  // (the object walk lowers Link's own max to it).
+  std::optional<std::int32_t> reset_lowered(FlagKey key) const {
+    const auto it = reset_holds_.find(key);
+    return it == reset_holds_.end() ? std::nullopt : std::optional<std::int32_t>(it->second.low);
+  }
+  static constexpr int kResetQuietFrames = 60;
   static constexpr std::uint64_t kDoubledGainFrames = 5 * 60;
   static constexpr std::int32_t kMaxDoubledGains = 4;
 
@@ -544,6 +565,18 @@ class FlagWatcher {
   // dropped); the rest of `entry`'s value.
   std::int32_t unraced(const protocol::FlagEntry& entry);
   std::map<FlagKey, std::int32_t> max_caps_;  // cap_max
+  struct ResetHold {
+    std::int32_t low = 0;    // the host's save's value (FLAG_RESET)
+    std::int32_t high = 0;   // our game's value before it
+    int quiet = 0;           // frames the game has kept `low`
+    int tries = 0;           // put-backs the game refused or undid
+    std::uint64_t put_at = 0;  // the frame of the last put-back
+  };
+  std::map<FlagKey, ResetHold> reset_holds_;  // reset_lowered
+  // Rows 136/137: a rise of a held key (diff); true when handled (not sent).
+  bool hold_reset(FlagStore& store, FlagKey key, const protocol::FlagEntry& before, const protocol::FlagEntry& now,
+                  protocol::FlagEntry& seen);
+  void age_reset_holds(FlagStore& store, std::uint32_t step);
   std::map<FlagKey, FlagKey> guard_source_;  // a source: its count
   Table added_;                              // count deltas add() put in this frame
   std::vector<CountGuarded> counts_guarded_;  // take_counts_guarded
