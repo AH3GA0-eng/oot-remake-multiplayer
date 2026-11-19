@@ -66,6 +66,13 @@ void HostNow();
 void LeaveNow();
 // Co-op came with the game's start (Host.bat, Join.bat, coop.ini): the page's rows open the menu instead.
 bool ByLauncher();
+// The Multiplayer page's Join view: joining with the code (or address line) on the clipboard, as the Join page's
+// paste then Join; and the last game again ("Join <host> again", its code kept in coop.ini). Refused (co-op on, the
+// code not readable) or failed: the menu opens on its main page or Join page, whose note says why.
+void JoinPasteNow();
+void RejoinNow();
+// A last game's code is kept (coop.ini last_invite); its host's name into `host` (may be null; "" when not known).
+bool Rejoin(std::string* host);
 // The host's Paste answer (a friend's answer code from the clipboard) and a waiting guest's Copy answer, as the
 // menu's rows do them; the menu opened on its main page, whose note says what became of it.
 void PasteAnswerNow();

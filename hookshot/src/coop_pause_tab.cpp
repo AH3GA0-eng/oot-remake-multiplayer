@@ -55,6 +55,7 @@ void Page::Hide(const char* why) {
         return;
     }
     shown_ = false;
+    sub_ = false, back_ = false;
     why_ = why;
     // Every button held now stays the module's until let go, so none reaches System as a fresh press (an A held
     // as the page goes would otherwise be the System page's A).
@@ -148,7 +149,17 @@ std::uint64_t Page::OnPad(std::uint64_t buttons, std::uint64_t now_ms) {
     if ((down & kPadA) != 0) {
         decide_ = true;
     }
+    if (sub_ && (down & kPadB) != 0) {   // (a view: B goes back to the five rows, kept until let go)
+        back_ = true;
+        swallow_ |= kPadB;
+    }
     return buttons & kPadPassed & ~swallow_;
+}
+
+bool Page::TakeBack() {
+    const bool b = back_;
+    back_ = false;
+    return b;
 }
 
 bool Page::TakeDecide() {
@@ -172,18 +183,38 @@ RowAction ActionFor(int row, const Session& s) {
     case kRowJoinCode:
         if (s.wait_host) return RowAction::kCopyAnswer;
         if (s.hosting) return s.code ? RowAction::kCopyCode : RowAction::kOpenMain;   // (the code still coming: shown there)
-        return s.in_one ? RowAction::kOpenMain : RowAction::kOpenJoin;
+        return s.in_one || s.by_launcher ? RowAction::kOpenMain : RowAction::kViewJoin;
     case kRowPlayers:
-        return RowAction::kOpenLobby;
+        return RowAction::kViewPlayers;
     case kRowLetIn:
         if (!s.hosting) return RowAction::kOpenLobby;
-        return s.invite && !s.asking ? RowAction::kPasteAnswer : RowAction::kAllow;   // (a knock first: /allow)
+        return s.invite && !s.asking ? RowAction::kPasteAnswer : RowAction::kViewLetIn;   // (a knock first)
     case kRowLeave:
         if (s.by_launcher) return RowAction::kOpenMain;   // (not stopped here: the main page says to start the game again)
         return s.in_one ? RowAction::kConfirmLeave : RowAction::kNone;   // (a second A leaves: never one stray press)
     default:
         return RowAction::kNone;
     }
+}
+
+RowAction ActionFor(View view, int row, const Session& s) {
+    if (row < 0 || row >= kRows) return RowAction::kNone;
+    switch (view) {
+    case View::kMain: return ActionFor(row, s);
+    case View::kPlayers: return row == kRows - 1 ? RowAction::kBack : RowAction::kNone;
+    case View::kLetIn:
+        if (row == 0 && s.hosting && s.asking) return RowAction::kAllow;
+        if (row == 1 && s.hosting && s.asking) return RowAction::kDeny;
+        return row == kRows - 1 ? RowAction::kBack : RowAction::kNone;
+    case View::kJoin: {
+        const bool free = !s.in_one && !s.by_launcher;   // (as co-op's menu: nobody joins from inside a session)
+        if (row == 0) return free ? RowAction::kJoinPaste : RowAction::kNone;
+        if (row == 1) return free && s.rejoin ? RowAction::kRejoin : RowAction::kNone;
+        if (row == 2) return RowAction::kOpenJoin;
+        return row == kRows - 1 ? RowAction::kBack : RowAction::kNone;
+    }
+    }
+    return RowAction::kNone;
 }
 
 namespace {
@@ -241,6 +272,42 @@ std::vector<std::string> RowTexts(const SessionView& v) {
     return rows;
 }
 
+std::vector<std::string> RowTexts(View view, const SessionView& v) {
+    if (view == View::kMain) return RowTexts(v);
+    std::vector<std::string> rows(kRows);
+    rows[kRows - 1] = "Back";
+    switch (view) {
+    case View::kMain: break;
+    case View::kPlayers:
+        if (v.names.empty()) {
+            rows[0] = v.s.in_one ? "Players: coming..." : "Not in a session";
+        }
+        for (std::size_t i = 0; i < v.names.size() && i < kRows - 1; ++i) rows[i] = v.names[i];
+        if (v.names.size() > kRows - 1) {   // (the last row says how many more: the Lobby tab lists all)
+            rows[kRows - 2] = "+" + std::to_string(v.names.size() - (kRows - 2)) + " more (Lobby tab)";
+        }
+        break;
+    case View::kLetIn:
+        if (v.asking.empty()) {
+            rows[0] = "Nobody asks to join";
+        } else {
+            rows[0] = "Let in " + v.asking.front();
+            rows[1] = "Refuse " + v.asking.front();
+            if (v.asking.size() > 1) rows[2] = "+" + std::to_string(v.asking.size() - 1) + " more ask";
+        }
+        break;
+    case View::kJoin:
+        rows[0] = v.s.by_launcher ? "Co-op came with the game" : v.s.in_one ? "In a session already" : "Paste code and join";
+        if (v.s.rejoin && !v.s.in_one && !v.s.by_launcher) {
+            rows[1] = v.rejoin_host.empty() ? "Join the last game again" : "Join " + v.rejoin_host + " again";
+        }
+        rows[2] = "Type a code (co-op's menu)";
+        break;
+    }
+    for (std::string& r : rows) r = r.empty() ? std::string(" ") : Fit(std::move(r));
+    return rows;
+}
+
 const char* ActionWords(RowAction a) {
     switch (a) {
     case RowAction::kOpenMain: return "co-op's menu, its main page";
@@ -252,9 +319,30 @@ const char* ActionWords(RowAction a) {
     case RowAction::kConfirmLeave: return "leave (or stop hosting) after a second A";
     case RowAction::kPasteAnswer: return "a friend's answer code from the clipboard (Paste answer), then co-op's main page";
     case RowAction::kCopyAnswer: return "this game's answer code to the clipboard (Copy answer), then co-op's main page";
+    case RowAction::kViewPlayers: return "the Players view";
+    case RowAction::kViewLetIn: return "the Let in view";
+    case RowAction::kViewJoin: return "the Join view";
+    case RowAction::kBack: return "back to the five rows";
+    case RowAction::kDeny: return "the oldest player who asks to join refused (/deny)";
+    case RowAction::kJoinPaste: return "join with the code on the clipboard";
+    case RowAction::kRejoin: return "join the last game again";
     case RowAction::kNone: break;
     }
     return "nothing";
+}
+
+// --- ScreenGuard ---
+
+namespace {
+thread_local bool t_in_screen = false;
+}  // namespace
+
+ScreenGuard::ScreenGuard() : nested_(t_in_screen) {
+    t_in_screen = true;
+}
+
+ScreenGuard::~ScreenGuard() {
+    if (!nested_) t_in_screen = false;
 }
 
 // --- Probe ---
