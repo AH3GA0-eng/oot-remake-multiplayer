@@ -134,13 +134,14 @@ typedef struct CoopModApi {
 
     /* Chooses the screen's focused button the game's own way, as the player's A would (its press, its sound, what it
        opens). 1 when the game took it; 0 when nothing is focused, the button cannot be chosen now (its opening animation,
-       another choice running: try at a later update), or co-op is busy at the title (hosting, joining, the host's save
-       on its way). */
+       another choice running: try at a later update), or co-op is busy: hosting, joining, in a session or the host's
+       save on its way (on every screen, not only the title). */
     int (*choose_focused)(const struct CoopModApi *self);
 
     /* Has the game read its save list (the files' captions the title and the load list show) again from the save
        folder, after the mod changed the files in it. The game reads it at the title's next update; save_list_ready is 0
-       until it is done. 1 when asked. */
+       until it is done. 1 when asked; 0 when the title is not up (the game reads its list only there: on the pause
+       menu's System > Load, ask again once the title shows). */
     int (*reload_save_list)(const struct CoopModApi *self);
 
     /* The buttons the game does not get from player 1 while held (NpadButton bits, as CoopModScreen's `buttons`):

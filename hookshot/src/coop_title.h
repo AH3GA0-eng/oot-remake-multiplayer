@@ -50,8 +50,9 @@ bool SaveWaitWaiting();
 std::string ClientId();
 
 // A code mod changed the save folder's files (coop_mod_api.h reload_save_list): the game re-reads its save list at
-// the title's next step, as after co-op's own switch of the folder. Any thread.
-void AskSaveListRead();
+// the title's next step, as after co-op's own switch of the folder. False (nothing asked) when the title is not up:
+// the read runs only at the title's step. Any thread.
+bool AskSaveListRead();
 // The game's save list is read: no re-read asked or running, and the game's own state says read. Any thread.
 bool SaveListReady();
 

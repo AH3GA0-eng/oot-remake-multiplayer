@@ -306,7 +306,15 @@ void Start() {
     game.runtime = "hookshot";
     game.choose_focused = ChooseFocused;
     game.reload_save_list = [] {
-        CoopTitle::AskSaveListRead();
+        // The game reads its save list again only at the title's step (CoopTitle::RefreshSaveList): asked anywhere
+        // else (the pause menu's System > Load), save_list_ready would stay 0 until the title, so it is refused there.
+        if (!CoopTitle::AskSaveListRead()) {
+            static std::atomic<bool> said{false};
+            if (!said.exchange(true)) {
+                CoopRuntime::Log("coop: mods: a mod's save list read is refused off the title (the game reads it there)");
+            }
+            return false;
+        }
         return true;
     };
     game.now_ms = SteadyMs;

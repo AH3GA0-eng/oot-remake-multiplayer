@@ -43,6 +43,8 @@ struct Seen {
     int screen_do = 0;   // kChoose | kReload | kHoldOn | kHoldOff | kOther | kThrow | kHoldA
     std::uint64_t seen_buttons = 0;   // the last screen's buttons
     int choose_ok = 1;   // the fake game takes a choice
+    int reload_ok = 1;   // the fake game takes a save list read (0: the title is not up)
+    std::function<void()> on_choose;   // what the fake game's choice runs on its thread (a nested screen update)
     std::uint64_t now = 1000;
     std::vector<std::string> game_calls;
 };
@@ -207,11 +209,14 @@ struct Run {
         game.choose_focused = [](void* ctx, std::uint64_t screen) {
             g.game_calls.push_back("choose " + std::to_string(reinterpret_cast<std::uintptr_t>(ctx)) + " " +
                                    std::to_string(screen));
+            if (g.on_choose) {
+                g.on_choose();
+            }
             return g.choose_ok != 0;
         };
         game.reload_save_list = [] {
             g.game_calls.push_back("reload");
-            return true;
+            return g.reload_ok != 0;
         };
         game.now_ms = [] { return g.now; };
         loader.Start();
@@ -600,4 +605,35 @@ TEST_CASE("mod plugins v2: a mod sees the player's buttons and may hold only som
     g.screen_do = kHoldOff;
     r.Screen(COOP_MOD_SCREEN_TITLE, "Pa_Button_01");
     CHECK(r.host->HeldButtons() == 0);
+}
+
+TEST_CASE("mod plugins v2: a screen update nested inside a mod's own call on its thread is skipped for the mods") {
+    Run r;
+    g.screen_do = kChoose;
+    g.calls.clear();
+    int nested = 0;
+    g.on_choose = [&] {
+        // (the game's Button::Decide ran another screen's update on this thread: no second on_screen, no lock taken
+        // again by its owner)
+        ++nested;
+        r.Screen(COOP_MOD_SCREEN_LOAD_LIST, "Pa_Save_00");
+    };
+    r.Screen(COOP_MOD_SCREEN_TITLE, "Pa_Button_00");
+    g.on_choose = nullptr;
+    CHECK(nested == 1);
+    CHECK(g.calls == std::vector<std::string>{"screen b 1 'Pa_Button_00' 1 choose 1"});
+    g.calls.clear();
+    r.Screen(COOP_MOD_SCREEN_LOAD_LIST, "Pa_Save_00");   // (the next update reaches the mod again)
+    CHECK(g.calls == std::vector<std::string>{"screen b 2 'Pa_Save_00' 1 choose 1"});
+}
+
+TEST_CASE("mod plugins v2: a save list read the game refuses (off the title) answers 0 and says nothing done") {
+    Run r;
+    g.screen_do = kReload;
+    g.reload_ok = 0;
+    g.calls.clear();
+    r.Screen(COOP_MOD_SCREEN_LOAD_LIST, "Pa_Save_00", true);
+    g.reload_ok = 1;
+    CHECK(g.calls == std::vector<std::string>{"screen b 2 'Pa_Save_00' 1 reload 0"});
+    CHECK_FALSE(r.Logged("asked the game to read its save list again"));
 }

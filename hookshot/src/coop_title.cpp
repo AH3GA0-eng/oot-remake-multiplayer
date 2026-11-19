@@ -529,9 +529,13 @@ bool SaveWaitWaiting() {
     return g_wait.waiting();
 }
 
-void AskSaveListRead() {
+bool AskSaveListRead() {
+    if (!TitleUp()) {
+        return false;   // (RefreshSaveList runs only at the title's step: off it the read would never complete)
+    }
     g_list_open = true;
     g_mod_asked = true;
+    return true;
 }
 
 bool SaveListReady() {

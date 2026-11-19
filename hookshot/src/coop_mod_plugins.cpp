@@ -650,6 +650,11 @@ void Host::Screen(const ScreenUpdate& update) {
     if (!started_ || stopped_) {
         return;
     }
+    if (t_update != nullptr) {
+        // (a screen update run on this thread from inside a mod's own call, e.g. the game's Button::Decide under
+        // choose_focused: the mods are already in one, and try_to_lock by the mutex's owner is undefined)
+        return;
+    }
     std::unique_lock lock(screen_mutex_, std::try_to_lock);
     if (!lock.owns_lock()) {
         return;  // (another thread's screen is with the mods)
