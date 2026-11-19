@@ -79,6 +79,8 @@
 #include "coop_input.h"
 #include "coop_look.h"
 #include "coop_look_view.h"
+#include "coop_lift_player_game.h"
+#include "coop_objects.h"
 #include "coop_local_game.h"
 #include "coop_local_layer.h"
 #include "coop_local_probe.h"
@@ -1005,6 +1007,11 @@ CoopDraw::Scene DrawScene() {
 }
 
 bool TypeKey(std::uint32_t vk, bool repeat) {
+    // The pause menu's Multiplayer page's field, while it is typed into: every key is its own, the ones it does not
+    // use too (a letter comes again as its character, TypeChar), so none opens the chat box or the cheats panel.
+    if (CoopPauseTab::Key(vk, repeat) || CoopPauseTab::KeysTaken()) {
+        return true;
+    }
     if (CoopPause::Key(vk, repeat)) {   // the Multiplayer tab's field, while it is typed into
         return true;
     }
@@ -1039,6 +1046,10 @@ bool TypeKey(std::uint32_t vk, bool repeat) {
 }
 
 bool TypeChar(std::uint32_t byte) {
+    if (CoopPauseTab::KeysTaken()) {   // the pause menu's Multiplayer page's field (ASCII only: a room name, a password)
+        CoopPauseTab::Char(byte < 0x80 ? byte : 0);
+        return true;
+    }
     if (!g_on) {
         return false;
     }
@@ -1095,7 +1106,7 @@ void SetChatKey(const std::string& key) {
 }
 
 bool KeysTaken() {
-    if (CoopPause::KeysTaken()) {
+    if (CoopPauseTab::KeysTaken() || CoopPause::KeysTaken()) {
         return true;
     }
     if (!g_on) {
@@ -1501,6 +1512,27 @@ bool HasWrap(std::uint32_t id) {
 int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
     if (!g_on || x == nullptr) {
         return 0;
+    }
+    if (id == CoopPlayerInput::kWrapInputOff && CoopLiftPlayerGame::On()) {
+        // Native puppets phase 3 (LICHII_COOP_LIFT_PLAYER=1): another player's Link holds ours, so our Link's
+        // own input check answers "off" (both callers skip their pad read), as for an extra player without a
+        // controller. Only our Link's check: the reading actor ([[[node+8]+8]+0x1f0], node in x19) is ours.
+        thread_local bool lift_held_off = false;
+        if (phase == 1 && std::exchange(lift_held_off, false)) {
+            x[0] = 1;
+            return 0;
+        }
+        if (phase == 0 && CoopLiftPlayerGame::OurInputOff()) {
+            namespace a = CoopPlayerInput::addr;
+            std::uint64_t owner = 0, holder = 0, actor = 0;
+            const auto link = CoopObjects::OurLinkActor();
+            if (link && CoopRuntime::Read(x[19] + a::kNodeOwner, &owner, 8) && owner != 0 &&
+                CoopRuntime::Read(owner + a::kOwnerHolder, &holder, 8) && holder != 0 &&
+                CoopRuntime::Read(holder + a::kHolderActor, &actor, 8) && actor == *link) {
+                lift_held_off = true;
+                return 1;  // (the game's check is not run; phase 1 answers 1)
+            }
+        }
     }
     if (id == CoopPlayerInput::kWrapButtons || id == CoopPlayerInput::kWrapSticks ||
         id == CoopPlayerInput::kWrapInputOff || id == CoopPlayerInput::kWrapControllerGet) {

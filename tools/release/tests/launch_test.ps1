@@ -867,6 +867,20 @@ exit 0
         Check (-not (Find-KitHookshotGameToCopy $cp "$want-x" @($hk))) 'kit-copy: another kit''s game of another stamp -> not copied'
         Check (-not (Find-KitHookshotGameToCopy $hk (Get-KitHookshotStamp $hk) @($hk))) 'kit-copy: a kit never copies from itself'
         Check (-not (Find-KitHookshotGameToCopy $cp $want @($cp, (Join-Path $hk 'nothing')))) 'kit-copy: no other built kit -> not copied'
+        # NVIDIA DLSS (#234): another kit's game is copied only with DLSS as this kit chose (NVIDIA's files only after its own yes)
+        Check (-not (Find-KitHookshotGameToCopy $cp $want @($hk) -Dlss $true)) 'dlss: a kit with DLSS on does not copy a game without it'
+        $hkNgx = Join-Path $hk 'hookshot\game\ngx'
+        Write-File (Join-Path $hkNgx 'nvngx_dlss.dll') 'NVIDIA'
+        try {
+            Check ((Test-KitHookshotDlss (Join-Path $hk 'hookshot\game')) -and -not (Test-KitHookshotDlss $cg)) 'dlss: a game with ngx\nvngx_dlss.dll has DLSS, one without has not'
+            Check (-not (Find-KitHookshotGameToCopy $cp $want @($hk))) 'dlss: a kit without DLSS never copies a game with NVIDIA''s files'
+            Check ((Find-KitHookshotGameToCopy $cp $want @($hk) -Dlss $true) -eq (Join-Path ([System.IO.Path]::GetFullPath($hk)) 'hookshot\game')) 'dlss: a kit with DLSS on copies a game with it'
+        } finally { Remove-Item -LiteralPath $hkNgx -Recurse -Force -ErrorAction SilentlyContinue }
+        # the license link follows the pinned tools' scripts\ngx_sdk.py; without them, NVIDIA's repository
+        $ngxTools = Join-Path $cp 'ngx-tools'
+        Write-File (Join-Path $ngxTools 'scripts\ngx_sdk.py') "COMMIT = `"$('ab' * 20)`"   # (v1)`n"
+        Check ((Get-KitNgxLicenseUrl $ngxTools) -eq "https://github.com/NVIDIA/DLSS/blob/$('ab' * 20)/LICENSE.txt") 'dlss: the license link is the pinned ngx_sdk.py''s commit'
+        Check ((Get-KitNgxLicenseUrl (Join-Path $cp 'no-tools')) -eq 'https://github.com/NVIDIA/DLSS/blob/main/LICENSE.txt') 'dlss: no tools -> the license in NVIDIA''s repository'
     } finally {
         Remove-Item -LiteralPath $cp -Recurse -Force -ErrorAction SilentlyContinue
         Write-File (Join-Path $hk 'hookshot\game-folder.txt') "$other`n"
@@ -1326,12 +1340,21 @@ try {
     Write-File "$cache\fedcba9876543210fedc\game\longshot.exe" 'NEWER BUILD'
     Check ((Find-KitHookshotCachedGame $stampOld $cache) -eq "$cache\0123456789abcdef0123\game") 'revert game: the cache entry of a stamp is found (its CRLF stamp.txt too)'
     Check (-not (Find-KitHookshotCachedGame "$stampOld-x" $cache) -and -not (Find-KitHookshotCachedGame $stampOld "$kc\no-cache")) 'revert game: another stamp, or no cache -> none'
+    # NVIDIA DLSS (#234): a kit that opted in takes only a cached game built with it, and one that did not only one without
+    Check (-not (Find-KitHookshotCachedGame $stampOld $cache -Dlss $true)) 'dlss: a kit with DLSS on does not take a cached game without it'
+    Write-File "$cache\0123456789abcdef0123\game\ngx\nvngx_dlss.dll" 'NVIDIA'
+    Check ((Find-KitHookshotCachedGame $stampOld $cache -Dlss $true) -eq "$cache\0123456789abcdef0123\game" -and
+        -not (Find-KitHookshotCachedGame $stampOld $cache)) 'dlss: a cached game with DLSS goes only to a kit with DLSS on'
+    Remove-Item -LiteralPath "$cache\0123456789abcdef0123\game\ngx" -Recurse -Force
+    # (this kit's game had DLSS once; the kit has no dlss.txt: the copy without DLSS takes NVIDIA's runtime away too)
+    Write-File "$g5\ngx\nvngx_dlss.dll" 'NVIDIA'
     $env:LOCALAPPDATA = "$kc\appdata"; $env:OOT_COOP_NO_SHORTCUT = '1'; $env:OOT_COOP_NO_LONGSHOT_ASK = '1'; $env:OOT_COOP_HS_CACHE = $cache
     $ErrorActionPreference = 'Continue'
     try { $out = (& powershell -NoProfile -ExecutionPolicy Bypass -File "$k5\scripts\hookshot-build.ps1" 2>&1) -join '|'; $code = $LASTEXITCODE }
     finally { $env:LOCALAPPDATA = $keepKc[0]; $env:OOT_COOP_NO_SHORTCUT = $keepKc[1]; Remove-Item env:OOT_COOP_NO_LONGSHOT_ASK, env:OOT_COOP_HS_CACHE -ErrorAction SilentlyContinue; $ErrorActionPreference = 'Stop' }
     Check ($code -eq 0 -and $out -match 'from the game cache on this PC' -and $out -notmatch 'Building the game' -and (Read-File "$g5\longshot.exe") -eq 'OLDER BUILD') "revert game: the cached build is copied in, not built [$code $out]"
     Check ((Read-File "$g5\coop-built-from.txt") -eq $stampOld) 'revert game: the game''s stamp is this version''s'
+    Check (-not (Test-Path -LiteralPath "$g5\ngx")) 'dlss: a copy without DLSS into a kit without it leaves no NVIDIA runtime behind'
     Check ((Read-File "$g5\save\slot_00\progress.sav") -eq 'MY SAVE' -and (Read-File "$g5\longshot_options.ini") -eq 'my graphics' -and
         (Read-File "$g5\romfs\Actor\x.bin") -eq 'my game files' -and (Read-File "$g5\coop.ini") -match 'Saria') 'revert game: saves, settings, coop.ini and the game files stay the player''s'
 } finally {

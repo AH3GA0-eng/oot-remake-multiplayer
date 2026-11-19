@@ -1401,6 +1401,20 @@ std::mutex& PvpMutex() {
     static std::mutex mutex;
     return mutex;
 }
+// Native puppets phase 3 (PlaceOurLink): where another player's Link holds ours, and when it was asked.
+struct OurLinkPut {
+    std::array<float, 3> at{};
+    u64 asked_ms = 0;
+};
+std::mutex& OurLinkPutMutex() {
+    static std::mutex m;
+    return m;
+}
+OurLinkPut& TheOurLinkPut() {
+    static OurLinkPut put;
+    return put;
+}
+
 std::vector<PvpAsk>& PvpAsks() {
     static std::vector<PvpAsk> asks;
     return asks;
@@ -4478,6 +4492,25 @@ private:
         }
         NpcAnim(r, now_us, removes, wish, plays);
         Aggro(r, now_us);
+        // Native puppets phase 3: another player's Link holds ours: our Link is placed first, as a copy is.
+        {
+            OurLinkPut put;
+            {
+                std::lock_guard lock(OurLinkPutMutex());
+                put = TheOurLinkPut();
+            }
+            const u64 now_ms = SteadyNowMs();
+            if (put.asked_ms != 0 && now_ms - put.asked_ms <= 200) {
+                if (const auto link = OurLinkActor()) {
+                    Mover::Pose p;
+                    p.actor = *link;
+                    p.transform[0] = put.at[0];
+                    p.transform[1] = put.at[1];
+                    p.transform[2] = put.at[2];
+                    wish.insert(wish.begin(), p);
+                }
+            }
+        }
         TheMover().Want(main_, std::move(wish), std::move(removes), std::move(plays));
         if (now_us - drift_at_ >= kDriftLogUs) {
             const auto [moved, deleted, played, framed] = TheMover().TakeCounts();
@@ -4836,6 +4869,12 @@ std::optional<std::uint64_t> OurLinkActor() {
         return std::nullopt;
     }
     return actor;
+}
+
+void PlaceOurLink(const std::array<float, 3>& at) {
+    const u64 now = SteadyNowMs();
+    std::lock_guard lock(OurLinkPutMutex());
+    TheOurLinkPut() = OurLinkPut{at, now == 0 ? 1 : now};
 }
 
 void HurtOurLink(std::int32_t quarters, const std::array<float, 3>& at,
