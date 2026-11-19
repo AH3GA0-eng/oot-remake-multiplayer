@@ -98,6 +98,7 @@
 #include "coop_time.h"
 #include "coop_pause.h"
 #include "coop_pause_tab.h"
+#include "coop_longshot_settings.h"
 #include "coop_title.h"
 #include "coop_title_menu.h"
 #include "core/core.h"
@@ -1223,6 +1224,7 @@ bool Start(const HosCoopApi* api) {
     CoopModsRuntime::SetGame(api, TitleHoldWhy);   // (mod API v2: the menu screens' calls)
     CoopTitle::Init(api);
     CoopPauseTab::Init(api);   // the pause menu's Multiplayer tab (patch 0030)
+    CoopLongshotSettings::Init(api);   // Longshot's own settings for the Settings tab (patch 0032; none from an older Hookshot)
     CoopPause::Init(server);
     CoopTestInput::SetMenuOpener(CoopPause::TestMenu);   // (the autotest's menu step; only a commands file asks it)
     CoopLook::StartModule();  // the look chosen in the pause menu (coop_look.h)
