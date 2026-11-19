@@ -55,6 +55,11 @@ struct Host::Slot {
     std::vector<std::pair<std::uint32_t, Callback<coop_mod_hook_fn>>> hook;
     std::vector<Callback<coop_mod_screen_fn>> screen;  // (API v2)
     std::atomic<std::uint64_t> hold{0};                // (API v2) the buttons it holds from the game
+    // (API v2) The screen the hold was set on (object and kind) and when that screen last updated: the hold ends when
+    // that screen stops updating (closed: the HUD's updates do not keep it) or the object updates as another kind.
+    std::atomic<std::uint64_t> hold_screen{0};
+    std::atomic<std::uint32_t> hold_kind{0};
+    std::atomic<std::uint64_t> hold_seen_ms{0};
     std::atomic<bool> said_outside{false};             // (API v2) a v2 call outside on_screen was logged
 
     static Slot* Of(const CoopModApi* self) {
@@ -329,6 +334,9 @@ int ApiHoldInput(const CoopModApi* self, std::uint64_t buttons) {
     if (s == nullptr) {
         return 0;
     }
+    s->hold_screen = t_update->screen;   // (each call ties the hold to the screen it was made on)
+    s->hold_kind = t_update->kind;
+    s->hold_seen_ms = s->game->now_ms ? s->game->now_ms() : 0;
     if (const std::uint64_t was = s->hold.exchange(buttons); was != buttons) {
         s->Say(buttons != 0 ? "holds " + HoldWords(buttons) : "gave the game's input back");
     }
@@ -655,12 +663,24 @@ void Host::Screen(const ScreenUpdate& update) {
         // choose_focused: the mods are already in one, and try_to_lock by the mutex's owner is undefined)
         return;
     }
+    // The holds set on this screen: it is still up (also when another thread's screen is with the mods now), unless
+    // the object now updates as another kind of screen: then the hold ends here, before the mods are called.
+    const std::uint64_t now = game_.now_ms ? game_.now_ms() : 0;
+    for (auto& s : slots_) {
+        if (s->hold.load() == 0 || s->hold_screen.load() != update.screen) {
+            continue;
+        }
+        if (s->hold_kind.load() != update.kind) {
+            if (s->hold.exchange(0) != 0) {
+                s->Say("its hold on the game's input ended (the screen it was set on changed)");
+            }
+            continue;
+        }
+        s->hold_seen_ms = now;
+    }
     std::unique_lock lock(screen_mutex_, std::try_to_lock);
     if (!lock.owns_lock()) {
         return;  // (another thread's screen is with the mods)
-    }
-    if (game_.now_ms) {
-        last_screen_ms_ = game_.now_ms();
     }
     CoopModScreen view{};
     view.size = sizeof view;
@@ -689,17 +709,21 @@ std::uint64_t Host::HeldButtons() {
     if (!started_) {
         return 0;
     }
-    const bool lapsed = !game_.now_ms || game_.now_ms() - last_screen_ms_.load() >= kHoldLapseMs;
+    const std::uint64_t now = game_.now_ms ? game_.now_ms() : 0;
     std::uint64_t held = 0;
     for (auto& s : slots_) {
         const std::uint64_t mine = s->hold.load();
         if (mine == 0) {
             continue;
         }
+        // (the screen it was set on has not updated for kHoldLapseMs: closed, or behind our page; no clock: no hold)
+        // (seen after our clock read, by another thread: not lapsed)
+        const std::uint64_t seen = s->hold_seen_ms.load();
+        const bool lapsed = !game_.now_ms || (now > seen && now - seen >= kHoldLapseMs);
         if (stopped_ || !s->on || lapsed) {
             if (s->hold.exchange(0) != 0) {
                 s->Say(!s->on || stopped_ ? "its hold on the game's input ended (the mod is off)"
-                                          : "its hold on the game's input ended (no menu screen for half a second)");
+                                          : "its hold on the game's input ended (the screen it was set on is gone)");
             }
             continue;
         }

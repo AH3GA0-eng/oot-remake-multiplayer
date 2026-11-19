@@ -224,10 +224,11 @@ struct Run {
         host->Start();
     }
     // One menu screen's update as the runtime hands it over.
-    void Screen(std::uint32_t kind, const std::string& focused, bool ready = true, std::uint64_t buttons = 0) {
+    void Screen(std::uint32_t kind, const std::string& focused, bool ready = true, std::uint64_t buttons = 0,
+                std::uint64_t screen = 0x5000) {
         ScreenUpdate u;
         u.ctx = reinterpret_cast<void*>(std::uintptr_t{7});
-        u.screen = 0x5000;
+        u.screen = screen;
         u.kind = kind;
         u.focused = focused;
         u.save_list_ready = ready;
@@ -519,8 +520,8 @@ TEST_CASE("mod plugins v2: choose, reload and hold work inside the mod's own on_
 
     g.calls.clear();
     g.screen_do = kHoldOff;
-    r.Screen(COOP_MOD_SCREEN_OTHER, "");
-    CHECK(g.calls == std::vector<std::string>{"screen b 0 '' 1 release 1"});
+    r.Screen(COOP_MOD_SCREEN_TITLE, "");
+    CHECK(g.calls == std::vector<std::string>{"screen b 1 '' 1 release 1"});
     CHECK(r.host->HeldButtons() == 0);
     CHECK(r.Logged("mod bee: gave the game's input back"));
 }
@@ -560,7 +561,7 @@ TEST_CASE("mod plugins v2: outside the mod's own on_screen call the v2 calls do 
     CHECK(b->on_screen(b, [](void*, const CoopModScreen*) {}, nullptr) == 0);
 }
 
-TEST_CASE("mod plugins v2: a hold ends with no menu screen for half a second, and with the mod") {
+TEST_CASE("mod plugins v2: a hold ends when its screen has not updated for half a second, and with the mod") {
     Run r;
     g.screen_do = kHoldOn;
     r.Screen(COOP_MOD_SCREEN_TITLE, "Pa_Button_00");
@@ -568,7 +569,7 @@ TEST_CASE("mod plugins v2: a hold ends with no menu screen for half a second, an
     CHECK(r.host->HeldButtons() == COOP_MOD_HOLD_ALL);
     g.now += 1;
     CHECK(r.host->HeldButtons() == 0);
-    CHECK(r.Logged("mod bee: its hold on the game's input ended (no menu screen for half a second)"));
+    CHECK(r.Logged("mod bee: its hold on the game's input ended (the screen it was set on is gone)"));
 
     g.screen_do = kHoldOn | kThrow;
     r.Screen(COOP_MOD_SCREEN_TITLE, "Pa_Button_00");
@@ -636,4 +637,56 @@ TEST_CASE("mod plugins v2: a save list read the game refuses (off the title) ans
     g.reload_ok = 1;
     CHECK(g.calls == std::vector<std::string>{"screen b 2 'Pa_Save_00' 1 reload 0"});
     CHECK_FALSE(r.Logged("asked the game to read its save list again"));
+}
+
+TEST_CASE("mod plugins v2: the HUD's updates do not keep a hold made on the title (the mod missed its screen change)") {
+    Run r;
+    g.screen_do = kHoldOn;
+    r.Screen(COOP_MOD_SCREEN_TITLE, "Pa_Button_00");
+    CHECK(r.host->HeldButtons() == COOP_MOD_HOLD_ALL);
+    g.screen_do = 0;   // (the mod's bug: it never gives the input back)
+    for (int i = 0; i < 40; ++i) {   // (gameplay: only the HUD, another object, updates every frame)
+        g.now += 16;
+        r.Screen(COOP_MOD_SCREEN_OTHER, "", true, 0, 0x6000);
+    }
+    CHECK(r.host->HeldButtons() == 0);   // (40 * 16 ms > half a second: the player moves again)
+    CHECK(r.Logged("mod bee: its hold on the game's input ended (the screen it was set on is gone)"));
+}
+
+TEST_CASE("mod plugins v2: its own screen's updates keep a hold, other screens' alongside do not end it") {
+    Run r;
+    g.screen_do = kHoldOn;
+    r.Screen(COOP_MOD_SCREEN_TITLE, "Pa_Button_00");
+    g.screen_do = 0;
+    for (int i = 0; i < 100; ++i) {
+        g.now += 16;
+        r.Screen(COOP_MOD_SCREEN_OTHER, "", true, 0, 0x6000);   // (the HUD)
+        r.Screen(COOP_MOD_SCREEN_TITLE, "Pa_Button_00");        // (the title, still up)
+    }
+    CHECK(r.host->HeldButtons() == COOP_MOD_HOLD_ALL);
+    CHECK_FALSE(r.Logged("its hold on the game's input ended"));
+}
+
+TEST_CASE("mod plugins v2: a hold ends at once when its screen object updates as another kind") {
+    Run r;
+    g.screen_do = kHoldA;
+    r.Screen(COOP_MOD_SCREEN_LOAD_LIST, "Pa_Save_00");
+    CHECK(r.host->HeldButtons() == 1);
+    g.screen_do = 0;
+    r.Screen(COOP_MOD_SCREEN_LOAD_QUESTION, "Pa_Button_00");   // (the same object, now the question)
+    CHECK(r.host->HeldButtons() == 0);
+    CHECK(r.Logged("mod bee: its hold on the game's input ended (the screen it was set on changed)"));
+}
+
+TEST_CASE("mod plugins v2: a hold made again on the next screen moves with it") {
+    Run r;
+    g.screen_do = kHoldOn;
+    r.Screen(COOP_MOD_SCREEN_TITLE, "Pa_Button_00");
+    r.Screen(COOP_MOD_SCREEN_LOAD_LIST, "Pa_Save_00", true, 0, 0x7000);   // (the mod holds on the load list too)
+    g.screen_do = 0;
+    for (int i = 0; i < 40; ++i) {   // (the title is gone; the load list stays up)
+        g.now += 16;
+        r.Screen(COOP_MOD_SCREEN_LOAD_LIST, "Pa_Save_00", true, 0, 0x7000);
+    }
+    CHECK(r.host->HeldButtons() == COOP_MOD_HOLD_ALL);
 }

@@ -59,7 +59,7 @@ struct ScreenUpdate {
     std::uint64_t buttons = 0;    // player 1's buttons before any hold
 };
 
-// A hold ends when no menu screen has updated for this long.
+// A hold ends when the menu screen it was set on has not updated for this long.
 inline constexpr std::uint64_t kHoldLapseMs = 500;
 
 class Host {
@@ -91,7 +91,7 @@ public:
     // thread is in one.
     void Screen(const ScreenUpdate& update);
     // (API v2) The buttons the mods hold from the game now (COOP_MOD_HOLD_ALL: the sticks too), 0 none. A hold whose mod
-    // is off, or with no menu screen for kHoldLapseMs, ends here (with a line).
+    // is off, or whose screen (the one it was set on) has not updated for kHoldLapseMs, ends here (with a line).
     std::uint64_t HeldButtons();
 
     // The ids of the mods running now, in load order.
@@ -111,7 +111,6 @@ private:
     std::atomic<bool> started_{false};
     std::atomic<bool> stopped_{false};
     std::mutex screen_mutex_;                    // one screen update at a time
-    std::atomic<std::uint64_t> last_screen_ms_{0};
 };
 
 // Runs fn(arg); false when it crashed (an access violation or an exception leaving it). Without structured

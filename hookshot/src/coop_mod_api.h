@@ -147,8 +147,10 @@ typedef struct CoopModApi {
     /* The buttons the game does not get from player 1 while held (NpadButton bits, as CoopModScreen's `buttons`):
        COOP_MOD_HOLD_ALL for all of them and the sticks (the mod's own screen is in front), a few to take one choice
        (A on a focused button: the mod sees the press in `buttons` and acts itself), 0 to give everything back. Each call
-       replaces this mod's last; the mods' holds add up. The hold ends by itself when no menu screen has updated for half
-       a second, and when the mod is switched off. 1 when done. */
+       replaces this mod's last and ties it to the screen it is made on; the mods' holds add up. The hold ends by itself
+       when that screen has not updated for half a second (it closed; other screens such as the HUD do not keep it) or
+       updates as another kind of screen, and when the mod is switched off. A mod keeps a hold across screens by
+       calling hold_input again on the next one. 1 when done. */
     int (*hold_input)(const struct CoopModApi *self, uint64_t buttons);
 } CoopModApi;
 
