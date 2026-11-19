@@ -5,6 +5,7 @@
 mark start
 give PouchData.Item_Boomerang.StockNum
 give hookshot
+give PouchData.Item_Ocarina_Fairy.StockNum
 wait 900
 place -35.7 98.3 11.0
 wait 30
@@ -14,7 +15,7 @@ wait 60
 assign Boomerang
 wait 30
 mark ready
-# child segment: 416 ticks from here (A waits the same)
+# child segment: 1044 ticks from here (A waits the same): boomerang 416 + Ocarina 628
 hold ZR 10
 mark boom1-thrown
 wait 6
@@ -53,6 +54,20 @@ mark boom2-g
 wait 6
 mark boom2-h
 wait 120
+# Ocarina (#152): B faces A, takes it out and plays one note, then puts it away (628 ticks)
+toward -35.7 0 10
+wait 30
+press DLEFT 12
+wait 240
+mark oca-out
+press A 12
+wait 60
+mark oca-note
+press B 12
+wait 120
+press B 12
+wait 120
+mark oca-away
 wait 60
 # adult segment: both games at once
 setflag Sequence_IsChildhood 0
