@@ -373,6 +373,7 @@ struct Session {
     bool password_shown = false;   // the host's Session view shows it now (its rows' A hides it again)
     bool can_resync = false;    // a guest whose game can take the host's save again (CoopSave::CanResync)
     int listed = 0;         // the Players view: how many players it lists
+    int self = -1;          // the Players view: our own place in its list (-1 not listed): no view of our own
     int page = 0;           // the Players view: its page (PlayerIndex)
     int player = 0;         // a player's view: 0 that player left, 1 it is us, 2 another player
 };
@@ -447,6 +448,37 @@ private:
     int target_ = -1, clicked_ = -1, step_from_ = -1;
     std::uint64_t since_ = 0, clicked_ms_ = 0, step_ms_ = 0;
 };
+
+// The game's cursor kept on the Multiplayer page's shown rows. The game walks its cursor over every button of the
+// pages screen, hidden ones too: our rows with nothing on them (ApplyBlankRows) and System's own buttons under our page
+// (Pa_Button_05 and 06, below Back). A tester's run (2026-11-19) had the cursor on those, out of sight: an A there was
+// no row's ("row 5 chosen: nothing"), and the mouse's steps to Back and the one Up off a row just hidden undid each
+// other, so the cursor went between the first row and Back without end. Now the cursor on a hidden button goes on the
+// way it came (a press each step, one read held and one let go), and back up from past our rows; at the end of the
+// rows (the cursor did not move) the other way.
+class RowSkip {
+public:
+    static constexpr std::uint64_t kStepWaitMs = 150;   // a step not seen as the cursor's move: the next after this
+    struct In {
+        std::uint64_t now_ms = 0;
+        int focused = -1;        // the game's cursor's button as a row (Pa_Button_NN: NN), -1 none or another
+        bool hidden = false;     // ... and that button is not shown
+        int rows = kRows;        // the page's rows (a higher row is System's own)
+        bool up = false, down = false;   // the player's own up or down this read
+        bool mouse_up = false, mouse_down = false;   // the mouse's step this read (MouseRows)
+    };
+    // The pad bits to add for the game this read (kPadUp, kPadDown or none).
+    std::uint64_t Step(const In& in);
+    // Whether the cursor is on a hidden button now (the last Step's): the mouse's own steps wait meanwhile.
+    bool Skipping() const { return skipping_; }
+    void Reset();
+
+private:
+    int dir_ = -1;   // the way the cursor went last (-1 up, +1 down)
+    bool held_ = false, skipping_ = false;
+    int from_ = -1;
+    std::uint64_t step_ms_ = 0;
+};
 // --- The pages' slide (Page::Do::slide) ---
 // The game slides its pages a page's width apart (N_MenuChange_01's 4280) when L or R changes the page: measured in a
 // run (2026-11-19, the strip's own x each update from Items to System), 4280 in about 430 ms, a fast ease-out with no
@@ -464,6 +496,7 @@ std::pair<float, float> SlideOffsets(int dir, float p);
 // A row of the game browser's list (View::kLan, ListLines): its left text and its right one; both "" for a row not shown.
 struct ListLine {
     std::string name, value;   // the row's left text and its right one; both "" for a row not shown
+    RowAction act = RowAction::kNone;   // an A on this line of the details (their Auto-rejoin), else nothing
 };
 
 struct SessionView {
@@ -478,6 +511,8 @@ struct SessionView {
     std::string note;                 // what the last copy on the page did, a few seconds (CoopPause::PageNote)
     std::string host_name;            // a guest: the host's name ("" not known)
     std::string why;                  // co-op's last problem or hint (its status message), "" none
+    int problem = 0;                  // ... as its number (HOS_COOP_PROBLEM_*), 0 none: the known ones in words of ours
+    bool port_open = false;           // hosting: the router forwards the port (UPnP, PCP or NAT-PMP)
     std::string player_name;          // a player's view: who
     // 0.11.6 (owner OK, 2026-11-19): this kit's release, "Squadala! v0.11.6" (CoopWindowBrand::TitleOf), "" none
     // (a developer's build). The details list's last line (DetailLines), "Release".

@@ -2,6 +2,8 @@
 // coop_pause_tab.h's logic: no game reads or calls, no log (the tests drive it).
 #include "coop_pause_tab.h"
 
+#include "hos_coop_host.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -537,6 +539,37 @@ void MouseRows::Reset() {
     *this = MouseRows{};
 }
 
+std::uint64_t RowSkip::Step(const In& in) {
+    if (in.up || in.mouse_up) dir_ = -1;
+    if (in.down || in.mouse_down) dir_ = 1;
+    if (in.focused < 0) {   // (no button focused for a read or two while the cursor steps: what was, kept)
+        held_ = false;
+        return 0;
+    }
+    skipping_ = in.hidden || in.focused >= in.rows;
+    if (!skipping_) {
+        from_ = -1, held_ = false;
+        return 0;
+    }
+    if (held_) {
+        held_ = false;   // (let go a read between steps: each is a press of its own)
+        return 0;
+    }
+    if (in.up || in.down) return 0;   // (the player's own step moves it this read)
+    if (from_ == in.focused && in.now_ms - step_ms_ < kStepWaitMs) return 0;   // (not moved yet)
+    if (in.focused >= in.rows) {
+        dir_ = -1;   // (past our rows: back up to them)
+    } else if (from_ == in.focused) {
+        dir_ = -dir_;   // (it did not move: an end of the rows, the other way)
+    }
+    from_ = in.focused, step_ms_ = in.now_ms, held_ = true;
+    return dir_ < 0 ? kPadUp : kPadDown;
+}
+
+void RowSkip::Reset() {
+    *this = RowSkip{};
+}
+
 RowAction ActionFor(int row, const Session& s) {
     switch (row) {
     case kRowSession:
@@ -547,7 +580,8 @@ RowAction ActionFor(int row, const Session& s) {
         return s.in_one || s.by_launcher ? RowAction::kViewSession : RowAction::kViewJoin;
     case kRowPlayers:
         if (!s.in_one && !s.by_launcher) return RowAction::kViewLan;   // (not in a session: the games on this network)
-        return RowAction::kViewPlayers;
+        // (just us, or nobody known yet: no list to open; a tester expected nothing there with "Players: just you")
+        return s.listed > 1 ? RowAction::kViewPlayers : RowAction::kNone;
     case kRowLetIn:
         if (!s.in_one && !s.by_launcher) return RowAction::kAutoRejoin;   // (not in a session: the switch)
         if (!s.hosting) return s.in_one && s.can_resync ? RowAction::kResync : RowAction::kNone;   // (only a host lets in)
@@ -590,7 +624,8 @@ RowAction ActionFor(View view, int row, const Session& s) {
     case View::kMain: break;
     case View::kPlayers:
         if (s.listed > kRows - 1 && row == kRows - 2) return RowAction::kMorePlayers;
-        return PlayerIndex(s.listed, s.page, row) >= 0 ? RowAction::kViewPlayer : RowAction::kNone;
+        if (const int i = PlayerIndex(s.listed, s.page, row); i >= 0 && i != s.self) return RowAction::kViewPlayer;
+        return RowAction::kNone;   // (our own row: nothing to do to ourselves)
     case View::kPlayer:
         if (s.player != 2) return RowAction::kNone;   // (us, or they left: nothing to do to them)
         if (row == 0) return RowAction::kTeleport;
@@ -1122,7 +1157,34 @@ std::vector<ListLine> DetailLines(View view, const SessionView& v) {
     } else {
         header = v.s.by_launcher ? "Co-op came with the game" : "Not in a session";
     }
-    lines[0] = ListLine{FitTo(header, kListNameChars), ""};
+    // (the header's value: hosting, who can reach this game. The header had none: the game's cursor frame, which
+    // Longshot's mouse puts on the line under it, framed an empty box there, a tester's screenshot 2026-11-19)
+    std::string reach;
+    if (v.s.hosting && v.says.empty()) {
+        if (v.port_open || !v.room.empty() || v.s.invite) {
+            reach = "Online";
+        } else if (v.problem == HOS_COOP_PROBLEM_NO_INVITE_CODE) {
+            reach = "This network";
+        } else {
+            reach = "Starting...";
+        }
+    }
+    lines[0] = ListLine{FitTo(header, kListNameChars), FitTo(reach, kListValueChars)};
+    // The host's known problems and hints in words of ours, one line each (the Router line above says the port's
+    // state): the server's message ("the router did not open the port (UPnP, PCP and NAT-PMP are off on it, or it said
+    // no)") cut over three lines read as pieces of a sentence (a tester's screenshot, 2026-11-19). Other messages as
+    // they are, with a capital letter.
+    if (v.s.hosting && v.says.empty()) {
+        if (v.problem == HOS_COOP_PROBLEM_UPNP_REFUSED) {
+            why = !v.room.empty() ? "Online friends: room name" : "Online friends: invite code";
+        } else if (v.problem == HOS_COOP_PROBLEM_NO_INVITE_CODE) {
+            why = "Only this network can join";
+        } else if (v.problem == HOS_COOP_PROBLEM_SYMMETRIC_NAT) {
+            why = "Strict router: try a relay";
+        } else if (!why.empty() && why[0] >= 'a' && why[0] <= 'z') {
+            why[0] = static_cast<char>(why[0] - 'a' + 'A');
+        }
+    }
     if (v.s.hosting && v.says.empty()) {
         add("Room", !v.room.empty() ? v.room : v.s.invite ? "Invite code" : "Coming...");
         add("Players", std::to_string(std::max(v.players, 1)));
@@ -1143,11 +1205,19 @@ std::vector<ListLine> DetailLines(View view, const SessionView& v) {
             }
         }
         if (!v.asking.empty()) add("Asking to join", std::to_string(v.asking.size()));   // (nobody: the Let in row says so)
+        if (v.port_open) {
+            add("Router", "Port open");
+        } else if (v.problem == HOS_COOP_PROBLEM_UPNP_REFUSED || v.problem == HOS_COOP_PROBLEM_NO_INVITE_CODE) {
+            add("Router", "Port shut");
+        }
     } else if (v.s.in_one && !v.connecting && v.says.empty() && v.turned_away.empty()) {
         if (!v.host_name.empty()) add("Host", v.host_name);
         if (v.players > 0) add("Players", std::to_string(v.players));
     } else if (!v.s.in_one && !v.s.by_launcher && !v.s.failed && v.says.empty() && v.turned_away.empty()) {
         add("Auto-rejoin", !v.s.auto_rejoin ? "Off" : v.s.rejoining ? "Trying..." : "On");
+        // (it looks like a setting of the game's Options, so an A on it turns it on or off, as the row of the same
+        // name: a tester pressed it there and nothing happened)
+        lines[at - 1].act = RowAction::kAutoRejoin;
     }
     // (co-op's problem or hint as lines of text on the lines left, the release on the last when it is free: the hint
     // takes it when it needs it)

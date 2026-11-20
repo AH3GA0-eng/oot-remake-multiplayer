@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "coop_pause_tab.h"
+#include "hos_coop_host.h"
 
 namespace {
 
@@ -449,12 +450,19 @@ TEST_CASE("pause tab: each row leads to co-op's own part, by what co-op is doing
 
     for (const Session& s : {idle, joined, hosting_no_code, hosting}) {
         CHECK(ActionFor(kRowSession, s) == (s.in_one ? RowAction::kViewSession : RowAction::kHost));
-        // (not in a session, the Players row is the games on this network, and Let in is auto-rejoin's switch)
-        CHECK(ActionFor(kRowPlayers, s) == (s.in_one ? RowAction::kViewPlayers : RowAction::kViewLan));
+        // (not in a session, the Players row is the games on this network, and Let in is auto-rejoin's switch; in one
+        // with nobody else known, nothing: below)
+        CHECK(ActionFor(kRowPlayers, s) == (s.in_one ? RowAction::kNone : RowAction::kViewLan));
         CHECK(ActionFor(kRowLeave, s) == (s.in_one ? RowAction::kConfirmLeave : RowAction::kNone));
         CHECK(ActionFor(-1, s) == RowAction::kNone);              // (no row under the cursor)
         CHECK(ActionFor(kRows, s) == RowAction::kNone);
     }
+    // The Players row opens the list once another player is in: "Players: just you" has nothing to open (a tester).
+    Session two = hosting;
+    two.listed = 1;
+    CHECK(ActionFor(kRowPlayers, two) == RowAction::kNone);
+    two.listed = 2;
+    CHECK(ActionFor(kRowPlayers, two) == RowAction::kViewPlayers);
     // Join code: the host copies its room name or code (the row says so); a host whose code is still coming, or a
     // guest, the Session view; alone the Join view.
     CHECK(ActionFor(kRowJoinCode, hosting) == RowAction::kCopyCode);
@@ -964,6 +972,122 @@ TEST_CASE("pause tab: the details list on the right: the session, why co-op fail
     CHECK(d[3].value.empty());
 }
 
+TEST_CASE("pause tab: the details list: who can reach a host, the router in words of ours, Auto-rejoin's A") {
+    // The header's value says who can reach the host (it had none: the game's cursor framed an empty box there).
+    SessionView hv;
+    hv.s.hosting = hv.s.in_one = hv.s.has_password = true;
+    hv.version = "Squadala! v0.11.7";
+    hv.players = 1;
+    CHECK(DetailLines(View::kMain, hv)[0].value == "Starting...");
+    hv.s.invite = hv.s.code = true;
+    std::vector<ListLine> d = DetailLines(View::kMain, hv);
+    CHECK(d[0].name == "Hosting");
+    CHECK(d[0].value == "Online");
+    // The router kept its port shut: a line of ours for it and one hint line, the release still on the last.
+    hv.problem = HOS_COOP_PROBLEM_UPNP_REFUSED;
+    hv.why = "the router did not open the port (UPnP, PCP and NAT-PMP are off on it, or it said no)";
+    d = DetailLines(View::kMain, hv);
+    CHECK(d[1].name == "Room");
+    CHECK(d[1].value == "Invite code");
+    CHECK(d[4].name == "Router");
+    CHECK(d[4].value == "Port shut");
+    CHECK(d[5].name == "Online friends: invite code");
+    CHECK(d[5].value.empty());
+    CHECK(d[6].name == "Release");
+    for (const ListLine& l : d) {
+        CHECK(l.name.find("UPnP") == std::string::npos);
+        CHECK(l.name.size() <= kListNameChars);
+        CHECK(l.value.size() <= kListValueChars);
+    }
+    hv.room = "forest-gang";
+    CHECK(DetailLines(View::kMain, hv)[5].name == "Online friends: room name");
+    // No invite code and no room: this network only.
+    SessionView lan;
+    lan.s.hosting = lan.s.in_one = true;
+    lan.problem = HOS_COOP_PROBLEM_NO_INVITE_CODE;
+    lan.why = "no invite code: STUN did not answer";
+    d = DetailLines(View::kMain, lan);
+    CHECK(d[0].value == "This network");
+    CHECK(d[1].value == "Coming...");
+    // The port open: said so, no hint.
+    SessionView open;
+    open.s.hosting = open.s.in_one = open.s.invite = true;
+    open.port_open = true;
+    d = DetailLines(View::kMain, open);
+    CHECK(d[0].value == "Online");
+    CHECK(d[4].name == "Router");
+    CHECK(d[4].value == "Port open");
+    // Another hint keeps its words, with a capital letter.
+    open.why = "voice chat is off";
+    CHECK(DetailLines(View::kMain, open)[5].name == "Voice chat is off");
+    // Not in a session: the Auto-rejoin line is the switch's (an A on it), the others nothing.
+    SessionView idle;
+    idle.version = "Squadala! v0.11.7";
+    d = DetailLines(View::kMain, idle);
+    CHECK(d[1].name == "Auto-rejoin");
+    CHECK(d[1].act == RowAction::kAutoRejoin);
+    CHECK(d[0].act == RowAction::kNone);
+    CHECK(d[2].act == RowAction::kNone);
+}
+
+TEST_CASE("pause tab: the game's cursor on a hidden button goes on the way it came, past the rows back up") {
+    using In = RowSkip::In;
+    const auto at = [](std::uint64_t t, int focused, bool hidden) {
+        In i;
+        i.now_ms = t, i.focused = focused, i.hidden = hidden;
+        return i;
+    };
+    // The Players view with one player: row 0 and Back (4) shown, 1 to 3 hidden. Down from row 0 lands on 1: on down.
+    RowSkip s;
+    std::uint64_t t = 1000;
+    In i = at(t, 0, false);
+    i.down = true;
+    CHECK(s.Step(i) == 0);              // (the player's own step; shown row: nothing)
+    CHECK(s.Step(at(t += 16, 1, true)) == kPadDown);
+    CHECK(s.Skipping());
+    CHECK(s.Step(at(t += 16, 1, true)) == 0);          // (let go)
+    CHECK(s.Step(at(t += 16, 1, true)) == 0);          // (not moved yet: wait)
+    CHECK(s.Step(at(t += 16, 2, true)) == kPadDown);
+    CHECK(s.Step(at(t += 16, 2, true)) == 0);
+    CHECK(s.Step(at(t += 16, -1, false)) == 0);        // (no button focused a read: as it was)
+    CHECK(s.Step(at(t += 16, 3, true)) == kPadDown);
+    CHECK(s.Step(at(t += 16, 3, true)) == 0);
+    CHECK(s.Step(at(t += 16, 4, false)) == 0);         // (Back: there)
+    CHECK(!s.Skipping());
+    // Up from Back: on up to row 0.
+    i = at(t += 16, 4, false);
+    i.up = true;
+    CHECK(s.Step(i) == 0);
+    CHECK(s.Step(at(t += 16, 3, true)) == kPadUp);
+    CHECK(s.Step(at(t += 16, 3, true)) == 0);
+    CHECK(s.Step(at(t += 16, 2, true)) == kPadUp);
+    // Past our rows (System's own Pa_Button_05 under Back): back up, whichever way it came.
+    RowSkip past;
+    i = at(t += 16, 4, false);
+    i.down = true;
+    CHECK(past.Step(i) == 0);
+    CHECK(past.Step(at(t += 16, 5, true)) == kPadUp);
+    CHECK(past.Step(at(t += 16, 5, true)) == 0);
+    CHECK(past.Step(at(t += 16, 4, false)) == 0);
+    // At an end of the rows (the cursor did not move): the other way.
+    RowSkip end;
+    i = at(t += 16, 0, false);
+    i.up = true;
+    CHECK(end.Step(i) == 0);
+    CHECK(end.Step(at(t += 16, 1, true)) == kPadUp);   // (a row just hidden under the cursor: up, as it last went)
+    CHECK(end.Step(at(t += 16, 1, true)) == 0);
+    CHECK(end.Step(at(t += 200, 1, true)) == kPadDown);   // (still there: the other way)
+    // The mouse's step counts as the way it went; the player's own press this read is left to the game.
+    RowSkip mouse;
+    i = at(t += 16, 2, true);
+    i.mouse_down = true;
+    CHECK(mouse.Step(i) == kPadDown);
+    i = at(t += 16, 3, true);
+    i.up = true;
+    CHECK(mouse.Step(i) == 0);
+    CHECK(mouse.Step(at(t += 16, 3, true)) == kPadUp);
+}
+
 TEST_CASE("pause tab: the Players view's pages and a player's view, with the host's controls") {
     // Up to four players a page; more: three a page, the fourth row turns it.
     CHECK(PlayerIndex(2, 0, 0) == 0);
@@ -984,6 +1108,10 @@ TEST_CASE("pause tab: the Players view's pages and a player's view, with the hos
     list.listed = 5;
     CHECK(ActionFor(View::kPlayers, 0, list) == RowAction::kViewPlayer);
     CHECK(ActionFor(View::kPlayers, 3, list) == RowAction::kMorePlayers);
+    list.self = 1;   // (our own row: nothing to do to ourselves)
+    CHECK(ActionFor(View::kPlayers, 1, list) == RowAction::kNone);
+    CHECK(ActionFor(View::kPlayers, 2, list) == RowAction::kViewPlayer);
+    list.self = -1;
     list.page = 1;
     CHECK(ActionFor(View::kPlayers, 2, list) == RowAction::kNone);
     SessionView lv;
