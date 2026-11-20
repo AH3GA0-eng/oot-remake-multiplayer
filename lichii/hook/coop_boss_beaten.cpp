@@ -230,18 +230,29 @@ std::vector<Write> Apply::Check(const std::optional<std::string>& scene, bool pl
             // In (or before) the boss room while our own death of it may run (its event writes the set itself):
             // after it. Row 159: not until we walk out. The shared quest has the host's step at once, so the room's
             // logic shows the boss again live while our warp stays up (a mix); the Bools go back there too.
+            Note(room, 1, std::string(set->boss) + ": the put-back after the host's save load waits: our own death "
+                                                   "of it may run here (in its area)");
             ++it;
             continue;
         }
         const std::optional<std::uint32_t> step = read(set->quest);
         if (!step) {
+            Note(room, 2, std::string(set->boss) + ": the put-back after the host's save load waits: its quest is "
+                                                   "not read");
             ++it;  // unread: the next frame
             continue;
         }
-        it = reverts_.erase(it);
         if (std::find(set->below.begin(), set->below.end(), *step) == set->below.end()) {
-            continue;  // the host's save has the boss beaten (or the quest past it): ours stays
+            // The host's save has the boss beaten (or the quest past it): ours stays. Row 159 (run 034533): kept,
+            // not dropped: the host's step reaches our quest through the flag watcher's store, maybe a frame
+            // after the reset is seen; a drop at that first read left the guest's warp up while the shared quest,
+            // set a moment later, made the boss again. Only a later reset or the boss beaten again ends it.
+            Note(room, 3, std::string(set->boss) + ": after the host's save load its quest reads beaten: our "
+                                                   "flags stay (until it reads alive)");
+            ++it;
+            continue;
         }
+        it = reverts_.erase(it);
         for (const BeatenBool& b : set->bools) {
             const std::optional<bool> alive = AliveValue(*set, b, *step);
             const std::optional<std::uint32_t> now = read(b.hash);
@@ -391,8 +402,21 @@ void Apply::HostAlive(std::uint16_t known, std::uint16_t alive, bool quests_shar
     }
 }
 
+void Apply::Note(std::uint8_t room, std::uint8_t reason, std::string line) {
+    const auto key = static_cast<std::uint16_t>(room << 8 | reason);
+    if (std::find(noted_.begin(), noted_.end(), key) == noted_.end()) {
+        noted_.push_back(key);
+        notes_.push_back(std::move(line));
+    }
+}
+
+std::vector<std::string> Apply::TakeNotes() {
+    return std::exchange(notes_, {});
+}
+
 void Apply::HostReset(bool quests_shared) {
     reverts_.clear();
+    noted_.clear();
     if (!quests_shared) {
         return;  // LICHII_COOP_QUESTS=0: no quest follows the host, each game's boss stays its own
     }

@@ -216,8 +216,13 @@ public:
     // quest past that (we took the warp on: the sage, the next dungeon) is left as ours.
     void HostAlive(std::uint16_t known, std::uint16_t alive, bool quests_shared);
     void Reset();
+    // Lines for the log: why a put-back waits (once per boss and reason after each host reset).
+    std::vector<std::string> TakeNotes();
 
 private:
+    void Note(std::uint8_t room, std::uint8_t reason, std::string line);
+    std::vector<std::string> notes_;
+    std::vector<std::uint16_t> noted_;
     std::vector<std::uint8_t> reverts_;  // HostReset's rooms not yet checked
     std::vector<std::uint8_t> rewinds_;  // HostAlive's rooms not yet checked (row 159)
     std::optional<std::string> scene_;

@@ -1089,3 +1089,39 @@ TEST_CASE("boss beaten: with the quests read, the host sends BOSS_ALIVE and the 
         }
     }
 }
+
+TEST_CASE("boss beaten: the host's step reaching our quest a frame after its reset still puts the Bools back (row 159)") {
+    // Run 20261120-034533: the guest read its quest in the frame the reset was seen, still at the beaten step (the
+    // host's step comes through the flag watcher's store a moment later): the put-back was dropped there, the warp
+    // stayed while the shared quest made Gohma again. Now it waits until the quest reads alive. Every shared boss.
+    for (const BeatenSet& set : CoopBossBeaten::Sets()) {
+        const CoopBoss::Room* room = CoopBoss::RoomByIndex(set.room);
+        if (!Shared(set) || room == nullptr) {
+            continue;
+        }
+        CAPTURE(set.boss);
+        Flags f = BeatenThenReset(set, set.step);  // the reset seen, our quest not yet moved back
+        const std::function<bool(std::uint8_t)> no_death = [](std::uint8_t) { return false; };
+        Apply a;
+        a.HostReset(true);
+        CHECK(a.Check(std::string(room->scene), true, {}, std::ref(f), kNear, no_death).empty());
+        const std::vector<std::string> notes = a.TakeNotes();
+        CHECK(std::any_of(notes.begin(), notes.end(),
+                          [](const std::string& n) { return n.find("its quest reads beaten") != std::string::npos; }));
+        CHECK(a.Check(std::string(room->scene), true, {}, std::ref(f), kNear, no_death).empty());
+        CHECK(a.TakeNotes().empty());  // once
+        f.v[set.quest] = set.below.back();  // the host's step arrives
+        const std::vector<Write> w = a.Check(std::string(room->scene), true, {}, std::ref(f), kNear, no_death);
+        REQUIRE_FALSE(w.empty());
+        CHECK(std::all_of(w.begin(), w.end(), [](const Write& x) { return x.revert && !x.is_enum; }));
+        CHECK(a.Check(std::string(room->scene), true, {}, std::ref(f), kNear, no_death).empty());  // once
+    }
+    // A host save that really has the boss beaten: nothing written, however long.
+    const BeatenSet& g = Gohma();
+    Flags kept = BeatenThenReset(g, g.step);
+    Apply b;
+    b.HostReset(true);
+    for (int i = 0; i < 5; ++i) {
+        CHECK(b.Check(std::string("KokiriForest"), true, {}, std::ref(kept), kAway).empty());
+    }
+}

@@ -1514,6 +1514,9 @@ public:
                          w.is_enum ? std::string("-> ") + set->step_name : std::string("= ") + std::to_string(w.value),
                          ok ? "(written)" : "(could not write)");
             }
+            for (const std::string& line : boss_beaten_.TakeNotes()) {
+                LOG_INFO(Core, "coop: boss: {}", line);
+            }
         }
         {  // our own key spends, for the locks' give-back (docs/dungeon.md, "Locked doors")
             std::vector<std::uint32_t> drops;
