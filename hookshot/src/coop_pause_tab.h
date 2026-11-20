@@ -1,19 +1,24 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The pause menu's Multiplayer tab (issue 264, piece 4; docs/hookshot.md "The
-// pause menu's Multiplayer tab"): a fifth tab after System in the game's own
-// pause menu, and its page. The pack adds the layouts, both stored hidden
-// (tools/puppet_pack/pause_menu.py): the tab Pa_Category_04 on the tab strip,
-// the page Pa_Coop_00 (a copy of the System page) where a shown page sits.
-// Patch 0030 hands the module every menu screen's update (hos_coop_game_screen)
-// and asks it which page the mouse's tab strip counts (hos_coop_game_pause_page).
+// The pause menu's Multiplayer and Longshot Settings pages (issue 264, piece 4;
+// docs/hookshot.md "The pause menu's Multiplayer page"): two pages opened from
+// two buttons the pack adds to the game's own System page, so the tab strip
+// stays the game's four tabs. The pack adds the layouts, stored hidden
+// (tools/puppet_pack/pause_menu.py): the buttons Pa_Button_05 (Longshot
+// Settings) and Pa_Button_06 (Multiplayer) of PaSystemMenu_00, and the pages
+// Pa_Coop_00 and Pa_Settings_00 (copies of the System page) where a shown page
+// sits. Patch 0030 hands the module every menu screen's update
+// (hos_coop_game_screen) and asks it which page the mouse's tab strip counts
+// (hos_coop_game_pause_page).
 //
-// The game keeps System as its page while ours shows (agreed on #264): R or ZR
-// on System, with the menu open and still and nothing over it, shows our page
-// over System's and lights the fifth tab; L or ZL gives System back. While it
-// shows, the pad is ours but B, + and - (the game closes the menu, or goes to
-// the Minus menu, as from any page), so nothing reaches the System page under
-// it. The menu closing or leaving System, a window over it, or Game Over gives
-// System back at once. Works with co-op idle (solo).
+// The game keeps System as its page while ours shows (agreed on #264): A on one
+// of the two buttons, with the menu open and still and nothing over it, shows
+// that page in System's place at once. B on the page's rows gives System back
+// (the cursor on the button again); L or R gives System back and is the game's
+// (on to its next page). While a page shows, the pad is ours but + and - and up
+// and down (the game closes the menu, goes to the Minus menu, or moves its
+// cursor over our rows), so nothing else reaches the System page under it. The
+// menu closing or leaving System, a window over it, or Game Over gives System
+// back at once. Works with co-op idle (solo).
 //
 // Logic only here (no game reads or calls, no log): Page and Probe, driven by
 // tests/hookshot/pause_tab_test.cpp. coop_pause_tab_module.cpp reads the game,
@@ -47,7 +52,7 @@ inline constexpr std::uint64_t kBlockerVtables[] = {
 // Fields read (docs/game-ui.md, "The pause menu"; seen in a run, 2026-11-18):
 inline constexpr std::uint64_t kScreenState = 0x1a6;   // u8, every screen: 0, 1 opening, 2 open, 3 closing
 inline constexpr std::uint64_t kScreenLayout = 0x28;   // a screen's layout
-inline constexpr std::uint64_t kStripTabs = 0x328;     // u32: its Pa_Category_%02d parts (5 with the pack's tab)
+inline constexpr std::uint64_t kStripTabs = 0x328;     // u32: its Pa_Category_%02d parts (4; 5 with an older pack's tab)
 inline constexpr std::uint64_t kStripTabArray = 0x330; // -> its tab objects, one pointer each
 inline constexpr std::uint64_t kStripMode = 0x350;     // s32: 1 the Plus menu's tabs, else the Minus menu's
 inline constexpr std::uint64_t kStripLit = 0x358;      // s32: the category it lights (0, 3, 4, 5 the Plus pages)
@@ -57,6 +62,9 @@ inline constexpr std::uint64_t kManagerAsked = 0x538;  // s32: the page asked fo
 inline constexpr int kSystemPage = 5;                  // the System page's category
 inline constexpr int kPlusMode = 1;
 inline constexpr int kRows = 5;                        // the page's buttons (Pa_Button_00..04), System's too
+// The buttons of the pages made of System's layout with the pack's Longshot Settings button (Pa_Button_05: System's
+// last button, and Longshot Settings' sixth category row).
+inline constexpr int kButtonRows = 6;
 // The game's functions (main+), as its own code calls them:
 inline constexpr std::uint64_t kFindPane = 0x76e2b0;   // (layout, "name") -> pane, or 0 (coop_map_page.h's)
 inline constexpr std::uint64_t kPaneTable = 0x43c040;  // (layout + 0x40) -> its pane table (kFindPane's first call)
@@ -68,12 +76,11 @@ inline constexpr std::uint64_t kTabLight = 0x2ccf60;   // (tab, lit, instant): i
 inline constexpr std::uint64_t kPaneAlpha = 0x2d8ac0;  // (pane, s0 alpha 0..1): a pane's own alpha (+0x74), marked dirty
 // A pane's own place's height (+0x70, its x at +0x6c), its place on the screen (+0x4c, +0x50) and its alpha with its
 // parents' (+0x78), as read in a run (2026-11-19: the strip's fourth tab and our fifth through the strip's opening).
-inline constexpr std::uint64_t kPaneOwnY = 0x70, kPaneScreenY = 0x50, kPaneScreenAlpha = 0x78;
+inline constexpr std::uint64_t kPaneOwnY = 0x70, kPaneScreenX = 0x4c, kPaneScreenY = 0x50, kPaneScreenAlpha = 0x78;
 // A null or text pane's second alpha block (+0xb0: its marks at +0, its own alpha at +0x74, so +0x124): the one the
 // strip's "text in" animation fades, from 0 to 1 in about 250 ms as the strip opens (seen in a run, 2026-11-19, on the
 // fourth tab's N_MenuChangeTextIn_00). kPaneAlpha takes it as its pane.
 inline constexpr std::uint64_t kTextAlphaBlock = 0xb0, kTextAlpha = 0xb0 + 0x74;
-inline constexpr float kFollowMost = 200.0f;   // the most our tab is moved from its own place to follow the fourth
 // (pane): the pane's place marked changed (bit 0x40 of its first word) and its matrices made again, as the game's own
 // place setter (main+0x20a3e0: (pane, x, y, z)) ends for a part after storing x and y at +0x6c; nothing for a pane whose
 // +0xa8 lacks bit 20. Read from main, 2026-11-19: a place written without it stays where it was drawn.
@@ -109,7 +116,8 @@ inline constexpr std::uint64_t kPadX = 1ull << 2, kPadY = 1ull << 3, kPadLeft = 
 // What the game still gets while our page shows: closing the menu, the Minus menu, and up and down, which move the
 // System page's focus under ours: the game's own cursor frame (drawn where the focused button is, and our rows sit
 // where System's buttons do) moves over our rows, with its sound (seen in a run, 2026-11-18). A is ours: the row is the
-// System page's focused button. Left and right are not passed (past the page's edge they would step the menu).
+// System page's focused button, and B leaves the page. Left and right are not passed (past the page's edge they would
+// step the menu).
 inline constexpr std::uint64_t kPadPassed = kPadB | kPadPlus | kPadMinus | kPadUp | kPadDown | kPadStickUp | kPadStickDown;
 
 enum class Kind { kOther, kPages, kStrip, kBlocker };
@@ -167,13 +175,15 @@ public:
         bool set_page = false;   // the pages: our page shown (and System hidden) or not (at the strip's update too:
                                  // the module then sets it through the pages screen it knows)
         bool page_shown = false;
-        // How the page comes or goes: +1 R on System, ours slides in from the right as System slides out to the left;
-        // -1 L, the other way; 0 at once (the menu opening on our page, closing, a window over it).
+        // Which page goes and which comes: 0 System's, 1 the Multiplayer page, 2 the Longshot Settings page. Both of
+        // ours open from a button of System's own (Pa_Button_06, Pa_Button_05: the pack's), in System's place, so the
+        // game's tabs stay its four and System's is lit for them.
+        int page_from = 0, page_to = 0;
+        // How the page comes or goes: +1 the page to the right slides in as the one before slides out to the left; -1
+        // the other way; 0 at once (now always: our pages open from System's buttons and leave in place).
         int slide = 0;
         bool set_texts = false;  // the pages: our rows' texts (once per screen object)
-        bool set_tabs = false;   // the strip: the fifth tab shown or not, lit or not; System's tab lit or not
-        bool tab_shown = false, tab_lit = false, fill_tab = false;
-        bool any() const { return set_page || set_texts || set_tabs; }
+        bool any() const { return set_page || set_texts; }
     };
     Do OnScreen(const Facts& f, std::uint64_t now_ms);
     // Player 1's pad before the game gets it: the buttons the game gets.
@@ -184,11 +194,27 @@ public:
     // What was looked up or set in the game for an earlier number is stale (a menu reopened at the same address).
     std::uint64_t Track(const Facts& f);
     // Whether the page can be used at all (the module: both screens' panes found as parts, and the game's calls there).
-    // Not usable: the page never shows (R and A stay System's) and the mouse keeps the fifth tab out.
+    // Not usable: the page never shows (A stays System's) and MousePage says -2.
     void SetUsable(bool usable);
     bool Usable() const { return usable_; }
-    // hos_coop_game_pause_page: 4 while our page shows, -1 while it can show, -2 while it cannot be used.
-    int MousePage() const { return !usable_ ? -2 : shown_ ? 4 : -1; }
+    // The Longshot Settings page can be used too (the module: its page and System's Longshot Settings button found, and
+    // Longshot's settings there).
+    void SetSettingsUsable(bool usable) { settings_ok_ = usable; }
+    bool SettingsUsable() const { return settings_ok_; }
+    // Which of System's buttons of ours the game's cursor is on now (the module reads it while A is held): 0 the
+    // Multiplayer button (Pa_Button_06), 1 the Longshot Settings button (Pa_Button_05), -1 neither. Its A opens that
+    // page.
+    void SetSystemButton(int which) { system_button_ = which; }
+    // One of our pages was opened (A on its button) or left (B on its rows) since the last call (Which() says which):
+    // the module hides rows a moment so the game's cursor lands where it should (it carries its cursor by the
+    // buttons' names).
+    bool TakeOpened() { return std::exchange(opened_, false); }
+    bool TakeLeft() { return std::exchange(left_, false); }
+    // Which of our pages shows (while Shown): 0 Multiplayer, 1 Longshot Settings.
+    int Which() const { return which_; }
+    // hos_coop_game_pause_page: -1 while our pages can be used (they are in System's place: the mouse's tabs are the
+    // game's four, System's page the one shown), -2 while they cannot.
+    int MousePage() const { return !usable_ ? -2 : -1; }
 
     // One of the rows' own views shows (Players, Let in, Join: View): B is ours then and goes back to the five rows
     // (TakeBack), instead of closing the menu. Off whenever the page goes.
@@ -200,9 +226,8 @@ public:
     bool TakeDecide();
     // Why it last went back to System, for the log ("" when none since the last call).
     std::string TakeWhy();
-    // The menu sound the module starts at the strip's next update (R onto our page, L off it) and at the pages' (A on
-    // a row): the game does not start them, the module took the press. nullptr when none.
-    const char* TakeStripSound();
+    // The menu sound the module starts at the pages' next update (A on one of System's buttons of ours, or on a row):
+    // the game does not start them, the module took the press. nullptr when none.
     const char* TakePagesSound();
     void Sound(const char* name) { pages_sound_ = name; }   // a menu sound for the module's own move (the cells)
 
@@ -238,8 +263,11 @@ private:
                                  // game stalled (AfterStall)
     std::uint64_t swallow_ = 0;   // buttons the module took, kept from the game until let go
     bool decide_ = false;
-    const char* strip_sound_ = nullptr;
-    int slide_ = 0;   // the next set_page's Do::slide (R or L)
+    int slide_ = 0;   // the next set_page's Do::slide
+    int which_ = 0;   // our page shown: 0 Multiplayer, 1 Longshot Settings (kept while hidden: the menu opens on it again)
+    bool settings_ok_ = false;
+    int system_button_ = -1;
+    bool opened_ = false, left_ = false;
     const char* pages_sound_ = nullptr;
     std::string why_;
     bool usable_ = false;
@@ -253,8 +281,6 @@ private:
     std::uint64_t next_gen_ = 0;
     int page_set_ = -1;
     bool texts_set_ = false;
-    int tab_key_ = -1;
-    bool tab_filled_ = false;   // the fifth tab filled in this opening of the strip
 };
 
 // The rows (Pa_Button_00..04): Session, Join code, Players, Let in, Leave. Each A acts on the page itself (hosting,
@@ -347,6 +373,7 @@ struct Session {
     bool password_shown = false;   // the host's Session view shows it now (its rows' A hides it again)
     bool can_resync = false;    // a guest whose game can take the host's save again (CoopSave::CanResync)
     int listed = 0;         // the Players view: how many players it lists
+    int self = -1;          // the Players view: our own place in its list (-1 not listed): no view of our own
     int page = 0;           // the Players view: its page (PlayerIndex)
     int player = 0;         // a player's view: 0 that player left, 1 it is us, 2 another player
 };
@@ -356,7 +383,8 @@ int PlayerIndex(int listed, int page, int row);
 int PlayerPages(int listed);
 RowAction ActionFor(int row, const Session& s);
 // The row of ours a focused button of the pages screen lies under: System's Pa_Button_00..04 (by the name the focus
-// manager's walk gives, CoopModScreens::ButtonName), -1 for any other.
+// manager's walk gives, CoopModScreens::ButtonName), and the Longshot Settings button (Pa_Button_05: 5); -1 for any
+// other.
 int RowOfButton(const std::string& name);
 // A row of a view (kMain: ActionFor).
 RowAction ActionFor(View view, int row, const Session& s);
@@ -378,7 +406,7 @@ struct RowBox {
     bool shown = false;
     float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
 };
-using RowBoxes = std::array<RowBox, kRows>;
+using RowBoxes = std::array<RowBox, kButtonRows>;
 
 // A client pixel in the layout's units: the game's 3840 x 2160 picture fit in a w x h client area about its centre,
 // y up (as Longshot's mouse takes it).
@@ -421,6 +449,36 @@ private:
     std::uint64_t since_ = 0, clicked_ms_ = 0, step_ms_ = 0;
 };
 
+// The game's cursor kept on the Multiplayer page's shown rows. The game walks its cursor over every button of the
+// pages screen, hidden ones too: our rows with nothing on them (ApplyBlankRows) and System's own buttons under our page
+// (Pa_Button_05 and 06, below Back). A tester's run (2026-11-19) had the cursor on those, out of sight: an A there was
+// no row's ("row 5 chosen: nothing"), and the mouse's steps to Back and the one Up off a row just hidden undid each
+// other, so the cursor went between the first row and Back without end. Now the cursor on a hidden button goes on the
+// way it came (a press each step, one read held and one let go), and back up from past our rows; at the end of the
+// rows (the cursor did not move) the other way.
+class RowSkip {
+public:
+    static constexpr std::uint64_t kStepWaitMs = 150;   // a step not seen as the cursor's move: the next after this
+    struct In {
+        std::uint64_t now_ms = 0;
+        int focused = -1;        // the game's cursor's button as a row (Pa_Button_NN: NN), -1 none or another
+        bool hidden = false;     // ... and that button is not shown
+        int rows = kRows;        // the page's rows (a higher row is System's own)
+        bool up = false, down = false;   // the player's own up or down this read
+        bool mouse_up = false, mouse_down = false;   // the mouse's step this read (MouseRows)
+    };
+    // The pad bits to add for the game this read (kPadUp, kPadDown or none).
+    std::uint64_t Step(const In& in);
+    // Whether the cursor is on a hidden button now (the last Step's): the mouse's own steps wait meanwhile.
+    bool Skipping() const { return skipping_; }
+    void Reset();
+
+private:
+    int dir_ = -1;   // the way the cursor went last (-1 up, +1 down)
+    bool held_ = false, skipping_ = false;
+    int from_ = -1;
+    std::uint64_t step_ms_ = 0;
+};
 // --- The pages' slide (Page::Do::slide) ---
 // The game slides its pages a page's width apart (N_MenuChange_01's 4280) when L or R changes the page: measured in a
 // run (2026-11-19, the strip's own x each update from Items to System), 4280 in about 430 ms, a fast ease-out with no
@@ -433,16 +491,12 @@ float SlideProgress(std::uint64_t ms);
 // from the right to its place, System from its place to the left; dir -1: back.
 std::pair<float, float> SlideOffsets(int dir, float p);
 
-// One update ahead of `now`, from its step since `prev`, and not past `limit` when it heads for it. The module reads
-// the fourth tab's place and fades before the strip's own update, so they are one update old: ours takes them one
-// update ahead to move with the fourth, not a frame after it.
-float Ahead(float prev, float now, float limit);
-
 // What the rows say, in the game's own text panes (the module writes them through the pack's placeholder messages,
 // Coop_Live_NN, in LayoutMsg/PlusMenu_00): the session's state on the rows themselves.
 // A row of the game browser's list (View::kLan, ListLines): its left text and its right one; both "" for a row not shown.
 struct ListLine {
     std::string name, value;   // the row's left text and its right one; both "" for a row not shown
+    RowAction act = RowAction::kNone;   // an A on this line of the details (their Auto-rejoin), else nothing
 };
 
 struct SessionView {
@@ -457,9 +511,11 @@ struct SessionView {
     std::string note;                 // what the last copy on the page did, a few seconds (CoopPause::PageNote)
     std::string host_name;            // a guest: the host's name ("" not known)
     std::string why;                  // co-op's last problem or hint (its status message), "" none
+    int problem = 0;                  // ... as its number (HOS_COOP_PROBLEM_*), 0 none: the known ones in words of ours
+    bool port_open = false;           // hosting: the router forwards the port (UPnP, PCP or NAT-PMP)
     std::string player_name;          // a player's view: who
     // 0.11.6 (owner OK, 2026-11-19): this kit's release, "Squadala! v0.11.6" (CoopWindowBrand::TitleOf), "" none
-    // (a developer's build). On the Leave row when in no session (solo too) and on a free row of the Session view.
+    // (a developer's build). The details list's last line (DetailLines), "Release".
     std::string version;
     std::uint8_t own_mutes = 0, host_mutes = 0;   // a player's view: kMuteVoice / kMuteChat bits
     bool confirm_kick = false, confirm_ban = false;   // the host's Kick or Ban waits for its second A
@@ -484,7 +540,8 @@ struct SessionView {
 // 2026-11-19: "Leave (not in a session)" fills it, 31 letters ran past both edges).
 inline constexpr std::size_t kRowChars = 24;
 std::vector<std::string> RowTexts(const SessionView& v);
-// A view's rows (kMain: RowTexts). A row with nothing on it says " " (a pane's text is never empty).
+// A view's rows (kMain: RowTexts). A row with nothing on it is "": the module does not show it (but while the game's
+// cursor is on it).
 std::vector<std::string> RowTexts(View view, const SessionView& v);
 
 // --- The game browser (View::kLan): a list of the games on the right of the page, as a server browser ---
@@ -500,11 +557,48 @@ inline constexpr std::size_t kListNameChars = 30, kListValueChars = 16;   // (th
 // The list's rows for this page: the header, then a page of games ("" rows not shown). With nothing listed, the
 // first game row says why.
 std::vector<ListLine> ListLines(const SessionView& v);
+// The same list on the main view and the Session view: the session's details (a header, what it is, then name and
+// value lines), co-op's problem or hint as lines of text (no value: their value box not shown), and the release last.
+// None on the other views. The rows keep what can be done.
+std::vector<ListLine> DetailLines(View view, const SessionView& v);
 // What a game's right column says: "2/4", "Full", "Other version" (it cannot be joined from here).
 std::string ListValue(int players, int max, bool same_version);
 // What a room's left column says: the name its host listed it under (the room name unless they picked one), with the
 // room name after it when that is another: "Saria's forest (forest-gang)".
 std::string ListName(const std::string& shown, const std::string& room);
+
+// --- Longshot Settings (System's last button): Longshot's own options, from its Insert menu ---
+// The page's five rows are the categories, Longshot's menu's tabs (its Debug and NFC tabs, its buttons such as Test
+// microphone, and the FPS counter's developer rows stay in that menu). The list on the right, the same Options rows as
+// the game browser's, shows a category's settings under a header (the category, "Page 1 of 4"), kSettingsPerPage a
+// page: the name on the left, the value between the arrows on the right. The rows choose the category (the game's
+// cursor on them); Right or A goes into its list, up and down move in it (turning the page at its ends), Left and Right
+// change the value, A takes the next one (of a few choices), B gives the pad back to the rows. A change goes through
+// Longshot as its own menu's Left and Right do (clamped, saved, a restart noted).
+inline constexpr int kSettingsPerPage = 6;   // (kListRows less the header)
+inline constexpr int kSettingRows = 6;   // (the five rows and the Longshot Settings button's copy)
+inline constexpr std::array<const char*, kSettingRows> kSettingTabs{"Graphics", "Audio", "Gameplay", "Controls", "Motion", "Debug"};
+struct SettingRow {
+    std::string key, name, text, tab;   // its line in longshot_options.ini, what the menu calls it, its value's words
+    int value = 0, lo = 0, hi = 0, step = 1;
+    bool restart = false;   // it applies at the next start
+    bool fixed = false;     // nothing to choose on this PC
+};
+// A category's settings (kSettingTabs[category]: their tab in Longshot's menu), in Longshot's order.
+std::vector<SettingRow> SettingsOf(const std::vector<SettingRow>& all, int category);
+int SettingPages(int count);
+// A page of a category's settings as the list's rows: the header (`title`, and "Page 2 of 4" when there are more),
+// then the settings: the name ("*" after a restart one), the value's words.
+std::vector<ListLine> SettingLines(const std::vector<SettingRow>& rows, int page, const std::string& title);
+// The value a press asks for: dir -1 Left, +1 Right (a step, kept within lo..hi), 0 A (the next, the first after the
+// last, for a setting of at most kCycleChoices choices: a slider such as Volume is never sent from its end back to its
+// start by A or a click on the row). The same value back when nothing would change (a fixed setting, the end of its
+// range, A on a slider).
+inline constexpr int kCycleChoices = 8;
+int SettingNext(const SettingRow& r, int dir);
+// The cursor moved up (-1) or down (+1) in a category's list of `count`: across its pages, staying at its ends. `row`
+// is the setting's place on its page (0 to kSettingsPerPage - 1; the list's row under the header is row + 1).
+void SettingMove(int count, int dy, int* page, int* row);
 // The games the browser lists now (the chosen list's), and its pages.
 int BrowseListed(const Session& s);
 int CellPages(int listed);
@@ -555,7 +649,7 @@ void Init(const HosCoopApi* api);
 void OnScreen(void* ctx, std::uint64_t screen) noexcept;
 // hos_coop_pad, first (coop_pad_order.h): what the game and the mods get (sticks zeroed while our page shows).
 std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept;
-// hos_coop_game_pause_page: Page::MousePage (4 shown, -1 can show, -2 cannot be used).
+// hos_coop_game_pause_page: Page::MousePage (-1 usable, -2 cannot be used).
 int MousePage() noexcept;
 // The keyboard while one of the page's fields is typed into (hos_coop_key, hos_coop_char; KeysTaken: the game gets
 // none of its keys then): true when the field took it.
