@@ -886,8 +886,62 @@ function Get-KitHookshotLogFiles([string]$Dir) {
     }
 }
 
-# The stamp the kit's hookshot-build.ps1 writes to the game's coop-built-from.txt: release, pin, patches.
-function Get-KitHookshotStamp([string]$Kit) {
+# The mods' code patches the game in $Game would be built with (patches 0034/0035: <game>\mods\...\exefs\*.ips and
+# *.pchtxt, folders starting with '-', '_' or '.' left out, up to four deep), as one more stamp line:
+# "`nexefs=<mod path>/exefs/<file>:<sha256>,...;list=<sha256 of coop-mods.list's rows for those mods>" (the Mods
+# tab's switches and order decide which go in; Get-KitCodeModsListHash), or '' when no mod has one: a game without code mods keeps the stamp it had.
+function Get-KitExefsStampLine([string]$Game) {
+    $mods = Join-Path $Game 'mods'
+    if (-not $Game -or -not (Test-Path -LiteralPath $mods -PathType Container)) { return '' }
+    $root = ([System.IO.Path]::GetFullPath($mods)).TrimEnd('\') + '\'
+    $rows = @()
+    $codeMods = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($f in @(Get-ChildItem -LiteralPath $mods -Recurse -Depth 5 -File -Include '*.ips', '*.pchtxt' -ErrorAction SilentlyContinue)) {
+        $rel = $f.FullName.Substring($root.Length) -replace '\\', '/'
+        $parts = @($rel -split '/')
+        if ($parts.Count -lt 3 -or $parts[-2] -ine 'exefs') { continue }
+        if (@($parts[0..($parts.Count - 3)] | Where-Object { $_ -match '^[-_.]' }).Count) { continue }
+        $rows += "${rel}:$((Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash.ToLowerInvariant())"
+        [void]$codeMods.Add((ConvertTo-KitModFold ($parts[0..($parts.Count - 3)] -join '/')))
+    }
+    if (-not $rows.Count) { return '' }
+    return "`nexefs=$((@($rows | Sort-Object -CaseSensitive) -join ','));list=$(Get-KitCodeModsListHash (Join-Path $mods 'coop-mods.list') $codeMods)"
+}
+
+# A mod's name as patch 0011's host/mods.c (hos_coop_mods.h) compares them: ASCII letters without case, '\' as '/'.
+function ConvertTo-KitModFold([string]$Name) {
+    $chars = $Name.Replace('\', '/').ToCharArray()
+    for ($i = 0; $i -lt $chars.Length; $i++) {
+        if ([int]$chars[$i] -ge 65 -and [int]$chars[$i] -le 90) { $chars[$i] = [char]([int]$chars[$i] + 32) }
+    }
+    return [string]::new($chars)
+}
+
+# The SHA-256 of the Mods tab's rows (coop-mods.list) that name a mod with code patches ($CodeMods: folded names), as
+# "on|off <folded name>" in the list's order, each name's first row only (as the game reads it), or 'none' (no list, not "coop-mods 1", or no
+# such row). Switching or moving a mod without code patches leaves it alone: the game is not built again for it.
+function Get-KitCodeModsListHash([string]$List, $CodeMods) {
+    if (-not (Test-Path -LiteralPath $List -PathType Leaf)) { return 'none' }
+    $lines = @(([System.IO.File]::ReadAllText($List, [System.Text.UTF8Encoding]::new($false))) -split "`n")
+    if ($lines[0].TrimEnd("`r") -cne 'coop-mods 1') { return 'none' }
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    $kept = @()
+    foreach ($line in @($lines | Select-Object -Skip 1)) {
+        $line = $line.TrimEnd("`r")
+        if (-not ($line -cmatch '^(on|off) (.+)$')) { continue }
+        $fold = ConvertTo-KitModFold $Matches[2]
+        if (-not $seen.Add($fold)) { continue }
+        if ($CodeMods.Contains($fold)) { $kept += "$($Matches[1]) $fold" }
+    }
+    if (-not $kept.Count) { return 'none' }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes(($kept -join "`n"))) } finally { $sha.Dispose() }
+    return (($bytes | ForEach-Object { $_.ToString('x2') }) -join '')
+}
+
+# The stamp the kit's hookshot-build.ps1 writes to the game's coop-built-from.txt: release, pin, patches, and the
+# mods' code patches when there are any (Get-KitExefsStampLine; $Game: the kit's game, Get-KitHookshotGame).
+function Get-KitHookshotStamp([string]$Kit, [string]$Game = '') {
     $hs = Join-Path $Kit 'hookshot'
     $keys = @{}
     foreach ($f in 'PIN', 'TOOLS.txt') {
@@ -898,7 +952,8 @@ function Get-KitHookshotStamp([string]$Kit) {
     if (-not $keys.release -or -not $keys.commit) { return '' }
     $patches = @(Get-ChildItem -LiteralPath (Join-Path $hs 'patches') -Filter '*.patch' -File -ErrorAction SilentlyContinue | Sort-Object Name)
     $hash = (($patches | ForEach-Object { (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }) -join ',')
-    return "release=$($keys.release)`ncommit=$($keys.commit)`npatches=$hash"
+    if (-not $Game) { $Game = Get-KitHookshotGame $Kit }
+    return "release=$($keys.release)`ncommit=$($keys.commit)`npatches=$hash$(Get-KitExefsStampLine $Game)"
 }
 
 # What the kit's Hookshot game needs before it starts:
@@ -909,6 +964,8 @@ function Get-KitHookshotStamp([string]$Kit) {
 #             or found with Build-Hookshot-Coop.bat -Out <its new folder>
 #   'pin'     the kit moved to another Hookshot release or pin (a full game build, about 15 minutes)
 #   'patches' the co-op patches changed (the game built again, only what changed: a few minutes)
+#   'mods'    a mod's code patches changed: put in, changed, removed, or switched or moved on the Mods tab (the game
+#             built again with them: patches 0034/0035, Get-KitExefsStampLine)
 #   'module'  the co-op module changed, or the puppet pack is missing or stale (co-op and the pack put in
 #             again: seconds to a minute; without a pack the other players cannot be shown), or the kit's
 #             randomizer (hookshot\OOTRR.txt) is not in the game yet
@@ -934,6 +991,8 @@ function Get-KitHookshotNeed([string]$Kit) {
     if ($have -ne $want) {
         $base = { param($s) (@($s -split "`n") | Where-Object { $_ -match '^(release|commit)=' }) -join "`n" }
         if ((& $base $have) -ne (& $base $want)) { return 'pin' }
+        $codeless = { param($s) (@($s -split "`n") | Where-Object { $_ -notmatch '^exefs=' }) -join "`n" }
+        if ((& $codeless $have) -eq (& $codeless $want)) { return 'mods' }   # (only the mods' code patches: Get-KitExefsStampLine)
         return 'patches'
     }
     $exeDir = Split-Path -Parent $exe
@@ -1298,6 +1357,7 @@ function Get-KitHookshotNeedText([string]$Need, [string]$Game = '', [bool]$HsOnl
         'moved' { "The co-op Hookshot game this kit built is not in $Game any more (moved or deleted). Moved it? Answer n, then run Build-Hookshot-Coop.bat -Out ""<its new folder>"" (seconds). Otherwise it is built again (about 20 to 40 minutes)." }
         'pin' { 'Your co-op game was built for another game version than this kit uses: it is built again (about 15 minutes; the PC stays usable).' }
         'patches' { 'This update changes the co-op game a little: updating it (a few minutes).' }
+        'mods' { 'A mod''s code patches changed (a mod with an exefs folder put in, changed or taken out, or switched on the Mods tab): the co-op game is built again with them (a few minutes).' }
         'module' { 'Putting the updated co-op and the puppet pack into the co-op game (seconds to a minute).' }
         'quarantine' { Get-KitHookshotQuarantineText }
         default { '' }

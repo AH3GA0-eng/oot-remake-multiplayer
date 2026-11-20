@@ -22,7 +22,9 @@ mods\
   randomizer-AB12CD34\romfs\...   a seed the randomizer built
 ```
 
-A mod made for an emulator's `load\<title id>\<name>\romfs` folder works the same: copy the `<name>` folder into `mods`. Code patches (`exefs`) are left out: Hookshot's game is compiled ahead of time.
+A mod made for an emulator's `load\<title id>\<name>\romfs` folder works the same: copy the `<name>` folder into `mods`.
+
+**Mods with code patches** (an `exefs` folder of `.ips` or `.pchtxt` files, for example [OoT Character Select](https://github.com/snaildev99/OoT-Character-Select)) work too: the game is compiled ahead of time, so the kit builds the patches into it (our patches 0034 and 0035; Longshot's own #134, after v3.0.0). Put the mod into `mods` and start the game as usual: the start sees the new code patch and builds the game again with it (a few minutes: "A mod's code patches changed"). The same happens when such a mod's patch changes, when it is taken out, or when it is switched off or moved on the Mods tab (the tab's order decides which patch wins a byte two patches write; switching or moving a mod without code patches builds nothing again). A patch for another game version (its file name is not the game's build id) is left out. `exefs_patches.txt` in the game folder lists the patch files the game was built with, and `hookshot_log.txt` names each mod's exefs folder at the start. A mod without code patches, and a game without such mods, build and play exactly as before.
 
 ### The Mods tab
 

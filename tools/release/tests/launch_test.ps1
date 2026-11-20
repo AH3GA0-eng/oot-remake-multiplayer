@@ -722,6 +722,40 @@ try {
     Write-File (Join-Path $hk 'hookshot\patches\0002-b.patch') "two`n"
     Check ((Get-KitHookshotNeed $hk) -eq 'patches') 'hookshot need: a patch changed, the same pin -> patches'
     Write-File (Join-Path $g 'coop-built-from.txt') (Get-KitHookshotStamp $hk)
+    # Patches 0034/0035: a mod's code patches are built in, so a new, changed or switched one builds the game again.
+    $plain = Get-KitHookshotStamp $hk
+    Check (-not (Get-KitExefsStampLine $g)) 'exefs stamp: no mod with code patches -> no line (the stamp as before)'
+    Write-File (Join-Path $g 'mods\Romfs Only\romfs\a.txt') 'x'
+    Write-File (Join-Path $g 'mods\_off\exefs\AA.ips') 'PATCHEOF'
+    Check (-not (Get-KitExefsStampLine $g)) 'exefs stamp: a romfs-only mod and a "_" folder add nothing'
+    Check ((Get-KitHookshotNeed $hk) -eq '') 'hookshot need: no code mods -> nothing new'
+    $ips = Join-Path $g 'mods\OoT Character Select\exefs\E0F3CCFAF50065AE.ips'
+    Write-File $ips 'PATCH1EOF'
+    $line = Get-KitExefsStampLine $g
+    Check ($line -like "`nexefs=OoT Character Select/exefs/E0F3CCFAF50065AE.ips:*;list=none") "exefs stamp: the mod's patch file and its hash ($line)"
+    Check ((Get-KitHookshotNeed $hk) -eq 'mods') 'hookshot need: a code mod put in -> mods (built again with it)'
+    Check ([bool](Get-KitHookshotNeedText 'mods')) 'hookshot need text: mods'
+    Write-File (Join-Path $g 'coop-built-from.txt') (Get-KitHookshotStamp $hk)
+    Check ((Get-KitHookshotNeed $hk) -eq '') 'hookshot need: built with it -> nothing'
+    Write-File $ips 'PATCH2EOF'
+    Check ((Get-KitHookshotNeed $hk) -eq 'mods') 'hookshot need: its patch changed -> mods'
+    Write-File (Join-Path $g 'coop-built-from.txt') (Get-KitHookshotStamp $hk)
+    # (the stamp hashes only the list's rows that name a mod with code patches, Get-KitCodeModsListHash)
+    Write-File (Join-Path $g 'mods\coop-mods.list') "coop-mods 1`noff Romfs Only`n"
+    Check ((Get-KitHookshotNeed $hk) -eq '') 'hookshot need: a mod without code patches switched off -> nothing'
+    Write-File (Join-Path $g 'mods\coop-mods.list') "coop-mods 1`noff Romfs Only`non oot character select`n"
+    Check ((Get-KitHookshotNeed $hk) -eq 'mods') 'hookshot need: the code mod named in the list (any case) -> mods'
+    Write-File (Join-Path $g 'coop-built-from.txt') (Get-KitHookshotStamp $hk)
+    Write-File (Join-Path $g 'mods\coop-mods.list') "coop-mods 1`non OoT Character Select`non Romfs Only`noff oot character select`n"
+    Check ((Get-KitHookshotNeed $hk) -eq '') 'hookshot need: the list moved a mod without code patches, a repeated row is not read -> nothing'
+    Write-File (Join-Path $g 'mods\coop-mods.list') "coop-mods 1`noff OoT Character Select`n"
+    Check ((Get-KitHookshotNeed $hk) -eq 'mods') 'hookshot need: switched off on the Mods tab -> mods (built without it)'
+    # (the code mod and the Mods tab's list only: the puppet pack beside them stays, or the need is 'module')
+    Remove-Item -LiteralPath (Join-Path $g 'mods\OoT Character Select') -Recurse -Force
+    Remove-Item -LiteralPath (Join-Path $g 'mods\coop-mods.list') -Force
+    Check ((Get-KitHookshotNeed $hk) -eq 'mods') 'hookshot need: the code mod taken out -> mods'
+    Write-File (Join-Path $g 'coop-built-from.txt') $plain
+    Check ((Get-KitHookshotNeed $hk) -eq '') 'hookshot need: back to the stamp without code mods -> nothing'
     Write-File (Join-Path $hk 'hookshot\PIN') "repo=x`ncommit=0000000000000000000000000000000000000000`n"
     Check ((Get-KitHookshotNeed $hk) -eq 'pin') 'hookshot need: another pin -> pin (a full build)'
     Write-File (Join-Path $hk 'hookshot\PIN') "repo=x`ncommit=e7ed2f7a6526cd6b841b86678b3ac96eb6e5b1c8`n"
