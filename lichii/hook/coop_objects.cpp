@@ -635,10 +635,10 @@ public:
     // next game frame, after that frame's pose writes. `node` is checked by
     // its vtable again then.
     void StartBlockNode(u64 node, u64 actor, const coop::protocol::Vec3& from,
-                        const coop::protocol::Vec3& to) {
+                        const coop::protocol::Vec3& to, bool untouched) {
         std::lock_guard lock(mutex_);
         if (node_starts_.size() < 16) {
-            node_starts_.push_back({node, actor, from, to});
+            node_starts_.push_back({node, actor, from, to, untouched});
         }
     }
 
@@ -1048,7 +1048,7 @@ public:
                     u64 word = 0;
                     return guest.Read(address, &word, 8) ? std::optional<u64>(word) : std::nullopt;
                 },
-                node, n.from, n.to);
+                node, n.from, n.to, n.untouched);
             if (stale.busy || stale.writes.empty()) {
                 ++node_skipped_;
                 continue;
@@ -1303,6 +1303,7 @@ private:
         u64 actor = 0;  // its block
         coop::protocol::Vec3 from{};  // the old rest both its places must still hold
         coop::protocol::Vec3 to{};
+        bool untouched = false;  // row 166: our player never moved it in this follow (CoopWorld::NodeRestWords)
     };
     std::vector<NodeStart> node_starts_;
     std::vector<NodeStart> work_node_starts_;
@@ -2079,11 +2080,11 @@ public:
                 // table of started nodes, no heap search: report 37).
                 const auto stale = node ? CoopWorld::NodeRestWords(
                                               [&r](u64 address) { return r.Get<u64>(address); },
-                                              *node, fix.from, fix.to)
+                                              *node, fix.from, fix.to, fix.untouched)
                                         : CoopWorld::RestScan{};
                 if (node && !stale.busy) {
                     if (!stale.writes.empty()) {
-                        TheMover().StartBlockNode(*node, fix.address, fix.from, fix.to);
+                        TheMover().StartBlockNode(*node, fix.address, fix.from, fix.to, fix.untouched);
                         LOG_INFO(Core, "coop: world: {:016x} {} push node {:x}: its own start "
                                        "(main+{:#x}) asked to run again, from where it rests now",
                                  fix.hash, fix.name, *node, CoopWorld::BlockNode::kStartFn);
@@ -2244,6 +2245,17 @@ public:
             SwitchShare(system, r, *scene, server_now_us, send);
         }
         if (platforms_mode_ != 0) {
+            // Row 164: the players whose game stands still now (ourselves too): their lifts stop while the server
+            // clock runs, so they lead no lift (CoopCounters::CounterSync::Tick's `away`).
+            counter_away_.clear();
+            session->with_client([&](coop::net::Client& c) {
+                for (const auto& p : c.players()) {
+                    if ((p.status.value_or(0) & kCounterAway) != 0) {
+                        counter_away_.insert(p.number);
+                    }
+                }
+                return 0;
+            });
             Platforms(r, *scene, self, server_now_us, send);
         }
         if (send.empty()) {
@@ -2416,6 +2428,11 @@ public:
     std::vector<coop::protocol::PlatformClock> platforms_in_;  // under platforms_mutex_
     std::vector<coop::protocol::PlatformCounter> counters_in_;  // under platforms_mutex_
     CoopCounters::CounterSync counters_;
+    // Row 164: PLAYER_STATUS bits of a game whose world stands still (a pause or quick-switch menu, a load, a
+    // cutscene), and the players with one of them now (filled each share, before Platforms).
+    static constexpr u8 kCounterAway = coop::protocol::status::paused | coop::protocol::status::in_menu |
+                                       coop::protocol::status::loading | coop::protocol::status::in_cutscene;
+    std::set<u8> counter_away_;
     std::set<u64> counter_nodes_;  // the platform nodes the ring named, while their actor is here
     // Each counter node's placement in the room table, found once a scene (Counters).
     std::unordered_map<u64, const CoopRoomObjects::Placement*> counter_places_;
@@ -3111,7 +3128,10 @@ private:
                 }
                 s.home_m = std::sqrt(d2);
                 s.wait = d2 <= CoopCounters::kHomeM * CoopCounters::kHomeM ? 0 : 1;
-                s.driven = !p->why.empty();
+                // Row 164: only a player's own input (a rider, a player sensor) keeps it out; a shared switch's
+                // input (Dodongo's shortcut lift, IsShortCutMove) runs the same in every game: lined up once it loops.
+                s.driven = CoopRoomObjects::PlayerDriven(p->why);
+                s.switched = !p->why.empty() && !s.driven;
             }
             seen.push_back(std::move(s));
         }
@@ -3135,7 +3155,7 @@ private:
             ring_overruns_ = 0;
         }
         CoopCounters::CounterSync::Out out;
-        counters_.Tick(scene, self, server_now_us, seen, platforms_mode_ == 2, out);
+        counters_.Tick(scene, self, server_now_us, seen, platforms_mode_ == 2, out, counter_away_);
         for (auto& m : out.send) {
             send.emplace_back(std::move(m));
         }
