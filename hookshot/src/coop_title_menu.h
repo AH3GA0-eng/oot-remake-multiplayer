@@ -152,6 +152,12 @@ JoinTarget ReadJoin(std::string_view typed, const CodeResult& code);
 // Whether `typed` is shaped as a server address ("host" or "host:port", as
 // coop-ini.ps1 Test-CoopServer).
 bool AddressOk(std::string_view typed);
+// A Join line ("<address>[ <password>]") whose address is a bare name: no '.', ':' or '@', and a room name's letters
+// (RoomNameOk, 3 to 24). Such a name is a PC on the home network ("mypc") or a room on the relay ("forest-gang"):
+// Join tries it as a PC first, then as a room (CoopPause's Join). Nothing for any other line.
+std::optional<std::string> BareJoinName(std::string_view join_line);
+// That line through the relay: "<name>@<relay>[ <password>]".
+std::string RoomJoinLine(std::string_view join_line, std::string_view relay);
 // Valid UDP port in 1..65535 (after trimming ends), or empty.
 std::optional<std::uint16_t> ParsePort(std::string_view text);
 

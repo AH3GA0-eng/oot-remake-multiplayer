@@ -38,6 +38,7 @@
 #include "coop_voice.h"
 #include "hos_coop_host.h"
 #include "nat_codes.hpp"
+#include "nat_net.hpp"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -442,13 +443,37 @@ bool Host() {
 
 // False when it did not start: refused (co-op on already, the code not readable; the menu's note says why) or the
 // join could not start (the session's lines say why).
-bool Join(const std::string& text) {
+// Whether this PC finds `name` as a PC (a name on the home network, or in DNS). The lookup blocks, as the plain
+// address join's own lookup does (CoopHostMenu::Menu::Join).
+bool PcFound(const std::string& name) {
+    if (enet_initialize() != 0) {
+        return true;   // (no network: the join itself says so)
+    }
+    const bool found = coop::server::nat::resolve(name, CoopTitleMenu::kDefaultPort).has_value();
+    enet_deinitialize();
+    return found;
+}
+
+bool Join(const std::string& text_in) {
     if (!g_auto_join) g_player_acted = true;
     if (Busy()) {
         g_menu.SetNote({"Co-op is on already in this game: stop it first, or start the game again."});
         return false;
     }
     namespace nat = coop::server::nat;
+    // A bare name ("mypc", "forest-gang"): a PC on the home network first, then a room on the relay.
+    std::string text = text_in;
+    if (const auto name = CoopTitleMenu::BareJoinName(text); name && !nat::looks_like_code(text) && !PcFound(*name)) {
+        const std::string relay(CoopTitleMenu::Trim(g_menu.options().relay));
+        if (relay.empty()) {
+            g_menu.SetNote({"No PC called " + *name + " was found. To join a room by its name, set a relay first: "
+                            "Co-op Settings, Relay. Or type the host's IP address."});
+            LOG_INFO(Core, "coop: multiplayer tab: join: a bare name is no PC here and no relay is set");
+            return false;
+        }
+        text = CoopTitleMenu::RoomJoinLine(text, relay);
+        LOG_INFO(Core, "coop: multiplayer tab: join: a bare name is no PC here: as a room on the relay");
+    }
     CoopTitleMenu::CodeResult code;
     code.looks_like_code = nat::looks_like_code(text);
     if (code.looks_like_code) {

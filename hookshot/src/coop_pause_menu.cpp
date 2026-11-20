@@ -16,11 +16,50 @@ using CoopTitleMenu::Trim;
 using State = Session::State;
 
 constexpr std::size_t kMaxJoinBytes = 300;
+// A pasted invite code on the Room or address row: its start, its end and its length (codes start alike).
+constexpr std::size_t kShownCodeEnds = 8;
 std::size_t Utf8Start(const std::string& s, std::size_t at) {   // back to the start of the character at `at`
     while (at > 0 && at < s.size() && (static_cast<unsigned char>(s[at]) & 0xC0) == 0x80) {
         --at;
     }
     return at;
+}
+
+std::string ShownCode(const std::string& code) {
+    if (code.size() <= 2 * kShownCodeEnds + 3) {
+        return code;
+    }
+    return code.substr(0, Utf8Start(code, kShownCodeEnds)) + "..." +
+           code.substr(Utf8Start(code, code.size() - kShownCodeEnds)) + " (" + std::to_string(code.size()) + ")";
+}
+
+// An invite (or answer) code's shape: at least 30 letters and digits, in groups with '-' (server/nat_codes.cpp
+// looks_like_code reads it for real when Join is pressed).
+bool CodeShaped(std::string_view line) {
+    std::size_t letters = 0;
+    for (const char c : line) {
+        if (std::isalnum(static_cast<unsigned char>(c)) != 0) {
+            ++letters;
+        } else if (c != '-') {
+            return false;
+        }
+    }
+    return letters >= 30;
+}
+
+// What an A on Room or address takes from the clipboard: an invite code, an address line ("host[:port][ password]",
+// "room@relay[ password]") or a bare room or PC name; not any other text that happens to be there.
+bool JoinLineShaped(std::string_view line) {
+    if (CodeShaped(line)) {
+        return true;
+    }
+    const auto target = CoopTitleMenu::ReadJoin(line, {});
+    const auto* addr = std::get_if<CoopTitleMenu::JoinAddress>(&target);
+    if (addr == nullptr) {
+        return false;
+    }
+    return addr->server.find_first_of(".:@") != std::string::npos ||
+           (addr->password.empty() && CoopTitleMenu::BareJoinName(line).has_value());
 }
 
 constexpr std::size_t kMaxIpBytes = 259;   // host (up to 253) + ':' + port (up to 5)
@@ -294,11 +333,18 @@ std::vector<Menu::Line> Menu::Lines() const {
             const bool typing_password = typing_ && typing_act_ == Act::kJoinPassword;
             // (a room name or an address, its port, the host's join password, then Join: the friend's code rows are
             // gone, a tester asked; a code pasted with Ctrl+V still fills the address and password)
+            // (an invite code pasted on the page: shown here, as the code's row did)
+            const bool code_in = join_ip_.empty() && !Trim(join_).empty();
             out.push_back({Action("Room or address",
-                                  typing_ip ? join_ip_ + "_" : join_ip_.empty() ? std::string("Type") : join_ip_, off),
+                                  typing_ip   ? join_ip_ + "_"
+                                  : code_in   ? ShownCode(std::string(Trim(join_)))
+                                  : join_ip_.empty() ? std::string("Type")
+                                                     : join_ip_,
+                                  off),
                            Act::kJoinIp,
-                           "The host's room name (found through your relay, Settings > Relay) or their IP address "
-                           "or host name."});
+                           "The host's room name (found through your relay, Settings > Relay) or their IP address or "
+                           "PC name. A name without a dot is tried as a PC on your network first, then as a room. "
+                           "Copied an invite code or address? Press this: it is pasted."});
             out.push_back({Action("Port",
                                   typing_port ? port_text_ + "_"
                                               : join_port_.empty() ? std::to_string(CoopTitleMenu::kDefaultPort)
@@ -669,15 +715,8 @@ void Menu::UpdateJoinFromIpPort() {
         return;
     }
     std::string server(ip);
-    // (a room name, no dot and no colon: through the relay, room@relay; the port is the relay's then)
-    const bool room = ip.find_first_of(".:") == std::string_view::npos && CoopTitleMenu::RoomNameOk(ip) &&
-                      !Trim(options_.relay).empty();
-    if (room) {
-        server += "@" + std::string(Trim(options_.relay));
-        if (!join_password_.empty()) server += " " + join_password_;
-        join_ = std::move(server);
-        return;
-    }
+    // (a bare name, no dot and no colon, stays as typed: Join tries it as a PC on the home network first, then as a
+    // room on the relay, CoopTitleMenu::BareJoinName)
     const std::string_view port = Trim(join_port_);
     if (!port.empty()) {
         server += ':';
@@ -699,6 +738,8 @@ void Menu::EndTyping(bool keep) {
     const Act act = typing_act_;
     typing_ = false;
     replace_typed_ = false;
+    paste_on_open_ = false;
+    drop_open_paste_ = false;
     typing_act_ = Act::kNone;
     typing_fresh_ = false;
     if (act == Act::kRelay || act == Act::kRoom) {   // (the relay and the room name: saved when changed)
@@ -873,7 +914,9 @@ bool Menu::Press(Input input) {
         case Input::kBack:
             EndTyping(false);
             return true;
-        case Input::kPaste:
+        case Input::kPaste:   // (Ctrl+V: the player's own paste, always used)
+            paste_on_open_ = false;
+            drop_open_paste_ = false;
             request_ = Request{Request::Kind::kPaste, {}};
             return true;
         case Input::kErase:
@@ -1033,6 +1076,10 @@ void Menu::Decide(Act act) {
         typing_ = true;
         typing_act_ = Act::kJoinIp;
         typing_fresh_ = false;
+        // A controller has no Ctrl+V: an invite code or address line on the clipboard is pasted at once, as the
+        // friend's code row did (anything else there is left alone, and the field is typed as before).
+        paste_on_open_ = true;
+        request_ = Request{Request::Kind::kPaste, {}};
         break;
     case Act::kJoinPassword:
         password_before_ = join_password_;
@@ -1204,6 +1251,9 @@ void Menu::Click(std::size_t row, int side) {
 }
 
 bool Menu::Char(std::uint32_t cp) {
+    if (std::exchange(paste_on_open_, false)) {
+        drop_open_paste_ = true;   // (a key typed first: the clipboard asked on open is not used when it comes)
+    }
     std::string* t = Typed();
     if (t == nullptr) {
         return false;
@@ -1254,6 +1304,23 @@ bool Menu::Char(std::uint32_t cp) {
 
 bool Menu::Paste(std::string_view text) {
     const std::string line = std::string(Trim(CoopTitleMenu::OneLine(text)));
+    if (std::exchange(drop_open_paste_, false)) {
+        return true;
+    }
+    const bool on_open = std::exchange(paste_on_open_, false);
+    if (on_open && typing_ && typing_act_ == Act::kJoinIp) {
+        if (!JoinLineShaped(line)) {
+            return true;   // (not a code or an address: the field stays open to be typed)
+        }
+        if (CodeShaped(line)) {   // (an invite code: the page holds it, as a Ctrl+V on the page does)
+            EndTyping(false);
+            join_ = line.substr(0, Utf8Start(line, std::min(line.size(), kMaxJoinBytes)));
+            SyncManualJoinFromText();
+            replace_typed_ = false;
+            Go(Page::kJoin, Act::kJoinNow);
+            return true;
+        }
+    }
     if (typing_ && typing_act_ == Act::kJoinIp) {
         if (line.empty()) {
             return true;
