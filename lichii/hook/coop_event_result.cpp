@@ -837,13 +837,17 @@ std::optional<std::string_view> KillEventOf(std::string_view scene, std::uint64_
 }
 
 std::set<std::uint64_t> KillsToRedo(std::string_view scene, const std::set<std::uint64_t>& dead,
+                                    const std::set<std::uint64_t>& kept,
                                     const std::function<bool(const std::string&)>& played) {
     std::map<std::string_view, bool> all_dead;  // event -> every kill actor of it is dead
+    std::set<std::string_view> others;          // events with another game's kill kept here
     for (const auto& t : kTriggers) {
         if (t.kind != Trigger::kill || !TriggerWaits(t, scene, played)) continue;
         const auto it = all_dead.try_emplace(t.event, true).first;
-        it->second = it->second && dead.contains(t.id);
+        it->second = it->second && (dead.contains(t.id) || kept.contains(t.id));
+        if (kept.contains(t.id)) others.insert(t.event);
     }
+    std::erase_if(all_dead, [&](const auto& e) { return !others.contains(e.first); });
     std::set<std::uint64_t> out;
     for (const auto& t : kTriggers) {
         if (t.kind != Trigger::kill || t.scene != scene) continue;

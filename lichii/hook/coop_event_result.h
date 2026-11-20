@@ -190,13 +190,16 @@ std::uint8_t DeciderAmongAble(std::uint8_t self, std::span<const std::uint8_t> i
 
 // Row 160 (run 20261120-132403: our Link revived by a reload, which re-made the room): the kill actors of a room event
 // to kill again once re-made in the same scene visit (pure). For each kill event in `scene` our game has not played,
-// if every one of its kill actors is in `dead` (seen dead here in this visit, or another game's kill kept here),
-// all of them: the group killed the whole room, so the re-made room is clear too and our game plays its event. An
-// event with any kill actor never killed is left as the game made it (a native refight of the room).
+// if every one of its kill actors is in `dead` (seen dead here in this visit) or `kept` (another game's kill kept
+// here) and at least one is in `kept`, all of them: the group killed the whole room, so the re-made room is clear too
+// and our game plays its event. An event with any kill actor never killed is left as the game made it (a native
+// refight of the room), and so is one that only our own game killed (no kept kill): a solo game or a host alone in
+// the room (co-op idle) that reloads before its event played fights the room again, as the game does.
+std::set<std::uint64_t> KillsToRedo(std::string_view scene, const std::set<std::uint64_t>& dead,
+                                    const std::set<std::uint64_t>& kept,
+                                    const std::function<bool(const std::string&)>& played);
 // The room event whose kill actor in `scene` is `hash` (pure); none: no kill line names it.
 std::optional<std::string_view> KillEventOf(std::string_view scene, std::uint64_t hash);
-std::set<std::uint64_t> KillsToRedo(std::string_view scene, const std::set<std::uint64_t>& dead,
-                                    const std::function<bool(const std::string&)>& played);
 
 // Row 160 (b) (run 20261120-132403): a kept kill's copy (another game killed it, the kill waits here for the event)
 // played its owner's death and then stood at full life, and our Link could hit it again. While its kill is kept its

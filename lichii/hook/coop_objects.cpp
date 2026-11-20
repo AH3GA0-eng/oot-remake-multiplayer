@@ -2756,11 +2756,13 @@ public:
         }
         // Row 160: the group killed every kill actor of an event here (seen dead, or another game's kill kept), and a
         // reload made them again: the ones seen dead die again (our game's own death), the kept ones keep waiting.
+        // Co-op idle (a host alone in the room) and solo: no kept kill, so no redo: the game's own refight.
         std::set<u64> dead;
+        std::set<u64> kept_here;
         for (const auto& [h, a] : trigger_dead_) dead.insert(h);
-        for (const auto& [a, k] : trigger_kept_) dead.insert(k.second);
-        for (const auto& [h, k] : trigger_kept_gone_) dead.insert(h);
-        const std::set<u64> redo = CoopEventResult::KillsToRedo(scene, dead, played);
+        for (const auto& [a, k] : trigger_kept_) kept_here.insert(k.second);
+        for (const auto& [h, k] : trigger_kept_gone_) kept_here.insert(h);
+        const std::set<u64> redo = CoopEventResult::KillsToRedo(scene, dead, kept_here, played);
         std::vector<LifeWrite> redo_writes;
         for (const Seen& s : seen) {
             const auto d = trigger_dead_.find(s.hash);

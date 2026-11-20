@@ -676,17 +676,21 @@ TEST_CASE("event result: row 160: a whole room killed in this visit is killed ag
     CHECK_FALSE(CoopEventResult::KillEventOf("FireTemple", kA));
     CHECK_FALSE(CoopEventResult::KillEventOf("DodongoCavern", 0x1234ULL));
     // A's game: its own A seen dead, B's kill kept: both of the event are dead for the group.
-    CHECK(CoopEventResult::KillsToRedo("DodongoCavern", {kA, kB}, never) == std::set<std::uint64_t>{kA, kB});
+    CHECK(CoopEventResult::KillsToRedo("DodongoCavern", {kA}, {kB}, never) == std::set<std::uint64_t>{kA, kB});
     // Only one killed: the re-made room is a native refight.
-    CHECK(CoopEventResult::KillsToRedo("DodongoCavern", {kA}, never).empty());
+    CHECK(CoopEventResult::KillsToRedo("DodongoCavern", {kA}, {}, never).empty());
+    CHECK(CoopEventResult::KillsToRedo("DodongoCavern", {}, {kB}, never).empty());
+    // Co-op idle (C #49): a host in a session, alone in the room, killed both itself and reloads before its event
+    // played (no other game's kill kept here): no redo, the game's own refight, as solo.
+    CHECK(CoopEventResult::KillsToRedo("DodongoCavern", {kA, kB}, {}, never).empty());
     // The event played here: nothing to redo.
-    CHECK(CoopEventResult::KillsToRedo("DodongoCavern", {kA, kB},
+    CHECK(CoopEventResult::KillsToRedo("DodongoCavern", {kA}, {kB},
                                        [](const std::string& e) { return e == "DodongoCavern_Gimmick_DefeatLizalfos02"; })
               .empty());
     // Another scene's hashes do not count.
-    CHECK(CoopEventResult::KillsToRedo("FireTemple", {kA, kB}, never).empty());
-    // Every 'last enemy -> event' line (kind kill) of every room: all its actors dead -> all of them; one missing ->
-    // none of that event's.
+    CHECK(CoopEventResult::KillsToRedo("FireTemple", {kA}, {kB}, never).empty());
+    // Every 'last enemy -> event' line (kind kill) of every room: all its actors dead with one kept -> all of them;
+    // all dead by our own game only -> none; one missing -> none of that event's.
     std::map<std::pair<std::string_view, std::string_view>, std::set<std::uint64_t>> events;
     for (const auto& t : CoopEventResult::Triggers()) {
         if (t.kind == CoopEventResult::Trigger::kill) events[{t.scene, t.event}].insert(t.id);
@@ -694,13 +698,22 @@ TEST_CASE("event result: row 160: a whole room killed in this visit is killed ag
     CHECK(events.size() >= 44);  // 44 kill events in 11 dungeons (ff54edf6)
     for (const auto& [key, ids] : events) {
         CAPTURE(key.second);
-        const auto redo = CoopEventResult::KillsToRedo(key.first, ids, never);
+        const std::set<std::uint64_t> one_kept{*ids.rbegin()};
+        const auto redo = CoopEventResult::KillsToRedo(key.first, ids, one_kept, never);
         for (const auto id : ids) CHECK(redo.contains(id));
+        const auto own_only = CoopEventResult::KillsToRedo(key.first, ids, {}, never);
+        for (const auto id : ids) {
+            bool shared = false;  // an id another event of the scene also names may come from that one
+            for (const auto& [k2, ids2] : events) {
+                if (k2 != key && k2.first == key.first && ids2.contains(id)) shared = true;
+            }
+            if (!shared) CHECK_FALSE(own_only.contains(id));
+        }
         if (ids.size() > 1) {
             std::set<std::uint64_t> one_short = ids;
             const std::uint64_t missing = *one_short.begin();
             one_short.erase(one_short.begin());
-            const auto partial = CoopEventResult::KillsToRedo(key.first, one_short, never);
+            const auto partial = CoopEventResult::KillsToRedo(key.first, one_short, {*ids.rbegin()}, never);
             for (const auto id : ids) {
                 // an id shared with another event of the scene may still come from that one
                 bool shared = false;
