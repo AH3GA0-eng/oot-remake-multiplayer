@@ -738,8 +738,8 @@ void Menu::EndTyping(bool keep) {
     const Act act = typing_act_;
     typing_ = false;
     replace_typed_ = false;
-    paste_on_open_ = false;
-    drop_open_paste_ = false;
+    // (a clipboard asked on open and still to come, Linux's late one: dropped when it comes, not a page paste)
+    drop_open_paste_ = std::exchange(paste_on_open_, false);
     typing_act_ = Act::kNone;
     typing_fresh_ = false;
     if (act == Act::kRelay || act == Act::kRoom) {   // (the relay and the room name: saved when changed)
@@ -981,6 +981,7 @@ bool Menu::Press(Input input) {
         }
         return true;
     case Input::kPaste:
+        drop_open_paste_ = false;   // (Ctrl+V: the player's own paste, always used)
         if (page_ == Page::kJoin && std::any_of(lines.begin(), lines.end(), [](const Line& l) {
                 return (l.act == Act::kCode || l.act == Act::kJoinIp || l.act == Act::kJoinPort) && !l.row.fixed;
             })) {
@@ -1079,6 +1080,7 @@ void Menu::Decide(Act act) {
         // A controller has no Ctrl+V: an invite code or address line on the clipboard is pasted at once, as the
         // friend's code row did (anything else there is left alone, and the field is typed as before).
         paste_on_open_ = true;
+        drop_open_paste_ = false;
         request_ = Request{Request::Kind::kPaste, {}};
         break;
     case Act::kJoinPassword:
