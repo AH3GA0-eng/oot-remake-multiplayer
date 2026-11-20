@@ -328,6 +328,32 @@ TEST_CASE("coop i18n: the commands' help, the save notices and the teleport refu
     CHECK(CoopI18n::Tr(hans, "teleport: 4090 refused (reason 3)") == "传送：4090 拒绝了（原因 3）");
 }
 
+TEST_CASE("coop i18n: the saves that switch folders, and the settings' own labels") {
+    const CoopI18n::Lang* hans = ByCode("zh-Hans");
+    const CoopI18n::Lang* hant = ByCode("zh-Hant");
+    // lichii/hook/coop_save.cpp's chat lines (the save set switches at the title).
+    CHECK(CoopI18n::Tr(hans, "Go back to the title screen first: the saves switch there.") ==
+          "先回标题画面：存档是在那里切换的。");
+    CHECK(CoopI18n::Tr(hans, "Multiplayer saves: load a save to play them.") == "联机存档：载入一个存档来玩。");
+    CHECK(CoopI18n::Tr(hant, "Resync from host: the host's save is already on its way.") ==
+          "重新取得房主存檔：房主的存檔已經在路上。");
+    CHECK(CoopI18n::Tr(hans, "The saves could not be switched (see the log).") == "存档切换不了（见日志）。");
+    // The Settings page's own row labels (Choice("Saves"...), Choice("New Game+"...), and the
+    // microphone row), which the page titles around them had translated before them.
+    CHECK(CoopI18n::Tr(hans, "Saves") == "存档");
+    CHECK(CoopI18n::Tr(hans, "New Game+") == "新游戏+");
+    CHECK(CoopI18n::Tr(hant, "Microphone") == "麥克風");
+    CHECK(CoopI18n::Tr(hans, "New Game+ off.") == "新游戏+：关");
+    CHECK(CoopI18n::Tr(hans, "New Game+ 2: start a new file to play it (your hearts carry over).") ==
+          "新游戏+ 2：开个新存档才能玩（心数会带过去）。");
+    // The game browser's own cells (coop_pause_tab.cpp: ListLines, ListValue, coop_room_list.cpp).
+    CHECK(CoopI18n::Tr(hans, "Game") == "游戏");
+    CHECK(CoopI18n::Tr(hans, "Looking for games...") == "正在找房间…");
+    CHECK(CoopI18n::Tr(hans, "No rooms listed") == "没有列出的房间");
+    CHECK(CoopI18n::Tr(hans, "Other version") == "版本不同");
+    CHECK(CoopI18n::Tr(hans, "Full") == "满员");
+}
+
 TEST_CASE("coop i18n: the difficulty line fits the chat's room") {
     const CoopI18n::Lang* hans = ByCode("zh-Hans");
     const char* en =

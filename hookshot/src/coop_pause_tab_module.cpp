@@ -512,9 +512,12 @@ void LiveCells(void* ctx, std::uint64_t layout, std::uint64_t gen, const Session
         if (on) {
             char path[64];
             std::snprintf(path, sizeof path, "Pa_Coop_00/Pa_List_%02d/T_Option_00", i);
-            LiveText(ctx, layout, gen, path, 8 + 2 * i, lines[k].name);
+            // The browser's own words (the header, "Looking for games...", a relay's state) in the
+            // player's language; a game's name is the player's own and comes back unchanged.
+            LiveText(ctx, layout, gen, path, 8 + 2 * i, CoopI18n::Tr(lines[k].name));
             std::snprintf(path, sizeof path, "Pa_Coop_00/Pa_List_%02d/T_Text_00", i);
-            LiveText(ctx, layout, gen, path, 9 + 2 * i, lines[k].value.empty() ? std::string(" ") : lines[k].value);
+            LiveText(ctx, layout, gen, path, 9 + 2 * i,
+                     lines[k].value.empty() ? std::string(" ") : CoopI18n::Tr(lines[k].value));
         }
         if (g_list_vis[k] != (on ? 1 : 0)) SetVisible(ctx, pane, on), g_list_vis[k] = on ? 1 : 0;
         // (the header a little dim, as a table's; a game bright when picked, or all of them when the rows have the pad)
