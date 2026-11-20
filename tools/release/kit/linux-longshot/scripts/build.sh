@@ -148,8 +148,26 @@ make_game() {
 }
 
 game_stamp=$GAME/coop-built-from.txt
+# The mods' code patches the game is built with (patches 0034/0035: mods/.../exefs/*.ips and *.pchtxt, folders starting
+# with '-', '_' or '.' left out), with the Mods tab's list (its switches and order decide which go in): a new, changed or
+# switched one builds the game again. No code mods: nothing added, the stamp as before (kit-paths.ps1 Get-KitExefsStampLine).
+exefs_stamp() {
+    local mods=$GAME/mods rows=() f rel
+    [[ -d $mods ]] || return 0
+    while IFS= read -r -d '' f; do
+        rel=${f#"$mods"/}
+        [[ ${rel%/*} == */exefs ]] || continue
+        [[ /${rel%/exefs/*} =~ /[-_.] ]] && continue
+        rows+=("$rel:$(sha256_of "$f")")
+    done < <(find "$mods" -maxdepth 6 -type f \( -iname '*.ips' -o -iname '*.pchtxt' \) -print0)
+    ((${#rows[@]})) || return 0
+    local list=none
+    [[ -f $mods/coop-mods.list ]] && list=$(sha256_of "$mods/coop-mods.list")
+    printf ' exefs=%s;list=%s' "$(printf '%s\n' "${rows[@]}" | LC_ALL=C sort | paste -sd, -)" "$list"
+}
+game_want="$src_stamp$(exefs_stamp)"
 ready=0
-[[ -n $(kit_game_exe) && $(cat "$game_stamp" 2>/dev/null) == "$src_stamp" ]] && ready=1
+[[ -n $(kit_game_exe) && $(cat "$game_stamp" 2>/dev/null) == "$game_want" ]] && ready=1
 
 # NVIDIA DLSS (#234), as hookshot-build.ps1: only in a game built with NVIDIA's DLSS SDK, which nobody may pass on, so
 # each build downloads it once NVIDIA's license is accepted. --dlss asks once and data/dlss.txt keeps the answer (the
@@ -257,7 +275,7 @@ else
     ((want_dlss)) && no_dlss_hint=" This build was with NVIDIA DLSS: if NVIDIA's SDK could not be downloaded (offline?), bash start-squadala.sh --no-dlss builds the game without it."
     make_game "${build_args[@]}" || fail "The build stopped. Its log: $LOGS/build.log$no_dlss_hint"
     [[ -n $(kit_game_exe) ]] || fail "The build finished but there is no game in $GAME. Its log: $LOGS/build.log"
-    printf '%s' "$src_stamp" >"$game_stamp"
+    printf '%s' "$game_want" >"$game_stamp"
 fi
 
 # --- 5: co-op into the game ---------------------------------------------------------------------
