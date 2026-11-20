@@ -19,12 +19,12 @@ press A
 wait 2400
 mark field
 wait 600
-place 200.93 163.4 309.87
+place 195.93 163.4 309.87      # was 200.93: on the Kokiri Forest exit (harness-0116); now 4 m east of B, facing it
 wait 30
-goto 193.0 309.87 0.5 300
+goto 188.0 309.87 0.5 300
 wait 30
 mark walk-into
-place 196.93 165.4 309.87
+place 191.93 165.4 309.87
 wait 60
 mark on-top
 wait 60

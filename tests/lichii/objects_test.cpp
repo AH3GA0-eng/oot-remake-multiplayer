@@ -5164,6 +5164,192 @@ TEST_CASE("objects: our own larva out of a copy egg waits only so long for the o
     CHECK(b.Removes().empty());
 }
 
+// boss-larva-0116 (issue 178): the eggs Gohma lays in the fight are her
+// minions: laid by the game that owns her, made from that one everywhere
+// else, so a hatch in the owner's game is a larva on every screen.
+namespace {
+
+const char* const kGohma = "Enemy_DungeonBoss_Gohma";
+
+proto::ObjectId OwnedGohma(Sync& s, std::uint8_t self, std::uint64_t address) {
+    Tick(s, 0, {Enemy(address, 0x77, 21, 0.0f, kGohma)}, self, kDeku);
+    const proto::ObjectId id = *s.IdOf(address);
+    Own(s, id, 1);
+    Tick(s, 50 * kMs, {Enemy(address, 0x77, 21, 0.0f, kGohma)}, self, kDeku);
+    return id;
+}
+
+} // namespace
+
+TEST_CASE("objects: Gohma's eggs and King Dodongo's babies are their boss's minions (boss-larva-0116)") {
+    CHECK(CoopObjects::MinionMaker(kEgg) == kGohma);
+    CHECK(CoopObjects::MinionMaker("Enemy_BabyDodongo") == "Enemy_DungeonBoss_Dodongo");
+    CHECK(CoopObjects::MinionMaker("Enemy_Gohma_Egg").empty());  // the scene's own placed eggs
+    CHECK(CoopObjects::MinionMaker(kLarva).empty());             // out of an egg (Hatch)
+}
+
+TEST_CASE("objects: the egg Gohma's owner lays is shared, hatches into a shared larva and ends once (boss-larva-0116)") {
+    for (const bool larva_first : {true, false}) {
+        CAPTURE(larva_first);
+        Sync a;
+        const Seen boss = Enemy(0x50, 0x77, 21, 0.0f, kGohma);
+        OwnedGohma(a, 1, 0x50);
+        const auto laid = All<proto::ObjectSpawn>(Tick(a, 100 * kMs, {boss, Enemy(0x100, ~0ULL, 1, 3.0f, kEgg)}, 1, kDeku));
+        REQUIRE(laid.size() == 1);
+        CHECK(laid[0].actor == kEgg);
+        CHECK(laid[0].id.kind == proto::ObjectKind::made);
+        CHECK(laid[0].id.maker == 1);
+        const proto::ObjectId egg = laid[0].id;
+        CHECK(a.OwnerOf(egg) == 1);
+
+        Step born;
+        std::vector<proto::ObjectRemove> removes;
+        if (larva_first) {
+            born = Tick(a, 200 * kMs, {boss, Enemy(0x100, ~0ULL, 1, 3.0f, kEgg), Enemy(0x200, ~0ULL, 1, 3.5f, kLarva)},
+                        1, kDeku);
+            CHECK(All<proto::ObjectRemove>(born).empty());
+            CHECK(All<proto::ObjectRemove>(Tick(a, 250 * kMs, {boss, Enemy(0x200, ~0ULL, 1, 3.5f, kLarva)}, 1, kDeku))
+                      .empty());  // (missed once)
+            removes = All<proto::ObjectRemove>(Tick(a, 300 * kMs, {boss, Enemy(0x200, ~0ULL, 1, 3.5f, kLarva)}, 1, kDeku));
+        } else {
+            Tick(a, 150 * kMs, {boss}, 1, kDeku);  // (missed once)
+            removes = All<proto::ObjectRemove>(Tick(a, 200 * kMs, {boss}, 1, kDeku));
+            born = Tick(a, 300 * kMs, {boss, Enemy(0x200, ~0ULL, 1, 3.5f, kLarva)}, 1, kDeku);
+            CHECK(All<proto::ObjectRemove>(born).empty());  // its remove went as it left
+            CHECK_FALSE(Lists(born, egg));
+        }
+        // The egg's remove: gone, once.
+        REQUIRE(removes.size() == 1);
+        CHECK(removes[0].id == egg);
+        CHECK(removes[0].reason == proto::RemoveReason::gone);
+        // The larva: a made enemy of ours.
+        const auto larvae = All<proto::ObjectSpawn>(born);
+        REQUIRE(larvae.size() == 1);
+        CHECK(larvae[0].actor == kLarva);
+        CHECK(larvae[0].id.kind == proto::ObjectKind::made);
+        CHECK(larvae[0].id.maker == 1);
+        CHECK(a.Hatched() == 1);
+        CHECK(All<proto::ObjectRemove>(Tick(a, 400 * kMs, {boss, Enemy(0x200, ~0ULL, 1, 3.5f, kLarva)}, 1, kDeku))
+                  .empty());
+    }
+}
+
+TEST_CASE("objects: a copy Gohma's own egg is not kept, the owner's egg is made here and ends with its hatch (boss-larva-0116)") {
+    Sync b;
+    const Seen boss = Enemy(0x60, 0x77, 21, 0.0f, kGohma);
+    OwnedGohma(b, 2, 0x60);
+    // Our copy boss lays one of its own: deleted, never shared (issue 178: an egg on one screen only).
+    const Step own = Tick(b, 100 * kMs, {boss, Enemy(0x210, ~0ULL, 1, 3.2f, kEgg)}, 2, kDeku);
+    CHECK(All<proto::ObjectSpawn>(own).empty());
+    CHECK_FALSE(b.IdOf(0x210));
+    CHECK(b.Removes() == std::vector<std::uint64_t>{0x210});
+
+    // The owner's egg comes: made here.
+    proto::ObjectSpawn spawn;
+    spawn.player_number = 1;
+    spawn.id = {proto::ObjectKind::made, 1, 4};
+    spawn.actor = kEgg;
+    spawn.state.position = proto::Vec3{3.0f, 0.0f, 0.0f};
+    b.Receive(spawn);
+    Tick(b, 200 * kMs, {boss}, 2, kDeku);
+    const auto creates = b.Creates();
+    REQUIRE(creates.size() == 1);
+    CHECK(creates[0].name == kEgg);
+    b.Bind({{creates[0].key, 0x220}});
+    Tick(b, 300 * kMs, {boss, Enemy(0x220, ~0ULL, 1, 3.0f, kEgg)}, 2, kDeku);
+    REQUIRE(b.IdOf(0x220));
+    CHECK(*b.IdOf(0x220) == spawn.id);
+    CHECK(b.OwnerOf(spawn.id) == 1);
+
+    // It hatched in the owner's game: the director deletes ours.
+    b.Receive(proto::ObjectRemove{1, spawn.id, 0, proto::RemoveReason::gone, {}});
+    Tick(b, 400 * kMs, {boss, Enemy(0x220, ~0ULL, 1, 3.0f, kEgg)}, 2, kDeku);
+    const auto after = b.Creates();
+    REQUIRE(after.size() == 1);
+    CHECK(after[0].removed);
+}
+
+TEST_CASE("objects: our copy of the owner's egg hatches here: not made again, the owner's larva takes ours (boss-larva-0116)") {
+    Sync b;
+    const Seen boss = Enemy(0x60, 0x77, 21, 0.0f, kGohma);
+    OwnedGohma(b, 2, 0x60);
+    proto::ObjectSpawn spawn;
+    spawn.player_number = 1;
+    spawn.id = {proto::ObjectKind::made, 1, 4};
+    spawn.actor = kEgg;
+    spawn.state.position = proto::Vec3{3.0f, 0.0f, 0.0f};
+    b.Receive(spawn);
+    Tick(b, 100 * kMs, {boss}, 2, kDeku);
+    const auto creates = b.Creates();
+    REQUIRE(creates.size() == 1);
+    b.Bind({{creates[0].key, 0x220}});
+    Tick(b, 200 * kMs, {boss, Enemy(0x220, ~0ULL, 1, 3.0f, kEgg)}, 2, kDeku);
+
+    // Our game's own AI hatches it: the egg leaves alive, our larva comes.
+    Tick(b, 300 * kMs, {boss}, 2, kDeku);
+    Tick(b, 400 * kMs, {boss}, 2, kDeku);
+    const auto born = Tick(b, 500 * kMs, {boss, Enemy(0x300, ~0ULL, 1, 3.4f, kLarva)}, 2, kDeku);
+    CHECK(All<proto::ObjectSpawn>(born).empty());
+    REQUIRE(b.IdOf(0x300));
+    // The egg is not made again (it would stand as an egg on our screen only).
+    const auto copies = b.Creates();
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].name == kEgg);
+    CHECK(copies[0].remakes == 0);
+    // The owner's larva: ours is its copy, nothing made, nothing deleted.
+    const proto::ObjectSpawn larva = OwnersLarva(3.5f);
+    b.Receive(larva);
+    Tick(b, 600 * kMs, {boss, Enemy(0x300, ~0ULL, 1, 3.4f, kLarva)}, 2, kDeku);
+    REQUIRE(b.Creates().size() == 1);  // (still the egg's, nothing new)
+    REQUIRE(b.IdOf(0x300));
+    CHECK(*b.IdOf(0x300) == larva.id);
+    CHECK(b.Removes().empty());
+}
+
+TEST_CASE("objects: an egg handed to us with Gohma hatches here: its larva is shared, the layer's egg ends (boss-larva-0116)") {
+    // A laid it; Gohma's group then went to B (the server moves a member with its root).
+    Sync a;
+    const Seen boss_a = Enemy(0x50, 0x77, 21, 0.0f, kGohma);
+    OwnedGohma(a, 1, 0x50);
+    const auto laid = All<proto::ObjectSpawn>(Tick(a, 100 * kMs, {boss_a, Enemy(0x100, ~0ULL, 1, 3.0f, kEgg)}, 1, kDeku));
+    REQUIRE(laid.size() == 1);
+    const proto::ObjectSpawn spawn = laid[0];
+    Own(a, spawn.id, 2, 1);
+
+    Sync b;
+    const Seen boss_b = Enemy(0x60, 0x77, 21, 0.0f, kGohma);
+    OwnedGohma(b, 2, 0x60);
+    proto::ObjectSpawn got = spawn;
+    got.player_number = 1;
+    b.Receive(got);
+    Tick(b, 100 * kMs, {boss_b}, 2, kDeku);
+    const auto creates = b.Creates();
+    REQUIRE(creates.size() == 1);
+    b.Bind({{creates[0].key, 0x220}});
+    Tick(b, 150 * kMs, {boss_b, Enemy(0x220, ~0ULL, 1, 3.0f, kEgg)}, 2, kDeku);
+    Own(b, spawn.id, 2, 1);
+    Tick(b, 200 * kMs, {boss_b, Enemy(0x220, ~0ULL, 1, 3.0f, kEgg)}, 2, kDeku);
+
+    // B's egg hatches: B shares the larva, and ends the egg as its owner.
+    const auto born = Tick(b, 300 * kMs, {boss_b, Enemy(0x220, ~0ULL, 1, 3.0f, kEgg), Enemy(0x300, ~0ULL, 1, 3.4f, kLarva)},
+                           2, kDeku);
+    const auto larvae = All<proto::ObjectSpawn>(born);
+    REQUIRE(larvae.size() == 1);
+    CHECK(larvae[0].id.maker == 2);
+    Tick(b, 400 * kMs, {boss_b, Enemy(0x300, ~0ULL, 1, 3.4f, kLarva)}, 2, kDeku);
+    const auto removes = All<proto::ObjectRemove>(Tick(b, 500 * kMs, {boss_b, Enemy(0x300, ~0ULL, 1, 3.4f, kLarva)}, 2, kDeku));
+    REQUIRE(removes.size() == 1);
+    CHECK(removes[0].id == spawn.id);
+    CHECK(removes[0].epoch == 1);
+    CHECK(removes[0].reason == proto::RemoveReason::gone);
+    CHECK(b.Creates()[0].remakes == 0);
+
+    // A's own egg (now a copy of B's) goes through the game's removal.
+    a.Receive(removes[0]);
+    Tick(a, 600 * kMs, {boss_a, Enemy(0x100, ~0ULL, 1, 3.0f, kEgg)}, 1, kDeku);
+    CHECK(a.Removes() == std::vector<std::uint64_t>{0x100});
+}
+
 TEST_CASE("objects: townspeople near our Link in an event are flagged targeting and wait (issue 200)") {
     constexpr const char* kNpc = "Npc_Kokiri_Mido";
     // A copy at x owned by player 2; our Link at 0 is in an event or not.
@@ -5337,6 +5523,83 @@ TEST_CASE("objects: another player's event here keeps its bound actors acting, c
     CHECK_FALSE(guessed_theirs.partner);  // its own AI in another player's event: not ours to take
     CHECK_FALSE(guessed_theirs.targeting);
     CHECK(run(true, std::nullopt, 200).targeting);  // in our Link's event it is, as before
+}
+
+TEST_CASE("objects: our event's actor is flagged in_event in its samples (S2, issue 144)") {
+    // The owner's side: an actor our Link's event binds (a scrub we talk to) carries
+    // object_state::in_event in its samples, so every copy keeps its own logic meanwhile.
+    Sync sync;
+    sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+    Seen scrub = Acting(0x100, 0x11, 100, 3.0f, "Wait", "Enemy_Scrub_Deku");
+    Tick(sync, 0, {scrub});
+    Own(sync, *sync.IdOf(0x100), 1);
+    Tick(sync, 20 * kMs, {scrub});  // the OBJECT_OWNER applied
+    // The samples of [from, from + 600 ms), ticking every 66 ms with a move each time: the last one's bit.
+    float x = 3.0f;
+    auto bit = [&](std::uint64_t from) {
+        std::optional<bool> in_event;
+        for (std::uint64_t t = from; t < from + 600; t += 66) {
+            x += 0.1f;
+            scrub.position[0] = x;  // a move, so samples go out
+            for (const auto& s : All<proto::ObjectSample>(Tick(sync, t * kMs, {scrub}))) {
+                in_event = s.state.state && (*s.state.state & proto::object_state::in_event) != 0;
+            }
+        }
+        return in_event;
+    };
+    CHECK(bit(50) == std::optional<bool>(false));  // no event
+    sync.SetEvent(true, 700 * kMs, true);
+    scrub.event_member = true;
+    CHECK(bit(700) == std::optional<bool>(true));  // our Link's event binds it
+    sync.SetEvent(true, 1300 * kMs, false);  // another player's event replayed here: not ours to tell
+    CHECK(bit(1300 + Sync::kEventKeepUs / kMs) == std::optional<bool>(false));
+}
+
+TEST_CASE("objects: a copy its owner's event binds keeps its own logic, unclaimed (S2, issue 144)") {
+    // The follower's side: P2 talks to its scrub (its samples say in_event). Our copy is not
+    // given P2's motion (EventPartner), and our Link near it with its own AI acting does not
+    // claim it away from P2 (no targeting). A townsperson still plays P2's cutscene (issue 200).
+    struct Out {
+        bool holds = false;
+        bool partner = false;
+        bool targeting = false;
+    };
+    auto run = [&](const std::string& name, bool owner_event, std::uint64_t until_ms = 700) {
+        Sync sync;
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        const Seen copy = Acting(0x100, 0x11, 100, 2.0f, "Hop", name);
+        Tick(sync, 0, {copy});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, 2);
+        std::optional<std::uint8_t> flags;
+        for (std::uint64_t t = 10; t < until_ms; t += 66) {
+            if (t < 700) {
+                proto::ObjectSample s = OwnerSample(id, 2, t * kMs, 2.0f, 100, "Talk");
+                if (owner_event) {
+                    s.state.state = proto::object_state::in_event;
+                }
+                sync.Receive(s);
+            }
+            sync.NoteTakeover(0x100, t * kMs, "Hop");  // our copy's own AI wants its own play
+            for (const auto& p : All<proto::ObjectPresent>(Tick(sync, t * kMs, {copy}))) {
+                flags = p.objects[0].flags;
+            }
+        }
+        const std::uint64_t at = (until_ms - 1) * kMs;
+        return Out{sync.OwnerEventHolds(0x100, at), sync.EventPartner(0x100, at),
+                   flags && (*flags & kTargeting) != 0};
+    };
+    const Out scrub = run("Enemy_Scrub_Deku", true);
+    CHECK(scrub.holds);
+    CHECK(scrub.partner);           // the owner's talk motion is not put on our copy
+    CHECK_FALSE(scrub.targeting);   // and it stays the talker's
+    CHECK(run("Enemy_Octorok", true).holds);  // any enemy its owner's event binds
+    CHECK_FALSE(run("Enemy_Scrub_Deku", false).holds);   // no event of the owner's: as before
+    CHECK_FALSE(run("Npc_Kokiri_Saria", true).holds);             // a townsperson follows the owner's cutscene
+    CHECK_FALSE(run("Enemy_DungeonBoss_Gohma", true).holds);             // a boss keeps its own rules
+    const Out after = run("Enemy_Scrub_Deku", true, 700 + Sync::kEventKeepUs / kMs + 100);
+    CHECK_FALSE(after.holds);       // kEventKeepUs after the owner's last in_event sample
+    CHECK_FALSE(after.partner);
 }
 
 TEST_CASE("objects: a boss or a fish our event binds stays unclaimed (row 97)") {

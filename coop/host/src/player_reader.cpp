@@ -270,6 +270,7 @@ std::optional<protocol::Equipment> PlayerReader::read_equipment() {
   e.third_weapon = read_slot_name(addr::kEquipSlotThirdWeapon);
   e.tool = read_slot_name(addr::kEquipSlotTool);
   e.sub_tool = read_slot_name(addr::kEquipSlotSubTool);
+  if (e.drawn) e.lit = read_lit(*e.drawn);
   if (e == protocol::Equipment{}) return std::nullopt;
   return e;
 }
@@ -335,6 +336,62 @@ std::optional<std::uint8_t> PlayerReader::read_drawn() {
     if (memo.drawn) drawn = static_cast<std::uint8_t>(drawn | (1u << i));
   }
   return drawn;
+}
+
+// Issue 248: the owner's game burns the stick (its chemistry); others are sent
+// only that it burns, and show the stick's own flame (docs/puppet.md).
+std::uint8_t PlayerReader::read_lit(std::uint8_t drawn) {
+  if (drawn == 0) return 0;
+  const auto actor = find_player_actor();
+  if (!actor) return 0;
+  const auto components = read_ptr(memory_, *actor + addr::kActorComponents);
+  if (!components) return 0;
+  const auto user = read_ptr(memory_, *components + addr::kComponentsEquipmentUser);
+  if (!user) return 0;
+  std::uint8_t lit = 0;
+  for (std::uint32_t i = 0; i < addr::kEquipSlotCount; ++i) {
+    if ((drawn & (1u << i)) == 0) continue;
+    const std::uint64_t slot = *user + addr::kEquipSlots + addr::kEquipSlotStride * i;
+    const auto id = read_u32(memory_, slot + addr::kEquipSlotId);
+    if (!id || *id == addr::kEmptyId) continue;
+    const auto holder = read_ptr(memory_, slot + addr::kEquipSlotHolder);
+    if (!holder) continue;
+    const auto holder_id = read_u32(memory_, *holder + addr::kHolderId);
+    if (!holder_id || *holder_id != *id) continue;
+    const auto piece = read_ptr(memory_, *holder + addr::kHolderActor);
+    if (piece && plays_effect(*piece, addr::kBurnKey)) lit = static_cast<std::uint8_t>(lit | (1u << i));
+  }
+  return lit;
+}
+
+bool PlayerReader::plays_effect(std::uint64_t actor, std::string_view key) {
+  const auto components = read_ptr(memory_, actor + addr::kActorComponents);
+  if (!components) return false;
+  const auto xlink = read_ptr(memory_, *components + addr::kComponentsXLink);
+  if (!xlink) return false;
+  const auto user = read_ptr(memory_, *xlink + addr::kXLinkEffectUser);
+  if (!user) return false;
+  const auto offset = read_u32(memory_, *user + addr::kUserLinkOffset);
+  auto link = read_ptr(memory_, *user + addr::kUserFirstLink);
+  // (as CoopPuppetSound's walk: a link offset past 0x400 is not a user's)
+  if (!offset || *offset > 0x400 || !link) return false;
+  const std::uint64_t head = *user + addr::kUserEvents;
+  const auto back = static_cast<std::int64_t>(static_cast<std::int32_t>(*offset));
+  for (std::uint32_t n = 0; link && *link != head && n < addr::kMaxUserEvents; ++n) {
+    const std::uint64_t event = *link - static_cast<std::uint64_t>(back);
+    if (const auto call = read_ptr(memory_, event + addr::kEventCall)) {
+      if (const auto text = read_ptr(memory_, *call)) {
+        std::array<std::uint8_t, 32> bytes{};
+        const auto want = std::span(bytes).first(std::min(key.size() + 1, bytes.size()));
+        if (key.size() < bytes.size() && memory_.read(*text, want) &&
+            std::equal(key.begin(), key.end(), bytes.begin()) && bytes[key.size()] == 0) {
+          return true;
+        }
+      }
+    }
+    link = read_ptr(memory_, *link + addr::kLinkNext);
+  }
+  return false;
 }
 
 std::optional<std::string> PlayerReader::read_slot_name(std::uint32_t slot_index) {

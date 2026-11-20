@@ -498,13 +498,16 @@ std::uint64_t MouseRows::Step(const In& in) {
     if (in.inside) seen_ = true, x_ = in.x, y_ = in.y;
     if (in.pad) target_ = -1;   // (the player's own steps: the mouse's stop)
     if (moved && hover >= 0 && hover != target_ && hover != in.focused) target_ = hover, since_ = in.now_ms, step_from_ = -1;
-    if (in.left && !left_) press_ = hover;
-    if (!in.left && left_) {
-        if (hover >= 0 && hover == press_) {   // (a click: pressed and let go on one row)
+    // A click is its press: Longshot's mouse presses A 50 ms after the left button goes down on a button (oot_menu.c,
+    // mouse_tick_locked: "0.05:A/80"), mostly before it is let go, so the row is taken where the button went down.
+    if (in.left && !left_ && in.inside) {
+        const bool any = std::any_of(in.boxes.begin(), in.boxes.end(), [](const RowBox& b) { return b.shown; });
+        if (hover >= 0) {
             clicked_ = hover, clicked_ms_ = in.now_ms;
             if (hover != in.focused) target_ = hover, since_ = in.now_ms, step_from_ = -1;
+        } else if (any) {
+            clicked_ = kOffRows, clicked_ms_ = in.now_ms;   // (on the page, off our rows: its A is no row's)
         }
-        press_ = -1;
     }
     left_ = in.left;
     if (target_ >= 0 && (in.focused == target_ || in.focused < 0 || in.now_ms - since_ > kGiveUpMs)) {
@@ -521,7 +524,7 @@ std::uint64_t MouseRows::Step(const In& in) {
 }
 
 int MouseRows::Clicked(std::uint64_t now_ms) const {
-    return clicked_ >= 0 && now_ms >= clicked_ms_ && now_ms - clicked_ms_ <= kClickMs ? clicked_ : -1;
+    return clicked_ != -1 && now_ms >= clicked_ms_ && now_ms - clicked_ms_ <= kClickMs ? clicked_ : -1;
 }
 
 int MouseRows::TakeClicked(std::uint64_t now_ms) {
@@ -782,7 +785,7 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
         rows[2] = pages > 1 ? "Next page (" + std::to_string((v.s.cell_page % pages + pages) % pages + 1) + "/" +
                                   std::to_string(pages) + ")"
                             : std::string("Refresh list");
-        rows[3] = v.s.list_room ? "List my room: On" : "List my room: Off";
+        rows[3] = v.s.list_room ? "List my room: On" : "List my room: Off";   // (listed as list_name, or the room name)
         break;
     }
     case View::kLanGame:

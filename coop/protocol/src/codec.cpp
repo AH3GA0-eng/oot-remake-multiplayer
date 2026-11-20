@@ -621,6 +621,11 @@ Error encode_body(const PlayerEquip& m, Writer& w) {
     w.u16(1);
     w.u8(*m.equipment.drawn);
   }
+  if (m.equipment.lit) {
+    w.u16(static_cast<std::uint16_t>(EquipComponent::lit));
+    w.u16(1);
+    w.u8(*m.equipment.lit);
+  }
   if (m.equipment.color) {
     const std::uint32_t rgb = *m.equipment.color;
     w.u16(static_cast<std::uint16_t>(EquipComponent::color));
@@ -1377,7 +1382,8 @@ Error decode_body(Reader& r, PlayerEquip& m) {
     }
     const bool is_drawn = id == static_cast<std::uint16_t>(EquipComponent::drawn);
     const bool is_color = id == static_cast<std::uint16_t>(EquipComponent::color);
-    if (name == nullptr && !is_drawn && !is_color) continue;  // unknown: skipped by its length
+    const bool is_lit = id == static_cast<std::uint16_t>(EquipComponent::lit);
+    if (name == nullptr && !is_drawn && !is_color && !is_lit) continue;  // unknown: skipped by its length
     if (seen & (1u << id)) return Error::duplicate_component;
     seen |= 1u << id;
 
@@ -1391,7 +1397,7 @@ Error decode_body(Reader& r, PlayerEquip& m) {
     } else {
       std::uint8_t bits = 0;
       e = c.u8(bits) ? Error::none : Error::truncated;
-      m.equipment.drawn = bits;
+      (is_lit ? m.equipment.lit : m.equipment.drawn) = bits;
     }
     // A known component's fields running past its length means its length
     // is wrong, not that the message was cut short.
