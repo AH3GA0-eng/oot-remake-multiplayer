@@ -114,10 +114,39 @@ Hold HoldFor(std::string_view scene, const std::set<std::string>& applied,
              const std::function<bool(std::uint64_t)>& have_key = nullptr);
 
 // The kill triggers' keepers in `scene` (pure): for each event our game has not played, the largest placement hash
-// of its kill actors that `alive` says is alive in our walk. The object sync keeps a kill or remove of a keeper until
-// it is no keeper any more (the event played here, or a scene change).
+// of its kill actors that `alive` says is alive in our walk and that our game does not own (`ours`). The object sync
+// keeps a kill or remove of a keeper until it is no keeper any more (the event played here, or a scene change).
+// Rows 160/161 (dc-doors-0118, Dodongo's Cavern's second Lizalfos room, 0.11.6): each enemy has one owner, whose game
+// alone decides its death (a mid-boss copy is held at life 1 until its owner's dies). With the two Lizalfos owned by
+// two games, each game kept the other owner's kill (the largest live one was always a copy there), so no game had both
+// dead, nobody played the event and the room stayed shut for everyone. So: a kill of an enemy our game owns is never
+// kept (it is the group's death of it: the remote player's last hit, landed through our game), and while one of the
+// event's live kill actors is ours, no copy is the last one here, so nothing of that event is kept. The game that
+// owns the event's last enemy plays the event; every other game keeps that one kill until the event's flags come.
 std::set<std::uint64_t> KillKeepers(std::string_view scene, const std::function<bool(std::uint64_t)>& alive,
-                                    const std::function<bool(const std::string&)>& played);
+                                    const std::function<bool(const std::string&)>& played,
+                                    const std::function<bool(std::uint64_t)>& ours = nullptr);
+
+// Crossing last kills (review-dc-0118): two owners each kill their own last enemy of an event within one round trip,
+// so each game has no owned enemy alive when the other's kill lands, and both keep it (nobody plays the event). The
+// tiebreak (pure): another game's kill of `keeper` kept here for `kept_for_us` lands anyway once it was kept
+// kCrossingUs, if one of the same event's kill actors that our game owned died here within kCrossingGapUs of that
+// kill being kept (`ours_died`, the caller's check: a crossing, not one kill long after the other) and our player
+// number is below the keeper's owner's. So exactly one of the crossing owners (the lowest) plays the event and the
+// others get its flags; a game that owned none of them, or whose own enemy died long before, still only waits (in a
+// kill after kill the last enemy's owner plays it). kCrossingUs is longer than a room event plays, so the playing
+// game's flags have come by then in every case that is no crossing.
+// The owner gone (`owner_here` false: its game no longer in our scene, or out of the session, by its samples): it
+// cannot play the event any more, so after kCrossingUs the kill lands in the one game that decides for our scene
+// (`we_decide`: Sync::DeciderOf, the lowest player number in it), whatever it owned; the others get its flags.
+// The cost: in a crossing (or with the owner gone) the shutters open kCrossingUs late, in the deciding game first and
+// in the others when its flags come. Before, they never opened until a reload.
+// `keeper_owner` is Sync::OwnerOrDeathOwnerOf: the dead ObjectRemove that brings such a kill forgets the owner.
+inline constexpr std::uint64_t kCrossingUs = 15'000'000;
+inline constexpr std::uint64_t kCrossingGapUs = 2'000'000;
+bool CrossingKillLands(std::string_view scene, std::uint64_t keeper, std::uint64_t kept_for_us, std::uint8_t self,
+                       std::optional<std::uint8_t> keeper_owner, const std::function<bool(std::uint64_t)>& ours_died,
+                       bool owner_here = true, bool we_decide = false);
 
 // The follow triggers' keepers in `scene` (pure): for each event our game has not played, its follow actors of group
 // 0 and the largest of each linked group. coop_world (WorldSync::SetTriggerKeepers) keeps another game's move, rest

@@ -706,16 +706,54 @@ bool TriggerWaits(const Trigger& t, std::string_view scene, const std::function<
 }  // namespace
 
 std::set<std::uint64_t> KillKeepers(std::string_view scene, const std::function<bool(std::uint64_t)>& alive,
-                                    const std::function<bool(const std::string&)>& played) {
+                                    const std::function<bool(const std::string&)>& played,
+                                    const std::function<bool(std::uint64_t)>& ours) {
     std::map<std::string_view, std::uint64_t> keeper;  // event -> its largest live kill actor
+    std::set<std::string_view> own_alive;              // events with a live kill actor our game owns
     for (const auto& t : kTriggers) {
         if (t.kind != Trigger::kill || !TriggerWaits(t, scene, played) || !(alive && alive(t.id))) continue;
+        if (ours && ours(t.id)) {
+            own_alive.insert(t.event);  // rows 160/161: our own enemy's death is the last one, in our game
+            continue;
+        }
         auto& k = keeper[t.event];
         k = std::max(k, t.id);
     }
     std::set<std::uint64_t> out;
-    for (const auto& [event, hash] : keeper) out.insert(hash);
+    for (const auto& [event, hash] : keeper) {
+        if (!own_alive.contains(event)) out.insert(hash);
+    }
     return out;
+}
+
+bool CrossingKillLands(std::string_view scene, std::uint64_t keeper, std::uint64_t kept_for_us, std::uint8_t self,
+                       std::optional<std::uint8_t> keeper_owner, const std::function<bool(std::uint64_t)>& ours_died,
+                       bool owner_here, bool we_decide) {
+    if (kept_for_us < kCrossingUs || self == 0) {
+        return false;
+    }
+    bool kill_line = false;
+    for (const auto& t : kTriggers) {
+        if (t.kind == Trigger::kill && t.scene == scene && t.id == keeper) kill_line = true;
+    }
+    if (!kill_line) {
+        return false;
+    }
+    if (!owner_here) {
+        return we_decide;  // its owner cannot play the event any more: the scene's decider does
+    }
+    if (!keeper_owner || *keeper_owner == 0 || self >= *keeper_owner || !ours_died) {
+        return false;
+    }
+    for (const auto& t : kTriggers) {
+        if (t.kind != Trigger::kill || t.scene != scene || t.id != keeper) continue;
+        for (const auto& o : kTriggers) {  // another kill actor of the same event that was ours and died here
+            if (o.kind == Trigger::kill && o.scene == scene && o.event == t.event && o.id != keeper && ours_died(o.id)) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 std::set<std::uint64_t> FollowKeepers(std::string_view scene, const std::function<bool(const std::string&)>& played) {

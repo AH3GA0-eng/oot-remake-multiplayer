@@ -2473,8 +2473,13 @@ public:
     // trigger reads die, so another game's kill of the last one would make our asker ask that player's event here (a
     // replay that binds our Link). The event's keeper (its largest live kill actor, CoopEventResult::KillKeepers) is
     // neither killed nor removed by another game until our game has played the event; its kill is kept (one per
-    // actor, the newest) and lands then, on the same actor. Our Link can still kill it: our own play.
+    // actor, the newest) and lands then, on the same actor. Our Link can still kill it: our own play. Rows 160/161:
+    // an enemy our game owns is never a keeper (its death is decided here, a remote player's last hit too), and while
+    // one of the event's enemies we own lives, no copy is the last one here: the owner of the last one plays it.
     std::map<u64, std::pair<LifeWrite, u64>> trigger_kept_;  // address -> the kill, the placement hash there
+    std::map<u64, u64> trigger_kept_since_;  // address -> when its kill was first kept (crossing last kills)
+    std::set<u64> owned_seen_;               // placement hashes our game owned in this scene (crossing last kills)
+    std::map<u64, u64> owned_died_at_;       // of those, when our walk first saw it dead or gone
     std::set<u64> keeper_addresses_;                          // this walk's keepers (Place skips their removes)
     std::string keeper_scene_;
     // The follow keepers (CoopEventResult::FollowKeepers) of `scene` by our game's played flags; none before the game's
@@ -2494,6 +2499,9 @@ public:
         if (scene != keeper_scene_) {
             keeper_scene_ = scene;
             trigger_kept_.clear();  // those actors are gone with the scene
+            trigger_kept_since_.clear();
+            owned_seen_.clear();
+            owned_died_at_.clear();
         }
         std::unordered_map<u64, u64> hash_at;  // address -> placement hash
         std::set<u64> alive;
@@ -2501,6 +2509,14 @@ public:
             hash_at.emplace(s.address, s.hash);
             if (!s.life || s.life->life > 0) {
                 alive.insert(s.hash);
+            }
+        }
+        // Rows 160/161: the enemies our game owns (their death is decided here, a remote hit's too).
+        std::set<u64> owned;
+        for (const auto& [address, name] : sync_.Owned()) {
+            if (const auto at = hash_at.find(address); at != hash_at.end()) {
+                owned.insert(at->second);
+                owned_seen_.insert(at->second);
             }
         }
         std::set<std::uint64_t> keepers;
@@ -2511,13 +2527,46 @@ public:
                 scene, [&alive](std::uint64_t h) { return alive.contains(h); },
                 [&flags](const std::string& e) {
                     return flags.get_bool(coop::host::flag_hash("HavePlayedEvent." + e)).value_or(false);
-                });
+                },
+                [&owned](std::uint64_t h) { return owned.contains(h); });
         }
         keeper_addresses_.clear();
         for (const auto& [a, h] : hash_at) {
             if (keepers.contains(h)) {
                 keeper_addresses_.insert(a);
             }
+        }
+        // Crossing last kills (review-dc-0118): two owners each killed their own last enemy of the event within one
+        // round trip, so each game keeps the other's kill. After kCrossingUs the lowest-numbered of those owners lets
+        // it land (CoopEventResult::CrossingKillLands): that one game plays the event, the others get its flags.
+        for (const u64 h : owned_seen_) {
+            if (!alive.contains(h)) owned_died_at_.try_emplace(h, now_us);
+        }
+        for (const auto& [address, kept] : trigger_kept_) {
+            const auto since = trigger_kept_since_.find(address);
+            if (since == trigger_kept_since_.end()) continue;
+            const u64 kept_at = since->second;
+            const auto ours_died = [&](std::uint64_t h) {
+                const auto d = owned_died_at_.find(h);
+                return d != owned_died_at_.end() &&
+                       (d->second > kept_at ? d->second - kept_at : kept_at - d->second) <= CoopEventResult::kCrossingGapUs;
+            };
+            if (!keeper_addresses_.contains(address)) {
+                continue;
+            }
+            const std::optional<u8> owner = sync_.OwnerOrDeathOwnerOf(address);
+            const bool owner_here = owner && sync_.InOurScene(*owner, now_us);
+            const bool we_decide = sync_.Self() != 0 && sync_.SceneDecider(sync_.Self(), now_us) == sync_.Self();
+            if (!CoopEventResult::CrossingKillLands(scene, kept.second, now_us - kept_at, sync_.Self(), owner,
+                                                    ours_died, owner_here, we_decide)) {
+                continue;
+            }
+            LOG_INFO(Core, "coop: dungeon: trigger: the kill of {:#x} kept {} ms lands: {} (player {}), our game plays "
+                           "the event", kept.second, (now_us - kept_at) / 1000,
+                     owner_here ? "crossing last kills, ours is the lowest owner's number"
+                                : "its owner is gone from our scene, we decide here",
+                     owner.value_or(0));
+            keeper_addresses_.erase(address);
         }
         // A kept kill whose actor is no keeper any more lands now, on the same actor (else it is dropped).
         for (auto it = trigger_kept_.begin(); it != trigger_kept_.end();) {
@@ -2531,6 +2580,7 @@ public:
                 sync_.Written(it->first, it->second.first.life, now_us);
                 writes.push_back(std::move(it->second.first));
             }
+            trigger_kept_since_.erase(it->first);
             it = trigger_kept_.erase(it);
         }
         std::erase_if(writes, [&](LifeWrite& w) {
@@ -2542,6 +2592,7 @@ public:
                 LOG_INFO(Core, "coop: dungeon: trigger: another game's kill of {:#x} waits: the last enemy of a room "
                                "event our game has not played (its asker would ask the event here)", hash);
             }
+            trigger_kept_since_.try_emplace(w.address, now_us);
             trigger_kept_.insert_or_assign(w.address, std::make_pair(std::move(w), hash));
             return true;
         });

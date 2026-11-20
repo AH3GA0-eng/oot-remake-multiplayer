@@ -408,6 +408,80 @@ TEST_CASE("event result: the kill keeper: the largest live enemy of an unplayed 
               .count(0xf8119818b5e22a95ULL) == 0);
 }
 
+TEST_CASE("event result: the kill keeper: an enemy our game owns is never kept, and no copy while one of ours lives") {
+    // Rows 160/161 (E'tykalu's 0.11.6 logs): Dodongo's Cavern's second Lizalfos room, the two Lizalfos owned by two
+    // games (the host 0x2345..., player 2 0x155c...). Before, each game kept the other owner's kill: nobody played.
+    constexpr std::uint64_t kA = 0x23456e4b5b005315ULL;  // the larger: owned by the host
+    constexpr std::uint64_t kB = 0x155ce1b2ba5028cfULL;  // owned by player 2
+    std::set<std::uint64_t> alive{kA, kB};
+    std::set<std::uint64_t> mine;
+    bool played = false;
+    const auto keepers = [&] {
+        return CoopEventResult::KillKeepers(
+            "DodongoCavern", [&](std::uint64_t h) { return alive.contains(h); },
+            [&](const std::string& e) { return played && e == "DodongoCavern_Gimmick_DefeatLizalfos02"; },
+            [&](std::uint64_t h) { return mine.contains(h); });
+    };
+    // Player 2's game: B is ours, A a copy. The host's kill of A lands (B, ours, still lives).
+    mine = {kB};
+    CHECK(keepers().empty());
+    alive.erase(kA);
+    CHECK(keepers().empty());  // B's death (a remote hit too) is our own game's: never kept; our asker plays it
+    // The host's game: A dead (ours), B a copy and the last one: its kill waits until the event's flags come.
+    mine = {kA};
+    CHECK(keepers() == std::set<std::uint64_t>{kB});
+    played = true;
+    CHECK(keepers().empty());
+    // A game that owns neither (a third player): the largest live copy waits, as before.
+    played = false;
+    mine.clear();
+    alive = {kA, kB};
+    CHECK(keepers() == std::set<std::uint64_t>{kA});
+    // Both ours (the owner of the whole fight): nothing is kept, a teammate's last hit lands here.
+    mine = {kA, kB};
+    CHECK(keepers().empty());
+    // No owner function (as before): the largest live one.
+    CHECK(CoopEventResult::KillKeepers("DodongoCavern", [&](std::uint64_t h) { return alive.contains(h); },
+                                       [](const std::string&) { return false; }) == std::set<std::uint64_t>{kA});
+}
+
+TEST_CASE("event result: crossing last kills: only the lowest-numbered owner lets the other's kill land, after a wait") {
+    // review-dc-0118: P1 owns A, P2 owns B; each kills its own within one round trip, so each keeps the other's kill.
+    constexpr std::uint64_t kA = 0x23456e4b5b005315ULL;
+    constexpr std::uint64_t kB = 0x155ce1b2ba5028cfULL;
+    constexpr auto kLong = CoopEventResult::kCrossingUs;
+    const auto died = [](std::uint64_t own) { return [own](std::uint64_t h) { return h == own; }; };
+    // P1's game keeps B's kill (B owned by 2), its own A died: lands once kept long enough.
+    CHECK_FALSE(CoopEventResult::CrossingKillLands("DodongoCavern", kB, kLong - 1, 1, 2, died(kA)));
+    CHECK(CoopEventResult::CrossingKillLands("DodongoCavern", kB, kLong, 1, 2, died(kA)));
+    // P2's game keeps A's kill (A owned by 1): never by this rule; P1's flags end it.
+    CHECK_FALSE(CoopEventResult::CrossingKillLands("DodongoCavern", kA, kLong * 4, 2, 1, died(kB)));
+    // A third player who owned neither (or whose own died long before: the caller's gap check says false): waits.
+    CHECK_FALSE(CoopEventResult::CrossingKillLands("DodongoCavern", kB, kLong * 4, 1, 2,
+                                                   [](std::uint64_t) { return false; }));
+    // Our own "died" enemy must be another kill actor of the same event, in the same scene.
+    CHECK_FALSE(CoopEventResult::CrossingKillLands("DodongoCavern", kB, kLong, 1, 2, died(kB)));
+    CHECK_FALSE(CoopEventResult::CrossingKillLands("DodongoCavern", kB, kLong, 1, 2, died(0x9cbd9c524b24df87ULL)));
+    CHECK_FALSE(CoopEventResult::CrossingKillLands("FireTemple", kB, kLong, 1, 2, died(kA)));
+    // Unknown numbers or owner: no tiebreak.
+    CHECK_FALSE(CoopEventResult::CrossingKillLands("DodongoCavern", kB, kLong, 0, 2, died(kA)));
+    CHECK_FALSE(CoopEventResult::CrossingKillLands("DodongoCavern", kB, kLong, 1, std::nullopt, died(kA)));
+    CHECK_FALSE(CoopEventResult::CrossingKillLands("DodongoCavern", kB, kLong, 1, 0, died(kA)));
+    CHECK_FALSE(CoopEventResult::CrossingKillLands("DodongoCavern", kB, kLong, 2, 2, died(kA)));
+    // The first room's pair goes the same way (every kill line shares the rule).
+    CHECK(CoopEventResult::CrossingKillLands("DodongoCavern", 0x9cbd9c524b24df87ULL, kLong, 1, 3,
+                                             died(0x01fa0074fddbc182ULL)));
+    // review-dc-0118 MUST 2: the lowest owner (1) left mid-wait. Player 2 keeps 1's kill of A: with 1 gone from our
+    // scene, the scene's decider (now 2) lets it land; a third player who does not decide still waits.
+    const auto none = [](std::uint64_t) { return false; };
+    CHECK(CoopEventResult::CrossingKillLands("DodongoCavern", kA, kLong, 2, 1, died(kB), false, true));
+    CHECK_FALSE(CoopEventResult::CrossingKillLands("DodongoCavern", kA, kLong - 1, 2, 1, died(kB), false, true));
+    CHECK_FALSE(CoopEventResult::CrossingKillLands("DodongoCavern", kA, kLong, 3, 1, none, false, false));
+    CHECK(CoopEventResult::CrossingKillLands("DodongoCavern", kA, kLong, 3, std::nullopt, none, false, true));
+    // ... but only for a kill line of our scene.
+    CHECK_FALSE(CoopEventResult::CrossingKillLands("FireTemple", kA, kLong, 2, 1, died(kB), false, true));
+}
+
 TEST_CASE("event result: the follow keepers: blocks on press switches wait, the box puzzle's largest corner waits") {
     std::set<std::string> played;
     const auto is_played = [&](const std::string& e) { return played.contains(e); };
