@@ -763,16 +763,19 @@ bool Table::KeepsLinkAsAttacker(std::uint64_t actor) const {
     return e != nullptr && !e->plain;
 }
 
-bool Table::OutOfReach(std::uint64_t actor) const {
+bool Table::OutOfReach(std::uint64_t actor, const HitGuard& guard) const {
     std::lock_guard lock(mutex_);
     const Entry* e = FindActor(actor);
-    return e != nullptr && !e->plain && !e->dying && e->role == Role::owner &&
-           UnreachableMove(e->name, e->hold_animation);
+    return e != nullptr && !e->plain && !e->dying && e->role == Role::owner && guard.TakesNoHit();
 }
 
-bool Table::UnreachableMove(std::string_view name, std::string_view animation) {
-    // Phantom Ganon's 'Run' is his ride inside a painting (then 'Appear' out of one, where he is hit).
-    return name == "Enemy_DungeonBoss_PhantomGanon" && animation == "Run";
+std::optional<std::string> Table::OurBossMove(std::uint64_t actor) const {
+    std::lock_guard lock(mutex_);
+    const Entry* e = FindActor(actor);
+    if (e == nullptr || e->plain || e->role != Role::owner) {
+        return std::nullopt;
+    }
+    return e->hold_animation;
 }
 
 bool Table::FightsPlayerOnly(std::string_view name) {

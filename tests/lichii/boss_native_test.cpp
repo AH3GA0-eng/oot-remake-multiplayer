@@ -1910,32 +1910,67 @@ TEST_CASE("native boss: row 178: every boss keeps our Link as a replayed hit's a
     CHECK_FALSE(t.KeepsLinkAsAttacker(kActor));
 }
 
-TEST_CASE("native boss: row 178: our Phantom Ganon riding inside his painting is out of reach of another's hit") {
-    CHECK(Table::UnreachableMove("Enemy_DungeonBoss_PhantomGanon", "Run"));
-    for (const char* hittable : {"Appear", "SmallDamage", "Fly", "RideJumpAttack_Attack", "SpearAttack_Turn", ""}) {
-        CHECK_FALSE(Table::UnreachableMove("Enemy_DungeonBoss_PhantomGanon", hittable));
-    }
-    CHECK_FALSE(Table::UnreachableMove("Enemy_DungeonBoss_Gohma", "Run"));
+TEST_CASE("native boss: row 178: the game's own no-hit state (invincible or every body no-hit) refuses a hit") {
+    using CoopBossNative::HitGuard;
+    HitGuard g;
+    CHECK_FALSE(g.TakesNoHit());  // (unread: nothing known)
+    g.read = true;
+    CHECK_FALSE(g.TakesNoHit());
+    g.invincible_names = 1;  // ExecuteInvincible's name list
+    CHECK(g.TakesNoHit());
+    g.life_flags = 0x40;  // its damage step lets a hit through then
+    CHECK_FALSE(g.TakesNoHit());
+    g.life_flags = 0x3f;
+    CHECK(g.TakesNoHit());
+    g = {};
+    g.read = true;
+    g.invincible_other = 2;
+    CHECK(g.TakesNoHit());
+    g.invincible_other = 0;
+    g.bodies = 3;
+    g.no_hit_bodies = 2;  // one body still takes a hit
+    CHECK_FALSE(g.TakesNoHit());
+    g.no_hit_bodies = 3;  // OneshotChangeForceNoHitMode on all of them
+    CHECK(g.TakesNoHit());
+    g.read = false;
+    CHECK_FALSE(g.TakesNoHit());
+}
+
+TEST_CASE("native boss: row 178: a boss of ours whose game takes no hit now is out of reach of another's hit") {
+    HitGuard refused;
+    refused.read = true;
+    refused.invincible_names = 1;
+    const HitGuard takes{true};
     Table t;
     t.SetOn(true, true);
-    CHECK_FALSE(t.OutOfReach(kActor));  // (not in the table)
+    CHECK_FALSE(t.OutOfReach(kActor, refused));  // (not in the table)
+    CHECK_FALSE(t.OurBossMove(kActor));
     Boss riding = Phantom(Role::owner);
     riding.animation = "Run";
     t.Publish({riding});
-    CHECK(t.OutOfReach(kActor));
-    CHECK_FALSE(t.OutOfReach(kActor + 8));
-    riding.animation = "Appear";  // out of a painting: hit as in a one-player game
-    t.Publish({riding});
-    CHECK_FALSE(t.OutOfReach(kActor));
+    CHECK(t.OutOfReach(kActor, refused));
+    CHECK_FALSE(t.OutOfReach(kActor, takes));  // the move's name alone says nothing: its game does
+    CHECK_FALSE(t.OutOfReach(kActor + 8, refused));
+    REQUIRE(t.OurBossMove(kActor));
+    CHECK(*t.OurBossMove(kActor) == "Run");
+    for (const char* other : {"Enemy_DungeonBoss_Gohma", "Enemy_DungeonBoss_Dodongo", "Enemy_DungeonBoss_Ganondorf"}) {
+        Boss b{kActor, kBsa, Role::owner, other, 2};
+        t.Publish({b});
+        CHECK(t.OutOfReach(kActor, refused));  // every boss of the table, no move list
+        CHECK_FALSE(t.OutOfReach(kActor, takes));
+    }
     Boss copy = Phantom(Role::copy);
-    copy.animation = "Run";
     t.Publish({copy});
-    CHECK_FALSE(t.OutOfReach(kActor));  // a copy's hits go to its owner, who judges them
-    riding.animation = "Run";
+    CHECK_FALSE(t.OutOfReach(kActor, refused));  // a copy's hits go to its owner, who judges them
+    CHECK_FALSE(t.OurBossMove(kActor));
+    Boss baba{kActor, kBsa, Role::owner, "Enemy_DekuBaba", 2};
+    baba.plain = true;
+    t.Publish({baba});
+    CHECK_FALSE(t.OutOfReach(kActor, refused));  // a plain enemy: as before
     t.Publish({riding});
     t.SetDying({"Enemy_DungeonBoss_PhantomGanon"});
     t.Publish({riding});
-    CHECK_FALSE(t.OutOfReach(kActor));  // his death: as before
+    CHECK_FALSE(t.OutOfReach(kActor, refused));  // his death: as before
 }
 
 TEST_CASE("native boss: row 178: Phantom Ganon and Ganondorf fight the Player only, the puppets are unseen while here") {
