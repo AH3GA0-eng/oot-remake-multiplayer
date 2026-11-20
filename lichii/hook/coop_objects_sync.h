@@ -1063,6 +1063,14 @@ public:
     std::optional<std::uint8_t> OwnerOf(std::uint64_t address) const;
     // Our own player number (0: not known yet).
     std::uint8_t Self() const { return self_; }
+    // review-dc-0118: the owner of the object at `address`, or, once its owner's dead ObjectRemove forgot that, the
+    // player whose game said it died (none: neither known).
+    std::optional<std::uint8_t> OwnerOrDeathOwnerOf(std::uint64_t address) const;
+    // review-dc-0118: `player`'s samples say it is in our scene, fresh within kSceneStaleUs of `now_us` (server
+    // time). False for 0 and for a player gone from the session (no samples) or in another scene.
+    bool InOurScene(std::uint8_t player, std::uint64_t now_us) const;
+    // The lowest player number in our scene by fresh samples, `self` included (DeciderOf).
+    std::uint8_t SceneDecider(std::uint8_t self, std::uint64_t now_us) const { return DeciderOf(self, now_us); }
     // The owner of the copy at `address` said it died: its life 0 in the owner's samples, or its
     // ObjectRemove dead (one boss death for everyone: the copy's Life step lets it die then).
     bool OwnerSaysDead(std::uint64_t address) const;
@@ -1219,6 +1227,9 @@ private:
         // its owner said it died (OBJECT_REMOVE dead; 0 = not said).
         int resent = 0;
         std::uint64_t dead_at = 0;
+        // review-dc-0118: the player whose game said it died (its owner then; the remove's sender if no owner was
+        // named to us). The dead ObjectRemove forgets the owner, and a room event's kept last kill still needs it.
+        std::uint8_t death_owner = 0;
         bool owner_life_zero = false;  // its owner's samples said life 0 (OwnerSaysDead)
         std::optional<std::int32_t> owner_life;  // its owner's last life, from the owner's samples (KeepBossLives)
         bool death_given = false;      // a dying copy boss's remaining life went to its own Life step (once)

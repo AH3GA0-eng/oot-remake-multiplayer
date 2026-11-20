@@ -471,6 +471,15 @@ TEST_CASE("event result: crossing last kills: only the lowest-numbered owner let
     // The first room's pair goes the same way (every kill line shares the rule).
     CHECK(CoopEventResult::CrossingKillLands("DodongoCavern", 0x9cbd9c524b24df87ULL, kLong, 1, 3,
                                              died(0x01fa0074fddbc182ULL)));
+    // review-dc-0118 MUST 2: the lowest owner (1) left mid-wait. Player 2 keeps 1's kill of A: with 1 gone from our
+    // scene, the scene's decider (now 2) lets it land; a third player who does not decide still waits.
+    const auto none = [](std::uint64_t) { return false; };
+    CHECK(CoopEventResult::CrossingKillLands("DodongoCavern", kA, kLong, 2, 1, died(kB), false, true));
+    CHECK_FALSE(CoopEventResult::CrossingKillLands("DodongoCavern", kA, kLong - 1, 2, 1, died(kB), false, true));
+    CHECK_FALSE(CoopEventResult::CrossingKillLands("DodongoCavern", kA, kLong, 3, 1, none, false, false));
+    CHECK(CoopEventResult::CrossingKillLands("DodongoCavern", kA, kLong, 3, std::nullopt, none, false, true));
+    // ... but only for a kill line of our scene.
+    CHECK_FALSE(CoopEventResult::CrossingKillLands("FireTemple", kA, kLong, 2, 1, died(kB), false, true));
 }
 
 TEST_CASE("event result: the follow keepers: blocks on press switches wait, the box puzzle's largest corner waits") {

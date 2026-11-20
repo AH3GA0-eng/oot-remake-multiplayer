@@ -4245,6 +4245,48 @@ TEST_CASE("objects: a kill from before we came dies through our game, deleted on
     CHECK(blind.Removes() == std::vector<std::uint64_t>{0x100});
 }
 
+TEST_CASE("objects: who said an enemy died outlives its owner's dead remove, and who is in our scene (review-dc-0118)") {
+    // A room event's kept last kill comes with its owner's dead ObjectRemove, which forgets the owner; the crossing
+    // tiebreak still needs that player's number (CoopEventResult::CrossingKillLands).
+    Sync sync;
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)}, 2);
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 1);
+    Tick(sync, 20 * kMs, {Enemy(0x100, 0x11, 2)}, 2);
+    CHECK(sync.OwnerOf(0x100) == std::optional<std::uint8_t>{1});
+    sync.Receive(Dead(id, 1));
+    Tick(sync, 50 * kMs, {Enemy(0x100, 0x11, 2)}, 2);
+    CHECK_FALSE(sync.OwnerOf(0x100).has_value());
+    CHECK(sync.OwnerOrDeathOwnerOf(0x100) == std::optional<std::uint8_t>{1});
+    CHECK(sync.Self() == 2);
+    // No owner ever named (a late entrant): the remove's sender.
+    Sync late;
+    Tick(late, 0, {Enemy(0x100, 0x11, 2)}, 2);
+    late.Receive(Dead(*late.IdOf(0x100), 3));
+    Tick(late, 50 * kMs, {Enemy(0x100, 0x11, 2)}, 2);
+    CHECK(late.OwnerOrDeathOwnerOf(0x100) == std::optional<std::uint8_t>{3});
+    CHECK_FALSE(late.OwnerOrDeathOwnerOf(0x999).has_value());
+
+    // Player 1's samples: in our scene while fresh; gone (left, or stale) and another scene are not.
+    auto sample = [](std::uint8_t player, const std::string& scene, std::uint64_t t) {
+        proto::PlayerSample p;
+        p.player_number = player;
+        p.scene = scene;
+        p.position = proto::Vec3{0.0f, 0.0f, 0.0f};
+        p.time.server_time_us = t;
+        return p;
+    };
+    sync.Receive(sample(1, kScene, 100 * kMs));
+    sync.Receive(sample(3, "FireTemple", 100 * kMs));
+    CHECK(sync.InOurScene(1, 200 * kMs));
+    CHECK_FALSE(sync.InOurScene(3, 200 * kMs));
+    CHECK_FALSE(sync.InOurScene(4, 200 * kMs));
+    CHECK_FALSE(sync.InOurScene(0, 200 * kMs));
+    CHECK_FALSE(sync.InOurScene(1, 100 * kMs + Sync::kSceneStaleUs));
+    CHECK(sync.SceneDecider(2, 200 * kMs) == 1);
+    CHECK(sync.SceneDecider(2, 100 * kMs + Sync::kSceneStaleUs) == 2);  // player 1 gone: we decide
+}
+
 TEST_CASE("objects: a life write held through our event lands later and is no hit of ours (#144)") {
     // The owner's hit asks for life 4 -> 3; the write waits 2 s (our Link in a talk with it),
     // so the walk reads 4 all that time. Then it lands: with Written the drop is ours, no DAMAGE.

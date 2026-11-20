@@ -2531,14 +2531,21 @@ public:
                 return d != owned_died_at_.end() &&
                        (d->second > kept_at ? d->second - kept_at : kept_at - d->second) <= CoopEventResult::kCrossingGapUs;
             };
-            if (!keeper_addresses_.contains(address) ||
-                !CoopEventResult::CrossingKillLands(scene, kept.second, now_us - kept_at, sync_.Self(),
-                                                    sync_.OwnerOf(address), ours_died)) {
+            if (!keeper_addresses_.contains(address)) {
                 continue;
             }
-            LOG_INFO(Core, "coop: dungeon: trigger: the kill of {:#x} kept {} ms while our own enemy of its event died "
-                           "here: crossing last kills, ours is the lowest player number: it lands, our game plays the "
-                           "event", kept.second, (now_us - since->second) / 1000);
+            const std::optional<u8> owner = sync_.OwnerOrDeathOwnerOf(address);
+            const bool owner_here = owner && sync_.InOurScene(*owner, now_us);
+            const bool we_decide = sync_.Self() != 0 && sync_.SceneDecider(sync_.Self(), now_us) == sync_.Self();
+            if (!CoopEventResult::CrossingKillLands(scene, kept.second, now_us - kept_at, sync_.Self(), owner,
+                                                    ours_died, owner_here, we_decide)) {
+                continue;
+            }
+            LOG_INFO(Core, "coop: dungeon: trigger: the kill of {:#x} kept {} ms lands: {} (player {}), our game plays "
+                           "the event", kept.second, (now_us - kept_at) / 1000,
+                     owner_here ? "crossing last kills, ours is the lowest owner's number"
+                                : "its owner is gone from our scene, we decide here",
+                     owner.value_or(0));
             keeper_addresses_.erase(address);
         }
         // A kept kill whose actor is no keeper any more lands now, on the same actor (else it is dropped).

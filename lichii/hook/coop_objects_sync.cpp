@@ -1017,6 +1017,31 @@ void Sync::Reset() {
     takes_in_.clear();  // the new scene's actors are made knowing every key
 }
 
+std::optional<std::uint8_t> Sync::OwnerOrDeathOwnerOf(std::uint64_t address) const {
+    if (auto owner = OwnerOf(address)) {
+        return owner;
+    }
+    const auto it = objects_.find(address);
+    if (it == objects_.end() || it->second.death_owner == 0) {
+        return std::nullopt;
+    }
+    return it->second.death_owner;
+}
+
+bool Sync::InOurScene(std::uint8_t player, std::uint64_t now_us) const {
+    if (player == 0) {
+        return false;
+    }
+    std::lock_guard lock(inbox_mutex_);
+    const auto it = scenes_.find(player);
+    if (it == scenes_.end()) {
+        return false;
+    }
+    const auto& seen = it->second;
+    const bool fresh = seen.second <= now_us ? now_us - seen.second < kSceneStaleUs : seen.second - now_us < kSceneStaleUs;
+    return fresh && seen.first == scene_;
+}
+
 std::uint8_t Sync::DeciderOf(std::uint8_t self, std::uint64_t now_us) const {
     std::uint8_t decider = self;
     std::lock_guard lock(inbox_mutex_);
@@ -3274,6 +3299,11 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                     o->hit_place.reset();
                     o->hit_record.reset();
                     o->place_seen.reset();
+                }
+                if (o != nullptr && o->death_owner == 0) {
+                    // review-dc-0118: who said it died, kept past the owner's erase below (a room event's kept kill).
+                    o->death_owner = had != owners_.end() && had->second.player != 0 ? had->second.player
+                                                                                   : remove->player_number;
                 }
                 // Nobody's now: no samples, poses or plays for it.
                 if (had != owners_.end()) {

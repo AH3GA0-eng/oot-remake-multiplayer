@@ -727,9 +727,22 @@ std::set<std::uint64_t> KillKeepers(std::string_view scene, const std::function<
 }
 
 bool CrossingKillLands(std::string_view scene, std::uint64_t keeper, std::uint64_t kept_for_us, std::uint8_t self,
-                       std::optional<std::uint8_t> keeper_owner, const std::function<bool(std::uint64_t)>& ours_died) {
-    if (kept_for_us < kCrossingUs || self == 0 || !keeper_owner || *keeper_owner == 0 || self >= *keeper_owner ||
-        !ours_died) {
+                       std::optional<std::uint8_t> keeper_owner, const std::function<bool(std::uint64_t)>& ours_died,
+                       bool owner_here, bool we_decide) {
+    if (kept_for_us < kCrossingUs || self == 0) {
+        return false;
+    }
+    bool kill_line = false;
+    for (const auto& t : kTriggers) {
+        if (t.kind == Trigger::kill && t.scene == scene && t.id == keeper) kill_line = true;
+    }
+    if (!kill_line) {
+        return false;
+    }
+    if (!owner_here) {
+        return we_decide;  // its owner cannot play the event any more: the scene's decider does
+    }
+    if (!keeper_owner || *keeper_owner == 0 || self >= *keeper_owner || !ours_died) {
         return false;
     }
     for (const auto& t : kTriggers) {

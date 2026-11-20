@@ -136,10 +136,17 @@ std::set<std::uint64_t> KillKeepers(std::string_view scene, const std::function<
 // others get its flags; a game that owned none of them, or whose own enemy died long before, still only waits (in a
 // kill after kill the last enemy's owner plays it). kCrossingUs is longer than a room event plays, so the playing
 // game's flags have come by then in every case that is no crossing.
+// The owner gone (`owner_here` false: its game no longer in our scene, or out of the session, by its samples): it
+// cannot play the event any more, so after kCrossingUs the kill lands in the one game that decides for our scene
+// (`we_decide`: Sync::DeciderOf, the lowest player number in it), whatever it owned; the others get its flags.
+// The cost: in a crossing (or with the owner gone) the shutters open kCrossingUs late, in the deciding game first and
+// in the others when its flags come. Before, they never opened until a reload.
+// `keeper_owner` is Sync::OwnerOrDeathOwnerOf: the dead ObjectRemove that brings such a kill forgets the owner.
 inline constexpr std::uint64_t kCrossingUs = 15'000'000;
 inline constexpr std::uint64_t kCrossingGapUs = 2'000'000;
 bool CrossingKillLands(std::string_view scene, std::uint64_t keeper, std::uint64_t kept_for_us, std::uint8_t self,
-                       std::optional<std::uint8_t> keeper_owner, const std::function<bool(std::uint64_t)>& ours_died);
+                       std::optional<std::uint8_t> keeper_owner, const std::function<bool(std::uint64_t)>& ours_died,
+                       bool owner_here = true, bool we_decide = false);
 
 // The follow triggers' keepers in `scene` (pure): for each event our game has not played, its follow actors of group
 // 0 and the largest of each linked group. coop_world (WorldSync::SetTriggerKeepers) keeps another game's move, rest
