@@ -691,7 +691,7 @@ TEST_CASE("event result: row 160: a whole room killed in this visit is killed ag
     for (const auto& t : CoopEventResult::Triggers()) {
         if (t.kind == CoopEventResult::Trigger::kill) events[{t.scene, t.event}].insert(t.id);
     }
-    CHECK(events.size() >= 45);
+    CHECK(events.size() >= 44);  // 44 kill events in 11 dungeons (ff54edf6)
     for (const auto& [key, ids] : events) {
         CAPTURE(key.second);
         const auto redo = CoopEventResult::KillsToRedo(key.first, ids, never);
