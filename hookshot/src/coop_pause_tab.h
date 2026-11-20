@@ -31,7 +31,6 @@
 #include <utility>
 #include <vector>
 
-#include "coop_keyboard.h"
 #include "hos_coop_api.h"
 
 namespace CoopPauseTab {
@@ -238,13 +237,15 @@ public:
     // The fields: 0 the room name, 1 the join password (Join view, a game's view), 2 the host's new join password.
     TextField& Field(int which) { return which == 2 ? new_password_ : which == 1 ? password_ : room_; }
     const TextField& Field(int which) const { return which == 2 ? new_password_ : which == 1 ? password_ : room_; }
-    // Typing into a field brings up the on-screen keyboard (coop_keyboard.h): the pad's arrows move over its keys and
-    // A presses the one under the cursor, B deletes (with nothing typed: Cancel), + is OK, L and R move in the text.
+    // Typing into a field turns the list on the right into its keys (TypingLines: the game's own Options rows, the
+    // game has no keyboard of its own): up and down pick a key, Left and Right the letter on Letter, A presses the key
+    // picked, B deletes (with nothing typed: Cancel), + is OK, L and R move in the text.
     void StartTyping(int which);
     int Typing() const { return typing_; }
-    // The keyboard's key pressed some other way (the mouse's click): as A on it.
-    void PressKey(int row, int col);
-    const CoopKeyboard::Cursor& KeyCursor() const { return keys_; }
+    // A key pressed some other way (the mouse's click on its row): as A on it.
+    void PressKey(int key);
+    int TypingKey() const { return key_; }        // the key picked (TypeKey)
+    char TypingLetter() const;                    // the letter Letter puts in
     // A field typed into ended with OK (or Enter, or +) since the last call: which (-1 none). Cancel (Esc) puts the
     // field back as it was and says none.
     int TakeTyped() { return std::exchange(typed_, -1); }
@@ -256,7 +257,8 @@ private:
     TextField room_{TextField::Kind::kRoom}, password_{TextField::Kind::kPassword},
         new_password_{TextField::Kind::kPassword};
     int typing_ = -1, typed_ = -1;
-    CoopKeyboard::Cursor keys_;
+    int key_ = 0;                // the key picked while typing (TypeKey)
+    std::size_t letter_ = 0;     // Letter's letter: its place in the field's Letters()
     std::string typing_was_;   // (the field before typing: Cancel puts it back)
     void EndTyping(bool ok);
     std::uint64_t repeat_since_ = 0, repeat_last_ = 0;   // a held direction: when it went down, its last step
@@ -351,7 +353,7 @@ enum class RowAction {
     kShowPassword,   // the host's Join password view: its join password shown on the details list, or hidden again
                      // (only on A: friends who found the game on this network type it)
     kViewPassword,   // the host's Session view: the Join password view (show it, change it)
-    kChangePassword, // the Join password view: a new one typed on the keyboard, then the session's from then on
+    kChangePassword, // the Join password view: a new one typed with the typing keys, then the session's from then on
                      // (players who join after need it; players in stay in)
     // The game browser (View::kLan): the games in the cells on the right, the list chosen on the rows.
     kBrowseLan,      // the cells list the games on this network
@@ -515,7 +517,22 @@ std::pair<float, float> SlideOffsets(int dir, float p);
 struct ListLine {
     std::string name, value;   // the row's left text and its right one; both "" for a row not shown
     RowAction act = RowAction::kNone;   // an A on this line of the details (their Auto-rejoin), else nothing
+    bool arrows = false;       // its value between the Options row's own arrows (N_Content_00): Left and Right change it
 };
+
+// --- Typing with a pad: the list's rows are the keys ---
+// The game has no text entry and no keyboard of its own (docs/game-ui.md, "Frames for a text field"; a grid of its
+// buttons would take some 70 copies of PaCommonBtnThin_00), so while a field is typed into the list on the right, the
+// game's own Options rows (Pa_List_00..06), shows: the header, the field's name and its text (the letter at the cursor
+// in brackets, a password as stars), then the keys: Letter (Left and Right pick it between the row's arrows, A puts it
+// in at the cursor), Delete (the letter before the cursor), OK and Cancel. The key picked bright, the others dimmed, as
+// the browser's games. The PC keyboard types into the field as before.
+enum class TypeKey { kLetter, kDelete, kOk, kCancel };
+inline constexpr int kTypeKeys = 4;
+// The field's name on the header: 0 the room name, 1 the join password, 2 the host's new join password.
+const char* TypingTitle(int which);
+// The list's rows (kListRows) while `f` is typed into: the header, then the keys (TypeKey order), the rest not shown.
+std::vector<ListLine> TypingLines(int which, const TextField& f, char letter);
 
 struct SessionView {
     Session s;
@@ -553,6 +570,10 @@ struct SessionView {
     std::string says;                     // the Session view: why the page's last Host or Join did not start
                                           // (CoopPause::PageSays), while that view shows after it; "" none
     int typing = -1;                  // the field typed into (0 the room, 1 the password), -1 none
+    // While any field is typed into (the Join view's, a game's view's, the host's new password): the list's rows as its
+    // keys (TypingLines) and the key picked; empty and -1 otherwise.
+    std::vector<ListLine> typing_lines;
+    int typing_key = -1;
 };
 // The most a row's text holds: the System page's button fits about 24 of the game's letters (seen in a run,
 // 2026-11-19: "Leave (not in a session)" fills it, 31 letters ran past both edges).

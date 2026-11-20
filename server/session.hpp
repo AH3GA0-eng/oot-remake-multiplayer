@@ -383,6 +383,9 @@ struct Stats {
   std::uint64_t stray_rejoin_claim = 0;
   // JOIN_PROOFs that did not match the join password (each one refused).
   std::uint64_t bad_password = 0;
+  // JOIN_PROOFs that matched the password a rejoining player knew from before
+  // the host changed it (shown with that player's rejoin token).
+  std::uint64_t rejoin_old_password = 0;
   // JOIN_PROOFs nobody asked for: no challenge open on that connection.
   std::uint64_t stray_proof = 0;
   // A HELLO without a key share to a server with a join password (refused
@@ -532,9 +535,14 @@ class Session {
   void set_ngplus(std::uint8_t level);
   std::uint8_t ngplus() const { return ngplus_; }
   // The join password from now on: a player who joins after this needs the new
-  // one; players already in keep their keys and stay in. Not empty (the host's
-  // own checks); on the session's thread.
+  // one; players already in keep their keys and stay in. A player who was in at
+  // the change and drops keeps a way back: its game still knows the password it
+  // joined with, so a connection that shows that player's rejoin token
+  // (REJOIN_CLAIM) may prove that one instead (old_passwords_). Not empty (the
+  // host's own checks); on the session's thread.
   void set_join_password(std::string password);
+  // How many players' old passwords are kept for their rejoin (tests).
+  std::size_t old_password_count() const { return old_passwords_.size(); }
   const std::string& join_password() const { return config_.join_password; }
   // Flags in the server's table.
   std::size_t flag_count() const { return flags_.size(); }
@@ -589,6 +597,9 @@ class Session {
     // HELLO: the token its REJOIN_CLAIM showed, if any.
     protocol::RejoinTokenBytes rejoin_token{};
     std::optional<protocol::RejoinTokenBytes> rejoin_claim;
+    // Once joined: the join password its game proved (the session's, or an old
+    // one on a rejoin): what that game tries again when it drops.
+    std::string proved_password;
     std::uint8_t number = 0;  // 1 to max_players once joined
     std::string nickname;
     // Its last MOD_LIST, with its number (docs/protocol.md, "Mods").
@@ -1037,6 +1048,17 @@ class Session {
     std::uint64_t blocked_until = 0;  // 0: not blocked
   };
   std::map<std::uint32_t, WrongGuesses> wrong_guesses_;
+  // The host changed the join password (set_join_password): for each player in
+  // then (by its rejoin token), the password its game knows. Taken only with
+  // that token; a player that left or was kicked loses it; at most
+  // kMaxOldPasswords, the oldest go first.
+  struct OldPassword {
+    protocol::RejoinTokenBytes token{};
+    std::string password;
+  };
+  std::vector<OldPassword> old_passwords_;
+  static constexpr std::size_t kMaxOldPasswords = 64;
+  void forget_old_password(const protocol::RejoinTokenBytes& token);
   static constexpr std::size_t kMaxWrongGuessAddresses = 4096;
   // Counts a wrong proof from `address`; blocks it at the limit.
   void note_wrong_password(std::optional<std::uint32_t> address, std::uint64_t now_us);

@@ -247,10 +247,25 @@ void Session::on_join_proof(ConnectionId id, Connection& c, const JoinProof& pro
   std::shared_ptr<const KeyPair> key_pair = std::move(c.key_pair);
   // Bound to both key shares: a proof relayed by someone who swapped them
   // (to sit in the middle) does not match.
-  const bool right =
-      key_pair != nullptr && hello.key_share &&
-      same_proof(proof.proof, join_proof(config_.join_password, c.nonce, *hello.key_share,
-                                         key_pair->share()));
+  const auto proves = [&](const std::string& password) {
+    return key_pair != nullptr && hello.key_share &&
+           same_proof(proof.proof, join_proof(password, c.nonce, *hello.key_share, key_pair->share()));
+  };
+  // The session's password; or, for a player that was in when the host changed
+  // it (its rejoin token shown), the one its game still knows.
+  std::string password = config_.join_password;
+  bool right = proves(password);
+  std::optional<protocol::RejoinTokenBytes> old_token;
+  if (!right && c.rejoin_claim) {
+    for (const OldPassword& o : old_passwords_) {
+      if (same_proof(o.token, *c.rejoin_claim) && proves(o.password)) {
+        right = true;
+        password = o.password;
+        old_token = o.token;
+        break;
+      }
+    }
+  }
   c.nonce = {};  // used once: a second proof on this connection finds no nonce to match
   std::vector<std::uint8_t> hello_packet = std::move(c.hello_packet);
   std::vector<std::uint8_t> challenge_packet = std::move(c.challenge_packet);
@@ -265,7 +280,7 @@ void Session::on_join_proof(ConnectionId id, Connection& c, const JoinProof& pro
   }
   // The keys for this connection: from here on, all of it is sealed.
   std::optional<TrafficKeys> keys =
-      derive_traffic_keys(*key_pair, *hello.key_share, config_.join_password, hello_packet,
+      derive_traffic_keys(*key_pair, *hello.key_share, password, hello_packet,
                           challenge_packet, /*is_server=*/true);
   if (!keys) {
     ++stats_.no_key_share;
@@ -282,7 +297,20 @@ void Session::on_join_proof(ConnectionId id, Connection& c, const JoinProof& pro
   actions_.push_back(EncryptAction{id, *keys});
   keys->wipe();
   c.state = State::awaiting_hello;  // admit() moves it on to joined or closing
+  c.proved_password = password;
   admit(id, c, hello, now_us, player_key);
+  if (old_token) {
+    // Back in with the old password: the token it showed is used up, its new
+    // one keeps that way back for the next drop.
+    ++stats_.rejoin_old_password;
+    const auto it = connections_.find(id);
+    if (it != connections_.end() && it->second.state == State::joined) {  // (held or refused: the token stays)
+      forget_old_password(*old_token);
+      old_passwords_.push_back(OldPassword{it->second.rejoin_token, password});
+      log("player " + std::to_string(it->second.number) +
+          " rejoined with the join password from before the host changed it");
+    }
+  }
 }
 
 void Session::note_wrong_password(std::optional<std::uint32_t> address, std::uint64_t now_us) {
@@ -864,7 +892,20 @@ Difficulty Session::difficulty() const {
 
 // (Navi) New Game+: the host's level, told to everyone in the session at once.
 void Session::set_join_password(std::string password) {
+  // Each player in keeps the password its game knows, for its rejoin claim only.
+  for (const auto& [id, c] : connections_) {
+    if (c.state != State::joined || c.parent || c.proved_password.empty() || c.proved_password == password) continue;
+    forget_old_password(c.rejoin_token);
+    old_passwords_.push_back(OldPassword{c.rejoin_token, c.proved_password});
+  }
+  // (an old password that is the session's again is no old one)
+  std::erase_if(old_passwords_, [&](const OldPassword& o) { return o.password == password; });
+  while (old_passwords_.size() > kMaxOldPasswords) old_passwords_.erase(old_passwords_.begin());
   config_.join_password = std::move(password);
+}
+
+void Session::forget_old_password(const protocol::RejoinTokenBytes& token) {
+  std::erase_if(old_passwords_, [&](const OldPassword& o) { return same_proof(o.token, token); });
 }
 
 void Session::set_ngplus(std::uint8_t level) {
@@ -2935,6 +2976,9 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
   const ConnectionId game = it->second.parent.value_or(id);
   Connection c = std::move(it->second);
   connections_.erase(it);
+  // Left or kicked: no way back with an old password (the host may have changed
+  // it to keep that player out). A lost connection keeps it, for its rejoin.
+  if (c.state == State::joined && !c.parent && reason != LeaveReason::timed_out) forget_old_password(c.rejoin_token);
   if (c.state == State::held) {
     // Host approval: it stopped waiting; the host's question is over.
     knock_over(c);

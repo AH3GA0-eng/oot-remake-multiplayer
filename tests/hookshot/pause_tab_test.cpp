@@ -1268,7 +1268,7 @@ TEST_CASE("pause tab: a password shows as stars but for the letter typed into, a
     CHECK(brackets.Shown(true, 12).find("[ ]") != std::string::npos);   // (at the end: the empty place in view)
 }
 
-TEST_CASE("pause tab: typing on the on-screen keyboard takes every button from System until OK or Cancel") {
+TEST_CASE("pause tab: typing with the pad: the list's rows are the keys, every button the page's until OK or Cancel") {
     Page p = UsablePage();
     OnSystem(p, 1000);
     Open(p, 1000);
@@ -1276,28 +1276,46 @@ TEST_CASE("pause tab: typing on the on-screen keyboard takes every button from S
     REQUIRE(p.Shown());
     p.StartTyping(0);
     CHECK(p.Typing() == 0);
-    CHECK(p.KeyCursor().row() == 0);
-    CHECK(p.OnPad(kPadA, 1032) == 0);           // (A presses the key under the cursor: A, a room name's a)
+    CHECK(p.TypingKey() == static_cast<int>(TypeKey::kLetter));
+    CHECK(p.TypingLetter() == 'a');
+    CHECK(p.OnPad(kPadA, 1032) == 0);           // (A on Letter: its letter in, a room name's a)
     CHECK(p.Field(0).text() == "a");
     CHECK(p.OnPad(0, 1048) == 0);
-    CHECK(p.OnPad(kPadRight, 1064) == 0);       // (the arrows move over the keys; none reaches System)
-    CHECK(p.KeyCursor().col() == 1);
+    CHECK(p.OnPad(kPadRight, 1064) == 0);       // (Right on Letter: the next letter; none reaches System)
+    CHECK(p.TypingLetter() == 'b');
     CHECK(p.OnPad(kPadRight | kPadA, 1080) == 0);
     CHECK(p.Field(0).text() == "ab");
+    p.OnPad(0, 1085);
+    p.OnPad(kPadLeft, 1086);                    // (Left: back, round the letters)
+    p.OnPad(0, 1087);
+    p.OnPad(kPadLeft, 1088);
+    CHECK(p.TypingLetter() == '_');             // (before the first: the last, a room name's _)
     // Held: again and again after a moment (the screens updating meanwhile, as in a game).
     p.OnPad(0, 1090);
     OnSystem(p, 1100);
     p.OnPad(kPadDown, 1100);
+    CHECK(p.TypingKey() == static_cast<int>(TypeKey::kDelete));
     OnSystem(p, 1250);
     p.OnPad(kPadDown, 1250);
     OnSystem(p, 1400);
     p.OnPad(kPadDown, 1400);
     OnSystem(p, 1550);
     p.OnPad(kPadDown, 1550);   // (held over 400 ms: a step)
-    CHECK(p.KeyCursor().row() == 2);
+    CHECK(p.TypingKey() == static_cast<int>(TypeKey::kOk));
     CHECK(p.OnPad(0, 1660) == 0);
-    CHECK(p.OnPad(kPadB, 1670) == 0);            // (B: a letter off)
+    p.OnPad(kPadUp, 1662);                      // (up: Delete; A deletes the letter before the cursor)
+    p.OnPad(0, 1664);
+    p.OnPad(kPadA, 1666);
     CHECK(p.Field(0).text() == "a");
+    p.OnPad(0, 1667);
+    p.OnPad(kPadA, 1668);
+    CHECK(p.Field(0).text().empty());
+    p.OnPad(0, 1669);
+    p.PressKey(static_cast<int>(TypeKey::kLetter));   // (the mouse's click on Letter)
+    p.PressKey(static_cast<int>(TypeKey::kLetter));
+    CHECK(p.Field(0).text() == "__");
+    CHECK(p.OnPad(kPadB, 1670) == 0);            // (B: a letter off)
+    CHECK(p.Field(0).text() == "_");
     CHECK(p.Typing() == 0);
     p.OnPad(0, 1680);
     p.OnPad(kPadPlus, 1690);                     // (+: OK)
@@ -1313,18 +1331,24 @@ TEST_CASE("pause tab: typing on the on-screen keyboard takes every button from S
     CHECK(p.Typing() == -1);
     CHECK(p.TakeTyped() == -1);
     p.OnPad(0, 1720);
-    // The mouse's click on a key, and the keys Cancel and OK.
+    // The keys Cancel and OK, and up from Letter round to Cancel.
     p.StartTyping(2);
-    p.PressKey(4, 1);                            // ('1')
-    p.PressKey(CoopKeyboard::kCharRows, 0);      // (Space: a password has none)
-    CHECK(p.Field(2).text() == "1");
-    p.PressKey(CoopKeyboard::kCharRows, 1);      // (Delete)
-    CHECK(p.Field(2).text().empty());
-    p.PressKey(0, 3);
-    p.PressKey(CoopKeyboard::kCharRows, 3);      // (OK)
+    CHECK(p.TypingLetter() == 'A');              // (a password's letters: a host's own come first)
+    p.PressKey(static_cast<int>(TypeKey::kLetter));
+    p.PressKey(static_cast<int>(TypeKey::kCancel));
+    CHECK(p.Typing() == -1);
+    CHECK(p.Field(2).text().empty());            // (Cancel: as it was)
+    p.StartTyping(2);
+    p.OnPad(kPadUp, 1730);
+    CHECK(p.TypingKey() == static_cast<int>(TypeKey::kCancel));
+    p.OnPad(0, 1740);
+    p.PressKey(static_cast<int>(TypeKey::kLetter));
+    p.PressKey(static_cast<int>(TypeKey::kOk));
     CHECK(p.Typing() == -1);
     CHECK(p.TakeTyped() == 2);
-    CHECK(p.Field(2).text() == "D");
+    CHECK(p.Field(2).text() == "A");
+    p.PressKey(static_cast<int>(TypeKey::kLetter));   // (not typing: nothing)
+    CHECK(p.Field(2).text() == "A");
     // The PC keyboard: its characters and keys while typing, none otherwise; Esc puts the field back.
     CHECK_FALSE(p.Char('x'));
     p.StartTyping(1);
@@ -1333,6 +1357,8 @@ TEST_CASE("pause tab: typing on the on-screen keyboard takes every button from S
     CHECK(p.Key(0x25, false));                   // (Left)
     CHECK(p.Char('a'));
     CHECK(p.Field(1).text() == "aP");
+    CHECK(p.Key(0x28, false));                   // (Down: the key picked)
+    CHECK(p.TypingKey() == static_cast<int>(TypeKey::kDelete));
     CHECK(p.Key(0x0d, false));                   // (Enter: OK)
     CHECK(p.Typing() == -1);
     CHECK(p.TakeTyped() == 1);
@@ -1341,7 +1367,28 @@ TEST_CASE("pause tab: typing on the on-screen keyboard takes every button from S
     CHECK(p.Char('z'));
     CHECK(p.Key(0x1b, false));                   // (Esc: Cancel)
     CHECK(p.Field(1).text() == "aP");
-    CHECK(p.TakeTyped() == -1);
+}
+
+TEST_CASE("pause tab: the typing keys on the list's rows: the field on the header, then Letter, Delete, OK, Cancel") {
+    TextField pw(TextField::Kind::kPassword);
+    for (const char c : std::string("Hunter2")) pw.Type(static_cast<unsigned char>(c));
+    const std::vector<ListLine> l = TypingLines(2, pw, 'Q');
+    REQUIRE(l.size() == static_cast<std::size_t>(kListRows));
+    CHECK(l[0].name == "New join password");
+    CHECK(l[0].value == pw.Shown(true, kListValueChars));
+    CHECK(l[0].value.find("Hunter") == std::string::npos);   // (a password: stars)
+    CHECK_FALSE(l[0].arrows);
+    CHECK(l[1].name == "Letter");
+    CHECK(l[1].value == "Q");
+    CHECK(l[1].arrows);                          // (between the row's own arrows: Left and Right change it)
+    CHECK(l[2].name == "Delete");
+    CHECK(l[3].name == "OK");
+    CHECK(l[4].name == "Cancel");
+    for (int i = 2; i < kListRows; ++i) CHECK_FALSE(l[static_cast<std::size_t>(i)].arrows);
+    CHECK(l[5].name.empty());                    // (the rest not shown)
+    CHECK(l[6].name.empty());
+    CHECK(std::string(TypingTitle(0)) == "Room name");
+    CHECK(std::string(TypingTitle(1)) == "Join password");
 }
 
 TEST_CASE("pause tab: typing ends when the page goes, and the Join view's rows say the fields") {

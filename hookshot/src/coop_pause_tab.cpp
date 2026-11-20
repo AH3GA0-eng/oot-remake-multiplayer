@@ -316,7 +316,8 @@ void Page::StartTyping(int which) {
     if (!shown_) return;
     typing_ = which == 2 ? 2 : which == 1 ? 1 : 0;
     typing_was_ = Field(typing_).text();
-    keys_.Reset();
+    key_ = 0;
+    letter_ = 0;
     repeat_since_ = repeat_last_ = 0;
     swallow_ |= pad_last_;   // (the A that started it is not the keyboard's first press)
 }
@@ -329,20 +330,37 @@ void Page::EndTyping(bool ok) {
     pages_sound_ = "button_decide";
 }
 
-void Page::PressKey(int row, int col) {
-    if (typing_ < 0) return;
-    keys_.Set(row, col);
+char Page::TypingLetter() const {
+    if (typing_ < 0) return 0;
+    const std::string& letters = Field(typing_).Letters();
+    return letters[letter_ % letters.size()];
+}
+
+void Page::PressKey(int key) {
+    if (typing_ < 0 || key < 0 || key >= kTypeKeys) return;
+    key_ = key;
     TextField& f = Field(typing_);
-    const CoopKeyboard::KeyAt k = CoopKeyboard::At(row, col);
-    switch (k.key) {
-    case CoopKeyboard::Key::kChar: f.Type(static_cast<unsigned char>(k.ch)); break;
-    case CoopKeyboard::Key::kSpace: f.Type(' '); break;   // (a field without spaces does not take it)
-    case CoopKeyboard::Key::kDelete: f.Backspace(); break;
-    case CoopKeyboard::Key::kCancel: EndTyping(false); return;
-    case CoopKeyboard::Key::kOk: EndTyping(true); return;
-    case CoopKeyboard::Key::kNone: return;
+    switch (static_cast<TypeKey>(key)) {
+    case TypeKey::kLetter: f.Type(static_cast<unsigned char>(TypingLetter())); break;
+    case TypeKey::kDelete: f.Backspace(); break;
+    case TypeKey::kCancel: EndTyping(false); return;
+    case TypeKey::kOk: EndTyping(true); return;
     }
     pages_sound_ = "button_decide";
+}
+
+const char* TypingTitle(int which) {
+    return which == 2 ? "New join password" : which == 1 ? "Join password" : "Room name";
+}
+
+std::vector<ListLine> TypingLines(int which, const TextField& f, char letter) {
+    std::vector<ListLine> out(kListRows);
+    out[0] = {TypingTitle(which), f.Shown(true, kListValueChars)};
+    out[1] = {"Letter", std::string(1, letter), true};
+    out[2] = {"Delete", ""};
+    out[3] = {"OK", ""};
+    out[4] = {"Cancel", ""};
+    return out;
 }
 
 void Page::TypingPad(std::uint64_t down, std::uint64_t held, std::uint64_t now_ms) {
@@ -352,7 +370,7 @@ void Page::TypingPad(std::uint64_t down, std::uint64_t held, std::uint64_t now_m
         return;
     }
     if ((down & kPadA) != 0) {
-        PressKey(keys_.row(), keys_.col());
+        PressKey(key_);
         if (typing_ < 0) return;
     }
     if ((down & kPadB) != 0) {   // (a letter off; with nothing typed: Cancel)
@@ -369,7 +387,14 @@ void Page::TypingPad(std::uint64_t down, std::uint64_t held, std::uint64_t now_m
     const std::uint64_t left = kPadLeft | kPadStickLeft, right = kPadRight | kPadStickRight;
     const std::uint64_t dirs = up | dn | left | right;
     const auto step = [&](std::uint64_t bits) {
-        keys_.Move((bits & dn) != 0 ? 1 : (bits & up) != 0 ? -1 : 0, (bits & right) != 0 ? 1 : (bits & left) != 0 ? -1 : 0);
+        // (up and down: the key, round the four; Left and Right: Letter's letter, round the field's letters)
+        const int dy = (bits & dn) != 0 ? 1 : (bits & up) != 0 ? -1 : 0;
+        key_ = (key_ + dy + kTypeKeys) % kTypeKeys;
+        const int dx = (bits & right) != 0 ? 1 : (bits & left) != 0 ? -1 : 0;
+        if (dx != 0 && key_ == static_cast<int>(TypeKey::kLetter)) {
+            const std::size_t n = f.Letters().size();
+            letter_ = (letter_ % n + n + static_cast<std::size_t>(dx + static_cast<int>(n))) % n;
+        }
     };
     if ((down & dirs) != 0) {
         step(down & dirs);
@@ -388,8 +413,8 @@ bool Page::Key(std::uint32_t vk, bool repeat) {
     switch (vk) {
     case 0x25: f.Move(-1); return true;      // VK_LEFT
     case 0x27: f.Move(+1); return true;      // VK_RIGHT
-    case 0x26: keys_.Move(-1, 0); return true;   // VK_UP, VK_DOWN: the keyboard's cursor
-    case 0x28: keys_.Move(+1, 0); return true;
+    case 0x26: key_ = (key_ + kTypeKeys - 1) % kTypeKeys; return true;   // VK_UP, VK_DOWN: the key picked
+    case 0x28: key_ = (key_ + 1) % kTypeKeys; return true;
     case 0x08: f.Backspace(); return true;   // VK_BACK
     case 0x2e: f.Delete(); return true;      // VK_DELETE
     case 0x0d:                               // VK_RETURN: done
@@ -706,7 +731,7 @@ RowAction ActionFor(View view, int row, const Session& s) {
         return RowAction::kNone;
     }
     case View::kPassword:
-        // (the host's join password: shown on the details list, or a new one typed on the keyboard)
+        // (the host's join password: shown on the details list, or a new one typed with the typing keys)
         if (!s.hosting || !s.has_password) return RowAction::kNone;
         if (row == 0) return RowAction::kShowPassword;
         return row == 1 ? RowAction::kChangePassword : RowAction::kNone;
@@ -927,7 +952,7 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
         }
         break;
     case View::kPassword:
-        // (the host's join password: on the details list while shown; a new one on the keyboard)
+        // (the host's join password: on the details list while shown; a new one with the typing keys)
         if (v.s.hosting && v.s.has_password) {
             rows[0] = v.s.password_shown && !v.host_password.empty() ? "Hide join password" : "Show join password";
             rows[1] = "Change join password";
@@ -1017,7 +1042,7 @@ const char* ActionWords(RowAction a) {
     case RowAction::kAutoRejoin: return "auto-rejoin on or off";
     case RowAction::kShowPassword: return "the join password shown or hidden";
     case RowAction::kViewPassword: return "the Join password view";
-    case RowAction::kChangePassword: return "a new join password typed on the keyboard";
+    case RowAction::kChangePassword: return "a new join password typed with the typing keys";
     case RowAction::kBrowseLan: return "the browser lists the games on this network";
     case RowAction::kBrowseOnline: return "the browser lists the relay's public rooms";
     case RowAction::kBrowsePage: return "the browser's next page of games";

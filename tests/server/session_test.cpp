@@ -1532,6 +1532,67 @@ TEST_CASE("issue 163: a rejoin with a join password shows the token, then the pr
   CHECK(h.session.stats().rejoined == 1);
 }
 
+TEST_CASE("a new join password: players who were in may rejoin with the old one, only with their token") {
+  SessionConfig config;
+  config.join_password = "kokiri";
+  Harness h(config);
+  auto join = [&](ConnectionId id, const std::string& name, const std::string& password,
+                  std::optional<RejoinTokenBytes> token, std::uint32_t address = kHomePc) {
+    h.clear();
+    h.connect(id, address);
+    if (token) h.receive(id, RejoinClaim{*token}, kChannelSession);
+    h.receive(id, hello_from(name), kChannelSession);
+    const auto challenge = only_message_to<JoinChallenge>(h, id);
+    REQUIRE(challenge.has_value());
+    h.clear();
+    h.receive(id, JoinProof{h.proof(password, challenge->nonce)}, kChannelSession);
+    return h.to(id);
+  };
+  auto welcomed = [](const std::vector<Sent>& msgs) {
+    return !msgs.empty() && std::holds_alternative<Welcome>(msgs[0].message);
+  };
+  REQUIRE(welcomed(join(1, "Link", "kokiri", std::nullopt)));
+  REQUIRE(welcomed(join(2, "Zelda", "kokiri", std::nullopt, kOtherPc)));
+  h.session.set_join_password("deku-tree");
+  CHECK(h.session.old_password_count() == 2);
+  CHECK(h.session.join_password() == "deku-tree");
+
+  // Link's game drops; its auto-rejoin still knows "kokiri" and shows its token: back in, same place.
+  h.now += 1'000'000;
+  REQUIRE(welcomed(join(9, "Link", "kokiri", token_of(h, 1))));
+  CHECK(h.session.stats().rejoin_old_password == 1);
+  CHECK(h.session.stats().rejoined == 1);
+  CHECK(h.session.player_number(9) == std::optional<std::uint8_t>{1});
+  CHECK(h.session.old_password_count() == 2);   // (its new token took the used one's place)
+
+  // The old password without a token, or with another's token, is a wrong one.
+  const std::uint64_t bad = h.session.stats().bad_password;
+  CHECK(refused_reason(join(20, "Saria", "kokiri", std::nullopt)) == RefuseReason::bad_password);
+  CHECK(refused_reason(join(21, "Saria", "kokiri", token_of(h, 1))) == RefuseReason::bad_password);   // (used up)
+  CHECK(h.session.stats().bad_password == bad + 2);
+
+  // A player who leaves (or is kicked) has no way back with the old one: the host may have changed it for that.
+  h.session.disconnected(2, h.now);   // (closed at once: left)
+  CHECK(h.session.old_password_count() == 1);
+  CHECK(refused_reason(join(22, "Zelda", "kokiri", token_of(h, 2), kOtherPc)) == RefuseReason::bad_password);
+
+  // A lost connection keeps it, also once the old place timed out and is gone.
+  h.now += 20'000'000;
+  h.session.disconnected(9, h.now);   // (silent: timed out)
+  CHECK(h.session.player_count() == 0);
+  REQUIRE(welcomed(join(23, "Link", "kokiri", token_of(h, 9))));
+  CHECK(h.session.stats().rejoin_old_password == 2);
+
+  // The new password lets anyone in; a second change keeps what each game knows.
+  REQUIRE(welcomed(join(24, "Mido", "deku-tree", std::nullopt, kOtherPc)));
+  h.session.set_join_password("lost-woods");
+  CHECK(h.session.old_password_count() == 2);   // (Link: kokiri, Mido: deku-tree)
+  h.now += 1'000'000;
+  REQUIRE(welcomed(join(25, "Mido", "deku-tree", token_of(h, 24), kOtherPc)));
+  CHECK(refused_reason(join(26, "Link", "deku-tree", token_of(h, 23))) == RefuseReason::bad_password);
+  REQUIRE(welcomed(join(27, "Link", "kokiri", token_of(h, 23))));
+}
+
 // ---------------------------------------------------------------- objects
 
 namespace {

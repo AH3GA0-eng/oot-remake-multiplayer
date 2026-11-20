@@ -1830,6 +1830,11 @@ public:
         color_change_ = color;
     }
 
+    // The host's new join password, for this client's next connection (coop_hook.h). Any thread.
+    void SetJoinPassword(const std::string& password) {
+        session_->with_client([&](coop::net::Client& c) { c.set_join_password(password); });
+    }
+
     // Chat and the player list (coop_hook.h). Any thread.
     bool SendChat(const std::string& text) {
         if (CoopTeleport::OnChat(text, *session_)) {
@@ -3492,6 +3497,14 @@ void End() {
     LOG_INFO(Core, "coop: off (left from the menu)");
     std::lock_guard lock(g_mutex);
     g_ended.push_back(std::move(coop));
+}
+
+void SetJoinPassword(const std::string& password) {
+    std::lock_guard lock(g_mutex);
+    if (g_coop) {
+        g_coop->SetJoinPassword(password);
+        LOG_INFO(Core, "coop: this game's own reconnect uses the new join password");   // (never the password)
+    }
 }
 
 void SetColor(std::optional<std::uint32_t> color) {

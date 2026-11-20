@@ -114,6 +114,7 @@ constexpr std::uint64_t kPcTryMs = 6000;
 std::string g_join_text;     // the code (or address) this join used: remembered once connected
 bool g_join_saved = false;
 std::vector<std::string> g_lan_lines;   // "Same network"'s or "VPN"'s lines while they are shown
+std::string g_lan_password;             // the join password those lines hold (a new one: they are old)
 std::uint64_t g_next_session_ms = 0;
 std::atomic<int> g_wanted{HOS_COOP_MENU_WANT_NOTHING};
 
@@ -159,7 +160,7 @@ std::vector<std::string> StatusLines(const HosCoopStatus& st, const CoopLobby::S
     v.invite = st.invite;
     v.answer = st.answer;
     v.copied = g_copied;
-    if (v.host && v.state == HOS_COOP_HOSTING && !g_lan_lines.empty()) {
+    if (v.host && v.state == HOS_COOP_HOSTING && !g_lan_lines.empty() && g_lan_password == st.password) {
         return g_lan_lines;
     }
     std::vector<std::string> lines = CoopTitleMenu::PlainStatus(v);
@@ -646,6 +647,7 @@ void CopyLan(bool vpn) {
         if (session != g_session) {
             return;   // (hosted again or joined since: these lines are old)
         }
+        g_lan_password = password;
         g_lan_lines = vpn ? CoopTitleMenu::VpnLines(addresses, port, password, copied)
                           : CoopTitleMenu::HomeLines(addresses, port, password, copied);
         LOG_INFO(Core, "coop: multiplayer tab: host: {}: {} address(es){}", vpn ? "VPN" : "same network",

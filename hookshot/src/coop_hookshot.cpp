@@ -12,7 +12,6 @@
 //   (coop_hold.h), at the same place in main;
 // - settings: coop.ini beside longshot.exe, then the LICHII_COOP_* variables,
 //   as in the emulator (the kit's launcher sets them from coop-options.ini).
-#include "coop_keyboard.h"
 #include "coop_hookshot.h"
 
 #include <algorithm>
@@ -606,6 +605,7 @@ CoopHostMenu::Menu& HostMenu() {
         };
         h.client_id = [] { return CoopTitle::ClientId(); };
         h.ngplus_level = [] { return CoopNgPlus::Level(); };  // (Navi) New Game+ for our server
+        h.password_changed = [](const std::string& password) { CoopHook::SetJoinPassword(password); };
         h.log = [](const std::string& line) { LOG_INFO(Core, "{}", line); };
         h.default_name = [] {
             const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
@@ -2084,8 +2084,7 @@ COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) n
     }
 }
 COOP_HOOKSHOT_EXPORT int hos_coop_draw_wanted(void) {
-    return g_on && (CoopDraw::Wanted(CoopHookshot::DrawScene()) || CoopModsRuntime::OverlayWanted() ||
-                    CoopKeyboard::Wanted())
+    return g_on && (CoopDraw::Wanted(CoopHookshot::DrawScene()) || CoopModsRuntime::OverlayWanted())
                ? 1
                : 0;
 }
@@ -2111,7 +2110,6 @@ COOP_HOOKSHOT_EXPORT void hos_coop_draw(const HosCoopDraw* d) {
         t.text_width = d->text_width;
         CoopDraw::Draw(t, CoopHookshot::DrawScene());
         CoopModsRuntime::Overlay(t);
-        CoopKeyboard::Draw(t, 0);   // (the pause menu's on-screen keyboard, over the rest)
     }
 }
 // The game's camera for the name tags (hos_coop_draw.h), on the thread that records Hookshot's draws: published as
@@ -2140,7 +2138,6 @@ COOP_HOOKSHOT_EXPORT void hos_coop_draw2(const HosCoopDraw* d) {
         }
         CoopHookshot::DrawWithLook(*d);
         CoopModsRuntime::Overlay(*d);
-        CoopKeyboard::Draw(*d, CoopHookshot::g_look_state.load() == CoopHookshot::kLookOn ? CoopHookshot::g_look.medium : 0);   // (over the rest)
     }
 }
 }

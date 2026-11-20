@@ -276,6 +276,9 @@ void Menu::RunHost(HostJob job) {
             if (new_password) {   // (the host's new join password: new joins need it, players in stay in)
                 std::string why;
                 const bool ok = host.set_join_password(*new_password, why);
+                if (ok && hooks_.password_changed) {
+                    hooks_.password_changed(*new_password);   // (our own game, if it reconnects, proves the new one)
+                }
                 std::lock_guard lock(mutex_);
                 if (ok) {
                     job.password = *new_password;
