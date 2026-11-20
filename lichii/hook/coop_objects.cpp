@@ -348,6 +348,14 @@ constexpr u64 kLifeCopy = 0x1ca8;  // life and max as last mirrored
 constexpr u64 kActorPlacement = 0x3d8;
 constexpr u64 kPlacementHash = 0x88;
 constexpr std::size_t kMaxWalk = 8192;
+// What an actor's cached name was read with (row 172): its name pointer and its placement pointer. A new
+// actor at a reused address differs in at least one, and its name is read again.
+struct ActorStamp {
+    u64 name = 0;
+    u64 head = 0;  // the name's first 8 characters (a name kept inside the actor has the same pointer)
+    u64 placement = 0;
+    bool operator==(const ActorStamp&) const = default;
+};
 
 // LICHII_COOP_OBJECTS_CHEAT: what it sets is in coop_cheat_items.h.
 
@@ -2676,6 +2684,7 @@ private:
             actors_.clear();
             first_ = true;
             names_.clear();
+            stamps_.clear();
             no_area_.clear();
             TheMover().ForgetReplayed();
 #ifdef COOP_HOOKSHOT
@@ -3402,6 +3411,7 @@ private:
         };
         std::vector<TalkScrub> talk_scrubs;
         std::unordered_map<u64, std::pair<std::string, u64>> names;
+        std::unordered_map<u64, ActorStamp> stamps;
         std::unordered_map<u64, u64> life_components;
         {
             // Difficulty: the extra enemies the director made so far (coop_difficulty.h Extras).
@@ -3424,9 +3434,19 @@ private:
         }
         const u64 now_ms = SteadyNowMs();
         for (const u64 a : actors) {
+            // Row 172 (run 053934): a scene change can put a new actor at an address an old one held without a
+            // walk between (our adult Link where the last scene's TerrainScenePermanent was): the cached name
+            // would stay the old one, and WriteLife found no Player (another player's kill not replayed). The
+            // cache holds only while the actor's name (pointer and first characters) and placement are the ones it
+            // was read with (the vtable is one generic class for every actor, main+0x4b25e18: no help).
+            const u64 name_at = r.Ptr(a + kActorName).value_or(0);
+            const ActorStamp stamp{name_at, name_at ? r.Get<u64>(name_at).value_or(0) : 0,
+                                   r.Ptr(a + kActorPlacement).value_or(0)};
+            stamps.emplace(a, stamp);
             auto it = names_.find(a);
+            const auto was = stamps_.find(a);
             std::pair<std::string, u64> known;
-            if (it != names_.end()) {
+            if (it != names_.end() && was != stamps_.end() && was->second == stamp) {
                 known = std::move(it->second);
             } else {
                 known.first = r.Name(a);
@@ -3741,6 +3761,7 @@ private:
             names.emplace(a, std::move(known));
         }
         names_ = std::move(names);
+        stamps_ = std::move(stamps);
         life_components_ = std::move(life_components);
         CoopDbno::NoteEnemiesNear(player && CoopDbno::AnyNear(*player, foes));
         sync_.SetPlayer(player);
@@ -4421,6 +4442,14 @@ private:
         }
 #endif
         const LifeRouted routed = RouteLife(ask);
+        if (static std::atomic<int> said_why{0};
+            w.hurt > 0 && routed.route != LifeRoute::replay && said_why.fetch_add(1) < 40) {
+            // Row 172 (run 053413): another player's hit not replayed loses the game's kill consequences.
+            LOG_INFO(Core, "coop: objects: share life {:#x} '{}': P{}'s hit not replayed (route {}): replay {}, "
+                           "player {:#x} (our Link {:#x}, {} names), direct {}, out of reach {}",
+                     w.address, NameOf(w.address), w.hitter, static_cast<int>(routed.route), replay_, player,
+                     our_link_, names_.size(), w.direct, ask.out_of_reach);
+        }
         switch (routed.route) {
         case LifeRoute::replay: {
             Mover::Hit h;
@@ -5262,6 +5291,7 @@ private:
     std::size_t refused_logged_ = 0;
     std::uint8_t decider_logged_ = 0;
     std::unordered_map<u64, std::pair<std::string, u64>> names_;  // name, hash by actor
+    std::unordered_map<u64, ActorStamp> stamps_;  // what each cached name was read with (row 172)
     // Row 138(8): townspeople and animals (by actor, its placement hash) whose live logic has no area input.
     std::unordered_map<u64, u64> no_area_;
     static constexpr std::size_t kNoAreaMax = 4096;
