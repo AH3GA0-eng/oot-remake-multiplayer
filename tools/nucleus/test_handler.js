@@ -36,6 +36,7 @@ function mkdirs(p) {
 
 // The .NET calls the handler uses, on the real file system.
 var startedServers = [];
+var deleted = [];   // the folders Directory.Delete was given
 var attrMode = "number";   // how the DirectoryInfo stand-in reports FileAttributes (below)
 var System = {
     IO: {
@@ -56,7 +57,12 @@ var System = {
             CreateDirectory: function (p) { mkdirs(p); },
             Move: function (a, b) { fso.MoveFolder(a, b); },
             GetDirectories: function (p) { var r = [], e = new Enumerator(fso.GetFolder(p).SubFolders); for (; !e.atEnd(); e.moveNext()) r.push(e.item().Path); return r; },
-            GetFiles: function (p) { var r = [], e = new Enumerator(fso.GetFolder(p).Files); for (; !e.atEnd(); e.moveNext()) r.push(e.item().Path); return r; }
+            GetFiles: function (p) { var r = [], e = new Enumerator(fso.GetFolder(p).Files); for (; !e.atEnd(); e.moveNext()) r.push(e.item().Path); return r; },
+            // (rmdir without /s: a link goes, not what it names; a folder with files in it would stay)
+            Delete: function (p, recursive) {
+                deleted.push(p);
+                shell.Run("cmd /c rmdir \"" + p + "\"", 0, true);
+            }
         },
         // FileAttributes as Jint may hand it over: a number (Directory 16, ReparsePoint 1024), or an object with
         // ToString (and valueOf: the number) or the enum's text, as attrMode says.
@@ -116,8 +122,16 @@ var instances = [];
 for (var i = 0; i < 3; i++) {
     instances[i] = fso.BuildPath(root, "content\\OoTCoopLongshot\\Instance" + i);
     mkdirs(instances[i]);
-    writeFile(fso.BuildPath(instances[i], "longshot_options.ini"), "fullscreen=1\r\nvsync=0\r\ndiscord_status=1\r\n");
+    writeFile(fso.BuildPath(instances[i], "longshot_options.ini"),
+              "fullscreen=1\r\nvsync=0\r\ndiscord_status=1\r\nmouse_camera=1\r\n");
 }
+// The game's logs, which an older handler's instance folders linked (instance 0): the link goes, the logs stay.
+// Instance 2 has its own logs folder already: kept.
+mkdirs(fso.BuildPath(game, "logs"));
+writeFile(fso.BuildPath(game, "logs\\longshot_log.txt"), "the game's own log");
+shell.Run("cmd /c mklink /J \"" + fso.BuildPath(instances[0], "logs") + "\" \"" + fso.BuildPath(game, "logs") + "\"", 0, true);
+mkdirs(fso.BuildPath(instances[2], "logs"));
+writeFile(fso.BuildPath(instances[2], "logs\\longshot_log.txt"), "player 3's log");
 // Instance 1 has a real user folder from an earlier start (Nucleus copied it): kept beside, renamed.
 mkdirs(fso.BuildPath(instances[1], "user"));
 
@@ -202,6 +216,23 @@ for (var e = new Enumerator(kept); !e.atEnd(); e.moveNext()) keptOld = keptOld |
 check(keptOld, "the real user folder of an earlier start kept, renamed");
 var k1 = readFile(fso.BuildPath(instances[0], "player-key.txt")), k2 = readFile(fso.BuildPath(instances[1], "player-key.txt"));
 check(k1 !== k2, "each player has its own key");
+
+// Each game its own logs: Nucleus links no logs folder, and an old link is removed (the logs it named kept).
+var excluded = false;
+for (var x = 0; x < Game.DirExclusions.length; x++) excluded = excluded || Game.DirExclusions[x] === "logs";
+check(excluded, "Nucleus does not link the logs folder");
+check(!fso.FolderExists(fso.BuildPath(instances[0], "logs")), "player 1's old logs link removed");
+check(readFile(fso.BuildPath(game, "logs\\longshot_log.txt")) === "the game's own log", "the game's logs kept");
+check(readFile(fso.BuildPath(instances[2], "logs\\longshot_log.txt")) === "player 3's log", "a real logs folder kept");
+check(deleted.length === 1, "only the link deleted: " + deleted.join(" | "));
+
+// The mouse camera: a controller player's is "As the stick" (0), never Native; a keyboard player keeps its own.
+var m1 = readFile(fso.BuildPath(instances[0], "longshot_options.ini"));
+var m2 = readFile(fso.BuildPath(instances[1], "longshot_options.ini"));
+var m3 = readFile(fso.BuildPath(instances[2], "longshot_options.ini"));
+check(m1.indexOf("mouse_camera=0") >= 0 && m1.indexOf("mouse_camera=1") < 0, "player 1 (pad): mouse camera off: " + m1);
+check(m2.indexOf("mouse_camera=0") >= 0 && m2.indexOf("mouse_camera=1") < 0, "player 2 (pad): mouse camera off: " + m2);
+check(m3.indexOf("mouse_camera=1") >= 0 && m3.indexOf("mouse_camera=0") < 0, "player 3 (keyboard) keeps it: " + m3);
 
 var o1 = readFile(fso.BuildPath(instances[0], "coop-options.ini"));
 var o2 = readFile(fso.BuildPath(instances[1], "coop-options.ini"));
