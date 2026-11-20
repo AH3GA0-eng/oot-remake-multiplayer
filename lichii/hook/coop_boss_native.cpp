@@ -91,6 +91,31 @@ Request RequestFromAction(const BossAction& a, std::uint64_t node) {
     return r;
 }
 
+Request RequestFromAction(const BossAction& a, const OwnAsk& ask) {
+    using namespace addr;
+    Request r = RequestFromAction(a, ask.node);
+    const bool placed = std::any_of(a.places.begin(), a.places.end(), [](const auto& p) { return p.has_value(); });
+    if (ask.has_plug && ask.plug != 0 && !placed) {
+        Put<std::uint64_t>(r, kReqPlug, ask.plug);
+        r[kReqHasPlug] = 1;
+    }
+    return r;
+}
+
+std::optional<OwnAsk> AskFor(const std::map<std::pair<std::int32_t, std::int32_t>, OwnAsk>& by_move,
+                             const std::map<std::int32_t, OwnAsk>& by_slot, std::uint64_t last, const BossAction& a) {
+    if (const auto it = by_move.find({a.slot, a.verb}); it != by_move.end()) {
+        return it->second;
+    }
+    if (const auto it = by_slot.find(a.slot); it != by_slot.end()) {
+        return OwnAsk{it->second.node};  // (another move's plug is not this one's)
+    }
+    if (last != 0) {
+        return OwnAsk{last};
+    }
+    return std::nullopt;
+}
+
 void Table::SetOn(bool brain, bool actions) {
     std::lock_guard lock(mutex_);
     brain_on_ = brain;
@@ -134,6 +159,21 @@ void Table::Note(std::string line) {
     if (notes_.size() < 64) {
         notes_.push_back(std::move(line));
     }
+}
+
+void Table::Stream(Entry& e, std::string kind) {
+    if (kind == e.stream_last) {
+        ++e.stream_run;
+        return;
+    }
+    if (stream_notes_ < kMaxStreamNotes) {
+        ++stream_notes_;
+        Note(e.name + ": action stream: " + kind +
+             (e.stream_last.empty() ? std::string()
+                                    : " after " + std::to_string(e.stream_run) + " x " + e.stream_last));
+    }
+    e.stream_last = std::move(kind);
+    e.stream_run = 1;
 }
 
 void Table::Publish(const std::vector<Boss>& bosses) {
@@ -431,6 +471,8 @@ bool Table::OnActionVerb(std::uint64_t bsa, const Request& request, bool changed
         bool plug = false;
         if (auto a = ActionFromRequest(request, &plug)) {
             a->changed = changed;
+            Stream(*e, "ours asks slot " + std::to_string(a->slot) + " verb " + std::to_string(a->verb) +
+                           " (changed " + std::to_string(changed ? 1 : 0) + (plug ? ", by plug)" : ")"));
             e->mine.action = *a;
             Record(*e, std::move(*a));
             ++counts_.owner_action;
@@ -450,6 +492,16 @@ bool Table::OnActionVerb(std::uint64_t bsa, const Request& request, bool changed
     std::memcpy(&node, request.data() + addr::kReqNode, sizeof node);
     if (node != 0) {
         e->own_node = node;
+        // Row 177: the node (and plug) its own AI names for this move, for the owner's same move (AskFor).
+        const std::int32_t slot = Get<std::int32_t>(request, addr::kReqSlot);
+        const std::int32_t verb = Get<std::int32_t>(request, addr::kReqVerb);
+        const OwnAsk ask{node, Get<std::uint64_t>(request, addr::kReqPlug), request[addr::kReqHasPlug] == 1};
+        if (e->own_asks.size() < kMaxOwnAsks || e->own_asks.contains({slot, verb})) {
+            e->own_asks[{slot, verb}] = ask;
+        }
+        if (e->own_slot_asks.size() < kMaxOwnAsks || e->own_slot_asks.contains(slot)) {
+            e->own_slot_asks[slot] = ask;
+        }
     }
     if (!e->wanted) {
         return false;
@@ -914,10 +966,17 @@ bool Table::StepOne(CoopPuppet::Guest& guest, std::uint64_t bsa, Entry& e, std::
             call = std::move(c);
             return true;
         }
-        const Request r = RequestFromAction(action, e.own_node);
+        const OwnAsk ask = AskFor(e.own_asks, e.own_slot_asks, e.own_node, action).value_or(OwnAsk{e.own_node});
+        const Request r = RequestFromAction(action, ask);
         if (!guest.Write(block_, r.data(), r.size())) {
             break;
         }
+        Stream(e, "owner's put in: slot " + std::to_string(action.slot) + " verb " + std::to_string(action.verb) +
+                      " (changed " + std::to_string(action.changed ? 1 : 0) + ", our node " +
+                      (e.own_asks.contains({action.slot, action.verb}) ? "of this move"
+                       : e.own_slot_asks.contains(action.slot)        ? "of this slot"
+                                                                       : "last asked") +
+                      (r[addr::kReqHasPlug] == 1 ? ", our plug)" : ")"));
         CoopPuppet::Call c;
         c.function = main_base + addr::kRequestActionVerb;
         c.x[0] = bsa;
@@ -1087,7 +1146,8 @@ std::optional<CoopPuppet::Call> Table::Ask(CoopPuppet::Guest& guest, Entry& e, s
         pending_ = Pending::malloc;
         return c;
     }
-    const Request r = RequestFromAction(action, e.own_node);
+    const Request r =
+        RequestFromAction(action, AskFor(e.own_asks, e.own_slot_asks, e.own_node, action).value_or(OwnAsk{e.own_node}));
     *made = true;  // (a block it cannot write: dropped)
     if (!guest.Write(block_, r.data(), r.size())) {
         return std::nullopt;
@@ -1126,6 +1186,7 @@ void Table::Reset() {
     }
     dying_.clear();
     shot_ends_.clear();
+    stream_notes_ = 0;
     for (auto& slot : dying_life_) {
         slot.store(0, std::memory_order_relaxed);
     }

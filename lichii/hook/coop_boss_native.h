@@ -95,8 +95,30 @@ using Request = std::array<std::uint8_t, addr::kRequestSize>;
 // through a plug (those are not sent: the copy then has its own places).
 std::optional<BossAction> ActionFromRequest(const Request& r, bool* plug = nullptr);
 // A request for the game from the owner's action, asked by `node` (the copy's
-// own AI node that last asked for an action: callers always name one).
+// own AI node that asks this move: callers always name one).
 Request RequestFromAction(const BossAction& a, std::uint64_t node);
+
+// Row 177 (Phantom Ganon never seen out of his painting on a copy, so never hit there): what the copy's own AI
+// names when it asks a move itself, its asking node and its plug. The game's request function (main+0xc08f0)
+// keeps the asking node in the move's slot and, for the same verb asked again with its "changed" argument,
+// compares that node's name with the request's plug name (main+0xbe070); a mismatch starts the move over. The
+// owner's game always names the node that asks that move; a copy that named whichever node of its own asked last
+// (another move's) had its move started over by the owner's every ask: PhantomGanon.action.appear waits one step
+// (ExecuteGenericDummyAction) before its fade-in (EnemyCommon.OneShotAppearOrDisappear, which also ends his
+// forced no-hit), so he stayed unseen and unhittable on every copy while the owner's Disappear (no wait) worked.
+struct OwnAsk {
+    std::uint64_t node = 0;
+    std::uint64_t plug = 0;
+    bool has_plug = false;
+    bool operator==(const OwnAsk&) const = default;
+};
+// The request for the owner's action as the copy's own AI would ask it: `ask`'s node, and its plug when the
+// owner's action names no place (the owner's own was asked through a plug: its places were not sent).
+Request RequestFromAction(const BossAction& a, const OwnAsk& ask);
+// The copy's own ask to name for `a` from what its own AI asked: the same slot and verb, else the slot's last,
+// else its last ask of all (`last`). Nothing when it never asked (no node yet).
+std::optional<OwnAsk> AskFor(const std::map<std::pair<std::int32_t, std::int32_t>, OwnAsk>& by_move,
+                             const std::map<std::int32_t, OwnAsk>& by_slot, std::uint64_t last, const BossAction& a);
 
 enum class Role : std::uint8_t { owner, copy };
 // A boss whose new copy runs its own start first (Table::kStartSteps): a
@@ -350,6 +372,8 @@ public:
     static constexpr std::size_t kMaxWants = 64;
     static constexpr std::size_t kMaxSkippedKept = 8;
     static constexpr std::size_t kMaxHeld = 8;  // copy bosses held at once (more: not held)
+    static constexpr std::size_t kMaxOwnAsks = 64;     // moves kept per copy (AskFor)
+    static constexpr std::uint64_t kMaxStreamNotes = 240;  // row 177's action stream lines per game
 
 private:
     struct Entry {
@@ -372,6 +396,12 @@ private:
         int drift = 0;                 // steps the brain verb has differed with nothing queued
         int drift_fixes = 0;           // put-backs since the owner's last new state
         std::uint64_t own_node = 0;    // the copy's own AI node that last asked for an action
+        // Row 177: the copy's own asks by move (slot, verb) and by slot (AskFor), at most kMaxOwnAsks moves.
+        std::map<std::pair<std::int32_t, std::int32_t>, OwnAsk> own_asks;
+        std::map<std::int32_t, OwnAsk> own_slot_asks;
+        // Row 177's log: the action stream's last kind (who, slot, verb, changed, plug or node source) and its run.
+        std::string stream_last;
+        std::uint64_t stream_run = 0;
         // Copy: its own changes skipped lately (step, change), and those to
         // make late; the step until which its own run (our hit); whether its
         // own ran last step (then the owner's state again).
@@ -423,6 +453,9 @@ private:
     Entry* FindActor(std::uint64_t actor);
     const Entry* FindActor(std::uint64_t actor) const;
     void Note(std::string line);
+    // Row 177's log: one line when the stream's kind changes (the last kind's run length with it), capped.
+    void Stream(Entry& e, std::string kind);
+    std::uint64_t stream_notes_ = 0;
 
     mutable std::mutex mutex_;
     std::map<std::uint64_t, Entry> by_bsa_;
