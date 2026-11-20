@@ -88,6 +88,7 @@ std::mutex g_mutex;   // everything below
 CoopPauseMenu::Menu g_menu;
 bool g_coop_on = false;      // co-op came with the game's start (coop.ini named a server): not started or stopped here
 bool g_shown = false;        // the tab shows in Hookshot's menu
+bool g_native = false;       // the title's own rows show its pages instead (OpenNative): no overlay
 std::string g_doing;         // what the tab started: "hosting", "joined", "" none
 // Auto-rejoin (coop_auto_rejoin.h): the planner, and what the player did since its last update (its own Host or Join,
 // a Leave), which stop what it planned; g_auto_join: the join being made is the planner's, not the player's.
@@ -114,6 +115,7 @@ constexpr std::uint64_t kPcTryMs = 6000;
 std::string g_join_text;     // the code (or address) this join used: remembered once connected
 bool g_join_saved = false;
 std::vector<std::string> g_lan_lines;   // "Same network"'s or "VPN"'s lines while they are shown
+std::string g_lan_password;             // the join password those lines hold (a new one: they are old)
 std::uint64_t g_next_session_ms = 0;
 std::atomic<int> g_wanted{HOS_COOP_MENU_WANT_NOTHING};
 
@@ -159,7 +161,7 @@ std::vector<std::string> StatusLines(const HosCoopStatus& st, const CoopLobby::S
     v.invite = st.invite;
     v.answer = st.answer;
     v.copied = g_copied;
-    if (v.host && v.state == HOS_COOP_HOSTING && !g_lan_lines.empty()) {
+    if (v.host && v.state == HOS_COOP_HOSTING && !g_lan_lines.empty() && g_lan_password == st.password) {
         return g_lan_lines;
     }
     std::vector<std::string> lines = CoopTitleMenu::PlainStatus(v);
@@ -438,6 +440,7 @@ bool Host() {
     h.invite = 1;
     h.pvp = o.pvp ? 1 : 0;
     h.approve_joins = o.approve_joins ? 1 : 0;
+    h.same_network_open = o.same_network_open ? 1 : 0;   // (off, the default: this network's players need the password too)
     h.max_players = static_cast<std::uint8_t>(o.max_players);
     // coop-options.ini's relay lines, as Host.bat uses them (issue 261: a room name friends type in Join a game).
     h.relay_via = o.relay.empty() ? nullptr : o.relay.c_str();
@@ -646,6 +649,7 @@ void CopyLan(bool vpn) {
         if (session != g_session) {
             return;   // (hosted again or joined since: these lines are old)
         }
+        g_lan_password = password;
         g_lan_lines = vpn ? CoopTitleMenu::VpnLines(addresses, port, password, copied)
                           : CoopTitleMenu::HomeLines(addresses, port, password, copied);
         LOG_INFO(Core, "coop: multiplayer tab: host: {}: {} address(es){}", vpn ? "VPN" : "same network",
@@ -1065,7 +1069,7 @@ bool Key(std::uint32_t vk, bool repeat) {
         return true;
     }
     std::lock_guard lock(g_mutex);
-    if (!g_shown) {
+    if (!g_shown && !g_native) {
         return false;
     }
     const auto [ctrl_down, shift_down] = Modifiers();
@@ -1107,7 +1111,7 @@ bool Char(std::uint32_t cp) {
         return true;
     }
     std::lock_guard lock(g_mutex);
-    if (!g_shown || !g_menu.typing()) {
+    if ((!g_shown && !g_native) || !g_menu.typing()) {
         return false;
     }
     if (cp >= 0x20 && cp != 0x7F) {
@@ -1121,7 +1125,47 @@ bool KeysTaken() {
         return true;
     }
     std::lock_guard lock(g_mutex);
-    return g_shown && g_menu.typing();
+    return (g_shown || g_native) && g_menu.typing();
+}
+
+void OpenNative(CoopPauseMenu::Page page) {
+    {
+        std::lock_guard lock(g_mutex);
+        g_native = true;
+    }
+    Open(page);
+    g_wanted = HOS_COOP_MENU_WANT_NOTHING;   // (no overlay: the title's own rows show the page)
+    LOG_INFO(Core, "coop: multiplayer tab: its page on the title's own rows (no overlay)");
+}
+
+bool NativeInput(int event, int arg, int arg2) {
+    {
+        std::lock_guard lock(g_mutex);
+        if (!g_native) return false;
+    }
+    return CoopPause::Input(kMultiplayerTab, event, arg, arg2);
+}
+
+CoopPauseMenu::View NativeView() {
+    std::lock_guard lock(g_mutex);
+    return g_native ? g_menu.view() : CoopPauseMenu::View{};
+}
+
+CoopPauseMenu::Page NativePage() {
+    std::lock_guard lock(g_mutex);
+    return g_menu.page();
+}
+
+bool NativeOpen() {
+    std::lock_guard lock(g_mutex);
+    return g_native;
+}
+
+void CloseNative() {
+    std::lock_guard lock(g_mutex);
+    if (!g_native) return;
+    g_native = false;
+    if (!g_shown) g_menu.Hide();
 }
 
 void Open(CoopPauseMenu::Page page) {

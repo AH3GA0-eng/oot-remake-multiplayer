@@ -1532,6 +1532,67 @@ TEST_CASE("issue 163: a rejoin with a join password shows the token, then the pr
   CHECK(h.session.stats().rejoined == 1);
 }
 
+TEST_CASE("a new join password: players who were in may rejoin with the old one, only with their token") {
+  SessionConfig config;
+  config.join_password = "kokiri";
+  Harness h(config);
+  auto join = [&](ConnectionId id, const std::string& name, const std::string& password,
+                  std::optional<RejoinTokenBytes> token, std::uint32_t address = kHomePc) {
+    h.clear();
+    h.connect(id, address);
+    if (token) h.receive(id, RejoinClaim{*token}, kChannelSession);
+    h.receive(id, hello_from(name), kChannelSession);
+    const auto challenge = only_message_to<JoinChallenge>(h, id);
+    REQUIRE(challenge.has_value());
+    h.clear();
+    h.receive(id, JoinProof{h.proof(password, challenge->nonce)}, kChannelSession);
+    return h.to(id);
+  };
+  auto welcomed = [](const std::vector<Sent>& msgs) {
+    return !msgs.empty() && std::holds_alternative<Welcome>(msgs[0].message);
+  };
+  REQUIRE(welcomed(join(1, "Link", "kokiri", std::nullopt)));
+  REQUIRE(welcomed(join(2, "Zelda", "kokiri", std::nullopt, kOtherPc)));
+  h.session.set_join_password("deku-tree");
+  CHECK(h.session.old_password_count() == 2);
+  CHECK(h.session.join_password() == "deku-tree");
+
+  // Link's game drops; its auto-rejoin still knows "kokiri" and shows its token: back in, same place.
+  h.now += 1'000'000;
+  REQUIRE(welcomed(join(9, "Link", "kokiri", token_of(h, 1))));
+  CHECK(h.session.stats().rejoin_old_password == 1);
+  CHECK(h.session.stats().rejoined == 1);
+  CHECK(h.session.player_number(9) == std::optional<std::uint8_t>{1});
+  CHECK(h.session.old_password_count() == 2);   // (its new token took the used one's place)
+
+  // The old password without a token, or with another's token, is a wrong one.
+  const std::uint64_t bad = h.session.stats().bad_password;
+  CHECK(refused_reason(join(20, "Saria", "kokiri", std::nullopt)) == RefuseReason::bad_password);
+  CHECK(refused_reason(join(21, "Saria", "kokiri", token_of(h, 1))) == RefuseReason::bad_password);   // (used up)
+  CHECK(h.session.stats().bad_password == bad + 2);
+
+  // A player who leaves (or is kicked) has no way back with the old one: the host may have changed it for that.
+  h.session.disconnected(2, h.now);   // (closed at once: left)
+  CHECK(h.session.old_password_count() == 1);
+  CHECK(refused_reason(join(22, "Zelda", "kokiri", token_of(h, 2), kOtherPc)) == RefuseReason::bad_password);
+
+  // A lost connection keeps it, also once the old place timed out and is gone.
+  h.now += 20'000'000;
+  h.session.disconnected(9, h.now);   // (silent: timed out)
+  CHECK(h.session.player_count() == 0);
+  REQUIRE(welcomed(join(23, "Link", "kokiri", token_of(h, 9))));
+  CHECK(h.session.stats().rejoin_old_password == 2);
+
+  // The new password lets anyone in; a second change keeps what each game knows.
+  REQUIRE(welcomed(join(24, "Mido", "deku-tree", std::nullopt, kOtherPc)));
+  h.session.set_join_password("lost-woods");
+  CHECK(h.session.old_password_count() == 2);   // (Link: kokiri, Mido: deku-tree)
+  h.now += 1'000'000;
+  REQUIRE(welcomed(join(25, "Mido", "deku-tree", token_of(h, 24), kOtherPc)));
+  CHECK(refused_reason(join(26, "Link", "deku-tree", token_of(h, 23))) == RefuseReason::bad_password);
+  REQUIRE(welcomed(join(27, "Link", "kokiri", token_of(h, 23))));
+}
+
 // ---------------------------------------------------------------- objects
 
 namespace {
@@ -3757,6 +3818,107 @@ TEST_CASE("join password: a game with no password (the empty one's proof) is ref
   auto refused = only_message_to<Refused>(h, 1);
   REQUIRE(refused);
   CHECK(refused->reason == RefuseReason::bad_password);
+}
+
+TEST_CASE("join password: the same network joins with the same-network key when the host lets it, and only it") {
+  SessionConfig config = with_password("hunter2");
+  config.same_network_open = true;
+  Harness h(config);
+  // From a private address: in, with the traffic sealed as for any player.
+  h.connect(1, enet_address(192, 168, 1, 20));
+  h.clear();
+  h.receive(1, hello_from("Link"), kChannelSession);
+  auto challenge = only_message_to<JoinChallenge>(h, 1);
+  REQUIRE(challenge);
+  h.clear();
+  h.receive(1, JoinProof{h.proof(std::string(kSameNetworkPassword), challenge->nonce)}, kChannelSession);
+  bool welcomed = false;
+  for (const Sent& s : h.to(1)) welcomed = welcomed || std::holds_alternative<Welcome>(s.message);
+  CHECK(welcomed);
+  CHECK(h.session.player_count() == 1);
+  CHECK(h.session.stats().same_network_joins == 1);
+  CHECK(h.session.stats().bad_password == 0);
+  // The join password still works from there, and counts as the password.
+  h.connect(2, enet_address(10, 0, 0, 7));
+  h.clear();
+  h.receive(2, hello_from("Saria"), kChannelSession);
+  challenge = only_message_to<JoinChallenge>(h, 2);
+  REQUIRE(challenge);
+  h.receive(2, JoinProof{h.proof("hunter2", challenge->nonce)}, kChannelSession);
+  CHECK(h.session.player_count() == 2);
+  CHECK(h.session.stats().same_network_joins == 1);
+  // From an internet address, from 127.0.0.1 (a relay's or a join helper's way in) or from no known address: refused.
+  ConnectionId id = 3;
+  for (std::optional<std::uint32_t> from : {std::optional<std::uint32_t>(enet_address(8, 8, 4, 4)),
+                                            std::optional<std::uint32_t>(enet_address(127, 0, 0, 1)),
+                                            std::optional<std::uint32_t>(enet_address(100, 64, 0, 9)),
+                                            std::optional<std::uint32_t>()}) {
+    h.connect(id, from);
+    h.clear();
+    h.receive(id, hello_from("Mido"), kChannelSession);
+    challenge = only_message_to<JoinChallenge>(h, id);
+    REQUIRE(challenge);
+    h.clear();
+    h.receive(id, JoinProof{h.proof(std::string(kSameNetworkPassword), challenge->nonce)}, kChannelSession);
+    auto refused = only_message_to<Refused>(h, id);
+    REQUIRE(refused);
+    CHECK(refused->reason == RefuseReason::bad_password);
+    ++id;
+  }
+  CHECK(h.session.player_count() == 2);
+  CHECK(h.session.stats().same_network_joins == 1);
+}
+
+TEST_CASE("join password: a same-network join keeps no old password when the host changes it") {
+  SessionConfig config = with_password("hunter2");
+  config.same_network_open = true;
+  Harness h(config);
+  auto join = [&](ConnectionId id, std::uint32_t address, std::optional<RejoinTokenBytes> token) {
+    h.clear();
+    h.connect(id, address);
+    if (token) h.receive(id, RejoinClaim{*token}, kChannelSession);
+    h.receive(id, hello_from("Link"), kChannelSession);
+    const auto challenge = only_message_to<JoinChallenge>(h, id);
+    REQUIRE(challenge.has_value());
+    h.clear();
+    h.receive(id, JoinProof{h.proof(std::string(kSameNetworkPassword), challenge->nonce)}, kChannelSession);
+    return h.to(id);
+  };
+  join(1, enet_address(192, 168, 1, 20), std::nullopt);
+  REQUIRE(h.session.player_count() == 1);
+  h.session.set_join_password("deku-tree");
+  CHECK(h.session.old_password_count() == 0);   // (the key is no password of theirs to keep)
+  // Its token and the key from the internet: refused, as any wrong password.
+  h.now += 1'000'000;
+  CHECK(refused_reason(join(2, enet_address(8, 8, 4, 4), token_of(h, 1))) == RefuseReason::bad_password);
+}
+
+TEST_CASE("join password: a host that keeps the password for its own network refuses the same-network key there") {
+  Harness h(with_password("hunter2"));   // (same_network_open off: as before)
+  h.connect(1, enet_address(192, 168, 1, 20));
+  h.clear();
+  h.receive(1, hello_from("Link"), kChannelSession);
+  auto challenge = only_message_to<JoinChallenge>(h, 1);
+  REQUIRE(challenge);
+  h.clear();
+  h.receive(1, JoinProof{h.proof(std::string(kSameNetworkPassword), challenge->nonce)}, kChannelSession);
+  auto refused = only_message_to<Refused>(h, 1);
+  REQUIRE(refused);
+  CHECK(refused->reason == RefuseReason::bad_password);
+  CHECK(h.session.stats().same_network_joins == 0);
+}
+
+TEST_CASE("join password: which addresses are the same network") {
+  CHECK(is_same_network(ipv4_of(enet_address(10, 1, 2, 3))));
+  CHECK(is_same_network(ipv4_of(enet_address(172, 16, 0, 1))));
+  CHECK(is_same_network(ipv4_of(enet_address(172, 31, 255, 254))));
+  CHECK(is_same_network(ipv4_of(enet_address(192, 168, 0, 10))));
+  CHECK(is_same_network(ipv4_of(enet_address(169, 254, 9, 9))));
+  CHECK(!is_same_network(ipv4_of(enet_address(127, 0, 0, 1))));     // (a relay's and a helper's)
+  CHECK(!is_same_network(ipv4_of(enet_address(172, 32, 0, 1))));
+  CHECK(!is_same_network(ipv4_of(enet_address(100, 64, 0, 1))));    // (a carrier's NAT, a VPN's: not this network)
+  CHECK(!is_same_network(ipv4_of(enet_address(25, 1, 2, 3))));
+  CHECK(!is_same_network(ipv4_of(enet_address(8, 8, 8, 8))));
 }
 
 TEST_CASE("join password: no proof at all times out like a missing HELLO") {

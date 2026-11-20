@@ -605,6 +605,7 @@ CoopHostMenu::Menu& HostMenu() {
         };
         h.client_id = [] { return CoopTitle::ClientId(); };
         h.ngplus_level = [] { return CoopNgPlus::Level(); };  // (Navi) New Game+ for our server
+        h.password_changed = [](const std::string& password) { CoopHook::SetJoinPassword(password); };
         h.log = [](const std::string& line) { LOG_INFO(Core, "{}", line); };
         h.default_name = [] {
             const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
@@ -2083,7 +2084,9 @@ COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) n
     }
 }
 COOP_HOOKSHOT_EXPORT int hos_coop_draw_wanted(void) {
-    return g_on && (CoopDraw::Wanted(CoopHookshot::DrawScene()) || CoopModsRuntime::OverlayWanted()) ? 1 : 0;
+    return g_on && (CoopDraw::Wanted(CoopHookshot::DrawScene()) || CoopModsRuntime::OverlayWanted())
+               ? 1
+               : 0;
 }
 COOP_HOOKSHOT_EXPORT void hos_coop_draw(const HosCoopDraw* d) {
     if (g_on && d != nullptr) {
