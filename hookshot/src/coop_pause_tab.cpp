@@ -356,7 +356,8 @@ const char* TypingTitle(int which) {
 std::vector<ListLine> TypingLines(int which, const TextField& f, char letter) {
     std::vector<ListLine> out(kListRows);
     out[0] = {TypingTitle(which), f.Shown(true, kListValueChars)};
-    out[1] = {"Letter", std::string(1, letter), true};
+    out[1] = {"Letter", std::string(1, letter)};
+    out[1].arrows = true;
     out[2] = {"Delete", ""};
     out[3] = {"OK", ""};
     out[4] = {"Cancel", ""};
