@@ -87,6 +87,7 @@ std::mutex g_mutex;   // everything below
 CoopPauseMenu::Menu g_menu;
 bool g_coop_on = false;      // co-op came with the game's start (coop.ini named a server): not started or stopped here
 bool g_shown = false;        // the tab shows in Hookshot's menu
+bool g_native = false;       // the title's own rows show its pages instead (OpenNative): no overlay
 std::string g_doing;         // what the tab started: "hosting", "joined", "" none
 // Auto-rejoin (coop_auto_rejoin.h): the planner, and what the player did since its last update (its own Host or Join,
 // a Leave), which stop what it planned; g_auto_join: the join being made is the planner's, not the player's.
@@ -1012,7 +1013,7 @@ bool Key(std::uint32_t vk, bool repeat) {
         return true;
     }
     std::lock_guard lock(g_mutex);
-    if (!g_shown) {
+    if (!g_shown && !g_native) {
         return false;
     }
     const auto [ctrl_down, shift_down] = Modifiers();
@@ -1054,7 +1055,7 @@ bool Char(std::uint32_t cp) {
         return true;
     }
     std::lock_guard lock(g_mutex);
-    if (!g_shown || !g_menu.typing()) {
+    if ((!g_shown && !g_native) || !g_menu.typing()) {
         return false;
     }
     if (cp >= 0x20 && cp != 0x7F) {
@@ -1068,7 +1069,47 @@ bool KeysTaken() {
         return true;
     }
     std::lock_guard lock(g_mutex);
-    return g_shown && g_menu.typing();
+    return (g_shown || g_native) && g_menu.typing();
+}
+
+void OpenNative(CoopPauseMenu::Page page) {
+    {
+        std::lock_guard lock(g_mutex);
+        g_native = true;
+    }
+    Open(page);
+    g_wanted = HOS_COOP_MENU_WANT_NOTHING;   // (no overlay: the title's own rows show the page)
+    LOG_INFO(Core, "coop: multiplayer tab: its page on the title's own rows (no overlay)");
+}
+
+bool NativeInput(int event, int arg, int arg2) {
+    {
+        std::lock_guard lock(g_mutex);
+        if (!g_native) return false;
+    }
+    return CoopPause::Input(kMultiplayerTab, event, arg, arg2);
+}
+
+CoopPauseMenu::View NativeView() {
+    std::lock_guard lock(g_mutex);
+    return g_native ? g_menu.view() : CoopPauseMenu::View{};
+}
+
+CoopPauseMenu::Page NativePage() {
+    std::lock_guard lock(g_mutex);
+    return g_menu.page();
+}
+
+bool NativeOpen() {
+    std::lock_guard lock(g_mutex);
+    return g_native;
+}
+
+void CloseNative() {
+    std::lock_guard lock(g_mutex);
+    if (!g_native) return;
+    g_native = false;
+    if (!g_shown) g_menu.Hide();
 }
 
 void Open(CoopPauseMenu::Page page) {

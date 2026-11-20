@@ -52,6 +52,16 @@ bool KeysTaken();
 // The menu opened on the tab at this page (the title's rows, Minus at the
 // title): Host hosts at once, Join pastes a code already copied.
 void Open(CoopPauseMenu::Page page);
+// The same pages on the title's own rows (coop_title.cpp, its Host, Join and Co-op Settings): the menu opened on the
+// page without the overlay; the title shows NativeView's rows on its buttons and sends its presses through
+// NativeInput (HOS_COOP_MENU_* events: they act as the overlay's, Settle included); Key and Char type into a field as
+// the overlay's. CloseNative when the title leaves the page (its Back).
+void OpenNative(CoopPauseMenu::Page page);
+bool NativeInput(int event, int arg = 0, int arg2 = 0);
+CoopPauseMenu::View NativeView();
+bool NativeOpen();
+CoopPauseMenu::Page NativePage();   // (the page the menu shows now)
+void CloseNative();
 
 // The pause menu's Multiplayer page (coop_pause_tab.h): its copies, done on the page itself (co-op's menu stays shut): the host's room name (else its relay join code,
 // else its invite code), a waiting guest's answer code, the host's same-network or VPN join line (as the menu's rows).
