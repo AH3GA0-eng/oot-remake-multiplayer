@@ -4,7 +4,8 @@
 // rows shown three at a time on the title's first three buttons and Back on the fourth, in the pack's live texts
 // (tools/puppet_pack/title_menu.py, Coop_Live_T0..T3). The pad's up and down move the menu's selection (the rows
 // scroll with it), left and right change a value, A does the row the title's cursor is on, B goes back. A field the
-// menu types into (a name, a port, a code) comes up on the on-screen keyboard (coop_keyboard.h).
+// menu types into (a name, a port, a code) turns the four buttons into its keys (TypingLook): the game has no keyboard
+// of its own (docs/game-ui.md, "Frames for a text field"), so nothing is drawn over the title.
 //
 // Logic only (tests/hookshot/title_native_test.cpp): what each button says and which row it is.
 #pragma once
@@ -31,5 +32,18 @@ struct Look {
 // The buttons for the menu's view, the rows scrolled so its selected row shows (`top`: the last look's). Headings are
 // left out; notes show (the menu never selects them).
 Look LookFor(const CoopPauseMenu::View& v, int top);
+
+// While a field is typed into: the first button shows the field ("Your name: Link_"), the others are its keys: Letter
+// (its letter between arrows; left and right pick it, A puts it in), Delete (the letter before the cursor) and OK. Up
+// and down move between the keys, B is Cancel (the field as it was), + is OK; the PC keyboard types as before.
+enum class Key { kField, kLetter, kDelete, kOk };
+inline constexpr int kFirstKey = static_cast<int>(Key::kLetter), kLastKey = static_cast<int>(Key::kOk);
+// The letters Letter picks from, in order (the menu's field takes only its own: a port its digits, a name no control
+// character): small letters, capitals, digits, the marks addresses and passwords use, then a space.
+const std::string& Letters();
+// The key `key` moved by `dy` (-1 up, +1 down), round the three keys.
+int MoveKey(int key, int dy);
+// The buttons while the menu's selected row is typed into, `key` focused.
+Look TypingLook(const CoopPauseMenu::View& v, char letter, int key);
 
 }  // namespace CoopTitleNative

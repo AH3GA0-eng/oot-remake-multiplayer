@@ -26,7 +26,6 @@
 #include "coop_pause_files.h"
 #include "coop_runtime.h"
 #include "coop_save.h"
-#include "coop_keyboard.h"
 #include "coop_title_menu.h"
 #include "coop_title_native.h"
 #include "hos_coop_menu.h"
@@ -133,11 +132,13 @@ int g_focus_logged = -2;
 // The title's own menu (a pack with CoopTitleMenu::kMenuMarker). g_mutex, but g_menu.
 std::atomic<bool> g_menu{false};   // this title has the menu's labels (the marker found at its set-up)
 // Co-op's menu page on the title's own buttons (coop_title_native.h): the page opened (-1: none), the first row shown,
-// the title's cursor to be put on the selected row at the next step, the on-screen keyboard's cursor for a field.
+// the title's cursor to be put on the selected row at the next step, and while a field is typed into the key focused
+// and Letter's letter (CoopTitleNative::TypingLook).
 std::atomic<int> g_native_page{-1};
 int g_native_top = 0;                 // (g_mutex)
 bool g_native_refocus = false;        // (g_mutex)
-CoopKeyboard::Cursor g_native_keys;   // (g_mutex)
+int g_native_key = CoopTitleNative::kFirstKey;   // (g_mutex)
+std::size_t g_native_letter = 0;                   // (g_mutex: its place in CoopTitleNative::Letters())
 // The live texts' slots (the pack's Coop_Live_T0..T3 in LayoutMsg/Title_00): the message's text in the game's memory,
 // the bytes the game counts past it, what it says now. Found again on a new title layout.
 struct LiveSlot {
@@ -495,7 +496,7 @@ const char* StopBtnNum(void* ctx, std::uint64_t layout, float frame) {
 // The title's own menu as it is now (MenuFor): the game's buttons shown, their texts, and what the step was asked to do
 // (the focus moved, a button decided, a sound). From the title's step.
 // Co-op's menu page on the title's own buttons (coop_title_native.h), at each step of the title: the rows' live texts,
-// the title's cursor on the selected row after a press, the keyboard for a field typed into. An older pack (no
+// the title's cursor on the selected row after a press, the typing keys for a field typed into. An older pack (no
 // placeholder): the overlay instead, as before.
 void StepNative(void* ctx, std::uint64_t screen) {
     const CoopPauseMenu::View v = CoopPause::NativeView();
@@ -504,26 +505,23 @@ void StepNative(void* ctx, std::uint64_t screen) {
     CoopTitleNative::Look look;
     bool refocus = false;
     const char* sound = nullptr;
-    CoopKeyboard::Shown kb;
     float frame = 4;
     bool apply = false;
     {
         std::lock_guard lock(g_mutex);
-        look = CoopTitleNative::LookFor(v, g_native_top);
-        g_native_top = look.top;
+        if (v.typing) {   // (the buttons are the field's keys)
+            const std::string& letters = CoopTitleNative::Letters();
+            look = CoopTitleNative::TypingLook(v, letters[g_native_letter % letters.size()], g_native_key);
+        } else {
+            look = CoopTitleNative::LookFor(v, g_native_top);
+            g_native_top = look.top;
+        }
         refocus = std::exchange(g_native_refocus, false);
         std::swap(sound, g_sound);
-        if (v.typing && v.selected >= 0 && static_cast<std::size_t>(v.selected) < v.rows.size()) {
-            kb.open = true;
-            kb.title = v.rows[static_cast<std::size_t>(v.selected)].name;
-            kb.text = v.rows[static_cast<std::size_t>(v.selected)].value;
-            kb.row = g_native_keys.row(), kb.col = g_native_keys.col();
-        }
         frame = CoopTitleMenu::MenuFor(g_any_save, true, g_one_start).btn_num_frame;
         const std::uint64_t now = NowMs();
         if (now >= g_apply_next) apply = true, g_apply_next = now + 250;
     }
-    CoopKeyboard::Publish(kb);
     if (apply) StopBtnNum(ctx, layout, frame);
     bool ok = true;
     for (int i = 0; i < CoopTitleNative::kButtons; ++i) {
@@ -532,7 +530,6 @@ void StepNative(void* ctx, std::uint64_t screen) {
     if (!ok) {   // (an older pack: the page in the overlay, as before)
         const int page = g_native_page.exchange(-1);
         CoopPause::CloseNative();
-        CoopKeyboard::Publish(CoopKeyboard::Shown{});
         if (page >= 0) CoopPause::Open(static_cast<CoopPauseMenu::Page>(page));
         std::lock_guard lock(g_mutex);
         g_apply_until = NowMs() + kApplyForMs, g_apply_next = 0;
@@ -833,6 +830,7 @@ void OnTitle(void* ctx, std::uint64_t screen, int event) {
 // nothing for them). In the title's own menu every row that is not the player's own (CoopTitleMenu::PlayersOwn):
 // Multiplayer and the submenu's, whose first is Host in the game's Continue place. g_mutex.
 bool OnCoopRow(int focused) {
+    if (g_native_page.load() >= 0) return true;   // (co-op's page on the title's buttons: every button is a co-op row)
     if (g_menu.load()) {
         const CoopTitleMenu::TitleMenuLook look = CoopTitleMenu::MenuFor(g_any_save, g_sub, g_one_start);
         return focused < 0 || static_cast<std::size_t>(focused) >= look.count ||
@@ -871,8 +869,9 @@ void NotePlayerPad(std::uint64_t buttons) {
 // The pad while co-op's menu page is on the title's own buttons: every button is the page's (the title moves nothing
 // itself). Up and down move the menu's selection, left and right change a value, A does the row the title's cursor is
 // on (a mouse click is the same A), B goes back (off the page opened: the Multiplayer rows again). A field typed into:
-// the on-screen keyboard's keys (A presses the one under its cursor, B deletes, + is OK). CoopPause is called after
-// the lock (it calls in here).
+// the buttons are its keys (CoopTitleNative::TypingLook: up and down move between them, left and right pick Letter's
+// letter, A presses the key the title's cursor is on, B is Cancel, + is OK). CoopPause is called after the lock (it
+// calls in here).
 std::uint64_t g_native_last = 0;   // (g_mutex)
 std::uint64_t NativePad(std::uint64_t buttons, std::int32_t stick[4]) {
     constexpr std::uint64_t kPlus = 1ull << 10, kLeft = 1ull << 12, kUp = 1ull << 13, kRight = 1ull << 14,
@@ -898,23 +897,36 @@ std::uint64_t NativePad(std::uint64_t buttons, std::int32_t stick[4]) {
         const int focused = FocusedIndex(g_screen.load());
         const CoopTitleNative::Look look = CoopTitleNative::LookFor(v, g_native_top);
         if (v.typing) {
-            const int dr = (down & kDown) != 0 ? 1 : (down & kUp) != 0 ? -1 : 0;
-            const int dc = (down & kRight) != 0 ? 1 : (down & kLeft) != 0 ? -1 : 0;
-            if (dr != 0 || dc != 0) g_native_keys.Move(dr, dc), g_sound = "button_on";
-            if ((down & kA) != 0) {
-                const CoopKeyboard::KeyAt k = CoopKeyboard::At(g_native_keys.row(), g_native_keys.col());
-                switch (k.key) {
-                case CoopKeyboard::Key::kChar: chars.push_back(static_cast<unsigned char>(k.ch)); break;
-                case CoopKeyboard::Key::kSpace: chars.push_back(' '); break;
-                case CoopKeyboard::Key::kDelete: keys.push_back(0x08); break;
-                case CoopKeyboard::Key::kCancel: keys.push_back(0x1B); break;
-                case CoopKeyboard::Key::kOk: keys.push_back(0x0D); break;
-                case CoopKeyboard::Key::kNone: break;
-                }
-                g_sound = "button_decide";
+            using CoopTitleNative::Key;
+            const int dy = (down & kDown) != 0 ? 1 : (down & kUp) != 0 ? -1 : 0;
+            if (dy != 0) {
+                g_native_key = CoopTitleNative::MoveKey(g_native_key, dy);
+                g_native_refocus = true, g_sound = "button_on";
             }
-            if ((down & kB) != 0) keys.push_back(0x08);
-            if ((down & kPlus) != 0) keys.push_back(0x0D);
+            const int dx = (down & kRight) != 0 ? 1 : (down & kLeft) != 0 ? -1 : 0;
+            if (dx != 0 && g_native_key == static_cast<int>(Key::kLetter)) {
+                const std::size_t n = CoopTitleNative::Letters().size();
+                g_native_letter = (g_native_letter % n + n + static_cast<std::size_t>(static_cast<int>(n) + dx)) % n;
+                g_sound = "button_on";
+            }
+            if ((down & kA) != 0) {   // (the key the title's cursor is on: a mouse click focuses it first)
+                const int key = focused >= CoopTitleNative::kFirstKey && focused <= CoopTitleNative::kLastKey ? focused
+                                                                                                             : g_native_key;
+                g_native_key = key;
+                switch (static_cast<Key>(key)) {
+                case Key::kLetter: {
+                    const std::string& letters = CoopTitleNative::Letters();
+                    chars.push_back(static_cast<unsigned char>(letters[g_native_letter % letters.size()]));
+                    break;
+                }
+                case Key::kDelete: keys.push_back(0x08); break;
+                case Key::kOk: keys.push_back(0x0D); break;
+                case Key::kField: break;
+                }
+                g_native_refocus = true, g_sound = "button_decide";
+            }
+            if ((down & kB) != 0) keys.push_back(0x1B), g_native_refocus = true;    // (Cancel: the field as it was)
+            if ((down & kPlus) != 0) keys.push_back(0x0D), g_native_refocus = true; // (OK)
         } else {
             if ((down & kUp) != 0) events.emplace_back(HOS_COOP_MENU_UP, 0);
             if ((down & kDown) != 0) events.emplace_back(HOS_COOP_MENU_DOWN, 0);
@@ -932,7 +944,7 @@ std::uint64_t NativePad(std::uint64_t buttons, std::int32_t stick[4]) {
                 events.emplace_back(HOS_COOP_MENU_SELECT, look.rows[static_cast<std::size_t>(focused)]);
                 events.emplace_back(HOS_COOP_MENU_CONFIRM, 0);
                 g_sound = "button_decide";
-                g_native_keys.Reset();   // (a field it may open: its keyboard from its first key)
+                g_native_key = CoopTitleNative::kFirstKey, g_native_letter = 0;   // (a field it may open: from Letter, a)
             }
             if (back) {
                 if (page == static_cast<CoopPauseMenu::Page>(opened) || page == CoopPauseMenu::Page::kMain) {
@@ -963,17 +975,47 @@ std::uint64_t NativePad(std::uint64_t buttons, std::int32_t stick[4]) {
     for (const std::uint32_t c : chars) CoopPause::Char(c);
     if (leave) {
         CoopPause::CloseNative();
-        CoopKeyboard::Publish(CoopKeyboard::Shown{});
     }
     return 0;   // (the title gets none of it)
 }
 
+// The host's save on its way (Join at the title, from the overlay or from co-op's page on the title's own buttons):
+// what the title says, and the pending switch, step on every pad, whatever the title shows. g_mutex.
+void WatchHostSave(bool title) {
+    CoopSave::NoteTitle(title);   // (a guest switches to the host's save only on the title's menu)
+    if (g_wait.waiting() && CoopSave::HostHasNoSave()) {
+        g_wait.NoSave();
+        LOG_INFO(Core, "coop: title: host's save: {}", g_wait.Line());
+    }
+    if (g_wait.watching()) {
+        // What the title says while the host's save comes. Nothing is pressed: the player loads a save
+        // themselves when the chat says Success (CoopSave, save::GuestNotices).
+        const std::string before = g_wait.Line();
+        CoopTitleMenu::SaveWait::Input in;
+        in.host_save_ready = CoopSave::HostSaveReady();
+        in.save_coming = CoopSave::HostSaveComing();
+        in.title_up = title;
+        in.in_game = InGame();
+        in.session_live = CoopSave::SessionLive();
+        if (g_wait.Step(NowMs(), in).rearm) {
+            CoopSave::ResumePendingSwitch();   // (they backed out of their own pick: the host's save again)
+            g_choice.Clear();   // (and their earlier A no longer makes a mod's choice theirs)
+        }
+        if (const std::string now = g_wait.Line(); now != before && !g_wait.chose()) {
+            LOG_INFO(Core, "coop: title: host's save: {}", now.empty() ? "done" : now);
+        }
+    }
+}
+
 std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
+    {   // (first: a Join from co-op's page on the title's buttons waits for the host's save while that page stays open)
+        std::lock_guard lock(g_mutex);
+        WatchHostSave(TitleUp());
+    }
     if (g_native_page.load() >= 0 && g_menu.load()) {
         if (TitleUp()) return NativePad(buttons, stick);
         g_native_page = -1;   // (the title went: the page with it)
         CoopPause::CloseNative();
-        CoopKeyboard::Publish(CoopKeyboard::Shown{});
     }
     std::optional<CoopPauseMenu::Page> open;   // (opened after the lock: CoopPause calls in here)
     bool open_native = false;                  // (on the title's own buttons, OpenNative)
@@ -981,29 +1023,6 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
     {
         std::lock_guard lock(g_mutex);
         const bool title = TitleUp();
-        CoopSave::NoteTitle(title);   // (a guest switches to the host's save only on the title's menu)
-        if (g_wait.waiting() && CoopSave::HostHasNoSave()) {
-            g_wait.NoSave();
-            LOG_INFO(Core, "coop: title: host's save: {}", g_wait.Line());
-        }
-        if (g_wait.watching()) {
-            // What the title says while the host's save comes. Nothing is pressed: the player loads a save
-            // themselves when the chat says Success (CoopSave, save::GuestNotices).
-            const std::string before = g_wait.Line();
-            CoopTitleMenu::SaveWait::Input in;
-            in.host_save_ready = CoopSave::HostSaveReady();
-            in.save_coming = CoopSave::HostSaveComing();
-            in.title_up = title;
-            in.in_game = InGame();
-            in.session_live = CoopSave::SessionLive();
-            if (g_wait.Step(NowMs(), in).rearm) {
-                CoopSave::ResumePendingSwitch();   // (they backed out of their own pick: the host's save again)
-                g_choice.Clear();   // (and their earlier A no longer makes a mod's choice theirs)
-            }
-            if (const std::string now = g_wait.Line(); now != before && !g_wait.chose()) {
-                LOG_INFO(Core, "coop: title: host's save: {}", now.empty() ? "done" : now);
-            }
-        }
         const std::uint64_t down = buttons & ~g_pad_last;
         g_pad_last = buttons;
         g_swallow &= buttons;   // (let go: the game gets it again)
@@ -1041,7 +1060,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
                 open = p, g_sound = "button_decide";
                 // (the title's own buttons show the page: no overlay; StepNative falls back to it for an older pack)
                 g_native_page = static_cast<int>(p), g_native_top = 0, g_native_refocus = true;
-                g_native_keys.Reset();
+                g_native_key = CoopTitleNative::kFirstKey, g_native_letter = 0;
                 open_native = true;
             };
             if ((down & kA) != 0 && menu_row != nullptr && menu_row->action != TitleDo::kGame) {
