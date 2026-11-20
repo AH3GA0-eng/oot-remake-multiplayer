@@ -275,7 +275,7 @@ TEST_CASE("coop i18n: the pause menu's Multiplayer tab (the game's own page)") {
     CHECK(CoopI18n::Tr(hant, "Hosting") == "房間已開");
     CHECK(CoopI18n::Tr(hans, "Copy invite code") == "复制邀请码");
     CHECK(CoopI18n::Tr(hans, "Players: just you") == "人数：只有你");
-    CHECK(CoopI18n::Tr(hans, "Let in: nobody asks") == "放人：没人申请");
+    CHECK(CoopI18n::Tr(hans, "Let in: nobody asks") == "放行：没人申请");
     CHECK(CoopI18n::Tr(hans, "Stop hosting") == "停止房间");
     CHECK(CoopI18n::Tr(hans, "Host a game") == "创建房间");
     CHECK(CoopI18n::Tr(hans, "Join a game") == "加入房间");
@@ -286,9 +286,9 @@ TEST_CASE("coop i18n: the pause menu's Multiplayer tab (the game's own page)") {
     CHECK(CoopI18n::Tr(hans, "Room: 7QK-2") == "房间：7QK-2");
     CHECK(CoopI18n::Tr(hans, "Copy room: 7QK-2") == "复制房间：7QK-2");
     CHECK(CoopI18n::Tr(hans, "Players: 3") == "人数：3");
-    CHECK(CoopI18n::Tr(hans, "Let in Saria") == "允许 Saria");
-    CHECK(CoopI18n::Tr(hans, "Let in Saria (+2)") == "允许 Saria（+2）");
-    CHECK(CoopI18n::Tr(hant, "Let in Saria (+2)") == "允許 Saria（+2）");
+    CHECK(CoopI18n::Tr(hans, "Let in Saria") == "放行 Saria");
+    CHECK(CoopI18n::Tr(hans, "Let in Saria (+2)") == "放行 Saria（+2）");
+    CHECK(CoopI18n::Tr(hant, "Let in Saria (+2)") == "放行 Saria（+2）");
     CHECK(CoopI18n::Tr(hans, "More players (2/3)") == "更多玩家（2/3）");
     CHECK(CoopI18n::Tr(hans, "Local games (2)") == "本机房间（2）");
     CHECK(CoopI18n::Tr(hans, "Next page (2/3)") == "下一页（2/3）");
