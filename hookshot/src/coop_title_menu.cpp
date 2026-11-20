@@ -914,22 +914,26 @@ TitleMenuLook MenuFor(bool any_save, bool multiplayer, bool one_start) {
         l.focus = 0;
         return l;
     }
+    // Options always on the game's own Options button (its third with a save, its second without), Multiplayer on the
+    // slot left: an Options row on another slot chose the game's Options in its place, and the game showed that
+    // button pressed, the one with Multiplayer's word on it, a moment first (a tester's run, 2026-11-19).
     if (any_save && !one_start) {
-        // Continue and New Game each their own (no file select of a mod's that does both): the game's fourth slot
-        // shown for Options, decided in its place (the game's third button is under Multiplayer).
+        // (Continue and New Game each their own, no file select of a mod's that does both: the fourth slot shown)
         l.btn_num_frame = 4;
         l.rows = {{{"0001", TitleDo::kGame},
                    {"0000", TitleDo::kGame},
-                   {"0104", TitleDo::kMultiplayer},
-                   {"0105", TitleDo::kDecide, 2}}};
+                   {"0105", TitleDo::kGame},
+                   {"0104", TitleDo::kMultiplayer}}};
         l.count = 4;
         return l;
     }
     l.btn_num_frame = 3;
-    l.rows = {{{one_start ? "0103" : "0000", TitleDo::kGame},   // (Start; New Game when no mod has a file select)
-               {"0104", TitleDo::kMultiplayer},
-               any_save ? TitleMenuRow{"0105", TitleDo::kGame} : TitleMenuRow{"0105", TitleDo::kDecide, 1},
-               {}}};
+    if (any_save) {   // (one Start for Continue and New Game: Start on Continue's slot, Multiplayer on New Game's)
+        l.rows = {{{"0103", TitleDo::kGame}, {"0104", TitleDo::kMultiplayer}, {"0105", TitleDo::kGame}, {}}};
+    } else {          // (no save: New Game, or Start, then the game's Options, then Multiplayer on the third slot)
+        l.rows = {{{one_start ? "0103" : "0000", TitleDo::kGame}, {"0105", TitleDo::kGame},
+                   {"0104", TitleDo::kMultiplayer}, {}}};
+    }
     l.count = 3;
     return l;
 }
