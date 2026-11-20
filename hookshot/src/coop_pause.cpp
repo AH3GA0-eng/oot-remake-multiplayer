@@ -106,6 +106,11 @@ bool g_copy_tried = false;
 bool g_answer_copy_tried = false;
 std::uint64_t g_session = 0;   // one more for each Host or Join: a clipboard result of an earlier one is dropped
 std::string g_answer_note;   // what became of the friend's answer code the host pasted ("" when none)
+// A bare name joined as a PC on the home network (CoopTitleMenu::BareJoinName) with a relay set: its room line, joined
+// next when no game there answered within kPcTryMs (a router or ISP that answers any name). Empty: none.
+std::string g_room_fallback;
+std::uint64_t g_room_fallback_ms = 0;
+constexpr std::uint64_t kPcTryMs = 6000;
 std::string g_join_text;     // the code (or address) this join used: remembered once connected
 bool g_join_saved = false;
 std::vector<std::string> g_lan_lines;   // "Same network"'s or "VPN"'s lines while they are shown
@@ -317,6 +322,22 @@ void Follow(const HosCoopStatus& st) {
             LOG_INFO(Core, "coop: multiplayer tab: {}", said);   // (the English detail, for the log)
         }
     }
+    // A bare name tried as a PC: no game answered there in time, so it is the room of that name on the relay.
+    if (!g_room_fallback.empty()) {
+        if (g_doing != "joined" || CoopLobby::Now().connected) {
+            g_room_fallback.clear();
+        } else if (NowMs() - g_room_fallback_ms >= kPcTryMs) {
+            const std::string line = std::exchange(g_room_fallback, std::string());
+            const auto bare = CoopTitleMenu::BareJoinName(line.substr(0, line.find('@')));
+            LOG_INFO(Core, "coop: multiplayer tab: join: no game answered at that PC: as a room on the relay");
+            CoopHookshot::HostMenu().Leave();
+            g_doing.clear();
+            g_menu.SetNote({"No game answered at a PC called " + bare.value_or("that") + ": trying the room " +
+                            bare.value_or("") + " on your relay."});
+            Join(line);
+            return;
+        }
+    }
     // Once the session took this game in: the host's name is known then (PlayerList).
     if (g_doing == "joined" && st.state == HOS_COOP_CONNECTED && !g_join_saved && !g_join_text.empty() &&
         CoopLobby::Now().connected) {
@@ -463,8 +484,12 @@ bool Join(const std::string& text_in) {
     namespace nat = coop::server::nat;
     // A bare name ("mypc", "forest-gang"): a PC on the home network first, then a room on the relay.
     std::string text = text_in;
-    if (const auto name = CoopTitleMenu::BareJoinName(text); name && !nat::looks_like_code(text) && !PcFound(*name)) {
-        const std::string relay(CoopTitleMenu::Trim(g_menu.options().relay));
+    std::string fallback;   // (a bare name joined as a PC: its room, should no game answer there)
+    const auto name = CoopTitleMenu::BareJoinName(text);
+    const std::string relay(CoopTitleMenu::Trim(g_menu.options().relay));
+    if (name && !nat::looks_like_code(text) && PcFound(*name)) {
+        if (!relay.empty()) fallback = CoopTitleMenu::RoomJoinLine(text, relay);
+    } else if (name && !nat::looks_like_code(text)) {
         if (relay.empty()) {
             g_menu.SetNote({"No PC called " + *name + " was found. To join a room by its name, set a relay first: "
                             "Co-op Settings, Relay. Or type the host's IP address."});
@@ -504,6 +529,8 @@ bool Join(const std::string& text_in) {
     j.password = password.empty() ? nullptr : password.c_str();
     g_doing = "joined";
     g_join_text = text;
+    g_room_fallback = fallback;
+    g_room_fallback_ms = NowMs();
     g_join_saved = false;
     ++g_session;
     g_answer_copied = false;
@@ -519,6 +546,7 @@ bool Join(const std::string& text_in) {
 
 void Leave() {
     g_player_left = true;
+    g_room_fallback.clear();
     LOG_INFO(Core, "coop: multiplayer tab: {}", g_doing == "hosting" ? "stop hosting" : "leave the friend's game");
     CoopHookshot::HostMenu().Leave();
     CoopTitle::StopSaveWait();

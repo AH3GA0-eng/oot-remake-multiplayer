@@ -282,6 +282,19 @@ TEST_CASE("pause tab: Join: A on Room or address pastes an invite code or an add
     REQUIRE(k.TakeRequest()->kind == Request::Kind::kPaste);
     k.Paste("25.1.2.3");
     CHECK(k.join_ip() == "25.1.2.3");
+    // B before the clipboard came (Linux's late one): it is dropped, not a page paste; the next Ctrl+V is used.
+    Menu b;
+    b.Show(CoopTitleMenu::Options{});
+    b.Open(Page::kJoin);
+    SelectRow(b, "Room or address");
+    b.Press(Input::kDecide);
+    b.Press(Input::kBack);
+    CHECK_FALSE(b.typing());
+    b.Paste("ABCDE-FGHJK-LMNPQ-RSTUV-WXYZ2-34567");
+    CHECK(b.join_text().empty());
+    b.Press(Input::kPaste);
+    b.Paste("ABCDE-FGHJK-LMNPQ-RSTUV-WXYZ2-34567");
+    CHECK(b.join_text() == "ABCDE-FGHJK-LMNPQ-RSTUV-WXYZ2-34567");
 }
 
 TEST_CASE("pause tab: Join offers the last game again first, one press") {
