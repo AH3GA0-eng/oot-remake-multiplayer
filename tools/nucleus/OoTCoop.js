@@ -6,8 +6,8 @@
 // Player 1 starts the kit's co-op server and plays on it; players 2 to 4 join it on this PC. The option "Who can join"
 // picks the server: "This PC only" (the default: 127.0.0.1, port 27590, a new join password each session) or "Allow
 // online players" (the kit's own start-server.cmd, as Host.bat starts it: every address of this PC, the kit's port
-// and join password, the router forward (UPnP) and an invite code in the server's window, copied to the clipboard,
-// that friends on other PCs paste under Join). Every game reads its own controller itself (LICHII_COOP_PAD, patch 0015), also behind the other
+// and join password, a join code (or the kit's room name) on the Squadala relay, built in, and an invite code in the
+// server's window, one copied to the clipboard, that friends on other PCs type under Join). Every game reads its own controller itself (LICHII_COOP_PAD, patch 0015), also behind the other
 // windows, so no Nucleus input hooks are used (Nucleus only lists the pads).
 // Written for Nucleus's script engine (Jint) in plain ES3 style, so tools/nucleus/test_handler.js runs it under
 // Windows' own cscript too.
@@ -19,8 +19,8 @@ Game.MaxPlayers = 4;
 Game.MaxPlayersOneMonitor = 4;
 Game.Description = "Split-screen OoT Co-op on Longshot. Add the longshot.exe of a kit's co-op game (the kit's " +
     "hookshot\\game folder). Player 1 hosts on this PC, the others join. Each game needs about 10 GB of RAM. " +
-    "Who can join: This PC only, or Allow online players (friends on other PCs join with the invite code the " +
-    "server window shows and copies).";
+    "Who can join: This PC only, or Allow online players (friends on other PCs join with the room name or join " +
+    "code on the Squadala relay, or the invite code, that the server window shows and copies).";
 
 // The option on Nucleus's setup screen. Anything but COOP_ONLINE (no choice made yet, an older Nucleus) is this PC
 // only.
@@ -28,8 +28,9 @@ var COOP_LOCAL = "This PC only";
 var COOP_ONLINE = "Allow online players";
 Game.AddOption("Who can join",
                "This PC only: the players on this PC. Allow online players: also friends on other PCs, as with " +
-               "Host.bat (the router forward and an invite code in the server window, copied to the clipboard; " +
-               "Windows may ask once to let coop_server through its firewall).",
+               "Host.bat: no router setup, the server window shows a join code on the Squadala relay (your room " +
+               "name instead, with relay_room in coop-options.ini) and an invite code, and copies one; players on " +
+               "your network need no password. Windows may ask once to let coop_server through its firewall.",
                "Online", [COOP_LOCAL, COOP_ONLINE], COOP_LOCAL);
 
 // The files: the game's big read-only files are linked, its folders too; what a game writes is its own.
@@ -295,7 +296,7 @@ Game.Play = function () {
                      "session in Nucleus and press Play again.");
         } else if (kit !== "" && coopWantsOnline()) {
             coopSession = coopStartOnline(kit);
-            Context.Log("OoT Co-op: online players allowed: the server window shows the invite code (also copied)");
+            Context.Log("OoT Co-op: online players allowed: the server window shows the relay's join code or room, and the invite code (one copied)");
         } else {
             coopSession = { password: coopNewKey(), server: "127.0.0.1", port: COOP_PORT, pads: 0 };
             if (kit !== "") {
