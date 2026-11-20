@@ -60,7 +60,8 @@ inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr const char* kDefaultRelay = "";
 // A room name the relay takes: 3 to 24 letters, digits, - or _ ("": none).
 bool RoomNameOk(std::string_view room);
-// A relay line: host[:port], no spaces, at most 128 bytes ("": the kit's default).
+// A relay line: host[:port] (a host of letters, digits, '.' and '-'; a port from 1 to 65535), at most 128 bytes
+// ("": the kit's default).
 bool RelayOk(std::string_view relay);
 
 // A name the server takes: 1 to 16 characters (code points), no control

@@ -388,13 +388,13 @@ std::vector<Menu::Line> Menu::Lines() const {
                                                                                  : options_.relay),
                        Act::kRelay,
                        "The relay that finds rooms by name and lists public rooms: host[:port]. Hosting through it "
-                       "needs no router setup. Empty: the kit's default."});
+                       "needs no router setup. Empty: the kit's default. A change while you host applies at your next Host."});
         out.push_back({Action("Room name", typing_ && typing_act_ == Act::kRoom ? options_.relay_room + "_"
                                            : options_.relay_room.empty()        ? std::string("None")
                                                                                 : options_.relay_room),
                        Act::kRoom,
                        "Your room's name on the relay when you host: 3 to 24 letters, digits, - or _. Friends type "
-                       "it to join. Empty: a join code instead."});
+                       "it to join. Empty: a join code instead. A change while you host applies at your next Host."});
         out.push_back({Toggle("Proximity voice chat", options_.voice), Act::kVoice,
                        "Talk with players near your Link through your microphone; they sound quieter the farther away "
                        "they are. Off: you neither send nor hear voices."});
@@ -733,7 +733,8 @@ void Menu::EndTyping(bool keep) {
             return;
         }
         if (keep) {
-            note_ = {act == Act::kRelay ? "Relay: host or host:port, no spaces. It was not changed."
+            note_ = {act == Act::kRelay ? "Relay: host or host:port (letters, digits, . and -; a port from 1 to 65535). "
+                                                          "It was not changed."
                                         : "Room name: 3 to 24 letters, digits, - or _. It was not changed."};
         }
         field = name_before_;
@@ -1257,8 +1258,9 @@ bool Menu::Char(std::uint32_t cp) {
     if (typing_act_ == Act::kRoom && !(std::isalnum(static_cast<unsigned char>(add[0])) != 0 || add == "-" || add == "_")) {
         return true;   // (a room name: letters, digits, - and _ only)
     }
-    if (typing_act_ == Act::kRelay && (add.size() != 1 || add[0] == ' ')) {
-        return true;   // (a relay line: no spaces, plain characters)
+    if (typing_act_ == Act::kRelay &&
+        !(add.size() == 1 && (std::isalnum(static_cast<unsigned char>(add[0])) != 0 || add == "." || add == "-" || add == ":"))) {
+        return true;   // (a relay line: host[:port], letters, digits, '.', '-' and ':')
     }
     const std::size_t max_bytes = typing_act_ == Act::kRoom            ? 24
                                   : typing_act_ == Act::kRelay         ? 128
