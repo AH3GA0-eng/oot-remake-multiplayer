@@ -1031,6 +1031,12 @@ TEST_CASE("pause tab: Settings: the relay and the room name, typed, checked and 
     m.Press(Input::kDecide);
     CHECK(m.options().relay == "relay.examplenet:27530");
     CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+    m.Press(Input::kDecide);   // (a bad port: not kept, and a note says why)
+    for (int i = 0; i < 5; ++i) m.Press(Input::kErase);
+    for (const char c : std::string("99999")) m.Char(static_cast<unsigned char>(c));
+    m.Press(Input::kDecide);
+    CHECK(m.options().relay == "relay.examplenet:27530");
+    CHECK_FALSE(m.TakeRequest().has_value());
     SelectRow(m, "Room name");
     m.Press(Input::kDecide);
     for (const char c : std::string("forest gang!")) m.Char(static_cast<unsigned char>(c));   // (letters, digits, - _)
