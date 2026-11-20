@@ -757,6 +757,12 @@ bool Table::RunsOwnMoveWhenOurs(std::uint64_t actor) const {
     return e != nullptr && !e->plain;
 }
 
+bool Table::KeepsLinkAsAttacker(std::uint64_t actor) const {
+    std::lock_guard lock(mutex_);
+    const Entry* e = FindActor(actor);
+    return e != nullptr && !e->plain;
+}
+
 void Table::Fall(Entry& e, const Boss& b) {
     if (!b.position) {
         return;

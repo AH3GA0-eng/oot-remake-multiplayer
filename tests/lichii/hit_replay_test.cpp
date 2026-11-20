@@ -188,3 +188,11 @@ TEST_CASE("hit replay (row 177 review MUST 2): the killing blow keeps our Link a
     CHECK_FALSE(CoopHitReplay::LethalHit(-1, 4, 4));
     CHECK_FALSE(CoopHitReplay::LethalHit(8, 0, 0));  // no hurt: not a hit
 }
+
+TEST_CASE("hit replay (row 178): a hit on a boss keeps our Link as the attacker, perception on or not") {
+    constexpr std::uint64_t link = 0x1000;
+    constexpr std::uint64_t puppet = 0x2000;
+    CHECK(CoopHitReplay::ReplayAttacker(link, 2, puppet, false, false, true) == link);
+    CHECK(CoopHitReplay::ReplayAttacker(link, 2, puppet, false, true, true) == link);
+    CHECK(CoopHitReplay::ReplayAttacker(link, 2, puppet, false, false, false) == puppet);  // a plain enemy
+}

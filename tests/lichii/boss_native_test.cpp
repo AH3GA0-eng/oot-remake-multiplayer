@@ -1895,6 +1895,21 @@ TEST_CASE("native boss: row 178: a boss on the brain path gets no issue-157 anim
     CHECK_FALSE(t.RunsOwnMoveWhenOurs(kActor));
 }
 
+TEST_CASE("native boss: row 178: every boss keeps our Link as a replayed hit's attacker, a plain enemy does not") {
+    Table t;
+    CHECK_FALSE(t.KeepsLinkAsAttacker(kActor));  // (not in the table)
+    t.Publish({Phantom(Role::owner)});
+    CHECK(t.KeepsLinkAsAttacker(kActor));  // (brain path off too)
+    t.SetOn(true, true);
+    t.Publish({Phantom(Role::owner)});
+    CHECK(t.KeepsLinkAsAttacker(kActor));
+    CHECK_FALSE(t.KeepsLinkAsAttacker(kActor + 8));
+    Boss baba{kActor, kBsa, Role::owner, "Enemy_DekuBaba", 2};
+    baba.plain = true;
+    t.Publish({baba});
+    CHECK_FALSE(t.KeepsLinkAsAttacker(kActor));
+}
+
 TEST_CASE("native boss: row 178: our boss fallen far below its fight start chooses again, once per fall") {
     FakeGuest g;
     const std::int32_t brain = 6;

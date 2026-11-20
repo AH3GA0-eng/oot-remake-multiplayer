@@ -90,9 +90,13 @@ struct Hit {
 // A killing hit (lethal: it takes the last of the life) keeps our Link: the game's death consequences (room clear
 // counters, drops, kill flags of Gold Skulltulas, Big Poes, mid-bosses) may check that the killer is the Player,
 // and a dead enemy's target memory no longer matters.
+// A boss (row 178, `boss`: CoopBossNative::Table::KeepsLinkAsAttacker) keeps our Link too: its attacks wait on the
+// game's attack permission for its target (target info isForbidAttackPermission), given to the Player only, so a
+// puppet in its target memory held Phantom Ganon's phase 2 Fly with no throw (~22 s, until our stall check). Its
+// own perception still picks every player's puppet it sees (Gohma's turn to player 2, issue 150).
 inline std::uint64_t ReplayAttacker(std::uint64_t our_link, std::uint8_t hitter, std::uint64_t hitter_puppet,
-                                    bool hitter_unseen, bool lethal = false) {
-    return !lethal && hitter != 0 && hitter_puppet != 0 && !hitter_unseen ? hitter_puppet : our_link;
+                                    bool hitter_unseen, bool lethal = false, bool boss = false) {
+    return !lethal && !boss && hitter != 0 && hitter_puppet != 0 && !hitter_unseen ? hitter_puppet : our_link;
 }
 
 // The replayed hit takes the last of the life: a hurt that is at least our life now (when read), or the owner's

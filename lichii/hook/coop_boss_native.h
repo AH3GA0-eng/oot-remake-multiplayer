@@ -273,6 +273,13 @@ public:
     // SpearAttack_Ready over Phantom Ganon's running RushAttack: its module waits for the dive's AS hold events
     // to return up, they never came, and he fell ~3 km (Geno's log). Plain enemies keep the replay (issue 157).
     bool RunsOwnMoveWhenOurs(std::uint64_t actor) const;
+    // Row 178 (perception on): whether this actor is a boss of the table (never a plain enemy), brain path on or
+    // off. A hit of another player replayed on it names our Link as the attacker, never their puppet
+    // (CoopHitReplay::ReplayAttacker): a boss's attacks wait on the game's attack permission for its battle target
+    // (QueryTargetGetTargetInfoActor's isForbidAttackPermission, read by Phantom Ganon's Fly and every Ganondorf
+    // move) and the game gives that permission to the Player only, so with a puppet in its target memory
+    // (EnemyCommon.BattleCommon's ExecuteMemoryPushLastAttacker) Phantom Ganon flew ~22 s without a throw.
+    bool KeepsLinkAsAttacker(std::uint64_t actor) const;
     // The plain enemy copies whose own brain asked for another brain verb than their owner's since the last
     // call (skipped at the wrap): their own AI wants to act here. At most kMaxWants kept.
     std::vector<std::uint64_t> TakeOwnWants();

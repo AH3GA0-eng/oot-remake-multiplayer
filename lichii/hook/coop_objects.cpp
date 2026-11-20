@@ -4294,15 +4294,24 @@ private:
             Mover::Hit h;
             h.actor = w.address;
             // Row 177: the hitter's puppet, so the game's battle AI turns on the player who hit (else our Link).
-            // A killing blow keeps our Link (the game's kill consequences may want the Player as the killer).
+            // A killing blow keeps our Link (the game's kill consequences may want the Player as the killer), and so
+            // does every boss (row 178: its attacks need the game's attack permission, the Player's only).
             h.attacker = CoopHitReplay::ReplayAttacker(player, w.hitter, CoopPuppet::TheDirector().LiveSeenActor(w.hitter),
                                                        CoopDbno::Body::TheCrawl().PuppetUnseen(w.hitter),
-                                                       CoopHitReplay::LethalHit(old, w.hurt, w.life));
+                                                       CoopHitReplay::LethalHit(old, w.hurt, w.life),
+                                                       CoopBossNative::TheTable().KeepsLinkAsAttacker(w.address));
             if (static std::atomic<int> said_kill{0};
                 h.attacker == player && w.hitter != 0 && CoopHitReplay::LethalHit(old, w.hurt, w.life) &&
                 said_kill.fetch_add(1) < 40) {
                 LOG_INFO(Core, "coop: objects: share life {:#x} '{}': P{}'s killing blow replayed with our Link as the "
                                "attacker (row 177 review: the game's kill consequences see the Player)",
+                         w.address, NameOf(w.address), w.hitter);
+            }
+            if (static std::atomic<int> said_boss{0};
+                h.attacker == player && w.hitter != 0 && CoopBossNative::TheTable().KeepsLinkAsAttacker(w.address) &&
+                said_boss.fetch_add(1) < 40) {
+                LOG_INFO(Core, "coop: objects: share life {:#x} '{}': P{}'s hit on a boss replayed with our Link as "
+                               "the attacker (row 178: a boss attacks only a target with the game's attack permission)",
                          w.address, NameOf(w.address), w.hitter);
             }
             if (static std::atomic<int> said{0}; h.attacker != player && said.fetch_add(1) < 40) {
