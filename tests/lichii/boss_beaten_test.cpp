@@ -873,7 +873,8 @@ TEST_CASE("boss beaten: BOSS_ALIVE for Ganondorf and Ganon waits out the end seq
     mid.v[ganon->quest] = ganon->below.back();
     Apply c;
     c.HostAlive(Bit(8) | Bit(9), Bit(8) | Bit(9), true);
-    const Write* q3 = EnumWrite(c.Check(std::string("HyruleField"), true, {}, std::ref(mid), kAway), dorf->quest);
+    const std::vector<Write> w3 = c.Check(std::string("HyruleField"), true, {}, std::ref(mid), kAway);
+    const Write* q3 = EnumWrite(w3, dorf->quest);
     REQUIRE(q3 != nullptr);
     CHECK(q3->value == dorf->below.back());
 }
