@@ -174,3 +174,17 @@ TEST_CASE("hit replay (row 177): another player's hit names their seen puppet as
     CHECK(CoopHitReplay::ReplayAttacker(link, 2, 0, false) == link);      // no seen puppet here (quiet, gone)
     CHECK(CoopHitReplay::ReplayAttacker(link, 0, puppet, false) == link); // the hitter is not known
 }
+
+TEST_CASE("hit replay (row 177 review MUST 2): the killing blow keeps our Link as the attacker") {
+    constexpr std::uint64_t link = 0x1000;
+    constexpr std::uint64_t puppet = 0x2000;
+    CHECK(CoopHitReplay::ReplayAttacker(link, 2, puppet, false, true) == link);
+    CHECK(CoopHitReplay::ReplayAttacker(link, 2, puppet, false, false) == puppet);
+    CHECK(CoopHitReplay::LethalHit(8, 8, 0));    // takes the last of it
+    CHECK(CoopHitReplay::LethalHit(8, 12, 0));   // more than is left
+    CHECK(CoopHitReplay::LethalHit(-1, 4, 0));   // our life not read: the owner's life after is 0
+    CHECK(CoopHitReplay::LethalHit(3, 4, 1));    // our copy is lower than the owner's: it dies here
+    CHECK_FALSE(CoopHitReplay::LethalHit(8, 4, 4));
+    CHECK_FALSE(CoopHitReplay::LethalHit(-1, 4, 4));
+    CHECK_FALSE(CoopHitReplay::LethalHit(8, 0, 0));  // no hurt: not a hit
+}

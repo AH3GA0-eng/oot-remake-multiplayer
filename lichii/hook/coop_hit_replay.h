@@ -87,9 +87,18 @@ struct Hit {
 // with our Link standing in for every other player's hit, the owner's enemy turned on the owner's Link after each
 // of them (Phantom Ganon's light balls always at player 1). The hitter's puppet when it is one enemies see here
 // (Director::LiveSeenActor) and they can fight now (not unseen: downed, spectating, away); else our Link, as before.
+// A killing hit (lethal: it takes the last of the life) keeps our Link: the game's death consequences (room clear
+// counters, drops, kill flags of Gold Skulltulas, Big Poes, mid-bosses) may check that the killer is the Player,
+// and a dead enemy's target memory no longer matters.
 inline std::uint64_t ReplayAttacker(std::uint64_t our_link, std::uint8_t hitter, std::uint64_t hitter_puppet,
-                                    bool hitter_unseen) {
-    return hitter != 0 && hitter_puppet != 0 && !hitter_unseen ? hitter_puppet : our_link;
+                                    bool hitter_unseen, bool lethal = false) {
+    return !lethal && hitter != 0 && hitter_puppet != 0 && !hitter_unseen ? hitter_puppet : our_link;
+}
+
+// The replayed hit takes the last of the life: a hurt that is at least our life now (when read), or the owner's
+// life after it is 0 or less (the hitter's game killed it).
+inline bool LethalHit(std::int64_t life_now, std::int64_t hurt, std::int64_t life_after) {
+    return hurt > 0 && ((life_now >= 0 && hurt >= life_now) || life_after <= 0);
 }
 
 // One hit written: for the caller's log and the difficulty's pass.
