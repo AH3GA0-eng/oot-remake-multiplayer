@@ -282,10 +282,18 @@ std::vector<Menu::Line> Menu::Lines() const {
                                "Your friend's router blocks the way in: send them this answer code (it is copied "
                                "already); they paste it on their Host page."});
             }
+            // (a note first: the title shows a page of one row with Back far below it)
+            if (session_.state != State::kWaitHost) {
+                out.push_back({Note(session_.state == State::kJoined ? "In your friend's game" : "Joining your friend's game"),
+                               Act::kNone, {}});
+            }
             out.push_back({Action("Leave the game", confirm_leave_ ? "Press again to confirm" : "Leave"), Act::kLeave,
                            "Leaves your friend's game. Their game goes on without you."});
         } else {
             const bool off = session_.by_launcher || host;
+            // (the last join's answer, a refusal, as a line of the page: the title's pages have no help text; gone with
+            // the next press)
+            if (!note_.empty() && note_[0].rfind("Turned away", 0) == 0) out.push_back({Note(note_[0]), Act::kNone, {}});
             if (!rejoin_code_.empty()) {
                 out.push_back({Action("Join " + rejoin_host_ + " again", "Join", off), Act::kRejoin,
                                "Joins the last game you were in, with the same code. It works while your friend is still "

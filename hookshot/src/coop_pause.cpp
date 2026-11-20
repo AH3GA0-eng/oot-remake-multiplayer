@@ -308,6 +308,9 @@ std::string ShareCode(const HosCoopStatus& st) {
 // What follows from co-op's state, whether the tab is shown or not: the code to give friends on the clipboard once
 // there is one (ShareCode; a guest's answer code too), the message logged, a connected join remembered and the host's
 // save loaded.
+void Leave();                          // (below)
+void SayOnPage(const char* otherwise);   // (below)
+
 void Follow(const HosCoopStatus& st) {
     const bool host = g_doing == "hosting";
     const std::uint64_t session = g_session;
@@ -392,9 +395,20 @@ void Follow(const HosCoopStatus& st) {
     f.player_acted = std::exchange(g_player_acted, false);
     {   // (a refusal counted since the last update: CoopLobby's count only grows, so none is missed)
         static std::uint32_t refusals_seen = 0;
-        const std::uint32_t refusals = CoopLobby::Now().refusals;
-        f.turned_away = refusals != refusals_seen;
-        refusals_seen = refusals;
+        const auto seen = CoopLobby::Now();
+        f.turned_away = seen.refusals != refusals_seen;
+        refusals_seen = seen.refusals;
+        // A join the host turned away (a wrong join password, a full game, a ban): co-op stops by itself and the Join
+        // rows come back with why. Kept on, the title's Join page offered only Leave the game, a tester's "janky".
+        if (f.turned_away && g_doing == "joined" && !seen.connected && !g_coop_on) {
+            const std::string why = CoopTitleMenu::RefusedLine(seen.refused);
+            LOG_INFO(Core, "coop: multiplayer tab: the join was turned away ({}): co-op stopped, the Join rows again",
+                     CoopTitleMenu::ShortReason(seen.refused));
+            Leave();
+            g_menu.SetNote({"Turned away: " + CoopTitleMenu::ShortReason(seen.refused),
+                            seen.banned ? "You cannot join that game again." : "Check the room and the join password, then Join again."});
+            SayOnPage(why.c_str());
+        }
     }
     if (g_rejoin.Tick(f, now)) {
         const auto code = CoopTitleMenu::IniGet(ReadText(CoopIni()), "last_invite");

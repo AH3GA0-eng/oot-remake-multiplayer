@@ -334,7 +334,7 @@ TEST_CASE("pause tab: a guest sees the friend's game and Leave, a blocked way in
     m.Press(Input::kDecide);
     CHECK(m.TakeRequest()->kind == Request::Kind::kCopyAnswer);
     m.SetSession(Joined());
-    CHECK(Names(m) == std::vector<std::string>{"Leave the game"});
+    CHECK(Names(m) == std::vector<std::string>{"In your friend's game", "Leave the game"});   // (the title: Back under them)
     CHECK(m.view().gold == "In a friend's game");
     m.Press(Input::kDecide);
     m.Press(Input::kDecide);

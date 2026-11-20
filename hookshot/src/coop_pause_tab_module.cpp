@@ -400,7 +400,10 @@ SessionView ViewNow(View view) {
     v.s.invite = v.s.hosting && room.empty() && st.invite[0] != 0;
     v.s.wait_host = st.state == HOS_COOP_WAIT_HOST;
     v.s.can_resync = !v.s.hosting && CoopSave::CanResync();
-    v.why = std::string(st.message, strnlen(st.message, sizeof st.message));
+    // (a guest in: co-op's status line is the join's old "connecting through it", left on the details list as three
+    // lines of text; only while joining, waiting or failed it says something)
+    const bool guest_in = v.s.in_one && !v.s.hosting && st.state == HOS_COOP_CONNECTED;
+    if (!guest_in) v.why = std::string(st.message, strnlen(st.message, sizeof st.message));
     v.problem = st.problem;
     v.port_open = v.s.hosting && st.upnp_open != 0;
     v.port = v.s.hosting ? st.port : 0;

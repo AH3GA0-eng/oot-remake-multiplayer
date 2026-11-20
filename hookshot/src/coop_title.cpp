@@ -586,6 +586,15 @@ void StepNative(void* ctx, std::uint64_t screen) {
         look = CoopTitleNative::LookFor(v, g_native_top);
         g_native_top = look.top;
         refocus = std::exchange(g_native_refocus, false);
+        // (the menu's selected row changed by itself or by a key, typing ended by Enter (Join next), a pick: the title's
+        // cursor goes with it, unless the mouse leads (its hover is the selection then). Left on Password after Enter,
+        // the next A typed the password again, a test run 2026-11-20)
+        static int last_selected = -1, last_typing = 0;
+        const int typing_now = v.typing ? 1 : 0;
+        const bool mouse_leads = g_title_mouse_move_ms.load() > g_title_pad_ms.load() &&
+                                 NowMs() - g_title_mouse_move_ms.load() < 800;
+        if ((v.selected != last_selected || typing_now != last_typing) && !v.typing && !mouse_leads) refocus = true;
+        last_selected = v.selected, last_typing = typing_now;
         std::swap(sound, g_sound);
         if (v.typing && v.selected >= 0 && static_cast<std::size_t>(v.selected) < v.rows.size()) {
             kb.open = true;
@@ -593,7 +602,7 @@ void StepNative(void* ctx, std::uint64_t screen) {
             kb.text = v.rows[static_cast<std::size_t>(v.selected)].value;
             kb.row = g_native_keys.row(), kb.col = g_native_keys.col();
         }
-        frame = CoopTitleMenu::MenuFor(g_any_save, true, g_one_start).btn_num_frame;
+        frame = static_cast<float>(look.buttons);   // (the rows and Back: no blank buttons between them)
         const std::uint64_t now = NowMs();
         if (now >= g_apply_next) apply = true, g_apply_next = now + 250;
     }
@@ -1054,7 +1063,7 @@ std::uint64_t NativePad(std::uint64_t buttons, std::int32_t stick[4]) {
             if ((down & kDown) != 0) events.emplace_back(HOS_COOP_MENU_DOWN, 0);
             if ((down & kLeft) != 0) events.emplace_back(HOS_COOP_MENU_LEFT, 0);
             if ((down & kRight) != 0) events.emplace_back(HOS_COOP_MENU_RIGHT, 0);
-            const bool back = (down & kB) != 0 || ((down & kA) != 0 && focused == CoopTitleNative::kButtons - 1);
+            const bool back = (down & kB) != 0 || ((down & kA) != 0 && focused == look.back);
             if ((down & kA) != 0) {   // (the log: what an A did here, for a tester's run)
                 LOG_INFO(Core, "coop: title: page: A on button {} (the menu's row {}{})", focused,
                          focused >= 0 && focused < CoopTitleNative::kButtons ? look.rows[static_cast<std::size_t>(focused)]
@@ -1191,6 +1200,23 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
             g_title_mouse_x = fx, g_title_mouse_y = fy, g_title_mouse_move_ms = NowMs();
         }
         if ((buttons & 0xF0FFull) != 0) g_title_pad_ms = NowMs();   // (A B X Y L R ZL ZR + - and the arrows)
+    }
+    // (the host's save in after a join made on co-op's page: the page is shut here, before NativePad takes the pad,
+    // and the presses that load it follow on the title's rows; with the page open the step below never ran, a test
+    // run 2026-11-20)
+    if (g_auto_load_until.load() != 0 && g_native_page.load() >= 0 && TitleUp() && CoopSave::HostSaveReady()) {
+        {
+            std::lock_guard lock(g_mutex);
+            g_native_page = -1;
+            g_sub = false;
+            g_focus_to = 0;
+            g_apply_until = NowMs() + kApplyForMs, g_apply_next = 0;
+            g_title_view_ms = NowMs();
+        }
+        CoopPause::CloseNative();
+        CoopKeyboard::Publish(CoopKeyboard::Shown{});
+        LOG_INFO(Core, "coop: title: the host's save is in: co-op's page closed for its Continue");
+        return 0;
     }
     if (g_native_page.load() >= 0 && g_menu.load()) {
         if (TitleUp()) return NativePad(buttons, stick);

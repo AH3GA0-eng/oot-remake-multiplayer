@@ -59,18 +59,26 @@ TEST_CASE("title native: three rows a time and Back, scrolled to the selection, 
     l = LookFor(v, l.top);
     CHECK(l.top == 0);
     CHECK(l.focus == 0);
-    // Fewer rows than buttons: the rest blank (one space: a pane's text is never empty), Back last.
+    CHECK(l.back == kButtons - 1);   // (three rows or more: Back on the fourth)
+    CHECK(l.buttons == kButtons);
+    // Fewer rows than buttons: Back right under the last row, the buttons after it not shown.
     View s;
     s.rows = {R("Host now")};
     s.selected = 0;
     l = LookFor(s, 5);
     CHECK(l.top == 0);
-    CHECK(l.texts[1] == " ");
-    CHECK(l.rows[1] == -1);
-    CHECK(l.texts[3] == "Back");
+    CHECK(l.texts[1] == " ");   // (one row: three buttons still, the game's own word came on a second of two)
+    CHECK(l.texts[2] == "Back");
+    CHECK(l.back == 2);
+    CHECK(l.buttons == 3);
+    s.rows = {R("Copy your answer code"), R("Leave the game")};
+    l = LookFor(s, 0);
+    CHECK(l.texts[2] == "Back");
+    CHECK(l.buttons == 3);
     // Nothing selectable: the cursor on Back.
     View none;
     none.rows = {R("", "Looking...", RowKind::kNote)};
     none.selected = -1;
-    CHECK(LookFor(none, 0).focus == kButtons - 1);
+    CHECK(LookFor(none, 0).focus == LookFor(none, 0).back);
+    CHECK(LookFor(none, 0).back == 2);
 }

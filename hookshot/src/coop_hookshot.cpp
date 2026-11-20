@@ -962,12 +962,17 @@ CoopDraw::Scene DrawScene() {
             dim_hold.Forget(n);
         }
     }
+    // (the game's pause menu up: the other players' blocks wait; drawn over the pause menu's left rows they hid our
+    // Multiplayer page's, a test run 2026-11-20)
+    const auto menu_state = CoopMapPage::MenuState();
+    const bool game_menu_up = menu_state && menu_state->menu_open;
     for (const auto& row : game ? rows : std::vector<CoopHook::PlayerRow>{}) {
         if (row.self) {
             s.own_voice = CoopVoice::IconFor(voice_on, CoopVoice::Get().muted || voice_muted(row.number),
                                              CoopVoice::Talking(), true);
             continue;
         }
+        if (game_menu_up) continue;
         CoopDraw::HudBlock b;
         b.voice = CoopVoice::IconFor(voice_on, voice_muted(row.number), CoopVoice::Speaking(row.number), false);
         b.name = row.name.empty() ? "Player " + std::to_string(row.number) : row.name;
