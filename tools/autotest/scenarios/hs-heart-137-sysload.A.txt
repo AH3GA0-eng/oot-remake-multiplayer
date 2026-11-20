@@ -1,0 +1,33 @@
+# hs-heart-137, A (host) System Load: the pause menu's System > Load (the tab path of hs-pause-tab: R x3 = Multiplayer,
+# L = System; its cursor rows Save, Load, Options, Special Actions, Title Screen), the slot list's first row, yes.
+press PLUS
+wait 240
+press R
+wait 90
+press R
+wait 90
+press R
+wait 120
+press L
+wait 120
+mark a-sys-tab
+press DUP
+wait 30
+press DUP
+wait 30
+press DUP
+wait 30
+press DDOWN
+wait 60
+mark a-sys-load
+press A
+wait 180
+mark a-sys-list
+press A
+wait 180
+mark a-sys-confirm
+press A
+wait 1800
+mark a-sys-loaded
+wait 900
+mark a-sys-late

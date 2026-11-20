@@ -10,8 +10,11 @@
 #  2. after A's load: A's MaxLife stays 12 (no 'int 0xfbe01da1 12 -> 16' in A's log before the refight; shot
 #     a-loaded: A 3 hearts); B goes back to 12 (held lower: 'MaxLife is held lower' or '16 -> 12'); Gohma alive.
 #  3. refight: a-r-late/b-r-late: both 4 hearts (MaxLife 16), never 20 in either log.
-#  4. guest title load (B closes, boots, Continue): B comes back at 16 = A's, not 20.
-#  System Load (pause menu) has no input script yet: not covered here.
+#  4. host System Load (hs-heart-137-sysload: pause > System > Load, first slot, yes): a second FLAG_RESET ('the
+#     fights this session knew are forgotten' twice in B's log); a-sys-loaded/b-sys-late: both at A's loaded MaxLife,
+#     never 20. VOID if a-sys-confirm shows no load prompt (the menu path is new: shots a-sys-tab/-load/-list/-confirm).
+#  5. b-loaded: B's hearts right after A's title load (3 = the host's save, or 4 held: the log says which).
+#  6. guest title load (B closes, boots, Continue): B comes back at 16 = A's, not 20.
 #! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_CHEATS=1
 start A
 start B
@@ -24,10 +27,16 @@ load A
 sleep 30
 lines forgotten B min=1 the fights this session knew are forgotten
 shot a-loaded
+sleep 20
+shot b-loaded
 play A hs-heart-137-fight.A.txt B hs-heart-137-fight.B.txt
 lines a-never-20 A max=0 (0xfbe01da1.* -> |life [0-9]+ of )(2[0-9]|[3-9][0-9])
 lines b-never-20 B max=0 (0xfbe01da1.* -> |life [0-9]+ of )(2[0-9]|[3-9][0-9])
 shot refought
+play A hs-heart-137-sysload.A.txt B hs-heart-137-sysload.B.txt
+lines a-sys-never-20 A max=0 (0xfbe01da1.* -> |life [0-9]+ of )(2[0-9]|[3-9][0-9])
+lines b-sys-never-20 B max=0 (0xfbe01da1.* -> |life [0-9]+ of )(2[0-9]|[3-9][0-9])
+shot sys-loaded
 close B
 sleep 10
 start B
