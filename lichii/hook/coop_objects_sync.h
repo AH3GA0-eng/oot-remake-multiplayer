@@ -795,6 +795,17 @@ public:
     // runs, as the 8 m event rule (coop_guard.h) does nearer. Row 138(8):
     // also a copy our Link is in the area of (AreaClaim).
     bool EventPartner(std::uint64_t address, std::uint64_t now_us) const;
+    // S2 (event-owner-0116, issue 144): a copy whose owner's own event binds it
+    // (object_state::in_event in the owner's samples, within kEventKeepUs) and that has a game
+    // logic of its own (an Enemy_: room B's and room F's Deku Scrubs; the Scrub Brothers and
+    // the Business Scrubs are each game's own already, IsOwnPuzzle). Our copy
+    // keeps that logic (EventPartner: the owner's motion, animation and remove are not put on
+    // it) and is not claimed away from the owner (no wake on it); the event's result reaches us
+    // by its flags (coop_scrub_talk.h, coop_scrub_sale.h), as in the owner's game. Before, the
+    // owner's talk motion was put on our copy every frame: our own beaten scrub never hopped
+    // or talked, and a talk of ours on it waited forever. Townspeople still play the owner's
+    // cutscene motion (issue 200); bosses and fish keep their own rules.
+    bool OwnerEventHolds(std::uint64_t address, std::uint64_t now_us) const;
     // Row 138(8) (coop_sensor_claim.h): a shared actor whose own sensor input
     // says our Link is in its area (Seen::sensor_in_area; Jabu-Jabu's mouth)
     // is claimed like an event's partner, without an event: flagged targeting
@@ -1174,6 +1185,8 @@ private:
         bool play_frame = false;                // PlaysByFrame
         CoopNpcAnim::Loop frame_loop;           // its owner's animation loop, from the samples (play_frame)
         std::uint64_t event_until = 0;          // flagged by our event until then
+        std::uint64_t own_event_until = 0;      // ... by our own Link's event (S2: sent as object_state::in_event)
+        std::uint64_t owner_event_until = 0;    // a copy: its owner's samples say its owner's event binds it (S2)
         PartnerWhy event_why = PartnerWhy::none; // ... and why (row 97)
         std::optional<bool> event_member;       // Seen::event_member, the last walk (row 97)
         std::optional<bool> sensor_in_area;     // Seen::sensor_in_area, the last walk (row 138(8))
@@ -1263,6 +1276,13 @@ private:
                std::vector<coop::protocol::Message>& send);
     // gohma-sync: an egg of ours still on the walk, marked hatched, near `at`.
     Object* HatchedSibling(std::uint8_t self, const coop::protocol::Vec3& at);
+    // boss-larva-0116: an egg id whose hatch this game shares when it owns it
+    // (placed, or made: a boss laid it); its owner is checked by the caller.
+    static bool HatchIsOurs(const coop::protocol::ObjectId& id);
+    // boss-larva-0116: a made egg we own left the walk alive: its remove
+    // (unless already sent), then eggs_ or its matched sibling freed.
+    void EndMadeEgg(std::uint8_t self, const Object& o, std::uint16_t epoch, std::uint64_t now_us,
+                    std::vector<coop::protocol::Message>& send, bool remove);
     // boss-sync-2 (issue 178): a fresh hatchling next to a copy of another
     // game's egg (still on the walk, or gone alive at most kHatchWindowUs
     // before, copy_eggs_): our game hatched it through its own AI.
@@ -1297,6 +1317,9 @@ private:
         std::uint16_t epoch = 0;
         coop::protocol::Vec3 position{};
         std::uint64_t at = 0;
+        // boss-larva-0116: an egg our boss laid (made): its OBJECT_REMOVE went
+        // as it left, so no second one and no listing.
+        bool removed = false;
     };
     std::vector<Egg> eggs_;
     // churn-b: placed objects off the walk without a delete request (SetDeleteEvents).
@@ -1339,6 +1362,7 @@ private:
     // own AI asked for another animation since the event began, within
     // kEventNpcM (own_ai); a townsperson within kEventNpcM (issue 200).
     PartnerWhy EventPartnerWhy(const Object& o) const;
+    static bool OwnerEventKeeps(const Object& o, std::uint64_t now_us);  // S2: OwnerEventHolds
     std::uint64_t event_since_ = 0;  // row 97: when our event began (SetEvent)
     std::vector<coop::protocol::Vec3> lures_;  // our own cast lures (SetLures)
     std::vector<coop::protocol::FishLureEntry> fish_sent_;  // the last FISH_LURE

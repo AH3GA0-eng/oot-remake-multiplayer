@@ -1989,6 +1989,17 @@ public:
             for (const auto& line : out.notes) {
                 LOG_INFO(Core, "coop: {}", line);
             }
+            // Issue 243: the solve flags at the hit, through the game's own flag store (the flag sync then
+            // shares them as when the talk set them; the room graph deletes the brothers, as in solo).
+            if (!out.solve.empty()) {
+                CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main_);
+                for (const std::uint32_t hash : out.solve) {
+                    const bool was = coop::host::GameFlags(memory).get_bool(hash).value_or(false);
+                    const bool set = was || coop::host::GameFlags::set_bool(memory, hash, true);
+                    LOG_INFO(Core, "coop: scrubs: solve flag {:#010x} {}", hash,
+                             was ? "already set" : set ? "set" : "NOT set (the store refused)");
+                }
+            }
         }
         // Field grass (docs/world.md): our new cuts go out, the others' are
         // made at the svc cave.

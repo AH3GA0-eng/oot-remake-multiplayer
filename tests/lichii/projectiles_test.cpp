@@ -215,6 +215,21 @@ TEST_CASE("shots: a copy is shown as late as the puppet, between the owner's sam
     CHECK(t.Shown(1'133'000 + shots::Track::kBehindUs, true)[0] == doctest::Approx(3.0f));
 }
 
+TEST_CASE("shots: over a slow line a copy is shown as late as its shooter's puppet (#239)") {
+    // At 300 ms ping the owner's samples come ~300 ms old: shown 100 ms late the copy was always past the
+    // newest one (carried on, held, then jumped at each sample). Shown at the shooter's delay it stays between two.
+    shots::Track t;
+    for (std::uint64_t i = 0; i <= 10; ++i) {
+        REQUIRE(t.Add({1'000'000 + i * 33'000, {static_cast<float>(i), 10, 0}, {30, 0, 0}}));
+    }
+    constexpr std::uint64_t kSlow = 350'000;
+    // The newest sample is at 1.33 s; at 1.6 s it is 270 ms old. Halfway between samples 7 and 8:
+    const auto at = t.Shown(1'000'000 + 7 * 33'000 + 16'500 + kSlow, true, kSlow);
+    CHECK(at[0] == doctest::Approx(7.5f));
+    // The default stays the LAN's 100 ms.
+    CHECK(t.Shown(1'000'000 + 3 * 33'000 + shots::Track::kBehindUs, true)[0] == doctest::Approx(3.0f));
+}
+
 TEST_CASE("shots: a copy flies in even steps where carrying on stepped") {
     // The owner's seed flies at 30 m/s along x. Its game moves it 30 times
     // a second; the owner walks 60 times a second and sends a sample at most
