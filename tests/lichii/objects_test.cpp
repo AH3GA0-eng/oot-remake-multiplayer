@@ -1056,6 +1056,77 @@ TEST_CASE("objects: delete events: an enemy of ours the game deleted with no dea
     CHECK_FALSE(Listed(step, id));
 }
 
+// skulltula-0118 follow-up (review-geno): a director's copy of another game's
+// late enemy (here a Wolfos only the host's game made: a late encounter) that the server
+// handed to us (its maker's one left) and that our game then deletes with no
+// death read is gone for everyone, and the director never makes it again.
+// Before, a copy was never "ours for good": no OBJECT_REMOVE, and up to
+// kRemakes copies came back with nobody left to end them.
+TEST_CASE("objects: skulltula-0118, a copy handed to us that our game deletes with no death is gone for all") {
+    // (Not a mini-boss: Enemy_MiddleBoss_* stays out of the gone-for-good path, as before: a Lizalfos
+    // jumps off to the next room alive, Poe sisters vanish and come back; handed over, the copy plays on.)
+    constexpr const char* kWolfos = "Enemy_Wolfos";
+    const proto::ObjectId id{proto::ObjectKind::placed, 0, 0x5a17c0de0b1e0001ULL};
+    proto::ObjectSpawn relayed;
+    relayed.player_number = 1;
+    relayed.id = id;
+    relayed.actor = kWolfos;
+    relayed.state.position = proto::Vec3{1.0f, 0.0f, 0.0f};
+
+    Sync b;
+    b.SetDeleteEvents(true);
+    b.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+    Tick(b, 0, {}, 2);
+    b.Receive(relayed);
+    Tick(b, 100 * kMs, {}, 2);
+    Tick(b, 100 * kMs + kEncounterWaitUs, {}, 2);
+    Tick(b, 100 * kMs + 2 * kEncounterWaitUs, {}, 2);  // (near since the walk before)
+    auto creates = b.Creates();
+    REQUIRE(creates.size() == 1);
+    b.Bind({{creates[0].key, 0x900}});
+    std::uint64_t t = 200 * kMs + 2 * kEncounterWaitUs;
+    Tick(b, t, {Enemy(0x900, ~0ULL, 4, 1.0f, kWolfos)}, 2);
+    REQUIRE(b.IdOf(0x900));
+    Own(b, id, 2, 1);  // the host's one left: handed to us
+    b.Bind({{creates[0].key, 0x900}});
+    Tick(b, t += 10 * kMs, {Enemy(0x900, ~0ULL, 4, 1.0f, kWolfos)}, 2);
+    b.GameDeleted(0x900, t + 5 * kMs);  // our game's own delete (its logic), no death read
+    b.Bind({{creates[0].key, 0x900}});
+    Tick(b, t += 20 * kMs, {}, 2);
+    CHECK(b.LeftCount() == 1);
+    // Its director entry ended in that same walk (marked removed, and off our
+    // list, so done): nothing left for the hook to make again.
+    CHECK(b.Creates().empty());
+    const auto removes = All<proto::ObjectRemove>(Tick(b, t + Sync::kLeftWaitUs, {}, 2));
+    REQUIRE(removes.size() == 1);
+    CHECK(removes[0].id == id);
+    CHECK(removes[0].epoch == 1);
+    CHECK(removes[0].reason == proto::RemoveReason::gone);
+    // Still never made again later, with our Link standing right there.
+    Tick(b, t + Sync::kLeftWaitUs + 2 * kEncounterWaitUs, {}, 2);
+    CHECK(b.Creates().empty());
+
+    // Still the host's (not handed to us): our copy going says nothing, as before.
+    Sync c;
+    c.SetDeleteEvents(true);
+    c.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+    Tick(c, 0, {}, 2);
+    c.Receive(relayed);
+    Tick(c, 100 * kMs, {}, 2);
+    Tick(c, 100 * kMs + kEncounterWaitUs, {}, 2);
+    Tick(c, 100 * kMs + 2 * kEncounterWaitUs, {}, 2);  // (near since the walk before)
+    REQUIRE(c.Creates().size() == 1);
+    const auto key = c.Creates()[0].key;
+    c.Bind({{key, 0x900}});
+    t = 200 * kMs + 2 * kEncounterWaitUs;
+    Tick(c, t, {Enemy(0x900, ~0ULL, 4, 1.0f, kWolfos)}, 2);
+    c.GameDeleted(0x900, t + 5 * kMs);
+    c.Bind({{key, 0x900}});
+    Tick(c, t += 20 * kMs, {}, 2);
+    CHECK(c.LeftCount() == 0);
+    CHECK(All<proto::ObjectRemove>(Tick(c, t + Sync::kLeftWaitUs, {}, 2)).empty());
+}
+
 TEST_CASE("objects: delete events: only the game's own delete of our own enemy, not the scene going, is told") {
     // Our own remove (by_coop), a copy of another player's, a death read, a boss,
     // a kind the game deletes when our Link leaves its area (coop_area_deleted.inc:
