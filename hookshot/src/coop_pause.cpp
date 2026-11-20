@@ -849,14 +849,15 @@ void RefreshFound(std::uint64_t now) {
         const CoopRoomList::Snapshot rooms = CoopRoomList::Now();
         for (const CoopRoomList::Room& r : rooms.rooms) {
             games.push_back({CoopPauseTab::ListName(r.host, r.room), CoopPauseTab::ListValue(r.players, r.max, r.protocol == mine),
-                             r.room, 0, CoopRoomList::Joinable(r, mine)});
+                             r.room, 0, CoopRoomList::Joinable(r, mine), r.host, r.players, r.max, r.protocol == mine});
         }
         state = rooms.state;
     } else {
         for (const CoopLan::Heard& h : CoopLanNet::Games(now)) {
             games.push_back({h.game.name + "'s game" + (h.game.room.empty() ? "" : " (" + h.game.room + ")"),
                              CoopPauseTab::ListValue(h.game.players, h.game.max, h.game.protocol == mine), h.address,
-                             h.game.port, CoopLan::Joinable(h, mine)});
+                             h.game.port, CoopLan::Joinable(h, mine), h.game.name, h.game.players, h.game.max,
+                             h.game.protocol == mine});
         }
     }
     g_menu.SetFound(std::move(games), std::move(state));
@@ -1353,6 +1354,22 @@ bool SetHostPort(int port) {
     LOG_INFO(Core, "coop: multiplayer tab: the port when hosting is {} now (from the pause menu's Multiplayer page){}", port,
              again ? ": hosting again on it" : "");
     if (again && !Host()) SayOnPage(kSayRefused);
+    return true;
+}
+
+std::string RoomName() {
+    return ReadOptions().relay_room;
+}
+
+bool SetRoomName(const std::string& name) {
+    std::lock_guard lock(g_mutex);
+    if (!name.empty() && !CoopTitleMenu::RoomNameOk(name)) return false;
+    CoopTitleMenu::Options o = ReadOptions();
+    o.relay_room = name;
+    g_menu.Show(o);
+    Save();
+    LOG_INFO(Core, "coop: multiplayer tab: the room name {} (from the pause menu's Multiplayer page; from the next "
+                   "Host on)", name.empty() ? "cleared" : "set");
     return true;
 }
 

@@ -107,6 +107,10 @@ void SetListRoom(bool on);
 // False when refused (not a port, not a relay address): the page's note says why.
 bool SetHostPort(int port);
 bool SetRelay(const std::string& relay);
+// This game's room name when it hosts (coop-options.ini relay_room; "" none: a join code), and set from the pause
+// menu's Multiplayer page (saved; the next Host uses it). False: not a room name (3 to 24 letters, digits, - or _).
+std::string RoomName();
+bool SetRoomName(const std::string& name);
 // The page's "Games on this network": join the game at that address and port, with `password` (the Join view's,
 // "" none). Refused or failed: PageSays why.
 void JoinLanNow(const std::string& address, std::uint16_t port, const std::string& password);

@@ -918,11 +918,19 @@ TEST_CASE("pause tab: the details list on the right: the session, why co-op fail
     REQUIRE(d.size() == static_cast<std::size_t>(kListRows));
     CHECK(d[0].name == "Not in a session");
     CHECK(d[0].value.empty());   // (the header: no value box)
-    CHECK(d[1].name == "Auto-rejoin");
-    CHECK(d[1].value == "On");
-    CHECK(d[2].name == "Release");
-    CHECK(d[2].value == "v0.11.6");
-    CHECK(d[3].name.empty());
+    CHECK(d[1].name == "Room name");
+    CHECK(d[1].value == "None");
+    CHECK(d[2].name == "List my room");
+    CHECK(d[2].value == "Off");
+    CHECK(d[3].name == "Auto-rejoin");
+    CHECK(d[3].value == "On");
+    CHECK(d[4].name == "Release");
+    CHECK(d[4].value == "v0.11.6");
+    CHECK(d[5].name.empty());
+    idle.room_name = "kokiri";
+    idle.s.list_room = true;
+    CHECK(DetailLines(View::kMain, idle)[1].value == "kokiri");
+    CHECK(DetailLines(View::kMain, idle)[2].value == "On");
     CHECK(DetailLines(View::kSession, idle)[0].name == "Not in a session");   // (the same on the Session view)
     for (View w : {View::kPlayers, View::kJoin, View::kLetIn, View::kLan}) {
         for (const ListLine& l : DetailLines(w, idle)) CHECK(l.name.empty());   // (none on the other views)
@@ -1046,14 +1054,17 @@ TEST_CASE("pause tab: the details list: who can reach a host, the router in word
     // Another hint keeps its words, with a capital letter.
     open.why = "voice chat is off";
     CHECK(DetailLines(View::kMain, open)[5].name == "Voice chat is off");
-    // Not in a session: the Auto-rejoin line is the switch's (an A on it), the others nothing.
+    // Not in a session: the Room name line types it, List my room and Auto-rejoin are switches (an A on them), the
+    // others nothing.
     SessionView idle;
     idle.version = "Squadala! v0.11.7";
     d = DetailLines(View::kMain, idle);
-    CHECK(d[1].name == "Auto-rejoin");
-    CHECK(d[1].act == RowAction::kAutoRejoin);
+    CHECK(d[1].act == RowAction::kTypeRoomName);
+    CHECK(d[2].act == RowAction::kListRoom);
+    CHECK(d[3].name == "Auto-rejoin");
+    CHECK(d[3].act == RowAction::kAutoRejoin);
     CHECK(d[0].act == RowAction::kNone);
-    CHECK(d[2].act == RowAction::kNone);
+    CHECK(d[4].act == RowAction::kNone);
 }
 
 TEST_CASE("pause tab: the game's cursor on a hidden button goes on the way it came, past the rows back up") {
@@ -1430,35 +1441,32 @@ TEST_CASE("pause tab: the kit's release shows on the page's details, solo and in
     for (const ListLine& l : DetailLines(View::kMain, dev)) CHECK(l.name != "Release");
 }
 
-TEST_CASE("pause tab: the game browser: the rows choose the list and its page, the cells hold its games") {
+TEST_CASE("pause tab: the game browser: the rows choose the list, search, filter and order, the cells hold its games") {
     Session s;
-    CHECK(ActionFor(View::kLan, 0, s) == RowAction::kBrowseLan);
-    CHECK(ActionFor(View::kLan, 1, s) == RowAction::kBrowseOnline);
-    CHECK(ActionFor(View::kLan, 2, s) == RowAction::kBrowseRefresh);   // (one page)
-    CHECK(ActionFor(View::kLan, 3, s) == RowAction::kListRoom);
+    CHECK(ActionFor(View::kLan, 0, s) == RowAction::kBrowseList);
+    CHECK(ActionFor(View::kLan, 1, s) == RowAction::kTypeSearch);
+    CHECK(ActionFor(View::kLan, 2, s) == RowAction::kBrowseFilter);
+    CHECK(ActionFor(View::kLan, 3, s) == RowAction::kBrowseSort);
     CHECK(ActionFor(View::kLan, kRows - 1, s) == RowAction::kBack);
-    s.lan_listed = 9;   // (more than a page of cells)
-    CHECK(ActionFor(View::kLan, 2, s) == RowAction::kBrowsePage);
-    s.online = true;    // (the other list: its own count)
-    CHECK(ActionFor(View::kLan, 2, s) == RowAction::kBrowseRefresh);
     s.in_one = true;    // (nobody joins from inside a session)
     CHECK(ActionFor(View::kLan, 0, s) == RowAction::kNone);
-    for (RowAction a : {RowAction::kBrowseLan, RowAction::kBrowseOnline, RowAction::kBrowsePage, RowAction::kBrowseRefresh,
-                        RowAction::kListRoom}) {
+    for (RowAction a : {RowAction::kBrowseList, RowAction::kBrowseFilter, RowAction::kBrowseSort, RowAction::kBrowseRefresh,
+                        RowAction::kTypeSearch, RowAction::kTypeRoomName}) {
         CHECK(std::string(ActionWords(a)).size() > 3);
     }
 
     SessionView v;
     auto rows = RowTexts(View::kLan, v);
-    CHECK(rows[0] == "Local games (0)");   // (the list the cells show: the module dims the other's row)
-    CHECK(rows[1] == "Online games");      // (not asked yet)
-    CHECK(rows[2] == "Refresh list");      // (one page: no empty row)
-    CHECK(rows[3] == "List my room: Off");
+    CHECK(rows[0] == "This network (0)");
+    CHECK(rows[1] == "Search: A to type");
+    CHECK(rows[2] == "Show: All games");
+    CHECK(rows[3] == "Sort: Most players");
     CHECK(rows[kRows - 1] == "Back");
     auto lines = ListLines(v);
     REQUIRE(lines.size() == static_cast<std::size_t>(kListRows));
-    CHECK(lines[0].name == "Games on this network");   // (a heading of text: no box that reads as a button)
-    CHECK(lines[0].value.empty());
+    CHECK(lines[0].name == "This network");      // (one page: no page marks)
+    CHECK(lines[0].value == "Refresh");          // (its box asks the list again)
+    CHECK(lines[0].act == RowAction::kBrowseRefresh);
     CHECK(lines[1].name == "Looking for games...");
     CHECK(lines[1].value.empty());
     CHECK(lines[2].name.empty());
@@ -1471,21 +1479,26 @@ TEST_CASE("pause tab: the game browser: the rows choose the list and its page, t
     CHECK(lines[2].name == "Saria's game: kokiri");
     CHECK(lines[2].value == "Full");
     CHECK(lines[3].name.empty());
+    CHECK(RowTexts(View::kLan, v)[0] == "This network (2)");
     v.s.online = true;   // (the relay's list: why there are none, in the first game row)
     v.online_state = "No relay set";
     rows = RowTexts(View::kLan, v);
-    CHECK(rows[0] == "Local games (2)");
-    CHECK(rows[1] == "Online games (0)");
+    CHECK(rows[0] == "Online (0)");
     CHECK(ListLines(v)[0].name == "Online games");
     CHECK(ListLines(v)[1].name == "No relay set: A to type one");   // (typed on the keyboard, saved)
     CHECK(ListLines(v)[1].act == RowAction::kTypeRelay);
     v.relay_set = true;   // (a relay that lists nothing: why, as it says)
     CHECK(ListLines(v)[1].name == "No relay set");
     CHECK(ListLines(v)[1].act == RowAction::kNone);
-    CHECK(ListLines(v)[0].value == "Search");                      // (a relay: the heading's box types a search)
-    CHECK(ListLines(v)[0].act == RowAction::kTypeSearch);
+    v.browse_all_out = true;   // (rooms heard, none kept by the search or the filter)
+    CHECK(ListLines(v)[1].name == "None match the search or Show");
+    v.browse_all_out = false;
     v.search = "kok";
-    CHECK(ListLines(v)[0].value == "\"kok\"");
+    v.s.browse_filter = 1, v.s.browse_sort = 2;
+    rows = RowTexts(View::kLan, v);
+    CHECK(rows[1] == "Search: kok");
+    CHECK(rows[2] == "Show: Open games");
+    CHECK(rows[3] == "Sort: Name");
     v.search.clear();
     v.relay_set = false;
     v.online_state.clear();
@@ -1493,15 +1506,14 @@ TEST_CASE("pause tab: the game browser: the rows choose the list and its page, t
     v.online_list.assign(10, ListLine{"kokiri (Saria)", "1/4"});
     v.online_list[7] = ListLine{"a room with a very long name indeed (Saria)", "Other version"};
     v.s.online_listed = 10;
-    v.s.list_room = true;
     rows = RowTexts(View::kLan, v);
-    CHECK(rows[1] == "Online games (10)");
-    CHECK(rows[2] == "Next page (1/2)");
-    CHECK(rows[3] == "List my room: On");
+    CHECK(rows[0] == "Online (10)");
     lines = ListLines(v);
+    CHECK(lines[0].name == "Online games  < 1 of 2 >");   // (more than a page: the heading pages it)
     CHECK(lines[2].name == "kokiri (Saria)");
     v.s.cell_page = 1;   // (the second page: the 7th to 10th rooms)
     lines = ListLines(v);
+    CHECK(lines[0].name == "Online games  < 2 of 2 >");
     CHECK(lines[1].name == "kokiri (Saria)");
     CHECK(lines[2].name == "a room with a very long nam...");   // (cut to kListNameChars)
     CHECK(lines[2].name.size() <= kListNameChars);

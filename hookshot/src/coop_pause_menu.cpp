@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_pause_menu.h"
 
+#include "coop_browse.h"
+
 #include <algorithm>
 #include <cctype>
 #include <utility>
@@ -326,12 +328,15 @@ std::vector<Menu::Line> Menu::Lines() const {
         out.push_back({Choice("List", find_online_ ? "Online" : "This network"), Act::kFindList,
                        "Online: the public rooms on your relay (Settings > Relay). This network: the games hosted "
                        "in your home."});
-        if (find_online_) {
-            const bool typing_search = typing_ && typing_act_ == Act::kFindSearch;
-            out.push_back({Action("Search", typing_search ? find_search_ + "_"
-                                            : find_search_.empty() ? std::string("Type") : find_search_),
-                           Act::kFindSearch, "Only the rooms whose name, or whose host's name, holds these letters."});
-        }
+        const bool typing_search = typing_ && typing_act_ == Act::kFindSearch;
+        out.push_back({Action("Search", typing_search ? find_search_ + "_"
+                                        : find_search_.empty() ? std::string("Type") : find_search_),
+                       Act::kFindSearch, "Only the games whose name, or whose host's name, holds these letters."});
+        out.push_back({Choice("Show", CoopBrowse::FilterWords(find_filter_)), Act::kFindFilter,
+                       "All games; only the ones you can join (your version, room for one more); or every game of "
+                       "your version."});
+        out.push_back({Choice("Sort", CoopBrowse::SortWords(find_sort_)), Act::kFindSort,
+                       "The most players first, the fewest first, or by name."});
         const std::vector<Found> games = FoundShown();
         for (const Found& g : games) {
             out.push_back({Action(g.name, g.players, !g.joinable), Act::kFindGame,
@@ -340,7 +345,7 @@ std::vector<Menu::Line> Menu::Lines() const {
                                       : "This game is full, or runs another version of co-op."});
         }
         if (games.empty()) {
-            const std::string none = !found_.empty() && !find_search_.empty() ? "No room has \"" + find_search_ + "\""
+            const std::string none = !found_.empty() ? std::string("None match the search or Show")
                                      : !found_state_.empty()                   ? found_state_
                                      : find_online_                            ? std::string("Asking the relay...")
                                                                                : std::string("Looking for games...");
@@ -1104,7 +1109,9 @@ void Menu::Decide(Act act) {
         Go(Page::kFind);
         break;
     case Act::kFindList:
-        Change(act, 0);
+    case Act::kFindFilter:
+    case Act::kFindSort:
+        Change(act, 1);
         break;
     case Act::kFindSearch:
         search_before_ = find_search_;
@@ -1195,6 +1202,14 @@ void Menu::Change(Act act, int step) {
     case Act::kFindList:   // (two lists: either way flips it; the module hears the other one from now)
         find_online_ = !find_online_;
         found_.clear(), found_state_.clear();
+        Clamp();
+        break;
+    case Act::kFindFilter:
+        find_filter_ = (find_filter_ + (step < 0 ? CoopBrowse::kFilters - 1 : 1)) % CoopBrowse::kFilters;
+        Clamp();
+        break;
+    case Act::kFindSort:
+        find_sort_ = (find_sort_ + (step < 0 ? CoopBrowse::kSorts - 1 : 1)) % CoopBrowse::kSorts;
         Clamp();
         break;
     case Act::kMic: {
@@ -1550,14 +1565,11 @@ void Menu::SetFound(std::vector<Found> games, std::string state) {
 }
 
 std::vector<Menu::Found> Menu::FoundShown() const {
-    if (!find_online_ || find_search_.empty()) return found_;
-    std::string want = find_search_;
-    for (char& c : want) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    std::vector<CoopBrowse::Entry> entries;
+    for (const Found& g : found_) entries.push_back({g.name, g.host, g.count, g.max, g.same_version});
     std::vector<Found> kept;
-    for (const Found& g : found_) {
-        std::string name = g.name;
-        for (char& c : name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        if (name.find(want) != std::string::npos) kept.push_back(g);
+    for (const int i : CoopBrowse::Order(entries, find_search_, find_filter_, find_sort_)) {
+        kept.push_back(found_[static_cast<std::size_t>(i)]);
     }
     return kept;
 }

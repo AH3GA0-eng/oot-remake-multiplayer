@@ -2,6 +2,8 @@
 // coop_pause_tab.h's logic: no game reads or calls, no log (the tests drive it).
 #include "coop_pause_tab.h"
 
+#include "coop_browse.h"
+
 #include "hos_coop_host.h"
 
 #include <algorithm>
@@ -691,13 +693,13 @@ RowAction ActionFor(View view, int row, const Session& s) {
         if (row == 1) return RowAction::kHostChat;
         return row == 2 ? RowAction::kKick : RowAction::kBan;
     case View::kLan:
-        // (0 this network's games, 1 the relay's public rooms, 2 the cells' next page, 3 listing our own room when we
-        // host; the games themselves are in the cells: Right goes into them)
+        // (0 the list, online or this network's, 1 the search, 2 the filter, 3 the order; the games themselves are in
+        // the cells: Right goes into them. The list's heading pages it and asks it again)
         if (s.in_one || s.by_launcher) return RowAction::kNone;
-        if (row == 0) return RowAction::kBrowseLan;
-        if (row == 1) return RowAction::kBrowseOnline;
-        if (row == 2) return CellPages(BrowseListed(s)) > 1 ? RowAction::kBrowsePage : RowAction::kBrowseRefresh;
-        if (row == 3) return RowAction::kListRoom;
+        if (row == 0) return RowAction::kBrowseList;
+        if (row == 1) return RowAction::kTypeSearch;
+        if (row == 2) return RowAction::kBrowseFilter;
+        if (row == 3) return RowAction::kBrowseSort;
         return RowAction::kNone;
     case View::kLanGame:
         // (0 the game, 1 its password typed on the row if its host asks one, 2 Join this game; the last row is Back.
@@ -874,17 +876,11 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
             rows[0] = v.s.by_launcher ? "Co-op came with the game" : "In a session already";
             break;
         }
-        // (the two lists as tabs: the one the cells show is bright, the other dimmed (the module's alpha); A on the one
-        // shown goes into its cells, as Right does)
-        rows[0] = "Local games (" + std::to_string(v.lan_rows.size()) + ")";
-        rows[1] = v.online_rows.empty() && v.online_state.empty()
-                      ? std::string("Online games")
-                      : "Online games (" + std::to_string(v.online_rows.size()) + ")";
-        const int pages = CellPages(BrowseListed(v.s));
-        rows[2] = pages > 1 ? "Next page (" + std::to_string((v.s.cell_page % pages + pages) % pages + 1) + "/" +
-                                  std::to_string(pages) + ")"
-                            : std::string("Refresh list");
-        rows[3] = v.s.list_room ? "List my room: On" : "List my room: Off";   // (listed as list_name, or the room name)
+        // (the list shown and how many it keeps; A flips to the other one)
+        rows[0] = std::string(v.s.online ? "Online" : "This network") + " (" + std::to_string(BrowseListed(v.s)) + ")";
+        rows[1] = v.search.empty() && v.typing != 5 ? std::string("Search: A to type") : "Search: " + v.search;
+        rows[2] = std::string("Show: ") + CoopBrowse::FilterWords(v.s.browse_filter);
+        rows[3] = std::string("Sort: ") + CoopBrowse::SortWords(v.s.browse_sort);
         break;
     }
     case View::kLanGame:
@@ -1054,7 +1050,11 @@ const char* ActionWords(RowAction a) {
     case RowAction::kChangePassword: return "a new join password typed on the keyboard";
     case RowAction::kChangePort: return "the port when hosting typed on the keyboard";
     case RowAction::kTypeRelay: return "the relay's address typed on the keyboard";
-    case RowAction::kTypeSearch: return "the online list's search typed on the keyboard";
+    case RowAction::kTypeSearch: return "the browser's search typed on the keyboard";
+    case RowAction::kBrowseList: return "the browser's other list";
+    case RowAction::kBrowseFilter: return "the browser's next filter";
+    case RowAction::kBrowseSort: return "the browser's next order";
+    case RowAction::kTypeRoomName: return "this game's room name typed on the keyboard (saved)";
     case RowAction::kBrowseLan: return "the browser lists the games on this network";
     case RowAction::kBrowseOnline: return "the browser lists the relay's public rooms";
     case RowAction::kBrowsePage: return "the browser's next page of games";
@@ -1205,15 +1205,18 @@ std::vector<ListLine> ListLines(const SessionView& v) {
     std::vector<ListLine> lines(kListRows);
     if (v.s.in_one || v.s.by_launcher) return lines;
     // (a heading of text: "Game | Players" with its value box read as a button that did nothing, a tester)
-    lines[0] = ListLine{v.s.online ? "Online games" : "Games on this network", ""};
-    if (v.s.online && v.relay_set) {   // (the heading's box: the search, typed there with A or a click)
-        lines[0].value = FitTo(v.search.empty() ? std::string("Search") : "\"" + v.search + "\"", kListValueChars);
-        lines[0].act = RowAction::kTypeSearch;
-    }
+    // (the heading: the list and its page, "< 1 of 3 >" when there are more (a click on its left half goes back a
+    // page, on its right half on); its box asks the list again (a click, or Y))
+    const int pages = CellPages(BrowseListed(v.s));
+    std::string head = v.s.online ? "Online games" : "This network";
+    if (pages > 1) head += "  < " + std::to_string((v.s.cell_page % pages + pages) % pages + 1) + " of " +
+                           std::to_string(pages) + " >";
+    lines[0] = ListLine{head, "Refresh", RowAction::kBrowseRefresh};
     const std::vector<ListLine>& list = v.s.online ? v.online_list : v.lan_list;
     if (list.empty()) {
-        lines[1].name = FitTo(v.s.online ? (v.online_state.empty() ? std::string("Asking the relay...") : v.online_state)
-                                         : std::string("Looking for games..."),
+        lines[1].name = FitTo(v.browse_all_out ? std::string("None match the search or Show")
+                              : v.s.online     ? (v.online_state.empty() ? std::string("Asking the relay...") : v.online_state)
+                                               : std::string("Looking for games..."),
                               kListNameChars);
         if (v.s.online && !v.relay_set) {   // (no relay: typed here, saved as Co-op Settings' Relay row)
             lines[1].name = "No relay set: A to type one";
@@ -1339,6 +1342,12 @@ std::vector<ListLine> DetailLines(View view, const SessionView& v) {
         if (!v.host_name.empty()) add("Host", v.host_name);
         if (v.players > 0) add("Players", std::to_string(v.players));
     } else if (!v.s.in_one && !v.s.by_launcher && !v.s.failed && v.says.empty() && v.turned_away.empty()) {
+        // (the room this game hosts under, and whether the relay lists it: set here as on the title's Co-op Settings,
+        // a tester asked why it could not be set in the game)
+        add("Room name", v.room_name.empty() ? "None" : v.room_name);
+        lines[at - 1].act = RowAction::kTypeRoomName;
+        add("List my room", v.s.list_room ? "On" : "Off");
+        lines[at - 1].act = RowAction::kListRoom;
         add("Auto-rejoin", !v.s.auto_rejoin ? "Off" : v.s.rejoining ? "Trying..." : "On");
         // (it looks like a setting of the game's Options, so an A on it turns it on or off, as the row of the same
         // name: a tester pressed it there and nothing happened)

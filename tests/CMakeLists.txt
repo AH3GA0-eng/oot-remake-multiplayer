@@ -208,6 +208,7 @@ target_sources(coop_tests PRIVATE hookshot/module_test.cpp hookshot/draw_test.cp
   hookshot/title_native_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_title_native.cpp
   hookshot/auto_rejoin_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_auto_rejoin.cpp
   hookshot/lan_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_lan.cpp
+  hookshot/browse_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_browse.cpp
   hookshot/longshot_settings_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_longshot_settings.cpp
   hookshot/pad_order_test.cpp
   hookshot/i18n_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_i18n.cpp)

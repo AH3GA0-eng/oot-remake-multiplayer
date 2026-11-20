@@ -255,22 +255,32 @@ TEST_CASE("pause tab: Find a game lists what is heard, searches the relay's room
     m.Press(Input::kDecide);
     CHECK(m.page() == Page::kFind);
     CHECK(m.find_online());
-    CHECK(Names(m) == std::vector<std::string>{"List", "Search", "Asking the relay..."});
-    m.SetFound({{"kokiri (Saria)", "1/4", "kokiri", 0, true}, {"forest (Mido)", "Full", "forest", 0, false}}, "");
-    CHECK(Names(m) == std::vector<std::string>{"List", "Search", "kokiri (Saria)", "forest (Mido)"});
-    CHECK(m.view().rows[3].fixed);   // (full: not joinable)
+    CHECK(Names(m) == std::vector<std::string>{"List", "Search", "Show", "Sort", "Asking the relay..."});
+    m.SetFound({{"kokiri (Saria)", "1/4", "kokiri", 0, true, "Saria", 1, 4, true},
+                {"forest (Mido)", "Full", "forest", 0, false, "Mido", 4, 4, true}}, "");
+    // (the most players first)
+    CHECK(Names(m) == std::vector<std::string>{"List", "Search", "Show", "Sort", "forest (Mido)", "kokiri (Saria)"});
+    CHECK(m.view().rows[4].fixed);   // (full: not joinable)
+    SelectRow(m, "Show");   // (only the ones this game can join)
+    m.Press(Input::kRight);
+    CHECK(Names(m) == std::vector<std::string>{"List", "Search", "Show", "Sort", "kokiri (Saria)"});
+    m.Press(Input::kLeft);
+    SelectRow(m, "Sort");   // (by name)
+    m.Press(Input::kLeft);
+    CHECK(Names(m).at(4) == "forest (Mido)");
+    m.Press(Input::kRight);
     // The search: only the rooms that hold it, any case
     SelectRow(m, "Search");
     m.Press(Input::kDecide);
     REQUIRE(m.typing());
     for (const char c : std::string("MID")) m.Char(static_cast<unsigned char>(c));
     m.Press(Input::kDecide);
-    CHECK(Names(m) == std::vector<std::string>{"List", "Search", "forest (Mido)"});
+    CHECK(Names(m) == std::vector<std::string>{"List", "Search", "Show", "Sort", "forest (Mido)"});
     SelectRow(m, "Search");
     m.Press(Input::kDecide);
     for (const char c : std::string("xyz")) m.Char(static_cast<unsigned char>(c));
     m.Press(Input::kDecide);
-    CHECK(Names(m).back() == "No room has \"MIDxyz\"");
+    CHECK(Names(m).back() == "None match the search or Show");
     SelectRow(m, "Search");   // (Esc: as it was)
     m.Press(Input::kDecide);
     m.Press(Input::kErase);
@@ -293,7 +303,7 @@ TEST_CASE("pause tab: Find a game lists what is heard, searches the relay's room
     SelectRow(m, "List");
     m.Press(Input::kRight);
     CHECK_FALSE(m.find_online());
-    CHECK(Names(m) == std::vector<std::string>{"List", "Looking for games..."});
+    CHECK(Names(m) == std::vector<std::string>{"List", "Search", "Show", "Sort", "Looking for games..."});
     m.SetFound({{"Saria's game", "1/4", "192.168.1.20", 27511, true}}, "");
     SelectRow(m, "Saria's game");
     m.Press(Input::kDecide);

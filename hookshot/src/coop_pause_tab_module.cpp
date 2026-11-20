@@ -5,6 +5,7 @@
 // pack's labels), the pad filtered, the log. Only in hookshot_coop.dll (the
 // tests drive Page and Probe themselves).
 #include "coop_pause_tab.h"
+#include "coop_browse.h"
 
 #include <algorithm>
 #include <array>
@@ -79,6 +80,9 @@ LanPick g_lan_pick;
 // The game browser (View::kLan): its list (the relay's rooms, else this network's games), its page of cells, and the
 // cell picked with the pad or the mouse (-1: the rows have the pad). Any thread.
 std::atomic<bool> g_online{false};
+std::atomic<int> g_browse_filter{0}, g_browse_sort{0};   // the browser's filter and order (CoopBrowse)
+std::atomic<int> g_browse_listed{0};        // the games the browser's list keeps now (its pages)
+std::atomic<std::uint64_t> g_head_click_ms{0};   // the left button last down on the browser's heading
 std::atomic<int> g_cell_page{0};
 std::atomic<int> g_cell{-1};
 std::atomic<int> g_cell_games{0};   // the cells on this page that hold a game (LiveCells)
@@ -342,13 +346,38 @@ const CoopLobby::PlayerSeen* ShownPlayer(const CoopLobby::Seen& seen) {
     return nullptr;
 }
 
-// The relay's rooms the online list's search keeps, in the relay's order (RoomMatches).
+// The relay's rooms and this network's games the browser lists (its search, filter and order: CoopBrowse), in its
+// order; the cells and a pick read the same lists.
 std::vector<CoopRoomList::Room> SearchedRooms(const std::string& search) {
+    const std::vector<CoopRoomList::Room> all = CoopRoomList::Now().rooms;
+    std::vector<CoopBrowse::Entry> entries;
+    for (const CoopRoomList::Room& r : all) {
+        entries.push_back({r.room, r.host, r.players, r.max, r.protocol == coop::protocol::kProtocolVersion});
+    }
     std::vector<CoopRoomList::Room> kept;
-    for (const CoopRoomList::Room& r : CoopRoomList::Now().rooms) {
-        if (RoomMatches(r.room, r.host, search)) kept.push_back(r);
+    for (const int i : CoopBrowse::Order(entries, search, g_browse_filter.load(), g_browse_sort.load())) {
+        kept.push_back(all[static_cast<std::size_t>(i)]);
     }
     return kept;
+}
+
+std::vector<CoopLan::Heard> SearchedGames(const std::string& search) {
+    const std::vector<CoopLan::Heard> all = CoopLanNet::Games(NowMs());
+    std::vector<CoopBrowse::Entry> entries;
+    for (const CoopLan::Heard& h : all) {
+        entries.push_back({h.game.name + "'s game" + (h.game.room.empty() ? "" : ": " + h.game.room), h.game.name,
+                           h.game.players, h.game.max, h.game.protocol == coop::protocol::kProtocolVersion});
+    }
+    std::vector<CoopLan::Heard> kept;
+    for (const int i : CoopBrowse::Order(entries, search, g_browse_filter.load(), g_browse_sort.load())) {
+        kept.push_back(all[static_cast<std::size_t>(i)]);
+    }
+    return kept;
+}
+
+std::string BrowseSearch() {
+    std::lock_guard lock(g_mutex);   // (the search is the page's field; no other lock of ours is held by the callers)
+    return g_page.Field(5).text();
 }
 
 // What the rows say now (co-op's host status and the Lobby's room, its players). No lock of ours held: they take
@@ -409,11 +438,15 @@ SessionView ViewNow(View view) {
         v.host_mutes = p->host_mutes;
     }
     if (view == View::kMain && !v.s.in_one && !v.s.by_launcher) {
+        v.room_name = CoopPause::RoomName();
+        v.s.list_room = CoopPause::ListRoom();
         v.s.auto_rejoin = CoopPause::AutoRejoin();
         v.s.rejoining = v.s.auto_rejoin && CoopPause::AutoRejoining();
     }
     if (view == View::kLan) {
-        const auto games = CoopLanNet::Games(NowMs());
+        v.search = BrowseSearch();
+        v.s.browse_filter = g_browse_filter.load(), v.s.browse_sort = g_browse_sort.load();
+        const auto games = SearchedGames(v.search);
         v.s.lan_listed = static_cast<int>(games.size());
         v.s.lan_page = g_lan_page.load();
         for (std::size_t i = 0; i < games.size(); ++i) {
@@ -424,10 +457,6 @@ SessionView ViewNow(View view) {
                                                     h.game.protocol == coop::protocol::kProtocolVersion)});
             if (i < 32 && CoopLan::Joinable(h, coop::protocol::kProtocolVersion)) v.s.lan_joinable |= 1u << i;
         }
-        {
-            std::lock_guard lock(g_mutex);   // (the search is the page's field; no other lock of ours is held here)
-            v.search = g_page.Field(5).text();
-        }
         const std::vector<CoopRoomList::Room> rooms = SearchedRooms(v.search);
         for (const CoopRoomList::Room& r : rooms) {
             v.online_rows.push_back(CoopRoomList::CellText(r, coop::protocol::kProtocolVersion));
@@ -435,9 +464,12 @@ SessionView ViewNow(View view) {
                                              ListValue(r.players, r.max, r.protocol == coop::protocol::kProtocolVersion)});
         }
         const CoopRoomList::Snapshot all = CoopRoomList::Now();
-        v.online_state = rooms.empty() && !all.rooms.empty() ? "No room has \"" + v.search + "\"" : all.state;
+        v.online_state = all.state;
         v.s.online_listed = static_cast<int>(rooms.size());
         v.s.online = g_online.load();
+        g_browse_listed = BrowseListed(v.s);
+        v.browse_all_out = v.s.online ? rooms.empty() && !all.rooms.empty()
+                                      : games.empty() && !CoopLanNet::Games(NowMs()).empty();
         v.s.cell_page = g_cell_page.load();
         v.s.list_room = CoopPause::ListRoom();   // (the files' setting; read only while this view shows)
         v.relay_set = CoopPause::RelaySet();   // (no relay: the online list's line types one)
@@ -605,7 +637,7 @@ void LiveCells(void* ctx, std::uint64_t layout, std::uint64_t gen, const Session
     if (!g_rows_moment.load() && g_rows_alpha_stale.exchange(false)) g_rows_alpha.fill(-1);
     for (int r = 0; r < kRows; ++r) {
         const std::size_t k = static_cast<std::size_t>(r);
-        const bool other_list = browse && !v.s.in_one && !v.s.by_launcher && r == (v.s.online ? 0 : 1);
+        const bool other_list = false;   // (one List row now: nothing dimmed for the list not shown)
         const float alpha = picked >= 0 ? 0.45f : other_list ? 0.55f : 1.0f;
         if (g_rows_moment.load()) break;   // (a moment's hiding: SystemButtons sets them back, then they are set again)
         if (g_row_panes[k] != 0 && g_rows_alpha[k] != alpha) CallAlpha(ctx, g_row_panes[k], alpha), g_rows_alpha[k] = alpha;
@@ -1355,6 +1387,16 @@ std::array<RowBox, kCells> ReadCellBoxes() {
     return boxes;
 }
 
+// The list's first line's box (the heading), or none shown.
+RowBox HeadBox() {
+    const std::uint64_t pane = g_head_pane_at.load();
+    float m[12] = {};
+    if (pane == 0 || !CoopRuntime::Read(pane + 0x28, m, sizeof m) || !(m[0] > 1e-3f) || !(m[4] > 1e-3f)) return {};
+    if ((Read<std::uint32_t>(pane + 0xa8) & 1u) == 0) return {};
+    const float hw = 940.0f * m[0], hh = 70.0f * m[4];
+    return RowBox{true, m[9] - hw, m[10] - hh, m[9] + hw, m[10] + hh};
+}
+
 // The list's line under x, y (its first, the header, then the cells' lines), or -1.
 int LineAt(float x, float y) {
     const std::array<RowBox, kCells> cells = ReadCellBoxes();
@@ -1436,7 +1478,8 @@ void PublishKeyboard() {
     s.open = t >= 0 && g_page.Shown();
     if (s.open) {
         s.title = t == 0   ? "Room name, or IP address and :port (192.168.1.20:27510)"
-                  : t == 5 ? "Search the online games (a room's or a host's name)"
+                  : t == 6 ? "Room name when you host (3 to 24: letters, digits, - and _)"
+                  : t == 5 ? "Search the games (a room's or a host's name)"
                   : t == 4 ? "Relay address (host or host:port)"
                   : t == 3 ? "Port when hosting (1 to 65535)"
                   : t == 2 ? "New join password"
@@ -1527,7 +1570,7 @@ void ActCell(int cell) {
         SetView(View::kJoin);
         return;
     }
-    const auto games = CoopLanNet::Games(NowMs());
+    const auto games = SearchedGames(v.search);   // (as the cells list them)
     if (i >= static_cast<int>(games.size())) return;
     const CoopLan::Heard& h = games[static_cast<std::size_t>(i)];
     if (!CoopLan::Joinable(h, coop::protocol::kProtocolVersion)) {
@@ -1635,6 +1678,26 @@ void Act(int row, int line = -1, bool clicked = false) {
     case RowAction::kBrowsePage:
         g_cell_page = (v.s.cell_page + 1) % CellPages(BrowseListed(v.s)), g_cell = -1;
         break;
+    case RowAction::kBrowseList:
+        g_online = !v.s.online, g_cell_page = 0, g_cell = -1;
+        if (v.s.online) CoopLanNet::Look(true, NowMs());   // (this network's games: heard from now)
+        g_live_poke = true;
+        break;
+    case RowAction::kBrowseFilter:
+        g_browse_filter = (v.s.browse_filter + 1) % CoopBrowse::kFilters, g_cell_page = 0, g_cell = -1, g_live_poke = true;
+        break;
+    case RowAction::kBrowseSort:
+        g_browse_sort = (v.s.browse_sort + 1) % CoopBrowse::kSorts, g_cell_page = 0, g_cell = -1, g_live_poke = true;
+        break;
+    case RowAction::kTypeRoomName: {   // (this game's room name on the keyboard; OnPad saves it)
+        const std::string name = CoopPause::RoomName();   // (co-op's own lock: before ours)
+        std::lock_guard lock(g_mutex);
+        if (g_page.Typing() == 6) break;
+        g_page.Field(6).Set(name);
+        g_page.StartTyping(6);
+        g_live_poke = true;
+        break;
+    }
     case RowAction::kListRoom: CoopPause::SetListRoom(!v.s.list_room); break;
     case RowAction::kJoinLan: {
         const auto games = CoopLanNet::Games(NowMs());
@@ -1676,7 +1739,7 @@ void Act(int row, int line = -1, bool clicked = false) {
     }
     case RowAction::kTypeSearch: {   // (the online list's search on the keyboard; the list follows it as typed)
         std::lock_guard lock(g_mutex);
-        if (g_page.Typing() == 5) break;   // (the click's and Longshot's A for the same heading: once)
+        if (g_page.Typing() == 5) break;   // (a click's and Longshot's A for the same row: once)
         g_page.StartTyping(5);
         g_live_poke = true;
         break;
@@ -1959,7 +2022,9 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
         std::string why, new_password, new_relay;
         bool row_clicked = false;
         int new_port = 0;
-        bool relay_typed = false;
+        bool relay_typed = false, room_name_typed = false;
+        bool browse_refresh = false;   // (Y, or a click on the browser heading's Refresh box: after the lock, as Act)
+        std::string new_room_name;
         if (const int phase = g_to_title.load(); phase != 0) {
             std::lock_guard lock(g_mutex);
             if (const std::uint64_t steps = ToTitleStep(phase); steps != kNoStep) return steps;
@@ -2048,6 +2113,8 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                 new_relay = g_page.Field(4).text(), relay_typed = true;
             } else if (typed == 5) {   // (a search: the list from its first page)
                 g_cell_page = 0, g_cell = -1, g_live_poke = true;
+            } else if (typed == 6) {
+                new_room_name = g_page.Field(6).text(), room_name_typed = true;
             }
             const std::uint64_t field_now = std::hash<std::string>{}(g_page.Field(0).text() + '\n' +
                                                                      g_page.Field(1).text()) ^ g_page.Field(0).cursor() ^
@@ -2146,8 +2213,15 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             if (browse) {
                 const bool right = (bdown & (kPadRight | kPadStickRight)) != 0, left = (bdown & (kPadLeft | kPadStickLeft)) != 0;
                 const bool up = (bdown & (kPadUp | kPadStickUp)) != 0, down = (bdown & (kPadDown | kPadStickDown)) != 0;
-                if (cell == 0 && up && g_online.load()) {
-                    line_clicked = 0;   // (Up from the first room: the heading, its search typed)
+                const int pages = CellPages(g_browse_listed.load());
+                if ((bdown & kPadY) != 0) {
+                    browse_refresh = true;   // (Y: the list asked again, as the heading's Refresh box)
+                } else if (cell >= 0 && down && cell == games - 1 && pages > 1) {
+                    g_cell_page = (g_cell_page.load() + 1) % pages, cell = 0;   // (past the page's last: the next page)
+                    g_page.Sound("button_on"), g_live_poke = true;
+                } else if (cell == 0 && up && g_cell_page.load() > 0) {
+                    g_cell_page = g_cell_page.load() - 1, cell = kCells - 1;   // (above its first: the page before)
+                    g_page.Sound("button_on"), g_live_poke = true;
                 } else if (cell < 0 && right && games > 0) {
                     cell = 0;   // (the list's first game)
                     g_page.Sound("button_on");
@@ -2163,13 +2237,26 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                     const bool moved = std::abs(x - g_cells_mouse_x) > 2 || std::abs(y - g_cells_mouse_y) > 2;
                     g_cells_mouse_x = x, g_cells_mouse_y = y;
                     if (moved && hover >= 0 && hover < games && hover != cell) cell = hover, g_page.Sound("button_on");
-                    const bool on_head = hover < 0 && LineAt(x, y) == 0;   // (the heading: the online list's search)
+                    const bool on_head = hover < 0 && LineAt(x, y) == 0;   // (the heading: its page and Refresh)
                     if (held && !g_cells_held) g_cells_press = on_head ? -2 : hover;
+                    if (held && on_head) g_head_click_ms = NowMs();   // (Longshot's A for it is not the line's)
                     if (!held && g_cells_held && hover >= 0 && hover == g_cells_press && hover < games) {
                         pick_cell = hover;   // (a click on a cell: its A)
                         g_page.Sound("button_decide");
                     }
-                    if (!held && g_cells_held && on_head && g_cells_press == -2) line_clicked = 0;
+                    if (!held && g_cells_held && on_head && g_cells_press == -2) {
+                        // (its box at the right: Refresh; its words: back a page on their left half, on on their right)
+                        const RowBox head = HeadBox();
+                        const float w = head.x1 - head.x0, box_x = head.x1 - w * 0.36f;
+                        const int pages = CellPages(g_browse_listed.load());
+                        if (x >= box_x) {
+                            browse_refresh = true;
+                        } else if (pages > 1) {
+                            const int dir = x < (head.x0 + box_x) / 2 ? -1 : 1;
+                            g_cell_page = ((g_cell_page.load() + dir) % pages + pages) % pages, cell = -1;
+                            g_page.Sound("button_decide"), g_live_poke = true;
+                        }
+                    }
                     g_cells_held = held;
                 }
                 if (cell >= 0) out &= ~(kPadUp | kPadDown | kPadStickUp | kPadStickDown);   // (the rows' cursor stays)
@@ -2365,10 +2452,11 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                     pick_cell = cell;   // (A on a cell)
                     decide = false;
                 } else if (clicked < 0 && on_list) {
-                    // (A on a line of the details: that line's own action, else nothing; Act reads which)
+                    // (A on a line of the details: that line's own action, else nothing; Act reads which. The
+                    // browser's heading clicked: ours (its page or Refresh), not Longshot's A for it)
                     const std::string name = FocusedShownName();
                     list_line = name.size() == 10 ? std::atoi(name.c_str() + 8) : -1;
-                    decide = list_line >= 0;
+                    decide = list_line >= 0 && !(list_line == 0 && NowMs() - g_head_click_ms.load() < 800);
                 } else {
                     row = clicked >= 0 ? clicked : FocusedRow();   // (under the lock: the pages screen is the updates')
                     row_clicked = clicked >= 0;
@@ -2402,6 +2490,11 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             LOG_INFO(Core, "coop: pause tab: a port typed: {}", taken ? std::to_string(new_port) : std::string("not a port (1 to 65535)"));
             g_live_poke = true;
         }
+        if (room_name_typed) {   // (the room name typed on the main view's details: saved as Co-op Settings' Room name)
+            const bool taken = CoopPause::SetRoomName(new_room_name);
+            LOG_INFO(Core, "coop: pause tab: a room name typed: {}", taken ? "saved" : "not a room name (3 to 24 letters, digits, - or _)");
+            g_live_poke = true;
+        }
         if (relay_typed) {   // (the relay typed on the online list: saved as Co-op Settings' Relay)
             const bool taken = CoopPause::SetRelay(new_relay);
             LOG_INFO(Core, "coop: pause tab: a relay typed: {}", taken ? "saved" : "not a relay address");
@@ -2412,6 +2505,9 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             LOG_INFO(Core, "coop: pause tab: a new join password typed: {}", taken ? "handed to the host" : "not taken (see why)");
             if (taken) g_show_password = true;
             g_live_poke = true;
+        }
+        if (browse_refresh) {
+            Act(-1, 0, true);   // (the heading's line: Refresh)
         }
         if (decide && !settings_shown) Act(row, list_line, row_clicked);
         else if (line_clicked >= 0 && !settings_shown) ClickLine(line_clicked);

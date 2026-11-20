@@ -240,13 +240,13 @@ public:
     // is, the pad's buttons are all the page's (none reach System) and the keyboard's keys are the field's (Key, Char).
     // The fields: 0 the room name, 1 the join password (Join view, a game's view), 2 the host's new join password,
     // 3 the port when hosting (the details' Router line), 4 the relay's address (the browser's online list), 5 the
-    // online list's search (its heading line).
-    static constexpr int kFields = 6;
+    // browser's search, 6 this game's room name when it hosts (the main view's details).
+    static constexpr int kFields = 7;
     TextField& Field(int which) {
-        return which == 5 ? search_ : which == 4 ? relay_ : which == 3 ? port_ : which == 2 ? new_password_ : which == 1 ? password_ : room_;
+        return which == 6 ? room_name_ : which == 5 ? search_ : which == 4 ? relay_ : which == 3 ? port_ : which == 2 ? new_password_ : which == 1 ? password_ : room_;
     }
     const TextField& Field(int which) const {
-        return which == 5 ? search_ : which == 4 ? relay_ : which == 3 ? port_ : which == 2 ? new_password_ : which == 1 ? password_ : room_;
+        return which == 6 ? room_name_ : which == 5 ? search_ : which == 4 ? relay_ : which == 3 ? port_ : which == 2 ? new_password_ : which == 1 ? password_ : room_;
     }
     // Typing into a field brings up the on-screen keyboard (coop_keyboard.h): the pad's arrows move over its keys and
     // A presses the one under the cursor, B is Cancel, Y deletes, + is OK, L and R move in the text.
@@ -265,7 +265,7 @@ private:
     void TypingPad(std::uint64_t down, std::uint64_t held, std::uint64_t now_ms);
     TextField room_{TextField::Kind::kRoom}, password_{TextField::Kind::kPassword},
         new_password_{TextField::Kind::kPassword}, port_{TextField::Kind::kPort}, relay_{TextField::Kind::kAddress},
-        search_{TextField::Kind::kRoom};
+        search_{TextField::Kind::kRoom}, room_name_{TextField::Kind::kRoom};
     int typing_ = -1, typed_ = -1;
     CoopKeyboard::Cursor keys_;
     std::string typing_was_;   // (the field before typing: Cancel puts it back)
@@ -375,6 +375,10 @@ enum class RowAction {
     kBrowseRefresh,  // the list asked again (this network's games forgotten; the relay asked at once)
     kListRoom,       // this game's room on the relay's public list when it hosts, on or off (coop-options.ini
                      // list_room; saved at once)
+    kBrowseList,     // the browser's list: the relay's public rooms or this network's games, the other one
+    kBrowseFilter,   // the browser's filter, the next one (CoopBrowse: all, open, this version)
+    kBrowseSort,     // the browser's order, the next one (CoopBrowse: most players, fewest, name)
+    kTypeRoomName,   // this game's room name when it hosts (coop-options.ini relay_room), typed on the keyboard, saved
 };
 inline constexpr std::uint64_t kConfirmMs = 5000;   // (3 s ran out before a test's second click)
 // proto::lobby_mute's bits (CoopLobby's kVoice, kChat; the module checks they match).
@@ -398,6 +402,7 @@ struct Session {
     int lan_page = 0;           // its page (PlayerIndex)
     std::uint32_t lan_joinable = 0;   // bit i: the list's game i can be joined (same version, room for one)
     bool online = false;        // the game browser lists the relay's public rooms (else the games on this network)
+    int browse_filter = 0, browse_sort = 0;   // its filter and its order (CoopBrowse::Filter, Sort)
     int online_listed = 0;      // the rooms it lists
     int cell_page = 0;          // the browser's page of cells (kCells a page)
     bool list_room = false;     // hosting lists this game's room on the relay's public list
@@ -563,7 +568,9 @@ struct SessionView {
     std::vector<std::string> online_rows; // the relay's public rooms, as their cells say them (CoopRoomList::CellText)
     std::vector<ListLine> lan_list, online_list;   // the same, as the browser's list shows them (name, players)
     std::string online_state;             // the browser's online list when it has no rooms: why ("" asking)
-    std::string search;                   // the online list's search, as typed ("" all rooms)
+    std::string search;                   // the browser's search, as typed ("" every game)
+    bool browse_all_out = false;          // games were heard, but the search or the filter keeps none
+    std::string room_name;                // this game's room name when it hosts ("" none: a join code)
     int cell = -1;                        // the browser's cell picked with the pad or the mouse (-1: the rows')
     std::string lan_game;                 // a game's view: the game picked, as its row said it
     std::string turned_away;              // a guest the host's game turned away (kicked, banned, full: the Lobby's
