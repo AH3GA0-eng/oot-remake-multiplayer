@@ -1910,6 +1910,28 @@ TEST_CASE("native boss: row 178: every boss keeps our Link as a replayed hit's a
     CHECK_FALSE(t.KeepsLinkAsAttacker(kActor));
 }
 
+TEST_CASE("native boss: row 178: Phantom Ganon and Ganondorf fight the Player only, the puppets are unseen while here") {
+    CHECK(Table::FightsPlayerOnly("Enemy_DungeonBoss_PhantomGanon"));
+    CHECK(Table::FightsPlayerOnly("Enemy_DungeonBoss_Ganondorf"));
+    for (const char* other : {"Enemy_DungeonBoss_Gohma", "Enemy_DungeonBoss_Dodongo", "Enemy_DungeonBoss_Barinade",
+                              "Enemy_DungeonBoss_Volvagia", "Enemy_DungeonBoss_Morpha", "Enemy_DungeonBoss_BongoBongo",
+                              "Enemy_DungeonBoss_Twinrova", "Enemy_DungeonBoss_Ganon", "Enemy_DekuBaba"}) {
+        CHECK_FALSE(Table::FightsPlayerOnly(other));
+    }
+    Table t;
+    CHECK_FALSE(t.PlayerOnlyBoss());  // (no boss)
+    t.Publish({Phantom(Role::copy)});
+    REQUIRE(t.PlayerOnlyBoss());  // a copy too: its game's perception picks a target as well
+    CHECK(*t.PlayerOnlyBoss() == "Enemy_DungeonBoss_PhantomGanon");
+    t.SetDying({"Enemy_DungeonBoss_PhantomGanon"});
+    CHECK_FALSE(t.PlayerOnlyBoss());  // his death: the puppets are seen again
+    t.SetDying({});
+    t.Publish({Boss{kActor, kBsa, Role::owner, "Enemy_DungeonBoss_Gohma", 2}});
+    CHECK_FALSE(t.PlayerOnlyBoss());  // Gohma still turns to the nearer player (issue 150)
+    t.Publish({});
+    CHECK_FALSE(t.PlayerOnlyBoss());  // he left our walk (another scene)
+}
+
 TEST_CASE("native boss: row 178: our boss fallen far below its fight start chooses again, once per fall") {
     FakeGuest g;
     const std::int32_t brain = 6;

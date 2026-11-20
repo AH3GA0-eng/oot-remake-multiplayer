@@ -280,6 +280,15 @@ public:
     // move) and the game gives that permission to the Player only, so with a puppet in its target memory
     // (EnemyCommon.BattleCommon's ExecuteMemoryPushLastAttacker) Phantom Ganon flew ~22 s without a throw.
     bool KeepsLinkAsAttacker(std::uint64_t actor) const;
+    // Row 178 (Geno, Forest Temple): a boss whose own native AI (Execute*MetaAI) picks its moves for a battle
+    // target that must be the Player. Its perception (PerceptionFilterPlayerOnly) takes a perceived puppet too
+    // (Affiliation Player), and then that AI never picks an attack: Phantom Ganon flew his phase 2 with no light
+    // ball until our stall check (LANE2: 4 of 4 runs with perceived puppets, 0 of 4 without, and normal with the
+    // puppets' perception emitter off at runtime). While such a boss is here every puppet is unseen
+    // (coop_dbno_body.h's unseen puppets), so its target is a real Link in every game.
+    static bool FightsPlayerOnly(std::string_view name);
+    // The first such boss of the table now (alive in our walk, not dying), or none.
+    std::optional<std::string> PlayerOnlyBoss() const;
     // The plain enemy copies whose own brain asked for another brain verb than their owner's since the last
     // call (skipped at the wrap): their own AI wants to act here. At most kMaxWants kept.
     std::vector<std::uint64_t> TakeOwnWants();

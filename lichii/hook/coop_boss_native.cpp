@@ -763,6 +763,23 @@ bool Table::KeepsLinkAsAttacker(std::uint64_t actor) const {
     return e != nullptr && !e->plain;
 }
 
+bool Table::FightsPlayerOnly(std::string_view name) {
+    // Their brains run ExecutePhantomGanonMetaAI / ExecuteDungeonBossGanondorfMetaAI (Phantom Ganon runs both;
+    // Ganondorf's fly module and moves are his too). Checked against every boss's AI files: the other bosses
+    // pick their moves in their AI files only.
+    return name == "Enemy_DungeonBoss_PhantomGanon" || name == "Enemy_DungeonBoss_Ganondorf";
+}
+
+std::optional<std::string> Table::PlayerOnlyBoss() const {
+    std::lock_guard lock(mutex_);
+    for (const auto& [bsa, e] : by_bsa_) {
+        if (!e.plain && !e.dying && FightsPlayerOnly(e.name)) {
+            return e.name;
+        }
+    }
+    return std::nullopt;
+}
+
 void Table::Fall(Entry& e, const Boss& b) {
     if (!b.position) {
         return;
