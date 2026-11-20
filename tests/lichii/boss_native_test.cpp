@@ -6,6 +6,7 @@
 #include <cstring>
 #include <limits>
 #include <map>
+#include <string>
 
 #include "coop_boss_native.h"
 
@@ -1662,4 +1663,78 @@ TEST_CASE("native boss: row 149: Barinade, Morpha, Bongo Bongo, Volvagia and Goh
             CHECK(t.Totals().owner_stalls == 0);
         }
     }
+}
+
+TEST_CASE("native boss: row 177, a copy names its own node of the owner's move (Phantom Ganon's appear)") {
+    constexpr std::uint64_t kAppearNode = 0x4000100;  // its own AI's node that asks Appear (verb 4)
+    constexpr std::uint64_t kRunNode = 0x4000200;     // the one that asks Run (verb 8), its last ask
+    constexpr std::uint64_t kPlug = 0x5000000;
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Boss{kActor, kBsa, Role::copy, "Enemy_DungeonBoss_PhantomGanon", 2}});
+    Request appear = GameRequest(4, kAppearNode, false);
+    std::memcpy(appear.data() + addr::kReqPlug, &kPlug, 8);
+    appear[addr::kReqHasPlug] = 1;
+    t.OnActionVerb(kBsa, appear, true, false);  // (no owner's state yet: its own runs)
+    t.OnActionVerb(kBsa, GameRequest(8, kRunNode), true, false);
+    // The owner's Appear asked through a plug (no place sent), then asked again.
+    BossAction a = *ActionFromRequest(GameRequest(4, 0, false));
+    a.changed = true;
+    t.Receive(kActor, BossBsa{1, 2, a, {}});
+    FakeGuest g;
+    const std::int32_t verb = 2;
+    g.Write(kBsa + addr::kBsaBrainVerb, &verb, 4);
+    REQUIRE(t.Step(g, false, 0, kMain));  // the block
+    auto c = t.Step(g, true, kBlock, kMain);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kRequestActionVerb);
+    // Named as its own AI asks Appear: that node and its plug (not Run's node, its last ask).
+    CHECK(g.Get<std::uint64_t>(kBlock + addr::kReqNode) == kAppearNode);
+    CHECK(g.Get<std::uint64_t>(kBlock + addr::kReqPlug) == kPlug);
+    CHECK(g.Get<std::uint8_t>(kBlock + addr::kReqHasPlug) == 1);
+    CHECK(g.Get<std::int32_t>(kBlock + addr::kReqVerb) == 4);
+}
+
+TEST_CASE("native boss: row 177, the node for a move its own AI never asked: the slot's, else its last") {
+    constexpr std::uint64_t kSlotNode = 0x4000300;
+    const std::map<std::pair<std::int32_t, std::int32_t>, OwnAsk> by_move{{{0, 8}, OwnAsk{kSlotNode, 0x77, true}}};
+    const std::map<std::int32_t, OwnAsk> by_slot{{0, OwnAsk{kSlotNode, 0x77, true}}};
+    BossAction a;
+    a.slot = 0;
+    a.verb = 8;
+    REQUIRE(AskFor(by_move, by_slot, kNode, a));
+    CHECK(*AskFor(by_move, by_slot, kNode, a) == OwnAsk{kSlotNode, 0x77, true});
+    a.verb = 3;  // another move of the slot: its node, never another move's plug
+    CHECK(*AskFor(by_move, by_slot, kNode, a) == OwnAsk{kSlotNode});
+    a.slot = 1;  // a slot it never asked: its last ask
+    CHECK(*AskFor(by_move, by_slot, kNode, a) == OwnAsk{kNode});
+    CHECK_FALSE(AskFor({}, {}, 0, a));  // none yet
+    // A plug only when the owner's action names no place (its own places come from that plug).
+    a.places[0] = coop::protocol::Vec3{1.0f, 2.0f, 3.0f};
+    const Request placed = RequestFromAction(a, OwnAsk{kSlotNode, 0x77, true});
+    CHECK(placed[addr::kReqHasPlug] == 0);
+    a.places[0].reset();
+    const Request plugged = RequestFromAction(a, OwnAsk{kSlotNode, 0x77, true});
+    CHECK(plugged[addr::kReqHasPlug] == 1);
+    std::uint64_t node = 0;
+    std::memcpy(&node, plugged.data() + addr::kReqNode, 8);
+    CHECK(node == kSlotNode);
+}
+
+TEST_CASE("native boss: row 177, the action stream log says each change of kind once, with the run before") {
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Gohma(Role::owner)});
+    t.TakeNotes();
+    for (int i = 0; i < 5; ++i) {
+        t.OnActionVerb(kBsa, GameRequest(4, kNode), i == 0, false);
+    }
+    t.OnActionVerb(kBsa, GameRequest(9, kNode), true, false);
+    const auto notes = t.TakeNotes();
+    const auto has = [&](const std::string& s) {
+        return std::any_of(notes.begin(), notes.end(), [&](const std::string& n) { return n.find(s) != std::string::npos; });
+    };
+    CHECK(has("action stream: ours asks slot 0 verb 4 (changed 1)"));
+    CHECK(has("action stream: ours asks slot 0 verb 4 (changed 0) after 1 x ours asks slot 0 verb 4 (changed 1)"));
+    CHECK(has("action stream: ours asks slot 0 verb 9 (changed 1) after 4 x ours asks slot 0 verb 4 (changed 0)"));
 }
