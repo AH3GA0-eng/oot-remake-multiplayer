@@ -514,6 +514,20 @@ function coopLinkMissing(game, inst) {
     }
 }
 
+// Notes this player's instance folder in nucleus-players\instances.txt beside the game ("<player>=<folder>", one line
+// per player, the newest start wins), so scripts\collect-logs.cmd finds every game's log (the instances are in
+// Nucleus's own folder, not in the kit).
+function coopNoteInstance(mine, player, inst) {
+    var path = coopPath(mine, "instances.txt"), lines = coopRead(path).split(/\r?\n/), out = [];
+    for (var i = 0; i < lines.length; i++) {
+        if (coopTrim(lines[i]) !== "" && lines[i].indexOf(player + "=") !== 0) {
+            out.push(lines[i]);
+        }
+    }
+    out.push(player + "=" + inst);
+    coopWrite(path, out.join("\r\n") + "\r\n");
+}
+
 Game.Play = function () {
     var player = Context.PlayerID + 1;                  // 1 to 4
     var game = String(Context.RootInstallFolder);       // the game folder Nucleus was given
@@ -521,6 +535,7 @@ Game.Play = function () {
     var mine = coopPath(game, "nucleus-players");
     System.IO.Directory.CreateDirectory(mine);
     var sessionFile = coopPath(mine, "session.txt");
+    coopNoteInstance(mine, player, inst);
     var kit = coopFindKit(game);
     try {
         coopLinkMissing(game, inst);

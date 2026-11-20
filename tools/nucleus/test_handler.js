@@ -189,6 +189,8 @@ check(readFile(fso.BuildPath(instances[0], "ngx\\nvngx_dlss.dll")) === "dlss" &&
 check(readFile(fso.BuildPath(instances[1], "newfile.dll")) === "new", "a new game DLL copied in");
 check(!fso.FileExists(fso.BuildPath(instances[1], "coop-saves.ini")) && !fso.FileExists(fso.BuildPath(instances[1], "coop-name-checked.txt")), "per-player files the solo game wrote are not taken");
 check(!fso.FolderExists(fso.BuildPath(instances[0], "logs")), "logs stay the instance's own");
+var noted = readFile(fso.BuildPath(game, "nucleus-players\\instances.txt"));
+check(noted === "1=" + instances[0] + "\r\n2=" + instances[1] + "\r\n3=" + instances[2] + "\r\n", "instances.txt: " + noted);
 check(readFile(fso.BuildPath(instances[0], "coop.ini")).indexOf("name = Saria\r\n") >= 0, "player 1 name");
 check(readFile(fso.BuildPath(instances[1], "coop.ini")).indexOf("name = A name that is f\r\n") >= 0, "name cut to 16");
 check(readFile(fso.BuildPath(instances[2], "coop.ini")).indexOf("name = Player 3\r\n") >= 0, "empty name: Player 3");
