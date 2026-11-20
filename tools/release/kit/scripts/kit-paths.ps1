@@ -1238,13 +1238,16 @@ function Get-KitOtherSizeTables([string]$ModsDir) {
 # old one's for the same seed word, and the old release's seed files do not build with the new one (OOTRR 0.6.0:
 # "Seeds made with older versions will not build"). So every built seed (mods\randomizer-*\coop-seed.txt) and its
 # seed file go: the game makes each one again with the new OOTRR at its next start (about a minute), so every player
-# of the same kit plays the same world. Run while the game is closed (the module step). The lines to show.
+# of the same kit plays the same world. Only seeds the game built (coop-rando.txt): a seed folder put in by hand (built
+# with another OOTRR, or made on OOTRR's page, and copied to every player) is the player's, kept as it is. Run while the
+# game is closed (the module step). The lines to show.
 function Remove-KitRandoSeeds([string]$ExeDir, [string]$Release) {
     $lines = @()
     $mods = Join-Path $ExeDir 'mods'
     $control = Join-Path $mods 'oot-remake-randomizer'
     foreach ($d in @(Get-ChildItem -LiteralPath $mods -Directory -Filter 'randomizer-*' -ErrorAction SilentlyContinue)) {
         if (-not (Test-Path -LiteralPath (Join-Path $d.FullName 'coop-seed.txt'))) { continue }
+        if (-not (Test-Path -LiteralPath (Join-Path $d.FullName 'coop-rando.txt'))) { continue }   # (put in by hand)
         Remove-Item -LiteralPath $d.FullName -Recurse -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath (Join-Path $control "$($d.Name).ootrr") -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath (Join-Path $control "$($d.Name).spoiler.txt") -Force -ErrorAction SilentlyContinue
@@ -1256,6 +1259,8 @@ function Remove-KitRandoSeeds([string]$ExeDir, [string]$Release) {
 
 # Built randomizer seeds (mods\randomizer-*\coop-seed.txt) whose size table is older than another mod's (a puppet
 # pack made again): the game aborts while it loads with such a seed on, so they are built again (Update-KitRandoSeeds).
+# Only seeds the game built (coop-rando.txt, its seed file kept): one put in by hand cannot be built again here, and
+# the size-table merge (Invoke-KitSizeTableMerge) gives it the pack's entries instead.
 function Get-KitStaleRandoSeeds([string]$ExeDir) {
     $mods = Join-Path $ExeDir 'mods'
     $others = @(Get-KitOtherSizeTables $mods)
@@ -1264,6 +1269,7 @@ function Get-KitStaleRandoSeeds([string]$ExeDir) {
     $stale = @()
     foreach ($d in @(Get-ChildItem -LiteralPath $mods -Directory -Filter 'randomizer-*' -ErrorAction SilentlyContinue)) {
         if (-not (Test-Path -LiteralPath (Join-Path $d.FullName 'coop-seed.txt'))) { continue }
+        if (-not (Test-Path -LiteralPath (Join-Path $d.FullName 'coop-rando.txt'))) { continue }   # (put in by hand)
         $own = @(Get-ChildItem -LiteralPath (Join-Path $d.FullName 'romfs\System\Resource') -File -Filter '*.rsizetable.zs' -ErrorAction SilentlyContinue)
         # (no table of its own: the seed's build time, coop-seed.txt, so it is not built again at every start)
         $built = if ($own) { ($own | Measure-Object -Property LastWriteTimeUtc -Minimum).Minimum } else { (Get-Item -LiteralPath (Join-Path $d.FullName 'coop-seed.txt')).LastWriteTimeUtc }

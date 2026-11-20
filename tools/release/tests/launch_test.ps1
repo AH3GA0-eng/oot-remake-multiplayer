@@ -805,11 +805,14 @@ try {
     Check (-not (Test-KitOotrrStale (Join-Path $hk 'no-kit') $g)) 'OOTRR stale: a kit without OOTRR.txt brings none'
     Check ((Test-KitOotrrStale $hk (Join-Path $hk 'no-game'))) 'OOTRR stale: a game without tools\ootrr -> yes'
     # Another OOTRR release (0.5.0 -> 0.6.0): its seeds are other worlds and the old seed files do not build with it,
-    # so the built seeds go (the game makes them again); another mod, a seed folder not built (no coop-seed.txt) and
-    # the control folder stay.
+    # so the built seeds go (the game makes them again); another mod, a seed folder not built (no coop-seed.txt), a seed
+    # put in by hand (no coop-rando.txt: built with another OOTRR, the player's) and the control folder stay.
     $ng = Join-Path $hk 'new-ootrr-game'
     Write-File (Join-Path $ng 'mods\randomizer-AB\coop-seed.txt') "AB`n"
+    Write-File (Join-Path $ng 'mods\randomizer-AB\coop-rando.txt') "default`n"
     Write-File (Join-Path $ng 'mods\randomizer-AB-keysanity\coop-seed.txt') "AB`n"
+    Write-File (Join-Path $ng 'mods\randomizer-AB-keysanity\coop-rando.txt') "keysanity`n"
+    Write-File (Join-Path $ng 'mods\randomizer-hand\coop-seed.txt') "hand`n"
     Write-File (Join-Path $ng 'mods\randomizer-half\romfs\x.bin') 'x'
     Write-File (Join-Path $ng 'mods\oot-remake-randomizer\randomizer-AB.ootrr') '{}'
     Write-File (Join-Path $ng 'mods\oot-remake-randomizer\randomizer-AB.spoiler.txt') 'chests'
@@ -823,7 +826,8 @@ try {
            -not (Test-Path -LiteralPath (Join-Path $ng 'mods\oot-remake-randomizer\randomizer-AB.spoiler.txt'))) 'new OOTRR: built seeds, their seed files and kept spoiler logs removed'
     Check ((Test-Path -LiteralPath (Join-Path $ng 'mods\randomizer-half\romfs\x.bin')) -and
            (Test-Path -LiteralPath (Join-Path $ng 'mods\oot-remake-randomizer\settings.txt')) -and
-           (Test-Path -LiteralPath (Join-Path $ng 'mods\hd-textures\romfs\y.bin'))) 'new OOTRR: other mods, the control folder and an unbuilt folder stay'
+           (Test-Path -LiteralPath (Join-Path $ng 'mods\hd-textures\romfs\y.bin')) -and
+           (Test-Path -LiteralPath (Join-Path $ng 'mods\randomizer-hand\coop-seed.txt'))) 'new OOTRR: other mods, the control folder, an unbuilt folder and a hand-put seed stay'
     Check (@(Remove-KitRandoSeeds (Join-Path $hk 'no-such-game') 'v0.6.0').Count -eq 0) 'new OOTRR: no mods folder -> nothing'
     # Install-KitOotrr (player report 2026-11-19, Velvet: no tools\ootrr\ootrr.exe on every start after Update.bat, the
     # randomizer broken; the old step deleted tools\ootrr before unpacking, so any failure after that left none).
@@ -900,6 +904,11 @@ try {
     $rst = 'romfs\System\Resource\T.rsizetable.zs'
     Write-File (Join-Path $rg "mods\randomizer-AB\$rst") 'seed'
     Write-File (Join-Path $rg 'mods\randomizer-AB\coop-seed.txt') "AB`n"
+    Write-File (Join-Path $rg 'mods\randomizer-AB\coop-rando.txt') "default`n"
+    # (a seed put in by hand, older than the pack too: not the kit's to build again or remove; merge_tables.py merges it)
+    Write-File (Join-Path $rg "mods\randomizer-hand\$rst") 'hand'
+    Write-File (Join-Path $rg 'mods\randomizer-hand\coop-seed.txt') "hand`n"
+    (Get-Item (Join-Path $rg "mods\randomizer-hand\$rst")).LastWriteTimeUtc = [datetime]::UtcNow.AddHours(-1)
     Write-File (Join-Path $rg "mods\_off\$rst") 'off'
     Write-File (Join-Path $rg "mods\contents\0400486024DEC000\coop-puppet\$rst") 'pack'
     (Get-Item (Join-Path $rg "mods\randomizer-AB\$rst")).LastWriteTimeUtc = [datetime]::UtcNow.AddHours(-1)
@@ -908,6 +917,8 @@ try {
     $lines = @(Update-KitRandoSeeds $rg)
     Check (-not (Test-Path -LiteralPath (Join-Path $rg 'mods\randomizer-AB')) -and $lines.Count -eq 1 -and $lines[0] -match 'removed') 'rando seeds: no OOTRR to build it again -> the seed is removed, said once'
     Check (@(Get-KitStaleRandoSeeds $rg).Count -eq 0) 'rando seeds: nothing stale after'
+    Check (Test-Path -LiteralPath (Join-Path $rg "mods\randomizer-hand\$rst")) 'rando seeds: a hand-put seed older than the pack stays'
+    Remove-Item -LiteralPath (Join-Path $rg 'mods\randomizer-hand') -Recurse -Force
     # Built again with OOTRR (a fake: writes the seed as `ootrr build` does): the game's own files OOTRR does not
     # write stay in the seed, so the players still find spoiler.txt and settings.txt (player report 0.11.3).
     Write-File (Join-Path $rg "mods\randomizer-AB\$rst") 'seed'

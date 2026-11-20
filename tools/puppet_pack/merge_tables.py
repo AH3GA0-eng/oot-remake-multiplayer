@@ -17,10 +17,12 @@ pack's entries in by hand, e.g. a skins mod), needs no merge: it is left as it i
 also the only way a winner under `contents/` other than the pack (a title's own mod folder, never rewritten here)
 keeps the puppets on.
 
-Our own seeds (`randomizer-*`) are left alone when they win: the module builds a seed beside every other table
-already (coop_rando StageSizeTables). When the puppet pack wins (a mod the Mods list does not name that sorts under
+Our own seeds (`randomizer-*` with `coop-rando.txt`, built by the game) are left alone when they win: the module
+builds a seed beside every other table already (coop_rando StageSizeTables). When the puppet pack wins (a mod the Mods list does not name that sorts under
 `contents/` by name, e.g. "bestbuddy"), the other mods' entries go into the pack's table, our seeds' not: without
 them a file that mod made larger has no size the game accepts and the game aborts at the start (player report 101).
+A seed folder put in by hand (no `coop-rando.txt`: built with another OOTRR, or made on OOTRR's page) is a mod like
+any other here: merged when it wins, its entries taken when the pack wins.
 
 The puppet pack's rows in RSDB tables (player report 144/145, merge_rows): before the size tables, each RSDB table the
 pack ships (ActorInfo, GameActorInfo) is merged the same way into the copy of the mod that wins it, our seeds too, and
@@ -146,9 +148,15 @@ def tables_of(path):
         return []
 
 
-def is_ours(name):
+SEED_MARK = "coop-rando.txt"  # in a seed the game built (coop_rando kPresetFile): a hand-put seed has none
+
+
+def is_ours(name, path):
+    """The randomizer's control folder, or a seed the game built (beside every other table already)."""
     top = fold(name).split("/", 1)[0]
-    return top.startswith("randomizer-") or top == CONTROL
+    if top == CONTROL:
+        return True
+    return top.startswith("randomizer-") and "/" not in fold(name) and os.path.isfile(os.path.join(path, SEED_MARK))
 
 
 def fnv64_bytes(data):
@@ -592,7 +600,7 @@ def merge_mods(root, romfs, say=print, fit=None):
             # list does not name it): that mod's entries go into the pack's table, else a file it made larger has no
             # size the game accepts and the game aborts at the start (player report 101). Our seeds are left out:
             # each is built beside every other table, and the pack's table changing makes them be built again.
-            others = [(n, p) for n, p in having[:-1] if not is_ours(n)]
+            others = [(n, p) for n, p in having[:-1] if not is_ours(n, p)]
             if not others:  # (the pack's table alone, or with our seeds only)
                 if fit:
                     try:
@@ -604,7 +612,7 @@ def merge_mods(root, romfs, say=print, fit=None):
             pack_in, title_mod = [], False
         else:
             title_mod = fold(win_name).startswith("contents/")
-            if len(having) < 2 or is_ours(win_name):  # (one table, or one of our seeds: left as it is but the fit)
+            if len(having) < 2 or is_ours(win_name, win_path):  # (one table, or our seed: left as it is but the fit)
                 if fit and not title_mod:
                     try:
                         fit_in_place(codec, win_name, win_path, fname, fit, say)

@@ -62,6 +62,11 @@ class MergeTablesTest(unittest.TestCase):
         with open(self.path(mod, "romfs", "System", "Resource", NAME), "rb") as f:
             return mt.Codec(self.romfs).load(f.read())
 
+    def mark_ours(self, mod):
+        """A seed the game built (coop_rando writes coop-rando.txt into each); one put in by hand has none."""
+        with open(self.path(mod, mt.SEED_MARK), "w", encoding="utf-8", newline="\n") as f:
+            f.write("default\n")
+
     def run_merge(self):
         self.lines = []
         return mt.merge_mods(self.mods, self.romfs, self.say)
@@ -172,10 +177,34 @@ class MergeTablesTest(unittest.TestCase):
     def test_our_seeds_are_left_alone(self):
         self.put_table(PACK, {1: 100})
         self.put_table("randomizer-S1", {2: 5})  # ours: built beside every table already
+        self.mark_ours("randomizer-S1")
         self.assertEqual(self.run_merge(), 0)
         self.assertEqual(self.lines, [])
         self.assertEqual(self.table("randomizer-S1").by_crc, {2: 5})
         self.assertEqual(self.table(PACK).by_crc, {1: 100})
+
+    def test_a_hand_put_seed_that_wins_is_merged_like_any_mod(self):
+        # Nax 2026-11-20: a seed built with an OOTRR from source, its randomizer-<seed> folder copied to every player
+        # (no coop-rando.txt). Not ours: it gets the pack's entries, its own table kept (which coop_rando's
+        # SeedFilesHash reads, so two players' copies still match after their merges).
+        self.put_table(PACK, {1: 100, 3: 9})
+        hand = self.put_table("randomizer-NAX1", {1: 120, 2: 5})
+        own = read(hand)
+        self.assertEqual(self.run_merge(), 0)
+        self.assertEqual(self.table("randomizer-NAX1").by_crc, {1: 120, 2: 5, 3: 9})
+        self.assertEqual(read(self.path("randomizer-NAX1", mt.KEEP_DIR, NAME)), own)
+        self.assertTrue(os.path.isfile(self.path("randomizer-NAX1", mt.MARK)))
+        self.assertIn("randomizer-NAX1", self.lines[0])
+
+    def test_a_hand_put_seed_under_a_winning_pack_is_merged_into_it(self):
+        self.put_table(PACK, {1: 100})
+        self.put_table("randomizer-NAX1", {4: 4})
+        self.put_table("randomizer-S1", {5: 5})
+        self.mark_ours("randomizer-S1")
+        with open(os.path.join(self.mods, mt.LIST_FILE), "w", encoding="utf-8", newline="\n") as f:
+            f.write(f"coop-mods 1\non {PACK}\non randomizer-S1\non randomizer-NAX1\n")
+        self.assertEqual(self.run_merge(), 0)
+        self.assertEqual(self.table(PACK).by_crc, {1: 100, 4: 4})  # the hand seed's in, our seed's not
 
     def test_a_mod_under_the_pack_by_name_gets_its_entries_into_the_packs_table(self):
         # Player report 101: "bestbuddy" (RSDB tables made larger, its own size table) sorts under "contents/", so
@@ -210,6 +239,7 @@ class MergeTablesTest(unittest.TestCase):
         self.put_table(PACK, {1: 100})
         self.put_table("bestbuddy", {3: 3})
         self.put_table("randomizer-S1", {4: 4})
+        self.mark_ours("randomizer-S1")
         with open(os.path.join(self.mods, mt.LIST_FILE), "w", encoding="utf-8", newline="\n") as f:
             f.write(f"coop-mods 1\non {PACK}\non randomizer-S1\n")
         self.assertEqual([n for n, _ in mt.load_order(self.mods)], ["bestbuddy", "randomizer-S1", PACK])
@@ -568,6 +598,8 @@ class MergeRowsTest(unittest.TestCase):
         own = self.put_rows(SEED, [{"__RowId": "Npc_Mido", "Heap": 9}, {"__RowId": "Player_Child", "Heap": 2},
                                    {"__RowId": "Rando_Item", "Heap": 5}])
         self.put_sizes(SEED, 4000)
+        with open(self.path(SEED, mt.SEED_MARK), "w", encoding="utf-8", newline="\n") as f:
+            f.write("default\n")  # (a seed the game built)
         return read(own)
 
     def test_a_seed_with_its_own_actor_table_gets_the_pack_rows_and_a_size_that_fits(self):
@@ -631,6 +663,8 @@ class MergeRowsTest(unittest.TestCase):
         self.put_rows(PACK, self.pack_rows())
         self.put_sizes(PACK, 5000)
         self.put_sizes(SEED, 4000)  # (an OOTRR 0.5.0 seed: no ActorInfo of its own)
+        with open(self.path(SEED, mt.SEED_MARK), "w", encoding="utf-8", newline="\n") as f:
+            f.write("default\n")  # (a seed the game built: its size table is left alone)
         pack_raw = read(self.path(PACK, "romfs", "RSDB", AI))
         self.assertEqual(self.run_all(), (0, {}))
         self.assertEqual(read(self.path(PACK, "romfs", "RSDB", AI)), pack_raw)
