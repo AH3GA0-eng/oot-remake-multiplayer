@@ -1512,6 +1512,12 @@ TEST_CASE("objects: row 175, a Poe sister's painting that died here sends the ki
     plays.clear();
     hitter.Plays(480 * kMs, plays);
     CHECK(plays.empty());
+    // Review of bd5fab5c: played again once. What it shows after that death (its end, inside kPictureReplayUs) is
+    // its own: no second replay.
+    hitter.Tick(kScene, 1, 490 * kMs, {painting("Pct_Wait")}, send, writes);
+    plays.clear();
+    hitter.Plays(500 * kMs, plays);
+    CHECK(plays.empty());
     send.clear();
 
     // The owner says it dead: ours is not deleted (its own death runs the room logic here).

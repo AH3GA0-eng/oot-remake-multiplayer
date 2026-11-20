@@ -1919,6 +1919,14 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 o.picture_kill_due = true;
                 o.picture_die = s.animation->name;
             }
+        } else if (o.picture_die_at != 0 && s.animation && !o.picture_replayed) {
+            // Review of bd5fab5c: a cut-off death is played again once. Its death seen playing again after it was
+            // cut ends the replay; a later other animation is its own (a finished death), never cut again.
+            if (!IsDeathAnimation(s.animation->name)) {
+                o.picture_cut = true;
+            } else if (o.picture_cut) {
+                o.picture_replayed = true;
+            }
         }
         if (s.hit_ours && *s.hit_ours) {
             o.ours_hit_at = now_us;  // issue 133: its newest hit was ours (its game's own hit record)
@@ -3935,7 +3943,7 @@ void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
         // Row 175: our painting's own death, cut off by an owner's play already on its way: played again (from
         // frame 0, once a sample) over whatever else it shows, so its room logic goes on.
         if (o.picture_die_at != 0 && now_us >= o.picture_die_at && now_us - o.picture_die_at < kPictureReplayUs &&
-            !o.picture_die.empty() && o.animation && !IsDeathAnimation(o.animation->name)) {
+            !o.picture_die.empty() && !o.picture_replayed && o.animation && !IsDeathAnimation(o.animation->name)) {
             out.push_back({address, o.picture_die, 1.0f, 0.0f, o.picture_die_at, 0, o.animation->name});
             continue;
         }
