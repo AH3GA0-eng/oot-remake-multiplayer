@@ -618,6 +618,20 @@ void Table::NoteOwnHit(std::uint64_t actor, bool by_shot) {
     e->react_until = std::max(e->react_until, steps_ + kReactSteps);
 }
 
+void Table::NoteOwnStun(std::uint64_t actor) {
+    std::lock_guard lock(mutex_);
+    Entry* e = FindActor(actor);
+    if (e == nullptr || e->role != Role::copy || !e->wanted) {
+        return;
+    }
+    if (!OwnTime(*e)) {
+        MakeLate(*e);
+        ++counts_.copy_own_stuns;
+        Note(e->name + ": its own stun in our game (the owner's is not stunned): the copy runs its own");
+    }
+    e->react_until = std::max(e->react_until, steps_ + kReactSteps);
+}
+
 void Table::NoteOwnDamage(std::uint64_t actor) {
     std::lock_guard lock(mutex_);
     Entry* e = FindActor(actor);

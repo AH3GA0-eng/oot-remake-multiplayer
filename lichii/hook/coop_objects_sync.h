@@ -414,8 +414,10 @@ bool UnderCeilingEnemy(const coop::protocol::Vec3& enemy, const coop::protocol::
 
 // Issue 150: a boss animation that plays while it is stunned or knocked down
 // ("Stun_Lp", "Down_Start", "Fall_St" when Gohma drops from the ceiling): the
-// first word, LOD suffix off, is Stun, Down, Fall or Faint. A seed in Gohma's
-// eye stuns it and takes no life, so a stun is the only sign of that hit.
+// first word, LOD suffix off, is Stun, Down, Fall, Faint or Chance, or starts
+// with ChanceTime or DownTimeReaction (row 169: Morpha, Volvagia, the Poe
+// sisters, Phantom Ganon, Ganondorf). A seed in Gohma's eye stuns it and takes
+// no life, so a stun is the only sign of that hit.
 bool IsStunAnimation(std::string_view name);
 
 // An animation name without its level-of-detail suffix ("Wait_ModelOnlyLOD"
@@ -947,6 +949,10 @@ public:
     // to give back). With the enemies' brain path (CoopBossNative, Boss::plain) the copy's own brain is let
     // run for the wake (NoteOwnWake): the rise is its brain's, not a play put back.
     std::vector<std::uint64_t> TakeOwnWakeStarts() { return std::exchange(own_wake_starts_, {}); }
+    // Present thread (row 169): the boss copies read in a stun of their own this walk (their own game's stun
+    // animation, the owner's last one not a stun: the reading that asks the hand-over, issue 150), every walk while
+    // it plays. The glue gives each to CoopBossNative::Table::NoteOwnStun: the stun is the copy's own time.
+    std::vector<std::uint64_t> TakeOwnStuns() { return std::exchange(own_stuns_, {}); }
     // The owner side flags a woken enemy only this long after it left its
     // rest animation, so an enemy that patrols or flies near its owner's
     // Link is not held in a fight for good (that would stop the chase rule).
@@ -1381,6 +1387,7 @@ private:
     std::vector<std::uint64_t> ours_now_;     // copies that became ours (TakeOursNow)
     std::vector<std::pair<std::uint64_t, std::string>> own_wakes_;  // report 109 (TakeOwnWakes)
     std::vector<std::uint64_t> own_wake_starts_;                    // (TakeOwnWakeStarts)
+    std::vector<std::uint64_t> own_stuns_;                          // row 169 (TakeOwnStuns)
     std::map<std::uint64_t, Decided> decided_;  // by director key
     // Report 99: late encounters other games announced that we lack, held
     // until our Link is near (IsLateEncounter). By id; first heard at got_us,
