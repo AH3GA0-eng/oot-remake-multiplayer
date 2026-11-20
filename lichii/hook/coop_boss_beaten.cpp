@@ -2,6 +2,7 @@
 #include "coop_boss_beaten.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <utility>
 #include <variant>
 
@@ -223,6 +224,10 @@ std::vector<Write> Apply::Check(const std::optional<std::string>& scene, bool pl
         const std::uint8_t room = *it;
         const BeatenSet* set = ForRoom(room);
         if (set == nullptr || Has(beaten, room)) {
+            if (set != nullptr) {
+                Note(room, 200, std::string(set->boss) + ": the put-back after the host's save load ends: beaten "
+                                                         "again since (the record has it)");
+            }
             it = reverts_.erase(it);  // beaten again since the reset: Apply gives the set below
             continue;
         }
@@ -247,8 +252,13 @@ std::vector<Write> Apply::Check(const std::optional<std::string>& scene, bool pl
             // not dropped: the host's step reaches our quest through the flag watcher's store, maybe a frame
             // after the reset is seen; a drop at that first read left the guest's warp up while the shared quest,
             // set a moment later, made the boss again. Only a later reset or the boss beaten again ends it.
-            Note(room, 3, std::string(set->boss) + ": after the host's save load its quest reads beaten: our "
-                                                   "flags stay (until it reads alive)");
+            char hex[16];
+            std::snprintf(hex, sizeof hex, "%08x", static_cast<unsigned>(*step));
+            // Once per step value read (a step that changes is said again).
+            Note(room, static_cast<std::uint8_t>(3 + (*step & 0x7fu)),
+                 std::string(set->boss) + ": after the host's save load its quest reads beaten (" + hex +
+                     (*step == set->step ? std::string(" = ") + set->step_name : std::string()) +
+                     "): our flags stay (until it reads alive)");
             ++it;
             continue;
         }
