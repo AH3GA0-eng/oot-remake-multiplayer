@@ -16,6 +16,13 @@
 //   table order, each until it reads back 1 for kApplyFrames frames. Then the event's held flags land (Hold below).
 //   Asker not found, or an output that never stays 1 within kTryMs: the flags stay held until we leave the dungeon or
 //   load (the safe floor of issue 129), one log line.
+// - performer plays (row 165): an event flow's EventPlayAS on a room actor whose Logic_Delete reads the event's played
+//   state (Dodongo's broken stair, the Forest Temple's box puzzle boxes, Ganon's Castle's lift rock). The room swaps
+//   that actor for its end actor only when it loads with the event played, so the other player's played flag changes
+//   nothing in our loaded room (run hs-dc-break: the up stair stayed): the event's own AS on its performer is the live
+//   result. Such an asker is class asker: our performer (the one of its name at its placement) plays that AS through
+//   the game's AS play request (0x2022a0, as the object sync's copies), once each, before our asker's outputs are set.
+//   A performer not in our room (already its end state, or moved away) is skipped with a log line.
 // - result guards: a shared flag that deletes a class-asker asker (Logic_Delete, read live). The other player's game
 //   sets it during or at the end of its event; landing first, it would delete our asker before our result is set (the
 //   Deku ladder never fell). It waits in its scene until our result is set this visit or our game played the event.
@@ -50,6 +57,24 @@ struct Result {
 };
 std::span<const Result> Results();
 
+// One performer's AS of an event (generated, row 165).
+struct Play {
+    std::string_view event;
+    std::string_view scene;
+    std::string_view actor;  // the performer's name
+    std::array<float, 3> at; // its placement
+    std::string_view as;     // the AS the event plays on it
+};
+std::span<const Play> Plays();
+// The plays of `event` in `scene`, in table order.
+std::vector<const Play*> PlaysOf(std::string_view event, std::string_view scene);
+// A performer is the actor of its name within this of its placement.
+inline constexpr float kPerformerAtM = 1.5f;
+// The longest AS name a play cell holds (with its 0).
+inline constexpr std::size_t kPlayNameCell = 0x40;
+// Play requests per performer at most (the AS did not show in its slot 0 after the first).
+inline constexpr int kMaxPlayCalls = 2;
+
 struct Guard {
     std::string_view flag;
     std::string_view scene;
@@ -57,7 +82,8 @@ struct Guard {
 };
 std::span<const Guard> Guards();
 
-// Every class-asker line of `event` in `scene`, nearest asker place to `link` first (table order without `link`).
+// Every class-asker line of `event` in `scene` (outputs to set, or plays of the event there), nearest asker place to
+// `link` first (table order without `link`).
 std::vector<const Result*> AskerLines(std::string_view event, std::string_view scene,
                                       const std::optional<std::array<float, 3>>& link = std::nullopt);
 // Whether every asker of `event` is class live (and it has at least one line): its played flag is not held.
@@ -157,7 +183,11 @@ private:
         int ones = 0;                // frames it read 1 in a row
         int sets = 0;                // our set-bools of this output
         int zeros_after_set = 0;     // frames it read 0 after one of our sets (something rewrites it)
+        std::size_t play = 0;        // the performer play being done (PlaysOf order), before the outputs
+        int play_calls = 0;          // our play requests of it
+        int play_ones = 0;           // frames its slot 0 showed the AS in a row
     };
+    std::optional<CoopPuppet::Call> PlayStep(CoopPuppet::Guest& guest, Try& t, std::uint64_t main);
     std::optional<CoopPuppet::Call> Frame(CoopPuppet::Guest& guest, std::uint64_t main, std::uint64_t now_ms);
     void End(const std::string& why, bool applied);
     static bool EventRunning(CoopPuppet::Guest& guest, std::uint64_t main);
@@ -170,7 +200,7 @@ private:
     std::set<std::string> applied_;  // this visit
     std::set<std::string> ended_;    // this visit: tried and not set (asked again on the next visit)
     std::uint64_t block_ = 0;
-    enum class Next { none, malloc, execute };
+    enum class Next { none, malloc, execute, play };
     Next next_ = Next::none;
     bool failed_ = false;  // the malloc gave nothing: nothing is set (the flags stay held)
 };

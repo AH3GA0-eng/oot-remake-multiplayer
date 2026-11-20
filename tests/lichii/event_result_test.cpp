@@ -8,6 +8,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "coop/protocol/codec.hpp"
@@ -95,12 +96,42 @@ struct Cave {
     bool sticks = true;
     int executes = 0;
     int mallocs = 0;
+    std::uint64_t malloc_size = 0;
+    // Row 165: performers (name -> address) and the game's AS play: slot 0 then shows the name it was given, unless
+    // `shows` is false (another AS took slot 0 at once).
+    std::map<std::string, std::uint64_t, std::less<>> performers;
+    bool shows = true;
+    std::vector<std::pair<std::uint64_t, std::string>> plays;  // (actor, AS) per play request
     CoopEyeSwitch::Finder Finder() {
         return [this](CoopPuppet::Guest&, std::uint64_t, std::span<const std::string_view> names,
                       const std::array<float, 3>&, float) {
             const bool asked = names.front() == "EventRequestActor";
+            if (const auto it = performers.find(names.front()); it != performers.end()) {
+                return std::vector<std::uint64_t>{it->second};
+            }
             return asked && present ? std::vector<std::uint64_t>{kAsker} : std::vector<std::uint64_t>{};
         };
+    }
+    // A performer at `actor` with an AS controller whose slot 0 plays `name` (kept in its own cell here).
+    void Performer(const std::string& name, std::uint64_t actor) {
+        namespace pa = CoopPuppet::addr;
+        performers[name] = actor;
+        std::uint64_t at = actor;
+        for (std::size_t i = 0; i < pa::kControllerPath.size(); ++i) {
+            const std::uint64_t next = actor + 0x1000 * (i + 1);
+            g.Put<std::uint64_t>(at + pa::kControllerPath[i], next);
+            at = next;
+        }
+        g.Put<std::uint64_t>(at + pa::kSlots, actor + 0x6000);
+        g.Put<std::uint64_t>(actor + 0x6000, actor + 0x7000);  // slot 0
+        g.Put<std::uint64_t>(actor + 0x7000 + pa::kSlotName, actor + 0x8000);
+        const char wait[] = "Wait";
+        g.Write(actor + 0x8000, wait, sizeof wait);
+    }
+    std::string Text(std::uint64_t at) {
+        std::string out;
+        for (char c = g.Get<char>(at); c != 0 && out.size() < 80; c = g.Get<char>(at + out.size())) out += c;
+        return out;
     }
     void Frame(CoopEventResult::Setter& s, std::uint64_t now_ms) {
         auto call = s.Step(g, false, 0, kMain, now_ms);
@@ -108,7 +139,15 @@ struct Cave {
             std::uint64_t result = 0;
             if (call->function == kMain + ls::kMalloc) {
                 ++mallocs;
+                malloc_size = call->x[0];
                 result = kBlock;
+            } else if (call->function == kMain + CoopPuppet::addr::kPlayAs) {
+                const auto actor = g.Get<std::uint64_t>(call->x[0]);
+                const auto name = g.Get<std::uint64_t>(call->x[0] + 8);
+                plays.emplace_back(actor, Text(name));
+                CHECK(name >= kBlock);
+                CHECK(name + CoopEventResult::kPlayNameCell <= kBlock + malloc_size);  // in our block
+                if (shows) g.Put<std::uint64_t>(actor + 0x7000 + CoopPuppet::addr::kSlotName, name);
             } else if (call->function == kMain + ls::kExecute) {
                 ++executes;
                 const int plug = Asker::PlugOf(g.Get<std::uint32_t>(kBlock + ls::kNodeKey));
@@ -196,6 +235,88 @@ TEST_CASE("event result: a class-live event has nothing to set") {
     CHECK_FALSE(s.Want(kWater, kDeku));
     cave.Frame(s, 100);
     CHECK(cave.mallocs == 0);  // nothing asked of the game
+}
+
+namespace {
+const std::string kStairs = "Dm_DodongoCave_0010";
+const std::string kDodongo = "DodongoCavern";
+const std::string kStair = "Obj_DodongoCave_BrokenStair_A_01";
+const std::string kStairAs = "Obj_DodongoCave_BrokenStair_A_01_Demo_Anim";
+constexpr std::uint64_t kStairActor = 0x100000;
+}  // namespace
+
+TEST_CASE("event result: row 165: an event whose performer's AS is its result is class asker") {
+    // Run hs-dc-break: the played flag landing changed nothing in a loaded room (the room swaps the stair only at its
+    // load); the event's own EventPlayAS on the stair is the live result.
+    CHECK_FALSE(CoopEventResult::IsLive(kStairs));
+    REQUIRE(CoopEventResult::AskerLines(kStairs, kDodongo).size() == 1);
+    const auto plays = CoopEventResult::PlaysOf(kStairs, kDodongo);
+    REQUIRE(plays.size() == 1);
+    CHECK(plays[0]->actor == kStair);
+    CHECK(plays[0]->as == kStairAs);
+    // The same pattern elsewhere: the Forest Temple's box puzzle boxes, Ganon's Castle's lift rock.
+    CHECK(CoopEventResult::PlaysOf("Dm_ForestTemple_0014", "ForestTemple").size() == 4);
+    CHECK(CoopEventResult::PlaysOf("Dm_InsideGanonCastle_0035", "InsideGanonCastle").size() == 1);
+    CHECK_FALSE(CoopEventResult::IsLive("Dm_ForestTemple_0014"));
+    CHECK_FALSE(CoopEventResult::IsLive("Dm_InsideGanonCastle_0035"));
+    // The Fire Temple's hammer stair is a door whose isOpen reads the shared flag live: no play, still live.
+    CHECK(CoopEventResult::PlaysOf("Dm_FireTemple_0029", "FireTemple").empty());
+    CHECK(CoopEventResult::IsLive("Dm_FireTemple_0029"));
+    // Its played flag waits in its scene until our result is set (a result guard).
+    const auto hold = CoopEventResult::HoldFor(kDodongo, {}, [](const std::string&) { return false; });
+    CHECK(hold.Waits(coop::protocol::flag_hash("HavePlayedEvent." + kStairs)));
+    const auto done = CoopEventResult::HoldFor(kDodongo, {kStairs}, [](const std::string&) { return false; });
+    CHECK(done.Releases(coop::protocol::flag_hash("HavePlayedEvent." + kStairs)));
+}
+
+TEST_CASE("event result: row 165: our stair plays the event's AS once, then the result counts as set") {
+    Cave cave;
+    cave.Performer(kStair, kStairActor);
+    CoopEventResult::Setter s(cave.Finder());
+    s.Visit(kDodongo);
+    REQUIRE(s.Want(kStairs, kDodongo));
+    std::uint64_t now = 1000;
+    for (int f = 0; f < 20 && !s.Applied().contains(kStairs); ++f) cave.Frame(s, now += 16);
+    CHECK(s.Applied().contains(kStairs));
+    REQUIRE(cave.plays.size() == 1);  // once: slot 0 showed it
+    CHECK(cave.plays[0].first == kStairActor);
+    CHECK(cave.plays[0].second == kStairAs);
+    CHECK(cave.executes == 0);  // no asker output to set
+    CHECK(cave.malloc_size >= CoopLogicSet::addr::kBlockSize + 0x30 + CoopEventResult::kPlayNameCell);
+    const auto notes = s.TakeNotes();
+    CHECK(Noted(notes, "our " + kStair + " plays " + kStairAs));
+    CHECK(Noted(notes, "set (its performers' AS)"));
+    // Asked again this visit: not played again.
+    CHECK(s.Want(kStairs, kDodongo));
+    cave.Frame(s, now += 16);
+    CHECK(cave.plays.size() == 1);
+}
+
+TEST_CASE("event result: row 165: a performer not at its place is skipped, one that never shows is played twice") {
+    {
+        Cave cave;  // no stair here (our room shows its end already)
+        CoopEventResult::Setter s(cave.Finder());
+        s.Visit(kDodongo);
+        REQUIRE(s.Want(kStairs, kDodongo));
+        std::uint64_t now = 1000;
+        for (int f = 0; f < 10; ++f) cave.Frame(s, now += 16);
+        CHECK(s.Applied().contains(kStairs));
+        CHECK(cave.plays.empty());
+        CHECK(Noted(s.TakeNotes(), "is not at its place: skipped"));
+    }
+    {
+        Cave cave;
+        cave.Performer(kStair, kStairActor);
+        cave.shows = false;
+        CoopEventResult::Setter s(cave.Finder());
+        s.Visit(kDodongo);
+        REQUIRE(s.Want(kStairs, kDodongo));
+        std::uint64_t now = 1000;
+        for (int f = 0; f < 20; ++f) cave.Frame(s, now += 16);
+        CHECK(cave.plays.size() == static_cast<std::size_t>(CoopEventResult::kMaxPlayCalls));
+        CHECK(s.Applied().contains(kStairs));
+        CHECK(Noted(s.TakeNotes(), "did not show " + kStairAs));
+    }
 }
 
 TEST_CASE("event result: our asker's EventBool then EventFinish, each read 1 for 3 frames, then set") {
