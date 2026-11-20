@@ -45,7 +45,7 @@ wait 2400               # her death and its event
 wait 1200               # A takes the container first
 goto 7.5 68.2 1.5 900   # B onto its own copy of it (1 m beside A)
 wait 300
-goto 9.0 68.2 1.5 300
+goto 17.3 67.6 1.0 600   # onto the container (Banc 0xf914fa367471a3e3 17.31 47.0 67.63)
 wait 600
 mark b-r-pickup
 wait 1800

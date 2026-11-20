@@ -44,7 +44,7 @@ mark a-r-kill
 wait 2400               # her death and its event
 goto 7.5 67.2 1.5 900   # the room's centre, where the heart container falls: A first
 wait 300
-goto 9.0 67.2 1.5 300
+goto 17.3 67.6 1.0 600   # onto the container (Banc 0xf914fa367471a3e3 17.31 47.0 67.63)
 wait 600
 mark a-r-pickup
 wait 2400

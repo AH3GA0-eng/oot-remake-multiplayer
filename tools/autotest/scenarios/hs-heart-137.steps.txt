@@ -1,7 +1,8 @@
 # hs-heart-137 (tracker row 137, Navi's report; rows 136/181 family): take Gohma's container, the HOST then loads a save
 # from BEFORE the boss, refight: max hearts must not grow past the save's + one container (Navi's log: 12 -> 16 from
 # a guest still holding 16 after the host's load, then 16 -> 20 at the refight).
-# SAVE (both lanes, all slots, set offline before the run and restored after): MaxLife 12 (3 hearts) + the
+# SAVE (both lanes, all slots, set offline before the run and restored after): MaxLife 12 (3 hearts), the container's
+# 64-bit key dropped (save_flags.py drop-keys 0xf914fa367471a3e3: run 075304 VOID, no container was made) + the
 # gohma-alive profile of boss-away-0115-probe.ps1 (quest GoToBossRoom, her set alive). The tools have no in-game
 # return to the title, so the host's title load is its first: A (host) boots and stays on the title.
 # Run: tools\autotest\run.ps1 -Runtime hookshot -Lane 2 -Scenario hs-heart-137 -Timeout 1800 -Server <lane server>
@@ -20,7 +21,7 @@ start A
 start B
 sleep 40
 load B
-play B hs-boss-away-reset-kill.B.txt
+play B hs-heart-137-kill.B.txt
 lines b-killed B min=1 Dm_Deku_BossOut: our game started
 shot b-pickup
 load A
