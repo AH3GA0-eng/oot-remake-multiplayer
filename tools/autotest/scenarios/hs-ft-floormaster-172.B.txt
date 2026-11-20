@@ -25,14 +25,15 @@ wait 600
 mark b-near
 wait 240
 mark b-split
-wait 900                 # A goes down meanwhile: the hand-over at life 0
-mark b-handed
+wait 60                  # the game fuses unkilled Littles back after ~5 s (Grow_Fuse, run 051022): kill them now
 kill Enemy_Floormaster_Little
-wait 180
+wait 60
 kill Enemy_Floormaster_Little
-wait 180
+wait 60
 kill Enemy_Floormaster_Little
-wait 240
+wait 120
 mark b-littles
+wait 600                 # A goes down meanwhile (its root at life 0 already dead or dying)
+mark b-handed
 wait 1800
 mark b-end
