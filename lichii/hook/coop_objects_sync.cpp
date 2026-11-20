@@ -1244,9 +1244,13 @@ constexpr std::string_view kAreaDeleted[] = {
 } // namespace
 
 bool Sync::LeavesForGood(std::uint8_t self, const proto::ObjectId& id, std::string_view name,
-                         std::uint64_t address, const proto::Vec3& position) const {
+                         std::uint64_t /*address*/, const proto::Vec3& position) const {
+    // A director's copy counts too once it is ours (the owner test below): its
+    // maker's one is gone and the server handed it to us, so our game deleting
+    // it with no death is its end for everyone (skulltula-0118 follow-up: before,
+    // nobody said so, and the director made it again).
     if (self == 0 || id.kind != proto::ObjectKind::placed || !name.starts_with("Enemy_") || IsBossOrPart(name) ||
-        IsHatchingEgg(name) || bound_.contains(address)) {
+        IsHatchingEgg(name)) {
         return false;
     }
     for (const std::string_view kind : kAreaDeleted) {
@@ -2168,7 +2172,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         if (delete_events_ && !deleted && o.id.kind == proto::ObjectKind::placed && owner != owners_.end() &&
             owner->second.player != 0 && o.dead_at == 0 && !o.dead_said && !(o.life && *o.life <= 0) &&
             !(o.animation && IsDeathAnimation(o.animation->name)) && !IsHatchingEgg(o.name) &&
-            !bound_.contains(o.address)) {
+            !bound_.contains(o.address) && !(IsAnnounced(o.name) && gold_taken_.contains(o.id.value))) {
+            // (skulltula-0118: a taken Gold Skulltula is never away: Flush says it dead)
             away_.push_back({o.id, o.address, now_us + kAwayKeepUs, o.name, o.position, now_us});
             it = objects_.erase(it);
             continue;
@@ -2180,6 +2185,15 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             !(o.life && *o.life <= 0) && !(o.animation && IsDeathAnimation(o.animation->name)) &&
             LeavesForGood(self, o.id, o.name, o.address, o.position)) {
             left_.push_back({o.id, o.address, now_us, o.position, o.name});
+            // skulltula-0118 follow-up: a copy the director made that is ours
+            // now (its maker's one left, the server handed it to us) ends here
+            // too: never made again with nobody left to end it.
+            if (const auto bound = bound_.find(o.address); bound != bound_.end()) {
+                if (const auto d = decided_.find(bound->second); d != decided_.end()) {
+                    d->second.removed = true;
+                    d->second.dead = true;
+                }
+            }
             it = objects_.erase(it);
             continue;
         }
