@@ -20,7 +20,7 @@ struct Logged {
 TEST_CASE("boundary: EndedText reads up to the first NUL inside the buffer") {
     char buf[16] = {};
     CHECK(CoopBoundary::EndedText(buf, sizeof buf).empty());
-    std::snprintf(buf, sizeof buf, "%s", "C:\\saves\\slot_01");   // (cut to 15 chars and ended, as patch 0025 writes)
+    CHECK(std::snprintf(buf, sizeof buf, "%s", "C:\\saves\\slot_01") == 16);   // (cut to 15 chars and ended, as patch 0025 writes; the return used: gcc -Wformat-truncation=1 only flags an unused one)
     CHECK(CoopBoundary::EndedText(buf, sizeof buf) == "C:\\saves\\slot_0");
     CHECK(CoopBoundary::EndedText(nullptr, 16).empty());
     CHECK(CoopBoundary::EndedText(buf, 0).empty());
