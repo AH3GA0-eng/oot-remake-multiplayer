@@ -353,11 +353,12 @@ std::vector<Menu::Line> Menu::Lines() const {
                        "The UDP port your game listens on when you host (default 27510). Type a number from 1 to "
                        "65535."});
         out.push_back({Action("Relay", typing_ && typing_act_ == Act::kRelay ? options_.relay + "_"
-                                       : options_.relay.empty()                  ? std::string("None")
-                                                                                 : options_.relay),
+                                       : options_.relay.empty() || options_.relay == CoopTitleMenu::kDefaultRelay
+                                           ? std::string(CoopTitleMenu::kDefaultRelayName)
+                                           : options_.relay),
                        Act::kRelay,
-                       "The relay that finds rooms by name and lists public rooms: host[:port]. Hosting through it "
-                       "needs no router setup. Empty: the kit's default."});
+                       "The relay that finds rooms by name and lists public rooms. Squadala's own is built in; type "
+                       "another (host or host:port) to use it instead. Cleared: Squadala's again."});
         out.push_back({Action("Room name", typing_ && typing_act_ == Act::kRoom ? options_.relay_room + "_"
                                            : options_.relay_room.empty()        ? std::string("None")
                                                                                 : options_.relay_room),
@@ -1067,6 +1068,9 @@ void Menu::Decide(Act act) {
     case Act::kRelay:
     case Act::kRoom:
         name_before_ = act == Act::kRelay ? options_.relay : options_.relay_room;
+        // (the built-in relay is not typed over: the field starts empty for one of the player's own, and left empty
+        // it is the built-in one again; Esc keeps it)
+        if (act == Act::kRelay && options_.relay == CoopTitleMenu::kDefaultRelay) options_.relay.clear();
         typing_ = true;
         typing_act_ = act;
         typing_fresh_ = false;

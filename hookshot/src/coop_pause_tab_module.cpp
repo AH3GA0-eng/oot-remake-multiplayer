@@ -444,6 +444,10 @@ SessionView ViewNow(View view) {
         v.typing = g_page.Typing();
         v.room_field = g_page.Field(0).Shown(v.typing == 0, kRowChars - 12);      // ("Room or IP: ")
         v.join_address = g_page.Field(0).text().find_first_of(".:") != std::string::npos;
+        if (const std::string& f = g_page.Field(0).text(); v.join_address) {
+            const auto colon = f.rfind(':');
+            v.join_port = colon != std::string::npos ? std::atoi(f.c_str() + colon + 1) : coop::protocol::kDefaultPort;
+        }
         v.password_field = g_page.Field(1).Shown(v.typing == 1, kRowChars - 10);  // ("Password: ")
         v.room_ready = v.s.room_ready = g_page.Field(0).Ready();
         v.s.lan_password = !g_page.Field(1).text().empty();
@@ -1248,6 +1252,7 @@ std::uint64_t g_b_list_last = 0;    // (the pad's last read, for B on the list: 
 bool g_b_swallow = false;           // (that B, held: not the page's)
 std::uint64_t g_list_left_ms = 0;    // (the mouse's Left off the list: the last one)
 std::uint64_t g_page_since_ms = 0;
+int g_mouse_steps_logged = 0;        // (trace: the mouse's steps logged so far)
 float g_skip_mouse_x = 0, g_skip_mouse_y = 0;   // (the mouse's last place and when it moved: RowSkip waits then)
 std::uint64_t g_skip_mouse_ms = 0;   // (when our page showed last: RowSkip waits a moment after)
 int g_slow_logged = 0;               // (trace: slow updates of ours logged so far)
@@ -1381,11 +1386,11 @@ void PublishKeyboard() {
     const int t = g_page.Typing();
     s.open = t >= 0 && g_page.Shown();
     if (s.open) {
-        s.title = t == 4   ? "Relay address (host or host:port)"
+        s.title = t == 0   ? "Room name, or IP address and :port (192.168.1.20:27510)"
+                  : t == 4 ? "Relay address (host or host:port)"
                   : t == 3 ? "Port when hosting (1 to 65535)"
                   : t == 2 ? "New join password"
-                  : t == 1 ? "Join password"
-                           : "Room name";
+                           : "Join password";
         s.text = g_page.Field(t).Shown(true, 40);
         s.row = g_page.KeyCursor().row(), s.col = g_page.KeyCursor().col();
     }
@@ -1895,6 +1900,22 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                 if ((mouse & (kPadUp | kPadDown)) != 0 && FocusedShownName().rfind("Pa_List_", 0) == 0) {
                     mouse = mi.now_ms - g_list_left_ms >= 150 ? kPadLeft : 0;
                     if (mouse != 0) g_list_left_ms = mi.now_ms;
+                }
+                // (never past the first or last shown row: the game's cursor wraps from the top row to the bottom one,
+                // so a step there went between Hosting and Stop hosting without end, a tester's run 2026-11-19)
+                if ((mouse & (kPadUp | kPadDown)) != 0 && mi.focused >= 0) {
+                    int first = -1, last = -1;
+                    for (int r = 0; r < kRows; ++r) {
+                        if (mi.boxes[static_cast<std::size_t>(r)].shown) last = r, first = first < 0 ? r : first;
+                    }
+                    const bool wraps = ((mouse & kPadUp) != 0 && mi.focused <= first) ||
+                                       ((mouse & kPadDown) != 0 && last >= 0 && mi.focused >= last);
+                    if (++g_mouse_steps_logged <= 40) {
+                        LOG_INFO(Core, "coop: pause tab: the mouse steps {} from row {} (the cursor on {}; rows shown {}..{}){}",
+                                 (mouse & kPadUp) != 0 ? "up" : "down", mi.focused, FocusedShownName(), first, last,
+                                 wraps ? ": not past the end" : "");
+                    }
+                    if (wraps) mouse &= ~(kPadUp | kPadDown);
                 }
                 // The game's cursor off the Multiplayer page's shown rows (RowSkip): on its way past them, the mouse's
                 // own steps wait (a moment's hiding and a slide leave it be: the cursor lands as they want).

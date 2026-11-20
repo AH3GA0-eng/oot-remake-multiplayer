@@ -397,7 +397,7 @@ TEST_CASE("pause tab: Settings: name, Link's look, players and voice chat (off u
     CHECK(v.rows[0].value == "Saria");
     CHECK(v.rows[1].value == "By player number");
     CHECK(v.rows[3].value == "27510");
-    CHECK(v.rows[4].value == "None");   // (the relay: the kit's default, none yet)
+    CHECK(v.rows[4].value == "Squadala relay");   // (the relay: the built-in one)
     CHECK(v.rows[5].value == "None");   // (no room name)
     CHECK(v.rows[6].value == "Not needed");   // (the password on this network)
     CHECK(v.rows[7].kind == RowKind::kToggle);
@@ -990,7 +990,8 @@ TEST_CASE("pause tab: q and e type into the code and the password, the page stay
     CHECK(m.page() == Page::kJoin);
     m.Press(Input::kDecide);
     CHECK_FALSE(m.typing());
-    CHECK(m.join_text() == "queue");
+    // (a room name: through the built-in relay)
+    CHECK(m.join_text() == std::string("queue@") + CoopTitleMenu::kDefaultRelay);
     // the Password row: the same
     Menu p;
     p.Show(CoopTitleMenu::Options{});

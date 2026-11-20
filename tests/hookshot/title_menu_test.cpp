@@ -1099,7 +1099,8 @@ TEST_CASE("title menu: an A on Host in the Multiplayer submenu (the game's Conti
 
 TEST_CASE("title menu: the relay and the room name: written when set, the kit's default needs no line") {
     Options o;
-    CHECK(o.relay.empty());
+    CHECK(o.relay == kDefaultRelay);   // (the project's own relay, built in)
+    CHECK(Options::Read("", "relay =\r\n").relay == kDefaultRelay);   // (an empty line: never no relay)
     std::string c, opt = "relay = old.example.net:27530\r\nrelay_room = old-room\r\n";
     o = Options::Read("", opt);
     CHECK(o.relay == "old.example.net:27530");

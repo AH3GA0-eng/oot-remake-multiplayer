@@ -552,6 +552,7 @@ struct SessionView {
     std::string room_field, password_field;
     bool room_ready = false, relay_set = false;
     bool join_address = false;   // the Join view's first field holds an address (a . or a :), not a room name
+    int join_port = 0;           // ... the port it joins on: typed after a colon, else the default (27510)
     std::vector<std::string> lan_rows;    // the games on this network, as their rows say them (CoopLan::RowText)
     std::vector<std::string> online_rows; // the relay's public rooms, as their cells say them (CoopRoomList::CellText)
     std::vector<ListLine> lan_list, online_list;   // the same, as the browser's list shows them (name, players)

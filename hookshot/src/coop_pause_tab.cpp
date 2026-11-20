@@ -942,7 +942,10 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
             rows[1] = "Room or IP: " + (v.room_field.empty() && v.typing != 0 ? std::string("A to type") : v.room_field);
             rows[2] = "Password: " + (v.password_field.empty() && v.typing != 1 ? std::string("A to type") : v.password_field);
             if (v.room_ready) {
-                rows[3] = v.join_address ? "Join this address" : v.relay_set ? "Join this room" : "Join room: no relay set";
+                // (an address: the port it joins on, so a tester sees where it goes; another is typed after a colon)
+                rows[3] = v.join_address ? "Join (port " + std::to_string(v.join_port > 0 ? v.join_port : 27510) + ")"
+                          : v.relay_set  ? "Join this room"
+                                         : "Join room: no relay set";
             } else if (v.s.rejoin) {
                 rows[3] = v.rejoin_host.empty() ? "Join the last game again" : "Join " + v.rejoin_host + " again";
             }

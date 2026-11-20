@@ -309,6 +309,7 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
     // The relay lines Host.bat reads too (coop-options.ini, "Advanced: relay"): the Multiplayer tab's Host uses them
     // the same way. Read only: the menu writes none of them.
     o.relay = std::string(Trim(IniGet(options_ini, "relay").value_or(kDefaultRelay)));
+    if (o.relay.empty()) o.relay = kDefaultRelay;   // (an empty line: the built-in one, which is never removed)
     o.relay_key = std::string(Trim(IniGet(options_ini, "relay_key").value_or("")));
     o.relay_room = std::string(Trim(IniGet(options_ini, "relay_room").value_or("")));
     o.list_name = std::string(Trim(IniGet(options_ini, "list_name").value_or("")));

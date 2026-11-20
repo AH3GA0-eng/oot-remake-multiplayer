@@ -140,6 +140,13 @@ std::atomic<int> g_native_page{-1};
 int g_native_top = 0;                 // (g_mutex)
 bool g_native_refocus = false;        // (g_mutex)
 CoopKeyboard::Cursor g_native_keys;   // (g_mutex)
+bool g_title_mouse_held = false;     // (the left button: OnPad)
+std::atomic<std::uint64_t> g_title_mouse_down_ms{0};
+// A press within this long of the left button going down is the mouse's (Longshot's A for a click)
+constexpr std::uint64_t kMouseClickMs = 500;
+std::uint64_t NowMs();
+bool MouseClicked() { return NowMs() - g_title_mouse_down_ms.load() < kMouseClickMs; }
+int g_kb_logged = 0;                  // (trace: the keyboard's mouse presses logged so far)
 bool g_kb_held = false;               // (the keyboard by mouse: the left button, the key it went down on, the last click)
 int g_kb_press = -1;
 std::uint64_t g_kb_click_ms = 0;
@@ -910,7 +917,14 @@ std::uint64_t NativePad(std::uint64_t buttons, std::int32_t stick[4]) {
                 const std::uint64_t now = NowMs();
                 float fx = 0, fy = 0;
                 bool held = false;
-                if (CoopPauseTab::ClientCursor(&fx, &fy, &held)) {
+                const bool got = CoopPauseTab::ClientCursor(&fx, &fy, &held);
+                if (held && !g_kb_held && ++g_kb_logged <= 20) {   // (trace: where a press on the keyboard went)
+                    int r = -1, c = -1;
+                    const bool on = got && CoopKeyboard::KeyAtPoint(fx, fy, &r, &c);
+                    LOG_INFO(Core, "coop: title: keyboard: the left button down at ({:.3f}, {:.3f}): {}", fx, fy,
+                             !got ? "the window not in front" : on ? fmt::format("key row {} column {}", r, c) : "no key there");
+                }
+                if (got) {
                     int r = -1, c = -1;
                     const bool on = CoopKeyboard::KeyAtPoint(fx, fy, &r, &c);
                     if (held && !g_kb_held) g_kb_press = on ? r * 16 + c : -1;
@@ -930,7 +944,7 @@ std::uint64_t NativePad(std::uint64_t buttons, std::int32_t stick[4]) {
                     }
                     g_kb_held = held;
                 }
-                if (g_kb_held || now - g_kb_click_ms < 400) down &= ~kA;
+                if (g_kb_held || now - g_kb_click_ms < 400 || MouseClicked()) down &= ~kA;
             }
             const int dr = (down & kDown) != 0 ? 1 : (down & kUp) != 0 ? -1 : 0;
             const int dc = (down & kRight) != 0 ? 1 : (down & kLeft) != 0 ? -1 : 0;
@@ -1004,6 +1018,13 @@ std::uint64_t NativePad(std::uint64_t buttons, std::int32_t stick[4]) {
 }
 
 std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
+    {   // (the mouse's left button: when it last went down, so a press it made is told from the pad's)
+        float fx = 0, fy = 0;
+        bool held = false;
+        const bool in = CoopPauseTab::ClientCursor(&fx, &fy, &held) && held;
+        if (in && !g_title_mouse_held) g_title_mouse_down_ms = NowMs();
+        g_title_mouse_held = in;
+    }
     if (g_native_page.load() >= 0 && g_menu.load()) {
         if (TitleUp()) return NativePad(buttons, stick);
         g_native_page = -1;   // (the title went: the page with it)
@@ -1060,8 +1081,11 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
             // The title's own menu: the rows the module answers keep their A from the game (its NormalTitle would
             // start Continue, New Game or Options for them); the step makes the sound, the focus and the look.
             using CoopTitleMenu::TitleDo;
+            // (a click's: the focus stays on the button under the mouse. Moved, Longshot's mouse gave it back only once
+            // the mouse went onto another button: a tester waited "a good second" for the highlight to follow)
+            const bool clicked = MouseClicked();
             const auto change = [&](bool sub, int focus) {
-                g_sub = sub, g_focus_to = focus, g_sound = "button_decide";
+                g_sub = sub, g_focus_to = clicked ? -1 : focus, g_sound = "button_decide";
                 g_apply_until = NowMs() + kApplyForMs, g_apply_next = 0;
             };
             const auto back = [&] {   // (the title's rows again, the cursor on Multiplayer)
@@ -1078,7 +1102,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
                 // tester's click on Join went on to the page's Password row, 2026-11-19)
                 g_native_last = buttons;
                 // (the title's own buttons show the page: no overlay; StepNative falls back to it for an older pack)
-                g_native_page = static_cast<int>(p), g_native_top = 0, g_native_refocus = true;
+                g_native_page = static_cast<int>(p), g_native_top = 0, g_native_refocus = !clicked;
                 g_native_keys.Reset();
                 open_native = true;
             };
