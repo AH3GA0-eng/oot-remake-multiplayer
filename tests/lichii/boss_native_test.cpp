@@ -2095,3 +2095,91 @@ TEST_CASE("native boss: row 178: our boss fallen far below its fight start choos
         CHECK(s.Totals().owner_fell == 0);
     }
 }
+
+TEST_CASE("native boss: boss turns: the game's own Attack attribute word of the BSA, as its AI query reads it") {
+    // QueryBSAIsActionVerbAttribute (main+0x29bd000): the entry of the s32 at +0x28 below 63, else the first.
+    CHECK(addr::VerbAttributesAt(kBsa, 0) == kBsa + 0x1650 + 8);
+    CHECK(addr::VerbAttributesAt(kBsa, 6) == kBsa + 0x1650 + 6 * 16 + 8);
+    CHECK(addr::VerbAttributesAt(kBsa, 62) == kBsa + 0x1650 + 62 * 16 + 8);
+    CHECK(addr::VerbAttributesAt(kBsa, 63) == kBsa + 0x1650 + 8);
+    CHECK(addr::VerbAttributesAt(kBsa, -1) == kBsa + 0x1650 + 8);  // (unsigned: past the table)
+    // Attack is attribute 0 (AttributeFlag 1; 513 = Attack and attribute 9 together).
+    CHECK(addr::IsAttack(1));
+    CHECK(addr::IsAttack(513));
+    CHECK_FALSE(addr::IsAttack(0));
+    CHECK_FALSE(addr::IsAttack(2));  // Interrupt alone
+    CHECK(TurnsSwitch(""));
+    CHECK(TurnsSwitch("1"));
+    CHECK_FALSE(TurnsSwitch("0"));
+}
+
+TEST_CASE("native boss: boss turns: a copy made ours between moves resumes, mid-attack or unread it restarts as before") {
+    using CoopBossNative::MadeOurs;
+    CHECK(PlanMadeOurs(true, false, true, true, true) == MadeOurs::resume);
+    CHECK(PlanMadeOurs(true, false, true, true, false) == MadeOurs::resume);  // (its own ask is the same move)
+    CHECK(PlanMadeOurs(true, true, true, true, true) == MadeOurs::restart_move);  // mid-attack: row 178
+    CHECK(PlanMadeOurs(true, std::nullopt, true, true, true) == MadeOurs::restart_move);  // not read
+    CHECK(PlanMadeOurs(true, false, true, false, true) == MadeOurs::restart_move);  // its own AI is elsewhere
+    CHECK(PlanMadeOurs(true, false, false, false, false) == MadeOurs::rechoose);   // row 149
+    CHECK(PlanMadeOurs(false, false, true, true, true) == MadeOurs::restart_move);  // turns off: as before
+    CHECK(PlanMadeOurs(false, false, false, false, true) == MadeOurs::rechoose);
+}
+
+TEST_CASE("native boss: boss turns: handed to us between moves, its own brain goes on (no brain verb, no start over)") {
+    FakeGuest g;
+    const std::int32_t brain = 6;
+    g.Write(kBsa + addr::kBsaBrainVerb, &brain, 4);
+    auto fly = ActionFromRequest(GameRequest(7, 0));
+    REQUIRE(fly);
+    fly->flags = 0;
+    const auto copy_in_fly = [&](Table& t) {
+        t.SetOn(true, true);
+        t.SetTurns(true);
+        t.Publish({Phantom(Role::copy)});
+        // Its own AI asks the same move (Fly) itself; the owner's Fly is put in.
+        CHECK_FALSE(t.OnActionVerb(kBsa, GameRequest(7, kNode), true, false));
+        t.Receive(kActor, BossBsa{3, 6, fly, {}});
+        REQUIRE(t.Step(g, false, 0, kMain));
+        REQUIRE(t.Step(g, true, kBlock, kMain));
+        CHECK_FALSE(t.Step(g, true, 0, kMain));
+    };
+    {
+        Table t;
+        copy_in_fly(t);
+        Boss ours = Phantom(Role::owner);
+        ours.attacking = false;  // its game: the move its body runs is no attack
+        t.Publish({ours});
+        CHECK_FALSE(t.Step(g, false, 0, kMain));  // nothing asked: its own AI goes on from its phase and move
+        CHECK(t.Totals().owner_restarted == 0);
+        CHECK(t.Totals().owner_rechosen == 0);
+        // Its own next ask is ours now: it goes through and is sent to every copy.
+        CHECK_FALSE(t.OnActionVerb(kBsa, GameRequest(103, kNode), true, true));
+        CHECK(t.Totals().owner_action == 1);
+    }
+    {
+        // The same hand-over mid-attack: the row 178 start-over, unchanged.
+        Table t;
+        copy_in_fly(t);
+        Boss ours = Phantom(Role::owner);
+        ours.attacking = true;
+        t.Publish({ours});
+        g.bytes.erase(kBlock + addr::kReqVerb);
+        const auto c = t.Step(g, false, 0, kMain);
+        REQUIRE(c);
+        CHECK(c->function == kMain + addr::kRequestActionVerb);
+        CHECK((g.Get<std::uint16_t>(kBlock + addr::kReqFlags) & addr::kReqStartOver) != 0);
+    }
+}
+
+TEST_CASE("native boss: boss turns: another player's hit names their puppet on a boss, not on Phantom Ganon or Ganondorf") {
+    Table t;
+    t.SetOn(true, true);
+    t.SetTurns(true);
+    t.Publish({Phantom(Role::owner)});
+    CHECK(t.KeepsLinkAsAttacker(kActor));  // fights the Player only (row 178): our Link still
+    Boss gohma{kActor, kBsa, Role::owner, "Enemy_DungeonBoss_Gohma", 2};
+    t.Publish({gohma});
+    CHECK_FALSE(t.KeepsLinkAsAttacker(kActor));  // the hitter's puppet: the game's own aggro
+    t.SetTurns(false);
+    CHECK(t.KeepsLinkAsAttacker(kActor));  // off: as before
+}

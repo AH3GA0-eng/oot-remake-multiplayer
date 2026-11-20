@@ -1945,7 +1945,7 @@ public:
                                            s.name, *owner, s.life_component, owner_dead, plain,
                                            plain && CoopBossNative::PlainDeath(life, owner_dead),
                                            s.animation ? s.animation->name : std::string{}, life,
-                                           s.position};
+                                           s.position, s.attacking};
                     list.push_back(std::move(b));
                 }
             }
@@ -3787,6 +3787,20 @@ private:
                         if (own_hit_life) {
                             (void)NewOwnHitAt(r, a, *own_hit_life, s.position, own_hit_took_life);
                         }  // our own hit: its own reaction runs (NoteOwnHit) unless it took life (NoteOwnDamage)
+                    }
+                }
+                if (IsBossOrPart(s.name) || OnBrainPath(s.name)) {
+                    // Boss turns (0.11.8, server/boss_turns.hpp): its attack as its own game says (the BSA's current
+                    // action verb attribute Attack), sent in our samples so the server hands it on between attacks.
+                    if (const auto table = r.Ptr(a + kActorComponents)) {
+                        if (const auto bsa = r.Ptr(*table + CoopBossNative::addr::kComponentBsa); bsa && *bsa != 0) {
+                            if (const auto index = r.Get<s32>(*bsa + CoopBossNative::addr::kBsaBrainVerb)) {
+                                if (const auto bits =
+                                        r.Get<u64>(CoopBossNative::addr::VerbAttributesAt(*bsa, *index))) {
+                                    s.attacking = CoopBossNative::addr::IsAttack(*bits);
+                                }
+                            }
+                        }
                     }
                 }
                 if (IsBossOrPart(s.name)) {

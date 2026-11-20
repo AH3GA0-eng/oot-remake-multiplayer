@@ -79,6 +79,23 @@ inline constexpr std::uint64_t kNoHitValues = 0x28;
 inline constexpr std::uint64_t kNoHitSlots = 0x34;
 inline constexpr std::int32_t kNoHitMaxSlots = 1024;  // (a sanity bound for the read)
 inline constexpr std::uint64_t kBsaBrainVerb = 0x28;      // s32, the current brain verb
+// Boss turns (0.11.8): the BSA's current action verb attribute bits, as the AI query
+// QueryBSAIsActionVerbAttribute tests them (its calc main+0x29bd000): 16-byte entries from +0x1650, the entry of
+// the s32 at +0x28 when it is below 63 (unsigned), else the first; the u64 at entry +8; attribute i is bit i, in
+// the order of the actor's ActionVerbAttributesSetting (Attack, murmur3 4009472201, is bit 0: AttributeFlag 1 on
+// every verb whose Attributes list Attack, e.g. Phantom Ganon's Default setting).
+inline constexpr std::uint64_t kBsaVerbAttributes = 0x1650;
+inline constexpr std::uint64_t kBsaVerbAttributeStride = 0x10;
+inline constexpr std::uint64_t kBsaVerbAttributeBits = 0x8;
+inline constexpr std::uint32_t kBsaVerbAttributeEntries = 63;
+inline constexpr std::uint64_t kAttributeAttack = 1u << 0;
+// Where the bits are for a BSA whose s32 at +0x28 reads `index` (the game's own choice of entry).
+constexpr std::uint64_t VerbAttributesAt(std::uint64_t bsa, std::int32_t index) {
+    const auto i = static_cast<std::uint32_t>(index);
+    return bsa + kBsaVerbAttributes + (i < kBsaVerbAttributeEntries ? i * kBsaVerbAttributeStride : 0) +
+           kBsaVerbAttributeBits;
+}
+constexpr bool IsAttack(std::uint64_t bits) { return (bits & kAttributeAttack) != 0; }
 inline constexpr std::uint64_t kSetBrainVerb = 0x6733b0;       // main+
 inline constexpr std::uint64_t kRequestActionVerb = 0xc08f0;   // main+
 inline constexpr std::uint64_t kMalloc = 0x14c6c90;            // main+, as coop_puppet.h
@@ -207,7 +224,30 @@ struct Boss {
     std::optional<std::int32_t> life = std::nullopt;
     // Row 178 (the fall guard, Table::kFallBelowStart): its place in our walk (nothing: not read).
     std::optional<coop::protocol::Vec3> position = std::nullopt;
+    // Boss turns: its current action verb's Attack attribute in our game (addr::IsAttack; nothing: not read).
+    std::optional<bool> attacking = std::nullopt;
 };
+
+// Boss turns (0.11.8, server/boss_turns.hpp): LICHII_COOP_BOSS_TURNS's text; on unless "0".
+constexpr bool TurnsSwitch(std::string_view value) { return value != "0"; }
+
+// What a copy that becomes ours does (Table::Publish), condition (1) of the boss turns: a hand-over between moves
+// must let the new owner's own brain go on from where the copy stands, not start the phase or the move over.
+enum class MadeOurs : std::uint8_t {
+    resume,        // its own AI goes on: nothing asked again (a turn between moves)
+    restart_move,  // its move starts over as ours (row 178: made ours mid-move)
+    rechoose,      // its brain verb is set again (row 149: its AI never ran its body as a copy)
+};
+// `turns`: the switch; `attacking`: the move its body runs is an attack in our game (nothing: not read);
+// `put_action`: the owner's move was put into it; `own_ask_same`: its own AI asked that same move itself (slot and
+// verb: its own brain is in the move its body runs); `own_node`: its own AI named a node for it.
+constexpr MadeOurs PlanMadeOurs(bool turns, std::optional<bool> attacking, bool put_action, bool own_ask_same,
+                                bool own_node) {
+    if (turns && attacking.has_value() && !*attacking && put_action && own_ask_same) {
+        return MadeOurs::resume;
+    }
+    return put_action && own_node ? MadeOurs::restart_move : MadeOurs::rechoose;
+}
 
 struct Counts {
     std::uint64_t owner_brain = 0;    // the owner's brain verb changes kept
@@ -247,6 +287,11 @@ public:
     // Switches (LICHII_COOP_BOSS_NATIVE, LICHII_COOP_BOSS_ACTIONS): off -> no
     // skip, no apply, nothing kept (the old gohma-sync path alone).
     void SetOn(bool brain, bool actions);
+    // Boss turns (LICHII_COOP_BOSS_TURNS, TurnsSwitch): a copy made ours between moves resumes (PlanMadeOurs), and
+    // a hit of another player replayed on a boss names their puppet (aggro), except on the bosses that fight the
+    // Player only (FightsPlayerOnly: their puppets stay unseen and they keep our Link). Off: as before.
+    void SetTurns(bool on);
+    bool TurnsOn() const;
     bool BrainOn() const;
     bool ActionsOn() const;
 
@@ -566,6 +611,7 @@ private:
     std::map<std::uint64_t, Entry> by_bsa_;
     bool brain_on_ = false;
     bool actions_on_ = false;
+    bool turns_ = false;
     bool event_ = false;           // our game runs an event (SetEvent)
     std::vector<std::string> dying_;  // the bodies whose death has begun (SetDying)
     bool Dying(std::string_view name) const;

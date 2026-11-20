@@ -7377,3 +7377,10 @@ TEST_CASE("objects: a Floormaster's Littles are shared by the game that split it
     }
     CHECK(c.Creates().size() == 3);  // A's
 }
+
+TEST_CASE("boss turns: a sample's attack bits: read and attacking, read and between moves, not read (nothing)") {
+    using CoopObjects::AttackBits;
+    CHECK(AttackBits(true) == (proto::object_state::attack_read | proto::object_state::attacking));
+    CHECK(AttackBits(false) == proto::object_state::attack_read);
+    CHECK(AttackBits(std::nullopt) == 0);
+}
