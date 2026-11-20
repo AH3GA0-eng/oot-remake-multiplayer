@@ -2632,6 +2632,46 @@ TEST_CASE("world: a block's own anchor follows it, and only it (row 175)") {
     CHECK(Said(out, "another block's or a shared grid base"));
 }
 
+// Row 175 review gap: a shared anchor placed exactly at one block's first place
+// (Hyrule Castle: two Lon Lon boxes link to ONE Obj_MovableBox_BasePosAnchor,
+// and the first box stands on it; romfs Banc, shared_anchors.py). It is no
+// single block's own (kSharedAnchors), so that box's rest never moves it.
+TEST_CASE("world: a shared anchor at one block's first place is never paired (Hyrule Castle boxes)") {
+    const std::string scene = "HyruleCastle";
+    const char* const box = "Obj_LonLonRanch_MovableBox_A_01";
+    const proto::Vec3 on{31.6244f, 117.0387f, -146.6301f};  // the shared anchor, and box 1's first place
+    const proto::Vec3 rest{33.1244f, 117.0387f, -146.6301f};  // 1.5 m east, where the other player left it
+    const proto::Vec3 link{31.6244f, 117.0387f, -148.0f};
+    const auto grid = Thing(0x900, 0, std::nullopt, "Obj_MovableBox_BasePosAnchor", on);
+    const auto other = Thing(0x101, 0x51, std::nullopt, box, {31.6244f, 117.0387f, -145.1301f});
+    const auto first = [&](proto::Vec3 at) { return Thing(0x100, 0x50, std::nullopt, box, at); };
+    WorldSync w;
+    Walk(w, 1000 * kMs, {first(on), other, grid}, link, 2, scene);
+    proto::WorldMove m;
+    m.player_number = 1;
+    m.scene = scene;
+    m.hash = 0x50;
+    m.time_us = 2000 * kMs;
+    m.position = {32.3744f, 117.0387f, -146.6301f};
+    w.Receive(m);
+    Walk(w, 2100 * kMs, {first(on), other, grid}, link, 2, scene);
+    proto::WorldPlace p;
+    p.player_number = 1;
+    p.scene = scene;
+    p.hash = 0x50;
+    p.position = rest;
+    w.Receive(p);
+    Walk(w, 2300 * kMs, {first(m.position), other, grid}, link, 2, scene);
+    Walk(w, 2700 * kMs, {first(rest), other, grid}, link, 2, scene);
+    const auto out = Walk(w, 2900 * kMs, {first(rest), other, grid}, link, 2, scene);
+    REQUIRE(out.blocks.size() == 1);
+    CHECK(out.blocks[0].anchor == 0);
+    CHECK(Said(out, "shared grid base: left"));
+    std::vector<CoopObjects::PoseWrite> poses;
+    w.Poses(3000 * kMs, poses);
+    CHECK(poses.empty());
+}
+
 // deku-visuals-b (0.10.1 playtest): the second player's push of a block the
 // first had moved jumped to a place between the two; that jump (our game's
 // push from the stale start) is told. It is still our push and is sent.
