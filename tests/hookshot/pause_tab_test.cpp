@@ -1152,7 +1152,7 @@ TEST_CASE("pause tab: the game browser: the rows choose the list and its page, t
     CHECK(rows[0] == "Local games (0)");   // (the list the cells show: the module dims the other's row)
     CHECK(rows[1] == "Online games");      // (not asked yet)
     CHECK(rows[2] == "Refresh list");      // (one page: no empty row)
-    CHECK(rows[3] == "List me (my name): Off");
+    CHECK(rows[3] == "List my room: Off");
     CHECK(rows[kRows - 1] == "Back");
     auto lines = ListLines(v);
     REQUIRE(lines.size() == static_cast<std::size_t>(kListRows));
