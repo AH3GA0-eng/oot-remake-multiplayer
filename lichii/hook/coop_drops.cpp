@@ -178,11 +178,52 @@ bool Sync::Beats(const Drop& a, const Drop& b) {
 
 bool Sync::Beaten(const Drop& d) const {
     for (const auto& [id, other] : drops_) {
-        if (id != d.id && Matches(other, d) && Beats(other, d)) {
+        if (id != d.id && !other.personal && Matches(other, d) && Beats(other, d)) {
             return true;
         }
     }
     return false;
+}
+
+bool Sync::Clash(const Drop& a, const Drop& b) {
+    return Matches(a, b) && a.name != b.name && (IsSupply(a.name) || IsSupply(b.name));
+}
+
+void Sync::Personal(Drop& d, std::uint64_t now_us, std::vector<Remove>& removes) {
+    if (d.personal) {
+        return;
+    }
+    if (self_ != 0 && d.id.maker == self_ && d.address != 0 && d.key == 0) {
+        // Ours: the game rolled it from our player's own stock. Left lying in our game alone.
+        own_.insert(d.address);
+        bound_.erase(d.address);
+        d.address = 0;
+        d.state = State::lost;
+        d.done_us = now_us;
+        ++kept_own_;
+        Note(Tag(d.id) + " " + d.name + ": our player's own supply roll (another game rolled another kind), kept here only");
+    } else {
+        // Another game's (or ours already gone): never shown here; a copy on its way or made goes.
+        if (d.state == State::live) {
+            Lose(d, nullptr, State::lost, now_us, removes);
+        }
+        Note(Tag(d.id) + " " + d.name + ": its player's own supply roll (another kind rolled here or elsewhere), not made here");
+    }
+    d.personal = true;
+}
+
+void Sync::Sort(Drop& x, std::uint64_t now_us, std::vector<Remove>& removes) {
+    for (auto& [id, other] : drops_) {
+        if (id == x.id || !Clash(x, other)) {
+            continue;
+        }
+        if (IsSupply(other.name)) {
+            Personal(other, now_us, removes);
+        }
+        if (IsSupply(x.name)) {
+            Personal(x, now_us, removes);
+        }
+    }
 }
 
 void Sync::Bind(Drop& d, std::uint64_t address) {
@@ -198,28 +239,16 @@ void Sync::Delete(std::uint64_t address, const std::string& name, std::uint64_t 
     }
 }
 
-bool Sync::KeepsOwn(const Drop& d, const Drop* winner) const {
-    return winner != nullptr && self_ != 0 && d.id.maker == self_ && d.key == 0 && winner->name != d.name &&
-           IsSupply(d.name);
-}
-
 void Sync::Lose(Drop& d, Drop* winner, State state, std::uint64_t now_us,
                 std::vector<Remove>& removes) {
     const std::uint64_t address = d.address;
-    const bool keep_own = address != 0 && KeepsOwn(d, winner);
     d.state = state;
     d.done_us = now_us;
     if (address != 0) {
         bound_.erase(address);
         d.address = 0;
     }
-    if (keep_own) {
-        // Row 168: the game rolled it for our player's own stock; the winner's roll is made beside it.
-        own_.insert(address);
-        ++kept_own_;
-        Note(Tag(d.id) + " " + d.name + " lost to " + Tag(winner->id) + " " + winner->name +
-             ": our player's own supply roll, kept here only");
-    } else if (address != 0 && winner != nullptr && winner->state == State::live &&
+    if (address != 0 && winner != nullptr && winner->state == State::live &&
         winner->address == 0 && winner->name == d.name && (d.key == 0 || winner->key == 0)) {
         // The same kind of drop for the same thing: our actor is the winner's.
         Bind(*winner, address);
@@ -259,6 +288,11 @@ void Sync::Learn(const proto::DropSpawn& spawn, std::uint64_t now_us,
     d.got_us = now_us;
     d.wait_us = (spawn.flags & proto::drop_spawn::again) != 0 ? 0 : kAdoptWaitUs;
     Drop& x = drops_.emplace(spawn.id, std::move(d)).first->second;
+    // Row 168: a supply roll against another kind for the same thing is its own player's (both directions).
+    Sort(x, now_us, removes);
+    if (x.personal) {
+        return;  // another game's supply roll of another kind than a roll here or elsewhere: never made here
+    }
     if (Beaten(x)) {
         // A better roll for the same thing is known: this one never shows.
         x.state = State::lost;
@@ -266,7 +300,7 @@ void Sync::Learn(const proto::DropSpawn& spawn, std::uint64_t now_us,
         return;
     }
     for (auto& [id, other] : drops_) {
-        if (other.state == State::live && id != x.id && Matches(x, other) && Beats(x, other)) {
+        if (other.state == State::live && !other.personal && id != x.id && Matches(x, other) && Beats(x, other)) {
             if (other.id.maker == self_) {
                 x.wait_us = 0;  // our own roll was there: nothing to wait for
             }
@@ -618,12 +652,19 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         if (self == 0) {
             continue;
         }
-        if (Beaten(mine) && IsSupply(mine.name) &&
-            std::none_of(drops_.begin(), drops_.end(), [&](const auto& kv) {
-                return kv.second.name == mine.name && Matches(kv.second, mine) && Beats(kv.second, mine);
-            })) {
-            // Row 168: another game's roll of another kind stays for everyone, and ours, made from
-            // our player's own stock, stays too (here only: never told, matched or taken).
+        // Row 168: a roll of another kind for the same thing is known (both directions, one a supply kind).
+        bool keep_own = false;
+        for (auto& [id, other] : drops_) {
+            if (other.personal || !Clash(mine, other)) {
+                continue;
+            }
+            if (IsSupply(other.name)) {
+                Personal(other, now_us, removes);  // their supply roll: never made here, ours is not beaten by it
+            }
+            keep_own = keep_own || IsSupply(mine.name);
+        }
+        if (keep_own) {
+            // Ours, made from our player's own stock: left lying in our game alone, never told, matched or taken.
             own_.insert(s.address);
             ++kept_own_;
             Note("own " + s.name + " kept: our player's own supply roll (another game rolled another kind)");

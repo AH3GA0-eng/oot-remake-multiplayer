@@ -3,6 +3,7 @@
 // director letting go of a copy.
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <map>
@@ -330,6 +331,7 @@ TEST_CASE("drops: our stick that loses to another kind stays ours, the winner's 
     CHECK(c.removes.empty());  // our stick is not deleted
     CHECK_FALSE(c.sync.IdOf(0x3000));  // and no longer shared
     CHECK(c.sync.KeptOwn() == 1);
+    c.Tick(600);
     REQUIRE(c.creates.size() == 1);  // P1's rupee is made here too
     CHECK(c.creates[0].name == kGreen);
     // Still listed: never told again as a new roll, never deleted.
@@ -393,6 +395,94 @@ TEST_CASE("drops: another game's stick that loses to our rupee is not made here 
     CHECK(a.creates.empty());
     CHECK(a.removes.empty());
     CHECK(a.sync.Live() == 1);
+}
+
+TEST_CASE("drops: another game's winning stick against our rupee is its player's own: our rupee stays (row 168)") {
+    // The mirror case: the needy player's stick beats our rupee (owned, or a lower number). Before, our rupee was
+    // deleted and their stick made here as shared, so our pickup took it from them.
+    Game b(2);
+    b.Tick();
+    b.seen = {Lying(0x2000, 5.5f)};
+    b.Tick();
+    const auto told = Of<proto::DropSpawn>(b.send);
+    REQUIRE(told.size() == 1);
+    b.sync.Receive(Told(1, 7, 5.0f, b.now, kStick, proto::drop_spawn::owned));
+    b.Tick();
+    CHECK(b.removes.empty());                    // our rupee is not deleted
+    CHECK(b.sync.IdOf(0x2000) == told[0].id);   // and stays the shared drop
+    b.Tick(1000);
+    CHECK(b.creates.empty());                    // their stick is never made here
+    CHECK(b.sync.Live() == 1);
+    // Their stick taken in their game: nothing of ours goes.
+    proto::DropTake take;
+    take.player_number = 1;
+    take.id = Id(1, 7);
+    b.sync.Receive(take);
+    b.Tick();
+    CHECK(b.removes.empty());
+    CHECK(b.sync.IdOf(0x2000) == told[0].id);
+}
+
+TEST_CASE("drops: our rupee rolled after another game's stick is known stays, the stick is not made (row 168)") {
+    Game b(2);
+    b.Tick();
+    b.sync.Receive(Told(1, 7, 5.0f, b.now, kStick, proto::drop_spawn::owned));
+    b.Tick(100);
+    b.seen = {Lying(0x2000, 5.5f)};
+    b.Tick(100);
+    const auto told = Of<proto::DropSpawn>(b.send);
+    REQUIRE(told.size() == 1);  // ours is the shared one
+    CHECK(b.sync.IdOf(0x2000) == told[0].id);
+    CHECK(b.removes.empty());
+    b.Tick(1000);
+    CHECK(b.creates.empty());
+}
+
+TEST_CASE("drops: a third game makes the rupee, never the needy player's stick (row 168)") {
+    const auto stick = Told(1, 7, 5.0f, 1'000'000, kStick, proto::drop_spawn::owned);
+    const auto rupee = Told(2, 9, 5.5f, 1'100'000);
+    for (int order = 0; order < 2; ++order) {
+        Game c(3);
+        c.Tick();
+        c.sync.Receive(order == 0 ? stick : rupee);
+        c.Tick();
+        c.Tick(700);
+        REQUIRE(c.creates.size() == 1);  // the first one heard is made
+        const std::uint64_t key = c.creates[0].key;
+        const std::string first = c.creates[0].name;
+        c.made[key] = 0x7000;
+        c.seen = {Lying(0x7000, 5.0f, first)};
+        c.Tick();
+        c.sync.Receive(order == 0 ? rupee : stick);
+        c.Tick();
+        std::vector<Create> later = c.creates;
+        c.Tick(700);
+        later.insert(later.end(), c.creates.begin(), c.creates.end());
+        CHECK(c.sync.Live() == 1);
+        CHECK(std::none_of(later.begin(), later.end(), [](const Create& k) { return k.name == kStick; }));
+        if (order == 0) {
+            // The stick copy is no longer the drop (the director deletes it); the rupee is made.
+            CHECK_FALSE(c.sync.IdOf(0x7000));
+            CHECK(std::any_of(later.begin(), later.end(),
+                              [&](const Create& k) { return k.name == kGreen && k.key != key; }));
+        } else {
+            CHECK(c.sync.IdOf(0x7000) == rupee.id);  // the rupee stays
+        }
+    }
+}
+
+TEST_CASE("drops: a stick against a nut: each player keeps their own, nothing is made (row 168)") {
+    Game b(2);
+    b.Tick();
+    b.seen = {Lying(0x2000, 5.5f, kStick)};
+    b.Tick();
+    b.sync.Receive(Told(1, 7, 5.0f, b.now, "Obj_DekuNut"));
+    b.Tick();
+    b.Tick(1000);
+    CHECK(b.removes.empty());
+    CHECK(b.creates.empty());
+    CHECK(b.sync.KeptOwn() == 1);
+    CHECK(b.sync.Live() == 0);
 }
 
 TEST_CASE("drops: the owner's roll beats a lower player number") {
