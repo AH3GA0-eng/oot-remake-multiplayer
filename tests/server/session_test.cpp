@@ -1934,6 +1934,25 @@ TEST_CASE("the maker's remove of a made object is relayed and forgets it") {
   CHECK(h.session.object_count() == 0);
 }
 
+TEST_CASE("row 177: a shot sent back in another game goes to its maker, as DAMAGE cause reflected") {
+  ObjectHarness h;
+  h.receive(1, present_in("Graveyard", {}), kChannelOwnership);
+  h.receive(2, present_in("Graveyard", {}), kChannelOwnership);
+  const ObjectId rock{ObjectKind::made, 1, 9};
+  h.receive(1, ObjectSpawn{0, rock, "Octorok_Bullet", object_spawn::projectile, state_at(0, 1)},
+            kChannelOwnership);
+  h.clear();
+  Damage back{0, rock, 0, 0, static_cast<std::uint8_t>(DamageCause::reflected), {1.0f, 2.0f, 3.0f}, {}};
+  h.receive(2, back, kChannelOwnership);
+  REQUIRE(h.sent.size() == 1);
+  CHECK(h.sent[0].to == 1);
+  const auto& got = std::get<Damage>(h.sent[0].message);
+  CHECK(got.player_number == 2);
+  CHECK(got.cause == static_cast<std::uint8_t>(DamageCause::reflected));
+  CHECK(got.amount == 0);
+  CHECK(h.session.stats().handover_asked == 0);  // a shot stays its maker's
+}
+
 TEST_CASE("handover state from a client is refused when the server did not ask for it") {
   ObjectHarness h;
   h.receive(1, present_in("Graveyard", {placed(7)}), kChannelOwnership);
