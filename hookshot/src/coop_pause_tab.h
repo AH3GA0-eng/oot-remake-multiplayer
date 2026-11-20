@@ -247,7 +247,7 @@ public:
         return which == 4 ? relay_ : which == 3 ? port_ : which == 2 ? new_password_ : which == 1 ? password_ : room_;
     }
     // Typing into a field brings up the on-screen keyboard (coop_keyboard.h): the pad's arrows move over its keys and
-    // A presses the one under the cursor, B deletes (with nothing typed: Cancel), + is OK, L and R move in the text.
+    // A presses the one under the cursor, B is Cancel, Y deletes, + is OK, L and R move in the text.
     void StartTyping(int which);
     int Typing() const { return typing_; }
     // The keyboard's key pressed some other way (the mouse's click): as A on it.
@@ -605,7 +605,11 @@ std::string ListName(const std::string& shown, const std::string& room);
 // cursor on them); Right or A goes into its list, up and down move in it (turning the page at its ends), Left and Right
 // change the value, A takes the next one (of a few choices), B gives the pad back to the rows. A change goes through
 // Longshot as its own menu's Left and Right do (clamped, saved, a restart noted).
-inline constexpr int kSettingsPerPage = 6;   // (kListRows less the header)
+// Seven a page with a pack whose page has an eighth list row (Pa_List_07: tools/puppet_pack/pause_menu.py ROWS, a
+// tester: "it fits"), else six (kListRows less the header): the module says which (`per_page` below).
+inline constexpr int kSettingsPerPage = 6;
+inline constexpr int kSettingsPerPageMost = 7;
+inline constexpr int kSettingListRows = kSettingsPerPageMost + 1;   // (the header and the most a page)
 inline constexpr int kSettingRows = 6;   // (the five rows and the Longshot Settings button's copy)
 inline constexpr std::array<const char*, kSettingRows> kSettingTabs{"Graphics", "Audio", "Gameplay", "Controls", "Motion", "Debug"};
 struct SettingRow {
@@ -616,10 +620,12 @@ struct SettingRow {
 };
 // A category's settings (kSettingTabs[category]: their tab in Longshot's menu), in Longshot's order.
 std::vector<SettingRow> SettingsOf(const std::vector<SettingRow>& all, int category);
-int SettingPages(int count);
+int SettingPages(int count, int per_page = kSettingsPerPage);
 // A page of a category's settings as the list's rows: the header (`title`, and "Page 2 of 4" when there are more),
 // then the settings: the name ("*" after a restart one), the value's words.
-std::vector<ListLine> SettingLines(const std::vector<SettingRow>& rows, int page, const std::string& title);
+// kSettingListRows lines, the ones past `per_page` + 1 empty.
+std::vector<ListLine> SettingLines(const std::vector<SettingRow>& rows, int page, const std::string& title,
+                                   int per_page = kSettingsPerPage);
 // The value a press asks for: dir -1 Left, +1 Right (a step, kept within lo..hi), 0 A (the next, the first after the
 // last, for a setting of at most kCycleChoices choices: a slider such as Volume is never sent from its end back to its
 // start by A or a click on the row). The same value back when nothing would change (a fixed setting, the end of its
@@ -628,7 +634,7 @@ inline constexpr int kCycleChoices = 8;
 int SettingNext(const SettingRow& r, int dir);
 // The cursor moved up (-1) or down (+1) in a category's list of `count`: across its pages, staying at its ends. `row`
 // is the setting's place on its page (0 to kSettingsPerPage - 1; the list's row under the header is row + 1).
-void SettingMove(int count, int dy, int* page, int* row);
+void SettingMove(int count, int dy, int* page, int* row, int per_page = kSettingsPerPage);
 // The games the browser lists now (the chosen list's), and its pages.
 int BrowseListed(const Session& s);
 int CellPages(int listed);

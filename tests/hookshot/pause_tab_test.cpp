@@ -1306,7 +1306,7 @@ TEST_CASE("pause tab: typing on the on-screen keyboard takes every button from S
     p.OnPad(kPadDown, 1550);   // (held over 400 ms: a step)
     CHECK(p.KeyCursor().row() == 2);
     CHECK(p.OnPad(0, 1660) == 0);
-    CHECK(p.OnPad(kPadB, 1670) == 0);            // (B: a letter off)
+    CHECK(p.OnPad(kPadY, 1670) == 0);            // (Y: a letter off)
     CHECK(p.Field(0).text() == "a");
     CHECK(p.Typing() == 0);
     p.OnPad(0, 1680);
@@ -1317,7 +1317,7 @@ TEST_CASE("pause tab: typing on the on-screen keyboard takes every button from S
     CHECK(p.Shown());
     CHECK_FALSE(p.TakeBack());
     p.OnPad(0, 1700);
-    // B with nothing typed is Cancel: the field as it was.
+    // B is Cancel: the field as it was.
     p.StartTyping(2);
     p.OnPad(kPadB, 1710);
     CHECK(p.Typing() == -1);
@@ -2010,7 +2010,8 @@ TEST_CASE("pause tab: the Settings page's list: a category's settings, its pages
     CHECK(SettingPages(10) == 2);
     CHECK(SettingPages(13) == 3);
     auto lines = SettingLines(graphics, 0, "Graphics");
-    REQUIRE(lines.size() == static_cast<std::size_t>(kListRows));
+    REQUIRE(lines.size() == static_cast<std::size_t>(kSettingListRows));
+    CHECK(lines[kSettingListRows - 1].name.empty());   // (six a page: the eighth row unused)
     CHECK(lines[0].name == "Graphics  < 1 of 2 >");   // (the header: the category, and its page when it has more)
     CHECK(lines[0].value.empty());                     // (no value: the module hides its box)
     CHECK(lines[1].name == "Graphics 0");
@@ -2049,6 +2050,18 @@ TEST_CASE("pause tab: the Settings page's list: a category's settings, its pages
     page = 0, row = 0;
     SettingMove(10, -1, &page, &row);
     CHECK((page == 0 && row == 0));
+
+    // Seven a page with a pack whose page has its eighth list row (Pa_List_07).
+    CHECK(SettingPages(7, 7) == 1);
+    CHECK(SettingPages(10, 7) == 2);
+    lines = SettingLines(graphics, 0, "Graphics", 7);
+    REQUIRE(lines.size() == static_cast<std::size_t>(kSettingListRows));
+    CHECK(lines[7].name == "Graphics 6");   // (the seventh setting, on the eighth row)
+    lines = SettingLines(graphics, 1, "Graphics", 7);
+    CHECK(lines[1].name == "Graphics 7");
+    page = 0, row = 6;
+    SettingMove(10, 1, &page, &row, 7);
+    CHECK((page == 1 && row == 0));
 }
 
 TEST_CASE("pause tab: the port and relay fields take what each can hold") {

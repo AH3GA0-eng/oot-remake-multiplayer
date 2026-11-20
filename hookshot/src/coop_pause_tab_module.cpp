@@ -707,10 +707,15 @@ void ChangeSetting(int index, int dir) {
 // row bright and the others dimmed while the list has the pad, a fixed one dimmed always, the rows dimmed then too.
 // Live texts 22..26 and 41 (the six rows) and 27..40 (the list: a name and a value each). g_live_mutex.
 std::uint64_t g_set_gen = 0;
-std::array<std::uint64_t, kListRows> g_set_list{};
+std::array<std::uint64_t, kSettingListRows> g_set_list{};
 std::array<std::uint64_t, kSettingRows> g_set_rows{};
-std::array<int, kListRows> g_set_vis{};
-std::array<float, kListRows> g_set_alpha{};
+std::array<int, kSettingListRows> g_set_vis{};
+std::array<float, kSettingListRows> g_set_alpha{};
+// Settings a page: seven when the pack's page has its eighth list row (Pa_List_07), else six. Any thread.
+std::atomic<int> g_set_per_page{kSettingsPerPage};
+// The live text slots of the list's row i: its name, its value (27..40 for the first seven, 42 and 43 the eighth's).
+int SetNameSlot(int i) { return i < 7 ? 27 + 2 * i : 42; }
+int SetValueSlot(int i) { return i < 7 ? 28 + 2 * i : 43; }
 std::array<float, kSettingRows> g_set_rows_alpha{};
 
 void LiveSettings(void* ctx, std::uint64_t layout, std::uint64_t gen) {
@@ -720,7 +725,7 @@ void LiveSettings(void* ctx, std::uint64_t layout, std::uint64_t gen) {
         std::uint64_t table = 0;
         Call(ctx, kPaneTable, layout + 0x40, 0, 0, 0, 0, &table);
         const std::uint64_t page = PartLayout(table, "Pa_Settings_00");
-        for (int i = 0; i < kListRows; ++i) {
+        for (int i = 0; i < kSettingListRows; ++i) {
             char name[16];
             std::snprintf(name, sizeof name, "Pa_List_%02d", i);
             const std::uint64_t pane = PaneIn(ctx, page, name);
@@ -751,10 +756,12 @@ void LiveSettings(void* ctx, std::uint64_t layout, std::uint64_t gen) {
     const std::vector<SettingRow> rows = SettingsOf(SettingsNow(NowMs()), g_set_category.load());
     g_set_count = static_cast<int>(rows.size());
     const int page = g_set_page.load(), picked = g_set_row.load(), category = g_set_category.load();
-    const std::vector<ListLine> lines =
-        SettingLines(rows, page, category >= 0 && category < kSettingRows ? kSettingTabs[static_cast<std::size_t>(category)] : "");
-    const int pages = SettingPages(static_cast<int>(rows.size())), at_page = (page % pages + pages) % pages;
-    for (int i = 0; i < kListRows; ++i) {
+    const int per_page = g_set_list[kSettingListRows - 1] != 0 ? kSettingsPerPageMost : kSettingsPerPage;
+    g_set_per_page = per_page;
+    const std::vector<ListLine> lines = SettingLines(
+        rows, page, category >= 0 && category < kSettingRows ? kSettingTabs[static_cast<std::size_t>(category)] : "", per_page);
+    const int pages = SettingPages(static_cast<int>(rows.size()), per_page), at_page = (page % pages + pages) % pages;
+    for (int i = 0; i < kSettingListRows; ++i) {
         const std::size_t k = static_cast<std::size_t>(i);
         const std::uint64_t pane = g_set_list[k];
         if (pane == 0) continue;
@@ -762,13 +769,13 @@ void LiveSettings(void* ctx, std::uint64_t layout, std::uint64_t gen) {
         if (on) {
             char path[64];
             std::snprintf(path, sizeof path, "Pa_Settings_00/Pa_List_%02d/T_Option_00", i);
-            LiveText(ctx, layout, gen, path, 27 + 2 * i, lines[k].name);
+            LiveText(ctx, layout, gen, path, SetNameSlot(i), lines[k].name);
             std::snprintf(path, sizeof path, "Pa_Settings_00/Pa_List_%02d/T_Text_00", i);
-            LiveText(ctx, layout, gen, path, 28 + 2 * i, lines[k].value.empty() ? std::string(" ") : lines[k].value);
+            LiveText(ctx, layout, gen, path, SetValueSlot(i), lines[k].value.empty() ? std::string(" ") : lines[k].value);
         }
         if (g_set_vis[k] != (on ? 1 : 0)) SetVisible(ctx, pane, on), g_set_vis[k] = on ? 1 : 0;
         // (the header a little dim, as the browser's; a setting bright when picked, or all while the rows have the pad)
-        const std::size_t at = static_cast<std::size_t>(at_page * kSettingsPerPage + i - 1);
+        const std::size_t at = static_cast<std::size_t>(at_page * per_page + i - 1);
         const bool fixed = i > 0 && at < rows.size() && rows[at].fixed;
         const float alpha = i == 0 ? 0.7f : fixed ? 0.4f : picked < 0 || picked == i - 1 ? 1.0f : 0.5f;
         if (on && g_set_alpha[k] != alpha) CallAlpha(ctx, pane, alpha), g_set_alpha[k] = alpha;
@@ -783,9 +790,9 @@ void LiveSettings(void* ctx, std::uint64_t layout, std::uint64_t gen) {
 // The settings list's rows where the game puts them now (as ReadCellBoxes: an Options row's bar, 1880 wide), and the
 // x of a row's two arrows from its centre (PaOptionBtnLevel_00: its value at +500, the arrows 360 either side of it).
 constexpr float kArrowLeftX = 140.0f, kArrowRightX = 860.0f, kArrowReach = 90.0f;
-std::array<RowBox, kListRows> ReadSettingBoxes() {
-    std::array<RowBox, kListRows> boxes{};
-    for (int i = 0; i < kListRows; ++i) {
+std::array<RowBox, kSettingListRows> ReadSettingBoxes() {
+    std::array<RowBox, kSettingListRows> boxes{};
+    for (int i = 0; i < kSettingListRows; ++i) {
         const std::uint64_t pane = g_set_list[static_cast<std::size_t>(i)];
         float m[12] = {};
         if (pane == 0 || !CoopRuntime::Read(pane + 0x28, m, sizeof m) || !(m[0] > 1e-3f) || !(m[4] > 1e-3f)) continue;
@@ -995,12 +1002,13 @@ void TraceCursor(const char* when, int* left, std::uint64_t since, std::string* 
 // `keep`: the one button left shown for the game's cursor to land on, see-through meanwhile, so that the page's
 // buttons come all at once: the game puts its cursor there only ~250 ms after (a run's log), and that button alone
 // showed first, then the others (a tester: "it loads menu items top to bottom").
+constexpr float kKeepAlpha = 0.02f;   // (the landing button's: not 0, which the game's cursor skips)
 void HideRowsAMoment(void* ctx, std::vector<std::pair<std::uint64_t, bool>> panes, const char* until,
                      std::uint64_t keep) {
     for (const auto& [pane, back] : panes) {
         if (pane != 0) SetVisible(ctx, pane, false);
     }
-    if (keep != 0) CallAlpha(ctx, keep, 0.0f);
+    if (keep != 0) CallAlpha(ctx, keep, kKeepAlpha);
     g_rows_keep = keep;
     g_rows_hidden = std::move(panes), g_rows_back_when = until, g_rows_back_ms = NowMs() + kRowsBackMs;
     g_rows_moment = true;
@@ -1099,9 +1107,11 @@ void SystemButtons(void* ctx) {
         std::vector<std::pair<std::uint64_t, bool>> others;
         for (const std::uint64_t b : g_sys_buttons) others.emplace_back(b, true);
         others.emplace_back(settings ? g_mp_button : g_settings_button, (want & (settings ? 1 : 2)) != 0);
-        // (the button to land on stays as it is: made see-through, the game's cursor never landed on it and every
-        // page change waited the whole 400 ms, a run's log 2026-11-19)
-        HideRowsAMoment(ctx, std::move(others), settings ? "Pa_Button_05" : "Pa_Button_06", 0);
+        // (the button to land on all but see-through, so the page's buttons come all at once: at alpha 0 the game's
+        // cursor never landed on it and every page change waited the whole 400 ms, a run's log 2026-11-19; 0.02 is
+        // tried, and the log line after says whether it landed)
+        HideRowsAMoment(ctx, std::move(others), settings ? "Pa_Button_05" : "Pa_Button_06",
+                        settings ? g_settings_button : g_mp_button);
         g_left_trace = 4, g_left_since = now, g_left_said.clear();
         LOG_INFO(Core, "coop: pause tab: {} left (B): System again", settings ? "Longshot Settings" : "the Multiplayer page");
     }
@@ -1144,7 +1154,7 @@ void ApplyPages(void* ctx, const Facts& f, const Page::Do& d) {
                 std::vector<std::pair<std::uint64_t, bool>> hide;
                 for (int r = 1; r < kRows; ++r) hide.emplace_back(rows[static_cast<std::size_t>(r)], true);
                 if (d.page_to == 2) hide.emplace_back(g_settings_button_set, g_page.SettingsUsable());
-                HideRowsAMoment(ctx, std::move(hide), "Pa_Button_00", 0);   // (as above: the first stays seen)
+                HideRowsAMoment(ctx, std::move(hide), "Pa_Button_00", rows[0]);   // (as above)
             }
         }
     }
@@ -1237,7 +1247,9 @@ MouseRows g_mouse_rows;
 std::uint64_t g_b_list_last = 0;    // (the pad's last read, for B on the list: OnPad)
 bool g_b_swallow = false;           // (that B, held: not the page's)
 std::uint64_t g_list_left_ms = 0;    // (the mouse's Left off the list: the last one)
-std::uint64_t g_page_since_ms = 0;   // (when our page showed last: RowSkip waits a moment after)
+std::uint64_t g_page_since_ms = 0;
+float g_skip_mouse_x = 0, g_skip_mouse_y = 0;   // (the mouse's last place and when it moved: RowSkip waits then)
+std::uint64_t g_skip_mouse_ms = 0;   // (when our page showed last: RowSkip waits a moment after)
 int g_slow_logged = 0;               // (trace: slow updates of ours logged so far)
 RowSkip g_row_skip;          // (the game's cursor kept off hidden buttons on the Multiplayer page)
 int g_skip_logged = 0;       // (its steps logged the first times)
@@ -1888,10 +1900,26 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                 // own steps wait (a moment's hiding and a slide leave it be: the cursor lands as they want).
                 std::uint64_t skip = 0;
                 if (!was) g_page_since_ms = mi.now_ms;
+                // (the mouse over the rows' column but on no shown row, or just moved: Longshot's mouse puts the game's
+                // cursor on the hidden button under it, and stepping it off there went on without end as the mouse
+                // passed, a tester's "bounces between Hosting and Stop hosting", 2026-11-19. The cursor is left there
+                // then; the next step of the pad or the mouse onto a row takes it on)
+                bool mouse_over_gap = false;
+                if (mi.inside) {
+                    if (std::abs(mi.x - g_skip_mouse_x) > 2 || std::abs(mi.y - g_skip_mouse_y) > 2) {
+                        g_skip_mouse_x = mi.x, g_skip_mouse_y = mi.y, g_skip_mouse_ms = mi.now_ms;
+                    }
+                    float x0 = 1e30f, x1 = -1e30f;
+                    for (const RowBox& b : mi.boxes) {
+                        if (b.shown) x0 = std::min(x0, b.x0), x1 = std::max(x1, b.x1);
+                    }
+                    mouse_over_gap = (mi.x >= x0 && mi.x <= x1 && RowAt(mi.boxes, mi.x, mi.y) < 0) ||
+                                     mi.now_ms - g_skip_mouse_ms < 300;
+                }
                 // (not while the page opens: the cursor is still on System's button then, and an Up there went into
                 // the opening's own landing, a run's log)
                 if (g_page.Which() == 0 && !g_rows_moment.load() && g_slide.dir == 0 && g_rows_back_ms == 0 &&
-                    mi.now_ms - g_page_since_ms > 500) {
+                    mi.now_ms - g_page_since_ms > 500 && !mouse_over_gap) {
                     RowSkip::In si;
                     si.now_ms = mi.now_ms;
                     si.focused = FocusedButtonRow(&si.hidden);
@@ -2005,19 +2033,19 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                 } else {
                     if (up || down) {
                         int page = g_set_page.load(), r = set_row;
-                        SettingMove(count, down ? 1 : -1, &page, &r);
+                        SettingMove(count, down ? 1 : -1, &page, &r, g_set_per_page.load());
                         if (page != g_set_page.load() || r != set_row) g_page.Sound("button_on");
                         g_set_page = page, set_row = r;
                     }
-                    if (left || right) set_change = g_set_page.load() * kSettingsPerPage + set_row, set_dir = left ? -1 : 1;
-                    if (decide) set_change = g_set_page.load() * kSettingsPerPage + set_row, set_dir = 0, decide = false;
+                    if (left || right) set_change = g_set_page.load() * g_set_per_page.load() + set_row, set_dir = left ? -1 : 1;
+                    if (decide) set_change = g_set_page.load() * g_set_per_page.load() + set_row, set_dir = 0, decide = false;
                 }
                 float x = 0, y = 0;
                 bool held = false;
                 if (ReadCursor(&x, &y, &held)) {
                     const auto boxes = ReadSettingBoxes();
                     int hover = -1;   // (the setting under the mouse, as set_row counts: the header's row is none)
-                    for (int i = 1; i < kListRows; ++i) {
+                    for (int i = 1; i < kSettingListRows; ++i) {
                         const RowBox& b = boxes[static_cast<std::size_t>(i)];
                         if (b.shown && x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1) hover = i - 1;
                     }
@@ -2037,7 +2065,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                     const bool on_head = head.shown && x >= head.x0 && x <= head.x1 && y >= head.y0 && y <= head.y1;
                     if (held && !g_cells_held && on_head) g_cells_press = -2;
                     if (!held && g_cells_held && on_head && g_cells_press == -2) {
-                        const int pages = SettingPages(g_set_count.load());
+                        const int pages = SettingPages(g_set_count.load(), g_set_per_page.load());
                         if (pages > 1) {
                             const int dir = x < (head.x0 + head.x1) / 2 ? -1 : 1;
                             g_set_page = ((g_set_page.load() + dir) % pages + pages) % pages;
@@ -2051,7 +2079,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                         const float cx = (b.x0 + b.x1) / 2, scale = (b.x1 - b.x0) / 1880.0f;
                         const float to_left = std::abs(x - (cx + kArrowLeftX * scale)), to_right = std::abs(x - (cx + kArrowRightX * scale));
                         set_row = hover;
-                        set_change = g_set_page.load() * kSettingsPerPage + hover;
+                        set_change = g_set_page.load() * g_set_per_page.load() + hover;
                         set_dir = to_left < kArrowReach * scale ? -1 : to_right < kArrowReach * scale ? 1 : 0;
                     }
                     g_cells_held = held;

@@ -364,11 +364,13 @@ void Page::TypingPad(std::uint64_t down, std::uint64_t held, std::uint64_t now_m
         PressKey(keys_.row(), keys_.col());
         if (typing_ < 0) return;
     }
-    if ((down & kPadB) != 0) {   // (a letter off; with nothing typed: Cancel)
-        if (f.text().empty()) {
-            EndTyping(false);
-            return;
-        }
+    // B is Cancel, the field as it was (a tester: B should back out of the keyboard, not take letters off); Y takes
+    // the letter before the cursor off, as the keyboard's Delete key does.
+    if ((down & kPadB) != 0) {
+        EndTyping(false);
+        return;
+    }
+    if ((down & kPadY) != 0) {
         f.Backspace();
         pages_sound_ = "button_on";
     }
@@ -1142,13 +1144,15 @@ std::vector<SettingRow> SettingsOf(const std::vector<SettingRow>& all, int categ
     return out;
 }
 
-int SettingPages(int count) {
-    return count <= kSettingsPerPage ? 1 : (count + kSettingsPerPage - 1) / kSettingsPerPage;
+int SettingPages(int count, int per_page) {
+    per_page = std::clamp(per_page, 1, kSettingsPerPageMost);
+    return count <= per_page ? 1 : (count + per_page - 1) / per_page;
 }
 
-std::vector<ListLine> SettingLines(const std::vector<SettingRow>& rows, int page, const std::string& title) {
-    std::vector<ListLine> lines(kListRows);
-    const int pages = SettingPages(static_cast<int>(rows.size()));
+std::vector<ListLine> SettingLines(const std::vector<SettingRow>& rows, int page, const std::string& title, int per_page) {
+    per_page = std::clamp(per_page, 1, kSettingsPerPageMost);
+    std::vector<ListLine> lines(kSettingListRows);
+    const int pages = SettingPages(static_cast<int>(rows.size()), per_page);
     const int at_page = (page % pages + pages) % pages;
     // (the header has no value: the module hides its value box and arrows, so it never looks like a setting)
     // (the page with arrows a click on either half of the line turns: the module's mouse)
@@ -1156,8 +1160,8 @@ std::vector<ListLine> SettingLines(const std::vector<SettingRow>& rows, int page
                                         : title,
                               kListNameChars),
                         ""};
-    for (int i = 0; i < kSettingsPerPage; ++i) {
-        const std::size_t at = static_cast<std::size_t>(at_page * kSettingsPerPage + i);
+    for (int i = 0; i < per_page; ++i) {
+        const std::size_t at = static_cast<std::size_t>(at_page * per_page + i);
         if (at >= rows.size()) break;
         const SettingRow& r = rows[at];
         lines[static_cast<std::size_t>(i) + 1] =
@@ -1176,13 +1180,14 @@ int SettingNext(const SettingRow& r, int dir) {
     return std::clamp(r.value + (dir < 0 ? -step : step), r.lo, r.hi);
 }
 
-void SettingMove(int count, int dy, int* page, int* row) {
+void SettingMove(int count, int dy, int* page, int* row, int per_page) {
+    per_page = std::clamp(per_page, 1, kSettingsPerPageMost);
     if (count <= 0) {
         *page = 0, *row = 0;
         return;
     }
-    const int at = std::clamp(*page * kSettingsPerPage + *row + dy, 0, count - 1);
-    *page = at / kSettingsPerPage, *row = at % kSettingsPerPage;
+    const int at = std::clamp(*page * per_page + *row + dy, 0, count - 1);
+    *page = at / per_page, *row = at % per_page;
 }
 
 std::vector<ListLine> ListLines(const SessionView& v) {

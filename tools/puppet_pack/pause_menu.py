@@ -7,8 +7,8 @@ Writes into the puppet mod's romfs:
   UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.blarc.zs
       PlusMenu_00.buil (the pages): Pa_Coop_00 and Pa_Settings_00, copies of the System page, where
           a page shows (the Multiplayer page, and Longshot Settings: Longshot's options)
-      PaSystemMenu_00.buil (the System page's own layout, which all three pages use): Pa_List_00..06,
-          seven of the game's Options rows (PaOptionBtnLevel_00: a name on the left, a value
+      PaSystemMenu_00.buil (the System page's own layout, which all three pages use): Pa_List_00..07,
+          eight of the game's Options rows (PaOptionBtnLevel_00: a name on the left, a value
           between arrows on the right) down the right half, where the controller picture is: the
           game browser's list (a header, then six games), and the settings' list; and Pa_Button_05
           and Pa_Button_06, copies of Pa_Button_03 below Pa_Button_04: System's Longshot Settings
@@ -54,7 +54,9 @@ SETTINGS_PAGE = "Pa_Settings_00"
 PAGE_PARENT = "N_InOut_00"
 SYSTEM_LAYOUT = "PaSystemMenu_00.buil"
 ROW = "Pa_List_%02d"           # the game browser's rows (CoopPauseTab::kListRows: a header and kCells games)
-ROWS = 7
+# 8: the eighth (Pa_List_07) is Longshot Settings' alone, its header and seven settings a page (a tester: "it
+# fits"); the Multiplayer page uses the first seven, and a module that knows only seven leaves it hidden.
+ROWS = 8
 ROW_SOURCE = "Pa_Button_00"     # (a part of the page's own, in whose place each row is made)
 ROW_LAYOUT = "PaOptionBtnLevel_00"   # the game's Options row: T_Option_00 on the left, T_Text_00 between arrows
 ROW_SIZE = (1920.0, 126.0)      # its N_BtnWidth_00

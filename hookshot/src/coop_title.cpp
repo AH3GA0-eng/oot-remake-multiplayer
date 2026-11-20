@@ -112,6 +112,7 @@ constexpr std::uint64_t kApplyForMs = 1500;   // the look set again each 250 ms 
 // --- Switch pad bits (nn::hid::NpadButton) ---
 constexpr std::uint64_t kA = 1ull << 0;
 constexpr std::uint64_t kB = 1ull << 1;
+constexpr std::uint64_t kY = 1ull << 3;   // (nn::hid: X is bit 2, Y bit 3)
 constexpr std::uint64_t kMinus = 1ull << 11;
 
 const HosCoopApi* g_api = nullptr;
@@ -946,7 +947,8 @@ std::uint64_t NativePad(std::uint64_t buttons, std::int32_t stick[4]) {
                 }
                 g_sound = "button_decide";
             }
-            if ((down & kB) != 0) keys.push_back(0x08);
+            if ((down & kB) != 0) keys.push_back(0x1B);   // (B: Cancel, the field as it was, as on the pause page)
+            if ((down & kY) != 0) keys.push_back(0x08);   // (Y: the letter before the cursor off)
             if ((down & kPlus) != 0) keys.push_back(0x0D);
         } else {
             if ((down & kUp) != 0) events.emplace_back(HOS_COOP_MENU_UP, 0);
@@ -1072,6 +1074,9 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
                     return;
                 }
                 open = p, g_sound = "button_decide";
+                // (the A that opened it, still held a few reads after a click, is not the page's first press: a
+                // tester's click on Join went on to the page's Password row, 2026-11-19)
+                g_native_last = buttons;
                 // (the title's own buttons show the page: no overlay; StepNative falls back to it for an older pack)
                 g_native_page = static_cast<int>(p), g_native_top = 0, g_native_refocus = true;
                 g_native_keys.Reset();
