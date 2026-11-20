@@ -46,7 +46,8 @@ var System = {
         File: {
             Exists: function (p) { return fso.FileExists(p); },
             ReadAllText: function (p) { return readFile(p); },
-            WriteAllText: function (p, t) { writeFile(p, t); }
+            WriteAllText: function (p, t) { writeFile(p, t); },
+            Delete: function (p) { if (fso.FileExists(p)) fso.DeleteFile(p); }
         },
         Directory: {
             Exists: function (p) { return fso.FolderExists(p); },
@@ -229,7 +230,7 @@ for (var m = 0; m < modes.length; m++) {
 attrMode = "number";
 
 // "Who can join": the option on Nucleus's setup screen, this PC only by default.
-check(Game.Options.length === 1 && Game.Options[0].key === "Online" && Game.Options[0].values.length === 2 &&
+check(Game.Options.length === 1 && Game.Options[0].key === "Online" && Game.Options[0].values.length === 3 && Game.Options[0].values[2] === "Join a game on another PC" &&
       Game.Options[0].values[0] === "This PC only" && Game.Options[0].values[1] === "Allow online players" &&
       Game.Options[0].def === "This PC only", "the option Who can join, default This PC only");
 check(startedWindows.length === 0, "no Options (an older Nucleus): no server window");
@@ -337,6 +338,63 @@ coopSession = null;
 var old = playAs(1, undefined);
 check(old.indexOf("server = 127.0.0.1\r\nport = 27590\r\n") >= 0 && old.indexOf("password = oldpassword\r\n") >= 0,
       "an old session.txt: " + old);
+
+// Join a game on another PC: no server started, every game's coop.ini points at the host, the guard skipped, the
+// handler closes no coop_server, a bad code tells the player.
+function noHostLine(p) {
+    var t = readFile(fso.BuildPath(instances[p], "coop.ini"));
+    return t !== "" && !/^\s*(server|port|password)\s*=/mi.test(t);   // written, and no host line (starts solo)
+}
+var JOIN = "Join a game on another PC", joinTxt = fso.BuildPath(game, "nucleus-players\\join.txt");
+check(coopSha256([97, 98, 99]).slice(0, 4).join(",") === "186,120,22,191", "SHA-256 of abc: " + coopSha256([97, 98, 99]).slice(0, 4).join(","));
+var invite = "CHFSA-6JFPP-5AATB-UCVDW-EXFYG-ZH2J3-KSGWK-S2GA";
+writeFile(joinTxt, invite + "\r\n");
+newSession();
+Game.KillProcessesOnClose = ["coop_server"];
+System.Diagnostics.Process.running = 1;        // a Host.bat of this PC is running: not our business
+logged = [];
+var j1 = playAs(0, JOIN), j2 = playAs(1, JOIN), j3 = playAs(2, JOIN);
+System.Diagnostics.Process.running = 0;
+check(startedWindows.length === 0 && startedServers.length === 0, "join: no server started");
+check(logged.join("\n").indexOf("already running") < 0, "join: the running-server guard is skipped");
+check(Game.KillProcessesOnClose.length === 0, "join: nothing closed at the end (no coop_server killed)");
+var joinOk = true, js = [j1, j2, j3];
+for (var q = 0; q < 3; q++) {
+    joinOk = joinOk && js[q].indexOf("server = 203.0.113.5\r\nport = 27510\r\n") >= 0 &&
+             js[q].indexOf("password = ABCDEFGHJKLMNPQRSTUV\r\n") >= 0;
+}
+check(joinOk, "join: every game's coop.ini points at the host: " + j3);
+// A later start that runs the script anew per player: from session.txt.
+coopSession = null;
+check(playAs(1, JOIN).indexOf("server = 203.0.113.5\r\nport = 27510\r\n") >= 0, "join: a later player from session.txt");
+// The Same network / VPN line, with and without a port.
+writeFile(joinTxt, "26.1.2.3:27600 hunter2x\r\n");
+newSession();
+check(playAs(0, JOIN).indexOf("server = 26.1.2.3\r\nport = 27600\r\n") >= 0, "join: address:port password");
+writeFile(joinTxt, "25.9.9.9 hunter2x\r\n");
+newSession();
+var lineNoPort = playAs(0, JOIN);
+check(lineNoPort.indexOf("server = 25.9.9.9\r\nport = 27510\r\n") >= 0 && lineNoPort.indexOf("password = hunter2x\r\n") >= 0,
+      "join: address password, the kit port");
+// Bad input: the player is told, no server started, nothing joined.
+var bads = [invite.substring(0, invite.length - 1), "CHFSA-6JFPP-5AATB-UCVDW-EXFYG-ZH2J3-KSGWK-S2GB", "hello", "999.1.1.1 pw", "",
+            "EHDDG-3ACVT-ASCAS-DASCS-NB2JP-PE7EA-GJEUQ-WC2NA-MLPZ3-JS"];
+for (var bi = 0; bi < bads.length; bi++) {
+    writeFile(joinTxt, bads[bi] + "\r\n");
+    newSession();
+    logged = [];
+    writeFile(sessionTxt, "stale\r\n10.0.0.1\r\n27510\r\n");
+    for (var dp = 0; dp < 2; dp++) {
+        writeFile(fso.BuildPath(instances[dp], "coop.ini"), "server = 203.0.113.5\r\nport = 27510\r\npassword = oldhost\r\n");   // the last session's host
+    }
+    var badThrew = false, bj = "", bj2 = "", badThrew2 = false;
+    try { bj = playAs(0, JOIN); } catch (e1) { badThrew = true; }
+    try { bj2 = playAs(1, JOIN); } catch (e2) { badThrew2 = true; }   // a later player: nothing either
+    check(badThrew && badThrew2 && startedWindows.length === 0 && startedServers.length === 0 &&
+          logged.join("\n").indexOf("Nothing is started") >= 0 && !fso.FileExists(sessionTxt) && noHostLine(0) && noHostLine(1),
+          "join: '" + bads[bi] + "' tells the player, starts nothing, no host line in coop.ini, no stale session: " + logged.join(" | "));
+}
+fso.DeleteFile(joinTxt);
 
 // Clean up: the links first (rmdir removes a link, not what it names), then the rest.
 for (var r = 0; r < 3; r++) shell.Run("cmd /c rmdir \"" + fso.BuildPath(instances[r], "user") + "\"", 0, true);

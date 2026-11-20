@@ -112,6 +112,19 @@ With **Who can join: Allow online players**, player 1's start runs the kit's own
 - The players on this PC join by themselves at 127.0.0.1, as with **This PC only**.
 - The first time, Windows may ask to let `coop_server.exe` through its firewall: allow it ([Firewall](#firewall) above). The Nucleus windows may cover the prompt and the server window: press Alt+Tab to find them.
 
+### Two PCs, two or more players on each (Join a game on another PC)
+
+PC 1 uses Nucleus with **Allow online players** (above) and its server window shows the invite code. On **PC 2**, Nucleus can join that host too, with every game of PC 2:
+
+1. On PC 2, copy `OoTCoop.js` from the newer kit's `nucleus` folder into Nucleus's `handlers` folder again (the handler of 0.11.7 or older has no such choice).
+2. Put the host's invite code (or, for a VPN or the same network, its line `address:port password`) as the **first line** of `nucleus-players\join.txt` beside the game (make the file; the folder appears at the first start), or just copy it: with no `join.txt`, the handler reads the clipboard. Nucleus's options are lists of choices, so there is no box to type it in.
+3. Under **Who can join** choose **Join a game on another PC**, set up the players and press **Play**. No server is started on PC 2: every game there writes its `coop.ini` to join the host directly, with the host's join password.
+4. A code the handler cannot read (a letter missing, an answer code, a code from a newer version) is told to you in a message box (and Nucleus's log) and nothing is started (the first game's start is abandoned with an error, no game opens); fix `join.txt` and press **Play** again.
+
+Ending the session closes only the games: this mode closes no `coop_server.exe`, so a server of your own on PC 2 keeps running. The games connect straight to the host's address from the code, with no join helper (the helper window of `Join.bat` serves one game only). That works when the host's router forwards the port (UPnP) or you are on a VPN or the same network (use the host's **Same network or VPN** line then); if the answer-code way through the routers is the only one that works for you, play one game per PC with the game's own **Join** instead.
+
+**"Co-op is already running" when starting a second game by hand:** `play.ps1` refuses a second copy of the same kit's exe. Nucleus makes one folder per player, so this mode does not meet it; by hand, use a second kit folder (as above).
+
 The game windows start in front of the server window. To see the invite code again, Alt+Tab to the window named **Squadala server**, or paste the clipboard right after the start.
 
 ## Something does not work
