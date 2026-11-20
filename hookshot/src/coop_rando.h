@@ -46,6 +46,9 @@ inline constexpr const char* kLogFile = "last-build.txt";          // in kFolder
 // In kFolder: the seed folders a host's world switched off in this guest's game, one per line, switched on again
 // when it plays alone (Decide: Want::restore, Plan::remember / forget).
 inline constexpr const char* kHostOffFile = "host-switched-off.txt";
+// In kFolder: the host's hand-put seed folder a host's world switched ON in this guest's game (it had it off), switched
+// off again when it plays alone (Want::host_on, Plan::remember_on / forget).
+inline constexpr const char* kHostOnFile = "host-switched-on.txt";
 inline constexpr const char* kTablesFile = "coop-tables.txt";      // in a seed: the size tables it was built beside
 // In a seed, for the players to share (player report: no spoiler log to post): OOTRR's own spoiler log (`generate
 // --spoiler`, kept as <seed folder>.spoiler.txt beside the seed file in kFolder) and the seed's OOTRR1- settings string
@@ -98,6 +101,7 @@ struct Want {
     bool guest = false;       // the host's values decide `on` (a guest in the host's world)
     bool turned_off = false;  // the player turned our switch from on to off in this run
     std::vector<std::string> restore;  // kHostOffFile: what a host's world switched off here
+    std::vector<std::string> host_on;  // kHostOnFile: what a host's world switched on here
     // A guest whose host plays a seed folder put in by hand (kHandSeedKey): that folder, and `keep` the same when this
     // game has it with the same files (SeedFilesHash): kept on in the host's world. `hand_pending`: this game has the
     // folder, its hash is not known yet (Decide waits).
@@ -116,7 +120,8 @@ struct Plan {
     std::string why;                    // one plain line for the log and the tab
     bool for_tables = true;             // refresh: for the size tables (false: only for spoiler.txt / settings.txt)
     std::vector<std::string> remember;  // a guest: `off` goes into kHostOffFile, to come back on alone
-    bool forget = false;                // kHostOffFile is done with (removed)
+    std::vector<std::string> remember_on;  // a guest: the host's hand-put seed switched on, into kHostOnFile
+    bool forget = false;                // kHostOffFile and kHostOnFile are done with (removed)
 };
 // What the game must do for `want`, given the seeds built and which mods are on now (Loader rows). `tables`: the
 // TablesStamp of the other mods' size tables now; a built seed with another one is refreshed (none: not compared).

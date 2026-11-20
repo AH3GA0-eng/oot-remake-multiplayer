@@ -1855,6 +1855,12 @@ TEST_CASE("rando: a guest keeps the host's hand-put seed only when it has the sa
     rows[0].on = false;
     p = Decide(want, {}, rows);
     CHECK(p.on == std::vector<std::string>{"randomizer-hand"});
+    CHECK(p.remember_on == std::vector<std::string>{"randomizer-hand"});  // off again alone
+    want.restore = {"randomizer-hand"};  // off only because an earlier host's world switched it off: on alone too
+    p = Decide(want, {}, rows);
+    CHECK(p.on == std::vector<std::string>{"randomizer-hand"});
+    CHECK(p.remember_on.empty());
+    want.restore.clear();
     rows[0].on = true;
     // Not the same, or not there: as before, every seed off for the host's world.
     want.keep.clear();
@@ -1874,6 +1880,18 @@ TEST_CASE("rando: a guest keeps the host's hand-put seed only when it has the sa
     want.keep = "randomizer-hand";
     p = Decide(want, {}, {RowNamed("randomizer-hand", true)});
     CHECK(p.what == Plan::Do::nothing);
+    // Alone after a host's world switched it on (kHostOnFile): off again, both lists forgotten.
+    want.host_on = {"randomizer-hand"};
+    p = Decide(want, {}, {RowNamed("randomizer-hand", true)});
+    CHECK(p.off == std::vector<std::string>{"randomizer-hand"});
+    CHECK(p.forget);
+    // Our own switch on alone: its seed plays, the list is forgotten too.
+    want = Want{true, "MINE1", "default"};
+    want.host_on = {"randomizer-hand"};
+    p = Decide(want, {{"randomizer-MINE1", "MINE1", "default", "", true}},
+               {RowNamed("randomizer-MINE1", true), RowNamed("randomizer-hand", true)});
+    CHECK(p.off == std::vector<std::string>{"randomizer-hand"});
+    CHECK(p.forget);
 }
 
 TEST_CASE("rando: the hand-put seed's value on the wire") {
@@ -2065,6 +2083,13 @@ TEST_CASE("rando: a guest that has the host's hand-put seed switched off gets it
     CHECK(On(*g.loader, "randomizer-hand"));
     const auto lines = g.rando->TakeLines();
     CHECK(std::find(lines.begin(), lines.end(), HandLine(HandMatch::same, "randomizer-hand", true)) != lines.end());
+    CHECK(fs::is_regular_file(g.w.mods / kFolder / kHostOnFile));
+    g.loader->SetHostValues(std::nullopt);  // alone again: off, as the player had it
+    g.rando->Recheck();
+    g.rando->Wait();
+    CHECK_FALSE(On(*g.loader, "randomizer-hand"));
+    CHECK(On(*g.loader, "randomizer-mine"));
+    CHECK_FALSE(fs::exists(g.w.mods / kFolder / kHostOnFile));
 }
 
 TEST_CASE("rando: a guest with another copy, or none, of the host's hand-put seed plays without it, both chats say so") {

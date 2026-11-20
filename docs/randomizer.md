@@ -48,7 +48,7 @@ From 0.11.8, a seed made outside the kit (OOTRR built from source, or OOTRR's ow
 3. The host leaves the **Randomizer** switch off and hosts. Everyone starts the game from the kit (its start fits the seed for the co-op puppets).
 4. Guests join from the title as usual, then everyone starts a new save.
 
-Each guest's chat says "Randomizer: the host plays the seed randomizer-X, and yours is the same: it stays on". A guest without the folder, or with a different copy, plays the base game's chests in the host's world; its chat says what to copy, and the host's chat names that player. Copy the host's folder again (the whole folder, unchanged) and restart. Details: `docs/mods.md`, "Sharing a seed you built yourself".
+Each guest's chat says "Randomizer: the host plays the seed randomizer-X, and yours is the same: it stays on". A guest without the folder, or with a different copy, plays the base game's chests in the host's world; its chat says what to copy, and the host's chat names that player. Delete your copy, copy the host's whole folder in again (unchanged) and restart. Details: `docs/mods.md`, "Sharing a seed you built yourself".
 
 ## What the chat lines mean
 
@@ -63,7 +63,7 @@ Each guest's chat says "Randomizer: the host plays the seed randomizer-X, and yo
 | Mods: player N has the randomizer seed X built unlike the host's ... | That player is on another kit (another OOTRR), so they play another world. | That player updates to the host's kit. |
 | Randomizer seed X was made again for the co-op puppets: RESTART ... | A kit update changed the co-op puppets' files. | Restart. Your save stays. |
 | Randomizer: the host plays the seed randomizer-X, and yours is the same: it stays on | You have the host's hand-put seed folder (above). | Nothing; "... RESTART" in the same line: restart, it was off in your Mods list. |
-| Randomizer: the host plays the seed randomizer-X, which you don't have / and yours is not the same as the host's ... | You play the base game's chests in the host's world. | Copy the host's whole `randomizer-X` folder into your `mods` (over yours), then restart. |
+| Randomizer: the host plays the seed randomizer-X, which you don't have / and yours is not the same as the host's ... | You play the base game's chests in the host's world. | Delete your `randomizer-X` folder (if you have one), copy the host's whole folder into your `mods`, then restart. |
 | [randomizer] I play without your seed randomizer-X: ... | Seen by the host: that guest lacks your hand-put seed, or has another copy. | Send that player the folder. |
 | "name" is a mod with its own size table (e.g. a randomizer seed from OOTRR's site) ... | A seed was made on OOTRR's site and put into `mods` by hand. Only you have it, and other players can't be shown. | Make the seed in the Mods tab instead, or turn that mod off. |
 

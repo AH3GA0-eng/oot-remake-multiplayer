@@ -284,7 +284,13 @@ Plan Decide(const Want& want, const std::vector<Built>& built, const std::vector
                 // player had it off; first row, so its size table wins as on the host's).
                 plan.remember = plan.off;
                 const CoopMods::Row* row = RowOf(rows, want.keep);
-                if (row != nullptr && !row->on) plan.on.push_back(row->name);
+                if (row != nullptr && !row->on) {
+                    plan.on.push_back(row->name);
+                    // Off by the player's choice (not by an earlier host's world, kHostOffFile): off again alone.
+                    const auto same = [&](const std::string& n) { return CoopMods::NameSame(n, row->name); };
+                    const bool was_on = std::any_of(want.restore.begin(), want.restore.end(), same);
+                    if (!was_on) plan.remember_on.push_back(row->name);
+                }
                 plan.why = "the host plays the seed " + want.keep + ", the same as yours: it stays on";
                 if (!plan.off.empty()) plan.why += " (your other seeds are switched off for its world)";
             } else if (want.guest) {
@@ -292,7 +298,7 @@ Plan Decide(const Want& want, const std::vector<Built>& built, const std::vector
                 plan.why = "the host plays without the randomizer: your seeds are switched off for its world (they "
                            "are switched on again when you play alone)";
             } else {
-                plan.forget = !want.restore.empty();
+                plan.forget = !want.restore.empty() || !want.host_on.empty();
                 plan.why = "the randomizer is off: its seeds are switched off";
             }
         } else {
@@ -305,7 +311,15 @@ Plan Decide(const Want& want, const std::vector<Built>& built, const std::vector
                     plan.on.push_back(row->name);
                 }
             }
-            plan.forget = !want.restore.empty();
+            // A host's hand-put seed this game had off, switched on for the host's world: off again.
+            for (const std::string& name : want.host_on) {
+                const CoopMods::Row* row = RowOf(rows, name);
+                if (row != nullptr && row->on && IsSeedFolder(row->name) && !ours(row->name) &&
+                    std::find(plan.off.begin(), plan.off.end(), row->name) == plan.off.end()) {
+                    plan.off.push_back(row->name);
+                }
+            }
+            plan.forget = !want.restore.empty() || !want.host_on.empty();
             if (!plan.off.empty()) plan.why = "the randomizer is off: its seeds are switched off";
             if (!plan.on.empty()) {
                 plan.why += std::string(plan.why.empty() ? "" : "; ") +
@@ -354,7 +368,7 @@ Plan Decide(const Want& want, const std::vector<Built>& built, const std::vector
     if (want.guest) {
         plan.remember = plan.off;  // the host's seed in its world; ours come back on alone
     } else {
-        plan.forget = !want.restore.empty();  // our switch picks the one seed now
+        plan.forget = !want.restore.empty() || !want.host_on.empty();  // our switch picks the one seed now
     }
     plan.what = plan.on.empty() && plan.off.empty() ? Plan::Do::nothing : Plan::Do::use;
     if (plan.what == Plan::Do::nothing && plan.forget) plan.what = Plan::Do::use;
@@ -586,7 +600,7 @@ std::string HandLine(HandMatch match, std::string_view folder, bool restart) {
         break;
     }
     return "Randomizer: the host plays the seed " + f + ", and yours is not the same as the host's: it is switched off "
-           "for this world (the base game's chests). To play it, copy the host's " + f + " folder over yours, then "
+           "for this world (the base game's chests). To play it, delete your " + f + " folder, copy the host's in, then "
            "restart";
 }
 
@@ -1465,6 +1479,11 @@ Want Rando::Wanted(bool* seed_locked) const {
             while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
             if (IsSeedFolder(line)) want.restore.push_back(line);
         }
+        std::istringstream on_lines(ReadFileText(loader_.Root() / kFolder / kHostOnFile));
+        for (std::string line; std::getline(on_lines, line);) {
+            while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+            if (IsSeedFolder(line)) want.host_on.push_back(line);
+        }
     }
     want.guest = loader_.HostValuesSet();
     if (want.guest) {
@@ -1610,6 +1629,17 @@ void Rando::Switch(const Plan& plan) {
     } else if (plan.forget) {
         std::error_code ec;
         fs::remove(host_off, ec);
+    }
+    const fs::path host_on = loader_.Root() / kFolder / kHostOnFile;
+    if (!plan.remember_on.empty()) {
+        std::string text = ReadFileText(host_on);
+        for (const std::string& name : plan.remember_on) {
+            if (("\n" + text).find("\n" + name + "\n") == std::string::npos) text += name + "\n";
+        }
+        WriteText(host_on, text);
+    } else if (plan.forget) {
+        std::error_code ec;
+        fs::remove(host_on, ec);
     }
     for (const std::string& name : plan.off) loader_.SetOn(name, false);
     for (const std::string& name : plan.on) {
