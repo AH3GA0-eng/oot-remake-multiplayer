@@ -410,10 +410,10 @@ std::vector<Menu::Line> Menu::Lines() const {
                        Act::kRoom,
                        "Your room's name on the relay when you host: 3 to 24 letters, digits, - or _. Friends type "
                        "it to join. Empty: a join code instead. A change while you host applies at your next Host."});
-        out.push_back({Choice("Password on this network", options_.same_network_password ? "Needed" : "Not needed"),
+        out.push_back({Choice("Password on this network", options_.same_network_open ? "Not needed" : "Needed"),
                        Act::kSameNetwork,
-                       "When you host, players on your own network (behind the same router) join without the join "
-                       "password. Needed: they type it too, as friends online do."});
+                       "Not needed: when you host, players from a private address join without the join password. "
+                       "Only on a network you trust: a tunnel, a VPN or a port forward can bring others in that way."});
         out.push_back({Toggle("Proximity voice chat", options_.voice), Act::kVoice,
                        "Talk with players near your Link through your microphone; they sound quieter the farther away "
                        "they are. Off: you neither send nor hear voices."});
@@ -1166,7 +1166,7 @@ void Menu::Change(Act act, int step) {
         request_ = Request{Request::Kind::kSave, {}};
         break;
     case Act::kSameNetwork:
-        options_.same_network_password = !options_.same_network_password;   // (two choices: either way flips it)
+        options_.same_network_open = !options_.same_network_open;   // (two choices: either way flips it)
         request_ = Request{Request::Kind::kSave, {}};
         break;
     case Act::kMic: {

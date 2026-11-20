@@ -148,7 +148,15 @@ bool HostService::start(std::string& error) {
   say("players must give the join password to join; the traffic is encrypted");
   if (config_.session.pvp) say("PvP is on: players can hurt each other");
   if (config_.session.approve_joins) say("each new player waits until the host lets them in (/allow or /deny)");
-  if (config_.session.same_network_open) say("players on this network join without the join password");
+  if (config_.session.same_network_open) {
+    say("players from a private address (this network) join without the join password");
+    // Open online too: a port forward, a tunnel or a VPN on this network brings
+    // players from the internet in from a private address, without the password.
+    if (config_.upnp || config_.invite || !config_.relay_via.empty()) {
+      say("this game is also open online: a tunnel, a VPN or a forwarded port on this network can let others in "
+          "without the password; choose Password on this network: Needed unless you trust this network");
+    }
+  }
   if (!config_.session.allowed.empty()) {
     say("only the " + std::to_string(config_.session.allowed.size()) +
         " address range(s) given with --allow may connect");

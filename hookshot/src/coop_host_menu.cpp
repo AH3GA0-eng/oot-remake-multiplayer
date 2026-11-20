@@ -176,7 +176,7 @@ int Menu::HostStart(const HosCoopHostOptions* o) {
     job.invite = COOP_HAS(o, HosCoopHostOptions, invite) && o->invite != 0;
     job.pvp = COOP_HAS(o, HosCoopHostOptions, pvp) && o->pvp != 0;
     job.approve_joins = COOP_HAS(o, HosCoopHostOptions, approve_joins) && o->approve_joins != 0;
-    job.same_network_open = !(COOP_HAS(o, HosCoopHostOptions, same_network_password) && o->same_network_password != 0);
+    job.same_network_open = COOP_HAS(o, HosCoopHostOptions, same_network_open) && o->same_network_open != 0;
     job.relay_via = Trim(COOP_HAS(o, HosCoopHostOptions, relay_via) ? Text(o->relay_via) : std::string());
     job.relay_key = COOP_HAS(o, HosCoopHostOptions, relay_key) ? Text(o->relay_key) : std::string();
     job.relay_room = Trim(COOP_HAS(o, HosCoopHostOptions, relay_room) ? Text(o->relay_room) : std::string());

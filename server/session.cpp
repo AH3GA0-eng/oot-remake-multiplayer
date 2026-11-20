@@ -268,9 +268,11 @@ void Session::on_join_proof(ConnectionId id, Connection& c, const JoinProof& pro
   }
   // The same network without the password (SessionConfig::same_network_open):
   // the same-network key, from a private address only.
+  bool same_network = false;
   if (!right && config_.same_network_open && c.address && is_same_network(ipv4_of(*c.address)) &&
       proves(std::string(protocol::kSameNetworkPassword))) {
     right = true;
+    same_network = true;
     password = std::string(protocol::kSameNetworkPassword);
     ++stats_.same_network_joins;
   }
@@ -305,7 +307,9 @@ void Session::on_join_proof(ConnectionId id, Connection& c, const JoinProof& pro
   actions_.push_back(EncryptAction{id, *keys});
   keys->wipe();
   c.state = State::awaiting_hello;  // admit() moves it on to joined or closing
-  c.proved_password = password;
+  // (a same-network join knew no password: none is kept for its rejoin claim, so
+  // the key never becomes an "old password" that works from anywhere)
+  c.proved_password = same_network ? std::string() : password;
   admit(id, c, hello, now_us, player_key);
   if (old_token) {
     // Back in with the old password: the token it showed is used up, its new

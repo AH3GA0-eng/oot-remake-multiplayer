@@ -3869,6 +3869,30 @@ TEST_CASE("join password: the same network joins with the same-network key when 
   CHECK(h.session.stats().same_network_joins == 1);
 }
 
+TEST_CASE("join password: a same-network join keeps no old password when the host changes it") {
+  SessionConfig config = with_password("hunter2");
+  config.same_network_open = true;
+  Harness h(config);
+  auto join = [&](ConnectionId id, std::uint32_t address, std::optional<RejoinTokenBytes> token) {
+    h.clear();
+    h.connect(id, address);
+    if (token) h.receive(id, RejoinClaim{*token}, kChannelSession);
+    h.receive(id, hello_from("Link"), kChannelSession);
+    const auto challenge = only_message_to<JoinChallenge>(h, id);
+    REQUIRE(challenge.has_value());
+    h.clear();
+    h.receive(id, JoinProof{h.proof(std::string(kSameNetworkPassword), challenge->nonce)}, kChannelSession);
+    return h.to(id);
+  };
+  join(1, enet_address(192, 168, 1, 20), std::nullopt);
+  REQUIRE(h.session.player_count() == 1);
+  h.session.set_join_password("deku-tree");
+  CHECK(h.session.old_password_count() == 0);   // (the key is no password of theirs to keep)
+  // Its token and the key from the internet: refused, as any wrong password.
+  h.now += 1'000'000;
+  CHECK(refused_reason(join(2, enet_address(8, 8, 4, 4), token_of(h, 1))) == RefuseReason::bad_password);
+}
+
 TEST_CASE("join password: a host that keeps the password for its own network refuses the same-network key there") {
   Harness h(with_password("hunter2"));   // (same_network_open off: as before)
   h.connect(1, enet_address(192, 168, 1, 20));
