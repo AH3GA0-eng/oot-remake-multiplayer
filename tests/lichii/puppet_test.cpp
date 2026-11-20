@@ -2910,14 +2910,18 @@ Target Dressed(std::string actor, std::uint64_t custom) {
     t.custom = custom;
     return t;
 }
-void LiveAs(Director& d, Game& g, const Target& t) {
+// The calls of the frames that bring the puppet live (a Frame runs every Step until none is left, so the first
+// colour routine call is among them, at the frame the puppet goes live).
+std::vector<Call> LiveAs(Director& d, Game& g, const Target& t) {
     d.SetInput(Wants({t}));
     auto calls = Frame(d, g, 0);
     REQUIRE(calls.size() >= 2);
     g.Spawn(calls[1].x[3]);
-    Frame(d, g, 10);
-    Frame(d, g, 15);
+    calls = Frame(d, g, 10);
+    const auto more = Frame(d, g, 15);
+    calls.insert(calls.end(), more.begin(), more.end());
     REQUIRE(d.Slots()[0].phase == Phase::live);
+    return calls;
 }
 }  // namespace
 
@@ -2929,17 +2933,17 @@ TEST_CASE("puppet characters: the mod's colour routine is called with the option
     Director d([&](const std::string& line) { log.push_back(line); });
     d.SetCharacterApply(kDressAt, kDressHead);
     const std::uint64_t word = (std::uint64_t{9} << 32) | 0x123456u;
-    LiveAs(d, g, Dressed("CoopPuppet_Adult_C005", word));
+    auto calls = LiveAs(d, g, Dressed("CoopPuppet_Adult_C005", word));
     std::uint64_t given = 0;
-    auto calls = Frame(d, g, 20);
-    REQUIRE(Dresses(calls, &given) == 1);
+    REQUIRE(Dresses(calls, &given) == 1);                                    // as soon as it is live
     CHECK(given == word);
     for (const auto& c : calls) {
         if (c.function == kBase + kDressAt) {
             CHECK(c.x[0] == kActor);   // the puppet's actor
         }
     }
-    CHECK(Dresses(Frame(d, g, 500)) == 0);                                   // once
+    CHECK(Dresses(Frame(d, g, 20)) == 0);                                    // once
+    CHECK(Dresses(Frame(d, g, 500)) == 0);
     CHECK(Dresses(Frame(d, g, 20 + kAgainMs + 1)) == 1);      // and again later (a late model)
     const std::uint64_t other = (std::uint64_t{9} << 32) | 0x000001u;
     d.SetInput(Wants({Dressed("CoopPuppet_Adult_C005", other)}));
