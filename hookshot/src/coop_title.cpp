@@ -729,6 +729,7 @@ void RefreshSaveList(void* ctx) {
 
 // Link is in the game: this game's own row has a scene (CoopHook::PlayerList).
 bool InGame() {
+    if (TitleUp()) return false;   // (the title's own scene has a Link: not a file played)
     for (const auto& row : CoopHook::PlayerList()) {
         if (row.self) {
             return row.scene.has_value() && !row.scene->empty();
