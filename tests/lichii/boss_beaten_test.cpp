@@ -637,19 +637,83 @@ TEST_CASE("boss beaten: in the boss's area, given once no death of ours can run 
     }
 }
 
-TEST_CASE("boss beaten: with no death_here the area still waits, a reset's put-back still waits in the area") {
+TEST_CASE("boss beaten: with no death_here the area still waits, a reset's put-back too") {
     const BeatenSet& s = Gohma();
     const std::string deku(CoopBoss::RoomByIndex(0)->scene);
-    const std::function<bool(std::uint8_t)> none = [](std::uint8_t) { return false; };
     Flags f = Alive(s);
     Apply a;
     CHECK(a.Check(deku, true, std::vector<std::uint8_t>{0}, std::ref(f), kNear).empty());
-    // Row 138 (4): the host's older save takes the warp away; never under our feet in the boss's area.
     Flags beatenFlags = BeatenThenReset(s, s.below.back());
     Apply r;
     r.HostReset(true);
-    CHECK(r.Check(deku, true, {}, std::ref(beatenFlags), kNear, none).empty());
-    CHECK_FALSE(r.Check(deku, true, {}, std::ref(beatenFlags), kAway, none).empty());
+    CHECK(r.Check(deku, true, {}, std::ref(beatenFlags), kNear).empty());
+    CHECK_FALSE(r.Check(deku, true, {}, std::ref(beatenFlags), kAway).empty());
+}
+
+TEST_CASE("boss beaten: the host reloads before the warp: a guest in the boss room loses the warp too (row 159)") {
+    // Row 159 (0.11.6, Gohma): the host beat her with the guests, then loaded its save from before the fight. Its
+    // FLAG_RESET put the shared quest back (her room's logic showed her again, live) while the guests' own
+    // Gohma_DefeatBoss stayed (the put-back waited for a walk out of the room): the warp AND Gohma, the host with
+    // neither warp nor kill. Now, in the area once no death of ours can run, the Bools go back there too: every game
+    // fights her again, as the host's save has it. Every boss whose quest the host's save sets.
+    int shared = 0;
+    for (const BeatenSet& set : CoopBossBeaten::Sets()) {
+        CAPTURE(set.boss);
+        const CoopBoss::Room* room = CoopBoss::RoomByIndex(set.room);
+        if (!Shared(set) || room == nullptr) {
+            continue;
+        }
+        ++shared;
+        const std::string dungeon(room->scene);
+        Flags f = BeatenThenReset(set, set.below.back());
+        bool runs = true;
+        const std::function<bool(std::uint8_t)> death = [&](std::uint8_t r) { return r == set.room && runs; };
+        Apply a;
+        a.HostReset(true);
+        CHECK(a.Check(dungeon, true, {}, std::ref(f), kNear, death).empty());  // our own death event still plays
+        runs = false;
+        const std::vector<Write> w = a.Check(dungeon, true, {}, std::ref(f), kNear, death);
+        REQUIRE_FALSE(w.empty());
+        CHECK(std::all_of(w.begin(), w.end(), [](const Write& x) { return x.revert && !x.is_enum; }));
+        for (const auto& b : set.bools) {
+            const std::string_view name(b.name);
+            CAPTURE(name);
+            const bool written =
+                std::any_of(w.begin(), w.end(), [&](const Write& x) { return x.hash == b.hash; });
+            if (b.value && !name.ends_with("_BossIn")) {
+                CHECK(written);  // the warp's flag (Gohma_DefeatBoss) and the death's events: alive again
+            } else if (b.value) {
+                CHECK_FALSE(written);  // the intro stays
+            }
+        }
+        CHECK(a.Check(dungeon, true, {}, std::ref(f), kNear, death).empty());  // once
+    }
+    CHECK(shared == 5);
+}
+
+TEST_CASE("boss beaten: row 159, a host save that kept the kill or a boss beaten again leaves the guest's room") {
+    const BeatenSet& s = Gohma();
+    const std::string deku(CoopBoss::RoomByIndex(0)->scene);
+    const std::function<bool(std::uint8_t)> none = [](std::uint8_t) { return false; };
+    {  // the host's save has her beaten (its quest past DefeatBoss): the warp stays for everyone
+        Flags f = BeatenThenReset(s, s.step);
+        Apply a;
+        a.HostReset(true);
+        CHECK(a.Check(deku, true, {}, std::ref(f), kNear, none).empty());
+        CHECK(a.Check(deku, true, {}, std::ref(f), kAway, none).empty());
+    }
+    {  // beaten again since the reset (a proven death in the record): nothing goes back
+        Flags f = BeatenThenReset(s, s.step);
+        Apply a;
+        a.HostReset(true);
+        CHECK(a.Check(deku, true, std::vector<std::uint8_t>{0}, std::ref(f), kNear, none).empty());
+    }
+    {  // unshared quests (LICHII_COOP_QUESTS=0): each game's own boss, nothing goes back
+        Flags f = BeatenThenReset(s, s.below.back());
+        Apply a;
+        a.HostReset(false);
+        CHECK(a.Check(deku, true, {}, std::ref(f), kNear, none).empty());
+    }
 }
 
 TEST_CASE("boss beaten: solo and co-op idle stay unchanged in the boss's room (row 136)") {
