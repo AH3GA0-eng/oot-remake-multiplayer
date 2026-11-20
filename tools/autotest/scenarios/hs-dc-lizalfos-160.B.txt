@@ -48,6 +48,8 @@ place 113.5 116.2 -37.0   # inside, on its floor, if the walk fell short
 mark b-near
 wait 1400                 # A killed one and is down (two hurts; A's a-down <= ~2200 after its in)
 mark b-down
+goto 111.0 -36.0 1.0 60   # a step west: the camera looks at 0x2345's spot (102 -31): is our kept copy shown? (0x155c 5.4 m stays the nearest)
+mark b-look
 kill Enemy_MiddleBoss_Lizalfos   # the last one, its owner down
 wait 120
 mark b-last
