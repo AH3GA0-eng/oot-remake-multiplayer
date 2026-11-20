@@ -180,105 +180,51 @@ TEST_CASE("pause tab: the host's player count goes round 2 to 16 and is saved") 
     CHECK(m.options().max_players == 2);
 }
 
-TEST_CASE("pause tab: Join pastes the code in one press, then joins with it") {
+TEST_CASE("pause tab: Join: a room name or an address, its port and the password, then Join (no friend's code)") {
     Menu m;
-    m.Show(CoopTitleMenu::Options{});
+    CoopTitleMenu::Options o;
+    o.relay = "relay.example.net:27530";
+    m.Show(o);
     SelectRow(m, "Join a game");
     m.Press(Input::kDecide);
     CHECK(m.page() == Page::kJoin);
-    CHECK(Names(m) == std::vector<std::string>{"Friend's code", "IP address", "Port", "Password", "Join"});
-    CHECK(m.view().rows[0].value == "Paste");
-    CHECK(m.view().rows[1].value == "Type");
-    CHECK(m.view().rows[2].value == "27510");
-    CHECK(m.view().rows[4].fixed);   // nothing to join yet
-    m.Press(Input::kDecide);
-    CHECK(m.typing());
-    CHECK(m.view().typing);
-    CHECK(m.TakeRequest()->kind == Request::Kind::kPaste);   // the module answers with the clipboard
-    CHECK(m.Paste("  ABCDE-FGHJK\r\n"));
-    CHECK_FALSE(m.typing());
-    CHECK(m.join_text() == "ABCDE-FGHJK");
-    CHECK(Selected(m) == "Join");
+    CHECK(Names(m) == std::vector<std::string>{"Room or address", "Port", "Password", "Join"});
+    CHECK(m.view().rows[0].value == "Type");
+    CHECK(m.view().rows[1].value == "27510");
+    CHECK(m.view().rows[3].fixed);   // nothing to join yet
+    const auto type = [&](const std::string& row, const std::string& text) {
+        SelectRow(m, row);
+        m.Press(Input::kDecide);
+        REQUIRE(m.typing());
+        for (const char c : text) m.Char(static_cast<unsigned char>(c));
+        m.Press(Input::kDecide);
+    };
+    // A room name: through the relay, with the password
+    type("Room or address", "forest-gang");
+    type("Password", "kokiri");
+    CHECK(m.join_text() == "forest-gang@relay.example.net:27530 kokiri");
+    CHECK(m.view().rows[2].value == "******");
+    SelectRow(m, "Join");
     m.Press(Input::kDecide);
     auto r = m.TakeRequest();
     REQUIRE(r.has_value());
     CHECK(r->kind == Request::Kind::kJoin);
-    CHECK(r->text == "ABCDE-FGHJK");
-    // nothing on the clipboard: said, and the field can still be typed into
-    Menu e;
-    e.Show(CoopTitleMenu::Options{});
-    e.Open(Page::kJoin);
-    e.Press(Input::kDecide);
-    e.TakeRequest();
-    CHECK(e.Paste(""));
-    CHECK(e.view().help.find("Nothing to paste") != std::string::npos);
-    CHECK(e.Char('1'));
-    CHECK(e.Char('2'));
-    e.Press(Input::kErase);
-    CHECK(e.join_text() == "1");
-    CHECK(e.view().rows[0].value == "1_");
-    e.Press(Input::kDecide);   // done: on to Join
-    CHECK(Selected(e) == "Join");
-}
-
-TEST_CASE("pause tab: a new code replaces the one in the field, never goes beside it, and Clear empties it") {
-    const std::string old_code = "ABCDEFGHJKLMNPQRSTUVWXYZ-OLD1";
-    const std::string new_code = "ABCDEFGHJKLMNPQRSTUVWXYZ-NEW2";
-    Menu m;
-    m.Show(CoopTitleMenu::Options{});
-    m.Open(Page::kJoin);
-    m.Press(Input::kDecide);
-    m.TakeRequest();
-    CHECK(m.Paste(old_code));
-    // a long code shows its start, its end and its length: codes start alike
-    CHECK(Names(m) == std::vector<std::string>{"Friend's code", "Clear the code", "IP address", "Port", "Password", "Join"});
-    CHECK(m.view().rows[0].value == "ABCDEFGH...XYZ-OLD1 (29)");
-    // pressing the field again pastes at once, in place of the old code (one press, then Join)
-    SelectRow(m, "Friend's code");
-    m.Press(Input::kDecide);
-    CHECK(m.TakeRequest()->kind == Request::Kind::kPaste);
-    CHECK(m.Paste(new_code));
-    CHECK(m.join_text() == new_code);
-    CHECK(Selected(m) == "Join");
-    // Ctrl+V while typing replaces it too
-    SelectRow(m, "Friend's code");
-    m.Press(Input::kDecide);
-    m.TakeRequest();
-    CHECK(m.Paste(""));   // nothing on the clipboard: the code stays, no complaint
-    CHECK(m.join_text() == new_code);
-    CHECK(m.typing());
-    CHECK(m.view().rows[0].value == "..." + new_code.substr(new_code.size() - 20) + "_");   // its end, typed
-    m.Press(Input::kPaste);
-    CHECK(m.TakeRequest()->kind == Request::Kind::kPaste);
-    CHECK(m.Paste(old_code));
-    CHECK(m.join_text() == old_code);
-    // a code that comes as keystrokes (Win+V, an on-screen keyboard) starts a new code, not more of the old one
-    SelectRow(m, "Friend's code");
-    m.Press(Input::kDecide);
-    m.TakeRequest();
-    m.Paste("");
-    for (const char c : new_code) {
-        m.Char(static_cast<unsigned char>(c));
-    }
-    CHECK(m.join_text() == new_code);
-    m.Press(Input::kDecide);
-    // Backspace first edits the old code instead
-    SelectRow(m, "Friend's code");
-    m.Press(Input::kDecide);
-    m.TakeRequest();
-    m.Paste("");
-    m.Press(Input::kErase);
-    m.Char('3');
-    CHECK(m.join_text() == new_code.substr(0, new_code.size() - 1) + "3");
-    m.Press(Input::kDecide);
-    // Clear empties the field and goes back to it; Join waits for a code
-    SelectRow(m, "Clear the code");
-    m.Press(Input::kDecide);
-    CHECK(m.join_text().empty());
-    CHECK(Names(m) == std::vector<std::string>{"Friend's code", "IP address", "Port", "Password", "Join"});
-    CHECK(m.view().rows[0].value == "Paste");
-    CHECK(Selected(m) == "Friend's code");
-    CHECK(m.view().rows[4].fixed);
+    CHECK(r->text == "forest-gang@relay.example.net:27530 kokiri");
+    // An address: directly, with the password
+    Menu d;
+    d.Show(CoopTitleMenu::Options{});
+    d.Open(Page::kJoin);
+    SelectRow(d, "Room or address");
+    d.Press(Input::kDecide);
+    for (const char c : std::string("192.168.1.20")) d.Char(static_cast<unsigned char>(c));
+    d.Press(Input::kDecide);
+    SelectRow(d, "Password");
+    d.Press(Input::kDecide);
+    for (const char c : std::string("kokiri")) d.Char(static_cast<unsigned char>(c));
+    d.Press(Input::kDecide);
+    CHECK(d.join_text().rfind("192.168.1.20", 0) == 0);
+    CHECK(d.join_text().find("kokiri") != std::string::npos);
+    CHECK(d.join_text().find('@') == std::string::npos);
 }
 
 TEST_CASE("pause tab: Join offers the last game again first, one press") {
@@ -286,7 +232,7 @@ TEST_CASE("pause tab: Join offers the last game again first, one press") {
     m.Show(CoopTitleMenu::Options{});
     m.Open(Page::kJoin);
     m.SetRejoin("Saria", "ABCDE-FGHJK");
-    CHECK(Names(m) == std::vector<std::string>{"Join Saria again", "Or a new code", "IP address", "Port", "Password", "Join"});
+    CHECK(Names(m) == std::vector<std::string>{"Join Saria again", "Room or address", "Port", "Password", "Join"});
     CHECK(Selected(m) == "Join Saria again");
     m.Press(Input::kDecide);
     auto r = m.TakeRequest();
@@ -296,7 +242,7 @@ TEST_CASE("pause tab: Join offers the last game again first, one press") {
     m.SetRejoin("", "ABCDE-FGHJK");
     CHECK(m.view().rows[0].name == "Join your friend again");
     m.SetRejoin("Saria", "");
-    CHECK(m.view().rows[0].name == "Friend's code");
+    CHECK(m.view().rows[0].name == "Room or address");
 }
 
 TEST_CASE("pause tab: a guest sees the friend's game and Leave, a blocked way in offers the answer code") {
@@ -800,7 +746,7 @@ TEST_CASE("pause tab: Join accepts manual IP address and port, with default port
     m.Show(CoopTitleMenu::Options{});
     m.Open(Page::kJoin);
 
-    SelectRow(m, "IP address");
+    SelectRow(m, "Room or address");
     CHECK(m.view().confirm == "Type");
     m.Press(Input::kDecide);
     CHECK(m.typing());
@@ -842,7 +788,7 @@ TEST_CASE("pause tab: Join accepts manual IP address and port, with default port
     CHECK(m.join_text() == "192.168.1.50:28005");
 
     // Invalid IP or out-of-range port shows a clear note and keeps the prior value.
-    SelectRow(m, "IP address");
+    SelectRow(m, "Room or address");
     m.Press(Input::kDecide);
     m.Char(' ');
     m.Char('!');
@@ -874,7 +820,7 @@ TEST_CASE("pause tab: Join accepts manual IP address and port, with default port
     CHECK(m.join_text() == "25.1.2.3:29000 ABCDEF");
 
     // Typing host:port in IP address splits both cleanly.
-    SelectRow(m, "IP address");
+    SelectRow(m, "Room or address");
     m.Press(Input::kDecide);
     for (int i = 0; i < 8; ++i) {
         m.Press(Input::kErase);
@@ -892,7 +838,7 @@ TEST_CASE("pause tab: Join's Password row: typed or pasted, shown as stars, sent
     Menu m;
     m.Show(CoopTitleMenu::Options{});
     m.Open(Page::kJoin);
-    SelectRow(m, "IP address");
+    SelectRow(m, "Room or address");
     m.Press(Input::kDecide);
     for (const char c : std::string("192.168.1.50:28000")) {
         m.Char(static_cast<unsigned char>(c));
@@ -913,8 +859,6 @@ TEST_CASE("pause tab: Join's Password row: typed or pasted, shown as stars, sent
     CHECK(m.join_text() == "192.168.1.50:28000 Secret7");
     SelectRow(m, "Password");
     CHECK(SelectedValue(m) == "*******");
-    SelectRow(m, "Friend's code");   // the address line shows the password as stars too
-    CHECK(SelectedValue(m) == "192.168.1.50:28000 *******");
     SelectRow(m, "Join");
     m.Press(Input::kDecide);
     const auto req = m.TakeRequest();
@@ -1011,17 +955,14 @@ TEST_CASE("pause tab: q and e type into the code and the password, the page stay
     Menu m;
     m.Show(CoopTitleMenu::Options{});
     m.Open(Page::kJoin);
-    SelectRow(m, "Friend's code");
+    SelectRow(m, "Room or address");
     m.Press(Input::kDecide);
     CHECK(m.typing());
-    CHECK(m.TakeRequest()->kind == Request::Kind::kPaste);
-    CHECK(m.Paste(""));   // nothing on the clipboard: typed instead
     for (const char c : std::string("queue")) {
         CHECK(m.Char(static_cast<unsigned char>(c)));
     }
     CHECK(m.typing());
     CHECK(m.page() == Page::kJoin);
-    CHECK(m.join_text() == "queue");
     m.Press(Input::kDecide);
     CHECK_FALSE(m.typing());
     CHECK(m.join_text() == "queue");
@@ -1029,7 +970,7 @@ TEST_CASE("pause tab: q and e type into the code and the password, the page stay
     Menu p;
     p.Show(CoopTitleMenu::Options{});
     p.Open(Page::kJoin);
-    SelectRow(p, "IP address");
+    SelectRow(p, "Room or address");
     p.Press(Input::kDecide);
     for (const char c : std::string("10.0.0.2:28000")) {
         p.Char(static_cast<unsigned char>(c));
