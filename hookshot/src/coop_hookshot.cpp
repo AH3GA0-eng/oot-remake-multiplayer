@@ -1898,8 +1898,8 @@ COOP_HOOKSHOT_EXPORT int hos_coop_start(const HosCoopApi* api) {
     });
 }
 COOP_HOOKSHOT_EXPORT void hos_coop_frame(void* ctx, int site) {
-    static CoopBoundary::Site site{"hos_coop_frame"};
-    CoopExportGuard::Guard(site, [&] {
+    static CoopBoundary::Site guard_site{"hos_coop_frame"};
+    CoopExportGuard::Guard(guard_site, [&] {
         CoopHookshot::Frame(ctx, site);
     });
 }
