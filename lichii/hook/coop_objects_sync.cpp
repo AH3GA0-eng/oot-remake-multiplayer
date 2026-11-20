@@ -2184,7 +2184,9 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             owner->second.player != 0 && o.dead_at == 0 && !o.dead_said && !(o.life && *o.life <= 0 && ZeroIsDeath(o)) &&
             !(o.animation && IsDeathAnimation(o.animation->name)) && !IsHatchingEgg(o.name) &&
             !bound_.contains(o.address)) {
-            away_.push_back({o.id, o.address, now_us + kAwayKeepUs, o.name, o.position, now_us});
+            // (a split enemy off the walk at life 0 is judged again when its brood dies: split)
+            away_.push_back({o.id, o.address, now_us + kAwayKeepUs, o.name, o.position, now_us,
+                             SplitsAtZero(o.name) && o.life && *o.life <= 0});
             it = objects_.erase(it);
             continue;
         }
@@ -2654,9 +2656,33 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
 
     // churn-b: an away object that came back goes on with its owner; one
     // still off the walk after kAwayKeepUs is gone (left), its owner forgotten.
-    std::erase_if(away_, [this, now_us](Away& a) {
+    std::erase_if(away_, [this, now_us, self, &send](Away& a) {
         if (std::any_of(objects_.begin(), objects_.end(), [&a](const auto& e) { return e.second.id == a.id; })) {
             return true;
+        }
+        // Row 172: a split enemy of ours that left the walk at life 0 before its brood died: dead for everyone
+        // once every member died; kept while one of its brood is still on our walk.
+        if (a.split) {
+            if (BroodDone(a.id)) {
+                const auto owner = owners_.find(a.id);
+                if (owner != owners_.end() && owner->second.player == self) {
+                    proto::ObjectRemove r;
+                    r.id = a.id;
+                    r.epoch = owner->second.epoch;
+                    r.reason = proto::RemoveReason::dead;
+                    r.position = a.position;
+                    send.emplace_back(r);
+                    notes_.emplace_back("dead " + a.name + ": off our walk at life 0, its whole brood died");
+                }
+                owners_.erase(a.id);
+                return true;
+            }
+            const auto b = broods_.find(a.id);
+            if (b != broods_.end() && std::any_of(objects_.begin(), objects_.end(), [&b](const auto& e) {
+                    return b->second.members.contains(e.second.id) && !b->second.dead.contains(e.second.id);
+                })) {
+                a.until = std::max(a.until, now_us + kAwayKeepUs);
+            }
         }
         if (now_us - a.since < kAwayEventMaxUs) {  // an event's performer off the list (row 138(3))
             if (in_event_) {
@@ -2898,11 +2924,21 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     }
     std::vector<proto::ObjectGroupEntry> groups = GroupsOf(walk, group_links_);
     group_links_.clear();
+    // Row 172: a brood is one split's. A split enemy whose life reads above 0 is whole (not split yet, grown
+    // back by a Little, or raised at a hand-over): its brood starts again, so a Little that grew it back (and
+    // left alive) never holds back its real death at a later split. Members join only while it is split.
+    std::set<proto::ObjectId> split_roots;
+    for (const auto& [address, o] : objects_) {
+        if (!SplitsAtZero(o.name)) continue;
+        if (o.life && *o.life > 0) {
+            broods_.erase(o.id);
+        } else {
+            split_roots.insert(o.id);
+        }
+    }
     for (const proto::ObjectGroupEntry& e : groups) {
         if (e.member != e.root) group_links_[e.member] = e.root;
-        if (e.member != e.root &&
-            std::any_of(walk.begin(), walk.end(),
-                        [&e](const GroupInput& r) { return r.id == e.root && SplitsAtZero(r.name); })) {
+        if (e.member != e.root && split_roots.contains(e.root)) {
             broods_[e.root].members.insert(e.member);
         }
     }
@@ -3752,8 +3788,11 @@ void Sync::KeepBossLives(std::uint8_t self, std::vector<LifeWrite>& writes) {
 }
 
 bool Sync::ZeroIsDeath(const Object& o) const {
-    if (!SplitsAtZero(o.name)) return true;
-    const auto b = broods_.find(o.id);
+    return !SplitsAtZero(o.name) || BroodDone(o.id);
+}
+
+bool Sync::BroodDone(const coop::protocol::ObjectId& root) const {
+    const auto b = broods_.find(root);
     return b != broods_.end() && !b->second.members.empty() &&
            std::includes(b->second.dead.begin(), b->second.dead.end(), b->second.members.begin(),
                          b->second.members.end());
@@ -3762,12 +3801,10 @@ bool Sync::ZeroIsDeath(const Object& o) const {
 void Sync::NoteBroodDeaths(const std::map<std::uint64_t, const Seen*>& now_seen) {
     for (const auto& [address, o] : objects_) {
         if (now_seen.contains(address)) continue;
-        const auto link = group_links_.find(o.id);
-        if (link == group_links_.end()) continue;
-        const auto b = broods_.find(link->second);
-        if (b == broods_.end() || !b->second.members.contains(o.id)) continue;
-        if ((o.life && *o.life <= 0) || (o.animation && IsDeathAnimation(o.animation->name))) {
-            b->second.dead.insert(o.id);
+        if (!(o.life && *o.life <= 0) && !(o.animation && IsDeathAnimation(o.animation->name))) continue;
+        // By the brood's own list, not the walk's links: a root already off the walk links nobody.
+        for (auto& [root, b] : broods_) {
+            if (b.members.contains(o.id)) b.dead.insert(o.id);
         }
     }
 }

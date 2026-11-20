@@ -1275,6 +1275,8 @@ private:
     // later if its own death has not taken it by then.
     // An object's life 0 read as its death: always, but for a split enemy (SplitsAtZero) whose brood still lives.
     bool ZeroIsDeath(const Object& o) const;
+    // Row 172: every member of the root's brood (this split) died (and it has one).
+    bool BroodDone(const coop::protocol::ObjectId& root) const;
     // Row 172: the members of a split enemy's group that leave this walk dead, counted before any leave is judged.
     void NoteBroodDeaths(const std::map<std::uint64_t, const Seen*>& now_seen);
     void DeadByWrite(Object& o, std::uint16_t epoch, std::uint64_t now_us,
@@ -1346,6 +1348,7 @@ private:
         std::string name;
         coop::protocol::Vec3 position{};  // where it was last seen (Left)
         std::uint64_t since = 0;          // when it left (kAwayEventMaxUs)
+        bool split = false;               // row 172: a split enemy that left at life 0 (dead when its brood is)
     };
     std::vector<Away> away_;
     bool delete_events_ = false;
@@ -1435,8 +1438,8 @@ private:
     bool present_once_ = false;
     std::vector<coop::protocol::ObjectGroupEntry> groups_sent_;  // as last sent
     std::map<coop::protocol::ObjectId, coop::protocol::ObjectId> group_links_;  // member to root
-    // Row 172: a split enemy's brood this scene visit (SplitsAtZero): the members ever linked to it, and those
-    // that died. Its life 0 is a death only when every one died.
+    // Row 172: a split enemy's brood this split (SplitsAtZero): the members linked to it while its life read 0,
+    // and those that died. Its life 0 is a death only when every one died. Cleared when its life reads > 0.
     struct Brood {
         std::set<coop::protocol::ObjectId> members;
         std::set<coop::protocol::ObjectId> dead;
