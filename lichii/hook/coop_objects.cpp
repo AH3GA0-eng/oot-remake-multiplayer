@@ -4298,6 +4298,13 @@ private:
             h.attacker = CoopHitReplay::ReplayAttacker(player, w.hitter, CoopPuppet::TheDirector().LiveSeenActor(w.hitter),
                                                        CoopDbno::Body::TheCrawl().PuppetUnseen(w.hitter),
                                                        CoopHitReplay::LethalHit(old, w.hurt, w.life));
+            if (static std::atomic<int> said_kill{0};
+                h.attacker == player && w.hitter != 0 && CoopHitReplay::LethalHit(old, w.hurt, w.life) &&
+                said_kill.fetch_add(1) < 40) {
+                LOG_INFO(Core, "coop: objects: share life {:#x} '{}': P{}'s killing blow replayed with our Link as the "
+                               "attacker (row 177 review: the game's kill consequences see the Player)",
+                         w.address, NameOf(w.address), w.hitter);
+            }
             if (static std::atomic<int> said{0}; h.attacker != player && said.fetch_add(1) < 40) {
                 LOG_INFO(Core, "coop: objects: share life {:#x} '{}': P{}'s hit replayed with their puppet {:#x} as "
                                "the attacker (row 177: its AI turns on them)",

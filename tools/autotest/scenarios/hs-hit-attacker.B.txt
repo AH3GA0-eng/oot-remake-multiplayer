@@ -1,0 +1,26 @@
+mark start
+warp InsideTheDekuTree Entrance
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark after
+wait 600
+goto -66.0 3.5 3.5 900
+toward -71.33 3.5 10
+wait 120
+hit Enemy_Dekubaba 1
+wait 300
+mark hit
+wait 300
+kill Enemy_Dekubaba
+wait 300
+mark kill
+wait 900
+mark late
