@@ -1211,27 +1211,6 @@ TEST_CASE("pause tab: the game browser: the rows choose the list and its page, t
     CHECK(ListName("Saria's forest", "forest-gang") == "Saria's forest (forest-gang)");
 }
 
-TEST_CASE("pause tab: a relay room's cell shows its room and its host's name, cut to fit, the count kept") {
-    CHECK(RoomCell("kokiri", "Saria", " (2/4)") == "kokiri: Saria (2/4)");
-    for (const auto& [room, host, tail] :
-         {std::tuple<std::string, std::string, std::string>{"forest-gang-and-friends", "Saria", " (2/4)"},
-          {"kokiri", "A very long player name here", " (1/16)"},
-          {"forest-gang-and-friends", "A very long player name here", " (other version)"},
-          {"abc", "Ã©Ã©Ã©Ã©Ã©Ã©Ã©Ã©Ã©Ã©", " (1/4)"}}) {
-        const std::string c = RoomCell(room, host, tail);
-        CHECK(c.size() <= kRowChars);
-        CHECK(c.size() >= tail.size());
-        CHECK(c.compare(c.size() - tail.size(), tail.size(), tail) == 0);   // (the count is never cut)
-        CHECK(c.find(host.substr(0, 1)) != std::string::npos);              // (the host's name starts there)
-        CHECK(c.find(": ") != std::string::npos);
-        for (std::size_t i = 0; i + 1 < c.size(); ++i) {   // (no UTF-8 letter cut in half: no lead byte before ASCII)
-            const auto a = static_cast<unsigned char>(c[i]), b = static_cast<unsigned char>(c[i + 1]);
-            CHECK_FALSE(((a & 0xe0) == 0xc0 && (b & 0xc0) != 0x80));
-        }
-    }
-    CHECK(RoomCell("forest-gang-and-friends", "Saria", " (2/4)") == "forest-g...: Saria (2/4)");
-}
-
 TEST_CASE("pause tab: the browser's list: up and down among its games, Left to the rows, the row under the mouse") {
     CHECK(CellMove(0, 0, 1, 6) == 1);
     CHECK(CellMove(5, 0, 1, 6) == 5);              // (the bottom)

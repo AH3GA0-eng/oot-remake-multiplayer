@@ -505,10 +505,6 @@ std::string ListValue(int players, int max, bool same_version);
 // What a room's left column says: the name its host listed it under (the room name unless they picked one), with the
 // room name after it when that is another: "Saria's forest (forest-gang)".
 std::string ListName(const std::string& shown, const std::string& room);
-// A relay room's text (CoopRoomList::CellText, the room count rows): "kokiri: Saria (2/4)", the room and the host's name
-// it was listed under (both public: anyone who asks the relay reads them), then `tail` (" (2/4)", " (full)",
-// " (other version)"). Within kRowChars: the longer of the two names is cut first ("..."), never the tail.
-std::string RoomCell(const std::string& room, const std::string& host, const std::string& tail);
 // The games the browser lists now (the chosen list's), and its pages.
 int BrowseListed(const Session& s);
 int CellPages(int listed);
