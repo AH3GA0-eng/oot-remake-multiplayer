@@ -995,11 +995,11 @@ std::string ChatSafe(std::string line, std::size_t max_chars) {
             from = name + 6;
         }
     }
-    if (line.size() > max_chars) {
-        std::size_t cut = max_chars;
+    if (line.size() > max_chars) {  // ("..." counts: at most max_chars bytes in all, as a chat line's limit wants)
+        std::size_t cut = max_chars > 3 ? max_chars - 3 : 0;
         while (cut > 0 && (static_cast<unsigned char>(line[cut]) & 0xC0) == 0x80) --cut;  // a whole UTF-8 character
         line.resize(cut);
-        line += "...";
+        line += std::string("...").substr(0, max_chars - cut < 3 ? max_chars - cut : 3);
     }
     return line;
 }

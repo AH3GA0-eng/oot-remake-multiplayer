@@ -1032,7 +1032,14 @@ TEST_CASE("rando: chat lines mask the user's folder and are cut") {
     CHECK(ChatSafe("/home/deck/kit/data/game") == "/home/<user>/kit/data/game");
     CHECK(ChatSafe("users and homes are words") == "users and homes are words");
     const std::string cut = ChatSafe(std::string(150, 'a'));
-    CHECK(cut == std::string(100, 'a') + "...");
+    CHECK(cut == std::string(97, 'a') + "...");  // ("..." counts toward the 100)
+    // A masked profile folder can make a line longer than it was: still at most the limit, "..." included.
+    const std::string masked = ChatSafe(R"(C:\Users\a\)" + std::string(200, 'b'), kTellChars);
+    CHECK(masked.size() <= kTellChars);
+    CHECK(masked.find("<user>") != std::string::npos);
+    CHECK(ChatSafe(std::string(10, 'a'), 2).size() <= 2);
+    // (cut before a whole UTF-8 character: the e-acute's two bytes sit across the cut, so neither is kept)
+    CHECK(ChatSafe(std::string(95, 'a') + "\xC3\xA9" + std::string(50, 'b'), 99) == std::string(95, 'a') + "...");
 }
 
 TEST_CASE("rando: a preset whose try was stopped is offered, not cached, and tried again at the next start (#16)") {
