@@ -333,8 +333,83 @@ def find_characters(mod_dir, log=print):
                 log(f"characters: {path} could not be read ({e}): no character puppets")
                 continue
             if files:
-                return {"mod": name, "files": files, "heaps": heaps, "numbers": numbers}
+                return {"mod": name, "dir": os.path.join(root, name), "files": files, "heaps": heaps,
+                        "numbers": numbers}
     return None
+
+
+# The pack's RSDB tables and size table are the game's plus the pack's rows, and they replace the mod's own copies
+# (the game reads one file per path). So the Character Select mod's own changes to them go into the pack's: its rows
+# that differ from the game's (its Player rows' larger heaps: up to 685 bones), its size-table entries (its model
+# files, its larger files). Read from the mod's own files, nothing about their contents assumed; a mod without a copy
+# of a table changes nothing.
+def character_mod_rows(characters, table_rel, dicts, game_rows, log=print):
+    """The rows of the mod's own copy of an RSDB table (`table_rel`, the game's path) that are new or differ from the
+    game's `game_rows` ({id: row}), in the mod's order."""
+    path = os.path.join(characters["dir"], "romfs", table_rel)
+    if not os.path.isfile(path):
+        return []
+    try:
+        rows = byml.loads(dicts.decompress(read(path)))
+    except (OSError, ValueError, KeyError, IndexError, struct.error) as e:
+        log(f"characters: {characters['mod']}'s {table_rel} could not be read ({e}): its rows left out")
+        return []
+    return [r for r in rows if isinstance(r, dict) and "__RowId" in r and game_rows.get(r["__RowId"]) != r]
+
+
+def character_player_rows(characters, rows):
+    """The Player_<age> rows (`rows`: {id: row}, the mod's if it changed them) with at least the heaps the mod's
+    characters.json asks for (actor_heaps): the player's own Link is one of the characters, as with the mod alone."""
+    out = []
+    for v in VARIANTS:
+        row = rows.get(f"Player_{v}")
+        if row is None:
+            continue
+        row = dict(row)
+        for key, size in characters["heaps"][v].items():
+            old = row.get(key)
+            size = max(int(size), int(_num(old or 0)))
+            row[key] = type(old)(size) if isinstance(old, byml._Num) else size
+        out.append(row)
+    return out
+
+
+def merge_character_table(table, characters, rs_rel, dicts, log=print):
+    """The mod's own size table into ours (the larger size of each entry: a file either side makes), when it is for
+    the game's version; then each character model file with no entry gets one, sized as its unpacked file plus the
+    margin (as a skin's file). The count of entries changed."""
+    tables = sorted("System/Resource/" + os.path.basename(t) for t in glob.glob(os.path.join(
+        characters["dir"], "romfs", "System", "Resource", "ResourceSizeTable.Product.*.rsizetable.zs")))
+    name = skin.pick_table(tables, rs_rel)
+    changed = 0
+    if name == rs_rel:
+        try:
+            theirs = rstb.Rstb.loads(dicts.decompress(read(os.path.join(characters["dir"], "romfs", name))))
+        except (OSError, ValueError, rstb.RstbError) as e:
+            log(f"characters: {characters['mod']}'s {name} could not be read ({e}): its entries left out")
+            theirs = None
+        for ours, mine in ((table.by_crc, theirs.by_crc if theirs else {}),
+                           (table.by_name, theirs.by_name if theirs else {})):
+            for k, size in mine.items():
+                if ours.get(k, -1) < size:
+                    ours[k] = size
+                    changed += 1
+    elif name is not None:
+        log(f"characters: {characters['mod']}'s size table is for another game version ({name}): only its model "
+            "files are sized")
+    for n in sorted(characters["files"]):
+        for v in characters["files"][n]:
+            path = f"Model/{character_project(v, n)}.Player_{v}.bfres"
+            if table.get(path) is not None:
+                continue
+            try:
+                size = len(dicts.decompress(read(os.path.join(characters["dir"], "romfs", path + ".zs"))))
+            except (OSError, ValueError) as e:
+                log(f"characters: {path} could not be read ({e}): no size-table entry for it")
+                continue
+            table.add_new(path, ((size + 0x1F) & ~0x1F) + PACK_SIZE_MARGIN)
+            changed += 1
+    return changed
 
 
 def guard_scenes(romfs, dicts):
@@ -2100,6 +2175,17 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         except (pause_menu.PauseMenuError, OSError, ValueError, KeyError, IndexError, struct.error) as e:
             log(f"pause menu: the Multiplayer tab left out ({e}); the pause menu keeps its four")
 
+    if characters:
+        # The mod's own rows first, the pack's own over them, then the player's own Link's heaps (as the mod alone).
+        mod_ai = character_mod_rows(characters, rel(romfs, ai_path), dicts, ai_rows, log)
+        mod_gai = character_mod_rows(characters, rel(romfs, gai_path), dicts, {r["__RowId"]: r for r in gai}, log)
+        players = character_player_rows(characters, {**ai_rows, **{r["__RowId"]: r for r in mod_ai}})
+        new_ai = mod_ai + new_ai + players
+        new_gai = mod_gai + new_gai
+        log(f"characters: {len(mod_ai)} ActorInfo and {len(mod_gai)} GameActorInfo rows of {characters['mod']}'s own "
+            f"kept; the player's own Link: " + ", ".join(
+                f"{r['__RowId']} {_num(r.get('InstanceHeapSize', 0))}/{_num(r.get('PreActorRenderInfoHeapSize', 0))}"
+                for r in players))
     ai_new = byml.dumps(upsert_rows(ai, new_ai))
     gai_new = byml.dumps(upsert_rows(gai, new_gai))
     for path, old, new in ((ai_path, ai_old, ai_new), (gai_path, gai_old, gai_new)):
@@ -2108,6 +2194,9 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         if size is None:
             raise BuildError(f"the size table has no {key}")
         table.set(key, size + max(0, len(new) - len(old)) + PACK_SIZE_MARGIN)
+    if characters:
+        n = merge_character_table(table, characters, rel(romfs, rs_path), dicts, log)
+        log(f"characters: {n} size-table entries from {characters['mod']} (its own table and model files)")
     for path, new in ((ai_path, ai_new), (gai_path, gai_new), (rs_path, table.dumps())):
         r = rel(romfs, path)
         write(os.path.join(out_romfs, r), recompress(dicts, read(path), new))
