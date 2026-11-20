@@ -21,6 +21,7 @@
 #     <- Gimmick_DefeatEnemy_Open_DodongoCave_02. The lane saves get AppearLizalfos_2F = 1 (defeat flags 0), so the pair
 #     is made at the scene load: room 1 is skipped, both go straight to room 2's door.
 
+#  Run 20261120-130248 VOID (see A): B now kills 0x155c, the nearest from its spot (not its kept copy of 0x2345).
 #! noload
 #! start coop: test warp done
 #! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_CHEATS=1
@@ -42,10 +43,10 @@ wait 400                  # A reaches room 2 first (owns both)
 place 110.0 116.6 -13.0   # room 2's door (outside)
 wait 60
 goto 110.0 -22.0 1.0 240
-goto 106.0 -35.0 1.0 300  # beside A
-place 106.0 116.6 -35.0   # inside if the walk fell short
+goto 113.5 -37.0 1.0 300  # by 0x155c's spot (116.1 -38.5), 13 m from 0x2345's
+place 113.5 116.2 -37.0   # inside, on its floor, if the walk fell short
 mark b-near
-wait 1000                 # A killed one and is down (A's a-down <= ~1800 after its in)
+wait 1400                 # A killed one and is down (two hurts; A's a-down <= ~2200 after its in)
 mark b-down
 kill Enemy_MiddleBoss_Lizalfos   # the last one, its owner down
 wait 120

@@ -21,6 +21,9 @@
 #     <- Gimmick_DefeatEnemy_Open_DodongoCave_02. The lane saves get AppearLizalfos_2F = 1 (defeat flags 0), so the pair
 #     is made at the scene load: room 1 is skipped, both go straight to room 2's door.
 
+#  Run 20261120-130248 (LANE1) VOID: the pair was made (the _2F flag works), A killed 0x2345, but A's bottled fairy
+#     took 'hurt 80' (not downed), B's 'kill' (nearest to Link) hit B's kept copy of 0x2345, so 0x155c never died, and
+#     B's spot 106/-35 was lava. Now: A hurt twice, B stands by 0x155c's spot (116.1 -38.5) on its floor.
 #! noload
 #! start coop: test warp done
 #! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_CHEATS=1
@@ -48,7 +51,9 @@ mark a-near
 kill Enemy_MiddleBoss_Lizalfos
 wait 300
 mark a-one
-hurt 80                   # the owner goes down with one Lizalfos left
+hurt 80                   # the owner goes down with one Lizalfos left (a bottled fairy takes the first)
+wait 400
+hurt 80                   # the second lethal hit: downed
 wait 600
 mark a-down
 wait 2400                 # B kills the last (b-last), the room event, the shutters
