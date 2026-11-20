@@ -980,6 +980,13 @@ std::uint64_t NativePad(std::uint64_t buttons, std::int32_t stick[4]) {
             if ((down & kY) != 0) keys.push_back(0x08);   // (Y: the letter before the cursor off)
             if ((down & kPlus) != 0) keys.push_back(0x0D);
         } else {
+            // (the step from the row the title shows lit: the mouse's hover moves the game's focus, not the menu's own
+            // row, and Down on the last shown row went from an older row, wrapping to the top instead of scrolling on
+            // to Room name and Relay, a test run 2026-11-20)
+            if ((down & (kUp | kDown)) != 0 && focused >= 0 && focused < CoopTitleNative::kRowButtons &&
+                look.rows[static_cast<std::size_t>(focused)] >= 0) {
+                events.emplace_back(HOS_COOP_MENU_SELECT, look.rows[static_cast<std::size_t>(focused)]);
+            }
             if ((down & kUp) != 0) events.emplace_back(HOS_COOP_MENU_UP, 0);
             if ((down & kDown) != 0) events.emplace_back(HOS_COOP_MENU_DOWN, 0);
             if ((down & kLeft) != 0) events.emplace_back(HOS_COOP_MENU_LEFT, 0);
