@@ -224,6 +224,9 @@ public:
     // (TakeBack), instead of closing the menu. Off whenever the page goes.
     void SetSubView(bool on) { sub_ = on && shown_; }
     bool TakeBack();
+    // An A on one of System's buttons of ours came while the page could not show (kept from the game): once.
+    bool TakeRefusedA() { const bool r = refused_a_; refused_a_ = false; return r; }
+    bool CanShowNow(std::uint64_t now_ms) const { return CanShow(now_ms); }
     void Leave(const char* why) { Hide(why); }   // (back to System at once: the module's way back to the title)
 
     bool Shown() const { return shown_; }
@@ -290,6 +293,7 @@ private:
                                  // game stalled (AfterStall)
     std::uint64_t swallow_ = 0;   // buttons the module took, kept from the game until let go
     bool decide_ = false;
+    bool refused_a_ = false;
     int slide_ = 0;   // the next set_page's Do::slide
     int which_ = 0;   // our page shown: 0 Multiplayer, 1 Longshot Settings (kept while hidden: the menu opens on it again)
     bool settings_ok_ = false;
@@ -709,6 +713,8 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept;
 inline constexpr std::uint64_t kToTitleMs = 25000;
 void ToTitle() noexcept;
 bool GoingToTitle() noexcept;
+// A test's view of the page (LICHII_COOP_TEST_STATE=1, CoopPause::Tick writes it): "key=value" words, one line.
+std::string TestState();
 // The System page's question's screen (UISystemWindowScreen: "Return to the title screen?").
 inline constexpr std::uint64_t kSystemWindowVtable = 0x4befbf8;
 // hos_coop_game_pause_page: Page::MousePage (-1 usable, -2 cannot be used).

@@ -188,7 +188,8 @@ void Joined() {
     WriteText(CoopIni(), coop);
     if (CoopTitle::StartSaveWait(host)) {
         g_wanted = HOS_COOP_MENU_WANT_CLOSE;
-        LOG_INFO(Core, "coop: multiplayer tab: joined at the title: load a save once the chat says Success");
+        CoopTitle::LoadHostSaveOnTitle();   // (the host's save, once in, loads by itself: Continue pressed for them)
+        LOG_INFO(Core, "coop: multiplayer tab: joined at the title: the host's save loads once it is in");
     } else if (!g_auto_join) {
         // (the player's own join with a file loaded: back to the title by itself, where the host's save loads. An
         // auto-rejoin after a drop keeps the game being played)

@@ -62,6 +62,12 @@ bool PlayerChoseLately();
 // button is not the game's Continue then, so a code mod is not given the title screen nor holds the pad there (Save
 // Profiles took the A of a click on co-op's first row for its file select, a test run 2026-11-20). Any thread.
 bool RowsOurs();
+// The title's menu is up with its focus off its first button (Continue, or Start): a code mod's hold for that button
+// (Save Profiles' A and +) is late letting go, and took the click on Multiplayer the mouse made just after passing
+// over Start (a tester clicked it twice). Any thread.
+bool FocusOffFirst();
+// A test's view of the title (LICHII_COOP_TEST_STATE=1): "key=value" words, one line.
+std::string TestState();
 
 // This PC's own id for rejoining (coop.ini client_id, made once): the module's
 // join helper uses the same nonce and port for the same invite with it.

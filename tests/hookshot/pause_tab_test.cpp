@@ -306,27 +306,27 @@ TEST_CASE("pause tab: the page does not show off System, mid-step, in the Minus 
         CHECK(p.OnPad(kPadR, now) == kPadR);   // (the game's: Items to System)
         CHECK_FALSE(p.Shown());
         p.OnPad(0, now + 1);
-        CHECK(Open(p, now + 2) == kPadA);   // (the game's A: no button of ours there)
+        CHECK(Open(p, now + 2) == 0);   // (on our button, the page not shown: kept from the game)
         CHECK_FALSE(p.Shown());
     }
     SUBCASE("mid-step to System") {
         Page p = UsablePage();
         p.OnScreen(Pages(0xa000, 4, kSystemPage), now);
         p.OnScreen(Strip(0x9000, 5, kSystemPage), now);
-        CHECK(Open(p, now) == kPadA);
+        CHECK(Open(p, now) == 0);
         CHECK_FALSE(p.Shown());
     }
     SUBCASE("the Minus menu") {
         Page p = UsablePage();
         p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage), now);
         p.OnScreen(Strip(0x9000, 5, 2, 0), now);
-        CHECK(Open(p, now) == kPadA);
+        CHECK(Open(p, now) == 0);
         CHECK_FALSE(p.Shown());
     }
     SUBCASE("three tabs: fewer than the game's four") {
         Page p = UsablePage();
         OnSystem(p, now, 3);
-        CHECK(Open(p, now) == kPadA);
+        CHECK(Open(p, now) == 0);
         CHECK_FALSE(p.Shown());
         // (the game's own four are enough: no tab of ours is needed)
         p.OnPad(0, now + 1);
@@ -338,7 +338,7 @@ TEST_CASE("pause tab: the page does not show off System, mid-step, in the Minus 
         Page p = UsablePage();
         p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 1), now);
         p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 1), now);
-        CHECK(Open(p, now) == kPadA);
+        CHECK(Open(p, now) == 0);
         CHECK_FALSE(p.Shown());
     }
     SUBCASE("a window over the System page (Save, Options, a question)") {
@@ -360,7 +360,7 @@ TEST_CASE("pause tab: the page does not show off System, mid-step, in the Minus 
         // (the pad is polled every frame while the game runs; with no call at all it would be a stall of the whole
         // game, which keeps the screens fresh: AfterStall)
         for (std::uint64_t t = now + 16; t < now + 1000; t += 16) p.OnPad(0, t);
-        CHECK(Open(p, now + 1000) == kPadA);
+        CHECK(Open(p, now + 1000) == 0);
         CHECK_FALSE(p.Shown());
     }
 }
@@ -539,7 +539,7 @@ TEST_CASE("pause tab: the invite code's two rows: the host's Paste answer, a wai
 TEST_CASE("pause tab: the rows say what co-op is doing, in at most a row's width") {
     SessionView idle;
     // (in no session the Leave row is not shown: nothing to leave)
-    CHECK(RowTexts(idle) == std::vector<std::string>{"Host a game", "Join a game", "Find a game",
+    CHECK(RowTexts(idle) == std::vector<std::string>{"Host a game", "Join by room or IP", "Browse games",
                                                      "Auto-rejoin: Off", ""});
     idle.s.auto_rejoin = true;
     CHECK(RowTexts(idle)[kRowLetIn] == "Auto-rejoin: On");
@@ -599,7 +599,7 @@ TEST_CASE("pause tab: a page whose panes or game calls are missing never shows, 
     Page p;   // (not usable until the module says so)
     CHECK(p.MousePage() == -2);
     OnSystem(p, now);
-    CHECK(Open(p, now) == kPadA);   // (the game's A: nothing of ours)
+    CHECK(Open(p, now) == 0);   // (kept from the game: it does not know our button)
     CHECK_FALSE(p.Shown());
     CHECK_FALSE(p.TakeOpened());
     p.OnPad(0, now + 1);
@@ -1955,7 +1955,7 @@ TEST_CASE("pause tab: without Longshot Settings (an older pack, or no settings f
     p.OnScreen(Strip(0x9000, 5, kSystemPage), now);
     p.OnPad(0, now);
     p.SetSystemButton(1);
-    CHECK(p.OnPad(kPadA, now + 16) == kPadA);
+    CHECK(p.OnPad(kPadA, now + 16) == 0);
     CHECK_FALSE(p.Shown());
     CHECK_FALSE(p.TakeOpened());
     p.SetSystemButton(-1);

@@ -668,6 +668,7 @@ std::uint64_t g_tap = 0, g_tap_until = 0, g_tap_next = 0;   // (a button held fo
 std::atomic<int> g_tap_downs{0};   // (the steps toward Title Screen so far)
 std::atomic<std::uint64_t> g_pages_seen_ms{0};
 std::atomic<int> g_pages_seen_state{-1}, g_pages_seen_page{-1};
+std::atomic<std::uint64_t> g_test_tab_in{0}, g_test_tab_out{0};   // (the last pad with buttons, in and out: TestState)
 int g_set_keep = -1;
 float g_set_mouse_x = 0, g_set_mouse_y = 0;   // (the mouse's last place, when it last moved: settings)
 std::uint64_t g_set_mouse_ms = 0;
@@ -1044,6 +1045,41 @@ std::string FocusedShownName() {
         ++found;
     }
     return found == 1 ? name : std::string();
+}
+
+// Which of System's buttons of ours the game's cursor is on or going to (0 Multiplayer, 1 Longshot Settings, -1
+// neither): any shown one in a focus state but leaving. FocusedShownName wants one alone, and while the focus moves
+// (Longshot's mouse moved it just before its click's A) two are: that A went to the game, which does not know the
+// button and then took no B, + or A (the menu stuck open, a test run 2026-11-20).
+int OurSystemButtonFocused() {
+    const std::uint64_t pages = g_pages_screen;
+    if (pages == 0) return -1;
+    const auto read = [](std::uint64_t a, void* out, std::size_t n) { return CoopRuntime::Read(a, out, n); };
+    bool mp = false, ls = false;
+    std::optional<CoopModScreens::Box> mp_box, ls_box;
+    for (const std::uint64_t b : CoopModScreens::Buttons(read, pages)) {
+        const std::uint8_t state = CoopModScreens::FocusState(read, b);
+        const auto box = CoopModScreens::HitBox(read, b);
+        if (state == 0 || (state & 0xfe) == 4 || !box) continue;
+        const std::string name = CoopModScreens::ButtonName(read, b);
+        if (name == "Pa_Button_06") mp = true, mp_box = box;
+        if (name == "Pa_Button_05" && g_page.SettingsUsable()) ls = true, ls_box = box;
+    }
+    if (mp && ls) {   // (both while the focus moves from one to the other: the one under the mouse, else the old way)
+        float x = 0, y = 0;
+        bool held = false;
+        if (LayoutCursor(&x, &y, &held)) {
+            const auto in = [&](const std::optional<CoopModScreens::Box>& b) {
+                return b && x >= std::min(b->x0, b->x1) && x <= std::max(b->x0, b->x1) && y >= std::min(b->y0, b->y1) &&
+                       y <= std::max(b->y0, b->y1);
+            };
+            if (in(ls_box)) return 1;
+            if (in(mp_box)) return 0;
+        }
+        const std::string name = FocusedShownName();
+        return name == "Pa_Button_05" ? 1 : 0;
+    }
+    return mp ? 0 : ls ? 1 : -1;
 }
 
 // System's two buttons of ours, at each update of the pages: Multiplayer shown while our pages can be used, Longshot
@@ -1501,8 +1537,15 @@ bool g_kb_held = false;
 int g_kb_press = -1;
 std::uint64_t g_kb_click_ms = 0;
 
+// A click's own A after a view or the page came: the same click, not the row's that took its place under the mouse
+// (a tester's click on Join a game opened the Join view and then the keyboard of its Room or IP row, there).
+std::atomic<std::uint64_t> g_view_ms{0}, g_click_down_ms{0};
+bool g_click_held = false;
+constexpr std::uint64_t kClickThroughMs = 450;
+
 void SetView(View v) {
     if (g_view.exchange(static_cast<int>(v)) != static_cast<int>(v)) {
+        g_view_ms = NowMs();
         g_confirm_until = 0;      // (a new view: no A waited)
         g_show_password = false;  // (and the password hidden again)
         g_cell = -1;              // (the browser's cells give the pad back)
@@ -2029,6 +2072,24 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             std::lock_guard lock(g_mutex);
             if (const std::uint64_t steps = ToTitleStep(phase); steps != kNoStep) return steps;
         }
+        {   // (the mouse's left button: when it last went down, for a click's A just after a view came)
+            float cx = 0, cy = 0;
+            bool cl = false;
+            const bool over = ReadCursor(&cx, &cy, &cl);
+            const bool held = over && cl;
+            if (held && !g_click_held) g_click_down_ms = NowMs();
+            g_click_held = held;
+            const std::uint64_t now = NowMs();
+            if (now - g_view_ms.load() < kClickThroughMs && now - g_click_down_ms.load() < kClickThroughMs + 400 &&
+                (in & kPadA) != 0) {
+                in &= ~kPadA;   // (the click that brought this view: not this view's)
+                static int logged = 0;
+                if (++logged <= 30) {
+                    LOG_INFO(Core, "coop: pause tab: a click's A {} ms after the view came: not the view's",
+                             now - g_view_ms.load());
+                }
+            }
+        }
         {
             std::lock_guard lock(g_mutex);
             was = g_page.Shown();
@@ -2039,10 +2100,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             // (A on System's Longshot Settings button opens its page: the button's name read only while A is held)
             {   // (which of System's buttons of ours the game's cursor is on: their names, read only while A is held)
                 int on = -1;
-                if ((in & kPadA) != 0 && !g_page.Shown()) {
-                    const std::string name = FocusedShownName();
-                    on = name == "Pa_Button_06" ? 0 : name == "Pa_Button_05" && g_page.SettingsUsable() ? 1 : -1;
-                }
+                if ((in & kPadA) != 0 && !g_page.Shown()) on = OurSystemButtonFocused();
                 g_page.SetSystemButton(on);
             }
             if (g_page.Typing() >= 0) {
@@ -2100,6 +2158,13 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             }
             g_b_list_last = buttons;
             out = g_page.OnPad(in, NowMs());
+            if (g_page.TakeRefusedA()) {
+                LOG_INFO(Core, "coop: pause tab: an A on System's button of ours while the page cannot show (usable {}, "
+                               "panes {}, Multiplayer button {:#x}, the menu seen {} ms ago in state {}): kept from the "
+                               "game",
+                         g_page.Usable(), g_pages_ok, g_mp_button, NowMs() - g_pages_seen_ms.load(),
+                         g_pages_seen_state.load());
+            }
             if (b_to_rows) out |= kPadLeft, g_page.Sound("button_cancel");
             typing = g_page.Typing() >= 0;
             PublishKeyboard();
@@ -2483,8 +2548,25 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             stick[0] = 0, stick[2] = 0, stick[3] = 0;   // (only the left stick's up and down: the game's cursor over our rows)
             if (typing || g_cell.load() >= 0 || (g_page.Which() == 1 && g_set_row.load() >= 0)) stick[1] = 0;
         }
-        if (!was && shown) LOG_INFO(Core, "coop: pause tab: our page shown (A on its System button)");
-        if (was && !shown) LOG_INFO(Core, "coop: pause tab: System back ({})", why);
+        if (!was && shown) {
+            g_view_ms = NowMs();
+            LOG_INFO(Core, "coop: pause tab: our page shown (A on its System button)");
+        }
+        if (was && !shown) {
+            // (trace: what came with the press that left the page: a tester's page went back by itself as it opened)
+            float mx = 0, my = 0;
+            bool mleft = false;
+            const bool over = ReadCursor(&mx, &my, &mleft);
+#ifdef _WIN32
+            const bool mright = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0, esc = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
+#else
+            const bool mright = false, esc = false;
+#endif
+            LOG_INFO(Core, "coop: pause tab: System back ({}); the pad {:#x}, the mouse {} (left {}, right {}), Esc {}, "
+                           "{} ms after the page showed",
+                     why, buttons, over ? fmt::format("at ({:.0f}, {:.0f})", mx, my) : std::string("off the game"),
+                     mleft ? "down" : "up", mright ? "down" : "up", esc ? "down" : "up", NowMs() - g_page_since_ms);
+        }
         if (new_port != 0) {   // (the port typed on the details' Port line: saved, and hosting again on it)
             const bool taken = new_port > 0 && CoopPause::SetHostPort(new_port);
             LOG_INFO(Core, "coop: pause tab: a port typed: {}", taken ? std::to_string(new_port) : std::string("not a port (1 to 65535)"));
@@ -2514,7 +2596,9 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
         if (pick_cell >= 0) ActCell(pick_cell);
         if (set_change >= 0) ChangeSetting(set_change, set_dir);
         // (the stick's up and down bits we added are not the game's: only what it sent, filtered)
-        return out & (buttons | ~(kPadStickUp | kPadStickDown | kPadStickLeft | kPadStickRight));
+        const std::uint64_t to_game = out & (buttons | ~(kPadStickUp | kPadStickDown | kPadStickLeft | kPadStickRight));
+        if (buttons != 0) g_test_tab_in = buttons, g_test_tab_out = to_game;   // (TestState)
+        return to_game;
     } catch (...) {
         return buttons;
     }
@@ -2588,6 +2672,19 @@ void ToTitle() noexcept {
 
 bool GoingToTitle() noexcept {
     return g_to_title.load() != 0;
+}
+
+std::string TestState() {
+    const std::uint64_t now = NowMs();
+    const std::string pads = fmt::format(" tab_in={:#x} tab_out={:#x}", g_test_tab_in.load(), g_test_tab_out.load());
+    const bool menu = now - g_pages_seen_ms.load() < 400;
+    std::lock_guard lock(g_mutex);
+    return fmt::format("menu={} pages_state={} pages_page={} shown={} which={} view={} typing={} cell={} set_row={} "
+                       "set_category={} focused={} to_title={} kb={}",
+                       menu ? 1 : 0, menu ? g_pages_seen_state.load() : -1, menu ? g_pages_seen_page.load() : -1,
+                       g_page.Shown() ? 1 : 0, g_page.Which(), g_view.load(), g_page.Typing(), g_cell.load(),
+                       g_set_row.load(), g_set_category.load(), menu ? FocusedShownName() : std::string("-"),
+                       g_to_title.load(), CoopKeyboard::Wanted() ? 1 : 0) + pads;
 }
 
 }  // namespace CoopPauseTab

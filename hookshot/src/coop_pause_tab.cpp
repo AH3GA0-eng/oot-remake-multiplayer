@@ -186,7 +186,10 @@ void Page::Hide(const char* why, bool keep) {
 std::uint64_t Page::Track(const Facts& f) {
     if (f.kind != Kind::kPages && f.kind != Kind::kStrip) return 0;
     Seen& s = f.kind == Kind::kPages ? pages_seen_ : strip_seen_;
-    const bool reopened = f.state == 1 && s.state != 1;
+    // (a new opening: the screen opening or open after it was closed or closing. The pages went from 0 straight to
+    // 2 on the menu's second opening in a run (2026-11-20), never 1: the first opening's state was kept, our page did
+    // not show, and the game took the A on our Multiplayer button and stopped taking B, + and A)
+    const bool reopened = (f.state == 1 || f.state == 2) && (s.state == 0 || s.state == 3);
     if (s.gen == 0 || f.screen != s.screen || f.layout != s.layout || reopened) {
         s.screen = f.screen, s.layout = f.layout, s.gen = ++next_gen_;
         if (f.kind == Kind::kPages) {
@@ -286,6 +289,12 @@ std::uint64_t Page::OnPad(std::uint64_t buttons, std::uint64_t now_ms) {
             pages_sound_ = "button_decide";
             swallow_ |= buttons & ~kPadPassed;
             return buttons & kPadPassed & ~swallow_;
+        }
+        if ((down & kPadA) != 0 && system_button_ >= 0 && now_ms >= blocked_until_ms_) {   // (a window's own A: its)
+            // (A on one of System's buttons of ours, the page not to show now: never the game's. It does not know the
+            // button, and after an A on it its System page took no B, + or A any more: the menu stuck open)
+            swallow_ |= kPadA;
+            refused_a_ = true;
         }
         return buttons & ~swallow_;
     }
@@ -817,9 +826,9 @@ std::vector<std::string> RowTexts(const SessionView& v) {
     } else if (v.s.hosting) {
         rows[kRowJoinCode] = !v.room.empty() ? "Room: " + v.room : v.s.code ? "Copy invite code" : "Room: coming...";
     } else {
-        rows[kRowJoinCode] = v.s.in_one || v.s.by_launcher ? "Session details" : "Join a game";
+        rows[kRowJoinCode] = v.s.in_one || v.s.by_launcher ? "Session details" : "Join by room or IP";
     }
-    rows[kRowPlayers] = !v.s.in_one && !v.s.by_launcher ? "Find a game"
+    rows[kRowPlayers] = !v.s.in_one && !v.s.by_launcher ? "Browse games"
                         : v.players <= 0   ? "Players"
                         : v.players == 1 ? "Players: just you"
                                          : "Players: " + std::to_string(v.players);

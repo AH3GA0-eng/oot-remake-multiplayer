@@ -293,7 +293,7 @@ std::vector<Menu::Line> Menu::Lines() const {
             }
             // (the games on this network and the relay's public rooms: one picked fills the rows below. After the
             // last game again, which stays the first row: one press)
-            out.push_back({PageRow("Find a game", find_online_ ? "Online" : "This network", off), Act::kOpenFind,
+            out.push_back({PageRow("Browse games", find_online_ ? "Online" : "This network", off), Act::kOpenFind,
                            "Lists the games on this network and the public rooms on your relay, with a search. Pick "
                            "one and its room or address is filled in below."});
             const bool typing_ip = typing_ && typing_act_ == Act::kJoinIp;
@@ -1500,7 +1500,7 @@ View Menu::view() const {
     case Page::kCustomize:   // (above)
         break;
     case Page::kFind:
-        v.help_title = "Find a game";
+        v.help_title = "Browse games";
         break;
     }
     if (!note_.empty()) {

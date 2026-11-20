@@ -1259,6 +1259,31 @@ bool Start(const HosCoopApi* api) {
 void LocalProbe();   // (below)
 void LocalLayer(void* ctx);   // (below)
 
+// A test's view of the menus (LICHII_COOP_TEST_STATE=1 only): coop-test-state.txt in the game's folder, 5 times a
+// second: the pause page, the title, co-op's menu. No lock of ours held (each part takes its own).
+std::atomic<uint64_t> g_test_pad_came{0}, g_test_pad_got{0};   // (hos_coop_pad's, for TestState)
+void TestState() {
+    static const bool on = [] {
+        const char* v = std::getenv("LICHII_COOP_TEST_STATE");
+        return v != nullptr && v[0] == '1';
+    }();
+    if (!on) return;
+    static std::uint64_t next = 0;
+    const std::uint64_t now = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+    if (now < next) return;
+    next = now + 200;
+    const std::string line = fmt::format("{} {} mp_page={} keys_taken={} host_started={} pad_came={:#x} pad_got={:#x} t={}\n",
+                                         CoopPauseTab::TestState(), CoopTitle::TestState(),
+                                         static_cast<int>(CoopPause::NativePage()), CoopPause::KeysTaken() ? 1 : 0,
+                                         CoopPause::HostStarted() ? 1 : 0, g_test_pad_came.load(), g_test_pad_got.load(), now);
+    const std::filesystem::path p = CoopRuntime::GameDir() / "coop-test-state.txt";
+    if (FILE* f = std::fopen(p.string().c_str(), "wb")) {
+        std::fwrite(line.data(), 1, line.size(), f);
+        std::fclose(f);
+    }
+}
+
 void Frame(void* ctx, int site) {
     CoopWindowBrand::Tick(CoopRuntime::GameDir());  // the window's title and icon, co-op on or idle (solo too)
     if (!g_on) {
@@ -1268,6 +1293,7 @@ void Frame(void* ctx, int site) {
         CoopFrameClock::Note();  // jitter-b: the game frame the next present reads (coop_frame_clock.h)
         CoopModsRuntime::Frame();
         CoopPause::Tick();   // the Multiplayer tab's follow-ups, also while the menu is closed
+        TestState();         // (LICHII_COOP_TEST_STATE=1 only)
         CoopLook::Frame();   // a look chosen in the pause menu, once it closed
         LocalProbe();
         if (ctx != nullptr) LocalLayer(ctx);
@@ -2069,13 +2095,16 @@ COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) n
     const uint64_t came = buttons;
     int32_t was[4] = {stick[0], stick[1], stick[2], stick[3]};
     try {
-        return CoopPadOrder::Run(
+        const uint64_t got = CoopPadOrder::Run(
             buttons, stick, [](uint64_t b, int32_t* s) { return CoopPauseTab::OnPad(b, s); },
             [](uint64_t b) {
                 CoopTitle::NotePlayerPad(b);   // (the player's own A on the title, before a mod's hold takes it)
                 CoopModsRuntime::NotePad(b);
             },
-            [] { return CoopTitle::RowsOurs() ? std::uint64_t{0} : CoopModsRuntime::HeldButtons(); },
+            [] {
+                return CoopTitle::RowsOurs() || CoopTitle::FocusOffFirst() ? std::uint64_t{0}
+                                                                           : CoopModsRuntime::HeldButtons();
+            },
             [](uint64_t b, int32_t* s) { return CoopTitle::OnPad(b, s); },
             [](uint64_t b, int32_t* s) {
                 // Down but not out (coop_dbno_game.h): a downed Link crawls and uses nothing; beside one, A revives.
@@ -2086,6 +2115,9 @@ COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) n
                 }
                 return pad.buttons;
             });
+        // (a test's view, LICHII_COOP_TEST_STATE: the last pad that came with buttons, and what the game got of it)
+        if (came != 0) CoopHookshot::g_test_pad_came = came, CoopHookshot::g_test_pad_got = got;
+        return got;
     } catch (...) {
         for (int i = 0; i < 4; ++i) {
             stick[i] = was[i];
