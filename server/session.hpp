@@ -531,6 +531,11 @@ class Session {
   // to everyone at once. 0: none. Only the in-game host's server sets it.
   void set_ngplus(std::uint8_t level);
   std::uint8_t ngplus() const { return ngplus_; }
+  // The join password from now on: a player who joins after this needs the new
+  // one; players already in keep their keys and stay in. Not empty (the host's
+  // own checks); on the session's thread.
+  void set_join_password(std::string password);
+  const std::string& join_password() const { return config_.join_password; }
   // Flags in the server's table.
   std::size_t flag_count() const { return flags_.size(); }
   // Connections from `address` still waiting for HELLO.

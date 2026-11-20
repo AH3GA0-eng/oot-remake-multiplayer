@@ -827,18 +827,27 @@ TEST_CASE("pause tab: the Session view: the host's lines to copy, a guest's host
     hv.note.clear();
     hv.players = 1;
     CHECK(RowTexts(View::kSession, hv)[0] == "Hosting: just you");
-    // Its join password: on the details list once A on the first row asks (friends who found the game on this network
-    // type it); the same row hides it, the other rows keep their copies.
+    // Its join password: the first row opens the Join password view (show it on the details list, or change it on
+    // the keyboard); the other rows keep their copies.
     hv.s.has_password = host.has_password = true;
-    CHECK(ActionFor(View::kSession, 0, host) == RowAction::kShowPassword);
-    CHECK(RowTexts(View::kSession, hv)[0] == "Show join password");
-    hv.host_password = "ABCDEFGHJKLMNPQRSTUV";
-    hv.s.password_shown = host.password_shown = true;
-    CHECK(RowTexts(View::kSession, hv) == std::vector<std::string>{"Hide join password", "Copy room: forest-gang",
-                                                                    "Copy same-network line", "Copy VPN line", "Back"});
-    CHECK(ActionFor(View::kSession, 0, host) == RowAction::kShowPassword);
+    CHECK(ActionFor(View::kSession, 0, host) == RowAction::kViewPassword);
+    CHECK(RowTexts(View::kSession, hv)[0] == "Join password");
     CHECK(ActionFor(View::kSession, 2, host) == RowAction::kCopyLan);
     CHECK(ActionFor(View::kSession, kRows - 1, host) == RowAction::kBack);
+    CHECK(RowTexts(View::kPassword, hv) ==
+          std::vector<std::string>{"Show join password", "Change join password", "", "", "Back"});
+    CHECK(ActionFor(View::kPassword, 0, host) == RowAction::kShowPassword);
+    CHECK(ActionFor(View::kPassword, 1, host) == RowAction::kChangePassword);
+    CHECK(ActionFor(View::kPassword, 2, host) == RowAction::kNone);
+    CHECK(ActionFor(View::kPassword, kRows - 1, host) == RowAction::kBack);
+    CHECK(BackOf(View::kPassword) == View::kSession);
+    hv.host_password = "ABCDEFGHJKLMNPQRSTUV";
+    hv.s.password_shown = host.password_shown = true;
+    CHECK(RowTexts(View::kPassword, hv)[0] == "Hide join password");
+    CHECK(DetailLines(View::kPassword, hv)[0].name == "Hosting");   // (the password on the details list there too)
+    Session guest_pw;   // (not hosting: nothing to show or change)
+    guest_pw.in_one = true;
+    CHECK(ActionFor(View::kPassword, 1, guest_pw) == RowAction::kNone);
     hv.s.password_shown = host.password_shown = false;
     hv.host_password.clear();
     // The main view's Join code row says what its copy did too.
@@ -1259,7 +1268,7 @@ TEST_CASE("pause tab: a password shows as stars but for the letter typed into, a
     CHECK(brackets.Shown(true, 12).find("[ ]") != std::string::npos);   // (at the end: the empty place in view)
 }
 
-TEST_CASE("pause tab: the Join view's fields: typing takes every button from System until A or B") {
+TEST_CASE("pause tab: typing on the on-screen keyboard takes every button from System until OK or Cancel") {
     Page p = UsablePage();
     OnSystem(p, 1000);
     Open(p, 1000);
@@ -1267,30 +1276,56 @@ TEST_CASE("pause tab: the Join view's fields: typing takes every button from Sys
     REQUIRE(p.Shown());
     p.StartTyping(0);
     CHECK(p.Typing() == 0);
-    CHECK(p.OnPad(kPadUp, 1032) == 0);          // (Up is the field's: none reaches System)
+    CHECK(p.KeyCursor().row() == 0);
+    CHECK(p.OnPad(kPadA, 1032) == 0);           // (A presses the key under the cursor: A, a room name's a)
     CHECK(p.Field(0).text() == "a");
     CHECK(p.OnPad(0, 1048) == 0);
-    CHECK(p.OnPad(kPadRight, 1064) == 0);
-    CHECK(p.OnPad(kPadRight | kPadDown, 1080) == 0);   // (down with right still held: a new letter, _)
-    CHECK(p.Field(0).text() == "a_");
+    CHECK(p.OnPad(kPadRight, 1064) == 0);       // (the arrows move over the keys; none reaches System)
+    CHECK(p.KeyCursor().col() == 1);
+    CHECK(p.OnPad(kPadRight | kPadA, 1080) == 0);
+    CHECK(p.Field(0).text() == "ab");
     // Held: again and again after a moment (the screens updating meanwhile, as in a game).
+    p.OnPad(0, 1090);
     OnSystem(p, 1100);
-    p.OnPad(kPadUp, 1100);
+    p.OnPad(kPadDown, 1100);
     OnSystem(p, 1250);
-    p.OnPad(kPadUp, 1250);
+    p.OnPad(kPadDown, 1250);
     OnSystem(p, 1400);
-    p.OnPad(kPadUp, 1400);
+    p.OnPad(kPadDown, 1400);
     OnSystem(p, 1550);
-    p.OnPad(kPadUp, 1550);   // (held over 400 ms: a step)
-    CHECK(p.Field(0).text().size() == 2);
-    CHECK(p.Field(0).text()[1] != '_');          // (stepped on from _ by the held Up)
+    p.OnPad(kPadDown, 1550);   // (held over 400 ms: a step)
+    CHECK(p.KeyCursor().row() == 2);
     CHECK(p.OnPad(0, 1660) == 0);
-    CHECK(p.OnPad(kPadB, 1670) == 0);            // (B ends typing; it does not leave the view or the page)
+    CHECK(p.OnPad(kPadB, 1670) == 0);            // (B: a letter off)
+    CHECK(p.Field(0).text() == "a");
+    CHECK(p.Typing() == 0);
+    p.OnPad(0, 1680);
+    p.OnPad(kPadPlus, 1690);                     // (+: OK)
     CHECK(p.Typing() == -1);
+    CHECK(p.TakeTyped() == 0);
+    CHECK(p.TakeTyped() == -1);                  // (once)
     CHECK(p.Shown());
     CHECK_FALSE(p.TakeBack());
-    p.OnPad(0, 1680);
-    // The keyboard: its characters and keys while typing, none otherwise.
+    p.OnPad(0, 1700);
+    // B with nothing typed is Cancel: the field as it was.
+    p.StartTyping(2);
+    p.OnPad(kPadB, 1710);
+    CHECK(p.Typing() == -1);
+    CHECK(p.TakeTyped() == -1);
+    p.OnPad(0, 1720);
+    // The mouse's click on a key, and the keys Cancel and OK.
+    p.StartTyping(2);
+    p.PressKey(4, 1);                            // ('1')
+    p.PressKey(CoopKeyboard::kCharRows, 0);      // (Space: a password has none)
+    CHECK(p.Field(2).text() == "1");
+    p.PressKey(CoopKeyboard::kCharRows, 1);      // (Delete)
+    CHECK(p.Field(2).text().empty());
+    p.PressKey(0, 3);
+    p.PressKey(CoopKeyboard::kCharRows, 3);      // (OK)
+    CHECK(p.Typing() == -1);
+    CHECK(p.TakeTyped() == 2);
+    CHECK(p.Field(2).text() == "D");
+    // The PC keyboard: its characters and keys while typing, none otherwise; Esc puts the field back.
     CHECK_FALSE(p.Char('x'));
     p.StartTyping(1);
     CHECK(p.Char('P'));
@@ -1298,9 +1333,15 @@ TEST_CASE("pause tab: the Join view's fields: typing takes every button from Sys
     CHECK(p.Key(0x25, false));                   // (Left)
     CHECK(p.Char('a'));
     CHECK(p.Field(1).text() == "aP");
-    CHECK(p.Key(0x0d, false));                   // (Enter: done)
+    CHECK(p.Key(0x0d, false));                   // (Enter: OK)
     CHECK(p.Typing() == -1);
+    CHECK(p.TakeTyped() == 1);
     CHECK_FALSE(p.Key(0x0d, false));
+    p.StartTyping(1);
+    CHECK(p.Char('z'));
+    CHECK(p.Key(0x1b, false));                   // (Esc: Cancel)
+    CHECK(p.Field(1).text() == "aP");
+    CHECK(p.TakeTyped() == -1);
 }
 
 TEST_CASE("pause tab: typing ends when the page goes, and the Join view's rows say the fields") {

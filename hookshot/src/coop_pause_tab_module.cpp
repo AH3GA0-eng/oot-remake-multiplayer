@@ -426,7 +426,7 @@ SessionView ViewNow(View view) {
         v.s.rejoin = CoopPause::Rejoin(&v.rejoin_host);
         v.relay_set = CoopPause::RelaySet();   // (co-op's own lock: before ours, never inside it)
     }
-    if (view == View::kSession || view == View::kMain) {   // (both show the details list, DetailLines)
+    if (view == View::kSession || view == View::kMain || view == View::kPassword) {   // (the details list)
         v.s.has_password = v.s.hosting && st.password[0] != 0;
         v.s.password_shown = v.s.has_password && g_show_password.load();
         if (v.s.password_shown) v.host_password.assign(st.password, strnlen(st.password, sizeof st.password));
@@ -1315,6 +1315,48 @@ bool ReadCursor(float* x, float* y, bool* left) {
 #endif
 }
 
+// The cursor over the game window's client area, 0 to 1 across it (the keyboard's keys are drawn in its pixels), and
+// the left button. False when the game's window is not in front or the cursor is off it.
+bool ReadClientCursor(float* fx, float* fy, bool* left) {
+#ifdef _WIN32
+    static HWND window = nullptr;
+    if (window == nullptr || !IsWindow(window)) {
+        window = nullptr;
+        EnumWindows(FindGameWindow, reinterpret_cast<LPARAM>(&window));
+        if (window == nullptr) return false;
+    }
+    if (GetForegroundWindow() != window) return false;
+    POINT p{};
+    RECT rc{};
+    if (!GetCursorPos(&p) || !ScreenToClient(window, &p) || !GetClientRect(window, &rc)) return false;
+    if (p.x < 0 || p.y < 0 || p.x >= rc.right || p.y >= rc.bottom || rc.right <= 0 || rc.bottom <= 0) return false;
+    *fx = static_cast<float>(p.x) / static_cast<float>(rc.right), *fy = static_cast<float>(p.y) / static_cast<float>(rc.bottom);
+    *left = (GetAsyncKeyState(GetSystemMetrics(SM_SWAPBUTTON) ? VK_RBUTTON : VK_LBUTTON) & 0x8000) != 0;
+    return true;
+#else
+    (void)fx, (void)fy, (void)left;
+    return false;
+#endif
+}
+
+// What the on-screen keyboard shows (coop_keyboard.h), from the page's typing. g_mutex.
+void PublishKeyboard() {
+    CoopKeyboard::Shown s;
+    const int t = g_page.Typing();
+    s.open = t >= 0 && g_page.Shown();
+    if (s.open) {
+        s.title = t == 2 ? "New join password" : t == 1 ? "Join password" : "Room name";
+        s.text = g_page.Field(t).Shown(true, 40);
+        s.row = g_page.KeyCursor().row(), s.col = g_page.KeyCursor().col();
+    }
+    CoopKeyboard::Publish(s);
+}
+// The mouse on the keyboard: a key pressed where the left button went down and came up; Longshot's own A for the
+// click (it presses A for a click in the game's menus) is not a second press. g_mutex.
+bool g_kb_held = false;
+int g_kb_press = -1;
+std::uint64_t g_kb_click_ms = 0;
+
 void SetView(View v) {
     if (g_view.exchange(static_cast<int>(v)) != static_cast<int>(v)) {
         g_confirm_until = 0;      // (a new view: no A waited)
@@ -1519,6 +1561,14 @@ void Act(int row, int line = -1) {
     }
     case RowAction::kAutoRejoin: CoopPause::SetAutoRejoin(!CoopPause::AutoRejoin()); break;
     case RowAction::kShowPassword: g_show_password = !g_show_password.load(); break;
+    case RowAction::kViewPassword: SetView(View::kPassword); break;
+    case RowAction::kChangePassword: {   // (a new one on the keyboard; TakeTyped hands it to the host, OnPad)
+        std::lock_guard lock(g_mutex);
+        g_page.Field(2).Clear();
+        g_page.StartTyping(2);
+        g_live_poke = true;
+        break;
+    }
     case RowAction::kTypeRoom:
     case RowAction::kTypePassword: {
         std::lock_guard lock(g_mutex);
@@ -1676,7 +1726,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
         bool decide = false;
         int row = -1, pick_cell = -1, set_change = -1, set_dir = 0, list_line = -1;
         bool settings_shown = false;
-        std::string why;
+        std::string why, new_password;
         {
             std::lock_guard lock(g_mutex);
             was = g_page.Shown();
@@ -1693,8 +1743,29 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                 }
                 g_page.SetSystemButton(on);
             }
+            if (g_page.Typing() >= 0) {
+                const std::uint64_t now = NowMs();
+                float fx = 0, fy = 0;
+                bool left = false;
+                if (ReadClientCursor(&fx, &fy, &left)) {
+                    int r = -1, c = -1;
+                    const bool on = CoopKeyboard::KeyAtPoint(fx, fy, &r, &c);
+                    if (left && !g_kb_held) g_kb_press = on ? r * 16 + c : -1;
+                    if (!left && g_kb_held && on && g_kb_press == r * 16 + c) {
+                        g_page.PressKey(r, c);
+                        g_kb_click_ms = now;
+                    }
+                    g_kb_held = left;
+                }
+                if (g_kb_held || now - g_kb_click_ms < 400) in &= ~kPadA;
+            }
             out = g_page.OnPad(in, NowMs());
             typing = g_page.Typing() >= 0;
+            PublishKeyboard();
+            if (const int typed = g_page.TakeTyped(); typed == 2) {
+                new_password = g_page.Field(2).text();
+                g_page.Field(2).Clear();
+            }
             const std::uint64_t field_now = std::hash<std::string>{}(g_page.Field(0).text() + '\n' +
                                                                      g_page.Field(1).text()) ^ g_page.Field(0).cursor() ^
                                             (g_page.Field(1).cursor() << 8);
@@ -1923,6 +1994,12 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
         }
         if (!was && shown) LOG_INFO(Core, "coop: pause tab: our page shown (A on its System button)");
         if (was && !shown) LOG_INFO(Core, "coop: pause tab: System back ({})", why);
+        if (!new_password.empty()) {   // (the host's new join password, typed on the keyboard: never in the log)
+            const bool taken = CoopHookshot::HostMenu().SetPassword(new_password.c_str()) != 0;
+            LOG_INFO(Core, "coop: pause tab: a new join password typed: {}", taken ? "handed to the host" : "not taken (see why)");
+            if (taken) g_show_password = true;
+            g_live_poke = true;
+        }
         if (decide && !settings_shown) Act(row, list_line);
         if (pick_cell >= 0) ActCell(pick_cell);
         if (set_change >= 0) ChangeSetting(set_change, set_dir);
@@ -1942,6 +2019,7 @@ bool Key(std::uint32_t vk, bool repeat) noexcept {
         std::lock_guard lock(g_mutex);
         const bool taken = g_page.Key(vk, repeat);
         if (taken) g_live_poke = true;
+        PublishKeyboard();
         return taken;
     } catch (...) {
         return false;
@@ -1953,6 +2031,7 @@ bool Char(std::uint32_t cp) noexcept {
         std::lock_guard lock(g_mutex);
         const bool taken = g_page.Char(cp);
         if (taken) g_live_poke = true;
+        PublishKeyboard();
         return taken;
     } catch (...) {
         return false;

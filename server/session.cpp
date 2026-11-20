@@ -863,6 +863,10 @@ Difficulty Session::difficulty() const {
 }
 
 // (Navi) New Game+: the host's level, told to everyone in the session at once.
+void Session::set_join_password(std::string password) {
+  config_.join_password = std::move(password);
+}
+
 void Session::set_ngplus(std::uint8_t level) {
   if (level > kMaxNgPlus) level = kMaxNgPlus;
   if (level == ngplus_) return;
