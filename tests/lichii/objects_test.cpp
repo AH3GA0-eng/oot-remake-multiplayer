@@ -2561,11 +2561,11 @@ TEST_CASE("objects: skulltula-0118, a taken Gold Skulltula leaves no copy and is
         CHECK(c.removed);
     }
 
-    // A game that took it before the announcement came (the scene's keys, or a
-    // take while no walk ran): no copy at all.
+    // A game that took it before the announcement came (the scene's keys, fed
+    // after the scene's first walk): no copy at all.
     Sync c;
-    c.Take(kHash);
     Tick(c, 0, {}, 3);
+    c.Take(kHash);
     c.Receive(relayed);
     Tick(c, 100 * kMs, {}, 3);
     CHECK(c.Creates().empty());

@@ -861,6 +861,7 @@ void Sync::GoldTaken(std::uint64_t placement) {
     for (auto& [key, d] : decided_) {
         if (!d.removed && d.id.kind == proto::ObjectKind::placed && d.id.value == placement) {
             d.removed = true;
+            d.dead = true;  // never made again (Creates: remakes 0)
             notes_.emplace_back("its token is taken: the copy of " + d.name + " goes");
         }
     }
