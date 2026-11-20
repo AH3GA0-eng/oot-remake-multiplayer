@@ -1,7 +1,9 @@
 # hs-phantom-ganon-reach (row 178 fix 02afd7bb proof): A is the host and owns Phantom Ganon; A deals 3 hits of 6
-# (42 -> 24), then B hits 2 every 150 frames, 6 times, so B's hits fall in every part of his ride cycle. With the fix
-# a B hit while he rides inside a painting ('Run') is life only: A's log "P2's hit came while it rides out of reach
-# (row 178): life only", and no SmallDamage/PhaseChange from it; his phase change comes from a B hit he can take.
+# (42 -> 24), then B hits 2 every 150 frames, 6 times, then 1 every 150 frames 8 times (so a hit he can take comes
+# below his phase-change line), so B's hits fall in every part of his ride cycle. e366b9e2: A's game reads his own
+# no-hit state for each B hit: "P2's hit on our boss .. in '<move>': its game takes no hit now / takes it (row 178:
+# invincible a/b, flags, no-hit bodies n/m)"; a refused one is life only ("its game takes no hit (row 178): life
+# only"), with no SmallDamage/PhaseChange from it; his phase change comes from a B hit he can take.
 # PASS (A's log): every 'PhaseChange' follows a replayed hit outside 'Run'; after it his phase-2 moves come
 # ('SpearAttack_Ready' / 'BasicAttack_Shoot', no "held 'Fly' .. stuck"); no exception; shots of both games at t5-t8.
 # Run 3 times: tools\autotest\run.ps1 -Runtime hookshot -Lane 2 -Scenario hs-phantom-ganon-reach
