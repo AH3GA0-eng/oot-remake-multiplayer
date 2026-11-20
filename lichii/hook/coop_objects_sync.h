@@ -1014,6 +1014,11 @@ public:
     // game made them knowing the key (a chest shows open). Forgotten at a
     // scene change (docs/items.md, "Chests").
     void Take(std::uint64_t hash);
+    // Present thread (Tick): a Gold Skulltula placement whose token is taken
+    // (from Take, also for its key + 2). Its copies go and none is made again;
+    // our own one leaving is its death for everyone (skulltula-0118).
+    void GoldTaken(std::uint64_t placement);
+    bool IsGoldTaken(std::uint64_t placement) const { return gold_taken_.contains(placement); }
     // Present thread: a placement key taken in this scene. Collect asks this
     // for actors that are not shared, to report them too.
     bool Taken(std::uint64_t hash) const { return taken_.contains(hash); }
@@ -1398,6 +1403,8 @@ private:
     // used (our own one died), on a new OBJECT_SPAWN for it (a respawn) and
     // on a scene change.
     std::set<coop::protocol::ObjectId> copy_killed_;
+    // Gold Skulltula placements taken (GoldTaken), this scene.
+    std::set<std::uint64_t> gold_taken_;
     void HoldEncounters(std::uint64_t now_us);
     std::map<std::uint64_t, std::uint64_t> bound_;  // actor to director key
     std::uint64_t next_key_ = 1;

@@ -834,14 +834,38 @@ void Sync::Take(std::uint64_t hash) {
     // TokenId(placement). Both are taken, so the Skulltula and the token it
     // already made go (issue 89: the token stayed and counted a second
     // time). Only for the 100 placements: any other key would name a token
-    // that cannot exist.
-    if (!CoopWorld::IsGoldSkulltulaKey(hash)) {
+    // that cannot exist. Either of the placement's two keys (key + 2 too,
+    // skulltula-0118) names it, and the Skulltula's own hash is taken with it.
+    const std::uint64_t placement = CoopWorld::GoldPlacementOfKey(hash);
+    if (placement == 0) {
         return;
     }
-    const std::uint64_t token = CoopWorld::TokenId(hash);
+    if (placement != hash && takes_in_.size() < 1024) {
+        takes_in_.push_back(placement);
+    }
+    const std::uint64_t token = CoopWorld::TokenId(placement);
     if (token != 0 && token != kNoHash && takes_in_.size() < 1024) {
         takes_in_.push_back(token);
     }
+}
+
+void Sync::GoldTaken(std::uint64_t placement) {
+    if (placement == 0 || placement == kNoHash || !gold_taken_.insert(placement).second) {
+        return;
+    }
+    // skulltula-0118 (row 158): a copy the director made of this Skulltula
+    // (its owner announced it to a game that had not loaded it: a night one,
+    // one out of a tree, one in a room loaded later) has no placement hash of
+    // its own, so no take found it. It stood on as a frozen copy whose owner
+    // was gone, and kept the Skulltula alive on the server for the others.
+    for (auto& [key, d] : decided_) {
+        if (!d.removed && d.id.kind == proto::ObjectKind::placed && d.id.value == placement) {
+            d.removed = true;
+            d.dead = true;  // never made again (Creates: remakes 0)
+            notes_.emplace_back("its token is taken: the copy of " + d.name + " goes");
+        }
+    }
+    held_.erase(proto::ObjectId{proto::ObjectKind::placed, 0, placement});
 }
 
 bool Sync::Hatch(std::uint8_t self, const Seen& s,
@@ -1002,6 +1026,7 @@ void Sync::Reset() {
     decided_.clear();
     held_.clear();
     copy_killed_.clear();
+    gold_taken_.clear();  // fed again for the new scene from the save's keys (Take)
     eggs_.clear();
     copy_eggs_.clear();
     away_.clear();
@@ -1570,6 +1595,11 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         // Takes that came while no walk ran are for actors made after them.
         const bool gap = !ticked_ || now_us < last_tick_us_ ||
                          now_us - last_tick_us_ > kTakeGapUs;
+        // A taken Gold Skulltula stays taken whatever the gap: no copy of it
+        // is made or kept (GoldTaken).
+        for (const std::uint64_t hash : takes) {
+            GoldTaken(CoopWorld::GoldPlacementOfKey(hash));
+        }
         if (!gap) {
             for (const std::uint64_t hash : takes) {
                 // The wait counts from the first take of a key: the chest's
@@ -3006,7 +3036,14 @@ void Sync::Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& g
             // Its life 0 alone does not reach a copy whose life cannot be
             // read (the big Skulltula), nor end a copy whose game did not
             // take the life we wrote. Rolled ones say it in Tick already.
-            const bool died = !o.dead_said && ((o.life && *o.life <= 0) ||
+            // skulltula-0118: a Gold Skulltula of ours whose token is taken
+            // went with its take (hidden or deleted), not by a death our walk
+            // read; it is dead for everyone too. Unsaid, the server kept it
+            // alive and named it again (OBJECT_SPAWN) to every game that came
+            // in later, which made a frozen copy of it.
+            const bool taken = o.id.kind == proto::ObjectKind::placed && IsAnnounced(o.name) &&
+                               gold_taken_.contains(o.id.value);
+            const bool died = !o.dead_said && ((o.life && *o.life <= 0) || taken ||
                                                (o.animation && IsDeathAnimation(o.animation->name)));
             // A fish of ours gone in our Link's hands: caught here (issue
             // 151), gone for everyone.
@@ -3128,6 +3165,11 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             if (!made && ((!IsAnnounced(spawn->actor) && !encounter) || have_live ||
                           spawn->player_number == self)) {
                 continue;  // we have that placement ourselves
+            }
+            if (!made && IsAnnounced(spawn->actor) && gold_taken_.contains(spawn->id.value)) {
+                // skulltula-0118: its token is taken (a key of this save): no copy.
+                notes_.emplace_back("its token is taken: no copy made of " + spawn->actor);
+                continue;
             }
             // A copy still being deleted is no longer it (a respawn makes a new one).
             const bool known = std::any_of(decided_.begin(), decided_.end(), [&](const auto& e) {

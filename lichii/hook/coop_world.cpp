@@ -151,6 +151,13 @@ bool IsGoldSkulltulaKey(std::uint64_t hash) {
     return std::binary_search(keys.begin(), keys.end(), hash);
 }
 
+std::uint64_t GoldPlacementOfKey(std::uint64_t key) {
+    if (IsGoldSkulltulaKey(key)) {
+        return key;
+    }
+    return key >= 2 && IsGoldSkulltulaKey(key - 2) ? key - 2 : 0;
+}
+
 std::uint64_t PlacementOfTokenId(std::uint64_t id) {
     // TokenId is a fixed XOR (and a flip away from 0 / ~0 on the wire), so the
     // way back is the same call; it only names a Skulltula when the result is one
