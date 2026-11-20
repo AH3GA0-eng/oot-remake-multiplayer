@@ -28,6 +28,14 @@ wait 300
 press A
 wait 2400
 mark a-in
+setflag HavePlayedEvent.Dm_DodongoCave_BossIn 0   # run 013205: in the arena but no intro and no KD (he appears only with his intro: IsIntendedForEventAppear)
+setflag HavePlayedEvent.Dm_DodongoCave_BossOut 0
+setflag Enemy_DungeonBoss_Dodongo_BossAppear 0
+setflag DodongoCavern_BossGroundChange 0
+wait 60
+warp DodongoStage DodongoStage   # same-map warp = reload with the flags
+wait 3000               # the module own warp took >25 s in run 013912
+goto 24.0 -63.0 1.0 1200   # into the arena: its trigger areas (Banc Area 24.0 73.2 -63.0); every earlier KD run stood at the warp spot, phase none
 wait 1800
 mark a-fight
 wait 420
