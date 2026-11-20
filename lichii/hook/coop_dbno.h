@@ -46,7 +46,7 @@ struct Rules {
     bool on = false;
     std::uint8_t set_by = 0;          // 0: the server's start; else the host
     std::uint8_t bleed_s = 45;        // bleed-out time
-    std::uint8_t revive_tenths = 30;  // how long a revive is held
+    std::uint8_t revive_tenths = 50;  // how long a revive is held (5 s, row 174)
     std::uint8_t revive_life = 12;    // quarter hearts a revived player gets
 
     std::uint64_t BleedUs() const { return std::uint64_t{bleed_s} * 1'000'000; }
