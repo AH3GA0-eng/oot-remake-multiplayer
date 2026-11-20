@@ -16,7 +16,7 @@ wait 300
 press A                 # loads the save, then the warp
 wait 2400
 mark b-in
-wait 2400               # the intro, then the fight
+wait 3900               # the intro, then the fight (run 040054: no boss at 2400, lane1 save)
 press ZL 10             # lock on
 wait 600
 mark t1

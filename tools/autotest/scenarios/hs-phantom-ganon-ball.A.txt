@@ -6,7 +6,7 @@
 #! noload
 #! start coop: test warp done
 #! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
-#! timeout 780
+#! timeout 900
 mark start
 warp PhantomGanonStage PhantomGanonStage
 wait 1200               # the title screen
@@ -20,7 +20,7 @@ wait 300
 press A                 # loads the save, then the warp
 wait 2400
 mark a-in
-wait 2400               # the intro, then the fight
+wait 3900               # the intro, then the fight (run 040054: no boss at 2400, lane1 save)
 press ZL 10             # lock on
 wait 600
 mark t1
