@@ -1394,7 +1394,7 @@ CoopPauseMenu::Page MenuTabPage(int tab) {
 
 std::string MenuValue(const CoopPauseMenu::Row& r, bool typing) {
     using CoopPauseMenu::RowKind;
-    if (typing) return r.value + "_";
+    if (typing) return !r.value.empty() && r.value.back() == '_' ? r.value : r.value + "_";   // (some end in it already)
     switch (r.kind) {
     case RowKind::kToggle: return !r.value.empty() ? r.value : r.on ? "On" : "Off";
     case RowKind::kChoice: {

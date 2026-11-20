@@ -412,7 +412,7 @@ void Follow(const HosCoopStatus& st) {
                             seen.banned ? "You cannot join that game again." : "Check the room and the join password, then Join again."});
             // (the pause page's Session view says it only for a join made there: one made on the title said it on the
             // title's Join page, and the page opened later in the game on that old line)
-            if (!g_native) SayOnPage(why.c_str());
+            if (!g_native || !CoopTitle::Up()) SayOnPage(why.c_str());
         }
     }
     if (g_rejoin.Tick(f, now)) {
@@ -1240,6 +1240,13 @@ CoopPauseMenu::Page NativePage() {
 bool NativeOpen() {
     std::lock_guard lock(g_mutex);
     return g_native;
+}
+
+void NativeGo(CoopPauseMenu::Page page) {
+    std::lock_guard lock(g_mutex);
+    if (!g_native) return;
+    g_menu.Open(page);
+    Settle();
 }
 
 void CloseNative() {

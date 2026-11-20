@@ -106,7 +106,9 @@ CoopKeyboard::Cursor g_menu_keys;
 CoopKeyboard::Shown g_menu_kb;
 bool g_menu_typed_last = false;
 std::uint64_t g_menu_pad_last = 0;
-std::uint64_t g_menu_click_ms = 0;   // the left button last down on the list (Longshot's A for that click is not one)
+std::atomic<bool> g_menu_focus_reset{false};   // (the view came: the game's cursor's row then is no choice)
+int g_menu_focus_seen = -2;                     // the game's cursor's row as last followed. g_mutex
+std::uint64_t g_menu_click_ms = 0;   // the left button last down on the list or Link (Longshot's A for it: not one)
 bool g_model_dragging = false;       // the left button went down on Link (Customize Link): its moves turn him
 float g_model_drag_x = 0.0f;
 // The Multiplayer page's rows with nothing on them (bit per row, LiveRows), not shown (the game's cursor on one goes on
@@ -651,7 +653,10 @@ void LiveCells(void* ctx, std::uint64_t layout, std::uint64_t gen, const Session
     MenuList ml;
     if (menu) {   // (co-op's menu's page: its rows; the lines' menu rows kept for the pad and the mouse)
         ml = MenuLines(v.menu, v.menu_tab, v.menu_top, v.s.menu_list, g_menu_per_page.load());
-        g_menu_top = ml.top;
+        // (kept within the rows, or with the selected row in view; not over a header click made since the view was
+        // read: a review's lost update)
+        int was = v.menu_top;
+        g_menu_top.compare_exchange_strong(was, ml.top);
         for (std::size_t k = 0; k < static_cast<std::size_t>(kLinePanes); ++k) {
             g_menu_line_row[k] = ml.rows[k], g_menu_line_pick[k] = ml.selectable[k];
         }
@@ -1646,6 +1651,29 @@ BOOL CALLBACK FindGameWindow(HWND h, LPARAM out) {
 }
 #endif
 
+// (a test run's, LICHII_COOP_TEST_STATE=1 only: the left button as the file mouse.now in the game's folder says it,
+// "1" down, "0" up, when the PC's own state does not show a test's injected clicks; read at most every 15 ms)
+bool TestLeftButton(bool held) {
+    static const bool on = [] {
+        const char* v = std::getenv("LICHII_COOP_TEST_STATE");
+        return v != nullptr && v[0] == '1';
+    }();
+    if (!on) return held;
+    static std::atomic<std::uint64_t> next{0};
+    static std::atomic<int> said{-1};
+    if (const std::uint64_t now = NowMs(); now >= next.load()) {
+        next = now + 15;
+        int v = -1;
+        if (FILE* f = std::fopen((CoopRuntime::GameDir() / "mouse.now").string().c_str(), "rb")) {
+            const int c = std::fgetc(f);
+            v = c == '1' ? 1 : c == '0' ? 0 : -1;
+            std::fclose(f);
+        }
+        said = v;
+    }
+    return said.load() < 0 ? held : said.load() == 1;
+}
+
 // The cursor over the game's picture, in the layout's units, with the game's window in front (false otherwise), and
 // the left button.
 bool ReadCursor(float* x, float* y, bool* left) {
@@ -1662,7 +1690,7 @@ bool ReadCursor(float* x, float* y, bool* left) {
     if (!GetCursorPos(&p) || !ScreenToClient(window, &p) || !GetClientRect(window, &rc)) return false;
     if (p.x < 0 || p.y < 0 || p.x >= rc.right || p.y >= rc.bottom) return false;
     std::tie(*x, *y) = LayoutPoint(p.x, p.y, rc.right, rc.bottom);
-    *left = (GetAsyncKeyState(GetSystemMetrics(SM_SWAPBUTTON) ? VK_RBUTTON : VK_LBUTTON) & 0x8000) != 0;
+    *left = TestLeftButton((GetAsyncKeyState(GetSystemMetrics(SM_SWAPBUTTON) ? VK_RBUTTON : VK_LBUTTON) & 0x8000) != 0);
     return true;
 #else
     (void)x, (void)y, (void)left;
@@ -1686,7 +1714,7 @@ bool ReadClientCursor(float* fx, float* fy, bool* left) {
     if (!GetCursorPos(&p) || !ScreenToClient(window, &p) || !GetClientRect(window, &rc)) return false;
     if (p.x < 0 || p.y < 0 || p.x >= rc.right || p.y >= rc.bottom || rc.right <= 0 || rc.bottom <= 0) return false;
     *fx = static_cast<float>(p.x) / static_cast<float>(rc.right), *fy = static_cast<float>(p.y) / static_cast<float>(rc.bottom);
-    *left = (GetAsyncKeyState(GetSystemMetrics(SM_SWAPBUTTON) ? VK_RBUTTON : VK_LBUTTON) & 0x8000) != 0;
+    *left = TestLeftButton((GetAsyncKeyState(GetSystemMetrics(SM_SWAPBUTTON) ? VK_RBUTTON : VK_LBUTTON) & 0x8000) != 0);
     return true;
 #else
     (void)fx, (void)fy, (void)left;
@@ -1836,7 +1864,8 @@ void FollowMenu(bool shown) {
         }
         LOG_INFO(Core, "coop: pause tab: settings and look: closed (Link wears the look chosen)");
     } else {
-        CoopPause::OpenNative(MenuTabPage(want));
+        if (open < 0) CoopPause::OpenNative(MenuTabPage(want));   // (the files' settings read once, as the view opens)
+        else CoopPause::NativeGo(MenuTabPage(want));              // (another of its pages: no files or devices read)
         g_menu_top = 0;
         LOG_INFO(Core, "coop: pause tab: settings and look: {} on the list", kMenuTabNames[static_cast<std::size_t>(want)]);
     }
@@ -2066,7 +2095,7 @@ void Act(int row, int line = -1, bool clicked = false) {
     case RowAction::kCopyLan: CoopPause::PageCopyNow(CoopPause::PageCopy::kLan); break;
     case RowAction::kCopyVpn: CoopPause::PageCopyNow(CoopPause::PageCopy::kVpn); break;
     case RowAction::kViewMenu:
-        g_menu_tab = 0, g_menu_list = false, g_menu_top = 0;
+        g_menu_tab = 0, g_menu_list = false, g_menu_top = 0, g_menu_focus_reset = true;
         SetView(View::kMenu);
         break;
     case RowAction::kMenuTab:   // (A on a page's row: its rows on the list, which has the pad)
@@ -2356,8 +2385,15 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
         g_model_back = g_menu_open.load() == 0 && mv.selected >= 0 &&
                        MenuHeadingOf(mv, mv.selected).find("Shield") != std::string::npos;
         if (const int phase = g_to_title.load(); phase != 0) {
-            std::lock_guard lock(g_mutex);
-            if (const std::uint64_t steps = ToTitleStep(phase); steps != kNoStep) return steps;
+            std::uint64_t steps = kNoStep;
+            {
+                std::lock_guard lock(g_mutex);
+                steps = ToTitleStep(phase);
+            }
+            if (steps != kNoStep) {
+                FollowMenu(false);   // (Settings and look shut on the way: co-op's menu's page with it)
+                return steps;
+            }
         }
         {   // (the mouse's left button: when it last went down, for a click's A just after a view came)
             float cx = 0, cy = 0;
@@ -2447,7 +2483,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             // to the left menu"). The press is ours: a Left for the game's cursor instead.
             bool b_to_rows = false;
             if ((in & kPadB) != 0 && g_page.Shown() && g_page.Which() == 0 && g_page.Typing() < 0 && g_cell.load() < 0 &&
-                FocusedShownName().rfind("Pa_List_", 0) == 0) {
+                ViewShown() != View::kMenu && FocusedShownName().rfind("Pa_List_", 0) == 0) {
                 b_to_rows = (g_b_list_last & kPadB) == 0;   // (its press; held, nothing more)
                 g_b_swallow = true;
             }
@@ -2509,7 +2545,8 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                     kb.open = true;
                     const bool sel_ok = mv.selected >= 0 && static_cast<std::size_t>(mv.selected) < mv.rows.size();
                     kb.title = sel_ok ? mv.rows[static_cast<std::size_t>(mv.selected)].name : std::string("Type");
-                    kb.text = (sel_ok ? mv.rows[static_cast<std::size_t>(mv.selected)].value : std::string()) + "_";
+                    kb.text = sel_ok ? mv.rows[static_cast<std::size_t>(mv.selected)].value : std::string();
+                    if (kb.text.empty() || kb.text.back() != '_') kb.text += "_";   // (some rows end in it already)
                     kb.row = g_menu_keys.row(), kb.col = g_menu_keys.col();
                     g_menu_kb = kb;
                     in = 0;   // (the page sees no press: B is the keyboard's Cancel, not the view's Back)
@@ -2886,8 +2923,16 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                 const bool up = (bdown & (kPadUp | kPadStickUp)) != 0, down = (bdown & (kPadDown | kPadStickDown)) != 0;
                 const std::uint64_t now = NowMs();
                 bool list = g_menu_list.load();
-                if (const int focused = FocusedRow(); !list && focused >= 0 && focused < kMenuTabs && focused != g_menu_tab.load()) {
-                    g_menu_tab = focused, g_menu_top = 0, g_live_poke = true;   // (FollowMenu opens its page)
+                // (the page follows the game's cursor only once it moves to another row: where it was as the view
+                // came (the view's own row: in a session row 4, Local co-op's) or as the list gave the pad back (the row
+                // it was on all along) is no choice: a test run opened Co-op settings after a click on the header)
+                const int focused = FocusedRow();
+                if (g_menu_focus_reset.exchange(false)) g_menu_focus_seen = focused;
+                if (!list && focused != g_menu_focus_seen) {
+                    g_menu_focus_seen = focused;
+                    if (focused >= 0 && focused < kMenuTabs && focused != g_menu_tab.load()) {
+                        g_menu_tab = focused, g_menu_top = 0, g_live_poke = true;   // (FollowMenu opens its page)
+                    }
                 }
                 if (!list) {
                     if (right) list = true, g_page.Sound("button_on");
@@ -2897,12 +2942,12 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                     if (left) menu_events.push_back({HOS_COOP_MENU_LEFT, 0, 0});
                     if (right) menu_events.push_back({HOS_COOP_MENU_RIGHT, 0, 0});
                     if (up || down || left || right) g_page.Sound("button_on");
-                    if (decide && g_mouse_rows.Clicked(now) < 0) {
-                        menu_events.push_back({HOS_COOP_MENU_CONFIRM, 0, 0});
-                        g_page.Sound("button_decide");
-                        decide = false;
-                    }
                 }
+                // The mouse. Longshot's mouse does not press A on the list's lines (it presses A only as a click takes
+                // its focus onto a button), so a click on a line is the module's: pressed and let go on the same line.
+                // The A Longshot does send for a click (the focus coming onto a line, or onto Link's side) is not the
+                // pad's: kept from co-op's menu while the button is down and a moment after (a review: the same click
+                // stepped a choice twice; a part's mixer opened under the click, a test run 2026-11-20).
                 float x = 0, y = 0;
                 bool held = false;
                 if (ReadCursor(&x, &y, &held)) {
@@ -2917,24 +2962,25 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                         g_page.Sound("button_on");
                     }
                     if (moved && line < 0 && list && RowAt(ReadRowBoxes(now), x, y) >= 0) list = false;   // (onto the rows)
-                    if (held && !g_cells_held) g_cells_press = line;
-                    if (held && line >= 0) g_menu_click_ms = now;   // (Longshot's A for a click on the list is not one)
-                    // (Customize Link: a drag that starts right of the list, on Link, turns him; its A is no row's)
-                    if (const RowBox head = HeadBox(); held && !g_cells_held) {
+                    if (held && !g_cells_held) {
+                        g_cells_press = line;
+                        // (Customize Link: a drag that starts right of the list, on Link, turns him)
+                        const RowBox head = HeadBox();
                         g_model_dragging = g_menu_tab.load() == 0 && head.shown && line < 0 && x > head.x1 + 40.0f;
                         g_model_drag_x = x;
                     }
+                    if (held && (line >= 0 || g_model_dragging)) g_menu_click_ms = now;
                     if (held && g_model_dragging) {
                         g_model_drag = g_model_drag.load() + (x - g_model_drag_x) * kModelDragTurn;
                         g_model_drag_x = x;
-                        g_menu_click_ms = now;
                     }
                     if (!held) g_model_dragging = false;
                     if (!held && g_cells_held && line >= 0 && line == g_cells_press) {
-                        if (line == 0) {   // (the header: the rows before or after)
+                        g_menu_click_ms = now;
+                        if (line == 0) {   // (the header: the rows before or after, a page's worth)
                             const RowBox head = HeadBox();
                             const int dir = x < (head.x0 + head.x1) / 2 ? -1 : 1;
-                            g_menu_top = std::max(0, g_menu_top.load() + dir * kCells);
+                            g_menu_top = std::max(0, g_menu_top.load() + dir * g_menu_per_page.load());
                             list = false;
                             g_page.Sound("button_decide"), g_live_poke = true;
                         } else if (pick) {
@@ -2943,22 +2989,42 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                             const float cx = (b.x0 + b.x1) / 2, scale = (b.x1 - b.x0) / 1880.0f;
                             const float to_left = std::abs(x - (cx + kArrowLeftX * scale)), to_right = std::abs(x - (cx + kArrowRightX * scale));
                             const int side = to_left < kArrowReach * scale ? -1 : to_right < kArrowReach * scale ? 1 : 0;
-                            menu_events.push_back({HOS_COOP_MENU_CLICK, mrow, side});
+                            if (side != 0) {
+                                menu_events.push_back({HOS_COOP_MENU_CLICK, mrow, side});   // (an arrow: that way)
+                            } else {   // (elsewhere on the row: as A on it: a part's mixer, a switch turned)
+                                menu_events.push_back({HOS_COOP_MENU_SELECT, mrow, 0});
+                                menu_events.push_back({HOS_COOP_MENU_CONFIRM, 0, 0});
+                            }
                             list = true;
                             g_page.Sound("button_decide");
                         }
                     }
                     g_cells_held = held;
                 }
-                if (now - g_menu_click_ms < 400) decide = false;
-                if (list) out &= ~(kPadUp | kPadDown | kPadStickUp | kPadStickDown);   // (the rows' cursor stays)
-                // (the game's cursor on a line of the list, where Longshot's mouse put it: a Left takes it back to the
-                // rows, as on Longshot Settings)
-                if (const std::string on = FocusedShownName(); on.rfind("Pa_List_", 0) == 0 && now - g_list_focus_fix_ms > 300) {
-                    g_list_focus_fix_ms = now;
-                    out |= kPadLeft;
+                // (Longshot's A for a click on the list or on Link: not one. A click on the page's rows is Longshot's
+                // own A, as ever)
+                if ((held && (g_cells_press >= 0 || g_model_dragging)) || now - g_menu_click_ms < 400) decide = false;
+                if (decide && list) {   // (the pad's A: the selected row's)
+                    menu_events.push_back({HOS_COOP_MENU_CONFIRM, 0, 0});
+                    g_page.Sound("button_decide");
+                    decide = false;
                 }
-                if (list != g_menu_list.load()) g_menu_list = list, g_live_poke = true;
+                if (list) {   // (the rows' cursor stays: left and right too, or they took it onto the list or back)
+                    out &= ~(kPadUp | kPadDown | kPadStickUp | kPadStickDown | kPadLeft | kPadRight | kPadStickLeft | kPadStickRight);
+                }
+                // (the game's cursor on a line of the list, where Longshot's mouse put it: left there while the list
+                // has the pad, its line the one picked. A Left each time sent it onto the page's row beside that line,
+                // another page, so the mouse over the list bounced to the rows, a tester. Only the rows' own up and
+                // down with the cursor still there take it back first)
+                if (const std::string on = FocusedShownName(); !list && (up || down) && on.rfind("Pa_List_", 0) == 0 &&
+                                                               now - g_list_focus_fix_ms > 300) {
+                    g_list_focus_fix_ms = now;
+                    out = (out & ~(kPadUp | kPadDown | kPadStickUp | kPadStickDown)) | kPadLeft;
+                }
+                if (list != g_menu_list.load()) {
+                    if (!list) g_menu_focus_seen = FocusedRow();   // (the rows have the pad: their cursor where it is)
+                    g_menu_list = list, g_live_poke = true;
+                }
                 if (!menu_events.empty()) g_live_poke = true;
             }
             // The Multiplayer page's details list (DetailLines, on the main and Session views) is the game's Options
@@ -3063,7 +3129,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             CoopPause::NativeInput(HOS_COOP_MENU_BACK);
             if (CoopPause::NativePage() != page) {   // (out of the page: open again, the rows have the pad)
                 CoopPause::OpenNative(page);
-                g_menu_list = false, g_menu_top = 0;
+                g_menu_list = false, g_menu_top = 0, g_menu_focus_reset = true;
             }
             g_live_poke = true;
         }
@@ -3156,14 +3222,35 @@ std::string TestState() {
     const std::uint64_t now = NowMs();
     const std::string pads = fmt::format(" tab_in={:#x} tab_out={:#x}", g_test_tab_in.load(), g_test_tab_out.load());
     const bool menu = now - g_pages_seen_ms.load() < 400;
+    // (Settings and look: co-op's menu's selected row, its name and value (spaces as _), its rows, the list's first
+    // shown and whether it has the pad, the page's row, and the menu's Link shown and his turn; read before our lock:
+    // co-op's menu takes its own)
+    std::string mpart;
+    if (g_menu_open.load() >= 0) {
+        const CoopPauseMenu::View mv = CoopPause::NativeView();
+        const auto under = [](std::string t) {
+            for (char& c : t) c = c == ' ' ? '_' : c;
+            return t.empty() ? std::string("-") : t;
+        };
+        const bool ok = mv.selected >= 0 && static_cast<std::size_t>(mv.selected) < mv.rows.size();
+        mpart = fmt::format(" msel={} mname={} mvalue={} mrows={} mtyping={} mpage={}", mv.selected,
+                            ok ? under(mv.rows[static_cast<std::size_t>(mv.selected)].name) : std::string("-"),
+                            !ok ? std::string("-")
+                            : mv.rows[static_cast<std::size_t>(mv.selected)].name.find("assword") != std::string::npos
+                                ? std::string("(hidden)")
+                                : under(MenuValue(mv.rows[static_cast<std::size_t>(mv.selected)], false)),
+                            mv.rows.size(), mv.typing ? 1 : 0, static_cast<int>(CoopPause::NativePage()));
+    }
     std::lock_guard lock(g_mutex);
+    mpart += fmt::format(" mtop={} mlist={} mtab={} mopen={} model={} yaw={:.2f}", g_menu_top.load(),
+                         g_menu_list.load() ? 1 : 0, g_menu_tab.load(), g_menu_open.load(), g_model.on ? 1 : 0, g_model.yaw);
     return fmt::format("menu={} pages_state={} pages_page={} shown={} which={} view={} typing={} cell={} set_row={} "
                        "set_category={} focused={} to_title={} kb={} online={} pouch={}",
                        menu ? 1 : 0, menu ? g_pages_seen_state.load() : -1, menu ? g_pages_seen_page.load() : -1,
                        g_page.Shown() ? 1 : 0, g_page.Which(), g_view.load(), g_page.Typing(), g_cell.load(),
                        g_set_row.load(), g_set_category.load(), menu ? FocusedShownName() : std::string("-"),
                        g_to_title.load(), CoopKeyboard::Wanted() ? 1 : 0, g_online.load() ? 1 : 0,
-                       g_test_pouch.load()) + pads;
+                       g_test_pouch.load()) + pads + mpart;
 }
 
 }  // namespace CoopPauseTab

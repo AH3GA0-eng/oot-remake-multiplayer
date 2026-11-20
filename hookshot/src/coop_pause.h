@@ -62,6 +62,9 @@ CoopPauseMenu::View NativeView();
 bool NativeOpen();
 CoopPauseMenu::Page NativePage();   // (the page the menu shows now)
 void CloseNative();
+// Another page of co-op's menu while it shows natively (the pause page's Settings and look): the page only, no files
+// read again (OpenNative read them as it opened).
+void NativeGo(CoopPauseMenu::Page page);
 
 // The pause menu's Multiplayer page (coop_pause_tab.h): its copies, done on the page itself (co-op's menu stays shut): the host's room name (else its relay join code,
 // else its invite code), a waiting guest's answer code, the host's same-network or VPN join line (as the menu's rows).
