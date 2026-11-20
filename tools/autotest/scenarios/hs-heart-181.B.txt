@@ -41,6 +41,11 @@ give PouchData.Weapon_Range_SlingShot.StockNum
 wait 120
 assign SlingShot
 wait 120
+setenum 0x7d776b61 GoToBossRoom   # LANE1 run 20261120-021438: Gohma never made (the lane save is past her: Delete_Gohma <- the quest)
+setflag HavePlayedEvent.InsideTheDekuTree_BossDie 0   # else her AI never asks her death (boss-die-0116-2)
+wait 60
+warp InsideTheDekuTree Entrance   # same-map warp = reload with the quest back
+wait 1800
 place -12.0 48.5 67.5   # the corridor, 11 m before the door (side by side)
 wait 240
 goto -4.0 68.3 1.0 600
