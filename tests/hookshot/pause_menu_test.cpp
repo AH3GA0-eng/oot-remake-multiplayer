@@ -749,8 +749,9 @@ TEST_CASE("pause tab: Customize Link opens the customizer, its changes are asked
     m.Press(Input::kDecide);
     CHECK(m.page() == Page::kCustomize);
     View v = m.view();
-    CHECK(v.rows[0].kind == RowKind::kHeading);
-    CHECK(v.rows[0].name == "Tunic");
+    CHECK(v.rows[0].name == "Your name");   // (the name first, then the parts)
+    CHECK(v.rows[1].kind == RowKind::kHeading);
+    CHECK(v.rows[1].name == "Tunic");
     CHECK(Selected(m) == "Kokiri Tunic");
     CHECK_FALSE(m.Picture().empty());
     CHECK_FALSE(m.TakeRequest());
@@ -762,7 +763,7 @@ TEST_CASE("pause tab: Customize Link opens the customizer, its changes are asked
     CHECK(m.look()[CoopLook::Part::boots] == 0x112233u);   // the rest as it was worn
     CHECK(m.options().colour == "red");                     // the Settings page's row agrees
     // The mouse: a click on a part's right half.
-    m.Click(2, 1);   // Goron Tunic
+    m.Click(3, 1);   // Goron Tunic (Your name, Tunic, Kokiri Tunic above it)
     CHECK(m.look()[CoopLook::Part::goron_tunic] == CoopColors::Parse("red"));
     m.Press(Input::kBack);
     CHECK(m.page() == Page::kMain);
@@ -1141,4 +1142,73 @@ TEST_CASE("pause tab: Settings: the relay and the room name, typed, checked and 
     m.Press(Input::kDecide);
     CHECK(m.options().relay_room == "forestgang");
     CHECK_FALSE(m.TakeRequest().has_value());
+}
+
+TEST_CASE("pause tab: Customize Link: Your name first, typed on its row, saved, Up and Down round it") {
+    Menu m;
+    CoopTitleMenu::Options o;
+    o.name = "Link";
+    m.Show(o);
+    m.Open(Page::kCustomize);
+    REQUIRE(m.page() == Page::kCustomize);
+    CHECK(Selected(m) == "Kokiri Tunic");
+    // Up from the first part: Your name; Up again: round to the last part; Down from there: the name again.
+    m.Press(Input::kUp);
+    CHECK(Selected(m) == "Your name");
+    CHECK(m.view().rows[0].value == "Link");
+    CHECK(m.view().help_title == "Your name");
+    m.Press(Input::kDown);
+    CHECK(Selected(m) == "Kokiri Tunic");
+    m.Press(Input::kUp);
+    m.Press(Input::kUp);
+    CHECK(Selected(m) != "Your name");
+    CHECK(Selected(m) != "Kokiri Tunic");
+    m.Press(Input::kDown);   // (the last part's Down: round to the list's top, its own way)
+    m.Press(Input::kUp);
+    // A on Your name: typing; Erase and characters; Enter keeps it and asks for a save.
+    while (Selected(m) != "Your name") m.Press(Input::kUp);
+    m.Press(Input::kDecide);
+    CHECK(m.typing());
+    CHECK(m.view().typing);
+    CHECK(m.view().selected == 0);
+    m.Press(Input::kErase);
+    m.Char('k');
+    m.Char('2');
+    CHECK(m.view().rows[0].value == "Link2");
+    m.Press(Input::kDecide);
+    CHECK_FALSE(m.typing());
+    CHECK(m.options().name == "Link2");
+    const auto saved = m.TakeRequest();
+    REQUIRE(saved);
+    CHECK(saved->kind == Request::Kind::kSave);
+    // Esc (Back) while typing: the name as it was, no save.
+    m.Press(Input::kDecide);
+    m.Char('x');
+    m.Press(Input::kBack);
+    CHECK_FALSE(m.typing());
+    CHECK(m.options().name == "Link2");
+    CHECK_FALSE(m.TakeRequest());
+    CHECK(m.page() == Page::kCustomize);   // (Back ended the typing only)
+    // An empty name is not taken.
+    m.Press(Input::kDecide);
+    for (int i = 0; i < 10; ++i) m.Press(Input::kErase);
+    m.Press(Input::kDecide);
+    CHECK(m.options().name == "Link2");
+    // The mouse: a click on row 0 types the name; a click on a part ends it and picks that part.
+    m.Click(0, 0);
+    CHECK(m.typing());
+    m.Click(2, 0);
+    CHECK_FALSE(m.typing());
+    m.Select(2);
+    CHECK(Selected(m) == "Kokiri Tunic");
+    m.Select(0);
+    CHECK(Selected(m) == "Your name");
+    // In a colour's mixer there is no name row; Back from the list leaves the page.
+    m.Select(2);
+    m.Press(Input::kDecide);   // (A on a part: its mixer)
+    CHECK(m.view().rows[0].name != "Your name");
+    m.Press(Input::kBack);     // (the mixer shut)
+    CHECK(m.view().rows[0].name == "Your name");
+    m.Press(Input::kBack);
+    CHECK(m.page() == Page::kMain);
 }

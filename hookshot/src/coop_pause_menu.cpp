@@ -876,10 +876,60 @@ void Menu::EndTyping(bool keep) {
     }
 }
 
+std::size_t Menu::CustomizeFirst() const {
+    const CoopLookMenu::View c = customize_.view();
+    for (std::size_t i = 0; i < c.rows.size(); ++i) {
+        const auto kind = static_cast<RowKind>(c.rows[i].kind);
+        if (kind != RowKind::kHeading && kind != RowKind::kNote) return i;
+    }
+    return 0;
+}
+
 bool Menu::Press(Input input) {
     note_.clear();
-    if (page_ == Page::kCustomize) {   // (its own rows: coop_look_menu.h)
+    if (page_ == Page::kCustomize) {   // (its own rows: coop_look_menu.h; Your name above them, ours)
         using L = CoopLookMenu::Input;
+        const bool name_row = !customize_.editing();
+        if (typing_) {   // (Your name typed on its row: as on the Settings page)
+            switch (input) {
+            case Input::kDecide: EndTyping(true); break;
+            case Input::kBack: EndTyping(false); break;
+            case Input::kErase:
+                typing_fresh_ = false;
+                if (std::string* t = Typed(); t != nullptr && !t->empty()) CoopTitleMenu::PopCodePoint(*t);
+                break;
+            case Input::kUp:
+            case Input::kDown:
+                EndTyping(true);
+                if (input == Input::kDown) customize_name_ = false, customize_.Select(CustomizeFirst());
+                break;
+            case Input::kPaste:   // (the caller pastes into the field: Paste)
+            case Input::kLeft:
+            case Input::kRight: break;
+            }
+            return true;
+        }
+        if (name_row && customize_name_) {
+            switch (input) {
+            case Input::kDown: customize_name_ = false, customize_.Select(CustomizeFirst()); break;
+            case Input::kUp:   // (round to the list's last row, as its own Up from its first)
+                customize_name_ = false;
+                customize_.Select(CustomizeFirst());
+                customize_.Press(L::kUp);
+                break;
+            case Input::kDecide: Decide(Act::kName); break;
+            case Input::kBack: Go(Page::kMain, Act::kOpenCustomize); break;
+            case Input::kLeft:
+            case Input::kRight:
+            case Input::kPaste:
+            case Input::kErase: break;
+            }
+            return true;
+        }
+        if (name_row && input == Input::kUp && customize_.view().selected == static_cast<int>(CustomizeFirst())) {
+            customize_name_ = true;   // (Up from the first part: Your name)
+            return true;
+        }
         std::optional<L> in;
         switch (input) {
         case Input::kUp: in = L::kUp; break;
@@ -1041,6 +1091,7 @@ void Menu::Decide(Act act) {
     case Act::kOpenCustomize:
         Go(Page::kCustomize);
         customize_.Open(look_);
+        customize_name_ = false;
         break;
     case Act::kCommand:   // (a line to read: its help says it)
         break;
@@ -1275,6 +1326,12 @@ void Menu::Change(Act act, int step) {
 
 void Menu::Select(std::size_t row) {
     if (page_ == Page::kCustomize) {
+        if (typing_) return;
+        if (!customize_.editing()) {   // (row 0: Your name; the parts one row down)
+            customize_name_ = row == 0;
+            if (row > 0) customize_.Select(row - 1);
+            return;
+        }
         customize_.Select(row);
         return;
     }
@@ -1289,6 +1346,20 @@ void Menu::Select(std::size_t row) {
 void Menu::Click(std::size_t row, int side) {
     if (page_ == Page::kCustomize) {
         note_.clear();
+        if (typing_) {   // (a click elsewhere ends the name's typing, kept)
+            if (row != 0 || customize_.editing()) EndTyping(true);
+            return;
+        }
+        if (!customize_.editing()) {
+            customize_name_ = row == 0;
+            if (row == 0) {
+                Decide(Act::kName);   // (a click on Your name: its typing)
+                return;
+            }
+            customize_.Click(row - 1, side);
+            TakeCustomize();
+            return;
+        }
         customize_.Click(row, side);
         TakeCustomize();
         return;
@@ -1450,8 +1521,16 @@ bool Menu::Paste(std::string_view text) {
 
 View Menu::view() const {
     View v;
-    if (page_ == Page::kCustomize) {   // (its own rows: coop_look_menu.h)
+    if (page_ == Page::kCustomize) {   // (its own rows: coop_look_menu.h; Your name above them)
         const CoopLookMenu::View c = customize_.view();
+        const bool name_row = !customize_.editing();
+        if (name_row) {
+            Row name;
+            name.name = "Your name";
+            name.value = options_.name;
+            name.kind = RowKind::kAction;
+            v.rows.push_back(std::move(name));
+        }
         for (const CoopLookMenu::Row& r : c.rows) {
             Row row;
             row.name = r.name;
@@ -1461,9 +1540,13 @@ View Menu::view() const {
             row.right = r.right;
             v.rows.push_back(std::move(row));
         }
-        v.selected = c.selected;
-        v.help_title = c.help_title;
-        v.help = note_.empty() ? c.help : Joined(note_);
+        v.selected = !name_row ? c.selected : customize_name_ || typing_ ? 0 : c.selected + 1;
+        v.typing = typing_;
+        v.help_title = name_row && (customize_name_ || typing_) ? "Your name" : c.help_title;
+        v.help = !note_.empty() ? Joined(note_)
+                 : name_row && (customize_name_ || typing_)
+                     ? std::string("The name the other players see over your Link and in the chat: 1 to 16 characters.")
+                     : c.help;
         v.change = c.change;
         v.confirm = c.confirm;
         v.back = c.back;

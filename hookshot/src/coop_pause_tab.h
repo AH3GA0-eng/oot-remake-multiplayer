@@ -32,6 +32,7 @@
 #include <vector>
 
 #include "coop_keyboard.h"
+#include "coop_pause_menu.h"
 #include "hos_coop_api.h"
 
 namespace CoopPauseTab {
@@ -319,7 +320,7 @@ private:
 // a player, Let in, Join). Only a Paste answer, a refused Host or Join, and co-op that came with the game's start open
 // co-op's menu (Hookshot's menu, over the game's pause menu) on its main page, whose note or help says why.
 // The game has no text entry or keyboard of its own (docs/game-ui.md, "Frames for a text field"), so a code is pasted.
-enum class View { kMain, kPlayers, kLetIn, kJoin, kSession, kPlayer, kPlayerHost, kLan, kLanGame, kPassword };
+enum class View { kMain, kPlayers, kLetIn, kJoin, kSession, kPlayer, kPlayerHost, kLan, kLanGame, kPassword, kMenu };
 // Where B (or Back) goes from a view: a player's host controls to that player, a player to the Players view, a game on
 // this network to the list of them, else the five rows.
 View BackOf(View view);
@@ -383,6 +384,8 @@ enum class RowAction {
     kBrowseFilter,   // the browser's filter, the next one (CoopBrowse: all, open, this version)
     kBrowseSort,     // the browser's order, the next one (CoopBrowse: most players, fewest, name)
     kTypeRoomName,   // this game's room name when it hosts (coop-options.ini relay_room), typed on the keyboard, saved
+    kViewMenu,       // Settings and look (View::kMenu): co-op's own menu's Customize, Settings, Commands, Local co-op
+    kMenuTab,        // that view's row: its page on the list, and the list has the pad
 };
 inline constexpr std::uint64_t kConfirmMs = 5000;   // (3 s ran out before a test's second click)
 // proto::lobby_mute's bits (CoopLobby's kVoice, kChat; the module checks they match).
@@ -414,6 +417,7 @@ struct Session {
     bool has_password = false;  // hosting, and the session's join password is known (the status)
     bool password_shown = false;   // the host's Session view shows it now (its rows' A hides it again)
     bool can_resync = false;    // a guest whose game can take the host's save again (CoopSave::CanResync)
+    bool menu_list = false;     // Settings and look: its list (co-op's menu's rows) has the pad
     int listed = 0;         // the Players view: how many players it lists
     int self = -1;          // the Players view: our own place in its list (-1 not listed): no view of our own
     int page = 0;           // the Players view: its page (PlayerIndex)
@@ -584,6 +588,10 @@ struct SessionView {
     std::string says;                     // the Session view: why the page's last Host or Join did not start
                                           // (CoopPause::PageSays), while that view shows after it; "" none
     int typing = -1;                  // the field typed into (0 the room, 1 the password), -1 none
+    // Settings and look (View::kMenu): co-op's menu's page as it shows it (CoopPause::NativeView), the row of the view
+    // that chose it (kMenuTabNames), the first of its rows on the list
+    CoopPauseMenu::View menu;
+    int menu_tab = 0, menu_top = 0;
 };
 // The most a row's text holds: the System page's button fits about 24 of the game's letters (seen in a run,
 // 2026-11-19: "Leave (not in a session)" fills it, 31 letters ran past both edges).
@@ -617,6 +625,38 @@ std::string ListValue(int players, int max, bool same_version);
 // What a room's left column says: the name its host listed it under (the room name unless they picked one), with the
 // room name after it when that is another: "Saria's forest (forest-gang)".
 std::string ListName(const std::string& shown, const std::string& room);
+
+// --- Settings and look (View::kMenu): co-op's own menu on the page ---
+// Hookshot's menu (the overlay) has co-op's look and settings: Customize Link's part colours, Co-op Settings' name,
+// Link's look, voice, controller... A tester asked for all of them in the game's own menu. The view's rows are four of
+// that menu's pages (and Back); the list on the right shows the page's rows, as the overlay does (the same model,
+// coop_pause_menu.h, so the two never differ): Right or A on a row goes into the list, up and down move in it, Left and
+// Right change a choice, A does a row (a name typed on the on-screen keyboard, a colour's mixer), B back out.
+inline constexpr int kMenuTabs = 4;
+inline constexpr std::array<const char*, kMenuTabs> kMenuTabNames{"Customize Link", "Co-op settings", "Commands",
+                                                                   "Local co-op"};
+CoopPauseMenu::Page MenuTabPage(int tab);
+// Its list: seven rows under the header with a pack whose page has the eighth list row (Pa_List_07, as Longshot
+// Settings' seven a page), else six.
+inline constexpr int kMenuMost = kCells + 1;
+// The list for co-op's menu's page: its header (the page, "< 2 of 5 >" with more rows than the list holds), then
+// `per_page` of its rows from `top` (kept so the selected row shows while the list has the pad). `lines` always
+// kMenuMost + 1 (those past per_page empty). `rows`: the menu's row on each line (-1 none, the header's too);
+// `selectable`: a line the pad and the mouse can pick (not a heading or a note); `picked`: the line of the menu's
+// selected row while the list has the pad (-1 none), counted from the first under the header.
+struct MenuList {
+    std::vector<ListLine> lines;
+    std::array<int, kMenuMost + 1> rows{};
+    std::array<bool, kMenuMost + 1> selectable{};
+    int top = 0;
+    int picked = -1;
+};
+MenuList MenuLines(const CoopPauseMenu::View& menu, int tab, int top, bool list, int per_page = kCells);
+// The heading a row is under (a part's group on Customize Link: "Tunic", "Hylian Shield"; in a colour's mixer its
+// own heading, "Hylian Shield: Face"), "" none.
+std::string MenuHeadingOf(const CoopPauseMenu::View& menu, int row);
+// What a row's value box says: a choice between its arrows ("< Red >"), a switch's On or Off, an action's value.
+std::string MenuValue(const CoopPauseMenu::Row& r, bool typing);
 
 // --- Longshot Settings (System's last button): Longshot's own options, from its Insert menu ---
 // The page's five rows are the categories, Longshot's menu's tabs (its Debug and NFC tabs, its buttons such as Test

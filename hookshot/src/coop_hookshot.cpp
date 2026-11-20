@@ -1267,6 +1267,8 @@ void LocalLayer(void* ctx);   // (below)
 // A test's view of the menus (LICHII_COOP_TEST_STATE=1 only): coop-test-state.txt in the game's folder, 5 times a
 // second: the pause page, the title, co-op's menu. No lock of ours held (each part takes its own).
 std::atomic<uint64_t> g_test_pad_came{0}, g_test_pad_got{0};   // (hos_coop_pad's, for TestState)
+// (each stage's last pad with buttons: our page's, the mods' hold, the title's, down but not out's; TestState)
+std::atomic<uint64_t> g_test_st_page{0}, g_test_st_hold{0}, g_test_st_title{0}, g_test_st_dbno{0};
 void TestState() {
     static const bool on = [] {
         const char* v = std::getenv("LICHII_COOP_TEST_STATE");
@@ -1278,10 +1280,13 @@ void TestState() {
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
     if (now < next) return;
     next = now + 200;
-    const std::string line = fmt::format("{} {} mp_page={} keys_taken={} host_started={} pad_came={:#x} pad_got={:#x} t={}\n",
+    const std::string line = fmt::format("{} {} mp_page={} keys_taken={} host_started={} pad_came={:#x} pad_got={:#x} st_page={:#x} st_hold={:#x} "
+                                         "st_title={:#x} st_dbno={:#x} t={}\n",
                                          CoopPauseTab::TestState(), CoopTitle::TestState(),
                                          static_cast<int>(CoopPause::NativePage()), CoopPause::KeysTaken() ? 1 : 0,
-                                         CoopPause::HostStarted() ? 1 : 0, g_test_pad_came.load(), g_test_pad_got.load(), now);
+                                         CoopPause::HostStarted() ? 1 : 0, g_test_pad_came.load(), g_test_pad_got.load(),
+                                         g_test_st_page.load(), g_test_st_hold.load(), g_test_st_title.load(),
+                                         g_test_st_dbno.load(), now);
     const std::filesystem::path p = CoopRuntime::GameDir() / "coop-test-state.txt";
     if (FILE* f = std::fopen(p.string().c_str(), "wb")) {
         std::fwrite(line.data(), 1, line.size(), f);
@@ -2101,20 +2106,32 @@ COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) n
     int32_t was[4] = {stick[0], stick[1], stick[2], stick[3]};
     try {
         const uint64_t got = CoopPadOrder::Run(
-            buttons, stick, [](uint64_t b, int32_t* s) { return CoopPauseTab::OnPad(b, s); },
+            buttons, stick,
+            [](uint64_t b, int32_t* s) {
+                const uint64_t o = CoopPauseTab::OnPad(b, s);
+                if (o != 0) CoopHookshot::g_test_st_page = o;
+                return o;
+            },
             [](uint64_t b) {
                 CoopTitle::NotePlayerPad(b);   // (the player's own A on the title, before a mod's hold takes it)
                 CoopModsRuntime::NotePad(b);
             },
             [] {
-                return CoopTitle::RowsOurs() || CoopTitle::FocusOffFirst() ? std::uint64_t{0}
-                                                                           : CoopModsRuntime::HeldButtons();
+                const uint64_t h = CoopTitle::RowsOurs() || CoopTitle::FocusOffFirst() ? std::uint64_t{0}
+                                                                                       : CoopModsRuntime::HeldButtons();
+                if (h != 0) CoopHookshot::g_test_st_hold = h;
+                return h;
             },
-            [](uint64_t b, int32_t* s) { return CoopTitle::OnPad(b, s); },
+            [](uint64_t b, int32_t* s) {
+                const uint64_t o = CoopTitle::OnPad(b, s);
+                if (b != 0) CoopHookshot::g_test_st_title = o | (b << 32);   // (in high, out low)
+                return o;
+            },
             [](uint64_t b, int32_t* s) {
                 // Down but not out (coop_dbno_game.h): a downed Link crawls and uses nothing; beside one, A revives.
                 CoopDbno::Pad pad{b, {s[0], s[1], s[2], s[3]}};
                 pad = CoopDbno::OnPad(pad);
+                if (b != 0) CoopHookshot::g_test_st_dbno = pad.buttons | (b << 32);   // (in high, out low)
                 for (int i = 0; i < 4; ++i) {
                     s[i] = pad.stick[i];
                 }

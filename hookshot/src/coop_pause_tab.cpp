@@ -645,13 +645,15 @@ RowAction ActionFor(int row, const Session& s) {
         return s.listed > 1 ? RowAction::kViewPlayers : RowAction::kNone;
     case kRowLetIn:
         if (!s.in_one && !s.by_launcher) return RowAction::kAutoRejoin;   // (not in a session: the switch)
-        if (!s.hosting) return s.in_one && s.can_resync ? RowAction::kResync : RowAction::kNone;   // (only a host lets in)
-        // (somebody asks, or an invite code whose friends may send an answer code: the Let in view; else nothing: a
-        // tester pressed "Let in: nobody asks" and a view with nothing to do came)
-        return s.asking || s.invite ? RowAction::kViewLetIn : RowAction::kNone;
+        // (only a host lets in: a guest's row is Settings and look; Resync from host is on the Session view)
+        if (!s.hosting) return RowAction::kViewMenu;
+        // (somebody asks, or an invite code whose friends may send an answer code: the Let in view; else Settings and
+        // look: a tester pressed "Let in: nobody asks" and a view with nothing to do came)
+        return s.asking || s.invite ? RowAction::kViewLetIn : RowAction::kViewMenu;
     case kRowLeave:
         if (s.by_launcher) return RowAction::kOpenMain;   // (not stopped here: the main page says to start the game again)
-        return s.in_one ? RowAction::kConfirmLeave : RowAction::kNone;   // (a second A leaves: never one stray press)
+        // (a second A leaves: never one stray press. In no session: Settings and look)
+        return s.in_one ? RowAction::kConfirmLeave : RowAction::kViewMenu;
     default:
         return RowAction::kNone;
     }
@@ -718,7 +720,11 @@ RowAction ActionFor(View view, int row, const Session& s) {
         if (row == 1) return RowAction::kTypePassword;
         if (row == 2) return RowAction::kJoinLanGame;
         return RowAction::kNone;
+    case View::kMenu:
+        return row < kMenuTabs ? RowAction::kMenuTab : RowAction::kNone;
     case View::kLetIn:
+        // (an invite code's host, nobody asking: the main view's row is Let in, so Settings and look is here)
+        if (row == 2 && s.hosting && !s.asking) return RowAction::kViewMenu;
         if (row == 0 && s.hosting && s.asking) return RowAction::kAllow;
         if (row == 1 && s.hosting && s.asking) return RowAction::kDeny;
         // (nobody asks: Paste answer code first, nothing between it and Back; a tester saw a row there that took no A
@@ -834,18 +840,16 @@ std::vector<std::string> RowTexts(const SessionView& v) {
                                          : "Players: " + std::to_string(v.players);
     if (v.s.hosting) {
         if (v.asking.empty()) {
-            rows[kRowLetIn] = v.s.invite ? "Let in: answer code" : "Let in: nobody asks";   // (ActionFor)
+            rows[kRowLetIn] = v.s.invite ? "Let in: answer code" : "Settings and look";   // (ActionFor)
         } else if (v.asking.size() == 1) {
             rows[kRowLetIn] = "Let in " + v.asking.front();
         } else {
             rows[kRowLetIn] = "Let in " + v.asking.front() + " (+" + std::to_string(v.asking.size() - 1) + ")";
         }
-    } else if (v.s.in_one) {
-        rows[kRowLetIn] = v.s.can_resync ? "Resync from host" : "Let in: the host does";
-    } else if (!v.s.by_launcher) {
-        rows[kRowLetIn] = !v.s.auto_rejoin ? "Auto-rejoin: Off" : v.s.rejoining ? "Auto-rejoin: trying..." : "Auto-rejoin: On";
+    } else if (v.s.in_one || v.s.by_launcher) {
+        rows[kRowLetIn] = "Settings and look";   // (a guest's: Resync from host is on the Session view)
     } else {
-        rows[kRowLetIn] = "Let in: when you host";
+        rows[kRowLetIn] = !v.s.auto_rejoin ? "Auto-rejoin: Off" : v.s.rejoining ? "Auto-rejoin: trying..." : "Auto-rejoin: On";
     }
     if (v.s.by_launcher) {
         rows[kRowLeave] = "Leave: restart the game";
@@ -853,8 +857,8 @@ std::vector<std::string> RowTexts(const SessionView& v) {
         rows[kRowLeave] = v.confirm_click ? (v.s.hosting ? "Click again to stop" : "Click again to leave")   // (kRowChars)
                                           : (v.s.hosting ? "A again: stop hosting" : "A again: leave");
     } else {
-        // (in no session: nothing to leave, the row not shown; the release is on the list, DetailLines)
-        rows[kRowLeave] = !v.s.in_one ? std::string() : v.s.hosting ? "Stop hosting" : "Leave";
+        // (in no session: nothing to leave, Settings and look there; the release is on the list, DetailLines)
+        rows[kRowLeave] = !v.s.in_one ? "Settings and look" : v.s.hosting ? "Stop hosting" : "Leave";
     }
     for (std::string& r : rows) r = Fit(std::move(r));
     return rows;
@@ -931,6 +935,7 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
     case View::kLetIn:
         if (v.asking.empty()) {
             rows[0] = v.s.hosting && v.s.invite ? "Paste answer code" : "Nobody asks to join";
+            if (v.s.hosting) rows[2] = "Settings and look";
             break;
         } else {
             rows[0] = "Let in " + v.asking.front();
@@ -962,6 +967,9 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
                 rows[3] = v.rejoin_host.empty() ? "Join the last game again" : "Join " + v.rejoin_host + " again";
             }
         }
+        break;
+    case View::kMenu:
+        for (int i = 0; i < kMenuTabs; ++i) rows[static_cast<std::size_t>(i)] = kMenuTabNames[static_cast<std::size_t>(i)];
         break;
     case View::kPassword:
         // (the host's join password: on the details list while shown; a new one on the keyboard)
@@ -1072,6 +1080,8 @@ const char* ActionWords(RowAction a) {
     case RowAction::kTypePassword: return "the join password typed on its row";
     case RowAction::kJoinRoom: return "join that room through the kit's relay";
     case RowAction::kBan: return "ban that player for this session after a second A";
+    case RowAction::kViewMenu: return "Settings and look (co-op's menu's Customize, Settings, Commands, Local co-op)";
+    case RowAction::kMenuTab: return "that page's rows on the list, the list has the pad";
     case RowAction::kNone: break;
     }
     return "nothing";
@@ -1371,6 +1381,83 @@ std::vector<ListLine> DetailLines(View view, const SessionView& v) {
     }
     if (!release.empty()) add("Release", release);
     return lines;
+}
+
+CoopPauseMenu::Page MenuTabPage(int tab) {
+    switch (tab) {
+    case 0: return CoopPauseMenu::Page::kCustomize;
+    case 1: return CoopPauseMenu::Page::kSettings;
+    case 2: return CoopPauseMenu::Page::kCommands;
+    default: return CoopPauseMenu::Page::kLocal;
+    }
+}
+
+std::string MenuValue(const CoopPauseMenu::Row& r, bool typing) {
+    using CoopPauseMenu::RowKind;
+    if (typing) return r.value + "_";
+    switch (r.kind) {
+    case RowKind::kToggle: return !r.value.empty() ? r.value : r.on ? "On" : "Off";
+    case RowKind::kChoice: {
+        std::string v = std::string(r.left ? "< " : "") + r.value + (r.right ? " >" : "");
+        // (with its arrows it would be cut: "< By player n..."; the value alone when that fits)
+        return v.size() > kListValueChars && r.value.size() <= kListValueChars ? r.value : v;
+    }
+    case RowKind::kHeading:
+    case RowKind::kNote: return "";
+    case RowKind::kAction: break;
+    }
+    return r.value;
+}
+
+std::string MenuHeadingOf(const CoopPauseMenu::View& menu, int row) {
+    for (int i = std::min(row, static_cast<int>(menu.rows.size()) - 1); i >= 0; --i) {
+        if (menu.rows[static_cast<std::size_t>(i)].kind == CoopPauseMenu::RowKind::kHeading) {
+            return menu.rows[static_cast<std::size_t>(i)].name;
+        }
+    }
+    return "";
+}
+
+MenuList MenuLines(const CoopPauseMenu::View& menu, int tab, int top, bool list, int per_page) {
+    using CoopPauseMenu::RowKind;
+    const int cells = std::clamp(per_page, 1, kMenuMost);
+    MenuList out;
+    out.lines.assign(kMenuMost + 1, ListLine{});
+    out.rows.fill(-1);
+    out.selectable.fill(false);
+    const int n = static_cast<int>(menu.rows.size());
+    const int most = std::max(0, n - cells);
+    top = std::clamp(top, 0, most);
+    const int sel = menu.selected;
+    if (list && sel >= 0 && sel < n) {   // (the selected row in view: the list scrolls with it)
+        if (sel < top) top = sel;
+        if (sel >= top + cells) top = sel - cells + 1;
+        // (a heading just above it shown too, when there is room: its part's name)
+        if (top > 0 && top == sel && menu.rows[static_cast<std::size_t>(top - 1)].kind == RowKind::kHeading) --top;
+    }
+    out.top = top;
+    std::string head = tab >= 0 && tab < kMenuTabs ? kMenuTabNames[static_cast<std::size_t>(tab)] : "";
+    if (n > cells) {
+        const int pages = (n + cells - 1) / cells;
+        const int page = top + cells >= n ? pages : std::min(pages, (top + cells / 2) / cells + 1);
+        head += "  < " + std::to_string(page) + " of " + std::to_string(pages) + " >";
+    }
+    out.lines[0] = ListLine{FitTo(head, kListNameChars), ""};
+    for (int c = 0; c < cells; ++c) {
+        const int i = top + c;
+        if (i >= n) break;
+        const CoopPauseMenu::Row& r = menu.rows[static_cast<std::size_t>(i)];
+        const std::size_t k = static_cast<std::size_t>(c) + 1;
+        const bool typing = menu.typing && i == sel;
+        std::string name = r.name;
+        if (r.kind == RowKind::kNote && name.empty()) name = r.value;   // (a note's words, whichever holds them)
+        out.lines[k] = ListLine{FitTo(name.empty() ? std::string(" ") : name, kListNameChars),
+                                FitTo(r.kind == RowKind::kNote ? std::string() : MenuValue(r, typing), kListValueChars)};
+        out.rows[k] = i;
+        out.selectable[k] = r.kind != RowKind::kHeading && r.kind != RowKind::kNote;
+        if (list && i == sel) out.picked = c;
+    }
+    return out;
 }
 
 }  // namespace CoopPauseTab

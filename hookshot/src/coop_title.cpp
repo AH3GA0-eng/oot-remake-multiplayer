@@ -1400,6 +1400,10 @@ std::string TestState() {
                        g_auto_load_until.load() != 0 ? 1 : 0, g_auto_press_ms.load() != 0 ? 1 : 0);
 }
 
+bool Up() {
+    return TitleUp();
+}
+
 bool FocusOffFirst() {
     if (!TitleUp()) return false;
     const int f = FocusedIndex(g_screen.load());

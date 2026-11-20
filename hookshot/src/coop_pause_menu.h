@@ -256,6 +256,10 @@ private:
     std::optional<Request> request_;
     // The Customize page (coop_look_menu.h): it has its own rows and presses.
     CoopLookMenu::Page customize_;
+    // Customize Link's first row, above the parts: Your name (the Settings page's own field; a tester asked for the
+    // name and the look in one place). Shown while the parts' list is (not in a colour's mixer); true while selected.
+    bool customize_name_ = false;
+    std::size_t CustomizeFirst() const;   // the parts' list's first row that can be selected
     CoopLook::Look look_;
     void TakeCustomize();
 };

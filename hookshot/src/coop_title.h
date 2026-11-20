@@ -66,6 +66,8 @@ bool RowsOurs();
 // (Save Profiles' A and +) is late letting go, and took the click on Multiplayer the mouse made just after passing
 // over Start (a tester clicked it twice). Any thread.
 bool FocusOffFirst();
+// The title's menu is up (the game's UITitleScreen, its step running). Any thread.
+bool Up();
 // A test's view of the title (LICHII_COOP_TEST_STATE=1): "key=value" words, one line.
 std::string TestState();
 

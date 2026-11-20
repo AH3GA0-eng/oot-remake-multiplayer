@@ -407,7 +407,9 @@ void Follow(const HosCoopStatus& st) {
             Leave();
             g_menu.SetNote({"Turned away: " + CoopTitleMenu::ShortReason(seen.refused),
                             seen.banned ? "You cannot join that game again." : "Check the room and the join password, then Join again."});
-            SayOnPage(why.c_str());
+            // (the pause page's Session view says it only for a join made there: one made on the title said it on the
+            // title's Join page, and the page opened later in the game on that old line)
+            if (!g_native) SayOnPage(why.c_str());
         }
     }
     if (g_rejoin.Tick(f, now)) {
@@ -1214,6 +1216,12 @@ void CloseNative() {
 void Open(CoopPauseMenu::Page page) {
     std::lock_guard lock(g_mutex);
     g_menu.Show(ReadOptions());
+    // (as the overlay's tab, ShowTab: the pause page's Settings and look opens Customize and Co-op settings here)
+    g_menu.SetLook(CoopLook::Shown());
+    g_menu.SetNgPlus(CoopNgPlus::Level(), CoopNgPlus::Unlocked(), CoopNgPlus::Hearts());
+    g_menu.SetSaveSet(CoopSave::MultiplayerSaves());
+    InputRows();
+    MicRows();
     g_menu.Open(page);
     if (page == CoopPauseMenu::Page::kJoin) {
         const std::string coop = ReadText(CoopIni());
