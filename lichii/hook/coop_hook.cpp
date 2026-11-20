@@ -124,6 +124,7 @@
 #include "coop_map_refresh.h"
 #include "coop_time.h"
 #include "coop_testinput.h"
+#include "coop_boundary.h"
 #include "coop_world.h"
 
 namespace CoopHook {
@@ -3424,9 +3425,33 @@ void LocalFrameOff(Core::System& system, bool writes) {
                         full ? std::optional(full->position) : std::nullopt, event, nullptr, 0);
 }
 
+namespace {
+void OnFrameBody(Core::System& system);
+}
+
+// save-crash-0118: the frame's co-op work behind the guarded boundary: a throw (a std::bad_alloc at the PC's commit
+// limit, runs 081813 + 082906) ends this frame's co-op work, logged once, and never the game (solo too).
 void OnFrame(Core::System& system) {
+    static CoopBoundary::Site site{"CoopHook::OnFrame"};
+    CoopBoundary::Run(site, [&] { OnFrameBody(system); },
+                      [](const char* where, const char* what, std::uint64_t n) {
+                          LOG_ERROR(Core, "coop: {} threw ({}, {} so far): this frame's co-op work skipped", where,
+                                    what, n);
+                      });
+}
+
+namespace {
+void OnFrameBody(Core::System& system) {
     CoopObjects::OnFrame(system);
-    CoopSave::PollSlotOpens();   // player report 120: the slot our game plays (Hookshot's patch 0025; solo too)
+    {   // player report 120: the slot our game plays (Hookshot's patch 0025; solo too). Its own guard: a slot folder
+        // that throws (a path the PC's code page cannot hold, no memory) costs only the slot, not the frame's co-op.
+        static CoopBoundary::Site site{"CoopSave::PollSlotOpens"};
+        CoopBoundary::Run(site, [] { CoopSave::PollSlotOpens(); },
+                          [](const char* where, const char* what, std::uint64_t n) {
+                              LOG_ERROR(Core, "coop: {} threw ({}, {} so far): the played save slot not read this "
+                                              "frame", where, what, n);
+                          });
+    }
     CoopTestInput::OnFrame(system);
     Start();
     // g_coop only changes in Start (before this), End (which keeps the old
@@ -3483,6 +3508,7 @@ void OnFrame(Core::System& system) {
     }
     }
 }
+}  // namespace
 
 void Shutdown() {
     Stop(false);
