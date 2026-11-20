@@ -69,13 +69,13 @@ void Sensor(FakeGuest& g, std::uint32_t tg, std::uint32_t at) {
 void TgHit(FakeGuest& g, std::uint32_t i, std::uint8_t kind, std::uint64_t attacker, bool second_handle = false) {
     const std::uint64_t e = kTgEntries + i * addr::kTgEntrySize;
     g.Put(e + addr::kTgKind, kind);
-    g.Put(e + addr::kTgHandleFlags, std::uint8_t{second_handle ? 1u : 0u});
+    g.Put(e + addr::kTgHandleFlags, static_cast<std::uint8_t>(second_handle ? 1u : 0u));
     g.Handle(e + (second_handle ? addr::kTgAttackerB : addr::kTgAttackerA), attacker);
 }
 
 void AtHit(FakeGuest& g, std::uint32_t i, bool guarded, std::uint64_t defender) {
     const std::uint64_t e = kAtEntries + i * addr::kAtEntrySize;
-    g.Put(e + addr::kAtFlags, std::uint8_t{guarded ? 1u : 4u});
+    g.Put(e + addr::kAtFlags, static_cast<std::uint8_t>(guarded ? 1u : 4u));
     g.Handle(e + addr::kAtDefender, defender);
 }
 
