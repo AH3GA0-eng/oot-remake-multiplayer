@@ -114,10 +114,18 @@ Hold HoldFor(std::string_view scene, const std::set<std::string>& applied,
              const std::function<bool(std::uint64_t)>& have_key = nullptr);
 
 // The kill triggers' keepers in `scene` (pure): for each event our game has not played, the largest placement hash
-// of its kill actors that `alive` says is alive in our walk. The object sync keeps a kill or remove of a keeper until
-// it is no keeper any more (the event played here, or a scene change).
+// of its kill actors that `alive` says is alive in our walk and that our game does not own (`ours`). The object sync
+// keeps a kill or remove of a keeper until it is no keeper any more (the event played here, or a scene change).
+// Rows 160/161 (dc-doors-0118, Dodongo's Cavern's second Lizalfos room, 0.11.6): each enemy has one owner, whose game
+// alone decides its death (a mid-boss copy is held at life 1 until its owner's dies). With the two Lizalfos owned by
+// two games, each game kept the other owner's kill (the largest live one was always a copy there), so no game had both
+// dead, nobody played the event and the room stayed shut for everyone. So: a kill of an enemy our game owns is never
+// kept (it is the group's death of it: the remote player's last hit, landed through our game), and while one of the
+// event's live kill actors is ours, no copy is the last one here, so nothing of that event is kept. The game that
+// owns the event's last enemy plays the event; every other game keeps that one kill until the event's flags come.
 std::set<std::uint64_t> KillKeepers(std::string_view scene, const std::function<bool(std::uint64_t)>& alive,
-                                    const std::function<bool(const std::string&)>& played);
+                                    const std::function<bool(const std::string&)>& played,
+                                    const std::function<bool(std::uint64_t)>& ours = nullptr);
 
 // The follow triggers' keepers in `scene` (pure): for each event our game has not played, its follow actors of group
 // 0 and the largest of each linked group. coop_world (WorldSync::SetTriggerKeepers) keeps another game's move, rest

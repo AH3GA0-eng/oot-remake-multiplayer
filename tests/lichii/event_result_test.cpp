@@ -408,6 +408,43 @@ TEST_CASE("event result: the kill keeper: the largest live enemy of an unplayed 
               .count(0xf8119818b5e22a95ULL) == 0);
 }
 
+TEST_CASE("event result: the kill keeper: an enemy our game owns is never kept, and no copy while one of ours lives") {
+    // Rows 160/161 (E'tykalu's 0.11.6 logs): Dodongo's Cavern's second Lizalfos room, the two Lizalfos owned by two
+    // games (the host 0x2345..., player 2 0x155c...). Before, each game kept the other owner's kill: nobody played.
+    constexpr std::uint64_t kA = 0x23456e4b5b005315ULL;  // the larger: owned by the host
+    constexpr std::uint64_t kB = 0x155ce1b2ba5028cfULL;  // owned by player 2
+    std::set<std::uint64_t> alive{kA, kB};
+    std::set<std::uint64_t> mine;
+    bool played = false;
+    const auto keepers = [&] {
+        return CoopEventResult::KillKeepers(
+            "DodongoCavern", [&](std::uint64_t h) { return alive.contains(h); },
+            [&](const std::string& e) { return played && e == "DodongoCavern_Gimmick_DefeatLizalfos02"; },
+            [&](std::uint64_t h) { return mine.contains(h); });
+    };
+    // Player 2's game: B is ours, A a copy. The host's kill of A lands (B, ours, still lives).
+    mine = {kB};
+    CHECK(keepers().empty());
+    alive.erase(kA);
+    CHECK(keepers().empty());  // B's death (a remote hit too) is our own game's: never kept; our asker plays it
+    // The host's game: A dead (ours), B a copy and the last one: its kill waits until the event's flags come.
+    mine = {kA};
+    CHECK(keepers() == std::set<std::uint64_t>{kB});
+    played = true;
+    CHECK(keepers().empty());
+    // A game that owns neither (a third player): the largest live copy waits, as before.
+    played = false;
+    mine.clear();
+    alive = {kA, kB};
+    CHECK(keepers() == std::set<std::uint64_t>{kA});
+    // Both ours (the owner of the whole fight): nothing is kept, a teammate's last hit lands here.
+    mine = {kA, kB};
+    CHECK(keepers().empty());
+    // No owner function (as before): the largest live one.
+    CHECK(CoopEventResult::KillKeepers("DodongoCavern", [&](std::uint64_t h) { return alive.contains(h); },
+                                       [](const std::string&) { return false; }) == std::set<std::uint64_t>{kA});
+}
+
 TEST_CASE("event result: the follow keepers: blocks on press switches wait, the box puzzle's largest corner waits") {
     std::set<std::string> played;
     const auto is_played = [&](const std::string& e) { return played.contains(e); };

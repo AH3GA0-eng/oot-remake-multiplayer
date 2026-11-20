@@ -706,15 +706,23 @@ bool TriggerWaits(const Trigger& t, std::string_view scene, const std::function<
 }  // namespace
 
 std::set<std::uint64_t> KillKeepers(std::string_view scene, const std::function<bool(std::uint64_t)>& alive,
-                                    const std::function<bool(const std::string&)>& played) {
+                                    const std::function<bool(const std::string&)>& played,
+                                    const std::function<bool(std::uint64_t)>& ours) {
     std::map<std::string_view, std::uint64_t> keeper;  // event -> its largest live kill actor
+    std::set<std::string_view> own_alive;              // events with a live kill actor our game owns
     for (const auto& t : kTriggers) {
         if (t.kind != Trigger::kill || !TriggerWaits(t, scene, played) || !(alive && alive(t.id))) continue;
+        if (ours && ours(t.id)) {
+            own_alive.insert(t.event);  // rows 160/161: our own enemy's death is the last one, in our game
+            continue;
+        }
         auto& k = keeper[t.event];
         k = std::max(k, t.id);
     }
     std::set<std::uint64_t> out;
-    for (const auto& [event, hash] : keeper) out.insert(hash);
+    for (const auto& [event, hash] : keeper) {
+        if (!own_alive.contains(event)) out.insert(hash);
+    }
     return out;
 }
 

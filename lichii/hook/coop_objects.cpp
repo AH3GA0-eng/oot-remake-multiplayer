@@ -2453,7 +2453,9 @@ public:
     // trigger reads die, so another game's kill of the last one would make our asker ask that player's event here (a
     // replay that binds our Link). The event's keeper (its largest live kill actor, CoopEventResult::KillKeepers) is
     // neither killed nor removed by another game until our game has played the event; its kill is kept (one per
-    // actor, the newest) and lands then, on the same actor. Our Link can still kill it: our own play.
+    // actor, the newest) and lands then, on the same actor. Our Link can still kill it: our own play. Rows 160/161:
+    // an enemy our game owns is never a keeper (its death is decided here, a remote player's last hit too), and while
+    // one of the event's enemies we own lives, no copy is the last one here: the owner of the last one plays it.
     std::map<u64, std::pair<LifeWrite, u64>> trigger_kept_;  // address -> the kill, the placement hash there
     std::set<u64> keeper_addresses_;                          // this walk's keepers (Place skips their removes)
     std::string keeper_scene_;
@@ -2483,6 +2485,13 @@ public:
                 alive.insert(s.hash);
             }
         }
+        // Rows 160/161: the enemies our game owns (their death is decided here, a remote hit's too).
+        std::set<u64> owned;
+        for (const auto& [address, name] : sync_.Owned()) {
+            if (const auto at = hash_at.find(address); at != hash_at.end()) {
+                owned.insert(at->second);
+            }
+        }
         std::set<std::uint64_t> keepers;
         if (main_ != 0) {
             CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main_);
@@ -2491,7 +2500,8 @@ public:
                 scene, [&alive](std::uint64_t h) { return alive.contains(h); },
                 [&flags](const std::string& e) {
                     return flags.get_bool(coop::host::flag_hash("HavePlayedEvent." + e)).value_or(false);
-                });
+                },
+                [&owned](std::uint64_t h) { return owned.contains(h); });
         }
         keeper_addresses_.clear();
         for (const auto& [a, h] : hash_at) {
