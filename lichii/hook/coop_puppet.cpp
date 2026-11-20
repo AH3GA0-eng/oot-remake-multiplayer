@@ -2418,6 +2418,10 @@ bool IsCharacterActor(std::string_view actor) {
         if (rest.substr(0, 5) == "Quiet") {
             rest.remove_prefix(5);
         }
+        // (its `_Pvp` copy, CoopPvpNative::PvpActor, is the same character)
+        if (rest.size() > 4 && rest.substr(rest.size() - 4) == "_Pvp") {
+            rest.remove_suffix(4);
+        }
         return rest.size() == 5 && rest[0] == '_' && rest[1] == 'C' && rest[2] >= '0' && rest[2] <= '9' &&
                rest[3] >= '0' && rest[3] <= '9' && rest[4] >= '0' && rest[4] <= '9';
     }

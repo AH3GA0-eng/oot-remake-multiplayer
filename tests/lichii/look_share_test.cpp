@@ -357,6 +357,7 @@ TEST_CASE("character puppets: the pack's are read from its manifest, and a playe
     CHECK(CharacterActor(true, 2000).empty());
     CHECK(IsCharacterActor("CoopPuppet_Adult_C007"));
     CHECK(IsCharacterActor("CoopPuppet_ChildQuiet_C113"));
+    CHECK(IsCharacterActor("CoopPuppet_Adult_C007_Pvp"));
     CHECK_FALSE(IsCharacterActor("CoopPuppet_Adult_Cyan"));
     CHECK_FALSE(IsCharacterActor("CoopPuppet_Adult"));
     CHECK_FALSE(IsCharacterActor("CoopPuppet_Adult_C07"));
