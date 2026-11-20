@@ -89,6 +89,14 @@ What it does not change: someone who records a challenge and its proof can still
 
 Other datagrams on the server's port, outside the protocol: STUN answers and NAT punches for the invite code (`coop_server --invite`; datagrams starting with `OCP` and version 1, signed with a key made from the join password). They are handled before ENet sees them, use no message types and change nothing in the session; the punch only opens the way through the routers, and the join password check above still decides who joins. [play-online.md](play-online.md), "How the invite code works".
 
+### Same network (no new types)
+
+A player on the host's own network may join without the join password (a tester asked for it, 2026-11-19). Nothing on the wire changes: the game answers `JOIN_CHALLENGE` with the same proof as ever, keyed with a fixed same-network key (`protocol::kSameNetworkPassword`, "squadala-same-network") in place of a password, and the traffic keys come from that key and fresh X25519 shares as above.
+
+- **The server** (`SessionConfig::same_network_open`; `coop_server --same-network-open`; the game's own Host: on unless `same_network_password = on` in `coop-options.ini`, the Co-op Settings row "Password on this network") takes a proof with that key only from a private address: 10/8, 172.16/12, 192.168/16 or 169.254/16 (`is_same_network`). Never from 127/8, where a relay's and a join helper's connections arrive for players from anywhere, nor from 100.64/10 (a carrier's NAT or a VPN). The join password still works from everywhere. `SessionStats::same_network_joins` counts who came in this way.
+- **The game** joining a private address (typed, or picked from the games on this network) with no password typed uses the key. An invite code and a relay room always carry or need the real password.
+- **What it gives up:** on that network, anyone can join, as with a game console's LAN play, and someone there who sits in the middle of a new connection can read it, as with a known password. A host on a shared network (a dorm, a café) chooses "Needed".
+
 ### Rejoin after a crash
 
 A dropped or killed emulator stays in the session until the server times it out, so its new connection would be refused as name taken. A `HELLO` whose nickname (ignoring ASCII case) a player already holds takes that player's place only when all three hold:

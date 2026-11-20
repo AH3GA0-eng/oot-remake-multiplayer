@@ -1556,12 +1556,12 @@ TEST_CASE("pause tab: the browser's list: up and down among its games, Left to t
     CHECK(CellAt(boxes, 900, 80) == -1);
 }
 
-TEST_CASE("pause tab: a game on this network: its password typed on a row, then Join this game, and Back to the list") {
+TEST_CASE("pause tab: a game on this network: Join this game, its password typed first if it asks one, Back to the list") {
     Session s;
     CHECK(BackOf(View::kLanGame) == View::kLan);
     CHECK(ActionFor(View::kLanGame, 0, s) == RowAction::kNone);   // (the game itself)
     CHECK(ActionFor(View::kLanGame, 1, s) == RowAction::kTypePassword);
-    CHECK(ActionFor(View::kLanGame, 2, s) == RowAction::kTypePassword);   // (no password yet: typing it first)
+    CHECK(ActionFor(View::kLanGame, 2, s) == RowAction::kJoinLanGame);   // (no password: the same network's way in)
     CHECK(ActionFor(View::kLanGame, kRows - 1, s) == RowAction::kBack);
     s.lan_password = true;
     CHECK(ActionFor(View::kLanGame, 2, s) == RowAction::kJoinLanGame);
@@ -1572,8 +1572,8 @@ TEST_CASE("pause tab: a game on this network: its password typed on a row, then 
     v.lan_game = "Mido's game (1/4)";
     auto rows = RowTexts(View::kLanGame, v);
     CHECK(rows[0] == "Mido's game (1/4)");
-    CHECK(rows[1] == "Password: A to type it");
-    CHECK(rows[2] == "Join: type its password");
+    CHECK(rows[1] == "Password: if it asks");
+    CHECK(rows[2] == "Join this game");
     CHECK(rows[kRows - 1] == "Back");
     v.password_field = "kokiri";
     v.s.lan_password = true;
