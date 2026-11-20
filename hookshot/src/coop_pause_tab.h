@@ -681,6 +681,9 @@ void OnScreen(void* ctx, std::uint64_t screen) noexcept;
 std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept;
 // hos_coop_game_pause_page: Page::MousePage (-1 usable, -2 cannot be used).
 int MousePage() noexcept;
+// The mouse in the game's window (its client area, 0..1 each way) and the left button, when the window is in front:
+// the title's own keyboard reads it too (coop_title.cpp).
+bool ClientCursor(float* fx, float* fy, bool* left) noexcept;
 // The keyboard while one of the page's fields is typed into (hos_coop_key, hos_coop_char; KeysTaken: the game gets
 // none of its keys then): true when the field took it.
 bool Key(std::uint32_t vk, bool repeat) noexcept;

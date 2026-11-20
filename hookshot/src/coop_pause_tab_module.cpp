@@ -65,6 +65,8 @@ View ViewShown() {
 // A second A (Leave, Kick, Ban): until when it is waited for (0: not), and on which row of which view. Any thread.
 std::atomic<std::uint64_t> g_confirm_until{0};
 std::atomic<int> g_confirm_row{-1}, g_confirm_view{0};
+std::atomic<bool> g_confirm_by_mouse{false};   // (the waiting A came from a click: SecondA)
+bool g_act_clicked = false;                    // (Act's row came from a click; Act's thread only)
 // The Players view's page, and the player whose view shows (their number; the views kPlayer, kPlayerHost).
 std::atomic<int> g_players_page{0}, g_player{0};
 std::atomic<int> g_lan_page{0};   // the games on this network: the view's page
@@ -1097,8 +1099,9 @@ void SystemButtons(void* ctx) {
         std::vector<std::pair<std::uint64_t, bool>> others;
         for (const std::uint64_t b : g_sys_buttons) others.emplace_back(b, true);
         others.emplace_back(settings ? g_mp_button : g_settings_button, (want & (settings ? 1 : 2)) != 0);
-        HideRowsAMoment(ctx, std::move(others), settings ? "Pa_Button_05" : "Pa_Button_06",
-                        settings ? g_settings_button : g_mp_button);
+        // (the button to land on stays as it is: made see-through, the game's cursor never landed on it and every
+        // page change waited the whole 400 ms, a run's log 2026-11-19)
+        HideRowsAMoment(ctx, std::move(others), settings ? "Pa_Button_05" : "Pa_Button_06", 0);
         g_left_trace = 4, g_left_since = now, g_left_said.clear();
         LOG_INFO(Core, "coop: pause tab: {} left (B): System again", settings ? "Longshot Settings" : "the Multiplayer page");
     }
@@ -1141,7 +1144,7 @@ void ApplyPages(void* ctx, const Facts& f, const Page::Do& d) {
                 std::vector<std::pair<std::uint64_t, bool>> hide;
                 for (int r = 1; r < kRows; ++r) hide.emplace_back(rows[static_cast<std::size_t>(r)], true);
                 if (d.page_to == 2) hide.emplace_back(g_settings_button_set, g_page.SettingsUsable());
-                HideRowsAMoment(ctx, std::move(hide), "Pa_Button_00", rows[0]);
+                HideRowsAMoment(ctx, std::move(hide), "Pa_Button_00", 0);   // (as above: the first stays seen)
             }
         }
     }
@@ -1231,6 +1234,8 @@ void TraceFocus(const char* why) {
 
 // --- The mouse over our rows (MouseRows): the cursor and the rows' boxes, read at each pad read. g_mutex. ---
 MouseRows g_mouse_rows;
+std::uint64_t g_b_list_last = 0;    // (the pad's last read, for B on the list: OnPad)
+bool g_b_swallow = false;           // (that B, held: not the page's)
 std::uint64_t g_list_left_ms = 0;    // (the mouse's Left off the list: the last one)
 std::uint64_t g_page_since_ms = 0;   // (when our page showed last: RowSkip waits a moment after)
 int g_slow_logged = 0;               // (trace: slow updates of ours logged so far)
@@ -1415,6 +1420,9 @@ bool SecondA(View view, int row) {
         return true;
     }
     g_confirm_view = static_cast<int>(view), g_confirm_row = row;
+    // (a click's: the game's cursor may not be on that row yet, the mouse steps it there; the wait stays until the
+    // second click or its time. Kept while the cursor was elsewhere, a tester's Stop hosting never took its second A)
+    g_confirm_by_mouse = g_act_clicked;
     g_confirm_until = NowMs() + kConfirmMs;   // (the row says "A again" until then)
     return false;
 }
@@ -1464,7 +1472,8 @@ void ActCell(int cell) {
 
 // A row's action, or (line >= 0) a line of the details list's (DetailLines' act: their Auto-rejoin) (after the lock:
 // co-op's menu, the Lobby and the chat take their own).
-void Act(int row, int line = -1) {
+void Act(int row, int line = -1, bool clicked = false) {
+    g_act_clicked = clicked;
     const View view = ViewShown();
     const SessionView v = ViewNow(view);
     RowAction a = RowAction::kNone;
@@ -1748,7 +1757,7 @@ void OnScreen(void* ctx, std::uint64_t screen) noexcept {
         for (const std::string& line : lines) LOG_INFO(Core, "{}", line);
         if (was && !now_shown) LOG_INFO(Core, "coop: pause tab: System back ({})", why);
         if (f.kind == Kind::kPages && now_shown && f.state <= 2 && calls) {
-            if (!KeepConfirm(true, focused, g_confirm_row.load())) g_confirm_until = 0;   // (the cursor left that row)
+            if (!g_confirm_by_mouse.load() && !KeepConfirm(true, focused, g_confirm_row.load())) g_confirm_until = 0;   // (the cursor left that row)
             FollowSays();   // (a Host or Join refused: why, on the Session view)
             // (after our lock: the status and the Lobby take their own; read only when the rows are due)
             if (LiveDue(gen)) LiveRows(ctx, f.layout, gen, ViewNow(ViewShown()));
@@ -1790,6 +1799,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
         int row = -1, pick_cell = -1, set_change = -1, set_dir = 0, list_line = -1;
         bool settings_shown = false;
         std::string why, new_password, new_relay;
+        bool row_clicked = false;
         int new_port = 0;
         bool relay_typed = false;
         {
@@ -1824,7 +1834,22 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                 }
                 if (g_kb_held || now - g_kb_click_ms < 400) in &= ~kPadA;
             }
+            // B with the game's cursor on the list on the right (the details, or the browser's games list without a
+            // picked cell): back to the rows on the left, not out of the page (a tester: "B doesn't kick you back over
+            // to the left menu"). The press is ours: a Left for the game's cursor instead.
+            bool b_to_rows = false;
+            if ((in & kPadB) != 0 && g_page.Shown() && g_page.Which() == 0 && g_page.Typing() < 0 && g_cell.load() < 0 &&
+                FocusedShownName().rfind("Pa_List_", 0) == 0) {
+                b_to_rows = (g_b_list_last & kPadB) == 0;   // (its press; held, nothing more)
+                g_b_swallow = true;
+            }
+            if (g_b_swallow) {   // (held on after the cursor went left: still not the page's B, until let go)
+                if ((buttons & kPadB) == 0) g_b_swallow = false;
+                in &= ~kPadB;
+            }
+            g_b_list_last = buttons;
             out = g_page.OnPad(in, NowMs());
+            if (b_to_rows) out |= kPadLeft, g_page.Sound("button_cancel");
             typing = g_page.Typing() >= 0;
             PublishKeyboard();
             if (const int typed = g_page.TakeTyped(); typed == 2) {
@@ -2065,6 +2090,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                     decide = list_line >= 0;
                 } else {
                     row = clicked >= 0 ? clicked : FocusedRow();   // (under the lock: the pages screen is the updates')
+                    row_clicked = clicked >= 0;
                     if (clicked == MouseRows::kOffRows) decide = false;   // (a click off our rows: no row's A)
                     if (clicked >= 0 && cell >= 0) g_cell = -1, g_live_poke = true;   // (a row clicked: the rows' pad)
                 }
@@ -2106,13 +2132,21 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             if (taken) g_show_password = true;
             g_live_poke = true;
         }
-        if (decide && !settings_shown) Act(row, list_line);
+        if (decide && !settings_shown) Act(row, list_line, row_clicked);
         if (pick_cell >= 0) ActCell(pick_cell);
         if (set_change >= 0) ChangeSetting(set_change, set_dir);
         // (the stick's up and down bits we added are not the game's: only what it sent, filtered)
         return out & (buttons | ~(kPadStickUp | kPadStickDown | kPadStickLeft | kPadStickRight));
     } catch (...) {
         return buttons;
+    }
+}
+
+bool ClientCursor(float* fx, float* fy, bool* left) noexcept {
+    try {
+        return ReadClientCursor(fx, fy, left);
+    } catch (...) {
+        return false;
     }
 }
 

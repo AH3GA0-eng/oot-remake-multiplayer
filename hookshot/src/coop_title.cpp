@@ -24,6 +24,7 @@
 #include "coop_mods_runtime.h"
 #include "coop_pause.h"
 #include "coop_pause_files.h"
+#include "coop_pause_tab.h"
 #include "coop_runtime.h"
 #include "coop_save.h"
 #include "coop_keyboard.h"
@@ -138,6 +139,9 @@ std::atomic<int> g_native_page{-1};
 int g_native_top = 0;                 // (g_mutex)
 bool g_native_refocus = false;        // (g_mutex)
 CoopKeyboard::Cursor g_native_keys;   // (g_mutex)
+bool g_kb_held = false;               // (the keyboard by mouse: the left button, the key it went down on, the last click)
+int g_kb_press = -1;
+std::uint64_t g_kb_click_ms = 0;
 // The live texts' slots (the pack's Coop_Live_T0..T3 in LayoutMsg/Title_00): the message's text in the game's memory,
 // the bytes the game counts past it, what it says now. Found again on a new title layout.
 struct LiveSlot {
@@ -892,12 +896,41 @@ std::uint64_t NativePad(std::uint64_t buttons, std::int32_t stick[4]) {
     {
         std::lock_guard lock(g_mutex);
         const int opened = g_native_page.load();
-        const std::uint64_t down = in & ~g_native_last;
+        std::uint64_t down = in & ~g_native_last;
         g_native_last = in;
         if (opened < 0) return 0;
         const int focused = FocusedIndex(g_screen.load());
         const CoopTitleNative::Look look = CoopTitleNative::LookFor(v, g_native_top);
         if (v.typing) {
+            // The mouse on the keyboard's keys, as on the pause page: a key pressed and let go on is pressed, and the
+            // A Longshot's mouse sends for a click is not the keyboard cursor's (a tester's clicks went to the title
+            // behind the keyboard, 2026-11-19).
+            {
+                const std::uint64_t now = NowMs();
+                float fx = 0, fy = 0;
+                bool held = false;
+                if (CoopPauseTab::ClientCursor(&fx, &fy, &held)) {
+                    int r = -1, c = -1;
+                    const bool on = CoopKeyboard::KeyAtPoint(fx, fy, &r, &c);
+                    if (held && !g_kb_held) g_kb_press = on ? r * 16 + c : -1;
+                    if (!held && g_kb_held && on && g_kb_press == r * 16 + c) {
+                        g_native_keys.Set(r, c);
+                        const CoopKeyboard::KeyAt k = CoopKeyboard::At(r, c);
+                        switch (k.key) {
+                        case CoopKeyboard::Key::kChar: chars.push_back(static_cast<unsigned char>(k.ch)); break;
+                        case CoopKeyboard::Key::kSpace: chars.push_back(' '); break;
+                        case CoopKeyboard::Key::kDelete: keys.push_back(0x08); break;
+                        case CoopKeyboard::Key::kCancel: keys.push_back(0x1B); break;
+                        case CoopKeyboard::Key::kOk: keys.push_back(0x0D); break;
+                        case CoopKeyboard::Key::kNone: break;
+                        }
+                        g_sound = "button_decide";
+                        g_kb_click_ms = now;
+                    }
+                    g_kb_held = held;
+                }
+                if (g_kb_held || now - g_kb_click_ms < 400) down &= ~kA;
+            }
             const int dr = (down & kDown) != 0 ? 1 : (down & kUp) != 0 ? -1 : 0;
             const int dc = (down & kRight) != 0 ? 1 : (down & kLeft) != 0 ? -1 : 0;
             if (dr != 0 || dc != 0) g_native_keys.Move(dr, dc), g_sound = "button_on";
