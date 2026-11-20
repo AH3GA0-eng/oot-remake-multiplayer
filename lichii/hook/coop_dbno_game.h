@@ -94,6 +94,12 @@ std::optional<View> Shown();
 // Told to the others as DBNO_THREAT while we are up.
 void NoteEnemiesNear(bool any);
 
+// The hook's frame (coop_hook.cpp), while our Link is in the game: whether one
+// of our bottles holds a fairy (coop::host::bottled_fairy, read with the
+// game's own flag getters). A lethal hit then goes to the game's own death,
+// whose fairy revives us, instead of downing us (tracker row 162).
+void NoteBottledFairy(bool held);
+
 // While we spectate a player in our scene: how far the camera moves from our
 // Link to them (their puppet's feet less our Link's, metres). The game's own
 // camera is shifted by it (hos_coop_view), so it follows them as it follows

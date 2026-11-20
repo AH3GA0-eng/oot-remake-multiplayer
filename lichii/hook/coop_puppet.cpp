@@ -332,6 +332,9 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                     if (OcarinaSoundOn() && s.name.starts_with("Ocarina_")) {
                         continue;  // the OCARINA_NOTE path plays the notes: not twice
                     }
+                    if (CoopLinkSound::OwnOnly(s.name)) {
+                        continue;  // the sender's own (its low-health beep): an older sender sends it (row 163)
+                    }
                     slot.link_sound.heard.Push(std::move(s.name), s.at_ms);
                 }
             }
