@@ -586,7 +586,7 @@ TEST_CASE("pause tab: Settings: the password on this network, needed unless chos
     CHECK(CoopTitleMenu::Options::Read(coop_ini, options_ini).same_network_open);
     o.same_network_open = false;
     o.Write(coop_ini, options_ini);
-    CHECK(options_ini.find("same_network_open") == std::string::npos);
+    CHECK(options_ini.find("# same_network_open = on") != std::string::npos);   // (commented out, as IniUnset does)
     CHECK_FALSE(CoopTitleMenu::Options::Read(coop_ini, options_ini).same_network_open);
 }
 
