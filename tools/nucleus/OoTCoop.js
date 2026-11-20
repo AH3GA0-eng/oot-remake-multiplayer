@@ -39,8 +39,9 @@ Game.SymlinkFolders = true;      // romfs (the game's files) and mods as links, 
 Game.KeepSymLinkOnExit = true;   // instance folders stay: the next start makes no links (no admin prompt) and keeps
                                  // each game's settings and caches
 // user (the saves): never linked or copied by Nucleus; Game.Play links it (player 1 to the game's own saves, the
-// others to nucleus-players\playerN). nucleus-players: this handler's folder beside the game.
-Game.DirExclusions = ["user", "nucleus-players"];
+// others to nucleus-players\playerN). nucleus-players: this handler's folder beside the game. logs: each game's own
+// (the game makes it at its start), else every game writes the same longshot_log.txt and co-op logs.
+Game.DirExclusions = ["user", "nucleus-players", "logs"];
 // Written by Game.Play for each game.
 Game.FileSymlinkExclusions = ["coop.ini", "coop-options.ini", "coop-kit.txt", "player-key.txt", "longshot_log.txt",
     "longshot_log.1.txt", "hookshot_log.txt", "longshot_load_start.txt", "longshot_damaged_files.txt"];
@@ -322,6 +323,13 @@ Game.Play = function () {
         Context.Log("OoT Co-op: player " + player + ": could not link " + inst + "\\user to " + saves);
     }
 
+    // The logs: this game's own. An instance folder made by an older handler kept a link to the game's logs folder:
+    // the link goes (a non-recursive delete of a link removes the link only), the game makes its own at its start.
+    var logs = coopPath(inst, "logs");
+    if (System.IO.Directory.Exists(logs) && coopIsLink(logs)) {
+        System.IO.Directory.Delete(logs, false);
+    }
+
     // The player's key (the Lobby's mutes and bans follow it): player 1's own, the others' kept with their saves.
     var keyFile = player === 1 ? coopPath(game, "player-key.txt")
                                : coopPath(coopPath(mine, "player" + player), "player-key.txt");
@@ -353,10 +361,17 @@ Game.Play = function () {
     coopWrite(coopPath(inst, "coop-options.ini"),
               "# Written by the Nucleus Co-op handler (tools/nucleus/OoTCoop.js) at each start.\r\n" + options + "\r\n");
 
-    // Longshot's own options: in a window (Nucleus places it), no Discord status from every copy.
+    // Longshot's own options: in a window (Nucleus places it), no Discord status from every copy. A controller
+    // player's camera is its pad's: Mouse camera "As the stick" (0), not Native (1), whose last mouse angles would be
+    // put back over the right stick each frame (patch 0015 keeps a game with no mouse out of it as well). A keyboard
+    // player keeps its own choice.
     var lsOptions = coopPath(inst, "longshot_options.ini");
     if (System.IO.File.Exists(lsOptions)) {
         var o = coopSetKey(coopRead(lsOptions), "fullscreen", "0");
-        coopWrite(lsOptions, coopSetKey(o, "discord_status", "0") + "\r\n");
+        o = coopSetKey(o, "discord_status", "0");
+        if (!Context.IsKeyboardPlayer) {
+            o = coopSetKey(o, "mouse_camera", "0");
+        }
+        coopWrite(lsOptions, o + "\r\n");
     }
 };
