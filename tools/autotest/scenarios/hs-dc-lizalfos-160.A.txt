@@ -1,5 +1,5 @@
 # hs-dc-lizalfos-160 (tracker rows 160/161, dc-doors-0118 9c1c58a5 + kept-kill-160): DC upper Lizalfos pair (el-dc-lizalfos pair 2,
-# 116.1/102.0 116 -38/-31). A arrives first (owns both), A test-kills one, then A goes DOWN (hurt 80: the owner gone,
+# 116.1/102.0 116 -38/-31), after room 1's fight (el-dc-lizalfos's entry; A kills that pair). A arrives first (owns both), A test-kills one, then A goes DOWN (hurt 80: the owner gone,
 # the report's death); B kills the last one. Rows 160/161: no game played the room event, so the shutters stayed locked
 # for one player. PASS (logs + shots, both games):
 #  1. exactly one game logs the room event start (DefeatLizalfos / "started the event") or "kept ... lands: ... our game
@@ -28,7 +28,17 @@ wait 300
 press A
 wait 2400
 mark in
-place 108.0 116.0 -33.0   # between the upper pair: A sees them first (owner)
+place 92.0 100.6 -44.0    # room 1 (el-dc-lizalfos): the fight starts, A owns its pair
+wait 30
+toward 95.0 -52.0 10
+wait 600
+mark a-room1
+kill Enemy_MiddleBoss_Lizalfos
+wait 60
+kill Enemy_MiddleBoss_Lizalfos
+wait 1800                 # room 1's event, its shutters; room 2's pair is made by the room logic (Logic_Create, latched)
+mark a-room1-done
+place 108.0 116.0 -33.0   # room 2, between its pair
 wait 600
 mark a-near
 kill Enemy_MiddleBoss_Lizalfos
