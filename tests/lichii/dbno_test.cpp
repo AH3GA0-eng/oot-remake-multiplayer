@@ -70,6 +70,7 @@ struct Game {
     int beside_asks = 0;
     int entrance_asks = 0;
     bool enemy_near_us = false;
+    bool bottled_fairy = false;
 
     Output Step(bool lethal = false) {
         now += kFrame;
@@ -86,6 +87,7 @@ struct Game {
         in.team = team;
         in.moved = std::exchange(pending, CoopDbno::Moved::none);
         in.enemy_near_us = enemy_near_us;
+        in.bottled_fairy = bottled_fairy;
         Output out = machine.Frame(in);
         if (out.move_beside != 0) {
             ++beside_asks;
@@ -246,6 +248,38 @@ TEST_CASE("dbno: up with a teammate up the guard is the last stand, alone, off o
     CHECK(g.Step().guard == Guard::off);
     // And a lethal flag from nowhere downs nobody then.
     CHECK(g.Step(true).state == State::up);
+}
+
+TEST_CASE("dbno: a bottled fairy is the game's own revive: no last stand, its death runs, back up, never downed (row 162)") {
+    Game g;
+    CHECK(g.Step().guard == Guard::last_stand);
+    g.bottled_fairy = true;
+    CHECK(g.Step().guard == Guard::off);  // the lethal hit is the game's: its death, its fairy
+    // The game's death at no life, then its fairy brings him back within the dying watch.
+    g.life = 0;
+    g.Run(3 * kS);
+    CHECK(g.machine.Now() == State::up);
+    g.bottled_fairy = false;  // the fairy left the bottle
+    g.life = 32;
+    const Output back = g.Step();
+    CHECK(back.state == State::up);
+    CHECK(back.guard == Guard::last_stand);  // the next lethal hit downs him again
+    CHECK(g.events.empty());
+    CHECK(g.sent.empty());  // nobody was told he was down
+    // A fairy that does not save him (the life stays 0): out, as the game's own death.
+    g.bottled_fairy = true;
+    g.Step();
+    g.life = 0;
+    g.Run(CoopDbno::kDyingUs + kS);
+    CHECK(g.machine.Now() == State::out);
+    CHECK(g.Saw(Event::died));
+    // Already down, a fairy changes nothing: still shielded, the teammates' revive.
+    Game d;
+    d.Step();
+    d.Down();
+    d.bottled_fairy = true;
+    CHECK(d.Step().guard == Guard::shielded);
+    CHECK(d.machine.Now() == State::downed);
 }
 
 TEST_CASE("dbno: a lethal hit downs, tells everyone, shields, and the bleed-out runs") {

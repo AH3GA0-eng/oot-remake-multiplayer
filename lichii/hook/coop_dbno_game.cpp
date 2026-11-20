@@ -96,6 +96,7 @@ struct Glue {
     std::atomic<PadMode> pad_mode{PadMode::game};
     std::atomic<bool> button{false};  // A as the player holds it (before we take it)
     std::atomic<bool> enemies_near{false};  // the objects walk
+    std::atomic<bool> bottled_fairy{false};  // the hook's frame (row 162)
 
     void Line(std::string text) {
         if (lines.size() < 32) {
@@ -365,6 +366,7 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
         in.moved = Moved::failed;
     }
     in.enemy_near_us = g.enemies_near.load(std::memory_order_relaxed);
+    in.bottled_fairy = reading && g.bottled_fairy.load(std::memory_order_relaxed);
     const Output out = g.machine.Frame(in);
     g.guard.Set(out.guard);
     Body::Raising& raise = Body::TheRaising();
@@ -549,6 +551,15 @@ std::optional<View> Shown() {
 
 void NoteEnemiesNear(bool any) {
     TheGlue().enemies_near.store(any, std::memory_order_relaxed);
+}
+
+void NoteBottledFairy(bool held) {
+    Glue& g = TheGlue();
+    if (g.bottled_fairy.exchange(held, std::memory_order_relaxed) != held) {
+        LOG_INFO(Core, "coop: dbno: {}", held ? "a fairy in our bottle: a lethal hit is the game's own death, its "
+                                                "fairy revives us (not downed)"
+                                              : "no fairy in our bottles: a lethal hit downs us");
+    }
 }
 
 std::optional<Vec3> SpectateOffset() {

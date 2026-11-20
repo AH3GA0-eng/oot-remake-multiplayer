@@ -765,6 +765,13 @@ public:
         if (view.game) {
             memory.emplace(system.ApplicationMemory(), base_);
             flag_debug_.Frame(*memory);
+            // Down but not out (row 162): a bottled fairy is the game's own revive at no life.
+            if (reading) {
+                coop::host::GameFlags bottles(*memory);
+                CoopDbno::NoteBottledFairy(coop::host::bottled_fairy(
+                    [&](std::uint32_t h) { return bottles.get_bool(h); },
+                    [&](std::uint32_t h) { return bottles.get_enum(h); }));
+            }
             if (sharing_ || cheats_) {
                 game_store.emplace(*memory);
                 if (!queue_sizes_logged_) {  // once: half of each is ours (issue 175)
