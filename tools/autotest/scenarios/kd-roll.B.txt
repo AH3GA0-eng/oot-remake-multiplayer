@@ -20,6 +20,8 @@ setflag HavePlayedEvent.Dm_DodongoCave_BossIn 0   # run 013205: in the arena but
 setflag HavePlayedEvent.Dm_DodongoCave_BossOut 0
 setflag Enemy_DungeonBoss_Dodongo_BossAppear 0
 setflag DodongoCavern_BossGroundChange 0
+setenum 0x1002b466 DungeonStart   # Get_StoneOfFire back before the fight (the lane save is past King Dodongo: molten arena, no intro), as Gohma's GoToBossRoom
+setflag HavePlayedEvent.Get_StoneOfFire_DefeatBoss 0
 wait 60
 warp DodongoStage DodongoStage   # same-map warp = reload with the flags
 wait 3000               # the module own warp took >25 s in run 013912
