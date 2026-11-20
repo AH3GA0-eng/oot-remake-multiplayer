@@ -1181,6 +1181,8 @@ private:
         std::uint64_t picture_die_at = 0;  // row 175: our copy's own death here went to its owner (PictureDeathHere)
         bool picture_kill_due = false;     // row 175: that kill is still to send
         std::string picture_die;           // row 175: its own death animation then (played again if cut off)
+        bool picture_cut = false;          // row 175: something else showed after it (cut off, or finished)
+        bool picture_replayed = false;     // row 175: its death seen again after that: no more replays
         std::optional<coop::protocol::Vec3> hit_place;  // where our own hit summed now landed (a boss; cleared with the sum)
         std::optional<coop::protocol::HitRecord> hit_record;  // protocol 14: our newest own hit summed now (cleared with it)
         std::uint32_t hit_seq_in = 0;  // protocol 14: the owner's newest sample hit seq replayed here
