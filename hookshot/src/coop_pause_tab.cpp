@@ -52,7 +52,7 @@ Kind KindOf(std::uint64_t vtable_offset) {
 // --- TextField ---
 
 const std::string& TextField::Letters() const {
-    static const std::string room = "abcdefghijklmnopqrstuvwxyz0123456789-_";
+    static const std::string room = "abcdefghijklmnopqrstuvwxyz0123456789.:-_";   // (. and : for an address)
     // (a host's own password is 20 of the first 32, the letters of its codes, coop::server::nat::kLetters: those come
     // first, so the pad's up and down reach them soonest)
     static const std::string password =
@@ -705,7 +705,10 @@ RowAction ActionFor(View view, int row, const Session& s) {
     case View::kLetIn:
         if (row == 0 && s.hosting && s.asking) return RowAction::kAllow;
         if (row == 1 && s.hosting && s.asking) return RowAction::kDeny;
-        if (row == 3 && s.hosting && s.invite) return RowAction::kPasteAnswer;
+        // (nobody asks: Paste answer code first, nothing between it and Back; a tester saw a row there that took no A
+        // and a gap under it)
+        if (row == 0 && s.hosting && !s.asking && s.invite) return RowAction::kPasteAnswer;
+        if (row == 3 && s.hosting && s.asking && s.invite) return RowAction::kPasteAnswer;
         return RowAction::kNone;
     case View::kJoin: {
         const bool free = !s.in_one && !s.by_launcher;   // (as co-op's menu: nobody joins from inside a session)
@@ -725,7 +728,7 @@ RowAction ActionFor(View view, int row, const Session& s) {
         return row == 1 ? RowAction::kChangePassword : RowAction::kNone;
     case View::kSession:
         if (s.hosting) {
-            if (row == 0) return s.has_password ? RowAction::kViewPassword : RowAction::kNone;   // (show it, change it)
+            if (row == 0) return s.has_password ? RowAction::kShowPassword : RowAction::kNone;   // (shown on the list)
             if (row == 1) return s.code ? RowAction::kCopyCode : RowAction::kNone;
             return row == 2 ? RowAction::kCopyLan : row == 3 ? RowAction::kCopyVpn : RowAction::kNone;
         }
@@ -915,7 +918,8 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
         break;
     case View::kLetIn:
         if (v.asking.empty()) {
-            rows[0] = "Nobody asks to join";
+            rows[0] = v.s.hosting && v.s.invite ? "Paste answer code" : "Nobody asks to join";
+            break;
         } else {
             rows[0] = "Let in " + v.asking.front();
             rows[1] = "Refuse " + v.asking.front();
@@ -931,10 +935,12 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
                                            : "Paste code and join";
         if (!v.s.in_one && !v.s.by_launcher) {
             // (the fields: the row's label, then what was typed, the letter at the cursor in brackets while typing)
-            rows[1] = "Room: " + (v.room_field.empty() && v.typing != 0 ? std::string("A to type its name") : v.room_field);
-            rows[2] = "Password: " + (v.password_field.empty() && v.typing != 1 ? std::string("A to type it") : v.password_field);
+            // (short labels: a tester saw "Room: A to type its name" squeezed to fit its button. The first field takes
+            // a room name, or an address with its port after a colon, as the title's Join: "Room or address")
+            rows[1] = "Room or IP: " + (v.room_field.empty() && v.typing != 0 ? std::string("A to type") : v.room_field);
+            rows[2] = "Password: " + (v.password_field.empty() && v.typing != 1 ? std::string("A to type") : v.password_field);
             if (v.room_ready) {
-                rows[3] = v.relay_set ? "Join this room" : "Join room: no relay set";
+                rows[3] = v.join_address ? "Join this address" : v.relay_set ? "Join this room" : "Join room: no relay set";
             } else if (v.s.rejoin) {
                 rows[3] = v.rejoin_host.empty() ? "Join the last game again" : "Join " + v.rejoin_host + " again";
             }
@@ -960,7 +966,9 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
             if (!v.note.empty()) {
                 rows[0] = v.note;
             } else if (v.s.has_password) {
-                rows[0] = "Join password";   // (its view: show it, change it)
+                // (shown or hidden on the list here; a new one is typed from the list's Join password line: a
+                // tester found it in two places)
+                rows[0] = v.s.password_shown ? "Hide join password" : "Show join password";
             } else {
                 rows[0] = "Hosting: " + Players(std::max(v.players, 1));
             }
@@ -1143,7 +1151,8 @@ std::vector<ListLine> SettingLines(const std::vector<SettingRow>& rows, int page
     const int pages = SettingPages(static_cast<int>(rows.size()));
     const int at_page = (page % pages + pages) % pages;
     // (the header has no value: the module hides its value box and arrows, so it never looks like a setting)
-    lines[0] = ListLine{FitTo(pages > 1 ? title + " (page " + std::to_string(at_page + 1) + " of " + std::to_string(pages) + ")"
+    // (the page with arrows a click on either half of the line turns: the module's mouse)
+    lines[0] = ListLine{FitTo(pages > 1 ? title + "  < " + std::to_string(at_page + 1) + " of " + std::to_string(pages) + " >"
                                         : title,
                               kListNameChars),
                         ""};

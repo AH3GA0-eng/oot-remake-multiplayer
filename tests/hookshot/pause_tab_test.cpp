@@ -494,7 +494,8 @@ TEST_CASE("pause tab: the invite code's two rows: the host's Paste answer, a wai
     Session host;
     host.hosting = host.in_one = host.code = host.invite = true;
     CHECK(ActionFor(kRowLetIn, host) == RowAction::kViewLetIn);
-    CHECK(ActionFor(View::kLetIn, 3, host) == RowAction::kPasteAnswer);
+    CHECK(ActionFor(View::kLetIn, 0, host) == RowAction::kPasteAnswer);   // (nobody asks: first, no gap)
+    CHECK(ActionFor(View::kLetIn, 3, host) == RowAction::kNone);
     CHECK(ActionFor(kRowJoinCode, host) == RowAction::kCopyCode);
     host.asking = true;
     CHECK(ActionFor(kRowLetIn, host) == RowAction::kViewLetIn);
@@ -519,7 +520,7 @@ TEST_CASE("pause tab: the invite code's two rows: the host's Paste answer, a wai
     v.players = 1;
     CHECK(RowTexts(v) ==
           std::vector<std::string>{"Hosting", "Copy invite code", "Players: just you", "Let in: answer code", "Stop hosting"});
-    CHECK(RowTexts(View::kLetIn, v)[3] == "Paste answer code");
+    CHECK(RowTexts(View::kLetIn, v) == std::vector<std::string>{"Paste answer code", "", "", "", "Back"});
     v.asking = {"Saria"};
     v.s.asking = true;
     CHECK(RowTexts(v)[kRowLetIn] == "Let in Saria");
@@ -728,8 +729,8 @@ TEST_CASE("pause tab: the rows' own views: Players, Let in and Join on the same 
     SessionView jv;
     jv.s = again;
     jv.rejoin_host = "Saria";
-    CHECK(RowTexts(View::kJoin, jv) == std::vector<std::string>{"Paste code and join", "Room: A to type its name",
-                                                               "Password: A to type it", "Join Saria again", "Back"});
+    CHECK(RowTexts(View::kJoin, jv) == std::vector<std::string>{"Paste code and join", "Room or IP: A to type",
+                                                               "Password: A to type", "Join Saria again", "Back"});
     // The main view is the five rows; out of range is nothing.
     CHECK(ActionFor(View::kMain, kRowPlayers, idle) == ActionFor(kRowPlayers, idle));
     CHECK(RowTexts(View::kMain, none) == RowTexts(none));
@@ -829,11 +830,11 @@ TEST_CASE("pause tab: the Session view: the host's lines to copy, a guest's host
     hv.note.clear();
     hv.players = 1;
     CHECK(RowTexts(View::kSession, hv)[0] == "Hosting: just you");
-    // Its join password: the first row opens the Join password view (show it on the details list, or change it on
-    // the keyboard); the other rows keep their copies.
+    // Its join password: the first row shows it on the details list or hides it (a new one is typed from the list's
+    // Join password line); the other rows keep their copies.
     hv.s.has_password = host.has_password = true;
-    CHECK(ActionFor(View::kSession, 0, host) == RowAction::kViewPassword);
-    CHECK(RowTexts(View::kSession, hv)[0] == "Join password");
+    CHECK(ActionFor(View::kSession, 0, host) == RowAction::kShowPassword);
+    CHECK(RowTexts(View::kSession, hv)[0] == "Show join password");
     CHECK(ActionFor(View::kSession, 2, host) == RowAction::kCopyLan);
     CHECK(ActionFor(View::kSession, kRows - 1, host) == RowAction::kBack);
     CHECK(RowTexts(View::kPassword, hv) ==
@@ -1371,14 +1372,14 @@ TEST_CASE("pause tab: typing ends when the page goes, and the Join view's rows s
     CHECK(ActionFor(View::kJoin, 1, s) == RowAction::kNone);         // (nobody joins from inside a session)
     SessionView v;
     auto rows = RowTexts(View::kJoin, v);
-    CHECK(rows[1] == "Room: A to type its name");
-    CHECK(rows[2] == "Password: A to type it");
+    CHECK(rows[1] == "Room or IP: A to type");
+    CHECK(rows[2] == "Password: A to type");
     CHECK(rows[3].empty());
     v.room_field = "fore[s]t";
     v.typing = 0;
     v.room_ready = true;
     rows = RowTexts(View::kJoin, v);
-    CHECK(rows[1] == "Room: fore[s]t");
+    CHECK(rows[1] == "Room or IP: fore[s]t");
     CHECK(rows[3] == "Join room: no relay set");
     v.relay_set = true;
     CHECK(RowTexts(View::kJoin, v)[3] == "Join this room");
@@ -2010,12 +2011,12 @@ TEST_CASE("pause tab: the Settings page's list: a category's settings, its pages
     CHECK(SettingPages(13) == 3);
     auto lines = SettingLines(graphics, 0, "Graphics");
     REQUIRE(lines.size() == static_cast<std::size_t>(kListRows));
-    CHECK(lines[0].name == "Graphics (page 1 of 2)");   // (the header: the category, and its page when it has more)
+    CHECK(lines[0].name == "Graphics  < 1 of 2 >");   // (the header: the category, and its page when it has more)
     CHECK(lines[0].value.empty());                     // (no value: the module hides its box)
     CHECK(lines[1].name == "Graphics 0");
     CHECK(lines[1].value == "On");
     lines = SettingLines(graphics, 1, "Graphics");
-    CHECK(lines[0].name == "Graphics (page 2 of 2)");
+    CHECK(lines[0].name == "Graphics  < 2 of 2 >");
     CHECK(lines[1].name == "Graphics 6");
     CHECK(lines[4].name == "Aspect ratio *");   // (a restart one)
     CHECK(lines[5].name.empty());

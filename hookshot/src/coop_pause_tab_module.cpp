@@ -440,7 +440,8 @@ SessionView ViewNow(View view) {
     if (view == View::kJoin || view == View::kLanGame) {
         std::lock_guard lock(g_mutex);   // (the fields are the page's; no other lock of ours is held here)
         v.typing = g_page.Typing();
-        v.room_field = g_page.Field(0).Shown(v.typing == 0, kRowChars - 6);       // ("Room: ")
+        v.room_field = g_page.Field(0).Shown(v.typing == 0, kRowChars - 12);      // ("Room or IP: ")
+        v.join_address = g_page.Field(0).text().find_first_of(".:") != std::string::npos;
         v.password_field = g_page.Field(1).Shown(v.typing == 1, kRowChars - 10);  // ("Password: ")
         v.room_ready = v.s.room_ready = g_page.Field(0).Ready();
         v.s.lan_password = !g_page.Field(1).text().empty();
@@ -1622,6 +1623,20 @@ void Act(int row, int line = -1) {
             g_live_poke = true;
         }
         SetView(View::kMain);
+        if (room.find_first_of(".:") != std::string::npos) {   // (an address, its port after a colon: joined directly)
+            std::string host = room;
+            int port = coop::protocol::kDefaultPort;
+            if (const auto colon = room.rfind(':'); colon != std::string::npos) {
+                host = room.substr(0, colon);
+                port = std::atoi(room.c_str() + colon + 1);
+            }
+            if (!host.empty() && port >= 1 && port <= 65535) {
+                CoopPause::JoinLanNow(host, static_cast<std::uint16_t>(port), password);
+            } else {
+                LOG_INFO(Core, "coop: pause tab: the Join view's address has no usable port");
+            }
+            break;
+        }
         CoopPause::JoinRoomNow(room, password);   // (refused: the Session view says why, FollowSays)
         break;
     }
@@ -1991,6 +2006,21 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                         LOG_INFO(Core, "coop: pause tab: settings: the mouse went onto the categories: the rows have the pad");
                     }
                     if (held && !g_cells_held) g_cells_press = hover;
+                    // (the header, "Motion  < 1 of 4 >": a click on its left half turns back a page, on its right half
+                    // on, as a tester asked for the mouse; the keyboard's and the pad's ways stay)
+                    const RowBox& head = boxes[0];
+                    const bool on_head = head.shown && x >= head.x0 && x <= head.x1 && y >= head.y0 && y <= head.y1;
+                    if (held && !g_cells_held && on_head) g_cells_press = -2;
+                    if (!held && g_cells_held && on_head && g_cells_press == -2) {
+                        const int pages = SettingPages(g_set_count.load());
+                        if (pages > 1) {
+                            const int dir = x < (head.x0 + head.x1) / 2 ? -1 : 1;
+                            g_set_page = ((g_set_page.load() + dir) % pages + pages) % pages;
+                            set_row = -1, g_live_poke = true;
+                            g_page.Sound("button_decide");
+                            LOG_INFO(Core, "coop: pause tab: settings: the header clicked: page {} of {}", g_set_page.load() + 1, pages);
+                        }
+                    }
                     if (!held && g_cells_held && hover >= 0 && hover == g_cells_press) {
                         const RowBox& b = boxes[static_cast<std::size_t>(hover) + 1];
                         const float cx = (b.x0 + b.x1) / 2, scale = (b.x1 - b.x0) / 1880.0f;
