@@ -41,7 +41,8 @@ var System = {
     IO: {
         Path: {
             Combine: function (a, b) { return fso.BuildPath(a, b); },
-            GetDirectoryName: function (p) { return fso.GetParentFolderName(p); }
+            GetDirectoryName: function (p) { return fso.GetParentFolderName(p); },
+            GetFileName: function (p) { return fso.GetFileName(p); }
         },
         File: {
             Exists: function (p) { return fso.FileExists(p); },
@@ -52,7 +53,9 @@ var System = {
         Directory: {
             Exists: function (p) { return fso.FolderExists(p); },
             CreateDirectory: function (p) { mkdirs(p); },
-            Move: function (a, b) { fso.MoveFolder(a, b); }
+            Move: function (a, b) { fso.MoveFolder(a, b); },
+            GetDirectories: function (p) { var r = [], e = new Enumerator(fso.GetFolder(p).SubFolders); for (; !e.atEnd(); e.moveNext()) r.push(e.item().Path); return r; },
+            GetFiles: function (p) { var r = [], e = new Enumerator(fso.GetFolder(p).Files); for (; !e.atEnd(); e.moveNext()) r.push(e.item().Path); return r; }
         },
         // FileAttributes as Jint may hand it over: a number (Directory 16, ReparsePoint 1024), or an object with
         // ToString (and valueOf: the number) or the enum's text, as attrMode says.
@@ -100,6 +103,11 @@ writeFile(fso.BuildPath(kit, "coop-options.ini"),
           "name = Saria\r\ncolor = red\r\nLICHII_COOP_PUPPET=1\r\nLICHII_COOP_PAD=2\r\n# LICHII_COOP_KEYBOARD=off\r\n");
 mkdirs(fso.BuildPath(game, "user\\save"));
 writeFile(fso.BuildPath(game, "user\\save\\host.sav"), "x");
+mkdirs(fso.BuildPath(game, "ngx"));                       // DLSS's runtime, built in after the instances were made
+writeFile(fso.BuildPath(game, "ngx\\nvngx_dlss.dll"), "dlss");
+mkdirs(fso.BuildPath(game, "logs"));
+writeFile(fso.BuildPath(game, "newfile.dll"), "new");
+writeFile(fso.BuildPath(game, "coop.ini"), "own");
 var instances = [];
 for (var i = 0; i < 3; i++) {
     instances[i] = fso.BuildPath(root, "content\\OoTCoopLongshot\\Instance" + i);
@@ -173,6 +181,9 @@ for (var q = 0; q < 3; q++) {
           ls.indexOf("vsync=0") >= 0, "longshot_options.ini " + q + ": " + ls);
     check(readFile(fso.BuildPath(instances[q], "player-key.txt")).length >= 32, "player-key.txt " + q);
 }
+check(readFile(fso.BuildPath(instances[0], "ngx\\nvngx_dlss.dll")) === "dlss" && (fso.GetFolder(fso.BuildPath(instances[0], "ngx")).Attributes & 1024) !== 0, "ngx folder linked into an instance made before it");
+check(readFile(fso.BuildPath(instances[1], "newfile.dll")) === "new", "a new game file linked in");
+check(!fso.FolderExists(fso.BuildPath(instances[0], "logs")), "logs stay the instance's own");
 check(readFile(fso.BuildPath(instances[0], "coop.ini")).indexOf("name = Saria\r\n") >= 0, "player 1 name");
 check(readFile(fso.BuildPath(instances[1], "coop.ini")).indexOf("name = A name that is f\r\n") >= 0, "name cut to 16");
 check(readFile(fso.BuildPath(instances[2], "coop.ini")).indexOf("name = Player 3\r\n") >= 0, "empty name: Player 3");

@@ -465,6 +465,47 @@ function coopTell(text) {
     }
 }
 
+// Nucleus links the game's files into an instance folder only when it makes the folder, and the folders are kept
+// (Game.KeepSymLinkOnExit). What the game gets later is missing there: the ngx folder (NVIDIA's DLSS runtime, which
+// "NVIDIA DLSS.bat" builds in; the game looks for it beside its exe, so the instance's own folder) or a file a rebuilt
+// game has new. Each top-level folder or file of the game that an instance lacks is linked in at every start: a
+// junction for a folder, a hard link for a file (no admin rights; none when the folders are on different drives).
+// Not the ones the handler or the game keeps per instance (user, logs, nucleus-players, the files named above).
+var COOP_OWN_DIRS = ["user", "logs", "nucleus-players"];
+function coopOwnName(name, list) {
+    for (var i = 0; i < list.length; i++) {
+        if (list[i].toLowerCase() === name.toLowerCase()) {
+            return true;
+        }
+    }
+    return false;
+}
+function coopLinkMissing(game, inst) {
+    var dirs = System.IO.Directory.GetDirectories(game), files = System.IO.Directory.GetFiles(game);
+    var nd = dirs.Length !== undefined ? dirs.Length : dirs.length, nf = files.Length !== undefined ? files.Length : files.length;
+    var cmd = System.Environment.GetEnvironmentVariable("ComSpec") || "C:\Windows\System32\cmd.exe";
+    var i, name, from, to;
+    for (i = 0; i < nd; i++) {
+        from = String(dirs[i]);
+        name = String(System.IO.Path.GetFileName(from));
+        to = coopPath(inst, name);
+        if (!coopOwnName(name, COOP_OWN_DIRS) && !System.IO.Directory.Exists(to)) {
+            coopLinkFolder(to, from);
+            Context.Log("OoT Co-op: linked the game's " + name + " folder into " + inst);
+        }
+    }
+    for (i = 0; i < nf; i++) {
+        from = String(files[i]);
+        name = String(System.IO.Path.GetFileName(from));
+        to = coopPath(inst, name);
+        if (!coopOwnName(name, Game.FileSymlinkExclusions) && !coopOwnName(name, Game.FileSymlinkCopyInstead) &&
+            !System.IO.File.Exists(to)) {
+            Context.StartProcess(String(cmd), "/c mklink /H \"" + to + "\" \"" + from + "\"", false);
+            Context.Log("OoT Co-op: linked the game's " + name + " into " + inst);
+        }
+    }
+}
+
 Game.Play = function () {
     var player = Context.PlayerID + 1;                  // 1 to 4
     var game = String(Context.RootInstallFolder);       // the game folder Nucleus was given
@@ -473,6 +514,11 @@ Game.Play = function () {
     System.IO.Directory.CreateDirectory(mine);
     var sessionFile = coopPath(mine, "session.txt");
     var kit = coopFindKit(game);
+    try {
+        coopLinkMissing(game, inst);
+    } catch (e) {
+        Context.Log("OoT Co-op: could not link the game's newer files into " + inst + ": " + e);
+    }
 
     // The session: player 1 makes it and starts the server; the others take it.
     // session.txt: the join password, the server's address, its port (a line each).

@@ -142,7 +142,7 @@ Longshot has **NVIDIA DLSS** and **DLAA** (and DLSS Frame Generation on RTX 40 a
 2. It downloads NVIDIA's DLSS SDK (into `hookshot\work\ngx-sdk`) and builds the game again with it: much shorter than the first build, since only what changes is compiled. If the Longshot Builder or the Longshot Launcher already fetched the SDK on this PC, the kit starts from that copy and downloads only what differs (`"NVIDIA DLSS.bat" -DlssSdk <folder>` names another one). If the download fails (offline?), `"NVIDIA DLSS.bat" -NoDlss` builds the game without DLSS.
 3. In the game: **Graphics → Upscaler: NVIDIA DLSS** (DLAA is DLSS's **Native** on the Render resolution row).
 
-The kit remembers the choice (`hookshot\dlss.txt`): the builds after an update keep DLSS. `"NVIDIA DLSS.bat" -NoDlss` builds the game again without it. A game built with DLSS holds NVIDIA's files (`ngx\`): never share that game folder. Linux: `bash start-squadala.sh --dlss` ([setup-linux.md](setup-linux.md#nvidia-dlss)).
+The kit remembers the choice (`hookshot\dlss.txt`): the builds after an update keep DLSS. `"NVIDIA DLSS.bat" -NoDlss` builds the game again without it. A game built with DLSS holds NVIDIA's files (`ngx\`): never share that game folder. With Nucleus split screen, each game has its own settings: pick **Upscaler: NVIDIA DLSS** once in each Nucleus game (the handler links in the `ngx` folder at every start). Linux: `bash start-squadala.sh --dlss` ([setup-linux.md](setup-linux.md#nvidia-dlss)).
 
 ## Low frame rate
 
