@@ -374,7 +374,7 @@ TEST_CASE("look share: a guest on the host's save sends its own pick, not the ho
     CoopLookShare::OwnPick p;
     CHECK(p.Update(0, false, 0) == 0);
     CHECK(p.Update(12, false, 0) == 12);       // our own save: what we picked
-    CHECK(p.TakeOwnChange() == std::optional<std::uint16_t>(12));
+    CHECK(p.TakeOwnChange() == std::optional<std::uint64_t>(12));
     CHECK_FALSE(p.TakeOwnChange());            // once
     CHECK(p.Update(30, true, 1) == 12);        // the host's save loads with the host's 30: ours goes out
     CHECK(p.Update(30, true, 1) == 12);
@@ -390,6 +390,72 @@ TEST_CASE("look share: a guest on the host's save sends its own pick, not the ho
     CHECK(seeded.Update(30, true, 0) == 7);    // a guest that joined before playing its own save
     CoopLookShare::OwnPick fresh;
     CHECK(fresh.Update(30, true, 0) == 0);     // nothing known: Link, never the host's
+    // The Customize options are in the save too: they go with the pick (OwnPick::Of), the guest's own until it
+    // changes either on the host's save (review of 07de2fe2, MUST 1).
+    using CoopLookShare::OwnPick;
+    CHECK(OwnPick::CharacterIn(OwnPick::Of(9, 0x123456)) == 9);
+    CHECK(OwnPick::CustomIn(OwnPick::Of(9, 0x123456)) == 0x123456u);
+    CHECK(OwnPick::CustomIn(OwnPick::Of(9, 0xFF123456u)) == 0x123456u);
+    OwnPick g;
+    CHECK(g.Update(OwnPick::Of(9, 0x000011), false, 0) == OwnPick::Of(9, 0x000011));
+    CHECK(g.Update(OwnPick::Of(30, 0x222222), true, 1) == OwnPick::Of(9, 0x000011));   // the host's pick and options
+    CHECK(g.Update(OwnPick::Of(30, 0x222223), true, 1) == OwnPick::Of(30, 0x222223));  // the guest changed an option
+    CHECK(g.Update(OwnPick::Of(30, 0x222222), true, 2) == OwnPick::Of(9, 0x000011));   // a new load: ours again
+    CHECK(g.TakeOwnChange() == std::optional<std::uint64_t>(OwnPick::Of(9, 0x000011)));
+}
+
+TEST_CASE("look share: a character's Customize options ride along as a part of their own") {
+    CoopLookShare::Share s;
+    s.SetCustom(0x123456);
+    CHECK_FALSE(s.TakeSend());                 // Link: nothing of it is sent
+    s.SetCharacter(9);
+    auto sent = s.TakeSend();
+    REQUIRE(sent);
+    const LookPart nine{CoopLookShare::kCharacterPart, CoopLookShare::kCharacterMark | 9u};
+    CHECK(sent->parts == CoopLookShare::Parts{nine, {CoopLookShare::kCustomPart, 0x123456}});
+    s.SetCustom(0x123456);
+    CHECK_FALSE(s.TakeSend());                 // the same again is no change
+    s.SetCustom(0x000001);
+    sent = s.TakeSend();
+    REQUIRE(sent);                             // a changed option sends the look again
+    CHECK(sent->parts == CoopLookShare::Parts{nine, {CoopLookShare::kCustomPart, 0x000001}});
+    s.SetCustom(0);
+    sent = s.TakeSend();
+    REQUIRE(sent);                             // none set: the part is left out
+    CHECK(sent->parts == CoopLookShare::Parts{nine});
+
+    CoopLookShare::Share r;
+    r.EnableSlots(true);
+    CHECK(r.CustomOf(2) == 0);
+    CHECK(r.OnEvent(Look(2, {{11, 0xFF0000}, nine, {CoopLookShare::kCustomPart, 0x654321}})));
+    CHECK(r.CustomOf(2) == 0x654321);
+    CHECK(r.CharacterOf(2) == 9);
+    CHECK(r.Of(2) == CoopLookShare::Parts{{11, 0xFF0000}});   // no painter sees either part
+    CHECK_FALSE(r.OnEvent(Look(2, {{11, 0xFF0000}, nine, {CoopLookShare::kCustomPart, 0x654321}})));
+    CHECK(r.OnEvent(Look(2, {{11, 0xFF0000}, nine, {CoopLookShare::kCustomPart, 0x654320}})));   // an option changed
+    CHECK(r.CustomOf(2) == 0x654320);
+    CHECK(r.OnEvent(Look(2, {{11, 0xFF0000}, {CoopLookShare::kCustomPart, 0x654320}})));         // Link: the options go with the character
+    CHECK(r.CustomOf(2) == 0);
+    CHECK(r.OnEvent(Look(2, {nine, {CoopLookShare::kCustomPart, 0x000002}})));
+    r.OnEvent(Kind(EventKind::player_left, 2));
+    CHECK(r.CustomOf(2) == 0);
+}
+
+TEST_CASE("character puppets: the mod's colour routine is read from the pack's manifest") {
+    using CoopPuppet::PackCharacterColours;
+    const auto c = PackCharacterColours(
+        R"({"characters": {"mod": "x", "colours": {"offset": 48340992, "head": "fd7bbfa9e0030034aB2c40b96b1d0051"}}, "x": 1})");
+    REQUIRE(c);
+    CHECK(c->first == 48340992u);
+    CHECK(c->second == std::array<std::uint8_t, 16>{0xfd, 0x7b, 0xbf, 0xa9, 0xe0, 0x03, 0x00, 0x34,
+                                                    0xab, 0x2c, 0x40, 0xb9, 0x6b, 0x1d, 0x00, 0x51});
+    CHECK_FALSE(PackCharacterColours(R"({"characters": {"mod": "x", "colours": null}})"));
+    CHECK_FALSE(PackCharacterColours(R"({"characters": null})"));
+    CHECK_FALSE(PackCharacterColours(R"({"colours": {"offset": 0, "head": "fd7bbfa9e0030034ab2c40b96b1d0051"}})"));
+    CHECK_FALSE(PackCharacterColours(R"({"colours": {"offset": 5, "head": "fd7bbfa9e0030034ab2c40b96b1d00"}})"));
+    CHECK_FALSE(PackCharacterColours(R"({"colours": {"offset": 5, "head": "zz7bbfa9e0030034ab2c40b96b1d0051"}})"));
+    CHECK_FALSE(PackCharacterColours(R"({"colours": {"offset": 99999999999, "head": "fd7bbfa9e0030034ab2c40b96b1d0051"}})"));
+    CHECK_FALSE(PackCharacterColours(R"({"colours": {"head": "fd7bbfa9e0030034ab2c40b96b1d0051"}, "offset": 5})"));
 }
 
 TEST_CASE("character puppets: the pack's are read from its manifest, and a player who picked one is shown as it") {

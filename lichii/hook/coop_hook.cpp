@@ -1621,22 +1621,42 @@ public:
             static const std::uint32_t picked_hash = coop::host::flag_hash("CharacterMenu_SelectedCharacter");
             EmulatorMemory flag_memory(system.ApplicationMemory(), base_);
             const auto picked = coop::host::GameFlags(flag_memory).get_int(picked_hash);
-            // A guest on the host's save sends its own pick, not the host's (CoopLookShare::OwnPick).
-            static CoopLookShare::OwnPick own_pick;
+            // ... and that mod's Customize options for it (kCustomFlags: an Int each, 0 to 15; 0 is the model's own).
+            static const auto custom_hashes = [] {
+                std::array<std::uint32_t, CoopLookShare::kCustomFlags.size()> out{};
+                for (std::size_t i = 0; i < out.size(); ++i) {
+                    out[i] = coop::host::flag_hash(CoopLookShare::kCustomFlags[i]);
+                }
+                return out;
+            }();
+            std::uint32_t custom = 0;
+            for (std::size_t i = 0; i < custom_hashes.size(); ++i) {
+                const auto v = coop::host::GameFlags(flag_memory).get_int(custom_hashes[i]);
+                if (v && *v > 0 && *v <= 15) {
+                    custom |= static_cast<std::uint32_t>(*v) << (4 * i);
+                }
+            }
+            // A guest on the host's save sends its own pick and options, not the host's (CoopLookShare::OwnPick).
+            using CoopLookShare::OwnPick;
+            static OwnPick own_pick;
             const auto kept = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop-character.txt";
             static const bool seeded = [&] {
                 std::ifstream in(kept);
-                unsigned number = 0;
-                if (in >> number && number <= CoopLookShare::kCharacterMax) {
-                    own_pick.Seed(static_cast<std::uint16_t>(number));
+                std::uint64_t value = 0;
+                if (in >> value && OwnPick::CharacterIn(value) <= CoopLookShare::kCharacterMax) {
+                    own_pick.Seed(value);
                 }
                 return true;
             }();
             (void)seeded;
-            CoopLookShare::SetCharacter(own_pick.Update(
+            const std::uint16_t character =
                 picked && *picked > 0 && *picked <= CoopLookShare::kCharacterMax ? static_cast<std::uint16_t>(*picked)
-                                                                                 : std::uint16_t{0},
-                CoopSave::UseCoopFolder() || CoopSave::HostSaveReady(), CoopSave::SaveLoadStarts()));
+                                                                                 : std::uint16_t{0};
+            const std::uint64_t sent = own_pick.Update(OwnPick::Of(character, custom),
+                                                       CoopSave::UseCoopFolder() || CoopSave::HostSaveReady(),
+                                                       CoopSave::SaveLoadStarts());
+            CoopLookShare::SetCharacter(OwnPick::CharacterIn(sent));
+            CoopLookShare::SetCustom(OwnPick::CustomIn(sent));
             if (const auto own = own_pick.TakeOwnChange()) {
                 std::ofstream(kept, std::ios::trunc) << *own << '\n';   // the next start (a guest that joins at once)
             }
