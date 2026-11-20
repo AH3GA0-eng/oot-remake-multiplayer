@@ -86,6 +86,7 @@ std::atomic<int> g_cell_games{0};   // the cells on this page that hold a game (
 std::atomic<std::uint32_t> g_rows_blank{0};
 std::atomic<int> g_focus_row{-1};
 std::atomic<bool> g_rows_moment{false};
+std::atomic<bool> g_nudge_up{false};   // (the game's cursor on a row hidden now: one Up moves it to the nearest shown)
 std::array<std::atomic<std::uint64_t>, kCells> g_cell_pane_at{};   // the cells' panes in our page, this opening
 // The pad's and the mouse's last state for the cells (OnPad, g_mutex).
 std::uint64_t g_browse_last = 0;
@@ -483,8 +484,8 @@ std::array<std::array<std::uint64_t, 2>, kListRows> g_list_box{};
 std::array<std::array<bool, 2>, kListRows> g_list_box_own{};   // (as the layout has them: shown again so)
 std::array<int, kListRows> g_list_box_vis{};
 
-// The rows with nothing on them not shown (the one the cursor is on kept: the game moves it to the nearest shown on the
-// next press). g_live_mutex.
+// The rows with nothing on them not shown; the game's cursor on one: one Up moves it to the nearest shown (OnPad).
+// g_live_mutex.
 void ApplyBlankRows(void* ctx) {
     if (g_rows_moment.load()) return;
     const std::uint32_t blank = g_rows_blank.load();
@@ -492,8 +493,11 @@ void ApplyBlankRows(void* ctx) {
     for (int r = 0; r < kRows; ++r) {
         const std::uint64_t pane = g_row_panes[static_cast<std::size_t>(r)];
         if (pane == 0) continue;
-        const bool want = (blank & (1u << r)) == 0 || r == focus;
-        if (((Read<std::uint32_t>(pane + 0xa8) & 1u) != 0) != want) SetVisible(ctx, pane, want);
+        const bool want = (blank & (1u << r)) == 0;
+        if (((Read<std::uint32_t>(pane + 0xa8) & 1u) != 0) != want) {
+            SetVisible(ctx, pane, want);
+            if (!want && r == focus) g_nudge_up = true;   // (the cursor there: one Up to the nearest shown, OnPad)
+        }
     }
 }
 
@@ -1039,12 +1043,11 @@ void SystemButtons(void* ctx) {
     if (g_rows_back_ms != 0 && (now >= g_rows_back_ms || FocusedShownName() == g_rows_back_when)) {
         g_rows_back_ms = 0;
         const std::uint32_t blank = g_rows_blank.load();
-        const int focus = g_focus_row.load();
         for (const auto& [pane, back] : g_rows_hidden) {
             if (pane == 0 || !back || (g_sys_hidden && SystemOwn(pane))) continue;
             bool empty = false;
             for (int r = 0; r < kRows; ++r) {
-                if (g_coop_buttons[static_cast<std::size_t>(r)] == pane) empty = (blank & (1u << r)) != 0 && r != focus;
+                if (g_coop_buttons[static_cast<std::size_t>(r)] == pane) empty = (blank & (1u << r)) != 0;
             }
             if (!empty) SetVisible(ctx, pane, true);
         }
@@ -1182,32 +1185,46 @@ void TraceFocus(const char* why) {
 
 // --- The mouse over our rows (MouseRows): the cursor and the rows' boxes, read at each pad read. g_mutex. ---
 MouseRows g_mouse_rows;
-std::uint64_t g_row_buttons_gen = 0, g_row_buttons_ms = 0;
-std::array<std::uint64_t, kButtonRows> g_row_buttons{};   // the shown Pa_Button_00..05 of the pages, as last found
+std::uint64_t g_row_buttons_gen = 0;
+// Every button of the pages screen named Pa_Button_00..05 (System's, the Multiplayer page's, Longshot Settings'), by
+// row; found once an opening.
+std::array<std::vector<std::uint64_t>, kButtonRows> g_row_buttons{};
 
-// The rows' boxes where the game puts them now. The buttons are found among the pages screen's buttons, the shown ones
-// of each name, once an opening and again each 250 ms while one found is not shown (our other page slid in: the
-// Multiplayer page's and Longshot Settings' rows are other buttons of the same names) or one is missing (the sixth
-// shows on Longshot Settings only).
+// The shown page's rows' boxes where the game puts them now. Each row is the button (of those of its name) whose box
+// holds that page's own row pane's place: the first of the name was System's at times, whose lower buttons sit lower
+// now (a tester's run, 2026-11-19: the mouse's steps went to the wrong row and the cursor went up and down without
+// end). A row of the page not shown (one with nothing on it, ApplyBlankRows) has no box. g_mutex.
 RowBoxes ReadRowBoxes(std::uint64_t now_ms) {
+    (void)now_ms;
     RowBoxes boxes{};
     const std::uint64_t pages = g_pages_screen;
     if (pages == 0) return boxes;
     const auto read = [](std::uint64_t a, void* out, std::size_t n) { return CoopRuntime::Read(a, out, n); };
-    const bool all = std::all_of(g_row_buttons.begin(), g_row_buttons.end(),
-                                 [&](std::uint64_t b) { return b != 0 && CoopModScreens::HitBox(read, b); });
-    if (g_row_buttons_gen != g_pages_gen || (!all && now_ms - g_row_buttons_ms > 250)) {
-        g_row_buttons_gen = g_pages_gen, g_row_buttons_ms = now_ms, g_row_buttons = {};
+    if (g_row_buttons_gen != g_pages_gen) {
+        g_row_buttons_gen = g_pages_gen, g_row_buttons = {};
         for (const std::uint64_t b : CoopModScreens::Buttons(read, pages)) {
             const int row = RowOfButton(CoopModScreens::ButtonName(read, b));
-            if (row >= 0 && g_row_buttons[static_cast<std::size_t>(row)] == 0 && CoopModScreens::HitBox(read, b)) {
-                g_row_buttons[static_cast<std::size_t>(row)] = b;
-            }
+            if (row >= 0) g_row_buttons[static_cast<std::size_t>(row)].push_back(b);
         }
     }
+    const bool settings = g_page.Which() == 1;
     for (int i = 0; i < kButtonRows; ++i) {
-        if (const auto box = CoopModScreens::HitBox(read, g_row_buttons[static_cast<std::size_t>(i)])) {
-            boxes[static_cast<std::size_t>(i)] = RowBox{true, box->x0, box->y0, box->x1, box->y1};
+        const std::size_t k = static_cast<std::size_t>(i);
+        const std::uint64_t pane = i < kRows ? (settings ? g_set_buttons[k] : g_coop_buttons[k])
+                                             : (settings ? g_settings_button_set : 0);
+        if (pane == 0 || (Read<std::uint32_t>(pane + 0xa8) & 1u) == 0) continue;   // (not on the page, or hidden)
+        float m[12] = {};
+        if (!CoopRuntime::Read(pane + 0x28, m, sizeof m)) continue;   // (its global matrix: the place at [9], [10])
+        const float cx = m[9], cy = m[10];
+        float best = 1e30f;
+        for (const std::uint64_t b : g_row_buttons[k]) {
+            const auto box = CoopModScreens::HitBox(read, b);
+            if (!box) continue;
+            const float dx = (box->x0 + box->x1) / 2 - cx, dy = (box->y0 + box->y1) / 2 - cy;
+            if (const float d = dx * dx + dy * dy; d < best) {
+                best = d;
+                boxes[k] = RowBox{true, box->x0, box->y0, box->x1, box->y1};
+            }
         }
     }
     return boxes;
@@ -1638,6 +1655,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             }
             out = g_page.OnPad(in, NowMs());
             typing = g_page.Typing() >= 0;
+            if (g_nudge_up.exchange(false) && g_page.Shown() && !typing && (in & (kPadUp | kPadDown)) == 0) out |= kPadUp;
             const std::uint64_t field_now = std::hash<std::string>{}(g_page.Field(0).text() + '\n' +
                                                                      g_page.Field(1).text()) ^ g_page.Field(0).cursor() ^
                                             (g_page.Field(1).cursor() << 8);
