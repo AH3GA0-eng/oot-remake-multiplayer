@@ -2,6 +2,7 @@
 #include "coop_pause_menu.h"
 
 #include <algorithm>
+#include <cctype>
 #include <utility>
 
 #include "coop_i18n.h"
@@ -382,6 +383,18 @@ std::vector<Menu::Line> Menu::Lines() const {
                        Act::kHostPort,
                        "The UDP port your game listens on when you host (default 27510). Type a number from 1 to "
                        "65535."});
+        out.push_back({Action("Relay", typing_ && typing_act_ == Act::kRelay ? options_.relay + "_"
+                                       : options_.relay.empty()                  ? std::string("None")
+                                                                                 : options_.relay),
+                       Act::kRelay,
+                       "The relay that finds rooms by name and lists public rooms: host[:port]. Hosting through it "
+                       "needs no router setup. Empty: the kit's default."});
+        out.push_back({Action("Room name", typing_ && typing_act_ == Act::kRoom ? options_.relay_room + "_"
+                                           : options_.relay_room.empty()        ? std::string("None")
+                                                                                : options_.relay_room),
+                       Act::kRoom,
+                       "Your room's name on the relay when you host: 3 to 24 letters, digits, - or _. Friends type "
+                       "it to join. Empty: a join code instead."});
         out.push_back({Toggle("Proximity voice chat", options_.voice), Act::kVoice,
                        "Talk with players near your Link through your microphone; they sound quieter the farther away "
                        "they are. Off: you neither send nor hear voices."});
@@ -631,6 +644,8 @@ std::string* Menu::Typed() {
     }
     switch (typing_act_) {
     case Act::kName: return &options_.name;
+    case Act::kRelay: return &options_.relay;
+    case Act::kRoom: return &options_.relay_room;
     case Act::kCode: return &join_;
     case Act::kJoinIp: return &join_ip_;
     case Act::kJoinPassword: return &join_password_;
@@ -708,6 +723,22 @@ void Menu::EndTyping(bool keep) {
     replace_typed_ = false;
     typing_act_ = Act::kNone;
     typing_fresh_ = false;
+    if (act == Act::kRelay || act == Act::kRoom) {   // (the relay and the room name: saved when changed)
+        std::string& field = act == Act::kRelay ? options_.relay : options_.relay_room;
+        field = std::string(Trim(field));
+        const bool ok = act == Act::kRelay ? CoopTitleMenu::RelayOk(field) : CoopTitleMenu::RoomNameOk(field);
+        if (keep && ok) {
+            if (act == Act::kRelay && field.empty()) field = CoopTitleMenu::kDefaultRelay;
+            if (field != name_before_) request_ = Request{Request::Kind::kSave, {}};
+            return;
+        }
+        if (keep) {
+            note_ = {act == Act::kRelay ? "Relay: host or host:port, no spaces. It was not changed."
+                                        : "Room name: 3 to 24 letters, digits, - or _. It was not changed."};
+        }
+        field = name_before_;
+        return;
+    }
     if (act == Act::kName) {
         if (keep && CoopTitleMenu::NameOk(options_.name)) {
             options_.name = std::string(Trim(options_.name));
@@ -1051,6 +1082,13 @@ void Menu::Decide(Act act) {
         typing_act_ = Act::kName;
         typing_fresh_ = false;
         break;
+    case Act::kRelay:
+    case Act::kRoom:
+        name_before_ = act == Act::kRelay ? options_.relay : options_.relay_room;
+        typing_ = true;
+        typing_act_ = act;
+        typing_fresh_ = false;
+        break;
     case Act::kLook:
     case Act::kPlayers:
     case Act::kVoiceMode:
@@ -1216,7 +1254,15 @@ bool Menu::Char(std::uint32_t cp) {
         join_.clear();
     }
     replace_typed_ = false;
-    const std::size_t max_bytes = typing_act_ == Act::kJoinIp         ? kMaxIpBytes
+    if (typing_act_ == Act::kRoom && !(std::isalnum(static_cast<unsigned char>(add[0])) != 0 || add == "-" || add == "_")) {
+        return true;   // (a room name: letters, digits, - and _ only)
+    }
+    if (typing_act_ == Act::kRelay && (add.size() != 1 || add[0] == ' ')) {
+        return true;   // (a relay line: no spaces, plain characters)
+    }
+    const std::size_t max_bytes = typing_act_ == Act::kRoom            ? 24
+                                  : typing_act_ == Act::kRelay         ? 128
+                                  : typing_act_ == Act::kJoinIp        ? kMaxIpBytes
                                   : typing_act_ == Act::kJoinPassword ? CoopTitleMenu::kMaxPasswordBytes
                                                                       : kMaxJoinBytes;
     if (typing_act_ == Act::kName ? CodePoints(*t) >= CoopTitleMenu::kMaxNameChars : t->size() + add.size() > max_bytes) {
@@ -1403,6 +1449,7 @@ View Menu::view() const {
             // (nothing to press: the row is read)
         } else if (line->row.kind == RowKind::kAction) {
             const bool typed_row = line->act == Act::kName || line->act == Act::kHostPort ||
+                                   line->act == Act::kRelay || line->act == Act::kRoom ||
                                    line->act == Act::kJoinIp || line->act == Act::kJoinPort ||
                                    line->act == Act::kJoinPassword;
             v.confirm = line->row.value.empty() || line->row.right ? "Open" : typed_row ? "Type" : "Choose";

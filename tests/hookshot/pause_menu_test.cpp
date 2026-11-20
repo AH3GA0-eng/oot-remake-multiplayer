@@ -444,15 +444,17 @@ TEST_CASE("pause tab: Settings: name, Link's look, players and voice chat (off u
     m.Show(o);
     m.Open(Page::kSettings);
     CHECK(Names(m) == std::vector<std::string>{"Your name", "Link's look", "Players when you host",
-                                               "Port when you host", "Proximity voice chat", "Chat key",
-                                               "Show players on map", "Names on map", "New Game+",
+                                               "Port when you host", "Relay", "Room name", "Proximity voice chat",
+                                               "Chat key", "Show players on map", "Names on map", "New Game+",
                                                "Saves"});   // (no patch 0015: no input rows; Navi's two last)
     View v = m.view();
     CHECK(v.rows[0].value == "Saria");
     CHECK(v.rows[1].value == "By player number");
     CHECK(v.rows[3].value == "27510");
-    CHECK(v.rows[4].kind == RowKind::kToggle);
-    CHECK_FALSE(v.rows[4].on);   // the default
+    CHECK(v.rows[4].value == "None");   // (the relay: the kit's default, none yet)
+    CHECK(v.rows[5].value == "None");   // (no room name)
+    CHECK(v.rows[6].kind == RowKind::kToggle);
+    CHECK_FALSE(v.rows[6].on);   // the default
     // the name, typed
     m.Press(Input::kDecide);
     CHECK(m.typing());
@@ -524,10 +526,10 @@ TEST_CASE("pause tab: Settings: players on the map and their names, on unless tu
     m.Show(CoopTitleMenu::Options{});
     m.Open(Page::kSettings);
     View v = m.view();
-    REQUIRE(v.rows.size() == 10);   // (the port and chat key rows before them, New Game+ and Saves after; no patch 0015)
-    CHECK(v.rows[6].kind == RowKind::kToggle);
-    CHECK(v.rows[6].on);
-    CHECK(v.rows[7].on);
+    REQUIRE(v.rows.size() == 12);   // (the port, relay and chat key rows before them, New Game+ and Saves after)
+    CHECK(v.rows[8].kind == RowKind::kToggle);
+    CHECK(v.rows[8].on);
+    CHECK(v.rows[9].on);
     SelectRow(m, "Show players on map");
     m.Press(Input::kLeft);
     CHECK_FALSE(m.options().map_players);
@@ -568,13 +570,13 @@ TEST_CASE("pause tab: the mouse selects a row and clicks a value's halves") {
     Menu m;
     m.Show(CoopTitleMenu::Options{});
     m.Open(Page::kSettings);
-    m.Select(4);
+    m.Select(6);
     CHECK(Selected(m) == "Proximity voice chat");
-    m.Click(4, 1);   // the On half
+    m.Click(6, 1);   // the On half
     CHECK(m.options().voice);
-    m.Click(4, -1);
+    m.Click(6, -1);
     CHECK_FALSE(m.options().voice);
-    m.Click(4, 0);   // the name: selected only
+    m.Click(6, 0);   // the name: selected only
     CHECK_FALSE(m.options().voice);
     m.Click(0, 0);   // an action: as A
     CHECK(m.typing());
@@ -661,9 +663,10 @@ TEST_CASE("pause tab: Settings: Controller and Keyboard rows when this Hookshot 
     m.SetInputRows("Controller: all", "Keyboard + mouse: window in front");
     CHECK(Selected(m) == "Chat key");   // (the rows came under it: the same row stays chosen)
     CHECK(Names(m) == std::vector<std::string>{"Your name", "Link's look", "Players when you host",
-                                               "Port when you host", "Proximity voice chat", "Chat key",
-                                               "Controller", "Keyboard and mouse", "Show players on map",
-                                               "Names on map", "New Game+", "Saves"});
+                                               "Port when you host", "Relay", "Room name",
+                                               "Proximity voice chat", "Chat key", "Controller",
+                                               "Keyboard and mouse", "Show players on map", "Names on map",
+                                               "New Game+", "Saves"});
     SelectRow(m, "Controller");
     View v = m.view();
     CHECK(v.rows[static_cast<std::size_t>(v.selected)].value == "all");
@@ -688,7 +691,7 @@ TEST_CASE("pause tab: Settings: Controller and Keyboard rows when this Hookshot 
     CHECK(r->kind == Request::Kind::kKeyboard);
     // gone again (the module found no patch 0015): the selection stays on a row there is
     m.SetInputRows({}, {});
-    CHECK(Names(m).size() == 10);   // (with the port, two map rows, New Game+ and Saves)
+    CHECK(Names(m).size() == 12);   // (with the port, the relay rows, two map rows, New Game+ and Saves)
     CHECK_FALSE(Selected(m).empty());
 }
 
@@ -1074,4 +1077,30 @@ TEST_CASE("pause tab: the Settings row's name is cut on a character, not in the 
     m.Show(o);
     const std::string v = m.view().rows[3].value;
     CHECK(v == "Ab\xC3\xA9\xC3\xA9\xC3\xA9...");   // (byte 9 is inside the fourth letter: the cut steps back to its start)
+}
+
+TEST_CASE("pause tab: Settings: the relay and the room name, typed, checked and saved") {
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    m.Open(Page::kSettings);
+    SelectRow(m, "Relay");
+    m.Press(Input::kDecide);
+    CHECK(m.typing());
+    for (const char c : std::string("relay.example net:27530")) m.Char(static_cast<unsigned char>(c));   // (no space)
+    m.Press(Input::kDecide);
+    CHECK(m.options().relay == "relay.examplenet:27530");
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+    SelectRow(m, "Room name");
+    m.Press(Input::kDecide);
+    for (const char c : std::string("forest gang!")) m.Char(static_cast<unsigned char>(c));   // (letters, digits, - _)
+    m.Press(Input::kDecide);
+    CHECK(m.options().relay_room == "forestgang");
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+    m.Press(Input::kDecide);   // (too short: not kept)
+    m.Press(Input::kErase);
+    for (int i = 0; i < 9; ++i) m.Press(Input::kErase);
+    m.Char('a');
+    m.Press(Input::kDecide);
+    CHECK(m.options().relay_room == "forestgang");
+    CHECK_FALSE(m.TakeRequest().has_value());
 }
