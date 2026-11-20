@@ -299,7 +299,7 @@ def character_project(variant, file):
 def find_characters(mod_dir, log=print):
     """The Character Select mod among the mods the pack is made into: {"mod": its folder, "files":
     {file number: [variants it has a model for]}, "heaps": {variant: {field: bytes}}, "numbers": {file:
-    stored number}}, or None. Looked for beside the pack (an emulator's load/<title id>) and in the mods
+    stored number}, "colours": {"offset", "head"} or None}, or None. Looked for beside the pack (an emulator's load/<title id>) and in the mods
     folder of a `contents/<title id>/<pack>` layout. A list that cannot be read is said and left out."""
     here = os.path.abspath(mod_dir)
     roots = [os.path.dirname(here)]
@@ -329,12 +329,21 @@ def find_characters(mod_dir, log=print):
                     if have:
                         files[n], numbers[n] = have, int(row["number"])
                 heaps = {v: {k: int(doc["actor_heaps"][v][k]) for k in CHARACTER_HEAPS} for v in VARIANTS}
+                # The mod's colour routine for a puppet (optional): main's offset and its first 16 bytes, which
+                # the hook checks before it calls it (docs/puppet.md).
+                colours = None
+                if isinstance(doc.get("puppet_colours"), dict):
+                    c = doc["puppet_colours"]
+                    offset, head = int(c["offset"]), str(c["head"]).lower()
+                    if not 0 < offset < 1 << 32 or len(head) != 32 or any(ch not in "0123456789abcdef" for ch in head):
+                        raise ValueError("puppet_colours: offset and 32 hex digits of head wanted")
+                    colours = {"offset": offset, "head": head}
             except (OSError, ValueError, KeyError, TypeError) as e:
                 log(f"characters: {path} could not be read ({e}): no character puppets")
                 continue
             if files:
                 return {"mod": name, "dir": os.path.join(root, name), "files": files, "heaps": heaps,
-                        "numbers": numbers}
+                        "numbers": numbers, "colours": colours}
     return None
 
 
@@ -2223,7 +2232,8 @@ def build(romfs, mod_dir, log=print, heaps=None, sound=True, player_footsteps=Fa
         "blade_items": blade_files,
         "tunics_off": tunics_off,
         "characters": ({"mod": characters["mod"], "numbers": {str(n): characters["numbers"][n] for n in sorted(characters["files"])},
-                        "variants": {str(n): characters["files"][n] for n in sorted(characters["files"])}} if characters else None),
+                        "variants": {str(n): characters["files"][n] for n in sorted(characters["files"])},
+                        "colours": characters.get("colours")} if characters else None),
         "test_tunic": test_tunic,
         "sound": sound,
         "footsteps": "player" if player_footsteps or not sound else "puppet",

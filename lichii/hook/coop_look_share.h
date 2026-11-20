@@ -58,6 +58,14 @@ bool HasGear(const Parts& parts);
 inline constexpr std::uint8_t kCharacterPart = 63;
 inline constexpr std::uint32_t kCharacterMark = 0x010000;
 inline constexpr std::uint16_t kCharacterMax = 0x0FFF;
+// That mod's Customize options for the picked character (hair, eye and clothing colours, gear shown or
+// hidden) ride along the same way, as part kCustomPart: its "colour" is the six options, four bits each,
+// in the order of kCustomFlags (the mod's GameData Ints that hold them). Sent only with a character and
+// only when one of them is set; taken out of the parts on arrival (CustomOf has it).
+inline constexpr std::uint8_t kCustomPart = 62;
+inline constexpr std::array<const char*, 6> kCustomFlags = {
+    "CharacterMenu_CustomHair",    "CharacterMenu_CustomEyes",     "CharacterMenu_CustomGear",
+    "CharacterMenu_CustomClothes", "CharacterMenu_CustomClothes2", "CharacterMenu_CustomClothes3"};
 
 // The rules, with no network: what to send and when, what the others wear.
 // Not thread-safe (the functions below guard it).
@@ -67,6 +75,10 @@ public:
     void Set(Parts parts);
     // Our picked character (0: Link, or no Character Select mod): when it changed, the look goes out again.
     void SetCharacter(std::uint16_t number);
+    // Our Customize options for it (kCustomPart's 24 bits): when they changed, the look goes out again.
+    void SetCustom(std::uint32_t options);
+    // Player `number`'s Customize options: 0 until heard, and for none set.
+    std::uint32_t CustomOf(std::uint8_t number) const;
     // Player `number`'s picked character: 0 until one is heard, and for Link.
     std::uint16_t CharacterOf(std::uint8_t number) const;
     // An event of the session: a join or a (re)connect sends ours again; a
@@ -114,6 +126,8 @@ private:
     bool character_said_ = false;   // a character went out once: a look goes out without colours too
     std::map<std::uint8_t, Parts> theirs_;
     std::map<std::uint8_t, std::uint16_t> their_character_;
+    std::uint32_t custom_ = 0;
+    std::map<std::uint8_t, std::uint32_t> their_custom_;
     bool slots_on_ = false;
     std::array<std::uint8_t, kSlots> slots_{};   // the player in each slot, 0 for none
     struct Ready {
@@ -126,28 +140,35 @@ private:
     std::array<Ready, kSlots> ready_{};
 };
 
-// Which pick goes out (coop_hook reads the saved Int twice a second). A guest plays the host's save (CoopSave), whose
-// Int is the HOST's pick, not the guest's: until the guest picks again in the mod on that save, the pick it had on its
-// own save this run goes out (none read yet: Link), so the others never see the guest as the host's character. A
-// new save load is a new start (CoopSave::SaveLoadStarts). The guest's own screen still shows the save's pick (the
-// mod's code reads that Int; we leave the game's data alone). Not thread-safe (the game's thread only).
+// Which pick goes out (coop_hook reads the saved Ints twice a second): the character and its Customize options as
+// one value (OwnPick::Of). A guest plays the host's save (CoopSave), whose Ints are the HOST's pick and options, not
+// the guest's: until the guest changes either on that save, the pick it had on its own save goes out (kept in
+// coop-character.txt for the next start; none known: Link), so the others never see the guest as the host's
+// character. A new save load is a new start (CoopSave::SaveLoadStarts). The guest's own screen still shows the save's
+// pick (the mod's code reads those Ints; we leave the game's data alone). Not thread-safe (the game's thread only).
 class OwnPick {
 public:
-    // `read`: the saved Int now (0: Link, or no mod); `on_host_save`: this game plays the host's save;
+    // The character (low 16 bits) and its Customize options (kCustomFlags' nibbles, the 24 bits above).
+    static std::uint64_t Of(std::uint16_t character, std::uint32_t custom) {
+        return character | (static_cast<std::uint64_t>(custom & 0xFFFFFFu) << 16);
+    }
+    static std::uint16_t CharacterIn(std::uint64_t pick) { return static_cast<std::uint16_t>(pick & 0xFFFFu); }
+    static std::uint32_t CustomIn(std::uint64_t pick) { return static_cast<std::uint32_t>(pick >> 16) & 0xFFFFFFu; }
+    // `read`: the saved Ints now (Of; 0: Link, or no mod); `on_host_save`: this game plays the host's save;
     // `loads`: CoopSave::SaveLoadStarts(). The pick to send.
-    std::uint16_t Update(std::uint16_t read, bool on_host_save, std::uint64_t loads);
+    std::uint64_t Update(std::uint64_t read, bool on_host_save, std::uint64_t loads);
     // The pick kept from an earlier start (coop-character.txt beside coop.ini), before the first Update: a guest that
     // joins before it plays its own save still sends its own.
-    void Seed(std::uint16_t own) { own_ = own; kept_ = own; }
-    // Our own pick changed (read on our own save) since the last call: the number to keep for the next start.
-    std::optional<std::uint16_t> TakeOwnChange();
+    void Seed(std::uint64_t own) { own_ = own; kept_ = own; }
+    // Our own pick changed (read on our own save) since the last call: the value to keep for the next start.
+    std::optional<std::uint64_t> TakeOwnChange();
 
 private:
-    std::uint16_t own_ = 0;                 // the last pick read on our own save
+    std::uint64_t own_ = 0;                 // the last pick read on our own save
     std::optional<std::uint64_t> loads_;    // the host's save load the baseline is of
-    std::uint16_t at_load_ = 0;             // the host's pick, as that load brought it
-    bool repicked_ = false;                 // the guest picked on the host's save since that load
-    std::optional<std::uint16_t> kept_;     // what TakeOwnChange last gave (or Seed)
+    std::uint64_t at_load_ = 0;             // the host's pick, as that load brought it
+    bool repicked_ = false;                 // the guest changed it on the host's save since that load
+    std::optional<std::uint64_t> kept_;     // what TakeOwnChange last gave (or Seed)
 };
 
 // The hook's one Share. Set: any thread. OnEvent: the network thread, with
@@ -155,6 +176,8 @@ private:
 void Set(Parts parts);
 void SetCharacter(std::uint16_t number);
 std::uint16_t CharacterOf(std::uint8_t number);
+void SetCustom(std::uint32_t options);
+std::uint32_t CustomOf(std::uint8_t number);
 void OnEvent(const coop::net::Event& event, coop::net::Client& client);
 void Frame(coop::host::Session* session);
 std::optional<Parts> Of(std::uint8_t number);

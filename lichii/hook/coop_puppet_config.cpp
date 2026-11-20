@@ -257,6 +257,12 @@ void Configure(bool perceived_safe) {
     if (const auto v = Env("LICHII_COOP_CHARACTERS"); v != "0" && v != "off") {
         settings.character_actors = PackCharacters();
         settings.character_files = PackCharacterFiles();
+        for (const auto& text : PackManifests()) {
+            if (const auto colours = CoopPuppet::PackCharacterColours(text)) {
+                settings.character_apply = colours->first;
+                settings.character_apply_head = colours->second;
+            }
+        }
         if (!settings.character_actors.empty()) {
             lines.push_back("coop: the puppet pack has " + std::to_string(settings.character_actors.size()) +
                             " puppets for the Character Select mod's characters: a player who picked one is shown "
