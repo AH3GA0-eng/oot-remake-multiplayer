@@ -3759,6 +3759,83 @@ TEST_CASE("join password: a game with no password (the empty one's proof) is ref
   CHECK(refused->reason == RefuseReason::bad_password);
 }
 
+TEST_CASE("join password: the same network joins with the same-network key when the host lets it, and only it") {
+  SessionConfig config = with_password("hunter2");
+  config.same_network_open = true;
+  Harness h(config);
+  // From a private address: in, with the traffic sealed as for any player.
+  h.connect(1, enet_address(192, 168, 1, 20));
+  h.clear();
+  h.receive(1, hello_from("Link"), kChannelSession);
+  auto challenge = only_message_to<JoinChallenge>(h, 1);
+  REQUIRE(challenge);
+  h.clear();
+  h.receive(1, JoinProof{h.proof(std::string(kSameNetworkPassword), challenge->nonce)}, kChannelSession);
+  bool welcomed = false;
+  for (const Sent& s : h.to(1)) welcomed = welcomed || std::holds_alternative<Welcome>(s.message);
+  CHECK(welcomed);
+  CHECK(h.session.player_count() == 1);
+  CHECK(h.session.stats().same_network_joins == 1);
+  CHECK(h.session.stats().bad_password == 0);
+  // The join password still works from there, and counts as the password.
+  h.connect(2, enet_address(10, 0, 0, 7));
+  h.clear();
+  h.receive(2, hello_from("Saria"), kChannelSession);
+  challenge = only_message_to<JoinChallenge>(h, 2);
+  REQUIRE(challenge);
+  h.receive(2, JoinProof{h.proof("hunter2", challenge->nonce)}, kChannelSession);
+  CHECK(h.session.player_count() == 2);
+  CHECK(h.session.stats().same_network_joins == 1);
+  // From an internet address, from 127.0.0.1 (a relay's or a join helper's way in) or from no known address: refused.
+  ConnectionId id = 3;
+  for (std::optional<std::uint32_t> from : {std::optional<std::uint32_t>(enet_address(8, 8, 4, 4)),
+                                            std::optional<std::uint32_t>(enet_address(127, 0, 0, 1)),
+                                            std::optional<std::uint32_t>(enet_address(100, 64, 0, 9)),
+                                            std::optional<std::uint32_t>()}) {
+    h.connect(id, from);
+    h.clear();
+    h.receive(id, hello_from("Mido"), kChannelSession);
+    challenge = only_message_to<JoinChallenge>(h, id);
+    REQUIRE(challenge);
+    h.clear();
+    h.receive(id, JoinProof{h.proof(std::string(kSameNetworkPassword), challenge->nonce)}, kChannelSession);
+    auto refused = only_message_to<Refused>(h, id);
+    REQUIRE(refused);
+    CHECK(refused->reason == RefuseReason::bad_password);
+    ++id;
+  }
+  CHECK(h.session.player_count() == 2);
+  CHECK(h.session.stats().same_network_joins == 1);
+}
+
+TEST_CASE("join password: a host that keeps the password for its own network refuses the same-network key there") {
+  Harness h(with_password("hunter2"));   // (same_network_open off: as before)
+  h.connect(1, enet_address(192, 168, 1, 20));
+  h.clear();
+  h.receive(1, hello_from("Link"), kChannelSession);
+  auto challenge = only_message_to<JoinChallenge>(h, 1);
+  REQUIRE(challenge);
+  h.clear();
+  h.receive(1, JoinProof{h.proof(std::string(kSameNetworkPassword), challenge->nonce)}, kChannelSession);
+  auto refused = only_message_to<Refused>(h, 1);
+  REQUIRE(refused);
+  CHECK(refused->reason == RefuseReason::bad_password);
+  CHECK(h.session.stats().same_network_joins == 0);
+}
+
+TEST_CASE("join password: which addresses are the same network") {
+  CHECK(is_same_network(ipv4_of(enet_address(10, 1, 2, 3))));
+  CHECK(is_same_network(ipv4_of(enet_address(172, 16, 0, 1))));
+  CHECK(is_same_network(ipv4_of(enet_address(172, 31, 255, 254))));
+  CHECK(is_same_network(ipv4_of(enet_address(192, 168, 0, 10))));
+  CHECK(is_same_network(ipv4_of(enet_address(169, 254, 9, 9))));
+  CHECK(!is_same_network(ipv4_of(enet_address(127, 0, 0, 1))));     // (a relay's and a helper's)
+  CHECK(!is_same_network(ipv4_of(enet_address(172, 32, 0, 1))));
+  CHECK(!is_same_network(ipv4_of(enet_address(100, 64, 0, 1))));    // (a carrier's NAT, a VPN's: not this network)
+  CHECK(!is_same_network(ipv4_of(enet_address(25, 1, 2, 3))));
+  CHECK(!is_same_network(ipv4_of(enet_address(8, 8, 8, 8))));
+}
+
 TEST_CASE("join password: no proof at all times out like a missing HELLO") {
   SessionConfig config = with_password("hunter2");
   config.hello_timeout_us = 1'000'000;

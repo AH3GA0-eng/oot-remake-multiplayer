@@ -188,6 +188,7 @@ private:
         kStartHost, kHostPort, kCopyInvite, kPasteAnswer, kCopyAnswer, kCopyLan, kCopyVpn, kLeave,
         kRejoin, kCode, kClearCode, kJoinIp, kJoinPort, kJoinPassword, kJoinNow, kRelay, kRoom,
         kName, kLook, kPlayers, kVoice, kMic, kVoiceMode, kChatKey, kController, kKeyboard, kMapPlayers, kMapNames,
+        kSameNetwork,
         kOpenCustomize, kNgPlus, kSaveSet
     };
     struct Line;   // a row, what it does and its help

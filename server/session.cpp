@@ -247,10 +247,21 @@ void Session::on_join_proof(ConnectionId id, Connection& c, const JoinProof& pro
   std::shared_ptr<const KeyPair> key_pair = std::move(c.key_pair);
   // Bound to both key shares: a proof relayed by someone who swapped them
   // (to sit in the middle) does not match.
-  const bool right =
+  bool right =
       key_pair != nullptr && hello.key_share &&
       same_proof(proof.proof, join_proof(config_.join_password, c.nonce, *hello.key_share,
                                          key_pair->share()));
+  // The same network without the password (SessionConfig::same_network_open):
+  // the same-network key, from a private address only.
+  std::string_view password = config_.join_password;
+  if (!right && config_.same_network_open && key_pair != nullptr && hello.key_share && c.address &&
+      is_same_network(ipv4_of(*c.address)) &&
+      same_proof(proof.proof, join_proof(protocol::kSameNetworkPassword, c.nonce, *hello.key_share,
+                                         key_pair->share()))) {
+    right = true;
+    password = protocol::kSameNetworkPassword;
+    ++stats_.same_network_joins;
+  }
   c.nonce = {};  // used once: a second proof on this connection finds no nonce to match
   std::vector<std::uint8_t> hello_packet = std::move(c.hello_packet);
   std::vector<std::uint8_t> challenge_packet = std::move(c.challenge_packet);
@@ -265,7 +276,7 @@ void Session::on_join_proof(ConnectionId id, Connection& c, const JoinProof& pro
   }
   // The keys for this connection: from here on, all of it is sealed.
   std::optional<TrafficKeys> keys =
-      derive_traffic_keys(*key_pair, *hello.key_share, config_.join_password, hello_packet,
+      derive_traffic_keys(*key_pair, *hello.key_share, password, hello_packet,
                           challenge_packet, /*is_server=*/true);
   if (!keys) {
     ++stats_.no_key_share;
@@ -2889,6 +2900,11 @@ std::uint32_t ipv4_of(std::uint32_t enet_host) {
   std::memcpy(b, &enet_host, 4);
   return (std::uint32_t{b[0]} << 24) | (std::uint32_t{b[1]} << 16) | (std::uint32_t{b[2]} << 8) |
          std::uint32_t{b[3]};
+}
+
+bool is_same_network(std::uint32_t ipv4) {
+  const std::uint32_t a = ipv4 >> 24, b = (ipv4 >> 16) & 255u;
+  return a == 10 || (a == 172 && (b & 0xF0u) == 16) || (a == 192 && b == 168) || (a == 169 && b == 254);
 }
 
 void Session::refuse(ConnectionId id, Connection& c, RefuseReason reason,

@@ -1458,7 +1458,7 @@ void ActCell(int cell) {
         std::lock_guard lock(g_mutex);
         g_lan_pick = LanPick{h.address, CoopLan::RowText(h, coop::protocol::kProtocolVersion), h.game.port};
     }
-    SetView(View::kLanGame);   // (the password first: every session has one)
+    SetView(View::kLanGame);   // (its view: Join this game, a password typed first if its host asks one)
 }
 
 // A row's action, or (line >= 0) a line of the details list's (DetailLines' act: their Auto-rejoin) (after the lock:
@@ -1562,7 +1562,7 @@ void Act(int row, int line = -1) {
                 std::lock_guard lock(g_mutex);
                 g_lan_pick = LanPick{h.address, CoopLan::RowText(h, coop::protocol::kProtocolVersion), h.game.port};
             }
-            SetView(View::kLanGame);   // (the password first: every session has one, and co-op's menu would ask it)
+            SetView(View::kLanGame);   // (its view: Join this game, a password typed first if its host asks one)
         }
         break;
     }

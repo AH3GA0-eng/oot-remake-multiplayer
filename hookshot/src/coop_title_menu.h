@@ -82,6 +82,8 @@ struct Options {
     bool show_players = false;     // LICHII_COOP_SHOW_PLAYERS (the list always shown)
     bool pvp = false;              // pvp (the host's)
     bool approve_joins = false;    // approve_joins (the host's: each new player waits for /allow or /deny); read only
+    bool same_network_password = false;   // same_network_password (the host's: on, players on this network need the
+                                          // join password too; off, the default, they join without it)
     bool auto_rejoin = false;      // auto_rejoin (join the last friend's game again by itself: coop_auto_rejoin.h)
     bool list_room = false;        // list_room (hosting with a relay room: the room on the relay's public list)
     bool upnp = true;              // upnp (the host's router forward)
