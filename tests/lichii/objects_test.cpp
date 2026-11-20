@@ -6971,3 +6971,125 @@ TEST_CASE("carry claim: a Cucco our Link lifts is claimed, one its owner carries
     CHECK_FALSE(run("Lifted", "Lifted"));  // the owner carries it: its Lifted on our copy, it stays theirs
     CHECK_FALSE(run("Wait", "Wait"));      // nobody carries it
 }
+
+TEST_CASE("objects: a Floormaster at life 0 is split, its death is its whole brood's (row 172)") {
+    using CoopObjects::PartOf;
+    using CoopObjects::SplitsAtZero;
+    // The brood follows its maker (one owner, one hand-over).
+    REQUIRE(PartOf("Enemy_Floormaster_Little") != nullptr);
+    CHECK(std::string(PartOf("Enemy_Floormaster_Little")->roots.front()) == "Enemy_Floormaster");
+    CHECK_FALSE(PartOf("Enemy_Floormaster_Little")->boss);
+    REQUIRE(PartOf("Enemy_Floormaster_Little_Truth") != nullptr);
+    CHECK(std::string(PartOf("Enemy_Floormaster_Little_Truth")->roots.front()) == "Enemy_Floormaster_Truth");
+    REQUIRE(PartOf("Enemy_Leever") != nullptr);
+    CHECK(std::string(PartOf("Enemy_Leever")->roots.front()) == "Enemy_Leever_Big");
+    CHECK(PartOf("Enemy_Floormaster") == nullptr);
+    CHECK(PartOf("Enemy_Wallmaster") == nullptr);
+    CHECK(SplitsAtZero("Enemy_Floormaster"));
+    CHECK(SplitsAtZero("Enemy_Floormaster_Truth"));
+    CHECK_FALSE(SplitsAtZero("Enemy_Floormaster_Little"));
+    CHECK_FALSE(SplitsAtZero("Enemy_Stalchild"));
+
+    const auto brood = [](std::int32_t master_life, std::int32_t little_life) {
+        return std::vector<Seen>{Enemy(0x100, 0x11, master_life, 0.0f, "Enemy_Floormaster"),
+                                 Enemy(0x200, 0x22, little_life, 2.0f, "Enemy_Floormaster_Little"),
+                                 Enemy(0x300, 0x33, little_life, 3.0f, "Enemy_Floormaster_Little"),
+                                 Enemy(0x400, 0x44, little_life, 4.0f, "Enemy_Floormaster_Little")};
+    };
+    const auto deads = [](Sync& sync, std::uint64_t from) {
+        std::vector<proto::ObjectRemove> out;
+        for (const std::uint64_t t : {from, from + 40, from + 80, from + 1100}) {
+            for (const auto& r : All<proto::ObjectRemove>(Tick(sync, t * kMs, {}))) {
+                if (r.reason == proto::RemoveReason::dead) out.push_back(r);
+            }
+        }
+        return out;
+    };
+    const auto owned = [&brood](Sync& sync) {
+        // The groups link the Littles to it, sent with the first walk's presence (a later walk
+        // with the same groups and presence sends none; it keeps the links).
+        const auto groups = All<proto::ObjectGroup>(Tick(sync, 0, brood(4, 2)));
+        for (const std::uint64_t a : {0x100, 0x200, 0x300, 0x400}) Own(sync, *sync.IdOf(a), 1);
+        Tick(sync, 10 * kMs, brood(4, 2));
+        REQUIRE_FALSE(groups.empty());
+        std::size_t linked = 0;
+        for (const auto& e : groups.back().entries) {
+            if (e.root == *sync.IdOf(0x100) && e.member != e.root) ++linked;
+        }
+        CHECK(linked == 3);
+    };
+
+    // Split (its life 0, the Littles out and alive), then the room goes (a player died: Game Over): no kill.
+    {
+        Sync sync;
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        owned(sync);
+        Tick(sync, 20 * kMs, brood(0, 2));
+        CHECK(deads(sync, 30).empty());
+    }
+    // Every Little killed, then the Floormaster goes at 0: one death for it too.
+    {
+        Sync sync;
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        owned(sync);
+        Tick(sync, 20 * kMs, brood(0, 0));
+        const auto removes = deads(sync, 30);
+        CHECK(removes.size() == 4);
+        CHECK(std::any_of(removes.begin(), removes.end(),
+                          [](const proto::ObjectRemove& r) { return r.id.value == 0x11; }));
+    }
+    const auto root_dead = [](const std::vector<proto::ObjectRemove>& removes) {
+        return std::count_if(removes.begin(), removes.end(),
+                             [](const proto::ObjectRemove& r) { return r.id.value == 0x11; });
+    };
+    // A Little not killed in time grows it back (it and its siblings leave alive, its life comes back). The
+    // next split's Littles all die, then it goes at 0: one death (the brood is the split's, not the visit's).
+    {
+        Sync sync;
+        sync.SetDeleteEvents(true);
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        owned(sync);
+        Tick(sync, 20 * kMs, brood(0, 2));
+        const std::vector<Seen> regrown{Enemy(0x100, 0x11, 4, 0.0f, "Enemy_Floormaster")};
+        for (const std::uint64_t t : {30, 40, 50}) {
+            CHECK(root_dead(All<proto::ObjectRemove>(Tick(sync, t * kMs, regrown))) == 0);
+        }
+        const auto second = [](std::int32_t little_life) {
+            return std::vector<Seen>{Enemy(0x100, 0x11, 0, 0.0f, "Enemy_Floormaster"),
+                                     Enemy(0x500, 0x55, little_life, 2.0f, "Enemy_Floormaster_Little"),
+                                     Enemy(0x600, 0x66, little_life, 3.0f, "Enemy_Floormaster_Little"),
+                                     Enemy(0x700, 0x77, little_life, 4.0f, "Enemy_Floormaster_Little")};
+        };
+        Tick(sync, 60 * kMs, second(2));
+        Tick(sync, 70 * kMs, second(0));
+        CHECK(root_dead(deads(sync, 80)) == 1);
+    }
+    // The same, but the second split's Littles leave alive (a player's Game Over): still no kill.
+    {
+        Sync sync;
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        owned(sync);
+        Tick(sync, 20 * kMs, brood(0, 0));
+        Tick(sync, 30 * kMs, {Enemy(0x100, 0x11, 4, 0.0f, "Enemy_Floormaster")});
+        Tick(sync, 40 * kMs, brood(0, 2));
+        CHECK(root_dead(deads(sync, 50)) == 0);
+    }
+    // The hidden Floormaster leaves the walk at 0 before its Littles: away (no kill), then dead once they die.
+    {
+        Sync sync;
+        sync.SetDeleteEvents(true);  // (the game's delete requests are read: an actor off the walk is away)
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        owned(sync);
+        Tick(sync, 20 * kMs, brood(0, 2));
+        const auto littles = [](std::int32_t life) {
+            return std::vector<Seen>{Enemy(0x200, 0x22, life, 2.0f, "Enemy_Floormaster_Little"),
+                                     Enemy(0x300, 0x33, life, 3.0f, "Enemy_Floormaster_Little"),
+                                     Enemy(0x400, 0x44, life, 4.0f, "Enemy_Floormaster_Little")};
+        };
+        for (const std::uint64_t t : {30, 40, 50, 60}) {
+            CHECK(root_dead(All<proto::ObjectRemove>(Tick(sync, t * kMs, littles(2)))) == 0);
+        }
+        Tick(sync, 70 * kMs, littles(0));
+        CHECK(root_dead(deads(sync, 80)) == 1);
+    }
+}

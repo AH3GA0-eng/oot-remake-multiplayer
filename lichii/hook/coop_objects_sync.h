@@ -341,6 +341,13 @@ bool IsRolled(std::string_view name);
 bool IsHatchingEgg(std::string_view name);
 bool IsHatchling(std::string_view name);
 
+// Row 172 (Forest Temple, after a player died): an enemy whose life 0 is its split, not its death. The Floormaster
+// (and its Lens of Truth one) holds three Enemy_Floormaster_Little in its own ActorHolder (Pack/Actor
+// ActorHolderParam "Little", MaxActors 3, IsAutoRecreate); at life 0 it hides (Floormaster.brain.Hiding, no Die
+// animation in its AS), the Littles jump out, and a Little that is not killed in time grows it back
+// (FloormasterGrow). Its life 0 is read as a death only once every Little linked to it (its group) died too.
+bool SplitsAtZero(std::string_view name);
+
 // Boss minions (native boss sync, docs/dungeons-boss.md): an enemy a boss makes
 // in the fight (King Dodongo's babies, Big Octo's children). With native boss
 // sync every game's boss runs the same spawn action, so each would make its
@@ -1295,6 +1302,12 @@ private:
     // (another game's hit our game did not take, or hurt off) may stand on
     // at life 0. Said dead to the others now, deleted here kDeadGraceUs
     // later if its own death has not taken it by then.
+    // An object's life 0 read as its death: always, but for a split enemy (SplitsAtZero) whose brood still lives.
+    bool ZeroIsDeath(const Object& o) const;
+    // Row 172: every member of the root's brood (this split) died (and it has one).
+    bool BroodDone(const coop::protocol::ObjectId& root) const;
+    // Row 172: the members of a split enemy's group that leave this walk dead, counted before any leave is judged.
+    void NoteBroodDeaths(const std::map<std::uint64_t, const Seen*>& now_seen);
     void DeadByWrite(Object& o, std::uint16_t epoch, std::uint64_t now_us,
                      std::vector<coop::protocol::Message>& send, const char* why);
 
@@ -1364,6 +1377,7 @@ private:
         std::string name;
         coop::protocol::Vec3 position{};  // where it was last seen (Left)
         std::uint64_t since = 0;          // when it left (kAwayEventMaxUs)
+        bool split = false;               // row 172: a split enemy that left at life 0 (dead when its brood is)
     };
     std::vector<Away> away_;
     bool delete_events_ = false;
@@ -1454,6 +1468,13 @@ private:
     bool present_once_ = false;
     std::vector<coop::protocol::ObjectGroupEntry> groups_sent_;  // as last sent
     std::map<coop::protocol::ObjectId, coop::protocol::ObjectId> group_links_;  // member to root
+    // Row 172: a split enemy's brood this split (SplitsAtZero): the members linked to it while its life read 0,
+    // and those that died. Its life 0 is a death only when every one died. Cleared when its life reads > 0.
+    struct Brood {
+        std::set<coop::protocol::ObjectId> members;
+        std::set<coop::protocol::ObjectId> dead;
+    };
+    std::map<coop::protocol::ObjectId, Brood> broods_;
     bool hurt_ = false;
     bool life_events_ = false;
     std::size_t loose_drops_ = 0;

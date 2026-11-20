@@ -523,6 +523,36 @@ Player report: Navi targets an invisible Deku Baba. Logs (Magloyr and Bean Selle
 - **Whose hit, beside a copy's blast.** A copy's life drop within 6 m and 1.4 s of another player's projectile copy going off was always taken for that blast and never sent, so our own sword or slingshot hit landing then was lost. The game's own hit record names the attacker (Life component +0x240). The walk reads it for every non-boss enemy with a new hit id (not our replay of the owner's hit): when it is our Link or one of our own projectiles (`CoopProjectiles::OwnShots`, kept 1.5 s after each was last on our list, so a seed removed on impact still counts), the drop is our hit and goes as DAMAGE (`Sync::kOurHitKeepUs`). Any other attacker, or none read: the blast rule as before. Only for copies: the owner's own enemy keeps its blast credit, which the thrower's DAMAGE uses up.
 - **Enemies whose life cannot be read** (Deku Scrubs, Tailpasaran, other actors with no Life value): a kill here never made a life drop, so nothing was sent, and the owner dropped any DAMAGE for them. Now a copy that played its own death animation here (`Die`, `Dead`, `Death`, within 5 s) and then left our walk, while its owner's samples show no death and the owner has not said it dead, sends DAMAGE amount 1 with cause `killed` (`LifelessKillHere`; never a boss or a boss's part). The owner takes that as a kill its game took: OBJECT_REMOVE dead to everyone, and its own enemy goes through the game's own delete request after the usual grace. Any other DAMAGE for such an enemy is still dropped.
 
+### Split enemies: the Floormaster's life 0 is no death (row 172, branch `forest-0118`)
+
+Geno's Forest Temple run: after a player died, the Floormaster's small hands bugged out and a hand came back.
+Read from the game's data: `Enemy_Floormaster` (and `Enemy_Floormaster_Truth`) holds three `Enemy_Floormaster_Little`
+in its own ActorHolder (`ActorHolderParam` "Little", MaxActors 3, IsAutoRecreate). At life 0 it plays no death (its AS
+has no Die animation): it hides (`Floormaster.brain.Hiding`), the Littles jump out, and one that is not killed in time
+grows it back (`FloormasterGrow`, the Littles' `metamorphose` module). Our sync read its life 0 as a kill: a room
+leaving with it split (the dead player's Game Over) or a hand-over at 0 told everyone it died, and the Littles, in no
+group, had owners of their own, so their grow message went to a Floormaster another game ran.
+
+**Now** (`SplitsAtZero`, `Sync::ZeroIsDeath`, `Sync::NoteBroodDeaths`; objects_test.cpp, row 172 case):
+- The Littles are a part of the nearest Floormaster within 30 m (`PartRules`): one owner runs the brood, a hand-over
+  moves it together. The Lens of Truth Floormaster holds both kinds of Little.
+- A split enemy at life 0 is a death only when every Little linked to it in this split died; leaving alive with its
+  brood alive is "away"/gone, and a hand-over at 0 lowers the copy (it splits by its own Life step) with no kill told.
+- The brood is per split: while its life reads above 0 (not split yet, grown back, raised at a hand-over) its brood is
+  cleared, and Littles join it only while its life reads 0. A Little that grew it back left alive and is never dead,
+  so a brood kept for the whole visit would have kept every later real death from being told.
+- One of ours that leaves the walk at 0 before its brood died is away (held while one of its Littles is still on the
+  walk) and is told dead the moment the last one dies. Its Littles' deaths are read from the brood's own list, not
+  the walk's links (a root off the walk links nobody).
+- At a hand-over its copy takes the old owner's life upward too (it grew back there), as a boss's does.
+- Same pattern swept in every `Enemy_` pack's ActorHolder: the Big Leever's Leevers are now its group; the Bari's
+  Biri come at its real death (each game's Bari dies by the shared kill and makes its own); the boss broods were
+  already groups. The Wallmaster holds nothing.
+- Same check for the other groups the branch made: only a `SplitsAtZero` enemy has a brood. The Big Leever's life 0
+  is its death as before (its Leevers are only its group: their own deaths, its own death); the Bari is no group.
+- Not proven in a game: that the hidden Floormaster stays on the walk (else it leaves at 0 before its Littles, and
+  its kill waits for the brood as above), that its life reads above 0 once it grew back, and that its own Life step regrows a copy raised at a hand-over.
+
 ### A ceiling Skulltula goes to the player under it (issue 35, row 3)
 
 Player report: a Skulltula won't drop. Bean Seller's log: the Skulltulas sat in `CeilingWait`, owned by the other game. Only the owner's AI moves the enemy, and it drops only on its own Link. The wake rule (issue 132) needs the copy's own AI to show its wake within `kWakeM` (10 m), which a Skulltula hanging high, or whose AI never shows the wake, does not give. Fix (module only, no new message): a copy whose owner's latest animation is `IsCeilingWait` (`CeilingWait`, any LOD) with our Link under it (`UnderCeilingEnemy`: within `kCeilingUnderM` 4 m across, below it by at most `kCeilingDropM` 30 m) is flagged targeting through `ChaseStep` (1 s held). The server then hands it to us by the issue 101 rule (`chased_by`, out of a fight), and our game's own AI drops it on our Link. This is the smallest native path: the existing hand-over, no perception of the puppet (issue 150). Check in game: a Skulltula on the ceiling (Deku Tree), owned by A (A entered first); B walks under it, A stays away. Within about 2 s B's log shows `share owner ... is player <B>` for it and it drops on B in both games.
