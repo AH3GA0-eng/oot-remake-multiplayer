@@ -16,11 +16,6 @@ using CoopTitleMenu::Trim;
 using State = Session::State;
 
 constexpr std::size_t kMaxJoinBytes = 300;
-// The row's value is drawn in a narrow box, and codes start alike: a long code shows its start, its end and its
-// length, so a player sees which code is in; while typed, its end (where the typing goes).
-constexpr std::size_t kShownCodeEnds = 8;
-constexpr std::size_t kShownTypedEnd = 20;
-
 std::size_t Utf8Start(const std::string& s, std::size_t at) {   // back to the start of the character at `at`
     while (at > 0 && at < s.size() && (static_cast<unsigned char>(s[at]) & 0xC0) == 0x80) {
         --at;
@@ -28,17 +23,6 @@ std::size_t Utf8Start(const std::string& s, std::size_t at) {   // back to the s
     return at;
 }
 
-std::string ShownCode(const std::string& code, bool typing) {
-    if (typing) {
-        return code.size() <= kShownTypedEnd ? code + "_"
-                                             : "..." + code.substr(Utf8Start(code, code.size() - kShownTypedEnd)) + "_";
-    }
-    if (code.size() <= 2 * kShownCodeEnds + 3) {
-        return code;
-    }
-    return code.substr(0, Utf8Start(code, kShownCodeEnds)) + "..." +
-           code.substr(Utf8Start(code, code.size() - kShownCodeEnds)) + " (" + std::to_string(code.size()) + ")";
-}
 constexpr std::size_t kMaxIpBytes = 259;   // host (up to 253) + ':' + port (up to 5)
 constexpr std::size_t kMaxPortBytes = 5;
 
@@ -305,30 +289,16 @@ std::vector<Menu::Line> Menu::Lines() const {
                                "Joins the last game you were in, with the same code. It works while your friend is still "
                                "hosting that game."});
             }
-            const bool typing_code = typing_ && typing_act_ == Act::kCode;
             const bool typing_ip = typing_ && typing_act_ == Act::kJoinIp;
             const bool typing_port = typing_ && typing_act_ == Act::kJoinPort;
             const bool typing_password = typing_ && typing_act_ == Act::kJoinPassword;
-            // An address line's password (pasted, or from the Password row) is shown as stars here too.
-            std::string code_shown = join_.empty() && !typing_code ? std::string("Paste") : ShownCode(join_, typing_code);
-            if (!typing_code && !join_password_.empty() && join_.size() > join_password_.size() &&
-                join_.compare(join_.size() - join_password_.size() - 1, std::string::npos, " " + join_password_) == 0) {
-                code_shown = ShownCode(join_.substr(0, join_.size() - join_password_.size() - 1), false) + " " +
-                             Masked(join_password_);
-            }
-            out.push_back({Action(rejoin_code_.empty() ? "Friend's code" : "Or a new code", code_shown, off),
-                           Act::kCode,
-                           "Copy the code from your friend's message, then press this: it is pasted. On the same home "
-                           "network or a VPN with your friend? Paste the line from Same network or from VPN on their "
-                           "Host page instead (address and password). You can also type it."});
-            if (!join_.empty()) {   // a paste replaces the code, and this empties it for one typed in
-                out.push_back({Action("Clear the code", "Clear", off), Act::kClearCode,
-                               "Empties the code field. Then paste or type your friend's code again."});
-            }
-            out.push_back({Action("IP address",
+            // (a room name or an address, its port, the host's join password, then Join: the friend's code rows are
+            // gone, a tester asked; a code pasted with Ctrl+V still fills the address and password)
+            out.push_back({Action("Room or address",
                                   typing_ip ? join_ip_ + "_" : join_ip_.empty() ? std::string("Type") : join_ip_, off),
                            Act::kJoinIp,
-                           "Type the host's IP address or host name directly (no invite code needed)."});
+                           "The host's room name (found through your relay, Settings > Relay) or their IP address "
+                           "or host name."});
             out.push_back({Action("Port",
                                   typing_port ? port_text_ + "_"
                                               : join_port_.empty() ? std::to_string(CoopTitleMenu::kDefaultPort)
@@ -341,11 +311,10 @@ std::vector<Menu::Line> Menu::Lines() const {
                                                   : join_password_.empty() ? std::string("Type") : Masked(join_password_),
                                   off),
                            Act::kJoinPassword,
-                           "The host's join password, for an IP address: the word after the address on their Same "
-                           "network or VPN line. An invite code has it inside."});
+                           "The host's join password: they see it on their Multiplayer page (Hosting, Join "
+                           "password)."});
             out.push_back({Action("Join", "Join", off || Trim(join_).empty()), Act::kJoinNow,
-                           Trim(join_).empty() ? "Paste your friend's code or enter an IP address first."
-                                               : "Joins your friend's game."});
+                           Trim(join_).empty() ? "Type the room name or address first." : "Joins your friend's game."});
         }
         break;
     case Page::kLocal:
@@ -700,6 +669,15 @@ void Menu::UpdateJoinFromIpPort() {
         return;
     }
     std::string server(ip);
+    // (a room name, no dot and no colon: through the relay, room@relay; the port is the relay's then)
+    const bool room = ip.find_first_of(".:") == std::string_view::npos && CoopTitleMenu::RoomNameOk(ip) &&
+                      !Trim(options_.relay).empty();
+    if (room) {
+        server += "@" + std::string(Trim(options_.relay));
+        if (!join_password_.empty()) server += " " + join_password_;
+        join_ = std::move(server);
+        return;
+    }
     const std::string_view port = Trim(join_port_);
     if (!port.empty()) {
         server += ':';
@@ -1323,12 +1301,14 @@ bool Menu::Paste(std::string_view text) {
     }
     if (page_ == Page::kJoin) {
         const auto lines = Lines();
-        if (std::none_of(lines.begin(), lines.end(), [](const Line& l) { return l.act == Act::kCode && !l.row.fixed; })) {
+        // (a code or an address line pasted on the page fills it, as the code's row did: the room or address row
+        // open to it)
+        if (std::none_of(lines.begin(), lines.end(), [](const Line& l) { return l.act == Act::kJoinIp && !l.row.fixed; })) {
             return false;
         }
         if (line.empty()) {
             if (join_.empty()) {   // (with a code in the field: it stays, to be edited or typed over)
-                note_ = {"Nothing to paste: copy the code from your friend's message first. You can also type it."};
+                note_ = {"Nothing to paste: copy the room name or address first. You can also type it."};
             }
             return true;
         }
