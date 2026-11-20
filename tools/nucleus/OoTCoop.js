@@ -20,17 +20,22 @@ Game.MaxPlayersOneMonitor = 4;
 Game.Description = "Split-screen OoT Co-op on Longshot. Add the longshot.exe of a kit's co-op game (the kit's " +
     "hookshot\\game folder). Player 1 hosts on this PC, the others join. Each game needs about 10 GB of RAM. " +
     "Who can join: This PC only, or Allow online players (friends on other PCs join with the invite code the " +
-    "server window shows and copies).";
+    "server window shows and copies), or Join a game on another PC (the host's invite code or line goes in " +
+    "nucleus-players\\join.txt or on the clipboard; no server is started on this PC).";
 
 // The option on Nucleus's setup screen. Anything but COOP_ONLINE (no choice made yet, an older Nucleus) is this PC
 // only.
 var COOP_LOCAL = "This PC only";
 var COOP_ONLINE = "Allow online players";
+var COOP_JOIN = "Join a game on another PC";
 Game.AddOption("Who can join",
                "This PC only: the players on this PC. Allow online players: also friends on other PCs, as with " +
                "Host.bat (the router forward and an invite code in the server window, copied to the clipboard; " +
                "Windows may ask once to let coop_server through its firewall).",
-               "Online", [COOP_LOCAL, COOP_ONLINE], COOP_LOCAL);
+               "Online", [COOP_LOCAL, COOP_ONLINE, COOP_JOIN], COOP_LOCAL);
+// Join a game on another PC: the host's invite code (or its 'address:port password' line from Same network / VPN) is
+// the first line of nucleus-players\join.txt beside the game, else on the clipboard (Nucleus options are choice lists,
+// no text field). No server is started on this PC; every game joins that host directly.
 
 // The files: the game's big read-only files are linked, its folders too; what a game writes is its own.
 Game.SymlinkGame = true;
@@ -179,6 +184,185 @@ function coopStartOnline(kit) {
     return { password: password, server: bind !== "" ? bind : "127.0.0.1", port: port, pads: 0 };
 }
 
+// ---- Join a game on another PC ----
+// The invite code's letters and bytes are those of tools/release/kit/scripts/invite.ps1 (ConvertFrom-InviteCode, from
+// server/nat_codes.cpp): kind 0x11/0x12, the host's IPv4 address and port, the join password, a 4-byte SHA-256
+// checksum. SHA-256 is written out here (plain ES3), so the same code runs in Jint and in cscript.
+var COOP_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+var COOP_K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1,
+    0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d,
+    0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+    0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
+    0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3,
+    0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb,
+    0xbef9a3f7, 0xc67178f2];
+function coopRotr(x, n) {
+    return ((x >>> n) | (x << (32 - n))) >>> 0;
+}
+// SHA-256 of an array of byte values: an array of 32 byte values.
+function coopSha256(bytes) {
+    var h = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+    var m = bytes.slice(0), bits = bytes.length * 8, i, j;
+    m.push(0x80);
+    while (m.length % 64 !== 56) {
+        m.push(0);
+    }
+    for (i = 7; i >= 0; i--) {
+        m.push(i >= 4 ? 0 : (bits >>> (i * 8)) & 255);
+    }
+    for (var off = 0; off < m.length; off += 64) {
+        var w = [];
+        for (j = 0; j < 16; j++) {
+            w[j] = ((m[off + j * 4] << 24) | (m[off + j * 4 + 1] << 16) | (m[off + j * 4 + 2] << 8) |
+                    m[off + j * 4 + 3]) >>> 0;
+        }
+        for (j = 16; j < 64; j++) {
+            var s0 = coopRotr(w[j - 15], 7) ^ coopRotr(w[j - 15], 18) ^ (w[j - 15] >>> 3);
+            var s1 = coopRotr(w[j - 2], 17) ^ coopRotr(w[j - 2], 19) ^ (w[j - 2] >>> 10);
+            w[j] = (w[j - 16] + s0 + w[j - 7] + s1) >>> 0;
+        }
+        var a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
+        for (j = 0; j < 64; j++) {
+            var t1 = (hh + (coopRotr(e, 6) ^ coopRotr(e, 11) ^ coopRotr(e, 25)) + ((e & f) ^ (~e & g)) + COOP_K[j] +
+                      w[j]) >>> 0;
+            var t2 = ((coopRotr(a, 2) ^ coopRotr(a, 13) ^ coopRotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) >>> 0;
+            hh = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+        }
+        h[0] = (h[0] + a) >>> 0; h[1] = (h[1] + b) >>> 0; h[2] = (h[2] + c) >>> 0; h[3] = (h[3] + d) >>> 0;
+        h[4] = (h[4] + e) >>> 0; h[5] = (h[5] + f) >>> 0; h[6] = (h[6] + g) >>> 0; h[7] = (h[7] + hh) >>> 0;
+    }
+    var out = [];
+    for (i = 0; i < 8; i++) {
+        out.push((h[i] >>> 24) & 255, (h[i] >>> 16) & 255, (h[i] >>> 8) & 255, h[i] & 255);
+    }
+    return out;
+}
+
+function coopPublicIp(ip) {
+    var a = ip[0], b = ip[1];
+    if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
+    if (a === 100 && (b & 0xC0) === 64) return false;
+    if (a === 169 && b === 254) return false;
+    if (a === 172 && (b & 0xF0) === 16) return false;
+    if (a === 192 && b === 168) return false;
+    if (a === 192 && b === 0 && ip[2] === 0) return false;
+    if (a === 198 && (b & 0xFE) === 18) return false;
+    return true;
+}
+
+// { ok: true, server, port, password } or { ok: false, error } for an invite code (ConvertFrom-InviteCode's rules).
+function coopParseInvite(text) {
+    var wrong = "a letter of the invite code is wrong or missing; ask the host to copy it again";
+    var letters = String(text).replace(/[\s\-\.'"]/g, "").toUpperCase();
+    if (!/^[A-HJ-NP-Z2-9]+$/.test(letters) || letters.length < 30) {
+        return { ok: false, error: "this is not an invite code (letters A-Z and 2-9 in groups of five; paste all of it)" };
+    }
+    var n = Math.floor(letters.length * 5 / 8);
+    if (Math.floor((n * 8 + 4) / 5) !== letters.length) {
+        return { ok: false, error: wrong };
+    }
+    var bits = [], i, j, v;
+    for (i = 0; i < letters.length; i++) {
+        v = COOP_LETTERS.indexOf(letters.charAt(i));
+        for (j = 4; j >= 0; j--) {
+            bits.push((v >> j) & 1);
+        }
+    }
+    for (i = n * 8; i < bits.length; i++) {
+        if (bits[i]) return { ok: false, error: wrong };
+    }
+    var bytes = [];
+    for (i = 0; i < n; i++) {
+        v = 0;
+        for (j = 0; j < 8; j++) {
+            v = (v << 1) | bits[i * 8 + j];
+        }
+        bytes.push(v);
+    }
+    if (n < 12) return { ok: false, error: wrong };
+    var body = n - 4;
+    if ((bytes[0] >> 4) === 2) {
+        return { ok: false, error: "this is an ANSWER code: it goes into the host's server window, not here" };
+    }
+    var digest = coopSha256(bytes.slice(0, body));
+    for (i = 0; i < 4; i++) {
+        if (digest[i] !== bytes[body + i]) return { ok: false, error: wrong };
+    }
+    var kind = bytes[0];
+    if (kind !== 0x11 && kind !== 0x12) {
+        return { ok: false, error: "the invite code is from a newer co-op version; everyone runs Update.bat" };
+    }
+    var bad = "the invite code does not make sense; ask the host for a new one";
+    var ip = [bytes[1], bytes[2], bytes[3], bytes[4]], port = bytes[5] * 256 + bytes[6], password = "";
+    if (kind === 0x11) {
+        if (body !== 20 || (bytes[19] & 0x0F)) return { ok: false, error: bad };
+        for (var k = 0; k < 20; k++) {
+            v = 0;
+            for (j = 0; j < 5; j++) {
+                v = (v << 1) | bits[56 + k * 5 + j];
+            }
+            password += COOP_LETTERS.charAt(v);
+        }
+    } else {
+        var len = bytes[7];
+        if (body !== 8 + len || len < 1) return { ok: false, error: bad };
+        for (i = 0; i < len; i++) {
+            password += String.fromCharCode(bytes[8 + i]);   // the server's own passwords are ASCII
+        }
+    }
+    if (port < 1 || /\s/.test(password)) return { ok: false, error: bad };
+    if (!coopPublicIp(ip)) {
+        return { ok: false, error: "the address in the invite code is not an internet address; ask the host for a new one" };
+    }
+    return { ok: true, server: ip.join("."), port: port, password: password };
+}
+
+// What the player gave: an invite code, or the Same network / VPN line "address:port password". { ok, server, port,
+// password } or { ok: false, error }.
+function coopParseJoin(text) {
+    var t = coopTrim(String(text || "").split(/\r?\n/)[0]);
+    if (t === "") {
+        return { ok: false, error: "no invite code: put the host's invite code (or its line 'address:port password') " +
+                 "as the first line of nucleus-players\\join.txt beside the game, or copy it, then press Play again" };
+    }
+    var m = /^(\d{1,3}(?:\.\d{1,3}){3})(?::(\d{1,5}))?\s+(\S+)$/.exec(t);
+    if (m) {
+        var port = m[2] ? parseInt(m[2], 10) : COOP_KIT_PORT, parts = m[1].split("."), okIp = true;
+        for (var i = 0; i < 4; i++) {
+            okIp = okIp && parseInt(parts[i], 10) <= 255;
+        }
+        if (!okIp || port < 1 || port > 65535) {
+            return { ok: false, error: "'" + m[1] + (m[2] ? ":" + m[2] : "") + "' is not an address" };
+        }
+        return { ok: true, server: m[1], port: port, password: m[3] };
+    }
+    return coopParseInvite(t);
+}
+
+// True when Nucleus's setup screen has "Join a game on another PC" chosen.
+function coopWantsJoin() {
+    try {
+        var o = Context.Options;
+        return !!o && String(o["Online"]) === COOP_JOIN;
+    } catch (e) {
+        return false;
+    }
+}
+
+// The host's code: the first line of nucleus-players\join.txt, else the clipboard.
+function coopJoinText(mine) {
+    var f = coopRead(coopPath(mine, "join.txt"));
+    if (coopTrim(f.split(/\r?\n/)[0]) !== "") {
+        return f;
+    }
+    try {
+        return String(System.Windows.Forms.Clipboard.GetText() || "");
+    } catch (e) {
+        return "";
+    }
+}
+
 // A player name the game takes: 1 to 16 characters, no control characters.
 function coopName(nick, player) {
     var n = coopTrim(String(nick || "").replace(/[\x00-\x1f\x7f]/g, ""));
@@ -282,7 +466,23 @@ Game.Play = function () {
 
     // The session: player 1 makes it and starts the server; the others take it.
     // session.txt: the join password, the server's address, its port (a line each).
-    if (player === 1) {
+    if (coopWantsJoin()) {
+        // Join a game on another PC: no server here, nothing to close at the end (Nucleus would kill every
+        // coop_server otherwise, also a Host.bat of this PC) and no running-server guard. Player 1 reads the host's
+        // code; the others take it from session.txt below.
+        Game.KillProcessesOnClose = [];
+    }
+    if (player === 1 && coopWantsJoin()) {
+        var joined = coopParseJoin(coopJoinText(mine));
+        if (joined.ok) {
+            coopSession = { password: joined.password, server: joined.server, port: joined.port, pads: 0 };
+            Context.Log("OoT Co-op: joining the host at " + joined.server + ":" + joined.port + " (no server started here)");
+        } else {
+            coopSession = { password: coopNewKey(), server: "127.0.0.1", port: COOP_PORT, pads: 0 };
+            coopTell("Join a game on another PC: " + joined.error + ". These games cannot join.");
+        }
+        coopWrite(sessionFile, coopSession.password + "\r\n" + coopSession.server + "\r\n" + coopSession.port + "\r\n");
+    } else if (player === 1) {
         var running = kit !== "" ? coopServersRunning() : 0;
         if (running > 0) {
             // Another server (Host.bat, start-server.cmd, an earlier session not ended) holds the port or has
