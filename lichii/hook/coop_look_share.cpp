@@ -41,6 +41,31 @@ std::uint16_t Share::CharacterOf(std::uint8_t number) const {
     return it == their_character_.end() ? std::uint16_t{0} : it->second;
 }
 
+std::uint16_t OwnPick::Update(std::uint16_t read, bool on_host_save, std::uint64_t loads) {
+    if (!on_host_save) {
+        own_ = read;
+        loads_.reset();
+        repicked_ = false;
+        return read;
+    }
+    if (loads_ != loads) {
+        loads_ = loads;
+        at_load_ = read;
+        repicked_ = false;
+    } else if (read != at_load_) {
+        repicked_ = true;
+    }
+    return repicked_ ? read : own_;
+}
+
+std::optional<std::uint16_t> OwnPick::TakeOwnChange() {
+    if (kept_ == own_) {
+        return std::nullopt;
+    }
+    kept_ = own_;
+    return own_;
+}
+
 bool Share::OnEvent(const coop::net::Event& event) {
     switch (event.kind) {
     case EventKind::welcomed: {

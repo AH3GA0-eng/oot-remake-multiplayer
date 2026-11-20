@@ -816,19 +816,29 @@ struct PlannerSettings {
     bool null_reads_zero = true;
     // The puppets the pack has for the characters of the Character Select mod
     // (PackCharacterActors, sorted): a player who picked one is shown as
-    // CharacterActor(their age, their character) when it is among them.
+    // CharacterActor(their age, the pack's file of their character) when it is
+    // among them.
     std::vector<std::string> character_actors;
+    // The pack's map of the mod's stored character numbers to its model files
+    // (PackCharacterNumbers): a number it does not list shows the colour puppet.
+    std::map<std::uint16_t, std::uint16_t> character_files;
 };
 
 // Character Select (github.com/snaildev99/OoT-Character-Select): a player there
 // is one of over a hundred characters, each a player model file of that mod,
-// Model/Player_<Age>_C<file>.Player_<Age>.bfres with file = the stored
-// character number less kFirstCharacter. tools/puppet_pack makes a puppet for
-// each (CoopPuppet_<Age>_C<file>: the plain puppet with that model project, as
-// a tunic colour's), which the game loads from the mod's own file.
-inline constexpr std::uint16_t kFirstCharacter = 2;   // 0 is Link, 1 has no file
-// "CoopPuppet_Adult_C007" for (true, 9); "" for a number that is no character.
-std::string CharacterActor(bool adult, std::uint16_t character);
+// Model/Player_<Age>_C<file>.Player_<Age>.bfres. The player's pick (the mod's
+// saved Int, sent as is: the mod's own id of the character) is not the file:
+// the mod's characters.json maps each number to its file, and tools/puppet_pack
+// writes that map into coop_puppet.json ("characters": {"numbers": {file:
+// number}}). The pack makes a puppet per file (CoopPuppet_<Age>_C<file>: the
+// plain puppet with that model project, as a tunic colour's), which the game
+// loads from the mod's own file. The numbers are mapped with the VIEWER's pack,
+// so another version of the mod that numbers a character the same shows it,
+// and one it does not know shows the colour puppet.
+// "CoopPuppet_Adult_C007" for (true, 7); "" past C999.
+std::string CharacterActor(bool adult, std::uint16_t file);
+// The pack's stored number -> file map ("characters": {"numbers": {...}}): empty for a pack without characters.
+std::map<std::uint16_t, std::uint16_t> PackCharacterNumbers(std::string_view manifest);
 // `actor` is a character's puppet (its quiet copy too).
 bool IsCharacterActor(std::string_view actor);
 // The character puppets a pack's coop_puppet.json lists, sorted.

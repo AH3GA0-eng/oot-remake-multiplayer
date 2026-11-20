@@ -2397,16 +2397,61 @@ LookItems PackLookItems(std::string_view manifest, std::string_view key) {
     return out;
 }
 
-std::string CharacterActor(bool adult, std::uint16_t character) {
-    if (character < kFirstCharacter || character - kFirstCharacter > 999) {
+std::string CharacterActor(bool adult, std::uint16_t file) {
+    if (file > 999) {
         return {};
     }
-    const unsigned file = static_cast<unsigned>(character - kFirstCharacter);
     std::string name = adult ? "CoopPuppet_Adult_C" : "CoopPuppet_Child_C";
     name += static_cast<char>('0' + file / 100);
     name += static_cast<char>('0' + file / 10 % 10);
     name += static_cast<char>('0' + file % 10);
     return name;
+}
+
+std::map<std::uint16_t, std::uint16_t> PackCharacterNumbers(std::string_view manifest) {
+    // "characters": {"mod": "...", "numbers": {"<file>": <number>, ...}, "variants": {...}}, as build.py writes it
+    // (json.dumps); null for a pack without them.
+    std::map<std::uint16_t, std::uint16_t> out;
+    const auto at = manifest.find("\"characters\"");
+    if (at == std::string_view::npos) {
+        return out;
+    }
+    const auto open = manifest.find_first_not_of(" 	
+:", at + 12);
+    if (open == std::string_view::npos || manifest[open] != '{') {
+        return out;   // null: none
+    }
+    const auto key = manifest.find("\"numbers\"", open);
+    const auto lb = key == std::string_view::npos ? key : manifest.find('{', key);
+    const auto rb = lb == std::string_view::npos ? lb : manifest.find('}', lb);
+    if (rb == std::string_view::npos || manifest.substr(open, key - open).find('}') != std::string_view::npos) {
+        return out;
+    }
+    std::string_view body = manifest.substr(lb + 1, rb - lb - 1);
+    const auto number = [](std::string_view& text, unsigned& value) {
+        const auto i = text.find_first_of("0123456789");
+        if (i == std::string_view::npos) {
+            return false;
+        }
+        text.remove_prefix(i);
+        value = 0;
+        while (!text.empty() && text.front() >= '0' && text.front() <= '9') {
+            value = value * 10 + static_cast<unsigned>(text.front() - '0');
+            text.remove_prefix(1);
+            if (value > 0xFFFF) {
+                return false;
+            }
+        }
+        return true;
+    };
+    unsigned file = 0;
+    unsigned stored = 0;
+    while (number(body, file) && number(body, stored)) {
+        if (file <= 999 && stored != 0) {
+            out[static_cast<std::uint16_t>(stored)] = static_cast<std::uint16_t>(file);
+        }
+    }
+    return out;
 }
 
 bool IsCharacterActor(std::string_view actor) {
@@ -2475,7 +2520,11 @@ std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color, st
     };
     // The character they picked in the Character Select mod, when this pack has its puppet (and it did not
     // fail, as a colour's): before the colours, since the character's own model has its own clothes.
-    if (const std::string picked = CharacterActor(adult, character); !picked.empty()) {
+    // The number is the sender's pick, the mod's id of the character; this pack's own map gives its file.
+    const auto file = settings_.character_files.find(character);
+    const std::string picked =
+        file == settings_.character_files.end() ? std::string{} : CharacterActor(adult, file->second);
+    if (!picked.empty()) {
         std::string name = named(picked);
         if (std::binary_search(settings_.character_actors.begin(), settings_.character_actors.end(), name) &&
             works(name)) {
