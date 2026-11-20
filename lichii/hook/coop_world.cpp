@@ -114,6 +114,23 @@ bool IsBlockAnchor(std::string_view name) {
     return name == "Obj_MovableBox_BasePosAnchor";
 }
 
+// Row 175: every Obj_MovableBox_BasePosAnchor that more than one placed movable
+// links to (generated from the romfs Banc by tools/puppet_pack/shared_anchors.py).
+// Such an anchor is no single block's own, even when a block stands on it (the
+// Hyrule Castle boxes): it is never moved for one block's rest. The game's own
+// link (node +0x40) is not read: its layout is not proven, the Banc is.
+struct SharedAnchor {
+    std::string_view scene;
+    float at[3];
+};
+constexpr SharedAnchor kSharedAnchors[] = {
+    {"DodongoCavern", {78.4250f, 99.1771f, -6.5000f}},  // 2 movables, nearest 3.51 m
+    {"ForestTemple", {61.2500f, 103.9000f, 2.2500f}},  // 5 movables, nearest 2.25 m
+    {"HyruleCastle", {31.6244f, 117.0387f, -146.6301f}},  // 2 movables, nearest 0.00 m
+    {"HyruleField", {-145.3997f, 150.9243f, 267.2221f}},  // 7 movables, nearest 0.75 m
+};
+constexpr float kSharedAnchorM = 0.1f;  // a placed anchor is read back this near its Banc place
+
 bool IsPushBlock(std::string_view name) {
     return IsMovable(name) && (name.find("MovableBox_") != std::string_view::npos ||
                                name.starts_with("Obj_SliderBox_"));
@@ -966,16 +983,33 @@ std::optional<WorldSync::Sample> WorldSync::PoseAt(const Remote& r, std::uint64_
     return r.samples.back();
 }
 
+namespace {
+bool IsSharedAnchor(std::string_view scene, const coop::protocol::Vec3& at) {
+    for (const SharedAnchor& s : kSharedAnchors) {
+        if (s.scene == scene && Distance(at, {s.at[0], s.at[1], s.at[2]}) <= kSharedAnchorM) {
+            return true;
+        }
+    }
+    return false;
+}
+}  // namespace
+
 std::uint64_t WorldSync::OwnAnchor(const Object& o, const coop::protocol::Vec3& from, bool& shared) {
     // An anchor is this block's own when it was paired with this block before,
     // or, not yet paired, when it lies at this block's first place (a block's
     // own base anchor is placed with it). Any other anchor near `from` is
     // another block's or a grid base several blocks share: never moved here.
+    // An anchor in kSharedAnchors (several placed blocks link to it) is never
+    // one block's own, even when a block stands on it (the Hyrule Castle boxes).
     std::uint64_t best_address = 0;
     float best = kAnchorNearM;
     for (const Anchor& a : anchors_) {
         const float d = Distance(a.position, from);
         if (d > best) {
+            continue;
+        }
+        if (IsSharedAnchor(scene_, a.position)) {  // several blocks' grid base: no one's own
+            shared = true;
             continue;
         }
         const auto paired = anchor_of_.find(a.address);
