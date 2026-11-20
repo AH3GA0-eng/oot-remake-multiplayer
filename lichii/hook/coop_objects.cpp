@@ -2595,6 +2595,12 @@ public:
                 LOG_INFO(Core, "coop: dungeon: trigger: the kill of {:#x} kept for its event lands now", at->second);
                 sync_.Written(it->first, it->second.first.life, now_us);
                 writes.push_back(std::move(it->second.first));
+            } else {
+                // Row 160 (hiddenblitz 20261119-201953, room 1): a kept kill was dropped with no line. Harmless when
+                // the event was played elsewhere (its clear flag comes), but a stuck room must show it in the log.
+                LOG_INFO(Core, "coop: dungeon: trigger: the kill of {:#x} kept for its event is dropped: {}",
+                         it->second.second,
+                         at == hash_at.end() ? "its actor is gone from our walk" : "another actor is at its address");
             }
             trigger_kept_since_.erase(it->first);
             it = trigger_kept_.erase(it);
