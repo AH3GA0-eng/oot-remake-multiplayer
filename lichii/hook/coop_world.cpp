@@ -1017,6 +1017,7 @@ void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
     if (o.ours && remote) {
         if (r->player < self) {
             o.ours = false;  // two movers: the lower number keeps it
+            o.contested = true;  // row 166: our player may be mid-push here
             out.notes.push_back(Line("world: %016llx %s: another player moves it too; theirs%s",
                                      o.hash, o.name, ""));
         } else {
@@ -1072,6 +1073,7 @@ void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
             fix.name = o.name;
             fix.from = *o.follow_from;
             fix.to = o.position;
+            fix.untouched = !o.contested;
             float best = kAnchorNearM;
             for (const Anchor& a : anchors_) {
                 const float d = Distance(a.position, fix.from);
@@ -1096,6 +1098,7 @@ void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
             o.stale_until = now_us + kSnapWatchUs;
         }
         o.follow_from.reset();
+        o.contested = false;
     }
     if (o.stale_from && (o.ours || now_us >= o.stale_until)) {
         o.stale_from.reset();
@@ -1156,6 +1159,7 @@ void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
         p.rotation = UnitQuat(o.rotation);
         out.send.emplace_back(std::move(p));
         o.ours = false;
+        o.contested = false;
         o.rest = o.position;
         o.rest_rotation = o.rotation;
         out.notes.push_back(Line("world: %016llx %s at rest: place sent%s", o.hash, o.name, ""));
@@ -2548,7 +2552,7 @@ std::optional<std::uint64_t> FindBlockNode(
 }
 
 RestScan NodeRestWords(const std::function<std::optional<std::uint64_t>(std::uint64_t)>& read,
-                       std::uint64_t node, const proto::Vec3& from, const proto::Vec3& to) {
+                       std::uint64_t node, const proto::Vec3& from, const proto::Vec3& to, bool untouched) {
     RestScan out;
     if (!Finite(from) || !Finite(to) || Distance(from, to) < WorldSync::kBlockStartM) {
         return out;
@@ -2561,23 +2565,31 @@ RestScan NodeRestWords(const std::function<std::optional<std::uint64_t>(std::uin
         std::memcpy(&f, &b, 4);
         return f;
     };
-    const auto holds_from = [&](std::uint64_t offset) {
+    const auto holds = [&](std::uint64_t offset, const proto::Vec3& at) {
         for (int axis = 0; axis < 3; ++axis) {
             const auto v = float_at(node + offset + 4 * axis);
-            if (!v || !std::isfinite(*v) || std::fabs(*v - from[axis]) > kRestMatchM) return false;
+            if (!v || !std::isfinite(*v) || std::fabs(*v - at[axis]) > kRestMatchM) return false;
         }
         return true;
     };
-    // Both or none (review): a node with only one of them at the old place is
-    // mid-push here (its target is the next cell); writing just one would make
-    // it run from the new place toward a cell figured from the old one.
-    const bool target = holds_from(BlockNode::kTarget), start = holds_from(BlockNode::kStart);
-    if (target != start) {
-        out.busy = true;
-        return out;
-    }
-    if (!target) {
-        return out;
+    const auto holds_from = [&](std::uint64_t offset) { return holds(offset, from); };
+    if (untouched) {
+        // Row 166: no push of ours under way: stale unless it already starts from where the block rests now.
+        if (holds(BlockNode::kTarget, to) && holds(BlockNode::kStart, to)) {
+            return out;
+        }
+    } else {
+        // Both or none (review): a node with only one of them at the old place is
+        // mid-push here (its target is the next cell); writing just one would make
+        // it run from the new place toward a cell figured from the old one.
+        const bool target = holds_from(BlockNode::kTarget), start = holds_from(BlockNode::kStart);
+        if (target != start) {
+            out.busy = true;
+            return out;
+        }
+        if (!target) {
+            return out;
+        }
     }
     char text[32];
     for (const std::uint64_t offset : {BlockNode::kTarget, BlockNode::kStart}) {

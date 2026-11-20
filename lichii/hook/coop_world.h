@@ -459,9 +459,14 @@ inline NodeStarts& TheNodeStarts() {
 std::optional<std::uint64_t> FindBlockNode(
     const std::function<std::optional<std::uint64_t>(std::uint64_t)>& read, std::uint64_t actor,
     std::uint64_t main, const NodeStarts& starts);
+// Row 166: `untouched` (our player never moved the block during this follow: its room loaded after another
+// player's push, or only the other game pushed it): no push of ours can be under way, so the node is stale unless
+// both its places already hold `to`. A block whose room loads late is first seen where the map put it, its node
+// started there with the grid target at +0xfc: one of the two matched `from`, which read as mid-push, so the start
+// never ran again and our player's next push started from the map's place (the 0.11.6 Dodongo playtest).
 RestScan NodeRestWords(const std::function<std::optional<std::uint64_t>(std::uint64_t)>& read,
                        std::uint64_t node, const coop::protocol::Vec3& from,
-                       const coop::protocol::Vec3& to);
+                       const coop::protocol::Vec3& to, bool untouched = false);
 
 // Breaks and moves of placed world objects, shared by placement hash
 // (docs/world.md, "Broken for everyone" and "Moved for everyone"). Beside the
@@ -587,6 +592,8 @@ public:
             // logged only: the fix is the node start at the hand-over
             // (BlockNode::kStartFn); no anchor, no wide search.
             bool snap = false;
+            // Row 166: our player never moved it during this follow (Object::contested unset): see NodeRestWords.
+            bool untouched = false;
             int tries = 0;  // the glue's: walks its push node was not found or busy
         };
         std::vector<BlockFix> blocks;
@@ -749,6 +756,7 @@ private:
         bool roller = false;               // IsRoller: rolls on its own
         std::uint32_t place_seen = 0;      // the rest place we last took (Remote::place_serial)
         std::optional<coop::protocol::Vec3> follow_from;  // where it rested before another game moved it
+        bool contested = false;            // row 166: our own move of it gave way to another game's (this follow)
         std::uint64_t settle_us = 0;       // when we took it
         std::uint64_t quiet_until = 0;
         // deku-visuals-b: where it rested before the last followed push

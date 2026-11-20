@@ -2987,3 +2987,65 @@ TEST_CASE("world: a trigger keeper waits for another game's moves, rest place an
     REQUIRE(felled.lives.size() == 1);
     CHECK(felled.lives[0].life == 0);
 }
+
+// Row 166 (0.11.6 Dodongo playtest): a block whose room loaded after another player pushed it is first seen where
+// the map put it, then put at the shared rest; our player never touched it, so its fix is untouched.
+TEST_CASE("world: row 166: a block first seen after another's push gives an untouched fix") {
+    WorldSync w;
+    Walk(w, 1000 * kMs, {});  // in the scene, the block's room not loaded yet
+    w.Receive(PlaceOf(0x50, 2.5f));  // the server's rest place, from another player's push
+    Walk(w, 1100 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)});  // the room loads: seen at the map's place
+    Walk(w, 1300 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {2.5f, 2.0f, 3.0f})});
+    WorldSync::Out out;
+    for (std::uint64_t t = 1500; t <= 4000 && out.blocks.empty(); t += 200) {
+        out = Walk(w, t * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {2.5f, 2.0f, 3.0f})});
+    }
+    REQUIRE(out.blocks.size() == 1);
+    CHECK(out.blocks[0].untouched);
+    CHECK(out.blocks[0].to[0] == doctest::Approx(2.5f));
+}
+
+TEST_CASE("world: row 166: a followed push our own push gave way to is not untouched") {
+    // We are player 2 and pushing; player 1's moves come in: ours stop (contested), theirs are placed.
+    WorldSync w;
+    Walk(w, 1000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)});
+    Walk(w, 1100 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {1.2f, 2.0f, 3.0f})});
+    w.Receive(MoveOf(0x50, 1150 * kMs, 1.6f, 1));
+    w.Receive(MoveOf(0x50, 1200 * kMs, 2.0f, 1));
+    Walk(w, 1200 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {1.4f, 2.0f, 3.0f})});
+    REQUIRE(w.MoverOf(0x50) == 1);
+    w.Receive(PlaceOf(0x50, 2.5f));
+    WorldSync::Out out;
+    for (std::uint64_t t = 1400; t <= 4000 && out.blocks.empty(); t += 200) {
+        out = Walk(w, t * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {2.5f, 2.0f, 3.0f})});
+    }
+    REQUIRE(out.blocks.size() == 1);
+    CHECK_FALSE(out.blocks[0].untouched);
+}
+
+TEST_CASE("world: row 166: an untouched block's node runs its start again unless it starts from the new rest") {
+    const proto::Vec3 from{-51.06f, 79.27f, 47.3f}, to{-51.06f, 79.27f, 45.6f};
+    // Its room loaded late: the node started at the map's place (+0x108), its target the grid cell (+0xfc). The
+    // strict check calls that mid-push; untouched, the start runs.
+    FakeGame g;
+    BlockNodeMemory(g);
+    PutFloats(g, kNode + CoopWorld::BlockNode::kTarget, {-51.06f, 79.27f, 47.1f});
+    PutFloats(g, kNode + CoopWorld::BlockNode::kStart, {-51.06f, 79.27f, 47.3f});
+    CHECK(CoopWorld::NodeRestWords(g.Reader(), kNode, from, to).busy);
+    const auto words = CoopWorld::NodeRestWords(g.Reader(), kNode, from, to, true);
+    CHECK_FALSE(words.busy);
+    CHECK(words.writes.size() == 6);
+    // Neither place at `from` (it settled on its way in): still stale, untouched.
+    FakeGame n;
+    BlockNodeMemory(n);
+    PutFloats(n, kNode + CoopWorld::BlockNode::kTarget, {-51.06f, 79.0f, 47.1f});
+    PutFloats(n, kNode + CoopWorld::BlockNode::kStart, {-51.06f, 79.6f, 47.3f});
+    CHECK(CoopWorld::NodeRestWords(n.Reader(), kNode, from, to).writes.empty());
+    CHECK(CoopWorld::NodeRestWords(n.Reader(), kNode, from, to, true).writes.size() == 6);
+    // Already starts from the new rest: left alone.
+    FakeGame d;
+    BlockNodeMemory(d);
+    PutFloats(d, kNode + CoopWorld::BlockNode::kTarget, {-51.06f, 79.27f, 45.6f});
+    PutFloats(d, kNode + CoopWorld::BlockNode::kStart, {-51.06f, 79.27f, 45.6f});
+    CHECK(CoopWorld::NodeRestWords(d.Reader(), kNode, from, to, true).writes.empty());
+}
