@@ -258,6 +258,7 @@ def fake_player_pack(variant):
             "XLinkRef": "?Component/XLink/Player.engine__component__XLinkParam.bgyml",
             "AffiliationRef": "?Component/AffiliationParam/Player.game__component__AffiliationParam.bgyml",
             "PerceptionEmitterRef": "?Component/PerceptionEmitterParam/Player.game__component__PerceptionEmitterParam.bgyml",
+            "GameBalanceClientRef": "?Component/GameBalanceClientParam/Player.game__component__GameBalanceClientParam.bgyml",
         }
     }
     child = {
@@ -561,6 +562,9 @@ class BuildPackTest(unittest.TestCase):
         self.assertEqual(comps["AffiliationRef"],
                          "?Component/AffiliationParam/Player.game__component__AffiliationParam.bgyml")
         self.assertEqual(comps["PhysicsRef"], "?" + build.PERCEPTION_PHYSICS)
+        # Row 178: the player's GameBalanceClient (the game's attack permission for a target).
+        self.assertEqual(comps["GameBalanceClientRef"],
+                         "?Component/GameBalanceClientParam/Player.game__component__GameBalanceClientParam.bgyml")
         for p in (build.PERCEPTION_PHYSICS, build.PERCEPTION_CONTROLLERS,
                   "Component/AffiliationParam/Player.game__component__AffiliationParam.bgyml"):
             self.assertIn(p, names)
@@ -888,7 +892,7 @@ class BuildPackTest(unittest.TestCase):
     def test_pack_no_perception(self):
         _, ap, _, _ = build.build_pack(fake_player_pack("Child"), "Child")
         comps = byml.loads(ap)["Components"]
-        for k in ("AffiliationRef", "PerceptionEmitterRef", "PhysicsRef"):
+        for k in ("AffiliationRef", "PerceptionEmitterRef", "PhysicsRef", "GameBalanceClientRef"):
             self.assertNotIn(k, comps)
 
     def test_perception_members_checks(self):

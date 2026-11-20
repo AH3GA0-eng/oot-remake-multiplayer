@@ -503,6 +503,15 @@ def add_perception(doc, player_components, members, actor, files, perception):
     doc["Components"]["PerceptionEmitterRef"] = "?" + path
     doc["Components"]["PhysicsRef"] = "?" + PERCEPTION_PHYSICS
     files.update(collect_members(members, {"Components": {"AffiliationRef": aff}}))
+    # Row 178: the player's GameBalanceClient too. An enemy's attacks wait on the game's attack permission for its
+    # battle target (target info isForbidAttackPermission, QueryGameBalanceClientTargetIsForbidAttackPermission),
+    # kept by the target's GameBalanceClient (AttackInterval). A perceived puppet without one was a target that
+    # never gave permission: Phantom Ganon, its owner's boss, held his Fly ~22 s with no throw while he had the
+    # guest's puppet as his target.
+    balance = player_components.get("GameBalanceClientRef")
+    if balance:
+        doc["Components"]["GameBalanceClientRef"] = balance
+        files.update(collect_members(members, {"Components": {"GameBalanceClientRef": balance}}))
     files.update(perception)
     files[path] = data
     return path, data, src
