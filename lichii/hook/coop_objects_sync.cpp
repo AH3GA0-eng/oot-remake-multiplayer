@@ -4138,6 +4138,7 @@ void Sync::Poses(std::uint64_t now_us, std::vector<PoseWrite>& out) const {
             w.rotation = MatOf(*rotation);
         }
         if (IsBoss(o.name) && w.position[1] < o.first_position[1] - kBossFallBelowStartM) {
+            ++boss_copies_kept_;
             continue;  // row 178: the owner's boss fell out of its room: ours stays in it
         }
         out.push_back(w);

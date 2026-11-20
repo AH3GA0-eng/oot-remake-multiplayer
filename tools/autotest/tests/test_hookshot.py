@@ -946,5 +946,18 @@ class NoFairyTest(unittest.TestCase):
                 self.assertTrue(set(hs.BOTTLE_ITEMS) <= emptied, "add `nofairy` before the first hurt")
 
 
+class DropTest(unittest.TestCase):
+    """Row 178's fall guard in a game: `drop NAME METRES` (a boss of ours put METRES down, test only)."""
+
+    def test_parses_and_goes_to_the_module(self):
+        steps = hs.parse("drop Enemy_DungeonBoss_PhantomGanon 60\n")
+        self.assertEqual((steps[0].kind, steps[0].name, steps[0].start), ("drop", "Enemy_DungeonBoss_PhantomGanon", "60"))
+        self.assertEqual(steps[0].text, "drop Enemy_DungeonBoss_PhantomGanon 60")
+        self.assertIn("drop", hs.MODULE_ONLY)
+        for bad in ("drop\n", "drop X\n", "drop X 0\n", "drop X 501\n", "drop X 1.5\n"):
+            with self.assertRaises(hs.ScriptError):
+                hs.parse(bad)
+
+
 if __name__ == "__main__":
     unittest.main()

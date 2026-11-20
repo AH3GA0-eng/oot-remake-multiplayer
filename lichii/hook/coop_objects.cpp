@@ -393,6 +393,10 @@ TestPlatformPlaces& ThePlatformPlaces() {
     static TestPlatformPlaces p;
     return p;
 }
+std::vector<std::pair<std::string, float>>& TestDropQueue() {  // the test script's drop steps (QueueTestDrop)
+    static std::vector<std::pair<std::string, float>> q;
+    return q;
+}
 std::vector<TestStrike>& TestKillQueue() {  // the test script's kill, hit and stun steps (QueueTestKill)
     static std::vector<TestStrike> q;
     return q;
@@ -4400,6 +4404,49 @@ private:
         }
     }
 
+    // Test only ("drop NAME METRES", row 178): the nearest boss of that name that we own goes METRES straight down,
+    // placed like a copy (one set-matrix write); our fall guard (CoopBossNative::Table::Fall) then puts it back.
+    void TestDrops(Reader& r, std::vector<PoseWrite>& poses) {
+        std::vector<std::pair<std::string, float>> drops;
+        {
+            std::lock_guard lock(KeyRefundMutex());
+            drops.swap(TestDropQueue());
+        }
+        for (const auto& [name, metres] : drops) {
+            const std::uint8_t self = sync_.Self();
+            u64 best = 0;
+            float best_m = 0.0f;
+            coop::protocol::Vec3 at{};
+            for (const auto& [address, entry] : names_) {
+                if (entry.first != name || !IsBoss(entry.first) || self == 0 || sync_.OwnerOf(address) != self) {
+                    continue;
+                }
+                coop::protocol::Vec3 p{};
+                for (std::size_t i = 0; i < 3; ++i) {
+                    p[i] = r.Get<float>(address + kActorPosition + 4 * i).value_or(0.0f);
+                }
+                const float m = player_ ? Apart(*player_, p) : 0.0f;
+                if (best == 0 || m < best_m) {
+                    best = address;
+                    best_m = m;
+                    at = p;
+                }
+            }
+            if (best == 0) {
+                LOG_INFO(Core, "coop: test drop {} {:.0f}: no boss of ours by that name here (a copy, or none)", name,
+                         metres);
+                continue;
+            }
+            PoseWrite w;
+            w.address = best;
+            w.position = at;
+            w.position[1] -= metres;
+            poses.push_back(w);
+            LOG_INFO(Core, "coop: test drop {} {:#x} from {:.2f} {:.2f} {:.2f} by {:.0f} m ({:.1f} m from Link)", name,
+                     best, at[0], at[1], at[2], metres, best_m);
+        }
+    }
+
     void TestKills(const std::vector<Seen>& seen, std::vector<LifeWrite>& writes, std::uint8_t self) {
         std::vector<TestStrike> strikes;
         {
@@ -4967,6 +5014,7 @@ private:
         }
         auto& memory = system.ApplicationMemory();
         Reader r(memory);
+        TestDrops(r, poses);
         std::unordered_map<u64, coop::protocol::Vec3> placed;
         std::vector<Mover::Pose> wish;
         if (drive_pose_) {
@@ -5163,11 +5211,11 @@ private:
                          "coop: objects: share placed {} copies; off from where we put them "
                          "avg {:.3f} max {:.3f} over {}; game calls: {} moves, {} deletes, {} "
                          "plays, {} frame sets; hurts taken {} missed {} (boss hits to its Life step {}, dying copies "
-                         "finished {}); own hits kept while a replay waited {}",
+                         "finished {}); own hits kept while a replay waited {}; boss copies kept in the room {}",
                          placed_.size(), drift_count_ ? drift_sum_ / drift_count_ : 0.0f,
                          drift_max_, drift_count_, moved, deleted, played, framed, sync_.HurtsTaken(),
                          sync_.HurtsMissed(), sync_.BossHitsStepped(), sync_.DyingFinished(),
-                         sync_.OwnHitsKept());
+                         sync_.OwnHitsKept(), sync_.BossCopiesKept());
             }
             // Issue 101: which copy was furthest from where we put it, so
             // one run tells a copy the setter does not hold (a flying or
@@ -5619,6 +5667,13 @@ std::optional<std::array<float, 3>> TestPlatformPlace(const std::string& name) {
 void QueueTestAim(float x, float y, float z) {
     TheMover().ArmAim({x, y, z}, SteadyNowMs() + 10000);
     LOG_INFO(Core, "coop: test aim {:.2f} {:.2f} {:.2f}: waits for our next arrow (10 s)", x, y, z);
+}
+
+void QueueTestDrop(std::string name, float metres) {
+    std::lock_guard lock(KeyRefundMutex());
+    if (TestDropQueue().size() < 16 && metres > 0.0f) {
+        TestDropQueue().emplace_back(std::move(name), metres);
+    }
 }
 
 void QueueTestKill(std::string name) {
