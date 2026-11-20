@@ -282,3 +282,105 @@ TEST_CASE("look share: a look with no gear set at start goes out, and the other 
     ours.OnEvent(Kind(EventKind::player_joined, 3));
     CHECK(ours.TakeSend());                    // and again for a late joiner
 }
+
+// Character Select (github.com/snaildev99/OoT-Character-Select): the picked character with the look.
+TEST_CASE("look share: our picked character goes out as a part of its own, with or without colours") {
+    CoopLookShare::Share s;
+    s.SetCharacter(0);
+    CHECK_FALSE(s.TakeSend());                 // Link, and no look chosen: nothing sent, as before
+    s.SetCharacter(9);
+    auto sent = s.TakeSend();
+    REQUIRE(sent);                             // a character alone sends a look
+    CHECK(sent->parts == CoopLookShare::Parts{{CoopLookShare::kCharacterPart, CoopLookShare::kCharacterMark | 9u}});
+    CHECK_FALSE(s.TakeSend());                 // once
+    s.SetCharacter(9);
+    CHECK_FALSE(s.TakeSend());                 // the same number again is no change
+    s.Set({{3, 0xE0C030}});
+    sent = s.TakeSend();
+    REQUIRE(sent);                             // the colours first, the character last
+    CHECK(sent->parts == CoopLookShare::Parts{{3, 0xE0C030}, {CoopLookShare::kCharacterPart, CoopLookShare::kCharacterMark | 9u}});
+    s.OnEvent(Kind(EventKind::player_joined, 3));
+    CHECK(s.TakeSend());                       // a newcomer gets it
+    s.SetCharacter(0);
+    sent = s.TakeSend();
+    REQUIRE(sent);                             // back to Link: the look without the part
+    CHECK(sent->parts == CoopLookShare::Parts{{3, 0xE0C030}});
+    CoopLookShare::Share alone;
+    alone.SetCharacter(4);
+    CHECK(alone.TakeSend());
+    alone.SetCharacter(0);
+    sent = alone.TakeSend();
+    REQUIRE(sent);                             // with no colours ever chosen too: an empty look says Link again
+    CHECK(sent->parts.empty());
+    alone.OnEvent(Kind(EventKind::welcomed));
+    CHECK(alone.TakeSend());                   // and a new session hears it
+    alone.SetCharacter(60000);
+    CHECK_FALSE(alone.TakeSend());             // a number that is no character counts as Link: no change
+}
+
+TEST_CASE("look share: a player's character is kept apart from the colours of their look") {
+    CoopLookShare::Share s;
+    s.EnableSlots(true);
+    CHECK(s.CharacterOf(2) == 0);
+    const LookPart nine{CoopLookShare::kCharacterPart, CoopLookShare::kCharacterMark | 9u};
+    CHECK(s.OnEvent(Look(2, {{11, 0xFF0000}, nine})));
+    CHECK(s.CharacterOf(2) == 9);
+    CHECK(s.Of(2) == CoopLookShare::Parts{{11, 0xFF0000}});   // what paints a look never sees the part
+    CHECK(s.SlotOf(2) == 1);
+    CHECK_FALSE(s.OnEvent(Look(2, {{11, 0xFF0000}, nine})));  // the same again
+    CHECK(s.OnEvent(Look(2, {{11, 0xFF0000}, {CoopLookShare::kCharacterPart, CoopLookShare::kCharacterMark | 15u}})));
+    CHECK(s.CharacterOf(2) == 15);                            // another pick is a change
+    CHECK(s.OnEvent(Look(2, {{11, 0xFF0000}})));              // no part: Link again
+    CHECK(s.CharacterOf(2) == 0);
+    // A part 63 that is not ours (no mark, or a number out of range) is no character, and no colour either.
+    CHECK_FALSE(s.OnEvent(Look(2, {{11, 0xFF0000}, {CoopLookShare::kCharacterPart, 0x000009}})));
+    CHECK(s.CharacterOf(2) == 0);
+    CHECK(s.Of(2) == CoopLookShare::Parts{{11, 0xFF0000}});
+    CHECK_FALSE(s.OnEvent(Look(2, {{11, 0xFF0000}, {CoopLookShare::kCharacterPart, CoopLookShare::kCharacterMark | 0xFFFFu}})));
+    CHECK(s.CharacterOf(2) == 0);
+    CHECK(s.OnEvent(Look(3, {nine})));
+    CHECK(s.CharacterOf(3) == 9);
+    s.OnEvent(Kind(EventKind::player_left, 3));
+    CHECK(s.CharacterOf(3) == 0);                             // gone with the player
+    CHECK(s.OnEvent(Look(2, {nine})));
+    s.OnEvent(Kind(EventKind::welcomed));
+    CHECK(s.CharacterOf(2) == 0);                             // and with the session
+}
+
+TEST_CASE("character puppets: the pack's are read from its manifest, and a player who picked one is shown as it") {
+    using namespace CoopPuppet;
+    CHECK(CharacterActor(true, 9) == "CoopPuppet_Adult_C007");
+    CHECK(CharacterActor(false, 2) == "CoopPuppet_Child_C000");
+    CHECK(CharacterActor(false, 115) == "CoopPuppet_Child_C113");
+    CHECK(CharacterActor(true, 0).empty());    // Link
+    CHECK(CharacterActor(true, 1).empty());    // no file
+    CHECK(CharacterActor(true, 2000).empty());
+    CHECK(IsCharacterActor("CoopPuppet_Adult_C007"));
+    CHECK(IsCharacterActor("CoopPuppet_ChildQuiet_C113"));
+    CHECK(IsCharacterActor("CoopPuppet_Adult_C007_Pvp"));
+    CHECK_FALSE(IsCharacterActor("CoopPuppet_Adult_Cyan"));
+    CHECK_FALSE(IsCharacterActor("CoopPuppet_Adult"));
+    CHECK_FALSE(IsCharacterActor("CoopPuppet_Adult_C07"));
+    CHECK_FALSE(IsCharacterActor("CoopPuppet_Adult_C0077"));
+    CHECK_FALSE(IsCharacterActor("CoopTunic_Adult_C007"));
+    const std::string manifest =
+        R"({"actors": [{"actor": "CoopPuppet_Child"}, {"actor": "CoopPuppet_Adult_Cyan", "tunic": "cyan"},)"
+        R"( {"actor": "CoopPuppet_Adult_C007", "character": 7, "model": "Player_Adult_C007"},)"
+        R"( {"actor": "CoopPuppet_Child_C007", "character": 7}, {"actor": "CoopPuppet_Adult_C007"}]})";
+    const auto actors = PackCharacterActors(manifest);
+    CHECK(actors == std::vector<std::string>{"CoopPuppet_Adult_C007", "CoopPuppet_Child_C007"});
+    CHECK(PackCharacterActors(R"({"actors": [{"actor": "CoopPuppet_Adult_Cyan"}]})").empty());
+
+    PlannerSettings settings;
+    settings.character_actors = actors;
+    Planner p(settings);
+    CHECK(p.ActorFor(true, 0xFF3030u, 9) == "CoopPuppet_Adult_C007");    // the character, before the colour
+    CHECK(p.ActorFor(false, std::nullopt, 9) == "CoopPuppet_Child_C007");
+    CHECK(p.ActorFor(true, 0xFF3030u, 0) == "CoopPuppet_Adult_Red");     // Link: the colour, as before
+    CHECK(p.ActorFor(true, 0xFF3030u, 10) == "CoopPuppet_Adult_Red");    // a character this pack has no puppet of
+    CHECK(p.ActorFor(true, 0xFF3030u) == "CoopPuppet_Adult_Red");
+    p.SetFailedTunics({"CoopPuppet_Adult_C007"});
+    CHECK(p.ActorFor(true, 0xFF3030u, 9) == "CoopPuppet_Adult_Red");     // one the game refused: the colour
+    PlannerSettings none;
+    CHECK(Planner(none).ActorFor(true, 0xFF3030u, 9) == "CoopPuppet_Adult_Red");   // a pack without them
+}

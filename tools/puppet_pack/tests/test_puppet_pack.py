@@ -2803,6 +2803,46 @@ class FullBuildTest(unittest.TestCase):
             build.build(self.romfs, os.path.join(self.dir, "mod_x"), log=lambda *_: None,
                         skins=[("Mod", mod_src)], test_skin="Other", look_slots=0)
 
+    def test_build_characters(self):
+        # A Character Select mod beside the pack (made-up data): a puppet per character and age it has a
+        # model file for, the plain puppet with that model project and the list's heap sizes.
+        mods = os.path.join(self.dir, "mods_cs")
+        cs = os.path.join(mods, "OoT Character Select")
+        os.makedirs(os.path.join(cs, "romfs", "Model"))
+        with open(os.path.join(cs, "romfs", "Model", "Player_Adult_C005.Player_Adult.bfres.zs"), "wb") as f:
+            f.write(b"made up")
+        doc = {"format": 1, "mod": "OoT Character Select",
+               "actor_heaps": {v: {"InstanceHeapSize": 0x7000000, "PreActorRenderInfoHeapSize": 0x60000}
+                               for v in build.VARIANTS},
+               "characters": [{"number": 0, "name": "Link"}, {"number": 7, "name": "Made Up", "file": 5},
+                              {"number": 8, "name": "No File", "file": 6}]}
+        with open(os.path.join(cs, build.CHARACTERS_FILE), "w", encoding="utf-8") as f:
+            json.dump(doc, f)
+        mod = os.path.join(mods, "pack")
+        found = build.find_characters(mod, log=lambda *_: None)
+        self.assertEqual(found["files"], {5: ["Adult"]})
+        self.assertEqual(found["numbers"], {5: 7})
+        m = build.build(self.romfs, mod, log=lambda *_: None, tunics=["red"], look_slots=0, characters=found)
+        actors = {a["actor"]: a for a in m["actors"]}
+        self.assertEqual(actors["CoopPuppet_Adult_C005"]["character"], 5)
+        self.assertEqual(actors["CoopPuppet_Adult_C005"]["model"], "Player_Adult_C005")
+        self.assertIsNone(actors["CoopPuppet_Adult_C005"]["tunic"])
+        self.assertGreaterEqual(actors["CoopPuppet_Adult_C005"]["instance_heap"], 0x7000000)
+        self.assertNotIn("CoopPuppet_Child_C005", actors)   # no model file for that age
+        self.assertNotIn("CoopPuppet_Adult_C006", actors)   # listed, no file
+        self.assertIsNone(actors["CoopPuppet_Adult"]["character"])
+        self.assertIsNone(actors["CoopPuppet_Adult_Red"]["character"])
+        self.assertEqual(m["characters"]["numbers"], {"5": 7})
+        # The puppet is the game's player pack under its own name: nothing of the mod's is copied.
+        self.assertFalse(os.path.exists(os.path.join(mod, "romfs", "Model", "Player_Adult_C005.Player_Adult.bfres.zs")))
+        # Another mod's list, or another format, is not ours.
+        doc["mod"] = "Something Else"
+        with open(os.path.join(cs, build.CHARACTERS_FILE), "w", encoding="utf-8") as f:
+            json.dump(doc, f)
+        self.assertIsNone(build.find_characters(mod, log=lambda *_: None))
+        m = build.build(self.romfs, os.path.join(mods, "pack2"), log=lambda *_: None, look_slots=0)
+        self.assertIsNone(m["characters"])
+
     def test_skin_refusals(self):
         cases = [
             (("Mod", self.make_model_mod("with_code", exefs=True)), "exefs"),

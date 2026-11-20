@@ -759,6 +759,9 @@ struct Remote {
     // The item copy painted in the player's gear colours
     // (CoopLookShare::CopyOf): their puppet wears it.
     std::optional<std::size_t> look_copy;
+    // The character they picked in the Character Select mod
+    // (CoopLookShare::CharacterOf): 0 is Link.
+    std::uint16_t character = 0;
 };
 
 struct PlannerSettings {
@@ -811,7 +814,25 @@ struct PlannerSettings {
     // Reads through a puppet's missing components give 0 (the emulator, or
     // Hookshot's null page armable): Director::SetNullReadsZero.
     bool null_reads_zero = true;
+    // The puppets the pack has for the characters of the Character Select mod
+    // (PackCharacterActors, sorted): a player who picked one is shown as
+    // CharacterActor(their age, their character) when it is among them.
+    std::vector<std::string> character_actors;
 };
+
+// Character Select (github.com/snaildev99/OoT-Character-Select): a player there
+// is one of over a hundred characters, each a player model file of that mod,
+// Model/Player_<Age>_C<file>.Player_<Age>.bfres with file = the stored
+// character number less kFirstCharacter. tools/puppet_pack makes a puppet for
+// each (CoopPuppet_<Age>_C<file>: the plain puppet with that model project, as
+// a tunic colour's), which the game loads from the mod's own file.
+inline constexpr std::uint16_t kFirstCharacter = 2;   // 0 is Link, 1 has no file
+// "CoopPuppet_Adult_C007" for (true, 9); "" for a number that is no character.
+std::string CharacterActor(bool adult, std::uint16_t character);
+// `actor` is a character's puppet (its quiet copy too).
+bool IsCharacterActor(std::string_view actor);
+// The character puppets a pack's coop_puppet.json lists, sorted.
+std::vector<std::string> PackCharacterActors(std::string_view manifest);
 
 // The puppet pack's item copies (coop_puppet.json "look_items",
 // tools/puppet_pack/look_items.py): the items and the copy count (two per
@@ -870,7 +891,7 @@ public:
                std::optional<std::uint32_t> own_color = {});
     // The actor for a player of that age and colour: CoopPuppet_<Age>, or
     // CoopPuppet_<Age>_<Colour> (CoopColors::TunicOf) while tunics are on.
-    std::string ActorFor(bool adult, std::optional<std::uint32_t> color = {}) const;
+    std::string ActorFor(bool adult, std::optional<std::uint32_t> color = {}, std::uint16_t character = 0) const;
     void SetTunics(bool on) { settings_.tunics = on; }
     void SetGreenPuppet(bool on) { settings_.green_puppet = on; }
     // Tunic actors that do not work here (Director::FailedTunics): the plain
