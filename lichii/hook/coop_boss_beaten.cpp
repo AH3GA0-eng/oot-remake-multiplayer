@@ -411,4 +411,24 @@ void Apply::Reset() {
     checked_.clear();
 }
 
+bool OwnLoadClears(bool hosting, bool save_load, bool retry) {
+    return hosting && save_load && !retry;
+}
+
+std::optional<std::uint32_t> Read(const GameIo& io, std::uint32_t hash) {
+    if (io.read_bool) {
+        if (const auto b = io.read_bool(hash)) {
+            return b;
+        }
+    }
+    return io.read_enum ? io.read_enum(hash) : std::nullopt;
+}
+
+bool WriteTo(const GameIo& io, const Write& w) {
+    if (w.is_enum) {
+        return io.write_enum && io.write_enum(w.hash, w.value);
+    }
+    return w.value <= 1 && io.write_bool && io.write_bool(w.hash, w.value != 0);
+}
+
 } // namespace CoopBossBeaten

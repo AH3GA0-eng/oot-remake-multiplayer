@@ -130,6 +130,28 @@ struct Write {
     bool revert = false;  // #138 (4): a Bool put back to its alive value after the host's older save (HostReset)
 };
 
+// Row 159 (dungeon-sweep-0118-2): whether our own save load clears the record at once, when the save is in
+// (FlagWatcher's save load, before the new scene is read), not at the FLAG_RESET when the load window ends: on the
+// host its own save decides, so the group's beaten set must never reach it in between. A guest's load keeps the
+// record (the group beat the boss: its save gets the set); Game Over's Try Again too (the group's values come back).
+bool OwnLoadClears(bool hosting, bool save_load, bool retry);
+
+// Row 159 (dungeon-sweep-0118-2): how the hook reads and writes a set's flags in the game. A set names Bools and
+// one quest Enum; the flag store (GameFlagStore) reads and writes Bools, Ints and shared UInts but no Enum, so a
+// quest read through it alone was always "unread": the host never sent BOSS_ALIVE (AliveInSave knew no quest),
+// HostReset's and HostAlive's put-backs waited for ever, and the beaten quest step was never written. The Enum goes
+// through the game's own Enum getter and setter (GameFlags::get_enum / set_enum), as every other quest of ours.
+struct GameIo {
+    std::function<std::optional<std::uint32_t>(std::uint32_t)> read_bool;  // the flag store: 0 or 1, or nothing
+    std::function<std::optional<std::uint32_t>(std::uint32_t)> read_enum;  // the game's Enum getter: a step's hash
+    std::function<bool(std::uint32_t, bool)> write_bool;
+    std::function<bool(std::uint32_t, std::uint32_t)> write_enum;
+};
+// A flag a set names: the Bool when the store has one by that hash, else the Enum.
+std::optional<std::uint32_t> Read(const GameIo& io, std::uint32_t hash);
+// One of Check's writes: an Enum write (`is_enum`) through the Enum setter, a Bool through the store.
+bool WriteTo(const GameIo& io, const Write& w);
+
 class Apply {
 public:
     // At each hook frame: `scene` nothing while loading; `place_known` once Link's position reads. Only at a scene
