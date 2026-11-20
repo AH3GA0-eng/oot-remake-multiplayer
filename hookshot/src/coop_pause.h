@@ -81,6 +81,8 @@ void HostNow();
 void LeaveNow();
 // Co-op came with the game's start (Host.bat, Join.bat, coop.ini): the page's rows open the menu instead.
 bool ByLauncher();
+// The tab's own Host started co-op (hosting, or still starting to).
+bool HostStarted();
 // The Multiplayer page's Join view: joining with the code (or address line) on the clipboard, as the Join page's
 // paste then Join; and the last game again ("Join <host> again", its code kept in coop.ini). Refused (co-op on, the
 // code not readable) or failed: PageSays why.

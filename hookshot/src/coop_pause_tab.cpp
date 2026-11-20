@@ -17,6 +17,7 @@ namespace {
 
 // A screen whose updates stopped this long ago is taken as gone (the game updates an open menu once a frame).
 constexpr std::uint64_t kStaleMs = 250;
+constexpr std::uint64_t kTypingStartMs = 400;   // (an A this soon after the keyboard opened is the one that opened it)
 // A window over the page keeps it away this long after its last opening, open or closing update.
 constexpr std::uint64_t kBlockMs = 250;
 
@@ -266,6 +267,7 @@ Page::Do Page::OnScreen(const Facts& f, std::uint64_t now_ms) {
 
 std::uint64_t Page::OnPad(std::uint64_t buttons, std::uint64_t now_ms) {
     AfterStall(now_ms);
+    pad_ms_ = now_ms;
     const std::uint64_t down = buttons & ~pad_last_;
     pad_last_ = buttons;
     swallow_ &= buttons;   // (let go: the game gets it again)
@@ -328,6 +330,7 @@ void Page::StartTyping(int which) {
     keys_.Reset();
     repeat_since_ = repeat_last_ = 0;
     swallow_ |= pad_last_;   // (the A that started it is not the keyboard's first press)
+    typing_from_ms_ = pad_ms_;   // (nor the same A coming again: a click's A, in two pulses, typed the first key)
 }
 
 void Page::EndTyping(bool ok) {
@@ -360,7 +363,7 @@ void Page::TypingPad(std::uint64_t down, std::uint64_t held, std::uint64_t now_m
         EndTyping(true);
         return;
     }
-    if ((down & kPadA) != 0) {
+    if ((down & kPadA) != 0 && now_ms - typing_from_ms_ >= kTypingStartMs) {
         PressKey(keys_.row(), keys_.col());
         if (typing_ < 0) return;
     }
@@ -797,7 +800,7 @@ std::vector<std::string> RowTexts(const SessionView& v) {
     } else if (!v.turned_away.empty()) {
         rows[kRowSession] = "Turned away";   // (co-op is still on: Leave, then join again)
     } else if (v.connecting) {
-        rows[kRowSession] = "Connecting...";
+        rows[kRowSession] = v.s.hosting ? "Starting to host..." : "Connecting...";
     } else if (v.s.hosting) {
         rows[kRowSession] = "Hosting";
     } else if (v.s.in_one) {
@@ -836,7 +839,8 @@ std::vector<std::string> RowTexts(const SessionView& v) {
     if (v.s.by_launcher) {
         rows[kRowLeave] = "Leave: restart the game";
     } else if (v.confirm_leave) {
-        rows[kRowLeave] = v.s.hosting ? "A again: stop hosting" : "A again: leave";
+        rows[kRowLeave] = v.confirm_click ? (v.s.hosting ? "Click again to stop" : "Click again to leave")   // (kRowChars)
+                                          : (v.s.hosting ? "A again: stop hosting" : "A again: leave");
     } else {
         // (in no session: nothing to leave, the row not shown; the release is on the list, DetailLines)
         rows[kRowLeave] = !v.s.in_one ? std::string() : v.s.hosting ? "Stop hosting" : "Leave";
@@ -914,8 +918,9 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
         } else {
             rows[0] = (v.host_mutes & kMuteVoice) != 0 ? "Unmute voice for all" : "Mute voice for all";
             rows[1] = (v.host_mutes & kMuteChat) != 0 ? "Unmute chat for all" : "Mute chat for all";
-            rows[2] = v.confirm_kick ? "A again: kick " + v.player_name : "Kick " + v.player_name;
-            rows[3] = v.confirm_ban ? "A again: ban " + v.player_name : "Ban for this session";
+            const std::string again = v.confirm_click ? "Again: " : "A again: ";   // (a name after it: short)
+            rows[2] = v.confirm_kick ? again + "kick " + v.player_name : "Kick " + v.player_name;
+            rows[3] = v.confirm_ban ? again + "ban " + v.player_name : "Ban for this session";
         }
         break;
     case View::kLetIn:
@@ -939,7 +944,9 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
             // (the fields: the row's label, then what was typed, the letter at the cursor in brackets while typing)
             // (short labels: a tester saw "Room: A to type its name" squeezed to fit its button. The first field takes
             // a room name, or an address with its port after a colon, as the title's Join: "Room or address")
-            rows[1] = "Room or IP: " + (v.room_field.empty() && v.typing != 0 ? std::string("A to type") : v.room_field);
+            // (typed: a short label, so an address and its port fit whole)
+            rows[1] = v.room_field.empty() && v.typing != 0 ? std::string("Room or IP: A to type")
+                      : (v.typing == 0 ? "Room or IP: " : "To: ") + v.room_field;
             rows[2] = "Password: " + (v.password_field.empty() && v.typing != 1 ? std::string("A to type") : v.password_field);
             if (v.room_ready) {
                 // (an address: the port it joins on, so a tester sees where it goes; another is typed after a colon)
@@ -1047,6 +1054,7 @@ const char* ActionWords(RowAction a) {
     case RowAction::kChangePassword: return "a new join password typed on the keyboard";
     case RowAction::kChangePort: return "the port when hosting typed on the keyboard";
     case RowAction::kTypeRelay: return "the relay's address typed on the keyboard";
+    case RowAction::kTypeSearch: return "the online list's search typed on the keyboard";
     case RowAction::kBrowseLan: return "the browser lists the games on this network";
     case RowAction::kBrowseOnline: return "the browser lists the relay's public rooms";
     case RowAction::kBrowsePage: return "the browser's next page of games";
@@ -1198,6 +1206,10 @@ std::vector<ListLine> ListLines(const SessionView& v) {
     if (v.s.in_one || v.s.by_launcher) return lines;
     // (a heading of text: "Game | Players" with its value box read as a button that did nothing, a tester)
     lines[0] = ListLine{v.s.online ? "Online games" : "Games on this network", ""};
+    if (v.s.online && v.relay_set) {   // (the heading's box: the search, typed there with A or a click)
+        lines[0].value = FitTo(v.search.empty() ? std::string("Search") : "\"" + v.search + "\"", kListValueChars);
+        lines[0].act = RowAction::kTypeSearch;
+    }
     const std::vector<ListLine>& list = v.s.online ? v.online_list : v.lan_list;
     if (list.empty()) {
         lines[1].name = FitTo(v.s.online ? (v.online_state.empty() ? std::string("Asking the relay...") : v.online_state)
@@ -1216,6 +1228,16 @@ std::vector<ListLine> ListLines(const SessionView& v) {
         }
     }
     return lines;
+}
+
+bool RoomMatches(const std::string& room, const std::string& host, const std::string& search) {
+    if (search.empty()) return true;
+    const auto lower = [](std::string s) {
+        for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return s;
+    };
+    const std::string want = lower(search);
+    return lower(room).find(want) != std::string::npos || lower(host).find(want) != std::string::npos;
 }
 
 std::vector<ListLine> DetailLines(View view, const SessionView& v) {

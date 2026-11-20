@@ -1198,6 +1198,11 @@ bool ByLauncher() {
     return g_coop_on;
 }
 
+bool HostStarted() {
+    std::lock_guard lock(g_mutex);
+    return g_doing == "hosting";
+}
+
 void HostNow() {
     std::lock_guard lock(g_mutex);
     FreshMain();

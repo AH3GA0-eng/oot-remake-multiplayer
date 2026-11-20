@@ -529,6 +529,11 @@ TEST_CASE("pause tab: the invite code's two rows: the host's Paste answer, a wai
     w.connecting = true;
     CHECK(RowTexts(w)[kRowSession] == "Connecting...");
     CHECK(RowTexts(w)[kRowJoinCode] == "Copy answer code");
+    SessionView starting;   // (the page's own Host, still starting: a host's rows, not a guest's)
+    starting.s.in_one = starting.s.hosting = true;
+    starting.connecting = true;
+    CHECK(RowTexts(starting)[kRowSession] == "Starting to host...");
+    CHECK(RowTexts(starting)[kRowLeave] == "Stop hosting");
 }
 
 TEST_CASE("pause tab: the rows say what co-op is doing, in at most a row's width") {
@@ -568,6 +573,8 @@ TEST_CASE("pause tab: the rows say what co-op is doing, in at most a row's width
     CHECK(RowTexts(guest)[kRowLeave] == "A again: leave");
     host.confirm_leave = true;
     CHECK(RowTexts(host)[kRowLeave] == "A again: stop hosting");
+    host.confirm_click = true;   // (the first a click: the second one too)
+    CHECK(RowTexts(host)[kRowLeave] == "Click again to stop");
     host.confirm_leave = false;
     SessionView joining;
     joining.connecting = true;
@@ -1287,42 +1294,45 @@ TEST_CASE("pause tab: typing on the on-screen keyboard takes every button from S
     p.StartTyping(0);
     CHECK(p.Typing() == 0);
     CHECK(p.KeyCursor().row() == 0);
-    CHECK(p.OnPad(kPadA, 1032) == 0);           // (A presses the key under the cursor: A, a room name's a)
+    CHECK(p.OnPad(kPadA, 1032) == 0);           // (the A that opened it, coming again: a click taps A just after)
+    CHECK(p.Field(0).text().empty());
+    p.OnPad(0, 1048);
+    CHECK(p.OnPad(kPadA, 1432) == 0);           // (A presses the key under the cursor: A, a room name's a)
     CHECK(p.Field(0).text() == "a");
-    CHECK(p.OnPad(0, 1048) == 0);
-    CHECK(p.OnPad(kPadRight, 1064) == 0);       // (the arrows move over the keys; none reaches System)
+    CHECK(p.OnPad(0, 1448) == 0);
+    CHECK(p.OnPad(kPadRight, 1464) == 0);       // (the arrows move over the keys; none reaches System)
     CHECK(p.KeyCursor().col() == 1);
-    CHECK(p.OnPad(kPadRight | kPadA, 1080) == 0);
+    CHECK(p.OnPad(kPadRight | kPadA, 1480) == 0);
     CHECK(p.Field(0).text() == "ab");
     // Held: again and again after a moment (the screens updating meanwhile, as in a game).
-    p.OnPad(0, 1090);
-    OnSystem(p, 1100);
-    p.OnPad(kPadDown, 1100);
-    OnSystem(p, 1250);
-    p.OnPad(kPadDown, 1250);
-    OnSystem(p, 1400);
-    p.OnPad(kPadDown, 1400);
-    OnSystem(p, 1550);
-    p.OnPad(kPadDown, 1550);   // (held over 400 ms: a step)
+    p.OnPad(0, 1490);
+    OnSystem(p, 1500);
+    p.OnPad(kPadDown, 1500);
+    OnSystem(p, 1650);
+    p.OnPad(kPadDown, 1650);
+    OnSystem(p, 1800);
+    p.OnPad(kPadDown, 1800);
+    OnSystem(p, 1950);
+    p.OnPad(kPadDown, 1950);   // (held over 400 ms: a step)
     CHECK(p.KeyCursor().row() == 2);
-    CHECK(p.OnPad(0, 1660) == 0);
-    CHECK(p.OnPad(kPadY, 1670) == 0);            // (Y: a letter off)
+    CHECK(p.OnPad(0, 2060) == 0);
+    CHECK(p.OnPad(kPadY, 2070) == 0);            // (Y: a letter off)
     CHECK(p.Field(0).text() == "a");
     CHECK(p.Typing() == 0);
-    p.OnPad(0, 1680);
-    p.OnPad(kPadPlus, 1690);                     // (+: OK)
+    p.OnPad(0, 2080);
+    p.OnPad(kPadPlus, 2090);                     // (+: OK)
     CHECK(p.Typing() == -1);
     CHECK(p.TakeTyped() == 0);
     CHECK(p.TakeTyped() == -1);                  // (once)
     CHECK(p.Shown());
     CHECK_FALSE(p.TakeBack());
-    p.OnPad(0, 1700);
+    p.OnPad(0, 2100);
     // B is Cancel: the field as it was.
     p.StartTyping(2);
-    p.OnPad(kPadB, 1710);
+    p.OnPad(kPadB, 2110);
     CHECK(p.Typing() == -1);
     CHECK(p.TakeTyped() == -1);
-    p.OnPad(0, 1720);
+    p.OnPad(0, 2120);
     // The mouse's click on a key, and the keys Cancel and OK.
     p.StartTyping(2);
     p.PressKey(4, 1);                            // ('1')
@@ -1382,7 +1392,9 @@ TEST_CASE("pause tab: typing ends when the page goes, and the Join view's rows s
     CHECK(rows[1] == "Room or IP: fore[s]t");
     CHECK(rows[3] == "Join room: no relay set");
     v.relay_set = true;
-    CHECK(RowTexts(View::kJoin, v)[3] == "Join this room");
+    CHECK(RowTexts(View::kJoin, v)[3] == "Join this room");    v.typing = -1;
+    v.room_field = "127.0.0.1:27510";
+    CHECK(RowTexts(View::kJoin, v)[1] == "To: 127.0.0.1:27510");   // (typed: a short label, the address whole)
 }
 
 TEST_CASE("pause tab: the focused row is the System button's number under it, by its name") {
@@ -1470,6 +1482,11 @@ TEST_CASE("pause tab: the game browser: the rows choose the list and its page, t
     v.relay_set = true;   // (a relay that lists nothing: why, as it says)
     CHECK(ListLines(v)[1].name == "No relay set");
     CHECK(ListLines(v)[1].act == RowAction::kNone);
+    CHECK(ListLines(v)[0].value == "Search");                      // (a relay: the heading's box types a search)
+    CHECK(ListLines(v)[0].act == RowAction::kTypeSearch);
+    v.search = "kok";
+    CHECK(ListLines(v)[0].value == "\"kok\"");
+    v.search.clear();
     v.relay_set = false;
     v.online_state.clear();
     v.online_rows.assign(10, "kokiri (1/4)");
@@ -2079,4 +2096,12 @@ TEST_CASE("pause tab: the port and relay fields take what each can hold") {
     for (char c : std::string("Relay.Example.org:27530 x")) relay.Type(static_cast<unsigned char>(c));
     CHECK(relay.text() == "relay.example.org:27530x");   // (lower case, no spaces)
     CHECK(relay.Shown(false, 40) == "relay.example.org:27530x");   // (shown as it is, not as a password)
+}
+
+TEST_CASE("pause tab: the online list's search keeps the rooms with its letters in their name or their host's") {
+    CHECK(RoomMatches("kokiri", "Saria", ""));
+    CHECK(RoomMatches("kokiri", "Saria", "kok"));
+    CHECK(RoomMatches("Kokiri", "Saria", "kok"));      // (any case)
+    CHECK(RoomMatches("forest", "Saria", "sar"));      // (the host's name too)
+    CHECK_FALSE(RoomMatches("forest", "Saria", "fire"));
 }

@@ -238,13 +238,14 @@ public:
     // The Join view's two fields (the room name, the join password) and which one is typed into (-1: none). While one
     // is, the pad's buttons are all the page's (none reach System) and the keyboard's keys are the field's (Key, Char).
     // The fields: 0 the room name, 1 the join password (Join view, a game's view), 2 the host's new join password,
-    // 3 the port when hosting (the details' Router line), 4 the relay's address (the browser's online list).
-    static constexpr int kFields = 5;
+    // 3 the port when hosting (the details' Router line), 4 the relay's address (the browser's online list), 5 the
+    // online list's search (its heading line).
+    static constexpr int kFields = 6;
     TextField& Field(int which) {
-        return which == 4 ? relay_ : which == 3 ? port_ : which == 2 ? new_password_ : which == 1 ? password_ : room_;
+        return which == 5 ? search_ : which == 4 ? relay_ : which == 3 ? port_ : which == 2 ? new_password_ : which == 1 ? password_ : room_;
     }
     const TextField& Field(int which) const {
-        return which == 4 ? relay_ : which == 3 ? port_ : which == 2 ? new_password_ : which == 1 ? password_ : room_;
+        return which == 5 ? search_ : which == 4 ? relay_ : which == 3 ? port_ : which == 2 ? new_password_ : which == 1 ? password_ : room_;
     }
     // Typing into a field brings up the on-screen keyboard (coop_keyboard.h): the pad's arrows move over its keys and
     // A presses the one under the cursor, B is Cancel, Y deletes, + is OK, L and R move in the text.
@@ -262,12 +263,14 @@ public:
 private:
     void TypingPad(std::uint64_t down, std::uint64_t held, std::uint64_t now_ms);
     TextField room_{TextField::Kind::kRoom}, password_{TextField::Kind::kPassword},
-        new_password_{TextField::Kind::kPassword}, port_{TextField::Kind::kPort}, relay_{TextField::Kind::kAddress};
+        new_password_{TextField::Kind::kPassword}, port_{TextField::Kind::kPort}, relay_{TextField::Kind::kAddress},
+        search_{TextField::Kind::kRoom};
     int typing_ = -1, typed_ = -1;
     CoopKeyboard::Cursor keys_;
     std::string typing_was_;   // (the field before typing: Cancel puts it back)
     void EndTyping(bool ok);
-    std::uint64_t repeat_since_ = 0, repeat_last_ = 0;   // a held direction: when it went down, its last step
+    std::uint64_t repeat_since_ = 0, repeat_last_ = 0;
+    std::uint64_t pad_ms_ = 0, typing_from_ms_ = 0;   // (the last pad read; when typing began: its first A is not a key's)   // a held direction: when it went down, its last step
 
     bool CanShow(std::uint64_t now_ms) const;
     bool CanStay(std::uint64_t now_ms) const;
@@ -363,6 +366,7 @@ enum class RowAction {
     kChangePort,     // the details' Router line: the port when hosting typed on the keyboard, hosting again on it
     kTypeRelay,      // the browser's online list with no relay: the relay's address typed on the keyboard, saved
                      // (players who join after need it; players in stay in)
+    kTypeSearch,     // the browser's online list's heading: words typed on the keyboard, the rooms that hold them listed
     // The game browser (View::kLan): the games in the cells on the right, the list chosen on the rows.
     kBrowseLan,      // the cells list the games on this network
     kBrowseOnline,   // the cells list the relay's public rooms (coop_room_list.h)
@@ -371,7 +375,7 @@ enum class RowAction {
     kListRoom,       // this game's room on the relay's public list when it hosts, on or off (coop-options.ini
                      // list_room; saved at once)
 };
-inline constexpr std::uint64_t kConfirmMs = 3000;
+inline constexpr std::uint64_t kConfirmMs = 5000;   // (3 s ran out before a test's second click)
 // proto::lobby_mute's bits (CoopLobby's kVoice, kChat; the module checks they match).
 inline constexpr std::uint8_t kMuteVoice = 1u << 0, kMuteChat = 1u << 1;
 // What co-op is doing, as the rows need it.
@@ -548,6 +552,7 @@ struct SessionView {
     std::string version;
     std::uint8_t own_mutes = 0, host_mutes = 0;   // a player's view: kMuteVoice / kMuteChat bits
     bool confirm_kick = false, confirm_ban = false;   // the host's Kick or Ban waits for its second A
+    bool confirm_click = false;   // the first was a click: "Click again", not "A again"
     // The Join view's fields: their rows' words (TextField::Shown) and whether a relay is set to join a room through.
     std::string room_field, password_field;
     bool room_ready = false, relay_set = false;
@@ -557,6 +562,7 @@ struct SessionView {
     std::vector<std::string> online_rows; // the relay's public rooms, as their cells say them (CoopRoomList::CellText)
     std::vector<ListLine> lan_list, online_list;   // the same, as the browser's list shows them (name, players)
     std::string online_state;             // the browser's online list when it has no rooms: why ("" asking)
+    std::string search;                   // the online list's search, as typed ("" all rooms)
     int cell = -1;                        // the browser's cell picked with the pad or the mouse (-1: the rows')
     std::string lan_game;                 // a game's view: the game picked, as its row said it
     std::string turned_away;              // a guest the host's game turned away (kicked, banned, full: the Lobby's
@@ -588,6 +594,8 @@ inline constexpr std::size_t kListNameChars = 30, kListValueChars = 16;   // (th
 // The list's rows for this page: the header, then a page of games ("" rows not shown). With nothing listed, the
 // first game row says why.
 std::vector<ListLine> ListLines(const SessionView& v);
+// A relay's room kept by the online list's search: the search's letters in its name or its host's, any case ("": all).
+bool RoomMatches(const std::string& room, const std::string& host, const std::string& search);
 // The same list on the main view and the Session view: the session's details (a header, what it is, then name and
 // value lines), co-op's problem or hint as lines of text (no value: their value box not shown), and the release last.
 // None on the other views. The rows keep what can be done.

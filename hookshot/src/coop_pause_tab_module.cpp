@@ -88,6 +88,9 @@ std::atomic<int> g_cell_games{0};   // the cells on this page that hold a game (
 std::atomic<std::uint32_t> g_rows_blank{0};
 std::atomic<bool> g_rows_moment{false};
 std::array<std::atomic<std::uint64_t>, kCells> g_cell_pane_at{};   // the cells' panes in our page, this opening
+std::atomic<std::uint64_t> g_head_pane_at{0};                      // (and the list's first line's, above the cells)
+bool g_lines_held = false;   // (the details list's own click: the left button as last read, the line it went down on)
+int g_lines_press = -1;
 // The pad's and the mouse's last state for the cells (OnPad, g_mutex).
 std::uint64_t g_browse_last = 0;
 float g_cells_mouse_x = 0, g_cells_mouse_y = 0;
@@ -339,6 +342,15 @@ const CoopLobby::PlayerSeen* ShownPlayer(const CoopLobby::Seen& seen) {
     return nullptr;
 }
 
+// The relay's rooms the online list's search keeps, in the relay's order (RoomMatches).
+std::vector<CoopRoomList::Room> SearchedRooms(const std::string& search) {
+    std::vector<CoopRoomList::Room> kept;
+    for (const CoopRoomList::Room& r : CoopRoomList::Now().rooms) {
+        if (RoomMatches(r.room, r.host, search)) kept.push_back(r);
+    }
+    return kept;
+}
+
 // What the rows say now (co-op's host status and the Lobby's room, its players). No lock of ours held: they take
 // their own.
 SessionView ViewNow(View view) {
@@ -348,7 +360,8 @@ SessionView ViewNow(View view) {
     SessionView v;
     v.s.by_launcher = CoopPause::ByLauncher();
     v.s.failed = st.state == HOS_COOP_FAILED;
-    v.s.hosting = st.state == HOS_COOP_HOSTING;
+    // (still starting: a host's rows already, not a guest's "Leave" for a moment)
+    v.s.hosting = st.state == HOS_COOP_HOSTING || (st.state == HOS_COOP_STARTING && CoopPause::HostStarted());
     v.s.in_one = (st.state != HOS_COOP_IDLE && st.state != HOS_COOP_FAILED) || CoopSave::SessionLive();
     v.connecting = st.state == HOS_COOP_STARTING || st.state == HOS_COOP_JOINING || st.state == HOS_COOP_WAIT_HOST;
     std::string room = st.relay_room[0] != 0 ? st.relay_room : st.relay_code[0] != 0 ? st.relay_code : "";
@@ -369,6 +382,7 @@ SessionView ViewNow(View view) {
     v.confirm_leave = Confirming(View::kMain, kRowLeave);
     v.confirm_kick = Confirming(View::kPlayerHost, 2);
     v.confirm_ban = Confirming(View::kPlayerHost, 3);
+    v.confirm_click = g_confirm_by_mouse.load();
     const CoopLobby::Seen seen = CoopLobby::Now();
     if (!v.s.hosting && !seen.refused.empty()) {   // (turned away: co-op's menu says "Press Leave, then join again")
         v.turned_away = CoopTitleMenu::ShortReason(seen.refused);
@@ -410,14 +424,19 @@ SessionView ViewNow(View view) {
                                                     h.game.protocol == coop::protocol::kProtocolVersion)});
             if (i < 32 && CoopLan::Joinable(h, coop::protocol::kProtocolVersion)) v.s.lan_joinable |= 1u << i;
         }
-        const CoopRoomList::Snapshot rooms = CoopRoomList::Now();
-        for (const CoopRoomList::Room& r : rooms.rooms) {
+        {
+            std::lock_guard lock(g_mutex);   // (the search is the page's field; no other lock of ours is held here)
+            v.search = g_page.Field(5).text();
+        }
+        const std::vector<CoopRoomList::Room> rooms = SearchedRooms(v.search);
+        for (const CoopRoomList::Room& r : rooms) {
             v.online_rows.push_back(CoopRoomList::CellText(r, coop::protocol::kProtocolVersion));
             v.online_list.push_back(ListLine{ListName(r.host, r.room),
                                              ListValue(r.players, r.max, r.protocol == coop::protocol::kProtocolVersion)});
         }
-        v.online_state = rooms.state;
-        v.s.online_listed = static_cast<int>(rooms.rooms.size());
+        const CoopRoomList::Snapshot all = CoopRoomList::Now();
+        v.online_state = rooms.empty() && !all.rooms.empty() ? "No room has \"" + v.search + "\"" : all.state;
+        v.s.online_listed = static_cast<int>(rooms.size());
         v.s.online = g_online.load();
         v.s.cell_page = g_cell_page.load();
         v.s.list_room = CoopPause::ListRoom();   // (the files' setting; read only while this view shows)
@@ -442,7 +461,7 @@ SessionView ViewNow(View view) {
     if (view == View::kJoin || view == View::kLanGame) {
         std::lock_guard lock(g_mutex);   // (the fields are the page's; no other lock of ours is held here)
         v.typing = g_page.Typing();
-        v.room_field = g_page.Field(0).Shown(v.typing == 0, kRowChars - 12);      // ("Room or IP: ")
+        v.room_field = g_page.Field(0).Shown(v.typing == 0, kRowChars - (v.typing == 0 ? 12 : 4));   // ("Room or IP: " typing, else "To: ")
         v.join_address = g_page.Field(0).text().find_first_of(".:") != std::string::npos;
         if (const std::string& f = g_page.Field(0).text(); v.join_address) {
             const auto colon = f.rfind(':');
@@ -525,6 +544,7 @@ void LiveCells(void* ctx, std::uint64_t layout, std::uint64_t gen, const Session
             const std::size_t k = static_cast<std::size_t>(i);
             g_list_panes[k] = IsPart(pane) ? pane : 0;
             if (i > 0) g_cell_pane_at[k - 1] = g_list_panes[k];
+            if (i == 0) g_head_pane_at = g_list_panes[k];
             g_list_vis[k] = -1, g_list_alpha[k] = -1, g_list_box_vis[k] = -1, g_list_box[k] = {};
             if (!IsPart(pane)) continue;
             ++found;
@@ -604,6 +624,13 @@ int g_set_seen_row = -1;
 constexpr std::uint64_t kMouseAMs = 400;   // an A this soon after the left button was down is the mouse's
 std::uint64_t g_set_left_ms = 0;          // the left button last seen down on Longshot Settings. g_mutex.
 std::uint64_t g_list_focus_fix_ms = 0;    // a Left last sent to bring the game's cursor back from the list. g_mutex.
+// (that Left lands on the category beside the list's row, not the one shown: the category kept, and the steps back to
+// it until then. A test run 2026-11-20: a click on the last setting's arrow turned the category to Debug. g_mutex)
+int g_set_keep = -1;
+float g_set_mouse_x = 0, g_set_mouse_y = 0;   // (the mouse's last place, when it last moved: settings)
+std::uint64_t g_set_mouse_ms = 0;
+std::uint64_t g_set_keep_until = 0, g_set_keep_step_ms = 0;
+std::uint64_t g_set_click_ms = 0;          // our click on a setting (its arrow or its row): Longshot's A after it is not one
 // Longshot's settings as last read (every 2 s while the page shows, and after a change). g_set_mutex.
 std::mutex g_set_mutex;
 std::vector<SettingRow> g_set_all;
@@ -1318,6 +1345,18 @@ std::array<RowBox, kCells> ReadCellBoxes() {
     return boxes;
 }
 
+// The list's line under x, y (its first, the header, then the cells' lines), or -1.
+int LineAt(float x, float y) {
+    const std::array<RowBox, kCells> cells = ReadCellBoxes();
+    if (const int c = CellAt(cells, x, y); c >= 0) return c + 1;
+    const std::uint64_t pane = g_head_pane_at.load();
+    float m[12] = {};
+    if (pane == 0 || !CoopRuntime::Read(pane + 0x28, m, sizeof m) || !(m[0] > 1e-3f) || !(m[4] > 1e-3f)) return -1;
+    if ((Read<std::uint32_t>(pane + 0xa8) & 1u) == 0) return -1;
+    const float hw = 940.0f * m[0], hh = 70.0f * m[4];
+    return std::abs(x - m[9]) <= hw && std::abs(y - m[10]) <= hh ? 0 : -1;
+}
+
 #ifdef _WIN32
 BOOL CALLBACK FindGameWindow(HWND h, LPARAM out) {
     DWORD pid = 0;
@@ -1387,6 +1426,7 @@ void PublishKeyboard() {
     s.open = t >= 0 && g_page.Shown();
     if (s.open) {
         s.title = t == 0   ? "Room name, or IP address and :port (192.168.1.20:27510)"
+                  : t == 5 ? "Search the online games (a room's or a host's name)"
                   : t == 4 ? "Relay address (host or host:port)"
                   : t == 3 ? "Port when hosting (1 to 65535)"
                   : t == 2 ? "New join password"
@@ -1458,9 +1498,9 @@ void ActCell(int cell) {
     const int i = CellIndex(v.s, cell);
     if (i < 0) return;
     if (v.s.online) {
-        const CoopRoomList::Snapshot rooms = CoopRoomList::Now();
-        if (i >= static_cast<int>(rooms.rooms.size())) return;
-        const CoopRoomList::Room& r = rooms.rooms[static_cast<std::size_t>(i)];
+        const std::vector<CoopRoomList::Room> rooms = SearchedRooms(v.search);   // (as the cells list them)
+        if (i >= static_cast<int>(rooms.size())) return;
+        const CoopRoomList::Room& r = rooms[static_cast<std::size_t>(i)];
         if (!CoopRoomList::Joinable(r, coop::protocol::kProtocolVersion)) {
             LOG_INFO(Core, "coop: pause tab: cell {} chosen: that room cannot be joined from here (full, or another "
                            "version)", cell);
@@ -1624,6 +1664,12 @@ void Act(int row, int line = -1, bool clicked = false) {
         g_live_poke = true;
         break;
     }
+    case RowAction::kTypeSearch: {   // (the online list's search on the keyboard; the list follows it as typed)
+        std::lock_guard lock(g_mutex);
+        g_page.StartTyping(5);
+        g_live_poke = true;
+        break;
+    }
     case RowAction::kTypeRelay: {   // (the relay's address on the keyboard; OnPad saves it)
         const std::string relay = CoopPause::Relay();   // (co-op's own lock: before ours)
         std::lock_guard lock(g_mutex);
@@ -1692,6 +1738,20 @@ void Act(int row, int line = -1, bool clicked = false) {
     case RowAction::kPasteAnswer: CoopPause::PasteAnswerNow(); break;
     case RowAction::kNone: break;
     }
+}
+
+// A click on a line of the details list (OnPad: pressed and let go on it): its action, with the menu's sound; a line
+// with none (a value to read) does nothing. No lock of ours held.
+void ClickLine(int line) {
+    const View view = ViewShown();
+    const SessionView v = ViewNow(view);
+    const std::vector<ListLine> lines = view == View::kLan ? ListLines(v) : DetailLines(view, v);
+    if (line < 0 || line >= static_cast<int>(lines.size()) || lines[static_cast<std::size_t>(line)].act == RowAction::kNone) return;
+    {
+        std::lock_guard lock(g_mutex);
+        g_page.Sound("button_decide");
+    }
+    Act(-1, line, true);
 }
 
 }  // namespace
@@ -1819,7 +1879,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
         std::uint64_t out = 0;
         bool was = false, shown = false;
         bool decide = false;
-        int row = -1, pick_cell = -1, set_change = -1, set_dir = 0, list_line = -1;
+        int row = -1, pick_cell = -1, set_change = -1, set_dir = 0, list_line = -1, line_clicked = -1;
         bool settings_shown = false;
         std::string why, new_password, new_relay;
         bool row_clicked = false;
@@ -1857,6 +1917,22 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                 }
                 if (g_kb_held || now - g_kb_click_ms < 400) in &= ~kPadA;
             }
+            // (a click on a setting is ours, made at its release: Longshot's A for the same click, when its mouse took
+            // the row for one of the game's buttons, would change it again. A test run: Auto to Off, then back to Auto)
+            if (g_page.Which() == 1 && g_page.Shown()) {
+                const std::uint64_t now = NowMs();
+                float mx = 0, my = 0;
+                bool mheld = false;
+                if (ReadCursor(&mx, &my, &mheld) && mheld) {   // (held on the list now: the A Longshot taps at the press)
+                    for (const RowBox& b : ReadSettingBoxes()) {
+                        if (b.shown && mx >= b.x0 && mx <= b.x1 && my >= b.y0 && my <= b.y1) {
+                            g_set_click_ms = now;
+                            break;
+                        }
+                    }
+                }
+                if (now - g_set_click_ms < 400) in &= ~kPadA;
+            }
             // B with the game's cursor on the list on the right (the details, or the browser's games list without a
             // picked cell): back to the rows on the left, not out of the page (a tester: "B doesn't kick you back over
             // to the left menu"). The press is ours: a Left for the game's cursor instead.
@@ -1883,6 +1959,8 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                 if (new_port == 0) new_port = -1;   // (typed, but no port: said so below)
             } else if (typed == 4) {
                 new_relay = g_page.Field(4).text(), relay_typed = true;
+            } else if (typed == 5) {   // (a search: the list from its first page)
+                g_cell_page = 0, g_cell = -1, g_live_poke = true;
             }
             const std::uint64_t field_now = std::hash<std::string>{}(g_page.Field(0).text() + '\n' +
                                                                      g_page.Field(1).text()) ^ g_page.Field(0).cursor() ^
@@ -1978,7 +2056,9 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             if (browse) {
                 const bool right = (bdown & (kPadRight | kPadStickRight)) != 0, left = (bdown & (kPadLeft | kPadStickLeft)) != 0;
                 const bool up = (bdown & (kPadUp | kPadStickUp)) != 0, down = (bdown & (kPadDown | kPadStickDown)) != 0;
-                if (cell < 0 && right && games > 0) {
+                if (cell == 0 && up && g_online.load()) {
+                    line_clicked = 0;   // (Up from the first room: the heading, its search typed)
+                } else if (cell < 0 && right && games > 0) {
                     cell = 0;   // (the list's first game)
                     g_page.Sound("button_on");
                 } else if (cell >= 0 && (right || left || up || down)) {
@@ -1993,16 +2073,33 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                     const bool moved = std::abs(x - g_cells_mouse_x) > 2 || std::abs(y - g_cells_mouse_y) > 2;
                     g_cells_mouse_x = x, g_cells_mouse_y = y;
                     if (moved && hover >= 0 && hover < games && hover != cell) cell = hover, g_page.Sound("button_on");
-                    if (held && !g_cells_held) g_cells_press = hover;
+                    const bool on_head = hover < 0 && LineAt(x, y) == 0;   // (the heading: the online list's search)
+                    if (held && !g_cells_held) g_cells_press = on_head ? -2 : hover;
                     if (!held && g_cells_held && hover >= 0 && hover == g_cells_press && hover < games) {
                         pick_cell = hover;   // (a click on a cell: its A)
                         g_page.Sound("button_decide");
                     }
+                    if (!held && g_cells_held && on_head && g_cells_press == -2) line_clicked = 0;
                     g_cells_held = held;
                 }
                 if (cell >= 0) out &= ~(kPadUp | kPadDown | kPadStickUp | kPadStickDown);   // (the rows' cursor stays)
             }
             if (cell != g_cell.load()) g_cell = cell, g_live_poke = true;
+            // The details list on the right (the main and Session views: DetailLines): Longshot's mouse does not reach
+            // its lines there (a click on Port did nothing, a test run 2026-11-20), so a click on a line with an action
+            // (the port, the join password, a code to copy) is its A here: pressed and let go on the same line.
+            if (shown && !typing && !settings && !browse) {
+                float x = 0, y = 0;
+                bool held = false;
+                if (ReadCursor(&x, &y, &held)) {
+                    const int on = LineAt(x, y);
+                    if (held && !g_lines_held) g_lines_press = on;
+                    if (!held && g_lines_held && on >= 0 && on == g_lines_press) line_clicked = on;
+                    g_lines_held = held;
+                }
+            } else {
+                g_lines_held = false, g_lines_press = -1;
+            }
             // The Settings page: the rows choose the category; Right or A goes into its list; up and down move in it,
             // Left and Right change the value, A the next one, B back to the rows. The mouse picks a row and a click
             // on an arrow changes it (elsewhere on the row: A).
@@ -2016,7 +2113,41 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                 // The rows' cursor moved (the pad's up and down while the rows have it, or the mouse's steps): the
                 // category is its row's, and the rows have the pad.
                 if (g_set_seen_gen != g_pages_gen) g_set_seen_gen = g_pages_gen, g_set_seen_row = -1;
-                if (const int focused = FocusedRow(); focused >= 0 && focused != g_set_seen_row) {
+                std::uint64_t keep_step = 0;   // (a step back to the kept category, past the list's mask below)
+                // (the game's cursor on the list: the category kept from now, before the rows' cursor reads as the row
+                // beside it, as it does in the same frame)
+                const bool on_list_now = FocusedShownName().rfind("Pa_List_", 0) == 0;
+                // (and the mouse on the list, moving or held: Longshot's mouse takes the game's cursor there, on
+                // another thread, so the frame it reads as the row beside it may come first)
+                bool mouse_on_list = false;
+                {
+                    float mx = 0, my = 0;
+                    bool mheld = false;
+                    if (ReadCursor(&mx, &my, &mheld)) {
+                        if (std::abs(mx - g_set_mouse_x) > 2 || std::abs(my - g_set_mouse_y) > 2) g_set_mouse_ms = now;
+                        g_set_mouse_x = mx, g_set_mouse_y = my;
+                        if (mheld || now - g_set_mouse_ms < 1000) {
+                            for (const RowBox& b : ReadSettingBoxes()) {
+                                if (b.shown && mx >= b.x0 && mx <= b.x1 && my >= b.y0 && my <= b.y1) mouse_on_list = true;
+                            }
+                        }
+                        // (the mouse onto the categories: its hover picks one, as ever; nothing kept)
+                        if (!mouse_on_list && RowAt(ReadRowBoxes(now), mx, my) >= 0) g_set_keep = -1;
+                    }
+                }
+                if (on_list_now || mouse_on_list) {
+                    if (g_set_keep < 0) g_set_keep = g_set_category.load();
+                    g_set_keep_until = now + 1500;
+                }
+                if (const int focused = FocusedRow(); focused >= 0 && g_set_keep >= 0 && now < g_set_keep_until) {
+                    if (focused == g_set_keep && !on_list_now) {
+                        g_set_keep = -1, g_set_seen_row = focused;   // (back: the category as it was)
+                    } else if (!on_list_now && now - g_set_keep_step_ms >= 120) {
+                        g_set_keep_step_ms = now;
+                        keep_step = focused > g_set_keep ? kPadUp : kPadDown;
+                    }
+                } else if (const int focused = FocusedRow(); focused >= 0 && focused != g_set_seen_row) {
+                    g_set_keep = -1;
                     g_set_seen_row = focused;
                     if (focused != g_set_category.load()) {
                         g_set_category = focused, g_set_page = 0, g_live_poke = true;
@@ -2086,6 +2217,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                         LOG_INFO(Core, "coop: pause tab: settings: the mouse went onto the categories: the rows have the pad");
                     }
                     if (held && !g_cells_held) g_cells_press = hover;
+                    if (held && (hover >= 0 || g_cells_press == -2)) g_set_click_ms = now;   // (held on the list: Longshot's A is not one)
                     // (the header, "Motion  < 1 of 4 >": a click on its left half turns back a page, on its right half
                     // on, as a tester asked for the mouse; the keyboard's and the pad's ways stay)
                     const RowBox& head = boxes[0];
@@ -2106,6 +2238,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                         const float cx = (b.x0 + b.x1) / 2, scale = (b.x1 - b.x0) / 1880.0f;
                         const float to_left = std::abs(x - (cx + kArrowLeftX * scale)), to_right = std::abs(x - (cx + kArrowRightX * scale));
                         set_row = hover;
+                        g_set_click_ms = now;
                         set_change = g_set_page.load() * g_set_per_page.load() + hover;
                         set_dir = to_left < kArrowReach * scale ? -1 : to_right < kArrowReach * scale ? 1 : 0;
                     }
@@ -2116,9 +2249,12 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                 // mouse puts its cursor on one it clicks. The categories' cursor then walked that column (a run: the
                 // mouse's steps toward a category went down and up the list, the category never changed, B was needed
                 // first). A Left sends it back to the categories, each 300 ms at most while it is there.
+                out |= keep_step;
                 if (const std::string on = FocusedShownName(); on.rfind("Pa_List_", 0) == 0 && now - g_list_focus_fix_ms > 300) {
                     g_list_focus_fix_ms = now;
                     out |= kPadLeft;
+                    if (g_set_keep < 0) g_set_keep = g_set_category.load();
+                    g_set_keep_until = now + 1500;
                     LOG_INFO(Core, "coop: pause tab: settings: the game's cursor on {} (the list): Left sends it back to "
                                    "the categories",
                              on);
@@ -2188,6 +2324,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             g_live_poke = true;
         }
         if (decide && !settings_shown) Act(row, list_line, row_clicked);
+        else if (line_clicked >= 0 && !settings_shown) ClickLine(line_clicked);
         if (pick_cell >= 0) ActCell(pick_cell);
         if (set_change >= 0) ChangeSetting(set_change, set_dir);
         // (the stick's up and down bits we added are not the game's: only what it sent, filtered)
