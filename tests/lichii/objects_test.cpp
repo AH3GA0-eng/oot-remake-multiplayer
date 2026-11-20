@@ -4432,13 +4432,25 @@ TEST_CASE("objects: a boss copy's own stun is told every walk while it plays, ne
     Tick(copy, 1400 * kMs, {c}, 2);
     CHECK(copy.TakeOwnStuns().empty());
 
-    // The owner's boss is stunned: the copy plays the owner's 'Down', which is no stun of its own.
+    // The owner's boss is stunned: the copy plays the owner's 'Down', which is no stun of its own. (A walk takes
+    // in its samples at its end, so the copy shows the owner's 'Down' a walk after it came, never before.)
     proto::ObjectSample down = s;
     down.state.time = {1500 * kMs, 2};
     down.state.animation = proto::Animation{"Down", 0.0f, 1.0f};
     copy.Receive(down);
+    Tick(copy, 1550 * kMs, {c}, 2);
+    CHECK(copy.TakeOwnStuns().empty());
     c.animation = proto::Animation{"Down", 0.0f, 1.0f};
     CHECK(All<proto::Damage>(Tick(copy, 1600 * kMs, {c}, 2)).empty());
+    CHECK(copy.TakeOwnStuns().empty());
+    // The owner's boss is up again a walk before the copy is: still the owner's stun, nothing told.
+    proto::ObjectSample up = s;
+    up.state.time = {1640 * kMs, 3};
+    up.state.animation = proto::Animation{"Walk", 0.0f, 1.0f};
+    copy.Receive(up);
+    Tick(copy, 1650 * kMs, {c}, 2);
+    CHECK(copy.TakeOwnStuns().empty());
+    CHECK(All<proto::Damage>(Tick(copy, 1660 * kMs, {c}, 2)).empty());
     CHECK(copy.TakeOwnStuns().empty());
 
     // Our own boss in a stun: nothing told (it is no copy).

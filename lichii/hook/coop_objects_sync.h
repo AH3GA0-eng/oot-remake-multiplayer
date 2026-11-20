@@ -1243,6 +1243,10 @@ private:
         // due), and when that last went out.
         bool stun_due = false;
         std::uint64_t stun_at = 0;
+        // Row 169: the stun this copy plays began in its own game (read at its first stun walk, issue 150's
+        // reading), so it is told every walk while it plays (TakeOwnStuns). A stun begun as the owner's (the copy
+        // played the owner's) never is, even when the owner's next sample leaves it a walk before the copy does.
+        bool own_stun = false;
     };
 
     // One step of `o` towards our Link at `now_us` (NoteDrift).
