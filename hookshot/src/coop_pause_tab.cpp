@@ -312,28 +312,62 @@ bool Page::TakeBack() {
 
 void Page::StartTyping(int which) {
     if (!shown_) return;
-    typing_ = which == 1 ? 1 : 0;
+    typing_ = which == 2 ? 2 : which == 1 ? 1 : 0;
+    typing_was_ = Field(typing_).text();
+    keys_.Reset();
     repeat_since_ = repeat_last_ = 0;
-    swallow_ |= pad_last_;   // (the A that started it is not the field's first press)
+    swallow_ |= pad_last_;   // (the A that started it is not the keyboard's first press)
+}
+
+void Page::EndTyping(bool ok) {
+    if (typing_ < 0) return;
+    if (!ok) Field(typing_).Set(typing_was_);
+    typed_ = ok ? typing_ : -1;
+    typing_ = -1;
+    pages_sound_ = "button_decide";
+}
+
+void Page::PressKey(int row, int col) {
+    if (typing_ < 0) return;
+    keys_.Set(row, col);
+    TextField& f = Field(typing_);
+    const CoopKeyboard::KeyAt k = CoopKeyboard::At(row, col);
+    switch (k.key) {
+    case CoopKeyboard::Key::kChar: f.Type(static_cast<unsigned char>(k.ch)); break;
+    case CoopKeyboard::Key::kSpace: f.Type(' '); break;   // (a field without spaces does not take it)
+    case CoopKeyboard::Key::kDelete: f.Backspace(); break;
+    case CoopKeyboard::Key::kCancel: EndTyping(false); return;
+    case CoopKeyboard::Key::kOk: EndTyping(true); return;
+    case CoopKeyboard::Key::kNone: return;
+    }
+    pages_sound_ = "button_decide";
 }
 
 void Page::TypingPad(std::uint64_t down, std::uint64_t held, std::uint64_t now_ms) {
     TextField& f = Field(typing_);
-    if ((down & (kPadA | kPadB | kPadPlus)) != 0) {   // (done: the row shows what was typed)
-        typing_ = -1;
-        pages_sound_ = "button_decide";
+    if ((down & kPadPlus) != 0) {   // (done: the row shows what was typed)
+        EndTyping(true);
         return;
     }
-    if ((down & kPadY) != 0) f.Delete();
-    if ((down & kPadX) != 0) f.Clear();
+    if ((down & kPadA) != 0) {
+        PressKey(keys_.row(), keys_.col());
+        if (typing_ < 0) return;
+    }
+    if ((down & kPadB) != 0) {   // (a letter off; with nothing typed: Cancel)
+        if (f.text().empty()) {
+            EndTyping(false);
+            return;
+        }
+        f.Backspace();
+        pages_sound_ = "button_on";
+    }
+    if ((down & (kPadL | kPadZL)) != 0) f.Move(-1);
+    if ((down & (kPadR | kPadZR)) != 0) f.Move(+1);
     const std::uint64_t up = kPadUp | kPadStickUp, dn = kPadDown | kPadStickDown;
     const std::uint64_t left = kPadLeft | kPadStickLeft, right = kPadRight | kPadStickRight;
     const std::uint64_t dirs = up | dn | left | right;
     const auto step = [&](std::uint64_t bits) {
-        if ((bits & up) != 0) f.Cycle(+1);
-        if ((bits & dn) != 0) f.Cycle(-1);
-        if ((bits & left) != 0) f.Move(-1);
-        if ((bits & right) != 0) f.Move(+1);
+        keys_.Move((bits & dn) != 0 ? 1 : (bits & up) != 0 ? -1 : 0, (bits & right) != 0 ? 1 : (bits & left) != 0 ? -1 : 0);
     };
     if ((down & dirs) != 0) {
         step(down & dirs);
@@ -352,13 +386,15 @@ bool Page::Key(std::uint32_t vk, bool repeat) {
     switch (vk) {
     case 0x25: f.Move(-1); return true;      // VK_LEFT
     case 0x27: f.Move(+1); return true;      // VK_RIGHT
-    case 0x26: f.Cycle(+1); return true;     // VK_UP
-    case 0x28: f.Cycle(-1); return true;     // VK_DOWN
+    case 0x26: keys_.Move(-1, 0); return true;   // VK_UP, VK_DOWN: the keyboard's cursor
+    case 0x28: keys_.Move(+1, 0); return true;
     case 0x08: f.Backspace(); return true;   // VK_BACK
     case 0x2e: f.Delete(); return true;      // VK_DELETE
-    case 0x0d:                               // VK_RETURN, VK_ESCAPE: done
-    case 0x1b:
-        if (!repeat) typing_ = -1;
+    case 0x0d:                               // VK_RETURN: done
+        if (!repeat) EndTyping(true);
+        return true;
+    case 0x1b:                               // VK_ESCAPE: as it was
+        if (!repeat) EndTyping(false);
         return true;
     default:
         return false;   // (a letter comes as its character, Char)
@@ -565,6 +601,7 @@ View BackOf(View view) {
     case View::kPlayerHost: return View::kPlayer;
     case View::kPlayer: return View::kPlayers;
     case View::kLanGame: return View::kLan;
+    case View::kPassword: return View::kSession;
     default: return View::kMain;
     }
 }
@@ -633,9 +670,14 @@ RowAction ActionFor(View view, int row, const Session& s) {
         if (row == 3) return s.room_ready ? RowAction::kJoinRoom : s.rejoin ? RowAction::kRejoin : RowAction::kNone;
         return RowAction::kNone;
     }
+    case View::kPassword:
+        // (the host's join password: shown on the details list, or a new one typed on the keyboard)
+        if (!s.hosting || !s.has_password) return RowAction::kNone;
+        if (row == 0) return RowAction::kShowPassword;
+        return row == 1 ? RowAction::kChangePassword : RowAction::kNone;
     case View::kSession:
         if (s.hosting) {
-            if (row == 0) return s.has_password ? RowAction::kShowPassword : RowAction::kNone;   // (shown or hidden)
+            if (row == 0) return s.has_password ? RowAction::kViewPassword : RowAction::kNone;   // (show it, change it)
             if (row == 1) return s.code ? RowAction::kCopyCode : RowAction::kNone;
             return row == 2 ? RowAction::kCopyLan : row == 3 ? RowAction::kCopyVpn : RowAction::kNone;
         }
@@ -849,6 +891,15 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
             }
         }
         break;
+    case View::kPassword:
+        // (the host's join password: on the details list while shown; a new one on the keyboard)
+        if (v.s.hosting && v.s.has_password) {
+            rows[0] = v.s.password_shown && !v.host_password.empty() ? "Hide join password" : "Show join password";
+            rows[1] = "Change join password";
+        } else {
+            rows[0] = "Not hosting";
+        }
+        break;
     case View::kSession: {
         // (what can be done; the session's details, co-op's problem or hint and the release are on the list on the
         // right, DetailLines)
@@ -860,8 +911,7 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
             if (!v.note.empty()) {
                 rows[0] = v.note;
             } else if (v.s.has_password) {
-                // (the password itself on the list, while shown)
-                rows[0] = v.s.password_shown && !v.host_password.empty() ? "Hide join password" : "Show join password";
+                rows[0] = "Join password";   // (its view: show it, change it)
             } else {
                 rows[0] = "Hosting: " + Players(std::max(v.players, 1));
             }
@@ -931,6 +981,8 @@ const char* ActionWords(RowAction a) {
     case RowAction::kMoreLan: return "the next page of games on this network";
     case RowAction::kAutoRejoin: return "auto-rejoin on or off";
     case RowAction::kShowPassword: return "the join password shown or hidden";
+    case RowAction::kViewPassword: return "the Join password view";
+    case RowAction::kChangePassword: return "a new join password typed on the keyboard";
     case RowAction::kBrowseLan: return "the browser lists the games on this network";
     case RowAction::kBrowseOnline: return "the browser lists the relay's public rooms";
     case RowAction::kBrowsePage: return "the browser's next page of games";
@@ -1094,7 +1146,7 @@ std::vector<ListLine> ListLines(const SessionView& v) {
 
 std::vector<ListLine> DetailLines(View view, const SessionView& v) {
     std::vector<ListLine> lines(kListRows);
-    if (view != View::kMain && view != View::kSession) return lines;
+    if (view != View::kMain && view != View::kSession && view != View::kPassword) return lines;
     std::size_t at = 1;
     const auto add = [&](const std::string& name, const std::string& value) {
         if (at < lines.size()) lines[at++] = ListLine{FitTo(name, kListNameChars), FitTo(value, kListValueChars)};

@@ -31,6 +31,7 @@
 #include <utility>
 #include <vector>
 
+#include "coop_keyboard.h"
 #include "hos_coop_api.h"
 
 namespace CoopPauseTab {
@@ -156,6 +157,7 @@ public:
     void Backspace();         // the letter before the cursor
     bool Type(std::uint32_t cp);   // a typed character at the cursor (a room name lower-cased): true when taken
     void Clear() { text_.clear(), cursor_ = 0; }
+    void Set(std::string text) { text_ = std::move(text), cursor_ = text_.size(); }   // (Cancel: as it was)
     // What its row shows after its label: the text, the letter at the cursor in brackets while it is typed into; a
     // password as * but for that letter. At most `room` bytes, scrolled to keep the cursor in view.
     std::string Shown(bool typing, std::size_t room) const;
@@ -233,17 +235,30 @@ public:
 
     // The Join view's two fields (the room name, the join password) and which one is typed into (-1: none). While one
     // is, the pad's buttons are all the page's (none reach System) and the keyboard's keys are the field's (Key, Char).
-    TextField& Field(int which) { return which == 1 ? password_ : room_; }
-    const TextField& Field(int which) const { return which == 1 ? password_ : room_; }
+    // The fields: 0 the room name, 1 the join password (Join view, a game's view), 2 the host's new join password.
+    TextField& Field(int which) { return which == 2 ? new_password_ : which == 1 ? password_ : room_; }
+    const TextField& Field(int which) const { return which == 2 ? new_password_ : which == 1 ? password_ : room_; }
+    // Typing into a field brings up the on-screen keyboard (coop_keyboard.h): the pad's arrows move over its keys and
+    // A presses the one under the cursor, B deletes (with nothing typed: Cancel), + is OK, L and R move in the text.
     void StartTyping(int which);
     int Typing() const { return typing_; }
+    // The keyboard's key pressed some other way (the mouse's click): as A on it.
+    void PressKey(int row, int col);
+    const CoopKeyboard::Cursor& KeyCursor() const { return keys_; }
+    // A field typed into ended with OK (or Enter, or +) since the last call: which (-1 none). Cancel (Esc) puts the
+    // field back as it was and says none.
+    int TakeTyped() { return std::exchange(typed_, -1); }
     bool Key(std::uint32_t vk, bool repeat);   // a Windows virtual-key code while typing: true when the field took it
     bool Char(std::uint32_t cp);               // a typed character while typing
 
 private:
     void TypingPad(std::uint64_t down, std::uint64_t held, std::uint64_t now_ms);
-    TextField room_{TextField::Kind::kRoom}, password_{TextField::Kind::kPassword};
-    int typing_ = -1;
+    TextField room_{TextField::Kind::kRoom}, password_{TextField::Kind::kPassword},
+        new_password_{TextField::Kind::kPassword};
+    int typing_ = -1, typed_ = -1;
+    CoopKeyboard::Cursor keys_;
+    std::string typing_was_;   // (the field before typing: Cancel puts it back)
+    void EndTyping(bool ok);
     std::uint64_t repeat_since_ = 0, repeat_last_ = 0;   // a held direction: when it went down, its last step
 
     bool CanShow(std::uint64_t now_ms) const;
@@ -288,7 +303,7 @@ private:
 // a player, Let in, Join). Only a Paste answer, a refused Host or Join, and co-op that came with the game's start open
 // co-op's menu (Hookshot's menu, over the game's pause menu) on its main page, whose note or help says why.
 // The game has no text entry or keyboard of its own (docs/game-ui.md, "Frames for a text field"), so a code is pasted.
-enum class View { kMain, kPlayers, kLetIn, kJoin, kSession, kPlayer, kPlayerHost, kLan, kLanGame };
+enum class View { kMain, kPlayers, kLetIn, kJoin, kSession, kPlayer, kPlayerHost, kLan, kLanGame, kPassword };
 // Where B (or Back) goes from a view: a player's host controls to that player, a player to the Players view, a game on
 // this network to the list of them, else the five rows.
 View BackOf(View view);
@@ -333,8 +348,11 @@ enum class RowAction {
     kJoinLanGame,    // the game's view: join it at its address and port, with the password typed
     kMoreLan,        // the next page of games on this network
     kAutoRejoin,     // auto-rejoin on or off (coop_auto_rejoin.h; saved at once)
-    kShowPassword,   // the host's Session view: its join password shown on the row, or hidden again (only on A:
-                     // friends who found the game on this network type it)
+    kShowPassword,   // the host's Join password view: its join password shown on the details list, or hidden again
+                     // (only on A: friends who found the game on this network type it)
+    kViewPassword,   // the host's Session view: the Join password view (show it, change it)
+    kChangePassword, // the Join password view: a new one typed on the keyboard, then the session's from then on
+                     // (players who join after need it; players in stay in)
     // The game browser (View::kLan): the games in the cells on the right, the list chosen on the rows.
     kBrowseLan,      // the cells list the games on this network
     kBrowseOnline,   // the cells list the relay's public rooms (coop_room_list.h)
