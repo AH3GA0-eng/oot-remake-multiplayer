@@ -1605,8 +1605,7 @@ public:
                                                                                  : std::uint16_t{0},
                 CoopSave::UseCoopFolder() || CoopSave::HostSaveReady(), CoopSave::SaveLoadStarts()));
             if (const auto own = own_pick.TakeOwnChange()) {
-                std::ofstream(kept, std::ios::trunc) << *own << '
-';   // the next start (a guest that joins at once)
+                std::ofstream(kept, std::ios::trunc) << *own << '\n';   // the next start (a guest that joins at once)
             }
         }
         // Our look of several parts, chosen in the Multiplayer tab (coop_look_share.h).

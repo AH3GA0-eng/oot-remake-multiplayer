@@ -2416,8 +2416,7 @@ std::map<std::uint16_t, std::uint16_t> PackCharacterNumbers(std::string_view man
     if (at == std::string_view::npos) {
         return out;
     }
-    const auto open = manifest.find_first_not_of(" 	
-:", at + 12);
+    const auto open = manifest.find_first_not_of(" \t\r\n:", at + 12);
     if (open == std::string_view::npos || manifest[open] != '{') {
         return out;   // null: none
     }
