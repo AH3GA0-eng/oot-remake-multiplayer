@@ -4,6 +4,7 @@
 #include <doctest/doctest.h>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <new>
 #include <stdexcept>
 #include <string>
@@ -20,7 +21,8 @@ struct Logged {
 TEST_CASE("boundary: EndedText reads up to the first NUL inside the buffer") {
     char buf[16] = {};
     CHECK(CoopBoundary::EndedText(buf, sizeof buf).empty());
-    CHECK(std::snprintf(buf, sizeof buf, "%s", "C:\\saves\\slot_01") == 16);   // (cut to 15 chars and ended, as patch 0025 writes; the return used: gcc -Wformat-truncation=1 only flags an unused one)
+    std::memcpy(buf, "C:\\saves\\slot_01", sizeof buf - 1);   // (cut to 15 chars and ended, as patch 0025's snprintf writes;
+    buf[sizeof buf - 1] = '\0';                                // memcpy, not snprintf: gcc -Werror=format-truncation flags the cut)
     CHECK(CoopBoundary::EndedText(buf, sizeof buf) == "C:\\saves\\slot_0");
     CHECK(CoopBoundary::EndedText(nullptr, 16).empty());
     CHECK(CoopBoundary::EndedText(buf, 0).empty());
