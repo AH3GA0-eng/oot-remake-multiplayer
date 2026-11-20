@@ -1910,6 +1910,34 @@ TEST_CASE("native boss: row 178: every boss keeps our Link as a replayed hit's a
     CHECK_FALSE(t.KeepsLinkAsAttacker(kActor));
 }
 
+TEST_CASE("native boss: row 178: our Phantom Ganon riding inside his painting is out of reach of another's hit") {
+    CHECK(Table::UnreachableMove("Enemy_DungeonBoss_PhantomGanon", "Run"));
+    for (const char* hittable : {"Appear", "SmallDamage", "Fly", "RideJumpAttack_Attack", "SpearAttack_Turn", ""}) {
+        CHECK_FALSE(Table::UnreachableMove("Enemy_DungeonBoss_PhantomGanon", hittable));
+    }
+    CHECK_FALSE(Table::UnreachableMove("Enemy_DungeonBoss_Gohma", "Run"));
+    Table t;
+    t.SetOn(true, true);
+    CHECK_FALSE(t.OutOfReach(kActor));  // (not in the table)
+    Boss riding = Phantom(Role::owner);
+    riding.animation = "Run";
+    t.Publish({riding});
+    CHECK(t.OutOfReach(kActor));
+    CHECK_FALSE(t.OutOfReach(kActor + 8));
+    riding.animation = "Appear";  // out of a painting: hit as in a one-player game
+    t.Publish({riding});
+    CHECK_FALSE(t.OutOfReach(kActor));
+    Boss copy = Phantom(Role::copy);
+    copy.animation = "Run";
+    t.Publish({copy});
+    CHECK_FALSE(t.OutOfReach(kActor));  // a copy's hits go to its owner, who judges them
+    riding.animation = "Run";
+    t.Publish({riding});
+    t.SetDying({"Enemy_DungeonBoss_PhantomGanon"});
+    t.Publish({riding});
+    CHECK_FALSE(t.OutOfReach(kActor));  // his death: as before
+}
+
 TEST_CASE("native boss: row 178: Phantom Ganon and Ganondorf fight the Player only, the puppets are unseen while here") {
     CHECK(Table::FightsPlayerOnly("Enemy_DungeonBoss_PhantomGanon"));
     CHECK(Table::FightsPlayerOnly("Enemy_DungeonBoss_Ganondorf"));

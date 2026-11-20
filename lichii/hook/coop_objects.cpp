@@ -4261,6 +4261,8 @@ private:
         ask.life = w.life;
         ask.old = old;
         ask.heal = w.heal;
+        // Row 178: another player's hit on our boss while it is in a move its own game takes no hit in.
+        ask.out_of_reach = w.hurt > 0 && !w.direct && w.hitter != 0 && CoopBossNative::TheTable().OutOfReach(w.address);
         std::optional<u64> life;
 #ifdef COOP_HOOKSHOT
         // Hookshot with patch 0007: the hit (or the life the owner says this
@@ -4283,7 +4285,7 @@ private:
             }
         }
         const bool steppable = ask.step_seen && life && old >= 0 && (w.hurt > 0 || w.life < old || (w.heal && w.life > old)) &&
-                               !(w.hurt > 0 && replay_ && !w.direct && player != 0);
+                               !(w.hurt > 0 && replay_ && !w.direct && player != 0 && !ask.out_of_reach);
         if (steppable) {
             ask.stale = steps.Take(*life);
         }
@@ -4352,6 +4354,11 @@ private:
 #ifdef COOP_HOOKSHOT
             // A life (not a hurt, not a raise) is the owner's for its copy: judged there (PassStops). A test kill
             // is a kill (past the stops where it is not held: our own enemy).
+            if (ask.out_of_reach) {
+                LOG_INFO(Core, "coop: objects: share life {:#x} '{}': P{}'s hit came while it rides out of reach "
+                               "(row 178): life only, through its Life step",
+                         w.address, NameOf(w.address), w.hitter);
+            }
             if (steps.Give(*life, routed.amount, (w.hurt <= 0 && !w.heal) || w.test_kill)) {
                 LOG_INFO(Core, "coop: objects: share {} {:#x}: {} through the game's Life step at life {} (to {})",
                          w.hurt > 0 ? "hurt" : "life", w.address, routed.amount, old, w.life);

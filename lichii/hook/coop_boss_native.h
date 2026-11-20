@@ -280,6 +280,13 @@ public:
     // move) and the game gives that permission to the Player only, so with a puppet in its target memory
     // (EnemyCommon.BattleCommon's ExecuteMemoryPushLastAttacker) Phantom Ganon flew ~22 s without a throw.
     bool KeepsLinkAsAttacker(std::uint64_t actor) const;
+    // Row 178: whether this actor is a boss of ours (its owner's game is this one) in a move its own game takes
+    // no hit in (UnreachableMove). Phantom Ganon's phase 2 started from another player's hit replayed while he
+    // rode inside his painting ('Run'), where no real hit reaches him: in LANE2 runs that start left him in
+    // Fly with no light ball in 6 of 10 (the stall check ended each), from 'Appear' (hittable) 0 of 2. Such a
+    // hit goes to his Life step as life only (RouteLife), so his phase change waits for a hit he can take.
+    bool OutOfReach(std::uint64_t actor) const;
+    static bool UnreachableMove(std::string_view name, std::string_view animation);
     // Row 178 (Geno, Forest Temple): a boss whose own native AI (Execute*MetaAI) picks its moves for a battle
     // target that must be the Player. Its perception (PerceptionFilterPlayerOnly) takes a perceived puppet too
     // (Affiliation Player), and then that AI never picks an attack: Phantom Ganon flew his phase 2 with no light
