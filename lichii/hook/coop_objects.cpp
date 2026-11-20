@@ -3452,18 +3452,21 @@ private:
                         LOG_INFO(Core, "coop: objects: our Link's max life {} -> {} (from MaxLife)",
                                  max, *raised);
                     }
-                    // Rows 136/137: the host's older save lowered MaxLife; the component follows it.
+                    // Rows 136/137: the host's older save lowered MaxLife; row 181: a second pickup of a boss's one
+                    // container was put back. The component follows it (never in the frame it was raised).
                     const s32 lower = TheMaxLifeLowerTo().load();
                     const auto lowered =
-                        LoweredMaxLife(max, life, lower >= 0 ? std::optional<std::int32_t>(lower) : std::nullopt);
+                        raised ? std::nullopt
+                               : LoweredMaxLife(max, life, lower >= 0 ? std::optional<std::int32_t>(lower) : std::nullopt);
                     if (lowered && memory_ != nullptr && memory_->IsValidVirtualAddressRange(value->second + 8, 4) &&
                         memory_->IsValidVirtualAddressRange(value->first + 8, 4)) {
                         if (lowered->life) {
                             memory_->Write32(value->first + 8, static_cast<u32>(*lowered->life));
                         }
                         memory_->Write32(value->second + 8, static_cast<u32>(lowered->max));
-                        LOG_INFO(Core, "coop: objects: our Link's max life {} -> {} (the host loaded a save with fewer "
-                                       "hearts){}", max, lowered->max,
+                        LOG_INFO(Core, "coop: objects: our Link's max life {} -> {} (MaxLife is held lower: the host "
+                                       "loaded a save with fewer hearts, or a boss's one container was taken twice){}",
+                                 max, lowered->max,
                                  lowered->life ? fmt::format(", life {} -> {}", life, *lowered->life) : "");
                     }
                 }

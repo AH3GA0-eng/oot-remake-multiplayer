@@ -265,6 +265,7 @@ void FlagWatcher::note_group(const FlagEntry& value, const FlagEntry* before) {
 void FlagWatcher::reset() {
   queue_.clear();
   reset_holds_.clear();  // rows 136/137: the old session's host's save
+  cap_holds_.clear();    // row 181: the old session's caps
   // Row 140: what was left to the game was the old session's group's.
   game_owned_.clear();
   put_back_.clear();
@@ -384,6 +385,7 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
     window_ = false;
     // Rows 136/137: the game made Link (and its other live copies) again from the flags in this window.
     reset_holds_.clear();
+    cap_holds_.clear();  // row 181: the game made Link's Life component from MaxLife too
     // Row 140: a save load (moved_) is another save: its floors are not owed the old one's.
     if (moved_) {
       owed_.clear();
@@ -423,6 +425,7 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
     }
     diff(store, changes);
     age_reset_holds(store, static_cast<std::uint32_t>(step));
+    age_cap_holds(store, static_cast<std::uint32_t>(step));
     // Row 140: after this pass, so its own read of the key does not see a write still on its way (Hookshot's setter).
     if (!loading_ && std::exchange(owed_due_, false)) put_owed(store);
   }
@@ -1284,12 +1287,27 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
         now->kind == protocol::FlagKind::int32 && as_int(now->value) > as_int(before.value) &&
         as_int(now->value) > cap->second && store.is_max(key)) {
       // Past the cap (cap_max: a second pickup of a boss's one heart
-      // container): put back, never sent.
+      // container): put back, never sent. Row 181: the put-back starts (or
+      // goes on with) a cap hold, so the object walk lowers the game's live
+      // copy (Link's Life component) to it; else the game writes its higher
+      // max back at once and the two fight for ever.
       FlagEntry back = before;
       back.key = key;
       back.value = as_bits((std::max)(as_int(before.value), std::int64_t{cap->second}));
+      CapHold& hold = cap_holds_[key];
+      hold.low = static_cast<std::int32_t>(as_int(back.value));
+      hold.quiet = 0;
+      hold.put_at = frames_;
+      if (hold.tries >= kMaxCapTries) {
+        // Rows 140/181: refused or undone kMaxCapTries times: left to the game (still never sent) until the value
+        // changes again; the hold ends, so the walk does not fight the game either.
+        cap_holds_.erase(key);
+        ++stats_.max_caps_left;
+        pending_.erase(key);
+        continue;  // it->second is the game's value now
+      }
+      ++hold.tries;
       if (store.write_exact(back)) {  // exact: the max rule would keep the higher
-        cap_tries_.erase(key);
         ++stats_.max_caps_kept;
         ++stats_.applied;
         it->second = back;
@@ -1299,11 +1317,6 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
       // Not put back now: still never sent. The value before stays the one
       // seen, so the next frame sees the rise again and tries again.
       note_write_failure(store, key, "diff rise");
-      if (++cap_tries_[key] >= kMaxCapTries) {
-        // Row 140: refused every frame for a second: left (still never sent) until the value changes again.
-        cap_tries_.erase(key);
-        continue;  // it->second is the game's value now
-      }
       it->second = before;
       continue;
     }
@@ -1430,6 +1443,39 @@ void FlagWatcher::age_reset_holds(FlagStore& store, std::uint32_t step) {
       }
     } else {
       it->second.quiet = 0;
+    }
+    ++it;
+  }
+}
+
+void FlagWatcher::age_cap_holds(FlagStore& store, std::uint32_t step) {
+  for (auto it = cap_holds_.begin(); it != cap_holds_.end();) {
+    if (it->second.put_at == frames_) {
+      ++it;  // put back in this pass: the game has not had a frame to keep or undo it
+      continue;
+    }
+    const std::optional<FlagEntry> now = store.read(it->first);
+    if (!now || now->kind != protocol::FlagKind::int32) {
+      ++it;  // not readable now (a load): kept, the window's end clears it
+      continue;
+    }
+    if (as_int(now->value) != it->second.low) {
+      const auto seen = last_.find(it->first);
+      if (seen != last_.end() && seen->second.kind == protocol::FlagKind::int32 &&
+          as_int(seen->second.value) == as_int(now->value)) {
+        // Moved, and the watcher has that value (it wrote the group's raise from elsewhere, which the walk must
+        // not lower, or the host's save with its own reset hold): the cap hold is over.
+        it = cap_holds_.erase(it);
+        continue;
+      }
+      it->second.quiet = 0;  // the game's own write since the diff read: the next pass puts it back
+      ++it;
+      continue;
+    }
+    it->second.quiet += static_cast<int>(step);
+    if (it->second.quiet >= kResetQuietFrames) {
+      it = cap_holds_.erase(it);  // the game keeps the capped value: its live copy follows MaxLife again
+      continue;
     }
     ++it;
   }

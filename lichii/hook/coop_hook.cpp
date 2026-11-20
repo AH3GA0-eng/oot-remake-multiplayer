@@ -1499,8 +1499,10 @@ public:
             if (session_) {
                 session_->cap_max(coop::protocol::FlagKey{0xfbe01da1u, 0}, CoopBoss::MaxLifeCap());
             }
-            // Rows 136/137: the host's older save lowered MaxLife: our Link's own max follows (coop_objects.h).
-            CoopObjects::SetMaxLifeLowerTo(session_ ? session_->reset_lowered(coop::protocol::FlagKey{0xfbe01da1u, 0})
+            // Rows 136/137: the host's older save lowered MaxLife; row 181: a capped second container pickup was put
+            // back. Either way our Link's own max follows (coop_objects.h), so his Life component stops writing the
+            // higher max back.
+            CoopObjects::SetMaxLifeLowerTo(session_ ? session_->held_lower(coop::protocol::FlagKey{0xfbe01da1u, 0})
                                                     : std::nullopt);
             if (const auto to = CoopBoss::TakeMaxLifeWrite(); to && known) {
                 auto set = *max_life;
