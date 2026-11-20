@@ -606,6 +606,7 @@ CoopHostMenu::Menu& HostMenu() {
         };
         h.client_id = [] { return CoopTitle::ClientId(); };
         h.ngplus_level = [] { return CoopNgPlus::Level(); };  // (Navi) New Game+ for our server
+        h.password_changed = [](const std::string& password) { CoopHook::SetJoinPassword(password); };
         h.log = [](const std::string& line) { LOG_INFO(Core, "{}", line); };
         h.default_name = [] {
             const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
