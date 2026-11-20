@@ -1057,18 +1057,20 @@ TEST_CASE("objects: delete events: an enemy of ours the game deleted with no dea
 }
 
 // skulltula-0118 follow-up (review-geno): a director's copy of another game's
-// late enemy (here a jail guard only the host's logic made) that the server
+// late enemy (here a Wolfos only the host's game made: a late encounter) that the server
 // handed to us (its maker's one left) and that our game then deletes with no
 // death read is gone for everyone, and the director never makes it again.
 // Before, a copy was never "ours for good": no OBJECT_REMOVE, and up to
 // kRemakes copies came back with nobody left to end them.
 TEST_CASE("objects: skulltula-0118, a copy handed to us that our game deletes with no death is gone for all") {
-    constexpr const char* kThief = "Enemy_MiddleBoss_GerudoThief";
-    const proto::ObjectId id{proto::ObjectKind::placed, 0, 0x2e80bd2b39d06e43ULL};
+    // (Not a mini-boss: Enemy_MiddleBoss_* stays out of the gone-for-good path, as before: a Lizalfos
+    // jumps off to the next room alive, Poe sisters vanish and come back; handed over, the copy plays on.)
+    constexpr const char* kWolfos = "Enemy_Wolfos";
+    const proto::ObjectId id{proto::ObjectKind::placed, 0, 0x5a17c0de0b1e0001ULL};
     proto::ObjectSpawn relayed;
     relayed.player_number = 1;
     relayed.id = id;
-    relayed.actor = kThief;
+    relayed.actor = kWolfos;
     relayed.state.position = proto::Vec3{1.0f, 0.0f, 0.0f};
 
     Sync b;
@@ -1083,11 +1085,11 @@ TEST_CASE("objects: skulltula-0118, a copy handed to us that our game deletes wi
     REQUIRE(creates.size() == 1);
     b.Bind({{creates[0].key, 0x900}});
     std::uint64_t t = 200 * kMs + 2 * kEncounterWaitUs;
-    Tick(b, t, {Enemy(0x900, ~0ULL, 4, 1.0f, kThief)}, 2);
+    Tick(b, t, {Enemy(0x900, ~0ULL, 4, 1.0f, kWolfos)}, 2);
     REQUIRE(b.IdOf(0x900));
     Own(b, id, 2, 1);  // the host's one left: handed to us
     b.Bind({{creates[0].key, 0x900}});
-    Tick(b, t += 10 * kMs, {Enemy(0x900, ~0ULL, 4, 1.0f, kThief)}, 2);
+    Tick(b, t += 10 * kMs, {Enemy(0x900, ~0ULL, 4, 1.0f, kWolfos)}, 2);
     b.GameDeleted(0x900, t + 5 * kMs);  // our game's own delete (its logic), no death read
     b.Bind({{creates[0].key, 0x900}});
     Tick(b, t += 20 * kMs, {}, 2);
@@ -1114,7 +1116,7 @@ TEST_CASE("objects: skulltula-0118, a copy handed to us that our game deletes wi
     const auto key = c.Creates()[0].key;
     c.Bind({{key, 0x900}});
     t = 200 * kMs + 2 * kEncounterWaitUs;
-    Tick(c, t, {Enemy(0x900, ~0ULL, 4, 1.0f, kThief)}, 2);
+    Tick(c, t, {Enemy(0x900, ~0ULL, 4, 1.0f, kWolfos)}, 2);
     c.GameDeleted(0x900, t + 5 * kMs);
     c.Bind({{key, 0x900}});
     Tick(c, t += 20 * kMs, {}, 2);
