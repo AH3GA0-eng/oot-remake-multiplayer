@@ -725,3 +725,209 @@ TEST_CASE("boss beaten: solo and co-op idle stay unchanged in the boss's room (r
     CHECK(a.Check(deku, true, {}, std::ref(f), kNear, none).empty());  // empty record: nothing
     CHECK(a.Check(deku, true, {}, std::ref(f), kAway, none).empty());
 }
+
+namespace {
+
+std::uint16_t Bit(std::uint8_t room) {
+    return static_cast<std::uint16_t>(1u << room);
+}
+
+bool OwnQuest(const BeatenSet& s) {
+    return CoopQuests::Find(s.quest) == nullptr;
+}
+
+const Write* EnumWrite(const std::vector<Write>& w, std::uint32_t quest) {
+    const auto it = std::find_if(w.begin(), w.end(), [&](const Write& x) { return x.is_enum && x.hash == quest; });
+    return it == w.end() ? nullptr : &*it;
+}
+
+} // namespace
+
+TEST_CASE("boss beaten: BOSS_ALIVE, a boss whose quest is each game's own: quest and Bools back (row 159)") {
+    // B #38: Morpha, Bongo Bongo and Twinrova (SageOfWater, SageOfShadow, SageOfSpirit: not in the host's
+    // FLAG_RESET) stayed beaten in a guest's game while the host fought them again, and their rooms make the boss,
+    // the warp and the container from that quest (romfs Logic: WaterTemple_Level_Room_23, ShadowTemple_Level_Room_
+    // B3FB4F_Q, SpiritTemple_Level_Room_34), the container's taken key back to 0 with the host's save: a second
+    // container. Now the quest goes back to the fight's step with its Bools: no warp, no container, the boss again.
+    int own = 0;
+    for (std::uint8_t room = 0; room < 8; ++room) {
+        const BeatenSet* set = CoopBossBeaten::ForRoom(room);
+        REQUIRE(set != nullptr);
+        CAPTURE(set->boss);
+        if (!OwnQuest(*set)) {
+            continue;
+        }
+        ++own;
+        const std::string dungeon(CoopBoss::RoomByIndex(room)->scene);
+        Flags f = BeatenThenReset(*set, set->step);
+        bool runs = true;
+        const std::function<bool(std::uint8_t)> death = [&](std::uint8_t r) { return r == room && runs; };
+        Apply a;
+        a.HostAlive(Bit(room), Bit(room), true);
+        CHECK(a.Check(dungeon, true, {}, std::ref(f), kNear, death).empty());  // our own death may still run
+        runs = false;
+        const std::vector<Write> w = a.Check(dungeon, true, {}, std::ref(f), kNear, death);
+        const Write* quest = EnumWrite(w, set->quest);
+        REQUIRE(quest != nullptr);
+        CHECK(quest->revert);
+        CHECK(quest->value == set->below.back());  // the fight's own step: the boss there again
+        for (const auto& b : set->bools) {
+            const std::string_view name(b.name);
+            CAPTURE(name);
+            const bool written = std::any_of(w.begin(), w.end(), [&](const Write& x) {
+                return !x.is_enum && x.hash == b.hash && x.revert && x.value == 0;
+            });
+            CHECK(written == (b.value && !name.ends_with("_BossIn")));
+        }
+        CHECK(a.Check(dungeon, true, {}, std::ref(f), kNear, death).empty());  // once
+    }
+    CHECK(own == 3);  // Morpha, Bongo Bongo, Twinrova
+}
+
+TEST_CASE("boss beaten: BOSS_ALIVE leaves a boss alive in ours, a quest gone on past it, a boss beaten again") {
+    const BeatenSet* morpha = CoopBossBeaten::ForRoom(5);
+    REQUIRE(morpha != nullptr);
+    REQUIRE(OwnQuest(*morpha));
+    const std::string water(CoopBoss::RoomByIndex(5)->scene);
+    {  // alive in our save too: nothing
+        Flags f = Alive(*morpha);
+        Apply a;
+        a.HostAlive(Bit(5), Bit(5), true);
+        CHECK(a.Check(water, true, {}, std::ref(f), kAway).empty());
+    }
+    {  // our quest went on past the boss (the warp, the sage): ours stays
+        Flags f = BeatenThenReset(*morpha, 0x12345678u);
+        Apply a;
+        a.HostAlive(Bit(5), Bit(5), true);
+        CHECK(a.Check(water, true, {}, std::ref(f), kAway).empty());
+    }
+    {  // beaten again since (a proven death in the record): nothing goes back
+        Flags f = BeatenThenReset(*morpha, morpha->step);
+        Apply a;
+        a.HostAlive(Bit(5), Bit(5), true);
+        CHECK(a.Check(water, true, std::vector<std::uint8_t>{5}, std::ref(f), kAway).empty());
+    }
+    {  // the host's save has it beaten (known, not alive), or never read: nothing
+        Flags f = BeatenThenReset(*morpha, morpha->step);
+        Apply a;
+        a.HostAlive(Bit(5), 0, true);
+        CHECK(a.Check(water, true, {}, std::ref(f), kAway).empty());
+        a.HostAlive(0, 0, true);
+        CHECK(a.Check(water, true, {}, std::ref(f), kAway).empty());
+    }
+    {  // a shared quest's boss (Gohma) is HostReset's, never BOSS_ALIVE's while the quests are shared
+        const BeatenSet& g = Gohma();
+        Flags f = BeatenThenReset(g, g.step);
+        Apply a;
+        a.HostAlive(Bit(0), Bit(0), true);
+        CHECK(a.Check(std::string("KokiriForest"), true, {}, std::ref(f), kAway).empty());
+        // LICHII_COOP_QUESTS=0: every quest is each game's own, so BOSS_ALIVE rewinds it too
+        Apply b;
+        b.HostAlive(Bit(0), Bit(0), false);
+        const std::vector<Write> w = b.Check(std::string("KokiriForest"), true, {}, std::ref(f), kAway);
+        const Write* quest = EnumWrite(w, g.quest);
+        REQUIRE(quest != nullptr);
+        CHECK(quest->value == g.below.back());
+    }
+    {  // Reset (out of the session) drops it
+        Flags f = BeatenThenReset(*morpha, morpha->step);
+        Apply a;
+        a.HostAlive(Bit(5), Bit(5), true);
+        a.Reset();
+        CHECK(a.Check(water, true, {}, std::ref(f), kAway).empty());
+    }
+}
+
+TEST_CASE("boss beaten: BOSS_ALIVE for Ganondorf and Ganon waits out the end sequence, one quest write, the earlier") {
+    const BeatenSet* dorf = CoopBossBeaten::ForRoom(8);
+    const BeatenSet* ganon = CoopBossBeaten::ForRoom(9);
+    REQUIRE(dorf != nullptr);
+    REQUIRE(ganon != nullptr);
+    REQUIRE(dorf->quest == ganon->quest);
+    Flags f;
+    for (const auto& b : dorf->bools) {
+        f.v[b.hash] = 1;
+    }
+    for (const auto& b : ganon->bools) {
+        f.v[b.hash] = 1;
+    }
+    f.v[ganon->quest] = ganon->step;  // Complete: both beaten in ours
+    Apply a;
+    a.HostAlive(Bit(8) | Bit(9), Bit(8) | Bit(9), true);  // both alive in the host's save
+    CHECK(a.Check(std::string("CrumblingGanonCastle"), true, {}, std::ref(f), kAway).empty());
+    CHECK(a.Check(std::string("FinalBattleField"), true, {}, std::ref(f), kAway).empty());
+    const std::vector<Write> w = a.Check(std::string("HyruleField"), true, {}, std::ref(f), kAway);
+    CHECK(std::count_if(w.begin(), w.end(), [](const Write& x) { return x.is_enum; }) == 1);
+    const Write* quest = EnumWrite(w, dorf->quest);
+    REQUIRE(quest != nullptr);
+    CHECK(quest->value == dorf->below.back());  // before Ganondorf's death, not only Ganon's
+    // Only Ganon alive in the host's save (it beat Ganondorf): back to before Ganon's death.
+    Apply b;
+    b.HostAlive(Bit(8) | Bit(9), Bit(9), true);
+    const std::vector<Write> w2 = b.Check(std::string("HyruleField"), true, {}, std::ref(f), kAway);
+    const Write* q2 = EnumWrite(w2, ganon->quest);
+    REQUIRE(q2 != nullptr);
+    CHECK(q2->value == ganon->below.back());
+    // Ganondorf alive in the host's, ours mid Ganon (a step after Ganondorf's death, before Complete): back too.
+    Flags mid = f;
+    mid.v[ganon->quest] = ganon->below.back();
+    Apply c;
+    c.HostAlive(Bit(8) | Bit(9), Bit(8) | Bit(9), true);
+    const Write* q3 = EnumWrite(c.Check(std::string("HyruleField"), true, {}, std::ref(mid), kAway), dorf->quest);
+    REQUIRE(q3 != nullptr);
+    CHECK(q3->value == dorf->below.back());
+}
+
+TEST_CASE("boss beaten: the host's AliveInSave reads each boss's quest (row 159)") {
+    Flags f;
+    for (const BeatenSet& s : CoopBossBeaten::Sets()) {
+        f.v[s.quest] = s.step;  // all beaten
+    }
+    const BeatenSet* morpha = CoopBossBeaten::ForRoom(5);
+    f.v[morpha->quest] = morpha->below.back();  // Morpha alive
+    const CoopBossBeaten::AliveBits bits = CoopBossBeaten::AliveInSave(std::ref(f));
+    CHECK(bits.known == coop::protocol::kBossAliveMask);
+    CHECK(bits.alive == Bit(5));
+    // Ganondorf and Ganon share Defeat_Ganon: Complete beats both; Step05 holds both alive.
+    const BeatenSet* dorf = CoopBossBeaten::ForRoom(8);
+    f.v[dorf->quest] = dorf->below.back();
+    CHECK(CoopBossBeaten::AliveInSave(std::ref(f)).alive == (Bit(5) | Bit(8) | Bit(9)));
+    // Unread: not known, never alive.
+    Flags none;
+    const CoopBossBeaten::AliveBits empty = CoopBossBeaten::AliveInSave(std::ref(none));
+    CHECK(empty.known == 0);
+    CHECK(empty.alive == 0);
+}
+
+TEST_CASE("boss beaten: the record drops the bosses BOSS_ALIVE says are alive") {
+    CoopBossBeaten::Record r;
+    CHECK(r.Add(5));
+    CHECK(r.Add(0));
+    r.Remove(Bit(5));
+    CHECK(r.Rooms() == std::vector<std::uint8_t>{0});
+    r.Remove(0);
+    CHECK(r.Rooms() == std::vector<std::uint8_t>{0});
+    // What died this session outlives the host's reset (Clear), not the session (ForgetSession).
+    CHECK(r.SeenMask() == (Bit(0) | Bit(5)));
+    r.Clear();
+    CHECK(r.Rooms().empty());
+    CHECK(r.SeenMask() == (Bit(0) | Bit(5)));
+    CHECK(r.Add(5));  // beaten again after the reset
+    r.ForgetSession();
+    CHECK(r.Rooms().empty());
+    CHECK(r.SeenMask() == 0);
+}
+
+TEST_CASE("boss beaten: the host alive box keeps the newest, once") {
+    CoopBossBeaten::HostAliveBox box;
+    CHECK_FALSE(box.Take());
+    box.Put(coop::protocol::BossAlive{1, 0x0020, 0x0020});
+    box.Put(coop::protocol::BossAlive{1, 0x0060, 0x0040});
+    const auto m = box.Take();
+    REQUIRE(m);
+    CHECK(m->alive == 0x0040);
+    CHECK_FALSE(box.Take());
+    box.Put(coop::protocol::BossAlive{1, 1, 1});
+    box.Clear();
+    CHECK_FALSE(box.Take());
+}

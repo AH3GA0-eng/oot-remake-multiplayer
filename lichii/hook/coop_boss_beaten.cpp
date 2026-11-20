@@ -2,6 +2,7 @@
 #include "coop_boss_beaten.h"
 
 #include <algorithm>
+#include <utility>
 #include <variant>
 
 #include "coop_boss.h"
@@ -54,6 +55,27 @@ std::optional<bool> AliveValue(const BeatenSet& set, const BeatenBool& b, std::u
     return *now < *at;
 }
 
+// The last set of `set`'s quest (Ganon for Ganondorf: the one whose `below` holds the other's step), or `set`.
+const BeatenSet& LastOfQuest(const BeatenSet& set) {
+    const BeatenSet* last = &set;
+    for (const BeatenSet& s : kSets) {
+        if (s.quest == set.quest && std::find(s.below.begin(), s.below.end(), last->step) != s.below.end()) {
+            last = &s;
+        }
+    }
+    return *last;
+}
+
+// Row 159: our quest holds `set`'s boss just beaten: its step, or a later one up to the quest's last boss's.
+bool InBeatenRange(const BeatenSet& set, std::uint32_t step) {
+    if (std::find(set.below.begin(), set.below.end(), step) != set.below.end()) {
+        return false;  // alive
+    }
+    const BeatenSet& last = LastOfQuest(set);
+    return step == set.step || step == last.step ||
+           std::find(last.below.begin(), last.below.end(), step) != last.below.end();
+}
+
 } // namespace
 
 std::span<const BeatenSet> Sets() {
@@ -102,6 +124,9 @@ bool Record::Add(std::uint8_t room) {
         return false;
     }
     std::lock_guard lock(mutex_);
+    if (room < 16) {
+        seen_ |= static_cast<std::uint16_t>(1u << room);
+    }
     if (Has(rooms_, room)) {
         return false;
     }
@@ -109,9 +134,25 @@ bool Record::Add(std::uint8_t room) {
     return true;
 }
 
+void Record::Remove(std::uint16_t mask) {
+    std::lock_guard lock(mutex_);
+    std::erase_if(rooms_, [&](std::uint8_t room) { return room < 16 && ((mask >> room) & 1u) != 0; });
+}
+
 void Record::Clear() {
     std::lock_guard lock(mutex_);
     rooms_.clear();
+}
+
+void Record::ForgetSession() {
+    std::lock_guard lock(mutex_);
+    rooms_.clear();
+    seen_ = 0;
+}
+
+std::uint16_t Record::SeenMask() const {
+    std::lock_guard lock(mutex_);
+    return seen_;
 }
 
 std::vector<std::uint8_t> Record::Rooms() const {
@@ -209,6 +250,55 @@ std::vector<Write> Apply::Check(const std::optional<std::string>& scene, bool pl
             }
         }
     }
+    // Row 159: a boss alive in the host's save whose quest is each game's own: quest and Bools back together.
+    for (auto it = rewinds_.begin(); it != rewinds_.end();) {
+        const std::uint8_t room = *it;
+        const BeatenSet* set = ForRoom(room);
+        if (set == nullptr || Has(beaten, room)) {
+            it = rewinds_.erase(it);  // beaten again since (a proven death): Apply gives the set below
+            continue;
+        }
+        if (room == 8 || room == 9) {
+            if (KeptScene(room, *scene)) {
+                ++it;  // Ganondorf's and Ganon's end sequence reads Defeat_Ganon live: the next scene
+                continue;
+            }
+        } else if (InDungeon(room, *scene) && near(room) && (!death_here || death_here(room))) {
+            ++it;  // our own death of it may run there: after it
+            continue;
+        }
+        const std::optional<std::uint32_t> step = read(set->quest);
+        if (!step) {
+            ++it;
+            continue;
+        }
+        it = rewinds_.erase(it);
+        if (!InBeatenRange(*set, *step)) {
+            continue;  // alive in ours too, or our quest went on past it (we took the warp on): ours stays
+        }
+        const std::uint32_t back = set->below.back();
+        for (const BeatenBool& b : set->bools) {
+            const std::optional<bool> alive_value = AliveValue(*set, b, back);
+            const std::optional<std::uint32_t> now = read(b.hash);
+            if (alive_value && now && (*now != 0) != *alive_value) {
+                out.push_back(Write{room, b.hash, false, *alive_value ? 1u : 0u, b.name, true});
+            }
+        }
+        // Two bosses of one quest (Ganondorf and Ganon, both alive in the host's save): one write, the earlier step.
+        const auto same = std::find_if(out.begin(), out.end(),
+                                       [&](const Write& w) { return w.is_enum && w.hash == set->quest; });
+        if (same == out.end()) {
+            out.push_back(Write{room, set->quest, true, back, set->quest_name, true});
+        } else {
+            const BeatenSet& last = LastOfQuest(*set);
+            const auto pos = [&](std::uint32_t v) {
+                return std::find(last.below.begin(), last.below.end(), v) - last.below.begin();
+            };
+            if (pos(back) < pos(same->value)) {
+                *same = Write{room, set->quest, true, back, set->quest_name, true};
+            }
+        }
+    }
     for (const std::uint8_t room : due) {
         if (!Has(beaten, room)) {
             continue;  // the record was cleared since (the host loaded a save): that boss fights again
@@ -247,6 +337,60 @@ std::vector<Write> Apply::Check(const std::optional<std::string>& scene, bool pl
     return out;
 }
 
+AliveBits AliveInSave(const std::function<std::optional<std::uint32_t>(std::uint32_t)>& read) {
+    AliveBits bits;
+    for (const BeatenSet& s : kSets) {
+        if (s.room >= 16) {
+            continue;
+        }
+        const std::optional<std::uint32_t> step = read(s.quest);
+        if (!step) {
+            continue;
+        }
+        const auto bit = static_cast<std::uint16_t>(1u << s.room);
+        bits.known |= bit;
+        if (std::find(s.below.begin(), s.below.end(), *step) != s.below.end()) {
+            bits.alive |= bit;
+        }
+    }
+    bits.known &= coop::protocol::kBossAliveMask;
+    bits.alive &= bits.known;
+    return bits;
+}
+
+void HostAliveBox::Put(const coop::protocol::BossAlive& m) {
+    std::lock_guard lock(mutex_);
+    pending_ = m;
+}
+
+std::optional<coop::protocol::BossAlive> HostAliveBox::Take() {
+    std::lock_guard lock(mutex_);
+    return std::exchange(pending_, std::nullopt);
+}
+
+void HostAliveBox::Clear() {
+    std::lock_guard lock(mutex_);
+    pending_.reset();
+}
+
+HostAliveBox& TheHostAlive() {
+    static HostAliveBox box;
+    return box;
+}
+
+void Apply::HostAlive(std::uint16_t known, std::uint16_t alive, bool quests_shared) {
+    rewinds_.clear();
+    for (const BeatenSet& s : kSets) {
+        if (s.room >= 16 || ((known >> s.room) & 1u) == 0 || ((alive >> s.room) & 1u) == 0) {
+            continue;
+        }
+        if (quests_shared && CoopQuests::Find(s.quest) != nullptr) {
+            continue;  // the host's FLAG_RESET set our quest: HostReset's put-back
+        }
+        rewinds_.push_back(s.room);
+    }
+}
+
 void Apply::HostReset(bool quests_shared) {
     reverts_.clear();
     if (!quests_shared) {
@@ -261,6 +405,7 @@ void Apply::HostReset(bool quests_shared) {
 
 void Apply::Reset() {
     reverts_.clear();
+    rewinds_.clear();
     scene_.reset();
     loaded_.clear();
     checked_.clear();

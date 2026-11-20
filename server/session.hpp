@@ -364,6 +364,8 @@ struct Stats {
   std::uint64_t boss_hearts_given = 0;     // first claims: one BOSS_HEART given to everyone
   std::uint64_t boss_hearts_late = 0;      // later claims of a decided boss, answered to their sender
   std::uint64_t boss_hearts_refused = 0;   // a "given" from a client
+  std::uint64_t boss_alive_relayed = 0;    // BOSS_ALIVE from the host, to everyone else (row 159)
+  std::uint64_t boss_alive_refused = 0;    // BOSS_ALIVE from a player who is not the host
   // Connections refused at connect: their address already had
   // max_half_open_per_address waiting for HELLO. Not packets, so not in
   // dropped().

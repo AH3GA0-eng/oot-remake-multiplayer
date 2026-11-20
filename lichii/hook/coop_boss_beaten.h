@@ -81,14 +81,44 @@ class Record {
 public:
     // True when `room` is new (a boss room of the table).
     bool Add(std::uint8_t room);
+    // Row 159: the rooms whose bit is set in `mask` (BOSS_ALIVE: alive in the host's save) are no longer beaten.
+    void Remove(std::uint16_t mask);
+    // The host loaded a save: no boss beaten now. What died this session is still known (SeenMask).
     void Clear();
+    // Out of the session: both.
+    void ForgetSession();
     std::vector<std::uint8_t> Rooms() const;
+    // Row 159: bit N for each boss that died this session (every Add since ForgetSession, a host reset kept). A
+    // BOSS_ALIVE rewinds only these: a boss a guest's own save beat before the session stays that game's own.
+    std::uint16_t SeenMask() const;
 
 private:
     mutable std::mutex mutex_;
     std::vector<std::uint8_t> rooms_;
+    std::uint16_t seen_ = 0;
 };
 Record& TheRecord();
+
+// Row 159 (BOSS_ALIVE): on the host, after its own save load, what its game holds for each boss: `known` bit N
+// when boss N's quest reads, `alive` bit N when that step is before the boss's death (in its set's `below`).
+struct AliveBits {
+    std::uint16_t known = 0;
+    std::uint16_t alive = 0;
+};
+AliveBits AliveInSave(const std::function<std::optional<std::uint32_t>(std::uint32_t)>& read);
+
+// The host's BOSS_ALIVE, from the network thread to the hook's frame (the newest one wins).
+class HostAliveBox {
+public:
+    void Put(const coop::protocol::BossAlive& m);
+    std::optional<coop::protocol::BossAlive> Take();
+    void Clear();
+
+private:
+    std::mutex mutex_;
+    std::optional<coop::protocol::BossAlive> pending_;
+};
+HostAliveBox& TheHostAlive();
 
 // One write to our game: a Bool (`is_enum` false, `value` 0 or 1) or the quest's Enum (`value` a step's hash).
 struct Write {
@@ -150,10 +180,24 @@ public:
     // guest's boss stays as its own save has it, quest and Bools together (no mixed room). On the host its own save
     // holds the alive values: nothing to write.
     void HostReset(bool quests_shared);
+    // Row 159 (B #38): the host's BOSS_ALIVE. A boss whose quest the host's FLAG_RESET does not set for us (each
+    // game's own: SageOfWater, SageOfShadow, SageOfSpirit, Defeat_Ganon; every boss when `quests_shared` is false)
+    // stayed beaten in a guest's game while the host fights it again, and its room's logic makes the boss, the warp
+    // and the container from our own quest (romfs: WaterTemple_Level_Room_23, ShadowTemple_Level_Room_B3FB4F_Q,
+    // SpiritTemple_Level_Room_34: Create_WarpPrefab and the boss's Delete from `<Quest>_IsAfter_<step>_Exp`), while
+    // the container's taken key, shared, went back to 0 with the host's save: a second container in our beaten
+    // room (a repeat). So for each boss the host holds alive, at the next Check where a put-back may run (as
+    // HostReset's; Ganondorf and Ganon never in their end sequence, KeptScene), when our quest reads the step the
+    // boss's death set, or a later one no further than the quest's last boss (Defeat_Ganon Step06 to Complete for
+    // Ganondorf): the quest goes back to the step just before the death (`below`'s last, the fight's own) and its
+    // Bools as HostReset's. Quest, Bools and container together: no warp and no container until it dies again. A
+    // quest past that (we took the warp on: the sage, the next dungeon) is left as ours.
+    void HostAlive(std::uint16_t known, std::uint16_t alive, bool quests_shared);
     void Reset();
 
 private:
     std::vector<std::uint8_t> reverts_;  // HostReset's rooms not yet checked
+    std::vector<std::uint8_t> rewinds_;  // HostAlive's rooms not yet checked (row 159)
     std::optional<std::string> scene_;
     std::vector<std::uint8_t> loaded_;   // the record's rooms when this scene was first seen: the only ones given here
     std::vector<std::uint8_t> checked_;  // rooms done since this scene load
