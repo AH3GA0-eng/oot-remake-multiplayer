@@ -2,6 +2,9 @@
 # and never came back: soft-lock). A is the host and owns him all along, B the guest. Both warp into
 # PhantomGanonStage as hs-phantom-ganon. Then, 600 frames a turn, the same on both sides:
 #   t1..t4 A hits 6 a turn (his life 40 -> 16: phase 2, his rides and RushAttack dives)
+#   t1..t3 B hits 2 halfway through each turn (row 177 review MUST 1: A owns him, A's game replays the hit with
+#          B's puppet as the attacker: "P2's hit replayed with their puppet .. as the attacker" in A's log, no crash,
+#          the flinch on both screens, his life 40 -> 10 by t4)
 #   t5     nothing (phase 2 runs)
 #   t6     A goes down (`hurt 80`, down-but-out): the server hands him to B mid-move
 #   t7, t8 B watches (no hits: B's own AI runs him from the move he was in)

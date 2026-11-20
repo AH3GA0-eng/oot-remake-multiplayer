@@ -2305,13 +2305,24 @@ bool SeenPuppetActor(std::string_view actor, bool perceived) {
 }
 
 bool PackPerception(std::string_view manifest) {
-    // "perception": true, as build.py writes it (json.dumps).
-    const auto at = manifest.find("\"perception\"");
-    if (at == std::string_view::npos) {
-        return false;
+    // "perception": true, as build.py writes it (json.dumps) at the top level, AFTER "actors": every actor entry
+    // has its own "perception" too (null, or its emitter {"param", "size"}), so the first key is an actor's and never
+    // the pack's (until row 177's review every pack read as without perception). The pack's is the last key whose
+    // value is a bool.
+    bool on = false;
+    for (auto at = manifest.find("\"perception\""); at != std::string_view::npos;
+         at = manifest.find("\"perception\"", at + 12)) {
+        const auto v = manifest.find_first_not_of(" \t\r\n:", at + 12);
+        if (v == std::string_view::npos) {
+            break;
+        }
+        if (manifest.substr(v, 4) == "true") {
+            on = true;
+        } else if (manifest.substr(v, 5) == "false") {
+            on = false;
+        }
     }
-    const auto v = manifest.find_first_not_of(" \t\r\n:", at + 12);
-    return v != std::string_view::npos && manifest.substr(v, 4) == "true";
+    return on;
 }
 
 std::string QuietActor(std::string_view actor) {

@@ -15,11 +15,17 @@ wait 2400               # the intro, then the fight
 press ZL 10             # lock on
 wait 600
 mark t1
-wait 600
+wait 300
+hit Enemy_DungeonBoss_PhantomGanon 2   # row 177 MUST 1: A replays it with our puppet as the attacker
+wait 300
 mark t2
-wait 600
+wait 300
+hit Enemy_DungeonBoss_PhantomGanon 2   # row 177 MUST 1: A replays it with our puppet as the attacker
+wait 300
 mark t3
-wait 600
+wait 300
+hit Enemy_DungeonBoss_PhantomGanon 2   # row 177 MUST 1: A replays it with our puppet as the attacker
+wait 300
 mark t4
 wait 600
 mark t5
