@@ -1266,7 +1266,9 @@ void Sync::Written(std::uint64_t address, std::int32_t life, std::uint64_t now_u
     o.late_left = 0;  // nothing of it may be put back as a second fall
     o.late_until = 0;
     if (o.life && *o.life > life) {
-        o.hurt_left += *o.life - life;
+        // The whole drop from the walk's life, counted once: a hurt held for less than kHurtWaitUs still has
+        // its own hurt_left from Lower (row 172: never twice, or it swallows a later hit of our Link's).
+        o.hurt_left = std::max(o.hurt_left, *o.life - life);
         o.hurt_target = life;
         // If the game does not take it, the life is written after kHurtWaitUs and hurt_left
         // is cleared, so it cannot swallow a later hit of our Link's.

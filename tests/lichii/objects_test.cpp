@@ -15,6 +15,7 @@
 
 #include "coop/protocol/codec.hpp"
 #include "coop_bomb_share.h"
+#include "coop_guard.h"
 #include "coop_hold.h"
 #include "coop_objects_sync.h"
 #include "coop_sensor_claim.h"
@@ -4550,6 +4551,46 @@ TEST_CASE("objects: a life write held through our event lands later and is no hi
     };
     CHECK(run(true) == 0);
     CHECK(run(false) >= 1);  // the bug the review found: the late drop went back as our hit
+}
+
+TEST_CASE("objects: another player's kill held through our Link's death event lands as the killing blow (row 172)") {
+    // Run 051351: B killed A's Littles while A's Link was in its own death event. The hurt was held (coop_guard.h),
+    // the Sync wrote its target as a plain life after kHurtWaitUs, and that plain write replaced the held hurt: the
+    // Little died through its Life step with no hitter, and the Floormaster never counted it (stuck in Grow_Wait).
+    Sync sync;
+    sync.SetHurt(true);
+    Tick(sync, 0, {Enemy(0x100, 0x11, 2)});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 1);
+    proto::Damage d;
+    d.player_number = 2;
+    d.id = id;
+    d.amount = 2;
+    sync.Receive(d);
+    CoopGuard::Held<LifeWrite> held{[](LifeWrite& kept, LifeWrite&& newer) { CoopGuard::MergeLife(kept, std::move(newer)); }};
+    const CoopGuard::Local dying{true, CoopGuard::Vec3{0, 0, 0}};
+    const auto where = [](std::uint64_t) { return std::optional<CoopGuard::Vec3>{CoopGuard::Vec3{2, 0, 0}}; };
+    const auto hash = [](std::uint64_t) { return std::optional<std::uint64_t>{0x11}; };
+    std::size_t asked = 0;
+    for (std::uint64_t t = 10; t < 3000; t += 50) {
+        auto writes = Tick(sync, t * kMs, {Enemy(0x100, 0x11, 2)}).writes;  // held: the game keeps 2
+        asked += writes.size();
+        CHECK(held.Pass(std::move(writes), dying, where, hash).apply.empty());
+    }
+    CHECK(asked >= 2);  // the hurt, then the Sync's fallback write of its target
+    auto out = held.Pass({}, CoopGuard::Local{false, CoopGuard::Vec3{0, 0, 0}}, where, hash);
+    REQUIRE(out.apply.size() == 1);
+    CHECK(out.released == 1);
+    CHECK(out.apply[0].life == 0);
+    CHECK(out.apply[0].hurt == 2);    // a hurt: the replayed hit, not a plain life
+    CHECK(out.apply[0].hitter == 2);  // the killing blow is P2's (its replay names the Player as the killer)
+    // Released: the walk then sees the game take it (2 -> 0), and that drop is no hit of ours.
+    sync.Written(0x100, 0, 3000 * kMs);
+    std::size_t damage = 0;
+    for (std::uint64_t t = 3010; t < 4000; t += 50) {
+        damage += All<proto::Damage>(Tick(sync, t * kMs, {Enemy(0x100, 0x11, 0)})).size();
+    }
+    CHECK(damage == 0);
 }
 
 TEST_CASE("objects: Written for an actor the Sync does not know, or a life not lower, does nothing") {
