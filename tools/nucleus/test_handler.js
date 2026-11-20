@@ -41,18 +41,22 @@ var System = {
     IO: {
         Path: {
             Combine: function (a, b) { return fso.BuildPath(a, b); },
-            GetDirectoryName: function (p) { return fso.GetParentFolderName(p); }
+            GetDirectoryName: function (p) { return fso.GetParentFolderName(p); },
+            GetFileName: function (p) { return fso.GetFileName(p); }
         },
         File: {
             Exists: function (p) { return fso.FileExists(p); },
             ReadAllText: function (p) { return readFile(p); },
             WriteAllText: function (p, t) { writeFile(p, t); },
-            Delete: function (p) { if (fso.FileExists(p)) fso.DeleteFile(p); }
+            Delete: function (p) { if (fso.FileExists(p)) fso.DeleteFile(p); },
+            Copy: function (a, b, over) { fso.CopyFile(a, b, over); }
         },
         Directory: {
             Exists: function (p) { return fso.FolderExists(p); },
             CreateDirectory: function (p) { mkdirs(p); },
-            Move: function (a, b) { fso.MoveFolder(a, b); }
+            Move: function (a, b) { fso.MoveFolder(a, b); },
+            GetDirectories: function (p) { var r = [], e = new Enumerator(fso.GetFolder(p).SubFolders); for (; !e.atEnd(); e.moveNext()) r.push(e.item().Path); return r; },
+            GetFiles: function (p) { var r = [], e = new Enumerator(fso.GetFolder(p).Files); for (; !e.atEnd(); e.moveNext()) r.push(e.item().Path); return r; }
         },
         // FileAttributes as Jint may hand it over: a number (Directory 16, ReparsePoint 1024), or an object with
         // ToString (and valueOf: the number) or the enum's text, as attrMode says.
@@ -100,6 +104,14 @@ writeFile(fso.BuildPath(kit, "coop-options.ini"),
           "name = Saria\r\ncolor = red\r\nLICHII_COOP_PUPPET=1\r\nLICHII_COOP_PAD=2\r\n# LICHII_COOP_KEYBOARD=off\r\n");
 mkdirs(fso.BuildPath(game, "user\\save"));
 writeFile(fso.BuildPath(game, "user\\save\\host.sav"), "x");
+mkdirs(fso.BuildPath(game, "ngx"));                       // DLSS's runtime, built in after the instances were made
+writeFile(fso.BuildPath(game, "ngx\\nvngx_dlss.dll"), "dlss");
+mkdirs(fso.BuildPath(game, "logs"));
+writeFile(fso.BuildPath(game, "newfile.dll"), "new");
+writeFile(fso.BuildPath(game, "coop.ini"), "own");
+writeFile(fso.BuildPath(game, "coop-saves.ini"), "solo");
+writeFile(fso.BuildPath(game, "coop-name-checked.txt"), "solo");
+// (written by the solo game after the instances were made: must stay each instance's own)
 var instances = [];
 for (var i = 0; i < 3; i++) {
     instances[i] = fso.BuildPath(root, "content\\OoTCoopLongshot\\Instance" + i);
@@ -173,6 +185,10 @@ for (var q = 0; q < 3; q++) {
           ls.indexOf("vsync=0") >= 0, "longshot_options.ini " + q + ": " + ls);
     check(readFile(fso.BuildPath(instances[q], "player-key.txt")).length >= 32, "player-key.txt " + q);
 }
+check(readFile(fso.BuildPath(instances[0], "ngx\\nvngx_dlss.dll")) === "dlss" && (fso.GetFolder(fso.BuildPath(instances[0], "ngx")).Attributes & 1024) !== 0, "ngx folder linked into an instance made before it");
+check(readFile(fso.BuildPath(instances[1], "newfile.dll")) === "new", "a new game DLL copied in");
+check(!fso.FileExists(fso.BuildPath(instances[1], "coop-saves.ini")) && !fso.FileExists(fso.BuildPath(instances[1], "coop-name-checked.txt")), "per-player files the solo game wrote are not taken");
+check(!fso.FolderExists(fso.BuildPath(instances[0], "logs")), "logs stay the instance's own");
 check(readFile(fso.BuildPath(instances[0], "coop.ini")).indexOf("name = Saria\r\n") >= 0, "player 1 name");
 check(readFile(fso.BuildPath(instances[1], "coop.ini")).indexOf("name = A name that is f\r\n") >= 0, "name cut to 16");
 check(readFile(fso.BuildPath(instances[2], "coop.ini")).indexOf("name = Player 3\r\n") >= 0, "empty name: Player 3");
@@ -201,8 +217,10 @@ Context.ExePath = fso.BuildPath(instances[1], "longshot.exe");
 Context.Nickname = "Mido";
 Context.GamepadId = 3;
 Context.IsKeyboardPlayer = false;
+writeFile(fso.BuildPath(game, "newfile.dll"), "rebuilt");   // a rebuild replaced the DLL
 Game.Play();
 check(readFile(fso.BuildPath(instances[1], "coop.ini")).indexOf("password = " + pw + "\r\n") >= 0, "password from session.txt");
+check(readFile(fso.BuildPath(instances[1], "newfile.dll")) === "rebuilt", "a DLL the handler copied is copied again after a rebuild");
 check(readFile(fso.BuildPath(instances[1], "coop-options.ini")).indexOf("LICHII_COOP_PAD=3\r\n") >= 0, "Nucleus's pad 3");
 
 // Runs again (the next session): links stay, a new password.

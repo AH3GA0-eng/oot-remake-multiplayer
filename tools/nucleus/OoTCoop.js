@@ -465,6 +465,55 @@ function coopTell(text) {
     }
 }
 
+// Nucleus links the game's files into an instance folder only when it makes the folder, and the folders are kept
+// (Game.KeepSymLinkOnExit). What a later build adds is missing there. Named, not "whatever is new": the solo game
+// also writes per-player files beside its exe (coop-saves.ini, coop-name-checked.txt, ...), which must stay each
+// instance's own. So at every start: the ngx folder (NVIDIA DLSS's runtime, built in by "NVIDIA DLSS.bat"; the game
+// looks for it beside its exe, so in the instance) is linked in as a junction (always the game's current one), and each
+// build DLL the instance lacks is copied in. A DLL the handler copied is copied again at every start (a rebuild
+// replaces the file, and a copy would keep the old bytes); those are listed in the instance's coop-linked.txt.
+var COOP_LINK_DIRS = ["ngx"];
+function coopLinkMissing(game, inst) {
+    var i, name, from, to;
+    for (i = 0; i < COOP_LINK_DIRS.length; i++) {
+        name = COOP_LINK_DIRS[i];
+        from = coopPath(game, name);
+        to = coopPath(inst, name);
+        if (System.IO.Directory.Exists(from) && !System.IO.Directory.Exists(to)) {
+            coopLinkFolder(to, from);
+            Context.Log("OoT Co-op: linked the game's " + name + " folder into " + inst);
+        }
+    }
+    var files = System.IO.Directory.GetFiles(game);
+    var nf = files.Length !== undefined ? files.Length : files.length;
+    var markFile = coopPath(inst, "coop-linked.txt"), marked = "\n" + coopRead(markFile).replace(/\r/g, "") + "\n";
+    var added = "";
+    for (i = 0; i < nf; i++) {
+        from = String(files[i]);
+        name = String(System.IO.Path.GetFileName(from));
+        to = coopPath(inst, name);
+        if (!/\.dll$/i.test(name)) {
+            continue;
+        }
+        var mine = marked.indexOf("\n" + name + "\n") >= 0;
+        if (System.IO.File.Exists(to) && !mine) {
+            continue;   // Nucleus's own link or copy
+        }
+        try {
+            System.IO.File.Copy(from, to, true);
+            if (!mine) {
+                added += name + "\r\n";
+                Context.Log("OoT Co-op: copied the game's " + name + " into " + inst);
+            }
+        } catch (e) {
+            Context.Log("OoT Co-op: could not copy " + name + " into " + inst + " (in use?): " + e);
+        }
+    }
+    if (added !== "") {
+        coopWrite(markFile, coopRead(markFile) + added);
+    }
+}
+
 Game.Play = function () {
     var player = Context.PlayerID + 1;                  // 1 to 4
     var game = String(Context.RootInstallFolder);       // the game folder Nucleus was given
@@ -473,6 +522,11 @@ Game.Play = function () {
     System.IO.Directory.CreateDirectory(mine);
     var sessionFile = coopPath(mine, "session.txt");
     var kit = coopFindKit(game);
+    try {
+        coopLinkMissing(game, inst);
+    } catch (e) {
+        Context.Log("OoT Co-op: could not link the game's newer files into " + inst + ": " + e);
+    }
 
     // The session: player 1 makes it and starts the server; the others take it.
     // session.txt: the join password, the server's address, its port (a line each).
