@@ -197,6 +197,75 @@ TEST_CASE("coop i18n: a pickup notice, clause by clause (coop/host/src/notify.cp
     CHECK(CoopI18n::Tr(hans, "Saria got lost") == "Saria got lost");
 }
 
+TEST_CASE("coop i18n: a chest opened elsewhere, and the one heart container") {
+    const CoopI18n::Lang* hans = ByCode("zh-Hans");
+    const CoopI18n::Lang* hant = ByCode("zh-Hant");
+    // The notice's extra_ (lichii/hook/coop_hook.cpp) had no line at all.
+    CHECK(CoopI18n::Tr(hans, "ROGX opened a chest") == "ROGX 打开了一个宝箱");
+    CHECK(CoopI18n::Tr(hant, "ROGX opened a chest") == "ROGX 打開了一個寶箱");
+    // The boss room's chat line (coop_boss_scenes.cpp) had none either.
+    CHECK(CoopI18n::Tr(hans, "ROGX got the heart container for everyone") ==
+          "ROGX 拿到了心之容器，人人有份");
+    CHECK(CoopI18n::Tr(hant, "ROGX got the heart container for everyone") ==
+          "ROGX 拿到了心之容器，人人有份");
+}
+
+TEST_CASE("coop i18n: the pickup names Spell() would have misspelled") {
+    const CoopI18n::Lang* hans = ByCode("zh-Hans");
+    const CoopI18n::Lang* hant = ByCode("zh-Hant");
+    // These reached ItemName (a line of kItems each, now) and were spelled from
+    // the id before: "4090 拿到了 Gauntlet Goron", "Quiver Small, the Arrow
+    // Normal". A pickup that is one notice with two names has each of them
+    // translated, and the ", the " between them too.
+    CHECK(CoopI18n::Tr(hans, "4090 got the Goron's Bracelet - you got one too!") ==
+          "4090 拿到了哥隆手环 —— 你也得到了一个！");
+    CHECK(CoopI18n::Tr(hans, "4090 got the Small Quiver, the Arrows - you got them too!") ==
+          "4090 拿到了小箭袋、箭 —— 你也得到了！");
+    CHECK(CoopI18n::Tr(hant, "4090 got the Small Quiver, the Arrows - you got them too!") ==
+          "4090 拿到了小箭袋、箭 —— 你也得到了！");
+    // A name the table does not know stays whole, in its own spelling: the join
+    // is the table's, the name is not.
+    CHECK(CoopI18n::Tr(hans, "4090 got the Small Quiver, the Nothing At All - you got them too!") ==
+          "4090 拿到了小箭袋、Nothing At All —— 你也得到了！");
+}
+
+TEST_CASE("coop i18n: 0.11.7's rows and help bodies") {
+    const CoopI18n::Lang* hans = ByCode("zh-Hans");
+    const CoopI18n::Lang* hant = ByCode("zh-Hant");
+    // The rows the 0.11.7 menu added (coop_pause_menu.cpp: PageRow("Local co-op", "2 players"),
+    // PageRow("Customize Link", "Colours"), Choice("Saves", "Solo")).
+    CHECK(CoopI18n::Tr(hans, "2 players") == "2 人");
+    CHECK(CoopI18n::Tr(hant, "2 players") == "2 人");
+    CHECK(CoopI18n::Tr(hans, "Colours") == "颜色");
+    CHECK(CoopI18n::Tr(hant, "Colours") == "顏色");
+    CHECK(CoopI18n::Tr(hans, "Solo") == "单人");
+    CHECK(CoopI18n::Tr(hant, "Solo") == "單人");
+    CHECK(CoopI18n::Tr(hans, "Co-op Settings") == "联机设置");
+    CHECK(CoopI18n::Tr(hant, "Co-op Settings") == "連線設定");
+    CHECK(CoopI18n::Tr(hans, "Options") == "选项");
+    CHECK(CoopI18n::Tr(hant, "Options") == "選項");
+    // New Game+'s two help bodies: the locked one is a line, the unlocked one is built
+    // around the hearts kept and the level now (a split shape).
+    CHECK(CoopI18n::Tr(hans, "Beat Ganon to unlock it: then play again with the hearts you had and tougher enemies.") ==
+          "击败加农后解锁：之后可以用当时的心数重玩，敌人也更强。");
+    CHECK(CoopI18n::Tr(hant, "Locked: beat Ganon") == "未解鎖：擊敗加農");
+    const std::string ng = CoopI18n::Tr(
+        hans, "Start a new file with this on: you keep your 4+1 hearts, and enemies and bosses get 50% more life "
+              "and 25% more damage for each level (up to NG+ 2 now). In a game you host your level counts for "
+              "everyone. Off: the game as it is.");
+    CHECK(ng.find("保留你的 4+1 颗心") != std::string::npos);
+    CHECK(ng.find("最高 NG+ 2") != std::string::npos);
+    CHECK(ng.find("Start a new file") == std::string::npos);
+    // The Saves row's help, whole.
+    const std::string saves = CoopI18n::Tr(
+        hans, "Solo: your own saves. Multiplayer: a separate set of saves for playing together (made from your "
+              "solo saves the first time), so co-op progress never mixes with your own. When you join a friend "
+              "from the title screen you play the host's save, copied beside your multiplayer saves; your saves "
+              "are not touched. Switched on the title screen with no file loaded.");
+    CHECK(saves.rfind("单人：你自己的存档。", 0) == 0);
+    CHECK(saves.find("联机：一套单独用于一起游玩的存档") != std::string::npos);
+}
+
 TEST_CASE("coop i18n: the difficulty line fits the chat's room") {
     const CoopI18n::Lang* hans = ByCode("zh-Hans");
     const char* en =
