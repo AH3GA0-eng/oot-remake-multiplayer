@@ -691,6 +691,8 @@ int MousePage() noexcept;
 // The mouse in the game's window (its client area, 0..1 each way) and the left button, when the window is in front:
 // the title's own keyboard reads it too (coop_title.cpp).
 bool ClientCursor(float* fx, float* fy, bool* left) noexcept;
+// The same in the game's layout units (as the buttons' hit boxes: the centre 0,0, y up).
+bool LayoutCursor(float* x, float* y, bool* left) noexcept;
 // The keyboard while one of the page's fields is typed into (hos_coop_key, hos_coop_char; KeysTaken: the game gets
 // none of its keys then): true when the field took it.
 bool Key(std::uint32_t vk, bool repeat) noexcept;

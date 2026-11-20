@@ -27,7 +27,8 @@ std::string RowText(const CoopPauseMenu::Row& r) {
         t += ": " + std::string(r.left ? "< " : "") + r.value + (r.right ? " >" : "");
         break;
     default:
-        if (!r.value.empty()) t += t.empty() ? r.value : ": " + r.value;
+        // (a value that only says the row's own word again, "Join: Join", is left off)
+        if (!r.value.empty() && (t.empty() || t.rfind(r.value, 0) != 0)) t += t.empty() ? r.value : ": " + r.value;
         break;
     }
     return Fit(t, kTextBytes);

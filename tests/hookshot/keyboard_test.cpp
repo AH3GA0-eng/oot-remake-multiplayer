@@ -15,7 +15,8 @@ TEST_CASE("keyboard: five rows of characters, then Space, Delete, Cancel and OK"
     CHECK(At(2, 0).ch == 'a');
     CHECK(At(4, 0).ch == '0');
     CHECK(At(4, 10).ch == '-');
-    CHECK(At(4, 11).ch == '_');
+    CHECK(At(4, 11).ch == '.');
+    CHECK(At(4, 12).ch == ':');   // (an address's port)
     for (int r = 0; r < kCharRows; ++r) CHECK(std::strlen(CharRow(r)) == static_cast<std::size_t>(kCols));
     CHECK(At(kCharRows, 0).key == Key::kSpace);
     CHECK(At(kCharRows, 1).key == Key::kDelete);

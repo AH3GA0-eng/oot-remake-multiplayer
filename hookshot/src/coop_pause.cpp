@@ -191,6 +191,8 @@ void Joined() {
 }
 
 // What co-op is doing, for the tab.
+std::string ShareCode(const HosCoopStatus& st);   // (below: the code a host gives its friends)
+
 CoopPauseMenu::Session SessionNow() {
     const HosCoopStatus st = Status();
     const CoopLobby::Seen seen = CoopLobby::Now();   // what the Lobby tab shows too
@@ -208,7 +210,7 @@ CoopPauseMenu::Session SessionNow() {
     s.by_launcher = g_coop_on;
     if (s.hosting) {
         s.players = st.players;
-        s.code = st.invite;
+        s.code = ShareCode(st);
     } else {
         s.players = static_cast<int>(CoopHook::PlayerList().size());
         s.code = st.state == HOS_COOP_WAIT_HOST ? st.answer : "";
@@ -283,21 +285,39 @@ void Delivered() {
 bool Busy();
 bool Join(const std::string& text);
 
-// What follows from co-op's state, whether the tab is shown or not: the invite code on the clipboard once there is
-// one (a guest's answer code too), the message logged, a connected join remembered and the host's save loaded.
+// The code a host gives its friends: its room on the relay ("<room>@<relay>"), else the relay's join code
+// ("<CODE>@<relay>"), else the invite code; "" none yet. Join takes each of them.
+constexpr std::uint64_t kRelayWaitMs = 6000;
+std::string ShareCode(const HosCoopStatus& st) {
+    if (st.relay_room[0] != 0) return std::string(st.relay_room, strnlen(st.relay_room, sizeof st.relay_room));
+    if (st.relay_code[0] != 0) return std::string(st.relay_code, strnlen(st.relay_code, sizeof st.relay_code));
+    return std::string(st.invite, strnlen(st.invite, sizeof st.invite));
+}
+
+// What follows from co-op's state, whether the tab is shown or not: the code to give friends on the clipboard once
+// there is one (ShareCode; a guest's answer code too), the message logged, a connected join remembered and the host's
+// save loaded.
 void Follow(const HosCoopStatus& st) {
     const bool host = g_doing == "hosting";
     const std::uint64_t session = g_session;
-    if (host && st.invite[0] != 0 && !g_copied && !g_copy_tried) {
+    // (the relay's room or code first, which needs no router: it is asked at once with the built-in relay, and the
+    // invite code is only taken alone when the relay has not answered in kRelayWaitMs or said why not)
+    static std::uint64_t waited_session = 0, wait_from = 0;
+    if (waited_session != session) waited_session = session, wait_from = NowMs();
+    const bool relay_in = st.relay_room[0] != 0 || st.relay_code[0] != 0;
+    const bool relay_out = st.problem == HOS_COOP_PROBLEM_RELAY_FAILED || NowMs() - wait_from > kRelayWaitMs;
+    const std::string share = ShareCode(st);
+    if (host && !share.empty() && (relay_in || relay_out) && !g_copied && !g_copy_tried) {
 #ifndef _WIN32
         g_copy_tried = true;   // one try per code (Windows tries again each round: a busy clipboard frees up)
 #endif
-        CopyThen(st.invite, [session](bool ok) {
+        CopyThen(share, [session, relay_in](bool ok) {
             if (session != g_session) {
                 return;
             }
             g_copied = ok;
-            LOG_INFO(Core, "coop: multiplayer tab: host: the invite code is on the clipboard{}", ok ? "" : " (it could not be)");
+            LOG_INFO(Core, "coop: multiplayer tab: host: the {} is on the clipboard{}",
+                     relay_in ? "relay's room or join code" : "invite code", ok ? "" : " (it could not be)");
         });
     }
     if (!host && st.state == HOS_COOP_WAIT_HOST && st.answer[0] != 0 && !g_answer_copied && !g_answer_copy_tried) {

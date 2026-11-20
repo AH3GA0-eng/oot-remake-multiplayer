@@ -54,6 +54,11 @@ bool SaveWaitWaiting();
 void NotePlayerPad(std::uint64_t buttons);
 bool PlayerChoseLately();
 
+// Co-op's own rows are on the title's buttons now (Multiplayer's rows, or a page of co-op's menu): the title's first
+// button is not the game's Continue then, so a code mod is not given the title screen nor holds the pad there (Save
+// Profiles took the A of a click on co-op's first row for its file select, a test run 2026-11-20). Any thread.
+bool RowsOurs();
+
 // This PC's own id for rejoining (coop.ini client_id, made once): the module's
 // join helper uses the same nonce and port for the same invite with it.
 std::string ClientId();

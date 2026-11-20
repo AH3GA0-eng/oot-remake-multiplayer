@@ -1394,6 +1394,12 @@ void PublishKeyboard() {
         s.text = g_page.Field(t).Shown(true, 40);
         s.row = g_page.KeyCursor().row(), s.col = g_page.KeyCursor().col();
     }
+    // (only the page's own: open while it types, and closed once after. Closed at every pad read, it took the title's
+    // keyboard away just before the title asked which key the mouse was on: no click on a key counted, a test run
+    // 2026-11-20)
+    static bool was_open = false;
+    if (!s.open && !was_open) return;
+    was_open = s.open;
     CoopKeyboard::Publish(s);
 }
 // The mouse on the keyboard: a key pressed where the left button went down and came up; Longshot's own A for the
@@ -2188,6 +2194,14 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
         return out & (buttons | ~(kPadStickUp | kPadStickDown | kPadStickLeft | kPadStickRight));
     } catch (...) {
         return buttons;
+    }
+}
+
+bool LayoutCursor(float* x, float* y, bool* left) noexcept {
+    try {
+        return ReadCursor(x, y, left);
+    } catch (...) {
+        return false;
     }
 }
 

@@ -1998,7 +1998,8 @@ COOP_HOOKSHOT_EXPORT void hos_coop_game_screen(void* ctx, uint64_t screen) noexc
         try {
             // (not while our Multiplayer page is in front: the screen behind it is not the player's, and a mod's
             // choose_focused would press the game's button under our page)
-            if (CoopPauseTab::MousePage() != 4) {
+            // (nor while co-op's rows are on the title's buttons: a mod's Continue is co-op's row there)
+            if (CoopPauseTab::MousePage() != 4 && !CoopTitle::RowsOurs()) {
                 CoopModsRuntime::Screen(ctx, screen);
             }
         } catch (...) {
@@ -2065,7 +2066,7 @@ COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) n
                 CoopTitle::NotePlayerPad(b);   // (the player's own A on the title, before a mod's hold takes it)
                 CoopModsRuntime::NotePad(b);
             },
-            [] { return CoopModsRuntime::HeldButtons(); },
+            [] { return CoopTitle::RowsOurs() ? std::uint64_t{0} : CoopModsRuntime::HeldButtons(); },
             [](uint64_t b, int32_t* s) { return CoopTitle::OnPad(b, s); },
             [](uint64_t b, int32_t* s) {
                 // Down but not out (coop_dbno_game.h): a downed Link crawls and uses nothing; beside one, A revives.

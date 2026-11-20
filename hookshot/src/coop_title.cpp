@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -141,6 +142,11 @@ int g_native_top = 0;                 // (g_mutex)
 bool g_native_refocus = false;        // (g_mutex)
 CoopKeyboard::Cursor g_native_keys;   // (g_mutex)
 bool g_title_mouse_held = false;     // (the left button: OnPad)
+float g_title_mouse_x = -1, g_title_mouse_y = -1;
+std::atomic<std::uint64_t> g_title_mouse_move_ms{0}, g_title_pad_ms{0};
+int g_edge_logged = 0;               // (trace: the edge test logged so far)
+int g_hover_edge = -1;               // (the page's first or last row under the mouse, and since when: its scroll)
+std::uint64_t g_hover_since = 0;
 std::atomic<std::uint64_t> g_title_mouse_down_ms{0};
 // A press within this long of the left button going down is the mouse's (Longshot's A for a click)
 constexpr std::uint64_t kMouseClickMs = 500;
@@ -161,7 +167,7 @@ std::array<LiveSlot, CoopTitleNative::kButtons> g_live{};   // (the title's step
 std::array<std::uint64_t, CoopTitleNative::kButtons> g_live_known{};   // (a placeholder's text once found: ours since)
 std::array<std::uint32_t, CoopTitleNative::kButtons> g_live_extra{};   // (the bytes the game counts past its text)
 constexpr std::uint32_t kLivePlaceholder = 64;
-bool g_sub = false;                // the Multiplayer submenu shows
+std::atomic<bool> g_sub{false};    // the Multiplayer submenu shows (atomic: RowsOurs reads it without the lock)
 bool g_any_save = true;            // the look's save list: a save or not (the caption manager's)
 bool g_one_start = false;          // one Start row for Continue and New Game (a file select mod runs)
 std::uint64_t g_apply_until = 0, g_apply_next = 0;   // the look set again until then (kApplyForMs)
@@ -588,7 +594,7 @@ void StepMenu(void* ctx, std::uint64_t screen) {
             }
         }
         if (now < g_apply_until && now >= g_apply_next) apply = true, g_apply_next = now + 250;
-        any_save = g_any_save, sub = g_sub;
+        any_save = g_any_save, sub = g_sub.load();
         std::swap(focus, g_focus_to);
         std::swap(decide, g_decide);
         std::swap(sound, g_sound);
@@ -808,7 +814,8 @@ void OnTitle(void* ctx, std::uint64_t screen, int event) {
             // title's step on, once the game's OpenTitle has set its own).
             g_rows = true;
             std::lock_guard lock(g_mutex);
-            g_sub = false, g_swallow = 0, g_focus_to = -1, g_decide = -1, g_sound = nullptr;
+            g_sub = false;
+            g_swallow = 0, g_focus_to = -1, g_decide = -1, g_sound = nullptr;
             g_one_start = CoopModsRuntime::FileSelectRuns();
             g_apply_until = NowMs() + kApplyForMs, g_apply_next = 0;
             LOG_INFO(Core, "coop: title: the title's own menu: {}, Multiplayer, Options ({} buttons)",
@@ -990,7 +997,63 @@ std::uint64_t NativePad(std::uint64_t buttons, std::int32_t stick[4]) {
                     events.emplace_back(HOS_COOP_MENU_BACK, 0);
                 }
             }
-            if (!events.empty()) g_native_refocus = true;
+            // The mouse resting on the page's last row with more rows below (or its first with more above): the page
+            // scrolls a row each 450 ms, so a mouse reaches every row. The wheel only moved the title's focus, and the
+            // Join page's Join row (its fourth) could not be clicked: a test run, 2026-11-20.
+            const std::uint64_t now_ms = NowMs();
+            const bool mouse_leads = g_title_mouse_move_ms.load() > g_title_pad_ms.load() &&
+                                     now_ms - g_title_mouse_move_ms.load() < 10000;
+            const int last_button = CoopTitleNative::kRowButtons - 1;
+            int edge_dir = 0;
+            // (only on the row's outer edge, its lower part for the last, its upper part for the first: resting on the
+            // middle of the row to read or click it scrolled it away, a test run 2026-11-20)
+            float mx = 0, my = 0;
+            bool mheld = false;
+            std::optional<CoopModScreens::Box> box;
+            if (mouse_leads && (focused == 0 || focused == last_button) && CoopPauseTab::LayoutCursor(&mx, &my, &mheld)) {
+                const auto read = [](std::uint64_t a, void* out, std::size_t n) { return CoopRuntime::Read(a, out, n); };
+                if (const std::uint64_t b = TitleButton(g_screen.load(), focused); b != 0) box = CoopModScreens::HitBox(read, b);
+            }
+            const float band = box ? (box->y1 - box->y0) * 0.35f : 0.0f;
+            if (mouse_leads && (focused == 0 || focused == last_button) && ++g_edge_logged <= 6) {   // (trace)
+                LOG_INFO(Core, "coop: title: page: the mouse at ({:.0f}, {:.0f}) on button {}: its box {}", mx, my, focused,
+                         box ? fmt::format("x {:.0f}..{:.0f}, y {:.0f}..{:.0f}", box->x0, box->x1, box->y0, box->y1)
+                             : std::string("not read"));
+            }
+            // (the box's two y in either order: its lower edge the smaller, y up)
+            const float lo_y = box ? std::min(box->y0, box->y1) : 0.0f, hi_y = box ? std::max(box->y0, box->y1) : 0.0f;
+            const float lo_x = box ? std::min(box->x0, box->x1) : 0.0f, hi_x = box ? std::max(box->x0, box->x1) : 0.0f;
+            const float edge = std::abs(band);
+            // (the game's hit box is the row's words only, about a third of the way to the next row: below the middle
+            // of the last row's words, or above the first's, counts, as far as the game's own hover keeps the row; a
+            // trace, 2026-11-20)
+            (void)lo_x, (void)hi_x, (void)edge;
+            const float mid_y = (lo_y + hi_y) / 2, margin = (hi_y - lo_y) * 0.15f;
+            const bool at_bottom = box.has_value() && my < mid_y - margin;
+            const bool at_top = box.has_value() && my > mid_y + margin;
+            if (mouse_leads && events.empty() && focused >= 0 && focused <= last_button) {
+                const int row = look.rows[static_cast<std::size_t>(focused)];
+                bool more = false;
+                if (focused == last_button && row >= 0 && at_bottom) {
+                    for (std::size_t i = static_cast<std::size_t>(row) + 1; i < v.rows.size() && !more; ++i) {
+                        more = v.rows[i].kind != CoopPauseMenu::RowKind::kHeading;
+                    }
+                    if (more) edge_dir = 1;
+                } else if (focused == 0 && look.top > 0 && at_top) {
+                    edge_dir = -1;
+                }
+            }
+            if (edge_dir == 0) {
+                g_hover_edge = -1;
+            } else if (g_hover_edge != focused) {
+                g_hover_edge = focused, g_hover_since = now_ms;
+            } else if (now_ms - g_hover_since >= 450) {
+                events.emplace_back(HOS_COOP_MENU_SELECT, look.rows[static_cast<std::size_t>(focused)]);
+                events.emplace_back(edge_dir > 0 ? HOS_COOP_MENU_DOWN : HOS_COOP_MENU_UP, 0);
+                g_hover_since = now_ms;
+                g_sound = "button_on";
+            }
+            if (!events.empty() && edge_dir == 0) g_native_refocus = true;   // (a scroll by the mouse: its focus stays)
             if ((down & (kUp | kDown)) != 0) g_sound = "button_on";
         }
         if (leave) {   // (the Multiplayer rows again, the title's cursor on the page's row)
@@ -1004,6 +1067,9 @@ std::uint64_t NativePad(std::uint64_t buttons, std::int32_t stick[4]) {
             g_sound = "button_decide";
             g_apply_until = NowMs() + kApplyForMs, g_apply_next = 0;
             g_swallow |= buttons;   // (the B or A that left: not the Multiplayer rows' too)
+            // (nor a press of theirs: still held at their next read, the B went on to leave Multiplayer's rows as
+            // well, a test run 2026-11-20)
+            g_pad_last |= buttons;
             LOG_INFO(Core, "coop: title: menu: the page left: Multiplayer's rows again");
         }
     }
@@ -1018,12 +1084,18 @@ std::uint64_t NativePad(std::uint64_t buttons, std::int32_t stick[4]) {
 }
 
 std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
-    {   // (the mouse's left button: when it last went down, so a press it made is told from the pad's)
+    {   // (the mouse's left button: when it last went down, so a press it made is told from the pad's; when the mouse
+        // last moved, and the pad last pressed: which of them leads, for the page's scroll by the mouse)
         float fx = 0, fy = 0;
         bool held = false;
-        const bool in = CoopPauseTab::ClientCursor(&fx, &fy, &held) && held;
+        const bool over = CoopPauseTab::ClientCursor(&fx, &fy, &held);
+        const bool in = over && held;
         if (in && !g_title_mouse_held) g_title_mouse_down_ms = NowMs();
         g_title_mouse_held = in;
+        if (over && (std::abs(fx - g_title_mouse_x) > 0.002f || std::abs(fy - g_title_mouse_y) > 0.002f)) {
+            g_title_mouse_x = fx, g_title_mouse_y = fy, g_title_mouse_move_ms = NowMs();
+        }
+        if ((buttons & 0xF0FFull) != 0) g_title_pad_ms = NowMs();   // (A B X Y L R ZL ZR + - and the arrows)
     }
     if (g_native_page.load() >= 0 && g_menu.load()) {
         if (TitleUp()) return NativePad(buttons, stick);
@@ -1065,7 +1137,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
         g_swallow &= buttons;   // (let go: the game gets it again)
         const int focused = title ? FocusedIndex(g_screen.load()) : -1;
         const bool menu = g_menu.load();
-        const CoopTitleMenu::TitleMenuLook look = CoopTitleMenu::MenuFor(g_any_save, g_sub, g_one_start);
+        const CoopTitleMenu::TitleMenuLook look = CoopTitleMenu::MenuFor(g_any_save, g_sub.load(), g_one_start);
         const CoopTitleMenu::TitleMenuRow* menu_row =
             menu && focused >= 0 && static_cast<std::size_t>(focused) < look.count ? &look.rows[static_cast<std::size_t>(focused)]
                                                                                  : nullptr;
@@ -1085,7 +1157,8 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
             // the mouse went onto another button: a tester waited "a good second" for the highlight to follow)
             const bool clicked = MouseClicked();
             const auto change = [&](bool sub, int focus) {
-                g_sub = sub, g_focus_to = clicked ? -1 : focus, g_sound = "button_decide";
+                g_sub = sub;
+                g_focus_to = clicked ? -1 : focus, g_sound = "button_decide";
                 g_apply_until = NowMs() + kApplyForMs, g_apply_next = 0;
             };
             const auto back = [&] {   // (the title's rows again, the cursor on Multiplayer)
@@ -1172,6 +1245,12 @@ bool SaveWaitWaiting() {
 bool PlayerChoseLately() {
     std::lock_guard lock(g_mutex);
     return g_choice.Lately(NowMs());
+}
+
+bool RowsOurs() {
+    if (!g_menu.load() || !TitleUp()) return false;
+    // (no lock: the game's screen update that asks may come from inside a call the title makes under it)
+    return g_native_page.load() >= 0 || g_sub.load();
 }
 
 bool AskSaveListRead() {

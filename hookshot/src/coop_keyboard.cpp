@@ -10,9 +10,10 @@ namespace CoopKeyboard {
 namespace {
 
 // (as the Save Profiles name keyboard: capitals, small letters, digits and a few signs; a field takes only the
-// characters it allows, TextField::Allowed)
+// characters it allows, TextField::Allowed. ":" for an address's port, as 192.168.1.20:27510, in "_"'s place, which a
+// room name may still have from the PC's keyboard: a test run found no way to type a port with the mouse)
 constexpr const char* kChars[kCharRows] = {"ABCDEFGHIJKLM", "NOPQRSTUVWXYZ", "abcdefghijklm", "nopqrstuvwxyz",
-                                              "0123456789-_."};
+                                              "0123456789-.:"};
 constexpr const char* kBottom[kBottomKeys] = {"Space", "Delete", "Cancel", "OK"};
 
 // The bottom key a character column is under, and the character column in the middle of a bottom key.
@@ -143,7 +144,7 @@ void Draw(const HosCoopDraw& d, int font) {
     }
     // (what the buttons do, as the file select's footer)
     Centred(d, px0, px1, l.bottom_y + l.key_h + 30 * sc, 32 * sc, Rgba(120, 248, 255, 255),
-            "A - Enter   B - Delete   + - Done");
+            "A - Enter   B - Cancel   Y - Delete   + - Done");
     Centred(d, px0, px1, l.bottom_y + l.key_h + 74 * sc, 24 * sc, Rgba(200, 210, 240, 255),
             "Keyboard: type, Enter when done, Esc to cancel   L / R: move in the text");
     if (font != 0 && d.use_font != nullptr) d.use_font(d.user, 0);
