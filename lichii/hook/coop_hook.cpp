@@ -1585,6 +1585,15 @@ public:
             CoopLookShare::SetCharacter(picked && *picked > 0 && *picked <= CoopLookShare::kCharacterMax
                                             ? static_cast<std::uint16_t>(*picked)
                                             : std::uint16_t{0});
+            // ... and that mod's Customize options for it (kCustomFlags: an Int each, 0 to 15; 0 is the model's own).
+            std::uint32_t custom = 0;
+            for (std::size_t i = 0; i < CoopLookShare::kCustomFlags.size(); ++i) {
+                const auto v = coop::host::GameFlags(flag_memory).get_int(coop::host::flag_hash(CoopLookShare::kCustomFlags[i]));
+                if (v && *v > 0 && *v <= 15) {
+                    custom |= static_cast<std::uint32_t>(*v) << (4 * i);
+                }
+            }
+            CoopLookShare::SetCustom(custom);
         }
         // Our look of several parts, chosen in the Multiplayer tab (coop_look_share.h).
         CoopLookShare::Frame(report.connected ? session_.get() : nullptr);

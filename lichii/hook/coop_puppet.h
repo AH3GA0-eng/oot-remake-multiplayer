@@ -374,6 +374,10 @@ struct Target {
     // The player's colour, 0xRRGGBB (coop_colors.h): the puppet is tinted
     // with it while live. Unset: no tint.
     std::optional<std::uint32_t> color;
+    // Character Select: for a character's puppet, what its colour routine is given (Director::Dress): the
+    // player's Customize options (CoopLookShare::CustomOf, bits 0 to 23) and their character from bit 32.
+    // 0: no character's puppet.
+    std::uint64_t custom = 0;
     // The player's newest OCARINA_NOTE, played on the puppet (issue 152).
     CoopPuppetSound::Wanted ocarina;
     // LINK_SOUNDs received since the last frame, near enough to hear
@@ -416,6 +420,13 @@ public:
     // The Link puppets' director runs the pose copy (coop_pose.h); others, such
     // as the fairies', do not.
     void SetPoseCopy(bool on) { pose_copy_ = on; }
+    // Character Select's colour routine (PackCharacterColours): main's offset and the 16 bytes it begins with.
+    // offset 0: none, no colours on a character's puppet.
+    void SetCharacterApply(std::uint64_t offset, const std::array<std::uint8_t, 16>& head) {
+        character_apply_ = offset;
+        character_apply_head_ = head;
+        character_apply_state_ = 0;
+    }
     // Move each puppet with the game's own setter as well (addr::kSetMatrix),
     // once a frame: for an actor with a physics body, such as the fairy.
     void SetMatrixCall(bool on) { matrix_call_ = on; }
@@ -621,6 +632,11 @@ private:
         CoopPuppetSound::State sound;       // the player's Ocarina on it (issue 152)
         CoopLinkSound::Player link_sound;   // the player's own sounds on it (issues 131, 152)
         CoopPuppetFlame::State flame;       // their lit Deku stick's flame on it (issue 248)
+        // Character Select: what the colour routine was last given for this actor (Target::custom), when,
+        // and what the call under way gives it.
+        std::optional<std::uint64_t> dressed;
+        std::uint64_t dress_ms = 0;
+        std::uint64_t dress_asked = 0;
         // Actors made for this player that are not `taken` any more (kStrayDeleteMs):
         // deleted until gone, so there is never a second puppet of one player.
         struct Stray {
@@ -634,7 +650,7 @@ private:
     };
     enum class Pending {
         none, malloc, create, take, drop, remove, play, frame, sync, equip, unequip, hold,
-        hold_check, move, sound, link_sound, stray, own_state, head_show, head_hair, flame
+        hold_check, move, sound, link_sound, stray, own_state, head_show, head_hair, flame, dress
     };
     // sword-3: once a frame, the game's state of one of the local Link's own
     // slots (CoopPuppetOwn::kSlots, in turn), for the sender (coop_puppet_own.h).
@@ -658,6 +674,12 @@ private:
     static std::optional<std::string> Playing(Guest& guest, std::uint64_t controller);
     std::optional<Call> Equip(Slot& slot, const Target& target, Guest& guest,
                               std::uint64_t now_ms);
+    // Character Select: the player's Customize options on a character's puppet, by that mod's own routine
+    // in the game's code (cz_puppet: x0 the actor, x1 Target::custom). Called when they change, and again
+    // every kDressAgainMs while any is set (a model that was not loaded yet). Never when the bytes at its
+    // place are not the ones the pack names (another build of the mod, or its code is not in the game).
+    std::optional<Call> Dress(Slot& slot, const Target& target, Guest& guest, std::uint64_t now_ms);
+    static constexpr std::uint64_t kDressAgainMs = 3000;
     std::optional<Call> Hold(Slot& slot, const Target& target, Guest& guest,
                              std::uint64_t now_ms);
     void LeftBehind(Slot& slot, Guest& guest, std::uint64_t now_ms);
@@ -696,6 +718,9 @@ private:
     bool verbose_;
     bool anim_;
     bool pose_copy_ = false;
+    std::uint64_t character_apply_ = 0;
+    std::array<std::uint8_t, 16> character_apply_head_{};
+    int character_apply_state_ = 0;   // 0 not checked, 1 the routine is there, 2 it is not
     bool matrix_call_ = false;
     float tint_ = 0.0f;
     std::atomic<bool> null_reads_zero_{true};
@@ -762,6 +787,8 @@ struct Remote {
     // The character they picked in the Character Select mod
     // (CoopLookShare::CharacterOf): 0 is Link.
     std::uint16_t character = 0;
+    // ... and their Customize options there (CoopLookShare::CustomOf): 0 is none set.
+    std::uint32_t custom = 0;
 };
 
 struct PlannerSettings {
@@ -818,6 +845,10 @@ struct PlannerSettings {
     // (PackCharacterActors, sorted): a player who picked one is shown as
     // CharacterActor(their age, their character) when it is among them.
     std::vector<std::string> character_actors;
+    // That mod's colour routine for a puppet (PackCharacterColours): main's offset (0: none) and the
+    // 16 bytes it begins with.
+    std::uint64_t character_apply = 0;
+    std::array<std::uint8_t, 16> character_apply_head{};
 };
 
 // Character Select (github.com/snaildev99/OoT-Character-Select): a player there
@@ -833,6 +864,9 @@ std::string CharacterActor(bool adult, std::uint16_t character);
 bool IsCharacterActor(std::string_view actor);
 // The character puppets a pack's coop_puppet.json lists, sorted.
 std::vector<std::string> PackCharacterActors(std::string_view manifest);
+// The mod's colour routine as a pack's coop_puppet.json names it ("colours": {"offset": n, "head": "32 hex
+// digits"}): main's offset and its first 16 bytes; nothing when the manifest has none or it does not read.
+std::optional<std::pair<std::uint64_t, std::array<std::uint8_t, 16>>> PackCharacterColours(std::string_view manifest);
 
 // The puppet pack's item copies (coop_puppet.json "look_items",
 // tools/puppet_pack/look_items.py): the items and the copy count (two per

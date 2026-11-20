@@ -750,6 +750,10 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
     case Pending::flame:
         CoopPuppetFlame::Finish(slot.flame, result, who, [this](const std::string& line) { Say(line); });
         break;
+    case Pending::dress:
+        slot.dressed = slot.dress_asked;
+        slot.dress_ms = now_ms;
+        break;
     case Pending::link_sound:
         CoopLinkSound::Finish(slot.link_sound, result, guest, slot.block, who,
                               [this](const std::string& line) { Say(line); }, anim_);
@@ -916,6 +920,9 @@ std::optional<Call> Director::Next(Slot& slot, Guest& guest, std::uint64_t now_m
                 }
             }
         }
+        if (auto c = Dress(slot, *t, guest, now_ms)) {
+            return c;
+        }
         if (auto c = Equip(slot, *t, guest, now_ms)) {
             return c;
         }
@@ -1049,6 +1056,8 @@ std::optional<Call> Director::Create(Slot& slot, const Target& target, Guest& gu
     slot.head_show = false;
     slot.head_shown = false;
     slot.head_hair_back = false;
+    slot.dressed.reset();   // (a new actor's model has its own colours)
+    slot.dress_ms = 0;
     CoopPuppetFlame::Forget(slot.flame);  // its pieces go with the old actor
     pending_ = Pending::create;
     return c;
@@ -1200,6 +1209,45 @@ bool Director::LeftOff(const std::string& name) const {
 // gauntlets) with the game's own call (addr::kUnequipArmor); a sword or a
 // shield, which has no known call, or armor the call refused, by making the
 // puppet again without it (slot.remake; issue 91: a mask taken off stayed on).
+std::optional<Call> Director::Dress(Slot& slot, const Target& target, Guest& guest, std::uint64_t now_ms) {
+    if (character_apply_ == 0 || character_apply_state_ == 2 || !IsCharacterActor(slot.actor_name)) {
+        return std::nullopt;
+    }
+    const std::uint64_t word = target.custom;
+    const bool plain = (word & 0xFFFFFFu) == 0;
+    if (word == 0 || (plain && !slot.dressed)) {
+        return std::nullopt;   // nothing set and nothing ever put on: the model's own
+    }
+    if (slot.dressed && *slot.dressed == word && (plain || now_ms - slot.dress_ms < kDressAgainMs)) {
+        return std::nullopt;
+    }
+    if (character_apply_state_ == 0) {
+        std::array<std::uint8_t, 16> there{};
+        const bool same = guest.Read(input_.main_base + character_apply_, there.data(), there.size()) &&
+                          there == character_apply_head_;
+        character_apply_state_ = same ? 1 : 2;
+        Say(same ? "characters: the Character Select mod's colour routine is at main+" + Hex(character_apply_) +
+                       ": a player's Customize options show on their puppet"
+                 : "characters: the Character Select mod's colour routine is not at main+" + Hex(character_apply_) +
+                       " (another build of the mod than the pack was made with, or its code is not in the game): "
+                       "no Customize options on puppets");
+        if (!same) {
+            return std::nullopt;
+        }
+    }
+    if (!slot.dressed || *slot.dressed != word) {
+        Say("P" + std::to_string(slot.number) + " " + slot.actor_name + ": Customize options " +
+            Hex(word & 0xFFFFFFu) + " of character " + std::to_string(word >> 32));
+    }
+    Call c;
+    c.function = input_.main_base + character_apply_;
+    c.x[0] = slot.actor;
+    c.x[1] = word;
+    slot.dress_asked = word;
+    pending_ = Pending::dress;
+    return c;
+}
+
 std::optional<Call> Director::Equip(Slot& slot, const Target& target, Guest& guest,
                                     std::uint64_t now_ms) {
     if (anim_ && now_ms - slot.gear_log_ms >= 2000) {
@@ -2225,6 +2273,9 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         if (r.number >= 1 && r.number < 32 && (PvpCopies() & (1u << r.number)) != 0) {
             t.actor = CoopPvpNative::PvpActor(t.actor);  // PvP on real bodies (phase 4)
         }
+        if (r.character != 0 && IsCharacterActor(t.actor)) {
+            t.custom = (static_cast<std::uint64_t>(r.character) << 32) | (r.custom & 0xFFFFFFu);
+        }
         t.position = r.position;
         t.velocity = r.velocity;
         if (r.rotation) {
@@ -2446,6 +2497,53 @@ std::vector<std::string> PackCharacterActors(std::string_view manifest) {
     return out;
 }
 
+std::optional<std::pair<std::uint64_t, std::array<std::uint8_t, 16>>> PackCharacterColours(
+    std::string_view manifest) {
+    const std::size_t at = manifest.find("\"colours\"");
+    if (at == std::string_view::npos) {
+        return std::nullopt;
+    }
+    const std::size_t end = manifest.find('}', at);
+    const std::string_view body = manifest.substr(at, end == std::string_view::npos ? end : end - at);
+    std::size_t o = body.find("\"offset\"");
+    std::size_t h = body.find("\"head\"");
+    if (o == std::string_view::npos || h == std::string_view::npos) {
+        return std::nullopt;
+    }
+    o = body.find(':', o);
+    std::uint64_t offset = 0;
+    bool digits = false;
+    for (o = o == std::string_view::npos ? body.size() : o + 1; o < body.size(); ++o) {
+        if (body[o] >= '0' && body[o] <= '9') {
+            offset = offset * 10 + static_cast<std::uint64_t>(body[o] - '0');
+            digits = true;
+            if (offset > 0xFFFFFFFFull) {
+                return std::nullopt;
+            }
+        } else if (digits || (body[o] != ' ' && body[o] != '\n' && body[o] != '\r' && body[o] != '\t')) {
+            break;
+        }
+    }
+    h = body.find(':', h);
+    h = h == std::string_view::npos ? h : body.find('"', h);
+    std::array<std::uint8_t, 16> head{};
+    if (!digits || offset == 0 || h == std::string_view::npos || h + 33 >= body.size() || body[h + 33] != '"') {
+        return std::nullopt;
+    }
+    for (std::size_t i = 0; i < 32; ++i) {
+        const char ch = body[h + 1 + i];
+        const int v = ch >= '0' && ch <= '9'   ? ch - '0'
+                      : ch >= 'a' && ch <= 'f' ? ch - 'a' + 10
+                      : ch >= 'A' && ch <= 'F' ? ch - 'A' + 10
+                                               : -1;
+        if (v < 0) {
+            return std::nullopt;
+        }
+        head[i / 2] = static_cast<std::uint8_t>(head[i / 2] << 4 | v);
+    }
+    return std::make_pair(offset, head);
+}
+
 bool PackHasGreenPuppets(std::string_view manifest) {
     return manifest.find("\"CoopPuppet_Child_Green\"") != std::string_view::npos &&
            manifest.find("\"CoopPuppet_Adult_Green\"") != std::string_view::npos;
@@ -2640,6 +2738,7 @@ void Configure(PlannerSettings settings, bool verbose, Director::Log log) {
     std::call_once(g_once, [&] {
         g_director = std::make_unique<Director>(std::move(log), verbose, settings.debug_anim);
         g_director->SetPoseCopy(true);
+        g_director->SetCharacterApply(settings.character_apply, settings.character_apply_head);
         g_director->SetNullReadsZero(settings.null_reads_zero);
         // docs/puppet.md, "Colour". LICHII_COOP_PUPPET_TINT: 0 to 1, or off.
         // The model tint darkens the whole Link (reports puppet-colors-2): off
@@ -2756,6 +2855,7 @@ std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_n
             }
             r.look_copy = CoopLookShare::CopyOf(r.number);
             r.character = CoopLookShare::CharacterOf(r.number);
+            r.custom = CoopLookShare::CustomOf(r.number);
         }
     }
     return remotes;

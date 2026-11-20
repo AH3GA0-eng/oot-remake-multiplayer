@@ -58,6 +58,14 @@ bool HasGear(const Parts& parts);
 inline constexpr std::uint8_t kCharacterPart = 63;
 inline constexpr std::uint32_t kCharacterMark = 0x010000;
 inline constexpr std::uint16_t kCharacterMax = 0x0FFF;
+// That mod's Customize options for the picked character (hair, eye and clothing colours, gear shown or
+// hidden) ride along the same way, as part kCustomPart: its "colour" is the six options, four bits each,
+// in the order of kCustomFlags (the mod's GameData Ints that hold them). Sent only with a character and
+// only when one of them is set; taken out of the parts on arrival (CustomOf has it).
+inline constexpr std::uint8_t kCustomPart = 62;
+inline constexpr std::array<const char*, 6> kCustomFlags = {
+    "CharacterMenu_CustomHair",    "CharacterMenu_CustomEyes",     "CharacterMenu_CustomGear",
+    "CharacterMenu_CustomClothes", "CharacterMenu_CustomClothes2", "CharacterMenu_CustomClothes3"};
 
 // The rules, with no network: what to send and when, what the others wear.
 // Not thread-safe (the functions below guard it).
@@ -67,6 +75,10 @@ public:
     void Set(Parts parts);
     // Our picked character (0: Link, or no Character Select mod): when it changed, the look goes out again.
     void SetCharacter(std::uint16_t number);
+    // Our Customize options for it (kCustomPart's 24 bits): when they changed, the look goes out again.
+    void SetCustom(std::uint32_t options);
+    // Player `number`'s Customize options: 0 until heard, and for none set.
+    std::uint32_t CustomOf(std::uint8_t number) const;
     // Player `number`'s picked character: 0 until one is heard, and for Link.
     std::uint16_t CharacterOf(std::uint8_t number) const;
     // An event of the session: a join or a (re)connect sends ours again; a
@@ -114,6 +126,8 @@ private:
     bool character_said_ = false;   // a character went out once: a look goes out without colours too
     std::map<std::uint8_t, Parts> theirs_;
     std::map<std::uint8_t, std::uint16_t> their_character_;
+    std::uint32_t custom_ = 0;
+    std::map<std::uint8_t, std::uint32_t> their_custom_;
     bool slots_on_ = false;
     std::array<std::uint8_t, kSlots> slots_{};   // the player in each slot, 0 for none
     struct Ready {
@@ -131,6 +145,8 @@ private:
 void Set(Parts parts);
 void SetCharacter(std::uint16_t number);
 std::uint16_t CharacterOf(std::uint8_t number);
+void SetCustom(std::uint32_t options);
+std::uint32_t CustomOf(std::uint8_t number);
 void OnEvent(const coop::net::Event& event, coop::net::Client& client);
 void Frame(coop::host::Session* session);
 std::optional<Parts> Of(std::uint8_t number);

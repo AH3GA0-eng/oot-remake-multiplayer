@@ -36,6 +36,20 @@ void Share::SetCharacter(std::uint16_t number) {
     due_ = true;
 }
 
+void Share::SetCustom(std::uint32_t options) {
+    options &= 0xFFFFFFu;
+    if (custom_ == options) {
+        return;
+    }
+    custom_ = options;
+    due_ = due_ || character_ != 0;   // (with Link nothing of it is sent)
+}
+
+std::uint32_t Share::CustomOf(std::uint8_t number) const {
+    const auto it = their_custom_.find(number);
+    return it == their_custom_.end() ? std::uint32_t{0} : it->second;
+}
+
 std::uint16_t Share::CharacterOf(std::uint8_t number) const {
     const auto it = their_character_.find(number);
     return it == their_character_.end() ? std::uint16_t{0} : it->second;
@@ -49,6 +63,7 @@ bool Share::OnEvent(const coop::net::Event& event) {
         const bool had = !theirs_.empty();
         theirs_.clear();
         their_character_.clear();
+        their_custom_.clear();
         slots_.fill(0);
         for (std::size_t i = 0; i < kSlots; ++i) {
             Forget(i);
@@ -63,6 +78,7 @@ bool Share::OnEvent(const coop::net::Event& event) {
     case EventKind::player_left:
         Free(event.player);
         their_character_.erase(event.player);
+        their_custom_.erase(event.player);
         return theirs_.erase(event.player) != 0;
     case EventKind::message:
         if (const auto* look = std::get_if<coop::protocol::PlayerLook>(&event.message);
@@ -70,21 +86,29 @@ bool Share::OnEvent(const coop::net::Event& event) {
             // The picked character rides along as a part of its own (kCharacterPart): out of the parts.
             Parts parts = look->parts;
             std::uint16_t character = 0;
+            std::uint32_t custom = 0;
             for (auto it = parts.begin(); it != parts.end();) {
-                if (it->part != kCharacterPart) {
+                if (it->part != kCharacterPart && it->part != kCustomPart) {
                     ++it;
                     continue;
                 }
-                if ((it->colour & 0xFF0000u) == kCharacterMark && (it->colour & 0xFFFFu) <= kCharacterMax) {
+                if (it->part == kCustomPart) {
+                    custom = it->colour & 0xFFFFFFu;
+                } else if ((it->colour & 0xFF0000u) == kCharacterMark && (it->colour & 0xFFFFu) <= kCharacterMax) {
                     character = static_cast<std::uint16_t>(it->colour & 0xFFFFu);
                 }
                 it = parts.erase(it);
             }
+            if (character == 0) {
+                custom = 0;   // (the options are a character's)
+            }
             auto& theirs = their_character_[look->player_number];
+            auto& their_custom = their_custom_[look->player_number];
             auto& worn = theirs_[look->player_number];
-            const bool changed = worn != parts || theirs != character;
+            const bool changed = worn != parts || theirs != character || their_custom != custom;
             worn = std::move(parts);
             theirs = character;
+            their_custom = custom;
             // Every player gets a slot, gear colours or not (held-sword): a puppet
             // that wears the game's own item shares its model's blade switch with
             // our own Link's, so its sword hid whenever ours was put away. Their
@@ -106,6 +130,9 @@ std::optional<coop::protocol::PlayerLook> Share::TakeSend() {
     Parts parts = ours_ ? *ours_ : Parts{};
     if (character_ != 0) {
         parts.push_back({kCharacterPart, kCharacterMark | character_});
+        if (custom_ != 0) {
+            parts.push_back({kCustomPart, custom_});
+        }
     }
     return coop::protocol::PlayerLook{coop::protocol::kPlayerSelf, std::move(parts)};
 }
@@ -233,6 +260,16 @@ void SetCharacter(std::uint16_t number) {
 std::uint16_t CharacterOf(std::uint8_t number) {
     std::lock_guard lock(g_mutex);
     return g_share.CharacterOf(number);
+}
+
+void SetCustom(std::uint32_t options) {
+    std::lock_guard lock(g_mutex);
+    g_share.SetCustom(options);
+}
+
+std::uint32_t CustomOf(std::uint8_t number) {
+    std::lock_guard lock(g_mutex);
+    return g_share.CustomOf(number);
 }
 
 void OnEvent(const coop::net::Event& event, coop::net::Client& client) {

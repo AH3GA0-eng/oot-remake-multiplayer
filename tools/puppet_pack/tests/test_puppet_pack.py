@@ -2822,6 +2822,7 @@ class FullBuildTest(unittest.TestCase):
         found = build.find_characters(mod, log=lambda *_: None)
         self.assertEqual(found["files"], {5: ["Adult"]})
         self.assertEqual(found["numbers"], {5: 7})
+        self.assertIsNone(found["colours"])
         m = build.build(self.romfs, mod, log=lambda *_: None, tunics=["red"], look_slots=0, characters=found)
         actors = {a["actor"]: a for a in m["actors"]}
         self.assertEqual(actors["CoopPuppet_Adult_C005"]["character"], 5)
@@ -2835,6 +2836,20 @@ class FullBuildTest(unittest.TestCase):
         self.assertEqual(m["characters"]["numbers"], {"5": 7})
         # The puppet is the game's player pack under its own name: nothing of the mod's is copied.
         self.assertFalse(os.path.exists(os.path.join(mod, "romfs", "Model", "Player_Adult_C005.Player_Adult.bfres.zs")))
+        # The mod's colour routine for a puppet goes into the manifest as the list names it; one that does not read
+        # leaves the characters out (said in the log).
+        doc["puppet_colours"] = {"offset": 0x2E1A000, "head": "FD7BBFA9" * 4, "bits": 4}
+        with open(os.path.join(cs, build.CHARACTERS_FILE), "w", encoding="utf-8") as f:
+            json.dump(doc, f)
+        found = build.find_characters(mod, log=lambda *_: None)
+        self.assertEqual(found["colours"], {"offset": 0x2E1A000, "head": "fd7bbfa9" * 4})
+        m = build.build(self.romfs, os.path.join(mods, "pack3"), log=lambda *_: None, look_slots=0, characters=found)
+        self.assertEqual(m["characters"]["colours"], {"offset": 0x2E1A000, "head": "fd7bbfa9" * 4})
+        doc["puppet_colours"]["head"] = "xyz"
+        with open(os.path.join(cs, build.CHARACTERS_FILE), "w", encoding="utf-8") as f:
+            json.dump(doc, f)
+        self.assertIsNone(build.find_characters(mod, log=lambda *_: None))
+        del doc["puppet_colours"]
         # Another mod's list, or another format, is not ours.
         doc["mod"] = "Something Else"
         with open(os.path.join(cs, build.CHARACTERS_FILE), "w", encoding="utf-8") as f:
