@@ -2666,6 +2666,11 @@ public:
     std::map<u64, u64> trigger_dead_;       // kill actors seen dead in this visit: placement hash -> that actor
     std::set<u64> trigger_redone_;          // re-made actors our game killed again (once each)
     std::map<u64, u64> land_wait_since_;    // address -> since when its landing kill waits for our key to come out
+    // Run 20261120-145142: a kept kill landed (the killing blow replayed) and the owner's dead ObjectRemove, waiting
+    // since, deleted the actor in the same walk, before its death ran: our room never counted it and never asked its
+    // event. After a kept kill lands, removes of its actor wait kLandedHoldUs (its own death deletes it first).
+    static constexpr u64 kLandedHoldUs = 8'000'000;
+    std::map<u64, u64> landed_hold_;        // address -> until when another game's remove of it waits
     std::set<u64> keeper_addresses_;                          // this walk's keepers (Place skips their removes)
     std::string keeper_scene_;
     // The follow keepers (CoopEventResult::FollowKeepers) of `scene` by our game's played flags; none before the game's
@@ -2704,9 +2709,14 @@ public:
             trigger_dead_.clear();
             trigger_redone_.clear();
             land_wait_since_.clear();
+            landed_hold_.clear();
             owned_seen_.clear();
             owned_died_at_.clear();
         }
+        std::erase_if(landed_hold_, [&](const auto& h) {
+            return now_us >= h.second || std::none_of(seen.begin(), seen.end(),
+                                                       [&](const Seen& s) { return s.address == h.first; });
+        });
         std::unordered_map<u64, u64> hash_at;  // address -> placement hash
         std::unordered_map<u64, u64> life_at;  // address -> its Life component
         std::set<u64> lives;                   // every Life component in this walk
@@ -2871,6 +2881,7 @@ public:
                     }
                 }
                 LOG_INFO(Core, "coop: dungeon: trigger: the kill of {:#x} kept for its event lands now", at->second);
+                landed_hold_.insert_or_assign(it->first, now_us + kLandedHoldUs);
                 sync_.Written(it->first, it->second.first.life, now_us);
                 writes.push_back(std::move(it->second.first));
             } else {
@@ -5293,7 +5304,7 @@ private:
             const auto where = [this](std::uint64_t a) { return Where(a); };
             CoopGuard::Skip(removes, local, where, [](u64 a) { return a; });
             // Row 98(2): an event's last enemy is not removed by another game before our game played it.
-            std::erase_if(removes, [this](u64 a) { return keeper_addresses_.contains(a); });
+            std::erase_if(removes, [this](u64 a) { return keeper_addresses_.contains(a) || landed_hold_.contains(a); });
             // Issue 194: a world object another game moves (coop_world: a falling ladder,
             // a block and its base anchor) is no event's partner: it follows at once, else
             // it jumped after.
