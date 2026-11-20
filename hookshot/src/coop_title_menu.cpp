@@ -486,6 +486,24 @@ bool AddressOk(std::string_view typed) {
     return port == Trim(port) && ParsePort(port).has_value();
 }
 
+std::optional<std::string> BareJoinName(std::string_view join_line) {
+    const std::string_view t = Trim(join_line);
+    const std::string_view address = t.substr(0, t.find_first_of(" \t"));
+    if (address.empty() || address.find_first_of(".:@") != std::string_view::npos || !RoomNameOk(address)) {
+        return std::nullopt;
+    }
+    return std::string(address);
+}
+
+std::string RoomJoinLine(std::string_view join_line, std::string_view relay) {
+    const std::string_view t = Trim(join_line);
+    const std::size_t space = t.find_first_of(" \t");
+    const std::string_view password = space == std::string_view::npos ? std::string_view{} : Trim(t.substr(space));
+    std::string out = std::string(t.substr(0, space)) + "@" + std::string(Trim(relay));
+    if (!password.empty()) out += " " + std::string(password);
+    return out;
+}
+
 JoinTarget ReadJoin(std::string_view typed, const CodeResult& code) {
     const std::string_view t = Trim(typed);
     if (t.empty()) {

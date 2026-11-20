@@ -210,6 +210,9 @@ private:
     bool typing_ = false;
     Act typing_act_ = Act::kNone;
     bool typing_fresh_ = false;
+    bool paste_on_open_ = false;   // Room or address was just opened with A: the clipboard is asked, used only when
+                                   // it holds an invite code or an address line (a pad has no Ctrl+V)
+    bool drop_open_paste_ = false;  // a key was typed before that clipboard came (on Linux it can come late): unused
     bool replace_typed_ = false;   // the Join field was opened with a code in it: a typed character starts a new one
     bool confirm_leave_ = false;   // Stop hosting / Leave was pressed once: the next press does it
     CoopTitleMenu::Options options_;

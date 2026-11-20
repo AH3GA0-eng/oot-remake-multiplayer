@@ -199,17 +199,18 @@ TEST_CASE("pause tab: Join: a room name or an address, its port and the password
         for (const char c : text) m.Char(static_cast<unsigned char>(c));
         m.Press(Input::kDecide);
     };
-    // A room name: through the relay, with the password
+    // A bare name (a room, or a PC on the home network): as typed; Join tries it as a PC first, then as a room
+    // (CoopPause, CoopTitleMenu::BareJoinName)
     type("Room or address", "forest-gang");
     type("Password", "kokiri");
-    CHECK(m.join_text() == "forest-gang@relay.example.net:27530 kokiri");
+    CHECK(m.join_text() == "forest-gang kokiri");
     CHECK(m.view().rows[2].value == "******");
     SelectRow(m, "Join");
     m.Press(Input::kDecide);
     auto r = m.TakeRequest();
     REQUIRE(r.has_value());
     CHECK(r->kind == Request::Kind::kJoin);
-    CHECK(r->text == "forest-gang@relay.example.net:27530 kokiri");
+    CHECK(r->text == "forest-gang kokiri");
     // An address: directly, with the password
     Menu d;
     d.Show(CoopTitleMenu::Options{});
@@ -225,6 +226,62 @@ TEST_CASE("pause tab: Join: a room name or an address, its port and the password
     CHECK(d.join_text().rfind("192.168.1.20", 0) == 0);
     CHECK(d.join_text().find("kokiri") != std::string::npos);
     CHECK(d.join_text().find('@') == std::string::npos);
+}
+
+TEST_CASE("pause tab: Join: A on Room or address pastes an invite code or an address line (a pad has no Ctrl+V)") {
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    m.Open(Page::kJoin);
+    SelectRow(m, "Room or address");
+    m.Press(Input::kDecide);
+    CHECK(m.typing());
+    auto r = m.TakeRequest();
+    REQUIRE(r.has_value());
+    CHECK(r->kind == Request::Kind::kPaste);   // (the module reads the clipboard and hands it to Paste)
+    m.Paste("ABCDE-FGHJK-LMNPQ-RSTUV-WXYZ2-34567\n");
+    CHECK_FALSE(m.typing());
+    CHECK(m.join_text() == "ABCDE-FGHJK-LMNPQ-RSTUV-WXYZ2-34567");
+    CHECK(Selected(m) == "Join");
+    CHECK(m.view().rows[0].value == "ABCDE-FG...Z2-34567 (35)");   // (the code shown on its row)
+    CHECK_FALSE(m.view().rows[3].fixed);
+    // An address line: its address, port and password
+    SelectRow(m, "Room or address");
+    m.Press(Input::kDecide);
+    m.Paste("25.1.2.3:27512 ABCDEF");
+    CHECK_FALSE(m.typing());
+    CHECK(m.join_text() == "25.1.2.3:27512 ABCDEF");
+    // Any other text on the clipboard is left alone: the field stays open to be typed, nothing changes
+    Menu t;
+    t.Show(CoopTitleMenu::Options{});
+    t.Open(Page::kJoin);
+    SelectRow(t, "Room or address");
+    t.Press(Input::kDecide);
+    t.Paste("see you at eight, bring snacks");
+    CHECK(t.typing());
+    CHECK(t.join_ip().empty());
+    t.Paste("");   // (an empty clipboard: the same)
+    CHECK(t.typing());
+    for (const char c : std::string("mypc")) t.Char(static_cast<unsigned char>(c));
+    t.Press(Input::kDecide);
+    CHECK(t.join_text() == "mypc");
+    // A key typed before the clipboard came: the late paste is not used
+    Menu k;
+    k.Show(CoopTitleMenu::Options{});
+    k.Open(Page::kJoin);
+    SelectRow(k, "Room or address");
+    k.Press(Input::kDecide);
+    k.Char('1');
+    k.Paste("ABCDE-FGHJK-LMNPQ-RSTUV-WXYZ2-34567");   // (the clipboard asked on open, come late)
+    CHECK(k.typing());
+    k.Press(Input::kDecide);
+    CHECK(k.join_text() == "1");
+    SelectRow(k, "Room or address");   // (a Ctrl+V while typing: the player's own paste, used)
+    k.Press(Input::kDecide);
+    k.Char('2');
+    k.Press(Input::kPaste);
+    REQUIRE(k.TakeRequest()->kind == Request::Kind::kPaste);
+    k.Paste("25.1.2.3");
+    CHECK(k.join_ip() == "25.1.2.3");
 }
 
 TEST_CASE("pause tab: Join offers the last game again first, one press") {

@@ -1135,6 +1135,24 @@ TEST_CASE("title menu: the relay and the room name: written when set, the kit's 
     CHECK_FALSE(RelayOk("a:b:27530"));
 }
 
+TEST_CASE("title menu: a bare Join name is a PC or a room, and its line through the relay") {
+    CHECK(BareJoinName("mypc") == "mypc");
+    CHECK(BareJoinName("forest-gang kokiri") == "forest-gang");
+    CHECK(BareJoinName("  DESKTOP-4F2A9 ") == "DESKTOP-4F2A9");
+    CHECK_FALSE(BareJoinName("192.168.1.20 kokiri").has_value());   // (a dot: an address)
+    CHECK_FALSE(BareJoinName("mypc:27511").has_value());            // (a port: a PC)
+    CHECK_FALSE(BareJoinName("forest-gang@relay.example.net").has_value());
+    CHECK_FALSE(BareJoinName("pc").has_value());                    // (too short for a room: a PC only)
+    CHECK_FALSE(BareJoinName("").has_value());
+    CHECK(RoomJoinLine("forest-gang kokiri", "relay.example.net:27530") == "forest-gang@relay.example.net:27530 kokiri");
+    CHECK(RoomJoinLine("forest-gang", " relay.example.net ") == "forest-gang@relay.example.net");
+    // (the room line is one ReadJoin takes, and that the relay join reads)
+    const auto t = ReadJoin(RoomJoinLine("forest-gang kokiri", "relay.example.net:27530"), {});
+    REQUIRE(std::holds_alternative<JoinAddress>(t));
+    CHECK(std::get<JoinAddress>(t).server == "forest-gang@relay.example.net:27530");
+    CHECK(std::get<JoinAddress>(t).password == "kokiri");
+}
+
 TEST_CASE("title menu: an unchanged relay or room name line is kept as the player wrote it") {
     std::string c, opt = "relay=old.example.net:27530   # my friend's\r\nrelay_room = old-room ; ours\r\n";
     Options o = Options::Read("", opt);
