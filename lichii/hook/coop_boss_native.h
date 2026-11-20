@@ -193,6 +193,7 @@ struct Counts {
     std::uint64_t copy_killed = 0;    // a copy let die by its Life step after its owner's died
     std::uint64_t copy_finished = 0;  // a dying copy's Life step that its own rules left alive, ended (#105)
     std::uint64_t copy_shot_hits = 0; // our own shot's end at a copy, its own reaction let run (NoteOwnShotEnd)
+    std::uint64_t copy_own_stuns = 0; // a copy's own stun begun in our game, its own time (NoteOwnStun; row 169)
     std::uint64_t copy_hits_to_owner = 0; // our own hit on a copy that took life: the owner reacts (NoteOwnDamage)
     std::uint64_t plain_wants = 0;    // a plain enemy copy's own brain asked another brain verb than its owner's
     std::uint64_t plain_wakes = 0;    // a plain enemy copy's own wake let run (NoteOwnWake)
@@ -239,6 +240,16 @@ public:
     // Dodongo twitching, frozen in his roll). Now nothing of its own runs: the owner judges the hit (its DAMAGE)
     // and its reaction comes as verbs. An own time already running (a stun of ours) is left as it is. Counted.
     void NoteOwnDamage(std::uint64_t actor);
+    // Row 169 (King Dodongo frozen in 'Down'): the objects walk reads this copy in a stun its owner's boss is not in
+    // (CoopObjects::Sync::TakeOwnStuns, every walk while it plays). A weak-point interrupt (a bomb King Dodongo
+    // swallowed, a seed in Gohma's eye) is the boss's own interrupt action, not an action request our wrap sees, so
+    // it runs in a copy whose brain is skipped and the copy's own game is stunned with no own time running. The
+    // stun's DAMAGE of 0 then handed the boss to us, the row-149 rule took it for a copy whose AI never ran its body
+    // and set its brain verb again (force), which cut the stun short: the new owner's boss lay in 'Down' at life 1,
+    // its chance time gone, no hit taken, the stall check's re-chooses no way out, until another player's stun
+    // took it back. Now the stun is the copy's own time (as NoteOwnHit, kReactSteps after the stun's last frame):
+    // its own interrupt and AI run, and a hand-over during it keeps the stun (no re-choose). Counted.
+    void NoteOwnStun(std::uint64_t actor);
     // Issue 150 (boss-stun-c): our game's own shot ended where it hit or went
     // off (coop_spawn's flights of ours: a seed, arrow, nut, bomb, bombchu, with
     // the remove's place; any thread). A weak-point hit that takes no life (a

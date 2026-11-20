@@ -4440,6 +4440,16 @@ TEST_CASE("objects: stun animations (issue 150)") {
     CHECK_FALSE(IsStunAnimation("Walk"));
     CHECK_FALSE(IsStunAnimation("Damage"));
     CHECK_FALSE(IsStunAnimation("Attack_Chance"));
+    // Row 169: the other bosses' chance times and down reactions (their AS files).
+    CHECK(IsStunAnimation("ChanceTime"));               // Morpha
+    CHECK(IsStunAnimation("Chance_time_St"));           // Morpha
+    CHECK(IsStunAnimation("ChanceTimeDamageStart"));    // Volvagia
+    CHECK(IsStunAnimation("ChanceTime_Loop"));          // the Poe sisters
+    CHECK(IsStunAnimation("Chance_St"));                // the Poe sisters
+    CHECK(IsStunAnimation("DownTimeReaction_Start"));   // Phantom Ganon, Ganondorf
+    CHECK(IsStunAnimation("Down"));                     // King Dodongo after a swallowed bomb
+    CHECK_FALSE(IsStunAnimation("ChanceAfterAttack"));  // Gohma's own move
+    CHECK_FALSE(IsStunAnimation("BombEat"));
     CHECK_FALSE(IsStunAnimation("Mat_Stun"));
     CHECK_FALSE(IsStunAnimation("Downward"));
     CHECK_FALSE(IsStunAnimation(""));
@@ -4498,6 +4508,73 @@ TEST_CASE("objects: a boss copy stunned here sends a DAMAGE of 0 and keeps its s
     owner.Receive(zero);
     auto step = Tick(owner, 1200 * kMs, {e});
     CHECK(step.writes.empty());
+}
+
+TEST_CASE("objects: a boss copy's own stun is told every walk while it plays, never the owner's (row 169)") {
+    const std::string dodongo = "Enemy_DungeonBoss_Dodongo";
+    Sync owner;
+    Seen e = Enemy(0x100, 0x11, 1, 0.0f, dodongo);
+    e.animation = proto::Animation{"Inhale", 10.0f, 1.0f};
+    Tick(owner, 0, {e});
+    const proto::ObjectId id = *owner.IdOf(0x100);
+    Own(owner, id, 1, 4);
+    auto samples = All<proto::ObjectSample>(Tick(owner, 10 * kMs, {e}));
+    REQUIRE(samples.size() == 1);
+    CHECK(owner.TakeOwnStuns().empty());  // (none read yet)
+
+    Sync copy;
+    Seen c = Enemy(0x200, 0x11, 1, 0.0f, dodongo);
+    c.animation = proto::Animation{"Inhale", 10.0f, 1.0f};
+    Tick(copy, 0, {c}, 2);
+    Own(copy, id, 1, 4);
+    proto::ObjectSample s = samples[0];
+    s.player_number = 1;
+    s.state.time = {1000 * kMs, 1};
+    copy.Receive(s);
+    Tick(copy, 1010 * kMs, {c}, 2);
+    CHECK(copy.TakeOwnStuns().empty());
+
+    // The bomb our Link threw went off in its mouth here: its own interrupt runs it 'Down' (no life lost).
+    c.animation = proto::Animation{"Down_St", 0.0f, 1.0f};
+    CHECK(All<proto::Damage>(Tick(copy, 1100 * kMs, {c}, 2)).size() == 1);  // the hand-over ask, as before
+    CHECK(copy.TakeOwnStuns() == std::vector<std::uint64_t>{0x200});
+    // Every walk while it lies there (the hand-over ask said once).
+    c.animation = proto::Animation{"Down", 0.0f, 1.0f};
+    CHECK(All<proto::Damage>(Tick(copy, 1200 * kMs, {c}, 2)).empty());
+    CHECK(copy.TakeOwnStuns() == std::vector<std::uint64_t>{0x200});
+    // Up again: no more.
+    c.animation = proto::Animation{"Down_Ed", 0.0f, 1.0f};
+    Tick(copy, 1300 * kMs, {c}, 2);
+    CHECK(copy.TakeOwnStuns().size() == 1);
+    c.animation = proto::Animation{"Walk", 0.0f, 1.0f};
+    Tick(copy, 1400 * kMs, {c}, 2);
+    CHECK(copy.TakeOwnStuns().empty());
+
+    // The owner's boss is stunned: the copy plays the owner's 'Down', which is no stun of its own. (A walk takes
+    // in its samples at its end, so the copy shows the owner's 'Down' a walk after it came, never before.)
+    proto::ObjectSample down = s;
+    down.state.time = {1500 * kMs, 2};
+    down.state.animation = proto::Animation{"Down", 0.0f, 1.0f};
+    copy.Receive(down);
+    Tick(copy, 1550 * kMs, {c}, 2);
+    CHECK(copy.TakeOwnStuns().empty());
+    c.animation = proto::Animation{"Down", 0.0f, 1.0f};
+    CHECK(All<proto::Damage>(Tick(copy, 1600 * kMs, {c}, 2)).empty());
+    CHECK(copy.TakeOwnStuns().empty());
+    // The owner's boss is up again a walk before the copy is: still the owner's stun, nothing told.
+    proto::ObjectSample up = s;
+    up.state.time = {1640 * kMs, 3};
+    up.state.animation = proto::Animation{"Walk", 0.0f, 1.0f};
+    copy.Receive(up);
+    Tick(copy, 1650 * kMs, {c}, 2);
+    CHECK(copy.TakeOwnStuns().empty());
+    CHECK(All<proto::Damage>(Tick(copy, 1660 * kMs, {c}, 2)).empty());
+    CHECK(copy.TakeOwnStuns().empty());
+
+    // Our own boss in a stun: nothing told (it is no copy).
+    e.animation = proto::Animation{"Down", 0.0f, 1.0f};
+    Tick(owner, 1700 * kMs, {e});
+    CHECK(owner.TakeOwnStuns().empty());
 }
 
 TEST_CASE("objects: a boss's other AS slots go with its samples and are played on the copy (gohma-sync, issue 150)") {

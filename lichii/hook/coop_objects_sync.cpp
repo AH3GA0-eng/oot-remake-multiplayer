@@ -696,7 +696,12 @@ bool UnderCeilingEnemy(const proto::Vec3& enemy, const proto::Vec3& link) {
 bool IsStunAnimation(std::string_view name) {
     const std::string_view base = AnimationBase(name);
     const std::string_view first = base.substr(0, base.find('_'));
-    return first == "Stun" || first == "Down" || first == "Fall" || first == "Faint";
+    // Row 169: also the bosses' chance times and down reactions that are no Stun/Down word (read from the AS
+    // files: Morpha 'ChanceTime', 'Chance_time_St'; Volvagia 'ChanceTimeDamageStart'; the Poe sisters 'Chance_St',
+    // 'ChanceTime_Loop'; Phantom Ganon and Ganondorf 'DownTimeReaction_Start'). Gohma's 'ChanceAfterAttack' and
+    // 'Attack_Chance' are her own moves (the owner's too), not a stun of a hit.
+    return first == "Stun" || first == "Down" || first == "Fall" || first == "Faint" || first == "Chance" ||
+           first.starts_with("ChanceTime") || first.starts_with("DownTimeReaction");
 }
 
 proto::Quat QuatOf(const Mat3& m) {
@@ -1934,21 +1939,32 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         // boss is not in (a seed in Gohma's eye takes no life). Its stun is
         // kept on screen like a hit reaction, and a DAMAGE of 0 asks the
         // server to hand the boss to us, whose boss is the stunned one.
-        if (s.animation && IsStunAnimation(s.animation->name) && IsBossOrPart(s.name) &&
-            !(o.animation && IsStunAnimation(o.animation->name))) {
+        // Row 169: every walk while a stun begun here plays, it is the copy's own time (TakeOwnStuns); a stun the
+        // copy began as the owner's is not, also in the walk or two it still plays after the owner's ended.
+        bool own_stun = false;
+        if (s.animation && IsStunAnimation(s.animation->name) && IsBossOrPart(s.name)) {
             const auto owner = owners_.find(o.id);
             const std::string owners = !o.received.empty() && o.received.back().animation
                                            ? o.received.back().animation->name
                                            : std::string{};
             if (owner != owners_.end() && owner->second.player != 0 &&
                 owner->second.player != self && !IsStunAnimation(owners)) {
-                o.react_at = now_us;
-                o.react_over = owners;
-                if (o.stun_at == 0 || now_us - o.stun_at >= kStunEveryUs) {
-                    o.stun_due = true;
+                if (!(o.animation && IsStunAnimation(o.animation->name))) {
+                    own_stun = true;
+                    o.react_at = now_us;
+                    o.react_over = owners;
+                    if (o.stun_at == 0 || now_us - o.stun_at >= kStunEveryUs) {
+                        o.stun_due = true;
+                    }
+                } else {
+                    own_stun = o.own_stun;
+                }
+                if (own_stun && own_stuns_.size() < 64) {
+                    own_stuns_.push_back(o.address);
                 }
             }
         }
+        o.own_stun = own_stun;
         o.animation = s.animation;
         if (s.animation && IsDeathAnimation(s.animation->name)) {
             o.own_death_at = now_us;  // issue 133: its own death here (LifelessKillHere)

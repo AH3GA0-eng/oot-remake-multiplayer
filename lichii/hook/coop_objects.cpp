@@ -4831,6 +4831,9 @@ private:
         for (const u64 a : sync_.TakeOwnWakeStarts()) {
             CoopBossNative::TheTable().NoteOwnWake(a);  // (a plain copy on the brain path; else nothing)
         }
+        for (const u64 a : sync_.TakeOwnStuns()) {
+            CoopBossNative::TheTable().NoteOwnStun(a);  // row 169: a copy's own stun is its own time
+        }
         std::vector<u64> removes = sync_.Removes();
         for (const u64 a : horde_.Removes()) {
             removes.push_back(a);  // difficulty: night horde beside a roll the spawner took away

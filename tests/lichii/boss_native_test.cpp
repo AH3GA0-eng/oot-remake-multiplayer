@@ -1523,6 +1523,54 @@ TEST_CASE("native boss: row 149: a copy made ours chooses again unless its own A
     }
 }
 
+TEST_CASE("native boss: row 169: a copy's own stun is its own time, and a hand-over during it keeps the stun") {
+    FakeGuest g;
+    const std::int32_t brain = 12;
+    g.Write(kBsa + addr::kBsaBrainVerb, &brain, 4);
+    {
+        // King Dodongo swallowed our bomb: his own interrupt laid the copy 'Down' with no hit and no shot read.
+        // The stun's DAMAGE of 0 hands him to us: no re-choose (it cut the stun short: 'Down' for good at life 1).
+        Table t;
+        t.SetOn(true, true);
+        t.Publish({Dodongo(Role::copy, "Down", 1)});
+        t.Receive(kActor, BossBsa{3, 12, std::nullopt, {}});
+        CHECK_FALSE(t.Step(g, false, 0, kMain));
+        t.NoteOwnStun(kActor);
+        t.NoteOwnStun(kActor);  // (every walk while it lies there: counted once)
+        CHECK(t.Totals().copy_own_stuns == 1);
+        // Its own time: its own changes run (the stun's end asks its next move).
+        CHECK_FALSE(t.OnBrainVerb(kBsa, 13, false, false));
+        t.Publish({Dodongo(Role::owner, "Down", 1)});
+        CHECK_FALSE(t.Step(g, false, 0, kMain));
+        CHECK(t.Totals().owner_rechosen == 0);
+    }
+    {
+        // Not a copy (ours already, or no owner's state yet): nothing.
+        Table t;
+        t.SetOn(true, true);
+        t.Publish({Dodongo(Role::owner, "Down", 1)});
+        t.NoteOwnStun(kActor);
+        Table u;
+        u.SetOn(true, true);
+        u.Publish({Dodongo(Role::copy, "Down", 1)});
+        u.NoteOwnStun(kActor);
+        CHECK(t.Totals().copy_own_stuns == 0);
+        CHECK(u.Totals().copy_own_stuns == 0);
+    }
+    {
+        // Without its own stun (the row 149 case) a copy made ours still chooses again.
+        Table t;
+        t.SetOn(true, true);
+        t.Publish({Dodongo(Role::copy, "Rolling_Loop", 24)});
+        t.Receive(kActor, BossBsa{3, 12, std::nullopt, {}});
+        CHECK_FALSE(t.Step(g, false, 0, kMain));
+        t.Publish({Dodongo(Role::owner, "Rolling_Loop", 24)});
+        auto c = t.Step(g, false, 0, kMain);
+        REQUIRE(c);
+        CHECK(c->function == kMain + addr::kSetBrainVerb);
+    }
+}
+
 TEST_CASE("native boss: row 149: after our hit a copy that ran no move of its own is not asked the owner's again") {
     FakeGuest g;
     const std::int32_t brain = 12;
