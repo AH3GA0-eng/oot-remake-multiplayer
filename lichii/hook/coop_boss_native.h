@@ -82,6 +82,9 @@ inline constexpr std::size_t kReqHasPlug = 0x40;
 inline constexpr std::size_t kReqSlot = 0x48;     // s32
 inline constexpr std::size_t kReqVerb = 0x4c;     // s32
 inline constexpr std::size_t kReqFlags = 0x50;    // u16
+// Flags bit the request function reads as a new move (main+0xc0f4c: the same verb then counts as another, the
+// move starts over from its start, its module's own sub-state with it).
+inline constexpr std::uint16_t kReqStartOver = 0x100;
 inline constexpr std::size_t kReqNode = 0x58;     // the asking AI node
 inline constexpr std::uint32_t kKind = 4;
 inline constexpr std::uint32_t kKind2 = 0x11a;
@@ -170,6 +173,8 @@ struct Boss {
     // life (nothing: not read).
     std::string animation = {};
     std::optional<std::int32_t> life = std::nullopt;
+    // Row 178 (the fall guard, Table::kFallBelowStart): its place in our walk (nothing: not read).
+    std::optional<coop::protocol::Vec3> position = std::nullopt;
 };
 
 struct Counts {
@@ -199,6 +204,8 @@ struct Counts {
     std::uint64_t plain_deaths = 0;   // a plain enemy copy whose death began here: its own runs
     std::uint64_t owner_stalls = 0;   // row 149: our boss held one move kStallSteps with no life change: re-chosen
     std::uint64_t owner_rechosen = 0; // its brain verb set again by our caller (a stall, or a copy just made ours)
+    std::uint64_t owner_restarted = 0; // row 178: a copy made ours mid-move: that move started over as ours
+    std::uint64_t owner_fell = 0;      // row 178: our boss fell far below its fight start (the fall guard)
     std::uint64_t moves_kept = 0;     // a resync's action the copy already runs (put in, none of its own since): not asked
 };
 
@@ -260,6 +267,12 @@ public:
     // verbs came). Its wake is then its own brain's alone; the Mover's pose-era give-back of the wake's
     // animation (Sync::TakeOwnWakes) is for the other copies only, or the rise is played twice (rows 109/111).
     bool WakesOwnBrain(std::uint64_t actor) const;
+    // Row 178: whether this actor is a boss (never a plain enemy) on the brain path: a copy of it made ours
+    // goes on through its own AI here (its move started over as ours, or its AI chooses again), so the Mover's
+    // issue-157 replay of the animation its AI wanted as a copy is not played over it. That replay put
+    // SpearAttack_Ready over Phantom Ganon's running RushAttack: its module waits for the dive's AS hold events
+    // to return up, they never came, and he fell ~3 km (Geno's log). Plain enemies keep the replay (issue 157).
+    bool RunsOwnMoveWhenOurs(std::uint64_t actor) const;
     // The plain enemy copies whose own brain asked for another brain verb than their owner's since the last
     // call (skipped at the wrap): their own AI wants to act here. At most kMaxWants kept.
     std::vector<std::uint64_t> TakeOwnWants();
@@ -369,6 +382,13 @@ public:
     // The server frees the fight lock of such a boss on its own (boss_stall_us), so it can be handed over.
     static constexpr std::uint64_t kStallSteps = 1500;
     static constexpr int kMaxStallRechoices = 3;  // per held move; then left (the server's hand-over is next)
+    // Row 178's fall guard: our own boss (never a plain enemy, not dying, not in our event) whose place is this
+    // far below its first seen place (its fight start: no boss room's floor is 40 m under its boss's start;
+    // free fall covers it in under 3 s) fell out of its room: its AI chooses again once per fall (its brain
+    // verb set again through the game's own function, as a stall: the change goes to every copy), the log says
+    // so, at most kMaxFallRechoices times while it stays below.
+    static constexpr float kFallBelowStart = 40.0f;
+    static constexpr int kMaxFallRechoices = 3;
     static constexpr std::size_t kMaxWants = 64;
     static constexpr std::size_t kMaxSkippedKept = 8;
     static constexpr std::size_t kMaxHeld = 8;  // copy bosses held at once (more: not held)
@@ -433,6 +453,17 @@ private:
         std::uint64_t hold_asks = 0;
         int hold_rechoices = 0;
         bool rechoose = false;
+        // Row 178: a copy made ours in the middle of a move (put_action) whose AI did not run its body: that move
+        // asked again as ours with kReqStartOver, naming the node its own AI names for it (restart_ask), so its
+        // module runs it from its start in our game (its own sub-state, physics and animation events) and its AI
+        // gets the move's end. Taken instead of `rechoose` (setting the brain verb again leaves the move's
+        // module where the copy's body was: Phantom Ganon in RushAttack's dive with his rigid body forced no-hit).
+        std::optional<BossAction> restart_action;
+        OwnAsk restart_ask;
+        // Row 178's fall guard: its first seen height, and its falls rechosen while below.
+        std::optional<float> start_y;
+        int fall_rechoices = 0;
+        bool fallen = false;
         // Copy (row 149): the owner's action last put into it, and whether its own AI ran an action of its own
         // since (our event, our hit, its start). A resync whose action is the one put in, with none of its own
         // since, asks nothing: the copy runs that move already (asking it again started King Dodongo's roll
@@ -441,6 +472,7 @@ private:
         bool own_action_ran = false;
     };
     void Hold(Entry& e, const Boss& b);   // the owner's stall check (Publish)
+    void Fall(Entry& e, const Boss& b);   // row 178's fall guard (Publish; a boss, owner or copy: its start)
     bool OwnTime(const Entry& e) const;   // the copy's own changes run now
     void Keep(Entry& e, std::variant<BossBrain, BossAction> what);
     void MakeLate(Entry& e);              // its skipped ones of the last kLookBackSteps, to make
@@ -500,7 +532,7 @@ private:
     std::uint64_t block_ = 0;      // our request in guest memory (kRequestSize)
     std::uint64_t main_base_ = 0;  // the game the block belongs to
     bool allocating_ = false;
-    enum class Pending : std::uint8_t { none, malloc, brain, action, late, rechoose } pending_ = Pending::none;
+    enum class Pending : std::uint8_t { none, malloc, brain, action, late, rechoose, restart } pending_ = Pending::none;
     std::uint64_t pending_bsa_ = 0;  // the copy whose change pending_ is (brain, action, late)
     void Made(bool made);            // pending_bsa_'s asked change: out of its queue (made) or asked again
 };

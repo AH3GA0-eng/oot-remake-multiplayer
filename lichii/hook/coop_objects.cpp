@@ -572,7 +572,9 @@ public:
     // Present thread: copies that just became ours, to clear the setter's
     // bit of at the next game frame (issues 150, 157; on unless
     // LICHII_COOP_OBJECTS_RELEASE=0).
-    void Release(const std::vector<u64>& actors) {
+    // `no_replay`: bosses on the brain path (CoopBossNative::Table::RunsOwnMoveWhenOurs, row 178): their own AI
+    // goes on through the Table, no animation is played over their move.
+    void Release(const std::vector<u64>& actors, const std::vector<u64>& no_replay = {}) {
         std::lock_guard lock(mutex_);
         for (const u64 a : actors) {
             if (releases_.size() < 64) {
@@ -589,7 +591,12 @@ public:
             // again: its AI waits for the end of a play we took away. Give
             // it that play back once.
             if (const auto w = wanted_.find(a); w != wanted_.end()) {
-                if (SteadyMs() - w->second.second <= kWakeReplayMs && wakes_.size() < 64) {
+                const bool replay = std::find(no_replay.begin(), no_replay.end(), a) == no_replay.end();
+                if (!replay) {
+                    LOG_INFO(Core, "coop: objects: {:#x} became ours: a boss on the brain path, its own AI goes "
+                                   "on (no '{}' replay, row 178)", a, w->second.first);
+                }
+                if (replay && SteadyMs() - w->second.second <= kWakeReplayMs && wakes_.size() < 64) {
                     wakes_.emplace_back(a, w->second.first);
                 }
                 wanted_.erase(w);
@@ -1849,7 +1856,8 @@ public:
                                            *owner == self ? CoopBossNative::Role::owner : CoopBossNative::Role::copy,
                                            s.name, *owner, s.life_component, owner_dead, plain,
                                            plain && CoopBossNative::PlainDeath(life, owner_dead),
-                                           s.animation ? s.animation->name : std::string{}, life};
+                                           s.animation ? s.animation->name : std::string{}, life,
+                                           s.position};
                     list.push_back(std::move(b));
                 }
             }
@@ -4755,7 +4763,13 @@ private:
             TheMover().Hold(sync_.Holds(now_us), CoopHold::MasksFor(ai_hold_));
         }
         if (const auto ours = sync_.TakeOursNow(); release_ && !ours.empty()) {
-            TheMover().Release(ours);
+            std::vector<u64> no_replay;
+            for (const u64 a : ours) {
+                if (CoopBossNative::TheTable().RunsOwnMoveWhenOurs(a)) {
+                    no_replay.push_back(a);
+                }
+            }
+            TheMover().Release(ours, no_replay);
         }
         // Report 109: a copy's own wake. On the enemies' brain path its own brain runs it (NoteOwnWake); the
         // pose-era give-back of the wake's animation is for the other copies only (one maker, rows 109/111).
