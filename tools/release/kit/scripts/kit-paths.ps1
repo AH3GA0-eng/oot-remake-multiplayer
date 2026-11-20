@@ -888,24 +888,55 @@ function Get-KitHookshotLogFiles([string]$Dir) {
 
 # The mods' code patches the game in $Game would be built with (patches 0034/0035: <game>\mods\...\exefs\*.ips and
 # *.pchtxt, folders starting with '-', '_' or '.' left out, up to four deep), as one more stamp line:
-# "`nexefs=<mod path>/exefs/<file>:<sha256>,...;list=<sha256 of coop-mods.list>" (the Mods tab's switches and order
-# decide which go in), or '' when no mod has one: a game without code mods keeps the stamp it had.
+# "`nexefs=<mod path>/exefs/<file>:<sha256>,...;list=<sha256 of coop-mods.list's rows for those mods>" (the Mods
+# tab's switches and order decide which go in; Get-KitCodeModsListHash), or '' when no mod has one: a game without code mods keeps the stamp it had.
 function Get-KitExefsStampLine([string]$Game) {
     $mods = Join-Path $Game 'mods'
     if (-not $Game -or -not (Test-Path -LiteralPath $mods -PathType Container)) { return '' }
     $root = ([System.IO.Path]::GetFullPath($mods)).TrimEnd('\') + '\'
     $rows = @()
+    $codeMods = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
     foreach ($f in @(Get-ChildItem -LiteralPath $mods -Recurse -Depth 5 -File -Include '*.ips', '*.pchtxt' -ErrorAction SilentlyContinue)) {
         $rel = $f.FullName.Substring($root.Length) -replace '\\', '/'
         $parts = @($rel -split '/')
         if ($parts.Count -lt 3 -or $parts[-2] -ine 'exefs') { continue }
         if (@($parts[0..($parts.Count - 3)] | Where-Object { $_ -match '^[-_.]' }).Count) { continue }
         $rows += "${rel}:$((Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash.ToLowerInvariant())"
+        [void]$codeMods.Add((ConvertTo-KitModFold ($parts[0..($parts.Count - 3)] -join '/')))
     }
     if (-not $rows.Count) { return '' }
-    $list = Join-Path $mods 'coop-mods.list'
-    $listHash = if (Test-Path -LiteralPath $list) { (Get-FileHash -LiteralPath $list -Algorithm SHA256).Hash.ToLowerInvariant() } else { 'none' }
-    return "`nexefs=$((@($rows | Sort-Object -CaseSensitive) -join ','));list=$listHash"
+    return "`nexefs=$((@($rows | Sort-Object -CaseSensitive) -join ','));list=$(Get-KitCodeModsListHash (Join-Path $mods 'coop-mods.list') $codeMods)"
+}
+
+# A mod's name as patch 0011's host/mods.c (hos_coop_mods.h) compares them: ASCII letters without case, '\' as '/'.
+function ConvertTo-KitModFold([string]$Name) {
+    $chars = $Name.Replace('\', '/').ToCharArray()
+    for ($i = 0; $i -lt $chars.Length; $i++) {
+        if ([int]$chars[$i] -ge 65 -and [int]$chars[$i] -le 90) { $chars[$i] = [char]([int]$chars[$i] + 32) }
+    }
+    return [string]::new($chars)
+}
+
+# The SHA-256 of the Mods tab's rows (coop-mods.list) that name a mod with code patches ($CodeMods: folded names), as
+# "on|off <folded name>" in the list's order, each name's first row only (as the game reads it), or 'none' (no list, not "coop-mods 1", or no
+# such row). Switching or moving a mod without code patches leaves it alone: the game is not built again for it.
+function Get-KitCodeModsListHash([string]$List, $CodeMods) {
+    if (-not (Test-Path -LiteralPath $List -PathType Leaf)) { return 'none' }
+    $lines = @(([System.IO.File]::ReadAllText($List, [System.Text.UTF8Encoding]::new($false))) -split "`n")
+    if ($lines[0].TrimEnd("`r") -cne 'coop-mods 1') { return 'none' }
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    $kept = @()
+    foreach ($line in @($lines | Select-Object -Skip 1)) {
+        $line = $line.TrimEnd("`r")
+        if (-not ($line -cmatch '^(on|off) (.+)$')) { continue }
+        $fold = ConvertTo-KitModFold $Matches[2]
+        if (-not $seen.Add($fold)) { continue }
+        if ($CodeMods.Contains($fold)) { $kept += "$($Matches[1]) $fold" }
+    }
+    if (-not $kept.Count) { return 'none' }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes(($kept -join "`n"))) } finally { $sha.Dispose() }
+    return (($bytes | ForEach-Object { $_.ToString('x2') }) -join '')
 }
 
 # The stamp the kit's hookshot-build.ps1 writes to the game's coop-built-from.txt: release, pin, patches, and the

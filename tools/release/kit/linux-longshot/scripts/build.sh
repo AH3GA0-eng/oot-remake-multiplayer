@@ -153,18 +153,37 @@ game_stamp=$GAME/coop-built-from.txt
 # switched one builds the game again. No code mods: nothing added, the stamp as before (kit-paths.ps1 Get-KitExefsStampLine).
 exefs_stamp() {
     local mods=$GAME/mods rows=() f rel
+    local -A code=()
     [[ -d $mods ]] || return 0
     while IFS= read -r -d '' f; do
         rel=${f#"$mods"/}
         [[ ${rel%/*} == */exefs ]] || continue
         [[ /${rel%/exefs/*} =~ /[-_.] ]] && continue
         rows+=("$rel:$(sha256_of "$f")")
+        code[$(mod_fold "${rel%/exefs/*}")]=1
     done < <(find "$mods" -maxdepth 6 -type f \( -iname '*.ips' -o -iname '*.pchtxt' \) -print0)
     ((${#rows[@]})) || return 0
-    local list=none
-    [[ -f $mods/coop-mods.list ]] && list=$(sha256_of "$mods/coop-mods.list")
+    # The list's rows for these mods only (its first row per name, in its order, as the game reads it): switching or
+    # moving a mod without code patches builds nothing again (kit-paths.ps1 Get-KitCodeModsListHash).
+    local list=none line name fold kept=() first=1
+    local -A seen=()
+    if [[ -f $mods/coop-mods.list ]]; then
+        while IFS= read -r line || [[ -n $line ]]; do
+            line=${line%$'\r'}
+            if ((first)); then first=0; [[ $line == 'coop-mods 1' ]] || break; continue; fi
+            case $line in 'on '?*) name=${line#on } ;; 'off '?*) name=${line#off } ;; *) continue ;; esac
+            local sw=${line%% *}
+            fold=$(mod_fold "$name")
+            [[ -n ${seen[$fold]+x} ]] && continue
+            seen[$fold]=1
+            [[ -n ${code[$fold]+x} ]] && kept+=("$sw $fold")
+        done < "$mods/coop-mods.list"
+        ((${#kept[@]})) && list=$(printf '%s' "$(printf '%s\n' "${kept[@]}")" | sha256sum | cut -d' ' -f1)
+    fi
     printf ' exefs=%s;list=%s' "$(printf '%s\n' "${rows[@]}" | LC_ALL=C sort | paste -sd, -)" "$list"
 }
+# A mod's name as patch 0011's host/mods.c compares them: ASCII letters without case, '\' as '/'.
+mod_fold() { local s=${1//\\//}; printf '%s' "$s" | LC_ALL=C tr 'A-Z' 'a-z'; }
 game_want="$src_stamp$(exefs_stamp)"
 ready=0
 [[ -n $(kit_game_exe) && $(cat "$game_stamp" 2>/dev/null) == "$game_want" ]] && ready=1

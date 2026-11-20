@@ -740,15 +740,22 @@ try {
     Write-File $ips 'PATCH2EOF'
     Check ((Get-KitHookshotNeed $hk) -eq 'mods') 'hookshot need: its patch changed -> mods'
     Write-File (Join-Path $g 'coop-built-from.txt') (Get-KitHookshotStamp $hk)
+    # (the stamp hashes only the list's rows that name a mod with code patches, Get-KitCodeModsListHash)
+    Write-File (Join-Path $g 'mods\coop-mods.list') "coop-mods 1`noff Romfs Only`n"
+    Check ((Get-KitHookshotNeed $hk) -eq '') 'hookshot need: a mod without code patches switched off -> nothing'
+    Write-File (Join-Path $g 'mods\coop-mods.list') "coop-mods 1`noff Romfs Only`non oot character select`n"
+    Check ((Get-KitHookshotNeed $hk) -eq 'mods') 'hookshot need: the code mod named in the list (any case) -> mods'
+    Write-File (Join-Path $g 'coop-built-from.txt') (Get-KitHookshotStamp $hk)
+    Write-File (Join-Path $g 'mods\coop-mods.list') "coop-mods 1`non OoT Character Select`non Romfs Only`noff oot character select`n"
+    Check ((Get-KitHookshotNeed $hk) -eq '') 'hookshot need: the list moved a mod without code patches, a repeated row is not read -> nothing'
     Write-File (Join-Path $g 'mods\coop-mods.list') "coop-mods 1`noff OoT Character Select`n"
     Check ((Get-KitHookshotNeed $hk) -eq 'mods') 'hookshot need: switched off on the Mods tab -> mods (built without it)'
-    Remove-Item -LiteralPath (Join-Path $g 'mods') -Recurse -Force
+    # (the code mod and the Mods tab's list only: the puppet pack beside them stays, or the need is 'module')
+    Remove-Item -LiteralPath (Join-Path $g 'mods\OoT Character Select') -Recurse -Force
+    Remove-Item -LiteralPath (Join-Path $g 'mods\coop-mods.list') -Force
     Check ((Get-KitHookshotNeed $hk) -eq 'mods') 'hookshot need: the code mod taken out -> mods'
     Write-File (Join-Path $g 'coop-built-from.txt') $plain
     Check ((Get-KitHookshotNeed $hk) -eq '') 'hookshot need: back to the stamp without code mods -> nothing'
-    Write-File (Join-Path $g 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json') '{"sound": true, "tunics": {"red": ["x"]}, "look_files": {"gear": "coop_look/gear.bin"}}'
-    Write-File (Join-Path $g 'mods\contents\0400486024DEC000\coop-puppet\coop_look\gear.bin') 'gear'
-    Write-File (Join-Path $g 'mods\contents\0400486024DEC000\coop-puppet\romfs\x') 'tunic'
     Write-File (Join-Path $hk 'hookshot\PIN') "repo=x`ncommit=0000000000000000000000000000000000000000`n"
     Check ((Get-KitHookshotNeed $hk) -eq 'pin') 'hookshot need: another pin -> pin (a full build)'
     Write-File (Join-Path $hk 'hookshot\PIN') "repo=x`ncommit=e7ed2f7a6526cd6b841b86678b3ac96eb6e5b1c8`n"
