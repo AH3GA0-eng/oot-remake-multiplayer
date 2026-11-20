@@ -6811,10 +6811,11 @@ TEST_CASE("objects: a Floormaster at life 0 is split, its death is its whole bro
         return out;
     };
     const auto owned = [&brood](Sync& sync) {
-        Tick(sync, 0, brood(4, 2));
+        // The groups link the Littles to it, sent with the first walk's presence (a later walk
+        // with the same groups and presence sends none; it keeps the links).
+        const auto groups = All<proto::ObjectGroup>(Tick(sync, 0, brood(4, 2)));
         for (const std::uint64_t a : {0x100, 0x200, 0x300, 0x400}) Own(sync, *sync.IdOf(a), 1);
-        // The groups link the Littles to it (and the next walk keeps the links).
-        const auto groups = All<proto::ObjectGroup>(Tick(sync, 10 * kMs, brood(4, 2)));
+        Tick(sync, 10 * kMs, brood(4, 2));
         REQUIRE_FALSE(groups.empty());
         std::size_t linked = 0;
         for (const auto& e : groups.back().entries) {
