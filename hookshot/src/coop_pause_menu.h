@@ -23,7 +23,7 @@
 namespace CoopPauseMenu {
 
 enum class Input { kUp, kDown, kLeft, kRight, kDecide, kBack, kPaste, kErase };
-enum class Page { kMain, kHost, kJoin, kLocal, kSettings, kCommands, kCustomize };
+enum class Page { kMain, kHost, kJoin, kLocal, kSettings, kCommands, kCustomize, kFind };   // (kFind: the Join page's Find a game)
 
 // The chat's commands, as the Commands page lists them (docs/setup.md "Chat
 // commands"): what is typed, and what it does. A new command adds its line here.
@@ -166,6 +166,20 @@ public:
     void SetNgPlus(int level, int unlocked, int hearts);
     // (Navi) The Settings page's Saves row: solo or multiplayer saves (CoopSave::MultiplayerSaves).
     void SetSaveSet(bool multiplayer);
+    // The Find a game page's list (the Join page's first row): the games on this network or the relay's public
+    // rooms, as the module hears them while the page shows (find_online() says which). A game picked fills the Join
+    // page: `join` its room name or its address, `port` its port (0: the default), then Join.
+    struct Found {
+        std::string name;      // "Saria's game: kokiri", "kokiri (Saria)"
+        std::string players;   // "1/4", "Full", "Other version"
+        std::string join;      // a room name, or an address
+        int port = 0;
+        bool joinable = true;
+        bool operator==(const Found&) const = default;
+    };
+    void SetFound(std::vector<Found> games, std::string state);
+    bool find_online() const { return find_online_; }
+    const std::string& find_search() const { return find_search_; }
     // The Customize page's picture of Link (hos_coop_menu_picture.h); empty
     // on the other pages.
     std::vector<CoopLookMenu::Shape> Picture() const;
@@ -189,7 +203,8 @@ private:
         kRejoin, kCode, kClearCode, kJoinIp, kJoinPort, kJoinPassword, kJoinNow, kRelay, kRoom,
         kName, kLook, kPlayers, kVoice, kMic, kVoiceMode, kChatKey, kController, kKeyboard, kMapPlayers, kMapNames,
         kSameNetwork,
-        kOpenCustomize, kNgPlus, kSaveSet
+        kOpenCustomize, kNgPlus, kSaveSet,
+        kOpenFind, kFindList, kFindSearch, kFindGame
     };
     struct Line;   // a row, what it does and its help
     std::vector<Line> Lines() const;
@@ -203,6 +218,7 @@ private:
     void EndTyping(bool keep);
     std::string* Typed();
     void SyncManualJoinFromText();
+    std::vector<Found> FoundShown() const;   // the Find page's games the search keeps, in its order
     void UpdateJoinFromIpPort();
     bool InSession() const;
 
@@ -227,6 +243,10 @@ private:
     std::optional<std::vector<std::string>> microphones_;
     int ngplus_level_ = 0, ngplus_unlocked_ = 0, ngplus_hearts_ = 0;   // (Navi) New Game+ (SetNgPlus)
     bool mp_saves_ = false;   // (Navi) the Saves row (SetSaveSet)
+    bool find_online_ = true;                 // the Find a game page lists the relay's rooms (else this network's)
+    std::string find_search_, search_before_; // its search, as typed (the relay's rooms only)
+    std::vector<Found> found_;                // what it lists now (SetFound), the search kept
+    std::string found_state_;                 // why it lists none ("" looking)
     Session session_;
     std::vector<std::string> note_;
     std::optional<Request> request_;

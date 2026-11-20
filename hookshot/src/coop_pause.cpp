@@ -30,9 +30,13 @@
 #include "coop_look_view.h"
 #include "coop_mods_tab.h"
 #include "coop_pause_files.h"
+#include "coop_pause_tab.h"
+#include "coop_room_list.h"
+#include "coop_runtime.h"
 #include "coop_ngplus.h"
 #include "coop_save.h"
 #include <cstdlib>
+#include <filesystem>
 #include "coop_title.h"
 #include "coop_title_menu.h"
 #include "coop_voice.h"
@@ -185,6 +189,12 @@ void Joined() {
     if (CoopTitle::StartSaveWait(host)) {
         g_wanted = HOS_COOP_MENU_WANT_CLOSE;
         LOG_INFO(Core, "coop: multiplayer tab: joined at the title: load a save once the chat says Success");
+    } else if (!g_auto_join) {
+        // (the player's own join with a file loaded: back to the title by itself, where the host's save loads. An
+        // auto-rejoin after a drop keeps the game being played)
+        LOG_INFO(Core, "coop: multiplayer tab: joined in the game: back to the title for the host's save");
+        CoopPauseTab::ToTitle();
+        CoopTitle::LoadHostSaveOnTitle();
     } else {
         LOG_INFO(Core, "coop: multiplayer tab: joined in the game: the host's save is used from the title on");
     }
@@ -818,6 +828,40 @@ void Init(bool coop_on) {
              coop_on ? "; co-op came with the game's start" : "");
 }
 
+// The Find a game page (the title's Join page's first row): while it shows, the games on this network or the relay's
+// public rooms are heard and handed to it, as the pause menu's browser lists them. g_mutex.
+bool g_finding = false;
+void RefreshFound(std::uint64_t now) {
+    const bool want = (g_shown || g_native) && g_menu.page() == CoopPauseMenu::Page::kFind;
+    if (!want) {
+        if (g_finding) CoopLanNet::Look(false, now), CoopRoomList::Look(false, now, {});
+        g_finding = false;
+        return;
+    }
+    g_finding = true;
+    const bool online = g_menu.find_online();
+    CoopLanNet::Look(!online, now);
+    CoopRoomList::Look(online, now, g_menu.options().relay);
+    std::vector<CoopPauseMenu::Menu::Found> games;
+    std::string state;
+    const int mine = coop::protocol::kProtocolVersion;
+    if (online) {
+        const CoopRoomList::Snapshot rooms = CoopRoomList::Now();
+        for (const CoopRoomList::Room& r : rooms.rooms) {
+            games.push_back({CoopPauseTab::ListName(r.host, r.room), CoopPauseTab::ListValue(r.players, r.max, r.protocol == mine),
+                             r.room, 0, CoopRoomList::Joinable(r, mine)});
+        }
+        state = rooms.state;
+    } else {
+        for (const CoopLan::Heard& h : CoopLanNet::Games(now)) {
+            games.push_back({h.game.name + "'s game" + (h.game.room.empty() ? "" : " (" + h.game.room + ")"),
+                             CoopPauseTab::ListValue(h.game.players, h.game.max, h.game.protocol == mine), h.address,
+                             h.game.port, CoopLan::Joinable(h, mine)});
+        }
+    }
+    g_menu.SetFound(std::move(games), std::move(state));
+}
+
 void Tick() {
     std::lock_guard lock(g_mutex);
     Delivered();   // (each frame: a finished copy or paste shows at once)
@@ -827,6 +871,24 @@ void Tick() {
     }
     g_next_follow_ms = now + 250;
     Follow(Status());
+    RefreshFound(now);
+    // (a test's trigger, LICHII_COOP_TEST_TO_TITLE=1 only: a file "to-title.now" in the game's folder starts the way
+    // back to the title a join with a file loaded takes, with no host to join)
+    static const bool test_to_title = [] {
+        const char* v = std::getenv("LICHII_COOP_TEST_TO_TITLE");
+        const bool on = v != nullptr && v[0] == '1';
+        if (on) LOG_INFO(Core, "coop: multiplayer tab: test: to-title.now in {} starts the way back to the title",
+                         CoopRuntime::GameDir().string());
+        return on;
+    }();
+    if (test_to_title) {
+        std::error_code ec;
+        if (std::filesystem::remove(CoopRuntime::GameDir() / "to-title.now", ec)) {
+            LOG_INFO(Core, "coop: multiplayer tab: test: back to the title asked (to-title.now)");
+            CoopPauseTab::ToTitle();
+            CoopTitle::LoadHostSaveOnTitle(true);
+        }
+    }
 }
 
 // Tab 1: the Lobby (coop_lobby_tab.h), always: who is in the game, the host's controls.

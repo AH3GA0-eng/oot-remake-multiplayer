@@ -628,6 +628,14 @@ std::uint64_t g_list_focus_fix_ms = 0;    // a Left last sent to bring the game'
 // it until then. A test run 2026-11-20: a click on the last setting's arrow turned the category to Debug. g_mutex)
 bool g_typing_seen = false;          // (the page typed at the last pad read; when typing last ended. g_mutex)
 std::uint64_t g_typing_end_ms = 0;
+// Back to the title (ToTitle): 0 none; 1 the pause menu to System and its cursor to Title Screen; 2 Title Screen
+// pressed, the question awaited; 3 the question answered. With when it began, the last tap, and the pages as last seen.
+std::atomic<int> g_to_title{0};
+std::atomic<std::uint64_t> g_to_title_ms{0}, g_to_title_phase_ms{0};
+std::uint64_t g_tap = 0, g_tap_until = 0, g_tap_next = 0;   // (a button held for a tap, then let go; g_mutex)
+std::atomic<int> g_tap_downs{0};   // (the steps toward Title Screen so far)
+std::atomic<std::uint64_t> g_pages_seen_ms{0};
+std::atomic<int> g_pages_seen_state{-1}, g_pages_seen_page{-1};
 int g_set_keep = -1;
 float g_set_mouse_x = 0, g_set_mouse_y = 0;   // (the mouse's last place, when it last moved: settings)
 std::uint64_t g_set_mouse_ms = 0;
@@ -1787,6 +1795,28 @@ void OnScreen(void* ctx, std::uint64_t screen) noexcept {
                 f.asked = Read<std::int32_t>(manager + kManagerAsked);
             }
         }
+        if (f.kind == Kind::kPages) {
+            g_pages_seen_ms = NowMs(), g_pages_seen_state = f.state, g_pages_seen_page = f.page;
+        }
+        // (back to the title: the question "Return to the title screen?" open, its first button, Title Screen, chosen
+        // as the player's A on it would)
+        if (f.kind == Kind::kBlocker && vtable - base == kSystemWindowVtable && f.state == 2 && g_to_title.load() == 2 &&
+            ctx != nullptr && CanCall()) {
+            const auto read = [](std::uint64_t a, void* out, std::size_t n) { return CoopRuntime::Read(a, out, n); };
+            std::string names;
+            std::uint64_t yes = 0;
+            for (const std::uint64_t b : CoopModScreens::Buttons(read, screen)) {
+                const std::string name = CoopModScreens::ButtonName(read, b);
+                names += (names.empty() ? "" : ", ") + name;
+                if (name == "Pa_Button_00") yes = b;
+            }
+            std::uint64_t took = 0;
+            const bool called = yes != 0 && Call(ctx, CoopModScreens::kButtonDecide, yes, 0, 0, 0, 0, &took);
+            LOG_INFO(Core, "coop: pause tab: back to the title: the question's buttons {}: Title Screen (Pa_Button_00) "
+                           "chosen{}",
+                     names, called && (took & 1) != 0 ? "" : " (it did not take it)");
+            g_to_title = 3, g_to_title_phase_ms = NowMs();
+        }
         std::vector<std::string> lines;
         Page::Do d;
         std::string why;
@@ -1869,6 +1899,48 @@ void OnScreen(void* ctx, std::uint64_t screen) noexcept {
     }
 }
 
+// One pad read of the way back to the title (ToTitle): the buttons the game gets (the player's wait), or kNoStep when
+// it is over. g_mutex.
+constexpr std::uint64_t kNoStep = ~0ull;
+std::uint64_t ToTitleStep(int phase) {
+    const std::uint64_t now = NowMs();
+    if (now - g_to_title_ms.load() > kToTitleMs || (phase == 3 && now - g_to_title_phase_ms.load() > 3000)) {
+        if (phase != 3) LOG_INFO(Core, "coop: pause tab: back to the title: given up (the menu did not get there)");
+        g_to_title = 0, g_tap = 0;
+        return kNoStep;
+    }
+    if (now < g_tap_until) return g_tap;   // (a tap held)
+    g_tap = 0;
+    if (phase == 3 || now < g_tap_next) return 0;   // (let go between taps; answered: the game's own way to the title)
+    const auto tap = [&](std::uint64_t b, std::uint64_t hold, std::uint64_t gap) {
+        g_tap = b, g_tap_until = now + hold, g_tap_next = now + hold + gap;
+        return b;
+    };
+    const bool seen = now - g_pages_seen_ms.load() < 400, open = seen && g_pages_seen_state.load() == 2;
+    if (phase == 2) {   // (Title Screen pressed: the question comes; none after 3 s, again from the start)
+        if (now - g_to_title_phase_ms.load() > 3000) g_to_title = 1, g_tap_downs = 0;
+        return 0;
+    }
+    if (!seen) return tap(kPadPlus, 80, 1500);   // (the pause menu, shut: opened)
+    if (!open) return 0;                          // (opening or closing: its own pace)
+    if (g_pages_seen_page.load() != kSystemPage) return tap(kPadR, 80, 500);   // (on to System)
+    if (g_page.Shown()) {
+        g_page.Leave("back to the title");   // (our page off: System's own buttons)
+        return 0;
+    }
+    if (FocusedShownName() == "Pa_Button_04") {   // (System's Title Screen)
+        LOG_INFO(Core, "coop: pause tab: back to the title: A on System's Title Screen");
+        g_to_title = 2, g_to_title_phase_ms = now;
+        return tap(kPadA, 80, 300);
+    }
+    if (++g_tap_downs > 12) {
+        LOG_INFO(Core, "coop: pause tab: back to the title: the cursor never reached Title Screen (on {})", FocusedShownName());
+        g_to_title = 0;
+        return kNoStep;
+    }
+    return tap(kPadDown, 80, 250);
+}
+
 std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
     try {
         std::uint64_t in = buttons;
@@ -1888,6 +1960,10 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
         bool row_clicked = false;
         int new_port = 0;
         bool relay_typed = false;
+        if (const int phase = g_to_title.load(); phase != 0) {
+            std::lock_guard lock(g_mutex);
+            if (const std::uint64_t steps = ToTitleStep(phase); steps != kNoStep) return steps;
+        }
         {
             std::lock_guard lock(g_mutex);
             was = g_page.Shown();
@@ -2404,6 +2480,18 @@ bool KeysTaken() noexcept {
     } catch (...) {
         return false;
     }
+}
+
+void ToTitle() noexcept {
+    if (g_to_title.load() != 0) return;
+    g_to_title_ms = NowMs(), g_to_title_phase_ms = NowMs();
+    g_tap_downs = 0;
+    g_to_title = 1;
+    LOG_INFO(Core, "coop: pause tab: back to the title: a join with a file loaded (the host's save is loaded there)");
+}
+
+bool GoingToTitle() noexcept {
+    return g_to_title.load() != 0;
 }
 
 }  // namespace CoopPauseTab

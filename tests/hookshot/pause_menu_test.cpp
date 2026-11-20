@@ -188,10 +188,10 @@ TEST_CASE("pause tab: Join: a room name or an address, its port and the password
     SelectRow(m, "Join a game");
     m.Press(Input::kDecide);
     CHECK(m.page() == Page::kJoin);
-    CHECK(Names(m) == std::vector<std::string>{"Room or address", "Port", "Password", "Join"});
-    CHECK(m.view().rows[0].value == "Type");
-    CHECK(m.view().rows[1].value == "27510");
-    CHECK(m.view().rows[3].fixed);   // nothing to join yet
+    CHECK(Names(m) == std::vector<std::string>{"Find a game", "Room or address", "Port", "Password", "Join"});
+    CHECK(m.view().rows[1].value == "Type");
+    CHECK(m.view().rows[2].value == "27510");
+    CHECK(m.view().rows[4].fixed);   // nothing to join yet
     const auto type = [&](const std::string& row, const std::string& text) {
         SelectRow(m, row);
         m.Press(Input::kDecide);
@@ -203,7 +203,7 @@ TEST_CASE("pause tab: Join: a room name or an address, its port and the password
     type("Room or address", "forest-gang");
     type("Password", "kokiri");
     CHECK(m.join_text() == "forest-gang@relay.example.net:27530 kokiri");
-    CHECK(m.view().rows[2].value == "******");
+    CHECK(m.view().rows[3].value == "******");
     SelectRow(m, "Join");
     m.Press(Input::kDecide);
     auto r = m.TakeRequest();
@@ -232,7 +232,7 @@ TEST_CASE("pause tab: Join offers the last game again first, one press") {
     m.Show(CoopTitleMenu::Options{});
     m.Open(Page::kJoin);
     m.SetRejoin("Saria", "ABCDE-FGHJK");
-    CHECK(Names(m) == std::vector<std::string>{"Join Saria again", "Room or address", "Port", "Password", "Join"});
+    CHECK(Names(m) == std::vector<std::string>{"Join Saria again", "Find a game", "Room or address", "Port", "Password", "Join"});
     CHECK(Selected(m) == "Join Saria again");
     m.Press(Input::kDecide);
     auto r = m.TakeRequest();
@@ -242,7 +242,68 @@ TEST_CASE("pause tab: Join offers the last game again first, one press") {
     m.SetRejoin("", "ABCDE-FGHJK");
     CHECK(m.view().rows[0].name == "Join your friend again");
     m.SetRejoin("Saria", "");
-    CHECK(m.view().rows[0].name == "Room or address");
+    CHECK(m.view().rows[0].name == "Find a game");
+}
+
+TEST_CASE("pause tab: Find a game lists what is heard, searches the relay's rooms, and a pick fills the Join page") {
+    Menu m;
+    CoopTitleMenu::Options o;
+    o.relay = "relay.example.net:27530";
+    m.Show(o);
+    m.Open(Page::kJoin);
+    SelectRow(m, "Find a game");
+    m.Press(Input::kDecide);
+    CHECK(m.page() == Page::kFind);
+    CHECK(m.find_online());
+    CHECK(Names(m) == std::vector<std::string>{"List", "Search", "Asking the relay..."});
+    m.SetFound({{"kokiri (Saria)", "1/4", "kokiri", 0, true}, {"forest (Mido)", "Full", "forest", 0, false}}, "");
+    CHECK(Names(m) == std::vector<std::string>{"List", "Search", "kokiri (Saria)", "forest (Mido)"});
+    CHECK(m.view().rows[3].fixed);   // (full: not joinable)
+    // The search: only the rooms that hold it, any case
+    SelectRow(m, "Search");
+    m.Press(Input::kDecide);
+    REQUIRE(m.typing());
+    for (const char c : std::string("MID")) m.Char(static_cast<unsigned char>(c));
+    m.Press(Input::kDecide);
+    CHECK(Names(m) == std::vector<std::string>{"List", "Search", "forest (Mido)"});
+    SelectRow(m, "Search");
+    m.Press(Input::kDecide);
+    for (const char c : std::string("xyz")) m.Char(static_cast<unsigned char>(c));
+    m.Press(Input::kDecide);
+    CHECK(Names(m).back() == "No room has \"MIDxyz\"");
+    SelectRow(m, "Search");   // (Esc: as it was)
+    m.Press(Input::kDecide);
+    m.Press(Input::kErase);
+    m.Press(Input::kBack);
+    CHECK(m.find_search() == "MIDxyz");
+    SelectRow(m, "Search");
+    m.Press(Input::kDecide);
+    for (int i = 0; i < 6; ++i) m.Press(Input::kErase);
+    m.Press(Input::kDecide);
+    CHECK(m.find_search().empty());
+    // A room picked: the Join page with its name, through the relay, the password next
+    SelectRow(m, "kokiri (Saria)");
+    m.Press(Input::kDecide);
+    CHECK(m.page() == Page::kJoin);
+    CHECK(Selected(m) == "Password");
+    CHECK(m.join_text() == "kokiri@relay.example.net:27530");
+    // This network's games: an address and its port, Join next; B goes back to the Join page
+    SelectRow(m, "Find a game");
+    m.Press(Input::kDecide);
+    SelectRow(m, "List");
+    m.Press(Input::kRight);
+    CHECK_FALSE(m.find_online());
+    CHECK(Names(m) == std::vector<std::string>{"List", "Looking for games..."});
+    m.SetFound({{"Saria's game", "1/4", "192.168.1.20", 27511, true}}, "");
+    SelectRow(m, "Saria's game");
+    m.Press(Input::kDecide);
+    CHECK(Selected(m) == "Join");
+    CHECK(m.join_text() == "192.168.1.20:27511");
+    SelectRow(m, "Find a game");
+    m.Press(Input::kDecide);
+    m.Press(Input::kBack);
+    CHECK(m.page() == Page::kJoin);
+    CHECK(Selected(m) == "Find a game");
 }
 
 TEST_CASE("pause tab: a guest sees the friend's game and Leave, a blocked way in offers the answer code") {

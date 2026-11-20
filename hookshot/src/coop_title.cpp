@@ -173,6 +173,14 @@ bool g_one_start = false;          // one Start row for Continue and New Game (a
 std::uint64_t g_apply_until = 0, g_apply_next = 0;   // the look set again until then (kApplyForMs)
 int g_focus_to = -1;               // a button to give the focus at the next step
 int g_decide = -1;                 // a game button to decide at the next step
+std::atomic<std::uint64_t> g_auto_load_until{0};   // LoadHostSaveOnTitle: Continue chosen once the host's save is in
+std::atomic<bool> g_auto_load_test{false};          // (a test's: no session to wait for)
+std::atomic<std::uint64_t> g_auto_press_ms{0};      // the presses that load it began (0: none)
+// (the game's Continue, then its save list's newest save (the host's, the co-op folder's only one), then Load: an A
+// each, at these times after the focus went to Continue; the player's buttons wait meanwhile)
+constexpr std::array<std::uint64_t, 4> kAutoPressAt{400, 2900, 5400, 7900};   // (the last again: Load came late once)
+constexpr std::uint64_t kAutoPressHold = 100, kAutoPressEnd = 9000;
+std::uint64_t g_title_since = 0;   // when the title's menu came up (0: not up)
 const char* g_sound = nullptr;     // a sound to play at the next step
 std::uint64_t g_swallow = 0;       // pad bits kept from the game until let go (the rows the module answers)
 
@@ -1084,6 +1092,19 @@ std::uint64_t NativePad(std::uint64_t buttons, std::int32_t stick[4]) {
 }
 
 std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
+    if (const std::uint64_t t0 = g_auto_press_ms.load(); t0 != 0) {   // (the host's save loading by itself)
+        const std::uint64_t e = NowMs() - t0;
+        if (e >= kAutoPressEnd || InGame()) {
+            g_auto_press_ms = 0;
+            LOG_INFO(Core, "coop: title: the host's save: the presses that load it are done ({})",
+                     InGame() ? "Link is in the game" : "the player has the pad again");
+        } else {
+            for (const std::uint64_t at : kAutoPressAt) {
+                if (e >= at && e < at + kAutoPressHold) return kA;
+            }
+            return 0;
+        }
+    }
     {   // (the mouse's left button: when it last went down, so a press it made is told from the pad's; when the mouse
         // last moved, and the pad last pressed: which of them leads, for the page's scroll by the mouse)
         float fx = 0, fy = 0;
@@ -1130,6 +1151,24 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
             }
             if (const std::string now = g_wait.Line(); now != before && !g_wait.chose()) {
                 LOG_INFO(Core, "coop: title: host's save: {}", now.empty() ? "done" : now);
+            }
+        }
+        // (back at the title from a join with a file loaded: the host's save, once in, loads by itself: the game's
+        // Continue chosen, as the player's A on it, a moment after the title's menu came up)
+        if (!title) g_title_since = 0;
+        else if (g_title_since == 0) g_title_since = NowMs();
+        if (const std::uint64_t until = g_auto_load_until.load(); until != 0) {
+            const bool test = g_auto_load_test.load();
+            if (NowMs() > until || (!test && (!CoopSave::SessionLive() || CoopSave::HostHasNoSave()))) {
+                g_auto_load_until = 0;
+                LOG_INFO(Core, "coop: title: the host's save did not come to load by itself: the player loads one");
+            } else if (title && !g_sub.load() && g_native_page < 0 && !InGame() && (test || CoopSave::HostSaveReady()) &&
+                       g_any_save && !g_list_open.load() && NowMs() - g_title_since >= 1500) {
+                g_auto_load_until = 0;
+                g_focus_to = 0;   // (the game's first button, Continue; then the A presses: OnPad's start)
+                g_auto_press_ms = NowMs();
+                LOG_INFO(Core, "coop: title: the host's save is in: Continue, its newest save and Load pressed for "
+                               "the player (back from a join with a file loaded)");
             }
         }
         const std::uint64_t down = buttons & ~g_pad_last;
@@ -1235,6 +1274,13 @@ bool StartSaveWait(const std::string& host) {
 void StopSaveWait() {
     std::lock_guard lock(g_mutex);
     g_wait.Stop();
+    g_auto_load_until = 0;
+}
+
+void LoadHostSaveOnTitle(bool test) {
+    g_auto_load_test = test;
+    g_auto_load_until = NowMs() + kAutoLoadMs;
+    LOG_INFO(Core, "coop: title: the host's save loads by itself once it is in (back from a join with a file loaded)");
 }
 
 bool SaveWaitWaiting() {

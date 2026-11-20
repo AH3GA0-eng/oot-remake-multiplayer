@@ -289,6 +289,11 @@ std::vector<Menu::Line> Menu::Lines() const {
                                "Joins the last game you were in, with the same code. It works while your friend is still "
                                "hosting that game."});
             }
+            // (the games on this network and the relay's public rooms: one picked fills the rows below. After the
+            // last game again, which stays the first row: one press)
+            out.push_back({PageRow("Find a game", find_online_ ? "Online" : "This network", off), Act::kOpenFind,
+                           "Lists the games on this network and the public rooms on your relay, with a search. Pick "
+                           "one and its room or address is filled in below."});
             const bool typing_ip = typing_ && typing_act_ == Act::kJoinIp;
             const bool typing_port = typing_ && typing_act_ == Act::kJoinPort;
             const bool typing_password = typing_ && typing_act_ == Act::kJoinPassword;
@@ -317,6 +322,32 @@ std::vector<Menu::Line> Menu::Lines() const {
                            Trim(join_).empty() ? "Type the room name or address first." : "Joins your friend's game."});
         }
         break;
+    case Page::kFind: {
+        out.push_back({Choice("List", find_online_ ? "Online" : "This network"), Act::kFindList,
+                       "Online: the public rooms on your relay (Settings > Relay). This network: the games hosted "
+                       "in your home."});
+        if (find_online_) {
+            const bool typing_search = typing_ && typing_act_ == Act::kFindSearch;
+            out.push_back({Action("Search", typing_search ? find_search_ + "_"
+                                            : find_search_.empty() ? std::string("Type") : find_search_),
+                           Act::kFindSearch, "Only the rooms whose name, or whose host's name, holds these letters."});
+        }
+        const std::vector<Found> games = FoundShown();
+        for (const Found& g : games) {
+            out.push_back({Action(g.name, g.players, !g.joinable), Act::kFindGame,
+                           g.joinable ? "Fills in the Join page with this game: then Join (with its password, if "
+                                        "it asks one)."
+                                      : "This game is full, or runs another version of co-op."});
+        }
+        if (games.empty()) {
+            const std::string none = !found_.empty() && !find_search_.empty() ? "No room has \"" + find_search_ + "\""
+                                     : !found_state_.empty()                   ? found_state_
+                                     : find_online_                            ? std::string("Asking the relay...")
+                                                                               : std::string("Looking for games...");
+            out.push_back({Note(none), Act::kNone, {}});
+        }
+        break;
+    }
     case Page::kLocal:
         out.push_back({Note("Split screen (experimental): two full games on this PC."), Act::kNone, {}});
         out.push_back({Note("1. Two kits (or Nucleus Co-op), each started once."), Act::kNone, {}});
@@ -527,6 +558,7 @@ void Menu::Open(Page page) {
     case Page::kSettings: act = Act::kOpenSettings; break;
     case Page::kCommands: act = Act::kOpenCommands; break;
     case Page::kCustomize: act = Act::kOpenCustomize; break;
+    case Page::kFind: act = Act::kOpenFind; break;
     }
     Go(Page::kMain, act);
     note_.clear();
@@ -623,6 +655,7 @@ std::string* Menu::Typed() {
     case Act::kCode: return &join_;
     case Act::kJoinIp: return &join_ip_;
     case Act::kJoinPassword: return &join_password_;
+    case Act::kFindSearch: return &find_search_;
     case Act::kHostPort:
     case Act::kJoinPort: return &port_text_;
     default: break;
@@ -720,6 +753,11 @@ void Menu::EndTyping(bool keep) {
                                         : "Room name: 3 to 24 letters, digits, - or _. It was not changed."};
         }
         field = name_before_;
+        return;
+    }
+    if (act == Act::kFindSearch) {   // (the list follows it; Esc: the search as it was)
+        find_search_ = keep ? std::string(Trim(find_search_)) : search_before_;
+        Clamp();
         return;
     }
     if (act == Act::kName) {
@@ -939,6 +977,9 @@ bool Menu::Press(Input input) {
             break;
         case Page::kCustomize:   // (Press gave it to the page)
             break;
+        case Page::kFind:
+            Go(Page::kJoin, Act::kOpenFind);
+            break;
         }
         return true;
     case Input::kPaste:
@@ -1059,6 +1100,34 @@ void Menu::Decide(Act act) {
     case Act::kJoinNow:
         request_ = Request{Request::Kind::kJoin, join_};
         break;
+    case Act::kOpenFind:
+        Go(Page::kFind);
+        break;
+    case Act::kFindList:
+        Change(act, 0);
+        break;
+    case Act::kFindSearch:
+        search_before_ = find_search_;
+        typing_ = true;
+        typing_act_ = Act::kFindSearch;
+        typing_fresh_ = false;
+        break;
+    case Act::kFindGame: {
+        // (which game: the game rows before the selected one, in the order Lines put them)
+        const auto lines = Lines();
+        std::size_t k = 0;
+        for (std::size_t i = 0; i < selected_ && i < lines.size(); ++i) k += lines[i].act == Act::kFindGame ? 1 : 0;
+        const std::vector<Found> games = FoundShown();
+        if (k >= games.size()) break;
+        const Found& g = games[k];
+        join_ip_ = g.join;
+        join_port_ = g.port > 0 && g.port != CoopTitleMenu::kDefaultPort ? std::to_string(g.port) : std::string();
+        join_password_.clear();
+        UpdateJoinFromIpPort();
+        // (a room on the relay asks its password as a rule; a game on this network lets its own network in)
+        Go(Page::kJoin, find_online_ ? Act::kJoinPassword : Act::kJoinNow);
+        break;
+    }
     case Act::kName:
         name_before_ = options_.name;
         typing_ = true;
@@ -1122,6 +1191,11 @@ void Menu::Change(Act act, int step) {
     case Act::kSameNetwork:
         options_.same_network_password = !options_.same_network_password;   // (two choices: either way flips it)
         request_ = Request{Request::Kind::kSave, {}};
+        break;
+    case Act::kFindList:   // (two lists: either way flips it; the module hears the other one from now)
+        find_online_ = !find_online_;
+        found_.clear(), found_state_.clear();
+        Clamp();
         break;
     case Act::kMic: {
         if (!microphones_) {
@@ -1251,7 +1325,7 @@ bool Menu::Char(std::uint32_t cp) {
     if (typing_act_ == Act::kRelay && (add.size() != 1 || add[0] == ' ')) {
         return true;   // (a relay line: no spaces, plain characters)
     }
-    const std::size_t max_bytes = typing_act_ == Act::kRoom            ? 24
+    const std::size_t max_bytes = typing_act_ == Act::kRoom || typing_act_ == Act::kFindSearch ? 24
                                   : typing_act_ == Act::kRelay         ? 128
                                   : typing_act_ == Act::kJoinIp        ? kMaxIpBytes
                                   : typing_act_ == Act::kJoinPassword ? CoopTitleMenu::kMaxPasswordBytes
@@ -1410,6 +1484,9 @@ View Menu::view() const {
         break;
     case Page::kCustomize:   // (above)
         break;
+    case Page::kFind:
+        v.help_title = "Find a game";
+        break;
     }
     if (!note_.empty()) {
         v.help = JoinedTr(note_);
@@ -1463,6 +1540,26 @@ View Menu::view() const {
 
 void Menu::SetLook(const CoopLook::Look& look) {
     look_ = look;
+}
+
+void Menu::SetFound(std::vector<Found> games, std::string state) {
+    if (games == found_ && state == found_state_) return;
+    found_ = std::move(games);
+    found_state_ = std::move(state);
+    if (page_ == Page::kFind && !typing_) Clamp();
+}
+
+std::vector<Menu::Found> Menu::FoundShown() const {
+    if (!find_online_ || find_search_.empty()) return found_;
+    std::string want = find_search_;
+    for (char& c : want) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    std::vector<Found> kept;
+    for (const Found& g : found_) {
+        std::string name = g.name;
+        for (char& c : name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (name.find(want) != std::string::npos) kept.push_back(g);
+    }
+    return kept;
 }
 
 void Menu::SetSaveSet(bool multiplayer) {

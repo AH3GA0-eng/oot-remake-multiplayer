@@ -224,6 +224,7 @@ public:
     // (TakeBack), instead of closing the menu. Off whenever the page goes.
     void SetSubView(bool on) { sub_ = on && shown_; }
     bool TakeBack();
+    void Leave(const char* why) { Hide(why); }   // (back to System at once: the module's way back to the title)
 
     bool Shown() const { return shown_; }
     // A pressed on our page since the last call (the row is the System page's focused button).
@@ -694,6 +695,15 @@ void Init(const HosCoopApi* api);
 void OnScreen(void* ctx, std::uint64_t screen) noexcept;
 // hos_coop_pad, first (coop_pad_order.h): what the game and the mods get (sticks zeroed while our page shows).
 std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept;
+// A join made with a file loaded connected: the game goes back to its title screen by itself, as the System page's
+// Title Screen and its question's Title Screen would (the pause menu opened on System if it is not, the cursor stepped
+// to Title Screen, A, then the question answered), so the host's save is loaded from there. The player's buttons wait
+// meanwhile; it gives up after kToTitleMs. Any thread.
+inline constexpr std::uint64_t kToTitleMs = 25000;
+void ToTitle() noexcept;
+bool GoingToTitle() noexcept;
+// The System page's question's screen (UISystemWindowScreen: "Return to the title screen?").
+inline constexpr std::uint64_t kSystemWindowVtable = 0x4befbf8;
 // hos_coop_game_pause_page: Page::MousePage (-1 usable, -2 cannot be used).
 int MousePage() noexcept;
 // The mouse in the game's window (its client area, 0..1 each way) and the left button, when the window is in front:

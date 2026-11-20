@@ -42,6 +42,10 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]);
 bool StartSaveWait(const std::string& host);
 // Co-op stopped: the title's line goes.
 void StopSaveWait();
+// A join with a file loaded went back to the title (CoopPauseTab::ToTitle): once the host's save is in and the title's
+// menu is up, its Continue is chosen for the player (the host's save loads), within kAutoLoadMs. Any thread.
+inline constexpr std::uint64_t kAutoLoadMs = 180000;
+void LoadHostSaveOnTitle(bool test = false);   // (test: no session; the save as it is (LICHII_COOP_TEST_TO_TITLE))
 // The title waits for the host's save (Longshot patch 0028's hold, hos_coop_title_hold).
 bool SaveWaitWaiting();
 // Player 1's buttons before the code mods' holds come off (coop_pad_order.h step 2), for the player's own A on the
