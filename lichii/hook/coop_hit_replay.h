@@ -71,7 +71,7 @@ inline Record WithHitKind(const Record& other) {
 
 struct Hit {
     std::uint64_t actor = 0;      // the copy
-    std::uint64_t attacker = 0;   // our player
+    std::uint64_t attacker = 0;   // our player, or the hitter's puppet (ReplayAttacker)
     std::int32_t amount = 0;
     std::array<float, 3> at{};    // the copy's place
     std::array<float, 3> from{};  // the hitter's place (ours when not known)
@@ -81,6 +81,16 @@ struct Hit {
     // (weapon, element: WithHitKind) goes into this game's damage step; the rest is kHitTemplate's and ours.
     std::optional<Record> record;
 };
+
+// Row 177 (every boss, every enemy): the actor a replayed hit names as its attacker (the record's +0x240). The
+// game's own battle AI draws its target from that hit (EnemyCommon.BattleCommon's ExecuteMemoryPushLastAttacker):
+// with our Link standing in for every other player's hit, the owner's enemy turned on the owner's Link after each
+// of them (Phantom Ganon's light balls always at player 1). The hitter's puppet when it is one enemies see here
+// (Director::LiveSeenActor) and they can fight now (not unseen: downed, spectating, away); else our Link, as before.
+inline std::uint64_t ReplayAttacker(std::uint64_t our_link, std::uint8_t hitter, std::uint64_t hitter_puppet,
+                                    bool hitter_unseen) {
+    return hitter != 0 && hitter_puppet != 0 && !hitter_unseen ? hitter_puppet : our_link;
+}
 
 // One hit written: for the caller's log and the difficulty's pass.
 struct Written {

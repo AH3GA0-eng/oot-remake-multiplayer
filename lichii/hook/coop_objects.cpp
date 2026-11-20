@@ -4285,7 +4285,14 @@ private:
         case LifeRoute::replay: {
             Mover::Hit h;
             h.actor = w.address;
-            h.attacker = player;
+            // Row 177: the hitter's puppet, so the game's battle AI turns on the player who hit (else our Link).
+            h.attacker = CoopHitReplay::ReplayAttacker(player, w.hitter, CoopPuppet::TheDirector().LiveSeenActor(w.hitter),
+                                                       CoopDbno::Body::TheCrawl().PuppetUnseen(w.hitter));
+            if (static std::atomic<int> said{0}; h.attacker != player && said.fetch_add(1) < 40) {
+                LOG_INFO(Core, "coop: objects: share life {:#x} '{}': P{}'s hit replayed with their puppet {:#x} as "
+                               "the attacker (row 177: its AI turns on them)",
+                         w.address, NameOf(w.address), w.hitter, h.attacker);
+            }
             h.amount = w.hurt;
             h.at = r.Get<std::array<float, 3>>(w.address + kActorPosition).value_or(h.at);
             if (w.hit_at) {

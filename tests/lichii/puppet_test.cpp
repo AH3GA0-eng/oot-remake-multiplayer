@@ -2885,3 +2885,12 @@ TEST_CASE("puppet: a playing pose sent at a still frame plays on, not set back e
     // A held pose (rate 0) at a still frame: followed (the copy is kept on that frame).
     CHECK(FrameFollowed("Pose", 4.0f, Anim{"Pose", 4.0f, 0.0f}));
 }
+
+TEST_CASE("puppet (row 177): only a plain puppet of a pack with perception is seen by enemies") {
+    CHECK(CoopPuppet::SeenPuppetActor("CoopPuppet_Child", true));
+    CHECK(CoopPuppet::SeenPuppetActor("CoopPuppet_Adult_Red", true));
+    CHECK_FALSE(CoopPuppet::SeenPuppetActor("CoopPuppet_ChildQuiet", true));
+    CHECK_FALSE(CoopPuppet::SeenPuppetActor("CoopPuppet_AdultQuiet_Red", true));
+    CHECK_FALSE(CoopPuppet::SeenPuppetActor("CoopPuppet_Child", false));
+    CHECK_FALSE(CoopPuppet::SeenPuppetActor("Player_Child", true));
+}

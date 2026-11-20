@@ -165,3 +165,12 @@ TEST_CASE("hit replay (protocol 14): no record: the stand-in sword hit, as befor
     CHECK(g.Get<std::uint32_t>(kLife + CoopHitReplay::kHitHeader) == 0x00060001);
     CHECK(g.Get<float>(kLife + 0x27c + 4) == doctest::Approx(3.0f));  // the foot + 1
 }
+
+TEST_CASE("hit replay (row 177): another player's hit names their seen puppet as the attacker, else our Link") {
+    constexpr std::uint64_t link = 0x1000;
+    constexpr std::uint64_t puppet = 0x2000;
+    CHECK(CoopHitReplay::ReplayAttacker(link, 2, puppet, false) == puppet);
+    CHECK(CoopHitReplay::ReplayAttacker(link, 2, puppet, true) == link);  // downed, spectating or away
+    CHECK(CoopHitReplay::ReplayAttacker(link, 2, 0, false) == link);      // no seen puppet here (quiet, gone)
+    CHECK(CoopHitReplay::ReplayAttacker(link, 0, puppet, false) == link); // the hitter is not known
+}

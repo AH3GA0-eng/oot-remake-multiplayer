@@ -3766,6 +3766,7 @@ void Sync::Lower(Object& o, std::int32_t life, std::uint64_t now_us,
     // The game takes it off itself; the walk sees the drop and does not
     // count it as our hit. o.life stays as read until then.
     LifeWrite w{o.address, life, from - life, std::nullopt};
+    w.hitter = hitter;
     w.hit_at = hit_at;
     w.record = record;
     {

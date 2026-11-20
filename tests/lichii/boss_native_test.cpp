@@ -1738,3 +1738,38 @@ TEST_CASE("native boss: row 177, the action stream log says each change of kind 
     CHECK(has("action stream: ours asks slot 0 verb 4 (changed 0) after 1 x ours asks slot 0 verb 4 (changed 1)"));
     CHECK(has("action stream: ours asks slot 0 verb 9 (changed 1) after 4 x ours asks slot 0 verb 4 (changed 0)"));
 }
+
+TEST_CASE("native boss: row 177 review, a brain change forgets the copy's kept nodes (its action sequence's go)") {
+    constexpr std::uint64_t kAppearNode = 0x4000100;  // its own AI's node that asked Appear (verb 4), then gone
+    constexpr std::uint64_t kRunNode = 0x4000200;     // its last ask
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Boss{kActor, kBsa, Role::copy, "Enemy_DungeonBoss_PhantomGanon", 2}});
+    t.OnActionVerb(kBsa, GameRequest(4, kAppearNode), true, false);  // (no owner's state yet: its own runs)
+    t.OnActionVerb(kBsa, GameRequest(8, kRunNode), true, false);
+    BossAction a = *ActionFromRequest(GameRequest(4, 0));
+    a.changed = true;
+    t.Receive(kActor, BossBsa{1, 3, a, {}});  // the owner's new brain verb 3 (ours is 2), then Appear
+    FakeGuest g;
+    const std::int32_t verb = 2;
+    g.Write(kBsa + addr::kBsaBrainVerb, &verb, 4);
+    bool brain = false;
+    std::optional<CoopPuppet::Call> action;
+    std::optional<CoopPuppet::Call> c = t.Step(g, false, 0, kMain);
+    for (int i = 0; i < 8 && c && !action; ++i) {
+        if (c->function == kMain + addr::kSetBrainVerb) {
+            brain = true;
+        } else if (c->function == kMain + addr::kRequestActionVerb) {
+            action = c;
+            break;
+        }
+        c = t.Step(g, true, c->function == kMain + addr::kSetBrainVerb ? 0 : kBlock, kMain);
+        if (!c) {
+            c = t.Step(g, false, 0, kMain);
+        }
+    }
+    CHECK(brain);
+    REQUIRE(action);
+    // Appear's node was its old sequence's: not named any more; its last ask stands in until it asks again.
+    CHECK(g.Get<std::uint64_t>(kBlock + addr::kReqNode) == kRunNode);
+}

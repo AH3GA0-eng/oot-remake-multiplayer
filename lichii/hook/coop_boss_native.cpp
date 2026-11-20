@@ -155,6 +155,11 @@ const Table::Entry* Table::FindActor(std::uint64_t actor) const {
     return nullptr;
 }
 
+void Table::ForgetOwnAsks(Entry& e) {
+    e.own_asks.clear();
+    e.own_slot_asks.clear();
+}
+
 void Table::Note(std::string line) {
     if (notes_.size() < 64) {
         notes_.push_back(std::move(line));
@@ -208,6 +213,7 @@ void Table::Publish(const std::vector<Boss>& bosses) {
                 e.hold_since = steps_;
                 e.hold_asks = 0;
                 e.hold_rechoices = 0;
+                ForgetOwnAsks(e);  // (row 177 review: learnt again as a copy from its own asks)
                 if (b.role == Role::copy) {
                     // (put_action stays: our copy's body still runs that move; a new owner whose state names
                     // the same one, its old owner's, is not asked it again)
@@ -1099,6 +1105,15 @@ void Table::Made(bool made) {
     const Entry::Asking asking = std::exchange(e->asking, Entry::Asking::none);
     if (!made) {
         return;  // the change is still at the front of its queue
+    }
+    const bool brain = (asking == Entry::Asking::due && !e->due.empty() &&
+                        std::holds_alternative<BossBrain>(e->due.front().change.what)) ||
+                       (asking == Entry::Asking::late && !e->own_late.empty() &&
+                        std::holds_alternative<BossBrain>(e->own_late.front()));
+    if (brain) {
+        // Row 177 review: a new brain verb may change the copy's action sequence, whose AI nodes go with it; the
+        // nodes kept for its moves are learnt again from its next own asks (the game reads a named node's name).
+        ForgetOwnAsks(*e);
     }
     if (asking == Entry::Asking::due && !e->due.empty()) {
         if (const auto* action = std::get_if<BossAction>(&e->due.front().change.what)) {
