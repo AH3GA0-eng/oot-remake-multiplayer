@@ -338,7 +338,17 @@ bool RoomNameOk(std::string_view room) {
 bool RelayOk(std::string_view relay) {
     if (relay.empty()) return true;
     if (relay.size() > 128) return false;
-    return std::all_of(relay.begin(), relay.end(), [](unsigned char c) { return c > 0x20 && c < 0x7f; });
+    // host[:port], as the server reads it (server/relay_link.cpp parse_relay_address): a host of letters, digits, '.'
+    // and '-', then a port from 1 to 65535 when one is given.
+    std::string_view host = relay;
+    if (const auto colon = relay.rfind(':'); colon != std::string_view::npos) {
+        const std::string_view port = relay.substr(colon + 1);
+        if (port != Trim(port) || !ParsePort(port)) return false;
+        host = relay.substr(0, colon);
+    }
+    return !host.empty() && std::all_of(host.begin(), host.end(), [](unsigned char c) {
+        return std::isalnum(c) != 0 || c == '.' || c == '-';
+    });
 }
 
 void Options::Write(std::string& coop_ini, std::string& options_ini) const {
@@ -355,8 +365,13 @@ void Options::Write(std::string& coop_ini, std::string& options_ini) const {
     o = auto_rejoin ? IniSet(o, "auto_rejoin", "on", true) : IniUnset(o, "auto_rejoin");
     o = list_room ? IniSet(o, "list_room", "on", true) : IniUnset(o, "list_room");
     // (the relay: the kit's default needs no line; a room name, or none)
-    o = relay == kDefaultRelay ? IniUnset(o, "relay") : IniSet(o, "relay", relay, true);
-    o = relay_room.empty() ? IniUnset(o, "relay_room") : IniSet(o, "relay_room", relay_room, true);
+    // A line whose value did not change is kept as the player wrote it (its spacing and a comment after it).
+    if (std::string(Trim(IniGet(o, "relay").value_or(kDefaultRelay))) != relay) {
+        o = relay == kDefaultRelay ? IniUnset(o, "relay") : IniSet(o, "relay", relay, true);
+    }
+    if (std::string(Trim(IniGet(o, "relay_room").value_or(""))) != relay_room) {
+        o = relay_room.empty() ? IniUnset(o, "relay_room") : IniSet(o, "relay_room", relay_room, true);
+    }
     o = upnp ? IniUnset(o, "upnp") : IniSet(o, "upnp", "no", true);
     o = password.empty() ? IniUnset(o, "server_password") : IniSet(o, "server_password", password, true);
     o = debug_panel ? IniSet(o, "LICHII_COOP_DEBUG_PANEL", "1", false) : IniUnset(o, "LICHII_COOP_DEBUG_PANEL");

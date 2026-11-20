@@ -1123,4 +1123,29 @@ TEST_CASE("title menu: the relay and the room name: written when set, the kit's 
     CHECK(RelayOk("relay.example.net:27530"));
     CHECK(RelayOk(""));
     CHECK_FALSE(RelayOk("has space"));
+    CHECK(RelayOk("relay.example.net"));
+    CHECK(RelayOk("10.0.0.2:1"));
+    CHECK(RelayOk("relay-1.example.net:65535"));
+    CHECK_FALSE(RelayOk("relay.example.net:0"));       // (a port from 1 to 65535)
+    CHECK_FALSE(RelayOk("relay.example.net:65536"));
+    CHECK_FALSE(RelayOk("relay.example.net:"));
+    CHECK_FALSE(RelayOk("relay.example.net:27x30"));
+    CHECK_FALSE(RelayOk(":27530"));                    // (no host)
+    CHECK_FALSE(RelayOk("relay_example.net"));         // (the server's host letters: letters, digits, . and -)
+    CHECK_FALSE(RelayOk("a:b:27530"));
+}
+
+TEST_CASE("title menu: an unchanged relay or room name line is kept as the player wrote it") {
+    std::string c, opt = "relay=old.example.net:27530   # my friend's\r\nrelay_room = old-room ; ours\r\n";
+    Options o = Options::Read("", opt);
+    CHECK(o.relay == "old.example.net:27530");
+    CHECK(o.relay_room == "old-room");
+    o.pvp = true;   // (something else changes: the relay lines stay as they were)
+    o.Write(c, opt);
+    CHECK(opt.find("relay=old.example.net:27530   # my friend's\r\n") != std::string::npos);
+    CHECK(opt.find("relay_room = old-room ; ours\r\n") != std::string::npos);
+    o.relay_room = "new-room";   // (a changed one is written)
+    o.Write(c, opt);
+    CHECK(IniGet(opt, "relay_room") == "new-room");
+    CHECK(opt.find("relay=old.example.net:27530   # my friend's\r\n") != std::string::npos);
 }
