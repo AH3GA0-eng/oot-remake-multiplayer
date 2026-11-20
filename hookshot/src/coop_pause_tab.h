@@ -368,7 +368,7 @@ struct Session {
     int online_listed = 0;      // the rooms it lists
     int cell_page = 0;          // the browser's page of cells (kCells a page)
     bool list_room = false;     // hosting lists this game's room on the relay's public list
-    bool lan_password = false;  // a game's view: its join password is typed (every session has one)
+    bool lan_password = false;  // a game's view: a join password is typed (none: the same network's way in)
     bool has_password = false;  // hosting, and the session's join password is known (the status)
     bool password_shown = false;   // the host's Session view shows it now (its rows' A hides it again)
     bool can_resync = false;    // a guest whose game can take the host's save again (CoopSave::CanResync)

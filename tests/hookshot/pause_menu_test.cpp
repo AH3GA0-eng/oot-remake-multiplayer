@@ -444,15 +444,17 @@ TEST_CASE("pause tab: Settings: name, Link's look, players and voice chat (off u
     m.Show(o);
     m.Open(Page::kSettings);
     CHECK(Names(m) == std::vector<std::string>{"Your name", "Link's look", "Players when you host",
-                                               "Port when you host", "Proximity voice chat", "Chat key",
+                                               "Port when you host", "Password on this network", "Proximity voice chat",
+                                               "Chat key",
                                                "Show players on map", "Names on map", "New Game+",
                                                "Saves"});   // (no patch 0015: no input rows; Navi's two last)
     View v = m.view();
     CHECK(v.rows[0].value == "Saria");
     CHECK(v.rows[1].value == "By player number");
     CHECK(v.rows[3].value == "27510");
-    CHECK(v.rows[4].kind == RowKind::kToggle);
-    CHECK_FALSE(v.rows[4].on);   // the default
+    CHECK(v.rows[4].value == "Not needed");   // (the password on this network)
+    CHECK(v.rows[5].kind == RowKind::kToggle);
+    CHECK_FALSE(v.rows[5].on);   // the default
     // the name, typed
     m.Press(Input::kDecide);
     CHECK(m.typing());
@@ -524,10 +526,10 @@ TEST_CASE("pause tab: Settings: players on the map and their names, on unless tu
     m.Show(CoopTitleMenu::Options{});
     m.Open(Page::kSettings);
     View v = m.view();
-    REQUIRE(v.rows.size() == 10);   // (the port and chat key rows before them, New Game+ and Saves after; no patch 0015)
-    CHECK(v.rows[6].kind == RowKind::kToggle);
-    CHECK(v.rows[6].on);
+    REQUIRE(v.rows.size() == 11);   // (the port and chat key rows before them, New Game+ and Saves after; no patch 0015)
+    CHECK(v.rows[7].kind == RowKind::kToggle);
     CHECK(v.rows[7].on);
+    CHECK(v.rows[8].on);
     SelectRow(m, "Show players on map");
     m.Press(Input::kLeft);
     CHECK_FALSE(m.options().map_players);
@@ -541,6 +543,30 @@ TEST_CASE("pause tab: Settings: players on the map and their names, on unless tu
     CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
     m.Press(Input::kRight);
     CHECK(m.options().map_names);
+}
+
+TEST_CASE("pause tab: Settings: the password on this network, not needed unless chosen, saved") {
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    m.Open(Page::kSettings);
+    SelectRow(m, "Password on this network");
+    CHECK(m.view().rows[static_cast<std::size_t>(m.view().selected)].value == "Not needed");
+    m.Press(Input::kDecide);
+    CHECK(m.options().same_network_password);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+    CHECK(m.view().rows[static_cast<std::size_t>(m.view().selected)].value == "Needed");
+    m.Press(Input::kLeft);   // (two choices: either way flips it)
+    CHECK_FALSE(m.options().same_network_password);
+    // coop-options.ini: same_network_password = on while it is needed, no line otherwise.
+    CoopTitleMenu::Options o;
+    o.same_network_password = true;
+    std::string coop_ini, options_ini;
+    o.Write(coop_ini, options_ini);
+    CHECK(options_ini.find("same_network_password = on") != std::string::npos);
+    CHECK(CoopTitleMenu::Options::Read(coop_ini, options_ini).same_network_password);
+    o.same_network_password = false;
+    o.Write(coop_ini, options_ini);
+    CHECK_FALSE(CoopTitleMenu::Options::Read(coop_ini, options_ini).same_network_password);
 }
 
 TEST_CASE("pause tab: a name the server would refuse is not kept") {
@@ -568,13 +594,13 @@ TEST_CASE("pause tab: the mouse selects a row and clicks a value's halves") {
     Menu m;
     m.Show(CoopTitleMenu::Options{});
     m.Open(Page::kSettings);
-    m.Select(4);
+    m.Select(5);
     CHECK(Selected(m) == "Proximity voice chat");
-    m.Click(4, 1);   // the On half
+    m.Click(5, 1);   // the On half
     CHECK(m.options().voice);
-    m.Click(4, -1);
+    m.Click(5, -1);
     CHECK_FALSE(m.options().voice);
-    m.Click(4, 0);   // the name: selected only
+    m.Click(5, 0);   // the name: selected only
     CHECK_FALSE(m.options().voice);
     m.Click(0, 0);   // an action: as A
     CHECK(m.typing());
@@ -661,7 +687,8 @@ TEST_CASE("pause tab: Settings: Controller and Keyboard rows when this Hookshot 
     m.SetInputRows("Controller: all", "Keyboard + mouse: window in front");
     CHECK(Selected(m) == "Chat key");   // (the rows came under it: the same row stays chosen)
     CHECK(Names(m) == std::vector<std::string>{"Your name", "Link's look", "Players when you host",
-                                               "Port when you host", "Proximity voice chat", "Chat key",
+                                               "Port when you host", "Password on this network", "Proximity voice chat",
+                                               "Chat key",
                                                "Controller", "Keyboard and mouse", "Show players on map",
                                                "Names on map", "New Game+", "Saves"});
     SelectRow(m, "Controller");
@@ -688,7 +715,7 @@ TEST_CASE("pause tab: Settings: Controller and Keyboard rows when this Hookshot 
     CHECK(r->kind == Request::Kind::kKeyboard);
     // gone again (the module found no patch 0015): the selection stays on a row there is
     m.SetInputRows({}, {});
-    CHECK(Names(m).size() == 10);   // (with the port, two map rows, New Game+ and Saves)
+    CHECK(Names(m).size() == 11);   // (with the port, the password on this network, two map rows, New Game+, Saves)
     CHECK_FALSE(Selected(m).empty());
 }
 

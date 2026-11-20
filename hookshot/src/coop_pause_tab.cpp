@@ -647,10 +647,12 @@ RowAction ActionFor(View view, int row, const Session& s) {
         if (row == 3) return RowAction::kListRoom;
         return RowAction::kNone;
     case View::kLanGame:
-        // (0 the game, 1 its password typed on the row, 2 Join this game once one is typed; the last row is Back)
+        // (0 the game, 1 its password typed on the row if its host asks one, 2 Join this game; the last row is Back.
+        // A host on this network lets its players in without the password unless it said otherwise: docs/protocol.md
+        // "Same network")
         if (s.in_one || s.by_launcher) return RowAction::kNone;
         if (row == 1) return RowAction::kTypePassword;
-        if (row == 2) return s.lan_password ? RowAction::kJoinLanGame : RowAction::kTypePassword;
+        if (row == 2) return RowAction::kJoinLanGame;
         return RowAction::kNone;
     case View::kLetIn:
         if (row == 0 && s.hosting && s.asking) return RowAction::kAllow;
@@ -831,8 +833,9 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
                                                : "In a session already";
             break;
         }
-        rows[1] = "Password: " + (v.password_field.empty() && v.typing != 1 ? std::string("A to type it") : v.password_field);
-        rows[2] = v.s.lan_password ? "Join this game" : "Join: type its password";
+        rows[1] = v.password_field.empty() && v.typing != 1 ? std::string("Password: if it asks")
+                                                              : "Password: " + v.password_field;
+        rows[2] = "Join this game";
         break;
     case View::kPlayer:
         if (v.s.player == 0) {

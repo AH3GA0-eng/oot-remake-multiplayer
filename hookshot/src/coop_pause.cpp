@@ -416,6 +416,7 @@ bool Host() {
     h.invite = 1;
     h.pvp = o.pvp ? 1 : 0;
     h.approve_joins = o.approve_joins ? 1 : 0;
+    h.same_network_password = o.same_network_password ? 1 : 0;   // (off: this network's players need none)
     h.max_players = static_cast<std::uint8_t>(o.max_players);
     // coop-options.ini's relay lines, as Host.bat uses them (issue 261: a room name friends type in Join a game).
     h.relay_via = o.relay.empty() ? nullptr : o.relay.c_str();

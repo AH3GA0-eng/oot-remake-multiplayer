@@ -116,6 +116,7 @@ bool HostService::start(std::string& error) {
   say("players must give the join password to join; the traffic is encrypted");
   if (config_.session.pvp) say("PvP is on: players can hurt each other");
   if (config_.session.approve_joins) say("each new player waits until the host lets them in (/allow or /deny)");
+  if (config_.session.same_network_open) say("players on this network join without the join password");
   if (!config_.session.allowed.empty()) {
     say("only the " + std::to_string(config_.session.allowed.size()) +
         " address range(s) given with --allow may connect");
