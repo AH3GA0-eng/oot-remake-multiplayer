@@ -1,0 +1,116 @@
+# kd-stun-169 B (tracker row 169, king-dodongo-0118 41cce370): King Dodongo frozen 'Down' (mouth open) at the kill,
+# no hit lands, soft-lock. Cause: the guest's bomb in his mouth stuns its COPY (the weak-point interrupt), the server
+# hands him to the guest, and the hand-over's re-choose ended the interrupt ('Down' left at life 1).
+# Setup as kd-roll (row 149): B's title press comes 600 ticks before A's, A owns KD ('native boss sync on (... ours)'
+# in A). A keeps away and never bombs; B throws a bomb at his mouth every ~7 s (locked on, ZR bomb, walk in, A throw)
+# until one is swallowed, then hits him in his stun and test-kills him.
+# SAVE: the KD save of kd-roll (L1-9 / proof-0116 setup). Run: tools\autotest\run.ps1 -Runtime hookshot -Scenario kd-stun-169
+# PASS (logs + shots, both games):
+#  1. B: 'stunned here, said to the owner' then 'now ours' for Enemy_DungeonBoss_Dodongo, and 'its own stun in our
+#     game' (the 41cce370 note); NO "held 'Down' .* stuck" line in either game.
+#  2. b-stun shots: KD down with his mouth open in BOTH games; b-hit: life drops on both (A's copy 'life' line).
+#  3. end: KD dead in both (death event, no KD in a-end/b-end), no frozen KD.
+#  VOID (not a game verdict): no bomb swallowed (no 'stunned here' in B) -> aim/timing, re-run.
+#! noload
+#! start coop: test warp done
+#! switches LICHII_COOP_DEBUG_BOSS=1,LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_CHEATS=1
+#! timeout 900
+mark start
+warp DodongoStage DodongoStage
+wait 1200
+mark title
+press A
+wait 180
+press A
+wait 180
+press A
+wait 300
+press A
+wait 2400
+mark b-in
+give bombs
+wait 120
+assign Bomb
+wait 1800
+mark b-fight
+press ZL 10             # lock on to KD
+wait 30
+press ZR                # a bomb out
+wait 120
+hold ZL+LSTICK_UP 60    # walk in, locked on (his mouth faces us when he inhales)
+press A                 # throw
+mark b-bomb1
+wait 240
+mark b-stun1
+press ZL 10             # lock on to KD
+wait 30
+press ZR                # a bomb out
+wait 120
+hold ZL+LSTICK_UP 60    # walk in, locked on (his mouth faces us when he inhales)
+press A                 # throw
+mark b-bomb2
+wait 240
+mark b-stun2
+press ZL 10             # lock on to KD
+wait 30
+press ZR                # a bomb out
+wait 120
+hold ZL+LSTICK_UP 60    # walk in, locked on (his mouth faces us when he inhales)
+press A                 # throw
+mark b-bomb3
+wait 240
+mark b-stun3
+press ZL 10             # lock on to KD
+wait 30
+press ZR                # a bomb out
+wait 120
+hold ZL+LSTICK_UP 60    # walk in, locked on (his mouth faces us when he inhales)
+press A                 # throw
+mark b-bomb4
+wait 240
+mark b-stun4
+press ZL 10             # lock on to KD
+wait 30
+press ZR                # a bomb out
+wait 120
+hold ZL+LSTICK_UP 60    # walk in, locked on (his mouth faces us when he inhales)
+press A                 # throw
+mark b-bomb5
+wait 240
+mark b-stun5
+press ZL 10             # lock on to KD
+wait 30
+press ZR                # a bomb out
+wait 120
+hold ZL+LSTICK_UP 60    # walk in, locked on (his mouth faces us when he inhales)
+press A                 # throw
+mark b-bomb6
+wait 240
+mark b-stun6
+press ZL 10             # lock on to KD
+wait 30
+press ZR                # a bomb out
+wait 120
+hold ZL+LSTICK_UP 60    # walk in, locked on (his mouth faces us when he inhales)
+press A                 # throw
+mark b-bomb7
+wait 240
+mark b-stun7
+press ZL 10             # lock on to KD
+wait 30
+press ZR                # a bomb out
+wait 120
+hold ZL+LSTICK_UP 60    # walk in, locked on (his mouth faces us when he inhales)
+press A                 # throw
+mark b-bomb8
+wait 240
+mark b-stun8
+hit Enemy_DungeonBoss_Dodongo 4
+wait 60
+mark b-hit
+wait 600
+kill Enemy_DungeonBoss_Dodongo
+wait 300
+mark b-kill
+wait 1500
+mark b-end
