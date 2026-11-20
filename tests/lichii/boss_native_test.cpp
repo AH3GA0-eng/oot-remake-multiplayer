@@ -1788,7 +1788,7 @@ Boss Phantom(Role role, std::optional<float> y = std::nullopt, std::uint8_t owne
 
 } // namespace
 
-TEST_CASE("native boss: row 178: a copy made ours mid-move starts that move over as ours, then its brain chooses again") {
+TEST_CASE("native boss: row 178: a copy made ours mid-move starts that move over as ours, not a brain re-choice") {
     FakeGuest g;
     const std::int32_t brain = 6;
     g.Write(kBsa + addr::kBsaBrainVerb, &brain, 4);
@@ -1824,15 +1824,9 @@ TEST_CASE("native boss: row 178: a copy made ours mid-move starts that move over
     c = t.Step(g, false, 0, kMain);
     REQUIRE(c);
     CHECK(c->function == kMain + addr::kRequestActionVerb);
-    // Made: then its brain verb is set again (the restart alone left its brain as it was while a copy: 25 s stalls).
-    c = t.Step(g, true, 0, kMain);
+    CHECK_FALSE(t.Step(g, true, 0, kMain));
     CHECK(t.Totals().owner_restarted == 1);
     CHECK(t.Totals().owner_rechosen == 0);
-    REQUIRE(c);
-    CHECK(c->function == kMain + addr::kSetBrainVerb);
-    CHECK(c->x[1] == 6);
-    CHECK_FALSE(t.Step(g, true, 0, kMain));
-    CHECK(t.Totals().owner_rechosen == 1);
     CHECK_FALSE(t.Step(g, false, 0, kMain));  // once
     // Our ask goes through the wrap as any of ours: every copy starts the move over too.
     CHECK_FALSE(t.OnActionVerb(kBsa, g.Get<Request>(kBlock), true, true));

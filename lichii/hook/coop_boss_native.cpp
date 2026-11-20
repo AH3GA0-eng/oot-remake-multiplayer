@@ -1153,12 +1153,6 @@ std::optional<CoopPuppet::Call> Table::Step(CoopPuppet::Guest& guest, bool after
             if (Entry* e = Find(std::exchange(pending_bsa_, 0)); e != nullptr && e->role == Role::owner) {
                 e->restart_action.reset();
                 ++counts_.owner_restarted;
-                // Row 178 rerun (lane2 hs-phantom-ganon-p2 x2): the restart alone left his brain where it was
-                // while a copy (its own brain skipped all that time): it asked the same move (changed 0) for
-                // 25 s ('SpearAttack', then 'Fly') until the stall guard set its brain verb again, after which
-                // he went on (Fly -> BasicAttack). The module now starts clean (physics, own sub-state), then
-                // the brain chooses from there on the next frame, as row 149's re-choice.
-                e->rechoose = true;
             }
             break;
         case Pending::none:
