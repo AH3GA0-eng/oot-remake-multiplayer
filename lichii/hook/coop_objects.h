@@ -42,9 +42,10 @@ void Share(Core::System& system, coop::host::Session* session,
 // component's max to it (on by default; LICHII_COOP_HEARTS_TO_LINK=0 turns
 // that off).
 void SetMaxLife(std::optional<std::int32_t> quarters);
-// Rows 136/137: while the host's save load holds MaxLife lower (FlagWatcher::reset_lowered), the walk lowers our
-// Link's own Life component to it (and his life to that max), so the game stops writing the replaced save's hearts
-// back. Nothing: no hold (the usual case, and always with co-op idle).
+// Rows 136/137 and 181: while MaxLife is held lower (FlagWatcher::held_lower: the host's save load, or a second
+// pickup of a boss's one heart container put back), the walk lowers our Link's own Life component to it (and his
+// life to that max), so the game stops writing the higher max back. Nothing: no hold (the usual case, and always
+// with co-op idle).
 void SetMaxLifeLowerTo(std::optional<std::int32_t> quarters);
 
 // Our own Link's hearts as the object walk last read them from his Life
