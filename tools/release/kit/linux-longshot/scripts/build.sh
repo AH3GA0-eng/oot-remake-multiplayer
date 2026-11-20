@@ -326,6 +326,7 @@ if [[ -f $ootrr_pin ]]; then
             if [[ -n $o_had && ${o_had%% *} != "$o_rel" ]]; then
                 for seed_dir in "$GAME"/mods/randomizer-*/; do
                     [[ -f ${seed_dir}coop-seed.txt ]] || continue
+                    [[ -f ${seed_dir}coop-rando.txt ]] || continue  # (put in by hand: the player's, kept)
                     seed_name=$(basename "$seed_dir")
                     rm -rf "$seed_dir" "$GAME/mods/oot-remake-randomizer/$seed_name.ootrr" \
                         "$GAME/mods/oot-remake-randomizer/$seed_name.spoiler.txt"
@@ -459,7 +460,8 @@ rando_tables() {   # the size tables of the mods the game loads besides the seed
 }
 pack_table=$(ls -t "$mod"/romfs/System/Resource/*.rsizetable.zs 2>/dev/null | head -n 1 || true)
 for seed_dir in "$GAME"/mods/randomizer-*/; do
-    [[ -n $pack_table && -f ${seed_dir}coop-seed.txt ]] || continue
+    # (only seeds the game built, coop-rando.txt: one put in by hand gets the pack's entries from merge_tables.py)
+    [[ -n $pack_table && -f ${seed_dir}coop-seed.txt && -f ${seed_dir}coop-rando.txt ]] || continue
     seed_name=$(basename "$seed_dir")
     seed_table=$(ls "${seed_dir}"romfs/System/Resource/*.rsizetable.zs 2>/dev/null | head -n 1 || true)
     [[ -n $seed_table && ! $pack_table -nt $seed_table ]] && continue
