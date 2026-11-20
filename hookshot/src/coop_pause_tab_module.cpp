@@ -1804,22 +1804,12 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             }
             if (set_row != g_set_row.load()) g_set_row = set_row, g_live_poke = true;
             // The Multiplayer page's details list (DetailLines, on the main and Session views) is the game's Options
-            // rows, its buttons: a click on one puts the game's cursor there. A Left sends it back to the rows, as on
-            // Longshot Settings, and an A there is no row's (the rows' last focused one would have been taken).
+            // rows, its buttons: Longshot's mouse puts the game's cursor on the one under it. Nothing there to pick: an
+            // A there is no row's (the rows' last focused one would have been taken). The cursor is left there (a Left
+            // to send it back bounced it each time the mouse passed over the list, a tester's run 2026-11-19); the
+            // mouse onto the rows takes it back.
             bool on_list = false;
-            if (shown && !typing && !settings && !browse) {
-                const std::uint64_t now = NowMs();
-                if (const std::string on = FocusedShownName(); on.rfind("Pa_List_", 0) == 0) {
-                    on_list = true;
-                    if (now - g_list_focus_fix_ms > 300) {
-                        g_list_focus_fix_ms = now;
-                        out |= kPadLeft;
-                        LOG_INFO(Core, "coop: pause tab: the game's cursor on {} (the details): Left sends it back to the "
-                                       "rows",
-                                 on);
-                    }
-                }
-            }
+            if (shown && !typing && !settings && !browse) on_list = FocusedShownName().rfind("Pa_List_", 0) == 0;
             if (decide) {
                 const int clicked = g_mouse_rows.TakeClicked(NowMs());
                 if (clicked < 0 && cell >= 0) {
