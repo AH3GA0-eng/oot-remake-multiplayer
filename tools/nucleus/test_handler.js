@@ -46,7 +46,8 @@ var System = {
         File: {
             Exists: function (p) { return fso.FileExists(p); },
             ReadAllText: function (p) { return readFile(p); },
-            WriteAllText: function (p, t) { writeFile(p, t); }
+            WriteAllText: function (p, t) { writeFile(p, t); },
+            Delete: function (p) { if (fso.FileExists(p)) fso.DeleteFile(p); }
         },
         Directory: {
             Exists: function (p) { return fso.FolderExists(p); },
@@ -378,9 +379,16 @@ for (var bi = 0; bi < bads.length; bi++) {
     writeFile(joinTxt, bads[bi] + "\r\n");
     newSession();
     logged = [];
-    var bj = playAs(0, JOIN);
-    check(startedWindows.length === 0 && startedServers.length === 0 && logged.join("\n").indexOf("Join a game on another PC") >= 0 &&
-          bj.indexOf("server = 127.0.0.1\r\nport = 27590\r\n") >= 0, "join: '" + bads[bi] + "' tells the player: " + logged.join(" | "));
+    writeFile(sessionTxt, "stale\r\n10.0.0.1\r\n27510\r\n");
+    for (var dp = 0; dp < 2; dp++) {
+        if (fso.FileExists(fso.BuildPath(instances[dp], "coop.ini"))) fso.DeleteFile(fso.BuildPath(instances[dp], "coop.ini"));
+    }
+    var badThrew = false, bj = "", bj2 = "", badThrew2 = false;
+    try { bj = playAs(0, JOIN); } catch (e1) { badThrew = true; }
+    try { bj2 = playAs(1, JOIN); } catch (e2) { badThrew2 = true; }   // a later player: nothing either
+    check(badThrew && badThrew2 && bj === "" && bj2 === "" && startedWindows.length === 0 && startedServers.length === 0 &&
+          logged.join("\n").indexOf("Nothing is started") >= 0 && !fso.FileExists(sessionTxt),
+          "join: '" + bads[bi] + "' tells the player, starts nothing, no coop.ini, no stale session: " + logged.join(" | "));
 }
 fso.DeleteFile(joinTxt);
 

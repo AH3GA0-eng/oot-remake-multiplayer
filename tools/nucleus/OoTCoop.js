@@ -31,7 +31,10 @@ var COOP_JOIN = "Join a game on another PC";
 Game.AddOption("Who can join",
                "This PC only: the players on this PC. Allow online players: also friends on other PCs, as with " +
                "Host.bat (the router forward and an invite code in the server window, copied to the clipboard; " +
-               "Windows may ask once to let coop_server through its firewall).",
+               "Windows may ask once to let coop_server through its firewall). Join a game on another PC: no server " +
+               "here; the host's invite code or 'address:port password' line (first line of " +
+               "nucleus-players\\join.txt, else the clipboard); every game connects DIRECTLY to the host's address " +
+               "(router forward, VPN or same network; no join helper, which serves one game only).",
                "Online", [COOP_LOCAL, COOP_ONLINE, COOP_JOIN], COOP_LOCAL);
 // Join a game on another PC: the host's invite code (or its 'address:port password' line from Same network / VPN) is
 // the first line of nucleus-players\join.txt beside the game, else on the clipboard (Nucleus options are choice lists,
@@ -78,6 +81,7 @@ Game.KillProcessesOnClose = ["coop_server"];   // the session's server (and any 
 var COOP_PORT = 27590;       // this PC only: not the kit's 27510, nor the test lanes' 27520/27530
 var COOP_KIT_PORT = 27510;   // online: the kit's coop.ini port, else this one (Host.bat's)
 var coopSession = null;
+var coopJoinFailed = false;   // join mode: player 1 found no usable host code, the later players start nothing either
 
 function coopPath(a, b) {
     return System.IO.Path.Combine(a, b);
@@ -475,13 +479,24 @@ Game.Play = function () {
     if (player === 1 && coopWantsJoin()) {
         var joined = coopParseJoin(coopJoinText(mine));
         if (joined.ok) {
+            coopJoinFailed = false;
             coopSession = { password: joined.password, server: joined.server, port: joined.port, pads: 0 };
             Context.Log("OoT Co-op: joining the host at " + joined.server + ":" + joined.port + " (no server started here)");
         } else {
-            coopSession = { password: coopNewKey(), server: "127.0.0.1", port: COOP_PORT, pads: 0 };
-            coopTell("Join a game on another PC: " + joined.error + ". These games cannot join.");
+            // Nothing is started: no session.txt (an old one must not feed the other players), the player is told, and
+            // the script stops here (this game's start is abandoned, nothing is written for it).
+            coopJoinFailed = true;
+            try {
+                System.IO.File.Delete(sessionFile);
+            } catch (e) {
+                // no old file
+            }
+            coopTell("Join a game on another PC: " + joined.error + ". Nothing is started.");
+            throw new Error("Join a game on another PC: " + joined.error);
         }
         coopWrite(sessionFile, coopSession.password + "\r\n" + coopSession.server + "\r\n" + coopSession.port + "\r\n");
+    } else if (coopWantsJoin() && coopJoinFailed) {
+        throw new Error("Join a game on another PC: no usable host code (see player 1's message)");
     } else if (player === 1) {
         var running = kit !== "" ? coopServersRunning() : 0;
         if (running > 0) {
