@@ -52,6 +52,8 @@ struct Hooks {
     std::uint64_t direct_ms = 3000;
     // (Navi) This game's New Game+ level (coop_ngplus.h), told to our server each round for everyone. Empty: 0.
     std::function<std::uint8_t()> ngplus_level;
+    // The host changed the join password while hosting: this game's own client takes it for its reconnects.
+    std::function<void(const std::string&)> password_changed;
 };
 
 // Most players at once for a server the title menu's Host starts: the options' number (1 to 16, more taken as 16),

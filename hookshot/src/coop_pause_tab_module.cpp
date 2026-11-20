@@ -443,6 +443,13 @@ SessionView ViewNow(View view) {
         v.s.lan_password = !g_page.Field(1).text().empty();
         v.lan_game = g_lan_pick.row;
     }
+    {
+        std::lock_guard lock(g_mutex);   // (the page's typing: the list's rows are its keys while a field is typed into)
+        if (const int t = g_page.Typing(); t >= 0) {
+            v.typing_lines = TypingLines(t, g_page.Field(t), g_page.TypingLetter());
+            v.typing_key = g_page.TypingKey();
+        }
+    }
     if (v.s.hosting) v.asking = CoopLobby::Asking();
     v.s.asking = !v.asking.empty();
     return v;
@@ -483,6 +490,10 @@ std::array<float, kRows> g_rows_alpha{};
 std::array<std::array<std::uint64_t, 2>, kListRows> g_list_box{};
 std::array<std::array<bool, 2>, kListRows> g_list_box_own{};   // (as the layout has them: shown again so)
 std::array<int, kListRows> g_list_box_vis{};
+// Each list row's own value arrows (N_Content_00): shown only on a line that changes with Left and Right (ListLine::
+// arrows: the typing keys' Letter).
+std::array<std::uint64_t, kListRows> g_list_arrows{};
+std::array<int, kListRows> g_list_arrows_vis{};
 
 // The rows with nothing on them not shown; the game's cursor on one: one Up moves it to the nearest shown (OnPad).
 // g_live_mutex.
@@ -516,6 +527,7 @@ void LiveCells(void* ctx, std::uint64_t layout, std::uint64_t gen, const Session
             g_list_panes[k] = IsPart(pane) ? pane : 0;
             if (i > 0) g_cell_pane_at[k - 1] = g_list_panes[k];
             g_list_vis[k] = -1, g_list_alpha[k] = -1, g_list_box_vis[k] = -1, g_list_box[k] = {};
+            g_list_arrows[k] = 0, g_list_arrows_vis[k] = 0;
             if (!IsPart(pane)) continue;
             ++found;
             // (inside the row: the value's arrows and the check mark an Options row has, never ours; its value box)
@@ -523,6 +535,7 @@ void LiveCells(void* ctx, std::uint64_t layout, std::uint64_t gen, const Session
             for (const char* inner : {"N_Content_00", "P_CheckMark_00"}) {
                 if (const std::uint64_t in = PaneIn(ctx, row, inner); in != 0) SetVisible(ctx, in, false);
             }
+            g_list_arrows[k] = PaneIn(ctx, row, "N_Content_00");
             g_list_box[k] = {PaneIn(ctx, row, "W_Base_01"), PaneIn(ctx, row, "W_Base_03")};
             for (std::size_t j = 0; j < 2; ++j) {
                 const std::uint64_t b = g_list_box[k][j];
@@ -541,12 +554,14 @@ void LiveCells(void* ctx, std::uint64_t layout, std::uint64_t gen, const Session
     }
     // (the browser's games; on the main view and the Session view the session's details, DetailLines)
     const View view = ViewShown();
-    const bool browse = view == View::kLan;
-    const std::vector<ListLine> lines = browse ? ListLines(v) : DetailLines(view, v);
+    // (a field typed into: the list is its keys, TypingLines, whatever the view)
+    const bool keys = !v.typing_lines.empty();
+    const bool browse = !keys && view == View::kLan;
+    const std::vector<ListLine> lines = keys ? v.typing_lines : browse ? ListLines(v) : DetailLines(view, v);
     int games = 0;
     for (int c = 0; c < kCells; ++c) games += CellIndex(v.s, c) >= 0 ? 1 : 0;
     g_cell_games = browse ? games : 0;
-    const int picked = browse ? g_cell.load() : -1;
+    const int picked = keys ? v.typing_key : browse ? g_cell.load() : -1;
     for (int i = 0; i < kListRows; ++i) {
         const std::size_t k = static_cast<std::size_t>(i);
         const std::uint64_t pane = g_list_panes[k];
@@ -566,10 +581,16 @@ void LiveCells(void* ctx, std::uint64_t layout, std::uint64_t gen, const Session
             }
         }
         if (g_list_vis[k] != (on ? 1 : 0)) SetVisible(ctx, pane, on), g_list_vis[k] = on ? 1 : 0;
+        if (const int arrows = on && lines[k].arrows ? 1 : 0; g_list_arrows[k] != 0 && g_list_arrows_vis[k] != arrows) {
+            SetVisible(ctx, g_list_arrows[k], arrows != 0), g_list_arrows_vis[k] = arrows;
+        }
         // (the header a little dim, as a table's; a game bright when picked, or all of them when the rows have the pad;
         // the details, which nothing picks, as Longshot Settings' lines not picked: an Options row's value box is the
         // game's bright orange, dimmed to its brown)
-        const float alpha = i == 0 ? 0.7f : !browse ? 0.55f : picked < 0 || picked == i - 1 ? 1.0f : 0.45f;
+        const float alpha = keys      ? (i == 0 || picked == i - 1 ? 1.0f : 0.45f)
+                            : i == 0  ? 0.7f
+                            : !browse ? 0.55f
+                            : picked < 0 || picked == i - 1 ? 1.0f : 0.45f;
         if (on && g_list_alpha[k] != alpha) CallAlpha(ctx, pane, alpha), g_list_alpha[k] = alpha;
     }
     for (int r = 0; r < kRows; ++r) {
@@ -1283,44 +1304,15 @@ bool ReadCursor(float* x, float* y, bool* left) {
 #endif
 }
 
-// The cursor over the game window's client area, 0 to 1 across it (the keyboard's keys are drawn in its pixels), and
-// the left button. False when the game's window is not in front or the cursor is off it.
-bool ReadClientCursor(float* fx, float* fy, bool* left) {
-#ifdef _WIN32
-    static HWND window = nullptr;
-    if (window == nullptr || !IsWindow(window)) {
-        window = nullptr;
-        EnumWindows(FindGameWindow, reinterpret_cast<LPARAM>(&window));
-        if (window == nullptr) return false;
-    }
-    if (GetForegroundWindow() != window) return false;
-    POINT p{};
-    RECT rc{};
-    if (!GetCursorPos(&p) || !ScreenToClient(window, &p) || !GetClientRect(window, &rc)) return false;
-    if (p.x < 0 || p.y < 0 || p.x >= rc.right || p.y >= rc.bottom || rc.right <= 0 || rc.bottom <= 0) return false;
-    *fx = static_cast<float>(p.x) / static_cast<float>(rc.right), *fy = static_cast<float>(p.y) / static_cast<float>(rc.bottom);
-    *left = (GetAsyncKeyState(GetSystemMetrics(SM_SWAPBUTTON) ? VK_RBUTTON : VK_LBUTTON) & 0x8000) != 0;
-    return true;
-#else
-    (void)fx, (void)fy, (void)left;
-    return false;
-#endif
+// What changes the list's typing keys show: the fields, their cursors, the key and the letter picked. g_mutex.
+std::uint64_t TypingHash() {
+    std::string all;
+    for (int f = 0; f < 3; ++f) all += g_page.Field(f).text() + '\n' + std::to_string(g_page.Field(f).cursor()) + '\n';
+    all += std::to_string(g_page.TypingKey()) + '\n' + g_page.TypingLetter();
+    return std::hash<std::string>{}(all);
 }
-
-// What the on-screen keyboard shows (coop_keyboard.h), from the page's typing. g_mutex.
-void PublishKeyboard() {
-    CoopKeyboard::Shown s;
-    const int t = g_page.Typing();
-    s.open = t >= 0 && g_page.Shown();
-    if (s.open) {
-        s.title = t == 2 ? "New join password" : t == 1 ? "Join password" : "Room name";
-        s.text = g_page.Field(t).Shown(true, 40);
-        s.row = g_page.KeyCursor().row(), s.col = g_page.KeyCursor().col();
-    }
-    CoopKeyboard::Publish(s);
-}
-// The mouse on the keyboard: a key pressed where the left button went down and came up; Longshot's own A for the
-// click (it presses A for a click in the game's menus) is not a second press. g_mutex.
+// The mouse on the typing keys (the list's rows): a key pressed where the left button went down and came up; Longshot's
+// own A for the click (it presses A for a click in the game's menus) is not a second press. g_mutex.
 bool g_kb_held = false;
 int g_kb_press = -1;
 std::uint64_t g_kb_click_ms = 0;
@@ -1691,9 +1683,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             std::lock_guard lock(g_mutex);
             was = g_page.Shown();
             const int typing_was = g_page.Typing();
-            const std::uint64_t field_was = std::hash<std::string>{}(g_page.Field(0).text() + '\n' +
-                                                                     g_page.Field(1).text()) ^ g_page.Field(0).cursor() ^
-                                            (g_page.Field(1).cursor() << 8);
+            const std::uint64_t field_was = TypingHash();
             // (A on System's Longshot Settings button opens its page: the button's name read only while A is held)
             {   // (which of System's buttons of ours the game's cursor is on: their names, read only while A is held)
                 int on = -1;
@@ -1705,14 +1695,14 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             }
             if (g_page.Typing() >= 0) {
                 const std::uint64_t now = NowMs();
-                float fx = 0, fy = 0;
+                float x = 0, y = 0;
                 bool left = false;
-                if (ReadClientCursor(&fx, &fy, &left)) {
-                    int r = -1, c = -1;
-                    const bool on = CoopKeyboard::KeyAtPoint(fx, fy, &r, &c);
-                    if (left && !g_kb_held) g_kb_press = on ? r * 16 + c : -1;
-                    if (!left && g_kb_held && on && g_kb_press == r * 16 + c) {
-                        g_page.PressKey(r, c);
+                if (ReadCursor(&x, &y, &left)) {
+                    const int cell = CellAt(ReadCellBoxes(), x, y);   // (the list's row under the header: a key)
+                    const int key = cell >= 0 && cell < kTypeKeys ? cell : -1;
+                    if (left && !g_kb_held) g_kb_press = key;
+                    if (!left && g_kb_held && key >= 0 && g_kb_press == key) {
+                        g_page.PressKey(key);
                         g_kb_click_ms = now;
                     }
                     g_kb_held = left;
@@ -1722,14 +1712,11 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             out = g_page.OnPad(in, NowMs());
             typing = g_page.Typing() >= 0;
             if (g_nudge_up.exchange(false) && g_page.Shown() && !typing && (in & (kPadUp | kPadDown)) == 0) out |= kPadUp;
-            PublishKeyboard();
             if (const int typed = g_page.TakeTyped(); typed == 2) {
                 new_password = g_page.Field(2).text();
                 g_page.Field(2).Clear();
             }
-            const std::uint64_t field_now = std::hash<std::string>{}(g_page.Field(0).text() + '\n' +
-                                                                     g_page.Field(1).text()) ^ g_page.Field(0).cursor() ^
-                                            (g_page.Field(1).cursor() << 8);
+            const std::uint64_t field_now = TypingHash();
             if (typing_was != g_page.Typing() || field_was != field_now) g_live_poke = true;
             shown = g_page.Shown();
             decide = g_page.TakeDecide();
@@ -1958,7 +1945,6 @@ bool Key(std::uint32_t vk, bool repeat) noexcept {
         std::lock_guard lock(g_mutex);
         const bool taken = g_page.Key(vk, repeat);
         if (taken) g_live_poke = true;
-        PublishKeyboard();
         return taken;
     } catch (...) {
         return false;
@@ -1970,7 +1956,6 @@ bool Char(std::uint32_t cp) noexcept {
         std::lock_guard lock(g_mutex);
         const bool taken = g_page.Char(cp);
         if (taken) g_live_poke = true;
-        PublishKeyboard();
         return taken;
     } catch (...) {
         return false;
