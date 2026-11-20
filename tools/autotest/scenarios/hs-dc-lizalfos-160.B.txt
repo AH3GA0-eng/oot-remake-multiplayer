@@ -16,6 +16,10 @@
 #     Now: in through room 1's door (DestinationAnchor 92.5 101.55 -31/-33) onto its floor (Lizalfos spots 82.75 100.6
 #     -44.5); room 2 in through its door (110.0 116.2 -17.25/-13.25). Lane saves checked offline: DC clear flags
 #     (Gimmick_DefeatEnemy_Open_DodongoCave_01/02, HavePlayedEvent ..DefeatLizalfos01/02) all 0, no Lizalfos keys.
+#  Run 3 setup (dungeon-sweep-0118-7, offline from the romfs): room 2's pair (Logic/Gimmick_DodongoCavern_MiddleBoss02_6dee)
+#     has Logic_Create <- OR-latch(its shutter's event output, DodongoCavern_AppearLizalfos_2F 0xaf24307b) and Logic_Delete
+#     <- Gimmick_DefeatEnemy_Open_DodongoCave_02. The lane saves get AppearLizalfos_2F = 1 (defeat flags 0), so the pair
+#     is made at the scene load: room 1 is skipped, both go straight to room 2's door.
 
 #! noload
 #! start coop: test warp done
@@ -34,16 +38,14 @@ wait 300
 press A
 wait 2400
 mark in
-place 92.5 102.0 -27.0    # the corridor outside room 1's door, behind A (no lava)
-wait 2800                 # A fights room 1 (A's a-room1-done ~2800-3200 after its in)
-mark b-room1-done
-wait 1100                 # A reaches room 2 first (A's a-near ~3400-4200)
+wait 400                  # A reaches room 2 first (owns both)
 place 110.0 116.6 -13.0   # room 2's door (outside)
 wait 60
 goto 110.0 -22.0 1.0 240
 goto 106.0 -35.0 1.0 300  # beside A
+place 106.0 116.6 -35.0   # inside if the walk fell short
 mark b-near
-wait 600                  # A killed one and is down (A's a-down ~4300-5100)
+wait 1000                 # A killed one and is down (A's a-down <= ~1800 after its in)
 mark b-down
 kill Enemy_MiddleBoss_Lizalfos   # the last one, its owner down
 wait 120

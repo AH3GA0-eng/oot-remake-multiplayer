@@ -16,6 +16,10 @@
 #     Now: in through room 1's door (DestinationAnchor 92.5 101.55 -31/-33) onto its floor (Lizalfos spots 82.75 100.6
 #     -44.5); room 2 in through its door (110.0 116.2 -17.25/-13.25). Lane saves checked offline: DC clear flags
 #     (Gimmick_DefeatEnemy_Open_DodongoCave_01/02, HavePlayedEvent ..DefeatLizalfos01/02) all 0, no Lizalfos keys.
+#  Run 3 setup (dungeon-sweep-0118-7, offline from the romfs): room 2's pair (Logic/Gimmick_DodongoCavern_MiddleBoss02_6dee)
+#     has Logic_Create <- OR-latch(its shutter's event output, DodongoCavern_AppearLizalfos_2F 0xaf24307b) and Logic_Delete
+#     <- Gimmick_DefeatEnemy_Open_DodongoCave_02. The lane saves get AppearLizalfos_2F = 1 (defeat flags 0), so the pair
+#     is made at the scene load: room 1 is skipped, both go straight to room 2's door.
 
 #! noload
 #! start coop: test warp done
@@ -34,23 +38,11 @@ wait 300
 press A
 wait 2400
 mark in
-place 92.5 102.0 -29.5    # the corridor outside room 1's door
-wait 60
-goto 92.5 -36.0 1.0 300   # in through the door: the room's own trigger makes its pair
-goto 83.5 -44.5 1.0 300   # its west floor (beside the pair's spot 84.9 -45.7)
-wait 30
-place 82.75 101.0 -44.5   # stay on the floor if the walk fell short
-wait 600
-mark a-room1
-kill Enemy_MiddleBoss_Lizalfos
-wait 60
-kill Enemy_MiddleBoss_Lizalfos
-wait 1800                 # room 1's event, its shutters; room 2's pair is made by the room logic (Logic_Create, latched)
-mark a-room1-done
 place 110.0 116.6 -13.0   # room 2's door (outside)
 wait 60
 goto 110.0 -22.0 1.0 240  # in through the door
 goto 108.0 -33.0 1.0 300  # between its pair
+place 108.0 116.6 -33.0   # inside if the walk fell short
 wait 300
 mark a-near
 kill Enemy_MiddleBoss_Lizalfos
