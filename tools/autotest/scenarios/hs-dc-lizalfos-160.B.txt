@@ -22,6 +22,8 @@
 #     is made at the scene load: room 1 is skipped, both go straight to room 2's door.
 
 #  Run 20261120-130248 VOID (see A): B now kills 0x155c, the nearest from its spot (not its kept copy of 0x2345).
+#  Run 20261120-132403: a 'goto 111 -36' toward 0x2345 walked B into the lava gap between the room's two platforms
+#     (B burning when its counter finished, then down): B stays on 0x155c's platform now.
 #! noload
 #! start coop: test warp done
 #! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_CHEATS=1
@@ -48,8 +50,6 @@ place 113.5 116.2 -37.0   # inside, on its floor, if the walk fell short
 mark b-near
 wait 1400                 # A killed one and is down (two hurts; A's a-down <= ~2200 after its in)
 mark b-down
-goto 111.0 -36.0 1.0 60   # a step west: the camera looks at 0x2345's spot (102 -31): is our kept copy shown? (0x155c 5.4 m stays the nearest)
-mark b-look
 kill Enemy_MiddleBoss_Lizalfos   # the last one, its owner down
 wait 120
 mark b-last

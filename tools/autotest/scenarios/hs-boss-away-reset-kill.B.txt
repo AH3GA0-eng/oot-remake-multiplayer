@@ -22,17 +22,8 @@ rstick 0 1 60           # walk into the room (GohmaStage Banc: floor Area x 22.5
 press ZL 10             # look up at her
 wait 900
 mark b-trigger          # her anim leaves Pre_Battle_Ceiling_* here, else the kill is VOID (no BossDie asked)
-# She drops and WALKS at Link (Walk_Start ~2 s after b-trigger, then her attacks) and climbs back up ~12 s
-# later. The kill lands only while she is on the floor: on the ceiling her life stops at 1 (run 20261120-124007:
-# the old 'goto 12.0' + 'wait 1500' killed her on the ceiling and she wiped B). So: kill at once, and again
-# twice on her floor time (a kill of a dead Gohma finds none with a life: harmless).
-wait 150
 mark b-fight
-kill Enemy_DungeonBoss_Gohma
-wait 120
-kill Enemy_DungeonBoss_Gohma
-wait 120
-kill Enemy_DungeonBoss_Gohma
+include hs-gohma-kill.inc.txt   # her drop, then three kills in her floor time
 mark b-kill
 wait 2400               # her death and its event
 goto 7.5 67.2 1.5 900   # the room's centre, where the heart container falls
