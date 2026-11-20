@@ -12,14 +12,18 @@ press A
 wait 2400
 mark after
 wait 600
-goto -66.0 3.5 3.5 900
-toward -71.33 3.5 10
+goto -5.0 -0.6 0.4 900   # 1.7 m from A's Baba (a real swing reaches it; the test hit on a copy is local only)
+toward -6.0 -1.95 10
+press ZL 10             # lock on
+wait 30
+press Y 8               # sword swing: a real hit on A's Baba, sent to A
 wait 120
-hit Enemy_Dekubaba 1
-wait 300
 mark hit
-wait 300
-kill Enemy_Dekubaba
+press Y 8
+wait 90
+press Y 8
+wait 90
+press Y 8               # more swings: the killing blow if it still lives
 wait 300
 mark kill
 wait 900
