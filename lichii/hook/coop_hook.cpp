@@ -265,6 +265,7 @@ struct FrameView {
     std::optional<coop::protocol::Age> age;
     std::vector<coop::overlay::Shown> others;
     std::vector<std::uint8_t> hidden;  // others with no marker (scene.hpp: hide)
+    std::vector<std::uint8_t> unheard; // others whose voice is not heard (scene.hpp: voice_heard; no event counts)
     std::optional<Markers> markers;  // none: no camera
     std::string camera_note;         // for the panel, when the game runs
     bool event = false;              // our own event hides the others (and the game its HUD)
@@ -1557,6 +1558,10 @@ public:
                         coop::host::Visibility::hide) {
                         view.hidden.push_back(s.number);
                     }
+                    // Their voice: the place alone (row 155: our talk hides the puppet, not the voice).
+                    if (!coop::host::voice_heard(ours, theirs)) {
+                        view.unheard.push_back(s.number);
+                    }
                 }
                 return shown;
             });
@@ -1568,7 +1573,7 @@ public:
                             report.connected ? session_.get() : nullptr, report.server_now_us);
         // Proximity voice (docs/voice.md): our microphone out, theirs at their Links.
         CoopVoice::SetHostMuted(CoopLobby::OwnVoiceMuted());
-        CoopVoice::Frame(view.game ? view.position : std::nullopt, view.others, view.hidden,
+        CoopVoice::Frame(view.game ? view.position : std::nullopt, view.others, view.unheard,
                          report.connected ? session_.get() : nullptr);
         // Our Ocarina's notes for the other games (issue 152, coop_ocarina_sound.h).
         CoopOcarinaSound::Frame(system,

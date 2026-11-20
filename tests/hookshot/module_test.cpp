@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cctype>
+#include <cstddef>
 
 #include <cstdio>
 #include <filesystem>
@@ -111,10 +112,35 @@ std::string Applied(const std::string& text, const std::string& patch, const std
 }  // namespace
 
 TEST_CASE("hookshot: the API header in our patches is hookshot/src's") {
-    // 0001 makes it, 0004 (the title menu) adds to it.
+    // 0001 makes it, 0004 (the title menu) and 0032 (the Settings tab) add to it.
     const std::string first = NewFile(Patch(), "host/hos_coop_api.h");
     const std::string title = ReadFile(kRepo / "hookshot" / "patches" / "0004-coop-title-menu.patch");
-    CHECK(Applied(first, title, "host/hos_coop_api.h") == ReadFile(kRepo / "hookshot" / "src" / "hos_coop_api.h"));
+    const std::string settings = ReadFile(kRepo / "hookshot" / "patches" / "0032-coop-settings.patch");
+    CHECK(Applied(Applied(first, title, "host/hos_coop_api.h"), settings, "host/hos_coop_api.h") ==
+          ReadFile(kRepo / "hookshot" / "src" / "hos_coop_api.h"));
+}
+
+TEST_CASE("hookshot: patch 0032 hands the module the Insert menu's settings, the control bridge's own two") {
+    const std::string p = ReadFile(kRepo / "hookshot" / "patches" / "0032-coop-settings.patch");
+    CHECK(p.find("+    api.setting = bridge_setting, api.setting_set = bridge_setting_set;") != std::string::npos);
+    CHECK(p.find("+    if (!out || !rx_control_setting(index, &s)) return 0;") != std::string::npos);
+    // (the control bridge's own answer: 1 set, 0 no such row, -1 fixed, -2 unreachable; never a -1 or -2 as set)
+    CHECK(p.find("+    const int r = rx_control_setting_set(key, value, &s);\n+    if (r && out) setting_copy(out, &s);\n"
+                 "+    return r;") != std::string::npos);
+    CHECK(p.find("+_Static_assert(sizeof(HosCoopSetting) == sizeof(HosControlSetting)") != std::string::npos);
+    // (the bridge, the API header and the microphones' list: no lift hook)
+    CHECK(p.find("diff --git a/nx2/") == std::string::npos);
+    CHECK(p.find("diff --git a/host/oot_menu.c") == std::string::npos);   // (five tabs: the mouse's own table)
+    // The microphones listed as the menu lists them when it opens, at an enumeration's start, when their count moved.
+    CHECK(p.find("+    if (index == 0 && can_mic() && std::chrono::steady_clock::now() - mics_asked > std::chrono::seconds(2)) {") !=
+          std::string::npos);
+    CHECK(p.find("+        if (std::min(host->mic_count(), kMaxMics) != mic_listed) refresh_mics();") != std::string::npos);
+    // A key the bridge handed out cut to 31 bytes is the row's it starts.
+    CHECK(p.find("+    while (i < kRows && !(bridge_row(i) && bridge_key_is(ini_key(rows[i]), key))) i++;") != std::string::npos);
+    // The module's table reads them only when the exe's table is that long (an older Hookshot goes without).
+    static_assert(offsetof(HosCoopApi, setting) > offsetof(HosCoopApi, scratch));
+    static_assert(offsetof(HosCoopApi, setting_set) > offsetof(HosCoopApi, setting));
+    static_assert(sizeof(HosCoopSetting) == 32 + 48 + 64 + 16 + 6 * sizeof(int));
 }
 
 TEST_CASE("hookshot: patch 0004 hooks the title screen, hands the pad over and sets x8 for calls") {
@@ -1409,4 +1435,42 @@ TEST_CASE("hookshot: the module tab's column is opaque and a valued page row has
     const auto in_menu = [&menu](const char* code) { return menu.find(Squashed(code)) != std::string::npos; };
     CHECK(in_menu("c.d->AddRectFilled(ImVec2(cx0, hh), ImVec2(cx1, c.h), ui::rgba(34, 26, 17));"));
     CHECK(in_menu("if (r.right) ui::triangle(c, ImVec2(vb.x - 15 * s, (va.y + vb.y) * 0.5f), 10 * s, 1,"));
+}
+
+// Row 156 (three crashes, 0xc0000005 in SDL_GetAudioStreamAvailable on the thread reading the co-op voice's microphone):
+// Longshot's rec_ready (host/hos_sdl.c) called SDL_InitSubSystem(SDL_INIT_AUDIO) for every microphone list and open and
+// never quit it. SDL3 counts those calls in 8 bits: the 256th wrapped the count to 0 and the next call restarted SDL's
+// audio, destroying every SDL_AudioStream (the open microphones' too), which nn_audio_in.c then read freed. Patch 0033
+// starts SDL's audio once, under a lock of its own; a failed start (SDL leaves it uncounted) is tried again.
+TEST_CASE("hookshot: SDL's audio is started once for the microphones, not at every list and open (patch 0033)") {
+    const std::string patch = ReadFile(kRepo / "hookshot" / "patches" / "0033-coop-sdl-audio-once.patch");
+    REQUIRE_FALSE(patch.empty());
+    const std::string sdl = PatchedCode(patch, "host/hos_sdl.c");
+    REQUIRE_FALSE(sdl.empty());
+    const auto has = [&sdl](const char* code) { return sdl.find(Squashed(code)) != std::string::npos; };
+    // The old line, which counted one more start at every call, is gone.
+    CHECK(patch.find("\n-    return rec.ok && hos_sdl_init(HOS_SDL_AUDIO);\n") != std::string::npos);
+    CHECK_FALSE(has("return rec.ok && hos_sdl_init(HOS_SDL_AUDIO);"));
+    // Once, remembered, and under the lock (the lists come from the menu's and the module's threads).
+    CHECK(has("int audio_on;"));
+    CHECK(has("static SRWLOCK rec_lock = SRWLOCK_INIT;"));
+    const auto lock = sdl.find(Squashed("AcquireSRWLockExclusive(&rec_lock); if (!rec.tried) {"));
+    const auto start = sdl.find(Squashed("if (rec.ok && !rec.audio_on) rec.audio_on = hos_sdl_init(HOS_SDL_AUDIO);"));
+    const auto unlock = sdl.find(Squashed("const int ready = rec.ok && rec.audio_on; ReleaseSRWLockExclusive(&rec_lock); return ready;"));
+    REQUIRE(lock != std::string::npos);
+    REQUIRE(start != std::string::npos);
+    REQUIRE(unlock != std::string::npos);
+    CHECK(lock < start);
+    CHECK(start < unlock);
+    // No other patch starts SDL's audio from the host's code: one counted start for the microphones.
+    for (const auto& entry : std::filesystem::directory_iterator(kRepo / "hookshot" / "patches")) {
+        const std::string text = ReadFile(entry.path());
+        for (auto at = text.find("\n+"); at != std::string::npos; at = text.find("\n+", at + 1)) {
+            const std::string line = text.substr(at + 1, text.find('\n', at + 1) - at - 1);
+            if (line.find("hos_sdl_init(HOS_SDL_AUDIO)") != std::string::npos) {
+                CHECK(entry.path().filename().string() == "0033-coop-sdl-audio-once.patch");
+                CHECK(line.find("!rec.audio_on") != std::string::npos);
+            }
+        }
+    }
 }
