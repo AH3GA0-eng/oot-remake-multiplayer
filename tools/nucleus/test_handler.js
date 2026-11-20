@@ -341,6 +341,10 @@ check(old.indexOf("server = 127.0.0.1\r\nport = 27590\r\n") >= 0 && old.indexOf(
 
 // Join a game on another PC: no server started, every game's coop.ini points at the host, the guard skipped, the
 // handler closes no coop_server, a bad code tells the player.
+function noHostLine(p) {
+    var t = readFile(fso.BuildPath(instances[p], "coop.ini"));
+    return t !== "" && !/^\s*(server|port|password)\s*=/mi.test(t);   // written, and no host line (starts solo)
+}
 var JOIN = "Join a game on another PC", joinTxt = fso.BuildPath(game, "nucleus-players\\join.txt");
 check(coopSha256([97, 98, 99]).slice(0, 4).join(",") === "186,120,22,191", "SHA-256 of abc: " + coopSha256([97, 98, 99]).slice(0, 4).join(","));
 var invite = "CHFSA-6JFPP-5AATB-UCVDW-EXFYG-ZH2J3-KSGWK-S2GA";
@@ -381,14 +385,14 @@ for (var bi = 0; bi < bads.length; bi++) {
     logged = [];
     writeFile(sessionTxt, "stale\r\n10.0.0.1\r\n27510\r\n");
     for (var dp = 0; dp < 2; dp++) {
-        if (fso.FileExists(fso.BuildPath(instances[dp], "coop.ini"))) fso.DeleteFile(fso.BuildPath(instances[dp], "coop.ini"));
+        writeFile(fso.BuildPath(instances[dp], "coop.ini"), "server = 203.0.113.5\r\nport = 27510\r\npassword = oldhost\r\n");   // the last session's host
     }
     var badThrew = false, bj = "", bj2 = "", badThrew2 = false;
     try { bj = playAs(0, JOIN); } catch (e1) { badThrew = true; }
     try { bj2 = playAs(1, JOIN); } catch (e2) { badThrew2 = true; }   // a later player: nothing either
-    check(badThrew && badThrew2 && bj === "" && bj2 === "" && startedWindows.length === 0 && startedServers.length === 0 &&
-          logged.join("\n").indexOf("Nothing is started") >= 0 && !fso.FileExists(sessionTxt),
-          "join: '" + bads[bi] + "' tells the player, starts nothing, no coop.ini, no stale session: " + logged.join(" | "));
+    check(badThrew && badThrew2 && startedWindows.length === 0 && startedServers.length === 0 &&
+          logged.join("\n").indexOf("Nothing is started") >= 0 && !fso.FileExists(sessionTxt) && noHostLine(0) && noHostLine(1),
+          "join: '" + bads[bi] + "' tells the player, starts nothing, no host line in coop.ini, no stale session: " + logged.join(" | "));
 }
 fso.DeleteFile(joinTxt);
 

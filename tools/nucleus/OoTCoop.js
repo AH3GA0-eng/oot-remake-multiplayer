@@ -367,6 +367,12 @@ function coopJoinText(mine) {
     }
 }
 
+// This game's coop.ini with no server, port or password (a bad or missing host code): if Nucleus goes on anyway, the
+// game starts solo, not at the host of the last session.
+function coopNoHost(inst) {
+    coopWrite(coopPath(inst, "coop.ini"), "# Join a game on another PC: no usable host code, so no server line (Nucleus handler).\r\n");
+}
+
 // A player name the game takes: 1 to 16 characters, no control characters.
 function coopName(nick, player) {
     var n = coopTrim(String(nick || "").replace(/[\x00-\x1f\x7f]/g, ""));
@@ -484,7 +490,7 @@ Game.Play = function () {
             Context.Log("OoT Co-op: joining the host at " + joined.server + ":" + joined.port + " (no server started here)");
         } else {
             // Nothing is started: no session.txt (an old one must not feed the other players), the player is told, and
-            // the script stops here (this game's start is abandoned, nothing is written for it).
+            // the script stops here (this game's start is abandoned; its coop.ini has no host line).
             coopJoinFailed = true;
             try {
                 System.IO.File.Delete(sessionFile);
@@ -492,10 +498,12 @@ Game.Play = function () {
                 // no old file
             }
             coopTell("Join a game on another PC: " + joined.error + ". Nothing is started.");
+            coopNoHost(inst);
             throw new Error("Join a game on another PC: " + joined.error);
         }
         coopWrite(sessionFile, coopSession.password + "\r\n" + coopSession.server + "\r\n" + coopSession.port + "\r\n");
     } else if (coopWantsJoin() && coopJoinFailed) {
+        coopNoHost(inst);
         throw new Error("Join a game on another PC: no usable host code (see player 1's message)");
     } else if (player === 1) {
         var running = kit !== "" ? coopServersRunning() : 0;
